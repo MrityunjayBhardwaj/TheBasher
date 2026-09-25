@@ -60,8 +60,8 @@ export function overrideChain(
 export interface PoseLayerChain {
   /** `PoseLayer` ids from the Object down: `[0]` feeds the Object, the last reads the source. */
   readonly layers: readonly string[];
-  /** Where the bottom of the chain reads its pose — a clip's `pose`, a retarget's `posed` — or
-   *  null when nothing feeds it. */
+  /** Where the bottom of the chain reads its pose — a clip's `pose`, a retarget's `posed`, a
+   *  skeleton's rest `pose` — or null when nothing feeds it. */
   readonly source: { readonly node: string; readonly socket: string } | null;
   /**
    * #1211 — the chain's BASE layer, or null: its bottom layer, when it is an override layer reading a

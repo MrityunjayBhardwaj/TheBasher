@@ -7,7 +7,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { __resetRegistryForTests, applyOp, evaluate } from '../../core/dag';
 import type { DagState } from '../../core/dag/state';
-import type { Op } from '../../core/dag/ops';
+import type { Op } from '../../core/dag/types';
 import { useDagStore } from '../../core/dag/store';
 import { buildDefaultDagState } from '../../core/project/default';
 import { buildBvhImportOps } from '../../core/import/bvhImportChain';

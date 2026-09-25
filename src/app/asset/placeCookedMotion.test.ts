@@ -21,7 +21,8 @@ import type {
   MotionGenerationCapability,
   MotionGenerationResult,
 } from '../../core/motiongen/MotionGenerationCapability';
-import { edgeTarget } from '../animate/graphNodes';
+import { edgeTarget, type GraphNodeLike } from '../animate/graphNodes';
+import { poseLayerChain } from '../animate/poseChain';
 import { resolvePendingMotionGenerations } from './resolveMotionGenerate';
 import { bakeGeneratedClipOps } from './bakeGeneratedClip';
 import { mintMotionGenerateOps } from './mintMotionGenerate';
@@ -341,7 +342,11 @@ describe('placeCookedMotionOps (#935)', () => {
     );
     if (!bind.ok) throw new Error(`the real bind refused: ${bind.reason}`);
     next = apply(next, bind.ops as Op[]);
-    expect(edgeTarget(next.nodes[armature], 'pose')).toBe('retarget');
+    // The retarget is the source of the Object's pose chain, under the muted base layer (#1211).
+    expect(
+      poseLayerChain(next.nodes as unknown as Readonly<Record<string, GraphNodeLike>>, armature)
+        .source?.node,
+    ).toBe('retarget');
     await resolvePendingMotionGenerations(next, capability());
     next = apply(next, bakeGeneratedClipOps(next));
 

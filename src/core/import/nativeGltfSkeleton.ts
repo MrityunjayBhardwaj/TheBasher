@@ -1,6 +1,5 @@
-// #393 (step 1) — a skinned glTF's joints read into a native `Skeleton` and the clip on them into an
-// `AnimationClip`, the shape the FBX and BVH roads already land (`fbxImportChain.ts`,
-// `bvhImportChain.ts`). The joints stop being empties: a bone is data of the skeleton, not a node
+// #393 (step 1) — a skinned glTF's joints read into a native `Skeleton`, and the clip on them into
+// keys on the armature's base pose layer (#1211). The joints stop being empties: a bone is data of the skeleton, not a node
 // of the scene.
 //
 // ── WHICH NODES ARE BONES ───────────────────────────────────────────────────────────────────────
@@ -30,30 +29,27 @@
 // (`guess_original_bind_pose`, `vnode.py:489-535`); on every skinned file in the repo the two agree
 // exactly (the recomputed inverses equal the file's), so the difference cannot show on them.
 //
-// ── WHAT THE CLIP LOSES, AND WHAT IS REFUSED SO THAT IT LOSES NOTHING SILENTLY ──────────────────
+// ── THE MOTION IS KEYS ON THE BASE POSE LAYER, AS THE FILE WROTE THEM (#1211, #1212) ─────────────
 //
-// An `AnimationClip` key holds a bone's position and XYZ euler rotation at one time, interpolated
-// linearly. Keys are written at the union of the bone's own channel times, each channel sampled
-// there by the ONE channel sampler (`sampleQuatKeyframes` / `sampleVec3Keyframes`), so at every key
-// the pose is the file's exactly. What a clip cannot hold is refused whole, by name: a bone channel
-// that is not LINEAR (a step or a cubic between two keys is not a straight line, #1211), and a
-// bone's scale keyed AWAY from its rest (a clip key has no scale, #1212). A scale channel that holds
-// the rest scale changes no pose, so it is dropped and counted — exporters key every bone's scale,
-// and on the four Khronos samples that carry scale channels every key sits at rest to 2e-5.
-// Between two keys a rotation about more than one axis follows the
-// euler lerp rather than the spec's slerp — the FBX road's clip does the same. Measured 0° on every
-// skinned fixture we hold and 24.8° at the middle of a 120° two-axis segment (#1202).
+// Each bone channel becomes a channel of the armature's base `PoseLayer` (step 4 of "Bones as
+// Channels", #1233): translation → `position`, rotation → `quaternion`, scale → `scale`, each with
+// the file's own keys, times, interpolation and handles — STEP as constant, CUBICSPLINE as bézier
+// handles carrying the file's tangents, LINEAR rotation slerped, as `readNativeClip` reads every
+// glTF channel. Each keyed bone is a member in quaternion mode, as the file stores rotations. Nothing
+// is refused or dropped: Blender keeps every bone channel as the pose bone's F-curve, a scale that
+// holds the rest included (`io_scene_gltf2/blender/imp/animation_node.py`). A component the file does
+// not key rests where the skeleton's rest pose holds it.
 //
 // REF: io_scene_gltf2/blender/imp/{vnode,node,mesh}.py (Blender 5.1.1, bundled);
 //      ref/GROUND_TRUTH_HOUDINI_KINEFX_SKINNING.md §8; src/core/import/skeletonObject.ts (the
 //      standing Object); issues #393, #1196, #1197.
 
 import { Matrix4, Quaternion, Vector3 } from 'three';
-import type { AnimationKeyframe, BoneSpec, Quat, Vec3 } from '../../nodes/types';
-import { sampleQuatKeyframes, sampleVec3Keyframes } from '../../nodes/keyframeInterp';
-import type { ClipChannel, Vec3ClipKey } from './nativeGltfClip';
+import type { BoneSpec, Quat, Vec3 } from '../../nodes/types';
+import type { PoseLayerChannel, PoseLayerMember } from '../../nodes/PoseLayer';
+import type { ClipChannel } from './nativeGltfClip';
 import type { NativeImportRefusal } from './nativeGltfImport';
-import { continuousEuler, quaternionToEulerVec3, sanitizeBoneName } from './threeAdapter';
+import { quaternionToEulerVec3, sanitizeBoneName } from './threeAdapter';
 import type { GltfJson } from './glb';
 
 /** The slice of a glTF document the skeleton reader looks at. */
@@ -307,103 +303,39 @@ function restOf(node: SkeletonGltfJson['nodes'][number]): {
 }
 
 /**
- * The clip's channels on bones as `AnimationClip` keys, or the refusal naming a channel a clip
- * cannot hold. Channels on other nodes are not this function's; the caller keeps them.
+ * #1211 — the clip's channels on this skeleton's bones as a base pose layer's members and channels,
+ * in the file's channel order. Channels on other nodes are not this function's; the caller keeps
+ * them. Every keyed bone is a member in quaternion mode; a channel is `{bone, component, keyframes}`
+ * with the file's keys as `readNativeClip` read them. No provenance: the keys are the character's.
  */
-export function nativeSkeletonClip(
+export function nativeSkeletonLayer(
   skeleton: NativeSkeleton,
   channels: readonly ClipChannel[],
-  json: SkeletonGltfJson,
-):
-  | { keyframes: AnimationKeyframe[]; duration: number; restScaleChannels: number }
-  | NativeImportRefusal {
+): { members: PoseLayerMember[]; channels: PoseLayerChannel[] } {
   const boneOf = new Map(skeleton.boneNodes.map((node, i) => [node, i]));
-  const perBone = new Map<number, { translation?: ClipChannel; rotation?: ClipChannel }>();
-  let duration = 0;
-  let restScaleChannels = 0;
+  const keyed = new Set<string>();
+  const out: PoseLayerChannel[] = [];
   for (const channel of channels) {
-    const bone = boneOf.get(channel.node);
-    if (bone === undefined) continue;
-    const name = skeleton.bones[bone].name;
-    if (channel.path === 'scale') {
-      // #1212 — a scale channel that holds the bone at its rest scale changes no pose: the clip
-      // already rests an unkeyed channel there. It is dropped and COUNTED; one that scales is
-      // refused. Its times still count toward the clip's length, as its F-curve would in Blender.
-      if (!holdsRestScale(channel.keyframes, restOf(json.nodes[channel.node]).scale)) {
-        return {
-          refused: `its clip scales bone ${name} away from its rest scale, and a clip key holds no scale`,
-          issue: '#1212',
-        };
-      }
-      restScaleChannels++;
-      duration = Math.max(duration, ...channel.keyframes.map((k) => k.time));
-      continue;
-    }
-    const stepped = channel.keyframes.find((k) => k.easing !== 'linear');
-    if (stepped !== undefined) {
-      return {
-        refused: `its clip moves bone ${name} by ${stepped.easing === 'constant' ? 'STEP' : 'CUBICSPLINE'}, and a clip interpolates linearly`,
-        issue: ISSUE,
-      };
-    }
-    const entry = perBone.get(bone) ?? {};
-    entry[channel.path] = channel;
-    perBone.set(bone, entry);
-    duration = Math.max(duration, ...channel.keyframes.map((k) => k.time));
+    const index = boneOf.get(channel.node);
+    if (index === undefined) continue;
+    const bone = skeleton.bones[index].name;
+    keyed.add(bone);
+    out.push({
+      bone,
+      component: COMPONENT[channel.path],
+      keyframes: channel.keyframes,
+    } as PoseLayerChannel);
   }
-
-  const keyframes: AnimationKeyframe[] = [];
-  for (const [bone, { translation, rotation }] of perBone) {
-    const rest = restOf(json.nodes[skeleton.boneNodes[bone]]);
-    const times = [
-      ...new Set(
-        [...(translation?.keyframes ?? []), ...(rotation?.keyframes ?? [])].map((k) => k.time),
-      ),
-    ].sort((a, b) => a - b);
-    let previous: Vec3 | null = null;
-    for (const time of times) {
-      const q =
-        rotation?.path === 'rotation'
-          ? sampleQuatKeyframes(rotation.keyframes, time)
-          : rest.quaternion;
-      const euler = continuousEuler(quaternionToEulerVec3(new Quaternion(...q)), previous);
-      previous = euler;
-      keyframes.push({
-        bone,
-        time,
-        position:
-          translation?.path === 'translation'
-            ? sampleVec3Keyframes(translation.keyframes, time)
-            : rest.position,
-        rotation: euler,
-      });
-    }
-  }
-  keyframes.sort((a, b) => a.time - b.time || a.bone - b.bone);
-  return { keyframes, duration, restScaleChannels };
+  // Members in bone order, so a layer reads the same whatever order the file lists its channels.
+  const members: PoseLayerMember[] = skeleton.bones
+    .filter((b) => keyed.has(b.name))
+    .map((b) => ({ bone: b.name, rotationMode: 'quaternion' }));
+  return { members, channels: out };
 }
 
-/**
- * How far a scale key may sit from the rest scale and still hold it: 1e-4 of the rest (or of 1,
- * when the rest is smaller) — a 0.2 mm change on a 2 m figure. Measured on the four Khronos
- * samples whose bones carry scale channels (BrainStem, CesiumMan, RiggedFigure, RiggedSimple):
- * the largest departure from rest is 1.97e-5, float noise from the exporter (#1212).
- */
-const REST_SCALE_TOLERANCE = 1e-4;
-
-/**
- * Whether a scale channel holds its bone at `rest` for its whole length: every key's value at the
- * rest scale, and every cubic handle flat — a handle is an offset from its key, so a CUBICSPLINE
- * channel whose keys sit at rest can still swing between them when its tangents are not zero.
- */
-function holdsRestScale(keys: readonly Vec3ClipKey[], rest: Vec3): boolean {
-  const near = (v: Vec3, to: Vec3): boolean =>
-    v.every((c, i) => Math.abs(c - to[i]) <= REST_SCALE_TOLERANCE * Math.max(1, Math.abs(to[i])));
-  const flat: Vec3 = [0, 0, 0];
-  return keys.every(
-    (k) =>
-      near(k.value, rest) &&
-      (k.inHandle === undefined || near(k.inHandle.value, flat)) &&
-      (k.outHandle === undefined || near(k.outHandle.value, flat)),
-  );
-}
+/** A glTF channel path as the pose layer component it keys. */
+const COMPONENT = {
+  translation: 'position',
+  rotation: 'quaternion',
+  scale: 'scale',
+} as const satisfies Record<ClipChannel['path'], PoseLayerChannel['component']>;

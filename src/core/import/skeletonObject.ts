@@ -106,7 +106,7 @@ function dataSourceOf(binding: unknown): string | null {
   return typeof one?.node === 'string' ? one.node : null;
 }
 
-export interface SkeletonObjectArgs {
+interface SkeletonObjectBase {
   readonly skeletonId: string;
   /** The skeleton's rest bones — what the scale is measured on when there is no clip. */
   readonly bones: readonly BoneSpec[];
@@ -135,7 +135,8 @@ export interface SkeletonObjectArgs {
    * copies, a rename cuts it).
    *
    * Required for the reason `name` is: a road that could leave it out would stand an Object with
-   * no pose edge, and both roads would look the same until something played.
+   * no pose edge, and both roads would look the same until something played. A road whose motion
+   * is keys on a pose layer names that layer as {@link SkeletonObjectArgs} `pose` instead.
    */
   readonly clipId: string;
   /**
@@ -151,13 +152,30 @@ export interface SkeletonObjectArgs {
 }
 
 /**
- * The Object, its name, its `data` edge from the skeleton, its `pose` edge from the clip, and
+ * The builder's arguments: the shared ones, and EXACTLY ONE pose source for the Object — a clip
+ * (`clipId`, whose `pose` output is wired) or any pose-wire output (`pose`), such as the base pose
+ * layer an imported glTF's keys live in (#1211). A road naming a `pose` has no clip for the name to
+ * follow, so it passes `nameFollowsClip: false`.
+ */
+export type SkeletonObjectArgs = Omit<SkeletonObjectBase, 'clipId' | 'nameFollowsClip'> &
+  (
+    | { readonly clipId: string; readonly nameFollowsClip: boolean; readonly pose?: never }
+    | {
+        readonly pose: { readonly node: string; readonly socket: string };
+        readonly nameFollowsClip: false;
+        readonly clipId?: never;
+      }
+  );
+
+/**
+ * The Object, its name, its `data` edge from the skeleton, its `pose` edge from its motion, and
  * its place among the scene's children.
  *
- * #1224 — the clip's POSE output feeds the Object's `pose`, the end of the pose wire (#1203 wired
- * the clip itself, as the Object's action): the armature band poses the rig from this edge, and a
- * deform pointed at the Object reads the pose through it (#393). Wired here, so every road that
- * stands a rig wires it.
+ * #1224 — the motion's POSE output feeds the Object's `pose`, the end of the pose wire (#1203 wired
+ * the clip itself, as the Object's action): a clip's `pose` on the BVH, FBX and generation roads,
+ * the base pose layer's `out` on the glTF road (#1211). The armature band poses the rig from this
+ * edge, and a deform pointed at the Object reads the pose through it (#393). Wired here, so every
+ * road that stands a rig wires it.
  *
  * The name goes on `meta.name` through a `setMeta` op, because that is the field the outliner's
  * rename writes and `nodeDisplayName` reads first, and `addNode` carries no meta. It lands in the
@@ -184,7 +202,9 @@ export function buildSkeletonObjectOps(args: SkeletonObjectArgs): {
               type: 'setMeta' as const,
               nodeId: objectId,
               name: args.name,
-              ...(args.nameFollowsClip ? { nameFrom: args.clipId } : {}),
+              ...(args.nameFollowsClip && args.clipId !== undefined
+                ? { nameFrom: args.clipId }
+                : {}),
             },
           ]
         : []),
@@ -195,7 +215,7 @@ export function buildSkeletonObjectOps(args: SkeletonObjectArgs): {
       },
       {
         type: 'connect',
-        from: { node: args.clipId, socket: 'pose' },
+        from: args.pose ?? { node: args.clipId, socket: 'pose' },
         to: { node: objectId, socket: 'pose' },
       },
       {

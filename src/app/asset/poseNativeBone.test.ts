@@ -142,9 +142,11 @@ describe('#1244 — hand-posing a native character', () => {
     const r: [number, number, number] = [10, -20, 70];
     expect(pose(armatureId, 'Bone1', r).ok).toBe(true);
     const after = useDagStore.getState().state;
-    // A layer now sits between the bar's clip and its armature Object.
+    // A layer now sits between the bar's motion (its base layer, holding the file's keys, #1211) and
+    // its armature Object: the pose never goes into the base, which a bind replaces.
     const chain = poseLayerChain(graph(after), armatureId);
-    expect(chain.layers).toHaveLength(1);
+    expect(chain.layers).toHaveLength(2);
+    expect(chain.layers[1]).toBe(chain.base);
     expect(chain.source?.socket).toBe('pose');
     const q = quatFromEuler([r[0] * DEG, r[1] * DEG, r[2] * DEG], 'ZYX');
     // The bar's clip keys Bone1 the whole way (0 → ~85°); the pose holds over it at every frame.
@@ -158,8 +160,8 @@ describe('#1244 — hand-posing a native character', () => {
     expect(pose(armatureId, 'Bone0', [0, 0, 5]).ok).toBe(true);
     expect(pose(armatureId, 'Bone1', [0, 0, 50]).ok).toBe(true);
     const after = useDagStore.getState().state;
-    const { layers } = poseLayerChain(graph(after), armatureId);
-    expect(layers).toHaveLength(1);
+    const { layers, base } = poseLayerChain(graph(after), armatureId);
+    expect(layers).toEqual([layers[0], base]);
     const members = (
       after.nodes[layers[0]].params as { members: { bone: string; rotation: number[] }[] }
     ).members;
@@ -205,7 +207,9 @@ describe('#1244 — hand-posing a native character', () => {
     if (!bound.ok) return;
     const after = useDagStore.getState().state;
     const chain = poseLayerChain(graph(after), armatureId);
-    expect(chain.layers).toHaveLength(1);
+    // The edit layer, then the base: muted by the bind (#1211), the retarget under it.
+    expect(chain.layers).toHaveLength(2);
+    expect((after.nodes[chain.layers[1]].params as { mute: boolean }).mute).toBe(true);
     expect(chain.source).toEqual({ node: bound.clipId, socket: 'posed' });
     // Bone0 plays the new motion: 30° about Y (the bar's own axis) at 0.5 s.
     const bone0 = boneQuat(after, armatureId, 0, 0.5);
@@ -215,7 +219,7 @@ describe('#1244 — hand-posing a native character', () => {
     expectTopTurnedBy(after, modifierId, qmul(bone0, quatFromEuler([0, 0, 20 * DEG], 'ZYX')), 0.5);
   });
 
-  it('one undo takes the pose back, and the clip poses the Object again', async () => {
+  it('one undo takes the pose back, and the base poses the Object again', async () => {
     const { state, armatureId } = await bar();
     useDagStore.getState().hydrate(state);
     const before = state.nodes[armatureId].inputs.pose;
@@ -223,7 +227,9 @@ describe('#1244 — hand-posing a native character', () => {
     useDagStore.getState().undo();
     const after = useDagStore.getState().state;
     expect(after.nodes[armatureId].inputs.pose).toEqual(before);
-    expect(Object.values(after.nodes).some((n) => n.type === 'PoseLayer')).toBe(false);
+    // Only the base layer is left.
+    const layers = Object.values(after.nodes).filter((n) => n.type === 'PoseLayer');
+    expect(layers.map((n) => n.id)).toEqual([(before as { node: string }).node]);
   });
 
   it('#1245 — posing again under an additive layer lands in the pose layer below it', async () => {
@@ -261,7 +267,8 @@ describe('#1244 — hand-posing a native character', () => {
     const again = pose(armatureId, 'Bone1', [0, 0, 60]);
     expect(again.ok, JSON.stringify(again)).toBe(true);
     const after = useDagStore.getState().state;
-    expect(poseLayerChain(graph(after), armatureId).layers).toEqual(['lean', poseLayer]);
+    const { layers, base } = poseLayerChain(graph(after), armatureId);
+    expect(layers).toEqual(['lean', poseLayer, base]);
     const members = (
       after.nodes[poseLayer].params as { members: { bone: string; rotation: number[] }[] }
     ).members;
@@ -293,8 +300,9 @@ describe('#1244 — hand-posing a native character', () => {
     );
     expect(pose(armatureId, 'Bone1', [0, 0, 60]).ok).toBe(true);
     const chain = poseLayerChain(graph(useDagStore.getState().state), armatureId);
-    expect(chain.layers).toHaveLength(2);
+    expect(chain.layers).toHaveLength(3);
     expect(chain.layers[1]).toBe('lean');
+    expect(chain.layers[2]).toBe(chain.base);
   });
 
   it('#1245 — the pose layer turned additive: a new pose is refused by name, not by an id collision', async () => {

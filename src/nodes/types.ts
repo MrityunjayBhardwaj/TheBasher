@@ -1623,6 +1623,12 @@ export interface PosedSkeletonValue {
   readonly source?: PosedSkeletonValue;
   /** #1241 — a soloed layer is at or above this point: layers that are not soloed pass it by. */
   readonly soloed?: boolean;
+  /**
+   * #1211 — this is a skeleton standing at rest (`Skeleton.pose`). An override layer reading it is
+   * the chain's BASE layer, the character's own motion as keys, and it names its own output as the
+   * wire's `source`, so a soloed layer above plays over that motion as it played over a clip.
+   */
+  readonly rest?: true;
 }
 
 /** A single keyframe targeting a bone (by index) at a given clip-time. */

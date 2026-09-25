@@ -1,6 +1,6 @@
-// #393 (step 1) — a skinned glTF's joints become a Skeleton, its standing Object and an
-// AnimationClip on the native road, never empties; and ONE function spells both the bone names and
-// the mesh's vertex groups.
+// #393 (step 1) — a skinned glTF's joints become a Skeleton, its standing Object and, since #1211, a
+// base pose layer holding the file's bone channels as keys, on the native road, never empties; and
+// ONE function spells both the bone names and the mesh's vertex groups.
 import { readFileSync } from 'node:fs';
 import { Euler, Matrix4, Quaternion, Vector3 } from 'three';
 import { beforeEach, describe, expect, it } from 'vitest';
@@ -9,10 +9,10 @@ import {
   buildNativeGltfImportOps,
   type NativeImportResult,
 } from './nativeGltfImport';
-import { nativeBoneNames, nativeSkeletonClip, readNativeSkeletons } from './nativeGltfSkeleton';
+import { nativeBoneNames, nativeSkeletonLayer, readNativeSkeletons } from './nativeGltfSkeleton';
 import { sampleSkinDeform } from '../../nodes/armatureDeform';
 import { parseGltfContainer } from './glb';
-import type { ClipChannel, Vec3ClipKey } from './nativeGltfClip';
+import type { Vec3ClipKey } from './nativeGltfClip';
 import { skeletonObjectId, standInObjectOf } from './skeletonObject';
 import { __resetRegistryForTests } from '../dag/registry';
 import { registerAllNodes } from '../../nodes/registerAll';
@@ -20,14 +20,15 @@ import { applyOp } from '../dag/ops';
 import { evaluate } from '../dag';
 import { emptyDagState, type DagState } from '../dag/state';
 import type { Op } from '../dag/types';
-import { posedSkeletonFromClip } from '../../nodes/AnimationClip';
+import { poseLayerChain } from '../../app/animate/poseChain';
+import type { GraphNodeLike } from '../../app/animate/graphNodes';
 import { eulerXYZFromQuat, armaturePoseOf } from '../../nodes/bonePose';
 import { unpackMeshData } from '../../app/meshGeometryData';
 import type {
-  AnimationClipValue,
   BoneSpec,
   ModifiedDataValue,
   ObjectValue,
+  PosedSkeletonValue,
 } from '../../nodes/types';
 
 const SKINNED_BAR = 'public/assets/skinned-bar.glb';
@@ -109,22 +110,23 @@ describe('#393 step 1 — a skinned glTF’s joints become a skeleton', () => {
     registerAllNodes();
   });
 
-  it('skinned-bar: one Skeleton, its standing Object and one clip — no empty per joint, no channel on a joint', async () => {
+  it('skinned-bar: one Skeleton, its standing Object and its base pose layer — no empty per joint, no channel on a joint', async () => {
     const result = await importSkinned(glbWith(SKINNED_BAR));
     const state = applied(result.ops);
     const types = Object.values(state.nodes)
       .map((n) => n.type)
       .sort();
     // The import Group, the mesh node's Object + PolyMeshData + the Armature modifier that deforms
-    // it, and the rig: Skeleton, its Object, its clip. Before #393 the joints were two Group
-    // empties with a KeyframeChannelQuat on one.
+    // it, and the rig: Skeleton, its Object, and the base pose layer holding its keys (#1211). Before
+    // #393 the joints were two Group empties with a KeyframeChannelQuat on one; before #1211 the
+    // keys were an AnimationClip.
     expect(types).toEqual([
-      'AnimationClip',
       'ArmatureModifier',
       'Group',
       'Object',
       'Object',
       'PolyMeshData',
+      'PoseLayer',
       'Skeleton',
     ]);
     const [skeletonId] = nodesOfType(state, 'Skeleton');
@@ -144,9 +146,27 @@ describe('#393 step 1 — a skinned glTF’s joints become a skeleton', () => {
     // #1238 — named after the armature node, as Blender 5.1.1 names it; not after the clip `bend`.
     expect(state.nodes[standIn!].meta?.name).toBe('SkinnedBar');
     expect(state.nodes[standIn!].meta?.nameFrom).toBeUndefined();
-    // #1224 — the clip's pose is the Object's pose: what the band draws and a deform reads.
-    const [clipId] = nodesOfType(state, 'AnimationClip');
-    expect(state.nodes[standIn!].inputs.pose).toEqual({ node: clipId, socket: 'pose' });
+    // #1211 — Skeleton.pose → base layer → Object.pose: what the band draws and a deform reads.
+    const [layerId] = nodesOfType(state, 'PoseLayer');
+    expect(state.nodes[standIn!].inputs.pose).toEqual({ node: layerId, socket: 'out' });
+    expect(state.nodes[layerId].inputs.pose).toEqual({ node: skeletonId, socket: 'pose' });
+    const graph = state.nodes as unknown as Readonly<Record<string, GraphNodeLike>>;
+    expect(poseLayerChain(graph, standIn!).base).toBe(layerId);
+    // Named after the file's animation, as Blender names the action; the keys carry no provenance.
+    const layer = state.nodes[layerId].params as {
+      name: string;
+      mode: string;
+      members: unknown[];
+      channels: Record<string, unknown>[];
+    };
+    expect(layer.name).toBe('bend');
+    expect(layer.mode).toBe('override');
+    expect(layer.members).toEqual([{ bone: 'Bone1', rotationMode: 'quaternion' }]);
+    for (const channel of layer.channels) {
+      for (const field of ['assetRef', 'childName', 'sourceClipId', 'sourceHash', 'target']) {
+        expect(channel, field).not.toHaveProperty(field);
+      }
+    }
     expect(state.nodes[standIn!].inputs.action).toBeUndefined();
     const rig = evaluate(state, standIn!, {
       ctx: { time: { frame: 0, seconds: 0, normalized: 0 } },
@@ -157,16 +177,14 @@ describe('#393 step 1 — a skinned glTF’s joints become a skeleton', () => {
     );
   });
 
-  it('skinned-bar: the clip plays on the skeleton, and at 0.5 s Bone1 is half of its 85° bend', async () => {
+  it('skinned-bar: the keys play on the skeleton, and at 0.5 s Bone1 is half of its 85° bend', async () => {
     const state = applied((await importSkinned(glbWith(SKINNED_BAR))).ops);
-    const [clipId] = nodesOfType(state, 'AnimationClip');
-    const clip = evaluate(state, clipId, {
+    const [layerId] = nodesOfType(state, 'PoseLayer');
+    const posed = evaluate(state, layerId, {
       ctx: { time: { frame: 0, seconds: 0, normalized: 0 } },
       socket: 'out',
-    }).value as AnimationClipValue;
-    expect(clip.skeleton.bones).toHaveLength(2);
-    expect(clip.duration).toBe(1);
-    const posed = posedSkeletonFromClip(clip);
+    }).value as PosedSkeletonValue;
+    expect(posed.skeleton.bones).toHaveLength(2);
     // The file's end key: (0, 0, 0.6756, 0.7373), a rotation of 2·atan2(0.6756, 0.7373) about Z.
     const end = 2 * Math.atan2(0.6756, 0.7373);
     expect(eulerXYZFromQuat(posed.sample(1)[1].quaternion)[2]).toBeCloseTo(end, 3);
@@ -304,95 +322,90 @@ describe('#393 step 1 — a skinned glTF’s joints become a skeleton', () => {
     expect(storedVertexGroups(state)).toEqual(['Bone0', 'Bone1']);
   });
 
-  // ── WHAT A CLIP OR THE NATIVE MODEL CANNOT HOLD IS REFUSED WHOLE, BY NAME ─────────────────────
-  // #1212 — a bone's scale channel that HOLDS the rest scale changes no pose (the clip already
-  // rests an unkeyed channel there), so it is dropped and counted; one that scales is refused.
-  describe('#1212 — a bone scale channel', () => {
-    /** Bone1's first skeleton, read from skinned-bar with `mutate` applied. */
+  // ── #1211 / #1212 — EVERY BONE CHANNEL COMES ACROSS AS KEYS, AS THE FILE WROTE IT ─────────────
+  // A scale that moves, a scale that holds the rest (Blender keeps both as the pose bone's F-curve),
+  // STEP and CUBICSPLINE: each is a channel of the base layer with the file's own keys.
+  describe('#1211 / #1212 — bone channels on the base layer', () => {
     const skeletonOf = (mutate?: (json: Json) => void) => {
       const json = jsonOf(glbWith(SKINNED_BAR, mutate));
       const read = readNativeSkeletons(json as never);
       if (read === null || 'refused' in read) throw new Error('no skeleton');
-      return { json, skeleton: read.skeletons[0] };
+      return read.skeletons[0];
     };
     const linear = (time: number, value: [number, number, number]) => ({
       time,
       value,
       easing: 'linear' as const,
     });
-    const scaleOn = (node: number, keyframes: Vec3ClipKey[]): ClipChannel[] => [
-      { node, path: 'scale', keyframes },
-    ];
 
-    it('at the rest scale is dropped, counted, and still counts toward the length', () => {
-      const { json, skeleton } = skeletonOf();
+    it('a scale channel that moves is a scale channel, keyed as written', () => {
+      const keys = [linear(0, [1, 1, 1]), linear(2, [1.5, 1, 0.5])];
       expect(
-        nativeSkeletonClip(
-          skeleton,
-          scaleOn(0, [linear(0, [1, 1, 1]), linear(3, [1, 1, 1])]),
-          json as never,
-        ),
-      ).toEqual({ keyframes: [], duration: 3, restScaleChannels: 1 });
-    });
-
-    it('away from the rest scale is refused, naming the bone', () => {
-      const { json, skeleton } = skeletonOf();
-      expect(
-        nativeSkeletonClip(skeleton, scaleOn(0, [linear(0, [1.5, 1, 1])]), json as never),
+        nativeSkeletonLayer(skeletonOf(), [{ node: 0, path: 'scale', keyframes: keys }]),
       ).toEqual({
-        refused:
-          'its clip scales bone Bone1 away from its rest scale, and a clip key holds no scale',
-        issue: '#1212',
+        members: [{ bone: 'Bone1', rotationMode: 'quaternion' }],
+        channels: [{ bone: 'Bone1', component: 'scale', keyframes: keys }],
       });
     });
 
-    it('is measured against the bone’s OWN rest scale, not against 1', () => {
-      const { json, skeleton } = skeletonOf((j) => {
-        j.nodes[0].scale = [2, 2, 2];
-      });
-      const at = (v: number) =>
-        nativeSkeletonClip(skeleton, scaleOn(0, [linear(0, [v, v, v])]), json as never);
-      expect(at(2)).toMatchObject({ restScaleChannels: 1 });
-      expect(at(1)).toMatchObject({ issue: '#1212' });
+    it('a scale channel at the rest scale is kept too, as Blender keeps it', () => {
+      const keys = [linear(0, [1, 1, 1]), linear(3, [1, 1, 1])];
+      expect(
+        nativeSkeletonLayer(skeletonOf(), [{ node: 0, path: 'scale', keyframes: keys }]).channels,
+      ).toEqual([{ bone: 'Bone1', component: 'scale', keyframes: keys }]);
     });
 
-    it('holds within 1e-4 of the rest and not beyond', () => {
-      const { json, skeleton } = skeletonOf();
-      const at = (v: number) =>
-        nativeSkeletonClip(skeleton, scaleOn(0, [linear(0, [v, 1, 1])]), json as never);
-      expect(at(1 + 0.9e-4)).toMatchObject({ restScaleChannels: 1 });
-      expect(at(1 + 1.1e-4)).toMatchObject({ issue: '#1212' });
-    });
-
-    it('a CUBICSPLINE channel at rest with a tangent that swings between keys is refused', () => {
-      const { json, skeleton } = skeletonOf();
-      const cubic = (outY: number): Vec3ClipKey[] => [
+    it('CUBICSPLINE handles come across on the key', () => {
+      const keys: Vec3ClipKey[] = [
         {
           time: 0,
-          value: [1, 1, 1],
+          value: [0, 0, 0],
           easing: 'cubic',
-          outHandle: { time: 1 / 3, value: [0, outY, 0] },
+          outHandle: { time: 1 / 3, value: [0, 2, 0] },
         },
         {
           time: 1,
-          value: [1, 1, 1],
+          value: [0, 1, 0],
           easing: 'cubic',
           inHandle: { time: -1 / 3, value: [0, 0, 0] },
         },
       ];
-      expect(nativeSkeletonClip(skeleton, scaleOn(0, cubic(0)), json as never)).toMatchObject({
-        restScaleChannels: 1,
-      });
-      expect(nativeSkeletonClip(skeleton, scaleOn(0, cubic(0.5)), json as never)).toMatchObject({
-        issue: '#1212',
-      });
+      const { channels } = nativeSkeletonLayer(skeletonOf(), [
+        { node: 0, path: 'translation', keyframes: keys },
+      ]);
+      expect(channels).toEqual([{ bone: 'Bone1', component: 'position', keyframes: keys }]);
     });
 
-    it('on a node that is not a bone is not this clip’s, and passes uncounted', () => {
-      const { json, skeleton } = skeletonOf();
+    it('a channel on a node that is not a bone is not this layer’s', () => {
       expect(
-        nativeSkeletonClip(skeleton, scaleOn(2, [linear(0, [3, 3, 3])]), json as never),
-      ).toEqual({ keyframes: [], duration: 0, restScaleChannels: 0 });
+        nativeSkeletonLayer(skeletonOf(), [
+          { node: 2, path: 'scale', keyframes: [linear(0, [3, 3, 3])] },
+        ]),
+      ).toEqual({ members: [], channels: [] });
+    });
+
+    it('a STEP bone channel is read, not refused, and its keys are constant', async () => {
+      const state = applied(
+        (
+          await importSkinned(
+            glbWith(SKINNED_BAR, (json) => {
+              json.animations![0].samplers[0].interpolation = 'STEP';
+            }),
+          )
+        ).ops,
+      );
+      const [layerId] = nodesOfType(state, 'PoseLayer');
+      const { channels } = state.nodes[layerId].params as {
+        channels: { component: string; keyframes: { easing: string }[] }[];
+      };
+      expect(channels.map((c) => c.component)).toEqual(['quaternion']);
+      expect(channels[0].keyframes.every((k) => k.easing === 'constant')).toBe(true);
+      // Held: at 0.9 s Bone1 still stands at its first key, the rest.
+      const posed = evaluate(state, layerId, {
+        ctx: { time: { frame: 0, seconds: 0, normalized: 0 } },
+        socket: 'out',
+      }).value as PosedSkeletonValue;
+      posed.sample(0.9)[1].quaternion.forEach((c, i) => expect(c).toBeCloseTo([0, 0, 0, 1][i], 9));
     });
   });
 
@@ -404,14 +417,6 @@ describe('#393 step 1 — a skinned glTF’s joints become a skeleton', () => {
   };
 
   it.each<[string, (json: Json) => void, string, string]>([
-    [
-      'a bone channel is STEP',
-      (json) => {
-        json.animations![0].samplers[0].interpolation = 'STEP';
-      },
-      'moves bone Bone1 by STEP',
-      '#393',
-    ],
     [
       // #1219 — a MESH under a bone comes across parented to it (#1210); an empty does not yet.
       'an empty hangs under a bone',

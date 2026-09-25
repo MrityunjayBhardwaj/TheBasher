@@ -1,6 +1,9 @@
 // PoseLayer — a layer that edits the pose wire (#1240, step 3 of "Bones as Channels", #1214).
 //
-//   RetargetClip.posed / AnimationClip.pose ──→ PoseLayer ──→ PoseLayer … ──→ Object.pose
+//   RetargetClip.posed / AnimationClip.pose / Skeleton.pose ──→ PoseLayer ──→ PoseLayer … ──→ Object.pose
+//
+// On a skeleton's rest pose (`Skeleton.pose`), an override layer is the BASE layer: the character's
+// own motion as keys, an imported file's among them (#1211).
 //
 // Wire in, wire out. The layer holds the bones it touches (its MEMBERS) and their keys, and folds
 // them onto the incoming pose by its MODE and WEIGHT. A bone that is not a member passes through.
@@ -349,6 +352,16 @@ export const PoseLayerNode: NodeDefinition<PoseLayerParams, PosedSkeletonValue> 
           };
     }
 
+    // #1211 — the BASE layer: an override layer reading a skeleton's rest pose holds the character's
+    // own motion (an imported file's keys, or a hand-keyed one), as a clip did. It names its own
+    // output as the wire's source, so a soloed layer above plays over that motion, not over rest.
+    // The same rule `poseLayerChain` uses to find the base a bind mutes.
+    const isBase =
+      params.mode === 'override' &&
+      incoming.rest === true &&
+      incoming.source === undefined &&
+      !params.solo;
+
     const blend = BLEND[params.mode];
     let built: { members: ResolvedMember[]; weight: (seconds: number) => number } | null = null;
     const build = () => {
@@ -363,7 +376,7 @@ export const PoseLayerNode: NodeDefinition<PoseLayerParams, PosedSkeletonValue> 
       return built;
     };
 
-    return {
+    const value: { -readonly [K in keyof PosedSkeletonValue]: PosedSkeletonValue[K] } = {
       kind: 'PosedSkeleton',
       skeleton: upstream.skeleton,
       source,
@@ -394,5 +407,7 @@ export const PoseLayerNode: NodeDefinition<PoseLayerParams, PosedSkeletonValue> 
         return out;
       },
     };
+    if (isBase) value.source = value;
+    return value;
   },
 };

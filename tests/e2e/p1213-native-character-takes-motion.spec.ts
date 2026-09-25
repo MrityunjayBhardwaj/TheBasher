@@ -1,7 +1,8 @@
 // #1213 — a motion dropped beside a native character binds to it, and the drawn skin plays it, in the
 // running editor.
 //
-// Binding makes the retarget the armature Object's pose, the one thing that poses a native rig. The
+// Binding makes the retarget the source of the armature Object's pose chain, the one thing that poses
+// a native rig, under the base layer holding the file's own keys, which the bind mutes (#1211). The
 // motion is a two-joint swing named as the bar's bones, so the product's bind bridges it by matching
 // names; it turns Bone1 by 45° at 0.5 s and 90° at 1 s about Z. Both rigs rest unrotated, so the bar's
 // tip (resting at (0.2, 2, 0) in the file) must turn by those angles about Bone1's head (0, 1, 0).
@@ -107,14 +108,20 @@ test('#1213 — a motion binds to the native bar and its drawn skin plays it', a
     const nodes = w.__basher_dag.getState().state.nodes;
     const modifier = Object.entries(nodes).find(([, n]) => n.type === 'ArmatureModifier')![0];
     const armature = (nodes[modifier].inputs.armature as { node: string }).node;
+    // Object ← base layer (muted) ← retarget.
+    const base = (nodes[armature].inputs.pose as { node: string }).node;
     return {
       bound,
-      pose: nodes[armature].inputs.pose,
+      baseType: nodes[base].type,
+      baseMuted: (nodes[base].params as { mute?: boolean }).mute === true,
+      pose: nodes[base].inputs.pose,
       standInHidden: nodes[stand.objectId].meta?.hidden === true,
     };
   }, SWING_BVH);
 
   expect(outcome.bound.ok, JSON.stringify(outcome.bound)).toBe(true);
+  expect(outcome.baseType).toBe('PoseLayer');
+  expect(outcome.baseMuted, 'the bind mutes the file’s own motion').toBe(true);
   expect(outcome.pose).toMatchObject({ socket: 'posed' });
   expect(outcome.standInHidden, 'the motion’s own rig steps aside').toBe(true);
 

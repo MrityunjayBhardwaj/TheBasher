@@ -57,6 +57,7 @@ export function restPoseOf(skeleton: SkeletonValue): PosedSkeletonValue {
     kind: 'PosedSkeleton',
     skeleton,
     sample: () => (rest ??= skeleton.bones.map(restBonePose)),
+    rest: true,
   };
 }
 

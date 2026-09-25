@@ -115,24 +115,16 @@ describe('#1212 — a file whose bones carry scale channels held at rest comes a
     return { result, state, modifierId };
   }
 
-  it('reads natively and says how many channels it dropped: one per bone', async () => {
-    const { result } = await sampled();
-    expect(result.restScaleChannels).toBe(2);
-  });
-
-  it('a file with no scale channels says zero, not nothing', async () => {
-    const bytes = readFileSync('public/assets/skinned-bar.glb');
-    const result = await __buildSkinnedNativeGltfImportOpsForTests({
-      buffer: bytes.buffer.slice(
-        bytes.byteOffset,
-        bytes.byteOffset + bytes.byteLength,
-      ) as ArrayBuffer,
-      assetRef: 'user-imports/native/skinned-bar.glb',
-      sceneNodeId: 'n_scene',
-      storeImage: async () => 'img',
-    });
-    if ('refused' in result) throw new Error(result.refused);
-    expect(result.restScaleChannels).toBe(0);
+  it('reads natively and keeps both scale channels as keys, one per bone, as Blender does (#1211)', async () => {
+    const { state } = await sampled();
+    const layer = Object.values(state.nodes).find((n) => n.type === 'PoseLayer')!;
+    const channels = (layer.params as { channels: { bone: string; component: string }[] }).channels;
+    expect(
+      channels
+        .filter((c) => c.component === 'scale')
+        .map((c) => c.bone)
+        .sort(),
+    ).toEqual(['Bone0', 'Bone1']);
   });
 
   it.each([0, 0.5, 1] as const)('at %s s the tip is where Blender puts it', async (t) => {

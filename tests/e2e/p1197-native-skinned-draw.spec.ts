@@ -82,10 +82,12 @@ test('#1197 — skinned-bar draws natively, deformed as Blender deforms it', asy
     dag.dispatchAtomic(result.ops, 'user', 'import gltf (native, skinned)');
     return Object.values(w.__basher_dag.getState().state.nodes).map((n) => n.type);
   });
-  // Native: a skeleton, its clip, a deform on the mesh's stack — and nothing of the clone road.
+  // Native: a skeleton, the base pose layer holding its keys (#1211), a deform on the mesh's stack
+  // — and nothing of the clone road.
   expect(types).toEqual(
-    expect.arrayContaining(['Skeleton', 'AnimationClip', 'ArmatureModifier', 'PolyMeshData']),
+    expect.arrayContaining(['Skeleton', 'PoseLayer', 'ArmatureModifier', 'PolyMeshData']),
   );
+  expect(types).not.toContain('AnimationClip');
   expect(types.filter((t) => t.startsWith('Gltf'))).toEqual([]);
 
   await page.waitForFunction(

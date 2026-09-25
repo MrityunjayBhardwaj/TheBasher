@@ -22,13 +22,13 @@
 //
 // ── A SKINNED FILE CAN ARRIVE AS A SKELETON, A DEFORM AND A MESH, AND DOES NOT YET (#1205) ───────
 //
-// Past the skin refusal the joints become a `Skeleton` standing as its own Object, posed by the
-// clip's pose output on its `pose` input (`nativeGltfSkeleton.ts`, #1224); each skinned mesh keeps its joint numbers and
+// Past the skin refusal the joints become a `Skeleton` standing as its own Object, posed through a
+// base pose layer holding the file's bone channels as keys, as the file wrote them (#1211, #1212):
+// Skeleton.pose → PoseLayer → Object.pose (`nativeGltfSkeleton.ts`); each skinned mesh keeps its joint numbers and
 // weights as point layers beside the group names they index, and an Armature modifier on its
 // stack, pointed at the skeleton's Object, deforms it (#393), drawn skinned (#1197). What a skin or
-// its clip needs that this model cannot hold — a bone scaled away from its rest (#1212), a stepped
-// or cubic bone channel (#1211), a bone that is also a mesh (#1209), an empty hung under a bone
-// (#1219) — is refused by name like everything above.
+// its clip needs that this model cannot hold — a bone that is also a mesh (#1209), an empty hung
+// under a bone (#1219) — is refused by name like everything above.
 //
 // The product still refuses a skin, because the clone road does more for a CHARACTER than deform
 // it: its bones can be selected and posed. A motion now binds to a native character too — the
@@ -73,7 +73,6 @@ import {
   RepeatWrapping,
 } from 'three';
 import type {
-  AnimationKeyframe,
   BakedTextureRef,
   InlineMaterialSpec,
   MeshCornerLayer,
@@ -101,7 +100,7 @@ import { gltfJsonMaterialToOpenpbr } from './gltfJsonMaterialToOpenpbr';
 import { readNativeClip, type ClipGltfJson } from './nativeGltfClip';
 import {
   leftBehindAsEmpty,
-  nativeSkeletonClip,
+  nativeSkeletonLayer,
   readNativeSkeletons,
   type NativeSkeleton,
 } from './nativeGltfSkeleton';
@@ -133,12 +132,6 @@ export interface NativeImportResult {
   readonly ops: Op[];
   readonly groupId: string;
   readonly objectIds: readonly string[];
-  /**
-   * #1212 — how many bone scale channels were dropped because they hold their bone at its rest
-   * scale (`nativeSkeletonClip`), which no clip key can carry and no pose needs. Always present,
-   * zero included, so a file that lost nothing says so rather than saying nothing.
-   */
-  readonly restScaleChannels: number;
 }
 
 /** The parts of a glTF document this road reads beyond what `GltfJson` declares. */
@@ -1218,22 +1211,27 @@ function skinIntoArmatureSpace(
 }
 
 /**
- * #393 — the skeleton, its clip, and the Object that stands it, hung under `parentId`.
+ * #393 — the skeleton, its base pose layer, and the Object that stands it, hung under `parentId`.
  *
  * The Object comes from `buildSkeletonObjectOps`, the builder the FBX and BVH roads use, so a glTF
  * rig is the same citizen theirs are. It is not normalised: a glTF declares metres (§3.4), so the
  * rig already has its size. Ids are content-addressed off the asset, as every id on this road is.
+ *
+ * #1211 — the file's bone motion is keys on the BASE pose layer: Skeleton.pose → PoseLayer →
+ * Object.pose, exactly what keying the character by hand makes. The layer is written even when the
+ * file keys no bone, so every native character has its base where a bind will find it. It is named
+ * after the file's animation, as Blender names the action.
  */
 function skeletonOps(
   args: NativeGltfImportArgs,
   json: NativeGltfJson,
   skeleton: NativeSkeleton,
-  clip: { keyframes: AnimationKeyframe[]; duration: number },
+  layer: ReturnType<typeof nativeSkeletonLayer>,
   parentId: string,
   key: string,
 ): Op[] {
   const skeletonId = nativeSkeletonId(args.assetRef, key);
-  const clipId = hashId('nativeClip', args.assetRef, key);
+  const layerId = hashId('nativePoseLayer', args.assetRef, key);
   const name = json.animations?.[0]?.name || baseNameOf(args.assetRef);
   return [
     {
@@ -1244,21 +1242,14 @@ function skeletonOps(
     },
     {
       type: 'addNode',
-      nodeId: clipId,
-      nodeType: 'AnimationClip',
-      // The FBX road's rules for the same two questions (`fbx.ts`, `parseFbx`): a clip with no
-      // length still has one second, and a file never asserts that its motion loops.
-      params: {
-        name,
-        duration: clip.duration > 0 ? clip.duration : 1,
-        loop: 'hold',
-        keyframes: clip.keyframes,
-      },
+      nodeId: layerId,
+      nodeType: 'PoseLayer',
+      params: { name, mode: 'override', members: layer.members, channels: layer.channels },
     },
     {
       type: 'connect',
-      from: { node: skeletonId, socket: 'out' },
-      to: { node: clipId, socket: 'skeleton' },
+      from: { node: skeletonId, socket: 'pose' },
+      to: { node: layerId, socket: 'pose' },
     },
     ...buildSkeletonObjectOps({
       skeletonId,
@@ -1266,11 +1257,11 @@ function skeletonOps(
       clip: null,
       sceneNodeId: parentId,
       normalise: false,
-      // #1238 — the armature node's name, as Blender names the armature Object; the clip keeps the
+      // #1238 — the armature node's name, as Blender names the armature Object; the layer keeps the
       // animation's.
       name: armatureNameOf(json, skeleton),
       nameFollowsClip: false,
-      clipId,
+      pose: { node: layerId, socket: 'out' },
     }).ops,
   ];
 }
@@ -1351,14 +1342,7 @@ async function buildNativeOps(
   const read = readNativeSkeletons(json);
   if (read !== null && 'refused' in read) return read;
   const skeletons = read?.skeletons ?? [];
-  const boneClips: { keyframes: AnimationKeyframe[]; duration: number }[] = [];
-  let restScaleChannels = 0;
-  for (const skeleton of skeletons) {
-    const boneClip = nativeSkeletonClip(skeleton, clip.channels, json);
-    if ('refused' in boneClip) return boneClip;
-    boneClips.push(boneClip);
-    restScaleChannels += boneClip.restScaleChannels;
-  }
+  const boneLayers = skeletons.map((skeleton) => nativeSkeletonLayer(skeleton, clip.channels));
   const isBone = new Set(skeletons.flatMap((skeleton) => skeleton.boneNodes));
   // #1210 — each bone node's skeleton and name, for a mesh the file hangs under it.
   const boneAt = new Map(
@@ -1475,7 +1459,7 @@ async function buildNativeOps(
       const standing = skeletonAtNode.get(i);
       if (standing !== undefined) {
         parentEdges.push(
-          ...skeletonOps(args, json, skeletons[standing], boneClips[standing], parentId, key),
+          ...skeletonOps(args, json, skeletons[standing], boneLayers[standing], parentId, key),
         );
       }
       continue;
@@ -1656,5 +1640,5 @@ async function buildNativeOps(
     from: { node: groupId, socket: 'out' },
     to: { node: args.sceneNodeId, socket: 'children' },
   });
-  return { ops, groupId, objectIds, restScaleChannels };
+  return { ops, groupId, objectIds };
 }

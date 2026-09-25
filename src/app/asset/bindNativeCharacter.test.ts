@@ -27,6 +27,20 @@ import { sampleSkinDeform } from '../../nodes/armatureDeform';
 import { useSelectionStore } from '../stores/selectionStore';
 import { collectSkeletonObjects } from '../skeletonObjects';
 import { bindMotionToCharacter, characterTargets } from './bindMotionToCharacter';
+import { poseLayerChain } from '../animate/poseChain';
+import type { GraphNodeLike } from '../animate/graphNodes';
+
+/** The retarget feeds the bottom of the Object's pose chain, and the base layer holding the file's
+ *  own keys sits muted above it (#1211, as Blender swaps an armature's action). */
+function expectBoundTo(state: DagState, objectId: string, retargetId: string) {
+  const chain = poseLayerChain(
+    state.nodes as unknown as Readonly<Record<string, GraphNodeLike>>,
+    objectId,
+  );
+  expect(chain.source).toEqual({ node: retargetId, socket: 'posed' });
+  expect(chain.layers).toHaveLength(1);
+  expect((state.nodes[chain.layers[0]].params as { mute?: boolean }).mute).toBe(true);
+}
 
 /** A two-joint motion named as the bar's bones are, so the bind bridges it by matching names:
  *  `Bone1` swings 0° → 45° → 90° about Z over one second. */
@@ -141,8 +155,8 @@ describe('#1213 — a retarget onto a native character poses its armature Object
     expect(result.ok, JSON.stringify(result)).toBe(true);
     const after = useDagStore.getState().state;
 
-    // The wiring: the Object holds ONE pose edge, and it is the retarget's.
-    expect(after.nodes[armatureId].inputs.pose).toEqual({ node: 'walk_on_bar', socket: 'posed' });
+    // The wiring: the retarget is the source of the Object's pose chain, under the muted base.
+    expectBoundTo(after, armatureId, 'walk_on_bar');
 
     // The value: the Object poses exactly as the retarget does, and not as the bar's own clip.
     const retargeted = evaluate(after, 'walk_on_bar', { socket: 'posed', ctx: at(0) })
@@ -221,7 +235,7 @@ describe('#1213 — dropping a motion binds it to the native character', () => {
     if (!bound.ok) return;
     expect(bound.mapped).toBe(2);
     const state = useDagStore.getState().state;
-    expect(state.nodes[armatureId].inputs.pose).toEqual({ node: bound.clipId, socket: 'posed' });
+    expectBoundTo(state, armatureId, bound.clipId);
     expect(state.nodes.swing_skel_object.meta?.hidden, 'the motion’s own rig steps aside').toBe(
       true,
     );
@@ -329,9 +343,9 @@ describe('#1213 — dropping a motion binds it to the native character', () => {
     );
     expect(bound.ok, JSON.stringify(bound)).toBe(true);
     const state = useDagStore.getState().state;
-    expect((state.nodes[second].inputs.pose as { socket: string }).socket).toBe('posed');
-    expect((state.nodes[targets[0].objectId!].inputs.pose as { socket: string }).socket).toBe(
-      'pose',
-    );
+    const graph = state.nodes as unknown as Readonly<Record<string, GraphNodeLike>>;
+    expect(poseLayerChain(graph, second).source?.socket).toBe('posed');
+    // The other bar still plays its own keys: its chain reads its skeleton's rest pose.
+    expect(poseLayerChain(graph, targets[0].objectId!).source?.socket).toBe('pose');
   });
 });

@@ -1,8 +1,8 @@
 // #1240 — a pose layer between the motion and the armature Object edits what the character does.
 //
 // The native skinned bar (Blender 5.1.1's own export, `skinned-bar.glb`), with a `PoseLayer` wired
-// between its clip's pose and its armature Object's pose — the place step 3 of "Bones as Channels"
-// puts it. Every oracle here is arithmetic on the rig, not our own sampler: Bone1's head is (0, 1, 0)
+// between its motion (since #1211, the base layer holding the file's keys) and its armature Object's
+// pose — the place step 3 of "Bones as Channels" puts it. Every oracle here is arithmetic on the rig, not our own sampler: Bone1's head is (0, 1, 0)
 // and its top vertices are wholly Bone1's (#1213's rotation oracle), so a rotation R on Bone1 puts a
 // top vertex at head + R·(rest − head). The deform itself already equals Blender's on this file
 // (`skinnedDraw.test.ts`, `q13_skinned_bar_oracle.py`).
@@ -54,7 +54,8 @@ beforeEach(() => {
 interface Rig {
   readonly state: DagState;
   readonly armatureId: string;
-  readonly clipId: string;
+  /** What feeds the armature Object's pose on import: the base layer holding the file's keys. */
+  readonly feed: { readonly node: string; readonly socket: string };
   readonly modifierId: string;
 }
 
@@ -74,11 +75,11 @@ async function bar(): Promise<Rig> {
   for (const op of result.ops) state = applyOp(state, op).next;
   const modifierId = Object.values(state.nodes).find((n) => n.type === 'ArmatureModifier')!.id;
   const armatureId = (state.nodes[modifierId].inputs.armature as { node: string }).node;
-  const clipId = (state.nodes[armatureId].inputs.pose as { node: string }).node;
-  return { state, armatureId, clipId, modifierId };
+  const feed = state.nodes[armatureId].inputs.pose as { node: string; socket: string };
+  return { state, armatureId, feed, modifierId };
 }
 
-/** Wire a layer between the clip's pose and the armature Object's, as step 3 places it. */
+/** Wire a layer between the motion and the armature Object's pose, as step 3 places it. */
 function withLayer(rig: Rig, params: Partial<PoseLayerParams>, id = 'layer'): DagState {
   let s = applyOp(rig.state, {
     type: 'addNode',
@@ -88,7 +89,7 @@ function withLayer(rig: Rig, params: Partial<PoseLayerParams>, id = 'layer'): Da
   }).next;
   s = applyOp(s, {
     type: 'connect',
-    from: { node: rig.clipId, socket: 'pose' },
+    from: rig.feed,
     to: { node: id, socket: 'pose' },
   }).next;
   s = applyOp(s, {
@@ -215,16 +216,18 @@ describe('#1240 — a pose layer edits the character', () => {
     }
   });
 
-  it('a keyed layer on a looping clip cycles with it', async () => {
+  it('a keyed layer on a looping motion cycles with it', async () => {
     const rig = await bar();
-    // The clip loops, and the layer's key curve cycles over the same one-second period.
+    // The motion loops (every base channel cycles, as a Blender F-curve with a Cycles modifier), and
+    // the layer's key curve cycles over the same one-second period.
+    const base = rig.state.nodes[rig.feed.node].params as PoseLayerParams;
     const looping: Rig = {
       ...rig,
       state: applyOp(rig.state, {
         type: 'setParam',
-        nodeId: rig.clipId,
-        paramPath: 'loop',
-        value: 'cycle',
+        nodeId: rig.feed.node,
+        paramPath: 'channels',
+        value: base.channels.map((c) => ({ ...c, extendBefore: 'cycle', extendAfter: 'cycle' })),
       }).next,
     };
     const state = withLayer(looping, {
@@ -307,7 +310,7 @@ describe('#1240 — a pose layer edits the character', () => {
 
   it('a muted layer, or one with no members, hands the incoming pose back unchanged', async () => {
     const rig = await bar();
-    const upstream = evaluate(rig.state, rig.clipId, { socket: 'pose', ...at(0) })
+    const upstream = evaluate(rig.state, rig.feed.node, { socket: rig.feed.socket, ...at(0) })
       .value as PosedSkeletonValue;
     // The node's own claim, asked of the node with one input value in hand: the very same object.
     for (const params of [
@@ -368,7 +371,8 @@ describe('#1240 — a pose layer edits the character', () => {
   it('a member naming no bone does nothing, and is counted, zero included', async () => {
     const rig = await bar();
     const skeleton = (
-      evaluate(rig.state, rig.clipId, { socket: 'pose', ...at(0) }).value as PosedSkeletonValue
+      evaluate(rig.state, rig.feed.node, { socket: rig.feed.socket, ...at(0) })
+        .value as PosedSkeletonValue
     ).skeleton;
     expect(
       poseLayerUnmatchedMembers({ members: [{ bone: 'Bone1', rotationMode: 'XYZ' }] }, skeleton),
