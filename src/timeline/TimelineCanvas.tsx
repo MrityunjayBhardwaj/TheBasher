@@ -100,6 +100,8 @@ import {
   appendSelectionClipRows,
   type ChannelRow,
 } from './clipChannelRows';
+import { appendLayerRows } from './layerChannelRows';
+import { resolveRowChannelForWrite } from '../app/animate/clipRowMint';
 import { dispatchRetimeKeyframe, dispatchBakeThenRetime } from '../app/animate/dispatchMutator';
 import { parseClipRowId, assetRefForChild, type ClipRowComponent } from '../app/animate/bakeOnEdit';
 import { nodeDisplayName } from '../app/sceneTreeWalk';
@@ -566,13 +568,18 @@ export function TimelineCanvas({ duration }: { duration: number }) {
   const primaryNodeId = useSelectionStore((s) => s.primaryNodeId);
   const rows = useMemo(
     () =>
-      appendSelectionClipRows({
-        // #903 — the AnimationClip road's read-only rows, appended BEFORE the
-        // selection-scoped TransformClip ones so a rig with a generated or
-        // retargeted motion is visible in the dopesheet without a bake. Both
-        // suppress a (bone, component) that already has a real channel, so the
-        // one-row-set invariant holds across both clip kinds.
-        baseRows: appendAnimationClipRows({ baseRows: collectChannelRows(nodes), nodes }),
+      // #1215 — the selected armature Object's pose layers: its keys, editable where they live.
+      appendLayerRows({
+        baseRows: appendSelectionClipRows({
+          // #903 — the AnimationClip road's read-only rows, appended BEFORE the
+          // selection-scoped TransformClip ones so a rig with a generated or
+          // retargeted motion is visible in the dopesheet without a bake. Both
+          // suppress a (bone, component) that already has a real channel, so the
+          // one-row-set invariant holds across both clip kinds.
+          baseRows: appendAnimationClipRows({ baseRows: collectChannelRows(nodes), nodes }),
+          nodes,
+          selectedNodeId: primaryNodeId,
+        }),
         nodes,
         selectedNodeId: primaryNodeId,
       }),
@@ -1179,7 +1186,9 @@ export function TimelineCanvas({ duration }: { duration: number }) {
           // float becomes fromTime, the D-03 discriminator (NOT a
           // pointerup-recomputed seconds, or removeKeyframes silently
           // no-ops and the drag duplicates the key).
-          const live = useDagStore.getState().state.nodes[row.channelId];
+          // #1215 — through the row resolver, so a layer row's keys (which live in its layer, not in
+          // a node of the row's id) are read the same way a channel node's are.
+          const live = resolveRowChannelForWrite(useDagStore.getState().state, row.channelId);
           const liveParams = (live?.params ?? {}) as {
             keyframes?: Array<{ time: number }>;
           };

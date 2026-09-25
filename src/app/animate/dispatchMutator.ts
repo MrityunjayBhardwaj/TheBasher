@@ -28,6 +28,8 @@ import { createFork } from '../../agent/diff/forkedDag';
 import { useDagStore } from '../../core/dag/store';
 import { gltfChannelDagId } from '../../core/import/gltfImportChain';
 import { clipRowMintOps } from './clipRowMint';
+import { resolveChannelAddress } from '../../agent/mutators/builders/channelAddress';
+import { rowAddress } from '../../timeline/layerChannelRows';
 import {
   importComfyGraph,
   parseComfyParamPath,
@@ -147,7 +149,8 @@ function proposeAndAccept(
 }
 
 export interface RetimeKeyframeArgs {
-  /** The KeyframeChannel node whose sample is being retimed. */
+  /** The timeline row whose sample is being retimed: a KeyframeChannel node's id, or a pose layer
+   *  row's id (#1215), whose curve lives in the layer. */
   channelId: string;
   /**
    * The EXACT stored sample time (seconds) to move FROM. The caller
@@ -183,16 +186,18 @@ export function dispatchRetimeKeyframe(args: RetimeKeyframeArgs): DispatchResult
   const intent = `Retime keyframe on ${channelId}`;
 
   const base = useDagStore.getState().state;
+  // #1215 — the address the two mutators take: the node id, or the layer curve a layer row names.
+  const address = rowAddress(channelId);
 
   // 1 — locate the sample at fromTime using the SAME exact compare the
   //     Mutators use (removeKeyframes.ts:124 / keyframe.ts:110). fromTime
   //     is the exact stored float (caller read it off the live sample),
   //     so this matches by construction — no new equality rule (D-03).
-  const channel = base.nodes[channelId];
-  if (!channel) {
-    return { ok: false, reason: `channelId "${channelId}" not in DAG.` };
+  const resolved = resolveChannelAddress(base, address, { mint: false });
+  if (!resolved.ok) {
+    return { ok: false, reason: resolved.reason };
   }
-  const params = (channel.params ?? {}) as {
+  const params = resolved.view.params as {
     keyframes?: Array<{ time: number; value: unknown; easing: 'linear' | 'cubic' }>;
   };
   const sample = (params.keyframes ?? []).find((k) => k.time === fromTime);
@@ -203,6 +208,20 @@ export function dispatchRetimeKeyframe(args: RetimeKeyframeArgs): DispatchResult
   // 2 — capture value + easing BEFORE anything else (D-01 pre-mortem).
   const value = sample.value;
   const easing = sample.easing;
+
+  // #1215 — a layer curve holding ONE key: removing it first would remove the curve (a layer drops
+  // an emptied curve, as Blender does) and the insert would mint a fresh one without its extend and
+  // modifiers. With no neighbour to split against, moving the key in place is the whole retime.
+  if (address.layer && (params.keyframes ?? []).length === 1) {
+    return proposeAndAccept(
+      base,
+      resolved.write({ keyframes: [{ ...sample, time: toTime }] }),
+      intent,
+      ['user:mutator.timeline.keyframe'],
+      { rootSelectors: [address.layer.layerId], followedEdges: [] },
+      [],
+    );
+  }
 
   const removeKeyframes = getMutator('mutator.timeline.removeKeyframes');
   const keyframe = getMutator('mutator.timeline.keyframe');
@@ -215,7 +234,7 @@ export function dispatchRetimeKeyframe(args: RetimeKeyframeArgs): DispatchResult
 
   // 3 — validate removeKeyframes({scope:{time:fromTime}}) vs base.
   const rParsed = removeKeyframes.spec.safeParse({
-    channelId,
+    ...address,
     scope: { time: fromTime },
   });
   if (!rParsed.success) {
@@ -244,7 +263,7 @@ export function dispatchRetimeKeyframe(args: RetimeKeyframeArgs): DispatchResult
   //     post-remove state (so D-03 last-wins lands via keyframe.ts:110's
   //     existing replace-at-time against the post-remove occupant).
   const kParsed = keyframe.spec.safeParse({
-    channelId,
+    ...address,
     time: toTime,
     value,
     easing,

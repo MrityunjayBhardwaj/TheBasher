@@ -53,6 +53,8 @@ import { boneIndexOf, boundClipsForAsset } from './boundClipsForAsset';
 import { activeClipKeyframesForAsset } from '../../timeline/clipChannelRows';
 import { ensureChannelForBone } from './ensureChannelForBone';
 import type { BakedComponent } from '../../agent/mutators/builders/bakeChannelOps';
+import { resolveChannelAddress } from '../../agent/mutators/builders/channelAddress';
+import { parseLayerRowId } from '../../timeline/layerChannelRows';
 
 export type ClipRowMint =
   | {
@@ -315,7 +317,21 @@ export interface RowChannelWrite {
    *  modifier fields too, not just the keys. */
   readonly params: Record<string, unknown>;
   readonly nodeType: string;
+  /** The ops that change the channel's fields wherever it lives (#1215: its node, or its entry in
+   *  a pose layer's list). */
+  readonly write: (fields: Readonly<Record<string, unknown>>) => Op[];
+  /** A key inserted here takes the value the CURVE shows, not a target param: a minted clip copy,
+   *  or a layer's curve (a bone's value is the pose, not a param anyone typed). */
+  readonly keyFromCurve: boolean;
+  /** Removing the last key removes the curve (a layer's, as Blender removes an emptied F-curve);
+   *  on a channel node an emptied channel would instead claim its component with zeros. */
+  readonly emptyRemovesCurve: boolean;
 }
+
+const setKeys = (channelId: string) => (fields: Readonly<Record<string, unknown>>) =>
+  Object.entries(fields).map(
+    ([paramPath, value]): Op => ({ type: 'setParam', nodeId: channelId, paramPath, value }),
+  );
 
 /**
  * Resolve the timeline's active row id — a real channel id, or a synthetic
@@ -333,6 +349,21 @@ export function resolveRowChannelForWrite(
   state: DagState,
   rowChannelId: string,
 ): RowChannelWrite | null {
+  // #1215 — a layer row: the address resolver answers where the curve lives and how to write it.
+  const layer = parseLayerRowId(rowChannelId);
+  if (layer) {
+    const resolved = resolveChannelAddress(state, { layer }, { mint: true });
+    if (!resolved.ok) return null;
+    return {
+      channelId: resolved.channelId,
+      mintOps: resolved.mintOps,
+      params: resolved.view.params,
+      nodeType: resolved.view.type,
+      write: resolved.write,
+      keyFromCurve: true,
+      emptyRemovesCurve: true,
+    };
+  }
   const clip = parseClipRowId(rowChannelId);
   if (!clip) {
     const live = state.nodes[rowChannelId];
@@ -342,6 +373,9 @@ export function resolveRowChannelForWrite(
       mintOps: [],
       params: (live.params ?? {}) as Record<string, unknown>,
       nodeType: live.type,
+      write: setKeys(rowChannelId),
+      keyFromCurve: false,
+      emptyRemovesCurve: false,
     };
   }
 
@@ -357,6 +391,9 @@ export function resolveRowChannelForWrite(
       mintOps: mint.ops,
       params: (fromMint.params ?? {}) as Record<string, unknown>,
       nodeType: fromMint.nodeType,
+      write: setKeys(channelId),
+      keyFromCurve: true,
+      emptyRemovesCurve: false,
     };
   }
   // The mint emitted nothing for this component: the channel is already there
@@ -369,6 +406,9 @@ export function resolveRowChannelForWrite(
     mintOps: [],
     params: (live.params ?? {}) as Record<string, unknown>,
     nodeType: live.type,
+    write: setKeys(channelId),
+    keyFromCurve: false,
+    emptyRemovesCurve: false,
   };
 }
 

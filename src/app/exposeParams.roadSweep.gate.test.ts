@@ -95,8 +95,11 @@ const OPT_OUTS: Record<string, string> = {
     "(a) writes only the selected node's OWN transform band (position/rotation/scale), which no other layer in the chain can hold — the projection would resolve it to the same node by construction. It also runs at pointer-move rate, where building a projection per event is the measured H48 hazard.",
   'src/app/MultiSelectInspector.tsx':
     '(a) offers the transform fields only, and writes a field ONLY to a node whose own params already hold a vec3 there (the isVec3 guard skips the rest) — so it never writes past a node that does not own the field. Multi-select holds no rows by definition; the day it offers a DATA param (size, material) it needs the oracle and must leave this list.',
-  'src/app/KeyboardShortcuts.tsx':
-    "(b) the insert/delete-keyframe targets are the KEYFRAME CHANNEL node's own `keyframes` param, addressed from the timeline selection rather than the node selection. A channel's keyframes are not a param any object-addressed projection carries.",
+  // `src/app/KeyboardShortcuts.tsx` LEFT this list at #1215: its insert/delete-keyframe writes now go
+  // through the timeline row resolver's `write` (`resolveRowChannelForWrite`, clipRowMint.ts), which
+  // lands a key wherever the row's curve lives — a channel node, or a pose layer's list — and which
+  // is addressed from the timeline selection, never the node selection. The file no longer spells a
+  // write, so it is no longer a road.
   'src/timeline/TimelineCanvas.tsx':
     '(b) writes mute/solo on `row.channelId` — the channel node the ROW was built from, which is provenance, not resolution.',
   'src/timeline/LightStudioPanel.tsx':
