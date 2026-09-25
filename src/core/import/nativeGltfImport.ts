@@ -34,7 +34,8 @@
 // it: its bones can be selected and posed. A motion now binds to a native character too — the
 // retarget becomes its armature Object's pose (#1213) — but a skinned import taking this road would
 // still lose the posing. #1205 lifts the refusal with it; until then only tests go past it, through
-// the door below.
+// the door below, and a saved clone-road character being converted as its project loads
+// (`buildSavedCharacterOps`, #1216).
 //
 // ── IMAGES COME ACROSS AS THE PROJECT'S OWN FILES (#1050) ───────────────────────────────────────
 //
@@ -132,6 +133,13 @@ export interface NativeImportResult {
   readonly ops: Op[];
   readonly groupId: string;
   readonly objectIds: readonly string[];
+  /**
+   * #1216 — the node standing for each glTF node, by the file's node index: its Object, or the
+   * Group an empty (or a skinned mesh's left-behind node) becomes. `null` for a bone, which is data
+   * of its skeleton and not a node of the scene. The index is the one join every road agrees on:
+   * the clone road keys its children by it too (`keyByGltfNodeIndex`), while the names differ.
+   */
+  readonly nodeIds: readonly (string | null)[];
 }
 
 /** The parts of a glTF document this road reads beyond what `GltfJson` declares. */
@@ -1344,6 +1352,18 @@ export async function buildNativeGltfImportOps(
 }
 
 /**
+ * #1216 — the same build past the skin refusal, for a character a saved project already holds on
+ * the clone road: loading it converts it onto exactly the nodes this reader writes
+ * (`convertCloneCharacters`). The product's import keeps refusing a skin until #1205 lifts the
+ * refusal, and this door goes with it.
+ */
+export async function buildSavedCharacterOps(
+  args: NativeGltfImportArgs,
+): Promise<NativeImportResult | NativeImportRefusal> {
+  return buildNativeOps(args, true);
+}
+
+/**
  * #393 — the same build, past the skin refusal: a skinned file's joints become a `Skeleton`, its
  * standing `Object` (posed by the clip's pose, #1224) and an `AnimationClip`, and each skinned mesh is deformed
  * by an Armature modifier pointed at that Object, which the viewport draws skinned (#1197).
@@ -1667,6 +1687,7 @@ async function buildNativeOps(
     });
     objectIds.push(objectId);
   }
+  const nodeIds = json.nodes.map((_, i) => (isBone.has(i) ? null : idOfNode(i)));
 
   // Every parent edge AFTER every node: glTF numbers its nodes in no particular order, so a child
   // can be written before the parent it names, and a `connect` to a node that does not exist yet
@@ -1696,7 +1717,7 @@ async function buildNativeOps(
     from: { node: groupId, socket: 'out' },
     to: { node: args.sceneNodeId, socket: 'children' },
   });
-  return { ops, groupId, objectIds };
+  return { ops, groupId, objectIds, nodeIds };
 }
 
 /**
