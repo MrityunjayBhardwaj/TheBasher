@@ -279,7 +279,9 @@ describe('ns-2 step 3 — the bypass, censused with its category attached', () =
     expect(casts).toEqual([
       ['src/app/constraintStack.ts', 1], // constraint / driver lane — OUT of this phase (#673)
       ['src/app/nodeConstraints.ts', 2], // constraint / driver lane — OUT of this phase (#673)
-      ['src/timeline/TimelineDrawer.tsx', 2], // timeline lane — OUT of this phase
+      // `src/timeline/TimelineDrawer.tsx` (2, timeline lane) LEFT at #1215: its Mute/Solo pressed state
+      // and toggle read the flag through the row resolver (`rowFlag`, `rowFlagToggleOps`), where the
+      // row's curve lives, instead of casting a node's params.
     ]);
 
     // The second honouring site in this phase's lane, and it was not a cast at all — which

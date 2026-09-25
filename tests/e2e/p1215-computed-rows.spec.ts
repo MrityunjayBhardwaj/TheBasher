@@ -156,7 +156,7 @@ test('#1215 — a bound retarget shows read-only in the dopesheet until baked; t
         id: r.channelId,
         computed: layers.isComputedRowId(r.channelId),
         readOnly: r.readOnly === true,
-        mute: r.mute === true,
+        layerMuted: r.layerMuted === true,
         times: r.keyframes.map((k) => Math.round(k.time * 1000) / 1000),
         name: r.name,
       }));
@@ -237,7 +237,7 @@ test('#1215 — a bound retarget shows read-only in the dopesheet until baked; t
     'baked: nothing computed left to show',
   ).toEqual([]);
   // The baked layer: the live one (the file's own base is muted by the bind, and stays so).
-  const editable = after.filter((r) => r.id.startsWith('layer:') && !r.readOnly && !r.mute);
+  const editable = after.filter((r) => r.id.startsWith('layer:') && !r.readOnly && !r.layerMuted);
   for (const r of computed) {
     const what = r.name.split(' — ')[1];
     const match = editable.find((e) => e.name.endsWith(what));

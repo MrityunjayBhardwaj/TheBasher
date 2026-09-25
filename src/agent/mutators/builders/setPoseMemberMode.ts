@@ -198,12 +198,15 @@ export const setPoseMemberModeMutator: MutatorDefinition<SetPoseMemberModeSpec> 
               keyframes,
               ...(ends.before !== 'hold' ? { extendBefore: ends.before } : {}),
               ...(ends.after !== 'hold' ? { extendAfter: ends.after } : {}),
+              // #1215 — a muted curve stays muted in its new mode.
+              ...(oldCurve.mute === true ? { mute: true } : {}),
             }
           : {
               bone: spec.bone,
               component: 'rotation' as const,
               keyframes,
               modifiers: cyclesFor(ends),
+              ...(oldCurve.mute === true ? { mute: true } : {}),
             };
       nextChannels = [...nextChannels, curve as unknown as PoseLayerChannel];
     } else if (rotationAt) {

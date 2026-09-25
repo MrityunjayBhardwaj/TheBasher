@@ -26,7 +26,12 @@ import {
 } from './clipRowMint';
 import { gltfChannelDagId, gltfChildDagId } from '../../core/import/gltfImportChain';
 import { paramAnimationState } from './paramAnimationState';
-import { transformClipCarriesChild } from './clipRowMint';
+import {
+  resolveRowChannelForWrite,
+  rowFlagToggleOps,
+  transformClipCarriesChild,
+} from './clipRowMint';
+import { clipRowChannelId } from '../../timeline/clipChannelRows';
 import { importedChildOps } from '../../test-utils/importedChildFixture';
 const IDENTITY16 = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
 const ASSET = 'asset-generated';
@@ -659,5 +664,16 @@ describe("#911 — the diamond reads a glTF's own embedded animation", () => {
     expect(transformClipCarriesChild(s, EMBEDDED_ASSET, EMBEDDED_UNANIMATED)).toBe(false);
     // …and an asset with no embedded clip at all is false rather than throwing.
     expect(transformClipCarriesChild(sceneWithNeighbours(), ASSET, BONE)).toBe(false);
+  });
+});
+
+describe('#1215 — mute / solo on a read-only clip row flips nothing', () => {
+  it('the row resolver would mint a copy here, and a mute toggle must not be the edit that makes it', () => {
+    const s = embeddedAnimationScene();
+    const row = clipRowChannelId(EMBEDDED_CHILD, 'rotation');
+    // The control: this row IS resolvable for a write — through the mint (copy-on-write).
+    expect(resolveRowChannelForWrite(s, row)?.mintOps.length).toBeGreaterThan(0);
+    expect(rowFlagToggleOps(s, row, 'mute')).toBeNull();
+    expect(rowFlagToggleOps(s, row, 'solo')).toBeNull();
   });
 });

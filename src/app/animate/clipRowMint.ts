@@ -413,6 +413,31 @@ export function resolveRowChannelForWrite(
   };
 }
 
+/**
+ * #1215 — the ops that flip a timeline row's `mute` or `solo`, wherever its curve lives: a channel
+ * node's param, or the curve's entry in its pose layer (through the row resolver's `write`, so the
+ * gutter glyph, the toolbar button and the agent's resolver land in one place). Null when the row has
+ * nothing to flip: a read-only clip row (no curve until an edit makes one), a missing row, or `solo`
+ * on a layer's curve, which has none (Blender's F-curves have a mute and no solo; the layer solos).
+ */
+export function rowFlagToggleOps(
+  state: DagState,
+  rowChannelId: string,
+  kind: 'mute' | 'solo',
+): Op[] | null {
+  if (parseClipRowId(rowChannelId)) return null;
+  if (kind === 'solo' && parseLayerRowId(rowChannelId)) return null;
+  const resolved = resolveRowChannelForWrite(state, rowChannelId);
+  if (!resolved) return null;
+  return resolved.write({ [kind]: resolved.params[kind] !== true });
+}
+
+/** Whether a timeline row's `mute` / `solo` is on, read where its curve lives. */
+export function rowFlag(state: DagState, rowChannelId: string, kind: 'mute' | 'solo'): boolean {
+  if (parseClipRowId(rowChannelId)) return false;
+  return resolveRowChannelForWrite(state, rowChannelId)?.params[kind] === true;
+}
+
 /** What a diamond activation should DO — see {@link diamondActivation}. */
 export type DiamondAction = 'delete' | 'refuse-nothing-authored' | 'key';
 

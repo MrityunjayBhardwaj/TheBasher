@@ -77,10 +77,12 @@ export const POSE_LAYER_MODES = ['override', 'additive'] as const;
 export type PoseLayerMode = (typeof POSE_LAYER_MODES)[number];
 
 /** The fields a channel spec never carries here: the bound target (the bone is a field instead),
- *  the param path (the component is a field instead), and the clone road's provenance. */
+ *  the param path (the component is a field instead), the clone road's provenance, and `solo`: an
+ *  F-curve has a mute and no solo in Blender, and solo here belongs to the LAYER (#1241, #1215). */
 const NOT_ON_A_LAYER = {
   target: true,
   paramPath: true,
+  solo: true,
   childName: true,
   assetRef: true,
   sourceClipId: true,
@@ -104,7 +106,7 @@ export const PoseLayerChannelSchema = z.discriminatedUnion('component', [
    * whose inspector would then offer slope (which holds on a rotation) and the whole F-modifier stack.
    * Optional: absent is hold, the plain sampler's clamp.
    */
-  KeyframeChannelQuatParams.omit({ target: true, paramPath: true }).extend({
+  KeyframeChannelQuatParams.omit({ target: true, paramPath: true, solo: true }).extend({
     bone: z.string(),
     component: z.literal('quaternion'),
     extendBefore: z.enum(QUAT_EXTENDS).optional(),
@@ -115,7 +117,7 @@ export const PoseLayerChannelSchema = z.discriminatedUnion('component', [
     component: z.literal('scale'),
   }),
   /** The layer's weight over time; `bone` is unused. */
-  KeyframeChannelNumberParams.omit({ target: true, paramPath: true }).extend({
+  KeyframeChannelNumberParams.omit({ target: true, paramPath: true, solo: true }).extend({
     bone: z.string().default(''),
     component: z.literal('weight'),
   }),
@@ -199,6 +201,16 @@ function synchronizedSampler(
 const BLEND: Record<PoseLayerMode, ChannelBlendMode> = { override: 'replace', additive: 'combine' };
 const DEG = Math.PI / 180;
 
+/**
+ * #1215 — the curves the layer plays: all but the muted ones. A muted curve is not evaluated, so the
+ * component falls back to the member's static value, else to what arrives from below — Blender skips
+ * an F-curve flagged `FCURVE_MUTED` when it evaluates an action (`anim_sys.cc:341`, `:768`). Editing
+ * still finds a muted curve (`poseLayerChannelOf` over the whole list); only playing skips it.
+ */
+export function playedChannels(channels: readonly PoseLayerChannel[]): PoseLayerChannel[] {
+  return channels.filter((c) => c.mute !== true);
+}
+
 /** The channel for `bone` + `component`, found by its fields. */
 export function poseLayerChannelOf(
   channels: readonly PoseLayerChannel[],
@@ -278,7 +290,7 @@ export function memberEulerDegreesAt(
 ): Vec3 | null {
   if (member.rotationMode === 'quaternion') return null;
   const order: EulerOrder = member.rotationMode;
-  const keys = poseLayerChannelOf(channels, member.bone, 'rotation');
+  const keys = poseLayerChannelOf(playedChannels(channels), member.bone, 'rotation');
   if (keys && member.eulerInterp === 'quaternion') {
     const toQuat = (deg: Vec3): Quat =>
       quatFromEuler([deg[0] * DEG, deg[1] * DEG, deg[2] * DEG], order);
@@ -293,6 +305,8 @@ export function memberEulerDegreesAt(
  * A member's rotation over time, as the layer reads it: its keyed curve in the member's mode (a curve
  * for another mode ignored), else its static value, else null (the member leaves rotation alone).
  * Exported for the mode change (#1242), which must read the member exactly as the layer does.
+ * `channels` is whatever the caller reads: the layer passes the curves it plays (`playedChannels`);
+ * the mode change passes every curve, so a muted curve's keys convert as keys, not as its static value.
  */
 export function memberRotationSampler(
   member: PoseLayerMember,
@@ -323,8 +337,11 @@ export function memberRotationSampler(
 }
 
 /** The layer's weight over time: its `weight` channel when keyed, else the static weight. */
-function weightOf(params: PoseLayerParams): (seconds: number) => number {
-  const keys = poseLayerChannelOf(params.channels, '', 'weight');
+function weightOf(
+  params: PoseLayerParams,
+  played: readonly PoseLayerChannel[],
+): (seconds: number) => number {
+  const keys = poseLayerChannelOf(played, '', 'weight');
   if (!keys) return () => params.weight;
   const spec = channelSpecOf(keys);
   const value = KeyframeChannelNumberNode.evaluate(
@@ -420,13 +437,14 @@ export const PoseLayerNode: NodeDefinition<PoseLayerParams, PosedSkeletonValue> 
     let built: { members: ResolvedMember[]; weight: (seconds: number) => number } | null = null;
     const build = () => {
       if (built) return built;
+      const played = playedChannels(params.channels);
       const indexOf = new Map(upstream.skeleton.bones.map((b, i) => [b.name, i]));
       const members: ResolvedMember[] = [];
       for (const member of params.members) {
         const index = indexOf.get(member.bone);
-        if (index !== undefined) members.push(resolveMember(member, params.channels, index));
+        if (index !== undefined) members.push(resolveMember(member, played, index));
       }
-      built = { members, weight: weightOf(params) };
+      built = { members, weight: weightOf(params, played) };
       return built;
     };
 

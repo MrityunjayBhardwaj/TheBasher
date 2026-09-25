@@ -101,7 +101,7 @@ import {
   type ChannelRow,
 } from './clipChannelRows';
 import { appendComputedSourceRows, appendLayerRows, computedSourceCache } from './layerChannelRows';
-import { resolveRowChannelForWrite } from '../app/animate/clipRowMint';
+import { resolveRowChannelForWrite, rowFlagToggleOps } from '../app/animate/clipRowMint';
 import { dispatchRetimeKeyframe, dispatchBakeThenRetime } from '../app/animate/dispatchMutator';
 import { parseClipRowId, assetRefForChild, type ClipRowComponent } from '../app/animate/bakeOnEdit';
 import { nodeDisplayName } from '../app/sceneTreeWalk';
@@ -370,7 +370,7 @@ export function paintStaticLayer(
     const rowTop = rowsTop + r * ROW_HEIGHT_PX;
     const soloedOut = !row.solo && !!row.targetId && soloedTargets.has(row.targetId);
     // A soloed-out row is silenced by the resolver just like a muted one → dim it too.
-    const muted = row.mute === true || soloedOut;
+    const muted = row.mute === true || row.layerMuted === true || soloedOut;
 
     // Active-channel row tint (a faint highlight on the pinned channel).
     if (activeChannelId !== null && row.channelId === activeChannelId) {
@@ -408,8 +408,11 @@ export function paintStaticLayer(
       ctx.textAlign = 'center';
       ctx.fillStyle = row.mute ? GLYPH_MUTE_ON : GLYPH_OFF;
       ctx.fillText('M', MUTE_GLYPH_X0 + GUTTER_GLYPH_BOX_PX / 2, gy);
-      ctx.fillStyle = row.solo ? LABEL_SOLO : GLYPH_OFF;
-      ctx.fillText('S', SOLO_GLYPH_X0 + GUTTER_GLYPH_BOX_PX / 2, gy);
+      // #1215 — a layer's curve has no solo (Blender's F-curves have none): no S to click.
+      if (!row.noSolo) {
+        ctx.fillStyle = row.solo ? LABEL_SOLO : GLYPH_OFF;
+        ctx.fillText('S', SOLO_GLYPH_X0 + GUTTER_GLYPH_BOX_PX / 2, gy);
+      }
       ctx.textAlign = 'left'; // restore for the next row's name + the ruler labels
     }
 
@@ -1118,16 +1121,10 @@ export function TimelineCanvas({ duration }: { duration: number }) {
       // read-only clip row (no DAG node, no glyph) falls through to row-select
       // below, preserving its existing gutter-click behavior.
       if (row && !row.readOnly) {
-        const node = useDagStore.getState().state.nodes[row.channelId];
-        if (node) {
-          const current = (node.params as Record<string, unknown>)[glyph.kind] === true;
-          useDagStore
-            .getState()
-            .dispatchAtomic(
-              [{ type: 'setParam', nodeId: row.channelId, paramPath: glyph.kind, value: !current }],
-              'user',
-              `toggle channel ${glyph.kind}`,
-            );
+        // #1215 — flipped where the curve lives (its node, or its entry in a pose layer).
+        const ops = rowFlagToggleOps(useDagStore.getState().state, row.channelId, glyph.kind);
+        if (ops) {
+          useDagStore.getState().dispatchAtomic(ops, 'user', `toggle channel ${glyph.kind}`);
         }
         return;
       }

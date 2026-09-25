@@ -65,6 +65,10 @@ export interface ChannelRow {
   solo?: boolean;
   /** The channel's `target` node id — the grouping key for the per-object solo scope. */
   targetId?: string;
+  /** #1215 — the row's curve sits in a MUTED pose layer: dimmed, while `mute` stays the curve's own. */
+  layerMuted?: boolean;
+  /** #1215 — the curve has no solo (a layer's curve: Blender's F-curves have none; the layer does). */
+  noSolo?: boolean;
 }
 
 /** The three TRS components a TransformClip carries, in dopesheet row order. */

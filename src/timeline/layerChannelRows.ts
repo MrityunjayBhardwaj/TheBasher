@@ -8,7 +8,8 @@
 // road for the timeline, the keyboard and the agent.
 //
 // Which rows: the selected armature Object's layers, top of the chain first, each layer's curves in
-// its channel order; a muted layer's rows dimmed. Blender's dope sheet shows the selected objects'
+// its channel order; a muted layer's rows dimmed. A row's M is its curve's own mute (Blender's F-curve
+// mute); a layer curve has no solo. Blender's dope sheet shows the selected objects'
 // action curves ("Only Show Selected", on by default), grouped by bone.
 //
 // Below the layers, the computed motion the chain stands on (a retarget, a generated clip) shows
@@ -88,7 +89,10 @@ export function layerChannelRows(nodes: Record<string, Node>, objectId: string):
         }),
         name: `${layerName} — ${what}`,
         keyframes: [...channel.keyframes].sort((a, b) => a.time - b.time),
-        ...(params.mute ? { mute: true } : {}),
+        // The curve's own mute (the gutter's M toggles it); its layer's mute only dims the row.
+        ...(channel.mute === true ? { mute: true } : {}),
+        ...(params.mute ? { layerMuted: true } : {}),
+        noSolo: true,
       });
     }
   }

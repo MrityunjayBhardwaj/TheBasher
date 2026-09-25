@@ -48,6 +48,8 @@ import { LightStudioPanel } from './LightStudioPanel';
 import { NlaLanePane } from './NlaLanePane';
 import { ControllersDockPane } from './ControllersDockPane';
 import { SimplifyPopover } from './SimplifyPopover';
+import { rowFlag, rowFlagToggleOps } from '../app/animate/clipRowMint';
+import { parseLayerRowId } from './layerChannelRows';
 
 const DRAWER_HEIGHT_PX = 240;
 const HEADER_HEIGHT_PX = 28;
@@ -246,16 +248,13 @@ function DockToolbar() {
   const activeKeyframeId = useTimelineSelection((s) => s.activeKeyframeId);
   // Pressed state for the Mute toggle — re-renders when the active channel's
   // `mute` param flips (#263). Synthetic clip rows have no DAG node → false.
+  // #1215 — read where the curve lives (a channel node, or a pose layer's curve).
   const activeChannelMuted = useDagStore((s) =>
-    activeChannelId
-      ? (s.state.nodes[activeChannelId]?.params as { mute?: boolean } | undefined)?.mute === true
-      : false,
+    activeChannelId ? rowFlag(s.state, activeChannelId, 'mute') : false,
   );
   // Pressed state for the Solo toggle (#263) — same shape as mute.
   const activeChannelSoloed = useDagStore((s) =>
-    activeChannelId
-      ? (s.state.nodes[activeChannelId]?.params as { solo?: boolean } | undefined)?.solo === true
-      : false,
+    activeChannelId ? rowFlag(s.state, activeChannelId, 'solo') : false,
   );
   const [simplifyOpen, setSimplifyOpen] = useState(false);
 
@@ -277,31 +276,19 @@ function DockToolbar() {
   }
 
   function onMute() {
-    if (!activeChannelId) return;
-    const node = useDagStore.getState().state.nodes[activeChannelId];
-    if (!node) return; // synthetic clip rows have no DAG node — nothing to mute
-    const current = (node.params as { mute?: boolean }).mute === true;
-    useDagStore
-      .getState()
-      .dispatchAtomic(
-        [{ type: 'setParam', nodeId: activeChannelId, paramPath: 'mute', value: !current }],
-        'user',
-        'toggle channel mute',
-      );
+    toggleActive('mute');
   }
 
   function onSolo() {
+    toggleActive('solo');
+  }
+
+  // #1215 — one toggle for every row kind: nothing to flip (a clip row, a layer curve's solo) is a
+  // no-op, as a clip row always was.
+  function toggleActive(kind: 'mute' | 'solo') {
     if (!activeChannelId) return;
-    const node = useDagStore.getState().state.nodes[activeChannelId];
-    if (!node) return; // synthetic clip rows have no DAG node — nothing to solo
-    const current = (node.params as { solo?: boolean }).solo === true;
-    useDagStore
-      .getState()
-      .dispatchAtomic(
-        [{ type: 'setParam', nodeId: activeChannelId, paramPath: 'solo', value: !current }],
-        'user',
-        'toggle channel solo',
-      );
+    const ops = rowFlagToggleOps(useDagStore.getState().state, activeChannelId, kind);
+    if (ops) useDagStore.getState().dispatchAtomic(ops, 'user', `toggle channel ${kind}`);
   }
 
   function onClear() {
@@ -409,7 +396,8 @@ function DockToolbar() {
         id="solo"
         label="Solo"
         title="Solo the active channel — only solo'd channels on the same object drive the scene; the rest go quiet. Click again to un-solo."
-        disabled={activeChannelId === null}
+        // #1215 — a pose layer's curve has no solo (the layer does), as Blender's F-curves have none.
+        disabled={activeChannelId === null || parseLayerRowId(activeChannelId) !== null}
         active={activeChannelSoloed}
         onClick={onSolo}
       />

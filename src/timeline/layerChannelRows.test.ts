@@ -90,8 +90,10 @@ describe('#1215 — which rows the dopesheet shows', () => {
     // Two layers (the base "bend", the held "Wave" muted above it), 6 curves each.
     expect(layers).toHaveLength(2);
     expect(rows).toHaveLength(12);
-    expect(rows.slice(0, 6).every((r) => r.mute === true)).toBe(true);
-    expect(rows.slice(6).every((r) => r.mute === undefined)).toBe(true);
+    // #1215 — the layer's mute dims its rows; each row's own M stays its curve's mute (off here).
+    expect(rows.slice(0, 6).every((r) => r.layerMuted === true && r.mute === undefined)).toBe(true);
+    expect(rows.slice(6).every((r) => r.layerMuted === undefined)).toBe(true);
+    expect(rows.every((r) => r.noSolo === true)).toBe(true);
     expect(rows[6].name).toMatch(/^bend — Bone0 position$/);
     const q = rows.find((r) => r.name === 'bend — Bone1 quaternion')!;
     expect(q.keyframes).toHaveLength(25);

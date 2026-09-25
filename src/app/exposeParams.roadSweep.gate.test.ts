@@ -100,8 +100,9 @@ const OPT_OUTS: Record<string, string> = {
   // lands a key wherever the row's curve lives — a channel node, or a pose layer's list — and which
   // is addressed from the timeline selection, never the node selection. The file no longer spells a
   // write, so it is no longer a road.
-  'src/timeline/TimelineCanvas.tsx':
-    '(b) writes mute/solo on `row.channelId` — the channel node the ROW was built from, which is provenance, not resolution.',
+  // `src/timeline/TimelineCanvas.tsx` LEFT this list at #1215 too: its gutter mute/solo toggle now goes
+  // through `rowFlagToggleOps` (clipRowMint.ts), the same row resolver `write`, so a layer curve's
+  // mute lands in its layer. The file no longer spells a write.
   'src/timeline/LightStudioPanel.tsx':
     '(b) writes to ids from its OWN enumeration of lights and its own shading node, never to the raw selection.',
   'src/app/animate/dispatchApplyTransform.ts':
