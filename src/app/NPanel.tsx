@@ -71,6 +71,7 @@ import { PromoteParamControl, PromotedControlRow } from './PromoteParamControl';
 import { z } from 'zod';
 import {
   optionsOf,
+  optionsValueKindOf,
   placeholderOf,
   type OptionsProvider,
   type ParamOption,
@@ -1071,6 +1072,14 @@ function OptionsParamField({
     [nodes, provider, nodeId],
   );
   const none = declaredPlaceholder(nodeId, paramPath) ?? 'none';
+  const field = paramPath.includes('.') ? null : fieldSchemaOf(nodeId, paramPath);
+  // #1065 — a node-id value that no option offers may still name a live node (the wrong kind,
+  // or one a strip cannot drive). NodeRefField's wording, for the same reason.
+  const staleLabel =
+    optionsValueKindOf(field) === 'nodeId'
+      ? (id: string) =>
+          nodes[id] ? `${nodeDisplayName(nodes, id)} — not a valid target` : `${id} — not found`
+      : undefined;
   return (
     <label className="flex cursor-pointer items-center justify-between gap-2 px-3 py-1.5 text-[11px] text-fg/80">
       <span className="font-mono text-fg/60">{paramPath}</span>
@@ -1079,6 +1088,7 @@ function OptionsParamField({
         value={value}
         options={options}
         noneLabel={`— ${none} —`}
+        staleLabel={staleLabel}
         onCommit={(next) =>
           dispatch({ type: 'setParam', nodeId, paramPath, value: next }, 'user', `set ${paramPath}`)
         }

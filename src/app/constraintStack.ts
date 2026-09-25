@@ -21,14 +21,17 @@
 //      src/app/ConstraintStackControls.tsx (the panel); src/app/operatorStack.ts (the
 //      SOP twin); docs/RELATIONAL-OPERATORS-DESIGN.md §8.
 
+import { createEvaluatorCache } from '../core/dag/evaluator';
 import type { DagState } from '../core/dag/state';
 import type { Op } from '../core/dag/types';
+import type { ParamOption } from '../nodes/paramWidget';
 import {
   relationalPoseStackForTarget,
   isRelationalPoseNode,
   nextConstraintOrder,
 } from './nodeConstraints';
 import type { StackRowEntry } from './OperatorStackRows';
+import { resolveWorldTransform } from './resolveWorldTransform';
 import { nodeDisplayName } from './sceneTreeWalk';
 
 /** The constraints the user can add from the "+ Add" menu. Follow-Path / Copy-Location
@@ -38,6 +41,30 @@ export const ADDABLE_CONSTRAINTS: ReadonlyArray<{ type: string; label: string }>
   { type: 'TrackTo', label: 'Track To' },
   { type: 'FollowPath', label: 'Follow Path' },
 ];
+
+/**
+ * #1065 — the picker for a constraint's `target`, the object it constrains: every node the
+ * resolver can place in the world.
+ *
+ * Both bands start there. The aim asks `resolveWorldTransform` for the constrained object first
+ * and returns nothing without it (`resolveConstraintRotation`), and a followed position only
+ * shows on a node the renderer places. So that is the filter, not "carries a `position`" (the
+ * aim picker's `transformable`): measured on the default scene plus one of every primitive,
+ * `transformable` offered an unwired Group and Transform, which are placed nowhere, and left
+ * out the AmbientLight, which is placed. On the two example projects the two lists agree.
+ *
+ * One evaluator cache for the whole scan, so the render root is evaluated once, not per node.
+ */
+export function constrainedObjectOptions(state: DagState): ParamOption[] {
+  const ctx = { time: { frame: 0, seconds: 0, normalized: 0 } };
+  const cache = createEvaluatorCache();
+  const out: ParamOption[] = [];
+  for (const node of Object.values(state.nodes)) {
+    if (resolveWorldTransform(state, node.id, ctx, cache) === null) continue;
+    out.push({ value: node.id, label: nodeDisplayName(state.nodes, node.id) });
+  }
+  return out.sort((a, b) => a.label.localeCompare(b.label));
+}
 
 function newId(prefix: string): string {
   return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;

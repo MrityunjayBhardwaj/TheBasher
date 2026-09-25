@@ -180,6 +180,11 @@ const CONSUMERS: Record<string, Decision> = {
   // above is. It exists because the operator bypass moved into the evaluator and a
   // direct `evaluate` call can no longer observe it.
   'src/test-utils/evaluateNodeAlone.ts': authored('fixed-ctx-by-design'),
+  // #1065 — the picker for a constraint's `target`. It asks the world resolver whether it can
+  // place each node, at frame 0, DELIBERATELY: whether a node is in the scene is a question
+  // about edges, not time, and the answer is a list to choose from, not a pose. The value it
+  // reads is discarded; only "placed or not" is kept.
+  'src/app/constraintStack.ts': authored('fixed-ctx-by-design'),
   'src/app/cookState.ts': authored('mints-the-cooked-state'),
 
   // ── INDIFFERENT — the escape hatch, and the reason it is not the easy road ─────────
@@ -241,7 +246,8 @@ describe('#582 — who evaluates the graph, and which params they need', () => {
     // than moved — the evaluate went away with the bake, and the row went with it.
     // 40 → 41 at #1056: the skeleton-Object collector, a NEW road (skeletons had no scene
     // presence to evaluate for until then), declared above as fixed-ctx.
-    expect(evaluatorConsumers()).toHaveLength(41); // 39 -> 40 at #935 (placement) (the motion resolver)
+    // 41 → 42 at #1065: the constraint-target picker, declared above as fixed-ctx.
+    expect(evaluatorConsumers()).toHaveLength(42); // 39 -> 40 at #935 (placement) (the motion resolver)
   });
 
   it('every reason is load-bearing — no member of any union is decorative', () => {

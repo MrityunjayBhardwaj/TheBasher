@@ -36,14 +36,18 @@ import { z } from 'zod';
 import type { NodeDefinition } from '../core/dag/types';
 import type { StripValue } from './types';
 import { CHANNEL_BLEND_MODES, STRIP_EXTRAPOLATES, type StripExtrapolate } from './types';
-import { nameParam } from './paramWidget';
+import { nameParam, optionsParam } from './paramWidget';
+import { stripActionOptions, stripTargetOptions } from '../app/stripTargets';
 
 export const StripParams = z.object({
   name: nameParam('Strip'),
-  /** Action node id (edge-less ref). Empty → the strip contributes nothing. */
-  action: z.string().default(''),
-  /** Target node id the placed Action drives (edge-less ref). */
-  target: z.string().default(''),
+  /** Action node id (edge-less ref). Empty → the strip contributes nothing. Picked from the
+   *  project's Actions (#1065). The provider is wrapped so this module never reads an
+   *  import during load: `stripTargets` reaches the scene walk, which can import back here. */
+  action: optionsParam(z.string().default(''), (s) => stripActionOptions(s), undefined, 'nodeId'),
+  /** Target node id the placed Action drives (edge-less ref). Picked from the add-strip
+   *  popover's own rows (#1065), so the two cannot disagree about what a strip may drive. */
+  target: optionsParam(z.string().default(''), (s) => stripTargetOptions(s), undefined, 'nodeId'),
   /** Global start time (seconds) where the Action's t=0 lands. */
   start: z.number().default(0),
   /** Playback rate: >1 = slower (stretches the Action over more time). */

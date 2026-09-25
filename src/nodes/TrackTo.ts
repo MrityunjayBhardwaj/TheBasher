@@ -21,7 +21,8 @@
 import { z } from 'zod';
 import type { NodeDefinition } from '../core/dag/types';
 import type { TrackToConstraintValue } from './types';
-import { nameParam } from './paramWidget';
+import { nameParam, optionsParam } from './paramWidget';
+import { constrainedObjectOptions } from '../app/constraintStack';
 
 const Vec3Schema = z.tuple([z.number(), z.number(), z.number()]);
 
@@ -29,7 +30,14 @@ export const TrackToParams = z.object({
   name: nameParam('track-to'),
   /** The constrained node id whose rotation this derives (mirrors a channel's
    *  `target`). Empty → inert (enumerated but no node to aim). */
-  target: z.string().default(''),
+  target: optionsParam(
+    z.string().default(''),
+    // Wrapped so this module never reads an import during load (#1065): the provider's module
+    // reaches the world resolver, which can import back into the node registry.
+    (s) => constrainedObjectOptions(s),
+    undefined,
+    'nodeId',
+  ),
   /** Aim at this node's WORLD position when non-empty; else `aimPoint`. */
   aimNode: z.string().default(''),
   /** Fixed-point aim target (world) used when `aimNode` is empty. */

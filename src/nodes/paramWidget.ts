@@ -170,6 +170,17 @@ export type OptionsProvider = (state: DagState, nodeId: string) => readonly Para
 const PROVIDERS = new WeakMap<object, OptionsProvider>();
 
 /**
+ * What an `options` param's value names (#1065). A `'name'` (the default) is matched by name, so
+ * a value no option offers is simply not found. A `'nodeId'` is a node's id, and a stored id
+ * that no option offers can still be a node that EXISTS but is not a valid choice — saying
+ * "not found" then would send the director looking for a node that is right there.
+ */
+export type OptionsValueKind = 'name' | 'nodeId';
+
+/** Schema instance → what its value names, when that is not a plain name. */
+const VALUE_KINDS = new WeakMap<object, OptionsValueKind>();
+
+/**
  * Declare that `schema` is authored as a picker over `provider`'s live options, and return the
  * SAME schema.
  *
@@ -186,9 +197,17 @@ export function optionsParam<S extends z.ZodTypeAny>(
   schema: S,
   provider: OptionsProvider,
   none?: string,
+  valueKind: OptionsValueKind = 'name',
 ): S {
   PROVIDERS.set(schema, provider);
+  if (valueKind !== 'name') VALUE_KINDS.set(schema, valueKind);
   return widget('options', schema, none);
+}
+
+/** What this `options` schema's value names — `'name'` unless it declared otherwise. */
+export function optionsValueKindOf(schema: unknown): OptionsValueKind {
+  if (schema === null || typeof schema !== 'object') return 'name';
+  return VALUE_KINDS.get(schema) ?? 'name';
 }
 
 /** The options provider this schema declares, or `undefined` if it declares none. */

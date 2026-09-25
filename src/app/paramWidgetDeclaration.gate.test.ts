@@ -37,6 +37,13 @@ import type { DagState } from '../core/dag/state';
 import type { Op } from '../core/dag/types';
 import { buildDefaultDagState } from '../core/project/default';
 import { profileOptions } from '../nodes/LightProfileSelect';
+import { buildAddPrimitiveOps, SCENE_OBJECT_KINDS } from './addPrimitives';
+import { buildAddConstraintOps } from './constraintStack';
+import { stripChannelValuesForTarget } from './layeredChannels';
+import { resolveConstraintRotation } from './nodeConstraints';
+import { stripTargetRows } from './stripTargets';
+import { addStripMutator } from '../agent/mutators/builders/addStrip';
+import { createActionMutator } from '../agent/mutators/builders/createAction';
 import { overrideDescriptor } from './overrideDescriptor';
 import { resolveActiveRigNode } from './resolveRigLightSources';
 import { nodeDisplayName } from './sceneTreeWalk';
@@ -330,7 +337,8 @@ describe('a param declares its control on its schema (#872)', () => {
       'KeyframeChannelVec3.sourceHash': MINTED,
       'RenderJob.jobId': MINTED,
 
-      'FollowPath.target': WIRING,
+      // `FollowPath.target`, `Strip.action`, `Strip.target` and `TrackTo.target` left this list in
+      // #1065 — pickers over what the strip fold and the constraint fold can resolve.
       'KeyframeChannelColor.paramPath': WIRING,
       'KeyframeChannelColor.target': WIRING,
       'KeyframeChannelImage.paramPath': WIRING,
@@ -347,9 +355,6 @@ describe('a param declares its control on its schema (#872)', () => {
       'KeyframeChannelVec3.target': WIRING,
       'ParamDriver.paramPath': WIRING,
       'ParamDriver.target': WIRING,
-      'Strip.action': WIRING,
-      'Strip.target': WIRING,
-      'TrackTo.target': WIRING,
 
       'ClipSelect.selectedClipName': CHOICE,
       'LightData.tex': CHOICE,
@@ -397,7 +402,7 @@ describe('a param declares its control on its schema (#872)', () => {
     });
     // The denominator rides with the verdict — an empty `unacknowledged` from a loop that
     // never ran looks exactly like a pass.
-    expect(readOnly.length).toBe(33);
+    expect(readOnly.length).toBe(29);
   });
 
   it('row 15 — a param owns the word for its EMPTY state, and the control owns the fallback (#1031)', () => {
@@ -539,9 +544,101 @@ describe('a param declares its control on its schema (#872)', () => {
     }
     expect({ examined: examined > 0, optionsWidget, withProvider }).toEqual({
       examined: true,
-      optionsWidget: ['LightProfileSelect.selectedProfile'],
-      withProvider: ['LightProfileSelect.selectedProfile'],
+      optionsWidget: [
+        'FollowPath.target',
+        'LightProfileSelect.selectedProfile',
+        'Strip.action',
+        'Strip.target',
+        'TrackTo.target',
+      ],
+      withProvider: [
+        'FollowPath.target',
+        'LightProfileSelect.selectedProfile',
+        'Strip.action',
+        'Strip.target',
+        'TrackTo.target',
+      ],
     });
+  });
+
+  it('row 19 — every strip and constraint option resolves once written, and nothing left out does (#1065)', () => {
+    // The property #1064 set for every provider, checked through each param's REAL resolver and
+    // in both directions: an offered option that resolves nothing is a picker that lies, and a
+    // resolvable node left out is a target the director cannot reach. One of every scene
+    // primitive, so the lists have placed and unplaced nodes to tell apart.
+    const FRAME = { time: { frame: 0, seconds: 0, normalized: 0 } };
+    const apply = (st: DagState, ops: readonly Op[]) => {
+      let n = st;
+      for (const op of ops) n = applyOp(n, op).next;
+      return n;
+    };
+    let s = buildDefaultDagState();
+    for (const kind of SCENE_OBJECT_KINDS) {
+      const r = buildAddPrimitiveOps(s, kind, [1, 0, 0]);
+      if (r) s = apply(s, r.ops);
+    }
+    const none = new Set<string>() as never;
+    s = apply(
+      s,
+      createActionMutator.build(
+        createActionMutator.spec.parse(createActionMutator.specExample),
+        none,
+        s,
+      ),
+    );
+    const providerOf = (type: string, key: string) =>
+      optionsOf((getNodeType(type)!.paramSchema as z.ZodObject<z.ZodRawShape>).shape[key])!;
+    const enabled = (type: string, key: string) =>
+      providerOf(type, key)(s, '')
+        .filter((o) => !o.disabledReason)
+        .map((o) => o.value);
+
+    // Constraint target — the aim band, aimed at a fixed point no node sits on.
+    const constrained = enabled('TrackTo', 'target');
+    expect(enabled('FollowPath', 'target'), 'both constraints offer one list').toEqual(constrained);
+    const aimOf = (target: string) => {
+      const added = buildAddConstraintOps(s, target, 'TrackTo', 'con_probe')!;
+      const t = apply(s, [
+        ...added.ops,
+        { type: 'setParam', nodeId: 'con_probe', paramPath: 'aimPoint', value: [37, 11, -23] },
+      ]);
+      return resolveConstraintRotation(t, target, FRAME);
+    };
+    const all = Object.keys(s.nodes);
+    expect({ examined: all.length, offered: constrained.length > 0 }).toMatchObject({
+      offered: true,
+    });
+    for (const id of all) {
+      const resolves = aimOf(id) !== null;
+      expect({ id, type: s.nodes[id].type, resolves }).toEqual({
+        id,
+        type: s.nodes[id].type,
+        resolves: constrained.includes(id),
+      });
+    }
+
+    // Strip action — through the strip fold, on a target the popover offers.
+    const actions = enabled('Strip', 'action');
+    const target = enabled('Strip', 'target')[0];
+    expect(actions.length, 'the Action the builder made is offered').toBeGreaterThan(0);
+    const foldedWith = (action: string) =>
+      stripChannelValuesForTarget(
+        apply(
+          s,
+          addStripMutator.build(
+            addStripMutator.spec.parse({ action, target, stripId: 'strip_probe' }),
+            none,
+            s,
+          ),
+        ).nodes,
+        target,
+      ).length;
+    for (const id of all) {
+      expect({ id, folds: foldedWith(id) > 0 }).toEqual({ id, folds: actions.includes(id) });
+    }
+
+    // Strip target — the add-strip popover's own rows, so the two cannot disagree.
+    expect(enabled('Strip', 'target')).toEqual(stripTargetRows(s).map((r) => r.id));
   });
 
   it('row 18 — every enabled profile option, once chosen, resolves to that rig on both roads (#1064)', () => {
