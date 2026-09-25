@@ -1,5 +1,6 @@
 // #1197 — the native skinned draw equals the Armature modifier's answer, vertex for vertex, read
 // through three's own skinning (`SkinnedMesh.getVertexPosition`, the CPU twin of the GPU shader).
+import { posedSkeletonFromClip } from '../nodes/AnimationClip';
 import { readFileSync } from 'node:fs';
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
@@ -71,15 +72,15 @@ function drawn(skin: SkinDeformValue, mesh: MeshGeometryData) {
   skinned.bind(draw.skeleton, draw.bindMatrix);
   const { vertexCorner } = meshSplitLayout(mesh);
   return {
-    /** Pose at 1 s, then pose with no action, and read every drawn vertex. */
+    /** Pose at 1 s, then with no pose, and read every drawn vertex. */
     restAfterPose(): number[][] {
-      draw.pose(1, skin.action);
+      draw.pose(1, skin.pose);
       draw.pose(1, null);
       const v3 = new Vector3();
       return Array.from(vertexCorner, (_, v) => skinned.getVertexPosition(v, v3).toArray());
     },
     at(seconds: number): { vertex: number[][]; point: number[][] } {
-      draw.pose(seconds, skin.action);
+      draw.pose(seconds, skin.pose);
       const expected = sampleSkinDeform(skin, mesh, seconds);
       const vertex: number[][] = [];
       const point: number[][] = [];
@@ -127,9 +128,9 @@ describe('#1197 — what is drawn is what the modifier evaluates', () => {
     [-0.978764, 1.286395, 0].forEach((v, k) => expect(end[k]).toBeCloseTo(v, 3));
   });
 
-  it('the bind-pose control: with no action, every drawn vertex is the stored mesh', async () => {
+  it('the bind-pose control: with no pose, every drawn vertex is the stored mesh', async () => {
     const { skin, mesh } = await modifierOf('public/assets/skinned-bar.glb');
-    const { vertex } = drawn({ ...skin, action: null }, mesh).at(0.5);
+    const { vertex } = drawn({ ...skin, pose: null }, mesh).at(0.5);
     const { vertexCorner } = meshSplitLayout(mesh);
     vertex.forEach((v, i) => {
       const p = mesh.cornerPoints[vertexCorner[i]];
@@ -188,7 +189,7 @@ function skinOf(
   return {
     kind: 'SkinDeform',
     bones: BONES,
-    action: TURN,
+    pose: posedSkeletonFromClip(TURN),
     boneOfGroup: boneOfGroups(groups, BONES),
     armatureMatrix,
   };
@@ -233,24 +234,24 @@ describe('#1197 — the join rows, drawn as the modifier evaluates them', () => 
   });
 });
 
-describe('#1207 — the draw is built once per content, and the action is read per frame', () => {
+describe('#1207 — the draw is built once per content, and the pose is read per frame', () => {
   it('an overlay’s copy of the skin keeps the build key; a changed binding does not', async () => {
     const { skin } = await modifierOf('public/assets/skinned-bar.glb');
     const key = skinnedDrawKey('mesh|k', skin);
     expect(skinnedDrawKey('mesh|k', cloneForOverlay(skin))).toBe(key);
     expect(skinnedDrawKey('mesh|k', { ...skin, boneOfGroup: [1, 0] })).not.toBe(key);
     expect(skinnedDrawKey('mesh|other', skin)).not.toBe(key);
-    // The action is not part of it: a different clip poses the same build.
-    expect(skinnedDrawKey('mesh|k', { ...skin, action: null })).toBe(key);
+    // The pose is not part of it: a different pose poses the same build.
+    expect(skinnedDrawKey('mesh|k', { ...skin, pose: null })).toBe(key);
   });
 
-  it('posing with no action returns the bones to rest after a pose', async () => {
+  it('posing with no pose returns the bones to rest after a pose', async () => {
     const { skin, mesh } = await modifierOf('public/assets/skinned-bar.glb');
     const draw = drawn(skin, mesh);
     const posed = draw.at(1).vertex;
-    const rest = drawn({ ...skin, action: null }, mesh).at(0).vertex;
+    const rest = drawn({ ...skin, pose: null }, mesh).at(0).vertex;
     expect(posed).not.toEqual(rest);
-    // The same build, posed at 1 s and then with its action taken away, draws the rest again.
+    // The same build, posed at 1 s and then with its pose taken away, draws the rest again.
     expectEqualEverywhere({ vertex: draw.restAfterPose(), point: rest });
   });
 });

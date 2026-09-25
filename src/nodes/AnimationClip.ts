@@ -33,7 +33,6 @@ import type {
   AnimationClipValue,
   AnimationKeyframe,
   BonePose,
-  ObjectValue,
   PosedSkeletonValue,
   Quat,
   SkeletonValue,
@@ -224,26 +223,6 @@ export function posedSkeletonFromClip(clip: AnimationClipValue): PosedSkeletonVa
  */
 const posedByClip = new WeakMap<AnimationClipValue, PosedSkeletonValue>();
 
-/**
- * #1203 — an armature Object's pose: its action, played on its skeleton, or `null` when it has no
- * action or the action is keyed on a different rig.
- *
- * A clip's keys address bones by INDEX into the skeleton it was made against, so it can only pose
- * a skeleton whose bones are the same list. Blender binds an action to pose bones by NAME and
- * leaves an unmatched channel doing nothing; the index form cannot do that partially, so a clip
- * whose bone names differ from the Object's, anywhere, poses nothing rather than the wrong bones.
- */
-export function actionPoseOf(object: ObjectValue): PosedSkeletonValue | null {
-  const { data, action } = object;
-  if (data?.kind !== 'Skeleton' || action === undefined) return null;
-  const own = data.bones;
-  const keyed = action.skeleton.bones;
-  if (own.length !== keyed.length || own.some((bone, i) => bone.name !== keyed[i].name)) {
-    return null;
-  }
-  return posedSkeletonFromClip(action);
-}
-
 export function buildClipBoneSamplers(
   // Widened to READONLY keys (#920) so the same factory serves both a node's
   // params and an `AnimationClipValue`, which is where the sampling now happens.
@@ -299,7 +278,18 @@ export function buildClipBoneSamplers(
   return out;
 }
 
-export const AnimationClipNode: NodeDefinition<AnimationClipParams, AnimationClipValue> = {
+/**
+ * #1224 — both views of one clip: the keys (`out`), and the same keys as the pose wire (`pose`),
+ * which is what an armature Object takes. The RetargetClip shape (`both`), through the one adapter,
+ * so the two outputs cannot disagree.
+ */
+export type ClipOutputs = { readonly out: AnimationClipValue; readonly pose: PosedSkeletonValue };
+
+function withPose(out: AnimationClipValue): ClipOutputs {
+  return { out, pose: posedSkeletonFromClip(out) };
+}
+
+export const AnimationClipNode: NodeDefinition<AnimationClipParams, ClipOutputs> = {
   type: 'AnimationClip',
   version: 1,
   pure: true,
@@ -343,23 +333,26 @@ export const AnimationClipNode: NodeDefinition<AnimationClipParams, AnimationCli
      */
     source: { type: 'AnimationClip', cardinality: 'single' },
   },
-  outputs: { out: { type: 'AnimationClip', cardinality: 'single' } },
+  outputs: {
+    out: { type: 'AnimationClip', cardinality: 'single' },
+    pose: { type: 'PosedSkeleton', cardinality: 'single' },
+  },
   inspectorSections: ['animate'],
-  evaluate(params, inputs: ResolvedInputs) {
+  evaluate(params, inputs: ResolvedInputs): ClipOutputs {
     const skeleton = inputs.skeleton as SkeletonValue | undefined;
 
     if (!skeleton) {
-      return {
+      return withPose({
         kind: 'AnimationClip',
         name: params.name,
         duration: params.duration,
         loop: params.loop,
         keyframes: params.keyframes,
         skeleton: { kind: 'Skeleton', bones: [] },
-      };
+      });
     }
 
-    return {
+    return withPose({
       kind: 'AnimationClip',
       name: params.name,
       duration: params.duration,
@@ -368,6 +361,6 @@ export const AnimationClipNode: NodeDefinition<AnimationClipParams, AnimationCli
       // The rig the keys are indexed against, travelling WITH them so a consumer
       // cannot pair one source's indices with another's spine (#901).
       skeleton,
-    };
+    });
   },
 };

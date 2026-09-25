@@ -325,7 +325,8 @@ export function SceneFromDAG({ outputName = 'render' }: SceneFromDAGProps) {
     const out: ReferenceRigInput[] = [];
     for (const pair of retargetPairs(state.nodes)) {
       try {
-        const clip = evaluate(state, pair.sourceClipId, { cache }).value as
+        // #1224 — by socket: a clip node outputs its keys and its pose.
+        const clip = evaluate(state, pair.sourceClipId, { cache, socket: 'out' }).value as
           | AnimationClipValue
           | undefined;
         const target = evaluate(state, pair.targetSkeletonId, { cache }).value as
@@ -2529,17 +2530,17 @@ function SkinnedMeshR({
       mesh.bindMode = THREE.DetachedBindMode;
       mesh.bind(draw.skeleton, draw.bindMatrix);
       mesh.frustumCulled = false;
-      draw.pose(useTimeStore.getState().seconds, skin.action);
+      draw.pose(useTimeStore.getState().seconds, skin.pose);
       next = { mesh, draw, geometry };
     }
     cache.current = { key: buildKey, built: next };
   }
   const built = cache.current.built;
-  const action = useRef(skin.action);
-  action.current = skin.action;
+  const skinPose = useRef(skin.pose);
+  skinPose.current = skin.pose;
   useEffect(() => () => built?.geometry.dispose(), [built]);
   useFrame(() => {
-    built?.draw.pose(useTimeStore.getState().seconds, action.current);
+    built?.draw.pose(useTimeStore.getState().seconds, skinPose.current);
   });
   // DEV-only — the skin seam the skinned e2e reads (`__basher_gltf_skin`), now on the native road
   // too (#1197): the clone road's shape, plus the vertex count and each vertex's REST position, so a

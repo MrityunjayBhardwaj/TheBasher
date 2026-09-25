@@ -13,7 +13,7 @@
 //
 // From the mesh: its skin — `skin_joints` / `skin_weights` point layers and the `vertexGroups`
 // table the joint numbers index. From the armature Object: its skeleton (the rest, Blender's
-// `arm_mat`), its action (the pose, #1203), and its own placement. Each group joins a bone BY
+// `arm_mat`), its pose (#1203, #1224), and its own placement. Each group joins a bone BY
 // NAME, once, here; an unmatched group contributes nothing.
 //
 // ── WHAT IT EMITS, AND WHY TIME IS NOT AN INPUT ─────────────────────────────────────────────────
@@ -41,7 +41,7 @@ import type { NodeDefinition } from '../core/dag/types';
 import type { ObjectData, ObjectValue } from './types';
 import { modifierDataSource, slotTableThrough } from '../app/modifierDataSource';
 import { localMatrix } from '../app/resolveWorldTransform';
-import { actionPoseOf } from './AnimationClip';
+import { armaturePoseOf } from './bonePose';
 import { boneOfGroups } from './armatureDeform';
 
 export const ArmatureModifierParams = z.object({
@@ -99,7 +99,7 @@ export const ArmatureModifierNode: NodeDefinition<ArmatureModifierParams, Object
       skin: {
         kind: 'SkinDeform',
         bones,
-        action: actionPoseOf(armature) === null ? null : (armature.action ?? null),
+        pose: armaturePoseOf(armature),
         boneOfGroup: boneOfGroups(mesh.data.vertexGroups, bones),
         armatureMatrix: localMatrix(armature).toArray(),
       },

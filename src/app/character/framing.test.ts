@@ -280,11 +280,11 @@ Frame Time: 0.0333333
       value: [scale, scale, scale],
     }).next;
     if (!withClip) {
-      // Deleted as the product deletes it: the Object's action lets go first (#1203).
+      // Deleted as the product deletes it: the Object's pose edge lets go first (#1203, #1224).
       s = applyOp(s, {
         type: 'disconnect',
-        from: { node: 'clip', socket: 'out' },
-        to: { node: 'sk_object', socket: 'action' },
+        from: { node: 'clip', socket: 'pose' },
+        to: { node: 'sk_object', socket: 'pose' },
       }).next;
       s = applyOp(s, { type: 'removeNode', nodeId: 'clip' }).next;
     }

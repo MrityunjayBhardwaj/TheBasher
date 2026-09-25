@@ -74,6 +74,7 @@ describe('buildBvhImportOps', () => {
     for (const op of ops) state = applyOp(state, op).next;
     const result = evaluate(state, clipId, {
       ctx: { time: { frame: 0, seconds: 0, normalized: 0 } },
+      socket: 'out',
     });
     const value = result.value as AnimationClipValue;
     expect(value.kind).toBe('AnimationClip');

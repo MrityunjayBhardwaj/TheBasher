@@ -688,7 +688,7 @@ export function ArmatureHelper({
           id: o.id,
           bones: standalone[i].length,
           clipCount: o.clipCount,
-          posed: o.clip !== null,
+          posed: o.pose !== null,
         })),
         bones: count,
         names: frames.slice(0, count).map((f) => f.name),

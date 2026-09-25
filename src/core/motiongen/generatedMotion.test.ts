@@ -194,6 +194,7 @@ describe("the identical road — the phase's discriminating observation", () => 
     state = applyAll(state, ops);
     const clip = evaluate(state, clipId, {
       ctx: { time: { frame: 0, seconds: 0, normalized: 0 } },
+      socket: 'out',
     }).value as AnimationClipValue;
     // Same assertions the imported-BVH test makes on its clip, deliberately —
     // if a generated clip needed a weaker check, it would not be the same object.

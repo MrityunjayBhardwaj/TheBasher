@@ -12,7 +12,6 @@
 
 import * as THREE from 'three';
 import { poseTransforms, type BoneFrame } from './boneShape';
-import { posedSkeletonFromClip } from '../nodes/AnimationClip';
 import type { SceneBounds } from './sceneBounds';
 import type { SkeletonObject } from '../app/skeletonObjects';
 
@@ -42,13 +41,9 @@ function placeInWorld(frames: readonly BoneFrame[], world: readonly number[]): B
   });
 }
 
-/** The Object's bones in world space at `seconds`: posed from its one clip, or at rest when it
- *  has none (or several). */
+/** The Object's bones in world space at `seconds`: posed by its pose, or at rest when it has none. */
 export function skeletonObjectFrames(o: SkeletonObject, seconds: number): BoneFrame[] {
-  return placeInWorld(
-    poseTransforms(o.bones, o.clip ? posedSkeletonFromClip(o.clip).sample(seconds) : null),
-    o.world,
-  );
+  return placeInWorld(poseTransforms(o.bones, o.pose ? o.pose.sample(seconds) : null), o.world);
 }
 
 /**

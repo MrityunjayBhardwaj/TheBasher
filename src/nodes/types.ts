@@ -2118,17 +2118,17 @@ export interface ModifiedDataValue {
  * #393 — a mesh deformed by an armature, as data: what Blender's Armature modifier reads at
  * evaluation, frozen on the value so the deform is a function of time alone.
  *
- * PLAIN DATA, NO CLOSURE. Time enters as an argument to `sampleSkinDeform`, never as an edge, and
- * the value carries no `sample` function of its own. This shape was forced by the overlay, which
- * copied a keyed Object's value the way JSON does and dropped every function in it; since #1236 it
- * copies only the paths it writes and shares the rest, closures included.
+ * Time enters as an argument to `sampleSkinDeform`, never as an edge. The value carries the
+ * armature's POSE (#1224), whose `sample` is a closure: it survives a key on the mesh's Object
+ * because an overlay shares what it does not write (#1236). Until then this was plain data carrying
+ * the action clip, since the overlay's JSON-style copy dropped every function.
  */
 export interface SkinDeformValue {
   readonly kind: 'SkinDeform';
   /** The armature's rest bones — Blender's `arm_mat`, relative to the armature Object. */
   readonly bones: readonly BoneSpec[];
-  /** The armature Object's action, or null: with no action the rig rests and no point moves. */
-  readonly action: AnimationClipValue | null;
+  /** The armature Object's pose, or null: with no pose the rig rests and no point moves. */
+  readonly pose: PosedSkeletonValue | null;
   /**
    * Per vertex group, in the mesh's `vertexGroups` order: the bone its NAME joins, or -1. Joined
    * once, at evaluation — Blender's `pose_channel_by_vertex_group` (`armature_deform.cc:330`).
@@ -2235,16 +2235,19 @@ export interface ObjectValue extends RotationModeFields {
    */
   readonly children?: readonly SceneObject[];
   /**
-   * #1203 — the clip that poses this Object's skeleton: Blender's action, which an armature Object
-   * carries and its Armature modifier reads through it. Present only when one is bound, so an
-   * Object with none evaluates to the value it always did.
+   * #1224 — the pose that poses this Object's skeleton: the end of the pose wire (Houdini's Joint
+   * Deform input; a Blender armature Object's pose). Present only when one is bound, so an Object
+   * with none evaluates to the value it always did. Until #1224 this was the action clip (#1203);
+   * a clip now reaches it through its `pose` output.
    *
    * It is ON the Object because the Object is what a deform points at (#393): a mesh's armature
    * operator takes the armature Object as an input, and the pose it deforms by has to arrive with
-   * it. The clip cannot sit on the skeleton instead — it reads the skeleton, so the edge would be
-   * a cycle. Read through `actionPoseOf`, which refuses a clip keyed on another rig.
+   * it. The pose cannot sit on the skeleton instead — it reads the skeleton, so the edge would be
+   * a cycle. It carries a `sample` closure, which survives a key on this Object because an
+   * overlay shares what it does not write (#1236). Read through `armaturePoseOf`, which refuses a
+   * pose made for another rig.
    */
-  readonly action?: AnimationClipValue;
+  readonly pose?: PosedSkeletonValue;
   /**
    * #1210 — the bone of its parent armature Object this Object hangs from: Blender's
    * `parent_type = 'BONE'` with `parent_bone`, a property of the CHILD (`Object.parsubstr`). The

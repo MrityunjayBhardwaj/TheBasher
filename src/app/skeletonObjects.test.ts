@@ -15,6 +15,14 @@ import { buildDefaultDagState } from '../core/project/default';
 import { registerAllNodes } from '../nodes/registerAll';
 import type { BoneSpec } from '../nodes/types';
 import { collectSkeletonObjects } from './skeletonObjects';
+import { evaluate } from '../core/dag/evaluator';
+import { restBonePose } from '../nodes/bonePose';
+import type { PosedSkeletonValue } from '../nodes/types';
+
+/** A clip node's pose output, sampled — what an Object wired to it should play. */
+function clipPoseAt(state: DagState, clipId: string, seconds: number) {
+  return (evaluate(state, clipId, { socket: 'pose' }).value as PosedSkeletonValue).sample(seconds);
+}
 
 const BVH = `HIERARCHY
 ROOT Hips
@@ -79,7 +87,7 @@ describe('collectSkeletonObjects', () => {
     expect(rig.bones.map((b) => b.name)).toEqual(['Hips', 'Spine', 'ENDSITE']);
     expect(rig.world).toHaveLength(16);
     expect(rig.clipCount).toBe(1);
-    expect(rig.clip?.kind).toBe('AnimationClip');
+    expect(rig.pose?.kind).toBe('PosedSkeleton');
   });
 
   it('with no clip wired, the rig rests — and says it has none', () => {
@@ -87,19 +95,20 @@ describe('collectSkeletonObjects', () => {
     const s = apply(build(), [
       {
         type: 'disconnect',
-        from: { node: 'clip', socket: 'out' },
-        to: { node: 'sk_object', socket: 'action' },
+        from: { node: 'clip', socket: 'pose' },
+        to: { node: 'sk_object', socket: 'pose' },
       },
       { type: 'removeNode', nodeId: 'clip' },
     ]);
     const [rig] = collectSkeletonObjects(s);
-    expect(rig.clip).toBeNull();
+    expect(rig.pose).toBeNull();
     expect(rig.clipCount).toBe(0);
   });
 
-  // #1203 — the Object's action decides, as in Blender. Before it, two clips on one skeleton made
-  // the rig rest, because the band had no way to know which was meant; the action is that way.
-  it('with two clips wired, the Object plays its action — and the count says there are two', () => {
+  // #1203 — the Object's own edge decides, as in Blender. Before it, two clips on one skeleton made
+  // the rig rest, because the band had no way to know which was meant; the edge is that way. Since
+  // #1224 the edge carries the clip's pose.
+  it('with two clips wired, the Object plays its pose — and the count says there are two', () => {
     const base = build();
     const s = apply(base, [
       {
@@ -115,15 +124,18 @@ describe('collectSkeletonObjects', () => {
       },
     ]);
     const [rig] = collectSkeletonObjects(s);
-    expect(rig.clip?.name).toBe((base.nodes.clip.params as { name: string }).name);
+    const rest = rig.bones.map(restBonePose);
+    expect(rig.pose!.sample(0.5)).toEqual(clipPoseAt(s, 'clip', 0.5));
+    expect(rig.pose!.sample(0.5)).not.toEqual(rest);
     expect(rig.clipCount).toBe(2);
-    // Re-pointed at the second clip, the action follows the edge, not an order among clips.
+    // Re-pointed at a third clip — one with no keys, so it rests — the pose follows the edge, not
+    // an order among clips.
     const repointed = apply(s, [
       {
         type: 'addNode',
         nodeId: 'clip3',
         nodeType: 'AnimationClip',
-        params: { ...(base.nodes.clip.params as object), name: 'third' },
+        params: { ...(base.nodes.clip.params as object), name: 'third', keyframes: [] },
       },
       {
         type: 'connect',
@@ -132,14 +144,14 @@ describe('collectSkeletonObjects', () => {
       },
       {
         type: 'connect',
-        from: { node: 'clip3', socket: 'out' },
-        to: { node: 'sk_object', socket: 'action' },
+        from: { node: 'clip3', socket: 'pose' },
+        to: { node: 'sk_object', socket: 'pose' },
       },
     ]);
-    expect(collectSkeletonObjects(repointed)[0].clip?.name).toBe('third');
+    expect(collectSkeletonObjects(repointed)[0].pose!.sample(0.5)).toEqual(rest);
   });
 
-  it('an action keyed on a different rig poses nothing, rather than the wrong bones', () => {
+  it('a pose made for a different rig poses nothing, rather than the wrong bones', () => {
     const base = build();
     const s = apply(base, [
       {
@@ -163,12 +175,12 @@ describe('collectSkeletonObjects', () => {
       },
       {
         type: 'connect',
-        from: { node: 'clipOther', socket: 'out' },
-        to: { node: 'sk_object', socket: 'action' },
+        from: { node: 'clipOther', socket: 'pose' },
+        to: { node: 'sk_object', socket: 'pose' },
       },
     ]);
     const [rig] = collectSkeletonObjects(s);
-    expect(rig.clip).toBeNull();
+    expect(rig.pose).toBeNull();
   });
 
   it('an Object that is not in the scene is not drawn', () => {

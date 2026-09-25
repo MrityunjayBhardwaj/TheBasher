@@ -346,8 +346,8 @@ describe('#645 — the slot table is derived once, through the Object', () => {
       'slotOverrides',
       // #1152 — what the Object parents; not a slot field, listed so the census stays exact.
       'children',
-      // #1203 — the clip that poses an armature Object; not a slot field either.
-      'action',
+      // #1203/#1224 — the pose that poses an armature Object; not a slot field either.
+      'pose',
       // #1210 — the bone an Object hangs from; not a slot field either.
       'parentBone',
       'rotationMode',

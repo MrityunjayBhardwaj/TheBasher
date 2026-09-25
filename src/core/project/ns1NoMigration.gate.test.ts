@@ -89,7 +89,7 @@ describe('#637 this phase ships no migration, and the absence is pinned', () => 
     registerAllNodes();
   });
 
-  it('has moved the project format version exactly six times since the freeze — #915, #920, #930, #389, #1062, then #1203', () => {
+  it('has moved the project format version exactly seven times since the freeze — #915, #920, #930, #389, #1062, #1203, then #1224', () => {
     // 🔴 THIS ROW CHANGED SHAPE IN #915, AND THE HEADER ABOVE SAYS WHY IT MAY.
     //
     // It read `toBe(fixture().formatVersion)` — ns-1 shipped no migration, so the frozen
@@ -123,7 +123,10 @@ describe('#637 this phase ships no migration, and the absence is pinned', () => 
     // #1203 is the SIXTH: the armature band chose a rig's pose by a rule, and the pose now lives
     // on the Object as an `action` edge. Without the pass that writes the rule down as the edge,
     // every saved rig would stop playing on load.
-    const MIGRATIONS_SINCE_FREEZE = 6; // #915, #920, #930, #389, #1062, then #1203
+    // #1224 is the SEVENTH: that `action` edge becomes `pose`, the end of the pose wire. Loading
+    // checks no socket type, so only a pass that re-points each saved edge to its producer's pose
+    // output keeps every saved rig playing, and correctly typed.
+    const MIGRATIONS_SINCE_FREEZE = 7; // #915, #920, #930, #389, #1062, #1203, then #1224
     expect(PROJECT_FORMAT_VERSION).toBe(fixture().formatVersion + MIGRATIONS_SINCE_FREEZE);
   });
 

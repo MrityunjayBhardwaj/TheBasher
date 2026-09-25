@@ -11,7 +11,7 @@
 // REF: ref/sources/blender-transform/object.cc (`ob_parbone`); issue #1210.
 
 import type { Matrix4 } from 'three';
-import { actionPoseOf } from './AnimationClip';
+import { armaturePoseOf } from './bonePose';
 import { posedBoneMatrices } from './armatureDeform';
 import type { ObjectValue } from './types';
 
@@ -21,8 +21,8 @@ import type { ObjectValue } from './types';
  * parent that is not an armature Object, or a bone name its skeleton does not have (Blender's
  * identity, with nothing to warn through here).
  *
- * The pose is the one the armature Object's deform reads: its action when it poses this rig
- * (`actionPoseOf`), the rest otherwise.
+ * The pose is the one the armature Object's deform reads: its `pose` when it was made for this rig
+ * (`armaturePoseOf`), the rest otherwise.
  */
 export function boneParentMatrix(
   parent: { readonly kind: string },
@@ -36,5 +36,5 @@ export function boneParentMatrix(
   if (data?.kind !== 'Skeleton') return null;
   const index = data.bones.findIndex((b) => b.name === bone);
   if (index < 0) return null;
-  return posedBoneMatrices(data.bones, actionPoseOf(armature), seconds)[index];
+  return posedBoneMatrices(data.bones, armaturePoseOf(armature), seconds)[index];
 }

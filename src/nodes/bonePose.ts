@@ -8,7 +8,7 @@
 //
 // REF: issue #1223; design "Bones as Channels" (the pose wire).
 
-import type { BonePose, BoneSpec, Quat, Vec3 } from './types';
+import type { BonePose, BoneSpec, ObjectValue, PosedSkeletonValue, Quat, Vec3 } from './types';
 
 /** A rotation stored as XYZ euler radians, as the quaternion it means. */
 export function quatFromEulerXYZ(e: Vec3): Quat {
@@ -51,4 +51,24 @@ export function restBonePose(bone: BoneSpec): BonePose {
     quaternion: quatFromEulerXYZ(bone.rotation),
     scale: bone.scale ?? [1, 1, 1],
   };
+}
+
+/**
+ * #1224 — an armature Object's pose: the pose wired into it, or `null` when it has none or the
+ * pose was made for a different rig. (#1203's `actionPoseOf`, which read an action clip.)
+ *
+ * A pose pairs index-for-index with the skeleton it was made against, so it can only pose a
+ * skeleton whose bones are the same list. Blender binds an action to pose bones by NAME and leaves
+ * an unmatched channel doing nothing; the index form cannot do that partially, so a pose whose bone
+ * names differ from the Object's, anywhere, poses nothing rather than the wrong bones.
+ */
+export function armaturePoseOf(object: ObjectValue): PosedSkeletonValue | null {
+  const { data, pose } = object;
+  if (data?.kind !== 'Skeleton' || pose === undefined) return null;
+  const own = data.bones;
+  const made = pose.skeleton.bones;
+  if (own.length !== made.length || own.some((bone, i) => bone.name !== made[i].name)) {
+    return null;
+  }
+  return pose;
 }

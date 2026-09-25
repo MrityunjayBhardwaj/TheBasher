@@ -44,8 +44,8 @@ import { assertValidMotionRequest } from '../../core/motiongen/MotionGenerationC
 import { skeletonObjectId } from '../../core/import/skeletonObject';
 import { buildDefaultDagState } from '../../core/project/default';
 import { collectSkeletonObjects } from '../skeletonObjects';
-import { boneTransforms } from '../../viewport/boneShape';
-import { armatureBounds, posedSourceBones } from '../../viewport/referenceRig';
+import { poseTransforms } from '../../viewport/boneShape';
+import { armatureBounds } from '../../viewport/referenceRig';
 
 const stub = new StubMotionGenerationCapability();
 // Mutable so one case can hand back a SOMA clip instead — the stub's three-joint
@@ -392,14 +392,12 @@ describe('a generated motion stands its skeleton in the scene (#1078)', () => {
     expect(drawn, 'the armature band does not draw the generated Object').toBeDefined();
     expect(drawn!.bones).toHaveLength(78);
     expect(drawn!.clipCount).toBe(1);
-    expect(drawn!.clip).not.toBeNull();
+    expect(drawn!.pose).not.toBeNull();
     const worldScale = Math.hypot(drawn!.world[0], drawn!.world[1], drawn!.world[2]);
     expect(worldScale).toBeCloseTo(1, 6);
 
     // Frame 0, the pose first drawn. Measured 1.68 m on this file.
-    const posed = armatureBounds(
-      boneTransforms(posedSourceBones(drawn!.clip!, 0), drawn!.clip!.skeleton.bones),
-    );
+    const posed = armatureBounds(poseTransforms(drawn!.bones, drawn!.pose!.sample(0)));
     expect(posed.size.y * worldScale).toBeGreaterThan(1.5);
     expect(posed.size.y * worldScale).toBeLessThan(2.1);
   });

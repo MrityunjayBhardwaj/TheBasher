@@ -92,11 +92,12 @@ describe('buildSkeletonObjectOps', () => {
         from: { node: 'sk', socket: 'out' },
         to: { node: objectId, socket: 'data' },
       },
-      // #1203 — the clip is the Object's action: what poses the rig, for the band and a deform.
+      // #1224 — the clip's pose output is the Object's pose: what poses the rig, for the band and
+      // a deform.
       {
         type: 'connect',
-        from: { node: 'clip', socket: 'out' },
-        to: { node: objectId, socket: 'action' },
+        from: { node: 'clip', socket: 'pose' },
+        to: { node: objectId, socket: 'pose' },
       },
       {
         type: 'connect',
@@ -183,6 +184,7 @@ describe('normalisedRigScale', () => {
     const bones = (state.nodes.sk.params as { bones: BoneSpec[] }).bones;
     const clip = evaluate(state, 'clip', {
       ctx: { time: { frame: 0, seconds: 0, normalized: 0 } },
+      socket: 'out',
     }).value as AnimationClipValue;
     expect(clip.kind).toBe('AnimationClip');
 

@@ -1,5 +1,6 @@
 // #393 (step 2) — the Armature modifier deforms a skinned mesh as Blender's does: the oracle is
 // Blender 5.1.1 on the same file, and the join rows are Blender's measured behaviour.
+import { posedSkeletonFromClip } from './AnimationClip';
 import { readFileSync } from 'node:fs';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { __buildSkinnedNativeGltfImportOpsForTests } from '../core/import/nativeGltfImport';
@@ -188,10 +189,10 @@ describe('#393 step 2 — skinned-bar deformed through the graph matches Blender
     );
   });
 
-  it('an armature with no action rests, and no point moves', async () => {
+  it('an armature with no pose rests, and no point moves', async () => {
     const { state, modifierId } = await skinnedBar();
     const { skin, mesh } = deformed(state, modifierId);
-    expect(Array.from(sampleSkinDeform({ ...skin, action: null }, mesh, 0.5))).toEqual(
+    expect(Array.from(sampleSkinDeform({ ...skin, pose: null }, mesh, 0.5))).toEqual(
       Array.from(mesh.points),
     );
   });
@@ -246,7 +247,7 @@ function skinFor(groups: string[], armatureMatrix?: number[]): SkinDeformValue {
   return {
     kind: 'SkinDeform',
     bones: BONES,
-    action: TURN,
+    pose: posedSkeletonFromClip(TURN),
     boneOfGroup: boneOfGroups(groups, BONES),
     armatureMatrix: armatureMatrix ?? [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1],
   };

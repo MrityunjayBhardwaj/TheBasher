@@ -24,7 +24,6 @@
 import { Matrix4, Vector3 } from 'three';
 import { boneWorldMatrices, posedWorldMatrices } from '../viewport/boneShape';
 import { SKIN_JOINTS, SKIN_WEIGHTS } from './attributes';
-import { posedSkeletonFromClip } from './AnimationClip';
 import type { BoneSpec, MeshGeometryData, PosedSkeletonValue, SkinDeformValue } from './types';
 
 /** Below this matched weight a point is left where it is — Blender's `contrib_threshold`. */
@@ -67,10 +66,8 @@ export function posedBoneMatrices(
 /** Each bone's skinning matrix at `seconds`, in armature space: pose · rest⁻¹. */
 function skinningMatrices(skin: SkinDeformValue, seconds: number): Matrix4[] {
   const rest = boneWorldMatrices(skin.bones);
-  if (skin.action === null) return rest.map(() => new Matrix4());
-  // The value stays plain data (an overlay drops closures), so the pose is derived here — once per
-  // clip value, by `posedSkeletonFromClip`'s memo.
-  const posed = posedBoneMatrices(skin.bones, posedSkeletonFromClip(skin.action), seconds);
+  if (skin.pose === null) return rest.map(() => new Matrix4());
+  const posed = posedBoneMatrices(skin.bones, skin.pose, seconds);
   return posed.map((m, i) => m.clone().multiply(rest[i].clone().invert()));
 }
 

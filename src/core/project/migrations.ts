@@ -98,6 +98,10 @@ const formatMigrations: Record<number, FormatMigration> = {
   // pick a rig's pose by a rule (the one clip wired to its skeleton); this pass writes that rule
   // down as the edge, so every saved rig poses exactly as it did.
   14: migrateSkeletonObjectAction,
+  // v15 → v16 (#1224): the armature Object takes the pose wire. Its `action` input (a clip)
+  // becomes `pose` (a PosedSkeleton); each saved edge is re-pointed to its producer's pose
+  // OUTPUT, not just renamed, because loading checks no socket type.
+  15: migrateObjectActionToPose,
 };
 
 // ── v1 → v2: AnimationLayer retirement (#199) ──────────────────────────────
@@ -1712,4 +1716,62 @@ export function migrateSkeletonObjectAction(raw: unknown): unknown {
   }
 
   return { ...proj, formatVersion: 15 };
+}
+
+/**
+ * The pose output of each node type that can have fed `Object.action` — every registered type with
+ * an `AnimationClip` output, censused from the registry (#1224): `AnimationClip` and `RetargetClip`
+ * have one; `MotionGenerate` has none.
+ */
+const POSE_OUTPUT_OF: Readonly<Record<string, string>> = {
+  AnimationClip: 'pose',
+  RetargetClip: 'posed',
+};
+
+/**
+ * v15 → v16 (#1224) — the armature Object takes the pose wire.
+ *
+ * `Object.action` (an `AnimationClip`) becomes `Object.pose` (a `PosedSkeleton`), so layers and
+ * computed motion can reach the rig. Each saved `action` edge is RE-POINTED to its producer's pose
+ * output, not merely renamed: loading checks no socket type and the evaluator follows every saved
+ * input key, so an edge renamed with `socket: 'out'` left in place would load silently and hand a
+ * clip to the pose socket (#1222). A producer with no pose output (a `MotionGenerate`), or an edge
+ * to a node that is gone, is dropped and counted, and the rig rests.
+ *
+ * Its OWN format version, as every step above: a project saved at v15 would never re-run an
+ * earlier pass, and without it every saved rig would stop playing on load.
+ */
+export function migrateObjectActionToPose(raw: unknown): unknown {
+  const proj = raw as {
+    formatVersion?: number;
+    state?: { nodes?: Record<string, RawNode> };
+  };
+  const nodes = proj.state?.nodes;
+  if (!nodes) return { ...proj, formatVersion: 16 };
+
+  let repointed = 0;
+  let dropped = 0;
+  for (const node of Object.values(nodes)) {
+    if (node?.type !== 'Object' || node.inputs?.action === undefined) continue;
+    const { action, ...rest } = node.inputs;
+    const ref = Array.isArray(action) ? action[0] : action;
+    const producer = ref?.node === undefined ? undefined : nodes[ref.node]?.type;
+    const socket = producer === undefined ? undefined : POSE_OUTPUT_OF[producer];
+    if (ref?.node !== undefined && socket !== undefined) {
+      node.inputs = { ...rest, pose: { node: ref.node, socket } };
+      repointed++;
+    } else {
+      node.inputs = rest;
+      dropped++;
+    }
+  }
+
+  if (repointed > 0 || dropped > 0) {
+    console.warn(
+      `[migrateObjectActionToPose] re-pointed ${repointed} armature Object action edge(s) to the ` +
+        `pose wire; dropped ${dropped} whose producer has no pose output (#1224).`,
+    );
+  }
+
+  return { ...proj, formatVersion: 16 };
 }

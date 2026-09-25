@@ -23,7 +23,7 @@
 // ── A SKINNED FILE CAN ARRIVE AS A SKELETON, A DEFORM AND A MESH, AND DOES NOT YET (#1205) ───────
 //
 // Past the skin refusal the joints become a `Skeleton` standing as its own Object, posed by the
-// clip as its action (`nativeGltfSkeleton.ts`); each skinned mesh keeps its joint numbers and
+// clip's pose output on its `pose` input (`nativeGltfSkeleton.ts`, #1224); each skinned mesh keeps its joint numbers and
 // weights as point layers beside the group names they index, and an Armature modifier on its
 // stack, pointed at the skeleton's Object, deforms it (#393), drawn skinned (#1197). What a skin or
 // its clip needs that this model cannot hold — a bone scaled away from its rest (#1212), a stepped
@@ -1296,7 +1296,7 @@ export async function buildNativeGltfImportOps(
 
 /**
  * #393 — the same build, past the skin refusal: a skinned file's joints become a `Skeleton`, its
- * standing `Object` (posed by its action) and an `AnimationClip`, and each skinned mesh is deformed
+ * standing `Object` (posed by the clip's pose, #1224) and an `AnimationClip`, and each skinned mesh is deformed
  * by an Armature modifier pointed at that Object, which the viewport draws skinned (#1197).
  *
  * TESTS ONLY, until #1205. The product keeps refusing a skin because a character on this road would

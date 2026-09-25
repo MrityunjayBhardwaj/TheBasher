@@ -75,7 +75,9 @@ import { NodeSchema, NodeIdSchema, NodeRefSchema } from '../dag/types';
 // v15 (#1203): an armature Object carries the clip that poses it on an `action` edge. The band
 // used to choose the pose by a rule; a saved rig would stop playing without the pass that writes
 // the rule down as the edge. See migrations.ts formatMigrations[14].
-export const PROJECT_FORMAT_VERSION = 15;
+// v16 (#1224): the armature Object takes the pose wire — `action` (a clip) becomes `pose`, and each
+// saved edge is re-pointed to its producer's pose output. See migrations.ts formatMigrations[15].
+export const PROJECT_FORMAT_VERSION = 16;
 
 export const ProjectSchema = z.object({
   formatVersion: z.literal(PROJECT_FORMAT_VERSION),

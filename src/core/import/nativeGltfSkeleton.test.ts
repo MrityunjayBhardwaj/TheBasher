@@ -20,8 +20,8 @@ import { applyOp } from '../dag/ops';
 import { evaluate } from '../dag';
 import { emptyDagState, type DagState } from '../dag/state';
 import type { Op } from '../dag/types';
-import { actionPoseOf, posedSkeletonFromClip } from '../../nodes/AnimationClip';
-import { eulerXYZFromQuat } from '../../nodes/bonePose';
+import { posedSkeletonFromClip } from '../../nodes/AnimationClip';
+import { eulerXYZFromQuat, armaturePoseOf } from '../../nodes/bonePose';
 import { unpackMeshData } from '../../app/meshGeometryData';
 import type {
   AnimationClipValue,
@@ -142,13 +142,14 @@ describe('#393 step 1 — a skinned glTF’s joints become a skeleton', () => {
     expect(children.map((c) => c.node)).toEqual([standIn]);
     expect(state.nodes[standIn!].params).toMatchObject({ scale: [1, 1, 1] });
     expect(state.nodes[standIn!].meta?.name).toBe('bend');
-    // #1203 — the clip is the Object's action: what the band draws and a deform reads.
+    // #1224 — the clip's pose is the Object's pose: what the band draws and a deform reads.
     const [clipId] = nodesOfType(state, 'AnimationClip');
-    expect(state.nodes[standIn!].inputs.action).toEqual({ node: clipId, socket: 'out' });
+    expect(state.nodes[standIn!].inputs.pose).toEqual({ node: clipId, socket: 'pose' });
+    expect(state.nodes[standIn!].inputs.action).toBeUndefined();
     const rig = evaluate(state, standIn!, {
       ctx: { time: { frame: 0, seconds: 0, normalized: 0 } },
     }).value as ObjectValue;
-    expect(eulerXYZFromQuat(actionPoseOf(rig)!.sample(1)[1].quaternion)[2]).toBeCloseTo(
+    expect(eulerXYZFromQuat(armaturePoseOf(rig)!.sample(1)[1].quaternion)[2]).toBeCloseTo(
       2 * Math.atan2(0.6756, 0.7373),
       3,
     );
@@ -159,6 +160,7 @@ describe('#393 step 1 — a skinned glTF’s joints become a skeleton', () => {
     const [clipId] = nodesOfType(state, 'AnimationClip');
     const clip = evaluate(state, clipId, {
       ctx: { time: { frame: 0, seconds: 0, normalized: 0 } },
+      socket: 'out',
     }).value as AnimationClipValue;
     expect(clip.skeleton.bones).toHaveLength(2);
     expect(clip.duration).toBe(1);

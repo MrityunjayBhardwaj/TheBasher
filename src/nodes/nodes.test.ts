@@ -576,9 +576,14 @@ describe('SceneChild recursion', () => {
 
 const TIME_SAMPLES = [0, 0.5, 1, 2.5, 5];
 
-function evalAt<T>(state: ReturnType<typeof emptyDagState>, target: string, seconds: number): T {
+function evalAt<T>(
+  state: ReturnType<typeof emptyDagState>,
+  target: string,
+  seconds: number,
+  socket?: string,
+): T {
   const ctx = { time: { frame: Math.round(seconds * 60), seconds, normalized: 0 } };
-  return evaluate(state, target, { ctx }).value as T;
+  return evaluate(state, target, { ctx, ...(socket ? { socket } : {}) }).value as T;
 }
 
 describe('P2 — Time socket plumbing (V3)', () => {
@@ -746,8 +751,8 @@ describe('P2 — AnimationClip (pure, TIME-FREE — #920)', () => {
 
   it.each(TIME_SAMPLES)('twice-eval bit-exact at t=%d', (t) => {
     const state = buildClip();
-    const a = evalAt<AnimationClipValue>(state, 'clip', t);
-    const b = evalAt<AnimationClipValue>(state, 'clip', t);
+    const a = evalAt<AnimationClipValue>(state, 'clip', t, 'out');
+    const b = evalAt<AnimationClipValue>(state, 'clip', t, 'out');
     expect(a).toEqual(b);
   });
 
@@ -758,8 +763,8 @@ describe('P2 — AnimationClip (pure, TIME-FREE — #920)', () => {
   // comparing ACROSS times does. Re-add the input and this reddens.
   it.each(TIME_SAMPLES)('is TIME-FREE — the value at t=%d equals the value at t=0', (t) => {
     const state = buildClip();
-    expect(evalAt<AnimationClipValue>(state, 'clip', t)).toEqual(
-      evalAt<AnimationClipValue>(state, 'clip', 0),
+    expect(evalAt<AnimationClipValue>(state, 'clip', t, 'out')).toEqual(
+      evalAt<AnimationClipValue>(state, 'clip', 0, 'out'),
     );
   });
 
@@ -768,7 +773,7 @@ describe('P2 — AnimationClip (pure, TIME-FREE — #920)', () => {
   // render band and `LocomotionState` call, so there is one answer to "where is
   // this bone at t" rather than two that can drift.
   it('keyframe interpolation: at t=0.5 torso rotation.y is between 0 and 0.5', () => {
-    const clip = evalAt<AnimationClipValue>(buildClip(), 'clip', 0);
+    const clip = evalAt<AnimationClipValue>(buildClip(), 'clip', 0, 'out');
     const torso = buildClipBoneSamplers(clip).get(1);
     expect(torso).toBeDefined();
     // #1223 — the sampler answers an orientation; a single-axis turn slerps to the same angle.
@@ -776,7 +781,7 @@ describe('P2 — AnimationClip (pure, TIME-FREE — #920)', () => {
   });
 
   it('looping: t=2.0 wraps to t=0 (start of clip)', () => {
-    const clip = evalAt<AnimationClipValue>(buildClip(), 'clip', 0);
+    const clip = evalAt<AnimationClipValue>(buildClip(), 'clip', 0, 'out');
     const torso = buildClipBoneSamplers(clip).get(1);
     expect(torso).toBeDefined();
     expect(torso!(2.0).quaternion).toEqual(torso!(0).quaternion);

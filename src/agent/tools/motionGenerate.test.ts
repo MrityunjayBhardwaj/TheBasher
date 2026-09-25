@@ -176,6 +176,7 @@ describe('motion.generate produces a clip and adds no road of its own', () => {
     expect(clipNode, 'no AnimationClip in the graph').toBeTruthy();
     const clip = evaluate(state, clipNode!.id, {
       ctx: { time: { frame: 0, seconds: 0, normalized: 0 } },
+      socket: 'out',
     }).value as AnimationClipValue;
     // The same assertions the imported-BVH clip gets, deliberately — a generated
     // clip needing a weaker check would not be the same kind of object.
@@ -423,12 +424,13 @@ describe('the agent-facing text offers only roads that exist (#758)', () => {
     // pose-bearing socket, so it cannot hold two poses at once. It is the first
     // consumer the pose lane has ever had — which is what makes the lane
     // terminate somewhere — and the property this row guards is untouched.
-    // #1203 adds a FIFTH, and it is not a fold: `Object.action` is the clip that poses an armature
-    // Object, exactly one, and the Object has no other pose-bearing socket.
+    // #1203 adds a FIFTH, and it is not a fold: what poses an armature Object, exactly one, and the
+    // Object has no other pose-bearing socket. #1224 re-types it from a clip (`action`) to the pose
+    // wire (`pose`); still one, still single.
     expect(poseConsumingSockets()).toEqual([
       'AnimationClip.source: AnimationClip (single)',
       'LocomotionState.clip: AnimationClip (single)',
-      'Object.action: AnimationClip (single)',
+      'Object.pose: PosedSkeleton (single)',
       'PoseOverride.pose: PosedSkeleton (single)',
       'RetargetClip.sourceClip: AnimationClip (single)',
     ]);

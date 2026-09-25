@@ -6,7 +6,7 @@
 // `specToThreeSkeleton` turns the armature's rest bones into three bones with their world matrices
 // composed before the inverses are taken — the order whose absence once flattened every rig to the
 // origin (#828, #838, #839). Those bones live outside the scene, in armature space; each frame they
-// take the action's pose and their world matrices are recomputed.
+// take the armature's pose and their world matrices are recomputed.
 //
 // ── THE PALETTE IS THE MESH'S GROUP TABLE ──────────────────────────────────────────────────────
 //
@@ -33,13 +33,12 @@
 
 import { Bone, Matrix4, Skeleton } from 'three';
 import { specToThreeSkeleton } from '../core/import/threeAdapter';
-import { posedSkeletonFromClip } from '../nodes/AnimationClip';
 import { restBonePose } from '../nodes/bonePose';
 import { SKIN_JOINTS, SKIN_WEIGHTS } from '../nodes/attributes';
 import type {
-  AnimationClipValue,
   BonePose,
   MeshGeometryData,
+  PosedSkeletonValue,
   SkinDeformValue,
 } from '../nodes/types';
 import { meshSplitLayout } from './polygonLayout';
@@ -56,17 +55,17 @@ export interface SkinnedDraw {
   readonly skinIndex: Uint16Array;
   readonly skinWeight: Float32Array;
   /**
-   * Pose the armature's bones by `action` at `seconds`; with no action, back to rest. The action is
-   * passed per call rather than fixed at build (#1207): an overlay copies the value it comes on
-   * every frame, and the build must not be redone for a copy of the same clip.
+   * Pose the armature's bones by `pose` at `seconds`; with none, back to rest. The pose is passed
+   * per call rather than fixed at build (#1207): it changes whenever the motion does, and the
+   * build must not be redone for it.
    */
-  readonly pose: (seconds: number, action: AnimationClipValue | null) => void;
+  readonly pose: (seconds: number, pose: PosedSkeletonValue | null) => void;
 }
 
 /**
  * What the build depends on, as content (#1207): the mesh's geometry key and the skin's rest
- * bones, group join and armature placement — never object identity, which an overlay's per-frame
- * copy changes. The action is not in it; `pose` takes that.
+ * bones, group join and armature placement — never object identity, which changes with every
+ * graph change. The pose is not in it; `pose` takes that.
  */
 export function skinnedDrawKey(geometryKey: string, skin: SkinDeformValue): string {
   return JSON.stringify([geometryKey, skin.bones, skin.boneOfGroup, skin.armatureMatrix]);
@@ -105,10 +104,10 @@ export function buildSkinnedDraw(skin: SkinDeformValue, mesh: MeshGeometryData):
     bindMatrix: new Matrix4().fromArray(skin.armatureMatrix).invert(),
     skinIndex,
     skinWeight,
-    pose(seconds, action) {
-      // The clip's pose is built once per clip value (`posedSkeletonFromClip`'s memo), the same
-      // samplers the CPU deform reads, so the draw and the modifier cannot disagree.
-      place(action === null ? rest : posedSkeletonFromClip(action).sample(seconds));
+    pose(seconds, pose) {
+      // The same pose the CPU deform reads (`SkinDeformValue.pose`), so the draw and the modifier
+      // cannot disagree.
+      place(pose === null ? rest : pose.sample(seconds));
       for (const root of roots) root.updateMatrixWorld(true);
     },
   };

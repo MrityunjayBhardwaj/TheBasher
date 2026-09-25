@@ -136,8 +136,10 @@ function importedClip(
   try {
     let scratch = state;
     for (const op of ops) scratch = applyOp(scratch, op).next;
+    // #1224 — by socket: a clip node outputs its keys and its pose.
     const value = evaluate(scratch, clipId, {
       ctx: { time: { frame: 0, seconds: 0, normalized: 0 } },
+      socket: 'out',
     }).value as AnimationClipValue | undefined;
     return value?.kind === 'AnimationClip' ? value : null;
   } catch {

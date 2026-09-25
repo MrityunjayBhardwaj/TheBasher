@@ -16,7 +16,7 @@
 import { z } from 'zod';
 import type { NodeDefinition } from '../core/dag/types';
 import { openpbrMaterialSchema } from './materialSchema';
-import type { AnimationClipValue, ObjectData, ObjectValue, SceneObject } from './types';
+import type { ObjectData, ObjectValue, PosedSkeletonValue, SceneObject } from './types';
 import { rotationModeFieldsOf, rotationModeParams } from './rotationMode';
 
 export const ObjectParams = z.object({
@@ -99,9 +99,11 @@ export const ObjectNode: NodeDefinition<ObjectParams, ObjectValue> = {
   inputs: {
     data: { type: ['ObjectData', 'Skeleton'], cardinality: 'single' },
     children: { type: 'SceneObject', cardinality: 'list' },
-    // #1203 — the clip that poses this Object's skeleton, as an armature Object carries its action
-    // in Blender. A deform reads the armature's pose through this Object (#393).
-    action: { type: 'AnimationClip', cardinality: 'single' },
+    // #1224 — the pose that poses this Object's skeleton: the end of the pose wire, as Houdini's
+    // Joint Deform takes an animated pose and a Blender armature Object carries its pose. A
+    // deform, the bone draw and a bone-parented Object read it through this Object (#393). It
+    // was an `action` clip until #1224 (#1203); a clip reaches it through its `pose` output.
+    pose: { type: 'PosedSkeleton', cardinality: 'single' },
   },
   outputs: { out: { type: 'SceneObject', cardinality: 'single' } },
   // The posable node — 'transform' implies 'constraint' (a pose can be
@@ -179,16 +181,16 @@ export const ObjectNode: NodeDefinition<ObjectParams, ObjectValue> = {
       // #1152 — the same rule: carried only when it holds something, so an Object with no
       // children keeps the shape (and the cache identity) it had before it could parent.
       ...(childrenOf(inputs.children).length > 0 ? { children: childrenOf(inputs.children) } : {}),
-      // #1203 — the same rule once more: an Object with no action keeps its old shape.
-      ...(isClip(inputs.action) ? { action: inputs.action } : {}),
+      // #1203/#1224 — the same rule once more: an Object with no pose keeps its old shape.
+      ...(isPose(inputs.pose) ? { pose: inputs.pose } : {}),
       // #1210 — and once more: only an Object parented to a bone names one.
       ...(params.parentBone ? { parentBone: params.parentBone } : {}),
     };
   },
 };
 
-function isClip(v: unknown): v is AnimationClipValue {
-  return (v as { kind?: unknown } | null | undefined)?.kind === 'AnimationClip';
+function isPose(v: unknown): v is PosedSkeletonValue {
+  return (v as { kind?: unknown } | null | undefined)?.kind === 'PosedSkeleton';
 }
 
 /** The evaluated children list, empty when the socket is unbound. */
