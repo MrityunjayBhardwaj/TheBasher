@@ -174,7 +174,7 @@ test('#1216 — a saved clone character loads native, drawn where the clone drew
   const notice = await page.evaluate(async (ref) => {
     const m = await import('/src/app/stores/assetErrorStore.ts');
     const s = m.useAssetErrorStore.getState();
-    return { message: s.errors[ref], label: s.labels[ref] };
+    return { message: s.errors[`character:${ref}`], label: s.labels[`character:${ref}`] };
   }, REF);
   expect(notice.label).toBe('character converted:');
   expect(notice.message).toContain('now loads as a native character');
@@ -203,13 +203,21 @@ async function saveAndReload(
     const boot = await import('/src/app/boot.ts');
     await boot.saveCurrent();
   });
+  return reloadAndRead(page, ref);
+}
+
+/** Reload on the resume road (no save), and read back the node types and the file's notice. */
+async function reloadAndRead(
+  page: Page,
+  ref: string,
+): Promise<{ after: string[]; notice: { message?: string; label?: string } }> {
   await page.reload();
   await ready(page);
   const after = await types(page);
   const notice = await page.evaluate(async (r) => {
     const m = await import('/src/app/stores/assetErrorStore.ts');
     const s = m.useAssetErrorStore.getState();
-    return { message: s.errors[r], label: s.labels[r] };
+    return { message: s.errors[`character:${r}`], label: s.labels[`character:${r}`] };
   }, ref);
   return { after, notice };
 }
@@ -240,16 +248,16 @@ function expectSameTip(
   );
 }
 
-test('#1216 slice 2 — a bound motion with a hand-pose on it loads native, drawn as the clone drew it', async ({
-  page,
-}) => {
-  const errors: string[] = [];
-  page.on('pageerror', (e) => errors.push(e.message));
-  await stageClone(page, 'skinned-bar.glb', REF);
-
-  // A motion stands in the scene, bound onto the clone rig and a bone posed on it — each through
-  // the product's own verbs (the retarget and the pose mutators, as the drop and the inspector call them).
-  const bound = await page.evaluate(async (pose) => {
+/**
+ * A motion stands in the scene (a BVH swing), bound onto the clone rig and Bone1 posed on it — each
+ * through the product's own verbs (the retarget and the pose mutators, as the drop and the
+ * inspector call them).
+ */
+async function bindSwingPosed(
+  page: Page,
+  pose: [number, number, number],
+): Promise<{ retarget: boolean; posed: boolean }> {
+  return page.evaluate(async (pose) => {
     const w = window as unknown as BasherWindow;
     const bvh = await import('/src/core/import/bvhImportChain.ts');
     const stand = await import('/src/core/import/skeletonObject.ts');
@@ -324,7 +332,17 @@ test('#1216 slice 2 — a bound motion with a hand-pose on it loads native, draw
       'pose',
     );
     return { retarget: retarget.ok, posed: posed.ok };
-  }, POSE);
+  }, pose);
+}
+
+test('#1216 slice 2 — a bound motion with a hand-pose on it loads native, drawn as the clone drew it', async ({
+  page,
+}) => {
+  const errors: string[] = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  await stageClone(page, 'skinned-bar.glb', REF);
+
+  const bound = await bindSwingPosed(page, POSE);
   expect(bound).toEqual({ retarget: true, posed: true });
   expect(await types(page)).toEqual(expect.arrayContaining(['GltfAsset', 'PoseOverride']));
   const clone = await drawnTip(page, [0.5, 1]);
@@ -464,7 +482,121 @@ test('#1216 slice 3 — a material colour set on the character loads native, dra
   const { after, notice } = await saveAndReload(page, REF);
   expect(after.filter((t) => /^Gltf|TransformClip|ClipSelect/.test(t))).toEqual([]);
   expect(notice.label).toBe('character converted:');
-  const native = await page.evaluate(async () => {
+  const native = { color: await nativeMeshColour(page) };
+  console.log(
+    `material: untouched ${JSON.stringify(untouched)} clone ${JSON.stringify(clone)} native ${JSON.stringify(native)}`,
+  );
+  expect(clone?.[0].color).not.toBe(untouched?.[0].color);
+  expect(native?.color).toBe(clone?.[0].color);
+  expect(errors).toEqual([]);
+});
+
+test('#1216 slice 4 — every carried edit on one character loads native, drawn as the clone drew it', async ({
+  page,
+}) => {
+  const errors: string[] = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  await stageClone(page, 'skinned-bar.glb', REF);
+
+  // Each edit through the product's own verbs, all on the one character, each on a component no
+  // other edit draws over (so dropping any one of them moves the drawn tip or the colour):
+  //   placed and turned (the Group), a motion bound (retarget), Bone1 posed on that motion
+  //   (poseBone), Bone0 turned by the gizmo (value + override bit), Bone0's location keyed (the key
+  //   tool's bone address), and the mesh's colour set (setMaterialColor).
+  await page.evaluate(() => {
+    const w = window as unknown as BasherWindow;
+    const dag = w.__basher_dag.getState();
+    const [groupId, group] = Object.entries(dag.state.nodes).find(([, n]) => n.type === 'Group')!;
+    const pos = (group.params as { position: number[] }).position;
+    dag.dispatchAtomic(
+      [
+        {
+          type: 'setParam',
+          nodeId: groupId,
+          paramPath: 'position',
+          value: [pos[0] + 1.5, pos[1], pos[2] - 1],
+        },
+        { type: 'setParam', nodeId: groupId, paramPath: 'rotation', value: [10, 90, 0] },
+      ],
+      'user',
+      'place the character',
+    );
+  });
+  const bound = await bindSwingPosed(page, POSE);
+  const rest = await page.evaluate(async (ref) => {
+    const w = window as unknown as BasherWindow;
+    const { dispatchMutatorFromUI } = await import('/src/app/animate/dispatchMutator.ts');
+    const dag = w.__basher_dag.getState();
+    const asset = Object.values(dag.state.nodes).find((n) => n.type === 'GltfAsset')!;
+    const names = (asset.params as { nodeNameMap: Record<string, string> }).nodeNameMap;
+    dag.dispatchAtomic(
+      [
+        { type: 'setParam', nodeId: names.Bone0, paramPath: 'rotation', value: [10, 0, -25] },
+        { type: 'setParam', nodeId: names.Bone0, paramPath: 'overridden.rotation', value: true },
+      ],
+      'user',
+      'turn the root bone',
+    );
+    const keyed = dispatchMutatorFromUI(
+      'mutator.timeline.keyframe',
+      {
+        bone: { assetRef: ref, childName: 'Bone0', component: 'position' },
+        time: 0.5,
+        value: [0.3, 0, 0.2],
+      },
+      'key',
+    ).ok;
+    const coloured = dispatchMutatorFromUI(
+      'mutator.setMaterialColor',
+      { targetSelectors: [names.SkinnedBar], color: '#12ab34' },
+      'colour',
+    ).ok;
+    return { keyed, coloured };
+  }, REF);
+  const edited = { ...bound, ...rest };
+  expect(edited).toEqual({ retarget: true, posed: true, keyed: true, coloured: true });
+  expect(await types(page)).toEqual(
+    expect.arrayContaining(['GltfAsset', 'PoseOverride', 'RetargetClip']),
+  );
+  const times = [0.25, 0.5, 1];
+  const clone = await drawnTip(page, times);
+  await page.waitForFunction(() =>
+    Boolean(
+      (window as unknown as { __basher_gltf_meshes?: () => unknown[] }).__basher_gltf_meshes?.()
+        ?.length,
+    ),
+  );
+  const cloneColour = await page.evaluate(
+    () =>
+      (
+        window as unknown as { __basher_gltf_meshes: () => { color: string | null }[] }
+      ).__basher_gltf_meshes()[0].color,
+  );
+
+  const { after, notice } = await saveAndReload(page, REF);
+  expect(after).toEqual(
+    expect.arrayContaining(['Skeleton', 'PoseLayer', 'ArmatureModifier', 'RetargetClip']),
+  );
+  expect(after.filter((t) => /^Gltf|TransformClip|ClipSelect|PoseOverride/.test(t))).toEqual([]);
+  expect(notice.label).toBe('character converted:');
+  console.log(`every edit: notice ${notice.message}`);
+
+  const native = await drawnTip(page, times);
+  const nativeColour = await nativeMeshColour(page);
+  console.log(
+    `every edit: clone ${JSON.stringify(clone.tip)} ${cloneColour} native ${JSON.stringify(native.tip)} ${nativeColour}`,
+  );
+  expectSameTip(clone.tip, native.tip, times);
+  expect(cloneColour).toBe('#12ab34');
+  expect(nativeColour).toBe(cloneColour);
+  // The bound motion and the key move the tip between the times; equal tips are not two rests.
+  expect(Math.hypot(...clone.tip[0].map((c, k) => c - clone.tip[2][k]))).toBeGreaterThan(0.1);
+  expect(errors).toEqual([]);
+});
+
+/** The colour the native mesh Object (the one an Armature modifier deforms) draws in. */
+async function nativeMeshColour(page: Page): Promise<string | null> {
+  return page.evaluate(async () => {
     const w = window as unknown as BasherWindow & {
       __basher_mesh_material?: (id: string) => { color: string | null } | null;
     };
@@ -478,15 +610,65 @@ test('#1216 slice 3 — a material colour set on the character loads native, dra
     )![0];
     for (let i = 0; i < 100; i++) {
       const m = w.__basher_mesh_material?.(meshObject);
-      if (m) return m;
+      if (m) return m.color;
       await new Promise((r) => requestAnimationFrame(r));
     }
     return null;
   });
+}
+
+test('#1216 slice 4 — a character whose file is gone says so by name, and the project still opens', async ({
+  page,
+}) => {
+  const errors: string[] = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  await stageClone(page, 'skinned-bar.glb', REF);
+  const name = await page.evaluate(() => {
+    const w = window as unknown as BasherWindow & {
+      __basher_dag: {
+        getState: () => { state: { nodes: Record<string, { meta?: { name?: string } }> } };
+      };
+    };
+    const nodes = w.__basher_dag.getState().state.nodes as Record<
+      string,
+      { type: string; meta?: { name?: string } }
+    >;
+    return Object.values(nodes).find((n) => n.type === 'Group')?.meta?.name ?? null;
+  });
+  // Saved, then the file leaves this browser's storage (cleared site data, another browser).
+  await page.evaluate(async () => {
+    const boot = await import('/src/app/boot.ts');
+    await boot.saveCurrent();
+  });
+  const gone = await page.evaluate(async (ref) => {
+    const boot = await import('/src/app/boot.ts');
+    const storage = await boot.getStorage();
+    await storage.delete(ref);
+    return !(await storage.exists(ref));
+  }, REF);
+  expect(gone).toBe(true);
+
+  // The page that was open when the file left still draws it and fails its reads; what is under test
+  // is the load that follows (cleared site data never has that page open), so only its errors count.
+  errors.length = 0;
+  const { after, notice } = await reloadAndRead(page, REF);
   console.log(
-    `material: untouched ${JSON.stringify(untouched)} clone ${JSON.stringify(clone)} native ${JSON.stringify(native)}`,
+    `file gone: name ${name} types ${JSON.stringify(after)} notice ${JSON.stringify(notice)}`,
   );
-  expect(clone?.[0].color).not.toBe(untouched?.[0].color);
-  expect(native?.color).toBe(clone?.[0].color);
-  expect(errors).toEqual([]);
+  // The project opened: the scene is there, and the character is kept exactly as saved.
+  expect(after).toContain('GltfAsset');
+  expect(after).not.toContain('ArmatureModifier');
+  expect(notice.label).toBe('character not converted:');
+  // The Group carries no name of its own here, so the notice names the character by its file.
+  expect(notice.message).toContain(`"${name ?? REF.split('/').pop()}"`);
+  expect(notice.message).toContain("no longer in this browser's storage");
+  // The kept character draws on the old road, whose read of the missing file fails: the file's OWN
+  // row reports it (the error boundary caught it), and the only page errors are that same failure,
+  // which React's development build re-reports to the window after a boundary catches it.
+  const fileRow = await page.evaluate(async (r) => {
+    const m = await import('/src/app/stores/assetErrorStore.ts');
+    return m.useAssetErrorStore.getState().errors[r] ?? null;
+  }, REF);
+  expect(fileRow).not.toBeNull();
+  expect(errors.every((e) => e === fileRow)).toBe(true);
 });

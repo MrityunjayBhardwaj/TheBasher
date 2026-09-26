@@ -10,6 +10,7 @@ import type { Op } from '../../core/dag/types';
 import { buildDefaultDagState } from '../../core/project/default';
 import { buildGltfImportOps, hashId } from '../../core/import/gltfImportChain';
 import { buildSavedCharacterOps } from '../../core/import/nativeGltfImport';
+import { useAssetErrorStore } from '../stores/assetErrorStore';
 import {
   convertCloneCharacters,
   convertLoadedProject,
@@ -417,7 +418,11 @@ describe('the load door: saved to storage, loaded back, converted', () => {
     const notices: string[][] = [];
     reportCharacterConversion(report, (...row) => notices.push(row));
     expect(notices).toEqual([
-      [REF, expect.stringContaining('now loads as a native character'), 'character converted:'],
+      [
+        `character:${REF}`,
+        expect.stringContaining('now loads as a native character'),
+        'character converted:',
+      ],
     ]);
 
     // Saved once converted, it loads as it is: nothing is left to convert.
@@ -439,11 +444,23 @@ describe('the load door: saved to storage, loaded back, converted', () => {
     reportCharacterConversion(report, (...row) => notices.push(row));
     expect(notices).toEqual([
       [
-        REF,
+        `character:${REF}`,
         `"skinned-bar.glb" still loads on the old imported-file structure: its file (${REF}) is no longer in this browser's storage.`,
         'character not converted:',
       ],
     ]);
+
+    // The kept character renders on the old road, and its file fails to load there: the renderer
+    // reports (and later clears) the FILE's row. The load's notice is its own row and outlives both.
+    const store = useAssetErrorStore.getState();
+    store.clearAll();
+    reportCharacterConversion(report, store.report);
+    store.report(REF, 'A requested file or directory could not be found');
+    store.clear(REF);
+    const rows = useAssetErrorStore.getState();
+    expect(rows.labels[`character:${REF}`]).toBe('character not converted:');
+    expect(rows.errors[`character:${REF}`]).toContain("no longer in this browser's storage");
+    store.clearAll();
   });
 });
 

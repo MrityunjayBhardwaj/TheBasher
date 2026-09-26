@@ -1119,14 +1119,21 @@ export async function convertLoadedProject(
   };
 }
 
-/** One notice row per character the load converted or kept, keyed by its file. */
+/**
+ * The banner row a character's load notice is written under. Its own row, not the file's: the
+ * renderer reports and clears the file's row (`assetRef`) as the file loads or fails, and a kept
+ * character whose file is gone fails to load — which replaced the one row that said why (#1264).
+ */
+const characterNoticeKey = (assetRef: string): string => `character:${assetRef}`;
+
+/** One notice row per character the load converted or kept, under `characterNoticeKey`. */
 export function reportCharacterConversion(
   report: CharacterConversionReport,
-  notify: (assetRef: string, message: string, label: string) => void,
+  notify: (row: string, message: string, label: string) => void,
 ): void {
   for (const { name, assetRef, notes } of report.converted) {
     notify(
-      assetRef,
+      characterNoticeKey(assetRef),
       `"${name}" was saved on the old imported-file structure and now loads as a native character (a skeleton and an Armature modifier); the project's next save keeps it that way.${
         notes.length > 0 ? ` Now: ${notes.join('; ')}.` : ''
       }`,
@@ -1135,7 +1142,7 @@ export function reportCharacterConversion(
   }
   for (const { name, assetRef, why } of report.kept) {
     notify(
-      assetRef,
+      characterNoticeKey(assetRef),
       `"${name}" still loads on the old imported-file structure: ${why.join('; ')}.`,
       'character not converted:',
     );
