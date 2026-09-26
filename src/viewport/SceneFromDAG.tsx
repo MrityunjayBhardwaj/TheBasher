@@ -202,7 +202,7 @@ import type {
   SpotLightValue,
   TransformValue,
   Vec3,
-  AnimationClipValue,
+  PosedSkeletonValue,
   SkeletonValue,
 } from '../nodes/types';
 
@@ -325,18 +325,19 @@ export function SceneFromDAG({ outputName = 'render' }: SceneFromDAGProps) {
     const out: ReferenceRigInput[] = [];
     for (const pair of retargetPairs(state.nodes)) {
       try {
-        // #1224 — by socket: a clip node outputs its keys and its pose.
-        const clip = evaluate(state, pair.sourceClipId, { cache, socket: 'out' }).value as
-          | AnimationClipValue
+        // #1250 — the source is whatever pose the retarget reads, evaluated on the socket its edge
+        // names: a clip's pose, a base layer's, a layer above it. The wire carries its own rig.
+        const pose = evaluate(state, pair.sourceId, { cache, socket: pair.sourceSocket }).value as
+          | PosedSkeletonValue
           | undefined;
         const target = evaluate(state, pair.targetSkeletonId, { cache, socket: 'out' }).value as
           | SkeletonValue
           | undefined;
-        if (!clip || clip.kind !== 'AnimationClip' || !clip.skeleton?.bones?.length) continue;
+        if (!pose || pose.kind !== 'PosedSkeleton' || !pose.skeleton?.bones?.length) continue;
         if (!target || !target.bones?.length) continue;
         out.push({
           id: pair.retargetId,
-          clip,
+          pose,
           targetSkeletonId: pair.targetSkeletonId,
         });
       } catch {

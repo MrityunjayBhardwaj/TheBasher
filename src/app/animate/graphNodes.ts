@@ -20,6 +20,14 @@ export interface GraphNodeLike {
  * A `single` socket resolves to one connection; an array is tolerated so a
  * cardinality change upstream degrades to "no clip found" rather than a crash.
  */
+/** The OUTPUT socket an input edge reads on its source node (`'out'` when the edge names none —
+ *  the evaluator's default). */
+export function edgeSocket(node: GraphNodeLike | undefined, socket: string): string {
+  const s = node?.inputs?.[socket];
+  const one = (Array.isArray(s) ? s[0] : s) as { socket?: unknown } | undefined;
+  return typeof one?.socket === 'string' && one.socket.length > 0 ? one.socket : 'out';
+}
+
 export function edgeTarget(node: GraphNodeLike | undefined, socket: string): string | null {
   const s = node?.inputs?.[socket];
   if (!s) return null;

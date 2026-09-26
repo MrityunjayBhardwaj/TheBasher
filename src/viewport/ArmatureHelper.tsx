@@ -33,7 +33,6 @@ import {
   resetDegenerateBasisCount,
 } from './boneShape';
 import { armatureBounds, referencePlacement } from './referenceRig';
-import { posedSkeletonFromClip } from '../nodes/AnimationClip';
 import { skeletonObjectFrames } from './skeletonObjectPose';
 import { useTimeStore } from '../app/stores/timeStore';
 import { useViewportStore } from '../app/stores/viewportStore';
@@ -42,7 +41,7 @@ import { useBoneSelectionStore } from '../app/stores/boneSelectionStore';
 import { getActiveBone } from '../app/boneSelection';
 import { selectNode, type SelectClickLike } from './selectNodeOnClick';
 import { pickBone } from './armaturePick';
-import type { AnimationClipValue } from '../nodes/types';
+import type { PosedSkeletonValue } from '../nodes/types';
 import type { SkeletonObject } from '../app/skeletonObjects';
 
 /** Blender's default unselected bone wire. Chrome, so it reads as an overlay. */
@@ -73,8 +72,9 @@ const MAX_BONES = 4096;
 export interface ReferenceRigInput {
   /** The retarget node's id — stable identity across frames. */
   readonly id: string;
-  /** The SOURCE clip: carries its own skeleton, keyframes, duration and loop. */
-  readonly clip: AnimationClipValue;
+  /** The SOURCE pose the retarget reads (#1250): a clip's, a base layer's, any pose wire. It
+   *  carries its own skeleton and samples itself at a time. */
+  readonly pose: PosedSkeletonValue;
   /** The Skeleton node this retarget drives. A native character's armature Object stands exactly
    *  this skeleton, so it is found by identity (#1273); a motion's own rig Object stands the
    *  SOURCE skeleton, never a target, so it can never be taken for the character. */
@@ -448,10 +448,7 @@ export function ArmatureHelper({
           if (standing < 0) continue;
           const best = standalone[standing];
 
-          const posed = poseTransforms(
-            rig.clip.skeleton.bones,
-            posedSkeletonFromClip(rig.clip).sample(seconds),
-          );
+          const posed = poseTransforms(rig.pose.skeleton.bones, rig.pose.sample(seconds));
           if (posed.length === 0) continue;
           const srcB = armatureBounds(posed);
           const tgtB = armatureBounds(best);

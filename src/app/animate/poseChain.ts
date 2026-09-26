@@ -155,3 +155,48 @@ export function whyNotHandPosable(
     return `is ${params.mode}, not override`;
   return null;
 }
+
+/**
+ * The `Skeleton` node whose rig a pose output stands, walked on the node table (#1250).
+ *
+ * The evaluated wire already answers this — a `PosedSkeletonValue` carries its `skeleton` — and a
+ * reader that evaluates should read it there. This is the params-side answer for readers that
+ * cannot evaluate (the bone-map editor's rows), and it is the ONE such walk: each producer of a
+ * `PosedSkeleton` output is named once, and `poseChain.test.ts` checks every one against the wire
+ * and fails when a registered node type gains a pose output this does not know.
+ *
+ * - `Skeleton.pose` stands its own rig (the rest pose).
+ * - `AnimationClip.pose` and `PosedSkeleton.out` (a procedural sway) stand the rig on their
+ *   `skeleton` edge.
+ * - `RetargetClip.posed` stands its TARGET rig (`skeleton`), which is what it poses.
+ * - `PoseLayer.out` / `PoseOverride.out` pass the pose on their `pose` input through.
+ *
+ * Null for anything else, an unwired input, or a cycle.
+ */
+export function poseSkeletonIdOf(
+  nodes: Readonly<Record<string, GraphNodeLike>>,
+  nodeId: string | null,
+): string | null {
+  const seen = new Set<string>();
+  let cur = nodeId;
+  while (cur && !seen.has(cur)) {
+    seen.add(cur);
+    const node = nodes[cur];
+    if (!node) return null;
+    switch (node.type) {
+      case 'Skeleton':
+        return cur;
+      case 'AnimationClip':
+      case 'PosedSkeleton':
+      case 'RetargetClip':
+        return edgeTarget(node, 'skeleton');
+      case 'PoseLayer':
+      case 'PoseOverride':
+        cur = edgeTarget(node, 'pose');
+        continue;
+      default:
+        return null;
+    }
+  }
+  return null;
+}

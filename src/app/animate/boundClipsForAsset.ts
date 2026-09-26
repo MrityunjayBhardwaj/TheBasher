@@ -32,7 +32,7 @@
 
 import type { AnimationClipParams } from '../../nodes/AnimationClip';
 import { poseLayerChain } from './poseChain';
-import { edgeTarget, type GraphNodeLike } from './graphNodes';
+import { edgeSocket, edgeTarget, type GraphNodeLike } from './graphNodes';
 import { retargetClipParamsFromNodes } from './retargetFromNodes';
 
 // Re-exported so every existing importer of the walk keeps its one import site.
@@ -175,7 +175,12 @@ export function charactersDrivenByClip(
 /** A retarget's two ends: the SOURCE clip it reads and the rig it drives. */
 export interface RetargetPair {
   readonly retargetId: string;
-  readonly sourceClipId: string;
+  /** The node whose pose feeds the retarget's `source` — a clip, a pose layer, anything with a pose
+   *  output (#1250). */
+  readonly sourceId: string;
+  /** The output socket that edge reads, so the source is evaluated on the wire the retarget reads
+   *  rather than on a socket guessed from the node's type. */
+  readonly sourceSocket: string;
   readonly targetSkeletonId: string;
 }
 
@@ -198,10 +203,10 @@ export function retargetPairs(nodes: Readonly<Record<string, GraphNodeLike>>): R
   for (const id of Object.keys(nodes)) {
     const n = nodes[id];
     if (n.type !== 'RetargetClip') continue;
-    const sourceClipId = edgeTarget(n, 'source');
+    const sourceId = edgeTarget(n, 'source');
     const targetSkeletonId = edgeTarget(n, 'skeleton');
-    if (!sourceClipId || !targetSkeletonId) continue;
-    out.push({ retargetId: id, sourceClipId, targetSkeletonId });
+    if (!sourceId || !targetSkeletonId) continue;
+    out.push({ retargetId: id, sourceId, sourceSocket: edgeSocket(n, 'source'), targetSkeletonId });
   }
   // Sorted so WHICH reference rig pairs with which character can never depend
   // on object-key order (V22).
