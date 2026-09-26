@@ -17,8 +17,9 @@
 //     (#888) the `GltfAsset` → `GltfSkeleton` → `AnimationClip` chain that
 //     enumerator now walks to reach a retargeted clip, AND (#901) a
 //     `RetargetClip` on that rig TOGETHER WITH ITS OPERANDS — the source clip,
-//     that clip's own `Skeleton`, and the `BoneNameMap`, AND (#995) the
-//     `PoseOverride` chain hanging off any of those clips
+//     that clip's own `Skeleton`, and the `BoneNameMap`. (#995 added the
+//     `PoseOverride` chain hanging off those clips; that band retired with the
+//     clone road's character half, #1053.)
 //
 // 🔴 THE #888 ADDITION IS NOT OPTIONAL POLISH — IT IS THE H40 PAIR. The
 // enumerator is shared by the renderer (which passes THIS collector's output)
@@ -63,7 +64,6 @@
 
 import type { Node } from '../core/dag/types';
 import { importedChildDataId, importedChildOf, isImportedChildMaterialPath } from './importedChild';
-import { overrideReachesRig } from './animate/boundClipsForAsset';
 
 /**
  * The nodes whose params drive GltfAssetR's per-child TRS/material override
@@ -128,16 +128,11 @@ export function gltfAssetDepNodes(
       // ids are gathered first and resolved after the sweep because an operand
       // can sit anywhere in the table, including before its consumer.
       const operandIds = new Set<string>();
-      // #995 — the clips an authored pose can hang off. Gathered here rather than
-      // re-swept, because this loop already decides exactly which clips belong to
-      // this asset's rigs, and that set IS the pose band's membership root.
-      const clipIds = new Set<string>();
       for (const n of Object.values(nodes)) {
         const boundTo =
           n.type === 'AnimationClip' || n.type === 'RetargetClip' ? edgeTo(n, 'skeleton') : null;
         if (boundTo === null || !skeletonIds.has(boundTo)) continue;
         out.push(n);
-        clipIds.add(n.id);
         if (n.type !== 'RetargetClip') continue;
         const mapId = edgeTo(n, 'boneMap');
         if (mapId) operandIds.add(mapId);
@@ -158,18 +153,6 @@ export function gltfAssetDepNodes(
       for (const id of operandIds) {
         const n = nodes[id];
         if (n && !already.has(n)) out.push(n);
-      }
-      // #995 — every `PoseOverride` whose `pose` chain lands on one of those
-      // clips, asked through the SAME predicate the band asks. A second copy of
-      // the reachability rule here would be a collector that delivers a different
-      // set from the one the enumerator reads, which is the displayed-≠-rendered
-      // split one level up from the one this file already guards.
-      if (clipIds.size > 0) {
-        for (const n of Object.values(nodes)) {
-          if (n.type !== 'PoseOverride') continue;
-          if (!overrideReachesRig(nodes, n.id, clipIds)) continue;
-          if (!already.has(n)) out.push(n);
-        }
       }
     }
   }

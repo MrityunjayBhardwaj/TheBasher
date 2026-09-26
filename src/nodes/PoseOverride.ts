@@ -3,6 +3,11 @@
 //
 //   RetargetClip.posed  ──→  PoseOverride  ──→  (the pose band)
 //
+// 🔶 NO LONGER AUTHORED OR DRAWN. Its author (`poseBone`'s retarget anchor) and the clone
+// renderer's band that drew it retired with the clone road's character half (#1053). It stays
+// registered so a project saved with one loads; the load converts it into a member of the
+// hand-pose layer (#1216), and the type itself retires in #1243.
+//
 // The whole node is `PosedSkeleton → PosedSkeleton`: it takes the rig as posed by
 // whatever is upstream and hands back the same rig with one bone's components
 // replaced. That shape is `MaterialOverride`'s, one lane over — same sparse

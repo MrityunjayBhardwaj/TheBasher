@@ -89,8 +89,14 @@ const NO_CREATION_ROAD: Readonly<Record<string, string>> = {
 
   PosedSkeleton:
     'Deliberate and known: the target shape of the pose lane, defined early and left ' +
-    'unwired. PoseOverride (#993) is the reachable half; this is the socket type both ' +
+    'unwired. PoseLayer (#1240) is the reachable half; this is the socket type both ' +
     'ends speak, and no director authors one directly.',
+
+  PoseOverride:
+    "The clone road's hand-pose (#993), minted off a retarget chain by poseBone's retarget " +
+    "anchor, which retired with the clone road's character half (#1053). Kept registered so a " +
+    'project saved with one still loads; the load converts it into a pose-layer member (#1216), ' +
+    'and the type itself retires in #1243.',
 
   RenderJob:
     'Opt-in by design, and the ONE type whose dag.exec road is documented rather than ' +

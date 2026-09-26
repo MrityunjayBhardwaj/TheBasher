@@ -97,7 +97,6 @@ import { useActiveBone } from './boneSelection';
 import { useBoneSelectionStore } from './stores/boneSelectionStore';
 import { poseTargetForBone, type ObjectPoseTarget } from './animate/poseTargetForBone';
 import { renameBone, rigReach } from './animate/renameBone';
-import { dispatchMutatorFromUI } from './animate/dispatchMutator';
 import {
   boneMapView,
   elidePrefix,
@@ -3903,22 +3902,10 @@ const SECTION_CONTROL_RENDERERS: SectionControlRenderers = {
  * director is — which is the question they clicked to ask.
  */
 /**
- * The WRITE half of the bone section (#1156).
- *
- * The lane could already be authored — by an agent, through `mutator.animate.poseBone` —
- * and by nobody else. This is the director's way in, and it goes through the SAME mutator
- * rather than minting a `PoseOverride` itself: one road in means the two cannot drift about
- * what a hand-pose is, and the mutator already refuses a bone the rig does not carry,
- * refuses an override that authors nothing, and extends a bone's existing override instead
- * of stacking a second one. Re-deriving any of that here would be a second answer.
- *
- * Once an override EXISTS, its rotation is edited by the ordinary param row — the same
- * widget every other node gets. Minting is the gesture that needed a road; editing already
- * had one.
- *
- * It renders nothing when there is no retarget driving this rig, or when the rig does not
- * carry the selected bone. That is an ordinary state, not an error: without a pose chain
- * there is nothing for an override to hang off.
+ * The WRITE half of the bone section (#1156): the selected bone's hand-pose, on the armature Object
+ * the bone belongs to (#1244). It renders nothing when the selection is not an armature Object or
+ * its skeleton does not carry the bone. (The clone road's rigs were posed here through a
+ * `PoseOverride` on their retarget chain; that half retired with the clone road, #1053.)
  */
 function BonePoseRow({ nodeId, boneName }: { nodeId: string; boneName: string }) {
   const state = useDagStore((s) => s.state);
@@ -3928,52 +3915,7 @@ function BonePoseRow({ nodeId, boneName }: { nodeId: string; boneName: string })
     () => poseTargetForBone(state, nodeId, boneName, seconds),
     [state, nodeId, boneName, seconds],
   );
-  const [refusal, setRefusal] = useState<string | null>(null);
-  if (!target) return null;
-  // #1244 — a native character's bone: posed into the layer feeding its armature Object.
-  if (target.kind === 'object') return <ObjectBonePoseRow target={target} />;
-
-  if (target.overrideId !== null) {
-    const rotation = (state.nodes[target.overrideId]?.params as { rotation?: unknown } | undefined)
-      ?.rotation;
-    return (
-      <div className="mt-2" data-testid="inspector-bone-pose">
-        <ParamRow nodeId={target.overrideId} paramPath="rotation" value={rotation} />
-      </div>
-    );
-  }
-
-  return (
-    <div className="mt-2" data-testid="inspector-bone-pose">
-      <button
-        type="button"
-        className="w-full rounded border border-border px-2 py-1 font-mono text-[10px] text-fg/70 hover:text-fg"
-        data-testid="inspector-bone-pose-add"
-        onClick={() => {
-          // Seeded at zero rotation so the mint is not itself a pose: the director gets an
-          // override to drag, and the rig does not jump the moment they ask for one. The
-          // `overridden` bit is what makes it authored, never value-vs-default, so a pose
-          // dragged back to zero still holds against the motion underneath.
-          const res = dispatchMutatorFromUI(
-            'mutator.animate.poseBone',
-            { retarget: target.retargetId, bone: target.bone, rotation: [0, 0, 0] },
-            `pose ${target.bone}`,
-          );
-          setRefusal(res.ok ? null : res.reason);
-        }}
-      >
-        pose this bone
-      </button>
-      {refusal !== null ? (
-        <div
-          className="mt-1 font-mono text-[10px] text-warn"
-          data-testid="inspector-bone-pose-refusal"
-        >
-          {refusal}
-        </div>
-      ) : null}
-    </div>
-  );
+  return target ? <ObjectBonePoseRow target={target} /> : null;
 }
 
 /**

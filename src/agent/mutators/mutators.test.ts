@@ -4024,12 +4024,9 @@ describe('V14 deeper non-redundancy — Op-shape probe (issue #22)', () => {
     return s;
   }
 
-  // #993 — a probe scene for poseBone: a WIRED RetargetClip whose target rig
-  // actually carries bones. A `Skeleton` with `params: {}` is enough for the
-  // retarget mutator (it only names the rig with an edge) and is NOT enough for
-  // this one — poseBone resolves the caller's bone name against the rig's own
-  // spelling, so a rig with no bones can resolve nothing and the probe would
-  // gate-reject rather than exercise the build.
+  // #993 / #1244 — a probe scene for poseBone: an armature Object standing a skeleton whose params
+  // carry the bone, so the precondition can find it (a `Skeleton` with `params: {}` names no bones
+  // to the mutator, which reads the skeleton's own list).
   // #1242 — one pose layer holding one static member; the mode change rewrites only its params.
   function buildSceneForPoseLayer(): DagState {
     return applyOp(emptyDagState(), {
@@ -4092,38 +4089,20 @@ describe('V14 deeper non-redundancy — Op-shape probe (issue #22)', () => {
   }
 
   function buildSceneForPoseBone(): DagState {
-    let s = buildSceneForRetarget();
-    s = applyOp(s, {
-      type: 'setParam',
-      nodeId: 'tgt_skel',
-      paramPath: 'bones',
-      value: [{ name: 'mixamorig_Hips', parent: -1, position: [0, 0, 0], rotation: [0, 0, 0] }],
-    }).next;
-    s = applyOp(s, {
+    let s = applyOp(emptyDagState(), {
       type: 'addNode',
-      nodeId: 'pb_map',
-      nodeType: 'BoneNameMap',
-      params: { name: 'bridge', map: {} },
+      nodeId: 'pb_skel',
+      nodeType: 'Skeleton',
+      params: {
+        bones: [{ name: 'mixamorig_Hips', parent: -1, position: [0, 0, 0], rotation: [0, 0, 0] }],
+      },
     }).next;
-    s = applyOp(s, {
-      type: 'addNode',
-      nodeId: 'pb_retarget',
-      nodeType: 'RetargetClip',
-      params: { name: 'retargeted' },
+    s = applyOp(s, { type: 'addNode', nodeId: 'pb_arm', nodeType: 'Object', params: {} }).next;
+    return applyOp(s, {
+      type: 'connect',
+      from: { node: 'pb_skel', socket: 'out' },
+      to: { node: 'pb_arm', socket: 'data' },
     }).next;
-    for (const [from, socket] of [
-      ['src_clip', 'source'],
-      ['pb_map', 'boneMap'],
-      ['tgt_skel', 'skeleton'],
-    ] as const) {
-      s = applyOp(s, {
-        type: 'connect',
-        // #1225 — the retarget reads the clip's pose wire.
-        from: { node: from, socket: socket === 'source' ? 'pose' : 'out' },
-        to: { node: 'pb_retarget', socket },
-      }).next;
-    }
-    return s;
   }
 
   // P7.12 (#108) — a probe scene for bakeGltfChannel: GltfAsset → ClipSelect →
@@ -4348,9 +4327,7 @@ describe('V14 deeper non-redundancy — Op-shape probe (issue #22)', () => {
     'mutator.animate.poseBone': {
       mutator: _poseBoneM as MutatorDefinition<unknown>,
       build: buildSceneForPoseBone,
-      // The LIVE three.js spelling on purpose — the rig calls this bone
-      // `mixamorig_Hips`, and resolving the two is the mutator's job.
-      spec: { retarget: 'pb_retarget', bone: 'mixamorigHips', rotation: [0, 0, 45] },
+      spec: { object: 'pb_arm', bone: 'mixamorig_Hips', rotation: [0, 0, 45] },
     },
     'mutator.animate.setPoseMemberMode': {
       mutator: _setPoseMemberModeM as MutatorDefinition<unknown>,

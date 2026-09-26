@@ -329,12 +329,15 @@ describe('#1244 — hand-posing a native character', () => {
     expect(noBone.ok === false && noBone.reason).toMatch(/not on this rig/);
     const notArmature = pose(state.outputs.scene!.node, 'Bone1', [0, 0, 1]);
     expect(notArmature.ok === false && notArmature.reason).toMatch(/not an armature Object/);
-    const both = dispatchMutatorFromUI(
+    // A pose authoring neither component is inert: refused, and nothing is left behind.
+    const before = Object.keys(useDagStore.getState().state.nodes).length;
+    const nothing = dispatchMutatorFromUI(
       'mutator.animate.poseBone',
-      { object: armatureId, retarget: 'x', bone: 'Bone1', rotation: [0, 0, 1] },
-      'both',
+      { object: armatureId, bone: 'Bone1' },
+      'nothing',
     );
-    expect(both.ok === false && both.reason).toMatch(/exactly one anchor/);
+    expect(nothing.ok === false && nothing.reason).toMatch(/needs position, rotation, or both/);
+    expect(Object.keys(useDagStore.getState().state.nodes)).toHaveLength(before);
   });
 });
 

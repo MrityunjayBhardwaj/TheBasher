@@ -674,8 +674,9 @@ function planEdits(
   }
 
   // ── Hand-poses on bound motions: the clone's `PoseOverride` chains. ────────────────────────────
-  // The clone draws every override reaching a bound clip (`poseBandForAsset`), a bone's first by
-  // sorted id winning per component; each becomes the same bone's member in the hand-pose layer.
+  // The clone drew every override reaching a bound clip (its pose band, retired with the clone
+  // road's character half, #1053), a bone's first by sorted id winning per component; each becomes
+  // the same bone's member in the hand-pose layer.
   const overrideIds = new Set<string>();
   for (const clip of bound) {
     for (const o of overrideChain(graph, clip.clipId)) overrideIds.add(o.id);
