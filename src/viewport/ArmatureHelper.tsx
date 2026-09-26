@@ -92,6 +92,10 @@ export interface ReferenceRigInput {
   /** The bone names of the rig this retarget DRIVES, used to find the live
    *  armature it belongs beside. */
   readonly targetBoneNames: readonly string[];
+  /** The Skeleton node this retarget drives. A native character's armature Object stands exactly
+   *  this skeleton, so it is found by identity (#1273); a motion's own rig Object stands the
+   *  SOURCE skeleton, never a target, so it can never be taken for the character. */
+  readonly targetSkeletonId: string;
 }
 
 /** One armature found in the scene: its root bone, and the bones under it. */
@@ -428,8 +432,9 @@ export function ArmatureHelper({
     // #1056 — skeleton Objects: rigs the DAG owns with no live `Bone`s behind them, so the scan
     // above cannot see them. Posed from their one clip at the playhead (the rest pose when
     // there is none, or several), carried into the world by the Object, and appended AFTER
-    // the live armatures, so the live-only reader below — the source-rig match — keeps
-    // reading `perArmature` and cannot mistake one for a character.
+    // the live armatures, so the source-rig match's NAME arm keeps reading `perArmature` alone and
+    // cannot mistake a motion's own rig for a character; a skeleton Object is taken there only by
+    // identity, as the character a retarget drives (#1273).
     const standaloneInputs = skeletonObjects ?? [];
     const standaloneSig = standaloneInputs.map((o) => `${o.id}:${o.bones.length}`).join('|');
     if (standaloneSig !== standaloneSignature.current) {
@@ -598,17 +603,20 @@ export function ArmatureHelper({
     const refMatrices: number[][] = [];
     if (refMesh) {
       let refCount = 0;
-      if (showSourceRigs && sourceRigs && sourceRigs.length > 0 && perArmature.length > 0) {
+      if (showSourceRigs && sourceRigs && sourceRigs.length > 0 && armatures.length > 0) {
         const seconds = useTimeStore.getState().seconds;
         for (const rig of sourceRigs) {
-          // Which live armature is this retarget's character? Matched on the
-          // TARGET rig's bone names rather than on index or id order, so two
-          // characters in one scene cannot swap reference rigs (V22).
+          // Which armature is this retarget's character? A native character is the skeleton
+          // Object standing the very skeleton the retarget drives (#1273) — identity, not a guess.
+          // Otherwise (the clone road's live bones) matched on the TARGET rig's bone names rather
+          // than on index or id order, so two characters in one scene cannot swap reference rigs
+          // (V22); skeleton Objects stay out of that match, so a motion's own rig is never taken.
+          const standing = standaloneInputs.findIndex((o) => o.skeletonId === rig.targetSkeletonId);
           const wanted = new Set(rig.targetBoneNames.map(normalizeBoneName));
-          if (wanted.size === 0) continue;
-          let best: BoneFrame[] | null = null;
-          let bestScore = 0;
-          for (const armature of perArmature) {
+          if (standing < 0 && wanted.size === 0) continue;
+          let best: BoneFrame[] | null = standing >= 0 ? standalone[standing] : null;
+          let bestScore = standing >= 0 ? 1 : 0;
+          for (const armature of standing >= 0 ? [] : perArmature) {
             if (armature.length === 0) continue;
             let hits = 0;
             for (const f of armature) if (wanted.has(normalizeBoneName(f.name))) hits++;

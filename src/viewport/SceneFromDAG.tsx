@@ -338,6 +338,7 @@ export function SceneFromDAG({ outputName = 'render' }: SceneFromDAGProps) {
           id: pair.retargetId,
           clip,
           targetBoneNames: target.bones.map((b) => b.name),
+          targetSkeletonId: pair.targetSkeletonId,
         });
       } catch {
         // A half-wired or mid-edit graph draws no reference rig. This runs in a

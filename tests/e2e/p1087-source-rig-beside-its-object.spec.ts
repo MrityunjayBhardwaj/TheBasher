@@ -37,8 +37,10 @@ interface Win {
       dispatch: (op: unknown) => unknown;
     };
   };
-  __basher_writeOpfsBytes?: (path: string, bytes: Uint8Array) => Promise<void>;
-  __basher_importGltf?: (buffer: ArrayBuffer, assetRef: string) => Promise<unknown>;
+  __basher_ingestGltfFolder?: (
+    files: { relativePath: string; bytes: Uint8Array }[],
+    folderName: string,
+  ) => Promise<string>;
   __basher_gltf_skin?: () => unknown;
   __basher_time: { getState: () => { setTime: (seconds: number) => void } };
   __basher_ingestBvhFile?: (bytes: Uint8Array, name: string) => Promise<string>;
@@ -70,24 +72,31 @@ test.beforeEach(async ({ page }) => {
   await expect(page.getByTestId('layout')).toBeVisible({ timeout: 10_000 });
 });
 
-/** What the band drew this frame: the Object's bone translations, the overlay's, and colours. */
-function drawn(page: import('@playwright/test').Page) {
-  return page.evaluate(() => {
+/** What the band drew this frame: the rig Object's bone translations, the overlay's, and colours.
+ *  Skeleton Objects are appended AFTER the live armatures (`ArmatureHelper`, `armatures`), in the
+ *  order `skeletonObjects` lists them; since #1205 the character is one of them too. */
+function drawn(page: import('@playwright/test').Page, rigId: string) {
+  return page.evaluate((rigId) => {
     const a = (window as unknown as Win).__basher_armature;
     if (!a) return null;
     const objectBones = a.skeletonObjects.reduce((n, o) => n + o.bones, 0);
-    // Skeleton Objects are appended AFTER the live armatures (`ArmatureHelper`, `armatures`).
-    const object = a.matrices.slice(a.bones - objectBones).map((m) => [m[12], m[13], m[14]]);
+    let start = a.bones - objectBones;
+    let object: number[][] = [];
+    for (const o of a.skeletonObjects) {
+      if (o.id === rigId)
+        object = a.matrices.slice(start, start + o.bones).map((m) => [m[12], m[13], m[14]]);
+      start += o.bones;
+    }
     return {
       armatures: a.armatures,
-      skeletonObjects: a.skeletonObjects.map((o) => o.id),
+      skeletonObjects: a.skeletonObjects.map((o) => o.id).sort(),
       sourceBones: a.sourceBones,
       object,
       overlay: a.sourceMatrices.map((m) => [m[12], m[13], m[14]]),
       boneColors: a.boneColors,
       sourceColor: a.sourceColor,
     };
-  });
+  }, rigId);
 }
 
 test('#1087 — the source rig and the unhidden rig Object both draw, told apart, neither following the other', async ({
@@ -97,23 +106,22 @@ test('#1087 — the source rig and the unhidden rig Object both draw, told apart
   await page.waitForFunction(
     () => {
       const w = window as unknown as Win;
-      return Boolean(
-        w.__basher_dag &&
-        w.__basher_ingestBvhFile &&
-        w.__basher_importGltf &&
-        w.__basher_writeOpfsBytes,
-      );
+      return Boolean(w.__basher_dag && w.__basher_ingestBvhFile && w.__basher_ingestGltfFolder);
     },
     undefined,
     { timeout: 60_000 },
   );
-  // A character, then a walk dropped onto it: the bind hides the walk's rig Object.
+  // A character through the product's import (a native character since #1205: a skeleton Object
+  // and a mesh deformed by it), then a walk dropped onto it: the bind hides the walk's rig Object.
   await page.evaluate(async () => {
     const w = window as unknown as Win;
-    const ref = 'fixtures/rig/standin-character.glb';
-    const buf = await (await fetch(`/${ref}`)).arrayBuffer();
-    await w.__basher_writeOpfsBytes!(ref, new Uint8Array(buf));
-    await w.__basher_importGltf!(buf, ref);
+    const bytes = new Uint8Array(
+      await (await fetch('/fixtures/rig/standin-character.glb')).arrayBuffer(),
+    );
+    await w.__basher_ingestGltfFolder!(
+      [{ relativePath: 'standin-character.glb', bytes }],
+      'standin-character',
+    );
   });
   await page.waitForFunction(
     () => {
@@ -123,7 +131,7 @@ test('#1087 — the source rig and the unhidden rig Object both draw, told apart
     undefined,
     { timeout: 120_000 },
   );
-  const objectId = await page.evaluate(async () => {
+  const ids = await page.evaluate(async () => {
     const w = window as unknown as Win;
     // A fixed playhead: the overlay and the Object are both posed from it, so a pose change
     // cannot pass for a placement change below.
@@ -132,10 +140,22 @@ test('#1087 — the source rig and the unhidden rig Object both draw, told apart
     await w.__basher_ingestBvhFile!(bytes, 'soma-walk');
     const { nodes } = w.__basher_dag.getState().state;
     const ref = (v: unknown) => (v as { node?: string } | undefined)?.node ?? '';
-    return Object.keys(nodes).find(
-      (id) => nodes[id].type === 'Object' && nodes[ref(nodes[id].inputs.data)]?.type === 'Skeleton',
+    // The character is the armature Object its mesh's Armature modifier deforms by; the walk's rig
+    // Object is the other Object standing a Skeleton.
+    const character = ref(
+      Object.values(nodes).find((n) => n.type === 'ArmatureModifier')?.inputs.armature,
     );
+    const rig = Object.keys(nodes).find(
+      (id) =>
+        id !== character &&
+        nodes[id].type === 'Object' &&
+        nodes[ref(nodes[id].inputs.data)]?.type === 'Skeleton',
+    );
+    return { character, rig };
   });
+  const objectId = ids.rig;
+  const characterId = ids.character;
+  expect(characterId, 'no Armature modifier deforms the character — it is not native').not.toBe('');
   expect(
     objectId,
     'the drop stood no rig Object — every reading below would be vacuous',
@@ -158,15 +178,15 @@ test('#1087 — the source rig and the unhidden rig Object both draw, told apart
   // BOTH draw: the character plus the Object as armatures, and the overlay's own bones.
   await expect
     .poll(async () => {
-      const d = await drawn(page);
+      const d = await drawn(page, objectId!);
       return (
         d && { armatures: d.armatures, objects: d.skeletonObjects, overlay: d.sourceBones > 0 }
       );
     })
-    .toEqual({ armatures: 2, objects: [objectId], overlay: true });
+    .toEqual({ armatures: 2, objects: [characterId, objectId].sort(), overlay: true });
 
   // TOLD APART: the overlay's colour is none of the colours the armatures are drawn in.
-  const before = (await drawn(page))!;
+  const before = (await drawn(page, objectId!))!;
   expect(before.sourceColor).not.toBeNull();
   expect(before.boneColors.length).toBeGreaterThan(0);
   expect(before.boneColors).not.toContain(before.sourceColor);
@@ -192,11 +212,11 @@ test('#1087 — the source rig and the unhidden rig Object both draw, told apart
   );
   await expect
     .poll(async () => {
-      const d = (await drawn(page))!;
+      const d = (await drawn(page, objectId!))!;
       return Math.round((d.object[1][0] - before.object[1][0]) * 1000) / 1000;
     })
     .toBe(5);
-  const after = (await drawn(page))!;
+  const after = (await drawn(page, objectId!))!;
   expect(after.overlay.length).toBe(before.overlay.length);
   for (let i = 0; i < before.overlay.length; i++) {
     for (let k = 0; k < 3; k++) expect(after.overlay[i][k]).toBeCloseTo(before.overlay[i][k], 6);
@@ -208,8 +228,8 @@ test('#1087 — the source rig and the unhidden rig Object both draw, told apart
   await page.keyboard.press('Escape');
   await expect
     .poll(async () => {
-      const d = (await drawn(page))!;
+      const d = (await drawn(page, objectId!))!;
       return { overlay: d.sourceBones, objects: d.skeletonObjects };
     })
-    .toEqual({ overlay: 0, objects: [objectId] });
+    .toEqual({ overlay: 0, objects: [characterId, objectId].sort() });
 });
