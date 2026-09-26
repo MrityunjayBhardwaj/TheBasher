@@ -1,5 +1,5 @@
 {
-  "$comment": "Measured by tests/e2e/p1235-animatable-census.spec.ts — regenerate with CENSUS_WRITE=1, never edit by hand. reach: scene | pose | render | null (keyed, nothing moved).",
+  "$comment": "Measured by tests/e2e/p1235-animatable-census.spec.ts — regenerate with CENSUS_WRITE=1, never edit by hand. reach: scene | pose | render | null (keyed, nothing moved). driver: the same for a ParamDriver carrying the value, on number and vec3 rows only.",
   "subjects": {
     "AmbientLight": {
       "color": {
@@ -8,27 +8,32 @@
       },
       "intensity": {
         "kind": "number",
-        "reach": "scene"
+        "reach": "scene",
+        "driver": "scene"
       }
     },
     "ArrayModifier": {
       "count": {
         "kind": "number",
-        "reach": "scene"
+        "reach": "scene",
+        "driver": "scene"
       },
       "offset": {
         "kind": "vec3",
-        "reach": "scene"
+        "reach": "scene",
+        "driver": "scene"
       }
     },
     "BevelModifier": {
       "amount": {
         "kind": "number",
-        "reach": "scene"
+        "reach": "scene",
+        "driver": "scene"
       },
       "angleLimit": {
         "kind": "number",
-        "reach": null
+        "reach": null,
+        "driver": null
       }
     },
     "BoxData": {
@@ -38,15 +43,18 @@
       },
       "material.base.metalness": {
         "kind": "number",
-        "reach": "scene"
+        "reach": "scene",
+        "driver": "scene"
       },
       "material.coat.roughness": {
         "kind": "number",
-        "reach": "scene"
+        "reach": "scene",
+        "driver": "scene"
       },
       "material.coat.weight": {
         "kind": "number",
-        "reach": "scene"
+        "reach": "scene",
+        "driver": "scene"
       },
       "material.emission.color": {
         "kind": "color",
@@ -54,199 +62,243 @@
       },
       "material.emission.luminance": {
         "kind": "number",
-        "reach": "scene"
+        "reach": "scene",
+        "driver": "scene"
       },
       "material.geometry.opacity": {
         "kind": "number",
-        "reach": "scene"
+        "reach": "scene",
+        "driver": "scene"
       },
       "material.specular.ior": {
         "kind": "number",
-        "reach": "scene"
+        "reach": "scene",
+        "driver": "scene"
       },
       "material.specular.roughness": {
         "kind": "number",
-        "reach": "scene"
+        "reach": "scene",
+        "driver": "scene"
       },
       "material.transmission.weight": {
         "kind": "number",
-        "reach": "scene"
+        "reach": "scene",
+        "driver": "scene"
       },
       "size": {
         "kind": "vec3",
-        "reach": "scene"
+        "reach": "scene",
+        "driver": "scene"
       }
     },
     "CameraData:Orthographic": {
       "fStop": {
         "kind": "number",
-        "reach": null
+        "reach": null,
+        "driver": null
       },
       "far": {
         "kind": "number",
-        "reach": "pose"
+        "reach": "pose",
+        "driver": null
       },
       "focusDistance": {
         "kind": "number",
-        "reach": null
+        "reach": null,
+        "driver": null
       },
       "fov": {
         "kind": "number",
-        "reach": "scene"
+        "reach": "scene",
+        "driver": null
       },
       "lookAt": {
         "kind": "vec3",
-        "reach": "scene"
+        "reach": "scene",
+        "driver": null
       },
       "near": {
         "kind": "number",
-        "reach": "pose"
+        "reach": "pose",
+        "driver": null
       },
       "roll": {
         "kind": "number",
-        "reach": "scene"
+        "reach": "scene",
+        "driver": null
       },
       "sensorSize": {
         "kind": "number",
-        "reach": null
+        "reach": null,
+        "driver": null
       },
       "zoom": {
         "kind": "number",
-        "reach": null
+        "reach": null,
+        "driver": null
       }
     },
     "CameraData:Perspective": {
       "fStop": {
         "kind": "number",
-        "reach": null
+        "reach": null,
+        "driver": null
       },
       "far": {
         "kind": "number",
-        "reach": "pose"
+        "reach": "pose",
+        "driver": null
       },
       "focusDistance": {
         "kind": "number",
-        "reach": null
+        "reach": null,
+        "driver": null
       },
       "fov": {
         "kind": "number",
-        "reach": "scene"
+        "reach": "scene",
+        "driver": null
       },
       "lookAt": {
         "kind": "vec3",
-        "reach": "scene"
+        "reach": "scene",
+        "driver": null
       },
       "near": {
         "kind": "number",
-        "reach": "pose"
+        "reach": "pose",
+        "driver": null
       },
       "roll": {
         "kind": "number",
-        "reach": "scene"
+        "reach": "scene",
+        "driver": null
       },
       "sensorSize": {
         "kind": "number",
-        "reach": null
+        "reach": null,
+        "driver": null
       },
       "zoom": {
         "kind": "number",
-        "reach": null
+        "reach": null,
+        "driver": null
       }
     },
     "Clamp": {
       "max": {
         "kind": "number",
-        "reach": null
+        "reach": null,
+        "driver": null
       },
       "min": {
         "kind": "number",
-        "reach": null
+        "reach": null,
+        "driver": null
       }
     },
     "CurveData": {
       "points.*.co": {
         "kind": "vec3",
-        "reach": null
+        "reach": null,
+        "driver": null
       },
       "resolution": {
         "kind": "number",
-        "reach": null
+        "reach": null,
+        "driver": null
       }
     },
     "CurveRemap": {
       "points.*.x": {
         "kind": "number",
-        "reach": null
+        "reach": null,
+        "driver": null
       },
       "points.*.y": {
         "kind": "number",
-        "reach": null
+        "reach": null,
+        "driver": null
       }
     },
     "Fit": {
       "inMax": {
         "kind": "number",
-        "reach": null
+        "reach": null,
+        "driver": null
       },
       "inMin": {
         "kind": "number",
-        "reach": null
+        "reach": null,
+        "driver": null
       },
       "outMax": {
         "kind": "number",
-        "reach": null
+        "reach": null,
+        "driver": null
       },
       "outMin": {
         "kind": "number",
-        "reach": null
+        "reach": null,
+        "driver": null
       }
     },
     "FollowPath": {
       "evalTime": {
         "kind": "number",
-        "reach": "scene"
+        "reach": "scene",
+        "driver": "scene"
       },
       "offset": {
         "kind": "number",
-        "reach": null
+        "reach": null,
+        "driver": null
       },
       "order": {
         "kind": "number",
-        "reach": null
+        "reach": null,
+        "driver": null
       }
     },
     "Group": {
       "pivot": {
         "kind": "vec3",
-        "reach": "scene"
+        "reach": "scene",
+        "driver": "scene"
       },
       "position": {
         "kind": "vec3",
-        "reach": "scene"
+        "reach": "scene",
+        "driver": "scene"
       },
       "rotation": {
         "kind": "vec3",
-        "reach": "scene"
+        "reach": "scene",
+        "driver": "scene"
       },
       "scale": {
         "kind": "vec3",
-        "reach": "scene"
+        "reach": "scene",
+        "driver": "scene"
       }
     },
     "Lag": {
       "factor": {
         "kind": "number",
-        "reach": null
+        "reach": null,
+        "driver": null
       },
       "seedFrame": {
         "kind": "number",
-        "reach": null
+        "reach": null,
+        "driver": null
       }
     },
     "LightData:Area": {
       "angle": {
         "kind": "number",
-        "reach": null
+        "reach": null,
+        "driver": null
       },
       "color": {
         "kind": "color",
@@ -254,41 +306,50 @@
       },
       "decay": {
         "kind": "number",
-        "reach": null
+        "reach": null,
+        "driver": null
       },
       "distance": {
         "kind": "number",
-        "reach": null
+        "reach": null,
+        "driver": null
       },
       "height": {
         "kind": "number",
-        "reach": "scene"
+        "reach": "scene",
+        "driver": "scene"
       },
       "intensity": {
         "kind": "number",
-        "reach": "scene"
+        "reach": "scene",
+        "driver": "scene"
       },
       "lookAt": {
         "kind": "vec3",
-        "reach": "scene"
+        "reach": "scene",
+        "driver": "scene"
       },
       "penumbra": {
         "kind": "number",
-        "reach": null
+        "reach": null,
+        "driver": null
       },
       "target": {
         "kind": "vec3",
-        "reach": null
+        "reach": null,
+        "driver": null
       },
       "width": {
         "kind": "number",
-        "reach": "scene"
+        "reach": "scene",
+        "driver": "scene"
       }
     },
     "LightData:Directional": {
       "angle": {
         "kind": "number",
-        "reach": null
+        "reach": null,
+        "driver": null
       },
       "color": {
         "kind": "color",
@@ -296,41 +357,50 @@
       },
       "decay": {
         "kind": "number",
-        "reach": null
+        "reach": null,
+        "driver": null
       },
       "distance": {
         "kind": "number",
-        "reach": null
+        "reach": null,
+        "driver": null
       },
       "height": {
         "kind": "number",
-        "reach": null
+        "reach": null,
+        "driver": null
       },
       "intensity": {
         "kind": "number",
-        "reach": "scene"
+        "reach": "scene",
+        "driver": "scene"
       },
       "lookAt": {
         "kind": "vec3",
-        "reach": null
+        "reach": null,
+        "driver": null
       },
       "penumbra": {
         "kind": "number",
-        "reach": null
+        "reach": null,
+        "driver": null
       },
       "target": {
         "kind": "vec3",
-        "reach": null
+        "reach": null,
+        "driver": null
       },
       "width": {
         "kind": "number",
-        "reach": null
+        "reach": null,
+        "driver": null
       }
     },
     "LightData:Point": {
       "angle": {
         "kind": "number",
-        "reach": null
+        "reach": null,
+        "driver": null
       },
       "color": {
         "kind": "color",
@@ -338,41 +408,50 @@
       },
       "decay": {
         "kind": "number",
-        "reach": "scene"
+        "reach": "scene",
+        "driver": "scene"
       },
       "distance": {
         "kind": "number",
-        "reach": "scene"
+        "reach": "scene",
+        "driver": "scene"
       },
       "height": {
         "kind": "number",
-        "reach": null
+        "reach": null,
+        "driver": null
       },
       "intensity": {
         "kind": "number",
-        "reach": "scene"
+        "reach": "scene",
+        "driver": "scene"
       },
       "lookAt": {
         "kind": "vec3",
-        "reach": null
+        "reach": null,
+        "driver": null
       },
       "penumbra": {
         "kind": "number",
-        "reach": null
+        "reach": null,
+        "driver": null
       },
       "target": {
         "kind": "vec3",
-        "reach": null
+        "reach": null,
+        "driver": null
       },
       "width": {
         "kind": "number",
-        "reach": null
+        "reach": null,
+        "driver": null
       }
     },
     "LightData:Spot": {
       "angle": {
         "kind": "number",
-        "reach": "scene"
+        "reach": "scene",
+        "driver": "scene"
       },
       "color": {
         "kind": "color",
@@ -380,35 +459,43 @@
       },
       "decay": {
         "kind": "number",
-        "reach": "scene"
+        "reach": "scene",
+        "driver": "scene"
       },
       "distance": {
         "kind": "number",
-        "reach": "scene"
+        "reach": "scene",
+        "driver": "scene"
       },
       "height": {
         "kind": "number",
-        "reach": null
+        "reach": null,
+        "driver": null
       },
       "intensity": {
         "kind": "number",
-        "reach": "scene"
+        "reach": "scene",
+        "driver": "scene"
       },
       "lookAt": {
         "kind": "vec3",
-        "reach": null
+        "reach": null,
+        "driver": null
       },
       "penumbra": {
         "kind": "number",
-        "reach": "scene"
+        "reach": "scene",
+        "driver": "scene"
       },
       "target": {
         "kind": "vec3",
-        "reach": "scene"
+        "reach": "scene",
+        "driver": "scene"
       },
       "width": {
         "kind": "number",
-        "reach": null
+        "reach": null,
+        "driver": null
       }
     },
     "Material": {
@@ -418,15 +505,18 @@
       },
       "material.base.metalness": {
         "kind": "number",
-        "reach": null
+        "reach": null,
+        "driver": null
       },
       "material.coat.roughness": {
         "kind": "number",
-        "reach": null
+        "reach": null,
+        "driver": null
       },
       "material.coat.weight": {
         "kind": "number",
-        "reach": null
+        "reach": null,
+        "driver": null
       },
       "material.emission.color": {
         "kind": "color",
@@ -434,23 +524,28 @@
       },
       "material.emission.luminance": {
         "kind": "number",
-        "reach": null
+        "reach": null,
+        "driver": null
       },
       "material.geometry.opacity": {
         "kind": "number",
-        "reach": null
+        "reach": null,
+        "driver": null
       },
       "material.specular.ior": {
         "kind": "number",
-        "reach": null
+        "reach": null,
+        "driver": null
       },
       "material.specular.roughness": {
         "kind": "number",
-        "reach": null
+        "reach": null,
+        "driver": null
       },
       "material.transmission.weight": {
         "kind": "number",
-        "reach": null
+        "reach": null,
+        "driver": null
       }
     },
     "MaterialOverrideOp": {
@@ -464,349 +559,422 @@
       },
       "emissiveIntensity": {
         "kind": "number",
-        "reach": null
+        "reach": null,
+        "driver": null
       },
       "metalness": {
         "kind": "number",
-        "reach": null
+        "reach": null,
+        "driver": null
       },
       "opacity": {
         "kind": "number",
-        "reach": null
+        "reach": null,
+        "driver": null
       },
       "roughness": {
         "kind": "number",
-        "reach": null
+        "reach": null,
+        "driver": null
       }
     },
     "MirrorModifier": {
       "offset": {
         "kind": "number",
-        "reach": "scene"
+        "reach": "scene",
+        "driver": "scene"
       }
     },
     "Mix": {
       "factor": {
         "kind": "number",
-        "reach": null
+        "reach": null,
+        "driver": null
       }
     },
     "Noise": {
       "amplitude": {
         "kind": "number",
-        "reach": null
+        "reach": null,
+        "driver": null
       },
       "octaves": {
         "kind": "number",
-        "reach": null
+        "reach": null,
+        "driver": null
       },
       "offset": {
         "kind": "number",
-        "reach": null
+        "reach": null,
+        "driver": null
       },
       "phase": {
         "kind": "number",
-        "reach": null
+        "reach": null,
+        "driver": null
       },
       "scale": {
         "kind": "number",
-        "reach": null
+        "reach": null,
+        "driver": null
       }
     },
     "Null": {
       "position": {
         "kind": "vec3",
-        "reach": "scene"
+        "reach": "scene",
+        "driver": "scene"
       },
       "rotation": {
         "kind": "vec3",
-        "reach": "scene"
+        "reach": "scene",
+        "driver": "scene"
       },
       "scale": {
         "kind": "vec3",
-        "reach": "scene"
+        "reach": "scene",
+        "driver": "scene"
       }
     },
     "Object<ArrayModifier>": {
       "position": {
         "kind": "vec3",
-        "reach": "scene"
+        "reach": "scene",
+        "driver": "scene"
       },
       "rotation": {
         "kind": "vec3",
-        "reach": "scene"
+        "reach": "scene",
+        "driver": "scene"
       },
       "scale": {
         "kind": "vec3",
-        "reach": "scene"
+        "reach": "scene",
+        "driver": "scene"
       }
     },
     "Object<BevelModifier>": {
       "position": {
         "kind": "vec3",
-        "reach": "scene"
+        "reach": "scene",
+        "driver": "scene"
       },
       "rotation": {
         "kind": "vec3",
-        "reach": "scene"
+        "reach": "scene",
+        "driver": "scene"
       },
       "scale": {
         "kind": "vec3",
-        "reach": "scene"
+        "reach": "scene",
+        "driver": "scene"
       }
     },
     "Object<BoxData>": {
       "position": {
         "kind": "vec3",
-        "reach": "scene"
+        "reach": "scene",
+        "driver": "scene"
       },
       "rotation": {
         "kind": "vec3",
-        "reach": "scene"
+        "reach": "scene",
+        "driver": "scene"
       },
       "scale": {
         "kind": "vec3",
-        "reach": "scene"
+        "reach": "scene",
+        "driver": "scene"
       }
     },
     "Object<CameraData:Orthographic>": {
       "position": {
         "kind": "vec3",
-        "reach": "scene"
+        "reach": "scene",
+        "driver": null
       },
       "rotation": {
         "kind": "vec3",
-        "reach": null
+        "reach": null,
+        "driver": null
       },
       "scale": {
         "kind": "vec3",
-        "reach": null
+        "reach": null,
+        "driver": null
       }
     },
     "Object<CameraData:Perspective>": {
       "position": {
         "kind": "vec3",
-        "reach": "scene"
+        "reach": "scene",
+        "driver": null
       },
       "rotation": {
         "kind": "vec3",
-        "reach": null
+        "reach": null,
+        "driver": null
       },
       "scale": {
         "kind": "vec3",
-        "reach": null
+        "reach": null,
+        "driver": null
       }
     },
     "Object<ComponentGroupOp>": {
       "position": {
         "kind": "vec3",
-        "reach": "scene"
+        "reach": "scene",
+        "driver": "scene"
       },
       "rotation": {
         "kind": "vec3",
-        "reach": "scene"
+        "reach": "scene",
+        "driver": "scene"
       },
       "scale": {
         "kind": "vec3",
-        "reach": "scene"
+        "reach": "scene",
+        "driver": "scene"
       }
     },
     "Object<CurveData>": {
       "position": {
         "kind": "vec3",
-        "reach": "scene"
+        "reach": "scene",
+        "driver": "scene"
       },
       "rotation": {
         "kind": "vec3",
-        "reach": "scene"
+        "reach": "scene",
+        "driver": "scene"
       },
       "scale": {
         "kind": "vec3",
-        "reach": "scene"
+        "reach": "scene",
+        "driver": "scene"
       }
     },
     "Object<LightData:Area>": {
       "position": {
         "kind": "vec3",
-        "reach": "scene"
+        "reach": "scene",
+        "driver": "scene"
       },
       "rotation": {
         "kind": "vec3",
-        "reach": null
+        "reach": null,
+        "driver": null
       },
       "scale": {
         "kind": "vec3",
-        "reach": "scene"
+        "reach": "scene",
+        "driver": "scene"
       }
     },
     "Object<LightData:Directional>": {
       "position": {
         "kind": "vec3",
-        "reach": "scene"
+        "reach": "scene",
+        "driver": "scene"
       },
       "rotation": {
         "kind": "vec3",
-        "reach": "scene"
+        "reach": "scene",
+        "driver": "scene"
       },
       "scale": {
         "kind": "vec3",
-        "reach": "scene"
+        "reach": "scene",
+        "driver": "scene"
       }
     },
     "Object<LightData:Point>": {
       "position": {
         "kind": "vec3",
-        "reach": "scene"
+        "reach": "scene",
+        "driver": "scene"
       },
       "rotation": {
         "kind": "vec3",
-        "reach": "scene"
+        "reach": "scene",
+        "driver": "scene"
       },
       "scale": {
         "kind": "vec3",
-        "reach": "scene"
+        "reach": "scene",
+        "driver": "scene"
       }
     },
     "Object<LightData:Spot>": {
       "position": {
         "kind": "vec3",
-        "reach": "scene"
+        "reach": "scene",
+        "driver": "scene"
       },
       "rotation": {
         "kind": "vec3",
-        "reach": null
+        "reach": null,
+        "driver": null
       },
       "scale": {
         "kind": "vec3",
-        "reach": "scene"
+        "reach": "scene",
+        "driver": "scene"
       }
     },
     "Object<MaskModifier>": {
       "position": {
         "kind": "vec3",
-        "reach": "scene"
+        "reach": "scene",
+        "driver": "scene"
       },
       "rotation": {
         "kind": "vec3",
-        "reach": "scene"
+        "reach": "scene",
+        "driver": "scene"
       },
       "scale": {
         "kind": "vec3",
-        "reach": "scene"
+        "reach": "scene",
+        "driver": "scene"
       }
     },
     "Object<MaterialOverrideOp>": {
       "position": {
         "kind": "vec3",
-        "reach": "scene"
+        "reach": "scene",
+        "driver": "scene"
       },
       "rotation": {
         "kind": "vec3",
-        "reach": "scene"
+        "reach": "scene",
+        "driver": "scene"
       },
       "scale": {
         "kind": "vec3",
-        "reach": "scene"
+        "reach": "scene",
+        "driver": "scene"
       }
     },
     "Object<MirrorModifier>": {
       "position": {
         "kind": "vec3",
-        "reach": "scene"
+        "reach": "scene",
+        "driver": "scene"
       },
       "rotation": {
         "kind": "vec3",
-        "reach": "scene"
+        "reach": "scene",
+        "driver": "scene"
       },
       "scale": {
         "kind": "vec3",
-        "reach": "scene"
+        "reach": "scene",
+        "driver": "scene"
       }
     },
     "Object<SetMaterialOp>": {
       "position": {
         "kind": "vec3",
-        "reach": "scene"
+        "reach": "scene",
+        "driver": "scene"
       },
       "rotation": {
         "kind": "vec3",
-        "reach": "scene"
+        "reach": "scene",
+        "driver": "scene"
       },
       "scale": {
         "kind": "vec3",
-        "reach": "scene"
+        "reach": "scene",
+        "driver": "scene"
       }
     },
     "Object<SphereData>": {
       "position": {
         "kind": "vec3",
-        "reach": "scene"
+        "reach": "scene",
+        "driver": "scene"
       },
       "rotation": {
         "kind": "vec3",
-        "reach": "scene"
+        "reach": "scene",
+        "driver": "scene"
       },
       "scale": {
         "kind": "vec3",
-        "reach": "scene"
+        "reach": "scene",
+        "driver": "scene"
       }
     },
     "Object<UVProjectModifier>": {
       "position": {
         "kind": "vec3",
-        "reach": "scene"
+        "reach": "scene",
+        "driver": "scene"
       },
       "rotation": {
         "kind": "vec3",
-        "reach": "scene"
+        "reach": "scene",
+        "driver": "scene"
       },
       "scale": {
         "kind": "vec3",
-        "reach": "scene"
+        "reach": "scene",
+        "driver": "scene"
       }
     },
     "ParamDriver": {
       "order": {
         "kind": "number",
-        "reach": null
+        "reach": null,
+        "driver": null
       }
     },
     "RenderOutput": {
       "height": {
         "kind": "number",
-        "reach": null
+        "reach": null,
+        "driver": null
       },
       "width": {
         "kind": "number",
-        "reach": null
+        "reach": null,
+        "driver": null
       }
     },
     "SampleGeometry": {
       "direction": {
         "kind": "vec3",
-        "reach": null
+        "reach": null,
+        "driver": null
       }
     },
     "Scene": {
       "envIntensity": {
         "kind": "number",
-        "reach": "scene"
+        "reach": "scene",
+        "driver": null
       },
       "envRotationY": {
         "kind": "number",
-        "reach": "scene"
+        "reach": "scene",
+        "driver": null
       }
     },
     "Solver": {
       "seedFrame": {
         "kind": "number",
-        "reach": null
+        "reach": null,
+        "driver": null
       }
     },
     "SphereData": {
       "heightSegments": {
         "kind": "number",
-        "reach": "scene"
+        "reach": "scene",
+        "driver": "scene"
       },
       "material.base.color": {
         "kind": "color",
@@ -814,15 +982,18 @@
       },
       "material.base.metalness": {
         "kind": "number",
-        "reach": "scene"
+        "reach": "scene",
+        "driver": "scene"
       },
       "material.coat.roughness": {
         "kind": "number",
-        "reach": "scene"
+        "reach": "scene",
+        "driver": "scene"
       },
       "material.coat.weight": {
         "kind": "number",
-        "reach": "scene"
+        "reach": "scene",
+        "driver": "scene"
       },
       "material.emission.color": {
         "kind": "color",
@@ -830,71 +1001,86 @@
       },
       "material.emission.luminance": {
         "kind": "number",
-        "reach": "scene"
+        "reach": "scene",
+        "driver": "scene"
       },
       "material.geometry.opacity": {
         "kind": "number",
-        "reach": "scene"
+        "reach": "scene",
+        "driver": "scene"
       },
       "material.specular.ior": {
         "kind": "number",
-        "reach": "scene"
+        "reach": "scene",
+        "driver": "scene"
       },
       "material.specular.roughness": {
         "kind": "number",
-        "reach": "scene"
+        "reach": "scene",
+        "driver": "scene"
       },
       "material.transmission.weight": {
         "kind": "number",
-        "reach": "scene"
+        "reach": "scene",
+        "driver": "scene"
       },
       "radius": {
         "kind": "number",
-        "reach": "scene"
+        "reach": "scene",
+        "driver": "scene"
       },
       "widthSegments": {
         "kind": "number",
-        "reach": "scene"
+        "reach": "scene",
+        "driver": "scene"
       }
     },
     "TrackTo": {
       "aimPoint": {
         "kind": "vec3",
-        "reach": null
+        "reach": null,
+        "driver": null
       },
       "order": {
         "kind": "number",
-        "reach": null
+        "reach": null,
+        "driver": null
       },
       "up": {
         "kind": "vec3",
-        "reach": null
+        "reach": null,
+        "driver": null
       }
     },
     "Transform": {
       "position": {
         "kind": "vec3",
-        "reach": "scene"
+        "reach": "scene",
+        "driver": "scene"
       },
       "rotation": {
         "kind": "vec3",
-        "reach": "scene"
+        "reach": "scene",
+        "driver": "scene"
       },
       "scale": {
         "kind": "vec3",
-        "reach": "scene"
+        "reach": "scene",
+        "driver": "scene"
       }
     },
     "UVProjectModifier": {
       "size": {
         "kind": "number",
-        "reach": "scene"
+        "reach": "scene",
+        "driver": "scene"
       }
     },
     "Vec3Math": {
       "scalar": {
         "kind": "number",
-        "reach": null
+        "reach": null,
+        "driver": null
       }
     }
   },

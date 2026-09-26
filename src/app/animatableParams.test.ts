@@ -196,6 +196,81 @@ describe('a param something else supplies is unmeasured here, not still', () => 
   });
 });
 
+describe("a driver is answered from its own measurement, never the channel's (#1258)", () => {
+  const apply = (st: DagState, ops: readonly Parameters<typeof applyOp>[1][]) => {
+    let n = st;
+    for (const op of ops) n = applyOp(n, op).next;
+    return n;
+  };
+  /** A Sphere with a driver `driverId` on its radius, fed by a Math node's output. */
+  function drivenSphere(driverIds: readonly string[]) {
+    const sphere = place(buildDefaultDagState(), 'Sphere');
+    const math = place(sphere.s, 'Math');
+    let s = math.s;
+    for (const driverId of driverIds) {
+      const bind = buildBindDriverOps(s, {
+        targetId: sphere.data,
+        paramPath: 'radius',
+        source: { kind: 'output', id: 'm', label: 'm', ref: { node: math.obj, socket: 'out' } },
+        driverId,
+      });
+      expect(bind.ok).toBe(true);
+      s = apply(s, bind.ok ? bind.ops : []);
+    }
+    return { s, data: sphere.data };
+  }
+
+  it("a camera's fov animates under a channel and not under a driver — the pose reads channels only (#1266)", () => {
+    const cam = place(buildDefaultDagState(), 'PerspectiveCamera');
+    expect(isAnimatable(cam.s, cam.data, 'fov', 'number').answer).toBe('animatable');
+    expect(isAnimatable(cam.s, cam.data, 'fov', 'number', { mechanism: 'driver' })).toEqual({
+      answer: 'still',
+      kind: 'number',
+    });
+    expect(animatablePathsOf(cam.s, cam.data, 'number')).toContain('fov');
+    expect(animatablePathsOf(cam.s, cam.data, 'number', { mechanism: 'driver' })).not.toContain(
+      'fov',
+    );
+  });
+
+  it("a sphere's radius animates under both", () => {
+    const sphere = place(buildDefaultDagState(), 'Sphere');
+    expect(
+      isAnimatable(sphere.s, sphere.data, 'radius', 'number', { mechanism: 'driver' }),
+    ).toMatchObject({ answer: 'animatable', reach: 'scene' });
+  });
+
+  it('a driver carries no colour, and says so rather than "still"', () => {
+    const cube = place(buildDefaultDagState(), 'Cube');
+    expect(
+      isAnimatable(cube.s, cube.data, 'material.base.color', 'color', { mechanism: 'driver' }),
+    ).toEqual({ answer: 'unmeasured', reason: 'a driver carries a number or a vec3, not a color' });
+  });
+
+  it("a driver asking about its own band is not 'something else supplies it'; another driver is", () => {
+    const one = drivenSphere(['drv']);
+    // Anyone else asking — a keyframe, or no one in particular — sees the driver as the supplier.
+    expect(isAnimatable(one.s, one.data, 'radius', 'number')).toMatchObject({
+      answer: 'unmeasured',
+      reason: expect.stringMatching(/driver/),
+    });
+    expect(
+      isAnimatable(one.s, one.data, 'radius', 'number', { mechanism: 'driver', asker: 'drv' }),
+    ).toMatchObject({ answer: 'animatable' });
+    expect(
+      animatablePathsOf(one.s, one.data, 'number', { mechanism: 'driver', asker: 'drv' }),
+    ).toContain('radius');
+
+    const two = drivenSphere(['drv', 'drv2']);
+    expect(
+      isAnimatable(two.s, two.data, 'radius', 'number', { mechanism: 'driver', asker: 'drv' }),
+    ).toEqual({
+      answer: 'unmeasured',
+      reason: 'a driver supplies it, so a driver on it would not show',
+    });
+  });
+});
+
 describe('animatablePathsOf — a picker list', () => {
   it("offers the spot light's live number params and none of the ones it ignores", () => {
     const spot = place(buildDefaultDagState(), 'SpotLight');

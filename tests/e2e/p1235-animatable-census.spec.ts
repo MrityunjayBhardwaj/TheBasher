@@ -78,8 +78,12 @@ interface Row {
   path: string;
   kind: string;
   reach: string | null;
+  /** #1258 — the same param driven by a ParamDriver instead: absent for a kind a driver cannot
+   *  carry, null when the driver moved nothing. */
+  driver?: string | null;
   setting: string[];
   note?: string;
+  driverNote?: string;
 }
 
 /** The committed table's shape, built from the measured rows. One row per (subject, pattern);
@@ -97,7 +101,11 @@ function tableOf(rows: Row[]) {
       notMeasured['(^|\\.)uvTransform\\.'] = r.note.slice('not measured: '.length);
       continue;
     }
-    const row = { kind: r.kind, reach: r.reach };
+    const row = {
+      kind: r.kind,
+      reach: r.reach,
+      ...(r.driver !== undefined ? { driver: r.driver } : {}),
+    };
     const prev = (subjects[r.subject] ??= {})[pattern];
     if (prev && JSON.stringify(prev) !== JSON.stringify(row))
       disagreements.push(
@@ -120,7 +128,7 @@ function tableOf(rows: Row[]) {
   return {
     table: {
       $comment:
-        'Measured by tests/e2e/p1235-animatable-census.spec.ts — regenerate with CENSUS_WRITE=1, never edit by hand. reach: scene | pose | render | null (keyed, nothing moved).',
+        'Measured by tests/e2e/p1235-animatable-census.spec.ts — regenerate with CENSUS_WRITE=1, never edit by hand. reach: scene | pose | render | null (keyed, nothing moved). driver: the same for a ParamDriver carrying the value, on number and vec3 rows only.',
       subjects: sorted,
       notMeasured: Object.keys(notMeasured)
         .sort()
@@ -317,6 +325,15 @@ test(TITLE, async ({ page }) => {
         if (!bound)
           placement.push(`${kind}: no output of it binds to a Sphere's radius or position`);
       }
+      // #1258 — the driver arm's source: one controller Null, apart from everything and never
+      // walked as a subject. A number row reads its `tx` (0 at home) remapped onto the value; a
+      // vec3 row reads its whole position, moved to the value for that row, since the position
+      // road has no remap. Both roads end in the one seam every reader of a driver calls
+      // (`driverChannelValuesForTarget`), so which source a row uses does not change its reach.
+      const CTRL_HOME: [number, number, number] = [0, -40, -60];
+      const ctrl = w.__basher_addPrimitive('Null', CTRL_HOME);
+      if (!ctrl) throw new Error('the driver arm could not place its controller Null');
+      const harness = new Set<string>([ctrl.nodeId, ctrl.dataNodeId].filter(Boolean));
       await frames();
       await frames();
 
@@ -485,8 +502,10 @@ test(TITLE, async ({ page }) => {
         path: string;
         kind: string;
         reach: string | null;
+        driver?: string | null;
         setting: string[];
         note?: string;
+        driverNote?: string;
       }[] = [];
       // #1260 — split by SUBJECT, never by row: "two instances of one subject agree" can only be
       // checked when every instance is measured in the same part. Each subject weighs its row
@@ -494,7 +513,8 @@ test(TITLE, async ({ page }) => {
       // split from the same scene without being told it.
       const weight: Record<string, number> = {};
       for (const [id, node] of Object.entries(nodes)) {
-        if (node.type.startsWith('KeyframeChannel') || contextOf(id).unmeasured) continue;
+        if (node.type.startsWith('KeyframeChannel') || harness.has(id)) continue;
+        if (contextOf(id).unmeasured) continue;
         const leaves: [string, string, unknown][] = [];
         walk(node.params, '', leaves);
         const s = subjectOf(id);
@@ -510,9 +530,34 @@ test(TITLE, async ({ page }) => {
         assignment[s] = k + 1;
         partLoad[k] += weight[s];
       }
+      /** The reach of the overlay `overlayId` just installed, against a `pre` taken without it.
+       *  The overlay is then removed, and the scene it leaves behind is returned as `back`. */
+      async function reachOf(overlayId: string, pre: string, prePose: string) {
+        await frames();
+        await frames();
+        const s1 = snap();
+        let reach: string | null = s1 !== pre ? 'scene' : poses() !== prePose ? 'pose' : null;
+        if (!reach) {
+          // Not in the editor scene: render through the active camera with and without it.
+          const withIt = await renderHash();
+          dag().dispatch(
+            { type: 'setParam', nodeId: overlayId, paramPath: 'mute', value: true },
+            'user',
+            'census',
+          );
+          await frames();
+          await frames();
+          const without = await renderHash();
+          if (withIt !== without) reach = 'render';
+        }
+        dag().dispatch({ type: 'removeNode', nodeId: overlayId }, 'user', 'census');
+        await frames();
+        await frames();
+        return { reach, back: snap() };
+      }
       let n = 0;
       for (const [id, node] of Object.entries(nodes)) {
-        if (node.type.startsWith('KeyframeChannel')) continue;
+        if (node.type.startsWith('KeyframeChannel') || harness.has(id)) continue;
         if (part && assignment[subjectOf(id)] !== part.index) continue;
         const leaves: [string, string, unknown][] = [];
         walk(node.params, '', leaves);
@@ -600,27 +645,57 @@ test(TITLE, async ({ page }) => {
             });
             continue;
           }
-          await frames();
-          await frames();
-          const s1 = snap();
-          let reach: string | null = s1 !== pre ? 'scene' : poses() !== prePose ? 'pose' : null;
-          if (!reach) {
-            // Not in the editor scene: render through the active camera with and without it.
-            const withIt = await renderHash();
-            dag().dispatch(
-              { type: 'setParam', nodeId: chId, paramPath: 'mute', value: true },
-              'user',
-              'census',
-            );
-            await frames();
-            await frames();
-            const without = await renderHash();
-            if (withIt !== without) reach = 'render';
+          const { reach, back } = await reachOf(chId, pre, prePose);
+          // #1258 — the driver arm: the same param, in the same setting, driven to the same value
+          // by a ParamDriver the product's bind builds, against a "before" taken without it.
+          let driver: string | null | undefined;
+          let driverNote: string | undefined;
+          if (kind === 'number' || kind === 'vec3') {
+            const drvId = `census_drv_${n}`;
+            const to = perturb(kind, value);
+            if (kind === 'vec3') {
+              dag().dispatch(
+                { type: 'setParam', nodeId: ctrl.nodeId, paramPath: 'position', value: to },
+                'user',
+                'census',
+              );
+              await frames();
+              await frames();
+            }
+            const dPre = snap();
+            const dPrePose = poses();
+            const bind = B.buildBindDriverOps(dag().state, {
+              targetId: id,
+              paramPath: path,
+              driverId: drvId,
+              source:
+                kind === 'number'
+                  ? {
+                      kind: 'transform',
+                      id: 'census',
+                      label: 'census',
+                      node: ctrl.nodeId,
+                      channel: 'tx',
+                      remap: { inMin: 0, inMax: 1, outMin: to, outMax: (to as number) + 1 },
+                    }
+                  : { kind: 'transformVec', id: 'census', label: 'census', node: ctrl.nodeId },
+            });
+            if (!bind.ok) driverNote = `driver refused: ${bind.reason}`;
+            else {
+              dag().dispatchAtomic(bind.ops, 'user', 'census');
+              const d = await reachOf(drvId, dPre, dPrePose);
+              driver = d.reach;
+              if (d.back !== dPre) driverNote = 'driver did not return to base';
+            }
+            if (kind === 'vec3') {
+              dag().dispatch(
+                { type: 'setParam', nodeId: ctrl.nodeId, paramPath: 'position', value: CTRL_HOME },
+                'user',
+                'census',
+              );
+              await frames();
+            }
           }
-          dag().dispatch({ type: 'removeNode', nodeId: chId }, 'user', 'census');
-          await frames();
-          await frames();
-          const back = snap();
           if (setting.some((x) => x.endsWith('=1'))) {
             const wPath = setting.find((x) => x.endsWith('=1'))!.slice(0, -2);
             dag().dispatch(
@@ -637,8 +712,10 @@ test(TITLE, async ({ page }) => {
             path,
             kind,
             reach,
+            ...(driver !== undefined ? { driver } : {}),
             setting,
             ...(back !== pre ? { note: 'did not return to base' } : {}),
+            ...(driverNote ? { driverNote } : {}),
           });
         }
       }
@@ -665,6 +742,21 @@ test(TITLE, async ({ page }) => {
     `CENSUS not measured (context): ${result.skippedUnderStack.length} — ${result.skippedUnderStack.slice(0, 40).join(' | ')}`,
   );
   console.log(`CENSUS rows=${rows.length} moved=${rows.filter((r) => r.reach !== null).length}`);
+  const driven = rows.filter((r) => r.driver !== undefined);
+  console.log(
+    `CENSUS driver arm: rows=${driven.length} moved=${driven.filter((r) => r.driver !== null).length} ` +
+      `differ-from-channel=${driven.filter((r) => r.driver !== r.reach).length} — ` +
+      driven
+        .filter((r) => r.driver !== r.reach)
+        .map((r) => `${r.subject}.${r.path} channel=${r.reach} driver=${r.driver}`)
+        .join(' | '),
+  );
+  console.log(
+    `CENSUS driver notes: ${rows
+      .filter((r) => r.driverNote)
+      .map((r) => `${r.subject}.${r.path}: ${r.driverNote}`)
+      .join(' | ')}`,
+  );
   const assignment = result.assignment as Record<string, number>;
   const mine = (subject: string) => !PART || assignment[subject] === PART.index;
   if (PART)
@@ -678,6 +770,10 @@ test(TITLE, async ({ page }) => {
     0,
   );
   expect(rows.filter((r) => r.note?.startsWith('channel refused'))).toEqual([]);
+  expect(
+    rows.filter((r) => r.driverNote?.startsWith('driver refused')).map((r) => r.driverNote),
+    'the bind builder takes every number and vec3 row',
+  ).toEqual([]);
   // Every row returns to its own snapshot once its channel is gone — except the two env params,
   // whose imperative write is never undone (#1239). Pinned so the fix reds here and is re-pinned.
   expect(

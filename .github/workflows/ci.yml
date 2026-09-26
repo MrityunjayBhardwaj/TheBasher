@@ -106,7 +106,9 @@ jobs:
   # after another: four parts took 4.0 / 2.4 / 2.9 / 4.5 min, three took
   # 1.7 / 3.7 / 4.0 min (226 / 186 / 185 rows). A fourth part did not shorten the
   # slowest one, so it would only add a runner. Rows are not time: a row whose
-  # key moves nothing in the scene pays for two extra renders. Each part places
+  # key moves nothing in the scene pays for two extra renders. With the driver
+  # arm (#1258: each number and vec3 row measured again under a ParamDriver) the
+  # three took 2.8 / 6.6 / 7.8 min on 2026-09-26, so about 20–36 min in CI. Each part places
   # the whole scene and derives the same split, so the three check every subject
   # in src/app/animatableCensus.json between them. No build step: no census part
   # reads dist/. retries 0: a second attempt of a 45-min cap would double the

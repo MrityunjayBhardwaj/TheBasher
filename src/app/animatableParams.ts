@@ -27,8 +27,11 @@
 //   never reported as "nothing moves".
 // • `scene` includes editor chrome: a point light's `rotation` moves only its helper glyph, and a
 //   curve's line is itself chrome. That is still a visible response to the channel.
-// • Bare keyframe channels only. Strips and drivers reach fewer roads (the camera pose ignores
-//   both) and are not measured here yet.
+// • Two mechanisms, each measured on its own (#1258): a bare keyframe channel, and a ParamDriver
+//   carrying the same value. They reach different readers — every reader of a driver goes
+//   through `driverChannelValuesForTarget`, and the camera pose is not one of them — so one's
+//   answer is never borrowed for the other. A driver carries a number or a vec3 only. Strips are
+//   not measured.
 //
 // REF: tests/e2e/p1235-animatable-census.spec.ts (the measurement); src/app/animatableCensus.json
 //      (its committed result); issues #1235, #1066, #1069, #1239, #474, #193.
@@ -47,6 +50,19 @@ export type ChannelValueKind = 'number' | 'vec2' | 'vec3' | 'quat' | 'color';
  *  the image rendered through the active camera. */
 export type AnimatableReach = 'scene' | 'pose' | 'render';
 
+/** What overlays the param: a bare keyframe channel, or a ParamDriver (#1258). */
+export type AnimatableMechanism = 'channel' | 'driver';
+
+/** The kinds a ParamDriver carries: its scalar road and its Vec3 road (`ParamDriver.ts`). */
+const DRIVER_KINDS: readonly ChannelValueKind[] = ['number', 'vec3'];
+
+/** How a question is asked: by which mechanism, and — when an overlay asks about its own
+ *  target — which node is asking, so it is not counted as "something else supplies it". */
+export interface AnimatableAsk {
+  readonly mechanism?: AnimatableMechanism;
+  readonly asker?: string;
+}
+
 export type AnimatableAnswer =
   | {
       readonly answer: 'animatable';
@@ -59,12 +75,20 @@ export type AnimatableAnswer =
 interface CensusRow {
   readonly kind: ChannelValueKind;
   readonly reach: AnimatableReach | null;
+  /** Absent for a kind a driver cannot carry; null when the driver moved nothing. */
+  readonly driver?: AnimatableReach | null;
 }
 interface CensusFile {
   readonly subjects: Readonly<Record<string, Readonly<Record<string, CensusRow>>>>;
   readonly notMeasured: readonly { readonly pattern: string; readonly reason: string }[];
 }
 const CENSUS = census as unknown as CensusFile;
+
+/** A row's answer for one mechanism: a reach, null (measured, nothing moved) or undefined
+ *  (not measured this way). */
+function reachFor(row: CensusRow, mechanism: AnimatableMechanism) {
+  return mechanism === 'driver' ? row.driver : row.reach;
+}
 
 /**
  * What a node IS for the purpose of which params it draws: its type, its kind discriminator
@@ -165,9 +189,15 @@ function perState(state: DagState) {
  * measures each param where nothing else supplies it, so these are answered "unmeasured", never
  * "still". Each question is put to the function that already owns it.
  */
-function suppliedElsewhere(state: DagState, nodeId: string, paramPath: string): string | null {
+function suppliedElsewhere(
+  state: DagState,
+  nodeId: string,
+  paramPath: string,
+  asker?: string,
+): string | null {
   const root = paramPath.split('.')[0];
-  if (driverStackForTarget(state.nodes, nodeId, paramPath).length > 0)
+  // A driver asking about its own band is not "something else" (#1258); another driver is.
+  if (driverStackForTarget(state.nodes, nodeId, paramPath).some((d) => d.id !== asker))
     return 'a driver supplies it';
   if (
     (root === 'rotation' || root === 'quaternion') &&
@@ -188,6 +218,7 @@ export function animatableContextOf(
   state: DagState,
   nodeId: string,
   paramPath?: string,
+  ask: AnimatableAsk = {},
 ): { readonly subject: string } | { readonly unmeasured: string } {
   const subject = animatableSubjectOf(state, nodeId);
   if (!subject) return { unmeasured: 'no such node' };
@@ -197,8 +228,9 @@ export function animatableContextOf(
       unmeasured: `under an operator stack (${above}), which the census does not measure (#1247)`,
     };
   if (paramPath !== undefined) {
-    const supplier = suppliedElsewhere(state, nodeId, paramPath);
-    if (supplier) return { unmeasured: `${supplier}, so a keyframe on it would not show` };
+    const supplier = suppliedElsewhere(state, nodeId, paramPath, ask.asker);
+    const overlay = ask.mechanism === 'driver' ? 'a driver' : 'a keyframe';
+    if (supplier) return { unmeasured: `${supplier}, so ${overlay} on it would not show` };
   }
   return { subject };
 }
@@ -211,17 +243,22 @@ export function animatablePathPattern(paramPath: string): string {
     .join('.');
 }
 
-/** Can a keyframe channel of `kind` on (`nodeId`, `paramPath`) change what is drawn? */
+/** Can a keyframe channel (or, asked so, a driver) of `kind` on (`nodeId`, `paramPath`) change
+ *  what is drawn? */
 export function isAnimatable(
   state: DagState,
   nodeId: string,
   paramPath: string,
   kind: ChannelValueKind,
+  ask: AnimatableAsk = {},
 ): AnimatableAnswer {
+  const mechanism = ask.mechanism ?? 'channel';
+  if (mechanism === 'driver' && !DRIVER_KINDS.includes(kind))
+    return { answer: 'unmeasured', reason: `a driver carries a number or a vec3, not a ${kind}` };
   const pattern = animatablePathPattern(paramPath);
   const skipped = CENSUS.notMeasured.find((n) => new RegExp(n.pattern).test(pattern));
   if (skipped) return { answer: 'unmeasured', reason: skipped.reason };
-  const context = animatableContextOf(state, nodeId, paramPath);
+  const context = animatableContextOf(state, nodeId, paramPath, ask);
   if ('unmeasured' in context) return { answer: 'unmeasured', reason: context.unmeasured };
   const { subject } = context;
   const rows = CENSUS.subjects[subject];
@@ -229,8 +266,11 @@ export function isAnimatable(
   const row = rows[pattern];
   if (!row) return { answer: 'unmeasured', reason: `the census found no ${pattern} on ${subject}` };
   if (row.kind !== kind) return { answer: 'still', kind: row.kind };
-  return row.reach
-    ? { answer: 'animatable', reach: row.reach, kind: row.kind }
+  const reach = reachFor(row, mechanism);
+  if (reach === undefined)
+    return { answer: 'unmeasured', reason: `the census did not drive ${pattern} on ${subject}` };
+  return reach
+    ? { answer: 'animatable', reach, kind: row.kind }
     : { answer: 'still', kind: row.kind };
 }
 
@@ -243,11 +283,15 @@ export function isMeasuredSubject(subject: string): boolean {
 /** The path patterns the census measured as animatable for `subject` with a `kind` channel,
  *  before anything about an instance is asked — so a picker can tell "this subject has such
  *  params, but here something else supplies them" from "this subject has none" (#1066). */
-export function measuredPathsOfSubject(subject: string, kind: ChannelValueKind): string[] {
+export function measuredPathsOfSubject(
+  subject: string,
+  kind: ChannelValueKind,
+  mechanism: AnimatableMechanism = 'channel',
+): string[] {
   const rows = CENSUS.subjects[subject];
   if (!rows) return [];
   return Object.entries(rows)
-    .filter(([, r]) => r.kind === kind && r.reach !== null)
+    .filter(([, r]) => r.kind === kind && reachFor(r, mechanism) != null)
     .map(([p]) => p);
 }
 
@@ -257,12 +301,14 @@ export function animatablePathsOf(
   state: DagState,
   nodeId: string,
   kind: ChannelValueKind,
+  ask: AnimatableAsk = {},
 ): string[] | null {
   const context = animatableContextOf(state, nodeId);
   const rows = 'subject' in context ? CENSUS.subjects[context.subject] : undefined;
   if (!rows) return null;
+  const mechanism = ask.mechanism ?? 'channel';
   return Object.entries(rows)
-    .filter(([, r]) => r.kind === kind && r.reach !== null)
+    .filter(([, r]) => r.kind === kind && reachFor(r, mechanism) != null)
     .map(([p]) => p)
-    .filter((p) => p.includes('*') || !suppliedElsewhere(state, nodeId, p));
+    .filter((p) => p.includes('*') || !suppliedElsewhere(state, nodeId, p, ask.asker));
 }
