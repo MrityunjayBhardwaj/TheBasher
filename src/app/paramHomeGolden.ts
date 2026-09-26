@@ -174,10 +174,12 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
     '[channel,animate] name=(unrouted) target=(unrouted) paramPath=channel mute=(unrouted) solo=(unrouted) weight=animate blendMode=(unrouted) order=(unrouted) keyframes=channel',
   KeyframeChannelVec2:
     '[channel,animate] name=(unrouted) target=(unrouted) paramPath=channel mute=(unrouted) solo=(unrouted) weight=animate blendMode=(unrouted) order=(unrouted) extendBefore=animate extendAfter=animate modifiers=animate axisModifiers=(unrouted) axisExtend=(unrouted) keyframes=channel',
-  // APPENDED at #1001 (the second arm) — `sourceClipId` + `sourceHash` record
-  // which clip a minted channel was seeded from. Machine provenance, so both are
-  // unrouted, the same standing as `childName`/`assetRef` beside them: a director
-  // never edits them and no card draws them.
+  // APPENDED at #1001 (the second arm) — `sourceClipId` + `sourceHash` recorded
+  // which clip a minted channel was seeded from. Nothing writes them since the
+  // clone rig's clip-seeded mint retired (#1053); they stay declared for old saves.
+  // Machine provenance, so both are unrouted, the same standing as
+  // `childName`/`assetRef` beside them: a director never edits them and no card
+  // draws them.
   KeyframeChannelVec3:
     '[channel,animate] name=(unrouted) target=(unrouted) paramPath=channel mute=(unrouted) solo=(unrouted) weight=animate blendMode=(unrouted) order=(unrouted) extendBefore=animate extendAfter=animate modifiers=animate axisModifiers=(unrouted) axisExtend=(unrouted) childName=(unrouted) assetRef=(unrouted) sourceClipId=(unrouted) sourceHash=(unrouted) keyframes=channel',
   Lag: '[] factor=(unrouted) seedFrame=(unrouted) sourceTransform=(unrouted)',

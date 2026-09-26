@@ -96,7 +96,8 @@ export const CHANNEL_ADDRESS_DOC =
   'glTF bone\u2019s); `layer` = {layerId, bone, component} for a bone\u2019s keys in a ' +
   'PoseLayer (component position|rotation|quaternion|scale|weight; the curve and the bone\u2019s ' +
   'membership are created when absent); or `bone` = {assetRef, childName, component} for a ' +
-  'clone-road glTF bone, which mints that bone\u2019s channel, seeded from the clip. A clone-road ' +
+  'clone-road glTF bone, which mints that bone\u2019s channel, seeded from the file\u2019s own ' +
+  'clip when it animates the bone, else from the bone\u2019s base pose. A clone-road ' +
   'bone MUST use the bone form: `channelId` is REFUSED for a bone\u2019s channel.';
 
 /** The same contract for a SUBTRACTIVE op, which addresses without ever minting. */

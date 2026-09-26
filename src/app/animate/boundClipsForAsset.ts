@@ -13,8 +13,11 @@
 // the read side would render one clip's motion while the mint seeded from
 // another, which looks like a bad seed rather than like a disagreement.
 //
-// So the walk lives here once, and both sides consume it: the band turns the
-// result into samplers, the mint turns it into keys.
+// So the walk lived here once, and both sides consumed it: the band turned the
+// result into samplers, the mint turned it into keys. Both retired with the clone
+// road's character half (#1053). What reads it now is the old-save side: the
+// converter that turns a saved clone character native (`convertCloneCharacters`)
+// and the migration that drops frozen channels (`migrations.ts`).
 //
 // WHY THE EDGE AND NOT A NAME MATCH. A clip keyframe's bone INDEX is only
 // meaningful against the skeleton the indices were authored for. Reading the
@@ -24,8 +27,8 @@
 // clip hangs off a plain `Skeleton`, so the walk excludes the source with no
 // special case.
 //
-// REF: src/app/bakedGltfChannels.ts (the read band that consumes this);
-//      src/nodes/AnimationClip.ts (buildClipBoneSamplers); issues #888, #889.
+// REF: src/app/asset/convertCloneCharacters.ts; src/core/project/migrations.ts;
+//      src/nodes/AnimationClip.ts (buildClipBoneSamplers); issues #888, #889, #1053.
 
 import type { AnimationClipParams } from '../../nodes/AnimationClip';
 import { poseLayerChain } from './poseChain';
