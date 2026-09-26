@@ -334,6 +334,30 @@ test(TITLE, async ({ page }) => {
       const ctrl = w.__basher_addPrimitive('Null', CTRL_HOME);
       if (!ctrl) throw new Error('the driver arm could not place its controller Null');
       const harness = new Set<string>([ctrl.nodeId, ctrl.dataNodeId].filter(Boolean));
+      // #1259 — a posable node's `quaternion` is optional and absent until the author opts in, so
+      // no leaf existed to key. Seed it (the identity, which draws what the euler zero draws) on
+      // every node whose schema DECLARES a rotation mode, and measure each such node in both
+      // modes. Asked of the schema, not of a dispatch: a passthrough schema (Scene) accepts any
+      // write, and seeding it made a Scene "posable" (measured).
+      const setMode = (id: string, mode: 'quaternion' | undefined) =>
+        dag().dispatch(
+          { type: 'setParam', nodeId: id, paramPath: 'rotationMode', value: mode },
+          'user',
+          'census mode',
+        );
+      const posable: string[] = [];
+      for (const [id, node] of Object.entries(dag().state.nodes) as [string, Loose][]) {
+        if (node.type.startsWith('KeyframeChannel') || harness.has(id)) continue;
+        if (!B.declaresParam(node.type, 'rotationMode')) continue;
+        dag().dispatch(
+          { type: 'setParam', nodeId: id, paramPath: 'quaternion', value: [0, 0, 0, 1] },
+          'user',
+          'census seed',
+        );
+        if (!Array.isArray(dag().state.nodes[id]?.params?.quaternion))
+          throw new Error(`the census could not seed ${node.type} ${id}'s quaternion`);
+        posable.push(id);
+      }
       await frames();
       await frames();
 
@@ -512,14 +536,22 @@ test(TITLE, async ({ page }) => {
       // count, and the heaviest goes first to the lightest part, so every part derives the same
       // split from the same scene without being told it.
       const weight: Record<string, number> = {};
-      for (const [id, node] of Object.entries(nodes)) {
-        if (node.type.startsWith('KeyframeChannel') || harness.has(id)) continue;
-        if (contextOf(id).unmeasured) continue;
+      const weigh = (id: string) => {
+        if (contextOf(id).unmeasured) return;
         const leaves: [string, string, unknown][] = [];
-        walk(node.params, '', leaves);
+        walk(dag().state.nodes[id].params, '', leaves);
         const s = subjectOf(id);
         for (const [path] of leaves)
           if (!contextOf(id, path).unmeasured) weight[s] = (weight[s] ?? 0) + 1;
+      };
+      for (const [id, node] of Object.entries(nodes)) {
+        if (node.type.startsWith('KeyframeChannel') || harness.has(id)) continue;
+        weigh(id);
+        if (posable.includes(id)) {
+          setMode(id, 'quaternion');
+          weigh(id);
+          setMode(id, undefined);
+        }
       }
       const assignment: Record<string, number> = {};
       const partLoad = Array.from({ length: part?.count ?? 1 }, () => 0);
@@ -556,15 +588,16 @@ test(TITLE, async ({ page }) => {
         return { reach, back: snap() };
       }
       let n = 0;
-      for (const [id, node] of Object.entries(nodes)) {
-        if (node.type.startsWith('KeyframeChannel') || harness.has(id)) continue;
-        if (part && assignment[subjectOf(id)] !== part.index) continue;
+      /** Every leaf of `id` as it stands now: one pass per rotation mode for a posable node. */
+      async function measurePass(id: string) {
+        const node = dag().state.nodes[id] as { type: string; params: Record<string, unknown> };
+        if (part && assignment[subjectOf(id)] !== part.index) return;
         const leaves: [string, string, unknown][] = [];
         walk(node.params, '', leaves);
         const ctx = contextOf(id);
         if (ctx.unmeasured) {
           if (leaves.length) skippedUnderStack.push(`${node.type} ${id}: ${ctx.unmeasured}`);
-          continue;
+          return;
         }
         for (const [path, kind, value] of leaves) {
           const pathCtx = contextOf(id, path);
@@ -719,8 +752,19 @@ test(TITLE, async ({ page }) => {
           });
         }
       }
+      for (const [id, node] of Object.entries(nodes)) {
+        if (node.type.startsWith('KeyframeChannel') || harness.has(id)) continue;
+        await measurePass(id);
+        if (posable.includes(id)) {
+          setMode(id, 'quaternion');
+          await measurePass(id);
+          setMode(id, undefined);
+          await frames();
+        }
+      }
       return {
         controlStill,
+        posable: posable.map((id) => `${dag().state.nodes[id].type} ${subjectOf(id)}`),
         placed,
         wiring,
         placement,
@@ -734,6 +778,7 @@ test(TITLE, async ({ page }) => {
   );
 
   const rows = result.rows as Row[];
+  console.log(`CENSUS posable (${result.posable.length}): ${result.posable.join(' | ')}`);
   console.log(
     'CENSUS placement: ' +
       (result.placement.length ? result.placement.join(' | ') : 'every builder accepted'),

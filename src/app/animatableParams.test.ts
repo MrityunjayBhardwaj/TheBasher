@@ -42,6 +42,61 @@ describe('animatableSubjectOf — the key the census measured under', () => {
     expect(animatableSubjectOf(cam.s, cam.data)).toBe('CameraData:Orthographic');
     expect(animatableSubjectOf(cam.s, 'no-such-node')).toBeNull();
   });
+
+  it('keys a posable node by its rotation mode, and leaves the euler key bare (#1259)', () => {
+    const sphere = place(buildDefaultDagState(), 'Sphere');
+    const group = place(sphere.s, 'Group');
+    const quat = [sphere.obj, group.obj].reduce(
+      (s, id) =>
+        applyOp(s, { type: 'setParam', nodeId: id, paramPath: 'rotationMode', value: 'quaternion' })
+          .next,
+      group.s,
+    );
+    expect([sphere.obj, group.obj, sphere.data].map((id) => animatableSubjectOf(quat, id))).toEqual(
+      ['Object<SphereData>@quaternion', 'Group@quaternion', 'SphereData'],
+    );
+    // Back to euler (the product unsets the mode) is the bare key again.
+    const euler = applyOp(quat, {
+      type: 'setParam',
+      nodeId: sphere.obj,
+      paramPath: 'rotationMode',
+      value: undefined,
+    }).next;
+    expect(animatableSubjectOf(euler, sphere.obj)).toBe('Object<SphereData>');
+  });
+});
+
+describe('the rotation mode decides which rotation is drawn (#1259, measured)', () => {
+  it("euler draws `rotation` and not `quaternion`; quaternion mode the reverse — Blender's rule", () => {
+    const sphere = place(buildDefaultDagState(), 'Sphere');
+    const seeded = applyOp(sphere.s, {
+      type: 'setParam',
+      nodeId: sphere.obj,
+      paramPath: 'quaternion',
+      value: [0, 0, 0, 1],
+    }).next;
+    const quat = applyOp(seeded, {
+      type: 'setParam',
+      nodeId: sphere.obj,
+      paramPath: 'rotationMode',
+      value: 'quaternion',
+    }).next;
+    const ask = (s: DagState, path: string, kind: 'vec3' | 'quat') =>
+      isAnimatable(s, sphere.obj, path, kind).answer;
+    expect({
+      euler: {
+        rotation: ask(seeded, 'rotation', 'vec3'),
+        quaternion: ask(seeded, 'quaternion', 'quat'),
+      },
+      quaternion: {
+        rotation: ask(quat, 'rotation', 'vec3'),
+        quaternion: ask(quat, 'quaternion', 'quat'),
+      },
+    }).toEqual({
+      euler: { rotation: 'animatable', quaternion: 'still' },
+      quaternion: { rotation: 'still', quaternion: 'animatable' },
+    });
+  });
 });
 
 describe('animatablePathPattern', () => {

@@ -271,10 +271,40 @@
         "reach": "scene",
         "driver": "scene"
       },
+      "quaternion": {
+        "kind": "quat",
+        "reach": null
+      },
       "rotation": {
         "kind": "vec3",
         "reach": "scene",
         "driver": "scene"
+      },
+      "scale": {
+        "kind": "vec3",
+        "reach": "scene",
+        "driver": "scene"
+      }
+    },
+    "Group@quaternion": {
+      "pivot": {
+        "kind": "vec3",
+        "reach": "scene",
+        "driver": "scene"
+      },
+      "position": {
+        "kind": "vec3",
+        "reach": "scene",
+        "driver": "scene"
+      },
+      "quaternion": {
+        "kind": "quat",
+        "reach": "scene"
+      },
+      "rotation": {
+        "kind": "vec3",
+        "reach": null,
+        "driver": null
       },
       "scale": {
         "kind": "vec3",
@@ -642,10 +672,35 @@
         "reach": "scene",
         "driver": "scene"
       },
+      "quaternion": {
+        "kind": "quat",
+        "reach": null
+      },
       "rotation": {
         "kind": "vec3",
         "reach": "scene",
         "driver": "scene"
+      },
+      "scale": {
+        "kind": "vec3",
+        "reach": "scene",
+        "driver": "scene"
+      }
+    },
+    "Object<ArrayModifier>@quaternion": {
+      "position": {
+        "kind": "vec3",
+        "reach": "scene",
+        "driver": "scene"
+      },
+      "quaternion": {
+        "kind": "quat",
+        "reach": "scene"
+      },
+      "rotation": {
+        "kind": "vec3",
+        "reach": null,
+        "driver": null
       },
       "scale": {
         "kind": "vec3",
@@ -659,10 +714,35 @@
         "reach": "scene",
         "driver": "scene"
       },
+      "quaternion": {
+        "kind": "quat",
+        "reach": null
+      },
       "rotation": {
         "kind": "vec3",
         "reach": "scene",
         "driver": "scene"
+      },
+      "scale": {
+        "kind": "vec3",
+        "reach": "scene",
+        "driver": "scene"
+      }
+    },
+    "Object<BevelModifier>@quaternion": {
+      "position": {
+        "kind": "vec3",
+        "reach": "scene",
+        "driver": "scene"
+      },
+      "quaternion": {
+        "kind": "quat",
+        "reach": "scene"
+      },
+      "rotation": {
+        "kind": "vec3",
+        "reach": null,
+        "driver": null
       },
       "scale": {
         "kind": "vec3",
@@ -676,10 +756,35 @@
         "reach": "scene",
         "driver": "scene"
       },
+      "quaternion": {
+        "kind": "quat",
+        "reach": null
+      },
       "rotation": {
         "kind": "vec3",
         "reach": "scene",
         "driver": "scene"
+      },
+      "scale": {
+        "kind": "vec3",
+        "reach": "scene",
+        "driver": "scene"
+      }
+    },
+    "Object<BoxData>@quaternion": {
+      "position": {
+        "kind": "vec3",
+        "reach": "scene",
+        "driver": "scene"
+      },
+      "quaternion": {
+        "kind": "quat",
+        "reach": "scene"
+      },
+      "rotation": {
+        "kind": "vec3",
+        "reach": null,
+        "driver": null
       },
       "scale": {
         "kind": "vec3",
@@ -692,6 +797,31 @@
         "kind": "vec3",
         "reach": "scene",
         "driver": null
+      },
+      "quaternion": {
+        "kind": "quat",
+        "reach": null
+      },
+      "rotation": {
+        "kind": "vec3",
+        "reach": null,
+        "driver": null
+      },
+      "scale": {
+        "kind": "vec3",
+        "reach": null,
+        "driver": null
+      }
+    },
+    "Object<CameraData:Orthographic>@quaternion": {
+      "position": {
+        "kind": "vec3",
+        "reach": "scene",
+        "driver": null
+      },
+      "quaternion": {
+        "kind": "quat",
+        "reach": null
       },
       "rotation": {
         "kind": "vec3",
@@ -710,6 +840,31 @@
         "reach": "scene",
         "driver": null
       },
+      "quaternion": {
+        "kind": "quat",
+        "reach": null
+      },
+      "rotation": {
+        "kind": "vec3",
+        "reach": null,
+        "driver": null
+      },
+      "scale": {
+        "kind": "vec3",
+        "reach": null,
+        "driver": null
+      }
+    },
+    "Object<CameraData:Perspective>@quaternion": {
+      "position": {
+        "kind": "vec3",
+        "reach": "scene",
+        "driver": null
+      },
+      "quaternion": {
+        "kind": "quat",
+        "reach": null
+      },
       "rotation": {
         "kind": "vec3",
         "reach": null,
@@ -727,10 +882,35 @@
         "reach": "scene",
         "driver": "scene"
       },
+      "quaternion": {
+        "kind": "quat",
+        "reach": null
+      },
       "rotation": {
         "kind": "vec3",
         "reach": "scene",
         "driver": "scene"
+      },
+      "scale": {
+        "kind": "vec3",
+        "reach": "scene",
+        "driver": "scene"
+      }
+    },
+    "Object<ComponentGroupOp>@quaternion": {
+      "position": {
+        "kind": "vec3",
+        "reach": "scene",
+        "driver": "scene"
+      },
+      "quaternion": {
+        "kind": "quat",
+        "reach": "scene"
+      },
+      "rotation": {
+        "kind": "vec3",
+        "reach": null,
+        "driver": null
       },
       "scale": {
         "kind": "vec3",
@@ -744,10 +924,35 @@
         "reach": "scene",
         "driver": "scene"
       },
+      "quaternion": {
+        "kind": "quat",
+        "reach": null
+      },
       "rotation": {
         "kind": "vec3",
         "reach": "scene",
         "driver": "scene"
+      },
+      "scale": {
+        "kind": "vec3",
+        "reach": "scene",
+        "driver": "scene"
+      }
+    },
+    "Object<CurveData>@quaternion": {
+      "position": {
+        "kind": "vec3",
+        "reach": "scene",
+        "driver": "scene"
+      },
+      "quaternion": {
+        "kind": "quat",
+        "reach": "scene"
+      },
+      "rotation": {
+        "kind": "vec3",
+        "reach": null,
+        "driver": null
       },
       "scale": {
         "kind": "vec3",
@@ -760,6 +965,31 @@
         "kind": "vec3",
         "reach": "scene",
         "driver": "scene"
+      },
+      "quaternion": {
+        "kind": "quat",
+        "reach": null
+      },
+      "rotation": {
+        "kind": "vec3",
+        "reach": null,
+        "driver": null
+      },
+      "scale": {
+        "kind": "vec3",
+        "reach": "scene",
+        "driver": "scene"
+      }
+    },
+    "Object<LightData:Area>@quaternion": {
+      "position": {
+        "kind": "vec3",
+        "reach": "scene",
+        "driver": "scene"
+      },
+      "quaternion": {
+        "kind": "quat",
+        "reach": null
       },
       "rotation": {
         "kind": "vec3",
@@ -778,10 +1008,35 @@
         "reach": "scene",
         "driver": "scene"
       },
+      "quaternion": {
+        "kind": "quat",
+        "reach": null
+      },
       "rotation": {
         "kind": "vec3",
         "reach": "scene",
         "driver": "scene"
+      },
+      "scale": {
+        "kind": "vec3",
+        "reach": "scene",
+        "driver": "scene"
+      }
+    },
+    "Object<LightData:Directional>@quaternion": {
+      "position": {
+        "kind": "vec3",
+        "reach": "scene",
+        "driver": "scene"
+      },
+      "quaternion": {
+        "kind": "quat",
+        "reach": "scene"
+      },
+      "rotation": {
+        "kind": "vec3",
+        "reach": null,
+        "driver": null
       },
       "scale": {
         "kind": "vec3",
@@ -795,10 +1050,35 @@
         "reach": "scene",
         "driver": "scene"
       },
+      "quaternion": {
+        "kind": "quat",
+        "reach": null
+      },
       "rotation": {
         "kind": "vec3",
         "reach": "scene",
         "driver": "scene"
+      },
+      "scale": {
+        "kind": "vec3",
+        "reach": "scene",
+        "driver": "scene"
+      }
+    },
+    "Object<LightData:Point>@quaternion": {
+      "position": {
+        "kind": "vec3",
+        "reach": "scene",
+        "driver": "scene"
+      },
+      "quaternion": {
+        "kind": "quat",
+        "reach": "scene"
+      },
+      "rotation": {
+        "kind": "vec3",
+        "reach": null,
+        "driver": null
       },
       "scale": {
         "kind": "vec3",
@@ -811,6 +1091,31 @@
         "kind": "vec3",
         "reach": "scene",
         "driver": "scene"
+      },
+      "quaternion": {
+        "kind": "quat",
+        "reach": null
+      },
+      "rotation": {
+        "kind": "vec3",
+        "reach": null,
+        "driver": null
+      },
+      "scale": {
+        "kind": "vec3",
+        "reach": "scene",
+        "driver": "scene"
+      }
+    },
+    "Object<LightData:Spot>@quaternion": {
+      "position": {
+        "kind": "vec3",
+        "reach": "scene",
+        "driver": "scene"
+      },
+      "quaternion": {
+        "kind": "quat",
+        "reach": null
       },
       "rotation": {
         "kind": "vec3",
@@ -829,10 +1134,35 @@
         "reach": "scene",
         "driver": "scene"
       },
+      "quaternion": {
+        "kind": "quat",
+        "reach": null
+      },
       "rotation": {
         "kind": "vec3",
         "reach": "scene",
         "driver": "scene"
+      },
+      "scale": {
+        "kind": "vec3",
+        "reach": "scene",
+        "driver": "scene"
+      }
+    },
+    "Object<MaskModifier>@quaternion": {
+      "position": {
+        "kind": "vec3",
+        "reach": "scene",
+        "driver": "scene"
+      },
+      "quaternion": {
+        "kind": "quat",
+        "reach": "scene"
+      },
+      "rotation": {
+        "kind": "vec3",
+        "reach": null,
+        "driver": null
       },
       "scale": {
         "kind": "vec3",
@@ -846,10 +1176,35 @@
         "reach": "scene",
         "driver": "scene"
       },
+      "quaternion": {
+        "kind": "quat",
+        "reach": null
+      },
       "rotation": {
         "kind": "vec3",
         "reach": "scene",
         "driver": "scene"
+      },
+      "scale": {
+        "kind": "vec3",
+        "reach": "scene",
+        "driver": "scene"
+      }
+    },
+    "Object<MaterialOverrideOp>@quaternion": {
+      "position": {
+        "kind": "vec3",
+        "reach": "scene",
+        "driver": "scene"
+      },
+      "quaternion": {
+        "kind": "quat",
+        "reach": "scene"
+      },
+      "rotation": {
+        "kind": "vec3",
+        "reach": null,
+        "driver": null
       },
       "scale": {
         "kind": "vec3",
@@ -863,10 +1218,35 @@
         "reach": "scene",
         "driver": "scene"
       },
+      "quaternion": {
+        "kind": "quat",
+        "reach": null
+      },
       "rotation": {
         "kind": "vec3",
         "reach": "scene",
         "driver": "scene"
+      },
+      "scale": {
+        "kind": "vec3",
+        "reach": "scene",
+        "driver": "scene"
+      }
+    },
+    "Object<MirrorModifier>@quaternion": {
+      "position": {
+        "kind": "vec3",
+        "reach": "scene",
+        "driver": "scene"
+      },
+      "quaternion": {
+        "kind": "quat",
+        "reach": "scene"
+      },
+      "rotation": {
+        "kind": "vec3",
+        "reach": null,
+        "driver": null
       },
       "scale": {
         "kind": "vec3",
@@ -880,10 +1260,35 @@
         "reach": "scene",
         "driver": "scene"
       },
+      "quaternion": {
+        "kind": "quat",
+        "reach": null
+      },
       "rotation": {
         "kind": "vec3",
         "reach": "scene",
         "driver": "scene"
+      },
+      "scale": {
+        "kind": "vec3",
+        "reach": "scene",
+        "driver": "scene"
+      }
+    },
+    "Object<SetMaterialOp>@quaternion": {
+      "position": {
+        "kind": "vec3",
+        "reach": "scene",
+        "driver": "scene"
+      },
+      "quaternion": {
+        "kind": "quat",
+        "reach": "scene"
+      },
+      "rotation": {
+        "kind": "vec3",
+        "reach": null,
+        "driver": null
       },
       "scale": {
         "kind": "vec3",
@@ -897,10 +1302,35 @@
         "reach": "scene",
         "driver": "scene"
       },
+      "quaternion": {
+        "kind": "quat",
+        "reach": null
+      },
       "rotation": {
         "kind": "vec3",
         "reach": "scene",
         "driver": "scene"
+      },
+      "scale": {
+        "kind": "vec3",
+        "reach": "scene",
+        "driver": "scene"
+      }
+    },
+    "Object<SphereData>@quaternion": {
+      "position": {
+        "kind": "vec3",
+        "reach": "scene",
+        "driver": "scene"
+      },
+      "quaternion": {
+        "kind": "quat",
+        "reach": "scene"
+      },
+      "rotation": {
+        "kind": "vec3",
+        "reach": null,
+        "driver": null
       },
       "scale": {
         "kind": "vec3",
@@ -914,10 +1344,35 @@
         "reach": "scene",
         "driver": "scene"
       },
+      "quaternion": {
+        "kind": "quat",
+        "reach": null
+      },
       "rotation": {
         "kind": "vec3",
         "reach": "scene",
         "driver": "scene"
+      },
+      "scale": {
+        "kind": "vec3",
+        "reach": "scene",
+        "driver": "scene"
+      }
+    },
+    "Object<UVProjectModifier>@quaternion": {
+      "position": {
+        "kind": "vec3",
+        "reach": "scene",
+        "driver": "scene"
+      },
+      "quaternion": {
+        "kind": "quat",
+        "reach": "scene"
+      },
+      "rotation": {
+        "kind": "vec3",
+        "reach": null,
+        "driver": null
       },
       "scale": {
         "kind": "vec3",

@@ -23,6 +23,7 @@ import {
 } from './geometryRegistry';
 import { sweepStats } from '../viewport/geometrySweep';
 import { detachGraph } from '../core/dag/state';
+import { getNodeType } from '../core/dag/registry';
 import { useDagStore } from '../core/dag/store';
 import type { EvalCtx, NodeId, Op } from '../core/dag/types';
 import {
@@ -652,6 +653,14 @@ export function boot(): Promise<void> {
           buildAddConstraintOps: constraints.buildAddConstraintOps,
           buildNewMaterialOps: material.buildNewMaterialOps,
           buildBindDriverOps: driver.buildBindDriverOps,
+          // #1259 — whether `type`'s schema DECLARES `key`. A dispatch cannot say: a passthrough
+          // schema (Scene) accepts any param, so a write that sticks is not a declaration.
+          declaresParam: (type: string, key: string) => {
+            const shape = (
+              getNodeType(type)?.paramSchema as { shape?: Record<string, unknown> } | undefined
+            )?.shape;
+            return shape !== undefined && key in shape;
+          },
         };
       });
       void import('./setActiveCamera').then((m) => {

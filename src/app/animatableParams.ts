@@ -94,7 +94,9 @@ function reachFor(row: CensusRow, mechanism: AnimatableMechanism) {
  * What a node IS for the purpose of which params it draws: its type, its kind discriminator
  * when it has one (`LightData:Spot`, `CameraData:Orthographic`), and for an `Object` the
  * subject of the data it poses (`Object<LightData:Spot>`) — because a spot light's Object
- * ignores `rotation` (it aims by `target`) while a point light's does not.
+ * ignores `rotation` (it aims by `target`) while a point light's does not. And, for a posable
+ * node, its rotation mode (`Object<SphereData>@quaternion`), since which of `rotation` and
+ * `quaternion` is drawn depends on it (#1259).
  *
  * The census harness asks THIS function (through a dev hook), so the key it measured under and
  * the key a picker looks up are one definition, not two.
@@ -106,14 +108,19 @@ export function animatableSubjectOf(state: DagState, nodeId: string): string | n
     lightKind?: unknown;
     projection?: unknown;
     kind?: unknown;
+    rotationMode?: unknown;
   };
+  // #1259 — a node in quaternion mode composes its `quaternion` and overwrites `rotation` with
+  // it (`withResolvedRotation`), so the same param answers differently in each mode: it is a
+  // different subject. Euler keeps the bare key, so no row measured before the modes did moves.
+  const mode = params.rotationMode === 'quaternion' ? '@quaternion' : '';
   const dataId = (node.inputs as { data?: { node?: string } } | undefined)?.data?.node;
   if (node.type === 'Object' && dataId && state.nodes[dataId]) {
     const data = animatableSubjectOf(state, dataId);
-    return data ? `Object<${data}>` : null;
+    return data ? `Object<${data}>${mode}` : null;
   }
   const kind = params.lightKind ?? params.projection ?? params.kind;
-  return typeof kind === 'string' ? `${node.type}:${kind}` : node.type;
+  return (typeof kind === 'string' ? `${node.type}:${kind}` : node.type) + mode;
 }
 
 /**
