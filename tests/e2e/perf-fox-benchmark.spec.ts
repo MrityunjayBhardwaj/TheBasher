@@ -26,9 +26,9 @@
 // rasterizes via SwiftShader.
 //
 // REF: src/perf/frameProfiler.ts, src/perf/PerfProbe.tsx, src/app/boot.ts
-// (`__basher_importGltf` + `__basher_writeOpfsBytes` + `__basher_perf` seams),
-// src/core/import/gltfImportChain.ts:307-349 (the auto-wire that joins every
-// imported clip to the same `n_time`), src/app/Clock.tsx + timeStore.tick
+// (`__basher_ingestGltfFolder` + `__basher_perf` seams),
+// src/core/import/nativeGltfImport.ts (a skinned import as a native character, its keys in a
+// base pose layer sampled at the playhead), src/app/Clock.tsx + timeStore.tick
 // (playback driver; `play()` must be called for tick to advance), [[H48]],
 // dharana [[B13]] (SceneFromDAG render-reconciliation boundary). Issue #114.
 
@@ -68,10 +68,19 @@ interface SkinHandle {
   vertex: (i: number) => [number, number, number];
 }
 interface PerfWindow {
-  __basher_dag?: { getState: () => { state: { outputs: Record<string, { node: string }> } } };
+  __basher_dag?: {
+    getState: () => {
+      state: {
+        outputs: Record<string, { node: string }>;
+        nodes: Record<string, { type: string }>;
+      };
+    };
+  };
   __basher_perf?: { start: () => void; stop: () => PerfSummary; summary: () => PerfSummary };
-  __basher_importGltf?: (buffer: ArrayBuffer, assetRef: string) => Promise<unknown>;
-  __basher_writeOpfsBytes?: (path: string, bytes: Uint8Array) => Promise<void>;
+  __basher_ingestGltfFolder?: (
+    files: { relativePath: string; bytes: Uint8Array }[],
+    folderName: string,
+  ) => Promise<string>;
   __basher_time?: {
     getState: () => {
       play: () => void;
@@ -137,34 +146,41 @@ test('perf fox-duplication playback: skinned+animated three-budget sweep', async
     await page.waitForFunction(() => {
       const w = window as unknown as PerfWindow;
       return Boolean(
-        w.__basher_dag &&
-        w.__basher_perf &&
-        w.__basher_importGltf &&
-        w.__basher_writeOpfsBytes &&
-        w.__basher_time,
+        w.__basher_dag && w.__basher_perf && w.__basher_ingestGltfFolder && w.__basher_time,
       );
     });
 
-    // Import N foxes — same bytes, N different OPFS paths. Each import
-    // auto-wires its TransformClip chain to the same `n_time` TimeSource
-    // (gltfImportChain.ts:249, 333), so all N foxes will animate together
-    // when timeStore.play() is called. Stacked at origin (no per-instance
-    // position in the seam) — all in-frustum by construction; overdraw is
-    // a controlled distortion identical at every level, so it does not
-    // distort the React-reconciliation knee we are measuring.
+    // Import N foxes through the product's ingest — same bytes, N folders. Each arrives as a
+    // native character (#1205): a skeleton Object posed by its base pose layer at the playhead, so
+    // all N animate together when timeStore.play() is called. Stacked at origin — all in-frustum
+    // by construction; overdraw is a controlled distortion identical at every level, so it does
+    // not distort the React-reconciliation knee we are measuring.
     await page.evaluate(
       async ({ count }) => {
         const w = window as unknown as PerfWindow;
-        const buf = await fetch('/__perf_fox.glb').then((r) => r.arrayBuffer());
-        const u8 = new Uint8Array(buf);
+        const bytes = new Uint8Array(await (await fetch('/__perf_fox.glb')).arrayBuffer());
         for (let i = 0; i < count; i++) {
-          const ref = `assets/perf-fox-${i}.glb`;
-          await w.__basher_writeOpfsBytes!(ref, u8);
-          await w.__basher_importGltf!(buf, ref);
+          await w.__basher_ingestGltfFolder!([{ relativePath: 'Fox.glb', bytes }], `perf-fox-${i}`);
         }
       },
       { count: foxCount },
     );
+
+    // Validity gate 0 — every fox is a native character, so the numbers below are the native
+    // road's: a Skeleton per fox and nothing of the clone road.
+    const road = await page.evaluate(() => {
+      const types = Object.values(
+        (window as unknown as PerfWindow).__basher_dag!.getState().state.nodes,
+      ).map((n) => (n as { type: string }).type);
+      return {
+        skeletons: types.filter((t) => t === 'Skeleton').length,
+        clone: types.filter((t) => t.startsWith('Gltf')).length,
+      };
+    });
+    expect(road, `fox @ count=${foxCount} did not import native`).toEqual({
+      skeletons: foxCount,
+      clone: 0,
+    });
 
     // Validity gate 1 — at least one fox registered a bound SkinnedMesh.
     // (`__basher_gltf_skin` is a global "last mounted" seam — N foxes all
