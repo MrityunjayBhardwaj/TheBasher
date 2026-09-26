@@ -186,7 +186,9 @@ function whyNot(state: DagState, nodeId: string, path: string, asking: Asking): 
       return asking.kinds.includes(answer.kind as PickedChannelKind)
         ? 'nothing drawn changes'
         : `a ${answer.kind}, not a ${asking.kinds.join(' or ')}`;
-  return 'animates';
+  // The census says this path animates on such a node, yet it was not offered: the list is
+  // built from the values the node holds, and this node holds none at the path.
+  return `this node holds no value at ${path}`;
 }
 
 function overlayParams(state: DagState, overlayId: string) {
@@ -260,7 +262,9 @@ function pathLock(state: DagState, overlayId: string, asking: Asking): string | 
   if (comfyGraphOf(state, target)) return `this workflow's batch reads no ${kinds} input`;
   const subject = animatableSubjectOf(state, target);
   if (subject && isMeasuredSubject(subject))
-    return `no ${kinds} param of ${subject} animates${asking.ask.mechanism === 'driver' ? ' by a driver' : ''}`;
+    return asking.ask.mechanism === 'driver'
+      ? `a driver moves no ${kinds} param of ${subject}`
+      : `no ${kinds} param of ${subject} animates`;
   return `the census has not measured ${subject ?? 'this node'}`;
 }
 

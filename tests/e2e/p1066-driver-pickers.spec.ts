@@ -171,7 +171,7 @@ test("a camera's fov is offered to a channel, and read-only with why to a driver
   const locked = page.getByTestId('inspector-options-locked-fovdrv_e2e-paramPath');
   await expect(locked).toContainText('fov');
   await expect(locked).toContainText(
-    'no number or vec3 param of CameraData:Perspective animates by a driver',
+    'a driver moves no number or vec3 param of CameraData:Perspective',
   );
   await expect(page.getByTestId('inspector-options-fovdrv_e2e-paramPath')).toHaveCount(0);
   const targets = await shown(page, 'inspector-options-fovdrv_e2e-target');

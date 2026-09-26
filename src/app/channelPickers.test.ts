@@ -33,6 +33,7 @@ import {
 } from './channelPickers';
 import { comfyParamPath, importComfyGraph } from '../core/comfy/comfyGraph';
 import { bakeComfyBatchedTracks } from './video/compileComfyBatch';
+import { buildSpringOps } from './solverBind';
 
 beforeEach(() => {
   __resetRegistryForTests();
@@ -159,6 +160,22 @@ describe('channel pickers — what the census cannot answer is listed with its r
     ).toBe('no color param of Object<LightData:Spot> animates');
   });
 
+  it('a path the census says animates, on a node holding no value there, says so', () => {
+    const spot = place(buildDefaultDagState(), 'SpotLight');
+    // Minted by hand: the builders always fill intensity, but a node is params, and a list
+    // built from held values must not read a missing one as "animates".
+    const params = { ...(spot.s.nodes[spot.data].params as Record<string, unknown>) };
+    delete params.intensity;
+    const bare = {
+      ...spot.s,
+      nodes: { ...spot.s.nodes, [spot.data]: { ...spot.s.nodes[spot.data], params } },
+    } as DagState;
+    const s = withChannel(bare, 'KeyframeChannelNumber', spot.data, 'intensity');
+    expect(reasonOf(channelPathOptions(s, 'ch', 'number'), 'intensity')).toBe(
+      'this node holds no value at intensity',
+    );
+  });
+
   it('a text channel on a scene node: only a ComfyUI workflow reads text', () => {
     const cube = place(buildDefaultDagState(), 'Cube');
     const s = withChannel(cube.s, 'KeyframeChannelText', cube.data, '');
@@ -210,6 +227,29 @@ describe('ParamDriver pickers — the census driver answers, of the source kind 
     });
     expect(driverKindsOf(scalar, 'drv')).toEqual(['number']);
     expect(enabled(driverPathOptions(scalar, 'drv'))).toContain('radius');
+  });
+
+  it('a spring reads as a vec3: its Solver feeds the driver a Vector3', () => {
+    const sphere = place(buildDefaultDagState(), 'Sphere');
+    const ctl = place(sphere.s, 'Null');
+    const spring = buildSpringOps(ctl.s, {
+      targetId: sphere.obj,
+      controllerId: ctl.obj,
+      idFor: (k) => `spring_${k}`,
+    });
+    expect(spring.ok).toBe(true);
+    const s = apply(ctl.s, spring.ok ? spring.ops : []);
+    const driver = Object.values(s.nodes).find((n) => n.type === 'ParamDriver')!.id;
+    expect(driverKindsOf(s, driver)).toEqual(['vec3']);
+    expect(enabled(driverPathOptions(s, driver))).toContain('position');
+    expect(enabled(driverPathOptions(s, driver))).not.toContain('radius');
+  });
+
+  it('a camera data node: the path is read-only, saying no param moves for a driver', () => {
+    const cam = place(buildDefaultDagState(), 'PerspectiveCamera');
+    expect(driverPathLock(withDriver(cam.s, cam.data, 'fov', {}), 'drv')).toBe(
+      'a driver moves no number or vec3 param of CameraData:Perspective',
+    );
   });
 
   it('a driver does not count itself as "something else supplies it"', () => {
