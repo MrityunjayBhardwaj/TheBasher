@@ -28,6 +28,8 @@ import { handPoseOps } from '../../agent/mutators/builders/poseBone';
 import { handPoseLayerOf } from '../animate/poseChain';
 import type { GraphNodeLike } from '../animate/graphNodes';
 import type { PoseLayerChannel } from '../../nodes/PoseLayer';
+import type { RotationModeFields } from '../../nodes/types';
+import { rotationModeOps } from '../resolvedRotation';
 
 const REF = 'user-imports/skinned-bar/skinned-bar.glb';
 
@@ -640,6 +642,137 @@ describe('keys edited on a bone on the clone road (slice 3)', () => {
       layerChannels(state).find((c) => c.bone === 'Bone1' && c.component === 'rotation')?.mute,
     ).toBe(true);
     expect(notes).toEqual([expect.stringMatching(/is now muted as it is marked/)]);
+  });
+});
+
+describe('keys edited on a node of the file that is not a bone (#1263)', () => {
+  const RIG = 'skinned-bar-animated-rig.glb';
+  // Two axes on every rotation, so an euler order or an euler/quaternion slip changes the answer.
+  // Each key's easing as the clone's key tool leaves it (a seeded key keeps `linear`, a new one is
+  // `cubic`); the native tool is handed the same, so both roads hold the same keys.
+  const ROT = [
+    { time: 0, value: [0, 0, 0], easing: 'linear' },
+    { time: 0.5, value: [20, 10, 30], easing: 'cubic' },
+    { time: 1, value: [40, -15, 60], easing: 'cubic' },
+  ];
+  const POS = [
+    { time: 0.5, value: [0.2, 0.1, -0.3], easing: 'cubic' },
+    { time: 1, value: [0.6, 0, 0.2], easing: 'cubic' },
+  ];
+
+  /** The clone road's key tool on the file's `Rig` node, each key in turn. */
+  function keyCloneRig(state: DagState, component: string, keys: typeof ROT): DagState {
+    for (const k of keys) {
+      state = tool(state, 'mutator.timeline.keyframe', {
+        bone: { assetRef: REF, childName: 'Rig', component },
+        time: k.time,
+        value: k.value,
+      });
+    }
+    return state;
+  }
+
+  /** The native road, same keys: the inspector's switch to euler, then the key tools on `Rig`. */
+  function keyNativeRig(state: DagState, rig: string): DagState {
+    state = apply(
+      state,
+      rotationModeOps(rig, state.nodes[rig].params as RotationModeFields, 'euler'),
+    );
+    state = tool(state, 'mutator.timeline.addChannel', {
+      target: rig,
+      paramPath: 'rotation',
+      valueType: 'vec3',
+    });
+    for (const k of ROT) {
+      state = tool(state, 'mutator.timeline.keyframe', {
+        channelId: `${rig}_rotation_channel`,
+        time: k.time,
+        value: k.value,
+        easing: k.easing,
+      });
+    }
+    for (const k of POS) {
+      state = tool(state, 'mutator.timeline.keyframe', {
+        channelId: `${rig}_position_channel`,
+        time: k.time,
+        value: k.value,
+        easing: k.easing,
+      });
+    }
+    return state;
+  }
+
+  const rigOf = (native: NativeImportResult): string => native.nodeIds[3]!;
+
+  it('rotation and location keyed: the node turns in euler mode on its own curve, the location curve rewritten in place', async () => {
+    let saved = await cloneProject(RIG);
+    saved = keyCloneRig(saved, 'rotation', ROT);
+    saved = keyCloneRig(saved, 'position', POS);
+    const { state, notes } = await convert(saved, RIG);
+
+    const { state: fresh, native } = await nativeProject(RIG);
+    const rig = rigOf(native);
+    expectSameCharacter(state, keyNativeRig(fresh, rig));
+    // The file's quaternion curve stays, composing nothing; the node is in euler mode.
+    expect(state.nodes[`${rig}_quaternion_channel`]).toEqual(
+      fresh.nodes[`${rig}_quaternion_channel`],
+    );
+    expect((state.nodes[rig].params as RotationModeFields).rotationMode).toBeUndefined();
+    expect(notes).toEqual([expect.stringContaining('"Rig" now turns in euler mode')]);
+  });
+
+  it("a component the node's Object forces: the clone drew the forced value, so its keys are not carried", async () => {
+    let saved = await cloneProject(RIG);
+    saved = keyCloneRig(saved, 'rotation', ROT);
+    saved = gizmo(saved, cloneChild(saved, 3), 'rotation', [20, 0, 30]);
+    const { state } = await convert(saved, RIG);
+
+    const { state: fresh, native } = await nativeProject(RIG);
+    const rig = rigOf(native);
+    expect((state.nodes[rig].params as RotationModeFields).rotationMode).toBe('quaternion');
+    expect(state.nodes[`${rig}_rotation_channel`]).toBeUndefined();
+    expect(
+      Object.values(state.nodes).some(
+        (n) => n.type === 'KeyframeChannelVec3' && (n.params as { assetRef?: string }).assetRef,
+      ),
+    ).toBe(false);
+    // The forced value is carried as the moved-child rule carries it, under the file's keys.
+    expect(Object.keys(state.nodes).sort()).toEqual(Object.keys(fresh.nodes).sort());
+  });
+
+  it('a muted curve on the node: carried muted, and the load says it now plays muted', async () => {
+    let saved = await cloneProject(RIG);
+    saved = keyCloneRig(saved, 'position', POS);
+    const channel = Object.values(saved.nodes).find(
+      (n) =>
+        n.type === 'KeyframeChannelVec3' &&
+        (n.params as { childName?: string }).childName === 'Rig',
+    )!;
+    saved = apply(saved, [
+      { type: 'setParam', nodeId: channel.id, paramPath: 'mute', value: true },
+    ]);
+    const { state, notes } = await convert(saved, RIG);
+    const rig = rigOf((await nativeProject(RIG)).native);
+    expect((state.nodes[`${rig}_position_channel`].params as { mute: boolean }).mute).toBe(true);
+    expect(notes).toEqual([expect.stringContaining('is now muted as it is marked')]);
+  });
+
+  it('keys edited while no take plays: kept, and named (natively they live in the first take’s curve)', async () => {
+    let saved = await cloneProject(RIG);
+    saved = keyCloneRig(saved, 'position', POS);
+    saved = apply(saved, [
+      {
+        type: 'setParam',
+        nodeId: hashId('sel', REF),
+        paramPath: 'selectedClipName',
+        value: 'no such take',
+      },
+    ]);
+    const { report } = await convertCloneCharacters(saved, deps(RIG));
+    expect(report.converted).toEqual([]);
+    expect(report.kept[0].why).toEqual([
+      expect.stringContaining('while none of the file’s animations plays'),
+    ]);
   });
 });
 

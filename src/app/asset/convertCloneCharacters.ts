@@ -65,7 +65,7 @@ import {
 } from '../../core/import/nativeGltfImport';
 import { resolveBoneNames } from '../../core/import/retarget';
 import { quatFromEulerXYZ } from '../../nodes/bonePose';
-import type { BoneSpec, Vec3 } from '../../nodes/types';
+import type { BoneSpec, RotationModeFields, Vec3 } from '../../nodes/types';
 import { KeyframeChannelVec3Params } from '../../nodes/KeyframeChannelVec3';
 import { bindPosedOps } from '../../agent/mutators/builders/retarget';
 import { handPoseOps } from '../../agent/mutators/builders/poseBone';
@@ -74,6 +74,7 @@ import { boundClipsForAsset } from '../animate/boundClipsForAsset';
 import { edgeTarget, type GraphNodeLike } from '../animate/graphNodes';
 import { handPoseLayerOf, overrideChain } from '../animate/poseChain';
 import { nodeDisplayName } from '../sceneTreeWalk';
+import { rotationModeOps } from '../resolvedRotation';
 import { opfsSiblingPath } from './opfsGltfResolver';
 import type { Project } from '../../core/project/schema';
 import { writeProjectImage } from '../../core/project/projectImages';
@@ -719,10 +720,73 @@ function planEdits(
       continue;
     boneChannels.push({ id: node.id, index, component: p.paramPath });
   }
-  const channelIds = new Set(boneChannels.map((c) => c.id));
+  // ── Keys edited on a node of the file that is not a bone (#1263): the same channels, on an Object. ─
+  // The clone drew such a channel over the file's clip on that component, under only the Object's
+  // own forced value. Natively the node's curve for the component is where its keys live: the file's
+  // `<node>_<param>_channel`, rewritten in place (the take lists name it by that id). Rotation is
+  // the clone's XYZ euler degrees, sampled axis by axis; the native node is in quaternion mode and
+  // its curve slerps, so the node switches to euler mode (the inspector's switch) and the curve keys
+  // `rotation` — the clone's own curve, drawn by the same sampler. The file's quaternion curve stays
+  // on it and composes nothing, as a quaternion F-curve on an euler-mode object does in Blender.
+  const objectChannels: {
+    id: string;
+    index: number;
+    target: string;
+    component: Component;
+    forced: boolean;
+  }[] = [];
+  /** Such channels that keep the character as saved: named once, here, not again as referrers. */
+  const refusedChannels: string[] = [];
+  for (const node of Object.values(state.nodes)) {
+    if (node.type !== 'KeyframeChannelVec3') continue;
+    const p = node.params as {
+      assetRef?: unknown;
+      childName?: unknown;
+      target?: unknown;
+      paramPath?: unknown;
+    };
+    if (p.assetRef !== assetRef || typeof p.childName !== 'string') continue;
+    const index = indexOfKey.get(p.childName);
+    if (index === undefined || skinOfBone.has(index)) continue;
+    if (typeof p.target !== 'string' || nodeNameMap[p.childName] !== p.target) continue;
+    if (p.paramPath !== 'position' && p.paramPath !== 'rotation' && p.paramPath !== 'scale')
+      continue;
+    const refusal = carryable(p.target);
+    if (refusal !== null) {
+      why.push(`${label(node.id)} keys ${label(p.target)}, which ${refusal}`);
+      refusedChannels.push(node.id);
+      continue;
+    }
+    // The native curve rewritten is the FIRST animation's; with another take playing it is muted.
+    if (playing !== 0) {
+      why.push(
+        `${label(node.id)} keys ${label(p.target)} while ${
+          playing > 0
+            ? `the file's animation ${label(clipIds[playing])}`
+            : 'none of the file’s animations'
+        } plays, and natively those keys live in the first animation's curve`,
+      );
+      refusedChannels.push(node.id);
+      continue;
+    }
+    const overridden = (
+      state.nodes[p.target]?.params as { overridden?: Partial<Record<Component, boolean>> }
+    )?.overridden;
+    objectChannels.push({
+      id: node.id,
+      index,
+      target: p.target,
+      component: p.paramPath,
+      forced: overridden?.[p.paramPath] === true,
+    });
+  }
+  const channelIds = new Set([
+    ...[...boneChannels, ...objectChannels].map((c) => c.id),
+    ...refusedChannels,
+  ]);
   // The clone's bone band samples keys, extend and modifiers only; a curve in a layer honours its
   // mute and weight, and has no solo (an F-curve has none in Blender). Said, not refused.
-  for (const { id } of boneChannels) {
+  for (const { id } of [...boneChannels, ...objectChannels.filter((c) => !c.forced)]) {
     // Read through the channel's own schema, typed: a curve's flags, not an operator's bypass.
     const parsed = KeyframeChannelVec3Params.safeParse(state.nodes[id].params);
     if (!parsed.success) continue;
@@ -932,6 +996,59 @@ function planEdits(
           unknown
         >;
         void _label;
+        run(resolved.write(fields));
+      }
+
+      // Keys edited on a node of the file: its curve for that component. A component the Object
+      // forces was drawn by that value on the clone, never by the channel: not carried (the file's
+      // curve then plays over the value, as the moved-child rule says).
+      for (const channel of [...objectChannels].sort((a, b) => (a.id < b.id ? -1 : 1))) {
+        if (channel.forced) continue;
+        const nodeId = native.nodeIds[channel.index];
+        if (!nodeId || !next.nodes[nodeId])
+          throw new Error(`${label(channel.id)} has no native node`);
+        if (channel.component === 'rotation') {
+          const before = next.nodes[nodeId].params as RotationModeFields & { rotation?: unknown };
+          if (before.rotationMode === 'quaternion') {
+            run(rotationModeOps(nodeId, before, 'euler'));
+            notes.push(
+              `${label(channel.target)} now turns in euler mode, as its keys were edited in euler angles (the file's quaternion keys stay on it and no longer turn it, as in Blender)`,
+            );
+          }
+        }
+        // The curve's own fields; the clone's name for it and its tie to the file stay behind.
+        const {
+          name: _name,
+          target: _target,
+          paramPath: _path,
+          assetRef: _asset,
+          childName: _child,
+          sourceClipId: _clip,
+          sourceHash: _hash,
+          ...fields
+        } = state.nodes[channel.id].params as Record<string, unknown>;
+        void [_name, _target, _path, _asset, _child, _clip, _hash];
+        const channelId = `${nodeId}_${channel.component}_channel`;
+        if (!next.nodes[channelId]) {
+          // No curve of the file's on it: the one the key tools mint for this param (addChannel's id
+          // and name), holding the clone's keys.
+          run([
+            {
+              type: 'addNode',
+              nodeId: channelId,
+              nodeType: 'KeyframeChannelVec3',
+              params: {
+                ...fields,
+                name: channel.component,
+                target: nodeId,
+                paramPath: channel.component,
+              },
+            },
+          ]);
+          continue;
+        }
+        const resolved = resolveChannelAddress(next, { channelId }, { mint: false });
+        if (!resolved.ok) throw new Error(resolved.reason);
         run(resolved.write(fields));
       }
 

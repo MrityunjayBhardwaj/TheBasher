@@ -70,7 +70,7 @@ import {
 import { PromoteParamControl, PromotedControlRow } from './PromoteParamControl';
 import { z } from 'zod';
 import { placeholderOf, type ParamWidget, widgetOf } from '../nodes/paramWidget';
-import type { NodeRef, Op } from '../core/dag/types';
+import type { NodeRef } from '../core/dag/types';
 import { countOverrideSlots } from './resolveOverrideSlots';
 import { resolveStackBase } from './operatorStack';
 import { useTimeStore } from './stores/timeStore';
@@ -161,7 +161,7 @@ import { SolverControls } from './SolverControls';
 import * as THREE from 'three';
 import { useThreeRef } from './character/threeRef';
 import { originToGeometry } from './setOrigin';
-import { rotationWriteOf, withResolvedRotation } from './resolvedRotation';
+import { rotationModeOps, withResolvedRotation } from './resolvedRotation';
 import { IDENTITY_QUATERNION } from '../nodes/rotationMode';
 import {
   buildRevertedSet,
@@ -3763,28 +3763,8 @@ function RotationModeControl({ nodeId }: { nodeId: string }) {
   const params = (node?.params ?? {}) as RotationModeFields & { rotation?: unknown };
   const quaternionMode = params.rotationMode === 'quaternion';
   const onMode = (next: string) => {
-    if ((next === 'quaternion') === quaternionMode) return;
-    const euler = (isVec3(params.rotation) ? params.rotation : [0, 0, 0]) as Vec3;
-    const ops: Op[] =
-      next === 'quaternion'
-        ? [
-            { type: 'setParam', nodeId, paramPath: 'rotationMode', value: 'quaternion' },
-            {
-              type: 'setParam',
-              nodeId,
-              paramPath: 'quaternion',
-              value: rotationWriteOf({ ...params, rotationMode: 'quaternion' }, euler).value,
-            },
-          ]
-        : [
-            {
-              type: 'setParam',
-              nodeId,
-              paramPath: 'rotation',
-              value: withResolvedRotation(params).rotation,
-            },
-            { type: 'setParam', nodeId, paramPath: 'rotationMode', value: undefined },
-          ];
+    const ops = rotationModeOps(nodeId, params, next === 'quaternion' ? 'quaternion' : 'euler');
+    if (ops.length === 0) return;
     dispatchAtomic(
       ops,
       'user',

@@ -167,12 +167,33 @@ function buildSkinnedBar() {
   return { mesh, clip };
 }
 
-async function main() {
+/**
+ * #1263 — the same bar under an animated EMPTY (`Rig`, a node of the file that is not a bone): it
+ * slides and turns about two axes, so an euler/quaternion or axis-order slip in a carried edit of
+ * its keys moves the drawn tip. The bar's own bend is kept beside it.
+ */
+function buildAnimatedRigBar() {
   const { mesh, clip } = buildSkinnedBar();
+  const rig = new THREE.Object3D();
+  rig.name = 'Rig';
+  rig.add(mesh);
+  const turned = new THREE.Quaternion().setFromEuler(
+    new THREE.Euler((40 * Math.PI) / 180, 0, (60 * Math.PI) / 180, 'XYZ'),
+  );
+  const slide = new THREE.VectorKeyframeTrack('Rig.position', [0, 1], [0, 0, 0, 0.5, 0, 0.3]);
+  const turn = new THREE.QuaternionKeyframeTrack(
+    'Rig.quaternion',
+    [0, 1],
+    [0, 0, 0, 1, turned.x, turned.y, turned.z, turned.w],
+  );
+  return { root: rig, clip: new THREE.AnimationClip('bend', 1, [...clip.tracks, slide, turn]) };
+}
+
+async function exportGlb(root, clip) {
   const exporter = new GLTFExporter();
-  const ab = await new Promise((res, rej) => {
+  return new Promise((res, rej) => {
     exporter.parse(
-      mesh,
+      root,
       (result) => {
         if (!(result instanceof ArrayBuffer)) {
           rej(new Error('expected ArrayBuffer for binary GLB export'));
@@ -184,11 +205,21 @@ async function main() {
       { binary: true, animations: [clip] },
     );
   });
+}
+
+async function main() {
+  const { mesh, clip } = buildSkinnedBar();
+  const ab = await exportGlb(mesh, clip);
   const out = resolve(OUT_DIR, 'skinned-bar.glb');
   writeFileSync(out, Buffer.from(ab));
   console.log(
     `wrote ${out} (${ab.byteLength} bytes); tip vertex index = ${TIP_VERTEX_INDEX} (weighted to Bone1)`,
   );
+  const rigged = buildAnimatedRigBar();
+  const rigAb = await exportGlb(rigged.root, rigged.clip);
+  const rigOut = resolve(OUT_DIR, 'skinned-bar-animated-rig.glb');
+  writeFileSync(rigOut, Buffer.from(rigAb));
+  console.log(`wrote ${rigOut} (${rigAb.byteLength} bytes)`);
 }
 
 main().catch((err) => {

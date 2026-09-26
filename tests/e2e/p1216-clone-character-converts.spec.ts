@@ -672,3 +672,42 @@ test('#1216 slice 4 — a character whose file is gone says so by name, and the 
   expect(fileRow).not.toBeNull();
   expect(errors.every((e) => e === fileRow)).toBe(true);
 });
+
+test('#1263 — keys edited on a node of the file that is not a bone load native, drawn as the clone drew them', async ({
+  page,
+}) => {
+  const errors: string[] = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  const ref = 'user-imports/p1216/skinned-bar-animated-rig.glb';
+  await stageClone(page, 'skinned-bar-animated-rig.glb', ref);
+
+  // The clone road's key tool on the file's `Rig` empty, which the file slides and turns: two-axis
+  // rotations (an euler order or an euler/quaternion slip moves the tip), and a location key.
+  const keyed = await page.evaluate(async (r) => {
+    const { dispatchMutatorFromUI } = await import('/src/app/animate/dispatchMutator.ts');
+    const key = (component: string, time: number, value: number[]) =>
+      dispatchMutatorFromUI(
+        'mutator.timeline.keyframe',
+        { bone: { assetRef: r, childName: 'Rig', component }, time, value },
+        'key',
+      ).ok;
+    return [
+      key('rotation', 0.5, [20, 10, 30]),
+      key('rotation', 1, [40, -15, 60]),
+      key('position', 0.5, [0.2, 0.1, -0.3]),
+    ];
+  }, ref);
+  expect(keyed).toEqual([true, true, true]);
+  const times = [0.25, 0.5, 0.75, 1];
+  const clone = await drawnTip(page, times);
+
+  const { after, notice } = await saveAndReload(page, ref);
+  expect(after.filter((t) => /^Gltf|TransformClip|ClipSelect/.test(t))).toEqual([]);
+  expect(notice.label).toBe('character converted:');
+  expect(notice.message).toContain('"Rig" now turns in euler mode');
+
+  const native = await drawnTip(page, times);
+  console.log(`rig keys: clone ${JSON.stringify(clone.tip)} native ${JSON.stringify(native.tip)}`);
+  expectSameTip(clone.tip, native.tip, times);
+  expect(errors).toEqual([]);
+});
