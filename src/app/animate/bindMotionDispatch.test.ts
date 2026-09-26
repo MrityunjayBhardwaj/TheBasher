@@ -21,7 +21,6 @@
 // ─────────────────────────────────────────────────────────────────────────
 // WIRING, not VALUES. It asserts which nodes exist after a bind, never what a
 // bone's rotation is at a given time. What covers the values:
-//   - ensureChannelForBone.test.ts     — the mint's seed and its rad→deg boundary
 //   - bakedClipParity.gate.test.ts     — band vs clip BETWEEN keyframes (#877)
 //   - gltfEulerContinuity.gate.test.ts — the representative choice (#876)
 //

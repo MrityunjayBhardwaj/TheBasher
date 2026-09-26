@@ -4,10 +4,10 @@
 // Extracted when the second consumer arrived (the "2nd consumer justifies the
 // module" retrofit this codebase already applies at D-06). Consumer 1 is
 // `bakeGltfChannel`, whose source is the asset's OWN embedded TransformClip.
-// Consumer 2 is `ensureChannelForBone`, whose source is a bound `AnimationClip`
-// that arrived from somewhere else entirely — a BVH, an FBX, a retarget, or a
-// generator. (Consumer 2 was `bakeClipOntoRig` until #889: same source, but it
-// emitted for every bone at bind time instead of for one bone at edit time.)
+// Consumer 2 is `ensureChannelForBone`, whose source is the bone's own base
+// pose. (It seeded from an `AnimationClip` bound onto a clone rig until that road
+// retired, #1053; before #889 that consumer was `bakeClipOntoRig`, which emitted
+// for every bone at bind time instead of for one bone at edit time.)
 //
 // 🔑 THE SOURCE DIFFERS; EVERYTHING DOWNSTREAM OF IT MUST NOT. Both consumers
 // must emit the same node type, under the same content-addressed ids, carrying
@@ -54,10 +54,9 @@ export type BakedComponent = (typeof BAKED_COMPONENTS)[number];
  * Rotation and scale are bounded and return to their start; offsetting them
  * would compound a residual each cycle without bound.
  *
- * This MUST match `buildClipBoneSamplers`' rule in AnimationClip.ts. The two are
- * the edited and unedited halves of one band, and `ensureChannelForBone`'s own
- * spec asserts they agree past the duration — a mint that cycles differently from
- * the clip it copied is the freeze defect #913 fixed, wearing the other face.
+ * This MUST match `buildClipBoneSamplers`' rule in AnimationClip.ts: a mint that
+ * cycles differently from the clip it copied is the freeze defect #913 fixed,
+ * wearing the other face.
  *
  * REF: Blender `FModifierCycles.mode_after` REPEAT_OFFSET, "offset based on
  * gradient between start and end values".
@@ -121,28 +120,8 @@ export function bakeChannelOpsForBone(args: {
    * clip cycling IN PLACE silently gained travel it was never asked for.
    */
   readonly loop?: ClipLoop;
-  /**
-   * Where each component's keys were COPIED FROM (#1001) — the clip id and a
-   * hash of the track that clip offered at the moment of the copy.
-   *
-   * 🔴 KEYED PER COMPONENT, mirroring `byComponent`, because the hash is of ONE
-   * bone's ONE track. A single provenance for the whole call would stamp the
-   * position track's revision onto the rotation channel, which reads `stale`
-   * forever for a bone nobody touched — the false alarm that costs a signal its
-   * credibility (#923).
-   *
-   * OMITTED BY THE OTHER CONSUMER, ON PURPOSE. `bakeGltfChannel` seeds from the
-   * asset's own embedded `TransformClip`, which `boundClipsForAsset` does not
-   * walk, so the staleness read would recompute an empty track for it and call
-   * every one of its channels stale. A channel with no recorded provenance reads
-   * `unknown`, which is the true answer for a copy this mechanism cannot vouch
-   * for — and it leaves that road byte-identical to before.
-   */
-  readonly provenance?: Partial<
-    Record<BakedComponent, { readonly sourceClipId: string; readonly sourceHash: string }>
-  >;
 }): Op[] {
-  const { assetRef, childName, byComponent, state, loop = 'hold', provenance } = args;
+  const { assetRef, childName, byComponent, state, loop = 'hold' } = args;
   const target = gltfChildDagId(assetRef, childName);
   const ops: Op[] = [];
 
@@ -203,11 +182,6 @@ export function bakeChannelOpsForBone(args: {
         // The key is OMITTED rather than set to `[]` when the source does not
         // cycle, so a non-looping mint stays byte-identical to pre-#913.
         ...(isCycling(loop) ? { modifiers: [cycleModifierFor(component, loop)] } : {}),
-        // #1001 — spread, so a caller that records nothing emits exactly the
-        // params it emitted before. ABSENT is a meaning here, not a default: the
-        // read calls an absent hash `unknown` and refuses to vouch for the copy,
-        // where a stamped-in `''` would claim a provenance nobody recorded.
-        ...(provenance?.[component] ?? {}),
       },
     });
   }

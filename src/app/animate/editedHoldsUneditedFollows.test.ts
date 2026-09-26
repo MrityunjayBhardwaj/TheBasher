@@ -35,7 +35,7 @@
 //
 // REF: issues #877, #887, #888, #889; src/app/resolveGltfChildTransform.ts
 //      (the band ladder — presence wins, never value-equality);
-//      src/app/animate/ensureChannelForBone.ts (the mint, and its seed);
+//      src/app/animate/ensureChannelForBone.ts (the mint);
 //      src/agent/tools/dagExec.ts (the universal mutation surface, an agent
 //      tool, which is what makes ROAD B reachable in this product).
 

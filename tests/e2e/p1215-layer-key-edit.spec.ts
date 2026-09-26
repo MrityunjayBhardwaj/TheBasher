@@ -188,10 +188,7 @@ test('#1215 — dragging a baked key in the dopesheet moves the skin at that tim
       const nodes = (window as unknown as W).__basher_dag.getState().state.nodes as never;
       const rows = layers.appendLayerRows({
         baseRows: clips.appendSelectionClipRows({
-          baseRows: clips.appendAnimationClipRows({
-            baseRows: tc.collectChannelRows(nodes),
-            nodes,
-          }),
+          baseRows: tc.collectChannelRows(nodes),
           nodes,
           selectedNodeId: id,
         }),

@@ -47,7 +47,6 @@
 //   - V22: no Date.now / Math.random; the output clip id is derived from the pair.
 //
 // REF: src/app/animate/dispatchMutator.ts (`dispatchMutatorFromUI`);
-//      src/app/animate/ensureChannelForBone.ts (where a channel comes from now);
 //      src/core/import/chooseBoneNameMap.ts (the bridge decision);
 //      src/app/asset/generateRiggedCharacter.ts (the composition this mirrors);
 //      issues #807, #889, #803, #100.

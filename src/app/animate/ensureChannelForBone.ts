@@ -30,24 +30,23 @@
 // without also saying what would be minted.
 //
 // ─────────────────────────────────────────────────────────────────────────
-// SEEDING IS THE LOAD-BEARING PART
+// THE SEED IS THE BONE'S OWN BASE POSE
 // ─────────────────────────────────────────────────────────────────────────
-// An edit means *take this motion and change it*, not *start from nothing*. A
-// channel minted empty would drop the bone to its base pose the instant a
-// director touched it — the motion would visibly vanish on the first keyframe,
-// which reads as a broken edit rather than as a missing seed.
-//
-// So the mint carries the clip's own track for that bone. The bake does not
-// disappear; it becomes per-bone, and happens at the moment something justifies
-// it.
+// This mint used to carry a clip's track too: a motion bound onto a clone rig
+// seeded the channel from that `AnimationClip`, so an edit changed the motion
+// rather than starting over. That road retired with the clone road's character
+// half (#1053) — a native character's keys are written into its pose layers,
+// not here — so the seed is the child's base pose. That is what an unanimated
+// child was already showing. A child the file's OWN clip drives (a
+// `TransformClip`) reaches here too and is seeded from its base pose, dropping
+// that clip's track for the component: #1277.
 //
 // Invariants honoured:
-//   - V8: app-layer, no `src/viewport/` imports beyond the shared unit helper.
+//   - V8: app-layer, no `src/viewport/` imports.
 //   - V22: no Date.now / Math.random — ids are content-addressed and the ops are
 //     a pure function of the graph.
 //
-// REF: src/app/animate/boundClipsForAsset.ts (the one edge walk);
-//      src/agent/mutators/builders/bakeChannelOps.ts (the op shape + skip);
+// REF: src/agent/mutators/builders/bakeChannelOps.ts (the op shape + skip);
 //      src/app/bakedGltfChannels.ts (the read band a channel-less bone falls to);
 //      issues #889, #888, #877, #843.
 
@@ -60,33 +59,6 @@ import {
   type BakedKey,
 } from '../../agent/mutators/builders/bakeChannelOps';
 import { gltfChannelDagId } from '../../core/import/gltfImportChain';
-import { provenanceOf, seedKeysFromClip, type ClipSeed } from './clipSeedProvenance';
-// 🔴 THE RADIANS→DEGREES BOUNDARY, AND THIS FILE IS NOW ONE OF THE TWO PLACES
-// THAT KNOWS IT. An `AnimationKeyframe.rotation` is RADIANS —
-// `quaternionToEulerVec3` returns a raw `Euler` and nothing converts it on the
-// way in. The `GltfChild` rotation band a channel writes into is DEGREES: the
-// import seeds a child's base rotation through `radVec3ToDeg` (gltfImportChain
-// `defaultTRS`) and the renderer converts back out with `degVec3ToRad`
-// (SceneFromDAG's TRS useFrame).
-//
-// Copying the value through unconverted does not FAIL — it scales every bone
-// rotation by π/180. A 40° leg swing becomes 0.7° and a rig's −90° corrective
-// root becomes −1.57°, so a character with a correct clip stands still while its
-// root POSITION channel — which needs no conversion — travels at full strength.
-// That is a character sliding across the floor without animating, and it reads
-// as "motion application is broken" rather than as a unit bug (#843).
-//
-// The sibling `bakeGltfChannel` needs no conversion because its source is a
-// `TransformClip`, which is already degrees. The two clip families differ in
-// units, and this road is the one that has to say so — the other place was the
-// read band's clip half, which converted for the same reason until it retired (#1053).
-//
-// 🔴 THIS FILE IS NOW ONE OF THE TWO PLACES ONLY BY DELEGATION (#1001).
-// The conversion itself now lives with the seed walk in `clipSeedProvenance`,
-// which is also what recomputes the hash — so the unit boundary is crossed in
-// exactly one place and the mint and the staleness read cannot disagree about
-// which side of it a number is on.
-import type { ClipLoop } from '../../nodes/clipLoop';
 
 /** What minting decided. `ops` is empty when the channel already existed — the
  *  caller appends it either way and never branches on which happened. */
@@ -114,7 +86,7 @@ function boneAddress(
 /**
  * The bone's own base pose for one component, as a single key.
  *
- * THE FALLBACK SEED, AND IT IS NOT COSMETIC. A channel with zero keyframes is
+ * NOT COSMETIC. A channel with zero keyframes is
  * not "absent" — measured, `buildVec3Sampler` on an empty channel returns
  * `[0, 0, 0]` at every time, and the band's filter does not skip it. So minting
  * an empty channel would make the bone PRESENT at the origin with no rotation:
@@ -136,8 +108,8 @@ function seedKeysFromBase(state: DagState, boneId: string, component: BakedCompo
 }
 
 /**
- * The channel for `boneId`'s `component`, minting it from the clip if it does
- * not exist yet.
+ * The channel for `boneId`'s `component`, minting it from the bone's base pose if
+ * it does not exist yet.
  *
  * Every channel-authoring mutator calls this instead of requiring a channel to
  * already be there. The rule is deliberately "any authoring op mints", with no
@@ -160,28 +132,16 @@ export function ensureChannelForBone(
   const { assetRef, childName } = address;
 
   const channelId = gltfChannelDagId(assetRef, childName, component);
-  // A FAST PATH, not the guarantee. The bone has been edited before, so its
-  // track is already the authority and there is no reason to read a clip we are
-  // not going to use.
-  //
-  // The guarantee that an existing channel is never overwritten lives in
-  // `bakeChannelOpsForBone`, which skips a component whose node is already in
-  // state. Deleting this line changes nothing observable — measured, by deleting
-  // it and watching the suite stay green — so it must not be described as the
-  // thing that keeps a director's edit safe. Re-seeding would replace an edit
-  // with the clip, which is the precise opposite of what this band is for, and
-  // the row that proves it cannot be proved here.
+  // A FAST PATH, not the guarantee. The guarantee that an existing channel is
+  // never overwritten lives in `bakeChannelOpsForBone`, which skips a component
+  // whose node is already in state. Deleting this line changes nothing
+  // observable — measured, by deleting it and watching the suite stay green — so
+  // it must not be described as the thing that keeps a director's edit safe.
   if (state.nodes[channelId]) return { channelId, ops: [] };
 
-  // Clip first, base second. Never empty: an empty channel is present-and-zero,
-  // not absent, so it would suppress the pose underneath it.
-  const fromClip: ClipSeed = seedKeysFromClip(state, assetRef, childName, component);
-  const keys =
-    fromClip.keys.length > 0 ? fromClip.keys : seedKeysFromBase(state, boneId, component);
-  // Only a clip seed carries a time domain. The base-pose fallback is a single
-  // key standing for a bone that was never animated — cycling one key repeats a
-  // constant, which is the same constant, so claiming it would be noise.
-  const loop: ClipLoop = fromClip.keys.length > 0 ? fromClip.loop : 'hold';
+  // Never empty: an empty channel is present-and-zero, not absent, so it would
+  // suppress the pose underneath it. A single key holds — no time domain to claim.
+  //
   // `bakeChannelOpsForBone` owns the node shape — the dual `target`/`childName`
   // key, the param names, and the same skip-if-present guard. Going through it
   // rather than emitting an addNode here means a minted channel and a baked one
@@ -190,20 +150,10 @@ export function ensureChannelForBone(
   const ops = bakeChannelOpsForBone({
     assetRef,
     childName,
-    byComponent: { [component]: keys } as Partial<Record<BakedComponent, readonly BakedKey[]>>,
+    byComponent: { [component]: seedKeysFromBase(state, boneId, component) } as Partial<
+      Record<BakedComponent, readonly BakedKey[]>
+    >,
     state,
-    loop,
-    // WHAT THE CLIP SAID AT THE MOMENT OF THE COPY (#1001), keyed per component
-    // exactly as `byComponent` is, so a caller emitting two components cannot
-    // stamp one component's revision onto the other.
-    //
-    // 🔴 IT DESCRIBES THE CONSULTATION, NOT THE KEYS STORED. On the base-pose
-    // fallback the stored keys are the bone's own pose and the recorded hash is
-    // still the CLIP's — the empty track. Hashing what was stored instead would
-    // read `stale` the instant it was minted for the fallback, and `current`
-    // forever for a bone whose keys the director then rewrote. Both are the
-    // comparison this whole mechanism exists to avoid, wearing the other face.
-    provenance: { [component]: provenanceOf(fromClip) },
   });
   return { channelId, ops };
 }

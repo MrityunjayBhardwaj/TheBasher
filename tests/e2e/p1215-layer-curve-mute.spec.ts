@@ -183,10 +183,7 @@ test('#1215 — a layer row’s gutter M mutes its curve (the skin drops to what
       const rows = layers.appendComputedSourceRows({
         baseRows: layers.appendLayerRows({
           baseRows: clips.appendSelectionClipRows({
-            baseRows: clips.appendAnimationClipRows({
-              baseRows: tc.collectChannelRows(nodes),
-              nodes,
-            }),
+            baseRows: tc.collectChannelRows(nodes),
             nodes,
             selectedNodeId: id,
           }),

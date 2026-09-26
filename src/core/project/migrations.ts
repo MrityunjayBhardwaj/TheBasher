@@ -1307,9 +1307,9 @@ function snapshotCurrentNodeVersions(nodes: Record<string, Node>): Record<string
 // REF: src/app/animate/boundClipsForAsset.ts (the ONE edge walk — imported
 //        rather than re-implemented, because a second copy of it is two answers
 //        to "which clip drives this bone" that diverge silently);
-//      src/app/animate/ensureChannelForBone.ts (`seedKeysFromClip`, the
-//        derivation this mirrors key-for-key, including the radians→degrees
-//        boundary, which must use the SAME helper or nothing compares equal);
+//      the clone rig's clip-seeded mint (`seedKeysFromClip`, retired with the
+//        clone road's character half, #1053), the derivation this mirrored
+//        key-for-key, including the radians→degrees boundary;
 //      src/agent/mutators/builders/bakeChannelOps.ts (the node shape + the
 //        `easing: 'linear'` the bake stamps); issues #915, #913, #889, #877.
 

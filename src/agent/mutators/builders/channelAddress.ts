@@ -56,7 +56,7 @@
 // BOTH sides of their "does it have a channel yet" branch, which collapses that
 // branch rather than duplicating it.
 //
-// REF: src/app/animate/ensureChannelForBone.ts (the mint + the seed);
+// REF: src/app/animate/ensureChannelForBone.ts (the mint);
 //      src/agent/mutators/builders/bakeGltfChannel.ts (the same spec shape);
 //      src/agent/mutators/types.ts:113 (buildClosureSpec takes no state);
 //      src/agent/mutators/validate.ts:117-136,170-186 (fresh addNode then

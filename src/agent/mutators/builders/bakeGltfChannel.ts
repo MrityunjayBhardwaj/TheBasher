@@ -51,8 +51,7 @@
 //      src/timeline/clipChannelRows.ts (activeClipForAsset, the clip walk —
 //        keys AND time domain as one answer, #916); src/app/bakedGltfChannels.ts
 //        (the resolver enumeration that consumes the baked channels);
-//        src/app/animate/ensureChannelForBone.ts (the sibling road, whose
-//        `seedKeysFromClip` this mirrors); vyapti V20/V22/H36 (single writer).
+//        vyapti V20/V22/H36 (single writer).
 
 import { z } from 'zod';
 import type { MutatorDefinition } from '../types';

@@ -145,8 +145,7 @@ function groupByBone(keyframes: readonly AnimationKeyframe[]): Map<number, Anima
 // through it, so a clip sampled by the band and the same clip sampled by the
 // node cannot disagree about what happens outside the authored range. It MUST
 // still match `cycleModifierFor` in agent/mutators/builders/bakeChannelOps.ts,
-// which makes the same split for a channel minted from a clip;
-// `ensureChannelForBone`'s spec asserts they agree past the duration.
+// which makes the same split for a channel minted from a clip.
 
 /** A bone's pose as a function of wall-clock time — the clip's own sampling. */
 export type ClipBoneSampler = (seconds: number) => { position: Vec3; quaternion: Quat };

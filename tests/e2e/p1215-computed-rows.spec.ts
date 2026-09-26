@@ -139,10 +139,7 @@ test('#1215 — a bound retarget shows read-only in the dopesheet until baked; t
       const rows = layers.appendComputedSourceRows({
         baseRows: layers.appendLayerRows({
           baseRows: clips.appendSelectionClipRows({
-            baseRows: clips.appendAnimationClipRows({
-              baseRows: tc.collectChannelRows(nodes),
-              nodes,
-            }),
+            baseRows: tc.collectChannelRows(nodes),
             nodes,
             selectedNodeId: id,
           }),
