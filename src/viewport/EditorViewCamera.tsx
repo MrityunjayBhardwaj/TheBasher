@@ -194,9 +194,7 @@ export function EditorViewCamera() {
   const viewLock = useViewportStore((s) => s.viewLock);
   // What the lock resolved to, refreshed on a cadence (LOCK_RESCAN_INTERVAL)
   // while the matrices — the part that actually moves — are read every frame.
-  // BOTH lookups sit on the one cadence: `getObjectByName` walks the whole scene
-  // exactly as `scanArmatures` does, so throttling one and not the other would
-  // have been a cost decision made twice and answered differently. Starts at the
+  // `getObjectByName` walks the whole scene, so it sits on the cadence. Starts at the
   // interval so the first locked frame resolves rather than following nothing
   // for a quarter second.
   const lockScan = useRef<FollowScan | null>(null);
@@ -400,8 +398,7 @@ export function EditorViewCamera() {
     if (lookThrough || !cam) return;
     if (++sinceLockScan.current >= LOCK_RESCAN_INTERVAL) {
       sinceLockScan.current = 0;
-      const isLiveNodeId = (name: string) => dag.nodes[name] !== undefined;
-      lockScan.current = scanForFollow(state.scene, isLiveNodeId, viewLock.nodeId);
+      lockScan.current = scanForFollow(state.scene, viewLock.nodeId);
     }
     const found = lockScan.current
       ? pointFromScan(lockScan.current, viewLock.nodeId, viewLock.boneName)

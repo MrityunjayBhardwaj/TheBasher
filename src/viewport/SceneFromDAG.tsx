@@ -337,7 +337,6 @@ export function SceneFromDAG({ outputName = 'render' }: SceneFromDAGProps) {
         out.push({
           id: pair.retargetId,
           clip,
-          targetBoneNames: target.bones.map((b) => b.name),
           targetSkeletonId: pair.targetSkeletonId,
         });
       } catch {

@@ -28,17 +28,12 @@
 // nothing else that separates them — so a lock restored from a previous session
 // (#985) would be cleared for as long as its asset had not arrived.
 //
-// 🔑 AND A CHARACTER IS EXACTLY THE CASE THAT ARRIVES LATE. Measured on a real
-// import: of the node ids in the graph, NOT ONE names an object in the scene —
-// not the `GltfAsset`, not the `GltfSkeleton`, not any of the twenty
-// `GltfChild`s; only the seed cube's own id does. So a character lock resolves
-// through the rig branch alone, which means it resolves only once the armature
-// is in the scene, and until then it looks exactly like a light.
-//
-// (How LONG that window is has not been measured — an import made through a
-// test seam is not persisted, so a reload has no character to wait for. The
-// argument above does not need the duration: it needs the two states to be
-// indistinguishable here, and they are.)
+// 🔑 AND A CHARACTER WAS EXACTLY THE CASE THAT ARRIVED LATE: on the clone road
+// no node id named an object in the scene, so a character lock resolved through
+// the rig branch alone, once its live bones were in the scene. That branch read
+// the clone road's live `Bone`s and retired with it (#1053); a native character
+// has no road here yet — neither its mesh nor its armature Object is found, bone
+// or not (#1275).
 //
 // At the click there is no such window. The director is looking at the thing
 // they just selected, so the scene is settled, and the answer is available
@@ -48,23 +43,12 @@
 //      click); src/viewport/EditorViewCamera.tsx (the frame); issues #984, #985.
 
 import * as THREE from 'three';
-import { scanArmatures } from './ArmatureHelper';
-import { assetIdsFor, type PickNode } from './armaturePick';
-import { placeBones } from './boneShape';
 import { computeSceneBounds } from './sceneBounds';
-import { followPoint, type FollowArmature, type FollowPoint } from './cameraFollow';
-
-interface ScannedRig {
-  readonly root: THREE.Object3D;
-  readonly bones: THREE.Object3D[];
-  readonly parents: number[];
-  readonly ids: ReadonlySet<string>;
-}
+import { followPoint, type FollowPoint } from './cameraFollow';
 
 /** The expensive half: everything a follow needs that requires walking the
  *  scene. Held across frames by the applier, taken fresh by the affordance. */
 export interface FollowScan {
-  readonly rigs: readonly ScannedRig[];
   /** The object `SceneFromDAG` named with this node's id, or null.
    *
    *  🔴 A HANDLE, NOT THE OBJECT. It is a picking wrapper pinned at the world
@@ -74,28 +58,9 @@ export interface FollowScan {
   readonly object: THREE.Object3D | null;
 }
 
-/**
- * Walk the scene for everything a lock on `nodeId` could follow.
- *
- * `isLiveNodeId` is asked rather than assumed: `assetIdsFor` collects the names
- * inside an asset's outermost named ancestor, and a name is only an id if the
- * graph still carries it.
- */
-export function scanForFollow(
-  scene: THREE.Object3D,
-  isLiveNodeId: (name: string) => boolean,
-  nodeId: string,
-): FollowScan {
-  return {
-    rigs: scanArmatures(scene).map((scan) => ({
-      ...scan,
-      ids: assetIdsFor(scan.root as unknown as PickNode, isLiveNodeId),
-    })),
-    // Resolved unconditionally rather than only when no rig matched: skipping it
-    // there would put the rig-beats-object priority in a second place, free to
-    // disagree with `followPoint`'s copy silently.
-    object: scene.getObjectByName(nodeId) ?? null,
-  };
+/** Walk the scene for everything a lock on `nodeId` could follow. */
+export function scanForFollow(scene: THREE.Object3D, nodeId: string): FollowScan {
+  return { object: scene.getObjectByName(nodeId) ?? null };
 }
 
 /**
@@ -111,38 +76,14 @@ export function pointFromScan(
   nodeId: string,
   boneName: string | null,
 ): FollowPoint | null {
-  // Only the rig(s) the lock names get placed. The `ids.has` here is a COST
-  // pre-pass, not a second decision — it is the same expression `followPoint`
-  // selects with, so the two cannot disagree; placing every rig in the scene to
-  // throw all but one away is simply work with no reader.
-  const armatures: FollowArmature[] = [];
-  for (const rig of scan.rigs) {
-    if (!rig.ids.has(nodeId)) continue;
-    // The TRS pass that poses the bones runs at the same default priority, so
-    // its order against the applier's is mount order. Forcing the update makes
-    // the read correct either way — the same guard the armature helper takes.
-    rig.root.updateWorldMatrix(true, true);
-    armatures.push({
-      ids: rig.ids,
-      // Clone-road live bones: no rest pose to hand, so the pose stands in for it (#1205).
-      frames: placeBones(
-        rig.bones.map((b, i) => ({
-          name: b.name,
-          parent: rig.parents[i],
-          matrix: b.matrixWorld,
-        })),
-        rig.bones.map((b) => b.matrixWorld),
-      ),
-    });
-  }
   // The centre of what this node actually DRAWS, through the same reader "frame
   // all" uses — live world bounds over non-chrome meshes. Reading the scene
-  // rather than the node's authored `position` is the same choice the rig branch
-  // makes and for the same reason: a follow has to track what is on screen, so a
+  // rather than the node's authored `position`: a follow has to track what is on screen, so a
   // keyframed, driven or constrained object is followed without any of those
   // needing to be known about here. A node that draws no measurable content
   // yields no point — which is the whole of #984, because a LIGHT's glyphs are
   // editor chrome and `computeSceneBounds` prunes them.
   const bounds = scan.object ? computeSceneBounds(scan.object) : null;
-  return followPoint(armatures, nodeId, boneName, bounds ? bounds.center : null);
+  // No rig is offered: the only rig source read the clone road's live bones (#1275).
+  return followPoint([], nodeId, boneName, bounds ? bounds.center : null);
 }

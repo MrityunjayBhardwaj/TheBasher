@@ -28,7 +28,6 @@ import { getActiveBone } from './boneSelection';
 import { useSelectionStore } from './stores/selectionStore';
 import { useViewportStore } from './stores/viewportStore';
 import { useThreeRef } from './character/threeRef';
-import { useDagStore } from '../core/dag/store';
 import { pointFromScan, scanForFollow } from '../viewport/followScan';
 
 /**
@@ -144,7 +143,6 @@ export function toggleViewLock(): ViewLockOutcome {
 function hasSomethingToFollow(nodeId: string, boneName: string | null): boolean {
   const scene = useThreeRef.getState().scene;
   if (!scene) return true;
-  const dag = useDagStore.getState().state;
-  const scan = scanForFollow(scene, (name) => dag.nodes[name] !== undefined, nodeId);
+  const scan = scanForFollow(scene, nodeId);
   return pointFromScan(scan, nodeId, boneName) !== null;
 }

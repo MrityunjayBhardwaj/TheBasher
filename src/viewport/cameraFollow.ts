@@ -56,7 +56,9 @@
 //
 // REF: src/app/character/framing.ts (`applyTarget`, the camera half);
 //      src/viewport/referenceRig.ts (`armatureBounds`);
-//      src/viewport/armaturePick.ts (`assetIdsFor`, the node↔rig join);
+//      `assetIdsFor` (the node↔rig join over the clone road's live bones — it
+//      and the live-rig feed into `followPoint` retired with the clone road,
+//      #1053; a native character has no rig feed yet, #1275);
 //      node_modules/three-stdlib/controls/OrbitControls.js (`update`);
 //      issue #856.
 
