@@ -333,12 +333,10 @@ export function dispatchBakeThenRetime(args: BakeThenRetimeArgs): DispatchResult
     };
   }
 
-  // 1 — mint the bone's channel, by the road the bone is actually on. A
-  //     TransformClip bone bakes whole-bone the way it always has; an
-  //     AnimationClip bone (generated / BVH / retargeted) mints per component,
-  //     seeded from that clip. `bakeGltfChannel` REFUSES on the second road —
-  //     measured, "No active clip track for bone" — which is why this is a
-  //     choice here rather than one mutator for both.
+  // 1 — mint the child's channel from the file's own clip: `bakeGltfChannel`
+  //     bakes the whole child from its TransformClip. (A motion bound onto a
+  //     clone rig minted per component from its AnimationClip here too, until
+  //     that road retired with the clone road's character half, #1053.)
   const mint = clipRowMintOps(base, assetRef, childName, component);
   if (!mint.ok) return { ok: false, reason: mint.reason };
 
@@ -416,11 +414,7 @@ export function dispatchBakeThenRetime(args: BakeThenRetimeArgs): DispatchResult
     [...mint.ops, ...rResult.ops, ...kResult.ops],
     intent,
     [
-      // The provenance names the road, because the two mints seed from different
-      // clips and a diff that said only "bake" could not tell them apart.
-      mint.source === 'animation-clip'
-        ? 'user:mint.channelForBone'
-        : 'user:mutator.timeline.bakeGltfChannel',
+      'user:mutator.timeline.bakeGltfChannel',
       'user:mutator.timeline.removeKeyframes',
       'user:mutator.timeline.keyframe',
     ],
