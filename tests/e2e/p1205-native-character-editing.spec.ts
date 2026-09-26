@@ -3,7 +3,7 @@
 // armature Object posed through its pose layers (the file's keys in a base layer), and a mesh Object
 // an Armature modifier deforms by it. These rows carry, onto that road, the user behaviours the
 // clone-road specs gated (`p7.7-gltf-child-addressing` E1b/E1c, `p7.12-editable-imported-clips`
-// (a)/(b)/(e)), whose clone-only rows retire with the clone road (#1053):
+// (a)/(b)/(e)), which were deleted with the clone road's character half (#1053):
 //   · a part of the character is selected from the outliner and gets the gizmo;
 //   · a gizmo move on the mesh Object holds on the drawn skin, frame after frame;
 //   · selecting the armature shows the file's keys as rows in the dopesheet, and showing them writes
