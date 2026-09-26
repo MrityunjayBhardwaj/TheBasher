@@ -86,7 +86,7 @@ it('a bound native character is found, hand-posed or not; another clip does not 
       expect(posed.ok).toBe(true);
     }
     const bound = bindMotionToCharacter(
-      { clipId: 'swing_clip', skeletonId: 'swing_skel' },
+      { motionId: 'swing_clip', skeletonId: 'swing_skel' },
       'imported',
     );
     expect(bound.ok, JSON.stringify(bound)).toBe(true);

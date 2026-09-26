@@ -1,5 +1,5 @@
-// retarget Mutator — apply a source AnimationClip onto a target
-// Skeleton via a bone-name map. Resolves the map either from a static
+// retarget Mutator — apply a source motion (any node with a pose output: an AnimationClip, a
+// character's base PoseLayer, a BVH or FBX import) onto a target Skeleton via a bone-name map. Resolves the map either from a static
 // preset id (Mixamo↔glTF / Reze / Rigify) or from an explicit
 // Record<string, string>.
 //
@@ -29,7 +29,7 @@
 // operand, and requiring one would refuse a retarget that has everything it
 // needs. Its own header says why the time-freedom is the whole cost decision.
 //
-// Closure: roots = [sourceClipId, sourceSkeletonId, targetSkeletonId, targetObjectId?];
+// Closure: roots = [sourceId, sourceSkeletonId, targetSkeletonId, targetObjectId?];
 // followedEdges = []. Both new node ids are fresh — V13 allows addNode under
 // fresh-add semantics — and every connect TARGETS a fresh node.
 //
@@ -49,7 +49,8 @@ import {
   standInObjectOf,
   standingObjectsOf,
 } from '../../../core/import/skeletonObject';
-import { poseLayerChain } from '../../../app/animate/poseChain';
+import { poseLayerChain, poseSkeletonIdOf } from '../../../app/animate/poseChain';
+import { getNodeType } from '../../../core/dag/registry';
 import type { GraphNodeLike } from '../../../app/animate/graphNodes';
 
 /** A retarget's source and target are `Skeleton` nodes. */
@@ -58,13 +59,16 @@ function isSkeletonNode(node: Node): boolean {
 }
 
 const RetargetSpec = z.object({
-  sourceClipId: z.string().min(1),
+  /** #1211 — the motion to retarget: any node with ONE pose output (an AnimationClip, a PoseLayer,
+   *  another retarget). The retarget reads that output; which socket it is comes from the node's
+   *  declared outputs, never from its type. */
+  sourceId: z.string().min(1),
   sourceSkeletonId: z.string().min(1),
   targetSkeletonId: z.string().min(1),
   /** Either a preset id from BONE_NAME_MAP_PRESETS, or an explicit map. At least one required. */
   mapPresetId: z.string().optional(),
   customMap: z.record(z.string(), z.string()).optional(),
-  /** Caller-supplied id; defaults to `<sourceClipId>_retargeted`. */
+  /** Caller-supplied id; defaults to `<sourceId>_retargeted`. */
   outputClipId: z.string().optional(),
   outputName: z.string().optional(),
   /**
@@ -86,22 +90,24 @@ export const retargetMutator: MutatorDefinition<RetargetSpec> = {
   // where the choice is actually made. Deriving it means a new preset is
   // announced by the act of registering it.
   description:
-    'Retarget an AnimationClip from one Skeleton onto another via a ' +
+    'Retarget a motion from one Skeleton onto another via a ' +
     'bone-name map. Pass mapPresetId for a known rig pair (' +
     listBoneNameMapPresets()
       .map((p) => p.id)
       .join(', ') +
-    ') or customMap for arbitrary rigs. ' +
-    'Emits a RetargetClip node wired to the source clip, the map and the ' +
+    ') or customMap for arbitrary rigs. sourceId is any node with one pose output (an ' +
+    'AnimationClip, or the PoseLayer a BVH/FBX import or a character keeps its motion in), and ' +
+    'sourceSkeletonId the Skeleton that pose stands. ' +
+    'Emits a RetargetClip node wired to the source motion, the map and the ' +
     'target rig, so editing either operand re-poses the target with no ' +
-    're-run; the source clip is left untouched. The retarget becomes the pose of the armature ' +
+    're-run; the source motion is left untouched. The retarget becomes the pose of the armature ' +
     'Object standing the target skeleton (targetObjectId names it when several do), replacing ' +
     'the pose it had. The Object the import stood the ' +
     'source skeleton up with is hidden in the same step, unless source and target are ' +
     'one skeleton.',
   spec: RetargetSpec,
   specExample: {
-    sourceClipId: 'mixamo_clip',
+    sourceId: 'mixamo_clip',
     sourceSkeletonId: 'mixamo_skel',
     targetSkeletonId: 'char_skel',
     mapPresetId: 'mixamoToGltf',
@@ -109,16 +115,16 @@ export const retargetMutator: MutatorDefinition<RetargetSpec> = {
   },
   contract: {
     // requiredNodeTypes is checked as "the closure contains AT LEAST ONE
-    // node of each listed type" — 'AnimationClip' is the one type ALWAYS present;
-    // the skeleton-type discipline is enforced precisely in preconditions.
+    // node of each listed type" — a 'Skeleton' is ALWAYS present (both rigs are roots; the source
+    // can be any pose producer, #1211); which root is which is enforced precisely in preconditions.
     requiredEdges: [],
-    requiredNodeTypes: ['AnimationClip'],
+    requiredNodeTypes: ['Skeleton'],
     preserves: ['rotation', 'scale', 'material', 'children', 'animation'],
   },
   buildClosureSpec(spec): ClosureSpec {
     return {
       rootSelectors: [
-        spec.sourceClipId,
+        spec.sourceId,
         spec.sourceSkeletonId,
         spec.targetSkeletonId,
         // #1244 — the Object the retarget poses, so its layer chain can be walked (`pose` below).
@@ -146,15 +152,10 @@ export const retargetMutator: MutatorDefinition<RetargetSpec> = {
     };
   },
   preconditions(spec, _closure, state) {
-    const sourceClip = state.nodes[spec.sourceClipId];
-    if (!sourceClip)
-      return { ok: false, reason: `sourceClipId "${spec.sourceClipId}" not in DAG.` };
-    if (sourceClip.type !== 'AnimationClip') {
-      return {
-        ok: false,
-        reason: `sourceClipId "${spec.sourceClipId}" is ${sourceClip.type}; expected AnimationClip.`,
-      };
-    }
+    const source = state.nodes[spec.sourceId];
+    if (!source) return { ok: false, reason: `sourceId "${spec.sourceId}" not in DAG.` };
+    const socket = poseOutputOf(source);
+    if (!socket.ok) return socket;
     const sourceSkel = state.nodes[spec.sourceSkeletonId];
     if (!sourceSkel)
       return { ok: false, reason: `sourceSkeletonId "${spec.sourceSkeletonId}" not in DAG.` };
@@ -173,28 +174,29 @@ export const retargetMutator: MutatorDefinition<RetargetSpec> = {
         reason: `targetSkeletonId is ${targetSkel.type}; expected Skeleton.`,
       };
     }
-    // The output reads its SOURCE rig off the source clip's own `skeleton` edge,
-    // because a keyframe's `bone` is an index and an index means nothing except
-    // against the rig it was authored for. So a spec that names a different rig
-    // than the clip is wired to is a disagreement, not a preference — refuse it
-    // rather than silently preferring one. (There is no TimeSource requirement
-    // any more: the emitted node is time-free, so a clock is not an operand.)
-    const clipRigId = edgeSource(sourceClip, 'skeleton');
-    if (!clipRigId) {
+    // The retarget reads its SOURCE rig off the wire, which stands the rig the source poses — a
+    // clip's `skeleton` edge, a layer chain's `Skeleton` (#1211, the same walk the bone-map editor
+    // uses). A spec naming a different rig is a disagreement, not a preference — refuse it rather
+    // than silently preferring one. (No TimeSource requirement: the emitted node is time-free.)
+    const sourceRigId = poseSkeletonIdOf(
+      state.nodes as unknown as Readonly<Record<string, GraphNodeLike>>,
+      spec.sourceId,
+    );
+    if (!sourceRigId) {
       return {
         ok: false,
         reason:
-          `sourceClipId "${spec.sourceClipId}" has no skeleton connected. A clip's ` +
-          'keyframes are bone INDICES, so the rig they were authored against has to ' +
-          'be on the graph before they can be retargeted.',
+          `sourceId "${spec.sourceId}" stands no rig: its pose reaches no Skeleton (an unwired ` +
+          'clip or layer). The rig the motion was authored against has to be on the graph before ' +
+          'it can be retargeted.',
       };
     }
-    if (clipRigId !== spec.sourceSkeletonId) {
+    if (sourceRigId !== spec.sourceSkeletonId) {
       return {
         ok: false,
         reason:
-          `sourceSkeletonId "${spec.sourceSkeletonId}" is not the rig "${spec.sourceClipId}" ` +
-          `is connected to ("${clipRigId}"). The clip's own edge is what the retarget reads.`,
+          `sourceSkeletonId "${spec.sourceSkeletonId}" is not the rig "${spec.sourceId}" poses ` +
+          `("${sourceRigId}"). The motion's own rig is what the retarget reads.`,
       };
     }
     if (!spec.mapPresetId && !spec.customMap) {
@@ -228,7 +230,7 @@ export const retargetMutator: MutatorDefinition<RetargetSpec> = {
       getBoneNameMapPreset(spec.mapPresetId!)?.map ??
       ({} as Readonly<Record<string, string>>);
 
-    const outputId = spec.outputClipId ?? `${spec.sourceClipId}_retargeted`;
+    const outputId = spec.outputClipId ?? `${spec.sourceId}_retargeted`;
     // Derived from the output id, so two binds of the same clip onto two
     // characters get their own maps and neither can overwrite the other's.
     const mapId = `${outputId}_map`;
@@ -252,8 +254,9 @@ export const retargetMutator: MutatorDefinition<RetargetSpec> = {
       },
       {
         type: 'connect',
-        // #1225 — the retarget reads the pose wire: the clip's pose, which carries its range.
-        from: { node: spec.sourceClipId, socket: 'pose' },
+        // #1225 — the retarget reads the pose wire, which carries its range. #1211 — on whichever
+        // output the source declares for it (a clip's `pose`, a layer's `out`).
+        from: { node: spec.sourceId, socket: poseSocketOf(_state.nodes[spec.sourceId]) },
         to: { node: outputId, socket: 'source' },
       },
       {
@@ -404,6 +407,30 @@ function posedObjectOf(
     };
   }
   return { ok: true, objectId: standing[0] ?? null };
+}
+
+/**
+ * #1211 — the ONE output a retarget source's pose comes out on, read from its node type's declared
+ * outputs: a clip's `pose`, a layer's `out`, a skeleton's rest `pose`. Refused, naming what it has,
+ * when the node has no pose output or more than one.
+ */
+function poseOutputOf(node: Node): { ok: true; socket: string } | { ok: false; reason: string } {
+  const outputs = Object.entries(getNodeType(node.type)?.outputs ?? {});
+  const pose = outputs.filter(([, o]) => (o as { type?: string }).type === 'PosedSkeleton');
+  if (pose.length === 1) return { ok: true, socket: pose[0][0] };
+  return {
+    ok: false,
+    reason:
+      `sourceId "${node.id}" is ${node.type}, which has ${pose.length === 0 ? 'no pose output' : `${pose.length} pose outputs`}` +
+      ` (outputs: ${outputs.map(([k]) => k).join(', ') || 'none'}). A retarget source is a node with one ` +
+      'pose output: an AnimationClip, a PoseLayer, a Skeleton at rest, or another retarget.',
+  };
+}
+
+/** The pose output of a source that passed `poseOutputOf` (the build runs after preconditions). */
+function poseSocketOf(node: Node | undefined): string {
+  const res = node ? poseOutputOf(node) : null;
+  return res?.ok ? res.socket : 'pose';
 }
 
 /** The node id feeding `node.inputs[socket]`, or null. */

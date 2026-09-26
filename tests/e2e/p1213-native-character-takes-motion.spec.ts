@@ -102,7 +102,7 @@ test('#1213 — a motion binds to the native bar and its drawn skin plays it', a
     });
     w.__basher_dag.getState().dispatchAtomic([...motion.ops, ...stand.ops], 'user', 'import bvh');
     const bound = bind.bindMotionToCharacter(
-      { clipId: 'p1213_swing_clip', skeletonId: 'p1213_swing_skel' },
+      { motionId: 'p1213_swing_clip', skeletonId: 'p1213_swing_skel' },
       'imported',
     );
     const nodes = w.__basher_dag.getState().state.nodes;

@@ -112,7 +112,7 @@ const bind = (clipId: string, out: string) =>
   dispatchMutatorFromUI(
     'mutator.animation.retarget',
     {
-      sourceClipId: clipId,
+      sourceId: clipId,
       sourceSkeletonId: 'n_src_skel',
       targetSkeletonId: SKEL,
       customMap: Object.fromEntries(BONES.map((b) => [b, b])),
@@ -356,7 +356,7 @@ describe('binding a motion to a character', () => {
     const result = dispatchMutatorFromUI(
       'mutator.animation.retarget',
       {
-        sourceClipId: 'n_clip_a',
+        sourceId: 'n_clip_a',
         sourceSkeletonId: 'n_src_skel',
         targetSkeletonId: 'n_src_skel',
         customMap: Object.fromEntries(BONES.map((b) => [b, b])),
@@ -389,7 +389,7 @@ describe('binding a motion to a character', () => {
     const refused = dispatchMutatorFromUI(
       'mutator.animation.retarget',
       {
-        sourceClipId: 'n_missing_clip',
+        sourceId: 'n_missing_clip',
         sourceSkeletonId: 'n_src_skel',
         targetSkeletonId: SKEL,
         customMap: Object.fromEntries(BONES.map((b) => [b, b])),

@@ -205,7 +205,7 @@ describe('#1056 — every imported motion stands in the scene as an Object', () 
     const state = useDagStore.getState().state;
     const objectId = `${result!.skeletonId}_object`;
     expect(state.nodes[objectId]?.meta?.name).toBe('wave');
-    expect((state.nodes[result!.clipId].params as { name?: string }).name).toBe('wave');
+    expect((state.nodes[result!.motionId].params as { name?: string }).name).toBe('wave');
     expect(nodeDisplayName(state.nodes, objectId)).toBe('wave');
   });
 
@@ -247,15 +247,15 @@ describe('#1056 — every imported motion stands in the scene as an Object', () 
     const objectId = `${result!.skeletonId}_object`;
     const store = useDagStore.getState();
     store.dispatch(
-      { type: 'setParam', nodeId: result!.clipId, paramPath: 'name', value: 'hero walk' },
+      { type: 'setParam', nodeId: result!.motionId, paramPath: 'name', value: 'hero walk' },
       'user',
       'set name',
     );
     const state = useDagStore.getState().state;
-    expect(nodeDisplayName(state.nodes, result!.clipId)).toBe('hero walk');
+    expect(nodeDisplayName(state.nodes, result!.motionId)).toBe('hero walk');
     expect(nodeDisplayName(state.nodes, objectId)).toBe('hero walk');
     // The field every direct reader uses, not only the resolver.
-    expect(state.nodes[objectId].meta).toEqual({ name: 'hero walk', nameFrom: result!.clipId });
+    expect(state.nodes[objectId].meta).toEqual({ name: 'hero walk', nameFrom: result!.motionId });
   });
 
   it('#1122 — once the Object is renamed, the clip’s next rename leaves it alone; undo resumes', async () => {
@@ -265,7 +265,7 @@ describe('#1056 — every imported motion stands in the scene as an Object', () 
     const store = useDagStore.getState();
     store.dispatch({ type: 'setMeta', nodeId: objectId, name: 'my rig' }, 'user', 'rename');
     store.dispatch(
-      { type: 'setParam', nodeId: result!.clipId, paramPath: 'name', value: 'hero walk' },
+      { type: 'setParam', nodeId: result!.motionId, paramPath: 'name', value: 'hero walk' },
       'user',
       'set name',
     );
@@ -274,9 +274,9 @@ describe('#1056 — every imported motion stands in the scene as an Object', () 
     store.undo(); // the clip's rename
     store.undo(); // the Object's rename — following resumes
     let nodes = useDagStore.getState().state.nodes;
-    expect(nodes[objectId].meta).toEqual({ name: 'wave', nameFrom: result!.clipId });
+    expect(nodes[objectId].meta).toEqual({ name: 'wave', nameFrom: result!.motionId });
     store.dispatch(
-      { type: 'setParam', nodeId: result!.clipId, paramPath: 'name', value: 'jog' },
+      { type: 'setParam', nodeId: result!.motionId, paramPath: 'name', value: 'jog' },
       'user',
       'set name',
     );
@@ -294,12 +294,12 @@ describe('#1056 — every imported motion stands in the scene as an Object', () 
       composeProject({ id: 'p1122', name: 'p1122', state: useDagStore.getState().state }),
     );
     const loaded = await loadProject(storage, 'p1122');
-    expect(loaded.state.nodes[objectId].meta).toEqual({ name: 'wave', nameFrom: result!.clipId });
+    expect(loaded.state.nodes[objectId].meta).toEqual({ name: 'wave', nameFrom: result!.motionId });
     useDagStore.getState().hydrate(loaded.state);
     useDagStore
       .getState()
       .dispatch(
-        { type: 'setParam', nodeId: result!.clipId, paramPath: 'name', value: 'hero walk' },
+        { type: 'setParam', nodeId: result!.motionId, paramPath: 'name', value: 'hero walk' },
         'user',
         'set name',
       );

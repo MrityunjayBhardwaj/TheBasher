@@ -143,7 +143,7 @@ describe('#1213 — a retarget onto a native character poses its armature Object
     const result = dispatchMutatorFromUI(
       'mutator.animation.retarget',
       {
-        sourceClipId: 'walk_clip',
+        sourceId: 'walk_clip',
         sourceSkeletonId: 'walk_skel',
         targetSkeletonId: barSkeletonId,
         customMap: { Hips: barBones[0].name, Spine1: barBones[1].name },
@@ -210,7 +210,7 @@ describe('#1213 — dropping a motion binds it to the native character', () => {
     expect(characterTargets(motions)).toEqual([]);
     useDagStore.getState().hydrate(motions);
     const refused = bindMotionToCharacter(
-      { clipId: 'swing_clip', skeletonId: 'swing_skel' },
+      { motionId: 'swing_clip', skeletonId: 'swing_skel' },
       'imported',
     );
     expect(refused.ok === false && refused.refusal).toBe('no-character');
@@ -228,7 +228,7 @@ describe('#1213 — dropping a motion binds it to the native character', () => {
     useSelectionStore.getState().select(null);
 
     const bound = bindMotionToCharacter(
-      { clipId: 'swing_clip', skeletonId: 'swing_skel' },
+      { motionId: 'swing_clip', skeletonId: 'swing_skel' },
       'imported',
     );
     expect(bound.ok, JSON.stringify(bound)).toBe(true);
@@ -283,7 +283,7 @@ describe('#1213 — dropping a motion binds it to the native character', () => {
     useDagStore.getState().hydrate(s0);
     useSelectionStore.getState().select(null);
     expect(
-      bindMotionToCharacter({ clipId: 'swing_clip', skeletonId: 'swing_skel' }, 'imported').ok,
+      bindMotionToCharacter({ motionId: 'swing_clip', skeletonId: 'swing_skel' }, 'imported').ok,
     ).toBe(true);
     const state = useDagStore.getState().state;
     const { mesh, skin } = skinnedMesh(state, 0);
@@ -320,7 +320,7 @@ describe('#1213 — dropping a motion binds it to the native character', () => {
     useDagStore.getState().hydrate(s0);
     useSelectionStore.getState().select(null);
     const refused = bindMotionToCharacter(
-      { clipId: 'swing_clip', skeletonId: 'swing_skel' },
+      { motionId: 'swing_clip', skeletonId: 'swing_skel' },
       'imported',
     );
     expect(refused.ok === false && refused.refusal).toBe('ambiguous');
@@ -338,7 +338,7 @@ describe('#1213 — dropping a motion binds it to the native character', () => {
     })!.id;
     useSelectionStore.getState().select(meshObject);
     const bound = bindMotionToCharacter(
-      { clipId: 'swing_clip', skeletonId: 'swing_skel' },
+      { motionId: 'swing_clip', skeletonId: 'swing_skel' },
       'imported',
     );
     expect(bound.ok, JSON.stringify(bound)).toBe(true);

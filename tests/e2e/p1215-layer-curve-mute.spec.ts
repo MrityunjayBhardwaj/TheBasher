@@ -105,7 +105,7 @@ test('#1215 — a layer row’s gutter M mutes its curve (the skin drops to what
     dag().dispatchAtomic(stand.ops, 'user', 'stand the motion');
     selection.useSelectionStore.getState().select(null);
     const bound = bind.bindMotionToCharacter(
-      { clipId: 'swing_clip', skeletonId: 'swing_skel' },
+      { motionId: 'swing_clip', skeletonId: 'swing_skel' },
       'imported',
     );
     if (!bound.ok) throw new Error(JSON.stringify(bound));

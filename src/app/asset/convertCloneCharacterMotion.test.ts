@@ -190,9 +190,23 @@ afterAll(() => {
 
 const gestureKey = (state: DagState, name: string, spec: unknown) =>
   createHash('sha256')
-    .update(JSON.stringify({ nodes: state.nodes, outputs: state.outputs, name, spec }))
+    .update(
+      JSON.stringify({ nodes: state.nodes, outputs: state.outputs, name, spec: asRecorded(spec) }),
+    )
     .digest('hex')
     .slice(0, 24);
+
+/**
+ * A spec in the spelling the tool had when the recordings were captured. The retarget's source was
+ * `sourceClipId` then; it is `sourceId` now (#1211, a motion is any pose output, not only a clip).
+ * Renamed in place, keys kept in order, so the recorded gesture hashes the same.
+ */
+function asRecorded(spec: unknown): unknown {
+  if (!spec || typeof spec !== 'object' || !('sourceId' in spec)) return spec;
+  return Object.fromEntries(
+    Object.entries(spec).map(([k, v]) => [k === 'sourceId' ? 'sourceClipId' : k, v]),
+  );
+}
 
 /** A mutator on `state`: live on a native project, replayed on a clone-road one (see above). */
 function tool(state: DagState, name: string, spec: unknown): DagState {
@@ -327,7 +341,7 @@ describe('a motion bound on the clone road', () => {
   /** Bind the swing onto the rig named `targetSkeletonId`, bone names as that rig spells them. */
   function bind(state: DagState, targetSkeletonId: string, bones: [string, string]) {
     return tool(state, 'mutator.animation.retarget', {
-      sourceClipId: 'swing_clip',
+      sourceId: 'swing_clip',
       sourceSkeletonId: 'swing_skel',
       targetSkeletonId,
       customMap: { Hips: bones[0], Spine: bones[1] },
@@ -399,14 +413,14 @@ describe('a motion bound on the clone road', () => {
   it('two binds, the earlier one filling a bone the later does not key: kept, and named', async () => {
     let saved = await cloneProject('skinned-bar.glb');
     saved = tool(saved, 'mutator.animation.retarget', {
-      sourceClipId: 'swing_clip',
+      sourceId: 'swing_clip',
       sourceSkeletonId: 'swing_skel',
       targetSkeletonId: gltfSkeletonDagId(REF, 0),
       customMap: { Hips: 'Bone0' },
       outputClipId: 'root_only',
     });
     saved = tool(saved, 'mutator.animation.retarget', {
-      sourceClipId: 'swing_clip',
+      sourceId: 'swing_clip',
       sourceSkeletonId: 'swing_skel',
       targetSkeletonId: gltfSkeletonDagId(REF, 0),
       customMap: { Spine: 'Bone1' },
@@ -423,7 +437,7 @@ describe('a motion bound on the clone road', () => {
 describe('binds: the edges of what carries', () => {
   const retarget = (state: DagState, map: Record<string, string>, outputClipId: string) =>
     tool(state, 'mutator.animation.retarget', {
-      sourceClipId: 'swing_clip',
+      sourceId: 'swing_clip',
       sourceSkeletonId: 'swing_skel',
       targetSkeletonId: gltfSkeletonDagId(REF, 0),
       customMap: map,
@@ -559,7 +573,7 @@ describe('the take a ClipSelect picked', () => {
       },
     ]);
     saved = tool(saved, 'mutator.animation.retarget', {
-      sourceClipId: 'swing_clip',
+      sourceId: 'swing_clip',
       sourceSkeletonId: 'swing_skel',
       targetSkeletonId: gltfSkeletonDagId(REF, 0),
       customMap: { Hips: 'Bone0', Spine: 'Bone1' },

@@ -56,7 +56,8 @@ import { importFormatOf, UNSUPPORTED_FORMAT_MESSAGE, type ImportExt } from './im
  */
 export interface MotionImportResult {
   readonly skeletonId: string;
-  readonly clipId: string;
+  /** #1211 — the node the motion comes out of: what a bind retargets from. */
+  readonly motionId: string;
 }
 
 /** Strip the directory + extension to a display name for the import label. */
@@ -168,7 +169,7 @@ export async function importBvhFromOpfs(path: string): Promise<MotionImportResul
     // Bump AFTER dispatch (pre-mortem: a pre-dispatch bump re-enumerates the
     // My-Imports list before the import lands → stale/empty on failure).
     useImportRefreshStore.getState().bump();
-    return { skeletonId, clipId };
+    return { skeletonId, motionId: clipId };
   } catch (err) {
     useAssetErrorStore.getState().report(path, `import failed: ${formatAssetError(err)}`);
     // `null` means "nothing landed", and the banner is already showing why. It is
@@ -197,7 +198,7 @@ export async function importFbxFromOpfs(path: string): Promise<MotionImportResul
     const standIn = skeletonObjectOps(ops, skeletonId, clipId, name, true);
     dag.dispatchAtomic([...ops, ...standIn], 'user', `import fbx: ${path}`);
     useImportRefreshStore.getState().bump();
-    return { skeletonId, clipId };
+    return { skeletonId, motionId: clipId };
   } catch (err) {
     useAssetErrorStore.getState().report(path, `import failed: ${formatAssetError(err)}`);
     return null;

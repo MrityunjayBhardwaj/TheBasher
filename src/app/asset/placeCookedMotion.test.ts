@@ -151,7 +151,7 @@ async function mintAndCookThroughRetarget(s: DagState, cap: MotionGenerationCapa
   const bind = validatePlan(
     retargetMutator,
     {
-      sourceClipId: clipId,
+      sourceId: clipId,
       sourceSkeletonId: edgeTarget(next.nodes[clipId], 'skeleton')!,
       targetSkeletonId: 'gskel',
       customMap: BRIDGE,
@@ -311,7 +311,7 @@ describe('placeCookedMotionOps (#935)', () => {
     const bind = validatePlan(
       retargetMutator,
       {
-        sourceClipId: clipId,
+        sourceId: clipId,
         sourceSkeletonId: edgeTarget(next.nodes[clipId], 'skeleton')!,
         targetSkeletonId: barSkeleton,
         customMap: { Hips: 'Bone0', Spine: 'Bone1' },
@@ -368,7 +368,7 @@ describe('placeCookedMotionOps (#935)', () => {
     const bind = validatePlan(
       retargetMutator,
       {
-        sourceClipId: clipId,
+        sourceId: clipId,
         sourceSkeletonId: edgeTarget(next.nodes[clipId], 'skeleton')!,
         targetSkeletonId: 'plainskel',
         customMap: BRIDGE,
@@ -395,7 +395,7 @@ describe('placeCookedMotionOps (#935)', () => {
     const bind2 = validatePlan(
       retargetMutator,
       {
-        sourceClipId: clipId,
+        sourceId: clipId,
         sourceSkeletonId: edgeTarget(two.nodes[clipId], 'skeleton')!,
         targetSkeletonId: 'gskel2',
         customMap: BRIDGE,

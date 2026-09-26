@@ -128,7 +128,7 @@ function bind() {
   return dispatchMutatorFromUI(
     'mutator.animation.retarget',
     {
-      sourceClipId: 'swing_clip',
+      sourceId: 'swing_clip',
       sourceSkeletonId: 'swing_skel',
       targetSkeletonId: 'sk',
       targetObjectId: 'rig',
@@ -216,5 +216,135 @@ describe('#1211 — the base pose layer', () => {
     expect(again.ok === false && again.reason).toMatch(
       /_pose_layer" is muted, so it cannot take a pose/,
     );
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// #1211 — a bind names a MOTION, not a clip. Once BVH and FBX land as keys on a base layer, the
+// thing dropped onto a character is a layer; the bind retargets from whatever pose output the
+// source declares, and checks its rig with the same walk the bone-map editor uses.
+// ─────────────────────────────────────────────────────────────────────────
+describe('#1211 — a bind whose source is a pose layer', () => {
+  function bindFrom(sourceId: string, sourceSkeletonId = 'swing_skel') {
+    return dispatchMutatorFromUI(
+      'mutator.animation.retarget',
+      {
+        sourceId,
+        sourceSkeletonId,
+        targetSkeletonId: 'sk',
+        targetObjectId: 'rig',
+        customMap: { Bone0: 'Bone0', Bone1: 'Bone1' },
+        outputClipId: 'swing_on_rig',
+      },
+      'bind',
+    );
+  }
+
+  /** Bone1's pose after binding from the plain clip — the reference every layer source must match. */
+  function clipBound(times: readonly number[]): Quat[] {
+    useDagStore.getState().hydrate(character());
+    expect(bindFrom('swing_clip').ok).toBe(true);
+    const s = useDagStore.getState().state;
+    return times.map((t) => bone1(s, t));
+  }
+
+  const close = (a: Quat, b: Quat) => {
+    // q and -q are one rotation
+    const d = Math.abs(a[0] * b[0] + a[1] * b[1] + a[2] * b[2] + a[3] * b[3]);
+    expect(d).toBeCloseTo(1, 6);
+  };
+
+  it('a layer over the clip: wired on the layer’s own output, and the rig plays the same motion', () => {
+    const times = [0, 0.25, 0.5, 1];
+    const expected = clipBound(times);
+    let s = character();
+    for (const op of [
+      {
+        type: 'addNode',
+        nodeId: 'swing_layer',
+        nodeType: 'PoseLayer',
+        params: { name: 'swing', mode: 'override', members: [], channels: [] },
+      },
+      {
+        type: 'connect',
+        from: { node: 'swing_clip', socket: 'pose' },
+        to: { node: 'swing_layer', socket: 'pose' },
+      },
+    ] as Op[])
+      s = applyOp(s, op).next;
+    useDagStore.getState().hydrate(s);
+    const res = bindFrom('swing_layer');
+    expect(res.ok, res.ok ? '' : res.reason).toBe(true);
+    const after = useDagStore.getState().state;
+    expect(after.nodes.swing_on_rig.inputs.source).toMatchObject({
+      node: 'swing_layer',
+      socket: 'out',
+    });
+    times.forEach((t, i) => close(bone1(after, t), expected[i]));
+  });
+
+  it('a BASE layer (keys over the rest pose) retargets the same pose as the clip, at its keys', () => {
+    // The shape a BVH drop lands as after #1211: the motion's own keys on a layer over the rig's rest
+    // pose, no clip anywhere. Keys copied off the clip's pose at its frames, so both carry one motion.
+    const times = [0, 0.5, 1];
+    const expected = clipBound(times);
+    let s = character();
+    const clipPose = evaluate(s, 'swing_clip', { ...at(0), socket: 'pose' })
+      .value as PosedSkeletonValue;
+    const keys = times.map((t) => ({
+      time: t,
+      value: [...clipPose.sample(t).find((b) => b.name === 'Bone1')!.quaternion],
+      easing: 'linear',
+    }));
+    for (const op of [
+      {
+        type: 'addNode',
+        nodeId: 'swing_base',
+        nodeType: 'PoseLayer',
+        params: {
+          name: 'swing',
+          mode: 'override',
+          members: [{ bone: 'Bone1', rotationMode: 'quaternion' }],
+          channels: [{ bone: 'Bone1', component: 'quaternion', keyframes: keys }],
+        },
+      },
+      {
+        type: 'connect',
+        from: { node: 'swing_skel', socket: 'pose' },
+        to: { node: 'swing_base', socket: 'pose' },
+      },
+    ] as Op[])
+      s = applyOp(s, op).next;
+    useDagStore.getState().hydrate(s);
+    const res = bindFrom('swing_base');
+    expect(res.ok, res.ok ? '' : res.reason).toBe(true);
+    const after = useDagStore.getState().state;
+    times.forEach((t, i) => close(bone1(after, t), expected[i]));
+    // …and the rig really moves between those keys, or every row above is satisfied at rest.
+    expect(Math.abs(bone1(after, 1)[3])).toBeLessThan(0.9); // well away from identity (w = 1)
+  });
+
+  it('refuses a source with no pose output, naming what it has', () => {
+    useDagStore.getState().hydrate(character());
+    const res = bindFrom('sk_missing');
+    expect(res.ok).toBe(false);
+    let s = character();
+    s = applyOp(s, {
+      type: 'addNode',
+      nodeId: 'a_map',
+      nodeType: 'BoneNameMap',
+      params: { name: 'm', map: {} },
+    }).next;
+    useDagStore.getState().hydrate(s);
+    const noPose = bindFrom('a_map');
+    expect(noPose.ok).toBe(false);
+    if (!noPose.ok) expect(noPose.reason).toContain('no pose output');
+  });
+
+  it('refuses a rig that is not the one the source poses, naming the one it does', () => {
+    useDagStore.getState().hydrate(character());
+    const res = bindFrom('swing_clip', 'sk');
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.reason).toContain('"swing_skel"');
   });
 });

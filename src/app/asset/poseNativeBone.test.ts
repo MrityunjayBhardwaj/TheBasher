@@ -203,7 +203,7 @@ describe('#1244 — hand-posing a native character', () => {
     useSelectionStore.getState().select(null);
     expect(pose(armatureId, 'Bone1', [0, 0, 20]).ok).toBe(true);
     const bound = bindMotionToCharacter(
-      { clipId: 'swing_clip', skeletonId: 'swing_skel' },
+      { motionId: 'swing_clip', skeletonId: 'swing_skel' },
       'imported',
     );
     expect(bound.ok, JSON.stringify(bound)).toBe(true);

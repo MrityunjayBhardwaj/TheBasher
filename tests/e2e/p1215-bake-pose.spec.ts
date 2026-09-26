@@ -97,7 +97,7 @@ test('#1215 — baking a bound motion to keys leaves the drawn skin where it was
     dag().dispatchAtomic(stand.ops, 'user', 'stand the motion');
     selection.useSelectionStore.getState().select(null);
     const bound = bind.bindMotionToCharacter(
-      { clipId: 'swing_clip', skeletonId: 'swing_skel' },
+      { motionId: 'swing_clip', skeletonId: 'swing_skel' },
       'imported',
     );
     if (!bound.ok) throw new Error(JSON.stringify(bound));

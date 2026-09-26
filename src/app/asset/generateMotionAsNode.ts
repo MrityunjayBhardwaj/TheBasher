@@ -124,7 +124,7 @@ export async function generateMotionAsNode(
     // The same continuation a dropped file takes (#807/#820): a generated clip
     // that stopped short of the bind was measured leaving a character standing
     // still while the same bytes dropped as a file animated it.
-    bindImportedMotion({ skeletonId: mint.skeletonId, clipId: mint.clipId }, 'generated');
+    bindImportedMotion({ skeletonId: mint.skeletonId, motionId: mint.clipId }, 'generated');
     // ...and only now can placement find the character the bind just chose.
     placeCookedMotion();
 

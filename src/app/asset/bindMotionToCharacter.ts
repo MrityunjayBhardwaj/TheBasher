@@ -302,14 +302,14 @@ export function chooseMotionTarget(
   };
 }
 
-/** The retargeted clip's id — derived from the PAIR, so the same clip can drive
+/** The retarget's id — derived from the PAIR, so the same motion can drive
  *  two different characters without the second binding overwriting the first. */
-export function retargetedClipId(sourceClipId: string, targetSkeletonId: string): string {
-  return `${sourceClipId}_on_${targetSkeletonId}`;
+export function retargetedClipId(motionId: string, targetSkeletonId: string): string {
+  return `${motionId}_on_${targetSkeletonId}`;
 }
 
 /**
- * Put an imported motion clip onto a character, and make it show in the render.
+ * Put an imported motion onto a character, and make it show in the render.
  *
  * Reports its own outcome — a refusal reaches a toast, a fault reaches the
  * persistent error banner — and ALSO returns it, so the decision is testable
@@ -318,7 +318,8 @@ export function retargetedClipId(sourceClipId: string, targetSkeletonId: string)
  */
 export function bindMotionToCharacter(
   source: {
-    clipId: string;
+    /** #1211 — the motion: any node with one pose output (a clip, an import's base layer). */
+    motionId: string;
     skeletonId: string;
   },
   arrival: MotionArrival,
@@ -352,12 +353,12 @@ export function bindMotionToCharacter(
     return { ok: false, refusal: 'no-bridge', reason };
   }
 
-  const outputClipId = retargetedClipId(source.clipId, target.skeletonId);
+  const outputClipId = retargetedClipId(source.motionId, target.skeletonId);
   const outputName = `${target.label} motion`;
   const result = dispatchMutatorFromUI(
     'mutator.animation.retarget',
     {
-      sourceClipId: source.clipId,
+      sourceId: source.motionId,
       sourceSkeletonId: source.skeletonId,
       targetSkeletonId: target.skeletonId,
       ...(bridge.presetId ? { mapPresetId: bridge.presetId } : {}),

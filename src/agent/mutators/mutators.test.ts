@@ -4343,7 +4343,7 @@ describe('V14 deeper non-redundancy — Op-shape probe (issue #22)', () => {
       mutator: _retargetM as MutatorDefinition<unknown>,
       build: buildSceneForRetarget,
       spec: {
-        sourceClipId: 'src_clip',
+        sourceId: 'src_clip',
         sourceSkeletonId: 'src_skel',
         targetSkeletonId: 'tgt_skel',
         mapPresetId: 'mixamoToGltf',

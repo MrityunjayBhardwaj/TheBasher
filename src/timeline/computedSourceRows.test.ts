@@ -109,7 +109,7 @@ async function boundBar() {
   useDagStore.getState().hydrate(state);
   useSelectionStore.getState().select(null);
   const bound = bindMotionToCharacter(
-    { clipId: 'swing_clip', skeletonId: 'swing_skel' },
+    { motionId: 'swing_clip', skeletonId: 'swing_skel' },
     'imported',
   );
   if (!bound.ok) throw new Error(JSON.stringify(bound));
