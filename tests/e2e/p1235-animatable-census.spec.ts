@@ -21,6 +21,16 @@ import { resolve } from 'node:path';
 import { expect, test } from './_fixtures';
 
 const CENSUS = resolve(process.cwd(), 'src/app/animatableCensus.json');
+// #1259 — each subject's measured seconds, written beside the census by CENSUS_WRITE. The parts
+// split by it: rows are not time (parts of 265 / 265 / 264 rows cost 3.3 / 8.8 / 11.1 min).
+const COST = resolve(process.cwd(), 'tests/e2e/p1235-census-cost.json');
+const COSTS: Record<string, number> = (() => {
+  try {
+    return (JSON.parse(readFileSync(COST, 'utf8')) as { seconds: Record<string, number> }).seconds;
+  } catch {
+    return {};
+  }
+})();
 
 const PART = (() => {
   const raw = process.env.CENSUS_PART;
@@ -181,7 +191,7 @@ test(TITLE, async ({ page }) => {
   });
 
   const result = await page.evaluate(
-    async ({ kinds, compute, part }) => {
+    async ({ kinds, compute, part, costs }) => {
       const w = window as Loose;
       const dag = () => w.__basher_dag.getState();
       const frames = () =>
@@ -532,9 +542,11 @@ test(TITLE, async ({ page }) => {
         driverNote?: string;
       }[] = [];
       // #1260 — split by SUBJECT, never by row: "two instances of one subject agree" can only be
-      // checked when every instance is measured in the same part. Each subject weighs its row
-      // count, and the heaviest goes first to the lightest part, so every part derives the same
-      // split from the same scene without being told it.
+      // checked when every instance is measured in the same part. Each subject weighs its
+      // measured seconds (#1259, from the committed cost file), and the heaviest goes first to the
+      // lightest part, so every part derives the same split from the same inputs without being
+      // told it. A subject the file has not timed yet weighs its rows at the file's mean seconds
+      // per row, and is named in the log so the next CENSUS_WRITE times it.
       const weight: Record<string, number> = {};
       const weigh = (id: string) => {
         if (contextOf(id).unmeasured) return;
@@ -553,6 +565,11 @@ test(TITLE, async ({ page }) => {
           setMode(id, undefined);
         }
       }
+      const timed = Object.keys(weight).filter((x) => x in costs);
+      const rowsTimed = timed.reduce((t, x) => t + weight[x], 0);
+      const perRow = rowsTimed > 0 ? timed.reduce((t, x) => t + costs[x], 0) / rowsTimed : 1;
+      const untimed = Object.keys(weight).filter((x) => !(x in costs));
+      for (const x of Object.keys(weight)) weight[x] = x in costs ? costs[x] : weight[x] * perRow;
       const assignment: Record<string, number> = {};
       const partLoad = Array.from({ length: part?.count ?? 1 }, () => 0);
       for (const s of Object.keys(weight).sort(
@@ -785,9 +802,10 @@ test(TITLE, async ({ page }) => {
         assignment,
         partLoad,
         subjectMs,
+        untimed,
       };
     },
-    { kinds: KINDS, compute: COMPUTE, part: PART },
+    { kinds: KINDS, compute: COMPUTE, part: PART, costs: COSTS },
   );
 
   const rows = result.rows as Row[];
@@ -823,11 +841,16 @@ test(TITLE, async ({ page }) => {
         .map(([s, ms]) => `${s}=${(ms / 1000).toFixed(1)}`)
         .join(' '),
   );
+  console.log(
+    `CENSUS cost file: ${Object.keys(COSTS).length} subjects timed; untimed (weighed by rows): ${
+      (result.untimed as string[]).join(' ') || 'none'
+    }`,
+  );
   const assignment = result.assignment as Record<string, number>;
   const mine = (subject: string) => !PART || assignment[subject] === PART.index;
   if (PART)
     console.log(
-      `CENSUS part ${PART.index}/${PART.count}: rows per part ${(result.partLoad as number[]).join(' / ')}, ` +
+      `CENSUS part ${PART.index}/${PART.count}: seconds per part ${(result.partLoad as number[]).map((x) => Math.round(x)).join(' / ')}, ` +
         `subjects ${Object.keys(assignment).filter(mine).sort().join(' ')}`,
     );
   // The measurement has to be able to see anything before its "nothing moved" means anything.
@@ -850,6 +873,22 @@ test(TITLE, async ({ page }) => {
   expect(disagreements, 'two instances of one subject agree').toEqual([]);
   if (process.env.CENSUS_WRITE === '1') {
     writeFileSync(CENSUS, JSON.stringify(table, null, 2) + '\n');
+    writeFileSync(
+      COST,
+      JSON.stringify(
+        {
+          $comment:
+            'Seconds each census subject took, written by CENSUS_WRITE=1 with the census; the CI parts split by it. Machine-dependent — only the ratios matter.',
+          seconds: Object.fromEntries(
+            Object.keys(subjectMs)
+              .sort()
+              .map((x) => [x, Math.round(subjectMs[x] / 100) / 10]),
+          ),
+        },
+        null,
+        2,
+      ) + '\n',
+    );
     return;
   }
   const committed = JSON.parse(readFileSync(CENSUS, 'utf8'));
