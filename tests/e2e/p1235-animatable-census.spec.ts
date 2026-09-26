@@ -589,9 +589,21 @@ test(TITLE, async ({ page }) => {
       }
       let n = 0;
       /** Every leaf of `id` as it stands now: one pass per rotation mode for a posable node. */
+      // Wall time per subject, reported beside the rows: rows are not time (a row that moves
+      // nothing pays two renders), and the split can only be sized from what each subject costs.
+      const subjectMs: Record<string, number> = {};
       async function measurePass(id: string) {
+        const subject = subjectOf(id);
+        if (part && assignment[subject] !== part.index) return;
+        const t0 = performance.now();
+        try {
+          await measureLeaves(id);
+        } finally {
+          subjectMs[subject] = (subjectMs[subject] ?? 0) + performance.now() - t0;
+        }
+      }
+      async function measureLeaves(id: string) {
         const node = dag().state.nodes[id] as { type: string; params: Record<string, unknown> };
-        if (part && assignment[subjectOf(id)] !== part.index) return;
         const leaves: [string, string, unknown][] = [];
         walk(node.params, '', leaves);
         const ctx = contextOf(id);
@@ -772,6 +784,7 @@ test(TITLE, async ({ page }) => {
         rows,
         assignment,
         partLoad,
+        subjectMs,
       };
     },
     { kinds: KINDS, compute: COMPUTE, part: PART },
@@ -801,6 +814,14 @@ test(TITLE, async ({ page }) => {
       .filter((r) => r.driverNote)
       .map((r) => `${r.subject}.${r.path}: ${r.driverNote}`)
       .join(' | ')}`,
+  );
+  const subjectMs = result.subjectMs as Record<string, number>;
+  console.log(
+    'CENSUS subject seconds: ' +
+      Object.entries(subjectMs)
+        .sort((a, b) => b[1] - a[1])
+        .map(([s, ms]) => `${s}=${(ms / 1000).toFixed(1)}`)
+        .join(' '),
   );
   const assignment = result.assignment as Record<string, number>;
   const mine = (subject: string) => !PART || assignment[subject] === PART.index;
