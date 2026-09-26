@@ -758,7 +758,8 @@ function planEdits(
       continue;
     }
     // The native curve rewritten is the FIRST animation's; with another take playing it is muted.
-    if (playing !== 0) {
+    // A file with no animation has no takes to mute (`playing` is -1 there too).
+    if (clipIds.length > 0 && playing !== 0) {
       why.push(
         `${label(node.id)} keys ${label(p.target)} while ${
           playing > 0

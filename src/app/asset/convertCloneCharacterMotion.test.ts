@@ -757,6 +757,21 @@ describe('keys edited on a node of the file that is not a bone (#1263)', () => {
     expect(notes).toEqual([expect.stringContaining('is now muted as it is marked')]);
   });
 
+  it('a file with no animation at all: keys set on its node carry, on a curve the key tools would mint', async () => {
+    const still = glbWith(RIG, (json) => {
+      (json as { animations?: unknown[] }).animations = [];
+    });
+    let saved = await cloneProject(still);
+    saved = keyCloneRig(saved, 'position', POS);
+    const { state } = await convert(saved, still);
+    const rig = rigOf((await nativeProject(still)).native);
+    expect(
+      (
+        state.nodes[`${rig}_position_channel`].params as { keyframes: { time: number }[] }
+      ).keyframes.map((k) => k.time),
+    ).toEqual(expect.arrayContaining([0.5, 1]));
+  });
+
   it('keys edited while no take plays: kept, and named (natively they live in the first take’s curve)', async () => {
     let saved = await cloneProject(RIG);
     saved = keyCloneRig(saved, 'position', POS);
