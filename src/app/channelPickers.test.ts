@@ -13,6 +13,7 @@ import { registerAllNodes } from '../nodes/registerAll';
 import {
   channelPathLockOf,
   channelPathOptionsOf,
+  driverPathLockOf,
   installChannelPickers,
   PICKERS_NOT_INSTALLED,
 } from '../nodes/channelPickerSlot';
@@ -24,8 +25,14 @@ import {
   channelPathLock,
   channelPathOptions,
   channelTargetOptions,
+  driverKindsOf,
+  driverPathLock,
+  driverPathOptions,
+  driverTargetOptions,
   expandPathPattern,
 } from './channelPickers';
+import { comfyParamPath, importComfyGraph } from '../core/comfy/comfyGraph';
+import { bakeComfyBatchedTracks } from './video/compileComfyBatch';
 
 beforeEach(() => {
   __resetRegistryForTests();
@@ -159,12 +166,117 @@ describe('channel pickers — what the census cannot answer is listed with its r
   });
 });
 
+function withDriver(
+  s: DagState,
+  target: string,
+  paramPath: string,
+  source: Record<string, unknown>,
+) {
+  return apply(s, [
+    {
+      type: 'addNode',
+      nodeId: 'drv',
+      nodeType: 'ParamDriver',
+      params: { target, paramPath, ...source },
+    },
+  ]);
+}
+
+describe('ParamDriver pickers — the census driver answers, of the source kind (#1258)', () => {
+  it("a camera's fov is offered to a number channel, and not to a driver", () => {
+    const cam = place(buildDefaultDagState(), 'PerspectiveCamera');
+    const s = withChannel(cam.s, 'KeyframeChannelNumber', cam.data, '');
+    expect(enabled(channelPathOptions(s, 'ch', 'number'))).toContain('fov');
+    // The camera pose reads bare channels only (#1266): the census measured a driver on fov
+    // move nothing, so the row is listed with that answer, never offered.
+    const d = withDriver(cam.s, cam.data, 'fov', {});
+    expect(enabled(driverPathOptions(d, 'drv'))).not.toContain('fov');
+    expect(reasonOf(driverPathOptions(d, 'drv'), 'fov')).toBe('nothing drawn changes');
+  });
+
+  it("a driver's kind is its source's: a Point controller lists vec3 paths only", () => {
+    const sphere = place(buildDefaultDagState(), 'Sphere');
+    const ctl = place(sphere.s, 'Null');
+    const point = withDriver(ctl.s, sphere.obj, '', { sourceTransformVec: { node: ctl.obj } });
+    expect(driverKindsOf(point, 'drv')).toEqual(['vec3']);
+    expect(enabled(driverPathOptions(point, 'drv'))).toEqual(
+      expect.arrayContaining(['position', 'scale']),
+    );
+    const onData = withDriver(ctl.s, sphere.data, '', { sourceTransformVec: { node: ctl.obj } });
+    expect(enabled(driverPathOptions(onData, 'drv'))).not.toContain('radius');
+    // The same data node through a transform channel (a number) offers the radius.
+    const scalar = withDriver(ctl.s, sphere.data, '', {
+      sourceTransform: { node: ctl.obj, channel: 'tx' },
+    });
+    expect(driverKindsOf(scalar, 'drv')).toEqual(['number']);
+    expect(enabled(driverPathOptions(scalar, 'drv'))).toContain('radius');
+  });
+
+  it('a driver does not count itself as "something else supplies it"', () => {
+    const spot = place(buildDefaultDagState(), 'SpotLight');
+    const d = withDriver(spot.s, spot.data, 'intensity', {});
+    expect(reasonOf(driverPathOptions(d, 'drv'), 'intensity')).toBeUndefined();
+    // A second driver on the same band is something else.
+    const two = apply(d, [
+      {
+        type: 'addNode',
+        nodeId: 'other',
+        nodeType: 'ParamDriver',
+        params: { target: spot.data, paramPath: 'intensity' },
+      },
+    ]);
+    expect(reasonOf(driverPathOptions(two, 'drv'), 'intensity')).toMatch(/a driver supplies it/);
+  });
+
+  it('a ComfyUI workflow is a driver target: its batch folds drivers as it folds channels', () => {
+    const META = { name: 'w', importedAt: 'fixed', fps: 30, frames: 24 };
+    const api = {
+      '3': { class_type: 'KSampler', inputs: { cfg: 6.5, denoise: 1 } },
+      '6': { class_type: 'CLIPTextEncode', inputs: { text: 'a cube' } },
+    };
+    const ctl = place(buildDefaultDagState(), 'Null');
+    const s = apply(ctl.s, [
+      {
+        type: 'addNode',
+        nodeId: 'wf',
+        nodeType: 'ComfyUIWorkflow',
+        params: { graph: importComfyGraph(api, META) },
+      },
+    ]);
+    const cfg = comfyParamPath('3', 'cfg');
+    const bakedCfg = (st: DagState) =>
+      bakeComfyBatchedTracks(st, 'wf', importComfyGraph(api, META), 0, 3, 30, 4).find(
+        (t) => comfyParamPath(t.nodeId, t.inputName) === cfg,
+      )?.values;
+    // Observed, not assumed: a driver writing 3 onto cfg bakes 3 where the input says 6.5.
+    const driven = withDriver(s, 'wf', cfg, {
+      sourceTransform: {
+        node: ctl.obj,
+        channel: 'tx',
+        remap: { inMin: 0, inMax: 1, outMin: 3, outMax: 3 },
+      },
+    });
+    expect({ undriven: bakedCfg(s), driven: bakedCfg(driven) }).toEqual({
+      undriven: [6.5, 6.5, 6.5, 6.5],
+      driven: [3, 3, 3, 3],
+    });
+    expect(enabled(driverTargetOptions(withDriver(s, '', '', {}), 'drv'))).toContain('wf');
+    const paths = driverPathOptions(driven, 'drv');
+    expect(enabled(paths)).toContain(cfg);
+    // A driver carries no text, so the prompt is not a path it can take.
+    expect(enabled(paths)).not.toContain(comfyParamPath('6', 'text'));
+  });
+});
+
 describe('the slot the channel schemas ask fails closed', () => {
   afterEach(() =>
     installChannelPickers({
       targetOptions: channelTargetOptions,
       pathOptions: channelPathOptions,
       pathLock: channelPathLock,
+      driverTargetOptions,
+      driverPathOptions,
+      driverPathLock,
     }),
   );
 
@@ -175,6 +287,9 @@ describe('the slot the channel schemas ask fails closed', () => {
     installChannelPickers(null);
     expect(channelPathLockOf('number')(s, 'ch')).toBe(PICKERS_NOT_INSTALLED);
     expect(channelPathOptionsOf('number')(s, 'ch')).toEqual([]);
+    // The driver's path reads the same slot and fails closed the same way.
+    const d = withDriver(spot.s, spot.data, '', {});
+    expect(driverPathLockOf()(d, 'drv')).toBe(PICKERS_NOT_INSTALLED);
   });
 });
 

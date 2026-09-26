@@ -53,7 +53,7 @@ import { buildAddModifierOps } from './operatorStack';
 import { buildNewMaterialOps } from './materialLink';
 import { buildBindDriverOps } from './driverBind';
 // #1066 — loading the pickers fills the slot the channel schemas ask (boot does this in the app).
-import './channelPickers';
+import { driverKindsOf } from './channelPickers';
 import { bakeBasherControllerValues, bakeComfyBatchedTracks } from './video/compileComfyBatch';
 import { comfyParamPath, importComfyGraph, type ComfyApiJson } from '../core/comfy/comfyGraph';
 import { comfyControllerPath, scanBasherControllers } from '../core/comfy/basherControllers';
@@ -341,8 +341,6 @@ describe('a param declares its control on its schema (#872)', () => {
       'the animatable census has no quat rows (imported rotations, optional quaternion), so no list could be honest (#1259)';
     const NOTHING_READS_IMAGE =
       'a keyed ComfyUI image input reaches nothing in the batch, so there is no path to offer (#1257)';
-    const DRIVERS_UNMEASURED =
-      'drivers reach fewer readers than channels (the camera pose ignores them) and are not measured yet (#1258)';
 
     const ACKNOWLEDGED: Readonly<Record<string, string>> = {
       'AnimationClip.sourceHash': MINTED,
@@ -358,7 +356,8 @@ describe('a param declares its control on its schema (#872)', () => {
       // `FollowPath.target`, `Strip.action`, `Strip.target` and `TrackTo.target` left this list in
       // #1065 — pickers over what the strip fold and the constraint fold can resolve. The Number,
       // Vec3, Color and Text channels' `target`/`paramPath` left it in #1066 — pickers over what
-      // the census measured and what a ComfyUI batch reads. What stays has a named reason: a
+      // the census measured and what a ComfyUI batch reads — and so did ParamDriver's, once the
+      // census measured drivers on their own (#1258). What stays has a named reason: a
       // picker needs something that KNOWS which paths animate, and for these nothing does yet.
       'KeyframeChannelImage.paramPath': NOTHING_READS_IMAGE,
       'KeyframeChannelImage.target': NOTHING_READS_IMAGE,
@@ -366,8 +365,6 @@ describe('a param declares its control on its schema (#872)', () => {
       'KeyframeChannelQuat.target': NO_QUAT_ROWS,
       'KeyframeChannelVec2.paramPath': NO_VEC2_ROWS,
       'KeyframeChannelVec2.target': NO_VEC2_ROWS,
-      'ParamDriver.paramPath': DRIVERS_UNMEASURED,
-      'ParamDriver.target': DRIVERS_UNMEASURED,
 
       'ClipSelect.selectedClipName': CHOICE,
       'LightData.tex': CHOICE,
@@ -415,7 +412,7 @@ describe('a param declares its control on its schema (#872)', () => {
     });
     // The denominator rides with the verdict — an empty `unacknowledged` from a loop that
     // never ran looks exactly like a pass.
-    expect(readOnly.length).toBe(21);
+    expect(readOnly.length).toBe(19);
   });
 
   it('row 15 — a param owns the word for its EMPTY state, and the control owns the fallback (#1031)', () => {
@@ -568,6 +565,8 @@ describe('a param declares its control on its schema (#872)', () => {
         'KeyframeChannelVec3.target',
         'KeyframeChannelVec3.paramPath',
         'LightProfileSelect.selectedProfile',
+        'ParamDriver.target',
+        'ParamDriver.paramPath',
         'Strip.action',
         'Strip.target',
         'TrackTo.target',
@@ -583,6 +582,8 @@ describe('a param declares its control on its schema (#872)', () => {
         'KeyframeChannelVec3.target',
         'KeyframeChannelVec3.paramPath',
         'LightProfileSelect.selectedProfile',
+        'ParamDriver.target',
+        'ParamDriver.paramPath',
         'Strip.action',
         'Strip.target',
         'TrackTo.target',
@@ -769,6 +770,21 @@ describe('a param declares its control on its schema (#872)', () => {
       return out;
     };
 
+    // Every input a channel or driver could name on a workflow: its controllers (Mode A) and
+    // every raw input (Mode B).
+    const comfyCandidates = (api: ComfyApiJson) => [
+      ...scanBasherControllers(api).map((d) => ({
+        path: comfyControllerPath(d.nodeId),
+        declaredKind: d.kind as string | null,
+      })),
+      ...Object.entries(api).flatMap(([nid, n]) =>
+        Object.keys(n.inputs ?? {}).map((input) => ({
+          path: comfyParamPath(nid, input),
+          declaredKind: null as string | null,
+        })),
+      ),
+    ];
+
     const counted: Record<string, number> = {};
     for (const [type, kind, a, b] of CHANNELS) {
       const field = (key: string) =>
@@ -815,16 +831,7 @@ describe('a param declares its control on its schema (#872)', () => {
         const declared = kind === 'number' ? ['float', 'int'] : ['string'];
         for (const [id, api] of Object.entries(WORKFLOWS)) {
           const decls = scanBasherControllers(api);
-          const candidates = [
-            ...decls.map((d) => ({ path: comfyControllerPath(d.nodeId), declaredKind: d.kind })),
-            ...Object.entries(api).flatMap(([nid, n]) =>
-              Object.keys(n.inputs ?? {}).map((input) => ({
-                path: comfyParamPath(nid, input),
-                declaredKind: null as string | null,
-              })),
-            ),
-          ];
-          for (const c of candidates) {
+          for (const c of comfyCandidates(api)) {
             const st = withProbe(id, c.path, true);
             if (decls.length > 0) {
               const baked = bakeBasherControllerValues(st, id, decls, 0, 3, 30, 4);
@@ -861,6 +868,111 @@ describe('a param declares its control on its schema (#872)', () => {
       Object.values(counted).every((n) => n > 0),
       JSON.stringify(counted),
     ).toBe(true);
+
+    // ParamDriver (#1258): the same property against the census's DRIVER answers, which differ
+    // from the channel's (the camera pose ignores a driver, #1266). A driver's kind is its
+    // source's, so one probe per road: each must offer exactly the leaves of its own kind(s).
+    const controller = Object.values(s.nodes).find((n) => n.type === 'Null')!.id;
+    const DRIVERS: readonly (readonly [string, Record<string, unknown>, boolean, string[]])[] = [
+      ['unbound', {}, false, ['number', 'vec3']],
+      ['transform', { sourceTransform: { node: controller, channel: 'tx' } }, false, ['number']],
+      ['point', { sourceTransformVec: { node: controller } }, false, ['vec3']],
+      ['wired Number', {}, true, ['number']],
+    ];
+    // A workflow's truth for a driver, measured on its own: a driver writing a sentinel onto
+    // each candidate, baked; it counts when the sentinel reaches a number-kind input.
+    const SENTINEL = 4242;
+    const comfyDriverTruth: string[] = [];
+    for (const [id, api] of Object.entries(WORKFLOWS)) {
+      const decls = scanBasherControllers(api);
+      for (const c of comfyCandidates(api)) {
+        const st = apply(s, [
+          {
+            type: 'addNode',
+            nodeId: 'sentinel',
+            nodeType: 'ParamDriver',
+            params: {
+              target: id,
+              paramPath: c.path,
+              sourceTransform: {
+                node: controller,
+                channel: 'tx',
+                remap: { inMin: 0, inMax: 1, outMin: SENTINEL, outMax: SENTINEL },
+              },
+            },
+          },
+        ]);
+        const reached =
+          decls.length > 0
+            ? Object.entries(bakeBasherControllerValues(st, id, decls, 0, 3, 30, 4)).some(
+                ([cid, vs]) =>
+                  comfyControllerPath(cid) === c.path &&
+                  vs.includes(SENTINEL) &&
+                  ['float', 'int'].includes(String(c.declaredKind)),
+              )
+            : bakeComfyBatchedTracks(st, id, importComfyGraph(api, META), 0, 3, 30, 4).some(
+                (t) =>
+                  comfyParamPath(t.nodeId, t.inputName) === c.path &&
+                  t.values.includes(SENTINEL) &&
+                  ['float', 'int'].includes(t.valueKind),
+              );
+        if (reached) comfyDriverTruth.push(`${id} ${c.path}`);
+      }
+    }
+
+    const driverField = (key: string) =>
+      optionsOf(
+        (getNodeType('ParamDriver')!.paramSchema as z.ZodObject<z.ZodRawShape>).shape[key],
+      )!;
+    const driverOffered: Record<string, number> = {};
+    for (const [road, fields, wired, kinds] of DRIVERS) {
+      const withDriver = (target: string) =>
+        apply(s, [
+          {
+            type: 'addNode',
+            nodeId: 'probe',
+            nodeType: 'ParamDriver',
+            params: { target, paramPath: '', ...fields },
+          },
+          ...(wired
+            ? [
+                {
+                  type: 'connect' as const,
+                  from: { node: source.obj, socket: 'out' },
+                  to: { node: 'probe', socket: 'in' },
+                },
+              ]
+            : []),
+        ]);
+      expect({ road, kinds: driverKindsOf(withDriver(''), 'probe') }).toEqual({ road, kinds });
+      const offered: string[] = [];
+      for (const t of driverField('target')(withDriver(''), 'probe')) {
+        if (t.disabledReason) continue;
+        for (const pth of driverField('paramPath')(withDriver(t.value), 'probe'))
+          if (!pth.disabledReason) offered.push(`${t.value} ${pth.value}`);
+      }
+      const truth: string[] = [];
+      for (const [id, node] of Object.entries(s.nodes)) {
+        if (node.type === 'ComfyUIWorkflow') continue;
+        for (const [path, shape] of leaves(node.params, [], []))
+          if (
+            kinds.includes(shape) &&
+            isAnimatable(s, id, path, shape as 'number' | 'vec3', { mechanism: 'driver' })
+              .answer === 'animatable'
+          )
+            truth.push(`${id} ${path}`);
+      }
+      if (kinds.includes('number')) truth.push(...comfyDriverTruth);
+      expect({ road, offered: [...offered].sort() }).toEqual({ road, offered: [...truth].sort() });
+      driverOffered[road] = truth.length;
+    }
+    // Denominators, and the kind split is real: the union is exactly its two halves.
+    expect(
+      Object.values(driverOffered).every((n) => n > 0),
+      JSON.stringify(driverOffered),
+    ).toBe(true);
+    expect(driverOffered.unbound).toBe(driverOffered.transform + driverOffered.point);
+    expect(comfyDriverTruth.length, 'a driver reaches some workflow input').toBeGreaterThan(0);
   });
 
   it('row 18 — every enabled profile option, once chosen, resolves to that rig on both roads (#1064)', () => {
