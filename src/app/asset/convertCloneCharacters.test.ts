@@ -392,28 +392,33 @@ describe('a character that is kept, and says why', () => {
     ]);
   });
 
-  it("a curve not on a child's transform: kept (made by hand; the key tools never make one)", async () => {
-    let saved = await savedClone('skinned-bar-child-mesh.glb');
-    const armature = cloneChild(saved, 'SkinnedBar');
-    saved = apply(saved, [
-      {
-        type: 'addNode',
-        nodeId: 'n_drv',
-        nodeType: 'ParamDriver',
-        params: { target: armature, paramPath: 'rotation' },
-      },
-    ]);
-    const { state, report } = await convertCloneCharacters(
-      saved,
-      deps('skinned-bar-child-mesh.glb'),
-    );
-    expect(state).toBe(saved);
-    expect(report.kept[0].why).toEqual([
-      expect.stringContaining(
-        'keys "rotation" of "SkinnedBar", which the native node holds as a quaternion',
-      ),
-    ]);
-  });
+  it.each([
+    ['a curve of another type on its transform', 'KeyframeChannelNumber', 'position'],
+    ['a curve on a param other than its transform', 'KeyframeChannelVec3', 'color'],
+    ['a driver on a param other than its transform', 'ParamDriver', 'color'],
+  ])(
+    '%s: kept (made by hand; what the clone drew of it is not measured)',
+    async (_, type, param) => {
+      let saved = await savedClone('skinned-bar-child-mesh.glb');
+      const armature = cloneChild(saved, 'SkinnedBar');
+      saved = apply(saved, [
+        {
+          type: 'addNode',
+          nodeId: 'curve', // a driver has no name: it is labelled by its id
+          nodeType: type,
+          params: { name: 'curve', target: armature, paramPath: param },
+        },
+      ]);
+      const { state, report } = await convertCloneCharacters(
+        saved,
+        deps('skinned-bar-child-mesh.glb'),
+      );
+      expect(state).toBe(saved);
+      expect(report.kept[0].why).toEqual([
+        `"curve" keys "${param}" of "SkinnedBar", which the converter does not carry`,
+      ]);
+    },
+  );
 
   it('an edge of the import itself removed: kept, and named', async () => {
     let saved = await savedClone('skinned-bar.glb');

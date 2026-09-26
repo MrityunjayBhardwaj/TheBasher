@@ -30,6 +30,8 @@ import type { GraphNodeLike } from '../animate/graphNodes';
 import type { PoseLayerChannel } from '../../nodes/PoseLayer';
 import type { RotationModeFields } from '../../nodes/types';
 import { rotationModeOps } from '../resolvedRotation';
+import { buildBindDriverOps } from '../driverBind';
+import { buildAddConstraintOps } from '../constraintStack';
 
 const REF = 'user-imports/skinned-bar/skinned-bar.glb';
 
@@ -878,6 +880,131 @@ describe('a curve added on a node of the file with addChannel (#1265, #1267)', (
       );
     },
   );
+});
+
+describe('what else names a node of the file as its subject (#1269)', () => {
+  const FIXTURE = 'skinned-bar-child-mesh.glb';
+  const CTL: Op = {
+    type: 'addNode',
+    nodeId: 'ctl',
+    nodeType: 'Null',
+    params: { position: [1.5, 0.7, 0.3], rotation: [0, 0, 0], scale: [1, 1, 1] },
+  };
+
+  /** Each gesture, by the product's own builder, on `target`: the state it leaves. */
+  const GESTURES: Record<
+    string,
+    { flag: string; says: string; make: (s: DagState, target: string) => DagState }
+  > = {
+    'a driver on its position': {
+      flag: 'mute',
+      says: 'drives "position" of',
+      make: (s, target) => {
+        const bind = buildBindDriverOps(s, {
+          targetId: target,
+          paramPath: 'position',
+          source: { kind: 'transformVec', id: 'xfvec:ctl', label: 'ctl', node: 'ctl' },
+          driverId: 'drv1',
+        });
+        if (!bind.ok) throw new Error(bind.reason);
+        return apply(s, bind.ops);
+      },
+    },
+    'a driver on its rotation': {
+      flag: 'mute',
+      says: 'drives "rotation" of',
+      make: (s, target) => {
+        const bind = buildBindDriverOps(s, {
+          targetId: target,
+          paramPath: 'rotation',
+          source: { kind: 'transformVec', id: 'xfvec:ctl', label: 'ctl', node: 'ctl' },
+          driverId: 'drv1',
+        });
+        if (!bind.ok) throw new Error(bind.reason);
+        return apply(s, bind.ops);
+      },
+    },
+    'a Track-To': {
+      flag: 'mute',
+      says: 'aims',
+      make: (s, target) =>
+        apply(s, [
+          ...buildAddConstraintOps(s, target, 'TrackTo', 'con1')!.ops,
+          { type: 'setParam', nodeId: 'con1', paramPath: 'aimPoint', value: [3, 3, 3] },
+        ]),
+    },
+    'a Follow-Path': {
+      flag: 'mute',
+      says: 'sets a path for',
+      make: (s, target) =>
+        apply(s, [
+          ...buildAddConstraintOps(s, target, 'FollowPath', 'con1')!.ops,
+          { type: 'setParam', nodeId: 'con1', paramPath: 'curve', value: 'ctl' },
+        ]),
+    },
+    'a strip': {
+      flag: 'muted',
+      says: 'plays an action on',
+      make: (s, target) => {
+        s = tool(s, 'mutator.nla.createAction', {
+          name: 'slide',
+          actionId: 'act1',
+          channels: [
+            {
+              valueType: 'vec3',
+              name: 'position',
+              paramPath: 'position',
+              keyframes: [
+                { time: 0, value: [0, 0, 0], easing: 'linear' },
+                { time: 1, value: [0.6, 0.3, 0.2], easing: 'linear' },
+              ],
+            },
+          ],
+        });
+        return tool(s, 'mutator.nla.addStrip', { action: 'act1', target, stripId: 'strip1' });
+      },
+    },
+  };
+
+  it.each(Object.keys(GESTURES))(
+    '%s on the empty: the clone never drew it, so it arrives bypassed, as the native tools make it',
+    async (name) => {
+      const { flag, says, make } = GESTURES[name];
+      const clone = apply(await cloneProject(FIXTURE), [CTL]);
+      const saved = make(clone, cloneChild(clone, 3));
+      const { state, notes } = await convert(saved, FIXTURE);
+
+      const { state: fresh, native } = await nativeProject(FIXTURE);
+      const node = native.nodeIds[3]!;
+      const gesture = make(apply(fresh, [CTL]), node);
+      const id = Object.keys(gesture.nodes).find(
+        (k) => !fresh.nodes[k] && k !== 'ctl' && k !== 'act1' && !k.startsWith('nla_track'),
+      )!;
+      const want = apply(gesture, [{ type: 'setParam', nodeId: id, paramPath: flag, value: true }]);
+      expect(state.nodes).toEqual(want.nodes);
+      expect(notes).toEqual([
+        `"${(state.nodes[id].params as { name?: string }).name ?? id}" ${says} "SkinnedBar", which the old structure never drew; it is kept muted`,
+      ]);
+    },
+  );
+
+  it('a driver that only reads the empty (it drives something else): carried as it is', async () => {
+    const drive = (s: DagState, source: string) => {
+      const bind = buildBindDriverOps(s, {
+        targetId: 'ctl',
+        paramPath: 'rotation',
+        source: { kind: 'transformVec', id: `xfvec:${source}`, label: 'src', node: source },
+        driverId: 'drv1',
+      });
+      if (!bind.ok) throw new Error(bind.reason);
+      return apply(s, bind.ops);
+    };
+    const clone = apply(await cloneProject(FIXTURE), [CTL]);
+    const { state, notes } = await convert(drive(clone, cloneChild(clone, 3)), FIXTURE);
+    const { state: fresh, native } = await nativeProject(FIXTURE);
+    expect(state.nodes).toEqual(drive(apply(fresh, [CTL]), native.nodeIds[3]!).nodes);
+    expect(notes).toEqual([]);
+  });
 });
 
 describe('material edits on the clone road (slice 3)', () => {

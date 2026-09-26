@@ -9,6 +9,7 @@
 // and an Armature modifier and nothing of the clone road.
 import { test, expect } from './_fixtures';
 import type { Page } from '@playwright/test';
+import { splitCurveOps } from './_splitCurve';
 
 interface SkinHandle {
   count?: number;
@@ -788,6 +789,150 @@ test('#1265 #1267 — curves added on a node of the file, which the clone never 
   console.log(
     `empty curves: clone ${JSON.stringify(clone.tip)} native ${JSON.stringify(native.tip)}`,
   );
+  expectSameTip(clone.tip, native.tip, times);
+  expect(errors).toEqual([]);
+});
+
+test('#1269 — a driver, a Track-To, a Follow-Path and a strip on a node of the file, which the clone never drew, load bypassed: drawn as the clone drew it', async ({
+  page,
+}) => {
+  const errors: string[] = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  const ref = 'user-imports/p1216/skinned-bar-child-mesh.glb';
+  await stageClone(page, 'skinned-bar-child-mesh.glb', ref);
+
+  // Each made by the product's own builder on the clone's `SkinnedBar` empty (which holds the mesh
+  // and the bones, and which the file does not move), from a controller and a path in the scene.
+  const made = await page.evaluate(
+    async ({ r, path }) => {
+      const w = window as unknown as BasherWindow;
+      const dag = w.__basher_dag.getState();
+      const s = dag.state as unknown as {
+        nodes: Record<string, { type: string; params: unknown }>;
+        outputs: { scene: { node: string } };
+      };
+      const asset = Object.values(s.nodes).find(
+        (n) => n.type === 'GltfAsset' && (n.params as { assetRef: string }).assetRef === r,
+      )!;
+      const empty = (asset.params as { nodeNameMap: Record<string, string> }).nodeNameMap
+        .SkinnedBar;
+      const scene = s.outputs.scene.node;
+      dag.dispatchAtomic(
+        [
+          {
+            type: 'addNode',
+            nodeId: 'ctl',
+            nodeType: 'Null',
+            params: { position: [1.5, 0.7, 0.3], rotation: [0, 0, 0], scale: [1, 1, 1] },
+          },
+          {
+            type: 'connect',
+            from: { node: 'ctl', socket: 'out' },
+            to: { node: scene, socket: 'children' },
+          },
+          ...path,
+          {
+            type: 'connect',
+            from: { node: 'n_path', socket: 'out' },
+            to: { node: scene, socket: 'children' },
+          },
+        ],
+        'test',
+        'controller and path',
+      );
+      const { buildBindDriverOps } = await import('/src/app/driverBind.ts');
+      const { buildAddConstraintOps } = await import('/src/app/constraintStack.ts');
+      const { dispatchMutatorFromUI } = await import('/src/app/animate/dispatchMutator.ts');
+      const now = () => w.__basher_dag.getState().state as never;
+      const bind = buildBindDriverOps(now(), {
+        targetId: empty,
+        paramPath: 'scale',
+        source: { kind: 'transformVec', id: 'xfvec:ctl', label: 'ctl', node: 'ctl' },
+        driverId: 'drv1',
+      });
+      if (!bind.ok) return [bind.reason];
+      dag.dispatchAtomic(bind.ops as unknown[], 'test', 'driver');
+      dag.dispatchAtomic(
+        [
+          ...buildAddConstraintOps(now(), empty, 'TrackTo', 'aim1')!.ops,
+          { type: 'setParam', nodeId: 'aim1', paramPath: 'aimPoint', value: [3, 3, 3] },
+        ] as unknown[],
+        'test',
+        'track-to',
+      );
+      dag.dispatchAtomic(
+        [
+          ...buildAddConstraintOps(now(), empty, 'FollowPath', 'follow1')!.ops,
+          { type: 'setParam', nodeId: 'follow1', paramPath: 'curve', value: 'n_path' },
+          { type: 'setParam', nodeId: 'follow1', paramPath: 'evalTime', value: 0.5 },
+        ] as unknown[],
+        'test',
+        'follow-path',
+      );
+      const action = dispatchMutatorFromUI(
+        'mutator.nla.createAction',
+        {
+          name: 'slide',
+          actionId: 'act1',
+          channels: [
+            {
+              valueType: 'vec3',
+              name: 'position',
+              paramPath: 'position',
+              keyframes: [
+                { time: 0, value: [0, 0, 0], easing: 'linear' },
+                { time: 1, value: [0.6, 0.3, 0.2], easing: 'linear' },
+              ],
+            },
+          ],
+        },
+        'action',
+      );
+      const strip = dispatchMutatorFromUI(
+        'mutator.nla.addStrip',
+        { action: 'act1', target: empty, stripId: 'strip1' },
+        'strip',
+      );
+      const nodes = w.__basher_dag.getState().state.nodes;
+      return [
+        action.ok,
+        strip.ok,
+        ...['drv1', 'aim1', 'follow1', 'strip1'].map((id) => Boolean(nodes[id])),
+      ];
+    },
+    {
+      r: ref,
+      path: splitCurveOps({
+        objectId: 'n_path',
+        points: [
+          [0, 0, 0],
+          [4, 0, 0],
+          [4, 3, 0],
+          [0, 3, 2],
+        ],
+        closed: false,
+        resolution: 32,
+        position: [0, 0, 0],
+        rotation: [0, 0, 0],
+        scale: [1, 1, 1],
+      }),
+    },
+  );
+  expect(made).toEqual([true, true, true, true, true, true]);
+  const times = [0.25, 0.5, 0.75, 1];
+  const clone = await drawnTip(page, times);
+
+  const { after, notice } = await saveAndReload(page, ref);
+  expect(after.filter((t) => /^Gltf|TransformClip|ClipSelect/.test(t))).toEqual([]);
+  expect(notice.label).toBe('character converted:');
+  for (const says of ['drives "scale" of', 'aims', 'sets a path for', 'plays an action on']) {
+    expect(notice.message).toContain(
+      `${says} "SkinnedBar", which the old structure never drew; it is kept muted`,
+    );
+  }
+
+  const native = await drawnTip(page, times);
+  console.log(`bypassed: clone ${JSON.stringify(clone.tip)} native ${JSON.stringify(native.tip)}`);
   expectSameTip(clone.tip, native.tip, times);
   expect(errors).toEqual([]);
 });

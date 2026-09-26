@@ -859,36 +859,34 @@ function planEdits(
           }
           continue;
         }
-        if (target === groupId || typeof keyed !== 'string') continue;
-        // A curve on a child's transform never moved it on the clone: the clone draws a child
-        // from its own params and the channels that name it by `childName` (`bakedGltfChannels`),
-        // and this one names it only by id (#1265, #1267). Natively it would play, so it comes
-        // across muted: the keys are kept, and still move nothing. The node stays in quaternion
-        // mode, so an unmuted rotation curve turns nothing either, as an euler F-curve on a
-        // quaternion-mode object does in Blender.
-        if (
-          node.type === 'KeyframeChannelVec3' &&
-          (keyed === 'position' || keyed === 'rotation' || keyed === 'scale')
-        ) {
-          // Read through the curve's own schema, typed: a curve's flag, not an operator's bypass.
-          const parsed = KeyframeChannelVec3Params.safeParse(node.params);
-          if (!(parsed.success && parsed.data.mute)) {
+        if (target === groupId || ref.role !== 'subject') continue;
+        // Nothing that names a child by id as its subject ever moved it on the clone: the clone
+        // draws a child from its own params and the curves that name it by `childName`
+        // (`bakedGltfChannels`), and nothing else (#1265, #1267, #1269 — measured for a curve, a
+        // driver, a Track-To, a Follow-Path and a strip). Natively each would act, so each comes
+        // across bypassed, by its own flag: kept, and still moving nothing. The node stays in
+        // quaternion mode, so an unmuted rotation curve or driver turns nothing either, as an
+        // euler F-curve on a quaternion-mode object does in Blender.
+        const acts = subjectActs(node.type, keyed);
+        if (acts !== null) {
+          const { flag, says } = acts;
+          // Read through the node's own schema, typed: its declared flag, not a cast.
+          const parsed = getNodeType(node.type)?.paramSchema.safeParse(node.params);
+          if (!(parsed?.success && (parsed.data as Record<string, unknown>)[flag] === true)) {
             editOps.push(() => [
-              { type: 'setParam', nodeId: node.id, paramPath: 'mute', value: true },
+              { type: 'setParam', nodeId: node.id, paramPath: flag, value: true },
             ]);
             notes.push(
-              `${label(node.id)} keys "${keyed}" of ${label(target)}, which the old structure never drew; it is kept muted`,
+              `${label(node.id)} ${says} ${label(target)}, which the old structure never drew; it is kept muted`,
             );
           }
           continue;
         }
-        // Anything else keying a child: the clone's rotation is XYZ euler degrees and the native
-        // node is in quaternion mode, so only position and scale carry as they are.
-        if (keyed !== 'position' && keyed !== 'scale') {
-          why.push(
-            `${label(node.id)} keys "${keyed}" of ${label(target)}, which the native node holds as a quaternion`,
-          );
-        }
+        // Anything else keying a child (a param other than its transform, or a curve of another
+        // type): what the clone drew of it is not measured, so the character is kept.
+        why.push(
+          `${label(node.id)} keys "${String(keyed)}" of ${label(target)}, which the converter does not carry`,
+        );
       }
     }
     if ((node.params as { assetRef?: unknown } | undefined)?.assetRef === assetRef) {
@@ -1196,6 +1194,27 @@ function metaOps(nodeId: string, now: Node, name: boolean, hidden: boolean): Op[
   if (name) ops.push({ type: 'setMeta', nodeId, name: now.meta?.name });
   if (hidden) ops.push({ type: 'setHidden', nodeId, hidden: !!now.meta?.hidden });
   return ops;
+}
+
+/**
+ * What a node naming a clone child as its subject does to it natively, and the flag that bypasses
+ * it; null when it is not one the converter carries bypassed. A curve or a driver acts on the
+ * param it keys, so only a transform one; a Track-To, a Follow-Path and a strip act on the whole
+ * Object. (`Strip` spells the flag `muted`, the rest `mute`.)
+ */
+function subjectActs(
+  type: string,
+  keyed: unknown,
+): { flag: 'mute' | 'muted'; says: string } | null {
+  const transform = keyed === 'position' || keyed === 'rotation' || keyed === 'scale';
+  if (type === 'KeyframeChannelVec3' && transform)
+    return { flag: 'mute', says: `keys "${String(keyed)}" of` };
+  if (type === 'ParamDriver' && transform)
+    return { flag: 'mute', says: `drives "${String(keyed)}" of` };
+  if (type === 'TrackTo') return { flag: 'mute', says: 'aims' };
+  if (type === 'FollowPath') return { flag: 'mute', says: 'sets a path for' };
+  if (type === 'Strip') return { flag: 'muted', says: 'plays an action on' };
+  return null;
 }
 
 /**
