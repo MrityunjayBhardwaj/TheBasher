@@ -20,6 +20,11 @@
 // the shape. Longest bone first, because if the biggest target on screen cannot
 // be clicked then the feature is broken rather than the aim.
 //
+// THE ROAD (#1205): the character comes in through the product's import, so it is a native
+// character — its armature a skeleton Object in the band, its mesh deformed by an Armature
+// modifier — and the rule is Blender's object mode: the first click on the armature selects the
+// Object, and its bones pick once it is the thing being worked on.
+//
 // THE TRACKED PAIR ONLY. `standin-character.glb` carries the same structure as
 // the vendor rig in 10 KB (#850) — a spec that needs an untracked 58 MB asset is
 // a spec that skips on every runner.
@@ -35,9 +40,17 @@ const GLB = 'public/fixtures/rig/standin-character.glb';
 const ASSET_REF = 'fixtures/rig/standin-character.glb';
 
 interface Win {
-  __basher_dag: { getState: () => { state: { nodes: Record<string, { type: string }> } } };
-  __basher_writeOpfsBytes?: (path: string, bytes: Uint8Array) => Promise<void>;
-  __basher_importGltf?: (buffer: ArrayBuffer, assetRef: string) => Promise<unknown>;
+  __basher_dag: {
+    getState: () => {
+      state: {
+        nodes: Record<string, { type: string; inputs?: Record<string, { node?: string }> }>;
+      };
+    };
+  };
+  __basher_ingestGltfFolder?: (
+    files: { relativePath: string; bytes: Uint8Array }[],
+    folderName: string,
+  ) => Promise<string>;
   __basher_gltf_skin?: () => { boneCount: number; bound: boolean } | null;
   __basher_armature?: {
     bones: number;
@@ -64,19 +77,22 @@ test('clicking a bone selects it, highlights it, and names it in the inspector',
   test.setTimeout(180_000);
   await page.goto('/');
   await expect(page.getByTestId('layout')).toBeVisible({ timeout: 20_000 });
-  await page.waitForFunction(() => Boolean((window as unknown as Win).__basher_importGltf), null, {
-    timeout: 60_000,
-  });
+  await page.waitForFunction(
+    () => Boolean((window as unknown as Win).__basher_ingestGltfFolder),
+    null,
+    { timeout: 60_000 },
+  );
 
   const glb = fs.readFileSync(path.join(ROOT, GLB));
   await page.evaluate(
-    async ([bytes, ref]) => {
+    async ([bytes, name]) => {
       const w = window as unknown as Win;
-      const arr = new Uint8Array(bytes as number[]);
-      await w.__basher_writeOpfsBytes!(ref as string, arr);
-      await w.__basher_importGltf!(arr.buffer as ArrayBuffer, ref as string);
+      await w.__basher_ingestGltfFolder!(
+        [{ relativePath: name as string, bytes: new Uint8Array(bytes as number[]) }],
+        'standin-character',
+      );
     },
-    [Array.from(glb), ASSET_REF] as [number[], string],
+    [Array.from(glb), path.basename(ASSET_REF)] as [number[], string],
   );
   await page.waitForFunction(
     () => Boolean((window as unknown as Win).__basher_gltf_skin?.()),
@@ -140,20 +156,19 @@ test('clicking a bone selects it, highlights it, and names it in the inspector',
 
   // THE GATE. Bones are pickable only once the character is the thing being
   // worked on — Blender's rule, where a click reaches a bone only after its
-  // armature is the active object. So the first click selects the character and
-  // must NOT select a bone; that ordering is the assertion, not a preamble.
-  // The character is selected from the OUTLINER, not by clicking the viewport.
-  // Clicking pixels to select it is what the gate is about, and using it here
-  // would make the setup depend on the thing under test; it is also unreliable
-  // on this fixture, whose stand-in mesh is small and sits inside the default
-  // cube — the first version of this spec clicked the canvas centre, selected
-  // `n_box`, and read as "picking does not work".
-  const groupId = await page.evaluate(() => {
+  // armature is the active object. So selecting the armature must NOT select a
+  // bone; that ordering is the assertion, not a preamble. The armature is
+  // selected from the OUTLINER, not by clicking the viewport: clicking pixels to
+  // select it is what the gate is about, and using it here would make the setup
+  // depend on the thing under test. (The armature Object is the one the mesh's
+  // Armature modifier deforms by.)
+  const armatureId = await page.evaluate(() => {
     const nodes = (window as unknown as Win).__basher_dag.getState().state.nodes;
-    return Object.entries(nodes).find(([, n]) => n.type === 'Group')?.[0] ?? null;
+    const mod = Object.values(nodes).find((n) => n.type === 'ArmatureModifier');
+    return mod?.inputs?.armature?.node ?? null;
   });
-  expect(groupId, 'the import minted no Group to select').not.toBeNull();
-  await page.getByTestId(`scene-tree-row-${groupId}`).click();
+  expect(armatureId, 'no Armature modifier — the character is not native').not.toBeNull();
+  await page.getByTestId(`scene-tree-row-${armatureId}`).click();
   await page.waitForTimeout(300);
   const beforeGate = await page.evaluate(
     () => (window as unknown as Win).__basher_bone?.getState().boneName ?? null,
@@ -206,7 +221,7 @@ test('clicking a bone selects it, highlights it, and names it in the inspector',
 
   // ...and the inspector, which is where the answer is read.
   await expect(page.getByTestId('inspector-selected-bone')).toBeVisible();
-  await expect(page.getByTestId('inspector-selected-bone-name')).toHaveText(picked.name as string);
+  await expect(page.getByTestId('inspector-selected-bone-name')).toHaveValue(picked.name as string);
 
   // Selecting something ELSE must retire the bone selection rather than leave a
   // highlight on a rig the director has navigated away from. Done through the
@@ -216,13 +231,17 @@ test('clicking a bone selects it, highlights it, and names it in the inspector',
   // Whichever other row the outliner is actually showing — the node's TYPE is
   // not the point, "not this character" is, and asking the DAG for a type that
   // has no row is how this row first hung.
-  const rows = page.locator('[data-testid^="scene-tree-row-"]');
-  const ids = await rows.evaluateAll((els) =>
-    els.map((el) => el.getAttribute('data-testid') ?? ''),
-  );
-  const other = ids.find((id) => id !== `scene-tree-row-${groupId}` && !id.includes('n_gltf'));
-  expect(other, 'the outliner shows nothing but this character').toBeTruthy();
-  await page.getByTestId(other as string).click();
+  // The default project's box: an Object whose data is a BoxData.
+  const other = await page.evaluate(() => {
+    const nodes = (window as unknown as Win).__basher_dag.getState().state.nodes;
+    return (
+      Object.entries(nodes).find(
+        ([, n]) => n.type === 'Object' && nodes[n.inputs?.data?.node ?? '']?.type === 'BoxData',
+      )?.[0] ?? null
+    );
+  });
+  expect(other, 'no other object to select').not.toBeNull();
+  await page.getByTestId(`scene-tree-row-${other}`).click();
   await page.waitForTimeout(300);
   await expect(page.getByTestId('inspector-selected-bone')).toHaveCount(0);
   expect(
