@@ -416,3 +416,77 @@ test('#1216 slice 3 — a key edited on a bone loads native, drawn as the clone 
   expectSameTip(clone.tip, native.tip, times);
   expect(errors).toEqual([]);
 });
+
+test('#1216 slice 3 — a material colour set on the character loads native, drawn in that colour', async ({
+  page,
+}) => {
+  const errors: string[] = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  await stageClone(page, 'skinned-bar.glb', REF);
+
+  // Each road draws through its own seam (the clone's whole-asset mesh list, a native Object's
+  // mesh): both are printed, and the drawn colour is what is compared.
+  const readClone = () =>
+    page.evaluate(() => {
+      const w = window as unknown as { __basher_gltf_meshes?: () => { color: string | null }[] };
+      return w.__basher_gltf_meshes?.() ?? null;
+    });
+  await page.waitForFunction(() =>
+    Boolean(
+      (window as unknown as { __basher_gltf_meshes?: () => unknown[] }).__basher_gltf_meshes?.()
+        ?.length,
+    ),
+  );
+  const untouched = await readClone();
+
+  const set = await page.evaluate(async () => {
+    const w = window as unknown as BasherWindow;
+    const nodes = w.__basher_dag.getState().state.nodes;
+    const asset = Object.values(nodes).find((n) => n.type === 'GltfAsset')!;
+    const mesh = (asset.params as { nodeNameMap: Record<string, string> }).nodeNameMap.SkinnedBar;
+    const { dispatchMutatorFromUI } = await import('/src/app/animate/dispatchMutator.ts');
+    return dispatchMutatorFromUI(
+      'mutator.setMaterialColor',
+      { targetSelectors: [mesh], color: '#12ab34' },
+      'colour',
+    ).ok;
+  });
+  expect(set).toBe(true);
+  await page.waitForFunction(
+    (before) =>
+      JSON.stringify(
+        (window as unknown as { __basher_gltf_meshes?: () => unknown[] }).__basher_gltf_meshes?.(),
+      ) !== before,
+    JSON.stringify(untouched),
+  );
+  const clone = await readClone();
+
+  const { after, notice } = await saveAndReload(page, REF);
+  expect(after.filter((t) => /^Gltf|TransformClip|ClipSelect/.test(t))).toEqual([]);
+  expect(notice.label).toBe('character converted:');
+  const native = await page.evaluate(async () => {
+    const w = window as unknown as BasherWindow & {
+      __basher_mesh_material?: (id: string) => { color: string | null } | null;
+    };
+    const nodes = w.__basher_dag.getState().state.nodes as Record<
+      string,
+      { type: string; inputs?: Record<string, { node: string }> }
+    >;
+    const meshObject = Object.entries(nodes).find(
+      ([, n]) =>
+        n.type === 'Object' && nodes[n.inputs?.data?.node ?? '']?.type === 'ArmatureModifier',
+    )![0];
+    for (let i = 0; i < 100; i++) {
+      const m = w.__basher_mesh_material?.(meshObject);
+      if (m) return m;
+      await new Promise((r) => requestAnimationFrame(r));
+    }
+    return null;
+  });
+  console.log(
+    `material: untouched ${JSON.stringify(untouched)} clone ${JSON.stringify(clone)} native ${JSON.stringify(native)}`,
+  );
+  expect(clone?.[0].color).not.toBe(untouched?.[0].color);
+  expect(native?.color).toBe(clone?.[0].color);
+  expect(errors).toEqual([]);
+});

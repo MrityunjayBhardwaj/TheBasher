@@ -197,6 +197,11 @@ async function convertOne(
     const nativeId = native.nodeIds[index];
     if (nativeId) idMap.set(cloneId, nativeId);
   }
+  // Each child's data node names the native mesh data of the same node.
+  for (const [cloneId, index] of plan.dataIndex) {
+    const mesh = native.meshes[index];
+    if (mesh) idMap.set(cloneId, mesh.dataId);
+  }
   // Each skin's rig names the skeleton of the armature that skin binds to.
   native.skinSkeleton.forEach((skeleton, skin) => {
     const nativeSkeleton = native.skeletons[skeleton];
@@ -250,6 +255,9 @@ async function convertOne(
 
   // 5. The motion: binds, hand-poses, and which of the file's animations plays.
   next = plan.motion.apply(next, native);
+
+  // 6. The materials: the leaves the director changed, and the per-slot materials an Object holds.
+  next = plan.materials(next, native);
   return { state: next, notes: plan.notes };
 }
 
@@ -312,6 +320,10 @@ interface EditPlan {
   /** The director's param/meta edits as ops, once the id map is known. */
   readonly edits: (remap: (id: string) => string) => Op[];
   readonly motion: MotionPlan;
+  /** Clone data node id → the glTF node index its mesh stands for. */
+  readonly dataIndex: ReadonlyMap<string, number>;
+  /** The director's material edits, onto the native mesh data and Objects. */
+  readonly materials: (state: DagState, native: NativeImportResult) => DagState;
 }
 
 interface MotionPlan {
@@ -460,6 +472,28 @@ function planEdits(
     return null;
   };
 
+  // ── Materials: each child's data node, joined to the native mesh data by the same node index. ──
+  const dataIndex = new Map<string, number>();
+  for (const [objectId, index] of childIndex) {
+    const data = edgeTarget(
+      (pristine.nodes as unknown as Readonly<Record<string, GraphNodeLike>>)[objectId],
+      'data',
+    );
+    if (data !== null && pristine.nodes[data]?.type === 'GltfData') dataIndex.set(data, index);
+  }
+  /** Per mesh node, the material leaves the director changed on its data, as setParam paths. */
+  const materialEdits: { index: number; label: string; leaves: MaterialLeaf[]; slots: number }[] =
+    [];
+  /** Per mesh node, the per-slot materials its Object holds (`slotOverrides`), whole. */
+  const slotOverrideEdits: { index: number; label: string; value: unknown; slots: number }[] = [];
+  /** How many material slots the clone numbered on a mesh node's data (one when it holds no table). */
+  const cloneSlots = (dataId: string | null): number => {
+    const p = (dataId ? pristine.nodes[dataId]?.params : undefined) as
+      | { materialSlots?: unknown[] }
+      | undefined;
+    return p?.materialSlots?.length ?? 1;
+  };
+
   const editOps: ((remap: (id: string) => string) => Op[])[] = [];
   const addedInputs: [string, { socket: string; refs: NodeRef[] }][] = [];
   /** Per bone (glTF node), the pose its child Object drew with an explicit override (wins) and without. */
@@ -522,6 +556,32 @@ function planEdits(
 
     if (now.type === 'Object') {
       const index = childIndex.get(id);
+      // A per-slot material the director gave the mesh Object (`setObjectSlotMaterial`): the same
+      // record on the native Object drawing that mesh, skinned or not — it is not a transform.
+      if (
+        index !== undefined &&
+        typeof json.nodes?.[index] === 'object' &&
+        (json.nodes[index] as { mesh?: number }).mesh !== undefined &&
+        fields.includes('slotOverrides')
+      ) {
+        const withMaps = Object.entries((params.slotOverrides ?? {}) as Record<string, unknown>)
+          .filter(([, m]) => materialHasMaps(m))
+          .map(([slot]) => slot);
+        if (withMaps.length > 0) {
+          why.push(
+            `${label(id)}'s material for slot ${withMaps.join(', ')} holds a texture, which the old structure stored elsewhere`,
+          );
+          continue;
+        }
+        slotOverrideEdits.push({
+          index,
+          label: label(id),
+          value: params.slotOverrides,
+          slots: cloneSlots(edgeTarget(graph[id], 'data')),
+        });
+        fields.splice(fields.indexOf('slotOverrides'), 1);
+        if (fields.length === 0 && !metaChanged && !hiddenChanged) continue;
+      }
       const unknown = fields.filter(
         (f) => !['position', 'rotation', 'scale', 'overridden'].includes(f),
       );
@@ -569,6 +629,38 @@ function planEdits(
         ...objectTransformOps(remap(id), drawn, params),
         ...metaOps(remap(id), now, metaChanged, hiddenChanged),
       ]);
+      continue;
+    }
+    if (now.type === 'GltfData' && dataIndex.has(id) && !metaChanged && !hiddenChanged) {
+      const other = fields.filter((f) => f !== 'material' && f !== 'materialSlots');
+      if (other.length > 0) {
+        why.push(`${label(id)} has edited ${other.join(', ')}`);
+        continue;
+      }
+      const before = was.params as Record<string, unknown>;
+      const leaves = [
+        ...materialLeaves(before.material, params.material, 'material'),
+        ...materialLeaves(before.materialSlots, params.materialSlots, 'materialSlots'),
+      ];
+      const unmappable = leaves.filter(
+        (leaf) => leaf.value === undefined || /(^|\.)maps(\.|$)/.test(leaf.path),
+      );
+      if (unmappable.length > 0) {
+        why.push(
+          `${label(id)}'s material has ${unmappable
+            .map((leaf) => leaf.path)
+            .join(
+              ', ',
+            )} edited, a texture or a removed field the native material cannot take as it is`,
+        );
+        continue;
+      }
+      materialEdits.push({
+        index: dataIndex.get(id)!,
+        label: label(id),
+        leaves,
+        slots: cloneSlots(id),
+      });
       continue;
     }
     why.push(
@@ -668,7 +760,7 @@ function planEdits(
   const referrers: string[] = [];
   const isRig = (id: string): boolean => state.nodes[id]?.type === 'GltfSkeleton';
   const mappable = (id: string): boolean =>
-    id === groupId || (childIndex.has(id) && carryable(id) === null);
+    id === groupId || (childIndex.has(id) && carryable(id) === null) || dataIndex.has(id);
   const retargets = new Set<string>();
   for (const node of Object.values(state.nodes)) {
     if (footprint.has(node.id) || channelIds.has(node.id)) continue;
@@ -691,9 +783,19 @@ function planEdits(
         if (!footprint.has(target)) continue;
         names = true;
         if (!mappable(target)) why.push(`${label(node.id)} names ${label(target)} (${ref.path})`);
+        const keyed = (node.params as { paramPath?: unknown }).paramPath;
+        // A channel on a child's data keys its material: the native mesh data holds the same
+        // material, at the same path. Nothing else of the data node has a native counterpart.
+        if (dataIndex.has(target)) {
+          if (typeof keyed !== 'string' || !keyed.startsWith('material.')) {
+            why.push(
+              `${label(node.id)} keys "${String(keyed)}" of ${label(target)}, which has no native counterpart`,
+            );
+          }
+          continue;
+        }
         // A channel on a child keys one of its params; the clone's rotation is XYZ euler degrees
         // and the native node is in quaternion mode, so only position and scale carry as they are.
-        const keyed = (node.params as { paramPath?: unknown }).paramPath;
         if (
           target !== groupId &&
           typeof keyed === 'string' &&
@@ -866,7 +968,83 @@ function planEdits(
     addedInputs,
     edits: (remap) => editOps.flatMap((make) => make(remap)),
     motion,
+    dataIndex,
+    materials: (state_, native) => {
+      let next = state_;
+      /** How many slots the native mesh data numbers (one when it holds no table). */
+      const nativeSlots = (dataId: string): number =>
+        (next.nodes[dataId]?.params as { materialSlots?: unknown[] } | undefined)?.materialSlots
+          ?.length ?? 1;
+      for (const edit of materialEdits) {
+        const mesh = native.meshes[edit.index];
+        if (!mesh) throw new Error(`${edit.label} has no native mesh`);
+        if (nativeSlots(mesh.dataId) !== edit.slots) {
+          throw new Error(
+            `${edit.label} numbers ${edit.slots} material slots, the native mesh ${nativeSlots(mesh.dataId)}`,
+          );
+        }
+        for (const leaf of edit.leaves) {
+          next = applyOp(next, {
+            type: 'setParam',
+            nodeId: mesh.dataId,
+            paramPath: leaf.path,
+            value: leaf.value,
+          }).next;
+        }
+      }
+      for (const edit of slotOverrideEdits) {
+        const mesh = native.meshes[edit.index];
+        if (!mesh) throw new Error(`${edit.label} has no native mesh`);
+        if (nativeSlots(mesh.dataId) !== edit.slots) {
+          throw new Error(
+            `${edit.label} numbers ${edit.slots} material slots, the native mesh ${nativeSlots(mesh.dataId)}`,
+          );
+        }
+        next = applyOp(next, {
+          type: 'setParam',
+          nodeId: mesh.objectId,
+          paramPath: 'slotOverrides',
+          value: edit.value,
+        }).next;
+      }
+      return next;
+    },
   };
+}
+
+/** One changed material leaf: the dotted param path and its new value (`undefined` = removed). */
+interface MaterialLeaf {
+  readonly path: string;
+  readonly value: unknown;
+}
+
+const isRecord = (v: unknown): v is Record<string, unknown> =>
+  typeof v === 'object' && v !== null && !Array.isArray(v);
+
+/**
+ * The leaves where `after` differs from `before`, as dotted paths under `path`. Objects are walked
+ * key by key, and arrays of one length element by element; anything else (a scalar, an array whose
+ * length changed, an object replacing null) is one leaf. Only what the director changed is carried,
+ * because the untouched values are the native reader's own (it converts a file's materials with
+ * this project's image keys, where the clone road's point elsewhere).
+ */
+function materialLeaves(before: unknown, after: unknown, path: string): MaterialLeaf[] {
+  if (deepEqual(before, after)) return [];
+  if (isRecord(before) && isRecord(after)) {
+    return [...new Set([...Object.keys(before), ...Object.keys(after)])].flatMap((key) =>
+      materialLeaves(before[key], after[key], `${path}.${key}`),
+    );
+  }
+  if (Array.isArray(before) && Array.isArray(after) && before.length === after.length) {
+    return after.flatMap((item, i) => materialLeaves(before[i], item, `${path}.${i}`));
+  }
+  return [{ path, value: after }];
+}
+
+/** A material with any texture map set. */
+function materialHasMaps(material: unknown): boolean {
+  const maps = isRecord(material) ? material.maps : undefined;
+  return isRecord(maps) && Object.values(maps).some((m) => m !== null && m !== undefined);
 }
 
 /** A clone TransformClip's index among the file's animations (its id is `clip/<assetRef>/<i>`). */

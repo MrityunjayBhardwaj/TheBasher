@@ -154,6 +154,12 @@ export interface NativeImportResult {
   }[];
   readonly skinSkeleton: readonly number[];
   /**
+   * #1216 — per glTF node index, the mesh a mesh node became: the Object that draws it (for a
+   * skinned mesh left behind as an empty, the new Object under its armature, not the empty) and its
+   * mesh data. `null` for a node with no mesh.
+   */
+  readonly meshes: readonly ({ readonly objectId: string; readonly dataId: string } | null)[];
+  /**
    * #1216 — the nodes each of the file's animations lives in, in file order (#1154): the first one's
    * base pose layers and bare Object channels, each later one's held (muted) layers and its NLA track.
    * What a director mutes and unmutes to switch which animation plays.
@@ -1546,6 +1552,7 @@ async function buildNativeOps(
       : hashId('nativeEmpty', args.assetRef, key);
   };
 
+  const meshIds: ({ objectId: string; dataId: string } | null)[] = json.nodes.map(() => null);
   for (let i = 0; i < json.nodes.length; i++) {
     const node = json.nodes[i];
     const key = keyByGltfNodeIndex[i];
@@ -1599,6 +1606,7 @@ async function buildNativeOps(
     const objectId = leftBehind
       ? hashId('nativeObject', args.assetRef, `${key}.skinned`)
       : idOfNode(i);
+    meshIds[i] = { objectId, dataId };
     // #1210 — a mesh under a bone hangs from that bone: its parent is the armature's Object, and
     // it names the bone (Blender `imp/node.py:104-117`). Its TRS stays the file's — glTF states it
     // from the joint's origin, where Basher parents (`boneParent.ts`), so nothing is moved back.
@@ -1783,6 +1791,7 @@ async function buildNativeOps(
     nodeIds,
     skeletons: skeletonIds,
     skinSkeleton: (read?.skins ?? []).map((skin) => skin.skeleton),
+    meshes: meshIds,
     takes,
   };
 }

@@ -642,3 +642,161 @@ describe('keys edited on a bone on the clone road (slice 3)', () => {
     expect(notes).toEqual([expect.stringMatching(/is now muted as it is marked/)]);
   });
 });
+
+describe('material edits on the clone road (slice 3)', () => {
+  /** skinned-bar's mesh is glTF node 2. */
+  const MESH = 2;
+
+  /** The clone child's data node (its `data` edge). */
+  const cloneData = (state: DagState, index: number): string =>
+    (state.nodes[cloneChild(state, index)].inputs.data as { node: string }).node;
+
+  it('a colour set on the character’s mesh: the native mesh data’s, as setMaterialColor writes it natively', async () => {
+    let saved = await cloneProject('skinned-bar.glb');
+    saved = tool(saved, 'mutator.setMaterialColor', {
+      targetSelectors: [cloneChild(saved, MESH)],
+      color: '#12ab34',
+    });
+    expect(
+      (saved.nodes[cloneData(saved, MESH)].params as { material: { base: { color: string } } })
+        .material.base.color,
+    ).toBe('#12ab34');
+    const { state } = await convert(saved, 'skinned-bar.glb');
+    const { state: fresh, native } = await nativeProject('skinned-bar.glb');
+    const want = tool(fresh, 'mutator.setMaterialColor', {
+      targetSelectors: [native.meshes[MESH]!.objectId],
+      color: '#12ab34',
+    });
+    expectSameCharacter(state, want);
+  });
+
+  it('a slot material the Object holds: the native mesh Object’s, as setObjectSlotMaterial writes it natively', async () => {
+    let saved = await cloneProject('skinned-bar.glb');
+    saved = tool(saved, 'mutator.setObjectSlotMaterial', {
+      targetSelectors: [cloneChild(saved, MESH)],
+      slotIndex: 0,
+      color: '#aa0000',
+    });
+    const { state } = await convert(saved, 'skinned-bar.glb');
+    const { state: fresh, native } = await nativeProject('skinned-bar.glb');
+    const want = tool(fresh, 'mutator.setObjectSlotMaterial', {
+      targetSelectors: [native.meshes[MESH]!.objectId],
+      slotIndex: 0,
+      color: '#aa0000',
+    });
+    expectSameCharacter(state, want);
+  });
+
+  it('a material channel: re-targeted onto the native mesh data, the same keys at the same path', async () => {
+    let saved = await cloneProject('skinned-bar.glb');
+    saved = tool(saved, 'mutator.timeline.addChannel', {
+      target: cloneData(saved, MESH),
+      paramPath: 'material.base.color',
+      valueType: 'color',
+      channelId: 'colour_ch',
+      initialKeyframe: { time: 0.5, value: '#0000ff' },
+    });
+    const { state } = await convert(saved, 'skinned-bar.glb');
+    const { state: fresh, native } = await nativeProject('skinned-bar.glb');
+    const want = tool(fresh, 'mutator.timeline.addChannel', {
+      target: native.meshes[MESH]!.dataId,
+      paramPath: 'material.base.color',
+      valueType: 'color',
+      channelId: 'colour_ch',
+      initialKeyframe: { time: 0.5, value: '#0000ff' },
+    });
+    expectSameCharacter(state, want);
+  });
+
+  it('a texture edited: kept, and named', async () => {
+    let saved = await cloneProject('skinned-bar.glb');
+    saved = apply(saved, [
+      {
+        type: 'setParam',
+        nodeId: cloneData(saved, MESH),
+        paramPath: 'material.maps.albedo',
+        value: {
+          hash: 'img_elsewhere',
+          colorSpace: 'srgb',
+          flipY: false,
+          wrapS: 10497,
+          wrapT: 10497,
+        },
+      },
+    ]);
+    const { state, report } = await convertCloneCharacters(saved, deps('skinned-bar.glb'));
+    expect(state).toBe(saved);
+    expect(report.kept[0].why).toEqual([expect.stringMatching(/material\.maps\.albedo edited/)]);
+  });
+
+  it('a channel keying something of the data other than its material: kept, and named (made by hand)', async () => {
+    let saved = await cloneProject('skinned-bar.glb');
+    saved = apply(saved, [
+      {
+        type: 'addNode',
+        nodeId: 'faces_ch',
+        nodeType: 'KeyframeChannelNumber',
+        params: {
+          name: 'faces',
+          target: cloneData(saved, MESH),
+          paramPath: 'faceCount',
+          keyframes: [],
+        },
+      },
+    ]);
+    const { state, report } = await convertCloneCharacters(saved, deps('skinned-bar.glb'));
+    expect(state).toBe(saved);
+    expect(report.kept[0].why).toEqual([
+      expect.stringMatching(/keys "faceCount" .* no native counterpart/),
+    ]);
+  });
+
+  it('a slot material holding a texture: kept, and named (made by hand)', async () => {
+    let saved = await cloneProject('skinned-bar.glb');
+    saved = tool(saved, 'mutator.setObjectSlotMaterial', {
+      targetSelectors: [cloneChild(saved, MESH)],
+      slotIndex: 0,
+      color: '#aa0000',
+    });
+    saved = apply(saved, [
+      {
+        type: 'setParam',
+        nodeId: cloneChild(saved, MESH),
+        paramPath: 'slotOverrides.0.maps.albedo',
+        value: {
+          hash: 'img_elsewhere',
+          colorSpace: 'srgb',
+          flipY: false,
+          wrapS: 10497,
+          wrapT: 10497,
+        },
+      },
+    ]);
+    const { state, report } = await convertCloneCharacters(saved, deps('skinned-bar.glb'));
+    expect(state).toBe(saved);
+    expect(report.kept[0].why).toEqual([expect.stringMatching(/slot 0 holds a texture/)]);
+  });
+
+  it('a mesh whose slots the two roads number differently: kept, and the load says why', async () => {
+    // A second primitive with the first's material: the clone numbers two slots, the native reader
+    // one (it keys a slot by material, as Blender does).
+    const twoPrims = glbWith('skinned-bar.glb', (json) => {
+      const mesh = (json as unknown as { meshes: { primitives: unknown[] }[] }).meshes[0];
+      mesh.primitives.push(mesh.primitives[0]);
+    });
+    let saved = await cloneProject(twoPrims);
+    saved = apply(saved, [
+      {
+        type: 'setParam',
+        nodeId: cloneData(saved, MESH),
+        paramPath: 'material.base.color',
+        value: '#00ff00',
+      },
+    ]);
+    const { state, report } = await convertCloneCharacters(saved, deps(twoPrims));
+    expect(state).toBe(saved);
+    expect(report.kept[0].why).toEqual([
+      expect.stringMatching(/numbers 2 material slots, the native mesh 1/),
+    ]);
+  });
+});
