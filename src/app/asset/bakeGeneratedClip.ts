@@ -28,7 +28,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // WHY IT RETURNS OPS INSTEAD OF DISPATCHING
 // ─────────────────────────────────────────────────────────────────────────────
-// Same contract as `buildGeneratedMotionOps` and every import road: the caller
+// Same contract as every import road: the caller
 // dispatches atomically, so a cook is ONE undo entry rather than one per param.
 // It also keeps this function pure over the state it is handed, which is what
 // lets it be falsified without a store.
