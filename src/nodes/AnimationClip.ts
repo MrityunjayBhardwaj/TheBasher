@@ -461,11 +461,11 @@ export const AnimationClipNode: NodeDefinition<AnimationClipParams, ClipOutputs>
      * ─────────────────────────────────────────────────────────────────────
      * WHY THIS EDGE EXISTS AND WHY `evaluate` DOES NOT READ IT
      * ─────────────────────────────────────────────────────────────────────
-     * Every reader that drives pixels goes through `boundClipsForAsset`, which
+     * Every clone-rig reader went through `boundClipsForAsset`, which
      * is deliberately pure over PARAMS -- no evaluator, because the format
      * migration calls it on raw saved JSON long before one exists. So a
-     * producer whose motion lives in an evaluated VALUE is invisible to the
-     * render band, the channel mint, the dopesheet and the migration alike.
+     * producer whose motion lives in an evaluated VALUE was invisible to the
+     * render band (retired, #1053), the channel mint, the dopesheet and the migration alike.
      * Measured: the same graph with a `MotionGenerate` in the source slot
      * instead of an `AnimationClip` gives the band `boundClips=0`.
      *

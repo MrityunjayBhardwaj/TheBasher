@@ -266,8 +266,9 @@ const CLIP_DRIVEN_COMPONENTS: ReadonlySet<string> = new Set(['position', 'rotati
  * So this is not a parallel answer to one question ([[V101]]); it is the wider
  * of two questions, composed FROM the narrower one, with one home each.
  *
- * REF: `src/app/bakedGltfChannels.ts` (`clipBandSamplersForAsset`, the band this
- *      agrees with); `src/app/resolveGltfChildTransform.ts` (the precedence);
+ * REF: `src/app/bakedGltfChannels.ts` (the channel band; the clip band this agreed with
+ *      retired with the clone road's character half, #1053); `src/app/resolveGltfChildTransform.ts`
+ *      (the precedence);
  *      issues #908, #889.
  */
 export function paramAnimationDisplayState(

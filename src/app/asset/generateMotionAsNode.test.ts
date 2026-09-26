@@ -17,7 +17,7 @@
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useDagStore } from '../../core/dag/store';
-import { applyOp } from '../../core/dag';
+import { applyOp, evaluate } from '../../core/dag';
 import type { DagState } from '../../core/dag/state';
 import { registerAllNodes } from '../../nodes/registerAll';
 import { useAssetErrorStore } from '../stores/assetErrorStore';
@@ -32,14 +32,13 @@ import {
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { registerAllMutators, __resetMutatorRegistryForTests } from '../../agent/mutators';
-import { gltfChildDagId, gltfSkeletonDagId } from '../../core/import/gltfImportChain';
 import { getBoneNameMapPreset } from '../../core/import/boneNameMaps';
 import { retargetedClipId } from './bindMotionToCharacter';
-import type { GltfSkinMetadata } from '../../nodes/types';
+import type { PosedSkeletonValue } from '../../nodes/types';
+import { nativeCharacterIds, nativeCharacterOps } from '../../test-utils/nativeCharacter';
 import { aBlockedRecord } from '../../core/licensing/blockedModelForTests';
 import { makeSplitCurve } from '../../test-utils/splitCurve';
 import { useSelectionStore } from '../stores/selectionStore';
-import { bakedChannelSamplersForAsset, sampleBakedChannel } from '../bakedGltfChannels';
 import { assertValidMotionRequest } from '../../core/motiongen/MotionGenerationCapability';
 import { skeletonObjectId } from '../../core/import/skeletonObject';
 import { buildDefaultDagState } from '../../core/project/default';
@@ -199,8 +198,9 @@ function nodesOf(state: DagState): unknown[] {
 const SOMA_BVH = (): string =>
   readFileSync(resolve(process.cwd(), 'public/fixtures/anim/soma-generated.bvh'), 'utf8');
 
-const CHAR_ASSET = 'user-imports/dwarf/dwarf.glb';
-const CHAR_SKEL = gltfSkeletonDagId(CHAR_ASSET, 0);
+/** The character every row below binds to (a native import's shape, `nativeCharacterOps`). */
+const CHAR = nativeCharacterIds('n_char');
+const CHAR_SKEL = CHAR.skeletonId;
 
 function somaCapability(): MotionGenerationCapability {
   return {
@@ -224,52 +224,28 @@ function somaCapability(): MotionGenerationCapability {
   };
 }
 
-/** A character in the scene, shaped exactly as an imported glTF leaves one. */
-function seedCharacter(): void {
+/**
+ * A character, shaped as a native glTF import leaves one, with the bones the SOMA clip bridges to.
+ * Its root Group hangs under no scene, so it has nowhere to be placed (`seedCharacterWithGroup` hangs
+ * it under one).
+ */
+function seedCharacter(opts?: {
+  sceneId?: string;
+  groupPosition?: [number, number, number];
+}): void {
   const boneNames = Object.values(getBoneNameMapPreset('somaToMixamo')!.map);
-  const skin: GltfSkinMetadata = {
-    jointKeys: boneNames,
-    bindTRS: boneNames.map(() => ({
-      position: [0, 0, 0] as [number, number, number],
-      rotation: [0, 0, 0] as [number, number, number],
-      scale: [1, 1, 1] as [number, number, number],
-    })),
-    parentJointIndex: boneNames.map((_, i) => (i === 0 ? -1 : 0)),
-    inverseBindMatrices: [],
-  };
-  const dag = useDagStore.getState();
-  let next: DagState = dag.state;
-  for (const op of [
-    {
-      type: 'addNode' as const,
-      nodeId: 'n_char_asset',
-      nodeType: 'GltfAsset',
-      params: {
-        assetRef: CHAR_ASSET,
-        // NOT `{}`. This map is the read band's asset-membership scope
-        // (`clipBandSamplersForAsset` skips any bone not in it), so an empty one
-        // would make "the clip drives the character" unobservable here — the
-        // assertion below would pass against a band that does nothing.
-        nodeNameMap: Object.fromEntries(boneNames.map((n) => [n, gltfChildDagId(CHAR_ASSET, n)])),
-        childHierarchy: {},
-        skins: [skin],
-      },
-    },
-    {
-      type: 'addNode' as const,
-      nodeId: CHAR_SKEL,
-      nodeType: 'GltfSkeleton',
-      params: { skinIndex: 0 },
-    },
-    {
-      type: 'connect' as const,
-      from: { node: 'n_char_asset', socket: 'out' },
-      to: { node: CHAR_SKEL, socket: 'asset' },
-    },
-  ]) {
+  let next: DagState = useDagStore.getState().state;
+  for (const op of nativeCharacterOps({ prefix: 'n_char', bones: boneNames, ...opts }).ops) {
     next = applyOp(next, op).next;
   }
   useDagStore.getState().hydrate(next);
+}
+
+/** The armature Object's pose at `seconds`, as the Object evaluates it — what the character draws. */
+function characterPose(state: DagState, seconds: number) {
+  const ctx = { time: { frame: seconds * 24, seconds, normalized: 0 } };
+  const value = evaluate(state, CHAR.armatureId, { ctx }).value as { pose?: PosedSkeletonValue };
+  return value.pose?.sample(seconds) ?? null;
 }
 
 describe('a generated clip reaches the character, exactly as a dropped one does', () => {
@@ -300,20 +276,15 @@ describe('a generated clip reaches the character, exactly as a dropped one does'
 
     // 🔑 THE ZERO ABOVE IS ONLY HALF AN ASSERTION. A bind that emitted nothing
     // AT ALL — the exact failure the old `> 0` was aimed at — satisfies it too.
-    // So the other half is measured on the band the renderer actually samples:
-    // the bones are driven, and they MOVE.
-    const samplers = bakedChannelSamplersForAsset(
-      nodes,
-      (nodes['n_char_asset'].params as { nodeNameMap: Record<string, string> }).nodeNameMap,
-      CHAR_ASSET,
+    // So the other half is measured on what the character draws: its armature
+    // Object's pose, whose bones MOVE.
+    const state = useDagStore.getState().state;
+    const a = characterPose(state, 0);
+    const b = characterPose(state, 0.5);
+    expect(a?.length ?? 0).toBeGreaterThan(0);
+    const moves = a!.filter((bone, i) =>
+      bone.quaternion.some((v, k) => Math.abs(v - b![i].quaternion[k]) > 1e-6),
     );
-    const driven = Object.keys(samplers);
-    expect(driven.length).toBeGreaterThan(0);
-    const moves = driven.filter((bone) => {
-      const a = sampleBakedChannel(samplers[bone], 0)?.rotation;
-      const b = sampleBakedChannel(samplers[bone], 0.5)?.rotation;
-      return !!a && !!b && a.some((v, i) => Math.abs(v - b[i]) > 1e-6);
-    });
     expect(moves.length).toBeGreaterThan(0);
     expect(Object.keys(useAssetErrorStore.getState().errors)).toHaveLength(0);
   });
@@ -508,7 +479,7 @@ describe('UI == agent — the two routes land the same clip', () => {
     // character here gets a failure that names the reason, instead of an equality
     // that mysteriously stops holding.
     expect(Object.values(useDagStore.getState().state.nodes).map((n) => n.type)).not.toContain(
-      'GltfSkeleton',
+      'ArmatureModifier',
     );
 
     // Compared at the OUTPUT — the resulting graph — rather than at the call.
@@ -645,29 +616,7 @@ describe('#730 — an authored curve steers the generation', () => {
    *  node that owns where the character stands, and so the node a placement
    *  must move. Without it there is nothing to place and the code says so. */
   function seedCharacterWithGroup(position: [number, number, number] = [0, 0, 0]): void {
-    seedCharacter();
-    let next: DagState = useDagStore.getState().state;
-    for (const op of [
-      {
-        type: 'addNode' as const,
-        nodeId: 'n_char_group',
-        nodeType: 'Group',
-        params: { position, rotation: [0, 0, 0], scale: [1, 1, 1], pivot: [0, 0, 0] },
-      },
-      {
-        type: 'connect' as const,
-        from: { node: 'n_char_asset', socket: 'out' },
-        to: { node: 'n_char_group', socket: 'children' },
-      },
-      {
-        type: 'connect' as const,
-        from: { node: 'n_char_group', socket: 'out' },
-        to: { node: 'n_scene', socket: 'children' },
-      },
-    ]) {
-      next = applyOp(next, op).next;
-    }
-    useDagStore.getState().hydrate(next);
+    seedCharacter({ sceneId: 'n_scene', groupPosition: position });
   }
 
   /** A straight curve in the scene, running from [-2,0,0] to [2,0,0]. */
@@ -749,7 +698,8 @@ describe('#730 — an authored curve steers the generation', () => {
   });
 
   it('reports — never swallows — an offset it could not place', async () => {
-    // The character has no root group, so the clip binds and plays at the origin.
+    // The character hangs under no scene, so it has no root to place by: the clip binds and plays
+    // at the origin.
     // That is the failure that looks identical to success in a screenshot, so it
     // has to reach the surface that persists.
     const { cap } = capturingCapability([3, 1]);

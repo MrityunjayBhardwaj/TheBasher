@@ -13,13 +13,14 @@
 // This collector returns ONLY the nodes the two layer-derivations read:
 //   - childOverridesForAsset → `GltfChild` nodes with this `assetRef`
 //   - bakedChannelSamplersForAsset → `KeyframeChannelVec3` nodes scoped to this
-//     asset by `nodeNameMap` (childName → target agreement, BLOCK-2), AND
-//     (#888) the `GltfAsset` → `GltfSkeleton` → `AnimationClip` chain that
-//     enumerator now walks to reach a retargeted clip, AND (#901) a
-//     `RetargetClip` on that rig TOGETHER WITH ITS OPERANDS — the source clip,
-//     that clip's own `Skeleton`, and the `BoneNameMap`. (#995 added the
-//     `PoseOverride` chain hanging off those clips; that band retired with the
-//     clone road's character half, #1053.)
+//     asset by `nodeNameMap` (childName → target agreement, BLOCK-2), and the
+//     `GltfAsset` whose map that is.
+//
+// Until the clone road's character half retired (#1053) the enumerator also read
+// the clips bound to the asset's `GltfSkeleton` (#888), a `RetargetClip` there with
+// its operands (#901), and `PoseOverride`s on those clips (#995), so this collector
+// delivered them too. The three notes below are how that pairing was learned, and
+// the rule they end on still holds for any band added here.
 //
 // 🔴 THE #888 ADDITION IS NOT OPTIONAL POLISH — IT IS THE H40 PAIR. The
 // enumerator is shared by the renderer (which passes THIS collector's output)
@@ -96,65 +97,15 @@ export function gltfAssetDepNodes(
   }
   const out: Node[] = [];
 
-  // #888 — the clip-band chain: GltfAsset → GltfSkeleton → AnimationClip.
-  // Collected in its own pass because it is a WALK (each hop needs the previous
-  // hop's id), not a predicate over one node. Three small passes over the table
-  // stay well inside the budget this collector exists to protect: the cost it
-  // was written to avoid is re-deriving the layers on every unrelated edit, not
-  // the walk itself.
   const assetNode = Object.values(nodes).find(
     (n) => n.type === 'GltfAsset' && (n.params as { assetRef?: unknown }).assetRef === assetRef,
   );
   if (assetNode) {
-    // The asset itself: its `skins[].jointKeys` is the bone-index → childName
-    // spine the enumerator reads, and its `nodeNameMap` is the membership scope.
-    // A re-import that changes either must re-derive the band.
+    // The asset itself: its `nodeNameMap` is the membership scope the enumerator reads, so a
+    // re-import that changes it must re-derive the band. (The walk on from its `GltfSkeleton` to the
+    // clips and retargets bound to that rig, #888/#901, retired with the clone road's character
+    // half, #1053: nothing draws them on this road any more.)
     out.push(assetNode);
-    const edgeTo = (n: Node, socket: string): string | null => {
-      const s = (n.inputs as Record<string, unknown> | undefined)?.[socket];
-      if (!s) return null;
-      const one = (Array.isArray(s) ? s[0] : s) as { node?: unknown } | undefined;
-      return typeof one?.node === 'string' ? one.node : null;
-    };
-    const skeletonIds = new Set<string>();
-    for (const n of Object.values(nodes)) {
-      if (n.type === 'GltfSkeleton' && edgeTo(n, 'asset') === assetNode.id) {
-        skeletonIds.add(n.id);
-        out.push(n);
-      }
-    }
-    if (skeletonIds.size > 0) {
-      // #901 — a RetargetClip's OPERANDS, collected as they are discovered. The
-      // ids are gathered first and resolved after the sweep because an operand
-      // can sit anywhere in the table, including before its consumer.
-      const operandIds = new Set<string>();
-      for (const n of Object.values(nodes)) {
-        const boundTo =
-          n.type === 'AnimationClip' || n.type === 'RetargetClip' ? edgeTo(n, 'skeleton') : null;
-        if (boundTo === null || !skeletonIds.has(boundTo)) continue;
-        out.push(n);
-        if (n.type !== 'RetargetClip') continue;
-        const mapId = edgeTo(n, 'boneMap');
-        if (mapId) operandIds.add(mapId);
-        const sourceId = edgeTo(n, 'source');
-        if (!sourceId) continue;
-        operandIds.add(sourceId);
-        // …and the SOURCE clip's own rig: its keyframes are indices into that
-        // skeleton, so editing the rig changes what the retarget produces.
-        const sourceNode = nodes[sourceId];
-        const sourceRigId = sourceNode ? edgeTo(sourceNode, 'skeleton') : null;
-        if (sourceRigId) operandIds.add(sourceRigId);
-      }
-      // The source clip normally hangs off a DIFFERENT rig than this asset's, so
-      // the walk above excluded it — but nothing forbids the two coinciding, and
-      // a node listed twice would make `shallow` compare a longer array against a
-      // shorter one on an unrelated edit. Dedupe by identity rather than assume.
-      const already = new Set(out);
-      for (const id of operandIds) {
-        const n = nodes[id];
-        if (n && !already.has(n)) out.push(n);
-      }
-    }
   }
 
   for (const [nodeId, node] of Object.entries(nodes)) {

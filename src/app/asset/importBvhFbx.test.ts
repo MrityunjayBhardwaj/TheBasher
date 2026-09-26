@@ -33,6 +33,7 @@ import { chooseMotionTarget } from './bindMotionToCharacter';
 import { nodeDisplayName } from '../sceneTreeWalk';
 import { applyOp } from '../../core/dag';
 import { composeProject, loadProject, saveProject } from '../../core/project/io';
+import { nativeCharacterOps } from '../../test-utils/nativeCharacter';
 import { __resetMutatorRegistryForTests, registerAllMutators } from '../../agent/mutators';
 
 // The committed ASCII FBX fixture (public/fixtures/anim/rig.fbx — 2-bone
@@ -75,43 +76,15 @@ function seedTime(): void {
   });
 }
 
-/** A glTF character with a two-bone rig the synthetic BVH's names match — something to bind to. */
+/** A native character with a two-bone rig the synthetic BVH's names match — something to bind to. */
 function seedCharacter(): void {
-  const names = ['Hips', 'Spine'];
   let s = useDagStore.getState().state;
-  s = applyOp(s, {
-    type: 'addNode',
-    nodeId: 'n_char',
-    nodeType: 'GltfAsset',
-    params: {
-      assetRef: 'assets/char.glb',
-      nodeNameMap: {},
-      childHierarchy: {},
-      skins: [
-        {
-          jointKeys: names,
-          bindTRS: names.map(() => ({
-            position: [0, 0, 0] as [number, number, number],
-            rotation: [0, 0, 0] as [number, number, number],
-            scale: [1, 1, 1] as [number, number, number],
-          })),
-          parentJointIndex: [-1, 0],
-          inverseBindMatrices: [],
-        },
-      ],
-    },
-  }).next;
-  s = applyOp(s, {
-    type: 'addNode',
-    nodeId: 'n_char_skel',
-    nodeType: 'GltfSkeleton',
-    params: { skinIndex: 0 },
-  }).next;
-  s = applyOp(s, {
-    type: 'connect',
-    from: { node: 'n_char', socket: 'out' },
-    to: { node: 'n_char_skel', socket: 'asset' },
-  }).next;
+  for (const op of nativeCharacterOps({
+    prefix: 'n_char',
+    bones: ['Hips', 'Spine'],
+    sceneId: 'n_scene',
+  }).ops)
+    s = applyOp(s, op).next;
   useDagStore.getState().hydrate(s);
 }
 

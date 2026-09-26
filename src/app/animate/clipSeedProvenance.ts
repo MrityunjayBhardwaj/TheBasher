@@ -49,6 +49,13 @@
 // signal is worth exactly nothing. That is the two-spellings-of-one-question
 // failure this codebase has now measured three times.
 //
+// 🔶 THE READ RETIRED WITH THE CLONE ROAD'S CHARACTER HALF (#1053). What compared a channel's
+// recorded seed against the clip now driving it (`channelSeedRows`, and the Cook panel's
+// stranded-bone offer built on it, #1001/#1002) read only clips bound to a clone rig, which no
+// character has any more. A native character's edited bone is a pose-layer override that holds
+// through a re-cook on purpose (#1244), so there is nothing to strand. The seed half below still
+// serves the mint for now.
+//
 // REF: src/app/animate/ensureChannelForBone.ts (the mint that records it);
 //      src/app/animate/boundClipsForAsset.ts (the one edge walk);
 //      src/app/asset/bakeGeneratedClip.ts (the SAME shape one hop up — a sink
@@ -58,8 +65,6 @@
 import { hashValue } from '../../core/dag/hash';
 import type { DagState } from '../../core/dag/state';
 import type { BakedComponent, BakedKey } from '../../agent/mutators/builders/bakeChannelOps';
-import { BAKED_COMPONENTS } from '../../agent/mutators/builders/bakeChannelOps';
-import { gltfChannelDagId } from '../../core/import/gltfImportChain';
 import type { AnimationClipParams } from '../../nodes/AnimationClip';
 import { boneIndexOf, boundClipsForAsset, type BoundClip } from './boundClipsForAsset';
 import { radVec3ToDeg } from '../../viewport/rotation';
@@ -116,7 +121,7 @@ interface IndexedClip {
  *
  * 🔴 A COST SHAPE, MEASURED, NOT A GUESS. Asking a clip for one bone's track by
  * filtering the whole keyframe array is O(all keys) per question, and
- * `channelSeedRows` asks it once per bone per component. On a 78-bone rig with a
+ * the stranded-bone read (retired, #1053) asked it once per bone per component. On a 78-bone rig with a
  * 109-frame clip — the pair a director actually gets — that is 234 sweeps of
  * 8500 keyframes, and `motionCookOffer` sits on a render path. Measured before
  * this: 3.6 ms per call with 20 edited bones, against the 2.2 ms the warning on
@@ -283,131 +288,4 @@ export interface SeedProvenance {
 /** What a seed consultation should be recorded as. */
 export function provenanceOf(seed: ClipSeed): SeedProvenance {
   return { sourceClipId: seed.clipId, sourceHash: seedTrackHash(seed.keys) };
-}
-
-/**
- * Whether a channel's seed still describes the clip driving its bone.
- *
- * `unknown` is NOT `current`, and the distinction is the reason this is a
- * three-state read rather than a boolean. A channel minted before #1001 — every
- * one in every project saved until now — records nothing, and a boolean would
- * have to call it either clean (vouching for a copy nobody can vouch for) or
- * stale (alarming on every bone of every existing project). Neither is true, so
- * neither is said.
- */
-export type SeedState = 'current' | 'stale' | 'unknown';
-
-export interface ChannelSeedRow {
-  readonly channelId: string;
-  readonly childName: string;
-  readonly component: BakedComponent;
-  readonly state: SeedState;
-  /** The clip the channel was seeded FROM: a node id, `''` for "no clip carried
-   *  this bone at the mint", or null when nothing was recorded. */
-  readonly seededFrom: string | null;
-  /** The clip carrying this bone NOW, or `''` when none does. */
-  readonly clipNow: string;
-}
-
-/** Minimal node shape this read needs — params only, never `evaluate`. */
-interface ChannelNodeLike {
-  readonly type: string;
-  readonly params?: unknown;
-}
-
-/**
- * Every minted channel on `assetRef`'s rig, with whether its seed is still the
- * motion its neighbours are playing.
- *
- * Rows rather than a count, for the reason `clipBakeStates` gives one hop up: a
- * bare "3 stale" cannot say WHICH bones froze, and which bones froze is the
- * whole of what a director needs in order to act.
- *
- * Addressed by content-addressed id rather than by scanning for channels that
- * happen to carry an `assetRef`: `gltfChannelDagId` is the one way a minted
- * channel is named, so asking for the id is asking the same question the
- * renderer's enumerator asks, and a channel this read can see is a channel that
- * drives a bone.
- *
- * Pure over params — no `evaluate` — so it can be falsified without a store and
- * so it stays usable on raw saved JSON, the same constraint `boundClipsForAsset`
- * carries and for the same reason.
- */
-export function channelSeedRows(state: DagState, assetRef: string): ChannelSeedRow[] {
-  const rows: ChannelSeedRow[] = [];
-  // The bones to ask about are the ones some bound clip can address — the rig's
-  // own joint spine. A channel for a bone no clip carries has nothing it could
-  // be stale against, and asking would only produce rows nobody can act on.
-  const bound = boundClipsForAsset(state.nodes, assetRef);
-  const childNames = new Set<string>();
-  for (const clip of bound) {
-    for (const name of clip.jointKeys) childNames.add(name);
-  }
-
-  // WHICH CHANNELS EXIST, BEFORE ANY KEYFRAME IS TOUCHED. In the ordinary
-  // project nobody has edited a bone, so this list is empty and the whole read
-  // costs one node-table walk and a few hundred id lookups. Indexing the clip
-  // first would put the cost of a defect nobody has onto every project — and
-  // this sits on a render path.
-  const present: { channelId: string; childName: string; component: BakedComponent }[] = [];
-  for (const childName of [...childNames].sort()) {
-    for (const component of BAKED_COMPONENTS) {
-      const channelId = gltfChannelDagId(assetRef, childName, component);
-      const node = state.nodes[channelId] as ChannelNodeLike | undefined;
-      if (!node || node.type !== 'KeyframeChannelVec3') continue;
-      present.push({ channelId, childName, component });
-    }
-  }
-  if (present.length === 0) return rows;
-
-  const clips = indexClipsByBone(bound);
-  for (const { channelId, childName, component } of present) {
-    const node = state.nodes[channelId] as ChannelNodeLike;
-    const p = node.params as { sourceClipId?: unknown; sourceHash?: unknown };
-    const now = seedFromIndexed(clips, childName, component);
-    // ABSENT, not empty. A recorded `''` clip id means "seeded from no clip",
-    // which is a fact; an absent `sourceHash` means the mint predates the
-    // field, which is the absence of one.
-    if (typeof p.sourceHash !== 'string') {
-      rows.push({
-        channelId,
-        childName,
-        component,
-        state: 'unknown',
-        seededFrom: null,
-        clipNow: now.clipId,
-      });
-      continue;
-    }
-    rows.push({
-      channelId,
-      childName,
-      component,
-      state: p.sourceHash === seedTrackHash(now.keys) ? 'current' : 'stale',
-      seededFrom: typeof p.sourceClipId === 'string' ? p.sourceClipId : '',
-      clipNow: now.clipId,
-    });
-  }
-  return rows;
-}
-
-/** How many of a rig's minted channels are behind the clip now driving it. */
-export function staleSeedCount(state: DagState, assetRef: string): number {
-  return channelSeedRows(state, assetRef).filter((r) => r.state === 'stale').length;
-}
-
-/**
- * The distinct BONES with at least one stale component, sorted.
- *
- * What a surface should say, because a director edited a BONE — they never chose
- * "the rotation channel of the left forearm". Counting components would report
- * two for one bone whose position and rotation were both seeded, which reads as
- * twice as much damage as there is.
- */
-export function staleSeedBones(state: DagState, assetRef: string): string[] {
-  const names = new Set<string>();
-  for (const row of channelSeedRows(state, assetRef)) {
-    if (row.state === 'stale') names.add(row.childName);
-  }
-  return [...names].sort();
 }

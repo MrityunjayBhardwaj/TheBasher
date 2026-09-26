@@ -19,8 +19,8 @@
 // 🔴 ONE ROAD, NOT TWO. The obvious smaller change was to leave this mutator
 // baking and give the UI drop-a-motion road its own graph-shaped builder. That
 // would have made the agent's verb and the director's gesture produce DIFFERENT
-// graphs for the same act — the divergence this codebase has already paid for
-// at the read band, and the reason `boundClipsForAsset` is one walk. So the verb
+// graphs for the same act — the divergence this codebase had already paid for
+// at the (since retired) read band, and the reason `boundClipsForAsset` was one walk. So the verb
 // changed instead of forking.
 //
 // WHAT WENT AWAY WITH THE BAKE: the connect to the project TimeSource, and the
@@ -33,14 +33,10 @@
 // followedEdges = []. Both new node ids are fresh — V13 allows addNode under
 // fresh-add semantics — and every connect TARGETS a fresh node.
 //
-// P7.11 Wave G (#100) — a `GltfSkeleton` is an accepted source/target. It used
-// to need type-aware bind-pose resolution HERE, because its rig is not in
-// `params.bones` (D-02: it is a pure evaluated projection of the upstream
-// GltfAsset's captured skin) and the bake needed the bones at build time. #901
-// took the bake out, so this builder reads no bind pose at all — it names the
-// rig with an edge and lets the reader project it. That is why the `evaluate()`
-// call, and the note about keeping it out of the op-closure, are gone rather
-// than merely unused.
+// This builder reads no bind pose (#901): it names the rig with an edge and lets the reader project
+// it. (P7.11 #100 also accepted the clone road's `GltfSkeleton` as a source or target; that arm
+// retired with the clone road's character half, #1053 — an old save holding such a bind converts
+// at load through `bindPosedOps`, #1216.)
 
 import { z } from 'zod';
 import type { MutatorDefinition } from '../types';
@@ -56,12 +52,9 @@ import {
 import { poseLayerChain } from '../../../app/animate/poseChain';
 import type { GraphNodeLike } from '../../../app/animate/graphNodes';
 
-/** Node types whose `out` is a `Skeleton` value — accepted as retarget source/target. */
-const SKELETON_NODE_TYPES = ['Skeleton', 'GltfSkeleton'] as const;
-type SkeletonNodeType = (typeof SKELETON_NODE_TYPES)[number];
-
-function isSkeletonNode(node: Node): node is Node & { type: SkeletonNodeType } {
-  return (SKELETON_NODE_TYPES as readonly string[]).includes(node.type);
+/** A retarget's source and target are `Skeleton` nodes. */
+function isSkeletonNode(node: Node): boolean {
+  return node.type === 'Skeleton';
 }
 
 const RetargetSpec = z.object({
@@ -116,10 +109,8 @@ export const retargetMutator: MutatorDefinition<RetargetSpec> = {
   },
   contract: {
     // requiredNodeTypes is checked as "the closure contains AT LEAST ONE
-    // node of each listed type" — so listing only 'AnimationClip' (the one
-    // type ALWAYS present) keeps the gate satisfiable whether the skeletons
-    // are plain `Skeleton` or `GltfSkeleton`. The skeleton-type discipline
-    // is enforced precisely in preconditions (accepting either family).
+    // node of each listed type" — 'AnimationClip' is the one type ALWAYS present;
+    // the skeleton-type discipline is enforced precisely in preconditions.
     requiredEdges: [],
     requiredNodeTypes: ['AnimationClip'],
     preserves: ['rotation', 'scale', 'material', 'children', 'animation'],
@@ -170,7 +161,7 @@ export const retargetMutator: MutatorDefinition<RetargetSpec> = {
     if (!isSkeletonNode(sourceSkel)) {
       return {
         ok: false,
-        reason: `sourceSkeletonId is ${sourceSkel.type}; expected Skeleton or GltfSkeleton.`,
+        reason: `sourceSkeletonId is ${sourceSkel.type}; expected Skeleton.`,
       };
     }
     const targetSkel = state.nodes[spec.targetSkeletonId];
@@ -179,7 +170,7 @@ export const retargetMutator: MutatorDefinition<RetargetSpec> = {
     if (!isSkeletonNode(targetSkel)) {
       return {
         ok: false,
-        reason: `targetSkeletonId is ${targetSkel.type}; expected Skeleton or GltfSkeleton.`,
+        reason: `targetSkeletonId is ${targetSkel.type}; expected Skeleton.`,
       };
     }
     // The output reads its SOURCE rig off the source clip's own `skeleton` edge,
@@ -316,7 +307,7 @@ export const retargetMutator: MutatorDefinition<RetargetSpec> = {
     // socket holds one edge, so the connect REPLACES the pose it had — Blender's armature Object
     // holds one action, and Houdini's retarget output is the animated pose Joint Deform reads.
     // `replace: true` declares the displacement, and the inverse restores the old edge on undo.
-    // No Object (a clone-road `GltfSkeleton`, whose pose is the active clip above) wires nothing.
+    // A skeleton standing no Object wires nothing.
     //
     // #1244 — AT THE BOTTOM OF THE OBJECT'S LAYERS. A pose layer edits whatever motion arrives, so a
     // hand-pose stays on when the motion under it is replaced: the retarget takes the place of the

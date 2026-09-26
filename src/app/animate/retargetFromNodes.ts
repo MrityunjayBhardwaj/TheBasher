@@ -3,9 +3,10 @@
 // ─────────────────────────────────────────────────────────────────────────
 // WHY THIS IS PURE OVER PARAMS AND DOES NOT CALL `evaluate()`
 // ─────────────────────────────────────────────────────────────────────────
-// Every reader that drives pixels goes through `boundClipsForAsset`, which is
+// Every reader of a clip bound to a clone rig goes through `boundClipsForAsset`, which is
 // deliberately pure over the node table — no evaluator, no DAG cache, no second
-// walk. Its callers include the format migration, which runs on raw saved JSON
+// walk. (Since the clone road's character half retired, #1053, nothing draws those clips; the
+// readers left are the load-time ones.) Its callers include the format migration, which runs on raw saved JSON
 // long before an evaluator exists. So the retarget has to be resolvable from
 // params alone, and it is: the source clip's keys are params, the bone map is
 // params, and the target rig's bind pose is params too — `GltfSkeleton` is a pure

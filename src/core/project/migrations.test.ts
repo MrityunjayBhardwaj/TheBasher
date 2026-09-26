@@ -56,7 +56,6 @@ import { inputAccepts } from '../dag/socketMembership';
 import { gltfChannelDagId, gltfChildDagId } from '../import/gltfImportChain';
 import { radVec3ToDeg } from '../../viewport/rotation';
 import { defaultModifier } from '../../nodes/channelModifiers';
-import { bakedChannelSamplersForAsset, sampleBakedChannel } from '../../app/bakedGltfChannels';
 import { buildDefaultDagState } from './default';
 import { retargetClip } from '../import/retarget';
 import { PROJECT_FORMAT_VERSION, ProjectSchema, type Project } from './schema';
@@ -2894,81 +2893,14 @@ describe("eager channels v9 → v10: the retired bake's unauthored copies are dr
   const channelsOf = (p: Project) =>
     Object.values(p.state.nodes).filter((n) => n.type === 'KeyframeChannelVec3');
 
-  /** The band both the renderer and the read side consume, sampled per bone. */
-  function bandAt(p: Project, bone: string, seconds: number) {
-    const asset = p.state.nodes.n_asset.params as { nodeNameMap: Record<string, string> };
-    const s = bakedChannelSamplersForAsset(p.state.nodes as never, asset.nodeNameMap, REF);
-    const v = sampleBakedChannel(s[bone], seconds);
-    return [...(v?.position ?? []), ...(v?.rotation ?? [])];
-  }
-
-  it('THE DEFECT: before the migration the rig HOLDS past the clip, after it it CYCLES', () => {
-    // The pre-state is asserted first on purpose. A gate that only shows the
-    // migrated project looping proves the clip band loops — which was never in
-    // doubt — and says nothing about the channels this migration exists to
-    // remove. Showing the same graph freeze without it is what makes the second
-    // half a measurement of the subject.
-    const raw = buildV9EagerJson();
-    const before = ProjectSchema.parse({
-      ...raw,
-      formatVersion: PROJECT_FORMAT_VERSION,
-    }) as Project;
-    expect(channelsOf(before)).toHaveLength(4);
-    for (const bone of BONES) {
-      // t = 0.5 is inside the authored range; t = 0.5 + DUR is past its end.
-      const inside = bandAt(before, bone, 0.5);
-      const wrapped = bandAt(before, bone, 0.5 + DUR);
-      expect(wrapped).not.toEqual(inside);
-      // and it is FROZEN, not merely different — the same constant forever.
-      expect(bandAt(before, bone, 3 * DUR)).toEqual(wrapped);
-    }
-
-    const after = loadFromBytes(raw);
-    expect(after.formatVersion).toBe(PROJECT_FORMAT_VERSION);
-    expect(channelsOf(after)).toHaveLength(0);
-    // INVERTED, NOT RELAXED (#924). These two rows used to assert that the whole
-    // band returns to its earlier value one period on — plain repeat. Position now
-    // cycles WITH OFFSET, so only the bounded half returns; the travelling half
-    // advances by the same amount every period. Asserting the increment is
-    // CONSTANT states that rule without hardcoding this fixture's travel, and it
-    // still fails if the band ever freezes (increment 0 is caught below).
-    const rot = (v: number[]) => v.slice(3);
-    const pos = (v: number[]) => v.slice(0, 3);
-    for (const bone of BONES) {
-      const p0 = pos(bandAt(after, bone, 0.5));
-      const p1 = pos(bandAt(after, bone, 0.5 + DUR));
-      const p2 = pos(bandAt(after, bone, 0.5 + 2 * DUR));
-      expect(rot(bandAt(after, bone, 0.5 + DUR))).toEqual(rot(bandAt(after, bone, 0.5)));
-      expect(rot(bandAt(after, bone, 0.5 + 3 * DUR))).toEqual(rot(bandAt(after, bone, 0.5)));
-      const step = p1.map((v, i) => v - p0[i]);
-      expect(p2.map((v, i) => v - p1[i])).toEqual(step);
-      // A frozen band gives step 0 and would satisfy every row above, so the
-      // fixture is required to actually travel.
-      expect(step.some((v) => Math.abs(v) > 1e-9)).toBe(true);
-    }
-  });
-
-  it('IN-RANGE MOTION SURVIVES: the clip band serves what the dropped channels served', () => {
-    // Dropping a channel is only safe because something underneath it renders the
-    // same motion. If the bone fell to its base pose instead, this suite's wrap
-    // rows would still pass — a frozen bone and a base-pose bone both "loop".
-    const raw = buildV9EagerJson();
-    const before = ProjectSchema.parse({
-      ...raw,
-      formatVersion: PROJECT_FORMAT_VERSION,
-    }) as Project;
-    const after = loadFromBytes(raw);
-    for (const bone of BONES)
-      // 🔴 NEVER t = DUR. A bound clip WRAPS at its duration and a channel CLAMPS
-      // there, so that one sample measures the wrap rather than the motion — the
-      // two roads agree everywhere else in range.
-      for (const t of [0, 0.25, 1, 1.75, 1.99]) {
-        const a = bandAt(before, bone, t);
-        const b = bandAt(after, bone, t);
-        expect(b).toHaveLength(6);
-        for (let i = 0; i < a.length; i++) expect(b[i]).toBeCloseTo(a[i], 9);
-      }
-  });
+  // 🔶 TWO ROWS RETIRED WITH THE CLONE ROAD'S CHARACTER HALF (#1053). They measured the clone
+  // band — the channels holding past the clip's end before the migration, the bound clip cycling
+  // and serving the same in-range motion after it. Nothing draws that band now: a saved clone
+  // character is converted at load (#1216), after this migration, and its clip becomes the native
+  // bind, measured vertex by vertex against a native import in
+  // `src/app/asset/convertCloneCharacterMotion.test.ts`. What this migration still owes is its
+  // predicate — drop only a bit-identical copy of the clip, keep every edit — and the rows below
+  // pin that.
 
   it('A HAND-EDITED BONE KEEPS ITS EDIT — the row that must not go green by accident', () => {
     const raw = buildV9EagerJson();

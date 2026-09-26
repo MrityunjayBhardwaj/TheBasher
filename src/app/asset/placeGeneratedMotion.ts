@@ -99,51 +99,13 @@ function vec3Param(params: unknown, key: string): [number, number, number] {
 }
 
 /**
- * The `GltfAsset` a `GltfSkeleton` projects.
- *
- * Deliberately the same two hops `assetRefOfSkeleton` takes in
- * bindMotionToCharacter — the character this places is the character that bind
- * chose, so it has to arrive by the same road or the two can disagree about
- * which asset a rig belongs to.
- */
-function assetIdOfSkeleton(state: DagState, skeletonId: string): string | null {
-  const socket = state.nodes[skeletonId]?.inputs?.asset;
-  if (!socket) return null;
-  const one = Array.isArray(socket) ? socket[0] : socket;
-  return one?.node && state.nodes[one.node] ? one.node : null;
-}
-
-/**
- * The root `Group` that places a character, found from its rig node.
- *
- * The walk is DOWNSTREAM, and that is why it is a scan rather than a socket
- * read: the import wires `GltfAsset.out → Group.children`, so the asset does not
- * know its Group — only the Group knows its asset. Bounded by the node table and
- * matched on type, so a `Group` that merely happens to contain something else is
- * never mistaken for this character's root.
- */
-export function placementGroupFor(state: DagState, skeletonId: string): string | null {
-  const assetId = assetIdOfSkeleton(state, skeletonId);
-  if (!assetId) return null;
-  for (const node of Object.values(state.nodes)) {
-    if (node.type !== 'Group') continue;
-    const socket = node.inputs?.children;
-    const conns = Array.isArray(socket) ? socket : socket ? [socket] : [];
-    if (conns.some((c) => c?.node === assetId)) return node.id;
-  }
-  return null;
-}
-
-/**
- * #1213 — the node that places a character, on both roads: the root its import hangs it under.
- *
- * Clone road: the asset's `Group` ({@link placementGroupFor}). Native: the import's root under the
- * scene that holds the armature Object — found by walking `children` edges upward from the Object,
- * so the mesh and the rig it is skinned to move together, as the clone road's Group moves both.
- * Null when neither answers.
+ * #1213 — the node that places a character: the import's root under the scene that holds the
+ * armature Object, found by walking `children` edges upward from the Object, so the mesh and the rig
+ * it is skinned to move together. Null when the Object hangs under no scene. (The clone road's
+ * rigs were placed by their asset's `Group`; that half retired with the clone road's character
+ * half, #1053.)
  */
 export function placementRootOf(state: DagState, character: DrivenCharacter): string | null {
-  if (character.objectId === null) return placementGroupFor(state, character.skeletonId);
   const sceneId = state.outputs.scene?.node;
   const parentOf = new Map<string, string>();
   for (const node of Object.values(state.nodes)) {
@@ -195,7 +157,7 @@ function threeYawDegrees(rotationRadians: number): number {
  */
 export function placeCharacterAtPathStart(
   state: DagState,
-  character: string | DrivenCharacter,
+  character: DrivenCharacter,
   offsetXZ: readonly [number, number],
   rotationRadians: number | null,
 ): PlacementOutcome {
@@ -203,11 +165,7 @@ export function placeCharacterAtPathStart(
   const invalid = invalidPlacementInput(offsetXZ, rotationRadians);
   if (invalid) return { ok: false, reason: invalid };
 
-  // A bare skeleton id is a clone-road rig (the imperative road's and the tests' form).
-  const groupId = placementRootOf(
-    state,
-    typeof character === 'string' ? { skeletonId: character, objectId: null } : character,
-  );
+  const groupId = placementRootOf(state, character);
   if (!groupId) {
     // Reported, not swallowed. The motion is bound and will play; it will play in
     // the wrong place, and that is a different thing from "nothing happened".

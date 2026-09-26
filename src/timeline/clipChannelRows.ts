@@ -432,10 +432,10 @@ export function bakedChannelKeysForAsset(
  * per (bone, component) the clip actually carries, minus the ones a director has
  * already authored.
  *
- * Uses the same `boundClipsForAsset` edge walk the read band and the mint use,
- * rather than a third answer to "which clip drives this bone". A row set built
- * from a different walk than the one that renders would show a director keys
- * that are not the ones playing.
+ * Uses the same `boundClipsForAsset` edge walk the mint uses (and the read band used, until it
+ * retired with the clone road's character half, #1053), rather than a third answer to "which clip
+ * drives this bone". A row set built from a different walk would show a director keys that are
+ * not the ones the mint seeds from.
  */
 export function animationClipRowsForAsset(args: {
   nodes: Record<string, ClipWalkNode>;

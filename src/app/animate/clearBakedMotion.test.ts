@@ -85,7 +85,7 @@ function buildTwoCharacterScene(): DagState {
 
 /** What the RENDERER would play for this asset — the enumerator it actually reads. */
 function rendererSeesBonesFor(nodes: DagState['nodes'], assetRef: string): string[] {
-  return Object.keys(bakedChannelSamplersForAsset(nodes, nameMapFor(assetRef), assetRef)).sort();
+  return Object.keys(bakedChannelSamplersForAsset(nodes, nameMapFor(assetRef))).sort();
 }
 
 describe('dispatchClearBakedMotion (#813 — the character-level fan-out)', () => {

@@ -12,64 +12,85 @@ import { stripComments } from '../../test-utils/sourceScan';
 import { registerAllNodes } from '../../nodes/registerAll';
 import { chooseMotionTarget, characterTargets, retargetedClipId } from './bindMotionToCharacter';
 import { getBoneNameMapPreset } from '../../core/import/boneNameMaps';
-import { gltfSkeletonDagId } from '../../core/import/gltfImportChain';
 import type { DagState } from '../../core/dag/state';
 import type { Node } from '../../core/dag/types';
-import type { GltfSkinMetadata } from '../../nodes/types';
 
 beforeAll(() => {
-  // The candidate scan EVALUATES each rig node, so the registry must be live.
   registerAllNodes();
 });
 
-/** A skin whose joints carry the given names — the only field the chooser reads. */
-function skin(names: string[]): GltfSkinMetadata {
-  return {
-    jointKeys: names,
-    bindTRS: names.map(() => ({
-      position: [0, 0, 0] as [number, number, number],
-      rotation: [0, 0, 0] as [number, number, number],
-      scale: [1, 1, 1] as [number, number, number],
-    })),
-    parentJointIndex: names.map((_, i) => (i === 0 ? -1 : 0)),
-    inverseBindMatrices: [],
-  };
-}
+/** The name a character's Objects carry: the file's base name, as the import names them. */
+const nameOf = (assetRef: string) =>
+  assetRef
+    .split('/')
+    .pop()!
+    .replace(/\.[^.]+$/, '');
+/** The armature Object standing a character's skeleton — the node the bind poses. */
+const armatureOf = (assetRef: string) => `arm_${assetRef}`;
+const skeletonOf = (assetRef: string) => `skel_${assetRef}`;
 
-/** A character: a GltfAsset carrying one skin, plus the GltfSkeleton over it. */
+/**
+ * A native character (#393, #1213): a Skeleton with the given bones, the armature Object standing
+ * it, a mesh Object whose Armature modifier deforms by that armature, and the import's root Group
+ * over both — the node a director clicks (#222).
+ */
 function character(assetRef: string, boneNames: string[]): Node[] {
-  const assetId = `asset_${assetRef}`;
-  const skelId = gltfSkeletonDagId(assetRef, 0);
+  const arm = armatureOf(assetRef);
+  const skel = skeletonOf(assetRef);
+  const mod = `mod_${assetRef}`;
+  const mesh = `mesh_${assetRef}`;
+  const name = nameOf(assetRef);
   return [
     {
-      id: assetId,
-      type: 'GltfAsset',
+      id: skel,
+      type: 'Skeleton',
       version: 1,
       params: {
-        assetRef,
-        nodeNameMap: {},
-        childHierarchy: {},
-        skins: [skin(boneNames)],
+        bones: boneNames.map((b, i) => ({
+          name: b,
+          parent: i === 0 ? -1 : 0,
+          position: [0, 0, 0],
+          rotation: [0, 0, 0],
+        })),
       },
       inputs: {},
     },
     {
-      id: skelId,
-      type: 'GltfSkeleton',
+      id: arm,
+      type: 'Object',
       version: 1,
-      params: { skinIndex: 0 },
-      inputs: { asset: { node: assetId, socket: 'out' } },
+      params: {},
+      meta: { name },
+      inputs: { data: { node: skel, socket: 'out' } },
     },
-    // The import root a director actually clicks (#222) — it carries NO assetRef
-    // of its own, which is why selection has to walk to reach the asset.
+    {
+      id: mod,
+      type: 'ArmatureModifier',
+      version: 1,
+      params: {},
+      inputs: { armature: { node: arm, socket: 'out' } },
+    },
+    {
+      id: mesh,
+      type: 'Object',
+      version: 1,
+      params: {},
+      meta: { name: `${name} mesh` },
+      inputs: { data: { node: mod, socket: 'out' } },
+    },
     {
       id: `grp_${assetRef}`,
       type: 'Group',
       version: 1,
       params: { position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
-      inputs: { children: [{ node: assetId, socket: 'out' }] },
+      inputs: {
+        children: [
+          { node: arm, socket: 'out' },
+          { node: mesh, socket: 'out' },
+        ],
+      },
     },
-  ];
+  ] as Node[];
 }
 
 function stateOf(...nodes: Node[]): DagState {
@@ -84,7 +105,7 @@ const MIXAMO = Object.values(getBoneNameMapPreset('somaToMixamo')!.map);
 const NO_MOTION = 'skel_not_in_graph';
 
 describe('characterTargets', () => {
-  it('finds a character by its rig node and reads the bones off the projection', () => {
+  it('finds a character by the armature its mesh deforms by, and reads the bones off its skeleton', () => {
     const state = stateOf(...character('user-imports/dwarf/dwarf.glb', MIXAMO));
     const found = characterTargets(state);
     expect(found).toHaveLength(1);
@@ -92,9 +113,9 @@ describe('characterTargets', () => {
     expect(found[0].boneNames).toEqual(MIXAMO);
   });
 
-  it('skips a rig node whose asset projects no bones', () => {
-    // The node exists and evaluates; it just has nothing to drive. Reporting it
-    // as a candidate would turn a scene with no character into an ambiguity.
+  it('skips an armature whose skeleton has no bones', () => {
+    // The nodes exist; there is just nothing to drive. Reporting it as a candidate would turn a
+    // scene with no character into an ambiguity.
     const state = stateOf(...character('user-imports/box/box.glb', []));
     expect(characterTargets(state)).toEqual([]);
   });
@@ -355,16 +376,16 @@ describe('chooseMotionTarget', () => {
     expect(table).toContain('drop it again');
   });
 
-  it('breaks the tie on the rig node itself', () => {
+  it('breaks the tie on the armature Object itself', () => {
     const state = stateOf(
       ...character('user-imports/dwarf/dwarf.glb', MIXAMO),
       ...character('user-imports/elf/elf.glb', MIXAMO),
     );
-    const elfSkel = gltfSkeletonDagId('user-imports/elf/elf.glb', 0);
-    const result = chooseMotionTarget(state, elfSkel, 'imported', NO_MOTION);
+    const elf = 'user-imports/elf/elf.glb';
+    const result = chooseMotionTarget(state, armatureOf(elf), 'imported', NO_MOTION);
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(result.target.skeletonId).toBe(elfSkel);
+    expect(result.target.skeletonId).toBe(skeletonOf(elf));
   });
 });
 

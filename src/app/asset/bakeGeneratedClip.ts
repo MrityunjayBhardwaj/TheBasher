@@ -5,9 +5,10 @@
 // WHY THIS FILE EXISTS AT ALL — MEASURED, NOT ARGUED
 // ─────────────────────────────────────────────────────────────────────────────
 // `MotionGenerate` evaluates to an `AnimationClipValue`. Nothing that drives
-// pixels reads an `AnimationClip` VALUE. Every one of them — the render band,
-// the channel mint, the dopesheet, the format migration — goes through
-// `boundClipsForAsset`, which is deliberately pure over PARAMS and never calls
+// pixels reads an `AnimationClip` VALUE. When this was written every one of them — the render band,
+// the channel mint, the dopesheet, the format migration — went through
+// `boundClipsForAsset` (the render band retired with the clone road's character half, #1053;
+// a native character is posed through its Object's pose edge), which is pure over PARAMS and never calls
 // `evaluate()`, because the migration runs it on raw saved JSON long before an
 // evaluator exists.
 //

@@ -78,8 +78,8 @@ import { provenanceOf, seedKeysFromClip, type ClipSeed } from './clipSeedProvena
 //
 // The sibling `bakeGltfChannel` needs no conversion because its source is a
 // `TransformClip`, which is already degrees. The two clip families differ in
-// units, and this road is the one that has to say so — the other place is the
-// read band's `clipBandSamplersForAsset`, which converts for the same reason.
+// units, and this road is the one that has to say so — the other place was the
+// read band's clip half, which converted for the same reason until it retired (#1053).
 //
 // 🔴 THIS FILE IS NOW ONE OF THE TWO PLACES ONLY BY DELEGATION (#1001).
 // The conversion itself now lives with the seed walk in `clipSeedProvenance`,

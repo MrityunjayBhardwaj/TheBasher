@@ -18,9 +18,7 @@ export interface GraphNodeLike {
  * The node id on the far end of `node.inputs[socket]`, or null.
  *
  * A `single` socket resolves to one connection; an array is tolerated so a
- * cardinality change upstream degrades to "no clip found" rather than a crash —
- * the same tolerance `bindMotionToCharacter.assetRefOfSkeleton` applies for the
- * same reason.
+ * cardinality change upstream degrades to "no clip found" rather than a crash.
  */
 export function edgeTarget(node: GraphNodeLike | undefined, socket: string): string | null {
   const s = node?.inputs?.[socket];

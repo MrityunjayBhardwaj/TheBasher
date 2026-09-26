@@ -13,9 +13,10 @@
 // producer, exactly as the thesis has it for "the user placed three trees" vs
 // "the user wrote a rule that produced three trees".
 //
-// Measured, so it is not merely argued: `boundClipsForAsset` is the ONE edge
-// walk every real reader goes through — the render band, the channel mint, the
-// dopesheet, the format migration — and all of them read the PARAMS side.
+// Measured, so it is not merely argued: `boundClipsForAsset` was the ONE edge
+// walk every real reader went through — the render band (retired with the clone road's
+// character half, #1053), the channel mint, the dopesheet, the format migration — and all of
+// them read the PARAMS side.
 // `AnimationClipValue` has no production consumers outside the nodes that emit
 // it. An input edge is invisible to every one of them.
 //

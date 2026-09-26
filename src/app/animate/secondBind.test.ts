@@ -41,6 +41,12 @@
 // Both halves are pinned below: "with NO active clip, the id order still
 // decides", and the `#907` pair that holds whatever the ids sort like.
 //
+// 🔶 SINCE #1053 NOTHING DRAWS THIS ORDER; A LOAD READS IT. The clone road's band that played
+// the winning clip retired with the clone road's character half, and a native character is posed
+// by its Object's one `pose` edge, so a second bind there replaces the first by construction. What
+// still reads the order is the load-time conversion of an old saved character (#1216): the clip
+// the clone played becomes the native bind. So the rows below pin the order itself, not a draw.
+//
 // REF: src/app/animate/boundClipsForAsset.ts (the sort that decides it);
 //      src/app/asset/bindMotionToCharacter.ts (the refusal set that does not
 //      include this case); src/app/asset/saveGeneratedMotion.ts (the comment
@@ -50,7 +56,6 @@ import { __resetRegistryForTests, applyOp, emptyDagState, type DagState } from '
 import { registerAllNodes } from '../../nodes/registerAll';
 import { gltfChildDagId, gltfSkeletonDagId } from '../../core/import/gltfImportChain';
 import { boundClipsForAsset } from './boundClipsForAsset';
-import { bakedChannelSamplersForAsset, sampleBakedChannel } from '../bakedGltfChannels';
 
 const ASSET = 'a';
 const BONES = ['b0', 'b1'];
@@ -152,8 +157,6 @@ describe('a second bind on an already-bound character (#918)', () => {
     // byte-identical to what it has always been. Without this row the fix could
     // silently change what existing work does.
     const s = twoClipsBound();
-    const samplers = bakedChannelSamplersForAsset(s.nodes, MAP, ASSET);
-    expect(sampleBakedChannel(samplers['b0'], 1)?.rotation?.[1]).toBeCloseTo(-70, 6);
     expect(boundClipsForAsset(s.nodes, ASSET)[0].clipId).toBe('n_out_a');
   });
 
@@ -165,18 +168,13 @@ describe('a second bind on an already-bound character (#918)', () => {
     it('when the last-bound clip also sorts FIRST', () => {
       // Bound second AND sorts first. The old id-sort agreed here by luck.
       const s = twoClipsBound('n_out_a');
-      const samplers = bakedChannelSamplersForAsset(s.nodes, MAP, ASSET);
-      expect(sampleBakedChannel(samplers['b0'], 1)?.rotation?.[1]).toBeCloseTo(-70, 6);
       expect(boundClipsForAsset(s.nodes, ASSET)[0].clipId).toBe('n_out_a');
     });
 
     it('when the last-bound clip sorts LAST — the case the id order got wrong', () => {
       // Bind order reversed: `n_out_a` first, then `n_out_z`. The active clip
-      // now sorts SECOND, so the old behaviour would hand the bone to
-      // `n_out_a` (-70). It must read +45.
+      // now sorts SECOND, so the old behaviour would hand the bone to `n_out_a`.
       const s = twoClipsBound('n_out_z', ['n_out_a', 'n_out_z']);
-      const samplers = bakedChannelSamplersForAsset(s.nodes, MAP, ASSET);
-      expect(sampleBakedChannel(samplers['b0'], 1)?.rotation?.[1]).toBeCloseTo(45, 6);
       expect(boundClipsForAsset(s.nodes, ASSET)[0].clipId).toBe('n_out_z');
     });
 

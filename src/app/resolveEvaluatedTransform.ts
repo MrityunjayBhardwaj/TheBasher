@@ -203,11 +203,7 @@ export function resolveEvaluatedTransform(
           // this resolver is the gizmo/NPanel static-read path, so the right
           // time is "the current play time" the caller passed in.
           clipTrack = assetVal.transformClip?.sample(ctx.time.seconds)[cp.childName];
-          const bakedSamplers = bakedChannelSamplersForAsset(
-            state.nodes,
-            assetVal.nodeNameMap,
-            cp.assetRef,
-          );
+          const bakedSamplers = bakedChannelSamplersForAsset(state.nodes, assetVal.nodeNameMap);
           bakedChannel = sampleBakedChannel(bakedSamplers[cp.childName], ctx.time.seconds);
         } catch {
           clipTrack = undefined;

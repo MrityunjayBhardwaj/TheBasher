@@ -141,12 +141,6 @@ const CONSUMERS: Record<string, Decision> = {
   'src/viewport/EditorViewCamera.tsx': authored('delegates-to-a-folding-resolver'),
   'src/app/studioLightRig.ts': authored('delegates-to-a-folding-resolver'),
   'src/timeline/LightStudioPanel.tsx': authored('edits-authored-values'),
-  // #807 — the third member of the same family, and it evaluates for the same
-  // reason the other two do: it reads a `GltfSkeleton`'s bone NAMES to decide
-  // which bone-name map bridges a dropped clip onto a character. Names are
-  // import-time static and the ctx is the same fixed bind pose (frame 0), so the
-  // playhead cannot change the answer. It never reads a value that moves.
-  'src/app/asset/bindMotionToCharacter.ts': authored('fixed-ctx-by-design'),
   // #902 — the motion resolver. It reads the generator's params AUTHORED and
   // evaluates at the default ctx, and both halves are the same claim: a
   // generation request must be time-invariant. If the playhead could change the
@@ -254,7 +248,10 @@ describe('#582 — who evaluates the graph, and which params they need', () => {
     // 41 → 42 at #1215: the pose bake, a new road (computed motion had no way into keys).
     // 42 → 43 at #1215: the computed source's read-only rows, a new road (the timeline had no way
     // to show computed motion before it is baked). They read the bake's own pose times.
-    expect(evaluatorConsumers()).toHaveLength(43); // 39 -> 40 at #935 (placement) (the motion resolver)
+    // 43 → 42 at #1053: the bind's character query evaluated a clone road `GltfSkeleton` to read
+    // its bones; a native character's bones are its Skeleton's own params, so the evaluate went
+    // with the clone road's character half, and the row went with it.
+    expect(evaluatorConsumers()).toHaveLength(42); // 39 -> 40 at #935 (placement) (the motion resolver)
   });
 
   it('every reason is load-bearing — no member of any union is decorative', () => {

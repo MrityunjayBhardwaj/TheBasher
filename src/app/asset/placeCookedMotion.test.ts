@@ -70,17 +70,8 @@ function apply(s: DagState, ops: Op[]): DagState {
   return next;
 }
 
-/** A rigged character with the root Group an import gives it, plus a curve. */
-function project(): DagState {
-  const skin = {
-    jointKeys: ['Hips', 'Spine'],
-    bindTRS: [
-      { position: [0, 1.2, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
-      { position: [0, 0.5, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
-    ],
-    parentJointIndex: [-1, 0],
-    inverseBindMatrices: [],
-  };
+/** A clock and a curve to walk along — no scene, and no character. */
+function bare(): DagState {
   return apply(emptyDagState(), [
     { type: 'addNode', nodeId: 'n_time', nodeType: 'TimeSource', params: {} },
     { type: 'addNode', nodeId: 'curve', nodeType: 'CurveData', params: {} },
@@ -90,66 +81,59 @@ function project(): DagState {
       from: { node: 'curve', socket: 'out' },
       to: { node: 'pathObj', socket: 'data' },
     },
+  ] as Op[]);
+}
+
+/** `s` with a scene. */
+function withScene(s: DagState): DagState {
+  s = apply(s, [{ type: 'addNode', nodeId: 'scene', nodeType: 'Scene', params: {} }] as Op[]);
+  return { ...s, outputs: { ...s.outputs, scene: { node: 'scene', socket: 'out' } } };
+}
+
+/**
+ * A native character (#1213) standing in the scene: its skeleton (`gskel`), the armature Object
+ * standing it (`charObj`), and the root Group its import hangs it under (`root`) — the node that
+ * owns where the character stands.
+ */
+function withCharacter(s: DagState, suffix = ''): DagState {
+  const [skel, obj, root] = [`gskel${suffix}`, `charObj${suffix}`, `root${suffix}`];
+  return apply(s, [
     {
       type: 'addNode',
-      nodeId: 'asset',
-      nodeType: 'GltfAsset',
-      params: { assetRef: 'asset://rig.glb', skins: [skin] },
+      nodeId: skel,
+      nodeType: 'Skeleton',
+      params: {
+        bones: [
+          { name: 'Hips', parent: -1, position: [0, 1.2, 0], rotation: [0, 0, 0] },
+          { name: 'Spine', parent: 0, position: [0, 0.5, 0], rotation: [0, 0, 0] },
+        ],
+      },
     },
-    { type: 'addNode', nodeId: 'gskel', nodeType: 'GltfSkeleton', params: { skinIndex: 0 } },
+    { type: 'addNode', nodeId: obj, nodeType: 'Object', params: {} },
+    { type: 'connect', from: { node: skel, socket: 'out' }, to: { node: obj, socket: 'data' } },
+    { type: 'addNode', nodeId: root, nodeType: 'Group', params: { position: [0, 0, 0] } },
+    { type: 'connect', from: { node: obj, socket: 'out' }, to: { node: root, socket: 'children' } },
     {
       type: 'connect',
-      from: { node: 'asset', socket: 'out' },
-      to: { node: 'gskel', socket: 'asset' },
-    },
-    // The root Group the import emits — the node that owns where the thing stands.
-    { type: 'addNode', nodeId: 'root', nodeType: 'Group', params: { position: [0, 0, 0] } },
-    {
-      type: 'connect',
-      from: { node: 'asset', socket: 'out' },
-      to: { node: 'root', socket: 'children' },
+      from: { node: root, socket: 'out' },
+      to: { node: 'scene', socket: 'children' },
     },
   ] as Op[]);
 }
 
-/** Mint, bind the clip to the character's rig, cook, and bake. */
-async function mintAndCook(s: DagState, cap: MotionGenerationCapability) {
-  const { ops, clipId } = mintMotionGenerateOps(s, {
-    prompt: 'a slow walk',
-    seed: 7,
-    model: 'kimodo-base',
-    curveObjectId: 'pathObj',
-  });
-  let next = apply(s, ops);
-  next = apply(next, [
-    {
-      type: 'disconnect',
-      from: { node: edgeTarget(next.nodes[clipId], 'skeleton')!, socket: 'out' },
-      to: { node: clipId, socket: 'skeleton' },
-    },
-    {
-      type: 'connect',
-      from: { node: 'gskel', socket: 'out' },
-      to: { node: clipId, socket: 'skeleton' },
-    },
-  ] as Op[]);
-  await resolvePendingMotionGenerations(next, cap);
-  next = apply(next, bakeGeneratedClipOps(next));
-  return { state: next, clipId };
+/** A native character in a scene, plus a curve. */
+function project(): DagState {
+  return withCharacter(withScene(bare()));
 }
 
 /**
  * Mint and cook, then bind THE WAY THE REAL BIND DOES (#966).
  *
- * 🔴 THE DIFFERENCE FROM `mintAndCook` IS THE WHOLE POINT. That helper moves the
- * clip's own `skeleton` edge onto the `GltfSkeleton`, which is a graph shape
- * `bindMotionToCharacter` never produces: it leaves the generated clip hanging
- * off its 78-bone source `Skeleton` and adds a `RetargetClip` beside it carrying
- * the rig. `boundClipsForAsset`'s header states that arrangement explicitly and
- * excludes the source clip from the read band because of it.
- *
- * So the shape below is the one a director actually gets, and placement has to
- * find the rig through the retarget rather than on the clip.
+ * 🔴 THE SHAPE IS THE WHOLE POINT. `bindMotionToCharacter` leaves the generated clip hanging off
+ * its source `Skeleton` and adds a `RetargetClip` beside it carrying the rig, which becomes the
+ * armature Object's pose. (A helper that moved the clip's own `skeleton` edge onto the rig — a
+ * shape the bind never produces, which only the clone road ever drew — stood beside this one until
+ * the clone road's character half retired, #1053.) Placement finds the character through the pose.
  */
 async function mintAndCookThroughRetarget(s: DagState, cap: MotionGenerationCapability) {
   const { ops, clipId } = mintMotionGenerateOps(s, {
@@ -193,7 +177,7 @@ describe('placeCookedMotionOps (#935)', () => {
   });
 
   it('moves the character to where the path was drawn', async () => {
-    const { state } = await mintAndCook(project(), capability());
+    const { state } = await mintAndCookThroughRetarget(project(), capability());
     expect(posOf(state)).toEqual([0, 0, 0]);
 
     const { ops, refusals } = placeCookedMotionOps(state);
@@ -213,7 +197,7 @@ describe('placeCookedMotionOps (#935)', () => {
   // written, with the tier fully green. So the gate runs the whole road rather
   // than any single hop: capability -> cache -> node value -> placement.
   it('carries the FACING down the same road as the offset', async () => {
-    const { state } = await mintAndCook(project(), capability(true, Math.PI / 2));
+    const { state } = await mintAndCookThroughRetarget(project(), capability(true, Math.PI / 2));
     const { ops, refusals } = placeCookedMotionOps(state);
     expect(refusals).toEqual([]);
     const placed = apply(state, ops);
@@ -224,7 +208,7 @@ describe('placeCookedMotionOps (#935)', () => {
   });
 
   it('leaves the facing alone when the clip states none', async () => {
-    const { state } = await mintAndCook(project(), capability(true, null));
+    const { state } = await mintAndCookThroughRetarget(project(), capability(true, null));
     const placed = apply(state, placeCookedMotionOps(state).ops);
     // Untouched, not zeroed: a clip that never asked to face anywhere must not
     // rotate a character the director may have turned by hand.
@@ -232,7 +216,7 @@ describe('placeCookedMotionOps (#935)', () => {
   });
 
   it('IS IDEMPOTENT: the target is absolute, so a second cook does not walk it further', async () => {
-    const { state } = await mintAndCook(project(), capability());
+    const { state } = await mintAndCookThroughRetarget(project(), capability());
     const once = apply(state, placeCookedMotionOps(state).ops);
     const twice = apply(once, placeCookedMotionOps(once).ops);
     expect(posOf(twice)).toEqual(posOf(once));
@@ -240,7 +224,7 @@ describe('placeCookedMotionOps (#935)', () => {
   });
 
   it('places NOTHING when no world path was requested — null is not [0, 0]', async () => {
-    const { state } = await mintAndCook(project(), capability(false));
+    const { state } = await mintAndCookThroughRetarget(project(), capability(false));
     expect(placeCookedMotionOps(state)).toEqual({ ops: [], refusals: [] });
     expect(posOf(state)).toEqual([0, 0, 0]);
   });
@@ -248,14 +232,13 @@ describe('placeCookedMotionOps (#935)', () => {
   // ───────────────────────────────────────────────────────────────────────
   // #966 — THE SHAPE THE BIND ACTUALLY BUILDS
   // ───────────────────────────────────────────────────────────────────────
-  // Every row above this one binds by moving the clip's own `skeleton` edge onto
-  // the GltfSkeleton. `bindMotionToCharacter` does not do that, and never did:
-  // it leaves the generated clip on its source `Skeleton` and hangs the rig off a
-  // `RetargetClip`. Measured in a headed browser against the real server — the
-  // waypoints reached the wire, the offset came back as the curve's first point,
-  // and placement refused with "not bound to a character rig" while 18 of 23
-  // bones animated. The fixture was constructing the one world in which the code
-  // was right.
+  // The rows above once bound by moving the clip's own `skeleton` edge onto the
+  // rig. `bindMotionToCharacter` does not do that, and never did: it leaves the
+  // generated clip on its source `Skeleton` and hangs the rig off a `RetargetClip`.
+  // Measured in a headed browser against the real server — the waypoints reached
+  // the wire, the offset came back as the curve's first point, and placement
+  // refused with "not bound to a character rig" while 18 of 23 bones animated.
+  // That fixture was constructing the one world in which the code was right.
   it('places the character when the rig is reached through the RetargetClip the bind builds', async () => {
     const { state } = await mintAndCookThroughRetarget(project(), capability(true, Math.PI / 2));
     const { ops, refusals } = placeCookedMotionOps(state);
@@ -265,7 +248,7 @@ describe('placeCookedMotionOps (#935)', () => {
     expect(rotOf(placed)).toEqual([0, -90, 0]);
   });
 
-  // Each guard in `riggedSkeletonsForClip` gets its own row, in a world where the
+  // Each guard in `charactersDrivenByClip` gets its own row, in a world where the
   // others cannot carry it. Written because the first two were VACUOUS: deleting
   // either left the row above green, because the fixture had only one rig, one
   // retarget and nothing else for a loosened match to find.
@@ -286,10 +269,10 @@ describe('placeCookedMotionOps (#935)', () => {
         to: { node: 'retarget', socket: 'source' },
       },
     ] as Op[]);
-    const out = placeCookedMotionOps(detached);
-    expect(out.ops).toEqual([]);
-    expect(out.refusals).toHaveLength(1);
-    expect(out.refusals[0].reason).toMatch(/not bound to a character rig/);
+    // The character is not this clip's to place: its root stays where it is. (The motion's own rig,
+    // which the bind hid, is still placed at the path start — #1100 — and that is not this row.)
+    const placed = apply(detached, placeCookedMotionOps(detached).ops as Op[]);
+    expect(posOf(placed)).toEqual([0, 0, 0]);
   });
 
   // #1213 — A NATIVE CHARACTER IS PLACED BY THE ROOT ITS IMPORT HANGS IT UNDER. The bind makes the
@@ -297,11 +280,8 @@ describe('placeCookedMotionOps (#935)', () => {
   // the import's root, so the mesh and the rig it is skinned to move together.
   it('places a NATIVE character, found through its armature Object’s pose, by its import root', async () => {
     const bytes = readFileSync('public/assets/skinned-bar.glb');
-    // `project()` has no scene aggregator; the native road hangs its root under one.
-    let s = apply(project(), [
-      { type: 'addNode', nodeId: 'scene', nodeType: 'Scene', params: {} },
-    ] as Op[]);
-    s = { ...s, outputs: { ...s.outputs, scene: { node: 'scene', socket: 'out' } } };
+    // The real import this time, under a scene of its own, rather than `project()`'s hand-made one.
+    let s = withScene(bare());
     const result = await buildNativeGltfImportOps({
       buffer: bytes.buffer.slice(
         bytes.byteOffset,
@@ -362,57 +342,54 @@ describe('placeCookedMotionOps (#935)', () => {
   });
 
   it('does NOT treat a retarget onto a plain Skeleton as a character to place', async () => {
-    const { state } = await mintAndCookThroughRetarget(project(), capability());
-    // A rig-to-rig retarget is a legitimate graph: `RetargetClip.skeleton` takes a
-    // `Skeleton`, and a `GltfSkeleton` is only one of the things that satisfies it.
-    // A plain one has no asset and no root Group, so it is not somewhere a
-    // character can be STOOD — and saying "no rig" is the honest diagnosis, not
-    // "found a rig with nowhere to put it".
-    const plain = apply(state, [
-      { type: 'addNode', nodeId: 'plainskel', nodeType: 'Skeleton', params: {} },
+    // A rig-to-rig retarget is a legitimate graph: `RetargetClip.skeleton` takes any `Skeleton`. One
+    // that no Object stands is not somewhere a character can be STOOD, so the bind wires no pose and
+    // placement moves no character for it.
+    const s = apply(project(), [
       {
-        type: 'disconnect',
-        from: { node: 'gskel', socket: 'out' },
-        to: { node: 'retarget', socket: 'skeleton' },
-      },
-      {
-        type: 'connect',
-        from: { node: 'plainskel', socket: 'out' },
-        to: { node: 'retarget', socket: 'skeleton' },
+        type: 'addNode',
+        nodeId: 'plainskel',
+        nodeType: 'Skeleton',
+        params: {
+          bones: [
+            { name: 'Hips', parent: -1, position: [0, 0, 0], rotation: [0, 0, 0] },
+            { name: 'Spine', parent: 0, position: [0, 1, 0], rotation: [0, 0, 0] },
+          ],
+        },
       },
     ] as Op[]);
-    const out = placeCookedMotionOps(plain);
-    expect(out.ops).toEqual([]);
-    expect(out.refusals).toHaveLength(1);
-    expect(out.refusals[0].reason).toMatch(/not bound to a character rig/);
+    const { ops, clipId } = mintMotionGenerateOps(s, {
+      prompt: 'a slow walk',
+      seed: 7,
+      model: 'kimodo-base',
+      curveObjectId: 'pathObj',
+    });
+    let next = apply(s, ops);
+    const bind = validatePlan(
+      retargetMutator,
+      {
+        sourceClipId: clipId,
+        sourceSkeletonId: edgeTarget(next.nodes[clipId], 'skeleton')!,
+        targetSkeletonId: 'plainskel',
+        customMap: BRIDGE,
+        outputClipId: 'retarget',
+      },
+      next,
+      'retarget onto a bare skeleton',
+    );
+    if (!bind.ok) throw new Error(`the real bind refused: ${bind.reason}`);
+    next = apply(next, bind.ops as Op[]);
+    await resolvePendingMotionGenerations(next, capability());
+    next = apply(next, bakeGeneratedClipOps(next));
+    const placed = apply(next, placeCookedMotionOps(next).ops as Op[]);
+    expect(posOf(placed)).toEqual([0, 0, 0]);
   });
 
   it('places EVERY character the one clip drives, not whichever sorts first', async () => {
     const { state, clipId } = await mintAndCookThroughRetarget(project(), capability());
-    const skin = (state.nodes.asset.params as { skins: unknown[] }).skins;
-    // A second character, bound to the SAME generated walk. Both were asked to
-    // walk the path; leaving one at the origin would make which one moves an
-    // accident of id order.
-    const two = apply(state, [
-      {
-        type: 'addNode',
-        nodeId: 'asset2',
-        nodeType: 'GltfAsset',
-        params: { assetRef: 'asset://rig2.glb', skins: skin },
-      },
-      { type: 'addNode', nodeId: 'gskel2', nodeType: 'GltfSkeleton', params: { skinIndex: 0 } },
-      {
-        type: 'connect',
-        from: { node: 'asset2', socket: 'out' },
-        to: { node: 'gskel2', socket: 'asset' },
-      },
-      { type: 'addNode', nodeId: 'root2', nodeType: 'Group', params: { position: [0, 0, 0] } },
-      {
-        type: 'connect',
-        from: { node: 'asset2', socket: 'out' },
-        to: { node: 'root2', socket: 'children' },
-      },
-    ] as Op[]);
+    // A second character, bound to the SAME generated walk. Both were asked to walk the path;
+    // leaving one at the origin would make which one moves an accident of id order.
+    const two = withCharacter(state, '2');
     // The SECOND bind through the same real mutator, for the same reason as the
     // first: a hand-wired one would be this file's opinion of a bind.
     const bind2 = validatePlan(
@@ -443,7 +420,7 @@ describe('placeCookedMotionOps (#935)', () => {
   it('REFUSES rather than silently leaving a character at the origin', async () => {
     // Cooked with an offset, but the clip was never bound to a character rig, and the project
     // has no scene for the motion's own rig to stand in (#1100) — so nothing at all stands.
-    const s = project();
+    const s = bare();
     const { ops, clipId } = mintMotionGenerateOps(s, {
       prompt: 'a slow walk',
       seed: 7,
@@ -469,12 +446,9 @@ describe('placeCookedMotionOps (#935)', () => {
 // no character to play it, that Object is the thing a director sees walk, and it used to walk
 // from the origin while placement reported "nothing to place".
 
-/** The same project, with a scene for the motion's own rig to stand in. */
+/** A scene for the motion's own rig to stand in, and no character. */
 function projectWithScene(): DagState {
-  const s = apply(project(), [
-    { type: 'addNode', nodeId: 'scene', nodeType: 'Scene', params: {} },
-  ] as Op[]);
-  return { ...s, outputs: { ...s.outputs, scene: { node: 'scene', socket: 'out' } } };
+  return withScene(bare());
 }
 
 /** Mint on the curve, cook and bake, with no character bound. */
@@ -601,12 +575,9 @@ describe('#1100 — the motion’s own rig is placed at the path start', () => {
   });
 
   it('with a character bound, places the character AND the rig the bind hid', async () => {
-    const { state } = await mintAndCookThroughRetarget(
-      projectWithScene(),
-      capability(true, Math.PI / 2),
-    );
+    const { state } = await mintAndCookThroughRetarget(project(), capability(true, Math.PI / 2));
     const standIn = Object.values(state.nodes).find(
-      (n) => n.type === 'Object' && n.id !== 'pathObj',
+      (n) => n.type === 'Object' && n.id !== 'pathObj' && n.id !== 'charObj',
     );
     expect(standIn?.meta?.hidden, 'the bind did not hide a stand-in — not the bound shape').toBe(
       true,
