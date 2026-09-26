@@ -9,6 +9,7 @@
 // and an Armature modifier and nothing of the clone road.
 import { test, expect } from './_fixtures';
 import type { Page } from '@playwright/test';
+import { readFileSync } from 'node:fs';
 import { splitCurveOps } from './_splitCurve';
 
 interface SkinHandle {
@@ -29,7 +30,6 @@ interface BasherWindow {
 }
 
 const REF = 'user-imports/p1216/skinned-bar.glb';
-const TWO_REF = 'user-imports/p1216/skinned-bar-two-clips.glb';
 
 async function setTime(page: Page, seconds: number): Promise<void> {
   await page.evaluate(
@@ -236,9 +236,6 @@ async function stageClone(page: Page, file: string, ref: string): Promise<void> 
   );
 }
 
-/** Two euler axes, so a wrong axis order or a degrees/radians slip moves the tip. */
-const POSE: [number, number, number] = [20, 0, 30];
-
 function expectSameTip(
   cloneTip: number[][],
   nativeTip: number[][],
@@ -250,90 +247,47 @@ function expectSameTip(
 }
 
 /**
- * A motion stands in the scene (a BVH swing), bound onto the clone rig and Bone1 posed on it — each
- * through the product's own verbs (the retarget and the pose mutators, as the drop and the
- * inspector call them).
+ * A project saved with a clone-road character, recorded when the clone road's own tools still
+ * existed (they retired with #1053): the saved project exactly as `saveCurrent` wrote it, the file it
+ * imported and where, and the tip vertex the clone DREW at each time (and the colour, where an edit
+ * set one). Recorded by this spec's staging at `capturedAt`; `git show <capturedAt>:<by>` shows the
+ * gestures. The recording is the only witness left of what the clone drew.
  */
-async function bindSwingPosed(
+interface Recorded {
+  capturedAt: string;
+  file: string;
+  ref: string;
+  times: number[];
+  clone: { tip: [number, number, number][]; colour?: string | null };
+  project: { id: string; state: { nodes: Record<string, { type: string }> } };
+}
+
+const recorded = (name: string): Recorded =>
+  JSON.parse(
+    readFileSync(`src/core/project/__fixtures__/clone-characters/${name}.json`, 'utf8'),
+  ) as Recorded;
+
+const savedTypes = (saved: Recorded): string[] =>
+  Object.values(saved.project.state.nodes).map((n) => n.type);
+
+/**
+ * The recorded project put where a returning user's browser holds it — its file in this browser's
+ * storage, the project saved, and it named as the one to resume — then loaded on the resume road.
+ */
+async function loadRecorded(
   page: Page,
-  pose: [number, number, number],
-): Promise<{ retarget: boolean; posed: boolean }> {
-  return page.evaluate(async (pose) => {
+  saved: Recorded,
+): Promise<{ after: string[]; notice: { message?: string; label?: string } }> {
+  await page.evaluate(async ({ file, ref, project }) => {
     const w = window as unknown as BasherWindow;
-    const bvh = await import('/src/core/import/bvhImportChain.ts');
-    const stand = await import('/src/core/import/skeletonObject.ts');
-    const { dispatchMutatorFromUI } = await import('/src/app/animate/dispatchMutator.ts');
-    const text = [
-      'HIERARCHY',
-      'ROOT Hips',
-      '{',
-      '  OFFSET 0 0 0',
-      '  CHANNELS 6 Xposition Yposition Zposition Zrotation Xrotation Yrotation',
-      '  JOINT Spine',
-      '  {',
-      '    OFFSET 0 1 0',
-      '    CHANNELS 3 Zrotation Xrotation Yrotation',
-      '    End Site',
-      '    {',
-      '      OFFSET 0 1 0',
-      '    }',
-      '  }',
-      '}',
-      'MOTION',
-      'Frames: 3',
-      'Frame Time: 0.5',
-      '0 0 0 0 0 0 0 0 0',
-      '0 0 0 15 0 0 45 0 0',
-      '0 0 0 30 0 0 90 0 0',
-      '',
-    ].join('\n');
-    const dag = w.__basher_dag.getState();
-    const motion = bvh.buildBvhImportOps({
-      text,
-      name: 'swing',
-      ids: { skeleton: 'swing_skel', clip: 'swing_clip' },
-    });
-    dag.dispatchAtomic(motion.ops, 'user', 'import swing');
-    const nodes = w.__basher_dag.getState().state.nodes;
-    const scene = (
-      w.__basher_dag.getState().state as unknown as { outputs: { scene: { node: string } } }
-    ).outputs.scene.node;
-    const bones = (nodes.swing_skel.params as { bones: unknown[] }).bones;
-    dag.dispatchAtomic(
-      stand.buildSkeletonObjectOps({
-        skeletonId: 'swing_skel',
-        bones: bones as never,
-        sceneNodeId: scene,
-        normalise: false,
-        name: 'swing',
-        clipId: 'swing_clip',
-        nameFollowsClip: true,
-      }).ops,
-      'user',
-      'stand swing',
-    );
-    const rig = Object.entries(w.__basher_dag.getState().state.nodes).find(
-      ([, n]) => n.type === 'GltfSkeleton',
-    )![0];
-    const retarget = dispatchMutatorFromUI(
-      'mutator.animation.retarget',
-      {
-        sourceClipId: 'swing_clip',
-        sourceSkeletonId: 'swing_skel',
-        targetSkeletonId: rig,
-        customMap: { Hips: 'Bone0', Spine: 'Bone1' },
-        outputClipId: 'swing_on_bar',
-        outputName: 'bar motion',
-      },
-      'bind',
-    );
-    const posed = dispatchMutatorFromUI(
-      'mutator.animate.poseBone',
-      { retarget: 'swing_on_bar', bone: 'Bone1', rotation: pose },
-      'pose',
-    );
-    return { retarget: retarget.ok, posed: posed.ok };
-  }, pose);
+    const buf = await fetch(`/assets/${file}`).then((r) => r.arrayBuffer());
+    await w.__basher_writeOpfsBytes!(ref, new Uint8Array(buf));
+    const boot = await import('/src/app/boot.ts');
+    const io = await import('/src/core/project/io.ts');
+    await io.saveProject(await boot.getStorage(), project as never);
+    localStorage.setItem('basher.lastProjectId', project.id);
+  }, saved);
+  return reloadAndRead(page, saved.ref);
 }
 
 test('#1216 slice 2 — a bound motion with a hand-pose on it loads native, drawn as the clone drew it', async ({
@@ -341,23 +295,25 @@ test('#1216 slice 2 — a bound motion with a hand-pose on it loads native, draw
 }) => {
   const errors: string[] = [];
   page.on('pageerror', (e) => errors.push(e.message));
-  await stageClone(page, 'skinned-bar.glb', REF);
+  // Recorded: the swing BVH stood in the scene, bound onto the clone rig (the retarget mutator),
+  // Bone1 posed on that motion (the pose mutator, which wrote a PoseOverride).
+  const saved = recorded('bind-pose');
+  expect(savedTypes(saved)).toEqual(expect.arrayContaining(['GltfAsset', 'PoseOverride']));
 
-  const bound = await bindSwingPosed(page, POSE);
-  expect(bound).toEqual({ retarget: true, posed: true });
-  expect(await types(page)).toEqual(expect.arrayContaining(['GltfAsset', 'PoseOverride']));
-  const clone = await drawnTip(page, [0.5, 1]);
-
-  const { after, notice } = await saveAndReload(page, REF);
+  const { after, notice } = await loadRecorded(page, saved);
   expect(after).toEqual(expect.arrayContaining(['Skeleton', 'PoseLayer', 'RetargetClip']));
   expect(after.filter((t) => /^Gltf|TransformClip|ClipSelect|PoseOverride/.test(t))).toEqual([]);
   expect(notice.label).toBe('character converted:');
 
-  const native = await drawnTip(page, [0.5, 1]);
-  console.log(`bind+pose: clone ${JSON.stringify(clone.tip)} native ${JSON.stringify(native.tip)}`);
-  expectSameTip(clone.tip, native.tip);
+  const native = await drawnTip(page, saved.times);
+  console.log(
+    `bind+pose: clone ${JSON.stringify(saved.clone.tip)} native ${JSON.stringify(native.tip)}`,
+  );
+  expectSameTip(saved.clone.tip, native.tip, saved.times);
   // The bound motion moves the root between the two times; equal tips are not two rests.
-  expect(Math.hypot(...clone.tip[0].map((c, k) => c - clone.tip[1][k]))).toBeGreaterThan(0.1);
+  expect(
+    Math.hypot(...saved.clone.tip[0].map((c, k) => c - saved.clone.tip[1][k])),
+  ).toBeGreaterThan(0.1);
   expect(errors).toEqual([]);
 });
 
@@ -366,39 +322,23 @@ test('#1216 slice 2 — a later take and a bone posed by the gizmo load native, 
 }) => {
   const errors: string[] = [];
   page.on('pageerror', (e) => errors.push(e.message));
-  await stageClone(page, 'skinned-bar-two-clips.glb', TWO_REF);
+  // Recorded: the take picker's param set to Wave, and the gizmo's write on the root bone (value
+  // [20, 0, 30] + override bit).
+  const saved = recorded('take-gizmo');
 
-  // The take picker's param, and the gizmo's write on an imported child (value + override bit).
-  await page.evaluate((pose) => {
-    const w = window as unknown as BasherWindow;
-    const dag = w.__basher_dag.getState();
-    const nodes = dag.state.nodes;
-    const [selectId] = Object.entries(nodes).find(([, n]) => n.type === 'ClipSelect')!;
-    const asset = Object.values(nodes).find((n) => n.type === 'GltfAsset')!;
-    const bone0 = (asset.params as { nodeNameMap: Record<string, string> }).nodeNameMap.Bone0;
-    dag.dispatchAtomic(
-      [
-        { type: 'setParam', nodeId: selectId, paramPath: 'selectedClipName', value: 'Wave' },
-        { type: 'setParam', nodeId: bone0, paramPath: 'rotation', value: pose },
-        { type: 'setParam', nodeId: bone0, paramPath: 'overridden.rotation', value: true },
-      ],
-      'user',
-      'pick Wave, turn the root bone',
-    );
-  }, POSE);
-  const clone = await drawnTip(page, [0.5, 1]);
-
-  const { after, notice } = await saveAndReload(page, TWO_REF);
+  const { after, notice } = await loadRecorded(page, saved);
   expect(after.filter((t) => /^Gltf|TransformClip|ClipSelect/.test(t))).toEqual([]);
   expect(notice.label).toBe('character converted:');
 
-  const native = await drawnTip(page, [0.5, 1]);
+  const native = await drawnTip(page, saved.times);
   console.log(
-    `take+gizmo: clone ${JSON.stringify(clone.tip)} native ${JSON.stringify(native.tip)}`,
+    `take+gizmo: clone ${JSON.stringify(saved.clone.tip)} native ${JSON.stringify(native.tip)}`,
   );
-  expectSameTip(clone.tip, native.tip);
+  expectSameTip(saved.clone.tip, native.tip, saved.times);
   // Wave moves the tip bone between the two times; equal tips are not two rests.
-  expect(Math.hypot(...clone.tip[0].map((c, k) => c - clone.tip[1][k]))).toBeGreaterThan(0.05);
+  expect(
+    Math.hypot(...saved.clone.tip[0].map((c, k) => c - saved.clone.tip[1][k])),
+  ).toBeGreaterThan(0.05);
   expect(errors).toEqual([]);
 });
 
@@ -407,32 +347,20 @@ test('#1216 slice 3 — a key edited on a bone loads native, drawn as the clone 
 }) => {
   const errors: string[] = [];
   page.on('pageerror', (e) => errors.push(e.message));
-  await stageClone(page, 'skinned-bar.glb', REF);
+  // Recorded: the clone road's key tool on Bone1's rotation at 0.5 s ([20, 0, 40]) — a copy of the
+  // file's track, then the key.
+  const saved = recorded('bone-key');
+  expect(savedTypes(saved)).toContain('KeyframeChannelVec3');
 
-  // The clone road's key tool on a bone the file animates: a copy of the file's track, then the key.
-  const keyed = await page.evaluate(async (ref) => {
-    const { dispatchMutatorFromUI } = await import('/src/app/animate/dispatchMutator.ts');
-    return dispatchMutatorFromUI(
-      'mutator.timeline.keyframe',
-      {
-        bone: { assetRef: ref, childName: 'Bone1', component: 'rotation' },
-        time: 0.5,
-        value: [20, 0, 40],
-      },
-      'key',
-    ).ok;
-  }, REF);
-  expect(keyed).toBe(true);
-  const times = [0.25, 0.5, 1];
-  const clone = await drawnTip(page, times);
-
-  const { after, notice } = await saveAndReload(page, REF);
+  const { after, notice } = await loadRecorded(page, saved);
   expect(after.filter((t) => /^Gltf|TransformClip|ClipSelect/.test(t))).toEqual([]);
   expect(notice.label).toBe('character converted:');
 
-  const native = await drawnTip(page, times);
-  console.log(`key edit: clone ${JSON.stringify(clone.tip)} native ${JSON.stringify(native.tip)}`);
-  expectSameTip(clone.tip, native.tip, times);
+  const native = await drawnTip(page, saved.times);
+  console.log(
+    `key edit: clone ${JSON.stringify(saved.clone.tip)} native ${JSON.stringify(native.tip)}`,
+  );
+  expectSameTip(saved.clone.tip, native.tip, saved.times);
   expect(errors).toEqual([]);
 });
 
@@ -497,84 +425,17 @@ test('#1216 slice 4 — every carried edit on one character loads native, drawn 
 }) => {
   const errors: string[] = [];
   page.on('pageerror', (e) => errors.push(e.message));
-  await stageClone(page, 'skinned-bar.glb', REF);
-
-  // Each edit through the product's own verbs, all on the one character, each on a component no
-  // other edit draws over (so dropping any one of them moves the drawn tip or the colour):
-  //   placed and turned (the Group), a motion bound (retarget), Bone1 posed on that motion
-  //   (poseBone), Bone0 turned by the gizmo (value + override bit), Bone0's location keyed (the key
-  //   tool's bone address), and the mesh's colour set (setMaterialColor).
-  await page.evaluate(() => {
-    const w = window as unknown as BasherWindow;
-    const dag = w.__basher_dag.getState();
-    const [groupId, group] = Object.entries(dag.state.nodes).find(([, n]) => n.type === 'Group')!;
-    const pos = (group.params as { position: number[] }).position;
-    dag.dispatchAtomic(
-      [
-        {
-          type: 'setParam',
-          nodeId: groupId,
-          paramPath: 'position',
-          value: [pos[0] + 1.5, pos[1], pos[2] - 1],
-        },
-        { type: 'setParam', nodeId: groupId, paramPath: 'rotation', value: [10, 90, 0] },
-      ],
-      'user',
-      'place the character',
-    );
-  });
-  const bound = await bindSwingPosed(page, POSE);
-  const rest = await page.evaluate(async (ref) => {
-    const w = window as unknown as BasherWindow;
-    const { dispatchMutatorFromUI } = await import('/src/app/animate/dispatchMutator.ts');
-    const dag = w.__basher_dag.getState();
-    const asset = Object.values(dag.state.nodes).find((n) => n.type === 'GltfAsset')!;
-    const names = (asset.params as { nodeNameMap: Record<string, string> }).nodeNameMap;
-    dag.dispatchAtomic(
-      [
-        { type: 'setParam', nodeId: names.Bone0, paramPath: 'rotation', value: [10, 0, -25] },
-        { type: 'setParam', nodeId: names.Bone0, paramPath: 'overridden.rotation', value: true },
-      ],
-      'user',
-      'turn the root bone',
-    );
-    const keyed = dispatchMutatorFromUI(
-      'mutator.timeline.keyframe',
-      {
-        bone: { assetRef: ref, childName: 'Bone0', component: 'position' },
-        time: 0.5,
-        value: [0.3, 0, 0.2],
-      },
-      'key',
-    ).ok;
-    const coloured = dispatchMutatorFromUI(
-      'mutator.setMaterialColor',
-      { targetSelectors: [names.SkinnedBar], color: '#12ab34' },
-      'colour',
-    ).ok;
-    return { keyed, coloured };
-  }, REF);
-  const edited = { ...bound, ...rest };
-  expect(edited).toEqual({ retarget: true, posed: true, keyed: true, coloured: true });
-  expect(await types(page)).toEqual(
-    expect.arrayContaining(['GltfAsset', 'PoseOverride', 'RetargetClip']),
-  );
-  const times = [0.25, 0.5, 1];
-  const clone = await drawnTip(page, times);
-  await page.waitForFunction(() =>
-    Boolean(
-      (window as unknown as { __basher_gltf_meshes?: () => unknown[] }).__basher_gltf_meshes?.()
-        ?.length,
-    ),
-  );
-  const cloneColour = await page.evaluate(
-    () =>
-      (
-        window as unknown as { __basher_gltf_meshes: () => { color: string | null }[] }
-      ).__basher_gltf_meshes()[0].color,
+  // Recorded: each edit through the product's own verbs, all on the one character, each on a
+  // component no other edit draws over (so dropping any one of them moves the drawn tip or the
+  // colour): placed and turned (the Group, [10, 90, 0]), a motion bound (retarget), Bone1 posed on
+  // that motion (poseBone), Bone0 turned by the gizmo (value + override bit), Bone0's location keyed
+  // (the key tool's bone address), and the mesh's colour set (setMaterialColor, #12ab34).
+  const saved = recorded('every-edit');
+  expect(savedTypes(saved)).toEqual(
+    expect.arrayContaining(['GltfAsset', 'PoseOverride', 'RetargetClip', 'KeyframeChannelVec3']),
   );
 
-  const { after, notice } = await saveAndReload(page, REF);
+  const { after, notice } = await loadRecorded(page, saved);
   expect(after).toEqual(
     expect.arrayContaining(['Skeleton', 'PoseLayer', 'ArmatureModifier', 'RetargetClip']),
   );
@@ -582,16 +443,18 @@ test('#1216 slice 4 — every carried edit on one character loads native, drawn 
   expect(notice.label).toBe('character converted:');
   console.log(`every edit: notice ${notice.message}`);
 
-  const native = await drawnTip(page, times);
+  const native = await drawnTip(page, saved.times);
   const nativeColour = await nativeMeshColour(page);
   console.log(
-    `every edit: clone ${JSON.stringify(clone.tip)} ${cloneColour} native ${JSON.stringify(native.tip)} ${nativeColour}`,
+    `every edit: clone ${JSON.stringify(saved.clone.tip)} ${saved.clone.colour} native ${JSON.stringify(native.tip)} ${nativeColour}`,
   );
-  expectSameTip(clone.tip, native.tip, times);
-  expect(cloneColour).toBe('#12ab34');
-  expect(nativeColour).toBe(cloneColour);
+  expectSameTip(saved.clone.tip, native.tip, saved.times);
+  expect(saved.clone.colour).toBe('#12ab34');
+  expect(nativeColour).toBe(saved.clone.colour);
   // The bound motion and the key move the tip between the times; equal tips are not two rests.
-  expect(Math.hypot(...clone.tip[0].map((c, k) => c - clone.tip[2][k]))).toBeGreaterThan(0.1);
+  expect(
+    Math.hypot(...saved.clone.tip[0].map((c, k) => c - saved.clone.tip[2][k])),
+  ).toBeGreaterThan(0.1);
   expect(errors).toEqual([]);
 });
 
@@ -679,37 +542,21 @@ test('#1263 — keys edited on a node of the file that is not a bone load native
 }) => {
   const errors: string[] = [];
   page.on('pageerror', (e) => errors.push(e.message));
-  const ref = 'user-imports/p1216/skinned-bar-animated-rig.glb';
-  await stageClone(page, 'skinned-bar-animated-rig.glb', ref);
+  // Recorded: the clone road's key tool on the file's `Rig` empty, which the file slides and turns:
+  // rotation keys [20, 10, 30] at 0.5 s and [40, -15, 60] at 1 s (two axes, so an euler order or an
+  // euler/quaternion slip moves the tip), and a location key [0.2, 0.1, -0.3] at 0.5 s.
+  const saved = recorded('rig-keys');
 
-  // The clone road's key tool on the file's `Rig` empty, which the file slides and turns: two-axis
-  // rotations (an euler order or an euler/quaternion slip moves the tip), and a location key.
-  const keyed = await page.evaluate(async (r) => {
-    const { dispatchMutatorFromUI } = await import('/src/app/animate/dispatchMutator.ts');
-    const key = (component: string, time: number, value: number[]) =>
-      dispatchMutatorFromUI(
-        'mutator.timeline.keyframe',
-        { bone: { assetRef: r, childName: 'Rig', component }, time, value },
-        'key',
-      ).ok;
-    return [
-      key('rotation', 0.5, [20, 10, 30]),
-      key('rotation', 1, [40, -15, 60]),
-      key('position', 0.5, [0.2, 0.1, -0.3]),
-    ];
-  }, ref);
-  expect(keyed).toEqual([true, true, true]);
-  const times = [0.25, 0.5, 0.75, 1];
-  const clone = await drawnTip(page, times);
-
-  const { after, notice } = await saveAndReload(page, ref);
+  const { after, notice } = await loadRecorded(page, saved);
   expect(after.filter((t) => /^Gltf|TransformClip|ClipSelect/.test(t))).toEqual([]);
   expect(notice.label).toBe('character converted:');
   expect(notice.message).toContain('"Rig" now turns in euler mode');
 
-  const native = await drawnTip(page, times);
-  console.log(`rig keys: clone ${JSON.stringify(clone.tip)} native ${JSON.stringify(native.tip)}`);
-  expectSameTip(clone.tip, native.tip, times);
+  const native = await drawnTip(page, saved.times);
+  console.log(
+    `rig keys: clone ${JSON.stringify(saved.clone.tip)} native ${JSON.stringify(native.tip)}`,
+  );
+  expectSameTip(saved.clone.tip, native.tip, saved.times);
   expect(errors).toEqual([]);
 });
 

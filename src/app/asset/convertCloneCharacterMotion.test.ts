@@ -1,9 +1,11 @@
 // #1216 slice 2 — a saved clone-road character's MOTION edits land where the native tool for the
-// same gesture writes them. Each case makes the edit with the product's own tools on the clone road,
-// converts, and compares with a fresh native import given the same edit by the native tools: the
-// nodes, and every deformed vertex at two times.
-import { readFileSync } from 'node:fs';
-import { beforeEach, describe, expect, it } from 'vitest';
+// same gesture writes them. Each case makes the edit with the product's own tools on the clone road
+// (replayed from a recording since those tools retired — see `tool`), converts, and compares with a
+// fresh native import given the same edit by the native tools, run live: the nodes, and every
+// deformed vertex at two times.
+import { createHash } from 'node:crypto';
+import { readFileSync, writeFileSync } from 'node:fs';
+import { afterAll, beforeEach, describe, expect, it } from 'vitest';
 import { __resetRegistryForTests, evaluate } from '../../core/dag';
 import { applyOp } from '../../core/dag/ops';
 import type { DagState } from '../../core/dag/state';
@@ -160,11 +162,66 @@ async function nativeProject(
 }
 
 /** Run a mutator the way the product does, on `state`; the state it leaves. */
-function tool(state: DagState, name: string, spec: unknown): DagState {
+function runTool(state: DagState, name: string, spec: unknown): DagState {
   useDagStore.getState().hydrate(state);
   const result = dispatchMutatorFromUI(name, spec, 'test');
   expect(result.ok, JSON.stringify(result)).toBe(true);
   return useDagStore.getState().state;
+}
+
+/**
+ * The clone road's tools retired with #1053, so what they wrote on a clone-road project is replayed
+ * from a recording: per gesture (the state it was given, the mutator, the spec), the nodes and
+ * outputs it changed. Recorded with `RECORD_CLONE_TOOLS=1` at `capturedAt`, when the tools still
+ * ran. A gesture with no recording fails here rather than running anything else.
+ */
+const RECORDINGS_PATH = 'src/core/project/__fixtures__/clone-characters/tool-recordings.json';
+interface ToolPatch {
+  nodes: Record<string, DagState['nodes'][string] | null>;
+  outputs?: DagState['outputs'];
+}
+const RECORDING = Boolean(process.env.RECORD_CLONE_TOOLS);
+const recordings: { capturedAt: string; patches: Record<string, ToolPatch> } = RECORDING
+  ? { capturedAt: process.env.RECORD_CLONE_TOOLS!, patches: {} }
+  : JSON.parse(readFileSync(RECORDINGS_PATH, 'utf8'));
+afterAll(() => {
+  if (RECORDING) writeFileSync(RECORDINGS_PATH, JSON.stringify(recordings));
+});
+
+const gestureKey = (state: DagState, name: string, spec: unknown) =>
+  createHash('sha256')
+    .update(JSON.stringify({ nodes: state.nodes, outputs: state.outputs, name, spec }))
+    .digest('hex')
+    .slice(0, 24);
+
+/** A mutator on `state`: live on a native project, replayed on a clone-road one (see above). */
+function tool(state: DagState, name: string, spec: unknown): DagState {
+  if (!Object.values(state.nodes).some((n) => n.type === 'GltfAsset')) {
+    return runTool(state, name, spec);
+  }
+  const key = gestureKey(state, name, spec);
+  if (RECORDING) {
+    const after = runTool(state, name, spec);
+    const nodes: ToolPatch['nodes'] = {};
+    for (const id of new Set([...Object.keys(state.nodes), ...Object.keys(after.nodes)])) {
+      const was = JSON.stringify(state.nodes[id] ?? null);
+      if (JSON.stringify(after.nodes[id] ?? null) !== was) nodes[id] = after.nodes[id] ?? null;
+    }
+    const outputs =
+      JSON.stringify(after.outputs) === JSON.stringify(state.outputs) ? undefined : after.outputs;
+    recordings.patches[key] = JSON.parse(JSON.stringify({ nodes, outputs }));
+  }
+  const patch = recordings.patches[key];
+  expect(
+    patch,
+    `a recording of ${name} ${JSON.stringify(spec)} on this clone project`,
+  ).toBeDefined();
+  const nodes = { ...state.nodes };
+  for (const [id, node] of Object.entries(patch.nodes)) {
+    if (node === null) delete nodes[id];
+    else nodes[id] = node;
+  }
+  return { ...state, nodes, outputs: patch.outputs ?? state.outputs };
 }
 
 /** The clone's key for the file's node `index` (its joint keys, as the clone rig names bones). */
