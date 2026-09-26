@@ -10,12 +10,26 @@
 // Loose difference from it. To regenerate after a renderer changes what it reads:
 //   CENSUS_WRITE=1 npx playwright test tests/e2e/p1235-animatable-census.spec.ts
 // and commit the JSON with the change that moved it.
+//
+// #1260 — CI runs it as parallel jobs, one per part: `CENSUS_PART=2/3` measures only the second
+// third of the subjects and checks them against their part of the file. The e2e shards skip it
+// (`E2E_SKIP_CENSUS`, see playwright.config.ts). Writing needs the whole census, so it refuses a
+// part.
 
 import { readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { expect, test } from './_fixtures';
 
 const CENSUS = resolve(process.cwd(), 'src/app/animatableCensus.json');
+
+const PART = (() => {
+  const raw = process.env.CENSUS_PART;
+  if (!raw) return null;
+  const m = /^(\d+)\/(\d+)$/.exec(raw);
+  if (!m || +m[1] < 1 || +m[1] > +m[2])
+    throw new Error(`CENSUS_PART must be i/n with 1 ≤ i ≤ n, got "${raw}"`);
+  return { index: +m[1], count: +m[2] };
+})();
 
 /** The page-side walk reads three.js objects and arbitrary params; typing them here would be a
  *  second copy of three's types for a probe that only hashes them. */
@@ -116,10 +130,19 @@ function tableOf(rows: Row[]) {
   };
 }
 
-test('which params a keyframe channel can animate, measured on the drawn scene', async ({
-  page,
-}) => {
-  test.setTimeout(900_000);
+// Each part is its own test, so the merged CI report holds n distinct results rather than one
+// title reported n times.
+const TITLE =
+  'which params a keyframe channel can animate, measured on the drawn scene' +
+  (PART ? ` (part ${PART.index}/${PART.count})` : '');
+
+test(TITLE, async ({ page }) => {
+  // Wall time follows the machine's load, not the code (#1262: 597 rows took 14.3 min at load 13
+  // and 23.1 min at load 24, on one commit). The cap is there to catch a hang, so it sits well
+  // above both.
+  test.setTimeout(2_700_000);
+  if (PART && process.env.CENSUS_WRITE === '1')
+    throw new Error('CENSUS_WRITE needs the whole census — unset CENSUS_PART');
   page.on('pageerror', (e) => console.log('CENSUS pageerror: ' + e.message.slice(0, 300)));
   await page.goto('/');
   await page.evaluate(async () => {
@@ -150,7 +173,7 @@ test('which params a keyframe channel can animate, measured on the drawn scene',
   });
 
   const result = await page.evaluate(
-    async ({ kinds, compute }) => {
+    async ({ kinds, compute, part }) => {
       const w = window as Loose;
       const dag = () => w.__basher_dag.getState();
       const frames = () =>
@@ -465,9 +488,32 @@ test('which params a keyframe channel can animate, measured on the drawn scene',
         setting: string[];
         note?: string;
       }[] = [];
+      // #1260 — split by SUBJECT, never by row: "two instances of one subject agree" can only be
+      // checked when every instance is measured in the same part. Each subject weighs its row
+      // count, and the heaviest goes first to the lightest part, so every part derives the same
+      // split from the same scene without being told it.
+      const weight: Record<string, number> = {};
+      for (const [id, node] of Object.entries(nodes)) {
+        if (node.type.startsWith('KeyframeChannel') || contextOf(id).unmeasured) continue;
+        const leaves: [string, string, unknown][] = [];
+        walk(node.params, '', leaves);
+        const s = subjectOf(id);
+        for (const [path] of leaves)
+          if (!contextOf(id, path).unmeasured) weight[s] = (weight[s] ?? 0) + 1;
+      }
+      const assignment: Record<string, number> = {};
+      const partLoad = Array.from({ length: part?.count ?? 1 }, () => 0);
+      for (const s of Object.keys(weight).sort(
+        (a, b) => weight[b] - weight[a] || (a < b ? -1 : 1),
+      )) {
+        const k = partLoad.indexOf(Math.min(...partLoad));
+        assignment[s] = k + 1;
+        partLoad[k] += weight[s];
+      }
       let n = 0;
       for (const [id, node] of Object.entries(nodes)) {
         if (node.type.startsWith('KeyframeChannel')) continue;
+        if (part && assignment[subjectOf(id)] !== part.index) continue;
         const leaves: [string, string, unknown][] = [];
         walk(node.params, '', leaves);
         const ctx = contextOf(id);
@@ -596,9 +642,18 @@ test('which params a keyframe channel can animate, measured on the drawn scene',
           });
         }
       }
-      return { controlStill, placed, wiring, placement, skippedUnderStack, rows };
+      return {
+        controlStill,
+        placed,
+        wiring,
+        placement,
+        skippedUnderStack,
+        rows,
+        assignment,
+        partLoad,
+      };
     },
-    { kinds: KINDS, compute: COMPUTE },
+    { kinds: KINDS, compute: COMPUTE, part: PART },
   );
 
   const rows = result.rows as Row[];
@@ -610,6 +665,13 @@ test('which params a keyframe channel can animate, measured on the drawn scene',
     `CENSUS not measured (context): ${result.skippedUnderStack.length} — ${result.skippedUnderStack.slice(0, 40).join(' | ')}`,
   );
   console.log(`CENSUS rows=${rows.length} moved=${rows.filter((r) => r.reach !== null).length}`);
+  const assignment = result.assignment as Record<string, number>;
+  const mine = (subject: string) => !PART || assignment[subject] === PART.index;
+  if (PART)
+    console.log(
+      `CENSUS part ${PART.index}/${PART.count}: rows per part ${(result.partLoad as number[]).join(' / ')}, ` +
+        `subjects ${Object.keys(assignment).filter(mine).sort().join(' ')}`,
+    );
   // The measurement has to be able to see anything before its "nothing moved" means anything.
   expect(result.controlStill, 'no channel, two playheads: the scene holds still').toBe(true);
   expect(rows.filter((r) => r.reach !== null).length, 'some params move the scene').toBeGreaterThan(
@@ -620,7 +682,7 @@ test('which params a keyframe channel can animate, measured on the drawn scene',
   // whose imperative write is never undone (#1239). Pinned so the fix reds here and is re-pinned.
   expect(
     rows.filter((r) => r.note === 'did not return to base').map((r) => `${r.subject}.${r.path}`),
-  ).toEqual(['Scene.envIntensity', 'Scene.envRotationY']);
+  ).toEqual(['Scene.envIntensity', 'Scene.envRotationY'].filter((x) => mine(x.split('.')[0])));
 
   const { table, disagreements } = tableOf(rows);
   expect(disagreements, 'two instances of one subject agree').toEqual([]);
@@ -629,5 +691,21 @@ test('which params a keyframe channel can animate, measured on the drawn scene',
     return;
   }
   const committed = JSON.parse(readFileSync(CENSUS, 'utf8'));
+  if (PART) {
+    // Every part places the whole scene and derives the whole split, so each one can check that
+    // no subject of the file falls outside all parts — and the n parts together check all of it.
+    expect(
+      Object.keys(committed.subjects).filter((s) => !assignment[s]),
+      'every subject in the file is measured by some part',
+    ).toEqual([]);
+    expect(
+      table.subjects,
+      `part ${PART.index}/${PART.count} equals its subjects in the file`,
+    ).toEqual(Object.fromEntries(Object.entries(committed.subjects).filter(([s]) => mine(s))));
+    // Not-measured patterns are not a subject's, so a part can only check that it found none
+    // the file lacks. The whole run (and CENSUS_WRITE) checks the list exactly.
+    expect(committed.notMeasured).toEqual(expect.arrayContaining(table.notMeasured));
+    return;
+  }
   expect(table, 'the measured census equals src/app/animatableCensus.json').toEqual(committed);
 });
