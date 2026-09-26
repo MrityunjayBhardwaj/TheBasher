@@ -25,8 +25,12 @@
 // channel: its batch samples `resolveEvaluatedParam`, which folds drivers (measured: a driver
 // writing 3 onto a KSampler's cfg bakes 3, not the authored 6.5).
 //
-// Not here yet: Vec2 and Quat (the census has no rows of either, #1259) and Image (a keyed
-// image input reaches nothing, #1257).
+// A Quat channel asks the same census: it measures every posable node in both rotation modes
+// (#1259), so a quaternion is offered where the node composes it and listed as still where it
+// is dormant (euler mode), exactly as Blender keys one either way.
+//
+// Not here yet: Vec2 (the census places no compositor layer, #1259) and Image (a keyed image
+// input reaches nothing, #1257).
 //
 // REF: src/app/animatableParams.ts; src/core/comfy/comfySchedule.ts; src/app/paramDrivers.ts
 //      (`driverChannelValuesForTarget`, the road order); issues #1066, #1065, #1235, #1258.

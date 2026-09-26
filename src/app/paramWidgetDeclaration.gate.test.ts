@@ -337,8 +337,6 @@ describe('a param declares its control on its schema (#872)', () => {
     // #1066 — channel wiring whose picker waits on a measurement, each named.
     const NO_VEC2_ROWS =
       'the animatable census has no vec2 rows (compositor layers, uvTransform), so no list could be honest (#1259)';
-    const NO_QUAT_ROWS =
-      'the animatable census has no quat rows (imported rotations, optional quaternion), so no list could be honest (#1259)';
     const NOTHING_READS_IMAGE =
       'a keyed ComfyUI image input reaches nothing in the batch, so there is no path to offer (#1257)';
 
@@ -357,12 +355,11 @@ describe('a param declares its control on its schema (#872)', () => {
       // #1065 — pickers over what the strip fold and the constraint fold can resolve. The Number,
       // Vec3, Color and Text channels' `target`/`paramPath` left it in #1066 — pickers over what
       // the census measured and what a ComfyUI batch reads — and so did ParamDriver's, once the
-      // census measured drivers on their own (#1258). What stays has a named reason: a
+      // census measured drivers on their own (#1258), and Quat's once it measured both rotation
+      // modes (#1259). What stays has a named reason: a
       // picker needs something that KNOWS which paths animate, and for these nothing does yet.
       'KeyframeChannelImage.paramPath': NOTHING_READS_IMAGE,
       'KeyframeChannelImage.target': NOTHING_READS_IMAGE,
-      'KeyframeChannelQuat.paramPath': NO_QUAT_ROWS,
-      'KeyframeChannelQuat.target': NO_QUAT_ROWS,
       'KeyframeChannelVec2.paramPath': NO_VEC2_ROWS,
       'KeyframeChannelVec2.target': NO_VEC2_ROWS,
 
@@ -412,7 +409,7 @@ describe('a param declares its control on its schema (#872)', () => {
     });
     // The denominator rides with the verdict — an empty `unacknowledged` from a loop that
     // never ran looks exactly like a pass.
-    expect(readOnly.length).toBe(19);
+    expect(readOnly.length).toBe(17);
   });
 
   it('row 15 — a param owns the word for its EMPTY state, and the control owns the fallback (#1031)', () => {
@@ -560,6 +557,8 @@ describe('a param declares its control on its schema (#872)', () => {
         'KeyframeChannelColor.paramPath',
         'KeyframeChannelNumber.target',
         'KeyframeChannelNumber.paramPath',
+        'KeyframeChannelQuat.target',
+        'KeyframeChannelQuat.paramPath',
         'KeyframeChannelText.target',
         'KeyframeChannelText.paramPath',
         'KeyframeChannelVec3.target',
@@ -577,6 +576,8 @@ describe('a param declares its control on its schema (#872)', () => {
         'KeyframeChannelColor.paramPath',
         'KeyframeChannelNumber.target',
         'KeyframeChannelNumber.paramPath',
+        'KeyframeChannelQuat.target',
+        'KeyframeChannelQuat.paramPath',
         'KeyframeChannelText.target',
         'KeyframeChannelText.paramPath',
         'KeyframeChannelVec3.target',
@@ -712,6 +713,26 @@ describe('a param declares its control on its schema (#872)', () => {
     });
     s = apply(s, bind.ok ? bind.ops : []);
     expect(bind.ok, 'the driver binds').toBe(true);
+    // #1259 — a quaternion is a leaf only once held, as the census seeds it: every node whose
+    // schema declares a rotation mode holds the identity, and one Sphere composes it.
+    const posable = Object.values(s.nodes).filter((n) => {
+      const shape = (getNodeType(n.type)?.paramSchema as z.ZodObject<z.ZodRawShape>)?.shape;
+      return shape !== undefined && 'rotationMode' in shape;
+    });
+    s = apply(
+      s,
+      posable.map((n) => ({
+        type: 'setParam' as const,
+        nodeId: n.id,
+        paramPath: 'quaternion',
+        value: [0, 0, 0, 1],
+      })),
+    );
+    const turned = placeKind('Sphere');
+    s = apply(s, [
+      { type: 'setParam', nodeId: turned.obj, paramPath: 'quaternion', value: [0, 0, 0, 1] },
+      { type: 'setParam', nodeId: turned.obj, paramPath: 'rotationMode', value: 'quaternion' },
+    ]);
 
     const META = { name: 'w', importedAt: 'fixed', fps: 30, frames: 24 };
     const MODE_B: ComfyApiJson = {
@@ -752,14 +773,15 @@ describe('a param declares its control on its schema (#872)', () => {
     const CHANNELS = [
       ['KeyframeChannelNumber', 'number', 1, 9],
       ['KeyframeChannelVec3', 'vec3', [0, 0, 0], [1, 2, 3]],
+      ['KeyframeChannelQuat', 'quat', [0, 0, 0, 1], [0.2, 0.3, 0.1, 0.927]],
       ['KeyframeChannelColor', 'color', '#000000', '#ffffff'],
       ['KeyframeChannelText', 'text', 'A', 'B'],
     ] as const;
     const shapeOf = (v: unknown): string | null => {
       if (typeof v === 'number') return 'number';
       if (typeof v === 'string') return /^#[0-9a-fA-F]{6}$/.test(v) ? 'color' : null;
-      if (Array.isArray(v) && v.length === 3 && v.every((x) => typeof x === 'number'))
-        return 'vec3';
+      if (Array.isArray(v) && v.every((x) => typeof x === 'number'))
+        return v.length === 3 ? 'vec3' : v.length === 4 ? 'quat' : null;
       return null;
     };
     const leaves = (v: unknown, at: string[], out: [string, string][]) => {
