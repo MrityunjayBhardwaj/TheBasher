@@ -9,13 +9,16 @@
 // radians→degrees conversion, the clip's time domain) retired with it.
 
 import { describe, it, expect, beforeEach } from 'vitest';
-import { __resetRegistryForTests } from '../../core/dag';
+import { __resetRegistryForTests, applyOp, emptyDagState } from '../../core/dag';
+import type { Op } from '../../core/dag/types';
+import { __resetMutatorRegistryForTests, registerAllMutators } from '../../agent/mutators';
 import { registerAllNodes } from '../../nodes/registerAll';
 import { gltfChannelDagId, gltfChildDagId } from '../../core/import/gltfImportChain';
-import { ensureChannelForBone } from './ensureChannelForBone';
+import { ensureChannelForBone, type EnsuredChannel } from './ensureChannelForBone';
+import { clipRowMintOps } from './clipRowMint';
 import type { DagState } from '../../core/dag/state';
 import type { KeyframeChannelVec3Params } from '../../nodes/KeyframeChannelVec3';
-import { importedChildNodes } from '../../test-utils/importedChildFixture';
+import { importedChildNodes, importedChildOps } from '../../test-utils/importedChildFixture';
 
 const ASSET = 'user-imports/dwarf.glb';
 const BONE = 'mixamorig_LeftArm';
@@ -157,5 +160,150 @@ describe('minting a channel for a bone', () => {
     // A spec error rather than a graph state — it should surface as a refusal, not as a
     // silent no-op that leaves the edit with nowhere to go.
     expect(ensureChannelForBone(childState(), 'n_asset', 'position')).toBeNull();
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// #1277 — a child the file's OWN clip drives mints from that clip.
+//
+// The clip-row road (drag, K, Delete on a `clip:` row) bakes the child from its
+// `TransformClip`. The diamond and Auto-Key reach this mint instead, and used to
+// seed it from the base pose, dropping the clip's track for the keyed component.
+// Two ways into one edit must mint the same channel.
+// ─────────────────────────────────────────────────────────────────────────
+describe('#1277 — a child the file’s own clip drives', () => {
+  const CHILD = 'Torso';
+  const STILL = 'Antenna';
+  const childId = gltfChildDagId(ASSET, CHILD);
+
+  function fileClipState(loop?: 'clamp' | 'cycle'): DagState {
+    let s = emptyDagState();
+    s = applyOp(s, {
+      type: 'addNode',
+      nodeId: 'n_gltf',
+      nodeType: 'GltfAsset',
+      params: { assetRef: ASSET },
+    }).next;
+    s = applyOp(s, {
+      type: 'addNode',
+      nodeId: 'n_tclip',
+      nodeType: 'TransformClip',
+      params: {
+        name: 'spin',
+        duration: 1,
+        ...(loop ? { loop } : {}),
+        keyframes: [
+          {
+            targetNodeId: CHILD,
+            time: 0,
+            position: [0, 0, 0],
+            rotation: [0, 0, 0],
+            scale: [1, 1, 1],
+          },
+          {
+            targetNodeId: CHILD,
+            time: 1,
+            position: [0, 1, 0],
+            rotation: [0, 90, 0],
+            scale: [2, 2, 2],
+          },
+        ],
+      },
+    }).next;
+    s = applyOp(s, {
+      type: 'addNode',
+      nodeId: 'n_sel',
+      nodeType: 'ClipSelect',
+      params: { selectedClipName: 'spin' },
+    }).next;
+    s = applyOp(s, {
+      type: 'connect',
+      from: { node: 'n_tclip', socket: 'out' },
+      to: { node: 'n_sel', socket: 'clips' },
+    }).next;
+    s = applyOp(s, {
+      type: 'connect',
+      from: { node: 'n_sel', socket: 'out' },
+      to: { node: 'n_gltf', socket: 'transformClip' },
+    }).next;
+    for (const name of [CHILD, STILL]) {
+      for (const op of importedChildOps(gltfChildDagId(ASSET, name), {
+        assetRef: ASSET,
+        childName: name,
+        position: [5, 5, 5],
+      })) {
+        s = applyOp(s, op as Op).next;
+      }
+    }
+    return s;
+  }
+
+  function keysOf(res: EnsuredChannel | null, component: 'position' | 'rotation') {
+    const add = res!.ops.find(
+      (o) => o.type === 'addNode' && o.nodeId === gltfChannelDagId(ASSET, CHILD, component),
+    ) as { params: KeyframeChannelVec3Params };
+    return add.params.keyframes.map((k) => [k.time, k.value]);
+  }
+
+  it('seeds from the clip’s track, not the base pose', () => {
+    const res = ensureChannelForBone(fileClipState(), childId, 'position');
+    expect(keysOf(res, 'position')).toEqual([
+      [0, [0, 0, 0]],
+      [1, [0, 1, 0]],
+    ]);
+  });
+
+  it('mints exactly what the clip-row road mints — one seed, two ways in', () => {
+    __resetMutatorRegistryForTests();
+    registerAllMutators();
+    const s = fileClipState();
+    const viaRow = clipRowMintOps(s, ASSET, CHILD, 'rotation');
+    expect(viaRow.ok).toBe(true);
+    if (!viaRow.ok) return;
+    const viaBone = ensureChannelForBone(s, childId, 'rotation')!;
+    expect(viaBone.ops).toEqual(viaRow.ops);
+    expect(viaBone.channelId).toBe(gltfChannelDagId(ASSET, CHILD, 'rotation'));
+  });
+
+  it('carries the clip’s time domain — a cycling clip mints a cycling channel', () => {
+    const res = ensureChannelForBone(fileClipState('cycle'), childId, 'position')!;
+    const add = res.ops.find(
+      (o) => o.type === 'addNode' && o.nodeId === gltfChannelDagId(ASSET, CHILD, 'position'),
+    ) as { params: KeyframeChannelVec3Params };
+    expect((add.params.modifiers ?? []).length).toBeGreaterThan(0);
+  });
+
+  it('never re-bakes a component already authored — the whole-child bake skips it', () => {
+    // The neighbour where whole-child and per-component disagree: position was edited earlier,
+    // now rotation is keyed. Re-seeding position from the clip would erase that edit.
+    const posId = gltfChannelDagId(ASSET, CHILD, 'position');
+    const s = applyOp(fileClipState(), {
+      type: 'addNode',
+      nodeId: posId,
+      nodeType: 'KeyframeChannelVec3',
+      params: {
+        target: childId,
+        childName: CHILD,
+        assetRef: ASSET,
+        paramPath: 'position',
+        keyframes: [{ time: 0, value: [7, 7, 7], easing: 'linear' }],
+      },
+    }).next;
+    expect(s.nodes[gltfChannelDagId(ASSET, CHILD, 'rotation')]).toBeUndefined();
+    const again = ensureChannelForBone(s, childId, 'rotation')!;
+    const added = again.ops.flatMap((o) => (o.type === 'addNode' ? [o.nodeId] : []));
+    expect(added.sort()).toEqual(
+      [gltfChannelDagId(ASSET, CHILD, 'rotation'), gltfChannelDagId(ASSET, CHILD, 'scale')].sort(),
+    );
+    expect(
+      (s.nodes[posId]!.params as KeyframeChannelVec3Params).keyframes.map((k) => k.value),
+    ).toEqual([[7, 7, 7]]);
+  });
+
+  it('a child the clip never targets still seeds from its base pose', () => {
+    const res = ensureChannelForBone(fileClipState(), gltfChildDagId(ASSET, STILL), 'position')!;
+    expect(res.ops).toHaveLength(1);
+    const add = res.ops[0] as { params: KeyframeChannelVec3Params };
+    expect(add.params.keyframes.map((k) => k.value)).toEqual([[5, 5, 5]]);
   });
 });

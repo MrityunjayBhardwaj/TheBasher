@@ -320,6 +320,25 @@ describe('the diamond / auto-key chokepoint on a bone', () => {
   });
 });
 
+describe('#1277 — keying the diamond on a child the file’s own clip drives', () => {
+  it('lands the key ON the clip’s track — the clip’s later key survives', () => {
+    // The clip-row K above keeps the clip's keys; the diamond reaches a different mint and
+    // must agree with it. Before #1277 this left [0, 0.25]: the t=1 key was gone, and the
+    // child stopped following the file's motion the moment it was keyed.
+    useDagStore.getState().hydrate(embeddedAnimationScene());
+    useTimeStore.getState().setTime(0.25);
+    expect(keyParamFromTransient(CHILD_ID, 'position', [5, 5, 5]).ok).toBe(true);
+    const channel =
+      useDagStore.getState().state.nodes[
+        gltfChannelDagId(EMBEDDED_ASSET, EMBEDDED_CHILD, 'position')
+      ];
+    const keys = (channel!.params as { keyframes: { time: number; value: number[] }[] }).keyframes;
+    expect(keys.map((k) => k.time)).toEqual([0, 0.25, 1]);
+    expect(keys.find((k) => k.time === 1)!.value).toEqual([0, 1, 0]);
+    expect(keys.find((k) => k.time === 0.25)!.value).toEqual([5, 5, 5]);
+  });
+});
+
 describe('#908 — an authored channel outranks the clip in the diamond', () => {
   it('only once the channel exists does the playhead light yellow', () => {
     // The clip has a key at t=0, and from the clip alone the diamond says animated, never on-key

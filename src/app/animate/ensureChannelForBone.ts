@@ -36,10 +36,16 @@
 // seeded the channel from that `AnimationClip`, so an edit changed the motion
 // rather than starting over. That road retired with the clone road's character
 // half (#1053) — a native character's keys are written into its pose layers,
-// not here — so the seed is the child's base pose. That is what an unanimated
-// child was already showing. A child the file's OWN clip drives (a
-// `TransformClip`) reaches here too and is seeded from its base pose, dropping
-// that clip's track for the component: #1277.
+// not here.
+//
+// What reaches this mint now is an imported child, and it is seeded from what
+// already drives it:
+//   - the file's OWN clip (a `TransformClip`), when it keys this child — the
+//     whole child is baked from it, keys and time domain, by `fileClipBakeOps`,
+//     the same derivation the clip-row mint uses (#1277). Before, this road took
+//     the base pose here and the keyed component dropped the clip's track, while
+//     the same edit from a clip row kept it.
+//   - otherwise the child's base pose, one key, which is what it was showing.
 //
 // Invariants honoured:
 //   - V8: app-layer, no `src/viewport/` imports.
@@ -59,6 +65,7 @@ import {
   type BakedKey,
 } from '../../agent/mutators/builders/bakeChannelOps';
 import { gltfChannelDagId } from '../../core/import/gltfImportChain';
+import { fileClipBakeOps } from '../../agent/mutators/builders/bakeGltfChannel';
 
 /** What minting decided. `ops` is empty when the channel already existed — the
  *  caller appends it either way and never branches on which happened. */
@@ -108,8 +115,8 @@ function seedKeysFromBase(state: DagState, boneId: string, component: BakedCompo
 }
 
 /**
- * The channel for `boneId`'s `component`, minting it from the bone's base pose if
- * it does not exist yet.
+ * The channel for `boneId`'s `component`, minting it if it does not exist yet —
+ * from the file's own clip when that drives the child, else from its base pose.
  *
  * Every channel-authoring mutator calls this instead of requiring a channel to
  * already be there. The rule is deliberately "any authoring op mints", with no
@@ -138,6 +145,12 @@ export function ensureChannelForBone(
   // observable — measured, by deleting it and watching the suite stay green — so
   // it must not be described as the thing that keeps a director's edit safe.
   if (state.nodes[channelId]) return { channelId, ops: [] };
+
+  // The file's own clip first (#1277). WHOLE-CHILD, not just `component`: it is exactly what the
+  // clip-row mint emits, so both ways into an edit leave the same channels, and the clip rows'
+  // whole-child suppression stays true (a half-baked child would hide rows still driving it).
+  const fromFileClip = fileClipBakeOps(state, assetRef, childName);
+  if (fromFileClip.length > 0) return { channelId, ops: fromFileClip };
 
   // Never empty: an empty channel is present-and-zero, not absent, so it would
   // suppress the pose underneath it. A single key holds — no time domain to claim.
