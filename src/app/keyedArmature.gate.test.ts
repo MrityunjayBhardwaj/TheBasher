@@ -16,7 +16,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { __resetRegistryForTests, applyOp, evaluate } from '../core/dag';
 import type { DagState } from '../core/dag/state';
 import { buildDefaultDagState } from '../core/project/default';
-import { __buildSkinnedNativeGltfImportOpsForTests } from '../core/import/nativeGltfImport';
+import { buildNativeGltfImportOps } from '../core/import/nativeGltfImport';
 import { registerAllNodes } from '../nodes/registerAll';
 import { sampleSkinDeform } from '../nodes/armatureDeform';
 import type { ObjectValue, SkinDeformValue } from '../nodes/types';
@@ -42,7 +42,7 @@ beforeEach(() => {
 async function imported() {
   const bytes = readFileSync('public/assets/skinned-bar-bone-prop.glb');
   let state = buildDefaultDagState();
-  const result = await __buildSkinnedNativeGltfImportOpsForTests({
+  const result = await buildNativeGltfImportOps({
     buffer: bytes.buffer.slice(
       bytes.byteOffset,
       bytes.byteOffset + bytes.byteLength,

@@ -1,7 +1,7 @@
 // #1215 — a character's layer curve opens in the graph editor and a key dragged there lands in the
 // layer: the drawn skin changes at that key's time and nowhere else, and one undo puts it back.
 //
-// Subject: skinned-bar.glb through the test door (as p1215-layer-key-edit), the two-joint swing bound
+// Subject: skinned-bar.glb through the product's native reader, dispatched directly (as p1215-layer-key-edit), the two-joint swing bound
 // onto it and baked at every pose (keys at 0 / 0.5 / 1 s). The baked layer's Bone0 position curve is
 // opened in the graph editor and its 0.5 s key's Z dot dragged up: Bone0, and the whole bar with it,
 // moves along Z at 0.5 s; at 0 s and 1 s the keys did not move.
@@ -72,7 +72,7 @@ test('#1215 — dragging a baked key in the graph editor moves the skin at that 
     const buffer = await fetch('/assets/skinned-bar.glb').then((r) => r.arrayBuffer());
     const dag = () => w.__basher_dag.getState();
     const scene = dag().state.outputs.scene!.node;
-    const result = await native.__buildSkinnedNativeGltfImportOpsForTests({
+    const result = await native.buildNativeGltfImportOps({
       buffer,
       assetRef: 'user-imports/p1215c/skinned-bar.glb',
       sceneNodeId: scene,

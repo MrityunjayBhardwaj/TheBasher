@@ -8,7 +8,7 @@
 // 1 s, halfway (45°) at 0.5 s, where the field shows 45. One undo takes the 1 s key back.
 //
 // Oracle, arithmetic: Bone1's head is (0, 1, 0), its tip rests at (0.2, 2, 0); turned θ about Z the
-// tip is (0.2·cosθ − sinθ, 1 + 0.2·sinθ + cosθ, 0). Through the test door, as p1244.
+// tip is (0.2·cosθ − sinθ, 1 + 0.2·sinθ + cosθ, 0). Through the product's native reader, dispatched directly, as p1244.
 import { test, expect } from './_fixtures';
 
 interface Node {
@@ -51,7 +51,7 @@ test('#1215 — with Auto-Key on, editing a keyed bone rotation keys it at the p
     const bones = await import('/src/app/stores/boneSelectionStore.ts');
     const buffer = await fetch('/assets/skinned-bar.glb').then((r) => r.arrayBuffer());
     const dag = w.__basher_dag.getState();
-    const result = await native.__buildSkinnedNativeGltfImportOpsForTests({
+    const result = await native.buildNativeGltfImportOps({
       buffer,
       assetRef: 'user-imports/p1215e/skinned-bar.glb',
       sceneNodeId: dag.state.outputs.scene!.node,

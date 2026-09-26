@@ -14,7 +14,7 @@ import { __resetRegistryForTests, applyOp, evaluate } from '../../core/dag';
 import type { DagState } from '../../core/dag/state';
 import { useDagStore } from '../../core/dag/store';
 import { buildDefaultDagState } from '../../core/project/default';
-import { __buildSkinnedNativeGltfImportOpsForTests } from '../../core/import/nativeGltfImport';
+import { buildNativeGltfImportOps } from '../../core/import/nativeGltfImport';
 import { buildBvhImportOps } from '../../core/import/bvhImportChain';
 import { buildSkeletonObjectOps } from '../../core/import/skeletonObject';
 import { registerAllNodes } from '../../nodes/registerAll';
@@ -80,7 +80,7 @@ beforeEach(() => {
 /** A native skinned import, as the skinned road builds it. */
 async function importNative(state: DagState, file: string): Promise<DagState> {
   const bytes = readFileSync(`public/assets/${file}`);
-  const result = await __buildSkinnedNativeGltfImportOpsForTests({
+  const result = await buildNativeGltfImportOps({
     buffer: bytes.buffer.slice(
       bytes.byteOffset,
       bytes.byteOffset + bytes.byteLength,

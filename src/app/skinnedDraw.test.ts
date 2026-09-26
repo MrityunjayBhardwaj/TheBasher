@@ -10,7 +10,7 @@ import {
   Float32BufferAttribute,
   Vector3,
 } from 'three';
-import { __buildSkinnedNativeGltfImportOpsForTests } from '../core/import/nativeGltfImport';
+import { buildNativeGltfImportOps } from '../core/import/nativeGltfImport';
 import { __resetRegistryForTests } from '../core/dag/registry';
 import { registerAllNodes } from '../nodes/registerAll';
 import { applyOp } from '../core/dag/ops';
@@ -42,7 +42,7 @@ async function modifierOf(
   path: string,
 ): Promise<{ skin: SkinDeformValue; mesh: MeshGeometryData }> {
   const bytes = readFileSync(path);
-  const result = await __buildSkinnedNativeGltfImportOpsForTests({
+  const result = await buildNativeGltfImportOps({
     buffer: bytes.buffer.slice(
       bytes.byteOffset,
       bytes.byteOffset + bytes.byteLength,

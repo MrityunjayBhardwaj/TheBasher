@@ -12,7 +12,7 @@ import type { DagState } from '../core/dag/state';
 import { buildDefaultDagState } from '../core/project/default';
 import { parseBvh } from '../core/import/bvh';
 import { paramsToThreeClip } from '../core/import/threeAdapter';
-import { __buildSkinnedNativeGltfImportOpsForTests } from '../core/import/nativeGltfImport';
+import { buildNativeGltfImportOps } from '../core/import/nativeGltfImport';
 import { registerAllNodes } from './registerAll';
 import { AnimationClipNode, AnimationClipParams, type ClipOutputs } from './AnimationClip';
 import { poseLayerClipInfo } from './PoseLayer';
@@ -78,7 +78,7 @@ describe('a base layer gives the wire its range; everything above passes it thro
   async function bar(): Promise<{ state: DagState; armatureId: string; baseId: string }> {
     let state = buildDefaultDagState();
     const bytes = readFileSync('public/assets/skinned-bar.glb');
-    const result = await __buildSkinnedNativeGltfImportOpsForTests({
+    const result = await buildNativeGltfImportOps({
       buffer: bytes.buffer.slice(
         bytes.byteOffset,
         bytes.byteOffset + bytes.byteLength,

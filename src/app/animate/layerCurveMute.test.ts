@@ -15,7 +15,7 @@ import type { DagState } from '../../core/dag/state';
 import { emptyDagState } from '../../core/dag/state';
 import { useDagStore } from '../../core/dag/store';
 import type { Node } from '../../core/dag/types';
-import { __buildSkinnedNativeGltfImportOpsForTests } from '../../core/import/nativeGltfImport';
+import { buildNativeGltfImportOps } from '../../core/import/nativeGltfImport';
 import { registerAllNodes } from '../../nodes/registerAll';
 import type { ObjectValue, PosedSkeletonValue } from '../../nodes/types';
 import {
@@ -45,7 +45,7 @@ const live = () => useDagStore.getState().state;
 
 async function bar() {
   const bytes = readFileSync('public/assets/skinned-bar-two-clips.glb');
-  const result = await __buildSkinnedNativeGltfImportOpsForTests({
+  const result = await buildNativeGltfImportOps({
     buffer: bytes.buffer.slice(
       bytes.byteOffset,
       bytes.byteOffset + bytes.byteLength,

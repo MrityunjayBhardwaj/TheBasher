@@ -1,7 +1,7 @@
 // #1208 — a glTF with two skins under two armature nodes comes across natively as two skeletons,
 // each standing its own Object and posed by its own channels, as Blender 5.1.1 makes two armature
-// Objects of it (ref/probes/blender-native-character/q1208_two_skins_oracle.py). Through the test
-// door, as #1197's spec, until #1205 lifts the skin refusal.
+// Objects of it (ref/probes/blender-native-character/q1208_two_skins_oracle.py). Through
+// the product's native reader (`buildNativeGltfImportOps`), dispatched directly; the product road itself is p1205's.
 //
 // The file: skinned-bar twice, the second rig at x = 3 bending the other way. At 0.5 s (frame 12)
 // each rig's leaf bone Bone1 therefore points along (∓0.6756, 0.7373, 0) in glTF space.
@@ -35,7 +35,7 @@ test('#1208 — two skins stand as two rigs, each posed by its own channels', as
     const native = await import('/src/core/import/nativeGltfImport.ts');
     const buffer = await fetch('/assets/two-skinned-bars.glb').then((r) => r.arrayBuffer());
     const dag = w.__basher_dag.getState();
-    const result = await native.__buildSkinnedNativeGltfImportOpsForTests({
+    const result = await native.buildNativeGltfImportOps({
       buffer,
       assetRef: 'user-imports/p1208/two-skinned-bars.glb',
       sceneNodeId: dag.state.outputs.scene!.node,

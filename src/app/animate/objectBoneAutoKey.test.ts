@@ -15,7 +15,7 @@ import type { DagState } from '../../core/dag/state';
 import { useDagStore } from '../../core/dag/store';
 import { buildDefaultDagState } from '../../core/project/default';
 import type { Op } from '../../core/dag/types';
-import { __buildSkinnedNativeGltfImportOpsForTests } from '../../core/import/nativeGltfImport';
+import { buildNativeGltfImportOps } from '../../core/import/nativeGltfImport';
 import { registerAllNodes } from '../../nodes/registerAll';
 import type { ObjectValue, PosedSkeletonValue } from '../../nodes/types';
 import type { PoseLayerParams } from '../../nodes/PoseLayer';
@@ -51,7 +51,7 @@ const setTime = (seconds: number) => useTimeStore.getState().setTime(seconds);
 async function posedBar(): Promise<{ armature: string; layer: string }> {
   const bytes = readFileSync('public/assets/skinned-bar.glb');
   const s0 = buildDefaultDagState();
-  const result = await __buildSkinnedNativeGltfImportOpsForTests({
+  const result = await buildNativeGltfImportOps({
     buffer: bytes.buffer.slice(
       bytes.byteOffset,
       bytes.byteOffset + bytes.byteLength,

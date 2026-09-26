@@ -17,7 +17,7 @@ import { __resetRegistryForTests, applyOp, evaluate } from '../core/dag';
 import type { DagState } from '../core/dag/state';
 import { emptyDagState } from '../core/dag/state';
 import { useDagStore } from '../core/dag/store';
-import { __buildSkinnedNativeGltfImportOpsForTests } from '../core/import/nativeGltfImport';
+import { buildNativeGltfImportOps } from '../core/import/nativeGltfImport';
 import { registerAllNodes } from '../nodes/registerAll';
 import type { ObjectValue, PosedSkeletonValue } from '../nodes/types';
 import type { PoseLayerParams } from '../nodes/PoseLayer';
@@ -62,7 +62,7 @@ const channelsOf = (state: DagState, layer: string) =>
 
 async function barWithBone0Position() {
   const bytes = readFileSync('public/assets/skinned-bar-two-clips.glb');
-  const result = await __buildSkinnedNativeGltfImportOpsForTests({
+  const result = await buildNativeGltfImportOps({
     buffer: bytes.buffer.slice(
       bytes.byteOffset,
       bytes.byteOffset + bytes.byteLength,

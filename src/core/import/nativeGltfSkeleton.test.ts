@@ -4,11 +4,7 @@
 import { readFileSync } from 'node:fs';
 import { Euler, Matrix4, Quaternion, Vector3 } from 'three';
 import { beforeEach, describe, expect, it } from 'vitest';
-import {
-  __buildSkinnedNativeGltfImportOpsForTests,
-  buildNativeGltfImportOps,
-  type NativeImportResult,
-} from './nativeGltfImport';
+import { buildNativeGltfImportOps, type NativeImportResult } from './nativeGltfImport';
 import { nativeBoneNames, nativeSkeletonLayer, readNativeSkeletons } from './nativeGltfSkeleton';
 import { sampleSkinDeform } from '../../nodes/armatureDeform';
 import { parseGltfContainer } from './glb';
@@ -69,7 +65,7 @@ function jsonOf(buffer: ArrayBuffer): Json {
 }
 
 async function importSkinned(buffer: ArrayBuffer): Promise<NativeImportResult> {
-  const result = await __buildSkinnedNativeGltfImportOpsForTests({
+  const result = await buildNativeGltfImportOps({
     buffer,
     assetRef: 'user-imports/native/skinned-bar.glb',
     sceneNodeId: 'n_scene',
@@ -193,18 +189,21 @@ describe('#393 step 1 — a skinned glTF’s joints become a skeleton', () => {
     expect(posed.sample(0.5)[0].quaternion).toEqual([0, 0, 0, 1]);
   });
 
-  it('the product entry still refuses a skinned file, until a native character can take a motion (#1205)', async () => {
+  it('the product reader takes a skinned file: a skeleton, and a mesh an Armature modifier deforms (#1205)', async () => {
     const result = await buildNativeGltfImportOps({
       buffer: glbWith(SKINNED_BAR),
       assetRef: 'user-imports/native/skinned-bar.glb',
       sceneNodeId: 'n_scene',
       storeImage: async () => 'img',
     });
-    expect(result).toMatchObject({ issue: '#1205' });
+    if ('refused' in result) throw new Error(`refused: ${result.refused} (${result.issue})`);
+    const types = result.ops.flatMap((op) => (op.type === 'addNode' ? [op.nodeType] : []));
+    expect(types).toContain('Skeleton');
+    expect(types).toContain('ArmatureModifier');
   });
 
-  it('past the refusal, nothing points at the file: no asset, no clone, no reference to it', async () => {
-    const result = await __buildSkinnedNativeGltfImportOpsForTests({
+  it('a skinned import leaves nothing pointing at the file: no asset, no clone, no reference to it', async () => {
+    const result = await buildNativeGltfImportOps({
       buffer: glbWith(SKINNED_BAR),
       assetRef: 'user-imports/native/skinned-bar.glb',
       sceneNodeId: 'n_scene',
@@ -466,7 +465,7 @@ describe('#393 step 1 — a skinned glTF’s joints become a skeleton', () => {
       '#1209',
     ],
   ])('refused: %s', async (_label, mutate, why, issue) => {
-    const result = await __buildSkinnedNativeGltfImportOpsForTests({
+    const result = await buildNativeGltfImportOps({
       buffer: glbWith(SKINNED_BAR, mutate),
       assetRef: 'user-imports/native/skinned-bar.glb',
       sceneNodeId: 'n_scene',

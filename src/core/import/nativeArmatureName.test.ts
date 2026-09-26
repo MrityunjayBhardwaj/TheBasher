@@ -11,7 +11,7 @@ import { __resetRegistryForTests, applyOp } from '../dag';
 import type { DagState } from '../dag/state';
 import { buildDefaultDagState } from '../project/default';
 import { registerAllNodes } from '../../nodes/registerAll';
-import { __buildSkinnedNativeGltfImportOpsForTests } from './nativeGltfImport';
+import { buildNativeGltfImportOps } from './nativeGltfImport';
 
 beforeEach(() => {
   __resetRegistryForTests();
@@ -21,7 +21,7 @@ beforeEach(() => {
 async function importNative(file: string): Promise<DagState> {
   let state = buildDefaultDagState();
   const bytes = readFileSync(`public/assets/${file}`);
-  const result = await __buildSkinnedNativeGltfImportOpsForTests({
+  const result = await buildNativeGltfImportOps({
     buffer: bytes.buffer.slice(
       bytes.byteOffset,
       bytes.byteOffset + bytes.byteLength,

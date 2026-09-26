@@ -2,8 +2,8 @@
 // key along its row in the dopesheet, and the drawn skin changes at that time and nowhere else. One
 // undo puts the key, the bone and the skin back.
 //
-// Subject: skinned-bar.glb through the test door (as #1201's and #1244's specs, until #1205 lifts the
-// skin refusal), the two-joint swing bound onto it and baked at every pose: Bone1 keyed 0° / 45° / 90°
+// Subject: skinned-bar.glb through the product's native reader (`buildNativeGltfImportOps`), dispatched directly; the product road itself is p1205's,
+// the two-joint swing bound onto it and baked at every pose: Bone1 keyed 0° / 45° / 90°
 // at 0 / 0.5 / 1 s. Dragging the 0.5 s key to 0.75 s makes Bone1 at 0.5 s a third of the way to 45°
 // (30°), so the bar bends less there; at 0 s and 1 s the keys did not move.
 import { test, expect } from './_fixtures';
@@ -90,7 +90,7 @@ test('#1215 — dragging a baked key in the dopesheet moves the skin at that tim
     const buffer = await fetch('/assets/skinned-bar.glb').then((r) => r.arrayBuffer());
     const dag = () => w.__basher_dag.getState();
     const scene = dag().state.outputs.scene!.node;
-    const result = await native.__buildSkinnedNativeGltfImportOpsForTests({
+    const result = await native.buildNativeGltfImportOps({
       buffer,
       assetRef: 'user-imports/p1215b/skinned-bar.glb',
       sceneNodeId: scene,

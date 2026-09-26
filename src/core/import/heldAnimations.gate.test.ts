@@ -22,10 +22,7 @@ import type { DagState } from '../dag/state';
 import { emptyDagState } from '../dag/state';
 import { buildDefaultDagState } from '../project/default';
 import { registerAllNodes } from '../../nodes/registerAll';
-import {
-  buildNativeGltfImportOps,
-  __buildSkinnedNativeGltfImportOpsForTests,
-} from './nativeGltfImport';
+import { buildNativeGltfImportOps } from './nativeGltfImport';
 import { resolveWorldTransform } from '../../app/resolveWorldTransform';
 import { sampleSkinDeform } from '../../nodes/armatureDeform';
 import type { ModifiedDataValue } from '../../nodes/types';
@@ -142,7 +139,7 @@ describe('#1154 — three animations on nested objects, against Blender', () => 
 
 // ── Bones: skinned-bar-two-clips.glb ─────────────────────────────────────────────────────────
 async function importBar() {
-  const result = await __buildSkinnedNativeGltfImportOpsForTests({
+  const result = await buildNativeGltfImportOps({
     buffer: bytesOf('skinned-bar-two-clips.glb'),
     assetRef: 'user-imports/native/skinned-bar-two-clips.glb',
     sceneNodeId: 'n_scene',

@@ -12,7 +12,7 @@ import { __resetRegistryForTests, applyOp, evaluate } from '../../core/dag';
 import type { DagState } from '../../core/dag/state';
 import { emptyDagState } from '../../core/dag/state';
 import { useDagStore } from '../../core/dag/store';
-import { __buildSkinnedNativeGltfImportOpsForTests } from '../../core/import/nativeGltfImport';
+import { buildNativeGltfImportOps } from '../../core/import/nativeGltfImport';
 import { registerAllNodes } from '../../nodes/registerAll';
 import { sampleSkinDeform } from '../../nodes/armatureDeform';
 import type {
@@ -43,7 +43,7 @@ const graph = (state: DagState) =>
 
 async function bar() {
   const bytes = readFileSync('public/assets/skinned-bar-two-clips.glb');
-  const result = await __buildSkinnedNativeGltfImportOpsForTests({
+  const result = await buildNativeGltfImportOps({
     buffer: bytes.buffer.slice(
       bytes.byteOffset,
       bytes.byteOffset + bytes.byteLength,

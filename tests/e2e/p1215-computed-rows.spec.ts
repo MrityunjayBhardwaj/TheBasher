@@ -4,7 +4,7 @@
 // motion to keys" in the inspector the read-only rows are gone and the baked layer's editable rows
 // stand in their place, key for key.
 //
-// Subject: skinned-bar.glb through the test door (as p1215-layer-key-edit), the two-joint swing (3
+// Subject: skinned-bar.glb through the product's native reader, dispatched directly (as p1215-layer-key-edit), the two-joint swing (3
 // poses, 0.5 s apart) bound onto it and NOT baked.
 import { test, expect } from './_fixtures';
 
@@ -89,7 +89,7 @@ test('#1215 — a bound retarget shows read-only in the dopesheet until baked; t
     const buffer = await fetch('/assets/skinned-bar.glb').then((r) => r.arrayBuffer());
     const dag = () => w.__basher_dag.getState();
     const scene = dag().state.outputs.scene!.node;
-    const result = await native.__buildSkinnedNativeGltfImportOpsForTests({
+    const result = await native.buildNativeGltfImportOps({
       buffer,
       assetRef: 'user-imports/p1215d/skinned-bar.glb',
       sceneNodeId: scene,

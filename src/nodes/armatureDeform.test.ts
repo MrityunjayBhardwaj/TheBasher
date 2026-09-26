@@ -3,7 +3,7 @@
 import { posedSkeletonFromClip } from './AnimationClip';
 import { readFileSync } from 'node:fs';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { __buildSkinnedNativeGltfImportOpsForTests } from '../core/import/nativeGltfImport';
+import { buildNativeGltfImportOps } from '../core/import/nativeGltfImport';
 import { __resetRegistryForTests } from '../core/dag/registry';
 import { registerAllNodes } from './registerAll';
 import { applyOp } from '../core/dag/ops';
@@ -27,7 +27,7 @@ const BLENDER_TIP = {
 
 async function skinnedBar(): Promise<{ state: DagState; modifierId: string }> {
   const bytes = readFileSync('public/assets/skinned-bar.glb');
-  const result = await __buildSkinnedNativeGltfImportOpsForTests({
+  const result = await buildNativeGltfImportOps({
     buffer: bytes.buffer.slice(
       bytes.byteOffset,
       bytes.byteOffset + bytes.byteLength,
@@ -94,7 +94,7 @@ describe('#1212 — a file whose bones carry scale channels held at rest comes a
 
   async function sampled() {
     const bytes = readFileSync('public/assets/skinned-bar-rest-scale.glb');
-    const result = await __buildSkinnedNativeGltfImportOpsForTests({
+    const result = await buildNativeGltfImportOps({
       buffer: bytes.buffer.slice(
         bytes.byteOffset,
         bytes.byteOffset + bytes.byteLength,
@@ -325,7 +325,7 @@ describe('#1218 — a skinned mesh under a moved armature stands in the armature
     path: string,
   ): Promise<{ state: DagState; objectId: string; modifierId: string }> {
     const bytes = readFileSync(path);
-    const result = await __buildSkinnedNativeGltfImportOpsForTests({
+    const result = await buildNativeGltfImportOps({
       buffer: bytes.buffer.slice(
         bytes.byteOffset,
         bytes.byteOffset + bytes.byteLength,
@@ -439,7 +439,7 @@ describe('#1218 — a skinned mesh under a moved armature stands in the armature
     head.writeUInt32LE(body.length, 12);
     head.writeUInt32LE(0x4e4f534a, 16);
     const out = Buffer.concat([head, body, rest]);
-    const result = await __buildSkinnedNativeGltfImportOpsForTests({
+    const result = await buildNativeGltfImportOps({
       buffer: out.buffer.slice(out.byteOffset, out.byteOffset + out.byteLength) as ArrayBuffer,
       assetRef: 'user-imports/native/with-child.glb',
       sceneNodeId: 'n_scene',
@@ -483,7 +483,7 @@ describe('#1218 — a skinned mesh under a moved armature stands in the armature
     head.writeUInt32LE(body.length, 12);
     head.writeUInt32LE(0x4e4f534a, 16);
     const out = Buffer.concat([head, body, rest]);
-    const result = await __buildSkinnedNativeGltfImportOpsForTests({
+    const result = await buildNativeGltfImportOps({
       buffer: out.buffer.slice(out.byteOffset, out.byteOffset + out.byteLength) as ArrayBuffer,
       assetRef: 'user-imports/native/animated-skin.glb',
       sceneNodeId: 'n_scene',

@@ -5,7 +5,7 @@ import { readFileSync } from 'node:fs';
 import { __resetRegistryForTests, applyOp } from '../../core/dag';
 import { useDagStore } from '../../core/dag/store';
 import { buildDefaultDagState } from '../../core/project/default';
-import { __buildSkinnedNativeGltfImportOpsForTests } from '../../core/import/nativeGltfImport';
+import { buildNativeGltfImportOps } from '../../core/import/nativeGltfImport';
 import { buildBvhImportOps } from '../../core/import/bvhImportChain';
 import { buildSkeletonObjectOps } from '../../core/import/skeletonObject';
 import { registerAllNodes } from '../../nodes/registerAll';
@@ -47,7 +47,7 @@ beforeEach(() => {
 it('a bound native character is found, hand-posed or not; another clip does not find it', async () => {
   let state = buildDefaultDagState();
   const b = readFileSync('public/assets/skinned-bar.glb');
-  const r = await __buildSkinnedNativeGltfImportOpsForTests({
+  const r = await buildNativeGltfImportOps({
     buffer: b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength) as ArrayBuffer,
     assetRef: 'user-imports/native/skinned-bar.glb',
     sceneNodeId: state.outputs.scene!.node,

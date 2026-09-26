@@ -2,8 +2,8 @@
 // does not move: the retarget's poses become an override layer of keys at the bottom of the chain, the
 // retarget is detached and kept, and one undo puts the live retarget back.
 //
-// Subject: skinned-bar.glb through the test door (as #1201's and #1244's specs, until #1205 lifts the
-// skin refusal), with a two-joint swing bound onto it by the product's bind. The swing takes Bone1
+// Subject: skinned-bar.glb through the product's native reader (`buildNativeGltfImportOps`), dispatched directly; the product road itself is p1205's,
+// with a two-joint swing bound onto it by the product's bind. The swing takes Bone1
 // from 0° to 90° over a second, so the drawn skin is bent mid-way; a bake that keyed the wrong poses,
 // or that the chain did not read, would draw it elsewhere.
 import { test, expect } from './_fixtures';
@@ -70,7 +70,7 @@ test('#1215 — baking a bound motion to keys leaves the drawn skin where it was
     const buffer = await fetch('/assets/skinned-bar.glb').then((r) => r.arrayBuffer());
     const dag = () => w.__basher_dag.getState();
     const scene = dag().state.outputs.scene!.node;
-    const result = await native.__buildSkinnedNativeGltfImportOpsForTests({
+    const result = await native.buildNativeGltfImportOps({
       buffer,
       assetRef: 'user-imports/p1215/skinned-bar.glb',
       sceneNodeId: scene,

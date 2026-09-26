@@ -3,7 +3,7 @@
 // same product (`ObjectR` → `BoneParentR`), read off the real three object, paired with the
 // resolver at the same instant.
 //
-// Through the test door, as #1218's spec, until #1205 lifts the skin refusal. Oracle: Blender 5.1.1
+// Through the product's native reader (`buildNativeGltfImportOps`), dispatched directly; the product road itself is p1205's. Oracle: Blender 5.1.1
 // (ref/probes/blender-native-character/q1210_bone_prop_oracle.py), glTF space, 24 fps.
 import { test, expect } from './_fixtures';
 
@@ -48,7 +48,7 @@ test('#1210 — a prop parented to a keyed bone is drawn where Blender stands it
     const native = await import('/src/core/import/nativeGltfImport.ts');
     const buffer = await fetch('/assets/skinned-bar-bone-prop.glb').then((r) => r.arrayBuffer());
     const dag = w.__basher_dag.getState();
-    const result = await native.__buildSkinnedNativeGltfImportOpsForTests({
+    const result = await native.buildNativeGltfImportOps({
       buffer,
       assetRef: 'user-imports/p1210/skinned-bar-bone-prop.glb',
       sceneNodeId: dag.state.outputs.scene!.node,

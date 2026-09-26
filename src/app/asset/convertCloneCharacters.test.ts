@@ -9,7 +9,7 @@ import type { DagState } from '../../core/dag/state';
 import type { Op } from '../../core/dag/types';
 import { buildDefaultDagState } from '../../core/project/default';
 import { buildGltfImportOps, hashId } from '../../core/import/gltfImportChain';
-import { buildSavedCharacterOps } from '../../core/import/nativeGltfImport';
+import { buildNativeGltfImportOps } from '../../core/import/nativeGltfImport';
 import { useAssetErrorStore } from '../stores/assetErrorStore';
 import {
   convertCloneCharacters,
@@ -24,7 +24,7 @@ import { composeProject, loadProject, saveProject } from '../../core/project/io'
 // character that is kept must never reach it. Spied, since no skinned fixture carries a texture.
 vi.mock('../../core/import/nativeGltfImport', async (original) => {
   const actual = await original<typeof import('../../core/import/nativeGltfImport')>();
-  return { ...actual, buildSavedCharacterOps: vi.fn(actual.buildSavedCharacterOps) };
+  return { ...actual, buildNativeGltfImportOps: vi.fn(actual.buildNativeGltfImportOps) };
 });
 
 const REF = 'user-imports/skinned-bar/skinned-bar.glb';
@@ -99,7 +99,7 @@ async function savedClone(fixture: string | Uint8Array): Promise<DagState> {
 
 /** The same project with the file imported fresh on the native road. */
 async function freshNative(fixture: string): Promise<DagState> {
-  const native = await buildSavedCharacterOps(argsFor(fixture));
+  const native = await buildNativeGltfImportOps(argsFor(fixture));
   if ('refused' in native) throw new Error(native.refused);
   return apply(buildDefaultDagState(), native.ops);
 }
@@ -110,7 +110,7 @@ const cloneTypes = (state: DagState): string[] =>
     .filter((t) => /^Gltf|TransformClip|ClipSelect/.test(t));
 
 beforeEach(() => {
-  vi.mocked(buildSavedCharacterOps).mockClear();
+  vi.mocked(buildNativeGltfImportOps).mockClear();
   __resetRegistryForTests();
   registerAllNodes();
 });
@@ -356,7 +356,7 @@ describe('a moved child the file animates (the clone let the gizmo outrank the c
     ]);
     const { state, report } = await convertCloneCharacters(saved, deps(fixture));
     expect(report.converted[0].notes).toEqual([]);
-    const native = await buildSavedCharacterOps(argsFor(fixture));
+    const native = await buildNativeGltfImportOps(argsFor(fixture));
     if ('refused' in native) throw new Error(native.refused);
     expect(state.nodes).toEqual(apply(buildDefaultDagState(), native.ops).nodes);
   });
@@ -379,7 +379,7 @@ describe('a character that is kept, and says why', () => {
       },
     ]);
     expect(stored).toEqual([]);
-    expect(buildSavedCharacterOps).not.toHaveBeenCalled();
+    expect(buildNativeGltfImportOps).not.toHaveBeenCalled();
   });
 
   it('a hidden bone: kept, and named (a bone has no node of its own natively)', async () => {

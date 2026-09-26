@@ -12,7 +12,7 @@ import type { DagState } from '../core/dag/state';
 import { useDagStore } from '../core/dag/store';
 import { buildDefaultDagState } from '../core/project/default';
 import type { Op } from '../core/dag/types';
-import { __buildSkinnedNativeGltfImportOpsForTests } from '../core/import/nativeGltfImport';
+import { buildNativeGltfImportOps } from '../core/import/nativeGltfImport';
 import { buildBvhImportOps } from '../core/import/bvhImportChain';
 import { buildSkeletonObjectOps } from '../core/import/skeletonObject';
 import { registerAllNodes } from '../nodes/registerAll';
@@ -71,7 +71,7 @@ const apply = (state: DagState, ops: readonly Op[]) =>
 async function importedBar(): Promise<{ state: DagState; armature: string }> {
   const bytes = readFileSync('public/assets/skinned-bar.glb');
   const s0 = buildDefaultDagState();
-  const result = await __buildSkinnedNativeGltfImportOpsForTests({
+  const result = await buildNativeGltfImportOps({
     buffer: bytes.buffer.slice(
       bytes.byteOffset,
       bytes.byteOffset + bytes.byteLength,

@@ -10,7 +10,7 @@ import * as THREE from 'three';
 import { __resetRegistryForTests, applyOp } from '../core/dag';
 import type { DagState } from '../core/dag/state';
 import { buildDefaultDagState } from '../core/project/default';
-import { __buildSkinnedNativeGltfImportOpsForTests } from '../core/import/nativeGltfImport';
+import { buildNativeGltfImportOps } from '../core/import/nativeGltfImport';
 import { unpackMeshData } from './meshGeometryData';
 import { registerAllNodes } from '../nodes/registerAll';
 import { resolveParentWorldMatrix, resolveWorldTransform } from './resolveWorldTransform';
@@ -29,7 +29,7 @@ beforeEach(() => {
 async function imported(): Promise<{ state: DagState; propId: string }> {
   const bytes = readFileSync('public/assets/skinned-bar-bone-prop.glb');
   let state = buildDefaultDagState();
-  const result = await __buildSkinnedNativeGltfImportOpsForTests({
+  const result = await buildNativeGltfImportOps({
     buffer: bytes.buffer.slice(
       bytes.byteOffset,
       bytes.byteOffset + bytes.byteLength,

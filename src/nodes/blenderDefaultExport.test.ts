@@ -13,7 +13,7 @@
 // ours agree exactly. Vertices are joined by rest position (Blender keeps 6, so do we).
 import { readFileSync } from 'node:fs';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { __buildSkinnedNativeGltfImportOpsForTests } from '../core/import/nativeGltfImport';
+import { buildNativeGltfImportOps } from '../core/import/nativeGltfImport';
 import { __resetRegistryForTests } from '../core/dag/registry';
 import { registerAllNodes } from './registerAll';
 import { applyOp } from '../core/dag/ops';
@@ -299,7 +299,7 @@ beforeEach(() => {
 
 async function deformedAt(file: string) {
   const bytes = readFileSync(`public/assets/${file}`);
-  const result = await __buildSkinnedNativeGltfImportOpsForTests({
+  const result = await buildNativeGltfImportOps({
     buffer: bytes.buffer.slice(
       bytes.byteOffset,
       bytes.byteOffset + bytes.byteLength,

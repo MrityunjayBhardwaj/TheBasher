@@ -9,7 +9,7 @@
 // frame (#1207 measured one rebuild per frame once the mesh's Object was keyed).
 //
 // Oracle: Blender 5.1.1 (ref/probes/blender-native-character/q1210_bone_prop_oracle.py), glTF space,
-// 24 fps. Through the test door, as #1210's spec, until #1205 lifts the skin refusal.
+// 24 fps. Through the product's native reader (`buildNativeGltfImportOps`), dispatched directly; the product road itself is p1205's.
 import { test, expect } from './_fixtures';
 
 interface Node {
@@ -58,7 +58,7 @@ test('#1224 — a keyed armature and a keyed skinned mesh keep their motion', as
     const native = await import('/src/core/import/nativeGltfImport.ts');
     const buffer = await fetch('/assets/skinned-bar-bone-prop.glb').then((r) => r.arrayBuffer());
     const dag = w.__basher_dag.getState();
-    const result = await native.__buildSkinnedNativeGltfImportOpsForTests({
+    const result = await native.buildNativeGltfImportOps({
       buffer,
       assetRef: 'user-imports/p1224/skinned-bar-bone-prop.glb',
       sceneNodeId: dag.state.outputs.scene!.node,

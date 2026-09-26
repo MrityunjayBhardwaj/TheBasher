@@ -3,7 +3,7 @@
 // mesh under the armature (`io_scene_gltf2/blender/imp/{mesh,vnode}.py`). Before the fix, a mesh
 // node BELOW its armature node drew offset twice and bent about the wrong points.
 //
-// Through the test door, as #1197's spec, until #1205 lifts the skin refusal. Oracle: Blender 5.1.1
+// Through the product's native reader (`buildNativeGltfImportOps`), dispatched directly; the product road itself is p1205's. Oracle: Blender 5.1.1
 // (ref/probes/blender-native-character/q1218_*.py), glTF space, frame 12 = 0.5 s at 24 fps.
 import { test, expect } from './_fixtures';
 import type { Page } from '@playwright/test';
@@ -38,7 +38,7 @@ async function importAndPose(
     const native = await import('/src/core/import/nativeGltfImport.ts');
     const buffer = await fetch(`/assets/${f}`).then((r) => r.arrayBuffer());
     const dag = w.__basher_dag.getState();
-    const result = await native.__buildSkinnedNativeGltfImportOpsForTests({
+    const result = await native.buildNativeGltfImportOps({
       buffer,
       assetRef: `user-imports/p1218/${f}`,
       sceneNodeId: dag.state.outputs.scene!.node,

@@ -1,13 +1,10 @@
 // #1197 — a skinned mesh draws natively in the live app: a three SkinnedMesh over the stored mesh,
 // deformed by the Armature modifier's rule, with no asset clone anywhere.
 //
-// WHICH ROAD THIS TAKES, SAID FIRST. The product still refuses a skinned file on the native road
-// (#1205 — a native character cannot yet have its bones posed), so no product
-// seam can bring one across yet. This spec builds the native ops through the test-only door
-// (`__buildSkinnedNativeGltfImportOpsForTests`, loaded as a dev-server module) and dispatches them
-// into the live editor. It witnesses the DRAW. The product-road gate — the same tip-vertex check
-// through `__basher_ingestGltfFolder`, and surviving the source's deletion — lands with #1205, which
-// lifts the refusal.
+// WHICH ROAD THIS TAKES, SAID FIRST. This spec builds the native ops with the product's reader
+// (`buildNativeGltfImportOps`, loaded as a dev-server module) and dispatches them into the live
+// editor. It witnesses the DRAW. The product-road gate — the same tip-vertex check through
+// `__basher_ingestGltfFolder`, and surviving the source's deletion — is p1205's.
 //
 // The oracle: Blender 5.1.1 on the same file (`ref/probes/blender-armature-deform/
 // q13_skinned_bar_oracle.py`), tip vertex at frames 12 and 24 (24 fps).
@@ -72,7 +69,7 @@ test('#1197 — skinned-bar draws natively, deformed as Blender deforms it', asy
     const native = await import('/src/core/import/nativeGltfImport.ts');
     const buffer = await fetch('/assets/skinned-bar.glb').then((r) => r.arrayBuffer());
     const dag = w.__basher_dag.getState();
-    const result = await native.__buildSkinnedNativeGltfImportOpsForTests({
+    const result = await native.buildNativeGltfImportOps({
       buffer,
       assetRef: 'user-imports/p1197/skinned-bar.glb',
       sceneNodeId: dag.state.outputs.scene!.node,

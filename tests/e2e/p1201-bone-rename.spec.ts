@@ -3,7 +3,7 @@
 // leaves the deform unchanged (measured 0.0 at frames 0/12/24, `q1201_bone_rename_oracle.py`). One undo
 // puts the old name back.
 //
-// Subject: skinned-bar.glb through the test door, as #1244's spec, until #1205 lifts the skin refusal.
+// Subject: skinned-bar.glb through the product's native reader (`buildNativeGltfImportOps`), dispatched directly; the product road itself is p1205's.
 // The bar's clip keys Bone1 across the whole clip, so at 0.5 s the drawn skin is bent; a rename that
 // lost the group or the keys would draw it at rest.
 import { test, expect } from './_fixtures';
@@ -44,7 +44,7 @@ test('#1201 — renaming a bone in the inspector leaves the drawn skin where it 
     const bones = await import('/src/app/stores/boneSelectionStore.ts');
     const buffer = await fetch('/assets/skinned-bar.glb').then((r) => r.arrayBuffer());
     const dag = w.__basher_dag.getState();
-    const result = await native.__buildSkinnedNativeGltfImportOpsForTests({
+    const result = await native.buildNativeGltfImportOps({
       buffer,
       assetRef: 'user-imports/p1201/skinned-bar.glb',
       sceneNodeId: dag.state.outputs.scene!.node,

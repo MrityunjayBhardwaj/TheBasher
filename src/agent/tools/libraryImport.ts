@@ -57,6 +57,13 @@ export const libraryImportTool: ToolDefinition<LibraryImportArgs> = {
     // from the spelling fell through to the static branch below and still looked like a win.
     if (isFamilyPath(args.assetRef, 'model')) {
       const result = await buildGltfImportOpsFromOpfs(args.assetRef, sceneRef.node, ctx.dagState);
+      // #1205 — a skinned file the native reader refused is not imported at all.
+      if (result.road === 'refused') {
+        return {
+          ops: [],
+          text: `Error: ${args.assetRef} was not imported — it is a character (it has a skin), and ${result.nativeRefusal.refused} (${result.nativeRefusal.issue}).`,
+        };
+      }
       return { ops: result.ops, text: `Imported ${args.assetRef} at [${args.position}]` };
     }
 

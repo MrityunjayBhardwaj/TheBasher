@@ -7,8 +7,8 @@
 // names; it turns Bone1 by 45° at 0.5 s and 90° at 1 s about Z. Both rigs rest unrotated, so the bar's
 // tip (resting at (0.2, 2, 0) in the file) must turn by those angles about Bone1's head (0, 1, 0).
 // That oracle is arithmetic, not our code; the bar's own clip lands elsewhere ((−0.823, 1.602) at
-// 0.5 s for the other top vertex, measured). Through the test door, as #1197's spec, until #1205 lifts
-// the skin refusal.
+// 0.5 s for the other top vertex, measured). Through
+// the product's native reader (`buildNativeGltfImportOps`), dispatched directly; the product road itself is p1205's.
 import { test, expect } from './_fixtures';
 
 interface Node {
@@ -77,7 +77,7 @@ test('#1213 — a motion binds to the native bar and its drawn skin plays it', a
     const buffer = await fetch('/assets/skinned-bar.glb').then((r) => r.arrayBuffer());
     const dag = w.__basher_dag.getState();
     const sceneNodeId = dag.state.outputs.scene!.node;
-    const result = await native.__buildSkinnedNativeGltfImportOpsForTests({
+    const result = await native.buildNativeGltfImportOps({
       buffer,
       assetRef: 'user-imports/p1213/skinned-bar.glb',
       sceneNodeId,

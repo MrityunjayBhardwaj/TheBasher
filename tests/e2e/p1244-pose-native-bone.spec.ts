@@ -6,7 +6,7 @@
 // way (0 → ~85°), so a pose that holds must override it at every frame. Oracle, arithmetic: Bone1's
 // head is (0, 1, 0), and the tip (resting at (0.2, 2, 0) in the file) turned 90° about Z around it
 // lands at (−1, 1.2, 0). The rotation is the verb's order (Blender ZYX); a single-axis Z turn is the
-// same in every order. Through the test door, as #1197's spec, until #1205 lifts the skin refusal.
+// same in every order. Through the product's native reader (`buildNativeGltfImportOps`), dispatched directly; the product road itself is p1205's.
 import { test, expect } from './_fixtures';
 
 interface Node {
@@ -43,7 +43,7 @@ test('#1244 — the pose row poses a native bone, and the drawn skin holds it', 
     const bones = await import('/src/app/stores/boneSelectionStore.ts');
     const buffer = await fetch('/assets/skinned-bar.glb').then((r) => r.arrayBuffer());
     const dag = w.__basher_dag.getState();
-    const result = await native.__buildSkinnedNativeGltfImportOpsForTests({
+    const result = await native.buildNativeGltfImportOps({
       buffer,
       assetRef: 'user-imports/p1244/skinned-bar.glb',
       sceneNodeId: dag.state.outputs.scene!.node,

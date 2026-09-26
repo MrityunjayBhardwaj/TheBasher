@@ -20,7 +20,7 @@ import { emptyDagState } from '../../core/dag/state';
 import { useDagStore } from '../../core/dag/store';
 import { buildDefaultDagState } from '../../core/project/default';
 import type { Op } from '../../core/dag/types';
-import { __buildSkinnedNativeGltfImportOpsForTests } from '../../core/import/nativeGltfImport';
+import { buildNativeGltfImportOps } from '../../core/import/nativeGltfImport';
 import { buildBvhImportOps } from '../../core/import/bvhImportChain';
 import { buildSkeletonObjectOps } from '../../core/import/skeletonObject';
 import { registerAllNodes } from '../../nodes/registerAll';
@@ -80,7 +80,7 @@ function bytesOf(file: string): ArrayBuffer {
 }
 
 async function importNative(state: DagState, file: string, sceneNodeId: string): Promise<DagState> {
-  const result = await __buildSkinnedNativeGltfImportOpsForTests({
+  const result = await buildNativeGltfImportOps({
     buffer: bytesOf(file),
     assetRef: `user-imports/native/${file}`,
     sceneNodeId,

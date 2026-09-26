@@ -12,30 +12,24 @@
 // ── A WHOLE IMPORT IS NATIVE OR IT IS REFUSED, NEVER SPLIT PER CHILD ────────────────────────────
 //
 // The clone road still owns what the native model cannot yet hold, and a file that needs any of it
-// is refused WHOLE, by name, with the issue that brings it across: a skin (#1205), several
-// primitives on one mesh (#1052), morph targets (#1060),
+// is refused WHOLE, by name, with the issue that brings it across: morph targets (#1060),
 // a mesh shared by several nodes (#1061), vertex attributes a render buffer has no slot for
 // (#1125), and material features the native material cannot hold (#1123). Making the importable
 // children native and leaving the rest on the clone would be two owners of one import, which is the
 // handover the decision on #1049 rules out. The refusals are the distance still to go, stated where
 // an import meets it.
 //
-// ── A SKINNED FILE CAN ARRIVE AS A SKELETON, A DEFORM AND A MESH, AND DOES NOT YET (#1205) ───────
+// ── A SKINNED FILE ARRIVES AS A SKELETON, A DEFORM AND A MESH (#1205) ────────────────────────────
 //
-// Past the skin refusal the joints become a `Skeleton` standing as its own Object, posed through a
-// base pose layer holding the file's bone channels as keys, as the file wrote them (#1211, #1212):
+// The joints become a `Skeleton` standing as its own Object, posed through a base pose layer
+// holding the file's bone channels as keys, as the file wrote them (#1211, #1212):
 // Skeleton.pose → PoseLayer → Object.pose (`nativeGltfSkeleton.ts`); each skinned mesh keeps its joint numbers and
 // weights as point layers beside the group names they index, and an Armature modifier on its
-// stack, pointed at the skeleton's Object, deforms it (#393), drawn skinned (#1197). What a skin or
-// its clip needs that this model cannot hold — a bone that is also a mesh (#1209), an empty hung
-// under a bone (#1219) — is refused by name like everything above.
-//
-// The product still refuses a skin, because the clone road does more for a CHARACTER than deform
-// it: its bones can be selected and posed. A motion now binds to a native character too — the
-// retarget becomes its armature Object's pose (#1213) — but a skinned import taking this road would
-// still lose the posing. #1205 lifts the refusal with it; until then only tests go past it, through
-// the door below, and a saved clone-road character being converted as its project loads
-// (`buildSavedCharacterOps`, #1216).
+// stack, pointed at the skeleton's Object, deforms it (#393), drawn skinned (#1197). A motion binds
+// to it (#1213) and its bones are posed (#1244), as a character's are. What a skin or its clip needs
+// that this model cannot hold — a bone that is also a mesh (#1209), an empty hung under a bone
+// (#1219) — is refused by name like everything above, and a skinned file refused for any reason is
+// not imported at all: it never falls back to the clone road (`buildGltfImportOpsFromOpfs`).
 //
 // ── IMAGES COME ACROSS AS THE PROJECT'S OWN FILES (#1050) ───────────────────────────────────────
 //
@@ -203,11 +197,12 @@ const TRIANGLE_FAN = 6;
 // cannot admit a layer the build has nowhere to draw.
 //
 // #1196 — and ONE set of joints and weights, which a stored mesh HOLDS as point layers, deformed by
-// the Armature modifier (#393) and drawn skinned (#1197) — past the skin refusal (#1205). A second
+// the Armature modifier (#393) and drawn skinned (#1197). A second
 // set (`JOINTS_1`, a vertex with more than four influences) stays out on purpose and is refused by
 // name below: Blender keeps every set (`io_scene_gltf2/blender/imp/mesh.py:93-96`), three draws only
 // the first (`GLTFLoader.js:2232-2233`), and a native mesh holding the first alone would keep less
-// than the file, with the file gone. Refused, the file takes the clone road and draws as it did.
+// than the file, with the file gone. Refused — and only a skinned file carries joints, so it is not
+// imported at all (#1205: a skinned file never takes the clone road).
 const HELD_ATTRIBUTES: ReadonlySet<string> = new Set([
   'POSITION',
   'NORMAL',
@@ -1377,51 +1372,16 @@ function baseNameOf(path: string): string {
 export async function buildNativeGltfImportOps(
   args: NativeGltfImportArgs,
 ): Promise<NativeImportResult | NativeImportRefusal> {
-  return buildNativeOps(args, false);
-}
-
-/**
- * #1216 — the same build past the skin refusal, for a character a saved project already holds on
- * the clone road: loading it converts it onto exactly the nodes this reader writes
- * (`convertCloneCharacters`). The product's import keeps refusing a skin until #1205 lifts the
- * refusal, and this door goes with it.
- */
-export async function buildSavedCharacterOps(
-  args: NativeGltfImportArgs,
-): Promise<NativeImportResult | NativeImportRefusal> {
-  return buildNativeOps(args, true);
-}
-
-/**
- * #393 — the same build, past the skin refusal: a skinned file's joints become a `Skeleton`, its
- * standing `Object` (posed by the clip's pose, #1224) and an `AnimationClip`, and each skinned mesh is deformed
- * by an Armature modifier pointed at that Object, which the viewport draws skinned (#1197).
- *
- * TESTS ONLY, until #1205. The product keeps refusing a skin because a character on this road would
- * lose what the clone road gives it — a motion binding to it, bones that can be selected and posed.
- * The refusal guards the whole capability, not its storage; #1205 lifts it, and this export goes
- * with it.
- */
-export async function __buildSkinnedNativeGltfImportOpsForTests(
-  args: NativeGltfImportArgs,
-): Promise<NativeImportResult | NativeImportRefusal> {
-  return buildNativeOps(args, true);
+  return buildNativeOps(args);
 }
 
 async function buildNativeOps(
   args: NativeGltfImportArgs,
-  pastSkinRefusal: boolean,
 ): Promise<NativeImportResult | NativeImportRefusal> {
   const { json: parsed, bin } = parseGltfContainer(args.buffer);
   const json = parsed as NativeGltfJson;
   const refusal = fileRefusal(json);
   if (refusal !== null) return refusal;
-  if (!pastSkinRefusal && (json.skins?.length ?? 0) > 0) {
-    return {
-      refused: 'it is skinned, and a native character cannot yet have its bones posed',
-      issue: '#1205',
-    };
-  }
   const buffers = await resolveBuffers(json, bin, args.resolveBuffer);
   // #1051 — the clip is read with everything else that can refuse, before anything is stored.
   const read_ = readNativeAnimations(json as ClipGltfJson, buffers);

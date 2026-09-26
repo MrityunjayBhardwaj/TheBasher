@@ -33,7 +33,7 @@ import { collectSkeletonObjects } from '../skeletonObjects';
 import { validatePlan } from '../../agent/mutators/index';
 import { retargetMutator } from '../../agent/mutators/builders/retarget';
 import { readFileSync } from 'node:fs';
-import { __buildSkinnedNativeGltfImportOpsForTests } from '../../core/import/nativeGltfImport';
+import { buildNativeGltfImportOps } from '../../core/import/nativeGltfImport';
 
 /** The offset the generator reports when a world path was requested. */
 const OFFSET: [number, number] = [3, -1];
@@ -302,7 +302,7 @@ describe('placeCookedMotionOps (#935)', () => {
       { type: 'addNode', nodeId: 'scene', nodeType: 'Scene', params: {} },
     ] as Op[]);
     s = { ...s, outputs: { ...s.outputs, scene: { node: 'scene', socket: 'out' } } };
-    const result = await __buildSkinnedNativeGltfImportOpsForTests({
+    const result = await buildNativeGltfImportOps({
       buffer: bytes.buffer.slice(
         bytes.byteOffset,
         bytes.byteOffset + bytes.byteLength,

@@ -18,7 +18,7 @@ import {
 import { __resetRegistryForTests, applyOp, evaluate } from '../core/dag';
 import type { DagState } from '../core/dag/state';
 import { buildDefaultDagState } from '../core/project/default';
-import { __buildSkinnedNativeGltfImportOpsForTests } from '../core/import/nativeGltfImport';
+import { buildNativeGltfImportOps } from '../core/import/nativeGltfImport';
 import { registerAllNodes } from '../nodes/registerAll';
 import { sampleSkinDeform } from '../nodes/armatureDeform';
 import { quatFromEuler } from '../nodes/bonePose';
@@ -62,7 +62,7 @@ interface Rig {
 async function bar(): Promise<Rig> {
   let state = buildDefaultDagState();
   const bytes = readFileSync('public/assets/skinned-bar.glb');
-  const result = await __buildSkinnedNativeGltfImportOpsForTests({
+  const result = await buildNativeGltfImportOps({
     buffer: bytes.buffer.slice(
       bytes.byteOffset,
       bytes.byteOffset + bytes.byteLength,

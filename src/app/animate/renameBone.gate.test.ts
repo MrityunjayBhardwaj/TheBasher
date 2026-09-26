@@ -16,7 +16,7 @@ import type { DagState } from '../../core/dag/state';
 import { emptyDagState } from '../../core/dag/state';
 import { buildDefaultDagState } from '../../core/project/default';
 import type { Op } from '../../core/dag/types';
-import { __buildSkinnedNativeGltfImportOpsForTests } from '../../core/import/nativeGltfImport';
+import { buildNativeGltfImportOps } from '../../core/import/nativeGltfImport';
 import { uniqueBoneName } from '../../core/import/nativeGltfSkeleton';
 import { registerAllNodes } from '../../nodes/registerAll';
 import { sampleSkinDeform } from '../../nodes/armatureDeform';
@@ -55,7 +55,7 @@ const setParam = (state: DagState, nodeId: string, paramPath: string, value: unk
   applyOp(state, { type: 'setParam', nodeId, paramPath, value } as never).next;
 
 async function importBar(): Promise<{ state: DagState; armature: string; data: string }> {
-  const result = await __buildSkinnedNativeGltfImportOpsForTests({
+  const result = await buildNativeGltfImportOps({
     buffer: bytesOf('skinned-bar-two-clips.glb'),
     assetRef: 'user-imports/native/skinned-bar-two-clips.glb',
     sceneNodeId: 'n_scene',
@@ -217,7 +217,7 @@ describe('#1201 — an Object parented to the bone follows the rename', () => {
   it('the prop keeps standing on Bone1 under its new name, at every frame', async () => {
     const bytes = readFileSync('public/assets/skinned-bar-bone-prop.glb');
     let state = buildDefaultDagState();
-    const result = await __buildSkinnedNativeGltfImportOpsForTests({
+    const result = await buildNativeGltfImportOps({
       buffer: bytes.buffer.slice(
         bytes.byteOffset,
         bytes.byteOffset + bytes.byteLength,

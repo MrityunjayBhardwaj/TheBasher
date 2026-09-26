@@ -10,7 +10,7 @@ import { __resetRegistryForTests, applyOp, evaluate } from '../core/dag';
 import type { DagState } from '../core/dag/state';
 import type { Op } from '../core/dag/types';
 import { buildDefaultDagState } from '../core/project/default';
-import { __buildSkinnedNativeGltfImportOpsForTests } from '../core/import/nativeGltfImport';
+import { buildNativeGltfImportOps } from '../core/import/nativeGltfImport';
 import { registerAllNodes } from '../nodes/registerAll';
 import { validatePlan } from '../agent/mutators/index';
 import { setPoseMemberModeMutator } from '../agent/mutators/builders/setPoseMemberMode';
@@ -34,7 +34,7 @@ async function rig(
 ): Promise<{ state: DagState; armatureId: string }> {
   let state = buildDefaultDagState();
   const bytes = readFileSync('public/assets/skinned-bar.glb');
-  const result = await __buildSkinnedNativeGltfImportOpsForTests({
+  const result = await buildNativeGltfImportOps({
     buffer: bytes.buffer.slice(
       bytes.byteOffset,
       bytes.byteOffset + bytes.byteLength,

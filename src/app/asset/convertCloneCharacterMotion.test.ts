@@ -12,7 +12,7 @@ import { useDagStore } from '../../core/dag/store';
 import { buildDefaultDagState } from '../../core/project/default';
 import { buildGltfImportOps, gltfSkeletonDagId, hashId } from '../../core/import/gltfImportChain';
 import {
-  buildSavedCharacterOps,
+  buildNativeGltfImportOps,
   type NativeImportResult,
 } from '../../core/import/nativeGltfImport';
 import { buildBvhImportOps } from '../../core/import/bvhImportChain';
@@ -154,7 +154,7 @@ async function cloneProject(fixture: string | Uint8Array): Promise<DagState> {
 async function nativeProject(
   fixture: string | Uint8Array,
 ): Promise<{ state: DagState; native: NativeImportResult }> {
-  const native = await buildSavedCharacterOps(argsFor(fixture));
+  const native = await buildNativeGltfImportOps(argsFor(fixture));
   if ('refused' in native) throw new Error(native.refused);
   return { state: withMotion(apply(buildDefaultDagState(), native.ops), 'swing'), native };
 }

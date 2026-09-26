@@ -40,7 +40,7 @@
 // live in the browser's import storage, not in the project. It runs before every hydrate of a loaded
 // project (`hydrateLoadedProject`, boot.ts).
 //
-// REF: src/core/import/nativeGltfImport.ts (`buildSavedCharacterOps`, `nodeIds`, `skeletons`,
+// REF: src/core/import/nativeGltfImport.ts (`buildNativeGltfImportOps`, `nodeIds`, `skeletons`,
 //      `takes`); src/core/import/gltfImportChain.ts (`buildGltfImportOps`, `importGroupNodeIds`);
 //      src/agent/mutators/builders/retarget.ts (`bindPosedOps`); poseBone.ts (`handPoseOps`);
 //      src/app/bakedGltfChannels.ts + src/app/resolveGltfChildTransform.ts (what the clone draws);
@@ -59,7 +59,7 @@ import {
   importGroupNodeIds,
 } from '../../core/import/gltfImportChain';
 import {
-  buildSavedCharacterOps,
+  buildNativeGltfImportOps,
   type NativeImportRefusal,
   type NativeImportResult,
 } from '../../core/import/nativeGltfImport';
@@ -186,7 +186,7 @@ async function convertOne(
   // is kept must leave nothing behind.
   let native: NativeImportResult | NativeImportRefusal;
   try {
-    native = await buildSavedCharacterOps(args);
+    native = await buildNativeGltfImportOps(args);
   } catch (err) {
     return { why: [`the native reader could not read it (${(err as Error).message})`] };
   }

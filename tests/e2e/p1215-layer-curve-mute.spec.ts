@@ -2,7 +2,7 @@
 // toolbar's Mute alike; it has no solo. Blender skips a muted F-curve when it evaluates
 // (`anim_sys.cc:341`, `:768`), and an F-curve has no solo (the layer does).
 //
-// Subject: skinned-bar.glb through the test door, the two-joint swing bound and baked at every pose
+// Subject: skinned-bar.glb through the product's native reader, dispatched directly, the two-joint swing bound and baked at every pose
 // (Bone1 0° / 45° / 90° at 0 / 0.5 / 1 s), as p1215-layer-key-edit. Muting the baked Bone1 curve
 // drops Bone1 to what arrives from below — the skeleton's rest, which is the swing's 0 s pose — so
 // the skin at 0.5 s draws as it did at 0 s.
@@ -79,7 +79,7 @@ test('#1215 — a layer row’s gutter M mutes its curve (the skin drops to what
     const buffer = await fetch('/assets/skinned-bar.glb').then((r) => r.arrayBuffer());
     const dag = () => w.__basher_dag.getState();
     const scene = dag().state.outputs.scene!.node;
-    const result = await native.__buildSkinnedNativeGltfImportOpsForTests({
+    const result = await native.buildNativeGltfImportOps({
       buffer,
       assetRef: 'user-imports/p1215f/skinned-bar.glb',
       sceneNodeId: scene,
