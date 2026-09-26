@@ -228,7 +228,7 @@ describe('edits carried across', () => {
     [0, 0, s, s].forEach((v, i) => expect(empty.quaternion[i]).toBeCloseTo(v, 12));
   });
 
-  it("re-targets a position channel on the file's empty", async () => {
+  it("re-targets a position channel on the file's empty, muted: the clone never drew it (#1267)", async () => {
     let saved = await savedClone('skinned-bar-child-mesh.glb');
     const armature = cloneChild(saved, 'SkinnedBar');
     saved = apply(saved, [
@@ -244,9 +244,62 @@ describe('edits carried across', () => {
       deps('skinned-bar-child-mesh.glb'),
     );
     expect(report.kept).toEqual([]);
-    expect((state.nodes.n_ch.params as { target: string }).target).toBe(
-      hashId('nativeEmpty', REF, 'SkinnedBar'),
+    const ch = state.nodes.n_ch.params as { target: string; mute: boolean };
+    expect(ch.target).toBe(hashId('nativeEmpty', REF, 'SkinnedBar'));
+    expect(ch.mute).toBe(true);
+    expect(report.converted[0].notes).toEqual([
+      '"position" keys "position" of "SkinnedBar", which the old structure never drew; it is kept muted',
+    ]);
+  });
+
+  it('a rotation curve on the empty converts muted, the node left in quaternion mode (#1265)', async () => {
+    let saved = await savedClone('skinned-bar-child-mesh.glb');
+    const armature = cloneChild(saved, 'SkinnedBar');
+    saved = apply(saved, [
+      {
+        type: 'addNode',
+        nodeId: 'n_rot',
+        nodeType: 'KeyframeChannelVec3',
+        params: {
+          name: 'rotation',
+          target: armature,
+          paramPath: 'rotation',
+          keyframes: [{ time: 1, value: [40, -15, 60], easing: 'linear' }],
+        },
+      },
+    ]);
+    const { state, report } = await convertCloneCharacters(
+      saved,
+      deps('skinned-bar-child-mesh.glb'),
     );
+    expect(report.kept).toEqual([]);
+    const empty = hashId('nativeEmpty', REF, 'SkinnedBar');
+    expect(state.nodes.n_rot.params).toMatchObject({ target: empty, mute: true });
+    expect((state.nodes[empty].params as { rotationMode?: string }).rotationMode).toBe(
+      'quaternion',
+    );
+    expect(report.converted[0].notes).toEqual([
+      '"rotation" keys "rotation" of "SkinnedBar", which the old structure never drew; it is kept muted',
+    ]);
+  });
+
+  it('a curve on the empty already muted: carried as it is, and nothing to say', async () => {
+    let saved = await savedClone('skinned-bar-child-mesh.glb');
+    const armature = cloneChild(saved, 'SkinnedBar');
+    saved = apply(saved, [
+      {
+        type: 'addNode',
+        nodeId: 'n_rot',
+        nodeType: 'KeyframeChannelVec3',
+        params: { name: 'rotation', target: armature, paramPath: 'rotation', mute: true },
+      },
+    ]);
+    const { state, report } = await convertCloneCharacters(
+      saved,
+      deps('skinned-bar-child-mesh.glb'),
+    );
+    expect(report.converted[0].notes).toEqual([]);
+    expect((state.nodes.n_rot.params as { mute: boolean }).mute).toBe(true);
   });
 });
 
@@ -339,15 +392,15 @@ describe('a character that is kept, and says why', () => {
     ]);
   });
 
-  it('a rotation channel on a child: kept (euler degrees have no place on a quaternion-mode node)', async () => {
+  it("a curve not on a child's transform: kept (made by hand; the key tools never make one)", async () => {
     let saved = await savedClone('skinned-bar-child-mesh.glb');
     const armature = cloneChild(saved, 'SkinnedBar');
     saved = apply(saved, [
       {
         type: 'addNode',
-        nodeId: 'n_rot',
-        nodeType: 'KeyframeChannelVec3',
-        params: { name: 'rotation', target: armature, paramPath: 'rotation', keyframes: [] },
+        nodeId: 'n_drv',
+        nodeType: 'ParamDriver',
+        params: { target: armature, paramPath: 'rotation' },
       },
     ]);
     const { state, report } = await convertCloneCharacters(
@@ -355,7 +408,11 @@ describe('a character that is kept, and says why', () => {
       deps('skinned-bar-child-mesh.glb'),
     );
     expect(state).toBe(saved);
-    expect(report.kept[0].why).toEqual([expect.stringContaining('"rotation"')]);
+    expect(report.kept[0].why).toEqual([
+      expect.stringContaining(
+        'keys "rotation" of "SkinnedBar", which the native node holds as a quaternion',
+      ),
+    ]);
   });
 
   it('an edge of the import itself removed: kept, and named', async () => {

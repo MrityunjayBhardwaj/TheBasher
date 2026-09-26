@@ -711,3 +711,83 @@ test('#1263 — keys edited on a node of the file that is not a bone load native
   expectSameTip(clone.tip, native.tip, times);
   expect(errors).toEqual([]);
 });
+
+test('#1265 #1267 — curves added on a node of the file, which the clone never drew, load muted: drawn as the clone drew it', async ({
+  page,
+}) => {
+  const errors: string[] = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  // The file's `SkinnedBar` empty, which holds the mesh and the bones and which the file does not
+  // move: what the curves would move, the tip shows. (A node the file turns is not compared here:
+  // the two roads turn it differently between its keys even untouched, #1268.)
+  const ref = 'user-imports/p1216/skinned-bar-child-mesh.glb';
+  await stageClone(page, 'skinned-bar-child-mesh.glb', ref);
+
+  // The key tools' own curves, made with addChannel on the clone's Object: two-axis rotations (an euler order or an euler/quaternion slip moves the tip),
+  // and a location.
+  const made = await page.evaluate(async (r) => {
+    const w = window as unknown as BasherWindow;
+    const nodes = w.__basher_dag.getState().state.nodes;
+    const asset = Object.values(nodes).find(
+      (n) => n.type === 'GltfAsset' && (n.params as { assetRef: string }).assetRef === r,
+    )!;
+    const empty = (asset.params as { nodeNameMap: Record<string, string> }).nodeNameMap.SkinnedBar;
+    const { dispatchMutatorFromUI } = await import('/src/app/animate/dispatchMutator.ts');
+    const ok: boolean[] = [];
+    for (const [component, keys] of [
+      [
+        'rotation',
+        [
+          [0, [0, 0, 0]],
+          [0.5, [20, 10, 30]],
+          [1, [40, -15, 60]],
+        ],
+      ],
+      [
+        'position',
+        [
+          [0.5, [0.2, 0.1, -0.3]],
+          [1, [0.6, 0, 0.2]],
+        ],
+      ],
+    ] as const) {
+      ok.push(
+        dispatchMutatorFromUI(
+          'mutator.timeline.addChannel',
+          { target: empty, paramPath: component, valueType: 'vec3' },
+          'add',
+        ).ok,
+      );
+      for (const [time, value] of keys) {
+        ok.push(
+          dispatchMutatorFromUI(
+            'mutator.timeline.keyframe',
+            { channelId: `${empty}_${component}_channel`, time, value },
+            'key',
+          ).ok,
+        );
+      }
+    }
+    return ok;
+  }, ref);
+  expect(made).toEqual([true, true, true, true, true, true, true]);
+  const times = [0.25, 0.5, 0.75, 1];
+  const clone = await drawnTip(page, times);
+
+  const { after, notice } = await saveAndReload(page, ref);
+  expect(after.filter((t) => /^Gltf|TransformClip|ClipSelect/.test(t))).toEqual([]);
+  expect(notice.label).toBe('character converted:');
+  expect(notice.message).toContain(
+    'keys "rotation" of "SkinnedBar", which the old structure never drew',
+  );
+  expect(notice.message).toContain(
+    'keys "position" of "SkinnedBar", which the old structure never drew',
+  );
+
+  const native = await drawnTip(page, times);
+  console.log(
+    `empty curves: clone ${JSON.stringify(clone.tip)} native ${JSON.stringify(native.tip)}`,
+  );
+  expectSameTip(clone.tip, native.tip, times);
+  expect(errors).toEqual([]);
+});

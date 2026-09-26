@@ -859,14 +859,32 @@ function planEdits(
           }
           continue;
         }
-        // A channel on a child keys one of its params; the clone's rotation is XYZ euler degrees
-        // and the native node is in quaternion mode, so only position and scale carry as they are.
+        if (target === groupId || typeof keyed !== 'string') continue;
+        // A curve on a child's transform never moved it on the clone: the clone draws a child
+        // from its own params and the channels that name it by `childName` (`bakedGltfChannels`),
+        // and this one names it only by id (#1265, #1267). Natively it would play, so it comes
+        // across muted: the keys are kept, and still move nothing. The node stays in quaternion
+        // mode, so an unmuted rotation curve turns nothing either, as an euler F-curve on a
+        // quaternion-mode object does in Blender.
         if (
-          target !== groupId &&
-          typeof keyed === 'string' &&
-          keyed !== 'position' &&
-          keyed !== 'scale'
+          node.type === 'KeyframeChannelVec3' &&
+          (keyed === 'position' || keyed === 'rotation' || keyed === 'scale')
         ) {
+          // Read through the curve's own schema, typed: a curve's flag, not an operator's bypass.
+          const parsed = KeyframeChannelVec3Params.safeParse(node.params);
+          if (!(parsed.success && parsed.data.mute)) {
+            editOps.push(() => [
+              { type: 'setParam', nodeId: node.id, paramPath: 'mute', value: true },
+            ]);
+            notes.push(
+              `${label(node.id)} keys "${keyed}" of ${label(target)}, which the old structure never drew; it is kept muted`,
+            );
+          }
+          continue;
+        }
+        // Anything else keying a child: the clone's rotation is XYZ euler degrees and the native
+        // node is in quaternion mode, so only position and scale carry as they are.
+        if (keyed !== 'position' && keyed !== 'scale') {
           why.push(
             `${label(node.id)} keys "${keyed}" of ${label(target)}, which the native node holds as a quaternion`,
           );

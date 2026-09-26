@@ -791,6 +791,95 @@ describe('keys edited on a node of the file that is not a bone (#1263)', () => {
   });
 });
 
+describe('a curve added on a node of the file with addChannel (#1265, #1267)', () => {
+  // Two axes on every key, so an euler order or an euler/quaternion slip changes the answer.
+  const ROT = [
+    { time: 0, value: [0, 0, 0], easing: 'linear' },
+    { time: 0.5, value: [20, 10, 30], easing: 'cubic' },
+    { time: 1, value: [40, -15, 60], easing: 'cubic' },
+  ];
+  const POS = [
+    { time: 0.5, value: [0.2, 0.1, -0.3], easing: 'cubic' },
+    { time: 1, value: [0.6, 0, 0.2], easing: 'cubic' },
+  ];
+
+  /** The key tools' own curve on `target`'s `component`, keyed; its id. */
+  function curve(state: DagState, target: string, component: string, keys: typeof ROT) {
+    state = tool(state, 'mutator.timeline.addChannel', {
+      target,
+      paramPath: component,
+      valueType: 'vec3',
+    });
+    const id = `${target}_${component}_channel`;
+    for (const k of keys) {
+      state = tool(state, 'mutator.timeline.keyframe', {
+        channelId: id,
+        time: k.time,
+        value: k.value,
+        easing: k.easing,
+      });
+    }
+    return { state, id };
+  }
+
+  // The file's `Rig` empty, which the file slides and turns; and an empty the file leaves still.
+  it.each([
+    ['skinned-bar-animated-rig.glb', 'animates'],
+    ['skinned-bar-child-mesh.glb', 'leaves still'],
+  ])(
+    '%s (a node the file %s): the clone never drew the curves, so they arrive muted beside the untouched native nodes',
+    async (fixture) => {
+      let saved = await cloneProject(fixture);
+      const child = cloneChild(saved, 3);
+      const rot = curve(saved, child, 'rotation', ROT);
+      const pos = curve(rot.state, child, 'position', POS);
+      saved = pos.state;
+      const { state, notes } = await convert(saved, fixture);
+
+      const { state: fresh, native } = await nativeProject(fixture);
+      const node = native.nodeIds[3]!;
+      // Drawn is the e2e's to say: these vertices are in the armature's space, and the empty
+      // holding the armature moves none of them. Here: the nodes.
+      // Stored: the untouched native nodes, plus the director's two curves: its own keys, on the
+      // native node, muted.
+      const { [rot.id]: rotCurve, [pos.id]: posCurve, ...rest } = state.nodes;
+      expect(rest).toEqual(fresh.nodes);
+      for (const [carried, id] of [
+        [rotCurve, rot.id],
+        [posCurve, pos.id],
+      ] as const) {
+        expect(carried.params).toEqual({
+          ...(saved.nodes[id].params as object),
+          target: node,
+          mute: true,
+        });
+      }
+      // And as the native key tools write the same gesture on the native node — where they can:
+      // on a node the file slides, its own location curve is there, and natively the keys go in it.
+      let gesture = curve(fresh, node, 'rotation', ROT).state;
+      expect(rotCurve.params).toEqual({
+        ...(gesture.nodes[`${node}_rotation_channel`].params as object),
+        mute: true,
+      });
+      if (!fresh.nodes[`${node}_position_channel`]) {
+        gesture = curve(gesture, node, 'position', POS).state;
+        expect(posCurve.params).toEqual({
+          ...(gesture.nodes[`${node}_position_channel`].params as object),
+          mute: true,
+        });
+      }
+      expect((state.nodes[node].params as RotationModeFields).rotationMode).toBe('quaternion');
+      expect(notes).toEqual([
+        expect.stringContaining('keys "rotation" of "'),
+        expect.stringContaining('keys "position" of "'),
+      ]);
+      notes.forEach((n) =>
+        expect(n).toContain('which the old structure never drew; it is kept muted'),
+      );
+    },
+  );
+});
+
 describe('material edits on the clone road (slice 3)', () => {
   /** skinned-bar's mesh is glTF node 2. */
   const MESH = 2;
