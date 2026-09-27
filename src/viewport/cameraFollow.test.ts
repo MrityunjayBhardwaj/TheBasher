@@ -51,9 +51,9 @@ const rig = (ids: string[], frames: BoneFrame[]): FollowArmature => ({
 
 describe('followPoint', () => {
   it('follows the rig belonging to a node that is nowhere in the armature itself', () => {
-    // The id a director locks with is almost never the one on the armature's
-    // ancestors: clicking the body selects a `GltfChild`, the armature's
-    // SIBLING. Membership of the asset's id set is the whole join.
+    // The id a director locks with is often not the armature's: clicking the
+    // body selects the mesh Object the armature deforms. Membership of the rig's
+    // id set is the whole join.
     // 🔴 THE OBJECT POINT IS SUPPLIED AND MUST LOSE. In the scene a director
     // actually has, the import group IS named with its node id, so a point for
     // it is always available — and it is the point that does not move. Preferring
@@ -94,9 +94,9 @@ describe('followPoint', () => {
   // ─────────────────────────────────────────────────────────────────────
   // #986 — TWO RIGS UNDER ONE IMPORT GROUP
   // ─────────────────────────────────────────────────────────────────────
-  // `assetIdsFor` walks to the OUTERMOST named ancestor, so two armatures in one
-  // glTF get IDENTICAL id sets. There is no id that tells them apart, and the
-  // answer used to be whichever `scanArmatures` reached first.
+  // A Group holding two characters is claimed by both rigs (followScan gives each
+  // rig the locked id when the id reaches it). There is no id that tells them
+  // apart, and the answer used to be whichever rig was reached first.
 
   it('follows the UNION of every rig claiming the node, not whichever was reached first', () => {
     const a = rig(['n_crowd'], walker(0));

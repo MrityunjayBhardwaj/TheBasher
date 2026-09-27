@@ -56,9 +56,9 @@
 //
 // REF: src/app/character/framing.ts (`applyTarget`, the camera half);
 //      src/viewport/referenceRig.ts (`armatureBounds`);
-//      `assetIdsFor` (the node↔rig join over the clone road's live bones — it
-//      and the live-rig feed into `followPoint` retired with the clone road,
-//      #1053; a native character has no rig feed yet, #1275);
+//      src/viewport/followScan.ts (the rig feed: the armature Objects the locked
+//      node names, read from the graph, #1275 — the clone road's live-bone join,
+//      `assetIdsFor`, retired with it, #1053);
 //      node_modules/three-stdlib/controls/OrbitControls.js (`update`);
 //      issue #856.
 
@@ -79,14 +79,13 @@ export interface FollowPoint {
 
 /** One live armature, reduced to what choosing a point needs. */
 export interface FollowArmature {
-  /** Every DAG node id that names some part of this rig's asset — the set
-   *  `assetIdsFor` builds. Membership, not equality: a director who clicks the
-   *  body selects a `GltfChild` that is the armature's SIBLING, so the id they
-   *  locked with is almost never the one on the armature's own ancestors.
+  /** The DAG node ids that name this rig. `followScan` gives each rig the locked node's id when that
+   *  node reaches its armature Object (`reachedFromSelection`: the armature itself, a mesh Object it
+   *  deforms, or what holds either). Membership, not equality: a director who clicks the body
+   *  selects the mesh Object, not the armature.
    *
-   *  🔴 NOT UNIQUE PER RIG. Two armatures under one import group share the
-   *  outermost named ancestor and so share this set exactly — which is why the
-   *  point is taken over every rig that claims an id, never the first (#986). */
+   *  🔴 NOT UNIQUE PER RIG. A Group holding two characters reaches both armatures, so both claim it
+   *  — which is why the point is taken over every rig that claims an id, never the first (#986). */
   readonly ids: ReadonlySet<string>;
   /** The rig as placed THIS frame, heads and tails in world space. */
   readonly frames: readonly BoneFrame[];
@@ -118,13 +117,11 @@ export function followPoint(
 ): FollowPoint | null {
   // 🔴 EVERY rig that claims the node, not the first one found (#986).
   //
-  // `assetIdsFor` walks up to the OUTERMOST named ancestor and collects
-  // everything the DAG can name inside it, so two armatures under ONE import
-  // group get IDENTICAL id sets — a glTF holding a crowd, or a character
-  // carrying a rigged prop. `find` then returned whichever `scanArmatures`
-  // reached first, which is scene-traversal order and not a decision: the view
-  // followed one of them and could follow the other after a reload with nothing
-  // visible having changed.
+  // A lock on a Group holding two characters (a glTF with a crowd, or a
+  // character carrying a rigged prop) is claimed by BOTH rigs. `find` once
+  // returned whichever rig was reached first, which is traversal order and not
+  // a decision: the view followed one of them and could follow the other after
+  // a reload with nothing visible having changed.
   //
   // The union needs no heuristic and is the meaning of "follow this asset" —
   // the same thing framing a group means. It composes with the root exclusion
