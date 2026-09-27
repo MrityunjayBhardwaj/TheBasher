@@ -45,6 +45,7 @@
  */
 
 import { z } from 'zod';
+import type { DagState } from '../core/dag/state';
 
 /**
  * The controls a declared param can ask for.
@@ -64,10 +65,15 @@ import { z } from 'zod';
  * field that makes it do anything un-typeable. Measured in self-review, not predicted — and it
  * is the same "advertised action that silently does nothing" shape the panel refuses elsewhere.
  *
+ * `'options'` (#1064) is a picker over what exists at runtime — a profile name, a clip name —
+ * where free text would let a director type a value that silently selects nothing. Its
+ * options are not a property of the schema alone, so the declaration carries a provider that
+ * reads the live graph ({@link optionsParam}).
+ *
  * A member is still not added on speculation: the name and the row land together, so this
  * union stays a census of what the panel can actually draw rather than a wish list.
  */
-export type ParamWidget = 'query' | 'color' | 'text';
+export type ParamWidget = 'query' | 'color' | 'text' | 'options';
 
 /**
  * Schema instance → the control it asks for.
@@ -134,6 +140,101 @@ export function placeholderOf(schema: unknown): string | undefined {
 export function widgetOf(schema: unknown): ParamWidget | undefined {
   if (schema === null || typeof schema !== 'object') return undefined;
   return WIDGETS.get(schema);
+}
+
+/** One choice an `options` picker offers. */
+export interface ParamOption {
+  /** What is written to the param when this option is chosen. */
+  readonly value: string;
+  /** What the director reads. */
+  readonly label: string;
+  /**
+   * Present when the option is LISTED but cannot be chosen, and says why. Listing it beats
+   * hiding it: a rig that is wired but cannot be selected is still there, and a picker that
+   * silently leaves it out reads as "it isn't wired".
+   */
+  readonly disabledReason?: string;
+}
+
+/**
+ * The live options for one param on one node.
+ *
+ * 🔴 THE RULE A PROVIDER MUST MEET: EVERY ENABLED OPTION, ONCE WRITTEN, RESOLVES. So a provider
+ * reads exactly what the param's resolver reads, never a nearby helper's wider list — the
+ * profile list Light Studio already had offered every `LightRig` in the graph, and a rig not
+ * wired into the select resolved to nothing when picked (#1064, measured).
+ */
+export type OptionsProvider = (state: DagState, nodeId: string) => readonly ParamOption[];
+
+/** Schema instance → its options provider. Weak and keyed by identity for {@link WIDGETS}' reasons. */
+const PROVIDERS = new WeakMap<object, OptionsProvider>();
+
+/**
+ * What an `options` param's value names (#1065). A `'name'` (the default) is matched by name, so
+ * a value no option offers is simply not found. A `'nodeId'` is a node's id, and a stored id
+ * that no option offers can still be a node that EXISTS but is not a valid choice — saying
+ * "not found" then would send the director looking for a node that is right there.
+ */
+export type OptionsValueKind = 'name' | 'nodeId';
+
+/** Schema instance → what its value names, when that is not a plain name. */
+const VALUE_KINDS = new WeakMap<object, OptionsValueKind>();
+
+/**
+ * Why an `options` param cannot be picked right now, or null when it can (#1066).
+ *
+ * For a param whose list depends on another param, there are states where nobody knows
+ * the answer — a channel aimed at a node the census never measured. Offering a list there
+ * would be offering guesses, and an empty list would read as "nothing animates". So the
+ * control shows the stored value read-only, with this reason.
+ */
+export type OptionsLock = (state: DagState, nodeId: string) => string | null;
+
+/** Schema instance → its lock. Weak and keyed by identity for {@link WIDGETS}' reasons. */
+const LOCKS = new WeakMap<object, OptionsLock>();
+
+/**
+ * Declare that `schema` is authored as a picker over `provider`'s live options, and return the
+ * SAME schema.
+ *
+ * The provider travels with the widget because an `options` control without one has nothing to
+ * draw; declaring them in one call makes that pair unsplittable at the declaration site.
+ * `none` is what the param calls its empty value, and lands in the placeholder table, because
+ * that is the question the table answers.
+ *
+ * Like {@link widget}, this never changes what the schema accepts: a stored value no option
+ * matches still validates, and the control shows it as not found rather than refusing it —
+ * a saved project whose rig was renamed must still load.
+ */
+export function optionsParam<S extends z.ZodTypeAny>(
+  schema: S,
+  provider: OptionsProvider,
+  none?: string,
+  valueKind: OptionsValueKind = 'name',
+  lock?: OptionsLock,
+): S {
+  PROVIDERS.set(schema, provider);
+  if (valueKind !== 'name') VALUE_KINDS.set(schema, valueKind);
+  if (lock) LOCKS.set(schema, lock);
+  return widget('options', schema, none);
+}
+
+/** The lock this `options` schema declares, or `undefined` if it is always pickable. */
+export function optionsLockOf(schema: unknown): OptionsLock | undefined {
+  if (schema === null || typeof schema !== 'object') return undefined;
+  return LOCKS.get(schema);
+}
+
+/** What this `options` schema's value names — `'name'` unless it declared otherwise. */
+export function optionsValueKindOf(schema: unknown): OptionsValueKind {
+  if (schema === null || typeof schema !== 'object') return 'name';
+  return VALUE_KINDS.get(schema) ?? 'name';
+}
+
+/** The options provider this schema declares, or `undefined` if it declares none. */
+export function optionsOf(schema: unknown): OptionsProvider | undefined {
+  if (schema === null || typeof schema !== 'object') return undefined;
+  return PROVIDERS.get(schema);
 }
 
 /**

@@ -45,6 +45,9 @@ jobs:
       # then "passes". `|| true` so a genuinely new baseline (no prior
       # file) doesn't fail the step before the commit.
       - run: npx playwright test --update-snapshots || true
+        env:
+          # The census takes no snapshots and would add most of an hour (#1260).
+          E2E_SKIP_CENSUS: '1'
       - name: Commit regenerated snapshots
         run: |
           git config user.name  "github-actions[bot]"

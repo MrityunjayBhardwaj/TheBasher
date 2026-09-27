@@ -2441,6 +2441,8 @@ export interface TrackToConstraintValue {
   readonly target: string;
   /** Aim at this node's world position when non-empty; else `aimPoint`. */
   readonly aimNode: string;
+  /** #1284 — a node inside the `aimNode` character (a bone) to aim at instead; '' = none. */
+  readonly aimBone: string;
   /** Fixed-point aim target (world) used when `aimNode` is empty. */
   readonly aimPoint: Vec3;
   /** Roll reference (default +Y). */

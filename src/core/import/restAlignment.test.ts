@@ -606,3 +606,98 @@ describe('what the two rests still disagree about, bone by bone', () => {
     ).toBeGreaterThan(60);
   });
 });
+
+// #1186 — a bone with several mapped children is aimed at ONE of them, and both rigs must aim
+// at the same one. Picked in each rig separately, the pick followed each rig's child order and
+// paired "hand → thumb" with "hand → middle" (51.59° off on samba → xbot). `s_spine` here has
+// two mapped children, `s_neck` and `s_shoulder`.
+
+/** The same rig with every bone's children visited in the reverse order, parents first. */
+function childrenReversed(bones: readonly BoneSpec[]): BoneSpec[] {
+  const order: number[] = [];
+  const visit = (i: number) => {
+    order.push(i);
+    const kids = bones.map((b, j) => (b.parent === i ? j : -1)).filter((j) => j >= 0);
+    for (const j of kids.reverse()) visit(j);
+  };
+  bones.forEach((b, i) => {
+    if (b.parent < 0) visit(i);
+  });
+  const newIndex = new Map(order.map((old, i) => [old, i]));
+  return order.map((old) => ({
+    ...bones[old],
+    parent: bones[old].parent < 0 ? -1 : (newIndex.get(bones[old].parent) as number),
+  }));
+}
+
+describe("#1186 — a branching bone's two directions point at the same child", () => {
+  const spineKids = (bones: readonly BoneSpec[]) => {
+    const spine = bones.findIndex((b) => b.name.endsWith('_spine'));
+    return bones.filter((b) => b.parent === spine).map((b) => b.name.slice(2));
+  };
+  const reversed = childrenReversed(THREE_DIMENSIONAL);
+
+  it('the fixture lists the spine’s children in the two orders', () => {
+    expect(spineKids(THREE_DIMENSIONAL)).toEqual(['neck', 'shoulder']);
+    expect(spineKids(reversed)).toEqual(['shoulder', 'neck']);
+  });
+
+  it('two rests one rotation apart agree everywhere, whatever order the SOURCE lists children in', () => {
+    // YAWED is THREE_DIMENSIONAL turned a quarter turn, so a pairing of the SAME joint on both
+    // sides leaves nothing over. Pairing spine→neck with spine→shoulder leaves 90° at the spine.
+    const source = specToThreeSkeleton(reversed).bones;
+    const target = specToThreeSkeleton(YAWED).bones;
+    const solved = solveRestAlignment(source, target, MAP);
+    expect(solved.kind).toBe('aligned');
+    if (solved.kind !== 'aligned') return;
+    const gaps = restDirectionDisagreement(source, target, MAP, solved.rotation);
+    expect(gaps.has('t_spine'), 'the branching bone was compared').toBe(true);
+    expect(Math.max(...gaps.values())).toBeLessThan(0.01);
+    expect(solved.disagreementAfter).toBeLessThan(1e-4);
+  });
+
+  it("the source's child order changes nothing: rotation, offsets and disagreement", () => {
+    // A target whose rest differs from the source's at the neck, so a pick of a DIFFERENT child
+    // would change the spine's correction.
+    const bentTarget = YAWED.map((b) =>
+      b.name === 't_neck' ? { ...b, position: [0.05, 0.19, 0] as [number, number, number] } : b,
+    );
+    const run = (sourceSpecs: BoneSpec[]) => {
+      const source = specToThreeSkeleton(sourceSpecs).bones;
+      const target = specToThreeSkeleton(bentTarget).bones;
+      const solved = solveRestAlignment(source, target, MAP);
+      if (solved.kind !== 'aligned') throw new Error(`expected aligned, got ${solved.kind}`);
+      const offsets = alignedLocalOffsets(source, target, MAP, solved.rotation).offsets;
+      return {
+        rotation: solved.rotation.toArray(),
+        spine: offsets.t_spine.elements,
+        gaps: Object.fromEntries(restDirectionDisagreement(source, target, MAP, solved.rotation)),
+      };
+    };
+    const a = run(THREE_DIMENSIONAL);
+    const b = run(reversed);
+    expect(a.gaps.t_spine, 'the spine is compared, and the bend reaches it').toBeGreaterThan(1);
+    a.rotation.forEach((v, i) => expect(b.rotation[i]).toBeCloseTo(v, 9));
+    a.spine.forEach((v, i) => expect(b.spine[i]).toBeCloseTo(v, 9));
+    expect(Object.keys(b.gaps).sort()).toEqual(Object.keys(a.gaps).sort());
+    for (const k of Object.keys(a.gaps)) expect(b.gaps[k]).toBeCloseTo(a.gaps[k], 9);
+  });
+
+  // #1199 — reds (passes) once the TARGET's child order stops deciding which child a branching
+  // bone is aimed by. Today the target's first mapped child is the one.
+  it.fails("#1199: the target's child order changes nothing either", () => {
+    const bentTarget = YAWED.map((b) =>
+      b.name === 't_neck' ? { ...b, position: [0.05, 0.19, 0] as [number, number, number] } : b,
+    );
+    const spineOffset = (targetSpecs: BoneSpec[]) => {
+      const source = specToThreeSkeleton(THREE_DIMENSIONAL).bones;
+      const target = specToThreeSkeleton(targetSpecs).bones;
+      const solved = solveRestAlignment(source, target, MAP);
+      if (solved.kind !== 'aligned') throw new Error(`expected aligned, got ${solved.kind}`);
+      return alignedLocalOffsets(source, target, MAP, solved.rotation).offsets.t_spine.elements;
+    };
+    const a = spineOffset(bentTarget);
+    const b = spineOffset(childrenReversed(bentTarget));
+    a.forEach((v, i) => expect(b[i]).toBeCloseTo(v, 6));
+  });
+});

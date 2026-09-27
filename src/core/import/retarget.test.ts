@@ -10,6 +10,7 @@ import {
   resolveNameMapToSource,
   resolveNameMapToTarget,
   retargetScale,
+  rootTravelScale,
 } from './retarget';
 import { specToThreeSkeleton } from './threeAdapter';
 import { Quaternion, Matrix4, Vector3, type Bone as ThreeBone } from 'three';
@@ -1168,6 +1169,68 @@ describe('the retarget scale comes from the leg chain, not the hip offset (#846)
     // 4 source units at 0.5555… — and NOT the 2.0 the hip offset would have given.
     expect(travel).toBeCloseTo(4 * ((0.6 + 0.4) / (0.8 + 1.0)), 4);
     expect(travel).not.toBeCloseTo(2.0, 2);
+  });
+
+  it('#1285 rootTravelScale reports the ratio the retarget APPLIES, on both bases', () => {
+    // A caller that sizes a request by this number is betting it is the retarget's own. So it is
+    // checked against what the retarget DID to the root, not against the formula: on the leg basis
+    // (this block's rigs) and on the hip-offset fallback (#839's), whose answers differ.
+    const travelOf = (
+      sourceBones: BoneSpec[],
+      targetBones: BoneSpec[],
+      map: Record<string, string>,
+    ) => {
+      const hips = sourceBones.findIndex((b) => b.name === 's_hips');
+      const start = sourceBones[hips].position;
+      const out = retargetClip({
+        sourceBones,
+        sourceClip: {
+          name: 'walk',
+          duration: 1,
+          keyframes: [
+            { bone: hips, time: 0, position: [...start], rotation: [0, 0, 0] },
+            {
+              bone: hips,
+              time: 1,
+              position: [start[0], start[1], start[2] + 4],
+              rotation: [0, 0, 0],
+            },
+          ],
+        },
+        targetBones,
+        nameMap: map,
+      });
+      const tHips = targetBones.findIndex((b) => b.name === map[sourceBones[hips].name]);
+      const keys = out.clipParams.keyframes.filter((k) => k.bone === tHips);
+      return Math.max(
+        ...[0, 1, 2].map(
+          (i) =>
+            Math.max(...keys.map((k) => k.position[i])) -
+            Math.min(...keys.map((k) => k.position[i])),
+        ),
+      );
+    };
+    const legs = [source(...SRC_LEGS), target(...TRG_LEGS)] as const;
+    expect(rootTravelScale(legs[0], MAP, legs[1])).toBeCloseTo(travelOf(...legs, MAP) / 4, 4);
+
+    const flatSource: BoneSpec[] = [
+      { name: 's_hips', parent: -1, position: [0, 1, 0], rotation: [0, 0, 0] },
+      { name: 's_spine', parent: 0, position: [0, 0.1, 0], rotation: [0, 0, 0] },
+    ];
+    const flatTarget: BoneSpec[] = [
+      { name: 't_hips', parent: -1, position: [0, 0.5, 0], rotation: [0, 0, 0] },
+      { name: 't_spine', parent: 0, position: [0, 0.05, 0], rotation: [0, 0, 0] },
+    ];
+    const flatMap = { s_hips: 't_hips', s_spine: 't_spine' };
+    expect(rootTravelScale(flatSource, flatMap, flatTarget)).toBeCloseTo(
+      travelOf(flatSource, flatTarget, flatMap) / 4,
+      4,
+    );
+    // The two bases really do answer differently, so the pair is not one case twice.
+    expect(rootTravelScale(flatSource, flatMap, flatTarget)).not.toBeCloseTo(
+      rootTravelScale(legs[0], MAP, legs[1]),
+      2,
+    );
   });
 });
 

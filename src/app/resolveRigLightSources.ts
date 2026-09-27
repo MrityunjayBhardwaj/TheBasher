@@ -20,6 +20,7 @@
 
 import type { DagState } from '../core/dag/state';
 import type { NodeRef } from '../core/dag/types';
+import { wiredProfileRigs } from '../nodes/LightProfileSelect';
 
 /** The active rig node feeding `Scene.inputs.lightRig`, following a
  *  LightProfileSelect hop when one sits between (increment 2). null when no rig is
@@ -36,22 +37,12 @@ export function resolveActiveRigNode(state: DagState): string | null {
   if (wired.type === 'LightRig') return wired.id;
 
   // LightProfileSelect (increment 2): pick the rig whose `name` matches the
-  // selector's `selectedProfile`, scanning its `rigs` edges in order.
+  // selector's `selectedProfile`, scanning its `rigs` edges in order — read through
+  // the SAME list the inspector's profile picker offers from (#1064), so a profile
+  // the picker lists is one this hop finds.
   if (wired.type === 'LightProfileSelect') {
     const selected = (wired.params as { selectedProfile?: unknown }).selectedProfile;
-    const rigsBinding = wired.inputs.rigs;
-    const refs: NodeRef[] = Array.isArray(rigsBinding)
-      ? (rigsBinding as NodeRef[])
-      : rigsBinding
-        ? [rigsBinding as NodeRef]
-        : [];
-    for (const ref of refs) {
-      const rig = state.nodes[ref.node];
-      if (rig?.type === 'LightRig' && (rig.params as { name?: unknown }).name === selected) {
-        return rig.id;
-      }
-    }
-    return null;
+    return wiredProfileRigs(state, wired.id).find((rig) => rig.name === selected)?.id ?? null;
   }
 
   return null;

@@ -28,7 +28,13 @@ import { CHANNEL_BLEND_MODES } from './types';
 // slerp lives in quatMath now — the ONE shared unit-quat slerp, also consumed by
 // the NLA layer-fold reducer (foldChannel.ts). No drift (H40).
 import { slerp } from './quatMath';
-import { nameParam } from './paramWidget';
+import { nameParam, optionsParam } from './paramWidget';
+import {
+  channelPathLockOf,
+  channelPathOptionsOf,
+  channelTargetLockOf,
+  channelTargetOptionsOf,
+} from './channelPickerSlot';
 
 const QuatSchema = z.tuple([z.number(), z.number(), z.number(), z.number()]);
 
@@ -39,8 +45,22 @@ export type QuatEasing = (typeof QUAT_EASINGS)[number];
 
 export const KeyframeChannelQuatParams = z.object({
   name: nameParam('channel'),
-  target: z.string().default(''),
-  paramPath: z.string().default(''),
+  // #1259 — picked from what a quat channel animates (the census measures both rotation modes),
+  // through the slot the app fills; importing the pickers here would be a load cycle.
+  target: optionsParam(
+    z.string().default(''),
+    channelTargetOptionsOf('quat'),
+    undefined,
+    'nodeId',
+    channelTargetLockOf(),
+  ),
+  paramPath: optionsParam(
+    z.string().default(''),
+    channelPathOptionsOf('quat'),
+    undefined,
+    'name',
+    channelPathLockOf('quat'),
+  ),
   /** Per-channel gate/blend lifted off the retired AnimationLayer (#199 / V57);
    *  identity defaults → byte-identical to pre-#199. */
   mute: z.boolean().default(false),

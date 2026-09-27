@@ -70,6 +70,15 @@ export const ASSET_CATALOG: readonly CatalogEntry[] = [
   // full reasoning lives in the doc.)
   // REF: src/core/licensing/external-models.json, NOTICE,
   //      docs/EXTERNAL-MODEL-LICENCES.md, issue #815.
+  // #1282 — the rigged stand-in the "Camera Path + AI Walk" example stands up. Seeded here, before
+  // the examples: the example ships with the app, and app-shipped assets are seeded rather than
+  // embedded (`sceneBundle.ts`), so the example finds it by this path.
+  {
+    path: 'fixtures/rig/standin-character.glb',
+    name: 'Stand-in Character',
+    seedUrl: '/fixtures/rig/standin-character.glb',
+    swatch: '#e0a0ff',
+  },
   ...(
     [
       ['walk', 'Walk'],

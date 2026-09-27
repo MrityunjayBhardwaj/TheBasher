@@ -18,7 +18,7 @@ import { cameraDataOf, cameraLensParams, cameraProjectionOf, isCameraNode } from
 import { enumerateCameraNodeIds } from './activeCamera';
 import { buildSetActiveCameraOps } from './setActiveCamera';
 import { resolveWorldTransform } from './resolveWorldTransform';
-import { stripTargetRows } from '../timeline/NlaAddStripPopover';
+import { stripTargetRows } from './stripTargets';
 import { resolveCameraPoseAt } from './activeCamera';
 import { identify } from '../agent/identify/identify';
 import { shotCreateMutator } from '../agent/mutators/builders/shotCreate';

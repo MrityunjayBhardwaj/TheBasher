@@ -10,6 +10,7 @@
 import { z } from 'zod';
 import type { NodeDefinition } from '../core/dag/types';
 import type { SkeletonValue } from './types';
+import { boneOnACycle } from '../core/import/threeAdapter';
 
 const Vec3 = z.tuple([z.number(), z.number(), z.number()]);
 
@@ -29,6 +30,17 @@ export const SkeletonParams = z.object({
         inverseBindMatrix: z.array(z.number()).length(16).optional(),
       }),
     )
+    // #1183 — a skeleton is a tree. A write whose parent chain loops is refused here,
+    // naming the bone, instead of freezing whatever walks the chain later.
+    .superRefine((bones, ctx) => {
+      const bone = boneOnACycle(bones);
+      if (bone !== null) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: `bone "${bone}" is its own ancestor — its parent chain loops instead of reaching a root`,
+        });
+      }
+    })
     // Default: a 3-bone "stick figure" — root → torso → head.
     // Sufficient for P2's locomotion + pose interpolation.
     .default([

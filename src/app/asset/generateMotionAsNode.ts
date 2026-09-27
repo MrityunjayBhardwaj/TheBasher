@@ -29,12 +29,16 @@
 // per-call choice would spread that surface across every invocation.
 //
 // ─────────────────────────────────────────────────────────────────────────────
-// THE ORDER IS MINT → COOK → BIND → PLACE, AND EACH STEP NEEDS THE ONE BEFORE
+// THE ORDER IS MINT → COOK → BIND → (FIT → COOK) → PLACE, EACH NEEDING THE ONE BEFORE
 // ─────────────────────────────────────────────────────────────────────────────
 // The bind needs a rig, and the rig does not exist until the cook lands one — the
 // minted `Skeleton` starts empty because the generator has not said what it
 // produced. Placement needs the bind, because the character it moves is the
 // character the bind chose. Placement last is why it is not folded into the cook.
+// The fit (#1285) needs the bind for the same reason: a path is asked for in the
+// character's scale, and the character is only known once the bind has chosen it.
+// So a first walk along a path is asked for twice when the character is not the
+// generator's size — once to learn the rig, once to land on the curve.
 //
 // REF: src/app/asset/mintMotionGenerate.ts (the chain);
 //      src/app/asset/cookMotionGenerations.ts (the cook + the placement step);
@@ -48,7 +52,11 @@ import { useImportRefreshStore } from '../stores/importRefreshStore';
 import { useSelectionStore } from '../stores/selectionStore';
 import { useSettingsStore } from '../stores/settingsStore';
 import { bindImportedMotion } from './importBvhFbx';
-import { cookMotionGenerations, placeCookedMotion } from './cookMotionGenerations';
+import {
+  cookMotionGenerations,
+  fitMotionPathScale,
+  placeCookedMotion,
+} from './cookMotionGenerations';
 import { chooseSeed, mintMotionGenerateOps } from './mintMotionGenerate';
 import { waypointsFromCurve } from './motionPathFromCurve';
 
@@ -125,6 +133,15 @@ export async function generateMotionAsNode(
     // that stopped short of the bind was measured leaving a character standing
     // still while the same bytes dropped as a file animated it.
     bindImportedMotion({ skeletonId: mint.skeletonId, clipId: mint.clipId }, 'generated');
+    // #1285 — and only now is the character's size known, because the rig the bind
+    // matched against arrived with the cook. A walk along a path is re-asked at the
+    // character's scale so it lands on the curve instead of stopping short of it;
+    // without a path, or on a character the generator's own size, nothing changes
+    // and nothing is asked twice.
+    if (fitMotionPathScale(mint.producerId) > 0) {
+      const refit = await cookMotionGenerations(mint.producerId);
+      if (refit.reason !== undefined) return { ok: false, reason: refit.reason };
+    }
     // ...and only now can placement find the character the bind just chose.
     placeCookedMotion();
 

@@ -25,8 +25,8 @@
 //
 // REF: src/nodes/Strip.ts:13-16 (the limit), src/app/activeCamera.ts:294-325 (the scan
 //      that folds nothing), src/app/animate/dispatchMutator.ts (the accept),
-//      src/timeline/NlaLanePane.tsx (the offer), src/timeline/NlaAddStripPopover.tsx
-//      (the picker); issues #479, #480, epic #283.
+//      src/timeline/NlaLanePane.tsx (the offer), src/app/stripTargets.ts (the picker's
+//      list, shared by the popover and the Strip inspector — #1065); issues #479, #480, epic #283.
 
 import type { DagState } from '../core/dag/state';
 import { isCameraNode } from './cameraNode';

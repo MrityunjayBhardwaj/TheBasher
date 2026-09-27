@@ -25,13 +25,38 @@ import { SCOPE_PARAM, scopeParam } from '../nodes/componentSelection';
 import {
   colorParam,
   nameParam,
+  optionsOf,
   placeholderOf,
   widget,
   widgetOf,
+  type ParamOption,
   type ParamWidget,
 } from '../nodes/paramWidget';
+import { applyOp, evaluate } from '../core/dag';
+import type { DagState } from '../core/dag/state';
+import type { Op } from '../core/dag/types';
+import { buildDefaultDagState } from '../core/project/default';
+import { profileOptions } from '../nodes/LightProfileSelect';
+import { buildAddPrimitiveOps, SCENE_OBJECT_KINDS } from './addPrimitives';
+import { buildAddConstraintOps } from './constraintStack';
+import { stripChannelValuesForTarget } from './layeredChannels';
+import { resolveConstraintRotation } from './nodeConstraints';
+import { stripTargetRows } from './stripTargets';
+import { addStripMutator } from '../agent/mutators/builders/addStrip';
+import { createActionMutator } from '../agent/mutators/builders/createAction';
 import { overrideDescriptor } from './overrideDescriptor';
+import { resolveActiveRigNode } from './resolveRigLightSources';
 import { nodeDisplayName } from './sceneTreeWalk';
+import { activeProfileSelect, buildAddProfileOps } from './studioProfiles';
+import { isAnimatable } from './animatableParams';
+import { buildAddModifierOps } from './operatorStack';
+import { buildNewMaterialOps } from './materialLink';
+import { buildBindDriverOps } from './driverBind';
+// #1066 — loading the pickers fills the slot the channel schemas ask (boot does this in the app).
+import { driverKindsOf } from './channelPickers';
+import { bakeBasherControllerValues, bakeComfyBatchedTracks } from './video/compileComfyBatch';
+import { comfyParamPath, importComfyGraph, type ComfyApiJson } from '../core/comfy/comfyGraph';
+import { comfyControllerPath, scanBasherControllers } from '../core/comfy/basherControllers';
 
 beforeEach(() => {
   __resetRegistryForTests();
@@ -302,13 +327,18 @@ describe('a param declares its control on its schema (#872)', () => {
     // below are gaps with a known shape: an identifier wants a PICKER over what exists, and
     // giving it free text would let a director type a name that silently selects nothing —
     // worse than read-only, because it looks like it worked. Tracked separately rather than
-    // papered over here — #1032 carries the twenty-five that want one.
+    // papered over here — #1032 carries every CHOICE entry and every named-wait entry still
+    // listed below (twenty-five when this was written; each picker that lands removes its own
+    // line). The last generic WIRING entry left in #1066; what wiring remains names its wait.
     const MINTED =
       'machine-minted — a hash, a handle or an id the product writes; typing one is never right';
-    const WIRING =
-      'names another node or a path into it — wants a picker, and free text would accept a target that resolves to nothing';
     const CHOICE =
       'selects from what exists at runtime — wants a picker over the live options, for the same reason';
+    // #1066 — channel wiring whose picker waits on a measurement, each named.
+    const NO_VEC2_ROWS =
+      'the animatable census has no vec2 rows (compositor layers, uvTransform), so no list could be honest (#1259)';
+    const NOTHING_READS_IMAGE =
+      'a keyed ComfyUI image input reaches nothing in the batch, so there is no path to offer (#1257)';
 
     const ACKNOWLEDGED: Readonly<Record<string, string>> = {
       'AnimationClip.sourceHash': MINTED,
@@ -321,30 +351,22 @@ describe('a param declares its control on its schema (#872)', () => {
       'KeyframeChannelVec3.sourceHash': MINTED,
       'RenderJob.jobId': MINTED,
 
-      'FollowPath.target': WIRING,
-      'KeyframeChannelColor.paramPath': WIRING,
-      'KeyframeChannelColor.target': WIRING,
-      'KeyframeChannelImage.paramPath': WIRING,
-      'KeyframeChannelImage.target': WIRING,
-      'KeyframeChannelNumber.paramPath': WIRING,
-      'KeyframeChannelNumber.target': WIRING,
-      'KeyframeChannelQuat.paramPath': WIRING,
-      'KeyframeChannelQuat.target': WIRING,
-      'KeyframeChannelText.paramPath': WIRING,
-      'KeyframeChannelText.target': WIRING,
-      'KeyframeChannelVec2.paramPath': WIRING,
-      'KeyframeChannelVec2.target': WIRING,
-      'KeyframeChannelVec3.paramPath': WIRING,
-      'KeyframeChannelVec3.target': WIRING,
-      'ParamDriver.paramPath': WIRING,
-      'ParamDriver.target': WIRING,
-      'Strip.action': WIRING,
-      'Strip.target': WIRING,
-      'TrackTo.target': WIRING,
+      // `FollowPath.target`, `Strip.action`, `Strip.target` and `TrackTo.target` left this list in
+      // #1065 — pickers over what the strip fold and the constraint fold can resolve. The Number,
+      // Vec3, Color and Text channels' `target`/`paramPath` left it in #1066 — pickers over what
+      // the census measured and what a ComfyUI batch reads — and so did ParamDriver's, once the
+      // census measured drivers on their own (#1258), and Quat's once it measured both rotation
+      // modes (#1259). What stays has a named reason: a
+      // picker needs something that KNOWS which paths animate, and for these nothing does yet.
+      'KeyframeChannelImage.paramPath': NOTHING_READS_IMAGE,
+      'KeyframeChannelImage.target': NOTHING_READS_IMAGE,
+      'KeyframeChannelVec2.paramPath': NO_VEC2_ROWS,
+      'KeyframeChannelVec2.target': NO_VEC2_ROWS,
 
       'ClipSelect.selectedClipName': CHOICE,
       'LightData.tex': CHOICE,
-      'LightProfileSelect.selectedProfile': CHOICE,
+      // `LightProfileSelect.selectedProfile` left this list in #1064 — the first CHOICE to get
+      // its picker. The stale-entry direction below is what makes that removal mandatory.
       'MotionGenerate.model': CHOICE,
       'PoseOverride.bone': CHOICE,
     };
@@ -387,7 +409,7 @@ describe('a param declares its control on its schema (#872)', () => {
     });
     // The denominator rides with the verdict — an empty `unacknowledged` from a loop that
     // never ran looks exactly like a pass.
-    expect(readOnly.length).toBe(34);
+    expect(readOnly.length).toBe(17);
   });
 
   it('row 15 — a param owns the word for its EMPTY state, and the control owns the fallback (#1031)', () => {
@@ -434,7 +456,8 @@ describe('a param declares its control on its schema (#872)', () => {
 
     // The census, so this cannot drift into "every text param declares a word" (which would
     // make the fallback dead) or "none does" (which is the bug it replaces). Every `name`
-    // carries one because they all come through the one helper; nothing else does yet.
+    // carries one because they all come through the one helper. The one other word is a
+    // picker's name for its empty value (#1064): a blank profile is "no profile".
     const declaredWord: string[] = [];
     let examined = 0;
     for (const type of listNodeTypes()) {
@@ -447,10 +470,14 @@ describe('a param declares its control on its schema (#872)', () => {
     }
     expect({ examined: examined > 0, count: declaredWord.length }).toEqual({
       examined: true,
-      // 25 since #1124 retired `MotionGenerate.name`.
-      count: 25,
+      // 25 `.name`s since #1124 retired `MotionGenerate.name`, the profile picker's word (#1064),
+      // and the bone picker's (#1284): an empty bone aims at "the object itself".
+      count: 27,
     });
-    expect(declaredWord.every((k) => k.endsWith('.name'))).toBe(true);
+    expect(declaredWord.filter((k) => !k.endsWith('.name'))).toEqual([
+      'LightProfileSelect.selectedProfile',
+      'TrackTo.aimBone',
+    ]);
   });
 
   it('row 5 — the widget union is closed, so a new member must be answered for', () => {
@@ -474,14 +501,575 @@ describe('a param declares its control on its schema (#872)', () => {
     // this Record errored only under a config that includes tests (the changed-file sweep).
     // So the production `never` is the guard, and this row is the readable census beside it.
     // Said plainly because the row it replaces claimed an enforcement it did not have.
+    //
+    // ⚠️ AND IT HAD DRIFTED AGAIN (measured #1064): `text` joined the union in #1027 with no line
+    // here, and this Record stopped compiling — `Property 'text' is missing` — which no gate
+    // saw, for exactly the reason above. Repaired with all four members.
     const DRAWN_BY: Record<ParamWidget, string> = {
       query: 'QueryField — free text over the component-selection language',
       color: 'ColorParamField -> MaterialColorRow — swatch + hex (#521)',
+      text: 'QueryField with testidKind "text" — plain authored string, the param’s own placeholder (#1027)',
+      options:
+        'OptionsParamField -> OptionsSelect — picker over the provider’s live options (#1064)',
     };
-    expect(Object.keys(DRAWN_BY).sort()).toEqual(['color', 'query']);
+    expect(Object.keys(DRAWN_BY).sort()).toEqual(['color', 'options', 'query', 'text']);
     // When this list grows: add the arm to `ParamRow`'s switch in `src/app/NPanel.tsx`,
     // and give the new control its own e2e row the way `scope` has one — an authorable
     // control that can refuse owes a visible refusal and an observed recovery.
+  });
+
+  it('row 16 — declaring the profile picker does not change what `selectedProfile` accepts (#1064)', () => {
+    // The pairing row: the schema BEFORE the declaration, rebuilt independently, against the
+    // instance the node stores now. A stored name no rig carries must still validate — the
+    // picker shows it as not found; refusing it would stop a saved project from loading.
+    const before = z.string().default('');
+    const field = fieldOf('LightProfileSelect', 'selectedProfile')!;
+    const cases: unknown[] = [undefined, '', 'Key', 'a profile that is gone', 42, null, {}];
+    const verdict = (s: z.ZodTypeAny, v: unknown) => {
+      const r = s.safeParse(v);
+      return r.success ? { ok: true, value: r.data } : { ok: false };
+    };
+    expect({ examined: cases.length, now: cases.map((v) => verdict(field, v)) }).toEqual({
+      examined: 7,
+      now: cases.map((v) => verdict(before, v)),
+    });
+    expect(widgetOf(field)).toBe('options');
+  });
+
+  it('row 17 — every options param has a provider, and every provider sits on an options param (#1064)', () => {
+    // Both directions: an `options` control with no provider draws an empty list, and a
+    // provider on a param drawn some other way is a picker nobody sees.
+    let examined = 0;
+    const optionsWidget: string[] = [];
+    const withProvider: string[] = [];
+    for (const type of listNodeTypes()) {
+      const schema = getNodeType(type)?.paramSchema;
+      if (!(schema instanceof z.ZodObject)) continue;
+      for (const [key, field] of Object.entries(schema.shape as Record<string, z.ZodTypeAny>)) {
+        examined++;
+        if (widgetOf(field) === 'options') optionsWidget.push(`${type}.${key}`);
+        if (optionsOf(field) !== undefined) withProvider.push(`${type}.${key}`);
+      }
+    }
+    expect({ examined: examined > 0, optionsWidget, withProvider }).toEqual({
+      examined: true,
+      optionsWidget: [
+        'FollowPath.target',
+        'KeyframeChannelColor.target',
+        'KeyframeChannelColor.paramPath',
+        'KeyframeChannelNumber.target',
+        'KeyframeChannelNumber.paramPath',
+        'KeyframeChannelQuat.target',
+        'KeyframeChannelQuat.paramPath',
+        'KeyframeChannelText.target',
+        'KeyframeChannelText.paramPath',
+        'KeyframeChannelVec3.target',
+        'KeyframeChannelVec3.paramPath',
+        'LightProfileSelect.selectedProfile',
+        'ParamDriver.target',
+        'ParamDriver.paramPath',
+        'Strip.action',
+        'Strip.target',
+        'TrackTo.target',
+        'TrackTo.aimBone',
+      ],
+      withProvider: [
+        'FollowPath.target',
+        'KeyframeChannelColor.target',
+        'KeyframeChannelColor.paramPath',
+        'KeyframeChannelNumber.target',
+        'KeyframeChannelNumber.paramPath',
+        'KeyframeChannelQuat.target',
+        'KeyframeChannelQuat.paramPath',
+        'KeyframeChannelText.target',
+        'KeyframeChannelText.paramPath',
+        'KeyframeChannelVec3.target',
+        'KeyframeChannelVec3.paramPath',
+        'LightProfileSelect.selectedProfile',
+        'ParamDriver.target',
+        'ParamDriver.paramPath',
+        'Strip.action',
+        'Strip.target',
+        'TrackTo.target',
+        'TrackTo.aimBone',
+      ],
+    });
+  });
+
+  it('row 19 — every strip and constraint option resolves once written, and nothing left out does (#1065)', () => {
+    // The property #1064 set for every provider, checked through each param's REAL resolver and
+    // in both directions: an offered option that resolves nothing is a picker that lies, and a
+    // resolvable node left out is a target the director cannot reach. One of every scene
+    // primitive, so the lists have placed and unplaced nodes to tell apart.
+    const FRAME = { time: { frame: 0, seconds: 0, normalized: 0 } };
+    const apply = (st: DagState, ops: readonly Op[]) => {
+      let n = st;
+      for (const op of ops) n = applyOp(n, op).next;
+      return n;
+    };
+    let s = buildDefaultDagState();
+    for (const kind of SCENE_OBJECT_KINDS) {
+      const r = buildAddPrimitiveOps(s, kind, [1, 0, 0]);
+      if (r) s = apply(s, r.ops);
+    }
+    const none = new Set<string>() as never;
+    s = apply(
+      s,
+      createActionMutator.build(
+        createActionMutator.spec.parse(createActionMutator.specExample),
+        none,
+        s,
+      ),
+    );
+    const providerOf = (type: string, key: string) =>
+      optionsOf((getNodeType(type)!.paramSchema as z.ZodObject<z.ZodRawShape>).shape[key])!;
+    const enabled = (type: string, key: string) =>
+      providerOf(type, key)(s, '')
+        .filter((o) => !o.disabledReason)
+        .map((o) => o.value);
+
+    // Constraint target — the aim band, aimed at a fixed point no node sits on.
+    const constrained = enabled('TrackTo', 'target');
+    expect(enabled('FollowPath', 'target'), 'both constraints offer one list').toEqual(constrained);
+    const aimOf = (target: string) => {
+      const added = buildAddConstraintOps(s, target, 'TrackTo', 'con_probe')!;
+      const t = apply(s, [
+        ...added.ops,
+        { type: 'setParam', nodeId: 'con_probe', paramPath: 'aimPoint', value: [37, 11, -23] },
+      ]);
+      return resolveConstraintRotation(t, target, FRAME);
+    };
+    const all = Object.keys(s.nodes);
+    expect({ examined: all.length, offered: constrained.length > 0 }).toMatchObject({
+      offered: true,
+    });
+    for (const id of all) {
+      const resolves = aimOf(id) !== null;
+      expect({ id, type: s.nodes[id].type, resolves }).toEqual({
+        id,
+        type: s.nodes[id].type,
+        resolves: constrained.includes(id),
+      });
+    }
+
+    // Strip action — through the strip fold, on a target the popover offers.
+    const actions = enabled('Strip', 'action');
+    const target = enabled('Strip', 'target')[0];
+    expect(actions.length, 'the Action the builder made is offered').toBeGreaterThan(0);
+    const foldedWith = (action: string) =>
+      stripChannelValuesForTarget(
+        apply(
+          s,
+          addStripMutator.build(
+            addStripMutator.spec.parse({ action, target, stripId: 'strip_probe' }),
+            none,
+            s,
+          ),
+        ).nodes,
+        target,
+      ).length;
+    for (const id of all) {
+      expect({ id, folds: foldedWith(id) > 0 }).toEqual({ id, folds: actions.includes(id) });
+    }
+
+    // Strip target — the add-strip popover's own rows, so the two cannot disagree.
+    expect(enabled('Strip', 'target')).toEqual(stripTargetRows(s).map((r) => r.id));
+  });
+
+  it('row 20 — every channel target+path option animates once written, and nothing left out does (#1066)', () => {
+    // V558's property for the channel pickers, both ways, against each road's own answer:
+    //   - a scene node: the measured census (`isAnimatable`) on EVERY concrete leaf of the
+    //     channel's shape, so a path the picker drops or a pattern it mis-expands reds;
+    //   - a ComfyUI workflow: the batch bake itself — each input is keyed A → B and counts only
+    //     when the baked values move AND the baked input's declared kind is the channel's.
+    // Two workflows, one per compile mode, because Mode A reads controllers and IGNORES keyed
+    // foreign inputs: the mode branch is exactly what a picker could get wrong.
+    const apply = (st: DagState, ops: readonly Op[]) => {
+      let n = st;
+      for (const op of ops) n = applyOp(n, op).next;
+      return n;
+    };
+    let s = buildDefaultDagState();
+    for (const kind of SCENE_OBJECT_KINDS) {
+      const r = buildAddPrimitiveOps(s, kind, [1, 0, 0]);
+      if (r) s = apply(s, r.ops);
+    }
+    // The contexts the census answers "unmeasured" for, built by the product's own builders, so
+    // a picker that offered "not still" instead of "animates" would list them (and reds).
+    const placeKind = (kind: 'Cube' | 'Sphere' | 'Math') => {
+      const r = buildAddPrimitiveOps(s, kind, [2, 0, 0])!;
+      s = apply(s, r.ops);
+      return { obj: r.newNodeId, data: r.dataNodeId ?? r.newNodeId };
+    };
+    const linked = placeKind('Cube');
+    s = apply(s, buildNewMaterialOps(s, linked.data)!.ops);
+    const stacked = placeKind('Cube');
+    s = apply(s, buildAddModifierOps(s, stacked.data, 'UVProjectModifier')!.ops);
+    const aimed = placeKind('Cube');
+    s = apply(s, buildAddConstraintOps(s, aimed.obj, 'TrackTo')!.ops);
+    const driven = placeKind('Sphere');
+    const source = placeKind('Math');
+    const bind = buildBindDriverOps(s, {
+      targetId: driven.data,
+      paramPath: 'radius',
+      source: { kind: 'output', id: 'm', label: 'm', ref: { node: source.obj, socket: 'out' } },
+      driverId: 'drv',
+    });
+    s = apply(s, bind.ok ? bind.ops : []);
+    expect(bind.ok, 'the driver binds').toBe(true);
+    // #1259 — a quaternion is a leaf only once held, as the census seeds it: every node whose
+    // schema declares a rotation mode holds the identity, and one Sphere composes it.
+    const posable = Object.values(s.nodes).filter((n) => {
+      const shape = (getNodeType(n.type)?.paramSchema as z.ZodObject<z.ZodRawShape>)?.shape;
+      return shape !== undefined && 'rotationMode' in shape;
+    });
+    s = apply(
+      s,
+      posable.map((n) => ({
+        type: 'setParam' as const,
+        nodeId: n.id,
+        paramPath: 'quaternion',
+        value: [0, 0, 0, 1],
+      })),
+    );
+    const turned = placeKind('Sphere');
+    s = apply(s, [
+      { type: 'setParam', nodeId: turned.obj, paramPath: 'quaternion', value: [0, 0, 0, 1] },
+      { type: 'setParam', nodeId: turned.obj, paramPath: 'rotationMode', value: 'quaternion' },
+    ]);
+
+    const META = { name: 'w', importedAt: 'fixed', fps: 30, frames: 24 };
+    const MODE_B: ComfyApiJson = {
+      '3': {
+        class_type: 'KSampler',
+        inputs: { seed: 42, steps: 20, cfg: 6.5, sampler_name: 'euler', denoise: 1 },
+      },
+      '5': { class_type: 'EmptyLatentImage', inputs: { width: 512, height: 512 } },
+      '6': { class_type: 'CLIPTextEncode', inputs: { text: 'a cube' } },
+      '9': { class_type: 'LoadImage', inputs: { image: 'a.png' } },
+    };
+    const MODE_A: ComfyApiJson = {
+      '3': { class_type: 'KSampler', inputs: { cfg: ['10', 0], denoise: 1 } },
+      '10': {
+        class_type: 'basher_controller',
+        inputs: { name: 'CFG', kind: 'float', values_json: '[7.5]', frame_count: 1 },
+      },
+      '11': {
+        class_type: 'basher_controller',
+        inputs: { name: 'Prompt', kind: 'string', values_json: '["x"]', frame_count: 1 },
+      },
+      '12': {
+        class_type: 'basher_controller',
+        inputs: { name: 'Flip', kind: 'bool', values_json: '[false]', frame_count: 1 },
+      },
+    };
+    const WORKFLOWS: Record<string, ComfyApiJson> = { wfB: MODE_B, wfA: MODE_A };
+    s = apply(
+      s,
+      Object.entries(WORKFLOWS).map(([id, api]) => ({
+        type: 'addNode' as const,
+        nodeId: id,
+        nodeType: 'ComfyUIWorkflow',
+        params: { graph: importComfyGraph(api, META) },
+      })),
+    );
+
+    const CHANNELS = [
+      ['KeyframeChannelNumber', 'number', 1, 9],
+      ['KeyframeChannelVec3', 'vec3', [0, 0, 0], [1, 2, 3]],
+      ['KeyframeChannelQuat', 'quat', [0, 0, 0, 1], [0.2, 0.3, 0.1, 0.927]],
+      ['KeyframeChannelColor', 'color', '#000000', '#ffffff'],
+      ['KeyframeChannelText', 'text', 'A', 'B'],
+    ] as const;
+    const shapeOf = (v: unknown): string | null => {
+      if (typeof v === 'number') return 'number';
+      if (typeof v === 'string') return /^#[0-9a-fA-F]{6}$/.test(v) ? 'color' : null;
+      if (Array.isArray(v) && v.every((x) => typeof x === 'number'))
+        return v.length === 3 ? 'vec3' : v.length === 4 ? 'quat' : null;
+      return null;
+    };
+    const leaves = (v: unknown, at: string[], out: [string, string][]) => {
+      const shape = shapeOf(v);
+      if (shape) out.push([at.join('.'), shape]);
+      else if (v !== null && typeof v === 'object')
+        for (const [k, x] of Object.entries(v)) leaves(x, [...at, k], out);
+      return out;
+    };
+
+    // Every input a channel or driver could name on a workflow: its controllers (Mode A) and
+    // every raw input (Mode B).
+    const comfyCandidates = (api: ComfyApiJson) => [
+      ...scanBasherControllers(api).map((d) => ({
+        path: comfyControllerPath(d.nodeId),
+        declaredKind: d.kind as string | null,
+      })),
+      ...Object.entries(api).flatMap(([nid, n]) =>
+        Object.keys(n.inputs ?? {}).map((input) => ({
+          path: comfyParamPath(nid, input),
+          declaredKind: null as string | null,
+        })),
+      ),
+    ];
+
+    const counted: Record<string, number> = {};
+    for (const [type, kind, a, b] of CHANNELS) {
+      const field = (key: string) =>
+        optionsOf((getNodeType(type)!.paramSchema as z.ZodObject<z.ZodRawShape>).shape[key])!;
+      const withProbe = (target: string, path: string, keyed: boolean) =>
+        apply(s, [
+          {
+            type: 'addNode',
+            nodeId: 'probe',
+            nodeType: type,
+            params: {
+              target,
+              paramPath: path,
+              keyframes: keyed
+                ? [
+                    { time: 0, value: a, easing: 'linear' },
+                    { time: 0.1, value: b, easing: 'linear' },
+                  ]
+                : [],
+            },
+          },
+        ]);
+
+      // What the pickers offer: every enabled target, then every enabled path on it.
+      const offered: string[] = [];
+      for (const t of field('target')(withProbe('', '', false), 'probe')) {
+        if (t.disabledReason) continue;
+        for (const pth of field('paramPath')(withProbe(t.value, '', false), 'probe'))
+          if (!pth.disabledReason) offered.push(`${t.value} ${pth.value}`);
+      }
+
+      // What animates, asked of each road independently of the pickers.
+      const truth: string[] = [];
+      // No scene param is a text channel's (the census measures no text), so its truth is
+      // ComfyUI-only below.
+      if (kind !== 'text')
+        for (const [id, node] of Object.entries(s.nodes)) {
+          if (node.type === 'ComfyUIWorkflow') continue;
+          for (const [path, shape] of leaves(node.params, [], []))
+            if (shape === kind && isAnimatable(s, id, path, kind).answer === 'animatable')
+              truth.push(`${id} ${path}`);
+        }
+      if (kind === 'number' || kind === 'text') {
+        const declared = kind === 'number' ? ['float', 'int'] : ['string'];
+        for (const [id, api] of Object.entries(WORKFLOWS)) {
+          const decls = scanBasherControllers(api);
+          for (const c of comfyCandidates(api)) {
+            const st = withProbe(id, c.path, true);
+            if (decls.length > 0) {
+              const baked = bakeBasherControllerValues(st, id, decls, 0, 3, 30, 4);
+              const moved = Object.entries(baked).some(
+                ([cid, vs]) =>
+                  comfyControllerPath(cid) === c.path && new Set(vs.map(String)).size > 1,
+              );
+              if (moved && declared.includes(String(c.declaredKind))) truth.push(`${id} ${c.path}`);
+            } else {
+              const track = bakeComfyBatchedTracks(
+                st,
+                id,
+                importComfyGraph(api, META),
+                0,
+                3,
+                30,
+                4,
+              ).find((t) => comfyParamPath(t.nodeId, t.inputName) === c.path);
+              if (
+                track &&
+                new Set(track.values.map(String)).size > 1 &&
+                declared.includes(track.valueKind)
+              )
+                truth.push(`${id} ${c.path}`);
+            }
+          }
+        }
+      }
+      expect({ kind, offered: [...offered].sort() }).toEqual({ kind, offered: [...truth].sort() });
+      counted[kind] = truth.length;
+    }
+    // The denominators ride with the verdict: an empty list on both sides would pass.
+    expect(
+      Object.values(counted).every((n) => n > 0),
+      JSON.stringify(counted),
+    ).toBe(true);
+
+    // ParamDriver (#1258): the same property against the census's DRIVER answers, which differ
+    // from the channel's (the camera pose ignores a driver, #1266). A driver's kind is its
+    // source's, so one probe per road: each must offer exactly the leaves of its own kind(s).
+    const controller = Object.values(s.nodes).find((n) => n.type === 'Null')!.id;
+    const DRIVERS: readonly (readonly [string, Record<string, unknown>, boolean, string[]])[] = [
+      ['unbound', {}, false, ['number', 'vec3']],
+      ['transform', { sourceTransform: { node: controller, channel: 'tx' } }, false, ['number']],
+      ['point', { sourceTransformVec: { node: controller } }, false, ['vec3']],
+      ['wired Number', {}, true, ['number']],
+    ];
+    // A workflow's truth for a driver, measured on its own: a driver writing a sentinel onto
+    // each candidate, baked; it counts when the sentinel reaches a number-kind input.
+    const SENTINEL = 4242;
+    const comfyDriverTruth: string[] = [];
+    for (const [id, api] of Object.entries(WORKFLOWS)) {
+      const decls = scanBasherControllers(api);
+      for (const c of comfyCandidates(api)) {
+        const st = apply(s, [
+          {
+            type: 'addNode',
+            nodeId: 'sentinel',
+            nodeType: 'ParamDriver',
+            params: {
+              target: id,
+              paramPath: c.path,
+              sourceTransform: {
+                node: controller,
+                channel: 'tx',
+                remap: { inMin: 0, inMax: 1, outMin: SENTINEL, outMax: SENTINEL },
+              },
+            },
+          },
+        ]);
+        const reached =
+          decls.length > 0
+            ? Object.entries(bakeBasherControllerValues(st, id, decls, 0, 3, 30, 4)).some(
+                ([cid, vs]) =>
+                  comfyControllerPath(cid) === c.path &&
+                  vs.includes(SENTINEL) &&
+                  ['float', 'int'].includes(String(c.declaredKind)),
+              )
+            : bakeComfyBatchedTracks(st, id, importComfyGraph(api, META), 0, 3, 30, 4).some(
+                (t) =>
+                  comfyParamPath(t.nodeId, t.inputName) === c.path &&
+                  t.values.includes(SENTINEL) &&
+                  ['float', 'int'].includes(t.valueKind),
+              );
+        if (reached) comfyDriverTruth.push(`${id} ${c.path}`);
+      }
+    }
+
+    const driverField = (key: string) =>
+      optionsOf(
+        (getNodeType('ParamDriver')!.paramSchema as z.ZodObject<z.ZodRawShape>).shape[key],
+      )!;
+    const driverOffered: Record<string, number> = {};
+    for (const [road, fields, wired, kinds] of DRIVERS) {
+      const withDriver = (target: string) =>
+        apply(s, [
+          {
+            type: 'addNode',
+            nodeId: 'probe',
+            nodeType: 'ParamDriver',
+            params: { target, paramPath: '', ...fields },
+          },
+          ...(wired
+            ? [
+                {
+                  type: 'connect' as const,
+                  from: { node: source.obj, socket: 'out' },
+                  to: { node: 'probe', socket: 'in' },
+                },
+              ]
+            : []),
+        ]);
+      expect({ road, kinds: driverKindsOf(withDriver(''), 'probe') }).toEqual({ road, kinds });
+      const offered: string[] = [];
+      for (const t of driverField('target')(withDriver(''), 'probe')) {
+        if (t.disabledReason) continue;
+        for (const pth of driverField('paramPath')(withDriver(t.value), 'probe'))
+          if (!pth.disabledReason) offered.push(`${t.value} ${pth.value}`);
+      }
+      const truth: string[] = [];
+      for (const [id, node] of Object.entries(s.nodes)) {
+        if (node.type === 'ComfyUIWorkflow') continue;
+        for (const [path, shape] of leaves(node.params, [], []))
+          if (
+            kinds.includes(shape) &&
+            isAnimatable(s, id, path, shape as 'number' | 'vec3', { mechanism: 'driver' })
+              .answer === 'animatable'
+          )
+            truth.push(`${id} ${path}`);
+      }
+      if (kinds.includes('number')) truth.push(...comfyDriverTruth);
+      expect({ road, offered: [...offered].sort() }).toEqual({ road, offered: [...truth].sort() });
+      driverOffered[road] = truth.length;
+    }
+    // Denominators, and the kind split is real: the union is exactly its two halves.
+    expect(
+      Object.values(driverOffered).every((n) => n > 0),
+      JSON.stringify(driverOffered),
+    ).toBe(true);
+    expect(driverOffered.unbound).toBe(driverOffered.transform + driverOffered.point);
+    expect(comfyDriverTruth.length, 'a driver reaches some workflow input').toBeGreaterThan(0);
+  });
+
+  it('row 18 — every enabled profile option, once chosen, resolves to that rig on both roads (#1064)', () => {
+    // The property the provider owes. Built with the product's own "+ Profile" builder, then
+    // pushed into the shapes that break a name lookup: a blank name, a duplicate name, and a
+    // rig in the graph that is not wired into the select.
+    const FRAME = { ctx: { time: { frame: 0, seconds: 0, normalized: 0 } } };
+    const apply = (s: DagState, ops: readonly Op[]) => {
+      let n = s;
+      for (const op of ops) n = applyOp(n, op).next;
+      return n;
+    };
+    let s = buildDefaultDagState();
+    for (const name of ['Key', 'Rim', 'Fill', 'Dup'])
+      s = apply(s, buildAddProfileOps(s, name, [0, 0, 0])!.ops);
+    const rigId = (name: string) =>
+      Object.values(s.nodes).find(
+        (n) => n.type === 'LightRig' && (n.params as { name: string }).name === name,
+      )!.id;
+    s = apply(s, [
+      { type: 'setParam', nodeId: rigId('Fill'), paramPath: 'name', value: '' },
+      { type: 'setParam', nodeId: rigId('Dup'), paramPath: 'name', value: 'Key' },
+      { type: 'addNode', nodeId: 'rig_loose', nodeType: 'LightRig', params: { name: 'Loose' } },
+    ]);
+    const selId = activeProfileSelect(s)!;
+
+    const resolves = (st: DagState, list: readonly ParamOption[]) =>
+      list
+        .filter((o) => o.disabledReason === undefined)
+        .map((o) => {
+          const after = apply(st, [
+            { type: 'setParam', nodeId: selId, paramPath: 'selectedProfile', value: o.value },
+          ]);
+          const value = evaluate(after, selId, FRAME).value as { name?: string } | null;
+          const rendered = resolveActiveRigNode(after);
+          return {
+            option: o.value,
+            evaluate: value?.name === o.value,
+            render:
+              rendered !== null &&
+              (after.nodes[rendered].params as { name: string }).name === o.value,
+          };
+        });
+
+    const offered = optionsOf(fieldOf('LightProfileSelect', 'selectedProfile'))!(s, selId);
+    expect(offered).toEqual(profileOptions(s, selId));
+    expect({
+      offered: offered.map((o) => `${o.value}${o.disabledReason ? ' (disabled)' : ''}`),
+      resolved: resolves(s, offered),
+    }).toEqual({
+      offered: ['Key', 'Rim', ' (disabled)', 'Key (disabled)'],
+      resolved: [
+        { option: 'Key', evaluate: true, render: true },
+        { option: 'Rim', evaluate: true, render: true },
+      ],
+    });
+
+    // Positive control: the same property over a provider with the WRONG domain — every rig in
+    // the graph, the shape Light Studio's switcher has today (#1110) — catches the unwired rig,
+    // so the row above can fail. Spelled here rather than borrowed from that switcher, so fixing
+    // #1110 cannot quietly turn this control into a row that asserts nothing.
+    const everyRig = Object.values(s.nodes)
+      .filter((n) => n.type === 'LightRig')
+      .map((n) => (n.params as { name: string }).name)
+      .filter((name) => name !== '')
+      .map((name) => ({ value: name, label: name }));
+    expect(
+      resolves(s, everyRig)
+        .filter((r) => !r.evaluate || !r.render)
+        .map((r) => r.option),
+    ).toEqual(['Loose']);
   });
 
   it('row 7 — every colour param declares the colour control, and none is left read-only', () => {

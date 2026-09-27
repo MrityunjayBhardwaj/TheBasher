@@ -13,7 +13,6 @@ import { buildBvhImportOps } from '../core/import/bvhImportChain';
 import { buildSkeletonObjectOps } from '../core/import/skeletonObject';
 import { buildDefaultDagState } from '../core/project/default';
 import { registerAllNodes } from '../nodes/registerAll';
-import type { BoneSpec } from '../nodes/types';
 import { collectSkeletonObjects } from './skeletonObjects';
 
 const BVH = `HIERARCHY
@@ -50,13 +49,11 @@ function build({ inScene = true }: { inScene?: boolean } = {}): DagState {
   const sceneNodeId = s.outputs.scene?.node;
   if (!sceneNodeId) throw new Error('default project has no scene output');
   s = apply(s, buildBvhImportOps({ text: BVH, ids: { skeleton: 'sk', clip: 'clip' } }).ops);
-  const bones = (s.nodes.sk.params as { bones: BoneSpec[] }).bones;
   const { ops } = buildSkeletonObjectOps({
     skeletonId: 'sk',
-    bones,
     sceneNodeId,
-    normalise: false,
     name: 'wave',
+    clipId: 'clip',
   });
   return apply(s, inScene ? ops : ops.slice(0, 2));
 }

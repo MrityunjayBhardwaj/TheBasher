@@ -2,6 +2,9 @@ import { defineConfig, devices } from '@playwright/test';
 
 export default defineConfig({
   testDir: './tests/e2e',
+  // #1260 — the census alone takes 14–23 min locally, so CI runs it as its own parallel jobs
+  // (ci.yml `e2e-census`) and the shards skip it. Locally it runs with everything else.
+  ...(process.env.E2E_SKIP_CENSUS ? { testIgnore: ['**/p1235-animatable-census.spec.ts'] } : {}),
   fullyParallel: false,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 1 : 0,

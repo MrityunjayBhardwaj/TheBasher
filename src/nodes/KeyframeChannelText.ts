@@ -14,12 +14,32 @@ import type { NodeDefinition } from '../core/dag/types';
 import type { KeyframeChannelTextValue } from './types';
 import { CHANNEL_BLEND_MODES } from './types';
 import { sampleStepKeyframes } from './keyframeInterp';
-import { nameParam } from './paramWidget';
+import { nameParam, optionsParam } from './paramWidget';
+import {
+  channelPathLockOf,
+  channelPathOptionsOf,
+  channelTargetLockOf,
+  channelTargetOptionsOf,
+} from './channelPickerSlot';
 
 export const KeyframeChannelTextParams = z.object({
   name: nameParam('channel'),
-  target: z.string().default(''),
-  paramPath: z.string().default(''),
+  // #1066 — picked from what a text channel animates, through a slot the app fills: the
+  // pickers' module reaches the node registry, so importing it here would be a load cycle.
+  target: optionsParam(
+    z.string().default(''),
+    channelTargetOptionsOf('text'),
+    undefined,
+    'nodeId',
+    channelTargetLockOf(),
+  ),
+  paramPath: optionsParam(
+    z.string().default(''),
+    channelPathOptionsOf('text'),
+    undefined,
+    'name',
+    channelPathLockOf('text'),
+  ),
   mute: z.boolean().default(false),
   solo: z.boolean().default(false),
   weight: z.number().min(0).max(1).default(1),

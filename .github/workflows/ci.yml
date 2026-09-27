@@ -87,10 +87,57 @@ jobs:
       # not an allowlist someone reads.)
       - run: npx playwright test --shard=${{ matrix.shard }}/4 --reporter=blob
         continue-on-error: true
+        env:
+          # The census runs in e2e-census below; see there.
+          E2E_SKIP_CENSUS: '1'
       - if: always()
         uses: actions/upload-artifact@v4
         with:
           name: blob-report-${{ matrix.shard }}
+          path: blob-report/
+          retention-days: 1
+
+  # THE ANIMATABLE CENSUS, SPLIT BY SUBJECT INTO THREE PARALLEL JOBS (#1260). It is
+  # one 597-row serial loop: 14–23 min on a dev machine (#1262), and CI ran two
+  # other specs 2.6–4.6× slower than local, so inside a shard it would outlast
+  # its own cap. A subject cannot be split (its instances must agree), and
+  # SphereData alone is 226 rows — every compute kind drives its own Sphere — so
+  # no part can be smaller than that. MEASURED 2026-09-26, locally, one part
+  # after another: four parts took 4.0 / 2.4 / 2.9 / 4.5 min, three took
+  # 1.7 / 3.7 / 4.0 min (226 / 186 / 185 rows). A fourth part did not shorten the
+  # slowest one, so it would only add a runner. Rows are not time: a row whose
+  # key moves nothing in the scene pays for two extra renders. With the driver
+  # arm (#1258: each number and vec3 row measured again under a ParamDriver) the
+  # three took 2.8 / 6.6 / 7.8 min on 2026-09-26, so about 20–36 min in CI. Each part places
+  # the whole scene and derives the same split, so the three check every subject
+  # in src/app/animatableCensus.json between them. No build step: no census part
+  # reads dist/. retries 0: a second attempt of a 45-min cap would double the
+  # gate's wall time, and a rerun of the whole workflow is the flake policy.
+  e2e-census:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        part: [1, 2, 3]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npx playwright test tests/e2e/p1235-animatable-census.spec.ts --reporter=blob --retries=0
+        continue-on-error: true
+        env:
+          CENSUS_PART: ${{ matrix.part }}/3
+          # An unsharded run names its blob report.zip, so three of them would
+          # overwrite each other when e2e merges the artifacts into one folder.
+          PLAYWRIGHT_BLOB_OUTPUT_NAME: report-census-${{ matrix.part }}.zip
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: blob-report-census-${{ matrix.part }}
           path: blob-report/
           retention-days: 1
 
@@ -103,7 +150,7 @@ jobs:
   # whose pass/fail we are explicitly told to ignore.
   e2e:
     runs-on: ubuntu-latest
-    needs: e2e-shard
+    needs: [e2e-shard, e2e-census]
     # always(), not success(): a shard job that dies on install or build must still
     # reach the verdict step, because a missing shard has to be caught by the
     # under-count floor rather than by this job never running.
@@ -127,12 +174,14 @@ jobs:
       # after running three quarters of the suite. A total is a proxy for "did the
       # suite run"; it is not a proxy for "did every shard report", so check the
       # thing itself.
+      #
+      # Seven: the four shards plus the three census parts (#1260).
       - name: every shard reported
         run: |
           found=$(find all-blobs -name '*.zip' | wc -l | tr -d ' ')
-          echo "blob reports found: $found (expected 4)"
-          if [ "$found" -ne 4 ]; then
-            echo "::error::expected 4 shard blob reports, found $found — a shard died or its upload failed. Refusing to render a verdict on a partial suite."
+          echo "blob reports found: $found (expected 7)"
+          if [ "$found" -ne 7 ]; then
+            echo "::error::expected 7 blob reports (4 shards + 3 census parts), found $found — a job died or its upload failed. Refusing to render a verdict on a partial suite."
             exit 1
           fi
       # merge-reports emits exactly the shape e2e-diff already consumes: a

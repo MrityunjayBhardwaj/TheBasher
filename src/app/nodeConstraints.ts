@@ -34,6 +34,7 @@ import {
   type WorldTransform,
 } from './resolveWorldTransform';
 import { readCurveSampleAt } from './curveSampleSource';
+import { gltfNodeWorldPosition } from './gltfNodeWorld';
 import { resolveEvaluatedParam } from './resolveEvaluatedParam';
 import type { EvaluatorCache } from '../core/dag/evaluator';
 
@@ -53,6 +54,8 @@ interface NodeLike {
 export interface ActiveConstraint {
   readonly target: string;
   readonly aimNode: string;
+  /** #1284 — a node inside the `aimNode` character to aim at (a bone); '' = the node itself. */
+  readonly aimBone: string;
   readonly aimPoint: Vec3;
   readonly up: Vec3;
   /** The constraint node itself — the panel needs to know which node a row
@@ -222,6 +225,7 @@ export function constraintStackForTarget(
       return {
         target: nodeId,
         aimNode: typeof p.aimNode === 'string' ? p.aimNode : '',
+        aimBone: typeof p.aimBone === 'string' ? p.aimBone : '',
         aimPoint: isVec3(p.aimPoint) ? p.aimPoint : [0, 0, 0],
         up: isVec3(p.up) ? p.up : [0, 1, 0],
         nodeId: m.nodeId,
@@ -605,6 +609,12 @@ function aimTargetWorld(
   cache?: EvaluatorCache,
 ): Vec3 {
   if (!tt.aimNode) return tt.aimPoint;
+  // #1284 — a bone of a character: its posed world position (the walk moves the Hips, not the
+  // Group). An unresolvable bone falls through to the node itself, never to a blank aim.
+  if (tt.aimBone) {
+    const bone = gltfNodeWorldPosition(state, tt.aimNode, tt.aimBone, ctx, cache);
+    if (bone) return bone;
+  }
   const followed = resolveFollowedWorldPosition(state, tt.aimNode, ctx, cache);
   if (followed) return followed;
   const targetWorld = resolveWorldTransform(state, tt.aimNode, ctx, cache);
