@@ -11,8 +11,10 @@ import { expect, test } from './_fixtures';
 
 test('overlapping writes to one path all succeed and leave one of them whole', async ({ page }) => {
   test.setTimeout(120_000);
+  // Measured on CI: one 3 MB write with its read-back takes ~2.7 s there (ms locally), so 18
+  // queued writes need ~50 s. Six rounds still red main's unqueued storage 4 of 4 locally.
   page.on('console', (m) => {
-    if (m.text().startsWith('[1293') || m.text().startsWith('[opfs-queue]')) console.log(m.text());
+    if (m.text().startsWith('[1293')) console.log(m.text());
   });
   await page.goto('/');
   await page.waitForFunction(() =>

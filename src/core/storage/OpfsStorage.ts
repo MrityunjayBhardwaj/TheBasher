@@ -24,21 +24,8 @@ const pathQueues = new Map<string, Promise<void>>();
 
 function exclusive<T>(key: string, op: () => Promise<T>): Promise<T> {
   const previous = pathQueues.get(key) ?? Promise.resolve();
-  // TEMP-DIAG #1294 — remove before merge: how long an op waited for its turn and how long it ran.
-  const queuedAt = performance.now();
-  const timed = async (): Promise<T> => {
-    const startedAt = performance.now();
-    try {
-      return await op();
-    } finally {
-      const waited = startedAt - queuedAt;
-      const ran = performance.now() - startedAt;
-      if (waited > 1000 || ran > 1000)
-        console.warn(`[opfs-queue] ${key} waited ${Math.round(waited)}ms ran ${Math.round(ran)}ms`);
-    }
-  };
   // After the previous operation SETTLES, success or not: one failed write must not wedge the path.
-  const run = previous.then(timed, timed);
+  const run = previous.then(op, op);
   const tail = run.then(
     () => undefined,
     () => undefined,
