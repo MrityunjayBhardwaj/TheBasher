@@ -62,13 +62,13 @@ async function rig(
   return { state, armatureId };
 }
 
+/** A spec parsed as the tool boundary parses it, so the builder sees the defaults the product sends:
+ *  `validatePlan` does not parse, and an unparsed spec would reach it without `method` or `fps`. */
+const specOf = (spec: Record<string, unknown>) =>
+  setPoseMemberModeMutator.spec.parse({ layer: 'layer', bone: 'Bone1', ...spec });
+
 function change(state: DagState, spec: Record<string, unknown>): DagState {
-  const plan = validatePlan(
-    setPoseMemberModeMutator,
-    { layer: 'layer', bone: 'Bone1', ...spec },
-    state,
-    'mode',
-  );
+  const plan = validatePlan(setPoseMemberModeMutator, specOf(spec), state, 'mode');
   if (!plan.ok) throw new Error(plan.reason);
   let next = state;
   for (const op of plan.ops as Op[]) next = applyOp(next, op).next;
@@ -205,7 +205,7 @@ describe('#1242 — changing a member’s rotation mode keeps its pose', () => {
     const { state } = await rig(eulerLayer('XYZ'));
     const plan = validatePlan(
       setPoseMemberModeMutator,
-      { layer: 'layer', bone: 'Bone0', rotationMode: 'quaternion' },
+      specOf({ bone: 'Bone0', rotationMode: 'quaternion' }),
       state,
       'x',
     );

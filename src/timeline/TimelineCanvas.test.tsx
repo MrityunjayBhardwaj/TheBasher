@@ -25,11 +25,7 @@
 // REF: memory/project_p6_w9_plan.md C3; hetvabhasa H32.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-// Explicit React import: the classic JSX runtime is in scope for this
-// test transform, so `<TimelineCanvas/>` needs `React` defined (the
-// app's automatic react-jsx runtime is a tsconfig.app setting that does
-// not reach the vitest .test.tsx transform here).
-import React, { act } from 'react';
+import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import {
   TimelineCanvas,
