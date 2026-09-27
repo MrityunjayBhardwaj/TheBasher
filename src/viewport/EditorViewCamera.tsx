@@ -398,10 +398,16 @@ export function EditorViewCamera() {
     if (lookThrough || !cam) return;
     if (++sinceLockScan.current >= LOCK_RESCAN_INTERVAL) {
       sinceLockScan.current = 0;
-      lockScan.current = scanForFollow(state.scene, viewLock.nodeId);
+      lockScan.current = scanForFollow(state.scene, viewLock.nodeId, dag);
     }
+    // A character's bones are placed at the playhead every frame, as the band draws them (#1275).
     const found = lockScan.current
-      ? pointFromScan(lockScan.current, viewLock.nodeId, viewLock.boneName)
+      ? pointFromScan(
+          lockScan.current,
+          viewLock.nodeId,
+          viewLock.boneName,
+          useTimeStore.getState().seconds,
+        )
       : null;
     // 🔴 NULL IS NOT CLEARED HERE, and that is a decision rather than an
     // omission (#984). From inside this callback "nothing to follow" and

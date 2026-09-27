@@ -2,7 +2,7 @@
 // rest pose feeds one base override PoseLayer holding the file's keys. No importer writes a clip.
 //
 // THE FILES. `public/assets/motion/walk.bvh`, and Blender 5.1.1's default glTF export of that BVH
-// imported with defaults (`__fixtures__/walk-blender-default.glb`, probe `q1211_bvh_to_glb.py`: one
+// imported with defaults (`public/fixtures/anim/walk-blender-default.glb`, probe `q1211_bvh_to_glb.py`: one
 // skin of 78 joints, no mesh, 234 channels, LINEAR and 2-key STEP). Blender's own round trip keeps the
 // motion: its re-import of this glb matches its BVH import to 0.0015 in heads at every whole frame
 // (probe `q1211_glb_roundtrip.py`), so a difference here is ours.
@@ -50,7 +50,7 @@ function added(before: DagState, after: DagState) {
 
 async function glbRoad() {
   const before = buildDefaultDagState();
-  const bytes = readFileSync('src/core/import/__fixtures__/walk-blender-default.glb');
+  const bytes = readFileSync('public/fixtures/anim/walk-blender-default.glb');
   const result = await buildNativeGltfImportOps({
     buffer: bytes.buffer.slice(
       bytes.byteOffset,

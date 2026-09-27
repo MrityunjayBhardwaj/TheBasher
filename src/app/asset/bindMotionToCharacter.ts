@@ -62,6 +62,7 @@ import { useNotificationStore, type ToastSeverity } from '../stores/notification
 import { formatAssetError, useAssetErrorStore } from '../stores/assetErrorStore';
 import type { DagState } from '../../core/dag/state';
 import type { BoneSpec } from '../../nodes/types';
+import { reachedFromSelection } from '../character/reachedFromSelection';
 
 export type BindMotionRefusal = 'no-character' | 'ambiguous' | 'no-bridge' | 'rejected';
 
@@ -156,34 +157,6 @@ export function characterTargets(state: DagState): Candidate[] {
   // Stable order (V22): sorted by the node that IS the character, so an ambiguity message names
   // the candidates in the same order every time rather than in object-key order.
   return out.sort((a, b) => (a.objectId < b.objectId ? -1 : 1));
-}
-
-/**
- * The nodes a selection reaches by walking up input edges, a bounded three levels (#1213): the armature
- * Object itself, the skinned mesh's Object (data → Armature modifier → armature), and the Object the
- * import hangs both under (children → mesh Object → modifier → armature). Bounded so it never turns
- * into a search of the graph.
- */
-function reachedFromSelection(state: DagState, selectedNodeId: string): Set<string> {
-  // Breadth-first, so each node is expanded at the SHALLOWEST depth it is reached: a depth-first walk
-  // that met a node deep first would never expand it again from a shorter path.
-  const reached = new Set<string>([selectedNodeId]);
-  let frontier = [selectedNodeId];
-  for (let depth = 0; depth < 3 && frontier.length > 0; depth++) {
-    const next: string[] = [];
-    for (const nodeId of frontier) {
-      for (const socket of Object.values(state.nodes[nodeId]?.inputs ?? {})) {
-        const conns = Array.isArray(socket) ? socket : socket ? [socket] : [];
-        for (const conn of conns) {
-          if (!conn?.node || reached.has(conn.node) || !state.nodes[conn.node]) continue;
-          reached.add(conn.node);
-          next.push(conn.node);
-        }
-      }
-    }
-    frontier = next;
-  }
-  return reached;
 }
 
 /** Does the selection point at this character? */
