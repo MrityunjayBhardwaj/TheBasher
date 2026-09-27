@@ -14,6 +14,7 @@ import { buildDefaultDagState } from '../core/project/default';
 import type { Op } from '../core/dag/types';
 import { buildNativeGltfImportOps } from '../core/import/nativeGltfImport';
 import { buildBvhImportOps } from '../core/import/bvhImportChain';
+import { poseLayerChain } from '../app/animate/poseChain';
 import { buildSkeletonObjectOps } from '../core/import/skeletonObject';
 import { registerAllNodes } from '../nodes/registerAll';
 import type { BoneSpec } from '../nodes/types';
@@ -90,7 +91,7 @@ async function boundBar() {
   const motion = buildBvhImportOps({
     text: SWING,
     name: 'swing',
-    ids: { skeleton: 'swing_skel', clip: 'swing_clip' },
+    ids: { skeleton: 'swing_skel', layer: 'swing_motion' },
   });
   let state = apply(withBar, motion.ops);
   const bones = (state.nodes.swing_skel.params as { bones: BoneSpec[] }).bones;
@@ -102,14 +103,14 @@ async function boundBar() {
       sceneNodeId: state.outputs.scene!.node,
       normalise: false,
       name: 'swing',
-      clipId: 'swing_clip',
-      nameFollowsClip: true,
+      pose: { node: 'swing_motion', socket: 'out' },
+      nameFollowsClip: false,
     }).ops,
   );
   useDagStore.getState().hydrate(state);
   useSelectionStore.getState().select(null);
   const bound = bindMotionToCharacter(
-    { motionId: 'swing_clip', skeletonId: 'swing_skel' },
+    { motionId: 'swing_motion', skeletonId: 'swing_skel' },
     'imported',
   );
   if (!bound.ok) throw new Error(JSON.stringify(bound));
@@ -168,7 +169,8 @@ describe('#1215 — computed motion shows read-only until baked', () => {
     expect(appendComputedSourceRows({ baseRows: base, state, selectedNodeId: null })).toBe(base);
     // A node in the chain selected on its own (the base layer, in the node editor) is not the
     // character: rows follow the selected Object, as the layer rows do.
-    const layer = Object.values(state.nodes).find((n) => n.type === 'PoseLayer')!.id;
+    // The character's own base layer, found on its chain: the dropped motion is a pose layer too.
+    const layer = poseLayerChain(state.nodes as never, armature).base!;
     expect(appendComputedSourceRows({ baseRows: base, state, selectedNodeId: layer })).toBe(base);
     expect(
       appendComputedSourceRows({ baseRows: base, state, selectedNodeId: armature }).length,
@@ -177,9 +179,9 @@ describe('#1215 — computed motion shows read-only until baked', () => {
 
   it('a source with no range to take poses from is one row saying so, never no rows', async () => {
     const { state, armature, retarget } = await boundBar();
-    // The swing's clip emptied: the retarget has no motion, so there are no poses to show.
+    // The swing's keys emptied: the retarget has no motion, so there are no poses to show.
     const emptied = apply(state, [
-      { type: 'setParam', nodeId: 'swing_clip', paramPath: 'keyframes', value: [] },
+      { type: 'setParam', nodeId: 'swing_motion', paramPath: 'channels', value: [] },
     ]);
     const rows = computedSourceRows(emptied, armature);
     expect(rows).toHaveLength(1);

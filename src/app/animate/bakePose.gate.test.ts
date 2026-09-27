@@ -287,7 +287,7 @@ function importMotion(state: DagState, id: string, text: string): DagState {
   const motion = buildBvhImportOps({
     text,
     name: id,
-    ids: { skeleton: `${id}_skel`, clip: `${id}_clip` },
+    ids: { skeleton: `${id}_skel`, layer: `${id}_motion` },
   });
   state = apply(state, motion.ops);
   const bones = (state.nodes[`${id}_skel`].params as { bones: BoneSpec[] }).bones;
@@ -297,8 +297,8 @@ function importMotion(state: DagState, id: string, text: string): DagState {
     sceneNodeId: state.outputs.scene!.node,
     normalise: false,
     name: id,
-    clipId: `${id}_clip`,
-    nameFollowsClip: true,
+    pose: { node: `${id}_motion`, socket: 'out' },
+    nameFollowsClip: false,
   });
   return apply(state, stand.ops);
 }
@@ -312,7 +312,7 @@ async function boundBar() {
   useDagStore.getState().hydrate(state0);
   useSelectionStore.getState().select(null);
   const bound = bindMotionToCharacter(
-    { motionId: 'swing_clip', skeletonId: 'swing_skel' },
+    { motionId: 'swing_motion', skeletonId: 'swing_skel' },
     'imported',
   );
   if (!bound.ok) throw new Error(JSON.stringify(bound));

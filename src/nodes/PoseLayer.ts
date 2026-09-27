@@ -371,6 +371,18 @@ export function poseLayerUnmatchedMembers(
  * span no time.
  */
 export function poseLayerClipInfo(channels: readonly PoseLayerChannel[]): WireClipInfo | undefined {
+  // #1211 — memoised by the channel list's identity: a base layer holding a whole file's motion walks
+  // every key here (walk.bvh: 9,600, measured 12.9 µs of an 18.3 µs evaluation), and the list is the
+  // same array for as long as the layer's params are unchanged.
+  if (CLIP_INFO.has(channels)) return CLIP_INFO.get(channels);
+  const info = computeClipInfo(channels);
+  CLIP_INFO.set(channels, info);
+  return info;
+}
+
+const CLIP_INFO = new WeakMap<readonly PoseLayerChannel[], WireClipInfo | undefined>();
+
+function computeClipInfo(channels: readonly PoseLayerChannel[]): WireClipInfo | undefined {
   let start = Infinity;
   let end = -Infinity;
   let densest = 0;

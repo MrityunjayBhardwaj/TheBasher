@@ -668,9 +668,9 @@ export function boot(): Promise<void> {
       void import('../core/import/bvhImportChain').then((m) => {
         w.__basher_importBvh = (text: string, name?: string) => {
           const dag = useDagStore.getState();
-          const { ops, skeletonId, clipId } = m.buildBvhImportOps({ text, name });
+          const { ops, skeletonId, motionId } = m.buildBvhImportOps({ text, name });
           dag.dispatchAtomic(ops, 'user', `import bvh: ${name ?? 'imported'}`);
-          return { skeletonId, clipId };
+          return { skeletonId, motionId };
         };
       });
       void import('../core/import/fbxImportChain').then((m) => {

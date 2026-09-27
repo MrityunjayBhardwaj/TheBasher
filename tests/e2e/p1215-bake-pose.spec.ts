@@ -81,7 +81,7 @@ test('#1215 — baking a bound motion to keys leaves the drawn skin where it was
     const motion = bvhChain.buildBvhImportOps({
       text: bvh,
       name: 'swing',
-      ids: { skeleton: 'swing_skel', clip: 'swing_clip' },
+      ids: { skeleton: 'swing_skel', layer: 'swing_motion' },
     });
     dag().dispatchAtomic(motion.ops, 'user', 'import bvh');
     const bones = dag().state.nodes.swing_skel.params.bones as never;
@@ -91,13 +91,13 @@ test('#1215 — baking a bound motion to keys leaves the drawn skin where it was
       sceneNodeId: scene,
       normalise: false,
       name: 'swing',
-      clipId: 'swing_clip',
-      nameFollowsClip: true,
+      pose: { node: 'swing_motion', socket: 'out' },
+      nameFollowsClip: false,
     });
     dag().dispatchAtomic(stand.ops, 'user', 'stand the motion');
     selection.useSelectionStore.getState().select(null);
     const bound = bind.bindMotionToCharacter(
-      { motionId: 'swing_clip', skeletonId: 'swing_skel' },
+      { motionId: 'swing_motion', skeletonId: 'swing_skel' },
       'imported',
     );
     if (!bound.ok) throw new Error(JSON.stringify(bound));

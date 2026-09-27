@@ -98,8 +98,10 @@ function nameFromPath(path: string): string {
 function skeletonObjectOps(
   ops: readonly Op[],
   skeletonId: string,
-  clipId: string,
-  // #1101 — the name the import gave the clip, so the Object and its motion read the same.
+  // The motion: a clip (FBX, until its reader writes a layer too), or the base pose layer a BVH's
+  // keys land on (#1211), whose `out` poses the Object.
+  motion: { readonly clipId: string } | { readonly layerId: string },
+  // #1101 — the name the import gave the motion, so the Object and its motion read the same.
   name: string,
   normalise: boolean,
 ): Op[] {
@@ -110,8 +112,22 @@ function skeletonObjectOps(
   const { state } = useDagStore.getState();
   const sceneNodeId = state.outputs.scene?.node;
   if (!sceneNodeId) return [];
+  if ('layerId' in motion) {
+    // A BVH's Object stands at file scale (never normalised, #791), so there is no clip to measure.
+    // Blender names the armature after the file and never renames it after the action, so the
+    // name follows nothing.
+    return buildSkeletonObjectOps({
+      skeletonId,
+      bones,
+      sceneNodeId,
+      normalise,
+      name,
+      pose: { node: motion.layerId, socket: 'out' },
+      nameFollowsClip: false,
+    }).ops;
+  }
   // The clip is read only to measure the fit, so a road that does not fit does not evaluate it.
-  const clip = normalise ? importedClip(state, ops, clipId) : null;
+  const clip = normalise ? importedClip(state, ops, motion.clipId) : null;
   return buildSkeletonObjectOps({
     skeletonId,
     bones,
@@ -119,7 +135,7 @@ function skeletonObjectOps(
     sceneNodeId,
     normalise,
     name,
-    clipId,
+    clipId: motion.clipId,
     nameFollowsClip: true,
   }).ops;
 }
@@ -163,13 +179,13 @@ export async function importBvhFromOpfs(path: string): Promise<MotionImportResul
     const text = new TextDecoder().decode(bytes);
     const dag = useDagStore.getState();
     const name = nameFromPath(path);
-    const { ops, skeletonId, clipId } = buildBvhImportOps({ text, name });
-    const standIn = skeletonObjectOps(ops, skeletonId, clipId, name, false);
+    const { ops, skeletonId, motionId } = buildBvhImportOps({ text, name });
+    const standIn = skeletonObjectOps(ops, skeletonId, { layerId: motionId }, name, false);
     dag.dispatchAtomic([...ops, ...standIn], 'user', `import bvh: ${path}`);
     // Bump AFTER dispatch (pre-mortem: a pre-dispatch bump re-enumerates the
     // My-Imports list before the import lands → stale/empty on failure).
     useImportRefreshStore.getState().bump();
-    return { skeletonId, motionId: clipId };
+    return { skeletonId, motionId };
   } catch (err) {
     useAssetErrorStore.getState().report(path, `import failed: ${formatAssetError(err)}`);
     // `null` means "nothing landed", and the banner is already showing why. It is
@@ -195,7 +211,7 @@ export async function importFbxFromOpfs(path: string): Promise<MotionImportResul
     const dag = useDagStore.getState();
     const name = nameFromPath(path);
     const { ops, skeletonId, clipId } = buildFbxImportOps({ data: copy.buffer, name });
-    const standIn = skeletonObjectOps(ops, skeletonId, clipId, name, true);
+    const standIn = skeletonObjectOps(ops, skeletonId, { clipId }, name, true);
     dag.dispatchAtomic([...ops, ...standIn], 'user', `import fbx: ${path}`);
     useImportRefreshStore.getState().bump();
     return { skeletonId, motionId: clipId };

@@ -17,7 +17,7 @@ import {
   buildNativeGltfImportOps,
   type NativeImportResult,
 } from '../../core/import/nativeGltfImport';
-import { buildBvhImportOps } from '../../core/import/bvhImportChain';
+import { buildBvhClipOps } from '../../test-utils/bvhClip';
 import { buildSkeletonObjectOps } from '../../core/import/skeletonObject';
 import { registerAllNodes } from '../../nodes/registerAll';
 import type { BoneSpec, MeshGeometryData, SkinDeformValue } from '../../nodes/types';
@@ -125,7 +125,7 @@ Frame Time: 0.5
 
 /** A BVH motion standing in the scene as its own rig, as the import road stands one. */
 function withMotion(state: DagState, id: string): DagState {
-  const motion = buildBvhImportOps({
+  const motion = buildBvhClipOps({
     text: SWING('Hips', 'Spine'),
     name: id,
     ids: { skeleton: `${id}_skel`, clip: `${id}_clip` },

@@ -1,10 +1,15 @@
 // #1122 — a motion's stand-in Object reads as its clip until a director names it otherwise.
 //
+// ON AN FBX (#1211). A dropped .bvh no longer carries a clip: its motion is keys on a base pose layer,
+// and Blender never renames an armature after its action, so a BVH's Object follows nothing
+// (`importBvhFbx.test.ts`). The FBX road still stands its rig on a clip, and generated motion keeps
+// one for good, so the follow is driven here through FBX.
+//
 // Driven through the director's own gestures, because the road that matters most is one no
 // unit row can take: the inspector's name field commits a `setParam` whose path is a runtime
 // variable, and the name then has to reach surfaces that read `meta.name` directly rather than
 // through the resolver — the outliner rename box's seed and the viewport's selection summary
-// among them. Import goes through the ingest seam (setup only; it appends `.bvh`, so it is
+// among them. Import goes through the ingest seam (setup only; it appends `.fbx`, so it is
 // passed the stem), and every observation after it is a gesture and what the page shows.
 //
 // Measured on `main` before this change, with the same gestures: the clip read `hero walk`,
@@ -21,14 +26,14 @@ interface DagNode {
 interface Win {
   __basher_dag: { getState: () => { state: { nodes: Record<string, DagNode> } } };
   __basher_selection: { getState: () => { select: (id: string) => void } };
-  __basher_ingestBvhFile?: (bytes: Uint8Array, name: string) => Promise<string>;
+  __basher_ingestFbxFile?: (bytes: Uint8Array, name: string) => Promise<string>;
 }
 
 async function ready(page: Page): Promise<void> {
   await expect(page.getByTestId('layout')).toBeVisible({ timeout: 10_000 });
   await page.waitForFunction(() => {
     const w = window as unknown as Win;
-    return Boolean(w.__basher_dag && w.__basher_selection && w.__basher_ingestBvhFile);
+    return Boolean(w.__basher_dag && w.__basher_selection && w.__basher_ingestFbxFile);
   });
 }
 
@@ -69,8 +74,8 @@ test('the Object follows its clip’s name, keeps a name the director gives it, 
   });
 
   await page.evaluate(async () => {
-    const bytes = new Uint8Array(await (await fetch('/fixtures/anim/soma-walk.bvh')).arrayBuffer());
-    await (window as unknown as Win).__basher_ingestBvhFile!(bytes, 'soma-walk'); // appends .bvh
+    const bytes = new Uint8Array(await (await fetch('/fixtures/anim/rig.fbx')).arrayBuffer());
+    await (window as unknown as Win).__basher_ingestFbxFile!(bytes, 'rig'); // appends .fbx
   });
   const ids = await page.evaluate(() => {
     const nodes = (window as unknown as Win).__basher_dag.getState().state.nodes;
@@ -87,7 +92,7 @@ test('the Object follows its clip’s name, keeps a name the director gives it, 
   expect(ids.object, 'the import stood no Object — every read below would be vacuous').toBeTruthy();
   expect(ids.clip, 'no clip found for the Object’s skeleton').toBeTruthy();
   const row = page.getByTestId(`scene-tree-row-${ids.object}`);
-  await expect(row).toHaveText('soma-walk', { timeout: 5_000 });
+  await expect(row).toHaveText('rig', { timeout: 5_000 });
 
   // 1. The clip is renamed in the inspector → the Object's row follows.
   await renameClip(page, ids.clip!, 'hero walk');

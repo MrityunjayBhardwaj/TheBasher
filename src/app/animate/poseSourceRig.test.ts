@@ -17,7 +17,7 @@ import {
 import type { DagState } from '../../core/dag/state';
 import type { Op } from '../../core/dag/types';
 import { registerAllNodes } from '../../nodes/registerAll';
-import { buildBvhImportOps } from '../../core/import/bvhImportChain';
+import { buildBvhClipOps } from '../../test-utils/bvhClip';
 import type { BoneSpec, PosedSkeletonValue, SkeletonValue } from '../../nodes/types';
 import { poseSkeletonIdOf } from './poseChain';
 import { retargetPairs } from './boundClipsForAsset';
@@ -58,7 +58,7 @@ const TARGET_BONES: BoneSpec[] = [
  *   tgt (Skeleton) · r_layer (RetargetClip: src_layer → tgt) · r_clip (RetargetClip: swing_clip → tgt) */
 function graph(): DagState {
   let s = emptyDagState();
-  const motion = buildBvhImportOps({
+  const motion = buildBvhClipOps({
     text: SWING_BVH,
     name: 'swing',
     ids: { skeleton: 'swing_skel', clip: 'swing_clip' },

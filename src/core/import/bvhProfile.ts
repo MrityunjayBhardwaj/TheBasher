@@ -34,6 +34,9 @@ interface JointChannels {
   readonly count: number;
   /** Columns of Xposition / Yposition / Zposition, or null when it has none. */
   readonly positionColumns: readonly [number, number, number] | null;
+  /** #1211 — the rotation channels' axes in the order the header lists them (`'ZYX'` for
+   *  `Zrotation Yrotation Xrotation`), or null when it has none. */
+  readonly rotationAxes: string | null;
 }
 
 export interface BvhProfile {
@@ -94,6 +97,30 @@ export function readPosedJoints(text: string): readonly string[] {
   return readChannelLayout(header)
     .filter((j) => j.positionColumns !== null)
     .map((j) => j.name);
+}
+
+/** #1211 — one joint's channels as the header declares them: which it rotates by, in what order,
+ *  and whether it is positioned. */
+export interface BvhJointChannels {
+  readonly name: string;
+  /** Rotation axes in the order listed (`'ZYX'`), or null for a joint with no rotation channels. */
+  readonly rotationAxes: string | null;
+  readonly positioned: boolean;
+}
+
+/**
+ * #1211 — every joint's channels, read from the HEADER alone, in declaration order (end sites carry
+ * none and are not listed). Header-only for the reason {@link readPosedJoints} is.
+ */
+export function readJointChannels(text: string): readonly BvhJointChannels[] {
+  const lines = text.split(/\r?\n/);
+  const motionAt = lines.findIndex((line) => line.trim() === 'MOTION');
+  const header = motionAt === -1 ? lines : lines.slice(0, motionAt);
+  return readChannelLayout(header).map((j) => ({
+    name: j.name,
+    rotationAxes: j.rotationAxes,
+    positioned: j.positionColumns !== null,
+  }));
 }
 
 export class BvhProfileError extends Error {
@@ -180,11 +207,16 @@ function readChannelLayout(headerLines: readonly string[]): JointChannels[] {
     const py = columnOf('Yposition');
     const pz = columnOf('Zposition');
 
+    const rotationAxes = names
+      .filter((n) => /^[XYZ]rotation$/i.test(n))
+      .map((n) => n[0].toUpperCase())
+      .join('');
     joints.push({
       name: pending,
       start: column,
       count,
       positionColumns: px >= 0 && py >= 0 && pz >= 0 ? [px, py, pz] : null,
+      rotationAxes: rotationAxes.length > 0 ? rotationAxes : null,
     });
     column += count;
     pending = null;

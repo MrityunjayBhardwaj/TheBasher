@@ -32,7 +32,7 @@ import { anchorForNode, applyFit, boundsForNode, frameSelected } from './framing
 import { useSelectionStore } from '../stores/selectionStore';
 import { useThreeRef } from './threeRef';
 import type { DagState } from '../../core/dag/state';
-import { buildBvhImportOps } from '../../core/import/bvhImportChain';
+import { buildBvhClipOps } from '../../test-utils/bvhClip';
 import { buildSkeletonObjectOps } from '../../core/import/skeletonObject';
 import { buildDefaultDagState } from '../../core/project/default';
 import type { BoneSpec } from '../../nodes/types';
@@ -261,7 +261,7 @@ Frame Time: 0.0333333
   function rigAt(scale: number, { withClip = true } = {}): void {
     let s = buildDefaultDagState();
     const sceneNodeId = s.outputs.scene!.node;
-    const chain = buildBvhImportOps({ text: RIG_BVH, ids: { skeleton: 'sk', clip: 'clip' } });
+    const chain = buildBvhClipOps({ text: RIG_BVH, ids: { skeleton: 'sk', clip: 'clip' } });
     for (const op of chain.ops) s = applyOp(s, op).next;
     const bones = (s.nodes.sk.params as { bones: BoneSpec[] }).bones;
     const { ops } = buildSkeletonObjectOps({

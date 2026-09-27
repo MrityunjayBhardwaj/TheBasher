@@ -88,7 +88,7 @@ test('#1213 — a motion binds to the native bar and its drawn skin plays it', a
     const motion = bvhChain.buildBvhImportOps({
       text: bvh,
       name: 'swing',
-      ids: { skeleton: 'p1213_swing_skel', clip: 'p1213_swing_clip' },
+      ids: { skeleton: 'p1213_swing_skel', layer: 'p1213_swing_motion' },
     });
     const bones = (motion.ops[0] as { params: { bones: never[] } }).params.bones;
     const stand = standing.buildSkeletonObjectOps({
@@ -97,12 +97,12 @@ test('#1213 — a motion binds to the native bar and its drawn skin plays it', a
       sceneNodeId,
       normalise: false,
       name: 'swing',
-      clipId: 'p1213_swing_clip',
-      nameFollowsClip: true,
+      pose: { node: 'p1213_swing_motion', socket: 'out' },
+      nameFollowsClip: false,
     });
     w.__basher_dag.getState().dispatchAtomic([...motion.ops, ...stand.ops], 'user', 'import bvh');
     const bound = bind.bindMotionToCharacter(
-      { motionId: 'p1213_swing_clip', skeletonId: 'p1213_swing_skel' },
+      { motionId: 'p1213_swing_motion', skeletonId: 'p1213_swing_skel' },
       'imported',
     );
     const nodes = w.__basher_dag.getState().state.nodes;

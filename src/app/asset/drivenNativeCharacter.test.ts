@@ -58,7 +58,7 @@ it('a bound native character is found, hand-posed or not; another clip does not 
   const motion = buildBvhImportOps({
     text: SWING,
     name: 'swing',
-    ids: { skeleton: 'swing_skel', clip: 'swing_clip' },
+    ids: { skeleton: 'swing_skel', layer: 'swing_motion' },
   });
   for (const op of motion.ops) state = applyOp(state, op).next;
   const stand = buildSkeletonObjectOps({
@@ -67,8 +67,8 @@ it('a bound native character is found, hand-posed or not; another clip does not 
     sceneNodeId: state.outputs.scene!.node,
     normalise: false,
     name: 'swing',
-    clipId: 'swing_clip',
-    nameFollowsClip: true,
+    pose: { node: 'swing_motion', socket: 'out' },
+    nameFollowsClip: false,
   });
   for (const op of stand.ops) state = applyOp(state, op).next;
   const modifier = Object.values(state.nodes).find((n) => n.type === 'ArmatureModifier')!;
@@ -86,13 +86,13 @@ it('a bound native character is found, hand-posed or not; another clip does not 
       expect(posed.ok).toBe(true);
     }
     const bound = bindMotionToCharacter(
-      { motionId: 'swing_clip', skeletonId: 'swing_skel' },
+      { motionId: 'swing_motion', skeletonId: 'swing_skel' },
       'imported',
     );
     expect(bound.ok, JSON.stringify(bound)).toBe(true);
     const s = useDagStore.getState().state;
     expect(
-      charactersDrivenByClip(s.nodes as never, 'swing_clip'),
+      charactersDrivenByClip(s.nodes as never, 'swing_motion'),
       `hand-posed ${handPosed}`,
     ).toEqual([{ skeletonId, objectId: armatureId }]);
     // Control: a clip nothing is bound from drives nothing.

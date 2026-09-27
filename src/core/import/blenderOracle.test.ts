@@ -42,11 +42,16 @@
 // version and every import setting that changes the answer are recorded in the
 // fixture itself). Issue #857.
 
-import { describe, it, expect } from 'vitest';
+import { beforeEach, describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import { Quaternion, Vector3 } from 'three';
-import { parseBvh, BVH_UNIT_SCALE_CENTIMETRES } from './bvh';
+import { BVH_UNIT_SCALE_CENTIMETRES } from './bvh';
+import { buildBvhImportOps } from './bvhImportChain';
+import { applyOp, emptyDagState, evaluate, __resetRegistryForTests } from '../dag';
+import { registerAllNodes } from '../../nodes/registerAll';
+import type { BoneSpec, PosedSkeletonValue } from '../../nodes/types';
+import type { PoseLayerParams } from '../../nodes/PoseLayer';
 import { specToThreeSkeleton } from './threeAdapter';
 import oracle from './__fixtures__/blender-oracle-soma-walk.json';
 
@@ -86,30 +91,40 @@ interface OracleFrame {
  *  `bend` runs after a frame's keys are applied and before the matrices are
  *  updated, so a falsification row can perturb one bone as the clip plays. */
 type OurFrame = { pos: Map<string, Vector3>; quat: Map<string, Quaternion> };
-type Specs = ReturnType<typeof parseBvh>['skeletonParams']['bones'];
+type Specs = readonly BoneSpec[];
 type Bones = ReturnType<typeof specToThreeSkeleton>['bones'];
 
+/**
+ * #1211 — OUR side is the imported motion as it now lands: keys on a base pose layer, read off the
+ * layer's pose wire at each of its keys (the product's road), not the parser's clip. Forward
+ * kinematics is still three's, over the wire's local transforms, so the rows below are unchanged.
+ */
 function ourFrames(bend?: (bones: Bones, specs: Specs) => void): OurFrame[] {
-  const parsed = parseBvh(fs.readFileSync(BVH, 'utf8'), 'oracle', BVH_UNIT_SCALE_CENTIMETRES);
-  const specs = parsed.skeletonParams.bones;
+  const imported = buildBvhImportOps({
+    text: fs.readFileSync(BVH, 'utf8'),
+    name: 'oracle',
+    ids: { skeleton: 'sk', layer: 'motion' },
+    unitScale: BVH_UNIT_SCALE_CENTIMETRES,
+  });
+  let state = emptyDagState();
+  for (const op of imported.ops) state = applyOp(state, op).next;
+  const wire = evaluate(state, 'motion', {
+    ctx: { time: { frame: 0, seconds: 0, normalized: 0 } },
+    socket: 'out',
+  }).value as PosedSkeletonValue;
+  const specs = wire.skeleton.bones;
   const { bones } = specToThreeSkeleton(specs);
-
-  const times = [...new Set(parsed.clipParams.keyframes.map((k) => k.time))].sort((a, b) => a - b);
-  const byTime = new Map<number, typeof parsed.clipParams.keyframes>();
-  for (const k of parsed.clipParams.keyframes) {
-    byTime.set(k.time, [...(byTime.get(k.time) ?? []), k]);
-  }
+  const params = state.nodes.motion.params as PoseLayerParams;
+  const times = [...new Set(params.channels.flatMap((c) => c.keyframes.map((k) => k.time)))].sort(
+    (a, b) => a - b,
+  );
 
   const out: OurFrame[] = [];
   for (const t of times) {
-    for (const k of byTime.get(t) ?? []) {
-      const bone = bones[k.bone];
-      if (!bone) continue;
-      bone.rotation.set(k.rotation[0], k.rotation[1], k.rotation[2], 'XYZ');
-      if (specs[k.bone].parent === -1) {
-        bone.position.set(k.position[0], k.position[1], k.position[2]);
-      }
-    }
+    wire.sample(t).forEach((pose, i) => {
+      bones[i].position.set(...pose.position);
+      bones[i].quaternion.set(...pose.quaternion);
+    });
     if (bend) bend(bones, specs);
     bones[0].updateMatrixWorld(true);
     const pos = new Map<string, Vector3>();
@@ -166,6 +181,11 @@ const oracleAngles = (frame: OracleFrame): Map<string, number> => {
   }
   return out;
 };
+
+beforeEach(() => {
+  __resetRegistryForTests();
+  registerAllNodes();
+});
 
 describe('a differential against Blender (#857)', () => {
   const frames = oracle.source.frames as OracleFrame[];

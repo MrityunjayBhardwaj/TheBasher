@@ -88,19 +88,22 @@ test.beforeEach(async ({ page }) => {
   });
 });
 
-test('P7.14 (a) — BVH ingest yields Skeleton + AnimationClip (motion, not mesh) + OPFS + My Imports', async ({
+test('P7.14 (a) — BVH ingest yields Skeleton + base PoseLayer (motion, not mesh) + OPFS + My Imports', async ({
   page,
 }) => {
   const skelBefore = await nodeTypeCount(page, 'Skeleton');
+  const layerBefore = await nodeTypeCount(page, 'PoseLayer');
   const clipBefore = await nodeTypeCount(page, 'AnimationClip');
   const meshBefore = await nodeTypeCount(page, 'Mesh');
 
   const entryPath = await ingestMotionFixture(page, 'bvh', '/fixtures/anim/walk.bvh', 'walk');
   expect(entryPath).toBe('user-imports/walk/walk.bvh');
 
-  // DAG: a Skeleton + AnimationClip landed; NO mesh (grounded: motion, not model).
+  // DAG: a Skeleton + the file's motion as keys on a base PoseLayer landed (#1211), no clip; NO mesh
+  // (grounded: motion, not model).
   await expect.poll(async () => await nodeTypeCount(page, 'Skeleton')).toBe(skelBefore + 1);
-  await expect.poll(async () => await nodeTypeCount(page, 'AnimationClip')).toBe(clipBefore + 1);
+  await expect.poll(async () => await nodeTypeCount(page, 'PoseLayer')).toBe(layerBefore + 1);
+  expect(await nodeTypeCount(page, 'AnimationClip')).toBe(clipBefore);
   expect(await nodeTypeCount(page, 'Mesh')).toBe(meshBefore);
   expect(await nodeTypeCount(page, 'GltfAsset')).toBe(0);
 

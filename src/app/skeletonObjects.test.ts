@@ -9,7 +9,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { __resetRegistryForTests, applyOp } from '../core/dag';
 import type { DagState } from '../core/dag/state';
 import type { Op } from '../core/dag/types';
-import { buildBvhImportOps } from '../core/import/bvhImportChain';
+import { buildBvhClipOps } from '../test-utils/bvhClip';
 import { buildSkeletonObjectOps } from '../core/import/skeletonObject';
 import { buildDefaultDagState } from '../core/project/default';
 import { registerAllNodes } from '../nodes/registerAll';
@@ -57,7 +57,7 @@ function build({ inScene = true }: { inScene?: boolean } = {}): DagState {
   let s = buildDefaultDagState();
   const sceneNodeId = s.outputs.scene?.node;
   if (!sceneNodeId) throw new Error('default project has no scene output');
-  s = apply(s, buildBvhImportOps({ text: BVH, ids: { skeleton: 'sk', clip: 'clip' } }).ops);
+  s = apply(s, buildBvhClipOps({ text: BVH, ids: { skeleton: 'sk', clip: 'clip' } }).ops);
   const bones = (s.nodes.sk.params as { bones: BoneSpec[] }).bones;
   const { ops } = buildSkeletonObjectOps({
     skeletonId: 'sk',

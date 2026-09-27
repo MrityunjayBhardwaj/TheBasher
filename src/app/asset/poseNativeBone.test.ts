@@ -88,7 +88,7 @@ function withSwing(state: DagState): DagState {
   const motion = buildBvhImportOps({
     text: SWING_BVH,
     name: 'swing',
-    ids: { skeleton: 'swing_skel', clip: 'swing_clip' },
+    ids: { skeleton: 'swing_skel', layer: 'swing_motion' },
   });
   for (const op of motion.ops) state = applyOp(state, op).next;
   const stand = buildSkeletonObjectOps({
@@ -97,8 +97,8 @@ function withSwing(state: DagState): DagState {
     sceneNodeId: state.outputs.scene!.node,
     normalise: false,
     name: 'swing',
-    clipId: 'swing_clip',
-    nameFollowsClip: true,
+    pose: { node: 'swing_motion', socket: 'out' },
+    nameFollowsClip: false,
   });
   for (const op of stand.ops) state = applyOp(state, op).next;
   return state;
@@ -203,7 +203,7 @@ describe('#1244 — hand-posing a native character', () => {
     useSelectionStore.getState().select(null);
     expect(pose(armatureId, 'Bone1', [0, 0, 20]).ok).toBe(true);
     const bound = bindMotionToCharacter(
-      { motionId: 'swing_clip', skeletonId: 'swing_skel' },
+      { motionId: 'swing_motion', skeletonId: 'swing_skel' },
       'imported',
     );
     expect(bound.ok, JSON.stringify(bound)).toBe(true);
@@ -230,9 +230,10 @@ describe('#1244 — hand-posing a native character', () => {
     useDagStore.getState().undo();
     const after = useDagStore.getState().state;
     expect(after.nodes[armatureId].inputs.pose).toEqual(before);
-    // Only the base layer is left.
-    const layers = Object.values(after.nodes).filter((n) => n.type === 'PoseLayer');
-    expect(layers.map((n) => n.id)).toEqual([(before as { node: string }).node]);
+    // Only the base layer is left under the character (the dropped motion's own layer is not its).
+    expect(poseLayerChain(graph(after), armatureId).layers).toEqual([
+      (before as { node: string }).node,
+    ]);
   });
 
   it('#1245 — posing again under an additive layer lands in the pose layer below it', async () => {

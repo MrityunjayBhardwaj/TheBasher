@@ -10,7 +10,7 @@ import type { DagState } from '../../core/dag/state';
 import type { Op } from '../../core/dag/types';
 import { useDagStore } from '../../core/dag/store';
 import { buildDefaultDagState } from '../../core/project/default';
-import { buildBvhImportOps } from '../../core/import/bvhImportChain';
+import { buildBvhClipOps } from '../../test-utils/bvhClip';
 import { registerAllNodes } from '../../nodes/registerAll';
 import { __resetMutatorRegistryForTests, registerAllMutators } from '../../agent/mutators';
 import { useDiffStore } from '../../agent/diff/store';
@@ -71,7 +71,7 @@ beforeEach(() => {
 function character(baseSource: 'rest' | 'clip' = 'rest'): DagState {
   let state = buildDefaultDagState();
   const scene = state.outputs.scene!.node;
-  const motion = buildBvhImportOps({
+  const motion = buildBvhClipOps({
     text: SWING_BVH,
     name: 'swing',
     ids: { skeleton: 'swing_skel', clip: 'swing_clip' },

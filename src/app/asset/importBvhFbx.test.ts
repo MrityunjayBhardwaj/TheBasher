@@ -42,6 +42,8 @@ import { __resetMutatorRegistryForTests, registerAllMutators } from '../../agent
 const RIG_FBX_BYTES = new Uint8Array(
   readFileSync(resolve(process.cwd(), 'public/fixtures/anim/rig.fbx')),
 );
+/** Where the FBX rows put their file, as the BVH rows use `path`. */
+const FBX_PATH = `${USER_IMPORTS_ROOT}/rig/rig.fbx`;
 
 const SYNTHETIC_BVH = `HIERARCHY
 ROOT Hips
@@ -97,7 +99,7 @@ beforeEach(() => {
 });
 
 describe('importBvhFromOpfs', () => {
-  it('dispatches Skeleton + AnimationClip addNode ops (no mesh) and bumps once', async () => {
+  it('dispatches Skeleton + base PoseLayer addNode ops (no clip, no mesh) and bumps once', async () => {
     const path = `${USER_IMPORTS_ROOT}/wave/wave.bvh`;
     await currentStorage.write(path, new TextEncoder().encode(SYNTHETIC_BVH));
 
@@ -108,7 +110,9 @@ describe('importBvhFromOpfs', () => {
     const ops = dispatchSpy.mock.calls[0][0];
     const types = ops.filter((o) => o.type === 'addNode').map((o) => o.nodeType);
     expect(types).toContain('Skeleton');
-    expect(types).toContain('AnimationClip');
+    // #1211 — the file's motion lands as keys on a base pose layer, as Blender's lands as an action.
+    expect(types).toContain('PoseLayer');
+    expect(types).not.toContain('AnimationClip');
     // Motion, not model — never a Mesh/GltfAsset.
     expect(types).not.toContain('Mesh');
     expect(types).not.toContain('GltfAsset');
@@ -241,9 +245,27 @@ describe('#1056 — every imported motion stands in the scene as an Object', () 
   // #1122 — the Object reads as its motion until a director names it otherwise. Through the
   // real store, so the undo is the one Cmd+Z runs, and through the ops the two gestures send:
   // the inspector's name field is a `setParam` on the clip, the outliner's rename a `setMeta`.
-  it('#1122 — renaming the clip renames the Object that stands it', async () => {
+  it('#1211 — renaming a BVH\u2019s motion leaves its Object\u2019s name, as Blender never renames the armature after its action', async () => {
     await currentStorage.write(path, new TextEncoder().encode(SYNTHETIC_BVH));
     const result = await importBvhFromOpfs(path);
+    const objectId = `${result!.skeletonId}_object`;
+    // Named after the file, and following nothing.
+    expect(useDagStore.getState().state.nodes[objectId].meta).toEqual({ name: 'wave' });
+    useDagStore
+      .getState()
+      .dispatch(
+        { type: 'setParam', nodeId: result!.motionId, paramPath: 'name', value: 'hero walk' },
+        'user',
+        'set name',
+      );
+    const nodes = useDagStore.getState().state.nodes;
+    expect(nodeDisplayName(nodes, result!.motionId)).toBe('hero walk');
+    expect(nodeDisplayName(nodes, objectId)).toBe('wave');
+  });
+
+  it('#1122 (FBX) — renaming the clip renames the Object that stands it', async () => {
+    await currentStorage.write(FBX_PATH, RIG_FBX_BYTES);
+    const result = await importFbxFromOpfs(FBX_PATH);
     const objectId = `${result!.skeletonId}_object`;
     const store = useDagStore.getState();
     store.dispatch(
@@ -258,9 +280,9 @@ describe('#1056 — every imported motion stands in the scene as an Object', () 
     expect(state.nodes[objectId].meta).toEqual({ name: 'hero walk', nameFrom: result!.motionId });
   });
 
-  it('#1122 — once the Object is renamed, the clip’s next rename leaves it alone; undo resumes', async () => {
-    await currentStorage.write(path, new TextEncoder().encode(SYNTHETIC_BVH));
-    const result = await importBvhFromOpfs(path);
+  it('#1122 (FBX) — once the Object is renamed, the clip’s next rename leaves it alone; undo resumes', async () => {
+    await currentStorage.write(FBX_PATH, RIG_FBX_BYTES);
+    const result = await importFbxFromOpfs(FBX_PATH);
     const objectId = `${result!.skeletonId}_object`;
     const store = useDagStore.getState();
     store.dispatch({ type: 'setMeta', nodeId: objectId, name: 'my rig' }, 'user', 'rename');
@@ -274,7 +296,7 @@ describe('#1056 — every imported motion stands in the scene as an Object', () 
     store.undo(); // the clip's rename
     store.undo(); // the Object's rename — following resumes
     let nodes = useDagStore.getState().state.nodes;
-    expect(nodes[objectId].meta).toEqual({ name: 'wave', nameFrom: result!.motionId });
+    expect(nodes[objectId].meta).toEqual({ name: 'rig', nameFrom: result!.motionId });
     store.dispatch(
       { type: 'setParam', nodeId: result!.motionId, paramPath: 'name', value: 'jog' },
       'user',
@@ -284,9 +306,9 @@ describe('#1056 — every imported motion stands in the scene as an Object', () 
     expect(nodeDisplayName(nodes, objectId)).toBe('jog');
   });
 
-  it('#1122 — the link survives a save and a load, and still follows afterwards', async () => {
-    await currentStorage.write(path, new TextEncoder().encode(SYNTHETIC_BVH));
-    const result = await importBvhFromOpfs(path);
+  it('#1122 (FBX) — the link survives a save and a load, and still follows afterwards', async () => {
+    await currentStorage.write(FBX_PATH, RIG_FBX_BYTES);
+    const result = await importFbxFromOpfs(FBX_PATH);
     const objectId = `${result!.skeletonId}_object`;
     const storage = new MemoryStorage();
     await saveProject(
@@ -294,7 +316,7 @@ describe('#1056 — every imported motion stands in the scene as an Object', () 
       composeProject({ id: 'p1122', name: 'p1122', state: useDagStore.getState().state }),
     );
     const loaded = await loadProject(storage, 'p1122');
-    expect(loaded.state.nodes[objectId].meta).toEqual({ name: 'wave', nameFrom: result!.motionId });
+    expect(loaded.state.nodes[objectId].meta).toEqual({ name: 'rig', nameFrom: result!.motionId });
     useDagStore.getState().hydrate(loaded.state);
     useDagStore
       .getState()
@@ -455,7 +477,7 @@ describe('routeImportByExtension', () => {
     const types = dispatchSpy.mock.calls[0][0]
       .filter((o) => o.type === 'addNode')
       .map((o) => o.nodeType);
-    expect(types).toEqual(expect.arrayContaining(['Skeleton', 'AnimationClip']));
+    expect(types).toEqual(expect.arrayContaining(['Skeleton', 'PoseLayer']));
   });
 
   it('reports (never silently no-ops) on an unsupported extension', async () => {

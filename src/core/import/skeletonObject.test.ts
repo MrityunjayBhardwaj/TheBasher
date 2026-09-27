@@ -11,7 +11,7 @@ import { registerAllNodes } from '../../nodes/registerAll';
 import type { AnimationClipValue, BoneSpec, ObjectValue } from '../../nodes/types';
 import { boneTransforms } from '../../viewport/boneShape';
 import { armatureBounds, posedSourceBones } from '../../viewport/referenceRig';
-import { buildBvhImportOps } from './bvhImportChain';
+import { buildBvhClipOps } from '../../test-utils/bvhClip';
 import {
   UNBOUND_RIG_HEIGHT_METRES,
   buildSkeletonObjectOps,
@@ -110,7 +110,7 @@ describe('buildSkeletonObjectOps', () => {
 
   it('applied after a BVH import, the Object evaluates to the skeleton as its data', () => {
     let state = sceneState();
-    const imported = buildBvhImportOps({ text: BVH, ids: { skeleton: 'sk', clip: 'clip' } });
+    const imported = buildBvhClipOps({ text: BVH, ids: { skeleton: 'sk', clip: 'clip' } });
     for (const op of imported.ops) state = applyOp(state, op).next;
     const bones = (state.nodes.sk.params as { bones: BoneSpec[] }).bones;
     const { ops, objectId } = buildSkeletonObjectOps({
@@ -181,7 +181,7 @@ describe('normalisedRigScale', () => {
   it('stands the real soma-walk.bvh at human height as drawn, posed at frame 0', () => {
     let state = sceneState();
     const text = readFileSync(resolve(process.cwd(), 'public/fixtures/anim/soma-walk.bvh'), 'utf8');
-    const imported = buildBvhImportOps({ text, ids: { skeleton: 'sk', clip: 'clip' } });
+    const imported = buildBvhClipOps({ text, ids: { skeleton: 'sk', clip: 'clip' } });
     for (const op of imported.ops) state = applyOp(state, op).next;
     const bones = (state.nodes.sk.params as { bones: BoneSpec[] }).bones;
     const clip = evaluate(state, 'clip', {
@@ -240,7 +240,7 @@ describe('#1101 — the Object carries its motion name', () => {
   it('applied, the name is the one the outliner reads; a blank name adds no op', () => {
     let state = sceneState();
     // The clip is named as the import names it; the Object's name follows its clip (#1122).
-    const imported = buildBvhImportOps({
+    const imported = buildBvhClipOps({
       text: BVH,
       name: 'soma-walk',
       ids: { skeleton: 'sk', clip: 'clip' },
@@ -274,7 +274,7 @@ describe('#1101 — the Object carries its motion name', () => {
 describe('standingObjectsOf (#1100)', () => {
   it('finds every Object whose data is the skeleton, id-sorted, and no other Object', () => {
     let state = sceneState();
-    const imported = buildBvhImportOps({ text: BVH, ids: { skeleton: 'sk', clip: 'clip' } });
+    const imported = buildBvhClipOps({ text: BVH, ids: { skeleton: 'sk', clip: 'clip' } });
     for (const op of imported.ops) state = applyOp(state, op).next;
     const ops: Op[] = [
       // Pointed at the skeleton by hand — found by its edge, not by the importer's id.

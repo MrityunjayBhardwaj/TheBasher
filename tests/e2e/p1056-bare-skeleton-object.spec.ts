@@ -124,7 +124,8 @@ test('#1056 — a BVH imported alone stands as an Object pointed at its skeleton
     () => (window as unknown as Win).__basher_armature!.skeletonObjects,
   );
   expect(rig.bones).toBeGreaterThan(10);
-  expect(rig.clipCount).toBe(1);
+  // #1211 — posed by its motion's base pose layer, so no clip is wired to it (the count is of clips).
+  expect(rig.clipCount).toBe(0);
   expect(rig.posed).toBe(true);
 
   // …drawn at the file's size, read off the drawn bones rather than the scale param: SOMA is
