@@ -313,10 +313,15 @@ describe('#814 the import cycles, enumerated and held', () => {
       // `resolveEvaluatedTransform` has always been here. Both new edges are call-time only —
       // `driverChannelValuesForTarget` is called inside `drawnChannels`, `resolveWorldTransform`
       // inside `curveSampleSource`'s sampler — so neither reads across at module load.
+      // #1284 — `gltfNodeWorld` joined it knowingly, for the same reason: a Track-To aimed at a bone
+      // reads the bone where the draw puts it, so it folds through `resolveEvaluatedTransform`.
+      // Both edges are call-time only: `nodeConstraints` calls it inside `aimTargetWorld`, and it
+      // calls the two resolvers inside `gltfNodeWorldPosition`; nothing is read at module load.
       [
         'src/app/activeCamera.ts',
         'src/app/curveSampleSource.ts',
         'src/app/geometrySampleSource.ts',
+        'src/app/gltfNodeWorld.ts',
         'src/app/nodeConstraints.ts',
         'src/app/operatorStack.ts',
         'src/app/paramDrivers.ts',

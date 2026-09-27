@@ -64,14 +64,19 @@ test('the Camera Path + AI Walk example opens from the startup screen and plays 
     null,
     { timeout: 30_000 },
   );
-  const a = await sampleAt(page, 0);
-  const b = await sampleAt(page, 1.5);
-
-  // The walk: bones swing between the two times (a still character reads 0 here).
-  const swung = a.bones.filter((q, i) => {
-    const r = b.bones[i];
-    return q && r && Math.max(...q.map((v, k) => Math.abs(v - r[k]))) > 0.2;
-  }).length;
+  // The walk: each bone's WIDEST swing from its frame-0 pose over several times. Two instants
+  // alone can land on the same phase of a stride and read a walking character as still.
+  const times = [0, 0.4, 0.8, 1.2, 1.6, 2.0, 3.0];
+  const samples: Awaited<ReturnType<typeof sampleAt>>[] = [];
+  for (const t of times) samples.push(await sampleAt(page, t));
+  const a = samples[0];
+  const b = samples[samples.length - 1];
+  const swung = a.bones.filter((q, i) =>
+    samples.some((s) => {
+      const r = s.bones[i];
+      return q && r && Math.max(...q.map((v, k) => Math.abs(v - r[k]))) > 0.2;
+    }),
+  ).length;
   console.log(
     `[1282] bones=${a.bones.length} swung=${swung} camera ${JSON.stringify(a.camera)} -> ${JSON.stringify(b.camera)}`,
   );

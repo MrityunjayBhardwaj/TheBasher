@@ -33,6 +33,7 @@ import {
 import type { StackRowEntry } from './OperatorStackRows';
 import { resolveWorldTransform } from './resolveWorldTransform';
 import { nodeDisplayName } from './sceneTreeWalk';
+import { characterNodeNames } from './characterParts';
 
 /** The constraints the user can add from the "+ Add" menu. Follow-Path / Copy-Location
  *  join HERE (plus `isRelationalPoseNode` + registerAll) — as stack MEMBERS, never as a
@@ -75,6 +76,15 @@ function newId(prefix: string): string {
  * (a muted row must still render so the user can re-enable it), bottom → top in the
  * SAME order the resolver folds them.
  */
+/** #1284 — the parts a Track-To (`constraintId`) can aim at inside its aim target: every glTF node
+ *  of the character its `aimNode` stands for (its bones among them). None when the
+ *  aim target is not a character — the empty value then aims at the object itself. */
+export function characterPartOptions(state: DagState, constraintId: string): ParamOption[] {
+  const aimNode = (state.nodes[constraintId]?.params as { aimNode?: unknown } | undefined)?.aimNode;
+  if (typeof aimNode !== 'string' || !aimNode) return [];
+  return characterNodeNames(state, aimNode).map((name) => ({ value: name, label: name }));
+}
+
 export function constraintStackEntries(state: DagState, targetId: string): StackRowEntry[] {
   // #339 — the TYPE-AGNOSTIC scan: an object has ONE constraint stack, and the panel is
   // its view. Reading a single band's view here would render a stack that silently omits

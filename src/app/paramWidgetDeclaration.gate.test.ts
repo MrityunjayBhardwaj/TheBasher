@@ -470,11 +470,13 @@ describe('a param declares its control on its schema (#872)', () => {
     }
     expect({ examined: examined > 0, count: declaredWord.length }).toEqual({
       examined: true,
-      // 25 `.name`s since #1124 retired `MotionGenerate.name`, and the profile picker's word (#1064).
-      count: 26,
+      // 25 `.name`s since #1124 retired `MotionGenerate.name`, the profile picker's word (#1064),
+      // and the bone picker's (#1284): an empty bone aims at "the object itself".
+      count: 27,
     });
     expect(declaredWord.filter((k) => !k.endsWith('.name'))).toEqual([
       'LightProfileSelect.selectedProfile',
+      'TrackTo.aimBone',
     ]);
   });
 
@@ -569,6 +571,7 @@ describe('a param declares its control on its schema (#872)', () => {
         'Strip.action',
         'Strip.target',
         'TrackTo.target',
+        'TrackTo.aimBone',
       ],
       withProvider: [
         'FollowPath.target',
@@ -588,6 +591,7 @@ describe('a param declares its control on its schema (#872)', () => {
         'Strip.action',
         'Strip.target',
         'TrackTo.target',
+        'TrackTo.aimBone',
       ],
     });
   });

@@ -132,6 +132,9 @@ const CONSUMERS: Record<string, Decision> = {
   'src/app/nodeConstraints.ts': authored('folds-its-own-overlays'),
   'src/app/resolveTransformParam.ts': authored('folds-its-own-overlays'),
   'src/app/resolveWorldTransform.ts': authored('folds-its-own-overlays'),
+  // #1284 — a bone's world position: evaluates the GltfAsset for its hierarchy and folds each
+  // node's pose through resolveEvaluatedTransform, the way resolveWorldTransform does.
+  'src/app/gltfNodeWorld.ts': authored('folds-its-own-overlays'),
   'src/app/animate/dispatchApplyTransform.ts': authored('folds-its-own-overlays'),
   'src/app/resolveEvaluatedParam.ts': authored('produces-an-overlay'),
   'src/app/resolveEvaluatedTransform.ts': authored('produces-an-overlay'),
@@ -247,7 +250,8 @@ describe('#582 — who evaluates the graph, and which params they need', () => {
     // 40 → 41 at #1056: the skeleton-Object collector, a NEW road (skeletons had no scene
     // presence to evaluate for until then), declared above as fixed-ctx.
     // 41 → 42 at #1065: the constraint-target picker, declared above as fixed-ctx.
-    expect(evaluatorConsumers()).toHaveLength(42); // 39 -> 40 at #935 (placement) (the motion resolver)
+    // 42 → 43 at #1284: a bone's world position (gltfNodeWorld), declared above as authored.
+    expect(evaluatorConsumers()).toHaveLength(43); // 39 -> 40 at #935 (placement) (the motion resolver)
   });
 
   it('every reason is load-bearing — no member of any union is decorative', () => {
