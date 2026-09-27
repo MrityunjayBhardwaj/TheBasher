@@ -161,6 +161,11 @@ const CONSUMERS: Record<string, Decision> = {
   // the start of its path is a property of the generation, not of the playhead.
   // A time-varying read here would move the character as the scrubber moved.
   'src/app/asset/placeGeneratedMotion.ts': authored('fixed-ctx-by-design'),
+  // #1226 — what a regeneration moved under each layer. It evaluates the layers standing on a
+  // regenerated clip in the graph BEFORE a cook and AFTER it, at the default ctx, DELIBERATELY:
+  // the two reads are compared, so they must be taken at one ctx, and time enters through the
+  // pose wire's own `sample(seconds)` at the layer's key times, not through the playhead.
+  'src/app/asset/regenerationShift.ts': authored('fixed-ctx-by-design'),
   // #1056 — the skeleton Objects the armature band draws. It evaluates a skeleton's rest
   // bones, the clip wired to it and the Object's world transform at frame 0, DELIBERATELY:
   // the pose at the playhead is sampled later, per frame, by the helper from the clip value
@@ -251,7 +256,9 @@ describe('#582 — who evaluates the graph, and which params they need', () => {
     // 43 → 42 at #1053: the bind's character query evaluated a clone road `GltfSkeleton` to read
     // its bones; a native character's bones are its Skeleton's own params, so the evaluate went
     // with the clone road's character half, and the row went with it.
-    expect(evaluatorConsumers()).toHaveLength(42); // 39 -> 40 at #935 (placement) (the motion resolver)
+    // 42 → 43 at #1226: the regeneration notice, a new road (a cook had no way to say what it moved
+    // under a layer), declared above as fixed-ctx.
+    expect(evaluatorConsumers()).toHaveLength(43); // 39 -> 40 at #935 (placement) (the motion resolver)
   });
 
   it('every reason is load-bearing — no member of any union is decorative', () => {

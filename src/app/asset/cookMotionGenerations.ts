@@ -33,6 +33,13 @@
 
 import { useDagStore } from '../../core/dag/store';
 import type { DagState } from '../../core/dag/state';
+import { useNotificationStore } from '../stores/notificationStore';
+import {
+  bakedClipIds,
+  previouslyBaked,
+  regenerationNotices,
+  regenerationShifts,
+} from './regenerationShift';
 import { getMotionCapability } from '../boot';
 import { formatAssetError, useAssetErrorStore } from '../stores/assetErrorStore';
 import { useGeneratedMotionStore } from '../stores/generatedMotionStore';
@@ -112,12 +119,23 @@ export async function cookMotionGenerations(
     producerId,
   );
 
-  const ops = bakeGeneratedClipOps(useDagStore.getState().state);
+  const beforeBake = useDagStore.getState().state;
+  const ops = bakeGeneratedClipOps(beforeBake);
   const baked = ops.filter((o) => o.type === 'setParam' && o.paramPath === 'sourceHash').length;
   if (ops.length > 0) {
     useDagStore
       .getState()
       .dispatchAtomic(ops, 'user', `cook motion: ${baked} clip${baked === 1 ? '' : 's'}`);
+    // #1226 — every layer standing on a REgenerated clip, compared across the dispatch it just made.
+    const report = regenerationShifts(
+      beforeBake,
+      useDagStore.getState().state,
+      previouslyBaked(beforeBake, bakedClipIds(ops)),
+    );
+    for (const n of regenerationNotices(report)) {
+      // A move stays until read: it names what to re-check, and a timer would choose for them.
+      useNotificationStore.getState().notify(n.severity === 'warn' ? { ...n, durationMs: 0 } : n);
+    }
   }
 
   const state = useDagStore.getState().state;
