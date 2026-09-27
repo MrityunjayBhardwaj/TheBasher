@@ -544,16 +544,40 @@ test(TITLE, async ({ page }) => {
         else if (v && typeof v === 'object')
           for (const [key, x] of Object.entries(v)) walk(x, path ? `${path}.${key}` : key, out);
       }
-      function perturb(kind: string, v: Loose): unknown {
+      // #1280 — a number is keyed inside the range its schema declares: keyed past a bound a
+      // reader clamps to (a Layer's opacity 1 -> 1.73, clamped back to 1), it draws as authored
+      // and reads "still". The usual step; the opposite step when it leaves the range; the bound
+      // farthest from the value when neither fits (the middle could be the value itself).
+      // Every row the range turned is logged.
+      const bounded: string[] = [];
+      function within(type: string, path: string, v: number, step: number): number {
+        const r = B.paramRange(type, path) as { min: number | null; max: number | null } | null;
+        const fits = (x: number) =>
+          !r || ((r.min === null || x >= r.min) && (r.max === null || x <= r.max));
+        if (fits(v + step)) return v + step;
+        const to =
+          fits(v - step) || r!.min === null || r!.max === null
+            ? v - step
+            : r!.max - v >= v - r!.min
+              ? r!.max
+              : r!.min;
+        bounded.push(`${type}.${path} ${v} -> ${r4(to)} (range ${r!.min}..${r!.max})`);
+        return to;
+      }
+      function perturb(kind: string, v: Loose, type: string, path: string): unknown {
         switch (kind) {
           case 'number':
-            return v + Math.max(0.5, Math.abs(v) * 0.6) + 0.13;
+            return within(type, path, v, Math.max(0.5, Math.abs(v) * 0.6) + 0.13);
           case 'color':
             return v.toLowerCase() === '#ff00ff' ? '#00ff00' : '#ff00ff';
           case 'vec2':
-            return [v[0] + 0.7, v[1] + 0.45];
+            return [within(type, `${path}.0`, v[0], 0.7), within(type, `${path}.1`, v[1], 0.45)];
           case 'vec3':
-            return [v[0] + 0.7, v[1] + 0.45, v[2] - 0.6];
+            return [
+              within(type, `${path}.0`, v[0], 0.7),
+              within(type, `${path}.1`, v[1], 0.45),
+              within(type, `${path}.2`, v[2], -0.6),
+            ];
           case 'quat': {
             const q = [0.2, 0.3, 0.1, 0.927];
             const n = Math.hypot(...q);
@@ -747,7 +771,7 @@ test(TITLE, async ({ page }) => {
                 paramPath: path,
                 keyframes: [
                   { time: 0, value, easing: 'linear' },
-                  { time: 1, value: perturb(kind, value), easing: 'linear' },
+                  { time: 1, value: perturb(kind, value, node.type, path), easing: 'linear' },
                 ],
               },
             },
@@ -774,7 +798,7 @@ test(TITLE, async ({ page }) => {
           let driverNote: string | undefined;
           if (kind === 'number' || kind === 'vec3') {
             const drvId = `census_drv_${n}`;
-            const to = perturb(kind, value);
+            const to = perturb(kind, value, node.type, path);
             if (kind === 'vec3') {
               dag().dispatch(
                 { type: 'setParam', nodeId: ctrl.nodeId, paramPath: 'position', value: to },
@@ -855,6 +879,7 @@ test(TITLE, async ({ page }) => {
       return {
         controlStill,
         composites,
+        bounded,
         posable: posable.map((id) => `${dag().state.nodes[id].type} ${subjectOf(id)}`),
         placed,
         wiring,
@@ -917,6 +942,9 @@ test(TITLE, async ({ page }) => {
     );
   // The measurement has to be able to see anything before its "nothing moved" means anything.
   console.log(`CENSUS composites: ${result.composites}`);
+  console.log(
+    `CENSUS keyed inside a declared range (${result.bounded.length}): ${result.bounded.join(' | ')}`,
+  );
   expect(result.controlStill, 'no channel, two playheads: the scene holds still').toBe(true);
   expect(rows.filter((r) => r.reach !== null).length, 'some params move the scene').toBeGreaterThan(
     0,

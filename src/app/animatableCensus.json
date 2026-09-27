@@ -375,8 +375,8 @@
       },
       "opacity": {
         "kind": "number",
-        "reach": null,
-        "driver": null
+        "reach": "composite",
+        "driver": "composite"
       },
       "outPoint": {
         "kind": "number",

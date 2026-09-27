@@ -668,6 +668,64 @@ export function boot(): Promise<void> {
               )?.shape;
               return shape !== undefined && key in shape;
             },
+            // #1280 — the range `type`'s schema declares for the number at `path` (either end null
+            // when undeclared), so the census keys a param inside it: keyed past a bound a reader
+            // clamps to, a param draws as it was authored and would read "still". A union answers
+            // only when its members agree.
+            paramRange: (type: string, path: string) => {
+              type Range = { min: number | null; max: number | null } | null;
+              const at = (s: unknown, segs: string[]): Range => {
+                const def = (s as { _def?: Record<string, unknown> } | undefined)?._def;
+                if (!def) return null;
+                switch (def.typeName) {
+                  case 'ZodDefault':
+                  case 'ZodOptional':
+                  case 'ZodNullable':
+                  case 'ZodCatch':
+                    return at(def.innerType, segs);
+                  case 'ZodEffects':
+                    return at(def.schema, segs);
+                  case 'ZodBranded':
+                    return at(def.type, segs);
+                  case 'ZodPipeline':
+                    return at(def.in, segs);
+                  case 'ZodLazy':
+                    return at((def.getter as () => unknown)(), segs);
+                  case 'ZodObject': {
+                    if (segs.length === 0) return null;
+                    const shape = (s as { shape: Record<string, unknown> }).shape;
+                    return segs[0] in shape ? at(shape[segs[0]], segs.slice(1)) : null;
+                  }
+                  case 'ZodTuple':
+                    return segs.length
+                      ? at((def.items as unknown[])[+segs[0]], segs.slice(1))
+                      : null;
+                  case 'ZodArray':
+                    return segs.length ? at(def.type, segs.slice(1)) : null;
+                  case 'ZodRecord':
+                    return segs.length ? at(def.valueType, segs.slice(1)) : null;
+                  case 'ZodUnion':
+                  case 'ZodDiscriminatedUnion': {
+                    const found = [
+                      ...new Set(
+                        (def.options as unknown[])
+                          .map((o) => at(o, segs))
+                          .filter((r) => r !== null)
+                          .map((r) => JSON.stringify(r)),
+                      ),
+                    ];
+                    return found.length === 1 ? (JSON.parse(found[0]) as Range) : null;
+                  }
+                  case 'ZodNumber': {
+                    if (segs.length) return null;
+                    const n = s as { minValue: number | null; maxValue: number | null };
+                    return { min: n.minValue, max: n.maxValue };
+                  }
+                }
+                return null;
+              };
+              return at(getNodeType(type)?.paramSchema, path.split('.'));
+            },
             // #1259 — a compositor Layer's params are read by the composite, not the 3D scene. The
             // census places a composition the way the video space does and reads the frame the one
             // composing site draws (the export's), at the playhead the viewer maps to the comp.
