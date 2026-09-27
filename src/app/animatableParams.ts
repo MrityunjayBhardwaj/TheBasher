@@ -46,9 +46,10 @@ import { driverStackForTarget } from './paramDrivers';
 /** The value kinds a keyframe channel carries, named as `addChannel` names them. */
 export type ChannelValueKind = 'number' | 'vec2' | 'vec3' | 'quat' | 'color';
 
-/** Where a measured param showed: the drawn scene, the camera pose the renderer takes, or only
- *  the image rendered through the active camera. */
-export type AnimatableReach = 'scene' | 'pose' | 'render';
+/** Where a measured param showed: the drawn scene, the camera pose the renderer takes, the frame
+ *  a composition composites (a compositor Layer, #1259), or only the image rendered through the
+ *  active camera. */
+export type AnimatableReach = 'scene' | 'pose' | 'composite' | 'render';
 
 /** What overlays the param: a bare keyframe channel, or a ParamDriver (#1258). */
 export type AnimatableMechanism = 'channel' | 'driver';

@@ -645,24 +645,58 @@ export function boot(): Promise<void> {
         import('./constraintStack'),
         import('./materialLink'),
         import('./driverBind'),
-      ]).then(([stack, chain, constraints, material, driver]) => {
-        w.__basher_censusBuilders = {
-          operatorTypesInSection: chain.operatorTypesInSection,
-          buildAddModifierOps: stack.buildAddModifierOps,
-          buildAddMaterialOpOps: stack.buildAddMaterialOpOps,
-          buildAddConstraintOps: constraints.buildAddConstraintOps,
-          buildNewMaterialOps: material.buildNewMaterialOps,
-          buildBindDriverOps: driver.buildBindDriverOps,
-          // #1259 — whether `type`'s schema DECLARES `key`. A dispatch cannot say: a passthrough
-          // schema (Scene) accepts any param, so a write that sticks is not a declaration.
-          declaresParam: (type: string, key: string) => {
-            const shape = (
-              getNodeType(type)?.paramSchema as { shape?: Record<string, unknown> } | undefined
-            )?.shape;
-            return shape !== undefined && key in shape;
-          },
-        };
-      });
+        import('./video/newComposition'),
+        import('./video/addLayer'),
+        import('./video/videoLayers'),
+        import('./video/compositeDecode'),
+        import('./video/videoTimelineGeometry'),
+        import('./stores/timeStore'),
+      ]).then(
+        ([stack, chain, constraints, material, driver, comp, layer, video, decode, geo, time]) => {
+          w.__basher_censusBuilders = {
+            operatorTypesInSection: chain.operatorTypesInSection,
+            buildAddModifierOps: stack.buildAddModifierOps,
+            buildAddMaterialOpOps: stack.buildAddMaterialOpOps,
+            buildAddConstraintOps: constraints.buildAddConstraintOps,
+            buildNewMaterialOps: material.buildNewMaterialOps,
+            buildBindDriverOps: driver.buildBindDriverOps,
+            // #1259 — whether `type`'s schema DECLARES `key`. A dispatch cannot say: a passthrough
+            // schema (Scene) accepts any param, so a write that sticks is not a declaration.
+            declaresParam: (type: string, key: string) => {
+              const shape = (
+                getNodeType(type)?.paramSchema as { shape?: Record<string, unknown> } | undefined
+              )?.shape;
+              return shape !== undefined && key in shape;
+            },
+            // #1259 — a compositor Layer's params are read by the composite, not the 3D scene. The
+            // census places a composition the way the video space does and reads the frame the one
+            // composing site draws (the export's), at the playhead the viewer maps to the comp.
+            createNewComposition: comp.createNewComposition,
+            importMediaClipAsLayer: layer.importMediaClipAsLayer,
+            buildAddLayerEffectOps: video.buildAddLayerEffectOps,
+            compositeFrame: async (compId: string): Promise<ImageData | null> => {
+              const state = useDagStore.getState().state;
+              const p = state.nodes[compId]?.params as
+                | import('../nodes/Composition').CompositionParams
+                | undefined;
+              if (!p) return null;
+              const canvas = document.createElement('canvas');
+              canvas.width = p.width ?? 1280;
+              canvas.height = p.height ?? 720;
+              const ctx = canvas.getContext('2d');
+              if (!ctx) return null;
+              const compFrame = geo.globalFrameToCompFrame(
+                time.useTimeStore.getState().frame,
+                time.FRAMES_PER_SECOND,
+                p.fps ?? 30,
+                Math.max(1, p.durationFrames ?? 150),
+              );
+              await decode.captureCompositeFrame(state, compId, p, compFrame, ctx);
+              return ctx.getImageData(0, 0, canvas.width, canvas.height);
+            },
+          };
+        },
+      );
       void import('./setActiveCamera').then((m) => {
         w.__basher_setActiveCamera = (cameraId: string) => {
           const dag = useDagStore.getState();

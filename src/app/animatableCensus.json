@@ -1,5 +1,5 @@
 {
-  "$comment": "Measured by tests/e2e/p1235-animatable-census.spec.ts — regenerate with CENSUS_WRITE=1, never edit by hand. reach: scene | pose | render | null (keyed, nothing moved). driver: the same for a ParamDriver carrying the value, on number and vec3 rows only.",
+  "$comment": "Measured by tests/e2e/p1235-animatable-census.spec.ts — regenerate with CENSUS_WRITE=1, never edit by hand. reach: scene | pose | composite | render | null (keyed, nothing moved). driver: the same for a ParamDriver carrying the value, on number and vec3 rows only.",
   "subjects": {
     "AmbientLight": {
       "color": {
@@ -197,6 +197,49 @@
         "driver": null
       }
     },
+    "ColorCorrect": {
+      "brightness": {
+        "kind": "number",
+        "reach": "composite",
+        "driver": "composite"
+      },
+      "contrast": {
+        "kind": "number",
+        "reach": "composite",
+        "driver": "composite"
+      },
+      "saturation": {
+        "kind": "number",
+        "reach": "composite",
+        "driver": "composite"
+      }
+    },
+    "Composition": {
+      "background": {
+        "kind": "color",
+        "reach": null
+      },
+      "durationFrames": {
+        "kind": "number",
+        "reach": null,
+        "driver": null
+      },
+      "fps": {
+        "kind": "number",
+        "reach": null,
+        "driver": null
+      },
+      "height": {
+        "kind": "number",
+        "reach": null,
+        "driver": null
+      },
+      "width": {
+        "kind": "number",
+        "reach": null,
+        "driver": null
+      }
+    },
     "CurveData": {
       "points.*.co": {
         "kind": "vec3",
@@ -322,6 +365,45 @@
         "kind": "number",
         "reach": null,
         "driver": null
+      }
+    },
+    "Layer": {
+      "inPoint": {
+        "kind": "number",
+        "reach": null,
+        "driver": null
+      },
+      "opacity": {
+        "kind": "number",
+        "reach": null,
+        "driver": null
+      },
+      "outPoint": {
+        "kind": "number",
+        "reach": null,
+        "driver": null
+      },
+      "startFrame": {
+        "kind": "number",
+        "reach": null,
+        "driver": null
+      },
+      "transform.anchor": {
+        "kind": "vec2",
+        "reach": null
+      },
+      "transform.position": {
+        "kind": "vec2",
+        "reach": "composite"
+      },
+      "transform.rotation": {
+        "kind": "number",
+        "reach": "composite",
+        "driver": "composite"
+      },
+      "transform.scale": {
+        "kind": "vec2",
+        "reach": "composite"
       }
     },
     "LightData:Area": {
@@ -603,6 +685,28 @@
         "driver": null
       },
       "roughness": {
+        "kind": "number",
+        "reach": null,
+        "driver": null
+      }
+    },
+    "MediaClip": {
+      "height": {
+        "kind": "number",
+        "reach": null,
+        "driver": null
+      },
+      "srcFps": {
+        "kind": "number",
+        "reach": null,
+        "driver": null
+      },
+      "srcFrames": {
+        "kind": "number",
+        "reach": null,
+        "driver": null
+      },
+      "width": {
         "kind": "number",
         "reach": null,
         "driver": null

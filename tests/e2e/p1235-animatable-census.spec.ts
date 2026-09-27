@@ -138,7 +138,7 @@ function tableOf(rows: Row[]) {
   return {
     table: {
       $comment:
-        'Measured by tests/e2e/p1235-animatable-census.spec.ts — regenerate with CENSUS_WRITE=1, never edit by hand. reach: scene | pose | render | null (keyed, nothing moved). driver: the same for a ParamDriver carrying the value, on number and vec3 rows only.',
+        'Measured by tests/e2e/p1235-animatable-census.spec.ts — regenerate with CENSUS_WRITE=1, never edit by hand. reach: scene | pose | composite | render | null (keyed, nothing moved). driver: the same for a ParamDriver carrying the value, on number and vec3 rows only.',
       subjects: sorted,
       notMeasured: Object.keys(notMeasured)
         .sort()
@@ -344,6 +344,57 @@ test(TITLE, async ({ page }) => {
       const ctrl = w.__basher_addPrimitive('Null', CTRL_HOME);
       if (!ctrl) throw new Error('the driver arm could not place its controller Null');
       const harness = new Set<string>([ctrl.nodeId, ctrl.dataNodeId].filter(Boolean));
+      // #1259 — a compositor Layer's params are read by the composite, which the 3D scene never
+      // shows. Two compositions, each placed the way the video space places one: a bare media
+      // layer, and one with a ColorCorrect on its clip (an effect puts its clip under a stack, so
+      // the bare one is where the clip is measured). The image is made here: a ramp in every
+      // channel, so a grade that pivots on the middle grey moves it, and narrower than the comp,
+      // so the background shows beside it.
+      const comps: string[] = [];
+      {
+        const c = new OffscreenCanvas(48, 32);
+        const g = c.getContext('2d')!;
+        for (let x = 0; x < 48; x++)
+          for (let y = 0; y < 32; y++) {
+            g.fillStyle = `rgb(${30 + x * 4},${40 + y * 5},${200 - x * 2})`;
+            g.fillRect(x, y, 1, 1);
+          }
+        const bytes = new Uint8Array(
+          await (await c.convertToBlob({ type: 'image/png' })).arrayBuffer(),
+        );
+        for (const effect of [null, 'ColorCorrect']) {
+          const compId = B.createNewComposition();
+          const layerId = await B.importMediaClipAsLayer(
+            { relativePath: `census-${effect ?? 'bare'}.png`, bytes },
+            compId,
+          );
+          if (!layerId) throw new Error('the census could not add a media layer');
+          if (effect) {
+            const ops = B.buildAddLayerEffectOps(dag().state, layerId, effect);
+            apply(ops.length ? ops : null, `effect ${effect}`);
+          }
+          comps.push(compId);
+        }
+      }
+      /** The frame each composition composites at the playhead, hashed. */
+      async function compHash(): Promise<string> {
+        const out: string[] = [];
+        for (const id of comps) {
+          const img = await B.compositeFrame(id);
+          if (!img) {
+            out.push('none');
+            continue;
+          }
+          const words = new Uint32Array(img.data.buffer);
+          let h = 2166136261;
+          for (let i = 0; i < words.length; i++) {
+            h ^= words[i];
+            h = Math.imul(h, 16777619);
+          }
+          out.push(`${img.width}x${img.height}:${h >>> 0}`);
+        }
+        return out.join(',');
+      }
       // #1259 — a posable node's `quaternion` is optional and absent until the author opts in, so
       // no leaf existed to key. Seed it (the identity, which draws what the euler zero draws) on
       // every node whose schema DECLARES a rotation mode, and measure each such node in both
@@ -520,10 +571,11 @@ test(TITLE, async ({ page }) => {
       };
 
       await setT(0);
-      const c0 = snap();
+      const c0 = snap() + (await compHash());
       await setT(1);
-      const c1 = snap();
+      const c1 = snap() + (await compHash());
       const controlStill = c0 === c1;
+      const composites = await compHash();
 
       const nodes = dag().state.nodes as Record<
         string,
@@ -581,11 +633,18 @@ test(TITLE, async ({ page }) => {
       }
       /** The reach of the overlay `overlayId` just installed, against a `pre` taken without it.
        *  The overlay is then removed, and the scene it leaves behind is returned as `back`. */
-      async function reachOf(overlayId: string, pre: string, prePose: string) {
+      async function reachOf(overlayId: string, pre: string, prePose: string, preComp: string) {
         await frames();
         await frames();
         const s1 = snap();
-        let reach: string | null = s1 !== pre ? 'scene' : poses() !== prePose ? 'pose' : null;
+        let reach: string | null =
+          s1 !== pre
+            ? 'scene'
+            : poses() !== prePose
+              ? 'pose'
+              : (await compHash()) !== preComp
+                ? 'composite'
+                : null;
         if (!reach) {
           // Not in the editor scene: render through the active camera with and without it.
           const withIt = await renderHash();
@@ -602,7 +661,7 @@ test(TITLE, async ({ page }) => {
         dag().dispatch({ type: 'removeNode', nodeId: overlayId }, 'user', 'census');
         await frames();
         await frames();
-        return { reach, back: snap() };
+        return { reach, back: snap() + (await compHash()) };
       }
       let n = 0;
       /** Every leaf of `id` as it stands now: one pass per rotation mode for a posable node. */
@@ -676,6 +735,7 @@ test(TITLE, async ({ page }) => {
           await frames();
           const pre = snap();
           const prePose = poses();
+          const preComp = await compHash();
           const res = dag().dispatch(
             {
               type: 'addNode',
@@ -707,7 +767,7 @@ test(TITLE, async ({ page }) => {
             });
             continue;
           }
-          const { reach, back } = await reachOf(chId, pre, prePose);
+          const { reach, back } = await reachOf(chId, pre, prePose, preComp);
           // #1258 — the driver arm: the same param, in the same setting, driven to the same value
           // by a ParamDriver the product's bind builds, against a "before" taken without it.
           let driver: string | null | undefined;
@@ -726,6 +786,7 @@ test(TITLE, async ({ page }) => {
             }
             const dPre = snap();
             const dPrePose = poses();
+            const dPreComp = await compHash();
             const bind = B.buildBindDriverOps(dag().state, {
               targetId: id,
               paramPath: path,
@@ -745,9 +806,9 @@ test(TITLE, async ({ page }) => {
             if (!bind.ok) driverNote = `driver refused: ${bind.reason}`;
             else {
               dag().dispatchAtomic(bind.ops, 'user', 'census');
-              const d = await reachOf(drvId, dPre, dPrePose);
+              const d = await reachOf(drvId, dPre, dPrePose, dPreComp);
               driver = d.reach;
-              if (d.back !== dPre) driverNote = 'driver did not return to base';
+              if (d.back !== dPre + dPreComp) driverNote = 'driver did not return to base';
             }
             if (kind === 'vec3') {
               dag().dispatch(
@@ -776,7 +837,7 @@ test(TITLE, async ({ page }) => {
             reach,
             ...(driver !== undefined ? { driver } : {}),
             setting,
-            ...(back !== pre ? { note: 'did not return to base' } : {}),
+            ...(back !== pre + preComp ? { note: 'did not return to base' } : {}),
             ...(driverNote ? { driverNote } : {}),
           });
         }
@@ -793,6 +854,7 @@ test(TITLE, async ({ page }) => {
       }
       return {
         controlStill,
+        composites,
         posable: posable.map((id) => `${dag().state.nodes[id].type} ${subjectOf(id)}`),
         placed,
         wiring,
@@ -854,10 +916,17 @@ test(TITLE, async ({ page }) => {
         `subjects ${Object.keys(assignment).filter(mine).sort().join(' ')}`,
     );
   // The measurement has to be able to see anything before its "nothing moved" means anything.
+  console.log(`CENSUS composites: ${result.composites}`);
   expect(result.controlStill, 'no channel, two playheads: the scene holds still').toBe(true);
   expect(rows.filter((r) => r.reach !== null).length, 'some params move the scene').toBeGreaterThan(
     0,
   );
+  // #1259 — the composite arm sees too: both compositions drew a frame, and a keyed Layer moved it.
+  expect(result.composites, 'each composition composites a frame').not.toMatch(/none/);
+  expect(
+    rows.filter((r) => r.reach === 'composite').map((r) => r.type),
+    'some params move the composite',
+  ).toContain('Layer');
   expect(rows.filter((r) => r.note?.startsWith('channel refused'))).toEqual([]);
   expect(
     rows.filter((r) => r.driverNote?.startsWith('driver refused')).map((r) => r.driverNote),
