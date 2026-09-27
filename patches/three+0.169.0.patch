@@ -1,0 +1,16 @@
+diff --git a/node_modules/three/examples/jsm/loaders/FBXLoader.js b/node_modules/three/examples/jsm/loaders/FBXLoader.js
+index bc8d49a..2f29124 100644
+--- a/node_modules/three/examples/jsm/loaders/FBXLoader.js
++++ b/node_modules/three/examples/jsm/loaders/FBXLoader.js
+@@ -2623,7 +2623,10 @@ class AnimationParser {
+ 
+ 									sceneGraph.traverse( function ( child ) {
+ 
+-										if ( child.ID === rawModel.id ) {
++										// A bone shared by two skins exists twice, the older twin nested at identity inside the
++										// newer (buildSkeleton). traverse visits a parent first, so keep the FIRST match: the twin
++										// that carries the file's transform, which fills the axes the curves leave unkeyed.
++										if ( child.ID === rawModel.id && node.transform === undefined ) {
+ 
+ 											node.transform = child.matrix;
+ 

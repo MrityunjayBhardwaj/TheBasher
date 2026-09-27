@@ -35,7 +35,6 @@ import type { DagState } from '../../core/dag/state';
 import { buildBvhImportOps } from '../../core/import/bvhImportChain';
 import { buildSkeletonObjectOps } from '../../core/import/skeletonObject';
 import { buildDefaultDagState } from '../../core/project/default';
-import type { BoneSpec } from '../../nodes/types';
 import { useTimeStore } from '../stores/timeStore';
 
 beforeEach(() => {
@@ -263,12 +262,9 @@ Frame Time: 0.0333333
     const sceneNodeId = s.outputs.scene!.node;
     const chain = buildBvhImportOps({ text: RIG_BVH, ids: { skeleton: 'sk', clip: 'clip' } });
     for (const op of chain.ops) s = applyOp(s, op).next;
-    const bones = (s.nodes.sk.params as { bones: BoneSpec[] }).bones;
     const { ops } = buildSkeletonObjectOps({
       skeletonId: 'sk',
-      bones,
       sceneNodeId,
-      normalise: false,
       name: 'rig',
       clipId: 'clip',
     });

@@ -414,11 +414,11 @@ describe('#791 — a dropped BVH stands at file scale, and its Object is selecte
     expect(objectScale(result!.skeletonId)).toEqual([1, 1, 1]);
   });
 
-  it('an FBX still gets the fit — its declared unit is not read yet, so 1 would be a guess too', async () => {
+  it('an FBX stands at scale 1 too — its declared unit is read at parse, so nothing is guessed (#1086)', async () => {
     const fbxPath = `${USER_IMPORTS_ROOT}/rig/rig.fbx`;
     await currentStorage.write(fbxPath, RIG_FBX_BYTES);
     const result = await importFbxFromOpfs(fbxPath);
-    expect(objectScale(result!.skeletonId)?.[0]).not.toBe(1);
+    expect(objectScale(result!.skeletonId)).toEqual([1, 1, 1]);
   });
 
   it('with nothing to bind to, the drop selects the Object, so its Scale is in the inspector', async () => {

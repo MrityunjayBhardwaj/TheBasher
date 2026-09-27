@@ -11,54 +11,17 @@
 // wrapper node is minted, because the skeleton is already the right noun
 // (docs/OBJECT-DATA-SPLIT-DESIGN.md §0, "skeleton-as-data").
 //
-// SCALE. The Object's `scale` is where a rig's size is set, visible and editable rather than
-// baked into the bones. A BVH import leaves it at 1 — the format declares no unit, and the
-// reference never guesses one from the content (#791). A caller that asks for `normalise`
-// gets the rig stood at a human height instead; the FBX road does, until it reads the unit
-// its format declares. The height is measured the way the source-rig overlay measures one —
-// `armatureBounds` over `boneTransforms`, a rig's transport root excluded.
+// SCALE. Every Object this stands is at scale 1: the rig's size is its data's, in metres. A
+// file that declares its unit is read in it at parse (FBX, #1086); a BVH declares none and
+// stands at the file's own size, where the director sets it on this Object (#791); a generated
+// clip carries the unit its producer declared (#790). Nothing here guesses a size from what the
+// rig looks like — the reference never does (Blender's BVH and FBX importers, measured).
 //
-// REF: src/viewport/referenceRig.ts (armatureBounds); src/nodes/ObjectNode.ts (the data
-//      socket); src/app/asset/importBvhFbx.ts (the caller); issues #1056, #791.
+// REF: src/nodes/ObjectNode.ts (the data socket); src/app/asset/importBvhFbx.ts (the caller);
+//      src/core/import/fbx.ts (`fbxMetresPerUnit`); issues #1056, #791, #1086.
 
 import type { DagState } from '../dag/state';
 import type { Op } from '../dag/types';
-import type { AnimationClipValue, BoneSpec } from '../../nodes/types';
-import { boneTransforms } from '../../viewport/boneShape';
-import { armatureBounds, posedSourceBones } from '../../viewport/referenceRig';
-
-/** The size a rig of unknown unit is stood at, in metres, along its longest extent. */
-export const UNBOUND_RIG_HEIGHT_METRES = 1.8;
-
-/** Below this a rig has no extent to normalise by (no bones; a collapsed rig still has the
- *  minimum drawn bone length, so it lands above this). */
-const MIN_HEIGHT = 1e-6;
-
-/**
- * The uniform scale that makes the rig {@link UNBOUND_RIG_HEIGHT_METRES} along its LONGEST
- * extent, measured on the pose it is first DRAWN in: the clip's frame 0 when there is a clip,
- * the rest pose only when there is not.
- *
- * 🔴 NEITHER THE REST POSE NOR ITS Y EXTENT — both measured wrong on `soma-walk.bvh`. Its
- * rest pose lies along +X with the arms raised past the head (extents 248 × 6 × 20 units),
- * while the walk's frame 0 stands 161 tall. The rest pose's Y extent drew the rig ~27× too
- * big; its longest extent, the lying figure plus the raised arms, drew it at 1.17 m. Frame 0
- * is what the director sees on import, and its longest extent is the height of an upright
- * figure or the length of a lying one, whichever way the file's rest pose happens to face.
- *
- * 1 when the rig has no measurable extent, so a degenerate rig draws at its own size rather
- * than being blown up by a division by almost nothing.
- */
-export function normalisedRigScale(
-  bones: readonly BoneSpec[],
-  clip?: AnimationClipValue | null,
-): number {
-  const pose = clip ? posedSourceBones(clip, 0) : bones;
-  const { empty, size } = armatureBounds(boneTransforms(pose));
-  const extent = Math.max(size.x, size.y, size.z);
-  if (empty || !(extent >= MIN_HEIGHT)) return 1;
-  return UNBOUND_RIG_HEIGHT_METRES / extent;
-}
 
 /** The Object's id, derived from the skeleton's — one skeleton, one Object, reproducibly. */
 export function skeletonObjectId(skeletonId: string): string {
@@ -107,16 +70,8 @@ function dataSourceOf(binding: unknown): string | null {
 
 export interface SkeletonObjectArgs {
   readonly skeletonId: string;
-  /** The skeleton's rest bones — what the scale is measured on when there is no clip. */
-  readonly bones: readonly BoneSpec[];
-  /** The clip wired to the skeleton, if any: its frame 0 is what the scale is measured on. */
-  readonly clip?: AnimationClipValue | null;
   /** The scene aggregator the Object joins as a child. */
   readonly sceneNodeId: string;
-  /** True to stand the rig at human height — a GUESS from the content, so only for a road
-   *  that cannot yet read a unit its format declares (FBX). A BVH declares none and passes
-   *  false: its size is the director's to set (#791). */
-  readonly normalise: boolean;
   /**
    * #1101 — the name the Object shows: its clip's, which is the file's base name on the import
    * road and the prompt on the generation road. Blender's BVH importer does the same, naming
@@ -150,7 +105,6 @@ export function buildSkeletonObjectOps(args: SkeletonObjectArgs): {
   readonly objectId: string;
 } {
   const objectId = skeletonObjectId(args.skeletonId);
-  const s = args.normalise ? normalisedRigScale(args.bones, args.clip) : 1;
   return {
     objectId,
     ops: [
@@ -158,7 +112,7 @@ export function buildSkeletonObjectOps(args: SkeletonObjectArgs): {
         type: 'addNode',
         nodeId: objectId,
         nodeType: 'Object',
-        params: { position: [0, 0, 0], rotation: [0, 0, 0], scale: [s, s, s] },
+        params: { position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
       },
       ...(args.name.trim()
         ? [{ type: 'setMeta' as const, nodeId: objectId, name: args.name, nameFrom: args.clipId }]

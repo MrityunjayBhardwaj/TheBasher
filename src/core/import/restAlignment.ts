@@ -261,6 +261,70 @@ function restDirectionsInWorld(
   return out;
 }
 
+/** A bone's two rest directions: where it points in each rig, toward the SAME mapped bone. */
+interface RestDirectionPair {
+  readonly source: Vector3;
+  readonly target: Vector3;
+}
+
+/**
+ * #1186 — each mapped target bone's rest direction in both rigs, toward one child they share.
+ *
+ * A bone points at its mapped child, and a bone with several mapped children — a hand, the
+ * hips, the upper spine — has to pick one. Picked in each rig separately, the choice follows
+ * each rig's own child order, and two rigs of the same character order children differently:
+ * xbot (glTF) lists a hand's Thumb1 or Pinky1 first, samba (FBX) its Middle1. Paired by name,
+ * "hand → thumb" was aligned onto "hand → middle", and the retargeted hands sat 51.59° and
+ * 25.41° off on every frame — exactly the angle between those finger directions on xbot's rest.
+ *
+ * So the child is picked ONCE, on the target, and the source points at that child's mapped
+ * counterpart. The pair is the same joint in both rigs whatever order either lists its
+ * children in. The retarget's direction branch already pairs this way (`retarget.ts`,
+ * `mappedChild`, which reads the source through the map); this makes the aligned branch, the
+ * whole-rig fit and the reported disagreement agree with it.
+ *
+ * Keyed by TARGET name, in the map's order. A bone with no mapped child, or whose child's
+ * counterpart is not in the source, is absent — no direction, not a zero one.
+ */
+function restDirectionPairs(
+  sourceBoneObjs: readonly Bone[],
+  targetBoneObjs: readonly Bone[],
+  targetToSource: Readonly<Record<string, string>>,
+): Map<string, RestDirectionPair> {
+  for (const bones of [sourceBoneObjs, targetBoneObjs]) {
+    for (const bone of bones) {
+      if (!bone.parent || !(bone.parent as Bone).isBone) bone.updateMatrixWorld(true);
+    }
+  }
+  const sourceByName = new Map(sourceBoneObjs.map((b) => [b.name, b]));
+  const targetByName = new Map(targetBoneObjs.map((b) => [b.name, b]));
+  const covered = (name: string) => {
+    const counterpart = targetToSource[name];
+    return counterpart !== undefined && sourceByName.has(counterpart);
+  };
+  const out = new Map<string, RestDirectionPair>();
+  for (const [targetName, sourceName] of Object.entries(targetToSource)) {
+    const targetBone = targetByName.get(targetName);
+    const sourceBone = sourceByName.get(sourceName);
+    if (!targetBone || !sourceBone) continue;
+    const targetChild = mappedChild(targetBone, covered);
+    if (!targetChild) continue;
+    const sourceChild = sourceByName.get(targetToSource[targetChild.name]) as Bone;
+    const target = directionInWorld(targetBone, targetChild);
+    const source = directionInWorld(sourceBone, sourceChild);
+    if (target && source) out.set(targetName, { source, target });
+  }
+  return out;
+}
+
+/** The world direction from `bone` to `toward`, or null when they coincide. */
+function directionInWorld(bone: Bone, toward: Bone): Vector3 | null {
+  const delta = new Vector3()
+    .setFromMatrixPosition(toward.matrixWorld)
+    .sub(new Vector3().setFromMatrixPosition(bone.matrixWorld));
+  return delta.lengthSq() < 1e-18 ? null : delta.normalize();
+}
+
 /** Bones of a rig that ARE limbs: everything but the anchor at the top. */
 function nonRootBones(bones: readonly Bone[]): Bone[] {
   return bones.filter((b) => b.parent && (b.parent as Bone).isBone);
@@ -477,20 +541,17 @@ export function restDirectionDisagreement(
   targetToSource: Readonly<Record<string, string>>,
   rotation?: Quaternion,
 ): Map<string, number> {
-  const sourceNames = new Set(Object.values(targetToSource));
-  const sourceDirs = restDirectionsInWorld(sourceBoneObjs, (n) => sourceNames.has(n));
-  const targetDirs = restDirectionsInWorld(targetBoneObjs, (n) => targetToSource[n] !== undefined);
-
   const out = new Map<string, number>();
-  for (const [targetName, sourceName] of Object.entries(targetToSource)) {
-    const s = sourceDirs.get(sourceName);
-    const t = targetDirs.get(targetName);
-    // A bone with no mapped descendant has no direction on one side or the
-    // other, so it is ABSENT rather than 0 — a zero here would read as "these
-    // two agree perfectly", which is the one thing it does not mean.
-    if (!s || !t) continue;
-    const turned = rotation ? s.clone().applyQuaternion(rotation) : s;
-    out.set(targetName, turned.angleTo(t) * DEG);
+  // A bone with no mapped descendant has no direction pair, so it is ABSENT
+  // rather than 0 — a zero here would read as "these two agree perfectly",
+  // which is the one thing it does not mean.
+  for (const [targetName, pair] of restDirectionPairs(
+    sourceBoneObjs,
+    targetBoneObjs,
+    targetToSource,
+  )) {
+    const turned = rotation ? pair.source.clone().applyQuaternion(rotation) : pair.source;
+    out.set(targetName, turned.angleTo(pair.target) * DEG);
   }
   return out;
 }
@@ -519,19 +580,11 @@ export function solveRestAlignment(
   targetBoneObjs: readonly Bone[],
   targetToSource: Readonly<Record<string, string>>,
 ): RestReconciliation {
-  const sourceNames = new Set(Object.values(targetToSource));
-  const sourceDirs = restDirectionsInWorld(sourceBoneObjs, (n) => sourceNames.has(n));
-  const targetDirs = restDirectionsInWorld(targetBoneObjs, (n) => targetToSource[n] !== undefined);
-
   const from: Vector3[] = [];
   const to: Vector3[] = [];
-  for (const [targetName, sourceName] of Object.entries(targetToSource)) {
-    const s = sourceDirs.get(sourceName);
-    const t = targetDirs.get(targetName);
-    if (s && t) {
-      from.push(s);
-      to.push(t);
-    }
+  for (const pair of restDirectionPairs(sourceBoneObjs, targetBoneObjs, targetToSource).values()) {
+    from.push(pair.source);
+    to.push(pair.target);
   }
   if (from.length < MIN_PAIRS) {
     return { kind: 'direction', reason: { kind: 'too-few-pairs', pairs: from.length } };
@@ -724,9 +777,11 @@ export function alignedLocalOffsets(
       if (!bone.parent || !(bone.parent as Bone).isBone) bone.updateMatrixWorld(true);
     }
   }
+  const pairs = restDirectionPairs(sourceBoneObjs, targetBoneObjs, targetToSource);
+  // A target LEAF has no child to pair by, so its source side is the source bone's own
+  // direction — its first mapped child, or its tail — measured on the source alone.
   const sourceNames = new Set(Object.values(targetToSource));
   const sourceDirs = restDirectionsInWorld(sourceBoneObjs, (n) => sourceNames.has(n));
-  const targetDirs = restDirectionsInWorld(targetBoneObjs, (n) => targetToSource[n] !== undefined);
   // #999 — what a LEAF falls back to. Null on a rig with no convention, and the
   // leaves then keep the pre-#999 behaviour: no direction term, gap intact,
   // named in neither list. Asked once for the whole rig rather than per bone.
@@ -749,11 +804,13 @@ export function alignedLocalOffsets(
     // does — 17 bones agreeing about the rig cannot outrank this bone's own
     // measured direction, and letting it try would replace measurement with
     // inference on every bone at once.
-    const measuredTarget = targetDirs.get(bone.name);
+    const pair = pairs.get(bone.name);
+    const measuredTarget = pair?.target;
     const leafTarget =
       measuredTarget ?? (convention ? convention.clone().applyQuaternion(bind) : undefined);
     const sourceBone = sourceByName.get(sourceName);
     const sourceWorld =
+      pair?.source ??
       sourceDirs.get(sourceName) ??
       (measuredTarget === undefined && sourceBone
         ? (tailDirectionInWorld(sourceBone) ?? undefined)
