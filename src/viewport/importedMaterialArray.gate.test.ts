@@ -12,7 +12,7 @@
 //   glTF — three never BUILDS an array material. A multi-primitive mesh becomes a `Group` of
 //          single-material `Mesh`es, so each primitive arrives as its own addressable slot.
 //   FBX  — three's FBX loader DOES build one (`FBXLoader.js`, `if (materials.length > 1)`),
-//          but Basher imports no FBX geometry and no FBX materials: only a skeleton and clips.
+//          but Basher imports no FBX geometry and no FBX materials: only a skeleton and its motion.
 //
 // So the array state is unreachable, and the capability #646 asks for was delivered instead by
 // the Group road plus per-slot IR addressing (row C).
@@ -98,7 +98,7 @@ describe('#646 — an imported mesh cannot carry a material ARRAY, on any road t
     expect(/const\s+group\s*=\s*new\s+Group\(\)/.test(stripped)).toBe(true);
   });
 
-  it('B. TRIPWIRE — Basher’s FBX import carries a skeleton and clips, no geometry, no material', () => {
+  it('B. TRIPWIRE — Basher’s FBX import carries a skeleton and its motion, no geometry, no material', () => {
     // three's FBX loader DOES build the array (`if ( materials.length > 1 ) material = materials`),
     // so this row is what keeps the array unreachable — not the loader, but OUR narrow use of it.
     const loader = read(THREE_LOADERS, 'FBXLoader.js');
@@ -110,9 +110,15 @@ describe('#646 — an imported mesh cannot carry a material ARRAY, on any road t
 
     const body = interfaceBody(src, 'FbxImportResult');
     expect(body).not.toBeNull();
-    // Exactly these two. A third field is the signal: geometry arriving is what makes an
-    // array material constructible and the SceneFromDAG guard live again.
-    expect(declaredFields(body as string)).toEqual(['skeletonParams', 'clipParams']);
+    // Exactly these: the skeleton, its motion (as a clip and as the file's raw tracks, #1211) and
+    // the count of tracks left unread. Another field is the signal: geometry arriving is what makes
+    // an array material constructible and the SceneFromDAG guard live again.
+    expect(declaredFields(body as string)).toEqual([
+      'skeletonParams',
+      'clipParams',
+      'tracks',
+      'unparsedTracks',
+    ]);
 
     const stripped = stripComments(src);
     expect(/new\s+Mesh\s*\(/.test(stripped)).toBe(false);

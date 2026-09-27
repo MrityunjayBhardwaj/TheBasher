@@ -11,8 +11,8 @@
 // ─────────────────────────────────────────────────────────────────────────
 // `TransformClip` is a glTF file's OWN embedded animation (gltfImportChain.ts:887)
 // — keyed by `targetNodeId`, full TRS per key, rotation already in degrees.
-// `AnimationClip` is a generated / BVH / FBX / retargeted motion
-// (bvhImportChain.ts:91, fbxImportChain.ts:65, retarget.ts:224) — keyed by bone
+// `AnimationClip` is a generated or retargeted motion, or a BVH / FBX one a saved project
+// still holds (dropped files land on a base pose layer since #1211) — keyed by bone
 // INDEX, position and rotation only, rotation in radians.
 //
 // They are not two encodings of one thing; they are two roads, and only the

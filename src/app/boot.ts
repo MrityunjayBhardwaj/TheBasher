@@ -676,9 +676,9 @@ export function boot(): Promise<void> {
       void import('../core/import/fbxImportChain').then((m) => {
         w.__basher_importFbx = (data: ArrayBuffer | string, name?: string) => {
           const dag = useDagStore.getState();
-          const { ops, skeletonId, clipId } = m.buildFbxImportOps({ data, name });
+          const { ops, skeletonId, motionId } = m.buildFbxImportOps({ data, name });
           dag.dispatchAtomic(ops, 'user', `import fbx: ${name ?? 'imported'}`);
-          return { skeletonId, clipId };
+          return { skeletonId, motionId };
         };
       });
       // P7.5 — glTF TRS animation import seam (issue #81). Mirrors the

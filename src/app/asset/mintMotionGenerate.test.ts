@@ -26,6 +26,10 @@ import { edgeTarget } from '../animate/graphNodes';
 import { resolvePendingMotionGenerations } from './resolveMotionGenerate';
 import { bakeGeneratedClipOps } from './bakeGeneratedClip';
 import { mintMotionGenerateOps } from './mintMotionGenerate';
+import { useDagStore } from '../../core/dag/store';
+import { MemoryStorage } from '../../core/storage/MemoryStorage';
+import { composeProject, loadProject, saveProject } from '../../core/project/io';
+import { nodeDisplayName } from '../sceneTreeWalk';
 
 const ASSET_REF = 'asset://rig.glb';
 
@@ -297,5 +301,73 @@ describe('mintMotionGenerateOps (#935)', () => {
     expect(a.producerId).not.toBe(b.producerId);
     expect(a.clipId).not.toBe(b.clipId);
     expect(Object.keys(s.nodes)).toContain(b.clipId);
+  });
+});
+
+// #1122 — a generated motion's Object reads as its clip until a director names it otherwise. Once
+// the import roads wrote layers (#1211), this is the one road whose Object follows a name, so the
+// behaviour is pinned here through the real store: the undo is the one Cmd+Z runs, and the ops are
+// the two gestures' own (the inspector's name field is a `setParam` on the clip, the outliner's
+// rename a `setMeta`). The reducer's rules are `nameFrom.test.ts`.
+describe('#1122 — a generated motion\u2019s Object follows its clip\u2019s name, through the store', () => {
+  beforeEach(() => {
+    registerAllNodes();
+    __resetGeneratedClipsForTests();
+  });
+
+  function minted(): { clipId: string; objectId: string } {
+    let s = apply(project(), [
+      { type: 'addNode', nodeId: 'scene', nodeType: 'Scene', params: {} },
+    ] as Op[]);
+    s = { ...s, outputs: { scene: { node: 'scene', socket: 'out' } } };
+    useDagStore.getState().hydrate(s);
+    const { ops, clipId, objectId } = mintMotionGenerateOps(s, { ...ARGS, name: 'walk' });
+    useDagStore.getState().dispatchAtomic(ops, 'user', 'generate motion');
+    return { clipId, objectId: objectId! };
+  }
+  const rename = (clipId: string, value: string) =>
+    useDagStore
+      .getState()
+      .dispatch({ type: 'setParam', nodeId: clipId, paramPath: 'name', value }, 'user', 'set name');
+
+  it('renaming the clip renames the Object that stands it', () => {
+    const { clipId, objectId } = minted();
+    rename(clipId, 'hero walk');
+    const state = useDagStore.getState().state;
+    expect(nodeDisplayName(state.nodes, clipId)).toBe('hero walk');
+    expect(nodeDisplayName(state.nodes, objectId)).toBe('hero walk');
+    // The field every direct reader uses, not only the resolver.
+    expect(state.nodes[objectId].meta).toEqual({ name: 'hero walk', nameFrom: clipId });
+  });
+
+  it('once the Object is renamed, the clip\u2019s next rename leaves it alone; undo resumes', () => {
+    const { clipId, objectId } = minted();
+    const store = useDagStore.getState();
+    store.dispatch({ type: 'setMeta', nodeId: objectId, name: 'my rig' }, 'user', 'rename');
+    rename(clipId, 'hero walk');
+    expect(nodeDisplayName(useDagStore.getState().state.nodes, objectId)).toBe('my rig');
+
+    store.undo(); // the clip's rename
+    store.undo(); // the Object's rename — following resumes
+    expect(useDagStore.getState().state.nodes[objectId].meta).toEqual({
+      name: 'walk',
+      nameFrom: clipId,
+    });
+    rename(clipId, 'jog');
+    expect(nodeDisplayName(useDagStore.getState().state.nodes, objectId)).toBe('jog');
+  });
+
+  it('the link survives a save and a load, and still follows afterwards', async () => {
+    const { clipId, objectId } = minted();
+    const storage = new MemoryStorage();
+    await saveProject(
+      storage,
+      composeProject({ id: 'p1122', name: 'p1122', state: useDagStore.getState().state }),
+    );
+    const loaded = await loadProject(storage, 'p1122');
+    expect(loaded.state.nodes[objectId].meta).toEqual({ name: 'walk', nameFrom: clipId });
+    useDagStore.getState().hydrate(loaded.state);
+    rename(clipId, 'hero walk');
+    expect(useDagStore.getState().state.nodes[objectId].meta?.name).toBe('hero walk');
   });
 });

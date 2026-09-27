@@ -52,9 +52,9 @@ export type ImportExt = (typeof IMPORT_EXTENSIONS)[number];
  * What the format produces, which is the fact six of the nine sites actually branch on.
  *
  * `model` = geometry that lands as a `GltfAsset` chain and may arrive as a folder of
- * siblings. `motion` = a Skeleton + AnimationClip pair from one self-contained file.
- * FBX is `motion` in Basher despite being a model format elsewhere: the importer takes the
- * skeleton and the clip and explicitly defers mesh import (`src/core/import/fbx.ts:11`).
+ * siblings. `motion` = a Skeleton and its keys on a base pose layer from one self-contained
+ * file (#1211). FBX is `motion` in Basher despite being a model format elsewhere: the importer
+ * takes the skeleton and its animation and explicitly defers mesh import (`src/core/import/fbx.ts`).
  */
 export type ImportFamily = 'model' | 'motion';
 
@@ -73,7 +73,7 @@ export interface ImportFormat {
    * format leaves none.
    *
    * This is the CONTEXT D-03 asymmetry, and until now it was documented in prose and
-   * enforced nowhere. A motion import dispatches a Skeleton + AnimationClip and nothing
+   * enforced nowhere. A motion import dispatches a Skeleton + base PoseLayer and nothing
    * retains the path, so its rename is a folder move and its delete needs no break-refs
    * prompt. A model import persists `params.assetRef` on its `GltfAsset`, so both operations
    * have to rewrite or offer to break it.

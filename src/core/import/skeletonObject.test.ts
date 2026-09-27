@@ -8,10 +8,11 @@ import { __resetRegistryForTests, applyOp, emptyDagState, evaluate } from '../da
 import type { DagState } from '../dag/state';
 import type { Op } from '../dag/types';
 import { registerAllNodes } from '../../nodes/registerAll';
-import type { AnimationClipValue, BoneSpec, ObjectValue } from '../../nodes/types';
+import type { BoneSpec, ObjectValue, PosedSkeletonValue } from '../../nodes/types';
 import { boneTransforms } from '../../viewport/boneShape';
 import { armatureBounds, posedSourceBones } from '../../viewport/referenceRig';
 import { buildBvhClipOps } from '../../test-utils/bvhClip';
+import { buildBvhImportOps } from './bvhImportChain';
 import {
   UNBOUND_RIG_HEIGHT_METRES,
   buildSkeletonObjectOps,
@@ -176,23 +177,24 @@ describe('normalisedRigScale', () => {
   // THE ABSOLUTE ROW, on the real file. The rows above are relative (invariance), and every one
   // of them stayed green while `soma-walk.bvh` drew ~27× too big (rest pose Y extent), and
   // again at 1.17 m (rest pose longest extent: it lies along +X with its arms raised). So this
-  // reads what is DRAWN — the clip's frame-0 pose, at the scale set from that clip — and asks
-  // that it be the height of a person.
+  // reads what is DRAWN — the motion's frame-0 pose, at the scale set from it — and asks that it
+  // be the height of a person. The motion is a dropped file's base pose layer (#1211), the wire the
+  // FBX road fits on.
   it('stands the real soma-walk.bvh at human height as drawn, posed at frame 0', () => {
     let state = sceneState();
     const text = readFileSync(resolve(process.cwd(), 'public/fixtures/anim/soma-walk.bvh'), 'utf8');
-    const imported = buildBvhClipOps({ text, ids: { skeleton: 'sk', clip: 'clip' } });
+    const imported = buildBvhImportOps({ text, ids: { skeleton: 'sk', layer: 'layer' } });
     for (const op of imported.ops) state = applyOp(state, op).next;
     const bones = (state.nodes.sk.params as { bones: BoneSpec[] }).bones;
-    const clip = evaluate(state, 'clip', {
+    const motion = evaluate(state, 'layer', {
       ctx: { time: { frame: 0, seconds: 0, normalized: 0 } },
       socket: 'out',
-    }).value as AnimationClipValue;
-    expect(clip.kind).toBe('AnimationClip');
+    }).value as PosedSkeletonValue;
+    expect(motion.kind).toBe('PosedSkeleton');
 
-    const s = normalisedRigScale(bones, clip);
+    const s = normalisedRigScale(bones, motion);
     const drawn = armatureBounds(
-      boneTransforms(scaled(posedSourceBones(clip, 0), s), scaled([...clip.skeleton.bones], s)),
+      boneTransforms(scaled(posedSourceBones(motion, 0), s), scaled([...motion.skeleton.bones], s)),
     ).height;
     expect(drawn).toBeGreaterThan(1.5);
     expect(drawn).toBeLessThan(2.1);

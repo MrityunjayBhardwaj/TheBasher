@@ -1,5 +1,12 @@
 // FBX import — converts three's FBXLoader output to our DAG-native
-// AnimationClipParams + Skeleton bone list.
+// Skeleton bone list, the first clip's raw tracks (what the import road's base
+// pose layer is built from, #1211), and AnimationClipParams (the clip shape
+// retarget tests and saved projects still read).
+//
+// 🔴 #1279 — three r169 reads a bone's rotation wrong when its X, Y and Z euler
+// curves are keyed at different times (Blender's default export simplifies each
+// axis on its own): `interpolateRotations` pairs the axes by index. The tracks
+// here carry that error; `fbxImportChain.test.ts` pins it until it is fixed.
 //
 // THREE.FBXLoader.parse(buffer) returns a THREE.Group whose subtree may
 // contain SkinnedMesh children (each with their own .skeleton) and a
@@ -21,7 +28,7 @@
 import { FBXLoader } from 'three/examples/jsm/loaders/FBXLoader.js';
 import type { Bone, AnimationClip as ThreeAnimationClip, SkinnedMesh } from 'three';
 import type { AnimationKeyframe, BoneSpec } from '../../nodes/types';
-import { bonesToSpec, clipToKeyframes, type ClipShape } from './threeAdapter';
+import { bonesToSpec, clipToKeyframes, parseTrackName, type ClipShape } from './threeAdapter';
 import type { ClipLoop } from '../../nodes/clipLoop';
 
 export interface FbxSkeletonParams {
@@ -35,9 +42,27 @@ export interface FbxClipParams {
   readonly keyframes: readonly AnimationKeyframe[];
 }
 
+/**
+ * #1211 — one of three's tracks as the file keyed it: a bone (sanitised as `bonesToSpec` spells it),
+ * the property, and the key times and flat values, untouched. What the import road's base pose layer
+ * is built from, so the file's own key times and its scale survive; `clipParams` merges each bone's
+ * times and drops scale.
+ */
+export interface FbxTrack {
+  readonly bone: string;
+  /** three's property name: `position`, `quaternion` (xyzw), `scale`, or anything else it wrote. */
+  readonly property: string;
+  readonly times: readonly number[];
+  readonly values: readonly number[];
+}
+
 export interface FbxImportResult {
   readonly skeletonParams: FbxSkeletonParams;
   readonly clipParams: FbxClipParams;
+  /** The first clip's tracks, in three's order; a track whose name does not parse is left out. */
+  readonly tracks: readonly FbxTrack[];
+  /** Tracks of the first clip whose name does not parse as `node.property` — counted, not read. */
+  readonly unparsedTracks: number;
 }
 
 /**
@@ -64,12 +89,31 @@ export function parseFbx(input: ArrayBuffer | string, name = 'imported-fbx'): Fb
     return {
       skeletonParams: { bones: skeletonBones },
       clipParams: { name, duration: 0, loop: 'hold', keyframes: [] },
+      tracks: [],
+      unparsedTracks: 0,
     };
   }
 
   const keyframes = clipToKeyframes(clip as ClipShape, skeletonBones);
+  const tracks: FbxTrack[] = [];
+  let unparsedTracks = 0;
+  for (const track of clip.tracks) {
+    const parsed = parseTrackName(track.name);
+    if (!parsed) {
+      unparsedTracks += 1;
+      continue;
+    }
+    tracks.push({
+      bone: parsed.bone,
+      property: parsed.property,
+      times: Array.from(track.times),
+      values: Array.from(track.values),
+    });
+  }
   return {
     skeletonParams: { bones: skeletonBones },
+    tracks,
+    unparsedTracks,
     clipParams: {
       name,
       duration: clip.duration > 0 ? clip.duration : 1,

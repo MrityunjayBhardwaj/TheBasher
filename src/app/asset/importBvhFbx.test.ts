@@ -1,10 +1,10 @@
 // BVH/FBX OPFS import chokepoints + dispatcher — unit coverage, Phase 7.14 A2.
 //
 // Mirrors importGltf.test.ts: boot.getStorage is mocked to a fresh
-// MemoryStorage per test; the real useDagStore is seeded with a TimeSource
-// (BVH/FBX clips wire to it). We assert the SURFACE behavior — bytes on OPFS →
-// Skeleton + AnimationClip ops dispatched + refresh bumped — not the parser
-// internals (those are covered by bvhImportChain.test.ts / fbx.test.ts).
+// MemoryStorage per test; the real useDagStore is seeded with a TimeSource. We
+// assert the SURFACE behavior — bytes on OPFS → Skeleton + base PoseLayer ops
+// dispatched + refresh bumped (#1211) — not the parser internals (those are
+// covered by bvhImportChain.test.ts / fbxImportChain.test.ts).
 //
 // FBX is exercised end-to-end (real ASCII fixture → FBXLoader) by the
 // p7.14 e2e; here we cover the dispatcher routing + the BVH text path + the
@@ -31,8 +31,9 @@ import { importBvhFromOpfs, importFbxFromOpfs, routeImportByExtension } from './
 import { ingestSingleFile, USER_IMPORTS_ROOT } from './importCommon';
 import { chooseMotionTarget } from './bindMotionToCharacter';
 import { nodeDisplayName } from '../sceneTreeWalk';
-import { applyOp } from '../../core/dag';
-import { composeProject, loadProject, saveProject } from '../../core/project/io';
+import { applyOp, evaluate } from '../../core/dag';
+import { normalisedRigScale } from '../../core/import/skeletonObject';
+import type { BoneSpec, PosedSkeletonValue } from '../../nodes/types';
 import { nativeCharacterOps } from '../../test-utils/nativeCharacter';
 import { __resetMutatorRegistryForTests, registerAllMutators } from '../../agent/mutators';
 
@@ -68,7 +69,7 @@ Frame Time: 0.0333333
 `;
 
 function seedTime(): void {
-  // BVH/FBX clips connect to a TimeSource; default projects seed `n_time`.
+  // Default projects seed `n_time`; the tests start from one.
   useDagStore.getState().hydrate({
     nodes: {
       n_scene: { id: 'n_scene', type: 'Scene', version: 1, params: {}, inputs: {} },
@@ -263,61 +264,12 @@ describe('#1056 — every imported motion stands in the scene as an Object', () 
     expect(nodeDisplayName(nodes, objectId)).toBe('wave');
   });
 
-  it('#1122 (FBX) — renaming the clip renames the Object that stands it', async () => {
+  it('#1211 — renaming an FBX\u2019s motion leaves its Object\u2019s name too: no import road follows its motion', async () => {
+    // Name-following lives on the generation road alone now (`mintMotionGenerate.test.ts`, #1122).
     await currentStorage.write(FBX_PATH, RIG_FBX_BYTES);
     const result = await importFbxFromOpfs(FBX_PATH);
     const objectId = `${result!.skeletonId}_object`;
-    const store = useDagStore.getState();
-    store.dispatch(
-      { type: 'setParam', nodeId: result!.motionId, paramPath: 'name', value: 'hero walk' },
-      'user',
-      'set name',
-    );
-    const state = useDagStore.getState().state;
-    expect(nodeDisplayName(state.nodes, result!.motionId)).toBe('hero walk');
-    expect(nodeDisplayName(state.nodes, objectId)).toBe('hero walk');
-    // The field every direct reader uses, not only the resolver.
-    expect(state.nodes[objectId].meta).toEqual({ name: 'hero walk', nameFrom: result!.motionId });
-  });
-
-  it('#1122 (FBX) — once the Object is renamed, the clip’s next rename leaves it alone; undo resumes', async () => {
-    await currentStorage.write(FBX_PATH, RIG_FBX_BYTES);
-    const result = await importFbxFromOpfs(FBX_PATH);
-    const objectId = `${result!.skeletonId}_object`;
-    const store = useDagStore.getState();
-    store.dispatch({ type: 'setMeta', nodeId: objectId, name: 'my rig' }, 'user', 'rename');
-    store.dispatch(
-      { type: 'setParam', nodeId: result!.motionId, paramPath: 'name', value: 'hero walk' },
-      'user',
-      'set name',
-    );
-    expect(nodeDisplayName(useDagStore.getState().state.nodes, objectId)).toBe('my rig');
-
-    store.undo(); // the clip's rename
-    store.undo(); // the Object's rename — following resumes
-    let nodes = useDagStore.getState().state.nodes;
-    expect(nodes[objectId].meta).toEqual({ name: 'rig', nameFrom: result!.motionId });
-    store.dispatch(
-      { type: 'setParam', nodeId: result!.motionId, paramPath: 'name', value: 'jog' },
-      'user',
-      'set name',
-    );
-    nodes = useDagStore.getState().state.nodes;
-    expect(nodeDisplayName(nodes, objectId)).toBe('jog');
-  });
-
-  it('#1122 (FBX) — the link survives a save and a load, and still follows afterwards', async () => {
-    await currentStorage.write(FBX_PATH, RIG_FBX_BYTES);
-    const result = await importFbxFromOpfs(FBX_PATH);
-    const objectId = `${result!.skeletonId}_object`;
-    const storage = new MemoryStorage();
-    await saveProject(
-      storage,
-      composeProject({ id: 'p1122', name: 'p1122', state: useDagStore.getState().state }),
-    );
-    const loaded = await loadProject(storage, 'p1122');
-    expect(loaded.state.nodes[objectId].meta).toEqual({ name: 'rig', nameFrom: result!.motionId });
-    useDagStore.getState().hydrate(loaded.state);
+    expect(useDagStore.getState().state.nodes[objectId].meta).toEqual({ name: 'rig' });
     useDagStore
       .getState()
       .dispatch(
@@ -325,7 +277,9 @@ describe('#1056 — every imported motion stands in the scene as an Object', () 
         'user',
         'set name',
       );
-    expect(useDagStore.getState().state.nodes[objectId].meta?.name).toBe('hero walk');
+    const nodes = useDagStore.getState().state.nodes;
+    expect(nodeDisplayName(nodes, result!.motionId)).toBe('hero walk');
+    expect(nodeDisplayName(nodes, objectId)).toBe('rig');
   });
 
   it('#1103 — with no scene to stand it in, the warning stays', async () => {
@@ -416,6 +370,49 @@ describe('#791 — a dropped BVH stands at file scale, and its Object is selecte
     expect(objectScale(result!.skeletonId)?.[0]).not.toBe(1);
   });
 
+  it('#1211 — the FBX fit is measured on the layer’s frame 0, the pose drawn, not the rest pose', async () => {
+    // rig.fbx with Hips turned 45° about Z at every key: its first frame is narrower along its
+    // longest axis than its rest pose, so a fit on the rest pose lands a different scale. (A
+    // Blender export cannot tell the two apart: Blender writes each node's rest as the pose at the
+    // export frame.)
+    const turned = new TextDecoder()
+      .decode(RIG_FBX_BYTES)
+      .replace('"AnimCurveNode::T"', '"AnimCurveNode::R"')
+      .replace('"OP",1200,100, "Lcl Translation"', '"OP",1200,100, "Lcl Rotation"')
+      .replace('"OP",1300,1200, "d|X"', '"OP",1300,1200, "d|Z"')
+      .replace('KeyValueFloat: *2 {\n\t\t\ta: 0,2', 'KeyValueFloat: *2 {\n\t\t\ta: 45,45')
+      .replace(
+        'C: "OP",1300,1200, "d|Z"',
+        ['C: "OP",1300,1200, "d|Z"', 'C: "OP",1301,1200, "d|X"', 'C: "OP",1302,1200, "d|Y"'].join(
+          '\n\t',
+        ),
+      )
+      .replace(
+        /(\tAnimationCurve: 1300[\s\S]*?\n\t\}\n)/,
+        (curve) =>
+          curve +
+          [1301, 1302]
+            .map((id) => curve.replace('1300', String(id)).replace('a: 45,45', 'a: 0,0'))
+            .join(''),
+      );
+    expect(turned).toContain('a: 45,45');
+    expect(turned.match(/AnimationCurve: 13\d\d/g)).toHaveLength(3);
+    const turnedPath = `${USER_IMPORTS_ROOT}/turned/turned.fbx`;
+    await currentStorage.write(turnedPath, new TextEncoder().encode(turned));
+    const result = await importFbxFromOpfs(turnedPath);
+    expect(result).not.toBeNull();
+    const state = useDagStore.getState().state;
+    const bones = (state.nodes[result!.skeletonId].params as { bones: BoneSpec[] }).bones;
+    const drawn = evaluate(state, result!.motionId, {
+      ctx: { time: { frame: 0, seconds: 0, normalized: 0 } },
+      socket: 'out',
+    }).value as PosedSkeletonValue;
+    const onDrawn = normalisedRigScale(bones, drawn);
+    const onRest = normalisedRigScale(bones);
+    expect(Math.abs(onDrawn - onRest) / onRest).toBeGreaterThan(0.1);
+    expect(objectScale(result!.skeletonId)?.[0]).toBeCloseTo(onDrawn, 9);
+  });
+
   it('with nothing to bind to, the drop selects the Object, so its Scale is in the inspector', async () => {
     await currentStorage.write(path, new TextEncoder().encode(SYNTHETIC_BVH));
     await routeImportByExtension(path);
@@ -446,7 +443,7 @@ describe('#791 — a dropped BVH stands at file scale, and its Object is selecte
 });
 
 describe('importFbxFromOpfs', () => {
-  it('decodes the committed ASCII FBX (binary path) into Skeleton + AnimationClip', async () => {
+  it('decodes the committed ASCII FBX (binary path) into a Skeleton and a base pose layer (#1211)', async () => {
     const path = `${USER_IMPORTS_ROOT}/rig/rig.fbx`;
     await currentStorage.write(path, RIG_FBX_BYTES);
 
@@ -458,7 +455,8 @@ describe('importFbxFromOpfs', () => {
       .filter((o) => o.type === 'addNode')
       .map((o) => o.nodeType);
     expect(types).toContain('Skeleton');
-    expect(types).toContain('AnimationClip');
+    expect(types).toContain('PoseLayer');
+    expect(types).not.toContain('AnimationClip');
     expect(types).not.toContain('Mesh');
     expect(useImportRefreshStore.getState().tick).toBe(1);
     expect(useAssetErrorStore.getState().errors[path]).toBeUndefined();

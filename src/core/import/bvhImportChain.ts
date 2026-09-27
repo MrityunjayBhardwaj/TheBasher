@@ -22,7 +22,7 @@
 // bone no header joint declares is counted too.
 //
 // The CLIP shape (Skeleton + AnimationClip) is what saved projects and generated motion still
-// carry; it is no longer what a dropped .bvh becomes.
+// carry; it is no longer what a dropped .bvh or .fbx becomes (`fbxImportChain.ts`).
 
 import { BVH_UNIT_SCALE_METRES, parseBvh } from './bvh';
 import { readJointChannels } from './bvhProfile';

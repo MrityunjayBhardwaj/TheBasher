@@ -1,11 +1,11 @@
 // A motion's skeleton, standing in the scene as an Object of its own (#1056).
 //
-// A `.bvh` or `.fbx` lands as a `Skeleton` + an `AnimationClip` — data with no scene
-// presence, so on its own a motion could not be looked at: no bones drawn, nothing to select,
+// A `.bvh` or `.fbx` lands as a `Skeleton` + its motion as keys on a base pose layer (#1211) —
+// data with no scene presence, so on its own a motion could not be looked at: no bones drawn, nothing to select,
 // nothing to scrub. These are the ops that give that skeleton an Object, the same citizen an
 // armature is in Blender (its own Object, pointing at armature data). Every import adds one,
 // whatever else is in the scene; a bind hides it (`mutator.animation.retarget`), so a
-// character playing the clip does not have a second rig standing beside it.
+// character playing the motion does not have a second rig standing beside it.
 //
 // THE OBJECT POINTS AT THE SKELETON ITSELF. `Object.data` accepts a `Skeleton` directly; no
 // wrapper node is minted, because the skeleton is already the right noun
@@ -23,7 +23,7 @@
 
 import type { DagState } from '../dag/state';
 import type { Op } from '../dag/types';
-import type { AnimationClipValue, BoneSpec } from '../../nodes/types';
+import type { BoneSpec, PosedSkeletonValue } from '../../nodes/types';
 import { boneTransforms } from '../../viewport/boneShape';
 import { armatureBounds, posedSourceBones } from '../../viewport/referenceRig';
 
@@ -36,8 +36,9 @@ const MIN_HEIGHT = 1e-6;
 
 /**
  * The uniform scale that makes the rig {@link UNBOUND_RIG_HEIGHT_METRES} along its LONGEST
- * extent, measured on the pose it is first DRAWN in: the clip's frame 0 when there is a clip,
- * the rest pose only when there is not.
+ * extent, measured on the pose it is first DRAWN in: the motion's frame 0 when there is one (the
+ * pose wire the Object reads — a base layer's `out` on the FBX road, #1211), the rest pose only
+ * when there is not.
  *
  * 🔴 NEITHER THE REST POSE NOR ITS Y EXTENT — both measured wrong on `soma-walk.bvh`. Its
  * rest pose lies along +X with the arms raised past the head (extents 248 × 6 × 20 units),
@@ -51,9 +52,9 @@ const MIN_HEIGHT = 1e-6;
  */
 export function normalisedRigScale(
   bones: readonly BoneSpec[],
-  clip?: AnimationClipValue | null,
+  motion?: PosedSkeletonValue | null,
 ): number {
-  const pose = clip ? posedSourceBones(clip, 0) : bones;
+  const pose = motion ? posedSourceBones(motion, 0) : bones;
   const { empty, size } = armatureBounds(boneTransforms(pose, bones));
   const extent = Math.max(size.x, size.y, size.z);
   if (empty || !(extent >= MIN_HEIGHT)) return 1;
@@ -108,10 +109,10 @@ function dataSourceOf(binding: unknown): string | null {
 
 interface SkeletonObjectBase {
   readonly skeletonId: string;
-  /** The skeleton's rest bones — what the scale is measured on when there is no clip. */
+  /** The skeleton's rest bones — what the scale is measured on when there is no motion. */
   readonly bones: readonly BoneSpec[];
-  /** The clip wired to the skeleton, if any: its frame 0 is what the scale is measured on. */
-  readonly clip?: AnimationClipValue | null;
+  /** The motion's evaluated pose wire, if any: its frame 0 is what the scale is measured on. */
+  readonly fitPose?: PosedSkeletonValue | null;
   /** The scene aggregator the Object joins as a child. */
   readonly sceneNodeId: string;
   /** True to stand the rig at human height — a GUESS from the content, so only for a road
@@ -119,8 +120,8 @@ interface SkeletonObjectBase {
    *  false: its size is the director's to set (#791). */
   readonly normalise: boolean;
   /**
-   * #1101 — the name the Object shows. For a motion's own rig, its clip's: the file's base name on
-   * the import road and the prompt on the generation road. Blender's BVH importer does the same,
+   * #1101 — the name the Object shows. For a motion's own rig, its motion's: the file's base name
+   * on the import road and the prompt on the generation road. Blender's BVH importer does the same,
    * naming the armature Object and its action after the file (`io_anim_bvh/import_bvh.py`, `load`).
    * For a glTF armature, its armature node's (#1238).
    *
@@ -140,11 +141,11 @@ interface SkeletonObjectBase {
    */
   readonly clipId: string;
   /**
-   * #1238 — whether the Object's name follows its clip's (`meta.nameFrom`). True for a MOTION's own
-   * rig (BVH, FBX, generation): Blender's BVH importer names the armature after the file, and the
-   * clip carries that name (#1101, #1122). False for a glTF armature, which is a node with a name of
-   * its own: Blender names the armature Object after that node (`io_scene_gltf2/blender/imp/node.py`,
-   * `create_object`), and renaming the clip must not rename the character.
+   * #1238 — whether the Object's name follows its clip's (`meta.nameFrom`). True for a GENERATED
+   * motion's own rig, whose clip carries the prompt (#1101, #1122). A road whose motion is keys on a
+   * layer follows nothing: a glTF armature is a node with a name of its own (Blender names the
+   * armature Object after that node, `io_scene_gltf2/blender/imp/node.py`, `create_object`), and a
+   * dropped BVH or FBX is named after the file, which Blender never renames after its action.
    *
    * Required, for the reason `name` is: a road that could leave it out would silently inherit one.
    */
@@ -172,8 +173,8 @@ export type SkeletonObjectArgs = Omit<SkeletonObjectBase, 'clipId' | 'nameFollow
  * its place among the scene's children.
  *
  * #1224 — the motion's POSE output feeds the Object's `pose`, the end of the pose wire (#1203 wired
- * the clip itself, as the Object's action): a clip's `pose` on the BVH, FBX and generation roads,
- * the base pose layer's `out` on the glTF road (#1211). The armature band poses the rig from this
+ * the clip itself, as the Object's action): a clip's `pose` on the generation road, the base pose
+ * layer's `out` on the glTF, BVH and FBX roads (#1211). The armature band poses the rig from this
  * edge, and a deform pointed at the Object reads the pose through it (#393). Wired here, so every
  * road that stands a rig wires it.
  *
@@ -186,7 +187,7 @@ export function buildSkeletonObjectOps(args: SkeletonObjectArgs): {
   readonly objectId: string;
 } {
   const objectId = skeletonObjectId(args.skeletonId);
-  const s = args.normalise ? normalisedRigScale(args.bones, args.clip) : 1;
+  const s = args.normalise ? normalisedRigScale(args.bones, args.fitPose) : 1;
   return {
     objectId,
     ops: [

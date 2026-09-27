@@ -3,7 +3,7 @@
 // Pure DAG query: which nodes reference a given My-Imports asset by its OPFS
 // path? Today only `GltfAsset` persists a reference (`params.assetRef`, set at
 // import to the OPFS path — importGltf.ts:180). BVH/FBX leave NO persistent
-// reference (they dispatch Skeleton+AnimationClip and nothing holds the path),
+// reference (they dispatch a Skeleton + base PoseLayer and nothing holds the path),
 // so a BVH/FBX asset is never "referenced" — its rename is a folder move only
 // and its delete never needs a break-refs prompt (CONTEXT D-03 asymmetry).
 //
