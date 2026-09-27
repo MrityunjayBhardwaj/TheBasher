@@ -1,6 +1,7 @@
-// #1282 — an example that refers to a stored asset opens only if boot seeded that asset first:
-// a saved scene carries no asset bytes (#1281), and the renderer throws on a missing file. So
-// every `assetRef` a bundled example holds must be a path the asset catalog seeds.
+// #1282 — an example that refers to a stored asset opens only if boot seeded that asset first: an
+// example ships with the app, and app-shipped assets are seeded, never embedded (`sceneBundle.ts`),
+// while the renderer throws on a missing file (#1281). So every `assetRef` a bundled example holds
+// must be a path the asset catalog seeds.
 
 import { describe, expect, it } from 'vitest';
 import { registerAllNodes } from '../../nodes/registerAll';

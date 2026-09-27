@@ -16,9 +16,10 @@
 //
 // Most examples use pure primitives (the Object+BoxData split, #365 Phase 5a) with no OPFS
 // asset dependency. #1282 — "Camera Path + AI Walk" is the first that has one: a rigged
-// character whose GLB lives in storage. A saved scene carries no asset bytes (#1281), so the
-// GLB is a catalog asset (`src/app/asset/catalog.ts`), which boot seeds BEFORE the examples;
-// `examples.test.ts` reds if an example refers to an asset the catalog does not seed.
+// character whose GLB lives in storage. It is an APP-SHIPPED asset, so it follows that convention
+// (`sceneBundle.ts`: app-shipped assets are seeded, never embedded): a catalog asset
+// (`src/app/asset/catalog.ts`) that boot seeds BEFORE the examples. `exampleAssets.test.ts` reds
+// if an example refers to an asset the catalog does not seed.
 //
 // That example is not Op-built: its motion is GENERATED (Kimodo, from a prompt and the
 // waypoints of a drawn curve), so it cannot be written down as ops by hand. It is the project

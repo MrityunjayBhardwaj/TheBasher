@@ -1,8 +1,8 @@
 // #1282 — the "Camera Path + AI Walk" example opens from the startup screen and plays with no
 // motion server.
 //
-// It is the first example with a stored asset (the character's GLB, a seeded catalog asset,
-// because a saved scene carries no asset bytes — #1281) and a generated motion (its clip holds
+// It is the first example with a stored asset (the character's GLB, a seeded catalog asset — the
+// convention for anything that ships with the app) and a generated motion (its clip holds
 // the keys Kimodo produced). So what is checked is what a person would see: the example card
 // opens it, the character's bones move with the playhead, and the camera travels its path —
 // with every request to the motion server refused, so a quiet pass cannot come from a server
