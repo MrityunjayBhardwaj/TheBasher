@@ -12,8 +12,8 @@
 // branch.
 //
 // Examples vs your projects: the gallery is ONE metadata read split client-side
-// by EXAMPLE_PROJECT_IDS (examples.ts). Examples are ordinary Op-built-DAG
-// projects (seeded idempotently at boot), visually separated but mechanically
+// by EXAMPLE_PROJECT_IDS (examples.ts). Examples are ordinary DAG projects (Op-built, or
+// one the app saved, #1282; seeded idempotently at boot), visually separated but mechanically
 // identical — opening one hydrates a real DAG whose every object is selectable
 // (V34 — one substrate, no parallel state).
 //

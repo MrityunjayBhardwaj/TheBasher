@@ -20,6 +20,10 @@ public/fixtures/rig/
 # would make the bytes ours rather than the app's, and the save-size gate (#631)
 # measures the real payload length. Same rationale as public/fixtures/ above.
 src/core/project/__fixtures__/
+# Captured example scenes (#1282) — the exact bytes the app wrote through File ▸ Save Scene
+# as .basher…, committed verbatim so the example is what the product built, not our reflow of
+# it (~880 KB, mostly a generated motion clip). Same rationale as the project fixtures above.
+src/core/project/exampleScenes/
 # Vendored Draco / Basis (KTX2) decoders — third-party JS+WASM wrappers
 # copied from three-stdlib (`node_modules/three/examples/jsm/libs/...`).
 # Not ours; do not reformat. See #80 / src/viewport/gltfLoaderConfig.ts.

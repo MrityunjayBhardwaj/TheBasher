@@ -14,18 +14,34 @@
 // `example_<slug>` ids let the HOME split the gallery into "Examples" vs "Your
 // projects" from the SAME `listProjectMetadata` read (no second data path).
 //
-// All examples use pure primitives (the Object+BoxData split, #365 Phase 5a) — no OPFS
-// asset dependency — so seeding never races asset loading.
+// Most examples use pure primitives (the Object+BoxData split, #365 Phase 5a) with no OPFS
+// asset dependency. #1282 — "Camera Path + AI Walk" is the first that has one: a rigged
+// character whose GLB lives in storage. A saved scene carries no asset bytes (#1281), so the
+// GLB is a catalog asset (`src/app/asset/catalog.ts`), which boot seeds BEFORE the examples;
+// `examples.test.ts` reds if an example refers to an asset the catalog does not seed.
+//
+// That example is not Op-built: its motion is GENERATED (Kimodo, from a prompt and the
+// waypoints of a drawn curve), so it cannot be written down as ops by hand. It is the project
+// the app itself saved (File ▸ Save Scene as .basher…) after the scene was built through the
+// product's own paths, committed verbatim, and loaded lazily so ~880 KB of clip keys stay out
+// of the main bundle. Its AnimationClip holds the generated keys, so it opens and plays with
+// no motion server (measured with every request to the server blocked, #1282).
 
 import { applyOp, emptyDagState, type DagState } from '../dag';
 import type { Op } from '../dag/types';
 import { composeProject, type Project } from './index';
+import { PROJECT_FORMAT_VERSION } from './schema';
 
-interface ExampleDef {
+/** A scene the app saved, as File ▸ Save Scene as .basher… writes it. */
+interface CapturedScene {
+  readonly formatVersion: number;
+  readonly state: DagState;
+}
+
+type ExampleDef = {
   readonly id: string;
   readonly name: string;
-  readonly ops: readonly Op[];
-}
+} & ({ readonly ops: readonly Op[] } | { readonly captured: () => Promise<CapturedScene> });
 
 // Shared scaffold ops (camera + light + time + scene + render + the four wiring
 // edges) — every example frames a calm, lit scene the same way default.ts does.
@@ -157,7 +173,20 @@ const TRIO_OPS: Op[] = [
 const EXAMPLES: readonly ExampleDef[] = [
   { id: 'example_starter', name: 'Starter Scene', ops: STARTER_OPS },
   { id: 'example_trio', name: 'Color Trio', ops: TRIO_OPS },
+  // #1282 — a character walking an AI motion steered by a waypoint curve, the camera on a
+  // Follow-Path of its own and aimed at the character by a Track-To.
+  {
+    id: 'example_camera_path_ai_walk',
+    name: 'Camera Path + AI Walk',
+    captured: async () =>
+      (await import('./exampleScenes/cameraPathAiWalk.basher.json')).default as CapturedScene,
+  },
 ];
+
+/** Ids of the examples the app saved rather than built from ops here (#1282). */
+export const CAPTURED_EXAMPLE_IDS: readonly string[] = EXAMPLES.filter((e) => 'captured' in e).map(
+  (e) => e.id,
+);
 
 /** Stable ids of the curated examples — the HOME splits the gallery on these. */
 export const EXAMPLE_PROJECT_IDS: readonly string[] = EXAMPLES.map((e) => e.id);
@@ -174,14 +203,27 @@ function buildState(ops: readonly Op[]): DagState {
   };
 }
 
-/** Build one example as a real Project (Op-built DAG). Throws on unknown id. */
-export function buildExampleProject(id: string): Project {
+/** Build one example as a real Project. Rejects on an unknown id, and on a captured scene
+ *  saved in another project format — it was never migrated, so it must be re-captured. */
+export async function buildExampleProject(id: string): Promise<Project> {
   const def = EXAMPLES.find((e) => e.id === id);
   if (!def) throw new Error(`buildExampleProject: unknown example id "${id}"`);
-  return composeProject({ id: def.id, name: def.name, state: buildState(def.ops) });
+  if ('ops' in def)
+    return composeProject({ id: def.id, name: def.name, state: buildState(def.ops) });
+  const scene = await def.captured();
+  if (scene.formatVersion !== PROJECT_FORMAT_VERSION)
+    throw new Error(
+      `buildExampleProject: "${id}" was captured at project format ${scene.formatVersion}, ` +
+        `the app writes ${PROJECT_FORMAT_VERSION} — re-capture it (#1282)`,
+    );
+  return composeProject({
+    id: def.id,
+    name: def.name,
+    state: { ...emptyDagState(), ...scene.state },
+  });
 }
 
 /** All curated examples — used by boot's idempotent seeding. */
-export function buildAllExampleProjects(): Project[] {
-  return EXAMPLES.map((e) => buildExampleProject(e.id));
+export function buildAllExampleProjects(): Promise<Project[]> {
+  return Promise.all(EXAMPLES.map((e) => buildExampleProject(e.id)));
 }

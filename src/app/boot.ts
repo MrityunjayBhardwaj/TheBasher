@@ -371,8 +371,8 @@ export function boot(): Promise<void> {
     }
 
     // W4-T1 (D-W4-SEED) — seed the curated example projects, idempotently.
-    // Runs AFTER asset seeding (an example could reference a seeded asset; ours
-    // use pure primitives so there is no dependency) and BEFORE project
+    // Runs AFTER asset seeding — an example may reference a seeded asset (#1282: the
+    // Camera Path + AI Walk character's GLB is a catalog asset) — and BEFORE project
     // resolution so the examples are listable on the home. Only writes an
     // example id that is ABSENT — a user who opened + edited an example keeps
     // their edits across reloads (re-seeding never clobbers them).
@@ -380,7 +380,7 @@ export function boot(): Promise<void> {
       const existing = new Set(await listProjects(storage));
       for (const id of EXAMPLE_PROJECT_IDS) {
         if (existing.has(id)) continue;
-        await saveProject(storage, buildExampleProject(id));
+        await saveProject(storage, await buildExampleProject(id));
       }
     } catch (e) {
       console.warn('boot: example seeding failed', e);
