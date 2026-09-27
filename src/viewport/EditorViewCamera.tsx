@@ -48,12 +48,7 @@ import { loadEditorView } from '../app/editorViewPersistence';
 import { loadViewLock, saveViewLock } from '../app/viewLockPersistence';
 import { loadViewportClip } from '../app/viewportClipPersistence';
 import { takePendingEditorView } from '../app/editorViewCapture';
-import {
-  boxDepthAlongView,
-  clipPlanesForView,
-  fitViewToSphere,
-  type ClipPlanes,
-} from './cameraFit';
+import { boxDepthAlongView, dollyRangeForClip, fitViewToSphere } from './cameraFit';
 import { computeSceneBounds, computeSceneBox } from './sceneBounds';
 import { scanForFollow, pointFromScan, type FollowScan } from './followScan';
 import { applyTarget } from '../app/character/framing';
@@ -181,10 +176,9 @@ export function EditorViewCamera() {
 
   // The active bounds-fit settle session (#186). `active:false` → the camera is
   // FREE (OrbitControls owns it); the fit only runs while content is arriving.
-  // `poseToo` (#191): true = full bounds-fit (move the pose AND derive limits);
-  // false = a limits-only settle for a saved / projection-toggle pose — keep the
-  // user's pose, re-derive the dolly limits from the LIVE camera distance each
-  // frame as async bounds arrive. Neither touches the clip planes (#1178).
+  // `poseToo` (#191): true = full bounds-fit (move the pose); false = a saved /
+  // projection-toggle pose, kept as the user left it. Neither touches the clip
+  // planes (#1178) or the dolly range (#1288) — both are the view's, not the fit's.
   const fit = useRef({ active: false, poseToo: false, frames: 0, still: 0, lastR: -1 });
 
   // #856 — the view lock. Subscribed rather than snapshot-read, because taking
@@ -234,29 +228,28 @@ export function EditorViewCamera() {
       // explicit) > a FULL bounds-fit on load (#186). The first two are exact
       // poses that WIN over the fit; only when neither exists do we frame the
       // scene's bounding sphere.
-      // Start a settle session. `poseToo` picks full bounds-fit (no saved pose)
-      // vs limits-only (a saved/captured pose we must NOT re-frame, #191). The
-      // settle loop (below) does the per-frame work.
+      // `poseToo` picks a full bounds-fit (no saved pose) or none (a saved/captured
+      // pose we must NOT re-frame, #191). A kept pose still REPLACES the session, so
+      // a fit still running for the previous project or projection stops here.
       const startSettle = (poseToo: boolean) => {
-        fit.current = { active: true, poseToo, frames: 0, still: 0, lastR: -1 };
+        fit.current = { active: poseToo, poseToo, frames: 0, still: 0, lastR: -1 };
       };
       const pendingPose = takePendingEditorView();
       if (pendingPose) {
-        // Projection-toggle pose: keep it, but re-derive the dolly limits from
-        // the live camera distance.
+        // Projection-toggle pose: keep it exactly.
         applyView(cam, pendingPose.position, pendingPose.target, orthoArg);
         startSettle(false);
       } else {
         const saved = loadEditorView(projectId);
         if (saved) {
           // Saved orbit view (reload / per-project restore): same — restore the
-          // exact pose, then run a limits-only settle.
+          // exact pose.
           applyView(cam, saved.position, saved.target, orthoArg);
           startSettle(false);
         } else {
           // No captured/saved pose → FULL bounds-fit. The settle frames the scene
-          // once geometry is present (async glTF loads after this effect), sets
-          // bounds-derived dolly limits, then hands the free camera to OrbitControls.
+          // once geometry is present (async glTF loads after this effect), then
+          // hands the free camera to OrbitControls.
           startSettle(true);
         }
       }
@@ -268,11 +261,10 @@ export function EditorViewCamera() {
 
   // The bounds-fit settle loop (#186/#191). Runs ONLY while `fit.active`,
   // re-deriving each frame as async geometry arrives and ending
-  // SETTLE_STILL_FRAMES after the bounds last changed (or at MAX_FRAMES). Two
-  // modes via `poseToo`: full fit re-frames the pose AND sets limits; limits-only
-  // keeps a saved/captured pose and just re-derives the dolly limits
-  // (#191). Either way it is a one-time initial pass, NOT a persistent
-  // constraint — canvas input (below) cancels it immediately.
+  // SETTLE_STILL_FRAMES after the bounds last changed (or at MAX_FRAMES). Only a
+  // full fit runs it (a saved/captured pose is kept, #191, and sets nothing: the
+  // dolly range is the clip's, #1288). It is a one-time initial pass, NOT a
+  // persistent constraint — canvas input (below) cancels it immediately.
   useFrame((state) => {
     const f = fit.current;
     const cam = ref.current;
@@ -316,39 +308,14 @@ export function EditorViewCamera() {
     f.frames += 1;
     const bounds = computeSceneBounds(state.scene);
     if (bounds) {
-      // Dolly limits derive from the camera's distance to the bounds center. For
-      // a full fit (poseToo) that distance IS the fit distance and we ALSO move
-      // the pose; for a saved/captured view (#191) we keep the user's pose and
-      // read the LIVE camera distance. The clip planes are NOT derived here:
-      // they are the user's (or the default), Blender's model (#1178).
-      const center = new THREE.Vector3(bounds.center[0], bounds.center[1], bounds.center[2]);
-      let planes: ClipPlanes;
-      if (f.poseToo) {
-        const aspect = state.size.width / Math.max(1, state.size.height);
-        const res = fitViewToSphere(bounds.center, bounds.radius, pose.fov, aspect);
-        const orthoArg = useOrtho
-          ? { fovDeg: pose.fov, viewportHeight: state.size.height }
-          : undefined;
-        applyView(cam, res.position, res.lookAt, orthoArg);
-        planes = res;
-      } else {
-        const cameraDist = cam.position.distanceTo(center);
-        planes = clipPlanesForView(cameraDist, bounds.radius);
-      }
-      const controls = state.controls as {
-        minDistance?: number;
-        maxDistance?: number;
-      } | null;
-      if (controls) {
-        // Clamp the dolly limits so they never EXCLUDE the live camera distance.
-        // A restored close pose (#191) can sit nearer than the radius-derived
-        // minDistance — OrbitControls would otherwise dolly it OUT to satisfy
-        // the limit, silently re-framing a limits-only view. No-op for the full
-        // fit (the eye sits at the fit distance, far above minDistance).
-        const liveDist = cam.position.distanceTo(center);
-        controls.minDistance = Math.min(planes.minDistance, liveDist);
-        controls.maxDistance = Math.max(planes.maxDistance, liveDist);
-      }
+      // The fit moves the pose and nothing else: the clip planes (Blender's model,
+      // #1178) and the dolly range (#1288, below) are the view's, from its clip.
+      const aspect = state.size.width / Math.max(1, state.size.height);
+      const res = fitViewToSphere(bounds.center, bounds.radius, pose.fov, aspect);
+      const orthoArg = useOrtho
+        ? { fovDeg: pose.fov, viewportHeight: state.size.height }
+        : undefined;
+      applyView(cam, res.position, res.lookAt, orthoArg);
       const r = bounds.radius;
       const delta = f.lastR > 0 ? Math.abs(r - f.lastR) / Math.max(r, f.lastR) : 1;
       f.lastR = r;
@@ -536,6 +503,23 @@ export function EditorViewCamera() {
   useEffect(() => {
     useViewportStore.getState().setViewportClipReadout({ near: freeNearEff, far: freeFarEff });
   }, [freeNearEff, freeFarEff]);
+
+  // #1288 — the orbit's dolly range is the free view's, from its Clip End: Blender's zoom limits
+  // (`dollyRangeForClip`). Written HERE and nowhere else. It used to be written by the bounds fit
+  // from whatever the scene held when the view booted, so a director could not wheel out past
+  // 38.08 units (the default cube's reach) from a character that walks 587. The range follows the
+  // clip rather than the scene, so an import, a Frame Selected or a script placing the camera
+  // never has to move it, and raising Clip End is how a director reaches further — as in Blender.
+  const controls = useThree((s) => s.controls) as unknown as {
+    minDistance?: number;
+    maxDistance?: number;
+  } | null;
+  useEffect(() => {
+    if (!controls) return;
+    const range = dollyRangeForClip(freeFarEff);
+    controls.minDistance = range.minDistance;
+    controls.maxDistance = range.maxDistance;
+  }, [controls, freeFarEff]);
 
   // Hydrate the per-project clip override into the store when the project
   // changes (#192). A project with NO saved clip hydrates `null` — the SAME

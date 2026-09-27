@@ -1,10 +1,12 @@
 // cameraFit — pure "frame all" math (#186): fit a bounding sphere with clip
-// planes + orbit limits derived from the radius, never from constants.
+// planes derived from the radius, never from constants; and the orbit's dolly
+// range, which is the view's (from its Clip End), never the scene's (#1288).
 
 import { describe, expect, it } from 'vitest';
 import {
   boxDepthAlongView,
   clipPlanesForView,
+  dollyRangeForClip,
   fitDistanceForSphere,
   fitViewToSphere,
 } from './cameraFit';
@@ -66,14 +68,6 @@ describe('fitViewToSphere', () => {
     expect(fit.near).toBeGreaterThan(0);
   });
 
-  it('scales orbit dolly limits with the radius (tiny model → tiny minDistance)', () => {
-    const tiny = fitViewToSphere([0, 0, 0], 0.01, 45, 1);
-    const huge = fitViewToSphere([0, 0, 0], 1000, 45, 1);
-    expect(tiny.minDistance).toBeLessThan(huge.minDistance);
-    expect(huge.maxDistance).toBeGreaterThan(huge.distance);
-    expect(tiny.minDistance).toBeGreaterThan(0);
-  });
-
   it('frames along the canonical [3,2,3] viewing angle by default', () => {
     const fit = fitViewToSphere([0, 0, 0], 1, 45, 1);
     // direction from center→camera is the normalized [3,2,3] (x ≈ z, y smaller).
@@ -107,8 +101,6 @@ describe('clipPlanesForView', () => {
     const planes = clipPlanesForView(fit.distance, 7);
     expect(planes.near).toBeCloseTo(fit.near, 9);
     expect(planes.far).toBeCloseTo(fit.far, 9);
-    expect(planes.minDistance).toBeCloseTo(fit.minDistance, 9);
-    expect(planes.maxDistance).toBeCloseTo(fit.maxDistance, 9);
   });
 
   it('far clears the back of the sphere from the camera; near stays positive', () => {
@@ -131,13 +123,6 @@ describe('clipPlanesForView', () => {
     const planes = clipPlanesForView(100000, 100000);
     expect(planes.far / planes.near).toBeLessThanOrEqual(50_000 + 1);
     expect(planes.near).toBeGreaterThan(0);
-  });
-
-  it('scales orbit dolly limits with the radius (tiny model → tiny minDistance)', () => {
-    const tiny = clipPlanesForView(0.05, 0.01);
-    const huge = clipPlanesForView(5000, 1000);
-    expect(tiny.minDistance).toBeLessThan(huge.minDistance);
-    expect(tiny.minDistance).toBeGreaterThan(0);
   });
 
   it('falls back to finite planes for degenerate camera distance / radius', () => {
@@ -179,5 +164,30 @@ describe('boxDepthAlongView', () => {
   it('is negative when the whole box is behind the eye, NaN with no direction', () => {
     expect(boxDepthAlongView([-1, -1, 5], [1, 1, 6], [0, 0, 10], [0, 0, 1])).toBeLessThan(0);
     expect(boxDepthAlongView([0, 0, 0], [1, 1, 1], [0, 0, 0], [0, 0, 0])).toBeNaN();
+  });
+});
+
+describe('dollyRangeForClip (#1288)', () => {
+  it("is Blender's zoom range: a thousandth of the grid to ten Clip Ends", () => {
+    // ED_view3d_dist_soft_range_get(v3d, false), view3d_utils.cc:154-165 (v5.1.1), at
+    // Blender's default grid 1 and clip_end 1000.
+    expect(dollyRangeForClip(1000)).toEqual({ minDistance: 0.001, maxDistance: 10_000 });
+  });
+
+  it('follows Clip End and nothing else — raising the clip is how a director reaches further', () => {
+    expect(dollyRangeForClip(100).maxDistance).toBe(1000);
+    expect(dollyRangeForClip(1e6).maxDistance).toBe(1e7);
+    expect(dollyRangeForClip(100).minDistance).toBe(dollyRangeForClip(1e6).minDistance);
+  });
+
+  it("admits the distance that failed #1288: the walk's 587-unit travel, from the default clip", () => {
+    // Measured before the fix: a wheel-out stopped at 38.08, the boot cube's (2.94 + 0.866) × 10.
+    expect(dollyRangeForClip(1000).maxDistance).toBeGreaterThan(587);
+  });
+
+  it('falls back to the default Clip End for a degenerate one', () => {
+    for (const bad of [Number.NaN, 0, -5, Number.POSITIVE_INFINITY]) {
+      expect(dollyRangeForClip(bad)).toEqual(dollyRangeForClip(1000));
+    }
   });
 });

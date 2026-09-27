@@ -153,17 +153,10 @@ export function applyFit(bounds: SceneBounds): boolean {
   if (ctrlTarget) ctrlTarget.copy(center);
   cam.lookAt(center);
 
-  // #1179 — move the dolly range WITH the camera. OrbitControls clamps the distance into
-  // [minDistance, maxDistance] on its next update, and that range was last set by the boot
-  // fit for whatever the scene held then: fitting a 161-unit rig after booting on a 1 m cube
-  // was measured landing at 38.08 = (2.94 + 0.866) × 10, the cube's limit, not the rig's fit.
-  // Same rule the boot fit applies: the range is the fit's, and never excludes where the
-  // camera now stands.
-  const limits = useThreeRef.getState().dollyLimits;
-  if (limits) {
-    limits.minDistance = Math.min(fit.minDistance, fit.distance);
-    limits.maxDistance = Math.max(fit.maxDistance, fit.distance);
-  }
+  // #1179 / #1288 — the orbit's dolly range is not moved here. It is the view's, from its Clip
+  // End (Blender's zoom limits, `dollyRangeForClip`), so any fit short of ten Clip Ends stands where
+  // this puts it. It used to be moved here, because the boot fit had sized it for the scene it
+  // booted on: fitting a 161-unit rig after booting on a 1 m cube was measured landing at 38.08.
 
   // An ORTHOGRAPHIC editor view is not framed by position at all — its frustum
   // extent is `zoom` (`orthoZoomForView`, the same math the boot fit uses), so

@@ -141,8 +141,8 @@ test('a view lock on a native character keeps it framed while it walks; without 
         const dz = e[2] - s[2];
         const len = Math.hypot(dx, dz);
         t.controlsTarget.set(s[0], s[1], s[2]);
-        // Across the travel. The orbit clamps the distance to the view fit's reach, so the camera
-        // may stand closer than asked; what is asserted holds at any distance.
+        // Across the travel. What is asserted holds at any distance (the orbit once clamped this
+        // to 38.1, the boot fit's reach, #1288).
         t.camera.position.set(s[0] - (dz / len) * 450, s[1], s[2] + (dx / len) * 450);
       },
       [start, end],
