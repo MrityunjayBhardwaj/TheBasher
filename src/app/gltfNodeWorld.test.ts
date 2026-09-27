@@ -1,7 +1,8 @@
 // #1284 — a bone's posed world position, pure, and Track-To aiming at it.
 //
 // The expected positions are the RENDERED ones: read off the drawn skeleton's bones in the
-// browser on the "Camera Path + AI Walk" example (2026-09-27, its 7.6 s walk), at the same times. The walk moves
+// browser on the "Camera Path + AI Walk" example (re-read 2026-09-27 for #1285's 10 s walk, whose
+// path is asked for in the generator's metres), at the same times. The walk moves
 // the Hips while the armature Root and the character's Group stay where the walk began — which is
 // why aiming at the character is not aiming at the walker.
 
@@ -35,9 +36,9 @@ describe('a glTF node inside a character, posed, in the world (#1284)', () => {
   it('the Hips travel with the walk while the Root holds — as drawn', async () => {
     const { state, group } = await example();
     const drawnHips: Record<number, [number, number, number]> = {
-      0: [-1.99, 0.62, -1.99],
-      2: [-1.53, 0.61, -0.41],
-      7.5: [0.5, 0.6, 0.92],
+      0: [-2.019, 0.604, -1.99],
+      2: [-1.421, 0.601, -0.118],
+      7.5: [1.349, 0.603, 0.261],
     };
     for (const [t, want] of Object.entries(drawnHips)) {
       const cache = createEvaluatorCache();
@@ -75,8 +76,8 @@ describe('Track-To aims at a bone when asked (#1284)', () => {
     const { state, trackTo } = await example();
     // The example ships aiming at the Hips; set it anyway so this row does not lean on that.
     const s = withAimBone(state, trackTo, 'mixamorig_Hips');
-    near(resolveTrackToTarget(s, 'n_camera', at(0)), [-1.99, 0.62, -1.99]);
-    near(resolveTrackToTarget(s, 'n_camera', at(7.5)), [0.5, 0.6, 0.92]);
+    near(resolveTrackToTarget(s, 'n_camera', at(0)), [-2.019, 0.604, -1.99]);
+    near(resolveTrackToTarget(s, 'n_camera', at(7.5)), [1.349, 0.603, 0.261]);
   });
 
   it('an unresolvable bone falls back to the object, never to a blank aim', async () => {

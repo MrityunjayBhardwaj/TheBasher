@@ -38,6 +38,7 @@ import { formatAssetError, useAssetErrorStore } from '../stores/assetErrorStore'
 import { useGeneratedMotionStore } from '../stores/generatedMotionStore';
 import { bakeGeneratedClipOps, clipBakeStates } from './bakeGeneratedClip';
 import { placeCookedMotionOps } from './placeGeneratedMotion';
+import { fitMotionPathScaleOps, motionPathScaleFit, pathScaleNeedsFit } from './fitMotionPathScale';
 import { resolvePendingMotionGenerations } from './resolveMotionGenerate';
 import { assetRefOfSkeleton, riggedSkeletonsForClip } from '../animate/boundClipsForAsset';
 import { gltfChildDagId } from '../../core/import/gltfImportChain';
@@ -107,6 +108,11 @@ export async function cookMotionGenerations(
     return { generated: 0, failed: 0, baked: 0, reason };
   }
 
+  // #1285 — fit each path to the character that walks it BEFORE asking, so the
+  // request that goes out is the one that lands the character on the curve. A
+  // changed scale is a changed request hash, which is what makes the resolver ask.
+  fitMotionPathScale(producerId);
+
   // Read the state fresh at each step rather than once: the resolver awaits, and
   // a director can edit the graph while a several-second call is out. Baking a
   // state captured before the await would write into a graph that has moved.
@@ -158,6 +164,20 @@ export async function cookMotionGenerations(
     failed: resolutions.filter((r) => r.outcome === 'failed').length,
     baked,
   };
+}
+
+/**
+ * Write each path-driven producer's fitted `pathScale` (#1285), reporting the ones
+ * whose characters disagree. Returns how many producers changed — each of those is
+ * now behind its clip and will generate on the next cook.
+ */
+export function fitMotionPathScale(producerId?: string): number {
+  const { ops, refusals } = fitMotionPathScaleOps(useDagStore.getState().state, producerId);
+  if (ops.length > 0) {
+    useDagStore.getState().dispatchAtomic(ops, 'user', 'fit motion path to character');
+  }
+  for (const r of refusals) useAssetErrorStore.getState().report('motion path', r.reason);
+  return ops.length;
 }
 
 /**
@@ -299,6 +319,18 @@ export function motionCookOffer(state: DagState, producerId: string): MotionCook
     };
   }
   if (!row.stale) {
+    // #1285 — the clip matches its request, but the request no longer fits the
+    // character (it was swapped, or bound after the first cook). "Up to date" would
+    // be true of the clip and false of the walk, which stops short of the path.
+    if (pathScaleNeedsFit(motionPathScaleFit(state, producerId))) {
+      return {
+        label: 'Re-cook (fit path to character)',
+        disabled: false,
+        status: row.status,
+        stale: false,
+        stranded,
+      };
+    }
     return { label: 'Up to date', disabled: true, status: row.status, stale: false, stranded };
   }
   // Stale AND already baked is the drag: the clip keeps playing its last result,

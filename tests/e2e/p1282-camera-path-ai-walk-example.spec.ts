@@ -91,3 +91,94 @@ test('the Camera Path + AI Walk example opens from the startup screen and plays 
   expect(errors).toEqual([]);
   expect(serverRequests, 'no request reached for the motion server').toBe(0);
 });
+
+// #1285 — the walker ends where its drawn path ends. Before the path was asked for in the
+// generator's metres, the retarget's leg ratio (0.63 here) shrank the walk to a copy of the curve
+// about its start: the Hips stopped about halfway along and strayed up to 0.79 m off it.
+test('the example’s walker follows its drawn path to the end', async ({ page }) => {
+  test.setTimeout(90_000);
+  await page.route(/:8600\//, (route) => route.abort());
+  await page.addInitScript(() => {
+    try {
+      localStorage.removeItem('basher.lastProjectId');
+    } catch {
+      /* storage disabled */
+    }
+  });
+  await page.goto('/');
+  await page.getByTestId('home-open-example_camera_path_ai_walk').click();
+  await page.waitForFunction(
+    () => {
+      const w = window as unknown as Record<string, unknown>;
+      return (
+        (w.__basher_gltf_skin as (() => unknown) | undefined)?.() != null &&
+        !!w.__basher_curve_sample
+      );
+    },
+    null,
+    { timeout: 30_000 },
+  );
+
+  const rows = await page.evaluate(async () => {
+    type Sample = { point: number[] };
+    type GraphNode = {
+      type: string;
+      inputs?: { path?: { node: string } };
+      params: { duration?: number };
+    };
+    type Obj = {
+      isBone?: boolean;
+      name: string;
+      position: { clone: () => unknown };
+      getWorldPosition: (v: unknown) => { x: number; z: number };
+    };
+    type Scene = {
+      traverse: (f: (o: Obj) => void) => void;
+      updateMatrixWorld: (f: boolean) => void;
+    };
+    const w = window as unknown as {
+      __basher_dag: { getState: () => { state: { nodes: Record<string, GraphNode> } } };
+      __basher_curve_sample: (id: string, u: number) => Sample;
+      __basher_three: { getState: () => { scene: Scene } };
+      __basher_time: { getState: () => { setTime: (s: number) => void } };
+    };
+    const nodes = Object.values(w.__basher_dag.getState().state.nodes);
+    const curve = nodes.find((n) => n.type === 'MotionGenerate')!.inputs!.path!.node;
+    const duration = nodes.find((n) => n.type === 'AnimationClip')!.params.duration!;
+    const N = 400;
+    const pts = Array.from(
+      { length: N + 1 },
+      (_, i) => w.__basher_curve_sample(curve, i / N).point,
+    );
+    const scene = w.__basher_three.getState().scene;
+    let found: Obj | null = null;
+    scene.traverse((o) => {
+      if (o.isBone && /Hips$/.test(o.name)) found = o;
+    });
+    const hips = found as unknown as Obj;
+    const out: { f: number; off: number; along: number; toEnd: number }[] = [];
+    for (const f of [0, 0.25, 0.5, 0.75, 1]) {
+      w.__basher_time.getState().setTime(f * duration);
+      for (let i = 0; i < 3; i++) await new Promise((r) => requestAnimationFrame(() => r(null)));
+      scene.updateMatrixWorld(true);
+      const h = hips.getWorldPosition(hips.position.clone());
+      let off = Infinity;
+      let at = 0;
+      pts.forEach((p, i) => {
+        const d = Math.hypot(p[0] - h.x, p[2] - h.z);
+        if (d < off) [off, at] = [d, i];
+      });
+      out.push({ f, off, along: at / N, toEnd: Math.hypot(pts[N][0] - h.x, pts[N][2] - h.z) });
+    }
+    return out;
+  });
+  console.log(
+    `[1285] ${JSON.stringify(rows.map((r) => [r.f, +r.off.toFixed(2), +r.along.toFixed(2)]))}`,
+  );
+  // Kimodo tracks root waypoints to 4-12 cm; the retarget scales that by the leg ratio.
+  for (const r of rows)
+    expect(r.off, `off the drawn path at ${r.f} of the walk`).toBeLessThan(0.25);
+  const last = rows[rows.length - 1];
+  expect(last.along, 'how far along the path the walk ends').toBeGreaterThan(0.95);
+  expect(last.toEnd, 'metres from the path’s end when the walk ends').toBeLessThan(0.25);
+});

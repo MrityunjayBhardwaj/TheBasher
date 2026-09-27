@@ -122,10 +122,32 @@ function pendingGenerations(
  * evaluated input value: local control points are not waypoints, and reading
  * them directly produces a path of the right shape in the wrong place.
  */
-function waypointsFor(state: DagState, nodeId: string) {
+function waypointsFor(state: DagState, nodeId: string, pathScale: number | undefined) {
   const binding = state.nodes[nodeId]?.inputs?.path;
   if (!binding || Array.isArray(binding)) return null;
-  return waypointsFromCurve(state, binding.node);
+  const drawn = waypointsFromCurve(state, binding.node);
+  return drawn && pathScale !== undefined ? waypointsInSourceMetres(drawn, pathScale) : drawn;
+}
+
+/**
+ * #1285 — the drawn path as the generator's rig must walk it for the retarget to land the
+ * character on it: every waypoint's distance from the START divided by the travel scale the
+ * retarget will multiply back in.
+ *
+ * About the start, because the start is the one point that must not move: the capability rebases
+ * the path to it and hands it back as `worldOffsetXZ`, which placement puts the character on. A
+ * uniform scale about that point leaves the offset and the first heading exactly as drawn.
+ */
+export function waypointsInSourceMetres(
+  drawn: readonly { readonly x: number; readonly z: number }[],
+  pathScale: number,
+): { x: number; z: number }[] {
+  const [start] = drawn;
+  if (!start || pathScale === 1) return drawn.map((p) => ({ x: p.x, z: p.z }));
+  return drawn.map((p) => ({
+    x: start.x + (p.x - start.x) / pathScale,
+    z: start.z + (p.z - start.z) / pathScale,
+  }));
 }
 
 /**
@@ -166,7 +188,7 @@ export async function resolvePendingMotionGenerations(
 
     inFlight.add(requestHash);
     try {
-      const waypoints = waypointsFor(state, nodeId);
+      const waypoints = waypointsFor(state, nodeId, params.pathScale);
       const generated = await capability.generate({
         prompt: params.prompt,
         model: params.model,
