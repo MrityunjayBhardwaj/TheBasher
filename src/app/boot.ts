@@ -42,6 +42,7 @@ import {
   type ProjectMetadata,
 } from '../core/project';
 import { buildExampleProject, EXAMPLE_PROJECT_IDS } from '../core/project/examples';
+import { beginExampleSeeding } from './exampleSeeding';
 import { projectImagePath } from '../core/project/projectImages';
 import { useRouteStore } from './stores/routeStore';
 import { useSettingsStore } from './stores/settingsStore';
@@ -372,19 +373,35 @@ export function boot(): Promise<void> {
 
     // W4-T1 (D-W4-SEED) — seed the curated example projects, idempotently.
     // Runs AFTER asset seeding — an example may reference a seeded asset (#1282: the
-    // Camera Path + AI Walk character's GLB is a catalog asset) — and BEFORE project
-    // resolution so the examples are listable on the home. Only writes an
+    // Camera Path + AI Walk character's GLB is a catalog asset). Only writes an
     // example id that is ABSENT — a user who opened + edited an example keeps
     // their edits across reloads (re-seeding never clobbers them).
+    //
+    // #1290 — WHICH are missing is found here; WHEN they are written depends on the
+    // route below. A first run waits for all of them (Home lists them). A resume
+    // opens its project FIRST and writes the rest behind it: one example is a
+    // captured scene megabytes long, and awaiting it here put ~1 s in front of every
+    // first boot while the editor was already interactive over a placeholder graph —
+    // an edit made there was replaced by the resume and a save found no project.
+    let missingExamples: string[] = [];
     try {
       const existing = new Set(await listProjects(storage));
-      for (const id of EXAMPLE_PROJECT_IDS) {
-        if (existing.has(id)) continue;
-        await saveProject(storage, await buildExampleProject(id));
-      }
+      missingExamples = EXAMPLE_PROJECT_IDS.filter((id) => !existing.has(id));
     } catch (e) {
       console.warn('boot: example seeding failed', e);
     }
+    const seedExamples = async (ids: readonly string[]): Promise<void> => {
+      for (const id of ids) {
+        try {
+          await saveProject(storage, await buildExampleProject(id));
+        } catch (e) {
+          console.warn(`boot: example seeding failed (${id})`, e);
+        }
+      }
+    };
+    // Begun BEFORE any route change, so Home can never read "done" for a seeding
+    // that has not started yet.
+    const examplesSeeded = beginExampleSeeding();
 
     // P6 W3 — dirty tracking subscription. Registered ONCE per boot regardless
     // of route (a project opened from the home later must still track dirty).
@@ -430,6 +447,8 @@ export function boot(): Promise<void> {
       typeof localStorage !== 'undefined' ? localStorage.getItem(LAST_PROJECT_KEY) : null;
 
     if (lastId == null) {
+      await seedExamples(missingExamples);
+      examplesSeeded();
       // FIRST RUN → home. Do NOT hydrate a project AND do NOT
       // persistLastProjectId here — "absence of lastId" must stay true until the
       // user actually opens something, else the home would show for exactly ONE
@@ -437,7 +456,10 @@ export function boot(): Promise<void> {
       // createNewProject persist the key when the user opens from the home.
       useRouteStore.getState().goHome();
     } else {
-      // Returning user → resume the persisted project in the editor.
+      // Returning user → resume the persisted project in the editor. When that
+      // project is itself an example storage no longer holds, it is written first,
+      // exactly as before #1290 — resuming it is what this boot is for.
+      if (missingExamples.includes(lastId)) await seedExamples([lastId]);
       let project = null;
       try {
         project = await loadProject(storage, lastId);
@@ -466,6 +488,8 @@ export function boot(): Promise<void> {
         });
         useRouteStore.getState().openEditor();
       }
+      // The rest behind the open project, not in front of it (#1290).
+      void seedExamples(missingExamples.filter((id) => id !== lastId)).finally(examplesSeeded);
     }
 
     // Install dirty tracking ONCE, after any resume hydrate (so the initial
