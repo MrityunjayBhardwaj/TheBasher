@@ -951,10 +951,13 @@ test(TITLE, async ({ page }) => {
   );
   // #1259 — the composite arm sees too: both compositions drew a frame, and a keyed Layer moved it.
   expect(result.composites, 'each composition composites a frame').not.toMatch(/none/);
-  expect(
-    rows.filter((r) => r.reach === 'composite').map((r) => r.type),
-    'some params move the composite',
-  ).toContain('Layer');
+  // #1291 — asked only of the part that measures Layer: a CI part measures its own subjects, so
+  // a part without Layer can never see one move, and the parts together still witness it once.
+  if (mine('Layer'))
+    expect(
+      rows.filter((r) => r.reach === 'composite').map((r) => r.type),
+      'some params move the composite',
+    ).toContain('Layer');
   expect(rows.filter((r) => r.note?.startsWith('channel refused'))).toEqual([]);
   expect(
     rows.filter((r) => r.driverNote?.startsWith('driver refused')).map((r) => r.driverNote),
