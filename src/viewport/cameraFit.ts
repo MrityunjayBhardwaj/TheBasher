@@ -104,6 +104,25 @@ export function clipPlanesForView(
 }
 
 /**
+ * The limits to hand OrbitControls for a view standing `distance` from its pivot, before it applies
+ * a zoom: the range, widened to admit where the view already stands (#1292).
+ *
+ * OrbitControls clamps the distance into its limits on EVERY update, so a view outside the range
+ * would be pulled into it. Blender never moves one: View All clamps only a minimum
+ * (view3d_navigate_view_all.cc:130-135), and the wheel only REFUSES to go further — out once
+ * `dist ≥ max`, in once `dist ≤ min` (view3d_navigate_view_zoom.cc:398-417, v5.1.1). Widening to
+ * the distance the view stood at before the zoom is the same rule: a framed 4000-unit box keeps its
+ * ~11 768 units, a zoom cannot carry it further out, and it can come back inside. Pure.
+ */
+export function zoomLimitsAt(range: DollyRange, distance: number): DollyRange {
+  if (!Number.isFinite(distance)) return range;
+  return {
+    minDistance: Math.min(range.minDistance, distance),
+    maxDistance: Math.max(range.maxDistance, distance),
+  };
+}
+
+/**
  * How deep the box `[min, max]` reaches along the camera's view direction: the
  * largest `dot(corner − eye, forward)` over its eight corners. A far plane
  * shallower than this cuts the box off (#1188). The far plane is a plane at

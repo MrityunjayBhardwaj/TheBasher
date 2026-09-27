@@ -48,7 +48,7 @@ import { loadEditorView } from '../app/editorViewPersistence';
 import { loadViewLock, saveViewLock } from '../app/viewLockPersistence';
 import { loadViewportClip } from '../app/viewportClipPersistence';
 import { takePendingEditorView } from '../app/editorViewCapture';
-import { boxDepthAlongView, dollyRangeForClip, fitViewToSphere } from './cameraFit';
+import { boxDepthAlongView, dollyRangeForClip, fitViewToSphere, zoomLimitsAt } from './cameraFit';
 import { computeSceneBounds, computeSceneBox } from './sceneBounds';
 import { scanForFollow, pointFromScan, type FollowScan } from './followScan';
 import { applyTarget } from '../app/character/framing';
@@ -510,16 +510,23 @@ export function EditorViewCamera() {
   // 38.08 units (the default cube's reach) from a character that walks 587. The range follows the
   // clip rather than the scene, so an import, a Frame Selected or a script placing the camera
   // never has to move it, and raising Clip End is how a director reaches further — as in Blender.
-  const controls = useThree((s) => s.controls) as unknown as {
-    minDistance?: number;
-    maxDistance?: number;
-  } | null;
-  useEffect(() => {
-    if (!controls) return;
-    const range = dollyRangeForClip(freeFarEff);
-    controls.minDistance = range.minDistance;
-    controls.maxDistance = range.maxDistance;
-  }, [controls, freeFarEff]);
+  //
+  // #1292 — applied every frame at priority -2, just BEFORE drei's `controls.update()` (-1), and
+  // widened to where the view stands now (`zoomLimitsAt`): OrbitControls clamps on every update,
+  // and a view a fit framed past ten Clip Ends (the p186 box, ~11 768) was pulled in to 10 000.
+  // Blender leaves such a view where it is and only refuses to zoom it further out.
+  const dollyRange = useMemo(() => dollyRangeForClip(freeFarEff), [freeFarEff]);
+  useFrame((state) => {
+    const controls = state.controls as unknown as {
+      minDistance?: number;
+      maxDistance?: number;
+      target?: THREE.Vector3;
+    } | null;
+    if (!controls?.target) return;
+    const limits = zoomLimitsAt(dollyRange, state.camera.position.distanceTo(controls.target));
+    controls.minDistance = limits.minDistance;
+    controls.maxDistance = limits.maxDistance;
+  }, -2);
 
   // Hydrate the per-project clip override into the store when the project
   // changes (#192). A project with NO saved clip hydrates `null` — the SAME

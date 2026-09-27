@@ -9,6 +9,7 @@ import {
   dollyRangeForClip,
   fitDistanceForSphere,
   fitViewToSphere,
+  zoomLimitsAt,
 } from './cameraFit';
 
 describe('fitDistanceForSphere', () => {
@@ -189,5 +190,26 @@ describe('dollyRangeForClip (#1288)', () => {
     for (const bad of [Number.NaN, 0, -5, Number.POSITIVE_INFINITY]) {
       expect(dollyRangeForClip(bad)).toEqual(dollyRangeForClip(1000));
     }
+  });
+});
+
+describe('zoomLimitsAt (#1292)', () => {
+  const range = dollyRangeForClip(1000);
+
+  it('is the range itself for a view standing inside it', () => {
+    expect(zoomLimitsAt(range, 50)).toEqual(range);
+  });
+
+  it('admits a view framed past the ceiling, so the controls do not pull it in', () => {
+    // The p186 box's fit, measured pulled in to 10 000 before this.
+    expect(zoomLimitsAt(range, 11_767.8)).toEqual({ minDistance: 0.001, maxDistance: 11_767.8 });
+  });
+
+  it('admits a view standing nearer than the floor', () => {
+    expect(zoomLimitsAt(range, 0.0004)).toEqual({ minDistance: 0.0004, maxDistance: 10_000 });
+  });
+
+  it('keeps the range for a distance it cannot read', () => {
+    expect(zoomLimitsAt(range, Number.NaN)).toEqual(range);
   });
 });
