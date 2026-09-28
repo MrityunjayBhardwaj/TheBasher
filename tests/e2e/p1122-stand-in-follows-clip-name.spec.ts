@@ -68,6 +68,11 @@ async function renameClip(page: Page, clipId: string, name: string): Promise<voi
 test('the Object follows its clip’s name, keeps a name the director gives it, and undo resumes', async ({
   page,
 }) => {
+  // #1301 — a budget sized to the work, not a retry for a hang. Generating through the Assets
+  // panel (#1211) made this row ~20 s longer than the .bvh-seam version main ran in 38.8 s: on
+  // CI's software GL each gesture costs 1–2.5 s, and the row measured 59.2 s of step time on a
+  // normal-speed shard (1.05× main's median), against the 60 s default. Every step completed.
+  test.setTimeout(120_000);
   const errors: string[] = [];
   page.on('console', (m) => {
     if (m.type() !== 'error' || /WebGL|GPU/i.test(m.text())) return;
