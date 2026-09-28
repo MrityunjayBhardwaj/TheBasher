@@ -38,6 +38,9 @@ import type { Op } from '../core/dag/types';
 import { buildDefaultDagState } from '../core/project/default';
 import { profileOptions } from '../nodes/LightProfileSelect';
 import { buildAddPrimitiveOps, SCENE_OBJECT_KINDS } from './addPrimitives';
+import { buildMediaClipOps } from './asset/importMediaClip';
+import { buildAddLayerOps } from './video/addLayer';
+import { buildNewCompositionOps } from './video/newComposition';
 import { buildAddConstraintOps } from './constraintStack';
 import { stripChannelValuesForTarget } from './layeredChannels';
 import { resolveConstraintRotation } from './nodeConstraints';
@@ -336,8 +339,6 @@ describe('a param declares its control on its schema (#872)', () => {
     const CHOICE =
       'selects from what exists at runtime — wants a picker over the live options, for the same reason';
     // #1066 — channel wiring whose picker waits on a measurement, each named.
-    const NO_VEC2_ROWS =
-      'the animatable census has no vec2 rows (compositor layers, uvTransform), so no list could be honest (#1259)';
     const NOTHING_READS_IMAGE =
       'a keyed ComfyUI image input reaches nothing in the batch, so there is no path to offer (#1257)';
 
@@ -357,12 +358,10 @@ describe('a param declares its control on its schema (#872)', () => {
       // Vec3, Color and Text channels' `target`/`paramPath` left it in #1066 — pickers over what
       // the census measured and what a ComfyUI batch reads — and so did ParamDriver's, once the
       // census measured drivers on their own (#1258), and Quat's once it measured both rotation
-      // modes (#1259). What stays has a named reason: a
+      // modes (#1259), and Vec2's once it measured compositor layers. What stays has a named reason: a
       // picker needs something that KNOWS which paths animate, and for these nothing does yet.
       'KeyframeChannelImage.paramPath': NOTHING_READS_IMAGE,
       'KeyframeChannelImage.target': NOTHING_READS_IMAGE,
-      'KeyframeChannelVec2.paramPath': NO_VEC2_ROWS,
-      'KeyframeChannelVec2.target': NO_VEC2_ROWS,
       // #1210 — a bone of the parent armature, by name. #1284's bone picker (`TrackTo.aimBone`)
       // offers a character's bones; pointing it at the parent's is what would retire this line.
       'Object.parentBone': CHOICE,
@@ -413,7 +412,7 @@ describe('a param declares its control on its schema (#872)', () => {
     });
     // The denominator rides with the verdict — an empty `unacknowledged` from a loop that
     // never ran looks exactly like a pass.
-    expect(readOnly.length).toBe(18);
+    expect(readOnly.length).toBe(16);
   });
 
   it('row 15 — a param owns the word for its EMPTY state, and the control owns the fallback (#1031)', () => {
@@ -568,6 +567,8 @@ describe('a param declares its control on its schema (#872)', () => {
         'KeyframeChannelQuat.paramPath',
         'KeyframeChannelText.target',
         'KeyframeChannelText.paramPath',
+        'KeyframeChannelVec2.target',
+        'KeyframeChannelVec2.paramPath',
         'KeyframeChannelVec3.target',
         'KeyframeChannelVec3.paramPath',
         'LightProfileSelect.selectedProfile',
@@ -588,6 +589,8 @@ describe('a param declares its control on its schema (#872)', () => {
         'KeyframeChannelQuat.paramPath',
         'KeyframeChannelText.target',
         'KeyframeChannelText.paramPath',
+        'KeyframeChannelVec2.target',
+        'KeyframeChannelVec2.paramPath',
         'KeyframeChannelVec3.target',
         'KeyframeChannelVec3.paramPath',
         'LightProfileSelect.selectedProfile',
@@ -743,6 +746,21 @@ describe('a param declares its control on its schema (#872)', () => {
       { type: 'setParam', nodeId: turned.obj, paramPath: 'rotationMode', value: 'quaternion' },
     ]);
 
+    // #1259 — a compositor layer, as the census places one: a composition holding a bare media
+    // layer. Its position and scale reach the composited frame; its anchor moves nothing.
+    s = apply(s, [
+      ...buildNewCompositionOps('comp', 'Composition 1'),
+      ...buildMediaClipOps('clip', 'clip', 'media/clip.png', {
+        mediaKind: 'image',
+        srcFps: 1,
+        srcFrames: 1,
+        durationSeconds: 0,
+        width: 64,
+        height: 64,
+      }),
+      ...buildAddLayerOps('layer', 'comp', 'clip', 'Layer 1'),
+    ]);
+
     const META = { name: 'w', importedAt: 'fixed', fps: 30, frames: 24 };
     const MODE_B: ComfyApiJson = {
       '3': {
@@ -781,6 +799,7 @@ describe('a param declares its control on its schema (#872)', () => {
 
     const CHANNELS = [
       ['KeyframeChannelNumber', 'number', 1, 9],
+      ['KeyframeChannelVec2', 'vec2', [0, 0], [4, 5]],
       ['KeyframeChannelVec3', 'vec3', [0, 0, 0], [1, 2, 3]],
       ['KeyframeChannelQuat', 'quat', [0, 0, 0, 1], [0.2, 0.3, 0.1, 0.927]],
       ['KeyframeChannelColor', 'color', '#000000', '#ffffff'],
@@ -790,7 +809,7 @@ describe('a param declares its control on its schema (#872)', () => {
       if (typeof v === 'number') return 'number';
       if (typeof v === 'string') return /^#[0-9a-fA-F]{6}$/.test(v) ? 'color' : null;
       if (Array.isArray(v) && v.every((x) => typeof x === 'number'))
-        return v.length === 3 ? 'vec3' : v.length === 4 ? 'quat' : null;
+        return ({ 2: 'vec2', 3: 'vec3', 4: 'quat' } as Record<number, string>)[v.length] ?? null;
       return null;
     };
     const leaves = (v: unknown, at: string[], out: [string, string][]) => {

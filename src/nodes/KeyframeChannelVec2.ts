@@ -32,7 +32,13 @@ import {
   AxisModifiersSchema,
   migrateExtendParamsToCycles,
 } from './channelModifiers';
-import { nameParam } from './paramWidget';
+import { nameParam, optionsParam } from './paramWidget';
+import {
+  channelPathLockOf,
+  channelPathOptionsOf,
+  channelTargetLockOf,
+  channelTargetOptionsOf,
+} from './channelPickerSlot';
 
 const Vec2Schema = z.tuple([z.number(), z.number()]);
 const HandleSchema = z
@@ -44,8 +50,22 @@ const HandleSchema = z
 
 export const KeyframeChannelVec2Params = z.object({
   name: nameParam('channel'),
-  target: z.string().default(''),
-  paramPath: z.string().default(''),
+  // #1259 — picked from what a vec2 channel animates (the census measures compositor layers),
+  // through the slot the app fills; importing the pickers here would be a load cycle.
+  target: optionsParam(
+    z.string().default(''),
+    channelTargetOptionsOf('vec2'),
+    undefined,
+    'nodeId',
+    channelTargetLockOf(),
+  ),
+  paramPath: optionsParam(
+    z.string().default(''),
+    channelPathOptionsOf('vec2'),
+    undefined,
+    'name',
+    channelPathLockOf('vec2'),
+  ),
   /** Per-channel gate/blend lifted off the retired AnimationLayer (#199 / V57);
    *  identity defaults → byte-identical to pre-#199. */
   mute: z.boolean().default(false),
