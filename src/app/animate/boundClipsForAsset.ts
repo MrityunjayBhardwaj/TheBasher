@@ -13,8 +13,11 @@
 // the read side would render one clip's motion while the mint seeded from
 // another, which looks like a bad seed rather than like a disagreement.
 //
-// So the walk lives here once, and both sides consume it: the band turns the
-// result into samplers, the mint turns it into keys.
+// So the walk lived here once, and both sides consumed it: the band turned the
+// result into samplers, the mint turned it into keys. Both retired with the clone
+// road's character half (#1053). What reads it now is the old-save side: the
+// converter that turns a saved clone character native (`convertCloneCharacters`)
+// and the migration that drops frozen channels (`migrations.ts`).
 //
 // WHY THE EDGE AND NOT A NAME MATCH. A clip keyframe's bone INDEX is only
 // meaningful against the skeleton the indices were authored for. Reading the
@@ -24,11 +27,12 @@
 // clip hangs off a plain `Skeleton`, so the walk excludes the source with no
 // special case.
 //
-// REF: src/app/bakedGltfChannels.ts (the read band that consumes this);
-//      src/nodes/AnimationClip.ts (buildClipBoneSamplers); issues #888, #889.
+// REF: src/app/asset/convertCloneCharacters.ts; src/core/project/migrations.ts;
+//      src/nodes/AnimationClip.ts (buildClipBoneSamplers); issues #888, #889, #1053.
 
 import type { AnimationClipParams } from '../../nodes/AnimationClip';
-import { edgeTarget, type GraphNodeLike } from './graphNodes';
+import { poseLayerChain } from './poseChain';
+import { edgeSocket, edgeTarget, type GraphNodeLike } from './graphNodes';
 import { retargetClipParamsFromNodes } from './retargetFromNodes';
 
 // Re-exported so every existing importer of the walk keeps its one import site.
@@ -135,98 +139,57 @@ export function boundClipsForAsset(
   return out;
 }
 
-/**
- * Every character rig a clip's motion ends up driving, in deterministic order.
- *
- * The INVERSE of the walk above: that one starts at an asset and finds its
- * clips, this one starts at a clip and finds its rigs. Both answer "which clip
- * drives which rig", so they live together — the alternative is a second copy of
- * the edge knowledge, and this file's header is about what that costs.
- *
- * 🔴 A GENERATED CLIP IS NOT ON ITS CHARACTER'S EDGE, AND NEVER WAS (#966).
- * `bindMotionToCharacter` leaves the incoming 78-bone clip hanging off its own
- * source `Skeleton` and builds a `RetargetClip` beside it carrying the
- * `GltfSkeleton`. So a caller asking a generated clip "which character are you
- * on?" by reading `clip.inputs.skeleton` gets the SOURCE rig — the right socket
- * name on the wrong node — and concludes the clip is bound to no character at
- * all. Measured in a browser: the motion generated along a drawn path, 18 of 23
- * bones animating, and placement refusing every time because it asked here.
- *
- * Both arrangements are answered: a clip already sitting on a `GltfSkeleton` (an
- * import that needed no retarget) reports it directly, and a clip reached through
- * one or more `RetargetClip`s reports each rig those carry.
- *
- * Returns every rig rather than the first, because one generated walk can be
- * bound to two characters and both of them walk the path. Picking one would make
- * WHICH character moves depend on id order — the same arbitrariness the sort
- * above exists to remove (V22).
- *
- * Asked of the GRAPH rather than of a bind result, and that is what makes it
- * work on a re-cook. The one-shot road that this replaced never had the bug,
- * because it placed the rig the bind had just handed back — but a re-cook has no
- * bind result in hand, and the graph still knows.
- */
-export function riggedSkeletonsForClip(
-  nodes: Readonly<Record<string, GraphNodeLike>>,
-  clipId: string,
-): string[] {
-  const out = new Set<string>();
-  const direct = edgeTarget(nodes[clipId], 'skeleton');
-  if (direct && nodes[direct]?.type === 'GltfSkeleton') out.add(direct);
-  for (const id of Object.keys(nodes)) {
-    const n = nodes[id];
-    // A COST GATE, not a correctness one, and said so because it cannot be
-    // falsified: `RetargetClip` is the only node in the tree that declares a
-    // `sourceClip` input, so deleting this line changes no answer today. It
-    // earns its place by skipping two edge reads per node on a table that runs
-    // to several hundred after a glTF import. What makes the answer RIGHT is the
-    // `sourceClip` match below.
-    if (n.type !== 'RetargetClip') continue;
-    if (edgeTarget(n, 'sourceClip') !== clipId) continue;
-    const skel = edgeTarget(n, 'skeleton');
-    if (skel && nodes[skel]?.type === 'GltfSkeleton') out.add(skel);
-  }
-  return [...out].sort();
+/** A character a clip drives: its rig, and the armature Object it poses. */
+export interface DrivenCharacter {
+  readonly skeletonId: string;
+  readonly objectId: string;
 }
 
 /**
- * The `assetRef` of the `GltfAsset` a `GltfSkeleton` projects, or null when the
- * rig is not wired to one.
- *
- * 🔴 IT LIVES HERE BECAUSE IT WAS ABOUT TO BE SPELLED A THIRD TIME (#1001).
- * `bindMotionToCharacter` had it as a private two-hop read and
- * `placeGeneratedMotion` has the id-returning half of the same walk, each
- * commenting that it must not disagree with the other. A third copy — for the
- * stranded-bone read — is how "which asset does this rig belong to" ends up with
- * three answers, and this file's header is about exactly that cost.
- *
- * Goes through `edgeTarget` rather than reading `inputs.asset` by hand, so the
- * single-vs-array socket shape is decoded in one place too.
+ * #1213 — every character a clip drives: every armature Object whose pose chain's SOURCE is a
+ * `RetargetClip` reading this clip — the bind's own
+ * edge, since the Object's pose is the one thing that poses a native rig (#1224). Found through the
+ * one chain walk, `poseLayerChain`: pose layers sit between the Object and the retarget (a hand-pose,
+ * #1244; the base layer, #1211), so reading the Object's edge one hop missed them (#1246). The motion's own rig is
+ * posed by the clip itself, not a retarget of it, so it is not a character here. (The clone road's
+ * `GltfSkeleton`s answered here too until its character half retired, #1053.) Sorted by the node
+ * that IS the character (V22).
  */
-export function assetRefOfSkeleton(
+export function charactersDrivenByClip(
   nodes: Readonly<Record<string, GraphNodeLike>>,
-  skeletonId: string,
-): string | null {
-  const assetId = edgeTarget(nodes[skeletonId], 'asset');
-  if (!assetId) return null;
-  const ref = (nodes[assetId]?.params as { assetRef?: unknown } | undefined)?.assetRef;
-  return typeof ref === 'string' && ref.length > 0 ? ref : null;
+  clipId: string,
+): DrivenCharacter[] {
+  const out: DrivenCharacter[] = [];
+  for (const id of Object.keys(nodes)) {
+    const n = nodes[id];
+    if (n.type !== 'Object') continue;
+    const source = poseLayerChain(nodes, id).source;
+    const producer = source ? nodes[source.node] : undefined;
+    if (producer?.type !== 'RetargetClip' || edgeTarget(producer, 'source') !== clipId) continue;
+    const skeletonId = edgeTarget(n, 'data');
+    if (skeletonId) out.push({ skeletonId, objectId: id });
+  }
+  return out.sort((a, b) => (a.objectId < b.objectId ? -1 : 1));
 }
 
 /** A retarget's two ends: the SOURCE clip it reads and the rig it drives. */
 export interface RetargetPair {
   readonly retargetId: string;
-  readonly sourceClipId: string;
+  /** The node whose pose feeds the retarget's `source` — a clip, a pose layer, anything with a pose
+   *  output (#1250). */
+  readonly sourceId: string;
+  /** The output socket that edge reads, so the source is evaluated on the wire the retarget reads
+   *  rather than on a socket guessed from the node's type. */
+  readonly sourceSocket: string;
   readonly targetSkeletonId: string;
 }
 
 /**
  * Every retarget in the graph, as the pair of ends it connects (#977).
  *
- * `riggedSkeletonsForClip` walks this same spine from the CLIP end and answers
- * "which rigs does this clip drive". This walks it whole and answers "what does
- * each retarget read, and what does it drive" — which is what a viewer needs to
- * draw the source rig beside the character it is being retargeted onto.
+ * It walks the retarget spine whole and answers "what does each retarget read, and what does it
+ * drive" — which is what a viewer needs to draw the source rig beside the character it is being
+ * retargeted onto.
  *
  * It lives here, next to that walk, rather than beside the drawing code: two
  * modules resolving `RetargetClip`'s edges independently would be two answers to
@@ -240,45 +203,16 @@ export function retargetPairs(nodes: Readonly<Record<string, GraphNodeLike>>): R
   for (const id of Object.keys(nodes)) {
     const n = nodes[id];
     if (n.type !== 'RetargetClip') continue;
-    const sourceClipId = edgeTarget(n, 'sourceClip');
+    const sourceId = edgeTarget(n, 'source');
     const targetSkeletonId = edgeTarget(n, 'skeleton');
-    if (!sourceClipId || !targetSkeletonId) continue;
-    out.push({ retargetId: id, sourceClipId, targetSkeletonId });
+    if (!sourceId || !targetSkeletonId) continue;
+    out.push({ retargetId: id, sourceId, sourceSocket: edgeSocket(n, 'source'), targetSkeletonId });
   }
   // Sorted so WHICH reference rig pairs with which character can never depend
-  // on object-key order (V22, the same reason riggedSkeletonsForClip sorts).
+  // on object-key order (V22).
   return out.sort((a, b) =>
     a.retargetId < b.retargetId ? -1 : a.retargetId > b.retargetId ? 1 : 0,
   );
-}
-
-/**
- * Does `startId`'s `pose` chain terminate on one of `bound`? `PoseOverride`s
- * stack, so this follows the whole chain rather than checking one hop. Bounded
- * by the evaluator's own depth limit so a malformed graph cannot spin.
- *
- * 🔴 IT LIVES HERE, WITH THE OTHER WALKS, BECAUSE IT HAS TWO CONSUMERS AND THEY
- * MUST NOT DISAGREE (#995). The render band asks it "does this override belong to
- * my rig?", and `gltfAssetDepNodes` asks it "must this override be in the asset's
- * subscription scope?" — the SAME question, from the two ends of the same
- * boundary. Answered in two places, the enumerator would find an override the
- * subscription never delivers: the read side shows a posed bone, the viewport
- * shows none, and nothing errors. That is the split this file's header is about,
- * and #995 is the third time this pair has come apart at this exact seam.
- */
-export function overrideReachesRig(
-  nodes: Readonly<Record<string, GraphNodeLike>>,
-  startId: string,
-  bound: ReadonlySet<string>,
-): boolean {
-  let cur: string | null = startId;
-  for (let hops = 0; hops < 32 && cur !== null; hops++) {
-    const next: string | null = edgeTarget(nodes[cur], 'pose');
-    if (next === null) return false;
-    if (bound.has(next)) return true;
-    cur = next;
-  }
-  return false;
 }
 
 /**

@@ -26,22 +26,8 @@
 //      (the layering primitive); vyapti V20/V24; hetvabhasa H40/H48.
 
 import { buildVec3Sampler, type KeyframeChannelVec3Params } from '../nodes/KeyframeChannelVec3';
-import { buildClipBoneSamplers } from '../nodes/AnimationClip';
 import type { Vec3 } from '../nodes/types';
 import type { BakedChannel } from './resolveGltfChildTransform';
-// The radians→degrees boundary. THE SAME helper `ensureChannelForBone` seeds a
-// minted channel with (animate/ensureChannelForBone.ts, where the unit change is
-// documented at length): the clip band below must produce, for an UNEDITED bone,
-// the value a mint would have produced for that same bone the instant it is
-// edited — otherwise the bone visibly jumps on its first keyframe. Two
-// conversion sites are two chances to drift, which is why they name each other.
-import { radVec3ToDeg } from '../viewport/rotation';
-import {
-  boundClipsForAsset,
-  overrideReachesRig,
-  type GraphNodeLike,
-} from './animate/boundClipsForAsset';
-import { clipLoopOf } from '../nodes/clipLoop';
 
 type ChannelSampler = (seconds: number) => Vec3;
 
@@ -144,174 +130,13 @@ export function bakedChannelIdsForAssetRef(
   return null;
 }
 
-// ───────────────────────────────────────────────────────────────────────────
-// THE CLIP BAND (#888) — how a bone with NO channel node still reaches motion
-// ───────────────────────────────────────────────────────────────────────────
-// The resolver already falls through to the clip when a bone has no baked
-// channel. For ONE of the two bake sources that is enough; for the other it is
-// not, and that difference is the whole reason the eager bake exists:
-//
-//   bakeGltfChannel   — the asset's OWN embedded clip. `clipTrack` is the
-//                       asset's `transformClip` socket, so the resolver falls
-//                       through to it. The bake is a duplicate of what would
-//                       have been read anyway.
-//   the clip band     — a FOREIGN clip: BVH, FBX, retarget, or generated. An
-//   below               `AnimationClip` is not on that socket, so nothing falls
-//                       through, and until #888 materialising every bone was the
-//                       only bridge to the rendered skin. That was the copy that
-//                       went stale, and #889 deleted the mutator that made it.
-//
-// It did not have to be. The clip is already edged to the rig — nothing had ever
-// looked at the edge:
-//
-//   AnimationClip  --inputs.skeleton-->  GltfSkeleton  --inputs.asset-->  GltfAsset
-//
-// Walking it gives a bone with no channel a sampler over the clip, which is what
-// let #889 stop making the copy at all. Measured on `Robot-Walk.basher`:
-// stripping all 46 baked channels leaves the same 23 bones driven, with the
-// sampled rotations agreeing to 6e-14.
-//
-// WHY THE EDGE AND NOT A NAME MATCH. The bone INDEX in a clip keyframe is only
-// meaningful against the skeleton the indices were authored for. Reading the
-// skeleton off the clip's own edge makes an index/rig mismatch unrepresentable
-// rather than merely unlikely — the same argument `retarget` makes for reading
-// the rig off an edge instead of a parameter. In `Robot-Walk.basher` this is load
-// bearing rather than theoretical: the retargeted 23-bone clip hangs off the
-// `GltfSkeleton`, while the 78-bone SOURCE clip it came from hangs off a plain
-// `Skeleton`, so the edge walk excludes the source clip without a special case.
-
 /**
- * Per-bone samplers over the `AnimationClip`s bound to this asset's rig, keyed
- * by childName. These are the FALLBACK band: a bone that has a real channel
- * node is served by that channel, never by this.
+ * Enumerate the baked motion belonging to ONE glTF asset — its `KeyframeChannelVec3` nodes, an
+ * authored or materialised track per child — keyed by childName → per-component sampler closures.
+ * (Until the clone road's character half retired, #1053, a second band filled in behind them from
+ * the `AnimationClip`s bound to the asset's rig, #888, and a third from hand-poses, #974.)
  *
- * The edge walk itself lives in `boundClipsForAsset` because #889's mint needs
- * the SAME answer to "which clip drives this bone". Two copies would diverge
- * silently — the read side rendering one clip while a mint seeded from another,
- * which reads as a bad seed rather than as a disagreement.
- *
- * Only `position` and `rotation` are produced. `AnimationClipParams.keyframes`
- * carries no scale, so claiming a scale component would SUPPRESS the asset's
- * own scale track underneath it (the resolver reads presence, not value) —
- * omitting it leaves scale to the bands below, which is the honest answer and
- * the same call `ensureChannelForBone` makes when it mints.
- */
-function clipBandSamplersForAsset(
-  nodes: Readonly<Record<string, GraphNodeLike>>,
-  nodeNameMap: Readonly<Record<string, string>>,
-  assetRef: string,
-): Record<string, BakedChannelSamplers> {
-  const out: Record<string, BakedChannelSamplers> = {};
-  for (const clip of boundClipsForAsset(nodes, assetRef)) {
-    const params = clip.params;
-    // Delegate to the CLIP's own sampling (AnimationClip.buildClipBoneSamplers)
-    // rather than rebuilding its keys as channel params — nothing is
-    // defaulted because nothing is invented. See that function's header.
-    const boneSamplers = buildClipBoneSamplers({
-      keyframes: params.keyframes ?? [],
-      duration: typeof params.duration === 'number' ? params.duration : 1,
-      loop: clipLoopOf(params.loop),
-    });
-
-    for (const [boneIndex, sample] of boneSamplers) {
-      const childName = clip.jointKeys[boneIndex];
-      // A bone the skeleton cannot name, or one outside this asset, cannot be
-      // addressed — the same skip `bakeChannelOpsForBone` makes for the same
-      // reason: a channel under an empty key is scoped to no asset and silently
-      // never applies.
-      if (typeof childName !== 'string' || childName.length === 0) continue;
-      if (!(childName in nodeNameMap)) continue;
-      // First clip by sorted id wins a bone; a later one does not overwrite.
-      const slot = (out[childName] ??= {});
-      slot.position ??= (seconds) => sample(seconds).position;
-      // 🔴 UNITS: an AnimationKeyframe rotation is RADIANS and this band is
-      // DEGREES. `ensureChannelForBone` documents why at length — copying
-      // through unconverted scales every bone rotation by π/180, which renders
-      // as a character standing still while its root position travels (#843).
-      slot.rotation ??= (seconds) => radVec3ToDeg(sample(seconds).rotation);
-    }
-  }
-  return out;
-}
-
-/**
- * The authored-pose band: constant per-component samplers from the
- * `PoseOverride` nodes hanging off this asset's rig (#974).
- *
- * PARAMS-SIDE, like every other band here, and for the same reason — an
- * override's authored values ARE its params, so nothing has to be evaluated to
- * read them. The value lane (`PosedSkeletonValue.sample`) is the graph-facing
- * road for nodes that consume a pose; this is the render-facing road, and they
- * agree because both read the same authored numbers.
- *
- * MEMBERSHIP IS AN EDGE WALK, not a name match, exactly as the clip band's is:
- * an override reaches this asset only by chaining up its `pose` input to a clip
- * that `boundClipsForAsset` already resolved to this rig. Overrides stack, so the
- * walk follows a chain of them; a bone named by a nearer override wins, which is
- * the same first-wins rule the clip band applies.
- *
- * CONSTANT, not time-varying: a hand-pose is one value held for the whole clip.
- * A sampler that ignores `seconds` is the honest shape for that, and it keeps the
- * band's type identical to the other two.
- *
- * 🔴 UNITS: `PoseOverride.rotation` is DEGREES — the codebase convention for an
- * authored rotation param (`Transform.rotation`, `GltfChild`) — and this band is
- * degrees, so unlike the clip band there is NO conversion here. The clip band
- * converts because an `AnimationKeyframe` rotation is radians; copying that call
- * across would scale every authored pose by π/180.
- */
-function poseBandForAsset(
-  nodes: Readonly<Record<string, GraphNodeLike>>,
-  nodeNameMap: Readonly<Record<string, string>>,
-  assetRef: string,
-): Record<string, BakedChannelSamplers> {
-  const bound = new Set(boundClipsForAsset(nodes, assetRef).map((c) => c.clipId));
-  if (bound.size === 0) return {};
-  const out: Record<string, BakedChannelSamplers> = {};
-  // Sorted for the same reason the clip walk sorts (V22): with two overrides on
-  // one bone, WHICH one wins must not depend on object-key order.
-  for (const id of Object.keys(nodes).sort()) {
-    const node = nodes[id];
-    if (node.type !== 'PoseOverride') continue;
-    if (!overrideReachesRig(nodes, id, bound)) continue;
-    const p = (node.params ?? {}) as {
-      bone?: unknown;
-      position?: unknown;
-      rotation?: unknown;
-      overridden?: { position?: boolean; rotation?: boolean };
-    };
-    const childName = p.bone;
-    // A bone this asset cannot name is scoped to no asset and silently never
-    // applies — the same skip the clip band makes, for the same reason.
-    if (typeof childName !== 'string' || !(childName in nodeNameMap)) continue;
-    const authored = p.overridden ?? {};
-    const slot = (out[childName] ??= {});
-    if (authored.position === true && isVec3(p.position)) {
-      const v = p.position;
-      slot.position ??= () => v;
-    }
-    if (authored.rotation === true && isVec3(p.rotation)) {
-      const v = p.rotation;
-      slot.rotation ??= () => v;
-    }
-  }
-  return out;
-}
-
-function isVec3(v: unknown): v is Vec3 {
-  return Array.isArray(v) && v.length === 3 && v.every((n) => typeof n === 'number');
-}
-
-/**
- * Enumerate the motion bands belonging to ONE glTF asset, keyed by childName →
- * per-component sampler closures.
- *
- * TWO SOURCES, ONE BAND, in precedence order:
- *   1. baked `KeyframeChannelVec3` nodes — an authored/materialised track;
- *   2. (#888) the `AnimationClip`s bound to this asset's rig, for any component
- *      no channel node supplies.
- *
- * The merge happens HERE, not at the call sites. Both surfaces — the renderer
+ * The enumeration happens HERE, not at the call sites. Both surfaces — the renderer
  * (C2) and the read-side gizmo/NPanel (C3) — consume this one function
  * precisely so a band cannot be threaded into one and not the other; a merge
  * performed per-caller would be exactly the per-surface re-implementation that
@@ -320,16 +145,10 @@ function isVec3(v: unknown): v is Vec3 {
  * @param nodes        the DAG node table (read-only).
  * @param nodeNameMap  the asset's childName → dagId map (GltfAssetValue.nodeNameMap)
  *                     — also the asset-membership scope (BLOCK-2).
- * @param assetRef     the asset's storage handle. REQUIRED, not optional: it is
- *                     the root of the edge walk, and a caller that omitted it
- *                     would silently get the channel band alone — which is a
- *                     correct-looking result and the wrong one. Both callers
- *                     have it in hand.
  */
 export function bakedChannelSamplersForAsset(
   nodes: Readonly<Record<string, ChannelNodeLike>>,
   nodeNameMap: Readonly<Record<string, string>>,
-  assetRef: string,
 ): Record<string, BakedChannelSamplers> {
   const out: Record<string, BakedChannelSamplers> = {};
   for (const node of Object.values(nodes)) {
@@ -341,33 +160,6 @@ export function bakedChannelSamplersForAsset(
     (out[p.childName] ??= {})[p.paramPath] = buildVec3Sampler(
       node.params as KeyframeChannelVec3Params,
     );
-  }
-  // #974 — the authored-pose band sits between the channel nodes and the clip:
-  // a materialised per-bone channel is the most specific authoring there is, a
-  // graph pose is an operator-level authored override, and the clip is the source
-  // motion both of them are edits to. Same `??=`, same per-component rule.
-  for (const [childName, fromPose] of Object.entries(
-    poseBandForAsset(nodes as Readonly<Record<string, GraphNodeLike>>, nodeNameMap, assetRef),
-  )) {
-    const slot = (out[childName] ??= {});
-    slot.position ??= fromPose.position;
-    slot.rotation ??= fromPose.rotation;
-  }
-
-  // The clip band fills only what no channel node OR pose supplied. `??=` is the
-  // precedence rule in one character: a real channel is an authored (or
-  // materialised) track and outranks the clip it came from, per-component —
-  // the same presence-not-value rule the resolver applies one layer up.
-  for (const [childName, fromClip] of Object.entries(
-    clipBandSamplersForAsset(
-      nodes as Readonly<Record<string, GraphNodeLike>>,
-      nodeNameMap,
-      assetRef,
-    ),
-  )) {
-    const slot = (out[childName] ??= {});
-    slot.position ??= fromClip.position;
-    slot.rotation ??= fromClip.rotation;
   }
   return out;
 }

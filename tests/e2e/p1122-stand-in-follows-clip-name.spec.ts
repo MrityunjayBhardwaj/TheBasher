@@ -1,14 +1,20 @@
 // #1122 — a motion's stand-in Object reads as its clip until a director names it otherwise.
 //
+// ON GENERATED MOTION (#1211). A dropped .bvh or .fbx no longer carries a clip: its motion is keys on
+// a base pose layer, and Blender never renames an armature after its action, so their Objects
+// follow nothing (`importBvhFbx.test.ts`). Generated motion keeps a clip for good (decision D-B), and
+// its Object follows it, so the follow is driven here through the Assets panel's generator, on the
+// offline generator the app falls back to (no server, no paid call — as `p1124` and
+// `generate-panel.spec.ts` run).
+//
 // Driven through the director's own gestures, because the road that matters most is one no
 // unit row can take: the inspector's name field commits a `setParam` whose path is a runtime
 // variable, and the name then has to reach surfaces that read `meta.name` directly rather than
 // through the resolver — the outliner rename box's seed and the viewport's selection summary
-// among them. Import goes through the ingest seam (setup only; it appends `.bvh`, so it is
-// passed the stem), and every observation after it is a gesture and what the page shows.
+// among them. Every observation after the generation is a gesture and what the page shows.
 //
-// Measured on `main` before this change, with the same gestures: the clip read `hero walk`,
-// the Object's row still read `soma-walk`, and its rename box opened on `soma-walk`.
+// Measured on `main` before #1122, with the same gestures on an imported clip: the clip read
+// `hero walk`, the Object's row still read the file's name, and its rename box opened on it.
 
 import { test, expect, type Page } from './_fixtures';
 
@@ -21,14 +27,13 @@ interface DagNode {
 interface Win {
   __basher_dag: { getState: () => { state: { nodes: Record<string, DagNode> } } };
   __basher_selection: { getState: () => { select: (id: string) => void } };
-  __basher_ingestBvhFile?: (bytes: Uint8Array, name: string) => Promise<string>;
 }
 
 async function ready(page: Page): Promise<void> {
   await expect(page.getByTestId('layout')).toBeVisible({ timeout: 10_000 });
   await page.waitForFunction(() => {
     const w = window as unknown as Win;
-    return Boolean(w.__basher_dag && w.__basher_selection && w.__basher_ingestBvhFile);
+    return Boolean(w.__basher_dag && w.__basher_selection);
   });
 }
 
@@ -63,15 +68,37 @@ async function renameClip(page: Page, clipId: string, name: string): Promise<voi
 test('the Object follows its clip’s name, keeps a name the director gives it, and undo resumes', async ({
   page,
 }) => {
+  // #1301 — a budget sized to the work, not a retry for a hang. Generating through the Assets
+  // panel (#1211) made this row ~20 s longer than the .bvh-seam version main ran in 38.8 s: on
+  // CI's software GL each gesture costs 1–2.5 s, and the row measured 59.2 s of step time on a
+  // normal-speed shard (1.05× main's median), against the 60 s default. Every step completed.
+  test.setTimeout(120_000);
   const errors: string[] = [];
   page.on('console', (m) => {
-    if (m.type() === 'error' && !/WebGL|GPU/i.test(m.text())) errors.push(m.text());
+    if (m.type() !== 'error' || /WebGL|GPU/i.test(m.text())) return;
+    // The capability probe asks the local motion server first, and no server ships, so that one
+    // request is refused before the offline generator answers (as in `p1124`). Only that URL is
+    // excused.
+    if (m.location().url.startsWith('http://127.0.0.1:8600')) return;
+    errors.push(`${m.text()} @ ${m.location().url}`);
   });
 
-  await page.evaluate(async () => {
-    const bytes = new Uint8Array(await (await fetch('/fixtures/anim/soma-walk.bvh')).arrayBuffer());
-    await (window as unknown as Win).__basher_ingestBvhFile!(bytes, 'soma-walk'); // appends .bvh
-  });
+  await page.getByTestId('top-toolbar-assets').click();
+  await page.getByTestId('generate-kind-motion').click();
+  await page.getByTestId('generate-prompt').fill('a figure walks forward');
+  await page.getByTestId('generate-submit').click();
+  // Cooked, not merely minted: the clip carries the receipt of a landed result.
+  await page.waitForFunction(
+    () =>
+      Object.values((window as unknown as Win).__basher_dag.getState().state.nodes).some(
+        (n) =>
+          n.type === 'AnimationClip' &&
+          typeof n.params.sourceHash === 'string' &&
+          n.params.sourceHash !== '',
+      ),
+    undefined,
+    { timeout: 30_000 },
+  );
   const ids = await page.evaluate(() => {
     const nodes = (window as unknown as Win).__basher_dag.getState().state.nodes;
     const ref = (v: unknown) => (v as { node?: string } | undefined)?.node;
@@ -84,10 +111,14 @@ test('the Object follows its clip’s name, keeps a name the director gives it, 
     )?.[0];
     return { object, clip };
   });
-  expect(ids.object, 'the import stood no Object — every read below would be vacuous').toBeTruthy();
+  expect(
+    ids.object,
+    'the generation stood no Object — every read below would be vacuous',
+  ).toBeTruthy();
   expect(ids.clip, 'no clip found for the Object’s skeleton').toBeTruthy();
+  await page.getByTestId('left-sidebar-tab-outliner').click();
   const row = page.getByTestId(`scene-tree-row-${ids.object}`);
-  await expect(row).toHaveText('soma-walk', { timeout: 5_000 });
+  await expect(row).toHaveText('a figure walks forward', { timeout: 5_000 });
 
   // 1. The clip is renamed in the inspector → the Object's row follows.
   await renameClip(page, ids.clip!, 'hero walk');

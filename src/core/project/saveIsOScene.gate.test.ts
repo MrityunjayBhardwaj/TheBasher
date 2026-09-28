@@ -223,6 +223,8 @@ describe('#631 — project save is O(scene), not O(vertices)', () => {
       cornerLayers: [],
       cornerNormals: null,
       faceLayers: [],
+      pointLayers: [],
+      vertexGroups: [],
     });
     const added = applyOp(emptyDagState(), {
       type: 'addNode',

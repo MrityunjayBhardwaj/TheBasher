@@ -70,6 +70,8 @@ function storedCube(extra: readonly MeshCornerLayer[]): GeometryRef {
     cornerLayers: [uvMap(), ...extra],
     cornerNormals: null,
     faceLayers: [],
+    pointLayers: [],
+    vertexGroups: [],
   };
   return meshGeometryRef(packMeshData(data));
 }

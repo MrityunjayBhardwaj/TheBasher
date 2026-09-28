@@ -47,8 +47,7 @@
 // rather than failing. That means it does not gate CI today; giving it a small
 // generated stand-in rig is tracked separately.
 //
-// REF: src/app/bakedGltfChannels.ts + src/app/animate/ensureChannelForBone.ts
-//        (the two sides of the units boundary);
+// REF: src/app/bakedGltfChannels.ts;
 //      src/app/asset/bindMotionToCharacter.ts (the bind decisions);
 //      src/viewport/SceneFromDAG.tsx (the TRS useFrame — the read site);
 //      issues #843, #844, #807, #820.
@@ -134,18 +133,27 @@ const MAX_LEAF_JOINT_DEG = 12;
 interface SkinHandle {
   boneCount: number;
   bound: boolean;
-  boneName: (i: number) => string | null;
-  boneRotation: (i: number) => [number, number, number] | null;
   vertex: (i: number) => [number, number, number];
 }
 interface BasherWindow {
   __basher_dag: {
     getState: () => {
-      state: { nodes: Record<string, { type: string; params?: Record<string, unknown> }> };
+      state: {
+        nodes: Record<
+          string,
+          {
+            type: string;
+            params?: Record<string, unknown>;
+            inputs?: Record<string, { node?: string }>;
+          }
+        >;
+      };
     };
   };
-  __basher_writeOpfsBytes?: (path: string, bytes: Uint8Array) => Promise<void>;
-  __basher_importGltf?: (buffer: ArrayBuffer, assetRef: string) => Promise<unknown>;
+  __basher_ingestGltfFolder?: (
+    files: { relativePath: string; bytes: Uint8Array }[],
+    folderName: string,
+  ) => Promise<string>;
   __basher_ingestBvhFile?: (bytes: Uint8Array, name: string) => Promise<string>;
   __basher_time?: { getState: () => { setTime: (s: number) => void } };
   __basher_gltf_skin?: () => SkinHandle | null;
@@ -186,8 +194,7 @@ async function walks(page: Page, pair: (typeof PAIRS)[number]): Promise<void> {
       const w = window as unknown as BasherWindow;
       return Boolean(
         w.__basher_dag &&
-        w.__basher_importGltf &&
-        w.__basher_writeOpfsBytes &&
+        w.__basher_ingestGltfFolder &&
         w.__basher_ingestBvhFile &&
         w.__basher_time,
       );
@@ -196,12 +203,17 @@ async function walks(page: Page, pair: (typeof PAIRS)[number]): Promise<void> {
   );
 
   // ---- 1. the generated, rigged character --------------------------------
+  // Through the product's import: a native character since #1205 — a skeleton Object posed through
+  // its pose layers, and a mesh an Armature modifier deforms by it.
   await page.evaluate(
     async ([url, ref]) => {
       const w = window as unknown as BasherWindow;
-      const buf = await (await fetch(url)).arrayBuffer();
-      await w.__basher_writeOpfsBytes!(ref, new Uint8Array(buf));
-      await w.__basher_importGltf!(buf, ref);
+      const bytes = new Uint8Array(await (await fetch(url)).arrayBuffer());
+      const name = ref.slice(ref.lastIndexOf('/') + 1);
+      await w.__basher_ingestGltfFolder!(
+        [{ relativePath: name, bytes }],
+        name.replace(/\.glb$/, ''),
+      );
     },
     [GLB_URL, ASSET_REF],
   );
@@ -213,6 +225,48 @@ async function walks(page: Page, pair: (typeof PAIRS)[number]): Promise<void> {
     { timeout: 120_000 },
   );
 
+  // THE BONES AS DRAWN. A native character's bones never enter the scene graph (the skinned draw
+  // parents bones only to bones), so every probe below reads them where the armature band draws
+  // them: the character's own slice of `__basher_armature` (the skeleton Object the mesh's
+  // Armature modifier deforms by), as world matrices under the rig's own bone names. Installed as a
+  // scene-shaped adapter so each probe's arithmetic is unchanged; it reads the band on every call.
+  await page.evaluate(() => {
+    type Band = {
+      bones: number;
+      names: string[];
+      matrices: number[][];
+      skeletonObjects: { id: string; bones: number }[];
+    };
+    const w = window as unknown as {
+      __basher_armature?: Band;
+      __basher_dag: BasherWindow['__basher_dag'];
+      __p_scene?: unknown;
+    };
+    const characterBones = (): Array<[string, number[]]> => {
+      const a = w.__basher_armature;
+      const nodes = w.__basher_dag.getState().state.nodes;
+      const id = Object.values(nodes).find((n) => n.type === 'ArmatureModifier')?.inputs?.armature
+        ?.node;
+      if (!a || !id) throw new Error('no armature band, or no native character to read');
+      let start = a.bones - a.skeletonObjects.reduce((n, o) => n + o.bones, 0);
+      for (const o of a.skeletonObjects) {
+        if (o.id === id) {
+          return a.names
+            .slice(start, start + o.bones)
+            .map((name, i) => [name, [...a.matrices[start + i]]] as [string, number[]]);
+        }
+        start += o.bones;
+      }
+      throw new Error(`the band draws no armature for the character ${id}`);
+    };
+    w.__p_scene = {
+      traverse: (visit: (o: unknown) => void) => {
+        for (const [name, elements] of characterBones())
+          visit({ name, isBone: true, matrixWorld: { elements } });
+      },
+    };
+  });
+
   const character = await page.evaluate(() => {
     const w = window as unknown as BasherWindow;
     const skin = w.__basher_gltf_skin!()!;
@@ -220,9 +274,9 @@ async function walks(page: Page, pair: (typeof PAIRS)[number]): Promise<void> {
     return {
       boneCount: skin.boneCount,
       bound: skin.bound,
-      // #807 — the import mints one rig node per captured skin. Without it the
-      // motion has nothing to be retargeted ONTO and the bind refuses.
-      rigNodes: Object.values(nodes).filter((n) => n.type === 'GltfSkeleton').length,
+      // #807 — the import mints one rig node per captured skin (natively a Skeleton). Without it
+      // the motion has nothing to be retargeted ONTO and the bind refuses.
+      rigNodes: Object.values(nodes).filter((n) => n.type === 'Skeleton').length,
     };
   });
   expect(character.bound, 'the imported character must have a bound skin').toBe(true);
@@ -234,10 +288,8 @@ async function walks(page: Page, pair: (typeof PAIRS)[number]): Promise<void> {
   // against. It has to be read here: once a clip is bound there is no frame in
   // which the rig is at its bind.
   const bindPose = await page.evaluate(() => {
-    const w = window as unknown as BasherWindow & {
-      __basher_three?: { getState: () => { scene?: unknown } };
-    };
-    const scene = w.__basher_three?.getState().scene as
+    const w = window as unknown as BasherWindow & {};
+    const scene = (w as unknown as { __p_scene?: unknown }).__p_scene as
       | { traverse: (f: (o: never) => void) => void }
       | undefined;
     if (!scene) throw new Error('no scene handle — the probe would report a vacuous zero');
@@ -285,27 +337,85 @@ async function walks(page: Page, pair: (typeof PAIRS)[number]): Promise<void> {
 
   // ---- 3. PLAYBACK — the assertion the whole spec exists for --------------
   const played = await page.evaluate(async (sampleTimes: readonly number[]) => {
-    const w = window as unknown as BasherWindow;
-    const times = sampleTimes;
-    const skin0 = w.__basher_gltf_skin!()!;
-    const n = skin0.boneCount;
-    const names = Array.from({ length: n }, (_, i) => skin0.boneName(i));
-    const frames: number[][][] = [];
+    const w = window as unknown as BasherWindow & {
+      __p_scene: { traverse: (f: (o: never) => void) => void };
+    };
+    // Each bone's LOCAL rotation, read off the drawn world matrices: parent⁻¹ · child, with the
+    // parents the character's Skeleton names. The spread is the angle a bone turns away from its
+    // first sample — the local rotation, so a parent's swing is not counted on its children.
+    type Q = [number, number, number, number];
+    const quat = (e: number[]): Q => {
+      const c = (i: number): [number, number, number] => {
+        const v: [number, number, number] = [e[i * 4], e[i * 4 + 1], e[i * 4 + 2]];
+        const n = Math.hypot(v[0], v[1], v[2]);
+        return [v[0] / n, v[1] / n, v[2] / n];
+      };
+      const [m00, m10, m20] = c(0);
+      const [m01, m11, m21] = c(1);
+      const [m02, m12, m22] = c(2);
+      const tr = m00 + m11 + m22;
+      if (tr > 0) {
+        const k = Math.sqrt(tr + 1) * 2;
+        return [(m21 - m12) / k, (m02 - m20) / k, (m10 - m01) / k, k / 4];
+      }
+      if (m00 > m11 && m00 > m22) {
+        const k = Math.sqrt(1 + m00 - m11 - m22) * 2;
+        return [k / 4, (m01 + m10) / k, (m02 + m20) / k, (m21 - m12) / k];
+      }
+      if (m11 > m22) {
+        const k = Math.sqrt(1 + m11 - m00 - m22) * 2;
+        return [(m01 + m10) / k, k / 4, (m12 + m21) / k, (m02 - m20) / k];
+      }
+      const k = Math.sqrt(1 + m22 - m00 - m11) * 2;
+      return [(m02 + m20) / k, (m12 + m21) / k, k / 4, (m10 - m01) / k];
+    };
+    const mul = (a: Q, b: Q): Q => [
+      a[3] * b[0] + a[0] * b[3] + a[1] * b[2] - a[2] * b[1],
+      a[3] * b[1] - a[0] * b[2] + a[1] * b[3] + a[2] * b[0],
+      a[3] * b[2] + a[0] * b[1] - a[1] * b[0] + a[2] * b[3],
+      a[3] * b[3] - a[0] * b[0] - a[1] * b[1] - a[2] * b[2],
+    ];
+    const inv = (a: Q): Q => [-a[0], -a[1], -a[2], a[3]];
+    const deg = (a: Q): number => (2 * Math.acos(Math.min(1, Math.abs(a[3]))) * 180) / Math.PI;
+
+    const nodes = w.__basher_dag.getState().state.nodes;
+    const armature = Object.values(nodes).find((n) => n.type === 'ArmatureModifier')?.inputs
+      ?.armature?.node;
+    const skeleton = nodes[nodes[armature ?? '']?.inputs?.data?.node ?? '']?.params?.bones as
+      | { name: string; parent: number }[]
+      | undefined;
+    if (!skeleton) throw new Error('no Skeleton behind the character — no parents to read');
+    const parentOf = new Map(
+      skeleton.map((b) => [b.name, b.parent >= 0 ? skeleton[b.parent].name : null]),
+    );
+
+    const frames: Map<string, Q>[] = [];
     const verts: [number, number, number][] = [];
-    for (const t of times) {
+    for (const t of sampleTimes) {
       w.__basher_time!.getState().setTime(t);
-      // Two rAFs: the TRS useFrame writes on the next frame after the time set.
+      // Two rAFs: the pose is sampled in a useFrame on the next frame after the time set.
       await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
-      const skin = w.__basher_gltf_skin!()!;
-      frames.push(Array.from({ length: n }, (_, i) => skin.boneRotation(i) ?? [0, 0, 0]));
-      verts.push(skin.vertex(0));
+      const world = new Map<string, number[]>();
+      w.__p_scene.traverse((o: never) => {
+        const b = o as unknown as { name: string; matrixWorld: { elements: number[] } };
+        world.set(b.name, b.matrixWorld.elements);
+      });
+      const local = new Map<string, Q>();
+      for (const [name, m] of world) {
+        const parent = parentOf.get(name);
+        const p = parent ? world.get(parent) : undefined;
+        local.set(name, p ? mul(inv(quat(p)), quat(m)) : quat(m));
+      }
+      frames.push(local);
+      verts.push(w.__basher_gltf_skin!()!.vertex(0));
     }
-    const spreads = Array.from({ length: n }, (_, i) => {
-      let m = 0;
-      for (const f of frames)
-        for (let a = 0; a < 3; a++) m = Math.max(m, Math.abs(f[i][a] - frames[0][i][a]));
-      return { bone: names[i] ?? `#${i}`, deg: (m * 180) / Math.PI };
-    }).sort((a, b) => b.deg - a.deg);
+    const spreads = [...frames[0].keys()]
+      .map((bone) => {
+        let m = 0;
+        for (const f of frames) m = Math.max(m, deg(mul(inv(frames[0].get(bone)!), f.get(bone)!)));
+        return { bone, deg: m };
+      })
+      .sort((a, b) => b.deg - a.deg);
     const travel = Math.max(
       ...verts.map((v) => Math.hypot(v[0] - verts[0][0], v[1] - verts[0][1], v[2] - verts[0][2])),
     );
@@ -329,10 +439,8 @@ async function walks(page: Page, pair: (typeof PAIRS)[number]): Promise<void> {
 
   // ---- 4. POSTURE — is it walking, or lying down doing the same motion? ---
   const posture = await page.evaluate(async (sampleTimes: readonly number[]) => {
-    const w = window as unknown as BasherWindow & {
-      __basher_three?: { getState: () => { scene?: unknown } };
-    };
-    const scene = w.__basher_three?.getState().scene as
+    const w = window as unknown as BasherWindow & {};
+    const scene = (w as unknown as { __p_scene?: unknown }).__p_scene as
       | { traverse: (f: (o: never) => void) => void }
       | undefined;
     if (!scene) throw new Error('no scene handle — the probe would report a vacuous zero');
@@ -350,7 +458,7 @@ async function walks(page: Page, pair: (typeof PAIRS)[number]): Promise<void> {
     for (const t of sampleTimes) {
       w.__basher_time!.getState().setTime(t);
       await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
-      rows.push(y('mixamorigHead') - y('mixamorigHips'));
+      rows.push(y('mixamorig_Head') - y('mixamorig_Hips'));
     }
     return rows;
   }, pair.times);
@@ -388,10 +496,8 @@ async function walks(page: Page, pair: (typeof PAIRS)[number]): Promise<void> {
   // carried the angle between them for the whole clip. Nothing else here can see
   // it: the arms rotate, the head is above the hips, and the stride is right.
   const arms = await page.evaluate(async (sampleTimes: readonly number[]) => {
-    const w = window as unknown as BasherWindow & {
-      __basher_three?: { getState: () => { scene?: unknown } };
-    };
-    const scene = w.__basher_three?.getState().scene as
+    const w = window as unknown as BasherWindow & {};
+    const scene = (w as unknown as { __p_scene?: unknown }).__p_scene as
       | { traverse: (f: (o: never) => void) => void }
       | undefined;
     if (!scene) throw new Error('no scene handle — the probe would report a vacuous zero');
@@ -413,8 +519,8 @@ async function walks(page: Page, pair: (typeof PAIRS)[number]): Promise<void> {
       });
       // Both arms, so a fix that only lands on one side cannot pass.
       for (const side of ['Left', 'Right']) {
-        const shoulder = at.get(`mixamorig${side}Arm`);
-        const elbow = at.get(`mixamorig${side}ForeArm`);
+        const shoulder = at.get(`mixamorig_${side}Arm`);
+        const elbow = at.get(`mixamorig_${side}ForeArm`);
         if (!shoulder || !elbow) throw new Error(`no rendered ${side} arm`);
         const d = [elbow[0] - shoulder[0], elbow[1] - shoulder[1], elbow[2] - shoulder[2]];
         const length = Math.hypot(d[0], d[1], d[2]);
@@ -451,10 +557,8 @@ async function walks(page: Page, pair: (typeof PAIRS)[number]): Promise<void> {
   // from, where the answer is zero by construction and would prove nothing.
   const leafJoints = await page.evaluate(
     async ([sampleTimes, bind]: [readonly number[], Record<string, number[]>]) => {
-      const w = window as unknown as BasherWindow & {
-        __basher_three?: { getState: () => { scene?: unknown } };
-      };
-      const scene = w.__basher_three?.getState().scene as
+      const w = window as unknown as BasherWindow & {};
+      const scene = (w as unknown as { __p_scene?: unknown }).__p_scene as
         | { traverse: (f: (o: never) => void) => void }
         | undefined;
       if (!scene) throw new Error('no scene handle — the probe would report a vacuous zero');
@@ -578,10 +682,8 @@ async function walks(page: Page, pair: (typeof PAIRS)[number]): Promise<void> {
   );
 
   const rendered = await page.evaluate(async (sampleTimes: readonly number[]) => {
-    const w = window as unknown as BasherWindow & {
-      __basher_three?: { getState: () => { scene?: unknown } };
-    };
-    const scene = w.__basher_three?.getState().scene as
+    const w = window as unknown as BasherWindow & {};
+    const scene = (w as unknown as { __p_scene?: unknown }).__p_scene as
       | { traverse: (f: (o: never) => void) => void }
       | undefined;
     if (!scene) throw new Error('no scene handle — the probe would report a vacuous zero');
@@ -617,12 +719,12 @@ async function walks(page: Page, pair: (typeof PAIRS)[number]): Promise<void> {
         // Thigh and shin on both sides, posed — the same two long bones the
         // scale is derived from, read here off the rendered skeleton.
         legs =
-          gap(m, 'mixamorigLeftUpLeg', 'mixamorigLeftLeg') +
-          gap(m, 'mixamorigLeftLeg', 'mixamorigLeftFoot') +
-          gap(m, 'mixamorigRightUpLeg', 'mixamorigRightLeg') +
-          gap(m, 'mixamorigRightLeg', 'mixamorigRightFoot');
+          gap(m, 'mixamorig_LeftUpLeg', 'mixamorig_LeftLeg') +
+          gap(m, 'mixamorig_LeftLeg', 'mixamorig_LeftFoot') +
+          gap(m, 'mixamorig_RightUpLeg', 'mixamorig_RightLeg') +
+          gap(m, 'mixamorig_RightLeg', 'mixamorig_RightFoot');
       }
-      const p = m.get('mixamorigHips');
+      const p = m.get('mixamorig_Hips');
       if (!p) throw new Error('no rendered hips');
       hips.push(p);
     }

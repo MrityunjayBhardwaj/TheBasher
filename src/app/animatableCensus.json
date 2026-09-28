@@ -770,6 +770,48 @@
         "driver": "scene"
       }
     },
+    "Object<ArmatureModifier>": {
+      "position": {
+        "kind": "vec3",
+        "reach": "scene",
+        "driver": "scene"
+      },
+      "quaternion": {
+        "kind": "quat",
+        "reach": null
+      },
+      "rotation": {
+        "kind": "vec3",
+        "reach": "scene",
+        "driver": "scene"
+      },
+      "scale": {
+        "kind": "vec3",
+        "reach": "scene",
+        "driver": "scene"
+      }
+    },
+    "Object<ArmatureModifier>@quaternion": {
+      "position": {
+        "kind": "vec3",
+        "reach": "scene",
+        "driver": "scene"
+      },
+      "quaternion": {
+        "kind": "quat",
+        "reach": "scene"
+      },
+      "rotation": {
+        "kind": "vec3",
+        "reach": null,
+        "driver": null
+      },
+      "scale": {
+        "kind": "vec3",
+        "reach": "scene",
+        "driver": "scene"
+      }
+    },
     "Object<ArrayModifier>": {
       "position": {
         "kind": "vec3",

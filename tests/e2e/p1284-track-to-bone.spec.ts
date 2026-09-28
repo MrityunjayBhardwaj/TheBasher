@@ -2,7 +2,8 @@
 // drawn Hips while the walk carries them away, not at the spot the walk began.
 //
 // Both sides of the boundary are the drawn ones: the look-through camera the viewport renders
-// with (`__basher_view_camera`) and the Hips bone of the skeleton three.js draws. The control
+// with (`__basher_view_camera`) and the Hips bone the armature band draws (`__basher_armature`) —
+// the example's character opens native (#1216 converts its saved clone-road rig on load). The control
 // clears `aimBone` in the same page, which must turn the camera back to the character's origin —
 // so a pass cannot come from a camera that happened to face the Hips anyway.
 
@@ -17,35 +18,18 @@ function degreesOffHips(page: Page, times: readonly number[]) {
     type W = {
       __basher_time: { getState: () => { setTime: (s: number) => void } };
       __basher_view_camera: () => { position: Vec3; direction: Vec3; lookThrough: boolean };
-      __basher_three: {
-        getState: () => {
-          scene: {
-            updateMatrixWorld: (f: boolean) => void;
-            traverse: (fn: (o: unknown) => void) => void;
-          };
-        };
-      };
+      __basher_armature?: { names: string[]; matrices: number[][] };
     };
     const w = window as unknown as W;
-    const scene = w.__basher_three.getState().scene;
-    type Bone = {
-      getWorldPosition: (v: unknown) => { x: number; y: number; z: number };
-      position: { clone: () => unknown };
-    };
-    const found: Bone[] = [];
-    scene.traverse((o) => {
-      const b = o as { isBone?: boolean; name?: string };
-      if (b.isBone && /Hips$/.test(b.name ?? '')) found.push(o as Bone);
-    });
-    const hips = found[0];
-    if (!hips) return null;
+    const hipsIndex = w.__basher_armature?.names.findIndex((n) => /Hips$/.test(n)) ?? -1;
+    if (hipsIndex < 0) return null;
     const out: { t: number; deg: number; lookThrough: boolean }[] = [];
     for (const t of ts) {
       w.__basher_time.getState().setTime(t);
       for (let i = 0; i < 4; i++) await new Promise((r) => requestAnimationFrame(() => r(null)));
-      scene.updateMatrixWorld(true);
       const v = w.__basher_view_camera();
-      const h = hips.getWorldPosition(hips.position.clone());
+      const m = w.__basher_armature!.matrices[hipsIndex];
+      const h = { x: m[12], y: m[13], z: m[14] };
       const d = [h.x - v.position[0], h.y - v.position[1], h.z - v.position[2]];
       const n = Math.hypot(d[0], d[1], d[2]);
       const cos = (d[0] * v.direction[0] + d[1] * v.direction[1] + d[2] * v.direction[2]) / n;
@@ -78,10 +62,10 @@ test('the camera looks through its Track-To at the walking Hips, not where the w
   await page.waitForFunction(
     () => {
       const w = window as unknown as {
-        __basher_gltf_skin?: () => unknown;
+        __basher_armature?: { bones: number };
         __basher_view_camera?: () => unknown;
       };
-      return w.__basher_gltf_skin?.() != null && w.__basher_view_camera?.() != null;
+      return (w.__basher_armature?.bones ?? 0) > 10 && w.__basher_view_camera?.() != null;
     },
     null,
     { timeout: 30_000 },
@@ -99,7 +83,7 @@ test('the camera looks through its Track-To at the walking Hips, not where the w
   console.log(
     `[1284] aimBone=Hips: ${JSON.stringify(aimed?.map((r) => [r.t, +r.deg.toFixed(2)]))}`,
   );
-  expect(aimed, 'the drawn skeleton has Hips').not.toBeNull();
+  expect(aimed, 'the drawn armature has Hips').not.toBeNull();
   for (const r of aimed!) {
     expect(r.lookThrough, 'looking through the camera').toBe(true);
     expect(r.deg, `at ${r.t}s the camera faces the Hips`).toBeLessThan(0.5);

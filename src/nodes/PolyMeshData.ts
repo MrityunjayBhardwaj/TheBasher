@@ -40,7 +40,12 @@
 
 import { z } from 'zod';
 import type { NodeDefinition } from '../core/dag/types';
-import type { MeshCornerLayerType, MeshDataValue, MeshFaceLayerType } from './types';
+import type {
+  MeshCornerLayerType,
+  MeshDataValue,
+  MeshFaceLayerType,
+  MeshPointLayerType,
+} from './types';
 import { UV_MAP } from './attributes';
 import { openpbrMaterialSchema } from './materialSchema';
 import { materialKeyOf } from './materialKey';
@@ -55,6 +60,9 @@ const CORNER_LAYER_TYPES = ['float2', 'float4'] as const satisfies readonly Mesh
 /** The face layer types a stored mesh holds (#1052). */
 const FACE_LAYER_TYPES = ['int'] as const satisfies readonly MeshFaceLayerType[];
 
+/** The point layer types a stored mesh holds (#1196). */
+const POINT_LAYER_TYPES = ['int4', 'float4'] as const satisfies readonly MeshPointLayerType[];
+
 /** The packed mesh, refused at parse time unless it decodes to a well-formed mesh. */
 export const PackedMeshSchema = z
   .object({
@@ -68,6 +76,10 @@ export const PackedMeshSchema = z
     faceLayers: z.array(
       z.object({ name: z.string(), type: z.enum(FACE_LAYER_TYPES), data: z.string() }),
     ),
+    pointLayers: z.array(
+      z.object({ name: z.string(), type: z.enum(POINT_LAYER_TYPES), data: z.string() }),
+    ),
+    vertexGroups: z.array(z.string()),
   })
   .superRefine((packed, ctx) => {
     let problem: string | null;
@@ -135,16 +147,35 @@ export function migrateAddFaceLayers(params: unknown): unknown {
   return { ...p, mesh: { ...(mesh as Record<string, unknown>), faceLayers: [] } };
 }
 
+/**
+ * Version 3 → 4 (#1196): a stored mesh gains point layers and a vertex group table, and every mesh
+ * saved before it has neither. Empty lists say what the missing fields did: bound to nothing. A mesh
+ * already carrying both, or params with no mesh, are returned as they are.
+ */
+export function migrateAddPointLayers(params: unknown): unknown {
+  const p = (params ?? {}) as Record<string, unknown>;
+  const mesh = p.mesh;
+  if (mesh === null || typeof mesh !== 'object' || Array.isArray(mesh)) return p;
+  const m = mesh as Record<string, unknown>;
+  if ('pointLayers' in m && 'vertexGroups' in m) return p;
+  return {
+    ...p,
+    mesh: { ...m, pointLayers: m.pointLayers ?? [], vertexGroups: m.vertexGroups ?? [] },
+  };
+}
+
 export const PolyMeshDataNode: NodeDefinition<PolyMeshDataParams, MeshDataValue> = {
   type: 'PolyMeshData',
   // #1117 — BUMPED 1 → 2 by `cornerUVs` moving into `cornerLayers`. Without the bump the schema
   // would refuse an old save's mesh on the way in, and the migration below would never run.
   // #1052 — BUMPED 2 → 3 by `faceLayers`, for the same reason: an old save's mesh has no such
   // field, and the schema would refuse it before a migration could add one.
-  version: 3,
+  // #1196 — BUMPED 3 → 4 by `pointLayers` and `vertexGroups`, for that reason again.
+  version: 4,
   migrations: {
     1: migrateCornerUVsToLayers,
     2: migrateAddFaceLayers,
+    3: migrateAddPointLayers,
   },
   pure: true,
   cost: 'cheap',

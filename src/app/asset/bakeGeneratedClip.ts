@@ -5,15 +5,17 @@
 // WHY THIS FILE EXISTS AT ALL — MEASURED, NOT ARGUED
 // ─────────────────────────────────────────────────────────────────────────────
 // `MotionGenerate` evaluates to an `AnimationClipValue`. Nothing that drives
-// pixels reads an `AnimationClip` VALUE. Every one of them — the render band,
-// the channel mint, the dopesheet, the format migration — goes through
-// `boundClipsForAsset`, which is deliberately pure over PARAMS and never calls
+// pixels reads an `AnimationClip` VALUE. When this was written every one of them — the render band,
+// the channel mint, the dopesheet, the format migration — went through
+// `boundClipsForAsset` (the render band retired with the clone road's character half, #1053;
+// a native character is posed through its Object's pose edge), which is pure over PARAMS and never calls
 // `evaluate()`, because the migration runs it on raw saved JSON long before an
 // evaluator exists.
 //
-// Observed on one graph with one node swapped in the `RetargetClip.sourceClip`
-// slot, the `AnimationClip` arm present precisely so the fixture is known to be
-// able to exhibit the property:
+// Observed on one graph with one node swapped in the retarget's source slot
+// (then `RetargetClip.sourceClip`, now `source`, the pose wire, #1225), the
+// `AnimationClip` arm present precisely so the fixture is known to be able to
+// exhibit the property:
 //
 //   AnimationClip   -> boundClips=1  keyframes=4  retarget.sourceNode=AnimationClip
 //   MotionGenerate  -> boundClips=0  keyframes=0  retarget.sourceNode=null
@@ -26,7 +28,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // WHY IT RETURNS OPS INSTEAD OF DISPATCHING
 // ─────────────────────────────────────────────────────────────────────────────
-// Same contract as `buildGeneratedMotionOps` and every import road: the caller
+// Same contract as every import road: the caller
 // dispatches atomically, so a cook is ONE undo entry rather than one per param.
 // It also keeps this function pure over the state it is handed, which is what
 // lets it be falsified without a store.
@@ -91,6 +93,7 @@ import { evaluate } from '../../core/dag/evaluator';
 import type { DagState } from '../../core/dag/state';
 import type { Op } from '../../core/dag/types';
 import { edgeTarget } from '../animate/graphNodes';
+import { lookupGeneratedClip } from '../../core/motiongen/generatedClipCache';
 import type { AnimationClipValue } from '../../nodes/types';
 
 /** One sink whose params are behind its producer, and the hash that will fix it. */
@@ -135,7 +138,8 @@ export interface ClipBakeState {
 }
 
 /** The producer feeding this clip, when it is a node that generates one. */
-function producerOf(state: DagState, clipId: string): string | null {
+/** The generator a clip is cooked from, or null: a clip whose params (and rig) each cook rewrites. */
+export function producerOf(state: DagState, clipId: string): string | null {
   const producerId = edgeTarget(state.nodes[clipId], 'source');
   if (!producerId) return null;
   return state.nodes[producerId]?.type === 'MotionGenerate' ? producerId : null;
@@ -191,6 +195,11 @@ export function bakeGeneratedClipOps(state: DagState): Op[] {
     // lock/freeze exists to prevent.
     if (!stale || status !== 'ready') continue;
     const value = evaluate(state, producerId).value as AnimationClipValue;
+    // #1225 — the params still spell keys by bone index in XYZ euler (until #1233 step 8), and the
+    // value now carries timed poses; the generated keys themselves are in the generation cache the
+    // value was built from, so they land exactly as generated, with no quaternion round trip.
+    const generated = lookupGeneratedClip(value.generation!.requestHash);
+    if (!generated) continue;
 
     // The rig FIRST. A keyframe's `bone` is an index into the skeleton the keys
     // were authored against, so params written in the other order leave a window
@@ -212,7 +221,7 @@ export function bakeGeneratedClipOps(state: DagState): Op[] {
       // what put a director's rename back to the generator's on every re-cook.
       { type: 'setParam', nodeId: clipId, paramPath: 'duration', value: value.duration },
       { type: 'setParam', nodeId: clipId, paramPath: 'loop', value: value.loop },
-      { type: 'setParam', nodeId: clipId, paramPath: 'keyframes', value: value.keyframes },
+      { type: 'setParam', nodeId: clipId, paramPath: 'keyframes', value: generated.keyframes },
       // LAST, and that is load-bearing: this is the receipt that the params above
       // were written. An inverse that stops partway leaves the hash unchanged, so
       // the clip still reads as stale and the next cook redoes it — rather than

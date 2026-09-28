@@ -78,10 +78,15 @@ describe('node schema payload (#1007)', () => {
     // The measured failure: 18 invented socket names across four models, on a node
     // that declares exactly one input.
     const obj = nodeSchemaOf('Object')!;
-    // #1056 — still exactly one input; it now accepts a Skeleton as well, and the catalogue
-    // names both types so a model is told the skeleton is a legal thing to wire there.
+    // #1056 — the data input accepts a Skeleton as well, and the catalogue names both types so a
+    // model is told the skeleton is a legal thing to wire there.
+    // #1152 — and a second input, `children`: an Object parents other scene objects, as a Group
+    // does. The catalogue carries it so a model wires a child to the socket that exists.
     expect(obj.inputs).toEqual([
       { socket: 'data', type: 'ObjectData|Skeleton', cardinality: 'single' },
+      { socket: 'children', type: 'SceneObject', cardinality: 'list' },
+      // #1203 — and a third, what poses an armature Object; since #1224 the pose wire, `pose`.
+      { socket: 'pose', type: 'PosedSkeleton', cardinality: 'single' },
     ]);
     expect(obj.outputs).toEqual([{ socket: 'out', type: 'SceneObject', cardinality: 'single' }]);
     // and `position` IS real — as a PARAM, which is the distinction nobody was given

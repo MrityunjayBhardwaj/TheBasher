@@ -1,10 +1,10 @@
 // BVH/FBX OPFS import chokepoints + dispatcher — unit coverage, Phase 7.14 A2.
 //
 // Mirrors importGltf.test.ts: boot.getStorage is mocked to a fresh
-// MemoryStorage per test; the real useDagStore is seeded with a TimeSource
-// (BVH/FBX clips wire to it). We assert the SURFACE behavior — bytes on OPFS →
-// Skeleton + AnimationClip ops dispatched + refresh bumped — not the parser
-// internals (those are covered by bvhImportChain.test.ts / fbx.test.ts).
+// MemoryStorage per test; the real useDagStore is seeded with a TimeSource. We
+// assert the SURFACE behavior — bytes on OPFS → Skeleton + base PoseLayer ops
+// dispatched + refresh bumped (#1211) — not the parser internals (those are
+// covered by bvhImportChain.test.ts / fbxImportChain.test.ts).
 //
 // FBX is exercised end-to-end (real ASCII fixture → FBXLoader) by the
 // p7.14 e2e; here we cover the dispatcher routing + the BVH text path + the
@@ -32,7 +32,7 @@ import { ingestSingleFile, USER_IMPORTS_ROOT } from './importCommon';
 import { chooseMotionTarget } from './bindMotionToCharacter';
 import { nodeDisplayName } from '../sceneTreeWalk';
 import { applyOp } from '../../core/dag';
-import { composeProject, loadProject, saveProject } from '../../core/project/io';
+import { nativeCharacterOps } from '../../test-utils/nativeCharacter';
 import { __resetMutatorRegistryForTests, registerAllMutators } from '../../agent/mutators';
 
 // The committed ASCII FBX fixture (public/fixtures/anim/rig.fbx — 2-bone
@@ -41,6 +41,8 @@ import { __resetMutatorRegistryForTests, registerAllMutators } from '../../agent
 const RIG_FBX_BYTES = new Uint8Array(
   readFileSync(resolve(process.cwd(), 'public/fixtures/anim/rig.fbx')),
 );
+/** Where the FBX rows put their file, as the BVH rows use `path`. */
+const FBX_PATH = `${USER_IMPORTS_ROOT}/rig/rig.fbx`;
 
 const SYNTHETIC_BVH = `HIERARCHY
 ROOT Hips
@@ -65,7 +67,7 @@ Frame Time: 0.0333333
 `;
 
 function seedTime(): void {
-  // BVH/FBX clips connect to a TimeSource; default projects seed `n_time`.
+  // Default projects seed `n_time`; the tests start from one.
   useDagStore.getState().hydrate({
     nodes: {
       n_scene: { id: 'n_scene', type: 'Scene', version: 1, params: {}, inputs: {} },
@@ -75,43 +77,15 @@ function seedTime(): void {
   });
 }
 
-/** A glTF character with a two-bone rig the synthetic BVH's names match — something to bind to. */
+/** A native character with a two-bone rig the synthetic BVH's names match — something to bind to. */
 function seedCharacter(): void {
-  const names = ['Hips', 'Spine'];
   let s = useDagStore.getState().state;
-  s = applyOp(s, {
-    type: 'addNode',
-    nodeId: 'n_char',
-    nodeType: 'GltfAsset',
-    params: {
-      assetRef: 'assets/char.glb',
-      nodeNameMap: {},
-      childHierarchy: {},
-      skins: [
-        {
-          jointKeys: names,
-          bindTRS: names.map(() => ({
-            position: [0, 0, 0] as [number, number, number],
-            rotation: [0, 0, 0] as [number, number, number],
-            scale: [1, 1, 1] as [number, number, number],
-          })),
-          parentJointIndex: [-1, 0],
-          inverseBindMatrices: [],
-        },
-      ],
-    },
-  }).next;
-  s = applyOp(s, {
-    type: 'addNode',
-    nodeId: 'n_char_skel',
-    nodeType: 'GltfSkeleton',
-    params: { skinIndex: 0 },
-  }).next;
-  s = applyOp(s, {
-    type: 'connect',
-    from: { node: 'n_char', socket: 'out' },
-    to: { node: 'n_char_skel', socket: 'asset' },
-  }).next;
+  for (const op of nativeCharacterOps({
+    prefix: 'n_char',
+    bones: ['Hips', 'Spine'],
+    sceneId: 'n_scene',
+  }).ops)
+    s = applyOp(s, op).next;
   useDagStore.getState().hydrate(s);
 }
 
@@ -124,7 +98,7 @@ beforeEach(() => {
 });
 
 describe('importBvhFromOpfs', () => {
-  it('dispatches Skeleton + AnimationClip addNode ops (no mesh) and bumps once', async () => {
+  it('dispatches Skeleton + base PoseLayer addNode ops (no clip, no mesh) and bumps once', async () => {
     const path = `${USER_IMPORTS_ROOT}/wave/wave.bvh`;
     await currentStorage.write(path, new TextEncoder().encode(SYNTHETIC_BVH));
 
@@ -135,7 +109,9 @@ describe('importBvhFromOpfs', () => {
     const ops = dispatchSpy.mock.calls[0][0];
     const types = ops.filter((o) => o.type === 'addNode').map((o) => o.nodeType);
     expect(types).toContain('Skeleton');
-    expect(types).toContain('AnimationClip');
+    // #1211 — the file's motion lands as keys on a base pose layer, as Blender's lands as an action.
+    expect(types).toContain('PoseLayer');
+    expect(types).not.toContain('AnimationClip');
     // Motion, not model — never a Mesh/GltfAsset.
     expect(types).not.toContain('Mesh');
     expect(types).not.toContain('GltfAsset');
@@ -232,7 +208,7 @@ describe('#1056 — every imported motion stands in the scene as an Object', () 
     const state = useDagStore.getState().state;
     const objectId = `${result!.skeletonId}_object`;
     expect(state.nodes[objectId]?.meta?.name).toBe('wave');
-    expect((state.nodes[result!.clipId].params as { name?: string }).name).toBe('wave');
+    expect((state.nodes[result!.motionId].params as { name?: string }).name).toBe('wave');
     expect(nodeDisplayName(state.nodes, objectId)).toBe('wave');
   });
 
@@ -268,69 +244,40 @@ describe('#1056 — every imported motion stands in the scene as an Object', () 
   // #1122 — the Object reads as its motion until a director names it otherwise. Through the
   // real store, so the undo is the one Cmd+Z runs, and through the ops the two gestures send:
   // the inspector's name field is a `setParam` on the clip, the outliner's rename a `setMeta`.
-  it('#1122 — renaming the clip renames the Object that stands it', async () => {
+  it('#1211 — renaming a BVH\u2019s motion leaves its Object\u2019s name, as Blender never renames the armature after its action', async () => {
     await currentStorage.write(path, new TextEncoder().encode(SYNTHETIC_BVH));
     const result = await importBvhFromOpfs(path);
     const objectId = `${result!.skeletonId}_object`;
-    const store = useDagStore.getState();
-    store.dispatch(
-      { type: 'setParam', nodeId: result!.clipId, paramPath: 'name', value: 'hero walk' },
-      'user',
-      'set name',
-    );
-    const state = useDagStore.getState().state;
-    expect(nodeDisplayName(state.nodes, result!.clipId)).toBe('hero walk');
-    expect(nodeDisplayName(state.nodes, objectId)).toBe('hero walk');
-    // The field every direct reader uses, not only the resolver.
-    expect(state.nodes[objectId].meta).toEqual({ name: 'hero walk', nameFrom: result!.clipId });
-  });
-
-  it('#1122 — once the Object is renamed, the clip’s next rename leaves it alone; undo resumes', async () => {
-    await currentStorage.write(path, new TextEncoder().encode(SYNTHETIC_BVH));
-    const result = await importBvhFromOpfs(path);
-    const objectId = `${result!.skeletonId}_object`;
-    const store = useDagStore.getState();
-    store.dispatch({ type: 'setMeta', nodeId: objectId, name: 'my rig' }, 'user', 'rename');
-    store.dispatch(
-      { type: 'setParam', nodeId: result!.clipId, paramPath: 'name', value: 'hero walk' },
-      'user',
-      'set name',
-    );
-    expect(nodeDisplayName(useDagStore.getState().state.nodes, objectId)).toBe('my rig');
-
-    store.undo(); // the clip's rename
-    store.undo(); // the Object's rename — following resumes
-    let nodes = useDagStore.getState().state.nodes;
-    expect(nodes[objectId].meta).toEqual({ name: 'wave', nameFrom: result!.clipId });
-    store.dispatch(
-      { type: 'setParam', nodeId: result!.clipId, paramPath: 'name', value: 'jog' },
-      'user',
-      'set name',
-    );
-    nodes = useDagStore.getState().state.nodes;
-    expect(nodeDisplayName(nodes, objectId)).toBe('jog');
-  });
-
-  it('#1122 — the link survives a save and a load, and still follows afterwards', async () => {
-    await currentStorage.write(path, new TextEncoder().encode(SYNTHETIC_BVH));
-    const result = await importBvhFromOpfs(path);
-    const objectId = `${result!.skeletonId}_object`;
-    const storage = new MemoryStorage();
-    await saveProject(
-      storage,
-      composeProject({ id: 'p1122', name: 'p1122', state: useDagStore.getState().state }),
-    );
-    const loaded = await loadProject(storage, 'p1122');
-    expect(loaded.state.nodes[objectId].meta).toEqual({ name: 'wave', nameFrom: result!.clipId });
-    useDagStore.getState().hydrate(loaded.state);
+    // Named after the file, and following nothing.
+    expect(useDagStore.getState().state.nodes[objectId].meta).toEqual({ name: 'wave' });
     useDagStore
       .getState()
       .dispatch(
-        { type: 'setParam', nodeId: result!.clipId, paramPath: 'name', value: 'hero walk' },
+        { type: 'setParam', nodeId: result!.motionId, paramPath: 'name', value: 'hero walk' },
         'user',
         'set name',
       );
-    expect(useDagStore.getState().state.nodes[objectId].meta?.name).toBe('hero walk');
+    const nodes = useDagStore.getState().state.nodes;
+    expect(nodeDisplayName(nodes, result!.motionId)).toBe('hero walk');
+    expect(nodeDisplayName(nodes, objectId)).toBe('wave');
+  });
+
+  it('#1211 — renaming an FBX\u2019s motion leaves its Object\u2019s name too: no import road follows its motion', async () => {
+    // Name-following lives on the generation road alone now (`mintMotionGenerate.test.ts`, #1122).
+    await currentStorage.write(FBX_PATH, RIG_FBX_BYTES);
+    const result = await importFbxFromOpfs(FBX_PATH);
+    const objectId = `${result!.skeletonId}_object`;
+    expect(useDagStore.getState().state.nodes[objectId].meta).toEqual({ name: 'rig' });
+    useDagStore
+      .getState()
+      .dispatch(
+        { type: 'setParam', nodeId: result!.motionId, paramPath: 'name', value: 'hero walk' },
+        'user',
+        'set name',
+      );
+    const nodes = useDagStore.getState().state.nodes;
+    expect(nodeDisplayName(nodes, result!.motionId)).toBe('hero walk');
+    expect(nodeDisplayName(nodes, objectId)).toBe('rig');
   });
 
   it('#1103 — with no scene to stand it in, the warning stays', async () => {
@@ -451,7 +398,7 @@ describe('#791 — a dropped BVH stands at file scale, and its Object is selecte
 });
 
 describe('importFbxFromOpfs', () => {
-  it('decodes the committed ASCII FBX (binary path) into Skeleton + AnimationClip', async () => {
+  it('decodes the committed ASCII FBX (binary path) into a Skeleton and a base pose layer (#1211)', async () => {
     const path = `${USER_IMPORTS_ROOT}/rig/rig.fbx`;
     await currentStorage.write(path, RIG_FBX_BYTES);
 
@@ -463,7 +410,8 @@ describe('importFbxFromOpfs', () => {
       .filter((o) => o.type === 'addNode')
       .map((o) => o.nodeType);
     expect(types).toContain('Skeleton');
-    expect(types).toContain('AnimationClip');
+    expect(types).toContain('PoseLayer');
+    expect(types).not.toContain('AnimationClip');
     expect(types).not.toContain('Mesh');
     expect(useImportRefreshStore.getState().tick).toBe(1);
     expect(useAssetErrorStore.getState().errors[path]).toBeUndefined();
@@ -482,7 +430,7 @@ describe('routeImportByExtension', () => {
     const types = dispatchSpy.mock.calls[0][0]
       .filter((o) => o.type === 'addNode')
       .map((o) => o.nodeType);
-    expect(types).toEqual(expect.arrayContaining(['Skeleton', 'AnimationClip']));
+    expect(types).toEqual(expect.arrayContaining(['Skeleton', 'PoseLayer']));
   });
 
   it('reports (never silently no-ops) on an unsupported extension', async () => {

@@ -160,7 +160,7 @@ describe('#396 — the chain spine is declared, not named', () => {
     expect(offenders).toEqual([]);
   });
 
-  it('the set of chain nodes is EXACTLY the eleven operators, across all three lanes', () => {
+  it('the set of chain nodes is EXACTLY the twelve operators, across all three lanes', () => {
     // An EXACT set, not a floor: this population grows, and the failure mode of a new
     // operator is that it registers without a spine and every stack surface goes blind
     // to it — silently, because a node with no spine simply is not a chain node. Making
@@ -168,6 +168,7 @@ describe('#396 — the chain spine is declared, not named', () => {
     // where the author is present to decide.
     const declared = listNodeTypes().filter((t) => getNodeType(t)?.chain);
     expect(declared.sort()).toEqual([
+      'ArmatureModifier', // data lane — geometry (#393, the first that DEFORMS: points move over time)
       'ArrayModifier', // data lane — geometry
       'BevelModifier', // data lane — geometry (#818/#814, the first that MINTS elements)
       'ColorCorrect', // effect lane

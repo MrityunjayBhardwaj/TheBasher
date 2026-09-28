@@ -185,7 +185,7 @@ describe('MotionGenerate (#902)', () => {
   it('an unresolved request is PENDING, and is not an empty clip', () => {
     const clip = clipOf(buildGraph());
     expect(clip.generation?.status).toBe('pending');
-    expect(clip.keyframes).toHaveLength(0);
+    expect(clip.poses).toHaveLength(0);
     // The discriminating half: a pending clip must not be readable as a clip
     // that legitimately produced nothing.
     expect(clip.duration).toBe(0);
@@ -205,7 +205,9 @@ describe('MotionGenerate (#902)', () => {
     const clip = clipOf(s);
     expect(clip.generation?.status).toBe('ready');
     expect(clip.duration).toBe(2.5);
-    expect(clip.keyframes).toHaveLength(1);
+    // #1225 — one key at one time is one pose, naming that key's bone.
+    expect(clip.poses).toHaveLength(1);
+    expect(Object.keys(clip.poses[0].bones)).toEqual([RIG.bones[0].name]);
     expect(clip.skeleton.bones).toHaveLength(1);
   });
 

@@ -55,6 +55,9 @@ import { setStripBlendMutator } from './builders/setStripBlend';
 import { setTrackStateMutator } from './builders/setTrackState';
 import { setComponentScopeMutator } from './builders/setComponentScope';
 import { poseBoneMutator } from './builders/poseBone';
+import { setPoseMemberModeMutator } from './builders/setPoseMemberMode';
+import { renameBoneMutator } from './builders/renameBone';
+import { bakePoseMutator } from './builders/bakePose';
 
 export {
   rotateMutator,
@@ -87,6 +90,9 @@ export {
   setObjectSlotMaterialMutator,
   setComponentScopeMutator,
   poseBoneMutator,
+  setPoseMemberModeMutator,
+  renameBoneMutator,
+  bakePoseMutator,
 };
 
 export function registerAllMutators(): void {
@@ -169,4 +175,10 @@ export function registerAllMutators(): void {
   // consumed by the render band while nothing in the codebase could bring one into
   // existence; a lane is not shipped until something can author it.
   registerMutator(poseBoneMutator);
+  // #1242 — a pose layer member's rotation mode, converted or resampled.
+  registerMutator(setPoseMemberModeMutator);
+  // #1201 — rename a bone, and every record that names it.
+  registerMutator(renameBoneMutator);
+  // #1215 — bake computed motion into keys on a pose layer.
+  registerMutator(bakePoseMutator);
 }

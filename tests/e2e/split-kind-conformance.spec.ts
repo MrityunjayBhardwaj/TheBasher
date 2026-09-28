@@ -184,6 +184,23 @@ interface RenderProbe {
    * this road rather than carried over from `expectHeld`.
    */
   expectConstrained: HeldExpectation;
+  /**
+   * What `signature` must read once the row's channel is seeded and has reached the render —
+   * R5's resting value (#1300).
+   *
+   * R5 used to take "resting" as the FIRST non-null reading after seeding. That is a race, not
+   * a baseline: the seed reaches the render a frame or more later, and on the glTF row later
+   * still (its clone mounts after the pair). Read before the seed landed, "resting" was the
+   * bare colour; the held edit then let go correctly onto the CHANNEL's colour, and the row
+   * reported the third value `#123456` as an overlay that never cleared — red only under
+   * load, twice, always that value. Waiting for THIS value instead is exact rather than a
+   * sleep, and it reds on its own the day a seed stops reaching the render.
+   *
+   * MEASURED on every kind (2026-09-28, 30 reads at 100 ms after seeding, all stable): the
+   * key the channel carries (`keyframeValueFor`), except the curve, whose probe counts
+   * vertices and whose channel keys a param the count does not see.
+   */
+  expectSeeded: number | string;
   /** What the probe measures, for the failure message. */
   what: string;
 }
@@ -350,6 +367,7 @@ const RENDER_PROBES: Record<SplitKindName, RenderProbe> = {
     // fallback nor the standard #cccccc schema default (#394 D7 — no longer per-kind),
     // so this cannot pass by collision.
     expectBare: String(SPLIT_KINDS.box.distinctValues[0]).toLowerCase(),
+    expectSeeded: '#123456',
     // MEASURED on this road: the shared channel's colour reaches a constrained cube.
     expectConstrained: { reaches: true, value: '#123456' },
     what: "the rendered material's base colour",
@@ -362,6 +380,7 @@ const RENDER_PROBES: Record<SplitKindName, RenderProbe> = {
     }),
     // MEASURED: #c81e5a, same reasoning as the box.
     expectBare: String(SPLIT_KINDS.sphere.distinctValues[0]).toLowerCase(),
+    expectSeeded: '#123456',
     // MEASURED: same road, same answer as the box — the two mesh bands are one path here.
     expectConstrained: { reaches: true, value: '#123456' },
     what: "the rendered material's base colour",
@@ -394,6 +413,7 @@ const RENDER_PROBES: Record<SplitKindName, RenderProbe> = {
     // drifting into the subject. If the sampler's resolution default changes, this reds and
     // the right response is to re-measure, not to compute.
     expectBare: 65,
+    expectSeeded: 65,
     // MEASURED: the polyline stayed at 65. Same mechanism as the held edit, and worth
     // stating precisely because the STIMULUS differs: an overlay writes `data.closed`,
     // and the renderer reads `data.samples`, which `CurveData.evaluate()` already baked.
@@ -419,6 +439,7 @@ const RENDER_PROBES: Record<SplitKindName, RenderProbe> = {
     expectHeld: () => ({ reaches: true, value: SPLIT_KINDS.light.distinctValues[1] as number }),
     // MEASURED: 3.5, the intensity the data node is minted with.
     expectBare: SPLIT_KINDS.light.distinctValues[0] as number,
+    expectSeeded: 1,
     // MEASURED: the constrained light follows its intensity channel to 1.
     expectConstrained: { reaches: true, value: 1 },
     what: "the mounted light's intensity",
@@ -448,6 +469,7 @@ const RENDER_PROBES: Record<SplitKindName, RenderProbe> = {
     // by design, but its committed fov reaches the frustum perfectly well. Those are
     // different claims, and only this one is R1's.
     expectBare: SPLIT_KINDS.camera.distinctValues[0] as number,
+    expectSeeded: 1,
     // MEASURED, and NOT the same answer as the held edit above. The camera refuses a
     // TRANSIENT by design — `resolveCameraPoseAt` renders committed DAG state only — but a
     // channel IS committed state, so the constrained camera does follow it. Carrying
@@ -471,6 +493,7 @@ const RENDER_PROBES: Record<SplitKindName, RenderProbe> = {
     // BakedMaterialSpec, because that failure renders as the #808080 fallback — a non-null
     // reading that a bare existence check would have accepted.
     expectBare: String(SPLIT_KINDS.baked.distinctValues[0]).toLowerCase(),
+    expectSeeded: '#123456',
     // MEASURED: the recomposed BakedMaterialSpec follows the channel on the constraint road.
     expectConstrained: { reaches: true, value: '#123456' },
     what: "the rendered material's captured baked colour",
@@ -495,6 +518,7 @@ const RENDER_PROBES: Record<SplitKindName, RenderProbe> = {
     // row that failed to write, or wrote to the wrong half, reads that instead. Neither
     // is it the #808080 missing-material fallback nor the #cccccc schema default.
     expectBare: String(SPLIT_KINDS.gltf.distinctValues[0]).toLowerCase(),
+    expectSeeded: '#123456',
     // MEASURED on this road: the shared channel's colour reaches the clone.
     expectConstrained: { reaches: true, value: '#123456' },
     what: 'the colour the asset clone draws for this child',
@@ -510,6 +534,7 @@ const RENDER_PROBES: Record<SplitKindName, RenderProbe> = {
       value: String(SPLIT_KINDS.mesh.distinctValues[1]).toLowerCase(),
     }),
     expectBare: String(SPLIT_KINDS.mesh.distinctValues[0]).toLowerCase(),
+    expectSeeded: '#123456',
     expectConstrained: { reaches: true, value: '#123456' },
     what: "the rendered material's base colour",
   },
@@ -883,14 +908,28 @@ test.describe('the split-kind conformance matrix (browser tier)', () => {
       // constraint, and that arm applies no overlays by design.
       await seedRowChannel(page, kind, objectId);
 
-      // Rest first. A road that never applies the transient would return this value, so
-      // everything below is stated against it rather than against a literal.
-      const resting = await expectEventually(page, probe, objectId, (v) => v !== null);
+      // Rest first — once the SEED has reached the render, not at the first non-null read
+      // (#1300: read early, "resting" was the pre-seed colour, and a correct release onto the
+      // channel's colour then read as an overlay that never cleared). A road that never
+      // applies the transient would return this value, so everything below is stated
+      // against it rather than against a literal.
+      const resting = await expectEventually(
+        page,
+        probe,
+        objectId,
+        (v) => v === probe.expectSeeded,
+      );
       expect(
         resting,
         `${kind}: nothing mounted for ${objectId} — ${probe.what} could not be read at all, ` +
           `so the transient road below would pass or fail for the wrong reason`,
       ).not.toBeNull();
+      expect(
+        resting,
+        `${kind}: the seeded channel never reached the render — ${probe.what} settled at ` +
+          `${JSON.stringify(resting)}, not the seeded ${JSON.stringify(probe.expectSeeded)}, ` +
+          `so the held edit below would be measured against a state that is still moving`,
+      ).toEqual(probe.expectSeeded);
 
       const expectation = probe.expectHeld(resting!);
       if (expectation.reaches) {

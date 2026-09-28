@@ -22,6 +22,10 @@
 // is therefore: existing cells are frozen; new cells may join, in the same commit as the
 // param they record, and never with an edit to a cell already there.
 //
+// USED AGAIN (#1210): `Object` appends `parentBone=(unrouted)` — the bone an Object is parented
+// to is written by the importer before any panel draws it (Blender shows it under Relations).
+// `unrouted` 236 → 237, `routed` untouched.
+//
 // USED AGAIN (#1153): `Object` and `Group` each append `rotationMode=(unrouted)
 // quaternion=(unrouted)` — the rotation mode lands before the inspector draws it, so the
 // honest cell is `(unrouted)` (the #645 P6 precedent below). `unrouted` 235 → 239, `routed`
@@ -114,7 +118,10 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
   // APPENDED at #907 — `active` says which clip a rebind stood up. Unrouted like
   // its neighbours on this node: no inspector card draws it yet.
   AnimationClip:
-    '[animate] name=(unrouted) duration=(unrouted) loop=(unrouted) active=(unrouted) keyframes=(unrouted) sourceHash=(unrouted)',
+    '[animate] name=(unrouted) duration=(unrouted) loop=(unrouted) active=(unrouted) interpolation=(unrouted) keyframes=(unrouted) sourceHash=(unrouted)',
+  // #393 — one cell, and it routes: the armature is an INPUT (the Object it points at), not a
+  // param, so the only thing to author on the card is the stack mute.
+  ArmatureModifier: '[modifier] muted=modifier',
   ArrayModifier: '[modifier] count=modifier offset=modifier muted=modifier scope=modifier',
   BakedData: '[material] geometry=(unrouted) material=material',
   // ADDED at #1049 — a stored polygon mesh. Placed beside its sibling data kind rather than in
@@ -167,10 +174,12 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
     '[channel,animate] name=(unrouted) target=(unrouted) paramPath=channel mute=(unrouted) solo=(unrouted) weight=animate blendMode=(unrouted) order=(unrouted) keyframes=channel',
   KeyframeChannelVec2:
     '[channel,animate] name=(unrouted) target=(unrouted) paramPath=channel mute=(unrouted) solo=(unrouted) weight=animate blendMode=(unrouted) order=(unrouted) extendBefore=animate extendAfter=animate modifiers=animate axisModifiers=(unrouted) axisExtend=(unrouted) keyframes=channel',
-  // APPENDED at #1001 (the second arm) — `sourceClipId` + `sourceHash` record
-  // which clip a minted channel was seeded from. Machine provenance, so both are
-  // unrouted, the same standing as `childName`/`assetRef` beside them: a director
-  // never edits them and no card draws them.
+  // APPENDED at #1001 (the second arm) — `sourceClipId` + `sourceHash` recorded
+  // which clip a minted channel was seeded from. Nothing writes them since the
+  // clone rig's clip-seeded mint retired (#1053); they stay declared for old saves.
+  // Machine provenance, so both are unrouted, the same standing as
+  // `childName`/`assetRef` beside them: a director never edits them and no card
+  // draws them.
   KeyframeChannelVec3:
     '[channel,animate] name=(unrouted) target=(unrouted) paramPath=channel mute=(unrouted) solo=(unrouted) weight=animate blendMode=(unrouted) order=(unrouted) extendBefore=animate extendAfter=animate modifiers=animate axisModifiers=(unrouted) axisExtend=(unrouted) childName=(unrouted) assetRef=(unrouted) sourceClipId=(unrouted) sourceHash=(unrouted) keyframes=channel',
   Lag: '[] factor=(unrouted) seedFrame=(unrouted) sourceTransform=(unrouted)',
@@ -206,7 +215,7 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
   NormalPass: '[render] width=(unrouted) height=(unrouted)',
   Null: '[transform,constraint,driver] position=transform rotation=transform scale=transform',
   Object:
-    '[transform,constraint,driver,modifier,slots] position=transform rotation=transform scale=transform slotOverrides=slots overridden=(unrouted) rotationMode=transform quaternion=transform',
+    '[transform,constraint,driver,modifier,slots] position=transform rotation=transform scale=transform slotOverrides=slots overridden=(unrouted) rotationMode=transform quaternion=transform parentBone=(unrouted)',
   ParamDriver:
     '[driver] target=(unrouted) paramPath=(unrouted) blendMode=(unrouted) order=(unrouted) mute=(unrouted) sourceSpare=(unrouted) sourceTransform=(unrouted) sourceTransformVec=(unrouted)',
   PosedSkeleton: '[] amplitude=(unrouted) frequency=(unrouted)',
@@ -219,9 +228,13 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
   // from its three inputs, which is the point of the node.
   // #974 — hand-posing. No `home` declared: the params are the override itself,
   // not a routed view of somebody else's, so every cell is honestly unrouted.
+  // #1240 — the pose layer that absorbs PoseOverride. No `home` declared, for PoseOverride's
+  // reason: the params are the layer itself. Its controls arrive with the writers (#1244).
+  PoseLayer:
+    '[animate] name=(unrouted) mode=(unrouted) weight=(unrouted) mute=(unrouted) solo=(unrouted) members=(unrouted) channels=(unrouted)',
   PoseOverride:
     '[animate] name=(unrouted) bone=(unrouted) position=(unrouted) rotation=(unrouted) overridden=(unrouted)',
-  RetargetClip: '[animate] name=(unrouted) active=(unrouted)',
+  RetargetClip: '[animate] name=(unrouted) active=(unrouted) sampleRate=(unrouted)',
   SampleGeometry:
     '[] sourceGeometry=(unrouted) at=(unrouted) method=(unrouted) direction=(unrouted) orientation=(unrouted) farthest=(unrouted)',
   Scatter:
@@ -359,5 +372,26 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
 //
 // #1153 routes four rows under the transform section's rotation arm (see their rows): +4 routed.
 //   types 88 · routed 139 + 4 = 143 · unrouted 236
-// #1284 — +1 unrouted: `TrackTo.aimBone`, homed like its sibling `aimNode`.
-export const GOLDEN_TOTALS = { types: 88, routed: 143, unrouted: 238 } as const;
+//
+// #393 adds `ArmatureModifier` as a wholly new node type: +1 type, +1 routed (`muted`). Nothing
+// existing moved:
+//   types 88 + 1 = 89 · routed 143 + 1 = 144 · unrouted 236
+//
+// #1240 adds `PoseLayer` as a wholly new node type: +1 type, +6 unrouted (see its row). Counted
+// from the constant as committed (237 — one more than the trail above ends on; that gap predates
+// this arrival and is not resolved here):
+//   types 89 + 1 = 90 · routed 144 · unrouted 237 + 6 = 243
+//
+// #1241 appends `PoseLayer.solo`, unrouted (see its row): +1 unrouted.
+//   types 90 · routed 144 · unrouted 243 + 1 = 244
+//
+// #1225 appends `RetargetClip.sampleRate`, unrouted, beside its other two: +1 unrouted.
+//   types 90 · routed 144 · unrouted 244 + 1 = 245
+//
+// #1225 adds `AnimationClip.interpolation` (Linear / Constant), unrouted beside its keys: +1 unrouted.
+//   types 90 · routed 144 · unrouted 245 + 1 = 246
+//
+// Merged with main (#1284 and its sibling on the AI track): +2 unrouted — `TrackTo.aimBone`, homed
+// like its sibling `aimNode`, and the other arrival counted by main's golden (236 → 238).
+//   types 90 · routed 144 · unrouted 246 + 2 = 248
+export const GOLDEN_TOTALS = { types: 90, routed: 144, unrouted: 248 } as const;

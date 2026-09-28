@@ -140,8 +140,8 @@ async function seedCharacter(page: import('@playwright/test').Page, opts?: { obs
           },
           {
             type: 'connect',
-            from: { node: 'p2_clip', socket: 'out' },
-            to: { node: 'p2_loco', socket: 'clip' },
+            from: { node: 'p2_clip', socket: 'pose' },
+            to: { node: 'p2_loco', socket: 'pose' },
           },
           {
             type: 'connect',
@@ -387,8 +387,8 @@ test("P2#4 multi-character isolation: setParam on A's locomotion does not flip B
         },
         {
           type: 'connect',
-          from: { node: `clip_${id}`, socket: 'out' },
-          to: { node: `loco_${id}`, socket: 'clip' },
+          from: { node: `clip_${id}`, socket: 'pose' },
+          to: { node: `loco_${id}`, socket: 'pose' },
         },
         {
           type: 'connect',

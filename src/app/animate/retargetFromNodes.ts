@@ -3,9 +3,10 @@
 // ─────────────────────────────────────────────────────────────────────────
 // WHY THIS IS PURE OVER PARAMS AND DOES NOT CALL `evaluate()`
 // ─────────────────────────────────────────────────────────────────────────
-// Every reader that drives pixels goes through `boundClipsForAsset`, which is
+// Every reader of a clip bound to a clone rig goes through `boundClipsForAsset`, which is
 // deliberately pure over the node table — no evaluator, no DAG cache, no second
-// walk. Its callers include the format migration, which runs on raw saved JSON
+// walk. (Since the clone road's character half retired, #1053, nothing draws those clips; the
+// readers left are the load-time ones.) Its callers include the format migration, which runs on raw saved JSON
 // long before an evaluator exists. So the retarget has to be resolvable from
 // params alone, and it is: the source clip's keys are params, the bone map is
 // params, and the target rig's bind pose is params too — `GltfSkeleton` is a pure
@@ -14,6 +15,14 @@
 //
 // The node's own `evaluate()` and this resolver therefore both delegate to the
 // same `retargetClip()`. One piece of math, two ways in — not two walks.
+//
+// #1225 — the node now reads the pose WIRE, sampled over the range the wire
+// carries; this resolver still reads the source clip's KEYS. On a clip the two
+// sample the same times: measured over the 12 tracked BVHs onto the stand-in rig,
+// identical key times, positions within 5e-7 and rotations within 1.6e-3°
+// (`retargetWire.gate.test.ts`). A source that is not a clip (a character's base pose
+// layer, wired by hand — the bind builder names a clip) has no keys here, so this
+// read answers null and a clone-road rig rests; the clone road retires in #1053.
 //
 // ─────────────────────────────────────────────────────────────────────────
 // WHY IT MEMOIZES ON OPERAND IDENTITY
@@ -39,6 +48,7 @@ import { projectGltfSkeleton } from '../../core/import/projectGltfSkeleton';
 import type { AnimationClipParams } from '../../nodes/AnimationClip';
 import type { BoneSpec, GltfSkinMetadata } from '../../nodes/types';
 import { edgeTarget, type GraphNodeLike } from './graphNodes';
+import { poseSkeletonIdOf } from './poseChain';
 import { clipLoopOf } from '../../nodes/clipLoop';
 
 /** Projections are keyed on the captured skin object, which import writes once. */
@@ -98,10 +108,11 @@ type SourceParams = { name?: string; duration?: number; keyframes?: unknown; loo
  * here would make the editor vanish at the moment it is wanted.
  */
 export interface RetargetOperands {
-  /** The `AnimationClip` node feeding `sourceClip`, when there is one. */
+  /** The `AnimationClip` node whose pose feeds the retarget's `source`, when it is one (#1225: the
+   *  node reads any pose wire; this params-only read answers for a clip's keys alone). */
   readonly sourceNode: GraphNodeLike | null;
   readonly sourceParams: SourceParams | null;
-  /** The rig the source clip's keyframe indices address — off the CLIP's own edge. */
+  /** The rig the source pose stands (`poseSkeletonIdOf`): a clip's rig, a layer chain's `Skeleton`. */
   readonly sourceBones: readonly BoneSpec[] | null;
   readonly mapNodeId: string | null;
   readonly map: Readonly<Record<string, string>> | null;
@@ -115,15 +126,15 @@ export function retargetOperandsFromNodes(
 ): RetargetOperands | null {
   if (!node || node.type !== 'RetargetClip') return null;
 
-  const sourceId = edgeTarget(node, 'sourceClip');
+  const sourceId = edgeTarget(node, 'source');
   const sourceCandidate = sourceId ? nodes[sourceId] : undefined;
   const sourceNode =
     sourceCandidate && sourceCandidate.type === 'AnimationClip' ? sourceCandidate : null;
 
-  // The source rig comes off the SOURCE CLIP's own edge — its keys are indices
-  // into that rig and nothing else. Mirrors the node's `sourceClip.skeleton`.
-  const sourceBones = sourceNode
-    ? bonesOfSkeletonNode(nodes, edgeTarget(sourceNode, 'skeleton'))
+  // The source rig is the rig the source pose stands — a clip's `skeleton` edge, or down a layer
+  // chain to its `Skeleton` (#1250). Mirrors the node, whose source rig rides on the wire.
+  const sourceBones = sourceId
+    ? bonesOfSkeletonNode(nodes, poseSkeletonIdOf(nodes, sourceId))
     : null;
 
   const mapId = edgeTarget(node, 'boneMap');

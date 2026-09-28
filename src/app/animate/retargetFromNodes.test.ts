@@ -9,9 +9,11 @@ import { retargetClipParamsFromNodes, bonesOfSkeletonNode } from './retargetFrom
 import { boundClipsForAsset, type GraphNodeLike } from './boundClipsForAsset';
 import { retargetClip } from '../../core/import/retarget';
 import { RetargetClipNode, RetargetClipParams } from '../../nodes/RetargetClip';
+import { motionPosesFromKeyframes, posedSkeletonFromClip } from '../../nodes/AnimationClip';
 import { buildClipBoneSamplers } from '../../nodes/AnimationClip';
 import { clipLoopOf } from '../../nodes/clipLoop';
 import type { AnimationKeyframe, BoneSpec, AnimationClipValue } from '../../nodes/types';
+import { clipValueFromKeys } from '../../test-utils/clipValue';
 
 const ASSET_REF = 'asset://rig.glb';
 
@@ -67,7 +69,7 @@ function graph(over: Record<string, GraphNodeLike> = {}): Record<string, GraphNo
       type: 'RetargetClip',
       params: { name: '' },
       inputs: {
-        sourceClip: { node: 'n_src', socket: 'out' },
+        source: { node: 'n_src', socket: 'pose' },
         boneMap: { node: 'n_map', socket: 'out' },
         skeleton: { node: 'n_gltfSkel', socket: 'out' },
       },
@@ -124,14 +126,17 @@ describe('retargetClipParamsFromNodes', () => {
     const viaEvaluate = RetargetClipNode.evaluate(
       RetargetClipParams.parse({}),
       {
-        sourceClip: {
-          kind: 'AnimationClip',
-          name: 'walk',
-          duration: 1,
-          loop: 'hold',
-          keyframes: sourceKeys(),
-          skeleton: { kind: 'Skeleton', bones: sourceBones() },
-        },
+        // #1225 — the node reads the clip's pose wire.
+        source: posedSkeletonFromClip(
+          clipValueFromKeys({
+            kind: 'AnimationClip',
+            name: 'walk',
+            duration: 1,
+            loop: 'hold',
+            keyframes: sourceKeys(),
+            skeleton: { kind: 'Skeleton', bones: sourceBones() },
+          }),
+        ),
         boneMap: { kind: 'BoneNameMap', name: 'bridge', map: nameMap() },
         skeleton: { kind: 'Skeleton', bones: bonesOfSkeletonNode(g, 'n_gltfSkel')! as BoneSpec[] },
       } as never,
@@ -140,23 +145,29 @@ describe('retargetClipParamsFromNodes', () => {
     // #992/#974 — the node emits two views of one retarget, so the parity claim
     // names the `out` socket. `posed` is pinned against this same clip in
     // RetargetClip.test.ts, so both views stay tied to this one params road.
-    expect(viaParams!.keyframes).toEqual(viaEvaluate.out.keyframes);
+    // #1225 — the node's value carries the keys as timed poses by bone name, through the one adapter.
+    expect(viaEvaluate.out.poses).toEqual(
+      motionPosesFromKeyframes(
+        viaParams!.keyframes!,
+        bonesOfSkeletonNode(g, 'n_gltfSkel')! as BoneSpec[],
+      ),
+    );
     expect(viaParams!.duration).toBe(viaEvaluate.out.duration);
     expect(viaParams!.name).toBe(viaEvaluate.out.name);
   });
 
   it('is null for every incomplete graph, one cause at a time', () => {
     const cases: Record<string, Record<string, GraphNodeLike>> = {
-      'no sourceClip edge': graph({
+      'no source edge': graph({
         n_retarget: {
           ...graph().n_retarget,
           inputs: { boneMap: { node: 'n_map', socket: 'out' } },
         } as GraphNodeLike,
       }),
-      'sourceClip is not a clip': graph({
+      'source is not a clip': graph({
         n_retarget: {
           ...graph().n_retarget,
-          inputs: { ...graph().n_retarget.inputs, sourceClip: { node: 'n_map', socket: 'out' } },
+          inputs: { ...graph().n_retarget.inputs, source: { node: 'n_map', socket: 'out' } },
         },
       }),
       'source clip has no keys': graph({
@@ -286,10 +297,10 @@ describe('boundClipsForAsset reads a RetargetClip', () => {
     const wayPast = sampler(9);
     // Held: nine seconds out reads exactly what the last key reads.
     expect(wayPast.position).toEqual(atEnd.position);
-    expect(wayPast.rotation).toEqual(atEnd.rotation);
+    expect(wayPast.quaternion).toEqual(atEnd.quaternion);
     // And the clip must genuinely MOVE inside its range, or "held" is satisfied by
     // a clip that never did anything and this row certifies nothing.
-    expect(sampler(0).rotation).not.toEqual(atEnd.rotation);
+    expect(sampler(0).quaternion).not.toEqual(atEnd.quaternion);
     // POSITIVE CONTROL. "Held" is only a finding if this fixture could have failed it.
     // Same bound clip, same keys, cycle-offset instead of the carried 'hold': the root
     // accumulates a full travel per period and reads ~9x out at t=9. So the assertions

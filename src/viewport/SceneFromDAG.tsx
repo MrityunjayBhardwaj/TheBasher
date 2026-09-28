@@ -26,6 +26,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type ReactNode,
 } from 'react';
 import * as THREE from 'three';
 import { RectAreaLightUniformsLib } from 'three/examples/jsm/lights/RectAreaLightUniformsLib.js';
@@ -72,6 +73,8 @@ import { useGltfLoaderExtend } from './gltfLoaderConfig';
 import { useSelectionStore } from '../app/stores/selectionStore';
 import { useAssetErrorStore } from '../app/stores/assetErrorStore';
 import { useTimeStore } from '../app/stores/timeStore';
+import { restBonePose } from '../nodes/bonePose';
+import { boneParentMatrix } from '../nodes/boneParent';
 import { useTransientEditStore, keyOf, type TransientEdit } from '../app/stores/transientEditStore';
 import { overlayTransients } from '../app/overlayTransients';
 import { createFoldCache, foldOverlays, type FoldCache } from '../app/cookState';
@@ -112,7 +115,8 @@ import { overlayChannels } from '../nodes/overlayChannels';
 import { recomposeLightObject } from '../nodes/lightRecompose';
 import { recomposeBakedObject } from '../nodes/bakedRecompose';
 import { recomposeModifiedObject } from '../nodes/modifiedRecompose';
-import { buildGltfDrillChain, type Obj3DLike } from './gltfDrillChain';
+import { buildSkinnedDraw, skinnedDrawKey, type SkinnedDraw } from '../app/skinnedDraw';
+import { buildPickChain, DRAWN_NODE_ID_KEY, type Obj3DLike } from './pickChain';
 import { useViewportStore } from '../app/stores/viewportStore';
 import { useLightBrushStore } from '../app/stores/lightBrushStore';
 import { buildLightBrushOp } from '../app/lightBrush';
@@ -187,7 +191,9 @@ import type {
   MaterialValue,
   MeshDataValue,
   ModifiedMeshValue,
+  ModifiedDataValue,
   ObjectValue,
+  SkinDeformValue,
   PointLightValue,
   RenderOutputValue,
   ScatterValue,
@@ -196,7 +202,7 @@ import type {
   SpotLightValue,
   TransformValue,
   Vec3,
-  AnimationClipValue,
+  PosedSkeletonValue,
   SkeletonValue,
 } from '../nodes/types';
 
@@ -319,18 +325,20 @@ export function SceneFromDAG({ outputName = 'render' }: SceneFromDAGProps) {
     const out: ReferenceRigInput[] = [];
     for (const pair of retargetPairs(state.nodes)) {
       try {
-        const clip = evaluate(state, pair.sourceClipId, { cache }).value as
-          | AnimationClipValue
+        // #1250 — the source is whatever pose the retarget reads, evaluated on the socket its edge
+        // names: a clip's pose, a base layer's, a layer above it. The wire carries its own rig.
+        const pose = evaluate(state, pair.sourceId, { cache, socket: pair.sourceSocket }).value as
+          | PosedSkeletonValue
           | undefined;
-        const target = evaluate(state, pair.targetSkeletonId, { cache }).value as
+        const target = evaluate(state, pair.targetSkeletonId, { cache, socket: 'out' }).value as
           | SkeletonValue
           | undefined;
-        if (!clip || clip.kind !== 'AnimationClip' || !clip.skeleton?.bones?.length) continue;
+        if (!pose || pose.kind !== 'PosedSkeleton' || !pose.skeleton?.bones?.length) continue;
         if (!target || !target.bones?.length) continue;
         out.push({
           id: pair.retargetId,
-          clip,
-          targetBoneNames: target.bones.map((b) => b.name),
+          pose,
+          targetSkeletonId: pair.targetSkeletonId,
         });
       } catch {
         // A half-wired or mid-edit graph draws no reference rig. This runs in a
@@ -686,8 +694,20 @@ function MeshScaleProbe() {
   useEffect(() => {
     if (!import.meta.env.DEV) return;
     const w = window as unknown as Record<string, unknown>;
+    // A top-level scene child's group is NAMED by its producer id; a nested node's is tagged
+    // with it instead (`RenderChild`, #1075). Both are looked up, so a probe addresses a node
+    // parented under an Object — a prop on a bone (#1210) — the same way.
+    const byNodeId = (nodeId: string): THREE.Object3D | undefined => {
+      const named = scene.getObjectByName(nodeId);
+      if (named) return named;
+      let tagged: THREE.Object3D | undefined;
+      scene.traverse((o) => {
+        if (!tagged && o.userData?.[DRAWN_NODE_ID_KEY] === nodeId) tagged = o;
+      });
+      return tagged;
+    };
     w.__basher_mesh_world_scale = (nodeId: string): [number, number, number] | null => {
-      const grp = scene.getObjectByName(nodeId);
+      const grp = byNodeId(nodeId);
       if (!grp) return null;
       // The wrapping group is named with the node id; its scale is identity, so
       // the inner mesh's world scale IS value.scale. Descend to the first Mesh.
@@ -710,7 +730,7 @@ function MeshScaleProbe() {
     // wrapping group is identity, so the inner mesh's world position IS the
     // rendered value. Read-only (V8 clean).
     w.__basher_mesh_world_position = (nodeId: string): [number, number, number] | null => {
-      const grp = scene.getObjectByName(nodeId);
+      const grp = byNodeId(nodeId);
       if (!grp) return null;
       let target: THREE.Object3D | null = null;
       grp.traverse((o) => {
@@ -730,7 +750,7 @@ function MeshScaleProbe() {
     w.__basher_mesh_world_quaternion = (
       nodeId: string,
     ): [number, number, number, number] | null => {
-      const grp = scene.getObjectByName(nodeId);
+      const grp = byNodeId(nodeId);
       if (!grp) return null;
       let target: THREE.Object3D | null = null;
       grp.traverse((o) => {
@@ -796,7 +816,7 @@ function MeshScaleProbe() {
     // boundary-pair e2e asserts rendered bounds == resolver geometry bounds
     // (side A == side B) instead of inferring from params. Read-only (V8 clean).
     w.__basher_mesh_world_bounds = (nodeId: string): [number, number, number] | null => {
-      const grp = scene.getObjectByName(nodeId);
+      const grp = byNodeId(nodeId);
       if (!grp) return null;
       let target: THREE.Mesh | null = null;
       grp.traverse((o) => {
@@ -861,7 +881,7 @@ function MeshScaleProbe() {
       mapRotation: number | null;
       mapCenter: [number, number] | null;
     } | null => {
-      const grp = scene.getObjectByName(nodeId);
+      const grp = byNodeId(nodeId);
       if (!grp) return null;
       let target: THREE.Mesh | null = null;
       grp.traverse((o) => {
@@ -1921,7 +1941,7 @@ const MeshChild = memo(function MeshChild({ value: raw, override, nodeId }: Mesh
     // #361 — the object↔data split's Object half. Renders its data's geometry at
     // its own TRS, byte-identical to the fused mesh it will replace (Phase 1).
     case 'Object':
-      return <ObjectR value={value} override={override} />;
+      return <ObjectR value={value} override={override} nodeId={nodeId} />;
     // #415 S5 — CLOSED BY A `never` ([[V109]]). It was not closed before, and two arms
     // above claimed in prose that it was ("dropping it would leave this switch
     // non-exhaustive"). MEASURED: deleting the `ModifiedMesh` arm typechecked cleanly,
@@ -2012,10 +2032,10 @@ const SceneChildNode = memo(function SceneChildNode({
       // #233 — nearest-SURFACE leaf-pick (V75, replaces the UX#7 broad-first
       // drill). A single click selects the LEAF whose visible surface is under
       // the cursor: the frontmost ray hit (`e.intersections[0]`, depth-sorted
-      // nearest-first by R3F) mapped to its addressable DAG node. For a glTF that
-      // is the GltfChild under the cursor — exactly `buildGltfDrillChain`'s
-      // `chain[last]`; for a plain mesh the chain is null (≤1) and we select the
-      // top-level pickId itself.
+      // nearest-first by R3F) mapped to the DAG node that drew it — the Object
+      // under an imported Group, the box inside a user's Group, or a glTF clone's
+      // GltfChild — exactly `buildPickChain`'s `chain[last]`; for a plain
+      // top-level mesh the chain is null and we select the top-level pickId itself.
       //
       // Alt+click selects UP one level (the inverse of the retired drill-in):
       // from the current selection's place in the chain toward `chain[0]` (the
@@ -2026,7 +2046,7 @@ const SceneChildNode = memo(function SceneChildNode({
       // node id to hand it (the brush gate above is its other superset layer).
       const state = useDagStore.getState().state;
       const hit = (e.intersections?.[0]?.object ?? e.object) as unknown as Obj3DLike | null;
-      const chain = buildGltfDrillChain(state, pickId, hit);
+      const chain = buildPickChain(state, pickId, hit);
       let target = pickId;
       if (chain && chain.length > 1) {
         if (e.altKey) {
@@ -2118,7 +2138,7 @@ function RenderChild({
   override?: MaterialValue;
 }) {
   const { directChannelTargets, constraintTargets } = useContext(OverlayMembershipContext);
-  return (
+  const drawn = (
     <OverlayDispatch
       value={value}
       nodeId={nodeId}
@@ -2127,6 +2147,13 @@ function RenderChild({
       override={override}
     />
   );
+  // #1075 — a nested node has no click handler of its own: the click reaches the
+  // top-level SceneChildNode's wrapper, which maps the hit object back to the node
+  // that drew it (`buildPickChain`). This identity group is that mapping, written
+  // here because every nested node is drawn through this one seam, whatever
+  // produced it (an import's Objects, a user's Group, a Transform's child).
+  if (nodeId == null) return drawn;
+  return <group userData={{ [DRAWN_NODE_ID_KEY]: nodeId }}>{drawn}</group>;
 }
 
 // v0.7 unification (#197) — renderer for a native node animated by FREE-FLOATING
@@ -2445,6 +2472,120 @@ function ModifiedMeshR({
   );
 }
 
+/**
+ * #1197 — a mesh deformed by an armature, drawn as a three `SkinnedMesh` and skinned on the GPU.
+ *
+ * The geometry is the stored mesh's shared build, CLONED before the skin attributes go on: the
+ * registry's instance is shared by every reader of that mesh (#533), and an attribute written onto
+ * it would reach them all. The skeleton, the palette and the weights come from `buildSkinnedDraw`,
+ * which states the rule; each frame poses the armature's bones at the playhead. What is drawn equals
+ * the Armature modifier's `sampleSkinDeform` vertex for vertex (`skinnedDraw.test.ts`).
+ *
+ * Frustum culling is off: the bounds three would test are the REST mesh's, and a deformed mesh
+ * leaves them.
+ */
+function SkinnedMeshR({
+  pose,
+  data,
+  skin,
+  override,
+}: {
+  pose: ModifiedMeshValue;
+  data: ModifiedDataValue;
+  skin: SkinDeformValue;
+  override?: MaterialValue;
+}) {
+  const shading = useViewportStore((s) => s.shading);
+  const mat = data.material;
+  const inlineMat = mat && 'base' in mat ? mat : MODIFIED_FALLBACK_MATERIAL;
+  const material = usePrimitiveMaterial(
+    inlineMat,
+    override,
+    shading,
+    null,
+    cornerLayerNamesOf(data.geometry.descriptor),
+  );
+  // #1207 — built once per CONTENT, cached in a ref. A keyed mesh Object has its value copied by the
+  // overlay every frame, `skin` and the descriptor with it, so a build keyed on identity would redo
+  // a geometry clone and a GPU upload every frame. The action is read per frame instead.
+  // The shared geometry is taken only to build: the draw attaches its own CLONE, so the shared
+  // instance is attached to nothing and the registry's sweep evicts it. Asking for it every render
+  // re-built it after each sweep, and keying on its identity then rebuilt the draw (measured: one
+  // rebuild per quiet sweep on a keyed Object). Its content is already in the key.
+  const buildKey = skinnedDrawKey(data.geometry.key, skin);
+  const cache = useRef<{
+    key: string;
+    built: { mesh: THREE.SkinnedMesh; draw: SkinnedDraw; geometry: THREE.BufferGeometry } | null;
+  } | null>(null);
+  // A null build retries: a baked geometry arrives after its async read.
+  if (cache.current?.key !== buildKey || cache.current.built === null) {
+    const shared = getForAttach(data.geometry);
+    const descriptor = data.geometry.descriptor;
+    let next: NonNullable<typeof cache.current>['built'] = null;
+    if (shared && descriptor.kind === 'mesh') {
+      const draw = buildSkinnedDraw(skin, descriptor.data);
+      const geometry = shared.clone();
+      geometry.setAttribute('skinIndex', new THREE.Uint16BufferAttribute(draw.skinIndex, 4));
+      geometry.setAttribute('skinWeight', new THREE.Float32BufferAttribute(draw.skinWeight, 4));
+      const mesh = new THREE.SkinnedMesh(geometry);
+      mesh.bindMode = THREE.DetachedBindMode;
+      mesh.bind(draw.skeleton, draw.bindMatrix);
+      mesh.frustumCulled = false;
+      draw.pose(useTimeStore.getState().seconds, skin.pose);
+      next = { mesh, draw, geometry };
+    }
+    cache.current = { key: buildKey, built: next };
+  }
+  const built = cache.current.built;
+  const skinPose = useRef(skin.pose);
+  skinPose.current = skin.pose;
+  useEffect(() => () => built?.geometry.dispose(), [built]);
+  useFrame(() => {
+    built?.draw.pose(useTimeStore.getState().seconds, skinPose.current);
+  });
+  // DEV-only — the skin seam the skinned e2e reads (`__basher_gltf_skin`), now on the native road
+  // too (#1197): the clone road's shape, plus the vertex count and each vertex's REST position, so a
+  // spec can find a vertex by where it rests rather than by a buffer index the two roads number
+  // differently. One getter, last mounted wins, as on the clone road.
+  useEffect(() => {
+    if (!import.meta.env.DEV || !built) return;
+    const mesh = built.mesh;
+    const handle = {
+      boneCount: mesh.skeleton.bones.length,
+      bound: mesh.skeleton.bones.length > 0,
+      count: mesh.geometry.attributes.position.count,
+      rest: (i: number): [number, number, number] => {
+        const v = new THREE.Vector3().fromBufferAttribute(mesh.geometry.attributes.position, i);
+        mesh.localToWorld(v);
+        return [v.x, v.y, v.z];
+      },
+      vertex: (i: number): [number, number, number] => {
+        const v = new THREE.Vector3();
+        mesh.getVertexPosition(i, v);
+        mesh.localToWorld(v);
+        return [v.x, v.y, v.z];
+      },
+    };
+    const w = window as unknown as Record<string, unknown>;
+    const getter = () => handle;
+    w.__basher_gltf_skin = getter;
+    return () => {
+      // Only its own: a clone-road asset may have registered the getter since.
+      if (w.__basher_gltf_skin === getter) delete w.__basher_gltf_skin;
+    };
+  }, [built]);
+  if (!built) return null;
+  return (
+    <primitive
+      object={built.mesh}
+      position={pose.position as [number, number, number]}
+      rotation={degVec3ToRad(pose.rotation as [number, number, number])}
+      scale={(pose.scale ?? [1, 1, 1]) as [number, number, number]}
+      material={material}
+    />
+  );
+}
+
 // #361 — ObjectR: renders the object↔data split's Object half (Phase 1).
 // An Object OWNS the TRS and points at data; it draws `data.geometry` (a shared
 // GeometryRef handle) at its own transform with the data's inline material — the
@@ -2458,7 +2599,103 @@ function ModifiedMeshR({
 // a <mesh>; a mesh Object (box/sphere/…) renders through ObjectMeshR. Dispatching
 // here — not inside ObjectMeshR — keeps the hook order stable per branch
 // (rules-of-hooks) and is the arm the compiler forces once ObjectData widens.
-function ObjectR({ value, override }: { value: ObjectValue; override?: MaterialValue }) {
+// #1152 — an Object draws ITSELF (the arms below, each at the Object's own pose) and, when it
+// parents anything, its CHILDREN in its space: a group carrying the Object's pose, the children
+// inside it through `RenderChild` — the seam that mounts their overlays and stamps their ids for
+// picking, exactly as `GroupR` does. The two are siblings rather than the children nesting inside
+// the drawn mesh, because every arm below poses its own three object and several of them
+// (a light, a camera, a skeleton) draw nothing to nest under.
+function ObjectR({
+  value,
+  override,
+  nodeId,
+}: {
+  value: ObjectValue;
+  override?: MaterialValue;
+  nodeId?: string | null;
+}) {
+  const self = <ObjectSelfR value={value} override={override} />;
+  if (!value.children || value.children.length === 0) return self;
+  // Index-aligned with `value.children`, as in GroupR; an absent id degrades to the bare draw.
+  const edges = nodeId ? childEdges(useDagStore.getState().state, nodeId, value) : [];
+  return (
+    <>
+      {self}
+      <group
+        position={value.position as [number, number, number]}
+        rotation={degVec3ToRad(value.rotation as [number, number, number])}
+        scale={(value.scale ?? [1, 1, 1]) as [number, number, number]}
+      >
+        {value.children.map((c, i) => {
+          const child = (
+            <RenderChild
+              key={`o:${i}`}
+              value={c}
+              nodeId={edges[i]?.id ?? null}
+              override={override}
+            />
+          );
+          // #1210 — a child parented to one of this armature's bones hangs in that bone's pose.
+          return (c as { parentBone?: unknown }).parentBone === undefined ? (
+            child
+          ) : (
+            <BoneParentR key={`b:${i}`} parent={value} child={c}>
+              {child}
+            </BoneParentR>
+          );
+        })}
+      </group>
+    </>
+  );
+}
+
+/**
+ * #1210 — the bone's posed matrix between an armature Object and a child parented to that bone,
+ * at the playhead: `boneParentMatrix`, the product `resolveWorldTransform` composes too (its
+ * `underParent`), so what is drawn and what a constraint or the gizmo reads agree. Written on the
+ * group's matrix every frame, as a bone moves without the graph changing; set once at render too,
+ * so the first frame is already in place.
+ */
+function BoneParentR({
+  parent,
+  child,
+  children,
+}: {
+  parent: ObjectValue;
+  child: SceneObject;
+  children: ReactNode;
+}) {
+  const ref = useRef<THREE.Group | null>(null);
+  const place = (group: THREE.Group, seconds: number): void => {
+    const m = boneParentMatrix(parent, child, seconds);
+    if (m) group.matrix.copy(m);
+    else group.matrix.identity();
+    group.matrixWorldNeedsUpdate = true;
+  };
+  const last = useRef<{ seconds: number; parent: unknown; child: unknown } | null>(null);
+  useFrame(() => {
+    const group = ref.current;
+    if (!group) return;
+    const seconds = useTimeStore.getState().seconds;
+    const la = last.current;
+    if (la && la.seconds === seconds && la.parent === parent && la.child === child) return;
+    last.current = { seconds, parent, child };
+    place(group, seconds);
+  });
+  return (
+    <group
+      ref={(group) => {
+        ref.current = group;
+        if (group) place(group, useTimeStore.getState().seconds);
+      }}
+      matrixAutoUpdate={false}
+    >
+      {children}
+    </group>
+  );
+}
+
+function ObjectSelfR({ value, override }: { value: ObjectValue; override?: MaterialValue }) {
   const data = value.data;
   if (data?.kind === 'CurveData') {
     // TRS is the Object's; samples/points are LOCAL (CurveLineChrome's enclosing
@@ -2560,6 +2797,12 @@ function ObjectR({ value, override }: { value: ObjectValue; override?: MaterialV
     // modifier pair.
     const modified = recomposeModifiedObject(value);
     if (!modified) return null;
+    // #1197 — a mesh an Armature modifier deforms draws SKINNED, at the same recomposed pose. It
+    // forks before the slot fork: the recompose carries no skin, and a skinned mesh's per-slot
+    // draw is not built yet, so it draws with its first material.
+    if (data.skin) {
+      return <SkinnedMeshR pose={modified} data={data} skin={data.skin} override={override} />;
+    }
     // #638 (ns-1b step 6) — the same 1↔N fork the MeshData arm takes, and it has to be
     // here too: `SetMaterialOp` over a partial face range is the FIRST producer of a slot
     // table anywhere, and its output is a `ModifiedData`. Without this arm the op could
@@ -3276,7 +3519,7 @@ function GltfAssetR({ value, override }: { value: GltfAssetValue; override?: Mat
   // consumers (later effects + the useFrame) read the populated ref.
   const childIdToObject = useRef<Map<string, THREE.Object3D>>(new Map());
   // #233 / H90 — stamp each clone object that maps to a GltfChild with its DAG
-  // node id, so viewport leaf-pick (buildGltfDrillChain) can address children by a
+  // node id, so viewport leaf-pick (buildPickChain) can address children by a
   // STAMPED ID rather than by name. The producer's nodeNameMap KEY space
   // (sanitizeBoneName + `__n` dedup, `node_i` for unnamed nodes) DIVERGES from
   // three's GLTFLoader clone NAME space (sanitizeNodeName + `_n` dedup, `''` for
@@ -3295,7 +3538,7 @@ function GltfAssetR({ value, override }: { value: GltfAssetValue; override?: Mat
   // per-instance clone (never the shared drei cache → no substrate leak,
   // B-substrate-purity); `basherGltfChildId` is a new userData key (no V20
   // single-writer collision with the TRS/material/visibility writers).
-  // REF: gltfDrillChain.ts; H90.
+  // REF: pickChain.ts; H90.
   useEffect(() => {
     const assoc = gltf.parser?.associations;
     const keyByIndex = value.keyByGltfNodeIndex;
@@ -3372,8 +3615,8 @@ function GltfAssetR({ value, override }: { value: GltfAssetValue; override?: Mat
   // scoped to this asset by nodeNameMap membership (BLOCK-2). Dormant until the
   // bake mutator (D1) exists — no baked channel ⇒ empty map ⇒ pure clip behavior.
   const bakedChannels = useMemo(
-    () => bakedChannelSamplersForAsset(depNodeMap, value.nodeNameMap, value.assetRef),
-    [depNodeMap, value.nodeNameMap, value.assetRef],
+    () => bakedChannelSamplersForAsset(depNodeMap, value.nodeNameMap),
+    [depNodeMap, value.nodeNameMap],
   );
   // #188 (v0.7 Phase 3) — the MATERIAL-CHANNEL band, keyed by the child's DATA node id
   // → the function-of-time channel VALUES targeting that node's material paths.
@@ -4351,15 +4594,16 @@ function CharacterR({ value }: { value: CharacterValue }) {
   const seconds = useTimeStore((s) => s.seconds);
   const boneTransforms: {
     position: [number, number, number];
-    rotation: [number, number, number];
+    quaternion: [number, number, number, number];
   }[] = [];
   const skel = value.pose.skeleton;
   const poses = value.pose.sample(seconds);
   for (let i = 0; i < skel.bones.length; i++) {
-    const pose = poses[i];
+    // #1223 — the wire carries an orientation; a bone the pose lacks rests.
+    const pose = poses[i] ?? restBonePose(skel.bones[i]);
     boneTransforms.push({
-      position: (pose?.position ?? skel.bones[i].position) as [number, number, number],
-      rotation: (pose?.rotation ?? skel.bones[i].rotation) as [number, number, number],
+      position: pose.position as [number, number, number],
+      quaternion: pose.quaternion as unknown as [number, number, number, number],
     });
   }
   return (
@@ -4385,7 +4629,10 @@ function CharacterBoneRig({
   transforms,
 }: {
   bones: readonly { parent: number }[];
-  transforms: readonly { position: [number, number, number]; rotation: [number, number, number] }[];
+  transforms: readonly {
+    position: [number, number, number];
+    quaternion: [number, number, number, number];
+  }[];
 }) {
   // Build a recursive tree: each bone is a <group> with its parent's group
   // as the React parent, so bone-local transforms compose by THREE matrix
@@ -4401,7 +4648,7 @@ function CharacterBoneRig({
     const t = transforms[i];
     const kids = childrenOf.get(i) ?? [];
     return (
-      <group key={`b:${i}`} position={t.position} rotation={t.rotation}>
+      <group key={`b:${i}`} position={t.position} quaternion={t.quaternion}>
         <mesh position={[0, 0.05, 0]}>
           <boxGeometry args={[0.18, 0.18, 0.18]} />
           <meshStandardMaterial color="#88aaff" roughness={0.6} metalness={0.0} />

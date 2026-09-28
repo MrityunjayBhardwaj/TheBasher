@@ -63,7 +63,7 @@
 import type { DagState } from '../../core/dag/state';
 import type { Op } from '../../core/dag/types';
 import { standInObjectOf, standingObjectsOf } from '../../core/import/skeletonObject';
-import { riggedSkeletonsForClip } from '../animate/boundClipsForAsset';
+import { charactersDrivenByClip, type DrivenCharacter } from '../animate/boundClipsForAsset';
 import { edgeTarget } from '../animate/graphNodes';
 import { clipBakeStates } from './bakeGeneratedClip';
 import { evaluate } from '../../core/dag/evaluator';
@@ -99,37 +99,26 @@ function vec3Param(params: unknown, key: string): [number, number, number] {
 }
 
 /**
- * The `GltfAsset` a `GltfSkeleton` projects.
- *
- * Deliberately the same two hops `assetRefOfSkeleton` takes in
- * bindMotionToCharacter — the character this places is the character that bind
- * chose, so it has to arrive by the same road or the two can disagree about
- * which asset a rig belongs to.
+ * #1213 — the node that places a character: the import's root under the scene that holds the
+ * armature Object, found by walking `children` edges upward from the Object, so the mesh and the rig
+ * it is skinned to move together. Null when the Object hangs under no scene. (The clone road's
+ * rigs were placed by their asset's `Group`; that half retired with the clone road's character
+ * half, #1053.)
  */
-function assetIdOfSkeleton(state: DagState, skeletonId: string): string | null {
-  const socket = state.nodes[skeletonId]?.inputs?.asset;
-  if (!socket) return null;
-  const one = Array.isArray(socket) ? socket[0] : socket;
-  return one?.node && state.nodes[one.node] ? one.node : null;
-}
-
-/**
- * The root `Group` that places a character, found from its rig node.
- *
- * The walk is DOWNSTREAM, and that is why it is a scan rather than a socket
- * read: the import wires `GltfAsset.out → Group.children`, so the asset does not
- * know its Group — only the Group knows its asset. Bounded by the node table and
- * matched on type, so a `Group` that merely happens to contain something else is
- * never mistaken for this character's root.
- */
-export function placementGroupFor(state: DagState, skeletonId: string): string | null {
-  const assetId = assetIdOfSkeleton(state, skeletonId);
-  if (!assetId) return null;
+export function placementRootOf(state: DagState, character: DrivenCharacter): string | null {
+  const sceneId = state.outputs.scene?.node;
+  const parentOf = new Map<string, string>();
   for (const node of Object.values(state.nodes)) {
-    if (node.type !== 'Group') continue;
     const socket = node.inputs?.children;
     const conns = Array.isArray(socket) ? socket : socket ? [socket] : [];
-    if (conns.some((c) => c?.node === assetId)) return node.id;
+    for (const c of conns) if (c?.node) parentOf.set(c.node, node.id);
+  }
+  let id = character.objectId;
+  for (let guard = 0; guard < 64; guard++) {
+    const parent = parentOf.get(id);
+    if (parent === undefined) return null;
+    if (parent === sceneId) return id;
+    id = parent;
   }
   return null;
 }
@@ -168,7 +157,7 @@ function threeYawDegrees(rotationRadians: number): number {
  */
 export function placeCharacterAtPathStart(
   state: DagState,
-  skeletonId: string,
+  character: DrivenCharacter,
   offsetXZ: readonly [number, number],
   rotationRadians: number | null,
 ): PlacementOutcome {
@@ -176,7 +165,7 @@ export function placeCharacterAtPathStart(
   const invalid = invalidPlacementInput(offsetXZ, rotationRadians);
   if (invalid) return { ok: false, reason: invalid };
 
-  const groupId = placementGroupFor(state, skeletonId);
+  const groupId = placementRootOf(state, character);
   if (!groupId) {
     // Reported, not swallowed. The motion is bound and will play; it will play in
     // the wrong place, and that is a different thing from "nothing happened".
@@ -349,7 +338,7 @@ export function placeCookedMotionOps(state: DagState): CookedPlacement {
     // that produces generated motion. The comment here used to claim parity
     // with the read band; the read band matches the RETARGETED clip and
     // deliberately excludes the source. Same socket name, different node.
-    const skeletonIds = riggedSkeletonsForClip(state.nodes, clipId);
+    const characters = charactersDrivenByClip(state.nodes, clipId);
 
     // #1100 — AND THE MOTION'S OWN RIG. Here the clip's `skeleton` edge IS the right read, for
     // the reason the note above says it is the wrong one for a character: it reaches the SOURCE
@@ -364,7 +353,7 @@ export function placeCookedMotionOps(state: DagState): CookedPlacement {
     const sourceSkeletonId = edgeTarget(state.nodes[clipId], 'skeleton');
     const standIn = sourceSkeletonId ? standInObjectOf(state, sourceSkeletonId) : null;
 
-    if (skeletonIds.length === 0 && standIn === null) {
+    if (characters.length === 0 && standIn === null) {
       const theirs = sourceSkeletonId ? standingObjectsOf(state, sourceSkeletonId).length : 0;
       refusals.push({
         clipId,
@@ -390,8 +379,8 @@ export function placeCookedMotionOps(state: DagState): CookedPlacement {
     // Every character the clip drives, not the first: one generated walk bound to
     // two characters walks the path twice, and placing one of them would leave
     // the other at the origin with nothing said.
-    for (const skeletonId of skeletonIds) {
-      const placed = placeCharacterAtPathStart(state, skeletonId, offset, rotation);
+    for (const character of characters) {
+      const placed = placeCharacterAtPathStart(state, character, offset, rotation);
       if (placed.ok) ops.push(...(placed.ops as Op[]));
       else refusals.push({ clipId, reason: placed.reason });
     }

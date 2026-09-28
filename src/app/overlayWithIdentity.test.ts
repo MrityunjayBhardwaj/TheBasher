@@ -385,8 +385,8 @@ describe('#537 — a write that feeds a geometry handle rebuilds it', () => {
     };
     const out = overlayWithIdentity('children', base, NODE, [channel(COUNT, 5)], NO_TRANSIENTS, 0);
     expect(out.data.geometry).toEqual(arrayGeometryRef(source, 5, [2, 0, 0]));
-    // The source's KEY, not its reference — everything is a deep clone by this point, so
-    // object identity says nothing. The key is the part that matters anyway: it is another
+    // The source's KEY, not its reference: the rebuilt ref is new, so the source under it is
+    // compared by what identifies it. The key is the part that matters anyway: it is another
     // producer's minted identity, and rebuilding it here would overwrite that with a guess.
     expect(out.data.geometry.descriptor.source.key).toBe(source.key);
   });
@@ -422,14 +422,11 @@ describe('#537 — a write that feeds a geometry handle rebuilds it', () => {
     // Property 2 of this seam, restated for geometry: animating a position must not move a
     // geometry key, or two objects sharing a build would stop sharing the moment one moved.
     //
-    // ⚠️ Written as `toBe` first, and that was wrong for a reason worth keeping: once ANY
-    // write happens the primitives hand back a DEEP CLONE, so no sub-object survives by
-    // reference and the assertion failed on an unchanged handle. Reference stability at this
-    // seam lives entirely in the `patched === base` early return (its own case above), not
-    // here. Which means "did not re-mint" and "re-minted an identical descriptor" are
-    // indistinguishable at this tier by construction — equal key, equal content, different
-    // object — so this pins the observable half and the guard against pointless re-minting is
-    // the `writeFeeds` check itself, not this test.
+    // By REFERENCE (#1236). This row was once `toEqual`, because the overlay deep-copied the
+    // whole value and no sub-object could survive by reference, so "did not re-mint" and
+    // "re-minted an identical descriptor" looked the same. The overlay now copies only the
+    // paths it writes, so an untouched handle is the very object the evaluator produced, and a
+    // pointless re-mint reds here.
     const base = boxValue();
     const before = base.data.geometry;
     const out = overlayWithIdentity(
@@ -440,7 +437,7 @@ describe('#537 — a write that feeds a geometry handle rebuilds it', () => {
       NO_TRANSIENTS,
       0,
     );
-    expect(out.data.geometry).toEqual(before);
+    expect(out.data.geometry).toBe(before);
   });
 
   it('does not treat a write to the HANDLE itself as a param that feeds it', () => {
@@ -657,8 +654,8 @@ describe('#638 D7 — the overlay RE-MINTS the attribute component, it never car
   });
 });
 
-// #1099 — both overlay primitives clone through JSON, and a stored mesh travels inside its handle
-// as typed arrays that JSON turns into plain objects with no `length`. Rebuilding an Array over
+// #1099 — both overlay primitives cloned through JSON (until #1236), and a stored mesh travels
+// inside its handle as typed arrays that JSON turned into plain objects with no `length`. Rebuilding an Array over
 // that source threw (`meshSplitLayout: points holds undefined numbers`) and unmounted the editor.
 // The handle is read from the un-overlaid value; the written params still come from the clone.
 describe('#1099 — a handle over stored mesh data is taken from the un-overlaid value', () => {
@@ -671,6 +668,8 @@ describe('#1099 — a handle over stored mesh data is taken from the un-overlaid
         cornerLayers: [],
         cornerNormals: null,
         faceLayers: [],
+        pointLayers: [],
+        vertexGroups: [],
       }),
     );
   const valueOver = (geometry: GeometryRef) => ({
@@ -692,7 +691,7 @@ describe('#1099 — a handle over stored mesh data is taken from the un-overlaid
     expect(pointsUnder(out.data.geometry)).toBeInstanceOf(Float32Array);
   });
 
-  it('a held Array count edit does the same (the transient primitive clones through JSON too)', () => {
+  it('a held Array count edit does the same (the transient primitive copies the same way)', () => {
     const source = storedMesh();
     const base = valueOver(arrayGeometryRef(source, 2, [2, 0, 0]));
     const out = overlayWithIdentity('children', base, NODE, NO_CHANNELS, transient(COUNT, 4), 0);

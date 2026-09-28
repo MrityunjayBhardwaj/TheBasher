@@ -63,11 +63,13 @@ import { MaskModifierNode } from './MaskModifier';
 import { ComponentGroupOpNode } from './ComponentGroupOp';
 import { BevelModifierNode } from './BevelModifier';
 import { UVProjectModifierNode } from './UVProjectModifier';
+import { ArmatureModifierNode } from './ArmatureModifier';
 import { NavmeshNode } from './Navmesh';
 import { NormalPassNode } from './NormalPass';
 import { ParamDriverNode } from './ParamDriver';
 import { PosedSkeletonNode } from './PosedSkeleton';
 import { PoseOverrideNode } from './PoseOverride';
+import { PoseLayerNode } from './PoseLayer';
 import { PromptNode } from './Prompt';
 import { RenderJobNode } from './RenderJob';
 import { RenderOutputNode } from './RenderOutput';
@@ -157,6 +159,7 @@ const ALL: NodeDefinition[] = [
   GltfSkeletonNode as unknown as NodeDefinition,
   PosedSkeletonNode as unknown as NodeDefinition,
   PoseOverrideNode as unknown as NodeDefinition,
+  PoseLayerNode as unknown as NodeDefinition,
   AnimationClipNode as unknown as NodeDefinition,
   NavmeshNode as unknown as NodeDefinition,
   WalkPathNode as unknown as NodeDefinition,
@@ -206,6 +209,7 @@ const ALL: NodeDefinition[] = [
   // operators because it stands in the MODIFIER stack — the reference's UV Project is a
   // modifier — and because it is a geometry-lane operator: what flows through it is ObjectData.
   UVProjectModifierNode as unknown as NodeDefinition,
+  ArmatureModifierNode as unknown as NodeDefinition,
   // #1027 — THE SIXTH, AND THE FIRST WHOSE ATTRIBUTE VALUES THE AUTHOR SUPPLIES. UVProject
   // above also reshapes nothing and also authors a layer, but its values are a geometric
   // function and the author picks only a size; this one's values ARE the statement ("these

@@ -195,6 +195,7 @@ export function mintMotionGenerateOps(
         name,
         // #1122 — and it keeps following that clip's name until the Object is renamed.
         clipId: ids.clip,
+        nameFollowsClip: true,
       })
     : undefined;
   if (standIn) ops.push(...standIn.ops);

@@ -176,6 +176,7 @@ describe('motion.generate produces a clip and adds no road of its own', () => {
     expect(clipNode, 'no AnimationClip in the graph').toBeTruthy();
     const clip = evaluate(state, clipNode!.id, {
       ctx: { time: { frame: 0, seconds: 0, normalized: 0 } },
+      socket: 'out',
     }).value as AnimationClipValue;
     // The same assertions the imported-BVH clip gets, deliberately — a generated
     // clip needing a weaker check would not be the same kind of object.
@@ -183,8 +184,8 @@ describe('motion.generate produces a clip and adds no road of its own', () => {
     expect(clip.duration).toBeGreaterThan(0);
     // Optional since #901; an `AnimationClip` node still always answers one.
     // No pose (#920) — the clip describes the motion; a consumer with a Time
-    // samples it. Keys and the rig they are indexed against travel together.
-    expect(clip.keyframes.length).toBeGreaterThan(0);
+    // samples it. Poses and the rig whose bones they name travel together (#1225).
+    expect(clip.poses.length).toBeGreaterThan(0);
     expect(clip.skeleton.bones.length).toBeGreaterThan(0);
   });
 
@@ -423,11 +424,22 @@ describe('the agent-facing text offers only roads that exist (#758)', () => {
     // pose-bearing socket, so it cannot hold two poses at once. It is the first
     // consumer the pose lane has ever had — which is what makes the lane
     // terminate somewhere — and the property this row guards is untouched.
+    // #1203 adds a FIFTH, and it is not a fold: what poses an armature Object, exactly one, and the
+    // Object has no other pose-bearing socket. #1224 re-types it from a clip (`action`) to the pose
+    // wire (`pose`); still one, still single.
+    // #1240 adds a SIXTH, and it is not a fold of two poses either: `PoseLayer` takes exactly one
+    // `PosedSkeleton` and folds its OWN keys onto it, as `PoseOverride` does. Chaining layers is
+    // chaining nodes, one pose in each.
+    // #1225 re-types `RetargetClip`'s input from a clip (`sourceClip`) to the pose wire (`source`);
+    // still one, still single, and the node has no other pose-bearing socket. #1225 re-types
+    // `LocomotionState`'s the same way (`clip` → `pose`); still one, still single.
     expect(poseConsumingSockets()).toEqual([
       'AnimationClip.source: AnimationClip (single)',
-      'LocomotionState.clip: AnimationClip (single)',
+      'LocomotionState.pose: PosedSkeleton (single)',
+      'Object.pose: PosedSkeleton (single)',
+      'PoseLayer.pose: PosedSkeleton (single)',
       'PoseOverride.pose: PosedSkeleton (single)',
-      'RetargetClip.sourceClip: AnimationClip (single)',
+      'RetargetClip.source: PosedSkeleton (single)',
     ]);
   });
 

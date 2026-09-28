@@ -248,7 +248,8 @@ describe('a param declares its control on its schema (#872)', () => {
     expect({ examined: examined > 0, nameCount: names.length, undeclared }).toEqual({
       examined: true,
       // 25 since #1124 retired `MotionGenerate.name` — a generated motion's clip owns its name.
-      nameCount: 25,
+      // 26 at #1240: `PoseLayer.name`, through `nameParam` like every other.
+      nameCount: 26,
       undeclared: [],
     });
   });
@@ -362,6 +363,9 @@ describe('a param declares its control on its schema (#872)', () => {
       'KeyframeChannelImage.target': NOTHING_READS_IMAGE,
       'KeyframeChannelVec2.paramPath': NO_VEC2_ROWS,
       'KeyframeChannelVec2.target': NO_VEC2_ROWS,
+      // #1210 — a bone of the parent armature, by name. #1284's bone picker (`TrackTo.aimBone`)
+      // offers a character's bones; pointing it at the parent's is what would retire this line.
+      'Object.parentBone': CHOICE,
 
       'ClipSelect.selectedClipName': CHOICE,
       'LightData.tex': CHOICE,
@@ -409,7 +413,7 @@ describe('a param declares its control on its schema (#872)', () => {
     });
     // The denominator rides with the verdict — an empty `unacknowledged` from a loop that
     // never ran looks exactly like a pass.
-    expect(readOnly.length).toBe(17);
+    expect(readOnly.length).toBe(18);
   });
 
   it('row 15 — a param owns the word for its EMPTY state, and the control owns the fallback (#1031)', () => {
@@ -471,8 +475,9 @@ describe('a param declares its control on its schema (#872)', () => {
     expect({ examined: examined > 0, count: declaredWord.length }).toEqual({
       examined: true,
       // 25 `.name`s since #1124 retired `MotionGenerate.name`, the profile picker's word (#1064),
-      // and the bone picker's (#1284): an empty bone aims at "the object itself".
-      count: 27,
+      // the bone picker's (#1284): an empty bone aims at "the object itself"; 28 at #1240
+      // (`PoseLayer.name`).
+      count: 28,
     });
     expect(declaredWord.filter((k) => !k.endsWith('.name'))).toEqual([
       'LightProfileSelect.selectedProfile',

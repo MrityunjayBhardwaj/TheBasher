@@ -10,21 +10,24 @@
 import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
 import type { DagState } from '../../core/dag/state';
-import { placeCharacterAtPathStart, placementGroupFor } from './placeGeneratedMotion';
+import { placeCharacterAtPathStart, placementRootOf } from './placeGeneratedMotion';
 
-/** The node shape the glTF import produces: rig → asset ← group.children. */
+/**
+ * The node shape a native character import produces, as far as placement reads it: the armature
+ * Object standing its skeleton, hung under the import's root Group, under the scene.
+ */
 function characterState(opts?: {
   position?: [number, number, number];
   pivot?: [number, number, number];
 }): DagState {
   return {
     nodes: {
-      n_asset: { id: 'n_asset', type: 'GltfAsset', params: { assetRef: '/models/x.glb' } },
+      n_skel: { id: 'n_skel', type: 'Skeleton', params: {} },
       n_rig: {
-        id: 'n_rig',
-        type: 'GltfSkeleton',
+        id: RIG,
+        type: 'Object',
         params: {},
-        inputs: { asset: { node: 'n_asset', socket: 'out' } },
+        inputs: { data: { node: 'n_skel', socket: 'out' } },
       },
       n_group: {
         id: 'n_group',
@@ -35,34 +38,50 @@ function characterState(opts?: {
           scale: [1, 1, 1],
           pivot: opts?.pivot ?? [0, 0, 0],
         },
-        inputs: { children: [{ node: 'n_asset', socket: 'out' }] },
+        inputs: { children: [{ node: 'n_rig', socket: 'out' }] },
+      },
+      n_scene: {
+        id: 'n_scene',
+        type: 'Scene',
+        params: {},
+        inputs: { children: [{ node: 'n_group', socket: 'out' }] },
       },
     },
+    outputs: { scene: { node: 'n_scene', socket: 'out' } },
   } as unknown as DagState;
 }
 
+/** The character: its skeleton, and the armature Object that stands it. */
+const RIG = { skeletonId: 'n_skel', objectId: 'n_rig' } as const;
+
 describe('finding the placement node', () => {
-  it('walks rig → asset → the group that contains it', () => {
-    expect(placementGroupFor(characterState(), 'n_rig')).toBe('n_group');
+  it('walks up from the armature Object to the root the scene holds', () => {
+    expect(placementRootOf(characterState(), RIG)).toBe('n_group');
   });
 
   it('does not mistake an unrelated group for this character’s root', () => {
     const state = characterState();
-    // A second Group holding something else entirely — the scan matches on the
-    // asset it contains, not on being a Group.
+    // A second Group under the scene holding something else entirely — the walk follows the
+    // Object's own parents, not "any Group".
     (state.nodes as Record<string, unknown>).n_other = {
       id: 'n_other',
       type: 'Group',
       params: {},
       inputs: { children: [{ node: 'n_elsewhere', socket: 'out' }] },
     };
-    expect(placementGroupFor(state, 'n_rig')).toBe('n_group');
+    (state.nodes.n_scene as unknown as { inputs: { children: unknown[] } }).inputs.children.unshift(
+      {
+        node: 'n_other',
+        socket: 'out',
+      },
+    );
+    expect(placementRootOf(state, RIG)).toBe('n_group');
   });
 
-  it('returns null for a rig with no asset behind it', () => {
+  it('returns null for an armature Object no scene holds', () => {
     const state = characterState();
-    delete (state.nodes.n_rig as { inputs?: unknown }).inputs;
-    expect(placementGroupFor(state, 'n_rig')).toBeNull();
+    delete (state.nodes.n_group as { inputs?: unknown }).inputs;
+    expect(placementRootOf(state, RIG)).toBeNull();
   });
 });
 
@@ -72,7 +91,7 @@ describe('placing the character at the path start', () => {
     // must produce position [3 + pivot.x, y, 1 + pivot.z] so that
     // `position - pivot` lands exactly on [3, 1].
     const state = characterState({ position: [0.5, 0, -0.25], pivot: [0.5, 0.9, -0.25] });
-    const out = placeCharacterAtPathStart(state, 'n_rig', [3, 1], null);
+    const out = placeCharacterAtPathStart(state, RIG, [3, 1], null);
     expect(out.ok).toBe(true);
     if (!out.ok) return;
     expect(out.ops).toEqual([
@@ -88,15 +107,10 @@ describe('placing the character at the path start', () => {
     // The falsifier for the row above: same request, pivot the only difference.
     // If this file ever regresses to `position = offset`, these two agree and the
     // bbox-centre error becomes invisible.
-    const zero = placeCharacterAtPathStart(
-      characterState({ pivot: [0, 0, 0] }),
-      'n_rig',
-      [3, 1],
-      null,
-    );
+    const zero = placeCharacterAtPathStart(characterState({ pivot: [0, 0, 0] }), RIG, [3, 1], null);
     const offCentre = placeCharacterAtPathStart(
       characterState({ pivot: [0.5, 0.9, -0.25] }),
-      'n_rig',
+      RIG,
       [3, 1],
       null,
     );
@@ -107,7 +121,7 @@ describe('placing the character at the path start', () => {
 
   it('leaves Y alone, so a character dropped at a height stays there', () => {
     const state = characterState({ position: [0, 2.5, 0], pivot: [0, 0, 0] });
-    const out = placeCharacterAtPathStart(state, 'n_rig', [3, 1], null);
+    const out = placeCharacterAtPathStart(state, RIG, [3, 1], null);
     expect(out.ok).toBe(true);
     if (!out.ok) return;
     expect((out.ops[0] as { value: [number, number, number] }).value[1]).toBe(2.5);
@@ -117,7 +131,7 @@ describe('placing the character at the path start', () => {
     // [0,0] is a placement, not an absence — the same distinction the chain keeps
     // on the way in. A character previously standing at [4, 4] must MOVE.
     const state = characterState({ position: [4, 0, 4], pivot: [0, 0, 0] });
-    const out = placeCharacterAtPathStart(state, 'n_rig', [0, 0], null);
+    const out = placeCharacterAtPathStart(state, RIG, [0, 0], null);
     expect(out.ok).toBe(true);
     if (!out.ok) return;
     expect((out.ops[0] as { value: [number, number, number] }).value).toEqual([0, 0, 0]);
@@ -127,7 +141,7 @@ describe('placing the character at the path start', () => {
   it('refuses — and says why — when the character has no group to place by', () => {
     const state = characterState();
     delete (state.nodes as Record<string, unknown>).n_group;
-    const out = placeCharacterAtPathStart(state, 'n_rig', [3, 1], null);
+    const out = placeCharacterAtPathStart(state, RIG, [3, 1], null);
     expect(out.ok).toBe(false);
     if (out.ok) return;
     // The message has to name the CONSEQUENCE, because the clip still plays and
@@ -136,7 +150,7 @@ describe('placing the character at the path start', () => {
   });
 
   it('refuses a non-finite offset rather than writing NaN into the graph', () => {
-    const out = placeCharacterAtPathStart(characterState(), 'n_rig', [Number.NaN, 1], null);
+    const out = placeCharacterAtPathStart(characterState(), RIG, [Number.NaN, 1], null);
     expect(out.ok).toBe(false);
   });
 
@@ -145,7 +159,7 @@ describe('placing the character at the path start', () => {
     // zod, so `position`/`pivot` are genuinely absent. `undefined + 3` is NaN.
     const state = characterState();
     (state.nodes.n_group as { params: unknown }).params = {};
-    const out = placeCharacterAtPathStart(state, 'n_rig', [3, 1], null);
+    const out = placeCharacterAtPathStart(state, RIG, [3, 1], null);
     expect(out.ok).toBe(true);
     if (!out.ok) return;
     expect((out.ops[0] as { value: [number, number, number] }).value).toEqual([3, 0, 1]);
@@ -204,7 +218,7 @@ describe('#897 — the facing half of the same placement', () => {
   it('sets the character off along the requested heading, not the canonical one', () => {
     const out = placeCharacterAtPathStart(
       characterState({ pivot: PIVOT }),
-      'n_rig',
+      RIG,
       [3, 1],
       Math.PI / 2, // +Z
     );
@@ -224,12 +238,7 @@ describe('#897 — the facing half of the same placement', () => {
   });
 
   it('walks a character backwards when that is what was asked for', () => {
-    const out = placeCharacterAtPathStart(
-      characterState({ pivot: PIVOT }),
-      'n_rig',
-      [0, 0],
-      Math.PI,
-    );
+    const out = placeCharacterAtPathStart(characterState({ pivot: PIVOT }), RIG, [0, 0], Math.PI);
     expect(out.ok).toBe(true);
     if (!out.ok) return;
     const { start, forward } = walkThroughThree(out.ops, PIVOT);
@@ -240,13 +249,8 @@ describe('#897 — the facing half of the same placement', () => {
   });
 
   it('leaves the facing ALONE when none was requested — null is not zero', () => {
-    const none = placeCharacterAtPathStart(characterState({ pivot: PIVOT }), 'n_rig', [3, 1], null);
-    const canonical = placeCharacterAtPathStart(
-      characterState({ pivot: PIVOT }),
-      'n_rig',
-      [3, 1],
-      0,
-    );
+    const none = placeCharacterAtPathStart(characterState({ pivot: PIVOT }), RIG, [3, 1], null);
+    const canonical = placeCharacterAtPathStart(characterState({ pivot: PIVOT }), RIG, [3, 1], 0);
     expect(none.ok && canonical.ok).toBe(true);
     if (!none.ok || !canonical.ok) return;
     // A request for the canonical direction WRITES it; no request writes nothing.
@@ -266,14 +270,14 @@ describe('#897 — the facing half of the same placement', () => {
     // NaN is the specific value to fear: it is what an un-normalised or
     // zero-length heading produces, and a NaN Euler reaches the renderer as a
     // silent identity — the facing simply does not happen, with nothing said.
-    const out = placeCharacterAtPathStart(characterState(), 'n_rig', [3, 1], Number.NaN);
+    const out = placeCharacterAtPathStart(characterState(), RIG, [3, 1], Number.NaN);
     expect(out.ok).toBe(false);
   });
 
   it('writes only the ground-plane facing, leaving an authored tilt alone', () => {
     const state = characterState({ pivot: PIVOT });
     (state.nodes.n_group as { params: Record<string, unknown> }).params.rotation = [12, 34, 56];
-    const out = placeCharacterAtPathStart(state, 'n_rig', [0, 0], Math.PI / 2);
+    const out = placeCharacterAtPathStart(state, RIG, [0, 0], Math.PI / 2);
     expect(out.ok).toBe(true);
     if (!out.ok) return;
     const written = out.ops.find((o) => (o as { paramPath: string }).paramPath === 'rotation');

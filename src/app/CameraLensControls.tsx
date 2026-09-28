@@ -26,6 +26,7 @@ import { cameraProjectionOf } from './cameraNode';
 import { ParamDiamond } from './ParamDiamond';
 import { resolveEvaluatedParam } from './resolveEvaluatedParam';
 import { useTimeStore } from './stores/timeStore';
+import { DEFAULT_CAMERA_FAR, DEFAULT_CAMERA_NEAR } from '../nodes/CameraData';
 
 const ROW = 'flex items-center justify-between gap-2 px-3 py-1.5 text-[11px] text-fg/80';
 const LABEL = 'font-mono text-fg/60';
@@ -136,11 +137,11 @@ export function CameraLensControls({
   const near =
     typeof evaluatedScalar.near?.value === 'number'
       ? evaluatedScalar.near.value
-      : (params.near ?? 0.01);
+      : (params.near ?? DEFAULT_CAMERA_NEAR);
   const far =
     typeof evaluatedScalar.far?.value === 'number'
       ? evaluatedScalar.far.value
-      : (params.far ?? 500);
+      : (params.far ?? DEFAULT_CAMERA_FAR);
   const nearReadOnly = playing && evaluatedScalar.near !== null;
   const farReadOnly = playing && evaluatedScalar.far !== null;
 

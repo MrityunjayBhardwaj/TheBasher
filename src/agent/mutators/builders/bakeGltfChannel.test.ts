@@ -449,9 +449,8 @@ describe("#916 — the mint carries the TransformClip's time domain", () => {
   });
 
   it('the minted channel agrees with the CLIP past the duration — the gate this carrier never had', () => {
-    // 🔑 THE ROW #934 EXISTS FOR. The sibling carrier has had this since #924
-    // (ensureChannelForBone: "the minted channel agrees with the CLIP past the
-    // duration, which is the point"). This carrier never did — so the clip and
+    // 🔑 THE ROW #934 EXISTS FOR. The sibling carrier (the clone rig's
+    // clip-seeded mint, retired #1053) had this since #924. This carrier never did — so the clip and
     // the channel minted from it disagreed about what `cycle` meant, for two
     // issues, and every row on either side stayed green because no row ever put
     // the two in the same room.

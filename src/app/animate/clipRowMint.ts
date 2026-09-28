@@ -1,12 +1,18 @@
 // Which mint does this bone's clip row use? (#889 slice 3 / #903)
 //
+// 🔶 ONE ROAD LEFT (#1053). The AnimationClip road below — a motion bound onto a clone rig,
+// minted by `ensureChannelForBone` seeded from that clip — retired with the clone road's
+// character half: no character is bound that way now (a native character's keys are written into
+// its pose layers). What remains is the TransformClip road: an imported file's own animation on an
+// unskinned child. The history below is kept because it is why the two were never one mint.
+//
 // ─────────────────────────────────────────────────────────────────────────
 // TWO CLIPS REACH A BONE, AND THEY ARE NOT INTERCHANGEABLE
 // ─────────────────────────────────────────────────────────────────────────
 // `TransformClip` is a glTF file's OWN embedded animation (gltfImportChain.ts:887)
 // — keyed by `targetNodeId`, full TRS per key, rotation already in degrees.
-// `AnimationClip` is a generated / BVH / FBX / retargeted motion
-// (bvhImportChain.ts:91, fbxImportChain.ts:65, retarget.ts:224) — keyed by bone
+// `AnimationClip` is a generated or retargeted motion, or a BVH / FBX one a saved project
+// still holds (dropped files land on a base pose layer since #1211) — keyed by bone
 // INDEX, position and rotation only, rotation in radians.
 //
 // They are not two encodings of one thing; they are two roads, and only the
@@ -45,14 +51,13 @@ import type { ClosureSpec } from '../../agent/closure/types';
 // imports these two the same way for the same reason.
 import { getMutator } from '../../agent/mutators/catalog';
 import { validatePlan } from '../../agent/mutators/validate';
-import { gltfChannelDagId, gltfChildDagId } from '../../core/import/gltfImportChain';
-import type { AnimationClipParams } from '../../nodes/AnimationClip';
+import { gltfChannelDagId } from '../../core/import/gltfImportChain';
 import { assetRefForChild, parseClipRowId } from './bakeOnEdit';
 import { paramAnimationState, type ParamAnimationState } from './paramAnimationState';
-import { boneIndexOf, boundClipsForAsset } from './boundClipsForAsset';
 import { activeClipKeyframesForAsset } from '../../timeline/clipChannelRows';
-import { ensureChannelForBone } from './ensureChannelForBone';
 import type { BakedComponent } from '../../agent/mutators/builders/bakeChannelOps';
+import { resolveChannelAddress } from '../../agent/mutators/builders/channelAddress';
+import { parseLayerRowId } from '../../timeline/layerChannelRows';
 
 export type ClipRowMint =
   | {
@@ -61,43 +66,21 @@ export type ClipRowMint =
       readonly closure: ClosureSpec;
       /** Which road the bone turned out to be on — for the intent line and for
        *  tests that would otherwise pass while minting from the wrong source. */
-      readonly source: 'animation-clip' | 'transform-clip';
+      readonly source: 'transform-clip';
       readonly warnings: readonly string[];
     }
   | { readonly ok: false; readonly reason: string };
 
 /**
- * Does a clip BOUND TO THIS RIG carry keys for this bone?
- *
- * The bound-ness matters and is not a formality: a clip's bone indices are only
- * meaningful against the skeleton they were authored for, and a project can hold
- * a 78-bone source clip alongside the 23-bone retargeted one. `boundClipsForAsset`
- * follows the skeleton edge, so the source clip is excluded with no special case.
- */
-export function animationClipCarriesBone(
-  state: DagState,
-  assetRef: string,
-  childName: string,
-): boolean {
-  for (const clip of boundClipsForAsset(state.nodes, assetRef)) {
-    const index = boneIndexOf(clip, childName);
-    if (index === null) continue;
-    const keyframes = (clip.params as Partial<AnimationClipParams>).keyframes ?? [];
-    if (keyframes.some((k) => k.bone === index)) return true;
-  }
-  return false;
-}
-
-/**
  * Does the asset's OWN embedded animation drive this child? (#911)
  *
- * 🔑 THE SECOND CLIP ROAD. `resolveGltfChildTransform`'s precedence is
- * manual → baked → CLIP → base, and the clip layer has two suppliers: an
- * `AnimationClip` bound to the rig (BVH / FBX / retargeted / generated), and a
- * `TransformClip` carrying a glTF file's own embedded animation. #908 taught the
- * diamond the first. This is the second, and without it importing a `.glb` that
- * animates itself gave exactly the indicator #908 removed: the bone moves, the
- * diamond says "not animated".
+ * 🔑 THE CLIP ROAD THAT REMAINS. `resolveGltfChildTransform`'s precedence is
+ * manual → baked → CLIP → base. The clip layer had two suppliers: an
+ * `AnimationClip` bound to a clone rig, and a `TransformClip` carrying a glTF
+ * file's own embedded animation. #908 taught the diamond the first; this taught it
+ * the second, without which importing a `.glb` that animates itself gave exactly
+ * the indicator #908 removed: the child moves, the diamond says "not animated".
+ * The first retired with the clone road's character half (#1053).
  *
  * IT NEEDS NO EVALUATED VALUE, which is the thing worth stating. The issue
  * expected to have to thread a `GltfAssetValue` in, because `transformClip` is
@@ -112,11 +95,10 @@ export function animationClipCarriesBone(
  * so the diamond cannot say "animated" about a bone the mint would then refuse,
  * or stay gray on one it would happily bake.
  *
- * ALL THREE COMPONENTS, unlike the sibling road. A `TransformClip` keyframe
- * carries full TRS (`ClipKeyframe` — position, rotation AND scale), where an
- * `AnimationClip` keyframe has no scale at all. So scale is honestly animated
- * here and honestly not animated there; one shared component filter would have
- * to be wrong on one of the two roads.
+ * ALL THREE COMPONENTS. A `TransformClip` keyframe carries full TRS
+ * (`ClipKeyframe` — position, rotation AND scale), so scale is honestly animated
+ * here. (The retired AnimationClip road had no scale, which is why the two never
+ * shared one component filter.)
  */
 export function transformClipCarriesChild(
   state: DagState,
@@ -137,35 +119,10 @@ export function clipRowMintOps(
   state: DagState,
   assetRef: string,
   childName: string,
-  component: BakedComponent,
+  // The component the row asked about. The TransformClip bake materialises the whole bone (all
+  // three components) whichever one was asked, so it is not read; kept so every caller states it.
+  _component: BakedComponent,
 ): ClipRowMint {
-  const boneId = gltfChildDagId(assetRef, childName);
-  const channelId = gltfChannelDagId(assetRef, childName, component);
-
-  if (animationClipCarriesBone(state, assetRef, childName)) {
-    const ensured = ensureChannelForBone(state, boneId, component);
-    if (!ensured) {
-      return { ok: false, reason: `No GltfChild for "${childName}" on asset "${assetRef}".` };
-    }
-    return {
-      ok: true,
-      ops: ensured.ops,
-      // Hand-built rather than borrowed from a mutator, because the mint is a
-      // pure function here rather than a plan.
-      //
-      // The channel root is NOT what keeps the composite's later write legal —
-      // measured, by removing it and watching every drag row stay green. Each
-      // retime step validates against the forked state and declares its own
-      // root, and the mint's own addNode is exempt from gate 3 anyway. It is
-      // declared because a closure should describe the step that produced it: a
-      // caller that mints and then writes in ONE plan (the keyboard paths) needs
-      // it, and a spec that only named the bone would be true by accident.
-      closure: { rootSelectors: [boneId, channelId], followedEdges: [] },
-      source: 'animation-clip',
-      warnings: [],
-    };
-  }
-
   const bake = getMutator('mutator.timeline.bakeGltfChannel');
   if (!bake) {
     return { ok: false, reason: 'Timeline Mutators not registered (bakeGltfChannel).' };
@@ -221,20 +178,8 @@ export function boneComponentAddress(
 }
 
 /**
- * The components an `AnimationClip` can drive.
- *
- * NOT all three: `AnimationClipParams.keyframes` carries `position` and
- * `rotation` and no scale (`AnimationClip.ts` schema), and the read band
- * supplies exactly those two for exactly that reason — claiming scale would
- * suppress the asset's own scale track underneath it. So a clip-driven bone's
- * scale is honestly un-animated, and saying otherwise would be the same lie in
- * the other direction.
- */
-const CLIP_DRIVEN_COMPONENTS: ReadonlySet<string> = new Set(['position', 'rotation']);
-
-/**
  * The animation state a READ-ONLY INDICATOR should show for `(nodeId, paramPath)`
- * — the authored-channel state, widened by "and a bound clip drives this bone".
+ * — the authored-channel state, widened by "and the file's own clip drives this child".
  *
  * ─────────────────────────────────────────────────────────────────────────
  * WHY THIS IS A SECOND FUNCTION RATHER THAN A WIDER `paramAnimationState`
@@ -264,8 +209,9 @@ const CLIP_DRIVEN_COMPONENTS: ReadonlySet<string> = new Set(['position', 'rotati
  * So this is not a parallel answer to one question ([[V101]]); it is the wider
  * of two questions, composed FROM the narrower one, with one home each.
  *
- * REF: `src/app/bakedGltfChannels.ts` (`clipBandSamplersForAsset`, the band this
- *      agrees with); `src/app/resolveGltfChildTransform.ts` (the precedence);
+ * REF: `src/app/bakedGltfChannels.ts` (the channel band; the clip band this agreed with
+ *      retired with the clone road's character half, #1053); `src/app/resolveGltfChildTransform.ts`
+ *      (the precedence);
  *      issues #908, #889.
  */
 export function paramAnimationDisplayState(
@@ -283,22 +229,11 @@ export function paramAnimationDisplayState(
   const bone = boneComponentAddress(state, nodeId, paramPath);
   if (!bone) return 'none';
 
-  // Deliberately never 'on-key' from either road: a clip key is not the
-  // director's to remove — the clip is read-only and shared, and yellow reads as
-  // "click to unkey".
-  //
-  // ROAD 1 — an AnimationClip bound to the rig. `position`/`rotation` only,
-  // because its keyframes carry no scale.
-  if (
-    CLIP_DRIVEN_COMPONENTS.has(bone.component) &&
-    animationClipCarriesBone(state, bone.assetRef, bone.childName)
-  ) {
-    return 'animated';
-  }
-
-  // ROAD 2 — the asset's OWN embedded animation (#911). NOT filtered by
-  // `CLIP_DRIVEN_COMPONENTS`: a TransformClip key carries full TRS, so scale is
-  // genuinely animated on this road where it genuinely is not on the other.
+  // Deliberately never 'on-key': a clip key is not the director's to remove — the clip is
+  // read-only and shared, and yellow reads as "click to unkey". The asset's OWN embedded
+  // animation (#911): a TransformClip key carries full TRS, so every component can be animated.
+  // (An AnimationClip bound to a clone rig was a second road here, position/rotation only, until
+  // it retired with the clone road's character half, #1053.)
   if (transformClipCarriesChild(state, bone.assetRef, bone.childName)) return 'animated';
 
   return 'none';
@@ -315,11 +250,26 @@ export interface RowChannelWrite {
    *  modifier fields too, not just the keys. */
   readonly params: Record<string, unknown>;
   readonly nodeType: string;
+  /** The ops that change the channel's fields wherever it lives (#1215: its node, or its entry in
+   *  a pose layer's list). */
+  readonly write: (fields: Readonly<Record<string, unknown>>) => Op[];
+  /** A key inserted here takes the value the CURVE shows, not a target param: a minted clip copy,
+   *  or a layer's curve (a bone's value is the pose, not a param anyone typed). */
+  readonly keyFromCurve: boolean;
+  /** Removing the last key removes the curve (a layer's, as Blender removes an emptied F-curve);
+   *  on a channel node an emptied channel would instead claim its component with zeros. */
+  readonly emptyRemovesCurve: boolean;
 }
 
+const setKeys = (channelId: string) => (fields: Readonly<Record<string, unknown>>) =>
+  Object.entries(fields).map(
+    ([paramPath, value]): Op => ({ type: 'setParam', nodeId: channelId, paramPath, value }),
+  );
+
 /**
- * Resolve the timeline's active row id — a real channel id, or a synthetic
- * `clip:<childName>:<component>` one — into the channel a write lands on.
+ * Resolve the timeline's active row id — a real channel id, a synthetic
+ * `clip:<childName>:<component>` one, or a pose layer's `layer:` row (#1215) —
+ * into the channel a write lands on, and the `write` that lands it there.
  *
  * The synthetic form is why this exists. A read-only clip row has no DAG node,
  * so every keyboard path bailed on it: `buildKeyframeInsertOp` and
@@ -333,6 +283,21 @@ export function resolveRowChannelForWrite(
   state: DagState,
   rowChannelId: string,
 ): RowChannelWrite | null {
+  // #1215 — a layer row: the address resolver answers where the curve lives and how to write it.
+  const layer = parseLayerRowId(rowChannelId);
+  if (layer) {
+    const resolved = resolveChannelAddress(state, { layer }, { mint: true });
+    if (!resolved.ok) return null;
+    return {
+      channelId: resolved.channelId,
+      mintOps: resolved.mintOps,
+      params: resolved.view.params,
+      nodeType: resolved.view.type,
+      write: resolved.write,
+      keyFromCurve: true,
+      emptyRemovesCurve: true,
+    };
+  }
   const clip = parseClipRowId(rowChannelId);
   if (!clip) {
     const live = state.nodes[rowChannelId];
@@ -342,6 +307,9 @@ export function resolveRowChannelForWrite(
       mintOps: [],
       params: (live.params ?? {}) as Record<string, unknown>,
       nodeType: live.type,
+      write: setKeys(rowChannelId),
+      keyFromCurve: false,
+      emptyRemovesCurve: false,
     };
   }
 
@@ -357,6 +325,9 @@ export function resolveRowChannelForWrite(
       mintOps: mint.ops,
       params: (fromMint.params ?? {}) as Record<string, unknown>,
       nodeType: fromMint.nodeType,
+      write: setKeys(channelId),
+      keyFromCurve: true,
+      emptyRemovesCurve: false,
     };
   }
   // The mint emitted nothing for this component: the channel is already there
@@ -369,7 +340,35 @@ export function resolveRowChannelForWrite(
     mintOps: [],
     params: (live.params ?? {}) as Record<string, unknown>,
     nodeType: live.type,
+    write: setKeys(channelId),
+    keyFromCurve: false,
+    emptyRemovesCurve: false,
   };
+}
+
+/**
+ * #1215 — the ops that flip a timeline row's `mute` or `solo`, wherever its curve lives: a channel
+ * node's param, or the curve's entry in its pose layer (through the row resolver's `write`, so the
+ * gutter glyph, the toolbar button and the agent's resolver land in one place). Null when the row has
+ * nothing to flip: a read-only clip row (no curve until an edit makes one), a missing row, or `solo`
+ * on a layer's curve, which has none (Blender's F-curves have a mute and no solo; the layer solos).
+ */
+export function rowFlagToggleOps(
+  state: DagState,
+  rowChannelId: string,
+  kind: 'mute' | 'solo',
+): Op[] | null {
+  if (parseClipRowId(rowChannelId)) return null;
+  if (kind === 'solo' && parseLayerRowId(rowChannelId)) return null;
+  const resolved = resolveRowChannelForWrite(state, rowChannelId);
+  if (!resolved) return null;
+  return resolved.write({ [kind]: resolved.params[kind] !== true });
+}
+
+/** Whether a timeline row's `mute` / `solo` is on, read where its curve lives. */
+export function rowFlag(state: DagState, rowChannelId: string, kind: 'mute' | 'solo'): boolean {
+  if (parseClipRowId(rowChannelId)) return false;
+  return resolveRowChannelForWrite(state, rowChannelId)?.params[kind] === true;
 }
 
 /** What a diamond activation should DO — see {@link diamondActivation}. */

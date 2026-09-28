@@ -109,7 +109,12 @@ export function renderNoOpReport(reportable: ReadonlyArray<Reportable | null>): 
   if (hits.length === 0) return '';
   const lines = hits.map(
     (r) =>
-      `  - ${badgeLabel(r.badge, { paramPath: r.paramPath, nodeId: r.nodeId, reason: r.reason })}`,
+      `  - ${badgeLabel(r.badge, {
+        paramPath: r.paramPath,
+        nodeId: r.nodeId,
+        reason: r.reason,
+        owner: r.owner,
+      })}`,
   );
   // The closing line stays badge-agnostic on purpose. A stripped write changed
   // NOTHING; a displaced edge changed the graph and destroyed a connection. A
@@ -1146,6 +1151,10 @@ const KNOWN_EDGE_KINDS_LIST = [
   // NLA strips naming their subject by id in params). Followed by the delete sweep so
   // the nodes it removes or repoints are inside its own closure.
   'id-ref',
+  // #1244 — the pose wire under an armature Object (its `pose` input and each layer's).
+  'pose',
+  // #1201 — the records holding a rig's bone names, on both sides of its armature Object.
+  'rig',
 ] as const satisfies readonly EdgeKind[];
 
 // Compile-time bidirectional exhaustiveness — fails tsc if EdgeKind

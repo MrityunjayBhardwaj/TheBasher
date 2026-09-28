@@ -17,12 +17,12 @@
 //   CUBICSPLINE → bézier handles at ±Δt/3 carrying the file's tangents, which is the spec's Hermite
 //                 curve exactly (2.5e-8 over 12,012 samples, measured). Blender drops the tangents
 //                 (`animation_node.py:67-69`, "TODO manage tangent?"): 1.92 units off, measured.
-//                 A CUBICSPLINE ROTATION has no handles to land in and is refused (#1157).
+//                 A CUBICSPLINE ROTATION lands the same way (#1157): the quaternion channel
+//                 holds per-component handles, evaluated as the spec's Hermite and normalized.
 //
 // ── WHAT IS REFUSED ─────────────────────────────────────────────────────────────────────────────
 //
-// Refused whole, by name, like every other native-import refusal: a second clip (#1154), a morph
-// weights track (#1060), a CUBICSPLINE rotation (#1157), an accessor this reader cannot read
+// Refused whole, by name, like every other native-import refusal: a morph weights track (#1060), an accessor this reader cannot read
 // correctly (sparse, bufferless, interleaved — `readAccessor` would silently misread each), and a
 // file that breaks the spec's own rules for animation data. A channel with no target node is
 // skipped, which is what the spec says to do with it (`:2782`).
@@ -67,7 +67,9 @@ export interface Vec3ClipKey {
 export interface QuatClipKey {
   time: number;
   value: Quat;
-  easing: 'linear' | 'constant';
+  easing: 'linear' | 'constant' | 'cubic';
+  inHandle?: { time: number; value: Quat };
+  outHandle?: { time: number; value: Quat };
 }
 
 export type ClipChannel =
@@ -115,27 +117,56 @@ function unreadable(json: ClipGltfJson, index: number, what: string): NativeImpo
   return null;
 }
 
+/** One of a file's animations: its name, unique among the file's animations, and its channels. */
+export interface NativeAnimation {
+  readonly name: string;
+  readonly channels: ClipChannel[];
+}
+
 /**
- * The file's clip as channels, or the reason it cannot come across. A file with no animation reads
- * as no channels.
+ * #1154 — every animation the file carries, in the file's order, or the reason one cannot come across.
+ * The first is the one that plays (Blender makes it the active action, `scene.py:86-89`); the rest
+ * are held muted (`animation_utils.py:20-29`). A file with no animation reads as none.
+ *
+ * Names follow Blender's importer: the animation's own name, or `Anim_<index>` when it has none,
+ * made unique among the file's animations with `.001`, `.002`, … (`blender_gltf.py:237-244`,
+ * `find_unused_name`), because each becomes a layer or a track the director picks by name.
  */
-export function readNativeClip(
+export function readNativeAnimations(
   json: ClipGltfJson,
   buffers: Uint8Array[],
-): { channels: ClipChannel[] } | NativeImportRefusal {
-  const animations = json.animations ?? [];
-  if (animations.length === 0) return { channels: [] };
-  if (animations.length > 1) {
-    return {
-      refused: `it carries ${animations.length} animation clips, and only one can come across until clips become Actions`,
-      issue: '#1154',
-    };
+): { animations: NativeAnimation[] } | NativeImportRefusal {
+  const taken = new Set<string>();
+  const animations: NativeAnimation[] = [];
+  for (const [index, animation] of (json.animations ?? []).entries()) {
+    const read = readAnimation(json, buffers, animation);
+    if ('refused' in read) return read;
+    const name = unusedName(taken, animation.name || `Anim_${index}`);
+    taken.add(name);
+    animations.push({ name, channels: read.channels });
   }
+  return { animations };
+}
+
+/** Blender's `find_unused_name`: the name, else the name with the first free `.NNN` suffix. */
+function unusedName(taken: ReadonlySet<string>, desired: string): string {
+  if (!taken.has(desired)) return desired;
+  for (let n = 1; ; n++) {
+    const name = `${desired}.${String(n).padStart(3, '0')}`;
+    if (!taken.has(name)) return name;
+  }
+}
+
+/** One animation's channels, or the reason it cannot come across. */
+function readAnimation(
+  json: ClipGltfJson,
+  buffers: Uint8Array[],
+  animation: NonNullable<ClipGltfJson['animations']>[number],
+): { channels: ClipChannel[] } | NativeImportRefusal {
   // The loose shape above admits what glTF files carry and `GltfJson` does not type (a `weights`
   // path, a sparse or bufferless accessor), so they can be refused. Each accessor is checked by
   // `unreadable` before `readAccessor` touches it, which is what makes this view of it sound.
   const asGltf = json as unknown as GltfJson;
-  const animation = animations[0];
   const seen = new Set<string>();
   const channels: ClipChannel[] = [];
   for (const channel of animation.channels) {
@@ -166,13 +197,6 @@ export function readNativeClip(
     if (interpolation !== 'LINEAR' && interpolation !== 'STEP' && interpolation !== 'CUBICSPLINE') {
       return malformed(`uses an interpolation "${interpolation}"`);
     }
-    if (interpolation === 'CUBICSPLINE' && path === 'rotation') {
-      return {
-        refused: `it animates node ${node}'s rotation as CUBICSPLINE, and a quaternion channel has no handles to hold the tangents`,
-        issue: '#1157',
-      };
-    }
-
     // Input: float scalars with min/max (`:2833`), time[0] >= 0 and strictly increasing (schema).
     const inputRefusal = unreadable(json, sampler.input, 'input');
     if (inputRefusal) return inputRefusal;
@@ -217,12 +241,36 @@ export function readNativeClip(
     const at = (k: number, slot: number): number[] =>
       Array.from(values.subarray((k * perKey + slot) * width, (k * perKey + slot + 1) * width));
 
-    if (path === 'rotation') {
+    if (path === 'rotation' && interpolation !== 'CUBICSPLINE') {
       const easing = interpolation === 'STEP' ? 'constant' : 'linear';
       channels.push({
         node,
         path,
         keyframes: Array.from(times, (time, k) => ({ time, value: quat(at(k, 0)), easing })),
+      });
+      continue;
+    }
+    if (path === 'rotation') {
+      // #1157 — the same conversion the vec3 arm does below, over four components: the spec's
+      // Hermite IS the bézier whose inner controls sit a third of the span in, so the tangents
+      // become handles at ±Δt/3. The channel evaluates them per component and normalizes, which
+      // is the spec's own definition of a CUBICSPLINE rotation (`:3628`) — the arc a slerp draws
+      // cannot hold a tangent, which is why this road exists.
+      channels.push({
+        node,
+        path,
+        keyframes: Array.from(times, (time, k) => {
+          const key: QuatClipKey = { time, value: quat(at(k, 1)), easing: 'cubic' };
+          if (k > 0) {
+            const dt = time - times[k - 1];
+            key.inHandle = { time: -dt / 3, value: quat(at(k, 0).map((a) => (-a * dt) / 3)) };
+          }
+          if (k < times.length - 1) {
+            const dt = times[k + 1] - time;
+            key.outHandle = { time: dt / 3, value: quat(at(k, 2).map((b) => (b * dt) / 3)) };
+          }
+          return key;
+        }),
       });
       continue;
     }

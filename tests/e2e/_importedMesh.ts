@@ -31,7 +31,9 @@
 // project and names it by content hash), and specs asserting on descriptors assert the road's own.
 //
 // Roots are identified by STRUCTURE, never by an id prefix: a scene child `Group` whose subtree holds
-// a `GltfAsset` or an `Object` over `PolyMeshData`. Only the importer writes `PolyMeshData` today; a
+// a `GltfAsset` or an `Object` over `PolyMeshData` — directly, or at the bottom of the modifier chain
+// a character's mesh draws through (an Armature modifier over the mesh, #1205; before #1276 such a
+// character was invisible here). Only the importer writes `PolyMeshData` today; a
 // spec that builds one by hand would be counted as an import, which no spec does.
 //
 // REF: src/core/import/nativeGltfImport.ts (the native shape), src/nodes/PolyMeshData.ts,
@@ -125,6 +127,23 @@ export async function importRoots(page: Page): Promise<ImportRoot[]> {
       (Array.isArray(v) ? v : v ? [v] : [])
         .map((r) => (r as { node?: string }).node)
         .filter((id): id is string => typeof id === 'string');
+    // The mesh an Object draws: its data, or — for a character's mesh, which an Armature modifier
+    // deforms (#1205) — the PolyMeshData at the bottom of that modifier chain. Objects are not
+    // entered, so a modifier's armature input does not count.
+    const meshDataOf = (objectId: string): string | null => {
+      const seen = new Set<string>();
+      const queue = refs(nodes[objectId]?.inputs.data);
+      while (queue.length) {
+        const id = queue.shift()!;
+        if (seen.has(id)) continue;
+        seen.add(id);
+        const n = nodes[id];
+        if (!n || n.type === 'Object') continue;
+        if (n.type === 'PolyMeshData') return id;
+        for (const v of Object.values(n.inputs)) queue.push(...refs(v));
+      }
+      return null;
+    };
     const roadOf = (rootId: string): 'native' | 'clone' | null => {
       const seen = new Set<string>();
       const stack = [rootId];
@@ -136,11 +155,7 @@ export async function importRoots(page: Page): Promise<ImportRoot[]> {
         const n = nodes[id];
         if (!n) continue;
         if (n.type === 'GltfAsset') return 'clone';
-        if (
-          n.type === 'Object' &&
-          refs(n.inputs.data).some((d) => nodes[d]?.type === 'PolyMeshData')
-        )
-          road = 'native';
+        if (n.type === 'Object' && meshDataOf(id) !== null) road = 'native';
         for (const v of Object.values(n.inputs)) stack.push(...refs(v));
       }
       return road;
@@ -178,6 +193,23 @@ export async function importedMeshes(page: Page): Promise<ImportedMeshRow[]> {
         (Array.isArray(v) ? v : v ? [v] : [])
           .map((r) => (r as { node?: string }).node)
           .filter((id): id is string => typeof id === 'string');
+      // The mesh an Object draws: its data, or — for a character's mesh, which an Armature modifier
+      // deforms (#1205) — the PolyMeshData at the bottom of that modifier chain. Objects are not
+      // entered, so a modifier's armature input does not count.
+      const meshDataOf = (objectId: string): string | null => {
+        const seen = new Set<string>();
+        const queue = refs(nodes[objectId]?.inputs.data);
+        while (queue.length) {
+          const id = queue.shift()!;
+          if (seen.has(id)) continue;
+          seen.add(id);
+          const n = nodes[id];
+          if (!n || n.type === 'Object') continue;
+          if (n.type === 'PolyMeshData') return id;
+          for (const v of Object.values(n.inputs)) queue.push(...refs(v));
+        }
+        return null;
+      };
       const rows: { rootId: string; objectId: string; dataId: string; slots: unknown[] }[] = [];
       for (const rootId of rootIds) {
         const seen = new Set<string>();
@@ -189,7 +221,7 @@ export async function importedMeshes(page: Page): Promise<ImportedMeshRow[]> {
           const n = nodes[id];
           if (!n) continue;
           if (n.type === 'Object') {
-            const dataId = refs(n.inputs.data).find((d) => nodes[d]?.type === 'PolyMeshData');
+            const dataId = meshDataOf(id);
             if (dataId) {
               const { material, materialSlots } = nodes[dataId].params;
               const slots = Array.isArray(materialSlots) ? materialSlots : [material ?? null];

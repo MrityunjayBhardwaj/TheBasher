@@ -156,17 +156,17 @@ describe('#1051 — an imported clip plays as the spec defines it', () => {
 
   it('a file that cannot come across is refused whole, naming why', async () => {
     const json = JSON.parse(readFileSync('public/assets/anim-nested.gltf', 'utf8')) as {
-      animations: unknown[];
+      animations: { channels: { target: { path: string } }[] }[];
     };
-    json.animations.push(json.animations[0]);
+    json.animations[0].channels[0].target.path = 'weights';
     const result = await buildNativeGltfImportOps({
       buffer: new TextEncoder().encode(JSON.stringify(json)).buffer as ArrayBuffer,
-      assetRef: 'user-imports/native/two-clips.gltf',
+      assetRef: 'user-imports/native/morph-weights.gltf',
       sceneNodeId: 'n_scene',
       storeImage: async () => {
         throw new Error('a refused import stores nothing');
       },
     });
-    expect(result).toMatchObject({ issue: '#1154' });
+    expect(result).toMatchObject({ issue: '#1060' });
   });
 });

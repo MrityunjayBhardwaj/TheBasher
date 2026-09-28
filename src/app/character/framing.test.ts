@@ -31,8 +31,10 @@ import * as THREE from 'three';
 import { anchorForNode, applyFit, boundsForNode, frameSelected } from './framing';
 import { useSelectionStore } from '../stores/selectionStore';
 import { useThreeRef } from './threeRef';
+import { dollyRangeForClip } from '../../viewport/cameraFit';
+import { DEFAULT_VIEWPORT_CLIP } from '../stores/viewportStore';
 import type { DagState } from '../../core/dag/state';
-import { buildBvhImportOps } from '../../core/import/bvhImportChain';
+import { buildBvhClipOps } from '../../test-utils/bvhClip';
 import { buildSkeletonObjectOps } from '../../core/import/skeletonObject';
 import { buildDefaultDagState } from '../../core/project/default';
 import { useTimeStore } from '../stores/timeStore';
@@ -260,13 +262,14 @@ Frame Time: 0.0333333
   function rigAt(scale: number, { withClip = true } = {}): void {
     let s = buildDefaultDagState();
     const sceneNodeId = s.outputs.scene!.node;
-    const chain = buildBvhImportOps({ text: RIG_BVH, ids: { skeleton: 'sk', clip: 'clip' } });
+    const chain = buildBvhClipOps({ text: RIG_BVH, ids: { skeleton: 'sk', clip: 'clip' } });
     for (const op of chain.ops) s = applyOp(s, op).next;
     const { ops } = buildSkeletonObjectOps({
       skeletonId: 'sk',
       sceneNodeId,
       name: 'rig',
       clipId: 'clip',
+      nameFollowsClip: true,
     });
     for (const op of ops) s = applyOp(s, op).next;
     s = applyOp(s, {
@@ -275,7 +278,15 @@ Frame Time: 0.0333333
       paramPath: 'scale',
       value: [scale, scale, scale],
     }).next;
-    if (!withClip) s = applyOp(s, { type: 'removeNode', nodeId: 'clip' }).next;
+    if (!withClip) {
+      // Deleted as the product deletes it: the Object's pose edge lets go first (#1203, #1224).
+      s = applyOp(s, {
+        type: 'disconnect',
+        from: { node: 'clip', socket: 'pose' },
+        to: { node: 'sk_object', socket: 'pose' },
+      }).next;
+      s = applyOp(s, { type: 'removeNode', nodeId: 'clip' }).next;
+    }
     useDagStore.setState({ state: s });
     const scene = new THREE.Scene();
     const group = new THREE.Group();
@@ -331,21 +342,21 @@ Frame Time: 0.0333333
     expect(cam.position.distanceTo(target), 'dollied out to the rig').toBeGreaterThan(b.radius);
   });
 
-  it("the fit moves the controls' dolly range with it, so the next frame cannot clamp it back", () => {
-    // The range the boot fit left for a 1 m cube — measured in the app: (2.94 + 0.866) × 10.
+  it("the fit stands inside the view's own dolly range, so the next frame cannot clamp it back", () => {
+    // #1179 measured a fit of this rig clamped back to 38.08, the reach the boot fit had left for
+    // a 1 m cube. Since #1288 the range is the view's (ten Clip Ends, Blender's zoom limit), so
+    // the fit is not the range's writer — it only has to land inside it.
     rigAt(100);
-    const limits = { minDistance: 0.01, maxDistance: 38.08 };
     const target = new THREE.Vector3(0, 0, 0);
     const cam = new THREE.PerspectiveCamera(50, 16 / 9, 0.01, 500);
     cam.position.set(1.88, 1.25, 1.88);
-    useThreeRef.setState({ camera: cam, controlsTarget: target, dollyLimits: limits });
+    useThreeRef.setState({ camera: cam, controlsTarget: target });
     expect(applyFit(boundsForNode('sk_object')!)).toBe(true);
     const dist = cam.position.distanceTo(target);
+    const range = dollyRangeForClip(DEFAULT_VIEWPORT_CLIP.far);
     expect(dist, 'the fit stands back past the old limit').toBeGreaterThan(38.08);
-    expect(limits.maxDistance, 'and the range now admits where it stands').toBeGreaterThanOrEqual(
-      dist,
-    );
-    expect(limits.minDistance).toBeLessThanOrEqual(dist);
+    expect(dist).toBeLessThanOrEqual(range.maxDistance);
+    expect(dist).toBeGreaterThanOrEqual(range.minDistance);
   });
 
   it('an ordinary Object still measures its meshes only — the bones are not invented for it', () => {

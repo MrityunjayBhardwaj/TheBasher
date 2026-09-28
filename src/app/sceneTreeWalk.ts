@@ -17,6 +17,7 @@ import type { Node, NodeId } from '../core/dag/types';
 import { enumerateCameraNodeIds } from './activeCamera';
 import { importedChildOf } from './importedChild';
 import { chainSocketOf, isSceneLaneWrapper } from './operatorChain';
+import { hierarchySocketForKind } from './sceneHierarchy';
 
 export interface TreeRow {
   /** Stable key for React. */
@@ -125,7 +126,10 @@ function walkOneAsChild(
     display: display(ctx.state, nodeId),
     parent,
   };
-  if (node.type === 'Group') {
+  // #1152 — every node that parents through a `children` LIST (a Group, and an Object that holds
+  // children), asked of `sceneHierarchy` rather than named here, so the outliner cannot miss the
+  // next aggregate parent the walk already descends.
+  if (hierarchySocketForKind(node.type, node) === 'children') {
     pushRow(ctx, row);
     const children = node.inputs.children;
     if (Array.isArray(children)) {

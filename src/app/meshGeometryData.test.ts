@@ -74,6 +74,8 @@ function cube(withNormals = true): MeshGeometryData {
       ? Float32Array.from(CUBE_FACES.flatMap(([, n]) => [...n, ...n, ...n, ...n]))
       : null,
     faceLayers: [],
+    pointLayers: [],
+    vertexGroups: [],
   };
 }
 
@@ -217,6 +219,23 @@ describe('the packed form', () => {
     expect(renamed.key).not.toBe(a.key);
     expect(added.key).not.toBe(a.key);
     expect(a.key.startsWith('mesh|')).toBe(true);
+  });
+
+  it('#1204 — a mesh with normals keys apart by its normals and by its vertex groups', () => {
+    const flipped = cube();
+    flipped.cornerNormals = flipped.cornerNormals!.map((n) => -n);
+    const withNormals = meshGeometryRef(packMeshData(cube())).key;
+    expect(meshGeometryRef(packMeshData(flipped)).key).not.toBe(withNormals);
+    expect(meshGeometryRef(packMeshData(cube(false))).key).not.toBe(withNormals);
+    // Both with normals and differing only in the names their joint numbers index.
+    const groups = (names: string[]) =>
+      meshGeometryRef(packMeshData({ ...cube(), vertexGroups: names })).key;
+    expect(groups(['A'])).not.toBe(groups(['B']));
+    expect(groups(['A'])).not.toBe(withNormals);
+    // And without normals, the same.
+    const bare = (names: string[]) =>
+      meshGeometryRef(packMeshData({ ...cube(false), vertexGroups: names })).key;
+    expect(bare(['A'])).not.toBe(bare(['B']));
   });
 
   it('#1052 — face layers round-trip, and a mesh whose faces say something different keys apart', () => {

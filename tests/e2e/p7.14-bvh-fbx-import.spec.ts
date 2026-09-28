@@ -9,7 +9,8 @@
 // same single-file chokepoint the drop/picker chains funnel through.
 //
 // THE load-bearing assertion (grounded): BVH/FBX are MOTION, not models. They
-// emit a `Skeleton` + an `AnimationClip` node — NEVER a Mesh or GltfAsset.
+// emit a `Skeleton` + the file's motion as keys on a base `PoseLayer` (#1211) — NEVER a Mesh or
+// GltfAsset, and no longer an `AnimationClip`.
 // We assert on the DAG node-type delta (the producer side) plus OPFS layout
 // plus the My-Imports list (the consumer surfaces). A mesh appearing would be
 // the regression this gate catches.
@@ -89,19 +90,22 @@ test.beforeEach(async ({ page }) => {
   });
 });
 
-test('P7.14 (a) — BVH ingest yields Skeleton + AnimationClip (motion, not mesh) + OPFS + My Imports', async ({
+test('P7.14 (a) — BVH ingest yields Skeleton + base PoseLayer (motion, not mesh) + OPFS + My Imports', async ({
   page,
 }) => {
   const skelBefore = await nodeTypeCount(page, 'Skeleton');
+  const layerBefore = await nodeTypeCount(page, 'PoseLayer');
   const clipBefore = await nodeTypeCount(page, 'AnimationClip');
   const meshBefore = await nodeTypeCount(page, 'Mesh');
 
   const entryPath = await ingestMotionFixture(page, 'bvh', '/fixtures/anim/walk.bvh', 'walk');
   expect(entryPath).toBe('user-imports/walk/walk.bvh');
 
-  // DAG: a Skeleton + AnimationClip landed; NO mesh (grounded: motion, not model).
+  // DAG: a Skeleton + the file's motion as keys on a base PoseLayer landed (#1211), no clip; NO mesh
+  // (grounded: motion, not model).
   await expect.poll(async () => await nodeTypeCount(page, 'Skeleton')).toBe(skelBefore + 1);
-  await expect.poll(async () => await nodeTypeCount(page, 'AnimationClip')).toBe(clipBefore + 1);
+  await expect.poll(async () => await nodeTypeCount(page, 'PoseLayer')).toBe(layerBefore + 1);
+  expect(await nodeTypeCount(page, 'AnimationClip')).toBe(clipBefore);
   expect(await nodeTypeCount(page, 'Mesh')).toBe(meshBefore);
   expect(await nodeTypeCount(page, 'GltfAsset')).toBe(0);
 
@@ -129,10 +133,11 @@ test('P7.14 (a) — BVH ingest yields Skeleton + AnimationClip (motion, not mesh
   ).toBeVisible({ timeout: 5_000 });
 });
 
-test('P7.14 (b) — FBX ingest yields Skeleton + AnimationClip (binary decode) + OPFS', async ({
+test('P7.14 (b) — FBX ingest yields Skeleton + base PoseLayer (binary decode) + OPFS', async ({
   page,
 }) => {
   const skelBefore = await nodeTypeCount(page, 'Skeleton');
+  const layerBefore = await nodeTypeCount(page, 'PoseLayer');
   const clipBefore = await nodeTypeCount(page, 'AnimationClip');
   const meshBefore = await nodeTypeCount(page, 'Mesh');
 
@@ -140,7 +145,9 @@ test('P7.14 (b) — FBX ingest yields Skeleton + AnimationClip (binary decode) +
   expect(entryPath).toBe('user-imports/rig/rig.fbx');
 
   await expect.poll(async () => await nodeTypeCount(page, 'Skeleton')).toBe(skelBefore + 1);
-  await expect.poll(async () => await nodeTypeCount(page, 'AnimationClip')).toBe(clipBefore + 1);
+  // #1211 — the file's motion is keys on a base PoseLayer, as a BVH's and a glTF's are; no clip.
+  await expect.poll(async () => await nodeTypeCount(page, 'PoseLayer')).toBe(layerBefore + 1);
+  expect(await nodeTypeCount(page, 'AnimationClip')).toBe(clipBefore);
   expect(await nodeTypeCount(page, 'Mesh')).toBe(meshBefore);
   expect(await nodeTypeCount(page, 'GltfAsset')).toBe(0);
 

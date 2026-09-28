@@ -1,9 +1,10 @@
 // cameraFit — pure "frame all" math (#186). Given a scene's bounding sphere
 // (center + radius), produce everything the editor orbit camera needs to fit
 // the whole model on screen WITHOUT clipping: an orbit distance, a camera
-// position along the canonical viewing direction, and near/far clip planes +
-// OrbitControls min/max distance DERIVED FROM the radius (not constants) so a
-// 0.01-unit gem and a 10,000-unit terrain both frame correctly.
+// position along the canonical viewing direction, and near/far clip planes
+// DERIVED FROM the radius (not constants) so a 0.01-unit gem and a 10,000-unit
+// terrain both frame correctly. The orbit's dolly range is NOT the fit's: it is
+// the view's, from its Clip End (`dollyRangeForClip`, #1288).
 //
 // Why this exists: fixed planes (three's ≈0.1/1000) clip a large model past
 // `far` and clip a tiny one at `near` when you zoom in. Tying the planes to the
@@ -38,10 +39,31 @@ const MAX_DEPTH_RATIO = 50_000;
 export interface ClipPlanes {
   near: number;
   far: number;
-  /** OrbitControls dolly limits, scaled from the radius so you can zoom into a
-   *  tiny model and out of a huge one. */
+}
+
+/** OrbitControls' dolly range: how near and how far the free view may stand from its pivot. */
+export interface DollyRange {
   minDistance: number;
   maxDistance: number;
+}
+
+/** Blender's default grid scale (`View3D.grid`). The zoom's near limit is a thousandth of it. */
+const GRID_SCALE = 1;
+
+/**
+ * The free view's dolly range for a view whose Clip End is `clipEnd` — Blender's zoom limits.
+ *
+ * Blender clamps a zoom (wheel, drag, trackpad) to `[grid × 0.001, clip_end × 10]`
+ * (`ED_view3d_dist_soft_range_get(v3d, false)`, view3d_utils.cc:154-165, read by
+ * view3d_navigate_view_zoom.cc:297-318 and :398-417, tag v5.1.1). Nothing in it comes from the
+ * scene, and that is the point (#1288): a range taken from a fit goes stale the moment the scene
+ * changes, and was measured holding a director 38.08 units from a character that walks 587, the
+ * reach of the 1 m cube the view booted on. Raising Clip End raises the range with it — the same
+ * lever the past-Clip-End notice (#1188) already points at. Pure.
+ */
+export function dollyRangeForClip(clipEnd: number): DollyRange {
+  const end = Number.isFinite(clipEnd) && clipEnd > 0 ? clipEnd : 1000;
+  return { minDistance: GRID_SCALE * 0.001, maxDistance: end * 10 };
 }
 
 export interface CameraFit extends ClipPlanes {
@@ -54,7 +76,7 @@ export interface CameraFit extends ClipPlanes {
 }
 
 /**
- * Bounds-derived clip planes + orbit dolly limits for a camera sitting
+ * Bounds-derived clip planes for a camera sitting
  * `cameraDist` from the center of a bounding sphere of radius `radius`.
  *
  * Separated from `fitViewToSphere` (#191) because the planes depend on the
@@ -78,13 +100,54 @@ export function clipPlanesForView(
   const m = Number.isFinite(margin) && margin > 0 ? margin : DEFAULT_MARGIN;
   const far = d + r * m;
   const near = Math.max(d - r * m, far / MAX_DEPTH_RATIO);
+  return { near, far };
+}
+
+/**
+ * The limits to hand OrbitControls for a view standing `distance` from its pivot, before it applies
+ * a zoom: the range, widened to admit where the view already stands (#1292).
+ *
+ * OrbitControls clamps the distance into its limits on EVERY update, so a view outside the range
+ * would be pulled into it. Blender never moves one: View All clamps only a minimum
+ * (view3d_navigate_view_all.cc:130-135), and the wheel only REFUSES to go further — out once
+ * `dist ≥ max`, in once `dist ≤ min` (view3d_navigate_view_zoom.cc:398-417, v5.1.1). Widening to
+ * the distance the view stood at before the zoom is the same rule: a framed 4000-unit box keeps its
+ * ~11 768 units, a zoom cannot carry it further out, and it can come back inside. Pure.
+ */
+export function zoomLimitsAt(range: DollyRange, distance: number): DollyRange {
+  if (!Number.isFinite(distance)) return range;
   return {
-    near,
-    far,
-    // Let the user dolly from nearly touching the surface to well outside it.
-    minDistance: Math.max(r * 0.01, far / MAX_DEPTH_RATIO),
-    maxDistance: (d + r) * 10,
+    minDistance: Math.min(range.minDistance, distance),
+    maxDistance: Math.max(range.maxDistance, distance),
   };
+}
+
+/**
+ * How deep the box `[min, max]` reaches along the camera's view direction: the
+ * largest `dot(corner − eye, forward)` over its eight corners. A far plane
+ * shallower than this cuts the box off (#1188). The far plane is a plane at
+ * that depth along `forward`, so this is the exact reach, where a
+ * distance-to-sphere test would fire early on a long flat scene. Negative when
+ * the whole box is behind the eye. `forward` need not be normalized. Pure.
+ */
+export function boxDepthAlongView(
+  min: readonly [number, number, number],
+  max: readonly [number, number, number],
+  eye: readonly [number, number, number],
+  forward: readonly [number, number, number],
+): number {
+  const len = Math.hypot(forward[0], forward[1], forward[2]);
+  if (!(len > 0)) return Number.NaN;
+  const f = [forward[0] / len, forward[1] / len, forward[2] / len];
+  // Per axis, the corner coordinate that maximizes the dot product is the max
+  // bound when the axis points away from the eye, else the min — so the
+  // deepest corner is picked directly instead of walking all eight.
+  let depth = 0;
+  for (let i = 0; i < 3; i += 1) {
+    const c = f[i] >= 0 ? max[i] : min[i];
+    depth += (c - eye[i]) * f[i];
+  }
+  return depth;
 }
 
 export interface FitOptions {
@@ -115,7 +178,7 @@ export function fitDistanceForSphere(r: number, fovDeg: number, aspect: number):
 }
 
 /**
- * Full fit: position + lookAt + clip planes + orbit limits for a bounding
+ * Full fit: position + lookAt + clip planes for a bounding
  * sphere. `aspect` is the viewport width/height. Degenerate inputs (zero /
  * non-finite radius) fall back to a unit sphere so the result is always sane
  * (a camera-less / empty scene still frames at a usable distance). Pure.
@@ -142,8 +205,8 @@ export function fitViewToSphere(
     center[2] + dir[2] * distance,
   ];
 
-  // Clip planes + dolly limits derived from the fit distance — same math as a
-  // saved view's planes-only path (#191), via the shared `clipPlanesForView`.
+  // Clip planes derived from the fit distance — same math as a saved view's
+  // planes-only path (#191), via the shared `clipPlanesForView`.
   const planes = clipPlanesForView(distance, r, margin);
 
   return {

@@ -2,8 +2,8 @@
 // Phase 7.14 Wave A (issue #111).
 //
 // The BVH and FBX importers (`buildBvhImportOps` / `buildFbxImportOps`) already
-// exist and emit ONLY a Skeleton + AnimationClip pair (FBX in Basher is MOTION,
-// not a model — P3.1 Mixamo-retarget heritage). Until now they were reachable
+// exist and emit ONLY a Skeleton + its motion as keys on a base pose layer
+// (#1211; FBX in Basher is MOTION, not a model — P3.1 Mixamo-retarget heritage). Until now they were reachable
 // only through the `__basher_importBvh` / `__basher_importFbx` dev seams
 // (boot.ts:240-255). This module is the missing INGESTION SURFACE: read the
 // OPFS bytes a drop/picker wrote, decode them per-format, build the op chain,
@@ -11,7 +11,7 @@
 //
 // Asymmetry vs glTF (grounded, CONTEXT D-03): glTF persists an `assetRef` on
 // its GltfAsset node; BVH/FBX leave NO persistent reference (they dispatch
-// Skeleton+AnimationClip and nothing holds the OPFS path afterwards). So a
+// a Skeleton and its layer, and nothing holds the OPFS path afterwards). So a
 // re-import is a fresh import, and a My-Imports rename of a BVH/FBX entry is a
 // folder move only — no ref rewrite.
 //
@@ -54,7 +54,8 @@ import { importFormatOf, UNSUPPORTED_FORMAT_MESSAGE, type ImportExt } from './im
  */
 export interface MotionImportResult {
   readonly skeletonId: string;
-  readonly clipId: string;
+  /** #1211 — the node the motion comes out of: what a bind retargets from. */
+  readonly motionId: string;
 }
 
 /** Strip the directory + extension to a display name for the import label. */
@@ -72,7 +73,7 @@ function nameFromPath(path: string): string {
  * scene presence at all. Blender's BVH importer never reads the scene either — `load()` always
  * creates an armature Object (io_anim_bvh/import_bvh.py, Blender 5.1.1).
  *
- * A bound clip does not leave a second rig standing beside its character: the bind that
+ * A bound motion does not leave a second rig standing beside its character: the bind that
  * follows hides this Object in its own op batch (`mutator.animation.retarget`), so undoing
  * the bind brings it back. It lands in the import's single dispatch (K6). A project with no
  * scene aggregator has nowhere to stand one, and gets the import alone.
@@ -88,8 +89,9 @@ function nameFromPath(path: string): string {
 function skeletonObjectOps(
   ops: readonly Op[],
   skeletonId: string,
-  clipId: string,
-  // #1101 — the name the import gave the clip, so the Object and its motion read the same.
+  // The base pose layer the file's keys land on (#1211), whose `out` poses the Object.
+  layerId: string,
+  // #1101 — the name the import gave the motion, so the Object and its motion read the same.
   name: string,
 ): Op[] {
   const skeleton = ops.find((op) => op.type === 'addNode' && op.nodeId === skeletonId);
@@ -99,11 +101,19 @@ function skeletonObjectOps(
   const { state } = useDagStore.getState();
   const sceneNodeId = state.outputs.scene?.node;
   if (!sceneNodeId) return [];
-  return buildSkeletonObjectOps({ skeletonId, sceneNodeId, name, clipId }).ops;
+  // Blender names the armature after the file and never renames it after the action, so the name
+  // follows nothing.
+  return buildSkeletonObjectOps({
+    skeletonId,
+    sceneNodeId,
+    name,
+    pose: { node: layerId, socket: 'out' },
+    nameFollowsClip: false,
+  }).ops;
 }
 
 /**
- * Read a `.bvh` from OPFS and import it as a Skeleton + AnimationClip.
+ * Read a `.bvh` from OPFS and import it as a Skeleton + its keys on a base pose layer (#1211).
  *
  * BVH is TEXT: decode the bytes with TextDecoder before parsing. A wrong decode
  * (or a TimeSource-less project) throws inside `buildBvhImportOps`; the catch
@@ -116,23 +126,23 @@ export async function importBvhFromOpfs(path: string): Promise<MotionImportResul
     const text = new TextDecoder().decode(bytes);
     const dag = useDagStore.getState();
     const name = nameFromPath(path);
-    const { ops, skeletonId, clipId } = buildBvhImportOps({ text, name });
-    const standIn = skeletonObjectOps(ops, skeletonId, clipId, name);
+    const { ops, skeletonId, motionId } = buildBvhImportOps({ text, name });
+    const standIn = skeletonObjectOps(ops, skeletonId, motionId, name);
     dag.dispatchAtomic([...ops, ...standIn], 'user', `import bvh: ${path}`);
     // Bump AFTER dispatch (pre-mortem: a pre-dispatch bump re-enumerates the
     // My-Imports list before the import lands → stale/empty on failure).
     useImportRefreshStore.getState().bump();
-    return { skeletonId, clipId };
+    return { skeletonId, motionId };
   } catch (err) {
     useAssetErrorStore.getState().report(path, `import failed: ${formatAssetError(err)}`);
     // `null` means "nothing landed", and the banner is already showing why. It is
-    // NOT an empty success — a caller that went on to bind would find no clip.
+    // NOT an empty success — a caller that went on to bind would find no motion.
     return null;
   }
 }
 
 /**
- * Read a `.fbx` from OPFS and import it as a Skeleton + AnimationClip.
+ * Read a `.fbx` from OPFS and import it as a Skeleton + its keys on a base pose layer (#1211).
  *
  * FBX is BINARY: pass the raw ArrayBuffer straight to `buildFbxImportOps`
  * (`parseFbx` accepts ArrayBuffer | string). Detach a fresh, non-shared
@@ -147,11 +157,11 @@ export async function importFbxFromOpfs(path: string): Promise<MotionImportResul
     copy.set(bytes);
     const dag = useDagStore.getState();
     const name = nameFromPath(path);
-    const { ops, skeletonId, clipId } = buildFbxImportOps({ data: copy.buffer, name });
-    const standIn = skeletonObjectOps(ops, skeletonId, clipId, name);
+    const { ops, skeletonId, motionId } = buildFbxImportOps({ data: copy.buffer, name });
+    const standIn = skeletonObjectOps(ops, skeletonId, motionId, name);
     dag.dispatchAtomic([...ops, ...standIn], 'user', `import fbx: ${path}`);
     useImportRefreshStore.getState().bump();
-    return { skeletonId, clipId };
+    return { skeletonId, motionId };
   } catch (err) {
     useAssetErrorStore.getState().report(path, `import failed: ${formatAssetError(err)}`);
     return null;

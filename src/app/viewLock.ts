@@ -29,6 +29,7 @@ import { useSelectionStore } from './stores/selectionStore';
 import { useViewportStore } from './stores/viewportStore';
 import { useThreeRef } from './character/threeRef';
 import { useDagStore } from '../core/dag/store';
+import { useTimeStore } from './stores/timeStore';
 import { pointFromScan, scanForFollow } from '../viewport/followScan';
 
 /**
@@ -94,11 +95,10 @@ export type ViewLockOutcome =
  * belongs: from inside a frame callback "nothing to follow" and "nothing to
  * follow YET" are the same observation — the resolver returns null for both and
  * the callback holds nothing else that separates them — so a lock restored from
- * a previous session (#985) would be cleared until its asset arrived. And a
- * character is the case that arrives late: measured on a real import, not one
- * node id names an object in the scene, so a character resolves through its rig
- * alone. At the click there is no such window — the director is looking at what
- * they just selected. See `followScan.ts` for the full argument.
+ * a previous session (#985) would be cleared until its asset arrived. A native
+ * character names no object in the scene at all — its rig is read from the
+ * graph (#1275). At the click there is no such window — the director is looking
+ * at what they just selected. See `followScan.ts` for the full argument.
  *
  * And it is answered at the CLICK rather than in `canToggleViewLock`, which the
  * menu evaluates on every render: this walks the scene, and the enabled state is
@@ -144,7 +144,6 @@ export function toggleViewLock(): ViewLockOutcome {
 function hasSomethingToFollow(nodeId: string, boneName: string | null): boolean {
   const scene = useThreeRef.getState().scene;
   if (!scene) return true;
-  const dag = useDagStore.getState().state;
-  const scan = scanForFollow(scene, (name) => dag.nodes[name] !== undefined, nodeId);
-  return pointFromScan(scan, nodeId, boneName) !== null;
+  const scan = scanForFollow(scene, nodeId, useDagStore.getState().state);
+  return pointFromScan(scan, nodeId, boneName, useTimeStore.getState().seconds) !== null;
 }

@@ -16,7 +16,7 @@
 // REF: PLAN.md W1 (1.6); THESIS §52; vyapti V4/V10/V32; hetvabhasa H14/H25; #178.
 
 import { primaryMaterial } from '../../app/materialAssignment';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { __resetRegistryForTests, applyOp, emptyDagState, type DagState } from '../dag';
 import { getNodeType } from '../dag/registry';
 import { registerAllNodes } from '../../nodes/registerAll';
@@ -28,7 +28,15 @@ import { hydrateInlineMaterial, openpbrMaterialSchema } from '../../nodes/materi
 import { CURRENT_LOOK_ROUGHNESS } from '../../nodes/materialSchema';
 import { createEvaluatorCache, evaluate } from '../dag/evaluator';
 import { sampleCurve } from '../../nodes/curveMath';
-import type { BakedDataValue, CurveDataValue, InlineMaterialSpec, Vec3 } from '../../nodes/types';
+import type {
+  AnimationClipValue,
+  BakedDataValue,
+  CurveDataValue,
+  InlineMaterialSpec,
+  ObjectValue,
+  PosedSkeletonValue,
+  Vec3,
+} from '../../nodes/types';
 import {
   KeyframeChannelNumberNode,
   type KeyframeChannelNumberParams,
@@ -36,13 +44,22 @@ import {
 import { sampleScalarKeyframesExtended, type ChannelExtend } from '../../nodes/keyframeInterp';
 import type { FModNoise } from '../../nodes/channelModifiers';
 import { makeSplitCamera } from '../../test-utils/splitCamera';
-import { migrateNodes, migrateProjectFormat } from './migrations';
+import {
+  migrateNodes,
+  migrateObjectActionToPose,
+  migrateRetargetSourceToPose,
+  migrateLocomotionClipToPose,
+  migrateProjectFormat,
+  migrateSkeletonObjectAction,
+} from './migrations';
+import { inputAccepts } from '../dag/socketMembership';
 import { gltfChannelDagId, gltfChildDagId } from '../import/gltfImportChain';
 import { radVec3ToDeg } from '../../viewport/rotation';
 import { defaultModifier } from '../../nodes/channelModifiers';
-import { bakedChannelSamplersForAsset, sampleBakedChannel } from '../../app/bakedGltfChannels';
 import { buildDefaultDagState } from './default';
+import { retargetClip } from '../import/retarget';
 import { PROJECT_FORMAT_VERSION, ProjectSchema, type Project } from './schema';
+import { motionPosesFromKeyframes } from '../../nodes/AnimationClip';
 
 beforeEach(() => {
   __resetRegistryForTests();
@@ -2876,81 +2893,14 @@ describe("eager channels v9 → v10: the retired bake's unauthored copies are dr
   const channelsOf = (p: Project) =>
     Object.values(p.state.nodes).filter((n) => n.type === 'KeyframeChannelVec3');
 
-  /** The band both the renderer and the read side consume, sampled per bone. */
-  function bandAt(p: Project, bone: string, seconds: number) {
-    const asset = p.state.nodes.n_asset.params as { nodeNameMap: Record<string, string> };
-    const s = bakedChannelSamplersForAsset(p.state.nodes as never, asset.nodeNameMap, REF);
-    const v = sampleBakedChannel(s[bone], seconds);
-    return [...(v?.position ?? []), ...(v?.rotation ?? [])];
-  }
-
-  it('THE DEFECT: before the migration the rig HOLDS past the clip, after it it CYCLES', () => {
-    // The pre-state is asserted first on purpose. A gate that only shows the
-    // migrated project looping proves the clip band loops — which was never in
-    // doubt — and says nothing about the channels this migration exists to
-    // remove. Showing the same graph freeze without it is what makes the second
-    // half a measurement of the subject.
-    const raw = buildV9EagerJson();
-    const before = ProjectSchema.parse({
-      ...raw,
-      formatVersion: PROJECT_FORMAT_VERSION,
-    }) as Project;
-    expect(channelsOf(before)).toHaveLength(4);
-    for (const bone of BONES) {
-      // t = 0.5 is inside the authored range; t = 0.5 + DUR is past its end.
-      const inside = bandAt(before, bone, 0.5);
-      const wrapped = bandAt(before, bone, 0.5 + DUR);
-      expect(wrapped).not.toEqual(inside);
-      // and it is FROZEN, not merely different — the same constant forever.
-      expect(bandAt(before, bone, 3 * DUR)).toEqual(wrapped);
-    }
-
-    const after = loadFromBytes(raw);
-    expect(after.formatVersion).toBe(PROJECT_FORMAT_VERSION);
-    expect(channelsOf(after)).toHaveLength(0);
-    // INVERTED, NOT RELAXED (#924). These two rows used to assert that the whole
-    // band returns to its earlier value one period on — plain repeat. Position now
-    // cycles WITH OFFSET, so only the bounded half returns; the travelling half
-    // advances by the same amount every period. Asserting the increment is
-    // CONSTANT states that rule without hardcoding this fixture's travel, and it
-    // still fails if the band ever freezes (increment 0 is caught below).
-    const rot = (v: number[]) => v.slice(3);
-    const pos = (v: number[]) => v.slice(0, 3);
-    for (const bone of BONES) {
-      const p0 = pos(bandAt(after, bone, 0.5));
-      const p1 = pos(bandAt(after, bone, 0.5 + DUR));
-      const p2 = pos(bandAt(after, bone, 0.5 + 2 * DUR));
-      expect(rot(bandAt(after, bone, 0.5 + DUR))).toEqual(rot(bandAt(after, bone, 0.5)));
-      expect(rot(bandAt(after, bone, 0.5 + 3 * DUR))).toEqual(rot(bandAt(after, bone, 0.5)));
-      const step = p1.map((v, i) => v - p0[i]);
-      expect(p2.map((v, i) => v - p1[i])).toEqual(step);
-      // A frozen band gives step 0 and would satisfy every row above, so the
-      // fixture is required to actually travel.
-      expect(step.some((v) => Math.abs(v) > 1e-9)).toBe(true);
-    }
-  });
-
-  it('IN-RANGE MOTION SURVIVES: the clip band serves what the dropped channels served', () => {
-    // Dropping a channel is only safe because something underneath it renders the
-    // same motion. If the bone fell to its base pose instead, this suite's wrap
-    // rows would still pass — a frozen bone and a base-pose bone both "loop".
-    const raw = buildV9EagerJson();
-    const before = ProjectSchema.parse({
-      ...raw,
-      formatVersion: PROJECT_FORMAT_VERSION,
-    }) as Project;
-    const after = loadFromBytes(raw);
-    for (const bone of BONES)
-      // 🔴 NEVER t = DUR. A bound clip WRAPS at its duration and a channel CLAMPS
-      // there, so that one sample measures the wrap rather than the motion — the
-      // two roads agree everywhere else in range.
-      for (const t of [0, 0.25, 1, 1.75, 1.99]) {
-        const a = bandAt(before, bone, t);
-        const b = bandAt(after, bone, t);
-        expect(b).toHaveLength(6);
-        for (let i = 0; i < a.length; i++) expect(b[i]).toBeCloseTo(a[i], 9);
-      }
-  });
+  // 🔶 TWO ROWS RETIRED WITH THE CLONE ROAD'S CHARACTER HALF (#1053). They measured the clone
+  // band — the channels holding past the clip's end before the migration, the bound clip cycling
+  // and serving the same in-range motion after it. Nothing draws that band now: a saved clone
+  // character is converted at load (#1216), after this migration, and its clip becomes the native
+  // bind, measured vertex by vertex against a native import in
+  // `src/app/asset/convertCloneCharacterMotion.test.ts`. What this migration still owes is its
+  // predicate — drop only a bit-identical copy of the clip, keep every edit — and the rows below
+  // pin that.
 
   it('A HAND-EDITED BONE KEEPS ITS EDIT — the row that must not go green by accident', () => {
     const raw = buildV9EagerJson();
@@ -3513,7 +3463,7 @@ describe('v13 → v14: a material names the layers it reads (#1062)', () => {
   };
 
   it('stamps the new version', () => {
-    expect(migrated().formatVersion).toBe(14);
+    expect(migrated().formatVersion).toBe(PROJECT_FORMAT_VERSION);
   });
 
   it('names each numbered UV set, and retires the numeric key', () => {
@@ -3540,5 +3490,474 @@ describe('v13 → v14: a material names the layers it reads (#1062)', () => {
     // 1.5 was never an index the parse would have honoured, so it names no layer either.
     expect(material.mapUvLayers).toBeUndefined();
     expect(material.mapUvSets).toBeUndefined();
+  });
+});
+
+describe('v14 → v15: an armature Object carries its pose as an action (#1203)', () => {
+  // The band's old rule, written as the edge: exactly one clip on the skeleton → that clip is
+  // the Object's action; none or several → nothing wired, and the rig rests as it did.
+  const v14 = () => ({
+    formatVersion: 14,
+    id: 'p',
+    name: 'p',
+    state: {
+      nodes: {
+        sk1: { id: 'sk1', type: 'Skeleton', version: 1, params: {}, inputs: {} },
+        clip1: {
+          id: 'clip1',
+          type: 'AnimationClip',
+          version: 1,
+          params: {},
+          inputs: { skeleton: { node: 'sk1', socket: 'out' } },
+        },
+        rig1: {
+          id: 'rig1',
+          type: 'Object',
+          version: 1,
+          params: {},
+          inputs: { data: { node: 'sk1', socket: 'out' } },
+        },
+        sk2: { id: 'sk2', type: 'Skeleton', version: 1, params: {}, inputs: {} },
+        clip2a: {
+          id: 'clip2a',
+          type: 'AnimationClip',
+          version: 1,
+          params: {},
+          inputs: { skeleton: { node: 'sk2', socket: 'out' } },
+        },
+        clip2b: {
+          id: 'clip2b',
+          type: 'AnimationClip',
+          version: 1,
+          params: {},
+          inputs: { skeleton: { node: 'sk2', socket: 'out' } },
+        },
+        rig2: {
+          id: 'rig2',
+          type: 'Object',
+          version: 1,
+          params: {},
+          inputs: { data: { node: 'sk2', socket: 'out' } },
+        },
+        sk3: { id: 'sk3', type: 'Skeleton', version: 1, params: {}, inputs: {} },
+        rig3: {
+          id: 'rig3',
+          type: 'Object',
+          version: 1,
+          params: {},
+          inputs: { data: { node: 'sk3', socket: 'out' } },
+        },
+        mesh: {
+          id: 'mesh',
+          type: 'Object',
+          version: 1,
+          params: {},
+          inputs: { data: { node: 'clip1', socket: 'out' } },
+        },
+      },
+    },
+  });
+  const migrated = () =>
+    migrateSkeletonObjectAction(v14()) as {
+      formatVersion: number;
+      state: { nodes: Record<string, { inputs: Record<string, unknown> }> };
+    };
+
+  it('stamps v15', () => {
+    expect(migrated().formatVersion).toBe(15);
+  });
+
+  it('wires the one clip on a rig’s skeleton as its action', () => {
+    expect(migrated().state.nodes.rig1.inputs.action).toEqual({ node: 'clip1', socket: 'out' });
+  });
+
+  it('wires nothing where the old rule rested: two clips, or none', () => {
+    expect(migrated().state.nodes.rig2.inputs.action).toBeUndefined();
+    expect(migrated().state.nodes.rig3.inputs.action).toBeUndefined();
+  });
+
+  it('touches only an Object whose data is a Skeleton', () => {
+    expect(migrated().state.nodes.mesh.inputs.action).toBeUndefined();
+  });
+
+  it('keeps an action already wired, even where the rule would pick another clip', () => {
+    // rig1's skeleton has exactly one clip, so the rule would wire clip1; an edge already there wins.
+    const project = v14();
+    (project.state.nodes.rig1.inputs as Record<string, unknown>).action = {
+      node: 'clip2a',
+      socket: 'out',
+    };
+    const out = migrateSkeletonObjectAction(project) as typeof project;
+    expect((out.state.nodes.rig1.inputs as Record<string, unknown>).action).toEqual({
+      node: 'clip2a',
+      socket: 'out',
+    });
+  });
+
+  it('runs on the ladder from v14', () => {
+    const out = migrateProjectFormat(v14()) as ReturnType<typeof migrated>;
+    expect(out.formatVersion).toBe(PROJECT_FORMAT_VERSION);
+    // #1224 — the ladder carries on past v15: the action this pass wrote ends on the pose wire.
+    expect(out.state.nodes.rig1.inputs.action).toBeUndefined();
+    expect(out.state.nodes.rig1.inputs.pose).toEqual({ node: 'clip1', socket: 'pose' });
+  });
+});
+
+describe('v15 → v16: the armature Object takes the pose wire (#1224)', () => {
+  beforeEach(() => {
+    __resetRegistryForTests();
+    registerAllNodes();
+  });
+
+  const bones = [
+    { name: 'root', parent: -1, position: [0, 0, 0], rotation: [0, 0, 0] },
+    { name: 'arm', parent: 0, position: [0, 1, 0], rotation: [0, 0, 0] },
+  ];
+  const obj = (id: string, inputs: Record<string, unknown>) => ({
+    id,
+    type: 'Object',
+    version: 1,
+    params: {},
+    inputs,
+  });
+  const v15 = () => ({
+    formatVersion: 15,
+    id: 'p',
+    name: 'p',
+    createdAt: 0,
+    updatedAt: 0,
+    nodeVersions: {},
+    state: {
+      nodes: {
+        sk: { id: 'sk', type: 'Skeleton', version: 1, params: { bones }, inputs: {} },
+        clip: {
+          id: 'clip',
+          type: 'AnimationClip',
+          version: 1,
+          params: {
+            duration: 1,
+            keyframes: [
+              { bone: 1, time: 0, position: [0, 1, 0], rotation: [0, 0, 0] },
+              { bone: 1, time: 1, position: [0, 1, 0], rotation: [0, 0, 1] },
+            ],
+          },
+          inputs: { skeleton: { node: 'sk', socket: 'out' } },
+        },
+        retarget: { id: 'retarget', type: 'RetargetClip', version: 1, params: {}, inputs: {} },
+        gen: { id: 'gen', type: 'MotionGenerate', version: 1, params: {}, inputs: {} },
+        rig: obj('rig', {
+          data: { node: 'sk', socket: 'out' },
+          action: { node: 'clip', socket: 'out' },
+        }),
+        rigRetarget: obj('rigRetarget', { action: { node: 'retarget', socket: 'out' } }),
+        rigGenerated: obj('rigGenerated', { action: { node: 'gen', socket: 'out' } }),
+        rigDangling: obj('rigDangling', { action: { node: 'gone', socket: 'out' } }),
+        mesh: obj('mesh', { data: { node: 'sk', socket: 'out' } }),
+      },
+      outputs: {},
+    },
+  });
+  type Raw = ReturnType<typeof v15>;
+  type Ref = { node: string; socket: string };
+  const inputsOf = (raw: Raw, id: string) =>
+    (raw.state.nodes as Record<string, { inputs: Record<string, Ref | undefined> }>)[id].inputs;
+
+  it('stamps v16', () => {
+    expect((migrateObjectActionToPose(v15()) as Raw).formatVersion).toBe(16);
+  });
+
+  it('re-points each action edge to its producer’s pose OUTPUT, not just its key', () => {
+    const out = migrateObjectActionToPose(v15()) as Raw;
+    expect(inputsOf(out, 'rig').pose).toEqual({ node: 'clip', socket: 'pose' });
+    expect(inputsOf(out, 'rigRetarget').pose).toEqual({ node: 'retarget', socket: 'posed' });
+    expect(inputsOf(out, 'rig').data).toEqual({ node: 'sk', socket: 'out' });
+  });
+
+  it('every edge it writes passes the socket type check, and no action key remains', () => {
+    // Loading checks neither (#1222): the evaluator follows every saved key and the only type
+    // check is the connect op's. So this row asks the connect op's own predicate of each edge.
+    const out = migrateObjectActionToPose(v15()) as Raw;
+    const poseInput = getNodeType('Object')!.inputs.pose;
+    const nodes = out.state.nodes as Record<string, { type: string; inputs: Record<string, Ref> }>;
+    let checked = 0;
+    for (const node of Object.values(nodes)) {
+      if (node.type !== 'Object') continue;
+      expect(node.inputs.action, node.type).toBeUndefined();
+      const ref = node.inputs.pose;
+      if (!ref) continue;
+      const produced = getNodeType(nodes[ref.node].type)!.outputs[ref.socket]?.type;
+      expect(produced, `${ref.node}.${ref.socket}`).toBeDefined();
+      expect(inputAccepts(poseInput, produced!), `${ref.node}.${ref.socket}`).toBe(true);
+      checked++;
+    }
+    expect(checked).toBe(2);
+    // The control that must fail: the edge a rename alone would leave.
+    expect(inputAccepts(poseInput, getNodeType('AnimationClip')!.outputs.out.type)).toBe(false);
+  });
+
+  it('drops, and counts, an edge whose producer has no pose output or is gone — the rig rests', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const out = migrateObjectActionToPose(v15()) as Raw;
+    expect(inputsOf(out, 'rigGenerated')).toEqual({});
+    expect(inputsOf(out, 'rigDangling')).toEqual({});
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('re-pointed 2'));
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('dropped 2'));
+    warn.mockRestore();
+  });
+
+  it('touches no Object without an action', () => {
+    const out = migrateObjectActionToPose(v15()) as Raw;
+    expect(inputsOf(out, 'mesh')).toEqual({ data: { node: 'sk', socket: 'out' } });
+  });
+
+  it('a saved v15 rig loads and poses exactly as its clip does', () => {
+    const out = migrateProjectFormat(v15()) as Raw;
+    expect(out.formatVersion).toBe(PROJECT_FORMAT_VERSION);
+    const state = { ...emptyDagState(), nodes: out.state.nodes } as unknown as DagState;
+    const rig = evaluate(state, 'rig').value as ObjectValue;
+    const clipPose = evaluate(state, 'clip', { socket: 'pose' }).value as PosedSkeletonValue;
+    for (const t of [0, 0.5, 1]) expect(rig.pose!.sample(t)).toEqual(clipPose.sample(t));
+    expect(rig.pose!.sample(0.5)).not.toEqual(rig.pose!.sample(0));
+  });
+});
+
+describe('v16 → v17: the retarget reads the pose wire (#1225)', () => {
+  beforeEach(() => {
+    __resetRegistryForTests();
+    registerAllNodes();
+  });
+
+  const bones = [
+    { name: 'root', parent: -1, position: [0, 0, 0], rotation: [0, 0, 0] },
+    { name: 'arm', parent: 0, position: [0, 1, 0], rotation: [0, 0, 0] },
+  ];
+  const keyframes = [
+    { bone: 1, time: 0, position: [0, 1, 0], rotation: [0, 0, 0] },
+    { bone: 1, time: 1, position: [0, 1, 0], rotation: [0, 0, 1] },
+  ];
+  const retarget = (id: string, inputs: Record<string, unknown>) => ({
+    id,
+    type: 'RetargetClip',
+    version: 1,
+    params: {},
+    inputs,
+  });
+  const operands = {
+    boneMap: { node: 'map', socket: 'out' },
+    skeleton: { node: 'tsk', socket: 'out' },
+  };
+  const v16 = () => ({
+    formatVersion: 16,
+    id: 'p',
+    name: 'p',
+    createdAt: 0,
+    updatedAt: 0,
+    nodeVersions: {},
+    state: {
+      nodes: {
+        sk: { id: 'sk', type: 'Skeleton', version: 1, params: { bones }, inputs: {} },
+        tsk: { id: 'tsk', type: 'Skeleton', version: 1, params: { bones }, inputs: {} },
+        clip: {
+          id: 'clip',
+          type: 'AnimationClip',
+          version: 1,
+          params: { name: 'wave', duration: 1, keyframes },
+          inputs: { skeleton: { node: 'sk', socket: 'out' } },
+        },
+        map: {
+          id: 'map',
+          type: 'BoneNameMap',
+          version: 1,
+          params: { map: { root: 'root', arm: 'arm' } },
+          inputs: {},
+        },
+        gen: { id: 'gen', type: 'MotionGenerate', version: 1, params: {}, inputs: {} },
+        retarget: retarget('retarget', {
+          ...operands,
+          sourceClip: { node: 'clip', socket: 'out' },
+        }),
+        chained: retarget('chained', {
+          ...operands,
+          sourceClip: { node: 'retarget', socket: 'out' },
+        }),
+        fromGenerated: retarget('fromGenerated', {
+          ...operands,
+          sourceClip: { node: 'gen', socket: 'out' },
+        }),
+        dangling: retarget('dangling', {
+          ...operands,
+          sourceClip: { node: 'gone', socket: 'out' },
+        }),
+        unwired: retarget('unwired', { ...operands }),
+      },
+      outputs: {},
+    },
+  });
+  type Raw = ReturnType<typeof v16>;
+  type Ref = { node: string; socket: string };
+  const inputsOf = (raw: Raw, id: string) =>
+    (raw.state.nodes as Record<string, { inputs: Record<string, Ref | undefined> }>)[id].inputs;
+
+  it('stamps v17', () => {
+    expect((migrateRetargetSourceToPose(v16()) as Raw).formatVersion).toBe(17);
+  });
+
+  it('re-points each source edge to its producer’s pose OUTPUT, not just its key', () => {
+    const out = migrateRetargetSourceToPose(v16()) as Raw;
+    expect(inputsOf(out, 'retarget').source).toEqual({ node: 'clip', socket: 'pose' });
+    expect(inputsOf(out, 'chained').source).toEqual({ node: 'retarget', socket: 'posed' });
+    expect(inputsOf(out, 'retarget').boneMap).toEqual(operands.boneMap);
+    expect(inputsOf(out, 'retarget').skeleton).toEqual(operands.skeleton);
+  });
+
+  it('every edge it writes passes the socket type check, and no sourceClip key remains', () => {
+    const out = migrateRetargetSourceToPose(v16()) as Raw;
+    const sourceInput = getNodeType('RetargetClip')!.inputs.source;
+    const nodes = out.state.nodes as Record<string, { type: string; inputs: Record<string, Ref> }>;
+    let checked = 0;
+    for (const node of Object.values(nodes)) {
+      if (node.type !== 'RetargetClip') continue;
+      expect(node.inputs.sourceClip, node.type).toBeUndefined();
+      const ref = node.inputs.source;
+      if (!ref) continue;
+      const produced = getNodeType(nodes[ref.node].type)!.outputs[ref.socket]?.type;
+      expect(produced, `${ref.node}.${ref.socket}`).toBeDefined();
+      expect(inputAccepts(sourceInput, produced!), `${ref.node}.${ref.socket}`).toBe(true);
+      checked++;
+    }
+    expect(checked).toBe(2);
+    // The control that must fail: the edge a rename alone would leave.
+    expect(inputAccepts(sourceInput, getNodeType('AnimationClip')!.outputs.out.type)).toBe(false);
+  });
+
+  it('drops, and counts, an edge whose producer has no pose output or is gone', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const out = migrateRetargetSourceToPose(v16()) as Raw;
+    expect(inputsOf(out, 'fromGenerated')).toEqual(operands);
+    expect(inputsOf(out, 'dangling')).toEqual(operands);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('re-pointed 2'));
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('dropped 2'));
+    warn.mockRestore();
+  });
+
+  it('touches no retarget without a source', () => {
+    const out = migrateRetargetSourceToPose(v16()) as Raw;
+    expect(inputsOf(out, 'unwired')).toEqual(operands);
+  });
+
+  it('a saved v16 retarget loads and retargets exactly as it retargeted the clip', () => {
+    const out = migrateProjectFormat(v16()) as Raw;
+    expect(out.formatVersion).toBe(PROJECT_FORMAT_VERSION);
+    const state = { ...emptyDagState(), nodes: out.state.nodes } as unknown as DagState;
+    const value = evaluate(state, 'retarget', { socket: 'out' }).value as AnimationClipValue;
+    const direct = retargetClip({
+      sourceBones: bones as never,
+      sourceClip: { name: 'wave', duration: 1, keyframes: keyframes as never, loop: 'hold' },
+      targetBones: bones as never,
+      nameMap: { root: 'root', arm: 'arm' },
+    });
+    expect(value.poses.length).toBeGreaterThan(0);
+    // #1225 — the value carries those keys as timed poses by bone name, through the one adapter.
+    expect(value.poses).toEqual(motionPosesFromKeyframes(direct.clipParams.keyframes, bones));
+  });
+});
+
+describe('v17 → v18: locomotion reads the pose wire (#1225)', () => {
+  beforeEach(() => {
+    __resetRegistryForTests();
+    registerAllNodes();
+  });
+
+  const bones = [
+    { name: 'root', parent: -1, position: [0, 0, 0], rotation: [0, 0, 0] },
+    { name: 'arm', parent: 0, position: [0, 1, 0], rotation: [0, 0, 0] },
+  ];
+  const loco = (id: string, inputs: Record<string, unknown>) => ({
+    id,
+    type: 'LocomotionState',
+    version: 1,
+    params: {},
+    inputs,
+  });
+  const v17 = () => ({
+    formatVersion: 17,
+    id: 'p',
+    name: 'p',
+    createdAt: 0,
+    updatedAt: 0,
+    nodeVersions: {},
+    state: {
+      nodes: {
+        sk: { id: 'sk', type: 'Skeleton', version: 1, params: { bones }, inputs: {} },
+        clip: {
+          id: 'clip',
+          type: 'AnimationClip',
+          version: 1,
+          params: {
+            duration: 1,
+            keyframes: [
+              { bone: 1, time: 0, position: [0, 1, 0], rotation: [0, 0, 0] },
+              { bone: 1, time: 1, position: [0, 1, 0], rotation: [0, 0, 1] },
+            ],
+          },
+          inputs: { skeleton: { node: 'sk', socket: 'out' } },
+        },
+        gen: { id: 'gen', type: 'MotionGenerate', version: 1, params: {}, inputs: {} },
+        walk: loco('walk', { clip: { node: 'clip', socket: 'out' } }),
+        walkGenerated: loco('walkGenerated', { clip: { node: 'gen', socket: 'out' } }),
+        walkDangling: loco('walkDangling', { clip: { node: 'gone', socket: 'out' } }),
+        stand: loco('stand', {}),
+      },
+      outputs: {},
+    },
+  });
+  type Raw = ReturnType<typeof v17>;
+  type Ref = { node: string; socket: string };
+  const inputsOf = (raw: Raw, id: string) =>
+    (raw.state.nodes as Record<string, { inputs: Record<string, Ref | undefined> }>)[id].inputs;
+
+  it('stamps v18', () => {
+    expect((migrateLocomotionClipToPose(v17()) as Raw).formatVersion).toBe(18);
+  });
+
+  it('re-points the clip edge to the clip’s pose OUTPUT, and every written edge type-checks', () => {
+    const out = migrateLocomotionClipToPose(v17()) as Raw;
+    expect(inputsOf(out, 'walk')).toEqual({ pose: { node: 'clip', socket: 'pose' } });
+    const poseInput = getNodeType('LocomotionState')!.inputs.pose;
+    const nodes = out.state.nodes as Record<string, { type: string; inputs: Record<string, Ref> }>;
+    let checked = 0;
+    for (const node of Object.values(nodes)) {
+      if (node.type !== 'LocomotionState') continue;
+      expect(node.inputs.clip).toBeUndefined();
+      const ref = node.inputs.pose;
+      if (!ref) continue;
+      const produced = getNodeType(nodes[ref.node].type)!.outputs[ref.socket]?.type;
+      expect(inputAccepts(poseInput, produced!), `${ref.node}.${ref.socket}`).toBe(true);
+      checked++;
+    }
+    expect(checked).toBe(1);
+    // The control that must fail: the edge a rename alone would leave.
+    expect(inputAccepts(poseInput, getNodeType('AnimationClip')!.outputs.out.type)).toBe(false);
+  });
+
+  it('drops, and counts, an edge whose producer has no pose output or is gone', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const out = migrateLocomotionClipToPose(v17()) as Raw;
+    expect(inputsOf(out, 'walkGenerated')).toEqual({});
+    expect(inputsOf(out, 'walkDangling')).toEqual({});
+    expect(inputsOf(out, 'stand')).toEqual({});
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('re-pointed 1'));
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('dropped 2'));
+    warn.mockRestore();
+  });
+
+  it('a saved v17 locomotion loads and poses exactly as its clip does', () => {
+    const out = migrateProjectFormat(v17()) as Raw;
+    expect(out.formatVersion).toBe(PROJECT_FORMAT_VERSION);
+    const state = { ...emptyDagState(), nodes: out.state.nodes } as unknown as DagState;
+    const walk = evaluate(state, 'walk').value as { pose: PosedSkeletonValue };
+    const clipPose = evaluate(state, 'clip', { socket: 'pose' }).value as PosedSkeletonValue;
+    for (const t of [0, 0.5, 1]) expect(walk.pose.sample(t)).toEqual(clipPose.sample(t));
+    expect(walk.pose.sample(0.5)).not.toEqual(walk.pose.sample(0));
   });
 });

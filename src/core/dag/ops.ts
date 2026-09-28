@@ -116,6 +116,11 @@ export interface Reportable {
   nodeId: string;
   paramPath: string;
   reason: string;
+  /** #1189 — the node that DOES own this param, when the write aimed at the wrong half
+   *  of a split object. Never filled here: the core cannot see the data-lane walk. It is
+   *  filled by the app-layer reader that renders the refusal (`createFork`), through the
+   *  one ownership rule, `resolveDataParamOwner`. Absent when nothing owns it. */
+  owner?: string;
 }
 
 export function applyOp(state: DagState, op: Op): ApplyResult {
@@ -320,14 +325,22 @@ function applyConnect(state: DagState, op: Extract<Op, { type: 'connect' }>): Ap
     }
   }
 
-  const nextNode: Node = {
-    ...consumer,
-    inputs: { ...consumer.inputs, [op.to.socket]: nextBinding },
-  };
-  const next: DagState = {
-    ...state,
-    nodes: { ...state.nodes, [consumer.id]: nextNode },
-  };
+  // #1191 — re-binding the producer a single socket already holds changes nothing, so it
+  // hands back the same state (the #1189 contract, `sameParamValue` below). A list socket
+  // is not covered: connecting there always inserts, so the list really does grow.
+  const unchanged = sameParamValue(prior, nextBinding);
+  const next: DagState = unchanged
+    ? state
+    : {
+        ...state,
+        nodes: {
+          ...state.nodes,
+          [consumer.id]: {
+            ...consumer,
+            inputs: { ...consumer.inputs, [op.to.socket]: nextBinding },
+          },
+        },
+      };
   return reportable ? { next, inverse, reportable } : { next, inverse };
 }
 
@@ -389,11 +402,19 @@ function applySetParam(state: DagState, op: Extract<Op, { type: 'setParam' }>): 
       op,
     );
   }
-  const nextNode: Node = { ...node, params: parsed.data };
-  const next: DagState = {
-    ...state,
-    nodes: { ...state.nodes, [node.id]: nextNode },
-  };
+  // #1189 — A WRITE THAT CHANGES NOTHING HANDS BACK THE SAME STATE OBJECT. Everything
+  // downstream keys on the reference: the store's undo push, the unsaved flag and
+  // autosave (`installDirtyTracking` in boot.ts). A fresh object with identical
+  // contents read as an edit to all three — measured: a stripped write and a same-value
+  // write each left an undo step and the unsaved dot. So "nothing changed" is decided
+  // HERE, once, by the one function that knows, and said in the only language those
+  // readers already speak. The inverse is still returned (a caller may hold it), and the
+  // stripped-write flag below still fires: the refusal stays visible, it just no longer
+  // commits.
+  const unchanged = sameParamValue(node.params, parsed.data);
+  const next: DagState = unchanged
+    ? state
+    : { ...state, nodes: { ...state.nodes, [node.id]: { ...node, params: parsed.data } } };
   const inverse: Op = {
     type: 'setParam',
     nodeId: op.nodeId,
@@ -421,11 +442,23 @@ function applySetParam(state: DagState, op: Extract<Op, { type: 'setParam' }>): 
   // reference by setting its path to `undefined`; treating "no value at the path"
   // as a defect would badge the product's own cleanup.
   if (op.value !== undefined && getAtPath(parsed.data, op.paramPath) === undefined) {
+    // 🔴 #1192 — A REFUSED WRITE COMMITS NOTHING, INCLUDING WHAT THE PATH WALK BUILT ON
+    // THE WAY DOWN. `setAtPath` creates each missing container to reach the leaf, so a
+    // refused `overridden.bogus` on a node whose `overridden` was absent left an empty
+    // `overridden: {}` behind — a real content change, so `sameParamValue` above says
+    // "changed" and the store committed it: one undo step and an unsaved dot for a write
+    // the user was told was ignored. Measured, and it is the ONLY shape of it: a census
+    // across the unit tier (a log here when `next !== state`) found exactly one hit, the
+    // row in `ops.reportable.test.ts` that documented the residue.
+    //
+    // So the refusal hands back the state it was given. `next` is discarded rather than
+    // never built, because the strip is only detectable AFTER the parse — which is also
+    // why this cannot be folded into the `unchanged` check above.
     const rootKey = paramRootKey(op.paramPath);
     const rootSurvived =
       rootKey === '' || Object.prototype.hasOwnProperty.call(parsed.data as object, rootKey);
     return {
-      next,
+      next: state,
       inverse,
       reportable: {
         badge: 'stripped-write',
@@ -451,6 +484,39 @@ function applySetParam(state: DagState, op: Extract<Op, { type: 'setParam' }>): 
   return { next, inverse };
 }
 
+/**
+ * #1189 — structural equality over param values, CONSERVATIVE by construction: plain
+ * objects, arrays and primitives (`Object.is`, so NaN equals NaN and -0 differs from 0)
+ * are compared by content; anything else — a typed array, a class instance, a Map — only
+ * by reference. So it can answer "different" for two equal exotic values (the write then
+ * commits as before), and can never answer "same" for two different ones, which is the
+ * direction that would silently drop an edit.
+ *
+ * #1191 — also the one comparison for the other ops that can be asked to change nothing:
+ * `connect`'s binding, `setMeta`'s whole meta, `setSpareParam`'s param.
+ */
+function sameParamValue(a: unknown, b: unknown): boolean {
+  if (Object.is(a, b)) return true;
+  if (typeof a !== 'object' || typeof b !== 'object' || a === null || b === null) return false;
+  if (Array.isArray(a)) {
+    if (!Array.isArray(b) || a.length !== b.length) return false;
+    for (let i = 0; i < a.length; i += 1) if (!sameParamValue(a[i], b[i])) return false;
+    return true;
+  }
+  if (Array.isArray(b) || !isPlainRecord(a) || !isPlainRecord(b)) return false;
+  const keys = Object.keys(a);
+  if (keys.length !== Object.keys(b).length) return false;
+  for (const k of keys) {
+    if (!Object.prototype.hasOwnProperty.call(b, k) || !sameParamValue(a[k], b[k])) return false;
+  }
+  return true;
+}
+
+function isPlainRecord(v: object): v is Record<string, unknown> {
+  const proto = Object.getPrototypeOf(v);
+  return proto === Object.prototype || proto === null;
+}
+
 // #291 (Epic 1 Inc 0) — spare params live in `node.spare`, validated by the ONE
 // shared SpareParamSchema (NOT the node's fixed per-type paramSchema, which would
 // strip them — the H28 mechanism). setParam stays strict and untouched.
@@ -467,8 +533,16 @@ function applySetSpareParam(
     );
   }
   const prior = node.spare?.[op.key];
-  const nextNode: Node = { ...node, spare: { ...(node.spare ?? {}), [op.key]: parsed.data } };
-  const next: DagState = { ...state, nodes: { ...state.nodes, [node.id]: nextNode } };
+  // #1191 — the value it already holds changes nothing: the same state (#1189 contract).
+  const next: DagState = sameParamValue(prior, parsed.data)
+    ? state
+    : {
+        ...state,
+        nodes: {
+          ...state.nodes,
+          [node.id]: { ...node, spare: { ...(node.spare ?? {}), [op.key]: parsed.data } },
+        },
+      };
   // Inverse: restore the prior value if the key existed, else remove the new key.
   const inverse: Op = prior
     ? { type: 'setSpareParam', nodeId: op.nodeId, key: op.key, param: prior }
@@ -554,11 +628,12 @@ function applySetMeta(state: DagState, op: Extract<Op, { type: 'setMeta' }>): Ap
   // An empty meta object is normalized away so a renamed-then-cleared node is
   // byte-identical to one that was never named (keeps save diffs minimal).
   const nextMeta = Object.keys(meta).length === 0 ? undefined : meta;
-  const nextNode: Node = { ...node, meta: nextMeta };
-  const next: DagState = {
-    ...state,
-    nodes: { ...state.nodes, [node.id]: nextNode },
-  };
+  // #1191 — judged on the WHOLE resulting meta, not on the name alone: a write that keeps
+  // the name but drops a `nameFrom` link, or clears a name, is a change; one that lands on
+  // exactly the meta already there is not, and hands back the same state (#1189 contract).
+  const next: DagState = sameParamValue(node.meta, nextMeta)
+    ? state
+    : { ...state, nodes: { ...state.nodes, [node.id]: { ...node, meta: nextMeta } } };
   const inverse: Op = {
     type: 'setMeta',
     nodeId: op.nodeId,
@@ -578,11 +653,15 @@ function applySetHidden(state: DagState, op: Extract<Op, { type: 'setHidden' }>)
   if (op.hidden) meta.hidden = true;
   else delete meta.hidden;
   const nextMeta = Object.keys(meta).length === 0 ? undefined : meta;
-  const nextNode: Node = { ...node, meta: nextMeta };
-  const next: DagState = {
-    ...state,
-    nodes: { ...state.nodes, [node.id]: nextNode },
-  };
+  // #1191 — judged by MEANING, unlike setMeta: this op owns one boolean, so the same
+  // visibility is no change and hands back the same state (#1189 contract). The only other
+  // difference it could make is normalizing a stored `hidden: false` / empty `meta` away;
+  // committing that would record an undo step that changes nothing visible and cannot put
+  // the stored key back (the inverse is `hidden: false`, which deletes it).
+  const next: DagState =
+    prior === op.hidden
+      ? state
+      : { ...state, nodes: { ...state.nodes, [node.id]: { ...node, meta: nextMeta } } };
   const inverse: Op = { type: 'setHidden', nodeId: op.nodeId, hidden: prior };
   return { next, inverse };
 }

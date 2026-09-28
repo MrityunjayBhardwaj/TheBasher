@@ -28,18 +28,14 @@
 // nothing else that separates them — so a lock restored from a previous session
 // (#985) would be cleared for as long as its asset had not arrived.
 //
-// 🔑 AND A CHARACTER IS EXACTLY THE CASE THAT ARRIVES LATE. Measured on a real
-// import: of the node ids in the graph, NOT ONE names an object in the scene —
-// not the `GltfAsset`, not the `GltfSkeleton`, not any of the twenty
-// `GltfChild`s; only the seed cube's own id does. So a character lock resolves
-// through the rig branch alone, which means it resolves only once the armature
-// is in the scene, and until then it looks exactly like a light.
-//
-// (How LONG that window is has not been measured — an import made through a
-// test seam is not persisted, so a reload has no character to wait for. The
-// argument above does not need the duration: it needs the two states to be
-// indistinguishable here, and they are.)
-//
+// 🔑 A CHARACTER IS READ FROM THE GRAPH, NOT THE SCENE (#1275). Its bones are never in the three.js
+// scene (the armature band draws them from the graph), and neither its armature nor its mesh Object is
+// mounted under its own id. So the scan collects the armature Objects the locked node names, by the
+// rule a bind uses (`reachedFromSelection`: the armature Object itself, a mesh Object it deforms, or
+// what holds either), and the point places their bones at the playhead with `skeletonObjectFrames`,
+// the placement the band draws with. The clone road's rig branch read its live `Bone`s and retired
+// with it (#1053).
+
 // At the click there is no such window. The director is looking at the thing
 // they just selected, so the scene is settled, and the answer is available
 // before the lock is taken rather than a frame after.
@@ -48,23 +44,16 @@
 //      click); src/viewport/EditorViewCamera.tsx (the frame); issues #984, #985.
 
 import * as THREE from 'three';
-import { scanArmatures } from './ArmatureHelper';
-import { assetIdsFor, type PickNode } from './armaturePick';
-import { placeBones } from './boneShape';
+import type { DagState } from '../core/dag/state';
+import { collectSkeletonObjects, type SkeletonObject } from '../app/skeletonObjects';
+import { reachedFromSelection } from '../app/character/reachedFromSelection';
 import { computeSceneBounds } from './sceneBounds';
-import { followPoint, type FollowArmature, type FollowPoint } from './cameraFollow';
-
-interface ScannedRig {
-  readonly root: THREE.Object3D;
-  readonly bones: THREE.Object3D[];
-  readonly parents: number[];
-  readonly ids: ReadonlySet<string>;
-}
+import { followPoint, type FollowPoint } from './cameraFollow';
+import { skeletonObjectFrames } from './skeletonObjectPose';
 
 /** The expensive half: everything a follow needs that requires walking the
  *  scene. Held across frames by the applier, taken fresh by the affordance. */
 export interface FollowScan {
-  readonly rigs: readonly ScannedRig[];
   /** The object `SceneFromDAG` named with this node's id, or null.
    *
    *  🔴 A HANDLE, NOT THE OBJECT. It is a picking wrapper pinned at the world
@@ -72,29 +61,23 @@ export interface FollowScan {
    *  constant however far the content travels. `pointFromScan` reads the
    *  CONTENT's bounds and never this object's position. */
   readonly object: THREE.Object3D | null;
+  /** The armature Objects the locked node names, posed per frame by `pointFromScan` (#1275). */
+  readonly rigs: readonly SkeletonObject[];
 }
 
 /**
- * Walk the scene for everything a lock on `nodeId` could follow.
- *
- * `isLiveNodeId` is asked rather than assumed: `assetIdsFor` collects the names
- * inside an asset's outermost named ancestor, and a name is only an id if the
- * graph still carries it.
+ * Walk the scene, and the graph, for everything a lock on `nodeId` could follow. Without a graph
+ * there are no rigs: nothing in the scene stands for a native character.
  */
 export function scanForFollow(
   scene: THREE.Object3D,
-  isLiveNodeId: (name: string) => boolean,
   nodeId: string,
+  dag: DagState | null,
 ): FollowScan {
+  const reached = dag ? reachedFromSelection(dag, nodeId) : null;
   return {
-    rigs: scanArmatures(scene).map((scan) => ({
-      ...scan,
-      ids: assetIdsFor(scan.root as unknown as PickNode, isLiveNodeId),
-    })),
-    // Resolved unconditionally rather than only when no rig matched: skipping it
-    // there would put the rig-beats-object priority in a second place, free to
-    // disagree with `followPoint`'s copy silently.
     object: scene.getObjectByName(nodeId) ?? null,
+    rigs: reached && dag ? collectSkeletonObjects(dag).filter((o) => reached.has(o.id)) : [],
   };
 }
 
@@ -110,37 +93,21 @@ export function pointFromScan(
   scan: FollowScan,
   nodeId: string,
   boneName: string | null,
+  seconds: number,
 ): FollowPoint | null {
-  // Only the rig(s) the lock names get placed. The `ids.has` here is a COST
-  // pre-pass, not a second decision — it is the same expression `followPoint`
-  // selects with, so the two cannot disagree; placing every rig in the scene to
-  // throw all but one away is simply work with no reader.
-  const armatures: FollowArmature[] = [];
-  for (const rig of scan.rigs) {
-    if (!rig.ids.has(nodeId)) continue;
-    // The TRS pass that poses the bones runs at the same default priority, so
-    // its order against the applier's is mount order. Forcing the update makes
-    // the read correct either way — the same guard the armature helper takes.
-    rig.root.updateWorldMatrix(true, true);
-    armatures.push({
-      ids: rig.ids,
-      frames: placeBones(
-        rig.bones.map((b, i) => ({
-          name: b.name,
-          parent: rig.parents[i],
-          matrix: b.matrixWorld,
-        })),
-      ),
-    });
-  }
   // The centre of what this node actually DRAWS, through the same reader "frame
   // all" uses — live world bounds over non-chrome meshes. Reading the scene
-  // rather than the node's authored `position` is the same choice the rig branch
-  // makes and for the same reason: a follow has to track what is on screen, so a
+  // rather than the node's authored `position`: a follow has to track what is on screen, so a
   // keyframed, driven or constrained object is followed without any of those
   // needing to be known about here. A node that draws no measurable content
   // yields no point — which is the whole of #984, because a LIGHT's glyphs are
   // editor chrome and `computeSceneBounds` prunes them.
   const bounds = scan.object ? computeSceneBounds(scan.object) : null;
+  // Each rig as the band draws it this frame. The locked node is the one id each claims: the scan
+  // kept only the rigs it names.
+  const armatures = scan.rigs.map((o) => ({
+    ids: new Set([nodeId]),
+    frames: skeletonObjectFrames(o, seconds),
+  }));
   return followPoint(armatures, nodeId, boneName, bounds ? bounds.center : null);
 }

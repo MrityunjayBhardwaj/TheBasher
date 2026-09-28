@@ -47,29 +47,22 @@
 //   - V22: no Date.now / Math.random; the output clip id is derived from the pair.
 //
 // REF: src/app/animate/dispatchMutator.ts (`dispatchMutatorFromUI`);
-//      src/app/animate/ensureChannelForBone.ts (where a channel comes from now);
 //      src/core/import/chooseBoneNameMap.ts (the bridge decision);
 //      src/app/asset/generateRiggedCharacter.ts (the composition this mirrors);
 //      issues #807, #889, #803, #100.
 
 import { useDagStore } from '../../core/dag/store';
-import { evaluate } from '../../core/dag/evaluator';
 import { chooseBoneNameMap } from '../../core/import/chooseBoneNameMap';
 import { standInObjectOf, standingObjectsOf } from '../../core/import/skeletonObject';
 import { dispatchMutatorFromUI } from '../animate/dispatchMutator';
-// #1001 — the two-hop rig→asset read moved to the module that owns the graph
-// walks, where `placeGeneratedMotion`'s id-returning half already points.
-import { assetRefOfSkeleton } from '../animate/boundClipsForAsset';
+import { edgeTarget } from '../animate/graphNodes';
 import { nodeDisplayName } from '../sceneTreeWalk';
 import { useSelectionStore } from '../stores/selectionStore';
 import { useNotificationStore, type ToastSeverity } from '../stores/notificationStore';
 import { formatAssetError, useAssetErrorStore } from '../stores/assetErrorStore';
 import type { DagState } from '../../core/dag/state';
-import type { BoneSpec, SkeletonValue } from '../../nodes/types';
-
-/** Bind pose is import-time static, so any frame projects the same rig.
- *  Mirrors `retarget.ts`, which reads it the same way. */
-const BIND_POSE_CTX = { time: { frame: 0, seconds: 0, normalized: 0 } } as const;
+import type { BoneSpec } from '../../nodes/types';
+import { reachedFromSelection } from '../character/reachedFromSelection';
 
 export type BindMotionRefusal = 'no-character' | 'ambiguous' | 'no-bridge' | 'rejected';
 
@@ -113,10 +106,14 @@ export type BindMotionOutcome =
     }
   | { readonly ok: false; readonly refusal: BindMotionRefusal; readonly reason: string };
 
-/** A character the motion could drive: a rig node with bones, and the asset it projects. */
-interface Candidate {
+/**
+ * A character the motion could drive (#1213): the rig the retarget targets, and the armature Object
+ * whose pose it becomes. (The clone road's rigs — a `GltfSkeleton` standing no Object, posed by its
+ * active clip — answered here too until that road's character half retired, #1053.)
+ */
+export interface Candidate {
   readonly skeletonId: string;
-  readonly assetRef: string;
+  readonly objectId: string;
   readonly boneNames: string[];
   readonly label: string;
 }
@@ -128,31 +125,49 @@ export function labelForAssetRef(assetRef: string): string {
 }
 
 /**
- * Every character in the scene that could receive motion.
+ * Every character in the scene that could receive motion — the ONE character query (#1213).
  *
- * A rig node with NO bones is excluded rather than reported as a candidate that
- * happens to fail later: it projects a skin the asset does not carry, so it is
- * not a character the director could have meant.
+ * A character is a rig that deforms a mesh (user decision, 2026-09-25). Natively that is an armature
+ * Object some mesh's Armature modifier points at (#393) — so a motion's own rig, a BVH/FBX/generated
+ * skeleton standing as an Object with nothing skinned to it, is never a target, and a second walk
+ * dropped beside the first does not chain onto it. A rig with NO bones is excluded rather than reported
+ * as a candidate that fails later, because it is not a character the director could have meant.
  */
-export function motionTargetCandidates(state: DagState): Candidate[] {
+export function characterTargets(state: DagState): Candidate[] {
   const out: Candidate[] = [];
+  const seen = new Set<string>();
   for (const node of Object.values(state.nodes)) {
-    if (node.type !== 'GltfSkeleton') continue;
-    const assetRef = assetRefOfSkeleton(state.nodes, node.id);
-    if (!assetRef) continue;
-    const value = evaluate(state, node.id, { ctx: BIND_POSE_CTX }).value as SkeletonValue;
-    const bones = value?.kind === 'Skeleton' ? value.bones : [];
+    if (node.type !== 'ArmatureModifier') continue;
+    const objectId = edgeTarget(node, 'armature');
+    const object = objectId ? state.nodes[objectId] : undefined;
+    if (!objectId || object?.type !== 'Object' || seen.has(objectId)) continue;
+    const skeletonId = edgeTarget(object, 'data');
+    if (!skeletonId || state.nodes[skeletonId]?.type !== 'Skeleton') continue;
+    const bones =
+      (state.nodes[skeletonId].params as { bones?: BoneSpec[] } | undefined)?.bones ?? [];
     if (bones.length === 0) continue;
+    seen.add(objectId);
     out.push({
-      skeletonId: node.id,
-      assetRef,
+      skeletonId,
+      objectId,
       boneNames: bones.map((b) => b.name),
-      label: labelForAssetRef(assetRef),
+      label: nodeDisplayName(state.nodes, objectId),
     });
   }
-  // Stable order (V22): id-sorted, so an ambiguity message names the candidates
-  // in the same order every time rather than in object-key order.
-  return out.sort((a, b) => (a.skeletonId < b.skeletonId ? -1 : 1));
+  // Stable order (V22): sorted by the node that IS the character, so an ambiguity message names
+  // the candidates in the same order every time rather than in object-key order.
+  return out.sort((a, b) => (a.objectId < b.objectId ? -1 : 1));
+}
+
+/** Does the selection point at this character? */
+function selectionPicks(
+  state: DagState,
+  selectedNodeId: string | null,
+  candidate: Candidate,
+): boolean {
+  return (
+    selectedNodeId !== null && reachedFromSelection(state, selectedNodeId).has(candidate.objectId)
+  );
 }
 
 /**
@@ -219,7 +234,8 @@ export function chooseMotionTarget(
   | { ok: true; target: Candidate }
   | { ok: false; refusal: BindMotionRefusal; reason: string; severity: ToastSeverity } {
   const { verb, retry } = ARRIVAL[arrival];
-  const candidates = motionTargetCandidates(state);
+  // The motion's own rig is never its target: a bind hides it (#1056).
+  const candidates = characterTargets(state).filter((c) => c.skeletonId !== sourceSkeletonId);
   if (candidates.length === 0) {
     // #1103 — since #1056 (files) and #1078 (generation) a motion with no character
     // is not left with nothing: its skeleton stands in the scene as an Object. So
@@ -246,8 +262,7 @@ export function chooseMotionTarget(
   }
   if (candidates.length === 1) return { ok: true, target: candidates[0] };
 
-  const refs = selectedAssetRefs(state, selectedNodeId);
-  const selected = candidates.filter((c) => refs.has(c.assetRef));
+  const selected = candidates.filter((c) => selectionPicks(state, selectedNodeId, c));
   if (selected.length === 1) return { ok: true, target: selected[0] };
 
   return {
@@ -260,14 +275,14 @@ export function chooseMotionTarget(
   };
 }
 
-/** The retargeted clip's id — derived from the PAIR, so the same clip can drive
+/** The retarget's id — derived from the PAIR, so the same motion can drive
  *  two different characters without the second binding overwriting the first. */
-export function retargetedClipId(sourceClipId: string, targetSkeletonId: string): string {
-  return `${sourceClipId}_on_${targetSkeletonId}`;
+export function retargetedClipId(motionId: string, targetSkeletonId: string): string {
+  return `${motionId}_on_${targetSkeletonId}`;
 }
 
 /**
- * Put an imported motion clip onto a character, and make it show in the render.
+ * Put an imported motion onto a character, and make it show in the render.
  *
  * Reports its own outcome — a refusal reaches a toast, a fault reaches the
  * persistent error banner — and ALSO returns it, so the decision is testable
@@ -276,7 +291,8 @@ export function retargetedClipId(sourceClipId: string, targetSkeletonId: string)
  */
 export function bindMotionToCharacter(
   source: {
-    clipId: string;
+    /** #1211 — the motion: any node with one pose output (a clip, an import's base layer). */
+    motionId: string;
     skeletonId: string;
   },
   arrival: MotionArrival,
@@ -310,16 +326,18 @@ export function bindMotionToCharacter(
     return { ok: false, refusal: 'no-bridge', reason };
   }
 
-  const outputClipId = retargetedClipId(source.clipId, target.skeletonId);
+  const outputClipId = retargetedClipId(source.motionId, target.skeletonId);
   const outputName = `${target.label} motion`;
   const result = dispatchMutatorFromUI(
     'mutator.animation.retarget',
     {
-      sourceClipId: source.clipId,
+      sourceId: source.motionId,
       sourceSkeletonId: source.skeletonId,
       targetSkeletonId: target.skeletonId,
       ...(bridge.presetId ? { mapPresetId: bridge.presetId } : {}),
       ...(bridge.customMap ? { customMap: bridge.customMap } : {}),
+      // #1213 — the Object whose pose the retarget becomes; a clone-road rig stands none.
+      ...(target.objectId !== null ? { targetObjectId: target.objectId } : {}),
       outputClipId,
       outputName,
     },
@@ -328,9 +346,10 @@ export function bindMotionToCharacter(
   if (!result.ok) {
     // A gate refused. That is a fault in the graph, not a choice the director
     // made, so it goes to the surface that PERSISTS until something changes.
+    // Keyed by the asset on the clone road and by the character's Object natively.
     useAssetErrorStore
       .getState()
-      .report(target.assetRef, `could not bind motion: ${formatAssetError(result.reason)}`);
+      .report(target.objectId, `could not bind motion: ${formatAssetError(result.reason)}`);
     return { ok: false, refusal: 'rejected', reason: result.reason };
   }
 

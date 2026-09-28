@@ -12,6 +12,7 @@
 
 import type { DagState } from '../core/dag/state';
 import type { Op } from '../core/dag/types';
+import { DEFAULT_CAMERA_FAR, DEFAULT_CAMERA_NEAR } from '../nodes/CameraData';
 
 /**
  * THE SCENE OBJECTS — everything the Add menu can put in the scene as a thing with a
@@ -591,9 +592,12 @@ function lightDataParamsFor(kind: PrimitiveKind): Record<string, unknown> {
  * #387 C4 — the CameraData (lens) half of a newly added camera. Sister to
  * `lightDataParamsFor`: the pose lives on the Object (`paramsFor`), the lens lives here.
  *
- * ⚠️ EVERY VALUE IS PRESERVED EXACTLY as the fused builders seeded it — `far: 1000` (which
- * differs from `CameraData`'s own zod default of 500, and from the seed project's 500) and
- * the orthographic `zoom: 1`. NO behaviour change rides in on the creation flip: this slice
+ * ⚠️ THE CLIP PLANES NOW COME FROM `CameraData`'s OWN DEFAULTS — Blender's camera Clip
+ * Start and Clip End (0.1–1000, #1193/#1195), the same values the schema, the seed project
+ * and the pose fallback use, so which road minted a camera no longer decides its clipping.
+ * Before that, this builder's `far: 1000` was the lone 1000 against their 500, and its
+ * near was 0.01 everywhere. Every OTHER value is still preserved exactly as the fused
+ * builders seeded it, including the orthographic `zoom: 1`. NO behaviour change rides in on the creation flip: this slice
  * changes the SHAPE a new camera is minted in, nothing about what it looks like. The ortho
  * `zoom: 1` in particular is currently read by no renderer at all (#478) — it is seeded here
  * unchanged so that issue stays exactly as measurable as it was, and is fixed under #478.
@@ -604,7 +608,7 @@ function lightDataParamsFor(kind: PrimitiveKind): Record<string, unknown> {
  * `zoom`. This is the same one-invented-value-in-one-place call the v6→v7 migration makes.
  */
 function cameraDataParamsFor(kind: PrimitiveKind): Record<string, unknown> {
-  const shared = { fov: 45, near: 0.01, far: 1000, lookAt: [0, 0, 0] };
+  const shared = { fov: 45, near: DEFAULT_CAMERA_NEAR, far: DEFAULT_CAMERA_FAR, lookAt: [0, 0, 0] };
   return kind === 'OrthographicCamera'
     ? { projection: 'Orthographic', zoom: 1, ...shared }
     : { projection: 'Perspective', ...shared };

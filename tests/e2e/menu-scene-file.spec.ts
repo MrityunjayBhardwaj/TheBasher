@@ -62,7 +62,10 @@ async function exportBundle(page: EvalPage): Promise<Bundle> {
 async function ingestGltf(page: EvalPage, folder: string): Promise<void> {
   await page.evaluate(async (name) => {
     const w = window as unknown as SceneWindow;
-    const buf = new Uint8Array(await (await fetch('/assets/skinned-bar.glb')).arrayBuffer());
+    // A file the scene keeps referencing: one the native reader still refuses (Draco, #1063), so it
+    // arrives through the file's copy. A native import stops referencing its file (#1049), and a
+    // skinned one comes in native since #1205.
+    const buf = new Uint8Array(await (await fetch('/assets/cube-draco.glb')).arrayBuffer());
     await w.__basher_ingestGltfFolder!([{ relativePath: `${name}.glb`, bytes: buf }], name);
   }, folder);
 }

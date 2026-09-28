@@ -161,8 +161,10 @@ export type ScopeDomain = (typeof SCOPE_DOMAINS)[number];
  * that issue and the record points at a closed one, which is the failure #958 is open about
  * one file over. `corner` genuinely awaits a filed consumer (#786, the authored layer its own
  * reason already argues for). `point` awaits NOTHING FILED — the whole open backlog was
- * censused and nothing would author a point-domain layer — so it carries no `until` at all
- * rather than a target invented to fill the field. The union makes the empty case
+ * censused and nothing would SELECT points — so it carries no `until` at all rather than a
+ * target invented to fill the field. (#1196 since authors the first point-domain layer, a skin
+ * binding on a stored mesh, and the deform that reads it, #393, reads every point whole: a
+ * layer to read is not a subset to select, so the absence below is unchanged.) The union makes the empty case
  * REPRESENTABLE, so the next author is not forced to point somewhere false.
  *
  * 🔑 THE TYPE MAKES THE TWO SETS PARTITION {@link KNOWN_DOMAINS}. `Exclude<KnownDomain,
@@ -184,7 +186,8 @@ export const SCOPE_ABSENT: Readonly<Record<Exclude<KnownDomain, ScopeDomain>, Sc
     why:
       'a point count has been derivable since #716 and total since #754, but no operator has ' +
       'a per-point semantic anybody has stated — a point selection would be a subset of a set ' +
-      'nothing consumes, and no open issue would author a point-domain layer',
+      'nothing consumes; the one point-domain layer that exists, a stored skin binding (#1196), ' +
+      'is read whole by a deform and names no subset of points',
   },
   corner: {
     kind: 'awaits-consumer',
@@ -242,8 +245,12 @@ export function isKnownDomain(domain: DomainId): domain is KnownDomain {
  * RGBA colour (#1117 — first held by a stored mesh's colour layer, where glTF's `COLOR_0` lands),
  * and `float` and `float3` are the ones a polygonal model cannot express itself without. A type
  * that has no producer is a type whose storage rules nothing has ever exercised.
+ *
+ * `int4` (#1196) is the four joint numbers a skinned vertex is bound to, read from glTF's
+ * `JOINTS_0`. Four because a glTF set holds four and three.js draws exactly four
+ * (`skinIndex.x/y/z/w`); integers because they index a table, and a float would round them.
  */
-export const ATTRIBUTE_TYPES = ['int', 'float', 'float2', 'float3', 'float4'] as const;
+export const ATTRIBUTE_TYPES = ['int', 'int4', 'float', 'float2', 'float3', 'float4'] as const;
 
 export type AttributeType = (typeof ATTRIBUTE_TYPES)[number];
 
@@ -300,6 +307,7 @@ export function componentsOf(type: AttributeType): number {
       return 2;
     case 'float3':
       return 3;
+    case 'int4':
     case 'float4':
       return 4;
     default: {
@@ -408,6 +416,18 @@ export function uvLayerName(n: number): string {
  * REF: ref/GROUND_TRUTH_BLENDER_ATTRIBUTE_NAMING.md (stage 2).
  */
 export const COLOR_LAYER = 'Color';
+
+/**
+ * #1196 — the point-domain layers a skinned mesh carries: each point's four joint numbers, and the
+ * four weights that go with them, from glTF's `JOINTS_0` and `WEIGHTS_0`.
+ *
+ * Blender has no attribute of this name to follow: it keeps skin weights as VERTEX GROUPS, one
+ * named group per bone, outside the attribute system (`io_scene_gltf2/blender/imp/mesh.py:358-368`).
+ * The shape here is that data at glTF's width instead: a joint number indexes the mesh's own
+ * `vertexGroups` table, and the table holds the names, as a Blender weight's group index does.
+ */
+export const SKIN_JOINTS = 'skin_joints';
+export const SKIN_WEIGHTS = 'skin_weights';
 
 /**
  * The `n` of {@link uvLayerName}, or `null` for a name that is not one of those.

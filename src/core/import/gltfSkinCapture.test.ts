@@ -22,7 +22,7 @@ import { parseGltfContainer, resolveBuffers, type GltfJson } from './glb';
 import type { Op } from '../dag/types';
 import type { DagState } from '../dag/state';
 import { GltfAssetParams } from '../../nodes/GltfAsset';
-import { SkeletonNode, SkeletonParams } from '../../nodes/Skeleton';
+import { SkeletonNode, SkeletonParams, type SkeletonOutputs } from '../../nodes/Skeleton';
 
 const MAGIC = 0x46546c67;
 const CHUNK_JSON = 0x4e4f534a;
@@ -273,7 +273,7 @@ describe('back-compat — additive fields are non-breaking (P7.11 F4 / D-03)', (
 
   it('the 3-bone default Skeleton evaluates with NO scale/IBM keys (BVH/FBX parity)', () => {
     const params = SkeletonParams.parse({}); // legacy = no scale/IBM authored
-    const out = SkeletonNode.evaluate(params, {});
+    const { out } = SkeletonNode.evaluate(params, {}) as SkeletonOutputs;
     expect(out.bones).toHaveLength(3);
     for (const b of out.bones) {
       // The optional fields must be ABSENT (not `undefined`) so a legacy
@@ -296,7 +296,7 @@ describe('back-compat — additive fields are non-breaking (P7.11 F4 / D-03)', (
         },
       ],
     });
-    const out = SkeletonNode.evaluate(params, {});
+    const { out } = SkeletonNode.evaluate(params, {}) as SkeletonOutputs;
     expect(out.bones[0].scale).toEqual([2, 2, 2]);
     expect(out.bones[0].inverseBindMatrix).toHaveLength(16);
   });

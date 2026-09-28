@@ -13,7 +13,12 @@ import { emptyDagState } from '../../core/dag/state';
 import type { DagState } from '../../core/dag/state';
 import type { Op } from '../../core/dag/types';
 import { registerAllNodes } from '../../nodes/registerAll';
-import { __resetGeneratedClipsForTests } from '../../core/motiongen/generatedClipCache';
+import {
+  __resetGeneratedClipsForTests,
+  lookupGeneratedClip,
+} from '../../core/motiongen/generatedClipCache';
+import { evaluate } from '../../core/dag/evaluator';
+import type { AnimationClipValue } from '../../nodes/types';
 import {
   synthesiseBvh,
   STUB_UNIT_SCALE,
@@ -151,6 +156,19 @@ describe('bakeGeneratedClipOps (#935)', () => {
     const after = bandSees(s);
     expect(after.clips).toBe(1);
     expect(after.keyframes).toBeGreaterThan(0);
+  });
+
+  it('#1225 — the params land exactly the generated keys, not a round trip through the poses', async () => {
+    let s = graph();
+    await resolvePendingMotionGenerations(s, capability);
+    const producerId = clipBakeStates(s)[0].producerId;
+    const generated = lookupGeneratedClip(
+      (evaluate(s, producerId).value as AnimationClipValue).generation!.requestHash,
+    )!;
+    expect(generated.keyframes.length).toBeGreaterThan(0);
+    s = apply(s, bakeGeneratedClipOps(s));
+    const landed = (s.nodes.clip.params as { keyframes: unknown[] }).keyframes;
+    expect(landed).toEqual(generated.keyframes);
   });
 
   // #900 RUNG 4, SETTLED — THE PREMISE THE DECISION RESTS ON.

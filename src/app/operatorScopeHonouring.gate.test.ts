@@ -237,7 +237,10 @@ describe('ns-2 step 17 — a declared scope is HONOURED, not merely declared', (
     // is only that an unscoped operator is excused from the cross-check by its own declaration
     // rather than by being forgotten, and a deferral excuses it exactly as a fact does.
     const exempt = listNodeTypes().filter((t) => getNodeType(t)?.chain?.scope.kind === 'unscoped');
+    // #393 — `ArmatureModifier` is the fifth, excused the way `UVProjectModifier` is: a
+    // `'declined'` deferral on an `ObjectData` spine (Blender's vertex-group limit, not built).
     expect(exempt.sort()).toEqual([
+      'ArmatureModifier',
       'ColorCorrect',
       'MaterialOverride',
       'Transform',

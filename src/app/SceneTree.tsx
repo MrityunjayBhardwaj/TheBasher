@@ -30,15 +30,30 @@ import { buildDeleteNodesOps, buildDuplicateNodeOps } from './sceneNodeActions';
 import { selectActiveCameraNode } from './activeCamera';
 import { isCameraNode } from './cameraNode';
 import { buildSetActiveCameraOps } from './setActiveCamera';
+import {
+  dropIntent,
+  dropZoneAt,
+  reorderIndex,
+  type DropIntent,
+  type DropZone,
+} from './treeDropIntent';
 
 const TREE_DRAG_MIME = 'application/x-basher-tree-row';
 
 // Row types that own a collapsible subtree and so get a chevron. GltfAsset
 // defaults COLLAPSED (node-flood, D-05); the rest default EXPANDED.
-const COLLAPSIBLE_TYPES = new Set(['Group', 'Transform', 'MaterialOverride', 'GltfAsset']);
+const COLLAPSIBLE_TYPES = new Set([
+  'Group',
+  'Transform',
+  'MaterialOverride',
+  'GltfAsset',
+  'Object',
+]);
 // The collapsible types that default EXPANDED (opt-out via `collapsedNodes`),
 // in contrast to GltfAsset which defaults collapsed (opt-in via `expandedAssets`).
-const CONTAINER_TYPES = new Set(['Group', 'Transform', 'MaterialOverride']);
+// #1152 — an Object joins both: it can parent now. A row gets a chevron only when it has child
+// rows (`rowsWithChildren`), so an Object that parents nothing draws exactly as before.
+const CONTAINER_TYPES = new Set(['Group', 'Transform', 'MaterialOverride', 'Object']);
 
 interface SceneTreeProps {
   /**
@@ -125,6 +140,8 @@ export function SceneTree({ filter = '' }: SceneTreeProps) {
 
   const [dragKey, setDragKey] = useState<string | null>(null);
   const [hoverKey, setHoverKey] = useState<string | null>(null);
+  // #1152 — which part of the hovered row the drop is aimed at, so the row shows what will happen.
+  const [hoverZone, setHoverZone] = useState<DropZone>('into');
   // #227 Slice 2 — right-click context menu, anchored at the cursor.
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; nodeId: NodeId } | null>(null);
   // GltfAsset child subtrees start COLLAPSED by default (D-05 node-flood:
@@ -494,7 +511,7 @@ export function SceneTree({ filter = '' }: SceneTreeProps) {
   }
 
   // #227 Slice 1 — the list socket a row can RECEIVE the dragged node into
-  // (reparent target): a Group's `children`, or one of the Scene root's lists.
+  // (reparent target): a Group's `children`, an Object's (#1152), or one of the Scene root's lists.
   // #231 Inc 2a — the Scene-root target is kind-aware: a light rejoins
   // `scene.lights`, everything else `scene.children` (so unparenting a grouped
   // light returns it to the rich light band, not the generic children band).
@@ -504,11 +521,21 @@ export function SceneTree({ filter = '' }: SceneTreeProps) {
   // `children` and loses the rich band (a cube-Object still correctly goes to `children`).
   // Returns null for rows that can't hold children (leaves, Transform/Material
   // wrappers — single `target` socket, glTF children).
+  // #1152 — can this row RECEIVE children? A Group, and an Object — but only an Object that
+  // itself hangs in the `children` hierarchy. That is where the renderer draws an Object's
+  // children (ObjectR); a light or a camera Object hangs off its own band (`scene.lights`,
+  // `scene.camera`), is drawn through that band, and would hold a child nothing draws. A glTF
+  // copy's rows carry no `parent` at all, so they are never a target either.
+  function holdsChildren(row: TreeRow): boolean {
+    if (row.nodeType === 'Group') return true;
+    return row.nodeType === 'Object' && row.parent?.socket === 'children';
+  }
+
   function reparentSocket(
     srcRow: TreeRow,
     dstRow: TreeRow,
   ): { node: NodeId; socket: string } | null {
-    if (dstRow.nodeType === 'Group') return { node: dstRow.nodeId, socket: 'children' };
+    if (holdsChildren(dstRow)) return { node: dstRow.nodeId, socket: 'children' };
     if (dstRow.depth === 0) {
       const socket = isLightNode(state.nodes, srcRow.nodeId) ? 'lights' : 'children';
       return { node: dstRow.nodeId, socket }; // Scene root
@@ -548,11 +575,21 @@ export function SceneTree({ filter = '' }: SceneTreeProps) {
   function cameraReparent(srcRow: TreeRow, dstRow: TreeRow): 'into' | 'root' | null {
     if (!isCameraNode(state, srcRow.nodeId)) return null; // possession, not the type's name (#387)
     if (dstRow.key === srcRow.key) return null;
-    if (dstRow.nodeType === 'Group') {
-      return dstRow.nodeId === srcRow.parent?.nodeId ? null : 'into'; // not its current group
+    if (holdsChildren(dstRow)) {
+      return dstRow.nodeId === srcRow.parent?.nodeId ? null : 'into'; // not its current parent
     }
     if (dstRow.depth === 0) return srcRow.parent?.socket === 'children' ? 'root' : null; // unparent
     return null;
+  }
+
+  // #1152 — ONE answer to "what would this drop do", asked by dragover (to draw it) and by drop (to
+  // do it), from where on the row the pointer is. See treeDropIntent.ts for the rule.
+  function intentOf(e: DragEvent, srcRow: TreeRow, dstRow: TreeRow): DropIntent {
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    return dropIntent(dropZoneAt(e.clientY, rect.top, rect.height), {
+      canParent: canReparent(srcRow, dstRow) || cameraReparent(srcRow, dstRow) !== null,
+      canReorder: canDropOn(srcRow, dstRow),
+    });
   }
 
   function onDragOver(e: DragEvent, dstRow: TreeRow) {
@@ -560,16 +597,12 @@ export function SceneTree({ filter = '' }: SceneTreeProps) {
     if (!dragKey) return;
     const srcRow = rows.find((r) => r.key === dragKey);
     if (!srcRow || srcRow === dstRow) return;
-    // Reparent takes precedence when dst is a Group/Scene the node isn't already in.
-    if (
-      !canReparent(srcRow, dstRow) &&
-      !canDropOn(srcRow, dstRow) &&
-      !cameraReparent(srcRow, dstRow)
-    )
-      return;
+    const intent = intentOf(e, srcRow, dstRow);
+    if (!intent) return;
     e.preventDefault();
     e.dataTransfer.dropEffect = 'move';
     setHoverKey(dstRow.key);
+    setHoverZone(intent.kind === 'parent' ? 'into' : intent.place);
   }
 
   function onDrop(e: DragEvent, dstRow: TreeRow) {
@@ -580,8 +613,27 @@ export function SceneTree({ filter = '' }: SceneTreeProps) {
     setDragKey(null);
     const srcRow = rows.find((r) => r.key === srcKey);
     if (!srcRow || !srcRow.parent) return;
+    const intent = intentOf(e, srcRow, dstRow);
+    if (!intent) return;
 
     const ref = { node: srcRow.nodeId, socket: 'out' };
+
+    if (intent.kind === 'reorder') {
+      // REORDER: same-parent sibling index change, before or after the target row.
+      if (!dstRow.parent) return;
+      const index = reorderIndex(srcRow.parent.index, dstRow.parent.index, intent.place);
+      if (index === null) return;
+      const to = { node: dstRow.parent.nodeId, socket: dstRow.parent.socket };
+      dispatchAtomic(
+        [
+          { type: 'disconnect', from: ref, to },
+          { type: 'connect', from: ref, to, index },
+        ],
+        'user',
+        'reorder scene tree',
+      );
+      return;
+    }
 
     // #231 Inc 3.3 — camera reparent (handled FIRST; cameras never reorder/reparent
     // via the list path — they have no scene-level list socket). Moves Group.children
@@ -641,23 +693,7 @@ export function SceneTree({ filter = '' }: SceneTreeProps) {
         { type: 'connect', from: ref, to: target, index: appendIndex },
       ];
       dispatchAtomic(ops, 'user', 'reparent scene node');
-      return;
     }
-
-    // REORDER: same-parent sibling index change (the original behavior).
-    if (!dstRow.parent || !canDropOn(srcRow, dstRow)) return;
-    if (srcRow.parent.index === dstRow.parent.index) return;
-    const to = { node: dstRow.parent.nodeId, socket: dstRow.parent.socket };
-    // Drop semantic: source takes target's visual slot. After disconnecting the
-    // source, indices shift left for everything to its right — including the
-    // target when dst > src. Compensate so the source lands where it was dropped.
-    const adjusted =
-      dstRow.parent.index > srcRow.parent.index ? dstRow.parent.index - 1 : dstRow.parent.index;
-    const ops: Op[] = [
-      { type: 'disconnect', from: ref, to },
-      { type: 'connect', from: ref, to, index: adjusted },
-    ];
-    dispatchAtomic(ops, 'user', 'reorder scene tree');
   }
 
   return (
@@ -719,6 +755,7 @@ export function SceneTree({ filter = '' }: SceneTreeProps) {
               data-active={isActive || undefined}
               data-dragging={isDragging || undefined}
               data-drop-hover={isHover || undefined}
+              data-drop-zone={isHover ? hoverZone : undefined}
               data-expanded={hasChildTree ? isExpanded : undefined}
               // Drag-reorder is inert while filtering: a filtered list is not the
               // contiguous sibling set, so a dropped index would be wrong.
@@ -740,13 +777,13 @@ export function SceneTree({ filter = '' }: SceneTreeProps) {
               className="outline-none"
             >
               <div
-                className={`group flex items-center gap-1.5 rounded-md px-2 py-1 ${
+                className={`group relative flex items-center gap-1.5 rounded-md px-2 py-1 ${
                   isActive
                     ? 'bg-accent/15 text-accent ring-1 ring-inset ring-accent/40'
                     : isInSet
                       ? 'bg-accent/15 text-accent'
                       : 'text-fg-dim hover:bg-bg-1 hover:text-fg'
-                } ${isHover ? 'outline outline-1 outline-accent' : ''}`}
+                } ${isHover && hoverZone === 'into' ? 'outline outline-1 outline-accent' : ''}`}
                 style={{ paddingLeft: `${0.5 + row.depth * 0.75}rem` }}
                 // Double-click ANYWHERE on the row renames in place (Blender
                 // parity; F2 does the same via the global shortcut). #250-adjacent
@@ -776,6 +813,15 @@ export function SceneTree({ filter = '' }: SceneTreeProps) {
                   >
                     {isExpanded ? '▾' : '▸'}
                   </button>
+                ) : null}
+                {/* #1152 — a reorder drop draws a line where the row will land, above or below. */}
+                {isHover && hoverZone !== 'into' ? (
+                  <span
+                    aria-hidden
+                    className={`pointer-events-none absolute inset-x-1 h-0.5 rounded-full bg-accent ${
+                      hoverZone === 'before' ? '-top-px' : '-bottom-px'
+                    }`}
+                  />
                 ) : null}
                 <span className={`flex shrink-0 ${hidden ? 'opacity-40' : ''}`}>
                   <SceneTreeIcon kind={iconKindForNode(state, row.nodeId, row.nodeType)} />

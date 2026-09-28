@@ -26,6 +26,7 @@ import type { Node, NodeId } from '../../core/dag/types';
 import type { ClosureEdge, ClosureSet, ClosureSpec, EdgeKind } from './types';
 import { buildIdRefIndex, idRefsOutOf } from '../../core/dag/idRefSweep';
 import { chainSocketOf, isDataLaneOperator } from '../../app/operatorChain';
+import { rigReach, rigReachNodes } from '../../app/animate/renameBone';
 
 const DEFAULT_MAX_DEPTH = 256;
 
@@ -82,7 +83,8 @@ export function expandClosure(spec: ClosureSpec, state: DagState): ClosureSet {
   // `visited` set for membership but uses a kind-local frontier so a
   // 'children' descendant is never followed via 'parent'.
   for (const kind of spec.followedEdges) {
-    walkKind(spec.rootSelectors, kind, maxDepth, state, consumersOf, idRefsInto, visited, edges);
+    const depth = spec.depthByKind?.[kind] ?? maxDepth;
+    walkKind(spec.rootSelectors, kind, depth, state, consumersOf, idRefsInto, visited, edges);
   }
 
   return {
@@ -159,6 +161,14 @@ function visitEdge(
     if (!consumers) return;
     for (const { consumer } of consumers) {
       enqueue(consumer, from, kind, depth, seenInKind, seenEdges, visited, frontier, edges);
+    }
+    return;
+  }
+
+  if (kind === 'rig') {
+    const reach = rigReach(state, from);
+    for (const id of reach ? rigReachNodes(reach) : []) {
+      enqueue(id, from, kind, depth, seenInKind, seenEdges, visited, frontier, edges);
     }
     return;
   }

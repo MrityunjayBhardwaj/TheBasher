@@ -13,9 +13,10 @@
 // producer, exactly as the thesis has it for "the user placed three trees" vs
 // "the user wrote a rule that produced three trees".
 //
-// Measured, so it is not merely argued: `boundClipsForAsset` is the ONE edge
-// walk every real reader goes through — the render band, the channel mint, the
-// dopesheet, the format migration — and all of them read the PARAMS side.
+// Measured, so it is not merely argued: `boundClipsForAsset` was the ONE edge
+// walk every real reader went through — the render band (retired with the clone road's
+// character half, #1053), the channel mint, the dopesheet, the format migration — and all of
+// them read the PARAMS side.
 // `AnimationClipValue` has no production consumers outside the nodes that emit
 // it. An input edge is invisible to every one of them.
 //
@@ -91,6 +92,7 @@ import { lookupGeneratedClip, lookupGenerationFailure } from '../core/motiongen/
 import type { NodeDefinition, ResolvedInputs } from '../core/dag/types';
 import type { AnimationClipValue, CurveDataValue, ObjectValue, SkeletonValue } from './types';
 import { widget } from './paramWidget';
+import { motionPosesFromKeyframes } from './AnimationClip';
 
 /**
  * Upper bound on requested clip length, mirroring the capability's own. Stated
@@ -239,7 +241,10 @@ export const MotionGenerateNode: NodeDefinition<MotionGenerateParams, AnimationC
         // which is a claim about the motion that nothing measured. `'hold'` is
         // what the old `false` meant, in the vocabulary #930 gave the concept.
         loop: 'hold',
-        keyframes: clip.keyframes,
+        // A generator writes a pose per frame; they read linearly between.
+        interpolation: 'linear',
+        // #1225 — the generated keys as timed poses by bone name, through the one adapter.
+        poses: motionPosesFromKeyframes(clip.keyframes, clip.skeleton.bones),
         skeleton: clip.skeleton,
         // BOTH halves of the placement, always together. `worldRotationRadians`
         // is optional on the state — a clip cached before the facing half existed
@@ -265,7 +270,8 @@ export const MotionGenerateNode: NodeDefinition<MotionGenerateParams, AnimationC
       // length it does not have to every consumer that reads one.
       duration: 0,
       loop: 'hold',
-      keyframes: [],
+      interpolation: 'linear',
+      poses: [],
       skeleton: EMPTY_SKELETON,
       generation:
         failure !== undefined

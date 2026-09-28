@@ -6,7 +6,12 @@
 // bone in the viewport, then use the inspector.
 //
 // IT GOES THROUGH THE MUTATOR, and that is the property worth pinning: the panel does not
-// mint a `PoseOverride` itself. One road in means the agent and the director cannot drift
+// write the pose itself.
+
+// THE ROAD (#1205): the character comes in through the product's import, so it is a native
+// character; the pose lands as a member of the hand-pose layer feeding its armature Object
+// (`poseBone {object}`), where the mutator writes it.
+// One road in means the agent and the director cannot drift
 // about what a hand-pose is, and the panel inherits the mutator's refusals for free.
 //
 // WHAT THIS ROW DOES NOT COVER: that a posed bone moves on screen. That is
@@ -54,11 +59,22 @@ const ASSET_REF = 'fixtures/rig/standin-character.glb';
 interface Win {
   __basher_dag: {
     getState: () => {
-      state: { nodes: Record<string, { type: string; params: Record<string, unknown> }> };
+      state: {
+        nodes: Record<
+          string,
+          {
+            type: string;
+            params: Record<string, unknown>;
+            inputs?: Record<string, { node?: string }>;
+          }
+        >;
+      };
     };
   };
-  __basher_writeOpfsBytes?: (path: string, bytes: Uint8Array) => Promise<void>;
-  __basher_importGltf?: (buffer: ArrayBuffer, assetRef: string) => Promise<unknown>;
+  __basher_ingestGltfFolder?: (
+    files: { relativePath: string; bytes: Uint8Array }[],
+    folderName: string,
+  ) => Promise<string>;
   __basher_gltf_skin?: () => { boneCount: number; bound: boolean } | null;
   __basher_armature?: {
     bones: number;
@@ -85,19 +101,22 @@ test('#1156 — a director poses the bone they clicked, through the same road th
   test.setTimeout(180_000);
   await page.goto('/');
   await expect(page.getByTestId('layout')).toBeVisible({ timeout: 20_000 });
-  await page.waitForFunction(() => Boolean((window as unknown as Win).__basher_importGltf), null, {
-    timeout: 60_000,
-  });
+  await page.waitForFunction(
+    () => Boolean((window as unknown as Win).__basher_ingestGltfFolder),
+    null,
+    { timeout: 60_000 },
+  );
 
   const glb = fs.readFileSync(path.join(ROOT, GLB));
   await page.evaluate(
-    async ([bytes, ref]) => {
+    async ([bytes, name]) => {
       const w = window as unknown as Win;
-      const arr = new Uint8Array(bytes as number[]);
-      await w.__basher_writeOpfsBytes!(ref as string, arr);
-      await w.__basher_importGltf!(arr.buffer as ArrayBuffer, ref as string);
+      await w.__basher_ingestGltfFolder!(
+        [{ relativePath: name as string, bytes: new Uint8Array(bytes as number[]) }],
+        'standin-character',
+      );
     },
-    [Array.from(glb), ASSET_REF] as [number[], string],
+    [Array.from(glb), path.basename(ASSET_REF)] as [number[], string],
   );
   await page.waitForFunction(
     () => Boolean((window as unknown as Win).__basher_gltf_skin?.()),
@@ -156,11 +175,17 @@ test('#1156 — a director poses the bone they clicked, through the same road th
     .filter((t) => t.onScreen && t.name !== 'Root')
     .sort((a, b) => b.length - a.length);
 
-  const groupId = await page.evaluate(() => {
+  // The armature Object (the one the mesh's Armature modifier deforms by) is selected first: its
+  // bones pick once it is the thing being worked on (Blender's object mode).
+  const armatureId = await page.evaluate(() => {
     const nodes = (window as unknown as Win).__basher_dag.getState().state.nodes;
-    return Object.entries(nodes).find(([, n]) => n.type === 'Group')?.[0] ?? null;
+    return (
+      Object.values(nodes).find((n) => n.type === 'ArmatureModifier')?.inputs?.armature?.node ??
+      null
+    );
   });
-  await page.getByTestId(`scene-tree-row-${groupId}`).click();
+  expect(armatureId, 'no Armature modifier — the character is not native').not.toBeNull();
+  await page.getByTestId(`scene-tree-row-${armatureId}`).click();
   await page.waitForTimeout(300);
 
   let picked: string | null = null;
@@ -180,24 +205,21 @@ test('#1156 — a director poses the bone they clicked, through the same road th
   await page.getByTestId('inspector-bone-pose-add').click();
   await page.waitForTimeout(400);
 
-  const after = await page.evaluate(() => {
+  const after = await page.evaluate(async (id) => {
     const nodes = (window as unknown as Win).__basher_dag.getState().state.nodes;
-    return Object.entries(nodes)
-      .filter(([, n]) => n.type === 'PoseOverride')
-      .map(([id, n]) => ({ id, params: n.params }));
-  });
-  // THE MINT, in the RIG's spelling. The click carries the live tree's name
-  // (`mixamorigLeftUpLeg`); what lands is the DAG's (`mixamorig_LeftUpLeg`). Storing the
-  // clicked spelling would be a bone the rig does not have, and the band would skip it
-  // silently — so the spelling IS the assertion, not a detail.
-  expect(after.length, 'the gesture minted no override').toBe(1);
-  expect(after[0].params.bone).toBe(`mixamorig_${picked!.replace('mixamorig', '')}`);
-  expect(
-    (after[0].params.overridden as { rotation?: boolean }).rotation,
-    'the override authors nothing, so it is inert and the band will ignore it',
-  ).toBe(true);
-  // Seeded at zero: asking for an override must not itself move the rig.
-  expect(after[0].params.rotation).toEqual([0, 0, 0]);
+    const { handPoseLayerOf } = await import('/src/app/animate/poseChain.ts');
+    const layer = handPoseLayerOf(nodes as never, id);
+    return layer === null
+      ? null
+      : ((nodes[layer].params.members ?? []) as { bone: string; rotation?: number[] }[]);
+  }, armatureId!);
+  // THE WRITE, in the rig's own spelling, which is also what the click names natively (one
+  // spelling on this road): a member for exactly the clicked bone, in the layer feeding the
+  // armature Object.
+  expect(after, 'the gesture wrote no hand-pose layer').not.toBeNull();
+  expect(after!.map((m) => m.bone)).toEqual([picked]);
+  // Seeded at zero: asking for a pose must not itself move the rig.
+  expect(after![0].rotation).toEqual([0, 0, 0]);
 
   // And the offer is replaced by the thing it made — the ordinary param row, so editing a
   // pose is the same gesture as editing any other value.

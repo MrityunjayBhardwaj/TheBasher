@@ -89,7 +89,7 @@ describe('#637 this phase ships no migration, and the absence is pinned', () => 
     registerAllNodes();
   });
 
-  it('has moved the project format version exactly five times since the freeze — #915, #920, #930, #389, then #1062', () => {
+  it('has moved the project format version exactly nine times since the freeze — #915, #920, #930, #389, #1062, #1203, #1224, then #1225 twice', () => {
     // 🔴 THIS ROW CHANGED SHAPE IN #915, AND THE HEADER ABOVE SAYS WHY IT MAY.
     //
     // It read `toBe(fixture().formatVersion)` — ns-1 shipped no migration, so the frozen
@@ -120,7 +120,16 @@ describe('#637 this phase ships no migration, and the absence is pinned', () => 
     // boolean, and names the layers it reads instead. Node params are not re-parsed through
     // their schemas on load, so this pass is the only thing that can respell a saved material —
     // without it a replaced map silently samples set 0.
-    const MIGRATIONS_SINCE_FREEZE = 5; // #915, #920, #930, #389, then #1062
+    // #1203 is the SIXTH: the armature band chose a rig's pose by a rule, and the pose now lives
+    // on the Object as an `action` edge. Without the pass that writes the rule down as the edge,
+    // every saved rig would stop playing on load.
+    // #1224 is the SEVENTH: that `action` edge becomes `pose`, the end of the pose wire. Loading
+    // checks no socket type, so only a pass that re-points each saved edge to its producer's pose
+    // output keeps every saved rig playing, and correctly typed.
+    // #1225 is the EIGHTH: the retarget's `sourceClip` (a clip) becomes `source` (the pose wire),
+    // re-pointed to each saved producer's pose output for #1224's reason. The NINTH is #1225's second:
+    // `LocomotionState.clip` becomes `pose` the same way.
+    const MIGRATIONS_SINCE_FREEZE = 9; // #915, #920, #930, #389, #1062, #1203, #1224, #1225 ×2
     expect(PROJECT_FORMAT_VERSION).toBe(fixture().formatVersion + MIGRATIONS_SINCE_FREEZE);
   });
 

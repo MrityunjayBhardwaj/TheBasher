@@ -28,7 +28,6 @@ import {
   CHANNEL_ADDRESS_DOC,
   CHANNEL_ADDRESS_FIELDS,
   channelRootSelectors,
-  channelViewAfterMint,
   resolveChannelAddress,
   superRefineChannelAddress,
 } from './channelAddress';
@@ -116,7 +115,7 @@ export const setChannelExtendMutator: MutatorDefinition<SetChannelExtendSpec> = 
   preconditions(spec, _closure, state) {
     const resolved = resolveChannelAddress(state, spec, { mint: true });
     if (!resolved.ok) return { ok: false, reason: resolved.reason };
-    const view = channelViewAfterMint(state, resolved.channelId, resolved.mintOps);
+    const view = resolved.view;
     if (!view) {
       return { ok: false, reason: `channel "${resolved.channelId}" could not be resolved.` };
     }
@@ -153,7 +152,7 @@ export const setChannelExtendMutator: MutatorDefinition<SetChannelExtendSpec> = 
   build(spec, _closure: ClosureSet, state: DagState): Op[] {
     const resolved = resolveChannelAddress(state, spec, { mint: true });
     if (!resolved.ok) throw new Error(resolved.reason);
-    const view = channelViewAfterMint(state, resolved.channelId, resolved.mintOps);
+    const view = resolved.view;
     if (!view) throw new Error(`channel "${resolved.channelId}" could not be resolved.`);
     const params = view.params as
       | {
@@ -177,30 +176,15 @@ export const setChannelExtendMutator: MutatorDefinition<SetChannelExtendSpec> = 
       const next = Array.from({ length: arity }, (_, k) =>
         k === spec.axis ? { before, after } : (cur?.[k] ?? null),
       );
-      return [
-        ...resolved.mintOps,
-        { type: 'setParam', nodeId: resolved.channelId, paramPath: 'axisExtend', value: next },
-      ];
+      return [...resolved.mintOps, ...resolved.write({ axisExtend: next })];
     }
     // Channel-level: one setParam per provided side (idempotent if unchanged). Deterministic
     // order: before then after.
-    const ops: Op[] = [...resolved.mintOps];
-    if (spec.before !== undefined) {
-      ops.push({
-        type: 'setParam',
-        nodeId: resolved.channelId,
-        paramPath: 'extendBefore',
-        value: spec.before,
-      });
-    }
-    if (spec.after !== undefined) {
-      ops.push({
-        type: 'setParam',
-        nodeId: resolved.channelId,
-        paramPath: 'extendAfter',
-        value: spec.after,
-      });
-    }
-    return ops;
+    // One write, so a channel inside a layer takes both sides in one rewrite of the list.
+    const fields: Record<string, unknown> = {};
+    if (spec.before !== undefined) fields.extendBefore = spec.before;
+    if (spec.after !== undefined) fields.extendAfter = spec.after;
+    if (Object.keys(fields).length === 0) return [...resolved.mintOps];
+    return [...resolved.mintOps, ...resolved.write(fields)];
   },
 };

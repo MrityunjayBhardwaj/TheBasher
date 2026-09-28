@@ -39,7 +39,6 @@ import {
   CHANNEL_ADDRESS_DOC,
   CHANNEL_ADDRESS_FIELDS,
   channelRootSelectors,
-  channelViewAfterMint,
   resolveChannelAddress,
   superRefineChannelAddress,
 } from './channelAddress';
@@ -162,7 +161,7 @@ export const setKeyframeInterpMutator: MutatorDefinition<SetKeyframeInterpSpec> 
   preconditions(spec, _closure, state) {
     const resolved = resolveChannelAddress(state, spec, { mint: true });
     if (!resolved.ok) return { ok: false, reason: resolved.reason };
-    const view = channelViewAfterMint(state, resolved.channelId, resolved.mintOps);
+    const view = resolved.view;
     if (!view) {
       return { ok: false, reason: `channel "${resolved.channelId}" could not be resolved.` };
     }
@@ -196,7 +195,7 @@ export const setKeyframeInterpMutator: MutatorDefinition<SetKeyframeInterpSpec> 
   build(spec, _closure: ClosureSet, state: DagState): Op[] {
     const resolved = resolveChannelAddress(state, spec, { mint: true });
     if (!resolved.ok) throw new Error(resolved.reason);
-    const view = channelViewAfterMint(state, resolved.channelId, resolved.mintOps);
+    const view = resolved.view;
     if (!view) throw new Error(`channel "${resolved.channelId}" could not be resolved.`);
     const keys = channelKeyframes(view);
     const scope = resolveScope(spec);
@@ -208,14 +207,6 @@ export const setKeyframeInterpMutator: MutatorDefinition<SetKeyframeInterpSpec> 
       if (spec.handleType !== undefined) updated.handleType = spec.handleType;
       return updated;
     });
-    return [
-      ...resolved.mintOps,
-      {
-        type: 'setParam',
-        nodeId: resolved.channelId,
-        paramPath: 'keyframes',
-        value: next,
-      },
-    ];
+    return [...resolved.mintOps, ...resolved.write({ keyframes: next })];
   },
 };

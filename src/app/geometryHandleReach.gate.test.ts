@@ -157,6 +157,8 @@ const HANDLE_KINDS: Record<
         cornerLayers: [],
         cornerNormals: null,
         faceLayers: [],
+        pointLayers: [],
+        vertexGroups: [],
       }),
     ),
     probe: 'z',

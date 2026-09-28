@@ -10,6 +10,9 @@
 import { describe, expect, it } from 'vitest';
 import { PoseOverrideNode, PoseOverrideParams } from './PoseOverride';
 import type { BonePose, PosedSkeletonValue, SkeletonValue, Vec3 } from './types';
+import { eulerXYZFromQuat, quatFromEulerXYZ } from './bonePose';
+
+const DEG = Math.PI / 180;
 
 const BONES: SkeletonValue = {
   kind: 'Skeleton',
@@ -26,10 +29,11 @@ function upstream(): PosedSkeletonValue {
     kind: 'PosedSkeleton',
     skeleton: BONES,
     sample: (seconds: number): readonly BonePose[] =>
-      BONES.bones.map((b, i) => ({
-        bone: i,
+      BONES.bones.map((b) => ({
+        name: b.name,
         position: [b.position[0], b.position[1] + seconds, b.position[2]] as Vec3,
-        rotation: [seconds * 10, 0, 0] as Vec3,
+        quaternion: quatFromEulerXYZ([seconds * 10 * DEG, 0, 0]),
+        scale: [1, 1, 1] as Vec3,
       })),
   };
 }
@@ -71,7 +75,7 @@ describe('PoseOverride', () => {
     const at2 = v.sample(2);
     expect(at2[1].position).toEqual([7, 7, 7]);
     // rotation was NOT authored, so it still tracks time.
-    expect(at2[1].rotation).toEqual([20, 0, 0]);
+    expect(at2[1].quaternion).toEqual(quatFromEulerXYZ([20 * DEG, 0, 0]));
   });
 
   it('the win signal is PRESENCE, not value — authoring the upstream value still overrides', () => {
@@ -106,7 +110,8 @@ describe('PoseOverride', () => {
       overridden: { rotation: true },
     });
     const at2 = v.sample(2);
-    expect(at2[1].rotation).toEqual([1, 2, 3]); // authored
+    const authored = quatFromEulerXYZ([1 * DEG, 2 * DEG, 3 * DEG]);
+    at2[1].quaternion.forEach((v, k) => expect(v).toBeCloseTo(authored[k], 12)); // authored
     expect(at2[1].position).toEqual([0, 3, 0]); // upstream at t=2, NOT [7,7,7]
   });
 
@@ -122,7 +127,21 @@ describe('PoseOverride', () => {
     expect(out[0]).toBe(base[0]); // Root — same object
     expect(out[2]).toBe(base[2]); // Spine — same object
     expect(out[1]).not.toBe(base[1]); // the posed one is fresh
-    expect(out[1].bone).toBe(1); // and keeps its index
+    expect(out[1].name).toBe('mixamorig_Hips'); // and keeps its name
+  });
+
+  // #1223 — the param is DEGREES and the wire is an orientation. It used to copy the degrees into
+  // a lane whose clip rotations were radians (#1222 finding 1), so 90 read as 90 radians.
+  it('an authored rotation in degrees reaches the wire as that orientation', () => {
+    const v = evalWith({
+      bone: 'mixamorig_Hips',
+      rotation: [90, 0, 0],
+      overridden: { rotation: true },
+    });
+    const [x, y, z] = eulerXYZFromQuat(v.sample(0)[1].quaternion);
+    expect(x).toBeCloseTo(Math.PI / 2, 9);
+    expect(y).toBeCloseTo(0, 9);
+    expect(z).toBeCloseTo(0, 9);
   });
 
   it('samples NOTHING at evaluate time — the lane is lazy', () => {

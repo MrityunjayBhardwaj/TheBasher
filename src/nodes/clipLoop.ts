@@ -57,9 +57,14 @@
 import { z } from 'zod';
 import type { ChannelExtend } from './keyframeInterp';
 
-/** What a clip does past its authored range. A subset of {@link ChannelExtend}:
- *  `mirror` and `slope` are per-channel authoring rules, not transport intent. */
-export type ClipLoop = 'hold' | 'cycle' | 'cycle-offset';
+/** What a clip does past its authored range. A subset of {@link ChannelExtend}: `slope` is a
+ *  per-channel authoring rule, not transport intent. `mirror` was left out on that same ground at
+ *  #930; #1225 brings it in because it IS transport intent on a motion clip: Houdini's MotionClip
+ *  names Mirrored Loop as an end behaviour beside Clamp and Loop (`kinefx--motionclip.txt`, Left/
+ *  Right End Behavior; `kinefx--motionclipevaluate.txt`, End Behavior). Only `AnimationClip` offers
+ *  it ({@link MotionClipLoopSchema}); `TransformClip` folds time itself and has no mirror arm, so its
+ *  schema keeps the three it honours rather than offering one it would silently hold. */
+export type ClipLoop = 'hold' | 'cycle' | 'cycle-offset' | 'mirror';
 
 /**
  * Every clip carrier's `loop`, defaulting to HOLD.
@@ -71,6 +76,14 @@ export type ClipLoop = 'hold' | 'cycle' | 'cycle-offset';
  * default now only decides what a NEWLY created clip does.
  */
 export const ClipLoopSchema = z.enum(['hold', 'cycle', 'cycle-offset']).default('hold');
+
+/**
+ * #1225 — a MotionClip's ends: the three above, plus `mirror`, Houdini's Mirrored Loop (the motion
+ * plays forward, then back, then forward…). Defaulting to HOLD for the same reason as above.
+ */
+export const MotionClipLoopSchema = z
+  .enum(['hold', 'cycle', 'cycle-offset', 'mirror'])
+  .default('hold');
 
 /**
  * The per-component extend rule a clip's transport intent implies.
@@ -96,6 +109,9 @@ export function clipExtendRules(loop: ClipLoop): {
       return { position: 'cycle-offset', rotation: 'cycle' };
     case 'cycle':
       return { position: 'cycle', rotation: 'cycle' };
+    case 'mirror':
+      // Continuous at every seam and bounded, so nothing to offset on either component.
+      return { position: 'mirror', rotation: 'mirror' };
     case 'hold':
       return { position: 'hold', rotation: 'hold' };
   }
@@ -113,7 +129,9 @@ export function clipExtendRules(loop: ClipLoop): {
  * five that agree with each other and not with it.
  */
 export function clipLoopOf(raw: unknown): ClipLoop {
-  return raw === 'cycle' || raw === 'cycle-offset' || raw === 'hold' ? raw : 'hold';
+  return raw === 'cycle' || raw === 'cycle-offset' || raw === 'mirror' || raw === 'hold'
+    ? raw
+    : 'hold';
 }
 
 /** Does this clip repeat at all? The half of the question a boolean could ask. */

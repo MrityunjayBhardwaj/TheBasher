@@ -116,7 +116,7 @@ describe('resolvePendingMotionGenerations (#902)', () => {
 
     const after = clip(s);
     expect(after.generation?.status).toBe('ready');
-    expect(after.keyframes.length).toBeGreaterThan(0);
+    expect(after.poses.length).toBeGreaterThan(0);
     expect(after.skeleton.bones.length).toBeGreaterThan(0);
     expect(after.duration).toBeGreaterThan(0);
   });

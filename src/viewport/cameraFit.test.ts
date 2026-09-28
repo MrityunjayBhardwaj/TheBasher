@@ -1,8 +1,16 @@
 // cameraFit — pure "frame all" math (#186): fit a bounding sphere with clip
-// planes + orbit limits derived from the radius, never from constants.
+// planes derived from the radius, never from constants; and the orbit's dolly
+// range, which is the view's (from its Clip End), never the scene's (#1288).
 
 import { describe, expect, it } from 'vitest';
-import { clipPlanesForView, fitDistanceForSphere, fitViewToSphere } from './cameraFit';
+import {
+  boxDepthAlongView,
+  clipPlanesForView,
+  dollyRangeForClip,
+  fitDistanceForSphere,
+  fitViewToSphere,
+  zoomLimitsAt,
+} from './cameraFit';
 
 describe('fitDistanceForSphere', () => {
   it('places the camera so the sphere is tangent to the frustum (vertical fit)', () => {
@@ -61,14 +69,6 @@ describe('fitViewToSphere', () => {
     expect(fit.near).toBeGreaterThan(0);
   });
 
-  it('scales orbit dolly limits with the radius (tiny model → tiny minDistance)', () => {
-    const tiny = fitViewToSphere([0, 0, 0], 0.01, 45, 1);
-    const huge = fitViewToSphere([0, 0, 0], 1000, 45, 1);
-    expect(tiny.minDistance).toBeLessThan(huge.minDistance);
-    expect(huge.maxDistance).toBeGreaterThan(huge.distance);
-    expect(tiny.minDistance).toBeGreaterThan(0);
-  });
-
   it('frames along the canonical [3,2,3] viewing angle by default', () => {
     const fit = fitViewToSphere([0, 0, 0], 1, 45, 1);
     // direction from center→camera is the normalized [3,2,3] (x ≈ z, y smaller).
@@ -102,8 +102,6 @@ describe('clipPlanesForView', () => {
     const planes = clipPlanesForView(fit.distance, 7);
     expect(planes.near).toBeCloseTo(fit.near, 9);
     expect(planes.far).toBeCloseTo(fit.far, 9);
-    expect(planes.minDistance).toBeCloseTo(fit.minDistance, 9);
-    expect(planes.maxDistance).toBeCloseTo(fit.maxDistance, 9);
   });
 
   it('far clears the back of the sphere from the camera; near stays positive', () => {
@@ -128,18 +126,90 @@ describe('clipPlanesForView', () => {
     expect(planes.near).toBeGreaterThan(0);
   });
 
-  it('scales orbit dolly limits with the radius (tiny model → tiny minDistance)', () => {
-    const tiny = clipPlanesForView(0.05, 0.01);
-    const huge = clipPlanesForView(5000, 1000);
-    expect(tiny.minDistance).toBeLessThan(huge.minDistance);
-    expect(tiny.minDistance).toBeGreaterThan(0);
-  });
-
   it('falls back to finite planes for degenerate camera distance / radius', () => {
     const bad = clipPlanesForView(Number.NaN, -5);
     expect(Number.isFinite(bad.near)).toBe(true);
     expect(Number.isFinite(bad.far)).toBe(true);
     expect(bad.far).toBeGreaterThan(bad.near);
     expect(bad.near).toBeGreaterThan(0);
+  });
+});
+
+// #1188 — how deep a box reaches along the view: the far plane is a PLANE, so
+// the notice asks about the deepest corner along `forward`, not a sphere.
+describe('boxDepthAlongView', () => {
+  it('is the deepest corner along the view direction', () => {
+    // Unit cube at the origin, eye 10 back on +Z looking down -Z: the deepest
+    // corner is on the far face z = -0.5 → depth 10.5.
+    expect(boxDepthAlongView([-0.5, -0.5, -0.5], [0.5, 0.5, 0.5], [0, 0, 10], [0, 0, -1])).toBe(
+      10.5,
+    );
+  });
+
+  it('does not over-answer a long flat scene seen along its short axis', () => {
+    // A 2000 × 0 × 2000 ground plane seen from 5 above, looking straight down:
+    // every point is 5 deep. A distance-to-sphere test (5 + radius ~1414)
+    // would call this past a 1000 far plane; the plane test must not.
+    const d = boxDepthAlongView([-1000, 0, -1000], [1000, 0, 1000], [0, 5, 0], [0, -1, 0]);
+    expect(d).toBeCloseTo(5, 9);
+    expect(d).toBeLessThan(1000);
+  });
+
+  it('normalizes forward and picks the corner per axis sign', () => {
+    const f: [number, number, number] = [3, 0, 4]; // |f| = 5
+    const d = boxDepthAlongView([-1, -1, -1], [1, 1, 1], [0, 0, 0], f);
+    // Deepest corner (1, ±1, 1): (1·3 + 1·4) / 5 = 1.4.
+    expect(d).toBeCloseTo(1.4, 9);
+  });
+
+  it('is negative when the whole box is behind the eye, NaN with no direction', () => {
+    expect(boxDepthAlongView([-1, -1, 5], [1, 1, 6], [0, 0, 10], [0, 0, 1])).toBeLessThan(0);
+    expect(boxDepthAlongView([0, 0, 0], [1, 1, 1], [0, 0, 0], [0, 0, 0])).toBeNaN();
+  });
+});
+
+describe('dollyRangeForClip (#1288)', () => {
+  it("is Blender's zoom range: a thousandth of the grid to ten Clip Ends", () => {
+    // ED_view3d_dist_soft_range_get(v3d, false), view3d_utils.cc:154-165 (v5.1.1), at
+    // Blender's default grid 1 and clip_end 1000.
+    expect(dollyRangeForClip(1000)).toEqual({ minDistance: 0.001, maxDistance: 10_000 });
+  });
+
+  it('follows Clip End and nothing else — raising the clip is how a director reaches further', () => {
+    expect(dollyRangeForClip(100).maxDistance).toBe(1000);
+    expect(dollyRangeForClip(1e6).maxDistance).toBe(1e7);
+    expect(dollyRangeForClip(100).minDistance).toBe(dollyRangeForClip(1e6).minDistance);
+  });
+
+  it("admits the distance that failed #1288: the walk's 587-unit travel, from the default clip", () => {
+    // Measured before the fix: a wheel-out stopped at 38.08, the boot cube's (2.94 + 0.866) × 10.
+    expect(dollyRangeForClip(1000).maxDistance).toBeGreaterThan(587);
+  });
+
+  it('falls back to the default Clip End for a degenerate one', () => {
+    for (const bad of [Number.NaN, 0, -5, Number.POSITIVE_INFINITY]) {
+      expect(dollyRangeForClip(bad)).toEqual(dollyRangeForClip(1000));
+    }
+  });
+});
+
+describe('zoomLimitsAt (#1292)', () => {
+  const range = dollyRangeForClip(1000);
+
+  it('is the range itself for a view standing inside it', () => {
+    expect(zoomLimitsAt(range, 50)).toEqual(range);
+  });
+
+  it('admits a view framed past the ceiling, so the controls do not pull it in', () => {
+    // The p186 box's fit, measured pulled in to 10 000 before this.
+    expect(zoomLimitsAt(range, 11_767.8)).toEqual({ minDistance: 0.001, maxDistance: 11_767.8 });
+  });
+
+  it('admits a view standing nearer than the floor', () => {
+    expect(zoomLimitsAt(range, 0.0004)).toEqual({ minDistance: 0.0004, maxDistance: 10_000 });
+  });
+
+  it('keeps the range for a distance it cannot read', () => {
+    expect(zoomLimitsAt(range, Number.NaN)).toEqual(range);
   });
 });

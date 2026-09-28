@@ -9,11 +9,19 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { __resetRegistryForTests, applyOp } from '../core/dag';
 import type { DagState } from '../core/dag/state';
 import type { Op } from '../core/dag/types';
-import { buildBvhImportOps } from '../core/import/bvhImportChain';
+import { buildBvhClipOps } from '../test-utils/bvhClip';
 import { buildSkeletonObjectOps } from '../core/import/skeletonObject';
 import { buildDefaultDagState } from '../core/project/default';
 import { registerAllNodes } from '../nodes/registerAll';
 import { collectSkeletonObjects } from './skeletonObjects';
+import { evaluate } from '../core/dag/evaluator';
+import { restBonePose } from '../nodes/bonePose';
+import type { PosedSkeletonValue } from '../nodes/types';
+
+/** A clip node's pose output, sampled — what an Object wired to it should play. */
+function clipPoseAt(state: DagState, clipId: string, seconds: number) {
+  return (evaluate(state, clipId, { socket: 'pose' }).value as PosedSkeletonValue).sample(seconds);
+}
 
 const BVH = `HIERARCHY
 ROOT Hips
@@ -48,14 +56,17 @@ function build({ inScene = true }: { inScene?: boolean } = {}): DagState {
   let s = buildDefaultDagState();
   const sceneNodeId = s.outputs.scene?.node;
   if (!sceneNodeId) throw new Error('default project has no scene output');
-  s = apply(s, buildBvhImportOps({ text: BVH, ids: { skeleton: 'sk', clip: 'clip' } }).ops);
+  s = apply(s, buildBvhClipOps({ text: BVH, ids: { skeleton: 'sk', clip: 'clip' } }).ops);
   const { ops } = buildSkeletonObjectOps({
     skeletonId: 'sk',
     sceneNodeId,
     name: 'wave',
     clipId: 'clip',
+    nameFollowsClip: true,
   });
-  return apply(s, inScene ? ops : ops.slice(0, 2));
+  // Out of the scene: every op but the edge that makes it a scene child.
+  const outOfScene = ops.filter((op) => !(op.type === 'connect' && op.to.socket === 'children'));
+  return apply(s, inScene ? ops : outOfScene);
 }
 
 beforeEach(() => {
@@ -73,17 +84,28 @@ describe('collectSkeletonObjects', () => {
     expect(rig.bones.map((b) => b.name)).toEqual(['Hips', 'Spine', 'ENDSITE']);
     expect(rig.world).toHaveLength(16);
     expect(rig.clipCount).toBe(1);
-    expect(rig.clip?.kind).toBe('AnimationClip');
+    expect(rig.pose?.kind).toBe('PosedSkeleton');
   });
 
   it('with no clip wired, the rig rests — and says it has none', () => {
-    const s = applyOp(build(), { type: 'removeNode', nodeId: 'clip' }).next;
+    // Deleted as the product deletes it: its consumers let go first (`sceneNodeActions.ts`).
+    const s = apply(build(), [
+      {
+        type: 'disconnect',
+        from: { node: 'clip', socket: 'pose' },
+        to: { node: 'sk_object', socket: 'pose' },
+      },
+      { type: 'removeNode', nodeId: 'clip' },
+    ]);
     const [rig] = collectSkeletonObjects(s);
-    expect(rig.clip).toBeNull();
+    expect(rig.pose).toBeNull();
     expect(rig.clipCount).toBe(0);
   });
 
-  it('with two clips wired, the rig rests rather than guessing — and says there are two', () => {
+  // #1203 — the Object's own edge decides, as in Blender. Before it, two clips on one skeleton made
+  // the rig rest, because the band had no way to know which was meant; the edge is that way. Since
+  // #1224 the edge carries the clip's pose.
+  it('with two clips wired, the Object plays its pose — and the count says there are two', () => {
     const base = build();
     const s = apply(base, [
       {
@@ -99,8 +121,63 @@ describe('collectSkeletonObjects', () => {
       },
     ]);
     const [rig] = collectSkeletonObjects(s);
-    expect(rig.clip).toBeNull();
+    const rest = rig.bones.map(restBonePose);
+    expect(rig.pose!.sample(0.5)).toEqual(clipPoseAt(s, 'clip', 0.5));
+    expect(rig.pose!.sample(0.5)).not.toEqual(rest);
     expect(rig.clipCount).toBe(2);
+    // Re-pointed at a third clip — one with no keys, so it rests — the pose follows the edge, not
+    // an order among clips.
+    const repointed = apply(s, [
+      {
+        type: 'addNode',
+        nodeId: 'clip3',
+        nodeType: 'AnimationClip',
+        params: { ...(base.nodes.clip.params as object), name: 'third', keyframes: [] },
+      },
+      {
+        type: 'connect',
+        from: { node: 'sk', socket: 'out' },
+        to: { node: 'clip3', socket: 'skeleton' },
+      },
+      {
+        type: 'connect',
+        from: { node: 'clip3', socket: 'pose' },
+        to: { node: 'sk_object', socket: 'pose' },
+      },
+    ]);
+    expect(collectSkeletonObjects(repointed)[0].pose!.sample(0.5)).toEqual(rest);
+  });
+
+  it('a pose made for a different rig poses nothing, rather than the wrong bones', () => {
+    const base = build();
+    const s = apply(base, [
+      {
+        type: 'addNode',
+        nodeId: 'other',
+        nodeType: 'Skeleton',
+        params: {
+          bones: [{ name: 'elsewhere', parent: -1, position: [0, 0, 0], rotation: [0, 0, 0] }],
+        },
+      },
+      {
+        type: 'addNode',
+        nodeId: 'clipOther',
+        nodeType: 'AnimationClip',
+        params: base.nodes.clip.params,
+      },
+      {
+        type: 'connect',
+        from: { node: 'other', socket: 'out' },
+        to: { node: 'clipOther', socket: 'skeleton' },
+      },
+      {
+        type: 'connect',
+        from: { node: 'clipOther', socket: 'pose' },
+        to: { node: 'sk_object', socket: 'pose' },
+      },
+    ]);
+    const [rig] = collectSkeletonObjects(s);
+    expect(rig.pose).toBeNull();
   });
 
   it('an Object that is not in the scene is not drawn', () => {

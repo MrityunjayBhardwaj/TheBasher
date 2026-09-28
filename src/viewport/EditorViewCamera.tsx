@@ -28,7 +28,7 @@
 
 import { OrthographicCamera, PerspectiveCamera } from '@react-three/drei';
 import { useFrame, useThree } from '@react-three/fiber';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import * as THREE from 'three';
 import {
   cameraPoseFromPair,
@@ -48,15 +48,10 @@ import { loadEditorView } from '../app/editorViewPersistence';
 import { loadViewLock, saveViewLock } from '../app/viewLockPersistence';
 import { loadViewportClip } from '../app/viewportClipPersistence';
 import { takePendingEditorView } from '../app/editorViewCapture';
-import { clipPlanesForView, fitViewToSphere, type ClipPlanes } from './cameraFit';
-import { computeSceneBounds } from './sceneBounds';
+import { boxDepthAlongView, dollyRangeForClip, fitViewToSphere, zoomLimitsAt } from './cameraFit';
+import { computeSceneBounds, computeSceneBox } from './sceneBounds';
 import { scanForFollow, pointFromScan, type FollowScan } from './followScan';
 import { applyTarget } from '../app/character/framing';
-
-// Default free-mode clip planes (three's near-ish / the pre-#186 constants).
-// The bounds-fit overrides them per-load so large/tiny models don't clip.
-const DEFAULT_FREE_NEAR = 0.01;
-const DEFAULT_FREE_FAR = 1000;
 
 // Settle loop (#186): glTF geometry loads ASYNC, AFTER the boot effect fires,
 // so we re-fit each frame as the bounds grow. End the settle SETTLE_STILL_FRAMES
@@ -77,6 +72,11 @@ const MAX_FRAMES = 300;
  *  own rescan: ~0.25s at 60fps is the longest a rig that was just loaded or
  *  swapped can go unfollowed. */
 const LOCK_RESCAN_INTERVAL = 15;
+
+/** Frames between checks of whether the scene reaches past Clip End (#1188).
+ *  The check walks the scene for its content box, so it runs on the same
+ *  cadence as the lock's rescan; a clip change re-checks on the next frame. */
+const CLIP_REACH_INTERVAL = 15;
 
 // `orthoZoomForView` lives in `cameraFit.ts` beside the rest of the pure fit
 // math (#969 needed it from `src/app/character/framing.ts`, and importing this
@@ -127,9 +127,11 @@ export function EditorViewCamera() {
   // projections — never two default cameras at once ([[H67]]/V34: a single
   // makeDefault camera, no oldCam-restore race).
   const useOrtho = !lookThrough && projection === 'orthographic';
-  // #192: manual viewport clip override (null = AUTO bounds-fit). Applies to the
-  // FREE view only — look-through uses the scene camera's own near/far.
+  // #192: manual viewport clip override (null = DEFAULT_VIEWPORT_CLIP, #1187).
+  // Applies to the FREE view only — look-through uses the scene camera's own
+  // near/far.
   const clipOverride = useViewportStore((s) => s.viewportClipOverride);
+  const freeClip = clipOverride ?? DEFAULT_VIEWPORT_CLIP;
   // Canvas pixel size — drei's OrthographicCamera frustum is in pixels, so the
   // ortho zoom that matches the perspective framing depends on viewport height.
   const viewportHeight = useThree((s) => s.size.height);
@@ -172,18 +174,11 @@ export function EditorViewCamera() {
   // After the latched re-frame, OrbitControls owns the camera in free mode.
   const bootedKey = useRef<string | null>(null);
 
-  // Free-mode clip planes — bounds-derived per load (#186) so large/tiny models
-  // don't clip. Driven via STATE (not just imperatively) so a re-render reapplies
-  // the fitted planes as props instead of drei resetting them to the defaults.
-  const [freeNear, setFreeNear] = useState(DEFAULT_FREE_NEAR);
-  const [freeFar, setFreeFar] = useState(DEFAULT_FREE_FAR);
-  const appliedPlanes = useRef({ near: DEFAULT_FREE_NEAR, far: DEFAULT_FREE_FAR });
   // The active bounds-fit settle session (#186). `active:false` → the camera is
   // FREE (OrbitControls owns it); the fit only runs while content is arriving.
-  // `poseToo` (#191): true = full bounds-fit (move the pose AND derive planes);
-  // false = a planes-only settle for a saved / projection-toggle pose — keep the
-  // user's pose, re-derive near/far + dolly limits from the LIVE camera distance
-  // each frame as async bounds arrive, so a large model still clears `far`.
+  // `poseToo` (#191): true = full bounds-fit (move the pose); false = a saved /
+  // projection-toggle pose, kept as the user left it. Neither touches the clip
+  // planes (#1178) or the dolly range (#1288) — both are the view's, not the fit's.
   const fit = useRef({ active: false, poseToo: false, frames: 0, still: 0, lastR: -1 });
 
   // #856 — the view lock. Subscribed rather than snapshot-read, because taking
@@ -193,9 +188,7 @@ export function EditorViewCamera() {
   const viewLock = useViewportStore((s) => s.viewLock);
   // What the lock resolved to, refreshed on a cadence (LOCK_RESCAN_INTERVAL)
   // while the matrices — the part that actually moves — are read every frame.
-  // BOTH lookups sit on the one cadence: `getObjectByName` walks the whole scene
-  // exactly as `scanArmatures` does, so throttling one and not the other would
-  // have been a cost decision made twice and answered differently. Starts at the
+  // `getObjectByName` walks the whole scene, so it sits on the cadence. Starts at the
   // interval so the first locked frame resolves rather than following nothing
   // for a quarter second.
   const lockScan = useRef<FollowScan | null>(null);
@@ -235,33 +228,28 @@ export function EditorViewCamera() {
       // explicit) > a FULL bounds-fit on load (#186). The first two are exact
       // poses that WIN over the fit; only when neither exists do we frame the
       // scene's bounding sphere.
-      // Start a settle session + reset planes to the defaults so a prior huge
-      // model's far doesn't linger into an empty/smaller scene. `poseToo` picks
-      // full bounds-fit (no saved pose) vs planes-only (a saved/captured pose we
-      // must NOT re-frame, #191). The settle loop (below) does the per-frame work.
+      // `poseToo` picks a full bounds-fit (no saved pose) or none (a saved/captured
+      // pose we must NOT re-frame, #191). A kept pose still REPLACES the session, so
+      // a fit still running for the previous project or projection stops here.
       const startSettle = (poseToo: boolean) => {
-        fit.current = { active: true, poseToo, frames: 0, still: 0, lastR: -1 };
-        appliedPlanes.current = { near: DEFAULT_FREE_NEAR, far: DEFAULT_FREE_FAR };
-        setFreeNear(DEFAULT_FREE_NEAR);
-        setFreeFar(DEFAULT_FREE_FAR);
+        fit.current = { active: poseToo, poseToo, frames: 0, still: 0, lastR: -1 };
       };
       const pendingPose = takePendingEditorView();
       if (pendingPose) {
-        // Projection-toggle pose: keep it, but re-derive clip planes/limits from
-        // the live camera distance so the toggled view also clears a big model.
+        // Projection-toggle pose: keep it exactly.
         applyView(cam, pendingPose.position, pendingPose.target, orthoArg);
         startSettle(false);
       } else {
         const saved = loadEditorView(projectId);
         if (saved) {
           // Saved orbit view (reload / per-project restore): same — restore the
-          // exact pose, then run a planes-only settle so far isn't stuck at 1000.
+          // exact pose.
           applyView(cam, saved.position, saved.target, orthoArg);
           startSettle(false);
         } else {
           // No captured/saved pose → FULL bounds-fit. The settle frames the scene
-          // once geometry is present (async glTF loads after this effect), sets
-          // bounds-derived planes, then hands the free camera to OrbitControls.
+          // once geometry is present (async glTF loads after this effect), then
+          // hands the free camera to OrbitControls.
           startSettle(true);
         }
       }
@@ -273,11 +261,10 @@ export function EditorViewCamera() {
 
   // The bounds-fit settle loop (#186/#191). Runs ONLY while `fit.active`,
   // re-deriving each frame as async geometry arrives and ending
-  // SETTLE_STILL_FRAMES after the bounds last changed (or at MAX_FRAMES). Two
-  // modes via `poseToo`: full fit re-frames the pose AND sets planes; planes-only
-  // keeps a saved/captured pose and just re-derives near/far + dolly limits
-  // (#191). Either way it is a one-time initial pass, NOT a persistent
-  // constraint — canvas input (below) cancels it immediately.
+  // SETTLE_STILL_FRAMES after the bounds last changed (or at MAX_FRAMES). Only a
+  // full fit runs it (a saved/captured pose is kept, #191, and sets nothing: the
+  // dolly range is the clip's, #1288). It is a one-time initial pass, NOT a
+  // persistent constraint — canvas input (below) cancels it immediately.
   useFrame((state) => {
     const f = fit.current;
     const cam = ref.current;
@@ -321,50 +308,14 @@ export function EditorViewCamera() {
     f.frames += 1;
     const bounds = computeSceneBounds(state.scene);
     if (bounds) {
-      // Planes + dolly limits always derive from the camera's distance to the
-      // bounds center. For a full fit (poseToo) that distance IS the fit
-      // distance and we ALSO move the pose; for a saved/captured view (#191) we
-      // keep the user's pose and read the LIVE camera distance, so a big model
-      // clears `far` without re-framing.
-      const center = new THREE.Vector3(bounds.center[0], bounds.center[1], bounds.center[2]);
-      let planes: ClipPlanes;
-      if (f.poseToo) {
-        const aspect = state.size.width / Math.max(1, state.size.height);
-        const res = fitViewToSphere(bounds.center, bounds.radius, pose.fov, aspect);
-        const orthoArg = useOrtho
-          ? { fovDeg: pose.fov, viewportHeight: state.size.height }
-          : undefined;
-        applyView(cam, res.position, res.lookAt, orthoArg);
-        planes = res;
-      } else {
-        const cameraDist = cam.position.distanceTo(center);
-        planes = clipPlanesForView(cameraDist, bounds.radius);
-      }
-      // A manual override (#192) wins over the auto planes for the RENDERED
-      // near/far, but we still track the auto planes in `freeNear/freeFar` below
-      // so clearing the override restores the bounds-fit without a reload.
-      cam.near = clipOverride?.near ?? planes.near;
-      cam.far = clipOverride?.far ?? planes.far;
-      cam.updateProjectionMatrix();
-      if (planes.near !== appliedPlanes.current.near || planes.far !== appliedPlanes.current.far) {
-        appliedPlanes.current = { near: planes.near, far: planes.far };
-        setFreeNear(planes.near);
-        setFreeFar(planes.far);
-      }
-      const controls = state.controls as {
-        minDistance?: number;
-        maxDistance?: number;
-      } | null;
-      if (controls) {
-        // Clamp the dolly limits so they never EXCLUDE the live camera distance.
-        // A restored close pose (#191) can sit nearer than the radius-derived
-        // minDistance — OrbitControls would otherwise dolly it OUT to satisfy
-        // the limit, silently re-framing a planes-only view. No-op for the full
-        // fit (the eye sits at the fit distance, far above minDistance).
-        const liveDist = cam.position.distanceTo(center);
-        controls.minDistance = Math.min(planes.minDistance, liveDist);
-        controls.maxDistance = Math.max(planes.maxDistance, liveDist);
-      }
+      // The fit moves the pose and nothing else: the clip planes (Blender's model,
+      // #1178) and the dolly range (#1288, below) are the view's, from its clip.
+      const aspect = state.size.width / Math.max(1, state.size.height);
+      const res = fitViewToSphere(bounds.center, bounds.radius, pose.fov, aspect);
+      const orthoArg = useOrtho
+        ? { fovDeg: pose.fov, viewportHeight: state.size.height }
+        : undefined;
+      applyView(cam, res.position, res.lookAt, orthoArg);
       const r = bounds.radius;
       const delta = f.lastR > 0 ? Math.abs(r - f.lastR) / Math.max(r, f.lastR) : 1;
       f.lastR = r;
@@ -414,11 +365,16 @@ export function EditorViewCamera() {
     if (lookThrough || !cam) return;
     if (++sinceLockScan.current >= LOCK_RESCAN_INTERVAL) {
       sinceLockScan.current = 0;
-      const isLiveNodeId = (name: string) => dag.nodes[name] !== undefined;
-      lockScan.current = scanForFollow(state.scene, isLiveNodeId, viewLock.nodeId);
+      lockScan.current = scanForFollow(state.scene, viewLock.nodeId, dag);
     }
+    // A character's bones are placed at the playhead every frame, as the band draws them (#1275).
     const found = lockScan.current
-      ? pointFromScan(lockScan.current, viewLock.nodeId, viewLock.boneName)
+      ? pointFromScan(
+          lockScan.current,
+          viewLock.nodeId,
+          viewLock.boneName,
+          useTimeStore.getState().seconds,
+        )
       : null;
     // 🔴 NULL IS NOT CLEARED HERE, and that is a decision rather than an
     // omission (#984). From inside this callback "nothing to follow" and
@@ -432,6 +388,42 @@ export function EditorViewCamera() {
     // keeps the two from writing the camera in the same frame.
     fit.current.active = false;
     applyTarget(lockPoint.set(found.point[0], found.point[1], found.point[2]));
+  });
+
+  // #1188 — does the scene reach past the free view's Clip End? The clip is
+  // fixed (Blender's model, #1178), so nothing else would say that a far part
+  // of the scene is missing because the camera cuts it off. Measured along the
+  // view direction against the content box's deepest corner, on a cadence;
+  // look-through is the scene camera's own clip, so it reports false there.
+  const sinceClipReach = useRef(CLIP_REACH_INTERVAL);
+  const eyeDir = useMemo(() => new THREE.Vector3(), []);
+  const eyePos = useMemo(() => new THREE.Vector3(), []);
+  useEffect(() => {
+    sinceClipReach.current = CLIP_REACH_INTERVAL;
+  }, [freeClip.far, lookThrough]);
+  useFrame((state) => {
+    const cam = ref.current;
+    const store = useViewportStore.getState();
+    if (lookThrough || !cam) {
+      store.setViewportClipExceeded(false);
+      return;
+    }
+    if (++sinceClipReach.current < CLIP_REACH_INTERVAL) return;
+    sinceClipReach.current = 0;
+    const box = computeSceneBox(state.scene);
+    if (!box) {
+      store.setViewportClipExceeded(false);
+      return;
+    }
+    cam.getWorldDirection(eyeDir);
+    cam.getWorldPosition(eyePos);
+    const depth = boxDepthAlongView(
+      [box.min.x, box.min.y, box.min.z],
+      [box.max.x, box.max.y, box.max.z],
+      [eyePos.x, eyePos.y, eyePos.z],
+      [eyeDir.x, eyeDir.y, eyeDir.z],
+    );
+    store.setViewportClipExceeded(depth > freeClip.far);
   });
 
   // #190 — while looking THROUGH the production camera, follow the EVALUATED
@@ -492,15 +484,15 @@ export function EditorViewCamera() {
 
   // Projection: free mode uses the seed camera's fov (captured via `pose` at
   // boot so framing is identical); look-through uses the live DAG fov/near/far.
-  // Free-mode near/far are the bounds-fit planes (#186). OrthographicCamera
+  // Free-mode near/far are the user's clip or the default (#1178). OrthographicCamera
   // look-through keeps a perspective editor camera (v1 limitation — ortho
   // cameras are rare; pose still adopted).
   const fov = pose.fov;
   // Free-view EFFECTIVE clip planes: the manual override (#192) when set, else
-  // the auto bounds-fit. Look-through ignores both and uses the scene camera's
-  // own near/far (you're previewing that camera).
-  const freeNearEff = clipOverride?.near ?? freeNear;
-  const freeFarEff = clipOverride?.far ?? freeFar;
+  // the default. Look-through ignores both and uses the scene camera's own
+  // near/far (you're previewing that camera).
+  const freeNearEff = freeClip.near;
+  const freeFarEff = freeClip.far;
   const near = lookThrough ? pose.near : freeNearEff;
   const far = lookThrough ? pose.far : freeFarEff;
 
@@ -512,16 +504,38 @@ export function EditorViewCamera() {
     useViewportStore.getState().setViewportClipReadout({ near: freeNearEff, far: freeFarEff });
   }, [freeNearEff, freeFarEff]);
 
+  // #1288 — the orbit's dolly range is the free view's, from its Clip End: Blender's zoom limits
+  // (`dollyRangeForClip`). Written HERE and nowhere else. It used to be written by the bounds fit
+  // from whatever the scene held when the view booted, so a director could not wheel out past
+  // 38.08 units (the default cube's reach) from a character that walks 587. The range follows the
+  // clip rather than the scene, so an import, a Frame Selected or a script placing the camera
+  // never has to move it, and raising Clip End is how a director reaches further — as in Blender.
+  //
+  // #1292 — applied every frame at priority -2, just BEFORE drei's `controls.update()` (-1), and
+  // widened to where the view stands now (`zoomLimitsAt`): OrbitControls clamps on every update,
+  // and a view a fit framed past ten Clip Ends (the p186 box, ~11 768) was pulled in to 10 000.
+  // Blender leaves such a view where it is and only refuses to zoom it further out.
+  const dollyRange = useMemo(() => dollyRangeForClip(freeFarEff), [freeFarEff]);
+  useFrame((state) => {
+    const controls = state.controls as unknown as {
+      minDistance?: number;
+      maxDistance?: number;
+      target?: THREE.Vector3;
+    } | null;
+    if (!controls?.target) return;
+    const limits = zoomLimitsAt(dollyRange, state.camera.position.distanceTo(controls.target));
+    controls.minDistance = limits.minDistance;
+    controls.maxDistance = limits.maxDistance;
+  }, -2);
+
   // Hydrate the per-project clip override into the store when the project
-  // changes (#192). A project with NO saved override falls back to the fixed
-  // DEFAULT_VIEWPORT_CLIP (0.01–500) for ALL projects — NOT AUTO bounds-fit — per
-  // the user's "camera clip default for all projects". A project's own saved
-  // override still wins. setViewportClipOverride is pure — no re-save here
-  // (persistence is owned by the View-menu handler), so hydration can't echo back.
+  // changes (#192). A project with NO saved clip hydrates `null` — the SAME
+  // value the View menu's Default sets in the session, so the two can't
+  // disagree after a reload (#1187). setViewportClipOverride is pure — no
+  // re-save here (persistence is owned by the View-menu handler), so hydration
+  // can't echo back.
   useEffect(() => {
-    useViewportStore
-      .getState()
-      .setViewportClipOverride(loadViewportClip(projectId) ?? DEFAULT_VIEWPORT_CLIP);
+    useViewportStore.getState().setViewportClipOverride(loadViewportClip(projectId));
   }, [projectId]);
 
   // #985 — the view lock, restored per project and kept in step with it.

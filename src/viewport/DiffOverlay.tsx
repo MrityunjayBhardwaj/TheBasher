@@ -180,6 +180,26 @@ function GhostChild({ value: raw }: { value: SceneObject }) {
   // rotation mode itself, after the pose band (whose aim already drops the mode). Recursion into
   // a Group's children comes back through here, so a nested quaternion-mode child resolves too.
   const value = withResolvedRotation(raw);
+  // #1152 — an Object that parents ghosts itself (the arm below, without its children) and its
+  // children in its space, as ObjectR draws them. Recursion comes back through here, so a child
+  // that parents in turn is ghosted the same way.
+  if (value.kind === 'Object' && value.children && value.children.length > 0) {
+    const { children, ...self } = value;
+    return (
+      <>
+        <GhostChild value={self} />
+        <group
+          position={value.position as [number, number, number]}
+          rotation={degVec3ToRad(value.rotation as [number, number, number])}
+          scale={(value.scale ?? [1, 1, 1]) as [number, number, number]}
+        >
+          {children.map((c, i) => (
+            <GhostChild key={`o:${i}`} value={c} />
+          ))}
+        </group>
+      </>
+    );
+  }
   switch (value.kind) {
     case 'Transform':
       if (!value.child) return null;

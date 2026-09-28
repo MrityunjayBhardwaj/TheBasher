@@ -11,8 +11,11 @@ import {
 import { buildDefaultDagState, buildDefaultProject } from '../core/project/default';
 import { ProjectSchema, PROJECT_FORMAT_VERSION } from '../core/project/schema';
 import { registerAllNodes } from './registerAll';
-import { buildClipBoneSamplers } from './AnimationClip';
+import { posedSkeletonFromClip } from './AnimationClip';
+import { eulerXYZFromQuat } from './bonePose';
 import { SCATTER_MAX } from './ScatterNode';
+import { LocomotionStateNode, LocomotionStateParams } from './LocomotionState';
+import type { LocomotionStateValue } from './types';
 import { makeSplitCamera } from '../test-utils/splitCamera';
 import { makeSplitCube } from '../test-utils/splitCube';
 import { makeSplitSphere } from '../test-utils/splitSphere';
@@ -63,6 +66,7 @@ const ALL_TYPES = [
   'Action',
   'AmbientLight',
   'AnimationClip',
+  'ArmatureModifier',
   'ArrayModifier',
   // #388 (Stage C · C5) — the baked mesh's data half. Sorts before the fused node it
   // will retire, exactly as BoxData sorts before BoxMesh.
@@ -130,6 +134,8 @@ const ALL_TYPES = [
   'ParamDriver',
   // #1049 — a stored polygon mesh's data half.
   'PolyMeshData',
+  // #1240 — a layer that edits the pose wire; absorbs PoseOverride (#1243).
+  'PoseLayer',
   'PoseOverride',
   'PosedSkeleton',
   'PrevFrame',
@@ -574,9 +580,14 @@ describe('SceneChild recursion', () => {
 
 const TIME_SAMPLES = [0, 0.5, 1, 2.5, 5];
 
-function evalAt<T>(state: ReturnType<typeof emptyDagState>, target: string, seconds: number): T {
+function evalAt<T>(
+  state: ReturnType<typeof emptyDagState>,
+  target: string,
+  seconds: number,
+  socket?: string,
+): T {
   const ctx = { time: { frame: Math.round(seconds * 60), seconds, normalized: 0 } };
-  return evaluate(state, target, { ctx }).value as T;
+  return evaluate(state, target, { ctx, ...(socket ? { socket } : {}) }).value as T;
 }
 
 describe('P2 — Time socket plumbing (V3)', () => {
@@ -620,8 +631,8 @@ describe('P2 — Skeleton (pure)', () => {
       nodeType: 'Skeleton',
       params: {},
     }).next;
-    const a = evaluate(state, 'sk');
-    const b = evaluate(state, 'sk');
+    const a = evaluate(state, 'sk', { socket: 'out' });
+    const b = evaluate(state, 'sk', { socket: 'out' });
     expect(a.hash).toBe(b.hash);
     const sk = a.value as SkeletonValue;
     expect(sk.bones).toHaveLength(3);
@@ -691,7 +702,7 @@ describe('P2 — PosedSkeleton (pure, TIME-FREE — #992)', () => {
   // Time did not stop mattering — it moved from an edge to an argument.
   it('sample IS a function of time — different seconds produce different poses', () => {
     const posed = evalAt<PosedSkeletonValue>(buildPosed(), 'posed', 0);
-    expect(posed.sample(0)[1].rotation).not.toEqual(posed.sample(0.5)[1].rotation);
+    expect(posed.sample(0)[1].quaternion).not.toEqual(posed.sample(0.5)[1].quaternion);
   });
 
   // The array pairs index-for-index with the skeleton, so a consumer can map a
@@ -700,7 +711,7 @@ describe('P2 — PosedSkeleton (pure, TIME-FREE — #992)', () => {
     const posed = evalAt<PosedSkeletonValue>(buildPosed(), 'posed', 0);
     const poses = posed.sample(1.25);
     expect(poses).toHaveLength(posed.skeleton.bones.length);
-    expect(poses.map((p) => p.bone)).toEqual(posed.skeleton.bones.map((_, i) => i));
+    expect(poses.map((p) => p.name)).toEqual(posed.skeleton.bones.map((b) => b.name));
   });
 });
 
@@ -744,8 +755,8 @@ describe('P2 — AnimationClip (pure, TIME-FREE — #920)', () => {
 
   it.each(TIME_SAMPLES)('twice-eval bit-exact at t=%d', (t) => {
     const state = buildClip();
-    const a = evalAt<AnimationClipValue>(state, 'clip', t);
-    const b = evalAt<AnimationClipValue>(state, 'clip', t);
+    const a = evalAt<AnimationClipValue>(state, 'clip', t, 'out');
+    const b = evalAt<AnimationClipValue>(state, 'clip', t, 'out');
     expect(a).toEqual(b);
   });
 
@@ -756,8 +767,8 @@ describe('P2 — AnimationClip (pure, TIME-FREE — #920)', () => {
   // comparing ACROSS times does. Re-add the input and this reddens.
   it.each(TIME_SAMPLES)('is TIME-FREE — the value at t=%d equals the value at t=0', (t) => {
     const state = buildClip();
-    expect(evalAt<AnimationClipValue>(state, 'clip', t)).toEqual(
-      evalAt<AnimationClipValue>(state, 'clip', 0),
+    expect(evalAt<AnimationClipValue>(state, 'clip', t, 'out')).toEqual(
+      evalAt<AnimationClipValue>(state, 'clip', 0, 'out'),
     );
   });
 
@@ -766,17 +777,17 @@ describe('P2 — AnimationClip (pure, TIME-FREE — #920)', () => {
   // render band and `LocomotionState` call, so there is one answer to "where is
   // this bone at t" rather than two that can drift.
   it('keyframe interpolation: at t=0.5 torso rotation.y is between 0 and 0.5', () => {
-    const clip = evalAt<AnimationClipValue>(buildClip(), 'clip', 0);
-    const torso = buildClipBoneSamplers(clip).get(1);
-    expect(torso).toBeDefined();
-    expect(torso!(0.5).rotation[1]).toBeCloseTo(0.25, 5);
+    const clip = evalAt<AnimationClipValue>(buildClip(), 'clip', 0, 'out');
+    // #1225 — the value is timed poses; its pose samples them, bone 1 being the torso.
+    const torso = (t: number) => posedSkeletonFromClip(clip).sample(t)[1];
+    // #1223 — the sampler answers an orientation; a single-axis turn slerps to the same angle.
+    expect(eulerXYZFromQuat(torso(0.5).quaternion)[1]).toBeCloseTo(0.25, 5);
   });
 
   it('looping: t=2.0 wraps to t=0 (start of clip)', () => {
-    const clip = evalAt<AnimationClipValue>(buildClip(), 'clip', 0);
-    const torso = buildClipBoneSamplers(clip).get(1);
-    expect(torso).toBeDefined();
-    expect(torso!(2.0).rotation).toEqual(torso!(0).rotation);
+    const clip = evalAt<AnimationClipValue>(buildClip(), 'clip', 0, 'out');
+    const torso = (t: number) => posedSkeletonFromClip(clip).sample(t)[1];
+    expect(torso(2.0).quaternion).toEqual(torso(0).quaternion);
   });
 });
 
@@ -858,6 +869,27 @@ describe('P2 — WalkPath (pure)', () => {
 });
 
 describe('P2 — LocomotionState + Character (pure, time-aware integrating chain)', () => {
+  it('#1225 — hands the pose wire it is given through untouched, whatever made it', () => {
+    // Not a clip: a sway, which no clip adapter could have produced.
+    const wire = {
+      kind: 'PosedSkeleton' as const,
+      skeleton: { kind: 'Skeleton' as const, bones: [] },
+      sample: () => [],
+    };
+    const value = LocomotionStateNode.evaluate(
+      LocomotionStateParams.parse({}),
+      { pose: wire },
+      undefined as never,
+    ) as LocomotionStateValue;
+    expect(value.pose).toBe(wire);
+    const unwired = LocomotionStateNode.evaluate(
+      LocomotionStateParams.parse({}),
+      {},
+      undefined as never,
+    ) as LocomotionStateValue;
+    expect(unwired.pose.sample(0)).toEqual([]);
+  });
+
   function buildLocoChain() {
     let state = emptyDagState();
     state = applyOp(state, {
@@ -920,8 +952,8 @@ describe('P2 — LocomotionState + Character (pure, time-aware integrating chain
     }).next;
     state = applyOp(state, {
       type: 'connect',
-      from: { node: 'clip', socket: 'out' },
-      to: { node: 'loco', socket: 'clip' },
+      from: { node: 'clip', socket: 'pose' },
+      to: { node: 'loco', socket: 'pose' },
     }).next;
     state = applyOp(state, {
       type: 'connect',
@@ -1041,8 +1073,8 @@ describe('P2 — multi-character cache isolation (acceptance #4)', () => {
       }).next;
       state = applyOp(state, {
         type: 'connect',
-        from: { node: `clip_${id}`, socket: 'out' },
-        to: { node: `loco_${id}`, socket: 'clip' },
+        from: { node: `clip_${id}`, socket: 'pose' },
+        to: { node: `loco_${id}`, socket: 'pose' },
       }).next;
       state = applyOp(state, {
         type: 'connect',

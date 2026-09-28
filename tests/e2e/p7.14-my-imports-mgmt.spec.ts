@@ -12,8 +12,9 @@
 //   · Delete is not blocked, and the scene keeps drawing the import, across a reload.
 // A file the native reader refuses still arrives through the file's copy, as a `GltfAsset`
 // whose `assetRef` IS a reference; deleting its folder is blocked until break-refs. That path is
-// kept on a still-refused fixture (a skinned .glb) and asserts its road, so it reds the day
-// skinning goes native and the break-refs path loses its last fixture. BVH/FBX leave no ref.
+// kept on a still-refused fixture (a Draco-compressed .glb, #1063 — a skinned file stopped being one
+// at #1205) and asserts its road, so it reds the day Draco goes native and the break-refs path
+// loses its last fixture. BVH/FBX leave no ref.
 //
 // REF: PLAN 7.14 Wave B (B4); CONTEXT D-03/D-05/D-06; issues #112, #1074, #1054;
 //      src/app/AssetLibrary.tsx (the ︙ menu + rename input + delete banner);
@@ -45,8 +46,8 @@ const FLAT_GLTF = [
   { urlPath: '/fixtures/multifile/flat/scene.bin', relativePath: 'scene.bin' },
   { urlPath: '/fixtures/multifile/flat/texture.png', relativePath: 'texture.png' },
 ];
-/** Still refused by the native reader (skinned), so it imports through the file's copy. */
-const SKINNED_GLB = [{ urlPath: '/assets/skinned-bar.glb', relativePath: 'skinned-bar.glb' }];
+/** Still refused by the native reader (Draco, #1063), so it imports through the file's copy. */
+const DRACO_GLB = [{ urlPath: '/assets/cube-draco.glb', relativePath: 'cube-draco.glb' }];
 
 async function ingestGltf(
   page: import('@playwright/test').Page,
@@ -268,14 +269,14 @@ test('P7.14 (delete referenced) — ︙ Delete of a referenced glTF blocks with 
   page,
 }) => {
   const baselineNodes = await dagNodeCount(page);
-  await ingestGltf(page, 'used-asset', SKINNED_GLB);
-  // Still the clone road (skinned) — see the header. When skinning goes native this reds, and
+  await ingestGltf(page, 'used-asset', DRACO_GLB);
+  // Still the clone road (Draco) — see the header. When Draco goes native this reds, and
   // the break-refs path has no fixture left to run on.
   await expect.poll(async () => (await importRoots(page)).map((r) => r.road)).toEqual(['clone']);
   // The import created a GltfAsset referencing the asset.
   await expect
     .poll(async () => await gltfAssetRefs(page))
-    .toContain('user-imports/used-asset/skinned-bar.glb');
+    .toContain('user-imports/used-asset/cube-draco.glb');
   // The import added a whole footprint (GltfAsset + wrapper Group + child satellites), so the
   // graph grew past baseline.
   expect(await dagNodeCount(page)).toBeGreaterThan(baselineNodes);
@@ -294,7 +295,7 @@ test('P7.14 (delete referenced) — ︙ Delete of a referenced glTF blocks with 
   await expect.poll(async () => await opfsDirExists(page, 'used-asset')).toBe(false);
   await expect
     .poll(async () => await gltfAssetRefs(page))
-    .not.toContain('user-imports/used-asset/skinned-bar.glb');
+    .not.toContain('user-imports/used-asset/cube-draco.glb');
   // #127: the WHOLE import footprint is gone — no orphan wrapper Group, no child satellites,
   // no clip ghosts. Node count returns to baseline and zero nodes still carry the deleted
   // asset's ref.

@@ -21,7 +21,6 @@
 // ─────────────────────────────────────────────────────────────────────────
 // WIRING, not VALUES. It asserts which nodes exist after a bind, never what a
 // bone's rotation is at a given time. What covers the values:
-//   - ensureChannelForBone.test.ts     — the mint's seed and its rad→deg boundary
 //   - bakedClipParity.gate.test.ts     — band vs clip BETWEEN keyframes (#877)
 //   - gltfEulerContinuity.gate.test.ts — the representative choice (#876)
 //
@@ -34,12 +33,11 @@ import { __resetMutatorRegistryForTests, registerAllMutators } from '../../agent
 import { useDagStore } from '../../core/dag/store';
 import { useDiffStore } from '../../agent/diff/store';
 import { dispatchMutatorFromUI } from './dispatchMutator';
-import { gltfChannelDagId, gltfSkeletonDagId } from '../../core/import/gltfImportChain';
-import type { GltfSkinMetadata } from '../../nodes/types';
 
-const ASSET = 'assets/char.glb';
 const BONES = ['mixamorig_Hips', 'mixamorig_Spine'];
-const SKEL = gltfSkeletonDagId(ASSET, 0);
+/** The character's skeleton, and the armature Object standing it (a native character, #1213). */
+const SKEL = 'n_char_skel';
+const CHARACTER = 'n_char';
 
 beforeEach(() => {
   __resetRegistryForTests();
@@ -49,39 +47,28 @@ beforeEach(() => {
   useDiffStore.getState().reset();
 });
 
-function skin(names: string[]): GltfSkinMetadata {
-  return {
-    jointKeys: names,
-    bindTRS: names.map(() => ({
-      position: [0, 0, 0] as [number, number, number],
-      rotation: [0, 0, 0] as [number, number, number],
-      scale: [1, 1, 1] as [number, number, number],
-    })),
-    parentJointIndex: names.map((_, i) => (i === 0 ? -1 : 0)),
-    inverseBindMatrices: [],
-  };
-}
-
 /** A character with a rig, a TimeSource, and one imported motion clip. */
 function buildScene(clipId: string, rotationAtEnd: number): DagState {
   let s = emptyDagState();
   s = applyOp(s, { type: 'addNode', nodeId: 'n_time', nodeType: 'TimeSource', params: {} }).next;
   s = applyOp(s, {
     type: 'addNode',
-    nodeId: 'n_asset',
-    nodeType: 'GltfAsset',
-    params: { assetRef: ASSET, nodeNameMap: {}, childHierarchy: {}, skins: [skin(BONES)] },
-  }).next;
-  s = applyOp(s, {
-    type: 'addNode',
     nodeId: SKEL,
-    nodeType: 'GltfSkeleton',
-    params: { skinIndex: 0 },
+    nodeType: 'Skeleton',
+    params: {
+      bones: BONES.map((name, i) => ({
+        name,
+        parent: i === 0 ? -1 : 0,
+        position: [0, i, 0],
+        rotation: [0, 0, 0],
+      })),
+    },
   }).next;
+  s = applyOp(s, { type: 'addNode', nodeId: CHARACTER, nodeType: 'Object', params: {} }).next;
   s = applyOp(s, {
     type: 'connect',
-    from: { node: 'n_asset', socket: 'out' },
-    to: { node: SKEL, socket: 'asset' },
+    from: { node: SKEL, socket: 'out' },
+    to: { node: CHARACTER, socket: 'data' },
   }).next;
   // The imported motion's OWN skeleton — same names here, so the shared-name
   // bridge applies and the retarget is not the thing under test.
@@ -125,7 +112,7 @@ const bind = (clipId: string, out: string) =>
   dispatchMutatorFromUI(
     'mutator.animation.retarget',
     {
-      sourceClipId: clipId,
+      sourceId: clipId,
       sourceSkeletonId: 'n_src_skel',
       targetSkeletonId: SKEL,
       customMap: Object.fromEntries(BONES.map((b) => [b, b])),
@@ -163,15 +150,13 @@ describe('binding a motion to a character', () => {
     // satisfy a type check and drive nothing.
     expect(nodes['n_out_a']?.type).toBe('RetargetClip');
     expect(nodes['n_out_a_map']?.type).toBe('BoneNameMap');
-    expect(edgeOf('n_out_a', 'sourceClip')).toBe('n_clip_a');
+    expect(edgeOf('n_out_a', 'source')).toBe('n_clip_a');
     expect(edgeOf('n_out_a', 'boneMap')).toBe('n_out_a_map');
     expect(edgeOf('n_out_a', 'skeleton')).toBe(SKEL);
-    // THE ASSERTION. Copy-on-write: the clip drives every bone through the read
-    // band, and a channel appears only when a director edits one.
+    // THE ASSERTION. The retargeted clip poses the character's Object (above), and a channel
+    // appears only when a director edits one. A zero can be satisfied by a bind that failed; the
+    // clip's edge above proves this one did not.
     expect(channelIds()).toEqual([]);
-    // Named as well as counted — a zero can be satisfied by a bind that failed,
-    // and the clip above proves this one did not.
-    expect(nodes[gltfChannelDagId(ASSET, 'mixamorig_Spine', 'rotation')]).toBeUndefined();
   });
 
   it('lands as ONE undo entry, and that entry takes BOTH minted nodes', () => {
@@ -371,7 +356,7 @@ describe('binding a motion to a character', () => {
     const result = dispatchMutatorFromUI(
       'mutator.animation.retarget',
       {
-        sourceClipId: 'n_clip_a',
+        sourceId: 'n_clip_a',
         sourceSkeletonId: 'n_src_skel',
         targetSkeletonId: 'n_src_skel',
         customMap: Object.fromEntries(BONES.map((b) => [b, b])),
@@ -385,17 +370,16 @@ describe('binding a motion to a character', () => {
   });
 
   it('leaves an Object showing the TARGET skeleton visible, though the bind reaches it', () => {
-    // The target rig is a closure root too, so an Object on it IS in the set the loop walks;
-    // only the `data` edge tells the two apart.
+    // The target rig is a closure root too, so the Object standing it — the character — IS in the
+    // set the loop walks; only the `data` edge tells it from the source's Object.
     let s = buildScene('n_clip_a', 60);
     s = withSkeletonObject(s, 'n_src_skel_object', 'n_src_skel');
-    s = withSkeletonObject(s, 'n_target_object', SKEL);
     useDagStore.getState().hydrate(s);
-    expect(edgeOf('n_target_object', 'data')).toBe(SKEL);
+    expect(edgeOf(CHARACTER, 'data')).toBe(SKEL);
 
     expect(bind('n_clip_a', 'n_out_a')).toEqual({ ok: true });
     expect(isHidden('n_src_skel_object')).toBe(true);
-    expect(isHidden('n_target_object')).toBe(false);
+    expect(isHidden(CHARACTER)).toBe(false);
   });
 
   it('a refused bind hides nothing — the motion stays visible', () => {
@@ -405,7 +389,7 @@ describe('binding a motion to a character', () => {
     const refused = dispatchMutatorFromUI(
       'mutator.animation.retarget',
       {
-        sourceClipId: 'n_missing_clip',
+        sourceId: 'n_missing_clip',
         sourceSkeletonId: 'n_src_skel',
         targetSkeletonId: SKEL,
         customMap: Object.fromEntries(BONES.map((b) => [b, b])),

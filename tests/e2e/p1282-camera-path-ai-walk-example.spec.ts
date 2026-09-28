@@ -14,23 +14,28 @@ import { expect, test } from './_fixtures';
 type Vec3 = [number, number, number];
 interface Win {
   __basher_time?: { getState: () => { setTime: (s: number) => void } };
-  __basher_gltf_skin?: () => {
-    boneCount: number;
-    boneRotation: (i: number) => Vec3 | null;
-  } | null;
+  /** The armature band's bones as drawn: world matrices, column-major. The example's character
+   *  opens native (#1216 converts its saved clone-road rig on load), so its bones are the band's. */
+  __basher_armature?: { bones: number; names: string[]; matrices: number[][] };
   __basher_frustum_pose?: Record<string, { position: Vec3 }>;
 }
 
-/** At `t` seconds, once the frame after the time change has drawn: every bone's rotation and
- *  the camera's evaluated position. */
+/** At `t` seconds, once the frame after the time change has drawn: every bone's world rotation
+ *  (the unit 3×3 of its drawn matrix) and the camera's evaluated position. */
 function sampleAt(page: Page, t: number) {
   return page.evaluate(async (sec) => {
     const w = window as unknown as Win;
     w.__basher_time!.getState().setTime(sec);
     for (let i = 0; i < 3; i++) await new Promise((r) => requestAnimationFrame(() => r(null)));
-    const skin = w.__basher_gltf_skin!()!;
+    const band = w.__basher_armature!;
+    // The drawn matrix's columns carry the bone's display length, so each is normalised first:
+    // the rotation alone, whatever size the bone is drawn at.
+    const unit = (m: number[], c: number) => {
+      const n = Math.hypot(m[c], m[c + 1], m[c + 2]) || 1;
+      return [m[c] / n, m[c + 1] / n, m[c + 2] / n];
+    };
     return {
-      bones: Array.from({ length: skin.boneCount }, (_, i) => skin.boneRotation(i)),
+      bones: band.matrices.map((m) => [...unit(m, 0), ...unit(m, 4), ...unit(m, 8)]),
       camera: w.__basher_frustum_pose?.['n_camera']?.position ?? null,
     };
   }, t);
@@ -60,12 +65,13 @@ test('the Camera Path + AI Walk example opens from the startup screen and plays 
   await page.getByTestId('home-open-example_camera_path_ai_walk').click();
 
   await page.waitForFunction(
-    () => (window as unknown as Win).__basher_gltf_skin?.() != null,
+    () => ((window as unknown as Win).__basher_armature?.bones ?? 0) > 10,
     null,
     { timeout: 30_000 },
   );
   // The walk: each bone's WIDEST swing from its frame-0 pose over several times. Two instants
-  // alone can land on the same phase of a stride and read a walking character as still.
+  // alone can land on the same phase of a stride and read a walking character as still. A swing is
+  // a change of more than 0.2 in an entry of the bone's drawn rotation, about 11.5°.
   const times = [0, 0.4, 0.8, 1.2, 1.6, 2.0, 3.0];
   const samples: Awaited<ReturnType<typeof sampleAt>>[] = [];
   for (const t of times) samples.push(await sampleAt(page, t));
@@ -110,10 +116,8 @@ test('the example’s walker follows its drawn path to the end', async ({ page }
   await page.waitForFunction(
     () => {
       const w = window as unknown as Record<string, unknown>;
-      return (
-        (w.__basher_gltf_skin as (() => unknown) | undefined)?.() != null &&
-        !!w.__basher_curve_sample
-      );
+      const band = w.__basher_armature as { bones: number } | undefined;
+      return (band?.bones ?? 0) > 10 && !!w.__basher_curve_sample;
     },
     null,
     { timeout: 30_000 },
@@ -126,20 +130,10 @@ test('the example’s walker follows its drawn path to the end', async ({ page }
       inputs?: { path?: { node: string } };
       params: { duration?: number };
     };
-    type Obj = {
-      isBone?: boolean;
-      name: string;
-      position: { clone: () => unknown };
-      getWorldPosition: (v: unknown) => { x: number; z: number };
-    };
-    type Scene = {
-      traverse: (f: (o: Obj) => void) => void;
-      updateMatrixWorld: (f: boolean) => void;
-    };
     const w = window as unknown as {
       __basher_dag: { getState: () => { state: { nodes: Record<string, GraphNode> } } };
       __basher_curve_sample: (id: string, u: number) => Sample;
-      __basher_three: { getState: () => { scene: Scene } };
+      __basher_armature: { names: string[]; matrices: number[][] };
       __basher_time: { getState: () => { setTime: (s: number) => void } };
     };
     const nodes = Object.values(w.__basher_dag.getState().state.nodes);
@@ -150,18 +144,14 @@ test('the example’s walker follows its drawn path to the end', async ({ page }
       { length: N + 1 },
       (_, i) => w.__basher_curve_sample(curve, i / N).point,
     );
-    const scene = w.__basher_three.getState().scene;
-    let found: Obj | null = null;
-    scene.traverse((o) => {
-      if (o.isBone && /Hips$/.test(o.name)) found = o;
-    });
-    const hips = found as unknown as Obj;
+    // The drawn Hips: the armature band's bone, read at each time.
+    const hipsIndex = w.__basher_armature.names.findIndex((n) => /Hips$/.test(n));
     const out: { f: number; off: number; along: number; toEnd: number }[] = [];
     for (const f of [0, 0.25, 0.5, 0.75, 1]) {
       w.__basher_time.getState().setTime(f * duration);
       for (let i = 0; i < 3; i++) await new Promise((r) => requestAnimationFrame(() => r(null)));
-      scene.updateMatrixWorld(true);
-      const h = hips.getWorldPosition(hips.position.clone());
+      const m = w.__basher_armature.matrices[hipsIndex];
+      const h = { x: m[12], z: m[14] };
       let off = Infinity;
       let at = 0;
       pts.forEach((p, i) => {

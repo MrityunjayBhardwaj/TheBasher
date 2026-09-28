@@ -27,10 +27,10 @@ import type { TransientEdit } from './stores/transientEditStore';
 /**
  * Apply every transient edit targeting `nodeId` onto a clone of `base`.
  * Returns `base` UNCHANGED (same ref → no churn) when no edit matches or when
- * `base` is null. When at least one edit matches, deep-clones `base` (the same
- * JSON deep-clone patchTarget uses — the overlay targets are plain data at this
- * layer) and writes each matching edit's value at its paramPath. The base is
- * never mutated.
+ * `base` is null. When at least one edit matches, copies `base` the way the channel
+ * overlay does (`cloneForOverlay`: shallow, and `writeAt` copies each object on a
+ * write's path — #1236) and writes each matching edit's value at its paramPath. The
+ * base is never mutated.
  *
  * Generic `<T>` (V20, mirroring overlayChannels) so the SAME primitive serves
  * BOTH the native/AnimationLayer `SceneChild` callers (T = SceneChild) AND the

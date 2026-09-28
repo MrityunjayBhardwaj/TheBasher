@@ -144,12 +144,6 @@ const CONSUMERS: Record<string, Decision> = {
   'src/viewport/EditorViewCamera.tsx': authored('delegates-to-a-folding-resolver'),
   'src/app/studioLightRig.ts': authored('delegates-to-a-folding-resolver'),
   'src/timeline/LightStudioPanel.tsx': authored('edits-authored-values'),
-  // #807 — the third member of the same family, and it evaluates for the same
-  // reason the other two do: it reads a `GltfSkeleton`'s bone NAMES to decide
-  // which bone-name map bridges a dropped clip onto a character. Names are
-  // import-time static and the ctx is the same fixed bind pose (frame 0), so the
-  // playhead cannot change the answer. It never reads a value that moves.
-  'src/app/asset/bindMotionToCharacter.ts': authored('fixed-ctx-by-design'),
   // #902 — the motion resolver. It reads the generator's params AUTHORED and
   // evaluates at the default ctx, and both halves are the same claim: a
   // generation request must be time-invariant. If the playhead could change the
@@ -170,12 +164,27 @@ const CONSUMERS: Record<string, Decision> = {
   // the start of its path is a property of the generation, not of the playhead.
   // A time-varying read here would move the character as the scrubber moved.
   'src/app/asset/placeGeneratedMotion.ts': authored('fixed-ctx-by-design'),
+  // #1226 — what a regeneration moved under each layer. It evaluates the layers standing on a
+  // regenerated clip in the graph BEFORE a cook and AFTER it, at the default ctx, DELIBERATELY:
+  // the two reads are compared, so they must be taken at one ctx, and time enters through the
+  // pose wire's own `sample(seconds)` at the layer's key times, not through the playhead.
+  'src/app/asset/regenerationShift.ts': authored('fixed-ctx-by-design'),
   // #1056 — the skeleton Objects the armature band draws. It evaluates a skeleton's rest
   // bones, the clip wired to it and the Object's world transform at frame 0, DELIBERATELY:
   // the pose at the playhead is sampled later, per frame, by the helper from the clip value
   // this hands over, so evaluating at t here would sample the motion twice. It is handed the
   // authored state SceneFromDAG holds, like the source-rig read beside it.
   'src/app/skeletonObjects.ts': authored('fixed-ctx-by-design'),
+  // #1215 — the pose bake. It evaluates ONE point of a character's pose wire, a value that is
+  // time-free by construction (`sample(seconds)` is the only way time enters it), and then samples
+  // it itself at every time it keys. Evaluating at the playhead would change nothing but the hash,
+  // and a bake whose keys depended on where the scrubber stood would be the bug. It reads the state
+  // the mutator is handed, authored, as the bind beside it does.
+  'src/app/animate/bakePose.ts': authored('fixed-ctx-by-design'),
+  // #1215 — the dopesheet's read-only rows for a character's computed source. It evaluates the same
+  // time-free wire the bake does, for the same answer (its pose times, `bakeTimes`), off the authored
+  // state the timeline holds; the playhead would change nothing but the hash.
+  'src/timeline/layerChannelRows.ts': authored('fixed-ctx-by-design'),
   // ns-2 step 5 — a TEST helper, and production to this census by the same rule every
   // fixture under `src/test-utils/` is: it is a non-test source file, so it counts. It
   // evaluates ONE node at the default ctx (frame 0), never the playhead, with whatever
@@ -249,9 +258,19 @@ describe('#582 — who evaluates the graph, and which params they need', () => {
     // than moved — the evaluate went away with the bake, and the row went with it.
     // 40 → 41 at #1056: the skeleton-Object collector, a NEW road (skeletons had no scene
     // presence to evaluate for until then), declared above as fixed-ctx.
+    // 41 → 42 at #1215: the pose bake, a new road (computed motion had no way into keys).
+    // 42 → 43 at #1215: the computed source's read-only rows, a new road (the timeline had no way
+    // to show computed motion before it is baked). They read the bake's own pose times.
+    // 43 → 42 at #1053: the bind's character query evaluated a clone road `GltfSkeleton` to read
+    // its bones; a native character's bones are its Skeleton's own params, so the evaluate went
+    // with the clone road's character half, and the row went with it.
+    // 42 → 43 at #1226: the regeneration notice, a new road (a cook had no way to say what it moved
+    // under a layer), declared above as fixed-ctx.
+    // Merged with main, which had taken the same 41 on two roads of its own:
     // 41 → 42 at #1065: the constraint-target picker, declared above as fixed-ctx.
     // 42 → 43 at #1284: a bone's world position (gltfNodeWorld), declared above as authored.
-    expect(evaluatorConsumers()).toHaveLength(43); // 39 -> 40 at #935 (placement) (the motion resolver)
+    // So 43 + 2 = 45.
+    expect(evaluatorConsumers()).toHaveLength(45); // 39 -> 40 at #935 (placement) (the motion resolver)
   });
 
   it('every reason is load-bearing — no member of any union is decorative', () => {

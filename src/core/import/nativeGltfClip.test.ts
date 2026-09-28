@@ -4,7 +4,7 @@
 
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { readNativeClip, type ClipChannel, type ClipGltfJson } from './nativeGltfClip';
+import { readNativeAnimations, type ClipChannel, type ClipGltfJson } from './nativeGltfClip';
 import { buildVec3Sampler, KeyframeChannelVec3Params } from '../../nodes/KeyframeChannelVec3';
 import {
   KeyframeChannelQuatNode,
@@ -43,11 +43,16 @@ type Append = (
 ) => number;
 const floats = (...values: number[]) => new Uint8Array(Float32Array.from(values).buffer);
 
-const read = (mutate?: (json: Json, append: Append) => void) => {
+const readAll = (mutate?: (json: Json, append: Append) => void) => {
   const { json, buffers } = fixture(mutate);
-  return readNativeClip(json, buffers);
+  return readNativeAnimations(json, buffers);
 };
-function channelsOf(result: ReturnType<typeof readNativeClip>): ClipChannel[] {
+/** The first animation's channels (the one that plays), or the refusal. */
+const read = (mutate?: (json: Json, append: Append) => void) => {
+  const result = readAll(mutate);
+  return 'refused' in result ? result : { channels: result.animations[0]?.channels ?? [] };
+};
+function channelsOf(result: ReturnType<typeof read>): ClipChannel[] {
   if ('refused' in result) throw new Error(result.refused);
   return result.channels;
 }
@@ -137,6 +142,112 @@ describe('#1051 — a clip reads into channels that sample as the spec defines',
     expect(worst).toBeLessThan(1e-5);
   });
 
+  // #1157 — a rotation sampled CUBICSPLINE used to be refused, because a quaternion channel had
+  // nowhere to hold the file's tangents. It holds them now, so the file arrives as itself. The
+  // reference below is the spec's own formula (`Specification.adoc:3615-3638`): Hermite per
+  // component, normalized (`:3628`), written out here rather than borrowed from the reader.
+  const SPLINE_T = [0, 0.4, 1.5];
+  const SPLINE_V: number[][] = [
+    [0, 0, 0, 1],
+    [0, 0.38268343, 0, 0.92387953],
+    [0.5, 0.5, 0.5, 0.5],
+  ];
+  const SPLINE_IN: number[][] = [
+    [0, 0, 0, 0],
+    [0.3, -0.9, 0.2, 0.4],
+    [-0.7, 0.25, 0.8, -0.3],
+  ];
+  const SPLINE_OUT: number[][] = [
+    [0.8, 0.4, -0.2, 0.6],
+    [-0.25, 0.7, 0.45, 0.1],
+    [0, 0, 0, 0],
+  ];
+
+  /** The cube's rotation, re-written as a CUBICSPLINE track the way a file carries one. */
+  function splineRotation(): ClipChannel {
+    return find(
+      channelsOf(
+        read((j, append) => {
+          const track = j.animations[0];
+          const rot = track.channels.find(
+            (c) => c.target.path === 'rotation' && c.target.node === CUBE,
+          )!;
+          const sampler = track.samplers[rot.sampler];
+          sampler.interpolation = 'CUBICSPLINE';
+          sampler.input = append(floats(...SPLINE_T), {
+            componentType: 5126,
+            count: SPLINE_T.length,
+            type: 'SCALAR',
+            // The spec requires an animation input to carry its bounds (`:2778`).
+            min: [SPLINE_T[0]],
+            max: [SPLINE_T[SPLINE_T.length - 1]],
+          });
+          // Per key, in the spec's order: in-tangent, value, out-tangent (`:3615`).
+          const packed: number[] = [];
+          for (let k = 0; k < SPLINE_T.length; k++) {
+            packed.push(...SPLINE_IN[k], ...SPLINE_V[k], ...SPLINE_OUT[k]);
+          }
+          sampler.output = append(floats(...packed), {
+            componentType: 5126,
+            count: SPLINE_T.length * 3,
+            type: 'VEC4',
+          });
+        }),
+      ),
+      CUBE,
+      'rotation',
+    );
+  }
+
+  it('CUBICSPLINE rotation is the spec’s Hermite over the components, normalized', () => {
+    const sample = quatSampler(splineRotation());
+    let worst = 0;
+    let samples = 0;
+    for (let k = 0; k < SPLINE_T.length - 1; k++) {
+      const td = SPLINE_T[k + 1] - SPLINE_T[k];
+      for (let j = 0; j <= 500; j++) {
+        const u = j / 500;
+        const got = sample(SPLINE_T[k] + u * td);
+        const want = [0, 1, 2, 3].map((c) =>
+          hermite(SPLINE_V[k][c], SPLINE_OUT[k][c], SPLINE_V[k + 1][c], SPLINE_IN[k + 1][c], td, u),
+        );
+        const len = Math.hypot(...want);
+        for (let c = 0; c < 4; c++) {
+          worst = Math.max(worst, Math.abs(got[c] - want[c] / len));
+          samples++;
+        }
+      }
+    }
+    expect(samples).toBe(2 * 501 * 4);
+    // float32 in the file, float64 here: the same bound the translation row holds to.
+    expect(worst).toBeLessThan(1e-5);
+  });
+
+  it('the tangents land on the keys as handles a third of the span in', () => {
+    const keys = splineRotation().keyframes;
+    // float32 in the file: 0.4 comes back as 0.40000000596.
+    keys.forEach((k, i) => expect(k.time).toBeCloseTo(SPLINE_T[i], 6));
+    expect(keys.length).toBe(SPLINE_T.length);
+    expect(keys.every((k) => k.easing === 'cubic')).toBe(true);
+    // The first in-tangent and the last out-tangent are unused (`:3638`), so neither is written.
+    expect(keys[0].inHandle).toBeUndefined();
+    expect(keys[keys.length - 1].outHandle).toBeUndefined();
+    const dt = SPLINE_T[1] - SPLINE_T[0];
+    expect(keys[0].outHandle!.time).toBeCloseTo(dt / 3, 6); // float32 span, as above
+    for (let c = 0; c < 4; c++) {
+      expect(keys[0].outHandle!.value[c]).toBeCloseTo((SPLINE_OUT[0][c] * dt) / 3, 6);
+      expect(keys[1].inHandle!.value[c]).toBeCloseTo((-SPLINE_IN[1][c] * dt) / 3, 6);
+    }
+  });
+
+  it('a CUBICSPLINE rotation stays a rotation: unit at every sample', () => {
+    const sample = quatSampler(splineRotation());
+    for (let j = 0; j <= 200; j++) {
+      const q = sample((1.5 * j) / 200);
+      expect(Math.hypot(q[0], q[1], q[2], q[3])).toBeCloseTo(1, 12);
+    }
+  });
+
   it('LINEAR rotation is the spec’s slerp (C.4), not a component lerp', () => {
     const ch = find(channelsOf(read()), CUBE, 'rotation');
     const keys = ch.keyframes.map((k) => k.value as Quat);
@@ -220,6 +331,48 @@ describe('#1051 — a clip reads into channels that sample as the spec defines',
   });
 });
 
+describe('#1154 — every animation comes across, named as Blender names its tracks', () => {
+  const names = (mutate: (json: Json, append: Append) => void) => {
+    const r = readAll(mutate);
+    if ('refused' in r) throw new Error(r.refused);
+    return r.animations.map((a) => a.name);
+  };
+
+  it('a second animation reads with its own channels, after the first', () => {
+    const r = readAll((j) => {
+      const second = structuredClone(j.animations[0]);
+      second.name = 'Second';
+      second.channels = second.channels.slice(0, 1);
+      j.animations.push(second);
+    });
+    if ('refused' in r) throw new Error(r.refused);
+    expect(r.animations.map((a) => a.channels.length)).toEqual([channelsOf(read()).length, 1]);
+  });
+
+  it('a repeated name takes .001, an unnamed one Anim_<index> (blender_gltf.py:237-244)', () => {
+    expect(
+      names((j) => {
+        const a = j.animations[0];
+        j.animations = [
+          { ...a, name: 'Walk' },
+          { ...a, name: 'Walk' },
+          { ...a, name: undefined },
+          { ...a, name: 'Walk' },
+        ];
+      }),
+    ).toEqual(['Walk', 'Walk.001', 'Anim_2', 'Walk.002']);
+  });
+
+  it('one refused animation refuses the file, whichever it is', () => {
+    const r = readAll((j) => {
+      const second = structuredClone(j.animations[0]);
+      second.channels[0].target.path = 'weights';
+      j.animations.push(second);
+    });
+    expect(r).toMatchObject({ issue: '#1060' });
+  });
+});
+
 describe('#1051 — what cannot come across is refused, by name', () => {
   const refusal = (mutate: (json: Json, append: Append) => void) => {
     const r = read(mutate);
@@ -230,22 +383,18 @@ describe('#1051 — what cannot come across is refused, by name', () => {
 
   it.each<[string, (json: Json, append: Append) => void, RegExp, string]>([
     [
-      'a second clip',
-      (j) => j.animations.push({ ...anim(j), name: 'Drop' }),
-      /2 animation clips/,
-      '#1154',
-    ],
-    [
       'a weights track',
       (j) => (anim(j).channels[0].target.path = 'weights'),
       /morph target weights/,
       '#1060',
     ],
     [
-      'a CUBICSPLINE rotation',
+      // #1157 took the rotation refusal out; what is left here is the spec's count rule, which
+      // this same mutation now trips: CUBICSPLINE wants three values per key (`:3615`).
+      'a CUBICSPLINE output that is not three per key',
       (j) => (anim(j).samplers[anim(j).channels[2].sampler].interpolation = 'CUBICSPLINE'),
-      /rotation as CUBICSPLINE/,
-      '#1157',
+      /values for \d+ keys/,
+      '#1063',
     ],
     [
       'an animated matrix node (:2786)',

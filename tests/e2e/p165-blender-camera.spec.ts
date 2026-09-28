@@ -65,11 +65,11 @@ test.describe('#165 Blender-style camera', () => {
     // Framing the unit box pulls the eye IN to ~2.9, not the authored 4.69.
     expect(dist).toBeGreaterThan(1.5);
     expect(dist).toBeLessThan(4.0);
-    // The headline #186 fix: clip planes are BOUNDS-DERIVED, not the old
-    // 0.1/1000 constants (so large models no longer clip at far). Revert the
-    // bounds-fit → near 0.1 / far 1000 → these two fail.
-    expect(cam!.far).toBeLessThan(50);
-    expect(cam!.near).toBeGreaterThan(0.5);
+    // #1178 — the framing follows the scene, the clip does NOT: Blender's
+    // viewport default, 0.01–1000, whatever the scene's size. A clip derived
+    // from the unit box would hug it (near ~2, far ~4) and fail both.
+    expect(cam!.near).toBeCloseTo(0.01, 5);
+    expect(cam!.far).toBeCloseTo(1000, 5);
     expect(cam!.fov).toBeCloseTo(45, 1);
     expect(cam!.lookThrough).toBe(false);
   });

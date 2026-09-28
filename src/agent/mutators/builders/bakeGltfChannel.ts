@@ -51,8 +51,7 @@
 //      src/timeline/clipChannelRows.ts (activeClipForAsset, the clip walk —
 //        keys AND time domain as one answer, #916); src/app/bakedGltfChannels.ts
 //        (the resolver enumeration that consumes the baked channels);
-//        src/app/animate/ensureChannelForBone.ts (the sibling road, whose
-//        `seedKeysFromClip` this mirrors); vyapti V20/V22/H36 (single writer).
+//        vyapti V20/V22/H36 (single writer).
 
 import { z } from 'zod';
 import type { MutatorDefinition } from '../types';
@@ -142,54 +141,65 @@ export const bakeGltfChannelMutator: MutatorDefinition<BakeGltfChannelSpec> = {
     return { ok: true };
   },
   build(spec, _closure: ClosureSet, state: DagState): Op[] {
-    const { assetRef, childName } = spec;
-
-    // R5: filter the active clip's keyframes to THIS bone by NAME, sort by time.
-    // The clip is taken as ONE answer — keys AND time domain — because taking
-    // the first without the second is exactly how this road minted a copy that
-    // stopped where its source wrapped (#916).
-    const active = activeClipForAsset(state.nodes, assetRef);
-    const forChild = (active?.keyframes ?? [])
-      .filter((k) => k.targetNodeId === childName)
-      .slice()
-      .sort((a, b) => a.time - b.time);
-
-    // The SHARED emitter (bakeChannelOps.ts) — consumer 1 of 2. The source
-    // differs between consumers; everything downstream of it must not, because
-    // the resolver enumerator recognises a channel by its id, its dual key and
-    // its edge-lessness. See that module header.
-    const ops: Op[] = bakeChannelOpsForBone({
-      assetRef,
-      childName,
-      byComponent: {
-        position: forChild.map((k) => ({ time: k.time, value: k.position as Vec3 })),
-        rotation: forChild.map((k) => ({ time: k.time, value: k.rotation as Vec3 })),
-        scale: forChild.map((k) => ({ time: k.time, value: k.scale as Vec3 })),
-      },
-      state,
-      // #916 — the SOURCE's time domain, the half #913 taught the sibling road to
-      // carry and this one did not. A cycling `TransformClip` wraps at its
-      // duration; a channel minted from it used to hold, so the bone froze at
-      // the end of the first cycle while the clip it came from kept going.
-      //
-      // 🔑 THE CHANNEL TAKES THE CLIP'S OWN INTENT — no translation (#934).
-      // This seam used to map `cycle` to `cycle-offset`, so a cycling
-      // TransformClip minted a channel that TRAVELLED while the clip itself
-      // folded time and cycled IN PLACE. That divergence was deliberate at #930
-      // and could not be resolved there: the carrier had no way to express an
-      // offset, so SOMETHING had to be translated. #934 gave it a real one, and
-      // the translation is what it costs to keep.
-      //
-      // Now `cycle` means in-place on both sides and `cycle-offset` means travel
-      // on both, so a director who edits one bone of a looping clip gets a
-      // channel that does what the clip they are looking at does. A clip that
-      // used to be spelled `cycle` and expected travel is spelled `cycle-offset`
-      // instead — the value that says so.
-      loop: clipLoopOf(active?.loop),
-    });
-
-    // R4: NO connect ops. The baked channels are edge-less satellites that
-    // reach the bone via the resolver enumeration, never an AnimationLayer edge.
-    return ops;
+    return fileClipBakeOps(state, spec.assetRef, spec.childName);
   },
 };
+
+/**
+ * The ops that bake one imported child whole — all three components — from the asset's OWN
+ * active clip (a `TransformClip`), keys AND time domain. Empty when no clip track drives the
+ * child, or when every component already has a channel.
+ *
+ * Pure over `DagState`, and the ONE derivation of that seed (#1277): the clip-row mint reaches it
+ * through this mutator, and the bone-addressed mint (`ensureChannelForBone` — the diamond,
+ * Auto-Key) calls it directly, so the two ways into one edit cannot seed differently.
+ */
+export function fileClipBakeOps(state: DagState, assetRef: string, childName: string): Op[] {
+  // R5: filter the active clip's keyframes to THIS bone by NAME, sort by time.
+  // The clip is taken as ONE answer — keys AND time domain — because taking
+  // the first without the second is exactly how this road minted a copy that
+  // stopped where its source wrapped (#916).
+  const active = activeClipForAsset(state.nodes, assetRef);
+  const forChild = (active?.keyframes ?? [])
+    .filter((k) => k.targetNodeId === childName)
+    .slice()
+    .sort((a, b) => a.time - b.time);
+
+  // The SHARED emitter (bakeChannelOps.ts). The source
+  // differs between consumers; everything downstream of it must not, because
+  // the resolver enumerator recognises a channel by its id, its dual key and
+  // its edge-lessness. See that module header.
+  const ops: Op[] = bakeChannelOpsForBone({
+    assetRef,
+    childName,
+    byComponent: {
+      position: forChild.map((k) => ({ time: k.time, value: k.position as Vec3 })),
+      rotation: forChild.map((k) => ({ time: k.time, value: k.rotation as Vec3 })),
+      scale: forChild.map((k) => ({ time: k.time, value: k.scale as Vec3 })),
+    },
+    state,
+    // #916 — the SOURCE's time domain (the half #913 first taught the retired
+    // AnimationClip mint to carry). A cycling `TransformClip` wraps at its
+    // duration; a channel minted from it used to hold, so the bone froze at
+    // the end of the first cycle while the clip it came from kept going.
+    //
+    // 🔑 THE CHANNEL TAKES THE CLIP'S OWN INTENT — no translation (#934).
+    // This seam used to map `cycle` to `cycle-offset`, so a cycling
+    // TransformClip minted a channel that TRAVELLED while the clip itself
+    // folded time and cycled IN PLACE. That divergence was deliberate at #930
+    // and could not be resolved there: the carrier had no way to express an
+    // offset, so SOMETHING had to be translated. #934 gave it a real one, and
+    // the translation is what it costs to keep.
+    //
+    // Now `cycle` means in-place on both sides and `cycle-offset` means travel
+    // on both, so a director who edits one bone of a looping clip gets a
+    // channel that does what the clip they are looking at does. A clip that
+    // used to be spelled `cycle` and expected travel is spelled `cycle-offset`
+    // instead — the value that says so.
+    loop: clipLoopOf(active?.loop),
+  });
+
+  // R4: NO connect ops. The baked channels are edge-less satellites that
+  // reach the bone via the resolver enumeration, never an AnimationLayer edge.
+  return ops;
+}

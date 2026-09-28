@@ -34,9 +34,6 @@ import { setMaterialColorMutator } from './builders/setMaterialColor';
 import { duplicateMutator } from './builders/duplicate';
 import { deleteNodeMutator } from './builders/deleteNode';
 import { randomizeMutator } from './builders/randomize';
-import { retargetMutator } from './builders/retarget';
-import { retargetClipParamsFromNodes } from '../../app/animate/retargetFromNodes';
-import type { GraphNodeLike } from '../../app/animate/boundClipsForAsset';
 import { addModifierMutator } from './builders/addModifier';
 import { addChannelModifierMutator } from './builders/addChannelModifier';
 import { setChannelExtendMutator } from './builders/setChannelExtend';
@@ -47,8 +44,6 @@ import { setStripTimingMutator } from './builders/setStripTiming';
 import { setStripBlendMutator } from './builders/setStripBlend';
 import { setTrackStateMutator } from './builders/setTrackState';
 import { buildAddModifierOps, enumerateModifierStack, findConsumer } from '../../app/operatorStack';
-import { getBoneNameMapPreset } from '../../core/import/boneNameMaps';
-import type { BoneSpec, GltfSkinMetadata } from '../../nodes/types';
 import { proposePlanTool, listMutatorsTool } from './tool';
 
 beforeEach(() => {
@@ -156,10 +151,16 @@ describe('mutator catalog', () => {
     // createAction+addStrip, 4B setStripTiming+setStripBlend, 4C setTrackState; 21 was 20 +
     // `setKeyframeInterp`; 20 was 19 + `setChannelExtend`; 19 was 18 + `addChannelModifier`;
     // 18 was 17 + `geometry.addModifier`; 17 = pre-#199 18 − `addLayer`.))
-    expect(mutators).toHaveLength(30);
+    // 30 → 31 at #1242 — `animate.setPoseMemberMode`, a pose layer member's rotation mode.
+    // 31 → 32 at #1201 — `animate.renameBone`.
+    // 32 → 33 at #1215 — `animate.bakePose`.
+    expect(mutators).toHaveLength(33);
     const names = mutators.map((m) => m.name).sort();
     expect(names).toEqual([
+      'mutator.animate.bakePose',
       'mutator.animate.poseBone',
+      'mutator.animate.renameBone',
+      'mutator.animate.setPoseMemberMode',
       'mutator.animation.retarget',
       'mutator.camera.trajectory',
       'mutator.deleteNode',
@@ -2303,7 +2304,10 @@ describe('agent.listMutators tool', () => {
     // agent surface is the one place that lie would never surface as a red.
     // 28 → 29 at #993 — `animate.poseBone`, for the mirror-image reason: a node type
     // the agent surface could not reach at all.
-    expect(parsed.mutators).toHaveLength(30);
+    // 30 → 31 at #1242 — `animate.setPoseMemberMode`.
+    // 31 → 32 at #1201 — `animate.renameBone`.
+    // 32 → 33 at #1215 — `animate.bakePose`.
+    expect(parsed.mutators).toHaveLength(33);
   });
 });
 
@@ -3926,6 +3930,9 @@ import {
   shotCreateMutator as _shotM,
   cameraTrajectoryMutator as _cameraTrajM,
   poseBoneMutator as _poseBoneM,
+  setPoseMemberModeMutator as _setPoseMemberModeM,
+  renameBoneMutator as _renameBoneM,
+  bakePoseMutator as _bakePoseM,
   retargetMutator as _retargetM,
   addPassMutator as _addPassM,
   addAIPassMutator as _addAIPassM,
@@ -4012,44 +4019,85 @@ describe('V14 deeper non-redundancy — Op-shape probe (issue #22)', () => {
     return s;
   }
 
-  // #993 — a probe scene for poseBone: a WIRED RetargetClip whose target rig
-  // actually carries bones. A `Skeleton` with `params: {}` is enough for the
-  // retarget mutator (it only names the rig with an edge) and is NOT enough for
-  // this one — poseBone resolves the caller's bone name against the rig's own
-  // spelling, so a rig with no bones can resolve nothing and the probe would
-  // gate-reject rather than exercise the build.
-  function buildSceneForPoseBone(): DagState {
-    let s = buildSceneForRetarget();
-    s = applyOp(s, {
-      type: 'setParam',
-      nodeId: 'tgt_skel',
-      paramPath: 'bones',
-      value: [{ name: 'mixamorig_Hips', parent: -1, position: [0, 0, 0], rotation: [0, 0, 0] }],
+  // #993 / #1244 — a probe scene for poseBone: an armature Object standing a skeleton whose params
+  // carry the bone, so the precondition can find it (a `Skeleton` with `params: {}` names no bones
+  // to the mutator, which reads the skeleton's own list).
+  // #1242 — one pose layer holding one static member; the mode change rewrites only its params.
+  function buildSceneForPoseLayer(): DagState {
+    return applyOp(emptyDagState(), {
+      type: 'addNode',
+      nodeId: 'pl_layer',
+      nodeType: 'PoseLayer',
+      params: { members: [{ bone: 'Bone1', rotationMode: 'XYZ', rotation: [0, 0, 30] }] },
+    }).next;
+  }
+
+  // #1201 — an armature Object standing the default 3-bone skeleton, posed through one layer that
+  // keys `torso`: the rename rewrites the skeleton and the layer.
+  function buildSceneForBoneRename(): DagState {
+    let s = applyOp(emptyDagState(), {
+      type: 'addNode',
+      nodeId: 'br_skel',
+      nodeType: 'Skeleton',
+      params: {},
     }).next;
     s = applyOp(s, {
       type: 'addNode',
-      nodeId: 'pb_map',
-      nodeType: 'BoneNameMap',
-      params: { name: 'bridge', map: {} },
+      nodeId: 'br_layer',
+      nodeType: 'PoseLayer',
+      params: { members: [{ bone: 'torso', rotationMode: 'XYZ', rotation: [0, 0, 30] }] },
     }).next;
-    s = applyOp(s, {
-      type: 'addNode',
-      nodeId: 'pb_retarget',
-      nodeType: 'RetargetClip',
-      params: { name: 'retargeted' },
-    }).next;
-    for (const [from, socket] of [
-      ['src_clip', 'sourceClip'],
-      ['pb_map', 'boneMap'],
-      ['tgt_skel', 'skeleton'],
+    s = applyOp(s, { type: 'addNode', nodeId: 'br_arm', nodeType: 'Object', params: {} }).next;
+    for (const [from, fromSocket, to, toSocket] of [
+      ['br_skel', 'out', 'br_arm', 'data'],
+      ['br_skel', 'pose', 'br_layer', 'pose'],
+      ['br_layer', 'out', 'br_arm', 'pose'],
     ] as const) {
       s = applyOp(s, {
         type: 'connect',
-        from: { node: from, socket: 'out' },
-        to: { node: 'pb_retarget', socket },
+        from: { node: from, socket: fromSocket },
+        to: { node: to, socket: toSocket },
       }).next;
     }
     return s;
+  }
+
+  // #1215 — the same armature with its layer keyed over a second, baked at that layer.
+  function buildSceneForPoseBake(): DagState {
+    let s = buildSceneForBoneRename();
+    s = applyOp(s, {
+      type: 'setParam',
+      nodeId: 'br_layer',
+      paramPath: 'channels',
+      value: [
+        {
+          bone: 'torso',
+          component: 'rotation',
+          keyframes: [
+            { time: 0, value: [0, 0, 0] },
+            { time: 1, value: [0, 0, 90] },
+          ],
+        },
+      ],
+    }).next;
+    return s;
+  }
+
+  function buildSceneForPoseBone(): DagState {
+    let s = applyOp(emptyDagState(), {
+      type: 'addNode',
+      nodeId: 'pb_skel',
+      nodeType: 'Skeleton',
+      params: {
+        bones: [{ name: 'mixamorig_Hips', parent: -1, position: [0, 0, 0], rotation: [0, 0, 0] }],
+      },
+    }).next;
+    s = applyOp(s, { type: 'addNode', nodeId: 'pb_arm', nodeType: 'Object', params: {} }).next;
+    return applyOp(s, {
+      type: 'connect',
+      from: { node: 'pb_skel', socket: 'out' },
+      to: { node: 'pb_arm', socket: 'data' },
+    }).next;
   }
 
   // P7.12 (#108) — a probe scene for bakeGltfChannel: GltfAsset → ClipSelect →
@@ -4274,15 +4322,28 @@ describe('V14 deeper non-redundancy — Op-shape probe (issue #22)', () => {
     'mutator.animate.poseBone': {
       mutator: _poseBoneM as MutatorDefinition<unknown>,
       build: buildSceneForPoseBone,
-      // The LIVE three.js spelling on purpose — the rig calls this bone
-      // `mixamorig_Hips`, and resolving the two is the mutator's job.
-      spec: { retarget: 'pb_retarget', bone: 'mixamorigHips', rotation: [0, 0, 45] },
+      spec: { object: 'pb_arm', bone: 'mixamorig_Hips', rotation: [0, 0, 45] },
+    },
+    'mutator.animate.setPoseMemberMode': {
+      mutator: _setPoseMemberModeM as MutatorDefinition<unknown>,
+      build: buildSceneForPoseLayer,
+      spec: { layer: 'pl_layer', bone: 'Bone1', rotationMode: 'quaternion' },
+    },
+    'mutator.animate.bakePose': {
+      mutator: _bakePoseM as MutatorDefinition<unknown>,
+      build: buildSceneForPoseBake,
+      spec: { object: 'br_arm', at: 'br_layer', poses: { nth: 2 } },
+    },
+    'mutator.animate.renameBone': {
+      mutator: _renameBoneM as MutatorDefinition<unknown>,
+      build: buildSceneForBoneRename,
+      spec: { object: 'br_arm', bone: 'torso', name: 'spine' },
     },
     'mutator.animation.retarget': {
       mutator: _retargetM as MutatorDefinition<unknown>,
       build: buildSceneForRetarget,
       spec: {
-        sourceClipId: 'src_clip',
+        sourceId: 'src_clip',
         sourceSkeletonId: 'src_skel',
         targetSkeletonId: 'tgt_skel',
         mapPresetId: 'mixamoToGltf',
@@ -4562,228 +4623,5 @@ describe('V14 deeper non-redundancy — Op-shape probe (issue #22)', () => {
       ).toBeUndefined();
       seen.set(sig, name);
     }
-  });
-});
-
-// ---------------------------------------------------------------------------
-// P7.11 Wave G (#100) — the headline D-01 director story through the AGENT
-// MUTATOR surface: a director drops a glTF character, then issues
-// `mutator.animation.retarget` to drive its `GltfSkeleton` rig with a
-// foreign-vocabulary (Mixamo) source clip via a NON-IDENTITY bridge map.
-//
-// The verifier (VERIFICATION.md) found this reachable only at the
-// `retargetClip()` function layer; the mutator rejected a `GltfSkeleton`
-// target at the precondition AND, even past the gate, read `params.bones`
-// the projection node does not have. This suite proves the gap is closed at
-// the product surface: (a) preconditions accept a GltfSkeleton target, (b)
-// the emitted clip's tracks bind to the TARGET (glTF-native) bone names —
-// resolved by EVALUATING the GltfSkeleton, not by reading absent params, and
-// (c) the closure gate (V13) accepts the plan even though evaluating the
-// GltfSkeleton reads its upstream GltfAsset.
-// ---------------------------------------------------------------------------
-describe('mutator.animation.retarget — GltfSkeleton target (P7.11 Wave G / #100 / D-01)', () => {
-  // The committed `skinned-bar` skin shape (Wave D): glTF-native joint keys
-  // `Bone0`/`Bone1`, captured bind TRS in DEGREES (buildSkinMetadata convention)
-  // — projectGltfSkeleton converts to radians, matching the Skeleton/BVH/FBX
-  // BoneSpec contract. parentJointIndex is first-class (no runtime re-derive).
-  const SKINNED_BAR_SKIN: GltfSkinMetadata = {
-    jointKeys: ['Bone0', 'Bone1'],
-    bindTRS: [
-      { position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
-      { position: [0, 1, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
-    ],
-    parentJointIndex: [-1, 0],
-    inverseBindMatrices: [],
-  };
-
-  // Mixamo-vocabulary source rig + clip. Source bone NAMES differ from the
-  // glTF target keys, so an identity/empty map is a no-op — the bridge preset
-  // is load-bearing (research risk #4 / FLAG 3).
-  const MIXAMO_SOURCE_BONES: BoneSpec[] = [
-    { name: 'mixamorig_Hips', parent: -1, position: [0, 1, 0], rotation: [0, 0, 0] },
-    { name: 'mixamorig_Spine', parent: 0, position: [0, 0.4, 0], rotation: [0, 0, 0] },
-  ];
-  const MIXAMO_SOURCE_KFS = [
-    { bone: 0, time: 0, position: [0, 1, 0], rotation: [0, 0, 0] },
-    { bone: 0, time: 1, position: [0, 1, 0], rotation: [0, 0.5, 0] },
-    { bone: 1, time: 0, position: [0, 0.4, 0], rotation: [0, 0, 0] },
-    { bone: 1, time: 1, position: [0, 0.4, 0], rotation: [0, 0.3, 0] },
-  ];
-
-  // Build a DAG matching what a director would have after dropping a glTF
-  // character (GltfAsset → GltfSkeleton target) and importing a Mixamo clip
-  // (Skeleton source + AnimationClip), with the project TimeSource present.
-  function buildSceneForGltfRetarget(): DagState {
-    let s = emptyDagState();
-    s = applyOp(s, { type: 'addNode', nodeId: 'time', nodeType: 'TimeSource', params: {} }).next;
-    // The dropped glTF character: a GltfAsset carrying the captured skin.
-    s = applyOp(s, {
-      type: 'addNode',
-      nodeId: 'gltf_asset',
-      nodeType: 'GltfAsset',
-      params: { assetRef: 'assets/skinned-bar.glb', skins: [SKINNED_BAR_SKIN] },
-    }).next;
-    // The PURE rig projection node — the director-reachable target. Its bones
-    // are an evaluated output, NOT params (D-02).
-    s = applyOp(s, {
-      type: 'addNode',
-      nodeId: 'gltf_skel',
-      nodeType: 'GltfSkeleton',
-      params: { skinIndex: 0 },
-    }).next;
-    s = applyOp(s, {
-      type: 'connect',
-      from: { node: 'gltf_asset', socket: 'out' },
-      to: { node: 'gltf_skel', socket: 'asset' },
-    }).next;
-    // The foreign (Mixamo) source rig + clip.
-    s = applyOp(s, {
-      type: 'addNode',
-      nodeId: 'src_skel',
-      nodeType: 'Skeleton',
-      params: { bones: MIXAMO_SOURCE_BONES },
-    }).next;
-    s = applyOp(s, {
-      type: 'addNode',
-      nodeId: 'src_clip',
-      nodeType: 'AnimationClip',
-      params: { name: 'walk', duration: 1, keyframes: MIXAMO_SOURCE_KFS },
-    }).next;
-    // The clip's own rig edge — what an import writes, and since #901 what the
-    // retarget reads the source bones off. Its keyframes are bone INDICES into
-    // THIS rig; naming a different one in the spec is a refusal, not a choice.
-    s = applyOp(s, {
-      type: 'connect',
-      from: { node: 'src_skel', socket: 'out' },
-      to: { node: 'src_clip', socket: 'skeleton' },
-    }).next;
-    return s;
-  }
-
-  function gltfRetargetSpec(map: Record<string, string>) {
-    return {
-      sourceClipId: 'src_clip',
-      sourceSkeletonId: 'src_skel',
-      targetSkeletonId: 'gltf_skel',
-      customMap: map,
-      outputClipId: 'walk_on_gltf',
-    };
-  }
-
-  it('passes preconditions + emits a retargeted clip bound to the glTF rig through the agent surface', () => {
-    const bridge = getBoneNameMapPreset('mixamoToGltfBarRig');
-    expect(bridge).toBeDefined();
-    // Load-bearing bridge: foreign source names map ONTO glTF-native targets.
-    expect(bridge!.map['mixamorig_Hips']).toBe('Bone0');
-
-    const state = buildSceneForGltfRetarget();
-    const result = validatePlan(
-      retargetMutator,
-      gltfRetargetSpec(bridge!.map),
-      state,
-      'drop a Mixamo clip onto a glTF character',
-    );
-
-    // (a) The mutator accepted the GltfSkeleton target — no precondition or
-    // closure-gate rejection. A silent rejection here is the gap reopening.
-    expect(result.ok).toBe(true);
-    if (!result.ok) {
-      throw new Error(`retarget rejected (gate ${result.gate}/${result.label}): ${result.reason}`);
-    }
-
-    // (b) It emitted the RELATIONSHIP (#901): a RetargetClip wired to the source
-    // clip, to a minted BoneNameMap, and to the glTF rig — not a baked copy.
-    const addRetarget = result.ops.find(
-      (o) => o.type === 'addNode' && o.nodeType === 'RetargetClip',
-    );
-    expect(addRetarget).toBeDefined();
-    if (addRetarget?.type !== 'addNode') throw new Error('no RetargetClip addNode');
-    expect(addRetarget.nodeId).toBe('walk_on_gltf');
-    expect(result.ops.some((o) => o.type === 'addNode' && o.nodeType === 'BoneNameMap')).toBe(true);
-    const wiredFrom = (node: string, socket: string) =>
-      result.ops.some(
-        (o) =>
-          o.type === 'connect' &&
-          o.from.node === node &&
-          o.to.node === 'walk_on_gltf' &&
-          o.to.socket === socket,
-      );
-    expect(wiredFrom('gltf_skel', 'skeleton')).toBe(true);
-    expect(wiredFrom('src_clip', 'sourceClip')).toBe(true);
-    expect(wiredFrom('walk_on_gltf_map', 'boneMap')).toBe(true);
-    // …and NOT to a clock. The node is time-free on purpose (#901).
-    expect(result.ops.some((o) => o.type === 'connect' && o.to.socket === 'time')).toBe(false);
-
-    // (c) The keys bind to the TARGET (glTF-native) bones. Read where the render
-    // band reads — the resolved node, after the plan is applied — because that is
-    // now where the answer exists at all. The GltfSkeleton projects
-    // ['Bone0','Bone1']; every key's `bone` must address one of THOSE, proving
-    // the target rig was resolved by PROJECTION and not from absent params.bones,
-    // which would have produced an empty rig → zero/out-of-range tracks.
-    let applied = state;
-    for (const op of result.ops) applied = applyOp(applied, op).next;
-    const resolved = retargetClipParamsFromNodes(
-      applied.nodes as unknown as Record<string, GraphNodeLike>,
-      applied.nodes['walk_on_gltf'] as unknown as GraphNodeLike,
-    );
-    const kfs = resolved?.keyframes ?? [];
-    expect(kfs.length).toBeGreaterThan(0);
-    const projectedTargetNames = ['Bone0', 'Bone1'];
-    for (const kf of kfs) {
-      expect(kf.bone).toBeGreaterThanOrEqual(0);
-      expect(kf.bone).toBeLessThan(projectedTargetNames.length);
-    }
-    // The set of target bones actually driven includes a glTF-native key.
-    const drivenNames = new Set(kfs.map((kf) => projectedTargetNames[kf.bone]));
-    expect(drivenNames.has('Bone0')).toBe(true);
-  });
-
-  it('FALSIFICATION: an empty map yields an empty clip — the bridge is load-bearing, not a no-op', () => {
-    const state = buildSceneForGltfRetarget();
-    const result = validatePlan(
-      retargetMutator,
-      gltfRetargetSpec({}),
-      state,
-      'empty map — nothing should bind',
-    );
-    // The plan still validates (an empty map is structurally valid), but the
-    // mixamorig_* source matches NO glTF joint key, so NO tracks bind. Since
-    // #901 the emptiness has to be observed where the keys now live — in the
-    // RESOLVED node, not in the emitted params, which carry no keys either way.
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
-    let applied = state;
-    for (const op of result.ops) applied = applyOp(applied, op).next;
-    const resolved = retargetClipParamsFromNodes(
-      applied.nodes as unknown as Record<string, GraphNodeLike>,
-      applied.nodes['walk_on_gltf'] as unknown as GraphNodeLike,
-    );
-    expect(resolved?.keyframes ?? []).toHaveLength(0);
-  });
-
-  it('rejects a non-skeleton target with a Skeleton-or-GltfSkeleton reason (precondition gate)', () => {
-    let state = buildSceneForGltfRetarget();
-    // Point the target at the GltfAsset (a Mesh-output node), not the rig.
-    state = applyOp(state, {
-      type: 'addNode',
-      nodeId: 'src_skel2',
-      nodeType: 'Skeleton',
-      params: { bones: MIXAMO_SOURCE_BONES },
-    }).next;
-    const result = validatePlan(
-      retargetMutator,
-      {
-        sourceClipId: 'src_clip',
-        sourceSkeletonId: 'src_skel',
-        targetSkeletonId: 'gltf_asset',
-        customMap: { mixamorig_Hips: 'Bone0' },
-        outputClipId: 'bad',
-      },
-      state,
-      'bad target type',
-    );
-    expect(result.ok).toBe(false);
-    if (result.ok) return;
-    expect(result.reason).toContain('GltfSkeleton');
   });
 });

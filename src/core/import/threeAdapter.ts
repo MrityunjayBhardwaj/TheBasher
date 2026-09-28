@@ -175,7 +175,8 @@ export function clipToKeyframes(clip: ClipShape, bones: readonly BoneSpec[]): An
   return out;
 }
 
-function parseTrackName(name: string): { bone: string; property: string } | null {
+/** A three track name as the bone (sanitised) and property it keys, or null. */
+export function parseTrackName(name: string): { bone: string; property: string } | null {
   const bracket = name.match(/\.bones\[([^\]]+)\]\.(\w+)/);
   if (bracket) return { bone: sanitizeBoneName(bracket[1]), property: bracket[2] };
   const dot = name.match(/^\.?([^.]+)\.(\w+)$/);

@@ -40,6 +40,8 @@ import type {
   MeshCornerLayerType,
   MeshFaceLayerType,
   MeshGeometryData,
+  MeshPointLayer,
+  MeshPointLayerType,
 } from '../nodes/types';
 import { hashString } from '../core/dag/hash';
 import {
@@ -65,6 +67,13 @@ export interface PackedFaceLayer {
   readonly data: string;
 }
 
+/** One point layer as saved (#1196): its name, its type, and its values as one base64 string. */
+export interface PackedPointLayer {
+  readonly name: string;
+  readonly type: MeshPointLayerType;
+  readonly data: string;
+}
+
 /** The persisted form: one base64 string per array and per layer, `null` for absent normals. */
 export interface PackedMeshData {
   readonly points: string;
@@ -73,6 +82,9 @@ export interface PackedMeshData {
   readonly cornerLayers: readonly PackedCornerLayer[];
   readonly cornerNormals: string | null;
   readonly faceLayers: readonly PackedFaceLayer[];
+  readonly pointLayers: readonly PackedPointLayer[];
+  /** #1196 — plain names, not packed: a table of words, and short. */
+  readonly vertexGroups: readonly string[];
 }
 
 function isPackedCornerLayer(value: unknown): boolean {
@@ -93,7 +105,11 @@ export function isPackedMeshData(value: unknown): value is PackedMeshData {
     v.cornerLayers.every(isPackedCornerLayer) &&
     (v.cornerNormals === null || typeof v.cornerNormals === 'string') &&
     Array.isArray(v.faceLayers) &&
-    v.faceLayers.every(isPackedCornerLayer)
+    v.faceLayers.every(isPackedCornerLayer) &&
+    Array.isArray(v.pointLayers) &&
+    v.pointLayers.every(isPackedCornerLayer) &&
+    Array.isArray(v.vertexGroups) &&
+    v.vertexGroups.every((group) => typeof group === 'string')
   );
 }
 
@@ -116,6 +132,8 @@ export function packedMeshSummary(packed: PackedMeshData): {
   readonly layers: readonly { readonly name: string; readonly type: MeshCornerLayerType }[];
   readonly normals: boolean;
   readonly faceLayers: readonly { readonly name: string; readonly type: MeshFaceLayerType }[];
+  readonly pointLayers: readonly { readonly name: string; readonly type: MeshPointLayerType }[];
+  readonly vertexGroups: number;
 } {
   return {
     points: decodedBytes(packed.points) / 12,
@@ -124,6 +142,8 @@ export function packedMeshSummary(packed: PackedMeshData): {
     layers: packed.cornerLayers.map(({ name, type }) => ({ name, type })),
     normals: packed.cornerNormals !== null,
     faceLayers: packed.faceLayers.map(({ name, type }) => ({ name, type })),
+    pointLayers: packed.pointLayers.map(({ name, type }) => ({ name, type })),
+    vertexGroups: packed.vertexGroups.length,
   };
 }
 
@@ -160,7 +180,28 @@ export function packMeshData(data: MeshGeometryData): PackedMeshData {
       type: layer.type,
       data: toBase64(layer.data),
     })),
+    pointLayers: data.pointLayers.map((layer) => ({
+      name: layer.name,
+      type: layer.type,
+      data: toBase64(layer.data),
+    })),
+    vertexGroups: [...data.vertexGroups],
   };
+}
+
+/** A point layer's values in the array class its type holds: joint numbers stay integers. */
+function unpackPointLayer(layer: PackedPointLayer): MeshPointLayer {
+  const bytes = fromBase64(layer.data);
+  switch (layer.type) {
+    case 'int4':
+      return { name: layer.name, type: 'int4', data: new Int32Array(bytes) };
+    case 'float4':
+      return { name: layer.name, type: 'float4', data: new Float32Array(bytes) };
+    default: {
+      const unreachable: never = layer.type;
+      throw new Error(`unpackPointLayer: undeclared layer type ${String(unreachable)}`);
+    }
+  }
 }
 
 /**
@@ -189,6 +230,8 @@ export function unpackMeshData(packed: PackedMeshData): MeshGeometryData {
       type: layer.type,
       data: new Int32Array(fromBase64(layer.data)),
     })),
+    pointLayers: packed.pointLayers.map(unpackPointLayer),
+    vertexGroups: packed.vertexGroups,
   };
   unpacked.set(packed, data);
   return data;
@@ -206,6 +249,10 @@ export function unpackMeshData(packed: PackedMeshData): MeshGeometryData {
  * #1052 — face layers are in the key too. The built buffer does not read them, but the handle's
  * descriptor carries the decoded mesh, and a cached handle must never answer for a mesh whose faces
  * say something different.
+ *
+ * #1196 — point layers and vertex groups too, for the same reason: two meshes with one shape and
+ * different bindings are different meshes. The groups are JSON-quoted so a name holding the
+ * separator cannot make two different tables spell one key.
  */
 export function meshGeometryRef(packed: PackedMeshData): GeometryRef {
   const content = [
@@ -216,9 +263,14 @@ export function meshGeometryRef(packed: PackedMeshData): GeometryRef {
       ? '-'
       : packed.cornerLayers.map((l) => JSON.stringify([l.name, l.type, l.data])).join(','),
     packed.cornerNormals ?? '-',
+    packed.vertexGroups.length === 0 ? '-' : JSON.stringify(packed.vertexGroups),
     packed.faceLayers.length === 0
       ? '-'
       : packed.faceLayers.map((l) => JSON.stringify([l.name, l.type, l.data])).join(','),
+    packed.pointLayers.length === 0
+      ? '-'
+      : packed.pointLayers.map((l) => JSON.stringify([l.name, l.type, l.data])).join(','),
+    '-',
   ].join('|');
   return {
     key: `mesh|${hashString(content)}`,

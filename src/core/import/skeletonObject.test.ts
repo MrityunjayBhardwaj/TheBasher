@@ -8,9 +8,10 @@ import { __resetRegistryForTests, applyOp, emptyDagState, evaluate } from '../da
 import type { DagState } from '../dag/state';
 import type { Op } from '../dag/types';
 import { registerAllNodes } from '../../nodes/registerAll';
-import type { AnimationClipValue, BoneSpec, ObjectValue } from '../../nodes/types';
+import type { BoneSpec, ObjectValue, PosedSkeletonValue } from '../../nodes/types';
 import { boneTransforms } from '../../viewport/boneShape';
 import { armatureBounds, posedSourceBones } from '../../viewport/referenceRig';
+import { buildBvhClipOps } from '../../test-utils/bvhClip';
 import { buildBvhImportOps } from './bvhImportChain';
 import {
   buildSkeletonObjectOps,
@@ -63,6 +64,7 @@ describe('buildSkeletonObjectOps', () => {
       sceneNodeId: 'scene',
       name: 'soma-walk',
       clipId: 'clip',
+      nameFollowsClip: true,
     });
     expect(objectId).toBe(skeletonObjectId('sk'));
     expect(ops).toEqual([
@@ -78,6 +80,13 @@ describe('buildSkeletonObjectOps', () => {
         from: { node: 'sk', socket: 'out' },
         to: { node: objectId, socket: 'data' },
       },
+      // #1224 — the clip's pose output is the Object's pose: what poses the rig, for the band and
+      // a deform.
+      {
+        type: 'connect',
+        from: { node: 'clip', socket: 'pose' },
+        to: { node: objectId, socket: 'pose' },
+      },
       {
         type: 'connect',
         from: { node: objectId, socket: 'out' },
@@ -88,7 +97,7 @@ describe('buildSkeletonObjectOps', () => {
 
   it('applied after a BVH import, the Object evaluates to the skeleton as its data', () => {
     let state = sceneState();
-    const imported = buildBvhImportOps({ text: BVH, ids: { skeleton: 'sk', clip: 'clip' } });
+    const imported = buildBvhClipOps({ text: BVH, ids: { skeleton: 'sk', clip: 'clip' } });
     for (const op of imported.ops) state = applyOp(state, op).next;
     const bones = (state.nodes.sk.params as { bones: BoneSpec[] }).bones;
     const { ops, objectId } = buildSkeletonObjectOps({
@@ -96,6 +105,7 @@ describe('buildSkeletonObjectOps', () => {
       sceneNodeId: 'scene',
       name: 'sk',
       clipId: 'clip',
+      nameFollowsClip: true,
     });
     for (const op of ops) state = applyOp(state, op).next;
 
@@ -138,21 +148,26 @@ describe('#1086 — the Object stands the rig at the size its data says', () => 
   it("the real soma-walk.bvh stands at scale 1 and draws at the file's own height", () => {
     let state = sceneState();
     const text = readFileSync(resolve(process.cwd(), 'public/fixtures/anim/soma-walk.bvh'), 'utf8');
-    const imported = buildBvhImportOps({ text, ids: { skeleton: 'sk', clip: 'clip' } });
+    const imported = buildBvhImportOps({ text, ids: { skeleton: 'sk', layer: 'layer' } });
     for (const op of imported.ops) state = applyOp(state, op).next;
-    const clip = evaluate(state, 'clip', {
+    // The dropped file's motion is its base pose layer (#1211): the wire the Object stands on.
+    const motion = evaluate(state, 'layer', {
       ctx: { time: { frame: 0, seconds: 0, normalized: 0 } },
-    }).value as AnimationClipValue;
-    expect(clip.kind).toBe('AnimationClip');
+      socket: 'out',
+    }).value as PosedSkeletonValue;
+    expect(motion.kind).toBe('PosedSkeleton');
 
     const { ops } = buildSkeletonObjectOps({
       skeletonId: 'sk',
       sceneNodeId: 'scene',
       name: 'soma-walk',
-      clipId: 'clip',
+      pose: { node: 'layer', socket: 'out' },
+      nameFollowsClip: false,
     });
     expect(ops[0]).toMatchObject({ params: { scale: [1, 1, 1] } });
-    const drawn = armatureBounds(boneTransforms(posedSourceBones(clip, 0))).height;
+    const drawn = armatureBounds(
+      boneTransforms(posedSourceBones(motion, 0), [...motion.skeleton.bones]),
+    ).height;
     expect(drawn).toBeGreaterThan(100);
     expect(drawn).toBeLessThan(250);
   });
@@ -161,8 +176,8 @@ describe('#1086 — the Object stands the rig at the size its data says', () => 
 describe('#1101 — the Object carries its motion name', () => {
   it('applied, the name is the one the outliner reads; a blank name adds no op', () => {
     let state = sceneState();
-    // Named as the import road names it: the clip after the file, and the Object after its clip.
-    const imported = buildBvhImportOps({
+    // The clip is named as the import names it; the Object's name follows its clip (#1122).
+    const imported = buildBvhClipOps({
       text: BVH,
       name: 'soma-walk',
       ids: { skeleton: 'sk', clip: 'clip' },
@@ -173,6 +188,7 @@ describe('#1101 — the Object carries its motion name', () => {
       sceneNodeId: 'scene',
       name: 'soma-walk',
       clipId: 'clip',
+      nameFollowsClip: true,
     });
     for (const op of named.ops) state = applyOp(state, op).next;
     expect(state.nodes[named.objectId].meta?.name).toBe('soma-walk');
@@ -182,6 +198,7 @@ describe('#1101 — the Object carries its motion name', () => {
       sceneNodeId: 'scene',
       name: '   ',
       clipId: 'clip',
+      nameFollowsClip: true,
     });
     expect(blank.ops.some((op) => op.type === 'setMeta')).toBe(false);
   });
@@ -190,7 +207,7 @@ describe('#1101 — the Object carries its motion name', () => {
 describe('standingObjectsOf (#1100)', () => {
   it('finds every Object whose data is the skeleton, id-sorted, and no other Object', () => {
     let state = sceneState();
-    const imported = buildBvhImportOps({ text: BVH, ids: { skeleton: 'sk', clip: 'clip' } });
+    const imported = buildBvhClipOps({ text: BVH, ids: { skeleton: 'sk', clip: 'clip' } });
     for (const op of imported.ops) state = applyOp(state, op).next;
     const ops: Op[] = [
       // Pointed at the skeleton by hand — found by its edge, not by the importer's id.
@@ -207,6 +224,7 @@ describe('standingObjectsOf (#1100)', () => {
         sceneNodeId: 'scene',
         name: 'sk',
         clipId: 'clip',
+        nameFollowsClip: true,
       }).ops,
     ];
     for (const op of ops) state = applyOp(state, op).next;

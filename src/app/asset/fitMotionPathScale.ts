@@ -76,7 +76,8 @@ function retargetRatios(
   for (const id of Object.keys(state.nodes).sort()) {
     const node = state.nodes[id];
     if (node.type !== 'RetargetClip') continue;
-    const source = edgeTarget(node, 'sourceClip');
+    // The retarget reads its source on the pose wire (`source`, #1225), a clip's `pose` here.
+    const source = edgeTarget(node, 'source');
     if (!source || !sinks.has(source)) continue;
     const { sourceBones, map, targetBones } = retargetOperandsFromNodes(state.nodes, node) ?? {};
     // A half-wired retarget drives nothing, so it has no size to fit.

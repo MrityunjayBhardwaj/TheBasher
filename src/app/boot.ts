@@ -56,6 +56,7 @@ import {
 import { pickRigging } from '../core/rigging';
 import type { RiggingCapability } from '../core/rigging';
 import { useAssetErrorStore } from './stores/assetErrorStore';
+import { convertLoadedProject, reportCharacterConversion } from './asset/convertCloneCharacters';
 
 /** The banner row a degraded text-to-3D reports under. Named for what a person
  *  asked for, because the banner renders "<ref> — <reason>". */
@@ -92,7 +93,7 @@ import {
   bundleAssetStoragePath,
   type SceneBundle,
 } from './sceneBundle';
-import { PROJECT_FORMAT_VERSION } from '../core/project/schema';
+import { PROJECT_FORMAT_VERSION, type Project } from '../core/project/schema';
 
 /**
  * The toast to raise for a resolved storage backend, or null when storage is
@@ -481,11 +482,7 @@ export function boot(): Promise<void> {
       }
       if (project) {
         persistLastProjectId(project.id);
-        useProjectStore.getState().setCurrent(project);
-        useDagStore.getState().hydrate({
-          nodes: project.state.nodes,
-          outputs: project.state.outputs,
-        });
+        await hydrateLoadedProject(storage, project);
         useRouteStore.getState().openEditor();
       }
       // The rest behind the open project, not in front of it (#1290).
@@ -846,17 +843,17 @@ export function boot(): Promise<void> {
       void import('../core/import/bvhImportChain').then((m) => {
         w.__basher_importBvh = (text: string, name?: string) => {
           const dag = useDagStore.getState();
-          const { ops, skeletonId, clipId } = m.buildBvhImportOps({ text, name });
+          const { ops, skeletonId, motionId } = m.buildBvhImportOps({ text, name });
           dag.dispatchAtomic(ops, 'user', `import bvh: ${name ?? 'imported'}`);
-          return { skeletonId, clipId };
+          return { skeletonId, motionId };
         };
       });
       void import('../core/import/fbxImportChain').then((m) => {
         w.__basher_importFbx = (data: ArrayBuffer | string, name?: string) => {
           const dag = useDagStore.getState();
-          const { ops, skeletonId, clipId } = m.buildFbxImportOps({ data, name });
+          const { ops, skeletonId, motionId } = m.buildFbxImportOps({ data, name });
           dag.dispatchAtomic(ops, 'user', `import fbx: ${name ?? 'imported'}`);
-          return { skeletonId, clipId };
+          return { skeletonId, motionId };
         };
       });
       // P7.5 — glTF TRS animation import seam (issue #81). Mirrors the
@@ -1363,15 +1360,30 @@ export async function switchProject(projectId: string): Promise<void> {
   await saveCurrent();
   const project = await loadProject(storage, projectId);
   persistLastProjectId(project.id);
+  await hydrateLoadedProject(storage, project);
+}
+
+/**
+ * #1216 — the ONE way a LOADED project reaches the DAG store: its clone-road characters converted
+ * first (`convertLoadedProject`), then set current and hydrated. Every loader goes through here —
+ * resume, open, duplicate, `.basher` bundle — so no road hydrates a saved clone character as it was.
+ * `loadConvertedProject.gate.test.ts` fails when a hydrate of a loaded project skips it.
+ *
+ * P6 W3 — hydrate triggers the dirty subscription, so setCurrent runs again after it (dirty=false,
+ * lastSavedAt=project.updatedAt). A converted project is then marked dirty on purpose: what is in
+ * the editor is not what is on disk until it is saved.
+ */
+async function hydrateLoadedProject(storage: StorageCapability, loaded: Project): Promise<Project> {
+  const { project, report } = await convertLoadedProject(loaded, storage);
   useProjectStore.getState().setCurrent(project);
   useDagStore.getState().hydrate({
     nodes: project.state.nodes,
     outputs: project.state.outputs,
   });
-  // P6 W3 — hydrate triggers the dirty subscription. Re-run setCurrent
-  // semantics (dirty=false, lastSavedAt=project.updatedAt) so the freshly
-  // loaded project doesn't appear unsaved.
   useProjectStore.getState().setCurrent(project);
+  if (report.converted.length > 0) useProjectStore.getState().markDirty();
+  reportCharacterConversion(report, useAssetErrorStore.getState().report);
+  return project;
 }
 
 /** Create a fresh default project under a new id and switch to it. */
@@ -1430,13 +1442,7 @@ export async function duplicateCurrentProject(newName?: string): Promise<string>
   const dup = await ioDuplicateProject(storage, current.id, newId, newName);
   // Switch to the duplicate.
   persistLastProjectId(dup.id);
-  useProjectStore.getState().setCurrent(dup);
-  useDagStore.getState().hydrate({
-    nodes: dup.state.nodes,
-    outputs: dup.state.outputs,
-  });
-  // P6 W3 — clear dirty caused by hydrate (see switchProject).
-  useProjectStore.getState().setCurrent(dup);
+  await hydrateLoadedProject(storage, dup);
   return newId;
 }
 
@@ -1559,13 +1565,7 @@ export async function importSceneBundle(bundle: SceneBundle): Promise<string> {
   await saveProject(storage, project);
   persistLastProjectId(project.id);
 
-  // 3. Hydrate (createNewProject pattern — the double setCurrent clears the
-  //    dirty flag the hydrate subscription raises).
-  useProjectStore.getState().setCurrent(project);
-  useDagStore.getState().hydrate({
-    nodes: project.state.nodes,
-    outputs: project.state.outputs,
-  });
-  useProjectStore.getState().setCurrent(project);
+  // 3. Hydrate, converting any clone-road character the bundle carries (#1216).
+  await hydrateLoadedProject(storage, project);
   return newId;
 }

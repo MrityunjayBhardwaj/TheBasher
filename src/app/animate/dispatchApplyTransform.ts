@@ -614,17 +614,30 @@ export async function dispatchApplyTransform(
   // animated guard above read the same call to decide what to ask (#1081 / #1098).
   const road = applyRoadOf(state, selectedId);
   if (road.kind === 'into-stored-mesh') {
-    return applyIntoStoredMesh(selectedId, road.dataId, road.mesh, mesh.transform, mask, state, {
-      dispatchAtomic: deps?.dispatchAtomic ?? dagStore.dispatchAtomic.bind(dagStore),
-      clearTransients:
-        deps?.clearTransients ?? ((id: string) => useTransientEditStore.getState().clearNode(id)),
-      setSelection: deps?.setSelection ?? ((id: string) => useSelectionStore.getState().select(id)),
-    });
+    return applyIntoStoredMesh(
+      selectedId,
+      road.dataId,
+      road.mesh,
+      mesh.transform,
+      mask,
+      state,
+      currentFrame,
+      {
+        dispatchAtomic: deps?.dispatchAtomic ?? dagStore.dispatchAtomic.bind(dagStore),
+        clearTransients:
+          deps?.clearTransients ?? ((id: string) => useTransientEditStore.getState().clearNode(id)),
+        setSelection:
+          deps?.setSelection ?? ((id: string) => useSelectionStore.getState().select(id)),
+      },
+    );
   }
 
   // #1080 — the geometry takes `kept⁻¹ · full`, and the Object keeps every band not applied.
   const split = splitAppliedPose(mesh.transform, mask);
   if (!split) return { ok: false, reason: zeroKeptScaleReason(name) };
+  // #1185 — asked before anything is written, so a refusal leaves nothing behind.
+  const children = childCompensation(state, selectedId, split.matrix, currentFrame);
+  if ('refusal' in children) return { ok: false, reason: children.refusal };
 
   // 2 — clone the SHARED registry geometry before baking (H45).
   const src = getForRead(mesh.geometry);
@@ -752,6 +765,16 @@ export async function dispatchApplyTransform(
       ...(isList && edge.index !== undefined ? { index: edge.index } : {}),
     });
   }
+  // #1185 — the rebuilt Object holds what the old one held, in the same order, and each child is
+  // re-solved so it stays where it was drawn. `removeNode` took the old `children` binding with it.
+  for (const childId of children.childIds) {
+    ops.push({
+      type: 'connect',
+      from: { node: childId, socket: 'out' },
+      to: { node: bakedId, socket: 'children' },
+    });
+  }
+  ops.push(...children.ops);
 
   const dispatchAtomic = deps?.dispatchAtomic ?? dagStore.dispatchAtomic.bind(dagStore);
   try {
@@ -826,6 +849,95 @@ function quaternionResetFor(
   const params = (state.nodes[nodeId]?.params ?? {}) as { quaternion?: unknown };
   if (params.quaternion === undefined) return [];
   return [{ type: 'setParam', nodeId, paramPath: 'quaternion', value: [...IDENTITY_QUATERNION] }];
+}
+
+/**
+ * #1185 — what Apply does to the children of the Object it applies to: nothing a director can see.
+ *
+ * Apply moves `applied` (the part of the Object's transform it takes out, `split.matrix`) into the
+ * mesh and leaves the Object at its kept transform. A child is drawn in the Object's space, so on
+ * its own it would move by exactly `applied`. Blender re-solves every child so it stays where it is
+ * (`ignore_parent_tx`, `object_transform.cc:536-556`, measured on 5.1.1: child deviation 1.2e-7,
+ * GROUND_TRUTH_BLENDER_TRANSFORM_APPLY Q6b). Here that is: each child's own T·R·S becomes
+ * `applied · T·R·S` — a Group child's pivot sits to the right of its T·R·S and is untouched.
+ *
+ * Blender absorbs what a T·R·S cannot hold into a parent-inverse matrix; nothing here has one. So
+ * when the product is not a T·R·S (a non-uniform scale taken out over a turned child shears it), or
+ * a child is animated (its keys would put it straight back), or a child holds no transform of its
+ * own, Apply refuses by name rather than move the child. The rotation lands through the one write
+ * route, so a quaternion-mode child stays in quaternion mode.
+ */
+function childCompensation(
+  state: DagState,
+  parentId: string,
+  applied: THREE.Matrix4,
+  currentFrame: number,
+): { readonly ops: Op[]; readonly childIds: readonly string[] } | { readonly refusal: string } {
+  const parent = state.nodes[parentId];
+  const childIds =
+    parent && hierarchySocketForKind(parent.type, parent) === 'children'
+      ? hierarchyChildIds(parent)
+      : [];
+  const parentName = nodeDisplayName(state.nodes, parentId);
+  const D2R = Math.PI / 180;
+  const ops: Op[] = [];
+  for (const childId of childIds) {
+    const child = state.nodes[childId];
+    if (!child) continue;
+    const childName = nodeDisplayName(state.nodes, childId);
+    const p = child.params as Partial<{ position: Vec3; rotation: Vec3; scale: Vec3 }> &
+      RotationModeFields;
+    if (!isVec3(p.position) || !isVec3(p.rotation) || !isVec3(p.scale)) {
+      return {
+        refusal: `Apply: "${parentName}" holds "${childName}", which has no transform of its own to keep it in place. Unparent it first.`,
+      };
+    }
+    if (isApplySourceAnimated(state, childId, currentFrame)) {
+      return {
+        refusal: `Apply: "${parentName}" holds "${childName}", which is animated, and its keys would move it back as soon as Apply kept it in place. Unparent it first.`,
+      };
+    }
+    const q =
+      p.rotationMode === 'quaternion' && p.quaternion
+        ? new THREE.Quaternion(...p.quaternion)
+        : new THREE.Quaternion().setFromEuler(
+            new THREE.Euler(p.rotation[0] * D2R, p.rotation[1] * D2R, p.rotation[2] * D2R, 'XYZ'),
+          );
+    const local = new THREE.Matrix4().compose(
+      new THREE.Vector3(...p.position),
+      q,
+      new THREE.Vector3(...p.scale),
+    );
+    const next = applied.clone().multiply(local);
+    const pos = new THREE.Vector3();
+    const rot = new THREE.Quaternion();
+    const scl = new THREE.Vector3();
+    next.decompose(pos, rot, scl);
+    if (!sameMatrix(new THREE.Matrix4().compose(pos, rot, scl), next)) {
+      return {
+        refusal: `Apply: "${parentName}" holds "${childName}", and taking this transform out of "${parentName}" would shear it, which a position, rotation and scale cannot hold. Unparent it first, or apply a uniform scale.`,
+      };
+    }
+    // Through the one quaternion→Euler door (#876), then the one rotation write route.
+    const e = quaternionToEulerVec3(rot);
+    const write = rotationWriteOf(p, [e[0] / D2R, e[1] / D2R, e[2] / D2R]);
+    ops.push(
+      { type: 'setParam', nodeId: childId, paramPath: 'position', value: pos.toArray() },
+      { type: 'setParam', nodeId: childId, paramPath: write.paramPath, value: write.value },
+      { type: 'setParam', nodeId: childId, paramPath: 'scale', value: scl.toArray() },
+    );
+  }
+  return { ops, childIds };
+}
+
+/** Two matrices equal to within float noise, relative to their size. */
+function sameMatrix(a: THREE.Matrix4, b: THREE.Matrix4): boolean {
+  const size = Math.max(1, ...b.elements.map(Math.abs));
+  return a.elements.every((v, i) => Math.abs(v - b.elements[i]) <= 1e-6 * size);
+}
+
+function isVec3(v: unknown): v is Vec3 {
+  return Array.isArray(v) && v.length === 3 && v.every((n) => typeof n === 'number');
 }
 
 /** T·R·S from a resolved transform (degrees, Euler XYZ), the order the renderer draws with. */
@@ -909,6 +1021,10 @@ function transformMeshData(data: MeshGeometryData, matrix: THREE.Matrix4): MeshG
     // A pose moves points and turns corners; it leaves faces where they are, in the same order,
     // so every face layer (a material index above all) comes through as it was (#1052).
     faceLayers: data.faceLayers.map((layer) => ({ ...layer, data: new Int32Array(layer.data) })),
+    // #1196 — nor does it rebind a point: a point keeps its joints and weights wherever it moves,
+    // as Blender's Apply keeps a mesh's vertex groups.
+    pointLayers: data.pointLayers,
+    vertexGroups: data.vertexGroups,
   };
 }
 
@@ -954,6 +1070,7 @@ function applyIntoStoredMesh(
   transform: MeshTransform,
   mask: ApplyMask,
   state: DagState,
+  currentFrame: number,
   io: Pick<ApplyDeps, 'dispatchAtomic' | 'clearTransients' | 'setSelection'>,
 ): DispatchResult {
   // Walk UP from the mesh data to this Object: every step must have exactly one consumer. A second
@@ -976,6 +1093,10 @@ function applyIntoStoredMesh(
   const applied = APPLIED_BANDS[mask];
   const split = splitAppliedPose(transform, mask);
   if (!split) return { ok: false, reason: zeroKeptScaleReason(name) };
+  // #1185 — the Object stays in place on this road, so its children's edges do; only their poses
+  // are re-solved.
+  const children = childCompensation(state, selectedId, split.matrix, currentFrame);
+  if ('refusal' in children) return { ok: false, reason: children.refusal };
   const next = transformMeshData(unpackMeshData(packed), split.matrix);
 
   const ops: Op[] = [
@@ -989,6 +1110,7 @@ function applyIntoStoredMesh(
       }),
     ),
     ...quaternionResetFor(state, selectedId, applied),
+    ...children.ops,
   ];
   try {
     io.dispatchAtomic(ops, 'user', `Apply ${mask} → mesh data`);

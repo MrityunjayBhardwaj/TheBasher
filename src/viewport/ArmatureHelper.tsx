@@ -8,13 +8,11 @@
 // `editorChrome` so the image render's hide-pass excludes it (V37), hidden in
 // `rendered` shading at the mount site. V8 holds — no dispatch, no DAG write.
 //
-// WHY IT READS LIVE `Bone` OBJECTS RATHER THAN THE DAG VALUE:
-// `GltfSkeleton.evaluate` returns the bind pose captured at import
-// (GltfSkeleton.ts:48-53 — no time argument, static). The ANIMATED pose exists
-// only as three.js `Bone`s, written per frame by the TRS useFrame in
-// SceneFromDAG. Drawing the DAG value would show a rig frozen in bind pose
-// while the character walks — which looks exactly like "the clip is not bound",
-// the very confusion #970 is about.
+// Every rig it draws is an Object whose data is a Skeleton (#1056): a native character's
+// armature and a motion's own rig alike, posed from the graph at the playhead. It once also
+// scanned the scene for live three.js `Bone`s — the clone road's characters — and that scan
+// retired with the clone road's character half (#1053): a native character's bones are never in
+// the scene.
 //
 // The geometry and the roll handling live in boneShape.ts, which is pure and
 // unit-tested; this file is placement and plumbing.
@@ -23,30 +21,27 @@
 //      ref/GROUND_TRUTH_BLENDER_ARMATURE_DISPLAY.md.
 
 import { useCallback, useMemo, useRef } from 'react';
-import { useFrame, useThree } from '@react-three/fiber';
+import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import {
   type BoneFrame,
-  boneTransforms,
+  poseTransforms,
   degenerateBasisCount,
   degenerateBasisNames,
   octahedralIndices,
   octahedralPositions,
-  placeBones,
   resetDegenerateBasisCount,
 } from './boneShape';
-import { armatureBounds, posedSourceBones, referencePlacement } from './referenceRig';
+import { armatureBounds, referencePlacement } from './referenceRig';
 import { skeletonObjectFrames } from './skeletonObjectPose';
 import { useTimeStore } from '../app/stores/timeStore';
 import { useViewportStore } from '../app/stores/viewportStore';
-import { useDagStore } from '../core/dag/store';
 import { useSelectionStore } from '../app/stores/selectionStore';
 import { useBoneSelectionStore } from '../app/stores/boneSelectionStore';
 import { getActiveBone } from '../app/boneSelection';
 import { selectNode, type SelectClickLike } from './selectNodeOnClick';
-import { assetIdsFor, bonesPickable, ownerNodeId, pickBone } from './armaturePick';
-import type { PickNode } from './armaturePick';
-import type { AnimationClipValue } from '../nodes/types';
+import { pickBone } from './armaturePick';
+import type { PosedSkeletonValue } from '../nodes/types';
 import type { SkeletonObject } from '../app/skeletonObjects';
 
 /** Blender's default unselected bone wire. Chrome, so it reads as an overlay. */
@@ -69,88 +64,33 @@ const SELECTED_COLOR = new THREE.Color(SELECTED_BONE_COLOR);
  *  the entire value of the comparison depends on knowing which is which. */
 const SOURCE_BONE_COLOR = '#ffb454';
 
-/** How much of a live armature's bone names a retarget must account for before
- *  the two are treated as the same character. Well clear of both outcomes: a
- *  retarget's own target rig shares nearly all its names, and an unrelated
- *  armature shares essentially none. */
-const NAME_MATCH_THRESHOLD = 0.4;
-
 /** Hard ceiling on instances, so a pathological rig cannot allocate unboundedly.
  *  Rigs here run to ~78 bones (BVH) and a few hundred at the very most. */
 const MAX_BONES = 4096;
-
-/** How often the scene is re-traversed for armatures, in frames. */
-const RESCAN_INTERVAL = 15;
 
 /** A source rig to draw beside the character it drives (#977). */
 export interface ReferenceRigInput {
   /** The retarget node's id — stable identity across frames. */
   readonly id: string;
-  /** The SOURCE clip: carries its own skeleton, keyframes, duration and loop. */
-  readonly clip: AnimationClipValue;
-  /** The bone names of the rig this retarget DRIVES, used to find the live
-   *  armature it belongs beside. */
-  readonly targetBoneNames: readonly string[];
-}
-
-/** One armature found in the scene: its root bone, and the bones under it. */
-interface ArmatureScan {
-  readonly root: THREE.Object3D;
-  readonly bones: THREE.Object3D[];
-  /** Parent index into `bones`, or -1 when the parent is not itself a bone. */
-  readonly parents: number[];
-}
-
-function isBone(o: THREE.Object3D): boolean {
-  return (o as THREE.Bone).isBone === true;
+  /** The SOURCE pose the retarget reads (#1250): a clip's, a base layer's, any pose wire. It
+   *  carries its own skeleton and samples itself at a time. */
+  readonly pose: PosedSkeletonValue;
+  /** The Skeleton node this retarget drives. A native character's armature Object stands exactly
+   *  this skeleton, so it is found by identity (#1273); a motion's own rig Object stands the
+   *  SOURCE skeleton, never a target, so it can never be taken for the character. */
+  readonly targetSkeletonId: string;
 }
 
 /**
- * A bone name reduced to what BOTH sides agree on.
+ * A bone name reduced to what every spelling of it agrees on, for the selected-bone highlight.
  *
- * 🔴 MEASURED, not defensive. The same glTF bone reaches the two sides under two
- * different names: the DAG projection reports `mixamorig_Hips` while the live
- * three.js `Bone` is `mixamorigHips`. Both are sanitisations of the file's
- * `mixamorig:Hips` — three strips the colon because `[].:/` are reserved in
- * PropertyBinding paths, and the projection replaces it with an underscore.
- * Compared raw, a rig and its own retarget target overlap by ZERO names, and the
- * reference rig silently never draws.
- *
- * Stripping every non-alphanumeric makes the match independent of which
- * sanitisation a given path applied.
+ * Measured when the clone road drew its own live bones: the same glTF bone reached two readers
+ * as `mixamorig_Hips` and `mixamorigHips` (three strips `[].:/`, the projection writes an
+ * underscore), and compared raw they overlapped by ZERO names. Only skeleton Objects are drawn
+ * now; the reduction stays so a bone named from any surface still lights.
  */
 function normalizeBoneName(name: string): string {
   return name.replace(/[^a-z0-9]/gi, '').toLowerCase();
-}
-
-/**
- * Collect every armature in the scene: a root is a bone whose parent is not a
- * bone, and its armature is that bone's bone-only subtree, in DFS order so
- * parents always precede children.
- */
-export function scanArmatures(scene: THREE.Object3D): ArmatureScan[] {
-  const out: ArmatureScan[] = [];
-  scene.traverse((o) => {
-    if (!isBone(o) || (o.parent != null && isBone(o.parent))) return;
-    const bones: THREE.Object3D[] = [];
-    const parents: number[] = [];
-    const walk = (b: THREE.Object3D, parentIdx: number) => {
-      if (bones.length >= MAX_BONES) return;
-      const i = bones.length;
-      bones.push(b);
-      parents.push(parentIdx);
-      for (const c of b.children) if (isBone(c)) walk(c, i);
-    };
-    walk(o, -1);
-    if (bones.length > 0) out.push({ root: o, bones, parents });
-  });
-  return out;
-}
-
-/** A cheap signature that changes when the SET of bones changes (asset reload,
- *  a second character, a rig swap) but not when they merely move. */
-function scanSignature(scans: ArmatureScan[]): string {
-  return scans.map((s) => `${s.root.uuid}:${s.bones.length}`).join('|');
 }
 
 /**
@@ -170,19 +110,13 @@ export function ArmatureHelper({
    *  retargeted, or when the diagnostic is off. */
   readonly sourceRigs?: readonly ReferenceRigInput[];
   readonly showSourceRigs?: boolean;
-  /** #1056 — Objects whose data is a Skeleton. They have no live `Bone`s, so the
-   *  scene scan cannot find them; their bones are posed here from the DAG. */
+  /** #1056 — Objects whose data is a Skeleton: every rig this draws, posed from the DAG. */
   readonly skeletonObjects?: readonly SkeletonObject[];
 } = {}) {
-  const scene = useThree((s) => s.scene);
   const boneDisplay = useViewportStore((s) => s.boneDisplay);
   const bonesInFront = useViewportStore((s) => s.bonesInFront);
   const meshRef = useRef<THREE.InstancedMesh>(null);
   const refMeshRef = useRef<THREE.InstancedMesh>(null);
-  const scans = useRef<ArmatureScan[]>([]);
-  const signature = useRef('');
-  // Starts at the interval so the very first frame scans.
-  const sinceScan = useRef(RESCAN_INTERVAL);
   const parentInverse = useRef(new THREE.Matrix4());
   // What the LAST fill drew, so a click can be answered by the same flattening
   // that produced the instance it hit. Read in an event handler, never in
@@ -191,19 +125,9 @@ export function ArmatureHelper({
   const picks = useRef<{
     offsets: number[];
     frames: BoneFrame[];
-    /** Per armature: the DAG node a click on it selects, or null when nothing owns it. Held
-     *  per armature rather than walked from a scene root at click time, because a skeleton
-     *  Object (#1056) HAS no scene root — its owner is known when it is collected. */
-    owners: (string | null)[];
-    /** How many leading armatures are LIVE (found by the scene scan). Everything after
-     *  them is a skeleton Object. */
-    liveCount: number;
-    /** Per armature: every node id that names a part of the same asset. Built on
-     *  the rescan cadence, not per raycast — R3F raycasts the scene on pointer
-     *  MOVE as well as on click, and a subtree walk there would cost a traverse
-     *  per mouse motion. */
-    assetIds: Set<string>[];
-  }>({ offsets: [], frames: [], owners: [], liveCount: 0, assetIds: [] });
+    /** Per armature: the skeleton Object a click on it selects. */
+    owners: string[];
+  }>({ offsets: [], frames: [], owners: [] });
   // Which instance is currently painted as selected, so the colour buffer is
   // rewritten when it CHANGES rather than on every frame of a 4096-instance
   // mesh.
@@ -215,9 +139,8 @@ export function ArmatureHelper({
   const lineRef = useRef<THREE.LineSegments>(null);
   /** What was last WRITTEN to the three materials, not read back from one. */
   const depthApplied = useRef<boolean | null>(null);
-  const assetIdsCache = useRef<Set<string>[]>([]);
-  /** The skeleton-Object set last drawn, for the same stale-bone-selection reason as
-   *  `signature` — those rigs change with the graph, not with the scene scan. */
+  /** The skeleton-Object set last drawn: a bone selection made against an older set may name a
+   *  bone that is no longer there, so it is cleared when the set changes. */
   const standaloneSignature = useRef('');
 
   const geometry = useMemo(() => {
@@ -293,45 +216,23 @@ export function ArmatureHelper({
   );
 
   /**
-   * Is this scene-object name a live DAG node? The walk up from a bone stops at
-   * the first ancestor for which this is true — `SceneFromDAG` names each
-   * producer's wrapping group with its node id, and an imported glTF's own group
-   * names must not be mistaken for one.
-   */
-  const isLiveNodeId = useCallback(
-    (name: string) => useDagStore.getState().state.nodes[name] !== undefined,
-    [],
-  );
-
-  /**
-   * Bones pick in FRONT of the skin, and only for the character being worked on.
+   * Bones pick in FRONT of what they are drawn over. The helper draws with `depthTest: false`
+   * because a bone inside a mesh is invisible and the helper exists to be looked at (#972). A
+   * thing drawn in front that picks from behind is a pointer that disagrees with the picture, so
+   * the distance is scaled down, which orders bones ahead of any mesh while keeping bones in their
+   * own depth order among themselves.
    *
-   * Two halves, and both are forced by what is already true:
-   *
-   * 1. THE BIAS. The helper draws with `depthTest: false` because a bone inside
-   *    a mesh is invisible and the helper exists to be looked at (#972). A thing
-   *    drawn in front that picks from behind is a pointer that disagrees with
-   *    the picture — the click lands on the skin the director cannot see through.
-   *    So the distance is scaled down, which orders bones ahead of the skinned
-   *    mesh while keeping bones in their own depth order among themselves.
-   *
-   * 2. THE GATE. Without it that bias would take EVERY click over a bone, and
-   *    most of a torso is over some bone — selecting the glTF parts of a rigged
-   *    character would quietly stop working. Blender gates the same thing with a
-   *    mode: a click reaches a bone only once its armature is the active object.
-   *    Ours is the selection — the character has to be the thing being worked on
-   *    first. Measured before it was written: six clicks on the character each
-   *    selected a `GltfChild` and the helper's handler never fired at all.
+   * Every rig here is a skeleton Object, which picks without a selection gate (#1056): a first
+   * click selects the Object, as a click on an armature does in object mode, and its bones pick
+   * once it is the thing being worked on. (The clone road's live bones picked only once their
+   * character was selected, so they would not take every click over a torso; that gate retired
+   * with them, #1053.)
    */
   const raycastBones = useCallback(
     (raycaster: THREE.Raycaster, intersects: THREE.Intersection[]) => {
       const mesh = meshRef.current;
       if (!mesh || !mesh.visible || mesh.count === 0) return;
-      const selectedId = useSelectionStore.getState().primaryNodeId;
-      const { offsets, frames, liveCount, assetIds } = picks.current;
-      // Nothing selected and no skeleton Object drawn ⇒ no bone can pick, so skip the raycast
-      // (R3F calls this on pointer MOVE too).
-      if (!selectedId && liveCount === offsets.length) return;
+      const { offsets, frames } = picks.current;
 
       const hits: THREE.Intersection[] = [];
       THREE.InstancedMesh.prototype.raycast.call(mesh, raycaster, hits);
@@ -342,12 +243,6 @@ export function ArmatureHelper({
         if (id === undefined) continue;
         const bone = pickBone(id, offsets, frames);
         if (!bone) continue;
-        // #1056 — the gate above protects a SKIN from bones drawn in front of it. A skeleton
-        // Object has no skin: its bones are its whole body, so they pick without it — the way
-        // clicking a bare armature in Blender selects it.
-        const standalone = bone.armature >= liveCount;
-        if (!standalone && !bonesPickable(assetIds[bone.armature] ?? new Set(), selectedId))
-          continue;
         intersects.push({ ...hit, distance: hit.distance * PICK_DEPTH_BIAS });
       }
     },
@@ -357,7 +252,7 @@ export function ArmatureHelper({
   const onBoneClick = useCallback((e: SelectClickLike & { instanceId?: number | null }) => {
     const id = e.instanceId;
     if (id === undefined || id === null) return;
-    const { offsets, frames, owners, liveCount } = picks.current;
+    const { offsets, frames, owners } = picks.current;
     const hit = pickBone(id, offsets, frames);
     if (!hit) return;
     const nodeId = owners[hit.armature] ?? null;
@@ -367,9 +262,8 @@ export function ArmatureHelper({
     // every other picker in the viewport does.
     if (!nodeId) return;
     // #1056 — a first click on a skeleton Object's bones selects the OBJECT, as a click on an
-    // armature does in object mode. Its bones pick once it is the thing being worked on,
-    // which is the same order a character's already follow.
-    if (hit.armature >= liveCount && useSelectionStore.getState().primaryNodeId !== nodeId) {
+    // armature does in object mode. Its bones pick once it is the thing being worked on.
+    if (useSelectionStore.getState().primaryNodeId !== nodeId) {
       selectNode(nodeId, e);
       return;
     }
@@ -383,49 +277,11 @@ export function ArmatureHelper({
     const mesh = meshRef.current;
     if (!mesh) return;
 
-    // The whole-scene traverse is the expensive part here, so it runs on a
-    // fixed cadence rather than every frame; in between, the topology is reused
-    // and only the ~78 bone matrices are refreshed. RESCAN_INTERVAL frames is
-    // therefore also the longest a rig that was just added or removed can stay
-    // wrong on screen (~0.25 s at 60fps), which is the trade being made.
-    if (++sinceScan.current >= RESCAN_INTERVAL) {
-      sinceScan.current = 0;
-      const fresh = scanArmatures(scene);
-      const sig = scanSignature(fresh);
-      if (sig !== signature.current) {
-        // The set of bones changed — a rig was added, removed, reloaded or
-        // swapped. A bone selection made against the old set may now name a
-        // bone that is not there, and the node id it hangs off can survive the
-        // swap, so the selection cannot detect this for itself. Cleared HERE,
-        // at the one place that knows, rather than guessed at by the reader.
-        if (signature.current !== '') useBoneSelectionStore.getState().clear();
-        signature.current = sig;
-        scans.current = fresh;
-        assetIdsCache.current = fresh.map((s) =>
-          assetIdsFor(s.root as unknown as PickNode, isLiveNodeId),
-        );
-      }
-    }
-    const current = scans.current;
-
-    // The TRS useFrame that poses the bones and this one both run at the
-    // default priority, so their order is mount order, not something to rely
-    // on. Forcing the update here makes the read correct either way.
-    for (const s of current) s.root.updateWorldMatrix(true, true);
-
     // Kept PER ARMATURE, not flattened away: a reference rig has to be sized
     // and placed against the bounds of the one character it belongs beside.
     resetDegenerateBasisCount();
-    const perArmature = current.map((s) =>
-      placeBones(
-        s.bones.map((b, i) => ({ name: b.name, parent: s.parents[i], matrix: b.matrixWorld })),
-      ),
-    );
-    // #1056 — skeleton Objects: rigs the DAG owns with no live `Bone`s behind them, so the scan
-    // above cannot see them. Posed from their one clip at the playhead (the rest pose when
-    // there is none, or several), carried into the world by the Object, and appended AFTER
-    // the live armatures, so the live-only reader below — the source-rig match — keeps
-    // reading `perArmature` and cannot mistake one for a character.
+    // #1056 — skeleton Objects: rigs the DAG owns, posed from their one clip at the playhead (the
+    // rest pose when there is none, or several) and carried into the world by the Object.
     const standaloneInputs = skeletonObjects ?? [];
     const standaloneSig = standaloneInputs.map((o) => `${o.id}:${o.bones.length}`).join('|');
     if (standaloneSig !== standaloneSignature.current) {
@@ -436,11 +292,11 @@ export function ArmatureHelper({
     // #1179 — posed and placed by the SAME function Frame Selected measures, so the camera
     // fits exactly the bones drawn here.
     const standalone = standaloneInputs.map((o) => skeletonObjectFrames(o, playhead));
-    const armatures = [...perArmature, ...standalone];
+    const armatures = standalone;
     const frames = armatures.flat();
 
     // The offsets ARE the flattening, recorded rather than re-derived: a click
-    // handler that recomputed them from `perArmature` would be a second copy of
+    // handler that recomputed them from `armatures` would be a second copy of
     // this loop's arithmetic, free to disagree with it by a frame.
     const offsets: number[] = [];
     let running = 0;
@@ -448,20 +304,8 @@ export function ArmatureHelper({
       offsets.push(running);
       running += armature.length;
     }
-    const owners = [
-      ...current.map((s) => ownerNodeId(s.root, isLiveNodeId)),
-      ...standaloneInputs.map((o) => o.id),
-    ];
-    picks.current = {
-      offsets,
-      frames,
-      owners,
-      liveCount: current.length,
-      assetIds: [
-        ...assetIdsCache.current,
-        ...standaloneInputs.map((o) => new Set([o.id, o.skeletonId])),
-      ],
-    };
+    const owners = standaloneInputs.map((o) => o.id);
+    picks.current = { offsets, frames, owners };
 
     // Instance matrices are in the mesh's LOCAL space; the bone matrices are
     // world. Without this the whole armature rides any ancestor transform twice.
@@ -594,29 +438,17 @@ export function ArmatureHelper({
     const refMatrices: number[][] = [];
     if (refMesh) {
       let refCount = 0;
-      if (showSourceRigs && sourceRigs && sourceRigs.length > 0 && perArmature.length > 0) {
+      if (showSourceRigs && sourceRigs && sourceRigs.length > 0 && armatures.length > 0) {
         const seconds = useTimeStore.getState().seconds;
         for (const rig of sourceRigs) {
-          // Which live armature is this retarget's character? Matched on the
-          // TARGET rig's bone names rather than on index or id order, so two
-          // characters in one scene cannot swap reference rigs (V22).
-          const wanted = new Set(rig.targetBoneNames.map(normalizeBoneName));
-          if (wanted.size === 0) continue;
-          let best: BoneFrame[] | null = null;
-          let bestScore = 0;
-          for (const armature of perArmature) {
-            if (armature.length === 0) continue;
-            let hits = 0;
-            for (const f of armature) if (wanted.has(normalizeBoneName(f.name))) hits++;
-            const score = hits / armature.length;
-            if (score > bestScore) {
-              bestScore = score;
-              best = armature;
-            }
-          }
-          if (!best || bestScore < NAME_MATCH_THRESHOLD) continue;
+          // Which armature is this retarget's character? The skeleton Object standing the very
+          // skeleton the retarget drives (#1273) — identity, not a guess. A motion's own rig Object
+          // stands the SOURCE skeleton, never a target, so it is never taken for the character.
+          const standing = standaloneInputs.findIndex((o) => o.skeletonId === rig.targetSkeletonId);
+          if (standing < 0) continue;
+          const best = standalone[standing];
 
-          const posed = boneTransforms(posedSourceBones(rig.clip, seconds));
+          const posed = poseTransforms(rig.pose.skeleton.bones, rig.pose.sample(seconds));
           if (posed.length === 0) continue;
           const srcB = armatureBounds(posed);
           const tgtB = armatureBounds(best);
@@ -624,9 +456,10 @@ export function ArmatureHelper({
           for (const f of posed) {
             if (refCount >= MAX_BONES) break;
             // Skip the rig's transport node for the same reason armatureBounds
-            // excludes it: its octahedron runs from the world origin to a pelvis
-            // that walks away, so it is a connector rather than anatomy and it
-            // dominates the very comparison this rig is drawn for.
+            // excludes it: its octahedron runs from the world origin toward the
+            // pelvis, a connector rather than anatomy, and it dominates the very
+            // comparison this rig is drawn for. (Before #1206 it also stretched
+            // to the walking pelvis; it now keeps its rest length.)
             if (f.parent < 0) continue;
             local.multiplyMatrices(parentInverse.current, place).multiply(f.matrix);
             refMesh.setMatrixAt(refCount++, local);
@@ -680,7 +513,7 @@ export function ArmatureHelper({
           id: o.id,
           bones: standalone[i].length,
           clipCount: o.clipCount,
-          posed: o.clip !== null,
+          posed: o.pose !== null,
         })),
         bones: count,
         names: frames.slice(0, count).map((f) => f.name),

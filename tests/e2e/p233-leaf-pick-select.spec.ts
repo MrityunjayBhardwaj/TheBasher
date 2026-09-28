@@ -1,17 +1,17 @@
 // #233 — nearest-SURFACE leaf-pick selection (V75, replaces the UX#7 broad-first
-// drill). A SINGLE click on a glTF model selects the LEAF (the GltfChild whose
-// visible surface is under the cursor), NOT the whole import. Alt+click selects
+// drill). A SINGLE click on an imported model selects the LEAF (the imported Object
+// whose visible surface is under the cursor), NOT the whole import. Alt+click selects
 // UP one level toward the import root (the Group / asset); at the root it is a
 // no-op. There is no double-click drill-in and no Esc pop-out anymore — Esc just
 // clears the selection.
 //
 // This is the BOUNDARY-PAIR gate: it drives a REAL R3F raycast click (the
 // make-or-break — proving the hit mesh reaches the wrapper handler via
-// e.intersections[0] and maps through the asset's nodeNameMap / stamped ids to
-// the GltfChild). The chain math is unit-tested separately (gltfDrillChain.test.ts).
+// e.intersections[0] and maps, through the node id stamped on the object that drew
+// it, to that Object). The chain math is unit-tested separately (pickChain.test.ts).
 //
-// Fixture: the flat multifile glTF (one textured child "Box") → asset + ONE
-// GltfChild, so the chain is [root, child] (single level); that's enough to
+// Fixture: the flat multifile glTF (one textured child "Box") → a Group over ONE
+// Object, so the chain is [root, child] (single level); that's enough to
 // prove single-click→leaf and Alt+click→up end-to-end. The starter box is moved
 // aside so the imported model is the only thing under the click point.
 
@@ -81,14 +81,10 @@ const nodeTypeOf = (page: Page, id: string | null): Promise<string | null> =>
     );
   }, id);
 
-// ⚠️ THE TITLE KEEPS THE RETIRED KIND'S NAME ON PURPOSE (#389). `accepted-failures.txt`
-// keys on `<spec file> › <describe titles…> › <test title>`, and this row is one of the ten
-// baselined linux entries. Renaming it to match the split's vocabulary would stop the
-// baseline matching, so the accepted failure would report as a NOVEL one and red the merge
-// gate — a rename with no behavioural content taking a branch down. The body below speaks
-// the current vocabulary; only the key is frozen. Retire the name here when the entry is
-// pruned from the baseline, in the same change, or not at all.
-test('#233 single click selects the GltfChild leaf; Alt+click selects up; Esc clears', async ({
+// #1075 — the title named the retired GltfChild kind while this row sat in
+// `accepted-failures.txt` (which keys on the title). The row left the baseline in the same
+// change that made the spec pass, so the name was retired with it.
+test('#233 single click selects the leaf under the cursor; Alt+click selects up; Esc clears', async ({
   page,
 }) => {
   await openStarter(page);
@@ -165,9 +161,8 @@ test('#233 single click selects the GltfChild leaf; Alt+click selects up; Esc cl
   // #1071 — the mesh is found through the import root on either road (a native mesh has no
   // name to find it by), and the road is asserted so a silent fall-back is visible.
   //
-  // ⚠️ RED UNTIL #1075: on a native import a single click selects the import Group, because the
-  // leaf chain (`buildGltfDrillChain`) only knows the glTF clone's stamps and name map. The
-  // spec asserts the promise, not today's behaviour.
+  // #1075 — this was red on a native import until every nested drawn node carried its own
+  // id (`RenderChild`); the leaf chain had known only the glTF clone's stamps and name map.
   await expect
     .poll(async () => (await importedMeshes(page)).map((m) => m.road), { timeout: 20_000 })
     .toEqual(['native']);

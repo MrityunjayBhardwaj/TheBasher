@@ -25,25 +25,24 @@
 // bones, one edited and one not, and the clip is changed underneath BOTH.
 //
 // The three ROAD tests below are unchanged and still describe the op layer: they
-// establish that a clip really can change under a live band. What changed is the
-// CONSEQUENCE, which is what the second describe block measures.
+// establish that a clip really can change under a live band.
+//
+// 🔶 THE CONSEQUENCE BLOCK RETIRED WITH THE CLONE ROAD'S CHARACTER HALF (#1053). It measured the
+// clone band, which drew a clip bound to a `GltfSkeleton`; nothing draws that now. On a native
+// character the same two halves are pinned where they now live —
+// `src/app/asset/poseNativeBone.test.ts` ("rebinding a motion keeps the pose"): the bone nobody
+// posed plays the new motion, and the posed one keeps its pose, both read off the deformed skin.
 //
 // REF: issues #877, #887, #888, #889; src/app/resolveGltfChildTransform.ts
 //      (the band ladder — presence wins, never value-equality);
-//      src/app/animate/ensureChannelForBone.ts (the mint, and its seed);
+//      src/app/animate/ensureChannelForBone.ts (the mint);
 //      src/agent/tools/dagExec.ts (the universal mutation surface, an agent
 //      tool, which is what makes ROAD B reachable in this product).
 
 import { describe, it, expect, beforeEach } from 'vitest';
 import { __resetRegistryForTests, applyOp, emptyDagState, type DagState } from '../../core/dag';
 import { registerAllNodes } from '../../nodes/registerAll';
-import {
-  gltfChildDagId,
-  gltfSkeletonDagId,
-  gltfChannelDagId,
-} from '../../core/import/gltfImportChain';
-import { ensureChannelForBone } from './ensureChannelForBone';
-import { bakedChannelSamplersForAsset, sampleBakedChannel } from '../bakedGltfChannels';
+import { gltfChildDagId, gltfSkeletonDagId } from '../../core/import/gltfImportChain';
 import type { GltfSkinMetadata } from '../../nodes/types';
 import { importedChildOps } from '../../test-utils/importedChildFixture';
 
@@ -133,18 +132,6 @@ function fresh(endDeg = 90): DagState {
   return build(endDeg);
 }
 
-/** The rendered Y rotation of one bone at `t`, through the band the renderer samples.
- *
- * 🔴 SAMPLED AT THE MIDPOINT, NEVER AT `t = duration`. The two roads disagree
- * exactly there and nowhere else: a bound clip LOOPS by default, so t=2 on a
- * 2s clip wraps to t=0, while a minted `KeyframeChannelVec3` clamps and holds
- * its last key. Comparing a follower against a holder at the boundary measures
- * that wrap rather than the precedence rule this file is about. */
-function rotYAt(state: DagState, childName: string, t: number): number | undefined {
-  const samplers = bakedChannelSamplersForAsset(state.nodes, NODE_NAME_MAP, ASSET);
-  return sampleBakedChannel(samplers[childName], t)?.rotation?.[1];
-}
-
 /** ROAD B, the open one: rewrite the clip's keyframes under the live band. */
 function changeClipTo(state: DagState, endDeg: number): DagState {
   return applyOp(state, {
@@ -188,71 +175,5 @@ describe('#887 — the three roads that could change a clip under a live band', 
   it('ROAD C is OPEN — the clip can be removed while any authored channel survives', () => {
     const s = applyOp(fresh(), { type: 'removeNode', nodeId: CLIP } as never).next;
     expect(CLIP in s.nodes).toBe(false);
-  });
-});
-
-describe('#889 — what the band renders after the clip changes underneath it', () => {
-  it('binds with ZERO channels, and both bones already follow the clip', () => {
-    const s = fresh(90);
-    expect(Object.values(s.nodes).filter((n) => n.type === 'KeyframeChannelVec3')).toHaveLength(0);
-    // The clip alone drives both bones — this is what makes the eager copy
-    // unnecessary rather than merely wasteful.
-    expect(rotYAt(s, HELD, 1)).toBeCloseTo(45, 6);
-    expect(rotYAt(s, FOLLOWS, 1)).toBeCloseTo(45, 6);
-  });
-
-  it('CLEARED returns to the clip — and emptying in place does not (#909)', () => {
-    let s = fresh(90);
-    const boneId = gltfChildDagId(ASSET, HELD);
-    const channelId = gltfChannelDagId(ASSET, HELD, 'rotation');
-    const minted = ensureChannelForBone(s, boneId, 'rotation')!;
-    for (const op of minted.ops) s = applyOp(s, op).next;
-    s = changeClipTo(s, -140);
-    // Holding, as the row above proves.
-    expect(rotYAt(s, HELD, 1)).toBeCloseTo(45, 6);
-
-    // THE TWO CANDIDATE MEANINGS OF "CLEAR", SIDE BY SIDE. They differ by one
-    // node, and the difference is the whole issue: the band picks on PRESENCE,
-    // so a channel that is present with no keys is a claim of zero rather than
-    // a silence.
-    const emptied = applyOp(s, {
-      type: 'setParam',
-      nodeId: channelId,
-      paramPath: 'keyframes',
-      value: [],
-    } as never).next;
-    const removed = applyOp(s, { type: 'removeNode', nodeId: channelId } as never).next;
-
-    // Emptied: the bone collapses to the origin, on a rig that is still walking.
-    expect(rotYAt(emptied, HELD, 1)).toBeCloseTo(0, 6);
-    // Removed: the bone rejoins the clip, at the clip's CURRENT value — which is
-    // -70 and not the +45 it was minted from, so this also proves the fallback
-    // is live rather than a stale copy of the seed.
-    expect(rotYAt(removed, HELD, 1)).toBeCloseTo(-70, 6);
-    // And the neighbour is untouched either way.
-    expect(rotYAt(removed, FOLLOWS, 1)).toBeCloseTo(-70, 6);
-  });
-
-  it('EDITED holds and UNEDITED follows — both halves, in one scene', () => {
-    let s = fresh(90);
-
-    // A director edits ONE bone. The mint is the real one, seeded from the clip
-    // at this instant, so the edit starts from the motion rather than from zero.
-    const minted = ensureChannelForBone(s, gltfChildDagId(ASSET, HELD), 'rotation');
-    expect(minted).not.toBeNull();
-    for (const op of minted!.ops) s = applyOp(s, op).next;
-    expect(s.nodes[gltfChannelDagId(ASSET, HELD, 'rotation')]).toBeDefined();
-    // ONE channel, for ONE bone, for ONE component. Not 46.
-    expect(Object.values(s.nodes).filter((n) => n.type === 'KeyframeChannelVec3')).toHaveLength(1);
-
-    // ROAD B: the clip now swings the other way, under both bones.
-    s = changeClipTo(s, -140);
-
-    // AUTHORSHIP: the edited bone keeps the motion it was minted with. Under the
-    // eager bake this same fact was STALENESS — the difference is that this copy
-    // exists because somebody made it, and 22 others no longer do.
-    expect(rotYAt(s, HELD, 1)).toBeCloseTo(45, 6);
-    // FOLLOWING: the untouched bone has no copy to go stale, so it moves.
-    expect(rotYAt(s, FOLLOWS, 1)).toBeCloseTo(-70, 6);
   });
 });

@@ -43,7 +43,12 @@ import { useEditorStore, type SpaceType } from './stores/editorStore';
 import { useSelectionStore } from './stores/selectionStore';
 import { useSettingsStore } from './stores/settingsStore';
 import { getViewportSelectableIds } from './selectableNodes';
-import { normalizeViewportClip, useViewportStore, type ShadingMode } from './stores/viewportStore';
+import {
+  DEFAULT_VIEWPORT_CLIP,
+  normalizeViewportClip,
+  useViewportStore,
+  type ShadingMode,
+} from './stores/viewportStore';
 import { saveViewportClip } from './viewportClipPersistence';
 import { useChromeStore } from './stores/chromeStore';
 import { openImportPicker, openGltfFilePicker, openMediaFilePicker } from './asset/importPicker';
@@ -399,9 +404,10 @@ export function MenuBar() {
   const currentProjectId = useProjectStore((s) => s.current?.id);
   const currentProjectUpdatedAt = useProjectStore((s) => s.current?.updatedAt);
 
-  // #192 — View ▸ Clipping. The free viewport view's near/far: AUTO (bounds-fit,
-  // #186/#191) by default, with a manual override. `clipReadout` is the live
-  // EFFECTIVE planes (override or auto) so the menu can display + seed numbers.
+  // #192 — View ▸ Clipping. The free viewport view's near/far: the default
+  // (Blender's 0.01–1000, #1178) unless the user sets their own. `clipReadout` is
+  // the live EFFECTIVE planes (override or default) so the menu can display +
+  // seed numbers.
   const clipOverride = useViewportStore((s) => s.viewportClipOverride);
   const clipReadout = useViewportStore((s) => s.viewportClipReadout);
   // Persist on every change (per project, localStorage) AND set the live store.
@@ -778,15 +784,16 @@ export function MenuBar() {
           onSelect={() => useViewportStore.getState().toggleAxisWidgetVisible()}
           testId="menu-view-toggle-axis"
         />
-        {/* #192 — viewport-view clip planes (NOT the scene camera's). AUTO
-            (bounds-fit) by default; Clip Start/End set a manual override that
-            persists per project. Numeric entry via window.prompt (same as
-            Rename); the labels show the current effective values. */}
+        {/* #192 — viewport-view clip planes (NOT the scene camera's). The
+            default by default; Clip Start/End set a manual override that
+            persists per project, and Default clears it — the same answer
+            before and after a reload (#1187). Numeric entry via window.prompt
+            (same as Rename); the labels show the current effective values. */}
         <Submenu label="Clipping" testId="menu-view-clipping">
           <Item
-            label={`${clipOverride === null ? '✓ ' : '   '}Auto (frame to scene)`}
+            label={`${clipOverride === null ? '✓ ' : '   '}Default (${fmtClip(DEFAULT_VIEWPORT_CLIP.near)}–${fmtClip(DEFAULT_VIEWPORT_CLIP.far)})`}
             onSelect={() => applyViewportClip(null)}
-            testId="menu-view-clip-auto"
+            testId="menu-view-clip-default"
           />
           <Item
             label={`Clip Start: ${fmtClip(clipReadout.near)}…`}

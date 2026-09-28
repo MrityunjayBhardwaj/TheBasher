@@ -6,12 +6,15 @@
 // the Hips while the armature Root and the character's Group stay where the walk began — which is
 // why aiming at the character is not aiming at the walker.
 
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { registerAllNodes } from '../nodes/registerAll';
 import { buildExampleProject } from '../core/project/examples';
 import { applyOp, type DagState } from '../core/dag';
 import { createEvaluatorCache } from '../core/dag/evaluator';
 import { characterAssetOf, characterNodeNames } from './characterParts';
+import { convertLoadedProject } from './asset/convertCloneCharacters';
+import { MemoryStorage } from '../core/storage/MemoryStorage';
 import { gltfNodeWorldPosition } from './gltfNodeWorld';
 import { resolveTrackToTarget } from './nodeConstraints';
 
@@ -25,8 +28,18 @@ const near = (got: readonly number[] | null, want: readonly number[], tol = 0.01
   for (let i = 0; i < 3; i++) expect(Math.abs(got![i] - want[i])).toBeLessThan(tol);
 };
 
+/** The example as a director gets it: opened through the load door, which turns its saved clone-road
+ *  character native (#1216) — so the bones here are the armature's, drawn by the band. */
 async function example() {
-  const state = (await buildExampleProject('example_camera_path_ai_walk')).state;
+  const storage = new MemoryStorage();
+  const glb = 'fixtures/rig/standin-character.glb';
+  await storage.write(glb, new Uint8Array(readFileSync(`public/${glb}`)));
+  const { project, report } = await convertLoadedProject(
+    await buildExampleProject('example_camera_path_ai_walk'),
+    storage,
+  );
+  expect(report.converted.map((c) => c.assetRef)).toEqual([glb]);
+  const state = project.state;
   const group = Object.values(state.nodes).find((n) => n.type === 'Group')!.id;
   const trackTo = Object.values(state.nodes).find((n) => n.type === 'TrackTo')!.id;
   return { state, group, trackTo };
@@ -54,12 +67,13 @@ describe('a glTF node inside a character, posed, in the world (#1284)', () => {
     expect(characterAssetOf(state, 'n_light')).toBeNull();
   });
 
-  it('lists the parts of the character a Group or its asset stands for', async () => {
+  it('lists the bones of the character a Group stands for — its armature’s, once native', async () => {
     const { state, group } = await example();
     const names = characterNodeNames(state, group);
     expect(names).toContain('mixamorig_Hips');
     expect(names).toContain('Root');
-    expect(characterNodeNames(state, characterAssetOf(state, group)!)).toEqual(names);
+    // No clone-road asset is left to list them from: the names are the Skeleton's own.
+    expect(characterAssetOf(state, group)).toBeNull();
   });
 });
 

@@ -25,7 +25,6 @@ import {
   CHANNEL_ADDRESS_DOC,
   CHANNEL_ADDRESS_FIELDS,
   channelRootSelectors,
-  channelViewAfterMint,
   resolveChannelAddress,
   superRefineChannelAddress,
 } from './channelAddress';
@@ -83,7 +82,7 @@ export const simplifyChannelMutator: MutatorDefinition<SimplifyChannelSpec> = {
   preconditions(spec, _closure, state) {
     const resolved = resolveChannelAddress(state, spec, { mint: true });
     if (!resolved.ok) return { ok: false, reason: resolved.reason };
-    const view = channelViewAfterMint(state, resolved.channelId, resolved.mintOps);
+    const view = resolved.view;
     if (!view) {
       return { ok: false, reason: `channel "${resolved.channelId}" could not be resolved.` };
     }
@@ -98,7 +97,7 @@ export const simplifyChannelMutator: MutatorDefinition<SimplifyChannelSpec> = {
   build(spec, _closure: ClosureSet, state: DagState): Op[] {
     const resolved = resolveChannelAddress(state, spec, { mint: true });
     if (!resolved.ok) throw new Error(resolved.reason);
-    const view = channelViewAfterMint(state, resolved.channelId, resolved.mintOps);
+    const view = resolved.view;
     if (!view) throw new Error(`channel "${resolved.channelId}" could not be resolved.`);
     // Quat / Color: return no-op rather than throwing — keeps the agent
     // surface forgiving and the toolbar button click harmless.
@@ -114,15 +113,7 @@ export const simplifyChannelMutator: MutatorDefinition<SimplifyChannelSpec> = {
     const next: Keyframe[] = keyframes.filter((_, i) => keepMask[i]);
     if (next.length === keyframes.length) return []; // RDP kept everything
 
-    return [
-      ...resolved.mintOps,
-      {
-        type: 'setParam',
-        nodeId: resolved.channelId,
-        paramPath: 'keyframes',
-        value: next,
-      },
-    ];
+    return [...resolved.mintOps, ...resolved.write({ keyframes: next })];
   },
 };
 

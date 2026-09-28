@@ -1,0 +1,854 @@
+{
+  "base": {
+    "asked": null,
+    "bones": ["Bone0", "Bone1"],
+    "groups": ["Bone0", "Bone1"],
+    "anim": {
+      "active": [
+        "bend",
+        [
+          "pose.bones[\"Bone0\"].location  [group Bone0]",
+          "pose.bones[\"Bone0\"].rotation_quaternion  [group Bone0]",
+          "pose.bones[\"Bone0\"].scale  [group Bone0]",
+          "pose.bones[\"Bone1\"].location  [group Bone1]",
+          "pose.bones[\"Bone1\"].rotation_quaternion  [group Bone1]",
+          "pose.bones[\"Bone1\"].scale  [group Bone1]"
+        ]
+      ],
+      "tracks": [
+        [
+          "Wave",
+          true,
+          [
+            [
+              "Wave",
+              [
+                "pose.bones[\"Bone0\"].location  [group Bone0]",
+                "pose.bones[\"Bone0\"].rotation_quaternion  [group Bone0]",
+                "pose.bones[\"Bone0\"].scale  [group Bone0]",
+                "pose.bones[\"Bone1\"].location  [group Bone1]",
+                "pose.bones[\"Bone1\"].rotation_quaternion  [group Bone1]",
+                "pose.bones[\"Bone1\"].scale  [group Bone1]"
+              ]
+            ]
+          ]
+        ],
+        [
+          "bend",
+          true,
+          [
+            [
+              "bend",
+              [
+                "pose.bones[\"Bone0\"].location  [group Bone0]",
+                "pose.bones[\"Bone0\"].rotation_quaternion  [group Bone0]",
+                "pose.bones[\"Bone0\"].scale  [group Bone0]",
+                "pose.bones[\"Bone1\"].location  [group Bone1]",
+                "pose.bones[\"Bone1\"].rotation_quaternion  [group Bone1]",
+                "pose.bones[\"Bone1\"].scale  [group Bone1]"
+              ]
+            ]
+          ]
+        ]
+      ]
+    },
+    "deform": {
+      "0": [
+        [
+          [-0.2, -0.0, 0.0],
+          [-0.2, -0.0, 0.0]
+        ],
+        [
+          [0.2, 0.0, -0.0],
+          [0.2, 0.0, -0.0]
+        ],
+        [
+          [-0.2, 1.0, 0.0],
+          [-0.2, 1.0, 0.0]
+        ],
+        [
+          [0.2, 1.0, 0.0],
+          [0.2, 1.0, 0.0]
+        ],
+        [
+          [-0.2, 2.0, 0.0],
+          [-0.2, 2.0, 0.0]
+        ],
+        [
+          [0.2, 2.0, 0.0],
+          [0.2, 2.0, 0.0]
+        ]
+      ],
+      "12": [
+        [
+          [-0.2, -0.0, 0.0],
+          [-0.2, -0.0, 0.0]
+        ],
+        [
+          [0.2, 0.0, -0.0],
+          [0.2, 0.0, -0.0]
+        ],
+        [
+          [-0.2, 1.0, 0.0],
+          [-0.2, 1.0, 0.0]
+        ],
+        [
+          [0.2, 1.0, 0.0],
+          [0.2, 1.0, 0.0]
+        ],
+        [
+          [-0.2, 2.0, 0.0],
+          [-0.823046, 1.602159, 0.0]
+        ],
+        [
+          [0.2, 2.0, 0.0],
+          [-0.528135, 1.872395, 0.0]
+        ]
+      ],
+      "24": [
+        [
+          [-0.2, -0.0, 0.0],
+          [-0.2, -0.0, 0.0]
+        ],
+        [
+          [0.2, 0.0, -0.0],
+          [0.2, 0.0, -0.0]
+        ],
+        [
+          [-0.2, 1.0, 0.0],
+          [-0.2, 1.0, 0.0]
+        ],
+        [
+          [0.2, 1.0, 0.0],
+          [0.2, 1.0, 0.0]
+        ],
+        [
+          [-0.2, 2.0, 0.0],
+          [-1.013626, 0.887917, 0.0]
+        ],
+        [
+          [0.2, 2.0, 0.0],
+          [-0.978764, 1.286394, 0.0]
+        ]
+      ]
+    },
+    "wave_active": [
+      "Wave",
+      [
+        "pose.bones[\"Bone0\"].location  [group Bone0]",
+        "pose.bones[\"Bone0\"].rotation_quaternion  [group Bone0]",
+        "pose.bones[\"Bone0\"].scale  [group Bone0]",
+        "pose.bones[\"Bone1\"].location  [group Bone1]",
+        "pose.bones[\"Bone1\"].rotation_quaternion  [group Bone1]",
+        "pose.bones[\"Bone1\"].scale  [group Bone1]"
+      ]
+    ],
+    "deform_wave": {
+      "0": [
+        [
+          [-0.2, -0.0, 0.0],
+          [-0.2, -0.0, 0.0]
+        ],
+        [
+          [0.2, 0.0, -0.0],
+          [0.2, 0.0, -0.0]
+        ],
+        [
+          [-0.2, 1.0, 0.0],
+          [-0.2, 1.0, 0.0]
+        ],
+        [
+          [0.2, 1.0, 0.0],
+          [0.2, 1.0, 0.0]
+        ],
+        [
+          [-0.2, 2.0, 0.0],
+          [-0.2, 2.0, 0.0]
+        ],
+        [
+          [0.2, 2.0, 0.0],
+          [0.2, 2.0, 0.0]
+        ]
+      ],
+      "12": [
+        [
+          [-0.2, -0.0, 0.0],
+          [-0.2, -0.0, 0.0]
+        ],
+        [
+          [0.2, 0.0, -0.0],
+          [0.2, 0.0, -0.0]
+        ],
+        [
+          [-0.2, 1.0, 0.0],
+          [-0.2, 1.0, 0.0]
+        ],
+        [
+          [0.2, 1.0, 0.0],
+          [0.2, 1.0, 0.0]
+        ],
+        [
+          [-0.2, 2.0, 0.0],
+          [-0.2, 1.696707, 0.717356]
+        ],
+        [
+          [0.2, 2.0, 0.0],
+          [0.2, 1.696707, 0.717356]
+        ]
+      ],
+      "24": [
+        [
+          [-0.2, -0.0, 0.0],
+          [-0.2, -0.0, 0.0]
+        ],
+        [
+          [0.2, 0.0, -0.0],
+          [0.2, 0.0, -0.0]
+        ],
+        [
+          [-0.2, 1.0, 0.0],
+          [-0.2, 1.0, 0.0]
+        ],
+        [
+          [0.2, 1.0, 0.0],
+          [0.2, 1.0, 0.0]
+        ],
+        [
+          [-0.2, 2.0, 0.0],
+          [0.399576, 1.938264, 0.0]
+        ],
+        [
+          [0.2, 2.0, 0.0],
+          [0.72971, 1.712407, 0.0]
+        ]
+      ]
+    }
+  },
+  "rename": {
+    "asked": "Renamed",
+    "bones": ["Bone0", "Renamed"],
+    "groups": ["Bone0", "Renamed"],
+    "anim": {
+      "active": [
+        "bend",
+        [
+          "pose.bones[\"Bone0\"].location  [group Bone0]",
+          "pose.bones[\"Bone0\"].rotation_quaternion  [group Bone0]",
+          "pose.bones[\"Bone0\"].scale  [group Bone0]",
+          "pose.bones[\"Renamed\"].location  [group Renamed]",
+          "pose.bones[\"Renamed\"].rotation_quaternion  [group Renamed]",
+          "pose.bones[\"Renamed\"].scale  [group Renamed]"
+        ]
+      ],
+      "tracks": [
+        [
+          "Wave",
+          true,
+          [
+            [
+              "Wave",
+              [
+                "pose.bones[\"Bone0\"].location  [group Bone0]",
+                "pose.bones[\"Bone0\"].rotation_quaternion  [group Bone0]",
+                "pose.bones[\"Bone0\"].scale  [group Bone0]",
+                "pose.bones[\"Renamed\"].location  [group Renamed]",
+                "pose.bones[\"Renamed\"].rotation_quaternion  [group Renamed]",
+                "pose.bones[\"Renamed\"].scale  [group Renamed]"
+              ]
+            ]
+          ]
+        ],
+        [
+          "bend",
+          true,
+          [
+            [
+              "bend",
+              [
+                "pose.bones[\"Bone0\"].location  [group Bone0]",
+                "pose.bones[\"Bone0\"].rotation_quaternion  [group Bone0]",
+                "pose.bones[\"Bone0\"].scale  [group Bone0]",
+                "pose.bones[\"Renamed\"].location  [group Renamed]",
+                "pose.bones[\"Renamed\"].rotation_quaternion  [group Renamed]",
+                "pose.bones[\"Renamed\"].scale  [group Renamed]"
+              ]
+            ]
+          ]
+        ]
+      ]
+    },
+    "deform": {
+      "0": [
+        [
+          [-0.2, -0.0, 0.0],
+          [-0.2, -0.0, 0.0]
+        ],
+        [
+          [0.2, 0.0, -0.0],
+          [0.2, 0.0, -0.0]
+        ],
+        [
+          [-0.2, 1.0, 0.0],
+          [-0.2, 1.0, 0.0]
+        ],
+        [
+          [0.2, 1.0, 0.0],
+          [0.2, 1.0, 0.0]
+        ],
+        [
+          [-0.2, 2.0, 0.0],
+          [-0.2, 2.0, 0.0]
+        ],
+        [
+          [0.2, 2.0, 0.0],
+          [0.2, 2.0, 0.0]
+        ]
+      ],
+      "12": [
+        [
+          [-0.2, -0.0, 0.0],
+          [-0.2, -0.0, 0.0]
+        ],
+        [
+          [0.2, 0.0, -0.0],
+          [0.2, 0.0, -0.0]
+        ],
+        [
+          [-0.2, 1.0, 0.0],
+          [-0.2, 1.0, 0.0]
+        ],
+        [
+          [0.2, 1.0, 0.0],
+          [0.2, 1.0, 0.0]
+        ],
+        [
+          [-0.2, 2.0, 0.0],
+          [-0.823046, 1.602159, 0.0]
+        ],
+        [
+          [0.2, 2.0, 0.0],
+          [-0.528135, 1.872395, 0.0]
+        ]
+      ],
+      "24": [
+        [
+          [-0.2, -0.0, 0.0],
+          [-0.2, -0.0, 0.0]
+        ],
+        [
+          [0.2, 0.0, -0.0],
+          [0.2, 0.0, -0.0]
+        ],
+        [
+          [-0.2, 1.0, 0.0],
+          [-0.2, 1.0, 0.0]
+        ],
+        [
+          [0.2, 1.0, 0.0],
+          [0.2, 1.0, 0.0]
+        ],
+        [
+          [-0.2, 2.0, 0.0],
+          [-1.013626, 0.887917, 0.0]
+        ],
+        [
+          [0.2, 2.0, 0.0],
+          [-0.978764, 1.286394, 0.0]
+        ]
+      ]
+    },
+    "wave_active": [
+      "Wave",
+      [
+        "pose.bones[\"Bone0\"].location  [group Bone0]",
+        "pose.bones[\"Bone0\"].rotation_quaternion  [group Bone0]",
+        "pose.bones[\"Bone0\"].scale  [group Bone0]",
+        "pose.bones[\"Renamed\"].location  [group Renamed]",
+        "pose.bones[\"Renamed\"].rotation_quaternion  [group Renamed]",
+        "pose.bones[\"Renamed\"].scale  [group Renamed]"
+      ]
+    ],
+    "deform_wave": {
+      "0": [
+        [
+          [-0.2, -0.0, 0.0],
+          [-0.2, -0.0, 0.0]
+        ],
+        [
+          [0.2, 0.0, -0.0],
+          [0.2, 0.0, -0.0]
+        ],
+        [
+          [-0.2, 1.0, 0.0],
+          [-0.2, 1.0, 0.0]
+        ],
+        [
+          [0.2, 1.0, 0.0],
+          [0.2, 1.0, 0.0]
+        ],
+        [
+          [-0.2, 2.0, 0.0],
+          [-0.2, 2.0, 0.0]
+        ],
+        [
+          [0.2, 2.0, 0.0],
+          [0.2, 2.0, 0.0]
+        ]
+      ],
+      "12": [
+        [
+          [-0.2, -0.0, 0.0],
+          [-0.2, -0.0, 0.0]
+        ],
+        [
+          [0.2, 0.0, -0.0],
+          [0.2, 0.0, -0.0]
+        ],
+        [
+          [-0.2, 1.0, 0.0],
+          [-0.2, 1.0, 0.0]
+        ],
+        [
+          [0.2, 1.0, 0.0],
+          [0.2, 1.0, 0.0]
+        ],
+        [
+          [-0.2, 2.0, 0.0],
+          [-0.2, 1.696707, 0.717356]
+        ],
+        [
+          [0.2, 2.0, 0.0],
+          [0.2, 1.696707, 0.717356]
+        ]
+      ],
+      "24": [
+        [
+          [-0.2, -0.0, 0.0],
+          [-0.2, -0.0, 0.0]
+        ],
+        [
+          [0.2, 0.0, -0.0],
+          [0.2, 0.0, -0.0]
+        ],
+        [
+          [-0.2, 1.0, 0.0],
+          [-0.2, 1.0, 0.0]
+        ],
+        [
+          [0.2, 1.0, 0.0],
+          [0.2, 1.0, 0.0]
+        ],
+        [
+          [-0.2, 2.0, 0.0],
+          [0.399576, 1.938264, 0.0]
+        ],
+        [
+          [0.2, 2.0, 0.0],
+          [0.72971, 1.712407, 0.0]
+        ]
+      ]
+    }
+  },
+  "dotted": {
+    "asked": "Arm.L",
+    "bones": ["Bone0", "Arm.L"],
+    "groups": ["Bone0", "Arm.L"],
+    "anim": {
+      "active": [
+        "bend",
+        [
+          "pose.bones[\"Arm.L\"].location  [group Arm.L]",
+          "pose.bones[\"Arm.L\"].rotation_quaternion  [group Arm.L]",
+          "pose.bones[\"Arm.L\"].scale  [group Arm.L]",
+          "pose.bones[\"Bone0\"].location  [group Bone0]",
+          "pose.bones[\"Bone0\"].rotation_quaternion  [group Bone0]",
+          "pose.bones[\"Bone0\"].scale  [group Bone0]"
+        ]
+      ],
+      "tracks": [
+        [
+          "Wave",
+          true,
+          [
+            [
+              "Wave",
+              [
+                "pose.bones[\"Arm.L\"].location  [group Arm.L]",
+                "pose.bones[\"Arm.L\"].rotation_quaternion  [group Arm.L]",
+                "pose.bones[\"Arm.L\"].scale  [group Arm.L]",
+                "pose.bones[\"Bone0\"].location  [group Bone0]",
+                "pose.bones[\"Bone0\"].rotation_quaternion  [group Bone0]",
+                "pose.bones[\"Bone0\"].scale  [group Bone0]"
+              ]
+            ]
+          ]
+        ],
+        [
+          "bend",
+          true,
+          [
+            [
+              "bend",
+              [
+                "pose.bones[\"Arm.L\"].location  [group Arm.L]",
+                "pose.bones[\"Arm.L\"].rotation_quaternion  [group Arm.L]",
+                "pose.bones[\"Arm.L\"].scale  [group Arm.L]",
+                "pose.bones[\"Bone0\"].location  [group Bone0]",
+                "pose.bones[\"Bone0\"].rotation_quaternion  [group Bone0]",
+                "pose.bones[\"Bone0\"].scale  [group Bone0]"
+              ]
+            ]
+          ]
+        ]
+      ]
+    },
+    "deform": {
+      "0": [
+        [
+          [-0.2, -0.0, 0.0],
+          [-0.2, -0.0, 0.0]
+        ],
+        [
+          [0.2, 0.0, -0.0],
+          [0.2, 0.0, -0.0]
+        ],
+        [
+          [-0.2, 1.0, 0.0],
+          [-0.2, 1.0, 0.0]
+        ],
+        [
+          [0.2, 1.0, 0.0],
+          [0.2, 1.0, 0.0]
+        ],
+        [
+          [-0.2, 2.0, 0.0],
+          [-0.2, 2.0, 0.0]
+        ],
+        [
+          [0.2, 2.0, 0.0],
+          [0.2, 2.0, 0.0]
+        ]
+      ],
+      "12": [
+        [
+          [-0.2, -0.0, 0.0],
+          [-0.2, -0.0, 0.0]
+        ],
+        [
+          [0.2, 0.0, -0.0],
+          [0.2, 0.0, -0.0]
+        ],
+        [
+          [-0.2, 1.0, 0.0],
+          [-0.2, 1.0, 0.0]
+        ],
+        [
+          [0.2, 1.0, 0.0],
+          [0.2, 1.0, 0.0]
+        ],
+        [
+          [-0.2, 2.0, 0.0],
+          [-0.823046, 1.602159, 0.0]
+        ],
+        [
+          [0.2, 2.0, 0.0],
+          [-0.528135, 1.872395, 0.0]
+        ]
+      ],
+      "24": [
+        [
+          [-0.2, -0.0, 0.0],
+          [-0.2, -0.0, 0.0]
+        ],
+        [
+          [0.2, 0.0, -0.0],
+          [0.2, 0.0, -0.0]
+        ],
+        [
+          [-0.2, 1.0, 0.0],
+          [-0.2, 1.0, 0.0]
+        ],
+        [
+          [0.2, 1.0, 0.0],
+          [0.2, 1.0, 0.0]
+        ],
+        [
+          [-0.2, 2.0, 0.0],
+          [-1.013626, 0.887917, 0.0]
+        ],
+        [
+          [0.2, 2.0, 0.0],
+          [-0.978764, 1.286394, 0.0]
+        ]
+      ]
+    }
+  },
+  "bonehit": {
+    "asked": "Bone0",
+    "bones": ["Bone0", "Bone0.001"],
+    "groups": ["Bone0", "Bone0.001"],
+    "anim": {
+      "active": [
+        "bend",
+        [
+          "pose.bones[\"Bone0\"].location  [group Bone0]",
+          "pose.bones[\"Bone0\"].rotation_quaternion  [group Bone0]",
+          "pose.bones[\"Bone0\"].scale  [group Bone0]",
+          "pose.bones[\"Bone0.001\"].location  [group Bone0.001]",
+          "pose.bones[\"Bone0.001\"].rotation_quaternion  [group Bone0.001]",
+          "pose.bones[\"Bone0.001\"].scale  [group Bone0.001]"
+        ]
+      ],
+      "tracks": [
+        [
+          "Wave",
+          true,
+          [
+            [
+              "Wave",
+              [
+                "pose.bones[\"Bone0\"].location  [group Bone0]",
+                "pose.bones[\"Bone0\"].rotation_quaternion  [group Bone0]",
+                "pose.bones[\"Bone0\"].scale  [group Bone0]",
+                "pose.bones[\"Bone0.001\"].location  [group Bone0.001]",
+                "pose.bones[\"Bone0.001\"].rotation_quaternion  [group Bone0.001]",
+                "pose.bones[\"Bone0.001\"].scale  [group Bone0.001]"
+              ]
+            ]
+          ]
+        ],
+        [
+          "bend",
+          true,
+          [
+            [
+              "bend",
+              [
+                "pose.bones[\"Bone0\"].location  [group Bone0]",
+                "pose.bones[\"Bone0\"].rotation_quaternion  [group Bone0]",
+                "pose.bones[\"Bone0\"].scale  [group Bone0]",
+                "pose.bones[\"Bone0.001\"].location  [group Bone0.001]",
+                "pose.bones[\"Bone0.001\"].rotation_quaternion  [group Bone0.001]",
+                "pose.bones[\"Bone0.001\"].scale  [group Bone0.001]"
+              ]
+            ]
+          ]
+        ]
+      ]
+    },
+    "deform": {
+      "0": [
+        [
+          [-0.2, -0.0, 0.0],
+          [-0.2, -0.0, 0.0]
+        ],
+        [
+          [0.2, 0.0, -0.0],
+          [0.2, 0.0, -0.0]
+        ],
+        [
+          [-0.2, 1.0, 0.0],
+          [-0.2, 1.0, 0.0]
+        ],
+        [
+          [0.2, 1.0, 0.0],
+          [0.2, 1.0, 0.0]
+        ],
+        [
+          [-0.2, 2.0, 0.0],
+          [-0.2, 2.0, 0.0]
+        ],
+        [
+          [0.2, 2.0, 0.0],
+          [0.2, 2.0, 0.0]
+        ]
+      ],
+      "12": [
+        [
+          [-0.2, -0.0, 0.0],
+          [-0.2, -0.0, 0.0]
+        ],
+        [
+          [0.2, 0.0, -0.0],
+          [0.2, 0.0, -0.0]
+        ],
+        [
+          [-0.2, 1.0, 0.0],
+          [-0.2, 1.0, 0.0]
+        ],
+        [
+          [0.2, 1.0, 0.0],
+          [0.2, 1.0, 0.0]
+        ],
+        [
+          [-0.2, 2.0, 0.0],
+          [-0.823046, 1.602159, 0.0]
+        ],
+        [
+          [0.2, 2.0, 0.0],
+          [-0.528135, 1.872395, 0.0]
+        ]
+      ],
+      "24": [
+        [
+          [-0.2, -0.0, 0.0],
+          [-0.2, -0.0, 0.0]
+        ],
+        [
+          [0.2, 0.0, -0.0],
+          [0.2, 0.0, -0.0]
+        ],
+        [
+          [-0.2, 1.0, 0.0],
+          [-0.2, 1.0, 0.0]
+        ],
+        [
+          [0.2, 1.0, 0.0],
+          [0.2, 1.0, 0.0]
+        ],
+        [
+          [-0.2, 2.0, 0.0],
+          [-1.013626, 0.887917, 0.0]
+        ],
+        [
+          [0.2, 2.0, 0.0],
+          [-0.978764, 1.286394, 0.0]
+        ]
+      ]
+    }
+  },
+  "grouphit": {
+    "asked": "Extra",
+    "bones": ["Bone0", "Extra"],
+    "groups": ["Bone0", "Bone1", "Extra"],
+    "anim": {
+      "active": [
+        "bend",
+        [
+          "pose.bones[\"Bone0\"].location  [group Bone0]",
+          "pose.bones[\"Bone0\"].rotation_quaternion  [group Bone0]",
+          "pose.bones[\"Bone0\"].scale  [group Bone0]",
+          "pose.bones[\"Extra\"].location  [group Extra]",
+          "pose.bones[\"Extra\"].rotation_quaternion  [group Extra]",
+          "pose.bones[\"Extra\"].scale  [group Extra]"
+        ]
+      ],
+      "tracks": [
+        [
+          "Wave",
+          true,
+          [
+            [
+              "Wave",
+              [
+                "pose.bones[\"Bone0\"].location  [group Bone0]",
+                "pose.bones[\"Bone0\"].rotation_quaternion  [group Bone0]",
+                "pose.bones[\"Bone0\"].scale  [group Bone0]",
+                "pose.bones[\"Extra\"].location  [group Extra]",
+                "pose.bones[\"Extra\"].rotation_quaternion  [group Extra]",
+                "pose.bones[\"Extra\"].scale  [group Extra]"
+              ]
+            ]
+          ]
+        ],
+        [
+          "bend",
+          true,
+          [
+            [
+              "bend",
+              [
+                "pose.bones[\"Bone0\"].location  [group Bone0]",
+                "pose.bones[\"Bone0\"].rotation_quaternion  [group Bone0]",
+                "pose.bones[\"Bone0\"].scale  [group Bone0]",
+                "pose.bones[\"Extra\"].location  [group Extra]",
+                "pose.bones[\"Extra\"].rotation_quaternion  [group Extra]",
+                "pose.bones[\"Extra\"].scale  [group Extra]"
+              ]
+            ]
+          ]
+        ]
+      ]
+    },
+    "deform": {
+      "0": [
+        [
+          [-0.2, -0.0, 0.0],
+          [-0.2, -0.0, 0.0]
+        ],
+        [
+          [0.2, 0.0, -0.0],
+          [0.2, 0.0, -0.0]
+        ],
+        [
+          [-0.2, 1.0, 0.0],
+          [-0.2, 1.0, 0.0]
+        ],
+        [
+          [0.2, 1.0, 0.0],
+          [0.2, 1.0, 0.0]
+        ],
+        [
+          [-0.2, 2.0, 0.0],
+          [-0.2, 2.0, 0.0]
+        ],
+        [
+          [0.2, 2.0, 0.0],
+          [0.2, 2.0, 0.0]
+        ]
+      ],
+      "12": [
+        [
+          [-0.2, -0.0, 0.0],
+          [-0.2, -0.0, 0.0]
+        ],
+        [
+          [0.2, 0.0, -0.0],
+          [0.2, 0.0, -0.0]
+        ],
+        [
+          [-0.2, 1.0, 0.0],
+          [-0.2, 1.0, 0.0]
+        ],
+        [
+          [0.2, 1.0, 0.0],
+          [0.2, 1.0, 0.0]
+        ],
+        [
+          [-0.2, 2.0, 0.0],
+          [-0.2, 2.0, 0.0]
+        ],
+        [
+          [0.2, 2.0, 0.0],
+          [0.2, 2.0, 0.0]
+        ]
+      ],
+      "24": [
+        [
+          [-0.2, -0.0, 0.0],
+          [-0.2, -0.0, 0.0]
+        ],
+        [
+          [0.2, 0.0, -0.0],
+          [0.2, 0.0, -0.0]
+        ],
+        [
+          [-0.2, 1.0, 0.0],
+          [-0.2, 1.0, 0.0]
+        ],
+        [
+          [0.2, 1.0, 0.0],
+          [0.2, 1.0, 0.0]
+        ],
+        [
+          [-0.2, 2.0, 0.0],
+          [-0.2, 2.0, 0.0]
+        ],
+        [
+          [0.2, 2.0, 0.0],
+          [0.2, 2.0, 0.0]
+        ]
+      ]
+    }
+  }
+}

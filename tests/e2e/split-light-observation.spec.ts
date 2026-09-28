@@ -31,7 +31,8 @@
 //      src/app/studioProfileIO.ts; src/viewport/SceneFromDAG.tsx; #386.
 
 import { expect, test } from './_fixtures';
-import type { JSHandle, Page } from '@playwright/test';
+import { dragRowOnto as dragTreeRowOnto } from './_treeDrag';
+import type { Page } from '@playwright/test';
 import { splitLightOps } from './_splitLight';
 
 interface W {
@@ -344,14 +345,7 @@ test.describe('#386 C3 — the split posable light, observed', () => {
       );
     }, GRP);
 
-    const dragRowOnto = async (srcId: string, dstId: string) => {
-      const dt: JSHandle = await page.evaluateHandle(() => new DataTransfer());
-      const src = page.locator(`[data-testid="scene-tree-row-${srcId}"]`);
-      const dst = page.locator(`[data-testid="scene-tree-row-${dstId}"]`);
-      await src.dispatchEvent('dragstart', { dataTransfer: dt });
-      await dst.dispatchEvent('dragover', { dataTransfer: dt });
-      await dst.dispatchEvent('drop', { dataTransfer: dt });
-    };
+    const dragRowOnto = (srcId: string, dstId: string) => dragTreeRowOnto(page, srcId, dstId);
 
     const sceneBand = (socket: 'children' | 'lights') =>
       page.evaluate((s) => {

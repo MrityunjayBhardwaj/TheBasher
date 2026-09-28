@@ -1,4 +1,5 @@
-// CurveEditor — read-only bezier projection of the active KeyframeChannel.
+// CurveEditor — the graph editor for the active timeline row: a KeyframeChannel node, or a curve in a
+// character's pose layer (#1215), both resolved by the row resolver the dopesheet's key editing uses.
 //
 // Renders the channel's interpolated curve over [0, duration]. Number
 // channels render a single line; Vec3 renders three lines (x/y/z). Quat
@@ -16,6 +17,8 @@ import { useTimelineSelection } from './timelineSelection';
 import { resolveClipRow } from './clipChannelRows';
 import { isKeyframeChannelNode } from '../app/animate/paramAnimationState';
 import { EditableCurve } from './EditableCurve';
+import { isComputedRowId, layerChannelRows, parseLayerRowId } from './layerChannelRows';
+import { resolveRowChannelForWrite } from '../app/animate/clipRowMint';
 
 const TRACK_COLORS = ['#ef4444', '#22c55e', '#3b82f6']; // x / y / z
 const SAMPLES_PER_SECOND = 30;
@@ -29,7 +32,8 @@ interface VecKey {
 export function CurveEditor({ duration }: { duration: number }) {
   const activeChannelId = useTimelineSelection((s) => s.activeChannelId);
   const selectedId = useSelectionStore((s) => s.selectedNodeId);
-  const nodes = useDagStore((s) => s.state.nodes);
+  const dagState = useDagStore((s) => s.state);
+  const nodes = dagState.nodes;
   const seconds = useTimeStore((s) => s.seconds);
 
   // #163 — when no channel row is explicitly active, fall back to a channel of
@@ -47,6 +51,11 @@ export function CurveEditor({ duration }: { duration: number }) {
       if (firstAny == null) firstAny = id;
       const target = (n.params as { target?: string } | undefined)?.target;
       if (selectedId && target === selectedId) return id; // prefer the selection's channel
+    }
+    // #1215 — a selected armature Object's keys live in its pose layers: its first layer curve.
+    if (selectedId && nodes[selectedId]?.type === 'Object') {
+      const first = layerChannelRows(nodes, selectedId)[0];
+      if (first) return first.channelId;
     }
     return firstAny; // else the first channel in the project
   }, [activeChannelId, nodes, selectedId]);
@@ -136,8 +145,23 @@ export function CurveEditor({ duration }: { duration: number }) {
     );
   }
 
-  const node = nodes[channelId];
-  if (!node) {
+  // #1215 — a computed source's row (a retarget, a generated clip): read-only until baked. Its keys
+  // are where the source's poses land; there is no curve to edit, and bake is the road to one.
+  if (isComputedRowId(channelId)) {
+    return (
+      <div
+        data-testid="curve-editor"
+        className="flex h-full items-center justify-center px-4 text-center text-xs text-fg-dim"
+      >
+        Computed motion — “bake motion to keys” in the inspector makes its keys editable.
+      </div>
+    );
+  }
+
+  // A channel node's row or a pose layer's row (#1215): one resolver answers where the curve lives,
+  // what it holds and how to write it — the same road K / Delete / drag take in the dopesheet.
+  const curve = resolveRowChannelForWrite(dagState, channelId);
+  if (!curve) {
     return (
       <div
         data-testid="curve-editor"
@@ -148,19 +172,24 @@ export function CurveEditor({ duration }: { duration: number }) {
     );
   }
 
-  const params = (node.params ?? {}) as { keyframes?: VecKey[]; paramPath?: string };
+  const params = curve.params as { keyframes?: VecKey[]; paramPath?: string };
   const keyframes = (params.keyframes ?? []).slice().sort((a, b) => a.time - b.time);
+  const layer = parseLayerRowId(channelId);
+  const paramPath = params.paramPath ?? layer?.component ?? '';
+  const nodeType = curve.nodeType;
 
   // Authored Number / Vec3 channel → the reze-style editable graph editor
   // (UX #11). Curves are sampled THROUGH the shared keyframeInterp inside
   // EditableCurve, so what's drawn is what the renderer plays (H40).
-  if (node.type === 'KeyframeChannelNumber' || node.type === 'KeyframeChannelVec3') {
+  if (nodeType === 'KeyframeChannelNumber' || nodeType === 'KeyframeChannelVec3') {
     return (
       <EditableCurve
         channelId={channelId}
-        channelType={node.type}
-        paramPath={params.paramPath ?? ''}
+        channelType={nodeType}
+        paramPath={paramPath}
         keyframes={keyframes}
+        curve={curve.params}
+        write={(fields) => [...curve.mintOps, ...curve.write(fields)]}
         duration={duration}
         seconds={seconds}
       />
@@ -177,11 +206,11 @@ export function CurveEditor({ duration }: { duration: number }) {
       className="flex h-full flex-col items-center justify-center gap-1 text-xs text-fg-dim"
     >
       <span>
-        {node.type.replace('KeyframeChannel', '')} — {params.paramPath ?? '(no path)'}
+        {nodeType.replace('KeyframeChannel', '')} — {paramPath || '(no path)'}
       </span>
       <span className="text-[10px]">
         Curve preview not yet implemented for{' '}
-        {node.type === 'KeyframeChannelQuat' ? 'quaternion' : 'color'} channels.
+        {nodeType === 'KeyframeChannelQuat' ? 'quaternion' : 'color'} channels.
       </span>
       <span className="text-[10px]">
         {keyframes.length} keyframe{keyframes.length === 1 ? '' : 's'}; values shown in dopesheet.

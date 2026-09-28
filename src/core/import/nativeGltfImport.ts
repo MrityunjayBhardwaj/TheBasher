@@ -12,13 +12,24 @@
 // ── A WHOLE IMPORT IS NATIVE OR IT IS REFUSED, NEVER SPLIT PER CHILD ────────────────────────────
 //
 // The clone road still owns what the native model cannot yet hold, and a file that needs any of it
-// is refused WHOLE, by name, with the issue that brings it across: skinning (#393), a second clip
-// (#1154), several primitives on one mesh (#1052), morph targets (#1060),
+// is refused WHOLE, by name, with the issue that brings it across: morph targets (#1060),
 // a mesh shared by several nodes (#1061), vertex attributes a render buffer has no slot for
 // (#1125), and material features the native material cannot hold (#1123). Making the importable
 // children native and leaving the rest on the clone would be two owners of one import, which is the
 // handover the decision on #1049 rules out. The refusals are the distance still to go, stated where
 // an import meets it.
+//
+// ── A SKINNED FILE ARRIVES AS A SKELETON, A DEFORM AND A MESH (#1205) ────────────────────────────
+//
+// The joints become a `Skeleton` standing as its own Object, posed through a base pose layer
+// holding the file's bone channels as keys, as the file wrote them (#1211, #1212):
+// Skeleton.pose → PoseLayer → Object.pose (`nativeGltfSkeleton.ts`); each skinned mesh keeps its joint numbers and
+// weights as point layers beside the group names they index, and an Armature modifier on its
+// stack, pointed at the skeleton's Object, deforms it (#393), drawn skinned (#1197). A motion binds
+// to it (#1213) and its bones are posed (#1244), as a character's are. What a skin or its clip needs
+// that this model cannot hold — a bone that is also a mesh (#1209), an empty hung under a bone
+// (#1219) — is refused by name like everything above, and a skinned file refused for any reason is
+// not imported at all: it never falls back to the clone road (`buildGltfImportOpsFromOpfs`).
 //
 // ── IMAGES COME ACROSS AS THE PROJECT'S OWN FILES (#1050) ───────────────────────────────────────
 //
@@ -62,6 +73,7 @@ import type {
   MeshCornerLayer,
   MeshFaceLayer,
   MeshGeometryData,
+  MeshPointLayer,
   UvPlacement,
   Vec3,
 } from '../../nodes/types';
@@ -80,12 +92,26 @@ import {
   type GltfImportChainArgs,
 } from './gltfImportChain';
 import { gltfJsonMaterialToOpenpbr } from './gltfJsonMaterialToOpenpbr';
-import { readNativeClip, type ClipGltfJson } from './nativeGltfClip';
+import { readNativeAnimations, type ClipGltfJson, type NativeAnimation } from './nativeGltfClip';
+import {
+  leftBehindAsEmpty,
+  nativeSkeletonLayer,
+  readNativeSkeletons,
+  type NativeSkeleton,
+} from './nativeGltfSkeleton';
+import { buildSkeletonObjectOps, skeletonObjectId } from './skeletonObject';
+import { boneWorldMatrices } from '../../viewport/boneShape';
 import { CENTRE_PIVOT, ORIGIN_PIVOT, rebasePlacementPivot } from '../../app/material/uvPlacement';
 import { weldByPosition } from '../../app/pointIdentity';
 import { packMeshData } from '../../app/meshGeometryData';
 import { MAX_COLOUR_LAYERS, MAX_UV_LAYERS } from '../../app/polygonLayout';
-import { COLOR_LAYER, MATERIAL_INDEX, uvLayerName } from '../../nodes/attributes';
+import {
+  COLOR_LAYER,
+  MATERIAL_INDEX,
+  SKIN_JOINTS,
+  SKIN_WEIGHTS,
+  uvLayerName,
+} from '../../nodes/attributes';
 
 /** The native parameter each animated glTF path drives. Rotation drives the quaternion, which is
  *  why every imported node is in quaternion mode. */
@@ -101,6 +127,42 @@ export interface NativeImportResult {
   readonly ops: Op[];
   readonly groupId: string;
   readonly objectIds: readonly string[];
+  /**
+   * #1216 — the node standing for each glTF node, by the file's node index: its Object, or the
+   * Group an empty (or a skinned mesh's left-behind node) becomes. `null` for a bone, which is data
+   * of its skeleton and not a node of the scene. The index is the one join every road agrees on:
+   * the clone road keys its children by it too (`keyByGltfNodeIndex`), while the names differ.
+   */
+  readonly nodeIds: readonly (string | null)[];
+  /**
+   * #1216 — each armature, in the order the reader meets them: its `Skeleton`, the Object standing
+   * it, and each bone's name by the glTF node the bone is. With `skinSkeleton` (per skin, in
+   * `json.skins` order, the armature it binds to) this is the join a saved clone-road rig needs: the
+   * clone names a bone by its joint key, the native skeleton by Blender's spelling, and the node index
+   * is the one thing both agree on.
+   */
+  readonly skeletons: readonly {
+    readonly skeletonId: string;
+    readonly objectId: string;
+    readonly boneNames: ReadonlyMap<number, string>;
+  }[];
+  readonly skinSkeleton: readonly number[];
+  /**
+   * #1216 — per glTF node index, the mesh a mesh node became: the Object that draws it (for a
+   * skinned mesh left behind as an empty, the new Object under its armature, not the empty) and its
+   * mesh data. `null` for a node with no mesh.
+   */
+  readonly meshes: readonly ({ readonly objectId: string; readonly dataId: string } | null)[];
+  /**
+   * #1216 — the nodes each of the file's animations lives in, in file order (#1154): the first one's
+   * base pose layers and bare Object channels, each later one's held (muted) layers and its NLA track.
+   * What a director mutes and unmutes to switch which animation plays.
+   */
+  readonly takes: readonly {
+    readonly layers: readonly string[];
+    readonly channels: readonly string[];
+    readonly track: string | null;
+  }[];
 }
 
 /** The parts of a glTF document this road reads beyond what `GltfJson` declares. */
@@ -133,11 +195,21 @@ const TRIANGLE_FAN = 6;
 // against the mesh, so a second UV set or a colour now reaches the screen. The list is what the whole
 // road honours, not what the reader can read: derived from the slot counts rather than spelled, so it
 // cannot admit a layer the build has nowhere to draw.
+//
+// #1196 — and ONE set of joints and weights, which a stored mesh HOLDS as point layers, deformed by
+// the Armature modifier (#393) and drawn skinned (#1197). A second
+// set (`JOINTS_1`, a vertex with more than four influences) stays out on purpose and is refused by
+// name below: Blender keeps every set (`io_scene_gltf2/blender/imp/mesh.py:93-96`), three draws only
+// the first (`GLTFLoader.js:2232-2233`), and a native mesh holding the first alone would keep less
+// than the file, with the file gone. Refused — and only a skinned file carries joints, so it is not
+// imported at all (#1205: a skinned file never takes the clone road).
 const HELD_ATTRIBUTES: ReadonlySet<string> = new Set([
   'POSITION',
   'NORMAL',
   ...Array.from({ length: MAX_UV_LAYERS }, (_, n) => `TEXCOORD_${n}`),
   ...Array.from({ length: MAX_COLOUR_LAYERS }, (_, n) => `COLOR_${n}`),
+  'JOINTS_0',
+  'WEIGHTS_0',
 ]);
 
 const COMPONENT_BYTES: Record<number, number> = {
@@ -297,12 +369,6 @@ function fileRefusal(json: NativeGltfJson): NativeImportRefusal | null {
       issue: '#1063',
     };
   }
-  if ((json.skins?.length ?? 0) > 0) {
-    return {
-      refused: 'it is skinned, and skinning as a deform relation is not native yet',
-      issue: '#393',
-    };
-  }
   const unheld = (json.extensionsUsed ?? []).filter((ext) => !HELD_EXTENSIONS.has(ext));
   if (unheld.length > 0) {
     return {
@@ -310,21 +376,12 @@ function fileRefusal(json: NativeGltfJson): NativeImportRefusal | null {
       issue: '#1123',
     };
   }
-  for (let i = 0; i < json.nodes.length; i++) {
-    const node = json.nodes[i];
-    // #1051 — a hierarchy comes across now: an empty is a Group, a mesh node is an Object, and the
-    // parent is an edge. What still has no shape is a node that is BOTH — an Object cannot parent
-    // (`connect` refuses: "Object has no input socket 'children'"), where Blender makes one object
-    // per node and parents object to object (`io_scene_gltf2/blender/imp/node.py:105-108`).
-    if (typeof node.mesh === 'number' && (node.children?.length ?? 0) > 0) {
-      return {
-        refused: `node ${i} carries a mesh and also has children, and an Object cannot parent`,
-        issue: '#1152',
-      };
-    }
-  }
-  // After the hierarchy refusal, so a file is refused for its shape first. A node without a mesh is
-  // an empty and shares nothing.
+  // #1051 — a hierarchy comes across: an empty is a Group, a mesh node is an Object, and the parent
+  // is an edge. #1152 — a node that is BOTH a mesh and a parent is an Object that parents, as in
+  // Blender, which makes one object per node and parents object to object
+  // (`io_scene_gltf2/blender/imp/node.py:105-108`); its children's edges go to it like any other.
+  //
+  // A node without a mesh is an empty and shares nothing.
   const nodeOfMesh = new Map<number, number>();
   for (let i = 0; i < json.nodes.length; i++) {
     if (typeof json.nodes[i].mesh !== 'number') continue;
@@ -459,6 +516,8 @@ interface ReadPrimitive {
   readonly uvAccessors: readonly number[];
   readonly colourAccessor: number | undefined;
   readonly normalAccessor: number | undefined;
+  /** #1196 — `JOINTS_0` and `WEIGHTS_0`, present together or not at all. */
+  readonly skinAccessors: { readonly joints: number; readonly weights: number } | undefined;
 }
 
 function readPrimitive(
@@ -500,10 +559,36 @@ function readPrimitive(
   }
   const colourAccessor = attributes.COLOR_0;
   const normalAccessor = attributes.NORMAL;
+  // #1196 — "the number of JOINTS_n attribute sets MUST be equal to the number of WEIGHTS_n
+  // attribute sets" (glTF 2.0 §Skins). Half a set binds a point to joints with no weights, or
+  // weights to no joints, so it is refused as the malformed file it is.
+  const jointsAccessor = attributes.JOINTS_0;
+  const weightsAccessor = attributes.WEIGHTS_0;
+  if ((typeof jointsAccessor === 'number') !== (typeof weightsAccessor === 'number')) {
+    return {
+      refused: `mesh ${meshIndex} carries ${typeof jointsAccessor === 'number' ? 'JOINTS_0 without WEIGHTS_0' : 'WEIGHTS_0 without JOINTS_0'}, and they come in pairs`,
+      issue: '#1063',
+    };
+  }
+  const skinAccessors =
+    typeof jointsAccessor === 'number' && typeof weightsAccessor === 'number'
+      ? { joints: jointsAccessor, weights: weightsAccessor }
+      : undefined;
+  if (skinAccessors !== undefined) {
+    const problem = skinAccessorProblem(json, skinAccessors);
+    if (problem !== null) return { refused: `mesh ${meshIndex} ${problem}`, issue: '#1063' };
+  }
   // Each accessor's own element size, not a literal per attribute. For POSITION, NORMAL and the UV
   // sets this is the same number the literals used to spell, because a non-float one of those needs
   // `KHR_mesh_quantization`, which `fileRefusal` has already turned away.
-  for (const accessorIndex of [positionAccessor, normalAccessor, ...uvAccessors, colourAccessor]) {
+  for (const accessorIndex of [
+    positionAccessor,
+    normalAccessor,
+    ...uvAccessors,
+    colourAccessor,
+    jointsAccessor,
+    weightsAccessor,
+  ]) {
     if (typeof accessorIndex !== 'number') continue;
     const elementBytes = elementBytesOf(json, accessorIndex);
     if (elementBytes !== undefined && interleaved(json, accessorIndex, elementBytes)) {
@@ -535,7 +620,34 @@ function readPrimitive(
     uvAccessors,
     colourAccessor: typeof colourAccessor === 'number' ? colourAccessor : undefined,
     normalAccessor: typeof normalAccessor === 'number' ? normalAccessor : undefined,
+    skinAccessors,
   };
+}
+
+/**
+ * #1196 — why a primitive's joints or weights are not what glTF allows, or `null`.
+ *
+ * glTF 2.0 §Skins: `JOINTS_n` is a VEC4 of unsigned bytes or shorts, and `WEIGHTS_n` a VEC4 of
+ * floats or of NORMALISED unsigned bytes or shorts. An un-normalised byte weight would be read as
+ * 0–255 and bind a point 255 times too hard, so it is refused rather than read.
+ */
+function skinAccessorProblem(
+  json: NativeGltfJson,
+  skin: { readonly joints: number; readonly weights: number },
+): string | null {
+  const joints = json.accessors?.[skin.joints];
+  const weights = json.accessors?.[skin.weights];
+  if (!joints || !weights) return 'names a JOINTS_0 or WEIGHTS_0 accessor the file does not have';
+  if (joints.type !== 'VEC4' || (joints.componentType !== 5121 && joints.componentType !== 5123)) {
+    return 'has a JOINTS_0 that is not four unsigned bytes or shorts';
+  }
+  const normalised =
+    (weights.componentType === 5121 || weights.componentType === 5123) &&
+    (weights as { normalized?: boolean }).normalized === true;
+  if (weights.type !== 'VEC4' || (weights.componentType !== 5126 && !normalised)) {
+    return 'has a WEIGHTS_0 that is not four floats or four normalised unsigned bytes or shorts';
+  }
+  return null;
 }
 
 /** The unit normal of triangle `(a, b, c)`, read off `positions`, xyz per vertex. */
@@ -567,6 +679,7 @@ export function readGltfMesh(
   json: NativeGltfJson,
   buffers: Uint8Array[],
   meshIndex: number,
+  vertexGroups: readonly string[] | null = null,
 ): MeshGeometryData | NativeImportRefusal {
   const primitives = json.meshes?.[meshIndex]?.primitives ?? [];
   if (primitives.length === 0) {
@@ -596,11 +709,21 @@ export function readGltfMesh(
     for (const v of one.corners) corners[cornerAt++] = v + vertexBase[i];
   });
 
+  // #1196 — each vertex's joints and weights, in the same numbering. A primitive without them, in a
+  // mesh whose others have them, is bound to nothing: joint 0 at weight 0 on every lane.
+  const skin = readVertexSkin(json, buffers, meshIndex, read, vertexBase, vertices, vertexGroups);
+  if (skin !== null && 'refused' in skin) return skin;
+
   // The weld: split vertices at one position are one point. `map[v]` is vertex v's point.
   const scratch = new BufferGeometry();
   scratch.setAttribute('position', new BufferAttribute(positions, 3));
-  const weld = weldByPosition(scratch);
+  const byPosition = weldByPosition(scratch);
   scratch.dispose();
+  // #1196 — two vertices at one position with different bindings stay two points, which is
+  // Blender's rule: its importer welds only vertices whose joints and weights match as well
+  // (`merge_duplicate_verts`, `io_scene_gltf2/blender/imp/mesh.py`, the `joint%d`/`weight%d` fields
+  // of its key). Welding them anyway would keep one binding and drop the other.
+  const weld = skin === null ? byPosition : splitByBinding(byPosition, skin);
   const points = new Float32Array(weld.points * 3);
   const seen = new Uint8Array(weld.points);
   for (let v = 0; v < vertices; v++) {
@@ -690,6 +813,21 @@ export function readGltfMesh(
     faceLayers.push({ name: MATERIAL_INDEX, type: 'int', data: index });
   }
 
+  // #1196 — a point's binding is its vertices' binding: `splitByBinding` has made them all agree.
+  const pointLayers: MeshPointLayer[] = [];
+  if (skin !== null) {
+    const joints = new Int32Array(weld.points * 4);
+    const weights = new Float32Array(weld.points * 4);
+    for (let v = 0; v < vertices; v++) {
+      joints.set(skin.joints.subarray(v * 4, v * 4 + 4), weld.map[v] * 4);
+      weights.set(skin.weights.subarray(v * 4, v * 4 + 4), weld.map[v] * 4);
+    }
+    pointLayers.push(
+      { name: SKIN_JOINTS, type: 'int4', data: joints },
+      { name: SKIN_WEIGHTS, type: 'float4', data: weights },
+    );
+  }
+
   return {
     points,
     faceSizes: new Uint32Array(faceCount).fill(3),
@@ -697,7 +835,83 @@ export function readGltfMesh(
     cornerLayers,
     cornerNormals,
     faceLayers,
+    pointLayers,
+    vertexGroups: vertexGroups ?? [],
   };
+}
+
+/** #1196 — every vertex's four joints and four weights, one mesh-wide numbering. */
+interface VertexSkin {
+  readonly joints: Int32Array;
+  readonly weights: Float32Array;
+}
+
+/**
+ * #1196 — read every primitive's `JOINTS_0` and `WEIGHTS_0` into one numbering, or `null` when no
+ * primitive carries them.
+ *
+ * A joint number indexes the skin's `joints` list, so it means something only beside the names of
+ * that list: `vertexGroups`, which the node that skins this mesh supplies. Joint numbers with no
+ * table are refused, and so is a number past the table, which glTF forbids ("All joint values MUST
+ * be within the range of joints in the skin", §Skins).
+ */
+function readVertexSkin(
+  json: NativeGltfJson,
+  buffers: Uint8Array[],
+  meshIndex: number,
+  read: readonly ReadPrimitive[],
+  vertexBase: readonly number[],
+  vertices: number,
+  vertexGroups: readonly string[] | null,
+): VertexSkin | NativeImportRefusal | null {
+  if (read.every((one) => one.skinAccessors === undefined)) return null;
+  if (vertexGroups === null) {
+    return {
+      refused: `mesh ${meshIndex} carries JOINTS_0, but no node skins it, so its joint numbers name nothing`,
+      issue: '#1063',
+    };
+  }
+  const joints = new Int32Array(vertices * 4);
+  const weights = new Float32Array(vertices * 4);
+  for (let i = 0; i < read.length; i++) {
+    const accessors = read[i].skinAccessors;
+    if (accessors === undefined) continue;
+    const count = read[i].positions.length / 3;
+    const j = readAccessor(json, buffers, accessors.joints);
+    const w = readAccessor(json, buffers, accessors.weights);
+    if (j.length !== count * 4) return mismatched(meshIndex, 'JOINTS_0');
+    if (w.length !== count * 4) return mismatched(meshIndex, 'WEIGHTS_0');
+    for (let k = 0; k < j.length; k++) {
+      if (j[k] >= vertexGroups.length) {
+        return {
+          refused: `mesh ${meshIndex} binds a vertex to joint ${j[k]}, but its skin lists ${vertexGroups.length} joints`,
+          issue: '#1063',
+        };
+      }
+    }
+    joints.set(j, vertexBase[i] * 4);
+    weights.set(w, vertexBase[i] * 4);
+  }
+  return { joints, weights };
+}
+
+/** A position weld refined so that no point holds two different bindings (#1196). */
+function splitByBinding(
+  byPosition: { readonly map: Uint32Array; readonly points: number },
+  skin: VertexSkin,
+): { readonly map: Uint32Array; readonly points: number } {
+  const map = new Uint32Array(byPosition.map.length);
+  const seen = new Map<string, number>();
+  for (let v = 0; v < map.length; v++) {
+    const key = `${byPosition.map[v]}|${skin.joints.subarray(v * 4, v * 4 + 4).join(',')}|${skin.weights.subarray(v * 4, v * 4 + 4).join(',')}`;
+    let point = seen.get(key);
+    if (point === undefined) {
+      point = seen.size;
+      seen.set(key, point);
+    }
+    map[v] = point;
+  }
+  return { map, points: seen.size };
 }
 
 /** #1050 — the native road's own arguments: the shared ones, plus where its images go. */
@@ -949,6 +1163,204 @@ function withProjectImages(
 }
 
 /**
+ * #1218 — a skinned mesh re-skinned into its armature's space, at the bind pose, as Blender's
+ * importer does (`io_scene_gltf2/blender/imp/mesh.py:673-718`, `skin_into_bind_pose`):
+ * `v' = Σ w · (boneRest[j] · inverseBind[j]) · v`, normalised by the weight sum.
+ *
+ * WHY. glTF places a skinned mesh by its joints alone; the mesh node's own transform has no effect,
+ * and its points are in whatever space the file's inverse bind matrices undo. Blender makes that
+ * explicit: the points become the bind pose in the ARMATURE's space and the mesh hangs under the
+ * armature with an identity transform (`vnode.py:349-408`, `move_skinned_meshes`). Then the mesh and
+ * its armature share one space, which is what the Armature modifier and the skinned draw assume.
+ * Storing the file's points as they were drew a mesh under a moved armature offset twice (#1218).
+ *
+ * A point with no weight at all is given wholly to its first joint, Blender's repair for an invalid
+ * file (`mesh.py:702-716`), in the stored weights too, so the deform moves it as Blender's does.
+ * Normals turn by the same matrix and are renormalised.
+ */
+function skinIntoArmatureSpace(
+  json: NativeGltfJson,
+  buffers: Uint8Array[],
+  skin: { joints: number[]; inverseBindMatrices?: number },
+  skeleton: NativeSkeleton,
+  data: MeshGeometryData,
+): MeshGeometryData {
+  const joints = data.pointLayers.find((l) => l.name === SKIN_JOINTS)?.data;
+  const weightLayer = data.pointLayers.find((l) => l.name === SKIN_WEIGHTS);
+  if (!joints || !weightLayer) return data;
+  const rest = boneWorldMatrices(skeleton.bones);
+  const inverseBind =
+    skin.inverseBindMatrices === undefined
+      ? null
+      : readAccessor(json as unknown as GltfJson, buffers, skin.inverseBindMatrices);
+  const jointMatrix = skin.joints.map((node, j) => {
+    const m = rest[skeleton.boneNodes.indexOf(node)].clone();
+    return inverseBind ? m.multiply(new Matrix4().fromArray(inverseBind, j * 16)) : m;
+  });
+  const weights = Float32Array.from(weightLayer.data);
+  const points = new Float32Array(data.points.length);
+  const perPoint: Matrix4[] = [];
+  const v = new Vector3();
+  for (let p = 0; p * 3 < points.length; p++) {
+    let sum = 0;
+    for (let lane = 0; lane < 4; lane++) sum += weights[p * 4 + lane];
+    if (sum === 0) {
+      weights[p * 4] = 1;
+      sum = 1;
+    }
+    const m = new Matrix4().makeScale(0, 0, 0);
+    m.elements[15] = 0;
+    for (let lane = 0; lane < 4; lane++) {
+      const w = weights[p * 4 + lane];
+      if (!w) continue;
+      const e = jointMatrix[joints[p * 4 + lane]].elements;
+      for (let k = 0; k < 16; k++) m.elements[k] += (w / sum) * e[k];
+    }
+    perPoint.push(m);
+    v.fromArray(data.points, p * 3)
+      .applyMatrix4(m)
+      .toArray(points, p * 3);
+  }
+  let cornerNormals = data.cornerNormals;
+  if (cornerNormals) {
+    const out = new Float32Array(cornerNormals.length);
+    const n = new Vector3();
+    for (let c = 0; c * 3 < out.length; c++) {
+      n.fromArray(cornerNormals, c * 3)
+        .transformDirection(perPoint[data.cornerPoints[c]])
+        .toArray(out, c * 3);
+    }
+    cornerNormals = out;
+  }
+  return {
+    ...data,
+    points,
+    cornerNormals,
+    pointLayers: data.pointLayers.map((l) =>
+      l === weightLayer ? { name: l.name, type: 'float4' as const, data: weights } : l,
+    ),
+  };
+}
+
+/**
+ * #393 — the skeleton, its base pose layer, and the Object that stands it, hung under `parentId`.
+ *
+ * The Object comes from `buildSkeletonObjectOps`, the builder the FBX and BVH roads use, so a glTF
+ * rig is the same citizen theirs are. It is not normalised: a glTF declares metres (§3.4), so the
+ * rig already has its size. Ids are content-addressed off the asset, as every id on this road is.
+ *
+ * #1211 — the file's bone motion is keys on the BASE pose layer: Skeleton.pose → PoseLayer →
+ * Object.pose, exactly what keying the character by hand makes. The layer is written even when the
+ * file keys no bone, so every native character has its base where a bind will find it. It is named
+ * after the file's first animation, as Blender names the action (the file's name when it has none).
+ *
+ * #1154 — each later animation that keys these bones is an override layer ABOVE the base, MUTED and
+ * named after it, in file order: Blender stashes every animation on a muted NLA track of the armature
+ * it drives (`animation_utils.py:20-29`). Pose layers are the bones' layering system (design D-C), so
+ * the base stays the bottom layer on the rest pose, a hand-pose skips the muted ones, and a bind
+ * mutes only the base.
+ */
+function skeletonOps(
+  args: NativeGltfImportArgs,
+  json: NativeGltfJson,
+  skeleton: NativeSkeleton,
+  layers: ArmatureLayers,
+  parentId: string,
+  key: string,
+): Op[] {
+  const skeletonId = nativeSkeletonId(args.assetRef, key);
+  const baseId = hashId('nativePoseLayer', args.assetRef, key);
+  const chain = [
+    {
+      id: baseId,
+      params: {
+        name: layers.name ?? baseNameOf(args.assetRef),
+        mode: 'override',
+        members: layers.members,
+        channels: layers.channels,
+      },
+    },
+    ...layers.held.map((layer) => ({
+      id: hashId('nativePoseLayer', args.assetRef, key, String(layer.index)),
+      params: {
+        name: layer.name,
+        mode: 'override',
+        mute: true,
+        members: layer.members,
+        channels: layer.channels,
+      },
+    })),
+  ];
+  return [
+    {
+      type: 'addNode',
+      nodeId: skeletonId,
+      nodeType: 'Skeleton',
+      params: { bones: skeleton.bones },
+    },
+    ...chain.map(
+      (layer): Op => ({
+        type: 'addNode',
+        nodeId: layer.id,
+        nodeType: 'PoseLayer',
+        params: layer.params,
+      }),
+    ),
+    ...chain.map(
+      (layer, i): Op => ({
+        type: 'connect',
+        from:
+          i === 0 ? { node: skeletonId, socket: 'pose' } : { node: chain[i - 1].id, socket: 'out' },
+        to: { node: layer.id, socket: 'pose' },
+      }),
+    ),
+    ...buildSkeletonObjectOps({
+      skeletonId,
+      sceneNodeId: parentId,
+      // #1238 — the armature node's name, as Blender names the armature Object; the layer keeps the
+      // animation's.
+      name: armatureNameOf(json, skeleton),
+      nameFollowsClip: false,
+      pose: { node: chain[chain.length - 1].id, socket: 'out' },
+    }).ops,
+  ];
+}
+
+/** An armature's layers from the file: the base (the first animation) and the held ones above it. */
+interface ArmatureLayers extends ReturnType<typeof nativeSkeletonLayer> {
+  readonly name: string | undefined;
+  readonly held: readonly ({
+    readonly index: number;
+    readonly name: string;
+  } & ReturnType<typeof nativeSkeletonLayer>)[];
+}
+
+/**
+ * #1238 — the name Blender gives this armature's Object: its armature node's name, or, when the
+ * armature stands at the file's root (no node holds it) or the node is unnamed, the armature data's —
+ * the first skin's name, else `Armature` (`io_scene_gltf2/blender/imp/node.py`, `create_object`;
+ * `vnode.py`, `mark_bones_and_armas`). Measured on Blender 5.1.1: `SkinnedBar`, and `SkinnedBar` +
+ * `SkinnedBarB` in `two-skinned-bars.glb` (`q1238_names.py`).
+ */
+function armatureNameOf(json: NativeGltfJson, skeleton: NativeSkeleton): string {
+  const node = skeleton.armatureNode === null ? undefined : json.nodes[skeleton.armatureNode];
+  if (node?.name) return node.name;
+  const skin = (json.skins ?? []).find((s) => skeleton.boneNodes.includes(s.joints[0]));
+  return skin?.name || 'Armature';
+}
+
+/** A skeleton's id: the asset and the node key of its first bone, one skeleton per armature. */
+function nativeSkeletonId(assetRef: string, key: string): string {
+  return hashId('nativeSkeleton', assetRef, key);
+}
+
+/** A path's file name without its extension. */
+function baseNameOf(path: string): string {
+  const base = path.split('/').filter(Boolean).pop() ?? path;
+  return base.replace(/\.[^.]+$/, '') || base;
+}
+
+/**
  * Build the native import's ops, or refuse the whole file by name.
  *
  * Deterministic: ids are content-addressed off the asset ref and each node's sanitised name, so
@@ -957,15 +1369,56 @@ function withProjectImages(
 export async function buildNativeGltfImportOps(
   args: NativeGltfImportArgs,
 ): Promise<NativeImportResult | NativeImportRefusal> {
+  return buildNativeOps(args);
+}
+
+async function buildNativeOps(
+  args: NativeGltfImportArgs,
+): Promise<NativeImportResult | NativeImportRefusal> {
   const { json: parsed, bin } = parseGltfContainer(args.buffer);
   const json = parsed as NativeGltfJson;
   const refusal = fileRefusal(json);
   if (refusal !== null) return refusal;
   const buffers = await resolveBuffers(json, bin, args.resolveBuffer);
   // #1051 — the clip is read with everything else that can refuse, before anything is stored.
-  const clip = readNativeClip(json as ClipGltfJson, buffers);
-  if ('refused' in clip) return clip;
+  const read_ = readNativeAnimations(json as ClipGltfJson, buffers);
+  if ('refused' in read_) return read_;
+  // #1154 — the first animation plays; the rest are held muted, as Blender stashes each on a muted
+  // NLA track and makes the first the active action (`animation_utils.py:20-29`, `scene.py:86-89`).
+  const [active, ...held] = read_.animations;
+  const clip = { channels: active?.channels ?? [] };
+  // #393 — each armature's joints as a skeleton, and the clip's channels on them as its clip
+  // (#1208: one skeleton per armature, as Blender's importer makes one armature Object each).
+  const read = readNativeSkeletons(json);
+  if (read !== null && 'refused' in read) return read;
+  const skeletons = read?.skeletons ?? [];
+  const boneLayers = skeletons.map((skeleton) => ({
+    name: active?.name,
+    ...nativeSkeletonLayer(skeleton, clip.channels),
+    // #1154 — each held animation that keys this armature's bones: a muted layer above the base.
+    held: held
+      .map((animation, i) => ({
+        index: i + 1,
+        name: animation.name,
+        ...nativeSkeletonLayer(skeleton, animation.channels),
+      }))
+      .filter((layer) => layer.channels.length > 0),
+  }));
+  const isBone = new Set(skeletons.flatMap((skeleton) => skeleton.boneNodes));
+  // #1210 — each bone node's skeleton and name, for a mesh the file hangs under it.
+  const boneAt = new Map(
+    skeletons.flatMap((skeleton, k) =>
+      skeleton.boneNodes.map((node, b) => [node, { skeleton: k, name: skeleton.bones[b].name }]),
+    ),
+  );
   const { keyByGltfNodeIndex } = buildNodeNameMap(json, args.assetRef);
+  // The skeleton that stands in place of each armature's first bone, by that bone's node.
+  const skeletonAtNode = new Map(skeletons.map((skeleton, i) => [skeleton.boneNodes[0], i]));
+  /** The Object standing skeleton `i` — what a skinned mesh's Armature modifier points at. */
+  const skeletonObjectOf = (i: number): string =>
+    skeletonObjectId(
+      nativeSkeletonId(args.assetRef, keyByGltfNodeIndex[skeletons[i].boneNodes[0]]),
+    );
 
   const groupId = hashId('nativeGrp', args.assetRef);
   const position: Vec3 = args.position ?? [0, 0, 0];
@@ -986,6 +1439,7 @@ export async function buildNativeGltfImportOps(
   ];
   const objectIds: string[] = [];
   const parentEdges: Op[] = [];
+  const armatureEdges: Op[] = [];
   const materialTables = { textures: json.textures as never, samplers: json.samplers };
 
   // #1050 — everything that can refuse is read before anything is stored: every mesh, every
@@ -1001,9 +1455,23 @@ export async function buildNativeGltfImportOps(
     // reads any attribute it is given, and what decides is whether the stored mesh would draw it.
     const undrawable = undrawableAttributes(json, node.mesh as number);
     if (undrawable !== null) return undrawable;
-    const data = readGltfMesh(json, buffers, node.mesh as number);
+    // #393 — a skinned node's mesh names its joint numbers by the skeleton's own bone names.
+    const vertexGroups =
+      typeof node.skin === 'number' && read !== null ? read.skins[node.skin].vertexGroups : null;
+    const data = readGltfMesh(json, buffers, node.mesh as number, vertexGroups);
     if ('refused' in data) return data;
-    meshes.set(i, data);
+    meshes.set(
+      i,
+      typeof node.skin === 'number' && read !== null
+        ? skinIntoArmatureSpace(
+            json,
+            buffers,
+            json.skins![node.skin],
+            skeletons[read.skins[node.skin].skeleton],
+            data,
+          )
+        : data,
+    );
     const primitives = json.meshes![node.mesh as number].primitives!;
     for (let p = 0; p < primitives.length; p++) {
       const materialIndex = primitives[p].material;
@@ -1041,10 +1509,23 @@ export async function buildNativeGltfImportOps(
       : hashId('nativeEmpty', args.assetRef, key);
   };
 
+  const meshIds: ({ objectId: string; dataId: string } | null)[] = json.nodes.map(() => null);
   for (let i = 0; i < json.nodes.length; i++) {
     const node = json.nodes[i];
     const key = keyByGltfNodeIndex[i];
     const parentId = parentOfNode.has(i) ? idOfNode(parentOfNode.get(i)!) : groupId;
+    // #393 — a bone is data of the skeleton, not a node of the scene. The skeleton's standing
+    // Object takes the place of the first bone below the armature, so it joins its parent's
+    // children where the file's joint chain did.
+    if (isBone.has(i)) {
+      const standing = skeletonAtNode.get(i);
+      if (standing !== undefined) {
+        parentEdges.push(
+          ...skeletonOps(args, json, skeletons[standing], boneLayers[standing], parentId, key),
+        );
+      }
+      continue;
+    }
     if (typeof node.mesh !== 'number') {
       const emptyId = idOfNode(i);
       ops.push(
@@ -1067,7 +1548,45 @@ export async function buildNativeGltfImportOps(
     }
     const data = meshes.get(i)!;
     const dataId = hashId('nativeMesh', args.assetRef, key);
-    const objectId = idOfNode(i);
+    // #1218 — a skinned mesh stands where its armature stands, with no transform of its own: its
+    // points were re-skinned into the armature's space above. Blender moves the node itself when
+    // nothing else rides on it (not animated, no children), and otherwise leaves the node behind as
+    // an empty and hangs a new object under the armature (`vnode.py:349-408`). A mesh node that IS
+    // its armature's node already stands there.
+    // The armature node this skinned mesh's skeleton stands under, when it has one.
+    const ownArmature =
+      typeof node.skin === 'number' && read !== null
+        ? skeletons[read.skins[node.skin].skeleton].armatureNode
+        : undefined;
+    const skinnedElsewhere = ownArmature !== undefined && ownArmature !== i;
+    const leftBehind = skinnedElsewhere && leftBehindAsEmpty(json, i);
+    const objectId = leftBehind
+      ? hashId('nativeObject', args.assetRef, `${key}.skinned`)
+      : idOfNode(i);
+    meshIds[i] = { objectId, dataId };
+    // #1210 — a mesh under a bone hangs from that bone: its parent is the armature's Object, and
+    // it names the bone (Blender `imp/node.py:104-117`). Its TRS stays the file's — glTF states it
+    // from the joint's origin, where Basher parents (`boneParent.ts`), so nothing is moved back.
+    const underBone = skinnedElsewhere ? undefined : boneAt.get(parentOfNode.get(i) ?? -1);
+    const objectParentId = underBone
+      ? skeletonObjectOf(underBone.skeleton)
+      : !skinnedElsewhere
+        ? parentId
+        : ownArmature === null || ownArmature === undefined
+          ? groupId
+          : idOfNode(ownArmature);
+    if (leftBehind) {
+      const emptyId = idOfNode(i);
+      ops.push(
+        { type: 'addNode', nodeId: emptyId, nodeType: 'Group', params: nodeTransformOf(node) },
+        { type: 'setMeta', nodeId: emptyId, name: node.name || `Empty_${i}` },
+      );
+      parentEdges.push({
+        type: 'connect',
+        from: { node: emptyId, socket: 'out' },
+        to: { node: parentId, socket: 'children' },
+      });
+    }
     // #1052 — one material per slot, numbered by the same function that wrote each face's slot.
     const slotMaterials = primitiveSlots(json, node.mesh as number).slots.map((slot) =>
       withProjectImages(
@@ -1099,34 +1618,77 @@ export async function buildNativeGltfImportOps(
         type: 'addNode',
         nodeId: objectId,
         nodeType: 'Object',
-        params: nodeTransformOf(node),
+        params: skinnedElsewhere
+          ? {
+              position: [0, 0, 0],
+              rotation: [0, 0, 0],
+              scale: [1, 1, 1],
+              rotationMode: 'quaternion',
+              quaternion: [0, 0, 0, 1],
+            }
+          : {
+              ...nodeTransformOf(node),
+              ...(underBone ? { parentBone: underBone.name } : {}),
+            },
       },
       // #1137 — the name every surface shows, so the outliner lists the file's own node.
       { type: 'setMeta', nodeId: objectId, name: objectNameOf(json, i) },
-      {
+    );
+    if (typeof node.skin === 'number' && read !== null) {
+      // #393 — a skinned mesh is deformed by an Armature modifier on its own stack, pointed at the
+      // skeleton's Object — what Blender's importer makes of this file (measured, 5.1.1: `Mesh_0`
+      // carries `('ARMATURE', 'SkinnedBar')`, `q13_skinned_bar_oracle.py`). The parenting says
+      // nothing about the deform.
+      const modifierId = hashId('nativeArmatureMod', args.assetRef, key);
+      ops.push(
+        { type: 'addNode', nodeId: modifierId, nodeType: 'ArmatureModifier', params: {} },
+        {
+          type: 'connect',
+          from: { node: dataId, socket: 'out' },
+          to: { node: modifierId, socket: 'target' },
+        },
+        {
+          type: 'connect',
+          from: { node: modifierId, socket: 'out' },
+          to: { node: objectId, socket: 'data' },
+        },
+      );
+      // After every parent edge: the skeleton's Object is written there.
+      armatureEdges.push({
+        type: 'connect',
+        from: { node: skeletonObjectOf(read.skins[node.skin].skeleton), socket: 'out' },
+        to: { node: modifierId, socket: 'armature' },
+      });
+    } else {
+      ops.push({
         type: 'connect',
         from: { node: dataId, socket: 'out' },
         to: { node: objectId, socket: 'data' },
-      },
-    );
-    parentEdges.push({
+      });
+    }
+    // Under a bone, after every parent edge: the armature's Object is written among them, and the
+    // file may number the mesh before its bones.
+    (underBone ? armatureEdges : parentEdges).push({
       type: 'connect',
       from: { node: objectId, socket: 'out' },
-      to: { node: parentId, socket: 'children' },
+      to: { node: objectParentId, socket: 'children' },
     });
     objectIds.push(objectId);
   }
+  const nodeIds = json.nodes.map((_, i) => (isBone.has(i) ? null : idOfNode(i)));
 
   // Every parent edge AFTER every node: glTF numbers its nodes in no particular order, so a child
   // can be written before the parent it names, and a `connect` to a node that does not exist yet
   // throws. Within this list the order is the file's, which is what fixes each parent's child order.
-  ops.push(...parentEdges);
+  ops.push(...parentEdges, ...armatureEdges);
 
   // #1051 — the clip as ordinary channels on the Objects and Groups it animates, written after
   // every node so each names a target that exists. Each is what Auto-Key or I would have made for
   // the same parameter: the same node type, the same `<target>_<param>_channel` id (these three
   // param names are already id-safe), named by its param. Nothing refers back to the file.
   for (const channel of clip.channels) {
+    // #393 — a bone's channels are the skeleton's clip, written above.
+    if (isBone.has(channel.node)) continue;
     const target = idOfNode(channel.node);
     const paramPath = CLIP_PARAM[channel.path];
     ops.push({
@@ -1136,11 +1698,119 @@ export async function buildNativeGltfImportOps(
       params: { name: paramPath, target, paramPath, keyframes: channel.keyframes },
     });
   }
+  ops.push(...heldObjectAnimationOps(args.assetRef, held, isBone, idOfNode));
 
   ops.push({
     type: 'connect',
     from: { node: groupId, socket: 'out' },
     to: { node: args.sceneNodeId, socket: 'children' },
   });
-  return { ops, groupId, objectIds };
+  // #1216 — the ids above, gathered for a caller that must address them by the file's structure.
+  const firstBoneKey = (s: number): string => keyByGltfNodeIndex[skeletons[s].boneNodes[0]];
+  const skeletonIds = skeletons.map((skeleton, s) => ({
+    skeletonId: nativeSkeletonId(args.assetRef, firstBoneKey(s)),
+    objectId: skeletonObjectOf(s),
+    boneNames: new Map(skeleton.boneNodes.map((node, b) => [node, skeleton.bones[b].name])),
+  }));
+  const objectChannelIds = (animation: NativeAnimation): string[] => [
+    ...new Set(
+      animation.channels
+        .filter((channel) => !isBone.has(channel.node))
+        .map((channel) => `${idOfNode(channel.node)}_${CLIP_PARAM[channel.path]}_channel`),
+    ),
+  ];
+  const takes = read_.animations.map((animation, k) =>
+    k === 0
+      ? {
+          layers: skeletons.map((_, s) =>
+            hashId('nativePoseLayer', args.assetRef, firstBoneKey(s)),
+          ),
+          channels: objectChannelIds(animation),
+          track: null,
+        }
+      : {
+          layers: boneLayers.flatMap((layers, s) =>
+            layers.held.some((layer) => layer.index === k)
+              ? [hashId('nativePoseLayer', args.assetRef, firstBoneKey(s), String(k))]
+              : [],
+          ),
+          channels: [],
+          track:
+            objectChannelIds(animation).length > 0
+              ? hashId('nativeTrack', args.assetRef, String(k))
+              : null,
+        },
+  );
+  return {
+    ops,
+    groupId,
+    objectIds,
+    nodeIds,
+    skeletons: skeletonIds,
+    skinSkeleton: (read?.skins ?? []).map((skin) => skin.skeleton),
+    meshes: meshIds,
+    takes,
+  };
+}
+
+/**
+ * #1154 — a held animation's Object channels as NLA: one `Track` per animation, MUTED and named after
+ * it, holding for each Object it drives an `Action` (that Object's channels, target-less) placed by a
+ * `Strip` — what placing an action on a track by hand makes (`mutator.nla.addStrip`). Blender stashes
+ * each animation on a muted NLA track of every object it drives (`animation_utils.py:20-29`), and NLA
+ * is the layering system for scene parameters (design D-C). Bone channels are the armature's layers,
+ * written with the skeleton; an animation that keys only bones writes no track here.
+ */
+function heldObjectAnimationOps(
+  assetRef: string,
+  held: readonly NativeAnimation[],
+  isBone: ReadonlySet<number>,
+  idOfNode: (node: number) => string,
+): Op[] {
+  const ops: Op[] = [];
+  held.forEach((animation, i) => {
+    const index = String(i + 1);
+    const byNode = new Map<number, NativeAnimation['channels']>();
+    for (const channel of animation.channels) {
+      if (isBone.has(channel.node)) continue;
+      byNode.set(channel.node, [...(byNode.get(channel.node) ?? []), channel]);
+    }
+    if (byNode.size === 0) return;
+    const strips: string[] = [];
+    for (const [node, channels] of byNode) {
+      const target = idOfNode(node);
+      const actionId = hashId('nativeAction', assetRef, index, target);
+      const stripId = hashId('nativeStrip', assetRef, index, target);
+      strips.push(stripId);
+      ops.push(
+        {
+          type: 'addNode',
+          nodeId: actionId,
+          nodeType: 'Action',
+          params: {
+            name: animation.name,
+            channels: channels.map((channel) => ({
+              valueType: channel.path === 'rotation' ? 'quat' : 'vec3',
+              name: CLIP_PARAM[channel.path],
+              paramPath: CLIP_PARAM[channel.path],
+              keyframes: channel.keyframes,
+            })),
+          },
+        },
+        {
+          type: 'addNode',
+          nodeId: stripId,
+          nodeType: 'Strip',
+          params: { name: animation.name, action: actionId, target },
+        },
+      );
+    }
+    ops.push({
+      type: 'addNode',
+      nodeId: hashId('nativeTrack', assetRef, index),
+      nodeType: 'Track',
+      params: { name: animation.name, strips, order: i, mute: true },
+    });
+  });
+  return ops;
 }

@@ -148,6 +148,11 @@ export function Viewport() {
   // #165: surface the "Camera view · 0" badge while looking through the active
   // camera (the inner scene component subscribes separately for its orbit gate).
   const lookThrough = useViewportStore((s) => s.lookThroughCamera);
+  // #1188: the scene reaches past the free view's Clip End. The clip is fixed
+  // (Blender's model, #1178), so this notice is what says a far part of the
+  // scene is cut off by the camera rather than missing.
+  const clipExceeded = useViewportStore((s) => s.viewportClipExceeded);
+  const clipFar = useViewportStore((s) => s.viewportClipReadout.far);
 
   // UX-BACKLOG #2 follow-up 2 — in the narrow layout the bottom-center
   // agent/timeline stack goes full-width, so the bottom-RIGHT viewport widgets
@@ -199,6 +204,18 @@ export function Viewport() {
           <span aria-label="Camera view — press 0 to exit" aria-live="polite">
             Camera view · 0
           </span>
+        </div>
+      ) : null}
+      {/* #1188: top-center like the camera badge, which never shows with it
+          (look-through reports no overrun). pointer-events-none so it never
+          swallows a viewport click; it names where the fix lives. */}
+      {clipExceeded && !lookThrough ? (
+        <div
+          data-testid="viewport-clip-notice"
+          role="status"
+          className="pointer-events-none absolute left-1/2 top-16 z-10 -translate-x-1/2 rounded border border-border bg-bg-2/90 px-2 py-1 font-mono text-[10px] text-fg-dim backdrop-blur-sm"
+        >
+          Scene extends past Clip End ({Math.round(clipFar)}) · View ▸ Clipping
         </div>
       ) : null}
       {selectedId == null && !timelineDrawerOpen ? (

@@ -643,6 +643,20 @@ export interface MeshFaceLayer {
   readonly data: Int32Array;
 }
 
+/** #1196 — the point layer types a stored mesh holds: joint numbers and their weights. */
+export type MeshPointLayerType = Extract<import('./attributes').AttributeType, 'int4' | 'float4'>;
+
+/**
+ * #1196 — one named, typed point layer of a stored mesh, four values per point, in point order.
+ *
+ * A union on the type rather than one shape with a loose array, because the two hold different
+ * numbers: joint numbers are integers that index a table, and a weight is a fraction. Typed this
+ * way, an `int4` layer cannot be handed a `Float32Array` that would round a joint number.
+ */
+export type MeshPointLayer =
+  | { readonly name: string; readonly type: 'int4'; readonly data: Int32Array }
+  | { readonly name: string; readonly type: 'float4'; readonly data: Float32Array };
+
 /**
  * #1049 — the substance of a stored polygon mesh, in the element domains the model already uses.
  *
@@ -664,6 +678,19 @@ export interface MeshGeometryData {
   readonly cornerLayers: readonly MeshCornerLayer[];
   /** Every face attribute, by name; empty when the mesh has none (#1052). */
   readonly faceLayers: readonly MeshFaceLayer[];
+  /**
+   * Every point attribute, by name; empty when the mesh has none (#1196). Today that is a skinned
+   * mesh's joint numbers and weights, which belong to the point: a UV seam splits a render vertex,
+   * never a vertex's binding to its bones.
+   */
+  readonly pointLayers: readonly MeshPointLayer[];
+  /**
+   * #1196 — the names an `int4` point layer's numbers index, in order: Blender's vertex groups,
+   * one per joint the mesh is bound to. Empty when the mesh is bound to nothing. The NUMBER is the
+   * key a weight uses; the name labels it, as a Blender weight's group index is joined to its
+   * group's name (`armature_deform.cc:330`).
+   */
+  readonly vertexGroups: readonly string[];
   /** Normal per corner, or `null` when the mesh stores none (the build derives them). */
   readonly cornerNormals: Float32Array | null;
 }
@@ -1531,17 +1558,27 @@ export interface SkeletonValue {
   readonly bones: readonly BoneSpec[];
 }
 
+/**
+ * One bone's LOCAL transform on the pose wire (#1223): relative to its parent, as the skeleton's
+ * bind values are, but posed.
+ *
+ * A quaternion and a scale rather than XYZ euler, because the wire is where layers fold and where
+ * clips interpolate: euler angles cannot slerp (#1202), and a scale key had nowhere to go. Euler
+ * stays an AUTHORING form (a member's rotation mode, a clip's stored keys) and is converted as it
+ * is read (`bonePose.ts`).
+ */
 export interface BonePose {
-  /** Index into the skeleton's `bones`. */
-  readonly bone: number;
+  /** The bone's name — how a consumer on another rig finds it, as Blender finds a pose channel. */
+  readonly name: string;
   readonly position: Vec3;
-  readonly rotation: Vec3;
+  readonly quaternion: Quat;
+  readonly scale: Vec3;
 }
 
 /**
  * A posed rig, as a FUNCTION OF TIME (rung 2 of #900, issue #992).
  *
- * Bone-indexed counterpart to {@link TransformClipValue}, and the same shape for
+ * Per-bone counterpart to {@link TransformClipValue}, and the same shape for
  * the same reason: `sample(seconds)` returns the per-bone poses at that time, so
  * a producing node's `evaluate` takes NO `Time` input and its cache key does not
  * flip while the clock runs.
@@ -1560,12 +1597,11 @@ export interface BonePose {
  * put ~12ms on the frame path" is true of the INSTANT shape and false of this
  * one.
  *
- * **Bone-indexed, not name-keyed, deliberately.** A {@link BonePose}'s `bone` is
- * an index, meaningful only against the skeleton it is paired with — the same
- * reasoning `RetargetClip` gives for taking the source rig off the clip rather
- * than off a fourth input. Reconciling index → name belongs at the one seam that
- * needs names, not in the value, so there is one reconciliation rather than one
- * per consumer.
+ * **In the skeleton's order, and named (#1223).** `sample` returns one entry per bone of
+ * `skeleton`, index for index, so a consumer on the same rig reads by position with no lookup.
+ * Each entry also carries its bone's NAME, which is what a consumer on a different rig joins by —
+ * a layer's members, a deform whose groups name bones. This was index-only before; the name is
+ * what lets motion move between rigs the way Blender's actions do, by name.
  */
 export interface PosedSkeletonValue {
   readonly kind: 'PosedSkeleton';
@@ -1579,6 +1615,60 @@ export interface PosedSkeletonValue {
    * Caller owns invocation cadence, exactly as with `TransformClipValue.sample`.
    */
   readonly sample: (seconds: number) => readonly BonePose[];
+  /**
+   * #1241 — the pose this one's layers started from: set by the first `PoseLayer` on a wire and
+   * carried by every layer after it; absent on a source (a clip, a retarget). What a soloed layer
+   * applies onto, so solo needs no node to look across the graph.
+   */
+  readonly source?: PosedSkeletonValue;
+  /** #1241 — a soloed layer is at or above this point: layers that are not soloed pass it by. */
+  readonly soloed?: boolean;
+  /**
+   * #1211 — this is a skeleton standing at rest (`Skeleton.pose`). An override layer reading it is
+   * the chain's BASE layer, the character's own motion as keys, and it names its own output as the
+   * wire's `source`, so a soloed layer above plays over that motion as it played over a clip.
+   */
+  readonly rest?: true;
+  /**
+   * #1225 — the time range this motion covers and how densely, Houdini's `clipinfo` detail attribute
+   * (`kinefx--gltfcharacterimport.txt:290-294`, `kinefx--motionclip.txt` "Frame Range"). A consumer
+   * that turns the wire into samples — a retarget — reads it instead of asking where the wire came from.
+   * Set by a clip's pose and by a base layer from its keys; a layer or override passes it through, as
+   * a detail attribute rides through SOPs. Absent on a pose with no range: a skeleton at rest, a sway.
+   */
+  readonly clip?: WireClipInfo;
+}
+
+/**
+ * #1225 — a wire's range and rate. `round((end - start) · rate)` samples cover `[start, end]`, both
+ * ends included: three's retarget rule (`SkeletonUtils.js:204,213-214`), under which a clip whose
+ * densest bone has n keys is sampled n times, landing on its keys.
+ */
+export interface WireClipInfo {
+  readonly start: number;
+  readonly end: number;
+  readonly rate: number;
+  /** The motion's name, as `clipinfo` records the clip name. */
+  readonly name?: string;
+  /** What the motion does past its range (`clipinfo`'s end behaviour). Absent is hold. A retarget
+   *  carries it across, so a one-shot motion stays one (#919). */
+  readonly loop?: ClipLoop;
+}
+
+/** #1225 — one bone in a MotionClip pose: whichever of its local transform the pose states. */
+export interface MotionBonePose {
+  readonly position?: Vec3;
+  readonly quaternion?: Quat;
+  readonly scale?: Vec3;
+}
+
+/** #1225 — how a MotionClip reads between two poses. */
+export type MotionInterpolation = 'linear' | 'constant';
+
+/** #1225 — a MotionClip pose: a time, and the bones it holds by name (sparse). */
+export interface MotionPose {
+  readonly time: number;
+  readonly bones: Readonly<Record<string, MotionBonePose>>;
 }
 
 /** A single keyframe targeting a bone (by index) at a given clip-time. */
@@ -1592,12 +1682,14 @@ export interface AnimationKeyframe {
 /**
  * A clip, as a value.
  *
- * WHY THE KEYS AND THE RIG TRAVEL WITH IT (#901). A keyframe's `bone` is an
- * INDEX, and an index means nothing except against the skeleton it was authored
- * for. A consumer that took the keys from one place and the rig from another
- * could pair a 78-bone source's indices with a 23-bone target's spine and get a
- * plausible-looking wrong answer — the same producer-vs-consumer split #913 and
- * #916 closed for the time domain. So the clip carries both, and `loop` besides:
+ * WHY THE POSES AND THE RIG TRAVEL WITH IT (#901). A pose names its bones, and
+ * a name only means something against the rig it was authored on; a bone the
+ * poses never hold takes that rig's rest. A consumer that took the poses from one
+ * place and the rig from another could pair one character's motion with another's
+ * rest and get a plausible-looking wrong answer — the same producer-vs-consumer
+ * split #913 and #916 closed for the time domain. (Keys once addressed bones by
+ * INDEX, which made the pairing worse; #1225 moved the value to names.) So the
+ * clip carries both, and `loop` besides:
  * a consumer able to take the keys without the domain is a consumer able to make
  * a copy that stops where its source wraps.
  *
@@ -1606,8 +1698,9 @@ export interface AnimationKeyframe {
  * per-frame-re-render invariant exists to forbid. Both producers are now
  * time-free: `RetargetClip` always was, and `AnimationClip` joined it. Sampling
  * belongs to the consumer, which is the only party holding a `Time` to sample
- * AT; `LocomotionState` does it with `buildClipBoneSamplers`, the same factory
- * the baked render band uses, so a bone posed through either cannot disagree.
+ * AT, through `posedSkeletonFromClip`, which samples each bone through the same
+ * per-track sampler the baked render band uses (`clipTrackSampler`), so a bone
+ * posed through either cannot disagree.
  */
 export interface AnimationClipValue {
   readonly kind: 'AnimationClip';
@@ -1617,9 +1710,19 @@ export interface AnimationClipValue {
    *  `true` meant cycle-WITH-OFFSET — so cycle-in-place had no spelling, and the
    *  sibling carrier defaulted the opposite way. */
   readonly loop: ClipLoop;
-  /** The clip's keys. `bone` indexes {@link AnimationClipValue.skeleton}. */
-  readonly keyframes: readonly AnimationKeyframe[];
-  /** The rig the keyframe indices are authored against. */
+  /**
+   * #1225 — the motion as TIMED POSES, Houdini's MotionClip (`kinefx-motionclips.txt:16-34`): each
+   * pose a time and the bones it holds, BY NAME, each with a local position, a quaternion and a
+   * scale where it states one. Poses are sparse: a bone missing from a pose is interpolated from
+   * the nearest poses that hold it, and a bone no pose holds stays at the rig's rest. Sorted by
+   * time. Built from the node's params by `motionPosesFromKeyframes` until the params move to the
+   * same shape (#1233 step 8).
+   */
+  readonly poses: readonly MotionPose[];
+  /** #1225 — between poses: `linear` (slerp for rotation) or `constant` (the pose at or before t),
+   *  Houdini's MotionClip Evaluate Interpolation (`kinefx--motionclipevaluate.txt:26-35`). */
+  readonly interpolation: MotionInterpolation;
+  /** The rig the poses' bone names are drawn from — its rest is what an unheld bone keeps. */
   readonly skeleton: SkeletonValue;
   /**
    * Present only on a clip produced by {@link MotionGenerateNode} (#902).
@@ -2070,6 +2173,36 @@ export interface ModifiedDataValue {
    * with no index has nothing selecting between its entries.
    */
   readonly attributeKey?: string;
+  /**
+   * #393 — the armature deform an `ArmatureModifier` put on this mesh, when one did. `geometry`
+   * stays the REST mesh (a query answers bind pose until #1198); where the points are at a time is
+   * `sampleSkinDeform(skin, mesh, seconds)`.
+   */
+  readonly skin?: SkinDeformValue;
+}
+
+/**
+ * #393 — a mesh deformed by an armature, as data: what Blender's Armature modifier reads at
+ * evaluation, frozen on the value so the deform is a function of time alone.
+ *
+ * Time enters as an argument to `sampleSkinDeform`, never as an edge. The value carries the
+ * armature's POSE (#1224), whose `sample` is a closure: it survives a key on the mesh's Object
+ * because an overlay shares what it does not write (#1236). Until then this was plain data carrying
+ * the action clip, since the overlay's JSON-style copy dropped every function.
+ */
+export interface SkinDeformValue {
+  readonly kind: 'SkinDeform';
+  /** The armature's rest bones — Blender's `arm_mat`, relative to the armature Object. */
+  readonly bones: readonly BoneSpec[];
+  /** The armature Object's pose, or null: with no pose the rig rests and no point moves. */
+  readonly pose: PosedSkeletonValue | null;
+  /**
+   * Per vertex group, in the mesh's `vertexGroups` order: the bone its NAME joins, or -1. Joined
+   * once, at evaluation — Blender's `pose_channel_by_vertex_group` (`armature_deform.cc:330`).
+   */
+  readonly boneOfGroup: readonly number[];
+  /** Where the armature Object stands in the mesh's space, column-major (Blender's premat). */
+  readonly armatureMatrix: readonly number[];
 }
 
 /**
@@ -2157,6 +2290,38 @@ export interface ObjectValue extends RotationModeFields {
    * object that overrides nothing, and disagrees only on the case under test.
    */
   readonly slotOverrides?: Readonly<Record<string, InlineMaterialSpec>>;
+  /**
+   * #1152 — the scene objects this Object PARENTS, drawn in its space, as a Group's are. Present
+   * only when there is at least one: an Object that parents nothing evaluates to exactly the value
+   * it did before this field existed, the same one-spelling rule `slotOverrides` follows.
+   *
+   * Blender has no Object/Group split here — its glTF importer makes one object per node and
+   * parents object to object (`io_scene_gltf2/blender/imp/node.py:105-108`) — so a headlamp under
+   * a car body, a handle on a door, is an Object under an Object, not a mesh beside a Group that
+   * stands for nothing a director placed.
+   */
+  readonly children?: readonly SceneObject[];
+  /**
+   * #1224 — the pose that poses this Object's skeleton: the end of the pose wire (Houdini's Joint
+   * Deform input; a Blender armature Object's pose). Present only when one is bound, so an Object
+   * with none evaluates to the value it always did. Until #1224 this was the action clip (#1203);
+   * a clip now reaches it through its `pose` output.
+   *
+   * It is ON the Object because the Object is what a deform points at (#393): a mesh's armature
+   * operator takes the armature Object as an input, and the pose it deforms by has to arrive with
+   * it. The pose cannot sit on the skeleton instead — it reads the skeleton, so the edge would be
+   * a cycle. It carries a `sample` closure, which survives a key on this Object because an
+   * overlay shares what it does not write (#1236). Read through `armaturePoseOf`, which refuses a
+   * pose made for another rig.
+   */
+  readonly pose?: PosedSkeletonValue;
+  /**
+   * #1210 — the bone of its parent armature Object this Object hangs from: Blender's
+   * `parent_type = 'BONE'` with `parent_bone`, a property of the CHILD (`Object.parsubstr`). The
+   * parent edge stays the armature's `children` socket; this names which bone's pose sits between
+   * the two. Read through `boneParentMatrix`. Present only when set.
+   */
+  readonly parentBone?: string;
 }
 
 export type SceneChild =

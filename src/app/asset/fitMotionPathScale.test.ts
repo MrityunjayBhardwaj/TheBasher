@@ -67,29 +67,20 @@ function apply(s: DagState, ops: readonly Op[]): DagState {
   return next;
 }
 
-/** A glTF character whose hips stand at `hipHeight`. */
+/** A character whose hips stand at `hipHeight` — a native `Skeleton`, the kind a bind retargets
+ *  onto since the clone road's `GltfSkeleton` stopped being a bind target (#1053). */
 function characterOps(id: string, hipHeight: number): Op[] {
-  const skin = {
-    jointKeys: ['Hips', 'Spine'],
-    bindTRS: [
-      { position: [0, hipHeight, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
-      { position: [0, 0.5, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
-    ],
-    parentJointIndex: [-1, 0],
-    inverseBindMatrices: [],
-  };
   return [
     {
       type: 'addNode',
-      nodeId: `${id}_asset`,
-      nodeType: 'GltfAsset',
-      params: { assetRef: `asset://${id}.glb`, skins: [skin] },
-    },
-    { type: 'addNode', nodeId: `${id}_skel`, nodeType: 'GltfSkeleton', params: { skinIndex: 0 } },
-    {
-      type: 'connect',
-      from: { node: `${id}_asset`, socket: 'out' },
-      to: { node: `${id}_skel`, socket: 'asset' },
+      nodeId: `${id}_skel`,
+      nodeType: 'Skeleton',
+      params: {
+        bones: [
+          { name: 'Hips', parent: -1, position: [0, hipHeight, 0], rotation: [0, 0, 0] },
+          { name: 'Spine', parent: 0, position: [0, 0.5, 0], rotation: [0, 0, 0] },
+        ],
+      },
     },
   ] as Op[];
 }
@@ -114,7 +105,7 @@ function bind(s: DagState, clipId: string, characterSkel: string, outputClipId: 
   const plan = validatePlan(
     retargetMutator,
     {
-      sourceClipId: clipId,
+      sourceId: clipId,
       sourceSkeletonId: edgeTarget(s.nodes[clipId], 'skeleton')!,
       targetSkeletonId: characterSkel,
       customMap: BRIDGE,

@@ -18,6 +18,11 @@ import { useSelectionStore } from './stores/selectionStore';
 import { useViewportStore } from './stores/viewportStore';
 import { useThreeRef } from './character/threeRef';
 import { useDagStore } from '../core/dag/store';
+import { __resetRegistryForTests, applyOp } from '../core/dag';
+import type { DagState } from '../core/dag/state';
+import { buildDefaultDagState } from '../core/project/default';
+import { registerAllNodes } from '../nodes/registerAll';
+import { nativeCharacterOps } from '../test-utils/nativeCharacter';
 
 function selectNode(id: string | null): void {
   useSelectionStore.setState({
@@ -162,6 +167,28 @@ describe('toggleViewLock against the live scene', () => {
     useThreeRef.getState().setRenderRefs(null, null);
     selectNode('n_whatever');
     expect(toggleViewLock()).toEqual({ kind: 'locked' });
+  });
+
+  // #1275 — a native character draws nothing the scene names by its ids; its rig comes from the
+  // graph. Measured before the fix: both Objects refused with `nothing-to-follow`.
+  it('takes a lock on a native character’s armature Object and on the mesh it deforms', () => {
+    __resetRegistryForTests();
+    registerAllNodes();
+    let state: DagState = buildDefaultDagState();
+    const { ops, ids } = nativeCharacterOps({
+      prefix: 'hero',
+      bones: ['Hips', 'Spine'],
+      sceneId: state.outputs.scene!.node,
+    });
+    for (const op of ops) state = applyOp(state, op).next;
+    useDagStore.setState({ state } as never);
+    useThreeRef.getState().setRenderRefs(null, new THREE.Scene());
+    for (const id of [ids.armatureId, ids.meshId]) {
+      useViewportStore.getState().setViewLock(null);
+      selectNode(id);
+      expect(toggleViewLock(), id).toEqual({ kind: 'locked' });
+      expect(useViewportStore.getState().viewLock?.nodeId).toBe(id);
+    }
   });
 
   it('releasing is never refused, whatever the scene says', () => {

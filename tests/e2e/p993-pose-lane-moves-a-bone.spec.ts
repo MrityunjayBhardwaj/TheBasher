@@ -6,22 +6,20 @@
 // BONE MOVE. The issue says so in as many words — "the current evidence stops at the resolver".
 //
 // A lane that is green in units and unobserved in the app is exactly where this project keeps
-// finding defects, so the evidence this row carries is deliberately the drawn bones: the live
-// `Bone` matrices the armature band reads, not the DAG params the mutator wrote. Params say what
-// was asked for; the matrices say what happened.
+// finding defects, so the evidence this row carries is deliberately the drawn bones: the matrices
+// the armature band draws, not the DAG params the mutator wrote. Params say what was asked for;
+// the matrices say what happened.
 //
 // It drives the real five-gate mutator road (`__basher_dispatchMutator`), the same entry an agent
-// uses. There is no director gesture yet — that is the remaining half of #993 — so this row
-// cannot pretend to cover one.
+// and the inspector's "pose this bone" use.
 //
-// 🔴 WHICH ROAD TO FALSIFY THIS AGAINST — MEASURED THE HARD WAY. Making
-// `PoseOverride.evaluate` completely inert does NOT red this row, and does not change a pixel:
-// the render reads an override PARAMS-SIDE through `poseBandForAsset` (`bakedGltfChannels.ts`),
-// the same way the clip band reads clips. `evaluate` is the graph-facing lane for nodes that
-// consume a pose; the two agree because both read the same authored numbers, and that agreement
-// is pinned separately in `poseBone.test.ts`. So a mutation aimed at `evaluate` proves nothing
-// here — falsify against the band. Dropping the band's authored-rotation branch empties the
-// moved set, which is what red looks like.
+// 🔴 WHICH ROAD TO FALSIFY THIS AGAINST (measured 2026-09-26, #1205): the hand-pose layer's write
+// (`handPoseOps` in `poseBone.ts`). Writing the member's rotation as zero there reds this row; the
+// clone road's params-side band (`poseBandForAsset`) is no longer on this road at all.
+//
+// THE ROAD (#1205): the character comes in through the product's import, so it is a native
+// character — a skeleton Object posed through its pose layers — and the pose is anchored on that
+// armature Object (`poseBone {object}`), the verb the inspector's "pose this bone" calls.
 //
 // WHAT MAKES IT DISCRIMINATING: a rotation on one bone must carry its DESCENDANTS and nothing
 // else. Asserting only "the posed bone moved" would pass on an override that moved the whole rig,
@@ -45,8 +43,10 @@ interface W {
     spec: unknown,
     intent: string,
   ) => { ok: true } | { ok: false; reason: string };
-  __basher_writeOpfsBytes?: (path: string, bytes: Uint8Array) => Promise<void>;
-  __basher_importGltf?: (buffer: ArrayBuffer, assetRef: string) => Promise<unknown>;
+  __basher_ingestGltfFolder?: (
+    files: { relativePath: string; bytes: Uint8Array }[],
+    folderName: string,
+  ) => Promise<string>;
   __basher_gltf_skin?: () => unknown;
   __basher_ingestBvhFile?: (bytes: Uint8Array, name: string) => Promise<string>;
   __basher_time: { getState: () => { setTime: (s: number) => void } };
@@ -76,8 +76,7 @@ test('#993 — a hand-posed bone moves on screen, and takes its chain and nothin
       return Boolean(
         w.__basher_dag &&
         w.__basher_ingestBvhFile &&
-        w.__basher_importGltf &&
-        w.__basher_writeOpfsBytes &&
+        w.__basher_ingestGltfFolder &&
         w.__basher_dispatchMutator,
       );
     },
@@ -87,10 +86,13 @@ test('#993 — a hand-posed bone moves on screen, and takes its chain and nothin
 
   await page.evaluate(async () => {
     const w = window as unknown as W;
-    const ref = 'fixtures/rig/standin-character.glb';
-    const buf = await (await fetch(`/${ref}`)).arrayBuffer();
-    await w.__basher_writeOpfsBytes!(ref, new Uint8Array(buf));
-    await w.__basher_importGltf!(buf, ref);
+    const bytes = new Uint8Array(
+      await (await fetch('/fixtures/rig/standin-character.glb')).arrayBuffer(),
+    );
+    await w.__basher_ingestGltfFolder!(
+      [{ relativePath: 'standin-character.glb', bytes }],
+      'standin-character',
+    );
   });
   await page.waitForFunction(
     () => {
@@ -108,12 +110,21 @@ test('#993 — a hand-posed bone moves on screen, and takes its chain and nothin
     await w.__basher_ingestBvhFile!(bytes, 'soma-walk');
   });
 
-  // The RetargetClip the bind created — poseBone's required node type.
-  const rt = await page.evaluate(() => {
+  // The character: the armature Object its mesh's Armature modifier deforms by — poseBone's anchor.
+  const character = await page.evaluate(() => {
     const { nodes } = (window as unknown as W).__basher_dag.getState().state;
-    return Object.keys(nodes).find((id) => nodes[id].type === 'RetargetClip') ?? null;
+    const mod = Object.values(nodes).find((n) => n.type === 'ArmatureModifier');
+    return (mod?.inputs.armature as { node?: string } | undefined)?.node ?? null;
   });
-  expect(rt, 'the bind stood no RetargetClip — nothing below would mean anything').not.toBeNull();
+  expect(character, 'no Armature modifier — the character is not native').not.toBeNull();
+  expect(
+    await page.evaluate(() =>
+      Object.values((window as unknown as W).__basher_dag.getState().state.nodes).some(
+        (n) => n.type === 'RetargetClip',
+      ),
+    ),
+    'the bind stood no RetargetClip — the walk is not on the character',
+  ).toBe(true);
 
   const before = await page.evaluate(() => {
     const a = (window as unknown as W).__basher_armature;
@@ -127,10 +138,10 @@ test('#993 — a hand-posed bone moves on screen, and takes its chain and nothin
     ([id, bone]) =>
       (window as unknown as W).__basher_dispatchMutator!(
         'mutator.animate.poseBone',
-        { retarget: id, bone, rotation: [0, 0, 75] },
+        { object: id, bone, rotation: [0, 0, 75] },
         'observe: hand-pose one bone',
       ),
-    [rt, boneName] as [string, string],
+    [character, boneName] as [string, string],
   );
   expect(res.ok, res.ok ? '' : `poseBone refused: ${res.reason}`).toBe(true);
 
@@ -155,19 +166,20 @@ test('#993 — a hand-posed bone moves on screen, and takes its chain and nothin
   expect(
     moved.slice().sort(),
     `expected the posed arm chain to move and nothing else; moved: ${moved.join(', ')}`,
-  ).toEqual(['mixamorigLeftArm', 'mixamorigLeftForeArm', 'mixamorigLeftHand']);
+  ).toEqual(['mixamorig_LeftArm', 'mixamorig_LeftForeArm', 'mixamorig_LeftHand']);
 
-  // And the authored override is on the graph, in the RIG's spelling rather than the live
-  // scene's. The mutator is handed `mixamorigLeftArm` above and stores `mixamorig_LeftArm`;
-  // those are two sanitisations of one glTF name, and storing the wrong one is a stored bone
-  // nobody has.
-  const poseNodes = await page.evaluate(() => {
+  // And the pose is on the graph where the native verb writes it: the rotation, in the rig's own
+  // bone name, in the hand-pose layer feeding the character's armature Object.
+  const posed = await page.evaluate(async (id) => {
     const { nodes } = (window as unknown as W).__basher_dag.getState().state;
-    return Object.keys(nodes)
-      .filter((id) => nodes[id].type === 'PoseOverride')
-      .map((id) => nodes[id].params as { bone?: string; rotation?: number[] });
-  });
-  expect(poseNodes.length, 'the mutator reported ok but minted no PoseOverride').toBe(1);
-  expect(poseNodes[0].bone).toBe('mixamorig_LeftArm');
-  expect(poseNodes[0].rotation).toEqual([0, 0, 75]);
+    const { handPoseLayerOf } = await import('/src/app/animate/poseChain.ts');
+    const layer = handPoseLayerOf(nodes as never, id);
+    return layer === null ? null : JSON.stringify(nodes[layer].params);
+  }, character!);
+  expect(
+    posed,
+    'the mutator reported ok but no hand-pose layer feeds the character',
+  ).not.toBeNull();
+  expect(posed).toContain('mixamorig_LeftArm');
+  expect(posed).toContain('75');
 });

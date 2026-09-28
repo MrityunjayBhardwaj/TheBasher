@@ -73,19 +73,44 @@ describe('clipToKeyframes — rotation continuity (#867)', () => {
   });
 
   it('the flip identity it relies on is real: (x+π, π−y, z+π) is the same XYZ rotation', () => {
-    // Proven over random rotations rather than asserted, because the whole fix
+    // Proven over many rotations rather than asserted, because the whole fix
     // rests on this identity holding for THREE's XYZ convention.
-    let worst = 0;
+    //
+    // #1270 — measured against the rotation the triple HOLDS, not the quaternion it was read from.
+    // Within 0.0256° of ±90° pitch, three's read snaps to its gimbal branch and sets z to 0
+    // (`Euler.js:120`, `|m13| < 0.9999999`), losing up to ~0.05°. That is the reader, not the
+    // identity, and comparing against `q` made an unseeded draw into that band red at random.
+    // Seeded, so a failure reproduces; the band is drawn on purpose below rather than by luck.
+    let seed = 1270;
+    const random = () => (seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0) / 2 ** 32;
+    const draws: Quaternion[] = [];
     for (let i = 0; i < 500; i++) {
-      const q = new Quaternion(
-        Math.random() * 2 - 1,
-        Math.random() * 2 - 1,
-        Math.random() * 2 - 1,
-        Math.random() * 2 - 1,
-      ).normalize();
+      draws.push(
+        new Quaternion(
+          random() * 2 - 1,
+          random() * 2 - 1,
+          random() * 2 - 1,
+          random() * 2 - 1,
+        ).normalize(),
+      );
+    }
+    for (const offDeg of [0, 1e-4, 1e-2, 0.02]) {
+      for (const sign of [1, -1]) {
+        draws.push(
+          quatOf([
+            (random() * 2 - 1) * Math.PI,
+            (sign * (90 - offDeg)) / DEG,
+            (random() * 2 - 1) * Math.PI,
+          ]),
+        );
+      }
+    }
+    let worst = 0;
+    for (const q of draws) {
       const e = new Euler().setFromQuaternion(q, 'XYZ');
+      const held = quatOf([e.x, e.y, e.z]);
       const flipped = quatOf([e.x + Math.PI, Math.PI - e.y, e.z + Math.PI]);
-      worst = Math.max(worst, 2 * Math.acos(Math.min(1, Math.abs(q.dot(flipped)))) * DEG);
+      worst = Math.max(worst, 2 * Math.acos(Math.min(1, Math.abs(held.dot(flipped)))) * DEG);
     }
     expect(worst, `worst flip error ${worst}°`).toBeLessThan(1e-4);
   });

@@ -81,13 +81,14 @@ test('the inspector text field writes one undo entry per edit, and none for no e
     const bytes = new Uint8Array(await (await fetch('/fixtures/anim/soma-walk.bvh')).arrayBuffer());
     await (window as unknown as Win).__basher_ingestBvhFile!(bytes, 'soma-walk'); // appends .bvh
   });
+  // #1211 — the import's motion is its base pose layer, whose name is a text field as a clip's was.
   const clip = await page.evaluate(
     () =>
       Object.entries((window as unknown as Win).__basher_dag.getState().state.nodes).find(
-        ([, n]) => n.type === 'AnimationClip',
+        ([, n]) => n.type === 'PoseLayer',
       )?.[0],
   );
-  expect(clip, 'the import made no clip — every step below would be vacuous').toBeTruthy();
+  expect(clip, 'the import made no motion layer — every step below would be vacuous').toBeTruthy();
   await select(page, clip!);
   await oneEntryPerEdit(
     page,

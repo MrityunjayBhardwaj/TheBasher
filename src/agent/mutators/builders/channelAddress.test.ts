@@ -4,7 +4,7 @@
 // The claim under test is not "a second spec form parses". It is that the whole
 // five-gate road works on the mint: the closure declares a node that does not
 // exist yet, the value-shape gate reads a type from an op rather than from
-// state, and the write lands on the seed the mint just took from the clip. Each
+// state, and the write lands on the seed the mint just took from the base pose. Each
 // of those is a separate place the road can be correct-looking and wrong.
 
 import { describe, it, expect, beforeEach } from 'vitest';
@@ -32,9 +32,10 @@ beforeEach(() => {
   registerAllNodes();
 });
 
-/** A rigged asset with a bound clip and no baked channels — the state
- *  copy-on-write leaves behind, and the state 22 of a humanoid's 23 bones are
- *  in once the eager bake is gone. */
+/** An imported asset whose child has no channel yet — the state copy-on-write
+ *  leaves behind. (It used to carry a clip bound onto a clone rig as well, which
+ *  the mint seeded from; that road retired with the clone road's character half,
+ *  #1053, and the mint now seeds from the child's base pose.) */
 function riggedState(extraNodes?: Record<string, unknown>): DagState {
   const nodes: Record<string, unknown> = {
     n_asset: {
@@ -43,31 +44,12 @@ function riggedState(extraNodes?: Record<string, unknown>): DagState {
       params: { assetRef: ASSET, skins: [{ jointKeys: [OTHER, BONE] }] },
       inputs: {},
     },
-    n_rig: {
-      id: 'n_rig',
-      type: 'GltfSkeleton',
-      params: { skinIndex: 0 },
-      inputs: { asset: { node: 'n_asset', socket: 'out' } },
-    },
     ...importedChildNodes(BONE_ID, {
       assetRef: ASSET,
       childName: BONE,
       position: [1, 2, 3],
       rotation: [10, 20, 30],
     }),
-    n_clip: {
-      id: 'n_clip',
-      type: 'AnimationClip',
-      params: {
-        duration: 1,
-        loop: 'cycle-offset',
-        keyframes: [
-          { bone: 1, time: 0, position: [0, 1, 0], rotation: [0, 0, 0] },
-          { bone: 1, time: 1, position: [0, 2, 0], rotation: [Math.PI / 2, 0, 0] },
-        ],
-      },
-      inputs: { skeleton: { node: 'n_rig', socket: 'out' } },
-    },
   };
   Object.assign(nodes, extraNodes ?? {});
   return { nodes } as unknown as DagState;
@@ -174,7 +156,7 @@ describe('the address is an XOR, enforced at the schema', () => {
 });
 
 describe('keying a bone that has no channel', () => {
-  it('mints, seeded from the clip, and passes all five gates', () => {
+  it('mints, seeded from the base pose, and passes all five gates', () => {
     const state = riggedState();
     expect(state.nodes[ROT_CHANNEL]).toBeUndefined();
 
@@ -193,8 +175,7 @@ describe('keying a bone that has no channel', () => {
     expect(set).toBeDefined();
   });
 
-  it('the authored key lands ON the clip’s own track, not on emptiness', () => {
-    // The row that separates "edit this motion" from "replace it with one key".
+  it('the authored key lands ON the minted seed, not on emptiness', () => {
     // A build that read `state` for the existing keyframes instead of reading
     // the mint would produce a single-key channel here, and every structural
     // assertion above would still pass.
@@ -209,11 +190,10 @@ describe('keying a bone that has no channel', () => {
     const set = plan.ops.find((o) => o.type === 'setParam') as {
       value: { time: number; value: number[] }[];
     };
-    // The clip's two keys (0 and 1, rotation in DEGREES) plus the authored one.
-    expect(set.value.map((k) => k.time)).toEqual([0, 0.5, 1]);
-    expect(set.value[0].value).toEqual([0, 0, 0]);
+    // The base-pose seed (rotation in DEGREES, as the import writes it) plus the authored one.
+    expect(set.value.map((k) => k.time)).toEqual([0, 0.5]);
+    expect(set.value[0].value).toEqual([10, 20, 30]);
     expect(set.value[1].value).toEqual([1, 2, 3]);
-    expect(set.value[2].value[0]).toBeCloseTo(90, 6);
   });
 
   it('never mints an empty channel', () => {
@@ -221,8 +201,6 @@ describe('keying a bone that has no channel', () => {
     // sampler answers [0,0,0] at every time, so an empty mint would suppress
     // the pose underneath and snap the bone to the origin on first touch.
     const plan = validatePlan(
-      // `scale` is the component the clip cannot carry — the one place an empty
-      // mint is reachable at all.
       keyframeMutator,
       { bone: { ...BONE_ADDRESS, component: 'scale' }, time: 0.5, value: [1, 1, 1] },
       riggedState(),
@@ -254,7 +232,7 @@ describe('the bone form on a bone that already HAS a channel', () => {
     expect(plan.ops.map((o) => ('nodeId' in o ? o.nodeId : null))).toEqual([ROT_CHANNEL]);
   });
 
-  it('does not re-seed — a director’s edit is not replaced by the clip', () => {
+  it('does not re-seed — a director’s edit is not replaced by a fresh seed', () => {
     const state = bakedState();
     const plan = validatePlan(
       keyframeMutator,
@@ -287,7 +265,12 @@ describe('the agent surface says so', () => {
         ['addChannelModifier', addChannelModifierMutator],
       ] as const
     )
-      .filter(([, m]) => !m.description.includes('is REFUSED for a'))
+      .filter(
+        ([, m]) =>
+          !m.description.includes('is REFUSED for a') ||
+          // #1215 — and the layer form, a bone's keys where they live.
+          !m.description.includes('`layer` = {layerId, bone, component}'),
+      )
       .map(([n]) => n);
     // Named, not counted — a count says how many drifted, never which.
     expect(silent).toEqual([]);

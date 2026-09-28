@@ -36,7 +36,6 @@ import {
   CHANNEL_ADDRESS_DOC,
   CHANNEL_ADDRESS_FIELDS,
   channelRootSelectors,
-  channelViewAfterMint,
   resolveChannelAddress,
   superRefineChannelAddress,
 } from './channelAddress';
@@ -135,7 +134,7 @@ export const addChannelModifierMutator: MutatorDefinition<AddChannelModifierSpec
   preconditions(spec, _closure, state) {
     const resolved = resolveChannelAddress(state, spec, { mint: true });
     if (!resolved.ok) return { ok: false, reason: resolved.reason };
-    const view = channelViewAfterMint(state, resolved.channelId, resolved.mintOps);
+    const view = resolved.view;
     if (!view) {
       return { ok: false, reason: `channel "${resolved.channelId}" could not be resolved.` };
     }
@@ -167,19 +166,11 @@ export const addChannelModifierMutator: MutatorDefinition<AddChannelModifierSpec
     }
     const resolved = resolveChannelAddress(state, spec, { mint: true });
     if (!resolved.ok) throw new Error(resolved.reason);
-    const view = channelViewAfterMint(state, resolved.channelId, resolved.mintOps);
+    const view = resolved.view;
     if (!view) throw new Error(`channel "${resolved.channelId}" could not be resolved.`);
     const existing = existingModifiers(view);
     const at = spec.index ?? existing.length;
     const next = [...existing.slice(0, at), built.modifier, ...existing.slice(at)];
-    return [
-      ...resolved.mintOps,
-      {
-        type: 'setParam',
-        nodeId: resolved.channelId,
-        paramPath: 'modifiers',
-        value: next,
-      },
-    ];
+    return [...resolved.mintOps, ...resolved.write({ modifiers: next })];
   },
 };

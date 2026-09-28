@@ -77,6 +77,8 @@ import { DEFAULT_IMAGE_DESCRIPTOR } from '../nodes/types';
 import { evaluateNodeAlone } from '../test-utils/evaluateNodeAlone';
 import { resolveComponentSelection } from '../nodes/componentSelection';
 import type { ObjectData } from '../nodes/types';
+import { meshGeometryRef, packMeshData } from './meshGeometryData';
+import { SKIN_JOINTS, SKIN_WEIGHTS } from '../nodes/attributes';
 
 const FILES: readonly (readonly [string, string])[] = sourceFiles().map(
   ([path, src]) => [path, stripComments(src)] as const,
@@ -119,6 +121,47 @@ const meshSrc = (color: string) => ({
   materialKey: null,
 });
 
+/**
+ * #393 — a stored triangle bound to one bone, and the armature Object whose skeleton has that
+ * bone. The Armature modifier passes anything else through by design (a non-stored mesh has no
+ * skin, an unwired armature deforms nothing), so a sphere spine would make its un-muted control
+ * pass with the bypass deleted — the inverted fixture the header above warns about.
+ */
+const skinnedSrc = {
+  kind: 'MeshData' as const,
+  geometry: meshGeometryRef(
+    packMeshData({
+      points: new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]),
+      faceSizes: new Uint32Array([3]),
+      cornerPoints: new Uint32Array([0, 1, 2]),
+      cornerLayers: [],
+      cornerNormals: null,
+      faceLayers: [],
+      pointLayers: [
+        { name: SKIN_JOINTS, type: 'int4', data: new Int32Array(12) },
+        {
+          name: SKIN_WEIGHTS,
+          type: 'float4',
+          data: new Float32Array([1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0]),
+        },
+      ],
+      vertexGroups: ['Bone'],
+    }),
+  ),
+  material: hydrateInlineMaterial(null, '#888888'),
+  materialKey: null,
+};
+const armatureObject = {
+  kind: 'Object' as const,
+  position: [0, 0, 0],
+  rotation: [0, 0, 0],
+  scale: [1, 1, 1],
+  data: {
+    kind: 'Skeleton' as const,
+    bones: [{ name: 'Bone', parent: -1, position: [0, 0, 0], rotation: [0, 0, 0] }],
+  },
+};
+
 const imageSrc = {
   kind: 'Image' as const,
   passKind: 'beauty',
@@ -156,6 +199,16 @@ const WIRED_MATERIAL = {
  * and it stayed green across the shape change, which is what a hash cannot show.
  */
 const ROWS = [
+  {
+    // #393 — the seventh geometry modifier and the twelfth operator, bypassed by the same
+    // machinery as every other: bypass is a property of standing in a stack. Its second input,
+    // the armature Object, rides on the row. Hash measured at introduction.
+    type: 'ArmatureModifier',
+    src: skinnedSrc,
+    armature: armatureObject,
+    params: {},
+    hash: '74ec7606',
+  },
   {
     type: 'ArrayModifier',
     src: meshSrc('#111111'),
@@ -234,6 +287,7 @@ type Row = (typeof ROWS)[number];
 /** The operator's resolved inputs, as `evaluate` receives them. */
 function inputsOf(row: Row): Record<string, unknown> {
   const inputs: Record<string, unknown> = { target: row.src };
+  if ('armature' in row) inputs.armature = row.armature;
   if ('material' in row && row.material) inputs.material = [WIRED_MATERIAL];
   return inputs;
 }
@@ -272,8 +326,10 @@ describe('ns-2 step 5 — the bypass is honoured at ONE site', () => {
     // one together — unlike the #974/#994 pair above, where only one of the two was.
     // 87 -> 88 at #1049 (PolyMeshData), a data kind and NOT an operator, so the operator
     // count below does not move.
-    expect(listNodeTypes()).toHaveLength(88);
-    expect(operators()).toHaveLength(11);
+    // 88 -> 89 at #393 (ArmatureModifier), an operator, so both counts move by one together.
+    // 89 -> 90 at #1240 (PoseLayer), NOT an operator, so the operator count does not move.
+    expect(listNodeTypes()).toHaveLength(90);
+    expect(operators()).toHaveLength(12);
     expect(declaredBypassParams()).toEqual(['muted']);
     expect(FILES.length).toBeGreaterThan(500);
     // Every row below names a registered type — a typo would otherwise read as a clean set.

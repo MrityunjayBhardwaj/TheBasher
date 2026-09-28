@@ -71,6 +71,8 @@ import { deleteCurvePoint, extrudeCurvePoint, toggleCurveClosed } from './curveP
 import { useCurveSelectionStore } from './stores/curveSelectionStore';
 import { resolveRowChannelForWrite } from './animate/clipRowMint';
 import { buildVec3Sampler, KeyframeChannelVec3Params } from '../nodes/KeyframeChannelVec3';
+import { sampleQuatKeyframes, type QuatKey } from '../nodes/keyframeInterp';
+import { parseLayerRowId } from '../timeline/layerChannelRows';
 
 interface KeyframeSample {
   time: number;
@@ -117,17 +119,13 @@ function buildKeyframeInsertOp(): Op[] | null {
   const easing = DEFAULT_EASING_BY_TYPE[resolved.nodeType] ?? 'linear';
   const existing = (resolved.params.keyframes as KeyframeSample[] | undefined) ?? [];
 
-  const value =
-    resolved.mintOps.length > 0
-      ? sampleMintedChannel(resolved.nodeType, resolved.params, time)
-      : readTargetParam(dagState, resolved.params);
+  const value = resolved.keyFromCurve
+    ? sampleMintedChannel(resolved.nodeType, resolved.params, time)
+    : readTargetParam(dagState, resolved.params);
   if (value === undefined) return null;
 
   const next = nextKeyframesAfterInsert(existing, time, value, easing);
-  return [
-    ...resolved.mintOps,
-    { type: 'setParam', nodeId: resolved.channelId, paramPath: 'keyframes', value: next },
-  ];
+  return [...resolved.mintOps, ...resolved.write({ keyframes: next })];
 }
 
 /** The channel's target param — what an ordinary node currently holds. */
@@ -157,6 +155,11 @@ function sampleMintedChannel(
   params: Record<string, unknown>,
   seconds: number,
 ): unknown {
+  if (nodeType === 'KeyframeChannelQuat') {
+    // #1215 — a layer's quaternion curve: the rotation it shows at `seconds`.
+    const keys = ((params.keyframes ?? []) as QuatKey[]).slice().sort((a, b) => a.time - b.time);
+    return keys.length > 0 ? sampleQuatKeyframes(keys, seconds) : undefined;
+  }
   if (nodeType !== 'KeyframeChannelVec3') return undefined;
   const parsed = KeyframeChannelVec3Params.safeParse(params);
   if (!parsed.success) return undefined;
@@ -185,16 +188,15 @@ function buildKeyframeDeleteOp(): Op[] | null {
   const existing = (resolved.params.keyframes as KeyframeSample[] | undefined) ?? [];
   const next = existing.filter((k) => k.time !== ref.time);
   if (next.length === existing.length) return null; // ref was dangling
-  if (next.length === 0) return null;
+  // #1215 — on a layer the last key goes with its curve (Blender), so the bone falls back to what is
+  // underneath; that is not the claim-of-zero an emptied channel NODE would make.
+  if (next.length === 0 && !resolved.emptyRemovesCurve) return null;
   // Never leave the channel empty: an empty channel is a claim, not silence —
   // the band collects it and the sampler answers [0,0,0] at every time. Deleting
   // the last key means "stop overriding", which is a channel REMOVAL, and that
   // belongs with clearBakedMotion rather than here.
 
-  return [
-    ...resolved.mintOps,
-    { type: 'setParam', nodeId: resolved.channelId, paramPath: 'keyframes', value: next },
-  ];
+  return [...resolved.mintOps, ...resolved.write({ keyframes: next })];
 }
 
 /** [ / ] seek helpers. Returns the time of the previous/next keyframe
@@ -203,7 +205,12 @@ function buildKeyframeDeleteOp(): Op[] | null {
 function findAdjacentKeyframeTime(direction: 'prev' | 'next'): number | null {
   const channelId = useTimelineSelection.getState().activeChannelId;
   if (!channelId) return null;
-  const channel = useDagStore.getState().state.nodes[channelId];
+  const state = useDagStore.getState().state;
+  // #1215 — a layer row's keys live in its layer, not in a node of the row's id.
+  const layerRow = parseLayerRowId(channelId) ? resolveRowChannelForWrite(state, channelId) : null;
+  const channel = layerRow
+    ? { type: layerRow.nodeType, params: layerRow.params }
+    : state.nodes[channelId];
   if (!channel || !isKeyframeChannelNode(channel)) return null;
   const cParams = (channel.params ?? {}) as { keyframes?: KeyframeSample[] };
   const times = (cParams.keyframes ?? []).map((k) => k.time).sort((a, b) => a - b);

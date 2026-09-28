@@ -132,7 +132,7 @@ export async function generateMotionAsNode(
     // The same continuation a dropped file takes (#807/#820): a generated clip
     // that stopped short of the bind was measured leaving a character standing
     // still while the same bytes dropped as a file animated it.
-    bindImportedMotion({ skeletonId: mint.skeletonId, clipId: mint.clipId }, 'generated');
+    bindImportedMotion({ skeletonId: mint.skeletonId, motionId: mint.clipId }, 'generated');
     // #1285 — and only now is the character's size known, because the rig the bind
     // matched against arrived with the cook. A walk along a path is re-asked at the
     // character's scale so it lands on the curve instead of stopping short of it;

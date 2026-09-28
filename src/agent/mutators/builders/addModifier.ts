@@ -51,6 +51,10 @@ const ModifierType = z.enum([
   'BevelModifier',
   'UVProjectModifier',
   'ComponentGroupOp',
+  // #393 — the Armature deform. This builder wires only the stack spine: the `armature` input (the
+  // Object it deforms by) is not reachable from here, so an agent-added one passes the mesh
+  // through unchanged until an armature Object is connected to it.
+  'ArmatureModifier',
 ]);
 type ModifierType = z.infer<typeof ModifierType>;
 
@@ -164,7 +168,9 @@ export const addModifierMutator: MutatorDefinition<AddModifierSpec> = {
     'of faces, writing a face-domain group attribute that survives later topology changes — ' +
     'give it `name` (letters, digits, underscores; no dashes or colons), then set its `scope` ' +
     'with mutator.geometry.setComponentScope to say WHICH faces; without a `name` it does ' +
-    'nothing at all, and with no scope it names every face. target may be the mesh or any modifier already in its stack (the base ' +
+    'nothing at all, and with no scope it names every face. "ArmatureModifier" deforms a ' +
+    'skinned mesh by an armature Object, which this call does not connect: until one is wired ' +
+    'to its `armature` input it leaves the mesh unchanged. target may be the mesh or any modifier already in its stack (the base ' +
     'is resolved automatically). Returns a deterministic modifierId; tune it later ' +
     'with dag.exec setParam (count / offset / axis / amount / size / keep / muted) or stack it with ' +
     'another addModifier call.',

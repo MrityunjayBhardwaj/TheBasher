@@ -28,6 +28,8 @@ import { createFork } from '../../agent/diff/forkedDag';
 import { useDagStore } from '../../core/dag/store';
 import { gltfChannelDagId } from '../../core/import/gltfImportChain';
 import { clipRowMintOps } from './clipRowMint';
+import { resolveChannelAddress } from '../../agent/mutators/builders/channelAddress';
+import { rowAddress } from '../../timeline/layerChannelRows';
 import {
   importComfyGraph,
   parseComfyParamPath,
@@ -147,7 +149,8 @@ function proposeAndAccept(
 }
 
 export interface RetimeKeyframeArgs {
-  /** The KeyframeChannel node whose sample is being retimed. */
+  /** The timeline row whose sample is being retimed: a KeyframeChannel node's id, or a pose layer
+   *  row's id (#1215), whose curve lives in the layer. */
   channelId: string;
   /**
    * The EXACT stored sample time (seconds) to move FROM. The caller
@@ -183,16 +186,18 @@ export function dispatchRetimeKeyframe(args: RetimeKeyframeArgs): DispatchResult
   const intent = `Retime keyframe on ${channelId}`;
 
   const base = useDagStore.getState().state;
+  // #1215 — the address the two mutators take: the node id, or the layer curve a layer row names.
+  const address = rowAddress(channelId);
 
   // 1 — locate the sample at fromTime using the SAME exact compare the
   //     Mutators use (removeKeyframes.ts:124 / keyframe.ts:110). fromTime
   //     is the exact stored float (caller read it off the live sample),
   //     so this matches by construction — no new equality rule (D-03).
-  const channel = base.nodes[channelId];
-  if (!channel) {
-    return { ok: false, reason: `channelId "${channelId}" not in DAG.` };
+  const resolved = resolveChannelAddress(base, address, { mint: false });
+  if (!resolved.ok) {
+    return { ok: false, reason: resolved.reason };
   }
-  const params = (channel.params ?? {}) as {
+  const params = resolved.view.params as {
     keyframes?: Array<{ time: number; value: unknown; easing: 'linear' | 'cubic' }>;
   };
   const sample = (params.keyframes ?? []).find((k) => k.time === fromTime);
@@ -203,6 +208,20 @@ export function dispatchRetimeKeyframe(args: RetimeKeyframeArgs): DispatchResult
   // 2 — capture value + easing BEFORE anything else (D-01 pre-mortem).
   const value = sample.value;
   const easing = sample.easing;
+
+  // #1215 — a layer curve holding ONE key: removing it first would remove the curve (a layer drops
+  // an emptied curve, as Blender does) and the insert would mint a fresh one without its extend and
+  // modifiers. With no neighbour to split against, moving the key in place is the whole retime.
+  if (address.layer && (params.keyframes ?? []).length === 1) {
+    return proposeAndAccept(
+      base,
+      resolved.write({ keyframes: [{ ...sample, time: toTime }] }),
+      intent,
+      ['user:mutator.timeline.keyframe'],
+      { rootSelectors: [address.layer.layerId], followedEdges: [] },
+      [],
+    );
+  }
 
   const removeKeyframes = getMutator('mutator.timeline.removeKeyframes');
   const keyframe = getMutator('mutator.timeline.keyframe');
@@ -215,7 +234,7 @@ export function dispatchRetimeKeyframe(args: RetimeKeyframeArgs): DispatchResult
 
   // 3 — validate removeKeyframes({scope:{time:fromTime}}) vs base.
   const rParsed = removeKeyframes.spec.safeParse({
-    channelId,
+    ...address,
     scope: { time: fromTime },
   });
   if (!rParsed.success) {
@@ -244,7 +263,7 @@ export function dispatchRetimeKeyframe(args: RetimeKeyframeArgs): DispatchResult
   //     post-remove state (so D-03 last-wins lands via keyframe.ts:110's
   //     existing replace-at-time against the post-remove occupant).
   const kParsed = keyframe.spec.safeParse({
-    channelId,
+    ...address,
     time: toTime,
     value,
     easing,
@@ -314,12 +333,10 @@ export function dispatchBakeThenRetime(args: BakeThenRetimeArgs): DispatchResult
     };
   }
 
-  // 1 — mint the bone's channel, by the road the bone is actually on. A
-  //     TransformClip bone bakes whole-bone the way it always has; an
-  //     AnimationClip bone (generated / BVH / retargeted) mints per component,
-  //     seeded from that clip. `bakeGltfChannel` REFUSES on the second road —
-  //     measured, "No active clip track for bone" — which is why this is a
-  //     choice here rather than one mutator for both.
+  // 1 — mint the child's channel from the file's own clip: `bakeGltfChannel`
+  //     bakes the whole child from its TransformClip. (A motion bound onto a
+  //     clone rig minted per component from its AnimationClip here too, until
+  //     that road retired with the clone road's character half, #1053.)
   const mint = clipRowMintOps(base, assetRef, childName, component);
   if (!mint.ok) return { ok: false, reason: mint.reason };
 
@@ -397,11 +414,7 @@ export function dispatchBakeThenRetime(args: BakeThenRetimeArgs): DispatchResult
     [...mint.ops, ...rResult.ops, ...kResult.ops],
     intent,
     [
-      // The provenance names the road, because the two mints seed from different
-      // clips and a diff that said only "bake" could not tell them apart.
-      mint.source === 'animation-clip'
-        ? 'user:mint.channelForBone'
-        : 'user:mutator.timeline.bakeGltfChannel',
+      'user:mutator.timeline.bakeGltfChannel',
       'user:mutator.timeline.removeKeyframes',
       'user:mutator.timeline.keyframe',
     ],
@@ -491,46 +504,6 @@ function existingChannelIds(addresses: readonly ChannelAddress[]): string[] {
     if (base.nodes[id]) out.push(id);
   }
   return out;
-}
-
-/**
- * Put a set of stranded bones back on the clip, in ONE gesture (#1002).
- *
- * 🔴 IT IS DESTRUCTIVE AND THE CALLER MUST SAY SO. This deletes the channels
- * named, which is where the director's edited keys live; there is no third road
- * that keeps them. Measured, twice over:
- *
- *   1. The keys the channel was seeded from are recorded as a HASH, not as
- *      content, and after a re-cook the pre-cook track exists nowhere in the
- *      graph — a scan of every array on every node finds it 0 times, against a
- *      positive control that finds it 1 time before the cook. So "re-apply the
- *      director's delta over the new track" cannot be built from what is there.
- *   2. Even given the old track, a delta assumes the edit was RELATIVE, and the
- *      keys cannot say whether it was. Measured on two real cooks of one
- *      character: for a director who FLATTENED a curve to hold a pose — an
- *      edited range of 0.0° — the delta shape returns a track carrying 26.96°
- *      of motion, more than either clip had (23.27° and 14.38°), because it is
- *      the difference of two motions and nobody authored that. It is the same
- *      indistinguishability the provenance itself exists for, one level up: a
- *      copy cannot say whether it was edited, and an edit cannot say whether it
- *      meant "above the clip" or "here".
- *
- * So the honest action is the destructive one, said out loud, with undo behind
- * it — which it has, because this is ONE atomic dispatch.
- *
- * Addresses rather than bone names, because a clip can drive two characters and
- * a name is not an address: the card shows `LeftArm` once and two channels have
- * to go, or the sentence stays on the card after the press.
- */
-export function dispatchFollowClip(
-  addresses: readonly ChannelAddress[],
-  label: string,
-): DispatchResult {
-  const targets = existingChannelIds(addresses);
-  // Nothing left to remove — the bone already follows the clip. Not an error:
-  // a director can press this twice, and the second press is simply true.
-  if (targets.length === 0) return { ok: true };
-  return dispatchMutatorFromUI('mutator.deleteNode', { targetSelectors: targets }, label);
 }
 
 export interface ClearBakedMotionArgs {

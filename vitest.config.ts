@@ -7,6 +7,10 @@ export default defineConfig({
       '@': path.resolve(__dirname, './src'),
     },
   },
+  // #1272 — JSX compiles the way the app compiles it (tsconfig.app.json `"jsx": "react-jsx"`).
+  // Without this vitest's transform used the classic runtime, so a test rendering JSX had to import
+  // `React` for a value TypeScript then reported unused (TS6133): two compilers, two answers.
+  esbuild: { jsx: 'automatic' },
   test: {
     environment: 'happy-dom',
     globals: false,

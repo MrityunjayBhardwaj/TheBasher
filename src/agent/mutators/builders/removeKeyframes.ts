@@ -116,10 +116,7 @@ export const removeKeyframesMutator: MutatorDefinition<RemoveKeyframesSpec> = {
     // something already there, which is a precondition, not a mint.
     const resolved = resolveChannelAddress(state, spec, { mint: false });
     if (!resolved.ok) return { ok: false, reason: resolved.reason };
-    const channel = state.nodes[resolved.channelId];
-    if (!channel) {
-      return { ok: false, reason: `channelId "${resolved.channelId}" not in DAG.` };
-    }
+    const channel = resolved.view;
     if (!isKeyframeChannelNode(channel)) {
       return {
         ok: false,
@@ -181,16 +178,14 @@ export const removeKeyframesMutator: MutatorDefinition<RemoveKeyframesSpec> = {
   build(spec, _closure: ClosureSet, state: DagState): Op[] {
     const resolved = resolveChannelAddress(state, spec, { mint: false });
     if (!resolved.ok) throw new Error(resolved.reason);
-    const channelId = resolved.channelId;
-    const channel = state.nodes[channelId];
-    const params = (channel.params ?? {}) as {
+    const params = resolved.view.params as {
       keyframes?: Array<{ time: number; value: unknown; easing: 'linear' | 'cubic' }>;
     };
     const existing = params.keyframes ?? [];
 
     if (spec.scope === 'all') {
       if (existing.length === 0) return []; // already empty → no-op
-      return [{ type: 'setParam', nodeId: channelId, paramPath: 'keyframes', value: [] }];
+      return resolved.write({ keyframes: [] });
     }
 
     // scope: { time }
@@ -200,13 +195,6 @@ export const removeKeyframesMutator: MutatorDefinition<RemoveKeyframesSpec> = {
     const scopeTime = spec.scope.time;
     const filtered = existing.filter((k) => k.time !== scopeTime);
     if (filtered.length === existing.length) return []; // no sample at time → no-op
-    return [
-      {
-        type: 'setParam',
-        nodeId: channelId,
-        paramPath: 'keyframes',
-        value: filtered,
-      },
-    ];
+    return resolved.write({ keyframes: filtered });
   },
 };

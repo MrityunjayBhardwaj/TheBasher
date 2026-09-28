@@ -31,6 +31,7 @@
 // than guessed at: a file or a hand edit that lands on zero draws what it draws in Blender.
 
 import { Euler, Quaternion } from 'three';
+import type { Op } from '../core/dag/types';
 import type { Quat, RotationModeFields, Vec3 } from '../nodes/types';
 
 const RAD2DEG = 180 / Math.PI;
@@ -104,4 +105,44 @@ export function rotationWriteOf(
     paramPath: 'quaternion',
     value: sameHemisphere(quaternionFromEulerDeg(eulerDeg), params.quaternion),
   };
+}
+
+/**
+ * The inspector's rotation-mode switch, as ops (Blender's `rotation_mode` set on an object): to
+ * quaternion writes the quaternion of the current euler; to euler writes the euler of the current
+ * quaternion and clears the mode, so an euler node goes back to exactly the shape it had. Only the
+ * stored values convert — a channel keeps driving the param it names, which in the other mode
+ * composes nothing, as in Blender. Empty when the node is already in that mode.
+ */
+export function rotationModeOps(
+  nodeId: string,
+  params: RotationModeFields & { rotation?: unknown },
+  mode: 'quaternion' | 'euler',
+): Op[] {
+  if ((mode === 'quaternion') === (params.rotationMode === 'quaternion')) return [];
+  if (mode === 'quaternion') {
+    const euler = (isVec3(params.rotation) ? params.rotation : [0, 0, 0]) as Vec3;
+    return [
+      { type: 'setParam', nodeId, paramPath: 'rotationMode', value: 'quaternion' },
+      {
+        type: 'setParam',
+        nodeId,
+        paramPath: 'quaternion',
+        value: rotationWriteOf({ ...params, rotationMode: 'quaternion' }, euler).value,
+      },
+    ];
+  }
+  return [
+    {
+      type: 'setParam',
+      nodeId,
+      paramPath: 'rotation',
+      value: withResolvedRotation(params).rotation,
+    },
+    { type: 'setParam', nodeId, paramPath: 'rotationMode', value: undefined },
+  ];
+}
+
+function isVec3(v: unknown): v is Vec3 {
+  return Array.isArray(v) && v.length === 3 && v.every((x) => typeof x === 'number');
 }

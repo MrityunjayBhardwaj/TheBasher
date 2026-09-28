@@ -94,6 +94,21 @@ const formatMigrations: Record<number, FormatMigration> = {
   // rewrite them. Without it a saved material keeps a number that nothing reads any more, and its
   // replaced map silently samples UV set 0 — a picture that is wrong with nothing said.
   13: migrateMaterialLayerNames,
+  // v14 → v15 (#1203): an armature Object carries its pose as an `action` edge. The band used to
+  // pick a rig's pose by a rule (the one clip wired to its skeleton); this pass writes that rule
+  // down as the edge, so every saved rig poses exactly as it did.
+  14: migrateSkeletonObjectAction,
+  // v15 → v16 (#1224): the armature Object takes the pose wire. Its `action` input (a clip)
+  // becomes `pose` (a PosedSkeleton); each saved edge is re-pointed to its producer's pose
+  // OUTPUT, not just renamed, because loading checks no socket type.
+  15: migrateObjectActionToPose,
+  // v16 → v17 (#1225): the retarget reads the pose wire. `RetargetClip.sourceClip` (a clip)
+  // becomes `source` (a PosedSkeleton), re-pointed to the source's pose output for the same
+  // reason as v16: loading checks no socket type.
+  16: migrateRetargetSourceToPose,
+  // v17 → v18 (#1225): locomotion reads the pose wire. `LocomotionState.clip` becomes `pose`,
+  // re-pointed to the producer's pose output for v16's reason.
+  17: migrateLocomotionClipToPose,
 };
 
 // ── v1 → v2: AnimationLayer retirement (#199) ──────────────────────────────
@@ -1292,9 +1307,9 @@ function snapshotCurrentNodeVersions(nodes: Record<string, Node>): Record<string
 // REF: src/app/animate/boundClipsForAsset.ts (the ONE edge walk — imported
 //        rather than re-implemented, because a second copy of it is two answers
 //        to "which clip drives this bone" that diverge silently);
-//      src/app/animate/ensureChannelForBone.ts (`seedKeysFromClip`, the
-//        derivation this mirrors key-for-key, including the radians→degrees
-//        boundary, which must use the SAME helper or nothing compares equal);
+//      the clone rig's clip-seeded mint (`seedKeysFromClip`, retired with the
+//        clone road's character half, #1053), the derivation this mirrored
+//        key-for-key, including the radians→degrees boundary;
 //      src/agent/mutators/builders/bakeChannelOps.ts (the node shape + the
 //        `easing: 'linear'` the bake stamps); issues #915, #913, #889, #877.
 
@@ -1655,4 +1670,200 @@ export function migrateMaterialLayerNames(raw: unknown): unknown {
   }
 
   return { ...proj, formatVersion: 14 };
+}
+
+/**
+ * v14 → v15 (#1203) — an armature Object carries its pose as an `action` edge.
+ *
+ * Before this version the armature band chose a rig's pose by a rule: "the one `AnimationClip`
+ * wired to its skeleton; none or several, and it rests". The pose now lives on the Object, as an
+ * armature Object carries its action in Blender, so a deform pointed at the Object can read it
+ * (#393). This pass writes the old rule down as the edge: an Object whose `data` is a `Skeleton`
+ * with exactly one clip wired to it, and no action yet, gets that clip as its action. With none or
+ * several, nothing is wired and the rig rests — exactly what it did before.
+ *
+ * Its OWN format version for the reason every step above owns one: a project saved at v14 would
+ * never re-run an earlier pass, and without it every saved rig would stop playing on load, because
+ * the band no longer reads the rule.
+ */
+export function migrateSkeletonObjectAction(raw: unknown): unknown {
+  const proj = raw as {
+    formatVersion?: number;
+    state?: { nodes?: Record<string, RawNode> };
+  };
+  const nodes = proj.state?.nodes;
+  if (!nodes) return { ...proj, formatVersion: 15 };
+
+  const single = (binding: RawRef | RawRef[] | undefined): string | undefined =>
+    Array.isArray(binding) ? binding[0]?.node : binding?.node;
+  const clipsBySkeleton = new Map<string, string[]>();
+  for (const [id, node] of Object.entries(nodes)) {
+    if (node?.type !== 'AnimationClip') continue;
+    const skeleton = single(node.inputs?.skeleton);
+    if (skeleton === undefined) continue;
+    clipsBySkeleton.set(skeleton, [...(clipsBySkeleton.get(skeleton) ?? []), id]);
+  }
+
+  let wired = 0;
+  for (const node of Object.values(nodes)) {
+    if (node?.type !== 'Object' || node.inputs?.action !== undefined) continue;
+    const data = single(node.inputs?.data);
+    if (data === undefined || nodes[data]?.type !== 'Skeleton') continue;
+    const clips = clipsBySkeleton.get(data) ?? [];
+    if (clips.length !== 1) continue;
+    node.inputs = { ...node.inputs, action: { node: clips[0], socket: 'out' } };
+    wired++;
+  }
+
+  if (wired > 0) {
+    console.warn(
+      `[migrateSkeletonObjectAction] wired ${wired} armature Object(s) to the one clip that ` +
+        `posed each (#1203 — the pose now lives on the Object as its action).`,
+    );
+  }
+
+  return { ...proj, formatVersion: 15 };
+}
+
+/**
+ * The pose output of each node type that can have fed `Object.action` — every registered type with
+ * an `AnimationClip` output, censused from the registry (#1224): `AnimationClip` and `RetargetClip`
+ * have one; `MotionGenerate` has none.
+ */
+const POSE_OUTPUT_OF: Readonly<Record<string, string>> = {
+  AnimationClip: 'pose',
+  RetargetClip: 'posed',
+};
+
+/**
+ * v15 → v16 (#1224) — the armature Object takes the pose wire.
+ *
+ * `Object.action` (an `AnimationClip`) becomes `Object.pose` (a `PosedSkeleton`), so layers and
+ * computed motion can reach the rig. Each saved `action` edge is RE-POINTED to its producer's pose
+ * output, not merely renamed: loading checks no socket type and the evaluator follows every saved
+ * input key, so an edge renamed with `socket: 'out'` left in place would load silently and hand a
+ * clip to the pose socket (#1222). A producer with no pose output (a `MotionGenerate`), or an edge
+ * to a node that is gone, is dropped and counted, and the rig rests.
+ *
+ * Its OWN format version, as every step above: a project saved at v15 would never re-run an
+ * earlier pass, and without it every saved rig would stop playing on load.
+ */
+export function migrateObjectActionToPose(raw: unknown): unknown {
+  const proj = raw as {
+    formatVersion?: number;
+    state?: { nodes?: Record<string, RawNode> };
+  };
+  const nodes = proj.state?.nodes;
+  if (!nodes) return { ...proj, formatVersion: 16 };
+
+  let repointed = 0;
+  let dropped = 0;
+  for (const node of Object.values(nodes)) {
+    if (node?.type !== 'Object' || node.inputs?.action === undefined) continue;
+    const { action, ...rest } = node.inputs;
+    const ref = Array.isArray(action) ? action[0] : action;
+    const producer = ref?.node === undefined ? undefined : nodes[ref.node]?.type;
+    const socket = producer === undefined ? undefined : POSE_OUTPUT_OF[producer];
+    if (ref?.node !== undefined && socket !== undefined) {
+      node.inputs = { ...rest, pose: { node: ref.node, socket } };
+      repointed++;
+    } else {
+      node.inputs = rest;
+      dropped++;
+    }
+  }
+
+  if (repointed > 0 || dropped > 0) {
+    console.warn(
+      `[migrateObjectActionToPose] re-pointed ${repointed} armature Object action edge(s) to the ` +
+        `pose wire; dropped ${dropped} whose producer has no pose output (#1224).`,
+    );
+  }
+
+  return { ...proj, formatVersion: 16 };
+}
+
+/**
+ * #1225 — re-point every `type` node's `from` input (a clip) to `to` (the pose wire), on its
+ * producer's pose output, exactly as v16 did for the armature Object: loading checks no socket type
+ * and the evaluator follows every saved input key, so a rename alone would hand a clip to a pose
+ * socket (#1222). A producer with no pose output (a `MotionGenerate`), or an edge to a node that is
+ * gone, is dropped and counted. Returns the two counts.
+ */
+function repointClipInputToPose(
+  nodes: Record<string, RawNode>,
+  type: string,
+  from: string,
+  to: string,
+): { repointed: number; dropped: number } {
+  let repointed = 0;
+  let dropped = 0;
+  for (const node of Object.values(nodes)) {
+    if (node?.type !== type || node.inputs?.[from] === undefined) continue;
+    const { [from]: edge, ...rest } = node.inputs;
+    const ref = Array.isArray(edge) ? edge[0] : edge;
+    const producer = ref?.node === undefined ? undefined : nodes[ref.node]?.type;
+    const socket = producer === undefined ? undefined : POSE_OUTPUT_OF[producer];
+    if (ref?.node !== undefined && socket !== undefined) {
+      node.inputs = { ...rest, [to]: { node: ref.node, socket } };
+      repointed++;
+    } else {
+      node.inputs = rest;
+      dropped++;
+    }
+  }
+  return { repointed, dropped };
+}
+
+/**
+ * v16 → v17 (#1225) — the retarget reads the pose wire.
+ *
+ * `RetargetClip.sourceClip` (an `AnimationClip`) becomes `source` (a `PosedSkeleton`), so a retarget
+ * can read any motion on the wire, a character's base layer among them; the retarget answers an
+ * empty clip where the edge is dropped.
+ */
+export function migrateRetargetSourceToPose(raw: unknown): unknown {
+  const proj = raw as {
+    formatVersion?: number;
+    state?: { nodes?: Record<string, RawNode> };
+  };
+  const nodes = proj.state?.nodes;
+  if (!nodes) return { ...proj, formatVersion: 17 };
+  const { repointed, dropped } = repointClipInputToPose(
+    nodes,
+    'RetargetClip',
+    'sourceClip',
+    'source',
+  );
+  if (repointed > 0 || dropped > 0) {
+    console.warn(
+      `[migrateRetargetSourceToPose] re-pointed ${repointed} retarget source edge(s) to the pose ` +
+        `wire; dropped ${dropped} whose producer has no pose output (#1225).`,
+    );
+  }
+  return { ...proj, formatVersion: 17 };
+}
+
+/**
+ * v17 → v18 (#1225) — locomotion reads the pose wire.
+ *
+ * `LocomotionState.clip` (an `AnimationClip`) becomes `pose` (a `PosedSkeleton`); the node hands the
+ * wire through as the character's pose. Where the edge is dropped, the character stands empty-posed,
+ * as an unwired clip left it.
+ */
+export function migrateLocomotionClipToPose(raw: unknown): unknown {
+  const proj = raw as {
+    formatVersion?: number;
+    state?: { nodes?: Record<string, RawNode> };
+  };
+  const nodes = proj.state?.nodes;
+  if (!nodes) return { ...proj, formatVersion: 18 };
+  const { repointed, dropped } = repointClipInputToPose(nodes, 'LocomotionState', 'clip', 'pose');
+  if (repointed > 0 || dropped > 0) {
+    console.warn(
+      `[migrateLocomotionClipToPose] re-pointed ${repointed} locomotion clip edge(s) to the pose ` +
+        `wire; dropped ${dropped} whose producer has no pose output (#1225).`,
+    );
+  }
+  return { ...proj, formatVersion: 18 };
 }

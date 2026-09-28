@@ -35,8 +35,10 @@ interface Win {
   __basher_dag: {
     getState: () => { state: { nodes: Record<string, DagNode> }; undo: () => unknown };
   };
-  __basher_importGltf?: (buf: ArrayBuffer, ref: string) => Promise<unknown>;
-  __basher_writeOpfsBytes?: (ref: string, bytes: Uint8Array) => Promise<void>;
+  __basher_ingestGltfFolder?: (
+    files: { relativePath: string; bytes: Uint8Array }[],
+    folderName: string,
+  ) => Promise<string>;
   __basher_gltf_skin?: () => unknown;
   __basher_armature?: { skeletonObjects: { id: string }[] };
 }
@@ -104,21 +106,25 @@ test('a motion generated through the panel onto a character hides its own rig, a
     return route.fulfill({ status: 404, headers: cors, body: 'not part of the contract' });
   });
 
-  // The stand-in character — the bind needs something to choose.
+  // The stand-in character, through the product's import (a native character since #1205: its
+  // armature is itself a skeleton Object in the band) — the bind needs something to choose.
   await page.waitForFunction(
     () => {
       const w = window as unknown as Win;
-      return Boolean(w.__basher_dag && w.__basher_importGltf && w.__basher_writeOpfsBytes);
+      return Boolean(w.__basher_dag && w.__basher_ingestGltfFolder);
     },
     undefined,
     { timeout: 60_000 },
   );
   await page.evaluate(async () => {
     const w = window as unknown as Win;
-    const ref = 'fixtures/rig/standin-character.glb';
-    const buf = await (await fetch(`/${ref}`)).arrayBuffer();
-    await w.__basher_writeOpfsBytes!(ref, new Uint8Array(buf));
-    await w.__basher_importGltf!(buf, ref);
+    const bytes = new Uint8Array(
+      await (await fetch('/fixtures/rig/standin-character.glb')).arrayBuffer(),
+    );
+    await w.__basher_ingestGltfFolder!(
+      [{ relativePath: 'standin-character.glb', bytes }],
+      'standin-character',
+    );
   });
   await page.waitForFunction(
     () => {
@@ -148,11 +154,19 @@ test('a motion generated through the panel onto a character hides its own rig, a
   const landed = await page.evaluate(() => {
     const { nodes } = (window as unknown as Win).__basher_dag.getState().state;
     const ref = (v: unknown) => (v as { node?: string } | undefined)?.node;
+    // The character is the armature Object its mesh's Armature modifier deforms by; the generated
+    // motion's Object is the other Object standing a Skeleton.
+    const characterId = ref(
+      Object.values(nodes).find((n) => n.type === 'ArmatureModifier')?.inputs.armature,
+    );
     const objectId = Object.keys(nodes).find(
       (id) =>
-        nodes[id].type === 'Object' && nodes[ref(nodes[id].inputs.data) ?? '']?.type === 'Skeleton',
+        id !== characterId &&
+        nodes[id].type === 'Object' &&
+        nodes[ref(nodes[id].inputs.data) ?? '']?.type === 'Skeleton',
     );
     return {
+      characterId,
       producers: Object.values(nodes).filter((n) => n.type === 'MotionGenerate').length,
       retargets: Object.values(nodes).filter((n) => n.type === 'RetargetClip').length,
       objectId,
@@ -168,15 +182,17 @@ test('a motion generated through the panel onto a character hides its own rig, a
   expect(landed.objectId, 'the generate road stood no Object for the skeleton').toBeDefined();
   // …and the bind hid it, so no second rig stands beside the character.
   expect(landed.hidden).toBe(true);
-  // What the armature band DRAWS, not what the DAG says. -1 when the seam was never written: a
-  // missing band must not read as "nothing drawn".
-  await expect
-    .poll(() =>
-      page.evaluate(
-        () => (window as unknown as Win).__basher_armature?.skeletonObjects?.length ?? -1,
-      ),
-    )
-    .toBe(0);
+  // What the armature band DRAWS, not what the DAG says: the character's own armature and no
+  // second rig. null when the seam was never written: a missing band must not read as "nothing
+  // drawn".
+  expect(landed.characterId, 'no Armature modifier — the character is not native').toBeDefined();
+  const bandIds = () =>
+    page.evaluate(
+      () =>
+        (window as unknown as Win).__basher_armature?.skeletonObjects?.map((o) => o.id).sort() ??
+        null,
+    );
+  await expect.poll(bandIds).toEqual([landed.characterId]);
 
   // One undo takes the bind, and with it the hide.
   await page.evaluate(() => (window as unknown as Win).__basher_dag.getState().undo());
@@ -189,13 +205,7 @@ test('a motion generated through the panel onto a character hides its own rig, a
     };
   }, landed.objectId!);
   expect(afterUndo).toEqual({ retargets: 0, exists: true, hidden: false });
-  await expect
-    .poll(() =>
-      page.evaluate(
-        () => (window as unknown as Win).__basher_armature?.skeletonObjects?.length ?? -1,
-      ),
-    )
-    .toBe(1);
+  await expect.poll(bandIds).toEqual([landed.characterId, landed.objectId].sort());
 
   expect(errors).toEqual([]);
 });

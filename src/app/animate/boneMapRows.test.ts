@@ -48,7 +48,7 @@ function graph(map: Record<string, string>, extra: Record<string, GraphNodeLike>
       type: 'RetargetClip',
       params: { name: 'retargeted' },
       inputs: {
-        sourceClip: { node: 'clip' },
+        source: { node: 'clip', socket: 'pose' },
         boneMap: { node: 'map1' },
         skeleton: { node: 'tgtRig' },
       },
@@ -188,7 +188,7 @@ describe('boneMapView — a half-wired graph answers null, not an empty table', 
   it('null when no map node is wired', () => {
     const nodes = graph(CORRECT_MAP);
     (nodes.rt as { inputs: Record<string, unknown> }).inputs = {
-      sourceClip: { node: 'clip' },
+      source: { node: 'clip', socket: 'pose' },
       skeleton: { node: 'tgtRig' },
     };
     expect(boneMapView(nodes, 'rt')).toBeNull();
@@ -427,7 +427,7 @@ function posedGraph(map: Record<string, string>) {
       type: 'RetargetClip',
       params: { name: 'retargeted' },
       inputs: {
-        sourceClip: { node: 'clip' },
+        source: { node: 'clip', socket: 'pose' },
         boneMap: { node: 'map1' },
         skeleton: { node: 'tgtRig' },
       },

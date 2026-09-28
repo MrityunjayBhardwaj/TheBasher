@@ -1,5 +1,12 @@
 // FBX import — converts three's FBXLoader output to our DAG-native
-// AnimationClipParams + Skeleton bone list.
+// Skeleton bone list, the first clip's raw tracks (what the import road's base
+// pose layer is built from, #1211), and AnimationClipParams (the clip shape
+// retarget tests and saved projects still read).
+//
+// 🔴 #1279 — three r169 reads a bone's rotation wrong when its X, Y and Z euler
+// curves are keyed at different times (Blender's default export simplifies each
+// axis on its own): `interpolateRotations` pairs the axes by index. The tracks
+// here carry that error; `fbxImportChain.test.ts` pins it until it is fixed.
 //
 // THREE.FBXLoader.parse(buffer) returns a THREE.Group whose subtree may
 // contain SkinnedMesh children (each with their own .skeleton) and a
@@ -34,6 +41,7 @@ import {
   bonesToSpec,
   clipToKeyframes,
   continuousEuler,
+  parseTrackName,
   quaternionToEulerVec3,
   type ClipShape,
 } from './threeAdapter';
@@ -51,9 +59,36 @@ export interface FbxClipParams {
   readonly keyframes: readonly AnimationKeyframe[];
 }
 
+/**
+ * #1211 — one of three's tracks at the file's own key times: a bone (sanitised as `bonesToSpec`
+ * spells it), the property, and the times and flat values. What the import road's base pose layer
+ * is built from, so the file's own key times and its scale survive; `clipParams` merges each bone's
+ * times and drops scale.
+ *
+ * The VALUES are the rig's, not the file's raw ones: they go through the same fold of the node above
+ * the root (#1190) and the same unit (#1086) as the bones and the clip's keys, so a layer built from
+ * them keys the skeleton it stands on. Read raw, a Mixamo walk's positions stayed in centimetres
+ * over a rest pose in metres.
+ */
+export interface FbxTrack {
+  readonly bone: string;
+  /** The bone of the rig this track keys — the k-th track on a name and property keys the k-th bone
+   *  of that name, in rig order. Null when no bone of the rig has the name (the armature node, a
+   *  mesh…). */
+  readonly boneIndex: number | null;
+  /** three's property name: `position`, `quaternion` (xyzw), `scale`, or anything else it wrote. */
+  readonly property: string;
+  readonly times: readonly number[];
+  readonly values: readonly number[];
+}
+
 export interface FbxImportResult {
   readonly skeletonParams: FbxSkeletonParams;
   readonly clipParams: FbxClipParams;
+  /** The first clip's tracks, in three's order; a track whose name does not parse is left out. */
+  readonly tracks: readonly FbxTrack[];
+  /** Tracks of the first clip whose name does not parse as `node.property` — counted, not read. */
+  readonly unparsedTracks: number;
 }
 
 /**
@@ -131,23 +166,34 @@ export function parseFbx(input: ArrayBuffer | string, name = 'imported-fbx'): Fb
   // takes its position from that rest), and only then is the node above the rig folded into
   // both, so the two move together.
   const fileRest = bonesToSpec(bones);
-  const { bones: skeletonBones, keyframes } = foldTransformAboveRoots(
+  const read = clip ? readTracks(clip, fileRest) : { tracks: [], unparsedTracks: 0 };
+  const {
+    bones: skeletonBones,
+    keyframes,
+    tracks,
+  } = foldTransformAboveRoots(
     group,
     bones,
     fileRest,
     clip ? clipToKeyframes(clip as ClipShape, fileRest) : [],
+    read.tracks,
   );
+  const unparsedTracks = read.unparsedTracks;
 
   if (!clip) {
     // Skeleton-only FBX — rare but valid (T-pose import). Empty clip.
     return {
       skeletonParams: { bones: scaleBonePositions(skeletonBones, metresPerUnit) },
       clipParams: { name, duration: 0, loop: 'hold', keyframes: [] },
+      tracks: [],
+      unparsedTracks: 0,
     };
   }
 
   return {
     skeletonParams: { bones: scaleBonePositions(skeletonBones, metresPerUnit) },
+    tracks: scaleTrackPositions(tracks, metresPerUnit),
+    unparsedTracks,
     clipParams: {
       name,
       duration: clip.duration > 0 ? clip.duration : 1,
@@ -192,17 +238,23 @@ function foldTransformAboveRoots(
   nodes: readonly Object3D[],
   rest: readonly BoneSpec[],
   keyframes: readonly AnimationKeyframe[],
-): { bones: BoneSpec[]; keyframes: AnimationKeyframe[] } {
+  fileTracks: readonly FbxTrack[],
+): { bones: BoneSpec[]; keyframes: AnimationKeyframe[]; tracks: FbxTrack[] } {
   group.updateMatrixWorld(true);
-  const groupInverse = group.matrixWorld.clone().invert();
   const bones = rest.map((b) => ({ ...b }));
   let keys = keyframes.map((k) => ({ ...k }));
+  let tracks = [...fileTracks];
 
   rest.forEach((spec, root) => {
     if (spec.parent >= 0) return;
     const above = nodes[root].parent;
     if (!above) return;
-    const matrix = groupInverse.clone().multiply(above.matrixWorld);
+    // #1296 — measured from the scene root, not from the group the loader returned: for a file
+    // whose models all sit under one group, FBXLoader returns THAT group as the scene
+    // (FBXLoader.js:907-913, r169), and on a Blender export it is the armature node itself. Taken
+    // relative to it, its ×100 and its turn cancelled to nothing and the rig came in at a
+    // hundredth of Blender's size. The returned group has no parent, so its world is the scene's.
+    const matrix = above.matrixWorld.clone();
 
     const offset = new Vector3();
     const turn = new Quaternion();
@@ -254,8 +306,74 @@ function foldTransformAboveRoots(
         ? { ...key, position: placeRoot(key.position), rotation: angles }
         : { ...key, position: lengthen(key.position) };
     });
+    // #1211's tracks, folded as the keys are: the root's positions placed and its quaternions
+    // turned, every other position in the subtree lengthened. A quaternion is turned as one, so
+    // it needs none of the Euler branch-chaining above. Scale is a ratio and is left alone.
+    tracks = tracks.map((track) => {
+      if (track.boneIndex === null || !inSubtree.has(track.boneIndex)) return track;
+      const v = track.values;
+      if (track.property === 'position') {
+        const move = track.boneIndex === root ? placeRoot : lengthen;
+        const values: number[] = [];
+        for (let i = 0; i + 2 < v.length; i += 3) values.push(...move([v[i], v[i + 1], v[i + 2]]));
+        return { ...track, values };
+      }
+      if (track.property === 'quaternion' && track.boneIndex === root) {
+        const values: number[] = [];
+        const q = new Quaternion();
+        for (let i = 0; i + 3 < v.length; i += 4) {
+          q.set(v[i], v[i + 1], v[i + 2], v[i + 3]).premultiply(turn);
+          values.push(q.x, q.y, q.z, q.w);
+        }
+        return { ...track, values };
+      }
+      return track;
+    });
   });
-  return { bones, keyframes: keys };
+  return { bones, keyframes: keys, tracks };
+}
+
+/**
+ * #1211 — the clip's tracks, each resolved to the bone it keys. A track names a bone by three's
+ * spelling, and names repeat, so the k-th track on a name and property keys the k-th bone of that
+ * name. A track whose name does not parse is counted and left out.
+ */
+function readTracks(
+  clip: ThreeAnimationClip,
+  rest: readonly BoneSpec[],
+): { tracks: FbxTrack[]; unparsedTracks: number } {
+  const byName = new Map<string, number[]>();
+  rest.forEach((b, i) => byName.set(b.name, [...(byName.get(b.name) ?? []), i]));
+  const claimed = new Map<string, number>();
+  const tracks: FbxTrack[] = [];
+  let unparsedTracks = 0;
+  for (const track of clip.tracks) {
+    const parsed = parseTrackName(track.name);
+    if (!parsed) {
+      unparsedTracks += 1;
+      continue;
+    }
+    const key = `${parsed.bone}\u0000${parsed.property}`;
+    const k = claimed.get(key) ?? 0;
+    const boneIndex = byName.get(parsed.bone)?.[k] ?? null;
+    if (boneIndex !== null) claimed.set(key, k + 1);
+    tracks.push({
+      bone: parsed.bone,
+      boneIndex,
+      property: parsed.property,
+      times: Array.from(track.times),
+      values: Array.from(track.values),
+    });
+  }
+  return { tracks, unparsedTracks };
+}
+
+/** #1086's unit on the tracks' lengths — positions only, as `scaleKeyframePositions` does. */
+function scaleTrackPositions(tracks: readonly FbxTrack[], by: number): readonly FbxTrack[] {
+  if (by === 1) return tracks;
+  return tracks.map((t) =>
+    t.property === 'position' ? { ...t, values: t.values.map((v) => v * by) } : t,
+  );
 }
 
 /**

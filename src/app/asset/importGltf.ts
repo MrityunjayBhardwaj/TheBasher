@@ -50,6 +50,7 @@
 
 import { useDagStore } from '../../core/dag/store';
 import { buildGltfImportOps, type GltfImportChainResult } from '../../core/import/gltfImportChain';
+import { parseGltfContainer } from '../../core/import/glb';
 import {
   buildNativeGltfImportOps,
   type NativeImportRefusal,
@@ -198,8 +199,9 @@ export async function buildGltfImportOpsFromOpfs(
     resolveBuffer: (uri: string) => storage.read(opfsSiblingPath(path, uri)),
     storeImage: storeImageInOpenProject,
   };
+  const skinned = isSkinned(copy.buffer);
   // A reader failure is a refusal like any other: the file still arrives, through the road that
-  // can hold it, and the notice says what the native reader could not do.
+  // can hold it (none, for a skinned file), and the notice says what the native reader could not do.
   let native: NativeImportResult | NativeImportRefusal;
   try {
     native = await buildNativeGltfImportOps(args);
@@ -210,7 +212,23 @@ export async function buildGltfImportOpsFromOpfs(
     };
   }
   if (!('refused' in native)) return { road: 'native', ...native };
+  // #1205 — a skinned file is a character, and a character is native or it is not imported: the
+  // clone road's character features retire with #1053, and a character that arrived on it would be
+  // left unable to take a motion or have its bones posed. Refused whole, by the name the native
+  // reader gave (user decision on #1205, 2026-09-26).
+  if (skinned) return { road: 'refused', nativeRefusal: native };
   return { road: 'clone', nativeRefusal: native, ...(await buildGltfImportOps(args, state)) };
+}
+
+/** Whether a file carries a skin — read off its JSON alone, so a file whose buffers the native
+ *  reader cannot decode (#1063) still says so. A container that does not parse says no, and takes
+ *  the road it always took. */
+function isSkinned(buffer: ArrayBuffer): boolean {
+  try {
+    return ((parseGltfContainer(buffer).json as { skins?: unknown[] }).skins?.length ?? 0) > 0;
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -237,7 +255,10 @@ export type GltfImportRoadResult =
   | ({
       readonly road: 'clone';
       readonly nativeRefusal: NativeImportRefusal;
-    } & GltfImportChainResult);
+    } & GltfImportChainResult)
+  // #1205 — a skinned file the native reader refused: nothing to write. No `ops`, on purpose, so
+  // every caller has to say so rather than dispatch an empty import that reads as a success.
+  | { readonly road: 'refused'; readonly nativeRefusal: NativeImportRefusal };
 
 export async function importGltfFromOpfs(path: string): Promise<void> {
   try {
@@ -252,6 +273,15 @@ export async function importGltfFromOpfs(path: string): Promise<void> {
       sceneRef.node,
       useDagStore.getState().state,
     );
+    if (result.road === 'refused') {
+      useAssetErrorStore
+        .getState()
+        .report(
+          path,
+          `import refused: it is a character (it has a skin), and ${result.nativeRefusal.refused} (${result.nativeRefusal.issue})`,
+        );
+      return;
+    }
     dag.dispatchAtomic(result.ops, 'user', `import asset: ${path}`);
     // NO-SILENT-DROP (V38, V53 fork-3). Two distinct notices:
     //  (1) spec/gloss reaching here means an UN-converted source. Both .gltf and

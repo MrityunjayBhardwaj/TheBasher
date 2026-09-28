@@ -16,8 +16,8 @@
 // Pure + unit-testable; no THREE scene objects, no store, no DAG.
 
 import * as THREE from 'three';
-import { buildClipBoneSamplers } from '../nodes/AnimationClip';
-import type { AnimationClipValue, BoneSpec } from '../nodes/types';
+import { eulerXYZFromQuat } from '../nodes/bonePose';
+import type { BoneSpec, PosedSkeletonValue } from '../nodes/types';
 import type { BoneFrame } from './boneShape';
 
 /** An armature's extent in world space. */
@@ -45,12 +45,13 @@ const MIN_HEIGHT = 1e-6;
  *
  * 🔴 ROOT BONES ARE EXCLUDED, and that is a measurement decision, not tidying.
  * A parentless bone's tail is manufactured from its child, and on a BVH rig
- * whose transport node sits at the world origin while the body walks away, that
- * one bone spans from the origin to the pelvis. Measured on our own clip: it
- * grew the rig's Z extent from 25 to 238 units across 1.5 s while the body
- * itself never changed size. Including it makes the "height" of a rig a
- * function of how far it has walked, so the normalising scale drifts every
- * frame and the figure slides out of frame.
+ * whose transport node sits at the world origin that one bone is a connector
+ * from the origin toward the pelvis, not anatomy. Measured on our own clip,
+ * before #1206, when a tail still followed the POSED child: it grew the rig's
+ * Z extent from 25 to 238 units across 1.5 s while the body itself never
+ * changed size. Since #1206 the bone keeps its rest length, so it no longer
+ * grows with the walk, but it still measures the rig's transport rather than
+ * its body, so it stays out of the extent.
  *
  * Falls back to all frames when every bone is a root, so a one-bone rig still
  * reports a real extent instead of an empty one.
@@ -126,27 +127,21 @@ export function referencePlacement(
 }
 
 /**
- * The source clip's own skeleton, posed at `seconds`.
+ * A pose wire's skeleton, posed at `seconds`, as bind-shaped bones (XYZ euler radians and a scale),
+ * for readers that measure or place a rig from `BoneSpec`s.
  *
- * Sampling goes through `buildClipBoneSamplers` — the SAME factory the
- * locomotion pose path and the baked render band already use. A second
- * interpolator here would be a second answer to "where is this bone at t", and
- * it would drift from the retarget's answer silently, which is precisely the
- * comparison this rig is drawn to make. A bone the clip does not touch holds
- * its rest pose.
+ * It samples the wire itself — a clip's pose (`posedSkeletonFromClip`, the ONE clip→pose adapter the
+ * deform, the drawn armature and the locomotion path read) or a pose layer's `out` alike. A second
+ * interpolator here would be a second answer to "where is this bone at t", and it would drift from
+ * what is drawn silently. A bone the wire does not touch holds its rest pose. A per-frame draw reads
+ * the pose directly (`poseTransforms`) and skips the euler round trip.
  */
-export function posedSourceBones(clip: AnimationClipValue, seconds: number): BoneSpec[] {
-  const bones = clip.skeleton.bones;
-  const samplers = buildClipBoneSamplers(clip);
-  const out: BoneSpec[] = [];
-  for (let i = 0; i < bones.length; i++) {
-    const sampler = samplers.get(i);
-    if (!sampler) {
-      out.push(bones[i]);
-      continue;
-    }
-    const { position, rotation } = sampler(seconds);
-    out.push({ ...bones[i], position, rotation });
-  }
-  return out;
+export function posedSourceBones(wire: PosedSkeletonValue, seconds: number): BoneSpec[] {
+  const pose = wire.sample(seconds);
+  return wire.skeleton.bones.map((bone, i) => {
+    const p = pose[i];
+    return p
+      ? { ...bone, position: p.position, rotation: eulerXYZFromQuat(p.quaternion), scale: p.scale }
+      : bone;
+  });
 }

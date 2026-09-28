@@ -18,7 +18,7 @@ function upright(height: number, x = 0): BoneFrame[] {
     { name: 'hips', parent: 0, position: [0, 0, 0], rotation: [0, 0, 0] },
     { name: 'head', parent: 1, position: [0, height, 0], rotation: [0, 0, 0] },
   ];
-  return boneTransforms(bones);
+  return boneTransforms(bones, bones);
 }
 
 describe('armatureBounds', () => {
@@ -93,7 +93,7 @@ describe('referencePlacement', () => {
         rotation: [0, 0, 0],
       },
     ];
-    const frames = boneTransforms(bones).slice(1);
+    const frames = boneTransforms(bones, bones).slice(1);
     const src = armatureBounds(frames);
     const m = referencePlacement(src, armatureBounds(upright(1.8)));
     const dirBefore = new THREE.Vector3(
@@ -116,7 +116,12 @@ describe('referencePlacement', () => {
 
   it('does not divide by zero on a rig with no height', () => {
     const flat = armatureBounds([
-      ...boneTransforms([{ name: 'a', parent: -1, position: [0, 0, 0], rotation: [0, 0, 0] }]),
+      ...(() => {
+        const lone: BoneSpec[] = [
+          { name: 'a', parent: -1, position: [0, 0, 0], rotation: [0, 0, 0] },
+        ];
+        return boneTransforms(lone, lone);
+      })(),
     ]);
     const m = referencePlacement(flat, armatureBounds(upright(1.8)));
     expect(m.elements.every(Number.isFinite)).toBe(true);

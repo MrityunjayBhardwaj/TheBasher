@@ -23,6 +23,8 @@ export interface BadgeContext {
   paramPath?: string;
   nodeId?: string;
   reason?: string;
+  /** #1189 — the node that owns the param a stripped write missed, when there is one. */
+  owner?: string;
 }
 
 export interface BadgeDef {
@@ -36,9 +38,10 @@ export const BADGES: Record<BadgeKind, BadgeDef> = {
   'stripped-write': {
     kind: 'stripped-write',
     tone: 'warning',
-    label: ({ paramPath, nodeId, reason }) =>
+    label: ({ paramPath, nodeId, reason, owner }) =>
       `Ignored ${paramPath ?? 'write'} on ${nodeId ?? '?'}` +
       (reason ? ` — ${reason}` : '') +
+      (owner ? `; it lives on ${owner}` : '') +
       ' (changed nothing)',
   },
   // #759 — a connect onto an OCCUPIED single-cardinality socket. The op is

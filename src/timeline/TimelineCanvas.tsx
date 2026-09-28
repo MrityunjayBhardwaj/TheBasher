@@ -95,11 +95,9 @@ import {
   DOPESHEET_DIAMOND_INSET_PX,
   DOPESHEET_GUTTER_GLYPH_BOX_PX,
 } from './timelineSettings';
-import {
-  appendAnimationClipRows,
-  appendSelectionClipRows,
-  type ChannelRow,
-} from './clipChannelRows';
+import { appendSelectionClipRows, type ChannelRow } from './clipChannelRows';
+import { appendComputedSourceRows, appendLayerRows, computedSourceCache } from './layerChannelRows';
+import { resolveRowChannelForWrite, rowFlagToggleOps } from '../app/animate/clipRowMint';
 import { dispatchRetimeKeyframe, dispatchBakeThenRetime } from '../app/animate/dispatchMutator';
 import { parseClipRowId, assetRefForChild, type ClipRowComponent } from '../app/animate/bakeOnEdit';
 import { nodeDisplayName } from '../app/sceneTreeWalk';
@@ -368,7 +366,7 @@ export function paintStaticLayer(
     const rowTop = rowsTop + r * ROW_HEIGHT_PX;
     const soloedOut = !row.solo && !!row.targetId && soloedTargets.has(row.targetId);
     // A soloed-out row is silenced by the resolver just like a muted one → dim it too.
-    const muted = row.mute === true || soloedOut;
+    const muted = row.mute === true || row.layerMuted === true || soloedOut;
 
     // Active-channel row tint (a faint highlight on the pinned channel).
     if (activeChannelId !== null && row.channelId === activeChannelId) {
@@ -406,8 +404,11 @@ export function paintStaticLayer(
       ctx.textAlign = 'center';
       ctx.fillStyle = row.mute ? GLYPH_MUTE_ON : GLYPH_OFF;
       ctx.fillText('M', MUTE_GLYPH_X0 + GUTTER_GLYPH_BOX_PX / 2, gy);
-      ctx.fillStyle = row.solo ? LABEL_SOLO : GLYPH_OFF;
-      ctx.fillText('S', SOLO_GLYPH_X0 + GUTTER_GLYPH_BOX_PX / 2, gy);
+      // #1215 — a layer's curve has no solo (Blender's F-curves have none): no S to click.
+      if (!row.noSolo) {
+        ctx.fillStyle = row.solo ? LABEL_SOLO : GLYPH_OFF;
+        ctx.fillText('S', SOLO_GLYPH_X0 + GUTTER_GLYPH_BOX_PX / 2, gy);
+      }
       ctx.textAlign = 'left'; // restore for the next row's name + the ruler labels
     }
 
@@ -564,19 +565,30 @@ export function TimelineCanvas({ duration }: { duration: number }) {
   // without a bake. Suppressed once the bone is baked (FLAG-3 single-row-set).
   // Pure: appendSelectionClipRows is a function of (baseRows, nodes, selection).
   const primaryNodeId = useSelectionStore((s) => s.primaryNodeId);
+  // #1215 — a STABLE evaluator cache for the computed source rows: the source re-evaluates only when
+  // its own inputs change, not on every edit elsewhere (the H40/H48 pattern, as SceneFromDAG's drivers).
+  const sourceCache = useMemo(() => computedSourceCache(), []);
   const rows = useMemo(
     () =>
-      appendSelectionClipRows({
-        // #903 — the AnimationClip road's read-only rows, appended BEFORE the
-        // selection-scoped TransformClip ones so a rig with a generated or
-        // retargeted motion is visible in the dopesheet without a bake. Both
-        // suppress a (bone, component) that already has a real channel, so the
-        // one-row-set invariant holds across both clip kinds.
-        baseRows: appendAnimationClipRows({ baseRows: collectChannelRows(nodes), nodes }),
-        nodes,
+      // #1215 — below the layers, the computed motion the chain stands on, read-only until baked.
+      appendComputedSourceRows({
+        baseRows:
+          // #1215 — the selected armature Object's pose layers: its keys, editable where they live.
+          appendLayerRows({
+            baseRows: appendSelectionClipRows({
+              baseRows: collectChannelRows(nodes),
+              nodes,
+              selectedNodeId: primaryNodeId,
+            }),
+            nodes,
+            selectedNodeId: primaryNodeId,
+          }),
+        // Read off the live state: `nodes` (the memo key) changes with every edit that could move it.
+        state: useDagStore.getState().state,
         selectedNodeId: primaryNodeId,
+        cache: sourceCache,
       }),
-    [nodes, primaryNodeId],
+    [nodes, primaryNodeId, sourceCache],
   );
 
   // P7.12 B2 — selection → active row. `setActiveChannel` had no production
@@ -1100,16 +1112,10 @@ export function TimelineCanvas({ duration }: { duration: number }) {
       // read-only clip row (no DAG node, no glyph) falls through to row-select
       // below, preserving its existing gutter-click behavior.
       if (row && !row.readOnly) {
-        const node = useDagStore.getState().state.nodes[row.channelId];
-        if (node) {
-          const current = (node.params as Record<string, unknown>)[glyph.kind] === true;
-          useDagStore
-            .getState()
-            .dispatchAtomic(
-              [{ type: 'setParam', nodeId: row.channelId, paramPath: glyph.kind, value: !current }],
-              'user',
-              `toggle channel ${glyph.kind}`,
-            );
+        // #1215 — flipped where the curve lives (its node, or its entry in a pose layer).
+        const ops = rowFlagToggleOps(useDagStore.getState().state, row.channelId, glyph.kind);
+        if (ops) {
+          useDagStore.getState().dispatchAtomic(ops, 'user', `toggle channel ${glyph.kind}`);
         }
         return;
       }
@@ -1179,7 +1185,9 @@ export function TimelineCanvas({ duration }: { duration: number }) {
           // float becomes fromTime, the D-03 discriminator (NOT a
           // pointerup-recomputed seconds, or removeKeyframes silently
           // no-ops and the drag duplicates the key).
-          const live = useDagStore.getState().state.nodes[row.channelId];
+          // #1215 — through the row resolver, so a layer row's keys (which live in its layer, not in
+          // a node of the row's id) are read the same way a channel node's are.
+          const live = resolveRowChannelForWrite(useDagStore.getState().state, row.channelId);
           const liveParams = (live?.params ?? {}) as {
             keyframes?: Array<{ time: number }>;
           };

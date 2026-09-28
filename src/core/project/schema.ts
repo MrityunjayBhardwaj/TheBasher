@@ -72,7 +72,16 @@ import { NodeSchema, NodeIdSchema, NodeRefSchema } from '../dag/types';
 // would never split — and unlike the earlier kinds there is no fused fallback left to
 // render it, because `GltfChild` retires in the same change. See migrations.ts
 // formatMigrations[12].
-export const PROJECT_FORMAT_VERSION = 14;
+// v15 (#1203): an armature Object carries the clip that poses it on an `action` edge. The band
+// used to choose the pose by a rule; a saved rig would stop playing without the pass that writes
+// the rule down as the edge. See migrations.ts formatMigrations[14].
+// v16 (#1224): the armature Object takes the pose wire — `action` (a clip) becomes `pose`, and each
+// saved edge is re-pointed to its producer's pose output. See migrations.ts formatMigrations[15].
+// v17 (#1225): the retarget reads the pose wire — `RetargetClip.sourceClip` becomes `source`, each
+// saved edge re-pointed to its producer's pose output. See migrations.ts formatMigrations[16].
+// v18 (#1225): locomotion reads the pose wire — `LocomotionState.clip` becomes `pose`, re-pointed
+// the same way. See migrations.ts formatMigrations[17].
+export const PROJECT_FORMAT_VERSION = 18;
 
 export const ProjectSchema = z.object({
   formatVersion: z.literal(PROJECT_FORMAT_VERSION),
