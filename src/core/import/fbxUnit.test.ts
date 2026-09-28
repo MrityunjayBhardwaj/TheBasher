@@ -112,6 +112,52 @@ describe('parseFbx — lengths come out in metres, in the declared unit', () => 
   });
 });
 
+// #1296 — when every model sits under one group, FBXLoader returns THAT group as the scene
+// (FBXLoader.js:907-913, r169), and it had recorded the file's unit on the scene it then threw away.
+// Blender's default export of an armature is such a file. `walk-blender-default.fbx` declares 1,
+// the default, so the loss could not show on it; the variant below declares 100 — one double
+// changed in the binary, built here like `rigDeclaring`. Blender 5.1.1 imports the variant with
+// the Hips at z 9781.89 at frame 1, exactly 100× its 97.82 for the file as exported (probe
+// `unit_oracle.py`, import defaults, 2026-09-29).
+const WALK_BYTES = readFileSync(
+  resolve(process.cwd(), 'src/core/import/__fixtures__/walk-blender-default.fbx'),
+);
+
+/** The walk declaring `factor` centimetres per unit, in the binary's one `UnitScaleFactor` record. */
+function walkDeclaring(factor: number): ArrayBuffer {
+  const bytes = new Uint8Array(WALK_BYTES);
+  const name = 'UnitScaleFactor';
+  const record = new Uint8Array([0x53, name.length, 0, 0, 0, ...new TextEncoder().encode(name)]);
+  const at = bytes.findIndex((_, i) => record.every((b, j) => bytes[i + j] === b));
+  if (at < 0) throw new Error('the walk no longer states its unit where expected');
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  let i = at + record.length;
+  // Three strings follow the name ("double", "Number", ""), then the value: 'D' + float64 LE.
+  for (let s = 0; s < 3; s++) i += 5 + view.getUint32(i + 1, true);
+  if (bytes[i] !== 0x44 || view.getFloat64(i + 1, true) !== 1)
+    throw new Error('the walk no longer declares 1 as a double');
+  view.setFloat64(i + 1, factor, true);
+  return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+}
+
+describe('a file whose models all sit under one group is read in its unit (#1296)', () => {
+  it('the loader collapses the walk to its armature node — the case this row is about', () => {
+    const group = new FBXLoader().parse(walkDeclaring(100), '');
+    expect(group.name).toBe('walk');
+    expect(group.userData.unitScaleFactor).toBe(100);
+  });
+
+  it('declaring 100 stands the walk at Blender’s 9781.89, 100× the file as exported', () => {
+    const hipsOf = (buf: ArrayBuffer) =>
+      parseFbx(buf, 'walk').skeletonParams.bones.find((b) => b.name === 'Hips')!.position;
+    const asExported = hipsOf(walkDeclaring(1));
+    const metres = hipsOf(walkDeclaring(100));
+    expect(asExported[1]).toBeCloseTo(97.819, 3);
+    expect(metres[1]).toBeCloseTo(9781.89, 1);
+    for (let a = 0; a < 3; a++) expect(metres[a]).toBeCloseTo(asExported[a] * 100, 6);
+  });
+});
+
 // The unit reaches the bind road too, and must not change what a character does: the retarget
 // carries hip travel across by the ratio of the two rigs' leg lengths, so a source read 100×
 // smaller moves its target exactly as much. A unit that leaked into rotations, or scaled rest

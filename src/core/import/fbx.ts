@@ -108,6 +108,10 @@ const CENTIMETRES_PER_METRE = 100;
  * declares 1, centimetres — parses with its hips 99.67 units up. Read here, where every FBX
  * door passes, so the drop, the picker, the Library and both dev seams all get it.
  *
+ * #1296 — a file whose models all sit under one group comes back as THAT group, and the loader
+ * had recorded the unit on the scene it discarded; our patch to it (`patches/three+0.169.0.patch`)
+ * carries the unit across, so the group read here holds it on either shape of file.
+ *
  * A declared factor that is not a positive, finite number is refused rather than defaulted:
  * the file has stated its unit and stated it wrongly, and guessing over that is the silent
  * wrong size this exists to remove.
