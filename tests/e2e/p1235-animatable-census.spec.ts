@@ -376,6 +376,24 @@ test(TITLE, async ({ page }) => {
           comps.push(compId);
         }
       }
+      // #1259 — an IMPORTED mesh: the importer writes rotation keys as quaternion channels onto
+      // it, so a Quat channel's picker must be able to offer one. Only the importer makes a
+      // PolyMeshData, so the census imports a small static glTF (one embedded mesh, no animation,
+      // no skin) through the door File ▸ Import uses, and refuses to go on if that door did not
+      // produce an Object over a PolyMeshData.
+      {
+        const bytes = new Uint8Array(await (await fetch('/assets/cube.gltf')).arrayBuffer());
+        await w.__basher_ingestGltfFolder([{ relativePath: 'cube.gltf', bytes }], 'census-import');
+        await frames();
+        const nodes = dag().state.nodes as Record<string, Loose>;
+        const imported = Object.entries(nodes).filter(
+          ([, n]) => n.type === 'Object' && nodes[n.inputs?.data?.node]?.type === 'PolyMeshData',
+        );
+        if (imported.length !== 1)
+          throw new Error(
+            `the census import made ${imported.length} Objects over a PolyMeshData, expected 1`,
+          );
+      }
       /** The frame each composition composites at the playhead, hashed. */
       async function compHash(): Promise<string> {
         const out: string[] = [];
@@ -417,6 +435,9 @@ test(TITLE, async ({ page }) => {
         );
         if (!Array.isArray(dag().state.nodes[id]?.params?.quaternion))
           throw new Error(`the census could not seed ${node.type} ${id}'s quaternion`);
+        // Every posable node starts in euler, as a freshly added one does, so the two passes
+        // below measure each mode once. The importer leaves its Objects in quaternion mode.
+        if (dag().state.nodes[id]?.params?.rotationMode === 'quaternion') setMode(id, undefined);
         posable.push(id);
       }
       await frames();

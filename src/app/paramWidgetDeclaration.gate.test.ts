@@ -39,6 +39,8 @@ import { buildDefaultDagState } from '../core/project/default';
 import { profileOptions } from '../nodes/LightProfileSelect';
 import { buildAddPrimitiveOps, SCENE_OBJECT_KINDS } from './addPrimitives';
 import { buildMediaClipOps } from './asset/importMediaClip';
+import { buildNativeGltfImportOps } from '../core/import/nativeGltfImport';
+import { readFileSync } from 'node:fs';
 import { buildAddLayerOps } from './video/addLayer';
 import { buildNewCompositionOps } from './video/newComposition';
 import { buildAddConstraintOps } from './constraintStack';
@@ -684,7 +686,7 @@ describe('a param declares its control on its schema (#872)', () => {
     expect(enabled('Strip', 'target')).toEqual(stripTargetRows(s).map((r) => r.id));
   });
 
-  it('row 20 — every channel target+path option animates once written, and nothing left out does (#1066)', () => {
+  it('row 20 — every channel target+path option animates once written, and nothing left out does (#1066)', async () => {
     // V558's property for the channel pickers, both ways, against each road's own answer:
     //   - a scene node: the measured census (`isAnimatable`) on EVERY concrete leaf of the
     //     channel's shape, so a path the picker drops or a pattern it mis-expands reds;
@@ -725,6 +727,22 @@ describe('a param declares its control on its schema (#872)', () => {
     });
     s = apply(s, bind.ok ? bind.ops : []);
     expect(bind.ok, 'the driver binds').toBe(true);
+    // #1259 — an imported mesh, as the census imports one: the native importer's Object over a
+    // PolyMeshData, left in the quaternion mode the importer writes, where its rotation keys land.
+    const cube = readFileSync('public/assets/cube.gltf');
+    const imported = await buildNativeGltfImportOps({
+      buffer: cube.buffer.slice(cube.byteOffset, cube.byteOffset + cube.byteLength) as ArrayBuffer,
+      assetRef: 'user-imports/census/cube.gltf',
+      sceneNodeId: s.outputs.scene!.node,
+      storeImage: async () => 'img',
+    });
+    if ('refused' in imported) throw new Error(imported.refused);
+    s = apply(s, imported.ops);
+    const importedObj = imported.objectIds[0];
+    expect(
+      s.nodes[importedObj]?.params.rotationMode,
+      'the importer leaves it in quaternion mode',
+    ).toBe('quaternion');
     // #1259 — a quaternion is a leaf only once held, as the census seeds it: every node whose
     // schema declares a rotation mode holds the identity, and one Sphere composes it.
     const posable = Object.values(s.nodes).filter((n) => {
@@ -911,6 +929,8 @@ describe('a param declares its control on its schema (#872)', () => {
         }
       }
       expect({ kind, offered: [...offered].sort() }).toEqual({ kind, offered: [...truth].sort() });
+      // The imported mesh is on both sides for a quaternion, not absent from both.
+      if (kind === 'quat') expect(offered).toContain(`${importedObj} quaternion`);
       counted[kind] = truth.length;
     }
     // The denominators ride with the verdict: an empty list on both sides would pass.
