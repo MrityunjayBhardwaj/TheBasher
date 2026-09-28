@@ -3,15 +3,17 @@
 // Returns Op[] (never dispatches — V7). The Diff system applies to the fork;
 // the user accepts before any real mutation.
 //
-// Two branches, matching the UI drop surfaces exactly:
-//   - `.glb` / `.gltf` (case-insensitive) → the SAME async chokepoint the
-//     human file-drop uses (`buildGltfImportOpsFromOpfs`), which eager-
-//     extracts embedded animations into TransformClip + ClipSelect nodes.
-//     Before this, the tool called only the static `buildAssetDropOps`, so
-//     an animated glTF imported as a silent static mesh — the #81-class
-//     drop, fixed on the UI surface but left open on the agent surface (#105).
-//   - everything else → the static `buildAssetDropOps` GltfAsset → Transform
-//     → Group chain, unchanged.
+// One branch per import family, matching the UI's extension dispatcher
+// (`routeImportByExtension`) exactly:
+//   - a model (`.glb` / `.gltf`) → the SAME async chokepoint the human
+//     file-drop uses (`buildGltfImportOpsFromOpfs`). Before #105 the tool
+//     called only a static drop chain, so an animated glTF imported as a
+//     silent static mesh.
+//   - a motion (`.bvh` / `.fbx`) → `buildMotionImportOpsFromOpfs`, the chain
+//     the UI's motion import dispatches: Skeleton + base pose layer + the
+//     Object that stands it. Before #1307 a motion fell through to that static
+//     chain and became a GltfAsset reading a motion file, reported "Imported".
+//   - anything else is refused by name. No format, no chain.
 //
 // V7 — the helper takes the FORKED `ctx.dagState`, never the live store, and
 // the tool returns ops for the Diff (it does NOT dispatch).
@@ -20,8 +22,8 @@
 
 import { z } from 'zod';
 import type { ToolDefinition, ToolContext, ToolResult } from './types';
-import { buildAssetDropOps } from '../../app/asset/dropChain';
-import { isFamilyPath } from '../../app/asset/importFormats';
+import { buildMotionImportOpsFromOpfs } from '../../app/asset/importBvhFbx';
+import { IMPORT_EXTENSIONS, importFormatOf } from '../../app/asset/importFormats';
 import { buildGltfImportOpsFromOpfs } from '../../app/asset/importGltf';
 
 export const libraryImportSchema = z.object({
@@ -39,7 +41,9 @@ export const libraryImportTool: ToolDefinition<LibraryImportArgs> = {
     'Import a library asset into the scene. ' +
     "Returns an Op[] that imports the model and wires it into the Scene aggregator's children: " +
     'a Group of Object + mesh data nodes when the file can become native geometry, otherwise ' +
-    'a GltfAsset + Group chain that reads the file.',
+    'a GltfAsset + Group chain that reads the file. A motion (.bvh, .fbx) imports as a ' +
+    'skeleton with its keys on a base pose layer and an Object that stands it, not bound to a ' +
+    'character. A file in no import format is refused.',
   paramSchema: libraryImportSchema,
   async handler(args: LibraryImportArgs, ctx: ToolContext): Promise<ToolResult> {
     const sceneRef = ctx.dagState.outputs.scene;
@@ -55,7 +59,14 @@ export const libraryImportTool: ToolDefinition<LibraryImportArgs> = {
     // #662 — the family, from the category, not a respelled pair. This site reported
     // `Imported …` for a format it had built the WRONG chain for, because a format missing
     // from the spelling fell through to the static branch below and still looked like a win.
-    if (isFamilyPath(args.assetRef, 'model')) {
+    const format = importFormatOf(args.assetRef);
+    if (!format) {
+      return {
+        ops: [],
+        text: `Error: ${args.assetRef} was not imported — it is in no import format (expected ${IMPORT_EXTENSIONS.join(', ')}).`,
+      };
+    }
+    if (format.family === 'model') {
       const result = await buildGltfImportOpsFromOpfs(args.assetRef, sceneRef.node, ctx.dagState);
       // #1205 — a skinned file the native reader refused is not imported at all.
       if (result.road === 'refused') {
@@ -67,12 +78,13 @@ export const libraryImportTool: ToolDefinition<LibraryImportArgs> = {
       return { ops: result.ops, text: `Imported ${args.assetRef} at [${args.position}]` };
     }
 
-    // Non-glTF assetRef — unchanged static GltfAsset → Transform → Group chain.
-    const dropOps = buildAssetDropOps({
-      assetRef: args.assetRef,
-      sceneNodeId: sceneRef.node,
-      position: args.position as [number, number, number] | undefined,
-    });
-    return { ops: dropOps, text: `Imported ${args.assetRef} at [${args.position}]` };
+    // #1307 — a motion stands where its file puts it, as the UI import does: `position` is not
+    // applied, and the text says so rather than claiming it. Binding it to a character is a
+    // separate step on this surface (the UI's drop binds after dispatch, which a Diff cannot).
+    const motion = await buildMotionImportOpsFromOpfs(args.assetRef, ctx.dagState);
+    return {
+      ops: [...motion.ops],
+      text: `Imported ${args.assetRef} as a motion: a skeleton (${motion.skeletonId}) with its keys on a base pose layer (${motion.motionId}), standing where the file puts it. It is not bound to a character.`,
+    };
   },
 };

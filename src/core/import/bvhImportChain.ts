@@ -72,8 +72,7 @@ export interface BvhImportChainArgs {
 let counter = 0;
 function uniqueId(prefix: string): string {
   counter += 1;
-  // Match dropChain.ts pattern: counter+random suffix for cross-restart
-  // collision avoidance. Safe under V2 (ids are UI artifacts, not
+  // Counter + random suffix for cross-restart collision avoidance. Safe under V2 (ids are UI artifacts, not
   // pure-evaluator values).
   const r = Math.floor(Math.random() * 1e6).toString(36);
   return `n_${prefix}_${counter.toString(36)}${r}`;

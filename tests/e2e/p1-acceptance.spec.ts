@@ -70,9 +70,9 @@ test('P1#1 drag GLB → 6-op chain placed via dispatchAtomic; one Cmd+Z reverts'
     { timeout: 10_000 },
   );
 
-  // Native HTML5 D&D is fragile; drive the buildAssetDropOps helper via
-  // the same path the AssetDropZone uses. (The chain shape itself is
-  // covered by the unit test in src/app/asset/dropChain.test.ts.)
+  // Native HTML5 D&D is fragile; dispatch a hand-written op chain the way a
+  // drop dispatches its import, because what this row measures is that one
+  // atomic dispatch is one undo step — not the shape of any import's chain.
   const before = await page.evaluate(() => {
     const w = window as unknown as DagWindow;
     return Object.keys(w.__basher_dag!.getState().state.nodes).length;

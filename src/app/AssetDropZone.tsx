@@ -10,17 +10,15 @@
 import { useState, type DragEvent, type ReactNode } from 'react';
 import { useDagStore } from '../core/dag/store';
 import { DRAG_MIME } from './asset/catalog';
-import { buildAssetDropOps } from './asset/dropChain';
 import { type IngestFile } from './asset/importGltf';
 import { ingestAndImportGltf } from './asset/gltfEntryChoice';
 import { ingestSingleFile } from './asset/importCommon';
 import { routeImportByExtension } from './asset/importBvhFbx';
-import { isImportablePath, isFamilyPath } from './asset/importFormats';
+import { isFamilyPath } from './asset/importFormats';
 import { dropItemsToFiles, plainFilesToFiles } from './asset/ingestReaders';
 import { formatAssetError, useAssetErrorStore } from './stores/assetErrorStore';
 import { useNotificationStore } from './stores/notificationStore';
 import type { DagState } from '../core/dag/state';
-import type { Op } from '../core/dag/types';
 
 /** The warn toast shown when a library asset is dropped but the project has no
  *  scene to add it into. Exported so the test asserts the exact surfaced text. */
@@ -28,9 +26,9 @@ export const NO_SCENE_DROP_MESSAGE = 'Can’t add asset — this project has no 
 
 /** What a dropped catalog (library) asset resolves to. */
 export type CatalogDropPlan =
-  | { kind: 'import'; path: string } // an importable file (.glb/.gltf/.bvh/.fbx) → routeImportByExtension
-  | { kind: 'ops'; ops: Op[] } // a plain library asset → catalog drop ops into the scene
-  | { kind: 'no-scene' }; // nothing to drop into — must be surfaced, never swallowed
+  // → routeImportByExtension, which imports it by format, or refuses a file in none by name
+  // (#1307 — this used to mint a GltfAsset reading any non-importable file)
+  { kind: 'import'; path: string } | { kind: 'no-scene' }; // nothing to drop into — must be surfaced, never swallowed
 
 /**
  * Decide what a dropped catalog asset should do — the pure core of `onDrop`'s
@@ -43,8 +41,7 @@ export type CatalogDropPlan =
 export function planCatalogAssetDrop(state: DagState, path: string): CatalogDropPlan {
   const sceneRef = state.outputs.scene;
   if (!sceneRef) return { kind: 'no-scene' };
-  if (isImportablePath(path)) return { kind: 'import', path };
-  return { kind: 'ops', ops: buildAssetDropOps({ assetRef: path, sceneNodeId: sceneRef.node }) };
+  return { kind: 'import', path };
 }
 
 interface Props {
@@ -122,7 +119,6 @@ async function routeIngest(files: IngestFile[], items: DataTransferItem[]): Prom
 }
 
 export function AssetDropZone({ children }: Props) {
-  const dispatchAtomic = useDagStore((s) => s.dispatchAtomic);
   const [over, setOver] = useState(false);
 
   function carriesAsset(e: DragEvent): boolean {
@@ -165,14 +161,9 @@ export function AssetDropZone({ children }: Props) {
       // P7.5 + #90 + Phase 7.9/7.14 — single-path importable-asset routing.
       // glTF (.glb/.gltf), BVH (.bvh) and FBX (.fbx) all route through the
       // shared extension dispatcher `routeImportByExtension` (B12 chokepoint:
-      // the sole importer call site in `src/app/`). Non-importable library
-      // drops fall through to the catalog `buildAssetDropOps` path unchanged.
-      if (plan.kind === 'import') {
-        void routeImportByExtension(plan.path);
-        return;
-      }
-
-      dispatchAtomic(plan.ops, 'user', `import asset: ${path}`);
+      // the sole importer call site in `src/app/`), which also refuses a file in
+      // no import format by name (#1307).
+      void routeImportByExtension(plan.path);
       return;
     }
 

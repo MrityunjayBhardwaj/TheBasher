@@ -934,9 +934,8 @@ export async function buildGltfImportOps(
   const buffers = await resolveBuffers(json, bin, args.resolveBuffer);
   const { nodeNameMap, keyByGltfNodeIndex, childHierarchy } = buildNodeNameMap(json, args.assetRef);
 
-  // Static chain ids (deterministic) — mirrors dropChain.ts:36-73 but
-  // content-addressed off assetRef so re-import of the same file
-  // produces identical Op stream.
+  // Static chain ids, content-addressed off assetRef so re-import of the
+  // same file produces an identical Op stream.
   const gltfAssetId = hashId('gltf', args.assetRef);
   const groupId = hashId('grp', args.assetRef);
   const position = args.position ?? [0, 0, 0];

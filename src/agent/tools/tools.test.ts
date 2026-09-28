@@ -29,6 +29,7 @@ vi.mock('../../app/boot', () => ({
   getStorage: async () => currentStorage,
 }));
 
+import { readFileSync } from 'node:fs';
 import {
   registerAllTools,
   getTool,
@@ -491,40 +492,46 @@ describe('library.import tool', () => {
     currentStorage = new MemoryStorage();
   });
 
-  it('non-glTF assetRef → the static 4-op drop chain, no clip nodes (twice-call)', async () => {
-    const ctx: ToolContext = { dagState: buildSceneBaseline() };
+  // #1307 — a motion file used to fall through to a static chain and become a GltfAsset reading
+  // it, reported "Imported". It now takes the chain the UI's motion import dispatches.
+  it.each([
+    ['assets/motion/walk.bvh', 'public/assets/motion/walk.bvh'],
+    ['user-imports/rig/rig.fbx', 'public/fixtures/anim/rig.fbx'],
+  ])(
+    '%s imports as a motion: skeleton, base pose layer, the Object that stands it',
+    async (assetRef, file) => {
+      await currentStorage.write(assetRef, new Uint8Array(readFileSync(file)));
+      const result = await libraryImportTool.handler(
+        { assetRef, position: [1, 0, 1] },
+        { dagState: buildSceneBaseline() },
+      );
+      const types = nodeTypesOf(result.ops);
+      expect(types).toContain('Skeleton');
+      expect(types).toContain('PoseLayer');
+      expect(types).toContain('Object');
+      expect(types).not.toContain('GltfAsset');
+      // The Object is wired into the scene the agent's fork holds.
+      expect(result.ops).toContainEqual(
+        expect.objectContaining({ type: 'connect', to: { node: 'scene', socket: 'children' } }),
+      );
+      // They apply to the fork as they stand — the Diff the user accepts is this.
+      let applied = buildSceneBaseline();
+      for (const op of result.ops) applied = applyOp(applied, op).next;
+      expect(Object.values(applied.nodes).filter((n) => n.type === 'Object')).toHaveLength(1);
+      expect(result.text).toMatch(/as a motion/);
+      expect(result.text).toMatch(/not bound to a character/);
+    },
+  );
 
-    const result1 = await libraryImportTool.handler(
-      { assetRef: 'assets/cube.fbx', position: [1, 0, 1] },
-      ctx,
+  it('a file in no import format is refused by name, with no ops', async () => {
+    const result = await libraryImportTool.handler(
+      { assetRef: 'library/rock.png', position: [0, 0, 0] },
+      { dagState: buildSceneBaseline() },
     );
-    const result2 = await libraryImportTool.handler(
-      { assetRef: 'assets/cube.fbx', position: [1, 0, 1] },
-      ctx,
+    expect(result.ops).toEqual([]);
+    expect(result.text).toMatch(
+      /^Error: library\/rock\.png was not imported .*\.gltf, \.glb, \.bvh, \.fbx/,
     );
-
-    // #222 — the import root is ONE transformable Group (no separate Transform).
-    expect(result1.ops.length).toBe(4);
-    expect(result2.ops.length).toBe(4);
-
-    // Structure: addNode gltf → addNode group → connect(gltf→grp) → connect(grp→scene)
-    const types1 = result1.ops.map((o) => o.type);
-    expect(types1).toEqual(['addNode', 'addNode', 'connect', 'connect']);
-    expect(result2.ops.map((o) => o.type)).toEqual(types1);
-
-    // Static path → GltfAsset → Group, NO Transform / TransformClip / ClipSelect.
-    expect(nodeTypesOf(result1.ops)).toEqual(['GltfAsset', 'Group']);
-
-    // Each connect references ids from preceding addNode calls.
-    const gltfId = (result1.ops[0] as { nodeId: string }).nodeId;
-    const grpId = (result1.ops[1] as { nodeId: string }).nodeId;
-    const connect1 = result1.ops[2] as { from: { node: string }; to: { node: string } };
-    const connect2 = result1.ops[3] as { from: { node: string }; to: { node: string } };
-
-    expect(connect1.from.node).toBe(gltfId);
-    expect(connect1.to.node).toBe(grpId);
-    expect(connect2.from.node).toBe(grpId);
-    expect(connect2.to.node).toBe('scene');
   });
 
   // #105 — the core parity proof: an animated glTF imported via the agent

@@ -172,7 +172,7 @@ export function summarizeGltfEntry(bytes: Uint8Array): {
  *
  * Sharing this with the agent tool closes the #81-class silent drop on the
  * agent surface: before, `library.import` called the static
- * `buildAssetDropOps` (no clip extraction), so an animated glTF imported as
+ * static drop chain (no clip extraction, since deleted, #1307), so an animated glTF imported as
  * a static mesh. Now both surfaces extract clips identically (H40 boundary-
  * pair: same node-type set on both paths).
  *
