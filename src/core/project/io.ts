@@ -20,7 +20,17 @@ import type { StorageCapability } from '../storage';
 import { migrateNodes, migrateProjectFormat } from './migrations';
 import { copyProjectImages, deleteProjectImages } from './projectImages';
 import { repairAndWarn } from './repairRoleBindings';
-import { PROJECT_FILENAME, PROJECT_FORMAT_VERSION, ProjectSchema, type Project } from './schema';
+import {
+  PROJECT_FILENAME,
+  PROJECT_FORMAT_VERSION,
+  PROJECT_META_FILENAME,
+  ProjectMetadataSchema,
+  ProjectSchema,
+  type Project,
+  type ProjectMetadata,
+} from './schema';
+
+export type { ProjectMetadata } from './schema';
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
@@ -80,10 +90,30 @@ export function projectPath(projectId: string): string {
   return `projects/${projectId}/${PROJECT_FILENAME}`;
 }
 
+function projectMetaPath(projectId: string): string {
+  return `projects/${projectId}/${PROJECT_META_FILENAME}`;
+}
+
+function metadataOf(project: Project): ProjectMetadata {
+  return {
+    id: project.id,
+    name: project.name,
+    createdAt: project.createdAt,
+    updatedAt: project.updatedAt,
+    formatVersion: project.formatVersion,
+    nodeCount: Object.keys(project.state.nodes).length,
+  };
+}
+
 export async function saveProject(storage: StorageCapability, project: Project): Promise<void> {
   const validated = ProjectSchema.parse(project);
   const json = JSON.stringify(validated, null, 2);
   await storage.write(projectPath(validated.id), encoder.encode(json));
+  // #1302 — AFTER the project: a summary exists only for a project file that was written whole.
+  await storage.write(
+    projectMetaPath(validated.id),
+    encoder.encode(JSON.stringify(metadataOf(validated))),
+  );
 }
 
 export async function loadProject(storage: StorageCapability, projectId: string): Promise<Project> {
@@ -112,18 +142,27 @@ export async function listProjects(storage: StorageCapability): Promise<string[]
   }
 }
 
-export interface ProjectMetadata {
-  id: string;
-  name: string;
-  createdAt: number;
-  updatedAt: number;
-  formatVersion: number;
-  nodeCount: number;
+/**
+ * One project's picker summary: its `meta.json` when it has one, else the project file itself (a
+ * project last saved before #1302). Never writes, so a listing cannot race a save.
+ */
+async function loadProjectMetadata(
+  storage: StorageCapability,
+  projectId: string,
+): Promise<ProjectMetadata> {
+  try {
+    const bytes = await storage.read(projectMetaPath(projectId));
+    const meta = ProjectMetadataSchema.parse(JSON.parse(decoder.decode(bytes)));
+    if (meta.id === projectId) return meta;
+  } catch {
+    // No summary yet, or an unreadable one: the project file is still the truth.
+  }
+  return metadataOf(await loadProject(storage, projectId));
 }
 
 /**
- * Walk every project in storage and parse its metadata. Defensive: a single
- * corrupt project file does not block listing the others — its id is
+ * Walk every project in storage and read its summary. Defensive: a single
+ * corrupt project does not block listing the others — its id is
  * skipped silently. Sorted newest-first by updatedAt for picker UIs.
  */
 export async function listProjectMetadata(storage: StorageCapability): Promise<ProjectMetadata[]> {
@@ -131,15 +170,7 @@ export async function listProjectMetadata(storage: StorageCapability): Promise<P
   const out: ProjectMetadata[] = [];
   for (const id of ids) {
     try {
-      const project = await loadProject(storage, id);
-      out.push({
-        id: project.id,
-        name: project.name,
-        createdAt: project.createdAt,
-        updatedAt: project.updatedAt,
-        formatVersion: project.formatVersion,
-        nodeCount: Object.keys(project.state.nodes).length,
-      });
+      out.push(await loadProjectMetadata(storage, id));
     } catch {
       // Corrupt or schema-mismatch project — skip rather than crash boot.
     }
@@ -151,6 +182,8 @@ export async function listProjectMetadata(storage: StorageCapability): Promise<P
 export async function deleteProject(storage: StorageCapability, projectId: string): Promise<void> {
   // #1050 — the images first: a project file that outlives its images is a broken project, while
   // images that outlive a deleted project file are only unreachable bytes.
+  // #1302 — the summary before anything: a listing must never show a project that is going away.
+  await storage.delete(projectMetaPath(projectId));
   await deleteProjectImages(storage, projectId);
   await storage.delete(projectPath(projectId));
 }

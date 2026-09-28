@@ -441,7 +441,8 @@ export function MenuBar() {
   // when the File menu opens and when the current project changes (new /
   // duplicate / rename / delete bumps id or updatedAt). Same read seam
   // ProjectsMenu used (listAllProjectMetadata).
-  const [projects, setProjects] = useState<ProjectMetadata[]>([]);
+  // #1302 — null until the first read lands: "not read yet" must not print as "No projects".
+  const [projects, setProjects] = useState<ProjectMetadata[] | null>(null);
   useEffect(() => {
     if (open !== 'file') return;
     let cancelled = false;
@@ -493,7 +494,9 @@ export function MenuBar() {
       >
         <Item label="New Project…" onSelect={onNewProject} testId="menu-file-new" />
         <Submenu label="Switch Project" testId="menu-file-switch">
-          {projects.length === 0 ? (
+          {projects === null ? (
+            <Item label="Loading…" onSelect={() => {}} testId="menu-file-switch-loading" />
+          ) : projects.length === 0 ? (
             <Item label="No projects" onSelect={() => {}} testId="menu-file-switch-empty" />
           ) : (
             projects.map((p) => (
