@@ -1,5 +1,5 @@
 diff --git a/node_modules/three/examples/jsm/loaders/FBXLoader.js b/node_modules/three/examples/jsm/loaders/FBXLoader.js
-index bc8d49a..76e761d 100644
+index bc8d49a..b0093fc 100644
 --- a/node_modules/three/examples/jsm/loaders/FBXLoader.js
 +++ b/node_modules/three/examples/jsm/loaders/FBXLoader.js
 @@ -908,6 +908,9 @@ class FBXTreeParser {
@@ -12,7 +12,7 @@ index bc8d49a..76e761d 100644
  			sceneGraph = sceneGraph.children[ 0 ];
  
  		}
-@@ -2623,7 +2626,10 @@ class AnimationParser {
+@@ -2623,11 +2626,19 @@ class AnimationParser {
  
  									sceneGraph.traverse( function ( child ) {
  
@@ -23,4 +23,133 @@ index bc8d49a..76e761d 100644
 +										if ( child.ID === rawModel.id && node.transform === undefined ) {
  
  											node.transform = child.matrix;
+ 
+-											if ( child.userData.transformData ) node.eulerOrder = child.userData.transformData.eulerOrder;
++											if ( child.userData.transformData ) {
++
++												node.eulerOrder = child.userData.transformData.eulerOrder;
++												if ( child.userData.transformData.rotation ) node.initialRotation = child.userData.transformData.rotation;
++
++											}
+ 
+ 										}
+ 
+@@ -2767,7 +2778,7 @@ class AnimationParser {
+ 
+ 		if ( rawTracks.R !== undefined && Object.keys( rawTracks.R.curves ).length > 0 ) {
+ 
+-			const rotationTrack = this.generateRotationTrack( rawTracks.modelName, rawTracks.R.curves, rawTracks.preRotation, rawTracks.postRotation, rawTracks.eulerOrder );
++			const rotationTrack = this.generateRotationTrack( rawTracks.modelName, rawTracks.R.curves, rawTracks.preRotation, rawTracks.postRotation, rawTracks.eulerOrder, rawTracks.initialRotation );
+ 			if ( rotationTrack !== undefined ) tracks.push( rotationTrack );
+ 
+ 		}
+@@ -2799,14 +2810,20 @@ class AnimationParser {
+ 
+ 	}
+ 
+-	generateRotationTrack( modelName, curves, preRotation, postRotation, eulerOrder ) {
++	generateRotationTrack( modelName, curves, preRotation, postRotation, eulerOrder, initialRotation = [ 0, 0, 0 ] ) {
+ 
+ 		let times;
+ 		let values;
+ 
+-		if ( curves.x !== undefined && curves.y !== undefined && curves.z !== undefined ) {
++		if ( curves.x !== undefined || curves.y !== undefined || curves.z !== undefined ) {
+ 
+-			const result = this.interpolateRotations( curves.x, curves.y, curves.z, eulerOrder );
++			const merged = this.getTimesForAllAxes( curves );
++			const result = this.interpolateRotations(
++				this.synchronizeCurve( curves.x, merged, initialRotation[ 0 ] ),
++				this.synchronizeCurve( curves.y, merged, initialRotation[ 1 ] ),
++				this.synchronizeCurve( curves.z, merged, initialRotation[ 2 ] ),
++				eulerOrder
++			);
+ 
+ 			times = result[ 0 ];
+ 			values = result[ 1 ];
+@@ -2936,61 +2953,39 @@ class AnimationParser {
+ 
+ 	getKeyframeTrackValues( times, curves, initialValue ) {
+ 
+-		const prevValue = initialValue;
+-
+ 		const values = [];
++		const axes = [ curves.x, curves.y, curves.z ];
++		for ( const time of times ) {
+ 
+-		let xIndex = - 1;
+-		let yIndex = - 1;
+-		let zIndex = - 1;
+-
+-		times.forEach( function ( time ) {
+-
+-			if ( curves.x ) xIndex = curves.x.times.indexOf( time );
+-			if ( curves.y ) yIndex = curves.y.times.indexOf( time );
+-			if ( curves.z ) zIndex = curves.z.times.indexOf( time );
+-
+-			// if there is an x value defined for this frame, use that
+-			if ( xIndex !== - 1 ) {
+-
+-				const xValue = curves.x.values[ xIndex ];
+-				values.push( xValue );
+-				prevValue[ 0 ] = xValue;
+-
+-			} else {
+-
+-				// otherwise use the x value from the previous frame
+-				values.push( prevValue[ 0 ] );
+-
+-			}
+-
+-			if ( yIndex !== - 1 ) {
++			for ( let a = 0; a < 3; a ++ ) values.push( axes[ a ] ? this.sampleCurveValue( axes[ a ], time, initialValue[ a ] ) : initialValue[ a ] );
+ 
+-				const yValue = curves.y.values[ yIndex ];
+-				values.push( yValue );
+-				prevValue[ 1 ] = yValue;
+-
+-			} else {
+-
+-				values.push( prevValue[ 1 ] );
+-
+-			}
+-
+-			if ( zIndex !== - 1 ) {
++		}
+ 
+-				const zValue = curves.z.values[ zIndex ];
+-				values.push( zValue );
+-				prevValue[ 2 ] = zValue;
++		return values;
+ 
+-			} else {
++	}
+ 
+-				values.push( prevValue[ 2 ] );
++	// A curve at every one of targetTimes: linear between its keys, its initial value before the first,
++	// its last value after the last (Blender, import_fbx.py _combine_curve_keyframe_times, np.interp left=initial).
++	synchronizeCurve( curve, targetTimes, initialValue ) {
+ 
+-			}
++		if ( curve === undefined ) return { times: targetTimes, values: targetTimes.map( () => initialValue ) };
++		if ( curve.times.length === targetTimes.length ) return curve;
++		return { times: targetTimes, values: targetTimes.map( ( t ) => this.sampleCurveValue( curve, t, initialValue ) ) };
+ 
+-		} );
++	}
+ 
+-		return values;
++	sampleCurveValue( curve, time, initialValue ) {
++
++		const times = curve.times;
++		const values = curve.values;
++		if ( time < times[ 0 ] ) return initialValue;
++		if ( time >= times[ times.length - 1 ] ) return values[ values.length - 1 ];
++		let i = 0;
++		while ( times[ i + 1 ] < time ) i ++;
++		if ( times[ i + 1 ] === time ) return values[ i + 1 ];
++		const alpha = ( time - times[ i ] ) / ( times[ i + 1 ] - times[ i ] );
++		return values[ i ] * ( 1 - alpha ) + values[ i + 1 ] * alpha;
+ 
+ 	}
  

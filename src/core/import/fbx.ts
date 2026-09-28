@@ -3,10 +3,12 @@
 // pose layer is built from, #1211), and AnimationClipParams (the clip shape
 // retarget tests and saved projects still read).
 //
-// 🔴 #1279 — three r169 reads a bone's rotation wrong when its X, Y and Z euler
-// curves are keyed at different times (Blender's default export simplifies each
-// axis on its own): `interpolateRotations` pairs the axes by index. The tracks
-// here carry that error; `fbxImportChain.test.ts` pins it until it is fixed.
+// #1279 — a bone's X, Y and Z curves may be keyed at different times (Blender's
+// default export simplifies each axis on its own). three r169 paired them by index;
+// our patch to it (`patches/three+0.169.0.patch`) reads them by Blender's rule
+// instead: every curve filled at the union of the item's key times, linearly, with
+// the initial value before a curve's first key. Checked every frame against
+// Blender in `fbxImportChain.test.ts`, edge cases in `fbxAxisCurves.test.ts`.
 //
 // THREE.FBXLoader.parse(buffer) returns a THREE.Group whose subtree may
 // contain SkinnedMesh children (each with their own .skeleton) and a
