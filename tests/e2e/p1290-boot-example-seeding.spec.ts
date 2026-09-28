@@ -30,9 +30,15 @@ test('a resume opens its project before the captured example has arrived, and Ho
   await page.goto('/');
   await expect(page.getByTestId('project-tab-default')).toBeVisible();
   const openedAt = Date.now();
-  expect(chunkRequestedAt, 'boot began seeding the captured example').not.toBeNull();
+  const releasedWhenOpened = chunkReleasedAt;
+  // #1305 — the open project's tab now shows from the project itself, so it can appear before
+  // the background seeding has even asked for the captured example. Wait for that request: it
+  // proves the hold is in play (a boot that never seeded reds here).
+  await expect
+    .poll(() => chunkRequestedAt, { message: 'boot began seeding the captured example' })
+    .not.toBeNull();
   expect(
-    chunkReleasedAt,
+    releasedWhenOpened,
     'the project was current while the example was still held back',
   ).toBeNull();
 
