@@ -94,7 +94,8 @@ function projectMetaPath(projectId: string): string {
   return `projects/${projectId}/${PROJECT_META_FILENAME}`;
 }
 
-function metadataOf(project: Project): ProjectMetadata {
+/** A project's picker summary, as its `meta.json` stores it (#1302). */
+export function metadataOf(project: Project): ProjectMetadata {
   return {
     id: project.id,
     name: project.name,

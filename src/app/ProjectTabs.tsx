@@ -29,7 +29,7 @@
 
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useProjectStore } from '../core/project/store';
-import type { ProjectMetadata } from '../core/project/io';
+import { metadataOf, type ProjectMetadata } from '../core/project/io';
 import {
   createNewProject,
   deleteProject,
@@ -77,6 +77,13 @@ export function ProjectTabs(): ReactNode {
     };
   }, [current?.id, current?.updatedAt]);
 
+  // #1305 — the open project's tab comes from the project itself, not from the list: until that
+  // read lands there would be no tab, so no dirty dot, and "no dot" would read as "saved".
+  const tabs =
+    current && !projects.some((p) => p.id === current.id)
+      ? [...projects, metadataOf(current)]
+      : projects;
+
   // Clean up any pending hover timer on unmount.
   useEffect(() => {
     return () => {
@@ -110,7 +117,7 @@ export function ProjectTabs(): ReactNode {
         `Close project "${name}" with unsaved changes? This deletes it from storage.`,
       );
       if (!ok) return;
-    } else if (projects.length > 1) {
+    } else if (tabs.length > 1) {
       const ok = window.confirm(`Close project "${name}"? This deletes it from storage.`);
       if (!ok) return;
     } else {
@@ -203,7 +210,7 @@ export function ProjectTabs(): ReactNode {
         </span>
       </div>
       <div className="flex flex-1 items-stretch overflow-x-auto">
-        {projects.map((p) => {
+        {tabs.map((p) => {
           const isActive = p.id === current?.id;
           return (
             <div
