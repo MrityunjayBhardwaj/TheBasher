@@ -10,7 +10,8 @@ import { BoxGeometry } from 'three';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MemoryStorage } from '../../core/storage/MemoryStorage';
 import * as geometryRegistry from '../geometryRegistry';
-import { writeBakedGeometry } from './bakedGeometryStore';
+import { useAssetErrorStore } from '../stores/assetErrorStore';
+import { bakedGeometryPath, writeBakedGeometry } from './bakedGeometryStore';
 import { __resetBakedGeometryLoaderForTests, resolveBakedGeometry } from './bakedGeometryLoader';
 
 let currentStorage: MemoryStorage = new MemoryStorage();
@@ -22,6 +23,7 @@ beforeEach(() => {
   currentStorage = new MemoryStorage();
   geometryRegistry.clear();
   __resetBakedGeometryLoaderForTests();
+  useAssetErrorStore.getState().clearAll();
 });
 afterEach(() => geometryRegistry.clear());
 
@@ -69,5 +71,32 @@ describe('bakedGeometryLoader', () => {
     const loaded = await resolveSuspense(ref);
     // No throw on the synchronous re-call.
     expect(resolveBakedGeometry(ref)).toBe(loaded);
+  });
+
+  // #1308 — a missing file used to be re-thrown into render, and nothing above `BakedMeshR`
+  // catches it: one missing geometry blanked the whole app.
+  it('a geometry file that cannot be read resolves to an empty stand-in, never a throw', async () => {
+    const ref = await writeBakedGeometry(currentStorage, new BoxGeometry(1, 1, 1));
+    if (ref.descriptor.kind !== 'baked') throw new Error('expected a baked ref');
+    await currentStorage.delete(bakedGeometryPath(ref.descriptor.hash, ref.descriptor.vertexCount));
+
+    const stand = await resolveSuspense(ref);
+    expect(stand.getAttribute('position')).toBeUndefined();
+    expect(resolveBakedGeometry(ref), 'one stand-in per failed ref').toBe(stand);
+    // Not primed: a sync reader still sees "no geometry", not a real empty mesh.
+    expect(geometryRegistry.getForRead(ref)).toBeNull();
+  });
+
+  it('a failed read names the geometry file in the asset banner, once', async () => {
+    const ref = await writeBakedGeometry(currentStorage, new BoxGeometry(1, 1, 1));
+    if (ref.descriptor.kind !== 'baked') throw new Error('expected a baked ref');
+    const path = bakedGeometryPath(ref.descriptor.hash, ref.descriptor.vertexCount);
+    await currentStorage.delete(path);
+
+    await resolveSuspense(ref);
+    resolveBakedGeometry(ref);
+    const errors = useAssetErrorStore.getState().errors;
+    expect(Object.keys(errors)).toEqual([path]);
+    expect(errors[path]).toMatch(/drawn empty: /);
   });
 });
