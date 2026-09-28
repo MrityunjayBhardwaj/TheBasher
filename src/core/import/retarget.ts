@@ -46,6 +46,7 @@ type RetargetClipOptionsWithOffsets = Parameters<typeof threeRetargetClip>[3] & 
 };
 import type { AnimationKeyframe, BoneSpec } from '../../nodes/types';
 import {
+  boneOnACycle,
   bonesToSpec,
   clipToKeyframes,
   paramsToThreeClip,
@@ -580,6 +581,21 @@ export function restDirectionLocalOffsets(
 }
 
 export function retargetClip(args: RetargetArgs): RetargetResult {
+  // #1183 — refused before anything walks a parent chain: a cyclic skeleton made
+  // `shallowestMapped` loop forever, synchronously, freezing the tab.
+  for (const [rig, bones] of [
+    ['source', args.sourceBones],
+    ['target', args.targetBones],
+  ] as const) {
+    const bone = boneOnACycle(bones);
+    if (bone !== null) {
+      throw new Error(
+        `retargetClip: the ${rig} skeleton's bone "${bone}" is its own ancestor — its parent ` +
+          'chain loops instead of reaching a root, so the skeleton is not a tree.',
+      );
+    }
+  }
+
   const { skeleton: sourceSkeleton, bones: sourceBoneObjs } = specToThreeSkeleton(args.sourceBones);
   const { skeleton: targetSkeleton, bones: targetBoneObjs } = specToThreeSkeleton(args.targetBones);
 
@@ -655,7 +671,7 @@ export function retargetClip(args: RetargetArgs): RetargetResult {
   const hip = shallowestMapped(args.sourceBones, nameMap);
   // `args.targetBones`, not `targetSpecs`: the ratio is a property of the two
   // BIND poses, and this one is in hand before the retarget touches anything.
-  const scale = retargetScale(hip, args.sourceBones, nameMap, args.targetBones);
+  const scale = scaleForResolvedMap(args.sourceBones, nameMap, args.targetBones);
 
   // Reconcile the two rigs' bone-axis conventions. Without this every bone but
   // the root receives an orientation unrelated to its own rest direction and the
@@ -841,6 +857,40 @@ function shallowestMapped(
     }
   }
   return best;
+}
+
+/** The travel scale for a name map already resolved against both rigs. The ONE
+ *  derivation `retargetClip` applies and `rootTravelScale` reports. */
+function scaleForResolvedMap(
+  sourceBones: readonly BoneSpec[],
+  nameMap: Readonly<Record<string, string>>,
+  targetBones: readonly BoneSpec[],
+): number {
+  return retargetScale(shallowestMapped(sourceBones, nameMap), sourceBones, nameMap, targetBones);
+}
+
+/**
+ * How much `retargetClip` will scale the root's travel for this pair of rigs and this map —
+ * the same number, from the same derivation, without running the retarget (#1285).
+ *
+ * A path drawn in the TARGET's metres is walked at this ratio: the retarget multiplies the
+ * source hip's world position by it, which keeps the feet planted and shortens (or lengthens)
+ * the distance covered by exactly this factor. A caller that wants the character to cover a
+ * drawn path asks the generator for the path divided by it.
+ *
+ * Takes the map as authored and resolves it against both rigs the way `retargetClip` does, so
+ * a map spelled in either road's bone names answers the same as the retarget would.
+ */
+export function rootTravelScale(
+  sourceBones: readonly BoneSpec[],
+  nameMap: Readonly<Record<string, string>>,
+  targetBones: readonly BoneSpec[],
+): number {
+  const resolved = resolveNameMapToTarget(
+    resolveNameMapToSource(nameMap, sourceBones),
+    targetBones,
+  );
+  return scaleForResolvedMap(sourceBones, resolved, targetBones);
 }
 
 /**

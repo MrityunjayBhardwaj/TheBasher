@@ -132,6 +132,9 @@ const CONSUMERS: Record<string, Decision> = {
   'src/app/nodeConstraints.ts': authored('folds-its-own-overlays'),
   'src/app/resolveTransformParam.ts': authored('folds-its-own-overlays'),
   'src/app/resolveWorldTransform.ts': authored('folds-its-own-overlays'),
+  // #1284 — a bone's world position: evaluates the GltfAsset for its hierarchy and folds each
+  // node's pose through resolveEvaluatedTransform, the way resolveWorldTransform does.
+  'src/app/gltfNodeWorld.ts': authored('folds-its-own-overlays'),
   'src/app/animate/dispatchApplyTransform.ts': authored('folds-its-own-overlays'),
   'src/app/resolveEvaluatedParam.ts': authored('produces-an-overlay'),
   'src/app/resolveEvaluatedTransform.ts': authored('produces-an-overlay'),
@@ -189,6 +192,11 @@ const CONSUMERS: Record<string, Decision> = {
   // above is. It exists because the operator bypass moved into the evaluator and a
   // direct `evaluate` call can no longer observe it.
   'src/test-utils/evaluateNodeAlone.ts': authored('fixed-ctx-by-design'),
+  // #1065 — the picker for a constraint's `target`. It asks the world resolver whether it can
+  // place each node, at frame 0, DELIBERATELY: whether a node is in the scene is a question
+  // about edges, not time, and the answer is a list to choose from, not a pose. The value it
+  // reads is discarded; only "placed or not" is kept.
+  'src/app/constraintStack.ts': authored('fixed-ctx-by-design'),
   'src/app/cookState.ts': authored('mints-the-cooked-state'),
 
   // ── INDIFFERENT — the escape hatch, and the reason it is not the easy road ─────────
@@ -258,7 +266,11 @@ describe('#582 — who evaluates the graph, and which params they need', () => {
     // with the clone road's character half, and the row went with it.
     // 42 → 43 at #1226: the regeneration notice, a new road (a cook had no way to say what it moved
     // under a layer), declared above as fixed-ctx.
-    expect(evaluatorConsumers()).toHaveLength(43); // 39 -> 40 at #935 (placement) (the motion resolver)
+    // Merged with main, which had taken the same 41 on two roads of its own:
+    // 41 → 42 at #1065: the constraint-target picker, declared above as fixed-ctx.
+    // 42 → 43 at #1284: a bone's world position (gltfNodeWorld), declared above as authored.
+    // So 43 + 2 = 45.
+    expect(evaluatorConsumers()).toHaveLength(45); // 39 -> 40 at #935 (placement) (the motion resolver)
   });
 
   it('every reason is load-bearing — no member of any union is decorative', () => {

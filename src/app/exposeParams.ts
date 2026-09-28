@@ -854,7 +854,34 @@ export function resolveExposedTarget(
   id: string,
   paramPath: string,
 ): ExposedTarget | null {
-  for (const row of exposeParams(state, id)) {
+  return exposedTargetResolver(state, id)(paramPath);
+}
+
+/**
+ * {@link resolveExposedTarget} for many paths on one node: the projection is built ONCE and
+ * each path is answered from it (#1261). Same answer per path, by construction — the single-
+ * path function is this applied once. A caller asking about every param of every node (the
+ * channel pickers, through the census lookup) otherwise rebuilt, and re-evaluated, the same
+ * node's projection once per path: measured at 3270 of 3740 ms on a 450-node scene.
+ *
+ * ⚠️ The resolver holds the rows of the state it was made from. Use it for that state only.
+ */
+export function exposedTargetResolver(
+  state: DagState,
+  id: string,
+  opts?: { canApply?: boolean },
+): (paramPath: string) => ExposedTarget | null {
+  const rows = exposeParams(state, id, opts);
+  return (paramPath) => resolveFromRows(state, id, rows, paramPath);
+}
+
+function resolveFromRows(
+  state: DagState,
+  id: string,
+  rows: readonly ExposedParam[],
+  paramPath: string,
+): ExposedTarget | null {
+  for (const row of rows) {
     // A PROMOTED CONTROL IS NOT AN ANSWER TO THIS QUESTION. The caller asked which LAYER
     // of this chain owns a path; a control is a spare param on another node, with its own
     // type and range, and answering with it would be the redirect [[V143]] forbids —

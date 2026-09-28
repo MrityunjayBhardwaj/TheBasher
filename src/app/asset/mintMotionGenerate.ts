@@ -41,13 +41,11 @@
 // skips a skeleton with none (`collectSkeletonObjects`), so nothing draws until
 // the cook fills them in.
 //
-// Scale stays [1, 1, 1], and nothing re-sizes it when the cook lands. Unlike a
-// file, a generator DECLARES its unit — every result carries `unitScale` and the
-// rig is parsed with it — so the rig is already the size it says it is, and
-// normalising would override what it told us. `normalise: false` states that
-// intent; it does not enforce it, because at mint time there are no bones to
-// measure and a normalised scale would be 1 as well (measured). What pins the
-// size is the absolute frame-0 row on a real Kimodo file in
+// Scale stays [1, 1, 1], and nothing re-sizes it when the cook lands: a generator
+// DECLARES its unit — every result carries `unitScale` and the rig is parsed with
+// it — so the rig is already the size it says it is. No road re-sizes a stand-in
+// any more (#1086 removed the fit), so there is nothing here to opt out of. What
+// pins the size is the absolute frame-0 row on a real Kimodo file in
 // `generateMotionAsNode.test.ts`, which reds at 168 m under a wrong unit.
 //
 // ─────────────────────────────────────────────────────────────────────────────
@@ -192,9 +190,7 @@ export function mintMotionGenerateOps(
   const standIn = sceneNodeId
     ? buildSkeletonObjectOps({
         skeletonId: ids.skeleton,
-        bones: [],
         sceneNodeId,
-        normalise: false,
         // #1101 — the clip's name, so the outliner lists the rig as the motion it is.
         name,
         // #1122 — and it keeps following that clip's name until the Object is renamed.

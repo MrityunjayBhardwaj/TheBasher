@@ -27,6 +27,13 @@
 import { z } from 'zod';
 import type { NodeDefinition } from '../core/dag/types';
 import { CHANNEL_BLEND_MODES } from './types';
+import { optionsParam } from './paramWidget';
+import {
+  channelTargetLockOf,
+  driverPathLockOf,
+  driverPathOptionsOf,
+  driverTargetOptionsOf,
+} from './channelPickerSlot';
 import type {
   KeyframeChannelNumberValue,
   KeyframeChannelVec3Value,
@@ -58,9 +65,23 @@ export const TransformSourceSchema = z.object({
 export const ParamDriverParams = z.object({
   /** Target node id whose param this driver overlays (resolved at enumeration
    *  time, not at evaluator time — the KeyframeChannel* contract). '' = unbound. */
-  target: z.string().default(''),
+  // #1066 — picked from what a driver animates (the census's driver arm), through the slot the
+  // app fills; importing the pickers here would be a load cycle through the node registry.
+  target: optionsParam(
+    z.string().default(''),
+    driverTargetOptionsOf(),
+    undefined,
+    'nodeId',
+    channelTargetLockOf(),
+  ),
   /** Param path on the target — e.g. 'intensity', 'material.opacity'. */
-  paramPath: z.string().default(''),
+  paramPath: optionsParam(
+    z.string().default(''),
+    driverPathOptionsOf(),
+    undefined,
+    'name',
+    driverPathLockOf(),
+  ),
   /** Fold composition on the (target, paramPath) band, shared with channels: 'replace'
    *  (default — the driver REPLACES the param) or 'combine' (additive over the identity).
    *  Inc 2 authors only 'replace'; the field exists so a driver + channel stack folds

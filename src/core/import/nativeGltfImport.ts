@@ -1316,9 +1316,7 @@ function skeletonOps(
     ),
     ...buildSkeletonObjectOps({
       skeletonId,
-      bones: skeleton.bones,
       sceneNodeId: parentId,
-      normalise: false,
       // #1238 — the armature node's name, as Blender names the armature Object; the layer keeps the
       // animation's.
       name: armatureNameOf(json, skeleton),

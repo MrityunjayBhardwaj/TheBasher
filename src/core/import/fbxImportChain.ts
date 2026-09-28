@@ -16,6 +16,8 @@
 // the file's key times into one track per bone and property; each track becomes one channel as it
 // stands: `position` and `scale` as vec3 keys, `quaternion` as quaternion keys on a member in
 // quaternion mode, all linear. Members are in bone order. The layer is named after the file.
+// The tracks arrive in the rig's space and unit — folded and scaled by `parseFbx` exactly as its
+// bones are (#1190, #1086) — so the keys and the rest they override agree.
 //
 // SCALE IS KEPT. The clip this road used to write dropped every scale track; they are channels now,
 // and counted (`scaleChannels`), so a file that scales a bone plays it.
@@ -78,30 +80,24 @@ export function buildFbxImportOps(args: FbxImportChainArgs): FbxImportChainResul
   const parsed = parseFbx(args.data, name);
   const ids = args.ids ?? { skeleton: uniqueId('fbx_skel'), layer: uniqueId('fbx_motion') };
 
-  // One spelling per bone, unique within the rig, as the glTF and BVH readers spell them. A track
-  // names a bone by three's spelling, so the k-th track on a name keys the k-th bone of that name.
+  // One spelling per bone, unique within the rig, as the glTF and BVH readers spell them. Which
+  // bone a track keys is `parseFbx`'s to say (`boneIndex`): it folds the track with that bone.
   const taken = new Set<string>();
-  const byName = new Map<string, number[]>();
-  const bones: BoneSpec[] = parsed.skeletonParams.bones.map((b, i) => {
+  const bones: BoneSpec[] = parsed.skeletonParams.bones.map((b) => {
     const unique = uniqueBoneName(b.name, (n) => taken.has(n));
     taken.add(unique);
-    byName.set(b.name, [...(byName.get(b.name) ?? []), i]);
     return { ...b, name: unique };
   });
 
   const tracksOf = new Map<number, Map<TrackProperty, (typeof parsed.tracks)[number]>>();
-  const claimed = new Map<string, number>();
   let unknownBoneTracks = 0;
   let otherPropertyTracks = 0;
   for (const track of parsed.tracks) {
-    const key = `${track.bone}\u0000${track.property}`;
-    const k = claimed.get(key) ?? 0;
-    const index = byName.get(track.bone)?.[k];
-    if (index === undefined) {
+    const index = track.boneIndex;
+    if (index === null) {
       unknownBoneTracks += 1;
       continue;
     }
-    claimed.set(key, k + 1);
     if (!(track.property in COMPONENT)) {
       otherPropertyTracks += 1;
       continue;

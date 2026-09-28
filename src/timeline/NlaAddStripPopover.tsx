@@ -14,7 +14,8 @@
 // popover ADDITIONALLY shows it inline and STAYS OPEN for correction (both
 // surfaces — RESEARCH open-q 3). The DAG is byte-unchanged on rejection.
 //
-// Target list: scene-tree rows (the outliner projection) MINUS cameras —
+// Target list (`stripTargetRows`, shared with the Strip inspector's picker — #1065):
+// scene-tree rows (the outliner projection) MINUS cameras —
 // camera strips are the documented Phase-3+ KNOWN-LIMIT (Strip.ts:13-16); the
 // UI must not offer the dead road. Default target = the global 3D selection
 // (READ only — the NLA pane never WRITES useSelectionStore, UI-SPEC §1.5).
@@ -31,34 +32,8 @@ import { createPortal } from 'react-dom';
 import { useDagStore } from '../core/dag/store';
 import { useTimeStore } from '../app/stores/timeStore';
 import { useSelectionStore } from '../app/stores/selectionStore';
-import { buildSceneTreeRows } from '../app/sceneTreeWalk';
-import { stripDriveRefusal } from '../app/stripDrive';
-import type { DagState } from '../core/dag/state';
+import { stripActionRows, stripTargetRows } from '../app/stripTargets';
 import { commitNla } from './nlaCommit';
-
-/** Valid add-strip targets: the outliner's scene rows (depth > 0 — the Scene
- *  container itself is not a strip target) minus every row a strip could not
- *  actually drive. That exclusion is `stripDriveRefusal` — the SAME expression
- *  the push-down offer and accept consume (#479), so this picker and push-down
- *  cannot disagree about which targets are reachable (the agent road is
- *  deliberately still ungated — see Strip.ts); plus the camera band socket,
- *  which excludes a camera row structurally. Pure — unit/e2e assert the
- *  exclusion. Cameras become valid targets when #480 lands.
- *
- *  #387 — the refusal's camera test is POSSESSION-keyed (`isCameraNode`), so this
- *  picker inherits the split form transitively rather than spelling a type list.
- *  That matters for exactly one shape: a TOP-LEVEL camera is already excluded by
- *  the band socket, but a camera NESTED IN A GROUP carries the Group's socket
- *  instead, and post-split its `nodeType` is 'Object' — a type test fails open on
- *  it and offers a strip that folds nothing. Asserted on a GROUPED camera. */
-export function stripTargetRows(state: DagState): { id: string; label: string }[] {
-  return buildSceneTreeRows(state)
-    .filter(
-      (r) =>
-        r.depth > 0 && r.parent?.socket !== 'camera' && stripDriveRefusal(state, r.nodeId) === null,
-    )
-    .map((r) => ({ id: r.nodeId, label: r.display }));
-}
 
 const POPOVER_WIDTH_PX = 256; // w-64
 
@@ -76,13 +51,7 @@ export function NlaAddStripPopover({
 }) {
   const state = useDagStore((s) => s.state);
 
-  const actions = useMemo(
-    () =>
-      Object.values(state.nodes)
-        .filter((n) => n.type === 'Action')
-        .map((n) => ({ id: n.id, name: (n.params as { name?: string }).name ?? n.id })),
-    [state],
-  );
+  const actions = useMemo(() => stripActionRows(state), [state]);
   const targets = useMemo(() => stripTargetRows(state), [state]);
   const tracks = useMemo(
     () =>

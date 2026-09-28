@@ -1,5 +1,5 @@
 // #1056 — every imported motion gets an Object of its own. These rows pin the ops, the
-// socket that admits the skeleton, and the scale that stands an unknown-unit rig up.
+// socket that admits the skeleton, and that the Object never sizes the rig (#1086).
 
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -14,9 +14,7 @@ import { armatureBounds, posedSourceBones } from '../../viewport/referenceRig';
 import { buildBvhClipOps } from '../../test-utils/bvhClip';
 import { buildBvhImportOps } from './bvhImportChain';
 import {
-  UNBOUND_RIG_HEIGHT_METRES,
   buildSkeletonObjectOps,
-  normalisedRigScale,
   skeletonObjectId,
   standInObjectOf,
   standingObjectsOf,
@@ -48,16 +46,6 @@ Frame Time: 0.0333333
 0.0 90.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0
 `;
 
-const RIG: BoneSpec[] = [
-  { name: 'root', parent: -1, position: [0, 0, 0], rotation: [0, 0, 0] },
-  { name: 'spine', parent: 0, position: [0, 2, 0], rotation: [0, 0, 0] },
-  { name: 'neck', parent: 1, position: [0, 2, 0], rotation: [0, 0, 0] },
-  { name: 'head', parent: 2, position: [0, 1, 0], rotation: [0, 0, 0] },
-];
-
-const scaled = (bones: BoneSpec[], k: number): BoneSpec[] =>
-  bones.map((b) => ({ ...b, position: [b.position[0] * k, b.position[1] * k, b.position[2] * k] }));
-
 function sceneState(): DagState {
   let s = emptyDagState();
   s = applyOp(s, { type: 'addNode', nodeId: 'scene', nodeType: 'Scene', params: {} }).next;
@@ -73,9 +61,7 @@ describe('buildSkeletonObjectOps', () => {
   it('adds an Object, points its data at the skeleton, and makes it a scene child', () => {
     const { ops, objectId } = buildSkeletonObjectOps({
       skeletonId: 'sk',
-      bones: RIG,
       sceneNodeId: 'scene',
-      normalise: false,
       name: 'soma-walk',
       clipId: 'clip',
       nameFollowsClip: true,
@@ -116,9 +102,7 @@ describe('buildSkeletonObjectOps', () => {
     const bones = (state.nodes.sk.params as { bones: BoneSpec[] }).bones;
     const { ops, objectId } = buildSkeletonObjectOps({
       skeletonId: 'sk',
-      bones,
       sceneNodeId: 'scene',
-      normalise: true,
       name: 'sk',
       clipId: 'clip',
       nameFollowsClip: true,
@@ -156,85 +140,36 @@ describe('buildSkeletonObjectOps', () => {
   });
 });
 
-describe('normalisedRigScale', () => {
-  it('stands an upright rest pose at the rig height', () => {
-    const s = normalisedRigScale(RIG);
-    const height = armatureBounds(boneTransforms(scaled(RIG, s), scaled(RIG, s))).height;
-    expect(height).toBeCloseTo(UNBOUND_RIG_HEIGHT_METRES, 6);
-  });
-
-  // The rest pose a BVH declares need not stand up. The same rig lying along +X is the same
-  // size, and must get the same scale — a Y-extent measure reads its width as its height.
-  it('does not care which way the rest pose faces — a rig lying along +X gets the same scale', () => {
-    const lying = RIG.map((b) => ({
-      ...b,
-      position: [b.position[1], -b.position[0], b.position[2]] as BoneSpec['position'],
-    }));
-    expect(armatureBounds(boneTransforms(lying, lying)).height).toBeLessThan(1);
-    expect(normalisedRigScale(lying)).toBeCloseTo(normalisedRigScale(RIG), 6);
-  });
-
-  // THE ABSOLUTE ROW, on the real file. The rows above are relative (invariance), and every one
-  // of them stayed green while `soma-walk.bvh` drew ~27× too big (rest pose Y extent), and
-  // again at 1.17 m (rest pose longest extent: it lies along +X with its arms raised). So this
-  // reads what is DRAWN — the motion's frame-0 pose, at the scale set from it — and asks that it
-  // be the height of a person. The motion is a dropped file's base pose layer (#1211), the wire the
-  // FBX road fits on.
-  it('stands the real soma-walk.bvh at human height as drawn, posed at frame 0', () => {
+// #1086 — the Object never sizes the rig. A format that declares its unit is read in it at parse,
+// and one that declares none stands at the file's own size (#791). This is the absolute row on
+// the real file: `soma-walk.bvh` is authored in centimetres and its frame 0 stands ~161 units
+// tall, so a scale that is not 1 — the old fit stood it at 1.8 m — reds here.
+describe('#1086 — the Object stands the rig at the size its data says', () => {
+  it("the real soma-walk.bvh stands at scale 1 and draws at the file's own height", () => {
     let state = sceneState();
     const text = readFileSync(resolve(process.cwd(), 'public/fixtures/anim/soma-walk.bvh'), 'utf8');
     const imported = buildBvhImportOps({ text, ids: { skeleton: 'sk', layer: 'layer' } });
     for (const op of imported.ops) state = applyOp(state, op).next;
-    const bones = (state.nodes.sk.params as { bones: BoneSpec[] }).bones;
+    // The dropped file's motion is its base pose layer (#1211): the wire the Object stands on.
     const motion = evaluate(state, 'layer', {
       ctx: { time: { frame: 0, seconds: 0, normalized: 0 } },
       socket: 'out',
     }).value as PosedSkeletonValue;
     expect(motion.kind).toBe('PosedSkeleton');
 
-    const s = normalisedRigScale(bones, motion);
-    const drawn = armatureBounds(
-      boneTransforms(scaled(posedSourceBones(motion, 0), s), scaled([...motion.skeleton.bones], s)),
-    ).height;
-    expect(drawn).toBeGreaterThan(1.5);
-    expect(drawn).toBeLessThan(2.1);
-  });
-
-  it('is unit-invariant: the same rig authored 100× larger gets a 100× smaller scale', () => {
-    expect(normalisedRigScale(scaled(RIG, 100))).toBeCloseTo(normalisedRigScale(RIG) / 100, 9);
-  });
-
-  it('ignores where the transport root stands — moving it does not change the size', () => {
-    const moved = RIG.map((b, i) =>
-      i === 0 ? { ...b, position: [3, 50, -7] as BoneSpec['position'] } : b,
-    );
-    expect(normalisedRigScale(moved)).toBeCloseTo(normalisedRigScale(RIG), 9);
-  });
-
-  it('a rig with no bones keeps scale 1', () => {
-    expect(normalisedRigScale([])).toBe(1);
-  });
-
-  // Measured, and it corrected this row's first draft: a rig collapsed to one point does NOT
-  // have zero height, because a zero-length bone is still drawn at a minimum length. So the
-  // answer is a finite scale, never a division by zero.
-  it('a rig collapsed to one point still gets a finite, positive scale', () => {
-    const s = normalisedRigScale(scaled(RIG, 0));
-    expect(Number.isFinite(s)).toBe(true);
-    expect(s).toBeGreaterThan(0);
-  });
-
-  it('a caller that knows the unit gets scale 1, however big the rig is', () => {
     const { ops } = buildSkeletonObjectOps({
       skeletonId: 'sk',
-      bones: scaled(RIG, 100),
       sceneNodeId: 'scene',
-      normalise: false,
-      name: 'sk',
-      clipId: 'clip',
-      nameFollowsClip: true,
+      name: 'soma-walk',
+      pose: { node: 'layer', socket: 'out' },
+      nameFollowsClip: false,
     });
     expect(ops[0]).toMatchObject({ params: { scale: [1, 1, 1] } });
+    const drawn = armatureBounds(
+      boneTransforms(posedSourceBones(motion, 0), [...motion.skeleton.bones]),
+    ).height;
+    expect(drawn).toBeGreaterThan(100);
+    expect(drawn).toBeLessThan(250);
   });
 });
 
@@ -250,9 +185,7 @@ describe('#1101 — the Object carries its motion name', () => {
     for (const op of imported.ops) state = applyOp(state, op).next;
     const named = buildSkeletonObjectOps({
       skeletonId: 'sk',
-      bones: [],
       sceneNodeId: 'scene',
-      normalise: false,
       name: 'soma-walk',
       clipId: 'clip',
       nameFollowsClip: true,
@@ -262,9 +195,7 @@ describe('#1101 — the Object carries its motion name', () => {
 
     const blank = buildSkeletonObjectOps({
       skeletonId: 'sk2',
-      bones: [],
       sceneNodeId: 'scene',
-      normalise: false,
       name: '   ',
       clipId: 'clip',
       nameFollowsClip: true,
@@ -290,9 +221,7 @@ describe('standingObjectsOf (#1100)', () => {
       { type: 'addNode', nodeId: 'a_empty', nodeType: 'Object', params: {} },
       ...buildSkeletonObjectOps({
         skeletonId: 'sk',
-        bones: [],
         sceneNodeId: 'scene',
-        normalise: false,
         name: 'sk',
         clipId: 'clip',
         nameFollowsClip: true,

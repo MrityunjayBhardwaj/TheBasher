@@ -23,6 +23,7 @@ import {
 } from './geometryRegistry';
 import { sweepStats } from '../viewport/geometrySweep';
 import { detachGraph } from '../core/dag/state';
+import { getNodeType } from '../core/dag/registry';
 import { useDagStore } from '../core/dag/store';
 import type { EvalCtx, NodeId, Op } from '../core/dag/types';
 import {
@@ -41,6 +42,7 @@ import {
   type ProjectMetadata,
 } from '../core/project';
 import { buildExampleProject, EXAMPLE_PROJECT_IDS } from '../core/project/examples';
+import { beginExampleSeeding } from './exampleSeeding';
 import { projectImagePath } from '../core/project/projectImages';
 import { useRouteStore } from './stores/routeStore';
 import { useSettingsStore } from './stores/settingsStore';
@@ -67,6 +69,9 @@ export const RIGGING_ERROR_REF = 'Rigging';
 import { pickStorage, type StorageCapability } from '../core/storage';
 import { BrowserBlenderBridge, type BlenderBridgeCapability } from '../integrations/blender';
 import { registerAllNodes } from '../nodes/registerAll';
+// #1066 — fills the slot the keyframe channels' target/path pickers ask (a load-time side
+// effect on purpose: the schemas cannot import it without a cycle through the registry).
+import './channelPickers';
 import { registerAllTools } from '../agent/tools';
 import { registerAllMutators } from '../agent/mutators';
 import { registerAllStrategies } from '../agent/strategy';
@@ -368,20 +373,36 @@ export function boot(): Promise<void> {
     }
 
     // W4-T1 (D-W4-SEED) — seed the curated example projects, idempotently.
-    // Runs AFTER asset seeding (an example could reference a seeded asset; ours
-    // use pure primitives so there is no dependency) and BEFORE project
-    // resolution so the examples are listable on the home. Only writes an
+    // Runs AFTER asset seeding — an example may reference a seeded asset (#1282: the
+    // Camera Path + AI Walk character's GLB is a catalog asset). Only writes an
     // example id that is ABSENT — a user who opened + edited an example keeps
     // their edits across reloads (re-seeding never clobbers them).
+    //
+    // #1290 — WHICH are missing is found here; WHEN they are written depends on the
+    // route below. A first run waits for all of them (Home lists them). A resume
+    // opens its project FIRST and writes the rest behind it: one example is a
+    // captured scene megabytes long, and awaiting it here put ~1 s in front of every
+    // first boot while the editor was already interactive over a placeholder graph —
+    // an edit made there was replaced by the resume and a save found no project.
+    let missingExamples: string[] = [];
     try {
       const existing = new Set(await listProjects(storage));
-      for (const id of EXAMPLE_PROJECT_IDS) {
-        if (existing.has(id)) continue;
-        await saveProject(storage, buildExampleProject(id));
-      }
+      missingExamples = EXAMPLE_PROJECT_IDS.filter((id) => !existing.has(id));
     } catch (e) {
       console.warn('boot: example seeding failed', e);
     }
+    const seedExamples = async (ids: readonly string[]): Promise<void> => {
+      for (const id of ids) {
+        try {
+          await saveProject(storage, await buildExampleProject(id));
+        } catch (e) {
+          console.warn(`boot: example seeding failed (${id})`, e);
+        }
+      }
+    };
+    // Begun BEFORE any route change, so Home can never read "done" for a seeding
+    // that has not started yet.
+    const examplesSeeded = beginExampleSeeding();
 
     // P6 W3 — dirty tracking subscription. Registered ONCE per boot regardless
     // of route (a project opened from the home later must still track dirty).
@@ -427,6 +448,8 @@ export function boot(): Promise<void> {
       typeof localStorage !== 'undefined' ? localStorage.getItem(LAST_PROJECT_KEY) : null;
 
     if (lastId == null) {
+      await seedExamples(missingExamples);
+      examplesSeeded();
       // FIRST RUN → home. Do NOT hydrate a project AND do NOT
       // persistLastProjectId here — "absence of lastId" must stay true until the
       // user actually opens something, else the home would show for exactly ONE
@@ -434,7 +457,10 @@ export function boot(): Promise<void> {
       // createNewProject persist the key when the user opens from the home.
       useRouteStore.getState().goHome();
     } else {
-      // Returning user → resume the persisted project in the editor.
+      // Returning user → resume the persisted project in the editor. When that
+      // project is itself an example storage no longer holds, it is written first,
+      // exactly as before #1290 — resuming it is what this boot is for.
+      if (missingExamples.includes(lastId)) await seedExamples([lastId]);
       let project = null;
       try {
         project = await loadProject(storage, lastId);
@@ -459,6 +485,8 @@ export function boot(): Promise<void> {
         await hydrateLoadedProject(storage, project);
         useRouteStore.getState().openEditor();
       }
+      // The rest behind the open project, not in front of it (#1290).
+      void seedExamples(missingExamples.filter((id) => id !== lastId)).finally(examplesSeeded);
     }
 
     // Install dirty tracking ONCE, after any resume hydrate (so the initial
@@ -608,6 +636,153 @@ export function boot(): Promise<void> {
       // production path reads it (H65).
       void import('./animate/dispatchMutator').then((m) => {
         w.__basher_dispatchMutator = m.dispatchMutatorFromUI;
+      });
+      // #1235 — add one primitive of `kind` at `position` through the builder the Add menu
+      // uses (`addPrimitive`), returning both halves of a split kind, so the animatable-param
+      // census can place every kind the product can place without driving the menu 16 times.
+      // Dev-only; no production path reads it (H65).
+      void import('./addPrimitives').then((m) => {
+        w.__basher_addPrimitive = (kind: string, position: [number, number, number]) => {
+          const dag = useDagStore.getState();
+          const result = m.buildAddPrimitiveOps(dag.state, kind as never, position);
+          if (!result) return null;
+          dag.dispatchAtomic(result.ops, 'user', result.description);
+          return { nodeId: result.newNodeId, dataNodeId: result.dataNodeId ?? null };
+        };
+      });
+      // #1235 — make `cameraId` the active camera through the builder the camera menu uses, so
+      // the census can render through each camera it measures. Dev-only (H65).
+      // #1235 — the census measures under the SAME subject key a picker looks up by.
+      void import('./animatableParams').then((m) => {
+        w.__basher_animatableContext = (nodeId: string, paramPath?: string) =>
+          m.animatableContextOf(useDagStore.getState().state, nodeId, paramPath);
+      });
+      // #1235 — the builders the stack panels, the material picker and the driver bind call, so
+      // the census places modifiers, material operators, constraints, materials and drivers the
+      // way the product does. The census dispatches the ops these return. Dev-only (H65).
+      void Promise.all([
+        import('./operatorStack'),
+        import('./operatorChain'),
+        import('./constraintStack'),
+        import('./materialLink'),
+        import('./driverBind'),
+        import('./video/newComposition'),
+        import('./video/addLayer'),
+        import('./video/videoLayers'),
+        import('./video/compositeDecode'),
+        import('./video/videoTimelineGeometry'),
+        import('./stores/timeStore'),
+      ]).then(
+        ([stack, chain, constraints, material, driver, comp, layer, video, decode, geo, time]) => {
+          w.__basher_censusBuilders = {
+            operatorTypesInSection: chain.operatorTypesInSection,
+            buildAddModifierOps: stack.buildAddModifierOps,
+            buildAddMaterialOpOps: stack.buildAddMaterialOpOps,
+            buildAddConstraintOps: constraints.buildAddConstraintOps,
+            buildNewMaterialOps: material.buildNewMaterialOps,
+            buildBindDriverOps: driver.buildBindDriverOps,
+            // #1259 — whether `type`'s schema DECLARES `key`. A dispatch cannot say: a passthrough
+            // schema (Scene) accepts any param, so a write that sticks is not a declaration.
+            declaresParam: (type: string, key: string) => {
+              const shape = (
+                getNodeType(type)?.paramSchema as { shape?: Record<string, unknown> } | undefined
+              )?.shape;
+              return shape !== undefined && key in shape;
+            },
+            // #1280 — the range `type`'s schema declares for the number at `path` (either end null
+            // when undeclared), so the census keys a param inside it: keyed past a bound a reader
+            // clamps to, a param draws as it was authored and would read "still". A union answers
+            // only when its members agree.
+            paramRange: (type: string, path: string) => {
+              type Range = { min: number | null; max: number | null } | null;
+              const at = (s: unknown, segs: string[]): Range => {
+                const def = (s as { _def?: Record<string, unknown> } | undefined)?._def;
+                if (!def) return null;
+                switch (def.typeName) {
+                  case 'ZodDefault':
+                  case 'ZodOptional':
+                  case 'ZodNullable':
+                  case 'ZodCatch':
+                    return at(def.innerType, segs);
+                  case 'ZodEffects':
+                    return at(def.schema, segs);
+                  case 'ZodBranded':
+                    return at(def.type, segs);
+                  case 'ZodPipeline':
+                    return at(def.in, segs);
+                  case 'ZodLazy':
+                    return at((def.getter as () => unknown)(), segs);
+                  case 'ZodObject': {
+                    if (segs.length === 0) return null;
+                    const shape = (s as { shape: Record<string, unknown> }).shape;
+                    return segs[0] in shape ? at(shape[segs[0]], segs.slice(1)) : null;
+                  }
+                  case 'ZodTuple':
+                    return segs.length
+                      ? at((def.items as unknown[])[+segs[0]], segs.slice(1))
+                      : null;
+                  case 'ZodArray':
+                    return segs.length ? at(def.type, segs.slice(1)) : null;
+                  case 'ZodRecord':
+                    return segs.length ? at(def.valueType, segs.slice(1)) : null;
+                  case 'ZodUnion':
+                  case 'ZodDiscriminatedUnion': {
+                    const found = [
+                      ...new Set(
+                        (def.options as unknown[])
+                          .map((o) => at(o, segs))
+                          .filter((r) => r !== null)
+                          .map((r) => JSON.stringify(r)),
+                      ),
+                    ];
+                    return found.length === 1 ? (JSON.parse(found[0]) as Range) : null;
+                  }
+                  case 'ZodNumber': {
+                    if (segs.length) return null;
+                    const n = s as { minValue: number | null; maxValue: number | null };
+                    return { min: n.minValue, max: n.maxValue };
+                  }
+                }
+                return null;
+              };
+              return at(getNodeType(type)?.paramSchema, path.split('.'));
+            },
+            // #1259 — a compositor Layer's params are read by the composite, not the 3D scene. The
+            // census places a composition the way the video space does and reads the frame the one
+            // composing site draws (the export's), at the playhead the viewer maps to the comp.
+            createNewComposition: comp.createNewComposition,
+            importMediaClipAsLayer: layer.importMediaClipAsLayer,
+            buildAddLayerEffectOps: video.buildAddLayerEffectOps,
+            compositeFrame: async (compId: string): Promise<ImageData | null> => {
+              const state = useDagStore.getState().state;
+              const p = state.nodes[compId]?.params as
+                | import('../nodes/Composition').CompositionParams
+                | undefined;
+              if (!p) return null;
+              const canvas = document.createElement('canvas');
+              canvas.width = p.width ?? 1280;
+              canvas.height = p.height ?? 720;
+              const ctx = canvas.getContext('2d');
+              if (!ctx) return null;
+              const compFrame = geo.globalFrameToCompFrame(
+                time.useTimeStore.getState().frame,
+                time.FRAMES_PER_SECOND,
+                p.fps ?? 30,
+                Math.max(1, p.durationFrames ?? 150),
+              );
+              await decode.captureCompositeFrame(state, compId, p, compFrame, ctx);
+              return ctx.getImageData(0, 0, canvas.width, canvas.height);
+            },
+          };
+        },
+      );
+      void import('./setActiveCamera').then((m) => {
+        w.__basher_setActiveCamera = (cameraId: string) => {
+          const dag = useDagStore.getState();
+          const ops = m.buildSetActiveCameraOps(dag.state, cameraId);
+          if (ops) dag.dispatchAtomic(ops, 'user', 'set active camera');
+          return ops !== null;
+        };
       });
       // NLA "push down" funnel (#283 Phase 5 inc 5E) — the UI composite +
       // its {ok:false}→toast funnel, so e2e can force a rejection and observe

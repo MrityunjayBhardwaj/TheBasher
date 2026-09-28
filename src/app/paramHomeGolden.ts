@@ -208,7 +208,7 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
   // draws these yet, and a home would claim a section renders them when none does.
   MotionGenerate:
     // #1124 — `name` retired: the clip owns a generated motion's name.
-    '[animate] prompt=(unrouted) seed=(unrouted) model=(unrouted) seconds=(unrouted)',
+    '[animate] prompt=(unrouted) seed=(unrouted) model=(unrouted) seconds=(unrouted) pathScale=(unrouted)',
   Navmesh: '[] halfSize=(unrouted) obstacles=(unrouted)',
   Noise:
     '[] scale=(unrouted) phase=(unrouted) octaves=(unrouted) amplitude=(unrouted) offset=(unrouted)',
@@ -263,7 +263,7 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
   TimeSource: '[]',
   Track: '[layout] name=layout strips=(unrouted) order=(unrouted) mute=(unrouted) solo=(unrouted)',
   TrackTo:
-    '[constraint,driver] name=(unrouted) target=(unrouted) aimNode=(unrouted) aimPoint=(unrouted) up=(unrouted) mute=(unrouted) order=(unrouted)',
+    '[constraint,driver] name=(unrouted) target=(unrouted) aimNode=(unrouted) aimBone=(unrouted) aimPoint=(unrouted) up=(unrouted) mute=(unrouted) order=(unrouted)',
   Transform: '[transform,constraint,driver] position=transform rotation=transform scale=transform',
   TransformClip:
     '[animate] name=(unrouted) duration=(unrouted) loop=(unrouted) keyframes=(unrouted)',
@@ -390,4 +390,8 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
 //
 // #1225 adds `AnimationClip.interpolation` (Linear / Constant), unrouted beside its keys: +1 unrouted.
 //   types 90 · routed 144 · unrouted 245 + 1 = 246
-export const GOLDEN_TOTALS = { types: 90, routed: 144, unrouted: 246 } as const;
+//
+// Merged with main (#1284 and its sibling on the AI track): +2 unrouted — `TrackTo.aimBone`, homed
+// like its sibling `aimNode`, and the other arrival counted by main's golden (236 → 238).
+//   types 90 · routed 144 · unrouted 246 + 2 = 248
+export const GOLDEN_TOTALS = { types: 90, routed: 144, unrouted: 248 } as const;

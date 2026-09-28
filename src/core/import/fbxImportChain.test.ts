@@ -85,7 +85,13 @@ const rotOf = (m: Matrix4) => {
   m.decompose(p, q, new Vector3());
   return q;
 };
-const theirQ = (q: number[]) => new Quaternion(q[1], q[2], q[3], q[0]);
+/** Blender's world is Z-up and ours is Y-up. The rig reaches ours folded and in metres (#1190,
+ *  #1086), so Blender's pose-bone numbers are carried into it here: a head (x, y, z) is (x, z, −y),
+ *  a rotation is turned −90° about X. Before the fold this road kept the file's raw frame, which
+ *  happened to read as Blender's armature space. */
+const ZUP_TO_YUP = new Quaternion().setFromAxisAngle(new Vector3(1, 0, 0), -Math.PI / 2);
+const theirQ = (q: number[]) => ZUP_TO_YUP.clone().multiply(new Quaternion(q[1], q[2], q[3], q[0]));
+const theirHead = (h: number[]) => new Vector3(h[0], h[2], -h[1]);
 /** The angle between two rotations. Normalised first: the file's quaternions are float32, off unit
  *  length by ~1e-7, and `acos` near 1 reads that as ~0.04° of rotation that is not there. */
 const degrees = (a: Quaternion, b: Quaternion) =>
@@ -218,7 +224,7 @@ describe('scale the clip dropped is kept (keyed-scale bar, Blender default expor
       const ours = worldAt(layer, (Number(frame) - 1) / o.fps);
       for (const name of ['Bone0', 'Bone1']) {
         const head = (bones[name] as unknown as { head: number[] }).head;
-        worstHead = Math.max(worstHead, headOf(ours.get(name)!).distanceTo(new Vector3(...head)));
+        worstHead = Math.max(worstHead, headOf(ours.get(name)!).distanceTo(theirHead(head)));
         compared += 1;
       }
     }
@@ -262,7 +268,7 @@ describe('walk against Blender 5.1.1’s import of the same FBX', () => {
     let worstDeg = 0;
     for (const [name, b] of Object.entries(o.frames['1'])) {
       const mine = ours.get(name)!;
-      const theirs = new Vector3(...b.head);
+      const theirs = theirHead(b.head);
       worstHead = Math.max(worstHead, headOf(mine).distanceTo(theirs) / HEIGHT);
       worstDeg = Math.max(worstDeg, degrees(rotOf(mine), theirQ(b.quat)));
     }
@@ -270,7 +276,7 @@ describe('walk against Blender 5.1.1’s import of the same FBX', () => {
     // Against the rig's height (~160 units), not each bone's distance out: measured 4.9e-7, the
     // worst at the feet, growing down the leg chain. That is Blender's float32 evaluation (ulp at
     // 100 is 7.6e-6, compounded per bone), the gap the BVH oracle measured too; a wrong axis or
-    // unit reads tens of units.
+    // unit reads tens of units. #1296: a hundredth of Blender's size read 0.99 here.
     expect(worstHead, 'of the rig height').toBeLessThan(1e-6);
     expect(worstDeg, 'degrees').toBeLessThan(0.01);
   });

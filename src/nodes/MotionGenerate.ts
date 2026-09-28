@@ -115,6 +115,22 @@ export const MotionGenerateParams = z.object({
   model: z.string().trim().min(1, 'must not be empty'),
   /** Requested length. Optional: the generator has its own default. */
   seconds: z.number().positive().finite().max(MAX_MOTION_SECONDS).optional(),
+  /**
+   * #1285 — how much the retarget will scale this walk's travel on the character it drives, so
+   * the path is asked for DIVIDED by it and the character lands on the curve that was drawn.
+   *
+   * The retarget multiplies root travel by the two rigs' leg ratio (`rootTravelScale`), which
+   * keeps the feet planted and, on a character shorter than the generator's rig, covers only that
+   * fraction of a path drawn in the character's metres. Scaling the REQUEST is the one place the
+   * correction does not cost foot contact.
+   *
+   * Written by the cook from the bound character (`fitMotionPathScaleOps`), not typed: it is a
+   * property of the rigs, and a value nobody derived would drift the moment the character
+   * changed. It is still a param, because it is part of what is asked for — two characters of
+   * different sizes are two requests. Absent means 1, so every clip baked before it existed keeps
+   * its hash.
+   */
+  pathScale: z.number().positive().finite().optional(),
   // #1124 — NO `name`. It lived here until the generator and its clip both wrote one name and
   // the cook let the generator win: a clip a director had renamed went back to the generator's
   // name on the next re-cook, measured in the running app. The clip owns the name now; the mint
@@ -167,6 +183,12 @@ export function motionRequestHash(
     model: params.model,
     seconds: params.seconds ?? null,
     path: pathSignature(path),
+    // #1285 — only where it changes what is sent: with a path wired, and when it is not the
+    // identity. So an unfitted request and one fitted to a character the generator's own size
+    // share an entry, a pathless request ignores it, and pre-#1285 hashes are unchanged.
+    ...(pathSignature(path) !== null && params.pathScale !== undefined && params.pathScale !== 1
+      ? { pathScale: params.pathScale }
+      : {}),
   });
 }
 

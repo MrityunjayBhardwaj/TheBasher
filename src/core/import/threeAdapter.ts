@@ -18,6 +18,7 @@ import {
   AnimationClip,
   Bone,
   Euler,
+  type Object3D,
   QuaternionKeyframeTrack,
   Quaternion,
   Skeleton,
@@ -61,17 +62,18 @@ export function sanitizeBoneName(name: string): string {
   return name.replace(/[[\].:/]/g, '_');
 }
 
-export function bonesToSpec(bones: readonly Bone[]): BoneSpec[] {
-  // THREE bones carry parent references. Build a name → index map so we
-  // can resolve parent indices in one pass. Root bones have parent = -1.
-  // Index by ORIGINAL name (THREE-side) so parent links stay correct;
-  // sanitize only the value we project into the POJO BoneSpec.
-  const indexByName = new Map<string, number>();
-  bones.forEach((b, i) => indexByName.set(b.name, i));
+export function bonesToSpec(bones: readonly Object3D[]): BoneSpec[] {
+  // THREE nodes carry parent references. A bone's parent is its parent NODE when that node is
+  // in the list, found by identity — so a parent that is not a three `Bone` (an FBX `Null`
+  // inside a chain, #1184) still links, and two bones that share a name cannot swap parents.
+  // A node whose parent is outside the list is a root (-1). Sanitize only the value we
+  // project into the POJO BoneSpec.
+  const indexOf = new Map<Object3D, number>();
+  bones.forEach((b, i) => indexOf.set(b, i));
 
   return bones.map((bone): BoneSpec => {
     const parent = bone.parent;
-    const parentIdx = parent && (parent as Bone).isBone ? (indexByName.get(parent.name) ?? -1) : -1;
+    const parentIdx = parent ? (indexOf.get(parent) ?? -1) : -1;
     return {
       name: sanitizeBoneName(bone.name),
       parent: parentIdx,
@@ -232,6 +234,33 @@ export function continuousEuler(e: Vec3, prev: Vec3 | null): Vec3 {
 // needs THREE.Skeleton + THREE.AnimationClip to call SkeletonUtils
 // upstream APIs.
 // ---------------------------------------------------------------------------
+
+/**
+ * #1183 — a bone whose parent chain never reaches a root, or null when every chain does.
+ *
+ * A skeleton is a tree: every bone's parents lead to a root (-1). `parent` is only a number,
+ * so a list can say otherwise — a bone its own parent, or two bones each other's — and every
+ * walk up such a chain runs forever. `retargetClip` froze the tab that way (a synchronous
+ * loop in `shallowestMapped`), on skeletons every Mixamo FBX produced before #1181.
+ *
+ * Named, so a refusal can say which bone. The walk is bounded by the bone count: a chain
+ * longer than that has revisited a bone. A parent index outside the list is left to the
+ * readers that already treat it as a root.
+ */
+export function boneOnACycle(
+  bones: readonly { readonly name: string; readonly parent: number }[],
+): string | null {
+  for (let i = 0; i < bones.length; i++) {
+    let cur = i;
+    for (let step = 0; step <= bones.length; step++) {
+      const parent = bones[cur]?.parent ?? -1;
+      if (parent < 0 || parent >= bones.length) break;
+      cur = parent;
+      if (step === bones.length) return bones[cur].name;
+    }
+  }
+  return null;
+}
 
 /**
  * Build a THREE.Skeleton from a BoneSpec[]. Each Bone gets its bind-pose

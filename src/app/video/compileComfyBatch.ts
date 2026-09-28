@@ -52,12 +52,12 @@ import {
   type InjectableTrack,
 } from '../../core/comfy/basherControllers';
 import { scanBasherExports } from '../../core/comfy/basherExports';
+import { isBakedTrackParam } from '../../core/comfy/comfySchedule';
 import { createMp4Sink } from '../../render/renderAnimation';
 import {
   comfyParamPath,
   importComfyGraph,
   isComfyLink,
-  isStructuralParam,
   type ComfyApiJson,
   type ComfyGraph,
   type ComfyGraphMeta,
@@ -99,9 +99,8 @@ export function bakeComfyBatchedTracks(
   for (const param of graph.params) {
     // Only keyframeable scalars become controllers. Structural (topology / batch-shape)
     // and enum / bool are read-only; image / video bind out-of-band (applyComfyImageBindings).
-    if (isStructuralParam(param.classType, param.inputName)) continue;
-    if (param.valueKind !== 'float' && param.valueKind !== 'int' && param.valueKind !== 'string')
-      continue;
+    // #1066 — the channel pickers ask the same predicate, so they offer what this bakes.
+    if (!isBakedTrackParam(param)) continue;
     const values: (number | string | boolean)[] = [];
     for (let i = 0; i < n; i++) {
       const frame = frameStart + i;

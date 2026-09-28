@@ -38,7 +38,13 @@ import {
   AxisModifiersSchema,
   migrateExtendParamsToCycles,
 } from './channelModifiers';
-import { nameParam } from './paramWidget';
+import { nameParam, optionsParam } from './paramWidget';
+import {
+  channelPathLockOf,
+  channelPathOptionsOf,
+  channelTargetLockOf,
+  channelTargetOptionsOf,
+} from './channelPickerSlot';
 
 const Vec3Schema = z.tuple([z.number(), z.number(), z.number()]);
 const HandleSchema = z
@@ -50,8 +56,22 @@ const HandleSchema = z
 
 export const KeyframeChannelVec3Params = z.object({
   name: nameParam('channel'),
-  target: z.string().default(''),
-  paramPath: z.string().default(''),
+  // #1066 — picked from what a vec3 channel animates, through a slot the app fills: the
+  // pickers' module reaches the node registry, so importing it here would be a load cycle.
+  target: optionsParam(
+    z.string().default(''),
+    channelTargetOptionsOf('vec3'),
+    undefined,
+    'nodeId',
+    channelTargetLockOf(),
+  ),
+  paramPath: optionsParam(
+    z.string().default(''),
+    channelPathOptionsOf('vec3'),
+    undefined,
+    'name',
+    channelPathLockOf('vec3'),
+  ),
   /** Per-channel gate/blend lifted off the retired AnimationLayer (#199 / V57);
    *  identity defaults → byte-identical to pre-#199. */
   mute: z.boolean().default(false),

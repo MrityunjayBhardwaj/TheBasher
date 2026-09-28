@@ -25,14 +25,12 @@
 //      (the existing seams); bvhImportChain.ts / fbxImportChain.ts (the
 //      importers, unchanged).
 
-import { applyOp, evaluate } from '../../core/dag';
-import type { DagState } from '../../core/dag/state';
 import { useDagStore } from '../../core/dag/store';
 import type { Op } from '../../core/dag/types';
 import { buildBvhImportOps } from '../../core/import/bvhImportChain';
 import { buildFbxImportOps } from '../../core/import/fbxImportChain';
 import { buildSkeletonObjectOps, skeletonObjectId } from '../../core/import/skeletonObject';
-import type { BoneSpec, PosedSkeletonValue } from '../../nodes/types';
+import type { BoneSpec } from '../../nodes/types';
 import { getStorage } from '../boot';
 import { formatAssetError, useAssetErrorStore } from '../stores/assetErrorStore';
 import { useImportRefreshStore } from '../stores/importRefreshStore';
@@ -80,20 +78,13 @@ function nameFromPath(path: string): string {
  * the bind brings it back. It lands in the import's single dispatch (K6). A project with no
  * scene aggregator has nowhere to stand one, and gets the import alone.
  *
- * #791 — `normalise` is FALSE for BVH and true for FBX, and the difference is the formats'.
- * BVH declares no unit, so nothing in the file can say how big the rig is, and guessing from
- * the content is the one answer the reference refuses: Blender's BVH importer offers a scale
- * defaulted to 1.0 and has no detection code at all (`io_anim_bvh/__init__.py:60-66`). A BVH
- * therefore stands at file scale, with the scale in `Object.scale` where the director can set
- * it, and the import selects the Object so that field is in front of them
- * (`selectLandedMotion`). A guess sized every rig to a person — right for a humanoid, silently
- * wrong for anything else, with nothing on screen to say which case it took.
- *
- * FBX does declare a unit, which Blender honours (`apply_unit_scale`); this road does not read
- * it yet, so until it does FBX keeps the frame-0 fit rather than landing a centimetre file at
- * 100x with no field explaining why. The fit is measured on the layer's frame 0 — the pose the
- * director first sees — not on the file's rest pose, which need not stand up
- * (`normalisedRigScale`).
+ * SCALE — the Object stands at 1, for both formats, and neither is guessed. BVH declares no unit,
+ * so the rig stands at the file's own size and its Scale is the director's to set (#791) — as
+ * Blender's BVH importer does, with a Scale defaulted to 1.0 and no detection code
+ * (`io_anim_bvh/__init__.py:60-66`); the import selects the Object so that field is in front of
+ * them (`landImportedMotion`). FBX declares its unit, and `parseFbx` has already read the rig in
+ * it (`fbxMetresPerUnit`, #1086). What used to stand here — a fit to 1.8 m measured on the
+ * rig's frame 0 — was right for a person and silently wrong for anything else.
  */
 function skeletonObjectOps(
   ops: readonly Op[],
@@ -102,7 +93,6 @@ function skeletonObjectOps(
   layerId: string,
   // #1101 — the name the import gave the motion, so the Object and its motion read the same.
   name: string,
-  normalise: boolean,
 ): Op[] {
   const skeleton = ops.find((op) => op.type === 'addNode' && op.nodeId === skeletonId);
   const params = skeleton?.type === 'addNode' ? skeleton.params : undefined;
@@ -112,42 +102,14 @@ function skeletonObjectOps(
   const sceneNodeId = state.outputs.scene?.node;
   if (!sceneNodeId) return [];
   // Blender names the armature after the file and never renames it after the action, so the name
-  // follows nothing. The layer is read only to measure the fit, so a road that does not fit (BVH,
-  // #791) does not evaluate it.
+  // follows nothing.
   return buildSkeletonObjectOps({
     skeletonId,
-    bones,
-    fitPose: normalise ? importedPose(state, ops, layerId) : null,
     sceneNodeId,
-    normalise,
     name,
     pose: { node: layerId, socket: 'out' },
     nameFollowsClip: false,
   }).ops;
-}
-
-/**
- * The pose wire this import is about to add, evaluated on a scratch copy of the graph with the
- * import applied. It has to be read BEFORE the dispatch, because the scale it sets is part of
- * that same single dispatch. Null when it does not evaluate — the rig is then sized from its
- * rest pose, which can be wrong for a file whose rest pose lies down, but still draws.
- */
-function importedPose(
-  state: DagState,
-  ops: readonly Op[],
-  layerId: string,
-): PosedSkeletonValue | null {
-  try {
-    let scratch = state;
-    for (const op of ops) scratch = applyOp(scratch, op).next;
-    const value = evaluate(scratch, layerId, {
-      ctx: { time: { frame: 0, seconds: 0, normalized: 0 } },
-      socket: 'out',
-    }).value as PosedSkeletonValue | undefined;
-    return value?.kind === 'PosedSkeleton' ? value : null;
-  } catch {
-    return null;
-  }
 }
 
 /**
@@ -165,7 +127,7 @@ export async function importBvhFromOpfs(path: string): Promise<MotionImportResul
     const dag = useDagStore.getState();
     const name = nameFromPath(path);
     const { ops, skeletonId, motionId } = buildBvhImportOps({ text, name });
-    const standIn = skeletonObjectOps(ops, skeletonId, motionId, name, false);
+    const standIn = skeletonObjectOps(ops, skeletonId, motionId, name);
     dag.dispatchAtomic([...ops, ...standIn], 'user', `import bvh: ${path}`);
     // Bump AFTER dispatch (pre-mortem: a pre-dispatch bump re-enumerates the
     // My-Imports list before the import lands → stale/empty on failure).
@@ -196,7 +158,7 @@ export async function importFbxFromOpfs(path: string): Promise<MotionImportResul
     const dag = useDagStore.getState();
     const name = nameFromPath(path);
     const { ops, skeletonId, motionId } = buildFbxImportOps({ data: copy.buffer, name });
-    const standIn = skeletonObjectOps(ops, skeletonId, motionId, name, true);
+    const standIn = skeletonObjectOps(ops, skeletonId, motionId, name);
     dag.dispatchAtomic([...ops, ...standIn], 'user', `import fbx: ${path}`);
     useImportRefreshStore.getState().bump();
     return { skeletonId, motionId };

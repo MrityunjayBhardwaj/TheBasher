@@ -21,7 +21,8 @@
 import { z } from 'zod';
 import type { NodeDefinition } from '../core/dag/types';
 import type { TrackToConstraintValue } from './types';
-import { nameParam } from './paramWidget';
+import { nameParam, optionsParam } from './paramWidget';
+import { characterPartOptions, constrainedObjectOptions } from '../app/constraintStack';
 
 const Vec3Schema = z.tuple([z.number(), z.number(), z.number()]);
 
@@ -29,9 +30,26 @@ export const TrackToParams = z.object({
   name: nameParam('track-to'),
   /** The constrained node id whose rotation this derives (mirrors a channel's
    *  `target`). Empty → inert (enumerated but no node to aim). */
-  target: z.string().default(''),
+  target: optionsParam(
+    z.string().default(''),
+    // Wrapped so this module never reads an import during load (#1065): the provider's module
+    // reaches the world resolver, which can import back into the node registry.
+    (s) => constrainedObjectOptions(s),
+    undefined,
+    'nodeId',
+  ),
   /** Aim at this node's WORLD position when non-empty; else `aimPoint`. */
   aimNode: z.string().default(''),
+  /** #1284 — when `aimNode` is a character, aim at this node INSIDE it (a bone, e.g. its Hips)
+   *  rather than at the character's own origin — Blender's Track To `subtarget`. A walk moves the
+   *  Hips while the character's Group stays where the walk began. Empty → the node itself. */
+  aimBone: optionsParam(
+    z.string().default(''),
+    // Wrapped like `target`'s provider, for the same load-order reason.
+    (s, id) => characterPartOptions(s, id),
+    'the object itself',
+    'name',
+  ),
   /** Fixed-point aim target (world) used when `aimNode` is empty. */
   aimPoint: Vec3Schema.default([0, 0, 0]),
   /** Roll reference for the aim basis (default +Y). */
@@ -81,6 +99,7 @@ export const TrackToNode: NodeDefinition<TrackToParams, TrackToConstraintValue> 
       name: params.name,
       target: params.target,
       aimNode: params.aimNode,
+      aimBone: params.aimBone,
       aimPoint: params.aimPoint,
       up: params.up,
       mute: params.mute,

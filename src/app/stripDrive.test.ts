@@ -12,7 +12,7 @@ import { registerAllNodes } from '../nodes/registerAll';
 import { stripDriveRefusal } from './stripDrive';
 import { makeSplitCube } from '../test-utils/splitCube';
 import { makeSplitCamera } from '../test-utils/splitCamera';
-import { stripTargetRows } from '../timeline/NlaAddStripPopover';
+import { stripTargetRows } from './stripTargets';
 
 beforeEach(() => {
   __resetRegistryForTests();

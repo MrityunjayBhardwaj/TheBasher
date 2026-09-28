@@ -31,9 +31,7 @@ import { importBvhFromOpfs, importFbxFromOpfs, routeImportByExtension } from './
 import { ingestSingleFile, USER_IMPORTS_ROOT } from './importCommon';
 import { chooseMotionTarget } from './bindMotionToCharacter';
 import { nodeDisplayName } from '../sceneTreeWalk';
-import { applyOp, evaluate } from '../../core/dag';
-import { normalisedRigScale } from '../../core/import/skeletonObject';
-import type { BoneSpec, PosedSkeletonValue } from '../../nodes/types';
+import { applyOp } from '../../core/dag';
 import { nativeCharacterOps } from '../../test-utils/nativeCharacter';
 import { __resetMutatorRegistryForTests, registerAllMutators } from '../../agent/mutators';
 
@@ -363,54 +361,11 @@ describe('#791 — a dropped BVH stands at file scale, and its Object is selecte
     expect(objectScale(result!.skeletonId)).toEqual([1, 1, 1]);
   });
 
-  it('an FBX still gets the fit — its declared unit is not read yet, so 1 would be a guess too', async () => {
+  it('an FBX stands at scale 1 too — its declared unit is read at parse, so nothing is guessed (#1086)', async () => {
     const fbxPath = `${USER_IMPORTS_ROOT}/rig/rig.fbx`;
     await currentStorage.write(fbxPath, RIG_FBX_BYTES);
     const result = await importFbxFromOpfs(fbxPath);
-    expect(objectScale(result!.skeletonId)?.[0]).not.toBe(1);
-  });
-
-  it('#1211 — the FBX fit is measured on the layer’s frame 0, the pose drawn, not the rest pose', async () => {
-    // rig.fbx with Hips turned 45° about Z at every key: its first frame is narrower along its
-    // longest axis than its rest pose, so a fit on the rest pose lands a different scale. (A
-    // Blender export cannot tell the two apart: Blender writes each node's rest as the pose at the
-    // export frame.)
-    const turned = new TextDecoder()
-      .decode(RIG_FBX_BYTES)
-      .replace('"AnimCurveNode::T"', '"AnimCurveNode::R"')
-      .replace('"OP",1200,100, "Lcl Translation"', '"OP",1200,100, "Lcl Rotation"')
-      .replace('"OP",1300,1200, "d|X"', '"OP",1300,1200, "d|Z"')
-      .replace('KeyValueFloat: *2 {\n\t\t\ta: 0,2', 'KeyValueFloat: *2 {\n\t\t\ta: 45,45')
-      .replace(
-        'C: "OP",1300,1200, "d|Z"',
-        ['C: "OP",1300,1200, "d|Z"', 'C: "OP",1301,1200, "d|X"', 'C: "OP",1302,1200, "d|Y"'].join(
-          '\n\t',
-        ),
-      )
-      .replace(
-        /(\tAnimationCurve: 1300[\s\S]*?\n\t\}\n)/,
-        (curve) =>
-          curve +
-          [1301, 1302]
-            .map((id) => curve.replace('1300', String(id)).replace('a: 45,45', 'a: 0,0'))
-            .join(''),
-      );
-    expect(turned).toContain('a: 45,45');
-    expect(turned.match(/AnimationCurve: 13\d\d/g)).toHaveLength(3);
-    const turnedPath = `${USER_IMPORTS_ROOT}/turned/turned.fbx`;
-    await currentStorage.write(turnedPath, new TextEncoder().encode(turned));
-    const result = await importFbxFromOpfs(turnedPath);
-    expect(result).not.toBeNull();
-    const state = useDagStore.getState().state;
-    const bones = (state.nodes[result!.skeletonId].params as { bones: BoneSpec[] }).bones;
-    const drawn = evaluate(state, result!.motionId, {
-      ctx: { time: { frame: 0, seconds: 0, normalized: 0 } },
-      socket: 'out',
-    }).value as PosedSkeletonValue;
-    const onDrawn = normalisedRigScale(bones, drawn);
-    const onRest = normalisedRigScale(bones);
-    expect(Math.abs(onDrawn - onRest) / onRest).toBeGreaterThan(0.1);
-    expect(objectScale(result!.skeletonId)?.[0]).toBeCloseTo(onDrawn, 9);
+    expect(objectScale(result!.skeletonId)).toEqual([1, 1, 1]);
   });
 
   it('with nothing to bind to, the drop selects the Object, so its Scale is in the inspector', async () => {

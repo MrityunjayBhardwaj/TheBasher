@@ -37,6 +37,7 @@ interface BasherWindow {
   };
   __basher_ingestBvhFile?: (bytes: Uint8Array, name: string) => Promise<string>;
   __basher_ingestFbxFile?: (bytes: Uint8Array, name: string) => Promise<string>;
+  __basher_armature?: { matrices: number[][]; skeletonObjects: { id: string }[] };
 }
 
 /** Fetch a fixture's bytes page-side and feed them to the single-file ingest
@@ -164,4 +165,43 @@ test('P7.14 (b) — FBX ingest yields Skeleton + base PoseLayer (binary decode) 
     return names;
   });
   expect(opfs).toEqual(['rig.fbx']);
+});
+
+// #1086 — an FBX is read in the unit it DECLARES. `rig.fbx` declares UnitScaleFactor 1 —
+// centimetres, FBX's base unit — and puts Hips 1 unit up, so read in its own unit that is 1 cm.
+// Blender reads it the same way (`io_scene_fbx/import_fbx.py:3132-3135`). The Object stands at
+// scale 1: nothing re-sizes the rig after the file has said how big it is.
+test('#1086 — an FBX stands at the size its declared unit gives, with the Object at scale 1', async ({
+  page,
+}) => {
+  await ingestMotionFixture(page, 'fbx', '/fixtures/anim/rig.fbx', 'rig');
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () => (window as unknown as BasherWindow).__basher_armature?.skeletonObjects?.length ?? 0,
+      ),
+    )
+    .toBe(1);
+
+  const graph = await page.evaluate(() => {
+    const w = window as unknown as BasherWindow;
+    const nodes = w.__basher_dag.getState().state.nodes;
+    const skel = Object.values(nodes).find((n) => n.type === 'Skeleton');
+    const bones = (skel?.params?.bones ?? []) as { name: string; position: number[] }[];
+    const objectId = w.__basher_armature!.skeletonObjects[0].id;
+    return {
+      hipsY: bones.find((b) => b.name === 'Hips')?.position[1],
+      objectScale: nodes[objectId]?.params?.scale,
+    };
+  });
+  expect(graph.objectScale, 'the Object does not re-size the rig').toEqual([1, 1, 1]);
+  expect(graph.hipsY, 'Hips at 1 file unit = 1 cm').toBeCloseTo(0.01, 6);
+
+  // What is DRAWN, not the param: every bone head within a few centimetres of the floor.
+  const heads = await page.evaluate(() =>
+    ((window as unknown as BasherWindow).__basher_armature?.matrices ?? []).map((m) => m[13]),
+  );
+  expect(heads.length).toBeGreaterThan(0);
+  expect(Math.max(...heads)).toBeLessThan(0.05);
+  expect(Math.max(...heads)).toBeGreaterThan(0.005);
 });

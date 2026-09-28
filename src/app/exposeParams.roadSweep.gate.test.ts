@@ -91,6 +91,8 @@ const CONSULTS_PROJECTION = /exposeParams|resolveExposedTarget|resolveControlHos
  * that no longer matches is reported as prunable rather than silently carried.
  */
 const OPT_OUTS: Record<string, string> = {
+  'src/app/boot.ts':
+    "(b) the dev-only census hook (#1235) hands `buildBindDriverOps` the target id and path the animatable-param census passes in from its OWN walk of the graph. It never reads the selection; boot's selection references are the unrelated e2e store handles beside it. No production path calls it (H65).",
   'src/app/Gizmo.tsx':
     "(a) writes only the selected node's OWN transform band (position/rotation/scale), which no other layer in the chain can hold — the projection would resolve it to the same node by construction. It also runs at pointer-move rate, where building a projection per event is the measured H48 hazard.",
   'src/app/MultiSelectInspector.tsx':

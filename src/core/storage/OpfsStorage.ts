@@ -8,6 +8,35 @@
 
 import type { StorageCapability, StorageQuota } from './StorageCapability';
 
+/**
+ * #1293 — operations on ONE path run one at a time; different paths still run in parallel.
+ *
+ * A write is `createWritable → write → close`, then a read-back of the file (the check above).
+ * When a second write to the same path lands between those steps, it replaces the file behind the
+ * first write's `File`, and the read-back throws `NotReadableError` or `NotFoundError`. Measured in
+ * Chromium: 17 of 40 overlapping writes of one 3 MB file failed; 40 of 40 one after another
+ * succeeded. The overlap is ordinary, not exotic: the idle autosave writes the open project's
+ * file, and so does every explicit save, including the one opening a `.basher` file makes first.
+ *
+ * Module-level and keyed by root + path, so two `OpfsStorage` instances over one origin share it.
+ */
+const pathQueues = new Map<string, Promise<void>>();
+
+function exclusive<T>(key: string, op: () => Promise<T>): Promise<T> {
+  const previous = pathQueues.get(key) ?? Promise.resolve();
+  // After the previous operation SETTLES, success or not: one failed write must not wedge the path.
+  const run = previous.then(op, op);
+  const tail = run.then(
+    () => undefined,
+    () => undefined,
+  );
+  pathQueues.set(key, tail);
+  void tail.then(() => {
+    if (pathQueues.get(key) === tail) pathQueues.delete(key);
+  });
+  return run;
+}
+
 export class OpfsStorage implements StorageCapability {
   readonly id = 'opfs';
   readonly kind = 'opfs' as const;
@@ -56,7 +85,24 @@ export class OpfsStorage implements StorageCapability {
     return { dir: parts.slice(0, -1), name: parts[parts.length - 1] };
   }
 
-  async write(path: string, bytes: Uint8Array): Promise<void> {
+  /** One key per file, however the path is spelled (`a//b` and `/a/b` are `a/b`, as in `split`). */
+  private key(path: string): string {
+    return `${this.rootName}/${path.split('/').filter(Boolean).join('/')}`;
+  }
+
+  write(path: string, bytes: Uint8Array): Promise<void> {
+    return exclusive(this.key(path), () => this.writeNow(path, bytes));
+  }
+
+  read(path: string): Promise<Uint8Array> {
+    return exclusive(this.key(path), () => this.readNow(path));
+  }
+
+  delete(path: string): Promise<void> {
+    return exclusive(this.key(path), () => this.deleteNow(path));
+  }
+
+  private async writeNow(path: string, bytes: Uint8Array): Promise<void> {
     const { dir, name } = this.split(path);
     const dirHandle = await this.resolveDir(dir, true);
     const fileHandle = await dirHandle.getFileHandle(name, { create: true });
@@ -68,8 +114,9 @@ export class OpfsStorage implements StorageCapability {
     new Uint8Array(ab).set(bytes);
     await writable.write(new Blob([ab]));
     await writable.close();
-    // Read-back verification (K5 step 4). Cheap: the data is hot in cache.
-    const verify = await this.read(path);
+    // Read-back verification (K5 step 4). Cheap: the data is hot in cache. Unqueued: this write
+    // already holds the path, so queueing it would wait on itself.
+    const verify = await this.readNow(path);
     if (verify.byteLength !== bytes.byteLength) {
       throw new Error(
         `OpfsStorage: read-back size mismatch on ${path} (wrote ${bytes.byteLength}, read ${verify.byteLength}). Likely OPFS quota exhausted.`,
@@ -77,7 +124,7 @@ export class OpfsStorage implements StorageCapability {
     }
   }
 
-  async read(path: string): Promise<Uint8Array> {
+  private async readNow(path: string): Promise<Uint8Array> {
     const { dir, name } = this.split(path);
     const dirHandle = await this.resolveDir(dir, false);
     const fileHandle = await dirHandle.getFileHandle(name, { create: false });
@@ -96,7 +143,7 @@ export class OpfsStorage implements StorageCapability {
     }
   }
 
-  async delete(path: string): Promise<void> {
+  private async deleteNow(path: string): Promise<void> {
     const { dir, name } = this.split(path);
     try {
       const dirHandle = await this.resolveDir(dir, false);

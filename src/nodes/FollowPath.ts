@@ -40,13 +40,21 @@
 import { z } from 'zod';
 import type { NodeDefinition } from '../core/dag/types';
 import type { FollowPathConstraintValue } from './types';
-import { nameParam } from './paramWidget';
+import { nameParam, optionsParam } from './paramWidget';
+import { constrainedObjectOptions } from '../app/constraintStack';
 
 export const FollowPathParams = z.object({
   name: nameParam('follow-path'),
   /** The constrained node id whose position this derives (mirrors a channel's `target`).
    *  Empty → inert (enumerated but no node to place). */
-  target: z.string().default(''),
+  target: optionsParam(
+    z.string().default(''),
+    // Wrapped so this module never reads an import during load (#1065): the provider's module
+    // reaches the world resolver, which can import back into the node registry.
+    (s) => constrainedObjectOptions(s),
+    undefined,
+    'nodeId',
+  ),
   /** The Curve node to follow. Empty / not a Curve → the member is DEGENERATE and
    *  contributes nothing to the fold, exactly as a muted one would. */
   curve: z.string().default(''),
