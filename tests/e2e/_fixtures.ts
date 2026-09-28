@@ -75,6 +75,16 @@ export const test = base.extend({
         /* storage disabled — boot falls back to home, the home spec covers it */
       }
     });
+    // #1297 — HERMETIC MOTION GENERATION. The app probes the local motion server
+    // (`DEFAULT_MOTIONGEN_URL`, src/core/motiongen/index.ts) and uses it when it
+    // answers, falling back to the offline stub only when it does not. CI has no
+    // server, so every generate spec was written against the stub — but on a
+    // machine running Kimodo on that port the same spec cooks through the real
+    // model, lands its bones 5–10 s later, and races its own poll (measured).
+    // Refusing the port here makes the stub the answer everywhere, as on CI. A
+    // spec that wants a motion service fulfils its own route: Playwright runs
+    // routes in the reverse of their registration order, so the spec's wins.
+    await page.route('http://127.0.0.1:8600/**', (route) => route.abort());
     const originalScreenshot = page.screenshot.bind(page);
     // Monkey-patch — every `page.screenshot(...)` (and therefore every
     // `expect(page).toHaveScreenshot(...)`) routes through this wrapper.
