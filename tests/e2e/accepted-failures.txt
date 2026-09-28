@@ -36,11 +36,13 @@
 #   below passed. Seeded from that run alone this file would hold six entries
 #   and the next build would have gone red on the other four.
 
-# ── Accepted debt (8) — each row's reason measured 2026-09-21, locally on darwin ───
+# ── Accepted debt (5) — each row's reason measured 2026-09-21, locally on darwin ───
 # This block used to say all nine pass on darwin and fail only on the CI runner.
 # Measured, that was true for four of them. Four of the others fail on darwin too, so
 # they sit under the reason that actually holds. The ninth, p233, was a product gap
-# (#1075); fixed, it left the list.
+# (#1075); fixed, it left the list. Three more left since: p165, p186 and p191
+# asserted the bounds-fit clip that Blender's fixed 0.01–1000 viewport clip replaced,
+# and were re-pointed at the past-Clip-End notice (#1178, #1188).
 #
 # Nine before that, not ten: the p6-w10 zoom readout row came out on 2026-09-18. It passed in
 # all seven CI runs of that day (six stacked PRs and one re-run), on top of the four
