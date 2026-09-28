@@ -36,7 +36,7 @@
 #   below passed. Seeded from that run alone this file would hold six entries
 #   and the next build would have gone red on the other four.
 
-# ── Accepted debt (5) — each row's reason measured 2026-09-21, locally on darwin ───
+# ── Accepted debt (7) — each row's reason measured 2026-09-21, locally on darwin ───
 # This block used to say all nine pass on darwin and fail only on the CI runner.
 # Measured, that was true for four of them. Four of the others fail on darwin too, so
 # they sit under the reason that actually holds. The ninth, p233, was a product gap
@@ -54,6 +54,15 @@ menu-import-gltf.spec.ts › picking a multi-file .gltf alone AUTO-ESCALATES to 
 menu-import-gltf.spec.ts › picking a multi-file .gltf TOGETHER with its siblings imports successfully
 p7.14-my-imports-mgmt.spec.ts › P7.14 (rename) — ︙ Rename moves OPFS folder AND the GltfAsset.assetRef follows
 spline-projection.spec.ts › Spline ortho|persp projection toggle › switching projection preserves the orbit position (Blender Numpad 5)
+
+# Intermittent on CI since #1289 — #1295, owned by the AI track. Both reload and then
+# poll storage on a short window while boot is still seeding ~11 MB of example assets
+# into the CI runner's slow OPFS (measured 2026-09-28: boot writes 11,227,490 bytes;
+# CI ≈ 2.7 s per 3 MB). ux4 #4 was red in all three CI runs of PR #1299 and in three of
+# main's six latest red runs; acceptance #4 in three of those six. Accepted so the gate
+# keeps naming everything else — take both lines out when #1295 lands.
+acceptance.spec.ts › #4 save → reload restores identical state
+ux4-projects-under-file.spec.ts › #4 File ▸ Switch Project lists projects and switches the active one
 
 # Red everywhere, reason not yet traced. The test's own title carries "REPRO: not
 # working"; it fails on darwin run alone, not only under load.
