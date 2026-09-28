@@ -37,6 +37,32 @@ function exclusive<T>(key: string, op: () => Promise<T>): Promise<T> {
   return run;
 }
 
+/**
+ * #1295 — dev-only: storage as slow as CI's. CI's OPFS took ~2.7 s per 3 MB write + read-back;
+ * locally it takes milliseconds, and CPU throttling leaves disk speed alone, so CI-only failures on
+ * save/load/list paths never reproduce here. Set before the app boots (a Playwright init script):
+ *
+ *   globalThis.__BASHER_SLOW_STORAGE__ = { msPerKb: 0.45 }
+ *
+ * Every byte written or read costs `msPerKb` per KB on ONE shared disk: operations on different
+ * paths queue for it, as they share a real disk's bandwidth. CI's two measurements bracket the
+ * rate: 0.45 matches its 3 MB write + read-back (2.7 s), 0.2 its 9.5 MB example write (4.1 s).
+ * Production builds never read it: `import.meta.env.DEV` is false there and the body drops out.
+ */
+interface SlowStorage {
+  msPerKb: number;
+}
+let diskFreeAt = 0;
+
+async function occupyDisk(byteCount: number): Promise<void> {
+  if (!import.meta.env.DEV) return;
+  const slow = (globalThis as { __BASHER_SLOW_STORAGE__?: SlowStorage }).__BASHER_SLOW_STORAGE__;
+  if (!slow || !(slow.msPerKb > 0)) return;
+  const now = performance.now();
+  diskFreeAt = Math.max(now, diskFreeAt) + (byteCount / 1024) * slow.msPerKb;
+  await new Promise((resolve) => setTimeout(resolve, diskFreeAt - now));
+}
+
 export class OpfsStorage implements StorageCapability {
   readonly id = 'opfs';
   readonly kind = 'opfs' as const;
@@ -113,6 +139,7 @@ export class OpfsStorage implements StorageCapability {
     const ab = new ArrayBuffer(bytes.byteLength);
     new Uint8Array(ab).set(bytes);
     await writable.write(new Blob([ab]));
+    await occupyDisk(bytes.byteLength);
     await writable.close();
     // Read-back verification (K5 step 4). Cheap: the data is hot in cache. Unqueued: this write
     // already holds the path, so queueing it would wait on itself.
@@ -129,7 +156,9 @@ export class OpfsStorage implements StorageCapability {
     const dirHandle = await this.resolveDir(dir, false);
     const fileHandle = await dirHandle.getFileHandle(name, { create: false });
     const file = await fileHandle.getFile();
-    return new Uint8Array(await file.arrayBuffer());
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    await occupyDisk(bytes.byteLength);
+    return bytes;
   }
 
   async exists(path: string): Promise<boolean> {
