@@ -4,6 +4,7 @@ import { MemoryStorage } from './MemoryStorage';
 import { OpfsStorage } from './OpfsStorage';
 import { TauriStorage } from './TauriStorage';
 import { pickStorage } from './index';
+import { isStorageNotFound, type StorageNotFoundError } from './StorageCapability';
 
 describe('MemoryStorage', () => {
   it('round-trips bytes', async () => {
@@ -117,5 +118,24 @@ describe('TauriStorage', () => {
     await expect(s.delete('x')).rejects.toThrow(/v0\.6/);
     await expect(s.list('x')).rejects.toThrow(/v0\.6/);
     await expect(s.quota()).rejects.toThrow(/v0\.6/);
+  });
+});
+
+// #1304 — "absent" is one typed answer across backends, and only it may be read as "nothing there".
+describe('a missing file is StorageNotFoundError, and nothing else is (#1304)', () => {
+  it('MemoryStorage.read of a missing path throws StorageNotFoundError', async () => {
+    const s = new MemoryStorage();
+    const err = await s.read('projects/none/project.json').catch((e: unknown) => e);
+    expect(isStorageNotFound(err)).toBe(true);
+    expect((err as StorageNotFoundError).path).toBe('projects/none/project.json');
+  });
+
+  it('a plain Error is not "not found"', () => {
+    expect(isStorageNotFound(new Error('not found: x'))).toBe(false);
+    expect(isStorageNotFound(new DOMException('locked', 'NoModificationAllowedError'))).toBe(false);
+  });
+
+  it('a missing directory lists as empty', async () => {
+    expect(await new MemoryStorage().list('projects')).toEqual([]);
   });
 });

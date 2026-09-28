@@ -5,7 +5,11 @@
 // browser: same path normalization, idempotent delete, listed directories
 // include every file whose path begins with `${dirPath}/`.
 
-import type { StorageCapability, StorageQuota } from './StorageCapability';
+import {
+  StorageNotFoundError,
+  type StorageCapability,
+  type StorageQuota,
+} from './StorageCapability';
 
 export class MemoryStorage implements StorageCapability {
   readonly id = 'memory';
@@ -30,7 +34,7 @@ export class MemoryStorage implements StorageCapability {
   async read(path: string): Promise<Uint8Array> {
     const norm = this.normalize(path);
     const buf = this.files.get(norm);
-    if (!buf) throw new Error(`MemoryStorage: not found: ${norm}`);
+    if (!buf) throw new StorageNotFoundError(norm);
     return new Uint8Array(buf);
   }
 

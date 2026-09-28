@@ -1,4 +1,5 @@
 export type { StorageCapability, StorageQuota } from './StorageCapability';
+export { StorageNotFoundError, isStorageNotFound } from './StorageCapability';
 export { OpfsStorage } from './OpfsStorage';
 export { IndexedDbStorage } from './IndexedDbStorage';
 export { TauriStorage } from './TauriStorage';

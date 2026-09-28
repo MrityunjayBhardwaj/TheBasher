@@ -7,6 +7,7 @@ import {
   composeProject,
   deleteProject,
   listProjectMetadata,
+  listProjects,
   renameProject,
   saveProject,
 } from './index';
@@ -104,5 +105,21 @@ describe('project listing reads summaries (#1302)', () => {
     await deleteProject(storage, 'gone');
     expect(await storage.exists('projects/gone/meta.json')).toBe(false);
     expect(await listProjectMetadata(storage)).toEqual([]);
+  });
+});
+
+describe('listing never answers "could not look" with "none" (#1304)', () => {
+  beforeEach(seed);
+
+  it('a failing list is thrown, not turned into an empty list', async () => {
+    const storage = new MemoryStorage();
+    storage.list = async () => {
+      throw new DOMException('locked', 'NoModificationAllowedError');
+    };
+    await expect(listProjects(storage)).rejects.toThrow('locked');
+  });
+
+  it('no projects directory yet lists as empty', async () => {
+    expect(await listProjects(new MemoryStorage())).toEqual([]);
   });
 });

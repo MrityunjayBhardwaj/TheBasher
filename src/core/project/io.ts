@@ -135,12 +135,14 @@ export async function loadProject(storage: StorageCapability, projectId: string)
   return repairAndWarn(migrateNodes(project));
 }
 
+/**
+ * Every project id in storage. #1304 — a failure to list is thrown, never answered with "none":
+ * boot seeds each example it thinks is missing, so an empty answer for "could not look" would
+ * save every example over the user's own edits of them. (A `projects` directory that does not
+ * exist yet lists as empty in every backend.)
+ */
 export async function listProjects(storage: StorageCapability): Promise<string[]> {
-  try {
-    return await storage.list('projects');
-  } catch {
-    return [];
-  }
+  return storage.list('projects');
 }
 
 /**

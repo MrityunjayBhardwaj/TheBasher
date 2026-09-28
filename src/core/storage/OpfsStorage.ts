@@ -6,7 +6,14 @@
 //
 // REF: THESIS.md §33, krama K5 step 4, dharana B2.
 
-import type { StorageCapability, StorageQuota } from './StorageCapability';
+import {
+  StorageNotFoundError,
+  type StorageCapability,
+  type StorageQuota,
+} from './StorageCapability';
+
+/** OPFS says "absent" with a DOMException named NotFoundError (a missing file or directory). */
+const isOpfsNotFound = (e: unknown) => e instanceof DOMException && e.name === 'NotFoundError';
 
 /**
  * #1293 — operations on ONE path run one at a time; different paths still run in parallel.
@@ -153,8 +160,15 @@ export class OpfsStorage implements StorageCapability {
 
   private async readNow(path: string): Promise<Uint8Array> {
     const { dir, name } = this.split(path);
-    const dirHandle = await this.resolveDir(dir, false);
-    const fileHandle = await dirHandle.getFileHandle(name, { create: false });
+    let fileHandle: FileSystemFileHandle;
+    try {
+      const dirHandle = await this.resolveDir(dir, false);
+      fileHandle = await dirHandle.getFileHandle(name, { create: false });
+    } catch (e) {
+      // #1304 — only a missing file or directory is "absent"; every other failure stays itself.
+      if (isOpfsNotFound(e)) throw new StorageNotFoundError(path);
+      throw e;
+    }
     const file = await fileHandle.getFile();
     const bytes = new Uint8Array(await file.arrayBuffer());
     await occupyDisk(bytes.byteLength);
@@ -184,7 +198,14 @@ export class OpfsStorage implements StorageCapability {
 
   async list(dirPath: string): Promise<string[]> {
     const parts = dirPath.split('/').filter(Boolean);
-    const dirHandle = await this.resolveDir(parts, false);
+    let dirHandle: FileSystemDirectoryHandle;
+    try {
+      dirHandle = await this.resolveDir(parts, false);
+    } catch (e) {
+      // #1304 — a directory that does not exist has no children, as in every other backend.
+      if (isOpfsNotFound(e)) return [];
+      throw e;
+    }
     const entries: string[] = [];
     // FileSystemDirectoryHandle is async-iterable in modern browsers.
     for await (const [entryName] of (

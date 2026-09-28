@@ -69,9 +69,12 @@ export function ProjectTabs(): ReactNode {
   // / new / delete bumps the id or updatedAt).
   useEffect(() => {
     let cancelled = false;
-    listAllProjectMetadata().then((p) => {
-      if (!cancelled) setProjects(p);
-    });
+    listAllProjectMetadata()
+      .then((p) => {
+        if (!cancelled) setProjects(p);
+      })
+      // #1304 — "could not list" keeps the tabs drawn so far (the open project's always is).
+      .catch((e) => console.warn('project tabs: could not list projects', e));
     return () => {
       cancelled = true;
     };

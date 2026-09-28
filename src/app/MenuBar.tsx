@@ -446,9 +446,12 @@ export function MenuBar() {
   useEffect(() => {
     if (open !== 'file') return;
     let cancelled = false;
-    void listAllProjectMetadata().then((p) => {
-      if (!cancelled) setProjects(p);
-    });
+    void listAllProjectMetadata()
+      .then((p) => {
+        if (!cancelled) setProjects(p);
+      })
+      // #1304 — "could not list" leaves the menu as it was; it never becomes "No projects".
+      .catch((e) => console.warn('File ▸ Switch Project: could not list projects', e));
     return () => {
       cancelled = true;
     };
