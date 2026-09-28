@@ -26,6 +26,7 @@ import {
   resolveBakedTexture,
   __resetBakedTextureLoaderForTests,
 } from './bakedTextureLoader';
+import { useAssetErrorStore } from '../stores/assetErrorStore';
 
 const REF: BakedTextureRef = {
   hash: 'deadbeef.png',
@@ -42,6 +43,7 @@ describe('peekBakedTexture (non-throwing UV-backdrop read)', () => {
   beforeEach(() => {
     __resetBakedTextureLoaderForTests();
     loadBakedTexture.mockReset();
+    useAssetErrorStore.getState().clearAll();
   });
 
   it('returns null on a cache MISS instead of throwing, and kicks off ONE load', async () => {
@@ -69,15 +71,32 @@ describe('peekBakedTexture (non-throwing UV-backdrop read)', () => {
     expect(peekBakedTexture(REF)).toBeNull();
   });
 
-  it('a failed decode makes resolveBakedTexture (the Suspense core) re-THROW', async () => {
-    const err = new Error('corrupt texture bytes');
-    loadBakedTexture.mockRejectedValue(err);
+  // #1048 — a failed read used to re-throw here, into render, and on every road without an error
+  // boundary (native meshes, primitives with a map) that unmounted the whole app.
+  it('a failed decode makes resolveBakedTexture return a magenta stand-in, never throw', async () => {
+    loadBakedTexture.mockRejectedValue(new Error('corrupt texture bytes'));
 
-    // Prime the error cache through the non-throwing peek.
-    expect(peekBakedTexture(REF)).toBeNull();
+    expect(() => resolveBakedTexture(REF)).toThrow(); // the first call suspends on the read
     await flush();
-    // The Suspense consumer surfaces the error (so its error boundary catches it).
-    expect(() => resolveBakedTexture(REF)).toThrow('corrupt texture bytes');
+    const stand = resolveBakedTexture(REF);
+    const texel = (stand as THREE.DataTexture).image.data as Uint8Array;
+    expect(Array.from(texel)).toEqual([255, 0, 255, 255]);
+    expect(resolveBakedTexture(REF), 'one stand-in per failed image').toBe(stand);
+  });
+
+  it('a failed read names the image in the asset banner, once', async () => {
+    loadBakedTexture.mockRejectedValue(
+      new Error('A requested file or directory could not be found'),
+    );
+    const project = { ...REF, store: 'project' as const };
+    expect(() => resolveBakedTexture(project)).toThrow();
+    expect(peekBakedTexture(project)).toBeNull(); // the same read, not a second one
+    await flush();
+    resolveBakedTexture(project);
+    const errors = useAssetErrorStore.getState().errors;
+    expect(Object.keys(errors)).toEqual([`images/${REF.hash}`]);
+    expect(errors[`images/${REF.hash}`]).toMatch(/drawn magenta: .*could not be found/);
+    expect(loadBakedTexture).toHaveBeenCalledTimes(1);
   });
 });
 
