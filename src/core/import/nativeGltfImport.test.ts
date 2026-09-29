@@ -962,6 +962,33 @@ describe('buildNativeGltfImportOps', () => {
         }),
       '#1061',
     ],
+    // #1319 — a camera would be dropped (its node arrived as an empty Group), and a light is not a
+    // material feature: both are refused under the issue that brings them across.
+    [
+      'a camera',
+      () =>
+        jsonFixture((json) => {
+          json.cameras = [{ type: 'perspective', perspective: { yfov: 0.8, znear: 0.1 } }];
+          const nodes = json.nodes as Record<string, unknown>[];
+          nodes.push({ name: 'Cam', camera: 0, translation: [0, 1, 5] });
+          (json.scenes as { nodes: number[] }[])[0].nodes.push(nodes.length - 1);
+        }),
+      '#1319',
+      'node 1 ("Cam") is a camera',
+    ],
+    [
+      'a punctual light',
+      () =>
+        jsonFixture((json) => {
+          json.extensionsUsed = ['KHR_lights_punctual'];
+          json.extensions = { KHR_lights_punctual: { lights: [{ type: 'point' }] } };
+          const nodes = json.nodes as Record<string, unknown>[];
+          nodes.push({ name: 'Lamp', extensions: { KHR_lights_punctual: { light: 0 } } });
+          (json.scenes as { nodes: number[] }[])[0].nodes.push(nodes.length - 1);
+        }),
+      '#1319',
+      'KHR_lights_punctual',
+    ],
     [
       'a mesh with morph targets',
       () =>

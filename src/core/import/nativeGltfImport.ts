@@ -253,6 +253,8 @@ function widenToRgba(rgb: Float32Array): Float32Array {
 // wider because three's loader decodes compression and quantization for it; this reader does not,
 // so those are refused here too. A missing entry refuses a file that could have come across, which
 // is the safe direction.
+const LIGHTS_EXTENSION = 'KHR_lights_punctual';
+
 const HELD_EXTENSIONS = new Set([
   // #1123 — held per texture below, restated about the native material's pivot.
   'KHR_texture_transform',
@@ -380,6 +382,25 @@ function fileRefusal(json: NativeGltfJson, decodesDraco: boolean): NativeImportR
     return {
       refused: `it requires extensions this reader does not implement (${unimplemented.join(', ')})`,
       issue: '#1063',
+    };
+  }
+  // #1319 — a file's lights and cameras have no native node to arrive as yet. A camera needs no
+  // extension, so nothing below would catch it: its node would arrive as an empty Group and the
+  // camera would be gone without a word. Both are refused under the issue that brings them across,
+  // not under #1123, which is about what a material holds.
+  if ((json.extensionsUsed ?? []).includes(LIGHTS_EXTENSION)) {
+    return {
+      refused: `it carries lights (${LIGHTS_EXTENSION}), which a native import does not bring across yet`,
+      issue: '#1319',
+    };
+  }
+  const camera = json.nodes.findIndex(
+    (node) => typeof (node as { camera?: unknown }).camera === 'number',
+  );
+  if (camera >= 0) {
+    return {
+      refused: `node ${camera} ("${json.nodes[camera].name ?? ''}") is a camera, which a native import does not bring across yet`,
+      issue: '#1319',
     };
   }
   const unheld = (json.extensionsUsed ?? []).filter(
