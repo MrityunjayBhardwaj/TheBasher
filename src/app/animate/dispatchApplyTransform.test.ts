@@ -799,10 +799,10 @@ describe('#1077 — Apply over stored mesh data applies INTO it, and never bakes
           store: 'project',
           colorSpace: 'srgb',
           flipY: false,
-          wrapS: THREE.RepeatWrapping,
-          wrapT: THREE.RepeatWrapping,
-          magFilter: THREE.NearestFilter,
-          minFilter: THREE.NearestFilter,
+          wrapS: 'repeat',
+          wrapT: 'repeat',
+          magFilter: 'nearest',
+          minFilter: 'nearest',
         },
       },
     };
@@ -2819,8 +2819,8 @@ describe('#1139 — a primitive bakes the material it draws, maps and placement 
     store: 'project' as const,
     colorSpace: 'srgb' as const,
     flipY: false,
-    wrapS: 1000,
-    wrapT: 1000,
+    wrapS: 'repeat',
+    wrapT: 'repeat',
   };
 
   async function bakeBoxWith(material: Record<string, unknown>) {

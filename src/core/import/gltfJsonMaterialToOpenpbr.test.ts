@@ -106,8 +106,8 @@ describe('gltfJsonMaterialToOpenpbr', () => {
       hash: '',
       colorSpace: 'srgb',
       flipY: false,
-      wrapS: 33071, // ClampToEdge from sampler 0
-      wrapT: 33071,
+      wrapS: 'clamp-to-edge', // sampler 0's 33071, by name (#1316)
+      wrapT: 'clamp-to-edge',
       gltfTexture: 0,
     });
     expect(ir.maps.emissive?.colorSpace).toBe('srgb');
@@ -121,13 +121,13 @@ describe('gltfJsonMaterialToOpenpbr', () => {
     expect(ir.maps.albedo?.hash).toBe('');
   });
 
-  it('defaults sampler wrap to REPEAT (10497) when a texture declares no sampler', () => {
+  it('defaults sampler wrap to REPEAT (glTF 10497, stored by name) when a texture declares no sampler', () => {
     const ir = gltfJsonMaterialToOpenpbr(
       { pbrMetallicRoughness: { baseColorTexture: { index: 0 } } },
       { textures: [{}], samplers: [] },
     );
-    expect(ir.maps.albedo?.wrapS).toBe(10497);
-    expect(ir.maps.albedo?.wrapT).toBe(10497);
+    expect(ir.maps.albedo?.wrapS).toBe('repeat');
+    expect(ir.maps.albedo?.wrapT).toBe('repeat');
   });
 
   it('captures a non-default texCoord (UV set) but omits the default 0', () => {

@@ -51,23 +51,9 @@
 //      (container + accessors), src/app/meshGeometryData.ts (packing), src/nodes/PolyMeshData.ts;
 //      issues #1049, #1054, #1050, #1051, #1052, #393.
 
-import {
-  BufferAttribute,
-  BufferGeometry,
-  Matrix4,
-  Quaternion,
-  Vector3,
-  ClampToEdgeWrapping,
-  LinearFilter,
-  LinearMipmapLinearFilter,
-  LinearMipmapNearestFilter,
-  MirroredRepeatWrapping,
-  NearestFilter,
-  NearestMipmapLinearFilter,
-  NearestMipmapNearestFilter,
-  RepeatWrapping,
-} from 'three';
+import { BufferAttribute, BufferGeometry, Matrix4, Quaternion, Vector3 } from 'three';
 import type {
+  BakedTextureMagFilter,
   BakedTextureRef,
   InlineMaterialSpec,
   MeshCornerLayer,
@@ -93,6 +79,7 @@ import {
 } from './gltfImportChain';
 import { DRACO_EXTENSION, decodeDracoPrimitives, usesDraco, type DecodeDraco } from './gltfDraco';
 import { gltfJsonMaterialToOpenpbr } from './gltfJsonMaterialToOpenpbr';
+import { FILTER_NAME_OF_GLTF, WRAP_NAME_OF_GLTF } from '../../nodes/materialSchema';
 import { readNativeAnimations, type ClipGltfJson, type NativeAnimation } from './nativeGltfClip';
 import {
   leftBehindAsEmpty,
@@ -297,19 +284,6 @@ const HELD_TEXTURE_SLOTS = new Set([
 // A glTF sampler's GL enums as three.js constants, by GLTFLoader's own tables and defaults
 // (`GLTFLoader.js:2198-2211`, `:3229-3232`, three r169), so a native texture samples as the clone
 // road's does. An absent or unknown value takes the loader's default.
-const THREE_FILTER_OF: Readonly<Record<number, number>> = {
-  9728: NearestFilter,
-  9729: LinearFilter,
-  9984: NearestMipmapNearestFilter,
-  9985: LinearMipmapNearestFilter,
-  9986: NearestMipmapLinearFilter,
-  9987: LinearMipmapLinearFilter,
-};
-const THREE_WRAP_OF: Readonly<Record<number, number>> = {
-  33071: ClampToEdgeWrapping,
-  33648: MirroredRepeatWrapping,
-  10497: RepeatWrapping,
-};
 
 /**
  * The vertex attributes a mesh carries that no render buffer slot draws, or `null` when a mesh is
@@ -1227,13 +1201,21 @@ function withProjectImages(
       store: 'project',
       colorSpace: captured.colorSpace,
       flipY: false,
-      wrapS: THREE_WRAP_OF[sampler?.wrapS ?? -1] ?? RepeatWrapping,
-      wrapT: THREE_WRAP_OF[sampler?.wrapT ?? -1] ?? RepeatWrapping,
-      magFilter: THREE_FILTER_OF[sampler?.magFilter ?? -1] ?? LinearFilter,
-      minFilter: THREE_FILTER_OF[sampler?.minFilter ?? -1] ?? LinearMipmapLinearFilter,
+      // #1316 — the file's sampler by name. glTF's wrap default is REPEAT; with no filter the
+      // renderer's own defaults are written out (linear, trilinear), as they always were.
+      wrapS: WRAP_NAME_OF_GLTF[sampler?.wrapS ?? 10497] ?? 'repeat',
+      wrapT: WRAP_NAME_OF_GLTF[sampler?.wrapT ?? 10497] ?? 'repeat',
+      magFilter: magFilterName(sampler?.magFilter),
+      minFilter: FILTER_NAME_OF_GLTF[sampler?.minFilter ?? -1] ?? 'linear-mipmap-linear',
     };
   }
   return { ...material, maps };
+}
+
+/** #1316 — a magnification filter by name: only NEAREST and LINEAR are one (glTF sampler schema). */
+function magFilterName(gl: number | undefined): BakedTextureMagFilter {
+  const name = FILTER_NAME_OF_GLTF[gl ?? -1];
+  return name === 'nearest' ? 'nearest' : 'linear';
 }
 
 /**

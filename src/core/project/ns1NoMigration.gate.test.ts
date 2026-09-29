@@ -89,7 +89,7 @@ describe('#637 this phase ships no migration, and the absence is pinned', () => 
     registerAllNodes();
   });
 
-  it('has moved the project format version exactly nine times since the freeze — #915, #920, #930, #389, #1062, #1203, #1224, then #1225 twice', () => {
+  it('has moved the project format version exactly ten times since the freeze — #915, #920, #930, #389, #1062, #1203, #1224, #1225 twice, then #1316', () => {
     // 🔴 THIS ROW CHANGED SHAPE IN #915, AND THE HEADER ABOVE SAYS WHY IT MAY.
     //
     // It read `toBe(fixture().formatVersion)` — ns-1 shipped no migration, so the frozen
@@ -129,7 +129,10 @@ describe('#637 this phase ships no migration, and the absence is pinned', () => 
     // #1225 is the EIGHTH: the retarget's `sourceClip` (a clip) becomes `source` (the pose wire),
     // re-pointed to each saved producer's pose output for #1224's reason. The NINTH is #1225's second:
     // `LocomotionState.clip` becomes `pose` the same way.
-    const MIGRATIONS_SINCE_FREEZE = 9; // #915, #920, #930, #389, #1062, #1203, #1224, #1225 ×2
+    // #1316 is the TENTH: a stored texture ref's wrap and filters become names. Those fields held
+    // glTF's numbers from one import road and three.js's from the other, in one untyped field, and
+    // only a pass can respell a saved ref, because params are not re-parsed on load.
+    const MIGRATIONS_SINCE_FREEZE = 10; // #915, #920, #930, #389, #1062, #1203, #1224, #1225 ×2, #1316
     expect(PROJECT_FORMAT_VERSION).toBe(fixture().formatVersion + MIGRATIONS_SINCE_FREEZE);
   });
 

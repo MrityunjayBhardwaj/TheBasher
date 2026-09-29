@@ -34,7 +34,12 @@ import type {
   InlineMaterialSpec,
   UvPlacement,
 } from '../../nodes/types';
-import { NULL_MAPS, IDENTITY_UV_TRANSFORM, MAP_UV_SLOTS } from '../../nodes/materialSchema';
+import {
+  NULL_MAPS,
+  IDENTITY_UV_TRANSFORM,
+  MAP_UV_SLOTS,
+  WRAP_NAME_OF_GLTF,
+} from '../../nodes/materialSchema';
 import { COLOR_LAYER, uvLayerName } from '../../nodes/attributes';
 
 /** glTF default sampler wrap = REPEAT (10497) when a texture declares no sampler. */
@@ -286,8 +291,9 @@ function captureMap(
     hash: '', // lighter path — bytes ride in the embedded .glb (V41), not OPFS
     colorSpace,
     flipY: false, // glTF textures are always flipY=false
-    wrapS: sampler?.wrapS ?? GLTF_WRAP_REPEAT,
-    wrapT: sampler?.wrapT ?? GLTF_WRAP_REPEAT,
+    // #1316 — by name, as the native road writes it (this road stored glTF's numbers verbatim).
+    wrapS: WRAP_NAME_OF_GLTF[sampler?.wrapS ?? GLTF_WRAP_REPEAT] ?? 'repeat',
+    wrapT: WRAP_NAME_OF_GLTF[sampler?.wrapT ?? GLTF_WRAP_REPEAT] ?? 'repeat',
     gltfTexture: info.index,
   };
   // texCoord captured (no silent drop of the UV set) only when non-default; the

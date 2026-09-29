@@ -43,6 +43,7 @@
 import { z } from 'zod';
 import type { NodeDefinition } from '../core/dag/types';
 import type { BakedDataValue } from './types';
+import { SAMPLER_MAG_FILTERS, SAMPLER_MIN_FILTERS, SAMPLER_WRAPS } from './materialSchema';
 
 // The baked handle + material-face schemas live HERE, on the data half, and used to live on
 // the fused `BakedMesh` (#599). They moved because this is the node that owns them now: a
@@ -53,13 +54,14 @@ const BakedTextureRefSchema = z.object({
   hash: z.string(),
   colorSpace: z.enum(['srgb', 'srgb-linear', 'no-colorspace']),
   flipY: z.boolean(),
-  wrapS: z.number(),
-  wrapT: z.number(),
+  // #1316 — named, as the inline copy is.
+  wrapS: z.enum(SAMPLER_WRAPS),
+  wrapT: z.enum(SAMPLER_WRAPS),
   // #1050 — a bake of a native textured import keeps pointing at the project's image; zod strips
   // an undeclared key, which would send the load to the global store instead.
   store: z.literal('project').optional(),
-  magFilter: z.number().optional(),
-  minFilter: z.number().optional(),
+  magFilter: z.enum(SAMPLER_MAG_FILTERS).optional(),
+  minFilter: z.enum(SAMPLER_MIN_FILTERS).optional(),
 });
 
 /** Zod for one baked map's UV placement (#1136), about the centre pivot. */

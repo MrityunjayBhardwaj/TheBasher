@@ -20,7 +20,13 @@
 //      vyapti V10/V32; hetvabhasa H14; issue #178.
 
 import { z } from 'zod';
-import type { BakedMaterialSpec, InlineMaterialSpec, UvPlacement } from './types';
+import type {
+  BakedMaterialSpec,
+  BakedTextureMinFilter,
+  BakedTextureWrap,
+  InlineMaterialSpec,
+  UvPlacement,
+} from './types';
 
 /**
  * The roughness a pre-#178 material rendered at when no override was present.
@@ -51,14 +57,63 @@ export const CURRENT_LOOK_ROUGHNESS = 0.5;
  */
 export const STANDARD_BASE_COLOR = '#cccccc';
 
+// ── #1316 — sampler state by name ──────────────────────────────────────────────────────────
+//
+// A stored ref's wrap and filters are glTF's sampler vocabulary, named. Two tables turn the numbers
+// that reach us into those names: glTF's own enums (`sampler.schema.json`, what a file says) and
+// three.js's constants (`three/src/constants.js:70-81`, what a live texture says and what refs
+// written before #1316 hold). Only the texture loader turns a name back into a renderer constant.
+
+export const SAMPLER_WRAPS = ['repeat', 'clamp-to-edge', 'mirrored-repeat'] as const;
+export const SAMPLER_MAG_FILTERS = ['nearest', 'linear'] as const;
+export const SAMPLER_MIN_FILTERS = [
+  'nearest',
+  'linear',
+  'nearest-mipmap-nearest',
+  'linear-mipmap-nearest',
+  'nearest-mipmap-linear',
+  'linear-mipmap-linear',
+] as const;
+
+/** glTF's wrap enums → names. */
+export const WRAP_NAME_OF_GLTF: Readonly<Record<number, BakedTextureWrap>> = {
+  10497: 'repeat',
+  33071: 'clamp-to-edge',
+  33648: 'mirrored-repeat',
+};
+/** glTF's filter enums → names. */
+export const FILTER_NAME_OF_GLTF: Readonly<Record<number, BakedTextureMinFilter>> = {
+  9728: 'nearest',
+  9729: 'linear',
+  9984: 'nearest-mipmap-nearest',
+  9985: 'linear-mipmap-nearest',
+  9986: 'nearest-mipmap-linear',
+  9987: 'linear-mipmap-linear',
+};
+/** three.js's wrap constants → names (RepeatWrapping 1000, ClampToEdge 1001, MirroredRepeat 1002). */
+export const WRAP_NAME_OF_THREE: Readonly<Record<number, BakedTextureWrap>> = {
+  1000: 'repeat',
+  1001: 'clamp-to-edge',
+  1002: 'mirrored-repeat',
+};
+/** three.js's filter constants → names (NearestFilter 1003 … LinearMipmapLinearFilter 1008). */
+export const FILTER_NAME_OF_THREE: Readonly<Record<number, BakedTextureMinFilter>> = {
+  1003: 'nearest',
+  1004: 'nearest-mipmap-nearest',
+  1005: 'nearest-mipmap-linear',
+  1006: 'linear',
+  1007: 'linear-mipmap-nearest',
+  1008: 'linear-mipmap-linear',
+};
+
 // A persisted texture handle (mirrors BakedTextureRef in types.ts). Map slots are
 // null until W5 attaches an image.
 const bakedTextureRefSchema = z.object({
   hash: z.string(),
   colorSpace: z.enum(['srgb', 'srgb-linear', 'no-colorspace']),
   flipY: z.boolean(),
-  wrapS: z.number(),
-  wrapT: z.number(),
+  wrapS: z.enum(SAMPLER_WRAPS),
+  wrapT: z.enum(SAMPLER_WRAPS),
   // glTF direct-import captured-descriptor fields (texture-maps milestone). Both
   // OPTIONAL so a native baked ref / pre-milestone save re-parses unchanged
   // (V10/H14). zod strips unknown keys, so they MUST be declared here or a whole-
@@ -68,8 +123,8 @@ const bakedTextureRefSchema = z.object({
   // #1050 — declared for the same reason: stripped, a project image would be looked up in the
   // global store and never found.
   store: z.literal('project').optional(),
-  magFilter: z.number().optional(),
-  minFilter: z.number().optional(),
+  magFilter: z.enum(SAMPLER_MAG_FILTERS).optional(),
+  minFilter: z.enum(SAMPLER_MIN_FILTERS).optional(),
 });
 const mapSlot = bakedTextureRefSchema.nullable().default(null);
 /**

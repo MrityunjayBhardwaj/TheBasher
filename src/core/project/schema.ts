@@ -81,7 +81,10 @@ import { NodeSchema, NodeIdSchema, NodeRefSchema } from '../dag/types';
 // saved edge re-pointed to its producer's pose output. See migrations.ts formatMigrations[16].
 // v18 (#1225): locomotion reads the pose wire — `LocomotionState.clip` becomes `pose`, re-pointed
 // the same way. See migrations.ts formatMigrations[17].
-export const PROJECT_FORMAT_VERSION = 18;
+// v19 (#1316): a stored texture ref's wrap and filters are NAMES — glTF's sampler vocabulary —
+// instead of numbers that were glTF's on one road and three.js's on the other. See migrations.ts
+// formatMigrations[18].
+export const PROJECT_FORMAT_VERSION = 19;
 
 export const ProjectSchema = z.object({
   formatVersion: z.literal(PROJECT_FORMAT_VERSION),

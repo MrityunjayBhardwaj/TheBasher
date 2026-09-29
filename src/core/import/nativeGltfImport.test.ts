@@ -30,6 +30,7 @@ import { join } from 'node:path';
 import * as THREE from 'three';
 import { MemoryStorage } from '../storage';
 import { listProjectImages, projectImagePath, writeProjectImage } from '../project/projectImages';
+import { gltfJsonMaterialToOpenpbr } from './gltfJsonMaterialToOpenpbr';
 
 /** A store an import must never reach: a file with no images, or one refused before storing. */
 async function noImages(): Promise<string> {
@@ -1019,10 +1020,11 @@ describe('buildNativeGltfImportOps', () => {
       store: 'project',
       colorSpace: 'srgb',
       flipY: false,
-      wrapS: THREE.RepeatWrapping,
-      wrapT: THREE.RepeatWrapping,
-      magFilter: THREE.NearestFilter,
-      minFilter: THREE.NearestFilter,
+      // #1316 — the file's sampler by name: REPEAT and NEAREST.
+      wrapS: 'repeat',
+      wrapT: 'repeat',
+      magFilter: 'nearest',
+      minFilter: 'nearest',
     });
     const ops = JSON.stringify(result.ops);
     expect(ops).not.toContain('gltfTexture');
@@ -1691,5 +1693,38 @@ describe('#1051 — a hierarchy comes across as parent edges', () => {
     // reading it as mesh 0 would refuse a file that is perfectly importable.
     const { ops } = await importNested(nestedFixture());
     expect(ops.some((o) => o.type === 'addNode' && o.nodeType === 'PolyMeshData')).toBe(true);
+  });
+});
+
+// #1316 — the probe from the issue, kept: one file through both import roads stores ONE sampler
+// value. Before, the clone road stored glTF's 10497 and the native road three's 1000.
+describe('#1316 — both import roads store the same sampler value', () => {
+  it('the textured quad`s albedo reads repeat/repeat on both', async () => {
+    const json = JSON.parse(readFileSync(TEXTURED, 'utf8')) as {
+      materials: Parameters<typeof gltfJsonMaterialToOpenpbr>[0][];
+      textures: { sampler?: number }[];
+      samplers: { wrapS?: number; wrapT?: number }[];
+    };
+    const clone = gltfJsonMaterialToOpenpbr(json.materials[0], {
+      textures: json.textures,
+      samplers: json.samplers,
+    }).maps.albedo;
+    const result = await buildNativeGltfImportOps({
+      buffer: fixture(TEXTURED),
+      assetRef: 'user-imports/native/probe.gltf',
+      sceneNodeId: 'n_scene',
+      storeImage: async () => 'img',
+    });
+    if ('refused' in result) throw new Error(result.refused);
+    const data = result.ops.find(
+      (op): op is Extract<Op, { type: 'addNode' }> =>
+        op.type === 'addNode' && op.nodeType === 'PolyMeshData',
+    )!;
+    const native = PolyMeshDataParams.parse(data.params).material!.maps.albedo;
+    expect({ wrapS: clone?.wrapS, wrapT: clone?.wrapT }).toEqual({
+      wrapS: native?.wrapS,
+      wrapT: native?.wrapT,
+    });
+    expect(native?.wrapS).toBe('repeat');
   });
 });

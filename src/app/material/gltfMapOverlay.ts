@@ -48,8 +48,8 @@ export const CLEARED_MAP: BakedTextureRef = {
   hash: '',
   colorSpace: 'no-colorspace',
   flipY: false,
-  wrapS: THREE.ClampToEdgeWrapping,
-  wrapT: THREE.ClampToEdgeWrapping,
+  wrapS: 'clamp-to-edge',
+  wrapT: 'clamp-to-edge',
 };
 
 /**

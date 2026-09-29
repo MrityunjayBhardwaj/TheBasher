@@ -479,8 +479,14 @@ export interface BakedTextureRef {
   readonly colorSpace: 'srgb' | 'srgb-linear' | 'no-colorspace';
   /** glTF textures are flipY=false; preserve verbatim. */
   readonly flipY: boolean;
-  readonly wrapS: number;
-  readonly wrapT: number;
+  /**
+   * #1316 — how the texture repeats past [0, 1], by NAME. These were bare numbers, and one field held
+   * two numberings: glTF's (10497) from one import road and three.js's own constants (1000) from the
+   * other, told apart by nothing. Names are glTF's sampler vocabulary, lowercased
+   * (`sampler.schema.json`); only the texture loader turns one into a renderer constant.
+   */
+  readonly wrapS: BakedTextureWrap;
+  readonly wrapT: BakedTextureWrap;
   /**
    * glTF direct-import (texture-maps milestone) — the index of the IMPORTED glTF
    * texture this slot was captured from (`json.textures[gltfTexture]`). Present
@@ -505,13 +511,26 @@ export interface BakedTextureRef {
    */
   readonly store?: 'project';
   /**
-   * #1050 — the sampler's filters, as three.js constants (`NearestFilter` …). Absent means three's
-   * texture defaults, as every ref written before #1050 has. A native import writes both, because
-   * glTF files routinely sample NEAREST and the native draw would otherwise smooth them.
+   * #1050 — the sampler's filters, by name (#1316; they were three.js constants). Absent means the
+   * renderer's texture defaults, as every ref written before #1050 has. A native import writes
+   * both, because glTF files routinely sample NEAREST and the native draw would otherwise smooth
+   * them.
    */
-  readonly magFilter?: number;
-  readonly minFilter?: number;
+  readonly magFilter?: BakedTextureMagFilter;
+  readonly minFilter?: BakedTextureMinFilter;
 }
+
+/** #1316 — glTF's wrap modes, named (`sampler.schema.json`: 10497, 33071, 33648). */
+export type BakedTextureWrap = 'repeat' | 'clamp-to-edge' | 'mirrored-repeat';
+/** #1316 — glTF's magnification filters, named (9728, 9729). */
+export type BakedTextureMagFilter = 'nearest' | 'linear';
+/** #1316 — glTF's minification filters, named (9728, 9729, 9984–9987). */
+export type BakedTextureMinFilter =
+  | BakedTextureMagFilter
+  | 'nearest-mipmap-nearest'
+  | 'linear-mipmap-nearest'
+  | 'nearest-mipmap-linear'
+  | 'linear-mipmap-linear';
 
 /** The six map slots of a {@link BakedMaterialSpec}, in three.js's own names. */
 export type BakedMapSlot =

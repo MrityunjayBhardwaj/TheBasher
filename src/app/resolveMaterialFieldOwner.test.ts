@@ -27,8 +27,8 @@ const ROUGHNESS_MAP = {
   hash: 'rough-hash',
   colorSpace: 'no-colorspace' as const,
   flipY: false,
-  wrapS: 1000,
-  wrapT: 1000,
+  wrapS: 'repeat',
+  wrapT: 'repeat',
 };
 
 /** `BoxData → Object`, the data node carrying its own inline material. */

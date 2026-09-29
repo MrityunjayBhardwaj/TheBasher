@@ -25,8 +25,10 @@ function refFor(key: string): BakedTextureRef {
     hash: key,
     colorSpace: 'srgb',
     flipY: false,
-    wrapS: 10497,
-    wrapT: 10497,
+    // #1316 — by name. This fixture held glTF's 10497 and loaded it, which three can't read: the
+    // two-vocabulary leak, in a test.
+    wrapS: 'repeat',
+    wrapT: 'repeat',
     store: 'project',
   };
 }
@@ -57,7 +59,7 @@ describe('#1050 — loading a project image', () => {
 
     const sharp = await loadBakedTexture(
       storage,
-      { ...refFor(key), magFilter: THREE.NearestFilter, minFilter: THREE.NearestFilter },
+      { ...refFor(key), magFilter: 'nearest', minFilter: 'nearest' },
       { decode },
     );
     expect(sharp.magFilter).toBe(THREE.NearestFilter);

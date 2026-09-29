@@ -53,8 +53,9 @@ describe('bakedTextureStore', () => {
     // Captured colorspace/flip/wrap travel on the ref.
     expect(ref.colorSpace).toBe('srgb');
     expect(ref.flipY).toBe(false);
-    expect(ref.wrapS).toBe(THREE.RepeatWrapping);
-    expect(ref.wrapT).toBe(THREE.ClampToEdgeWrapping);
+    // #1316 — stored by name; the loader turns a name back into three's constant.
+    expect(ref.wrapS).toBe('repeat');
+    expect(ref.wrapT).toBe('clamp-to-edge');
   });
 
   it('(path 2) falls back to the injected encoder when no source path resolves', async () => {
