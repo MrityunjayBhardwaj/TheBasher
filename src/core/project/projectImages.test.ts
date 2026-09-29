@@ -36,11 +36,17 @@ describe('#1050 — project images', () => {
     expect((await listProjectImages(storage, 'p1')).sort()).toEqual([key, jpeg].sort());
   });
 
+  it('#1320 — stores a WebP under its own extension, and lists it', async () => {
+    const storage = new MemoryStorage();
+    const webp = await writeProjectImage(storage, 'p1', PNG, 'image/webp');
+    expect(webp).toMatch(/^[0-9a-f]{64}\.webp$/);
+    expect(await listProjectImages(storage, 'p1')).toEqual([webp]);
+  });
+
   it('refuses an image type a project does not store', async () => {
     const storage = new MemoryStorage();
-    await expect(writeProjectImage(storage, 'p1', PNG, 'image/webp')).rejects.toThrow(
-      /image\/webp/,
-    );
+    // GIF: a glTF image can be only PNG or JPEG, or WebP through its extension (#1320).
+    await expect(writeProjectImage(storage, 'p1', PNG, 'image/gif')).rejects.toThrow(/image\/gif/);
     expect(await listProjectImages(storage, 'p1')).toEqual([]);
   });
 

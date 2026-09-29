@@ -774,10 +774,11 @@ describe('buildNativeGltfImportOps', () => {
       'names its own UV set',
     ],
     [
-      'an image that is neither PNG nor JPEG',
+      'an image that is not PNG, JPEG or WebP',
       () =>
         texturedFixture((json) => {
-          json.images = [{ uri: 'data:image/webp;base64,UklGRiQAAABXRUJQVlA4IBgAAAAw' }];
+          // A GIF header: a format no glTF texture may be (#1320 made WebP readable).
+          json.images = [{ uri: 'data:image/gif;base64,R0lGODlhAQABAAAAACw=' }];
         }),
       '#1063',
     ],
@@ -1064,6 +1065,67 @@ describe('buildNativeGltfImportOps', () => {
     const material = PolyMeshDataParams.parse(data.params).material!;
     expect(material.maps.normal).not.toBeNull();
     expect('mapStrengths' in material).toBe(false);
+  });
+
+  describe('#1320 — WebP textures, chosen the way Blender chooses by default', () => {
+    /** Import a fixture and report what was stored and what the albedo points at. */
+    async function importStoring(file: string) {
+      const stored: { mime: string; bytes: Uint8Array }[] = [];
+      const result = await buildNativeGltfImportOps({
+        buffer: fixture(file),
+        assetRef: `user-imports/native/${file}`,
+        sceneNodeId: 'n_scene',
+        storeImage: async (bytes, mime) => {
+          stored.push({ mime, bytes });
+          return `key-${stored.length}`;
+        },
+      });
+      if ('refused' in result) throw new Error(`${result.refused} (${result.issue})`);
+      const data = result.ops.find(
+        (op): op is Extract<Op, { type: 'addNode' }> =>
+          op.type === 'addNode' && op.nodeType === 'PolyMeshData',
+      )!;
+      return { stored, albedo: PolyMeshDataParams.parse(data.params).material?.maps.albedo };
+    }
+    const embedded = (file: string, image: number) => {
+      const uri = (JSON.parse(readFileSync(file, 'utf8')) as { images: { uri: string }[] }).images[
+        image
+      ].uri;
+      return Buffer.from(uri.slice(uri.indexOf(',') + 1), 'base64');
+    };
+
+    it('a WebP with a PNG fallback imports the fallback, as Blender does unless asked', async () => {
+      // Blender 5.1.1, default settings: `import_webp_texture` is off, so `get_source` returns the
+      // fallback when there is one (measured on this fixture: the PNG, red).
+      const file = 'public/assets/webp-fallback-quad.gltf';
+      const { stored, albedo } = await importStoring(file);
+      expect(stored.map((s) => s.mime)).toEqual(['image/png']);
+      expect(Buffer.from(stored[0].bytes)).toEqual(embedded(file, 1));
+      expect(albedo?.hash).toBe('key-1');
+    });
+
+    it('a WebP alone imports as WebP, its bytes stored as they are', async () => {
+      const file = 'public/assets/webp-only-quad.gltf';
+      const { stored, albedo } = await importStoring(file);
+      expect(stored.map((s) => s.mime)).toEqual(['image/webp']);
+      expect(Buffer.from(stored[0].bytes)).toEqual(embedded(file, 0));
+      expect(albedo?.hash).toBe('key-1');
+    });
+
+    it('bytes that say WebP in the header but not RIFF…WEBP are still refused by signature', async () => {
+      const buffer = texturedFixture((json) => {
+        json.images = [
+          { uri: `data:image/webp;base64,${Buffer.from('RIFF0000WEBX').toString('base64')}` },
+        ];
+      });
+      const result = await buildNativeGltfImportOps({
+        buffer,
+        assetRef: 'user-imports/native/not-webp.gltf',
+        sceneNodeId: 'n_scene',
+        storeImage: async () => 'k',
+      });
+      expect(result).toMatchObject({ issue: '#1063' });
+    });
   });
 
   it('#1123 — the UV-transform quad arrives native, its placement restated about the centre pivot', async () => {

@@ -11,8 +11,8 @@
 // needs its files moved and never its refs rewritten.
 //
 // The bytes are the file's own PNG/JPEG encoding, never decoded pixels: raw RGBA measured 1.7× to
-// 125× larger on real models. Those two are the image types core glTF allows; anything else is the
-// reader's to refuse before it reaches here.
+// 125× larger on real models. Those two are the image types core glTF allows, and WebP arrives
+// through `EXT_texture_webp` (#1320); anything else is the reader's to refuse before it reaches here.
 //
 // REF: issue #1050 (decision comment 2026-09-14); src/core/project/io.ts (duplicate/delete carry
 //      the folder); src/app/asset/bakedTextureStore.ts (`refToPath` resolves a project ref);
@@ -23,9 +23,11 @@ import type { StorageCapability } from '../storage/StorageCapability';
 const EXTENSION_OF_MIME: Readonly<Record<string, string>> = {
   'image/png': 'png',
   'image/jpeg': 'jpg',
+  // #1320 — a glTF texture's WebP source, stored as the file carries it; the browser decodes it.
+  'image/webp': 'webp',
 };
 
-const KEY = /^[0-9a-f]{64}\.(png|jpg)$/;
+const KEY = /^[0-9a-f]{64}\.(png|jpg|webp)$/;
 
 /** True for a key this store could have written — and nothing that could leave the folder. */
 export function isProjectImageKey(key: string): boolean {

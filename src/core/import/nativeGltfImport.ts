@@ -170,7 +170,11 @@ export interface NativeImportResult {
 type NativeGltfJson = GltfJson & {
   extensionsUsed?: string[];
   extensionsRequired?: string[];
-  textures?: { source?: number; sampler?: number }[];
+  textures?: {
+    source?: number;
+    sampler?: number;
+    extensions?: { EXT_texture_webp?: { source?: number } };
+  }[];
   images?: { uri?: string; bufferView?: number; mimeType?: string }[];
   samplers?: { wrapS?: number; wrapT?: number; magFilter?: number; minFilter?: number }[];
   meshes?: {
@@ -255,6 +259,9 @@ function widenToRgba(rgb: Float32Array): Float32Array {
 // is the safe direction.
 const LIGHTS_EXTENSION = 'KHR_lights_punctual';
 
+/** #1320 — WebP texture sources. */
+const WEBP_EXTENSION = 'EXT_texture_webp';
+
 const HELD_EXTENSIONS = new Set([
   // #1123 — held per texture below, restated about the native material's pivot.
   'KHR_texture_transform',
@@ -262,6 +269,8 @@ const HELD_EXTENSIONS = new Set([
   'KHR_materials_clearcoat',
   'KHR_materials_transmission',
   'KHR_materials_emissive_strength',
+  // #1320 — a texture's WebP source is read when it is the only one (see `readTextureImage`).
+  WEBP_EXTENSION,
 ]);
 
 // #1050 — where a material may sample a texture and still arrive whole: the slots the IR captures
@@ -377,7 +386,8 @@ function fileRefusal(json: NativeGltfJson, decodesDraco: boolean): NativeImportR
       issue: '#1063',
     };
   }
-  const unimplemented = required.filter((ext) => ext !== DRACO_EXTENSION);
+  // #1320 — a file with no fallback image must require WebP, and this reader reads it.
+  const unimplemented = required.filter((ext) => ext !== DRACO_EXTENSION && ext !== WEBP_EXTENSION);
   if (unimplemented.length > 0) {
     return {
       refused: `it requires extensions this reader does not implement (${unimplemented.join(', ')})`,
@@ -1038,6 +1048,10 @@ function sniffImage(bytes: Uint8Array): string | null {
   if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) {
     return 'image/jpeg';
   }
+  // #1320 — `RIFF` <size> `WEBP`.
+  const ascii = (at: number, word: string) =>
+    [...word].every((c, i) => bytes[at + i] === c.charCodeAt(0));
+  if (bytes.length >= 12 && ascii(0, 'RIFF') && ascii(8, 'WEBP')) return 'image/webp';
   return null;
 }
 
@@ -1049,13 +1063,18 @@ async function readTextureImage(
   resolveBuffer: GltfImportChainArgs['resolveBuffer'],
 ): Promise<ReadImage | NativeImportRefusal> {
   const texture = json.textures?.[textureIndex];
-  if (typeof texture?.source !== 'number') {
+  // #1320 — the fallback `source` when there is one, else the WebP one. That is Blender's default
+  // (`import_webp_texture` is off, `blender/imp/texture.py` `get_source`); three's loader prefers
+  // the WebP, but both draw the same picture and the reference decides.
+  const webpSource = texture?.extensions?.EXT_texture_webp?.source;
+  const source = typeof texture?.source === 'number' ? texture.source : webpSource;
+  if (typeof source !== 'number') {
     return {
-      refused: `texture ${textureIndex} has no image of its own (a source inside an extension is not decoded)`,
+      refused: `texture ${textureIndex} has no image this reader can find`,
       issue: '#1063',
     };
   }
-  const image = json.images?.[texture.source];
+  const image = json.images?.[source];
   let bytes: Uint8Array | null = null;
   if (typeof image?.bufferView === 'number') {
     const view = json.bufferViews?.[image.bufferView];
@@ -1069,11 +1088,11 @@ async function readTextureImage(
     else if (resolveBuffer) bytes = await resolveBuffer(image.uri);
   }
   if (bytes === null) {
-    return { refused: `image ${texture.source} could not be read`, issue: '#1063' };
+    return { refused: `image ${source} could not be read`, issue: '#1063' };
   }
   const mime = sniffImage(bytes);
   if (mime === null) {
-    return { refused: `image ${texture.source} is neither PNG nor JPEG`, issue: '#1063' };
+    return { refused: `image ${source} is not PNG, JPEG or WebP`, issue: '#1063' };
   }
   return { bytes, mime };
 }
