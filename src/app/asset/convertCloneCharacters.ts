@@ -1,4 +1,6 @@
 // #1216 — a saved project's clone-road characters become native when the project loads.
+// #1317 — and so do its plain models: every saved clone import, skinned or not, goes through the
+// same conversion; only what the load says about it differs (a character or a model).
 //
 // ── WHY THIS EXISTS ─────────────────────────────────────────────────────────────────────────────
 //
@@ -91,29 +93,39 @@ export interface ConvertCloneCharactersDeps {
   readonly decodeDraco?: DecodeDraco;
 }
 
+/**
+ * #1317 — what a saved clone import was: a `character` (its file carries a skin) or a plain `model`.
+ * Both convert the same way; only what the load says about them differs.
+ */
+export type CloneImportKind = 'character' | 'model';
+
 export interface CharacterConversionReport {
-  /** A converted character, and what now plays differently from the clone road, by name (may be empty). */
+  /** A converted import, and what now plays differently from the clone road, by name (may be empty). */
   readonly converted: readonly {
+    readonly kind: CloneImportKind;
     readonly name: string;
     readonly assetRef: string;
     readonly notes: readonly string[];
   }[];
-  /** A character left as it was saved, and why — each edit it could not carry, by name. */
+  /** An import left as it was saved, and why — each edit it could not carry, by name. */
   readonly kept: readonly {
+    readonly kind: CloneImportKind;
     readonly name: string;
     readonly assetRef: string;
     readonly why: readonly string[];
   }[];
 }
 
-/** A saved clone-road character: an import whose asset carries a skin. */
-export function cloneCharacterAssets(state: DagState): readonly Node[] {
-  return Object.values(state.nodes).filter(
-    (node) =>
-      node.type === 'GltfAsset' &&
-      ((node.params as { skins?: readonly unknown[] }).skins?.length ?? 0) > 0,
-  );
+/**
+ * Every saved clone-road import, with or without a skin. #1317 — this was characters only, which
+ * left a saved plain model on a road that #1053 retires, with nothing to turn it native.
+ */
+export function cloneImportAssets(state: DagState): readonly Node[] {
+  return Object.values(state.nodes).filter((node) => node.type === 'GltfAsset');
 }
+
+const kindOf = (asset: Node): CloneImportKind =>
+  ((asset.params as { skins?: readonly unknown[] }).skins?.length ?? 0) > 0 ? 'character' : 'model';
 
 /**
  * Every clone-road character in `state`, converted to the native structure where it can be, and
@@ -123,21 +135,22 @@ export async function convertCloneCharacters(
   state: DagState,
   deps: ConvertCloneCharactersDeps,
 ): Promise<{ readonly state: DagState; readonly report: CharacterConversionReport }> {
-  const converted: { name: string; assetRef: string; notes: string[] }[] = [];
-  const kept: { name: string; assetRef: string; why: string[] }[] = [];
+  const converted: CharacterConversionReport['converted'][number][] = [];
+  const kept: CharacterConversionReport['kept'][number][] = [];
   let next = state;
-  for (const asset of cloneCharacterAssets(state)) {
+  for (const asset of cloneImportAssets(state)) {
     const assetRef = (asset.params as { assetRef: string }).assetRef;
+    const kind = kindOf(asset);
     const name = characterName(next, assetRef);
     // A conversion that throws (a corrupt file, an op the reducer refuses) keeps the character as
     // saved and says why: converting must never be the reason a project does not open.
     const one = await convertOne(next, assetRef, deps).catch((err: unknown) => ({
       why: [`it could not be converted (${err instanceof Error ? err.message : String(err)})`],
     }));
-    if ('why' in one) kept.push({ name, assetRef, why: one.why });
+    if ('why' in one) kept.push({ kind, name, assetRef, why: one.why });
     else {
       next = one.state;
-      converted.push({ name, assetRef, notes: one.notes });
+      converted.push({ kind, name, assetRef, notes: one.notes });
     }
   }
   return { state: next, report: { converted, kept } };
@@ -1263,7 +1276,7 @@ export async function convertLoadedProject(
   storage: StorageCapability,
 ): Promise<{ readonly project: Project; readonly report: CharacterConversionReport }> {
   const state: DagState = { nodes: project.state.nodes, outputs: project.state.outputs };
-  if (cloneCharacterAssets(state).length === 0) {
+  if (cloneImportAssets(state).length === 0) {
     return { project, report: { converted: [], kept: [] } };
   }
   const result = await convertCloneCharacters(state, {
@@ -1282,31 +1295,37 @@ export async function convertLoadedProject(
 }
 
 /**
- * The banner row a character's load notice is written under. Its own row, not the file's: the
+ * The banner row an import's load notice is written under. Its own row, not the file's: the
  * renderer reports and clears the file's row (`assetRef`) as the file loads or fails, and a kept
- * character whose file is gone fails to load — which replaced the one row that said why (#1264).
+ * import whose file is gone fails to load — which replaced the one row that said why (#1264).
  */
-const characterNoticeKey = (assetRef: string): string => `character:${assetRef}`;
+const noticeKey = (kind: CloneImportKind, assetRef: string): string => `${kind}:${assetRef}`;
 
-/** One notice row per character the load converted or kept, under `characterNoticeKey`. */
+/** What a converted import now loads as, by kind. */
+const LOADS_AS: Record<CloneImportKind, string> = {
+  character: 'a native character (a skeleton and an Armature modifier)',
+  model: 'native geometry',
+};
+
+/** One notice row per import the load converted or kept, under `noticeKey`. */
 export function reportCharacterConversion(
   report: CharacterConversionReport,
   notify: (row: string, message: string, label: string) => void,
 ): void {
-  for (const { name, assetRef, notes } of report.converted) {
+  for (const { kind, name, assetRef, notes } of report.converted) {
     notify(
-      characterNoticeKey(assetRef),
-      `"${name}" was saved on the old imported-file structure and now loads as a native character (a skeleton and an Armature modifier); the project's next save keeps it that way.${
+      noticeKey(kind, assetRef),
+      `"${name}" was saved on the old imported-file structure and now loads as ${LOADS_AS[kind]}; the project's next save keeps it that way.${
         notes.length > 0 ? ` Now: ${notes.join('; ')}.` : ''
       }`,
-      'character converted:',
+      `${kind} converted:`,
     );
   }
-  for (const { name, assetRef, why } of report.kept) {
+  for (const { kind, name, assetRef, why } of report.kept) {
     notify(
-      characterNoticeKey(assetRef),
+      noticeKey(kind, assetRef),
       `"${name}" still loads on the old imported-file structure: ${why.join('; ')}.`,
-      'character not converted:',
+      `${kind} not converted:`,
     );
   }
 }

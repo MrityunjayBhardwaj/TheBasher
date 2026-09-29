@@ -123,7 +123,9 @@ describe('an untouched saved character', () => {
       expect(cloneTypes(saved).length).toBeGreaterThan(0);
       const { state, report } = await convertCloneCharacters(saved, deps(fixture));
       expect(report.kept).toEqual([]);
-      expect(report.converted).toEqual([{ name: 'skinned-bar.glb', assetRef: REF, notes: [] }]);
+      expect(report.converted).toEqual([
+        { kind: 'character', name: 'skinned-bar.glb', assetRef: REF, notes: [] },
+      ]);
       expect(cloneTypes(state)).toEqual([]);
       expect(state.nodes).toEqual((await freshNative(fixture)).nodes);
     },
@@ -170,7 +172,9 @@ describe('edits carried across', () => {
       { type: 'setHidden', nodeId: grp, hidden: true },
     ]);
     const { state, report } = await convertCloneCharacters(saved, deps('skinned-bar.glb'));
-    expect(report.converted).toEqual([{ name: 'Hero', assetRef: REF, notes: [] }]);
+    expect(report.converted).toEqual([
+      { kind: 'character', name: 'Hero', assetRef: REF, notes: [] },
+    ]);
     const nativeGrp = hashId('nativeGrp', REF);
     expect(state.nodes.n_holder.inputs.children).toEqual([
       { node: nativeGrp, socket: 'out' },
@@ -373,6 +377,7 @@ describe('a character that is kept, and says why', () => {
     expect(report.converted).toEqual([]);
     expect(report.kept).toEqual([
       {
+        kind: 'character',
         name: 'skinned-bar.glb',
         assetRef: REF,
         why: ['"Forearm" was renamed, and it is a bone, which has no node of its own natively'],
@@ -441,6 +446,7 @@ describe('a character that is kept, and says why', () => {
     expect(state).toBe(saved);
     expect(report.kept).toEqual([
       {
+        kind: 'character',
         name: 'skinned-bar.glb',
         assetRef: REF,
         why: [`its file (${REF}) is no longer in this browser's storage`],
@@ -448,7 +454,7 @@ describe('a character that is kept, and says why', () => {
     ]);
   });
 
-  it('a clone import that is not a character is not touched', async () => {
+  it('a clone import that is not a character is converted too (#1317) — kept here, its file gone', async () => {
     const bytes = bytesOf('specgloss-quad.glb');
     const clone = await buildGltfImportOps(
       { ...argsFor('specgloss-quad.glb'), buffer: bytes.buffer.slice(0) as ArrayBuffer },
@@ -457,7 +463,17 @@ describe('a character that is kept, and says why', () => {
     const saved = apply(buildDefaultDagState(), clone.ops);
     const { state, report } = await convertCloneCharacters(saved, deps(null));
     expect(state).toBe(saved);
-    expect(report).toEqual({ converted: [], kept: [] });
+    expect(report).toEqual({
+      converted: [],
+      kept: [
+        {
+          kind: 'model',
+          name: 'skinned-bar.glb',
+          assetRef: REF,
+          why: [`its file (${REF}) is no longer in this browser's storage`],
+        },
+      ],
+    });
   });
 });
 
@@ -471,7 +487,7 @@ describe('the load door: saved to storage, loaded back, converted', () => {
 
     const { project, report } = await convertLoadedProject(loaded, storage);
     expect(report).toEqual({
-      converted: [{ name: 'skinned-bar.glb', assetRef: REF, notes: [] }],
+      converted: [{ kind: 'character', name: 'skinned-bar.glb', assetRef: REF, notes: [] }],
       kept: [],
     });
     expect(project.id).toBe('proj_saved');
@@ -533,6 +549,7 @@ describe('converting never stops a project from opening', () => {
     expect(state).toBe(saved);
     expect(report.kept).toEqual([
       {
+        kind: 'character',
         name: 'skinned-bar.glb',
         assetRef: REF,
         why: [expect.stringMatching(/^it could not be converted \(/)],
