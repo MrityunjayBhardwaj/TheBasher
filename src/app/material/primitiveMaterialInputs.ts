@@ -218,6 +218,7 @@ export function primitiveMaterialSpec(
     // #1123 — the map strengths, omitted at their default for the same reason.
     ...(compiled.normalScale !== undefined ? { normalScale: compiled.normalScale } : {}),
     ...(compiled.aoMapIntensity !== undefined ? { aoMapIntensity: compiled.aoMapIntensity } : {}),
+    ...(compiled.materialClass ? { materialClass: compiled.materialClass } : {}),
     // #1062 — the layer names, RESOLVED against the mesh this material will draw on. Spread
     // from one object so the spec and the key below cannot state the resolution differently.
     ...resolved,

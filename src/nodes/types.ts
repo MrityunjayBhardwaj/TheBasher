@@ -400,6 +400,20 @@ export interface InlineMaterialSpec {
    */
   readonly mapStrengths?: { readonly normal?: number; readonly ao?: number };
   /**
+   * #1123 — draw the surface UNLIT: its base colour and base map as they are, with no lighting, no
+   * lobes and no other maps. glTF `KHR_materials_unlit`; three's loader draws it as a
+   * `MeshBasicMaterial`, and Blender's importer replaces the whole surface with an Emission of the
+   * base colour. A class of surface, not a lobe; the compile and the bake call it
+   * `materialClass: 'basic'`. Absent means lit.
+   *
+   * 🔴 NOT NAMED `materialClass` HERE: that key is the one discriminator between this spec and a
+   * {@link BakedMaterialSpec} (`isBakedMaterialSpec`), so an unlit material carrying it would be
+   * read as a baked snapshot.
+   *
+   * 🔴 OPTIONAL WITH NO `.default()`, for the reason {@link mapUvTransforms} states.
+   */
+  readonly unlit?: true;
+  /**
    * OpenPBR lobes with NO classic-WebGL MeshPhysical representation
    * (subsurface*, transmission_scatter*, base_diffuse_roughness,
    * coat_ior/color/darkening, dispersion Abbe). STORED for the v0.7 TSL backend,

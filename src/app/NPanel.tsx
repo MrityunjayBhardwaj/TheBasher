@@ -2016,6 +2016,13 @@ const MATERIAL_LOBES: { lobe: string; label: string; fields: MaterialFieldSpec[]
   },
 ];
 
+/** The object without one own key: absent, not set to `undefined` (a key walk would still see it). */
+function withoutKey<T extends Record<string, unknown>>(o: T, key: string): T {
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(o)) if (k !== key) out[k] = v;
+  return out as T;
+}
+
 /** #1123 — a map's strength as the material holds it; absent means 1, both references' default. */
 function mapStrengthOf(material: Record<string, unknown>, slot: 'normal' | 'ao'): number {
   const bag = material.mapStrengths as { normal?: unknown; ao?: unknown } | undefined;
@@ -2297,18 +2304,39 @@ function UvTransformSection({
 // because it is a no-op" — it is hidden because it is UNSATISFIABLE on that road.
 function MaterialRenderOptions({
   geometry,
+  unlit,
   testidBase,
   onSet,
+  onUnlit,
 }: {
   geometry: { alphaCutoff?: number; vertexColors?: boolean; doubleSided?: boolean };
+  /** #1123 — the surface draws unlit (glTF `KHR_materials_unlit`). */
+  unlit: boolean;
   testidBase: string;
   onSet: (key: 'alphaCutoff' | 'vertexColors' | 'doubleSided', value: number | boolean) => void;
+  onUnlit: (unlit: boolean) => void;
 }) {
   return (
     <div className="flex flex-col" data-testid={`inspector-render-options-${testidBase}`}>
       <div className="px-3 pb-0.5 pt-1.5 font-mono text-[10px] uppercase tracking-wide text-fg/40">
         Render Options
       </div>
+      <label className="flex items-center justify-between gap-2 px-3 py-1.5 text-[11px] text-fg/80">
+        <span
+          className="font-mono text-fg/60"
+          title="Draw the base colour and base map with no lighting. Other maps and lobes are kept but not drawn."
+        >
+          unlit
+        </span>
+        <input
+          type="checkbox"
+          checked={unlit}
+          aria-label="unlit"
+          data-testid={`inspector-unlit-${testidBase}`}
+          onChange={(e) => onUnlit(e.target.checked)}
+          className="h-3.5 w-3.5 cursor-pointer accent-accent"
+        />
+      </label>
       <label className="flex items-center justify-between gap-2 px-3 py-1.5 text-[11px] text-fg/80">
         <span className="font-mono text-fg/60">double-sided</span>
         <input
@@ -3041,8 +3069,18 @@ function MaterialEditor({
             doubleSided?: boolean;
           }
         }
+        unlit={(material as { unlit?: unknown }).unlit === true}
         testidBase={nodeId}
         onSet={(key, value) => commitField(`geometry.${key}`, value, `set ${base}.geometry.${key}`)}
+        // #1123 — lit is the ABSENT key (the schema holds only `true`), so turning it off writes the
+        // material without the field rather than `unlit: false`, which would not parse.
+        onUnlit={(on) =>
+          commitField(
+            '',
+            on ? { ...material, unlit: true } : withoutKey(material, 'unlit'),
+            on ? 'make material unlit' : 'make material lit',
+          )
+        }
       />
     </div>
   );

@@ -84,13 +84,12 @@
 //      docs/RENDER-RESOURCE-IDENTITY-DESIGN.md S3; issues #530, #533, #535, #536.
 
 import { useLayoutEffect } from 'react';
-import type * as THREE from 'three';
 import type { InlineMaterialSpec, MaterialValue } from '../../nodes/types';
 import { useBakedTexture } from '../asset/bakedTextureLoader';
 // The accessor surface, imported by NAME. `import * as materialRegistry` would name the
 // module and never the binding, which is exactly the door this seam exists to declare —
 // see `registryDoors.gate.test.ts` case 1, which refuses the namespace form outright.
-import { get as getMaterial, release, retain } from '../materialRegistry';
+import { get as getMaterial, release, retain, type PrimitiveMaterial } from '../materialRegistry';
 import { compilePrimitiveMaterial, primitiveMaterialInputs } from './primitiveMaterialInputs';
 import type { NamedCornerLayer } from '../cornerLayerNames';
 
@@ -111,7 +110,7 @@ export function usePrimitiveMaterial(
    * carries no layer list, so no name resolves and nothing is drawn that was not before.
    */
   layers: readonly NamedCornerLayer[],
-): THREE.MeshPhysicalMaterial {
+): PrimitiveMaterial {
   const compiled = compilePrimitiveMaterial(ir, override);
   // v0.6 #2 (#178, W5) — suspense-load the 6 map slots UNCONDITIONALLY (rules-of-
   // hooks safe; useBakedTexture(null) is a no-op). The OPFS read + decode lives in

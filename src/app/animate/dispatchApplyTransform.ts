@@ -304,11 +304,36 @@ function bakedSpecFromInline(material: InlineMaterialSpec | null): BakedMaterial
     };
   }
   const drawn = openpbrToThree(material);
+  // #1123 — an unlit material draws its colour and base map alone, so that is all its bake holds:
+  // the same shape the clone capture writes for a basic material, which the rebuild draws unlit.
+  const basic = drawn.materialClass === 'basic';
   const placements: { [K in BakedMapSlot]?: UvPlacement } = {};
   for (const slot of Object.keys(drawn.maps) as BakedMapSlot[]) {
-    if (drawn.maps[slot] === null) continue;
+    if (drawn.maps[slot] === null || (basic && slot !== 'map')) continue;
     const placement = resolveSlotPlacement(drawn.uvTransform, drawn.mapUvTransforms, slot);
     if (!isIdentityPlacement(placement)) placements[slot] = placement;
+  }
+  if (basic) {
+    // The basic shape `captureBakedMaterial` writes: colour, base map, opacity and the surface.
+    return {
+      materialClass: 'basic',
+      color: drawn.color,
+      roughness: 0.5,
+      metalness: 0,
+      opacity: drawn.opacity,
+      transparent: drawn.transparent,
+      emissive: '#000000',
+      emissiveIntensity: 0,
+      map: drawn.maps.map,
+      normalMap: null,
+      roughnessMap: null,
+      metalnessMap: null,
+      aoMap: null,
+      emissiveMap: null,
+      ...(Object.keys(placements).length > 0 ? { mapPlacements: placements } : {}),
+      ...(drawn.alphaTest !== 0 ? { alphaTest: drawn.alphaTest } : {}),
+      ...(drawn.doubleSided ? { doubleSided: true } : {}),
+    };
   }
   return {
     // Physical, as the primitive draws (`materialRegistry` builds a MeshPhysicalMaterial).

@@ -41,10 +41,10 @@
 //      src/nodes/materialKeyReach.gate.test.ts (case D counts these calls);
 //      issues #638, #545, #536.
 
-import type * as THREE from 'three';
 import type { InlineMaterialSpec, MaterialValue } from '../../nodes/types';
 import { usePrimitiveMaterial } from './usePrimitiveMaterial';
 import type { NamedCornerLayer } from '../cornerLayerNames';
+import type { PrimitiveMaterial } from '../materialRegistry';
 
 /**
  * The most material slots one mesh can render with.
@@ -76,7 +76,7 @@ export function useSlotMaterials(
    */
   layers: readonly NamedCornerLayer[],
 ): {
-  readonly materials: readonly THREE.MeshPhysicalMaterial[];
+  readonly materials: readonly PrimitiveMaterial[];
   readonly capRefusal: string | null;
 } {
   // Written out rather than looped, and that is the decision D5 records: a loop over a

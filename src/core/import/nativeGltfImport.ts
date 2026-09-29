@@ -271,6 +271,8 @@ const HELD_EXTENSIONS = new Set([
   'KHR_materials_emissive_strength',
   // #1320 — a texture's WebP source is read when it is the only one (see `readTextureImage`).
   WEBP_EXTENSION,
+  // #1123 — an unlit surface, the material's `unlit`.
+  'KHR_materials_unlit',
 ]);
 
 // #1050 — where a material may sample a texture and still arrive whole: the slots the IR captures

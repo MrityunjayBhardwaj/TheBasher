@@ -2971,6 +2971,27 @@ describe('#1139 — a primitive bakes the material it draws, maps and placement 
     });
   });
 
+  describe('#1123 — an unlit box bakes as the basic class', () => {
+    it('keeps its colour and base map, and nothing lit', async () => {
+      const albedo = { ...IMAGE, hash: 'a.png' };
+      const normal = { ...IMAGE, hash: 'n.png', colorSpace: 'srgb-linear' as const };
+      const { result, spec } = await bakeBoxWith({
+        unlit: true,
+        base: { color: '#336699', metalness: 0.5 },
+        maps: { ...NULL_IR_MAPS, albedo, normal },
+      });
+      expect(result.ok).toBe(true);
+      expect(spec).toMatchObject({ materialClass: 'basic', color: '#336699', map: albedo });
+      expect(spec.normalMap).toBeNull();
+      expect('physical' in spec).toBe(false);
+    });
+
+    it('a lit box still bakes physical', async () => {
+      const { spec } = await bakeBoxWith({});
+      expect(spec.materialClass).toBe('physical');
+    });
+  });
+
   describe('#1123 — the normal and occlusion strengths come across', () => {
     const normal = { ...IMAGE, hash: 'n.png', colorSpace: 'srgb-linear' as const };
     const ao = { ...IMAGE, hash: 'ao.png', colorSpace: 'srgb-linear' as const };

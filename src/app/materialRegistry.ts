@@ -192,6 +192,11 @@ export interface PrimitiveMaterialSpec {
   /** #1123 — the occlusion map's strength. Absent means three's default of 1. */
   readonly aoMapIntensity?: number;
   /**
+   * #1123 — `'basic'` builds an UNLIT `MeshBasicMaterial` from the colour, the base map and the
+   * surface flags alone, as three's glTF loader does for `KHR_materials_unlit`. Absent means lit.
+   */
+  readonly materialClass?: 'basic';
+  /**
    * The RESOLVED map textures (already decoded + shared by hash), not the refs.
    * Resolution happens above this module, in the suspense hooks; keying on the
    * instance means a slot that is still loading and one that has loaded are
@@ -227,7 +232,7 @@ export const MAP_SLOTS = Object.keys(
 ) as (keyof PrimitiveMaterialSpec['textures'])[];
 
 interface Entry {
-  readonly material: THREE.MeshPhysicalMaterial;
+  readonly material: PrimitiveMaterial;
   /** Committed holders. `get` never touches this — only `retain` / `release`. */
   count: number;
   /** An eviction is already queued for this entry (do not queue a second). */
@@ -288,7 +293,7 @@ export function get(
   key: string = keyOf(spec),
 ): {
   key: string;
-  material: THREE.MeshPhysicalMaterial;
+  material: PrimitiveMaterial;
 } {
   const hit = cache.get(key);
   if (hit) return { key, material: hit.material };
@@ -323,7 +328,10 @@ export function release(key: string): void {
   });
 }
 
-function build(spec: PrimitiveMaterialSpec): THREE.MeshPhysicalMaterial {
+/** What the registry builds: the lit physical material, or the unlit basic one (#1123). */
+export type PrimitiveMaterial = THREE.MeshPhysicalMaterial | THREE.MeshBasicMaterial;
+
+function build(spec: PrimitiveMaterialSpec): PrimitiveMaterial {
   // Textures are cached & SHARED by hash (bakedTextureLoader), so CLONE before
   // applying the UV transform — mutating the shared instance would cross-
   // contaminate every other material using that image. The clone shares the image
@@ -350,6 +358,25 @@ function build(spec: PrimitiveMaterialSpec): THREE.MeshPhysicalMaterial {
     clones.push(c);
     return c;
   };
+
+  if (spec.materialClass === 'basic') {
+    // #1123 — unlit: colour, base map and the surface flags, nothing lit. three's GLTFLoader draws
+    // `KHR_materials_unlit` exactly so, skipping every other map (`materialType !== MeshBasicMaterial`),
+    // and Blender wires only the base colour into its Emission.
+    const b = new THREE.MeshBasicMaterial();
+    b.color = new THREE.Color(spec.color);
+    b.opacity = spec.opacity;
+    b.transparent = spec.transparent;
+    b.wireframe = spec.wireframe;
+    b.alphaTest = spec.alphaTest;
+    b.side = spec.side;
+    b.vertexColors = spec.vertexColors;
+    b.map = prep(spec.textures.map, 'map', MAP_COLOR_SPACE.map);
+    const channel = spec.mapUvChannels?.map;
+    if (channel !== undefined && b.map) b.map.channel = channel;
+    b.userData.__uvClones = clones;
+    return b;
+  }
 
   const m = new THREE.MeshPhysicalMaterial();
   m.color = new THREE.Color(spec.color);
@@ -390,7 +417,7 @@ function build(spec: PrimitiveMaterialSpec): THREE.MeshPhysicalMaterial {
   return m;
 }
 
-function dispose(material: THREE.MeshPhysicalMaterial): void {
+function dispose(material: PrimitiveMaterial): void {
   material.dispose();
   // Material.dispose does NOT free textures, and these clones are ours.
   (material.userData.__uvClones as THREE.Texture[] | undefined)?.forEach((t) => t.dispose());

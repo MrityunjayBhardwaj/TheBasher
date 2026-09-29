@@ -1067,6 +1067,40 @@ describe('buildNativeGltfImportOps', () => {
     expect('mapStrengths' in material).toBe(false);
   });
 
+  it('#1123 — an unlit material arrives native as the basic class, its base map kept', async () => {
+    const result = await buildNativeGltfImportOps({
+      buffer: fixture('public/assets/unlit-quad.gltf'),
+      assetRef: 'user-imports/native/unlit.gltf',
+      sceneNodeId: 'n_scene',
+      storeImage: async () => 'img',
+    });
+    if ('refused' in result) throw new Error(`${result.refused} (${result.issue})`);
+    const data = result.ops.find(
+      (op): op is Extract<Op, { type: 'addNode' }> =>
+        op.type === 'addNode' && op.nodeType === 'PolyMeshData',
+    )!;
+    const material = PolyMeshDataParams.parse(data.params).material!;
+    expect(material.unlit).toBe(true);
+    // Not `materialClass`: that key is what tells a baked spec from this one.
+    expect('materialClass' in material).toBe(false);
+    expect(material.maps.albedo?.hash).toBe('img');
+  });
+
+  it('#1123 — a lit material names no class, so it keys as it always did', async () => {
+    const result = await buildNativeGltfImportOps({
+      buffer: fixture(TEXTURED),
+      assetRef: 'user-imports/native/lit.gltf',
+      sceneNodeId: 'n_scene',
+      storeImage: async () => 'img',
+    });
+    if ('refused' in result) throw new Error(result.refused);
+    const data = result.ops.find(
+      (op): op is Extract<Op, { type: 'addNode' }> =>
+        op.type === 'addNode' && op.nodeType === 'PolyMeshData',
+    )!;
+    expect('unlit' in PolyMeshDataParams.parse(data.params).material!).toBe(false);
+  });
+
   describe('#1320 — WebP textures, chosen the way Blender chooses by default', () => {
     /** Import a fixture and report what was stored and what the albedo points at. */
     async function importStoring(file: string) {

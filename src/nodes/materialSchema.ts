@@ -234,6 +234,8 @@ export function openpbrMaterialSchema() {
       mapUvTransforms: mapUvTransformsSchema,
       mapUvLayers: mapUvLayersSchema,
       mapStrengths: mapStrengthsSchema,
+      // #1123 — unlit. Optional, absent means lit, and no default for the reason above.
+      unlit: z.literal(true).optional(),
       unsupported: z.record(z.string(), z.number()).optional(),
     })
     .default({});
@@ -323,6 +325,7 @@ export function hydrateInlineMaterial(
     mapUvTransforms?: Record<string, { tiling?: unknown; offset?: unknown; rotation?: unknown }>;
     mapUvLayers?: Record<string, unknown>;
     mapStrengths?: { normal?: unknown; ao?: unknown };
+    unlit?: unknown;
     unsupported?: Record<string, number>;
   };
   const legacyColor = typeof m.color === 'string' ? m.color : undefined;
@@ -379,7 +382,9 @@ export function hydrateInlineMaterial(
   // #1123 — the map strengths, conditional for the same reason.
   const strengths = hydrateMapStrengths(m.mapStrengths);
   const withStrengths = strengths ? { ...withUvSets, mapStrengths: strengths } : withUvSets;
-  return m.unsupported ? { ...withStrengths, unsupported: m.unsupported } : withStrengths;
+  // #1123 — unlit, conditional for the same reason; anything but `true` reads as lit.
+  const withClass = m.unlit === true ? { ...withStrengths, unlit: true as const } : withStrengths;
+  return m.unsupported ? { ...withClass, unsupported: m.unsupported } : withClass;
 }
 
 /**

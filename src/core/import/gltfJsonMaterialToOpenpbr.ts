@@ -363,6 +363,8 @@ export function gltfJsonMaterialToOpenpbr(
   const perMap = capturePerMapUvTransforms(mat);
   const perUvSets = capturePerMapUvLayers(mat);
   const strengths = captureMapStrengths(mat);
+  // #1123 — KHR_materials_unlit: the surface is drawn unlit (Blender: an Emission of base colour).
+  const unlit = mat.extensions?.KHR_materials_unlit !== undefined;
   return {
     name: mat.name || 'default',
     base: {
@@ -402,5 +404,6 @@ export function gltfJsonMaterialToOpenpbr(
     ...(perMap ? { mapUvTransforms: perMap } : {}),
     ...(perUvSets ? { mapUvLayers: perUvSets } : {}),
     ...(strengths ? { mapStrengths: strengths } : {}),
+    ...(unlit ? { unlit: true as const } : {}),
   };
 }

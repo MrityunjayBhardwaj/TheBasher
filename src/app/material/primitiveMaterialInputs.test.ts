@@ -154,6 +154,7 @@ const CORPUS: readonly World[] = [
   // #1123 — the two map strengths; a spec that drops one makes its world a duplicate of `base`.
   world('normal strength', { ir: irWith({ mapStrengths: { normal: 0.5 } }) }),
   world('occlusion strength', { ir: irWith({ mapStrengths: { ao: 0.3 } }) }),
+  world('unlit', { ir: irWith({ unlit: true }) }),
   world('uvTransform', {
     ir: irWith({ uvTransform: { tiling: [2, 3], offset: [0.25, 0], rotation: 0.5 } }),
   }),
@@ -384,6 +385,10 @@ describe('#566 — every field the compile produces is carried on the spec, or e
     // what makes a declared correspondence necessary here rather than name equality.
     colorLayer: 'vertexColors',
     mapUvLayers: 'mapUvChannels',
+    // #1123 — the map strengths and the unlit class, each under the build's own name.
+    normalScale: 'normalScale',
+    aoMapIntensity: 'aoMapIntensity',
+    materialClass: 'materialClass',
   };
 
   /**
@@ -422,6 +427,11 @@ describe('#566 — every field the compile produces is carried on the spec, or e
       // #1062 — `mapUvLayers` is conditionally emitted too, so without a world naming a UV
       // layer the union is blind to it and every case in this file would be blind with it.
       irWith({ mapUvLayers: { albedo: 'UVMap.001' } }),
+      // #1123 — both strengths and the unlit class are conditional too. The strengths were
+      // missing here when they landed, and the source half could not see them either: their
+      // condition used `?.`, which the pattern below did not read (widened with this entry).
+      irWith({ mapStrengths: { normal: 0.5, ao: 0.3 } }),
+      irWith({ unlit: true }),
     ];
     const seen = new Set<string>();
     for (const ir of worlds)
@@ -446,12 +456,14 @@ describe('#566 — every field the compile produces is carried on the spec, or e
     // EXACT on both sides. A floor would pass a field that stopped being produced — which is
     // the direction that looks like cleanup and silently removes a rendering lobe.
     const produced = producedFields();
-    expect(produced.length).toBe(19);
-    expect(produced.filter((f) => f in CARRIED).length).toBe(19);
+    expect(produced.length).toBe(22);
+    expect(produced.filter((f) => f in CARRIED).length).toBe(22);
     expect(produced.filter((f) => f in EXCLUDED).length).toBe(0);
   });
 
   it('every CARRIED target really is a key of the assembled spec', () => {
+    // #1123 — the strengths and the class are conditional on the spec too, so the world below
+    // sets them.
     // Guards the map itself. A stale entry — right-hand side renamed, or the field dropped
     // from the assembly — would otherwise let the first case pass while nothing arrives.
     // #1062 — the IR must name BOTH layers and the layer list must RESOLVE them, or
@@ -464,6 +476,8 @@ describe('#566 — every field the compile produces is carried on the spec, or e
           mapUvTransforms: { albedo: { tiling: [2, 2], offset: [0, 0], rotation: 0 } },
           mapUvLayers: { albedo: 'UVMap.001' },
           geometry: { opacity: 1, colorLayer: 'Color' },
+          mapStrengths: { normal: 0.5, ao: 0.3 },
+          unlit: true,
         }),
         undefined,
       ),
@@ -522,7 +536,11 @@ describe('#566 — every field the compile produces is carried on the spec, or e
     const src = stripComments(readFileSync(join(__dirname, '..', '..', '..', COMPILER), 'utf8'));
     const body = /export function openpbrToThree[\s\S]*?\n}/.exec(src);
     if (!body) throw new Error('could not find the openpbrToThree body');
-    return [...body[0].matchAll(/\.\.\.\([^?]*\?\s*\{\s*([A-Za-z0-9_]+)\s*:/g)].map((m) => m[1]);
+    // The condition may use optional chaining (`a?.b !== undefined ? {…}`, #1123), so a `?`
+    // followed by `.` is part of it; the first other `?` is the ternary's.
+    return [...body[0].matchAll(/\.\.\.\((?:[^?]|\?\.)*\?\s*\{\s*([A-Za-z0-9_]+)\s*:/g)].map(
+      (m) => m[1],
+    );
   };
 
   /**

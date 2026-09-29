@@ -153,6 +153,8 @@ export interface ThreeMaterialParams {
   readonly normalScale?: number;
   /** #1123 — the occlusion map's strength (three's `aoMapIntensity`). Absent means 1. */
   readonly aoMapIntensity?: number;
+  /** #1123 — `'basic'`: build an unlit material. Absent means lit. */
+  readonly materialClass?: 'basic';
 }
 
 /** The UV layer a map slot samples, in THREE's slot vocabulary. */
@@ -198,6 +200,8 @@ export function openpbrToThree(ir: InlineMaterialSpec): ThreeMaterialParams {
     // #1123 — the two map strengths, each omitted at its default for the same reason.
     ...(ir.mapStrengths?.normal !== undefined ? { normalScale: ir.mapStrengths.normal } : {}),
     ...(ir.mapStrengths?.ao !== undefined ? { aoMapIntensity: ir.mapStrengths.ao } : {}),
+    // #1123 — unlit; omitted when lit, same reason.
+    ...(ir.unlit ? { materialClass: 'basic' as const } : {}),
   };
   // NOTE: ir.unsupported is intentionally NOT read — those lobes have no WebGL
   // MeshPhysical representation (v0.7 TSL backend renders them).

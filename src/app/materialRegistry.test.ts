@@ -25,6 +25,12 @@ import type { PrimitiveMaterialSpec } from './materialRegistry';
 
 afterEach(() => materialRegistry.clear());
 
+/** A lit build, narrowed by checking it rather than by assertion (#1123 added the basic one). */
+function lit(m: materialRegistry.PrimitiveMaterial): THREE.MeshPhysicalMaterial {
+  expect(m).toBeInstanceOf(THREE.MeshPhysicalMaterial);
+  return m as THREE.MeshPhysicalMaterial;
+}
+
 const BASE: PrimitiveMaterialSpec = {
   color: '#3366cc',
   roughness: 0.42,
@@ -126,8 +132,8 @@ describe('#530 — two meshes whose material resolves to the same thing share on
     const first = materialRegistry.get(BASE);
     const overridden = materialRegistry.get({ ...BASE, roughness: 0.13 });
     expect(overridden.material).not.toBe(first.material);
-    expect(overridden.material.roughness).toBe(0.13);
-    expect(first.material.roughness).toBe(0.42);
+    expect(lit(overridden.material).roughness).toBe(0.13);
+    expect(lit(first.material).roughness).toBe(0.42);
     expect(materialRegistry.size()).toBe(2);
   });
 });
@@ -202,7 +208,7 @@ describe('#530 — the build applies every scalar the spec carries', () => {
       textures: { ...BASE.textures, normalMap: new THREE.Texture() },
     }).material;
     for (const [path, value] of scalars) {
-      const source = path === 'normalScale' ? withNormalMap : material;
+      const source = lit(path === 'normalScale' ? withNormalMap : material);
       const applied = source[path as keyof THREE.MeshPhysicalMaterial];
       // #1123 — `normalScale` is three's vector; the spec's strength is its x, which carries no
       // upload-dependent sign (#1325's y does, and is pinned below).
@@ -240,10 +246,12 @@ describe('#1325 — a normal map bends the surface toward image-up, whichever wa
     // At the default strength: absent, which is what every material without a strength holds.
     const atDefault: PrimitiveMaterialSpec = { ...BASE };
     delete (atDefault as { normalScale?: number }).normalScale;
-    return materialRegistry.get({
-      ...atDefault,
-      textures: { ...BASE.textures, normalMap: source },
-    }).material;
+    return lit(
+      materialRegistry.get({
+        ...atDefault,
+        textures: { ...BASE.textures, normalMap: source },
+      }).material,
+    );
   };
 
   it('an UNFLIPPED map (glTF) draws with y negated, as three`s own loader draws it', () => {
@@ -266,7 +274,36 @@ describe('#1325 — a normal map bends the surface toward image-up, whichever wa
       normalScale: 0.5,
       textures: { ...BASE.textures, normalMap: source },
     });
-    expect([material.normalScale.x, material.normalScale.y]).toEqual([0.5, -0.5]);
+    const m = lit(material);
+    expect([m.normalScale.x, m.normalScale.y]).toEqual([0.5, -0.5]);
+  });
+});
+
+describe('#1123 — an unlit spec builds a basic material from the colour and base map alone', () => {
+  it('is a MeshBasicMaterial carrying the colour, the base map clone and the surface flags', () => {
+    const map = new THREE.Texture();
+    const normal = new THREE.Texture();
+    const { material } = materialRegistry.get({
+      ...BASE,
+      materialClass: 'basic',
+      textures: { ...BASE.textures, map, normalMap: normal },
+    });
+    expect(material).toBeInstanceOf(THREE.MeshBasicMaterial);
+    const b = material as THREE.MeshBasicMaterial;
+    expect(`#${b.color.getHexString()}`).toBe(BASE.color);
+    expect(b.map).not.toBe(map); // the clone, placed, as the lit build does
+    expect(b.map!.repeat.x).toBe(2);
+    expect(b.opacity).toBe(BASE.opacity);
+    expect(b.alphaTest).toBe(BASE.alphaTest);
+    expect(b.side).toBe(BASE.side);
+    // Nothing lit comes across: three's loader skips every other map for an unlit material.
+    expect('normalMap' in b).toBe(false);
+  });
+
+  it('keys apart from the lit material it otherwise equals', () => {
+    expect(materialRegistry.keyOf({ ...BASE, materialClass: 'basic' })).not.toBe(
+      materialRegistry.keyOf(BASE),
+    );
   });
 });
 
