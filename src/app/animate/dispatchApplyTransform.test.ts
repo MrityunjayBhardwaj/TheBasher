@@ -2970,6 +2970,55 @@ describe('#1139 — a primitive bakes the material it draws, maps and placement 
       expect(spec.physical?.thickness).toBe(DEFAULT_TRANSMISSION_THICKNESS);
     });
   });
+
+  describe('#1123 — the normal and occlusion strengths come across', () => {
+    const normal = { ...IMAGE, hash: 'n.png', colorSpace: 'srgb-linear' as const };
+    const ao = { ...IMAGE, hash: 'ao.png', colorSpace: 'srgb-linear' as const };
+    const mapped = { ...NULL_IR_MAPS, normal, ao };
+
+    it('bakes each strength the box draws with', async () => {
+      const { result, spec } = await bakeBoxWith({
+        maps: mapped,
+        mapStrengths: { normal: 0.5, ao: 0.3 },
+      });
+      expect(result.ok).toBe(true);
+      expect(spec).toMatchObject({ normalScale: 0.5, aoMapIntensity: 0.3 });
+    });
+
+    it('a box at the default strengths writes neither field', async () => {
+      const { spec } = await bakeBoxWith({ maps: mapped });
+      expect('normalScale' in spec).toBe(false);
+      expect('aoMapIntensity' in spec).toBe(false);
+    });
+
+    it('both survive the schema that `addNode` parses through', async () => {
+      let state = makeSplitCube(emptyDagState(), { objectId: 'n_box' }).state;
+      const dataId = (state.nodes['n_box'].inputs.data as { node: string }).node;
+      const current = state.nodes[dataId].params.material as Record<string, unknown>;
+      state = applyOp(state, {
+        type: 'setParam',
+        nodeId: dataId,
+        paramPath: 'material',
+        value: { ...current, maps: mapped, mapStrengths: { normal: 0.5, ao: 0.3 } },
+      }).next;
+      let ops: Op[] = [];
+      await dispatchApplyTransform('n_box', 'all', {
+        state,
+        storage: new MemoryStorage(),
+        currentFrame: 0,
+        dispatchAtomic: (o) => {
+          ops = o;
+          return [];
+        },
+        setSelection: () => {},
+      });
+      let after = state;
+      for (const op of ops) after = applyOp(after, op).next;
+      const baked = Object.values(after.nodes).find((n) => n.type === 'BakedData');
+      const spec = (baked?.params as { material: BakedMaterialSpec }).material;
+      expect(spec).toMatchObject({ normalScale: 0.5, aoMapIntensity: 0.3 });
+    });
+  });
 });
 
 describe('#1153 — a primitive bake re-mints the Object and keeps its rotation mode', () => {

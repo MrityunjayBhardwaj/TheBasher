@@ -1015,18 +1015,6 @@ function materialRefusal(json: NativeGltfJson, materialIndex: number): NativeImp
         issue: '#1123',
       };
     }
-    if (path === 'normalTexture' && (info.scale ?? 1) !== 1) {
-      return {
-        refused: `${where} scales its normals by ${String(info.scale)}, which the native material does not hold`,
-        issue: '#1123',
-      };
-    }
-    if (path === 'occlusionTexture' && (info.strength ?? 1) !== 1) {
-      return {
-        refused: `${where} has occlusion strength ${String(info.strength)}, which the native material does not hold`,
-        issue: '#1123',
-      };
-    }
   }
   return null;
 }

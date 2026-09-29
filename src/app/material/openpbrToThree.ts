@@ -145,6 +145,14 @@ export interface ThreeMaterialParams {
    * access to. Absent rather than empty, same trap, same answer.
    */
   readonly mapUvLayers?: ThreeMapUvLayers;
+  /**
+   * #1123 — the normal map's strength, the IR's `mapStrengths.normal`. A STRENGTH, not three's
+   * signed `normalScale` vector: which way y points depends on the texture as uploaded, which only
+   * the builder holds (`normalScaleFor`, #1325). Absent means 1, and absent rather than 1, same trap.
+   */
+  readonly normalScale?: number;
+  /** #1123 — the occlusion map's strength (three's `aoMapIntensity`). Absent means 1. */
+  readonly aoMapIntensity?: number;
 }
 
 /** The UV layer a map slot samples, in THREE's slot vocabulary. */
@@ -187,6 +195,9 @@ export function openpbrToThree(ir: InlineMaterialSpec): ThreeMaterialParams {
     uvTransform: ir.uvTransform, // v0.6 #3 — pass through; the renderer applies it
     // #550 — the key is OMITTED, not set to undefined, when there is nothing per-map.
     ...(perMap ? { mapUvTransforms: perMap } : {}),
+    // #1123 — the two map strengths, each omitted at its default for the same reason.
+    ...(ir.mapStrengths?.normal !== undefined ? { normalScale: ir.mapStrengths.normal } : {}),
+    ...(ir.mapStrengths?.ao !== undefined ? { aoMapIntensity: ir.mapStrengths.ao } : {}),
   };
   // NOTE: ir.unsupported is intentionally NOT read — those lobes have no WebGL
   // MeshPhysical representation (v0.7 TSL backend renders them).

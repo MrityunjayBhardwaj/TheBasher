@@ -54,6 +54,10 @@ interface GltfTextureTransform {
 interface GltfTextureInfo {
   index?: number;
   texCoord?: number;
+  /** `normalTexture` only (#1123). */
+  scale?: number;
+  /** `occlusionTexture` only (#1123). */
+  strength?: number;
   extensions?: { KHR_texture_transform?: GltfTextureTransform };
 }
 
@@ -206,6 +210,20 @@ function capturePerMapUvLayers(mat: GltfJsonMaterial): InlineMaterialSpec['mapUv
   return Object.keys(out).length > 0 ? out : undefined;
 }
 
+/**
+ * #1123 — the normal map's scale and the occlusion map's strength, for a map that is there and
+ * says something other than the default of 1. `undefined` when neither does, so an ordinary
+ * material keys exactly as it did.
+ */
+function captureMapStrengths(mat: GltfJsonMaterial): InlineMaterialSpec['mapStrengths'] {
+  const out: { normal?: number; ao?: number } = {};
+  const normal = mat.normalTexture?.scale;
+  if (typeof normal === 'number' && normal !== 1) out.normal = normal;
+  const ao = mat.occlusionTexture?.strength;
+  if (typeof ao === 'number' && ao !== 1) out.ao = ao;
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
 function capturePerMapUvTransforms(mat: GltfJsonMaterial): InlineMaterialSpec['mapUvTransforms'] {
   if (!materialHasPerMapUvTransform(mat)) return undefined;
   const out: { -readonly [K in keyof InlineMaterialMaps]?: UvPlacement } = {};
@@ -344,6 +362,7 @@ export function gltfJsonMaterialToOpenpbr(
   // `undefined` in unconditionally would re-key every material (H265).
   const perMap = capturePerMapUvTransforms(mat);
   const perUvSets = capturePerMapUvLayers(mat);
+  const strengths = captureMapStrengths(mat);
   return {
     name: mat.name || 'default',
     base: {
@@ -382,5 +401,6 @@ export function gltfJsonMaterialToOpenpbr(
     uvTransform: captureUvTransform(mat),
     ...(perMap ? { mapUvTransforms: perMap } : {}),
     ...(perUvSets ? { mapUvLayers: perUvSets } : {}),
+    ...(strengths ? { mapStrengths: strengths } : {}),
   };
 }

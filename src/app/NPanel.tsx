@@ -37,7 +37,7 @@
 // viewport in <16ms because dispatch is sync + zustand subscribers
 // re-render before next frame).
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import {
   attachMapFromFile,
   MATERIAL_MAP_SLOTS,
@@ -2016,6 +2016,13 @@ const MATERIAL_LOBES: { lobe: string; label: string; fields: MaterialFieldSpec[]
   },
 ];
 
+/** #1123 — a map's strength as the material holds it; absent means 1, both references' default. */
+function mapStrengthOf(material: Record<string, unknown>, slot: 'normal' | 'ao'): number {
+  const bag = material.mapStrengths as { normal?: unknown; ao?: unknown } | undefined;
+  const v = bag?.[slot];
+  return typeof v === 'number' ? v : 1;
+}
+
 function isMaterialIR(v: unknown): v is Record<string, Record<string, unknown>> {
   return (
     typeof v === 'object' &&
@@ -2958,13 +2965,31 @@ function MaterialEditor({
           Maps
         </div>
         {MATERIAL_MAP_SLOTS.map((s) => (
-          <MapRow
-            key={s}
-            nodeId={nodeId}
-            slot={s}
-            mapRef={maps[s] ?? null}
-            onSet={(value, what) => commitField(`maps.${s}`, value, `${what} ${s} map`)}
-          />
+          <Fragment key={s}>
+            <MapRow
+              nodeId={nodeId}
+              slot={s}
+              mapRef={maps[s] ?? null}
+              onSet={(value, what) => commitField(`maps.${s}`, value, `${what} ${s} map`)}
+            />
+            {/* #1123 — the normal and occlusion maps carry a strength (glTF scale/strength,
+                Blender's Strength), shown under the map it acts on while that map is there.
+                Absent reads 1, both references' default; an edit creates the bag. */}
+            {(s === 'normal' || s === 'ao') && maps[s] ? (
+              <MaterialNumberRow
+                nodeId={nodeId}
+                paramPath={`${base}.mapStrengths.${s}`}
+                label={`${s} strength`}
+                value={mapStrengthOf(material, s)}
+                testidInput={`inspector-input-${nodeId}-${base}.mapStrengths.${s}`}
+                testidScrub={`inspector-scrub-${nodeId}-${base}.mapStrengths.${s}`}
+                onSource={(v) =>
+                  commitField(`mapStrengths.${s}`, v, `edit ${base}.mapStrengths.${s}`)
+                }
+                masked={maskedBy?.[`${base}.mapStrengths.${s}`] ?? suppliedBy}
+              />
+            ) : null}
+          </Fragment>
         ))}
       </div>
       {uvt ? (

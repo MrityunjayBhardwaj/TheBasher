@@ -168,6 +168,14 @@ const mapUvLayersSchema = z
   .optional();
 
 /**
+ * #1123 — the normal map's and the occlusion map's strength. Absent means 1. `.optional()` with NO
+ * `.default()`, for the reason `mapUvTransformsSchema` states.
+ */
+const mapStrengthsSchema = z
+  .object({ normal: z.number().optional(), ao: z.number().optional() })
+  .optional();
+
+/**
  * The OpenPBR core-10 inline-material zod schema (layer 1 — NEW-node defaults).
  * Every field AND every nested object carries a `.default` so a partial `setParam`
  * whole-params re-parse (ops.ts) always fills siblings (R6).
@@ -225,6 +233,7 @@ export function openpbrMaterialSchema() {
       uvTransform: uvTransformSchema,
       mapUvTransforms: mapUvTransformsSchema,
       mapUvLayers: mapUvLayersSchema,
+      mapStrengths: mapStrengthsSchema,
       unsupported: z.record(z.string(), z.number()).optional(),
     })
     .default({});
@@ -313,6 +322,7 @@ export function hydrateInlineMaterial(
     uvTransform?: { tiling?: unknown; offset?: unknown; rotation?: unknown };
     mapUvTransforms?: Record<string, { tiling?: unknown; offset?: unknown; rotation?: unknown }>;
     mapUvLayers?: Record<string, unknown>;
+    mapStrengths?: { normal?: unknown; ao?: unknown };
     unsupported?: Record<string, number>;
   };
   const legacyColor = typeof m.color === 'string' ? m.color : undefined;
@@ -366,7 +376,24 @@ export function hydrateInlineMaterial(
   // #997 — the per-slot UV layer, conditional for exactly the reason above.
   const uvSets = hydrateMapUvLayers(m.mapUvLayers);
   const withUvSets = uvSets ? { ...withPerMap, mapUvLayers: uvSets } : withPerMap;
-  return m.unsupported ? { ...withUvSets, unsupported: m.unsupported } : withUvSets;
+  // #1123 — the map strengths, conditional for the same reason.
+  const strengths = hydrateMapStrengths(m.mapStrengths);
+  const withStrengths = strengths ? { ...withUvSets, mapStrengths: strengths } : withUvSets;
+  return m.unsupported ? { ...withStrengths, unsupported: m.unsupported } : withStrengths;
+}
+
+/**
+ * #1123 — a serialized strength bag → the IR's, or `undefined` when it holds none. A value that is
+ * not a finite number is dropped, which reads as the default of 1.
+ */
+function hydrateMapStrengths(
+  raw: { normal?: unknown; ao?: unknown } | undefined,
+): InlineMaterialSpec['mapStrengths'] | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const out: { normal?: number; ao?: number } = {};
+  if (typeof raw.normal === 'number' && Number.isFinite(raw.normal)) out.normal = raw.normal;
+  if (typeof raw.ao === 'number' && Number.isFinite(raw.ao)) out.ao = raw.ao;
+  return Object.keys(out).length > 0 ? out : undefined;
 }
 
 /**

@@ -880,6 +880,9 @@ function MeshScaleProbe() {
       mapOffset: [number, number] | null;
       mapRotation: number | null;
       mapCenter: [number, number] | null;
+      // #1123 / #1325 — the drawn normal-map vector (sign included) and occlusion strength.
+      normalScale: [number, number] | null;
+      aoMapIntensity: number | null;
     } | null => {
       const grp = byNodeId(nodeId);
       if (!grp) return null;
@@ -919,6 +922,8 @@ function MeshScaleProbe() {
         // so a Physical material ≈ Standard cost. Deterministic, not a timing race.
         clearcoat: typeof phys.clearcoat === 'number' ? phys.clearcoat : null,
         transmission: typeof phys.transmission === 'number' ? phys.transmission : null,
+        normalScale: std.normalMap ? [std.normalScale.x, std.normalScale.y] : null,
+        aoMapIntensity: std.aoMap ? std.aoMapIntensity : null,
       };
     };
     return () => {
@@ -3277,10 +3282,11 @@ function CapturedBakedMeshR({
     m.map = placed(sRGB(mapTex), 'map');
     m.normalMap = placed(linear(normalTex), 'normalMap');
     // #1325 — the same orientation rule the registry's builder applies (`normalScaleFor`).
-    if (m.normalMap) m.normalScale.set(...normalScaleFor(m.normalMap));
+    if (m.normalMap) m.normalScale.set(...normalScaleFor(m.normalMap, spec.normalScale));
     m.roughnessMap = placed(linear(roughnessTex), 'roughnessMap');
     m.metalnessMap = placed(linear(metalnessTex), 'metalnessMap');
     m.aoMap = placed(linear(aoTex), 'aoMap');
+    if (spec.aoMapIntensity !== undefined) m.aoMapIntensity = spec.aoMapIntensity; // #1123
     m.emissiveMap = placed(sRGB(emissiveTex), 'emissiveMap');
     bakedSurface(m, spec);
     m.userData.__placedClones = clones;
@@ -3319,6 +3325,8 @@ function CapturedBakedMeshR({
     spec.mapPlacements,
     spec.alphaTest,
     spec.doubleSided,
+    spec.normalScale,
+    spec.aoMapIntensity,
   ]);
 
   // Dispose the built material when it is replaced or the node unmounts — it is

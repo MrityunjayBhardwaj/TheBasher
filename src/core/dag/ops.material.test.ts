@@ -54,3 +54,17 @@ describe('partial material setParam re-parse (R6 — every sibling defaulted)', 
     expect(mat.base.metalness).toBe(0); // sibling lobe untouched
   });
 });
+
+// #1123 — the map strengths are an OPTIONAL bag with no default, so a material saved before it
+// has none. An inspector edit on that material must create it, not fail validation or vanish.
+describe('#1123 — an edit on an absent map-strength bag creates it', () => {
+  it('the default box has no bag, and setting one strength makes a bag holding only it', () => {
+    const state = buildDefaultDagState();
+    const before = state.nodes.n_box_data.params.material as InlineMaterialSpec;
+    expect('mapStrengths' in before).toBe(false);
+    const next = applyOp(state, setParam('material.mapStrengths.normal', 0.4)).next;
+    const mat = next.nodes.n_box_data.params.material as InlineMaterialSpec;
+    expect(mat.mapStrengths).toEqual({ normal: 0.4 });
+    expect(mat.base.color).toBe(before.base.color); // the rest of the material is untouched
+  });
+});

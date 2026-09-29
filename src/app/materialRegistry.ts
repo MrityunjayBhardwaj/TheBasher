@@ -184,6 +184,14 @@ export interface PrimitiveMaterialSpec {
    */
   readonly mapUvChannels?: { readonly [K in keyof PrimitiveMaterialSpec['textures']]?: number };
   /**
+   * #1123 — the normal map's STRENGTH. three's `normalScale` is a vector whose y sign the build
+   * derives from the texture (`normalScaleFor`, #1325), so the spec holds the one number that is
+   * authored. Absent means 1, and ABSENT rather than 1 for the reason {@link mapUvTransforms} gives.
+   */
+  readonly normalScale?: number;
+  /** #1123 — the occlusion map's strength. Absent means three's default of 1. */
+  readonly aoMapIntensity?: number;
+  /**
    * The RESOLVED map textures (already decoded + shared by hash), not the refs.
    * Resolution happens above this module, in the suspense hooks; keying on the
    * instance means a slot that is still loading and one that has loaded are
@@ -376,7 +384,8 @@ function build(spec: PrimitiveMaterialSpec): THREE.MeshPhysicalMaterial {
   }
   // #1325 — a normal map's green is image-up; on an unflipped (glTF) texture three's derived
   // tangent frame points the other way, so y is negated. See `normalScaleFor`.
-  if (m.normalMap) m.normalScale.set(...normalScaleFor(m.normalMap));
+  if (m.normalMap) m.normalScale.set(...normalScaleFor(m.normalMap, spec.normalScale));
+  if (spec.aoMapIntensity !== undefined) m.aoMapIntensity = spec.aoMapIntensity; // #1123
   m.userData.__uvClones = clones;
   return m;
 }

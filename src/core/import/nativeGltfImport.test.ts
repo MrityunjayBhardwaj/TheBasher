@@ -774,22 +774,6 @@ describe('buildNativeGltfImportOps', () => {
       'names its own UV set',
     ],
     [
-      'a normal map with a scale',
-      () =>
-        texturedFixture((json) => {
-          materialOf(json).normalTexture = { index: 0, scale: 2 };
-        }),
-      '#1123',
-    ],
-    [
-      'an occlusion map with a strength',
-      () =>
-        texturedFixture((json) => {
-          materialOf(json).occlusionTexture = { index: 0, strength: 0.5 };
-        }),
-      '#1123',
-    ],
-    [
       'an image that is neither PNG nor JPEG',
       () =>
         texturedFixture((json) => {
@@ -1041,6 +1025,45 @@ describe('buildNativeGltfImportOps', () => {
     const ops = JSON.stringify(result.ops);
     expect(ops).not.toContain('gltfTexture');
     expect(ops).not.toContain('data:image');
+  });
+
+  it("#1123 — a normal map's scale and an occlusion map's strength arrive native, on the material", async () => {
+    const result = await buildNativeGltfImportOps({
+      buffer: fixture('public/assets/normal-strength-quad.gltf'),
+      assetRef: 'user-imports/native/strength.gltf',
+      sceneNodeId: 'n_scene',
+      storeImage: async (_bytes, mime) => `img-${mime}`,
+    });
+    if ('refused' in result) throw new Error(result.refused);
+    const data = result.ops.find(
+      (op): op is Extract<Op, { type: 'addNode' }> =>
+        op.type === 'addNode' && op.nodeType === 'PolyMeshData',
+    )!;
+    const material = PolyMeshDataParams.parse(data.params).material!;
+    expect(material.mapStrengths).toEqual({ normal: 0.5, ao: 0.3 });
+    expect(material.maps.normal).not.toBeNull();
+    expect(material.maps.ao).not.toBeNull();
+  });
+
+  it('#1123 — a strength of exactly 1 is the default and writes no field', async () => {
+    const buffer = texturedFixture((json) => {
+      materialOf(json).normalTexture = { index: 0, scale: 1 };
+      materialOf(json).occlusionTexture = { index: 0, strength: 1 };
+    });
+    const result = await buildNativeGltfImportOps({
+      buffer,
+      assetRef: 'user-imports/native/strength-one.gltf',
+      sceneNodeId: 'n_scene',
+      storeImage: async () => 'img',
+    });
+    if ('refused' in result) throw new Error(result.refused);
+    const data = result.ops.find(
+      (op): op is Extract<Op, { type: 'addNode' }> =>
+        op.type === 'addNode' && op.nodeType === 'PolyMeshData',
+    )!;
+    const material = PolyMeshDataParams.parse(data.params).material!;
+    expect(material.maps.normal).not.toBeNull();
+    expect('mapStrengths' in material).toBe(false);
   });
 
   it('#1123 — the UV-transform quad arrives native, its placement restated about the centre pivot', async () => {

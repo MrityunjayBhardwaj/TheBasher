@@ -389,6 +389,17 @@ export interface InlineMaterialSpec {
    */
   readonly mapUvLayers?: { readonly [K in keyof InlineMaterialMaps]?: string };
   /**
+   * #1123 — how strongly a map acts: the normal map's bend (glTF `normalTexture.scale`, Blender's
+   * Normal Map node Strength) and the occlusion map's darkening (glTF `occlusionTexture.strength`,
+   * which Blender's importer mixes toward white as "Occlusion Strength"). Absent, or absent for a
+   * slot, means 1, the default of both. Only these two slots carry a strength in either reference,
+   * so only they can be written here.
+   *
+   * 🔴 OPTIONAL WITH NO `.default()`, for the reason {@link mapUvTransforms} states: a
+   * materialised bag re-keys every existing material.
+   */
+  readonly mapStrengths?: { readonly normal?: number; readonly ao?: number };
+  /**
    * OpenPBR lobes with NO classic-WebGL MeshPhysical representation
    * (subsurface*, transmission_scatter*, base_diffuse_roughness,
    * coat_ior/color/darkening, dispersion Abbe). STORED for the v0.7 TSL backend,
@@ -510,6 +521,14 @@ export interface BakedMaterialSpec {
    * diverge by inverting. `BakedMeshR` passes this through `threeSideFor` like every other road.
    */
   readonly doubleSided?: boolean;
+  /**
+   * #1123 — the normal map's STRENGTH as it drew. Never three's signed `normalScale.y`: the rebuild
+   * derives y's sign from the texture again (`normalScaleFor`, #1325), so storing the signed value
+   * would flip it twice. Absent means 1, so every save before this field reads as it did.
+   */
+  readonly normalScale?: number;
+  /** #1123 — the occlusion map's strength as it drew (three's `aoMapIntensity`). Absent means 1. */
+  readonly aoMapIntensity?: number;
   // physical-only extras (captured only when materialClass==='physical', Wave 3).
   readonly physical?: {
     readonly clearcoat?: number;

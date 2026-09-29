@@ -215,6 +215,9 @@ export function primitiveMaterialSpec(
     // compile produced none: the spec's content key is a generic walk over own
     // enumerable keys, so a materialised empty bag would re-key every material.
     ...(compiled.mapUvTransforms ? { mapUvTransforms: compiled.mapUvTransforms } : {}),
+    // #1123 — the map strengths, omitted at their default for the same reason.
+    ...(compiled.normalScale !== undefined ? { normalScale: compiled.normalScale } : {}),
+    ...(compiled.aoMapIntensity !== undefined ? { aoMapIntensity: compiled.aoMapIntensity } : {}),
     // #1062 — the layer names, RESOLVED against the mesh this material will draw on. Spread
     // from one object so the spec and the key below cannot state the resolution differently.
     ...resolved,

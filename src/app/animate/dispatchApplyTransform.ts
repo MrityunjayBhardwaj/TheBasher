@@ -325,6 +325,9 @@ function bakedSpecFromInline(material: InlineMaterialSpec | null): BakedMaterial
     // #1140 — the cutout and the side, absent at three's defaults, as on the clone road.
     ...(drawn.alphaTest !== 0 ? { alphaTest: drawn.alphaTest } : {}),
     ...(drawn.doubleSided ? { doubleSided: true } : {}),
+    // #1123 — the map strengths, absent at their default of 1.
+    ...(drawn.normalScale !== undefined ? { normalScale: drawn.normalScale } : {}),
+    ...(drawn.aoMapIntensity !== undefined ? { aoMapIntensity: drawn.aoMapIntensity } : {}),
     physical: {
       clearcoat: drawn.clearcoat,
       clearcoatRoughness: drawn.clearcoatRoughness,

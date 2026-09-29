@@ -127,6 +127,10 @@ export function rebasePlacementPivot(
  * (`materialRegistry.ts` `build`, `SceneFromDAG.tsx` `CapturedBakedMeshR`; a flattened bake draws
  * through the registry), so they cannot disagree.
  */
-export function normalScaleFor(normalMap: Pick<THREE.Texture, 'flipY'>): [number, number] {
-  return [1, normalMap.flipY ? 1 : -1];
+export function normalScaleFor(
+  normalMap: Pick<THREE.Texture, 'flipY'>,
+  strength: number = 1,
+): [number, number] {
+  // #1123 — the strength scales both axes; only y's sign depends on the upload.
+  return [strength, normalMap.flipY ? strength : -strength];
 }

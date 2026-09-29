@@ -151,6 +151,9 @@ const CORPUS: readonly World[] = [
   // absent from this corpus; it is pinned on its own below.)
   world('alphaTest', { ir: irWith({ geometry: { opacity: 1, alphaCutoff: 0.5 } }) }),
   world('side (doubleSided)', { ir: irWith({ geometry: { opacity: 1, doubleSided: true } }) }),
+  // #1123 — the two map strengths; a spec that drops one makes its world a duplicate of `base`.
+  world('normal strength', { ir: irWith({ mapStrengths: { normal: 0.5 } }) }),
+  world('occlusion strength', { ir: irWith({ mapStrengths: { ao: 0.3 } }) }),
   world('uvTransform', {
     ir: irWith({ uvTransform: { tiling: [2, 3], offset: [0.25, 0], rotation: 0.5 } }),
   }),

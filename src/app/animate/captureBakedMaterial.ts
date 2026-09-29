@@ -182,6 +182,10 @@ export async function captureBakedMaterial(
   // #1136 — absent, not empty, when nothing is transformed, so an ordinary bake writes no field.
   const mapPlacements = bakedMapPlacements(material);
   if (mapPlacements) spec = { ...spec, mapPlacements };
+  // #1123 — the map strengths, absent at 1. `normalScale.x` is the strength: y's sign belongs to
+  // the texture's upload (#1325), and the rebuild derives it again.
+  if (std.normalMap && std.normalScale.x !== 1) spec = { ...spec, normalScale: std.normalScale.x };
+  if (std.aoMap && std.aoMapIntensity !== 1) spec = { ...spec, aoMapIntensity: std.aoMapIntensity };
 
   // Physical-only scalars (M3) — captured only when the subclass is physical.
   // Map refs for these (clearcoatMap etc.) are a v0.6 #2 follow-up.
