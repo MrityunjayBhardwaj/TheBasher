@@ -297,8 +297,10 @@ test('UX #9 — an imported HDRI embeds in the .basher bundle (V41 self-containe
 test('UX #9 — a corrupt HDRI surfaces an error and does NOT crash the viewport', async ({
   page,
 }) => {
+  const errors: string[] = [];
+  page.on('pageerror', (e) => errors.push(e.message));
   // Import bytes that pass the .hdr extension gate but are NOT a valid Radiance
-  // file → RGBELoader throws at decode time (render), past Suspense.
+  // file → RGBELoader throws at decode time, past Suspense.
   await page.evaluate(async () => {
     const w = window as unknown as EnvWindow;
     const garbage = new TextEncoder().encode('this is not a radiance hdr file');
@@ -319,9 +321,20 @@ test('UX #9 — a corrupt HDRI surfaces an error and does NOT crash the viewport
     );
   });
 
-  // The AssetErrorBoundary catches it: the banner surfaces the failure, the
-  // viewport stays alive (layout visible), and scene.environment never binds.
+  // #1309 — the loader answers a failed read with a magenta stand-in instead of throwing it into
+  // render (Blender fills an image it cannot decode with magenta): the banner names the file, the
+  // viewport stays alive (layout visible), and the environment binds to the stand-in rather than
+  // silently lighting nothing. It used to be caught by the AssetErrorBoundary and bind nothing.
   await expect(page.getByTestId('asset-error-banner')).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByTestId('asset-error-banner')).toContainText('drawn magenta');
   await expect(page.getByTestId('layout')).toBeVisible();
-  expect(await readEnv(page)).toEqual({ env: false, bg: false });
+  await expect.poll(() => readEnv(page)).toEqual({ env: true, bg: false });
+  // Never thrown into render: before #1309 this listed the RGBELoader error twice as well. The one
+  // left is three 0.169's own — `DataTextureLoader.load` calls `onError` for a parse failure and
+  // then falls through to `texData.image` (fixed upstream, where the `return` follows both
+  // branches). It fires in a network callback after the promise has already rejected, so it
+  // changes nothing drawn. Pinned exactly, so it goes red once three no longer throws it.
+  expect(errors, 'a corrupt HDRI is never thrown into render').toEqual([
+    "Cannot read properties of undefined (reading 'image')",
+  ]);
 });
