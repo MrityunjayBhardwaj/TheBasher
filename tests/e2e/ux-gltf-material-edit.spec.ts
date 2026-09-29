@@ -9,6 +9,7 @@
 // `materials` the renderer reads, the clone colour would never change.
 
 import { test, expect } from './_fixtures';
+import { ingestOnCloneRoad } from './_cloneRoadImport';
 import { openInspectorSection } from './_inspectorSections';
 import { importedChild, importedChildren } from './_importedChild';
 
@@ -29,13 +30,8 @@ interface BasherWindow {
 }
 
 async function ingestCube(page: import('@playwright/test').Page): Promise<void> {
-  await page.evaluate(async () => {
-    const w = window as unknown as BasherWindow;
-    const bytes = new Uint8Array(
-      await fetch('/assets/cube-draco.glb').then((r) => r.arrayBuffer()),
-    );
-    await w.__basher_ingestGltfFolder([{ relativePath: 'cube-draco.glb', bytes }], 'matedit');
-  });
+  // #1063 — the clone road on purpose: cube-draco now arrives native through ingest.
+  await ingestOnCloneRoad(page, 'cube-draco.glb', 'matedit');
 }
 
 // #389 — `id` is the DATA half's (where the material lives and what the controls are

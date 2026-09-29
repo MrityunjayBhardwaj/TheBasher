@@ -11,6 +11,7 @@
 // could never change from the inspector.
 
 import { test, expect } from './_fixtures';
+import { ingestOnCloneRoad } from './_cloneRoadImport';
 import { openInspectorSection } from './_inspectorSections';
 import { firstMaterialChild } from './_importedChild';
 
@@ -39,21 +40,6 @@ interface BasherWindow {
   __basher_importGltf: (buffer: ArrayBuffer, assetRef: string) => Promise<unknown>;
   __basher_writeOpfsBytes: (ref: string, bytes: Uint8Array) => Promise<void>;
   __basher_gltf_meshes?: () => MeshSummary[];
-}
-
-async function ingest(page: import('@playwright/test').Page, file: string, folder: string) {
-  await page.goto('/');
-  await page.waitForFunction(
-    () => typeof (window as unknown as BasherWindow).__basher_ingestGltfFolder === 'function',
-  );
-  await page.evaluate(
-    async ([f, name]) => {
-      const w = window as unknown as BasherWindow;
-      const bytes = new Uint8Array(await fetch(`/assets/${f}`).then((r) => r.arrayBuffer()));
-      await w.__basher_ingestGltfFolder([{ relativePath: f, bytes }], name);
-    },
-    [file, folder] as const,
-  );
 }
 
 /**
@@ -100,7 +86,8 @@ async function selectAndOpen(page: import('@playwright/test').Page, id: string) 
 
 test.describe('#217 — glTF material render-options + UV inspector controls', () => {
   test('toggling double-sided in the inspector flips the rendered side', async ({ page }) => {
-    await ingest(page, 'cube-draco.glb', 'ro-ds');
+    await page.goto('/');
+    await ingestOnCloneRoad(page, 'cube-draco.glb', 'ro-ds');
     await expect.poll(async () => (await materialChild(page))?.id).toBeTruthy();
     const child = await materialChild(page);
     await selectAndOpen(page, child!.id);
@@ -121,7 +108,8 @@ test.describe('#217 — glTF material render-options + UV inspector controls', (
   });
 
   test('setting alpha cutout in the inspector drives the rendered alphaTest', async ({ page }) => {
-    await ingest(page, 'cube-draco.glb', 'ro-ac');
+    await page.goto('/');
+    await ingestOnCloneRoad(page, 'cube-draco.glb', 'ro-ac');
     await expect.poll(async () => (await materialChild(page))?.id).toBeTruthy();
     const child = await materialChild(page);
     await selectAndOpen(page, child!.id);
@@ -144,7 +132,8 @@ test.describe('#217 — glTF material render-options + UV inspector controls', (
   // #220 — the imported material name is a label (not appearance), so the proof is
   // the DAG side (side A) + the read-side: the field resyncs to the committed name.
   test('renaming a material in the inspector updates the DAG name', async ({ page }) => {
-    await ingest(page, 'cube-draco.glb', 'ro-name');
+    await page.goto('/');
+    await ingestOnCloneRoad(page, 'cube-draco.glb', 'ro-name');
     await expect.poll(async () => (await materialChild(page))?.id).toBeTruthy();
     const child = await materialChild(page);
     await selectAndOpen(page, child!.id);

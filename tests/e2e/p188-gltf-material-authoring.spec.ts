@@ -11,6 +11,7 @@
 // it in a layer would be the H104-adjacent break). The diamond then reads 'on-key'.
 
 import { test, expect } from './_fixtures';
+import { ingestOnCloneRoad } from './_cloneRoadImport';
 import { importedChild } from './_importedChild';
 import { openInspectorSection } from './_inspectorSections';
 
@@ -61,13 +62,8 @@ test.describe('#188 — glTF material keyframe authoring (H104, free-floating ch
         !!(window as unknown as W).__basher_dag &&
         !!(window as unknown as W).__basher_selection,
     );
-    await page.evaluate(async () => {
-      const w = window as unknown as W;
-      const bytes = new Uint8Array(
-        await fetch('/assets/cube-draco.glb').then((r) => r.arrayBuffer()),
-      );
-      await w.__basher_ingestGltfFolder([{ relativePath: 'cube-draco.glb', bytes }], 'matauthor');
-    });
+    // #1063 — the clone road on purpose: cube-draco now arrives native through ingest.
+    await ingestOnCloneRoad(page, 'cube-draco.glb', 'matauthor');
     await expect.poll(async () => (await cubeChildIds(page)) !== null).toBe(true);
     const ids = (await cubeChildIds(page))!;
     // Select the OBJECT — that is what a director clicks — and address the params on the

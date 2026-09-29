@@ -23,6 +23,7 @@
 // file write/read exactly.
 
 import { test, expect } from './_fixtures';
+import { ingestOnCloneRoad } from './_cloneRoadImport';
 import { importedChild } from './_importedChild';
 import { openInspectorSection } from './_inspectorSections';
 
@@ -67,13 +68,8 @@ interface ChildMat {
 }
 
 async function ingestCube(page: Page): Promise<void> {
-  await page.evaluate(async () => {
-    const w = window as unknown as W;
-    const bytes = new Uint8Array(
-      await fetch('/assets/cube-draco.glb').then((r) => r.arrayBuffer()),
-    );
-    await w.__basher_ingestGltfFolder([{ relativePath: 'cube-draco.glb', bytes }], 'matround');
-  });
+  // #1063 — the clone road on purpose: cube-draco now arrives native through ingest.
+  await ingestOnCloneRoad(page, 'cube-draco.glb', 'matround');
 }
 
 /** The cube's captured material datum (slot 0), re-found by childName so it

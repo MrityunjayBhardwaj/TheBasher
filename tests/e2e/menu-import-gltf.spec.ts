@@ -7,10 +7,10 @@
 // root appear in the scene. Unwiring the menu item (or breaking the multi-model
 // loop) drops the count back → these fail.
 //
-// #1071 — counted on EITHER road. The two .glb fixtures are still refused by the
-// native reader (skinned; Draco) and arrive through the file's copy; the flat
-// multi-file .gltf is a file the native model holds and arrives as native geometry.
-// The picker under test is the same for both, so the count must not care.
+// #1071 — counted on EITHER road. All three fixtures now arrive as native geometry (the
+// skinned .glb since #1205, the Draco one since #1063, the flat multi-file .gltf before
+// them), but the picker under test is the same whichever road a file takes, so the
+// count must not care.
 
 import { expect, test } from './_fixtures';
 import { importCount } from './_importedMesh';

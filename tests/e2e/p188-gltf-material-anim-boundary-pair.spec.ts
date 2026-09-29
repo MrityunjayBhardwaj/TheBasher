@@ -15,6 +15,7 @@
 // channel-overlaid value, metalness would freeze at its captured base.
 
 import { test, expect } from './_fixtures';
+import { ingestOnCloneRoad } from './_cloneRoadImport';
 import { importedChild } from './_importedChild';
 
 interface BasherWindow {
@@ -39,13 +40,8 @@ interface BasherWindow {
 }
 
 async function ingestCube(page: import('@playwright/test').Page): Promise<void> {
-  await page.evaluate(async () => {
-    const w = window as unknown as BasherWindow;
-    const bytes = new Uint8Array(
-      await fetch('/assets/cube-draco.glb').then((r) => r.arrayBuffer()),
-    );
-    await w.__basher_ingestGltfFolder([{ relativePath: 'cube-draco.glb', bytes }], 'matanim');
-  });
+  // #1063 — the clone road on purpose: cube-draco now arrives native through ingest.
+  await ingestOnCloneRoad(page, 'cube-draco.glb', 'matanim');
 }
 
 // #389 — the DATA half's id. A material channel, a diamond and a transient all address

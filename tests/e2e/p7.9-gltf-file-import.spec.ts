@@ -47,7 +47,7 @@
 //      `src/app/AssetLibrary.tsx` (the `library-popover-my-imports` list).
 
 import { test, expect } from './_fixtures';
-import { drawnImportMeshes, type DrawnImportMesh } from './_importedMesh';
+import { drawnImportMeshes, importedMeshes, type DrawnImportMesh } from './_importedMesh';
 
 type MeshSummary = DrawnImportMesh;
 interface IngestFileShape {
@@ -414,26 +414,13 @@ test('P7.9 (c) — single .glb layout = user-imports/<basename>/<basename>.glb (
   });
   expect(opfs).toEqual(['cube-draco.glb']);
 
-  // Scene contains a GltfAsset child with the user-imports assetRef.
-  // (cube-draco may or may not carry a texture — we don't assert hasMap
-  // here; the loader's success is asserted by the GltfAsset DAG child
-  // landing in the scene AND zero loader console errors below.)
+  // The import landed. #1063 — the file is Draco-compressed and arrives as native geometry (the
+  // reader decodes it), so success is one native import in the scene, not a GltfAsset child: a
+  // native import holds its mesh in the project and names no file. Together with zero loader
+  // console errors below.
   await expect
-    .poll(
-      async () =>
-        await page.evaluate(() => {
-          const w = window as unknown as BasherWindow;
-          const state = w.__basher_dag.getState().state;
-          return Object.values(state.nodes).filter(
-            (n) =>
-              n.type === 'GltfAsset' &&
-              (n.params as { assetRef?: string } | undefined)?.assetRef ===
-                'user-imports/cube-draco/cube-draco.glb',
-          ).length;
-        }),
-      { timeout: 5_000 },
-    )
-    .toBeGreaterThan(0);
+    .poll(async () => (await importedMeshes(page)).map((m) => m.road), { timeout: 5_000 })
+    .toEqual(['native']);
 
   expect(
     loaderErrors,

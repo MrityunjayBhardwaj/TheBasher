@@ -10,6 +10,7 @@
 // loop: bake → setParam → overlay async-loads → render.
 
 import { test, expect } from './_fixtures';
+import { ingestOnCloneRoad } from './_cloneRoadImport';
 import { openInspectorSection } from './_inspectorSections';
 import { importedChild } from './_importedChild';
 
@@ -39,13 +40,8 @@ function pngBuffer(): Buffer {
 }
 
 async function ingestCube(page: import('@playwright/test').Page): Promise<void> {
-  await page.evaluate(async () => {
-    const w = window as unknown as W;
-    const bytes = new Uint8Array(
-      await fetch('/assets/cube-draco.glb').then((r) => r.arrayBuffer()),
-    );
-    await w.__basher_ingestGltfFolder([{ relativePath: 'cube-draco.glb', bytes }], 'mapedit');
-  });
+  // #1063 — the clone road on purpose: cube-draco now arrives native through ingest.
+  await ingestOnCloneRoad(page, 'cube-draco.glb', 'mapedit');
 }
 
 async function cubeChild(page: import('@playwright/test').Page) {

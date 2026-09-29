@@ -8,6 +8,7 @@
 // material (the pre-fix depNodesById no-op), the colour would never change.
 
 import { test, expect } from './_fixtures';
+import { ingestOnCloneRoad } from './_cloneRoadImport';
 import { importedChild } from './_importedChild';
 
 interface BasherWindow {
@@ -27,13 +28,8 @@ interface BasherWindow {
 }
 
 async function ingestCube(page: import('@playwright/test').Page): Promise<void> {
-  await page.evaluate(async () => {
-    const w = window as unknown as BasherWindow;
-    const bytes = new Uint8Array(
-      await fetch('/assets/cube-draco.glb').then((r) => r.arrayBuffer()),
-    );
-    await w.__basher_ingestGltfFolder([{ relativePath: 'cube-draco.glb', bytes }], 'matdag');
-  });
+  // #1063 — the clone road on purpose: cube-draco now arrives native through ingest.
+  await ingestOnCloneRoad(page, 'cube-draco.glb', 'matdag');
 }
 
 // #389 — the child is an `Object` + `GltfData` pair now, so the id this spec writes to is

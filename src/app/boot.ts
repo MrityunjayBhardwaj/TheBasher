@@ -897,12 +897,14 @@ export function boot(): Promise<void> {
           }
           const native = await import('../core/import/nativeGltfImport');
           const { storeImageInOpenProject } = await import('./asset/importGltf');
+          const { decodeDracoInBrowser } = await import('./asset/dracoDecoder');
           const result = await native.buildNativeGltfImportOps({
             buffer,
             assetRef,
             sceneNodeId: sceneRef.node,
             resolveBuffer,
             storeImage: storeImageInOpenProject,
+            decodeDraco: decodeDracoInBrowser,
           });
           if ('refused' in result) {
             throw new Error(`native import refused: ${result.refused} (${result.issue})`);

@@ -91,6 +91,7 @@ import {
   hashId,
   type GltfImportChainArgs,
 } from './gltfImportChain';
+import { DRACO_EXTENSION, decodeDracoPrimitives, usesDraco, type DecodeDraco } from './gltfDraco';
 import { gltfJsonMaterialToOpenpbr } from './gltfJsonMaterialToOpenpbr';
 import { readNativeAnimations, type ClipGltfJson, type NativeAnimation } from './nativeGltfClip';
 import {
@@ -361,15 +362,29 @@ function unsampledUvSet(
   return null;
 }
 
-/** The file-level reasons an import cannot be native yet, checked before any bytes are read. */
-function fileRefusal(json: NativeGltfJson): NativeImportRefusal | null {
-  if ((json.extensionsRequired?.length ?? 0) > 0) {
+/**
+ * The file-level reasons an import cannot be native yet, checked before any bytes are read.
+ * `decodesDraco`: the caller gave a Draco decoder, so Draco compression is read (#1063) rather than
+ * refused — it is decoded into ordinary accessors before anything else reads the document.
+ */
+function fileRefusal(json: NativeGltfJson, decodesDraco: boolean): NativeImportRefusal | null {
+  const required = json.extensionsRequired ?? [];
+  if (required.includes(DRACO_EXTENSION) && !decodesDraco) {
     return {
-      refused: `it requires extensions this reader does not implement (${json.extensionsRequired!.join(', ')})`,
+      refused: `it is Draco-compressed and no Draco decoder was given to the reader`,
       issue: '#1063',
     };
   }
-  const unheld = (json.extensionsUsed ?? []).filter((ext) => !HELD_EXTENSIONS.has(ext));
+  const unimplemented = required.filter((ext) => ext !== DRACO_EXTENSION);
+  if (unimplemented.length > 0) {
+    return {
+      refused: `it requires extensions this reader does not implement (${unimplemented.join(', ')})`,
+      issue: '#1063',
+    };
+  }
+  const unheld = (json.extensionsUsed ?? []).filter(
+    (ext) => !HELD_EXTENSIONS.has(ext) && !(ext === DRACO_EXTENSION && decodesDraco),
+  );
   if (unheld.length > 0) {
     return {
       refused: `it uses ${unheld.join(', ')}, which a native import would drop`,
@@ -535,7 +550,7 @@ function readPrimitive(
   }
   if (prim.extensions?.KHR_draco_mesh_compression !== undefined) {
     return {
-      refused: `mesh ${meshIndex} is Draco-compressed, which this reader does not decode`,
+      refused: `mesh ${meshIndex} is Draco-compressed and no Draco decoder was given to the reader`,
       issue: '#1063',
     };
   }
@@ -921,6 +936,12 @@ export interface NativeGltfImportArgs extends GltfImportChainArgs {
    * Required, so there is no road on which a textured file arrives with nowhere to put its pixels.
    */
   readonly storeImage: (bytes: Uint8Array, mime: string) => Promise<string>;
+  /**
+   * #1063 — decode a Draco-compressed primitive (`gltfDraco.ts`). Optional so a caller with no
+   * Draco file to read need not supply one; a Draco file read WITHOUT it is refused with its own
+   * reason, never as "this reader does not implement Draco". Every product door passes one.
+   */
+  readonly decodeDraco?: DecodeDraco;
 }
 
 interface TextureSite {
@@ -1376,10 +1397,18 @@ async function buildNativeOps(
   args: NativeGltfImportArgs,
 ): Promise<NativeImportResult | NativeImportRefusal> {
   const { json: parsed, bin } = parseGltfContainer(args.buffer);
-  const json = parsed as NativeGltfJson;
-  const refusal = fileRefusal(json);
+  let json = parsed as NativeGltfJson;
+  const refusal = fileRefusal(json, args.decodeDraco !== undefined);
   if (refusal !== null) return refusal;
-  const buffers = await resolveBuffers(json, bin, args.resolveBuffer);
+  let buffers = await resolveBuffers(json, bin, args.resolveBuffer);
+  // #1063 — Draco primitives become ordinary accessors here, before anything below reads one, as
+  // Blender's importer decodes them (`gltfDraco.ts`). Without a decoder the primitive refusal below
+  // names it.
+  if (args.decodeDraco !== undefined && usesDraco(json)) {
+    const decoded = await decodeDracoPrimitives(json, buffers, args.decodeDraco);
+    if ('refused' in decoded) return decoded;
+    ({ json, buffers } = decoded);
+  }
   // #1051 — the clip is read with everything else that can refuse, before anything is stored.
   const read_ = readNativeAnimations(json as ClipGltfJson, buffers);
   if ('refused' in read_) return read_;

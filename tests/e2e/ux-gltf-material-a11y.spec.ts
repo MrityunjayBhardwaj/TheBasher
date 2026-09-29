@@ -10,6 +10,7 @@
 //   - the multi-slot selector is a radiogroup of radios with aria-checked.
 
 import { test, expect } from './_fixtures';
+import { ingestOnCloneRoad } from './_cloneRoadImport';
 import { importedChild, importedChildren } from './_importedChild';
 import { openInspectorSection } from './_inspectorSections';
 
@@ -44,13 +45,8 @@ test.describe('#178 S6 — glTF material inspector a11y', () => {
     await page.waitForFunction(
       () => typeof (window as unknown as W).__basher_ingestGltfFolder === 'function',
     );
-    await page.evaluate(async () => {
-      const w = window as unknown as W;
-      const bytes = new Uint8Array(
-        await fetch('/assets/cube-draco.glb').then((r) => r.arrayBuffer()),
-      );
-      await w.__basher_ingestGltfFolder([{ relativePath: 'cube-draco.glb', bytes }], 'a11y');
-    });
+    // #1063 — the clone road on purpose: cube-draco now arrives native through ingest.
+    await ingestOnCloneRoad(page, 'cube-draco.glb', 'a11y');
     await expect.poll(() => cubeChildId(page)).not.toBeNull();
     const id = await cubeChildId(page);
     await page.evaluate(

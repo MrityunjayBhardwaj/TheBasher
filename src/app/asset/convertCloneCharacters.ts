@@ -79,12 +79,16 @@ import { opfsSiblingPath } from './opfsGltfResolver';
 import type { Project } from '../../core/project/schema';
 import { writeProjectImage } from '../../core/project/projectImages';
 import type { StorageCapability } from '../../core/storage';
+import type { DecodeDraco } from '../../core/import/gltfDraco';
+import { decodeDracoInBrowser } from './dracoDecoder';
 
 export interface ConvertCloneCharactersDeps {
   /** The bytes at a storage path; throws when there is no file there. */
   readonly read: (path: string) => Promise<Uint8Array>;
   /** Store an image in THIS project's image folder and return its key (#1050). */
   readonly storeImage: (bytes: Uint8Array, mime: string) => Promise<string>;
+  /** #1063 — decode a Draco-compressed primitive, so a compressed character converts natively. */
+  readonly decodeDraco?: DecodeDraco;
 }
 
 export interface CharacterConversionReport {
@@ -168,6 +172,7 @@ async function convertOne(
     sceneNodeId: sceneId,
     resolveBuffer: (uri: string) => deps.read(opfsSiblingPath(assetRef, uri)),
     storeImage: deps.storeImage,
+    decodeDraco: deps.decodeDraco,
   };
 
   // The import exactly as the clone road wrote it, applied on its own beside a bare scene.
@@ -1264,6 +1269,7 @@ export async function convertLoadedProject(
   const result = await convertCloneCharacters(state, {
     read: (path) => storage.read(path),
     storeImage: (bytes, mime) => writeProjectImage(storage, project.id, bytes, mime),
+    decodeDraco: decodeDracoInBrowser,
   });
   if (result.state === state) return { project, report: result.report };
   return {

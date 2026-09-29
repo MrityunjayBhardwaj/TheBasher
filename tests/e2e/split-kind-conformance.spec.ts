@@ -71,6 +71,7 @@
 //      two sides); issues #471, #387.
 
 import { test, expect, type Page } from './_fixtures';
+import { ingestOnCloneRoad } from './_cloneRoadImport';
 import {
   dataIdFor,
   OBJECT_SECTIONS,
@@ -715,9 +716,10 @@ async function buildBakedRow(page: Page, restingColor: string) {
  * roads that read pixels see nothing. R7 and R8 pass on the hand-authored fixture for
  * exactly that reason, which is why the fixture survived until a rendering road asked.
  *
- * So the fixture drives the LIVE IMPORTER. Ingest the cube fixture through the same
- * `__basher_ingestGltfFolder` the app uses, let the real chain mint the pair, then write
- * the row's resting colour onto the data half.
+ * So the fixture drives the LIVE IMPORTER. Import the cube fixture through the clone road's
+ * own chain (`__basher_importGltf`, via `ingestOnCloneRoad` — since #1063 the ingest door brings
+ * this Draco file across native, and this row is the clone road's pair), let the real chain mint
+ * the pair, then write the row's resting colour onto the data half.
  *
  * ⚠️ THE IDS MUST BE READ, NOT DERIVED — the same rule the baked row records, arrived at
  * from the other side. Both halves are content-addressed off `(assetRef, childName)`
@@ -733,25 +735,9 @@ async function buildBakedRow(page: Page, restingColor: string) {
  * `buildBakedRow` takes.
  */
 async function buildGltfRow(page: Page, restingColor: string) {
-  await page.waitForFunction(
-    () =>
-      typeof (window as unknown as { __basher_ingestGltfFolder?: unknown })
-        .__basher_ingestGltfFolder === 'function',
-    undefined,
-    { timeout: 20_000 },
-  );
-  await page.evaluate(async () => {
-    const w = window as unknown as {
-      __basher_ingestGltfFolder: (
-        files: { relativePath: string; bytes: Uint8Array }[],
-        folder: string,
-      ) => Promise<string>;
-    };
-    const bytes = new Uint8Array(
-      await fetch('/assets/cube-draco.glb').then((r) => r.arrayBuffer()),
-    );
-    await w.__basher_ingestGltfFolder([{ relativePath: 'cube-draco.glb', bytes }], 'conf-gltf');
-  });
+  // #1063 — the clone road on purpose: this row is the GltfAsset pair, and cube-draco now arrives
+  // native through ingest.
+  await ingestOnCloneRoad(page, 'cube-draco.glb', 'conf-gltf');
 
   // Wait on the PAIR, not on a node type: `Object` alone is satisfied by the default
   // project's box before the import has done anything at all.

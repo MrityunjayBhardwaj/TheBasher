@@ -18,6 +18,7 @@
 // import to mimic the real file write/read exactly.
 
 import { expect, test } from './_fixtures';
+import { ingestOnCloneRoad } from './_cloneRoadImport';
 
 interface Bundle {
   assets?: Record<string, string>;
@@ -60,14 +61,10 @@ async function exportBundle(page: EvalPage): Promise<Bundle> {
 /** Diverge the live scene: import a real .glb (adds a GltfAsset node + a
  *  user-imports OPFS asset). `folder` keeps successive imports from colliding. */
 async function ingestGltf(page: EvalPage, folder: string): Promise<void> {
-  await page.evaluate(async (name) => {
-    const w = window as unknown as SceneWindow;
-    // A file the scene keeps referencing: one the native reader still refuses (Draco, #1063), so it
-    // arrives through the file's copy. A native import stops referencing its file (#1049), and a
-    // skinned one comes in native since #1205.
-    const buf = new Uint8Array(await (await fetch('/assets/cube-draco.glb')).arrayBuffer());
-    await w.__basher_ingestGltfFolder!([{ relativePath: `${name}.glb`, bytes: buf }], name);
-  }, folder);
+  // A file the scene keeps referencing: a native import stops referencing its file (#1049), and
+  // since #1063 the native reader decodes Draco too, so this imports on the clone road on purpose —
+  // which still serves every file the native road refuses (#1053).
+  await ingestOnCloneRoad(page, 'cube-draco.glb', folder, `${folder}.glb`);
 }
 
 test.beforeEach(async ({ page }) => {

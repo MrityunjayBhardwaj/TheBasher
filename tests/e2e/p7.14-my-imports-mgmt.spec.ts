@@ -11,10 +11,10 @@
 //   · Rename moves the folder and the scene is untouched (nothing followed, nothing had to).
 //   · Delete is not blocked, and the scene keeps drawing the import, across a reload.
 // A file the native reader refuses still arrives through the file's copy, as a `GltfAsset`
-// whose `assetRef` IS a reference; deleting its folder is blocked until break-refs. That path is
-// kept on a still-refused fixture (a Draco-compressed .glb, #1063 — a skinned file stopped being one
-// at #1205) and asserts its road, so it reds the day Draco goes native and the break-refs path
-// loses its last fixture. BVH/FBX leave no ref.
+// whose `assetRef` IS a reference; deleting its folder is blocked until break-refs. That path runs
+// on the clone road on purpose (`ingestOnCloneRoad`): since #1063 the native reader decodes Draco,
+// which was the last refused fixture here (a skinned file stopped being one at #1205), and the
+// break-refs path lives until the clone retires (#1053). BVH/FBX leave no ref.
 //
 // REF: PLAN 7.14 Wave B (B4); CONTEXT D-03/D-05/D-06; issues #112, #1074, #1054;
 //      src/app/AssetLibrary.tsx (the ︙ menu + rename input + delete banner);
@@ -22,6 +22,7 @@
 //      tests/e2e/_importedMesh.ts (import roots + drawn reader, both roads).
 
 import { test, expect } from './_fixtures';
+import { ingestOnCloneRoad } from './_cloneRoadImport';
 import { drawnImportMeshes, importRoots } from './_importedMesh';
 
 interface DagNode {
@@ -46,9 +47,6 @@ const FLAT_GLTF = [
   { urlPath: '/fixtures/multifile/flat/scene.bin', relativePath: 'scene.bin' },
   { urlPath: '/fixtures/multifile/flat/texture.png', relativePath: 'texture.png' },
 ];
-/** Still refused by the native reader (Draco, #1063), so it imports through the file's copy. */
-const DRACO_GLB = [{ urlPath: '/assets/cube-draco.glb', relativePath: 'cube-draco.glb' }];
-
 async function ingestGltf(
   page: import('@playwright/test').Page,
   name: string,
@@ -269,9 +267,10 @@ test('P7.14 (delete referenced) — ︙ Delete of a referenced glTF blocks with 
   page,
 }) => {
   const baselineNodes = await dagNodeCount(page);
-  await ingestGltf(page, 'used-asset', DRACO_GLB);
-  // Still the clone road (Draco) — see the header. When Draco goes native this reds, and
-  // the break-refs path has no fixture left to run on.
+  // #1063 — Draco now arrives native through ingest, and a native import references no file, so
+  // this imports on the clone road on purpose: the break-refs path still exists for every file the
+  // native road refuses (#1053), and this is its fixture.
+  await ingestOnCloneRoad(page, 'cube-draco.glb', 'used-asset');
   await expect.poll(async () => (await importRoots(page)).map((r) => r.road)).toEqual(['clone']);
   // The import created a GltfAsset referencing the asset.
   await expect

@@ -70,6 +70,7 @@ import {
 } from './opfsGltfResolver';
 import { formatAssetError, useAssetErrorStore } from '../stores/assetErrorStore';
 import { useImportRefreshStore } from '../stores/importRefreshStore';
+import { decodeDracoInBrowser } from './dracoDecoder';
 import {
   USER_IMPORTS_ROOT,
   resolveFreeImportName,
@@ -198,6 +199,7 @@ export async function buildGltfImportOpsFromOpfs(
     sceneNodeId,
     resolveBuffer: (uri: string) => storage.read(opfsSiblingPath(path, uri)),
     storeImage: storeImageInOpenProject,
+    decodeDraco: decodeDracoInBrowser,
   };
   const skinned = isSkinned(copy.buffer);
   // A reader failure is a refusal like any other: the file still arrives, through the road that
