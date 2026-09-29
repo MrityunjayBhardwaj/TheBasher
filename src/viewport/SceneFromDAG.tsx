@@ -171,7 +171,7 @@ import {
   type ObjectSlotSource,
 } from '../app/materialAssignment';
 import { threeSideFor } from '../app/material/threeSide';
-import { CENTRE_PIVOT, placeTexture } from '../app/material/uvPlacement';
+import { CENTRE_PIVOT, normalScaleFor, placeTexture } from '../app/material/uvPlacement';
 import { aimPatch, withResolvedRotation } from '../app/resolvedRotation';
 import type {
   AmbientLightValue,
@@ -3276,6 +3276,8 @@ function CapturedBakedMeshR({
     // through the bake first; only then does binding it here mean anything.
     m.map = placed(sRGB(mapTex), 'map');
     m.normalMap = placed(linear(normalTex), 'normalMap');
+    // #1325 — the same orientation rule the registry's builder applies (`normalScaleFor`).
+    if (m.normalMap) m.normalScale.set(...normalScaleFor(m.normalMap));
     m.roughnessMap = placed(linear(roughnessTex), 'roughnessMap');
     m.metalnessMap = placed(linear(metalnessTex), 'metalnessMap');
     m.aoMap = placed(linear(aoTex), 'aoMap');

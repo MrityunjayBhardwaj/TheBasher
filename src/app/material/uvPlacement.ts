@@ -110,3 +110,23 @@ export function rebasePlacementPivot(
     rotation: placement.rotation,
   };
 }
+
+/**
+ * #1325 — the `normalScale` a normal map draws with on a mesh WITHOUT a tangent attribute, which
+ * is every mesh this app draws (the native reader refuses tangents, #1125; primitives have none).
+ *
+ * three then derives the tangent frame from UV derivatives, and its bitangent follows the image's
+ * up only when the texture is uploaded flipped (`flipY: true`, three's convention, UV origin at
+ * the bottom-left). A texture uploaded unflipped (glTF's `flipY: false`, UV origin at the
+ * top-left) points that bitangent at image-DOWN, so the green channel would bend the surface the
+ * wrong way. three's own GLTFLoader negates `normalScale.y` for exactly this case
+ * (`GLTFLoader.js:3402`, `:3468`); the spec says green is +Y, image-up.
+ *
+ * Keyed on the texture's own orientation, never on where it came from: a map a director uploads
+ * keeps `flipY: true`, and three's default `(1, 1)` is right for it. Both draw builders call this
+ * (`materialRegistry.ts` `build`, `SceneFromDAG.tsx` `CapturedBakedMeshR`; a flattened bake draws
+ * through the registry), so they cannot disagree.
+ */
+export function normalScaleFor(normalMap: Pick<THREE.Texture, 'flipY'>): [number, number] {
+  return [1, normalMap.flipY ? 1 : -1];
+}

@@ -215,6 +215,27 @@ describe('#530 — the build applies every scalar the spec carries', () => {
   });
 });
 
+describe('#1325 — a normal map bends the surface toward image-up, whichever way it was uploaded', () => {
+  const normalMapped = (flipY: boolean) => {
+    const source = new THREE.Texture();
+    source.flipY = flipY;
+    return materialRegistry.get({ ...BASE, textures: { ...BASE.textures, normalMap: source } })
+      .material;
+  };
+
+  it('an UNFLIPPED map (glTF) draws with y negated, as three`s own loader draws it', () => {
+    // Measured in the app: (1, 1) on a glTF map leaned the surface toward -Y where the file
+    // says +Y; GLTFLoader's (1, -1) leaned it toward +Y (#1325).
+    const m = normalMapped(false);
+    expect([m.normalScale.x, m.normalScale.y]).toEqual([1, -1]);
+  });
+
+  it('a FLIPPED map (an upload) keeps three`s default, which is right for it', () => {
+    const m = normalMapped(true);
+    expect([m.normalScale.x, m.normalScale.y]).toEqual([1, 1]);
+  });
+});
+
 describe('#530 — lifetime is refcounted, and a handoff is not a drop', () => {
   it('the instance survives while any holder remains, and is disposed at zero', async () => {
     const { key, material } = materialRegistry.get(BASE);

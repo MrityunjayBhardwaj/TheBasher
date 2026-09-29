@@ -110,7 +110,12 @@
 //      issues #530, #532, #1062.
 
 import * as THREE from 'three';
-import { CENTRE_PIVOT, placeTexture, resolveSlotPlacement } from './material/uvPlacement';
+import {
+  CENTRE_PIVOT,
+  normalScaleFor,
+  placeTexture,
+  resolveSlotPlacement,
+} from './material/uvPlacement';
 import type { SlotPlacements } from './material/uvPlacement';
 
 /**
@@ -369,6 +374,9 @@ function build(spec: PrimitiveMaterialSpec): THREE.MeshPhysicalMaterial {
       if (texture) texture.channel = channel;
     }
   }
+  // #1325 — a normal map's green is image-up; on an unflipped (glTF) texture three's derived
+  // tangent frame points the other way, so y is negated. See `normalScaleFor`.
+  if (m.normalMap) m.normalScale.set(...normalScaleFor(m.normalMap));
   m.userData.__uvClones = clones;
   return m;
 }
