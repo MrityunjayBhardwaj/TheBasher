@@ -14,8 +14,13 @@ import * as THREE from 'three';
 import type { BakedTextureRef } from '../../nodes/types';
 
 const loadBakedTexture = vi.fn();
+/** #1312 — which file a ref reads; a project image's moves with the open project. */
+let openProject = 'p1';
+const refToPath = (ref: BakedTextureRef) =>
+  ref.store === 'project' ? `projects/${openProject}/images/${ref.hash}` : `textures/${ref.hash}`;
 vi.mock('./bakedTextureStore', () => ({
   loadBakedTexture: (...args: unknown[]) => loadBakedTexture(...args),
+  refToPath: (ref: BakedTextureRef) => refToPath(ref),
 }));
 vi.mock('../boot', () => ({
   getStorage: vi.fn(async () => ({})),
@@ -27,6 +32,9 @@ import {
   __resetBakedTextureLoaderForTests,
 } from './bakedTextureLoader';
 import { useAssetErrorStore } from '../stores/assetErrorStore';
+import { __resetReadFailuresForTests } from './readFailures';
+import { MemoryStorage } from '../../core/storage/MemoryStorage';
+import { withWriteNotice } from '../../core/storage/writeNotice';
 
 const REF: BakedTextureRef = {
   hash: 'deadbeef.png',
@@ -42,8 +50,10 @@ const flush = () => new Promise((r) => setTimeout(r, 0));
 describe('peekBakedTexture (non-throwing UV-backdrop read)', () => {
   beforeEach(() => {
     __resetBakedTextureLoaderForTests();
+    __resetReadFailuresForTests();
     loadBakedTexture.mockReset();
     useAssetErrorStore.getState().clearAll();
+    openProject = 'p1';
   });
 
   it('returns null on a cache MISS instead of throwing, and kicks off ONE load', async () => {
@@ -97,6 +107,61 @@ describe('peekBakedTexture (non-throwing UV-backdrop read)', () => {
     expect(Object.keys(errors)).toEqual([`images/${REF.hash}`]);
     expect(errors[`images/${REF.hash}`]).toMatch(/drawn magenta: .*could not be found/);
     expect(loadBakedTexture).toHaveBeenCalledTimes(1);
+  });
+
+  // #1312 — importing the same image writes the same file back. The cached failure used to answer
+  // for it until a reload, so the NEW import drew the stand-in too (measured).
+  it('once the file is written again, the next resolve reads it and the banner row clears', async () => {
+    const project = { ...REF, store: 'project' as const };
+    loadBakedTexture.mockRejectedValueOnce(new Error('could not be found'));
+    expect(() => resolveBakedTexture(project)).toThrow();
+    await flush();
+    const stand = resolveBakedTexture(project);
+
+    const decoded = new THREE.Texture();
+    loadBakedTexture.mockResolvedValue(decoded);
+    await withWriteNotice(new MemoryStorage()).write(refToPath(project), new Uint8Array([1]));
+
+    expect(() => resolveBakedTexture(project)).toThrow(); // a fresh read, not the stand-in
+    await flush();
+    expect(resolveBakedTexture(project)).toBe(decoded);
+    expect(resolveBakedTexture(project)).not.toBe(stand);
+    expect(useAssetErrorStore.getState().errors).toEqual({});
+  });
+
+  it('a project image that failed in one project is read again under another', async () => {
+    const project = { ...REF, store: 'project' as const };
+    loadBakedTexture.mockRejectedValueOnce(new Error('could not be found'));
+    expect(() => resolveBakedTexture(project)).toThrow();
+    await flush();
+    expect((resolveBakedTexture(project) as THREE.DataTexture).image.width).toBe(1);
+
+    const decoded = new THREE.Texture();
+    loadBakedTexture.mockResolvedValue(decoded);
+    openProject = 'p2'; // same key, another file
+    expect(() => resolveBakedTexture(project)).toThrow();
+    await flush();
+    expect(resolveBakedTexture(project)).toBe(decoded);
+  });
+
+  it('a write to the path an OLDER failure read does not clear the newer one', async () => {
+    const project = { ...REF, store: 'project' as const };
+    loadBakedTexture.mockRejectedValue(new Error('could not be found'));
+    expect(() => resolveBakedTexture(project)).toThrow();
+    await flush();
+    resolveBakedTexture(project); // failed under p1
+    openProject = 'p2';
+    expect(() => resolveBakedTexture(project)).toThrow(); // retried under p2 …
+    await flush();
+    const stand = resolveBakedTexture(project); // … and failed there too
+
+    await withWriteNotice(new MemoryStorage()).write(
+      `projects/p1/images/${REF.hash}`,
+      new Uint8Array([1]),
+    );
+
+    expect(resolveBakedTexture(project), 'p2 still has no such file').toBe(stand);
+    expect(Object.keys(useAssetErrorStore.getState().errors)).toEqual([`images/${REF.hash}`]);
   });
 });
 

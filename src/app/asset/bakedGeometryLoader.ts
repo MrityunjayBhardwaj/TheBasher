@@ -23,6 +23,7 @@ import type { GeometryRef } from '../../nodes/types';
 import { getForRead, prime } from '../geometryRegistry';
 import { formatAssetError, useAssetErrorStore } from '../stores/assetErrorStore';
 import { bakedGeometryPath, readBakedGeometry } from './bakedGeometryStore';
+import { rememberFailedRead, useReadFailureEpoch } from './readFailures';
 
 const promiseCache = new Map<string, Promise<void>>();
 const errorCache = new Map<string, Error>();
@@ -89,13 +90,21 @@ export function resolveBakedGeometry(ref: GeometryRef): BufferGeometry {
     p = loadAndPrime(ref).then(
       () => undefined,
       (err: unknown) => {
+        const label = geometryLabel(ref);
         errorCache.set(ref.key, err instanceof Error ? err : new Error(String(err)));
         useAssetErrorStore
           .getState()
-          .report(
-            geometryLabel(ref),
-            `geometry could not be read, drawn empty: ${formatAssetError(err)}`,
-          );
+          .report(label, `geometry could not be read, drawn empty: ${formatAssetError(err)}`);
+        // #1312 — the failure answers only until the file is written again: an identical bake
+        // writes the same path, and must draw.
+        if (ref.descriptor.kind === 'baked') {
+          rememberFailedRead(label, () => {
+            errorCache.delete(ref.key);
+            promiseCache.delete(ref.key);
+            missingCache.delete(ref.key);
+            useAssetErrorStore.getState().clear(label);
+          });
+        }
       },
     );
     promiseCache.set(ref.key, p);
@@ -109,6 +118,7 @@ export function resolveBakedGeometry(ref: GeometryRef): BufferGeometry {
  * promise and the viewport's <Suspense> boundary catches it.
  */
 export function useBakedGeometry(ref: GeometryRef): BufferGeometry {
+  useReadFailureEpoch(); // #1312 — re-resolve once a failed file is written again
   return resolveBakedGeometry(ref);
 }
 

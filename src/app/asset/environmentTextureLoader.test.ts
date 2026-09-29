@@ -17,7 +17,10 @@ import {
   resolveEnvironmentTexture,
 } from './environmentTextureLoader';
 import { averageRadiance } from '../averageRadiance';
+import { MemoryStorage } from '../../core/storage/MemoryStorage';
+import { withWriteNotice } from '../../core/storage/writeNotice';
 import { useAssetErrorStore } from '../stores/assetErrorStore';
+import { __resetReadFailuresForTests } from './readFailures';
 
 const REF = 'env-hdri/b90a6094.hdr';
 
@@ -27,6 +30,7 @@ const flush = () => new Promise((r) => setTimeout(r, 0));
 describe('resolveEnvironmentTexture — a failed read', () => {
   beforeEach(() => {
     __resetEnvironmentTextureLoaderForTests();
+    __resetReadFailuresForTests();
     loadEnvHdri.mockReset();
     useAssetErrorStore.getState().clearAll();
   });
@@ -57,6 +61,39 @@ describe('resolveEnvironmentTexture — a failed read', () => {
     const errors = useAssetErrorStore.getState().errors;
     expect(Object.keys(errors)).toEqual([REF]);
     expect(errors[REF]).toMatch(/drawn magenta: .*could not be found/);
+    expect(loadEnvHdri).toHaveBeenCalledTimes(1);
+  });
+
+  // #1312 — importing the same HDRI writes the same path. The cached failure used to answer for it
+  // until a reload (measured: the studio light stayed magenta with the file back).
+  it('once the file is written again, the next resolve reads it and the banner row clears', async () => {
+    loadEnvHdri.mockRejectedValueOnce(
+      new Error('A requested file or directory could not be found'),
+    );
+    expect(() => resolveEnvironmentTexture(REF)).toThrow();
+    await flush();
+    const stand = resolveEnvironmentTexture(REF);
+    expect(stand.name).toBe('missing-image');
+
+    const decoded = new THREE.Texture();
+    loadEnvHdri.mockResolvedValue(decoded);
+    await withWriteNotice(new MemoryStorage()).write(REF, new Uint8Array([1]));
+
+    expect(() => resolveEnvironmentTexture(REF)).toThrow(); // a fresh read, not the stand-in
+    await flush();
+    expect(resolveEnvironmentTexture(REF)).toBe(decoded);
+    expect(useAssetErrorStore.getState().errors).toEqual({});
+  });
+
+  it('a write to ANOTHER path leaves the failure standing', async () => {
+    loadEnvHdri.mockRejectedValue(new Error('A requested file or directory could not be found'));
+    expect(() => resolveEnvironmentTexture(REF)).toThrow();
+    await flush();
+    const stand = resolveEnvironmentTexture(REF);
+
+    await withWriteNotice(new MemoryStorage()).write('env-hdri/other.hdr', new Uint8Array([1]));
+
+    expect(resolveEnvironmentTexture(REF)).toBe(stand);
     expect(loadEnvHdri).toHaveBeenCalledTimes(1);
   });
 

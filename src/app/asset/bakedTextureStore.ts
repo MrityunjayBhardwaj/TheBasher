@@ -195,8 +195,12 @@ export async function persistTexture(
   };
 }
 
-/** Split a `BakedTextureRef.hash` ('<hash>.<ext>') into its OPFS path. */
-function refToPath(ref: BakedTextureRef): string {
+/**
+ * Split a `BakedTextureRef.hash` ('<hash>.<ext>') into its OPFS path. Exported so the loader can
+ * tell which file a cached failure was about (#1312): a project image's path moves with the open
+ * project while its cache key does not.
+ */
+export function refToPath(ref: BakedTextureRef): string {
   // #1050 — an image the project owns. Its key is relative to the project, so it resolves against
   // whichever project is open, and a project copied under a new id reads the same refs.
   if (ref.store === 'project') {

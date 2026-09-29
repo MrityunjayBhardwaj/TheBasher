@@ -22,6 +22,7 @@ import {
 import { getStorage } from '../boot';
 import { formatAssetError, useAssetErrorStore } from '../stores/assetErrorStore';
 import { loadEnvHdri } from './envHdriStore';
+import { rememberFailedRead, useReadFailureEpoch } from './readFailures';
 
 const textureCache = new Map<string, Texture>();
 const promiseCache = new Map<string, Promise<void>>();
@@ -93,6 +94,14 @@ export function resolveEnvironmentTexture(assetRef: string): Texture {
         useAssetErrorStore
           .getState()
           .report(assetRef, `image could not be read, drawn magenta: ${formatAssetError(err)}`);
+        // #1312 — the failure answers only until the file is written again: importing the same
+        // HDRI writes the same path.
+        rememberFailedRead(assetRef, () => {
+          errorCache.delete(assetRef);
+          promiseCache.delete(assetRef);
+          missingCache.delete(assetRef);
+          useAssetErrorStore.getState().clear(assetRef);
+        });
       },
     );
     promiseCache.set(assetRef, p);
@@ -102,6 +111,7 @@ export function resolveEnvironmentTexture(assetRef: string): Texture {
 
 /** React Suspense hook — the EnvironmentFile entry point. */
 export function useEnvironmentTexture(assetRef: string): Texture {
+  useReadFailureEpoch(); // #1312 — re-resolve once a failed file is written again
   return resolveEnvironmentTexture(assetRef);
 }
 

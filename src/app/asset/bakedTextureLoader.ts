@@ -3,7 +3,8 @@
 //
 // Mirrors bakedGeometryLoader.ts / opfsLoader.ts exactly: a per-ref cache keyed by
 // the `BakedTextureRef.hash`, an in-flight promise cache (Suspense throw), and an
-// error cache so a rejected read re-throws on retry (no permanent suspended hang).
+// error cache so a rejected read draws a stand-in instead of suspending forever (#1048),
+// until that file is written again or the key reads another file (#1312).
 // The renderer (BakedMeshR) calls `useBakedTexture` for each non-null map slot;
 // the async OPFS read + TextureLoader decode lives HERE, never in the pure
 // resolver (V29 purity).
@@ -15,12 +16,15 @@ import { DataTexture, RGBAFormat, SRGBColorSpace, type Texture } from 'three';
 import { getStorage } from '../boot';
 import type { BakedTextureRef } from '../../nodes/types';
 import { formatAssetError, useAssetErrorStore } from '../stores/assetErrorStore';
-import { loadBakedTexture } from './bakedTextureStore';
+import { loadBakedTexture, refToPath } from './bakedTextureStore';
+import { rememberFailedRead, useReadFailureEpoch } from './readFailures';
 
 const textureCache = new Map<string, Texture>();
 const promiseCache = new Map<string, Promise<void>>();
 const errorCache = new Map<string, Error>();
 const missingCache = new Map<string, Texture>();
+/** #1312 — the file each cached failure read. A failure answers only while its key reads it. */
+const failedPathCache = new Map<string, string>();
 
 /**
  * #1048 — what a map that cannot be read draws: one magenta texel, as Blender draws an image it
@@ -64,11 +68,45 @@ function cacheKeyOf(ref: BakedTextureRef): string {
   ].join('|');
 }
 
+/** The file `ref` reads right now, or null when it cannot say (a project image, no project open). */
+function pathNow(ref: BakedTextureRef): string | null {
+  try {
+    return refToPath(ref);
+  } catch {
+    return null;
+  }
+}
+
+/** Drop the cached failure for `key`, and its banner row. */
+function forgetFailure(key: string, ref: BakedTextureRef): void {
+  errorCache.delete(key);
+  promiseCache.delete(key);
+  missingCache.delete(key);
+  failedPathCache.delete(key);
+  useAssetErrorStore.getState().clear(imageLabel(ref));
+}
+
+/**
+ * #1312 — does the cached failure for `key` still answer? Only for the file it read: a project
+ * image read under another open project is another file, so the failure is dropped and the read
+ * retried. A key with no path now (no project open) keeps its failure — nothing better to read.
+ */
+function failureStands(key: string, ref: BakedTextureRef): boolean {
+  if (!errorCache.has(key)) return false;
+  const now = pathNow(ref);
+  if (now !== null && now !== failedPathCache.get(key)) {
+    forgetFailure(key, ref);
+    return false;
+  }
+  return true;
+}
+
 /**
  * Start one read+decode for `ref`, shared by the Suspense and peek roads. A failure is cached and
  * reported to the asset banner once, by the image's name — never thrown into render (#1048).
  */
 function startLoad(key: string, ref: BakedTextureRef): Promise<void> {
+  const readPath = pathNow(ref);
   const p = (async () => {
     const storage = await getStorage();
     const tex = await loadBakedTexture(storage, ref);
@@ -83,6 +121,15 @@ function startLoad(key: string, ref: BakedTextureRef): Promise<void> {
           imageLabel(ref),
           `image could not be read, drawn magenta: ${formatAssetError(err)}`,
         );
+      // #1312 — the failure answers only until that file is written again: importing the same
+      // image writes the same path, and the new import must draw it.
+      if (readPath !== null) {
+        failedPathCache.set(key, readPath);
+        rememberFailedRead(readPath, () => {
+          // Only if this key still holds the failure it recorded for this path.
+          if (failedPathCache.get(key) === readPath) forgetFailure(key, ref);
+        });
+      }
     },
   );
   promiseCache.set(key, p);
@@ -105,7 +152,7 @@ export function resolveBakedTexture(ref: BakedTextureRef): Texture {
   const hit = textureCache.get(key);
   if (hit) return hit;
 
-  if (errorCache.has(key)) return missingTextureFor(key);
+  if (failureStands(key, ref)) return missingTextureFor(key);
 
   throw promiseCache.get(key) ?? startLoad(key, ref);
 }
@@ -121,7 +168,7 @@ export function peekBakedTexture(ref: BakedTextureRef): Texture | null {
   const key = cacheKeyOf(ref);
   const hit = textureCache.get(key);
   if (hit) return hit;
-  if (errorCache.has(key)) return null;
+  if (failureStands(key, ref)) return null;
   if (!promiseCache.has(key)) startLoad(key, ref);
   return null;
 }
@@ -133,6 +180,7 @@ export function peekBakedTexture(ref: BakedTextureRef): Texture | null {
  * (rules-of-hooks safe) — only the present refs actually suspend.
  */
 export function useBakedTexture(ref: BakedTextureRef | null): Texture | null {
+  useReadFailureEpoch(); // #1312 — re-resolve once a failed file is written again
   if (!ref) return null;
   return resolveBakedTexture(ref);
 }
@@ -143,4 +191,5 @@ export function __resetBakedTextureLoaderForTests(): void {
   promiseCache.clear();
   errorCache.clear();
   missingCache.clear();
+  failedPathCache.clear();
 }
