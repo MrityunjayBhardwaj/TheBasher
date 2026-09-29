@@ -157,6 +157,12 @@ const CORPUS: readonly World[] = [
   world('unlit', { ir: irWith({ unlit: true }) }),
   world('fuzz', { ir: irWith({ fuzz: { weight: 1, color: '#ffffff', roughness: 0.3 } }) }),
   world('fuzz colour', { ir: irWith({ fuzz: { weight: 1, color: '#ff0000', roughness: 0.3 } }) }),
+  world('specular weight', {
+    ir: irWith({ specular: { roughness: 0.72, ior: 1.5, weight: 0.4 } }),
+  }),
+  world('specular colour', {
+    ir: irWith({ specular: { roughness: 0.72, ior: 1.5, color: '#ffbc89' } }),
+  }),
   world('fuzz roughness', {
     ir: irWith({ fuzz: { weight: 1, color: '#ffffff', roughness: 0.8 } }),
   }),
@@ -397,6 +403,8 @@ describe('#566 — every field the compile produces is carried on the spec, or e
     sheen: 'sheen',
     sheenColor: 'sheenColor',
     sheenRoughness: 'sheenRoughness',
+    specularIntensity: 'specularIntensity',
+    specularColor: 'specularColor',
   };
 
   /**
@@ -441,6 +449,7 @@ describe('#566 — every field the compile produces is carried on the spec, or e
       irWith({ mapStrengths: { normal: 0.5, ao: 0.3 } }),
       irWith({ unlit: true }),
       irWith({ fuzz: { weight: 1, color: '#ffffff', roughness: 0.3 } }),
+      irWith({ specular: { roughness: 0.72, ior: 1.5, weight: 0.4, color: '#ffbc89' } }),
     ];
     const seen = new Set<string>();
     for (const ir of worlds)
@@ -465,8 +474,8 @@ describe('#566 — every field the compile produces is carried on the spec, or e
     // EXACT on both sides. A floor would pass a field that stopped being produced — which is
     // the direction that looks like cleanup and silently removes a rendering lobe.
     const produced = producedFields();
-    expect(produced.length).toBe(25);
-    expect(produced.filter((f) => f in CARRIED).length).toBe(25);
+    expect(produced.length).toBe(27);
+    expect(produced.filter((f) => f in CARRIED).length).toBe(27);
     expect(produced.filter((f) => f in EXCLUDED).length).toBe(0);
   });
 
@@ -488,6 +497,7 @@ describe('#566 — every field the compile produces is carried on the spec, or e
           mapStrengths: { normal: 0.5, ao: 0.3 },
           unlit: true,
           fuzz: { weight: 1, color: '#ffffff', roughness: 0.3 },
+          specular: { roughness: 0.72, ior: 1.5, weight: 0.4, color: '#ffbc89' },
         }),
         undefined,
       ),

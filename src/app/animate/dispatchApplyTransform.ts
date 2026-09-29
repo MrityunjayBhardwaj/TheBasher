@@ -365,6 +365,11 @@ function bakedSpecFromInline(material: InlineMaterialSpec | null): BakedMaterial
       ...(drawn.sheen !== undefined ? { sheen: drawn.sheen } : {}),
       ...(drawn.sheenColor !== undefined ? { sheenColor: drawn.sheenColor } : {}),
       ...(drawn.sheenRoughness !== undefined ? { sheenRoughness: drawn.sheenRoughness } : {}),
+      // #1321 — the specular weight and colour, when the material sets them.
+      ...(drawn.specularIntensity !== undefined
+        ? { specularIntensity: drawn.specularIntensity }
+        : {}),
+      ...(drawn.specularColor !== undefined ? { specularColor: drawn.specularColor } : {}),
     },
   };
 }

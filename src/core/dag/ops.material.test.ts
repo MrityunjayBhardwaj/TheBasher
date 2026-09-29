@@ -81,3 +81,14 @@ describe('#1123 — an edit on an absent fuzz lobe creates the whole lobe', () =
     expect(mat.fuzz).toEqual({ weight: 0.7, color: '#ffffff', roughness: 0.5 });
   });
 });
+
+// #1321 — the specular lobe always exists, but its weight and colour are optional fields inside it:
+// an edit on one must add that field alone and leave the other absent (absent means OpenPBR's default).
+describe('#1321 — an edit on an absent specular weight adds that field alone', () => {
+  it('setting the weight leaves the colour absent', () => {
+    const state = buildDefaultDagState();
+    const next = applyOp(state, setParam('material.specular.weight', 0.4)).next;
+    const mat = next.nodes.n_box_data.params.material as InlineMaterialSpec;
+    expect(mat.specular).toEqual({ roughness: 0.3, ior: 1.5, weight: 0.4 });
+  });
+});

@@ -286,8 +286,18 @@ export interface InlineMaterialSpec {
   readonly name: string;
   /** base_color (sRGB hex) + base_metalness [0..1]. */
   readonly base: { readonly color: string; readonly metalness: number };
-  /** specular_roughness [0..1] + specular_ior [1.0..2.33]. */
-  readonly specular: { readonly roughness: number; readonly ior: number };
+  /**
+   * specular_roughness [0..1] + specular_ior [1.0..2.33]. #1321 — `weight` (OpenPBR
+   * `specular_weight`, glTF `specularFactor`) and `color` (`specular_color`, sRGB hex) are OPTIONAL
+   * with no default: absent means OpenPBR's default, 1 and white (`open_pbr_surface.mtlx:16,18`),
+   * and a defaulted field would re-key every saved material (see {@link mapUvTransforms}).
+   */
+  readonly specular: {
+    readonly roughness: number;
+    readonly ior: number;
+    readonly weight?: number;
+    readonly color?: string;
+  };
   /** coat_weight [0..1] + coat_roughness [0..1]. */
   readonly coat: { readonly weight: number; readonly roughness: number };
   /**
@@ -571,6 +581,8 @@ export interface BakedMaterialSpec {
     readonly sheenColor?: string;
     readonly sheenRoughness?: number;
     readonly specularIntensity?: number;
+    /** #1321 — the specular colour (sRGB hex), beside its weight above. Absent: white. */
+    readonly specularColor?: string;
   };
 }
 

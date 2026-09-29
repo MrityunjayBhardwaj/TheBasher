@@ -1107,6 +1107,51 @@ describe('buildNativeGltfImportOps', () => {
     });
   });
 
+  describe('#1321 — specular weight and colour', () => {
+    async function specularOf(buffer: ArrayBuffer) {
+      const result = await buildNativeGltfImportOps({
+        buffer,
+        assetRef: 'user-imports/native/specular.gltf',
+        sceneNodeId: 'n_scene',
+        storeImage: async () => 'img',
+      });
+      if ('refused' in result) return result;
+      const data = result.ops.find(
+        (op): op is Extract<Op, { type: 'addNode' }> =>
+          op.type === 'addNode' && op.nodeType === 'PolyMeshData',
+      )!;
+      return PolyMeshDataParams.parse(data.params).material!.specular;
+    }
+    const withSpecular = (ext: Record<string, unknown>) =>
+      texturedFixture((json) => {
+        json.extensionsUsed = ['KHR_materials_specular'];
+        materialOf(json).extensions = { KHR_materials_specular: ext };
+      });
+
+    it('arrive on the existing specular lobe, the colour as sRGB hex', async () => {
+      // The fixture: specularFactor 0.4, specularColorFactor [1, 0.5, 0.25] (linear) = #ffbc89.
+      expect(await specularOf(fixture('public/assets/specular-quad.gltf'))).toEqual({
+        roughness: 0.8,
+        ior: 1.5,
+        weight: 0.4,
+        color: '#ffbc89',
+      });
+    });
+
+    it('at OpenPBR`s defaults (1, white) nothing is written, so the material keys as it did', async () => {
+      expect(
+        await specularOf(withSpecular({ specularFactor: 1, specularColorFactor: [1, 1, 1] })),
+      ).toEqual({ roughness: 0.8, ior: 1.5 });
+    });
+
+    it('a colour above 1, which the spec allows and an sRGB hex cannot hold, is refused by name', async () => {
+      expect(await specularOf(withSpecular({ specularColorFactor: [1.2, 1, 1] }))).toMatchObject({
+        issue: '#1321',
+        refused: expect.stringMatching(/specular colour above 1/),
+      });
+    });
+  });
+
   it('#1123 — a lit material names no class, so it keys as it always did', async () => {
     const result = await buildNativeGltfImportOps({
       buffer: fixture(TEXTURED),

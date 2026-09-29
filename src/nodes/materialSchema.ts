@@ -199,6 +199,9 @@ export function openpbrMaterialSchema() {
         .object({
           roughness: z.number().default(0.3), // OpenPBR new-box default (R1: NOT 0.5)
           ior: z.number().default(1.5),
+          // #1321 — optional, no default: absent is OpenPBR's 1 and white.
+          weight: z.number().optional(),
+          color: z.string().optional(),
         })
         .default({ roughness: 0.3, ior: 1.5 }),
       coat: z
@@ -346,7 +349,15 @@ export function hydrateInlineMaterial(
       color: str(m.base?.color, legacyColor ?? baseColorDefault),
       metalness: num(m.base?.metalness, 0),
     },
-    specular: { roughness: num(m.specular?.roughness, 0.3), ior: num(m.specular?.ior, 1.5) },
+    specular: {
+      roughness: num(m.specular?.roughness, 0.3),
+      ior: num(m.specular?.ior, 1.5),
+      // #1321 — present only when set, for the reason the per-map fields give below.
+      ...(typeof m.specular?.weight === 'number' && Number.isFinite(m.specular.weight)
+        ? { weight: m.specular.weight }
+        : {}),
+      ...(typeof m.specular?.color === 'string' ? { color: m.specular.color } : {}),
+    },
     coat: { weight: num(m.coat?.weight, 0), roughness: num(m.coat?.roughness, 0) },
     transmission: { weight: num(m.transmission?.weight, 0) },
     emission: {

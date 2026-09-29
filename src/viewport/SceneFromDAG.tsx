@@ -887,6 +887,9 @@ function MeshScaleProbe() {
       sheen: number | null;
       sheenColor: string | null;
       sheenRoughness: number | null;
+      // #1321 — the drawn specular weight and colour.
+      specularIntensity: number | null;
+      specularColor: string | null;
     } | null => {
       const grp = byNodeId(nodeId);
       if (!grp) return null;
@@ -931,6 +934,9 @@ function MeshScaleProbe() {
         sheen: typeof phys.sheen === 'number' ? phys.sheen : null,
         sheenColor: phys.sheenColor ? `#${phys.sheenColor.getHexString()}` : null,
         sheenRoughness: typeof phys.sheenRoughness === 'number' ? phys.sheenRoughness : null,
+        specularIntensity:
+          typeof phys.specularIntensity === 'number' ? phys.specularIntensity : null,
+        specularColor: phys.specularColor ? `#${phys.specularColor.getHexString()}` : null,
       };
     };
     return () => {
@@ -3313,6 +3319,8 @@ function CapturedBakedMeshR({
       if (ph.sheenColor !== undefined) p.sheenColor = new THREE.Color(ph.sheenColor);
       if (ph.sheenRoughness !== undefined) p.sheenRoughness = ph.sheenRoughness;
       if (ph.specularIntensity !== undefined) p.specularIntensity = ph.specularIntensity;
+      // #1321 — without this a baked specular colour drew white.
+      if (ph.specularColor !== undefined) p.specularColor = new THREE.Color(ph.specularColor);
     }
     return m;
   }, [

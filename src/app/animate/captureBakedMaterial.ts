@@ -206,6 +206,10 @@ export async function captureBakedMaterial(
           ? { sheenColor: `#${p.sheenColor.getHexString()}`, sheenRoughness: p.sheenRoughness }
           : {}),
         specularIntensity: p.specularIntensity,
+        // #1321 — the specular colour when it is not white, three's default.
+        ...(p.specularColor.getHex() !== 0xffffff
+          ? { specularColor: `#${p.specularColor.getHexString()}` }
+          : {}),
       },
     };
   }

@@ -200,6 +200,9 @@ export interface PrimitiveMaterialSpec {
   readonly sheen?: number;
   readonly sheenColor?: string;
   readonly sheenRoughness?: number;
+  /** #1321 — the specular lobe's weight and colour. Absent: three's 1 and white. */
+  readonly specularIntensity?: number;
+  readonly specularColor?: string;
   /**
    * The RESOLVED map textures (already decoded + shared by hash), not the refs.
    * Resolution happens above this module, in the suspense hooks; keying on the
@@ -398,6 +401,9 @@ function build(spec: PrimitiveMaterialSpec): PrimitiveMaterial {
   if (spec.sheen !== undefined) m.sheen = spec.sheen;
   if (spec.sheenColor !== undefined) m.sheenColor = new THREE.Color(spec.sheenColor);
   if (spec.sheenRoughness !== undefined) m.sheenRoughness = spec.sheenRoughness;
+  // #1321 — the specular weight and colour.
+  if (spec.specularIntensity !== undefined) m.specularIntensity = spec.specularIntensity;
+  if (spec.specularColor !== undefined) m.specularColor = new THREE.Color(spec.specularColor);
   m.thickness = spec.thickness;
   m.wireframe = spec.wireframe;
   m.alphaTest = spec.alphaTest; // #532 — explicit; three's default is 0

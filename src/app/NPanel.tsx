@@ -1989,6 +1989,9 @@ const MATERIAL_LOBES: { lobe: string; label: string; fields: MaterialFieldSpec[]
     lobe: 'specular',
     label: 'Specular',
     fields: [
+      // #1321 — optional fields, shown at OpenPBR's defaults (weight 1, colour white) while absent.
+      { key: 'weight', label: 'weight', kind: 'number', absent: 1 },
+      { key: 'color', label: 'color', kind: 'color', absent: '#ffffff' },
       { key: 'roughness', label: 'roughness', kind: 'number' },
       { key: 'ior', label: 'ior', kind: 'number' },
     ],

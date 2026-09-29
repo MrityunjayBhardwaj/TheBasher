@@ -2971,6 +2971,21 @@ describe('#1139 — a primitive bakes the material it draws, maps and placement 
     });
   });
 
+  describe('#1321 — a box bakes its specular weight and colour', () => {
+    it('keeps both', async () => {
+      const { spec } = await bakeBoxWith({
+        specular: { roughness: 0.3, ior: 1.5, weight: 0.4, color: '#ffbc89' },
+      });
+      expect(spec.physical).toMatchObject({ specularIntensity: 0.4, specularColor: '#ffbc89' });
+    });
+
+    it('a box at the defaults writes neither', async () => {
+      const { spec } = await bakeBoxWith({});
+      expect('specularIntensity' in (spec.physical ?? {})).toBe(false);
+      expect('specularColor' in (spec.physical ?? {})).toBe(false);
+    });
+  });
+
   describe('#1123 — a box with fuzz bakes its sheen weight, colour and roughness', () => {
     it('keeps all three', async () => {
       const { spec } = await bakeBoxWith({

@@ -159,6 +159,9 @@ export interface ThreeMaterialParams {
   readonly sheen?: number;
   readonly sheenColor?: string;
   readonly sheenRoughness?: number;
+  /** #1321 — the specular lobe's weight and colour (sRGB hex). Absent: three's 1 and white. */
+  readonly specularIntensity?: number;
+  readonly specularColor?: string;
 }
 
 /** The UV layer a map slot samples, in THREE's slot vocabulary. */
@@ -210,6 +213,9 @@ export function openpbrToThree(ir: InlineMaterialSpec): ThreeMaterialParams {
     ...(ir.fuzz ? { sheen: ir.fuzz.weight } : {}),
     ...(ir.fuzz ? { sheenColor: ir.fuzz.color } : {}),
     ...(ir.fuzz ? { sheenRoughness: ir.fuzz.roughness } : {}),
+    // #1321 — omitted at OpenPBR's default, which is three's too.
+    ...(ir.specular.weight !== undefined ? { specularIntensity: ir.specular.weight } : {}),
+    ...(ir.specular.color !== undefined ? { specularColor: ir.specular.color } : {}),
   };
   // NOTE: ir.unsupported is intentionally NOT read — those lobes have no WebGL
   // MeshPhysical representation (v0.7 TSL backend renders them).

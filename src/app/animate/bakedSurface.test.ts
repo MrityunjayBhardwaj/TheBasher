@@ -60,6 +60,20 @@ describe('#1140 — the capture reads the surface the material draws', () => {
   });
 });
 
+describe('#1321 — a captured specular colour comes across', () => {
+  it('keeps a colour that is not white', async () => {
+    const live = new THREE.MeshPhysicalMaterial({ specularIntensity: 0.4 });
+    live.specularColor.set('#ffbc89');
+    const spec = await captureBakedMaterial(storage(), live);
+    expect(spec.physical).toMatchObject({ specularIntensity: 0.4, specularColor: '#ffbc89' });
+  });
+
+  it('white, three`s default, writes nothing', async () => {
+    const spec = await captureBakedMaterial(storage(), new THREE.MeshPhysicalMaterial());
+    expect('specularColor' in (spec.physical ?? {})).toBe(false);
+  });
+});
+
 describe('#1123 — a captured sheen keeps its colour and roughness', () => {
   it('keeps both beside the weight', async () => {
     const live = new THREE.MeshPhysicalMaterial({ sheen: 1, sheenRoughness: 0.3 });
@@ -90,9 +104,18 @@ describe('#1123 — a captured sheen keeps its colour and roughness', () => {
       metalnessMap: null,
       aoMap: null,
       emissiveMap: null,
-      physical: { sheen: 1, sheenColor: '#ff8800', sheenRoughness: 0.3 },
+      physical: {
+        sheen: 1,
+        sheenColor: '#ff8800',
+        sheenRoughness: 0.3,
+        specularColor: '#ffbc89',
+      },
     });
-    expect(parsed.physical).toMatchObject({ sheenColor: '#ff8800', sheenRoughness: 0.3 });
+    expect(parsed.physical).toMatchObject({
+      sheenColor: '#ff8800',
+      sheenRoughness: 0.3,
+      specularColor: '#ffbc89',
+    });
   });
 });
 

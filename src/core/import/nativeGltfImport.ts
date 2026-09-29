@@ -275,6 +275,9 @@ const HELD_EXTENSIONS = new Set([
   'KHR_materials_unlit',
   // #1123 — sheen, the material's `fuzz` lobe (its textures stay refused by slot).
   'KHR_materials_sheen',
+  // #1321 — specular weight and colour, on the material's `specular` lobe (a colour above 1 is
+  // refused in `materialRefusal`; the textures stay refused by slot).
+  'KHR_materials_specular',
 ]);
 
 // #1050 — where a material may sample a texture and still arrive whole: the slots the IR captures
@@ -1004,6 +1007,21 @@ function materialOf(json: NativeGltfJson, materialIndex: number): unknown {
 
 /** Why a material's textures cannot come across whole, or null. */
 function materialRefusal(json: NativeGltfJson, materialIndex: number): NativeImportRefusal | null {
+  // #1321 — the extension allows a specular colour above 1 (`KHR_materials_specular` README), which
+  // the material's sRGB hex colour cannot hold, and folding the excess into the weight is not the
+  // same draw (three multiplies `specularIntensity` into F90 as well as F0). Refused, not clamped.
+  const specular = (
+    materialOf(json, materialIndex) as {
+      extensions?: { KHR_materials_specular?: { specularColorFactor?: unknown } };
+    }
+  ).extensions?.KHR_materials_specular;
+  const specularColor = specular?.specularColorFactor;
+  if (Array.isArray(specularColor) && specularColor.some((c) => typeof c === 'number' && c > 1)) {
+    return {
+      refused: `material ${materialIndex} has a specular colour above 1, which the native material cannot hold`,
+      issue: '#1321',
+    };
+  }
   for (const { path, info } of textureSites(materialOf(json, materialIndex))) {
     const where = `material ${materialIndex} ${path}`;
     if (!HELD_TEXTURE_SLOTS.has(path)) {

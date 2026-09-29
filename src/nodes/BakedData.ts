@@ -113,6 +113,8 @@ export const BakedMaterialSpecSchema = z.object({
       sheenColor: z.string().optional(),
       sheenRoughness: z.number().optional(),
       specularIntensity: z.number().optional(),
+      // #1321 — declared, or zod strips it and a baked specular colour turns white.
+      specularColor: z.string().optional(),
     })
     .optional(),
 });

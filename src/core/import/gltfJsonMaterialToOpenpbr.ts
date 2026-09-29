@@ -356,6 +356,16 @@ export function gltfJsonMaterialToOpenpbr(
   // #1123 — sheen → OpenPBR fuzz at weight 1. Both references do so: Blender sets Sheen Weight 1
   // (`blender/imp/pbrMetallicRoughness.py` `sheen`), three sets `sheen = 1` (`GLTFLoader.js:998`).
   // The glTF defaults are a black colour and roughness 0.
+  // #1321 — specular weight and colour, onto the existing lobe; each written only when it is not
+  // OpenPBR's default (1, white), so an ordinary material keys as it did. A colour above 1 never
+  // reaches here: the native reader refuses it by name (an sRGB hex cannot hold it).
+  const specularExt = ext.KHR_materials_specular as
+    | { specularFactor?: number; specularColorFactor?: number[] }
+    | undefined;
+  const specularWeight = specularExt?.specularFactor;
+  const specularColor = specularExt?.specularColorFactor
+    ? linearRgbToSrgbHex(specularExt.specularColorFactor, [1, 1, 1])
+    : undefined;
   const sheen = ext.KHR_materials_sheen as
     | { sheenColorFactor?: number[]; sheenRoughnessFactor?: number }
     | undefined;
@@ -377,7 +387,16 @@ export function gltfJsonMaterialToOpenpbr(
       color: linearRgbToSrgbHex(bcf, [1, 1, 1]),
       metalness: num(pbr.metallicFactor, 1),
     },
-    specular: { roughness: num(pbr.roughnessFactor, 1), ior: num(ior?.ior, 1.5) },
+    specular: {
+      roughness: num(pbr.roughnessFactor, 1),
+      ior: num(ior?.ior, 1.5),
+      ...(typeof specularWeight === 'number' && specularWeight !== 1
+        ? { weight: specularWeight }
+        : {}),
+      ...(specularColor !== undefined && specularColor !== '#ffffff'
+        ? { color: specularColor }
+        : {}),
+    },
     coat: {
       weight: num(coat?.clearcoatFactor, 0),
       roughness: num(coat?.clearcoatRoughnessFactor, 0),
