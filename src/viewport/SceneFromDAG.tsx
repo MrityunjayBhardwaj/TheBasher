@@ -890,6 +890,10 @@ function MeshScaleProbe() {
       // #1321 — the drawn specular weight and colour.
       specularIntensity: number | null;
       specularColor: string | null;
+      // #1322 — the drawn volume: thickness and absorption.
+      thickness: number | null;
+      attenuationDistance: number | null;
+      attenuationColor: string | null;
     } | null => {
       const grp = byNodeId(nodeId);
       if (!grp) return null;
@@ -937,6 +941,12 @@ function MeshScaleProbe() {
         specularIntensity:
           typeof phys.specularIntensity === 'number' ? phys.specularIntensity : null,
         specularColor: phys.specularColor ? `#${phys.specularColor.getHexString()}` : null,
+        thickness: typeof phys.thickness === 'number' ? phys.thickness : null,
+        attenuationDistance:
+          typeof phys.attenuationDistance === 'number' && Number.isFinite(phys.attenuationDistance)
+            ? phys.attenuationDistance
+            : null,
+        attenuationColor: phys.attenuationColor ? `#${phys.attenuationColor.getHexString()}` : null,
       };
     };
     return () => {
@@ -3321,6 +3331,10 @@ function CapturedBakedMeshR({
       if (ph.specularIntensity !== undefined) p.specularIntensity = ph.specularIntensity;
       // #1321 — without this a baked specular colour drew white.
       if (ph.specularColor !== undefined) p.specularColor = new THREE.Color(ph.specularColor);
+      // #1322 — without these baked glass drew clear.
+      if (ph.attenuationDistance !== undefined) p.attenuationDistance = ph.attenuationDistance;
+      if (ph.attenuationColor !== undefined)
+        p.attenuationColor = new THREE.Color(ph.attenuationColor);
     }
     return m;
   }, [

@@ -1107,6 +1107,58 @@ describe('buildNativeGltfImportOps', () => {
     });
   });
 
+  describe('#1322 — a volume', () => {
+    async function materialOfImport(buffer: ArrayBuffer) {
+      const result = await buildNativeGltfImportOps({
+        buffer,
+        assetRef: 'user-imports/native/volume.gltf',
+        sceneNodeId: 'n_scene',
+        storeImage: async () => 'img',
+      });
+      if ('refused' in result) throw new Error(`${result.refused} (${result.issue})`);
+      const data = result.ops.find(
+        (op): op is Extract<Op, { type: 'addNode' }> =>
+          op.type === 'addNode' && op.nodeType === 'PolyMeshData',
+      )!;
+      return PolyMeshDataParams.parse(data.params).material!;
+    }
+
+    it('arrives as transmission colour and depth, and the thickness on geometry', async () => {
+      // The fixture: attenuationColor [0.2, 0.6, 1] (linear) = #7ccbff, distance 0.5, thickness 0.2.
+      const m = await materialOfImport(fixture('public/assets/volume-quad.gltf'));
+      expect(m.transmission).toEqual({ weight: 1, color: '#7ccbff', depth: 0.5 });
+      expect(m.geometry.thickness).toBe(0.2);
+    });
+
+    it('with no attenuation distance (glTF: +Infinity, no absorption) it writes no colour or depth', async () => {
+      const m = await materialOfImport(
+        texturedFixture((json) => {
+          json.extensionsUsed = ['KHR_materials_transmission', 'KHR_materials_volume'];
+          materialOf(json).extensions = {
+            KHR_materials_transmission: { transmissionFactor: 1 },
+            KHR_materials_volume: { thicknessFactor: 0, attenuationColor: [0.2, 0.6, 1] },
+          };
+        }),
+      );
+      expect(m.transmission).toEqual({ weight: 1 });
+      // A thickness of 0 is the file saying thin-walled, and it is kept, not defaulted.
+      expect(m.geometry.thickness).toBe(0);
+    });
+
+    it('a distance of 0, outside the spec`s (0, +inf), is read as no absorption', async () => {
+      const m = await materialOfImport(
+        texturedFixture((json) => {
+          json.extensionsUsed = ['KHR_materials_transmission', 'KHR_materials_volume'];
+          materialOf(json).extensions = {
+            KHR_materials_transmission: { transmissionFactor: 1 },
+            KHR_materials_volume: { attenuationDistance: 0, attenuationColor: [0.2, 0.6, 1] },
+          };
+        }),
+      );
+      expect(m.transmission).toEqual({ weight: 1 });
+    });
+  });
+
   describe('#1321 — specular weight and colour', () => {
     async function specularOf(buffer: ArrayBuffer) {
       const result = await buildNativeGltfImportOps({

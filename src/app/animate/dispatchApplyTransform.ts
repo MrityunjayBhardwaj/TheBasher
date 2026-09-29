@@ -370,6 +370,11 @@ function bakedSpecFromInline(material: InlineMaterialSpec | null): BakedMaterial
         ? { specularIntensity: drawn.specularIntensity }
         : {}),
       ...(drawn.specularColor !== undefined ? { specularColor: drawn.specularColor } : {}),
+      // #1322 — the volume's absorption, when it has any.
+      ...(drawn.attenuationDistance !== undefined
+        ? { attenuationDistance: drawn.attenuationDistance }
+        : {}),
+      ...(drawn.attenuationColor !== undefined ? { attenuationColor: drawn.attenuationColor } : {}),
     },
   };
 }

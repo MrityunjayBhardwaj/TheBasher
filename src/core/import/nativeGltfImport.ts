@@ -278,6 +278,9 @@ const HELD_EXTENSIONS = new Set([
   // #1321 — specular weight and colour, on the material's `specular` lobe (a colour above 1 is
   // refused in `materialRefusal`; the textures stay refused by slot).
   'KHR_materials_specular',
+  // #1322 — a volume: the transmission lobe's colour and depth, and `geometry.thickness` (the
+  // thickness texture stays refused by slot).
+  'KHR_materials_volume',
 ]);
 
 // #1050 — where a material may sample a texture and still arrive whole: the slots the IR captures

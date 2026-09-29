@@ -162,6 +162,13 @@ export interface ThreeMaterialParams {
   /** #1321 — the specular lobe's weight and colour (sRGB hex). Absent: three's 1 and white. */
   readonly specularIntensity?: number;
   readonly specularColor?: string;
+  /**
+   * #1322 — Beer's-law absorption: three's `attenuationDistance` / `attenuationColor`, from the
+   * transmission lobe's depth and colour. Both absent unless a depth is set (a colour alone is
+   * OpenPBR's tint, which three has no way to draw).
+   */
+  readonly attenuationDistance?: number;
+  readonly attenuationColor?: string;
 }
 
 /** The UV layer a map slot samples, in THREE's slot vocabulary. */
@@ -187,7 +194,8 @@ export function openpbrToThree(ir: InlineMaterialSpec): ThreeMaterialParams {
     clearcoat: ir.coat.weight,
     clearcoatRoughness: ir.coat.roughness,
     transmission,
-    thickness: transmission > 0 ? DEFAULT_TRANSMISSION_THICKNESS : 0,
+    // #1322 — a file's volume thickness when it gives one; the default otherwise.
+    thickness: transmission > 0 ? (ir.geometry.thickness ?? DEFAULT_TRANSMISSION_THICKNESS) : 0,
     emissive: ir.emission.color,
     emissiveIntensity: ir.emission.luminance * EMISSION_NIT_TO_INTENSITY,
     opacity,
@@ -216,6 +224,13 @@ export function openpbrToThree(ir: InlineMaterialSpec): ThreeMaterialParams {
     // #1321 — omitted at OpenPBR's default, which is three's too.
     ...(ir.specular.weight !== undefined ? { specularIntensity: ir.specular.weight } : {}),
     ...(ir.specular.color !== undefined ? { specularColor: ir.specular.color } : {}),
+    // #1322 — absorption only with a depth.
+    ...(ir.transmission.depth !== undefined && ir.transmission.depth > 0
+      ? { attenuationDistance: ir.transmission.depth }
+      : {}),
+    ...(ir.transmission.depth !== undefined && ir.transmission.depth > 0
+      ? { attenuationColor: ir.transmission.color ?? '#ffffff' }
+      : {}),
   };
   // NOTE: ir.unsupported is intentionally NOT read — those lobes have no WebGL
   // MeshPhysical representation (v0.7 TSL backend renders them).

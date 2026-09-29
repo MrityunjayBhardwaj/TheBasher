@@ -92,3 +92,14 @@ describe('#1321 — an edit on an absent specular weight adds that field alone',
     expect(mat.specular).toEqual({ roughness: 0.3, ior: 1.5, weight: 0.4 });
   });
 });
+
+// #1322 — the transmission lobe's colour and depth are optional fields inside it: an edit on the
+// depth adds that field alone.
+describe('#1322 — an edit on an absent transmission depth adds that field alone', () => {
+  it('setting the depth leaves the colour absent', () => {
+    const state = buildDefaultDagState();
+    const next = applyOp(state, setParam('material.transmission.depth', 0.5)).next;
+    const mat = next.nodes.n_box_data.params.material as InlineMaterialSpec;
+    expect(mat.transmission).toEqual({ weight: 0, depth: 0.5 });
+  });
+});

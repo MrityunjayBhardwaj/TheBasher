@@ -43,6 +43,7 @@ import {
   MATERIAL_MAP_SLOTS,
   type MaterialMapSlot,
 } from './material/attachMapFromFile';
+import { DEFAULT_TRANSMISSION_THICKNESS } from './material/openpbrToThree';
 import { CLEARED_MAP, isClearedMap, isImportedMap } from './material/gltfMapOverlay';
 import {
   perMapPlacementRows,
@@ -2018,7 +2019,12 @@ const MATERIAL_LOBES: { lobe: string; label: string; fields: MaterialFieldSpec[]
   {
     lobe: 'transmission',
     label: 'Transmission',
-    fields: [{ key: 'weight', label: 'weight', kind: 'number' }],
+    fields: [
+      { key: 'weight', label: 'weight', kind: 'number' },
+      // #1322 — optional: absent is no absorption. OpenPBR's defaults while absent.
+      { key: 'color', label: 'color', kind: 'color', absent: '#ffffff' },
+      { key: 'depth', label: 'depth', kind: 'number', absent: 0 },
+    ],
   },
   {
     lobe: 'emission',
@@ -2328,11 +2334,19 @@ function MaterialRenderOptions({
   onSet,
   onUnlit,
 }: {
-  geometry: { alphaCutoff?: number; vertexColors?: boolean; doubleSided?: boolean };
+  geometry: {
+    alphaCutoff?: number;
+    vertexColors?: boolean;
+    doubleSided?: boolean;
+    thickness?: number;
+  };
   /** #1123 — the surface draws unlit (glTF `KHR_materials_unlit`). */
   unlit: boolean;
   testidBase: string;
-  onSet: (key: 'alphaCutoff' | 'vertexColors' | 'doubleSided', value: number | boolean) => void;
+  onSet: (
+    key: 'alphaCutoff' | 'vertexColors' | 'doubleSided' | 'thickness',
+    value: number | boolean,
+  ) => void;
   onUnlit: (unlit: boolean) => void;
 }) {
   return (
@@ -2386,6 +2400,29 @@ function MaterialRenderOptions({
             const n = parseFloat(e.target.value);
             if (Number.isNaN(n)) return;
             onSet('alphaCutoff', Math.min(Math.max(n, 0), 1));
+          }}
+          className="w-24 rounded border border-border bg-muted px-2 py-0.5 text-right font-mono text-xs text-fg focus-visible:border-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+        />
+      </label>
+      <label className="flex items-center justify-between gap-2 px-3 py-1.5 text-[11px] text-fg/80">
+        <span
+          className="font-mono text-fg/60"
+          title="How thick the volume under a transmissive surface is, in mesh units (glTF volume thickness). 0 is thin-walled."
+        >
+          volume thickness
+        </span>
+        <input
+          type="number"
+          step="0.05"
+          min={0}
+          // #1322 — absent draws the transmissive default, so that is what it shows.
+          value={geometry.thickness ?? DEFAULT_TRANSMISSION_THICKNESS}
+          aria-label="volume thickness"
+          data-testid={`inspector-thickness-${testidBase}`}
+          onChange={(e) => {
+            const n = parseFloat(e.target.value);
+            if (Number.isNaN(n)) return;
+            onSet('thickness', Math.max(n, 0));
           }}
           className="w-24 rounded border border-border bg-muted px-2 py-0.5 text-right font-mono text-xs text-fg focus-visible:border-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
         />
@@ -3095,6 +3132,7 @@ function MaterialEditor({
             alphaCutoff?: number;
             vertexColors?: boolean;
             doubleSided?: boolean;
+            thickness?: number;
           }
         }
         unlit={(material as { unlit?: unknown }).unlit === true}

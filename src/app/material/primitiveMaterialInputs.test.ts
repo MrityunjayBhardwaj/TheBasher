@@ -163,6 +163,13 @@ const CORPUS: readonly World[] = [
   world('specular colour', {
     ir: irWith({ specular: { roughness: 0.72, ior: 1.5, color: '#ffbc89' } }),
   }),
+  world('volume depth', { ir: irWith({ transmission: { weight: 0.6, depth: 0.5 } }) }),
+  world('volume colour', {
+    ir: irWith({ transmission: { weight: 0.6, color: '#7ccbff', depth: 0.5 } }),
+  }),
+  world('volume thickness', {
+    ir: irWith({ transmission: { weight: 0.6 }, geometry: { opacity: 1, thickness: 0.2 } }),
+  }),
   world('fuzz roughness', {
     ir: irWith({ fuzz: { weight: 1, color: '#ffffff', roughness: 0.8 } }),
   }),
@@ -405,6 +412,8 @@ describe('#566 — every field the compile produces is carried on the spec, or e
     sheenRoughness: 'sheenRoughness',
     specularIntensity: 'specularIntensity',
     specularColor: 'specularColor',
+    attenuationDistance: 'attenuationDistance',
+    attenuationColor: 'attenuationColor',
   };
 
   /**
@@ -450,6 +459,7 @@ describe('#566 — every field the compile produces is carried on the spec, or e
       irWith({ unlit: true }),
       irWith({ fuzz: { weight: 1, color: '#ffffff', roughness: 0.3 } }),
       irWith({ specular: { roughness: 0.72, ior: 1.5, weight: 0.4, color: '#ffbc89' } }),
+      irWith({ transmission: { weight: 1, color: '#7ccbff', depth: 0.5 } }),
     ];
     const seen = new Set<string>();
     for (const ir of worlds)
@@ -474,8 +484,8 @@ describe('#566 — every field the compile produces is carried on the spec, or e
     // EXACT on both sides. A floor would pass a field that stopped being produced — which is
     // the direction that looks like cleanup and silently removes a rendering lobe.
     const produced = producedFields();
-    expect(produced.length).toBe(27);
-    expect(produced.filter((f) => f in CARRIED).length).toBe(27);
+    expect(produced.length).toBe(29);
+    expect(produced.filter((f) => f in CARRIED).length).toBe(29);
     expect(produced.filter((f) => f in EXCLUDED).length).toBe(0);
   });
 
@@ -498,6 +508,7 @@ describe('#566 — every field the compile produces is carried on the spec, or e
           unlit: true,
           fuzz: { weight: 1, color: '#ffffff', roughness: 0.3 },
           specular: { roughness: 0.72, ior: 1.5, weight: 0.4, color: '#ffbc89' },
+          transmission: { weight: 1, color: '#7ccbff', depth: 0.5 },
         }),
         undefined,
       ),

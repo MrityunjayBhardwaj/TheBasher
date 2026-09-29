@@ -206,6 +206,13 @@ export async function captureBakedMaterial(
           ? { sheenColor: `#${p.sheenColor.getHexString()}`, sheenRoughness: p.sheenRoughness }
           : {}),
         specularIntensity: p.specularIntensity,
+        // #1322 — the volume's absorption when it has any (three's default distance is Infinity).
+        ...(Number.isFinite(p.attenuationDistance)
+          ? {
+              attenuationDistance: p.attenuationDistance,
+              attenuationColor: `#${p.attenuationColor.getHexString()}`,
+            }
+          : {}),
         // #1321 — the specular colour when it is not white, three's default.
         ...(p.specularColor.getHex() !== 0xffffff
           ? { specularColor: `#${p.specularColor.getHexString()}` }

@@ -60,6 +60,20 @@ describe('#1140 — the capture reads the surface the material draws', () => {
   });
 });
 
+describe('#1322 — a captured volume keeps its absorption', () => {
+  it('keeps distance and colour when the material absorbs', async () => {
+    const live = new THREE.MeshPhysicalMaterial({ transmission: 1, attenuationDistance: 0.5 });
+    live.attenuationColor.set('#7ccbff');
+    const spec = await captureBakedMaterial(storage(), live);
+    expect(spec.physical).toMatchObject({ attenuationDistance: 0.5, attenuationColor: '#7ccbff' });
+  });
+
+  it('three`s default (Infinity) writes neither', async () => {
+    const spec = await captureBakedMaterial(storage(), new THREE.MeshPhysicalMaterial());
+    expect('attenuationDistance' in (spec.physical ?? {})).toBe(false);
+  });
+});
+
 describe('#1321 — a captured specular colour comes across', () => {
   it('keeps a colour that is not white', async () => {
     const live = new THREE.MeshPhysicalMaterial({ specularIntensity: 0.4 });
@@ -109,7 +123,13 @@ describe('#1123 — a captured sheen keeps its colour and roughness', () => {
         sheenColor: '#ff8800',
         sheenRoughness: 0.3,
         specularColor: '#ffbc89',
+        attenuationDistance: 0.5,
+        attenuationColor: '#7ccbff',
       },
+    });
+    expect(parsed.physical).toMatchObject({
+      attenuationDistance: 0.5,
+      attenuationColor: '#7ccbff',
     });
     expect(parsed.physical).toMatchObject({
       sheenColor: '#ff8800',

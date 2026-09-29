@@ -203,6 +203,9 @@ export interface PrimitiveMaterialSpec {
   /** #1321 — the specular lobe's weight and colour. Absent: three's 1 and white. */
   readonly specularIntensity?: number;
   readonly specularColor?: string;
+  /** #1322 — absorption through the volume. Absent: three's none (distance Infinity). */
+  readonly attenuationDistance?: number;
+  readonly attenuationColor?: string;
   /**
    * The RESOLVED map textures (already decoded + shared by hash), not the refs.
    * Resolution happens above this module, in the suspense hooks; keying on the
@@ -404,6 +407,10 @@ function build(spec: PrimitiveMaterialSpec): PrimitiveMaterial {
   // #1321 — the specular weight and colour.
   if (spec.specularIntensity !== undefined) m.specularIntensity = spec.specularIntensity;
   if (spec.specularColor !== undefined) m.specularColor = new THREE.Color(spec.specularColor);
+  // #1322 — the volume's absorption.
+  if (spec.attenuationDistance !== undefined) m.attenuationDistance = spec.attenuationDistance;
+  if (spec.attenuationColor !== undefined)
+    m.attenuationColor = new THREE.Color(spec.attenuationColor);
   m.thickness = spec.thickness;
   m.wireframe = spec.wireframe;
   m.alphaTest = spec.alphaTest; // #532 — explicit; three's default is 0

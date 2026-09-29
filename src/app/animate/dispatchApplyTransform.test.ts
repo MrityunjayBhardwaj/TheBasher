@@ -2971,6 +2971,20 @@ describe('#1139 — a primitive bakes the material it draws, maps and placement 
     });
   });
 
+  describe('#1322 — a box bakes its volume', () => {
+    it('keeps the thickness and the absorption', async () => {
+      const { spec } = await bakeBoxWith({
+        transmission: { weight: 1, color: '#7ccbff', depth: 0.5 },
+        geometry: { opacity: 1, thickness: 0.2 },
+      });
+      expect(spec.physical).toMatchObject({
+        thickness: 0.2,
+        attenuationDistance: 0.5,
+        attenuationColor: '#7ccbff',
+      });
+    });
+  });
+
   describe('#1321 — a box bakes its specular weight and colour', () => {
     it('keeps both', async () => {
       const { spec } = await bakeBoxWith({

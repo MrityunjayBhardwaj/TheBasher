@@ -311,8 +311,19 @@ export interface InlineMaterialSpec {
    * the defaults live inside a present lobe.
    */
   readonly fuzz?: { readonly weight: number; readonly color: string; readonly roughness: number };
-  /** transmission_weight [0..1] — auto-sets three `transparent` + `thickness`. */
-  readonly transmission: { readonly weight: number };
+  /**
+   * transmission_weight [0..1] — auto-sets three `transparent` + `thickness`. #1322 — `color` and
+   * `depth` are OpenPBR's `transmission_color` / `transmission_depth` (sRGB hex; mesh units): the
+   * colour light turns into after travelling `depth` through the medium (Beer's law), which is what
+   * glTF `KHR_materials_volume` calls `attenuationColor` / `attenuationDistance`. OPTIONAL, no
+   * default: absent means no absorption. A colour with no depth is OpenPBR's non-physical tint,
+   * which three cannot draw, so it is stored and not drawn.
+   */
+  readonly transmission: {
+    readonly weight: number;
+    readonly color?: string;
+    readonly depth?: number;
+  };
   /** emission_color (sRGB hex) + emission_luminance (cd/m², 1:1 → emissiveIntensity). */
   readonly emission: { readonly color: string; readonly luminance: number };
   /**
@@ -338,6 +349,13 @@ export interface InlineMaterialSpec {
     /** glTF direct-import — render both faces (three `side=DoubleSide`), captured
      *  from a material's `doubleSided:true`. Absent = front-only (the default). */
     readonly doubleSided?: boolean;
+    /**
+     * #1322 — how thick the volume under a transmissive surface is, in mesh units (glTF
+     * `KHR_materials_volume` `thicknessFactor`; three's `thickness`). 0 is thin-walled. A geometry
+     * hint beside the other glTF geometry hints here; OpenPBR has none. Absent keeps the
+     * `DEFAULT_TRANSMISSION_THICKNESS` every transmissive material drew with before it.
+     */
+    readonly thickness?: number;
   };
   /** Texture map slots (W5). */
   readonly maps: InlineMaterialMaps;
@@ -583,6 +601,9 @@ export interface BakedMaterialSpec {
     readonly specularIntensity?: number;
     /** #1321 — the specular colour (sRGB hex), beside its weight above. Absent: white. */
     readonly specularColor?: string;
+    /** #1322 — the volume's absorption. Absent: none. */
+    readonly attenuationDistance?: number;
+    readonly attenuationColor?: string;
   };
 }
 

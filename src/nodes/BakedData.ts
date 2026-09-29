@@ -115,6 +115,9 @@ export const BakedMaterialSpecSchema = z.object({
       specularIntensity: z.number().optional(),
       // #1321 — declared, or zod strips it and a baked specular colour turns white.
       specularColor: z.string().optional(),
+      // #1322 — declared, or zod strips them and baked glass loses its absorption.
+      attenuationDistance: z.number().optional(),
+      attenuationColor: z.string().optional(),
     })
     .optional(),
 });

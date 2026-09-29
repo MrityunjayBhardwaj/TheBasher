@@ -213,6 +213,9 @@ export function openpbrMaterialSchema() {
       transmission: z
         .object({
           weight: z.number().default(0),
+          // #1322 — optional, no default: absent is no absorption.
+          color: z.string().optional(),
+          depth: z.number().optional(),
         })
         .default({ weight: 0 }),
       // #1123 — the fuzz lobe: optional, no default on the lobe, OpenPBR's defaults inside it
@@ -240,6 +243,8 @@ export function openpbrMaterialSchema() {
           // #1062 — the NAME of the colour layer this material reads (was `vertexColors: true`).
           colorLayer: z.string().min(1).optional(),
           doubleSided: z.boolean().optional(),
+          // #1322 — the glTF volume's thickness; absent keeps the transmissive default.
+          thickness: z.number().optional(),
         })
         .default({ opacity: 1 }),
       maps: mapsSchema,
@@ -289,6 +294,7 @@ interface PartialLobe {
   weight?: unknown;
   luminance?: unknown;
   opacity?: unknown;
+  depth?: unknown;
 }
 
 function num(v: unknown, fallback: number): number {
@@ -333,6 +339,7 @@ export function hydrateInlineMaterial(
       alphaCutoff?: unknown;
       colorLayer?: unknown;
       doubleSided?: unknown;
+      thickness?: unknown;
     };
     maps?: Partial<InlineMaterialSpec['maps']>;
     uvTransform?: { tiling?: unknown; offset?: unknown; rotation?: unknown };
@@ -359,7 +366,14 @@ export function hydrateInlineMaterial(
       ...(typeof m.specular?.color === 'string' ? { color: m.specular.color } : {}),
     },
     coat: { weight: num(m.coat?.weight, 0), roughness: num(m.coat?.roughness, 0) },
-    transmission: { weight: num(m.transmission?.weight, 0) },
+    transmission: {
+      weight: num(m.transmission?.weight, 0),
+      // #1322 — present only when set.
+      ...(typeof m.transmission?.color === 'string' ? { color: m.transmission.color } : {}),
+      ...(typeof m.transmission?.depth === 'number' && Number.isFinite(m.transmission.depth)
+        ? { depth: m.transmission.depth }
+        : {}),
+    },
     emission: {
       color: str(m.emission?.color, '#000000'),
       luminance: num(m.emission?.luminance, 0),
@@ -376,6 +390,9 @@ export function hydrateInlineMaterial(
         : {}),
       ...(typeof m.geometry?.doubleSided === 'boolean'
         ? { doubleSided: m.geometry.doubleSided }
+        : {}),
+      ...(typeof m.geometry?.thickness === 'number' && Number.isFinite(m.geometry.thickness)
+        ? { thickness: m.geometry.thickness }
         : {}),
     },
     maps: {

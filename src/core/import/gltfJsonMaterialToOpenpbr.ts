@@ -366,6 +366,17 @@ export function gltfJsonMaterialToOpenpbr(
   const specularColor = specularExt?.specularColorFactor
     ? linearRgbToSrgbHex(specularExt.specularColorFactor, [1, 1, 1])
     : undefined;
+  // #1322 — the volume: attenuation → OpenPBR transmission colour/depth (same Beer's-law meaning:
+  // `KHR_materials_volume` README, `open_pbr_surface.mtlx` transmission_color/depth), written only
+  // only when the file gives a distance, since glTF's default (+Infinity, which JSON can only say by
+  // leaving it out) means no absorption and OpenPBR's depth 0 would turn the colour into a tint. The
+  // spec's range is (0, +inf), so a 0 is read as no distance. `thicknessFactor` →
+  // `geometry.thickness` (0 = thin-walled).
+  const volume = ext.KHR_materials_volume as
+    | { thicknessFactor?: number; attenuationDistance?: number; attenuationColor?: number[] }
+    | undefined;
+  const attenuationDistance = volume?.attenuationDistance;
+  const absorbs = typeof attenuationDistance === 'number' && attenuationDistance > 0;
   const sheen = ext.KHR_materials_sheen as
     | { sheenColorFactor?: number[]; sheenRoughnessFactor?: number }
     | undefined;
@@ -401,7 +412,15 @@ export function gltfJsonMaterialToOpenpbr(
       weight: num(coat?.clearcoatFactor, 0),
       roughness: num(coat?.clearcoatRoughnessFactor, 0),
     },
-    transmission: { weight: num(transmission?.transmissionFactor, 0) },
+    transmission: {
+      weight: num(transmission?.transmissionFactor, 0),
+      ...(absorbs
+        ? {
+            color: linearRgbToSrgbHex(volume?.attenuationColor, [1, 1, 1]),
+            depth: attenuationDistance,
+          }
+        : {}),
+    },
     emission: {
       color: linearRgbToSrgbHex(mat.emissiveFactor, [0, 0, 0]),
       luminance: num(emissiveStrength?.emissiveStrength, 1),
@@ -418,6 +437,8 @@ export function gltfJsonMaterialToOpenpbr(
       ...(prim?.vertexColors ? { colorLayer: COLOR_LAYER } : {}),
       // doubleSided → render both faces; captured so the DAG can override `side`.
       ...(mat.doubleSided ? { doubleSided: true } : {}),
+      // #1322 — the volume's thickness, whenever the file has a volume (its default is 0).
+      ...(volume ? { thickness: num(volume.thicknessFactor, 0) } : {}),
     },
     // Capture imported-texture descriptors when the JSON texture tables are
     // available (import path); fall back to NULL_MAPS for the clone-read oracle.

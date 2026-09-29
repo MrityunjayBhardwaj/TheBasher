@@ -226,6 +226,12 @@ export function primitiveMaterialSpec(
       ? { specularIntensity: compiled.specularIntensity }
       : {}),
     ...(compiled.specularColor !== undefined ? { specularColor: compiled.specularColor } : {}),
+    ...(compiled.attenuationDistance !== undefined
+      ? { attenuationDistance: compiled.attenuationDistance }
+      : {}),
+    ...(compiled.attenuationColor !== undefined
+      ? { attenuationColor: compiled.attenuationColor }
+      : {}),
     // #1062 — the layer names, RESOLVED against the mesh this material will draw on. Spread
     // from one object so the spec and the key below cannot state the resolution differently.
     ...resolved,

@@ -64,6 +64,9 @@ const BASE: PrimitiveMaterialSpec = {
   // #1321 — the specular weight and colour, each away from three's default.
   specularIntensity: 0.4,
   specularColor: '#ffbc89',
+  // #1322 — the volume's absorption, away from three's default (Infinity, white).
+  attenuationDistance: 0.5,
+  attenuationColor: '#7ccbff',
   textures: {
     map: null,
     normalMap: null,
@@ -207,7 +210,7 @@ describe('#530 — the build applies every scalar the spec carries', () => {
     // field turning optional and quietly leaving `BASE`, which would make both this gate
     // and the key gate blind to it while staying green. The count is the guard for that
     // direction, so it is meant to be edited deliberately.
-    expect(scalars.length).toBe(22);
+    expect(scalars.length).toBe(24);
     // BASE's normal map is a flipped upload, so the drawn vector is (strength, strength); a
     // strength is only drawn beside a normal map.
     const withNormalMap = materialRegistry.get({
