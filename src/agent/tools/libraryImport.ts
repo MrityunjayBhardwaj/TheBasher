@@ -24,7 +24,7 @@ import { z } from 'zod';
 import type { ToolDefinition, ToolContext, ToolResult } from './types';
 import { buildMotionImportOpsFromOpfs } from '../../app/asset/importBvhFbx';
 import { IMPORT_EXTENSIONS, importFormatOf } from '../../app/asset/importFormats';
-import { buildGltfImportOpsFromOpfs } from '../../app/asset/importGltf';
+import { buildGltfImportOpsFromOpfs, refusalNotice } from '../../app/asset/importGltf';
 
 export const libraryImportSchema = z.object({
   assetRef: z
@@ -67,12 +67,12 @@ export const libraryImportTool: ToolDefinition<LibraryImportArgs> = {
       };
     }
     if (format.family === 'model') {
-      const result = await buildGltfImportOpsFromOpfs(args.assetRef, sceneRef.node, ctx.dagState);
-      // #1205 — a skinned file the native reader refused is not imported at all.
+      const result = await buildGltfImportOpsFromOpfs(args.assetRef, sceneRef.node);
+      // #1053 — a file the native reader refused is not imported at all.
       if (result.road === 'refused') {
         return {
           ops: [],
-          text: `Error: ${args.assetRef} was not imported — it is a character (it has a skin), and ${result.nativeRefusal.refused} (${result.nativeRefusal.issue}).`,
+          text: `Error: ${args.assetRef} was not imported — ${refusalNotice(result.nativeRefusal)}.`,
         };
       }
       return { ops: result.ops, text: `Imported ${args.assetRef} at [${args.position}]` };

@@ -29,10 +29,6 @@ import type { Page } from '@playwright/test';
 import { importRoots, importedMeshes } from './_importedMesh';
 
 type Tuple3 = [number, number, number];
-interface IngestFileShape {
-  relativePath: string;
-  bytes: Uint8Array;
-}
 interface GraphNode {
   type: string;
   params: Record<string, unknown>;
@@ -64,10 +60,12 @@ interface BasherWindow {
   __basher_three?: {
     getState: () => { scene: { getObjectByName: (n: string) => O3 | undefined } };
   };
-  __basher_ingestGltfFolder?: (
-    files: ReadonlyArray<IngestFileShape>,
-    folderName: string,
-  ) => Promise<string>;
+  __basher_writeOpfsBytes?: (path: string, bytes: Uint8Array) => Promise<void>;
+  __basher_importGltf?: (
+    buffer: ArrayBuffer,
+    assetRef: string,
+    resolveBuffer?: (uri: string) => Promise<Uint8Array>,
+  ) => Promise<unknown>;
 }
 
 async function openFresh(page: Page): Promise<void> {
@@ -89,7 +87,10 @@ async function openFresh(page: Page): Promise<void> {
   await page.waitForFunction(() => {
     const w = window as unknown as BasherWindow;
     return Boolean(
-      w.__basher_dag && w.__basher_ingestGltfFolder && w.__basher_three?.getState().scene,
+      w.__basher_dag &&
+      w.__basher_importGltf &&
+      w.__basher_writeOpfsBytes &&
+      w.__basher_three?.getState().scene,
     );
   });
 }
@@ -102,11 +103,7 @@ async function ingestHierarchy(page: Page, folderName: string): Promise<void> {
     const gltf = (await fetch(`${base}scene.gltf`).then((r) => r.json())) as {
       nodes: Record<string, unknown>[];
       scenes: { nodes: number[] }[];
-      extensionsUsed?: string[];
     };
-    // Keeps the file on the clone road: the native reader refuses an extension it does not hold,
-    // and one that exists nowhere is never held. Not required, so GLTFLoader only warns.
-    gltf.extensionsUsed = [...(gltf.extensionsUsed ?? []), 'EXT_p1108_clone_road'];
     const meshNode = gltf.scenes[0].nodes[0];
     gltf.nodes.push({
       name: 'p1108_parent',
@@ -117,13 +114,21 @@ async function ingestHierarchy(page: Page, folderName: string): Promise<void> {
     gltf.scenes[0].nodes = [gltf.nodes.length - 1];
     const bytes = async (file: string) =>
       new Uint8Array((await fetch(`${base}${file}`).then((r) => r.arrayBuffer())) as ArrayBuffer);
-    await w.__basher_ingestGltfFolder!(
-      [
-        { relativePath: 'scene.gltf', bytes: new TextEncoder().encode(JSON.stringify(gltf)) },
-        { relativePath: 'scene.bin', bytes: await bytes('scene.bin') },
-        { relativePath: 'texture.png', bytes: await bytes('texture.png') },
-      ],
-      name,
+    // #1053 — the product door no longer has a clone road, so this imports through the clone road's
+    // own seam, laid out in OPFS exactly where ingest would put it (the precedent is
+    // `_cloneRoadImport.ts`). The subject is Apply on a clone child, which retires with the road.
+    const files: [string, Uint8Array][] = [
+      ['scene.gltf', new TextEncoder().encode(JSON.stringify(gltf))],
+      ['scene.bin', await bytes('scene.bin')],
+      ['texture.png', await bytes('texture.png')],
+    ];
+    const dir = `user-imports/${name}/`;
+    for (const [file, data] of files) await w.__basher_writeOpfsBytes!(`${dir}${file}`, data);
+    const byName = new Map(files);
+    await w.__basher_importGltf!(
+      files[0][1].slice().buffer,
+      `${dir}scene.gltf`,
+      async (uri) => byName.get(uri)!,
     );
   }, folderName);
 }

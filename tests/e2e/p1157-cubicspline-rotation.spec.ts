@@ -154,10 +154,6 @@ test('#1157 — a CUBICSPLINE rotation imports native and draws the file’s own
   page,
 }) => {
   test.slow();
-  const warnings: string[] = [];
-  page.on('console', (m) => {
-    if (m.type() === 'warning') warnings.push(m.text());
-  });
   await page.goto('/');
   await page.evaluate(async () => {
     const root = await navigator.storage.getDirectory();
@@ -177,13 +173,10 @@ test('#1157 — a CUBICSPLINE rotation imports native and draws the file’s own
     await w.__basher_ingestGltfFolder!([{ relativePath: 'anim-cubic-rot.gltf', bytes }], 'p1157');
   });
 
-  // Native, and nothing refused it: no file's-copy notice, and a quaternion channel exists.
+  // Native, and nothing refused it: no refusal banner, and a quaternion channel exists.
   await expect.poll(() => importedGroupId(page)).not.toBeNull();
   const groupId = (await importedGroupId(page))!;
-  expect(
-    warnings.filter((t) => t.includes('not as native geometry')),
-    'the file imported native, not as a copy',
-  ).toEqual([]);
+  await expect(page.getByTestId('asset-error-banner')).toHaveCount(0);
   const shape = await page.evaluate(() => {
     const nodes = Object.values((window as unknown as W).__basher_dag!.getState().state.nodes);
     const rot = nodes.find((n) => n.type === 'KeyframeChannelQuat');
