@@ -1388,9 +1388,14 @@ function DirectChannelsLightR({
 // an ANIMATED camera (direct channels or a Track-To) — a static camera keeps the
 // cheap static path, parity with how meshes mount DirectChannelsR. `usePlayheadFollow`
 // re-samples `resolveCameraPoseAt` (channels + Track-To + parent world) each frame.
+// #1314 — through a stable cache, as `LightHelperFollower` below does. The pose reads other
+// objects (a Track-To's target, a Follow-Path's curve, a bone of a character), and uncached each
+// of those re-evaluates the graph under it every frame: on the "Camera Path + AI Walk" example
+// that is the walk's whole-clip retarget, three times a frame (~3 fps, idle or playing).
 function CameraFrustumFollower({ cameraId, active }: { cameraId: string; active: boolean }) {
+  const cache = useMemo<EvaluatorCache>(() => createEvaluatorCache(), []);
   const pose = usePlayheadFollow((seconds) =>
-    resolveCameraPoseAt(useDagStore.getState().state, cameraId, seconds),
+    resolveCameraPoseAt(useDagStore.getState().state, cameraId, seconds, cache),
   );
   return <CameraHelper pose={pose} pickId={cameraId} active={active} />;
 }

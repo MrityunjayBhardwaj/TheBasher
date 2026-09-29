@@ -55,7 +55,7 @@ import { degVec3ToRad, radVec3ToDeg } from '../viewport/rotation';
 import { rotationWriteOf, withResolvedRotation } from './resolvedRotation';
 import { useDagStore } from '../core/dag/store';
 import { resolveDataParamOwner } from './resolveDataParamOwner';
-import { evaluate } from '../core/dag/evaluator';
+import { createEvaluatorCache, evaluate, type EvaluatorCache } from '../core/dag/evaluator';
 import type { Node, Op } from '../core/dag/types';
 import type { CharacterValue, RotationModeFields } from '../nodes/types';
 import { buildWalkToOps } from './character/walkTo';
@@ -272,6 +272,10 @@ function SingleGizmo() {
           ? 'translate'
           : mode;
 
+  // #1314 — a stable evaluator cache for the per-playhead re-seeds below. Each resolve reads the
+  // graph under the selection (a character's pose, a constraint's target); uncached it re-ran all of
+  // it every frame — on the "Camera Path + AI Walk" example, the walk's whole-clip retarget.
+  const cache = useMemo<EvaluatorCache>(() => createEvaluatorCache(), []);
   useEffect(() => {
     if (!groupNode || !selectedId) return;
     if (manip) {
@@ -291,9 +295,12 @@ function SingleGizmo() {
       // behavior exactly (D-04 per-param-when-null).
       let evalT: ReturnType<typeof resolveEvaluatedTransform> = null;
       try {
-        evalT = resolveEvaluatedTransform(useDagStore.getState().state, selectedId, {
-          time: { frame, seconds, normalized },
-        });
+        evalT = resolveEvaluatedTransform(
+          useDagStore.getState().state,
+          selectedId,
+          { time: { frame, seconds, normalized } },
+          cache,
+        );
       } catch {
         evalT = null; // fall back entirely to static (Character-branch shape)
       }
@@ -324,9 +331,12 @@ function SingleGizmo() {
       // stripped on write-back (worldToLocalTRS).
       let parentWorld: THREE.Matrix4 | null = null;
       try {
-        parentWorld = resolveParentWorldMatrix(useDagStore.getState().state, selectedId, {
-          time: { frame, seconds, normalized },
-        });
+        parentWorld = resolveParentWorldMatrix(
+          useDagStore.getState().state,
+          selectedId,
+          { time: { frame, seconds, normalized } },
+          cache,
+        );
       } catch {
         parentWorld = null;
       }
@@ -355,6 +365,7 @@ function SingleGizmo() {
       const dagState = useDagStore.getState().state;
       try {
         const result = evaluate(dagState, selectedId, {
+          cache,
           ctx: { time: { frame, seconds, normalized } },
         });
         const v = result.value as CharacterValue;
@@ -391,7 +402,7 @@ function SingleGizmo() {
         (groupNode as unknown as { userData: Record<string, unknown> }).userData.__basher_gizmo ??
         null;
     }
-  }, [groupNode, manip, node, isCharacter, selectedId, seconds, frame, normalized, playing]);
+  }, [groupNode, manip, node, isCharacter, selectedId, seconds, frame, normalized, playing, cache]);
 
   if (!selectedId) return null;
   if (!isCharacter && !manip) return null;
@@ -671,6 +682,10 @@ function MultiGizmo() {
   // Seed the proxy at the median of the selected nodes' WORLD positions and
   // capture each node's seed world. Re-runs on selection/time change so the
   // group gizmo display-follows animation (like SingleGizmo).
+  // #1314 — a stable evaluator cache for the per-playhead re-seeds below. Each resolve reads the
+  // graph under the selection (a character's pose, a constraint's target); uncached it re-ran all of
+  // it every frame — on the "Camera Path + AI Walk" example, the walk's whole-clip retarget.
+  const cache = useMemo<EvaluatorCache>(() => createEvaluatorCache(), []);
   useEffect(() => {
     if (!groupNode) return;
     const state = useDagStore.getState().state;
@@ -683,7 +698,7 @@ function MultiGizmo() {
       let world: THREE.Matrix4;
       let parentWorld: THREE.Matrix4 | null = null;
       try {
-        const wt = resolveWorldTransform(state, id, ctx);
+        const wt = resolveWorldTransform(state, id, ctx, cache);
         world = wt
           ? new THREE.Matrix4().fromArray(wt.matrix)
           : new THREE.Matrix4().setPosition(...manip.position);
@@ -693,9 +708,9 @@ function MultiGizmo() {
         // phantom and the whole group orbits a pivot that is nowhere near any object. Position
         // ONLY — the band writes no rotation/scale, so the rest of the matrix stands. Read on
         // top of the pure walk, never folded into it (#348).
-        const followed = resolveFollowedWorldPosition(state, id, ctx);
+        const followed = resolveFollowedWorldPosition(state, id, ctx, cache);
         if (followed) world.setPosition(followed[0], followed[1], followed[2]);
-        parentWorld = resolveParentWorldMatrix(state, id, ctx);
+        parentWorld = resolveParentWorldMatrix(state, id, ctx, cache);
       } catch {
         world = new THREE.Matrix4().setPosition(...manip.position);
         parentWorld = null;
@@ -741,7 +756,7 @@ function MultiGizmo() {
         pivotMode,
       });
     }
-  }, [groupNode, selectedIds, primaryId, pivotMode, seconds, frame, normalized, playing]);
+  }, [groupNode, selectedIds, primaryId, pivotMode, seconds, frame, normalized, playing, cache]);
 
   function onObjectChange() {
     const g = groupNode;
@@ -1094,11 +1109,15 @@ function CameraGizmo() {
   // animation/scrub (the SingleGizmo discipline). The body proxy carries the
   // camera's world ORIENTATION (so rotate spins from the rendered orientation);
   // the aim proxy sits at the world lookAt point.
+  // #1314 — a stable evaluator cache for the per-playhead re-seeds below. Each resolve reads the
+  // graph under the selection (a character's pose, a constraint's target); uncached it re-ran all of
+  // it every frame — on the "Camera Path + AI Walk" example, the walk's whole-clip retarget.
+  const cache = useMemo<EvaluatorCache>(() => createEvaluatorCache(), []);
   useEffect(() => {
     if (!camId) return;
     let pose;
     try {
-      pose = resolveActiveCameraPoseAt(useDagStore.getState().state, seconds);
+      pose = resolveActiveCameraPoseAt(useDagStore.getState().state, seconds, cache);
     } catch {
       return;
     }
@@ -1111,9 +1130,12 @@ function CameraGizmo() {
     // #231 Inc 3.3 — the parent Group world (null for a top-level camera). The pose
     // above is already in WORLD space (resolveActiveCameraPoseAt composed it), so
     // the drag handlers undo this matrix to recover the LOCAL authored params.
-    const parentWorld = resolveParentWorldMatrix(useDagStore.getState().state, camId, {
-      time: { frame: Math.round(seconds * 60), seconds, normalized: 0 },
-    });
+    const parentWorld = resolveParentWorldMatrix(
+      useDagStore.getState().state,
+      camId,
+      { time: { frame: Math.round(seconds * 60), seconds, normalized: 0 } },
+      cache,
+    );
     seedRef.current = { position: pose.position, distance, parentWorld };
     if (bodyNode) {
       bodyNode.position.set(...pose.position);
@@ -1136,7 +1158,7 @@ function CameraGizmo() {
         bound,
       });
     }
-  }, [camId, bodyNode, aimNode, seconds, frame, normalized, playing, bound]);
+  }, [camId, bodyNode, aimNode, seconds, frame, normalized, playing, bound, cache]);
 
   // ONE write chokepoint per camera param — animated → re-route (channel keyed),
   // else raw setParam + autoKey first-key (mirrors the generic gizmo per-param,

@@ -86,6 +86,14 @@ import { clipLoopOf } from './clipLoop';
 import { posedSkeletonFromClip } from './AnimationClip';
 import { nameParam } from './paramWidget';
 
+let retargetRuns = 0;
+/** How many times a retarget has run, since load. It costs a whole clip (~300 ms on the
+ *  "Camera Path + AI Walk" walk), so a caller that evaluates without a cache runs it per frame —
+ *  for tests of #1314. */
+export function __retargetRunsForTests(): number {
+  return retargetRuns;
+}
+
 /** Both views of one retarget: the clip, and that same clip as a posed rig.
  *  A `type` and not an `interface` on purpose — only a type alias gets TypeScript's
  *  implicit index signature, which is what makes it assignable to the
@@ -208,6 +216,7 @@ export const RetargetClipNode: NodeDefinition<
       });
     }
 
+    retargetRuns++;
     const result = retargetClip({
       // The source rig travels on the wire, with the poses it indexes.
       sourceBones: source.skeleton.bones,

@@ -10,7 +10,7 @@
 //
 // REF: THESIS.md §11, §15, §17.
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { buildDefaultDagState } from '../core/project';
 import { useDagStore } from '../core/dag/store';
 import { historyUndo, historyRedo } from './history';
@@ -473,7 +473,13 @@ export function MenuBar() {
   // Admitting every `Object` by type left this enabled for an Empty, which then failed with
   // an internal-sounding "could not resolve mesh" — offered and accepted now agree by
   // construction.
-  const isPrimitive = Boolean(selectedId && canApplyTransform(dag, selectedId));
+  // #1314 — memoised on (graph, selection): the answer depends on nothing else, and this component
+  // re-renders every frame for `currentFrame`. Asked per render, it evaluated the selection's mesh
+  // (a skinned character's whole-clip retarget) on every frame of playback.
+  const isPrimitive = useMemo(
+    () => Boolean(selectedId && canApplyTransform(dag, selectedId)),
+    [dag, selectedId],
+  );
   const applyAnimated = Boolean(
     selectedId && isPrimitive && isApplySourceAnimated(dag, selectedId, currentFrame),
   );

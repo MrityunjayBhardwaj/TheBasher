@@ -142,6 +142,14 @@ const CONSUMERS: Record<string, Decision> = {
   'src/app/statefulOps.ts': authored('produces-an-overlay'),
   'src/viewport/EditorViewCamera.tsx': authored('delegates-to-a-folding-resolver'),
   'src/app/studioLightRig.ts': authored('delegates-to-a-folding-resolver'),
+  // #1314 — three per-playhead readers that import the evaluator ONLY for `createEvaluatorCache`:
+  // each hands the authored state, and now a stable cache, to the same folding resolvers it
+  // called before (resolveEvaluatedParam / resolveTransformParam / resolveCameraPoseAt /
+  // resolveWorldTransform). No new road; the cache is what keeps a re-read per frame from
+  // re-evaluating everything under the node.
+  'src/app/CameraLensControls.tsx': authored('delegates-to-a-folding-resolver'),
+  'src/app/CurvePointHandles.tsx': authored('delegates-to-a-folding-resolver'),
+  'src/app/NPanel.tsx': authored('delegates-to-a-folding-resolver'),
   'src/timeline/LightStudioPanel.tsx': authored('edits-authored-values'),
   // #902 — the motion resolver. It reads the generator's params AUTHORED and
   // evaluates at the default ctx, and both halves are the same claim: a
@@ -272,7 +280,11 @@ describe('#582 — who evaluates the graph, and which params they need', () => {
     // 45 → 44 at #1053: Apply on a clone-road child evaluated the owning `GltfAsset` to place the
     // bake under what the child drew under. That road baked off the live render clone, which went
     // with the clone renderer; Apply now refuses a kept import, so the evaluate and the row went.
-    expect(evaluatorConsumers()).toHaveLength(44); // 39 -> 40 at #935 (placement) (the motion resolver)
+    // 44 → 47 at #1314, and it is not three new roads: three per-playhead readers import the
+    // evaluator only to hold a stable cache for the resolvers they already called. Uncached, each
+    // re-read per frame re-evaluated the graph under the node — on the AI-walk example, the
+    // walk's whole-clip retarget, at ~3 fps.
+    expect(evaluatorConsumers()).toHaveLength(47); // 39 -> 40 at #935 (placement) (the motion resolver)
   });
 
   it('every reason is load-bearing — no member of any union is decorative', () => {

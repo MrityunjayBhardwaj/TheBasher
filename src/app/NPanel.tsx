@@ -174,6 +174,7 @@ import {
   readOverriddenSet,
   type OverrideDescriptor,
 } from './overrideDescriptor';
+import { createEvaluatorCache, type EvaluatorCache } from '../core/dag/evaluator';
 
 // #130 (D-04) — the per-field override decorator contract threaded into the
 // editable fields. `descriptor` names the set param + covered fields; `marked`
@@ -378,13 +379,20 @@ function NumericField({
       ),
     [dagState, nodeId, paramPath],
   );
+  // #1314 — a stable cache: this re-reads the evaluated graph on every playhead change, and
+  // uncached that re-runs everything under the node (a character's whole-clip retarget) per frame.
+  const cache = useMemo<EvaluatorCache>(() => createEvaluatorCache(), []);
   const drivenValue = useMemo(() => {
     if (!driven) return null;
-    const r = resolveEvaluatedParam(dagState, nodeId, paramPath, {
-      time: { frame, seconds, normalized },
-    });
+    const r = resolveEvaluatedParam(
+      dagState,
+      nodeId,
+      paramPath,
+      { time: { frame, seconds, normalized } },
+      cache,
+    );
     return typeof r?.value === 'number' ? r.value : null;
-  }, [driven, dagState, nodeId, paramPath, frame, seconds, normalized]);
+  }, [driven, dagState, nodeId, paramPath, frame, seconds, normalized, cache]);
   const readOnly = driven || (playing && evaluated);
   const display = driven ? (drivenValue ?? value) : scrub.isDragging ? scrub.previewValue : value;
   return (
@@ -562,12 +570,19 @@ function VectorField({
   const normalized = useTimeStore((s) => s.normalized);
   const playing = useTimeStore((s) => s.playing);
   const dagState = useDagStore((s) => s.state);
+  // #1314 — a stable cache: this re-reads the evaluated graph on every playhead change, and
+  // uncached that re-runs everything under the node (a character's whole-clip retarget) per frame.
+  const cache = useMemo<EvaluatorCache>(() => createEvaluatorCache(), []);
   const resolved = useMemo(
     () =>
-      resolveTransformParam(dagState, nodeId, paramPath, {
-        time: { frame, seconds, normalized },
-      }),
-    [dagState, nodeId, paramPath, frame, seconds, normalized],
+      resolveTransformParam(
+        dagState,
+        nodeId,
+        paramPath,
+        { time: { frame, seconds, normalized } },
+        cache,
+      ),
+    [dagState, nodeId, paramPath, frame, seconds, normalized, cache],
   );
   // #300 F2b — BOTH transform and non-transform Vec3 params are drivable now that the
   // transform read seam (resolveEvaluatedTransform → resolveTransformParam) folds drivers
@@ -589,11 +604,15 @@ function VectorField({
     // A driven TRANSFORM vec shows via `resolved` (the driver-aware transform seam), so
     // only the non-transform road reads the driven value through resolveEvaluatedParam.
     if (!driven || isTransformParam) return null;
-    const r = resolveEvaluatedParam(dagState, nodeId, paramPath, {
-      time: { frame, seconds, normalized },
-    });
+    const r = resolveEvaluatedParam(
+      dagState,
+      nodeId,
+      paramPath,
+      { time: { frame, seconds, normalized } },
+      cache,
+    );
     return isVec3(r?.value) ? r!.value : null;
-  }, [driven, isTransformParam, dagState, nodeId, paramPath, frame, seconds, normalized]);
+  }, [driven, isTransformParam, dagState, nodeId, paramPath, frame, seconds, normalized, cache]);
   // Per-param fallback (D-01): driven vec → resolved transform Vec3 → authored value.
   const effectiveValue: readonly number[] = drivenVec ?? resolved ?? value;
   // D-02: read-only while playing IFF this field is showing an evaluated
@@ -3899,11 +3918,14 @@ function QuaternionField({ nodeId, authored }: { nodeId: string; authored: Quat 
   const normalized = useTimeStore((s) => s.normalized);
   const playing = useTimeStore((s) => s.playing);
   const dagState = useDagStore((s) => s.state);
+  // #1314 — a stable cache: this re-reads the evaluated graph on every playhead change, and
+  // uncached that re-runs everything under the node (a character's whole-clip retarget) per frame.
+  const cache = useMemo<EvaluatorCache>(() => createEvaluatorCache(), []);
   const evaluated = useMemo(
     () =>
-      resolveEvaluatedTransform(dagState, nodeId, { time: { frame, seconds, normalized } })
+      resolveEvaluatedTransform(dagState, nodeId, { time: { frame, seconds, normalized } }, cache)
         ?.quaternion ?? null,
-    [dagState, nodeId, frame, seconds, normalized],
+    [dagState, nodeId, frame, seconds, normalized, cache],
   );
   const animated = paramAnimationState(dagState, nodeId, 'quaternion', frame) !== 'none';
   const shown: Quat = animated && evaluated ? evaluated : authored;
