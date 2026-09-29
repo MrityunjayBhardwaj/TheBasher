@@ -290,6 +290,17 @@ export interface InlineMaterialSpec {
   readonly specular: { readonly roughness: number; readonly ior: number };
   /** coat_weight [0..1] + coat_roughness [0..1]. */
   readonly coat: { readonly weight: number; readonly roughness: number };
+  /**
+   * #1123 — OpenPBR's fuzz lobe (`fuzz_weight`, `fuzz_color`, `fuzz_roughness`): a sheen of fine
+   * fibres over the surface. glTF `KHR_materials_sheen` arrives as weight 1 with its colour and
+   * roughness, as both Blender's importer and three's loader take it. Colour is sRGB hex, as every
+   * colour in this spec is. Absent means no fuzz; a lobe created by an edit starts at OpenPBR's own
+   * defaults (weight 0, colour white, roughness 0.5).
+   *
+   * 🔴 OPTIONAL WITH NO `.default()` ON THE LOBE, for the reason {@link mapUvTransforms} states;
+   * the defaults live inside a present lobe.
+   */
+  readonly fuzz?: { readonly weight: number; readonly color: string; readonly roughness: number };
   /** transmission_weight [0..1] — auto-sets three `transparent` + `thickness`. */
   readonly transmission: { readonly weight: number };
   /** emission_color (sRGB hex) + emission_luminance (cd/m², 1:1 → emissiveIntensity). */
@@ -556,6 +567,9 @@ export interface BakedMaterialSpec {
     readonly transmission?: number;
     readonly ior?: number;
     readonly sheen?: number;
+    /** #1123 — the fuzz lobe's colour (sRGB hex) and roughness, beside its weight above. */
+    readonly sheenColor?: string;
+    readonly sheenRoughness?: number;
     readonly specularIntensity?: number;
   };
 }

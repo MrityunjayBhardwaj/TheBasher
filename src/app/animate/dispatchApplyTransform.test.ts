@@ -2971,6 +2971,25 @@ describe('#1139 — a primitive bakes the material it draws, maps and placement 
     });
   });
 
+  describe('#1123 — a box with fuzz bakes its sheen weight, colour and roughness', () => {
+    it('keeps all three', async () => {
+      const { spec } = await bakeBoxWith({
+        fuzz: { weight: 0.8, color: '#ff8800', roughness: 0.3 },
+      });
+      expect(spec.physical).toMatchObject({
+        sheen: 0.8,
+        sheenColor: '#ff8800',
+        sheenRoughness: 0.3,
+      });
+    });
+
+    it('a box with no fuzz writes none of them', async () => {
+      const { spec } = await bakeBoxWith({});
+      for (const k of ['sheen', 'sheenColor', 'sheenRoughness'])
+        expect(k in (spec.physical ?? {})).toBe(false);
+    });
+  });
+
   describe('#1123 — an unlit box bakes as the basic class', () => {
     it('keeps its colour and base map, and nothing lit', async () => {
       const albedo = { ...IMAGE, hash: 'a.png' };

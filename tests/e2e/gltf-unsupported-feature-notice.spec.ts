@@ -3,7 +3,7 @@
 // took the clone road and warned to the console. Now it writes nothing, and the refusal banner says
 // what the reader could not hold and which issue brings it across.
 //
-// THE PROOF: importing sheen-quad.gltf (KHR_materials_sheen, #1123) through the product door adds
+// THE PROOF: importing iridescence-quad.gltf (KHR_materials_iridescence, #1123) through the product door adds
 // no node, shows the refusal naming the extension and its issue, and throws nothing on the page.
 
 import { test, expect } from './_fixtures';
@@ -36,17 +36,20 @@ test('a file with a feature the native reader cannot hold is refused by name, an
   const path = await page.evaluate(async () => {
     const w = window as unknown as BasherWindow;
     const bytes = new Uint8Array(
-      await fetch('/assets/sheen-quad.gltf').then((r) => r.arrayBuffer()),
+      await fetch('/assets/iridescence-quad.gltf').then((r) => r.arrayBuffer()),
     );
-    return w.__basher_ingestGltfFolder([{ relativePath: 'sheen-quad.gltf', bytes }], 'sheen');
+    return w.__basher_ingestGltfFolder(
+      [{ relativePath: 'iridescence-quad.gltf', bytes }],
+      'iridescence',
+    );
   });
 
   const notice = await page.evaluate(async (p) => {
     const m = await import('/src/app/stores/assetErrorStore.ts');
     return m.useAssetErrorStore.getState().errors[p] ?? '';
   }, path);
-  expect(notice).toMatch(/^import refused: .*KHR_materials_sheen.*\(#1123\)$/);
-  await expect(page.getByText(/import refused: .*KHR_materials_sheen/)).toBeVisible();
+  expect(notice).toMatch(/^import refused: .*KHR_materials_iridescence.*\(#1123\)$/);
+  await expect(page.getByText(/import refused: .*KHR_materials_iridescence/)).toBeVisible();
   expect(await nodeCount()).toBe(before);
   expect(pageErrors).toEqual([]);
 });

@@ -57,6 +57,10 @@ const BASE: PrimitiveMaterialSpec = {
   // both gates below), and away from three's default of 1 for the reason `side` is.
   normalScale: 0.5,
   aoMapIntensity: 0.7,
+  // #1123 — the fuzz lobe as three's sheen, each away from three's default.
+  sheen: 0.4,
+  sheenColor: '#336699',
+  sheenRoughness: 0.6,
   textures: {
     map: null,
     normalMap: null,
@@ -200,7 +204,7 @@ describe('#530 — the build applies every scalar the spec carries', () => {
     // field turning optional and quietly leaving `BASE`, which would make both this gate
     // and the key gate blind to it while staying green. The count is the guard for that
     // direction, so it is meant to be edited deliberately.
-    expect(scalars.length).toBe(17);
+    expect(scalars.length).toBe(20);
     // BASE's normal map is a flipped upload, so the drawn vector is (strength, strength); a
     // strength is only drawn beside a normal map.
     const withNormalMap = materialRegistry.get({

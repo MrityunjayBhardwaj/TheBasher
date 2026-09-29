@@ -219,6 +219,9 @@ export function primitiveMaterialSpec(
     ...(compiled.normalScale !== undefined ? { normalScale: compiled.normalScale } : {}),
     ...(compiled.aoMapIntensity !== undefined ? { aoMapIntensity: compiled.aoMapIntensity } : {}),
     ...(compiled.materialClass ? { materialClass: compiled.materialClass } : {}),
+    ...(compiled.sheen !== undefined ? { sheen: compiled.sheen } : {}),
+    ...(compiled.sheenColor !== undefined ? { sheenColor: compiled.sheenColor } : {}),
+    ...(compiled.sheenRoughness !== undefined ? { sheenRoughness: compiled.sheenRoughness } : {}),
     // #1062 — the layer names, RESOLVED against the mesh this material will draw on. Spread
     // from one object so the spec and the key below cannot state the resolution differently.
     ...resolved,

@@ -361,6 +361,10 @@ function bakedSpecFromInline(material: InlineMaterialSpec | null): BakedMaterial
       // mesh drew a transmissive material with three's thickness 0, which does not refract.
       thickness: drawn.thickness,
       ior: drawn.ior,
+      // #1123 — the fuzz lobe, when the material has one.
+      ...(drawn.sheen !== undefined ? { sheen: drawn.sheen } : {}),
+      ...(drawn.sheenColor !== undefined ? { sheenColor: drawn.sheenColor } : {}),
+      ...(drawn.sheenRoughness !== undefined ? { sheenRoughness: drawn.sheenRoughness } : {}),
     },
   };
 }

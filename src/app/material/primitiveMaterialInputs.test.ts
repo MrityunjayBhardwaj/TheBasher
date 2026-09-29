@@ -155,6 +155,11 @@ const CORPUS: readonly World[] = [
   world('normal strength', { ir: irWith({ mapStrengths: { normal: 0.5 } }) }),
   world('occlusion strength', { ir: irWith({ mapStrengths: { ao: 0.3 } }) }),
   world('unlit', { ir: irWith({ unlit: true }) }),
+  world('fuzz', { ir: irWith({ fuzz: { weight: 1, color: '#ffffff', roughness: 0.3 } }) }),
+  world('fuzz colour', { ir: irWith({ fuzz: { weight: 1, color: '#ff0000', roughness: 0.3 } }) }),
+  world('fuzz roughness', {
+    ir: irWith({ fuzz: { weight: 1, color: '#ffffff', roughness: 0.8 } }),
+  }),
   world('uvTransform', {
     ir: irWith({ uvTransform: { tiling: [2, 3], offset: [0.25, 0], rotation: 0.5 } }),
   }),
@@ -389,6 +394,9 @@ describe('#566 — every field the compile produces is carried on the spec, or e
     normalScale: 'normalScale',
     aoMapIntensity: 'aoMapIntensity',
     materialClass: 'materialClass',
+    sheen: 'sheen',
+    sheenColor: 'sheenColor',
+    sheenRoughness: 'sheenRoughness',
   };
 
   /**
@@ -432,6 +440,7 @@ describe('#566 — every field the compile produces is carried on the spec, or e
       // condition used `?.`, which the pattern below did not read (widened with this entry).
       irWith({ mapStrengths: { normal: 0.5, ao: 0.3 } }),
       irWith({ unlit: true }),
+      irWith({ fuzz: { weight: 1, color: '#ffffff', roughness: 0.3 } }),
     ];
     const seen = new Set<string>();
     for (const ir of worlds)
@@ -456,8 +465,8 @@ describe('#566 — every field the compile produces is carried on the spec, or e
     // EXACT on both sides. A floor would pass a field that stopped being produced — which is
     // the direction that looks like cleanup and silently removes a rendering lobe.
     const produced = producedFields();
-    expect(produced.length).toBe(22);
-    expect(produced.filter((f) => f in CARRIED).length).toBe(22);
+    expect(produced.length).toBe(25);
+    expect(produced.filter((f) => f in CARRIED).length).toBe(25);
     expect(produced.filter((f) => f in EXCLUDED).length).toBe(0);
   });
 
@@ -478,6 +487,7 @@ describe('#566 — every field the compile produces is carried on the spec, or e
           geometry: { opacity: 1, colorLayer: 'Color' },
           mapStrengths: { normal: 0.5, ao: 0.3 },
           unlit: true,
+          fuzz: { weight: 1, color: '#ffffff', roughness: 0.3 },
         }),
         undefined,
       ),

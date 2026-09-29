@@ -92,7 +92,7 @@ const SUPPORTED_GLTF_EXTENSIONS = new Set<string>([
 /**
  * Detect glTF features the importer does NOT yet capture into the editable IR
  * (V38 no-silent-drop, V53 fork-3). Pure: reads `extensionsUsed` (authoritative
- * top-level list — catches sheen/volume/specular/KHR_texture_transform/etc. AND
+ * top-level list — catches volume/specular/iridescence/etc. AND
  * any future unknown extension) plus a primitive scan for secondary UV sets.
  * These still RENDER via the imported clone; the notice is about editability.
  */
@@ -152,7 +152,8 @@ export function detectUnsupportedGltfFeatures(json: {
   // observation landed, so the notice keeps firing and its words stay true: the feature
   // renders, and it is not editable. (Since #1062 that spec's subject imports native, so it now
   // observes the native road; this notice fires only on the file's-copy road, for files refused
-  // for something else — `sheen-quad.gltf` is one.)
+  // for something else — `iridescence-quad.gltf` is one; `sheen-quad.gltf` was, until #1123
+  // carried sheen.)
   const multiUV = (json.meshes ?? []).some((m) =>
     (m.primitives ?? []).some((p) =>
       Object.keys(p.attributes ?? {}).some((a) => /^TEXCOORD_[1-9]/.test(a)),

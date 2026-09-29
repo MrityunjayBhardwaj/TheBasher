@@ -883,6 +883,10 @@ function MeshScaleProbe() {
       // #1123 / #1325 — the drawn normal-map vector (sign included) and occlusion strength.
       normalScale: [number, number] | null;
       aoMapIntensity: number | null;
+      // #1123 — the drawn sheen (fuzz lobe): weight, colour and roughness.
+      sheen: number | null;
+      sheenColor: string | null;
+      sheenRoughness: number | null;
     } | null => {
       const grp = byNodeId(nodeId);
       if (!grp) return null;
@@ -924,6 +928,9 @@ function MeshScaleProbe() {
         transmission: typeof phys.transmission === 'number' ? phys.transmission : null,
         normalScale: std.normalMap ? [std.normalScale.x, std.normalScale.y] : null,
         aoMapIntensity: std.aoMap ? std.aoMapIntensity : null,
+        sheen: typeof phys.sheen === 'number' ? phys.sheen : null,
+        sheenColor: phys.sheenColor ? `#${phys.sheenColor.getHexString()}` : null,
+        sheenRoughness: typeof phys.sheenRoughness === 'number' ? phys.sheenRoughness : null,
       };
     };
     return () => {
@@ -3302,6 +3309,9 @@ function CapturedBakedMeshR({
       if (ph.thickness !== undefined) p.thickness = ph.thickness;
       if (ph.ior !== undefined) p.ior = ph.ior;
       if (ph.sheen !== undefined) p.sheen = ph.sheen;
+      // #1123 — without these a baked fuzz drew three's defaults: black and smooth.
+      if (ph.sheenColor !== undefined) p.sheenColor = new THREE.Color(ph.sheenColor);
+      if (ph.sheenRoughness !== undefined) p.sheenRoughness = ph.sheenRoughness;
       if (ph.specularIntensity !== undefined) p.specularIntensity = ph.specularIntensity;
     }
     return m;

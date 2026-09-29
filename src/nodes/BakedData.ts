@@ -109,6 +109,9 @@ export const BakedMaterialSpecSchema = z.object({
       transmission: z.number().optional(),
       ior: z.number().optional(),
       sheen: z.number().optional(),
+      // #1123 — declared, or zod strips them and a baked fuzz loses its colour and roughness.
+      sheenColor: z.string().optional(),
+      sheenRoughness: z.number().optional(),
       specularIntensity: z.number().optional(),
     })
     .optional(),

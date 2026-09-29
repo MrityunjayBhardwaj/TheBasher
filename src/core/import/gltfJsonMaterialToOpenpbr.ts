@@ -353,6 +353,12 @@ export function gltfJsonMaterialToOpenpbr(
   const emissiveStrength = ext.KHR_materials_emissive_strength as
     | { emissiveStrength?: number }
     | undefined;
+  // #1123 — sheen → OpenPBR fuzz at weight 1. Both references do so: Blender sets Sheen Weight 1
+  // (`blender/imp/pbrMetallicRoughness.py` `sheen`), three sets `sheen = 1` (`GLTFLoader.js:998`).
+  // The glTF defaults are a black colour and roughness 0.
+  const sheen = ext.KHR_materials_sheen as
+    | { sheenColorFactor?: number[]; sheenRoughnessFactor?: number }
+    | undefined;
   // baseColorFactor alpha drives opacity ONLY for alphaMode BLEND (OPAQUE/MASK
   // render fully opaque in three's metallic-roughness path).
   const bcf = pbr.baseColorFactor;
@@ -405,5 +411,14 @@ export function gltfJsonMaterialToOpenpbr(
     ...(perUvSets ? { mapUvLayers: perUvSets } : {}),
     ...(strengths ? { mapStrengths: strengths } : {}),
     ...(unlit ? { unlit: true as const } : {}),
+    ...(sheen
+      ? {
+          fuzz: {
+            weight: 1,
+            color: linearRgbToSrgbHex(sheen.sheenColorFactor, [0, 0, 0]),
+            roughness: num(sheen.sheenRoughnessFactor, 0),
+          },
+        }
+      : {}),
   };
 }

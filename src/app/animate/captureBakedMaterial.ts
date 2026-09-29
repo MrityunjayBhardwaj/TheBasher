@@ -201,6 +201,10 @@ export async function captureBakedMaterial(
         thickness: p.thickness,
         ior: p.ior,
         sheen: p.sheen,
+        // #1123 — with a sheen, its colour and roughness too, or the bake draws it white and smooth.
+        ...(p.sheen > 0
+          ? { sheenColor: `#${p.sheenColor.getHexString()}`, sheenRoughness: p.sheenRoughness }
+          : {}),
         specularIntensity: p.specularIntensity,
       },
     };

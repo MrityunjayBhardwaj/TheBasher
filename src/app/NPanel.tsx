@@ -1970,6 +1970,11 @@ interface MaterialFieldSpec {
   key: string;
   label: string;
   kind: 'number' | 'color';
+  /**
+   * #1123 — what the row shows when the material has no such lobe, for an OPTIONAL lobe: the value
+   * an edit would create it with. Absent for the lobes every material carries.
+   */
+  absent?: number | string;
 }
 const MATERIAL_LOBES: { lobe: string; label: string; fields: MaterialFieldSpec[] }[] = [
   {
@@ -1994,6 +1999,17 @@ const MATERIAL_LOBES: { lobe: string; label: string; fields: MaterialFieldSpec[]
     fields: [
       { key: 'weight', label: 'weight', kind: 'number' },
       { key: 'roughness', label: 'roughness', kind: 'number' },
+    ],
+  },
+  {
+    // #1123 — OpenPBR's fuzz (glTF sheen). Optional: shown at OpenPBR's defaults until an edit
+    // creates it (`open_pbr_surface.mtlx`: weight 0, colour white, roughness 0.5).
+    lobe: 'fuzz',
+    label: 'Fuzz',
+    fields: [
+      { key: 'weight', label: 'weight', kind: 'number', absent: 0 },
+      { key: 'color', label: 'color', kind: 'color', absent: '#ffffff' },
+      { key: 'roughness', label: 'roughness', kind: 'number', absent: 0.5 },
     ],
   },
   {
@@ -2454,7 +2470,12 @@ function MaterialRows({
    *  glTF `materials.<slot>.<lobe>.<field>`) — drives diamond + animation + read. */
   fieldPath: (lobe: string, key: string) => string;
   /** The authored base value (pre-evaluation) for a field. */
-  readValue: (lobe: string, key: string, kind: 'number' | 'color') => number | string;
+  readValue: (
+    lobe: string,
+    key: string,
+    kind: 'number' | 'color',
+    absent?: number | string,
+  ) => number | string;
   /** The UN-animated source write — caller-specific (native dotted setParam, glTF
    *  whole-`materials`-array replace, since setAtPath can't index an array, V53). */
   commitSource: (lobe: string, key: string, value: number | string) => void;
@@ -2500,7 +2521,7 @@ function MaterialRows({
           <div className="px-3 pb-0.5 pt-1.5 font-mono text-[10px] uppercase tracking-wide text-fg/40">
             {label}
           </div>
-          {fields.map(({ key, label: fieldLabel, kind }) => {
+          {fields.map(({ key, label: fieldLabel, kind, absent }) => {
             const path = fieldPath(lobe, key);
             const tid = testids(lobe, key);
             if (kind === 'color') {
@@ -2510,7 +2531,7 @@ function MaterialRows({
                   nodeId={nodeId}
                   paramPath={path}
                   label={fieldLabel}
-                  value={readValue(lobe, key, 'color') as string}
+                  value={readValue(lobe, key, 'color', absent) as string}
                   testidColor={tid.color}
                   testidHex={tid.colorHex}
                   onSource={(v) => commitSource(lobe, key, v)}
@@ -2524,7 +2545,7 @@ function MaterialRows({
                 nodeId={nodeId}
                 paramPath={path}
                 label={fieldLabel}
-                value={readValue(lobe, key, 'number') as number}
+                value={readValue(lobe, key, 'number', absent) as number}
                 testidInput={tid.num}
                 testidScrub={tid.scrub}
                 onSource={(v) => commitSource(lobe, key, v)}
@@ -2969,11 +2990,15 @@ function MaterialEditor({
         maskedBy={maskedBy}
         suppliedBy={suppliedBy}
         fieldPath={(lobe, key) => `${base}.${lobe}.${key}`}
-        readValue={(lobe, key, kind) => {
+        readValue={(lobe, key, kind, absent) => {
           const lobeObj = (material[lobe] ?? {}) as Record<string, unknown>;
           if (kind === 'color')
-            return typeof lobeObj[key] === 'string' ? (lobeObj[key] as string) : '#000000';
-          return typeof lobeObj[key] === 'number' ? (lobeObj[key] as number) : 0;
+            return typeof lobeObj[key] === 'string'
+              ? (lobeObj[key] as string)
+              : ((absent as string | undefined) ?? '#000000');
+          return typeof lobeObj[key] === 'number'
+            ? (lobeObj[key] as number)
+            : ((absent as number | undefined) ?? 0);
         }}
         commitSource={(lobe, key, value) =>
           commitField(`${lobe}.${key}`, value, `edit ${base}.${lobe}.${key}`)

@@ -68,3 +68,16 @@ describe('#1123 — an edit on an absent map-strength bag creates it', () => {
     expect(mat.base.color).toBe(before.base.color); // the rest of the material is untouched
   });
 });
+
+// #1123 — THE PLAN'S OPEN QUESTION for the first new lobe: fuzz is optional with no default on the
+// lobe, so a material saved before it has none. An edit on one of its fields must create the WHOLE
+// lobe, its other fields at OpenPBR's defaults (`open_pbr_surface.mtlx`: colour white, roughness 0.5).
+describe('#1123 — an edit on an absent fuzz lobe creates the whole lobe', () => {
+  it('setting the weight on a box with no fuzz makes a lobe with the other fields defaulted', () => {
+    const state = buildDefaultDagState();
+    expect('fuzz' in (state.nodes.n_box_data.params.material as InlineMaterialSpec)).toBe(false);
+    const next = applyOp(state, setParam('material.fuzz.weight', 0.7)).next;
+    const mat = next.nodes.n_box_data.params.material as InlineMaterialSpec;
+    expect(mat.fuzz).toEqual({ weight: 0.7, color: '#ffffff', roughness: 0.5 });
+  });
+});

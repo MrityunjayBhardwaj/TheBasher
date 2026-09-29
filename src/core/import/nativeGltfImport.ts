@@ -273,6 +273,8 @@ const HELD_EXTENSIONS = new Set([
   WEBP_EXTENSION,
   // #1123 — an unlit surface, the material's `unlit`.
   'KHR_materials_unlit',
+  // #1123 — sheen, the material's `fuzz` lobe (its textures stay refused by slot).
+  'KHR_materials_sheen',
 ]);
 
 // #1050 — where a material may sample a texture and still arrive whole: the slots the IR captures

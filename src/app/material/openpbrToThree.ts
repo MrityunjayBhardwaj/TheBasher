@@ -155,6 +155,10 @@ export interface ThreeMaterialParams {
   readonly aoMapIntensity?: number;
   /** #1123 — `'basic'`: build an unlit material. Absent means lit. */
   readonly materialClass?: 'basic';
+  /** #1123 — the fuzz lobe as three's sheen (weight, sRGB hex colour, roughness). Absent: none. */
+  readonly sheen?: number;
+  readonly sheenColor?: string;
+  readonly sheenRoughness?: number;
 }
 
 /** The UV layer a map slot samples, in THREE's slot vocabulary. */
@@ -202,6 +206,10 @@ export function openpbrToThree(ir: InlineMaterialSpec): ThreeMaterialParams {
     ...(ir.mapStrengths?.ao !== undefined ? { aoMapIntensity: ir.mapStrengths.ao } : {}),
     // #1123 — unlit; omitted when lit, same reason.
     ...(ir.unlit ? { materialClass: 'basic' as const } : {}),
+    // #1123 — fuzz → three's sheen, omitted without a lobe.
+    ...(ir.fuzz ? { sheen: ir.fuzz.weight } : {}),
+    ...(ir.fuzz ? { sheenColor: ir.fuzz.color } : {}),
+    ...(ir.fuzz ? { sheenRoughness: ir.fuzz.roughness } : {}),
   };
   // NOTE: ir.unsupported is intentionally NOT read — those lobes have no WebGL
   // MeshPhysical representation (v0.7 TSL backend renders them).

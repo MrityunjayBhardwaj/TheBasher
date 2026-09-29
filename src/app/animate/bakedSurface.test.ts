@@ -60,6 +60,42 @@ describe('#1140 — the capture reads the surface the material draws', () => {
   });
 });
 
+describe('#1123 — a captured sheen keeps its colour and roughness', () => {
+  it('keeps both beside the weight', async () => {
+    const live = new THREE.MeshPhysicalMaterial({ sheen: 1, sheenRoughness: 0.3 });
+    live.sheenColor.set('#ff8800');
+    const spec = await captureBakedMaterial(storage(), live);
+    expect(spec.physical).toMatchObject({ sheen: 1, sheenColor: '#ff8800', sheenRoughness: 0.3 });
+  });
+
+  it('a material with no sheen writes neither', async () => {
+    const spec = await captureBakedMaterial(storage(), new THREE.MeshPhysicalMaterial());
+    expect('sheenColor' in (spec.physical ?? {})).toBe(false);
+    expect('sheenRoughness' in (spec.physical ?? {})).toBe(false);
+  });
+
+  it('both survive the schema', () => {
+    const parsed = BakedMaterialSpecSchema.parse({
+      materialClass: 'physical',
+      color: '#ffffff',
+      roughness: 0.5,
+      metalness: 0,
+      opacity: 1,
+      transparent: false,
+      emissive: '#000000',
+      emissiveIntensity: 0,
+      map: null,
+      normalMap: null,
+      roughnessMap: null,
+      metalnessMap: null,
+      aoMap: null,
+      emissiveMap: null,
+      physical: { sheen: 1, sheenColor: '#ff8800', sheenRoughness: 0.3 },
+    });
+    expect(parsed.physical).toMatchObject({ sheenColor: '#ff8800', sheenRoughness: 0.3 });
+  });
+});
+
 describe('#1140 — the schema carries them, which is what makes them survive a save', () => {
   const base: BakedMaterialSpec = {
     materialClass: 'standard',

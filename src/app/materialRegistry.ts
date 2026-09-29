@@ -196,6 +196,10 @@ export interface PrimitiveMaterialSpec {
    * surface flags alone, as three's glTF loader does for `KHR_materials_unlit`. Absent means lit.
    */
   readonly materialClass?: 'basic';
+  /** #1123 — the fuzz lobe, as three's sheen. All three absent when the material has none. */
+  readonly sheen?: number;
+  readonly sheenColor?: string;
+  readonly sheenRoughness?: number;
   /**
    * The RESOLVED map textures (already decoded + shared by hash), not the refs.
    * Resolution happens above this module, in the suspense hooks; keying on the
@@ -390,6 +394,10 @@ function build(spec: PrimitiveMaterialSpec): PrimitiveMaterial {
   m.clearcoat = spec.clearcoat;
   m.clearcoatRoughness = spec.clearcoatRoughness; // explicit — three default is 0
   m.transmission = spec.transmission;
+  // #1123 — the fuzz lobe; three's defaults (sheen 0) stand when the material has none.
+  if (spec.sheen !== undefined) m.sheen = spec.sheen;
+  if (spec.sheenColor !== undefined) m.sheenColor = new THREE.Color(spec.sheenColor);
+  if (spec.sheenRoughness !== undefined) m.sheenRoughness = spec.sheenRoughness;
   m.thickness = spec.thickness;
   m.wireframe = spec.wireframe;
   m.alphaTest = spec.alphaTest; // #532 — explicit; three's default is 0

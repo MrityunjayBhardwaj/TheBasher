@@ -200,8 +200,8 @@ test('#1317 — a saved clone model the native reader refuses loads as saved, an
   test.slow();
   const errors: string[] = [];
   page.on('pageerror', (e) => errors.push(e.message));
-  const ref = 'user-imports/p1317-sheen/sheen-quad.gltf';
-  await stageOnCloneRoad(page, 'sheen-quad.gltf', ref, [0, 0, 0]);
+  const ref = 'user-imports/p1317-iridescence/iridescence-quad.gltf';
+  await stageOnCloneRoad(page, 'iridescence-quad.gltf', ref, [0, 0, 0]);
   await expect.poll(async () => (await importRoots(page)).map((r) => r.road)).toEqual(['clone']);
 
   await saveAndReload(page);
@@ -209,6 +209,6 @@ test('#1317 — a saved clone model the native reader refuses loads as saved, an
   await expect.poll(async () => (await importRoots(page)).map((r) => r.road)).toEqual(['clone']);
   const row = await notice(page, `model:${ref}`);
   expect(row.label).toBe('model not converted:');
-  expect(row.message).toMatch(/KHR_materials_sheen.*#1123/);
+  expect(row.message).toMatch(/KHR_materials_iridescence.*#1123/);
   expect(errors).toEqual([]);
 });

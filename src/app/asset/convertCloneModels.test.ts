@@ -100,17 +100,24 @@ describe('an untouched saved model', () => {
 
 describe('a saved model the native reader refuses', () => {
   it('is kept exactly as saved, with the refusal and its issue named, and writes nothing', async () => {
-    const saved = await savedClone('sheen-quad.gltf');
+    const saved = await savedClone('iridescence-quad.gltf');
     const stored: string[] = [];
-    const { state, report } = await convertCloneCharacters(saved, deps('sheen-quad.gltf', stored));
+    const { state, report } = await convertCloneCharacters(
+      saved,
+      deps('iridescence-quad.gltf', stored),
+    );
     expect(state).toBe(saved);
     expect(report.converted).toEqual([]);
     expect(report.kept).toEqual([
       {
         kind: 'model',
-        name: 'sheen-quad.gltf',
-        assetRef: refOf('sheen-quad.gltf'),
-        why: [expect.stringMatching(/^the native reader refuses it: .*KHR_materials_sheen.*#1123/)],
+        name: 'iridescence-quad.gltf',
+        assetRef: refOf('iridescence-quad.gltf'),
+        why: [
+          expect.stringMatching(
+            /^the native reader refuses it: .*KHR_materials_iridescence.*#1123/,
+          ),
+        ],
       },
     ]);
     expect(stored).toEqual([]);

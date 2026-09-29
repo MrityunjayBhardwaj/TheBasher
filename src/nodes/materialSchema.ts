@@ -212,6 +212,16 @@ export function openpbrMaterialSchema() {
           weight: z.number().default(0),
         })
         .default({ weight: 0 }),
+      // #1123 — the fuzz lobe: optional, no default on the lobe, OpenPBR's defaults inside it
+      // (`open_pbr_surface.mtlx`: fuzz_weight 0, fuzz_color 1,1,1, fuzz_roughness 0.5), so an edit
+      // on an absent lobe creates a whole one.
+      fuzz: z
+        .object({
+          weight: z.number().default(0),
+          color: z.string().default('#ffffff'),
+          roughness: z.number().default(0.5),
+        })
+        .optional(),
       emission: z
         .object({
           color: z.string().default('#000000'),
@@ -313,6 +323,7 @@ export function hydrateInlineMaterial(
     base?: PartialLobe;
     specular?: PartialLobe;
     coat?: PartialLobe;
+    fuzz?: PartialLobe;
     transmission?: PartialLobe;
     emission?: PartialLobe;
     geometry?: PartialLobe & {
@@ -384,7 +395,19 @@ export function hydrateInlineMaterial(
   const withStrengths = strengths ? { ...withUvSets, mapStrengths: strengths } : withUvSets;
   // #1123 — unlit, conditional for the same reason; anything but `true` reads as lit.
   const withClass = m.unlit === true ? { ...withStrengths, unlit: true as const } : withStrengths;
-  return m.unsupported ? { ...withClass, unsupported: m.unsupported } : withClass;
+  // #1123 — the fuzz lobe, present only when the material has one, with OpenPBR's defaults inside.
+  const withFuzz =
+    m.fuzz && typeof m.fuzz === 'object'
+      ? {
+          ...withClass,
+          fuzz: {
+            weight: num(m.fuzz.weight, 0),
+            color: str(m.fuzz.color, '#ffffff'),
+            roughness: num(m.fuzz.roughness, 0.5),
+          },
+        }
+      : withClass;
+  return m.unsupported ? { ...withFuzz, unsupported: m.unsupported } : withFuzz;
 }
 
 /**

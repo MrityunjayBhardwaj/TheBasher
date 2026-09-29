@@ -926,16 +926,17 @@ describe('buildNativeGltfImportOps', () => {
       'a material extension the native material does not draw',
       () =>
         jsonFixture((json) => {
-          json.extensionsUsed = ['KHR_materials_sheen'];
+          json.extensionsUsed = ['KHR_materials_iridescence'];
         }),
       '#1123',
     ],
-    // Sheen AND a second UV set: still refused, and now for the sheen alone.
+    // Iridescence AND a second UV set: still refused, and for the iridescence alone. (It was the
+    // sheen quad until sheen imported; iridescence stays refused, as Blender's importer drops it.)
     [
-      'the sheen quad',
-      () => fixture('public/assets/sheen-quad.gltf'),
+      'the iridescence quad',
+      () => fixture('public/assets/iridescence-quad.gltf'),
       '#1123',
-      'KHR_materials_sheen',
+      'KHR_materials_iridescence',
     ],
     [
       'two nodes sharing one mesh',
@@ -1084,6 +1085,26 @@ describe('buildNativeGltfImportOps', () => {
     // Not `materialClass`: that key is what tells a baked spec from this one.
     expect('materialClass' in material).toBe(false);
     expect(material.maps.albedo?.hash).toBe('img');
+  });
+
+  it('#1123 — a sheen material arrives native as the fuzz lobe, at weight 1 as both references take it', async () => {
+    const result = await buildNativeGltfImportOps({
+      buffer: fixture('public/assets/sheen-quad.gltf'),
+      assetRef: 'user-imports/native/sheen.gltf',
+      sceneNodeId: 'n_scene',
+      storeImage: async () => 'img',
+    });
+    if ('refused' in result) throw new Error(`${result.refused} (${result.issue})`);
+    const data = result.ops.find(
+      (op): op is Extract<Op, { type: 'addNode' }> =>
+        op.type === 'addNode' && op.nodeType === 'PolyMeshData',
+    )!;
+    // The file: sheenColorFactor [1,1,1] (linear, so white in sRGB) and roughness 0.3.
+    expect(PolyMeshDataParams.parse(data.params).material!.fuzz).toEqual({
+      weight: 1,
+      color: '#ffffff',
+      roughness: 0.3,
+    });
   });
 
   it('#1123 — a lit material names no class, so it keys as it always did', async () => {
