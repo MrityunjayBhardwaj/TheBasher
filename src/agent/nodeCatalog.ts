@@ -312,7 +312,8 @@ const MIN_BLOCK_SAVING = 400;
 /** One hoisted subtree: the text every sharer would otherwise print, and what it is called. */
 interface SharedSubtree {
   readonly name: string;
-  readonly body: string;
+  /** Its fields, paths relative to the prefix. The printed body is these, folded ({@link foldRepeats}). */
+  readonly fields: readonly ParamField[];
   /** `type|prefix` for each sharer — the lookup a line does while rendering. */
   readonly sharers: readonly string[];
 }
@@ -340,7 +341,7 @@ function prefixOf(p: ParamField): string | null {
  * full rather than borrowing a name that would describe it wrongly.
  */
 function sharedSubtrees(schemas: NodeSchema[]): SharedSubtree[] {
-  const bodies = new Map<string, { prefix: string; sharers: string[] }>();
+  const bodies = new Map<string, { prefix: string; fields: ParamField[]; sharers: string[] }>();
   for (const s of schemas) {
     const byPrefix = new Map<string, ParamField[]>();
     for (const p of s.params) {
@@ -349,10 +350,9 @@ function sharedSubtrees(schemas: NodeSchema[]): SharedSubtree[] {
       byPrefix.set(prefix, [...(byPrefix.get(prefix) ?? []), p]);
     }
     for (const [prefix, fields] of byPrefix) {
-      const body = fields
-        .map((f) => renderParam({ ...f, path: f.path.slice(prefix.length + 1) }))
-        .join(' ');
-      const entry = bodies.get(body) ?? { prefix, sharers: [] };
+      const relative = fields.map((f) => ({ ...f, path: f.path.slice(prefix.length + 1) }));
+      const body = relative.map(renderParam).join(' ');
+      const entry = bodies.get(body) ?? { prefix, fields: relative, sharers: [] };
       entry.sharers.push(at(s.type, prefix));
       bodies.set(body, entry);
     }
@@ -364,12 +364,64 @@ function sharedSubtrees(schemas: NodeSchema[]): SharedSubtree[] {
     )
     .sort((a, b) => b[0].length - a[0].length);
   const taken = new Set<string>();
-  return worth.flatMap(([body, e]) => {
+  return worth.flatMap(([, e]) => {
     // Largest first, so when two different trees share a prefix the bigger one takes the name and
     // the other stays inline — a block that described the wrong tree would be worse than no block.
     if (taken.has(e.prefix)) return [];
     taken.add(e.prefix);
-    return [{ name: e.prefix, body, sharers: e.sharers }];
+    return [{ name: e.prefix, fields: e.fields, sharers: e.sharers }];
+  });
+}
+
+/** `p` itself or any path below it — the subtree a prefix names. */
+const within = (path: string, p: string) => path === p || path.startsWith(`${p}.`);
+
+/**
+ * Render one field list, printing a subtree that repeats inside it once (#1326).
+ *
+ * {@link sharedSubtrees} folds a tree that several node TYPES share, but only at the top of a
+ * type's params. A tree can also repeat INSIDE one list: the material's six map slots each hold
+ * the same texture-ref fields, and so do the baked snapshot's six. Printed in full, the payload
+ * carried that body twelve times. Here the first copy prints in full and every later one prints
+ * `x:=y` — "x has exactly y's fields" — at the place its first field stood.
+ *
+ * Same evidence as #1149: two subtrees are the same only when their rendered text is identical,
+ * the subtree's own entry (`maps.albedo:object?`) included, so nullability is part of what must
+ * match. No name is invented: the reference is the earlier path, which the reader has just read.
+ * Largest first, so a repeated parent folds before the children inside it; a copy that sits inside
+ * a folded copy is gone with it and is not a candidate. The same {@link MIN_BLOCK_SAVING} bar
+ * applies — a reference a reader has to follow is not worth a handful of bytes.
+ */
+function foldRepeats(fields: readonly ParamField[]): string[] {
+  const prefixes = new Set<string>();
+  for (const f of fields) {
+    const segs = f.path.split('.');
+    for (let i = 1; i < segs.length; i++) prefixes.add(segs.slice(0, i).join('.'));
+  }
+  const byBody = new Map<string, string[]>();
+  for (const p of prefixes) {
+    const body = fields
+      .filter((f) => within(f.path, p))
+      .map((f) => renderParam({ ...f, path: f.path.slice(p.length) }))
+      .join(' ');
+    byBody.set(body, [...(byBody.get(body) ?? []), p]);
+  }
+  const repeatOf = new Map<string, string>();
+  const candidates = [...byBody.entries()]
+    .filter(([, ps]) => ps.length > 1)
+    .sort((a, b) => b[0].length - a[0].length);
+  for (const [body, ps] of candidates) {
+    const live = ps.filter((p) => ![...repeatOf.keys()].some((r) => within(p, r)));
+    if (live.length < 2 || body.length * (live.length - 1) < MIN_BLOCK_SAVING) continue;
+    for (const p of live.slice(1)) repeatOf.set(p, live[0]);
+  }
+  const printed = new Set<string>();
+  return fields.flatMap((f) => {
+    const r = [...repeatOf.keys()].find((p) => within(f.path, p));
+    if (r === undefined) return [renderParam(f)];
+    if (printed.has(r)) return [];
+    printed.add(r);
+    return [`${r}:=${repeatOf.get(r)}`];
   });
 }
 
@@ -390,10 +442,11 @@ export function renderNodeCatalog(schemas: NodeSchema[] = listNodeSchemas()): st
     '#   [3 number] after a tuple = fixed length and element kind',
     '#   ? after a param = may be null',
     '#   x:<name> = the shared block named <name> below, each of its paths prefixed with "x."',
+    '#   x:=y = x has exactly the fields printed earlier under y on the same list, each "y." read as "x."',
     '# Param paths are exactly the paths setParam takes. A path not listed here is not a param.',
   ].join('\n');
   const shared = sharedSubtrees(schemas);
-  const blocks = shared.map((b) => `<${b.name}> = ${b.body}`);
+  const blocks = shared.map((b) => `<${b.name}> = ${foldRepeats(b.fields).join(' ')}`);
   const nameAt = new Map(shared.flatMap((b) => b.sharers.map((s) => [s, b.name] as const)));
   const lines = schemas.map((s) => {
     const ins = s.inputs.map(renderSocket).join(' ') || '-';
@@ -403,14 +456,24 @@ export function renderNodeCatalog(schemas: NodeSchema[] = listNodeSchemas()): st
     const seen = new Set<string>();
     const ps =
       s.params
-        .flatMap((p) => {
+        .flatMap((p): Array<ParamField | string> => {
           const prefix = prefixOf(p);
           const name = prefix === null ? undefined : nameAt.get(at(s.type, prefix));
-          if (name === undefined) return [renderParam(p)];
+          if (name === undefined) return [p];
           if (seen.has(name)) return [];
           seen.add(name);
           return [`${prefix}:<${name}>`];
         })
+        // A run of fields between block references folds on its own: a fold never spans a
+        // reference, because the block's fields are not on this line to be compared.
+        .reduce<Array<string | ParamField[]>>((runs, x) => {
+          const last = runs[runs.length - 1];
+          if (typeof x === 'string') runs.push(x);
+          else if (Array.isArray(last)) last.push(x);
+          else runs.push([x]);
+          return runs;
+        }, [])
+        .flatMap((run) => (typeof run === 'string' ? [run] : foldRepeats(run)))
         .join(' ') || '-';
     return `${s.type} | in: ${ins} | out: ${outs} | params: ${ps}`;
   });
