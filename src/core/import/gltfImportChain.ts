@@ -154,7 +154,7 @@ export function detectUnsupportedGltfFeatures(json: {
   // observes the native road; this notice fired only on the file's-copy road, for files the
   // native reader refused for something else. Since #1053 such a file is refused whole and that
   // road draws nothing, so "the feature renders" no longer holds anywhere this notice is built:
-  // only the load converter's comparison and the `__basher_importGltf` dev seam build it.)
+  // only the load converter's comparison builds it.)
   const multiUV = (json.meshes ?? []).some((m) =>
     (m.primitives ?? []).some((p) =>
       Object.keys(p.attributes ?? {}).some((a) => /^TEXCOORD_[1-9]/.test(a)),
