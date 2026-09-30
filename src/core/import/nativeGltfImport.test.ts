@@ -1076,6 +1076,29 @@ describe('buildNativeGltfImportOps', () => {
     expect(material.coat).toEqual({ weight: 1, roughness: 0.3 });
   });
 
+  it('#1328 — a transmission texture arrives native, in its own slot', async () => {
+    const result = await buildNativeGltfImportOps({
+      buffer: fixture('public/assets/transmission-quad.gltf'),
+      assetRef: 'user-imports/native/transmission.gltf',
+      sceneNodeId: 'n_scene',
+      storeImage: async () => 'img-t',
+    });
+    if ('refused' in result) throw new Error(result.refused);
+    const data = result.ops.find(
+      (op): op is Extract<Op, { type: 'addNode' }> =>
+        op.type === 'addNode' && op.nodeType === 'PolyMeshData',
+    )!;
+    const material = PolyMeshDataParams.parse(data.params).material!;
+    expect(material.maps.transmission).toMatchObject({
+      hash: 'img-t',
+      store: 'project',
+      colorSpace: 'srgb-linear',
+    });
+    expect(material.transmission.weight).toBe(1);
+    // Only the slot the file fills: the base colour has no texture here.
+    expect(material.maps.albedo).toBeNull();
+  });
+
   it('#1327 — a material with no coat texture holds no coat slot, so it keys as before', async () => {
     const result = await buildNativeGltfImportOps({
       buffer: texturedFixture(() => {}),

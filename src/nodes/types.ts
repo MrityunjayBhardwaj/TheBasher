@@ -292,6 +292,13 @@ export const MATERIAL_MAP_SLOT_TABLE = {
     seeded: false,
     label: 'clearcoat normal',
   },
+  // #1328 — the transmission lobe's weight per texel (glTF `KHR_materials_transmission`, R).
+  transmission: {
+    three: 'transmissionMap',
+    colorSpace: 'srgb-linear',
+    seeded: false,
+    label: 'transmission',
+  },
 } as const satisfies Readonly<Record<string, MaterialMapSlotRow>>;
 
 /** One row of {@link MATERIAL_MAP_SLOT_TABLE}. */

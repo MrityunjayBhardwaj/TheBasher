@@ -27,6 +27,8 @@ const EXPECTED: Record<MaterialMapSlot, 'srgb' | 'srgb-linear'> = {
   coat: 'srgb-linear',
   coatRoughness: 'srgb-linear',
   coatNormal: 'srgb-linear',
+  // #1328 — the transmission weight is data too.
+  transmission: 'srgb-linear',
 };
 
 describe('attachMapFromFile (W5 — File → OPFS map, colorspace-correct)', () => {

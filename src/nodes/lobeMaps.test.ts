@@ -1,6 +1,7 @@
-// #1327 — the coat lobe's textures: the first slots the table holds that are NOT seeded, so these
-// rows are also the first live inputs to the branches an unseeded slot takes (the compile leaves
-// an absent slot out; the baked schema lets an older snapshot omit it).
+// The material lobes' textures, one describe per lobe. #1327 (the coat) added the first slots the
+// table holds that are NOT seeded, so its rows are also the first live inputs to the branches an
+// unseeded slot takes (the compile leaves an absent slot out; the baked schema lets an older
+// snapshot omit it). #1328 (transmission) is the second lobe down the same path.
 import { describe, expect, it } from 'vitest';
 import { hydrateInlineMaterial } from './materialSchema';
 import { BakedMaterialSpecSchema } from './BakedData';
@@ -36,6 +37,20 @@ describe('#1327 — the coat maps compile to three`s coat maps', () => {
     for (const k of ['clearcoatMap', 'clearcoatRoughnessMap', 'clearcoatNormalMap'])
       expect(k in drawn.maps, k).toBe(false);
     expect('clearcoatNormalScale' in drawn).toBe(false);
+  });
+});
+
+describe('#1328 — the transmission map compiles to three`s', () => {
+  it('lands on `transmissionMap`, and a material without one compiles no such key', () => {
+    const withMap = openpbrToThree(
+      hydrateInlineMaterial({
+        transmission: { weight: 1 },
+        maps: { transmission: ref('t') },
+      }),
+    );
+    expect(withMap.maps.transmissionMap).toEqual(ref('t'));
+    expect(withMap.transmission).toBe(1);
+    expect('transmissionMap' in openpbrToThree(hydrateInlineMaterial({})).maps).toBe(false);
   });
 });
 

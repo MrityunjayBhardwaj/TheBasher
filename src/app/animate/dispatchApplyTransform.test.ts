@@ -51,6 +51,7 @@ vi.mock('../resolveEvaluatedMesh', async (importOriginal) => {
 import { packMeshData, unpackMeshData, type PackedMeshData } from '../meshGeometryData';
 import { gltfJsonMaterialToOpenpbr } from '../../core/import/gltfJsonMaterialToOpenpbr';
 import { DEFAULT_TRANSMISSION_THICKNESS } from '../material/openpbrToThree';
+import { MATERIAL_MAP_SLOT_TABLE } from '../../nodes/types';
 import type {
   BakedMaterialSpec,
   EvaluatedMesh,
@@ -3113,10 +3114,23 @@ describe('#1139 — a primitive bakes the material it draws, maps and placement 
       expect(spec.physical).toMatchObject({ clearcoat: 1, clearcoatNormalScale: 0.5 });
     });
 
-    it('a box with no coat texture writes no coat map field at all', async () => {
+    it('#1328 — a box with a transmission texture bakes it', async () => {
+      const t = tex('t.png');
+      const { result, spec } = await bakeBoxWith({
+        transmission: { weight: 1 },
+        maps: { ...NULL_IR_MAPS, transmission: t },
+      });
+      expect(result.ok).toBe(true);
+      expect(spec.transmissionMap).toEqual(t);
+      expect(spec.physical).toMatchObject({ transmission: 1 });
+    });
+
+    it('a box with no lobe texture writes no lobe map field at all', async () => {
       const { spec } = await bakeBoxWith({});
-      for (const k of ['clearcoatMap', 'clearcoatRoughnessMap', 'clearcoatNormalMap'])
-        expect(k in spec, k).toBe(false);
+      // Every slot the table does not seed — the coat's three, transmission, and any later one.
+      const unseeded = Object.values(MATERIAL_MAP_SLOT_TABLE).filter((r) => !r.seeded);
+      expect(unseeded.length).toBeGreaterThan(0);
+      for (const k of unseeded.map((r) => r.three)) expect(k in spec, k).toBe(false);
       expect('clearcoatNormalScale' in (spec.physical ?? {})).toBe(false);
     });
   });
