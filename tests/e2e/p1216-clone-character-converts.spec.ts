@@ -284,7 +284,12 @@ async function loadRecorded(
     await w.__basher_writeOpfsBytes!(ref, new Uint8Array(buf));
     const boot = await import('/src/app/boot.ts');
     const io = await import('/src/core/project/io.ts');
-    await io.saveProject(await boot.getStorage(), project as never);
+    // #1391 — written RAW, as the older app that saved it wrote it: `saveProject` validates against
+    // the CURRENT format and would refuse a recording from an earlier one before the load could
+    // migrate it. The resume load below migrates it, as it does for a returning user.
+    await (
+      await boot.getStorage()
+    ).write(io.projectPath(project.id), new TextEncoder().encode(JSON.stringify(project, null, 2)));
     localStorage.setItem('basher.lastProjectId', project.id);
   }, saved);
   return reloadAndRead(page, saved.ref);
