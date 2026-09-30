@@ -1099,6 +1099,24 @@ describe('buildNativeGltfImportOps', () => {
     expect(material.maps.albedo).toBeNull();
   });
 
+  it('#1331 — a volume thickness texture arrives native, beside the thickness it scales', async () => {
+    const result = await buildNativeGltfImportOps({
+      buffer: fixture('public/assets/thickness-quad.gltf'),
+      assetRef: 'user-imports/native/thickness.gltf',
+      sceneNodeId: 'n_scene',
+      storeImage: async () => 'img-th',
+    });
+    if ('refused' in result) throw new Error(result.refused);
+    const data = result.ops.find(
+      (op): op is Extract<Op, { type: 'addNode' }> =>
+        op.type === 'addNode' && op.nodeType === 'PolyMeshData',
+    )!;
+    const material = PolyMeshDataParams.parse(data.params).material!;
+    expect(material.maps.thickness).toMatchObject({ hash: 'img-th', store: 'project' });
+    expect(material.geometry.thickness).toBe(0.5);
+    expect(material.maps.transmission).toBeUndefined();
+  });
+
   it('#1327 — a material with no coat texture holds no coat slot, so it keys as before', async () => {
     const result = await buildNativeGltfImportOps({
       buffer: texturedFixture(() => {}),

@@ -108,6 +108,8 @@ const IR_SLOT_SOURCES: {
   coatNormal: fromPath('extensions.KHR_materials_clearcoat.clearcoatNormalTexture'),
   // #1328 — three's loader reads it into `transmissionMap` (`GLTFLoader.js:1082`).
   transmission: fromPath('extensions.KHR_materials_transmission.transmissionTexture'),
+  // #1331 — three's loader reads it into `thicknessMap` (`GLTFLoader.js:1136`).
+  thickness: fromPath('extensions.KHR_materials_volume.thicknessTexture'),
 };
 
 /** A slot source read off its material path, so the path the refusal names is the path read. */

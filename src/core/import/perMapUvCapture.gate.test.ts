@@ -127,6 +127,8 @@ const SOURCE_OF: Record<Slot, (t: Khr) => GltfJsonMaterial> = {
   transmission: (t) => ({
     extensions: { KHR_materials_transmission: { transmissionTexture: info(8, t) } },
   }),
+  // #1331 — the volume's thickness texture, inside `KHR_materials_volume`.
+  thickness: (t) => ({ extensions: { KHR_materials_volume: { thicknessTexture: info(9, t) } } }),
 };
 
 /** Deep-merge two material fragments — `pbrMetallicRoughness` holds three of the core texture

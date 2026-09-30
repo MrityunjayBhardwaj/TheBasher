@@ -3125,6 +3125,18 @@ describe('#1139 — a primitive bakes the material it draws, maps and placement 
       expect(spec.physical).toMatchObject({ transmission: 1 });
     });
 
+    it('#1331 — a box with a thickness texture bakes it beside the thickness', async () => {
+      const t = tex('th.png');
+      const { result, spec } = await bakeBoxWith({
+        transmission: { weight: 1 },
+        geometry: { opacity: 1, thickness: 0.5 },
+        maps: { ...NULL_IR_MAPS, thickness: t },
+      });
+      expect(result.ok).toBe(true);
+      expect(spec.thicknessMap).toEqual(t);
+      expect(spec.physical).toMatchObject({ thickness: 0.5 });
+    });
+
     it('a box with no lobe texture writes no lobe map field at all', async () => {
       const { spec } = await bakeBoxWith({});
       // Every slot the table does not seed — the coat's three, transmission, and any later one.

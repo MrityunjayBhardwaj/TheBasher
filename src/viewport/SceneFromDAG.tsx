@@ -892,6 +892,8 @@ function MeshScaleProbe() {
       clearcoatNormalScale: [number, number] | null;
       // #1328 — the drawn transmission map's image width, null when absent.
       transmissionMapWidth: number | null;
+      // #1331 — the drawn thickness map's image width, null when absent.
+      thicknessMapWidth: number | null;
       // #1123 — the drawn sheen (fuzz lobe): weight, colour and roughness.
       sheen: number | null;
       sheenColor: string | null;
@@ -954,6 +956,7 @@ function MeshScaleProbe() {
           ? [phys.clearcoatNormalScale.x, phys.clearcoatNormalScale.y]
           : null,
         transmissionMapWidth: widthOf(phys.transmissionMap),
+        thicknessMapWidth: widthOf(phys.thicknessMap),
         sheen: typeof phys.sheen === 'number' ? phys.sheen : null,
         sheenColor: phys.sheenColor ? `#${phys.sheenColor.getHexString()}` : null,
         sheenRoughness: typeof phys.sheenRoughness === 'number' ? phys.sheenRoughness : null,

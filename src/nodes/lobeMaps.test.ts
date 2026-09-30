@@ -54,6 +54,21 @@ describe('#1328 — the transmission map compiles to three`s', () => {
   });
 });
 
+describe('#1331 — the thickness map compiles to three`s', () => {
+  it('lands on `thicknessMap` beside the thickness it scales', () => {
+    const drawn = openpbrToThree(
+      hydrateInlineMaterial({
+        transmission: { weight: 1 },
+        geometry: { opacity: 1, thickness: 0.5 },
+        maps: { thickness: ref('th') },
+      }),
+    );
+    expect(drawn.maps.thicknessMap).toEqual(ref('th'));
+    expect(drawn.thickness).toBe(0.5);
+    expect('thicknessMap' in openpbrToThree(hydrateInlineMaterial({})).maps).toBe(false);
+  });
+});
+
 describe('#1327 — a baked snapshot', () => {
   const older = {
     materialClass: 'physical',

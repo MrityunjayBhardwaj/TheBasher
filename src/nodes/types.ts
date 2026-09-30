@@ -299,6 +299,14 @@ export const MATERIAL_MAP_SLOT_TABLE = {
     seeded: false,
     label: 'transmission',
   },
+  // #1331 — the volume's thickness per texel (glTF `KHR_materials_volume`, G), scaling
+  // `geometry.thickness`.
+  thickness: {
+    three: 'thicknessMap',
+    colorSpace: 'srgb-linear',
+    seeded: false,
+    label: 'thickness',
+  },
 } as const satisfies Readonly<Record<string, MaterialMapSlotRow>>;
 
 /** One row of {@link MATERIAL_MAP_SLOT_TABLE}. */
