@@ -8,17 +8,17 @@
 // (`GLTFLoader.js:1017`) and the roughness as data (`:1023`); the glTF extension says the same
 // (`KHR_materials_sheen.md`, sheenColorTexture "in sRGB transfer function").
 //
-// Read on the drawn three material, never on the DAG. The bake case takes its expected reading from
-// the clone BEFORE the bake, which three's own loader drew.
+// Read on the drawn three material, never on the DAG.
 //
 // REF: src/nodes/types.ts (`MATERIAL_MAP_SLOT_TABLE`, the fuzzColor / fuzzRoughness rows);
 //      src/core/import/gltfJsonMaterialToOpenpbr.ts (`IR_SLOT_SOURCES`); issue #1329.
 
 import { test, expect } from './_fixtures';
 import type { Page } from '@playwright/test';
-import { ingestOnCloneRoad } from './_cloneRoadImport';
+import { applyBox, boxWithImportedMaterial } from './_bakeOnBox';
 
 const FIXTURE = 'sheen-texture-quad.gltf';
+const BOX = 'n_p1329_box';
 
 interface Sheen {
   sheen: number | null;
@@ -167,81 +167,15 @@ test('#1329 — a file’s sheen textures import native, draw, and survive a sav
   expect(errors).toEqual([]);
 });
 
-// The baked mesh's own builder: a clone-road import baked by Apply keeps both sheen maps, and
-// the rebuild draws it as three's loader drew the clone.
-test('#1329 — a bake keeps the sheen textures and draws them as the loader did', async ({
+// The baked mesh's own builder: the file's material on a box, baked by Apply, keeps both sheen
+// maps and draws them as the file says (#1053: through a primitive bake, the one live producer of a
+// textured `BakedData`; see `_bakeOnBox`).
+test('#1329 — a bake keeps the sheen textures and draws them as the file says', async ({
   page,
 }) => {
-  await ingestOnCloneRoad(page, FIXTURE, 'p1329-bake');
-  const FROM_LOADER = { ...FROM_FILE, count: 1 };
-  await expect.poll(() => visibleSheen(page)).toEqual(FROM_LOADER);
-  const applied = await page.evaluate(async () => {
-    const nodes = (window as unknown as Win).__basher_dag.getState().state.nodes;
-    const dataId = Object.entries(nodes).find(([, n]) => n.type === 'GltfData')?.[0];
-    const objectId = Object.entries(nodes).find(
-      ([, n]) => n.type === 'Object' && (n.inputs.data as { node?: string })?.node === dataId,
-    )?.[0];
-    const url = '/src/app/animate/dispatchApplyTransform.ts';
-    const mod = (await import(/* @vite-ignore */ url)) as {
-      dispatchApplyTransform: (id: string | undefined, what: 'all') => Promise<{ ok: boolean }>;
-    };
-    return (await mod.dispatchApplyTransform(objectId, 'all')).ok;
-  });
-  expect(applied).toBe(true);
-  await expect
-    .poll(() =>
-      page.evaluate(
-        () =>
-          Object.values((window as unknown as Win).__basher_dag.getState().state.nodes).filter(
-            (n) => n.type === 'BakedData',
-          ).length,
-      ),
-    )
-    .toBe(1);
-  await expect.poll(() => visibleSheen(page)).toEqual(FROM_LOADER);
+  await boxWithImportedMaterial(page, FIXTURE, 'p1329-bake', BOX);
+  await expect.poll(() => drawn(page, BOX)).toEqual(FROM_FILE);
+  await applyBox(page, BOX);
+  await expect.poll(() => drawn(page, BOX)).toEqual(FROM_FILE);
   expect(errors).toEqual([]);
 });
-
-/** The one VISIBLE sheen-mapped mesh; Apply leaves the clone mounted and hidden. */
-function visibleSheen(page: Page) {
-  return page.evaluate(() => {
-    type Tex = { image?: { width?: number }; colorSpace?: string } | null | undefined;
-    const three = (
-      window as unknown as {
-        __basher_three: {
-          getState: () => {
-            scene: {
-              traverseVisible: (
-                cb: (o: {
-                  isMesh?: boolean;
-                  material?: {
-                    sheen?: number;
-                    sheenRoughness?: number;
-                    sheenColorMap?: Tex;
-                    sheenRoughnessMap?: Tex;
-                  };
-                }) => void,
-              ) => void;
-            } | null;
-          };
-        };
-      }
-    ).__basher_three.getState();
-    const transferOf = (cs: unknown) => (cs == null ? null : cs === 'srgb' ? 'srgb' : 'linear');
-    const found: Record<string, unknown>[] = [];
-    three.scene?.traverseVisible((o) => {
-      const m = o.material;
-      if (o.isMesh && m?.sheenColorMap?.image) {
-        found.push({
-          sheen: m.sheen ?? null,
-          sheenRoughness: m.sheenRoughness ?? null,
-          sheenColorMapWidth: m.sheenColorMap.image.width ?? 0,
-          sheenColorMapTransfer: transferOf(m.sheenColorMap.colorSpace),
-          sheenRoughnessMapWidth: m.sheenRoughnessMap?.image?.width ?? null,
-          sheenRoughnessMapTransfer: transferOf(m.sheenRoughnessMap?.colorSpace),
-        });
-      }
-    });
-    return { ...(found[0] ?? {}), count: found.length };
-  });
-}

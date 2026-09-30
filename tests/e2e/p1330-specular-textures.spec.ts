@@ -9,8 +9,8 @@
 // identified by its image. three's loader reads the weight as data (`GLTFLoader.js:1241`) and the
 // colour as sRGB (`:1250`), as the extension says (`KHR_materials_specular.md`).
 //
-// Read on the drawn three material, never on the DAG. The bake case takes its expected reading from
-// the clone BEFORE the bake, which three's own loader drew.
+// Read on the drawn three material, never on the DAG. The bake case bakes the file's
+// material on a box and expects the same reading (#1053).
 //
 // REF: src/nodes/types.ts (`MATERIAL_MAP_SLOT_TABLE`, the specularWeight / specularColor rows;
 //      `LOBE_WEIGHT_WHEN_ABSENT`); src/core/import/gltfJsonMaterialToOpenpbr.ts (`IR_SLOT_SOURCES`);
@@ -18,9 +18,10 @@
 
 import { test, expect } from './_fixtures';
 import type { Page } from '@playwright/test';
-import { ingestOnCloneRoad } from './_cloneRoadImport';
+import { applyBox, boxWithImportedMaterial } from './_bakeOnBox';
 
 const FIXTURE = 'specular-texture-quad.gltf';
+const BOX = 'n_p1330_box';
 
 interface Specular {
   specularIntensity: number | null;
@@ -166,79 +167,15 @@ test('#1330 — a file’s specular textures import native, draw at weight 1, an
   expect(errors).toEqual([]);
 });
 
-// The baked mesh's own builder: a clone-road import baked by Apply keeps both specular maps, and
-// the rebuild draws it as three's loader drew the clone.
-test('#1330 — a bake keeps the specular textures and draws them as the loader did', async ({
+// The baked mesh's own builder: the file's material on a box, baked by Apply, keeps the specular textures
+// and draws as the file says (#1053: through a primitive bake, the one live producer of a textured
+// `BakedData`; see `_bakeOnBox`).
+test('#1330 — a bake keeps the specular textures and draws them as the file says', async ({
   page,
 }) => {
-  await ingestOnCloneRoad(page, FIXTURE, 'p1330-bake');
-  const FROM_LOADER = { ...FROM_FILE, count: 1 };
-  await expect.poll(() => visibleSpecular(page)).toEqual(FROM_LOADER);
-  const applied = await page.evaluate(async () => {
-    const nodes = (window as unknown as Win).__basher_dag.getState().state.nodes;
-    const dataId = Object.entries(nodes).find(([, n]) => n.type === 'GltfData')?.[0];
-    const objectId = Object.entries(nodes).find(
-      ([, n]) => n.type === 'Object' && (n.inputs.data as { node?: string })?.node === dataId,
-    )?.[0];
-    const url = '/src/app/animate/dispatchApplyTransform.ts';
-    const mod = (await import(/* @vite-ignore */ url)) as {
-      dispatchApplyTransform: (id: string | undefined, what: 'all') => Promise<{ ok: boolean }>;
-    };
-    return (await mod.dispatchApplyTransform(objectId, 'all')).ok;
-  });
-  expect(applied).toBe(true);
-  await expect
-    .poll(() =>
-      page.evaluate(
-        () =>
-          Object.values((window as unknown as Win).__basher_dag.getState().state.nodes).filter(
-            (n) => n.type === 'BakedData',
-          ).length,
-      ),
-    )
-    .toBe(1);
-  await expect.poll(() => visibleSpecular(page)).toEqual(FROM_LOADER);
+  await boxWithImportedMaterial(page, FIXTURE, 'p1330-bake', BOX);
+  await expect.poll(() => drawn(page, BOX)).toEqual(FROM_FILE);
+  await applyBox(page, BOX);
+  await expect.poll(() => drawn(page, BOX)).toEqual(FROM_FILE);
   expect(errors).toEqual([]);
 });
-
-/** The one VISIBLE specular-mapped mesh; Apply leaves the clone mounted and hidden. */
-function visibleSpecular(page: Page) {
-  return page.evaluate(() => {
-    type Tex = { image?: { width?: number }; colorSpace?: string } | null | undefined;
-    const three = (
-      window as unknown as {
-        __basher_three: {
-          getState: () => {
-            scene: {
-              traverseVisible: (
-                cb: (o: {
-                  isMesh?: boolean;
-                  material?: {
-                    specularIntensity?: number;
-                    specularColorMap?: Tex;
-                    specularIntensityMap?: Tex;
-                  };
-                }) => void,
-              ) => void;
-            } | null;
-          };
-        };
-      }
-    ).__basher_three.getState();
-    const transferOf = (cs: unknown) => (cs == null ? null : cs === 'srgb' ? 'srgb' : 'linear');
-    const found: Record<string, unknown>[] = [];
-    three.scene?.traverseVisible((o) => {
-      const m = o.material;
-      if (o.isMesh && m?.specularColorMap?.image) {
-        found.push({
-          specularIntensity: m.specularIntensity ?? null,
-          specularColorMapWidth: m.specularColorMap.image.width ?? 0,
-          specularColorMapTransfer: transferOf(m.specularColorMap.colorSpace),
-          specularIntensityMapWidth: m.specularIntensityMap?.image?.width ?? null,
-          specularIntensityMapTransfer: transferOf(m.specularIntensityMap?.colorSpace),
-        });
-      }
-    });
-    return { ...(found[0] ?? {}), count: found.length };
-  });
-}

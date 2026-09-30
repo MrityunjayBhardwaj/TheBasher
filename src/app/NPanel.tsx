@@ -136,7 +136,6 @@ import {
 import { CostPreviewConnector } from './render/CostPreviewConnector';
 import { MotionGenerateCookConnector } from './asset/MotionGenerateCookConnector';
 import { RevertImportedClipConnector } from './animate/RevertImportedClipConnector';
-import { ClearBakedMotionConnector } from './animate/ClearBakedMotionConnector';
 import { BakePoseConnector } from './animate/BakePoseConnector';
 import { SceneEnvironmentControls } from './SceneEnvironmentControls';
 import { CameraLensControls } from './CameraLensControls';
@@ -4767,11 +4766,6 @@ export function NPanel() {
             if (!gp) return null;
             return <RevertImportedClipConnector assetRef={gp.assetRef} childName={gp.childName} />;
           })()}
-          {/* #813 — the character-level counterpart of the per-bone revert above.
-              Not keyed on node.type: the outliner selects the import Group, so the
-              connector resolves the character through the bind road's own selection
-              walk and renders null when that finds no character with baked motion. */}
-          <ClearBakedMotionConnector nodeId={node.id} />
           {/* #1215 — an armature Object on computed motion bakes it into keys it can edit. */}
           <BakePoseConnector nodeId={node.id} />
         </>

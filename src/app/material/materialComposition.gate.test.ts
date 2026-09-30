@@ -14,6 +14,7 @@
 //   composeMaterial.ts          IR → IR              (the data lane, the operator stack)
 //   resolveMaterialFieldOwner   IR → ownership       (which layer OWNS each field)
 //   SceneFromDAG.tsx            live THREE.Material  (the glTF road, merging onto a clone)
+//                               — gone at #1053 with the clone renderer; a kept import is not drawn
 //
 // The third is the one that looks like a violation and is not: it merges onto a cloned
 // `THREE.Material`, where there is no IR to compose, so it CANNOT route through
@@ -63,9 +64,8 @@ describe('#394 S4 — one composition decision, translated N ways', () => {
       'src/app/material/composeMaterial.ts',
       // IR → ownership. Answers "which layer owns this field", not "what is its value".
       'src/app/resolveMaterialFieldOwner.ts',
-      // live THREE.Material. No IR exists to compose on the glTF road; it merges onto a
-      // clone, and asks the SAME decision rather than re-deriving it.
-      'src/viewport/SceneFromDAG.tsx',
+      // #1053 — `SceneFromDAG.tsx` (the live-THREE.Material translation onto a glTF clone) left
+      // with the clone renderer; a kept clone import is not drawn.
     ]);
   });
 

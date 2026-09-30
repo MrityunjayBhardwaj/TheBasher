@@ -16,7 +16,9 @@
 import { test, expect } from './_fixtures';
 import type { Page } from '@playwright/test';
 import { openInspectorSection } from './_inspectorSections';
-import { ingestOnCloneRoad } from './_cloneRoadImport';
+import { applyBox, boxWithImportedMaterial } from './_bakeOnBox';
+
+const BOX = 'n_p1123_sheen_box';
 
 interface DrawnMaterial {
   sheen: number | null;
@@ -175,69 +177,13 @@ test('#1123 — the inspector creates a fuzz lobe on a material that has none', 
   expect(errors).toEqual([]);
 });
 
+// The baked mesh's own builder: the file's material on a box, baked by Apply, keeps the sheen colour and roughness and
+// draws them as the file says (#1053: through a primitive bake, the one live producer of a textured
+// `BakedData`; see `_bakeOnBox`).
 test('#1123 — a bake keeps the sheen colour and roughness', async ({ page }) => {
-  // One UV set: the baked store refuses a second one (#1130), which `sheen-quad.gltf` carries.
-  await ingestOnCloneRoad(page, 'sheen-one-uv-quad.gltf', 'p1123-sheen-bake');
-  const read = () =>
-    page.evaluate(() => {
-      const three = (
-        window as unknown as {
-          __basher_three: {
-            getState: () => {
-              scene: {
-                traverseVisible: (
-                  cb: (o: {
-                    isMesh?: boolean;
-                    material?: {
-                      sheen?: number;
-                      sheenColor?: { getHexString: () => string };
-                      sheenRoughness?: number;
-                    };
-                  }) => void,
-                ) => void;
-              } | null;
-            };
-          };
-        }
-      ).__basher_three.getState();
-      const found: { sheen: number; sheenColor: string; sheenRoughness: number }[] = [];
-      three.scene?.traverseVisible((o) => {
-        const m = o.material;
-        if (o.isMesh && m && typeof m.sheen === 'number' && m.sheen > 0) {
-          found.push({
-            sheen: m.sheen,
-            sheenColor: `#${m.sheenColor!.getHexString()}`,
-            sheenRoughness: m.sheenRoughness!,
-          });
-        }
-      });
-      return { ...(found[0] ?? {}), count: found.length };
-    });
-  // Before the bake the clone draws through three's own loader: the reference reading.
-  await expect.poll(read).toEqual({ ...IMPORTED, count: 1 });
-  const applied = await page.evaluate(async () => {
-    const nodes = (window as unknown as Win).__basher_dag.getState().state.nodes;
-    const dataId = Object.entries(nodes).find(([, n]) => n.type === 'GltfData')?.[0];
-    const objectId = Object.entries(nodes).find(
-      ([, n]) => n.type === 'Object' && (n.inputs.data as { node?: string })?.node === dataId,
-    )?.[0];
-    const url = '/src/app/animate/dispatchApplyTransform.ts';
-    const mod = (await import(/* @vite-ignore */ url)) as {
-      dispatchApplyTransform: (id: string | undefined, what: 'all') => Promise<{ ok: boolean }>;
-    };
-    return (await mod.dispatchApplyTransform(objectId, 'all')).ok;
-  });
-  expect(applied).toBe(true);
-  await expect
-    .poll(() =>
-      page.evaluate(
-        () =>
-          Object.values((window as unknown as Win).__basher_dag.getState().state.nodes).filter(
-            (n) => n.type === 'BakedData',
-          ).length,
-      ),
-    )
-    .toBe(1);
-  await expect.poll(read).toEqual({ ...IMPORTED, count: 1 });
+  await boxWithImportedMaterial(page, 'sheen-one-uv-quad.gltf', 'p1123-sheen-bake', BOX);
+  await expect.poll(() => drawn(page, BOX)).toEqual(IMPORTED);
+  await applyBox(page, BOX);
+  await expect.poll(() => drawn(page, BOX)).toEqual(IMPORTED);
   expect(errors).toEqual([]);
 });

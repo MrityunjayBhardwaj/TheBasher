@@ -1,17 +1,21 @@
 // #178 (S4) — the inspector MATERIAL section for an imported child is EDITABLE: the
 // native OpenPBR lobe editor, wired to the child's DAG-captured `materials[]`.
 //
-// THE PROOF (falsifiable, [[H97]]): import cube-draco → select its GltfChild →
-// the MATERIAL section renders editable fields (not the read-only readout). Type
-// a new base-colour hex into the inspector → the DAG `materials[0].base.color`
-// changes AND the rendered clone repaints (read back through __basher_gltf_meshes,
-// the same live-three.js seam S3 uses). If the editor weren't wired to the same
-// `materials` the renderer reads, the clone colour would never change.
+// THE PROOF (falsifiable, [[H97]]): import cube-draco → select it → the MATERIAL
+// section renders editable fields (not the read-only readout). Type a new base-colour
+// hex into the inspector → the DAG material's base.color changes AND the drawn mesh
+// repaints (read off the live three.js material). If the editor weren't wired to the
+// material the renderer reads, the colour would never change.
+//
+// #1053 — cube-draco imports native; the clone road is retired. The multi-slot case below
+// still stages on the clone road and reads the DAG only.
 
 import { test, expect } from './_fixtures';
-import { ingestOnCloneRoad } from './_cloneRoadImport';
+import { drawnImportMeshes, firstMaterialMesh } from './_importedMesh';
 import { openInspectorSection } from './_inspectorSections';
-import { importedChild, importedChildren } from './_importedChild';
+import { importedChildren } from './_importedChild';
+
+const FOLDER = 'matedit';
 
 interface BasherWindow {
   __basher_dag: {
@@ -26,19 +30,26 @@ interface BasherWindow {
     files: { relativePath: string; bytes: Uint8Array }[],
     folderName: string,
   ) => Promise<string>;
-  __basher_gltf_meshes?: () => { name: string; color: string | null; hasMap: boolean }[];
 }
 
 async function ingestCube(page: import('@playwright/test').Page): Promise<void> {
-  // #1063 — the clone road on purpose: cube-draco now arrives native through ingest.
-  await ingestOnCloneRoad(page, 'cube-draco.glb', 'matedit');
+  // #1053 — cube-draco arrives native (#1063), and the clone road is retired.
+  await page.evaluate(async (folder) => {
+    const bytes = new Uint8Array(
+      await fetch('/assets/cube-draco.glb').then((r) => r.arrayBuffer()),
+    );
+    await (window as unknown as BasherWindow).__basher_ingestGltfFolder(
+      [{ relativePath: 'cube-draco.glb', bytes }],
+      folder,
+    );
+  }, FOLDER);
 }
 
 // #389 — `id` is the DATA half's (where the material lives and what the controls are
 // keyed on); `objectId` is what a director selects. `materials` is the flattened slot
 // table, which is what `materials[]` used to be.
 async function cubeChild(page: import('@playwright/test').Page) {
-  const c = await importedChild(page, 'cube');
+  const c = await firstMaterialMesh(page);
   return c
     ? {
         id: c.dataId,
@@ -48,19 +59,11 @@ async function cubeChild(page: import('@playwright/test').Page) {
     : null;
 }
 
-const renderedCubeColor = (page: import('@playwright/test').Page) =>
-  page.evaluate(() => {
-    const w = window as unknown as BasherWindow;
-    const m = (w.__basher_gltf_meshes ? w.__basher_gltf_meshes() : []).find(
-      (s) => s.name === 'cube',
-    );
-    return m ? m.color : null;
-  });
+const renderedCubeColor = async (page: import('@playwright/test').Page) =>
+  (await drawnImportMeshes(page))[0]?.color ?? null;
 
 test.describe('#178 S4 — editable glTF material inspector', () => {
-  test('editing base.color via the inspector editor repaints the rendered clone', async ({
-    page,
-  }) => {
+  test('editing base.color via the inspector editor repaints the drawn mesh', async ({ page }) => {
     await page.goto('/');
     await page.waitForFunction(
       () => typeof (window as unknown as BasherWindow).__basher_ingestGltfFolder === 'function',
@@ -74,7 +77,7 @@ test.describe('#178 S4 — editable glTF material inspector', () => {
     const child = await cubeChild(page);
     await page.evaluate((id) => {
       (window as unknown as BasherWindow).__basher_selection.getState().select(id);
-    }, child!.id);
+    }, child!.objectId);
     // The MATERIAL section is default-collapsed — expand it.
     await openInspectorSection(page, 'material');
 
@@ -92,7 +95,7 @@ test.describe('#178 S4 — editable glTF material inspector', () => {
     await expect
       .poll(async () => (await cubeChild(page))?.materials?.[0].base.color)
       .toBe('#ff0000');
-    // Side B: the rendered clone repainted (the S3 overlay re-applied on the edit).
+    // Side B: the drawn mesh repainted.
     await expect.poll(() => renderedCubeColor(page)).toBe('#ff0000');
   });
 
@@ -108,7 +111,7 @@ test.describe('#178 S4 — editable glTF material inspector', () => {
     const child = await cubeChild(page);
     await page.evaluate((id) => {
       (window as unknown as BasherWindow).__basher_selection.getState().select(id);
-    }, child!.id);
+    }, child!.objectId);
     await openInspectorSection(page, 'material');
 
     const num = page.getByTestId(`inspector-input-${child!.id}-material.base.metalness`);

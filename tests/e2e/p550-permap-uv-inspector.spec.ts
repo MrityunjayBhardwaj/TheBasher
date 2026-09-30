@@ -20,39 +20,27 @@
 //
 // ── THE PROOF (boundary-pair, both sides, every time) ─────────────────────────
 //
-// Side A is the DAG param (`GltfData.material`, #389), side B is the LIVE three.js
-// clone (`__basher_gltf_meshes().slotPlacements`, which reports every filled slot —
-// a single-slot probe cannot observe a per-SLOT claim). Every assertion names the
+// Side A is the DAG param (the imported `PolyMeshData.material`), side B is the LIVE
+// three.js material the import draws, read per filled slot — a single-slot probe cannot
+// observe a per-SLOT claim. Each slot's `repeat` is its tiling on either pivot. Every assertion names the
 // OTHER slot as a control in the same run, because "this slot moved" and "every slot
 // moved" are the same picture when only one slot is read.
 //
-// ⚠️ THE RESET IS OBSERVED AGAINST A NON-IDENTITY SHARED PLACEMENT ON PURPOSE. The
-// glTF road SKIPS a slot whose resolved placement is identity, leaving whatever the
-// loader wrote — so resetting a slot back to an identity shared value changes nothing
-// drawn, and "correct fallback" would be indistinguishable from "the overlay never
-// ran". Editing the shared placement first makes the fallback discriminating.
+// ⚠️ THE RESET IS OBSERVED AGAINST A NON-IDENTITY SHARED PLACEMENT ON PURPOSE: resetting a
+// slot back to an identity shared value would draw what an untouched slot draws, so "correct
+// fallback" would be indistinguishable from "nothing ran". Editing the shared placement first
+// makes the fallback discriminating.
 //
 // REF: src/app/NPanel.tsx (the rows), src/app/material/perMapPlacementEdit.ts (the
-//      rule), src/viewport/applyGltfUvTransform.ts (the road that applies them,
-//      ORIGIN pivot); issues #550, #551, #217, #181.
-
-// #1123 — a drop now brings this fixture across native, so it imports through `__basher_importGltf`,
-// the entry that never tries native. This spec's subject is the clone road's per-map placement,
-// which still serves every file the native road refuses.
+//      rule); issues #550, #551, #217, #181.
+//
+// #1053 — the fixture imports native (the importer keeps `mapUvTransforms`); the clone road
+// this spec used to stage on is retired.
 
 import { test, expect } from './_fixtures';
 import { openInspectorSection } from './_inspectorSections';
-import { firstMaterialChild } from './_importedChild';
+import { firstMaterialMesh, importRoots } from './_importedMesh';
 
-interface SlotPlacement {
-  repeat: [number, number];
-  offset: [number, number];
-  rotation: number;
-  center: [number, number];
-}
-interface MeshSummary {
-  slotPlacements: Record<string, SlotPlacement>;
-}
 interface BasherWindow {
   __basher_dag: {
     getState: () => {
@@ -62,9 +50,10 @@ interface BasherWindow {
     };
   };
   __basher_selection: { getState: () => { select: (id: string | null) => void } };
-  __basher_importGltf: (buffer: ArrayBuffer, assetRef: string) => Promise<unknown>;
-  __basher_writeOpfsBytes: (ref: string, bytes: Uint8Array) => Promise<void>;
-  __basher_gltf_meshes?: () => MeshSummary[];
+  __basher_ingestGltfFolder: (
+    files: { relativePath: string; bytes: Uint8Array }[],
+    folderName: string,
+  ) => Promise<string>;
 }
 
 /**
@@ -75,7 +64,7 @@ interface BasherWindow {
 async function ingestPerMap(page: import('@playwright/test').Page, folder: string) {
   await page.goto('/');
   await page.waitForFunction(
-    () => typeof (window as unknown as BasherWindow).__basher_importGltf === 'function',
+    () => typeof (window as unknown as BasherWindow).__basher_ingestGltfFolder === 'function',
   );
   await page.evaluate(async (name) => {
     const w = window as unknown as BasherWindow;
@@ -86,21 +75,20 @@ async function ingestPerMap(page: import('@playwright/test').Page, folder: strin
     };
     json.materials[0].emissiveFactor = [1, 1, 1];
     const bytes = new TextEncoder().encode(JSON.stringify(json));
-    const ref = `assets/${name}.gltf`;
-    await w.__basher_writeOpfsBytes(ref, bytes);
-    await w.__basher_importGltf(bytes.buffer as ArrayBuffer, ref);
+    await w.__basher_ingestGltfFolder([{ relativePath: `${name}.gltf`, bytes }], name);
   }, folder);
+  await expect.poll(async () => (await firstMaterialMesh(page))?.road).toBe('native');
 }
 
 /** The imported child + the shape of its slot-0 material (side A). */
 async function materialChild(page: import('@playwright/test').Page) {
   {
-    const c0 = await firstMaterialChild(page);
-    const c = c0 ? { id: c0.dataId, params: { materials: c0.slots } } : null;
-    if (!c) return null;
-    const m0 = (c.params.materials as Record<string, unknown>[])[0];
+    const c0 = await firstMaterialMesh(page);
+    if (!c0) return null;
+    const m0 = c0.slots[0] as Record<string, unknown>;
     return {
-      id: c.id,
+      id: c0.dataId,
+      objectId: c0.objectId,
       ownKeys: Object.keys(m0),
       uvTransform: m0.uvTransform as { tiling: [number, number] },
       perMap: m0.mapUvTransforms as
@@ -110,27 +98,54 @@ async function materialChild(page: import('@playwright/test').Page) {
   }
 }
 
-/** The LIVE clone's per-slot placements (side B). */
-const drawn = (page: import('@playwright/test').Page) =>
-  page.evaluate(() => {
-    const w = window as unknown as BasherWindow;
-    const meshes = w.__basher_gltf_meshes ? w.__basher_gltf_meshes() : [];
-    return meshes[0]?.slotPlacements ?? null;
-  });
+/** The LIVE drawn material's per-slot placements (side B): each filled slot's `repeat`. */
+async function drawn(
+  page: import('@playwright/test').Page,
+): Promise<Record<string, { repeat: [number, number] }> | null> {
+  const roots = await importRoots(page);
+  if (roots.length !== 1) return null;
+  return page.evaluate((id) => {
+    type Tex = { repeat: { x: number; y: number } } | null | undefined;
+    type O3 = {
+      isMesh?: boolean;
+      material?: Record<string, Tex>;
+      traverse: (f: (o: O3) => void) => void;
+    };
+    const scene = (
+      window as unknown as {
+        __basher_three: { getState: () => { scene: { getObjectByName: (n: string) => O3 } } };
+      }
+    ).__basher_three.getState().scene;
+    let out: Record<string, { repeat: [number, number] }> | null = null;
+    scene.getObjectByName(id)?.traverse((o) => {
+      if (!o.isMesh || out || !o.material) return;
+      const found: Record<string, { repeat: [number, number] }> = {};
+      for (const slot of ['map', 'emissiveMap']) {
+        const t = o.material[slot];
+        if (t) found[slot] = { repeat: [t.repeat.x, t.repeat.y] };
+      }
+      out = found;
+    });
+    return out;
+  }, roots[0].rootId);
+}
 
-async function selectAndOpen(page: import('@playwright/test').Page, id: string) {
+async function selectAndOpen(
+  page: import('@playwright/test').Page,
+  child: { id: string; objectId: string },
+) {
   await page.evaluate((nid) => {
     (window as unknown as BasherWindow).__basher_selection.getState().select(nid);
-  }, id);
+  }, child.objectId);
   await openInspectorSection(page, 'material');
-  await expect(page.getByTestId(`inspector-material-editor-${id}`)).toBeVisible();
+  await expect(page.getByTestId(`inspector-material-editor-${child.id}`)).toBeVisible();
 }
 
 async function importedChild(page: import('@playwright/test').Page, folder: string) {
   await ingestPerMap(page, folder);
   await expect.poll(async () => (await materialChild(page))?.id).toBeTruthy();
   const child = await materialChild(page);
-  await selectAndOpen(page, child!.id);
+  await selectAndOpen(page, child!);
   return child!;
 }
 
@@ -190,7 +205,7 @@ test.describe('#550 — per-map UV placement in the inspector', () => {
     expect((await materialChild(page))?.perMap?.emissive?.tiling).toEqual([4, 4]);
     expect((await materialChild(page))?.uvTransform.tiling).toEqual([1, 1]);
 
-    // Side B — the drawn clone agrees, and the control slot did NOT move.
+    // Side B — the drawn material agrees, and the control slot did NOT move.
     await expect.poll(async () => (await drawn(page))?.map?.repeat).toEqual([7, 3]);
     expect((await drawn(page))?.emissiveMap?.repeat).toEqual([4, 4]);
   });

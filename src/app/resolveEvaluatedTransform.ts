@@ -46,16 +46,13 @@
 import { evaluate, type EvaluatorCache } from '../core/dag/evaluator';
 import type { DagState } from '../core/dag/state';
 import type { EvalCtx, NodeRef } from '../core/dag/types';
-import type { GltfAssetValue, Quat, RenderOutputValue, SceneChild } from '../nodes/types';
-import { resolveGltfChildTrs, type ChildTrs, type BakedChannel } from './resolveGltfChildTransform';
-import { bakedChannelSamplersForAsset, sampleBakedChannel } from './bakedGltfChannels';
+import type { Quat, RenderOutputValue, SceneChild } from '../nodes/types';
 import { overlayTransients } from './overlayTransients';
 import { overlayChannels } from '../nodes/overlayChannels';
 import { layeredChannelValues } from './layeredChannels';
 import { driverChannelValuesForTarget } from './paramDrivers';
 import { resolveConstraintRotation, resolveConstraintPosition } from './nodeConstraints';
 import { useTransientEditStore } from './stores/transientEditStore';
-import { importedChildOf } from './importedChild';
 import { childEdges } from './resolveWorldTransform';
 import {
   quaternionFromEulerDeg,
@@ -146,88 +143,9 @@ export function resolveEvaluatedTransform(
     }
   }
   if (matchIdx === -1 && !nested) {
-    // 4b. TRAILING glTF-child branch (P7.7 / #91 — purely additive, H40).
-    //   A GltfChild id is NEITHER a top-level scene-child ref NOR a single-hop
-    //   AnimationLayer target — it lives BY NAME inside a GltfAssetValue, so the
-    //   index-correspondence match above (the box/AnimationLayer path) always
-    //   misses it. This branch fires ONLY on that miss AND only when the node is
-    //   a GltfChild, so the existing paths are never reordered or shadowed.
-    //
-    //   It layers the SAME way the renderer does (resolveGltfChildTrs, B1 — one
-    //   precedence rule across renderer + resolver, V20): manual override (if
-    //   overridden[field]) → active clip track → captured base. The base for a
-    //   non-overridden field IS the child node's seeded param (A2 seeded it with
-    //   the captured static base at import), so the child node serves as BOTH
-    //   the override layer AND the base. The clip track comes from the owning
-    //   GltfAsset's evaluated TransformClip.
-    const selected = state.nodes[selectedId];
-    // #389 — the address and the override flags come from the ONE seam; the pose comes
-    // off the Object itself, because after the split the Object is what owns it. Both
-    // reads are needed and neither substitutes for the other (see importedChild.ts).
-    const cp = importedChildOf(state.nodes, selectedId);
-    if (selected && cp) {
-      const sp = selected.params as {
-        position?: unknown;
-        rotation?: unknown;
-        scale?: unknown;
-      };
-      if (!isVec3(sp.position) || !isVec3(sp.rotation) || !isVec3(sp.scale)) {
-        return null;
-      }
-      const childTrs: ChildTrs = {
-        position: sp.position,
-        rotation: sp.rotation,
-        scale: sp.scale,
-      };
-
-      // Find the owning GltfAsset (matched by assetRef) and read its evaluated
-      // TransformClip track for this child. Evaluation is best-effort: a missing
-      // / unevaluable asset simply means "no clip layer" — the override or base
-      // still resolves (the child node carries both).
-      let clipTrack: ChildTrs | undefined;
-      // P7.12 (#108, C3, BLOCK-1) — the read-side MUST layer the SAME
-      // baked-channel band the renderer (C2) does, or a baked-then-edited bone
-      // renders the baked value while the gizmo/NPanel show clip/base (the
-      // #68/#77 displayed-≠-rendered second-surface class, H40). Use the SAME
-      // shared enumerator (bakedGltfChannels) the renderer uses, sampled at the
-      // SAME ctx.time.seconds the clip is sampled at on the line below.
-      let bakedChannel: BakedChannel | undefined;
-      for (const node of Object.values(state.nodes)) {
-        if (node.type !== 'GltfAsset') continue;
-        const ap = node.params as { assetRef?: unknown };
-        if (ap.assetRef !== cp.assetRef) continue;
-        try {
-          const assetVal = evaluate(state, node.id, { cache, ctx }).value as GltfAssetValue;
-          // P7.10 (#114): TransformClipValue carries `.sample(seconds)` instead
-          // of a pre-baked `.tracks` map. Sample at the caller's ctx.time —
-          // this resolver is the gizmo/NPanel static-read path, so the right
-          // time is "the current play time" the caller passed in.
-          clipTrack = assetVal.transformClip?.sample(ctx.time.seconds)[cp.childName];
-          const bakedSamplers = bakedChannelSamplersForAsset(state.nodes, assetVal.nodeNameMap);
-          bakedChannel = sampleBakedChannel(bakedSamplers[cp.childName], ctx.time.seconds);
-        } catch {
-          clipTrack = undefined;
-          bakedChannel = undefined;
-        }
-        break;
-      }
-
-      const resolved = resolveGltfChildTrs({
-        base: childTrs,
-        clipTrack,
-        childNode: { ...childTrs, overridden: cp.overridden },
-        bakedChannel,
-      });
-      // The child always carries rotation + scale (seeded at import), so unlike
-      // the box/size-fallback path these are never null. Copy into mutable
-      // tuples — resolveGltfChildTrs returns readonly Vec3s (ChildTrs), the
-      // EvaluatedTransform contract is the mutable local Vec3.
-      return {
-        position: [resolved.position[0], resolved.position[1], resolved.position[2]],
-        rotation: [resolved.rotation[0], resolved.rotation[1], resolved.rotation[2]],
-        scale: [resolved.scale[0], resolved.scale[1], resolved.scale[2]],
-      };
-    }
+    // 4b. (#1053) The glTF-child branch that layered a clone import's clip and baked channels here
+    //   is gone with the clone road: a kept clone import is not drawn, so there is nothing for the
+    //   gizmo or inspector to agree with.
 
     // 4c. FOLLOWED-LIGHT branch (#343). A light is wired FLAT into scene.lights, never a
     //   scene child, so the index-correspondence walk above always misses it → this

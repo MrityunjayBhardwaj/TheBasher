@@ -139,7 +139,10 @@ const EXPECTED_ARMS = [
  * second producer would mean two writers for a shared resource, which is a different and
  * worse problem than a fifth reader.
  */
-const EXPECTED_PRODUCERS = ['src/viewport/SceneFromDAG.tsx'] as const;
+// #1053 — EMPTY: the clone renderer was the one producer, and it is deleted with the clone road
+// (a kept clone import is not drawn). Nothing fills the registry, so every arm above reads an empty
+// one; the arms themselves retire in #1053's next slices, and this list stays exact meanwhile.
+const EXPECTED_PRODUCERS = [] as const;
 
 /**
  * The geometry model itself (#367). CAPPED AT ONE, and that cap is the whole reason this

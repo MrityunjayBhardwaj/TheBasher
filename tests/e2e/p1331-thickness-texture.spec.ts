@@ -6,17 +6,18 @@
 // fixture is glass (transmission 1) with a volume thickness of 0.5 and a thickness texture 8 px
 // wide, so the drawn map is identified by its image. three scales `thickness` by the map's G.
 //
-// Read on the drawn three material, never on the DAG. The bake case takes its expected reading from
-// the clone BEFORE the bake, which three's own loader drew (`GLTFLoader.js:1136`).
+// Read on the drawn three material, never on the DAG. The bake case bakes the file's
+// material on a box and expects the same reading (#1053) (`GLTFLoader.js:1136`).
 //
 // REF: src/nodes/types.ts (`MATERIAL_MAP_SLOT_TABLE`, the thickness row);
 //      src/core/import/gltfJsonMaterialToOpenpbr.ts (`IR_SLOT_SOURCES`); issue #1331.
 
 import { test, expect } from './_fixtures';
 import type { Page } from '@playwright/test';
-import { ingestOnCloneRoad } from './_cloneRoadImport';
+import { applyBox, boxWithImportedMaterial } from './_bakeOnBox';
 
 const FIXTURE = 'thickness-quad.gltf';
+const BOX = 'n_p1331_box';
 
 interface Volume {
   thickness: number | null;
@@ -138,70 +139,15 @@ test('#1331 — a file’s thickness texture imports native, draws, and survives
   expect(errors).toEqual([]);
 });
 
-// The baked mesh's own builder: a clone-road import baked by Apply keeps the thickness map, and
-// the rebuild draws it as three's loader drew the clone.
-test('#1331 — a bake keeps the thickness texture and draws it as the loader did', async ({
+// The baked mesh's own builder: the file's material on a box, baked by Apply, keeps the thickness texture
+// and draws as the file says (#1053: through a primitive bake, the one live producer of a textured
+// `BakedData`; see `_bakeOnBox`).
+test('#1331 — a bake keeps the thickness texture and draws it as the file says', async ({
   page,
 }) => {
-  await ingestOnCloneRoad(page, FIXTURE, 'p1331-bake');
-  await expect.poll(() => visibleVolume(page)).toEqual({ ...FROM_FILE, count: 1 });
-  const applied = await page.evaluate(async () => {
-    const nodes = (window as unknown as Win).__basher_dag.getState().state.nodes;
-    const dataId = Object.entries(nodes).find(([, n]) => n.type === 'GltfData')?.[0];
-    const objectId = Object.entries(nodes).find(
-      ([, n]) => n.type === 'Object' && (n.inputs.data as { node?: string })?.node === dataId,
-    )?.[0];
-    const url = '/src/app/animate/dispatchApplyTransform.ts';
-    const mod = (await import(/* @vite-ignore */ url)) as {
-      dispatchApplyTransform: (id: string | undefined, what: 'all') => Promise<{ ok: boolean }>;
-    };
-    return (await mod.dispatchApplyTransform(objectId, 'all')).ok;
-  });
-  expect(applied).toBe(true);
-  await expect
-    .poll(() =>
-      page.evaluate(
-        () =>
-          Object.values((window as unknown as Win).__basher_dag.getState().state.nodes).filter(
-            (n) => n.type === 'BakedData',
-          ).length,
-      ),
-    )
-    .toBe(1);
-  await expect.poll(() => visibleVolume(page)).toEqual({ ...FROM_FILE, count: 1 });
+  await boxWithImportedMaterial(page, FIXTURE, 'p1331-bake', BOX);
+  await expect.poll(() => drawn(page, BOX)).toEqual(FROM_FILE);
+  await applyBox(page, BOX);
+  await expect.poll(() => drawn(page, BOX)).toEqual(FROM_FILE);
   expect(errors).toEqual([]);
 });
-
-/** The one VISIBLE thickness-mapped mesh; Apply leaves the clone mounted and hidden. */
-function visibleVolume(page: Page) {
-  return page.evaluate(() => {
-    type Tex = { image?: { width?: number } } | null | undefined;
-    const three = (
-      window as unknown as {
-        __basher_three: {
-          getState: () => {
-            scene: {
-              traverseVisible: (
-                cb: (o: {
-                  isMesh?: boolean;
-                  material?: { thickness?: number; thicknessMap?: Tex };
-                }) => void,
-              ) => void;
-            } | null;
-          };
-        };
-      }
-    ).__basher_three.getState();
-    const found: Record<string, unknown>[] = [];
-    three.scene?.traverseVisible((o) => {
-      const m = o.material;
-      if (o.isMesh && m?.thicknessMap?.image) {
-        found.push({
-          thickness: m.thickness ?? null,
-          thicknessMapWidth: m.thicknessMap.image.width ?? 0,
-        });
-      }
-    });
-    return { ...(found[0] ?? {}), count: found.length };
-  });
-}

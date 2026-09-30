@@ -89,6 +89,8 @@ const CURVE_LINE = 'src/viewport/CurveLine.tsx';
  * read the captured count OFF the descriptor by name, and a gate pins what they answer.
  */
 const FACE_QUESTIONS = 'src/app/faceCount.ts';
+/** #1053 — the load converter, which reads a saved clone import to turn it native. */
+const CLONE_CONVERTER = 'src/app/asset/convertCloneCharacters.ts';
 const POINT_QUESTIONS = 'src/app/pointIdentity.ts';
 
 /**
@@ -187,19 +189,14 @@ export const PARAM_READERS: Record<SplitKindName, Record<string, ParamReader>> =
     material: { by: BAKED_RECOMPOSE },
   },
   gltf: {
-    // Both are read by the renderer, and not only folded: `childOverridesForAsset` filters
-    // the children of ONE asset by `assetRef`, and the clone's meshes are matched to a
-    // child BY NAME through `nodeNameMap`. They also fold into the GeometryRef, which is
-    // what makes them unusable as the conformance observable — but that is a statement
-    // about the road, not about whether anything reads them.
-    assetRef: { by: SCENE },
-    childName: { by: SCENE },
-    // The captured material, overlaid onto the loaded clone's own material per slot
-    // (`overlayDagMaterial`), then re-overlaid per frame when a channel drives it.
-    material: { by: SCENE },
-    // The multi-primitive table, indexed slot-by-slot against the clone's meshes in
-    // primitive order by the same effect that reads `material`.
-    materialSlots: { by: SCENE },
+    // #1053 — the clone renderer is gone (a kept clone import is not drawn), so what reads a saved
+    // clone child's params now is the load converter, which reads them to turn the child native:
+    // `assetRef` and `childName` to find it in the file, `material` and `materialSlots` to carry
+    // what the director set. Nothing draws from them any more.
+    assetRef: { by: CLONE_CONVERTER },
+    childName: { by: CLONE_CONVERTER },
+    material: { by: CLONE_CONVERTER },
+    materialSlots: { by: CLONE_CONVERTER },
     // #1023 — the captured face count. A NAMED reader rather than a fold, which is why this
     // is not `FOLDED_INTO_GEOMETRY` like the sphere's segment counts: those are handed to a
     // geometry builder and nothing checks that the builder honoured them. This one is folded

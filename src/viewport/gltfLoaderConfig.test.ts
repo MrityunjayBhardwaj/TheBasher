@@ -48,16 +48,9 @@ describe('gltfLoaderConfig — self-hosted decoder paths (#80)', () => {
     expect(existsSync(join(PUBLIC, 'basis', 'basis_transcoder.js'))).toBe(true);
   });
 
-  it('GltfAssetR consumes useGLTF with the SELF-HOSTED Draco path (regression guard)', () => {
-    // Source-grep against the consumer: a future refactor that drops
-    // the `'/draco/'` arg back to the bare `useGLTF(url)` shape would
-    // silently re-introduce the THESIS §48 CDN dependency. Catch it.
-    const src = readFileSync(join(__dirname, 'SceneFromDAG.tsx'), 'utf8');
-    // Must call useGLTF with the self-hosted path as the 2nd arg.
-    expect(src).toMatch(/useGLTF\(\s*url\s*,\s*['"]\/draco\/['"]/);
-    // Must NOT call useGLTF with no extra args (the drei-CDN default).
-    expect(src).not.toMatch(/useGLTF\(\s*url\s*\)\s*as\s+unknown/);
-  });
+  // (#1053) The `useGLTF` self-hosted-Draco guard read the clone renderer, deleted with the clone
+  // road. The native reader decodes Draco through `decodeDracoInBrowser`, from the same
+  // self-hosted files the rows above pin.
 
   it('the Draco-compressed test fixture exists (asset-side proof)', () => {
     // Generated via `gltf-pipeline -i public/assets/cube.gltf -d -o

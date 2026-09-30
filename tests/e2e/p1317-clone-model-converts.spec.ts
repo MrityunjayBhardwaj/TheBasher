@@ -168,9 +168,18 @@ test('#1317 — a saved clone model loads native, drawn where and how the clone 
   page.on('pageerror', (e) => errors.push(e.message));
   const ref = 'user-imports/p1317/albedo-textured-quad.gltf';
   await stageOnCloneRoad(page, 'albedo-textured-quad.gltf', ref, [1.5, 0.5, -1]);
-  await expect.poll(async () => (await drawnImport(page)).mapImageOk).toBe(true);
-  const clone = await drawnImport(page);
-  expect(clone.road).toBe('clone');
+  expect((await importRoots(page)).map((r) => r.road)).toEqual(['clone']);
+  // What the clone drew for this staging, read by `drawnImport` on the committed code at `7e659d1d`
+  // with the clone renderer still in place (#1053 retired it; the print is in the store at
+  // `ref/architecture/1053-clone-goldens.txt`).
+  const clone = {
+    road: 'clone',
+    centre: [1.5, 0.5, -1],
+    size: [1, 1, 0],
+    color: '#ffffff',
+    hasMap: true,
+    mapImageOk: true,
+  };
 
   await saveAndReload(page);
 
@@ -178,7 +187,7 @@ test('#1317 — a saved clone model loads native, drawn where and how the clone 
   expect(await types(page)).toContain('PolyMeshData');
   await expect.poll(async () => (await drawnImport(page)).mapImageOk).toBe(true);
   const native = await drawnImport(page);
-  console.log(`P1317 clone ${JSON.stringify(clone)} native ${JSON.stringify(native)}`);
+  console.log(`P1317 clone (recorded) ${JSON.stringify(clone)} native ${JSON.stringify(native)}`);
   expect(native.road).toBe('native');
   native.centre.forEach((c, k) => expect(c, `centre axis ${k}`).toBeCloseTo(clone.centre[k], 4));
   native.size.forEach((c, k) => expect(c, `size axis ${k}`).toBeCloseTo(clone.size[k], 4));
@@ -194,7 +203,7 @@ test('#1317 — a saved clone model loads native, drawn where and how the clone 
   expect(errors).toEqual([]);
 });
 
-test('#1317 — a saved clone model the native reader refuses loads as saved, and says why', async ({
+test('#1317 — a saved clone model the native reader refuses is kept as saved, not drawn, and says why', async ({
   page,
 }) => {
   test.slow();
@@ -210,5 +219,8 @@ test('#1317 — a saved clone model the native reader refuses loads as saved, an
   const row = await notice(page, `model:${ref}`);
   expect(row.label).toBe('model not converted:');
   expect(row.message).toMatch(/KHR_materials_iridescence.*#1123/);
+  // #1053 (user decision 2026-09-30): a kept import is not drawn, and the load says so.
+  expect(row.message).toContain('is not drawn');
+  expect(await drawnImportMeshes(page)).toEqual([]);
   expect(errors).toEqual([]);
 });

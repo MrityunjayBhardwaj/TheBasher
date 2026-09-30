@@ -6,9 +6,9 @@
 // on the material's existing specular lobe; absent is OpenPBR's default (1, white), which is also
 // three's, and the inspector case checks an edit adds the one field it names.
 //
-// Read on the drawn three material. The bake case reads three's own loader first (the clone draws
-// through it), so the native numbers are checked against the reference, not only against this
-// file's arithmetic.
+// Read on the drawn three material. The numbers are this file's arithmetic; until #1053 the bake
+// case also read three's own loader (the clone drew through it) and it agreed. The bake case now bakes
+// the file's material on a box.
 //
 // REF: src/nodes/types.ts (`specular`); src/core/import/gltfJsonMaterialToOpenpbr.ts;
 //      src/app/materialRegistry.ts (`build`); src/viewport/SceneFromDAG.tsx (`CapturedBakedMeshR`);
@@ -17,7 +17,9 @@
 import { test, expect } from './_fixtures';
 import type { Page } from '@playwright/test';
 import { openInspectorSection } from './_inspectorSections';
-import { ingestOnCloneRoad } from './_cloneRoadImport';
+import { applyBox, boxWithImportedMaterial } from './_bakeOnBox';
+
+const BOX = 'n_p1321_box';
 
 interface DrawnMaterial {
   specularIntensity: number | null;
@@ -182,69 +184,13 @@ test('#1321 — the inspector sets a specular weight the material does not have 
   expect(errors).toEqual([]);
 });
 
-test('#1321 — a bake keeps the specular colour, as three`s loader drew it', async ({ page }) => {
-  await ingestOnCloneRoad(page, 'specular-quad.gltf', 'p1321-bake');
-  const read = () =>
-    page.evaluate(() => {
-      const three = (
-        window as unknown as {
-          __basher_three: {
-            getState: () => {
-              scene: {
-                traverseVisible: (
-                  cb: (o: {
-                    isMesh?: boolean;
-                    material?: {
-                      map?: unknown;
-                      specularIntensity?: number;
-                      specularColor?: { getHexString: () => string };
-                    };
-                  }) => void,
-                ) => void;
-              } | null;
-            };
-          };
-        }
-      ).__basher_three.getState();
-      const found: { specularIntensity: number; specularColor: string }[] = [];
-      three.scene?.traverseVisible((o) => {
-        const m = o.material;
-        // The quad is the one textured mesh; the scene's own box is physical too.
-        if (o.isMesh && m?.map && typeof m.specularIntensity === 'number' && m.specularColor) {
-          found.push({
-            specularIntensity: m.specularIntensity,
-            specularColor: `#${m.specularColor.getHexString()}`,
-          });
-        }
-      });
-      return { ...(found[0] ?? {}), count: found.length };
-    });
-  // Before the bake the clone draws through three's own loader: the reference reading, and the
-  // same numbers the native import draws above.
-  await expect.poll(read).toEqual({ ...IMPORTED, count: 1 });
-  const applied = await page.evaluate(async () => {
-    const nodes = (window as unknown as Win).__basher_dag.getState().state.nodes;
-    const dataId = Object.entries(nodes).find(([, n]) => n.type === 'GltfData')?.[0];
-    const objectId = Object.entries(nodes).find(
-      ([, n]) => n.type === 'Object' && (n.inputs.data as { node?: string })?.node === dataId,
-    )?.[0];
-    const url = '/src/app/animate/dispatchApplyTransform.ts';
-    const mod = (await import(/* @vite-ignore */ url)) as {
-      dispatchApplyTransform: (id: string | undefined, what: 'all') => Promise<{ ok: boolean }>;
-    };
-    return (await mod.dispatchApplyTransform(objectId, 'all')).ok;
-  });
-  expect(applied).toBe(true);
-  await expect
-    .poll(() =>
-      page.evaluate(
-        () =>
-          Object.values((window as unknown as Win).__basher_dag.getState().state.nodes).filter(
-            (n) => n.type === 'BakedData',
-          ).length,
-      ),
-    )
-    .toBe(1);
-  await expect.poll(read).toEqual({ ...IMPORTED, count: 1 });
+// The baked mesh's own builder: the file's material on a box, baked by Apply, keeps the specular weight and colour and
+// draws them as the file says (#1053: through a primitive bake, the one live producer of a textured
+// `BakedData`; see `_bakeOnBox`).
+test('#1321 — a bake keeps the specular colour, as the file says', async ({ page }) => {
+  await boxWithImportedMaterial(page, 'specular-quad.gltf', 'p1321-bake', BOX);
+  await expect.poll(() => drawn(page, BOX)).toEqual(IMPORTED);
+  await applyBox(page, BOX);
+  await expect.poll(() => drawn(page, BOX)).toEqual(IMPORTED);
   expect(errors).toEqual([]);
 });

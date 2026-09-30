@@ -5,7 +5,8 @@
 // (`__basher_writeOpfsBytes` + `__basher_importGltf`, which always takes the clone road), moved and
 // turned, and its drawn tip vertex read at two times. After a save and a reload — the resume road,
 // which goes through `hydrateLoadedProject` — the same instrument (`__basher_gltf_skin`, which reads
-// the drawn SkinnedMesh on either road) must read the same tip, and the scene must hold a Skeleton
+// the drawn SkinnedMesh on either road) must read the tip the clone drew (recorded since #1053 retired
+// the clone renderer, `CLONE_DREW`), and the scene must hold a Skeleton
 // and an Armature modifier and nothing of the clone road.
 import { test, expect } from './_fixtures';
 import type { Page } from '@playwright/test';
@@ -30,6 +31,31 @@ interface BasherWindow {
 }
 
 const REF = 'user-imports/p1216/skinned-bar.glb';
+
+/**
+ * What the CLONE drew, for the cases that stage a character on the clone road in the browser rather
+ * than loading a recording (#1053: the clone renderer is gone, so it can no longer be read live).
+ * Read by this spec's own `drawnTip` / `__basher_gltf_meshes` on the committed code at `7e659d1d`,
+ * with the renderer still in place; the prints are kept in the store at
+ * `ref/architecture/1053-clone-goldens.txt`. The staging below is unchanged, so the saved project
+ * the converter reads is still made by the product's own verbs.
+ */
+const CLONE_DREW = {
+  capturedAt: '7e659d1d',
+  placed: [
+    [1.5, 1.602159282629117, -0.17695431503732417],
+    [1.4999999999999998, 0.8879167739419482, 0.013625844001874388],
+  ] as [number, number, number][],
+  colourUntouched: '#f0a85a',
+  colourSet: '#12ab34',
+  /** #1265 #1267 and #1269: the same file and gestures on the file's bones, at 0.25/0.5/0.75/1 s. */
+  mutedOrBypassed: [
+    [2.823963530312899, 2.004495484978301, 4.70227987379039e-8],
+    [2.4718652030831576, 1.8723953723985547, 6.133540965681136e-8],
+    [2.1915848986255484, 1.621663199124534, 7.522009555950725e-8],
+    [2.021236328450141, 1.286394595732033, 8.678875761219706e-8],
+  ] as [number, number, number][],
+};
 
 async function setTime(page: Page, seconds: number): Promise<void> {
   await page.evaluate(
@@ -157,8 +183,7 @@ test('#1216 — a saved clone character loads native, drawn where the clone drew
   const before = await types(page);
   expect(before).toContain('GltfAsset');
   expect(before).not.toContain('ArmatureModifier');
-  const clone = await drawnTip(page, [0.5, 1]);
-  const cloneTip = clone.tip;
+  const cloneTip = CLONE_DREW.placed;
 
   await page.evaluate(async () => {
     const boot = await import('/src/app/boot.ts');
@@ -183,7 +208,7 @@ test('#1216 — a saved clone character loads native, drawn where the clone drew
   const native = await drawnTip(page, [0.5, 1]);
   const nativeTip = native.tip;
   console.log(
-    `tip search examined ${clone.examined} (clone) / ${native.examined} (native); clone ${JSON.stringify(cloneTip)} native ${JSON.stringify(nativeTip)}`,
+    `tip search examined ${native.examined} (native); clone (recorded) ${JSON.stringify(cloneTip)} native ${JSON.stringify(nativeTip)}`,
   );
   nativeTip.forEach((v, t) =>
     v.forEach((c, k) =>
@@ -376,21 +401,6 @@ test('#1216 slice 3 — a material colour set on the character loads native, dra
   page.on('pageerror', (e) => errors.push(e.message));
   await stageClone(page, 'skinned-bar.glb', REF);
 
-  // Each road draws through its own seam (the clone's whole-asset mesh list, a native Object's
-  // mesh): both are printed, and the drawn colour is what is compared.
-  const readClone = () =>
-    page.evaluate(() => {
-      const w = window as unknown as { __basher_gltf_meshes?: () => { color: string | null }[] };
-      return w.__basher_gltf_meshes?.() ?? null;
-    });
-  await page.waitForFunction(() =>
-    Boolean(
-      (window as unknown as { __basher_gltf_meshes?: () => unknown[] }).__basher_gltf_meshes?.()
-        ?.length,
-    ),
-  );
-  const untouched = await readClone();
-
   const set = await page.evaluate(async () => {
     const w = window as unknown as BasherWindow;
     const nodes = w.__basher_dag.getState().state.nodes;
@@ -404,24 +414,17 @@ test('#1216 slice 3 — a material colour set on the character loads native, dra
     ).ok;
   });
   expect(set).toBe(true);
-  await page.waitForFunction(
-    (before) =>
-      JSON.stringify(
-        (window as unknown as { __basher_gltf_meshes?: () => unknown[] }).__basher_gltf_meshes?.(),
-      ) !== before,
-    JSON.stringify(untouched),
-  );
-  const clone = await readClone();
 
   const { after, notice } = await saveAndReload(page, REF);
   expect(after.filter((t) => /^Gltf|TransformClip|ClipSelect/.test(t))).toEqual([]);
   expect(notice.label).toBe('character converted:');
   const native = { color: await nativeMeshColour(page) };
   console.log(
-    `material: untouched ${JSON.stringify(untouched)} clone ${JSON.stringify(clone)} native ${JSON.stringify(native)}`,
+    `material: clone (recorded) untouched ${CLONE_DREW.colourUntouched} set ${CLONE_DREW.colourSet} native ${JSON.stringify(native)}`,
   );
-  expect(clone?.[0].color).not.toBe(untouched?.[0].color);
-  expect(native?.color).toBe(clone?.[0].color);
+  // Drawn in the colour the edit set, not the file's own: a converter that dropped the edit fails.
+  expect(native.color).toBe(CLONE_DREW.colourSet);
+  expect(native.color).not.toBe(CLONE_DREW.colourUntouched);
   expect(errors).toEqual([]);
 });
 
@@ -517,8 +520,8 @@ test('#1216 slice 4 — a character whose file is gone says so by name, and the 
   }, REF);
   expect(gone).toBe(true);
 
-  // The page that was open when the file left still draws it and fails its reads; what is under test
-  // is the load that follows (cleared site data never has that page open), so only its errors count.
+  // What is under test is the load that follows (cleared site data never has the saving page open),
+  // so only its errors count.
   errors.length = 0;
   const { after, notice } = await reloadAndRead(page, REF);
   console.log(
@@ -531,15 +534,18 @@ test('#1216 slice 4 — a character whose file is gone says so by name, and the 
   // The Group carries no name of its own here, so the notice names the character by its file.
   expect(notice.message).toContain(`"${name ?? REF.split('/').pop()}"`);
   expect(notice.message).toContain("no longer in this browser's storage");
-  // The kept character draws on the old road, whose read of the missing file fails: the file's OWN
-  // row reports it (the error boundary caught it), and the only page errors are that same failure,
-  // which React's development build re-reports to the window after a boundary catches it.
+  // #1053 (user decision 2026-09-30): a kept import is NOT DRAWN, and the notice says so. Nothing
+  // draws it, so nothing reads the missing file: no row of its own and no page error.
+  expect(notice.message).toContain('is not drawn');
+  expect(
+    await page.evaluate(() => (window as unknown as BasherWindow).__basher_gltf_skin?.() ?? null),
+  ).toBeNull();
   const fileRow = await page.evaluate(async (r) => {
     const m = await import('/src/app/stores/assetErrorStore.ts');
     return m.useAssetErrorStore.getState().errors[r] ?? null;
   }, REF);
-  expect(fileRow).not.toBeNull();
-  expect(errors.every((e) => e === fileRow)).toBe(true);
+  expect(fileRow).toBeNull();
+  expect(errors).toEqual([]);
 });
 
 test('#1263 — keys edited on a node of the file that is not a bone load native, drawn as the clone drew them', async ({
@@ -625,7 +631,7 @@ test('#1265 #1267 — curves added on a node of the file, which the clone never 
   }, ref);
   expect(made).toEqual([true, true, true, true, true, true, true]);
   const times = [0.25, 0.5, 0.75, 1];
-  const clone = await drawnTip(page, times);
+  const clone = { tip: CLONE_DREW.mutedOrBypassed };
 
   const { after, notice } = await saveAndReload(page, ref);
   expect(after.filter((t) => /^Gltf|TransformClip|ClipSelect/.test(t))).toEqual([]);
@@ -639,7 +645,7 @@ test('#1265 #1267 — curves added on a node of the file, which the clone never 
 
   const native = await drawnTip(page, times);
   console.log(
-    `empty curves: clone ${JSON.stringify(clone.tip)} native ${JSON.stringify(native.tip)}`,
+    `empty curves: clone (recorded) ${JSON.stringify(clone.tip)} native ${JSON.stringify(native.tip)}`,
   );
   expectSameTip(clone.tip, native.tip, times);
   expect(errors).toEqual([]);
@@ -772,7 +778,7 @@ test('#1269 — a driver, a Track-To, a Follow-Path and a strip on a node of the
   );
   expect(made).toEqual([true, true, true, true, true, true]);
   const times = [0.25, 0.5, 0.75, 1];
-  const clone = await drawnTip(page, times);
+  const clone = { tip: CLONE_DREW.mutedOrBypassed };
 
   const { after, notice } = await saveAndReload(page, ref);
   expect(after.filter((t) => /^Gltf|TransformClip|ClipSelect/.test(t))).toEqual([]);
@@ -784,7 +790,9 @@ test('#1269 — a driver, a Track-To, a Follow-Path and a strip on a node of the
   }
 
   const native = await drawnTip(page, times);
-  console.log(`bypassed: clone ${JSON.stringify(clone.tip)} native ${JSON.stringify(native.tip)}`);
+  console.log(
+    `bypassed: clone (recorded) ${JSON.stringify(clone.tip)} native ${JSON.stringify(native.tip)}`,
+  );
   expectSameTip(clone.tip, native.tip, times);
   expect(errors).toEqual([]);
 });

@@ -523,13 +523,14 @@ describe('the load door: saved to storage, loaded back, converted', () => {
     expect(notices).toEqual([
       [
         `character:${REF}`,
-        `"skinned-bar.glb" still loads on the old imported-file structure: its file (${REF}) is no longer in this browser's storage.`,
+        // #1053 — the clone road is retired: a kept import is not drawn, and the notice says so.
+        `"skinned-bar.glb" is not drawn: it was saved on the old imported-file structure and cannot be converted (its file (${REF}) is no longer in this browser's storage). It stays in the project as saved and converts on a later load once that is fixed.`,
         'character not converted:',
       ],
     ]);
 
-    // The kept character renders on the old road, and its file fails to load there: the renderer
-    // reports (and later clears) the FILE's row. The load's notice is its own row and outlives both.
+    // The load's notice is its own row, so a FILE row reported and cleared under the asset's ref
+    // (as any stored-asset loader does) never takes it with it.
     const store = useAssetErrorStore.getState();
     store.clearAll();
     reportCharacterConversion(report, store.report);

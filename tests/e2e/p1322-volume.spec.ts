@@ -5,8 +5,9 @@
 // attenuationDistance 0.5, attenuationColor [0.2, 0.6, 1] (linear) = #7ccbff in sRGB. They land as
 // OpenPBR's transmission depth and colour (same Beer's-law meaning) and `geometry.thickness`.
 //
-// Read on the drawn three material. The bake case reads three's own loader first (the clone draws
-// through it), so the native numbers are checked against the reference.
+// Read on the drawn three material. The numbers are this file's arithmetic; until #1053 the bake
+// case also read three's own loader (the clone drew through it) and it agreed. The bake case now bakes
+// the file's material on a box.
 //
 // REF: src/nodes/types.ts (`transmission`, `geometry.thickness`);
 //      src/core/import/gltfJsonMaterialToOpenpbr.ts; src/app/material/openpbrToThree.ts;
@@ -15,7 +16,9 @@
 import { test, expect } from './_fixtures';
 import type { Page } from '@playwright/test';
 import { openInspectorSection } from './_inspectorSections';
-import { ingestOnCloneRoad } from './_cloneRoadImport';
+import { applyBox, boxWithImportedMaterial } from './_bakeOnBox';
+
+const BOX = 'n_p1322_box';
 
 interface DrawnMaterial {
   thickness: number | null;
@@ -192,72 +195,13 @@ test('#1322 — the inspector sets an absorption depth the material does not hav
   expect(errors).toEqual([]);
 });
 
-test('#1322 — a bake keeps the volume, as three`s loader drew it', async ({ page }) => {
-  await ingestOnCloneRoad(page, 'volume-quad.gltf', 'p1322-bake');
-  const read = () =>
-    page.evaluate(() => {
-      const three = (
-        window as unknown as {
-          __basher_three: {
-            getState: () => {
-              scene: {
-                traverseVisible: (
-                  cb: (o: {
-                    isMesh?: boolean;
-                    material?: {
-                      map?: unknown;
-                      thickness?: number;
-                      attenuationDistance?: number;
-                      attenuationColor?: { getHexString: () => string };
-                    };
-                  }) => void,
-                ) => void;
-              } | null;
-            };
-          };
-        }
-      ).__basher_three.getState();
-      const found: { thickness: number; attenuationDistance: number; attenuationColor: string }[] =
-        [];
-      three.scene?.traverseVisible((o) => {
-        const m = o.material;
-        // The quad is the one textured mesh; the scene's own box is physical too.
-        if (o.isMesh && m?.map && typeof m.thickness === 'number' && m.attenuationColor) {
-          found.push({
-            thickness: m.thickness,
-            attenuationDistance: m.attenuationDistance!,
-            attenuationColor: `#${m.attenuationColor.getHexString()}`,
-          });
-        }
-      });
-      return { ...(found[0] ?? {}), count: found.length };
-    });
-  // Before the bake the clone draws through three's own loader: the reference reading, and the
-  // same numbers the native import draws above.
-  await expect.poll(read).toEqual({ ...IMPORTED, count: 1 });
-  const applied = await page.evaluate(async () => {
-    const nodes = (window as unknown as Win).__basher_dag.getState().state.nodes;
-    const dataId = Object.entries(nodes).find(([, n]) => n.type === 'GltfData')?.[0];
-    const objectId = Object.entries(nodes).find(
-      ([, n]) => n.type === 'Object' && (n.inputs.data as { node?: string })?.node === dataId,
-    )?.[0];
-    const url = '/src/app/animate/dispatchApplyTransform.ts';
-    const mod = (await import(/* @vite-ignore */ url)) as {
-      dispatchApplyTransform: (id: string | undefined, what: 'all') => Promise<{ ok: boolean }>;
-    };
-    return (await mod.dispatchApplyTransform(objectId, 'all')).ok;
-  });
-  expect(applied).toBe(true);
-  await expect
-    .poll(() =>
-      page.evaluate(
-        () =>
-          Object.values((window as unknown as Win).__basher_dag.getState().state.nodes).filter(
-            (n) => n.type === 'BakedData',
-          ).length,
-      ),
-    )
-    .toBe(1);
-  await expect.poll(read).toEqual({ ...IMPORTED, count: 1 });
+// The baked mesh's own builder: the file's material on a box, baked by Apply, keeps the volume and
+// draws them as the file says (#1053: through a primitive bake, the one live producer of a textured
+// `BakedData`; see `_bakeOnBox`).
+test('#1322 — a bake keeps the volume, as the file says', async ({ page }) => {
+  await boxWithImportedMaterial(page, 'volume-quad.gltf', 'p1322-bake', BOX);
+  await expect.poll(() => drawn(page, BOX)).toEqual(IMPORTED);
+  await applyBox(page, BOX);
+  await expect.poll(() => drawn(page, BOX)).toEqual(IMPORTED);
   expect(errors).toEqual([]);
 });

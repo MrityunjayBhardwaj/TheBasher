@@ -1,13 +1,9 @@
-// #178 (S5) — the GltfMaterialEditor's Maps section is EDITABLE: replace a glTF
-// material's texture map (pick a file → attachMapFromFile bakes it to OPFS → the
-// IR map ref) and the rendered clone shows the new texture; clear writes the
-// CLEARED_MAP sentinel.
+// #178 (S5) — the inspector's map rows on an imported glTF material: clear writes the CLEARED_MAP
+// sentinel, revert restores null (inherit the imported texture).
 //
-// THE PROOF (falsifiable, real decode on a live render): import cube-draco (its
-// material has NO base-colour map → hasMap false). Pick an albedo file in the
-// inspector → the DAG materials[0].maps.albedo becomes a real BakedTextureRef AND
-// the rendered clone now HAS a base map (hasMap true). This exercises the full
-// loop: bake → setParam → overlay async-loads → render.
+// #1053 — the replace case ("the rendered clone shows the picked texture") retired with the clone
+// renderer; replacing a map on a native import and seeing it drawn is
+// `p997-replaced-map-uv-set.spec.ts`. The case left here reads the DAG and the inspector only.
 
 import { test, expect } from './_fixtures';
 import { ingestOnCloneRoad } from './_cloneRoadImport';
@@ -27,16 +23,6 @@ interface W {
     files: { relativePath: string; bytes: Uint8Array }[],
     folderName: string,
   ) => Promise<string>;
-  __basher_gltf_meshes?: () => { name: string; color: string | null; hasMap: boolean }[];
-}
-
-// A minimal valid 1×1 PNG (red) for the file picker — attachMapFromFile decodes
-// it via the real TextureLoader in the browser.
-const RED_PNG_B64 =
-  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
-
-function pngBuffer(): Buffer {
-  return Buffer.from(RED_PNG_B64, 'base64');
 }
 
 async function ingestCube(page: import('@playwright/test').Page): Promise<void> {
@@ -57,57 +43,7 @@ async function cubeChild(page: import('@playwright/test').Page) {
   }
 }
 
-const cubeHasMap = (page: import('@playwright/test').Page) =>
-  page.evaluate(() => {
-    const w = window as unknown as W;
-    const m = (w.__basher_gltf_meshes ? w.__basher_gltf_meshes() : []).find(
-      (s) => s.name === 'cube',
-    );
-    return m ? m.hasMap : null;
-  });
-
 test.describe('#178 S5 — editable glTF map rows', () => {
-  test('replacing the albedo map paints the imported clone with the picked texture', async ({
-    page,
-  }) => {
-    await page.goto('/');
-    await page.waitForFunction(
-      () => typeof (window as unknown as W).__basher_ingestGltfFolder === 'function',
-    );
-    await ingestCube(page);
-    await expect.poll(async () => (await cubeChild(page))?.id ?? null).not.toBeNull();
-    const child = await cubeChild(page);
-    // cube-draco has no base-colour map.
-    await expect.poll(() => cubeHasMap(page)).toBe(false);
-
-    await page.evaluate((id) => {
-      (window as unknown as W).__basher_selection.getState().select(id);
-    }, child!.id);
-    await openInspectorSection(page, 'material');
-
-    // The Maps section shows the albedo slot as "— none": cube-draco has NO
-    // base-colour texture, so nothing is captured/inherited (the texture-maps
-    // milestone distinguishes an empty slot from an "● imported" captured one).
-    const stateTag = page.getByTestId(`inspector-map-state-${child!.id}-albedo`);
-    await expect(stateTag).toHaveText('— none');
-
-    // Pick a file → bake → the IR ref is set + the clone repaints with a map.
-    await page
-      .getByTestId(`inspector-map-file-${child!.id}-albedo`)
-      .setInputFiles({ name: 'red.png', mimeType: 'image/png', buffer: pngBuffer() });
-
-    // Side A: the DAG map ref is a real (non-null, non-empty) BakedTextureRef.
-    await expect
-      .poll(async () => {
-        const a = (await cubeChild(page))?.albedo as { hash?: string } | null | undefined;
-        return a && typeof a.hash === 'string' && a.hash.length > 0 ? 'ref' : 'none';
-      })
-      .toBe('ref');
-    // Side B: the rendered clone now carries a base map (overlay loaded + applied).
-    await expect.poll(() => cubeHasMap(page)).toBe(true);
-    await expect(stateTag).toHaveText('● replaced');
-  });
-
   test('clear writes the CLEARED_MAP sentinel; revert restores null', async ({ page }) => {
     await page.goto('/');
     await page.waitForFunction(

@@ -228,7 +228,9 @@ describe('#583 — the tier the render root may fold', () => {
     // the walk calls, still at weight 1.
     // 8 → 7 (#1166): the world read's light branch overlays through that same helper now, so a
     // light folds its strips and drivers as the draw does; still weight 1.
-    expect(calls).toHaveLength(7);
+    // 7 → 6 (#1053): the clone renderer `GltfAssetR` is deleted with the clone road (a kept clone
+    // import is not drawn), and its overlay site with it. No surviving site changed.
+    expect(calls).toHaveLength(6);
     expect(calls.filter((c) => !/,\s*1,\s*/.test(c))).toEqual([]);
   });
 });

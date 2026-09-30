@@ -21,7 +21,9 @@
 import { test, expect } from './_fixtures';
 import type { Page } from '@playwright/test';
 import { openInspectorSection } from './_inspectorSections';
-import { ingestOnCloneRoad } from './_cloneRoadImport';
+import { applyBox, boxWithImportedMaterial } from './_bakeOnBox';
+
+const BOX = 'n_p1123_strength_box';
 
 interface DrawnMaterial {
   normalScale: [number, number] | null;
@@ -185,73 +187,14 @@ test('#1123 — the inspector edits a strength the material does not have yet', 
   expect(errors).toEqual([]);
 });
 
-// The baked mesh's own builder: a clone-road import baked by Apply carries the strength the clone
-// drew with, as a strength, and the rebuild draws it with the sign the baked texture needs.
+// The baked mesh's own builder: the file's material on a box, baked by Apply, keeps the normal and occlusion strengths and
+// draws them as the file says (#1053: through a primitive bake, the one live producer of a textured
+// `BakedData`; see `_bakeOnBox`).
 test('#1123 — a bake keeps the strengths and draws them', async ({ page }) => {
-  await ingestOnCloneRoad(page, 'normal-strength-quad.gltf', 'p1123-bake');
-  const expected = { normalScale: [0.5, -0.5], aoMapIntensity: 0.3, count: 1 };
-  // Before the bake the clone draws through three's own loader: the reference reading.
-  await expect.poll(() => visibleNormalMapped(page)).toEqual(expected);
-  const applied = await page.evaluate(async () => {
-    const nodes = (window as unknown as Win).__basher_dag.getState().state.nodes;
-    const dataId = Object.entries(nodes).find(([, n]) => n.type === 'GltfData')?.[0];
-    const objectId = Object.entries(nodes).find(
-      ([, n]) => n.type === 'Object' && (n.inputs.data as { node?: string })?.node === dataId,
-    )?.[0];
-    const url = '/src/app/animate/dispatchApplyTransform.ts';
-    const mod = (await import(/* @vite-ignore */ url)) as {
-      dispatchApplyTransform: (id: string | undefined, what: 'all') => Promise<{ ok: boolean }>;
-    };
-    return (await mod.dispatchApplyTransform(objectId, 'all')).ok;
-  });
-  expect(applied).toBe(true);
-  await expect
-    .poll(() =>
-      page.evaluate(
-        () =>
-          Object.values((window as unknown as Win).__basher_dag.getState().state.nodes).filter(
-            (n) => n.type === 'BakedData',
-          ).length,
-      ),
-    )
-    .toBe(1);
-  await expect.poll(() => visibleNormalMapped(page)).toEqual(expected);
+  await boxWithImportedMaterial(page, 'normal-strength-quad.gltf', 'p1123-bake', BOX);
+  const expected = { normalScale: [0.5, -0.5], aoMapIntensity: 0.3 };
+  await expect.poll(() => drawn(page, BOX)).toEqual(expected);
+  await applyBox(page, BOX);
+  await expect.poll(() => drawn(page, BOX)).toEqual(expected);
   expect(errors).toEqual([]);
 });
-
-/** The one VISIBLE normal-mapped mesh's strengths; Apply leaves the clone mounted and hidden. */
-function visibleNormalMapped(page: Page) {
-  return page.evaluate(() => {
-    const three = (
-      window as unknown as {
-        __basher_three: {
-          getState: () => {
-            scene: {
-              traverseVisible: (
-                cb: (o: {
-                  isMesh?: boolean;
-                  material?: {
-                    normalMap?: { image?: unknown } | null;
-                    normalScale: { x: number; y: number };
-                    aoMapIntensity: number;
-                  };
-                }) => void,
-              ) => void;
-            } | null;
-          };
-        };
-      }
-    ).__basher_three.getState();
-    const found: { normalScale: [number, number]; aoMapIntensity: number }[] = [];
-    three.scene?.traverseVisible((o) => {
-      const m = o.material;
-      if (o.isMesh && m?.normalMap?.image) {
-        found.push({
-          normalScale: [m.normalScale.x, m.normalScale.y],
-          aoMapIntensity: m.aoMapIntensity,
-        });
-      }
-    });
-    return { ...(found[0] ?? { normalScale: null, aoMapIntensity: null }), count: found.length };
-  });
-}

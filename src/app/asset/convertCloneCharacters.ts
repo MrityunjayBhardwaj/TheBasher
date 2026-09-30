@@ -1321,10 +1321,13 @@ export function reportCharacterConversion(
       `${kind} converted:`,
     );
   }
+  // #1053 — the clone road is retired, so a kept import has nothing left to draw it: it is NOT
+  // DRAWN, and said so (user decision, 2026-09-30). Its nodes stay as saved; every load tries
+  // again, so it converts on its own once what kept it is fixed.
   for (const { kind, name, assetRef, why } of report.kept) {
     notify(
       noticeKey(kind, assetRef),
-      `"${name}" still loads on the old imported-file structure: ${why.join('; ')}.`,
+      `"${name}" is not drawn: it was saved on the old imported-file structure and cannot be converted (${why.join('; ')}). It stays in the project as saved and converts on a later load once that is fixed.`,
       `${kind} not converted:`,
     );
   }

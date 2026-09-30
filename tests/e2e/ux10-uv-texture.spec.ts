@@ -8,19 +8,20 @@
 //
 // THE PROOF (Lokayata, side B == what the panel draws):
 //   - A glTF whose material binds a 64×64 baseColorTexture (flipY=false, glTF
-//     convention) → the seam reports an `ok` 64×64 image with flipY=false for both
-//     the whole asset and the textured child.
+//     convention) → the seam reports an `ok` 64×64 image with flipY=false for the
+//     imported mesh's Object.
+//
+// #1053 — the imports arrive native; the clone road (and its whole-asset half of the
+// first case) is retired.
 //   - A mesh with NO base-color map (the default BoxMesh; the metallic-roughness-
 //     only quad) → `none`, no image. The grid-only path is unchanged.
 
 import { test, expect } from './_fixtures';
 import { openInspectorSection } from './_inspectorSections';
-import { importedChildren } from './_importedChild';
+import { firstMaterialMesh } from './_importedMesh';
 
-const ASSET_REF = 'assets/albedo-textured-quad.gltf';
-const FIXTURE_URL = '/assets/albedo-textured-quad.gltf';
-const PLAIN_REF = 'assets/two-material-textured-quad.gltf'; // metallic-roughness map only, NO base color
-const PLAIN_URL = '/assets/two-material-textured-quad.gltf';
+const FIXTURE = 'albedo-textured-quad.gltf';
+const PLAIN = 'two-material-textured-quad.gltf'; // metallic-roughness map only, NO base color
 
 interface TexResult {
   status: string;
@@ -34,9 +35,10 @@ interface BasherWindow {
   __basher_selection?: { getState: () => { select: (id: string) => void } };
   __basher_mesh_material?: (nodeId: string) => { hasMap: boolean; mapImageOk: boolean } | null;
   __basher_dag: { getState: () => { state: { nodes: Record<string, { type: string }> } } };
-  __basher_importGltf?: (buffer: ArrayBuffer, assetRef: string) => Promise<{ gltfAssetId: string }>;
-  __basher_writeOpfsBytes?: (path: string, bytes: Uint8Array) => Promise<void>;
-  __basher_gltf_meshes?: () => { slot: number }[];
+  __basher_ingestGltfFolder?: (
+    files: { relativePath: string; bytes: Uint8Array }[],
+    folderName: string,
+  ) => Promise<string>;
   __basher_dispatchMutator?: (
     name: string,
     spec: unknown,
@@ -44,39 +46,25 @@ interface BasherWindow {
   ) => { ok: boolean; reason?: string };
 }
 
-async function importGltf(page: import('@playwright/test').Page, url: string, ref: string) {
+/** Import `/assets/<file>` native through the product's door; resolve the imported mesh's Object. */
+async function importGltf(page: import('@playwright/test').Page, file: string): Promise<string> {
   await page.waitForFunction(() => {
     const w = window as unknown as BasherWindow;
     return (
       typeof w.__basher_uv_texture === 'function' &&
-      typeof w.__basher_importGltf === 'function' &&
-      typeof w.__basher_writeOpfsBytes === 'function'
+      typeof w.__basher_ingestGltfFolder === 'function'
     );
   });
-  await page.evaluate(
-    async ({ url, ref }) => {
-      const w = window as unknown as BasherWindow;
-      const buf = await fetch(url).then((r) => r.arrayBuffer());
-      await w.__basher_writeOpfsBytes!(ref, new Uint8Array(buf));
-      await w.__basher_importGltf!(buf, ref);
-    },
-    { url, ref },
-  );
-  await page.waitForFunction(() => {
+  await page.evaluate(async (file) => {
     const w = window as unknown as BasherWindow;
-    return (w.__basher_gltf_meshes ? w.__basher_gltf_meshes() : []).length >= 1;
-  });
+    const bytes = new Uint8Array(await fetch(`/assets/${file}`).then((r) => r.arrayBuffer()));
+    await w.__basher_ingestGltfFolder!([{ relativePath: file, bytes }], `ux10-${file}`);
+  }, file);
+  await expect.poll(async () => (await firstMaterialMesh(page))?.road).toBe('native');
+  return (await firstMaterialMesh(page))!.objectId;
 }
 
-function findNode(page: import('@playwright/test').Page, type: string) {
-  return page.evaluate((t: string) => {
-    const w = window as unknown as BasherWindow;
-    const nodes = w.__basher_dag.getState().state.nodes;
-    return Object.keys(nodes).find((id) => nodes[id].type === t) ?? null;
-  }, type);
-}
-
-/** Poll the seam until the async clone/decode settles out of 'loading'. */
+/** Poll the seam until the async decode settles out of 'loading'. */
 function readTexture(page: import('@playwright/test').Page, id: string) {
   return page.evaluate(async (nodeId: string) => {
     const w = window as unknown as BasherWindow;
@@ -90,19 +78,12 @@ function readTexture(page: import('@playwright/test').Page, id: string) {
 }
 
 test.describe('UX #10 — UV-editor texture backdrop', () => {
-  test('glTF base-color map → seam reports an ok 64×64 flipY=false image (asset + child)', async ({
-    page,
-  }) => {
+  test('glTF base-color map → seam reports an ok 64×64 flipY=false image', async ({ page }) => {
     await page.goto('/');
-    await importGltf(page, FIXTURE_URL, ASSET_REF);
-
-    const assetId = await findNode(page, 'GltfAsset');
     // #389 — the OBJECT half: the UV seam is fed a SELECTION id.
-    const childId = (await importedChildren(page))[0]?.objectId ?? null;
-    expect(assetId).not.toBeNull();
-    expect(childId).not.toBeNull();
+    const childId = await importGltf(page, FIXTURE);
 
-    for (const id of [assetId!, childId!]) {
+    for (const id of [childId]) {
       const tex = await readTexture(page, id);
       console.log(`[ux10 tex ${id}] ${JSON.stringify(tex)}`);
       expect(tex.status).toBe('ok');
@@ -117,26 +98,19 @@ test.describe('UX #10 — UV-editor texture backdrop', () => {
 
   // ── #1015 — THE SAME MESH, WITH AN OPERATOR ON IT ──────────────────────────────────
   //
-  // The row above proves the backdrop for a BARE imported child. This one adds a UV Project
-  // to it and asks again, because that is where the resolver lost it: a projection that
-  // cannot materialise passes its source's availability through, so the mesh is still drawn
-  // by the asset clone while its descriptor is no longer a glTF one. Keyed on the kind, the
-  // clone arm fell through and this seam reported `none` with no image — indistinguishable
-  // from the genuinely-untextured meshes in the test below, which is why neither that row nor
-  // the one above could catch it.
+  // The row above proves the backdrop for a BARE imported mesh. This one adds a UV Project to it
+  // and asks again, because that is where the resolver once lost it (#1015, on the clone road): a
+  // projection that cannot materialise passes its source's availability through, and the seam
+  // reported `none` with no image — indistinguishable from the genuinely-untextured meshes in the
+  // test below. (#1053 — re-asked on the native road.)
   //
   // Authored through `dispatchMutatorFromUI`, the same five-gate path the agent and the
   // modifier stack use, so what is under test is the product's own road to this state.
-  test('#1015 — a UV Project over the imported child KEEPS the clone backdrop', async ({
-    page,
-  }) => {
+  test('#1015 — a UV Project over the imported mesh KEEPS its backdrop', async ({ page }) => {
     await page.goto('/');
-    await importGltf(page, FIXTURE_URL, ASSET_REF);
+    const childId: string | null = await importGltf(page, FIXTURE);
 
-    const childId = (await importedChildren(page))[0]?.objectId ?? null;
-    expect(childId).not.toBeNull();
-
-    // Before: the bare child resolves its backdrop off the clone.
+    // Before: the bare mesh resolves its backdrop.
     const before = await readTexture(page, childId!);
     expect(before.status).toBe('ok');
     expect(before.hasImage).toBe(true);
@@ -193,9 +167,8 @@ test.describe('UX #10 — UV-editor texture backdrop', () => {
 
     // A glTF whose only texture is a metallic-roughness map (NOT base color) is
     // still "no backdrop" — the editor shows base color only.
-    await importGltf(page, PLAIN_URL, PLAIN_REF);
     // #389 — the OBJECT half: the UV seam is fed a SELECTION id.
-    const childId = (await importedChildren(page))[0]?.objectId ?? null;
+    const childId = await importGltf(page, PLAIN);
     const child = await readTexture(page, childId!);
     console.log(`[ux10 tex plain child ${childId}] ${JSON.stringify(child)}`);
     expect(child.status).toBe('none');

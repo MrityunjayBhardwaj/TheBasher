@@ -301,7 +301,8 @@ describe('#550 case 6 — the origin-pivot values have no reader, and that is EX
     // AUTHORED road's compile, so the values are already centre-pivot and carry unchanged.
     'src/app/animate/dispatchApplyTransform.ts':
       'AUTHORED road — bakes each slot’s resolved placement, centre pivot, unconverted',
-    'src/viewport/SceneFromDAG.tsx': 'glTF OVERLAY road — origin pivot, the captured convention',
+    // #1053 — `SceneFromDAG.tsx` left this list with the clone renderer (a kept clone import is
+    // not drawn); its surviving `BakedMeshR` places a bake's maps without naming this field.
     // #550 inspector slice — the EDIT side. Owns the field's presence so the panel
     // cannot reintroduce an empty bag; pass-through, no pivot conversion.
     'src/app/material/perMapPlacementEdit.ts':

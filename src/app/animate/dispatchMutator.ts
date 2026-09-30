@@ -42,7 +42,6 @@ import {
   scanBasherControllers,
   type BasherControllerKind,
 } from '../../core/comfy/basherControllers';
-import { bakedChannelIdsForAssetRef } from '../bakedGltfChannels';
 import { bareChannelNodesForSubject } from '../nodeChannels';
 import { linkedDataNodeId } from '../resolveDataParamOwner';
 import { isCameraNode } from '../cameraNode';
@@ -504,59 +503,6 @@ function existingChannelIds(addresses: readonly ChannelAddress[]): string[] {
     if (base.nodes[id]) out.push(id);
   }
   return out;
-}
-
-export interface ClearBakedMotionArgs {
-  /** The character's `GltfAsset` assetRef. */
-  assetRef: string;
-  /** Readable character name, for the undo-entry label. */
-  label?: string;
-}
-
-/**
- * Clear a whole character's baked motion in ONE gesture (#813).
- *
- * The per-bone revert (`dispatchRevertGltfChannel`) has existed since #121, and
- * the second-clip refusal USED TO tell a director to "remove the existing baked
- * channels first" — an instruction that, on a 22-bone rig, meant finding and
- * clicking that button 22 times. That refusal is gone (#889 slice 3 removed the
- * eager bake, so a second bind has nothing to collide with); this gesture is not,
- * because clearing a character's motion in one act is worth having on its own.
- * A fan-out, not a new mechanism. No new node type, no new id scheme.
- *
- * 🔑 WHAT GETS DELETED IS WHAT THE RENDERER PLAYS. The id set comes from
- * `bakedChannelNodeIdsForAsset`, which shares its membership predicate with the
- * enumerator the renderer reads (`bakedChannelSamplersForAsset`). So "cleared"
- * means "this character has no baked motion on screen" — not "some channels were
- * removed". Deriving the set independently here (say, by walking the rig's bone
- * names) could leave a channel the renderer still plays, and the character would
- * keep moving after a success message — the H516 shape, one level up.
- *
- * Lossless, exactly as the per-bone revert is: the imported clip was never
- * deleted, so the resolver's presence-based pick falls back to it. ONE atomic
- * deleteNode op set = ONE undo for the whole character (K6).
- *
- * No-op (ok, zero ops) when the character has nothing baked — that is "already
- * clear", not an error, mirroring the per-bone revert.
- */
-export function dispatchClearBakedMotion(args: ClearBakedMotionArgs): DispatchResult {
-  const { assetRef, label } = args;
-  const base = useDagStore.getState().state;
-
-  // null (asset absent / no usable nodeNameMap) is a REFUSAL, not "already
-  // clear": the baked set is unknown, and announcing a successful clear that
-  // deleted nothing is the failure mode this whole area keeps producing.
-  const targets = bakedChannelIdsForAssetRef(base.nodes, assetRef);
-  if (targets === null) {
-    return { ok: false, reason: `no glTF asset in the scene carries assetRef ${assetRef}` };
-  }
-  if (targets.length === 0) return { ok: true };
-
-  return dispatchMutatorFromUI(
-    'mutator.deleteNode',
-    { targetSelectors: targets },
-    `Clear baked motion${label ? ` for ${label}` : ''}`,
-  );
 }
 
 export interface FirstKeyCompositeArgs {
