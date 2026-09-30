@@ -47,7 +47,7 @@
 // rather than failing. That means it does not gate CI today; giving it a small
 // generated stand-in rig is tracked separately.
 //
-// REF: src/app/bakedGltfChannels.ts@7e1356c7;
+// REF: app/bakedGltfChannels.ts (gone in #1053; at 7e1356c7);
 //      src/app/asset/bindMotionToCharacter.ts (the bind decisions);
 //      src/viewport/SceneFromDAG.tsx (the TRS useFrame — the read site);
 //      issues #843, #844, #807, #820.

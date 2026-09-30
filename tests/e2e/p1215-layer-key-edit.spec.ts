@@ -183,15 +183,10 @@ test('#1215 — dragging a baked key in the dopesheet moves the skin at that tim
   const rowIndex = await page.evaluate(
     async ({ id, layerId }) => {
       const tc = await import('/src/timeline/TimelineCanvas.tsx');
-      const clips = await import('/src/timeline/clipChannelRows.ts');
       const layers = await import('/src/timeline/layerChannelRows.ts');
       const nodes = (window as unknown as W).__basher_dag.getState().state.nodes as never;
       const rows = layers.appendLayerRows({
-        baseRows: clips.appendSelectionClipRows({
-          baseRows: tc.collectChannelRows(nodes),
-          nodes,
-          selectedNodeId: id,
-        }),
+        baseRows: tc.collectChannelRows(nodes),
         nodes,
         selectedNodeId: id,
       });

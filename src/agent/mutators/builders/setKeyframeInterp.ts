@@ -207,6 +207,6 @@ export const setKeyframeInterpMutator: MutatorDefinition<SetKeyframeInterpSpec> 
       if (spec.handleType !== undefined) updated.handleType = spec.handleType;
       return updated;
     });
-    return [...resolved.mintOps, ...resolved.write({ keyframes: next })];
+    return resolved.write({ keyframes: next });
   },
 };

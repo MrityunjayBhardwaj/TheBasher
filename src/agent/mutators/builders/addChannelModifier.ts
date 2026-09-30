@@ -171,6 +171,6 @@ export const addChannelModifierMutator: MutatorDefinition<AddChannelModifierSpec
     const existing = existingModifiers(view);
     const at = spec.index ?? existing.length;
     const next = [...existing.slice(0, at), built.modifier, ...existing.slice(at)];
-    return [...resolved.mintOps, ...resolved.write({ modifiers: next })];
+    return resolved.write({ modifiers: next });
   },
 };

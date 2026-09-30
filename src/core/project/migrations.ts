@@ -1320,7 +1320,7 @@ function snapshotCurrentNodeVersions(nodes: Record<string, Node>): Record<string
 //      the clone rig's clip-seeded mint (`seedKeysFromClip`, retired with the
 //        clone road's character half, #1053), the derivation this mirrored
 //        key-for-key, including the radians→degrees boundary;
-//      src/agent/mutators/builders/bakeChannelOps.ts (the node shape + the
+//      agent/mutators/builders/bakeChannelOps.ts (gone in #1053; at 15c170c4) (the node shape + the
 //        `easing: 'linear'` the bake stamps); issues #915, #913, #889, #877.
 
 /** The eager bake's value for every non-keyframe field. A channel deviating in

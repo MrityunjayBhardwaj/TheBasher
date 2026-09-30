@@ -390,7 +390,7 @@ const posesMemo = new WeakMap<object, WeakMap<object, readonly MotionPose[]>>();
  * keys by bone index against the joints of a glTF asset. Every bone samples through the one
  * `clipTrackSampler`, so a bone the band draws and the same bone the clip's pose draws agree.
  * Bones with no keys are ABSENT from the map, so the caller can fall through to the bands below.
- * Callers writing into a degrees-valued euler band convert at that boundary (app/bakedGltfChannels.ts@7e1356c7).
+ * Callers writing into a degrees-valued euler band convert at that boundary (app/bakedGltfChannels.ts (gone in #1053; at 7e1356c7)).
  *
  * ⚠️ The copy-on-first-edit mint (`bakeChannelOps`) copies these keys into an euler channel, which
  * lerps its angles, so an edited bone can differ from an unedited one BETWEEN keys (at most 0.10°

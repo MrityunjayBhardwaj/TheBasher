@@ -241,6 +241,6 @@ export const keyframeMutator: MutatorDefinition<KeyframeSpec> = {
       }
     }
 
-    return [...resolved.mintOps, ...resolved.write({ keyframes: next })];
+    return resolved.write({ keyframes: next });
   },
 };

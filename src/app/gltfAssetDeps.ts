@@ -60,7 +60,7 @@
 // relevant edit flips exactly one element's ref → shallow detects it → re-render →
 // the layers re-derive and re-apply (H40 freeze guard preserved).
 //
-// REF: src/viewport/SceneFromDAG.tsx (GltfAssetR subscription), bakedGltfChannels.ts@7e1356c7
+// REF: src/viewport/SceneFromDAG.tsx (GltfAssetR subscription), bakedGltfChannels.ts (gone in #1053; at 7e1356c7)
 //      (bakedChannelSamplersForAsset — same node selection), [[H48]] [[B13]] [[H40]].
 
 import type { Node } from '../core/dag/types';

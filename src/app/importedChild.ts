@@ -51,7 +51,7 @@
 // address. That is precisely why they are returned together — see `ImportedChild`.
 //
 // REF: src/nodes/GltfData.ts (the data half); src/nodes/ObjectNode.ts (`overridden`);
-//      src/app/resolveGltfChildTransform.ts@7e1356c7 (the precedence rule `overridden` feeds);
+//      app/resolveGltfChildTransform.ts (gone in #1053; at 7e1356c7) (the precedence rule `overridden` feeds);
 //      src/core/project/migrations.ts (`migrateFusedGltfChildToSplit`); issues #389, #383.
 
 import { dataSlotsOnly } from './materialAssignment';

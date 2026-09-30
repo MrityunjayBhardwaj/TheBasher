@@ -5,19 +5,7 @@
       "defect": "nothing \u2014 the control. Every gate below must stay GREEN, which is what proves the runner produces no spurious reds of its own.",
       "gates": [
         {
-          "file": "src/agent/mutators/builders/bakeGltfChannel.test.ts",
-          "expect": "green"
-        },
-        {
-          "file": "src/agent/mutators/builders/bakedClipParity.gate.test.ts",
-          "expect": "green"
-        },
-        {
           "file": "src/app/animate/bindMotionDispatch.test.ts",
-          "expect": "green"
-        },
-        {
-          "file": "src/app/animate/ensureChannelForBone.test.ts",
           "expect": "green"
         },
         {
@@ -27,22 +15,6 @@
         {
           "file": "src/core/import/gltfImportChain.test.ts",
           "expect": "green"
-        }
-      ]
-    },
-    {
-      "inversion": "bakeEasingCubic",
-      "defect": "the shared bake emitter stamps easing 'cubic' on keys copied from a clip whose sampler is a raw lerp, so the two carriers of one motion disagree between keyframes (#877).",
-      "gates": [
-        {
-          "file": "src/agent/mutators/builders/bakedClipParity.gate.test.ts",
-          "expect": "red",
-          "subject": "bake-versus-clip agreement, at and between keyframes. The dedicated gate for this defect."
-        },
-        {
-          "file": "src/agent/mutators/builders/bakeGltfChannel.test.ts",
-          "expect": "red",
-          "subject": "the bakeGltfChannel mutator's ops, including its H40 no-jump claim. Was GREEN here until #883 gave it interval sampling \u2014 the whole point of the sweep."
         }
       ]
     },
@@ -59,22 +31,6 @@
           "file": "src/core/import/gltfImportChain.test.ts",
           "expect": "red",
           "subject": "the import chain's emitted ops, including the B3 conversion checkpoint. Was GREEN here until #883 added the B3 SEQUENCE row \u2014 the module's own test file could not see the defect the module carried."
-        }
-      ]
-    },
-    {
-      "inversion": "bakeClipRotationRadians",
-      "defect": "the per-bone mint seeds a channel with the clip's rotation in radians, scaling every value by pi/180. Was bakeClipOntoRig's defect until #889 slice 3 deleted that eager bake and ensureChannelForBone inherited the rad->deg boundary.",
-      "gates": [
-        {
-          "file": "src/app/animate/ensureChannelForBone.test.ts",
-          "expect": "red",
-          "subject": "the values the per-bone mint seeds. This is what covers them."
-        },
-        {
-          "file": "src/app/animate/bindMotionDispatch.test.ts",
-          "expect": "green",
-          "subject": "WIRING, not values \u2014 it asserts which nodes a bind creates (zero channels) and never what a rotation is. Green here is CORRECT and expected: the pair exists to keep that documented blindness visible, not to fix it. If this ever turns red, the file's subject has changed and its header needs rewriting."
         }
       ]
     }

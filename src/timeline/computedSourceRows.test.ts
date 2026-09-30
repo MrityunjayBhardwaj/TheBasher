@@ -25,7 +25,7 @@ import { bindMotionToCharacter, characterTargets } from '../app/asset/bindMotion
 import { bakePose, freeBakedLayerId } from '../app/animate/bakePose';
 import { createEvaluatorCache } from '../core/dag/evaluator';
 import { buildKeyframeInsertOp } from '../app/KeyboardShortcuts';
-import { resolveRowChannelForWrite } from '../app/animate/clipRowMint';
+import { resolveRowChannelForWrite } from '../app/animate/rowChannelWrite';
 import { useTimeStore } from '../app/stores/timeStore';
 import { useTimelineSelection } from './timelineSelection';
 import {

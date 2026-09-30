@@ -176,7 +176,7 @@ export const setChannelExtendMutator: MutatorDefinition<SetChannelExtendSpec> = 
       const next = Array.from({ length: arity }, (_, k) =>
         k === spec.axis ? { before, after } : (cur?.[k] ?? null),
       );
-      return [...resolved.mintOps, ...resolved.write({ axisExtend: next })];
+      return resolved.write({ axisExtend: next });
     }
     // Channel-level: one setParam per provided side (idempotent if unchanged). Deterministic
     // order: before then after.
@@ -184,7 +184,7 @@ export const setChannelExtendMutator: MutatorDefinition<SetChannelExtendSpec> = 
     const fields: Record<string, unknown> = {};
     if (spec.before !== undefined) fields.extendBefore = spec.before;
     if (spec.after !== undefined) fields.extendAfter = spec.after;
-    if (Object.keys(fields).length === 0) return [...resolved.mintOps];
-    return [...resolved.mintOps, ...resolved.write(fields)];
+    if (Object.keys(fields).length === 0) return [];
+    return resolved.write(fields);
   },
 };

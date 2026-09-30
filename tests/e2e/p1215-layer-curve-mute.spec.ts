@@ -174,7 +174,6 @@ test('#1215 — a layer row’s gutter M mutes its curve (the skin drops to what
   const { rowIndex, rowId } = await page.evaluate(
     async ({ id, layerId }) => {
       const tc = await import('/src/timeline/TimelineCanvas.tsx');
-      const clips = await import('/src/timeline/clipChannelRows.ts');
       const layers = await import('/src/timeline/layerChannelRows.ts');
       const state = (window as unknown as W).__basher_dag.getState().state as never as {
         nodes: never;
@@ -182,11 +181,7 @@ test('#1215 — a layer row’s gutter M mutes its curve (the skin drops to what
       const nodes = state.nodes;
       const rows = layers.appendComputedSourceRows({
         baseRows: layers.appendLayerRows({
-          baseRows: clips.appendSelectionClipRows({
-            baseRows: tc.collectChannelRows(nodes),
-            nodes,
-            selectedNodeId: id,
-          }),
+          baseRows: tc.collectChannelRows(nodes),
           nodes,
           selectedNodeId: id,
         }),

@@ -45,7 +45,7 @@
 // REF: src/core/import/nativeGltfImport.ts (`buildNativeGltfImportOps`, `nodeIds`, `skeletons`,
 //      `takes`); src/core/import/gltfImportChain.ts (`buildGltfImportOps`, `importGroupNodeIds`);
 //      src/agent/mutators/builders/retarget.ts (`bindPosedOps`); poseBone.ts (`handPoseOps`);
-//      src/app/bakedGltfChannels.ts@7e1356c7 + src/app/resolveGltfChildTransform.ts@7e1356c7 (what the clone draws);
+//      app/bakedGltfChannels.ts (gone in #1053; at 7e1356c7) + app/resolveGltfChildTransform.ts (gone in #1053; at 7e1356c7) (what the clone draws);
 //      src/core/dag/idRefSweep.ts (`remapIdRefs`); issues #1216 #1227 #1205 #1053.
 
 import { applyOp } from '../../core/dag/ops';

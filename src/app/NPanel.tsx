@@ -56,7 +56,6 @@ import { useAssetErrorStore } from './stores/assetErrorStore';
 import { LOBE_WEIGHT_WHEN_ABSENT } from '../nodes/types';
 import type { BakedTextureRef, Quat, RotationModeFields, UvPlacement, Vec3 } from '../nodes/types';
 import { useDagStore } from '../core/dag/store';
-import { importedChildOf } from './importedChild';
 import { useGltfMaterialStore } from './asset/gltfMaterialStore';
 import type { GltfMaterialSlot } from './asset/readGltfMaterials';
 import { getNodeType } from '../core/dag/registry';
@@ -135,7 +134,6 @@ import {
 } from './inspectorSectionBody';
 import { CostPreviewConnector } from './render/CostPreviewConnector';
 import { MotionGenerateCookConnector } from './asset/MotionGenerateCookConnector';
-import { RevertImportedClipConnector } from './animate/RevertImportedClipConnector';
 import { BakePoseConnector } from './animate/BakePoseConnector';
 import { SceneEnvironmentControls } from './SceneEnvironmentControls';
 import { CameraLensControls } from './CameraLensControls';
@@ -4761,11 +4759,6 @@ export function NPanel() {
           {node.type === 'MotionGenerate' ? (
             <MotionGenerateCookConnector producerId={node.id} />
           ) : null}
-          {(() => {
-            const gp = importedChildOf(dagState.nodes, node.id);
-            if (!gp) return null;
-            return <RevertImportedClipConnector assetRef={gp.assetRef} childName={gp.childName} />;
-          })()}
           {/* #1215 — an armature Object on computed motion bakes it into keys it can edit. */}
           <BakePoseConnector nodeId={node.id} />
         </>

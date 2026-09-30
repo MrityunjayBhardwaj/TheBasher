@@ -205,11 +205,11 @@ export function hashId(prefix: string, ...parts: string[]): string {
  * (bakeGltfChannel, Wave D) stores `params.target` = the child's dagId without
  * re-deriving the hash by hand (single source of truth — BLOCK-2). Diverging
  * derivations would break the renderer's `nodeNameMap[childName] === target`
- * asset-membership check (bakedGltfChannels.ts@7e1356c7) AND paramAnimationState's
+ * asset-membership check (bakedGltfChannels.ts (gone in #1053; at 7e1356c7)) AND paramAnimationState's
  * `p.target === selectionNodeId` match (the bone's selection id IS this dagId).
  *
  * REF: src/core/import/gltfImportChain.ts:120 (the import-time derivation);
- *      src/app/bakedGltfChannels.ts@7e1356c7 (the consumer); PLAN 7.12 Wave D (BLOCK-2).
+ *      app/bakedGltfChannels.ts (gone in #1053; at 7e1356c7) (the consumer); PLAN 7.12 Wave D (BLOCK-2).
  */
 export function gltfChildDagId(assetRef: string, childName: string): string {
   return hashId('gltfChild', assetRef, childName);

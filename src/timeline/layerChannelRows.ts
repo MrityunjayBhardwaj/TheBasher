@@ -34,7 +34,7 @@ import type {
 import { LAYER_CHANNEL_COMPONENTS } from '../agent/mutators/builders/channelAddress';
 import { poseLayerChain } from '../app/animate/poseChain';
 import type { GraphNodeLike } from '../app/animate/graphNodes';
-import type { ChannelRow } from './clipChannelRows';
+import type { ChannelRow } from './channelRow';
 
 const PREFIX = 'layer:';
 const COMPUTED_PREFIX = 'computed:';

@@ -51,7 +51,7 @@
 //
 // REF: src/nodes/keyframeInterp.ts (ChannelExtend — the superset this draws
 //      from); src/nodes/AnimationClip.ts (clipExtendRules); src/nodes/
-//      TransformClip.ts (the time fold); src/timeline/clipChannelRows.ts (where
+//      TransformClip.ts (the time fold); timeline/clipChannelRows.ts (gone in #1053; at 15c170c4) (where
 //      the two used to be normalised); issues #930, #927, #924.
 
 import { z } from 'zod';
