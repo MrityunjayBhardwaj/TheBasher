@@ -53,6 +53,7 @@ import {
 } from './material/perMapPlacementEdit';
 import { getStorage } from './boot';
 import { useAssetErrorStore } from './stores/assetErrorStore';
+import { LOBE_WEIGHT_WHEN_ABSENT } from '../nodes/types';
 import type { BakedTextureRef, Quat, RotationModeFields, UvPlacement, Vec3 } from '../nodes/types';
 import { useDagStore } from '../core/dag/store';
 import { importedChildOf } from './importedChild';
@@ -1991,7 +1992,7 @@ const MATERIAL_LOBES: { lobe: string; label: string; fields: MaterialFieldSpec[]
     label: 'Specular',
     fields: [
       // #1321 — optional fields, shown at OpenPBR's defaults (weight 1, colour white) while absent.
-      { key: 'weight', label: 'weight', kind: 'number', absent: 1 },
+      { key: 'weight', label: 'weight', kind: 'number', absent: LOBE_WEIGHT_WHEN_ABSENT.specular },
       { key: 'color', label: 'color', kind: 'color', absent: '#ffffff' },
       { key: 'roughness', label: 'roughness', kind: 'number' },
       { key: 'ior', label: 'ior', kind: 'number' },
@@ -2011,7 +2012,7 @@ const MATERIAL_LOBES: { lobe: string; label: string; fields: MaterialFieldSpec[]
     lobe: 'fuzz',
     label: 'Fuzz',
     fields: [
-      { key: 'weight', label: 'weight', kind: 'number', absent: 0 },
+      { key: 'weight', label: 'weight', kind: 'number', absent: LOBE_WEIGHT_WHEN_ABSENT.fuzz },
       { key: 'color', label: 'color', kind: 'color', absent: '#ffffff' },
       { key: 'roughness', label: 'roughness', kind: 'number', absent: 0.5 },
     ],

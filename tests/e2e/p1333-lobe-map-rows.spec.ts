@@ -2,8 +2,9 @@
 //
 // Since the lobe textures arrived (#1327, #1328, #1331) the Maps section listed every slot on every
 // material. The user's call: a lobe's rows show only while its weight is above 0. The six original
-// slots always show. Driven through the inspector's own coat-weight input, the way a user turns
-// the coat on and off, and read as the rendered map rows (their file inputs), not as the table.
+// slots always show, and so do specular's while its weight is absent (it draws at 1, #1330).
+// Driven through the inspector's own coat-weight input, the way a user turns the coat on and off,
+// and read as the rendered map rows (their file inputs), not as the table.
 //
 // REF: src/nodes/types.ts (`MATERIAL_MAP_SLOT_TABLE`, `weightOf`);
 //      src/app/material/attachMapFromFile.ts (`shownMapSlots`); src/app/NPanel.tsx; issue #1333.
@@ -17,6 +18,9 @@ interface BasherWindow {
 
 const SIX = ['albedo', 'normal', 'roughness', 'metalness', 'emissive', 'ao'];
 const COAT = ['coat', 'coatRoughness', 'coatNormal'];
+// #1330 — specular draws at weight 1 while its weight is absent (OpenPBR's default), so every
+// default material offers the specular rows, after the lobes above in table order.
+const SPECULAR = ['specularWeight', 'specularColor'];
 
 async function selectBoxAndOpenMaterial(page: Page): Promise<void> {
   await page.goto('/');
@@ -54,13 +58,13 @@ test('#1333 — a box shows its coat map rows only while its coat is on', async 
   page.on('pageerror', (e) => errors.push(String(e)));
   await selectBoxAndOpenMaterial(page);
 
-  // The default box has no coat and no transmission: the six original rows and nothing else.
-  await expect.poll(() => mapRows(page)).toEqual(SIX);
+  // The default box has no coat and no transmission: the six original rows and specular's.
+  await expect.poll(() => mapRows(page)).toEqual([...SIX, ...SPECULAR]);
 
   await setCoatWeight(page, '0.5');
-  await expect.poll(() => mapRows(page)).toEqual([...SIX, ...COAT]);
+  await expect.poll(() => mapRows(page)).toEqual([...SIX, ...COAT, ...SPECULAR]);
 
   await setCoatWeight(page, '0');
-  await expect.poll(() => mapRows(page)).toEqual(SIX);
+  await expect.poll(() => mapRows(page)).toEqual([...SIX, ...SPECULAR]);
   expect(errors).toEqual([]);
 });

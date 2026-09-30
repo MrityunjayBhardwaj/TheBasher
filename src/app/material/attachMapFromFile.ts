@@ -16,7 +16,7 @@
 
 import * as THREE from 'three';
 import type { StorageCapability } from '../../core/storage/StorageCapability';
-import { MATERIAL_MAP_SLOT_TABLE } from '../../nodes/types';
+import { LOBE_WEIGHT_WHEN_ABSENT, MATERIAL_MAP_SLOT_TABLE } from '../../nodes/types';
 import type { BakedTextureRef, IrMapSlot, MaterialMapSlotRow } from '../../nodes/types';
 import { MAP_UV_SLOTS } from '../../nodes/materialSchema';
 import {
@@ -44,8 +44,9 @@ export function shownMapSlots(material: {
   return MATERIAL_MAP_SLOTS.filter((slot) => {
     const lobe = (MATERIAL_MAP_SLOT_TABLE[slot] as MaterialMapSlotRow).weightOf;
     if (lobe === undefined || maps[slot] != null) return true;
+    // #1330 — an absent weight draws at OpenPBR's default: specular's is 1, the others' 0.
     const weight = (material[lobe] as { weight?: unknown } | undefined)?.weight;
-    return typeof weight === 'number' && weight > 0;
+    return (typeof weight === 'number' ? weight : LOBE_WEIGHT_WHEN_ABSENT[lobe]) > 0;
   });
 }
 

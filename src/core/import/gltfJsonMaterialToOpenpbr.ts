@@ -114,6 +114,10 @@ const IR_SLOT_SOURCES: {
   // (`GLTFLoader.js:1017`, `:1023`).
   fuzzColor: fromPath('extensions.KHR_materials_sheen.sheenColorTexture'),
   fuzzRoughness: fromPath('extensions.KHR_materials_sheen.sheenRoughnessTexture'),
+  // #1330 — three reads them into `specularIntensityMap` (linear) and `specularColorMap` (sRGB)
+  // (`GLTFLoader.js:1241`, `:1250`).
+  specularWeight: fromPath('extensions.KHR_materials_specular.specularTexture'),
+  specularColor: fromPath('extensions.KHR_materials_specular.specularColorTexture'),
 };
 
 /** A slot source read off its material path, so the path the refusal names is the path read. */

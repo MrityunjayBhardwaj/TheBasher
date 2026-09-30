@@ -335,6 +335,22 @@ export const MATERIAL_MAP_SLOT_TABLE = {
     label: 'sheen roughness',
     weightOf: 'fuzz',
   },
+  // #1330 — the specular lobe's weight (glTF `KHR_materials_specular`, A) and F0 colour (RGB, sRGB)
+  // per texel.
+  specularWeight: {
+    three: 'specularIntensityMap',
+    colorSpace: 'srgb-linear',
+    seeded: false,
+    label: 'specular',
+    weightOf: 'specular',
+  },
+  specularColor: {
+    three: 'specularColorMap',
+    colorSpace: 'srgb',
+    seeded: false,
+    label: 'specular color',
+    weightOf: 'specular',
+  },
 } as const satisfies Readonly<Record<string, MaterialMapSlotRow>>;
 
 /** One row of {@link MATERIAL_MAP_SLOT_TABLE}. */
@@ -353,6 +369,19 @@ export interface MaterialMapSlotRow {
 
 /** The IR lobes that carry a `weight` (#1333). */
 export type WeightedLobe = 'coat' | 'transmission' | 'fuzz' | 'specular';
+
+/**
+ * #1330 — the weight a lobe draws with while its `weight` (or the whole lobe) is absent: OpenPBR's
+ * own defaults (`open_pbr_surface.mtlx`: specular_weight 1.0, transmission/fuzz/coat 0.0). Only
+ * specular is ON when absent — three's `specularIntensity` starts at 1 too — so a material that
+ * never set it still draws its specular maps.
+ */
+export const LOBE_WEIGHT_WHEN_ABSENT: Readonly<Record<WeightedLobe, number>> = {
+  coat: 0,
+  transmission: 0,
+  fuzz: 0,
+  specular: 1,
+};
 
 type MapSlotTable = typeof MATERIAL_MAP_SLOT_TABLE;
 /** A material map slot in the IR's vocabulary (`albedo`, `normal`, …). */

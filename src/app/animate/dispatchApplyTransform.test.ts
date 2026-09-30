@@ -3150,6 +3150,17 @@ describe('#1139 — a primitive bakes the material it draws, maps and placement 
       expect(spec.physical).toMatchObject({ sheen: 1, sheenRoughness: 0.5 });
     });
 
+    it('#1330 — a box with specular textures bakes them, drawn at the default weight', async () => {
+      const w = tex('sw.png');
+      const c = tex('sc.png');
+      const { result, spec } = await bakeBoxWith({
+        maps: { ...NULL_IR_MAPS, specularWeight: w, specularColor: c },
+      });
+      expect(result.ok).toBe(true);
+      expect(spec.specularIntensityMap).toEqual(w);
+      expect(spec.specularColorMap).toEqual(c);
+    });
+
     it('a box with no lobe texture writes no lobe map field at all', async () => {
       const { spec } = await bakeBoxWith({});
       // Every slot the table does not seed — the coat's three, transmission, and any later one.

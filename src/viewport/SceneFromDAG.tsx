@@ -900,6 +900,11 @@ function MeshScaleProbe() {
       sheenColorMapColorSpace: string | null;
       sheenRoughnessMapWidth: number | null;
       sheenRoughnessMapColorSpace: string | null;
+      // #1330 — the drawn specular maps' image widths and colour spaces, null when absent.
+      specularIntensityMapWidth: number | null;
+      specularIntensityMapColorSpace: string | null;
+      specularColorMapWidth: number | null;
+      specularColorMapColorSpace: string | null;
       // #1123 — the drawn sheen (fuzz lobe): weight, colour and roughness.
       sheen: number | null;
       sheenColor: string | null;
@@ -969,6 +974,12 @@ function MeshScaleProbe() {
         sheenRoughnessMapColorSpace: phys.sheenRoughnessMap
           ? phys.sheenRoughnessMap.colorSpace
           : null,
+        specularIntensityMapWidth: widthOf(phys.specularIntensityMap),
+        specularIntensityMapColorSpace: phys.specularIntensityMap
+          ? phys.specularIntensityMap.colorSpace
+          : null,
+        specularColorMapWidth: widthOf(phys.specularColorMap),
+        specularColorMapColorSpace: phys.specularColorMap ? phys.specularColorMap.colorSpace : null,
         sheen: typeof phys.sheen === 'number' ? phys.sheen : null,
         sheenColor: phys.sheenColor ? `#${phys.sheenColor.getHexString()}` : null,
         sheenRoughness: typeof phys.sheenRoughness === 'number' ? phys.sheenRoughness : null,

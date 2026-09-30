@@ -231,6 +231,8 @@ describe('#550 case 6 — the panel’s slot table and the IR’s are the same t
       thickness: true, // #1331
       fuzzColor: true, // #1329
       fuzzRoughness: true, // #1329
+      specularWeight: true, // #1330
+      specularColor: true, // #1330
     };
     expect([...MAP_UV_SLOTS].sort()).toEqual(Object.keys(asKeys).sort());
   });

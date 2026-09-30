@@ -15,7 +15,7 @@ import {
   type MaterialMapSlot,
 } from './attachMapFromFile';
 import { hydrateInlineMaterial, NULL_MAPS } from '../../nodes/materialSchema';
-import { MATERIAL_MAP_SLOT_TABLE } from '../../nodes/types';
+import { LOBE_WEIGHT_WHEN_ABSENT, MATERIAL_MAP_SLOT_TABLE } from '../../nodes/types';
 import type { MaterialMapSlotRow } from '../../nodes/types';
 
 function pngFile(): File {
@@ -42,6 +42,9 @@ const EXPECTED: Record<MaterialMapSlot, 'srgb' | 'srgb-linear'> = {
   // its roughness is data (`:1023`, no colour space passed).
   fuzzColor: 'srgb',
   fuzzRoughness: 'srgb-linear',
+  // #1330 — the specular weight is data (`GLTFLoader.js:1241`); its colour is sRGB (`:1250`).
+  specularWeight: 'srgb-linear',
+  specularColor: 'srgb',
 };
 
 describe('attachMapFromFile (W5 — File → OPFS map, colorspace-correct)', () => {
@@ -94,11 +97,28 @@ describe('#1333 — the inspector offers a lobe`s map rows only while that lobe 
     wrapS: 'repeat',
     wrapT: 'repeat',
   };
+  // #1330 — every material's specular lobe draws at weight 1 while its weight is absent, so the
+  // specular rows follow the others unless a row turns specular off.
+  const SPECULAR = ['specularWeight', 'specularColor'];
   const shown = (raw: Record<string, unknown>) =>
     shownMapSlots(hydrateInlineMaterial(raw) as unknown as Record<string, unknown>);
 
   it('a material with every lobe off shows the six original slots and nothing else', () => {
-    expect(shown({})).toEqual(Object.keys(NULL_MAPS));
+    expect(shown({ specular: { roughness: 0.5, ior: 1.5, weight: 0 } })).toEqual(
+      Object.keys(NULL_MAPS),
+    );
+  });
+
+  it('#1330 — specular with no weight draws at 1, so a plain material offers its specular rows', () => {
+    const slots = shown({});
+    expect(slots).toEqual([...Object.keys(NULL_MAPS), ...SPECULAR]);
+    // …and a lobe that is absent altogether still draws at 0: no fuzz rows.
+    expect(slots).not.toContain('fuzzColor');
+  });
+
+  it('#1330 — the weight each lobe draws with while absent is OpenPBR`s default', () => {
+    // `open_pbr_surface.mtlx`: specular_weight 1.0, transmission/fuzz/coat _weight 0.0.
+    expect(LOBE_WEIGHT_WHEN_ABSENT).toEqual({ coat: 0, transmission: 0, fuzz: 0, specular: 1 });
   });
 
   it('a coat above 0 adds its three rows; transmission above 0 adds transmission and thickness', () => {
@@ -107,11 +127,13 @@ describe('#1333 — the inspector offers a lobe`s map rows only while that lobe 
       'coat',
       'coatRoughness',
       'coatNormal',
+      ...SPECULAR,
     ]);
     expect(shown({ transmission: { weight: 1 } })).toEqual([
       ...Object.keys(NULL_MAPS),
       'transmission',
       'thickness',
+      ...SPECULAR,
     ]);
   });
 
@@ -120,10 +142,12 @@ describe('#1333 — the inspector offers a lobe`s map rows only while that lobe 
       ...Object.keys(NULL_MAPS),
       'fuzzColor',
       'fuzzRoughness',
+      ...SPECULAR,
     ]);
-    expect(shown({ fuzz: { weight: 0, color: '#ffffff', roughness: 0.5 } })).toEqual(
-      Object.keys(NULL_MAPS),
-    );
+    expect(shown({ fuzz: { weight: 0, color: '#ffffff', roughness: 0.5 } })).toEqual([
+      ...Object.keys(NULL_MAPS),
+      ...SPECULAR,
+    ]);
   });
 
   it('a slot that holds a texture stays visible when its lobe is turned off', () => {
@@ -140,6 +164,8 @@ describe('#1333 — the inspector offers a lobe`s map rows only while that lobe 
     // …and each names a lobe the IR really gives a weight.
     const ir = hydrateInlineMaterial({
       fuzz: { weight: 1, color: '#ffffff', roughness: 0 },
+      // #1330 — specular's weight is optional; set it so the schema must keep it.
+      specular: { roughness: 0.5, ior: 1.5, weight: 1 },
     }) as unknown as Record<string, { weight?: unknown } | undefined>;
     for (const [slot, row] of unseeded)
       expect(typeof ir[row.weightOf!]?.weight, `${slot} → ${row.weightOf}`).toBe('number');

@@ -85,6 +85,22 @@ describe('#1329 — the sheen maps compile to three`s', () => {
   });
 });
 
+describe('#1330 — the specular maps compile to three`s', () => {
+  it('land on `specularIntensityMap` and `specularColorMap`, with no weight written', () => {
+    const drawn = openpbrToThree(
+      hydrateInlineMaterial({
+        maps: { specularWeight: ref('sw'), specularColor: ref('sc') },
+      }),
+    );
+    expect(drawn.maps.specularIntensityMap).toEqual(ref('sw'));
+    expect(drawn.maps.specularColorMap).toEqual(ref('sc'));
+    // Absent weight: three keeps its own 1 (`MeshPhysicalMaterial.js:64`), so the maps draw.
+    expect('specularIntensity' in drawn).toBe(false);
+    const bare = openpbrToThree(hydrateInlineMaterial({})).maps;
+    expect('specularIntensityMap' in bare || 'specularColorMap' in bare).toBe(false);
+  });
+});
+
 describe('#1327 — a baked snapshot', () => {
   const older = {
     materialClass: 'physical',

@@ -1140,6 +1140,30 @@ describe('buildNativeGltfImportOps', () => {
     expect(material.fuzz).toEqual({ weight: 1, color: '#ffffff', roughness: 0.5 });
   });
 
+  it('#1330 — specular textures arrive native with no weight written, colour as sRGB', async () => {
+    let n = 0;
+    const result = await buildNativeGltfImportOps({
+      buffer: fixture('public/assets/specular-texture-quad.gltf'),
+      assetRef: 'user-imports/native/specular.gltf',
+      sceneNodeId: 'n_scene',
+      storeImage: async () => `img-sp${n++}`,
+    });
+    if ('refused' in result) throw new Error(result.refused);
+    const data = result.ops.find(
+      (op): op is Extract<Op, { type: 'addNode' }> =>
+        op.type === 'addNode' && op.nodeType === 'PolyMeshData',
+    )!;
+    const material = PolyMeshDataParams.parse(data.params).material!;
+    expect(material.maps.specularColor).toMatchObject({ store: 'project', colorSpace: 'srgb' });
+    expect(material.maps.specularWeight).toMatchObject({
+      store: 'project',
+      colorSpace: 'srgb-linear',
+    });
+    expect(material.maps.specularColor!.hash).not.toBe(material.maps.specularWeight!.hash);
+    // The file gives no specularFactor: the weight stays absent, which draws at 1.
+    expect(material.specular.weight).toBeUndefined();
+  });
+
   it('#1327 — a material with no coat texture holds no coat slot, so it keys as before', async () => {
     const result = await buildNativeGltfImportOps({
       buffer: texturedFixture(() => {}),

@@ -134,6 +134,13 @@ const SOURCE_OF: Record<Slot, (t: Khr) => GltfJsonMaterial> = {
   fuzzRoughness: (t) => ({
     extensions: { KHR_materials_sheen: { sheenRoughnessTexture: info(11, t) } },
   }),
+  // #1330 — the specular's two textures, inside `KHR_materials_specular`.
+  specularWeight: (t) => ({
+    extensions: { KHR_materials_specular: { specularTexture: info(12, t) } },
+  }),
+  specularColor: (t) => ({
+    extensions: { KHR_materials_specular: { specularColorTexture: info(13, t) } },
+  }),
 };
 
 /** Deep-merge two material fragments — `pbrMetallicRoughness` holds three of the core texture
