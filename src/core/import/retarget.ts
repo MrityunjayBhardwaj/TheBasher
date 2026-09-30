@@ -589,11 +589,21 @@ export function retargetClip(args: RetargetArgs): RetargetResult {
   for (const [name, held] of Object.entries(first?.bones ?? {})) {
     if (held.quaternion) referencePose[name] = held.quaternion;
   }
+  // #1249 — A ONE-POSE SOURCE IS ONE POSE, and three cannot time it. `SkeletonUtils.retargetClip`
+  // samples as many frames as the longest track has keys, `duration / (frames − 1)` apart
+  // (SkeletonUtils.js:203, 213-214), and stamps frame `i` at `i · delta` (:252). With one key per
+  // track that is one frame at `0 · ∞ = NaN`: measured, all 78 keys of a one-frame Kimodo pose came
+  // back at NaN. At duration 0 it is worse: `fps = 1 / 0` makes the frame count NaN, the loop never
+  // runs, and the pose came back with NO keys. Its values are right either way (frame 0 is sampled
+  // with the mixer at 0, :239), so three still does the math; only the sampling span and the stamp
+  // are ours. It gets a positive span to sample, and its one pose is timed where the source times it.
+  const sourceTimes = new Set(poses.map((p) => p.time));
+  const onePose = sourceTimes.size === 1;
   const run = retargetThree({
     sourceBones: args.sourceBones,
     sourceClip: posesToThreeClip(
       args.sourceClip.name,
-      args.sourceClip.duration,
+      onePose && !(args.sourceClip.duration > 0) ? 1 : args.sourceClip.duration,
       poses,
       args.sourceBones,
     ),
@@ -601,17 +611,22 @@ export function retargetClip(args: RetargetArgs): RetargetResult {
     targetBones: args.targetBones,
     nameMap: args.nameMap,
   });
+  // Named as the caller's rig names its bones: `targetSpecs` is three's spelling of it.
+  const sampled = clipToPoses(run.retargeted, run.targetSpecs, args.targetBones);
+  const outPoses = onePose ? sampled.map((p) => ({ ...p, time: [...sourceTimes][0] })) : sampled;
   return {
     clipParams: {
       name: args.outputName ?? `${args.sourceClip.name}_retargeted`,
-      duration: run.retargeted.duration > 0 ? run.retargeted.duration : args.sourceClip.duration,
+      duration:
+        !onePose && run.retargeted.duration > 0
+          ? run.retargeted.duration
+          : args.sourceClip.duration,
       // Carried, not invented (#919). Every other field on this object derives
       // from the source; `loop` alone used to be a literal, so a one-shot motion —
       // a jump, a wave, a fall — silently became a looping one the moment it was
       // retargeted, with nothing in the UI saying the time domain had changed.
       loop: clipLoopOf(args.sourceClip.loop),
-      // Named as the caller's rig names its bones: `targetSpecs` is three's spelling of it.
-      poses: clipToPoses(run.retargeted, run.targetSpecs, args.targetBones),
+      poses: outPoses,
     },
     unmappedSourceBones: run.unmappedSourceBones,
     unboundTargetBones: run.unboundTargetBones,
