@@ -1117,6 +1117,29 @@ describe('buildNativeGltfImportOps', () => {
     expect(material.maps.transmission).toBeUndefined();
   });
 
+  it('#1329 — sheen textures arrive native, colour as sRGB and roughness as data', async () => {
+    let n = 0;
+    const result = await buildNativeGltfImportOps({
+      buffer: fixture('public/assets/sheen-texture-quad.gltf'),
+      assetRef: 'user-imports/native/sheen.gltf',
+      sceneNodeId: 'n_scene',
+      storeImage: async () => `img-sh${n++}`,
+    });
+    if ('refused' in result) throw new Error(result.refused);
+    const data = result.ops.find(
+      (op): op is Extract<Op, { type: 'addNode' }> =>
+        op.type === 'addNode' && op.nodeType === 'PolyMeshData',
+    )!;
+    const material = PolyMeshDataParams.parse(data.params).material!;
+    expect(material.maps.fuzzColor).toMatchObject({ store: 'project', colorSpace: 'srgb' });
+    expect(material.maps.fuzzRoughness).toMatchObject({
+      store: 'project',
+      colorSpace: 'srgb-linear',
+    });
+    expect(material.maps.fuzzColor!.hash).not.toBe(material.maps.fuzzRoughness!.hash);
+    expect(material.fuzz).toEqual({ weight: 1, color: '#ffffff', roughness: 0.5 });
+  });
+
   it('#1327 — a material with no coat texture holds no coat slot, so it keys as before', async () => {
     const result = await buildNativeGltfImportOps({
       buffer: texturedFixture(() => {}),

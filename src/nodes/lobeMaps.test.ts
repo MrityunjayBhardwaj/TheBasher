@@ -69,6 +69,22 @@ describe('#1331 — the thickness map compiles to three`s', () => {
   });
 });
 
+describe('#1329 — the sheen maps compile to three`s', () => {
+  it('land on `sheenColorMap` and `sheenRoughnessMap` beside the sheen they scale', () => {
+    const drawn = openpbrToThree(
+      hydrateInlineMaterial({
+        fuzz: { weight: 1, color: '#ffffff', roughness: 0.5 },
+        maps: { fuzzColor: ref('sc'), fuzzRoughness: ref('sr') },
+      }),
+    );
+    expect(drawn.maps.sheenColorMap).toEqual(ref('sc'));
+    expect(drawn.maps.sheenRoughnessMap).toEqual(ref('sr'));
+    expect(drawn.sheen).toBe(1);
+    const bare = openpbrToThree(hydrateInlineMaterial({})).maps;
+    expect('sheenColorMap' in bare || 'sheenRoughnessMap' in bare).toBe(false);
+  });
+});
+
 describe('#1327 — a baked snapshot', () => {
   const older = {
     materialClass: 'physical',

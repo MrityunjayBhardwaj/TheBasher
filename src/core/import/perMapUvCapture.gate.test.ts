@@ -129,6 +129,11 @@ const SOURCE_OF: Record<Slot, (t: Khr) => GltfJsonMaterial> = {
   }),
   // #1331 — the volume's thickness texture, inside `KHR_materials_volume`.
   thickness: (t) => ({ extensions: { KHR_materials_volume: { thicknessTexture: info(9, t) } } }),
+  // #1329 — the sheen's two textures, inside `KHR_materials_sheen`.
+  fuzzColor: (t) => ({ extensions: { KHR_materials_sheen: { sheenColorTexture: info(10, t) } } }),
+  fuzzRoughness: (t) => ({
+    extensions: { KHR_materials_sheen: { sheenRoughnessTexture: info(11, t) } },
+  }),
 };
 
 /** Deep-merge two material fragments — `pbrMetallicRoughness` holds three of the core texture

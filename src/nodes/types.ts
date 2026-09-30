@@ -319,6 +319,22 @@ export const MATERIAL_MAP_SLOT_TABLE = {
     label: 'thickness',
     weightOf: 'transmission',
   },
+  // #1329 — the fuzz lobe's colour (glTF `KHR_materials_sheen`, RGB, sRGB) and roughness (A) per
+  // texel. three draws either only while `sheen` is above 0.
+  fuzzColor: {
+    three: 'sheenColorMap',
+    colorSpace: 'srgb',
+    seeded: false,
+    label: 'sheen color',
+    weightOf: 'fuzz',
+  },
+  fuzzRoughness: {
+    three: 'sheenRoughnessMap',
+    colorSpace: 'srgb-linear',
+    seeded: false,
+    label: 'sheen roughness',
+    weightOf: 'fuzz',
+  },
 } as const satisfies Readonly<Record<string, MaterialMapSlotRow>>;
 
 /** One row of {@link MATERIAL_MAP_SLOT_TABLE}. */

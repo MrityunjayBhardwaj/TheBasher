@@ -110,6 +110,10 @@ const IR_SLOT_SOURCES: {
   transmission: fromPath('extensions.KHR_materials_transmission.transmissionTexture'),
   // #1331 — three's loader reads it into `thicknessMap` (`GLTFLoader.js:1136`).
   thickness: fromPath('extensions.KHR_materials_volume.thicknessTexture'),
+  // #1329 — three reads them into `sheenColorMap` (sRGB) and `sheenRoughnessMap` (linear)
+  // (`GLTFLoader.js:1017`, `:1023`).
+  fuzzColor: fromPath('extensions.KHR_materials_sheen.sheenColorTexture'),
+  fuzzRoughness: fromPath('extensions.KHR_materials_sheen.sheenRoughnessTexture'),
 };
 
 /** A slot source read off its material path, so the path the refusal names is the path read. */

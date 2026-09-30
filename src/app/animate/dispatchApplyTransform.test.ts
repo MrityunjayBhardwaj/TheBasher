@@ -3137,6 +3137,19 @@ describe('#1139 — a primitive bakes the material it draws, maps and placement 
       expect(spec.physical).toMatchObject({ thickness: 0.5 });
     });
 
+    it('#1329 — a box with sheen textures bakes them beside the sheen', async () => {
+      const c = tex('sc.png');
+      const r = tex('sr.png');
+      const { result, spec } = await bakeBoxWith({
+        fuzz: { weight: 1, color: '#ffffff', roughness: 0.5 },
+        maps: { ...NULL_IR_MAPS, fuzzColor: c, fuzzRoughness: r },
+      });
+      expect(result.ok).toBe(true);
+      expect(spec.sheenColorMap).toEqual(c);
+      expect(spec.sheenRoughnessMap).toEqual(r);
+      expect(spec.physical).toMatchObject({ sheen: 1, sheenRoughness: 0.5 });
+    });
+
     it('a box with no lobe texture writes no lobe map field at all', async () => {
       const { spec } = await bakeBoxWith({});
       // Every slot the table does not seed — the coat's three, transmission, and any later one.

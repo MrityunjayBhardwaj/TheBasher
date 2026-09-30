@@ -894,6 +894,12 @@ function MeshScaleProbe() {
       transmissionMapWidth: number | null;
       // #1331 — the drawn thickness map's image width, null when absent.
       thicknessMapWidth: number | null;
+      // #1329 — the drawn sheen maps' image widths, and the colour map's colour space (the first
+      // unseeded sRGB slot), null when absent.
+      sheenColorMapWidth: number | null;
+      sheenColorMapColorSpace: string | null;
+      sheenRoughnessMapWidth: number | null;
+      sheenRoughnessMapColorSpace: string | null;
       // #1123 — the drawn sheen (fuzz lobe): weight, colour and roughness.
       sheen: number | null;
       sheenColor: string | null;
@@ -957,6 +963,12 @@ function MeshScaleProbe() {
           : null,
         transmissionMapWidth: widthOf(phys.transmissionMap),
         thicknessMapWidth: widthOf(phys.thicknessMap),
+        sheenColorMapWidth: widthOf(phys.sheenColorMap),
+        sheenColorMapColorSpace: phys.sheenColorMap ? phys.sheenColorMap.colorSpace : null,
+        sheenRoughnessMapWidth: widthOf(phys.sheenRoughnessMap),
+        sheenRoughnessMapColorSpace: phys.sheenRoughnessMap
+          ? phys.sheenRoughnessMap.colorSpace
+          : null,
         sheen: typeof phys.sheen === 'number' ? phys.sheen : null,
         sheenColor: phys.sheenColor ? `#${phys.sheenColor.getHexString()}` : null,
         sheenRoughness: typeof phys.sheenRoughness === 'number' ? phys.sheenRoughness : null,

@@ -38,6 +38,10 @@ const EXPECTED: Record<MaterialMapSlot, 'srgb' | 'srgb-linear'> = {
   // #1328 — the transmission weight is data too.
   transmission: 'srgb-linear',
   thickness: 'srgb-linear', // #1331
+  // #1329 — the sheen colour is a colour, sRGB as three's loader reads it (`GLTFLoader.js:1017`);
+  // its roughness is data (`:1023`, no colour space passed).
+  fuzzColor: 'srgb',
+  fuzzRoughness: 'srgb-linear',
 };
 
 describe('attachMapFromFile (W5 — File → OPFS map, colorspace-correct)', () => {
@@ -109,6 +113,17 @@ describe('#1333 — the inspector offers a lobe`s map rows only while that lobe 
       'transmission',
       'thickness',
     ]);
+  });
+
+  it('#1329 — a fuzz lobe above 0 adds the sheen colour and roughness rows; no fuzz lobe, none', () => {
+    expect(shown({ fuzz: { weight: 1, color: '#ffffff', roughness: 0.5 } })).toEqual([
+      ...Object.keys(NULL_MAPS),
+      'fuzzColor',
+      'fuzzRoughness',
+    ]);
+    expect(shown({ fuzz: { weight: 0, color: '#ffffff', roughness: 0.5 } })).toEqual(
+      Object.keys(NULL_MAPS),
+    );
   });
 
   it('a slot that holds a texture stays visible when its lobe is turned off', () => {
