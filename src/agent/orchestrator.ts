@@ -27,7 +27,7 @@
 // REF: THESIS.md §18-21, krama K3, vyapti V7 + V11.
 
 import type { LLMConfig, ChatMessage, AssistantToolCall, ToolSchema } from './transport/types';
-import { streamChatCompletion, buildToolSchemas } from './transport/openai';
+import { streamChatCompletion, buildToolSchemas, DEFAULT_MAX_TOKENS } from './transport/openai';
 import { getTool, listTools } from './tools/registry';
 import type { ToolContext, ToolDefinition, ToolResult } from './tools/types';
 import { useDagStore } from '../core/dag/store';
@@ -412,6 +412,10 @@ export async function runAgentTurn(config: LLMConfig, options: TurnOptions): Pro
       // back to the local estimate (#333). roundOutputChars accumulates the
       // streamed text + tool-call args so the estimate has an output term.
       let roundUsage: { prompt_tokens: number; completion_tokens: number } | undefined;
+      // #1405 — STICKY: one stream reports `length` on its finish chunk, then the usage chunk
+      // and `[DONE]` each arrive as another `done` defaulted to 'stop'. The last word is not
+      // the true one, so any `length` marks the round.
+      let roundCutAtOutputCap = false;
       let roundOutputChars = 0;
 
       // Per-round tool_choice override — used to force agent.identify
@@ -454,6 +458,7 @@ export async function runAgentTurn(config: LLMConfig, options: TurnOptions): Pro
             }
             case 'done': {
               if (chunk.usage) roundUsage = chunk.usage;
+              if (chunk.finish_reason === 'length') roundCutAtOutputCap = true;
               break;
             }
             case 'error': {
@@ -505,6 +510,21 @@ export async function runAgentTurn(config: LLMConfig, options: TurnOptions): Pro
           throw new Error(refusal);
         }
         previousRead = read;
+      }
+
+      // #1405 — the OUTPUT twin of #1057. A round the provider cut at `max_tokens` is not an
+      // answer: with no tool call it used to fall through to "text-only → turn complete" and
+      // end blank with no error (measured: a thinking model spent all 4096 tokens reasoning,
+      // 0 chars of content), and a tool call in it may be cut mid-arguments. Refused the same
+      // way — thrown, so nothing from the turn runs.
+      if (roundCutAtOutputCap) {
+        const cap = config.maxTokens ?? DEFAULT_MAX_TOKENS;
+        throw new Error(
+          `The model ran out of output before it finished answering: it hit the ${cap}-token ` +
+            `output cap (max_tokens)${toolCallAccumulators.size > 0 ? ' in the middle of a tool call' : ' without replying or calling a tool'}. ` +
+            `Nothing from this turn was run. Raise the output cap, or use a model or mode that ` +
+            `spends less of it on reasoning.`,
+        );
       }
 
       // A5 / #333: hard cost guard AFTER the round — catches a round whose

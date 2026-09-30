@@ -14,6 +14,9 @@ import { zodToJsonSchema } from 'zod-to-json-schema';
 import type { z } from 'zod';
 import type { LLMConfig, ChatMessage, ToolSchema, ToolCall, StreamChunk } from './types';
 
+/** The output cap a request carries when the config names none. */
+export const DEFAULT_MAX_TOKENS = 4096;
+
 export interface StreamOptions {
   messages: ChatMessage[];
   tools?: ToolSchema[];
@@ -50,7 +53,7 @@ export async function streamChatCompletion(
     // the orchestrator's prompt-read check has no count to read and never runs,
     // so a cut prompt goes through exactly as it did before.
     stream_options: { include_usage: true },
-    max_tokens: config.maxTokens ?? 4096,
+    max_tokens: config.maxTokens ?? DEFAULT_MAX_TOKENS,
     temperature: config.temperature ?? 0.7,
   };
 
