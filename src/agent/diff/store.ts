@@ -124,19 +124,24 @@ export const useDiffStore = create<DiffStore>((set, get) => ({
     if (closureSpec) {
       // Expand against the fork: closure roots must resolve, and the
       // walker needs the post-batch graph to find consumers/producers.
-      closure = expandClosure(closureSpec, fork);
-      // A removeNode deletes its target — by construction the node is gone from
-      // `fork`, so the fork-expanded closure cannot reach it and the membership
-      // check below would falsely reject. But V13 must still catch a removeNode
-      // that reaches OUTSIDE the mutator's declared scope. So expand the SAME
-      // closureSpec against the ORIGINAL `state` (where the node still exists)
-      // and exempt a removeNode only when its target is in THAT closure — a
-      // deleteNode mutator roots its closure on the node(s) it deletes, so a
-      // legitimate delete is contained, while an out-of-closure removeNode still
-      // throws. Computed lazily (only when the batch actually removes a node).
-      // (P7.12 D3 — the revert path deletes edge-less baked channels.)
+      const forkClosure = expandClosure(closureSpec, fork);
+      closure = forkClosure;
+      // #1400 — the fork alone cannot see what this batch DELETES. A delete roots its
+      // closure on the node it removes, so in `fork` that root is gone and the walk
+      // returns nothing: not the removeNode's target, and not the consumers the delete
+      // must disconnect first. The removeNode half was exempted on its own (P7.12 D3 —
+      // edge-less baked channels, which need no disconnect); the disconnect half was
+      // not, so every agent delete of a WIRED node — the light, the cube, the camera —
+      // was refused with "n_scene outside [root]" after the tool's own gate, which
+      // expands against the original, had said ok.
+      //
+      // So membership is the SAME declared spec expanded against both graphs: the fork
+      // for ids this batch introduces, the original `state` for ids it removes. An op
+      // outside both is still refused (V13). Computed lazily — only when the fork
+      // expansion misses.
       let originalClosure: ClosureSet | undefined;
-      const closureContainsInOriginal = (nodeId: string): boolean => {
+      const inScope = (nodeId: string): boolean => {
+        if (forkClosure.nodes.has(nodeId)) return true;
         originalClosure ??= expandClosure(closureSpec, state);
         return originalClosure.nodes.has(nodeId);
       };
@@ -148,12 +153,9 @@ export const useDiffStore = create<DiffStore>((set, get) => ({
           introducedIds.add(op.nodeId);
           continue;
         }
-        if (op.type === 'removeNode' && closureContainsInOriginal(op.nodeId)) {
-          continue;
-        }
         const target = opTargetNodeId(op);
-        if (target !== null && !closure.nodes.has(target) && !introducedIds.has(target)) {
-          throw new ClosurePreservationError(target, closure);
+        if (target !== null && !introducedIds.has(target) && !inScope(target)) {
+          throw new ClosurePreservationError(target, forkClosure);
         }
       }
     }
