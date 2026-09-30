@@ -2048,9 +2048,21 @@ function withoutKey<T extends Record<string, unknown>>(o: T, key: string): T {
   return out as T;
 }
 
+/**
+ * #1123 — the map slots that carry a strength, with the row's label. The normal and occlusion
+ * maps (glTF scale / strength); #1327 — the coat normal (glTF `clearcoatNormalTexture.scale`).
+ */
+const MAP_STRENGTH_LABEL: Readonly<Partial<Record<MaterialMapSlot, string>>> = {
+  normal: 'normal strength',
+  ao: 'ao strength',
+  coatNormal: 'clearcoat normal strength',
+};
+type StrengthSlot = 'normal' | 'ao' | 'coatNormal';
+const hasStrength = (s: MaterialMapSlot): s is StrengthSlot => s in MAP_STRENGTH_LABEL;
+
 /** #1123 — a map's strength as the material holds it; absent means 1, both references' default. */
-function mapStrengthOf(material: Record<string, unknown>, slot: 'normal' | 'ao'): number {
-  const bag = material.mapStrengths as { normal?: unknown; ao?: unknown } | undefined;
+function mapStrengthOf(material: Record<string, unknown>, slot: StrengthSlot): number {
+  const bag = material.mapStrengths as Partial<Record<StrengthSlot, unknown>> | undefined;
   const v = bag?.[slot];
   return typeof v === 'number' ? v : 1;
 }
@@ -3068,11 +3080,11 @@ function MaterialEditor({
             {/* #1123 — the normal and occlusion maps carry a strength (glTF scale/strength,
                 Blender's Strength), shown under the map it acts on while that map is there.
                 Absent reads 1, both references' default; an edit creates the bag. */}
-            {(s === 'normal' || s === 'ao') && maps[s] ? (
+            {hasStrength(s) && maps[s] ? (
               <MaterialNumberRow
                 nodeId={nodeId}
                 paramPath={`${base}.mapStrengths.${s}`}
-                label={`${s} strength`}
+                label={MAP_STRENGTH_LABEL[s]!}
                 value={mapStrengthOf(material, s)}
                 testidInput={`inspector-input-${nodeId}-${base}.mapStrengths.${s}`}
                 testidScrub={`inspector-scrub-${nodeId}-${base}.mapStrengths.${s}`}

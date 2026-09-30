@@ -57,6 +57,8 @@ const BASE: PrimitiveMaterialSpec = {
   // both gates below), and away from three's default of 1 for the reason `side` is.
   normalScale: 0.5,
   aoMapIntensity: 0.7,
+  // #1327 — the coat normal's strength, the same way.
+  clearcoatNormalScale: 0.35,
   // #1123 — the fuzz lobe as three's sheen, each away from three's default.
   sheen: 0.4,
   sheenColor: '#336699',
@@ -210,15 +212,20 @@ describe('#530 — the build applies every scalar the spec carries', () => {
     // field turning optional and quietly leaving `BASE`, which would make both this gate
     // and the key gate blind to it while staying green. The count is the guard for that
     // direction, so it is meant to be edited deliberately.
-    expect(scalars.length).toBe(24);
+    expect(scalars.length).toBe(25);
     // BASE's normal map is a flipped upload, so the drawn vector is (strength, strength); a
     // strength is only drawn beside a normal map.
     const withNormalMap = materialRegistry.get({
       ...BASE,
-      textures: { ...BASE.textures, normalMap: new THREE.Texture() },
+      textures: {
+        ...BASE.textures,
+        normalMap: new THREE.Texture(),
+        clearcoatNormalMap: new THREE.Texture(),
+      },
     }).material;
     for (const [path, value] of scalars) {
-      const source = lit(path === 'normalScale' ? withNormalMap : material);
+      const drawnWithMap = path === 'normalScale' || path === 'clearcoatNormalScale';
+      const source = lit(drawnWithMap ? withNormalMap : material);
       const applied = source[path as keyof THREE.MeshPhysicalMaterial];
       // #1123 — `normalScale` is three's vector; the spec's strength is its x, which carries no
       // upload-dependent sign (#1325's y does, and is pinned below).
@@ -286,6 +293,39 @@ describe('#1325 — a normal map bends the surface toward image-up, whichever wa
     });
     const m = lit(material);
     expect([m.normalScale.x, m.normalScale.y]).toEqual([0.5, -0.5]);
+  });
+});
+
+describe('#1327 — the coat normal follows the same orientation rule as the normal map', () => {
+  const coatNormalMapped = (flipY: boolean, strength?: number) => {
+    const source = new THREE.Texture();
+    source.flipY = flipY;
+    // At the default strength: absent, which is what every material without one holds.
+    const spec: PrimitiveMaterialSpec = { ...BASE };
+    delete (spec as { clearcoatNormalScale?: number }).clearcoatNormalScale;
+    return lit(
+      materialRegistry.get({
+        ...spec,
+        ...(strength !== undefined ? { clearcoatNormalScale: strength } : {}),
+        textures: { ...BASE.textures, clearcoatNormalMap: source },
+      }).material,
+    );
+  };
+
+  it('an UNFLIPPED map (glTF) draws with y negated, as three`s loader draws it', () => {
+    const m = coatNormalMapped(false);
+    expect(m.clearcoatNormalMap).not.toBeNull();
+    expect([m.clearcoatNormalScale.x, m.clearcoatNormalScale.y]).toEqual([1, -1]);
+  });
+
+  it('a FLIPPED map (an upload) keeps three`s default', () => {
+    const m = coatNormalMapped(true);
+    expect([m.clearcoatNormalScale.x, m.clearcoatNormalScale.y]).toEqual([1, 1]);
+  });
+
+  it('its strength scales both axes and keeps the upload`s sign on y', () => {
+    const m = coatNormalMapped(false, 0.5);
+    expect([m.clearcoatNormalScale.x, m.clearcoatNormalScale.y]).toEqual([0.5, -0.5]);
   });
 });
 

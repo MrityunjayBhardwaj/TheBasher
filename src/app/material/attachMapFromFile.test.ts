@@ -23,6 +23,10 @@ const EXPECTED: Record<MaterialMapSlot, 'srgb' | 'srgb-linear'> = {
   roughness: 'srgb-linear',
   metalness: 'srgb-linear',
   ao: 'srgb-linear',
+  // #1327 — the coat's maps are data: weight, roughness and a normal.
+  coat: 'srgb-linear',
+  coatRoughness: 'srgb-linear',
+  coatNormal: 'srgb-linear',
 };
 
 describe('attachMapFromFile (W5 — File → OPFS map, colorspace-correct)', () => {

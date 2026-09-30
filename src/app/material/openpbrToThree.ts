@@ -137,6 +137,8 @@ export interface ThreeMaterialParams {
   readonly normalScale?: number;
   /** #1123 — the occlusion map's strength (three's `aoMapIntensity`). Absent means 1. */
   readonly aoMapIntensity?: number;
+  /** #1327 — the coat normal map's strength (unsigned; see `normalScale`). Absent means 1. */
+  readonly clearcoatNormalScale?: number;
   /** #1123 — `'basic'`: build an unlit material. Absent means lit. */
   readonly materialClass?: 'basic';
   /** #1123 — the fuzz lobe as three's sheen (weight, sRGB hex colour, roughness). Absent: none. */
@@ -199,6 +201,9 @@ export function openpbrToThree(ir: InlineMaterialSpec): ThreeMaterialParams {
     // #1123 — the two map strengths, each omitted at its default for the same reason.
     ...(ir.mapStrengths?.normal !== undefined ? { normalScale: ir.mapStrengths.normal } : {}),
     ...(ir.mapStrengths?.ao !== undefined ? { aoMapIntensity: ir.mapStrengths.ao } : {}),
+    ...(ir.mapStrengths?.coatNormal !== undefined
+      ? { clearcoatNormalScale: ir.mapStrengths.coatNormal }
+      : {}),
     // #1123 — unlit; omitted when lit, same reason.
     ...(ir.unlit ? { materialClass: 'basic' as const } : {}),
     // #1123 — fuzz → three's sheen, omitted without a lobe.

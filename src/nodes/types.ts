@@ -277,6 +277,21 @@ export const MATERIAL_MAP_SLOT_TABLE = {
   metalness: { three: 'metalnessMap', colorSpace: 'srgb-linear', seeded: true, label: 'metalness' },
   emissive: { three: 'emissiveMap', colorSpace: 'srgb', seeded: true, label: 'emissive' },
   ao: { three: 'aoMap', colorSpace: 'srgb-linear', seeded: true, label: 'ambient occlusion' },
+  // #1327 — the coat lobe's textures (glTF `KHR_materials_clearcoat`): weight (R), roughness (G)
+  // and the coat's own normal. Not seeded, so a material without them keys as it always did.
+  coat: { three: 'clearcoatMap', colorSpace: 'srgb-linear', seeded: false, label: 'clearcoat' },
+  coatRoughness: {
+    three: 'clearcoatRoughnessMap',
+    colorSpace: 'srgb-linear',
+    seeded: false,
+    label: 'clearcoat roughness',
+  },
+  coatNormal: {
+    three: 'clearcoatNormalMap',
+    colorSpace: 'srgb-linear',
+    seeded: false,
+    label: 'clearcoat normal',
+  },
 } as const satisfies Readonly<Record<string, MaterialMapSlotRow>>;
 
 /** One row of {@link MATERIAL_MAP_SLOT_TABLE}. */
@@ -482,7 +497,12 @@ export interface InlineMaterialSpec {
    * 🔴 OPTIONAL WITH NO `.default()`, for the reason {@link mapUvTransforms} states: a
    * materialised bag re-keys every existing material.
    */
-  readonly mapStrengths?: { readonly normal?: number; readonly ao?: number };
+  readonly mapStrengths?: {
+    readonly normal?: number;
+    readonly ao?: number;
+    /** #1327 — the coat normal map's strength (glTF `clearcoatNormalTexture.scale`). */
+    readonly coatNormal?: number;
+  };
   /**
    * #1123 — draw the surface UNLIT: its base colour and base map as they are, with no lighting, no
    * lobes and no other maps. glTF `KHR_materials_unlit`; three's loader draws it as a
@@ -647,6 +667,11 @@ export interface BakedMaterialSpec extends BakedMaterialMaps {
   // physical-only extras (captured only when materialClass==='physical', Wave 3).
   readonly physical?: {
     readonly clearcoat?: number;
+    /**
+     * #1327 — the coat normal map's STRENGTH as it drew, unsigned for the reason `normalScale`
+     * gives (the rebuild derives y's sign from the texture). Absent means 1.
+     */
+    readonly clearcoatNormalScale?: number;
     /**
      * #1140 — how deep the refraction is (three's `thickness`). Transmission only refracts through
      * a material with thickness, so a captured `transmission` without this drew clear glass as a

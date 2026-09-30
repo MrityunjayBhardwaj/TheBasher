@@ -156,7 +156,7 @@ export async function applyEditedMaps(
     if (isImportedMap(ref)) continue; // captured descriptor → inherit (leave clone)
     const prop = THREE_SLOT_OF[slot];
     if (isClearedMap(ref)) {
-      if (std[prop] != null) {
+      if ((std as unknown as Record<string, THREE.Texture | null | undefined>)[prop] != null) {
         (std as unknown as Record<string, unknown>)[prop] = null;
         changed = true;
       }

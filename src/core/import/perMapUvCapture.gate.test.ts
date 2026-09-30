@@ -115,14 +115,27 @@ const SOURCE_OF: Record<Slot, (t: Khr) => GltfJsonMaterial> = {
   metalness: (t) => ({ pbrMetallicRoughness: { metallicRoughnessTexture: info(2, t) } }),
   emissive: (t) => ({ emissiveTexture: info(3, t) }),
   ao: (t) => ({ occlusionTexture: info(4, t) }),
+  // #1327 — the coat's three textures, inside `KHR_materials_clearcoat`.
+  coat: (t) => ({ extensions: { KHR_materials_clearcoat: { clearcoatTexture: info(5, t) } } }),
+  coatRoughness: (t) => ({
+    extensions: { KHR_materials_clearcoat: { clearcoatRoughnessTexture: info(6, t) } },
+  }),
+  coatNormal: (t) => ({
+    extensions: { KHR_materials_clearcoat: { clearcoatNormalTexture: info(7, t) } },
+  }),
 };
 
-/** Deep-merge two material fragments — `pbrMetallicRoughness` holds three of the five
- *  texture slots, so a shallow spread would drop one of any two that share it. */
+/** Deep-merge two material fragments — `pbrMetallicRoughness` holds three of the core texture
+ *  slots and `KHR_materials_clearcoat` the coat's three, so a shallow spread would drop one of any
+ *  two that share either. */
 function merge(a: GltfJsonMaterial, b: GltfJsonMaterial): GltfJsonMaterial {
   const pbr = { ...a.pbrMetallicRoughness, ...b.pbrMetallicRoughness };
+  const coatOf = (m: GltfJsonMaterial) =>
+    (m.extensions as Record<string, object> | undefined)?.KHR_materials_clearcoat;
+  const coat = { ...coatOf(a), ...coatOf(b) };
   const out: GltfJsonMaterial = { ...a, ...b };
   if (Object.keys(pbr).length > 0) out.pbrMetallicRoughness = pbr;
+  if (Object.keys(coat).length > 0) out.extensions = { KHR_materials_clearcoat: coat };
   return out;
 }
 

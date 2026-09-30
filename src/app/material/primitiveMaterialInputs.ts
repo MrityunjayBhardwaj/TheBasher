@@ -218,6 +218,9 @@ export function primitiveMaterialSpec(
     // #1123 — the map strengths, omitted at their default for the same reason.
     ...(compiled.normalScale !== undefined ? { normalScale: compiled.normalScale } : {}),
     ...(compiled.aoMapIntensity !== undefined ? { aoMapIntensity: compiled.aoMapIntensity } : {}),
+    ...(compiled.clearcoatNormalScale !== undefined
+      ? { clearcoatNormalScale: compiled.clearcoatNormalScale }
+      : {}),
     ...(compiled.materialClass ? { materialClass: compiled.materialClass } : {}),
     ...(compiled.sheen !== undefined ? { sheen: compiled.sheen } : {}),
     ...(compiled.sheenColor !== undefined ? { sheenColor: compiled.sheenColor } : {}),

@@ -52,6 +52,19 @@ describe('#1123 — the capture reads the strengths the material draws with', ()
     expect('aoMapIntensity' in spec).toBe(false);
   });
 
+  it('#1327 — a coat normal keeps its strength and its map, the coat`s maps with it', async () => {
+    const live = new THREE.MeshPhysicalMaterial({ clearcoat: 1 });
+    live.clearcoatMap = new THREE.Texture();
+    live.clearcoatNormalMap = new THREE.Texture();
+    live.clearcoatNormalScale.set(0.5, -0.5);
+    const spec = await captureBakedMaterial(new MemoryStorage(), live);
+    expect(spec.physical).toMatchObject({ clearcoat: 1, clearcoatNormalScale: 0.5 });
+    expect(spec.clearcoatMap).toMatchObject({ hash: 'stub.png' });
+    expect(spec.clearcoatNormalMap).toMatchObject({ hash: 'stub.png' });
+    // A slot the live material leaves empty is not written: it is not seeded.
+    expect('clearcoatRoughnessMap' in spec).toBe(false);
+  });
+
   it('a strength with no map to act on is not captured', async () => {
     const live = new THREE.MeshStandardMaterial();
     live.normalScale.set(0.5, 0.5);

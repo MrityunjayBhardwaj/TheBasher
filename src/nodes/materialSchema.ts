@@ -283,7 +283,12 @@ const mapUvLayersSchema = perMapSlot(
  * `.default()`, for the reason `mapUvTransformsSchema` states.
  */
 const mapStrengthsSchema = z
-  .object({ normal: z.number().optional(), ao: z.number().optional() })
+  .object({
+    normal: z.number().optional(),
+    ao: z.number().optional(),
+    // #1327 — the coat normal map's strength.
+    coatNormal: z.number().optional(),
+  })
   .optional();
 
 /**
@@ -456,7 +461,7 @@ export function hydrateInlineMaterial(
     uvTransform?: { tiling?: unknown; offset?: unknown; rotation?: unknown };
     mapUvTransforms?: Record<string, { tiling?: unknown; offset?: unknown; rotation?: unknown }>;
     mapUvLayers?: Record<string, unknown>;
-    mapStrengths?: { normal?: unknown; ao?: unknown };
+    mapStrengths?: { normal?: unknown; ao?: unknown; coatNormal?: unknown };
     unlit?: unknown;
     unsupported?: Record<string, number>;
   };
@@ -547,12 +552,14 @@ export function hydrateInlineMaterial(
  * not a finite number is dropped, which reads as the default of 1.
  */
 function hydrateMapStrengths(
-  raw: { normal?: unknown; ao?: unknown } | undefined,
+  raw: { normal?: unknown; ao?: unknown; coatNormal?: unknown } | undefined,
 ): InlineMaterialSpec['mapStrengths'] | undefined {
   if (!raw || typeof raw !== 'object') return undefined;
-  const out: { normal?: number; ao?: number } = {};
+  const out: { normal?: number; ao?: number; coatNormal?: number } = {};
   if (typeof raw.normal === 'number' && Number.isFinite(raw.normal)) out.normal = raw.normal;
   if (typeof raw.ao === 'number' && Number.isFinite(raw.ao)) out.ao = raw.ao;
+  if (typeof raw.coatNormal === 'number' && Number.isFinite(raw.coatNormal))
+    out.coatNormal = raw.coatNormal;
   return Object.keys(out).length > 0 ? out : undefined;
 }
 

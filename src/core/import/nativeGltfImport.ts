@@ -1177,6 +1177,7 @@ function withProjectImages(
   const maps = {} as { -readonly [K in keyof InlineMaterialSpec['maps']]: BakedTextureRef | null };
   for (const slot of Object.keys(material.maps) as (keyof InlineMaterialSpec['maps'])[]) {
     const captured = material.maps[slot];
+    if (captured === undefined) continue; // #1327 — an unseeded slot the file leaves empty
     if (captured === null) {
       maps[slot] = null;
       continue;

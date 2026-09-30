@@ -102,6 +102,10 @@ const IR_SLOT_SOURCES: {
   metalness: fromPath('pbrMetallicRoughness.metallicRoughnessTexture'),
   emissive: fromPath('emissiveTexture'),
   ao: fromPath('occlusionTexture'),
+  // #1327 — three's loader reads these into the coat's maps (`GLTFLoader.js:788-806`).
+  coat: fromPath('extensions.KHR_materials_clearcoat.clearcoatTexture'),
+  coatRoughness: fromPath('extensions.KHR_materials_clearcoat.clearcoatRoughnessTexture'),
+  coatNormal: fromPath('extensions.KHR_materials_clearcoat.clearcoatNormalTexture'),
 };
 
 /** A slot source read off its material path, so the path the refusal names is the path read. */
@@ -240,11 +244,15 @@ function capturePerMapUvLayers(mat: GltfJsonMaterial): InlineMaterialSpec['mapUv
  * material keys exactly as it did.
  */
 function captureMapStrengths(mat: GltfJsonMaterial): InlineMaterialSpec['mapStrengths'] {
-  const out: { normal?: number; ao?: number } = {};
+  const out: { normal?: number; ao?: number; coatNormal?: number } = {};
   const normal = mat.normalTexture?.scale;
   if (typeof normal === 'number' && normal !== 1) out.normal = normal;
   const ao = mat.occlusionTexture?.strength;
   if (typeof ao === 'number' && ao !== 1) out.ao = ao;
+  // #1327 — the coat normal's scale, as three's loader reads it (`GLTFLoader.js:808-812`).
+  const coatNormal = (IR_SLOT_SOURCES.coatNormal.info(mat) as { scale?: unknown } | undefined)
+    ?.scale;
+  if (typeof coatNormal === 'number' && coatNormal !== 1) out.coatNormal = coatNormal;
   return Object.keys(out).length > 0 ? out : undefined;
 }
 
@@ -329,11 +337,11 @@ function captureMap(
 function captureMaps(mat: GltfJsonMaterial, tables: GltfTextureTables): InlineMaterialMaps {
   const out = {} as { -readonly [K in keyof InlineMaterialMaps]: BakedTextureRef | null };
   for (const slot of MAP_UV_SLOTS) {
-    out[slot] = captureMap(
-      IR_SLOT_SOURCES[slot].info(mat),
-      MATERIAL_MAP_SLOT_TABLE[slot].colorSpace,
-      tables,
-    );
+    const { colorSpace, seeded } = MATERIAL_MAP_SLOT_TABLE[slot];
+    const ref = captureMap(IR_SLOT_SOURCES[slot].info(mat), colorSpace, tables);
+    // #1327 — an unseeded slot the file leaves empty stays ABSENT, as the schema has it: a
+    // written null would re-key every imported material that has no such texture.
+    if (seeded || ref !== null) out[slot] = ref;
   }
   return out;
 }

@@ -347,6 +347,10 @@ function bakedSpecFromInline(material: InlineMaterialSpec | null): BakedMaterial
     ...(drawn.aoMapIntensity !== undefined ? { aoMapIntensity: drawn.aoMapIntensity } : {}),
     physical: {
       clearcoat: drawn.clearcoat,
+      // #1327 — the coat normal's strength, absent at 1.
+      ...(drawn.clearcoatNormalScale !== undefined
+        ? { clearcoatNormalScale: drawn.clearcoatNormalScale }
+        : {}),
       clearcoatRoughness: drawn.clearcoatRoughness,
       transmission: drawn.transmission,
       // #1140 — `openpbrToThree` seeds this whenever transmission is on; without it the baked

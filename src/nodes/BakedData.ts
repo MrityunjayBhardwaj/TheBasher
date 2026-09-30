@@ -118,6 +118,8 @@ export const BakedMaterialSpecSchema = z.object({
   physical: z
     .object({
       clearcoat: z.number().optional(),
+      // #1327 — declared, or zod strips it and a baked coat normal loses its strength.
+      clearcoatNormalScale: z.number().optional(),
       thickness: z.number().optional(),
       clearcoatRoughness: z.number().optional(),
       transmission: z.number().optional(),

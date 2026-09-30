@@ -884,6 +884,12 @@ function MeshScaleProbe() {
       // #1123 / #1325 — the drawn normal-map vector (sign included) and occlusion strength.
       normalScale: [number, number] | null;
       aoMapIntensity: number | null;
+      // #1327 — the drawn coat maps (each one's image width, null when absent) and the coat
+      // normal's vector, sign included.
+      clearcoatMapWidth: number | null;
+      clearcoatRoughnessMapWidth: number | null;
+      clearcoatNormalMapWidth: number | null;
+      clearcoatNormalScale: [number, number] | null;
       // #1123 — the drawn sheen (fuzz lobe): weight, colour and roughness.
       sheen: number | null;
       sheenColor: string | null;
@@ -912,6 +918,9 @@ function MeshScaleProbe() {
       if (!mat) return null;
       const std = mat as THREE.MeshStandardMaterial;
       const phys = mat as THREE.MeshPhysicalMaterial;
+      // #1327 — a drawn map's image width: which image a slot holds, where `null` is no map.
+      const widthOf = (t: THREE.Texture | null | undefined) =>
+        t ? ((t.image as { width?: number } | undefined)?.width ?? 0) : null;
       const map = std.map ?? null;
       const image = map?.image as { width?: number } | undefined;
       return {
@@ -936,6 +945,12 @@ function MeshScaleProbe() {
         transmission: typeof phys.transmission === 'number' ? phys.transmission : null,
         normalScale: std.normalMap ? [std.normalScale.x, std.normalScale.y] : null,
         aoMapIntensity: std.aoMap ? std.aoMapIntensity : null,
+        clearcoatMapWidth: widthOf(phys.clearcoatMap),
+        clearcoatRoughnessMapWidth: widthOf(phys.clearcoatRoughnessMap),
+        clearcoatNormalMapWidth: widthOf(phys.clearcoatNormalMap),
+        clearcoatNormalScale: phys.clearcoatNormalMap
+          ? [phys.clearcoatNormalScale.x, phys.clearcoatNormalScale.y]
+          : null,
         sheen: typeof phys.sheen === 'number' ? phys.sheen : null,
         sheenColor: phys.sheenColor ? `#${phys.sheenColor.getHexString()}` : null,
         sheenRoughness: typeof phys.sheenRoughness === 'number' ? phys.sheenRoughness : null,
@@ -3299,6 +3314,11 @@ function CapturedBakedMeshR({
     // #1325 — the same orientation rule the registry's builder applies (`normalScaleFor`).
     if (m.normalMap) m.normalScale.set(...normalScaleFor(m.normalMap, spec.normalScale));
     if (spec.aoMapIntensity !== undefined) m.aoMapIntensity = spec.aoMapIntensity; // #1123
+    // #1327 — the coat's normal, by the same orientation rule (`GLTFLoader.js:3469`).
+    if (m instanceof THREE.MeshPhysicalMaterial && m.clearcoatNormalMap)
+      m.clearcoatNormalScale.set(
+        ...normalScaleFor(m.clearcoatNormalMap, spec.physical?.clearcoatNormalScale),
+      );
     bakedSurface(m, spec);
     m.userData.__placedClones = clones;
 

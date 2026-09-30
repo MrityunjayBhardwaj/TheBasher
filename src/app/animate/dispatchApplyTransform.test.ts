@@ -3088,6 +3088,38 @@ describe('#1139 — a primitive bakes the material it draws, maps and placement 
       expect(spec).toMatchObject({ normalScale: 0.5, aoMapIntensity: 0.3 });
     });
   });
+
+  describe('#1327 — a box with coat textures bakes them, and the coat normal`s strength', () => {
+    const tex = (hash: string) => ({ ...IMAGE, hash, colorSpace: 'srgb-linear' as const });
+    const coated = {
+      ...NULL_IR_MAPS,
+      coat: tex('c.png'),
+      coatRoughness: tex('cr.png'),
+      coatNormal: tex('cn.png'),
+    };
+
+    it('keeps each coat map in its own field and the strength beside the coat', async () => {
+      const { result, spec } = await bakeBoxWith({
+        coat: { weight: 1, roughness: 0.3 },
+        maps: coated,
+        mapStrengths: { coatNormal: 0.5 },
+      });
+      expect(result.ok).toBe(true);
+      expect(spec).toMatchObject({
+        clearcoatMap: coated.coat,
+        clearcoatRoughnessMap: coated.coatRoughness,
+        clearcoatNormalMap: coated.coatNormal,
+      });
+      expect(spec.physical).toMatchObject({ clearcoat: 1, clearcoatNormalScale: 0.5 });
+    });
+
+    it('a box with no coat texture writes no coat map field at all', async () => {
+      const { spec } = await bakeBoxWith({});
+      for (const k of ['clearcoatMap', 'clearcoatRoughnessMap', 'clearcoatNormalMap'])
+        expect(k in spec, k).toBe(false);
+      expect('clearcoatNormalScale' in (spec.physical ?? {})).toBe(false);
+    });
+  });
 });
 
 describe('#1153 — a primitive bake re-mints the Object and keeps its rotation mode', () => {

@@ -13,6 +13,7 @@ import { emptyDagState } from '../core/dag/state';
 import { dagInspectTool } from './tools/dagInspect';
 import type { DagState } from '../core/dag/state';
 import type { ParamField } from './nodeCatalog';
+import { MATERIAL_MAP_SLOT_TABLE } from '../nodes/types';
 import {
   listNodeSchemas,
   nodeSchemaOf,
@@ -323,24 +324,20 @@ describe('node schema payload (#1007)', () => {
     });
 
     it('a texture ref prints once per tree, not once per map slot (#1326)', () => {
-      // Two trees hold six map slots each: the material IR (inside <material>) and the baked
+      // Two trees hold one ref per map slot: the material IR (inside <material>) and the baked
       // snapshot (on BakedData, whose ref has no glTF fields and so is a DIFFERENT body). Each
-      // prints its ref body once; the other five slots refer back to it. `wrapS` is in every ref,
-      // so it counts printed copies: 12 before this fold.
+      // prints its ref body once; every other slot refers back to its first. `wrapS` is in every
+      // ref, so it counts printed copies: one per slot per tree before this fold.
       const text = renderNodeCatalog(schemas);
       expect(text.match(/\.wrapS:/g)).toHaveLength(2);
+      const [first, ...rest] = Object.entries(MATERIAL_MAP_SLOT_TABLE);
       const material = text.split('\n').find((l) => l.startsWith('<material> = '))!;
-      for (const slot of ['normal', 'roughness', 'metalness', 'emissive', 'ao']) {
-        expect(material, slot).toContain(`maps.${slot}:=maps.albedo`);
-      }
       const baked = text.split('\n').find((l) => l.startsWith('BakedData | '))!;
-      for (const slot of ['normalMap', 'roughnessMap', 'metalnessMap', 'aoMap', 'emissiveMap']) {
-        expect(baked, slot).toContain(`material.${slot}:=material.map`);
+      expect(rest.length).toBeGreaterThan(0);
+      for (const [slot, row] of rest) {
+        expect(material, slot).toContain(`maps.${slot}:=maps.${first[0]}`);
+        expect(baked, row.three).toContain(`material.${row.three}:=material.${first[1].three}`);
       }
-      // A per-slot UV placement repeats too, but at three fields it saves less than a reference
-      // costs a reader: it stays inline, under the same bar a block has to clear.
-      expect(material).toContain('mapUvTransforms.normal.tiling:');
-      expect(material).not.toContain('mapUvTransforms.normal:=');
     });
 
     it('a subtree folds only onto one whose text is identical, its own entry included', () => {

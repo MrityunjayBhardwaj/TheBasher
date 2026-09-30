@@ -154,6 +154,8 @@ const CORPUS: readonly World[] = [
   // #1123 — the two map strengths; a spec that drops one makes its world a duplicate of `base`.
   world('normal strength', { ir: irWith({ mapStrengths: { normal: 0.5 } }) }),
   world('occlusion strength', { ir: irWith({ mapStrengths: { ao: 0.3 } }) }),
+  // #1327 — the coat normal's strength, the same way.
+  world('coat normal strength', { ir: irWith({ mapStrengths: { coatNormal: 0.5 } }) }),
   world('unlit', { ir: irWith({ unlit: true }) }),
   world('fuzz', { ir: irWith({ fuzz: { weight: 1, color: '#ffffff', roughness: 0.3 } }) }),
   world('fuzz colour', { ir: irWith({ fuzz: { weight: 1, color: '#ff0000', roughness: 0.3 } }) }),
@@ -414,6 +416,8 @@ describe('#566 — every field the compile produces is carried on the spec, or e
     specularColor: 'specularColor',
     attenuationDistance: 'attenuationDistance',
     attenuationColor: 'attenuationColor',
+    // #1327 — the coat normal's strength.
+    clearcoatNormalScale: 'clearcoatNormalScale',
   };
 
   /**
@@ -455,7 +459,7 @@ describe('#566 — every field the compile produces is carried on the spec, or e
       // #1123 — both strengths and the unlit class are conditional too. The strengths were
       // missing here when they landed, and the source half could not see them either: their
       // condition used `?.`, which the pattern below did not read (widened with this entry).
-      irWith({ mapStrengths: { normal: 0.5, ao: 0.3 } }),
+      irWith({ mapStrengths: { normal: 0.5, ao: 0.3, coatNormal: 0.5 } }),
       irWith({ unlit: true }),
       irWith({ fuzz: { weight: 1, color: '#ffffff', roughness: 0.3 } }),
       irWith({ specular: { roughness: 0.72, ior: 1.5, weight: 0.4, color: '#ffbc89' } }),
@@ -484,8 +488,8 @@ describe('#566 — every field the compile produces is carried on the spec, or e
     // EXACT on both sides. A floor would pass a field that stopped being produced — which is
     // the direction that looks like cleanup and silently removes a rendering lobe.
     const produced = producedFields();
-    expect(produced.length).toBe(29);
-    expect(produced.filter((f) => f in CARRIED).length).toBe(29);
+    expect(produced.length).toBe(30);
+    expect(produced.filter((f) => f in CARRIED).length).toBe(30);
     expect(produced.filter((f) => f in EXCLUDED).length).toBe(0);
   });
 
@@ -504,7 +508,7 @@ describe('#566 — every field the compile produces is carried on the spec, or e
           mapUvTransforms: { albedo: { tiling: [2, 2], offset: [0, 0], rotation: 0 } },
           mapUvLayers: { albedo: 'UVMap.001' },
           geometry: { opacity: 1, colorLayer: 'Color' },
-          mapStrengths: { normal: 0.5, ao: 0.3 },
+          mapStrengths: { normal: 0.5, ao: 0.3, coatNormal: 0.5 },
           unlit: true,
           fuzz: { weight: 1, color: '#ffffff', roughness: 0.3 },
           specular: { roughness: 0.72, ior: 1.5, weight: 0.4, color: '#ffbc89' },

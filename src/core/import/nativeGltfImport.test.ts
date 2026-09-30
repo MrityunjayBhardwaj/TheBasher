@@ -729,9 +729,12 @@ describe('buildNativeGltfImportOps', () => {
       'a texture in a slot the native material does not hold',
       () =>
         texturedFixture((json) => {
+          // A texture site no slot reads, inside an extension held for its factors. Named by hand
+          // so this row keeps its subject as lobe textures arrive: it used to be the clearcoat
+          // texture, which the material holds since #1327.
           json.extensionsUsed = ['KHR_materials_clearcoat'];
           materialOf(json).extensions = {
-            KHR_materials_clearcoat: { clearcoatFactor: 1, clearcoatTexture: { index: 0 } },
+            KHR_materials_clearcoat: { clearcoatFactor: 1, unreadTexture: { index: 0 } },
           };
         }),
       '#1123',
@@ -1047,6 +1050,53 @@ describe('buildNativeGltfImportOps', () => {
     expect(material.mapStrengths).toEqual({ normal: 0.5, ao: 0.3 });
     expect(material.maps.normal).not.toBeNull();
     expect(material.maps.ao).not.toBeNull();
+  });
+
+  it('#1327 — the coat textures arrive native, each in its own slot, with the normal strength', async () => {
+    let n = 0;
+    const result = await buildNativeGltfImportOps({
+      buffer: fixture('public/assets/clearcoat-quad.gltf'),
+      assetRef: 'user-imports/native/clearcoat.gltf',
+      sceneNodeId: 'n_scene',
+      storeImage: async () => `img-${n++}`,
+    });
+    if ('refused' in result) throw new Error(result.refused);
+    const data = result.ops.find(
+      (op): op is Extract<Op, { type: 'addNode' }> =>
+        op.type === 'addNode' && op.nodeType === 'PolyMeshData',
+    )!;
+    const material = PolyMeshDataParams.parse(data.params).material!;
+    const { coat, coatRoughness, coatNormal } = material.maps;
+    for (const ref of [coat, coatRoughness, coatNormal]) {
+      expect(ref).toMatchObject({ store: 'project', colorSpace: 'srgb-linear', flipY: false });
+    }
+    // Three different images, so a slot that read another slot's texture would share a hash.
+    expect(new Set([coat?.hash, coatRoughness?.hash, coatNormal?.hash]).size).toBe(3);
+    expect(material.mapStrengths).toEqual({ coatNormal: 0.5 });
+    expect(material.coat).toEqual({ weight: 1, roughness: 0.3 });
+  });
+
+  it('#1327 — a material with no coat texture holds no coat slot, so it keys as before', async () => {
+    const result = await buildNativeGltfImportOps({
+      buffer: texturedFixture(() => {}),
+      assetRef: 'user-imports/native/no-coat.gltf',
+      sceneNodeId: 'n_scene',
+      storeImage: async () => 'img',
+    });
+    if ('refused' in result) throw new Error(result.refused);
+    const data = result.ops.find(
+      (op): op is Extract<Op, { type: 'addNode' }> =>
+        op.type === 'addNode' && op.nodeType === 'PolyMeshData',
+    )!;
+    const maps = (data.params as { material: { maps: Record<string, unknown> } }).material.maps;
+    expect(Object.keys(maps)).toEqual([
+      'albedo',
+      'normal',
+      'roughness',
+      'metalness',
+      'emissive',
+      'ao',
+    ]);
   });
 
   it('#1123 — a strength of exactly 1 is the default and writes no field', async () => {

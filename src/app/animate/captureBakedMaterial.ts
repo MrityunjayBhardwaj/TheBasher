@@ -165,14 +165,18 @@ export async function captureBakedMaterial(
   if (std.normalMap && std.normalScale.x !== 1) spec = { ...spec, normalScale: std.normalScale.x };
   if (std.aoMap && std.aoMapIntensity !== 1) spec = { ...spec, aoMapIntensity: std.aoMapIntensity };
 
-  // Physical-only scalars (M3) — captured only when the subclass is physical.
-  // Map refs for these (clearcoatMap etc.) are a v0.6 #2 follow-up.
+  // Physical-only scalars (M3) — captured only when the subclass is physical. Their maps
+  // (`clearcoatMap`, …) are captured with the rest above, by the slot table (#1327).
   if (cls === 'physical') {
     const p = material as THREE.MeshPhysicalMaterial;
     return {
       ...spec,
       physical: {
         clearcoat: p.clearcoat,
+        // #1327 — the coat normal's strength, unsigned (the rebuild derives y's sign again).
+        ...(p.clearcoatNormalMap && p.clearcoatNormalScale.x !== 1
+          ? { clearcoatNormalScale: p.clearcoatNormalScale.x }
+          : {}),
         clearcoatRoughness: p.clearcoatRoughness,
         transmission: p.transmission,
         // #1140 — transmission refracts only through thickness, so the two travel together.

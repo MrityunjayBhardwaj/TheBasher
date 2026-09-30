@@ -193,6 +193,8 @@ export interface PrimitiveMaterialSpec {
   readonly normalScale?: number;
   /** #1123 — the occlusion map's strength. Absent means three's default of 1. */
   readonly aoMapIntensity?: number;
+  /** #1327 — the coat normal map's strength, unsigned like {@link normalScale}. Absent means 1. */
+  readonly clearcoatNormalScale?: number;
   /**
    * #1123 — `'basic'` builds an UNLIT `MeshBasicMaterial` from the colour, the base map and the
    * surface flags alone, as three's glTF loader does for `KHR_materials_unlit`. Absent means lit.
@@ -410,7 +412,7 @@ function build(spec: PrimitiveMaterialSpec): PrimitiveMaterial {
   // and the attribute cannot disagree — which is the whole reason it can live here now.
   m.vertexColors = spec.vertexColors;
   for (const slot of Object.keys(MAP_COLOR_SPACE) as (keyof typeof MAP_COLOR_SPACE)[]) {
-    m[slot] = prep(spec.textures[slot], slot, MAP_COLOR_SPACE[slot]);
+    m[slot] = prep(spec.textures[slot] ?? null, slot, MAP_COLOR_SPACE[slot]);
     // #1062 — the UV buffer this slot samples. Written on the CLONE `prep` just made (never
     // the shared instance), and only for a slot that resolved: three's default is 0, so an
     // absent entry is already the right answer and writing it would say nothing.
@@ -424,6 +426,10 @@ function build(spec: PrimitiveMaterialSpec): PrimitiveMaterial {
   // tangent frame points the other way, so y is negated. See `normalScaleFor`.
   if (m.normalMap) m.normalScale.set(...normalScaleFor(m.normalMap, spec.normalScale));
   if (spec.aoMapIntensity !== undefined) m.aoMapIntensity = spec.aoMapIntensity; // #1123
+  // #1327 — the coat's normal follows the same rule: three's loader negates its y too
+  // (`GLTFLoader.js:3469`).
+  if (m.clearcoatNormalMap)
+    m.clearcoatNormalScale.set(...normalScaleFor(m.clearcoatNormalMap, spec.clearcoatNormalScale));
   m.userData.__uvClones = clones;
   return m;
 }
