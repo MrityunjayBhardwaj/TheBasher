@@ -41,6 +41,8 @@
 // pivots about the origin (`SceneFromDAG.tsx`, `applyGltfUvTransform`), the authored road
 // about the texture centre (`materialRegistry.ts`, `prep`). Identical numbers therefore
 // mean different placements on the two roads for any scale ≠ 1 or rotation ≠ 0.
+// #1053 — the glTF overlay road is gone (it drew the clone); a native import rebases a glTF
+// placement to the centre at import (`nativeGltfImport.ts`), so one apply road remains.
 //
 // So the pivot convention travels with the ROAD, not with the value — and the value this
 // slice starts writing is origin-pivot. Today nothing reads it at all, which means the
@@ -332,7 +334,8 @@ describe('#550 case 6 — the origin-pivot values have no reader, and that is EX
    */
   const PIVOT_OF_ROAD: Record<string, 'CENTRE_PIVOT' | 'ORIGIN_PIVOT'> = {
     'src/app/materialRegistry.ts': 'CENTRE_PIVOT',
-    'src/viewport/applyGltfUvTransform.ts': 'ORIGIN_PIVOT',
+    // #1053 — `applyGltfUvTransform.ts` (the clone road's inherited textures, ORIGIN_PIVOT) went with
+    // the clone renderer, its one caller.
     // #553 — the glTF road's OTHER half, `gltfMapOverlay.ts` (replaced maps, ORIGIN_PIVOT),
     // went with the clone renderer in #1053.
     // #1136 — `BakedMeshR` places the per-map placement a bake captured. The capture restates

@@ -22,7 +22,8 @@
 //     a caller has to state which road it is. See #551 for the axis itself.
 //
 // REF: src/app/materialRegistry.ts (`build`/`prep` — the authored road, CENTRE),
-//      src/viewport/applyGltfUvTransform.ts (the glTF overlay road, ORIGIN),
+//      viewport/applyGltfUvTransform.ts (the glTF overlay road, ORIGIN; gone in #1053, at
+//      d7d19591 — the native importer rebases a glTF placement to the centre instead),
 //      src/app/material/openpbrToThree.ts (translates the IR's slot names to
 //      three's, once); issues #550, #551, #181.
 

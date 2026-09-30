@@ -39,8 +39,9 @@
 // REF: src/app/material/openpbrToThree.ts (the one slot-name correspondence),
 //      src/app/material/uvPlacement.ts (`placeTexture` — resolve + write, shared by
 //      both roads, pivot passed in by the caller), src/app/materialRegistry.ts
-//      (`build`/`prep`, CENTRE pivot), src/viewport/applyGltfUvTransform.gate.test.ts
-//      (the OTHER road, ORIGIN pivot), src/core/import/perMapUvCapture.gate.test.ts
+//      (`build`/`prep`, CENTRE pivot), viewport/applyGltfUvTransform.gate.test.ts
+//      (the OTHER road, ORIGIN pivot; gone in #1053, at d7d19591),
+//      src/core/import/perMapUvCapture.gate.test.ts
 //      (the producer); issues #550, #551 (the pivot axis), #530, #536.
 
 import { afterEach, describe, expect, it } from 'vitest';
