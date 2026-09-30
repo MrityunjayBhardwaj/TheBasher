@@ -71,7 +71,7 @@
 //      two sides); issues #471, #387.
 
 import { test, expect, type Page } from './_fixtures';
-import { ingestOnCloneRoad } from './_cloneRoadImport';
+import { recordedSave, writeRecordedSave } from './_recordedSave';
 import {
   dataIdFor,
   OBJECT_SECTIONS,
@@ -688,10 +688,11 @@ async function buildBakedRow(page: Page, restingColor: string) {
  * roads that read pixels see nothing. R7 and R8 pass on the hand-authored fixture for
  * exactly that reason, which is why the fixture survived until a rendering road asked.
  *
- * So the fixture drives the LIVE IMPORTER. Import the cube fixture through the clone road's
- * own chain (`__basher_importGltf`, via `ingestOnCloneRoad` — since #1063 the ingest door brings
- * this Draco file across native, and this row is the clone road's pair), let the real chain mint
- * the pair, then write the row's resting colour onto the data half.
+ * So the fixture is a pair the product really made. Since #1053 no import makes one — a file the
+ * native reader refuses is refused whole — and the only GltfData pair a user can have is one a load
+ * KEPT: a project saved on the clone road whose file the native reader still refuses. The row loads
+ * exactly that, a recorded save (`_recordedSave.ts`) of iridescence-quad.gltf, on the resume road,
+ * then writes the row's resting colour onto the data half.
  *
  * ⚠️ THE IDS MUST BE READ, NOT DERIVED — the same rule the baked row records, arrived at
  * from the other side. Both halves are content-addressed off `(assetRef, childName)`
@@ -700,37 +701,44 @@ async function buildBakedRow(page: Page, restingColor: string) {
  *
  * ⚠️ AND THE PAIR IS NOT WIRED TO THE SCENE ROOT, which makes this the one row where R1's
  * title is literally inaccurate. An imported child is deliberately edge-less: it reaches no
- * scene parent, and the asset clone draws it. Connecting it to `scene.children` to satisfy
+ * scene parent, and nothing draws it (the asset clone did until #1053). Connecting it to
+ * `scene.children` to satisfy
  * the phrasing would build a fixture the product never produces. The road's QUESTION — does
  * the data half's committed value reach the render with no channel, no constraint and no
  * transient — is asked in full; only the mounting path differs, which is the same latitude
  * `buildBakedRow` takes.
  */
+/** The kept import's one mesh child (iridescence-quad.gltf's node). */
+const GLTF_ROW_CHILD = 'SheenQuad';
+
 async function buildGltfRow(page: Page, restingColor: string) {
-  // #1063 — the clone road on purpose: this row is the GltfAsset pair, and cube-draco now arrives
-  // native through ingest.
-  await ingestOnCloneRoad(page, 'cube-draco.glb', 'conf-gltf');
+  const saved = recordedSave('clone-models/refused-iridescence');
+  await writeRecordedSave(page, saved);
+  await page.reload();
+  // The load says why it kept the import, and that notice covers the top toolbars until it is
+  // dismissed (#1410) — the roads below click them, so dismiss it first, as a director would.
+  await page.getByRole('button', { name: `Dismiss error for model:${saved.ref}` }).click();
 
   // Wait on the PAIR, not on a node type: `Object` alone is satisfied by the default
   // project's box before the import has done anything at all.
   await page.waitForFunction(
-    () => {
-      const nodes = (window as unknown as BasherWindow).__basher_dag!.getState().state.nodes;
+    (child) => {
+      const nodes = (window as unknown as BasherWindow).__basher_dag?.getState().state.nodes ?? {};
       return Object.keys(nodes).some((id) => {
         const dataId = nodes[id]?.inputs?.data?.node;
         return (
           nodes[id]?.type === 'Object' &&
           dataId !== undefined &&
           nodes[dataId]?.type === 'GltfData' &&
-          (nodes[dataId].params as { childName?: string }).childName === 'cube'
+          (nodes[dataId].params as { childName?: string }).childName === child
         );
       });
     },
-    undefined,
+    GLTF_ROW_CHILD,
     { timeout: 20_000 },
   );
 
-  const ids = await page.evaluate(() => {
+  const ids = await page.evaluate((child) => {
     const nodes = (window as unknown as BasherWindow).__basher_dag!.getState().state.nodes;
     for (const id of Object.keys(nodes)) {
       const dataId = nodes[id]?.inputs?.data?.node;
@@ -739,18 +747,21 @@ async function buildGltfRow(page: Page, restingColor: string) {
       if (
         nodes[id].type === 'Object' &&
         data?.type === 'GltfData' &&
-        (data.params as { childName?: string }).childName === 'cube'
+        (data.params as { childName?: string }).childName === child
       ) {
         return { objectId: id, dataId };
       }
     }
     return null;
-  });
-  expect(ids, 'gltf: the import minted no Object/GltfData pair for the cube child').not.toBeNull();
+  }, GLTF_ROW_CHILD);
+  expect(
+    ids,
+    `gltf: the kept import has no Object/GltfData pair for ${GLTF_ROW_CHILD}`,
+  ).not.toBeNull();
 
   // The row's resting colour, written onto the DATA half through the same whole-`material`
   // replace the inspector commits. Deliberately a WRITE and not a fixture value: the
-  // cube's own captured colour is #5af07a, so a road that reads the resting value from the
+  // quad's own captured colour is #e77c7c, so a road that reads the resting value from the
   // wrong half — or fails to write at all — reads that instead of #c81e5a and says so.
   await page.evaluate(
     ({ d, color }) => {
