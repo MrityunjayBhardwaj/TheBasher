@@ -600,18 +600,24 @@ export async function runAgentTurn(config: LLMConfig, options: TurnOptions): Pro
         // target=newId)] fails gate-1, because the new id doesn't exist in the
         // round's initial DAG snapshot.
         //
-        // 🔴 A THROWN FORK IS HELD, NOT PROPAGATED FROM HERE. `createFork` re-validates
-        // every op against the live shape and throws when one references a node or
-        // socket that does not exist — which is a COMMON agent mistake, not a rare
-        // one. Before this moved, the throw happened below the answer, so the chat
-        // still carried `[dag.exec] Proposed N Op(s)` alongside the error. Throwing
-        // here instead would have silently taken that line away and made the failure
-        // less legible than it was. So the error waits until the call has been
-        // answered and the line written, and is rethrown unchanged.
+        // 🔴 A REFUSED FORK ANSWERS THE CALL; IT DOES NOT END THE TURN (#1401). `createFork`
+        // re-validates every op against the live shape and the op layer refuses one that
+        // references a node or socket that does not exist, or would orphan an edge — a
+        // COMMON agent mistake, not a rare one. It used to be held and rethrown after the
+        // answer, which kept the chat's `[dag.exec]` line (#1014) but ended the turn: the
+        // model had been told "Proposed N Op(s)" and never saw why. Now the refusal IS the
+        // answer — the model reads it and can correct itself this turn, the director reads
+        // the same line in the chat, and the refused batch contributes nothing.
+        //
+        // EVERY throw from the fork is treated as the refusal, not only `OpError`: measured,
+        // the op layer refuses in three shapes — `OpError` for most, a plain `Error` from
+        // `getNode` for a missing id ("Node not found", the commonest mistake of all) and
+        // another for a malformed op. A type test would have left the commonest one ending
+        // the turn exactly as before.
         let noOpReport = '';
         let critiqueReport = '';
         let maskedReport = '';
-        let forkError: unknown;
+        let forkRefusal: string | null = null;
         if (result.ops.length > 0) {
           try {
             const before = effectiveState;
@@ -639,15 +645,16 @@ export async function runAgentTurn(config: LLMConfig, options: TurnOptions): Pro
               ),
             );
           } catch (e) {
-            forkError = e;
+            forkRefusal = e instanceof Error ? e.message : String(e);
           }
         }
 
-        const resultMessage =
-          (result.text ?? `OK (${result.ops.length} ops)`) +
-          noOpReport +
-          maskedReport +
-          critiqueReport;
+        const resultMessage = forkRefusal
+          ? `ERROR: ${forkRefusal} — nothing in this batch was proposed. Fix the op and resend it.`
+          : (result.text ?? `OK (${result.ops.length} ops)`) +
+            noOpReport +
+            maskedReport +
+            critiqueReport;
         // Wave D telemetry: tool name + outcome + duration only. No
         // args, no DAG content, no prompt text. Killswitch-respecting.
         recordEvent({
@@ -669,10 +676,7 @@ export async function runAgentTurn(config: LLMConfig, options: TurnOptions): Pro
         // Surface the result to the user in the chat too (debuggability).
         sessionStore.appendToLastAssistant(`\n\n[${acc.name}] ${resultMessage}`);
 
-        // The held fork error, now that the call is answered and the line is written.
-        if (forkError) throw forkError;
-
-        if (result.ops.length > 0) {
+        if (result.ops.length > 0 && !forkRefusal) {
           for (const op of result.ops) {
             turnOps.push(op);
             turnOpSources.push(`agent:${acc.name}`);
