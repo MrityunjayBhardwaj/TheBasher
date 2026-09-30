@@ -27,8 +27,8 @@
 // the SAME run. "The replaced one is right" alone passes a build that places every slot
 // identically; "the control is unchanged" alone passes a build that places nothing.
 //
-// REF: src/app/material/uvPlacement.ts; src/app/material/replacedMapPlacement.gate.test.ts
-//      (the unit half); issues #553, #550, #178.
+// REF: src/app/material/uvPlacement.ts; app/material/replacedMapPlacement.gate.test.ts (the
+//      clone road's unit half; gone in #1053, at 9734f82e); issues #553, #550, #178.
 //
 // #1053 — the fixture imports native and the clone road (whose `applyEditedMaps` overlay this
 // file first pinned) is retired. The question is the same on the native road: a replaced map

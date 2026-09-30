@@ -333,11 +333,8 @@ describe('#550 case 6 — the origin-pivot values have no reader, and that is EX
   const PIVOT_OF_ROAD: Record<string, 'CENTRE_PIVOT' | 'ORIGIN_PIVOT'> = {
     'src/app/materialRegistry.ts': 'CENTRE_PIVOT',
     'src/viewport/applyGltfUvTransform.ts': 'ORIGIN_PIVOT',
-    // #553 — the glTF road's OTHER half. `applyGltfUvTransform` places the textures a
-    // child INHERITS from the imported clone; this one places the textures the director
-    // REPLACES, which arrive later from OPFS on a deferred pass. Same road, so the same
-    // pivot — it was the missing caller here that let a replaced map draw unplaced.
-    'src/app/material/gltfMapOverlay.ts': 'ORIGIN_PIVOT',
+    // #553 — the glTF road's OTHER half, `gltfMapOverlay.ts` (replaced maps, ORIGIN_PIVOT),
+    // went with the clone renderer in #1053.
     // #1136 — `BakedMeshR` places the per-map placement a bake captured. The capture restates
     // whatever pivot the source drew with about the centre, so this road is the authored one's.
     'src/viewport/SceneFromDAG.tsx': 'CENTRE_PIVOT',

@@ -234,7 +234,7 @@ describe('#458 possession is asked of the schema, not of the live params', () =>
     }
   });
 
-  it('gives the imported child ordinary material rows, and the readout to the ASSET alone', () => {
+  it('gives the imported child ordinary material rows, and no glTF control to the asset either', () => {
     // 🔴 #389 INVERTED THIS ROW, AND THE INVERSION IS THE FEATURE. It used to assert that a
     // fused `GltfChild` got the bespoke `gltfMaterialEditor` when it had captured materials
     // and the read-only `gltfMaterialReadout` when it had none. Both arms are gone: the
@@ -253,10 +253,10 @@ describe('#458 possession is asked of the schema, not of the live params', () =>
     // control applies, and a filter would also hide the day a fifth control started
     // applying here.
     expect(active(data)).toEqual(['materialLink', 'materialStack']);
-    // The whole-asset node keeps the read-only readout.
+    // #1053 — the whole-asset node's read-only readout is gone too: the clone renderer published
+    // its contents, and nothing publishes any more. It gets exactly what every node gets.
     expect(active(ctxFor('GltfAsset', { assetRef: 'a' }))).toEqual([
       'materialLink',
-      'gltfMaterialReadout',
       'materialStack',
     ]);
   });

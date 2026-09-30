@@ -55,8 +55,6 @@ import { useAssetErrorStore } from './stores/assetErrorStore';
 import { LOBE_WEIGHT_WHEN_ABSENT } from '../nodes/types';
 import type { BakedTextureRef, Quat, RotationModeFields, UvPlacement, Vec3 } from '../nodes/types';
 import { useDagStore } from '../core/dag/store';
-import { useGltfMaterialStore } from './asset/gltfMaterialStore';
-import type { GltfMaterialSlot } from './asset/readGltfMaterials';
 import { getNodeType } from '../core/dag/registry';
 import { nodeRefCandidates, type NodeRefKind } from './nodeRefCandidates';
 import {
@@ -3632,77 +3630,9 @@ function ObjectSlotRows({ nodeId }: { nodeId: string }) {
   );
 }
 
-/** One read-only row inside the glTF material readout (label · value). */
-function ReadoutRow({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div className="flex items-center justify-between gap-3">
-      <span className="font-mono text-[10px] uppercase tracking-wide text-fg/40">{label}</span>
-      <span className="text-[11px] text-fg/70">{children}</span>
-    </div>
-  );
-}
-
-/** One render slot's embedded material, read-only. */
-function GltfMaterialSlotRow({ slot }: { slot: GltfMaterialSlot }) {
-  const num = (n: number | null) => (n == null ? '—' : n.toFixed(2));
-  return (
-    <div
-      data-testid={`gltf-material-slot-${slot.slot}`}
-      className="flex flex-col gap-0.5 rounded border border-border px-2 py-1.5"
-    >
-      <div className="flex items-center justify-between">
-        <span className="text-[11px] text-fg/80">{slot.materialName}</span>
-        <span className="font-mono text-[10px] text-fg/40">slot {slot.slot}</span>
-      </div>
-      <ReadoutRow label="base color">
-        {slot.color ? (
-          <span className="inline-flex items-center gap-1.5">
-            <span
-              aria-hidden
-              data-testid={`gltf-material-swatch-${slot.slot}`}
-              className="inline-block h-3 w-3 rounded-sm border border-border"
-              style={{ backgroundColor: slot.color }}
-            />
-            <span className="font-mono text-[10px] text-fg/60">{slot.color}</span>
-          </span>
-        ) : (
-          '—'
-        )}
-      </ReadoutRow>
-      <ReadoutRow label="metalness">{num(slot.metalness)}</ReadoutRow>
-      <ReadoutRow label="roughness">{num(slot.roughness)}</ReadoutRow>
-      {slot.opacity != null && slot.opacity < 1 ? (
-        <ReadoutRow label="opacity">{num(slot.opacity)}</ReadoutRow>
-      ) : null}
-      <ReadoutRow label="maps">{slot.maps.length > 0 ? slot.maps.join(', ') : '—'}</ReadoutRow>
-    </div>
-  );
-}
-
-// #389 — `GltfMapRow` lived here: one texture-map row of the glTF material editor
-// (replace / clear / reveal-in-place, with the S5 edit layer behind it). It went with
-// its only caller. Map editing for an imported mesh is not lost — `MaterialRows` draws
-// map rows for every data kind's `material`, which is now what an imported child has.
-
-function GltfMaterialReadout({ assetRef, childId }: { assetRef: string; childId: string | null }) {
-  const slots = useGltfMaterialStore((s) => s.byAsset[assetRef]);
-  const visible = (slots ?? []).filter((sl) => childId == null || sl.childId === childId);
-  if (visible.length === 0) {
-    return (
-      <div data-testid="gltf-material-readout-empty" className="px-3 py-1.5 text-[11px] text-fg/40">
-        {slots == null ? 'Materials load with the model…' : 'No materials on this part.'}
-      </div>
-    );
-  }
-  return (
-    <div data-testid="gltf-material-readout" className="flex flex-col gap-2 px-3 py-1.5">
-      {visible.map((sl) => (
-        <GltfMaterialSlotRow key={sl.slot} slot={sl} />
-      ))}
-    </div>
-  );
-}
-
+// #1053 — `GltfMaterialReadout` lived here: a read-only summary of a kept import's embedded
+// materials, published by the clone renderer as it mounted. That renderer is gone and nothing
+// published any more, so the readout could only say "Materials load with the model…" for ever.
 /** A collapsible section card. Header click toggles via
  *  inspectorSectionsStore; visual collapse combines user choice with
  *  the §5.8 default rule via resolveCollapsed. */
@@ -4030,18 +3960,6 @@ function QuaternionField({ nodeId, authored }: { nodeId: string; authored: Quat 
 
 const SECTION_CONTROL_RENDERERS: SectionControlRenderers = {
   slotSelector: (ctx) => <SlotSelector nodeId={ctx.paramsNodeId} />,
-  gltfMaterialReadout: (ctx) => (
-    <GltfMaterialReadout
-      assetRef={String((ctx.params as { assetRef?: unknown }).assetRef ?? '')}
-      // A child of an imported asset owns the name of the child it stands for;
-      // the whole-asset node does not. That possession is what "is this a
-      // child?" actually means here.
-      // Whole-asset only now (#389) — the table's gate no longer selects a child, so this
-      // is always the asset and the filter is always "all slots". Kept as an explicit null
-      // rather than dropped, because the prop still expresses the readout's own contract.
-      childId={null}
-    />
-  ),
   sceneEnvironment: (ctx) => <SceneEnvironmentControls nodeId={ctx.paramsNodeId} />,
   cameraLens: (ctx) => (
     <CameraLensControls nodeId={ctx.paramsNodeId} poseNodeId={ctx.objectNodeId} />

@@ -125,7 +125,8 @@ describe('#394 S4 — one composition decision, translated N ways', () => {
 
 describe('#394 S4 — the IR and the outbound adapter are renderer-agnostic (V32)', () => {
   // Closed on purpose, and the closure is the interesting half. `src/app/material/` also
-  // holds `gltfMaterialToOpenpbr.ts`, `gltfMapOverlay.ts` and `attachMapFromFile.ts`,
+  // holds `gltfMaterialToOpenpbr.ts` and `attachMapFromFile.ts` (and held `gltfMapOverlay.ts`
+  // until #1053),
   // which DO import three — correctly, because they translate INBOUND (a loaded
   // THREE.Material or texture becoming IR). That direction must stay allowed; it is the
   // IR itself and the OUTBOUND compile that must not know what they compile to. Sweeping

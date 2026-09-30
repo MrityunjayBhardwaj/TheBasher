@@ -59,7 +59,8 @@
 // hold. Each case still asserts its road, so a file that falls back to the file's copy reds
 // here rather than passing on the other road's drawing.
 //
-// REF: src/app/material/gltfMapOverlay.ts (`applyEditedMaps` — the write),
+// REF: app/material/gltfMapOverlay.ts (`applyEditedMaps`, the clone road's write; gone in #1053,
+//      at 9734f82e),
 //      src/viewport/SceneFromDAG.tsx (the call site this file is the only cover for),
 //      src/core/import/gltfJsonMaterialToOpenpbr.ts (`capturePerMapUvLayers` — the capture),
 //      src/app/cornerLayerNames.ts (`uvChannelOf` — a layer name resolved on the drawn mesh),

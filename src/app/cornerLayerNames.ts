@@ -56,8 +56,8 @@ export const COLOUR_BUFFER: string = cornerLayerBufferNames([{ type: 'float4' }]
  *
  * An EMPTY list means "this mesh has no layer list to resolve against", which is a different
  * claim from "this mesh has no layers": a `gltf` handle draws three's copy of the file, whose
- * buffers are numbered rather than named, and the road that draws it resolves by number
- * instead (`gltfMapOverlay`). Either way no name resolves here, which is the answer that
+ * buffers were numbered rather than named, and the road that drew it resolved by number
+ * instead (`gltfMapOverlay`, gone with the clone renderer in #1053). Either way no name resolves here, which is the answer that
  * makes a material naming a layer decline rather than guess.
  */
 export function cornerLayerNamesOf(descriptor: GeometryDescriptor): readonly NamedCornerLayer[] {

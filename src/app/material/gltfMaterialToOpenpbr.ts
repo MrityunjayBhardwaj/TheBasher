@@ -17,7 +17,8 @@
 // bidirectional, so a captured material renders identically to its glTF source.
 //
 // REF: #178 (glTF materials → OpenPBR DAG); src/app/material/openpbrToThree.ts
-//      (the forward adapter); src/app/asset/readGltfMaterials.ts (field-read style).
+//      (the forward adapter); app/asset/readGltfMaterials.ts (field-read style;
+//      gone in #1053, at 9734f82e).
 
 import type * as THREE from 'three';
 import type { InlineMaterialSpec } from '../../nodes/types';

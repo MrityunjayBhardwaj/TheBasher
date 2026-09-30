@@ -81,10 +81,10 @@ test.describe('#178 S4 — editable glTF material inspector', () => {
     // The MATERIAL section is default-collapsed — expand it.
     await openInspectorSection(page, 'material');
 
-    // The EDITABLE editor renders (not the read-only readout).
+    // The EDITABLE editor renders. (It used to assert the read-only readout did NOT; that readout
+    // went with the clone renderer in #1053, so the assertion could no longer fail.)
     const editor = page.getByTestId(`inspector-material-editor-${child!.id}`);
     await expect(editor).toBeVisible();
-    await expect(page.getByTestId('gltf-material-readout')).toHaveCount(0);
 
     // Type a new base colour into the hex field → commit on Enter.
     const hex = page.getByTestId(`inspector-colorhex-${child!.id}-material.base.color`);
