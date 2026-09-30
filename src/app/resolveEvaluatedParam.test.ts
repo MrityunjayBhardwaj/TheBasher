@@ -9,6 +9,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { applyOp } from '../core/dag';
+import { __setEvalPerfHook } from '../core/dag/evaluator';
 import type { DagState } from '../core/dag/state';
 import type { Op } from '../core/dag/types';
 import { buildDefaultDagState } from '../core/project/default';
@@ -267,5 +268,52 @@ describe('resolveEvaluatedParam (C2 — generic non-transform resolver)', () => 
     expect(src).not.toMatch(/\bslerp\b/i);
     // It MUST call .sample (the render-identical path).
     expect(src).toMatch(/\.sample\(/);
+  });
+});
+
+describe('#1392 — reading one param evaluates only that param’s drivers', () => {
+  /** The box with `material.metalness` and `material.roughness` each driven by its own wired
+   *  Math node. With no cache every node a read reaches is an evaluator miss, so the miss count
+   *  is exactly the set of nodes the read evaluated. */
+  function twoDrivenParams(): DagState {
+    let state = buildDefaultDagState();
+    const ops: Op[] = [];
+    for (const [tag, paramPath] of [
+      ['m', 'material.metalness'],
+      ['r', 'material.roughness'],
+    ] as const) {
+      ops.push(
+        { type: 'addNode', nodeId: `math_${tag}`, nodeType: 'Math', params: { op: 'add' } },
+        {
+          type: 'addNode',
+          nodeId: `drv_${tag}`,
+          nodeType: 'ParamDriver',
+          params: { target: BOX_ID, paramPath, blendMode: 'replace', order: 0 },
+        },
+        {
+          type: 'connect',
+          from: { node: `math_${tag}`, socket: 'out' },
+          to: { node: `drv_${tag}`, socket: 'in' },
+        },
+      );
+    }
+    for (const op of ops) state = applyOp(state, op).next;
+    return state;
+  }
+
+  it('one driven param read evaluates its driver and its source, not the other param’s', () => {
+    const state = twoDrivenParams();
+    let misses = 0;
+    __setEvalPerfHook((_ms, hit) => {
+      if (!hit) misses++;
+    });
+    try {
+      const got = resolveEvaluatedParam(state, BOX_ID, 'material.metalness', ctxAt(0));
+      expect(got?.value).toBe(0); // the driver's Math reads 0 + 0
+      // drv_m + math_m. Enumerating every driver on the box first evaluated drv_r + math_r too.
+      expect(misses).toBe(2);
+    } finally {
+      __setEvalPerfHook(null);
+    }
   });
 });

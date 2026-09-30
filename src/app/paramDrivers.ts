@@ -369,6 +369,10 @@ export function driverChannelValuesForTarget(
   targetId: string,
   ctx: EvalCtx,
   cache?: EvaluatorCache,
+  /** Narrow to one `(target, paramPath)` band (#1392). A reader of one param evaluates only
+   *  that param's drivers; each can walk an expensive chain. Undefined = every band, which
+   *  is what the fold seams want. */
+  paramPath?: string,
 ): KeyframeChannelValue[] {
   const out: KeyframeChannelValue[] = [];
   // #315 — the ordered stack, ACTIVE members only. A muted driver is dropped HERE, at
@@ -376,7 +380,7 @@ export function driverChannelValuesForTarget(
   // driver (a Lag/Solver) is never replayed at all. Both fold seams sort by `order`
   // again downstream, so this sort is about the ENUMERATION being deterministic — what
   // the panel lists is what the fold folds.
-  for (const node of driverStackForTarget(state.nodes, targetId)) {
+  for (const node of driverStackForTarget(state.nodes, targetId, paramPath)) {
     try {
       const transformVec = transformVecSourceOf(node);
       if (transformVec) {

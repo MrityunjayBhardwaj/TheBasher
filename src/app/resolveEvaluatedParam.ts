@@ -125,7 +125,9 @@ export function resolveEvaluatedParam(
   //     strips (H40 — the pull twin of the push overlay). No driver → `matches`
   //     unchanged → byte-identical. This is the READ side; the render side
   //     (SceneFromDAG useLayeredChannels) consumes the SAME enumerator.
-  for (const v of driverChannelValuesForTarget(state, nodeId, ctx, cache)) {
+  //     Narrowed to this param's band at enumeration (#1392), so a driver on another param
+  //     of the node is never evaluated for this read.
+  for (const v of driverChannelValuesForTarget(state, nodeId, ctx, cache, paramPath)) {
     if (v.paramPath === paramPath) matches.push(v);
   }
 
