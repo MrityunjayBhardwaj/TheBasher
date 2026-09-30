@@ -41,6 +41,7 @@ import {
   addableConstraint,
   buildAddConstraintOps,
   buildRemoveConstraintOps,
+  liveConstraintOfType,
 } from '../../../app/constraintStack';
 import { relationalPoseStackForTarget } from '../../../app/nodeConstraints';
 import { resolveWorldTransform } from '../../../app/resolveWorldTransform';
@@ -77,13 +78,6 @@ function targetProblem(state: DagState, target: string, cache: EvaluatorCache): 
     return `target "${target}" (${state.nodes[target].type}) is not placed in the scene, so nothing a constraint writes would show.`;
   }
   return null;
-}
-
-/** The LIVE members of `type` constraining `target`, bottom → top — the panel's own list. */
-function liveMembers(state: DagState, target: string, type?: string): NodeId[] {
-  return relationalPoseStackForTarget(state.nodes, target)
-    .map((m) => m.nodeId)
-    .filter((id) => type === undefined || state.nodes[id]?.type === type);
 }
 
 /** Every member — muted ones too — for a removal: a bypassed constraint is still one. */
@@ -138,9 +132,7 @@ export const constrainMutator: MutatorDefinition<ConstrainSpec> = {
   },
   build(spec, _closure: ClosureSet, state: DagState): Op[] {
     const kind = addableConstraint(spec.type)!;
-    const live = liveMembers(state, spec.target, spec.type);
-    // The TOP live member is the one the fold lets win, so it is the one to re-aim.
-    const existing = live[live.length - 1];
+    const existing = liveConstraintOfType(state, spec.target, spec.type);
     if (existing) {
       return [{ type: 'setParam', nodeId: existing, paramPath: kind.pointer, value: spec.to }];
     }

@@ -82,6 +82,24 @@ export const ADDABLE_CONSTRAINTS: ReadonlyArray<AddableConstraint> = [
   },
 ];
 
+/**
+ * #1404 — the constraint a second request should RE-POINT rather than stack a rival beside: the
+ * LIVE member of `type` on `targetId` that the fold lets win, i.e. the top of the stack. One
+ * answer, because two roads asked it separately and answered differently (first by sorted id,
+ * muted included — which could re-aim a bypassed constraint and change nothing on screen, or
+ * the one the fold lets LOSE). Null when there is none, and the caller adds one.
+ */
+export function liveConstraintOfType(
+  state: DagState,
+  targetId: string,
+  type: string,
+): string | null {
+  const live = relationalPoseStackForTarget(state.nodes, targetId).filter(
+    (m) => state.nodes[m.nodeId]?.type === type,
+  );
+  return live.length > 0 ? live[live.length - 1].nodeId : null;
+}
+
 /** The addable row for `type`, or undefined. */
 export function addableConstraint(type: string): AddableConstraint | undefined {
   return ADDABLE_CONSTRAINTS.find((c) => c.type === type);
