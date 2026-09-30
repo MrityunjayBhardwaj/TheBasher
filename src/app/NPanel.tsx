@@ -3483,14 +3483,17 @@ function ObjectSlotRows({ nodeId }: { nodeId: string }) {
   const frame = useTimeStore((s) => s.frame);
   const seconds = useTimeStore((s) => s.seconds);
   const normalized = useTimeStore((s) => s.normalized);
-  const table = objectSlotTable(state, nodeId, { time: { frame, seconds, normalized } });
+  // #1387 — a stable cache: this body runs on every playhead change, and uncached each run
+  // re-evaluated everything under the Object (a character's whole-clip retarget, 4× a frame).
+  const cache = useMemo<EvaluatorCache>(() => createEvaluatorCache(), []);
+  const table = objectSlotTable(state, nodeId, { time: { frame, seconds, normalized } }, cache);
 
   // No data to slot. Say WHICH of the three absences it is, through the same capability
   // table the section classification uses — an Empty, a tracked gap, or a category answer.
   // Reporting them all as "no mesh data" would encode #528 as a design decision, and would
   // leave that table a set of grounded answers nothing reads.
   if (!table) {
-    const absence = slotAbsenceOf(state, nodeId, { time: { frame, seconds, normalized } });
+    const absence = slotAbsenceOf(state, nodeId, { time: { frame, seconds, normalized } }, cache);
     return (
       <div
         className={`px-3 py-1.5 text-[11px] ${absence?.why === 'not-yet' ? 'text-warn' : 'text-fg/50'}`}

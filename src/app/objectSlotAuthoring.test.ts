@@ -24,6 +24,7 @@
 
 import { beforeEach, describe, expect, it } from 'vitest';
 import { __resetRegistryForTests, applyOp, emptyDagState, type DagState } from '../core/dag';
+import { __setEvalPerfHook, createEvaluatorCache } from '../core/dag/evaluator';
 import type { EvalCtx, Op } from '../core/dag/types';
 import { registerAllNodes } from '../nodes/registerAll';
 import { makeSplitCube } from '../test-utils/splitCube';
@@ -162,6 +163,25 @@ describe('#645 WHY an Object has no slot list — three absences, three sentence
     const absence = slotAbsenceOf(objectOver('LightData'), 'obj', CTX);
     expect(absence?.why).toBe('never');
     expect(absence?.message).toContain('LightData');
+  });
+
+  it('#1387 — asked again through the same cache, it re-runs nothing', () => {
+    // The Slots section asks on every playhead change. The absence path resolves the table
+    // AND the data's kind; both must go through the section's cache, or every frame re-runs
+    // the data's upstream (on a character, the whole-clip retarget).
+    const state = objectOver('CurveData');
+    const cache = createEvaluatorCache();
+    expect(slotAbsenceOf(state, 'obj', CTX, cache)?.why).toBe('not-yet');
+    let misses = 0;
+    __setEvalPerfHook((_ms, hit) => {
+      if (!hit) misses++;
+    });
+    try {
+      expect(slotAbsenceOf(state, 'obj', CTX, cache)?.why).toBe('not-yet');
+    } finally {
+      __setEvalPerfHook(null);
+    }
+    expect(misses).toBe(0);
   });
 
   it('a curve says NOT-YET and names the issue — a gap, not a limit', () => {

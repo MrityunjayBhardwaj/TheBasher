@@ -31,7 +31,7 @@
 //      docs/OPERATORS-AND-LIGHTING-DESIGN.md §5 / §2.2; vyapti V58; issue #415.
 
 import type { GeometryDescriptor, GeometryRef, MirrorAxis, ObjectData, Vec3 } from '../nodes/types';
-import { evaluate } from '../core/dag/evaluator';
+import { evaluate, type EvaluatorCache } from '../core/dag/evaluator';
 import { getNodeType } from '../core/dag/registry';
 import type { DagState } from '../core/dag/state';
 import { dataSectionCapability } from './dataSectionCapability';
@@ -237,14 +237,21 @@ export function canModifyGeometry(state: DagState, nodeId: string): boolean {
  * ([[H48]] — a read-side resolver re-evaluating per inspector row is what produced the
  * measured ~458ms edit-lag on a heavy asset). A zustand selector runs on every store
  * change, including every playhead tick while playing.
+ *
+ * #1387 — a caller that asks per frame passes its stable `cache`, so the data's upstream
+ * (a character's whole-clip retarget) runs once per graph change instead of per ask.
  */
-export function resolveDataKind(state: DagState, nodeId: string): ObjectData['kind'] | null {
+export function resolveDataKind(
+  state: DagState,
+  nodeId: string,
+  cache?: EvaluatorCache,
+): ObjectData['kind'] | null {
   const node = state.nodes[nodeId];
   if (!node) return null;
   const def = getNodeType(node.type);
   if (def?.outputs.out?.type !== 'ObjectData') return null;
   try {
-    const value = evaluate(state, nodeId).value as ObjectData | undefined;
+    const value = evaluate(state, nodeId, { cache }).value as ObjectData | undefined;
     return value?.kind ?? null;
   } catch {
     return null;

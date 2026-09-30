@@ -167,7 +167,7 @@ export function slotAbsenceOf(
   if (objectSlotTable(state, objectId, ctx, cache)) return null;
 
   const dataId = (node.inputs as { data?: { node?: string } } | undefined)?.data?.node;
-  const kind = dataId ? resolveDataKind(state, dataId) : null;
+  const kind = dataId ? resolveDataKind(state, dataId, cache) : null;
   if (!kind) {
     return {
       why: 'no-data',

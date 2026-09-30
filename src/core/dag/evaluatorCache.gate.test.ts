@@ -56,6 +56,30 @@ interface Origin {
 }
 
 const ORIGINS: Record<string, Origin> = {
+  'src/viewport/followScan.ts · scanForFollow → collectSkeletonObjects': {
+    count: 1,
+    frequency: 'per-frame',
+    why: "EditorViewCamera's frame loop rescans every 15th frame while a view lock is active, paused or not. Measured on the AI walk: 3 whole-clip retargets per 10 frames (~185 ms per scan).",
+    issue: 1388,
+  },
+  'src/app/MaterialStackControls.tsx · MaterialStackControls → resolveDataKind': {
+    count: 1,
+    frequency: 'per-edit',
+    why: "Render body on graph change: the data's kind decides which material operators to offer.",
+    issue: 1315,
+  },
+  'src/app/ModifierStackControls.tsx · ModifierStackControls → resolveDataKind': {
+    count: 1,
+    frequency: 'per-edit',
+    why: "Render body on graph change: the data's kind decides which modifiers to offer.",
+    issue: 1315,
+  },
+  'src/app/modifierGeometry.ts · canWearMaterial → resolveDataKind': {
+    count: 1,
+    frequency: 'per-edit',
+    why: "MaterialStackControls' render body on graph change; also the add-material action.",
+    issue: 1315,
+  },
   'src/agent/critic/maskedWrites.ts · renderedValue → resolveEvaluatedParam': {
     count: 1,
     frequency: 'per-action',
@@ -91,18 +115,6 @@ const ORIGINS: Record<string, Origin> = {
     frequency: 'per-edit',
     why: 'Memo on (nodes, kind, node id).',
     issue: 1315,
-  },
-  'src/app/NPanel.tsx · ObjectSlotRows → objectSlotTable': {
-    count: 1,
-    frequency: 'per-frame',
-    why: "Subscribes to the playhead and resolves the slot table in its render body, unmemoised. Measured with the Slots section open: the walker's Object re-runs the whole-clip retarget 4x per frame (~4 fps).",
-    issue: 1387,
-  },
-  'src/app/NPanel.tsx · ObjectSlotRows → slotAbsenceOf': {
-    count: 1,
-    frequency: 'per-frame',
-    why: 'Same render body, when the Object has no slot table; re-resolves the table and the data kind every frame.',
-    issue: 1387,
   },
   'src/app/NPanel.tsx · takeOver → buildOverrideSlotOp': {
     count: 1,
@@ -239,12 +251,6 @@ const ORIGINS: Record<string, Origin> = {
     why: "ModifierStackControls' render body on graph change; also the add-modifier action and agent tool.",
     issue: 1315,
   },
-  'src/app/modifierGeometry.ts · resolveDataKind → evaluate': {
-    count: 1,
-    frequency: 'per-edit',
-    why: "Modifier/Material stack controls' render bodies on graph change; per frame only through ObjectSlotRows when an Object has no slot table (that row's issue).",
-    issue: 1315,
-  },
   'src/app/resolveMaterialFieldOwner.ts · mapPresenceBelow → evaluate': {
     count: 1,
     frequency: 'per-edit',
@@ -311,16 +317,11 @@ const ORIGINS: Record<string, Origin> = {
     why: 'Render body on graph change (time read through getState, not subscribed): one uncached pose walk per edit when the camera focuses on its target.',
     issue: 1315,
   },
-  'src/viewport/followScan.ts · scanForFollow → collectSkeletonObjects': {
-    count: 1,
-    frequency: 'per-frame',
-    why: "EditorViewCamera's frame loop rescans every 15th frame while a view lock is active, paused or not. Measured on the AI walk: 3 whole-clip retargets per 10 frames (~185 ms per scan).",
-    issue: 1388,
-  },
 };
 
 /** Every function that takes a cache, as `name@file`. Pinned so the census cannot narrow. */
 const TAKERS: string[] = [
+  'resolveDataKind@src/app/modifierGeometry.ts',
   'aimTargetWorld@src/app/nodeConstraints.ts',
   'appendComputedSourceRows@src/timeline/layerChannelRows.ts',
   'applyGhostPoseBand@src/viewport/DiffOverlay.tsx',

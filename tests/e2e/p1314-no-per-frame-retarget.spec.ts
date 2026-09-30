@@ -92,6 +92,23 @@ test('the example evaluates its retarget once, not every frame', async ({ page }
     await select(id);
     await row(`playing, ${id} selected`, true);
   }
+
+  // #1387 — the inspector's Slots section (collapsed by default) resolves the selection's slot
+  // table in its render body, which follows the playhead. Open, it must not re-run the walk.
+  for (const id of ['n_nativeObject_843e4bd5', 'n_nativeSkeleton_35c8723b_object']) {
+    await select(id);
+    const section = page.getByTestId('inspector-section-slots');
+    await expect(section).toBeVisible();
+    if ((await section.getAttribute('data-collapsed')) !== null)
+      await page.getByTestId('inspector-section-toggle-slots').click();
+    await expect(
+      page.locator(
+        `[data-testid="inspector-object-slots-${id}"],[data-testid="inspector-slots-none-${id}"]`,
+      ),
+    ).toBeVisible();
+    await row(`playing, ${id} selected, Slots open`, true);
+  }
+
   expect(rows.filter(([, n]) => n > 0)).toEqual([]);
 
   // The walk still moves: the Hips' drawn matrix differs between two times.
