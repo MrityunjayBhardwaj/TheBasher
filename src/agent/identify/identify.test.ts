@@ -570,3 +570,86 @@ describe('shouldRunIdentifyRound', () => {
     expect(shouldRunIdentifyRound('move the light', empty)).toBe(true);
   });
 });
+
+// ---------------------------------------------------------------------------
+// #336 — the name strategy
+// ---------------------------------------------------------------------------
+
+describe('identify hears a node by its name (#336)', () => {
+  const rename = (s: DagState, nodeId: string, name: string) =>
+    applyOp(s, { type: 'setMeta', nodeId, name }).next;
+  const ids = (r: ReturnType<typeof identify>) =>
+    r.type === 'match'
+      ? [...r.selectors].sort()
+      : r.type === 'ambiguous'
+        ? r.candidates.map((c) => c.id).sort()
+        : [];
+
+  it('a bare name commits to the node that carries it, in any case', () => {
+    const s = rename(buildScene(), 'greenCube', 'Hero');
+    for (const q of ['Hero', 'hero', 'the Hero']) {
+      const r = identify({ query: q }, s);
+      expect(r.type, q).toBe('match');
+      expect(ids(r), q).toEqual(['greenCube']);
+    }
+  });
+
+  it('"called" / "named" decide among the nodes the phrase before them names', () => {
+    const s = rename(buildScene(), 'greenCube', 'Hero');
+    expect(ids(identify({ query: 'the cube called Hero' }, s))).toEqual(['greenCube']);
+    expect(ids(identify({ query: 'the cube named "Hero"' }, s))).toEqual(['greenCube']);
+    // The phrase narrows: no SPHERE is named Hero, so this is a no-match, not the cube.
+    const sphere = identify({ query: 'the sphere called Hero' }, s);
+    expect(sphere.type).toBe('no-match');
+  });
+
+  it('"called X" with nothing named X is a no-match that says so, never the type instead', () => {
+    const r = identify({ query: 'the cube called Ghost' }, buildScene());
+    expect(r.type).toBe('no-match');
+    expect(r.type === 'no-match' && r.rationale).toMatch(/named "Ghost"/);
+  });
+
+  it('a type noun keeps its type meaning even where something is named after it', () => {
+    // As an imported Blender file names its default cube "Cube".
+    const s = rename(buildScene(), 'redCube', 'Cube');
+    const r = identify({ query: 'the cube' }, s);
+    expect(r.type).toBe('ambiguous');
+    expect(ids(r)).toEqual(['blueCube', 'greenCube', 'redCube']);
+  });
+
+  it('two nodes sharing a name are ambiguous between them, and only them', () => {
+    let s = rename(buildScene(), 'redCube', 'Twin');
+    s = rename(s, 'sphere1', 'Twin');
+    const r = identify({ query: 'Twin' }, s);
+    expect(r.type).toBe('ambiguous');
+    expect(ids(r)).toEqual(['redCube', 'sphere1']);
+  });
+
+  it('the exact spelling wins over a case-insensitive one', () => {
+    let s = rename(buildScene(), 'redCube', 'Hero');
+    s = rename(s, 'blueCube', 'HERO');
+    expect(ids(identify({ query: 'HERO' }, s))).toEqual(['blueCube']);
+  });
+
+  it('the name ends where a known name ends, so a trailing instruction does not swallow it', () => {
+    const s = rename(buildScene(), 'greenCube', 'Hero');
+    expect(ids(identify({ query: 'rotate the cube called Hero by 90 degrees' }, s))).toEqual([
+      'greenCube',
+    ]);
+  });
+
+  it('the longest name that fits wins, so a name with spaces is kept whole', () => {
+    let s = rename(buildScene(), 'redCube', 'Hero');
+    s = rename(s, 'greenCube', 'Hero Two');
+    expect(ids(identify({ query: 'the cube called Hero Two, please' }, s))).toEqual(['greenCube']);
+  });
+
+  it('a node that carries the name by following a match is not counted twice', () => {
+    let s = rename(buildScene(), 'greenCube', 'Hero');
+    s = applyOp(s, { type: 'setMeta', nodeId: 'blueCube', nameFrom: 'greenCube' }).next;
+    // The follower really does carry the name (the reducer copies it, #1122) …
+    expect(s.nodes.blueCube.meta?.name).toBe('Hero');
+    // … and the name still means the one node it belongs to.
+    expect(ids(identify({ query: 'Hero' }, s))).toEqual(['greenCube']);
+  });
+});

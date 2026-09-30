@@ -24,6 +24,7 @@ import type { DagState } from '../../core/dag/state';
 import type { Node, NodeId, NodeTypeId } from '../../core/dag/types';
 import type { Candidate, IdentifyArgs, IdentifyResult, IdentifyStrategy } from './types';
 import { COMMIT_THRESHOLD, deriveConfidence } from './confidence';
+import { ownName } from '../../core/dag/nodeName';
 import { SCENE_OBJECT_KINDS, nodeTypeFor } from '../../app/addPrimitives';
 import { lightKindOf } from '../../app/lightNode';
 import { cameraProjectionOf, type CameraProjection } from '../../app/cameraNode';
@@ -131,6 +132,13 @@ export function identify(
       strategy: 'selection',
     };
   }
+
+  // 2b. Name strategy (#336). A node's own name is the label the outliner shows, the one a
+  //     rename writes, and the one "called"/"named" forces an identify round to hear
+  //     (`shouldRunIdentifyRound`). It was never read, so "the cube called Hero" came back
+  //     ambiguous between every cube and "Hero" alone came back no-match.
+  const byName = nameStrategy(args, raw, q, state, hint, selectedNodeIds);
+  if (byName) return byName;
 
   // 3. Type-filter strategy. Resolve a node-type alias from the query
   //    (e.g. "cube" → BoxMesh) or honor an explicit args.filter.types.
@@ -251,6 +259,91 @@ export function identify(
 // ---------------------------------------------------------------------------
 // Decision: commit vs ambiguous (P-6 confidence threshold)
 // ---------------------------------------------------------------------------
+
+/** "the cube called Hero" → the name "Hero" and the phrase "the cube" before it. */
+const NAME_MARKER = /^(.*?)\b(?:named|called)\s+["'“‘]?(.+?)["'”’]?\s*$/i;
+
+/**
+ * #336 — resolve by a node's own name, or return null to let the type ladder answer.
+ *
+ * - "called X" / "named X": the director is naming, so the name decides. The phrase before
+ *   the marker narrows it ("the cube called Hero" → cubes named Hero). No node carrying the
+ *   name is a no-match with a reason, never a fall back to the type: the colour-and-type
+ *   conjunction below refuses the same widening.
+ * - A bare query ("Hero") is a name only when it is not a type noun. "the cube" keeps its
+ *   type meaning even where something is named "Cube", as imported Blender files often are.
+ *
+ * Case-exact hits are preferred over case-insensitive ones. A node that carries the name
+ * because it FOLLOWS a matched node (`meta.nameFrom`, #1122) is the same thing counted twice,
+ * so it is dropped.
+ */
+function nameStrategy(
+  args: IdentifyArgs,
+  raw: string,
+  q: string,
+  state: DagState,
+  hint: 'unique' | 'multiple-allowed',
+  selectedNodeIds: ReadonlySet<NodeId> | undefined,
+): IdentifyResult | null {
+  const marked = NAME_MARKER.exec(raw);
+  const tail = (marked ? marked[2] : raw.replace(/^the\s+/i, '')).trim();
+  if (tail === '') return null;
+  if (!marked && inferNodeTypes(q) !== null) return null;
+
+  const nameOf = (n: Node) => ownName(n)?.trim().toLowerCase();
+  const known = new Set(Object.values(state.nodes).map(nameOf));
+  // After a marker the model may pass the whole instruction ("… called Hero by 90 degrees"),
+  // so the name is the LONGEST leading run of words that some node is called — which keeps a
+  // name with spaces in it whole. With none, the reason quotes what followed the marker.
+  const words = tail.split(/\s+/);
+  let wanted = tail;
+  if (marked) {
+    for (let k = words.length; k > 0; k--) {
+      const run = words
+        .slice(0, k)
+        .join(' ')
+        .replace(/["'\u201c\u201d\u2018\u2019.,!?]+$/, '');
+      if (known.has(run.toLowerCase())) {
+        wanted = run;
+        break;
+      }
+    }
+  }
+
+  const named = Object.values(state.nodes).filter((n) => nameOf(n) === wanted.toLowerCase());
+  const exact = named.filter((n) => ownName(n)?.trim() === wanted);
+  let hits = exact.length > 0 ? exact : named;
+  const hitIds = new Set(hits.map((n) => n.id));
+  hits = hits.filter((n) => !(n.meta?.nameFrom && hitIds.has(n.meta.nameFrom)));
+
+  const phrase = marked?.[1].trim() ?? '';
+  if (marked && phrase !== '' && hits.length > 0) {
+    const narrowed = identify(
+      { ...args, query: phrase, hint: 'multiple-allowed' },
+      state,
+      selectedNodeIds,
+    );
+    if (narrowed.type === 'match') {
+      const within = new Set(narrowed.selectors);
+      hits = hits.filter((n) => within.has(n.id));
+    }
+  }
+
+  if (hits.length === 0) {
+    return marked
+      ? {
+          type: 'no-match',
+          rationale: `No node${phrase ? ` matching "${phrase}"` : ''} is named "${wanted}".`,
+        }
+      : null;
+  }
+  return commitMatch(
+    hits.map((n) => toCandidate(state, n)),
+    'name',
+    `Resolved "${raw}" by name "${wanted}" → ${hits.length} node(s).`,
+    hint,
+  );
+}
 
 function commitMatch(
   candidates: Candidate[],
