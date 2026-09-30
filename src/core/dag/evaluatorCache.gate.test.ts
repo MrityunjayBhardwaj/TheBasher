@@ -395,6 +395,14 @@ export function ctlOrphan(s: DagState, keep: boolean) {
   const cache = keep ? held : undefined;
   return resolveWorldTransform(s, 'x', ctx, cache);
 }
+export function ctlOrphanInTaker(s: DagState, cache?: EvaluatorCache) {
+  const own = cache && Math.random() > 0.5 ? held : undefined;
+  return resolveWorldTransform(s, 'x', ctx, own);
+}
+export function ctlForwardThroughBag(s: DagState, opts: { cache?: EvaluatorCache }) {
+  const at = { ...opts, ctx };
+  return evaluate(s, 'x', at);
+}
 `;
 
 const CONTROL_REL = 'src/core/dag/__cacheCensusControl__.ts';
@@ -423,6 +431,10 @@ describe('#1386 — production walks that start with no cache held', () => {
       ctlPassPositional: 'pass',
       ctlForward: 'forward',
       ctlOrphan: 'orphan',
+      // #1390 — inside a function that takes a cache, a maybe-undefined local it made itself
+      // is still an origin; its own options object handed on is not.
+      ctlOrphanInTaker: 'orphan',
+      ctlForwardThroughBag: 'forward',
     });
     // A function that forwards its own optional cache becomes a taker itself.
     expect(census.takers.map((t) => `${t.name}@${t.file}`)).toContain(`ctlForward@${CONTROL_REL}`);

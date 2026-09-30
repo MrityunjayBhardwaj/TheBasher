@@ -11,11 +11,11 @@
 // declaration by the TypeScript checker, and the argument is classified by its TYPE:
 //
 //   pass     — the argument is definitely an `EvaluatorCache`.
-//   forward  — it may be `undefined`, inside a function that itself takes a cache (the caller's
-//              own optional `cache` handed on). Not a gap: the gap, if any, is wherever the
-//              chain starts, and that start is its own row.
-//   orphan   — it may be `undefined`, but nothing around the call took a cache: a local that
-//              is `undefined` on some path. That IS a start, so it counts as an origin.
+//   forward  — it may be `undefined`, and it traces back to a parameter: the caller's own
+//              optional `cache` (or options object) handed on. Not a gap: the gap, if any, is
+//              wherever the chain starts, and that start is its own row.
+//   orphan   — it may be `undefined` and does not trace back to a parameter: a local that is
+//              `undefined` on some path. That IS a start, so it counts as an origin (#1390).
 //   none     — no cache reaches the callee (argument absent, `undefined`, or a bag without one).
 //   fresh    — a cache made inline (`createEvaluatorCache()` or any call returning one), which
 //              dies with the call.
@@ -188,10 +188,58 @@ export function runCacheCensus(extra: Record<string, string> = {}): CacheCensus 
     const optional = !!(prop.flags & ts.SymbolFlags.Optional) || mayBeUndefined(propType);
     return optional ? 'forward' : 'pass';
   };
-  /** True when some function around `node` is itself a cache taker (so it has one to hand on). */
-  const insideTaker = (node: ts.Node): boolean => {
-    for (let n = node.parent; n; n = n.parent) if (takers.has(n)) return true;
+  /**
+   * True when `expr` is a value this function was HANDED: a parameter, read through property
+   * access, a local initialised from one, an object literal whose own `cache` (or a spread) is
+   * one, or a conditional whose both branches are (#1390). A maybe-undefined cache that does not
+   * trace back to a parameter was made here, so the walk starts here.
+   */
+  /** Strip parentheses, `as`, `satisfies`, `!` and `<T>` — none of them changes which value it is. */
+  const unwrap = (expr: ts.Expression): ts.Expression => {
+    let e = expr;
+    while (
+      ts.isParenthesizedExpression(e) ||
+      ts.isAsExpression(e) ||
+      ts.isSatisfiesExpression(e) ||
+      ts.isNonNullExpression(e) ||
+      ts.isTypeAssertionExpression(e)
+    )
+      e = e.expression;
+    return e;
+  };
+  const rootedInParam = (expr: ts.Expression, depth = 0): boolean => {
+    if (depth > 8) return false;
+    const e = unwrap(expr);
+    if (ts.isIdentifier(e)) return symbolRooted(checker.getSymbolAtLocation(e), depth);
+    if (ts.isPropertyAccessExpression(e) || ts.isElementAccessExpression(e))
+      return rootedInParam(e.expression, depth + 1);
+    if (ts.isConditionalExpression(e))
+      return rootedInParam(e.whenTrue, depth + 1) && rootedInParam(e.whenFalse, depth + 1);
+    if (ts.isObjectLiteralExpression(e)) {
+      for (const p of e.properties) {
+        if (!p.name || !ts.isIdentifier(p.name) || p.name.text !== 'cache') continue;
+        if (ts.isPropertyAssignment(p)) return rootedInParam(p.initializer, depth + 1);
+        // `{ cache }` — the symbol AT the name is the property; the value it reads is this one.
+        if (ts.isShorthandPropertyAssignment(p))
+          return symbolRooted(checker.getShorthandAssignmentValueSymbol(p), depth + 1);
+      }
+      return e.properties.some(
+        (p) => ts.isSpreadAssignment(p) && rootedInParam(p.expression, depth + 1),
+      );
+    }
     return false;
+  };
+  const symbolRooted = (sym: ts.Symbol | undefined, depth: number): boolean => {
+    const decl = sym?.valueDeclaration;
+    if (!decl) return false;
+    if (ts.isParameter(decl)) return true;
+    let n: ts.Node = decl;
+    while (ts.isBindingElement(n) || ts.isObjectBindingPattern(n) || ts.isArrayBindingPattern(n))
+      n = n.parent;
+    if (ts.isParameter(n)) return true;
+    return (
+      ts.isVariableDeclaration(n) && !!n.initializer && rootedInParam(n.initializer, depth + 1)
+    );
   };
   const enclosingName = (node: ts.Node): string => {
     for (let n = node.parent; n; n = n.parent) {
@@ -220,7 +268,7 @@ export function runCacheCensus(extra: Record<string, string> = {}): CacheCensus 
             taker.shape === 'positional'
               ? classifyValue(argExpr, argExpr && checker.getTypeAtLocation(argExpr))
               : classifyBag(argExpr);
-          const arg = raw === 'forward' && !insideTaker(node) ? 'orphan' : raw;
+          const arg = raw === 'forward' && !(argExpr && rootedInParam(argExpr)) ? 'orphan' : raw;
           calls.push({
             file: rel(sf),
             enclosing: enclosingName(node),
