@@ -355,9 +355,10 @@ describe('#553 case 7 — the slot vocabulary comes from the ONE table, not a lo
   });
 
   it('CONTROL — the census can see such a table when there IS one', () => {
-    // The same scan over the module that legitimately owns the correspondence, so
-    // an empty result above means "folded in", never "the scan reads nothing".
-    const code = stripComments(readFileSync(join(__dirname, 'openpbrToThree.ts'), 'utf8'));
+    // The same scan over the module that legitimately owns the correspondence — the slot
+    // table (#1324), which `THREE_SLOT_OF` is read off — so an empty result above means
+    // "folded in", never "the scan reads nothing".
+    const code = stripComments(readFileSync(join(__dirname, '../../nodes/types.ts'), 'utf8'));
     for (const three of Object.values(THREE_SLOT_OF)) {
       expect(code).toContain(`'${three}'`);
     }

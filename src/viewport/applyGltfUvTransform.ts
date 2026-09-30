@@ -26,6 +26,7 @@
 
 import type * as THREE from 'three';
 import type { UvPlacement } from '../nodes/types';
+import { BAKED_MAP_SLOTS } from '../nodes/materialSchema';
 import type { ThreeMapUvTransforms } from '../app/material/openpbrToThree';
 import {
   isIdentityPlacement,
@@ -35,14 +36,7 @@ import {
 } from '../app/material/uvPlacement';
 
 /** The map slots a glTF child's placement applies to. */
-export const GLTF_UV_MAP_SLOTS = [
-  'map',
-  'normalMap',
-  'roughnessMap',
-  'metalnessMap',
-  'aoMap',
-  'emissiveMap',
-] as const;
+export const GLTF_UV_MAP_SLOTS = BAKED_MAP_SLOTS;
 
 /**
  * Apply a glTF child material's captured KHR_texture_transform onto an OVERLAY

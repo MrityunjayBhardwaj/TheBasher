@@ -247,15 +247,60 @@ export interface UvPlacement {
   readonly rotation: number;
 }
 
-/** The 6 texture-map slots the inline material carries (W5 populates; null = none). */
-export interface InlineMaterialMaps {
-  readonly albedo: BakedTextureRef | null;
-  readonly normal: BakedTextureRef | null;
-  readonly roughness: BakedTextureRef | null;
-  readonly metalness: BakedTextureRef | null;
-  readonly emissive: BakedTextureRef | null;
-  readonly ao: BakedTextureRef | null;
+/**
+ * #1324 — THE material map slots: which inputs of a material take a texture, stated ONCE.
+ *
+ * Every consumer derives from this table rather than spelling the list again: the IR's
+ * `maps` type and schema, the per-map UV placement and UV layer bags, the compile's IR → three
+ * correspondence, the baked snapshot's fields and schema, the capture, both rebuild roads, the
+ * attach dialog and the inspector. Before it, the six slots were written out by hand at more than
+ * a dozen sites in two vocabularies, and a slot added at one site was silently missing at the rest.
+ *
+ * Per row:
+ *  - `three` — three.js's name for the slot, which is also the baked snapshot's field. The IR is
+ *    renderer-agnostic; this is the one place the two vocabularies meet.
+ *  - `colorSpace` — what the texels hold: colour maps are sRGB, data maps linear (a data map read
+ *    as sRGB washes out).
+ *  - `seeded` — present on every material as `null` when empty. The six original slots are, so
+ *    every save already carries them. A slot added later is NOT seeded: it is optional and absent
+ *    means no texture, because `materialKeyOf` walks every own key and a seeded new slot would
+ *    re-key every saved material.
+ *  - `label` — the slot's name in prose, for a reader.
+ *
+ * ORDER IS IDENTITY: `materialKeyOf` walks keys in insertion order and the schema inserts them in
+ * this order, so reordering rows re-keys every saved material. Append; never reorder.
+ */
+export const MATERIAL_MAP_SLOT_TABLE = {
+  albedo: { three: 'map', colorSpace: 'srgb', seeded: true, label: 'base color' },
+  normal: { three: 'normalMap', colorSpace: 'srgb-linear', seeded: true, label: 'normal' },
+  roughness: { three: 'roughnessMap', colorSpace: 'srgb-linear', seeded: true, label: 'roughness' },
+  metalness: { three: 'metalnessMap', colorSpace: 'srgb-linear', seeded: true, label: 'metalness' },
+  emissive: { three: 'emissiveMap', colorSpace: 'srgb', seeded: true, label: 'emissive' },
+  ao: { three: 'aoMap', colorSpace: 'srgb-linear', seeded: true, label: 'ambient occlusion' },
+} as const satisfies Readonly<Record<string, MaterialMapSlotRow>>;
+
+/** One row of {@link MATERIAL_MAP_SLOT_TABLE}. */
+export interface MaterialMapSlotRow {
+  readonly three: string;
+  readonly colorSpace: BakedTextureRef['colorSpace'];
+  readonly seeded: boolean;
+  /** How a reader names the slot in prose (`base color`, `ambient occlusion`). */
+  readonly label: string;
 }
+
+type MapSlotTable = typeof MATERIAL_MAP_SLOT_TABLE;
+/** A material map slot in the IR's vocabulary (`albedo`, `normal`, …). */
+export type IrMapSlot = keyof MapSlotTable;
+/** The slots every material carries (as null when empty) — the six every save already has. */
+export type SeededMapSlot = {
+  [K in IrMapSlot]: MapSlotTable[K]['seeded'] extends true ? K : never;
+}[IrMapSlot];
+type OptionalMapSlot = Exclude<IrMapSlot, SeededMapSlot>;
+
+/** The texture-map slots the inline material carries (null = none). Derived from the table. */
+export type InlineMaterialMaps = {
+  readonly [K in SeededMapSlot]: BakedTextureRef | null;
+} & { readonly [K in OptionalMapSlot]?: BakedTextureRef | null };
 
 /**
  * What a `'Material'` socket carries (#394 D1) — the FINISHED material, tagged.
@@ -533,13 +578,16 @@ export type BakedTextureMinFilter =
   | 'linear-mipmap-linear';
 
 /** The six map slots of a {@link BakedMaterialSpec}, in three.js's own names. */
-export type BakedMapSlot =
-  | 'map'
-  | 'normalMap'
-  | 'roughnessMap'
-  | 'metalnessMap'
-  | 'aoMap'
-  | 'emissiveMap';
+/** A map slot in three.js's vocabulary (`map`, `normalMap`, …) — the baked snapshot's field names. */
+export type BakedMapSlot = MapSlotTable[IrMapSlot]['three'];
+
+/**
+ * The baked snapshot's map refs, one field per slot (null when the source has none). A slot that is
+ * optional in the IR is optional here too, so a baked save from before it existed still reads.
+ */
+export type BakedMaterialMaps = {
+  readonly [K in MapSlotTable[SeededMapSlot]['three']]: BakedTextureRef | null;
+} & { readonly [K in MapSlotTable[OptionalMapSlot]['three']]?: BakedTextureRef | null };
 
 /**
  * The rich PBR material a BakedMesh carries — ONE shape for every source
@@ -556,7 +604,7 @@ export type BakedMapSlot =
  * reports ok. #1119, #1136, #1139 and #1140 were each one such field. A new one
  * belongs here AND in `BakedMaterialSpecSchema`, or the parse strips it on the way in.
  */
-export interface BakedMaterialSpec {
+export interface BakedMaterialSpec extends BakedMaterialMaps {
   readonly materialClass: 'standard' | 'physical' | 'basic';
   readonly color: string;
   readonly roughness: number;
@@ -565,13 +613,8 @@ export interface BakedMaterialSpec {
   readonly transparent: boolean;
   readonly emissive: string;
   readonly emissiveIntensity: number;
-  // map refs — null when the source has none (a Box bake leaves all null).
-  readonly map: BakedTextureRef | null;
-  readonly normalMap: BakedTextureRef | null;
-  readonly roughnessMap: BakedTextureRef | null;
-  readonly metalnessMap: BakedTextureRef | null;
-  readonly aoMap: BakedTextureRef | null;
-  readonly emissiveMap: BakedTextureRef | null;
+  // Map refs (`map`, `normalMap`, …) come from {@link BakedMaterialMaps} — null when the source has
+  // none (a Box bake leaves all null).
   /**
    * #1136 — each map's UV placement as it drew at bake time, restated about the CENTRE pivot
    * `BakedMeshR` places with. Only slots whose placement is not identity are listed, and the field

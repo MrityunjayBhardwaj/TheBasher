@@ -40,6 +40,7 @@ import { useDagStore } from '../../core/dag/store';
 import type { OpSource } from '../../core/dag/store';
 import type { DagState } from '../../core/dag/state';
 import { IDENTITY_QUATERNION } from '../../nodes/rotationMode';
+import { NULL_BAKED_MAPS } from '../../nodes/materialSchema';
 import { rotationWriteOf } from '../resolvedRotation';
 import type { Op, EvalCtx } from '../../core/dag/types';
 import { requireNodeType } from '../../core/dag/registry';
@@ -295,12 +296,7 @@ function bakedSpecFromInline(material: InlineMaterialSpec | null): BakedMaterial
       transparent: false,
       emissive: '#000000',
       emissiveIntensity: 0,
-      map: null,
-      normalMap: null,
-      roughnessMap: null,
-      metalnessMap: null,
-      aoMap: null,
-      emissiveMap: null,
+      ...NULL_BAKED_MAPS,
     };
   }
   const drawn = openpbrToThree(material);
@@ -324,12 +320,8 @@ function bakedSpecFromInline(material: InlineMaterialSpec | null): BakedMaterial
       transparent: drawn.transparent,
       emissive: '#000000',
       emissiveIntensity: 0,
+      ...NULL_BAKED_MAPS,
       map: drawn.maps.map,
-      normalMap: null,
-      roughnessMap: null,
-      metalnessMap: null,
-      aoMap: null,
-      emissiveMap: null,
       ...(Object.keys(placements).length > 0 ? { mapPlacements: placements } : {}),
       ...(drawn.alphaTest !== 0 ? { alphaTest: drawn.alphaTest } : {}),
       ...(drawn.doubleSided ? { doubleSided: true } : {}),

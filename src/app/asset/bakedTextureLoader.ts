@@ -14,7 +14,9 @@
 
 import { DataTexture, RGBAFormat, SRGBColorSpace, type Texture } from 'three';
 import { getStorage } from '../boot';
-import type { BakedTextureRef } from '../../nodes/types';
+import { useMemo } from 'react';
+import type { BakedMapSlot, BakedTextureRef } from '../../nodes/types';
+import { BAKED_MAP_SLOTS } from '../../nodes/materialSchema';
 import { formatAssetError, useAssetErrorStore } from '../stores/assetErrorStore';
 import { loadBakedTexture, refToPath } from './bakedTextureStore';
 import { rememberFailedRead, useReadFailureEpoch } from './readFailures';
@@ -183,6 +185,30 @@ export function useBakedTexture(ref: BakedTextureRef | null): Texture | null {
   useReadFailureEpoch(); // #1312 — re-resolve once a failed file is written again
   if (!ref) return null;
   return resolveBakedTexture(ref);
+}
+
+/**
+ * #1324 — every map slot at once, in the slot table's order: the texture per three slot name (null
+ * where the ref is null or absent). Replaces one {@link useBakedTexture} call per slot, which each
+ * render road spelled out six times; a slot added to the table is loaded here with no caller edit.
+ *
+ * Suspends exactly as the separate calls did: the slots resolve in order and the first one still
+ * loading throws. The record keeps its identity until one slot's texture changes, so a caller's
+ * memo re-runs when a map arrives and not on every render.
+ */
+export function useBakedTextures(refs: Partial<Record<BakedMapSlot, BakedTextureRef | null>>): {
+  readonly [K in BakedMapSlot]: Texture | null;
+} {
+  useReadFailureEpoch(); // #1312 — re-resolve once a failed file is written again
+  const list = BAKED_MAP_SLOTS.map((slot) => {
+    const ref = refs[slot];
+    return ref ? resolveBakedTexture(ref) : null;
+  });
+  // The deps ARE the textures: one per slot, and the list's length is the table's, a constant.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  return useMemo(() => Object.fromEntries(BAKED_MAP_SLOTS.map((s, i) => [s, list[i]])), list) as {
+    readonly [K in BakedMapSlot]: Texture | null;
+  };
 }
 
 /** Test-only — clear the caches. */

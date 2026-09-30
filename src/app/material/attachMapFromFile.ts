@@ -16,29 +16,19 @@
 
 import * as THREE from 'three';
 import type { StorageCapability } from '../../core/storage/StorageCapability';
-import type { BakedTextureRef } from '../../nodes/types';
-import { persistTexture, type PersistTextureHooks } from '../asset/bakedTextureStore';
+import { MATERIAL_MAP_SLOT_TABLE } from '../../nodes/types';
+import type { BakedTextureRef, IrMapSlot } from '../../nodes/types';
+import { MAP_UV_SLOTS } from '../../nodes/materialSchema';
+import {
+  fromBakedColorSpace,
+  persistTexture,
+  type PersistTextureHooks,
+} from '../asset/bakedTextureStore';
 
-export type MaterialMapSlot = 'albedo' | 'normal' | 'roughness' | 'metalness' | 'emissive' | 'ao';
+/** A material map slot (IR vocabulary). The list and each slot's colour space are the slot table's (#1324). */
+export type MaterialMapSlot = IrMapSlot;
 
-export const MATERIAL_MAP_SLOTS: MaterialMapSlot[] = [
-  'albedo',
-  'normal',
-  'roughness',
-  'metalness',
-  'emissive',
-  'ao',
-];
-
-/** The colorspace each map slot must carry (D-04). */
-const SLOT_COLORSPACE: Record<MaterialMapSlot, THREE.ColorSpace> = {
-  albedo: THREE.SRGBColorSpace,
-  emissive: THREE.SRGBColorSpace,
-  normal: THREE.LinearSRGBColorSpace,
-  roughness: THREE.LinearSRGBColorSpace,
-  metalness: THREE.LinearSRGBColorSpace,
-  ao: THREE.LinearSRGBColorSpace,
-};
+export const MATERIAL_MAP_SLOTS: readonly MaterialMapSlot[] = MAP_UV_SLOTS;
 
 export interface AttachMapHooks {
   /** Override the File→Texture decode (test seam — happy-dom has no decoder). */
@@ -68,7 +58,7 @@ export async function attachMapFromFile(
     // Set the colorspace BEFORE persist so the ref captures it (M5). flipY keeps
     // the TextureLoader default (true) — the standard image-upload orientation
     // (glTF's flipY=false is a glTF-specific convention, not used for uploads).
-    texture.colorSpace = SLOT_COLORSPACE[slot];
+    texture.colorSpace = fromBakedColorSpace(MATERIAL_MAP_SLOT_TABLE[slot].colorSpace); // D-04
     return await persistTexture(storage, texture, hooks.persist);
   } finally {
     URL.revokeObjectURL(url);

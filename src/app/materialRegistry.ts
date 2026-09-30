@@ -117,6 +117,8 @@ import {
   resolveSlotPlacement,
 } from './material/uvPlacement';
 import type { SlotPlacements } from './material/uvPlacement';
+import type { BakedMaterialMaps } from '../nodes/types';
+import { BAKED_MAP_COLOR_SPACE } from './asset/bakedTextureStore';
 
 /**
  * Everything a shared primitive material is made of — and the builder's ONLY
@@ -212,30 +214,18 @@ export interface PrimitiveMaterialSpec {
    * instance means a slot that is still loading and one that has loaded are
    * distinct materials rather than the same one at two moments.
    */
-  readonly textures: {
-    readonly map: THREE.Texture | null;
-    readonly normalMap: THREE.Texture | null;
-    readonly roughnessMap: THREE.Texture | null;
-    readonly metalnessMap: THREE.Texture | null;
-    readonly aoMap: THREE.Texture | null;
-    readonly emissiveMap: THREE.Texture | null;
-  };
+  readonly textures: { readonly [K in keyof BakedMaterialMaps]: THREE.Texture | null };
 }
 
 /** sRGB for colour maps, linear for data maps (M5 — a data map as sRGB washes out). */
-const MAP_COLOR_SPACE: Record<keyof PrimitiveMaterialSpec['textures'], THREE.ColorSpace> = {
-  map: THREE.SRGBColorSpace,
-  normalMap: THREE.LinearSRGBColorSpace,
-  roughnessMap: THREE.LinearSRGBColorSpace,
-  metalnessMap: THREE.LinearSRGBColorSpace,
-  aoMap: THREE.LinearSRGBColorSpace,
-  emissiveMap: THREE.SRGBColorSpace,
-};
+/** The slot table's colorspaces, in three's vocabulary (#1324). */
+const MAP_COLOR_SPACE: Readonly<Record<keyof PrimitiveMaterialSpec['textures'], THREE.ColorSpace>> =
+  BAKED_MAP_COLOR_SPACE;
 
 /**
- * The map slots, in one order. Derived from {@link MAP_COLOR_SPACE} rather than written
- * out again, so a seventh slot cannot be added to the spec and forgotten by a caller
- * assembling the texture half of an identity key (#536 S2).
+ * The map slots, in one order. Derived from {@link MAP_COLOR_SPACE} — itself the slot table's —
+ * so a slot cannot be added to the spec and forgotten by a caller assembling the texture half of an
+ * identity key (#536 S2).
  */
 export const MAP_SLOTS = Object.keys(
   MAP_COLOR_SPACE,

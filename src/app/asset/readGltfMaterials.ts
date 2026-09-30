@@ -26,6 +26,7 @@
 //      the stamp); src/app/asset/gltfMaterialStore.ts (the published store).
 
 import type * as THREE from 'three';
+import { MATERIAL_MAP_SLOT_TABLE } from '../../nodes/types';
 
 export interface GltfMaterialSlot {
   /** Render slot index (i-th isMesh in clone.traverse — matches override slotIndex). */
@@ -45,14 +46,10 @@ export interface GltfMaterialSlot {
   readonly maps: readonly string[];
 }
 
-const MAP_LABELS: ReadonlyArray<readonly [string, string]> = [
-  ['map', 'base color'],
-  ['normalMap', 'normal'],
-  ['roughnessMap', 'roughness'],
-  ['metalnessMap', 'metalness'],
-  ['emissiveMap', 'emissive'],
-  ['aoMap', 'ambient occlusion'],
-];
+/** Each map slot's three name and prose label, from the slot table (#1324). */
+const MAP_LABELS: ReadonlyArray<readonly [string, string]> = Object.values(
+  MATERIAL_MAP_SLOT_TABLE,
+).map((row) => [row.three, row.label] as const);
 
 /** Nearest ancestor (including self) carrying a `basherGltfChildId` stamp.
  *  Exported so the renderer's DAG-material overlay (#178 S3) maps a clone mesh

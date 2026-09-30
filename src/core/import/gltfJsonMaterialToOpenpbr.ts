@@ -28,6 +28,7 @@
 //      V53 (the IR invariant + the DIRECT-IMPORTABILITY GAP block).
 
 import { Color, LinearSRGBColorSpace, SRGBColorSpace } from 'three';
+import { MATERIAL_MAP_SLOT_TABLE } from '../../nodes/types';
 import type {
   BakedTextureRef,
   InlineMaterialMaps,
@@ -85,27 +86,45 @@ const IDENTITY_SLOT_TRANSFORM: UvSlotTransform = { offset: [0, 0], scale: [1, 1]
  * The mapping is not one-to-one in either direction: glTF packs roughness (G) and
  * metalness (B) into a single `metallicRoughnessTexture`, so two IR slots read one
  * glTF field, and `ao` reads `occlusionTexture`, whose name matches nothing.
- * Colorspaces follow the glTF convention — baseColor/emissive sRGB, the rest linear.
+ * Each slot's colorspace is the slot table's (#1324), which follows the glTF convention —
+ * baseColor/emissive sRGB, the rest linear.
  */
 const IR_SLOT_SOURCES: {
-  readonly [K in keyof InlineMaterialMaps]: {
+  readonly [K in keyof InlineMaterialMaps]-?: {
+    /** The material path of the glTF texture this slot reads — also how a refusal names it. */
+    readonly path: string;
     readonly info: (mat: GltfJsonMaterial) => GltfTextureInfo | undefined;
-    readonly colorSpace: BakedTextureRef['colorSpace'];
   };
 } = {
-  albedo: { info: (m) => m.pbrMetallicRoughness?.baseColorTexture, colorSpace: 'srgb' },
-  normal: { info: (m) => m.normalTexture, colorSpace: 'srgb-linear' },
-  roughness: {
-    info: (m) => m.pbrMetallicRoughness?.metallicRoughnessTexture,
-    colorSpace: 'srgb-linear',
-  },
-  metalness: {
-    info: (m) => m.pbrMetallicRoughness?.metallicRoughnessTexture,
-    colorSpace: 'srgb-linear',
-  },
-  emissive: { info: (m) => m.emissiveTexture, colorSpace: 'srgb' },
-  ao: { info: (m) => m.occlusionTexture, colorSpace: 'srgb-linear' },
+  albedo: fromPath('pbrMetallicRoughness.baseColorTexture'),
+  normal: fromPath('normalTexture'),
+  roughness: fromPath('pbrMetallicRoughness.metallicRoughnessTexture'),
+  metalness: fromPath('pbrMetallicRoughness.metallicRoughnessTexture'),
+  emissive: fromPath('emissiveTexture'),
+  ao: fromPath('occlusionTexture'),
 };
+
+/** A slot source read off its material path, so the path the refusal names is the path read. */
+function fromPath(path: string): (typeof IR_SLOT_SOURCES)[keyof typeof IR_SLOT_SOURCES] {
+  return {
+    path,
+    info: (mat) =>
+      path
+        .split('.')
+        .reduce<unknown>((o, k) => (o as Record<string, unknown> | undefined)?.[k], mat) as
+        | GltfTextureInfo
+        | undefined,
+  };
+}
+
+/**
+ * #1050 — the glTF texture paths the IR captures. A texture anywhere else is refused on the native
+ * road rather than read past and left behind; derived from the slot sources, so a slot added there
+ * is held here with no second list.
+ */
+export const HELD_TEXTURE_PATHS: ReadonlySet<string> = new Set(
+  Object.values(IR_SLOT_SOURCES).map((s) => s.path),
+);
 
 /** The normalized KHR_texture_transform for a present texture slot (identity when
  *  the slot has no transform); undefined when the slot is absent. */
@@ -310,8 +329,11 @@ function captureMap(
 function captureMaps(mat: GltfJsonMaterial, tables: GltfTextureTables): InlineMaterialMaps {
   const out = {} as { -readonly [K in keyof InlineMaterialMaps]: BakedTextureRef | null };
   for (const slot of MAP_UV_SLOTS) {
-    const src = IR_SLOT_SOURCES[slot];
-    out[slot] = captureMap(src.info(mat), src.colorSpace, tables);
+    out[slot] = captureMap(
+      IR_SLOT_SOURCES[slot].info(mat),
+      MATERIAL_MAP_SLOT_TABLE[slot].colorSpace,
+      tables,
+    );
   }
   return out;
 }

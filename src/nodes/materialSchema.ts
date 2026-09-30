@@ -20,11 +20,19 @@
 //      vyapti V10/V32; hetvabhasa H14; issue #178.
 
 import { z } from 'zod';
+import { MATERIAL_MAP_SLOT_TABLE } from './types';
 import type {
+  BakedMapSlot,
+  BakedMaterialMaps,
   BakedMaterialSpec,
   BakedTextureMinFilter,
+  BakedTextureRef,
   BakedTextureWrap,
+  InlineMaterialMaps,
   InlineMaterialSpec,
+  IrMapSlot,
+  MaterialMapSlotRow,
+  SeededMapSlot,
   UvPlacement,
 } from './types';
 
@@ -127,33 +135,93 @@ const bakedTextureRefSchema = z.object({
   minFilter: z.enum(SAMPLER_MIN_FILTERS).optional(),
 });
 const mapSlot = bakedTextureRefSchema.nullable().default(null);
+
+/** A slot's rows, keyed by slot name — the real table, or a hand-minted one in a test. */
+type MapSlotRows = Readonly<Record<string, MaterialMapSlotRow>>;
+
 /**
- * The map slot names, DERIVED from {@link NULL_MAPS} rather than written out again, so
- * a seventh slot cannot be added to the IR and silently miss per-map placement (#550).
- * Declared after NULL_MAPS below; see `perMapUvTransform.gate.test.ts`, which pins this
- * list equal to the IR's own map keys in both directions.
+ * Every map slot, in {@link MATERIAL_MAP_SLOT_TABLE}'s order (#1324) — the one list the per-slot
+ * bags (placement, UV layer) and every loop over slots walk. `perMapUvTransform.gate.test.ts` pins
+ * it equal to the IR's own map keys in both directions.
  */
+export const MAP_UV_SLOTS = Object.keys(MATERIAL_MAP_SLOT_TABLE) as IrMapSlot[];
+
 // Exported so the glTF→OpenPBR converter (gltfMaterialToOpenpbr) seeds an IR with
 // the SAME empty-maps / identity-UV defaults the schema uses — one source, no drift.
-export const NULL_MAPS = {
-  albedo: null,
-  normal: null,
-  roughness: null,
-  metalness: null,
-  emissive: null,
-  ao: null,
-} as const;
-export const MAP_UV_SLOTS = Object.keys(NULL_MAPS) as (keyof typeof NULL_MAPS)[];
-const mapsSchema = z
-  .object({
-    albedo: mapSlot,
-    normal: mapSlot,
-    roughness: mapSlot,
-    metalness: mapSlot,
-    emissive: mapSlot,
-    ao: mapSlot,
-  })
-  .default({ ...NULL_MAPS });
+// Only the SEEDED slots: a later slot is absent until it holds a texture (see the table).
+export const NULL_MAPS = Object.fromEntries(
+  MAP_UV_SLOTS.filter((slot) => MATERIAL_MAP_SLOT_TABLE[slot].seeded).map((slot) => [slot, null]),
+) as { readonly [K in SeededMapSlot]: null };
+
+/** Every map slot in three's vocabulary — the baked snapshot's field names — in the table's order. */
+export const BAKED_MAP_SLOTS = MAP_UV_SLOTS.map((slot) => MATERIAL_MAP_SLOT_TABLE[slot].three);
+
+/**
+ * A baked snapshot's map fields from a per-slot lookup (#1324): every seeded slot present (null when
+ * it holds nothing), any other slot only when it holds a texture — absent means off, as in the IR.
+ */
+export function bakedMapsOf(
+  refOf: (slot: BakedMapSlot) => BakedTextureRef | null,
+  rows: MapSlotRows = MATERIAL_MAP_SLOT_TABLE,
+): BakedMaterialMaps {
+  const out: Record<string, BakedTextureRef | null> = {};
+  for (const { three, seeded } of Object.values(rows)) {
+    const ref = refOf(three as BakedMapSlot);
+    if (seeded || ref !== null) out[three] = ref;
+  }
+  return out as BakedMaterialMaps;
+}
+
+/** The baked snapshot's maps when it holds none. */
+export const NULL_BAKED_MAPS: BakedMaterialMaps = bakedMapsOf(() => null);
+
+/**
+ * One zod field per map slot, in the table's order. Statically a string-keyed object, because
+ * `Object.fromEntries` cannot carry the keys; code reads the IR through `InlineMaterialSpec`.
+ */
+function perMapSlot(field: (row: MaterialMapSlotRow) => z.ZodTypeAny, rows: MapSlotRows) {
+  return z.object(
+    Object.fromEntries(Object.entries(rows).map(([slot, row]) => [slot, field(row)])),
+  );
+}
+
+/**
+ * The `maps` object for a slot table (#1324): a seeded slot defaults to null, so every save's six
+ * slots re-parse as they always have; any other slot is optional with NO default, because a
+ * materialised `null` would re-key every saved material (the rule `mapUvTransformsSchema` states).
+ * Exported so a test can hand it a table with an unseeded row, which the live table has none of yet.
+ */
+export function mapsSchemaFor(rows: MapSlotRows) {
+  return perMapSlot(
+    (row) => (row.seeded ? mapSlot : bakedTextureRefSchema.nullable().optional()),
+    rows,
+  );
+}
+
+const mapsSchema = (
+  mapsSchemaFor(MATERIAL_MAP_SLOT_TABLE) as unknown as z.ZodType<
+    InlineMaterialMaps,
+    z.ZodTypeDef,
+    unknown
+  >
+).default({ ...NULL_MAPS });
+
+/**
+ * A serialized `maps` bag → the IR's (#1324), by the same rule as {@link mapsSchemaFor}: a seeded
+ * slot is always present (null when empty), any other only when the save holds it.
+ */
+export function hydrateMapsFor(
+  raw: Partial<Record<string, BakedTextureRef | null>> | undefined,
+  rows: MapSlotRows,
+): Record<string, BakedTextureRef | null> {
+  const out: Record<string, BakedTextureRef | null> = {};
+  for (const [slot, row] of Object.entries(rows)) {
+    const v = raw?.[slot];
+    if (row.seeded) out[slot] = v ?? null;
+    else if (v !== undefined) out[slot] = v;
+  }
+  return out;
+}
 
 // v0.6 #3 (#181) — the ONE shared UV placement (tiling/offset/rotation). IDENTITY
 // default so a pre-#3 project renders byte-identically (V10/H14). Every field +
@@ -188,16 +256,10 @@ const uvTransformSchema = z.object(uvPlacementFields).default({ ...IDENTITY_UV_T
  * exists, so a partial `setParam` on one component still refills its siblings. The
  * defaults belong inside a present slot, never on the map of slots.
  */
-const mapUvTransformsSchema = z
-  .object({
-    albedo: z.object(uvPlacementFields).optional(),
-    normal: z.object(uvPlacementFields).optional(),
-    roughness: z.object(uvPlacementFields).optional(),
-    metalness: z.object(uvPlacementFields).optional(),
-    emissive: z.object(uvPlacementFields).optional(),
-    ao: z.object(uvPlacementFields).optional(),
-  })
-  .optional();
+const mapUvTransformsSchema = perMapSlot(
+  () => z.object(uvPlacementFields).optional(),
+  MATERIAL_MAP_SLOT_TABLE,
+).optional();
 
 /**
  * #997 — which UV set each map slot samples. A non-negative integer per slot; absent
@@ -211,16 +273,10 @@ const mapUvTransformsSchema = z
  * the reference an empty name is the documented request for the ACTIVE layer, a fallback this
  * project does not have, so admitting it here would store a wish nothing can grant.
  */
-const mapUvLayersSchema = z
-  .object({
-    albedo: z.string().min(1).optional(),
-    normal: z.string().min(1).optional(),
-    roughness: z.string().min(1).optional(),
-    metalness: z.string().min(1).optional(),
-    emissive: z.string().min(1).optional(),
-    ao: z.string().min(1).optional(),
-  })
-  .optional();
+const mapUvLayersSchema = perMapSlot(
+  () => z.string().min(1).optional(),
+  MATERIAL_MAP_SLOT_TABLE,
+).optional();
 
 /**
  * #1123 — the normal map's and the occlusion map's strength. Absent means 1. `.optional()` with NO
@@ -450,14 +506,7 @@ export function hydrateInlineMaterial(
         ? { thickness: m.geometry.thickness }
         : {}),
     },
-    maps: {
-      albedo: m.maps?.albedo ?? null,
-      normal: m.maps?.normal ?? null,
-      roughness: m.maps?.roughness ?? null,
-      metalness: m.maps?.metalness ?? null,
-      emissive: m.maps?.emissive ?? null,
-      ao: m.maps?.ao ?? null,
-    },
+    maps: hydrateMapsFor(m.maps, MATERIAL_MAP_SLOT_TABLE) as InlineMaterialMaps,
     uvTransform: {
       tiling: vec2(m.uvTransform?.tiling, [1, 1]),
       offset: vec2(m.uvTransform?.offset, [0, 0]),

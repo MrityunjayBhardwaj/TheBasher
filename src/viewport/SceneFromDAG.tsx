@@ -45,8 +45,9 @@ import {
 import { useResolvedAssetUrl } from '../app/asset/opfsLoader';
 import { useBakedGeometry } from '../app/asset/bakedGeometryLoader';
 import { getForAttach } from '../app/geometryRegistry';
-import { hydrateInlineMaterial } from '../nodes/materialSchema';
-import { useBakedTexture } from '../app/asset/bakedTextureLoader';
+import { BAKED_MAP_SLOTS, hydrateInlineMaterial } from '../nodes/materialSchema';
+import { useBakedTextures } from '../app/asset/bakedTextureLoader';
+import { BAKED_MAP_COLOR_SPACE } from '../app/asset/bakedTextureStore';
 import {
   openpbrToThree,
   threeMapUvTransforms,
@@ -3215,15 +3216,10 @@ function CapturedBakedMeshR({
   const shading = useViewportStore((s) => s.shading);
   const spec = value.material;
 
-  // Suspense-load each of the 6 fixed map slots UNCONDITIONALLY (rules-of-hooks
-  // safe — `useBakedTexture(null)` is a no-op; only present refs suspend). The
-  // OPFS read + decode lives in the loader hook, never in the pure resolver (V29).
-  const mapTex = useBakedTexture(spec.map);
-  const normalTex = useBakedTexture(spec.normalMap);
-  const roughnessTex = useBakedTexture(spec.roughnessMap);
-  const metalnessTex = useBakedTexture(spec.metalnessMap);
-  const aoTex = useBakedTexture(spec.aoMap);
-  const emissiveTex = useBakedTexture(spec.emissiveMap);
+  // Suspense-load every map slot the table names (#1324); a null or absent ref loads nothing,
+  // only present refs suspend. The OPFS read + decode lives in the loader hook, never in the pure
+  // resolver (V29).
+  const tex = useBakedTextures(spec);
 
   // The override composes onto the captured spec through the ONE shared rule
   // (`composeBakedMaterial`, #394 S3b) when present; otherwise the baked spec's
@@ -3244,16 +3240,11 @@ function CapturedBakedMeshR({
       };
 
   const material = useMemo(() => {
-    // Colorspace per slot (M5): base/emissive maps are sRGB; the data maps
-    // (normal/ao/roughness/metalness) are linear. The texture loader already
-    // restored the captured colorspace from the ref, but assign it AGAIN here so
-    // the render-side contract is explicit and self-documenting at the boundary.
-    const sRGB = (t: THREE.Texture | null) => {
-      if (t) t.colorSpace = THREE.SRGBColorSpace;
-      return t;
-    };
-    const linear = (t: THREE.Texture | null) => {
-      if (t) t.colorSpace = THREE.LinearSRGBColorSpace;
+    // Colorspace per slot (M5), the slot table's: colour maps sRGB, data maps linear. The texture
+    // loader already restored the captured colorspace from the ref, but assign it AGAIN here so
+    // the render-side contract is explicit at the boundary.
+    const inColorSpace = (t: THREE.Texture | null, slot: BakedMapSlot) => {
+      if (t) t.colorSpace = BAKED_MAP_COLOR_SPACE[slot];
       return t;
     };
     // #1136 — a slot baked with a placement draws a CLONE placed about the centre. The loaded
@@ -3278,7 +3269,7 @@ function CapturedBakedMeshR({
         transparent: scalar.transparent,
         wireframe: shading === 'wireframe',
       });
-      m.map = placed(sRGB(mapTex), 'map');
+      m.map = placed(inColorSpace(tex.map, 'map'), 'map');
       bakedSurface(m, spec);
       m.userData.__placedClones = clones;
       return m;
@@ -3302,15 +3293,12 @@ function CapturedBakedMeshR({
     // and `:185`), so honouring a captured set here would point a sampler at an
     // attribute that does not exist. The discharge is upstream — carry the second set
     // through the bake first; only then does binding it here mean anything.
-    m.map = placed(sRGB(mapTex), 'map');
-    m.normalMap = placed(linear(normalTex), 'normalMap');
+    // Every slot the table names (#1324), each by its three name.
+    const slots = m as unknown as Record<BakedMapSlot, THREE.Texture | null>;
+    for (const slot of BAKED_MAP_SLOTS) slots[slot] = placed(inColorSpace(tex[slot], slot), slot);
     // #1325 — the same orientation rule the registry's builder applies (`normalScaleFor`).
     if (m.normalMap) m.normalScale.set(...normalScaleFor(m.normalMap, spec.normalScale));
-    m.roughnessMap = placed(linear(roughnessTex), 'roughnessMap');
-    m.metalnessMap = placed(linear(metalnessTex), 'metalnessMap');
-    m.aoMap = placed(linear(aoTex), 'aoMap');
     if (spec.aoMapIntensity !== undefined) m.aoMapIntensity = spec.aoMapIntensity; // #1123
-    m.emissiveMap = placed(sRGB(emissiveTex), 'emissiveMap');
     bakedSurface(m, spec);
     m.userData.__placedClones = clones;
 
@@ -3348,12 +3336,7 @@ function CapturedBakedMeshR({
     scalar.emissive,
     scalar.emissiveIntensity,
     shading,
-    mapTex,
-    normalTex,
-    roughnessTex,
-    metalnessTex,
-    aoTex,
-    emissiveTex,
+    tex,
     spec.mapPlacements,
     spec.alphaTest,
     spec.doubleSided,

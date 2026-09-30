@@ -78,7 +78,7 @@ import {
   type GltfImportChainArgs,
 } from './gltfImportChain';
 import { DRACO_EXTENSION, decodeDracoPrimitives, usesDraco, type DecodeDraco } from './gltfDraco';
-import { gltfJsonMaterialToOpenpbr } from './gltfJsonMaterialToOpenpbr';
+import { gltfJsonMaterialToOpenpbr, HELD_TEXTURE_PATHS } from './gltfJsonMaterialToOpenpbr';
 import { FILTER_NAME_OF_GLTF, WRAP_NAME_OF_GLTF } from '../../nodes/materialSchema';
 import { readNativeAnimations, type ClipGltfJson, type NativeAnimation } from './nativeGltfClip';
 import {
@@ -270,16 +270,10 @@ const HELD_EXTENSIONS = new Set([
   'KHR_materials_volume',
 ]);
 
-// #1050 — where a material may sample a texture and still arrive whole: the slots the IR captures
-// (`IR_SLOT_SOURCES` in the converter). A texture anywhere else, such as a clearcoat texture inside
-// an extension this road holds for its factors, would be read past and left behind.
-const HELD_TEXTURE_SLOTS = new Set([
-  'pbrMetallicRoughness.baseColorTexture',
-  'pbrMetallicRoughness.metallicRoughnessTexture',
-  'normalTexture',
-  'occlusionTexture',
-  'emissiveTexture',
-]);
+// #1050 — where a material may sample a texture and still arrive whole: the slots the IR captures,
+// read off the converter's slot sources (#1324). A texture anywhere else, such as a clearcoat
+// texture inside an extension this road holds for its factors, would be read past and left behind.
+const HELD_TEXTURE_SLOTS = HELD_TEXTURE_PATHS;
 
 // A glTF sampler's GL enums as three.js constants, by GLTFLoader's own tables and defaults
 // (`GLTFLoader.js:2198-2211`, `:3229-3232`, three r169), so a native texture samples as the clone

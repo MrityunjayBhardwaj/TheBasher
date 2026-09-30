@@ -39,12 +39,14 @@ import * as THREE from 'three';
 import { hashValue } from '../../core/dag/hash';
 import type { StorageCapability } from '../../core/storage/StorageCapability';
 import type {
+  BakedMapSlot,
   BakedTextureMagFilter,
   BakedTextureMinFilter,
   BakedTextureRef,
   BakedTextureWrap,
 } from '../../nodes/types';
 import { WRAP_NAME_OF_THREE } from '../../nodes/materialSchema';
+import { MATERIAL_MAP_SLOT_TABLE } from '../../nodes/types';
 import { projectImagePath } from '../../core/project/projectImages';
 import { useProjectStore } from '../../core/project/store';
 
@@ -63,11 +65,19 @@ function toBakedColorSpace(cs: string): BakedTextureRef['colorSpace'] {
 }
 
 /** Inverse of {@link toBakedColorSpace}: the ref token → a three colorspace. */
-function fromBakedColorSpace(cs: BakedTextureRef['colorSpace']): THREE.ColorSpace {
+export function fromBakedColorSpace(cs: BakedTextureRef['colorSpace']): THREE.ColorSpace {
   if (cs === 'srgb') return THREE.SRGBColorSpace;
   if (cs === 'srgb-linear') return THREE.LinearSRGBColorSpace;
   return THREE.NoColorSpace;
 }
+
+/** Each map slot's three colorspace, by its three name — the slot table's, converted (#1324). */
+export const BAKED_MAP_COLOR_SPACE = Object.fromEntries(
+  Object.values(MATERIAL_MAP_SLOT_TABLE).map((row) => [
+    row.three,
+    fromBakedColorSpace(row.colorSpace),
+  ]),
+) as Readonly<Record<BakedMapSlot, THREE.ColorSpace>>;
 
 /** The OPFS file path for a baked texture, keyed by content hash + extension. */
 export function bakedTexturePath(hash: string, ext: string): string {

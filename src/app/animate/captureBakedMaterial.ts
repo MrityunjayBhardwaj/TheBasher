@@ -33,16 +33,8 @@ import type {
   UvPlacement,
 } from '../../nodes/types';
 import { persistTexture } from '../asset/bakedTextureStore';
+import { BAKED_MAP_SLOTS, bakedMapsOf, NULL_BAKED_MAPS } from '../../nodes/materialSchema';
 import { CENTRE_PIVOT, isIdentityPlacement, rebasePlacementPivot } from '../material/uvPlacement';
-
-const BAKED_MAP_SLOTS: readonly BakedMapSlot[] = [
-  'map',
-  'normalMap',
-  'roughnessMap',
-  'metalnessMap',
-  'aoMap',
-  'emissiveMap',
-];
 
 /**
  * #1136 — each map's UV placement as it draws, restated about the centre pivot `BakedMeshR` places
@@ -140,27 +132,18 @@ export async function captureBakedMaterial(
       transparent: basic.transparent,
       emissive: '#000000',
       emissiveIntensity: 0,
+      ...NULL_BAKED_MAPS,
       map,
-      normalMap: null,
-      roughnessMap: null,
-      metalnessMap: null,
-      aoMap: null,
-      emissiveMap: null,
       ...(mapPlacements ? { mapPlacements } : {}),
       ...bakedSurface(basic),
     };
   }
 
   const std = material as THREE.MeshStandardMaterial;
-  // Persist all six map slots (path 2). Each is read-only on the live texture.
-  const [map, normalMap, roughnessMap, metalnessMap, aoMap, emissiveMap] = await Promise.all([
-    persistSlot(storage, std.map),
-    persistSlot(storage, std.normalMap),
-    persistSlot(storage, std.roughnessMap),
-    persistSlot(storage, std.metalnessMap),
-    persistSlot(storage, std.aoMap),
-    persistSlot(storage, std.emissiveMap),
-  ]);
+  // Persist every map slot the table names (path 2). Each is read-only on the live texture.
+  const live = material as unknown as Partial<Record<BakedMapSlot, THREE.Texture | null>>;
+  const refs = await Promise.all(BAKED_MAP_SLOTS.map((slot) => persistSlot(storage, live[slot])));
+  const maps = bakedMapsOf((slot) => refs[BAKED_MAP_SLOTS.indexOf(slot)]);
 
   let spec: BakedMaterialSpec = {
     materialClass: cls, // 'standard' | 'physical'
@@ -171,12 +154,7 @@ export async function captureBakedMaterial(
     transparent: std.transparent,
     emissive: hexOf(std.emissive, '#000000'),
     emissiveIntensity: typeof std.emissiveIntensity === 'number' ? std.emissiveIntensity : 1,
-    map,
-    normalMap,
-    roughnessMap,
-    metalnessMap,
-    aoMap,
-    emissiveMap,
+    ...maps,
     ...bakedSurface(std),
   };
   // #1136 — absent, not empty, when nothing is transformed, so an ordinary bake writes no field.

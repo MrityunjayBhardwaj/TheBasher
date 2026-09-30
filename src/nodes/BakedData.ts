@@ -42,6 +42,7 @@
 
 import { z } from 'zod';
 import type { NodeDefinition } from '../core/dag/types';
+import { MATERIAL_MAP_SLOT_TABLE } from './types';
 import type { BakedDataValue } from './types';
 import { SAMPLER_MAG_FILTERS, SAMPLER_MIN_FILTERS, SAMPLER_WRAPS } from './materialSchema';
 
@@ -71,6 +72,17 @@ const BakedPlacementSchema = z.object({
   rotation: z.number(),
 });
 
+/** The slot table's rows, as the baked snapshot names them (three's vocabulary). */
+const BAKED_MAP_ROWS = Object.values(MATERIAL_MAP_SLOT_TABLE);
+type BakedMapRow = (typeof BAKED_MAP_ROWS)[number];
+const nullableRef = BakedTextureRefSchema.nullable();
+/** The map fields' static shape, which `Object.fromEntries` cannot carry: one per row, by seeding. */
+type BakedMapFields = {
+  [R in BakedMapRow as R['three']]: R['seeded'] extends true
+    ? typeof nullableRef
+    : z.ZodOptional<typeof nullableRef>;
+};
+
 /** Zod for the rich `BakedMaterialSpec` (the ONE material face, M6). */
 export const BakedMaterialSpecSchema = z.object({
   materialClass: z.enum(['standard', 'physical', 'basic']),
@@ -81,19 +93,19 @@ export const BakedMaterialSpecSchema = z.object({
   transparent: z.boolean(),
   emissive: z.string(),
   emissiveIntensity: z.number(),
-  map: BakedTextureRefSchema.nullable(),
-  normalMap: BakedTextureRefSchema.nullable(),
-  roughnessMap: BakedTextureRefSchema.nullable(),
-  metalnessMap: BakedTextureRefSchema.nullable(),
-  aoMap: BakedTextureRefSchema.nullable(),
-  emissiveMap: BakedTextureRefSchema.nullable(),
+  // One ref per map slot, from the slot table (#1324): null when the source has none, and absent
+  // allowed for a slot added after the six, so an older baked save still parses.
+  ...(Object.fromEntries(
+    BAKED_MAP_ROWS.map(({ three, seeded }) => [
+      three,
+      seeded ? nullableRef : nullableRef.optional(),
+    ]),
+  ) as BakedMapFields),
   // #1136 — declared, or zod strips it on every parse and the placement is lost on load.
   mapPlacements: z
     .object(
       Object.fromEntries(
-        (['map', 'normalMap', 'roughnessMap', 'metalnessMap', 'aoMap', 'emissiveMap'] as const).map(
-          (slot) => [slot, BakedPlacementSchema.optional()],
-        ),
+        BAKED_MAP_ROWS.map(({ three }) => [three, BakedPlacementSchema.optional()]),
       ),
     )
     .optional(),
