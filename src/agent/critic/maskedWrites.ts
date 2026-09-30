@@ -152,6 +152,15 @@ export function maskedWrites(
     // after, which differs, so it is already excluded as "the write reached the scene".
     if (was === undefined && now === undefined) continue;
     if (JSON.stringify(was) !== JSON.stringify(now)) continue; // the write reached the scene
+    // #1406 — a write of the value the node ALREADY held changed nothing, base included, so
+    // nothing was hidden. Without this it read as masked ("still shows X, not X. Something
+    // else drives it") — measured: a model re-writing its own earlier round's value was sent
+    // hunting for a driver that did not exist, for five rounds. Distinct from THE
+    // COINCIDENCE, where the base DID move and a channel hides it: that stays reported.
+    const prior = before.nodes[w.nodeId];
+    if (prior && JSON.stringify(readBaseParam(prior, w.paramPath)) === JSON.stringify(w.value)) {
+      continue;
+    }
     hits.push({
       nodeId: w.nodeId,
       paramPath: w.paramPath,

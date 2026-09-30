@@ -108,6 +108,20 @@ describe('#1017 - a write the scene does not show', () => {
     expect(hits[0].wrote).toEqual([5, 0, 0]);
   });
 
+  // #1406 — the live false report: "the scene still shows [0,1,0] at 0.0s, not [0,1,0].
+  // Something else drives it." The model had re-written the value its own earlier round set.
+  it('A REPEAT of the value the node already holds is not masked - nothing changed, base included', () => {
+    const seeded = createFork(base, [setPos([5, 0, 0])]).fork;
+    const { hits } = run(seeded, [setPos([5, 0, 0])]);
+    expect(hits).toEqual([]);
+  });
+
+  it('...and under a live channel too: a write that moves nothing hides nothing', () => {
+    const seeded = createFork(base, [setPos([5, 0, 0]), channel('n_chan', {}, [10, 0, 0])]).fork;
+    const { hits } = run(seeded, [setPos([5, 0, 0])]);
+    expect(hits).toEqual([]);
+  });
+
   it('A MUTED channel masks nothing - the write IS what the scene shows', () => {
     const seeded = createFork(base, [channel('n_chan', { mute: true })]).fork;
     const { hits } = run(seeded, [setPos([5, 0, 0])]);
