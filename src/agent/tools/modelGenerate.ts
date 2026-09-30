@@ -42,7 +42,11 @@ import type { ToolContext, ToolDefinition, ToolResult } from './types';
 import { MAX_FACE_LIMIT, describeRequest } from '../../core/modelgen';
 import type { ModelGenerationRequest } from '../../core/modelgen';
 import { ingestSingleFile } from '../../app/asset/importCommon';
-import { buildGltfImportOpsFromOpfs, refusalNotice } from '../../app/asset/importGltf';
+import {
+  buildGltfImportOpsFromOpfs,
+  leftBehindNotice,
+  refusalNotice,
+} from '../../app/asset/importGltf';
 
 export const modelGenerateSchema = z.object({
   prompt: z
@@ -144,7 +148,7 @@ export const modelGenerateTool: ToolDefinition<ModelGenerateArgs> = {
       text:
         `Generated "${args.name ?? args.prompt}" (task ${taskId}) — imported from ` +
         `${opfsPath} as ${landed}. It is an ordinary imported ` +
-        `asset, with nothing in the graph marking it as generated.`,
+        `asset, with nothing in the graph marking it as generated.${leftBehindNotice(chain.notices)}`,
     };
   },
 };

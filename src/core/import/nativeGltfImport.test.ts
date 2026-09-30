@@ -7,6 +7,7 @@ import {
   primitiveSlots,
   readGltfMesh,
   triangulate,
+  type NativeImportResult,
 } from './nativeGltfImport';
 import { attributeAt, MATERIAL_INDEX, SKIN_JOINTS, SKIN_WEIGHTS } from '../../nodes/attributes';
 import { read as readAttributes } from '../../app/attributeStore';
@@ -111,6 +112,18 @@ function withSkinData(
   attributes.JOINTS_0 = accessors.length - 2;
   attributes.WEIGHTS_0 = accessors.length - 1;
   return { joints: accessors.length - 2, weights: accessors.length - 1 };
+}
+
+/**
+ * #1384 — a node skins the cube: two joint nodes (`A` over `B`) and one skin listing them, so the
+ * cube's joint sets are READ. Without it they are dropped unread, as Blender drops them.
+ */
+function skinTheCube(json: Record<string, unknown>): void {
+  const nodes = json.nodes as Record<string, unknown>[];
+  nodes.push({ name: 'A', children: [2] }, { name: 'B' });
+  (json.scenes as { nodes: number[] }[])[0].nodes.push(1);
+  json.skins = [{ joints: [1, 2] }];
+  nodes[0].skin = 0;
 }
 
 /** One binding row per cube vertex (24): all on joint 0, fully weighted. */
@@ -502,7 +515,7 @@ describe('#1196 — readGltfMesh reads a skin into point layers', () => {
     ]);
   });
 
-  it('refuses a joint number past the skin’s table, and joint numbers with no table at all', async () => {
+  it('refuses a joint number past the skin’s table, and reads no joints with no table at all', async () => {
     const joints = uniformJoints();
     joints[5] = [0, 2, 0, 0];
     const { json, bin } = parseGltfContainer(
@@ -515,7 +528,8 @@ describe('#1196 — readGltfMesh reads a skin into point layers', () => {
       refused: 'mesh 0 binds a vertex to joint 2, but its skin lists 2 joints',
       issue: '#1063',
     });
-    expect(readGltfMesh(json, buffers, 0)).toMatchObject({ issue: '#1063' });
+    // #1384 — no vertex groups: the mesh is unskinned, and its joint sets are dropped unread.
+    expect(readGltfMesh(json, buffers, 0)).toMatchObject({ pointLayers: [], vertexGroups: [] });
     expect(readGltfMesh(json, buffers, 0, ['A', 'B', 'C'])).not.toHaveProperty('refused');
   });
 
@@ -810,6 +824,7 @@ describe('buildNativeGltfImportOps', () => {
       'a second joint set',
       () =>
         jsonFixture((json) => {
+          skinTheCube(json);
           const skin = withSkinData(json, uniformJoints(), uniformWeights());
           const attributes = cubeAttributes(json);
           attributes.JOINTS_1 = skin.joints;
@@ -818,21 +833,13 @@ describe('buildNativeGltfImportOps', () => {
       '#1125',
       'carries JOINTS_1, WEIGHTS_1,',
     ],
-    // The same file with ONE set passes that guard, which is what makes the row above its witness:
-    // it is refused one step later, because no node skins the mesh its joints would index.
-    [
-      'joint numbers on a mesh no node skins',
-      () =>
-        jsonFixture((json) => {
-          withSkinData(json, uniformJoints(), uniformWeights());
-        }),
-      '#1063',
-      'carries JOINTS_0, but no node skins it',
-    ],
+    // #1384 — the validator rows below skin the cube: on a mesh no node skins, joint sets are
+    // dropped unread (Blender reads them only for a skinned mesh), so nothing there would refuse.
     [
       'joints without weights',
       () =>
         jsonFixture((json) => {
+          skinTheCube(json);
           withSkinData(json, uniformJoints(), uniformWeights());
           delete cubeAttributes(json).WEIGHTS_0;
         }),
@@ -843,6 +850,7 @@ describe('buildNativeGltfImportOps', () => {
       'byte weights that are not normalised',
       () =>
         jsonFixture((json) => {
+          skinTheCube(json);
           withSkinData(json, uniformJoints(), uniformWeights(), {
             weightType: 5121,
             normalized: false,
@@ -1994,5 +2002,76 @@ describe('#1381 — a file`s tangents are checked against MikkTSpace and dropped
     expect('refused' in result && result.refused).toBe(
       'mesh 0 carries tangents but no TEXCOORD_0 to derive them from',
     );
+  });
+});
+
+describe('#1384 — joint sets on a mesh no node skins are dropped, as Blender drops them', () => {
+  beforeEach(() => {
+    __resetRegistryForTests();
+    registerAllNodes();
+  });
+
+  const importOf = (buffer: ArrayBuffer) =>
+    buildNativeGltfImportOps({
+      buffer,
+      assetRef: 'user-imports/native/cube.gltf',
+      sceneNodeId: 'n_scene',
+      storeImage: noImages,
+    });
+
+  const meshOf = (result: NativeImportResult) => {
+    const data = result.ops.find(
+      (op): op is Extract<Op, { type: 'addNode' }> =>
+        op.type === 'addNode' && op.nodeType === 'PolyMeshData',
+    )!;
+    return PolyMeshDataParams.parse(data.params).mesh!;
+  };
+
+  it('two sets on an unskinned cube: it imports, holds neither, and says what it left', async () => {
+    const result = await importOf(
+      jsonFixture((json) => {
+        const skin = withSkinData(json, uniformJoints(), uniformWeights());
+        const attributes = cubeAttributes(json);
+        attributes.JOINTS_1 = skin.joints;
+        attributes.WEIGHTS_1 = skin.weights;
+      }),
+    );
+    if ('refused' in result) throw new Error(result.refused);
+    expect(meshOf(result).pointLayers).toEqual([]);
+    expect(meshOf(result).vertexGroups).toEqual([]);
+    expect(result.notices).toEqual([
+      'mesh 0 carries JOINTS_0, JOINTS_1, WEIGHTS_0, WEIGHTS_1, but no node skins it, so they were dropped (as Blender drops them)',
+    ]);
+  });
+
+  it('half a set on an unskinned cube is dropped unread too, not refused as malformed', async () => {
+    const result = await importOf(
+      jsonFixture((json) => {
+        withSkinData(json, uniformJoints(), uniformWeights());
+        delete cubeAttributes(json).WEIGHTS_0;
+      }),
+    );
+    if ('refused' in result) throw new Error(result.refused);
+    expect(result.notices).toEqual([
+      'mesh 0 carries JOINTS_0, but no node skins it, so they were dropped (as Blender drops them)',
+    ]);
+  });
+
+  it('a cube with no joint sets leaves nothing behind', async () => {
+    const result = await importOf(fixture(CUBE));
+    if ('refused' in result) throw new Error(result.refused);
+    expect(result.notices).toEqual([]);
+  });
+
+  it('the same sets on a SKINNED cube are held, with no notice', async () => {
+    const result = await importOf(
+      jsonFixture((json) => {
+        skinTheCube(json);
+        withSkinData(json, uniformJoints(), uniformWeights());
+      }),
+    );
+    if ('refused' in result) throw new Error(result.refused);
+    expect(result.notices).toEqual([]);
+    expect(meshOf(result).pointLayers.map((l) => l.type)).toEqual(['int4', 'float4']);
   });
 });

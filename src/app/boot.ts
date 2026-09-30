@@ -910,7 +910,8 @@ export function boot(): Promise<void> {
             throw new Error(`native import refused: ${result.refused} (${result.issue})`);
           }
           dag.dispatchAtomic(result.ops, 'user', `import gltf (native): ${assetRef}`);
-          return { groupId: result.groupId, objectIds: result.objectIds };
+          // #1384 — and what the import left behind on purpose, for a spec to read.
+          return { groupId: result.groupId, objectIds: result.objectIds, notices: result.notices };
         };
       });
       // P7.9 Wave D Task 8 — real-path ingestion seam (issue #110). Drives the

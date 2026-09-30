@@ -233,6 +233,14 @@ export function refusalNotice(refusal: NativeImportRefusal): string {
   return `import refused: ${refusal.refused} (${refusal.issue})`;
 }
 
+/**
+ * #1384 — what an import that SUCCEEDED left behind on purpose, as one sentence to append to a
+ * surface's report, or '' when it left nothing. Never the refusal banner: nothing was refused.
+ */
+export function leftBehindNotice(notices: readonly string[]): string {
+  return notices.length === 0 ? '' : ` Left behind: ${notices.join('; ')}.`;
+}
+
 export async function importGltfFromOpfs(path: string): Promise<void> {
   try {
     const dag = useDagStore.getState();
@@ -247,6 +255,10 @@ export async function importGltfFromOpfs(path: string): Promise<void> {
       return;
     }
     dag.dispatchAtomic(result.ops, 'user', `import asset: ${path}`);
+    // #1384 — a console notice, as the other no-silent-drop repairs on this path are (V38): the
+    // import succeeded, so the refusal banner would say the wrong thing.
+    if (result.notices.length > 0)
+      console.warn(`glTF import (${path}):${leftBehindNotice(result.notices)}`);
     // Bump AFTER dispatchAtomic returns (pre-mortem #3): a pre-dispatch
     // bump would cause the My-Imports list to re-enumerate before the
     // import succeeded, yielding stale/empty results on failure.

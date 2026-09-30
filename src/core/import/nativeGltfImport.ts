@@ -152,6 +152,12 @@ export interface NativeImportResult {
     readonly channels: readonly string[];
     readonly track: string | null;
   }[];
+  /**
+   * #1384 — what the file carried that the import left behind on purpose, one sentence each, for the
+   * surfaces that report an import (never the refusal banner: the import succeeded). Empty when
+   * nothing was left behind.
+   */
+  readonly notices: readonly string[];
 }
 
 /** The parts of a glTF document this road reads beyond what `GltfJson` declares. */
@@ -211,6 +217,12 @@ const HELD_ATTRIBUTES: ReadonlySet<string> = new Set([
 // saves authored mesh data, never derived data. So they come across by being CHECKED and dropped:
 // `unreproducedTangents` refuses a file whose tangents MikkTSpace does not give back.
 const DERIVED_ATTRIBUTES: ReadonlySet<string> = new Set(['TANGENT']);
+
+// #1384 — every joint and weight set, `JOINTS_0`, `WEIGHTS_0`, `JOINTS_1`, …. On a mesh no node skins
+// they name joints of nothing, and Blender reads them only when the mesh is skinned
+// (`io_scene_gltf2/blender/imp/mesh.py:92`, 5.1.1): otherwise they are dropped, and so are they here,
+// with a notice (user decision, 2026-09-30).
+const SKIN_SET = /^(JOINTS|WEIGHTS)_\d+$/;
 
 /**
  * #1381 — how far a file's tangent may sit from the MikkTSpace one before the file is refused.
@@ -311,11 +323,18 @@ const HELD_TEXTURE_SLOTS = HELD_TEXTURE_PATHS;
  *
  * #1052 — asked of EVERY primitive: the mesh they become holds the union of what they carry.
  */
-function undrawableAttributes(json: NativeGltfJson, meshIndex: number): NativeImportRefusal | null {
+function undrawableAttributes(
+  json: NativeGltfJson,
+  meshIndex: number,
+  skinned: boolean,
+): NativeImportRefusal | null {
   for (const prim of json.meshes?.[meshIndex]?.primitives ?? []) {
     const attributes = prim.attributes ?? {};
     const undrawable = Object.keys(attributes).filter(
-      (name) => !HELD_ATTRIBUTES.has(name) && !DERIVED_ATTRIBUTES.has(name),
+      (name) =>
+        !HELD_ATTRIBUTES.has(name) &&
+        !DERIVED_ATTRIBUTES.has(name) &&
+        !(!skinned && SKIN_SET.test(name)),
     );
     if (undrawable.length > 0) {
       return {
@@ -390,7 +409,8 @@ async function unreproducedTangents(
         issue: '#1381',
       };
     }
-    const read = readPrimitive(json, buffers, meshIndex, prim);
+    // Geometry only: the positions and corners the tangents sit on.
+    const read = readPrimitive(json, buffers, meshIndex, prim, false);
     if ('refused' in read) return read;
     const normals = readAccessor(json, buffers, normalAccessor);
     const uvs = readAccessor(json, buffers, uvAccessor);
@@ -666,6 +686,7 @@ function readPrimitive(
   buffers: Uint8Array[],
   meshIndex: number,
   prim: NonNullable<NonNullable<NativeGltfJson['meshes']>[number]['primitives']>[number],
+  skinned: boolean,
 ): ReadPrimitive | NativeImportRefusal {
   const mode = prim.mode ?? TRIANGLES;
   if (mode !== TRIANGLES && mode !== TRIANGLE_STRIP && mode !== TRIANGLE_FAN) {
@@ -703,8 +724,9 @@ function readPrimitive(
   // #1196 — "the number of JOINTS_n attribute sets MUST be equal to the number of WEIGHTS_n
   // attribute sets" (glTF 2.0 §Skins). Half a set binds a point to joints with no weights, or
   // weights to no joints, so it is refused as the malformed file it is.
-  const jointsAccessor = attributes.JOINTS_0;
-  const weightsAccessor = attributes.WEIGHTS_0;
+  // #1384 — read only for a mesh a node skins; otherwise they are dropped unread, as Blender does.
+  const jointsAccessor = skinned ? attributes.JOINTS_0 : undefined;
+  const weightsAccessor = skinned ? attributes.WEIGHTS_0 : undefined;
   if ((typeof jointsAccessor === 'number') !== (typeof weightsAccessor === 'number')) {
     return {
       refused: `mesh ${meshIndex} carries ${typeof jointsAccessor === 'number' ? 'JOINTS_0 without WEIGHTS_0' : 'WEIGHTS_0 without JOINTS_0'}, and they come in pairs`,
@@ -828,7 +850,7 @@ export function readGltfMesh(
   }
   const read: ReadPrimitive[] = [];
   for (const prim of primitives) {
-    const one = readPrimitive(json, buffers, meshIndex, prim);
+    const one = readPrimitive(json, buffers, meshIndex, prim, vertexGroups !== null);
     if ('refused' in one) return one;
     read.push(one);
   }
@@ -1006,12 +1028,8 @@ function readVertexSkin(
   vertexGroups: readonly string[] | null,
 ): VertexSkin | NativeImportRefusal | null {
   if (read.every((one) => one.skinAccessors === undefined)) return null;
-  if (vertexGroups === null) {
-    return {
-      refused: `mesh ${meshIndex} carries JOINTS_0, but no node skins it, so its joint numbers name nothing`,
-      issue: '#1063',
-    };
-  }
+  // #1384 — unreachable with sets present: an unskinned mesh's reader skipped them. No skin, no read.
+  if (vertexGroups === null) return null;
   const joints = new Int32Array(vertices * 4);
   const weights = new Float32Array(vertices * 4);
   for (let i = 0; i < read.length; i++) {
@@ -1624,18 +1642,32 @@ async function buildNativeOps(
   // mesh at all, and a list would slide every later node onto the wrong geometry (#1051).
   const meshes = new Map<number, MeshGeometryData>();
   const textures = new Set<number>();
+  const notices: string[] = [];
   for (let i = 0; i < json.nodes.length; i++) {
     const node = json.nodes[i];
     if (typeof node.mesh !== 'number') continue; // an empty: a transform and a parent, no geometry
     // ASKED HERE AND NOT IN THE READER, because it is not a question about reading: `readGltfMesh`
     // reads any attribute it is given, and what decides is whether the stored mesh would draw it.
-    const undrawable = undrawableAttributes(json, node.mesh as number);
-    if (undrawable !== null) return undrawable;
-    const unreproduced = await unreproducedTangents(json, buffers, node.mesh as number);
-    if (unreproduced !== null) return unreproduced;
     // #393 — a skinned node's mesh names its joint numbers by the skeleton's own bone names.
     const vertexGroups =
       typeof node.skin === 'number' && read !== null ? read.skins[node.skin].vertexGroups : null;
+    // #1384 — skinned means the mesh has vertex groups to bind to: the one test the reader uses too.
+    const skinned = vertexGroups !== null;
+    const undrawable = undrawableAttributes(json, node.mesh as number, skinned);
+    if (undrawable !== null) return undrawable;
+    const unreproduced = await unreproducedTangents(json, buffers, node.mesh as number);
+    if (unreproduced !== null) return unreproduced;
+    if (!skinned) {
+      const sets = [
+        ...new Set(
+          (json.meshes![node.mesh as number].primitives ?? []).flatMap((prim) =>
+            Object.keys(prim.attributes ?? {}).filter((name) => SKIN_SET.test(name)),
+          ),
+        ),
+      ].sort();
+      const notice = `mesh ${node.mesh} carries ${sets.join(', ')}, but no node skins it, so they were dropped (as Blender drops them)`;
+      if (sets.length > 0 && !notices.includes(notice)) notices.push(notice);
+    }
     const data = readGltfMesh(json, buffers, node.mesh as number, vertexGroups);
     if ('refused' in data) return data;
     meshes.set(
@@ -1928,6 +1960,7 @@ async function buildNativeOps(
     skinSkeleton: (read?.skins ?? []).map((skin) => skin.skeleton),
     meshes: meshIds,
     takes,
+    notices,
   };
 }
 

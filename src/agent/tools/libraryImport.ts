@@ -24,7 +24,11 @@ import { z } from 'zod';
 import type { ToolDefinition, ToolContext, ToolResult } from './types';
 import { buildMotionImportOpsFromOpfs } from '../../app/asset/importBvhFbx';
 import { IMPORT_EXTENSIONS, importFormatOf } from '../../app/asset/importFormats';
-import { buildGltfImportOpsFromOpfs, refusalNotice } from '../../app/asset/importGltf';
+import {
+  buildGltfImportOpsFromOpfs,
+  leftBehindNotice,
+  refusalNotice,
+} from '../../app/asset/importGltf';
 
 export const libraryImportSchema = z.object({
   assetRef: z
@@ -75,7 +79,10 @@ export const libraryImportTool: ToolDefinition<LibraryImportArgs> = {
           text: `Error: ${args.assetRef} was not imported — ${refusalNotice(result.nativeRefusal)}.`,
         };
       }
-      return { ops: result.ops, text: `Imported ${args.assetRef} at [${args.position}]` };
+      return {
+        ops: result.ops,
+        text: `Imported ${args.assetRef} at [${args.position}]${leftBehindNotice(result.notices)}`,
+      };
     }
 
     // #1307 — a motion stands where its file puts it, as the UI import does: `position` is not
