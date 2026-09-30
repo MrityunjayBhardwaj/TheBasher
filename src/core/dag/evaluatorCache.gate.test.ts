@@ -246,16 +246,20 @@ const ORIGINS: Record<string, Origin> = {
     frequency: 'per-action',
     why: 'Frame Selected on a character.',
   },
+  'src/app/exposeParams.ts · exposedTargetResolver → exposeParams': {
+    count: 1,
+    frequency: 'per-action',
+    why: 'A write road asking who owns a param (resolveExposedTarget), and a channel picker built once per graph state; each evaluates only for a chain holding a material operator. The N panel and the viewport pass the shared UI cache (#1394).',
+  },
   'src/app/lightBrush.ts · buildLightBrushOp → resolveRigTarget': {
     count: 1,
     frequency: 'per-action',
     why: 'A click on a mesh while the Light Brush is active.',
   },
-  'src/app/resolveMaterialFieldOwner.ts · mapPresenceBelow → evaluate': {
+  'src/app/promoteParam.ts · resolveControlHost → exposeParams': {
     count: 1,
-    frequency: 'per-edit',
-    why: "N panel's exposed-params memo (graph, selection) and the data-lane overlay memo; only when a lane holds a material operator. Unmeasured.",
-    issue: 1394,
+    frequency: 'per-action',
+    why: 'One promote click; evaluates only for a chain holding a material operator.',
   },
   'src/app/statefulOps.ts · cookSolverStep → evaluate': {
     count: 1,
@@ -363,6 +367,12 @@ const TAKERS: string[] = [
   'underParent@src/app/resolveWorldTransform.ts',
   'walk@src/app/resolveWorldTransform.ts',
   'walkParent@src/app/resolveWorldTransform.ts',
+  'dataLaneOverlaySources@src/app/dataLaneOverlay.ts',
+  'exposeParams@src/app/exposeParams.ts',
+  'mapPresenceBelow@src/app/resolveMaterialFieldOwner.ts',
+  'maskedFieldsOf@src/app/resolveMaterialFieldOwner.ts',
+  'resolveMaterialFieldOwners@src/app/resolveMaterialFieldOwner.ts',
+  'withMaterialMasking@src/app/exposeParams.ts',
 ];
 
 // ── Controls: a file the census reads alongside `src/`, one call per classification ──────

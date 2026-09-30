@@ -1169,7 +1169,7 @@ function useLaneOverlaySources(targetId: string): LaneOverlaySource[] {
   // stale. The lint rule cannot see a dependency that exists to key a read rather than to
   // feed it, and dropping it would freeze the sources at first render.
   return useMemo(
-    () => dataLaneOverlaySources(useDagStore.getState().state, targetId),
+    () => dataLaneOverlaySources(useDagStore.getState().state, targetId, uiEvaluatorCache),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [laneNodes, targetId],
   );

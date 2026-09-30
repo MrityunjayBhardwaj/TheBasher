@@ -51,7 +51,7 @@ import type { Node } from '../core/dag/types';
 import type { MaterialOverrideField, ObjectData } from '../nodes/types';
 import type { MaterialOverrideOpParams } from '../nodes/MaterialOverrideOp';
 import { overrideValueOf } from '../nodes/MaterialOverrideOp';
-import { evaluate } from '../core/dag/evaluator';
+import { evaluate, type EvaluatorCache } from '../core/dag/evaluator';
 import { requireNodeType } from '../core/dag/registry';
 import { isBypassed } from '../core/dag/chainBypass';
 import {
@@ -97,11 +97,15 @@ const NO_MAPS: MaterialMapPresence = { roughnessMap: false, metalnessMap: false 
  * `target` is what makes this the composed base AT THAT LAYER rather than the bottom of
  * the stack, which matters the moment two override ops sit on each other.
  */
-function mapPresenceBelow(state: DagState, opId: string): MaterialMapPresence {
+function mapPresenceBelow(
+  state: DagState,
+  opId: string,
+  cache?: EvaluatorCache,
+): MaterialMapPresence {
   const up = singleRef(state.nodes[opId], 'target');
   if (!up) return NO_MAPS;
   try {
-    const value = evaluate(state, up.node).value as ObjectData | undefined;
+    const value = evaluate(state, up.node, { cache }).value as ObjectData | undefined;
     const material = value ? (modifierDataSource(value)?.material ?? null) : null;
     if (!material) return NO_MAPS;
     return 'materialClass' in material
@@ -159,6 +163,7 @@ export const MATERIAL_OVERRIDE_FIELDS = Object.keys(
 function maskedFieldsOf(
   state: DagState,
   node: Node & { type: MaterialLaneType },
+  cache?: EvaluatorCache,
 ): Partial<Record<MaterialOverrideField, MaterialFieldOwner>> {
   const opId = node.id;
   const params = node.params as Record<string, unknown>;
@@ -194,7 +199,7 @@ function maskedFieldsOf(
       // ONE call, six answers — see the note above.
       const fields = resolveMaterialOverrideFields(
         overrideValueOf(params as unknown as MaterialOverrideOpParams),
-        mapPresenceBelow(state, opId),
+        mapPresenceBelow(state, opId, cache),
         (params as unknown as MaterialOverrideOpParams).overridden,
         // The data lane — the layer below is another authored layer, never a source
         // material. Must match what `MaterialOverrideOp.evaluate` composes with, or the
@@ -237,6 +242,7 @@ function maskedFieldsOf(
 export function resolveMaterialFieldOwners(
   state: DagState,
   id: string,
+  cache?: EvaluatorCache,
 ): Readonly<Record<MaterialOverrideField, MaterialFieldOwner | null>> {
   const out = Object.fromEntries(MATERIAL_OVERRIDE_FIELDS.map((f) => [f, null])) as Record<
     MaterialOverrideField,
@@ -254,7 +260,7 @@ export function resolveMaterialFieldOwners(
     seen.add(cur);
     const op = state.nodes[cur];
     if (isMaterialLaneOperator(op)) {
-      const masked = maskedFieldsOf(state, op);
+      const masked = maskedFieldsOf(state, op, cache);
       for (const field of MATERIAL_OVERRIDE_FIELDS) {
         const owner = masked[field];
         if (owner && out[field] === null) {

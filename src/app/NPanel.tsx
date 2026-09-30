@@ -4286,7 +4286,7 @@ export function NPanel() {
   // it, and letting the projection recompute would add a third evaluate per render.
   const dagState = useDagStore((s) => s.state);
   const projection = useMemo(
-    () => exposeParams(dagState, selectedId, { canApply }),
+    () => exposeParams(dagState, selectedId, { canApply, cache: uiEvaluatorCache }),
     [dagState, selectedId, canApply],
   );
   // #394 P3 (#518) — the linked-data block draws the base's rows AND the rows of every
