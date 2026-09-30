@@ -26,7 +26,7 @@
 // per-frame rows are the work list, and each names the issue that decides it.
 //
 // REF: tools/gates/cacheCensus.ts; src/core/dag/evaluator.ts (`EvaluatorCache`, cache key);
-//      issues #1314 #1315 #1318 #1385 #1386.
+//      issues #1314 #1315 #1318 #1385 #1386 #1389.
 
 import { join } from 'node:path';
 import { beforeAll, describe, expect, it } from 'vitest';
@@ -156,18 +156,6 @@ const ORIGINS: Record<string, Origin> = {
     frequency: 'per-action',
     why: 'Apply Transform on an imported child; the inline fresh cache dies with the action.',
   },
-  'src/app/animate/useAnimatableField.ts · useAnimatableField → resolveEvaluatedParam': {
-    count: 1,
-    frequency: 'per-frame',
-    why: 'The hook subscribes to the playhead and its memo is keyed on it: one walk per mounted field per frame. Measured 0 pure misses on undriven environment fields; costs once a field is driven through pure nodes (unmeasured).',
-    issue: 1389,
-  },
-  'src/app/animate/useAnimatableField.ts · useAnimatableVec2Field → resolveEvaluatedParam': {
-    count: 1,
-    frequency: 'per-frame',
-    why: 'Same as useAnimatableField, for two-component fields.',
-    issue: 1389,
-  },
   'src/app/asset/bakeGeneratedClip.ts · bakeGeneratedClipOps → evaluate': {
     count: 1,
     frequency: 'per-action',
@@ -229,6 +217,11 @@ const ORIGINS: Record<string, Origin> = {
     frequency: 'once',
     why: 'DEV-only window hook for e2e.',
   },
+  'src/app/boot.ts · compositeFrame → captureCompositeFrame': {
+    count: 1,
+    frequency: 'once',
+    why: 'Dev hook for the census harness: composites one frame per call. The viewer and the export hold a cache (#1389).',
+  },
   'src/app/character/framing.ts · anchorForNode → evaluate': {
     count: 1,
     frequency: 'per-action',
@@ -284,12 +277,6 @@ const ORIGINS: Record<string, Origin> = {
     why: 'Render coherent clip: one walk per frame x param of the batch, each uncached; unmeasured (#1318).',
     issue: 1318,
   },
-  'src/app/video/compositeDecode.ts · collectCompositeInputs → resolveEvaluatedParam': {
-    count: 7,
-    frequency: 'per-frame',
-    why: "CompositeViewer's memo is keyed on the playhead: one walk per layer input and ColorCorrect field per frame, and once per exported composition frame. Measured 0 pure misses with a media layer; costs once a layer param is driven (unmeasured).",
-    issue: 1389,
-  },
   'src/render/dryRun.ts · dryRun → evaluate': {
     count: 2,
     frequency: 'per-action',
@@ -322,6 +309,8 @@ const ORIGINS: Record<string, Origin> = {
 const TAKERS: string[] = [
   'resolveDataKind@src/app/modifierGeometry.ts',
   'scanForFollow@src/viewport/followScan.ts',
+  'collectCompositeInputs@src/app/video/compositeDecode.ts',
+  'captureCompositeFrame@src/app/video/compositeDecode.ts',
   'aimTargetWorld@src/app/nodeConstraints.ts',
   'appendComputedSourceRows@src/timeline/layerChannelRows.ts',
   'applyGhostPoseBand@src/viewport/DiffOverlay.tsx',

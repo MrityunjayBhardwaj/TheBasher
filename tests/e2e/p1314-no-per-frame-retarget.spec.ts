@@ -20,6 +20,29 @@ interface Win {
   __basher_viewport?: {
     getState: () => { setViewLock: (lock: { nodeId: string; boneName: null } | null) => void };
   };
+  __basher_dag?: {
+    getState: () => {
+      state: { nodes: Record<string, { type: string }> };
+      dispatchAtomic: (ops: unknown[]) => unknown;
+    };
+  };
+}
+
+/** A driver on `target.paramPath` reading the camera's yaw. The camera aims at the walker's
+ *  Hips, so evaluating the driver evaluates the walk's retarget. */
+function cameraYawDriver(id: string, target: string, paramPath: string) {
+  return {
+    type: 'addNode',
+    nodeId: id,
+    nodeType: 'ParamDriver',
+    params: {
+      target,
+      paramPath,
+      blendMode: 'replace',
+      order: 0,
+      sourceTransform: { node: 'n_camera', channel: 'ry' },
+    },
+  };
 }
 
 /** Retarget runs over `frames` animation frames, after the given setup has settled. */
@@ -133,6 +156,56 @@ test('the example evaluates its retarget once, not every frame', async ({ page }
       (window as unknown as Win).__basher_viewport!.getState().setViewLock(null),
     );
   }
+  const dispatch = (ops: unknown[]) =>
+    page.evaluate(
+      (ops) => (window as unknown as Win).__basher_dag!.getState().dispatchAtomic(ops),
+      ops,
+    );
+
+  // #1389 — an animatable field follows the playhead. Driven through the camera, each read
+  // evaluates the walk: 40 retargets per 10 frames with the Scene's environment fields
+  // mounted, before each field held a cache.
+  await dispatch([cameraYawDriver('drv_1389_env', 'n_scene', 'envIntensity')]);
+  await select('n_scene');
+  await expect(page.getByTestId('inspector-environment-n_scene')).toBeVisible();
+  await row('playing, Scene selected, env intensity driven by the camera', true);
+  await dispatch([{ type: 'removeNode', nodeId: 'drv_1389_env' }]);
+
+  // #1389 — the composite viewer re-reads its layers per frame. A layer's opacity driven
+  // through the camera evaluates the walk on every read.
+  await page.getByTestId('menu-file-button').click();
+  await page.getByTestId('menu-file-new-composition').click();
+  await expect(page.getByTestId('video-mode-viewer')).toBeVisible();
+  const compId = await page.evaluate(() => {
+    const nodes = (window as unknown as Win).__basher_dag!.getState().state.nodes;
+    return Object.keys(nodes).find((id) => nodes[id].type === 'Composition')!;
+  });
+  await dispatch([
+    { type: 'addNode', nodeId: 'layer_1389', nodeType: 'Layer', params: {} },
+    {
+      type: 'connect',
+      from: { node: 'layer_1389', socket: 'out' },
+      to: { node: compId, socket: 'layers' },
+    },
+    cameraYawDriver('drv_1389_layer', 'layer_1389', 'opacity'),
+  ]);
+  await row('playing, composite viewer, layer opacity driven by the camera', true);
+
+  // #1389 — the composition export walks the same layer reads once per frame. Over a 6-frame
+  // comp the walk may run once (its cache starts empty), not once per frame.
+  await dispatch([{ type: 'setParam', nodeId: compId, paramPath: 'durationFrames', value: 6 }]);
+  const exported = await page.evaluate(async () => {
+    const rc = await import('/src/nodes/RetargetClip.ts');
+    const ex = await import('/src/app/video/exportCompositionAction.ts');
+    const before = rc.__retargetRunsForTests();
+    const result = await ex.exportCompositionToFile('png');
+    return { ok: result.ok, frames: result.frameCount, runs: rc.__retargetRunsForTests() - before };
+  });
+  expect(exported, 'the export ran 6 frames').toMatchObject({ ok: true, frames: 6 });
+  console.log(`[1314] composition export, 6 frames: ${exported.runs} retarget runs`);
+  rows.push(['composition export, 6 frames (1 allowed)', Math.max(0, exported.runs - 1)]);
+  await page.getByTestId('space-switch-view3d').click();
+
   expect(rows.filter(([, n]) => n > 0)).toEqual([]);
 
   // The walk still moves: the Hips' drawn matrix differs between two times.

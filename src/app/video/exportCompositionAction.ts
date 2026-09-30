@@ -16,6 +16,7 @@
 //      (surface every outcome); dharana B24; issue #237.
 
 import { useDagStore } from '../../core/dag/store';
+import { createEvaluatorCache } from '../../core/dag/evaluator';
 import { useProjectStore } from '../../core/project/store';
 import { useCompositionStore } from '../stores/compositionStore';
 import { FRAMES_PER_SECOND, useTimeStore } from '../stores/timeStore';
@@ -123,6 +124,11 @@ export async function exportCompositionToFile(
     return { ok: false, reason: 'no-2d-context' };
   }
 
+  // One evaluator cache for the whole export (#1389): each frame's layer reads walk
+  // whatever drives them, and a pure node under a driver must run once per export,
+  // not once per frame. Keys are content hashes and impure nodes key on the time, so
+  // sharing it across frames is exact.
+  const cache = createEvaluatorCache();
   try {
     const output = await renderAnimation(
       {
@@ -140,7 +146,14 @@ export async function exportCompositionToFile(
           );
           // Read state fresh each frame (the DAG is stable across the export; only
           // time advances) and composite via the SAME core the viewer uses.
-          await captureCompositeFrame(useDagStore.getState().state, id, params, compFrame, ctx);
+          await captureCompositeFrame(
+            useDagStore.getState().state,
+            id,
+            params,
+            compFrame,
+            ctx,
+            cache,
+          );
           return canvas;
         },
       },

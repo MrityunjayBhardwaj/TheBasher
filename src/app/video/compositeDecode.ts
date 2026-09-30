@@ -34,6 +34,7 @@ import { useSettingsStore } from '../stores/settingsStore';
 import { useNotificationStore } from '../stores/notificationStore';
 import type { StorageCapability } from '../../core/storage/StorageCapability';
 import type { DagState } from '../../core/dag/state';
+import type { EvaluatorCache } from '../../core/dag/evaluator';
 import type { EvalCtx, NodeId } from '../../core/dag/types';
 import type { CompositionParams } from '../../nodes/Composition';
 import type { LayerBlendMode } from '../../nodes/types';
@@ -112,6 +113,7 @@ export function collectCompositeInputs(
   state: DagState,
   compId: NodeId,
   ctx: EvalCtx,
+  cache?: EvaluatorCache,
 ): ResolvedLayerInput[] {
   const comp = state.nodes[compId];
   if (!comp) return [];
@@ -129,22 +131,22 @@ export function collectCompositeInputs(
     const t = (p.transform ?? {}) as Record<string, unknown>;
 
     const opacity = num(
-      resolveEvaluatedParam(state, layerId, 'opacity', ctx)?.value,
+      resolveEvaluatedParam(state, layerId, 'opacity', ctx, cache)?.value,
       num(p.opacity, 1),
     );
     const rotation = num(
-      resolveEvaluatedParam(state, layerId, 'transform.rotation', ctx)?.value,
+      resolveEvaluatedParam(state, layerId, 'transform.rotation', ctx, cache)?.value,
       num(t.rotation, 0),
     );
     // Position + scale overlay their evaluated [[V57]] channel value too (vec2),
     // so a keyframed 2D transform animates in viewer + export (H40) — same path
     // as opacity/rotation, just a 2-vector.
     const position = vec2(
-      resolveEvaluatedParam(state, layerId, 'transform.position', ctx)?.value,
+      resolveEvaluatedParam(state, layerId, 'transform.position', ctx, cache)?.value,
       vec2(t.position, [0, 0]),
     );
     const scale = vec2(
-      resolveEvaluatedParam(state, layerId, 'transform.scale', ctx)?.value,
+      resolveEvaluatedParam(state, layerId, 'transform.scale', ctx, cache)?.value,
       vec2(t.scale, [1, 1]),
     );
 
@@ -202,15 +204,15 @@ export function collectCompositeInputs(
           effects.push({
             type: 'ColorCorrect',
             brightness: num(
-              resolveEvaluatedParam(state, entry.nodeId, 'brightness', ctx)?.value,
+              resolveEvaluatedParam(state, entry.nodeId, 'brightness', ctx, cache)?.value,
               num(ep.brightness, 1),
             ),
             contrast: num(
-              resolveEvaluatedParam(state, entry.nodeId, 'contrast', ctx)?.value,
+              resolveEvaluatedParam(state, entry.nodeId, 'contrast', ctx, cache)?.value,
               num(ep.contrast, 1),
             ),
             saturation: num(
-              resolveEvaluatedParam(state, entry.nodeId, 'saturation', ctx)?.value,
+              resolveEvaluatedParam(state, entry.nodeId, 'saturation', ctx, cache)?.value,
               num(ep.saturation, 1),
             ),
           });
@@ -496,17 +498,23 @@ export async function captureCompositeFrame(
   comp: CompositionParams,
   compFrame: number,
   ctx: CanvasRenderingContext2D,
+  cache?: EvaluatorCache,
 ): Promise<LayerComposite[]> {
   const fps = comp.fps ?? 30;
   const durationFrames = Math.max(1, comp.durationFrames ?? 150);
   const seconds = fps > 0 ? compFrame / fps : 0;
-  const inputs = collectCompositeInputs(state, compId, {
-    time: {
-      frame: compFrame,
-      seconds,
-      normalized: durationFrames > 0 ? compFrame / durationFrames : 0,
+  const inputs = collectCompositeInputs(
+    state,
+    compId,
+    {
+      time: {
+        frame: compFrame,
+        seconds,
+        normalized: durationFrames > 0 ? compFrame / durationFrames : 0,
+      },
     },
-  });
+    cache,
+  );
   const draws = planComposite({ fps, durationFrames }, inputs, compFrame);
   const bitmaps = await decodeDraws(draws);
   drawComposite(

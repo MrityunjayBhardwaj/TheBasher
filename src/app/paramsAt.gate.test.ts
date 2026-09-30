@@ -155,6 +155,15 @@ const CONSUMERS: Record<string, Decision> = {
   // state, and now the frame loop's stable cache, to `collectSkeletonObjects`, which reads the
   // skeletons at frame 0 by design (its own row). No new road.
   'src/viewport/followScan.ts': authored('fixed-ctx-by-design'),
+  // #1389 — the animatable-field hooks, the composite viewer and the composition export import
+  // the evaluator only for the cache (a value or its type): each hands the authored state to
+  // `resolveEvaluatedParam`, as before. A field driven through pure nodes re-ran them per frame
+  // per mounted field (40 walk retargets per 10 frames with the Scene's env intensity driven by
+  // the camera). No new road.
+  'src/app/animate/useAnimatableField.ts': authored('delegates-to-a-folding-resolver'),
+  'src/app/video/CompositeViewer.tsx': authored('delegates-to-a-folding-resolver'),
+  'src/app/video/compositeDecode.ts': authored('delegates-to-a-folding-resolver'),
+  'src/app/video/exportCompositionAction.ts': authored('delegates-to-a-folding-resolver'),
   // #902 — the motion resolver. It reads the generator's params AUTHORED and
   // evaluates at the default ctx, and both halves are the same claim: a
   // generation request must be time-invariant. If the playhead could change the
@@ -290,7 +299,10 @@ describe('#582 — who evaluates the graph, and which params they need', () => {
     // walk's whole-clip retarget, at ~3 fps.
     // 47 → 48 at #1388, not a new road either: the view lock's scan takes the frame loop's cache
     // for the rig collection it already delegated to (a rescan re-ran the walk's retarget).
-    expect(evaluatorConsumers()).toHaveLength(48); // 39 -> 40 at #935 (placement) (the motion resolver)
+    // 48 → 52 at #1389, the same shape: two per-frame readers (the animatable-field hooks, the
+    // composite viewer) and the composition export hold a cache for the resolver they already
+    // called, and the composite core takes one.
+    expect(evaluatorConsumers()).toHaveLength(52); // 39 -> 40 at #935 (placement) (the motion resolver)
   });
 
   it('every reason is load-bearing — no member of any union is decorative', () => {

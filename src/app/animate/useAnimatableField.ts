@@ -24,6 +24,7 @@ import { useMemo } from 'react';
 import { useDagStore } from '../../core/dag/store';
 import { useTimeStore } from '../stores/timeStore';
 import { resolveEvaluatedParam } from '../resolveEvaluatedParam';
+import { createEvaluatorCache, type EvaluatorCache } from '../../core/dag/evaluator';
 import { routeAnimatedGrab, autoKeyCommit } from './autoKeyCommit';
 
 export interface AnimatableField<T> {
@@ -54,12 +55,20 @@ export function useAnimatableField<T extends number | string>(
   const normalized = useTimeStore((s) => s.normalized);
   const playing = useTimeStore((s) => s.playing);
   const dagState = useDagStore((s) => s.state);
+  // A stable cache (#1389): this read follows the playhead, and a field driven through
+  // pure nodes (a driver on a controller that reads the character) would otherwise
+  // re-run every one of them per frame, per mounted field.
+  const cache = useMemo<EvaluatorCache>(() => createEvaluatorCache(), []);
   const resolved = useMemo(
     () =>
-      resolveEvaluatedParam(dagState, nodeId, paramPath, {
-        time: { frame, seconds, normalized },
-      }),
-    [dagState, nodeId, paramPath, frame, seconds, normalized],
+      resolveEvaluatedParam(
+        dagState,
+        nodeId,
+        paramPath,
+        { time: { frame, seconds, normalized } },
+        cache,
+      ),
+    [dagState, nodeId, paramPath, frame, seconds, normalized, cache],
   );
   // Match the resolved value to the field's type (a number field ignores a string
   // channel and vice-versa), exactly like the per-row code it replaces.
@@ -102,12 +111,18 @@ export function useAnimatableVec2Field(
   const normalized = useTimeStore((s) => s.normalized);
   const playing = useTimeStore((s) => s.playing);
   const dagState = useDagStore((s) => s.state);
+  // A stable cache, as in useAnimatableField (#1389).
+  const cache = useMemo<EvaluatorCache>(() => createEvaluatorCache(), []);
   const resolved = useMemo(
     () =>
-      resolveEvaluatedParam(dagState, nodeId, paramPath, {
-        time: { frame, seconds, normalized },
-      }),
-    [dagState, nodeId, paramPath, frame, seconds, normalized],
+      resolveEvaluatedParam(
+        dagState,
+        nodeId,
+        paramPath,
+        { time: { frame, seconds, normalized } },
+        cache,
+      ),
+    [dagState, nodeId, paramPath, frame, seconds, normalized, cache],
   );
   const v = resolved?.value;
   const effective: readonly [number, number] =
