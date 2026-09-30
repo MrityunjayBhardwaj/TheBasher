@@ -103,3 +103,57 @@ test('W6 (#178) — a whole-child override tints EVERY slot of a two-material im
       { color: '#00ff00', roughnessMap: true },
     ]);
 });
+
+// #1412 — an override saved with a `slotIndex` keeps its reset reachable. The control is a readout
+// of the held slot plus an "All" button: it used to be a radio group whose one radio ("All") could
+// never be the checked one, since the control only renders while a slot IS held.
+test('#1412 — a held slot reads as text and "All" clears it (no radio group)', async ({ page }) => {
+  await page.evaluate(async () => {
+    const file = 'two-material-textured-quad.gltf';
+    const bytes = new Uint8Array(await fetch(`/assets/${file}`).then((r) => r.arrayBuffer()));
+    await (window as unknown as BasherWindow).__basher_ingestGltfFolder!(
+      [{ relativePath: file, bytes }],
+      'p06-2-slot',
+    );
+  });
+  await expect.poll(async () => (await importRoots(page)).length, { timeout: 15_000 }).toBe(1);
+  await wrapImportInOverride(page, 'mo62s', { color: '#00ff00', slotIndex: 1 });
+  await page.evaluate(() => {
+    (
+      window as unknown as {
+        __basher_selection: { getState: () => { select: (id: string) => void } };
+      }
+    ).__basher_selection
+      .getState()
+      .select('mo62s');
+  });
+
+  const selector = page.getByTestId('inspector-slot-selector-mo62s');
+  if (!(await selector.isVisible().catch(() => false))) {
+    await page.getByTestId('inspector-section-toggle-material').click();
+  }
+  await expect(selector).toBeVisible();
+  await expect(page.getByTestId('inspector-slot-held-mo62s')).toHaveText('Slot 1');
+  await expect(selector.getByRole('radiogroup')).toHaveCount(0);
+  await expect(selector.getByRole('radio')).toHaveCount(0);
+
+  await page.getByTestId('inspector-slot-all-mo62s').click();
+  await expect
+    .poll(() =>
+      page.evaluate(() => {
+        const dag = (
+          window as unknown as {
+            __basher_dag: {
+              getState: () => {
+                state: { nodes: Record<string, { params: { slotIndex?: unknown } }> };
+              };
+            };
+          }
+        ).__basher_dag.getState();
+        return dag.state.nodes.mo62s?.params.slotIndex ?? 'cleared';
+      }),
+    )
+    .toBe('cleared');
+  // With no slot held there is nothing to reset, so the control goes away.
+  await expect(selector).toHaveCount(0);
+});

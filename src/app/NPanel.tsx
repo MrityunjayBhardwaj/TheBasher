@@ -3398,6 +3398,9 @@ function SetOriginControl({ nodeId }: { nodeId: string }) {
  * here yet, and nothing reads `slotIndex` either (#1090). So the numbered buttons are gone, and the
  * selector renders only for an override that already HOLDS a `slotIndex` — a saved one — to keep
  * its "All" reset reachable: a persisted optional value must keep the control that clears it.
+ *
+ * #1412 — so it is a readout and a reset, not a choice: the held slot as text, and "All" as a plain
+ * button. A radio group here offered one option that could never be the checked one.
  */
 function SlotSelector({ nodeId }: { nodeId: string }) {
   const nodes = useDagStore((s) => s.state.nodes);
@@ -3410,12 +3413,14 @@ function SlotSelector({ nodeId }: { nodeId: string }) {
       className="flex flex-col gap-1 px-3 py-1.5"
     >
       <div className="font-mono text-[10px] uppercase tracking-wide text-fg/40">Submesh</div>
-      <div role="radiogroup" aria-label="Material slot" className="flex flex-wrap gap-1">
+      <div className="flex flex-wrap items-center gap-1">
+        <span data-testid={`inspector-slot-held-${nodeId}`} className="px-1 text-[10px] text-fg/70">
+          Slot {params.slotIndex}
+        </span>
         <button
           type="button"
-          role="radio"
-          aria-checked={false}
           data-testid={`inspector-slot-all-${nodeId}`}
+          title="Clear the slot so the override applies to every slot"
           onClick={() =>
             dispatch(
               { type: 'setParam', nodeId, paramPath: 'slotIndex', value: undefined },
