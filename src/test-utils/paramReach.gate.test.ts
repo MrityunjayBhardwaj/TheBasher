@@ -210,6 +210,15 @@ describe('param-reach gate (#492)', () => {
     // disagrees with a road that is independently green, and one of them is broken.
     for (const kind of SPLIT_KIND_NAMES) {
       const observableRoot = SPLIT_KINDS[kind].observableDataParam.split('.')[0];
+      // #1053 — a kind whose render road answers NO: the roads assert that nothing draws, so
+      // the measurement must agree that its observable does NOT reach the renderer.
+      if (SPLIT_KINDS[kind].roadAnswers?.render?.reaches === false) {
+        expect(
+          measureSeams(kind)[observableRoot],
+          `${kind}: the render road answers NO, yet "${observableRoot}" reaches the renderer`,
+        ).not.toBe('render');
+        continue;
+      }
       expect(
         measureSeams(kind)[observableRoot],
         `${kind}: the observable "${observableRoot}" does not reach the renderer, but R3/R4 ` +

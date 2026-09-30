@@ -172,16 +172,11 @@ const MATERIAL_KEY_WRITERS: Record<string, string> = {
   'src/nodes/types.ts': 'declares it — on MeshDataValue, and on no other union member',
   'src/nodes/BoxData.ts': 'mints it after the fold',
   'src/nodes/SphereData.ts': 'mints it after the fold',
-  // #389 — the third minter, and legitimately one: a glTF child's material is captured at
-  // import and resolved by nothing downstream, so its identity has to be minted where the
-  // value is built, exactly as the two primitives do. It is NOT a fourth place DECIDING
-  // identity — the concern the header raises — because it mints through `materialKeyOf`,
-  // the same function the other two call over the same IR. One function, three callers,
-  // one answer.
-  'src/nodes/GltfData.ts': 'mints it after the fold — the imported child (#389)',
-  // #1049 — the fourth minter, on the same argument as the third: a stored mesh's material is
+  // #389 added `GltfData` as a minter; #1053 removed it. A kept clone import evaluates to no data
+  // (its Object is an Empty), so it has no material value to mint an identity for.
+  // #1049 — a minter on the same argument as the primitives: a stored mesh's material is
   // captured by whoever wrote the mesh, so identity is minted where the value is built, through
-  // the same `materialKeyOf`. Still one function deciding identity, now with four callers.
+  // the same `materialKeyOf`. Still one function deciding identity, with three callers.
   'src/nodes/PolyMeshData.ts': 'mints it after the fold — the stored polygon mesh (#1049)',
   // NOT a producer, and listed rather than excused. A fixture that builds a mesh data value
   // by hand has to write every field the type declares, so it appears in a writer census
@@ -205,14 +200,13 @@ const MATERIAL_KEY_WRITERS: Record<string, string> = {
 const KEY_FUNCTION_CONSUMERS: Record<string, string> = {
   'src/nodes/BoxData.ts': 'mints — the evaluator side',
   'src/nodes/SphereData.ts': 'mints — the evaluator side',
-  'src/nodes/GltfData.ts': 'mints — the evaluator side, the imported child (#389)',
   'src/nodes/PolyMeshData.ts': 'mints — the evaluator side, the stored polygon mesh (#1049)',
   'src/app/material/primitiveMaterialInputs.ts':
     'the documented fallback: re-derives when the value carries no minted key',
 };
 
 describe('#542 — the reach of render identity, so §4 cannot overstate it', () => {
-  it('mints the material key at exactly four producers, on one declaring type', () => {
+  it('mints the material key at exactly three producers, on one declaring type', () => {
     const writers = sourceFiles()
       .filter(([, src]) => /(?<![\w.])materialKey\s*\??\s*:/.test(stripComments(src)))
       .map(([path]) => path)

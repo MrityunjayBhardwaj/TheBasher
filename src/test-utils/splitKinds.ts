@@ -225,6 +225,13 @@ export interface SplitKindSpec {
    */
   readonly roadAnswers?: {
     readonly management?: RoadAnswer;
+    /**
+     * #1053 — whether the data reaches the renderer at all. Only a kind that draws nothing
+     * answers NO (a kept clone import, whose Object is an Empty), and the roads then assert
+     * that NO as an equality: the fixture is built, the stimulus applied, and the renderer is
+     * shown to receive no data.
+     */
+    readonly render?: RoadAnswer;
   };
 }
 
@@ -621,10 +628,8 @@ export const SPLIT_KINDS: Record<SplitKindName, SplitKindSpec> = {
       childName: 'Cube',
       material: null,
     },
-    // The one param that survives to the value under an UNCHANGED path. `assetRef` and
-    // `childName` are folded into an opaque `GeometryRef.key`, so asserting on either
-    // would mean re-implementing that fold in the test — the drift the read-equals-render
-    // road exists to catch.
+    // The param the director sets and the converter carries when the import converts. Since
+    // #1053 it reaches no renderer (see `roadAnswers.render`), and the roads assert exactly that.
     observableDataParam: 'material.base.color',
     // The standard '#cccccc' default and the '#808080' missing-material fallback are both
     // avoided, for the reason every kind above avoids them: a broken road returns the
@@ -633,15 +638,21 @@ export const SPLIT_KINDS: Record<SplitKindName, SplitKindSpec> = {
     channelValueType: 'color',
     readRendered: (r) => at(r, 'data', 'material', 'base', 'color'),
     customSections: [],
-    // 'material' ALONE — the same answer `BakedData` gives, and for the same reason: a
-    // glTF child's geometry is not authored anywhere, so a declared 'mesh' section would
-    // be a permanently empty card. See GltfData.ts.
+    // 'material' ALONE: a glTF child's geometry is not authored anywhere, so a declared 'mesh'
+    // section would be a permanently empty card. See GltfData.ts.
     dataSections: ['material'],
     primaryWorkflows: [
-      'recolour an imported mesh',
-      'pose an imported bone over its clip',
-      'stack a modifier on an imported child',
+      'reopen a save whose import the load converter kept, and see it named rather than drawn',
     ],
+    roadAnswers: {
+      render: {
+        reaches: false,
+        why:
+          'every new import is native or refused, so a GltfData survives only in a save the ' +
+          'load converter kept; it evaluates to no data and its Object is an Empty',
+        issue: '#1053',
+      },
+    },
   },
   // #1049 — a stored polygon mesh: the kind an import writes so that it stops being special.
   // The first imported-geometry kind whose pair CAN be hand-authored, because its geometry is

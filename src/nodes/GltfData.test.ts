@@ -1,18 +1,27 @@
-// GltfData evaluator + schema (#389). The DATA half of the last fused kind.
+// GltfData evaluator + schema (#389, #1053). The data half of a saved clone-road import.
 //
-// These assert the VALUE CONTRACT, which is the half a later commit cannot silently
-// change: the geometry key must be byte-identical to the one `resolveEvaluatedMesh`
-// already mints (two spellings of one cache key is how false sharing gets in), the
-// material must reach `MeshDataValue.material` under an unchanged path, and the
-// multi-slot table must be ABSENT rather than synthesised when the child has one
-// primitive — `dataSlotsOnly` reads `materialSlots ?? [material]`, so a one-entry array
-// and an absent one are the same answer written two ways, and only one of them is the
-// shape every other producer writes.
+// Since #1053 every new import is native or refused, so a `GltfData` exists only in a save the
+// load converter kept unconverted. Such an import draws nothing and the load says why (decided
+// on #1053, 2026-09-30). These rows pin that answer where it is produced: the node evaluates to
+// NO data, so its Object is an Empty — not to a geometry ref that answers questions about a mesh
+// nothing draws.
 
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
+import {
+  __resetRegistryForTests,
+  applyOp,
+  emptyDagState,
+  evaluate,
+  type EvalCtx,
+  type Op,
+} from '../core/dag';
+import { importedChildOps } from '../test-utils/importedChildFixture';
 import { GltfDataNode, GltfDataParams } from './GltfData';
+import { registerAllNodes } from './registerAll';
 import { openpbrMaterialSchema } from './materialSchema';
-import type { MeshDataValue } from './types';
+import type { ObjectValue } from './types';
+
+const CTX: EvalCtx = { time: { frame: 0, seconds: 0, normalized: 0 } };
 
 const material = (color: string) => openpbrMaterialSchema().parse({ base: { color } });
 
@@ -23,82 +32,49 @@ const baseParams = {
 };
 
 describe('GltfData node', () => {
-  it('mints the SAME geometry key resolveEvaluatedMesh already mints for a glTF child', () => {
-    const params = GltfDataParams.parse(baseParams);
-    const value = GltfDataNode.evaluate(params, {}) as MeshDataValue;
-
-    // The spelling at resolveEvaluatedMesh.ts:176. Asserted literally rather than by
-    // importing that module's template, because the point is that the two agree
-    // CHARACTER FOR CHARACTER — a shared helper would make this test pass by
-    // construction and stop noticing the thing it exists to notice.
-    expect(value.geometry.key).toBe('gltf|asset-1|Cube');
-    expect(value.geometry.descriptor).toEqual({
-      kind: 'gltf',
-      assetRef: 'asset-1',
-      childName: 'Cube',
-    });
+  beforeEach(() => {
+    __resetRegistryForTests();
+    registerAllNodes();
   });
 
-  it('produces MeshData carrying the captured material and its key', () => {
-    const params = GltfDataParams.parse(baseParams);
-    const value = GltfDataNode.evaluate(params, {}) as MeshDataValue;
-
-    expect(value.kind).toBe('MeshData');
-    expect(value.material?.base.color).toBe('#c81e5a');
-    expect(value.materialKey).toEqual(expect.any(String));
-  });
-
-  it('derives NO attribute identity — a glTF child’s buffers live in a clone this value never sees', () => {
-    const params = GltfDataParams.parse(baseParams);
-    const value = GltfDataNode.evaluate(params, {}) as MeshDataValue;
-
-    // null, and specifically not "not yet": the same answer BakedData gives, for the
-    // same reason. A `undefined` here would read as an unset field rather than a fact.
-    expect(value.attributeKey).toBeNull();
-  });
-
-  it('omits materialSlots entirely for a single-primitive child', () => {
-    const params = GltfDataParams.parse(baseParams);
-    const value = GltfDataNode.evaluate(params, {}) as MeshDataValue;
-
-    expect('materialSlots' in value).toBe(false);
-  });
-
-  it('carries the full slot table verbatim for a multi-primitive child, nulls included', () => {
+  it('evaluates to no data, whatever it captured', () => {
     const params = GltfDataParams.parse({
       ...baseParams,
-      materialSlots: [material('#c81e5a'), null, material('#1e9ac8')],
+      materialSlots: [material('#c81e5a'), null],
+      faceCount: 12,
+      pointCount: 8,
     });
-    const value = GltfDataNode.evaluate(params, {}) as MeshDataValue;
+    expect(GltfDataNode.evaluate(params, {}, CTX)).toBeNull();
+  });
 
-    expect(value.materialSlots).toHaveLength(3);
-    // A primitive with no material at all is a real glTF state; it must survive as a
-    // hole rather than be dropped, or a three-slot mesh reports as a two-slot one.
-    expect(value.materialSlots?.[1]).toBeNull();
-    expect(value.materialSlots?.[2]?.base.color).toBe('#1e9ac8');
+  it('makes its Object an Empty that keeps its own transform', () => {
+    let state = emptyDagState();
+    for (const op of importedChildOps('child', {
+      material: baseParams.material,
+      position: [1, 2, 3],
+    })) {
+      state = applyOp(state, op as unknown as Op).next;
+    }
+    const value = evaluate(state, 'child').value as ObjectValue;
+    expect(value.kind).toBe('Object');
+    expect(value.data).toBeNull();
+    expect(value.position).toEqual([1, 2, 3]);
   });
 
   it('carries NO override flags — they belong to the Object that owns the pose', () => {
-    // Reversed from an earlier draft, on grounding. An override record belongs to the ID
-    // that owns the overridden property (Blender's `IDOverrideLibraryProperty.rna_path`
-    // is "from owning ID"), and after this split the pose is the Object's. The mechanical
-    // half is sharper than the principle: the panel's decorator reads the descriptor from
-    // a node's TYPE and the authored bit from that SAME node's params, so the bit and the
-    // TRS rows it decorates cannot live on different nodes.
+    // An override record belongs to the ID that owns the overridden property (Blender's
+    // `IDOverrideLibraryProperty.rna_path` is "from owning ID"), and the pose is the Object's.
     const params = GltfDataParams.parse(baseParams);
 
     expect('overridden' in params).toBe(false);
   });
 
   it('owns no pose and no scene output', () => {
-    // The whole point of the split: the data half has no transform to constrain, and
-    // reaches the scene only through an Object.
-    expect(GltfDataNode.inspectorSections).not.toContain('transform');
     expect(GltfDataNode.inputs).toEqual({});
     expect(GltfDataNode.outputs).toEqual({ out: { type: 'ObjectData', cardinality: 'single' } });
   });
 
-  it('rejects an empty assetRef — a child with no asset is not a child', () => {
+  it('rejects an empty assetRef — the converter needs the file it came from', () => {
     expect(() => GltfDataParams.parse({ ...baseParams, assetRef: '' })).toThrow();
   });
 });
