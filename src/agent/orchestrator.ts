@@ -919,8 +919,8 @@ literal string "scene", "render", "ground" etc. as a node id.
 2. Wire the Object into scene children (replace <sceneId> with the actual scene id):
    {"type":"connect","from":{"node":"box1","socket":"out"},"to":{"node":"<sceneId>","socket":"children"}}
 
-3. Remove a node:
-   {"type":"removeNode","nodeId":"box1"}
+3. Delete a node — NOT a dag.exec op (dag.exec refuses removeNode). Use
+   agent.proposePlan({"mutator":"mutator.deleteNode","intent":"delete box1","spec":{"targetSelectors":["box1"]}})
 
 4. Change a param — geometry + material live on the BoxData; the transform
    (position/rotation/scale) lives on the Object:
