@@ -97,7 +97,7 @@ describe('GltfChild manual-override write (P7.7 C2)', () => {
     // #389 — SPARSE, and the assertion says so rather than saying `false`. The flags moved
     // onto `Object` as an optional record with optional keys (mirroring `slotOverrides`),
     // so an untouched component has NO KEY at all. That is the same answer as `false` to
-    // every reader — `resolveGltfChildTransform` branches on truthiness and
+    // every reader — `resolveGltfChildTransform` (gone in #1053) branched on truthiness and
     // `importedChildOf` normalises with `=== true` — but writing `toBe(false)` here would
     // pin a dead record into every saved Object, which is the shape the schema refused.
     expect(p.overridden.rotation).toBeUndefined(); // others untouched — and unwritten

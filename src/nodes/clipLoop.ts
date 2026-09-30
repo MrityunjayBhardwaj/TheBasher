@@ -9,8 +9,8 @@
 //     AnimationClip.loop  z.boolean().default(true)
 //
 // So an AnimationClip whose params omitted the key cycled, and a TransformClip
-// whose params omitted it clamped. `clipChannelRows` already had to normalise
-// the two at the one place they meet.
+// whose params omitted it clamped. `clipChannelRows` (gone in #1053) had to
+// normalise the two at the one place they met.
 //
 // The reference settles which default is right: F-Curve extrapolation is a
 // two-value enum defaulting to CONSTANT (hold), and cycling is DELIBERATELY

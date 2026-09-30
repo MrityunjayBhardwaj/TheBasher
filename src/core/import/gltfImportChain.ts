@@ -201,10 +201,11 @@ export function hashId(prefix: string, ...parts: string[]): string {
 /**
  * The content-addressed DAG id of a glTF child (bone) node. This is the SAME
  * derivation `buildNodeNameMap` uses at import (:120, `hashId('gltfChild',
- * assetRef, key)`), exported so the P7.12 copy-on-write bake mutator
- * (bakeGltfChannel, Wave D) stores `params.target` = the child's dagId without
- * re-deriving the hash by hand (single source of truth — BLOCK-2). Diverging
- * derivations would break the renderer's `nodeNameMap[childName] === target`
+ * assetRef, key)`). Exported so the P7.12 copy-on-write bake mutator
+ * (bakeGltfChannel, Wave D — gone in #1053) stored `params.target` = the child's dagId
+ * without re-deriving the hash by hand (single source of truth — BLOCK-2); today the
+ * v9→v10 migration uses it to recognise channels saved in that shape. Diverging
+ * derivations would have broken the renderer's `nodeNameMap[childName] === target`
  * asset-membership check (bakedGltfChannels.ts (gone in #1053; at 7e1356c7)) AND paramAnimationState's
  * `p.target === selectionNodeId` match (the bone's selection id IS this dagId).
  *
@@ -241,7 +242,8 @@ export function gltfChildDataDagId(assetRef: string, childName: string): string 
  * `state.nodes[id]`). Namespaced `gltfChannel` so it can never collide with the
  * bone's own `gltfChild` id nor an authored channel id.
  *
- * REF: PLAN 7.12 Wave D (D1, V22 determinism); bakeGltfChannel.ts.
+ * REF: PLAN 7.12 Wave D (D1, V22 determinism); app/animate/bakeGltfChannel.ts (gone in
+ *      #1053; at 15c170c4); src/core/project/migrations.ts (the reader today).
  */
 export function gltfChannelDagId(assetRef: string, childName: string, component: string): string {
   return hashId('gltfChannel', assetRef, childName, component);

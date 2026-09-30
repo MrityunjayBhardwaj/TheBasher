@@ -15,9 +15,9 @@
 // component}`. Not `{boneId, component}` — `buildClosureSpec(spec)` is handed
 // NO state (types.ts:113), and a bone's node id is itself a hash, so from the
 // bone id alone the closure cannot name the channel it is about to write. The
-// parts make BOTH ids pure functions of the spec. This is not a new invention:
-// `bakeGltfChannel` has carried exactly this spec shape since Wave D for
-// exactly this reason.
+// parts make BOTH ids pure functions of the spec. This was not a new invention:
+// `bakeGltfChannel` carried exactly this spec shape from Wave D until it retired
+// with the clone road (#1053), for exactly this reason.
 //
 // The forms are an XOR, not a primary with a fallback. A fallback would be
 // worse than it looks: it fails only for a bone with NO channel, which under

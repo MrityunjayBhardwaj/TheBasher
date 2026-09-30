@@ -99,7 +99,7 @@ export function parseBvh(
       // `false` is the reference answer, and this repo's own sibling carrier
       // already gives it: `TransformClip.loop` is an enum defaulting to `'clamp'`
       // (TransformClip.ts:47) while this one defaulted to `true` — the
-      // disagreement `clipChannelRows.ts` flags. Blender's `FCurve.extrapolation`
+      // disagreement `clipChannelRows.ts` flagged (gone in #1053). Blender's `FCurve.extrapolation`
       // defaults to CONSTANT and its Cycles modifier to no cycling at all;
       // Houdini's per-channel extend conditions draw the same line. Cycling is
       // something a director asks for, never something an importer assumes.

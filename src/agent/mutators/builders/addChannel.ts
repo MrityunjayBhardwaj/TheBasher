@@ -5,8 +5,8 @@
 // `overlayChannels` primitive that BOTH the renderer (DirectChannelsR) and the
 // read-side (resolveEvaluatedTransform) consume. There is NO AnimationLayer
 // wrapper and NO `animation` input socket to wire into — this is the agent's
-// authoring counterpart of the UI's `dispatchDirectFirstKey`, and a sibling of
-// `bakeGltfChannel` (which already mints free-floating channels for glTF bones).
+// authoring counterpart of the UI's `dispatchDirectFirstKey`. (Its sibling for glTF
+// bones, `bakeGltfChannel`, retired with the clone road in #1053.)
 //
 // One channel = one (target, paramPath, valueType) triple; valueType picks the
 // concrete node type (KeyframeChannelNumber / Vec3 / Quat / Color). The channel

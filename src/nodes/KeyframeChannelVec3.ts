@@ -119,8 +119,9 @@ export const KeyframeChannelVec3Params = z.object({
     )
     .optional(),
   // P7.12 #108 (BLOCK-2) — the COPY-ON-WRITE BAKE variant: when a glTF bone's
-  // imported clip track is materialized into per-bone channels (bakeGltfChannel,
-  // Wave D), each channel carries the bone's `childName` AND the owning asset's
+  // imported clip track was materialized into per-bone channels (bakeGltfChannel,
+  // Wave D — gone in #1053; saved channels still load, and the clone-character
+  // converter reads these two fields to find them), each channel carries the bone's `childName` AND the owning asset's
   // `assetRef` so the renderer/read-side resolver can enumerate it by name with
   // no per-frame nodeNameMap inverse scan. These MUST be declared on the schema —
   // the DAG stores zod-PARSED params (ops.ts applyAddNode), so an undeclared key

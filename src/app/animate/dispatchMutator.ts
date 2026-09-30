@@ -765,8 +765,8 @@ function nextFreshNodeId(prefix: string, state: DagState): string {
  * "Push down" composite (UI-SPEC §2.7 LOCKED mechanism; Blender's term): convert
  * `targetId`'s bare KeyframeChannel* nodes into ONE Action + ONE Strip placing it
  * back at the channels' min key time, and DELETE the bare channels — all as ONE
- * atomic undo entry. The fork-evolve discipline mirrors dispatchBakeThenRetime
- * (`:295-393`): createAction validates vs base; addStrip vs the fork (the Action
+ * atomic undo entry. The fork-evolve discipline (it once mirrored
+ * `dispatchBakeThenRetime`, gone in #1053): createAction validates vs base; addStrip vs the fork (the Action
  * only exists there); deleteNode vs the twice-evolved fork; all ops proposed in
  * ONE diff with the UNIONED closure → one dispatchAtomic → one Cmd+Z.
  *

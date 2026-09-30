@@ -38,9 +38,9 @@
 // its `curve` re-pointed at the new Object, and an existing Track-To its
 // `aimNode`. The superseded curve stays in the scene — visible, selectable and
 // deletable — rather than being removed underneath a director who may want it
-// back. Same idempotence `poseBone` gives an override and `ensureChannelForBone`
-// a channel, and for the same reason: every repeat must land on the thing already
-// driving the subject.
+// back. Same idempotence `poseBone` gives an override (and `ensureChannelForBone`
+// gave a channel, until #1053), for the same reason: every repeat must land on the
+// thing already driving the subject.
 //
 // ─────────────────────────────────────────────────────────────────────────
 // 🔑 THE DECISION #774 ASKED FOR: THE VOCABULARY RESOLVES AGAINST THE SUBJECT'S
