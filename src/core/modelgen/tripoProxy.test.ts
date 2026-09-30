@@ -22,7 +22,6 @@ import {
 } from './tripoProxy';
 import {
   TRIPO_API_VERSIONS,
-  TRIPO_V2_BASE_URL,
   TRIPO_V3_BASE_URL,
   DEFAULT_TRIPO_API_VERSION,
   tripoDialect,
@@ -50,20 +49,16 @@ describe('the route table covers what the client can hold', () => {
 });
 
 describe('target and prefix are DERIVED from the dialect, not restated', () => {
-  it.each([
-    ['v2', TRIPO_V2_BASE_URL],
-    ['v3', TRIPO_V3_BASE_URL],
-  ] as const)('%s recomposes exactly to its dialect base URL', (version, baseUrl) => {
-    const route = tripoProxyRoute(version);
-    // The load-bearing property: target + upstreamPrefix IS the service address.
-    // If someone hand-edits either half, this fails rather than 404ing at runtime.
-    expect(route.target + route.upstreamPrefix).toBe(baseUrl);
-    expect(route.target).toBe(new URL(baseUrl).origin);
-  });
-
-  it('v2 and v3 live on DIFFERENT hosts — the reason a route is per-version', () => {
-    expect(tripoProxyRoute('v2').target).not.toBe(tripoProxyRoute('v3').target);
-  });
+  it.each([['v3', TRIPO_V3_BASE_URL]] as const)(
+    '%s recomposes exactly to its dialect base URL',
+    (version, baseUrl) => {
+      const route = tripoProxyRoute(version);
+      // The load-bearing property: target + upstreamPrefix IS the service address.
+      // If someone hand-edits either half, this fails rather than 404ing at runtime.
+      expect(route.target + route.upstreamPrefix).toBe(baseUrl);
+      expect(route.target).toBe(new URL(baseUrl).origin);
+    },
+  );
 });
 
 describe('rewriting a proxied path is a round trip to the service address', () => {
@@ -110,28 +105,17 @@ describe('rewriting a proxied path is a round trip to the service address', () =
   });
 });
 
-describe('browserTripoOptions hands back the version WITH its base URL', () => {
-  it('defaults to the default API version', () => {
+describe('browserTripoOptions hands back the same-origin base URL', () => {
+  it('is the proxied route of the API version the client speaks', () => {
     const opts = browserTripoOptions();
-    expect(opts.apiVersion).toBe(DEFAULT_TRIPO_API_VERSION);
     expect(opts.baseUrl).toBe(tripoBrowserBaseUrl(DEFAULT_TRIPO_API_VERSION));
-  });
-
-  it.each([...TRIPO_API_VERSIONS])('%s: the pair always agrees', (version) => {
-    const opts = browserTripoOptions(version);
-    expect(opts.apiVersion).toBe(version);
-    // The failure this forecloses: a base URL for one generation under the
-    // dialect of another sends v2 paths to a v3 route, which 404s and reads as
-    // the service being down.
     expect(rewriteTripoProxyPath(`${opts.baseUrl}/x`)).toBe(
-      `${tripoProxyRoute(version).upstreamPrefix}/x`,
+      `${tripoProxyRoute(DEFAULT_TRIPO_API_VERSION).upstreamPrefix}/x`,
     );
   });
 
   it('never returns an absolute URL — that would reintroduce the preflight', () => {
-    for (const version of TRIPO_API_VERSIONS) {
-      expect(browserTripoOptions(version).baseUrl).not.toMatch(/^https?:/);
-    }
+    expect(browserTripoOptions().baseUrl).not.toMatch(/^https?:/);
   });
 });
 

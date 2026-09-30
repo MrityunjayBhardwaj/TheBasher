@@ -14,26 +14,20 @@ import {
   type TripoOptions,
 } from './TripoModelGenerationCapability';
 import type { ModelGenerationCapability } from './ModelGenerationCapability';
-import { DEFAULT_TRIPO_API_VERSION, type TripoApiVersion } from './tripoDialect';
+import { DEFAULT_TRIPO_API_VERSION } from './tripoDialect';
 import { tripoBrowserBaseUrl } from './tripoProxy';
 
 /**
  * The options a call ORIGINATING IN A PAGE needs: a same-origin base URL,
  * because Tripo answers no CORS preflight (#804).
  *
- * 🔑 THE VERSION AND ITS BASE URL ARE ONE FACT AND THIS RETURNS THEM TOGETHER.
- * Passing them separately is exactly how they drift — a v3 base URL under a v2
- * dialect sends v2 paths to a v3 route and fails as a 404, which reads like the
- * service being down rather than like a caller mistake. There is no way to hold
- * one of these without the other.
- *
  * Callers that are NOT a page — a node harness, a test — pass nothing and get
- * the dialect's own address, which is reachable from anywhere.
+ * the dialect's own address, which is reachable from anywhere. (This used to
+ * return the API version with its base URL, as one fact, so the two could not
+ * drift; with v2 retired there is one version and nothing to drift — #1403.)
  */
-export function browserTripoOptions(
-  version: TripoApiVersion = DEFAULT_TRIPO_API_VERSION,
-): Pick<TripoOptions, 'apiVersion' | 'baseUrl'> {
-  return { apiVersion: version, baseUrl: tripoBrowserBaseUrl(version) };
+export function browserTripoOptions(): Pick<TripoOptions, 'baseUrl'> {
+  return { baseUrl: tripoBrowserBaseUrl(DEFAULT_TRIPO_API_VERSION) };
 }
 
 /**
@@ -56,8 +50,6 @@ export async function pickModelGeneration(
   onFallback?: (fallback: ModelGenerationFallback) => void,
 ): Promise<ModelGenerationCapability> {
   if (!apiKey?.trim()) return new StubModelGenerationCapability();
-  // `apiVersion` rides along in `opts` and defaults inside the client, so the
-  // API generation is one constructor argument rather than a branch here.
   const tripo = new TripoModelGenerationCapability({ apiKey: apiKey.trim(), ...opts });
   const probe = await tripo.probe();
   if (probe.ok) return tripo;
@@ -133,9 +125,7 @@ export {
 export {
   DEFAULT_TRIPO_API_VERSION,
   TRIPO_API_VERSIONS,
-  TRIPO_V2_BASE_URL,
   TRIPO_V3_BASE_URL,
-  TRIPO_V2_DIALECT,
   TRIPO_V3_DIALECT,
   TRIPO_V3_DEFAULT_MODEL_VERSION,
   tripoDialect,

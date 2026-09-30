@@ -23,29 +23,12 @@
 // a hosted API ships no weights, so a version is a menu choice inside one
 // agreement rather than a separately-licensed artefact.
 //
-// 🔑 TWO API GENERATIONS, ONE CLIENT. Tripo's v2 and v3 differ in paths, a few
-// field names, and which key the output URL arrives under — and agree on
-// everything that carries risk: Bearer auth, the `{code, data}` envelope,
-// poll-until-terminal-status, download-by-URL, and licence-before-request. So
-// the version is a VALUE this class holds (`tripoDialect.ts`), not a second
-// class. The shared half is written and tested once.
-//
-// 🔴 THE TWO VERSIONS ARE NOT EQUALLY GROUNDED, and the dialect table says so
-// per entry. v2 is source-verified against Tripo's official MIT-licensed Python
-// SDK, mirrored at `ref/sources/tripo-python-sdk/`:
-//   - BASE_URL                          tripo3d/client.py:25
-//   - POST /task   → data.task_id       tripo3d/client.py:200-216
-//   - GET  /task/{id} → data.{status,progress,output}
-//                                       tripo3d/client.py:177-198
-//   - GET  /user/balance                tripo3d/client.py:217-230
-//   - POST /upload (multipart `file`) → data.image_token
-//                                       tripo3d/client_impl/aiohttp_client_impl.py:98-127
-//   - Authorization: Bearer <key>       tripo3d/client_impl/aiohttp_client_impl.py:32
-//   - TaskStatus values                 tripo3d/models.py:39-48
-//   - output.{model,base_model,pbr_model}
-//                                       tripo3d/models.py:65-72
-// v3 is VENDOR-DOCUMENTED ONLY — there is no v3 source to read, and nothing in
-// it has been observed against the running service. See `tripoDialect.ts`.
+// 🔑 THE WIRE CONTRACT IS A VALUE THIS CLASS HOLDS (`tripoDialect.ts`), not code spread
+// through it: paths, field names and which key the output URL arrives under come from
+// the dialect, while everything that carries risk — Bearer auth, the `{code, data}`
+// envelope, poll-until-terminal-status, download-by-URL, licence-before-request — is
+// written and tested once here. It carried two API generations until v2's retirement
+// (#1403); v3 is VENDOR-DOCUMENTED ONLY, with no source to read. See `tripoDialect.ts`.
 //
 // REF: ref/architecture/ai-track.md phase A4; issues #732, #761, #762, #797.
 
@@ -77,7 +60,6 @@ import {
 import {
   DEFAULT_TRIPO_API_VERSION,
   tripoDialect,
-  type TripoApiVersion,
   type TripoDialect,
   type TripoTaskOutput,
   type TripoUploads,
@@ -96,26 +78,19 @@ export const TRIPO_SERVICE_ID = 'tripo-api';
 /**
  * Statuses from which a task never recovers.
  *
- * A UNION across both versions, on purpose. v2 names all five
- * (models.py:39-48); v3 documents only `failed` and `cancelled`, folding
- * moderation and queue expiry into `failed` with an `error_code`. Treating v2's
- * extra three as terminal under v3 costs nothing — they cannot arrive — while
- * dropping them would strand a v2 poll loop on a status it can never leave.
+ * v3 documents only `failed` and `cancelled`, folding moderation and queue expiry
+ * into `failed` with an `error_code`. The other three are the statuses v2 named
+ * (#1403 removed v2). Kept: treating them as terminal costs nothing if they never
+ * arrive, and a poll loop that met one without it would never leave.
  */
 const TERMINAL_FAILURE_STATUSES = new Set(['failed', 'cancelled', 'banned', 'expired', 'unknown']);
 
 export interface TripoOptions {
   /**
    * The account key. Its shape is checked only where the shape is DOCUMENTED —
-   * v2 states `tsk_`, v3 states nothing — so see `assertTripoKeyShape`.
+   * v3 documents none — so see `assertTripoKeyShape`.
    */
   readonly apiKey: string;
-  /**
-   * Which API generation to speak. Defaults to v3, the version Tripo documents
-   * today. v2 is retained and source-verified; see `tripoDialect.ts` for why
-   * both exist and how differently grounded they are.
-   */
-  readonly apiVersion?: TripoApiVersion;
   /** Overrides the dialect's own base URL. Injected by tests; a host swap is a
    *  constructor swap and never an edit to a caller. */
   readonly baseUrl?: string;
@@ -383,24 +358,19 @@ export class TripoTaskFailedError extends Error {
 /**
  * Check a key's shape — but only against a prefix the vendor DOCUMENTS.
  *
- * 🔑 THIS CHECK IS VERSION-SCOPED, and that is the point. v2's `tsk_` rule has
- * two independent citations (the SDK at `client.py:50-51` and the Blender plugin
- * at `operators.py:105`), so refusing a non-`tsk_` key there is a real early
- * error that saves an opaque 401 several seconds later.
- *
  * v3 documents no prefix at all. A rule invented from the one key we happened to
  * observe would refuse every valid key of a form we have not seen, while
  * reporting a confident reason for it — a check that can reject an input over a
- * fact it never reliably knows. So under v3 the only shape requirement is
- * non-emptiness, and the service's own 401 is the authority on validity.
+ * fact it never reliably knows. So the only shape requirement today is
+ * non-emptiness, and the service's own 401 is the authority on validity. (v2
+ * documented `tsk_`, with two independent citations, and was checked for it; the
+ * dialect's `keyPrefix` is where a future version's documented prefix goes.)
  *
- * An empty key is refused under BOTH, because that one is not a guess: it means
- * nothing was configured.
+ * An empty key is refused, because that one is not a guess: it means nothing
+ * was configured.
  */
-export function assertTripoKeyShape(
-  apiKey: string,
-  version: TripoApiVersion = DEFAULT_TRIPO_API_VERSION,
-): void {
+export function assertTripoKeyShape(apiKey: string): void {
+  const version = DEFAULT_TRIPO_API_VERSION;
   const prefix = tripoDialect(version).keyPrefix;
   if (apiKey.trim() === '') {
     throw new TripoApiError('No Tripo API key is configured.');
@@ -431,7 +401,7 @@ export class TripoModelGenerationCapability
 
   constructor(options: TripoOptions) {
     this.apiKey = options.apiKey;
-    this.dialect = tripoDialect(options.apiVersion ?? DEFAULT_TRIPO_API_VERSION);
+    this.dialect = tripoDialect(DEFAULT_TRIPO_API_VERSION);
     this.baseUrl = (options.baseUrl ?? this.dialect.baseUrl).replace(/\/+$/, '');
     this.timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     this.pollIntervalMs = options.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
@@ -457,7 +427,7 @@ export class TripoModelGenerationCapability
    */
   async probe(): Promise<TripoProbeResult> {
     try {
-      assertTripoKeyShape(this.apiKey, this.dialect.version);
+      assertTripoKeyShape(this.apiKey);
     } catch (err) {
       return { ok: false, cause: 'key-shape', detail: messageOf(err) };
     }
@@ -507,7 +477,7 @@ export class TripoModelGenerationCapability
     // same ordering and the same reason as the motion capability.
     assertModelAllowed(TRIPO_SERVICE_ID);
     assertValidModelRequest(request);
-    assertTripoKeyShape(this.apiKey, this.dialect.version);
+    assertTripoKeyShape(this.apiKey);
 
     const deadline = Date.now() + this.timeoutMs;
     const uploads = await this.uploadSources(request);
@@ -565,8 +535,7 @@ export class TripoModelGenerationCapability
     if (!url) {
       throw new TripoApiError(
         `Tripo task ${taskId} succeeded but its output carried no model URL ` +
-          `(${this.dialect.version} expects ` +
-          `${this.dialect.version === 'v2' ? 'pbr_model, model or base_model' : 'model_url or model_urls'}).`,
+          `(${this.dialect.version} expects model_url or model_urls).`,
       );
     }
     return this.download('Downloading the generated model', url, deadline);
@@ -594,7 +563,7 @@ export class TripoModelGenerationCapability
   /** REF: ref/sources/tripo-python-sdk/tripo3d/client.py:1126 (`check_riggable`). */
   async checkRiggable(subject: RigSubject): Promise<RiggableCheck> {
     assertModelAllowed(TRIPO_SERVICE_ID);
-    assertTripoKeyShape(this.apiKey, this.dialect.version);
+    assertTripoKeyShape(this.apiKey);
 
     const deadline = Date.now() + this.timeoutMs;
     const call = this.dialect.rigCheckCall(subject.sourceTaskId);
@@ -618,7 +587,7 @@ export class TripoModelGenerationCapability
   async rig(request: RigRequest, onProgress?: (p: RigProgress) => void): Promise<RigResult> {
     assertModelAllowed(TRIPO_SERVICE_ID);
     assertValidRigRequest(request);
-    assertTripoKeyShape(this.apiKey, this.dialect.version);
+    assertTripoKeyShape(this.apiKey);
 
     const spec = request.spec ?? DEFAULT_RIG_SPEC;
     const deadline = Date.now() + this.timeoutMs;
@@ -640,8 +609,7 @@ export class TripoModelGenerationCapability
     if (!url) {
       throw new TripoApiError(
         `Tripo rig ${taskId} succeeded but its output carried no model URL ` +
-          `(${this.dialect.version} expects ` +
-          `${this.dialect.version === 'v2' ? 'model, pbr_model or base_model' : 'model_url or model_urls'}).`,
+          `(${this.dialect.version} expects model_url or model_urls).`,
       );
     }
     const glb = await this.download('Downloading the rigged model', url, deadline);
@@ -730,13 +698,10 @@ export class TripoModelGenerationCapability
    * Upload one image with multipart `file` and return the token a task body
    * references it by.
    *
-   * BOTH the path and the token's field name are version-specific — v2 posts to
-   * `/upload` and answers `data.image_token`, v3 posts to `/files` and answers
-   * `data.file_token` — so both come from the dialect. The `{type, file_token}`
-   * shape the task body then carries is the same in both.
+   * Both the path and the token's field name come from the dialect (v3 posts to
+   * `/files` and answers `data.file_token`).
    *
-   * REF: aiohttp_client_impl.py:98-127 and client.py:486-500 (v2);
-   *      v3 docs, `POST /files` → FileData.file_token.
+   * REF: v3 docs, `POST /files` → FileData.file_token.
    */
   private async uploadImage(image: SourceImage): Promise<UploadedFile> {
     const form = new FormData();

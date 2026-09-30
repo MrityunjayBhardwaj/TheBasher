@@ -316,8 +316,8 @@ export function SettingsModal() {
                 problem.
 
                 🔑 BUT ONLY WHERE THE VENDOR DOCUMENTS A SHAPE. This hint mirrors
-                `assertTripoKeyShape`, and it must mirror its SCOPE too: the v2
-                API documents a `tsk_` prefix, the v3 API documents none. Telling
+                `assertTripoKeyShape`, and it must mirror its SCOPE too: the v3
+                API documents no prefix (v2's `tsk_` retired with v2, #1403). Telling
                 someone their valid key looks wrong is worse than saying nothing,
                 because it is a confident claim that sends them to re-copy a key
                 that was already right. */}
