@@ -75,13 +75,20 @@ export async function renderAnimationToFile(
 
   // Static render config (resolution + postFx), read once (V10/H14 defaults).
   const state = useDagStore.getState().state;
+  // #1318 — ONE evaluator cache for the whole export. `state` is captured once and cannot
+  // change under the loop, so a pure node (the walk's whole-clip retarget above all) is
+  // evaluated once, not once per frame per reader: without it `capture()` re-ran the
+  // retarget 3× per frame (19 runs for a 6-frame export of the Camera Path + AI Walk
+  // example; 1 with). Sharing it across frames is correct by construction: a time-dependent
+  // node's cache key carries the frame (`evaluator.ts`, `timePart`), a pure one's doesn't.
+  const cache = createEvaluatorCache();
   let width = DEFAULT_RENDER_WIDTH;
   let height = DEFAULT_RENDER_HEIGHT;
   let postFx: RenderOutputValue['postFx'] = { tonemap: 'ACES', smaa: true };
   const target = state.outputs.render;
   if (target) {
     const value = evaluate(state, target.node, {
-      cache: createEvaluatorCache(),
+      cache,
       ctx: FROZEN_TIME,
     }).value as RenderOutputValue;
     width = value.width || DEFAULT_RENDER_WIDTH;
@@ -163,7 +170,7 @@ export async function renderAnimationToFile(
           // waitForApply have advanced the playhead. Read the live seconds (just
           // set) and the captured DAG state (unchanged across frames). Same
           // resolver as the still + viewport → frame-for-frame parity.
-          const pose = resolveActiveCameraPoseAt(state, useTimeStore.getState().seconds);
+          const pose = resolveActiveCameraPoseAt(state, useTimeStore.getState().seconds, cache);
           return renderSceneToImageCanvas({ gl, scene, pose, width, height, postFx, dof }, scratch);
         },
       },

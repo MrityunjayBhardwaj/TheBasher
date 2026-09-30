@@ -27,7 +27,7 @@
 // isolation, here under live D-01 stylized output reuse).
 
 import type { ComfyUICapability } from '../core/comfy';
-import { evaluate } from '../core/dag/evaluator';
+import { createEvaluatorCache, evaluate } from '../core/dag/evaluator';
 import type { DagState } from '../core/dag/state';
 import type { EvalCtx, NodeId } from '../core/dag/types';
 import type { StorageCapability } from '../core/storage';
@@ -124,6 +124,11 @@ export async function runComfyUIWorkflow(
   const passRefs =
     passBinding === undefined ? [] : Array.isArray(passBinding) ? passBinding : [passBinding];
 
+  // #1318 — ONE evaluator cache for the whole run: `state` doesn't change during it, so a
+  // pure node (a character's whole-clip retarget above all) is evaluated once, not once per
+  // frame. Correct across frames by construction: a time-dependent node's cache key carries
+  // the frame, a pure one's doesn't (`evaluator.ts`). Values held are descriptors, not pixels.
+  const cache = createEvaluatorCache();
   const outputs: string[] = [];
   let lastCompletedFrame = lastGoodFrame;
 
@@ -132,9 +137,10 @@ export async function runComfyUIWorkflow(
     const prompt = evaluate(state, promptBinding.node, {
       ctx,
       socket: promptBinding.socket,
+      cache,
     }).value as PromptValue;
     const passes = passRefs.map(
-      (ref) => evaluate(state, ref.node, { ctx, socket: ref.socket }).value as ImageValue,
+      (ref) => evaluate(state, ref.node, { ctx, socket: ref.socket, cache }).value as ImageValue,
     );
 
     // Prev-frame plumbing: frame N consumes frame N-1's stylized output
