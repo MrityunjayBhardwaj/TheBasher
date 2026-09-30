@@ -214,6 +214,10 @@ const CONSUMERS: Record<string, Decision> = {
   // about edges, not time, and the answer is a list to choose from, not a pose. The value it
   // reads is discarded; only "placed or not" is kept.
   'src/app/constraintStack.ts': authored('fixed-ctx-by-design'),
+  // #353 — constrain's preconditions make one cache and ask the world resolver and the curve
+  // sampler whether the target and the pointee resolve. Both fold their own overlays, so the
+  // mutator must hand them what the director authored.
+  'src/agent/mutators/builders/constrain.ts': authored('delegates-to-a-folding-resolver'),
   // #1394 — both import only the cache TYPE and forward the caller's cache to the
   // material-owner walk. The projection is what the inspector edits; the lane sources are
   // what the overlay folds. Neither may be handed folded params.
@@ -306,10 +310,11 @@ describe('#582 — who evaluates the graph, and which params they need', () => {
     // called, and the composite core takes one.
     // 52 → 49 at #1315, and nothing stopped evaluating: six UI readers that imported the evaluator
     // only to create their own cache now share one (`uiEvaluatorCache`, +1), and two predicates
-    // that take a cache from their UI caller import its type (+2). 53 − 6 + 3 = 50.
+    // that take a cache from their UI caller import its type (+2). 52 − 6 + 3 = 49.
     // 49 → 51 at #1394, not a new road: the inspector's projection and the lane-overlay sources
     // import the cache type to hand the material-owner walk the shared UI cache (+2).
-    expect(evaluatorConsumers()).toHaveLength(51); // 39 -> 40 at #935 (placement) (the motion resolver)
+    // 51 → 52 at #353: `mutator.constrain` creates the one cache its two precondition checks share.
+    expect(evaluatorConsumers()).toHaveLength(52); // 39 -> 40 at #935 (placement) (the motion resolver)
   });
 
   it('every reason is load-bearing — no member of any union is decorative', () => {

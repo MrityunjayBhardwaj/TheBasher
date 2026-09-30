@@ -57,6 +57,7 @@ import { poseBoneMutator } from './builders/poseBone';
 import { setPoseMemberModeMutator } from './builders/setPoseMemberMode';
 import { renameBoneMutator } from './builders/renameBone';
 import { bakePoseMutator } from './builders/bakePose';
+import { constrainMutator, unconstrainMutator } from './builders/constrain';
 
 export {
   rotateMutator,
@@ -91,6 +92,8 @@ export {
   setPoseMemberModeMutator,
   renameBoneMutator,
   bakePoseMutator,
+  constrainMutator,
+  unconstrainMutator,
 };
 
 export function registerAllMutators(): void {
@@ -120,6 +123,10 @@ export function registerAllMutators(): void {
   // than a capability: a trajectory is about five Vec3s, which is what a language
   // model emits well, so no service, stub or transport is involved.
   registerMutator(cameraTrajectoryMutator);
+  // #353 — the constraint family's verbs: aim at / ride along, and remove. Their kind
+  // axis is ADDABLE_CONSTRAINTS itself, so a new constraint kind needs no mutator work.
+  registerMutator(constrainMutator);
+  registerMutator(unconstrainMutator);
   // P3.1 Wave C — animation retargeting
   registerMutator(retargetMutator);
   // P4 Wave C — render graph

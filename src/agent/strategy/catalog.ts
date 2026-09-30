@@ -153,8 +153,8 @@ For explicit framing of a target node, compute camera position:
 - Distance ≈ \`bbox_diagonal / (2 * tan(fov/2 * π/180))\`.
 - LookAt at the target's center.
 
-## Future (P3+)
-\`camera.frameShot\` Mutator will auto-frame multiple targets.`,
+\`lookAt\` is a fixed POINT. To keep a camera on a subject — "point the camera at
+the cube", "follow the car" — constrain it instead (topic: constraints).`,
 };
 
 const ASSET_CHOICE: StrategyResource = {
@@ -635,6 +635,31 @@ skips the validation gates — prefer the mutator.
   counts differ.`,
 };
 
+// #353 — the verb exists only if the model knows when to reach for it.
+const CONSTRAINTS: StrategyResource = {
+  topic: 'constraints',
+  description: 'Aim one object at another or move it along a path: mutator.constrain.',
+  body: `# Constraints
+
+A constraint makes one object follow another, live. Use one whenever the request is a
+RELATIONSHIP rather than a pose:
+
+- "point the camera at the cube", "keep the light on the hero" → \`TrackTo\`, \`to\` = the
+  subject. It overrides the target's rotation every frame, so it stays aimed when either moves.
+  Don't keyframe rotations or set \`lookAt\` for this — those aim at where the subject IS NOW.
+- "make the camera follow the path", "move the car along the curve" → \`FollowPath\`, \`to\` =
+  an EXISTING Curve object. It overrides position. To move along it over time, keyframe the
+  constraint's \`evalTime\` 0 → 1. For a NEW camera move with no path yet, use
+  \`mutator.camera.trajectory\`, which makes the path too.
+
+\`agent.proposePlan({ mutator: "mutator.constrain", spec: { target, type, to } })\`.
+Asking again re-points the existing constraint of that type; it never stacks a second one.
+\`mutator.unconstrain({ target, type? })\` removes them and the object returns to its own pose.
+
+Refusals are real: a subject with no place in the scene, or a \`to\` that is not a Curve for
+FollowPath, would draw nothing — pick another node instead of retrying the same one.`,
+};
+
 export function registerAllStrategies(): void {
   registerStrategy(UNITS);
   registerStrategy(MATERIALS);
@@ -646,4 +671,5 @@ export function registerAllStrategies(): void {
   registerStrategy(RENDERING);
   registerStrategy(AI_RENDER);
   registerStrategy(COMPONENT_SCOPE);
+  registerStrategy(CONSTRAINTS);
 }

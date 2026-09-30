@@ -307,6 +307,11 @@ const ORIGINS: Record<string, Origin> = {
 
 /** Every function that takes a cache, as `name@file`. Pinned so the census cannot narrow. */
 const TAKERS: string[] = [
+  // #353 — constrain's preconditions make ONE cache and hand it to both checks (the target's
+  // placement, then the pointee's), each of which resolves the render root.
+  'pointeeProblem@src/app/constraintStack.ts',
+  'pointeeProblem@src/app/constraintStack.ts',
+  'targetProblem@src/agent/mutators/builders/constrain.ts',
   'canApplyTransform@src/app/animate/dispatchApplyTransform.ts',
   'canModifyGeometry@src/app/modifierGeometry.ts',
   'canWearMaterial@src/app/modifierGeometry.ts',

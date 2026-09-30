@@ -155,7 +155,8 @@ describe('mutator catalog', () => {
     // 31 → 32 at #1201 — `animate.renameBone`.
     // 32 → 33 at #1215 — `animate.bakePose`.
     // 33 → 32 at #1053 — `timeline.bakeGltfChannel` retired with the clone road.
-    expect(mutators).toHaveLength(32);
+    // 32 → 34 at #353 — `constrain` + `unconstrain`, the constraint family's verbs.
+    expect(mutators).toHaveLength(34);
     const names = mutators.map((m) => m.name).sort();
     expect(names).toEqual([
       'mutator.animate.bakePose',
@@ -164,6 +165,7 @@ describe('mutator catalog', () => {
       'mutator.animate.setPoseMemberMode',
       'mutator.animation.retarget',
       'mutator.camera.trajectory',
+      'mutator.constrain',
       'mutator.deleteNode',
       'mutator.duplicate',
       'mutator.geometry.addModifier',
@@ -190,6 +192,7 @@ describe('mutator catalog', () => {
       'mutator.timeline.setKeyframeInterp',
       'mutator.timeline.simplifyChannel',
       'mutator.translate',
+      'mutator.unconstrain',
     ]);
   });
 
@@ -2308,7 +2311,8 @@ describe('agent.listMutators tool', () => {
     // 31 → 32 at #1201 — `animate.renameBone`.
     // 32 → 33 at #1215 — `animate.bakePose`.
     // 33 → 32 at #1053 — `timeline.bakeGltfChannel` retired with the clone road.
-    expect(parsed.mutators).toHaveLength(32);
+    // 32 → 34 at #353 — `constrain` + `unconstrain`.
+    expect(parsed.mutators).toHaveLength(34);
   });
 });
 
@@ -3930,6 +3934,8 @@ import {
   removeKeyframesMutator as _removeKfM,
   shotCreateMutator as _shotM,
   cameraTrajectoryMutator as _cameraTrajM,
+  constrainMutator as _constrainM,
+  unconstrainMutator as _unconstrainM,
   poseBoneMutator as _poseBoneM,
   setPoseMemberModeMutator as _setPoseMemberModeM,
   renameBoneMutator as _renameBoneM,
@@ -4254,6 +4260,25 @@ describe('V14 deeper non-redundancy — Op-shape probe (issue #22)', () => {
           [-4, 2, 3],
         ],
       },
+    },
+    'mutator.constrain': {
+      mutator: _constrainM as MutatorDefinition<unknown>,
+      // The product's default project, not a mutator fixture: a Track-To's aim needs a world
+      // position, which only a render root gives, and the fixtures here carry none — on them
+      // constrain refuses, correctly, because the aim would silently fall back to the origin.
+      build: buildDefaultDagState,
+      spec: { target: 'n_camera', type: 'TrackTo', to: 'n_box' },
+    },
+    'mutator.unconstrain': {
+      mutator: _unconstrainM as MutatorDefinition<unknown>,
+      build: () =>
+        applyOp(buildDefaultDagState(), {
+          type: 'addNode',
+          nodeId: 'cam_aim',
+          nodeType: 'TrackTo',
+          params: { target: 'n_camera', aimNode: 'n_box' },
+        }).next,
+      spec: { target: 'n_camera', type: 'TrackTo' },
     },
     'mutator.animate.poseBone': {
       mutator: _poseBoneM as MutatorDefinition<unknown>,
