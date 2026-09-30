@@ -40,7 +40,7 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import {
   attachMapFromFile,
-  MATERIAL_MAP_SLOTS,
+  shownMapSlots,
   type MaterialMapSlot,
 } from './material/attachMapFromFile';
 import { DEFAULT_TRANSMISSION_THICKNESS } from './material/openpbrToThree';
@@ -3069,7 +3069,7 @@ function MaterialEditor({
         <div className="px-3 pb-0.5 pt-1.5 font-mono text-[10px] uppercase tracking-wide text-fg/40">
           Maps
         </div>
-        {MATERIAL_MAP_SLOTS.map((s) => (
+        {shownMapSlots(material).map((s) => (
           <Fragment key={s}>
             <MapRow
               nodeId={nodeId}

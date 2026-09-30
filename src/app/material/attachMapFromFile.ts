@@ -17,7 +17,7 @@
 import * as THREE from 'three';
 import type { StorageCapability } from '../../core/storage/StorageCapability';
 import { MATERIAL_MAP_SLOT_TABLE } from '../../nodes/types';
-import type { BakedTextureRef, IrMapSlot } from '../../nodes/types';
+import type { BakedTextureRef, IrMapSlot, MaterialMapSlotRow } from '../../nodes/types';
 import { MAP_UV_SLOTS } from '../../nodes/materialSchema';
 import {
   fromBakedColorSpace,
@@ -29,6 +29,25 @@ import {
 export type MaterialMapSlot = IrMapSlot;
 
 export const MATERIAL_MAP_SLOTS: readonly MaterialMapSlot[] = MAP_UV_SLOTS;
+
+/**
+ * #1333 — the slots the inspector offers a map row for on this material. A lobe's slot shows only
+ * while its lobe's weight is above 0 (the table's `weightOf`): off, the map draws nothing and the
+ * row is clutter. A slot that already HOLDS a texture shows regardless, or turning a weight to 0
+ * would hide a stored map that could then be neither seen nor cleared.
+ */
+export function shownMapSlots(material: {
+  readonly maps?: unknown;
+  readonly [lobe: string]: unknown;
+}): readonly MaterialMapSlot[] {
+  const maps = (material.maps ?? {}) as Readonly<Record<string, unknown>>;
+  return MATERIAL_MAP_SLOTS.filter((slot) => {
+    const lobe = (MATERIAL_MAP_SLOT_TABLE[slot] as MaterialMapSlotRow).weightOf;
+    if (lobe === undefined || maps[slot] != null) return true;
+    const weight = (material[lobe] as { weight?: unknown } | undefined)?.weight;
+    return typeof weight === 'number' && weight > 0;
+  });
+}
 
 export interface AttachMapHooks {
   /** Override the File→Texture decode (test seam — happy-dom has no decoder). */

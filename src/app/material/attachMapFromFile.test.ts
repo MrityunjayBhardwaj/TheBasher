@@ -8,7 +8,15 @@ import * as THREE from 'three';
 import { describe, expect, it } from 'vitest';
 import { MemoryStorage } from '../../core/storage/MemoryStorage';
 import { loadBakedTexture } from '../asset/bakedTextureStore';
-import { attachMapFromFile, MATERIAL_MAP_SLOTS, type MaterialMapSlot } from './attachMapFromFile';
+import {
+  attachMapFromFile,
+  MATERIAL_MAP_SLOTS,
+  shownMapSlots,
+  type MaterialMapSlot,
+} from './attachMapFromFile';
+import { hydrateInlineMaterial, NULL_MAPS } from '../../nodes/materialSchema';
+import { MATERIAL_MAP_SLOT_TABLE } from '../../nodes/types';
+import type { MaterialMapSlotRow } from '../../nodes/types';
 
 function pngFile(): File {
   return new File([new Uint8Array([0x89, 0x50, 0x4e, 0x47, 1, 2, 3, 4])], 'tex.png', {
@@ -69,5 +77,56 @@ describe('attachMapFromFile (W5 — File → OPFS map, colorspace-correct)', () 
         },
       }),
     ).rejects.toThrow('corrupt image');
+  });
+});
+
+// #1333 — a lobe's map rows show only while the lobe is on (the user's call), or while the slot
+// already holds a texture, which must never be hidden.
+describe('#1333 — the inspector offers a lobe`s map rows only while that lobe is on', () => {
+  const ref = {
+    hash: 'h',
+    colorSpace: 'srgb-linear',
+    flipY: false,
+    wrapS: 'repeat',
+    wrapT: 'repeat',
+  };
+  const shown = (raw: Record<string, unknown>) =>
+    shownMapSlots(hydrateInlineMaterial(raw) as unknown as Record<string, unknown>);
+
+  it('a material with every lobe off shows the six original slots and nothing else', () => {
+    expect(shown({})).toEqual(Object.keys(NULL_MAPS));
+  });
+
+  it('a coat above 0 adds its three rows; transmission above 0 adds transmission and thickness', () => {
+    expect(shown({ coat: { weight: 0.5, roughness: 0 } })).toEqual([
+      ...Object.keys(NULL_MAPS),
+      'coat',
+      'coatRoughness',
+      'coatNormal',
+    ]);
+    expect(shown({ transmission: { weight: 1 } })).toEqual([
+      ...Object.keys(NULL_MAPS),
+      'transmission',
+      'thickness',
+    ]);
+  });
+
+  it('a slot that holds a texture stays visible when its lobe is turned off', () => {
+    const slots = shown({ coat: { weight: 0, roughness: 0 }, maps: { coat: ref } });
+    expect(slots).toContain('coat');
+    expect(slots).not.toContain('coatRoughness');
+  });
+
+  it('every slot not seeded names the lobe that governs it, so a new lobe row cannot forget', () => {
+    const rows = Object.entries(MATERIAL_MAP_SLOT_TABLE) as [string, MaterialMapSlotRow][];
+    const unseeded = rows.filter(([, r]) => !r.seeded);
+    expect(unseeded.length).toBeGreaterThan(0);
+    for (const [slot, row] of unseeded) expect(row.weightOf, slot).toBeDefined();
+    // …and each names a lobe the IR really gives a weight.
+    const ir = hydrateInlineMaterial({
+      fuzz: { weight: 1, color: '#ffffff', roughness: 0 },
+    }) as unknown as Record<string, { weight?: unknown } | undefined>;
+    for (const [slot, row] of unseeded)
+      expect(typeof ir[row.weightOf!]?.weight, `${slot} → ${row.weightOf}`).toBe('number');
   });
 });

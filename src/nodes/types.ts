@@ -266,6 +266,7 @@ export interface UvPlacement {
  *    means no texture, because `materialKeyOf` walks every own key and a seeded new slot would
  *    re-key every saved material.
  *  - `label` — the slot's name in prose, for a reader.
+ *  - `weightOf` — the lobe whose weight must be above 0 for the map to draw (#1333).
  *
  * ORDER IS IDENTITY: `materialKeyOf` walks keys in insertion order and the schema inserts them in
  * this order, so reordering rows re-keys every saved material. Append; never reorder.
@@ -279,18 +280,26 @@ export const MATERIAL_MAP_SLOT_TABLE = {
   ao: { three: 'aoMap', colorSpace: 'srgb-linear', seeded: true, label: 'ambient occlusion' },
   // #1327 — the coat lobe's textures (glTF `KHR_materials_clearcoat`): weight (R), roughness (G)
   // and the coat's own normal. Not seeded, so a material without them keys as it always did.
-  coat: { three: 'clearcoatMap', colorSpace: 'srgb-linear', seeded: false, label: 'clearcoat' },
+  coat: {
+    three: 'clearcoatMap',
+    colorSpace: 'srgb-linear',
+    seeded: false,
+    label: 'clearcoat',
+    weightOf: 'coat',
+  },
   coatRoughness: {
     three: 'clearcoatRoughnessMap',
     colorSpace: 'srgb-linear',
     seeded: false,
     label: 'clearcoat roughness',
+    weightOf: 'coat',
   },
   coatNormal: {
     three: 'clearcoatNormalMap',
     colorSpace: 'srgb-linear',
     seeded: false,
     label: 'clearcoat normal',
+    weightOf: 'coat',
   },
   // #1328 — the transmission lobe's weight per texel (glTF `KHR_materials_transmission`, R).
   transmission: {
@@ -298,14 +307,17 @@ export const MATERIAL_MAP_SLOT_TABLE = {
     colorSpace: 'srgb-linear',
     seeded: false,
     label: 'transmission',
+    weightOf: 'transmission',
   },
   // #1331 — the volume's thickness per texel (glTF `KHR_materials_volume`, G), scaling
-  // `geometry.thickness`.
+  // `geometry.thickness`. Shown with transmission: three draws a thickness only on a transmissive
+  // material.
   thickness: {
     three: 'thicknessMap',
     colorSpace: 'srgb-linear',
     seeded: false,
     label: 'thickness',
+    weightOf: 'transmission',
   },
 } as const satisfies Readonly<Record<string, MaterialMapSlotRow>>;
 
@@ -316,7 +328,15 @@ export interface MaterialMapSlotRow {
   readonly seeded: boolean;
   /** How a reader names the slot in prose (`base color`, `ambient occlusion`). */
   readonly label: string;
+  /**
+   * #1333 — the lobe whose `weight` must be above 0 for this slot's map to draw, and so for the
+   * inspector to offer its row. Absent for the six original slots, which always draw.
+   */
+  readonly weightOf?: WeightedLobe;
 }
+
+/** The IR lobes that carry a `weight` (#1333). */
+export type WeightedLobe = 'coat' | 'transmission' | 'fuzz' | 'specular';
 
 type MapSlotTable = typeof MATERIAL_MAP_SLOT_TABLE;
 /** A material map slot in the IR's vocabulary (`albedo`, `normal`, …). */
