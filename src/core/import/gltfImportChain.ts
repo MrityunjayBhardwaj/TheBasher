@@ -863,9 +863,11 @@ export function captureChildFaceCount(
  *
  * ── 🔴 SINGLE-PRIMITIVE CHILDREN ONLY, AND THAT IS THE WHOLE OF THE POPULATION DECISION ──
  *
- * A glTF node with two primitives loads as a GROUP of two Meshes, and `firstMeshGeometry` —
- * the read door — reaches only the FIRST. So a count welded across every primitive describes
- * a buffer that no reader ever holds. `two-material-quad.gltf` cannot show this: its two
+ * A glTF node with two primitives loads as a GROUP of two Meshes, and the clone road's read
+ * door (`firstMeshGeometry`, gone with the clone renderer in #1053) reached only the FIRST. So
+ * a count welded across every primitive described a buffer that no reader held. (The capture
+ * still runs: the load converter rebuilds a saved clone import and diffs its params against
+ * the save, so it must keep writing what it wrote.) `two-material-quad.gltf` cannot show this: its two
  * primitives sit on the same four corners, so the door and a unioning capture both say 4 by
  * accident. Constructed with DISJOINT primitives, they part: door 3, union 6.
  *

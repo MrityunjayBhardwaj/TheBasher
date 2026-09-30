@@ -2,9 +2,11 @@
 //
 // ── WHY THE ORACLE IS THE REAL LOADER AND NOT A FIXTURE OF MY OWN ────────────────────────
 //
-// The number this capture writes is compared, downstream, against `weldByPosition` of the
-// geometry a reader gets from the mounted clone. So the only oracle that means anything is
-// that same geometry, produced by the same `GLTFLoader` the app uses. Both sides weld through
+// The number this capture writes was compared, downstream, against `weldByPosition` of the
+// geometry a reader got from the mounted clone. Since #1053 nothing draws the clone, but the
+// load converter rebuilds a saved clone import and diffs every param against the save, so the
+// capture must still write what it always wrote. The oracle stays the geometry the clone road
+// read, produced by the same `GLTFLoader` the app uses. Both sides weld through
 // PRODUCTION's `weldByPosition` rather than through two spellings of it — an earlier probe for
 // this work hashed coordinates itself and split a sphere's seam column on negative zero, which
 // is exactly the disagreement this file exists to rule out.
@@ -31,7 +33,6 @@ import * as THREE from 'three';
 import { parseGltfContainer, resolveBuffers, type GltfJson } from './glb';
 import { captureChildPointCount } from './gltfImportChain';
 import { weldByPosition } from '../../app/pointIdentity';
-import { firstMeshGeometry } from '../../app/firstMeshGeometry';
 
 function fixtureBuffer(name: string): ArrayBuffer {
   const n = readFileSync(resolve(process.cwd(), `public/assets/${name}`));
@@ -64,6 +65,21 @@ async function loadScene(name: string, bytes?: ArrayBuffer): Promise<THREE.Objec
   } catch {
     return null;
   }
+}
+
+/**
+ * The geometry the clone road read for a child: the first `isMesh` under the named node, the
+ * node itself included. Production's copy (`src/app/firstMeshGeometry.ts`) went with the clone
+ * renderer in #1053; it is kept here as the ORACLE's definition, because the capture below was
+ * written to agree with exactly this buffer and saved clone imports still carry what it wrote.
+ */
+function firstMeshGeometry(root: THREE.Object3D | undefined): THREE.BufferGeometry | null {
+  if (!root) return null;
+  let found: THREE.BufferGeometry | null = null;
+  root.traverse((o) => {
+    if (!found && (o as THREE.Mesh).isMesh) found = (o as THREE.Mesh).geometry;
+  });
+  return found;
 }
 
 async function parsed(name: string, bytes?: ArrayBuffer) {
