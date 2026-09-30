@@ -1,14 +1,14 @@
 // #1317 — a project saved with a plain model on the clone road loads as native geometry, drawn where
 // and how the clone drew it; one the native reader refuses loads as it was saved, and says why.
 //
-// The model is staged on the CLONE road the way every refused file arrived before #1053
-// (`__basher_writeOpfsBytes` + `__basher_importGltf`, which always takes the clone road) and moved.
-// What is drawn under its import root is read — world centre, size, colour, base-colour map — then
-// the project is saved and reloaded on the resume road (`hydrateLoadedProject`), and the same
-// reading is taken again from whatever root the import now has.
+// The project is one saved with the model on the CLONE road, the way every refused file arrived before
+// #1053, and moved — recorded (`_recordedSave.ts`), since #1053 retired the clone road's import. It is
+// loaded on the resume road (`hydrateLoadedProject`), and what is drawn under the import's root —
+// world centre, size, colour, base-colour map — is compared with what the clone drew.
 import { test, expect } from './_fixtures';
 import type { Page } from '@playwright/test';
 import { drawnImportMeshes, importRoots } from './_importedMesh';
+import { recordedSave, savedTypes, writeRecordedSave } from './_recordedSave';
 
 type V3 = [number, number, number];
 interface O3 {
@@ -27,7 +27,6 @@ interface BasherWindow {
       dispatchAtomic: (ops: unknown[], who: string, label: string) => void;
     };
   };
-  __basher_importGltf?: (buf: ArrayBuffer, ref: string) => Promise<unknown>;
   __basher_writeOpfsBytes?: (path: string, bytes: Uint8Array) => Promise<void>;
   __basher_three?: {
     getState: () => { scene: { getObjectByName: (n: string) => O3 | undefined } };
@@ -38,39 +37,8 @@ async function ready(page: Page): Promise<void> {
   await expect(page.getByTestId('layout')).toBeVisible({ timeout: 15_000 });
   await page.waitForFunction(() => {
     const w = window as unknown as BasherWindow;
-    return Boolean(w.__basher_importGltf && w.__basher_writeOpfsBytes && w.__basher_three);
+    return Boolean(w.__basher_writeOpfsBytes && w.__basher_three);
   });
-}
-
-/** Stage `/assets/<file>` on the clone road at `ref`, and move its import Group by `move`. */
-async function stageOnCloneRoad(page: Page, file: string, ref: string, move: V3): Promise<void> {
-  await page.evaluate(
-    async ({ file, ref, move }) => {
-      const w = window as unknown as BasherWindow;
-      const buf = await fetch(`/assets/${file}`).then((r) => r.arrayBuffer());
-      await w.__basher_writeOpfsBytes!(ref, new Uint8Array(buf));
-      await w.__basher_importGltf!(buf, ref);
-      const dag = w.__basher_dag.getState();
-      const [groupId] = Object.entries(dag.state.nodes).find(
-        ([, n]) =>
-          n.type === 'Group' && Object.values(dag.state.nodes).some((m) => m.type === 'GltfAsset'),
-      )!;
-      const pos = (dag.state.nodes[groupId].params as { position: number[] }).position;
-      dag.dispatchAtomic(
-        [
-          {
-            type: 'setParam',
-            nodeId: groupId,
-            paramPath: 'position',
-            value: pos.map((c, k) => c + move[k]),
-          },
-        ],
-        'user',
-        'place the model',
-      );
-    },
-    { file, ref, move },
-  );
 }
 
 /** The world-space centre of everything visibly drawn under `rootId`, and how many meshes. */
@@ -121,13 +89,14 @@ async function drawnImport(page: Page) {
   };
 }
 
-async function saveAndReload(page: Page): Promise<void> {
-  await page.evaluate(async () => {
-    const boot = await import('/src/app/boot.ts');
-    await boot.saveCurrent();
-  });
+/** The recorded project loaded on the resume road, as a returning user's browser loads it. */
+async function loadRecorded(page: Page, name: string): Promise<string> {
+  const saved = recordedSave(`clone-models/${name}`);
+  expect(savedTypes(saved)).toContain('GltfAsset');
+  await writeRecordedSave(page, saved);
   await page.reload();
   await ready(page);
+  return saved.ref;
 }
 
 const types = (page: Page): Promise<string[]> =>
@@ -166,9 +135,8 @@ test('#1317 — a saved clone model loads native, drawn where and how the clone 
   test.slow();
   const errors: string[] = [];
   page.on('pageerror', (e) => errors.push(e.message));
-  const ref = 'user-imports/p1317/albedo-textured-quad.gltf';
-  await stageOnCloneRoad(page, 'albedo-textured-quad.gltf', ref, [1.5, 0.5, -1]);
-  expect((await importRoots(page)).map((r) => r.road)).toEqual(['clone']);
+  // Recorded: albedo-textured-quad.gltf staged on the clone road and its import Group moved by
+  // [1.5, 0.5, -1].
   // What the clone drew for this staging, read by `drawnImport` on the committed code at `7e659d1d`
   // with the clone renderer still in place (#1053 retired it; the print is in the store at
   // `ref/architecture/1053-clone-goldens.txt`).
@@ -181,7 +149,7 @@ test('#1317 — a saved clone model loads native, drawn where and how the clone 
     mapImageOk: true,
   };
 
-  await saveAndReload(page);
+  const ref = await loadRecorded(page, 'textured-quad');
 
   expect((await types(page)).filter((t) => /^Gltf|TransformClip|ClipSelect/.test(t))).toEqual([]);
   expect(await types(page)).toContain('PolyMeshData');
@@ -209,11 +177,8 @@ test('#1317 — a saved clone model the native reader refuses is kept as saved, 
   test.slow();
   const errors: string[] = [];
   page.on('pageerror', (e) => errors.push(e.message));
-  const ref = 'user-imports/p1317-iridescence/iridescence-quad.gltf';
-  await stageOnCloneRoad(page, 'iridescence-quad.gltf', ref, [0, 0, 0]);
-  await expect.poll(async () => (await importRoots(page)).map((r) => r.road)).toEqual(['clone']);
-
-  await saveAndReload(page);
+  // Recorded: iridescence-quad.gltf staged on the clone road, not moved.
+  const ref = await loadRecorded(page, 'refused-iridescence');
 
   await expect.poll(async () => (await importRoots(page)).map((r) => r.road)).toEqual(['clone']);
   const row = await notice(page, `model:${ref}`);

@@ -1,17 +1,16 @@
 // #1216 — a project saved with a clone-road character loads as a native character, drawn where and
 // how the clone drew it.
 //
-// The character is staged on the CLONE road the way every skinned import arrived before #1205
-// (`__basher_writeOpfsBytes` + `__basher_importGltf`, which always takes the clone road), moved and
-// turned, and its drawn tip vertex read at two times. After a save and a reload — the resume road,
+// The project is one saved with the character on the CLONE road, the way every skinned import arrived
+// before #1205 — recorded (`_recordedSave.ts`), since #1053 retired the clone road's import — moved and
+// turned, and its drawn tip vertex read at two times. After a reload — the resume road,
 // which goes through `hydrateLoadedProject` — the same instrument (`__basher_gltf_skin`, which reads
 // the drawn SkinnedMesh on either road) must read the tip the clone drew (recorded since #1053 retired
 // the clone renderer, `CLONE_DREW`), and the scene must hold a Skeleton
 // and an Armature modifier and nothing of the clone road.
 import { test, expect } from './_fixtures';
 import type { Page } from '@playwright/test';
-import { readFileSync } from 'node:fs';
-import { splitCurveOps } from './_splitCurve';
+import { recordedSave, savedTypes, writeRecordedSave, type RecordedSave } from './_recordedSave';
 
 interface SkinHandle {
   count?: number;
@@ -24,7 +23,6 @@ interface BasherWindow {
       dispatchAtomic: (ops: unknown[], who: string, label: string) => void;
     };
   };
-  __basher_importGltf?: (buf: ArrayBuffer, ref: string) => Promise<unknown>;
   __basher_writeOpfsBytes?: (path: string, bytes: Uint8Array) => Promise<void>;
   __basher_time?: { getState: () => { setTime: (s: number) => void } };
   __basher_gltf_skin?: () => SkinHandle | null;
@@ -71,7 +69,7 @@ async function ready(page: Page): Promise<void> {
   await expect(page.getByTestId('layout')).toBeVisible({ timeout: 15_000 });
   await page.waitForFunction(() => {
     const w = window as unknown as BasherWindow;
-    return Boolean(w.__basher_importGltf && w.__basher_writeOpfsBytes && w.__basher_time);
+    return Boolean(w.__basher_writeOpfsBytes && w.__basher_time);
   });
 }
 
@@ -154,45 +152,15 @@ test('#1216 — a saved clone character loads native, drawn where the clone drew
   const errors: string[] = [];
   page.on('pageerror', (e) => errors.push(e.message));
 
-  // Staged on the clone road, then placed: moved and turned about Y, as a director would.
-  await page.evaluate(async (ref) => {
-    const w = window as unknown as BasherWindow;
-    const buf = await fetch('/assets/skinned-bar.glb').then((r) => r.arrayBuffer());
-    await w.__basher_writeOpfsBytes!(ref, new Uint8Array(buf));
-    await w.__basher_importGltf!(buf, ref);
-    const dag = w.__basher_dag.getState();
-    const [groupId] = Object.entries(dag.state.nodes).find(
-      ([, n]) =>
-        n.type === 'Group' && Object.values(dag.state.nodes).some((m) => m.type === 'GltfAsset'),
-    )!;
-    const pos = (dag.state.nodes[groupId].params as { position: number[] }).position;
-    dag.dispatchAtomic(
-      [
-        {
-          type: 'setParam',
-          nodeId: groupId,
-          paramPath: 'position',
-          value: [pos[0] + 1.5, pos[1], pos[2] - 1],
-        },
-        { type: 'setParam', nodeId: groupId, paramPath: 'rotation', value: [0, 90, 0] },
-      ],
-      'user',
-      'place the character',
-    );
-  }, REF);
-  const before = await types(page);
-  expect(before).toContain('GltfAsset');
-  expect(before).not.toContain('ArmatureModifier');
+  // Recorded: staged on the clone road, then placed — the import Group moved by [1.5, 0, -1] and
+  // turned to [0, 90, 0] about Y, as a director would.
+  const saved = recordedSave('clone-characters/placed');
+  expect(saved.ref).toBe(REF);
+  expect(savedTypes(saved)).toContain('GltfAsset');
+  expect(savedTypes(saved)).not.toContain('ArmatureModifier');
   const cloneTip = CLONE_DREW.placed;
 
-  await page.evaluate(async () => {
-    const boot = await import('/src/app/boot.ts');
-    await boot.saveCurrent();
-  });
-  await page.reload();
-  await ready(page);
-
-  const after = await types(page);
+  const { after } = await loadRecorded(page, saved);
   expect(after).toEqual(
     expect.arrayContaining(['Skeleton', 'PoseLayer', 'ArmatureModifier', 'PolyMeshData']),
   );
@@ -220,18 +188,6 @@ test('#1216 — a saved clone character loads native, drawn where the clone drew
   expect(errors).toEqual([]);
 });
 
-/** Save, reload on the resume road, and read back the scene's node types and the file's notice. */
-async function saveAndReload(
-  page: Page,
-  ref: string,
-): Promise<{ after: string[]; notice: { message?: string; label?: string } }> {
-  await page.evaluate(async () => {
-    const boot = await import('/src/app/boot.ts');
-    await boot.saveCurrent();
-  });
-  return reloadAndRead(page, ref);
-}
-
 /** Reload on the resume road (no save), and read back the node types and the file's notice. */
 async function reloadAndRead(
   page: Page,
@@ -248,19 +204,6 @@ async function reloadAndRead(
   return { after, notice };
 }
 
-/** The file imported on the clone road, as every skinned import arrived before #1205. */
-async function stageClone(page: Page, file: string, ref: string): Promise<void> {
-  await page.evaluate(
-    async ({ file, ref }) => {
-      const w = window as unknown as BasherWindow;
-      const buf = await fetch(`/assets/${file}`).then((r) => r.arrayBuffer());
-      await w.__basher_writeOpfsBytes!(ref, new Uint8Array(buf));
-      await w.__basher_importGltf!(buf, ref);
-    },
-    { file, ref },
-  );
-}
-
 function expectSameTip(
   cloneTip: number[][],
   nativeTip: number[][],
@@ -272,51 +215,24 @@ function expectSameTip(
 }
 
 /**
- * A project saved with a clone-road character, recorded when the clone road's own tools still
- * existed (they retired with #1053): the saved project exactly as `saveCurrent` wrote it, the file it
- * imported and where, and the tip vertex the clone DREW at each time (and the colour, where an edit
- * set one). Recorded by this spec's staging at `capturedAt`; `git show <capturedAt>:<by>` shows the
- * gestures. The recording is the only witness left of what the clone drew.
+ * A project saved with a clone-road character whose edits used the clone road's own tools (they
+ * retired with #1053), and the tip vertex the clone DREW at each time (and the colour, where an edit
+ * set one). The recording is the only witness left of what the clone drew.
  */
-interface Recorded {
-  capturedAt: string;
-  file: string;
-  ref: string;
+interface Recorded extends RecordedSave {
   times: number[];
   clone: { tip: [number, number, number][]; colour?: string | null };
-  project: { id: string; state: { nodes: Record<string, { type: string }> } };
 }
 
-const recorded = (name: string): Recorded =>
-  JSON.parse(
-    readFileSync(`src/core/project/__fixtures__/clone-characters/${name}.json`, 'utf8'),
-  ) as Recorded;
+const recorded = (name: string): Recorded => recordedSave<Recorded>(`clone-characters/${name}`);
 
-const savedTypes = (saved: Recorded): string[] =>
-  Object.values(saved.project.state.nodes).map((n) => n.type);
-
-/**
- * The recorded project put where a returning user's browser holds it — its file in this browser's
- * storage, the project saved, and it named as the one to resume — then loaded on the resume road.
- */
+/** The recorded project loaded on the resume road, as a returning user's browser loads it. */
 async function loadRecorded(
   page: Page,
-  saved: Recorded,
+  saved: RecordedSave,
+  opts?: { withFile?: boolean },
 ): Promise<{ after: string[]; notice: { message?: string; label?: string } }> {
-  await page.evaluate(async ({ file, ref, project }) => {
-    const w = window as unknown as BasherWindow;
-    const buf = await fetch(`/assets/${file}`).then((r) => r.arrayBuffer());
-    await w.__basher_writeOpfsBytes!(ref, new Uint8Array(buf));
-    const boot = await import('/src/app/boot.ts');
-    const io = await import('/src/core/project/io.ts');
-    // #1391 — written RAW, as the older app that saved it wrote it: `saveProject` validates against
-    // the CURRENT format and would refuse a recording from an earlier one before the load could
-    // migrate it. The resume load below migrates it, as it does for a returning user.
-    await (
-      await boot.getStorage()
-    ).write(io.projectPath(project.id), new TextEncoder().encode(JSON.stringify(project, null, 2)));
-    localStorage.setItem('basher.lastProjectId', project.id);
-  }, saved);
+  await writeRecordedSave(page, saved, opts);
   return reloadAndRead(page, saved.ref);
 }
 
@@ -399,23 +315,12 @@ test('#1216 slice 3 — a material colour set on the character loads native, dra
 }) => {
   const errors: string[] = [];
   page.on('pageerror', (e) => errors.push(e.message));
-  await stageClone(page, 'skinned-bar.glb', REF);
+  // Recorded: the clone road's material editor on the file's `SkinnedBar` mesh
+  // (`mutator.setMaterialColor`, #12ab34).
+  const saved = recordedSave('clone-characters/colour-set');
+  expect(JSON.stringify(saved.project)).toContain('#12ab34');
 
-  const set = await page.evaluate(async () => {
-    const w = window as unknown as BasherWindow;
-    const nodes = w.__basher_dag.getState().state.nodes;
-    const asset = Object.values(nodes).find((n) => n.type === 'GltfAsset')!;
-    const mesh = (asset.params as { nodeNameMap: Record<string, string> }).nodeNameMap.SkinnedBar;
-    const { dispatchMutatorFromUI } = await import('/src/app/animate/dispatchMutator.ts');
-    return dispatchMutatorFromUI(
-      'mutator.setMaterialColor',
-      { targetSelectors: [mesh], color: '#12ab34' },
-      'colour',
-    ).ok;
-  });
-  expect(set).toBe(true);
-
-  const { after, notice } = await saveAndReload(page, REF);
+  const { after, notice } = await loadRecorded(page, saved);
   expect(after.filter((t) => /^Gltf|TransformClip|ClipSelect/.test(t))).toEqual([]);
   expect(notice.label).toBe('character converted:');
   const native = { color: await nativeMeshColour(page) };
@@ -494,36 +399,19 @@ test('#1216 slice 4 — a character whose file is gone says so by name, and the 
 }) => {
   const errors: string[] = [];
   page.on('pageerror', (e) => errors.push(e.message));
-  await stageClone(page, 'skinned-bar.glb', REF);
-  const name = await page.evaluate(() => {
-    const w = window as unknown as BasherWindow & {
-      __basher_dag: {
-        getState: () => { state: { nodes: Record<string, { meta?: { name?: string } }> } };
-      };
-    };
-    const nodes = w.__basher_dag.getState().state.nodes as Record<
-      string,
-      { type: string; meta?: { name?: string } }
-    >;
-    return Object.values(nodes).find((n) => n.type === 'Group')?.meta?.name ?? null;
-  });
-  // Saved, then the file leaves this browser's storage (cleared site data, another browser).
-  await page.evaluate(async () => {
-    const boot = await import('/src/app/boot.ts');
-    await boot.saveCurrent();
-  });
+  // Recorded: the file imported on the clone road and saved. Its file is NOT put in this browser's
+  // storage (cleared site data, another browser).
+  const saved = recordedSave('clone-characters/file-gone');
+  const name =
+    (Object.values(saved.project.state.nodes) as { type: string; meta?: { name?: string } }[]).find(
+      (n) => n.type === 'Group',
+    )?.meta?.name ?? null;
+  const { after, notice } = await loadRecorded(page, saved, { withFile: false });
   const gone = await page.evaluate(async (ref) => {
     const boot = await import('/src/app/boot.ts');
-    const storage = await boot.getStorage();
-    await storage.delete(ref);
-    return !(await storage.exists(ref));
+    return !(await (await boot.getStorage()).exists(ref));
   }, REF);
   expect(gone).toBe(true);
-
-  // What is under test is the load that follows (cleared site data never has the saving page open),
-  // so only its errors count.
-  errors.length = 0;
-  const { after, notice } = await reloadAndRead(page, REF);
   console.log(
     `file gone: name ${name} types ${JSON.stringify(after)} notice ${JSON.stringify(notice)}`,
   );
@@ -579,61 +467,17 @@ test('#1265 #1267 — curves added on a node of the file, which the clone never 
   // The file's `SkinnedBar` empty, which holds the mesh and the bones and which the file does not
   // move: what the curves would move, the tip shows. (A node the file turns is not compared here:
   // the two roads turn it differently between its keys even untouched, #1268.)
-  const ref = 'user-imports/p1216/skinned-bar-child-mesh.glb';
-  await stageClone(page, 'skinned-bar-child-mesh.glb', ref);
-
-  // The key tools' own curves, made with addChannel on the clone's Object: two-axis rotations (an euler order or an euler/quaternion slip moves the tip),
-  // and a location.
-  const made = await page.evaluate(async (r) => {
-    const w = window as unknown as BasherWindow;
-    const nodes = w.__basher_dag.getState().state.nodes;
-    const asset = Object.values(nodes).find(
-      (n) => n.type === 'GltfAsset' && (n.params as { assetRef: string }).assetRef === r,
-    )!;
-    const empty = (asset.params as { nodeNameMap: Record<string, string> }).nodeNameMap.SkinnedBar;
-    const { dispatchMutatorFromUI } = await import('/src/app/animate/dispatchMutator.ts');
-    const ok: boolean[] = [];
-    for (const [component, keys] of [
-      [
-        'rotation',
-        [
-          [0, [0, 0, 0]],
-          [0.5, [20, 10, 30]],
-          [1, [40, -15, 60]],
-        ],
-      ],
-      [
-        'position',
-        [
-          [0.5, [0.2, 0.1, -0.3]],
-          [1, [0.6, 0, 0.2]],
-        ],
-      ],
-    ] as const) {
-      ok.push(
-        dispatchMutatorFromUI(
-          'mutator.timeline.addChannel',
-          { target: empty, paramPath: component, valueType: 'vec3' },
-          'add',
-        ).ok,
-      );
-      for (const [time, value] of keys) {
-        ok.push(
-          dispatchMutatorFromUI(
-            'mutator.timeline.keyframe',
-            { channelId: `${empty}_${component}_channel`, time, value },
-            'key',
-          ).ok,
-        );
-      }
-    }
-    return ok;
-  }, ref);
-  expect(made).toEqual([true, true, true, true, true, true, true]);
+  //
+  // Recorded: the key tools' own curves, made with addChannel on the clone's Object — two-axis
+  // rotations (an euler order or an euler/quaternion slip moves the tip) keyed [0, 0, 0] at 0 s,
+  // [20, 10, 30] at 0.5 s and [40, -15, 60] at 1 s, and a location keyed [0.2, 0.1, -0.3] at 0.5 s and
+  // [0.6, 0, 0.2] at 1 s.
+  const saved = recordedSave('clone-characters/empty-curves');
+  expect(savedTypes(saved).filter((t) => t === 'KeyframeChannelVec3')).toHaveLength(2);
   const times = [0.25, 0.5, 0.75, 1];
   const clone = { tip: CLONE_DREW.mutedOrBypassed };
 
-  const { after, notice } = await saveAndReload(page, ref);
+  const { after, notice } = await loadRecorded(page, saved);
   expect(after.filter((t) => /^Gltf|TransformClip|ClipSelect/.test(t))).toEqual([]);
   expect(notice.label).toBe('character converted:');
   expect(notice.message).toContain(
@@ -656,131 +500,18 @@ test('#1269 — a driver, a Track-To, a Follow-Path and a strip on a node of the
 }) => {
   const errors: string[] = [];
   page.on('pageerror', (e) => errors.push(e.message));
-  const ref = 'user-imports/p1216/skinned-bar-child-mesh.glb';
-  await stageClone(page, 'skinned-bar-child-mesh.glb', ref);
-
-  // Each made by the product's own builder on the clone's `SkinnedBar` empty (which holds the mesh
-  // and the bones, and which the file does not move), from a controller and a path in the scene.
-  const made = await page.evaluate(
-    async ({ r, path }) => {
-      const w = window as unknown as BasherWindow;
-      const dag = w.__basher_dag.getState();
-      const s = dag.state as unknown as {
-        nodes: Record<string, { type: string; params: unknown }>;
-        outputs: { scene: { node: string } };
-      };
-      const asset = Object.values(s.nodes).find(
-        (n) => n.type === 'GltfAsset' && (n.params as { assetRef: string }).assetRef === r,
-      )!;
-      const empty = (asset.params as { nodeNameMap: Record<string, string> }).nodeNameMap
-        .SkinnedBar;
-      const scene = s.outputs.scene.node;
-      dag.dispatchAtomic(
-        [
-          {
-            type: 'addNode',
-            nodeId: 'ctl',
-            nodeType: 'Null',
-            params: { position: [1.5, 0.7, 0.3], rotation: [0, 0, 0], scale: [1, 1, 1] },
-          },
-          {
-            type: 'connect',
-            from: { node: 'ctl', socket: 'out' },
-            to: { node: scene, socket: 'children' },
-          },
-          ...path,
-          {
-            type: 'connect',
-            from: { node: 'n_path', socket: 'out' },
-            to: { node: scene, socket: 'children' },
-          },
-        ],
-        'test',
-        'controller and path',
-      );
-      const { buildBindDriverOps } = await import('/src/app/driverBind.ts');
-      const { buildAddConstraintOps } = await import('/src/app/constraintStack.ts');
-      const { dispatchMutatorFromUI } = await import('/src/app/animate/dispatchMutator.ts');
-      const now = () => w.__basher_dag.getState().state as never;
-      const bind = buildBindDriverOps(now(), {
-        targetId: empty,
-        paramPath: 'scale',
-        source: { kind: 'transformVec', id: 'xfvec:ctl', label: 'ctl', node: 'ctl' },
-        driverId: 'drv1',
-      });
-      if (!bind.ok) return [bind.reason];
-      dag.dispatchAtomic(bind.ops as unknown[], 'test', 'driver');
-      dag.dispatchAtomic(
-        [
-          ...buildAddConstraintOps(now(), empty, 'TrackTo', 'aim1')!.ops,
-          { type: 'setParam', nodeId: 'aim1', paramPath: 'aimPoint', value: [3, 3, 3] },
-        ] as unknown[],
-        'test',
-        'track-to',
-      );
-      dag.dispatchAtomic(
-        [
-          ...buildAddConstraintOps(now(), empty, 'FollowPath', 'follow1')!.ops,
-          { type: 'setParam', nodeId: 'follow1', paramPath: 'curve', value: 'n_path' },
-          { type: 'setParam', nodeId: 'follow1', paramPath: 'evalTime', value: 0.5 },
-        ] as unknown[],
-        'test',
-        'follow-path',
-      );
-      const action = dispatchMutatorFromUI(
-        'mutator.nla.createAction',
-        {
-          name: 'slide',
-          actionId: 'act1',
-          channels: [
-            {
-              valueType: 'vec3',
-              name: 'position',
-              paramPath: 'position',
-              keyframes: [
-                { time: 0, value: [0, 0, 0], easing: 'linear' },
-                { time: 1, value: [0.6, 0.3, 0.2], easing: 'linear' },
-              ],
-            },
-          ],
-        },
-        'action',
-      );
-      const strip = dispatchMutatorFromUI(
-        'mutator.nla.addStrip',
-        { action: 'act1', target: empty, stripId: 'strip1' },
-        'strip',
-      );
-      const nodes = w.__basher_dag.getState().state.nodes;
-      return [
-        action.ok,
-        strip.ok,
-        ...['drv1', 'aim1', 'follow1', 'strip1'].map((id) => Boolean(nodes[id])),
-      ];
-    },
-    {
-      r: ref,
-      path: splitCurveOps({
-        objectId: 'n_path',
-        points: [
-          [0, 0, 0],
-          [4, 0, 0],
-          [4, 3, 0],
-          [0, 3, 2],
-        ],
-        closed: false,
-        resolution: 32,
-        position: [0, 0, 0],
-        rotation: [0, 0, 0],
-        scale: [1, 1, 1],
-      }),
-    },
-  );
-  expect(made).toEqual([true, true, true, true, true, true]);
+  // Recorded: each made by the product's own builder on the clone's `SkinnedBar` empty (which holds
+  // the mesh and the bones, and which the file does not move), from a controller and a path in the
+  // scene — a driver on its scale from the controller (`buildBindDriverOps`), a Track-To aimed at
+  // [3, 3, 3] and a Follow-Path on the path at 0.5 (`buildAddConstraintOps`), and an NLA strip of a
+  // one-second slide (`mutator.nla.createAction` + `addStrip`).
+  const saved = recordedSave('clone-characters/bypassed');
+  const ids = Object.keys(saved.project.state.nodes);
+  expect(['drv1', 'aim1', 'follow1', 'strip1'].filter((id) => ids.includes(id))).toHaveLength(4);
   const times = [0.25, 0.5, 0.75, 1];
   const clone = { tip: CLONE_DREW.mutedOrBypassed };
 
-  const { after, notice } = await saveAndReload(page, ref);
+  const { after, notice } = await loadRecorded(page, saved);
   expect(after.filter((t) => /^Gltf|TransformClip|ClipSelect/.test(t))).toEqual([]);
   expect(notice.label).toBe('character converted:');
   for (const says of ['drives "scale" of', 'aims', 'sets a path for', 'plays an action on']) {
