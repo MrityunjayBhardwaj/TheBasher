@@ -69,15 +69,6 @@ import { cubeProjectedLayer } from './cubeProjection';
 import { materialiseCornerLayer } from './cornerMaterialisation';
 import { arrayCopiesOf } from './arrayCopies';
 import { newellNormal, planarWeights } from './polygonInterpolation';
-// #367 — where a glTF child's buffers actually live. A LEAF by the strictest measure in
-// `faceCountLeaf.gate.test.ts`: one TYPE import of `three` and no value imports at all, the
-// same bar `copyTransform` and `pointIdentity` met. The registry needs it because it is the
-// geometry model, and the model is the one place that should know where a kind's buffers are
-// — see `gltfCloneGeometry` below for why reaching for it here is not a fifth clone-arm.
-import { getGltfClone } from './asset/gltfCloneRegistry';
-// #367 — the same walk `resolveMeshUVSpace` makes into a clone, so the operator chain and the
-// UV editor cannot disagree about which mesh a glTF child is. See that module's header.
-import { firstMeshGeometry } from './firstMeshGeometry';
 import type { ScopeDomain } from '../nodes/attributes';
 import { buildMeshGeometry, CORNER_LAYER_SLOTS } from './meshGeometryData';
 
@@ -159,10 +150,10 @@ const primed = new Set<string>();
 /**
  * Resolve a GeometryRef to a cached three.js BufferGeometry, building on miss.
  *
- * Resolves a `gltf` ref THROUGH the mounted asset clone (#367) — see
- * {@link gltfCloneGeometry}. The registry still does not OWN that geometry; it stops
- * pretending it cannot find it. Null there means the clone has not mounted yet, which is
- * a WAIT and is typed as one by {@link readGeometry}. Returns null for a `baked` MISS — the bytes
+ * A `gltf` ref answers null (#1053): its buffers lived in the render clone (#367 read them
+ * through it), and the clone renderer is gone — a kept clone-road import is not drawn, and
+ * {@link readGeometry} types that as `elsewhere`, and a recipe over one as `none`. Returns
+ * null for a `baked` MISS — the bytes
  * live in OPFS and must be loaded asynchronously by the renderer hook, then
  * `prime`d (see header). Returns the SAME instance for repeated calls with an
  * identical key (cache hit).
@@ -174,51 +165,10 @@ const primed = new Set<string>();
  * DELIBERATELY NOT EXPORTED (#536 S3) — see the two doors below. Every caller
  * outside this module reaches the cache through one of them.
  */
-/**
- * A glTF child's buffers, read out of the mounted asset clone (#367).
- *
- * ── WHY THIS IS THE MODEL AND NOT A FIFTH CLONE-ARM ──────────────────────────────────
- *
- * `gltfCloneArms.gate.test.ts` ratchets the modules that reach `getGltfClone`, and its rule
- * is that the count may only go DOWN. This is a call to `getGltfClone`, so it has to answer
- * that gate rather than slip past it. The gate's own partition is the answer: it already
- * excludes `SceneFromDAG` because that file PRODUCES clones — "it is the thing being reached
- * into" — rather than reaching around the model. An ARM is a consumer that goes AROUND the
- * geometry model into the renderer because the model has nowhere to put imported buffers.
- * This is not that. This IS the geometry model, and it is the one place that should know
- * where a kind's buffers live. The gate now names three classes rather than two, and the
- * model class is capped at ONE member and asserted BY PATH, so a genuine fifth arm still reds.
- *
- * ── WHAT THIS DOES NOT DO ────────────────────────────────────────────────────────────
- *
- * It does not CACHE. The returned geometry belongs to the live clone the renderer is
- * drawing, so caching it would put a foreign, mutable, renderer-owned instance under a key
- * the sweep can evict and dispose — and the key `gltf|assetRef|childName` is not
- * content-derived, so a clone swap would leave it pointing at a disposed object. Reading
- * through on every call means the answer always describes the CURRENT clone, and it costs a
- * `Map` lookup plus a `traverse`, which is exactly what the four clone-arms already do.
- *
- * Not caching also keeps the null honest: the same ref answers `null` before the clone
- * mounts and geometry after, with nothing to invalidate in between. That is measured, and it
- * is what makes availability a re-render question rather than a negative-caching one.
- *
- * It also does not take OWNERSHIP. The caller must treat this exactly as the clone-arms do —
- * read it, never mutate it, clone before writing.
- */
-function gltfCloneGeometry(
-  descriptor: Extract<GeometryDescriptor, { kind: 'gltf' }>,
-): BufferGeometry | null {
-  const clone = getGltfClone(descriptor.assetRef);
-  if (!clone) return null;
-  // `childName` is a REQUIRED string on this descriptor member, so there is no whole-clone
-  // fallback to write: an absent name is not a state this type can be in. The earlier draft
-  // guarded it anyway and would have answered with the asset's first mesh — a different
-  // question, answered silently.
-  return firstMeshGeometry(clone.getObjectByName(descriptor.childName));
-}
-
 function get(ref: GeometryRef, via: GeometryGrowthSource): BufferGeometry | null {
-  if (ref.descriptor.kind === 'gltf') return gltfCloneGeometry(ref.descriptor);
+  // #1053 — a `gltf` descriptor's buffers lived in the render clone, which went with the clone
+  // renderer. A kept clone-road import is not drawn, so there is nothing to read.
+  if (ref.descriptor.kind === 'gltf') return null;
   // 🔴 #786 — A PROJECTION USED TO RESOLVE TO ITS SOURCE'S INSTANCE HERE AND TAKE NO CACHE ENTRY,
   // AND THAT STOPPED BEING TRUE THE MOMENT THE LAYER REACHED THE BUFFER. What stood here read
   // *"`uvProject` authors an ATTRIBUTE LAYER; it moves no position and rewires no index, so there
@@ -404,14 +354,16 @@ export function getForRead(ref: GeometryRef): BufferGeometry | null {
  *                  descriptor, i.e. there genuinely is no geometry.
  *   'primed'     — authoritative bytes live in OPFS and are primed after an async read.
  *                  A miss is "not read yet".
- *   'clone'      — the buffers live in a loaded glTF asset clone, never in the registry.
- *                  An absent clone is "still loading the asset".
- *   'mounting'   — a RECIPE rooted at a glTF source. The registry BUILDS it, unlike 'clone',
- *                  but only once the asset clone is mounted and `get` can reach the source's
- *                  buffers through it. A miss is "the asset has not mounted yet".
- *                  Composition only: no leaf kind is 'mounting'.
+ *   'clone'      — the buffers lived in a loaded glTF asset clone, never in the registry.
+ *                  Since #1053 nothing mounts a clone: a kept clone-road import is not drawn.
+ *   'mounting'   — a RECIPE rooted at a glTF source. The registry would BUILD it, unlike
+ *                  'clone', once `get` reached the source's buffers through a mounted clone —
+ *                  which since #1053 never happens, so a miss is `none`, not a wait.
+ *                  Composition only: no leaf kind is 'mounting'. Both classes retire with the
+ *                  `gltf` kind.
  *
- * 🔴 THIS CLASS REPLACED 'unreachable', AND #367 IS PRECISELY WHY. That class read "a RECIPE
+ * 🔴 THIS CLASS REPLACED 'unreachable', AND #367 IS PRECISELY WHY (and #1053 made 'mounting' mean
+ * what 'unreachable' did again — see above). That class read "a RECIPE
  * whose source the registry can never `get`", and its own text named its expiry: "a miss is
  * permanent until #367 makes a glTF handle resolve for the operator chain." `get` now
  * delegates to the clone, so the build CAN succeed and nothing is permanently unreachable any
@@ -684,18 +636,14 @@ export function readGeometry(ref: GeometryRef): GeometryReadResult {
   switch (availability) {
     case 'clone':
       return { status: 'elsewhere', availability };
-    // Both are waits, and they are one arm because the CALLER's response is the same: hold
-    // the loading state and read again. What differs is who ends the wait — the OPFS read for
-    // 'primed', the renderer mounting a clone for 'mounting' (#367) — and that difference is
-    // carried in `availability`, which travels with the result for exactly this reason.
+    // A wait: the OPFS read ends it, and the caller holds the loading state and reads again.
     case 'primed':
-    case 'mounting':
       return { status: 'pending', availability };
-    // #367 — 'mounting' MOVED OUT of this arm and into 'pending' above, which is the whole
-    // point of the class. It used to sit here as 'unreachable' beside 'procedural' because
-    // the two genuinely shared "waiting will not help". They no longer do: a recipe over a
-    // glTF source becomes buildable the moment the asset mounts, so answering `none` here
-    // would be a statement this same function contradicts on the next call.
+    // #1053 — 'mounting' was a wait too (#367): a recipe over a glTF source became buildable the
+    // moment the renderer mounted the asset's clone. The clone renderer is gone and nothing mounts
+    // one, so waiting will not help — a kept clone-road import is not drawn — and it answers `none`
+    // beside 'procedural'. The class itself goes with the `gltf` kind.
+    case 'mounting':
     case 'procedural':
       return { status: 'none', availability };
     default: {

@@ -260,14 +260,14 @@ describe('#638 who may speak of a material array', () => {
   // minter should still cost someone an argument.
   const ARRAY_SPEAKERS: Record<string, string> = {
     'src/app/resolveMeshMaterial.ts': 'MINTS one — the only place that may',
-    'src/app/resolveMeshUVSpace.ts':
-      'READS one, array-aware by construction (`Array.isArray(mesh.material) ? … : [ … ]`)',
+    // #1053 — `resolveMeshUVSpace.ts` read one off the live render clone for the UV backdrop; that
+    // arm went with the clone renderer, and the set shrank from three to two.
     'src/viewport/SceneFromDAG.tsx':
       'READS one on the glTF road, array-aware by declared type — and now also the two ' +
       'components that hand a resolved pair to a <mesh>',
   };
 
-  it('exactly three production modules are typed to hold a material array', () => {
+  it('exactly two production modules are typed to hold a material array', () => {
     const files = sourceFiles();
     const found = files
       .filter(([, src]) => /\bMaterial\s*\[\s*\]/.test(stripComments(src)))

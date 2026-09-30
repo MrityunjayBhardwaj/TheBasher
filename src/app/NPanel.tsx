@@ -81,7 +81,6 @@ import {
 } from '../nodes/paramWidget';
 import { OptionsSelect } from './OptionsSelect';
 import type { NodeRef } from '../core/dag/types';
-import { countOverrideSlots } from './resolveOverrideSlots';
 import { resolveStackBase } from './operatorStack';
 import { useTimeStore } from './stores/timeStore';
 import {
@@ -3393,54 +3392,20 @@ function SetOriginControl({ nodeId }: { nodeId: string }) {
 }
 
 /**
- * v0.6 #2 (#178, W6 — D-05/D-07) — the per-submesh slot selector for a
- * MaterialOverride that wraps a MULTI-material glTF. Renders ONLY when the
- * target glTF has >=2 material slots (a primitive / single-material / not-yet-
- * loaded target shows nothing — the override is whole-child by nature). The
- * "which-slot" state IS the node's `slotIndex` param (no separate React state):
- * "All" clears it (undefined ⇒ every slot, backward-compat); a number addresses
- * that submesh. The SAME flat material controls below the selector author the
- * override; the selector only changes WHICH slot they target (D-05 — an
- * addressing dimension, not a second code path).
+ * v0.6 #2 (#178, W6 — D-05/D-07) — the per-submesh slot selector for a MaterialOverride. The
+ * "which-slot" state IS the node's `slotIndex` param: "All" clears it (undefined ⇒ every slot).
+ *
+ * #1053 — the slot COUNT was read off the live render clone of the glTF the override wrapped
+ * (`countOverrideSlots`), which went with the clone renderer; nothing counts a native mesh's slots
+ * here yet, and nothing reads `slotIndex` either (#1090). So the numbered buttons are gone, and the
+ * selector renders only for an override that already HOLDS a `slotIndex` — a saved one — to keep
+ * its "All" reset reachable: a persisted optional value must keep the control that clears it.
  */
 function SlotSelector({ nodeId }: { nodeId: string }) {
   const nodes = useDagStore((s) => s.state.nodes);
   const dispatch = useDagStore((s) => s.dispatch);
-  const slotCount = countOverrideSlots(nodes, nodeId);
   const params = (nodes[nodeId]?.params ?? {}) as { slotIndex?: number };
-  const current = typeof params.slotIndex === 'number' ? params.slotIndex : undefined;
-  // Hide the selector for whole-child targets (primitive / single-material /
-  // not-yet-loaded). EXCEPTION: if a slotIndex is already set, ALWAYS render so a
-  // STALE slotIndex (e.g. the asset later dropped below 2 slots → the override
-  // silently matches no slot) still has an "All" reset affordance. Without this
-  // the override would no-op with no UI to recover it.
-  if (slotCount < 2 && current === undefined) return null;
-  const setSlot = (slot: number | undefined) =>
-    dispatch(
-      { type: 'setParam', nodeId, paramPath: 'slotIndex', value: slot },
-      'user',
-      slot === undefined ? 'override all slots' : `override slot ${slot}`,
-    );
-  const slotButton = (label: string, slot: number | undefined, testid: string) => {
-    const active = current === slot;
-    return (
-      <button
-        key={testid}
-        type="button"
-        role="radio"
-        aria-checked={active}
-        data-testid={testid}
-        onClick={() => setSlot(slot)}
-        className={`rounded border px-2 py-0.5 text-[10px] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent ${
-          active
-            ? 'border-accent bg-accent/15 text-accent'
-            : 'border-border text-fg/70 hover:bg-muted hover:text-fg'
-        }`}
-      >
-        {label}
-      </button>
-    );
-  };
+  if (typeof params.slotIndex !== 'number') return null;
   return (
     <div
       data-testid={`inspector-slot-selector-${nodeId}`}
@@ -3448,10 +3413,22 @@ function SlotSelector({ nodeId }: { nodeId: string }) {
     >
       <div className="font-mono text-[10px] uppercase tracking-wide text-fg/40">Submesh</div>
       <div role="radiogroup" aria-label="Material slot" className="flex flex-wrap gap-1">
-        {slotButton('All', undefined, `inspector-slot-all-${nodeId}`)}
-        {Array.from({ length: slotCount }, (_, i) =>
-          slotButton(String(i), i, `inspector-slot-${nodeId}-${i}`),
-        )}
+        <button
+          type="button"
+          role="radio"
+          aria-checked={false}
+          data-testid={`inspector-slot-all-${nodeId}`}
+          onClick={() =>
+            dispatch(
+              { type: 'setParam', nodeId, paramPath: 'slotIndex', value: undefined },
+              'user',
+              'override all slots',
+            )
+          }
+          className="rounded border border-border px-2 py-0.5 text-[10px] text-fg/70 hover:bg-muted hover:text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+        >
+          All
+        </button>
       </div>
     </div>
   );

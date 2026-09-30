@@ -5,10 +5,11 @@
 // buildDefaultDagState + applyOp scaffold. The live boundary-pair (render == read) is
 // observed in a throwaway e2e; this suite guards the resolution in CI.
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 import * as THREE from 'three';
 import { applyOp } from '../core/dag';
-import { registerGltfClone, __clearGltfCloneRegistryForTests } from './asset/gltfCloneRegistry';
+import * as geometryRegistry from './geometryRegistry';
+import { resolveEvaluatedMesh } from './resolveEvaluatedMesh';
 import type { DagState } from '../core/dag/state';
 import type { Op } from '../core/dag/types';
 import { buildDefaultDagState } from '../core/project/default';
@@ -55,6 +56,41 @@ function buildTerrainState(nullPos: [number, number, number], terrainRotZ = 0): 
       nodeId: 'geo_sample',
       nodeType: 'SampleGeometry',
       params: { sourceGeometry: { node: 'geo_terrain' }, at: { node: 'geo_null' } },
+    },
+  ];
+  for (const op of ops) state = applyOp(state, op).next;
+  return state;
+}
+
+/** The query Null + SampleGeometry of {@link buildTerrainState}, over an already-built terrain. */
+function buildTerrainStateOver(
+  base: DagState,
+  terrainId: string,
+  nullPos: [number, number, number],
+): DagState {
+  let state = base;
+  const ops: Op[] = [
+    {
+      type: 'connect',
+      from: { node: terrainId, socket: 'out' },
+      to: { node: 'n_scene', socket: 'children' },
+    },
+    {
+      type: 'addNode',
+      nodeId: 'geo_null',
+      nodeType: 'Null',
+      params: { position: nullPos, rotation: [0, 0, 0], scale: [1, 1, 1] },
+    },
+    {
+      type: 'connect',
+      from: { node: 'geo_null', socket: 'out' },
+      to: { node: 'n_scene', socket: 'children' },
+    },
+    {
+      type: 'addNode',
+      nodeId: 'geo_sample',
+      nodeType: 'SampleGeometry',
+      params: { sourceGeometry: { node: terrainId }, at: { node: 'geo_null' } },
     },
   ];
   for (const op of ops) state = applyOp(state, op).next;
@@ -162,178 +198,68 @@ describe('geometrySampleSourceOf / geometrySampleRefOf', () => {
   });
 });
 
-/** A glTF terrain is a loaded three.js clone (registered by the renderer), NOT a registry
- *  geometry — the seam reads its world triangles from `getGltfClone`. Register a synthetic
- *  clone (a flat box top at y=2.5) to exercise the gltf branch without a real asset load. */
-describe('readTerrainSampleAt — glTF terrain (loaded clone)', () => {
-  afterEach(() => __clearGltfCloneRegistryForTests());
-
-  function buildGltfTerrainState(nullPos: [number, number, number]): DagState {
-    let state = buildDefaultDagState();
-    const ops: Op[] = [
-      {
-        type: 'addNode',
-        nodeId: 'geo_terrain',
-        nodeType: 'GltfAsset',
-        params: { assetRef: 'asset_terrain' },
-      },
-      {
-        type: 'addNode',
-        nodeId: 'geo_null',
-        nodeType: 'Null',
-        params: { position: nullPos, rotation: [0, 0, 0], scale: [1, 1, 1] },
-      },
-      {
-        type: 'connect',
-        from: { node: 'geo_null', socket: 'out' },
-        to: { node: 'n_scene', socket: 'children' },
-      },
-      {
-        type: 'addNode',
-        nodeId: 'geo_sample',
-        nodeType: 'SampleGeometry',
-        params: { sourceGeometry: { node: 'geo_terrain' }, at: { node: 'geo_null' } },
-      },
-    ];
-    for (const op of ops) state = applyOp(state, op).next;
-    return state;
-  }
-
-  /** Register a flat box terrain (size 20×1×20 at y=2 → top face y=2.5) as the clone. */
-  function registerFlatTerrainClone(): void {
-    const group = new THREE.Group();
-    const box = new THREE.Mesh(new THREE.BoxGeometry(20, 1, 20));
-    box.position.set(0, 2, 0);
-    group.add(box);
-    group.updateMatrixWorld(true);
-    registerGltfClone('asset_terrain', group);
-  }
-
-  it('snaps to a loaded glTF terrain top under the query XZ (registry returns null)', () => {
-    registerFlatTerrainClone();
-    const state = buildGltfTerrainState([4, 10, -3]);
-    const ref = geometrySampleRefOf(state.nodes['geo_sample'])!;
-    const { point, sample } = readTerrainSampleAt(state, ref, ctxAt(0));
-    expect(sample).not.toBeNull();
-    expect(point[0]).toBeCloseTo(4, 3);
-    expect(point[1]).toBeCloseTo(2.5, 3); // gltf terrain top: 2 (mesh pos) + 0.5 (half height)
-    expect(point[2]).toBeCloseTo(-3, 3);
-    expect(sample!.normal[1]).toBeCloseTo(1, 3);
-  });
-
-  it('nearest method on a loaded glTF terrain returns a surface point', () => {
-    registerFlatTerrainClone();
-    const state = buildGltfTerrainState([15, 3, 0]); // outside the footprint (x=15 > 10)
-    const ref = { ...geometrySampleRefOf(state.nodes['geo_sample'])!, method: 'nearest' as const };
-    const { point, sample } = readTerrainSampleAt(state, ref, ctxAt(0));
-    expect(sample).not.toBeNull();
-    expect(point[0]).toBeCloseTo(10, 3); // clamped to the +x face
-    expect(point[1]).toBeCloseTo(2.5, 3);
-    expect(point[2]).toBeCloseTo(0, 3);
-  });
-
-  it('falls back to the query position when the glTF asset is not loaded (no clone)', () => {
-    const state = buildGltfTerrainState([4, 10, -3]); // NO registerGltfClone
-    const ref = geometrySampleRefOf(state.nodes['geo_sample'])!;
-    const { point, sample } = readTerrainSampleAt(state, ref, ctxAt(0));
-    expect(sample).toBeNull(); // async asset not mounted → no geometry to sample
-    expect(point).toEqual([4, 10, -3]); // the Null's own world position, not [0,0,0]
-  });
-});
-
-// ── #725 — A DERIVED STRUCTURE MUST INVALIDATE ON THE TOPOLOGY IT WAS BUILT FROM ─────
-//
-// The BVH is the pick/raycast acceleration this invariant is about, and its cache key has
-// to cover every input `buildMeshBvh` consumes: positions, index AND matrix. It used to
-// cover positions and matrix, which is the shape that produces a QUIET wrong answer — the
-// structure still exists, still answers, and answers about a mesh that is gone.
-//
-// 🔑 THE ORACLE IS THE POINT OF THIS ROW. "The reading did not change" proves nothing on
-// its own: the correct answer might be unchanged too, and a probe that cannot tell those
-// apart is evidence about the probe. So the expected value is derived from a FRESH geometry
-// carrying the same reduced index, and the cached read is compared against THAT.
-//
-// ⚠️ Not reachable in production today — nothing mutates a live geometry's index; every
-// `setIndex` runs on a freshly built one. The rule is stated here rather than relied upon,
-// because the first operator to change a topology in place would inherit the wrong answer
-// silently rather than fail.
 describe('#725 — the BVH cache invalidates on an index change, not only on positions', () => {
-  afterEach(() => __clearGltfCloneRegistryForTests());
+  // #1053 — this used a mounted glTF clone as the terrain, only because a clone handed the test a
+  // geometry it could mutate. The clone is gone; the registry's box geometry is the same kind of
+  // shared, mutable instance (every reader gets the one object), so the terrain is a box now.
 
-  function terrainState(pos: [number, number, number]): DagState {
-    let st = buildDefaultDagState();
-    const ops: Op[] = [
-      {
-        type: 'addNode',
-        nodeId: 'geo_terrain',
-        nodeType: 'GltfAsset',
-        params: { assetRef: 'asset_topo' },
-      },
-      {
-        type: 'addNode',
-        nodeId: 'geo_null',
-        nodeType: 'Null',
-        params: { position: pos, rotation: [0, 0, 0], scale: [1, 1, 1] },
-      },
-      {
-        type: 'connect',
-        from: { node: 'geo_null', socket: 'out' },
-        to: { node: 'n_scene', socket: 'children' },
-      },
-      {
-        type: 'addNode',
-        nodeId: 'geo_sample',
-        nodeType: 'SampleGeometry',
-        params: { sourceGeometry: { node: 'geo_terrain' }, at: { node: 'geo_null' } },
-      },
-    ];
-    for (const op of ops) st = applyOp(st, op).next;
-    return st;
+  /** The registry's shared geometry for a box terrain — the instance the sampler reads. */
+  function registryGeometryOf(state: DagState, objectId: string): THREE.BufferGeometry {
+    const mesh = resolveEvaluatedMesh(state, objectId, ctxAt(0));
+    return geometryRegistry.getForRead(mesh!.geometry)!;
   }
 
-  function mountTerrain(geometry: THREE.BufferGeometry): void {
-    const group = new THREE.Group();
-    const box = new THREE.Mesh(geometry);
-    box.position.set(0, 2, 0);
-    group.add(box);
-    group.updateMatrixWorld(true);
-    registerGltfClone('asset_topo', group);
-  }
-
-  it('an index replaced in place is a new topology, and the read follows it', () => {
-    const geo = new THREE.BoxGeometry(20, 1, 20);
-    mountTerrain(geo);
-    const st = terrainState([4, 10, -3]);
-    const ref = geometrySampleRefOf(st.nodes['geo_sample'])!;
-
-    // Prime the cache against the full box — the top face at world y = 2.5.
-    expect(readTerrainSampleAt(st, ref, ctxAt(0)).point[1]).toBeCloseTo(2.5, 3);
-    const positionsBefore = geo.getAttribute('position').array;
-
-    // A discriminating replacement: one triangle of BOTTOM vertices only (local y = -0.5,
-    // world y = 1.5). If the stale structure were reused the answer would still be 2.5.
+  /** The indices of the first three bottom-face vertices (local y = -0.5 → world y = 1.5). */
+  function bottomTriangle(geo: THREE.BufferGeometry): number[] {
     const pos = geo.getAttribute('position');
     const bottom: number[] = [];
     for (let i = 0; i < pos.count && bottom.length < 3; i++) {
       if (Math.abs(pos.getY(i) - -0.5) < 1e-6) bottom.push(i);
     }
-    expect(bottom).toHaveLength(3);
+    return bottom;
+  }
 
-    // THE ORACLE — the same index on a fresh geometry, so the expectation is measured
-    // rather than asserted from the shape of the box.
-    __clearGltfCloneRegistryForTests();
-    const oracleGeo = geo.clone();
-    oracleGeo.setIndex([...bottom]);
-    mountTerrain(oracleGeo);
-    const oracleY = readTerrainSampleAt(terrainState([4, 10, -3]), ref, ctxAt(0)).point[1];
-    expect(oracleY).toBeCloseTo(1.5, 3);
+  it('an index replaced in place is a new topology, and the read follows it', () => {
+    const st = buildTerrainState([4, 10, -3]);
+    const geo = registryGeometryOf(st, 'geo_terrain');
+    const indexBefore = geo.getIndex();
+    try {
+      // Prime the cache against the full box — the top face at world y = 2.5.
+      expect(readTerrainSampleAt(st, REF, ctxAt(0)).point[1]).toBeCloseTo(2.5, 3);
+      const positionsBefore = geo.getAttribute('position').array;
 
-    // The in-place change, with the position array's identity deliberately preserved.
-    __clearGltfCloneRegistryForTests();
-    mountTerrain(geo);
-    geo.setIndex([...bottom]);
-    expect(geo.getAttribute('position').array).toBe(positionsBefore);
+      // A discriminating replacement: one triangle of BOTTOM vertices only. If the stale
+      // structure were reused the answer would still be 2.5.
+      const bottom = bottomTriangle(geo);
+      expect(bottom).toHaveLength(3);
 
-    expect(readTerrainSampleAt(st, ref, ctxAt(0)).point[1]).toBeCloseTo(oracleY, 3);
+      // THE ORACLE — the same index on ANOTHER box (a hair wider in X, so the registry keys it
+      // apart; same height, same vertex order), so the expectation is measured rather than
+      // asserted from the shape of the box.
+      let oracleSt = buildDefaultDagState();
+      oracleSt = makeSplitCube(oracleSt, {
+        objectId: 'oracle',
+        size: [20.001, 1, 20],
+        position: [0, 2, 0],
+      }).state;
+      const oracleGeo = registryGeometryOf(oracleSt, 'oracle');
+      expect(oracleGeo).not.toBe(geo);
+      const oracleIndexBefore = oracleGeo.getIndex();
+      oracleGeo.setIndex(bottomTriangle(oracleGeo));
+      const oracleY = readTerrainSampleAt(
+        buildTerrainStateOver(oracleSt, 'oracle', [4, 10, -3]),
+        { ...REF, geometry: 'oracle' },
+        ctxAt(0),
+      ).point[1];
+      oracleGeo.setIndex(oracleIndexBefore);
+      expect(oracleY).toBeCloseTo(1.5, 3);
+
+      // The in-place change, with the position array's identity deliberately preserved.
+      geo.setIndex([...bottom]);
+      expect(geo.getAttribute('position').array).toBe(positionsBefore);
+      expect(readTerrainSampleAt(st, REF, ctxAt(0)).point[1]).toBeCloseTo(oracleY, 3);
+    } finally {
+      geo.setIndex(indexBefore);
+    }
   });
 });

@@ -14,23 +14,19 @@
 // through the SAME `makeParamDriverVec3ChannelValue` a position keyframe rides.
 //
 // Terrain kinds: box/sphere/array/mirror build sync from the registry, and a baked mesh
-// hits once its render primes the registry. A `gltf` terrain has no registry geometry (it
-// lives only in the loaded three.js clone), so we read its world triangles from the SAME
-// production-safe clone the renderer mounts (`getGltfClone`, like `resolveMeshUVSpace`) — see
-// `gltfTerrainMeshes`. Only an UN-LOADED gltf / UN-primed baked mesh yields no geometry;
-// then the sample falls back to the query controller's own position (the object tracks the
+// hits once its render primes the registry; an import is native geometry and builds like a box.
+// (A kept clone-road import's terrain was read off the live render clone; that went with the
+// clone renderer in #1053, and such an import is not drawn.) An UN-primed baked mesh, or a kept
+// import, yields no geometry; then the sample falls back to the query controller's own position (the object tracks the
 // Null in 3D, un-snapped) — a surfaced KNOWN LIMIT, not a silent no-op.
 //
 // REF: src/app/rayMesh.ts (the pure ray/nearest core); src/app/transformChannelSource.ts (the
 //      pattern); src/app/resolveWorldTransform.ts + geometryRegistry.ts (world geometry).
 
-import { Matrix4 } from 'three';
-import type { Mesh, Object3D } from 'three';
 import type { EvaluatorCache } from '../core/dag/evaluator';
 import type { DagState } from '../core/dag/state';
 import type { EvalCtx, Node } from '../core/dag/types';
 import { getForRead as getGeometry } from './geometryRegistry';
-import { getGltfClone } from './asset/gltfCloneRegistry';
 import { resolveEvaluatedMesh } from './resolveEvaluatedMesh';
 import { resolveWorldTransform } from './resolveWorldTransform';
 import type { RayHit, RayOrientation } from './rayMesh';
@@ -169,58 +165,6 @@ function cachedMeshBvh(tm: TerrainMesh): MeshBvh {
 }
 
 /**
- * World-space collision meshes for a glTF terrain node, or [] when it is not a loaded,
- * mounted glTF (the async asset hasn't loaded yet, or the node isn't glTF at all). The
- * registry can't build a `gltf` geometry synchronously — the geometry lives only in the
- * loaded three.js clone — so we read it from the SAME production-safe clone the renderer
- * mounts (`getGltfClone`, as `resolveMeshUVSpace` already does), which makes
- * render == read by construction. Each mesh's transform is composed as
- * `nodeWorld · (cloneRoot⁻¹ · meshWorld)`: the parenthesised part is the mesh's pose
- * RELATIVE to the clone root, so wherever the clone happens to be mounted cancels out —
- * keeping the read render-independent (mirrors the procedural path's use of
- * `resolveWorldTransform` for the world matrix). Multi-mesh glTFs yield one entry per mesh.
- */
-function gltfTerrainMeshes(
-  state: DagState,
-  nodeId: string,
-  ctx: EvalCtx,
-  cache?: EvaluatorCache,
-): TerrainMesh[] {
-  const node = state.nodes[nodeId];
-  const p = (node?.params ?? {}) as { assetRef?: unknown; childName?: unknown };
-  if (typeof p.assetRef !== 'string' || !p.assetRef) return [];
-  const clone = getGltfClone(p.assetRef);
-  if (!clone) return [];
-  const root: Object3D | null =
-    typeof p.childName === 'string' && p.childName
-      ? (clone.getObjectByName(p.childName) ?? null)
-      : clone;
-  if (!root) return [];
-
-  const nodeWorld = new Matrix4().fromArray(
-    (resolveWorldTransform(state, nodeId, ctx, cache)?.matrix ?? IDENTITY16) as number[],
-  );
-  const cloneRootInv = new Matrix4().copy(clone.matrixWorld).invert();
-  const meshes: TerrainMesh[] = [];
-  root.traverse((o) => {
-    const m = o as Mesh;
-    if (!m.isMesh || !m.geometry) return;
-    const posAttr = m.geometry.getAttribute('position');
-    if (!posAttr) return;
-    // mesh-relative-to-clone-root (mount cancels) → then under the DAG node's world.
-    const relative = new Matrix4().multiplyMatrices(cloneRootInv, m.matrixWorld);
-    const world = new Matrix4().multiplyMatrices(nodeWorld, relative);
-    const index = m.geometry.getIndex();
-    meshes.push({
-      positions: posAttr.array as ArrayLike<number>,
-      index: index ? (index.array as ArrayLike<number>) : null,
-      matrix: world.elements,
-    });
-  });
-  return meshes;
-}
-
-/**
  * The Ray-op hit for the query at `ctx` — the surface point/normal/distance the driver
  * reads. Dispatches the node's Method: 'project' casts a ray (`raycastMesh`) from the query
  * position along `direction` (with orientation + farthest); 'nearest' returns the closest
@@ -242,24 +186,21 @@ export function readTerrainSampleAt(
     ? (resolveWorldTransform(state, ref.at, ctx, cache)?.position ?? [0, 0, 0])
     : [0, 0, 0];
 
-  // Procedural / baked-primed terrain builds sync from the registry (one mesh); a glTF
-  // terrain reads its meshes from the loaded clone (empty when not yet loaded → un-snapped).
+  // Procedural / baked-primed terrain builds sync from the registry (one mesh); anything else
+  // has no geometry to hit, and the sample falls back (un-snapped).
   const mesh = resolveEvaluatedMesh(state, ref.geometry, ctx, cache);
   const buf = mesh ? getGeometry(mesh.geometry) : null;
   const posAttr = buf?.getAttribute('position');
-  let meshes: TerrainMesh[];
-  if (posAttr) {
-    const index = buf!.getIndex();
-    meshes = [
-      {
-        positions: posAttr.array as ArrayLike<number>,
-        index: index ? (index.array as ArrayLike<number>) : null,
-        matrix: resolveWorldTransform(state, ref.geometry, ctx, cache)?.matrix ?? IDENTITY16,
-      },
-    ];
-  } else {
-    meshes = gltfTerrainMeshes(state, ref.geometry, ctx, cache);
-  }
+  const index = buf?.getIndex();
+  const meshes: TerrainMesh[] = posAttr
+    ? [
+        {
+          positions: posAttr.array as ArrayLike<number>,
+          index: index ? (index.array as ArrayLike<number>) : null,
+          matrix: resolveWorldTransform(state, ref.geometry, ctx, cache)?.matrix ?? IDENTITY16,
+        },
+      ]
+    : [];
 
   let sample: RayHit | null = null;
   for (const gm of meshes) {

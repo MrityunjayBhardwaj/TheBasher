@@ -67,25 +67,19 @@
 //      (the shared read-side twin); vyapti V33 (read-only projection), V48 (flipY
 //      registration); hetvabhasa H178. Issue #406, follow-up from #378.
 
-import type { Material, Mesh, Object3D, Texture } from 'three';
+import type { Texture } from 'three';
 import type { DagState } from '../core/dag/state';
 import type { EvalCtx } from '../core/dag/types';
 import type {
   BakedMaterialSpec,
   BakedTextureRef,
   EvaluatedUVs,
-  GeometryDescriptor,
   InlineMaterialSpec,
-  UVIsland,
 } from '../nodes/types';
 import { resolveEvaluatedMesh } from './resolveEvaluatedMesh';
-import { extractUVIslands } from './uvIslands';
-import { firstMeshGeometry } from './firstMeshGeometry';
-import { getGltfClone } from './asset/gltfCloneRegistry';
 import { cloneAddressOf } from './geometryRegistry';
 import { peekBakedTexture } from './asset/bakedTextureLoader';
 import { primarySlotMaterial, type SlotMaterial } from './materialAssignment';
-import { isImportedMap } from './material/gltfMapOverlay';
 import type { MeshUVRead } from '../nodes/types';
 
 // UV layout and texture placement are both time-independent (geometry UVs are static;
@@ -129,43 +123,6 @@ const TEX_NONE: MeshTextureSource = {
 const TEX_LOADING: MeshTextureSource = { ...TEX_NONE, status: 'loading' };
 
 const SPACE_NONE: MeshUVSpace = { uvs: UV_NONE, texture: TEX_NONE };
-const SPACE_LOADING: MeshUVSpace = { uvs: UV_LOADING, texture: TEX_LOADING };
-
-/** Union the UV islands of every mesh under a clone root (whole-asset view). */
-function extractCloneUVs(root: Object3D): EvaluatedUVs {
-  const islands: UVIsland[] = [];
-  let triangleCount = 0;
-  let sampled = false;
-  root.traverse((o) => {
-    if ((o as Mesh).isMesh) {
-      const u = extractUVIslands((o as Mesh).geometry);
-      islands.push(...u.islands);
-      triangleCount += u.triangleCount;
-      sampled = sampled || u.sampled;
-    }
-  });
-  return { islands, triangleCount, sampled };
-}
-
-/** First base-color (`material.map`) texture among the meshes under `root`. */
-function firstBaseColorMap(root: Object3D | null | undefined): Texture | null {
-  if (!root) return null;
-  let map: Texture | null = null;
-  root.traverse((o) => {
-    if (map) return;
-    const mesh = o as Mesh;
-    if (!mesh.isMesh || !mesh.material) return;
-    const mats: Material[] = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
-    for (const m of mats) {
-      const t = (m as { map?: Texture | null }).map;
-      if (t) {
-        map = t;
-        return;
-      }
-    }
-  });
-  return map;
-}
 
 /** True for an image we can hand to CanvasRenderingContext2D.drawImage. Guards against
  *  DataTexture-style `{ data, width, height }` images and absent globals (this module is
@@ -203,7 +160,10 @@ function fromTexture(tex: Texture | null | undefined): MeshTextureSource | null 
  *  FAILURE resolves to 'loading' and never blanks the editor — peek returns null on the
  *  cached error, so the panel just shows the grid (resilience by construction). */
 function fromBakedRef(ref: BakedTextureRef | null | undefined): MeshTextureSource {
-  if (!ref) return TEX_NONE;
+  // #1053 — an EMPTY hash names no stored file (a clone road's imported-texture descriptor, whose
+  // pixels lived only in the render clone, or an old save's "cleared" placeholder). Peeking one
+  // starts a read that fails and raises the missing-image banner; there is nothing to show.
+  if (!ref || ref.hash === '') return TEX_NONE;
   const tex = peekBakedTexture(ref);
   if (!tex) return TEX_LOADING;
   return fromTexture(tex) ?? TEX_LOADING;
@@ -231,8 +191,8 @@ function textureFromMaterial(
 /**
  * Narrow the resolver's four-way UV answer into this module's own three-status facet.
  *
- * `elsewhere` cannot arrive here — the clone-backed arm above answers those from the asset
- * itself — so it is mapped to `none` explicitly rather than by a default, which is what
+ * `elsewhere` cannot arrive here — the clone-backed arm in `resolveMeshUVSpace` takes those
+ * first (and, since #1053, answers `none`: a kept clone-road import is not drawn) — so it is mapped to `none` explicitly rather than by a default, which is what
  * makes a fifth status a visible edit instead of a silent collapse into "no UVs".
  *
  * #367 — that exclusion still holds, and now by construction rather than by coincidence:
@@ -298,141 +258,24 @@ export function resolveMeshUVSpace(state: DagState, nodeId: string): MeshUVSpace
   const mesh = resolveEvaluatedMesh(state, nodeId, STATIC_CTX);
 
   if (!mesh) {
-    // THE ONE named exception to capability-keying, and it is structural rather than an
-    // oversight: a GltfAsset is an AGGREGATE over every mesh in the clone, so it has no
-    // single EvaluatedMesh to resolve — `resolveEvaluatedMesh` correctly returns null for
-    // it. The whole-asset union is a different question from "this mesh's UVs", so it gets
-    // its own arm instead of being forced through the shared shape.
-    if (node.type === 'GltfAsset') {
-      const assetRef = (node.params as { assetRef?: string }).assetRef;
-      const clone = assetRef ? getGltfClone(assetRef) : null;
-      if (!clone) return SPACE_LOADING;
-      return {
-        uvs: { uvs: extractCloneUVs(clone), status: 'ok' },
-        texture: fromTexture(firstBaseColorMap(clone)) ?? TEX_NONE,
-      };
-    }
-    return SPACE_NONE; // not a mesh producer
+    // #1053 — a `GltfAsset` is a kept clone-road import, which is not drawn. Its union of UVs and
+    // its base-colour map were read off the live render clone, which went with the clone
+    // renderer, so there is nothing to show — `none`, not a `loading` that never ends.
+    return SPACE_NONE;
   }
 
   const geometry = mesh.geometry;
 
-  // #635 took this branch on the RESOLVER'S TYPED ANSWER rather than a re-derived
-  // availability class, because `elsewhere` meant exactly "these buffers live in a loaded
-  // asset clone, not in the registry" — the glTF road and nothing else.
-  //
-  // 🔴 #367 BROKE THAT COINCIDENCE, AND THE BRANCH NOW ASKS THE QUESTION IT ACTUALLY MEANS.
-  // The registry delegates a `gltf` read to the mounted clone, so `elsewhere` no longer
-  // identifies glTF — it now means "the clone has not mounted YET", and a mounted glTF mesh
-  // reads `ok`. One status was answering two questions: where the UVs come from, and where
-  // the TEXTURE comes from. Only the first moved.
-  //
-  // 🔴 #1037 CORRECTS WHY THE TEXTURE DID NOT MOVE. This paragraph used to say glTF materials
-  // "have no data half at all (#389/#605)" and that `resolveEvaluatedMesh` hands a glTF mesh
-  // `EMPTY_ASSIGNMENT`. Both were true once and neither is now: `EMPTY_ASSIGNMENT` is gone with
-  // its only caller (`resolveEvaluatedMesh.ts` says so where it stood), and #389 gave an
-  // imported mesh a data half that DOES carry materials — `GltfData` holds the captured
-  // primary plus `materialSlots`. Left uncorrected, the comment argues the road is shut using
-  // the very change that opened it, which invites either a false "no" or a confident wrong "yes".
-  //
-  // THE REAL REASON IS BYTE OWNERSHIP, and it is the stronger one. The import capture DOES fill
-  // the base-colour slot — measured, with a material carrying `baseColorTexture` and the
-  // texture/sampler tables the import road supplies:
-  //
-  //     maps.albedo = { hash: '', colorSpace: 'srgb', flipY: false, wrap*: 10497, gltfTexture: 0 }
-  //
-  // and `null` both without the tables and for a material with no `baseColorTexture`, so that is
-  // the capture working rather than a default. But `hash: ''` + a `gltfTexture` index is the
-  // IMPORTED-TEXTURE descriptor, and `gltfMapOverlay.ts` defines it as "INHERIT the clone's
-  // imported texture … the bytes ride in the embedded `.glb`". The data half NAMES the texture
-  // and deliberately does not carry its pixels, because an unedited import is meant to pay zero
-  // map cost. A backdrop needs pixels, so the mounted clone is not a side-channel here — it is
-  // the only place they exist.
-  //
-  // MEASURED when this arm was keyed on the status instead: the arm flipped and the UV editor's
-  // backdrop went from `ok` with an image to `none` — and NOTHING IN THE SUITE REDDENED. The row
-  // below is what makes that observable, because nothing else did.
-  //
-  // So the branch keys on the descriptor's own discriminant, which is the fact its body
-  // already consumes two lines down. That is not the re-derived availability class #635
-  // removed — it is a question about where this mesh's MATERIALS live, asked of the only
-  // thing that can answer it.
-  // 🔴 #1015 — KEYED ON THE CLONE ADDRESS, NOT ON THE KIND, AND THE SET HAS ACTUALLY DIVERGED.
-  // The block below argued its way to the descriptor's own discriminant and that was right for
-  // the question it was then asking. It is a NAMING TIER now: `availabilityOf` is `'clone'` for
-  // a `gltf` descriptor AND for a `uvProject` that cannot materialise over one (#738/#786 — the
-  // projection passes its source's availability through and `get()` delegates its read to the
-  // source), so a projected imported mesh is drawn by the clone while its kind is `uvProject`.
-  // `drawnByAssetClone`'s own doc names this trap; this is the third time and the first where a
-  // kind test and the availability class select different sets.
-  //
-  // MEASURED, on a mounted clone carrying a base-colour map with a UV Project over it: the arm
-  // fell through, the backdrop resolved `none` with a null image, and that is byte-identical to
-  // a cube that genuinely has no map — the panel could neither show the texture nor say why it
-  // was blank. `cloneAddressOf` answers WHICH child draws, by the same recursion that decides
-  // whether one does, so the two cannot drift into disagreement.
-  const cloneAddress = cloneAddressOf(geometry.descriptor);
-  if (cloneAddress) {
-    // glTF: both facets come from the loaded asset clone, keyed by the RESOLVED descriptor
-    // rather than the node's params — so any node that resolves to a gltf-kind geometry
-    // works, not just the GltfChild type.
-    // #367 — NO CAST HERE ANY MORE, and the branch condition above is why. While this arm was
-    // keyed on `uvRead.status === 'elsewhere'` the descriptor stayed a union, so reading
-    // `assetRef` off it needed a widening cast — and that cast made two REQUIRED fields
-    // optional, which grew two fallbacks for states the type cannot hold. One of them
-    // (`childName` absent) would have answered with the whole asset's first mesh: a different
-    // question, silently. Keying on the discriminant narrows the descriptor, so both fields
-    // are `string` and both fallbacks are gone rather than merely unreachable.
-    const clone = getGltfClone(cloneAddress.assetRef);
-    if (!clone) return SPACE_LOADING;
-    const sub = clone.getObjectByName(cloneAddress.childName);
-    const geo = firstMeshGeometry(sub);
-    return {
-      uvs: geo ? { uvs: extractUVIslands(geo), status: 'ok' } : UV_NONE,
-      texture: fromTexture(firstBaseColorMap(sub)) ?? TEX_NONE,
-    };
-  }
+  // #1053 — a mesh drawn by an asset clone (`cloneAddressOf`: a `gltf` descriptor, or a projection
+  // over one that cannot materialise) belongs to a kept clone-road import. Both facets were read
+  // off the live clone, which is gone: nothing is drawn, so nothing is shown.
+  if (cloneAddressOf(geometry.descriptor)) return SPACE_NONE;
 
   // Registry-backed geometry. Procedural and primed share this arm because the resolver has
   // ALREADY made the read and typed its absence — nothing here re-derives what a miss means.
   const slot = primarySlotMaterial(mesh.materials);
   return {
     uvs: uvSourceOf(mesh.uvRead),
-    texture: importedTextureOf(slot, geometry.descriptor) ?? textureSourceOf(slot),
+    texture: textureSourceOf(slot),
   };
-}
-
-/** The glTF child a descriptor chain is rooted at, walking each recipe's `source`. */
-function gltfRootOf(
-  descriptor: GeometryDescriptor,
-): Extract<GeometryDescriptor, { kind: 'gltf' }> | null {
-  if (descriptor.kind === 'gltf') return descriptor;
-  return 'source' in descriptor ? gltfRootOf(descriptor.source.descriptor) : null;
-}
-
-/**
- * #1015 — the backdrop of a recipe the REGISTRY builds over an imported mesh.
- *
- * Once #1023 captured an imported child's face count, a UV Project over it materialises: the
- * registry builds its buffers, so it is no longer clone-drawn and the clone arm above rightly
- * declines it. Its UVs are then the projection's own. Its TEXTURE is not: the captured albedo is
- * an imported-map descriptor (`hash: ''` + `gltfTexture`), which names a texture whose pixels
- * live only in the asset clone. Handed to the OPFS peek it can never be found, and the panel
- * reported `loading` for as long as it stayed open — measured in the browser, while the viewport
- * drew the texture. Byte ownership decides where pixels come from, not who builds the buffers.
- *
- * Null when this is not that case, so the caller's ordinary slot answer stands.
- */
-function importedTextureOf(
-  slot: SlotMaterial<InlineMaterialSpec | BakedMaterialSpec>,
-  descriptor: GeometryDescriptor,
-): MeshTextureSource | null {
-  if (slot.status !== 'ok' || !slot.material) return null;
-  const albedo = 'materialClass' in slot.material ? slot.material.map : slot.material.maps?.albedo;
-  if (!isImportedMap(albedo)) return null;
-  const root = gltfRootOf(descriptor);
-  if (!root) return null;
-  const clone = getGltfClone(root.assetRef);
-  if (!clone) return TEX_LOADING;
-  return fromTexture(firstBaseColorMap(clone.getObjectByName(root.childName))) ?? TEX_NONE;
 }

@@ -26,8 +26,7 @@
 //      src/nodes/ComponentGroupOp.ts (the corrected limit); issues #1036, #734, #1027, #1023,
 //      #1025, #825 (the corner precedent), #717.
 
-import { afterEach, describe, expect, it } from 'vitest';
-import * as THREE from 'three';
+import { describe, expect, it } from 'vitest';
 import type { AttributeData } from '../nodes/attributes';
 import type { GeometryDescriptor, GeometryRef, ObjectData } from '../nodes/types';
 import {
@@ -42,27 +41,15 @@ import { ComponentGroupOpNode } from '../nodes/ComponentGroupOp';
 import { carriageForDomain, mintTiledModifierAttributes } from '../nodes/meshAttributes';
 import { resolveComponentSelection, SCOPE_PARAM } from '../nodes/componentSelection';
 import { tiledFaceOrder, tiledCornerOrder, faceCountOf } from './faceCount';
-import { pointCountOf, tiledPointOrder, weldByPosition } from './pointIdentity';
+import { tiledPointOrder } from './pointIdentity';
 import { bevelLayoutOf } from './bevelLayout';
-import { edgeCountOf } from './edgeIdentity';
 import { groupLookupFor } from './componentGroupLookup';
 import { insert } from './attributeStore';
-import { __clearGltfCloneRegistryForTests, registerGltfClone } from './asset/gltfCloneRegistry';
 
 const ASSET = 'u/imported-named-group.gltf';
 const CHILD = 'Imported';
 /** A three.js box is 12 triangles, so an imported one is 12 triangular faces. */
 const IMPORTED_FACES = 12;
-
-afterEach(() => __clearGltfCloneRegistryForTests());
-
-function mountClone() {
-  const mesh = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshBasicMaterial());
-  mesh.name = CHILD;
-  const group = new THREE.Group();
-  group.add(mesh);
-  registerGltfClone(ASSET, group);
-}
 
 function importedRef(): GeometryRef {
   const descriptor: GeometryDescriptor = {
@@ -70,21 +57,6 @@ function importedRef(): GeometryRef {
     assetRef: ASSET,
     childName: CHILD,
     faceCount: IMPORTED_FACES,
-  };
-  return { key: `k|${JSON.stringify(descriptor)}`, descriptor };
-}
-
-/**
- * The same child, imported by a build that ALSO captured its point count (#1040) — taken from
- * production's weld over a separate BoxGeometry instance, not written as a literal.
- */
-function capturedImportedRef(): GeometryRef {
-  const descriptor: GeometryDescriptor = {
-    kind: 'gltf',
-    assetRef: ASSET,
-    childName: CHILD,
-    faceCount: IMPORTED_FACES,
-    pointCount: weldByPosition(new THREE.BoxGeometry(1, 1, 1)).points,
   };
   return { key: `k|${JSON.stringify(descriptor)}`, descriptor };
 }
@@ -112,7 +84,6 @@ function membership(ref: GeometryRef, key: string, name: string): string | null 
 
 describe('#1036 — a named group rides an imported mesh through a topology change', () => {
   it('1 — the flagship observation, on a glTF: name faces, array it, read the name back', () => {
-    mountClone();
     const named = nameAGroup(importedRef(), 'arm', '0-2');
     expect(named.attributeKey).toBeDefined();
     expect(membership(named.geometry!, named.attributeKey!, 'arm')).toBe('111000000000');
@@ -137,9 +108,9 @@ describe('#1036 — a named group rides an imported mesh through a topology chan
     // This comment used to say the bevel failed because "an imported mesh cannot state its rims".
     // #1041 made that false — rims now come off the buffer through the ref — and THIS ROW KEPT
     // PASSING, because this fixture never captured a point count and a bevel needs one. Same
-    // green, different cause, and nothing said. So the refusal is now pinned by its REASON below,
-    // and the capturing import that DOES carry the name is row 1d.
-    mountClone();
+    // green, different cause, and nothing said. So the refusal is now pinned by its REASON below.
+    // (Row 1d showed a capturing import DID carry the name through a bevel; it needed a mounted
+    // clone for the buffer, and went with the clone renderer in #1053.)
     const named = nameAGroup(importedRef(), 'arm', '0-2');
     const g = named.geometry!;
 
@@ -163,15 +134,17 @@ describe('#1036 — a named group rides an imported mesh through a topology chan
     const bevelled = bevelGeometryRef(g, 0.1);
     expect(faceCountOf(bevelled.descriptor)).toBeNull();
     expect(mintTiledModifierAttributes(bevelled.descriptor)).toBeNull();
+    // #1053 — the reason MOVED, and this is where that shows: the refusal was "no point count"
+    // while a mounted clone supplied the buffer; with the clone renderer gone a `gltf` source has
+    // no buffer at all, so the bevel refuses one step earlier, on the welded rims it cannot read.
     const verdict = bevelLayoutOf(bevelled.descriptor);
-    expect(verdict.kind === 'refused' ? verdict.why : verdict.kind).toMatch(/point count/);
+    expect(verdict.kind === 'refused' ? verdict.why : verdict.kind).toMatch(/welded ri/);
   });
 
   it('1c — the name is ADDRESSABLE by a scope after the change, not merely stored', () => {
     // 🔑 #734's discriminating observation is *re-texture THE SAME NAME* after modifying the
     // mesh. Surviving in the store is a weaker claim than being addressable, and only this row
     // tests the one the flagship actually makes.
-    mountClone();
     const named = nameAGroup(importedRef(), 'arm', '0-2');
     const arrayed = arrayGeometryRef(named.geometry!, 3, [2, 0, 0], null);
     const changed = { ...arrayed, attributeKey: mintTiledModifierAttributes(arrayed.descriptor)! };
@@ -191,59 +164,6 @@ describe('#1036 — a named group rides an imported mesh through a topology chan
     expect(picked).toEqual([0, 1, 2, 12, 13, 14, 24, 25, 26]);
   });
 
-  it('1d — #1041: a bevel carries the name over an import that captured its point count, addressably', () => {
-    mountClone();
-    const captured = capturedImportedRef();
-
-    // A bevel reads the name through production's REPRESENTATIVE map (the reference's `facerep`
-    // rule: a minted face copies one source face's data). So the expected pattern is the source
-    // pattern read through that map, derived here rather than copied from a probe's output — and
-    // the SAME derivation is run on a box below, so it cannot be something only an import passes.
-    function carried(source: GeometryRef) {
-      const named = nameAGroup(source, 'arm', '0-2');
-      const pattern = membership(named.geometry!, named.attributeKey!, 'arm')!;
-      const bevelled = bevelGeometryRef(named.geometry!, 0.1);
-      const key = mintTiledModifierAttributes(bevelled.descriptor);
-      const inherit = tiledFaceOrder(bevelled.descriptor)?.representative;
-      return { pattern, bevelled, key, inherit };
-    }
-
-    const imported = carried(captured);
-    expect(imported.pattern).toBe('111000000000');
-
-    // The face count against Blender's closed form, from counts derived WITHOUT the layout.
-    const edges = edgeCountOf(captured);
-    const points = pointCountOf(captured.descriptor);
-    if (edges.kind !== 'counted' || points.kind !== 'counted')
-      throw new Error('a captured, mounted import must state its edge and point counts');
-    expect(faceCountOf(imported.bevelled.descriptor)).toBe(
-      IMPORTED_FACES + edges.count + points.count,
-    );
-
-    for (const [label, row] of [
-      ['import', imported],
-      ['box control', carried(boxGeometryRef([1, 1, 1], null))],
-    ] as const) {
-      expect(row.key, label).not.toBeNull();
-      expect(row.inherit?.length, label).toBe(faceCountOf(row.bevelled.descriptor));
-      const expected = row.inherit!.map((face) => row.pattern[face]).join('');
-      expect(membership(row.bevelled, row.key!, 'arm'), label).toBe(expected);
-
-      // ADDRESSABLE, which is #734's claim — a scope resolves the name on the bevelled mesh.
-      const selection = resolveComponentSelection(
-        {
-          kind: 'MeshData',
-          geometry: { ...row.bevelled, attributeKey: row.key! },
-          material: null,
-        } as unknown as ObjectData,
-        { [SCOPE_PARAM]: 'arm' },
-        'face',
-      );
-      expect(selection?.length, label).toBe(row.inherit!.length);
-      expect(selection?.count, label).toBe([...expected].filter((c) => c === '1').length);
-    }
-  });
-
   it('2 — the box control is unchanged', () => {
     const named = nameAGroup(boxGeometryRef([1, 1, 1], null), 'arm', '0-2');
     expect(membership(named.geometry!, named.attributeKey!, 'arm')).toBe('111000');
@@ -256,7 +176,6 @@ describe('#1036 — a named group rides an imported mesh through a topology chan
   it('3 — the precondition is live: an imported source really has NO point order', () => {
     // Without this row, rows 1 and 2 would pass identically on a source that HAS a point
     // order, and neither would be testing the thing #1036 changed.
-    mountClone();
     const arrayed = arrayGeometryRef(importedRef(), 3, [2, 0, 0], null);
     expect(tiledPointOrder(arrayed.descriptor)).toBeNull();
     // …while the two orders the face domain needs both answer, which is what makes the old
@@ -266,7 +185,6 @@ describe('#1036 — a named group rides an imported mesh through a topology chan
   });
 
   it('4 — the refusal is narrow: point refuses, face lays out, same absent point order', () => {
-    mountClone();
     const arrayed = arrayGeometryRef(importedRef(), 3, [2, 0, 0], null);
     const faces = tiledFaceOrder(arrayed.descriptor)!;
     const corners = tiledCornerOrder(arrayed.descriptor);
@@ -296,7 +214,6 @@ describe('#1036 — a named group rides an imported mesh through a topology chan
   });
 
   it('4b — a point attribute is dropped from the set while the face group rides through', () => {
-    mountClone();
     const key = 'imported-named-group|both-domains';
     insert(
       key,
@@ -328,7 +245,6 @@ describe('#1036 — a named group rides an imported mesh through a topology chan
     // correction cannot drift from the code: a buffer VERTEX count cannot state a face count.
     const baked: GeometryDescriptor = { kind: 'baked', hash: 'abc', vertexCount: 24 } as never;
     expect(faceCountOf(baked)).toBeNull();
-    mountClone();
     expect(faceCountOf(importedRef().descriptor)).toBe(IMPORTED_FACES);
   });
 });

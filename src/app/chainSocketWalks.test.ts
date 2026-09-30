@@ -25,7 +25,6 @@ import type { DagState } from '../core/dag/state';
 import type { Node, NodeDefinition } from '../core/dag/types';
 import { registerAllNodes } from '../nodes/registerAll';
 import { childEdges } from './resolveWorldTransform';
-import { findTargetAssetRef } from './resolveOverrideSlots';
 
 /** A wrapper whose spine is `spine` and which ALSO has a `target` argument socket.
  *  This is the shape no shipped node has yet — see the header. */
@@ -102,41 +101,5 @@ describe('childEdges descends the declared spine, not the socket named `target`'
     } as never);
 
     expect(edges).toHaveLength(0);
-  });
-});
-
-describe('findTargetAssetRef walks the declared spine', () => {
-  it('reaches the glTF through `spine` while `target` points at a non-asset decoy', () => {
-    const nodes: Record<string, Node> = {
-      n_wrap: node('n_wrap', 'TmpSpineWrapper', {
-        spine: { node: 'n_gltf' },
-        target: { node: 'n_decoy' },
-      }),
-      n_gltf: node('n_gltf', 'GltfAsset', {}, { assetRef: 'asset-abc' }),
-      n_decoy: node('n_decoy', 'BoxData', {}),
-    };
-
-    // A by-name walk steps to n_decoy, finds no GltfAsset and no further `target`,
-    // and returns null — the submesh selector silently disappears.
-    expect(findTargetAssetRef(nodes, 'n_wrap')).toBe('asset-abc');
-  });
-
-  it('still walks a real Transform/MaterialOverride chain (spelled `target` today)', () => {
-    const nodes: Record<string, Node> = {
-      n_ovr: node('n_ovr', 'MaterialOverride', { target: { node: 'n_xf' } }),
-      n_xf: node('n_xf', 'Transform', { target: { node: 'n_gltf' } }),
-      n_gltf: node('n_gltf', 'GltfAsset', {}, { assetRef: 'asset-xyz' }),
-    };
-
-    expect(findTargetAssetRef(nodes, 'n_ovr')).toBe('asset-xyz');
-  });
-
-  it('stops at a node that has a `target` but declares no chain', () => {
-    const nodes: Record<string, Node> = {
-      n_leaf: node('n_leaf', 'BoxData', { target: { node: 'n_gltf' } }),
-      n_gltf: node('n_gltf', 'GltfAsset', {}, { assetRef: 'asset-nope' }),
-    };
-
-    expect(findTargetAssetRef(nodes, 'n_leaf')).toBeNull();
   });
 });

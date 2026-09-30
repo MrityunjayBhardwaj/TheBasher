@@ -1,4 +1,4 @@
-import { BoxGeometry, Group, Mesh, MeshBasicMaterial } from 'three';
+import { BoxGeometry } from 'three';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { GeometryRef } from '../nodes/types';
 import {
@@ -9,7 +9,6 @@ import {
   prime,
   size,
 } from './geometryRegistry';
-import { registerGltfClone, unregisterGltfClone } from './asset/gltfCloneRegistry';
 
 afterEach(() => clear());
 
@@ -51,52 +50,33 @@ describe('geometryRegistry', () => {
   // input the divergence is about. So the divergence is asserted directly, on the input
   // that has it, in BOTH directions: a green row over an unaffected input is how a
   // description rots while its assertion keeps passing.
-  it('the ATTACH door refuses a clone-drawn ref that the READ door resolves', () => {
-    const clone = new Group();
-    const mesh = new Mesh(new BoxGeometry(1, 1, 1), new MeshBasicMaterial());
-    mesh.name = 'Cube';
-    clone.add(mesh);
-    registerGltfClone('asset-a', clone);
-    try {
-      const ref: GeometryRef = {
-        key: 'gltf|asset-a|Cube',
-        descriptor: { kind: 'gltf', assetRef: 'asset-a', childName: 'Cube' },
-      };
-      // The READ door must still resolve it: Apply-Transform bakes a glTF child by reading
-      // exactly these buffers out of the mounted clone. Narrowing `get` instead of this one
-      // door would have broken that road silently.
-      expect(getForRead(ref)).toBe(mesh.geometry);
-      // The ATTACH door must not: `GltfAssetR` is already drawing this very instance, so
-      // handing it over puts one BufferGeometry in the scene graph twice — and on a skinned
-      // child the second draw is the undeformed bind pose.
-      expect(getForAttach(ref)).toBeNull();
-    } finally {
-      unregisterGltfClone('asset-a', clone);
-    }
-  });
-
-  // The case that keeps the rule ONE rule: a recipe over a glTF source is built by the
-  // registry and drawn by nobody else, so the attach door must still hand it over. This is
-  // the boundary a `descriptor.kind === 'gltf'` test would have got wrong.
-  it('the ATTACH door still resolves a RECIPE over a glTF source', () => {
-    const clone = new Group();
-    const mesh = new Mesh(new BoxGeometry(1, 1, 1), new MeshBasicMaterial());
-    mesh.name = 'Cube';
-    clone.add(mesh);
-    registerGltfClone('asset-a', clone);
-    try {
-      const source: GeometryRef = {
-        key: 'gltf|asset-a|Cube',
-        descriptor: { kind: 'gltf', assetRef: 'asset-a', childName: 'Cube' },
-      };
-      const recipe: GeometryRef = {
-        key: 'gltf|asset-a|Cube|array|3',
-        descriptor: { kind: 'array', source, count: 3, offset: [1, 0, 0] },
-      };
-      expect(getForAttach(recipe)).not.toBeNull();
-    } finally {
-      unregisterGltfClone('asset-a', clone);
-    }
+  // #1053 — the two rows that stood here needed a MOUNTED clone to make the doors disagree: the
+  // read door resolved a clone-drawn ref (Apply baked a glTF child off those buffers) while the
+  // attach door refused it (`GltfAssetR` already drew that instance). The clone renderer, the
+  // registry it filled, and that Apply road are all gone, so the disagreement cannot be built:
+  // a kept clone-road import is not drawn, and both doors answer `null` — for the ref and for a
+  // recipe over it alike.
+  it('both doors answer null for a clone-drawn ref and a recipe over one (#1053)', () => {
+    const source: GeometryRef = {
+      key: 'gltf|asset-a|Cube',
+      descriptor: { kind: 'gltf', assetRef: 'asset-a', childName: 'Cube' },
+    };
+    const recipe: GeometryRef = {
+      key: 'gltf|asset-a|Cube|array|3',
+      descriptor: { kind: 'array', source, count: 3, offset: [1, 0, 0] },
+    };
+    expect(getForRead(source)).toBeNull();
+    expect(getForAttach(source)).toBeNull();
+    expect(getForRead(recipe)).toBeNull();
+    expect(getForAttach(recipe)).toBeNull();
+    // The control: the same recipe over a BOX builds through both doors.
+    const box = boxRef('box|1', [1, 1, 1]);
+    const overBox: GeometryRef = {
+      key: 'box|array|3',
+      descriptor: { kind: 'array', source: box, count: 3, offset: [1, 0, 0] },
+    };
+    expect(getForRead(overBox)).not.toBeNull();
+    expect(getForAttach(overBox)).not.toBeNull();
   });
 
   it('keys distinct params to distinct instances (no false sharing)', () => {
