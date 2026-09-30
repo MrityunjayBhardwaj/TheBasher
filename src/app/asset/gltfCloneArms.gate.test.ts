@@ -127,8 +127,9 @@ const CLONE_REGISTRY_MODULE = 'gltfCloneRegistry';
  * is the MODULE — one module taking the dependency is one arm to delete — so the import
  * is the thing counted, not the call.
  */
+// #1053 — `dispatchApplyTransform.ts` left: Apply on a kept clone-road import refuses instead of
+// baking off the clone (the ratchet turning the right way).
 const EXPECTED_ARMS = [
-  'src/app/animate/dispatchApplyTransform.ts',
   'src/app/geometrySampleSource.ts',
   'src/app/resolveMeshUVSpace.ts',
   'src/app/resolveOverrideSlots.ts',

@@ -1,4 +1,4 @@
-// dispatchApplyTransform — Apply-Transform (Phase 151 Wave 2 t5, issue #151). Three roads:
+// dispatchApplyTransform — Apply-Transform (Phase 151 Wave 2 t5, issue #151). Two roads:
 //
 //   - STORED MESH DATA (#1077, `applyIntoStoredMesh`): the pose is written into the mesh data at
 //     the base of the Object's data lane, and the Object keeps posing it. No bake, no OPFS write,
@@ -6,7 +6,10 @@
 //   - BOX / SPHERE (below): compose the (masked) resolved TRS into a 4×4 matrix, bake it into a
 //     CLONE of the registry geometry, persist the baked bytes to OPFS, and swap the original mesh
 //     node for a baked pair in ONE atomic Op composite (one dispatchAtomic = one Cmd+Z).
-//   - glTF CHILD on the clone road (`dispatchApplyGltfChild`).
+//
+// A third, the glTF CHILD on the clone road, baked off the live render clone. It went with the clone
+// renderer (#1053): a kept clone-road import is not drawn, so there is no clone to read, and Apply
+// refuses it by name (`KEPT_IMPORT_REFUSAL`) and is not offered for it (`canApplyTransform`).
 //
 // THE single OPFS-write chokepoint (V20) and the single Apply Op author (V1).
 //
@@ -22,8 +25,7 @@
 //      everything keyed by node id rather than by edge (a constraint/driver target, an
 //      NLA strip) survives the bake. Ordered: disconnect every consumer edge → removeNode
 //      original (+ its exclusive data node) → addNode BakedMesh at the SAME id → replay
-//      the edges in ascending list index (preserves sibling order). The glTF-child path
-//      still mints a fresh id — see nextBakedId.
+//      the edges in ascending list index (preserves sibling order).
 //
 // Animated guard (D-04): if ANYTHING the bake consumes is keyframed, reject — the
 // dispatch-side belt (the UI also disables, through the same predicate). #411
@@ -71,19 +73,14 @@ import { dataLaneNodeIds } from '../dataLaneOverlay';
 import { isKeyframeChannelNode, paramAnimationState } from './paramAnimationState';
 import { getStorage } from '../boot';
 import { useTimeStore } from '../stores/timeStore';
-import { importedChildDataId, importedChildOf, isImportedChild } from '../importedChild';
+import { isImportedChild } from '../importedChild';
 import { nodeDisplayName } from '../sceneTreeWalk';
 import { useSelectionStore } from '../stores/selectionStore';
 import { useTransientEditStore } from '../stores/transientEditStore';
-import { getGltfClone } from '../asset/gltfCloneRegistry';
 import { hierarchyChildIds, hierarchySocketForKind } from '../sceneHierarchy';
-import { resolveParentWorldMatrix, resolveWorldTransform } from '../resolveWorldTransform';
 import { quaternionToEulerVec3 } from '../../core/import/threeAdapter';
-import { captureBakedMaterial } from './captureBakedMaterial';
 import { openpbrToThree } from '../material/openpbrToThree';
 import { isIdentityPlacement, resolveSlotPlacement } from '../material/uvPlacement';
-import { evaluate, createEvaluatorCache } from '../../core/dag/evaluator';
-import type { GltfAssetValue } from '../../nodes/types';
 
 export type ApplyMask = 'all' | 'location' | 'rotation' | 'scale';
 
@@ -98,12 +95,13 @@ export interface ApplyDeps {
   setSelection: (id: string) => void;
   /** Drop every held (un-keyed) edit for a node — see the call site in step 5. */
   clearTransients: (nodeId: string) => void;
-  /** glTF-child path only — the live render clone (tests inject a fake Group;
-   *  production reads it from the live-clone registry by assetRef). */
-  gltfClone: THREE.Group;
 }
 
 const ANIMATED_MSG = 'Apply unavailable — the object or its geometry is animated (#153/#149)';
+
+/** #1053 — the clone road's Apply read the live render clone, and a kept clone-road import has none. */
+const KEPT_IMPORT_REFUSAL = (name: string): string =>
+  `Apply unavailable — "${name}" was saved on the old imported-file structure and is not drawn, so there is nothing to apply.`;
 
 /**
  * True when ANYTHING the bake consumes is animated — the guard that makes Apply
@@ -301,7 +299,7 @@ function bakedSpecFromInline(material: InlineMaterialSpec | null): BakedMaterial
   }
   const drawn = openpbrToThree(material);
   // #1123 — an unlit material draws its colour and base map alone, so that is all its bake holds:
-  // the same shape the clone capture writes for a basic material, which the rebuild draws unlit.
+  // the basic shape, which the rebuild draws unlit.
   const basic = drawn.materialClass === 'basic';
   const placements: { [K in BakedMapSlot]?: UvPlacement } = {};
   for (const slot of Object.keys(drawn.maps) as BakedMapSlot[]) {
@@ -310,7 +308,7 @@ function bakedSpecFromInline(material: InlineMaterialSpec | null): BakedMaterial
     if (!isIdentityPlacement(placement)) placements[slot] = placement;
   }
   if (basic) {
-    // The basic shape `captureBakedMaterial` writes: colour, base map, opacity and the surface.
+    // The basic shape: colour, base map, opacity and the surface — all an unlit material draws.
     return {
       materialClass: 'basic',
       color: drawn.color,
@@ -339,7 +337,7 @@ function bakedSpecFromInline(material: InlineMaterialSpec | null): BakedMaterial
     emissiveIntensity: drawn.emissiveIntensity,
     ...drawn.maps,
     ...(Object.keys(placements).length > 0 ? { mapPlacements: placements } : {}),
-    // #1140 — the cutout and the side, absent at three's defaults, as on the clone road.
+    // #1140 — the cutout and the side, absent at three's defaults.
     ...(drawn.alphaTest !== 0 ? { alphaTest: drawn.alphaTest } : {}),
     ...(drawn.doubleSided ? { doubleSided: true } : {}),
     // #1123 — the map strengths, absent at their default of 1.
@@ -521,13 +519,6 @@ function consumerEdgesOf(state: DagState, nodeId: string): ConsumerEdge[] {
   return edges;
 }
 
-let bakedCounter = 0;
-/**
- * A fresh baked id. Since #412 this is the glTF-CHILD path only — the primitive/`Object`
- * path inherits the applied node's id instead. A GltfChild id is an import artifact on an
- * edge-less satellite node, so handing it to a standalone BakedMesh would risk colliding
- * with the same child on a later re-import; that path keeps minting deliberately.
- */
 /**
  * A free id for the BakedData half of a baked pair. Mirrors the load migration's
  * `freshDataId` spelling (`<object>__data`, then `__data1`, `__data2`, …) so the two
@@ -539,15 +530,6 @@ function freshDataIdFor(state: DagState, objectId: string): string {
   let id = `${objectId}__data`;
   let n = 1;
   while (state.nodes[id]) id = `${objectId}__data${n++}`;
-  return id;
-}
-
-function nextBakedId(state: DagState): string {
-  // Deterministic-enough fresh id; loop until unused (collisions are vanishing).
-  let id: string;
-  do {
-    id = `baked_${Date.now().toString(36)}_${bakedCounter++}`;
-  } while (state.nodes[id]);
   return id;
 }
 
@@ -583,6 +565,8 @@ const ZERO_CTX: EvalCtx = { time: { frame: 0, seconds: 0, normalized: 0 } };
 export function canApplyTransform(state: DagState, nodeId: string): boolean {
   const node = state.nodes[nodeId];
   if (!node || !isBakeableWrapperType(node.type)) return false;
+  // #1053 — the dispatcher refuses a kept clone-road import, so it is not offered either.
+  if (isImportedChild(state.nodes, nodeId)) return false;
   return resolveEvaluatedMesh(state, nodeId, ZERO_CTX) !== null;
 }
 
@@ -610,18 +594,10 @@ export async function dispatchApplyTransform(
   // header do. A caller that passed the id still knows it; a director has never seen it.
   const name = nodeDisplayName(state.nodes, selectedId);
 
-  // The glTF-child path (the R-1 edge-less satellite) is materially different —
-  // source geometry/material live inside the live render clone, and the asset
-  // must suppress the child by name. It has its own dispatcher below.
+  // #1053 — a kept clone-road import is not drawn, so there is nothing to apply. Asked FIRST: it is
+  // an `Object`, and the Object road below would otherwise read it.
   if (isImportedChild(state.nodes, selectedId)) {
-    return dispatchApplyGltfChild(
-      selectedId,
-      mask,
-      state,
-      currentFrame,
-      deps,
-      dagStore.dispatchAtomic.bind(dagStore),
-    );
+    return { ok: false, reason: KEPT_IMPORT_REFUSAL(name) };
   }
 
   // #376: a split `Object` bakes alongside the still-fused `SphereMesh`. The gate stays
@@ -1160,355 +1136,4 @@ function applyIntoStoredMesh(
   io.clearTransients(dataId);
   io.setSelection(selectedId);
   return { ok: true, bakedId: selectedId };
-}
-
-/**
- * Is the owning GltfAsset's active TransformClip driving `childName`? (D-04 — the
- * clip-driven half of the animated guard, on top of the keyframe-channel check.)
- * A clip-driven child has a non-identity sampled track for its name at the live
- * time, so baking a single static pose would silently freeze the animation.
- */
-function isGltfChildClipDriven(
-  state: DagState,
-  assetRef: string,
-  childName: string,
-  seconds: number,
-): boolean {
-  for (const n of Object.values(state.nodes)) {
-    if (n.type !== 'GltfAsset') continue;
-    if ((n.params as { assetRef?: unknown }).assetRef !== assetRef) continue;
-    try {
-      const val = evaluate(state, n.id, {
-        cache: createEvaluatorCache(),
-        ctx: { time: { frame: seconds * 60, seconds, normalized: 0 } },
-      }).value as GltfAssetValue;
-      const tracks = val.transformClip?.sample(seconds) ?? null;
-      // A track keyed for THIS child means the clip animates it (resolveEvaluated
-      // Transform.ts:206 reads the same `sample(seconds)[childName]`).
-      if (tracks && tracks[childName]) return true;
-    } catch {
-      // Unevaluable asset → treat as no clip layer (the static base still bakes).
-    }
-    break;
-  }
-  return false;
-}
-
-/**
- * #1108 — where an imported child's baked Object goes, and the pose it has there.
- *
- * The child draws under a chain the DAG does not hold as nodes of its own: the glTF parent nodes
- * inside the live clone, and any wrapper between the asset and the Group or Scene that holds it.
- * The bake takes the child out of the clone, so that chain has to go somewhere. Blender says where:
- * a child whose transform is applied keeps its parent, and nothing moves (measured on 5.1.1). The
- * nearest node here that holds children is the import's Group, so the baked Object is wired there,
- * and its pose is the child's pose RELATIVE TO that holder — `wrappers · clone parents · child` —
- * which the holder keeps drawing its own transform over, exactly as it did over the asset. It used
- * to go to the scene root with the child's own pose alone, which moved it by the whole chain.
- *
- * When nothing sits between the holder and the child, that is the child's resolved pose itself,
- * with no decomposition, so an import with a flat hierarchy bakes exactly as it did.
- *
- * It also names what it read above the child (`wrapperIds`, `cloneAncestorNames`): everything
- * there is read at the current frame and then gone from the child's chain, so the animated guard
- * asks exactly these, the same way #1081 made the guard ask what the road consumes.
- */
-function importedChildPlacement(
-  state: DagState,
-  assetId: string,
-  clone: THREE.Object3D,
-  child: THREE.Object3D,
-  local: MeshTransform,
-  ctx: EvalCtx,
-): {
-  readonly holderId: string;
-  readonly transform: MeshTransform;
-  readonly full?: THREE.Matrix4;
-  readonly wrapperIds: readonly string[];
-  readonly cloneAncestorNames: readonly string[];
-} | null {
-  const nodes = Object.values(state.nodes);
-  const parentOf = (id: string) => nodes.find((n) => hierarchyChildIds(n).includes(id));
-  const assetParent = parentOf(assetId);
-  const wrapperIds: string[] = [];
-  let holder = assetParent;
-  while (holder && hierarchySocketForKind(holder.type, holder) !== 'children') {
-    wrapperIds.push(holder.id);
-    holder = parentOf(holder.id);
-  }
-  const sceneId = state.outputs.scene?.node;
-  const holderId = holder?.id ?? sceneId;
-  if (!holderId) return null;
-
-  // Wrappers between the holder and the asset (a Transform, a MaterialOverride): the holder's world
-  // taken back out of the asset's parent world. Imports wire the asset straight into its Group, so
-  // this is identity without asking the resolver.
-  const between = new THREE.Matrix4();
-  if (assetParent && assetParent.id !== holderId) {
-    const assetParentWorld = resolveParentWorldMatrix(state, assetId, ctx) ?? new THREE.Matrix4();
-    const holderWorld = holderId === sceneId ? null : resolveWorldTransform(state, holderId, ctx);
-    const holderMatrix = holderWorld
-      ? new THREE.Matrix4().fromArray(holderWorld.matrix)
-      : new THREE.Matrix4();
-    between.copy(holderMatrix.invert().multiply(assetParentWorld));
-  }
-
-  // The clone's own chain above the child, up to and including the clone root, as drawn.
-  const parents = new THREE.Matrix4();
-  const cloneAncestorNames: string[] = [];
-  for (let o = child.parent; o; o = o.parent) {
-    parents.premultiply(new THREE.Matrix4().compose(o.position, o.quaternion, o.scale));
-    if (o.name) cloneAncestorNames.push(o.name);
-    if (o === clone) break;
-  }
-
-  const above = between.multiply(parents);
-  if (above.equals(new THREE.Matrix4())) {
-    return { holderId, transform: local, wrapperIds, cloneAncestorNames };
-  }
-  const full = above.multiply(trsMatrix(local));
-  const p = new THREE.Vector3();
-  const q = new THREE.Quaternion();
-  const s = new THREE.Vector3();
-  full.decompose(p, q, s);
-  // One pose, consumed now and never interpolated against a neighbour, so the canonical
-  // conversion is the right one (the #876 census's POINT_IN_TIME kind), through its one primitive.
-  const [ex, ey, ez] = quaternionToEulerVec3(q);
-  const deg = THREE.MathUtils.radToDeg;
-  return {
-    holderId,
-    transform: {
-      ...local,
-      position: [p.x, p.y, p.z],
-      rotation: [deg(ex), deg(ey), deg(ez)],
-      scale: [s.x, s.y, s.z],
-    },
-    full,
-    wrapperIds,
-    cloneAncestorNames,
-  };
-}
-
-/**
- * #1108 follow-up — the first thing above an imported child whose animation the bake would freeze,
- * or `null` when nothing above it animates.
- *
- * {@link importedChildPlacement} reads the wrappers and the clone's parent nodes at the current
- * frame, and the baked Object no longer draws under either, so any motion there would stop at that
- * frame (measured: a clip track or a baked channel on the glTF parent left the bake 4 units off
- * the drawn mesh one second later). The holder is not asked: the bake is wired under it and keeps
- * following it. Each ancestor is asked the questions the child is asked for itself: a keyframe
- * channel on its node (a baked channel targets the same node), and a clip track for its name.
- */
-function animatedAncestorOfImportedChild(
-  state: DagState,
-  asset: { readonly params?: unknown },
-  placement: {
-    readonly wrapperIds: readonly string[];
-    readonly cloneAncestorNames: readonly string[];
-  },
-  assetRef: string,
-  currentFrame: number,
-): string | null {
-  const seconds = currentFrame / 60;
-  for (const id of placement.wrapperIds) {
-    if (isApplySourceAnimated(state, id, currentFrame)) return nodeDisplayName(state.nodes, id);
-  }
-  const nameMap = (asset.params as { nodeNameMap?: Record<string, string> }).nodeNameMap ?? {};
-  for (const name of placement.cloneAncestorNames) {
-    // By the mapped id alone: a baked channel is drawn by `nodeNameMap` membership, whether or not
-    // the node it names has a satellite in the graph.
-    const nodeId = nameMap[name];
-    if (nodeId && isApplySourceAnimated(state, nodeId, currentFrame)) return name;
-    if (isGltfChildClipDriven(state, assetRef, name, seconds)) return name;
-  }
-  return null;
-}
-
-/**
- * Apply a glTF child's (masked) RESOLVED transform into a standalone BakedMesh,
- * capturing its resolved geometry + full PBR material off the LIVE render clone
- * (bake-what-renders, H58/H59), persisting both to OPFS, and — in the SAME atomic
- * composite — removing the GltfChild node and suppressing the source render by
- * name so the child renders exactly ONCE. One proposeAndAccept = one Cmd+Z.
- *
- * Lifecycle (ORDERED): resolve(sync) → read clone geom+material(sync) →
- *   clone+matrix(sync) → OPFS writes geom + textures (async, ALL awaited) →
- *   atomic Op composite (addNode + connect + removeNode + setParam, sync).
- */
-async function dispatchApplyGltfChild(
-  selectedId: string,
-  mask: ApplyMask,
-  state: DagState,
-  currentFrame: number,
-  deps: Partial<ApplyDeps> | undefined,
-  liveDispatchAtomic: (ops: Op[], source?: OpSource, description?: string) => unknown,
-): Promise<DispatchResult> {
-  const imported = importedChildOf(state.nodes, selectedId);
-  if (!imported) {
-    return {
-      ok: false,
-      reason: `Apply: imported child "${selectedId}" missing assetRef/childName.`,
-    };
-  }
-  const { assetRef, childName } = imported;
-  // #1134 — `childName` finds the mesh in the clone; `name` is what a message calls it, and differs
-  // once the director renames the object.
-  const name = nodeDisplayName(state.nodes, selectedId);
-  const seconds = currentFrame / 60;
-
-  // Animated guard (D-04) — keyframe channels on the child node OR a clip track
-  // for this child on the owning asset. Either means the transform is animated;
-  // baking a single static pose would freeze it.
-  if (
-    isApplySourceAnimated(state, selectedId, currentFrame) ||
-    isGltfChildClipDriven(state, assetRef, childName, seconds)
-  ) {
-    return { ok: false, reason: ANIMATED_MSG };
-  }
-
-  // 1 — resolve the STATIC transform via the ONE band (Q6). resolveEvaluatedMesh's
-  // GltfChild path funnels through resolveGltfChildTrs (manual → base; clip/baked
-  // are the animated layers, barred by the guard). Compose the masked matrix.
-  const ctx: EvalCtx = {
-    time: { frame: currentFrame, seconds, normalized: 0 },
-  };
-  const mesh = resolveEvaluatedMesh(state, selectedId, ctx);
-  if (!mesh) return { ok: false, reason: `Apply: could not resolve GltfChild "${name}".` };
-
-  // 2 — read source geometry + RESOLVED material off the LIVE render clone (Q4 —
-  // registry.get returns null for gltf). The clone is the post-override render
-  // state (H58/H59 bake-what-renders), accessed via the production-safe registry.
-  const clone = deps?.gltfClone ?? getGltfClone(assetRef);
-  if (!clone) {
-    return {
-      ok: false,
-      reason: `Apply: glTF asset "${assetRef}" is not currently rendered (no live clone).`,
-    };
-  }
-  const child = clone.getObjectByName(childName) as THREE.Mesh | undefined;
-  if (!child || !(child as THREE.Mesh).isMesh || !child.geometry) {
-    return { ok: false, reason: `Apply: child "${name}" is not a renderable mesh.` };
-  }
-
-  // The owning GltfAsset node (to append the suppression key on it, and to find what holds it).
-  const asset = Object.values(state.nodes).find(
-    (n) => n.type === 'GltfAsset' && (n.params as { assetRef?: unknown }).assetRef === assetRef,
-  );
-  if (!asset) return { ok: false, reason: `Apply: owning GltfAsset for "${assetRef}" not found.` };
-
-  // #1108 — the pose relative to the Group the child drew under, and that Group as the new parent.
-  const placement = importedChildPlacement(state, asset.id, clone, child, mesh.transform, ctx);
-  if (!placement) return { ok: false, reason: 'Apply: project has no `scene` output.' };
-  const animatedAncestor = animatedAncestorOfImportedChild(
-    state,
-    asset,
-    placement,
-    assetRef,
-    currentFrame,
-  );
-  if (animatedAncestor) {
-    return {
-      ok: false,
-      reason: `Apply unavailable — "${animatedAncestor}", which "${name}" draws under, is animated, and the bake would freeze it.`,
-    };
-  }
-  // #1080 — the same split as every road: `kept⁻¹ · full` into the verts, `kept` on the Object.
-  const split = splitAppliedPose(placement.transform, mask, placement.full);
-  if (!split) return { ok: false, reason: zeroKeptScaleReason(name) };
-
-  const unheld = unheldAttributesBakeRefusal(name, child.geometry);
-  if (unheld) return { ok: false, reason: unheld };
-
-  // Capture the RESOLVED material (M2 — post-override, read-only H45/M9). A child
-  // may carry a Material[] (multi-primitive); bake the first (one-child-one-bake
-  // for #151; multi-material merge is a later concern). Textures persist inside.
-  // #1132 — read and refused here, before the geometry write, so a refusal leaves no file behind.
-  const liveMat = Array.isArray(child.material) ? child.material[0] : child.material;
-  if (!liveMat) return { ok: false, reason: `Apply: child "${name}" has no material.` };
-
-  // H45 — clone the SHARED clone geometry before baking; mutating it would corrupt
-  // every other instance/child sharing the buffer.
-  const baked = child.geometry.clone();
-  baked.applyMatrix4(split.matrix);
-  if (split.matrix.determinant() < 0) reverseTriangleWinding(baked);
-  if (mask !== 'location') baked.computeVertexNormals();
-
-  // 3 — persist baked geometry + every texture map to OPFS (async, ALL AWAITED
-  // before the Op composite so a reload right after Apply finds the bytes).
-  const storage = deps?.storage ?? (await getStorage());
-  const bakedRef = await writeBakedGeometry(storage, baked);
-  baked.dispose();
-  const spec = await captureBakedMaterial(storage, liveMat);
-
-  // 4 — atomic Op composite (Q1, the R-1 edge-less satellite collapses to):
-  //   addNode BakedMesh + connect into Scene.children + removeNode GltfChild +
-  //   setParam GltfAsset.suppressedChildren (append childName). ONE Cmd+Z.
-  const prevSuppressed = Array.isArray(
-    (asset.params as { suppressedChildren?: unknown }).suppressedChildren,
-  )
-    ? ((asset.params as { suppressedChildren: string[] }).suppressedChildren as string[])
-    : [];
-
-  const dataId = importedChildDataId(state.nodes, selectedId);
-  const bakedId = nextBakedId(state);
-  // #388 C5 — mints the PAIR, like the primitive road above and like the load migration.
-  // Unlike that road there is no id to inherit: a glTF child is not a scene node, so the
-  // bake introduces a genuinely new object and both halves take fresh ids.
-  const bakedDataId = freshDataIdFor(state, bakedId);
-  const ops: Op[] = [
-    {
-      type: 'addNode',
-      nodeId: bakedDataId,
-      nodeType: 'BakedData',
-      params: { geometry: bakedRef, material: spec },
-    },
-    {
-      type: 'addNode',
-      nodeId: bakedId,
-      nodeType: 'Object',
-      // #1080 — the KEPT pose, as on the primitive bake: applied bands identity, the rest unchanged.
-      params: {
-        position: split.kept.position,
-        rotation: split.kept.rotation,
-        scale: split.kept.scale,
-      },
-    },
-    {
-      type: 'connect',
-      from: { node: bakedDataId, socket: 'out' },
-      to: { node: bakedId, socket: 'data' },
-    },
-    {
-      type: 'connect',
-      from: { node: bakedId, socket: 'out' },
-      to: { node: placement.holderId, socket: 'children' },
-    },
-    { type: 'removeNode', nodeId: selectedId },
-    // #389 — the DATA half goes too. The apply collapses the imported child into a fresh
-    // baked pair, so leaving `GltfData` behind would strand an inputless node describing a
-    // child that has been suppressed on its own asset: invisible in the outliner (nothing
-    // walks a bare data node), still resolving a geometry ref into a clone, and impossible
-    // to select or delete. The fused kind was ONE node, so this line had no counterpart.
-    ...(dataId ? [{ type: 'removeNode' as const, nodeId: dataId }] : []),
-    {
-      type: 'setParam',
-      nodeId: asset.id,
-      paramPath: 'suppressedChildren',
-      value: [...prevSuppressed, childName],
-    },
-  ];
-
-  const dispatchAtomic = deps?.dispatchAtomic ?? liveDispatchAtomic;
-  try {
-    dispatchAtomic(ops, 'user', `Apply ${mask} → bake glTF child ${childName}`);
-  } catch (err) {
-    return { ok: false, reason: (err as Error).message };
-  }
-
-  const setSelection =
-    deps?.setSelection ?? ((id: string) => useSelectionStore.getState().select(id));
-  setSelection(bakedId);
-
-  return { ok: true, bakedId };
 }

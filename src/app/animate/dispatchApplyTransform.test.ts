@@ -25,7 +25,6 @@ import { useTransientEditStore } from '../stores/transientEditStore';
 import * as geometryRegistry from '../geometryRegistry';
 import { readBakedGeometry } from '../asset/bakedGeometryStore';
 import { evaluatedMeshFromMeshData, resolveEvaluatedMesh } from '../resolveEvaluatedMesh';
-import { resolveWorldTransform } from '../resolveWorldTransform';
 import {
   dispatchApplyTransform,
   canApplyTransform,
@@ -1773,17 +1772,6 @@ describe('canApplyTransform — the offer side of the boundary-pair (#376)', () 
   });
 });
 
-// ---------------------------------------------------------------------------
-// glTF-child path (Wave 4 Task 10) — the R-1 edge-less satellite.
-// ---------------------------------------------------------------------------
-//
-// Pins the DAG-side contract with a MOCKED live clone (the real render proof is
-// the t11 e2e against a textured fixture). A map-LESS MeshStandardMaterial is used
-// so captureBakedMaterial never invokes the canvas readback (happy-dom has no
-// decoder) — the textured capture is the e2e's job.
-//
-// REF: PLAN.md Wave 4 Task 10; RESEARCH §Q1/§Q4/§M2/§M7; hetvabhasa H45/H58/H59.
-
 describe('#1080 — a single-band Apply on the bake road keeps the world shape and the other bands', () => {
   // The bake baked only the applied band into the verts and then reset ALL THREE bands on the
   // Object, so Location, Rotation or Scale alone moved and reshaped the object (measured on every
@@ -1931,76 +1919,6 @@ describe('#1080 — a single-band Apply on the bake road keeps the world shape a
     },
   );
 
-  /** The same Apply over an imported child, which bakes off the live clone — the second bake site. */
-  async function bakeChild(pose: Pose, mask: (typeof MASKS)[number]) {
-    let state = buildSceneScaffold();
-    const sceneId = state.outputs.scene!.node;
-    state = applyAll(state, [
-      {
-        type: 'addNode',
-        nodeId: 'n_gltf',
-        nodeType: 'GltfAsset',
-        params: { assetRef: 'assets/textured.glb', nodeNameMap: { Cube: 'n_child' } },
-      },
-      {
-        type: 'connect',
-        from: { node: 'n_gltf', socket: 'out' },
-        to: { node: sceneId, socket: 'children' },
-      },
-      ...(importedChildOps('n_child', {
-        assetRef: 'assets/textured.glb',
-        childName: 'Cube',
-        ...pose,
-        overridden: { position: true, rotation: true, scale: true },
-      }) as Op[]),
-    ]);
-    const clone = new THREE.Group();
-    const mesh = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshStandardMaterial());
-    mesh.name = 'Cube';
-    clone.add(mesh);
-    const storage = new MemoryStorage();
-    const stateRef = { current: state };
-    const { fn } = makeDispatch(stateRef);
-    const result = await dispatchApplyTransform('n_child', mask, {
-      state,
-      storage,
-      currentFrame: 0,
-      dispatchAtomic: fn,
-      setSelection: () => {},
-      clearTransients: () => {},
-      gltfClone: clone,
-    });
-    if (!result.ok) return { result, sourceGeom: mesh.geometry, bakedGeom: null, poseAfter: null };
-    const bakedData = dataHalfOf(stateRef.current, result.bakedId);
-    const ref = (
-      bakedData!.params as { geometry: { descriptor: { hash: string; vertexCount: number } } }
-    ).geometry;
-    return {
-      result,
-      sourceGeom: mesh.geometry,
-      bakedGeom: await readBakedGeometry(storage, ref.descriptor.hash, ref.descriptor.vertexCount),
-      poseAfter: stateRef.current.nodes[result.bakedId].params as Pose,
-    };
-  }
-
-  it.each(Object.keys(POSES).flatMap((pose) => MASKS.map((mask) => ({ pose, mask }))))(
-    'imported child $pose Apply $mask: drawn verts unchanged, only the applied bands reset, no face inside-out',
-    async ({ pose, mask }) => {
-      const before = POSES[pose];
-      const m = await bakeChild(before, mask);
-      expect(m.result.ok).toBe(true);
-      for (const band of ['position', 'rotation', 'scale'] as const) {
-        const want = APPLIED[mask].includes(band) ? IDENTITY[band] : before[band];
-        expect(m.poseAfter![band], band).toEqual(want);
-      }
-      const was = drawnPoints(m.sourceGeom, before);
-      const is = drawnPoints(m.bakedGeom!, m.poseAfter!);
-      const worst = Math.max(...was.map((p, i) => p.distanceTo(is[i])));
-      expect(worst).toBeLessThan(1e-4);
-      expect(drawnInward(m.bakedGeom!, m.poseAfter!)).toBe(0);
-    },
-  );
-
   it('refuses when a kept scale is zero — the rest of the pose cannot be taken back out', async () => {
     const m = await bake(
       'cube',
@@ -2042,98 +1960,10 @@ function gltfChildState() {
   return state;
 }
 
-/** A fake render clone: a Group holding one named unit-box Mesh + a map-less
- *  MeshStandardMaterial. Mirrors what GltfAssetR registers. */
-function fakeClone(): THREE.Group {
-  const grp = new THREE.Group();
-  const mesh = new THREE.Mesh(
-    new THREE.BoxGeometry(1, 1, 1),
-    new THREE.MeshStandardMaterial({ color: '#abcdef', roughness: 0.25, metalness: 0.75 }),
-  );
-  mesh.name = CHILD_NAME;
-  grp.add(mesh);
-  return grp;
-}
-
-describe('dispatchApplyTransform (glTF child)', () => {
-  it('bakes resolved geom + rich material, removes GltfChild, suppresses by name, ONE atomic', async () => {
-    const state = gltfChildState();
-    const storage = new MemoryStorage();
-    const stateRef = { current: state };
-    const { fn, calls } = makeDispatch(stateRef);
-    const selected: string[] = [];
-
-    const result = await dispatchApplyTransform('n_child', 'all', {
-      state,
-      storage,
-      currentFrame: 0,
-      dispatchAtomic: fn,
-      setSelection: (id) => selected.push(id),
-      gltfClone: fakeClone(),
-    });
-
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
-    expect(calls).toHaveLength(1); // ONE Cmd+Z
-
-    const next = stateRef.current;
-    // GltfChild removed; one baked PAIR added, the rich captured spec on the data half.
-    expect(next.nodes['n_child']).toBeUndefined();
-    const baked = next.nodes[result.bakedId];
-    expect(baked.type).toBe('Object');
-    expect(baked.params.scale).toEqual([1, 1, 1]);
-    const bakedData = dataHalfOf(next, result.bakedId);
-    expect(bakedData?.type).toBe('BakedData');
-    const spec = bakedData!.params.material as {
-      color: string;
-      roughness: number;
-      metalness: number;
-    };
-    expect(spec.color).toBe('#abcdef'); // captured from the live clone material
-    expect(spec.roughness).toBeCloseTo(0.25, 5);
-    expect(spec.metalness).toBeCloseTo(0.75, 5);
-
-    // suppressedChildren appended on the owning asset (no double-render).
-    expect(next.nodes['n_gltf'].params.suppressedChildren).toEqual([CHILD_NAME]);
-    // selection moved to the baked node.
-    expect(selected).toEqual([result.bakedId]);
-
-    // SC-2 (resolver half) — the baked geometry carries the scale=2 (2×2×2 box).
-    const ref = bakedData!.params.geometry as {
-      descriptor: { hash: string; vertexCount: number };
-    };
-    const geom = await readBakedGeometry(storage, ref.descriptor.hash, ref.descriptor.vertexCount);
-    geom.computeBoundingBox();
-    const size = new Vector3();
-    new Box3(geom.boundingBox!.min, geom.boundingBox!.max).getSize(size);
-    expect(size.x).toBeCloseTo(2, 4);
-    expect(size.y).toBeCloseTo(2, 4);
-    expect(size.z).toBeCloseTo(2, 4);
-  });
-
-  it('H45: the live clone geometry is NOT mutated by the bake', async () => {
-    const state = gltfChildState();
-    const storage = new MemoryStorage();
-    const stateRef = { current: state };
-    const { fn } = makeDispatch(stateRef);
-    const clone = fakeClone();
-    const childGeom = (clone.getObjectByName(CHILD_NAME) as THREE.Mesh).geometry;
-    const posBefore = Float32Array.from(childGeom.getAttribute('position').array);
-
-    await dispatchApplyTransform('n_child', 'all', {
-      state,
-      storage,
-      currentFrame: 0,
-      dispatchAtomic: fn,
-      setSelection: () => {},
-      gltfClone: clone,
-    });
-
-    const posAfter = childGeom.getAttribute('position').array;
-    expect(Array.from(posAfter)).toEqual(Array.from(posBefore));
-  });
-
-  it('rejects with no live clone (asset not rendered) — no mutation', async () => {
+// #1053 — a kept clone-road import is not drawn, so Apply has nothing to read. It used to bake the
+// child off the live render clone; that road went with the clone renderer.
+describe('#1053 — Apply on a kept clone-road import refuses, and is not offered', () => {
+  it('refuses by the imported name, writes nothing and dispatches nothing', async () => {
     const state = gltfChildState();
     const storage = new MemoryStorage();
     const writeSpy = vi.spyOn(storage, 'write');
@@ -2147,459 +1977,25 @@ describe('dispatchApplyTransform (glTF child)', () => {
         return [];
       },
       setSelection: () => {},
-      // no gltfClone injected, and the registry is empty for this assetRef.
     });
-    expect(result.ok).toBe(false);
-    expect(dispatched).toBe(0);
-    expect(writeSpy).not.toHaveBeenCalled();
-  });
-
-  it('SC-8 (C-2): a CLIP-driven child rejects (D-04 clip half), DAG byte-unchanged', async () => {
-    // The keyframe-channel half of the animated guard is covered above; THIS
-    // pins the OTHER half — `isGltfChildClipDriven`. A TransformClip wired into
-    // the owning GltfAsset's `transformClip` socket, carrying a track keyed for
-    // this child's name, drives the child via clip sampling
-    // (resolveEvaluatedTransform.ts:206 reads the SAME `sample(seconds)[name]`).
-    // Baking a single static pose would silently freeze the animation, so Apply
-    // must reject with the animated reason — no OPFS write, no dispatch.
-    let state = gltfChildState();
-    // A TransformClip whose track targets CHILD_NAME ("Cube") — a non-trivial
-    // motion (position 0→5 over 2s) so sampling at a mid-frame is non-identity.
-    state = applyOp(state, {
-      type: 'addNode',
-      nodeId: 'n_clip',
-      nodeType: 'TransformClip',
-      params: {
-        name: 'walk',
-        duration: 2,
-        loop: 'hold',
-        keyframes: [
-          { targetNodeId: CHILD_NAME, time: 0, position: [0, 0, 0] },
-          { targetNodeId: CHILD_NAME, time: 2, position: [5, 0, 0] },
-        ],
-      },
-    }).next;
-    // Wire the clip into the owning GltfAsset's transformClip input — this is
-    // the edge the renderer (GltfAssetR) + the guard both read.
-    state = applyOp(state, {
-      type: 'connect',
-      from: { node: 'n_clip', socket: 'out' },
-      to: { node: 'n_gltf', socket: 'transformClip' },
-    }).next;
-
-    const storage = new MemoryStorage();
-    const writeSpy = vi.spyOn(storage, 'write');
-    let dispatched = 0;
-    const result = await dispatchApplyTransform('n_child', 'all', {
-      state,
-      storage,
-      currentFrame: 60, // 1.0s — mid-clip, the track samples to [2.5,0,0]
-      dispatchAtomic: () => {
-        dispatched++;
-        return [];
-      },
-      setSelection: () => {},
-      gltfClone: fakeClone(),
-    });
-
-    expect(result.ok).toBe(false);
-    if (result.ok) return;
-    expect(result.reason).toContain('animated'); // the clip-driven half fired
-    // No mutation, no OPFS write — proving the reject is BEFORE any side effect.
-    expect(dispatched).toBe(0);
-    expect(writeSpy).not.toHaveBeenCalled();
-  });
-
-  it('SC-8 extend: a keyframed child rejects (D-04), DAG byte-unchanged', async () => {
-    let state = gltfChildState();
-    state = applyOp(state, {
-      type: 'addNode',
-      nodeId: 'kf',
-      nodeType: 'KeyframeChannelVec3',
-      params: {
-        name: 'pos',
-        target: 'n_child',
-        paramPath: 'position',
-        keyframes: [{ time: 0, value: [0, 0, 0], easing: 'linear' }],
-      },
-    }).next;
-    const storage = new MemoryStorage();
-    const writeSpy = vi.spyOn(storage, 'write');
-    let dispatched = 0;
-    const result = await dispatchApplyTransform('n_child', 'all', {
-      state,
-      storage,
-      currentFrame: 30,
-      dispatchAtomic: () => {
-        dispatched++;
-        return [];
-      },
-      setSelection: () => {},
-      gltfClone: fakeClone(),
-    });
-    expect(result.ok).toBe(false);
-    if (result.ok) return;
-    expect(result.reason).toContain('animated');
-    expect(dispatched).toBe(0);
-    expect(writeSpy).not.toHaveBeenCalled();
-  });
-});
-
-// #1108 — the baked Object used to land at the scene root carrying only the child's own pose, so
-// everything the child drew under (the import Group, a wrapper, the glTF parent nodes inside the
-// clone) was dropped and the mesh jumped by that whole chain. Blender keeps an applied child under
-// its parent with the world shape unchanged, and so must this.
-//
-// BEFORE is the chain the renderer draws, composed by hand from `GroupR` (Translate(position)·R·S·
-// Translate(-pivot)) · the wrapper · the clone's parent node · the child. AFTER is the production
-// world resolver's matrix for the baked Object, times the baked vertices — so the two sides of the
-// comparison are computed by different instruments.
-describe('#1108 — an imported child baked by Apply stays under what it drew under', () => {
-  type Pose = { position: Vec3; rotation: Vec3; scale: Vec3 };
-  const CHILD_POSE: Pose = { position: [1, 0.5, 0], rotation: [0, 0, 30], scale: [2, 1, 1] };
-  const IDENTITY_POSE: Pose = { position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] };
-  const trs = (p: Pose) =>
-    new THREE.Matrix4().compose(
-      new THREE.Vector3(...p.position),
-      new THREE.Quaternion().setFromEuler(
-        new THREE.Euler(
-          THREE.MathUtils.degToRad(p.rotation[0]),
-          THREE.MathUtils.degToRad(p.rotation[1]),
-          THREE.MathUtils.degToRad(p.rotation[2]),
-          'XYZ',
-        ),
+    expect(result).toEqual({
+      ok: false,
+      reason: expect.stringContaining(
+        `"${CHILD_NAME}" was saved on the old imported-file structure`,
       ),
-      new THREE.Vector3(...p.scale),
-    );
-
-  interface Chain {
-    group: Pose & { pivot: Vec3 };
-    wrapper?: Pose;
-    gltfParent: Pose;
-  }
-  const PARENT_NAME = 'Parent';
-  const PARENT_ID = 'n_parent';
-
-  const CHAINS: Record<string, Chain> = {
-    'the import Group moved, turned and scaled about its pivot': {
-      group: { position: [5, 1, 0], rotation: [0, 0, 45], scale: [2, 2, 2], pivot: [1, 0, 0] },
-      gltfParent: IDENTITY_POSE,
-    },
-    'a glTF parent node inside the clone': {
-      group: { ...IDENTITY_POSE, pivot: [0, 0, 0] },
-      gltfParent: { position: [0, 3, 0], rotation: [-90, 0, 0], scale: [1, 1, 1] },
-    },
-    'a wrapper under a moved Group, over a non-uniformly scaled glTF parent (shear)': {
-      group: { position: [2, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1], pivot: [0, 0, 0] },
-      wrapper: { position: [0, 0, 2], rotation: [0, 30, 0], scale: [1, 1, 1] },
-      gltfParent: { position: [0, 1, 0], rotation: [0, 0, 0], scale: [1, 3, 1] },
-    },
-    'a mirroring glTF parent': {
-      group: { position: [0, 0, 3], rotation: [0, 0, 0], scale: [1, 1, 1], pivot: [0, 0, 0] },
-      gltfParent: { position: [0, 0, 0], rotation: [0, 0, 0], scale: [-1, 1, 1] },
-    },
-  };
-
-  function chainState(c: Chain): DagState {
-    const ops: Op[] = [
-      { type: 'addNode', nodeId: 'n_import', nodeType: 'Group', params: c.group },
-      {
-        type: 'connect',
-        from: { node: 'n_import', socket: 'out' },
-        to: { node: 'n_scene', socket: 'children' },
-      },
-      {
-        type: 'addNode',
-        nodeId: 'n_gltf',
-        nodeType: 'GltfAsset',
-        params: {
-          assetRef: ASSET_REF,
-          nodeNameMap: { [CHILD_NAME]: 'n_child', [PARENT_NAME]: PARENT_ID },
-        },
-      },
-    ];
-    if (c.wrapper) {
-      ops.push(
-        { type: 'addNode', nodeId: 'n_wrap', nodeType: 'Transform', params: c.wrapper },
-        {
-          type: 'connect',
-          from: { node: 'n_gltf', socket: 'out' },
-          to: { node: 'n_wrap', socket: 'target' },
-        },
-        {
-          type: 'connect',
-          from: { node: 'n_wrap', socket: 'out' },
-          to: { node: 'n_import', socket: 'children' },
-        },
-      );
-    } else {
-      ops.push({
-        type: 'connect',
-        from: { node: 'n_gltf', socket: 'out' },
-        to: { node: 'n_import', socket: 'children' },
-      });
-    }
-    ops.push(
-      ...(importedChildOps('n_child', {
-        assetRef: ASSET_REF,
-        childName: CHILD_NAME,
-        ...CHILD_POSE,
-        overridden: { position: true, rotation: true, scale: true },
-      }) as Op[]),
-    );
-    return applyAll(buildSceneScaffold(), ops);
-  }
-
-  /** The live clone as the renderer holds it: clone root → glTF parent node → the posed child. */
-  function chainClone(c: Chain): THREE.Group {
-    const root = new THREE.Group();
-    const parent = new THREE.Object3D();
-    parent.name = PARENT_NAME;
-    parent.applyMatrix4(trs(c.gltfParent));
-    const child = fakeClone().getObjectByName(CHILD_NAME)!;
-    child.applyMatrix4(trs(CHILD_POSE));
-    root.add(parent);
-    parent.add(child);
-    return root;
-  }
-
-  function drawnChain(c: Chain): THREE.Matrix4 {
-    const g = c.group;
-    return trs(g)
-      .multiply(new THREE.Matrix4().makeTranslation(-g.pivot[0], -g.pivot[1], -g.pivot[2]))
-      .multiply(c.wrapper ? trs(c.wrapper) : new THREE.Matrix4())
-      .multiply(trs(c.gltfParent))
-      .multiply(trs(CHILD_POSE));
-  }
-
-  const worldPoints = (geom: THREE.BufferGeometry, m: THREE.Matrix4) => {
-    const a = geom.getAttribute('position');
-    return Array.from({ length: a.count }, (_, i) =>
-      new THREE.Vector3().fromBufferAttribute(a, i).applyMatrix4(m),
-    );
-  };
-
-  /** Triangles that face inward as drawn: world winding, flipped when the world matrix mirrors. */
-  const inwardFaces = (geom: THREE.BufferGeometry, m: THREE.Matrix4) => {
-    const p = worldPoints(geom, m);
-    const centre = p.reduce((s, v) => s.add(v), new THREE.Vector3()).divideScalar(p.length);
-    const index = geom.getIndex();
-    const corners = index ? index.count : p.length;
-    let inward = 0;
-    for (let i = 0; i + 2 < corners; i += 3) {
-      const [a, b, c] = [0, 1, 2].map((k) => p[index ? index.getX(i + k) : i + k]);
-      const n = new THREE.Vector3().subVectors(b, a).cross(new THREE.Vector3().subVectors(c, a));
-      const out = a.clone().add(b).add(c).divideScalar(3).sub(centre);
-      if (n.dot(out) < 0 !== m.determinant() < 0) inward++;
-    }
-    return inward;
-  };
-
-  async function applyOnChain(c: Chain, mask: 'all' | 'location' | 'rotation' | 'scale') {
-    const state = chainState(c);
-    const clone = chainClone(c);
-    const source = (clone.getObjectByName(CHILD_NAME) as THREE.Mesh).geometry;
-    const before = worldPoints(source, drawnChain(c));
-    const storage = new MemoryStorage();
-    const stateRef = { current: state };
-    const { fn } = makeDispatch(stateRef);
-    const result = await dispatchApplyTransform('n_child', mask, {
-      state,
-      storage,
-      currentFrame: 0,
-      dispatchAtomic: fn,
-      setSelection: () => {},
-      gltfClone: clone,
     });
-    expect(result.ok).toBe(true);
-    if (!result.ok) throw new Error(result.reason);
-    const next = stateRef.current;
-    const { geometry: ref } = dataHalfOf(next, result.bakedId)!.params as {
-      geometry: { descriptor: { hash: string; vertexCount: number } };
-    };
-    const baked = await readBakedGeometry(storage, ref.descriptor.hash, ref.descriptor.vertexCount);
-    const world = resolveWorldTransform(next, result.bakedId, {
-      time: { frame: 0, seconds: 0, normalized: 0 },
-    });
-    expect(world).not.toBeNull();
-    const after = new THREE.Matrix4().fromArray(world!.matrix);
-    return { next, bakedId: result.bakedId, before, baked, after };
-  }
-
-  const holdersOf = (state: DagState, id: string) =>
-    Object.values(state.nodes)
-      .filter((n) =>
-        Object.values(n.inputs ?? {})
-          .flat()
-          .some((e) => (e as { node?: string } | undefined)?.node === id),
-      )
-      .map((n) => n.id);
-
-  for (const [name, chain] of Object.entries(CHAINS)) {
-    for (const mask of ['all', 'location', 'rotation', 'scale'] as const) {
-      it(`${name} — Apply ${mask} keeps every drawn vertex where it was, under the import Group`, async () => {
-        const { next, bakedId, before, baked, after } = await applyOnChain(chain, mask);
-        expect(holdersOf(next, bakedId)).toEqual(['n_import']);
-        const drawnAfter = worldPoints(baked, after);
-        expect(drawnAfter).toHaveLength(before.length);
-        const worst = Math.max(...before.map((v, i) => v.distanceTo(drawnAfter[i])));
-        expect(worst).toBeLessThan(1e-6);
-        expect(inwardFaces(baked, after)).toBe(0);
-        if (mask === 'all') {
-          expect(next.nodes[bakedId].params).toMatchObject({
-            position: [0, 0, 0],
-            rotation: [0, 0, 0],
-            scale: [1, 1, 1],
-          });
-        }
-      });
-    }
-  }
-
-  // What sits above the child is read at the current frame and is no longer above the bake, so an
-  // animation there would stop at that frame (measured before the refusal: a clip track or a baked
-  // channel on the glTF parent left the bake 4 units off the drawn mesh one second later). Each
-  // ancestor is asked what the child is asked for itself. The holder is not: the bake stays under it.
-  const MOVING_CHAIN =
-    CHAINS['a wrapper under a moved Group, over a non-uniformly scaled glTF parent (shear)'];
-  const vec3Channel = (
-    target: string,
-    paramPath: string,
-    from: Vec3,
-    to: Vec3,
-    extra = {},
-  ): Op => ({
-    type: 'addNode',
-    nodeId: 'n_moving',
-    nodeType: 'KeyframeChannelVec3',
-    params: {
-      name: 'moving',
-      target,
-      paramPath,
-      ...extra,
-      keyframes: [
-        { time: 0, value: from, easing: 'linear' },
-        { time: 2, value: to, easing: 'linear' },
-      ],
-    },
-  });
-  const ANIMATED_ANCESTORS: Record<string, { ops: Op[]; names: string }> = {
-    'a clip track on the glTF parent node': {
-      names: PARENT_NAME,
-      ops: [
-        {
-          type: 'addNode',
-          nodeId: 'n_clip',
-          nodeType: 'TransformClip',
-          params: {
-            name: 'walk',
-            duration: 2,
-            loop: 'hold',
-            keyframes: [
-              { targetNodeId: PARENT_NAME, time: 0, position: [0, 1, 0] },
-              { targetNodeId: PARENT_NAME, time: 2, position: [4, 1, 0] },
-            ],
-          },
-        },
-        {
-          type: 'connect',
-          from: { node: 'n_clip', socket: 'out' },
-          to: { node: 'n_gltf', socket: 'transformClip' },
-        },
-      ],
-    },
-    'a baked channel on the glTF parent node, which has no node of its own in the graph': {
-      names: PARENT_NAME,
-      ops: [vec3Channel(PARENT_ID, 'position', [0, 1, 0], [4, 1, 0], { childName: PARENT_NAME })],
-    },
-    'a keyframed wrapper between the import Group and the asset': {
-      names: 'n_wrap',
-      ops: [vec3Channel('n_wrap', 'position', [0, 0, 2], [4, 0, 2])],
-    },
-  };
-
-  for (const [name, { ops, names }] of Object.entries(ANIMATED_ANCESTORS)) {
-    it(`refuses, before writing anything, when ${name} animates`, async () => {
-      const state = applyAll(chainState(MOVING_CHAIN), ops);
-      const storage = new MemoryStorage();
-      const writeSpy = vi.spyOn(storage, 'write');
-      let dispatched = 0;
-      const result = await dispatchApplyTransform('n_child', 'all', {
-        state,
-        storage,
-        currentFrame: 30,
-        dispatchAtomic: () => {
-          dispatched++;
-          return [];
-        },
-        setSelection: () => {},
-        gltfClone: chainClone(MOVING_CHAIN),
-      });
-      expect(result.ok).toBe(false);
-      if (result.ok) return;
-      expect(result.reason).toContain(`"${names}"`);
-      expect(result.reason).toContain('animated');
-      expect(dispatched).toBe(0);
-      expect(writeSpy).not.toHaveBeenCalled();
-    });
-  }
-
-  it('an animated import Group is not refused, and the bake keeps following it', async () => {
-    const chain = MOVING_CHAIN;
-    const state = applyAll(chainState(chain), [
-      vec3Channel('n_import', 'position', chain.group.position, [6, 0, 0]),
-    ]);
-    const clone = chainClone(chain);
-    const source = (clone.getObjectByName(CHILD_NAME) as THREE.Mesh).geometry;
-    const storage = new MemoryStorage();
-    const stateRef = { current: state };
-    const { fn } = makeDispatch(stateRef);
-    const result = await dispatchApplyTransform('n_child', 'all', {
-      state,
-      storage,
-      currentFrame: 0,
-      dispatchAtomic: fn,
-      setSelection: () => {},
-      gltfClone: clone,
-    });
-    expect(result.ok, result.ok ? '' : result.reason).toBe(true);
-    if (!result.ok) return;
-    const next = stateRef.current;
-    expect(holdersOf(next, result.bakedId)).toEqual(['n_import']);
-    const { geometry: ref } = dataHalfOf(next, result.bakedId)!.params as {
-      geometry: { descriptor: { hash: string; vertexCount: number } };
-    };
-    const baked = await readBakedGeometry(storage, ref.descriptor.hash, ref.descriptor.vertexCount);
-    // One second in, the Group is halfway along its keys; the chain draws under it there.
-    const moved = { ...chain, group: { ...chain.group, position: [4, 0, 0] as Vec3 } };
-    const before = worldPoints(source, drawnChain(moved));
-    const world = resolveWorldTransform(next, result.bakedId, {
-      time: { frame: 60, seconds: 1, normalized: 0 },
-    });
-    const drawnAfter = worldPoints(baked, new THREE.Matrix4().fromArray(world!.matrix));
-    expect(Math.max(...before.map((v, i) => v.distanceTo(drawnAfter[i])))).toBeLessThan(1e-6);
+    // #1134 — named the way the outliner names it, never by id.
+    expect(result.ok ? '' : result.reason).not.toContain('n_child');
+    expect(dispatched).toBe(0);
+    expect(writeSpy).not.toHaveBeenCalled();
   });
 
-  it('a flat import bakes exactly as before: the child pose is kept verbatim, under the scene', async () => {
+  it('is not offered: canApplyTransform agrees with the dispatcher', () => {
+    // An `Object` over mesh data, so the type admission above it says yes; the answer is the
+    // import's alone (reddened by deleting the `isImportedChild` line in `canApplyTransform`).
     const state = gltfChildState();
-    const storage = new MemoryStorage();
-    const stateRef = { current: state };
-    const { fn } = makeDispatch(stateRef);
-    const result = await dispatchApplyTransform('n_child', 'location', {
-      state,
-      storage,
-      currentFrame: 0,
-      dispatchAtomic: fn,
-      setSelection: () => {},
-      gltfClone: fakeClone(),
-    });
-    expect(result.ok).toBe(true);
-    if (!result.ok) return;
-    expect(holdersOf(stateRef.current, result.bakedId)).toEqual(['n_scene']);
-    expect(stateRef.current.nodes[result.bakedId].params).toMatchObject({
-      rotation: [0, 0, 0],
-      scale: [2, 2, 2],
-    });
+    expect(state.nodes['n_child']?.type).toBe('Object');
+    expect(canApplyTransform(state, 'n_child')).toBe(false);
   });
 });
 
@@ -2626,29 +2022,6 @@ describe('#1119 — a bake refuses attributes the baked store cannot hold', () =
     one.setAttribute('uv1', one.getAttribute('uv').clone());
     expect(unheldAttributesBakeRefusal('box', one)).toContain('carries uv1, which');
     expect(unheldAttributesBakeRefusal('box', one)).toContain('would drop it.');
-  });
-
-  it('an imported child drawn from the file refuses, writes nothing and dispatches nothing', async () => {
-    const state = gltfChildState();
-    const storage = new MemoryStorage();
-    const writeSpy = vi.spyOn(storage, 'write');
-    const clone = fakeClone();
-    withCornerLayers((clone.getObjectByName(CHILD_NAME) as THREE.Mesh).geometry);
-    let dispatched = 0;
-    const result = await dispatchApplyTransform('n_child', 'all', {
-      state,
-      storage,
-      currentFrame: 0,
-      dispatchAtomic: () => {
-        dispatched++;
-        return [];
-      },
-      setSelection: () => {},
-      gltfClone: clone,
-    });
-    expect(result).toEqual({ ok: false, reason: expect.stringContaining('carries color, uv1,') });
-    expect(dispatched).toBe(0);
-    expect(writeSpy).not.toHaveBeenCalled();
   });
 
   it('a mesh baked from the geometry registry refuses the same way', async () => {
@@ -2679,7 +2052,6 @@ describe('#1132 — a refused Apply writes nothing to storage', () => {
   async function applyRefused(
     selectedId: string,
     state: DagState,
-    gltfClone?: THREE.Group,
   ): Promise<{
     result: Awaited<ReturnType<typeof dispatchApplyTransform>>;
     writes: number;
@@ -2697,7 +2069,6 @@ describe('#1132 — a refused Apply writes nothing to storage', () => {
         return [];
       },
       setSelection: () => {},
-      ...(gltfClone ? { gltfClone } : {}),
     });
     return { result, writes: writeSpy.mock.calls.length, dispatched };
   }
@@ -2744,33 +2115,6 @@ describe('#1132 — a refused Apply writes nothing to storage', () => {
     expect(dispatched).toBe(0);
     expect(writes).toBe(0);
   });
-
-  it('the imported-child bake refuses a child with no material before it writes', async () => {
-    const clone = fakeClone();
-    (clone.getObjectByName(CHILD_NAME) as THREE.Mesh).material = [];
-    const { result, writes, dispatched } = await applyRefused('n_child', gltfChildState(), clone);
-    expect(result).toEqual({ ok: false, reason: `Apply: child "${CHILD_NAME}" has no material.` });
-    expect(dispatched).toBe(0);
-    expect(writes).toBe(0);
-  });
-
-  it('the positive control: the same child with its material writes and dispatches', async () => {
-    const stateRef = { current: gltfChildState() };
-    const { fn, calls } = makeDispatch(stateRef);
-    const storage = new MemoryStorage();
-    const writeSpy = vi.spyOn(storage, 'write');
-    const result = await dispatchApplyTransform('n_child', 'all', {
-      state: stateRef.current,
-      storage,
-      currentFrame: 0,
-      dispatchAtomic: fn,
-      setSelection: () => {},
-      gltfClone: fakeClone(),
-    });
-    expect(result.ok).toBe(true);
-    expect(calls).toHaveLength(1);
-    expect(writeSpy).toHaveBeenCalled();
-  });
 });
 
 describe('#1134 — a refusal names the object the way the outliner does', () => {
@@ -2792,25 +2136,6 @@ describe('#1134 — a refusal names the object the way the outliner does', () =>
     });
     expect(result).toEqual({ ok: false, reason: expect.stringContaining('"Hero" carries uv1') });
     expect(result.ok ? '' : result.reason).not.toContain(PRIM_ID);
-  });
-
-  it('quotes an imported child by the name it was imported with', async () => {
-    const clone = fakeClone();
-    const geometry = (clone.getObjectByName(CHILD_NAME) as THREE.Mesh).geometry;
-    geometry.setAttribute('uv1', geometry.getAttribute('uv').clone());
-    const result = await dispatchApplyTransform('n_child', 'all', {
-      state: gltfChildState(),
-      storage: new MemoryStorage(),
-      currentFrame: 0,
-      dispatchAtomic: () => [],
-      setSelection: () => {},
-      gltfClone: clone,
-    });
-    expect(result).toEqual({
-      ok: false,
-      reason: expect.stringContaining(`"${CHILD_NAME}" carries uv1`),
-    });
-    expect(result.ok ? '' : result.reason).not.toContain('n_child');
   });
 });
 

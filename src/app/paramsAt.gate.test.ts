@@ -135,7 +135,6 @@ const CONSUMERS: Record<string, Decision> = {
   // #1284 — a bone's world position: evaluates the GltfAsset for its hierarchy and folds each
   // node's pose through resolveEvaluatedTransform, the way resolveWorldTransform does.
   'src/app/gltfNodeWorld.ts': authored('folds-its-own-overlays'),
-  'src/app/animate/dispatchApplyTransform.ts': authored('folds-its-own-overlays'),
   'src/app/resolveEvaluatedParam.ts': authored('produces-an-overlay'),
   'src/app/resolveEvaluatedTransform.ts': authored('produces-an-overlay'),
   'src/app/transformChannelSource.ts': authored('produces-an-overlay'),
@@ -270,7 +269,10 @@ describe('#582 — who evaluates the graph, and which params they need', () => {
     // 41 → 42 at #1065: the constraint-target picker, declared above as fixed-ctx.
     // 42 → 43 at #1284: a bone's world position (gltfNodeWorld), declared above as authored.
     // So 43 + 2 = 45.
-    expect(evaluatorConsumers()).toHaveLength(45); // 39 -> 40 at #935 (placement) (the motion resolver)
+    // 45 → 44 at #1053: Apply on a clone-road child evaluated the owning `GltfAsset` to place the
+    // bake under what the child drew under. That road baked off the live render clone, which went
+    // with the clone renderer; Apply now refuses a kept import, so the evaluate and the row went.
+    expect(evaluatorConsumers()).toHaveLength(44); // 39 -> 40 at #935 (placement) (the motion resolver)
   });
 
   it('every reason is load-bearing — no member of any union is decorative', () => {
