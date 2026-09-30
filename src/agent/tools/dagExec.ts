@@ -17,7 +17,28 @@
 
 import { z } from 'zod';
 import type { ToolDefinition, ToolContext, ToolResult } from './types';
-import { OpSchema } from '../../core/dag/types';
+import {
+  OpAddNodeSchema,
+  OpConnectSchema,
+  OpDisconnectSchema,
+  OpRemoveNodeSchema,
+  OpSetParamSchema,
+} from '../../core/dag/types';
+
+// #334 — the ops dag.exec takes, which is also the schema every request advertises.
+// It was the full OpSchema union (nine variants, ~3.9 KB on every round) while the
+// description names four. setMeta, setHidden and the spare-param ops are not part of
+// the raw surface; the op layer still has them for the app and the mutators.
+// removeNode stays: it is refused in the handler below, and that refusal carries the
+// redirect to mutator.deleteNode. Dropped from the union, a raw delete would fail
+// validation with a generic error instead.
+const DagExecOpSchema = z.discriminatedUnion('type', [
+  OpAddNodeSchema,
+  OpRemoveNodeSchema,
+  OpConnectSchema,
+  OpDisconnectSchema,
+  OpSetParamSchema,
+]);
 
 const OpBatchSchema = z.object({
   description: z
@@ -25,7 +46,7 @@ const OpBatchSchema = z.object({
     .min(1)
     .describe('Human-readable description of what this batch does (becomes the undo entry title)'),
   ops: z
-    .array(OpSchema)
+    .array(DagExecOpSchema)
     .min(1, 'At least one Op is required')
     .describe(
       'Array of Ops to execute in order. Supported: addNode, connect, disconnect, setParam. ' +

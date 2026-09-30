@@ -298,9 +298,10 @@ export async function runAgentTurn(config: LLMConfig, options: TurnOptions): Pro
   const availableTools = filterToolsByMode(listTools(), mode);
   const toolSchemas = buildToolSchemas(availableTools);
 
-  // A6: static prompt — rules + tool catalogue + op examples. Doesn't
-  // include DAG state. Re-sending it across rounds is cheap.
-  const systemPrompt = buildStaticSystemPrompt(mode, availableTools);
+  // A6: static prompt — rules + op examples. Doesn't include DAG state. The tool
+  // catalogue is NOT restated here: every name and description already travels in
+  // the request's `tools` array, and a second copy cost ~a fifth of round 1 (#334).
+  const systemPrompt = buildStaticSystemPrompt(mode);
 
   // A8: capture the prior session history BEFORE pushing the current user
   // message so we can thread it into the LLM context.
@@ -924,9 +925,7 @@ function filterToolsByMode(tools: ToolDefinition[], mode: AgentMode): ToolDefini
 // Prompt construction
 // ---------------------------------------------------------------------------
 
-function buildStaticSystemPrompt(mode: AgentMode, tools: ToolDefinition[]): string {
-  const toolList = tools.map((t) => `  - ${t.name}: ${t.description}`).join('\n');
-
+function buildStaticSystemPrompt(mode: AgentMode): string {
   const opExamples = `
 Op shape examples (use inside dag.exec's "ops" array). Tokens like
 <sceneId> are PLACEHOLDERS — read the actual id from the Context
@@ -968,9 +967,6 @@ Quick conventions (full guidance in strategy resources — call agent.getStrateg
   return [
     `You are Basher's AI agent — a director-first assistant for procedural 3D scene authoring.`,
     `Mode: ${mode}`,
-    ``,
-    `Available tools:`,
-    toolList,
     ``,
     `Rules:`,
     `- You NEVER mutate the scene directly. Mutation tools return Op[] that get proposed as a diff for the user to accept or reject.`,
