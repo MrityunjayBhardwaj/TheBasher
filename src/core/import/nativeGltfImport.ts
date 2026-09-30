@@ -64,6 +64,7 @@ import type {
   Vec3,
 } from '../../nodes/types';
 import type { Op } from '../dag/types';
+import * as MikkTSpace from 'three/examples/jsm/libs/mikktspace.module.js';
 import {
   decodeDataUri,
   parseGltfContainer,
@@ -204,6 +205,22 @@ const HELD_ATTRIBUTES: ReadonlySet<string> = new Set([
   'WEIGHTS_0',
 ]);
 
+// #1381 — what a mesh may carry that the stored mesh DERIVES rather than holds. A file's tangents are
+// the MikkTSpace tangents of its own positions, normals and UVs (glTF 2.0 §3.7.2.1, `Specification.adoc:1768`),
+// Blender never reads them (no `TANGENT` in `io_scene_gltf2/blender/imp/`, 5.1.1) and a project
+// saves authored mesh data, never derived data. So they come across by being CHECKED and dropped:
+// `unreproducedTangents` refuses a file whose tangents MikkTSpace does not give back.
+const DERIVED_ATTRIBUTES: ReadonlySet<string> = new Set(['TANGENT']);
+
+/**
+ * #1381 — how far a file's tangent may sit from the MikkTSpace one before the file is refused.
+ * Measured 2026-09-30 over the Khronos tangent assets, MikkTSpace against the file's own `TANGENT`:
+ * mean 0.0001° (`NormalTangentMirrorTest`, 15,720 corners) and 0.046°, max 0.97°
+ * (`AnisotropyRotationTest`, 22,428); three's own non-MikkTSpace `computeTangents` reaches 10.6° on
+ * the first. Two degrees keeps float noise in and a different algorithm out.
+ */
+const TANGENT_TOLERANCE_DEGREES = 2;
+
 const COMPONENT_BYTES: Record<number, number> = {
   5120: 1,
   5121: 1,
@@ -297,7 +314,9 @@ const HELD_TEXTURE_SLOTS = HELD_TEXTURE_PATHS;
 function undrawableAttributes(json: NativeGltfJson, meshIndex: number): NativeImportRefusal | null {
   for (const prim of json.meshes?.[meshIndex]?.primitives ?? []) {
     const attributes = prim.attributes ?? {};
-    const undrawable = Object.keys(attributes).filter((name) => !HELD_ATTRIBUTES.has(name));
+    const undrawable = Object.keys(attributes).filter(
+      (name) => !HELD_ATTRIBUTES.has(name) && !DERIVED_ATTRIBUTES.has(name),
+    );
     if (undrawable.length > 0) {
       return {
         refused: `mesh ${meshIndex} carries ${undrawable.join(', ')}, which a native mesh has no buffer slot to draw`,
@@ -314,6 +333,104 @@ function undrawableAttributes(json: NativeGltfJson, meshIndex: number): NativeIm
           issue: '#1063',
         };
       }
+    }
+  }
+  return null;
+}
+
+/**
+ * #1381 — a mesh whose `TANGENT` MikkTSpace does not reproduce, or `null` when every primitive's
+ * tangents are the ones the draw would derive (and so can be dropped without losing anything).
+ *
+ * Per primitive, as glTF defines the tangents it expects (`Specification.adoc`): computed from the
+ * positions, the normals and the UV set the NORMAL TEXTURE samples (`:1768`, `TEXCOORD_0` without
+ * one); ignored when the primitive has no normals (`:1760`), so those are dropped unchecked. Each
+ * corner's direction must lie within {@link TANGENT_TOLERANCE_DEGREES} and its handedness must
+ * match. MikkTSpace's W comes out negated against glTF's on every corner of both Khronos tangent
+ * assets (measured, 38,148 corners), which is why three's `computeMikkTSpaceTangents` negates it by
+ * default (`BufferGeometryUtils.js:14`); compared the same way here.
+ */
+async function unreproducedTangents(
+  json: NativeGltfJson,
+  buffers: Uint8Array[],
+  meshIndex: number,
+): Promise<NativeImportRefusal | null> {
+  const primitives = json.meshes?.[meshIndex]?.primitives ?? [];
+  for (const prim of primitives) {
+    const attributes = prim.attributes ?? {};
+    const tangentAccessor = attributes.TANGENT;
+    const normalAccessor = attributes.NORMAL;
+    if (typeof tangentAccessor !== 'number' || typeof normalAccessor !== 'number') continue;
+    const accessor = json.accessors?.[tangentAccessor] as
+      | { type?: string; componentType?: number }
+      | undefined;
+    if (accessor?.type !== 'VEC4' || accessor.componentType !== 5126) {
+      return {
+        refused: `mesh ${meshIndex} carries a TANGENT that is not four floats`,
+        issue: '#1381',
+      };
+    }
+    const elementBytes = elementBytesOf(json, tangentAccessor);
+    if (elementBytes !== undefined && interleaved(json, tangentAccessor, elementBytes)) {
+      return {
+        refused: `mesh ${meshIndex} stores interleaved vertex data, which this reader does not split`,
+        issue: '#1063',
+      };
+    }
+    const normalTexture = (
+      materialOf(json, typeof prim.material === 'number' ? prim.material : -1) as {
+        normalTexture?: { texCoord?: number };
+      }
+    ).normalTexture;
+    const set = typeof normalTexture?.texCoord === 'number' ? normalTexture.texCoord : 0;
+    const uvAccessor = attributes[`TEXCOORD_${set}`];
+    if (typeof uvAccessor !== 'number') {
+      return {
+        refused: `mesh ${meshIndex} carries tangents but no TEXCOORD_${set} to derive them from`,
+        issue: '#1381',
+      };
+    }
+    const read = readPrimitive(json, buffers, meshIndex, prim);
+    if ('refused' in read) return read;
+    const normals = readAccessor(json, buffers, normalAccessor);
+    const uvs = readAccessor(json, buffers, uvAccessor);
+    const tangents = readAccessor(json, buffers, tangentAccessor);
+    const n = read.corners.length;
+    const position = new Float32Array(n * 3);
+    const normal = new Float32Array(n * 3);
+    const texcoord = new Float32Array(n * 2);
+    for (let k = 0; k < n; k++) {
+      const v = read.corners[k];
+      position.set(read.positions.subarray(v * 3, v * 3 + 3), k * 3);
+      normal.set(normals.subarray(v * 3, v * 3 + 3), k * 3);
+      texcoord.set(uvs.subarray(v * 2, v * 2 + 2), k * 2);
+    }
+    await MikkTSpace.ready;
+    const derived = MikkTSpace.generateTangents(position, normal, texcoord);
+    let off = 0;
+    let worst = 0;
+    for (let k = 0; k < n; k++) {
+      const v = read.corners[k];
+      const [fx, fy, fz, fw] = tangents.subarray(v * 4, v * 4 + 4);
+      const [mx, my, mz, mw] = derived.subarray(k * 4, k * 4 + 4);
+      const lf = Math.hypot(fx, fy, fz);
+      const lm = Math.hypot(mx, my, mz);
+      const degrees =
+        lf > 0 && lm > 0
+          ? (Math.acos(Math.min(1, Math.max(-1, (fx * mx + fy * my + fz * mz) / (lf * lm)))) *
+              180) /
+            Math.PI
+          : 180;
+      if (degrees > TANGENT_TOLERANCE_DEGREES || Math.sign(fw) !== -Math.sign(mw)) {
+        off++;
+        worst = Math.max(worst, degrees);
+      }
+    }
+    if (off > 0) {
+      return {
+        refused: `mesh ${meshIndex} carries tangents that MikkTSpace does not reproduce (${off} of ${n} corners differ, by up to ${worst.toFixed(1)}°), so dropping them would change how it draws`,
+        issue: '#1381',
+      };
     }
   }
   return null;
@@ -1514,6 +1631,8 @@ async function buildNativeOps(
     // reads any attribute it is given, and what decides is whether the stored mesh would draw it.
     const undrawable = undrawableAttributes(json, node.mesh as number);
     if (undrawable !== null) return undrawable;
+    const unreproduced = await unreproducedTangents(json, buffers, node.mesh as number);
+    if (unreproduced !== null) return unreproduced;
     // #393 — a skinned node's mesh names its joint numbers by the skeleton's own bone names.
     const vertexGroups =
       typeof node.skin === 'number' && read !== null ? read.skins[node.skin].vertexGroups : null;

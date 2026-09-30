@@ -612,7 +612,9 @@ describe('#1052 — readGltfMesh reads every primitive into one mesh', () => {
 
   it('an attribute no buffer draws is refused on any primitive, not only the first', async () => {
     const json = twoPrimitiveFixture((prims) => {
-      prims[1].attributes.TANGENT = 0;
+      // A semantic glTF does not define and that is not an application's own (`_…`): nothing
+      // will ever draw it. (#1381 took `TANGENT`, which this row used to use, off the list.)
+      prims[1].attributes.FOO = 0;
     });
     const result = await buildNativeGltfImportOps({
       buffer: new TextEncoder().encode(JSON.stringify(json)).buffer as ArrayBuffer,
@@ -889,8 +891,9 @@ describe('buildNativeGltfImportOps', () => {
           const attributes = cubeAttributes(json);
           attributes.TANGENT = attributes.NORMAL;
         }),
-      '#1125',
-      'carries TANGENT,',
+      // #1381 — tangents come across by being checked; a VEC3 one is malformed (glTF: VEC4 float).
+      '#1381',
+      'carries a TANGENT that is not four floats',
     ],
     [
       'a UV set numbered past a gap',
@@ -1864,5 +1867,132 @@ describe('#1316 — both import roads store the same sampler value', () => {
       wrapT: native?.wrapT,
     });
     expect(native?.wrapS).toBe('repeat');
+  });
+});
+
+describe('#1381 — a file`s tangents are checked against MikkTSpace and dropped', () => {
+  // The geometry of Khronos's `NormalTangentMirrorTest` (CC BY 4.0, credited in the file): 15,720
+  // corners whose tangents Khronos authored, including mirrored UV islands.
+  const MIRROR = 'public/assets/tangent-mirror.glb';
+
+  /** The mirror fixture, its JSON and binary chunk edited in place and repacked as a GLB. */
+  function editedMirror(
+    edit: (json: Record<string, unknown>, floats: (accessor: number) => Float32Array) => void,
+  ): ArrayBuffer {
+    const bytes = new Uint8Array(fixture(MIRROR));
+    const view = new DataView(bytes.buffer);
+    const jsonLength = view.getUint32(12, true);
+    const json = JSON.parse(new TextDecoder().decode(bytes.subarray(20, 20 + jsonLength))) as {
+      accessors: { bufferView: number; count: number; type: string }[];
+      bufferViews: { byteOffset?: number }[];
+    } & Record<string, unknown>;
+    const bin = bytes.slice(28 + jsonLength);
+    const width: Record<string, number> = { VEC2: 2, VEC3: 3, VEC4: 4 };
+    edit(json, (accessor) => {
+      const a = json.accessors[accessor];
+      const offset = json.bufferViews[a.bufferView].byteOffset ?? 0;
+      return new Float32Array(bin.buffer, offset, a.count * width[a.type]);
+    });
+    let text = new TextEncoder().encode(JSON.stringify(json));
+    const padded = new Uint8Array(Math.ceil(text.length / 4) * 4).fill(0x20);
+    padded.set(text);
+    text = padded;
+    const out = new Uint8Array(12 + 8 + text.length + 8 + bin.length);
+    const o = new DataView(out.buffer);
+    o.setUint32(0, 0x46546c67, true);
+    o.setUint32(4, 2, true);
+    o.setUint32(8, out.length, true);
+    o.setUint32(12, text.length, true);
+    o.setUint32(16, 0x4e4f534a, true);
+    out.set(text, 20);
+    o.setUint32(20 + text.length, bin.length, true);
+    o.setUint32(24 + text.length, 0x004e4942, true);
+    out.set(bin, 28 + text.length);
+    return out.buffer;
+  }
+
+  const attributesOf = (json: Record<string, unknown>) =>
+    (json.meshes as { primitives: { attributes: Record<string, number> }[] }[])[0].primitives[0]
+      .attributes;
+
+  const importOf = (buffer: ArrayBuffer) =>
+    buildNativeGltfImportOps({
+      buffer,
+      assetRef: 'user-imports/native/mirror.glb',
+      sceneNodeId: 'n_scene',
+      storeImage: noImages,
+    });
+
+  beforeEach(() => {
+    __resetRegistryForTests();
+    registerAllNodes();
+  });
+
+  it('tangents MikkTSpace reproduces come across by being dropped: the mesh holds none', async () => {
+    const result = await importOf(fixture(MIRROR));
+    if ('refused' in result) throw new Error(result.refused);
+    const data = result.ops.find(
+      (op): op is Extract<Op, { type: 'addNode' }> =>
+        op.type === 'addNode' && op.nodeType === 'PolyMeshData',
+    )!;
+    const mesh = PolyMeshDataParams.parse(data.params).mesh!;
+    expect(mesh.cornerLayers.map((l) => l.name)).toEqual(['UVMap']);
+    expect(mesh.pointLayers).toEqual([]);
+  });
+
+  it('tangents turned 10° about the normal are refused, by count and angle', async () => {
+    const result = await importOf(
+      editedMirror((json, floats) => {
+        const t = floats(attributesOf(json).TANGENT);
+        const n = floats(attributesOf(json).NORMAL);
+        const [c, s] = [Math.cos((10 * Math.PI) / 180), Math.sin((10 * Math.PI) / 180)];
+        for (let v = 0; v < t.length / 4; v++) {
+          const [tx, ty, tz] = [t[v * 4], t[v * 4 + 1], t[v * 4 + 2]];
+          const [nx, ny, nz] = [n[v * 3], n[v * 3 + 1], n[v * 3 + 2]];
+          // Rodrigues about the normal (t ⟂ n): t cos θ + (n × t) sin θ.
+          t[v * 4] = tx * c + (ny * tz - nz * ty) * s;
+          t[v * 4 + 1] = ty * c + (nz * tx - nx * tz) * s;
+          t[v * 4 + 2] = tz * c + (nx * ty - ny * tx) * s;
+        }
+      }),
+    );
+    expect('refused' in result && result.issue).toBe('#1381');
+    expect('refused' in result && result.refused).toMatch(
+      /carries tangents that MikkTSpace does not reproduce \(15720 of 15720 corners differ, by up to 10\.\d°\)/,
+    );
+  });
+
+  it('tangents of the opposite handedness are refused', async () => {
+    const result = await importOf(
+      editedMirror((json, floats) => {
+        const t = floats(attributesOf(json).TANGENT);
+        for (let v = 0; v < t.length / 4; v++) t[v * 4 + 3] = -t[v * 4 + 3];
+      }),
+    );
+    expect('refused' in result && result.refused).toContain(
+      'MikkTSpace does not reproduce (15720 of 15720 corners differ',
+    );
+  });
+
+  it('tangents on a mesh with no normals are ignored, as glTF says, and it imports', async () => {
+    const result = await importOf(
+      editedMirror((json, floats) => {
+        const t = floats(attributesOf(json).TANGENT);
+        for (let v = 0; v < t.length / 4; v++) t[v * 4 + 3] = -t[v * 4 + 3];
+        delete attributesOf(json).NORMAL;
+      }),
+    );
+    expect('refused' in result ? result.refused : 'imported').toBe('imported');
+  });
+
+  it('tangents with no UV set to derive them from are refused by name', async () => {
+    const result = await importOf(
+      editedMirror((json) => {
+        delete attributesOf(json).TEXCOORD_0;
+      }),
+    );
+    expect('refused' in result && result.refused).toBe(
+      'mesh 0 carries tangents but no TEXCOORD_0 to derive them from',
+    );
   });
 });
