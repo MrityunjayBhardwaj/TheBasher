@@ -26,7 +26,7 @@
 // per-frame rows are the work list, and each names the issue that decides it.
 //
 // REF: tools/gates/cacheCensus.ts; src/core/dag/evaluator.ts (`EvaluatorCache`, cache key);
-//      issues #1314 #1315 #1318 #1385 #1386 #1389.
+//      issues #1314 #1315 #1318 #1385 #1386 #1389 #1394.
 
 import { join } from 'node:path';
 import { beforeAll, describe, expect, it } from 'vitest';
@@ -38,7 +38,7 @@ type Frequency =
   | 'per-action'
   /** At boot, once per load, or only through a dev/test hook. */
   | 'once'
-  /** On a graph or selection change, not per frame. Tracked by #1315. */
+  /** On a graph or selection change, not per frame. Each names the issue that decides it. */
   | 'per-edit'
   /** Once per render job (not per frame of it). */
   | 'per-job'
@@ -56,23 +56,55 @@ interface Origin {
 }
 
 const ORIGINS: Record<string, Origin> = {
-  'src/app/MaterialStackControls.tsx · MaterialStackControls → resolveDataKind': {
+  'src/agent/mutators/builders/addModifier.ts · preconditions → canModifyGeometry': {
     count: 1,
-    frequency: 'per-edit',
-    why: "Render body on graph change: the data's kind decides which material operators to offer.",
-    issue: 1315,
+    frequency: 'per-action',
+    why: 'Mutator validation, once per add-modifier dispatch.',
   },
-  'src/app/ModifierStackControls.tsx · ModifierStackControls → resolveDataKind': {
+  'src/app/asset/bakeGeneratedClip.ts · bakeGeneratedClipOps → clipBakeStates': {
     count: 1,
-    frequency: 'per-edit',
-    why: "Render body on graph change: the data's kind decides which modifiers to offer.",
-    issue: 1315,
+    frequency: 'per-action',
+    why: 'Cook or Generate click, or the motion-generate agent tool.',
   },
-  'src/app/modifierGeometry.ts · canWearMaterial → resolveDataKind': {
+  'src/app/asset/cookMotionGenerations.ts · cookMotionGenerations → clipBakeStates': {
     count: 1,
-    frequency: 'per-edit',
-    why: "MaterialStackControls' render body on graph change; also the add-material action.",
-    issue: 1315,
+    frequency: 'per-action',
+    why: 'The Cook click.',
+  },
+  'src/app/asset/cookMotionGenerations.ts · hasStaleGenerations → clipBakeStates': {
+    count: 1,
+    frequency: 'per-action',
+    why: 'No production caller today; its own header asks the surface that wires it to hand a cache.',
+  },
+  'src/app/asset/placeGeneratedMotion.ts · placeCookedMotionOps → clipBakeStates': {
+    count: 1,
+    frequency: 'per-action',
+    why: 'Once per cook, after the clips land.',
+  },
+  'src/app/asset/resolveMotionGenerate.ts · pendingGenerations → clipBakeStates': {
+    count: 1,
+    frequency: 'per-action',
+    why: 'Motion cook or the motion-generate agent tool.',
+  },
+  'src/app/boot.ts · boot → resolveMeshUVSpace': {
+    count: 2,
+    frequency: 'once',
+    why: 'Two dev hooks reading the UV layout and backdrop for e2e.',
+  },
+  'src/app/exposeParams.ts · exposeParams → canApplyTransform': {
+    count: 1,
+    frequency: 'per-action',
+    why: 'Only when the caller hands no answer: promoteParam, once per promote. The N panel passes the answer its selector computed through the shared UI cache (#1315).',
+  },
+  'src/app/operatorStack.ts · buildAddMaterialOpOps → canWearMaterial': {
+    count: 1,
+    frequency: 'per-action',
+    why: 'The add-material click or agent tool: the accept side of the offer.',
+  },
+  'src/app/operatorStack.ts · buildAddModifierOps → canModifyGeometry': {
+    count: 1,
+    frequency: 'per-action',
+    why: 'The add-modifier click or agent tool: the accept side of the offer.',
   },
   'src/app/viewLock.ts · hasSomethingToFollow → scanForFollow': {
     count: 1,
@@ -109,12 +141,6 @@ const ORIGINS: Record<string, Origin> = {
     frequency: 'per-action',
     why: 'The insert-keyframe key.',
   },
-  'src/app/NPanel.tsx · NodeRefField → nodeRefCandidates': {
-    count: 1,
-    frequency: 'per-edit',
-    why: 'Memo on (nodes, kind, node id).',
-    issue: 1315,
-  },
   'src/app/NPanel.tsx · takeOver → buildOverrideSlotOp': {
     count: 1,
     frequency: 'per-action',
@@ -124,12 +150,6 @@ const ORIGINS: Record<string, Origin> = {
     count: 1,
     frequency: 'per-action',
     why: 'Bake Pose click or agent mutator: one evaluation per dispatch.',
-  },
-  'src/app/animate/dispatchApplyTransform.ts · canApplyTransform → resolveEvaluatedMesh': {
-    count: 1,
-    frequency: 'per-edit',
-    why: 'A selector in the N panel: runs on each graph-store write and N panel render (MenuBar memoises it on graph + selection, #1314).',
-    issue: 1315,
   },
   'src/app/animate/dispatchApplyTransform.ts · dispatchApplyGltfChild → resolveEvaluatedMesh': {
     count: 1,
@@ -160,12 +180,6 @@ const ORIGINS: Record<string, Origin> = {
     count: 1,
     frequency: 'per-action',
     why: 'Cook or Generate click, or the motion-generate agent tool.',
-  },
-  'src/app/asset/bakeGeneratedClip.ts · clipBakeStates → evaluate': {
-    count: 1,
-    frequency: 'per-edit',
-    why: "MotionGenerateCookConnector's render body asks for the cook offer on every graph change; also per Cook click.",
-    issue: 1315,
   },
   'src/app/asset/motionPathFromCurve.ts · waypointsFromCurve → curveSamplerFor': {
     count: 1,
@@ -237,23 +251,11 @@ const ORIGINS: Record<string, Origin> = {
     frequency: 'per-action',
     why: 'A click on a mesh while the Light Brush is active.',
   },
-  'src/app/modifierGeometry.ts · canModifyGeometry → evaluate': {
-    count: 1,
-    frequency: 'per-edit',
-    why: "ModifierStackControls' render body on graph change; also the add-modifier action and agent tool.",
-    issue: 1315,
-  },
   'src/app/resolveMaterialFieldOwner.ts · mapPresenceBelow → evaluate': {
     count: 1,
     frequency: 'per-edit',
-    why: "N panel's exposed-params memo (graph, selection) and the data-lane overlay memo.",
-    issue: 1315,
-  },
-  'src/app/resolveMeshUVSpace.ts · resolveMeshUVSpace → resolveEvaluatedMesh': {
-    count: 1,
-    frequency: 'per-edit',
-    why: "UVEditor's memo on (graph, selection, retry); also two dev hooks.",
-    issue: 1315,
+    why: "N panel's exposed-params memo (graph, selection) and the data-lane overlay memo; only when a lane holds a material operator. Unmeasured.",
+    issue: 1394,
   },
   'src/app/statefulOps.ts · cookSolverStep → evaluate': {
     count: 1,
@@ -297,16 +299,16 @@ const ORIGINS: Record<string, Origin> = {
     frequency: 'per-action',
     why: 'Box-select commit, once per selectable node.',
   },
-  'src/viewport/SceneFromDAG.tsx · SceneFromDAG → resolveCameraDofAt': {
-    count: 1,
-    frequency: 'per-edit',
-    why: 'Render body on graph change (time read through getState, not subscribed): one uncached pose walk per edit when the camera focuses on its target.',
-    issue: 1315,
-  },
 };
 
 /** Every function that takes a cache, as `name@file`. Pinned so the census cannot narrow. */
 const TAKERS: string[] = [
+  'canApplyTransform@src/app/animate/dispatchApplyTransform.ts',
+  'canModifyGeometry@src/app/modifierGeometry.ts',
+  'canWearMaterial@src/app/modifierGeometry.ts',
+  'clipBakeStates@src/app/asset/bakeGeneratedClip.ts',
+  'motionCookOffer@src/app/asset/cookMotionGenerations.ts',
+  'resolveMeshUVSpace@src/app/resolveMeshUVSpace.ts',
   'resolveDataKind@src/app/modifierGeometry.ts',
   'scanForFollow@src/viewport/followScan.ts',
   'collectCompositeInputs@src/app/video/compositeDecode.ts',

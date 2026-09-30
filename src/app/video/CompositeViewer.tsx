@@ -15,13 +15,13 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useDagStore } from '../../core/dag/store';
-import { createEvaluatorCache, type EvaluatorCache } from '../../core/dag/evaluator';
 import { useTimeStore, FRAMES_PER_SECOND } from '../stores/timeStore';
 import type { NodeId } from '../../core/dag/types';
 import type { CompositionParams } from '../../nodes/Composition';
 import { drawComposite, planComposite, type LayerComposite } from './composite';
 import { collectCompositeInputs, decodeDraws } from './compositeDecode';
 import { globalFrameToCompFrame } from './videoTimelineGeometry';
+import { uiEvaluatorCache } from '../uiEvaluatorCache';
 
 export function CompositeViewer({ compId, comp }: { compId: NodeId; comp: CompositionParams }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -41,9 +41,9 @@ export function CompositeViewer({ compId, comp }: { compId: NodeId; comp: Compos
   // drawn playhead and the readout can never disagree).
   const compFrame = globalFrameToCompFrame(frame, FRAMES_PER_SECOND, fps, durationFrames);
 
-  // One cache for the viewer's life (#1389): the layer reads re-run per frame, and a
-  // layer param driven through pure nodes would otherwise re-run them every frame.
-  const cache = useMemo<EvaluatorCache>(() => createEvaluatorCache(), []);
+  // The shared UI cache (#1389, #1315): the layer reads re-run per frame, and a layer param
+  // driven through pure nodes would otherwise re-run them every frame.
+  const cache = uiEvaluatorCache;
   const inputs = useMemo(
     () => collectCompositeInputs(dagState, compId, { time: { frame, seconds, normalized } }, cache),
     [dagState, compId, frame, seconds, normalized, cache],

@@ -53,9 +53,9 @@ async function runsOver(page: Page, frames: number, playing: boolean): Promise<n
       const w = window as unknown as Win;
       const time = w.__basher_time!.getState();
       if (playing) time.play();
-      // Let the change (a selection, play) settle. Selecting mounts panels, and each mounted
-      // reader pays ONE retarget through its fresh cache (#1315's cost, not this one's), so wait
-      // until no retarget has run for 10 frames — at most 120. A per-frame caller never settles,
+      // Let the change (a selection, play) settle. Selecting mounts panels; since #1315 they share
+      // the viewport's cache and pay nothing (p1315 counts that), but a change may still settle over
+      // a few frames, so wait until no retarget has run for 10 frames — at most 120. A per-frame caller never settles,
       // and its runs then land in the window below.
       const frame = () => new Promise((r) => requestAnimationFrame(r));
       let quiet = 0;

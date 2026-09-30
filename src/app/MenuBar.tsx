@@ -55,6 +55,7 @@ import { openImportPicker, openGltfFilePicker, openMediaFilePicker } from './ass
 import { createNewComposition } from './video/newComposition';
 import { downloadSceneBundle, openSceneFilePicker } from './sceneFileActions';
 import { useFlyoutSide } from './menu/useFlyoutSide';
+import { uiEvaluatorCache } from './uiEvaluatorCache';
 
 // ---------------------------------------------------------------------------
 // Popover primitives — minimal, no library.
@@ -477,7 +478,7 @@ export function MenuBar() {
   // re-renders every frame for `currentFrame`. Asked per render, it evaluated the selection's mesh
   // (a skinned character's whole-clip retarget) on every frame of playback.
   const isPrimitive = useMemo(
-    () => Boolean(selectedId && canApplyTransform(dag, selectedId)),
+    () => Boolean(selectedId && canApplyTransform(dag, selectedId, uiEvaluatorCache)),
     [dag, selectedId],
   );
   const applyAnimated = Boolean(

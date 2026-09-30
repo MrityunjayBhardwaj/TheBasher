@@ -40,7 +40,6 @@ import { cameraDataOf } from '../app/cameraNode';
 import { cameraOrientationQuat } from '../app/cameraOrientation';
 import { useThreeRef } from '../app/character/threeRef';
 import { useDagStore } from '../core/dag/store';
-import { createEvaluatorCache, type EvaluatorCache } from '../core/dag/evaluator';
 import { useTimeStore } from '../app/stores/timeStore';
 import { useProjectStore } from '../core/project/store';
 import { useViewportStore, DEFAULT_VIEWPORT_CLIP } from '../app/stores/viewportStore';
@@ -84,6 +83,7 @@ const CLIP_REACH_INTERVAL = 15;
 // is where it was, and both call sites below still read it as a local.
 export { orthoZoomForView } from './cameraFit';
 import { orthoZoomForView } from './cameraFit';
+import { uiEvaluatorCache } from '../app/uiEvaluatorCache';
 
 /** Point a THREE camera from `position` toward `lookAt` + move the
  *  OrbitControls target to `lookAt` so orbiting pivots around the right point.
@@ -153,10 +153,10 @@ export function EditorViewCamera() {
   // carries a Track-To (to read the aim target's world pos via #202); the cache
   // makes that a content-hash HIT while the DAG is unchanged, so a constrained
   // camera doesn't re-walk the scene every frame (the SceneFromDAG cache pattern).
-  const cameraPoseCache = useMemo<EvaluatorCache>(() => createEvaluatorCache(), []);
+  const cameraPoseCache = uiEvaluatorCache;
   // #1388 — the same, for the view lock's rescan (every LOCK_RESCAN_INTERVAL frames, playing or
   // not): it collects the scene's rigs, and uncached that re-ran a character's retarget per scan.
-  const lockScanCache = useMemo<EvaluatorCache>(() => createEvaluatorCache(), []);
+  const lockScanCache = uiEvaluatorCache;
   // The Canvas (and this component) mounts ONCE for the app lifetime, but the
   // boot-framing guard's true scope is the PROJECT, not the component: each
   // project has its own saved view / active camera, and switching projects

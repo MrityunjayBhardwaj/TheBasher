@@ -174,7 +174,7 @@ import {
   readOverriddenSet,
   type OverrideDescriptor,
 } from './overrideDescriptor';
-import { createEvaluatorCache, type EvaluatorCache } from '../core/dag/evaluator';
+import { uiEvaluatorCache } from './uiEvaluatorCache';
 
 // #130 (D-04) — the per-field override decorator contract threaded into the
 // editable fields. `descriptor` names the set param + covered fields; `marked`
@@ -381,7 +381,7 @@ function NumericField({
   );
   // #1314 — a stable cache: this re-reads the evaluated graph on every playhead change, and
   // uncached that re-runs everything under the node (a character's whole-clip retarget) per frame.
-  const cache = useMemo<EvaluatorCache>(() => createEvaluatorCache(), []);
+  const cache = uiEvaluatorCache;
   const drivenValue = useMemo(() => {
     if (!driven) return null;
     const r = resolveEvaluatedParam(
@@ -572,7 +572,7 @@ function VectorField({
   const dagState = useDagStore((s) => s.state);
   // #1314 — a stable cache: this re-reads the evaluated graph on every playhead change, and
   // uncached that re-runs everything under the node (a character's whole-clip retarget) per frame.
-  const cache = useMemo<EvaluatorCache>(() => createEvaluatorCache(), []);
+  const cache = uiEvaluatorCache;
   const resolved = useMemo(
     () =>
       resolveTransformParam(
@@ -1023,7 +1023,14 @@ function NodeRefField({
   const nodes = useDagStore((s) => s.state.nodes);
   const state = useDagStore((s) => s.state);
   const candidates = useMemo(
-    () => nodeRefCandidates(state, kind, nodeId, { time: { frame: 0, seconds: 0, normalized: 0 } }),
+    () =>
+      nodeRefCandidates(
+        state,
+        kind,
+        nodeId,
+        { time: { frame: 0, seconds: 0, normalized: 0 } },
+        uiEvaluatorCache,
+      ),
     // `state` identity changes on every dispatch; `nodes` is the meaningful dep.
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [nodes, kind, nodeId],
@@ -3485,7 +3492,7 @@ function ObjectSlotRows({ nodeId }: { nodeId: string }) {
   const normalized = useTimeStore((s) => s.normalized);
   // #1387 — a stable cache: this body runs on every playhead change, and uncached each run
   // re-evaluated everything under the Object (a character's whole-clip retarget, 4× a frame).
-  const cache = useMemo<EvaluatorCache>(() => createEvaluatorCache(), []);
+  const cache = uiEvaluatorCache;
   const table = objectSlotTable(state, nodeId, { time: { frame, seconds, normalized } }, cache);
 
   // No data to slot. Say WHICH of the three absences it is, through the same capability
@@ -3923,7 +3930,7 @@ function QuaternionField({ nodeId, authored }: { nodeId: string; authored: Quat 
   const dagState = useDagStore((s) => s.state);
   // #1314 — a stable cache: this re-reads the evaluated graph on every playhead change, and
   // uncached that re-runs everything under the node (a character's whole-clip retarget) per frame.
-  const cache = useMemo<EvaluatorCache>(() => createEvaluatorCache(), []);
+  const cache = uiEvaluatorCache;
   const evaluated = useMemo(
     () =>
       resolveEvaluatedTransform(dagState, nodeId, { time: { frame, seconds, normalized } }, cache)
@@ -4222,7 +4229,7 @@ export function NPanel() {
   // control appears exactly when the dispatcher would accept it (never for an Empty Object).
   // Selected down to a boolean so unrelated DAG changes don't re-render the panel.
   const canApply = useDagStore((s) =>
-    selectedId ? canApplyTransform(s.state, selectedId) : false,
+    selectedId ? canApplyTransform(s.state, selectedId, uiEvaluatorCache) : false,
   );
   // #415 — THE OBJECT'S `data` INPUT IS NO LONGER THE DATA NODE once a modifier is on it.
   // The stack splices into that very edge (`BoxData → Array → Object`), so `inputs.data`

@@ -54,10 +54,10 @@ export interface EvaluatorCache {
  * A node like `MotionGenerate` is a pure function of (params, inputs, store),
  * where the store is filled asynchronously by a resolver. When a result lands,
  * the node's params and inputs have NOT changed, so its cache key has not
- * changed either — and every evaluator cache in the app is a per-component
- * `useMemo(() => createEvaluatorCache(), [])` that lives as long as its
- * component. Measured: nothing in production calls `invalidate` or `clear` on
- * one, and all eight render-side caches have empty dependency arrays. So a
+ * changed either — and the app's UI readers hold caches that live all session
+ * (per component when this was written; one shared `uiEvaluatorCache` since
+ * #1315). Measured then: nothing in production calls `invalidate` or `clear` on
+ * one, and all eight render-side caches had empty dependency arrays. So a
  * landed generation would sit behind a cached `pending` value forever, and the
  * clip would never reach the screen.
  *
@@ -94,7 +94,20 @@ export function evaluatorContentEpoch(): number {
   return contentEpoch;
 }
 
-export function createEvaluatorCache(): EvaluatorCache {
+export interface EvaluatorCacheOptions {
+  /**
+   * Keep at most this many entries, dropping the least recently used (#1315). A read
+   * refreshes an entry, so a result read every frame (a whole-clip retarget under a
+   * per-frame reader) is never the one dropped. What piles up in a cache that lives all
+   * session is the other kind: an impure node keys on the time, so every frame played
+   * adds one entry per impure node, and those are read again only on the same frame.
+   * Unset = unbounded, which is right for a cache that dies with its action.
+   */
+  maxEntries?: number;
+}
+
+export function createEvaluatorCache(options: EvaluatorCacheOptions = {}): EvaluatorCache {
+  const { maxEntries } = options;
   const map = new Map<string, EvalResult>();
   // The epoch this cache's contents were computed under. Checked on read rather
   // than on write: a stale entry is only wrong at the moment somebody relies on
@@ -109,7 +122,14 @@ export function createEvaluatorCache(): EvaluatorCache {
   return {
     get: (k) => {
       dropIfStale();
-      return map.get(k);
+      const v = map.get(k);
+      // A Map iterates in insertion order, so re-inserting on a hit moves the entry to
+      // the young end and the oldest key is always the least recently used.
+      if (v !== undefined && maxEntries !== undefined) {
+        map.delete(k);
+        map.set(k, v);
+      }
+      return v;
     },
     set: (k, v) => {
       // Also here, not only on read: a value computed AFTER a bump is correct,
@@ -117,6 +137,9 @@ export function createEvaluatorCache(): EvaluatorCache {
       // — discarding fresh work rather than merely stale work.
       dropIfStale();
       map.set(k, v);
+      if (maxEntries !== undefined) {
+        while (map.size > maxEntries) map.delete(map.keys().next().value as string);
+      }
     },
     invalidate: (pred) => {
       for (const k of [...map.keys()]) if (pred(k)) map.delete(k);

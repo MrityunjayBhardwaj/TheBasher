@@ -81,6 +81,7 @@ import { hierarchyChildIds, hierarchySocketForKind } from '../sceneHierarchy';
 import { quaternionToEulerVec3 } from '../../core/import/threeAdapter';
 import { openpbrToThree } from '../material/openpbrToThree';
 import { isIdentityPlacement, resolveSlotPlacement } from '../material/uvPlacement';
+import type { EvaluatorCache } from '../../core/dag/evaluator';
 
 export type ApplyMask = 'all' | 'location' | 'rotation' | 'scale';
 
@@ -515,12 +516,16 @@ const ZERO_CTX: EvalCtx = { time: { frame: 0, seconds: 0, normalized: 0 } };
  *
  * Mesh-ness does not vary with time, so a zero ctx is exact for this question.
  */
-export function canApplyTransform(state: DagState, nodeId: string): boolean {
+export function canApplyTransform(
+  state: DagState,
+  nodeId: string,
+  cache?: EvaluatorCache,
+): boolean {
   const node = state.nodes[nodeId];
   if (!node || !isBakeableWrapperType(node.type)) return false;
   // #1053 — the dispatcher refuses a kept clone-road import, so it is not offered either.
   if (isImportedChild(state.nodes, nodeId)) return false;
-  return resolveEvaluatedMesh(state, nodeId, ZERO_CTX) !== null;
+  return resolveEvaluatedMesh(state, nodeId, ZERO_CTX, cache) !== null;
 }
 
 /**

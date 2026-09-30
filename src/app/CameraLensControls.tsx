@@ -27,7 +27,7 @@ import { ParamDiamond } from './ParamDiamond';
 import { resolveEvaluatedParam } from './resolveEvaluatedParam';
 import { useTimeStore } from './stores/timeStore';
 import { DEFAULT_CAMERA_FAR, DEFAULT_CAMERA_NEAR } from '../nodes/CameraData';
-import { createEvaluatorCache, type EvaluatorCache } from '../core/dag/evaluator';
+import { uiEvaluatorCache } from './uiEvaluatorCache';
 
 const ROW = 'flex items-center justify-between gap-2 px-3 py-1.5 text-[11px] text-fg/80';
 const LABEL = 'font-mono text-fg/60';
@@ -78,7 +78,7 @@ export function CameraLensControls({
   const playing = useTimeStore((s) => s.playing);
   // #1314 — a stable cache: this re-reads the evaluated graph on every playhead change, and
   // uncached that re-runs everything under the node (a character's whole-clip retarget) per frame.
-  const cache = useMemo<EvaluatorCache>(() => createEvaluatorCache(), []);
+  const cache = uiEvaluatorCache;
   const evaluatedScalar = useMemo(() => {
     const ctx = { time: { frame, seconds, normalized } };
     const at = (paramPath: string) =>

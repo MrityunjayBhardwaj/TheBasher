@@ -24,8 +24,8 @@ import { useMemo } from 'react';
 import { useDagStore } from '../../core/dag/store';
 import { useTimeStore } from '../stores/timeStore';
 import { resolveEvaluatedParam } from '../resolveEvaluatedParam';
-import { createEvaluatorCache, type EvaluatorCache } from '../../core/dag/evaluator';
 import { routeAnimatedGrab, autoKeyCommit } from './autoKeyCommit';
+import { uiEvaluatorCache } from '../uiEvaluatorCache';
 
 export interface AnimatableField<T> {
   /** The evaluated value the renderer shows (transient → channel → base). */
@@ -58,7 +58,7 @@ export function useAnimatableField<T extends number | string>(
   // A stable cache (#1389): this read follows the playhead, and a field driven through
   // pure nodes (a driver on a controller that reads the character) would otherwise
   // re-run every one of them per frame, per mounted field.
-  const cache = useMemo<EvaluatorCache>(() => createEvaluatorCache(), []);
+  const cache = uiEvaluatorCache;
   const resolved = useMemo(
     () =>
       resolveEvaluatedParam(
@@ -112,7 +112,7 @@ export function useAnimatableVec2Field(
   const playing = useTimeStore((s) => s.playing);
   const dagState = useDagStore((s) => s.state);
   // A stable cache, as in useAnimatableField (#1389).
-  const cache = useMemo<EvaluatorCache>(() => createEvaluatorCache(), []);
+  const cache = uiEvaluatorCache;
   const resolved = useMemo(
     () =>
       resolveEvaluatedParam(

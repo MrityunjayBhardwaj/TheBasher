@@ -123,3 +123,45 @@ describe('evaluator', () => {
     expect(idxB).toBeLessThan(idxS);
   });
 });
+
+describe('#1315 — a bounded evaluator cache drops the least recently USED entry', () => {
+  const r = (n: number) => ({ value: n, hash: `h${n}` });
+
+  it('holds at most maxEntries, dropping the oldest', () => {
+    const cache = createEvaluatorCache({ maxEntries: 3 });
+    for (let i = 0; i < 5; i++) cache.set(`k${i}`, r(i));
+    expect(cache.size()).toBe(3);
+    expect(cache.get('k0')).toBeUndefined();
+    expect(cache.get('k1')).toBeUndefined();
+    expect(cache.get('k4')?.value).toBe(4);
+  });
+
+  it('a read refreshes an entry, so one read every frame survives any churn', () => {
+    // The shape that matters: a per-frame reader hits one expensive pure result every frame,
+    // while an impure node adds a new time-keyed entry every frame.
+    const cache = createEvaluatorCache({ maxEntries: 3 });
+    cache.set('hot', r(-1));
+    for (let frame = 0; frame < 50; frame++) {
+      expect(cache.get('hot')?.value, `frame ${frame}`).toBe(-1);
+      cache.set(`t:${frame}`, r(frame));
+    }
+    expect(cache.size()).toBe(3);
+  });
+
+  it('re-setting an existing key does not count it twice', () => {
+    const cache = createEvaluatorCache({ maxEntries: 2 });
+    cache.set('a', r(1));
+    cache.set('b', r(2));
+    cache.set('a', r(3));
+    expect(cache.size()).toBe(2);
+    expect(cache.get('b')?.value).toBe(2);
+    expect(cache.get('a')?.value).toBe(3);
+  });
+
+  it('with no bound nothing is dropped', () => {
+    const cache = createEvaluatorCache();
+    for (let i = 0; i < 1000; i++) cache.set(`k${i}`, r(i));
+    expect(cache.size()).toBe(1000);
+    expect(cache.get('k0')?.value).toBe(0);
+  });
+});

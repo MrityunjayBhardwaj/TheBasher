@@ -52,7 +52,7 @@ import { useSelectionStore } from './stores/selectionStore';
 import { useTimeStore } from './stores/timeStore';
 import { maybeSnapVec3 } from './stores/viewportStore';
 import type { Vec3 } from '../nodes/types';
-import { createEvaluatorCache, type EvaluatorCache } from '../core/dag/evaluator';
+import { uiEvaluatorCache } from './uiEvaluatorCache';
 
 const HANDLE_COLOR = '#f0b357';
 const HANDLE_SELECTED_COLOR = '#ffffff';
@@ -165,7 +165,7 @@ export function CurvePointHandles() {
   const entries = curveId ? curvePointEntriesOf(state, curveId) : null;
   // #1314 — a stable cache: this re-reads the evaluated graph on every playhead change, and
   // uncached that re-runs everything under the node (a character's whole-clip retarget) per frame.
-  const cache = useMemo<EvaluatorCache>(() => createEvaluatorCache(), []);
+  const cache = uiEvaluatorCache;
 
   // The world matrix + the handles' world positions. Recomputed on any DAG or time change,
   // so handles follow a scrubbing/animated curve exactly as the drawn line does.

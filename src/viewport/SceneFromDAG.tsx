@@ -111,8 +111,7 @@ import { usePlayheadFollow } from './usePlayheadFollow';
 import { resolveRigLightSources } from '../app/resolveRigLightSources';
 import { degVec3ToRad } from './rotation';
 import { selectNode } from './selectNodeOnClick';
-import { evaluate, type EvaluatorCache } from '../core/dag/evaluator';
-import { createEvaluatorCache } from '../core/dag/evaluator';
+import { evaluate } from '../core/dag/evaluator';
 import { useDagStore } from '../core/dag/store';
 import { useStoreWithEqualityFn } from 'zustand/traditional';
 import { shallow } from 'zustand/shallow';
@@ -166,6 +165,7 @@ import type {
   PosedSkeletonValue,
   SkeletonValue,
 } from '../nodes/types';
+import { uiEvaluatorCache } from '../app/uiEvaluatorCache';
 
 let rectAreaInit = false;
 function ensureRectAreaInit() {
@@ -234,7 +234,7 @@ export function SceneFromDAG({ outputName = 'render' }: SceneFromDAGProps) {
   // is a referentially-stable closure. That stability is what unlocks Pass 1's
   // React.memo on MeshChild to short-circuit per-fox reconciliation during
   // playback.
-  const cache = useMemo<EvaluatorCache>(() => createEvaluatorCache(), []);
+  const cache = uiEvaluatorCache;
 
   // #583 — the fold's cross-call memo, long-lived for the same reason `cache` is: it is
   // what keeps a folded node's params OBJECT stable between renders, and the evaluator's
@@ -464,7 +464,12 @@ export function SceneFromDAG({ outputName = 'render' }: SceneFromDAGProps) {
   // fallback pose rather than an error. `resolveCameraDofAt` owns both reaches and is
   // the SAME function the still render calls, so the viewport and the still cannot
   // focus at different depths.
-  const activeDof = resolveCameraDofAt(state, activeCameraId, useTimeStore.getState().seconds);
+  const activeDof = resolveCameraDofAt(
+    state,
+    activeCameraId,
+    useTimeStore.getState().seconds,
+    uiEvaluatorCache,
+  );
 
   return (
     <OverlayMembershipContext.Provider value={overlayMembership}>
@@ -1104,7 +1109,7 @@ function useLayeredChannels(targetId: string): KeyframeChannelValue[] {
   // A STABLE evaluator cache: a driver's value is evaluated through the compute graph;
   // the cache HITS across rebuilds while sources are unchanged and MISSES (recomputes)
   // when a source param's cacheKey flips — the H40/H48 pattern (LightHelperFollower).
-  const cache = useMemo<EvaluatorCache>(() => createEvaluatorCache(), []);
+  const cache = uiEvaluatorCache;
   return useMemo(() => {
     const map: Record<string, (typeof contribNodes)[number]> = {};
     for (const n of contribNodes) map[n.id] = n;
@@ -1190,7 +1195,7 @@ function useLaneOverlayChannels(targetId: string, band: OverlayBand): KeyframeCh
     (s) => sources.flatMap((src) => driverSubscriptionNodesForTarget(s.state.nodes, src.nodeId)),
     shallow,
   );
-  const cache = useMemo<EvaluatorCache>(() => createEvaluatorCache(), []);
+  const cache = uiEvaluatorCache;
   return useMemo(() => {
     if (sources.length === 0) return EMPTY_CHANNELS;
     const map: Record<string, (typeof contribNodes)[number]> = {};
@@ -1323,7 +1328,7 @@ function DirectChannelsLightR({
   const transients = useLightShadingTransients(nodeId, rawTransients);
   // #343 — the position band resolves through the shared evaluator; a stable cache HITS
   // across frames while the curve/target are unchanged (the H48 / ConstrainedR pattern).
-  const cache = useMemo<EvaluatorCache>(() => createEvaluatorCache(), []);
+  const cache = uiEvaluatorCache;
   // The per-frame light value: channel → transient overlay, then (if followed) the
   // Follow-Path POSITION band OVERRIDES the authored/animated position — exactly as
   // ConstrainedR does for a mesh, so a followed light illuminates from the path point.
@@ -1393,7 +1398,7 @@ function DirectChannelsLightR({
 // of those re-evaluates the graph under it every frame: on the "Camera Path + AI Walk" example
 // that is the walk's whole-clip retarget, three times a frame (~3 fps, idle or playing).
 function CameraFrustumFollower({ cameraId, active }: { cameraId: string; active: boolean }) {
-  const cache = useMemo<EvaluatorCache>(() => createEvaluatorCache(), []);
+  const cache = uiEvaluatorCache;
   const pose = usePlayheadFollow((seconds) =>
     resolveCameraPoseAt(useDagStore.getState().state, cameraId, seconds, cache),
   );
@@ -1427,10 +1432,10 @@ function LightHelperFollower({
   // freezes at frame 0 while the lit effect tracks an animated target. Re-resolve the
   // SAME aim at `seconds` here and write it into `lookAt` so the wireframe rectangle
   // faces the current-frame target — the value-recompute analogue of the camera
-  // follower's `resolveCameraPoseAt` Track-To overlay. A stable local cache so the
+  // follower's `resolveCameraPoseAt` Track-To overlay. The shared UI cache (#1315) so the
   // per-frame render-root evaluate (inside `resolveTrackToTarget`) HITS while the DAG
   // is unchanged (the ConstrainedR / useAreaLightAim pattern).
-  const cache = useMemo<EvaluatorCache>(() => createEvaluatorCache(), []);
+  const cache = uiEvaluatorCache;
   const patched = usePlayheadFollow((seconds) => {
     // #1153 — resolved after the overlay, as the light it follows is.
     const base = withResolvedRotation(
@@ -1682,9 +1687,9 @@ function useAreaLightAim(
   constrained: boolean,
   refs: React.RefObject<THREE.Object3D | null>[],
 ) {
-  // A stable local cache so the per-frame render-root evaluate (inside
+  // The shared UI cache (#1315) so the per-frame render-root evaluate (inside
   // resolveTrackToTarget → resolveWorldTransform) HITS while the DAG is unchanged.
-  const cache = useMemo(() => createEvaluatorCache(), []);
+  const cache = uiEvaluatorCache;
   // Static authored aim — owns orientation when there is no Track-To.
   useEffect(() => {
     if (constrained) return;
@@ -1726,9 +1731,9 @@ function useLightTargetAim(
   constrained: boolean,
   ref: React.RefObject<THREE.SpotLight | THREE.DirectionalLight | null>,
 ) {
-  // A stable local cache so the per-frame render-root evaluate (inside
+  // The shared UI cache (#1315) so the per-frame render-root evaluate (inside
   // resolveTrackToTarget → resolveWorldTransform) HITS while the DAG is unchanged.
-  const cache = useMemo(() => createEvaluatorCache(), []);
+  const cache = uiEvaluatorCache;
   useFrame(() => {
     if (!constrained || !nodeId) return;
     const light = ref.current;
@@ -2303,7 +2308,7 @@ function ConstrainedR({
   );
   const rawTransients = useTransientEditStore((s) => s.edits);
   const transients = useDataParamTransients(pickId, rawTransients);
-  const cache = useMemo<EvaluatorCache>(() => createEvaluatorCache(), []);
+  const cache = uiEvaluatorCache;
 
   // channels (position) → transient → derived aim rotation (constraint wins on
   // rotation, the whole point of V58 — derived, never stored). Returns the

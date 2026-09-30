@@ -196,7 +196,11 @@ export function sphereGeometryRef(
  * becomes modifiable is offered the day it lands, and one that retires stops being
  * offered the day it goes.
  */
-export function canModifyGeometry(state: DagState, nodeId: string): boolean {
+export function canModifyGeometry(
+  state: DagState,
+  nodeId: string,
+  cache?: EvaluatorCache,
+): boolean {
   const node = state.nodes[nodeId];
   if (!node) return false;
   // #415 — the stack lives on the DATA lane now, so the offer is a question about a
@@ -209,7 +213,7 @@ export function canModifyGeometry(state: DagState, nodeId: string): boolean {
   const def = getNodeType(node.type);
   if (def?.outputs.out?.type !== 'ObjectData') return false;
   try {
-    const value = evaluate(state, nodeId).value as ObjectData | undefined;
+    const value = evaluate(state, nodeId, { cache }).value as ObjectData | undefined;
     return value ? modifierDataSource(value) !== null : false;
   } catch {
     // `evaluate` THROWS on a cycle, a dangling input ref, or the depth limit — and
@@ -277,8 +281,8 @@ export function resolveDataKind(
  *
  * ⚠️ Same evaluation cost as {@link resolveDataKind}: component bodies, never selectors.
  */
-export function canWearMaterial(state: DagState, nodeId: string): boolean {
-  const kind = resolveDataKind(state, nodeId);
+export function canWearMaterial(state: DagState, nodeId: string, cache?: EvaluatorCache): boolean {
+  const kind = resolveDataKind(state, nodeId, cache);
   return kind !== null && dataSectionCapability(kind, 'material').state === 'supported';
 }
 

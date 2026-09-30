@@ -140,30 +140,27 @@ const CONSUMERS: Record<string, Decision> = {
   'src/app/transformChannelSource.ts': authored('produces-an-overlay'),
   'src/app/paramDrivers.ts': authored('produces-an-overlay'),
   'src/app/statefulOps.ts': authored('produces-an-overlay'),
-  'src/viewport/EditorViewCamera.tsx': authored('delegates-to-a-folding-resolver'),
   'src/app/studioLightRig.ts': authored('delegates-to-a-folding-resolver'),
-  // #1314 — three per-playhead readers that import the evaluator ONLY for `createEvaluatorCache`:
-  // each hands the authored state, and now a stable cache, to the same folding resolvers it
-  // called before (resolveEvaluatedParam / resolveTransformParam / resolveCameraPoseAt /
-  // resolveWorldTransform). No new road; the cache is what keeps a re-read per frame from
-  // re-evaluating everything under the node.
-  'src/app/CameraLensControls.tsx': authored('delegates-to-a-folding-resolver'),
-  'src/app/CurvePointHandles.tsx': authored('delegates-to-a-folding-resolver'),
-  'src/app/NPanel.tsx': authored('delegates-to-a-folding-resolver'),
   'src/timeline/LightStudioPanel.tsx': authored('edits-authored-values'),
   // #1388 — the view lock's scan imports only the `EvaluatorCache` type: it hands the authored
   // state, and now the frame loop's stable cache, to `collectSkeletonObjects`, which reads the
   // skeletons at frame 0 by design (its own row). No new road.
   'src/viewport/followScan.ts': authored('fixed-ctx-by-design'),
-  // #1389 — the animatable-field hooks, the composite viewer and the composition export import
-  // the evaluator only for the cache (a value or its type): each hands the authored state to
-  // `resolveEvaluatedParam`, as before. A field driven through pure nodes re-ran them per frame
-  // per mounted field (40 walk retargets per 10 frames with the Scene's env intensity driven by
-  // the camera). No new road.
-  'src/app/animate/useAnimatableField.ts': authored('delegates-to-a-folding-resolver'),
-  'src/app/video/CompositeViewer.tsx': authored('delegates-to-a-folding-resolver'),
+  // #1389 — the composite core and the composition export import the evaluator only for the
+  // cache (its type, or one per export run): each hands the authored state to
+  // `resolveEvaluatedParam`, as before. A layer param driven through pure nodes re-ran them once
+  // per read (24 walk retargets over a 6-frame export). No new road.
   'src/app/video/compositeDecode.ts': authored('delegates-to-a-folding-resolver'),
   'src/app/video/exportCompositionAction.ts': authored('delegates-to-a-folding-resolver'),
+  // #1315 — `uiEvaluatorCache` imports the evaluator only to create the one bounded cache the
+  // long-lived UI readers share; it evaluates nothing. The readers that held their own cache
+  // (#1314 #1388 #1389: the N panel fields, lens controls, curve handles, the editor camera, the
+  // animatable-field hooks, the composite viewer) now import that instead of the evaluator, and
+  // left this table. `resolveMeshUVSpace` and `cookMotionGenerations` import the cache
+  // TYPE only, to take one from their UI caller and hand it to the resolver they already called.
+  'src/app/uiEvaluatorCache.ts': indifferent('never-reads-the-graph'),
+  'src/app/resolveMeshUVSpace.ts': authored('delegates-to-a-folding-resolver'),
+  'src/app/asset/cookMotionGenerations.ts': authored('fixed-ctx-by-design'),
   // #902 — the motion resolver. It reads the generator's params AUTHORED and
   // evaluates at the default ctx, and both halves are the same claim: a
   // generation request must be time-invariant. If the playhead could change the
@@ -302,7 +299,10 @@ describe('#582 — who evaluates the graph, and which params they need', () => {
     // 48 → 52 at #1389, the same shape: two per-frame readers (the animatable-field hooks, the
     // composite viewer) and the composition export hold a cache for the resolver they already
     // called, and the composite core takes one.
-    expect(evaluatorConsumers()).toHaveLength(52); // 39 -> 40 at #935 (placement) (the motion resolver)
+    // 52 → 49 at #1315, and nothing stopped evaluating: six UI readers that imported the evaluator
+    // only to create their own cache now share one (`uiEvaluatorCache`, +1), and two predicates
+    // that take a cache from their UI caller import its type (+2). 52 − 6 + 3 = 49.
+    expect(evaluatorConsumers()).toHaveLength(49); // 39 -> 40 at #935 (placement) (the motion resolver)
   });
 
   it('every reason is load-bearing — no member of any union is decorative', () => {
@@ -329,8 +329,9 @@ describe('#582 — who evaluates the graph, and which params they need', () => {
 
   it('the escape hatch stays small, and is named rather than counted', () => {
     // The failure mode this guards is the hatch becoming the default: a consumer that
-    // simply did not want to think declares itself indifferent. Three files, named, so
-    // widening it is a visible edit rather than a number ticking up.
+    // simply did not want to think declares itself indifferent. Named files, so widening it
+    // is a visible edit rather than a number ticking up. The fourth (#1315) creates the shared
+    // UI cache and evaluates nothing.
     const hatch = Object.entries(CONSUMERS)
       .filter(([, d]) => d.needs === 'indifferent')
       .map(([path]) => path)
@@ -338,6 +339,7 @@ describe('#582 — who evaluates the graph, and which params they need', () => {
     expect(hatch).toEqual([
       'src/app/nodeRefCandidates.ts',
       'src/app/resolveMaterialFieldOwner.ts',
+      'src/app/uiEvaluatorCache.ts',
       'src/perf/frameProfiler.ts',
     ]);
   });

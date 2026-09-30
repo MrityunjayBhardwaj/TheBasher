@@ -55,7 +55,7 @@ import { degVec3ToRad, radVec3ToDeg } from '../viewport/rotation';
 import { rotationWriteOf, withResolvedRotation } from './resolvedRotation';
 import { useDagStore } from '../core/dag/store';
 import { resolveDataParamOwner } from './resolveDataParamOwner';
-import { createEvaluatorCache, evaluate, type EvaluatorCache } from '../core/dag/evaluator';
+import { evaluate } from '../core/dag/evaluator';
 import type { Node, Op } from '../core/dag/types';
 import type { CharacterValue, RotationModeFields } from '../nodes/types';
 import { buildWalkToOps } from './character/walkTo';
@@ -75,6 +75,7 @@ import { isCameraNode } from './cameraNode';
 import { cameraOrientationQuat, lookAtRollFromQuat } from './cameraOrientation';
 import { constraintTargetSet, resolveFollowedWorldPosition } from './nodeConstraints';
 import { useActiveCurvePoint } from './curvePointSelection';
+import { uiEvaluatorCache } from './uiEvaluatorCache';
 
 type Vec3 = [number, number, number];
 
@@ -275,7 +276,7 @@ function SingleGizmo() {
   // #1314 — a stable evaluator cache for the per-playhead re-seeds below. Each resolve reads the
   // graph under the selection (a character's pose, a constraint's target); uncached it re-ran all of
   // it every frame — on the "Camera Path + AI Walk" example, the walk's whole-clip retarget.
-  const cache = useMemo<EvaluatorCache>(() => createEvaluatorCache(), []);
+  const cache = uiEvaluatorCache;
   useEffect(() => {
     if (!groupNode || !selectedId) return;
     if (manip) {
@@ -685,7 +686,7 @@ function MultiGizmo() {
   // #1314 — a stable evaluator cache for the per-playhead re-seeds below. Each resolve reads the
   // graph under the selection (a character's pose, a constraint's target); uncached it re-ran all of
   // it every frame — on the "Camera Path + AI Walk" example, the walk's whole-clip retarget.
-  const cache = useMemo<EvaluatorCache>(() => createEvaluatorCache(), []);
+  const cache = uiEvaluatorCache;
   useEffect(() => {
     if (!groupNode) return;
     const state = useDagStore.getState().state;
@@ -1112,7 +1113,7 @@ function CameraGizmo() {
   // #1314 — a stable evaluator cache for the per-playhead re-seeds below. Each resolve reads the
   // graph under the selection (a character's pose, a constraint's target); uncached it re-ran all of
   // it every frame — on the "Camera Path + AI Walk" example, the walk's whole-clip retarget.
-  const cache = useMemo<EvaluatorCache>(() => createEvaluatorCache(), []);
+  const cache = uiEvaluatorCache;
   useEffect(() => {
     if (!camId) return;
     let pose;
