@@ -211,7 +211,6 @@ export function composedWeldOf(ref: GeometryRef): PointWeld | null {
  */
 export function topologyIsBufferOnly(descriptor: GeometryDescriptor): boolean {
   switch (descriptor.kind) {
-    case 'gltf':
     case 'baked':
       return true;
     case 'box':
@@ -263,7 +262,6 @@ export function bufferReachabilityOf(ref: GeometryRef): string {
 function bufferRootOf(ref: GeometryRef): GeometryRef | null {
   const d = ref.descriptor;
   switch (d.kind) {
-    case 'gltf':
     case 'baked':
       return ref;
     case 'box':

@@ -33,13 +33,7 @@
 //      A); src/nodes/types.ts (the `uvProject` descriptor); issues #994, #786, #881, #959.
 
 import { beforeEach, describe, expect, it } from 'vitest';
-import {
-  clear,
-  getForRead,
-  readGeometry,
-  availabilityOf,
-  drawnByAssetClone,
-} from './geometryRegistry';
+import { clear, getForRead, readGeometry } from './geometryRegistry';
 import { alignedSplitRims } from './builtRims';
 import {
   arrayGeometryRef,
@@ -280,40 +274,6 @@ describe('#994 a projection reshapes NOTHING', () => {
     for (const name of ['position', 'normal', 'uv'])
       expect(projected.getAttribute(name), name).not.toBe(underneath.getAttribute(name));
     expect(projected.getIndex()).not.toBe(underneath.getIndex());
-  });
-
-  it('🔴 COMPOSED WHEN IT BUILDS, VERBATIM WHEN IT PASSES THROUGH — only a glTF source shows it', () => {
-    // ⚠️ THE ROW ABOVE CANNOT MAKE THIS CLAIM, AND THAT WAS MEASURED RATHER THAN NOTICED. It
-    // works over a PROCEDURAL source, where `composedOverSource('procedural')` is itself
-    // `'procedural'` — so the two rules agree and any assertion there is green under both.
-    //
-    // A glTF source separates them, because that is the one input on which they differ:
-    //   composed → 'mounting'  ("the registry will build this once the asset mounts")
-    //   verbatim → 'clone'     ("these buffers ARE the asset clone's")
-    //
-    // 🔴 AND SINCE #786 THE ANSWER IS `clone` FOR A REASON THAT IS NO LONGER "IT BUILDS
-    // NOTHING". It builds — over any source that states a face arity. A glTF child states none
-    // (#738: an imported mesh is triangulated before this module sees it), so the projection
-    // cannot materialise anything over it and passes through instead. `'mounting'` there would
-    // promise buffers the registry will never hold, turn `drawnByAssetClone` false, and leave the
-    // Object asking for a build that refuses — the imported mesh would simply not be drawn.
-    const asset: GeometryRef = {
-      key: 'gltf|asset-a|Cube',
-      descriptor: { kind: 'gltf', assetRef: 'asset-a', childName: 'Cube' },
-    };
-    const ref = uvProjectGeometryRef(asset, SIZE);
-
-    expect(availabilityOf(asset.descriptor)).toBe('clone');
-    expect(availabilityOf(ref.descriptor)).toBe('clone');
-    expect(drawnByAssetClone(ref.descriptor)).toBe(true);
-    expect(availabilityOf(ref.descriptor)).not.toBe('mounting');
-
-    // And the composing half of the rule, over a source that DOES state an arity: a projection
-    // over an ARRAY over a glTF child materialises, so its buffers are the registry's.
-    const arrayed = arrayGeometryRef(asset, 3, [1, 0, 0], null);
-    expect(availabilityOf(arrayed.descriptor)).toBe('mounting');
-    expect(availabilityOf(uvProjectGeometryRef(arrayed, SIZE).descriptor)).toBe('mounting');
-    expect(drawnByAssetClone(uvProjectGeometryRef(arrayed, SIZE).descriptor)).toBe(false);
   });
 
   it('two sizes are two layers, and one size is one', () => {

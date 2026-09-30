@@ -3,11 +3,12 @@
 //
 // ── THE DEFECT THIS CLOSES ─────────────────────────────────────────────────────────────
 //
-// `getForRead` returns null for three unrelated reasons, and the correct response differs
-// for each: LOOK ELSEWHERE (a glTF ref — the asset clone owns those buffers), WAIT (a baked
-// miss — the bytes are in OPFS behind an async read), and THERE GENUINELY IS NONE (a
-// procedural miss — the registry builds those synchronously, so a null means `build`
-// refused). Collapsing them makes a loading mesh indistinguishable from an empty one.
+// `getForRead` returns null for unrelated reasons, and the correct response differs for each:
+// WAIT (a baked miss — the bytes are in OPFS behind an async read) and THERE GENUINELY IS NONE
+// (a procedural miss — the registry builds those synchronously, so a null means `build`
+// refused). Collapsing them makes a loading mesh indistinguishable from an empty one. A third,
+// LOOK ELSEWHERE (a glTF ref whose buffers lived in an asset clone), went with the clone road in
+// #1053.
 //
 // Nothing enforced the distinction. It was recoverable only by re-inspecting `ref.kind` at
 // each call site, which means the rule was restated everywhere it was needed — and the one
@@ -32,30 +33,10 @@ import { arrayGeometryRef, boxGeometryRef, mirrorGeometryRef } from './modifierG
 import type { GeometryRef } from '../nodes/types';
 import { BoxGeometry } from 'three';
 
-const gltfRef: GeometryRef = {
-  key: 'gltf|asset-1|Mesh0',
-  descriptor: { kind: 'gltf', assetRef: 'asset-1', childName: 'Mesh0' },
-};
-
 const bakedRef: GeometryRef = {
   key: 'baked|hash-1',
   descriptor: { kind: 'baked', hash: 'hash-1', vertexCount: 24 },
 };
-
-/**
- * An `array` whose source is a glTF ref — a recipe over a kept clone-road import.
- *
- * 🔴 THIS DOC HAS NOW BEEN WRONG THREE TIMES, AND EVERY TIME THE ROW KEPT PASSING. Until #708 the
- * name said `procedural` while the classification composed. Until #367 the doc said the build
- * could never succeed, which was true of the registry rather than of the world. From #367 the
- * build succeeded once the renderer mounted the asset's clone, so the class was a WAIT. #1053
- * deleted the clone renderer: nothing mounts a clone, the build can never succeed, and the honest
- * answer is `none` again — for the opposite reason to the first time.
- *
- * The lesson the corrections share is why this is written out rather than deleted: a status
- * assertion cannot notice that the REASON attached to it has stopped being true.
- */
-const recipeOverCloneRef = arrayGeometryRef(gltfRef, 3, [1, 0, 0]);
 
 /** An `array` over a BAKED source — the case #708 exists for. Buildable, but only once the
  *  OPFS read lands, so the honest answer before that is "wait", not "there is none". */
@@ -73,46 +54,22 @@ describe('#630 — a registry read says WHY it is empty', () => {
     expect(result.geometry).toBeInstanceOf(BoxGeometry);
   });
 
-  it('distinguishes a baked miss (a wait) from a recipe over a kept clone-road import (none)', () => {
+  it('a baked miss is a wait, and says so', () => {
     const baked = readGeometry(bakedRef);
-    const overClone = readGeometry(recipeOverCloneRef);
-
-    // Both are empty. Before #630 both were exactly `null` and a caller had no way to tell
-    // them apart without re-deriving the rule.
     expect(getForRead(bakedRef)).toBeNull();
-    expect(getForRead(recipeOverCloneRef)).toBeNull();
-
-    // The STATUS differs again (#1053): the baked read ends when the OPFS read lands, so it is a
-    // wait; the recipe's source lived in a render clone that nothing will ever mount now, so
-    // waiting will not help. From #367 until #1053 both were `pending`.
     expect(baked.status).toBe('pending');
-    expect(overClone.status).toBe('none');
-
-    // And the class still says WHY, which is what a caller acts on.
-    if (baked.status === 'ok' || overClone.status === 'ok') throw new Error('expected empties');
+    if (baked.status === 'ok') throw new Error('expected an empty read');
     expect(baked.availability).toBe('primed');
-    expect(overClone.availability).toBe('mounting');
   });
 
-  it('`none` has one producer: a recipe over a kept clone-road import', () => {
-    // #367 gave a recipe over a glTF source a road (through the mounted clone), and this row
-    // measured `none` as having NO producer. #1053 took the road away again with the clone
-    // renderer, so that recipe is the producer once more. Every malformed PROCEDURAL descriptor
-    // still builds — an array of count 0, of -3, of NaN — which is why the producer is the
-    // recipe and not a refusal in `build`.
+  it('a malformed PROCEDURAL descriptor still builds, so it is not a producer of `none`', () => {
+    // An array of count 0, of -3, of NaN all build. Until #1053 the one measured producer of
+    // `none` was a recipe over a kept clone-road import, which went with the `gltf` kind.
     const box = boxGeometryRef([1, 1, 1], null);
     for (const count of [0, -3, Number.NaN]) {
       expect(readGeometry(arrayGeometryRef(box, count, [1, 0, 0])).status).toBe('ok');
     }
     expect(availabilityOf(box.descriptor)).toBe('procedural');
-    expect(readGeometry(recipeOverCloneRef).status).toBe('none');
-  });
-
-  it('distinguishes a glTF ref from both of them', () => {
-    const gltf = readGeometry(gltfRef);
-    expect(gltf.status).toBe('elsewhere'); // a kept clone-road import: never in the registry
-    expect(gltf.status).not.toBe(readGeometry(bakedRef).status);
-    expect(gltf.status).not.toBe(readGeometry(recipeOverCloneRef).status);
   });
 
   it('a baked ref stops being pending once it is primed — the reason tracks reality', () => {
@@ -144,20 +101,15 @@ describe('#630 — a registry read says WHY it is empty', () => {
     // the kind was what made the un-composed answer askable in the first place.
     expect(availabilityOf(boxGeometryRef([1, 1, 1], null).descriptor)).toBe('procedural');
     expect(availabilityOf(bakedRef.descriptor)).toBe('primed');
-    expect(availabilityOf(gltfRef.descriptor)).toBe('clone');
-    // All four classes are reachable from real handles — a class nothing can produce is a
-    // fiction in the other direction.
+    // Both classes are reachable from real handles — a class nothing can produce is a fiction
+    // in the other direction. (Four until #1053 removed `clone` and `mounting`.)
     expect(
       new Set(
-        [
-          boxGeometryRef([1, 1, 1], null),
-          bakedRef,
-          gltfRef,
-          recipeOverCloneRef,
-          recipeOverPrimedRef,
-        ].map((r) => availabilityOf(r.descriptor)),
+        [boxGeometryRef([1, 1, 1], null), bakedRef, recipeOverPrimedRef].map((r) =>
+          availabilityOf(r.descriptor),
+        ),
       ).size,
-    ).toBe(4);
+    ).toBe(2);
   });
 
   // ── #708 — THE COMPOSITION, AND EVERY ROW WAS OBSERVED TO MOVE ──────────────────────
@@ -182,23 +134,6 @@ describe('#630 — a registry read says WHY it is empty', () => {
       const nested = arrayGeometryRef(mirrorGeometryRef(bakedRef, 'x', 0), 2, [1, 0, 0]);
       expect(availabilityOf(nested.descriptor)).toBe('primed');
       expect(readGeometry(nested).status).toBe('pending');
-    });
-
-    it('a generator over a CLONE source is mounting — not clone, and not procedural', () => {
-      // Still not `clone`: the array's buffers would be built BY THE REGISTRY, so "look in the
-      // clone for this geometry" would be false, and a consumer reading `assetRef` off an
-      // `elsewhere` descriptor would find none here. Its STATUS is `none` since #1053: the source
-      // lived in a render clone nothing mounts any more (see `recipeOverCloneRef`).
-      expect(availabilityOf(recipeOverCloneRef.descriptor)).toBe('mounting');
-      expect(readGeometry(recipeOverCloneRef).status).toBe('none');
-      expect(readGeometry(recipeOverCloneRef).status).not.toBe('elsewhere');
-    });
-
-    it('a BARE gltf ref says `elsewhere` and never builds', () => {
-      // The leaf case the composition row above is built on, pinned separately so a change to
-      // one cannot silently carry the other. Until #1053 it built once its clone mounted.
-      expect(readGeometry(gltfRef).status).toBe('elsewhere');
-      expect(getForRead(gltfRef)).toBeNull();
     });
 
     it('a generator over a procedural source is unchanged — the control', () => {

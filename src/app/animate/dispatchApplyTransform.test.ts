@@ -38,7 +38,6 @@ import { makeSplitCamera } from '../../test-utils/splitCamera';
 import { makeSplitLight } from '../../test-utils/splitLight';
 import { importedChildOps } from '../../test-utils/importedChildFixture';
 import { twoMaterialMeshData } from '../../test-utils/twoMaterialMesh';
-import { materialAssignmentOf } from '../materialAssignment';
 
 // #1132 — the registry road's material refusals read `mesh.materials`, and no real node yet
 // resolves to a two-material or clone-owned assignment on that road. The mock passes straight
@@ -2092,26 +2091,6 @@ describe('#1132 — a refused Apply writes nothing to storage', () => {
     resolveWithMaterials(two);
     const { result, writes, dispatched } = await applyRefused(PRIM_ID, state);
     expect(result).toEqual({ ok: false, reason: expect.stringContaining('assigns 2 materials') });
-    expect(dispatched).toBe(0);
-    expect(writes).toBe(0);
-  });
-
-  it('the registry bake refuses a material owned by an imported asset before it writes', async () => {
-    const state = buildSplitSphereState();
-    const mesh = resolveEvaluatedMesh(state, PRIM_ID, {
-      time: { frame: 0, seconds: 0, normalized: 0 },
-    })!;
-    const cloneOwned = materialAssignmentOf(null, [null], {
-      key: 'gltf|asset-a|Cube',
-      descriptor: { kind: 'gltf', assetRef: 'asset-a', childName: 'Cube' },
-    });
-    expect(mesh.geometry.descriptor.kind).not.toBe('gltf');
-    resolveWithMaterials(cloneOwned);
-    const { result, writes, dispatched } = await applyRefused(PRIM_ID, state);
-    expect(result).toEqual({
-      ok: false,
-      reason: expect.stringContaining('owned by its imported asset'),
-    });
     expect(dispatched).toBe(0);
     expect(writes).toBe(0);
   });

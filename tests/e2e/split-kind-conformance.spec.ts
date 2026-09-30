@@ -1424,7 +1424,7 @@ const CONSTRAINT_WITNESS: Record<
     gltf: {
       // The same weakest-witness shape the light has, for a DIFFERENT and equally
       // structural reason, and it was measured rather than assumed: an imported child's
-      // Object draws nothing at all (`drawnByAssetClone`), so
+      // Object draws nothing at all (its data evaluates to none since #1053), so
       // `__basher_mesh_world_quaternion` has no mesh to report and returns null. There is
       // no rendered orientation to observe because there is no rendered object — the
       // clone carries the surface, and its per-child TRS is written by GltfAssetR's own

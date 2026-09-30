@@ -229,16 +229,17 @@ describe('#718 — the edge set agrees with the built geometry', () => {
     }
   });
 
-  it('censuses the two kinds that cannot answer, exactly', () => {
+  it('censuses the one kind that cannot answer, exactly', () => {
     // The same escape hatch `faceCountOf` and `pointCountOf` declare. Counted rather than left
     // implicit: an escape hatch that is not censused is an escape hatch that widens.
-    const outside = ['gltf', 'baked'] as const;
+    // #1053 — two until the `gltf` kind went with the clone road.
+    const outside = ['baked'] as const;
     for (const kind of outside) {
       const descriptor = { kind, source: null } as never;
       expect(weldedPolygonsOf(descriptor)).toBeNull();
       const verdict = edgeCountOf(descriptor);
       expect(verdict.kind).toBe('outside-the-descriptor');
     }
-    expect(outside.length).toBe(2);
+    expect(outside.length).toBe(1);
   });
 });

@@ -17,7 +17,7 @@
 //   3  a multi-primitive child is refused, and the falsifier shows why it must be: with
 //      DISJOINT primitives the door and a unioning capture genuinely disagree
 //   4  absence is not zero
-//   5  `pointCountOf` reads it, and refuses without it
+//   5  (retired in #1053: `pointCountOf` read it off the `gltf` descriptor, which is gone)
 //
 // REF: src/core/import/gltfImportChain.ts (`captureChildPointCount`); src/app/pointIdentity.ts
 //      (`pointCountOf`, `weldByPosition`); src/app/importedMeshParity.gate.test.ts (the
@@ -28,10 +28,9 @@ import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { GLTFLoader } from 'three-stdlib';
 import * as THREE from 'three';
-import type { GeometryDescriptor } from '../../nodes/types';
 import { parseGltfContainer, resolveBuffers, type GltfJson } from './glb';
 import { captureChildPointCount } from './gltfImportChain';
-import { pointCountOf, weldByPosition } from '../../app/pointIdentity';
+import { weldByPosition } from '../../app/pointIdentity';
 import { firstMeshGeometry } from '../../app/firstMeshGeometry';
 
 function fixtureBuffer(name: string): ArrayBuffer {
@@ -213,28 +212,4 @@ describe('#1040 — a captured point count agrees with the buffer a reader holds
       ),
     ).toBeUndefined();
   }, 120000);
-
-  it('5 — `pointCountOf` reads it, and absence is not zero', () => {
-    const welded: GeometryDescriptor = {
-      kind: 'gltf',
-      assetRef: 'a/b.gltf',
-      childName: 'Cube',
-      faceCount: 12,
-      pointCount: 8,
-    };
-    const v = pointCountOf(welded);
-    expect(v.kind).toBe('counted');
-    if (v.kind === 'counted') expect(v.count).toBe(8);
-
-    // Uncaptured keeps refusing, and the refusal is the escape hatch and not a zero.
-    const bare: GeometryDescriptor = { kind: 'gltf', assetRef: 'a/b.gltf', childName: 'Cube' };
-    expect(pointCountOf(bare).kind).toBe('outside-the-descriptor');
-
-    // A genuinely empty child would be `counted(0)` — a different answer from "not captured",
-    // which is the whole reason the field is optional rather than defaulted.
-    const empty: GeometryDescriptor = { ...welded, pointCount: 0 };
-    const ev = pointCountOf(empty);
-    expect(ev.kind).toBe('counted');
-    if (ev.kind === 'counted') expect(ev.count).toBe(0);
-  });
 });

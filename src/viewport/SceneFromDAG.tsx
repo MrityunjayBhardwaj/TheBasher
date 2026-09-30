@@ -2450,7 +2450,7 @@ function ModifiedMeshR({
       ref,
       'this modifier cannot load its source (glTF/baked-sourced modifiers are a follow-up)',
       // #711 — NOT "asset failed:". The registry classifies this exact state as still
-      // loading (`composedOverSource` maps a primed source through to primed), so the
+      // loading (`availabilityOf` maps a primed source through to primed), so the
       // default label would have the banner contradict the registry about the same
       // condition. The asset is fine; nothing on this road ever asks for it.
       'modifier blocked:',
@@ -2472,9 +2472,7 @@ function ModifiedMeshR({
   // hold one entry. It is sound BY POSITION, never by type — and a comment that grounds it
   // in the type instead invites the next reader to trust the collapse somewhere the fork
   // does not protect, which is exactly the defect #978 fixed one road over.
-  const draw = resolveMeshMaterial(geom, materialAssignmentOf(null, [inlineMat], value.geometry), [
-    material,
-  ]);
+  const draw = resolveMeshMaterial(geom, materialAssignmentOf(null, [inlineMat]), [material]);
   if (!draw) return null; // source not sync-buildable (glTF/baked) — surfaced above (#258)
   // #530 / #533 — a SHARED resource is passed as a PROP, never adopted by
   // <primitive>. `<primitive>` takes OWNERSHIP of the object it is handed (it stamps
@@ -2961,10 +2959,9 @@ function ObjectMeshR({
       ? // #645 — the Object's table, not the data's, and the SAME `slots` the material above
         // was hydrated from. Resolving twice here would be two answers to one question, and
         // the pair silently disagreeing is what made the override invisible before.
-        materialAssignmentOf(data.attributeKey, slots, data.geometry)
-      : // An Empty — no data, so no slots and nothing anywhere else to ask. `'none'` is the
-        // answer to a question about a mesh that is not there, not a claim about a clone.
-        { slots: [], indices: null, absentSlot: 'none' as const },
+        materialAssignmentOf(data.attributeKey, slots)
+      : // An Empty — no data, so no slots.
+        { slots: [], indices: null },
     [material],
   );
   if (!draw) return null; // an Empty (no data) or a non-sync-buildable handle
@@ -3047,7 +3044,7 @@ function MultiMaterialMeshR({
     cornerLayerNamesOf(geometry.descriptor),
   );
   const geom = getForAttach(geometry);
-  const assignment = materialAssignmentOf(attributeKey, slots, geometry);
+  const assignment = materialAssignmentOf(attributeKey, slots);
   const draw = resolveMeshMaterial(geom, assignment, materials);
   const refusal = meshMaterialRefusal(geom, assignment, materials);
   // A DEGRADATION IS REPORTED, NEVER SILENT. A mesh that should draw two materials and

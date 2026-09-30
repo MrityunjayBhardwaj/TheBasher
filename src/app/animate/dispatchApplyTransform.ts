@@ -64,7 +64,7 @@ import {
 import type { StorageCapability } from '../../core/storage/StorageCapability';
 import { getForRead } from '../geometryRegistry';
 import { unheldBakeAttributes, writeBakedGeometry } from '../asset/bakedGeometryStore';
-import { assignedMaterials, primaryMaterial, slotMaterialAt } from '../materialAssignment';
+import { assignedMaterials, primaryMaterial } from '../materialAssignment';
 import type { EvaluatedMesh, Quat, RotationModeFields } from '../../nodes/types';
 import { resolveEvaluatedMesh } from '../resolveEvaluatedMesh';
 import { linkedDataNodeId } from '../resolveDataParamOwner';
@@ -433,53 +433,6 @@ export function unheldAttributesBakeRefusal(
 }
 
 /**
- * Why this Apply must be refused when the material that would be baked is one we never
- * captured, or `null` when there is nothing uncaptured to lose (#605 item 2).
- *
- * ── THE SIBLING REFUSAL, AND WHY IT IS A SECOND ONE RATHER THAN A WIDER FIRST ────────────
- *
- * {@link multiMaterialBakeRefusal} stops a bake from flattening TWO materials into one. This
- * stops it from flattening ONE material into NONE, and the two are different failures with the
- * same manners: nothing errors, the object keeps rendering, and a material is simply gone from
- * a file the director now believes is saved. Kept separate because the messages must be —
- * "reduce it to a single material" is useless advice for a mesh whose one material is fine and
- * merely unreadable from here.
- *
- * ── WHAT WAS MEASURED ────────────────────────────────────────────────────────────────────
- *
- * `primaryMaterial` answers `null` for BOTH a genuinely materialless mesh and a clone-drawn one,
- * because its return type has no room for the difference — the collapse `absentSlot` exists to
- * end, still standing at the one consumer where it costs something. Observed on two assignments
- * differing ONLY in where their buffers live:
- *
- *     absentSlot           none -> "none"        elsewhere -> "elsewhere"    told apart
- *     slotMaterialAt(0)    none -> none          elsewhere -> elsewhere      told apart
- *     primaryMaterial      none -> null          elsewhere -> null           INDISTINGUISHABLE
- *     the bake at :412     null                  null                        INDISTINGUISHABLE
- *
- * So an Apply over an imported mesh wrote a baked spec with no material where the asset clone
- * has one on screen. The refusal is keyed through {@link slotMaterialAt}, not off
- * `absentSlot` directly: `absentSlot` says what an absence WOULD mean, and a clone-backed mesh
- * whose material we DID capture must still bake fine.
- *
- * 🔑 THIS REFUSAL IS DISTANCE FROM THE GOAL, AND IT SHOULD ONE DAY BE UNREACHABLE. `elsewhere`
- * exists only because an imported mesh's material lives in an asset clone instead of on the
- * mesh. In both reference systems the importer reads the material and puts it ON the geometry,
- * so the question never arises — a format fills the model and stops existing. When that holds
- * here, nothing can construct an `elsewhere` assignment and this function returns `null` for
- * every input. Refusing honestly is the interim; it is not the destination.
- */
-export function uncapturedMaterialBakeRefusal(
-  name: string,
-  materials: EvaluatedMesh['materials'],
-): string | null {
-  // Slot 0 is the one the bake carries — `primaryMaterial` narrows to it, and the
-  // multi-material refusal above has already stopped anything with more than one assigned.
-  if (slotMaterialAt(materials, 0).status !== 'elsewhere') return null;
-  return `Apply: "${name}" draws with a material owned by its imported asset, and we hold no capture of it. Baking would write a mesh with no material where one is on screen. Give the slot a material of its own first.`;
-}
-
-/**
  * The data node this Object poses, when retiring the Object should retire it too (#376).
  *
  * Returns null when there is no linked data node, or when the data node is SHARED — a
@@ -662,11 +615,6 @@ export async function dispatchApplyTransform(
   // honest about the graph, but it leaves the baked file in storage with nothing pointing at it.
   const refusal = multiMaterialBakeRefusal(name, mesh.materials);
   if (refusal) return { ok: false, reason: refusal };
-  // Order matters and is not arbitrary: the multi-material refusal runs FIRST, so by the time
-  // this asks about slot 0 there is at most one assigned material and slot 0 is the one the
-  // bake carries. Reversed, a two-material clone-drawn mesh would be told about the wrong one.
-  const uncaptured = uncapturedMaterialBakeRefusal(name, mesh.materials);
-  if (uncaptured) return { ok: false, reason: uncaptured };
   const baked = src.clone();
   baked.applyMatrix4(split.matrix);
   if (split.matrix.determinant() < 0) reverseTriangleWinding(baked);

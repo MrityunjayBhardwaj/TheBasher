@@ -60,10 +60,6 @@ const sphere: GeometryRef = {
   key: 'sphere|1|8|6',
   descriptor: { kind: 'sphere', radius: 1, widthSegments: 8, heightSegments: 6 },
 };
-const gltf: GeometryRef = {
-  key: 'gltf|a|c',
-  descriptor: { kind: 'gltf', assetRef: 'a', childName: 'c', faceCount: 12 },
-};
 const baked: GeometryRef = {
   key: 'baked|dead',
   descriptor: { kind: 'baked', hash: 'deadbeef', vertexCount: 24 },
@@ -77,7 +73,6 @@ const baked: GeometryRef = {
 const REPRESENTATIVE: Record<GeometryDescriptor['kind'], GeometryRef> = {
   box,
   sphere,
-  gltf,
   baked,
   array: arrayGeometryRef(box, 3, [1, 0, 0]),
   mirror: mirrorGeometryRef(box, 'x', 0),
@@ -102,8 +97,6 @@ const REPRESENTATIVE: Record<GeometryDescriptor['kind'], GeometryRef> = {
 
 /** Composed refs over BUFFER sources — where a count and a buffer are most likely to diverge. */
 const COMPOSED: [string, GeometryRef][] = [
-  ['array(gltf)', arrayGeometryRef(gltf, 3, [1, 0, 0])],
-  ['mirror(gltf)', mirrorGeometryRef(gltf, 'x', 0)],
   ['array(baked)', arrayGeometryRef(baked, 3, [1, 0, 0])],
   ['mirror(baked)', mirrorGeometryRef(baked, 'x', 0)],
 ];
@@ -117,9 +110,8 @@ const COMPOSED: [string, GeometryRef][] = [
 // rots silently because its subject moved. So `dangerous` asks what the resolver asks.
 //
 // #1053 — the MOUNTED rows that stood here (an import's edge count, read off its mounted clone's
-// buffer) needed the clone renderer, which is gone: nothing mounts a clone, so no `gltf` ref
-// states an edge count and those rows cannot be built. The census below runs on every row that
-// can be; the stored-mesh representative is the imported shape that states one today.
+// buffer) went with the clone renderer, and the `gltf` kind with them. The stored-mesh
+// representative is the imported shape that states an edge count today.
 
 /** Does this ref have BOTH a derivable edge count and unreadable geometry? */
 function dangerous(ref: GeometryRef): boolean {
@@ -156,15 +148,16 @@ describe('#1039 — a derivable edge count implies readable geometry', () => {
       'control: a box DOES state an edge count, so the first half of the predicate is live',
     ).toBe('counted');
     expect(
-      getForRead(gltf),
-      'control: an unmounted clone IS unreadable, so the second half is live',
+      getForRead(baked),
+      'control: an unprimed bake IS unreadable, so the second half is live',
     ).toBeNull();
 
     const bad = rows.filter(([, ref]) => dangerous(ref)).map(([label]) => label);
     // 17 → 18 at #1049: the stored-mesh representative, the first imported shape that states an
     // edge count without anything to mount. 18 → 14 at #1053: the four MOUNTED rows went with the
-    // clone renderer (see above).
-    expect(rows.length, 'control: the census examined every row').toBe(14);
+    // clone renderer (see above). 14 → 11 at #1053: the `gltf` representative and its two
+    // composed rows went with the kind.
+    expect(rows.length, 'control: the census examined every row').toBe(11);
     expect(
       bad,
       'A descriptor now states an edge count while its geometry cannot be read. That combination ' +

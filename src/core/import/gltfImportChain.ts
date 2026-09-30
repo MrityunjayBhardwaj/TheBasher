@@ -1029,7 +1029,8 @@ export async function buildGltfImportOps(
   //
   // These pairs are still inputless as far as the SCENE is concerned (R-1): the
   // Object takes the data edge and nothing else, and reaches no scene parent, so
-  // it is drawn by the asset clone rather than by itself (`drawnByAssetClone`).
+  // it was drawn by the asset clone rather than by itself. Since #1053 nothing draws it:
+  // this road only rebuilds a saved clone import for the load converter to compare.
   // Emitted in the SAME atomic ops array (K6 — one Cmd+Z), BEFORE the
   // TransformClip/ClipSelect block so the chain order is locked.
   const childNodes = json.nodes ?? [];

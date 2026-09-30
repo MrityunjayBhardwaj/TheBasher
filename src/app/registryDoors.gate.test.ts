@@ -174,22 +174,9 @@ const GEOMETRY_CONSUMERS: Record<string, Door> = {
   // in use?", and the two would not have to agree.
   'src/viewport/geometrySweep.ts': 'lifetime',
 
-  // SPEC-ONLY — imports the CLASSIFIER (`availabilityOf`) and nothing else. #605 item 2: the
-  // sole minter of a `MaterialAssignment` derives from it whether an unanswered slot can be
-  // answered somewhere else, which is the same condition `MeshUVRead` and `GeometryReadResult`
-  // key their own `'elsewhere'` on. A classifier takes a descriptor and returns a label — it
-  // never touches the cache and hands back no instance — so there is nothing here for a caller
-  // to hold or free, and no door is opened. Deliberately NOT `readGeometry`: that would build
-  // a geometry on every material read, where this question needs only the classification.
-  'src/app/materialAssignment.ts': 'spec-only',
-  // #1015 — the second spec-only importer, and the SAME classifier read one step further on.
-  // `materialAssignment` asks whether an unanswered slot can be answered elsewhere; the UV
-  // editor's backdrop then has to ask WHICH clone child holds the answer, and a boolean cannot
-  // say. `cloneAddressOf` walks descriptors to descriptors by the recursion `availabilityOf`
-  // already runs — no cache read, no build, no instance — so it opens no door either. It lives
-  // in the registry rather than beside its caller because the whole defect it fixes was a
-  // second rule (`descriptor.kind === 'gltf'`) that agreed with the classifier until it didn't.
-  'src/app/resolveMeshUVSpace.ts': 'spec-only',
+  // SPEC-ONLY — imports only the CLASSIFIER (`availabilityOf`), opening no door. Its two members,
+  // `materialAssignment` and `resolveMeshUVSpace`, asked it whether a mesh was drawn by an asset
+  // clone; that question went with the clone road in #1053, and the class is empty today.
 };
 
 /**
@@ -232,22 +219,9 @@ const GEOMETRY_DIAGNOSTICS = ['size', 'residentBytes', 'growthBySource', 'resetG
  * adds a geometry kind — which is the shape `resolveMeshUVSpace.ts` was in before #630, and
  * its own header records that defect biting.
  */
-// #389 — `drawnByAssetClone` joins on exactly the rule stated above rather than by
-// resemblance: it takes a DESCRIPTOR and returns a boolean, never touches the cache, and
-// hands back no instance, so there is nothing for a caller to hold or free. It is defined
-// in terms of `availabilityOf` — one implementation, one rule — so it is not a second
-// spelling of the classification either; it is that classification asked a question the
-// renderer needs ("is something else already drawing these buffers?"). The alternative was
-// a `descriptor.kind === 'gltf'` test at the draw site, which is the naming tier this
-// module has catalogued twice and which would have gone right on passing when a kind moved.
-// #1015 — `cloneAddressOf` joins by the same rule again, and it is the one the paragraph above
-// predicted: the `descriptor.kind === 'gltf'` test the comment calls "the naming tier this module
-// has catalogued twice" had in fact gone right on passing when a kind moved — a non-materialising
-// `uvProject` over an imported mesh is drawn by the clone and is not of that kind. This takes a
-// DESCRIPTOR and returns a DESCRIPTOR, reads no cache and builds nothing, and recurses exactly as
-// `availabilityOf` does, so it is that same classification asked the follow-up question a boolean
-// cannot answer: not "is something else drawing these buffers" but "WHICH child is".
-const GEOMETRY_CLASSIFIERS = ['availabilityOf', 'drawnByAssetClone', 'cloneAddressOf'];
+// #389 and #1015 added `drawnByAssetClone` and `cloneAddressOf` here, two questions about the
+// clone class; both went with it in #1053.
+const GEOMETRY_CLASSIFIERS = ['availabilityOf'];
 
 /** The door names each class is allowed to import. `get` is deliberately absent. */
 const GEOMETRY_DOORS: Record<Door, string[]> = {

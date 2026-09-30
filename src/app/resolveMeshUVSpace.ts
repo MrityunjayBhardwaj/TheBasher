@@ -31,7 +31,7 @@
 //    meanings of an empty registry read and which status each maps to. It no longer does,
 //    and the deletion is the point: prose describing a rule is a second copy of it, and the
 //    two agree only until someone changes one. The rule is now a TYPE — `readMeshUVs`
-//    returns ok / elsewhere / loading / none, inherited from the registry's own typed read
+//    returns ok / loading / none, inherited from the registry's own typed read
 //    (#630) — and this module consumes that answer instead of deriving one.
 //
 // 3. A NEW GEOMETRY KIND IS A COMPILE ERROR, NOT A SILENT DEFAULT. `availabilityOf` is
@@ -77,7 +77,6 @@ import type {
   InlineMaterialSpec,
 } from '../nodes/types';
 import { resolveEvaluatedMesh } from './resolveEvaluatedMesh';
-import { cloneAddressOf } from './geometryRegistry';
 import { peekBakedTexture } from './asset/bakedTextureLoader';
 import { primarySlotMaterial, type SlotMaterial } from './materialAssignment';
 import type { MeshUVRead } from '../nodes/types';
@@ -189,15 +188,8 @@ function textureFromMaterial(
  * Pure and sync: no store reads, never throws, async sources report 'loading'.
  */
 /**
- * Narrow the resolver's four-way UV answer into this module's own three-status facet.
- *
- * `elsewhere` cannot arrive here — the clone-backed arm in `resolveMeshUVSpace` takes those
- * first (and, since #1053, answers `none`: a kept clone-road import is not drawn) — so it is mapped to `none` explicitly rather than by a default, which is what
- * makes a fifth status a visible edit instead of a silent collapse into "no UVs".
- *
- * #367 — that exclusion still holds, and now by construction rather than by coincidence:
- * `elsewhere` is produced only for a `gltf` descriptor, and every `gltf` descriptor is taken
- * by the arm above before reaching here.
+ * Narrow the resolver's UV answer into this module's own facet. Written out rather than
+ * defaulted, so a new status is a visible edit instead of a silent collapse into "no UVs".
  */
 function uvSourceOf(read: MeshUVRead): UVSource {
   switch (read.status) {
@@ -205,7 +197,6 @@ function uvSourceOf(read: MeshUVRead): UVSource {
       return { uvs: read.islands, status: 'ok' };
     case 'loading':
       return UV_LOADING;
-    case 'elsewhere':
     case 'none':
       return UV_NONE;
     default: {
@@ -216,20 +207,9 @@ function uvSourceOf(read: MeshUVRead): UVSource {
 }
 
 /**
- * Narrow the assignment's four-way slot answer into this module's texture facet — the twin of
- * {@link uvSourceOf}, and the reason this arm no longer calls `primaryMaterial`.
- *
- * `primaryMaterial` returns `M | null`, which has no room for the difference between *"there
- * is no material"* and *"a mounted clone owns what draws and we hold no capture"* — so it
- * re-merged them here and the panel went blank for a clone-drawn mesh (#1015). Taking the
- * widened road means the collapse cannot come back by someone editing this body.
- *
- * `elsewhere` cannot arrive: the clone arm above takes every descriptor `cloneAddressOf`
- * answers for, and `absentSlot` is `'elsewhere'` on exactly the same condition — both are
- * defined in terms of `availabilityOf(descriptor) === 'clone'`, one rule read twice rather
- * than two that happen to agree. It is written out rather than defaulted anyway, because that
- * is what makes a fifth status a visible edit, and `cloneAddress.gate.test.ts` reds if the two
- * ever select different sets.
+ * Narrow the assignment's slot answer into this module's texture facet — the twin of
+ * {@link uvSourceOf}. Taken through `primarySlotMaterial` rather than `primaryMaterial`, so an
+ * absence stays an answer the switch below must name.
  */
 function textureSourceOf(
   slot: SlotMaterial<InlineMaterialSpec | BakedMaterialSpec>,
@@ -241,8 +221,6 @@ function textureSourceOf(
     // different questions that this facet genuinely answers the same way.
     case 'none':
     case 'no-such-slot':
-      return TEX_NONE;
-    case 'elsewhere':
       return TEX_NONE;
     default: {
       const unreachable: never = slot;
@@ -258,18 +236,10 @@ export function resolveMeshUVSpace(state: DagState, nodeId: string): MeshUVSpace
   const mesh = resolveEvaluatedMesh(state, nodeId, STATIC_CTX);
 
   if (!mesh) {
-    // #1053 — a `GltfAsset` is a kept clone-road import, which is not drawn. Its union of UVs and
-    // its base-colour map were read off the live render clone, which went with the clone
-    // renderer, so there is nothing to show — `none`, not a `loading` that never ends.
+    // Nothing resolves a mesh here — a light, a camera, an Empty (a kept clone-road import is
+    // one, #1053) — so there is nothing to show: `none`, not a `loading` that never ends.
     return SPACE_NONE;
   }
-
-  const geometry = mesh.geometry;
-
-  // #1053 — a mesh drawn by an asset clone (`cloneAddressOf`: a `gltf` descriptor, or a projection
-  // over one that cannot materialise) belongs to a kept clone-road import. Both facets were read
-  // off the live clone, which is gone: nothing is drawn, so nothing is shown.
-  if (cloneAddressOf(geometry.descriptor)) return SPACE_NONE;
 
   // Registry-backed geometry. Procedural and primed share this arm because the resolver has
   // ALREADY made the read and typed its absence — nothing here re-derives what a miss means.

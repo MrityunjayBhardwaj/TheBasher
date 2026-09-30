@@ -41,11 +41,11 @@ describe('#634 a primitive derives a uniform face-domain material_index', () => 
   });
 
   it('derives NOTHING when the face count is not derivable from params', () => {
-    // glTF and baked geometry keep their buffers elsewhere. Absence is the honest answer;
+    // Baked geometry keeps its bytes in OPFS. Absence is the honest answer;
     // a fabricated count would be a length that agrees with nothing.
-    const gltf: GeometryDescriptor = { kind: 'gltf', assetRef: 'asset', childName: 'child' };
-    expect(uniformMaterialAttributes(gltf)).toBeNull();
-    expect(mintMeshAttributes(gltf, 'evaluate')).toBeNull();
+    const baked: GeometryDescriptor = { kind: 'baked', hash: 'countless', vertexCount: 24 };
+    expect(uniformMaterialAttributes(baked)).toBeNull();
+    expect(mintMeshAttributes(baked, 'evaluate')).toBeNull();
   });
 
   it('puts the derived set in the store under the key it hands back', () => {

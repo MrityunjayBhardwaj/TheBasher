@@ -1,14 +1,7 @@
 import { BoxGeometry } from 'three';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { GeometryRef } from '../nodes/types';
-import {
-  clear,
-  drawnByAssetClone,
-  getForAttach,
-  getForRead,
-  prime,
-  size,
-} from './geometryRegistry';
+import { clear, getForAttach, getForRead, prime, size } from './geometryRegistry';
 
 afterEach(() => clear());
 
@@ -41,43 +34,8 @@ describe('geometryRegistry', () => {
     expect(size()).toBe(1); // one ref, one entry — neither door cloned
   });
 
-  // #981 — AND HERE THEY DIVERGE, WHICH IS THE HALF THAT USED NOT TO EXIST.
-  //
-  // The row above used to carry a note predicting this: *the day someone gives one door
-  // different behaviour it is a decision with a red test attached rather than a silent
-  // divergence between two names that used to agree.* The decision arrived and the note
-  // would NOT have redded on its own — that row asserts over a box, and a box is not the
-  // input the divergence is about. So the divergence is asserted directly, on the input
-  // that has it, in BOTH directions: a green row over an unaffected input is how a
-  // description rots while its assertion keeps passing.
-  // #1053 — the two rows that stood here needed a MOUNTED clone to make the doors disagree: the
-  // read door resolved a clone-drawn ref (Apply baked a glTF child off those buffers) while the
-  // attach door refused it (`GltfAssetR` already drew that instance). The clone renderer, the
-  // registry it filled, and that Apply road are all gone, so the disagreement cannot be built:
-  // a kept clone-road import is not drawn, and both doors answer `null` — for the ref and for a
-  // recipe over it alike.
-  it('both doors answer null for a clone-drawn ref and a recipe over one (#1053)', () => {
-    const source: GeometryRef = {
-      key: 'gltf|asset-a|Cube',
-      descriptor: { kind: 'gltf', assetRef: 'asset-a', childName: 'Cube' },
-    };
-    const recipe: GeometryRef = {
-      key: 'gltf|asset-a|Cube|array|3',
-      descriptor: { kind: 'array', source, count: 3, offset: [1, 0, 0] },
-    };
-    expect(getForRead(source)).toBeNull();
-    expect(getForAttach(source)).toBeNull();
-    expect(getForRead(recipe)).toBeNull();
-    expect(getForAttach(recipe)).toBeNull();
-    // The control: the same recipe over a BOX builds through both doors.
-    const box = boxRef('box|1', [1, 1, 1]);
-    const overBox: GeometryRef = {
-      key: 'box|array|3',
-      descriptor: { kind: 'array', source: box, count: 3, offset: [1, 0, 0] },
-    };
-    expect(getForRead(overBox)).not.toBeNull();
-    expect(getForAttach(overBox)).not.toBeNull();
-  });
+  // #981 made the two doors diverge on a clone-drawn ref and asserted it here in both directions;
+  // #1053 removed the clone road, so the doors agree again and those rows went with it.
 
   it('keys distinct params to distinct instances (no false sharing)', () => {
     const a = getForRead(boxRef('box|1,1,1', [1, 1, 1]));
@@ -94,15 +52,6 @@ describe('geometryRegistry', () => {
     const g = getForRead(ref);
     expect(g).not.toBeNull();
     expect(g).toBe(getForRead(ref)); // cached
-  });
-
-  it('returns null for a gltf ref (registry does not own loaded glTF geometry)', () => {
-    const ref: GeometryRef = {
-      key: 'gltf|asset-1|Mesh0',
-      descriptor: { kind: 'gltf', assetRef: 'asset-1', childName: 'Mesh0' },
-    };
-    expect(getForRead(ref)).toBeNull();
-    expect(size()).toBe(0); // not cached
   });
 
   it('clear() empties the cache', () => {
@@ -178,12 +127,8 @@ describe('geometryRegistry', () => {
     expect(sourceInstance.boundingBox!.max.x).toBeCloseTo(0.5, 5);
   });
 
-  it('returns null for an array over a non-sync-buildable source (gltf) — v1 follow-up', () => {
-    const gltfSrc: GeometryRef = {
-      key: 'gltf|a|M',
-      descriptor: { kind: 'gltf', assetRef: 'a', childName: 'M' },
-    };
-    expect(getForRead(arrayRef(gltfSrc, 3, [2, 0, 0]))).toBeNull();
+  it('returns null for an array over a source not yet read in (baked, unprimed)', () => {
+    expect(getForRead(arrayRef(bakedRef('array-src', 24), 3, [2, 0, 0]))).toBeNull();
   });
 
   // SOP / modifier (epic #201, #209) — the recursive `mirror` descriptor build.
@@ -257,37 +202,11 @@ describe('geometryRegistry', () => {
     expect(getForRead(mirrorRef(src, 'x'))).not.toBe(getForRead(mirrorRef(src, 'y')));
   });
 
-  it('returns null for a mirror over a non-sync-buildable source (gltf) — v1 follow-up', () => {
-    const gltfSrc: GeometryRef = {
-      key: 'gltf|a|M',
-      descriptor: { kind: 'gltf', assetRef: 'a', childName: 'M' },
+  it('returns null for a mirror over a source not yet read in (baked, unprimed)', () => {
+    const bakedSrc: GeometryRef = {
+      key: 'baked|M',
+      descriptor: { kind: 'baked', hash: 'M', vertexCount: 24 },
     };
-    expect(getForRead(mirrorRef(gltfSrc, 'x'))).toBeNull();
-  });
-});
-
-describe('drawnByAssetClone — is something else already drawing these buffers? (#389)', () => {
-  // The predicate the renderer's draw rule keys on. Asserted over the CLASS boundary in
-  // both directions, because the whole argument for it is that a `kind === 'gltf'` test
-  // would select the same set today and stop being right the moment a kind moved.
-
-  it('is true for a glTF child — its buffers live in the clone GltfAssetR already draws', () => {
-    expect(drawnByAssetClone({ kind: 'gltf', assetRef: 'a', childName: 'Cube' })).toBe(true);
-  });
-
-  it('is FALSE for a recipe over a glTF source — the registry builds those, nothing else draws them', () => {
-    // This is the case that makes the rule one rule instead of two. An Array over an
-    // imported cube must draw: measured in the browser at 72 added positions (3 × 24),
-    // in its own material, alongside the clone's original and with no double draw.
-    const source = {
-      key: 'gltf|a|Cube',
-      descriptor: { kind: 'gltf', assetRef: 'a', childName: 'Cube' },
-    } as const;
-    expect(drawnByAssetClone({ kind: 'array', source, count: 3, offset: [1, 0, 0] })).toBe(false);
-  });
-
-  it('is false for every kind the registry itself builds or holds', () => {
-    expect(drawnByAssetClone({ kind: 'box', size: [1, 1, 1] })).toBe(false);
-    expect(drawnByAssetClone({ kind: 'baked', hash: 'h', vertexCount: 8 })).toBe(false);
+    expect(getForRead(mirrorRef(bakedSrc, 'x'))).toBeNull();
   });
 });

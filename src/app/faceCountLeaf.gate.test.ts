@@ -362,8 +362,8 @@ describe('#638 a count disagreement is refused by name', () => {
     // makes coverage undefined rather than violated) and is not this gate's to refuse.
     expect(faceCountMismatch(box(), null)).toBeNull();
     // A descriptor with no derivable count cannot disagree with anything.
-    const gltf: GeometryDescriptor = { kind: 'gltf', assetRef: 'a', childName: 'n' };
-    expect(faceCountOf(gltf)).toBeNull();
-    expect(faceCountMismatch(gltf, 999)).toBeNull();
+    const baked: GeometryDescriptor = { kind: 'baked', hash: 'h', vertexCount: 3 };
+    expect(faceCountOf(baked)).toBeNull();
+    expect(faceCountMismatch(baked, 999)).toBeNull();
   });
 });

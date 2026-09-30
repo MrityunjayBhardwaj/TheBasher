@@ -805,41 +805,7 @@ export interface BakedMaterialSpec extends BakedMaterialMaps {
 export interface MaterialAssignment<M> {
   readonly slots: readonly M[];
   readonly indices: ArrayLike<number> | null;
-  /**
-   * WHAT AN ABSENT SLOT MEANS ON THIS MESH (#605 item 2).
-   *
-   * A `null` slot carried two meanings and had one spelling, and one producer wrote both.
-   * `GltfData.material` is `null` for a bone, an empty and a pre-#178 save — and the
-   * renderer's answer to that is *keep the clone's embedded material*, i.e. the material
-   * exists and we never captured it. A `materialSlots` entry is `null` for a primitive the
-   * glTF assigned no material at all. **"We do not have it" and "there is none" are not the
-   * same claim**, and every reader was giving them one answer: the inspector drew the
-   * default grey swatch for a child that is on screen in whatever the asset gave it.
-   *
-   * 🔴 IT IS A PROPERTY OF THE MESH, NOT OF THE SLOT, and that is why it sits here rather
-   * than widening `M`. Whether an unanswered slot can be answered elsewhere depends on
-   * where these buffers live — one fact for the whole assignment. Putting an `'elsewhere'`
-   * arm in the slot type would invite per-slot reasoning about a per-mesh condition, and
-   * would widen the material union at every consumer that never asks the question.
-   *
-   * The two sibling reads on {@link EvaluatedMesh} already draw this distinction and are
-   * keyed on the same condition — {@link MeshUVRead}'s `'elsewhere'` and
-   * `GeometryReadResult`'s. This was the last of the three still spelling it as `null`.
-   */
-  readonly absentSlot: AbsentSlotMeaning;
 }
-
-/**
- * Where the answer for an unanswered slot lives.
- *
- * `'none'` — there is no material, and looking elsewhere will not produce one.
- * `'elsewhere'` — a mounted asset clone owns what draws; we hold no capture of it.
- *
- * Deliberately NOT a boolean. `elsewhere: false` would read as "not elsewhere", which is a
- * statement about location rather than about the answer, and the two absences are what this
- * type exists to keep apart.
- */
-export type AbsentSlotMeaning = 'none' | 'elsewhere';
 
 /** Full TRS transform band (D-01) — separate from the geometry capability. */
 export interface MeshTransform {
@@ -956,69 +922,6 @@ export type GeometryDescriptor =
       readonly radius: number;
       readonly widthSegments: number;
       readonly heightSegments: number;
-    }
-  | {
-      readonly kind: 'gltf';
-      readonly assetRef: string;
-      readonly childName: string;
-      /**
-       * HOW MANY FACES THE IMPORTED CHILD HAS, captured from the glTF JSON at import (#1023).
-       *
-       * 🔑 THIS IS THE FIRST ELEMENT FACT AN IMPORTED MESH STATES ABOUT ITSELF, and it is
-       * what lets a `gltf` answer the model's face and corner questions at all. Before it,
-       * an imported mesh's triangles were never faces: the geometry was resolved and present
-       * in the asset clone, and every face- and corner-domain consumer still refused, because
-       * the arity that says how to walk an index buffer is a property of the DESCRIPTOR and
-       * this one stated none.
-       *
-       * 🔴 OPTIONAL, AND ABSENT MEANS "WE NEVER CAPTURED IT" — NEVER "there are no faces".
-       * Every save written before #1023 has no readout, and a child whose primitives are not
-       * all triangles gets none either (see `captureChildFaceCount`). Both must keep
-       * answering `null` exactly as they did, which is why a missing key may never be read
-       * as a zero. This is the same distinction `MaterialAssignment` draws for an unanswered
-       * material slot, and for the same reason: "we do not have it" and "there is none" are
-       * different claims, and giving them one spelling is how a consumer starts drawing a
-       * confident wrong answer.
-       *
-       * Faces and not corners or arity, because a glTF face is a TRIANGLE by construction —
-       * the format has no n-gon primitive mode (`GLTFLoader.js:3804-3832` takes triangles,
-       * strips and fans and throws on the rest). So corners are `3` per face and arity `1`
-       * per face, both derived at the one site that already states the fan rule. Storing
-       * three numbers where the format guarantees two of them would invite them to disagree.
-       *
-       * NOT part of the geometry cache key: two children of the same asset and child name
-       * are the same geometry and therefore the same count, so the key stays
-       * `gltf|<assetRef>|<childName>`.
-       */
-      readonly faceCount?: number;
-      /**
-       * HOW MANY TOPOLOGICAL POINTS THE IMPORTED CHILD HAS, welded at import (#1040).
-       *
-       * 🔑 THE SECOND ELEMENT FACT AN IMPORTED MESH STATES, and unlike the face count it is
-       * not read off the accessor TABLE — it needs the position bytes, because a topological
-       * point is a WELD and two buffer positions at one coordinate are one point. A box
-       * arrives as 24 split positions and 8 points; a sphere as 425 and 362. So this is the
-       * one capture that reads geometry rather than metadata.
-       *
-       * 🔴 OPTIONAL, AND ABSENT MEANS "WE NEVER CAPTURED IT" — the same rule
-       * {@link GeometryDescriptor} states for `faceCount` one field up, and it has three
-       * populations here: every save written before #1040, every child whose primitives are
-       * not all triangles, and — the one that is specific to this field — every
-       * MULTI-PRIMITIVE child.
-       *
-       * ⚠️ WHY MULTI-PRIMITIVE CHILDREN ARE EXCLUDED WHERE `faceCount` SUMS THEM. A glTF node
-       * with two primitives loads as a GROUP of two Meshes and `firstMeshGeometry` reaches
-       * only the FIRST, so a count welded across both primitives describes a buffer no reader
-       * holds. Measured with disjoint primitives: the read door sees 3 points, a unioning
-       * capture says 6. `faceCount` sums and relies on a cross-source check to refuse the
-       * disagreement; this field makes the disagreement UNREPRESENTABLE instead, which is the
-       * stronger of the two and the reason the populations of the two fields differ on
-       * purpose rather than by oversight.
-       *
-       * NOT part of the geometry cache key, for the reason `faceCount` is not: one asset and
-       * child name is one geometry and therefore one count.
-       */
-      readonly pointCount?: number;
     }
   | { readonly kind: 'baked'; readonly hash: string; readonly vertexCount: number }
   /**
@@ -1462,8 +1365,6 @@ export type MeshUVRead =
       /** The corner-domain layer, or the named reason it could not be lifted. */
       readonly attribute: UVAttributeVerdict;
     }
-  /** The buffers live in a loaded asset clone — ask it, not the registry. */
-  | { readonly status: 'elsewhere' }
   /** The bytes exist but have not been read in yet. Waiting helps. */
   | { readonly status: 'loading' }
   /** There genuinely are none. Waiting does not help. */

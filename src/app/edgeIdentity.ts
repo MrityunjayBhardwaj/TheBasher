@@ -293,7 +293,6 @@ export function weldedPolygonsOf(
           : sphereSplitToWelded(descriptor.widthSegments, descriptor.heightSegments);
       return layout.polygons.map((rim) => rim.map((v) => split[v]));
     }
-    case 'gltf':
     case 'baked':
       // The escape hatch `faceCountOf` and `pointCountOf` declare, and censused with them: these
       // buffers live outside the descriptor. That is still true OF A DESCRIPTOR — and #1041

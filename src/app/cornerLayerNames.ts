@@ -82,10 +82,6 @@ export function cornerLayerNamesOf(descriptor: GeometryDescriptor): readonly Nam
       // dropped on the way in is #1119, not this module's to paper over.
       return PRIMITIVE_UV;
 
-    case 'gltf':
-      // The file's-copy road. Numbered buffers, no layer list — see the doc above.
-      return [];
-
     case 'array':
     case 'mirror':
     case 'subset':

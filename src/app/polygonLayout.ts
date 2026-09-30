@@ -574,11 +574,6 @@ export function polygonLayoutOf(descriptor: GeometryDescriptor): PolygonLayoutVe
         until: '#777',
       };
     }
-    case 'gltf':
-      return {
-        kind: 'outside-the-descriptor',
-        why: "a 'gltf' descriptor's buffers live in a loaded asset clone, so nothing on it says what its polygons are",
-      };
     case 'baked':
       return {
         kind: 'outside-the-descriptor',

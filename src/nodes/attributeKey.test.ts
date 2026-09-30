@@ -198,8 +198,8 @@ describe('#638 the geometry key — the four BASE templates, and the ONE compone
     );
   });
 
-  it('a glTF-sourced handle is byte-identical, and its value hash has not moved', () => {
-    // `faceCountOf` is null for gltf/baked, so neither can carry a component — which is
+  it('a baked handle is byte-identical, and its value hash has not moved', () => {
+    // `faceCountOf` is null for baked, so it cannot carry a component — which is
     // what keeps a baked key (and the OPFS path it doubles as) from moving. Pinned as a
     // HASH rather than by inspection: a field materialising as `undefined` would change
     // the hash while leaving every structural assertion above green.
@@ -211,20 +211,20 @@ describe('#638 the geometry key — the four BASE templates, and the ONE compone
     // stored path moves. Nothing in `ProjectSchema` carries a descriptor either. The one
     // persisted spelling of the handle is `BakedGeometryRefSchema`, and an already-saved
     // value parses clean under it with the stale field stripped.
-    const gltf: GeometryRef = {
-      key: 'gltf|asset|child',
-      descriptor: { kind: 'gltf', assetRef: 'asset', childName: 'child' },
+    const baked: GeometryRef = {
+      key: 'baked|h',
+      descriptor: { kind: 'baked', hash: 'h', vertexCount: 24 },
     };
-    expect('attributeKey' in gltf).toBe(false);
-    expect(hashValue(gltf)).toBe(
+    expect('attributeKey' in baked).toBe(false);
+    expect(hashValue(baked)).toBe(
       hashValue({
-        key: 'gltf|asset|child',
-        descriptor: { kind: 'gltf', assetRef: 'asset', childName: 'child' },
+        key: 'baked|h',
+        descriptor: { kind: 'baked', hash: 'h', vertexCount: 24 },
       }),
     );
     // The discriminator: the same handle WITH the field present-and-undefined is a
     // different value to the hash, which is the failure this whole shape avoids.
-    expect(hashValue({ ...gltf, attributeKey: undefined })).not.toBe(hashValue(gltf));
+    expect(hashValue({ ...baked, attributeKey: undefined })).not.toBe(hashValue(baked));
   });
 
   it('the phase’s own two-valued fixture carries a component in its handle', () => {
@@ -262,7 +262,6 @@ describe('#638 the geometry key — the four BASE templates, and the ONE compone
       // one, and why the templates above did not move.
       'bevel',
       'box',
-      'gltf',
       // #1049 — a stored polygon mesh carries its corner UVs and normals INSIDE its data, and its
       // key is a hash over all of that data, so nothing it holds rides outside the key the way this
       // check guards against. What it does not carry is an attribute SET: a per-face material

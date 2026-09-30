@@ -105,35 +105,35 @@ describe('#682 — a scoped override composes onto the selection only', () => {
   });
 
   it('a source with no derivable face count takes the replace arm, and the AUTHORED case throws upstream', () => {
-    // Declared limit, shared with `SetMaterialOp`: a glTF handle's buffers live in an asset
-    // clone, so there is no domain to scope over. Emitting a table with no index behind it
+    // Declared limit, shared with `SetMaterialOp`: a baked handle's bytes live in OPFS,
+    // so there is no domain to scope over. Emitting a table with no index behind it
     // would report one used slot and the override would silently vanish from a mesh the
     // director just styled.
     //
     // 🔴 THE SCOPE HERE IS BLANK, AND THAT IS NOT AN ARBITRARY FIXTURE CHOICE — IT IS THE
-    // ONLY WAY THIS ARM IS REACHABLE. Measured: an AUTHORED scope over a glTF source never
+    // ONLY WAY THIS ARM IS REACHABLE. Measured: an AUTHORED scope over a countless source never
     // arrives, because the resolver refuses it first by name ("has no derivable face count
     // … so the authored scope '0-2' cannot be honoured"). So `targeted === null` inside
     // `evaluate` means a TOTAL selection over an underivable source, never a narrowed one,
     // and the second half of that is asserted below rather than assumed.
-    const gltfSource: MeshDataValue = {
+    const bakedSource: MeshDataValue = {
       kind: 'MeshData',
       geometry: {
-        key: 'gltf|asset-x|child-y',
-        descriptor: { kind: 'gltf', assetRef: 'asset-x', childName: 'child-y' },
+        key: 'baked|countless',
+        descriptor: { kind: 'baked', hash: 'countless', vertexCount: 24 },
       },
       material: SOURCE_MATERIAL,
       materialKey: null,
       attributeKey: null,
     };
-    const out = evalOp({ [SCOPE_PARAM]: '' }, gltfSource) as ModifiedDataValue;
+    const out = evalOp({ [SCOPE_PARAM]: '' }, bakedSource) as ModifiedDataValue;
 
     expect(Object.keys(out).sort()).toEqual(['geometry', 'kind', 'material']);
-    expect(out.geometry).toBe(gltfSource.geometry);
+    expect(out.geometry).toBe(bakedSource.geometry);
 
     // The authored case, refused upstream — so the limit is enforced where the director can
     // be told about it, not silently absorbed into an arm that drops the scope.
-    expect(() => evalOp({ [SCOPE_PARAM]: '0-2' }, gltfSource)).toThrow(
+    expect(() => evalOp({ [SCOPE_PARAM]: '0-2' }, bakedSource)).toThrow(
       /has no derivable face count/,
     );
   });

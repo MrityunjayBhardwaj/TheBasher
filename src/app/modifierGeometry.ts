@@ -684,7 +684,6 @@ export function rebuildGeometryRef(
     // handle, not a param.
     case 'uvProject':
       return uvProjectGeometryRef(d.source, (values.size ?? d.size) as number);
-    case 'gltf':
     case 'baked':
     case 'mesh': // #1049 — no animatable field; a stored mesh changes only by a new params object.
       return ref;
