@@ -56,12 +56,6 @@ interface Origin {
 }
 
 const ORIGINS: Record<string, Origin> = {
-  'src/viewport/followScan.ts · scanForFollow → collectSkeletonObjects': {
-    count: 1,
-    frequency: 'per-frame',
-    why: "EditorViewCamera's frame loop rescans every 15th frame while a view lock is active, paused or not. Measured on the AI walk: 3 whole-clip retargets per 10 frames (~185 ms per scan).",
-    issue: 1388,
-  },
   'src/app/MaterialStackControls.tsx · MaterialStackControls → resolveDataKind': {
     count: 1,
     frequency: 'per-edit',
@@ -79,6 +73,11 @@ const ORIGINS: Record<string, Origin> = {
     frequency: 'per-edit',
     why: "MaterialStackControls' render body on graph change; also the add-material action.",
     issue: 1315,
+  },
+  'src/app/viewLock.ts · hasSomethingToFollow → scanForFollow': {
+    count: 1,
+    frequency: 'per-action',
+    why: "The view-lock click: one scan to decide whether there is anything to follow. The frame loop's rescans hold a cache (#1388).",
   },
   'src/agent/critic/maskedWrites.ts · renderedValue → resolveEvaluatedParam': {
     count: 1,
@@ -322,6 +321,7 @@ const ORIGINS: Record<string, Origin> = {
 /** Every function that takes a cache, as `name@file`. Pinned so the census cannot narrow. */
 const TAKERS: string[] = [
   'resolveDataKind@src/app/modifierGeometry.ts',
+  'scanForFollow@src/viewport/followScan.ts',
   'aimTargetWorld@src/app/nodeConstraints.ts',
   'appendComputedSourceRows@src/timeline/layerChannelRows.ts',
   'applyGhostPoseBand@src/viewport/DiffOverlay.tsx',

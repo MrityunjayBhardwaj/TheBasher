@@ -17,6 +17,9 @@ interface Win {
   };
   __basher_selection?: { getState: () => { select: (id: string) => void; clear?: () => void } };
   __basher_armature?: { bones: number; matrices: number[][] };
+  __basher_viewport?: {
+    getState: () => { setViewLock: (lock: { nodeId: string; boneName: null } | null) => void };
+  };
 }
 
 /** Retarget runs over `frames` animation frames, after the given setup has settled. */
@@ -109,6 +112,27 @@ test('the example evaluates its retarget once, not every frame', async ({ page }
     await row(`playing, ${id} selected, Slots open`, true);
   }
 
+  // #1388 — a view lock rescans the scene every 15th frame, playing or not. Locked to the
+  // camera, the scan still walks the character.
+  for (const id of ['n_camera', 'n_nativeObject_843e4bd5']) {
+    await select(id);
+    await page.evaluate(
+      (id) =>
+        (window as unknown as Win).__basher_viewport!.getState().setViewLock({
+          nodeId: id,
+          boneName: null,
+        }),
+      id,
+    );
+    // 30 frames, so at least one rescan (every 15th) lands in the window.
+    rows.push([`paused, view lock on ${id}`, await runsOver(page, 30, false)]);
+    console.log(
+      `[1314] paused, view lock on ${id}: ${rows[rows.length - 1][1]} retarget runs over 30 frames`,
+    );
+    await page.evaluate(() =>
+      (window as unknown as Win).__basher_viewport!.getState().setViewLock(null),
+    );
+  }
   expect(rows.filter(([, n]) => n > 0)).toEqual([]);
 
   // The walk still moves: the Hips' drawn matrix differs between two times.

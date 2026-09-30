@@ -151,6 +151,10 @@ const CONSUMERS: Record<string, Decision> = {
   'src/app/CurvePointHandles.tsx': authored('delegates-to-a-folding-resolver'),
   'src/app/NPanel.tsx': authored('delegates-to-a-folding-resolver'),
   'src/timeline/LightStudioPanel.tsx': authored('edits-authored-values'),
+  // #1388 — the view lock's scan imports only the `EvaluatorCache` type: it hands the authored
+  // state, and now the frame loop's stable cache, to `collectSkeletonObjects`, which reads the
+  // skeletons at frame 0 by design (its own row). No new road.
+  'src/viewport/followScan.ts': authored('fixed-ctx-by-design'),
   // #902 — the motion resolver. It reads the generator's params AUTHORED and
   // evaluates at the default ctx, and both halves are the same claim: a
   // generation request must be time-invariant. If the playhead could change the
@@ -284,7 +288,9 @@ describe('#582 — who evaluates the graph, and which params they need', () => {
     // evaluator only to hold a stable cache for the resolvers they already called. Uncached, each
     // re-read per frame re-evaluated the graph under the node — on the AI-walk example, the
     // walk's whole-clip retarget, at ~3 fps.
-    expect(evaluatorConsumers()).toHaveLength(47); // 39 -> 40 at #935 (placement) (the motion resolver)
+    // 47 → 48 at #1388, not a new road either: the view lock's scan takes the frame loop's cache
+    // for the rig collection it already delegated to (a rescan re-ran the walk's retarget).
+    expect(evaluatorConsumers()).toHaveLength(48); // 39 -> 40 at #935 (placement) (the motion resolver)
   });
 
   it('every reason is load-bearing — no member of any union is decorative', () => {

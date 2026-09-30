@@ -154,6 +154,9 @@ export function EditorViewCamera() {
   // makes that a content-hash HIT while the DAG is unchanged, so a constrained
   // camera doesn't re-walk the scene every frame (the SceneFromDAG cache pattern).
   const cameraPoseCache = useMemo<EvaluatorCache>(() => createEvaluatorCache(), []);
+  // #1388 — the same, for the view lock's rescan (every LOCK_RESCAN_INTERVAL frames, playing or
+  // not): it collects the scene's rigs, and uncached that re-ran a character's retarget per scan.
+  const lockScanCache = useMemo<EvaluatorCache>(() => createEvaluatorCache(), []);
   // The Canvas (and this component) mounts ONCE for the app lifetime, but the
   // boot-framing guard's true scope is the PROJECT, not the component: each
   // project has its own saved view / active camera, and switching projects
@@ -365,7 +368,7 @@ export function EditorViewCamera() {
     if (lookThrough || !cam) return;
     if (++sinceLockScan.current >= LOCK_RESCAN_INTERVAL) {
       sinceLockScan.current = 0;
-      lockScan.current = scanForFollow(state.scene, viewLock.nodeId, dag);
+      lockScan.current = scanForFollow(state.scene, viewLock.nodeId, dag, lockScanCache);
     }
     // A character's bones are placed at the playhead every frame, as the band draws them (#1275).
     const found = lockScan.current
