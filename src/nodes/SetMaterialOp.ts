@@ -135,7 +135,7 @@ export const SetMaterialOpParams = z.object({
    *
    * ⚠️ WHAT IT CANNOT CATCH, said here so the gap is not mistaken for coverage: a query that
    * PARSES can still be unhonourable against a particular source — an authored scope over a
-   * curve, or over a `gltf`/`baked` handle whose face count is not derivable. Those depend
+   * curve, or over a `baked` handle whose face count is not derivable. Those depend
    * on the spine value, which a param schema cannot see, and they remain named throws.
    */
   [SCOPE_PARAM]: scopeParam(),
@@ -312,8 +312,8 @@ export const SetMaterialOpNode: NodeDefinition<SetMaterialOpParams, ObjectData> 
     //   covered === faces      every face receives the write, so a table would hold one
     //                          used slot — byte-identical to what this node emitted before
     //                          any range or scope existed.
-    //   targeted === null      the face count is not derivable (a glTF or baked source: its
-    //                          buffers live in an asset clone or in OPFS), so there is no
+    //   targeted === null      the face count is not derivable (a baked source: its
+    //                          buffers live in OPFS), so there is no
     //                          domain to write onto. Emitting a table with no index behind
     //                          it would report one used slot anyway and the wired material
     //                          would silently vanish from a mesh the director just assigned

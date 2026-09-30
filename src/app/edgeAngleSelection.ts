@@ -73,7 +73,7 @@ export function edgeIndicesByAngle(ref: GeometryRef, limitDegrees: number): Edge
   if (geometry === null)
     return {
       kind: 'refused',
-      why: `'${ref.descriptor.kind}' has no readable built geometry, so no edge angle can be measured — a glTF ref lives in its asset clone, and a baked one behind an async read`,
+      why: `'${ref.descriptor.kind}' has no readable built geometry, so no edge angle can be measured — a baked one sits behind an async read`,
     };
 
   // #1046 — the ref, so an imported mesh's edges are walkable; the descriptor stops one step short.

@@ -71,12 +71,12 @@ export type SlotMaterial<M> =
   | { readonly status: 'no-such-slot' };
 
 /**
- * Read one slot with the THREE absences told apart.
+ * Read one slot with the absences told apart.
  *
  * ⚠️ THIS IS THE ROAD; `assignment.slots[i]` IS NOT. A bare index hands back `M | null |
- * undefined` and leaves the reader to collapse three different answers into whichever one it
+ * undefined` and leaves the reader to collapse different answers into whichever one it
  * happens to test for — which is what the inspector did, drawing the default grey swatch for
- * a slot whose material simply lives in the asset clone. Reading through here, a consumer
+ * a slot whose material lived in the asset clone (a third absence until #1053). Reading through here, a consumer
  * cannot fail to meet the distinction, because there is no arm to forget.
  */
 export function slotMaterialAt<M>(

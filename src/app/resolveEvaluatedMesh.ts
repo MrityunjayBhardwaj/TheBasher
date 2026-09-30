@@ -28,7 +28,7 @@
 //
 // geometry is a `GeometryRef` HANDLE (deterministic key, §48) — NEVER inlined
 // buffers (Ousterhout interface-depth). The registry (geometryRegistry.ts) builds
-// box/sphere on demand; glTF geometry lives in the loaded asset clone (H45).
+// every descriptor kind but `baked` on demand; a `baked` one is primed after its OPFS read.
 //
 // REF: PLAN.md Wave 1 Task 2; CONTEXT §B/§H; RESEARCH §B; vyapti V1/V20; hetvabhasa H40.
 

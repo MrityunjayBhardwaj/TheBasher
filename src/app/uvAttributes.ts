@@ -2,13 +2,14 @@
 //
 // ── WHY A UV READ CANNOT ANSWER `null` ────────────────────────────────────────────────
 //
-// Three different situations produce "no UVs here", and they need three different responses
-// from the consumer:
+// Two different situations produce "no UVs here", and they need different responses from
+// the consumer:
 //
 //   loading   — the bytes exist and are in flight (a baked geometry's OPFS read). WAIT.
-//   elsewhere — this kind never keeps its buffers in the registry; they live in a loaded
-//               asset clone. LOOK SOMEWHERE ELSE.
 //   none      — there genuinely are none, and waiting will not help. RENDER UNTEXTURED.
+//
+// (A third, `elsewhere` — buffers in a loaded asset clone, LOOK SOMEWHERE ELSE — went with the
+// clone renderer in #1053.)
 //
 // Collapsing `loading` into `none` makes an in-flight read indistinguishable from a mesh
 // that has no UVs — the consumer renders untextured and calls it correct. That defect has
@@ -96,7 +97,7 @@ function uvAttributeOf(
   if (polygons === null)
     // 🔑 STILL PROPAGATED VERBATIM, NEVER RE-WORDED — the discipline `edgeCountOf` keeps one
     // domain over, and the reason is the same as it was: minting a message here would have to
-    // guess which refusal fired. What CAN reach this line has narrowed to one case. A `gltf` or
+    // guess which refusal fired. What CAN reach this line has narrowed to one case. A
     // `baked` descriptor has no face arity, so there is nothing to walk the buffer against, and
     // `polygonLayoutOf` says exactly why — its buffers live outside the descriptor. That verdict
     // is permanent and is not #777's.

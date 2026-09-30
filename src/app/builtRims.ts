@@ -147,7 +147,7 @@ const KEY_STRIDE = 0x1000000;
  * primitive at the bottom of the chain is welded by position and every derived kind above it
  * composes, which is the same thing `pointCountOf` does and the reason its counts agree.
  *
- * `null` rather than a throw wherever the chain cannot answer: a `gltf` or `baked` source has no
+ * `null` rather than a throw wherever the chain cannot answer: a `baked` source has no
  * derivable point count, and a subset whose ratio is not a whole number of copies is not a
  * repetition at all. Both are refusals a caller must handle, not crashes.
  */
@@ -205,7 +205,7 @@ export function composedWeldOf(ref: GeometryRef): PointWeld | null {
  * Reusing it would put `bevel` on the unaligned road and silently retire a working check.
  *
  * 🔴 AND IT IS NOT `weldedPolygonsOf(d) === null`. That is null for genuine refusals as well —
- * a fractional block, a minted face, a derived kind over an imported source — and each of those
+ * a fractional block, a minted face, a derived kind over a baked source — and each of those
  * is a named absence a caller must keep receiving. Falling through on a null would widen every
  * one of them into an answer.
  */
@@ -232,8 +232,8 @@ export function topologyIsBufferOnly(descriptor: GeometryDescriptor): boolean {
 /**
  * What a cache keyed on a DERIVED descriptor has to add to its key once its answer can depend on
  * a buffer that has not arrived yet (#1041) — `''` for a chain rooted at a procedural kind, and
- * the root buffer's read status (`ok` / `elsewhere` / `pending`) for one rooted at an import or
- * a bake.
+ * the root buffer's read status (`ok` / `pending` / `none`) for one rooted at a bake. (An import
+ * was the other buffer root until #1053; it is a stored `mesh` now, with nothing to wait for.)
  *
  * 🔴 WHY THIS EXISTS: A CACHED REFUSAL OUTLIVED THE WAIT IT DESCRIBED. #1041 let the welded-rim
  * door reach an imported mesh's buffer through the ref a derived descriptor carries, which made
@@ -250,8 +250,7 @@ export function topologyIsBufferOnly(descriptor: GeometryDescriptor): boolean {
  *
  * ⚠️ ONLY THE ROOT IS READ, AND ONLY WHEN IT IS A BUFFER KIND. `readGeometry` on a procedural or
  * derived ref BUILDS it — from inside a pure descriptor function, and through `buildBevel` back
- * into `bevelLayoutOf` itself. On a `gltf` or `baked` root it only looks: the clone, or the
- * primed cache. The walk is a `never` switch so a tenth kind is a type error here, not a chain
+ * into `bevelLayoutOf` itself. On a `baked` root it only looks, at the primed cache. The walk is a `never` switch so a tenth kind is a type error here, not a chain
  * that silently answers `''`.
  */
 export function bufferReachabilityOf(ref: GeometryRef): string {
@@ -302,6 +301,10 @@ function bufferRootOf(ref: GeometryRef): GeometryRef | null {
  *
  * ── ROAD B — THE BUFFER IS THE ONLY DERIVATION, SO IT IS ALSO THE CONVENTION (#1025) ──────
  *
+ * ⚠️ SINCE #1053 NO INPUT REACHES THIS ROAD. It was built for a clone-drawn import; an import is
+ * a stored `mesh` now and takes Road A, and `baked` states no arity, so it returns above. What
+ * follows records why the road was shaped as it is; #1402 decides whether it goes.
+ *
  * 🔴 THE ALIGNMENT SELF-CHECK DOES NOT EXIST FOR AN IMPORTED MESH, AND SAYING SO IS THE POINT.
  * An imported mesh's topology is its index buffer and nothing else. The obvious way to reach
  * Road A — synthesise `welded` as `weld.map[raw[f][k]]` — produces an array that IS a function
@@ -328,9 +331,9 @@ function bufferRootOf(ref: GeometryRef): GeometryRef | null {
  *
  * It also repairs `builtPolygonRims`'s cache rather than leaning on it: `rimCache` keys on the
  * GEOMETRY alone, on the stated assumption that a built geometry comes from exactly one
- * descriptor. An asset clone's buffer does not — two nodes can name one imported child with
- * different captured counts, and measured, the second call receives the first's rims. Because
- * `faceArityOf`'s imported arm returns a uniform array, the sum pins its length, so at most one
+ * descriptor. An asset clone's buffer did not — two nodes could name one imported child with
+ * different captured counts, and measured, the second call received the first's rims. Because
+ * `faceArityOf`'s imported arm returned a uniform array, the sum pins its length, so at most one
  * arity can pass this check for a given buffer and the assumption holds again.
  */
 export function alignedSplitRims(

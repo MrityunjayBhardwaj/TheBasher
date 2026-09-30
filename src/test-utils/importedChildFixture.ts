@@ -12,9 +12,9 @@
 //
 // So the shape lives here once, beside `splitOps` in `splitKinds.ts`, which does the same
 // job for the kinds a test CAN mint from primitives. This one is separate rather than a
-// seventh entry there because an imported child is not mintable that way: its geometry is
-// a reference into a loaded asset clone, so what a unit fixture needs is the NODE SHAPE
-// without any pretence that the pair would draw.
+// seventh entry there because an imported child is not mintable that way: its data node is
+// a saved clone import (`GltfData`), which evaluates to nothing since #1053, so what a unit
+// fixture needs is the NODE SHAPE without any pretence that the pair would draw.
 //
 // ── THE TWO IDIOMS, BOTH SERVED ──────────────────────────────────────────────────────
 //

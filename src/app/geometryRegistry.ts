@@ -5,19 +5,18 @@
 //   this is a DERIVED cache, NOT authoritative state. It is keyed by the
 //   resolver's deterministic key (producer identity + params, §48), it is
 //   NEVER serialized into the DAG, and it never participates in Ops / undo /
-//   content-hashing. Heavy BufferGeometry buffers stay HERE (and, for glTF, in
-//   the loaded asset clone) — the DAG carries only the structure + a GeometryRef
-//   handle (Ousterhout interface-depth: simple ref, deep registry).
+//   content-hashing. Heavy BufferGeometry buffers stay HERE — the DAG carries only
+//   the structure + a GeometryRef handle (Ousterhout interface-depth: simple ref,
+//   deep registry).
 //
 // Determinism (§48): `get(ref)` builds-on-miss and returns the cached instance
 //   on-hit. Two refs with the same `key` resolve to the SAME instance (no churn);
 //   two refs with different params produce different keys (no false sharing).
 //
-// glTF scope (D-02 MINIMAL): the registry does NOT load glTF. A `gltf` descriptor
-//   keys the child by (assetRef, childName); the actual BufferGeometry lives in
-//   the GltfAsset's loaded three.js clone (GltfAssetR owns it, H45). `get()`
-//   returns null for a gltf ref — the consumer reads geometry from the asset
-//   clone, not from this registry.
+// glTF scope: the registry does NOT load glTF. An import is a stored `mesh`
+//   descriptor (#1049) whose data the importer filled, built here like a box.
+//   Until #1053 a `gltf` descriptor keyed a child of the loaded three.js clone
+//   instead, and its buffers lived there.
 //
 // baked scope (Phase 151): a `baked` geometry is AUTHORITATIVE (the product of
 //   applyMatrix4 on a clone, NOT rebuildable from params) — its bytes live in
@@ -150,13 +149,11 @@ const primed = new Set<string>();
 /**
  * Resolve a GeometryRef to a cached three.js BufferGeometry, building on miss.
  *
- * A `gltf` ref answers null (#1053): its buffers lived in the render clone (#367 read them
- * through it), and the clone renderer is gone — a kept clone-road import is not drawn, and
- * {@link readGeometry} types that as `elsewhere`, and a recipe over one as `none`. Returns
- * null for a `baked` MISS — the bytes
- * live in OPFS and must be loaded asynchronously by the renderer hook, then
- * `prime`d (see header). Returns the SAME instance for repeated calls with an
- * identical key (cache hit).
+ * Returns null for a `baked` MISS — the bytes live in OPFS and must be loaded asynchronously
+ * by the renderer hook, then `prime`d (see header). Returns the SAME instance for repeated
+ * calls with an identical key (cache hit). (A `gltf` ref, read through the render clone since
+ * #367, went with the clone renderer in #1053: a kept clone-road import is an Empty that asks
+ * for no geometry.)
  *
  * `via` records which origin caused an INSERTION (see the block above). It is a
  * diagnostic, never a behavioural input — the two doors resolve identically, and this
@@ -281,34 +278,22 @@ export function getForRead(ref: GeometryRef): BufferGeometry | null {
 
 // ── #630 — WHY THE ABSENCE HAS A REASON, AND WHY THE REASON LIVES HERE ─────────────────
 //
-// `get` returns null for THREE unrelated reasons, and which one it is changes what the
+// `get` returns null for TWO unrelated reasons, and which one it is changes what the
 // caller must do:
 //
-//   a `gltf` ref        → null only until the asset MOUNTS. The registry does not own loaded
-//                         glTF geometry; the asset clone does — and `get` DELEGATES to it
-//                         (`:220`), so a mounted child RESOLVES and an unmounted one reads
-//                         null. Null means WAIT FOR THE MOUNT.
-//
-//                         🔴 THIS READ "ALWAYS null / LOOK ELSEWHERE" UNTIL #1042, AND IT
-//                         WAS FALSE FROM #367 ONWARD. That change gave `get` the delegation
-//                         and updated {@link GeometryAvailability} forty lines below; this
-//                         block — the registry's own statement of who owns what — kept the
-//                         pre-#367 rule. Measured against a mounted clone with a box control:
-//                         `getForRead` returns a 24-vertex geometry and `readGeometry` reads
-//                         `ok`. A false constraint in the file that OWNS the rule is not inert:
-//                         it is the sentence that nearly argued #1041 into carrying
-//                         buffer-scale rims in the document, which #1025 had already closed
-//                         against. Named by `importedRims.gate.test.ts` ground 14 — named
-//                         rather than merely covered: six grounds there already red if this
-//                         delegation breaks, but each reds about RIMS, so none of them would
-//                         tell a reader the ownership rule had moved.
 //   a `baked` miss      → the authoritative bytes are in OPFS behind an async read that has
 //                         not happened yet. Null means WAIT — and it may well arrive.
 //   a procedural miss   → the registry builds procedural geometry synchronously on demand,
 //                         so a null here means `build` refused. Null means THERE GENUINELY
 //                         IS NONE, and waiting will not help.
 //
-// A caller handed a bare `null` has to re-derive which of the three it got by re-inspecting
+// There were three until #1053: a `gltf` ref read null until its asset clone MOUNTED (WAIT FOR
+// THE MOUNT), because `get` delegated to the clone from #367. This block said "always null /
+// look elsewhere" from #367 until #1042, and that false sentence in the file that owns the rule
+// nearly argued #1041 into carrying buffer-scale rims in the document. A rule's own statement
+// goes stale first, because nothing reds on prose.
+//
+// A caller handed a bare `null` has to re-derive which of the two it got by re-inspecting
 // `ref.descriptor.kind` — which means the rule is restated at every call site, and every
 // restatement is a place it can be got wrong or quietly fall out of date when a kind is
 // added. That is not hypothetical here: `resolveMeshUVSpace.ts` carried its own private copy
@@ -342,7 +327,7 @@ export type GeometryAvailability = 'procedural' | 'primed';
  *
  * Exhaustive, closed by a `never`. Adding an arm to `GeometryDescriptor` without declaring
  * how it becomes available is a COMPILE ERROR rather than a silent default — deliberately,
- * because a default would pick one of the three meanings for the new kind and be right by
+ * because a default would pick one of the meanings for the new kind and be right by
  * accident at best.
  *
  * 🔴 THAT SENTENCE USED TO NAME `GeometryRef`, AND IT WAS FALSE (ns-2 D8). The `never` was
@@ -710,8 +695,8 @@ function build(ref: GeometryRef): BufferGeometry | null {
   // property that made widening this module's import set safe in the first place.
   //
   // 🔴 A `null` HERE HAS AN EMPTY POPULATION, AND THAT IS CENSUSED RATHER THAN ASSERTED. An
-  // arity is null on exactly the descriptors whose face COUNT is — `gltf`, `baked`, or a chain
-  // reaching one — which `faceCount.gate.test.ts` holds as a set rather than a number, and
+  // arity is null on exactly the descriptors whose face COUNT is — `baked`, or a chain reaching
+  // one — which `faceCount.gate.test.ts` holds as a set rather than a number, and
   // those mint no `material_index` at all because `uniformMaterialAttributes` returns null for
   // them. So nothing can arrive here today. It is refused BY NAME anyway, on the same
   // principle the two refusals below it follow: the alternative is a mesh that renders in one
@@ -741,17 +726,17 @@ function build(ref: GeometryRef): BufferGeometry | null {
  * ── ns-2 step 8b — WHY THIS IS A `switch` CLOSED BY A `never` ─────────────────────────
  *
  * It was an if-chain ending in a bare `return null`, and that terminal line was doing two
- * unrelated jobs at once. For `gltf` and `baked` the null is the DECLARED answer — their
- * buffers live in an asset clone and in OPFS, and this function is not their builder. For a
+ * unrelated jobs at once. For `baked` (and, until #1053, `gltf`) the null is the DECLARED
+ * answer — its buffers live in OPFS, and this function is not their builder. For a
  * descriptor kind nobody taught this function about, the same null means "I have no idea
  * what this is", and the two were indistinguishable to every caller and to every reader.
  *
  * A new geometry operator therefore had a silent site here: register the node, add the union
  * arm, teach `faceCountOf` and `availabilityOf` because they refuse to compile, and this
  * function returns null forever. The renderer draws nothing, the registry warns nothing, and
- * the descriptor kind that nobody built looks exactly like a glTF child still loading.
+ * the descriptor kind that nobody built looked exactly like a glTF child still loading.
  *
- * The two answers are now separate: `gltf`/`baked` are cases that return null on purpose,
+ * The two answers are now separate: `baked` is a case that returns null on purpose,
  * and the seventh kind is a compile error at the `never`.
  *
  * 🔴 THE LIMIT, STATED HERE BECAUSE A LATER STEP DEPENDS ON KNOWING IT. A `never` closes over
@@ -893,9 +878,8 @@ function elementSubset(
   // variable number of triangles. Threaded from the caller rather than derived here for the
   // reason every other descriptor fact in this module is: the builders hold the descriptor and
   // this function holds a `BufferGeometry`, and re-deriving one from the other is the second
-  // spelling this file exists to avoid. `null` is a source whose arity is not derivable, which
-  // no caller can construct today — a `gltf` source never builds through here at all — and is
-  // refused by name rather than assumed away.
+  // spelling this file exists to avoid. `null` is a source whose arity is not derivable — a
+  // `baked` one — and is refused by name rather than assumed away.
   sourceArity: readonly number[] | null,
   scope: string | undefined,
   // Paired with `scope` by `scopeField`, so "a query at no class" has no constructor. Read
@@ -1763,7 +1747,7 @@ function buildUVProject(
   if (arity === null || rims === null) {
     // 🔴 THIS IS A DEFECT ARM, NOT THE ORDINARY MISSING-BUFFER ONE, AND THE DIFFERENCE IS THE
     // POINT. {@link projectionMaterialises} has already sent every source with no derivable face
-    // arity down the pass-through road, so a `gltf` or `baked` chain cannot arrive here — the
+    // arity down the pass-through road, so a `baked` chain cannot arrive here — the
     // `arity === null` half is unreachable through `get` and is written out anyway, because a
     // predicate and a builder agreeing today is not a reason for the builder to assume it.
     //

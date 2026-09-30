@@ -1272,7 +1272,7 @@ export interface GeometryRef {
  * ── WHY THIS IS A TYPE AND NOT `number | null` ────────────────────────────────────────
  *
  * The `null` it replaces was carrying two unrelated facts (#744). One is permanent — a
- * `gltf` or `baked` descriptor's buffers live in a loaded asset clone or in OPFS, and
+ * `baked` descriptor's buffers live in OPFS (a `gltf` one's lived in an asset clone), and
  * nothing on the descriptor says how many elements they hold, so no amount of later work
  * makes that arm answerable HERE. The other was temporary: the three derived kinds refused
  * because a WELDED point count depends on whether copies coincide. #754 retires that second
@@ -1402,8 +1402,8 @@ export interface EvaluatedMesh {
   readonly geometry: GeometryRef;
   /**
    * #635 — the UV read: the island projection when there is one, and otherwise WHICH kind
-   * of absence this is. Waiting, look-elsewhere and genuinely-none are three different
-   * answers requiring three different responses, and the single nullable field this
+   * of absence this is. Waiting and genuinely-none (and, until #1053, look-elsewhere) are
+   * different answers requiring different responses, and the single nullable field this
    * replaced could carry only their union.
    */
   readonly uvRead: MeshUVRead;

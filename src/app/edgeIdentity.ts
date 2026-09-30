@@ -511,7 +511,7 @@ function walkEdgeIncidences(
  *
  * ⚠️ THE LENGTH OF EACH ENTRY IS THE MANIFOLDNESS, AND CALLERS MUST READ IT. Two is a manifold
  * edge; one is a boundary edge, which every open mesh has and every `subset` produces; three or
- * more is non-manifold, which nothing in this project builds today but a `gltf` import could.
+ * more is non-manifold, which nothing in this project builds today but an imported `mesh` can carry.
  * A caller that assumes two gets a wrong answer on a shape this substrate already ships.
  */
 export interface EdgeAdjacency {
@@ -545,8 +545,8 @@ export function edgeFaceAdjacencyOf(
  * How many edges a descriptor has — the `edge` answer `componentCountOf` used to refuse.
  *
  * Shaped as a {@link CountVerdict} like `pointCountOf` rather than as `number | null`, because
- * the absence has a REASON a caller should be able to quote: a `gltf` or `baked` anywhere up the
- * source chain, propagated verbatim so the verdict still names the link that could not answer.
+ * the absence has a REASON a caller should be able to quote: a `baked` anywhere up the source
+ * chain, propagated verbatim so the verdict still names the link that could not answer.
  */
 export function edgeCountOf(subject: GeometryDescriptor | GeometryRef): CountVerdict {
   const descriptor = descriptorOf(subject);

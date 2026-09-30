@@ -104,8 +104,8 @@ export function builtFaceNormals(
 /**
  * Every edge's angle in radians, index-aligned with {@link edgeSetOf}'s pairs — `0` to `PI`.
  *
- * `null` for exactly the descriptors the edge walk refuses (`gltf` and `baked` anywhere up the
- * chain, whose buffers live outside the descriptor) or whose split rims cannot be recovered.
+ * `null` for exactly the descriptors the edge walk refuses (`baked` anywhere up the chain,
+ * whose buffers live outside the descriptor) or whose split rims cannot be recovered.
  *
  * ⚠️ ZERO IS AN ANSWER AND NOT AN ABSENCE, which matters because three different edges give it:
  * a FLAT edge (its two faces are coplanar), a BOUNDARY edge (one face — every open mesh has

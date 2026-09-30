@@ -157,8 +157,9 @@ function GhostLight({ value }: { value: LightValue }) {
 }
 
 // Kinds a diff-ghost deliberately does NOT preview — a VISIBLE opt-out (§9), not a
-// silent fall-through. Lights/cameras carry no geometry; a glTF/baked/modified mesh
-// needs its loaded asset clone or OPFS bytes (async, outside this sync overlay). A
+// silent fall-through. Lights/cameras carry no geometry; a baked/modified mesh needs
+// OPFS bytes (async, outside this sync overlay); a glTF asset root has drawn nothing
+// since #1053 (it needed its loaded asset clone before). A
 // NEW SceneObject kind lands in neither a case below nor this list, so the `.includes`
 // exhaustiveness gate in `default` stops compiling — the add-a-kind decision (ghost
 // it, or opt out here) can no longer be made silently (#357 / K22 step 8).

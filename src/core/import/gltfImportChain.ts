@@ -138,9 +138,9 @@ export function detectUnsupportedGltfFeatures(json: {
   // director still cannot do is SEE or CHANGE the binding: there is no inspector control
   // for a slot's UV set, and the 2D UV view draws one anonymous set
   // (`resolveMeshUVSpace.ts` — its extension point says so), so a slot sampling set 1 is
-  // shown against set 0's layout. A second set also still reaches no ELEMENT data: the
-  // corner lift refuses for every imported mesh, first set included, because a `gltf`
-  // descriptor states no face arity (#738).
+  // shown against set 0's layout. (A native import carries every set as a named corner
+  // layer; the file's-copy road's corner lift refused them all, because a `gltf` descriptor
+  // stated no face arity (#738), until #1053 retired that descriptor.)
   //
   // ✅ THE OBSERVATION IS TAKEN, AND IT DID NOT LICENSE DELETING THIS ENTRY. The browser
   // check this comment used to ask for — a replaced map on `two-uv-quad.gltf` drawing the
@@ -151,9 +151,10 @@ export function detectUnsupportedGltfFeatures(json: {
   // USED to give. The three above are untouched by it and were each re-measured when the
   // observation landed, so the notice keeps firing and its words stay true: the feature
   // renders, and it is not editable. (Since #1062 that spec's subject imports native, so it now
-  // observes the native road; this notice fires only on the file's-copy road, for files refused
-  // for something else — `iridescence-quad.gltf` is one; `sheen-quad.gltf` was, until #1123
-  // carried sheen.)
+  // observes the native road; this notice fired only on the file's-copy road, for files the
+  // native reader refused for something else. Since #1053 such a file is refused whole and that
+  // road draws nothing, so "the feature renders" no longer holds anywhere this notice is built:
+  // only the load converter's comparison and the `__basher_importGltf` dev seam build it.)
   const multiUV = (json.meshes ?? []).some((m) =>
     (m.primitives ?? []).some((p) =>
       Object.keys(p.attributes ?? {}).some((a) => /^TEXCOORD_[1-9]/.test(a)),

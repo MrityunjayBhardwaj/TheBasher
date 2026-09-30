@@ -2934,17 +2934,10 @@ function ObjectMeshR({
     // data, no mesh, nothing for a name to resolve against.
     data ? cornerLayerNamesOf(data.geometry.descriptor) : [],
   );
-  // #389 — an Object does not draw what the asset clone is already drawing: without that
-  // rule the pair draws a second mesh from one geometry, and on a skinned child the second
-  // draw is the undeformed bind pose. A recipe OVER a glTF source is not clone-drawn and is
-  // unaffected.
-  //
-  // #981 — THE TEST USED TO BE SPELLED HERE, and being spelled HERE is what let it be
-  // skipped. `MultiMaterialMeshR` — the fork this component's own note below points at —
-  // reached for the same door with no such test, so a two-primitive imported child drew
-  // twice while this one-primitive road was correct. `getForAttach` refuses a clone-drawn
-  // ref itself now, so this reads as an ordinary attach and there is no unguarded spelling
-  // left for a fourth draw site to find.
+  // #389 / #981 — an Object once had to not draw what the asset clone was already drawing
+  // (else one geometry drew twice, the second as the undeformed bind pose), and #981 moved
+  // that test from here onto `getForAttach` so no draw site could skip it. #1053 removed the
+  // clone renderer and with it the case: this is an ordinary attach.
   const geom = data ? getForAttach(data.geometry) : null;
   // #638 (ns-1b step 5) — the decision is the resolver's, not this component's, and the
   // REAL assignment is handed over rather than a synthesised single-slot one. This

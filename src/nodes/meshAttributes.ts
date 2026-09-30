@@ -18,8 +18,8 @@
 //
 // ── WHY IT MAY RETURN NOTHING ─────────────────────────────────────────────────────────
 //
-// A geometry whose face count is not derivable from params (glTF, baked — their buffers live
-// in an asset clone or in OPFS) gets NO attribute set rather than a guessed one. Absence
+// A geometry whose face count is not derivable from params (baked — its buffers live in
+// OPFS) gets NO attribute set rather than a guessed one. Absence
 // here means "this road has not been given a data half yet", which is the honest state and
 // the subject of a later phase; a fabricated count would be a length that agrees with
 // nothing.
@@ -353,8 +353,7 @@ export function mintGroupAttributes(
 ): { readonly key: string; readonly members: number; readonly faces: number } | null {
   refuseUnattributedGrowth(via);
   const faces = faceCountOf(geometry.descriptor);
-  // No derivable face count (a glTF or baked source: its buffers live in an asset clone or
-  // in OPFS) means there is no face domain to write onto. Declared limit, not an oversight —
+  // No derivable face count (a baked source: its buffers live in OPFS) means there is no face domain to write onto. Declared limit, not an oversight —
   // it lifts when those roads get a data half of their own (#605).
   if (faces === null) return null;
   const carried = geometry.attributeKey === undefined ? null : read(geometry.attributeKey);
@@ -638,12 +637,14 @@ export function carriageForDomain(
   // missing CORNER order. An aggregate refusing on behalf of a domain it was not asked about.
   corners: TiledCornerOrder | null,
   // 🔴 NULLABLE SINCE #1036, FOR THE REASON DIRECTLY ABOVE AND ONE THE CORNER CASE DID NOT HAVE.
-  // `tiledPointOrder` needs its source's POINT COUNT, and an imported mesh answers
-  // `outside-the-descriptor` for that — its buffers live in a loaded asset clone. So a `gltf`
-  // source reaches here with a face order, a corner order and NO point order, and while this
-  // was non-nullable `mintTiledModifierAttributes` returned `null` the moment it was missing:
+  // `tiledPointOrder` needs its source's POINT COUNT, and a `gltf` import answered
+  // `outside-the-descriptor` for that — its buffers lived in a loaded asset clone. So it
+  // reached here with a face order, a corner order and NO point order, and while this was
+  // non-nullable `mintTiledModifierAttributes` returned `null` the moment it was missing:
   // a NAMED FACE GROUP on an imported mesh was discarded because the POINT domain could not
   // answer. The same aggregate-refusing-for-an-unasked-domain shape #825 fixed for corners.
+  // (Since #1053 an import is a stored `mesh` with a point count; whether anything still
+  // arrives with a face order and no point order is unmeasured.)
   //
   // ⚠️ AND THE OLD REASONING WAS SOUND WHEN IT WAS WRITTEN, which is why this is re-derived
   // rather than called a bug. Taking all three orders unconditionally cost nothing while no
@@ -793,14 +794,14 @@ export function carriageForDomain(
       // point came from is the whole of the answer, and there is no second field carrying it.
       //
       // So this refuses for the POINT domain only, and the face and corner domains above go on
-      // answering — which is the entire difference between "an imported mesh loses its point
-      // attributes" and "an imported mesh loses every attribute because of its point ones".
+      // answering — which is the entire difference between "a mesh loses its point
+      // attributes" and "a mesh loses every attribute because of its point ones".
       if (points === null)
         return {
           kind: 'refused',
           why:
             `'${operator}' derives from a source whose topological point count is not derivable ` +
-            `from its descriptor — an imported mesh keeps its buffers in a loaded asset clone — ` +
+            `from its descriptor — a baked mesh keeps its buffers in OPFS — ` +
             `so a '${data.type}' at the '${domain}' domain has no order to be gathered through. ` +
             `The face and corner domains are unaffected: this refusal is about this datum's ` +
             `domain and not about the geometry`,
