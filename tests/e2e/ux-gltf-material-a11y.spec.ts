@@ -10,8 +10,7 @@
 //   - the multi-slot selector is a radiogroup of radios with aria-checked.
 
 import { test, expect } from './_fixtures';
-import { ingestOnCloneRoad } from './_cloneRoadImport';
-import { importedChild, importedChildren } from './_importedChild';
+import { firstMaterialMesh, importedMeshes } from './_importedMesh';
 import { openInspectorSection } from './_inspectorSections';
 
 interface W {
@@ -27,15 +26,30 @@ interface W {
     files: { relativePath: string; bytes: Uint8Array }[],
     folderName: string,
   ) => Promise<string>;
-  __basher_importGltf: (b: ArrayBuffer, ref: string) => Promise<unknown>;
-  __basher_writeOpfsBytes: (p: string, b: Uint8Array) => Promise<void>;
 }
 
 type Page = import('@playwright/test').Page;
 
+/**
+ * Import `/assets/<file>` through the door a drop takes. #1053 — the native road: this spec ran on the
+ * clone road until the clone road was retired.
+ */
+async function ingest(page: Page, file: string, folder: string): Promise<void> {
+  await page.evaluate(
+    async ({ file, folder }) => {
+      const bytes = new Uint8Array(await fetch(`/assets/${file}`).then((r) => r.arrayBuffer()));
+      await (window as unknown as W).__basher_ingestGltfFolder(
+        [{ relativePath: file, bytes }],
+        folder,
+      );
+    },
+    { file, folder },
+  );
+}
+
 // #389 — the DATA half's id: the material rows, and therefore every label and control
 // this spec reaches for, are keyed on the node that owns the material.
-const cubeChildId = async (page: Page) => (await importedChild(page, 'cube'))?.dataId ?? null;
+const cubeMesh = async (page: Page) => await firstMaterialMesh(page);
 
 test.describe('#178 S6 — glTF material inspector a11y', () => {
   test('map-row buttons have slot-specific accessible names; row is a named group', async ({
@@ -45,13 +59,13 @@ test.describe('#178 S6 — glTF material inspector a11y', () => {
     await page.waitForFunction(
       () => typeof (window as unknown as W).__basher_ingestGltfFolder === 'function',
     );
-    // #1063 — the clone road on purpose: cube-draco now arrives native through ingest.
-    await ingestOnCloneRoad(page, 'cube-draco.glb', 'a11y');
-    await expect.poll(() => cubeChildId(page)).not.toBeNull();
-    const id = await cubeChildId(page);
+    await ingest(page, 'cube-draco.glb', 'a11y');
+    await expect.poll(async () => (await cubeMesh(page))?.road ?? null).toBe('native');
+    const { dataId: id, objectId } = (await cubeMesh(page))!;
+    // Select the OBJECT — what a director clicks; the rows are keyed on the data half.
     await page.evaluate(
       (i) => (window as unknown as W).__basher_selection.getState().select(i),
-      id,
+      objectId,
     );
     await openInspectorSection(page, 'material');
 
@@ -74,21 +88,15 @@ test.describe('#178 S6 — glTF material inspector a11y', () => {
   test('the multi-slot selector is a radiogroup of radios with aria-checked', async ({ page }) => {
     await page.goto('/');
     await page.waitForFunction(
-      () => typeof (window as unknown as W).__basher_importGltf === 'function',
+      () => typeof (window as unknown as W).__basher_ingestGltfFolder === 'function',
     );
-    await page.evaluate(async () => {
-      const w = window as unknown as W;
-      const ref = 'assets/two-material-textured-quad.gltf';
-      const buf = await fetch('/assets/two-material-textured-quad.gltf').then((r) =>
-        r.arrayBuffer(),
-      );
-      await w.__basher_writeOpfsBytes(ref, new Uint8Array(buf));
-      await w.__basher_importGltf(buf, ref);
-    });
-    // #389 — a two-primitive child stores the full table in `materialSlots`; `slots`
+    await ingest(page, 'two-material-textured-quad.gltf', 'a11y-two');
+    // #1052 — a two-primitive mesh stores the full table in `materialSlots`; `slots`
     // is that table flattened by the one rule, so the arity question is asked of it.
     const twoSlotChild = async () => {
-      const c = (await importedChildren(page)).find((child) => child.slots.length === 2);
+      const c = (await importedMeshes(page)).find(
+        (m) => m.road === 'native' && m.slots.length === 2,
+      );
       // The OBJECT half — this id is selected, and selection addresses the object.
       return c?.objectId ?? null;
     };

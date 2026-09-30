@@ -7,13 +7,12 @@
 // repaints (read off the live three.js material). If the editor weren't wired to the
 // material the renderer reads, the colour would never change.
 //
-// #1053 — cube-draco imports native; the clone road is retired. The multi-slot case below
-// still stages on the clone road and reads the DAG only.
+// #1053 — every case imports native (cube-draco since #1063, the two-material quad since #1052);
+// the clone road is retired.
 
 import { test, expect } from './_fixtures';
-import { drawnImportMeshes, firstMaterialMesh } from './_importedMesh';
+import { drawnImportMeshes, firstMaterialMesh, importedMeshes } from './_importedMesh';
 import { openInspectorSection } from './_inspectorSections';
-import { importedChildren } from './_importedChild';
 
 const FOLDER = 'matedit';
 
@@ -131,25 +130,23 @@ test.describe('#178 S4 — editable glTF material inspector', () => {
   }) => {
     await page.goto('/');
     await page.waitForFunction(
-      () => typeof (window as unknown as BasherWindow).__basher_importGltf === 'function',
+      () => typeof (window as unknown as BasherWindow).__basher_ingestGltfFolder === 'function',
     );
-    // The two-material quad → ONE GltfChild owning 2 material slots.
+    // The two-material quad → ONE native mesh owning 2 material slots (#1052), through the door a
+    // drop takes. #1053 — this ran on the clone road until the clone road was retired.
     await page.evaluate(async () => {
-      const w = window as unknown as BasherWindow & {
-        __basher_importGltf: (b: ArrayBuffer, ref: string) => Promise<unknown>;
-        __basher_writeOpfsBytes: (p: string, b: Uint8Array) => Promise<void>;
-      };
-      const ref = 'assets/two-material-textured-quad.gltf';
-      const buf = await fetch('/assets/two-material-textured-quad.gltf').then((r) =>
-        r.arrayBuffer(),
+      const bytes = new Uint8Array(
+        await fetch('/assets/two-material-textured-quad.gltf').then((r) => r.arrayBuffer()),
       );
-      await w.__basher_writeOpfsBytes(ref, new Uint8Array(buf));
-      await w.__basher_importGltf(buf, ref);
+      await (window as unknown as BasherWindow).__basher_ingestGltfFolder(
+        [{ relativePath: 'two-material-textured-quad.gltf', bytes }],
+        'matedit-two',
+      );
     });
-    // #389 — the two-slot child, found by ARITY on the flattened table (`materialSlots ??
-    // [material]`), which is what the retired `materials[].length === 2` asked.
+    // The two-slot mesh, found by ARITY on the flattened table (`materialSlots` when it has more
+    // than one slot), on the native road.
     const twoSlotChild = async () =>
-      (await importedChildren(page)).find((c) => c.slots.length === 2) ?? null;
+      (await importedMeshes(page)).find((c) => c.road === 'native' && c.slots.length === 2) ?? null;
     await expect.poll(async () => (await twoSlotChild()) !== null).toBe(true);
     const two = (await twoSlotChild())!;
     const childId = two.dataId;
