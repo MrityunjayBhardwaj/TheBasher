@@ -18,7 +18,7 @@
 // excluded layer-wired channels is gone with the wrapper — V57.)
 //
 // REF: docs/UNIFICATION-DESIGN.md §3.1/§3.3; activeCamera.ts (camera precedent);
-//      bakedGltfChannels.ts (glTF precedent); vyapti V20/V24/V57; hetvabhasa H40/H48.
+//      bakedGltfChannels.ts@7e1356c7 (glTF precedent); vyapti V20/V24/V57; hetvabhasa H40/H48.
 
 import { getNodeType } from '../core/dag/registry';
 import type { KeyframeChannelValue } from '../nodes/types';

@@ -22,11 +22,9 @@
 //     the evaluator + every consumer that destructures scale). This closes the
 //     latent H40 where a static param-read diverged from an animated render for
 //     the #2/#3 (material/UV) consumers, one indirection deeper. No parallel walk.
-//   - GltfChild: the transform is delegated to `resolveEvaluatedTransform`
-//     (which funnels through the ONE `resolveGltfChildTrs` layering primitive —
-//     manual → baked → clip → base). When there is no render output to walk
-//     (the bare-node case), we fall back to `resolveGltfChildTrs` directly with
-//     the child's own params as base — STILL the one band, never a parallel walk.
+//   - an imported child (an `Object` over a `GltfData`) takes the same road as every
+//     other Object. Its own layering band (manual → baked → clip → base) was the
+//     clone renderer's, and went with it (#1053): a kept import is not drawn.
 //
 // geometry is a `GeometryRef` HANDLE (deterministic key, §48) — NEVER inlined
 // buffers (Ousterhout interface-depth). The registry (geometryRegistry.ts) builds
@@ -158,8 +156,9 @@ export function resolveEvaluatedMesh(
   // An imported child is now an `Object` over a `GltfData`, so the `node.type === 'Object'`
   // branch resolves it: the geometry handle comes from the data node's own evaluate (one
   // minter for the `gltf|<assetRef>|<childName>` key, where this branch was a second
-  // spelling of it), and the pose comes from `resolvePrimitiveTransform`, which walks
-  // `resolveEvaluatedTransform` and therefore still layers manual → baked → clip → base.
+  // spelling of it), and the pose comes from `resolvePrimitiveTransform`, as for any Object.
+  // (Its manual → baked → clip → base layering was the clone renderer's and went with it,
+  // #1053: a kept import is not drawn.)
   //
   // The materials answer IMPROVES rather than merely moving. This branch returned
   // `EMPTY_ASSIGNMENT` because a fused child had no data half to carry a slot table; the

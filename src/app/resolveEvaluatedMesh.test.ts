@@ -1,7 +1,6 @@
 // resolveEvaluatedMesh — the producer-agnostic projection suite (v0.6 #1, #150).
 // Proves ONE resolver projects BoxMesh, SphereMesh, AND GltfChild into one
-// EvaluatedMesh, that the geometry key is deterministic, and that the GltfChild
-// transform funnels through the SAME resolveGltfChildTrs band (H40 — no drift).
+// EvaluatedMesh, and that the geometry key is deterministic.
 //
 // REF: PLAN.md Wave 1 Task 2; hetvabhasa H40; vyapti V20.
 
@@ -11,7 +10,6 @@ import { applyOp, emptyDagState, type DagState } from '../core/dag';
 import { __resetRegistryForTests } from '../core/dag';
 import { registerAllNodes } from '../nodes/registerAll';
 import { buildDefaultDagState } from '../core/project/default';
-import { resolveGltfChildTrs } from './resolveGltfChildTransform';
 import { resolveEvaluatedMesh } from './resolveEvaluatedMesh';
 import { makeSplitSphere } from '../test-utils/splitSphere';
 import { rowDataParams, splitOps } from '../test-utils/splitKinds';
@@ -92,7 +90,7 @@ describe('resolveEvaluatedMesh', () => {
     expect(mesh!.transform.scale).toEqual([1, 1, 1]); // C-1 guard
   });
 
-  it('projects a GltfChild: gltf geometry ref + transform via the ONE resolveGltfChildTrs band', () => {
+  it("projects an imported child: gltf geometry ref + the child's own transform", () => {
     let state = buildDefaultDagState();
     const childTrs = {
       position: [1, 2, 3] as [number, number, number],
@@ -121,17 +119,11 @@ describe('resolveEvaluatedMesh', () => {
     });
     expect(primaryMaterial(mesh!.materials)).toBeNull(); // #2 fills it later
 
-    // H40 — the resolver's transform.scale equals the ONE band's output for the
-    // same inputs (no parallel walk, no drift).
-    const expected = resolveGltfChildTrs({
-      base: childTrs,
-      clipTrack: undefined,
-      childNode: { ...childTrs, overridden },
-      bakedChannel: undefined,
-    });
-    expect(mesh!.transform.scale).toEqual([...expected.scale]);
-    expect(mesh!.transform.position).toEqual([...expected.position]);
-    expect(mesh!.transform.rotation).toEqual([...expected.rotation]);
+    // No clip and no baked band reach it since the clone renderer went (#1053): the
+    // transform is the child's own, as for any Object.
+    expect(mesh!.transform.scale).toEqual(childTrs.scale);
+    expect(mesh!.transform.position).toEqual(childTrs.position);
+    expect(mesh!.transform.rotation).toEqual(childTrs.rotation);
   });
 
   // #388 C5 — the read road for a baked PAIR. This branch used to narrow with

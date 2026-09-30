@@ -159,7 +159,7 @@ export type KeyframeChannelVec3Params = z.infer<typeof KeyframeChannelVec3Params
 /**
  * Build the function-of-time sampler for a vec3 channel (V24): sort the
  * keyframes ONCE, return a closure that interpolates per call. Exported so the
- * P7.12 baked-channel enumerator (`bakedGltfChannels.ts`, the resolver band)
+ * P7.12 baked-channel enumerator (`bakedGltfChannels.ts@7e1356c7`, the resolver band)
  * reuses the SAME interpolation as the node's evaluate — one source of the
  * sampling math, no per-frame ctx/inputs needed (BLOCK-1 shared logic).
  * Interpolation is `sampleVec3Keyframes` (cubic Bézier when a segment carries

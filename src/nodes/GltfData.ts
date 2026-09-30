@@ -31,7 +31,7 @@
 // ── WHY THE POSE FLAGS DO **NOT** LIVE HERE ──────────────────────────────────────────
 //
 // `overridden` is the manual band's win signal: `manual → baked channel → clip → base`
-// (resolveGltfChildTransform.ts). It exists because the importer SEEDS a child's TRS
+// (resolveGltfChildTransform.ts@7e1356c7). It exists because the importer SEEDS a child's TRS
 // with its captured base pose, so value-equality cannot tell "the director dragged this
 // bone back to base" from "this IS base" — only an explicit flag can, and dropping it
 // would let the clip resurface under an author's own edit. That much is unchanged.
@@ -64,7 +64,7 @@
 // need a hop that call site does not have.
 //
 // REF: src/nodes/SphereData.ts (the node template);
-//      src/app/resolveGltfChildTransform.ts (the precedence rule);
+//      src/app/resolveGltfChildTransform.ts@7e1356c7 (the precedence rule);
 //      src/app/geometryRegistry.ts (`drawnByAssetClone` — why the Object does not draw);
 //      docs/OBJECT-DATA-SPLIT-DESIGN.md §3.1; issues #389, #383, #367.
 
