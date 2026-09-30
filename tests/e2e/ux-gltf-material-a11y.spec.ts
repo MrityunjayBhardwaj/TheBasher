@@ -1,6 +1,6 @@
 // #178 (S6 / Part B) — a11y of the editable glTF material inspector chrome.
 // The S4/S5 editor adds: a slot selector (radiogroup) and map rows (a group per
-// slot with pick/replace, clear/revert buttons + a hidden file input). This spec
+// slot with pick/replace, remove buttons + a hidden file input). This spec
 // pins the ARIA contract so a future chrome edit can't silently regress it:
 //   - the map-row buttons carry SLOT-SPECIFIC accessible names (6 slots would
 //     otherwise all read "pick"/"clear" — ambiguous to a screen reader);
@@ -55,11 +55,13 @@ test.describe('#178 S6 — glTF material inspector a11y', () => {
     );
     await openInspectorSection(page, 'material');
 
-    // The albedo row is a named group (not a label), and its action buttons read
-    // unambiguously — "Pick albedo map" / "Clear albedo map", not bare "pick".
+    // The albedo row is a named group (not a label), and its action button reads
+    // unambiguously — "Pick albedo map", not bare "pick". An empty slot offers pick only
+    // (#1397 — the old "clear" wrote a placeholder the renderer draws magenta); a filled
+    // slot's "Replace"/"Remove" names are pinned by ux-gltf-map-edit.spec.ts.
     await expect(page.getByRole('group', { name: /albedo map/i })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Pick albedo map' })).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Clear albedo map' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Clear albedo map' })).toHaveCount(0);
     // A different slot's buttons are distinct (normal, not albedo).
     await expect(page.getByRole('button', { name: 'Pick normal map' })).toBeVisible();
     // The hidden file input keeps its aria-label.

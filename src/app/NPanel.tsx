@@ -44,7 +44,6 @@ import {
   type MaterialMapSlot,
 } from './material/attachMapFromFile';
 import { DEFAULT_TRANSMISSION_THICKNESS } from './material/openpbrToThree';
-import { CLEARED_MAP, isClearedMap, isImportedMap } from './material/gltfMapOverlay';
 import {
   perMapPlacementRows,
   withSlotPlacement,
@@ -2077,24 +2076,22 @@ function isMaterialIR(v: unknown): v is Record<string, Record<string, unknown>> 
 // ParamDiamond. A decode/persist failure surfaces via assetErrorStore (the MERGED
 // feedback surface), never a silent drop.
 //
-// ── THE EDIT LAYER HAS THREE STATES, AND THE ROW NEEDS A CONTROL FOR EACH (#937) ──────
+// ── A MAP IS THERE OR IT IS NOT: TWO STATES, AS BLENDER'S IMAGE TEXTURE (#1396, #1397) ──
 //
-// `null` = inherit whatever the source supplies (for an imported mesh, the clone's own
-// texture; for a native material, nothing). `CLEARED_MAP` = REMOVE it. A real
-// `BakedTextureRef` = replace it. The two sentinels both carry `hash: ''` and are told
-// apart by `gltfTexture` — see `gltfMapOverlay.ts`, which is where that rule lives.
+// The material holds its textures itself — a native material always did, and since #1053 an
+// import's material is native too (the importer filled the model and stopped existing). So the
+// row has the two states the value has: a ref → *replace* or *remove* (remove writes `null`);
+// `null` → *pick*. Blender's Image Texture node offers the same: open another image, or unlink.
 //
-// This row used to offer one button writing `null`, which collapsed "remove" and "revert"
-// into the same action and left `CLEARED_MAP` unreachable from anywhere in the app: #389
-// moved imported materials onto these generic rows, and the bespoke glTF row that owned
-// the third state went with the move. The renderer and the bundle both still honour the
-// sentinel, so the state remained legal, writable by a migration, and impossible to enter
-// or leave by hand.
+// It used to have three, derived for the clone road's overlay (#937): there `null` meant
+// "inherit the file's own texture", so "revert" wrote `null`, and removing needed an empty-hash
+// placeholder of its own. On a native material both lie. The file's texture read "● replaced"
+// and "revert to imported" DELETED it (#1396); "clear" wrote the placeholder, which the native
+// renderer loads as a file named `''` and draws magenta with a missing-file banner (#1397).
 //
-// Every state is derived from the VALUE alone — no store lookup and nothing glTF-shaped —
-// which is why this belongs on the generic row rather than on a kind-specific branch. A
-// native material simply never reaches the `imported` arm, so it sees exactly the one
-// button it saw before, and no native behaviour moves.
+// Any non-null value is "there", an empty-hash one included: the renderer loads every non-null
+// ref, so such a value (an old save's placeholder) draws, and *remove* is how it is repaired.
+// Nothing here writes one.
 function MapRow({
   nodeId,
   slot,
@@ -2109,20 +2106,7 @@ function MapRow({
   onSet: (value: BakedTextureRef | null, what: string) => void;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
-  // #937 — the three states, from the value alone. `imported` must be tested BEFORE
-  // `cleared`: both sentinels carry `hash: ''`, and only `gltfTexture` separates
-  // "inherit the clone's texture" from "remove it".
-  const importedTex = isImportedMap(mapRef);
-  const cleared = isClearedMap(mapRef);
-  const replaced = mapRef != null && !cleared && !importedTex;
-  const stateLabel = replaced
-    ? 'replaced'
-    : cleared
-      ? 'cleared'
-      : importedTex
-        ? 'imported'
-        : 'none';
-  const setMap = (value: BakedTextureRef | null, what: string) => onSet(value, what);
+  const present = mapRef != null;
   const onPick = async (file: File) => {
     try {
       const storage = await getStorage();
@@ -2138,15 +2122,12 @@ function MapRow({
     // #937 — a `role=group`, NOT a `<label>`. A label wraps a single labelable control,
     // and this row holds several buttons plus a hidden file input, so the label associates
     // with the FILE INPUT: clicking the slot name or the state text spuriously opens the OS
-    // file chooser. That is a live defect and not only an a11y one, and it predates the
-    // split — the generic row has always been a label; it simply had no imported material
-    // in front of it until #389 routed one here. The group's aria-label names the slot so
-    // the otherwise-generic pick/clear/revert buttons read in context, and each button
-    // ALSO carries its own slot-specific label so it is unambiguous alone (six map slots
-    // would otherwise read identically).
+    // file chooser. The group's aria-label names the slot so the otherwise-generic buttons
+    // read in context, and each button ALSO carries its own slot-specific label so it is
+    // unambiguous alone (six map slots would otherwise read identically).
     <div
       role="group"
-      aria-label={`${slot} map (${stateLabel})`}
+      aria-label={`${slot} map (${present ? 'set' : 'none'})`}
       className="flex items-center justify-between gap-2 px-3 py-1.5 text-[11px] text-fg/80"
     >
       <span className="font-mono text-fg/60">{slot}</span>
@@ -2155,47 +2136,28 @@ function MapRow({
           className="font-mono text-[10px] text-fg/40"
           data-testid={`inspector-map-state-${nodeId}-${slot}`}
         >
-          {replaced ? '● replaced' : cleared ? '— cleared' : importedTex ? '● imported' : '— none'}
+          {present ? '● set' : '— none'}
         </span>
         <button
           type="button"
-          aria-label={`${replaced ? 'Replace' : 'Pick'} ${slot} map`}
+          aria-label={`${present ? 'Replace' : 'Pick'} ${slot} map`}
           data-testid={`inspector-map-pick-${nodeId}-${slot}`}
           onClick={() => inputRef.current?.click()}
           className="rounded border border-border bg-muted px-2 py-0.5 text-[10px] text-fg/80 hover:text-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
         >
-          {replaced ? 'replace' : 'pick'}
+          {present ? 'replace' : 'pick'}
         </button>
-        {/* #937 — the two actions the edit layer needs, and the branch is on whether an
-            EDIT exists rather than on whether an imported texture does. An unedited slot
-            offers "clear" (write the sentinel: explicitly no texture); an edited one —
-            replaced or cleared — offers "revert" (drop the edit, back to inheriting).
-            That is the branch the bespoke glTF row used, restored verbatim rather than
-            narrowed: gating "clear" on a genuine imported descriptor reads as tighter but
-            silently removes the ability to state "this slot has no texture" for a slot
-            that merely happens to be empty, which is a different claim from inheriting
-            and is the one the bundle round-trip persists. */}
-        {!replaced && !cleared ? (
+        {present ? (
           <button
             type="button"
-            aria-label={`Clear ${slot} map`}
-            data-testid={`inspector-map-clear-${nodeId}-${slot}`}
-            onClick={() => setMap(CLEARED_MAP, 'clear')}
+            aria-label={`Remove ${slot} map`}
+            data-testid={`inspector-map-remove-${nodeId}-${slot}`}
+            onClick={() => onSet(null, 'remove')}
             className="rounded border border-border bg-muted px-2 py-0.5 text-[10px] text-fg/80 hover:text-warn focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
           >
-            clear
+            remove
           </button>
-        ) : (
-          <button
-            type="button"
-            aria-label={`Revert ${slot} map to imported`}
-            data-testid={`inspector-map-revert-${nodeId}-${slot}`}
-            onClick={() => setMap(null, 'revert')}
-            className="rounded border border-border bg-muted px-2 py-0.5 text-[10px] text-fg/80 hover:text-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
-          >
-            revert
-          </button>
-        )}
+        ) : null}
         <input
           ref={inputRef}
           type="file"
