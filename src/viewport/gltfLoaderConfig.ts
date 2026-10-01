@@ -9,14 +9,12 @@
 //   - `/draco/`  — `draco_decoder.{js,wasm}`, `draco_wasm_wrapper.js`,
 //                  copied from `three/examples/jsm/libs/draco/`. Loaded by
 //                  `src/app/asset/dracoDecoder.ts`.
-//   - `/basis/`  — `basis_transcoder.{js,wasm}`, copied from
-//                  `three/examples/jsm/libs/basis/`. NOTHING LOADS IT TODAY: the
-//                  loader hook that wired KTX2 belonged to the clone renderer and
-//                  went with it (#1053). The import refuses a KTX2 texture by name
-//                  (#1063) rather than reading it.
 //
-// REF: #80, #1063, THESIS §48.
+// No KTX2/Basis transcoder ships (#1417): the import refuses a KTX2 texture by name
+// (#1063) rather than reading it, so a transcoder would be bytes nothing loads. It
+// comes back in the same change as the reader that needs it.
+//
+// REF: #80, #1063, #1417, THESIS §48.
 
-/** Self-hosted decoder paths. Served from `public/` at the app root. */
+/** Self-hosted decoder path. Served from `public/` at the app root. */
 export const DRACO_DECODER_PATH = '/draco/';
-export const KTX2_TRANSCODER_PATH = '/basis/';

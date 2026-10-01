@@ -10,22 +10,19 @@
 import { describe, it, expect } from 'vitest';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { DRACO_DECODER_PATH, KTX2_TRANSCODER_PATH } from './gltfLoaderConfig';
+import { DRACO_DECODER_PATH } from './gltfLoaderConfig';
 
 const PUBLIC = join(__dirname, '..', '..', 'public');
 
 describe('gltfLoaderConfig — self-hosted decoder paths (#80)', () => {
-  it('exports the canonical self-hosted paths (NOT a CDN URL)', () => {
+  it('exports the canonical self-hosted path (NOT a CDN URL)', () => {
     // The original drei default was `https://www.gstatic.com/draco/...`.
     // We must point at OUR public/ root, served at the app root path.
     expect(DRACO_DECODER_PATH).toBe('/draco/');
-    expect(KTX2_TRANSCODER_PATH).toBe('/basis/');
     // Defense against accidentally re-introducing a CDN URL: no scheme,
     // no host, must start with '/'.
     expect(DRACO_DECODER_PATH).not.toMatch(/^https?:/);
-    expect(KTX2_TRANSCODER_PATH).not.toMatch(/^https?:/);
     expect(DRACO_DECODER_PATH.startsWith('/')).toBe(true);
-    expect(KTX2_TRANSCODER_PATH.startsWith('/')).toBe(true);
   });
 
   it('the Draco decoder WASM is committed under public/draco/', () => {
@@ -34,9 +31,9 @@ describe('gltfLoaderConfig — self-hosted decoder paths (#80)', () => {
     expect(existsSync(join(PUBLIC, 'draco', 'draco_wasm_wrapper.js'))).toBe(true);
   });
 
-  it('the KTX2/Basis transcoder is committed under public/basis/', () => {
-    expect(existsSync(join(PUBLIC, 'basis', 'basis_transcoder.wasm'))).toBe(true);
-    expect(existsSync(join(PUBLIC, 'basis', 'basis_transcoder.js'))).toBe(true);
+  it('no KTX2/Basis transcoder ships while nothing loads one (#1417)', () => {
+    // The import refuses a KTX2 texture by name. A transcoder returns with its reader.
+    expect(existsSync(join(PUBLIC, 'basis'))).toBe(false);
   });
 
   // (#1053) The `useGLTF` self-hosted-Draco guard read the clone renderer, deleted with the clone
