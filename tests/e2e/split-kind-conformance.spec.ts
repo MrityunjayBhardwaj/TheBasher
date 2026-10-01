@@ -1437,9 +1437,8 @@ const CONSTRAINT_WITNESS: Record<
       // structural reason, and it was measured rather than assumed: an imported child's
       // Object draws nothing at all (its data evaluates to none since #1053), so
       // `__basher_mesh_world_quaternion` has no mesh to report and returns null. There is
-      // no rendered orientation to observe because there is no rendered object — the
-      // clone carries the surface, and its per-child TRS is written by GltfAssetR's own
-      // override effect rather than by the band the other four mesh rows take.
+      // no rendered orientation to observe because there is no rendered object. (Before
+      // #1053 the clone carried the surface and the clone renderer wrote its per-child TRS.)
       //
       // Carrying the box's witness over would have recorded a null as a FAILURE to
       // constrain, which is a different claim from "this band has no orientation of its

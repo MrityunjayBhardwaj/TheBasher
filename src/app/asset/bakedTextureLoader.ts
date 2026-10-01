@@ -1,7 +1,7 @@
 // Suspense loader for baked textures — the async reader of the OPFS authoritative
 // baked-texture bytes (Phase 151, Wave 3 Task 8, issue #151).
 //
-// Mirrors bakedGeometryLoader.ts / opfsLoader.ts exactly: a per-ref cache keyed by
+// Mirrors bakedGeometryLoader.ts exactly: a per-ref cache keyed by
 // the `BakedTextureRef.hash`, an in-flight promise cache (Suspense throw), and an
 // error cache so a rejected read draws a stand-in instead of suspending forever (#1048),
 // until that file is written again or the key reads another file (#1312).
@@ -10,7 +10,7 @@
 // resolver (V29 purity).
 //
 // REF: PLAN.md Wave 3 Task 8; bakedGeometryLoader.ts (the mirrored suspense hook);
-//      bakedTextureStore.ts (loadBakedTexture); opfsLoader.ts:30-111.
+//      bakedTextureStore.ts (loadBakedTexture).
 
 import { DataTexture, RGBAFormat, SRGBColorSpace, type Texture } from 'three';
 import { getStorage } from '../boot';

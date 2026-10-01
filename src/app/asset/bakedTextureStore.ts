@@ -24,7 +24,7 @@
 //
 // Colorspace (M5/M8): a map loaded without its sRGB colorspace washes out on
 // reload. `BakedTextureRef.colorSpace` carries it; `loadBakedTexture` sets it
-// explicitly. The load is suspense-cached (mirrors opfsLoader.ts), the only async
+// explicitly. The load is suspense-cached (see bakedTextureLoader.ts), the only async
 // reader of the authoritative OPFS texture bytes.
 //
 // H45 / read-only capture: `persistTexture` READS `texture.image` (or copies
@@ -32,7 +32,7 @@
 // material is already a per-instance `s.clone()` (#99).
 //
 // REF: PLAN.md Wave 3 Task 7; RESEARCH §M4/§M5/§M8; bakedGeometryStore.ts (the
-//      mirrored content-hash store); opfsLoader.ts:30-111 (the suspense pattern);
+//      mirrored content-hash store);
 //      GROUND_TRUTH_GLTF.md §STAGE 3 (Texture associations).
 
 import * as THREE from 'three';

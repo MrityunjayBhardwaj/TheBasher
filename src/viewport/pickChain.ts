@@ -17,8 +17,9 @@
 //    any nested node is addressed the same way, which is Blender's rule — a click
 //    selects the object under the cursor, never its parent.
 //
-// 2. THE glTF CLONE (H90) — the clone renders a whole SkeletonUtils copy under one
-//    `GltfAsset`, so its sub-meshes are not DAG-drawn nodes. `GltfAssetR` stamps
+// 2. THE glTF CLONE (H90) — NOTHING STAMPS THIS ANY MORE. Until #1053 the clone
+//    renderer drew a whole SkeletonUtils copy under one `GltfAsset`, so its
+//    sub-meshes were not DAG-drawn nodes, and it stamped
 //    `userData.basherGltfChildId` via the glTF node-INDEX correspondence
 //    (gltf.parser.associations × the persisted keyByGltfNodeIndex), immune to the
 //    producer-key ↔ clone-name divergence that leaves ~28% of a real export's

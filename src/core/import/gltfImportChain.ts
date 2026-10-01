@@ -60,17 +60,19 @@ export interface GltfImportChainResult {
   readonly nodeNameMap: Record<string, string>;
   /**
    * NO-SILENT-DROP (V38, V53 fork-3) — glTF features present in the file that
-   * are NOT yet captured into Basher's editable OpenPBR IR. These RENDER (the
-   * imported three.js clone draws them and the scalar overlay never strips
-   * them), but they are not addressable/editable in the inspector. The app
-   * caller surfaces this via `assetErrorStore` so the limitation is visible
-   * rather than silent. Empty for a fully-supported import.
+   * are NOT captured into Basher's editable OpenPBR IR. Until #1053 the clone
+   * renderer still drew them and the import surfaced this list as a notice.
+   * Today this chain runs only to rebuild a saved clone import for the load
+   * converter, and no product code reads the list. Empty for a fully-supported
+   * import.
    */
   readonly unsupportedFeatures: string[];
 }
 
-// glTF extensions Basher either handles at the loader (DRACO/KTX2/Meshopt/
-// quantization) or captures into the OpenPBR IR (the scalar material lobes).
+// glTF extensions the clone road either handled at three's loader (DRACO/KTX2/
+// Meshopt/quantization) or captured into the OpenPBR IR (the scalar material
+// lobes). That loader went with the clone renderer (#1053); what the native
+// reader accepts is decided in `nativeGltfImport.ts`, not here.
 // Anything in the file's `extensionsUsed` NOT listed here is surfaced as a
 // no-silent-drop notice — including FUTURE extensions we haven't seen, so a new
 // unknown feature warns instead of vanishing.
@@ -94,7 +96,7 @@ const SUPPORTED_GLTF_EXTENSIONS = new Set<string>([
  * (V38 no-silent-drop, V53 fork-3). Pure: reads `extensionsUsed` (authoritative
  * top-level list — catches volume/specular/iridescence/etc. AND
  * any future unknown extension) plus a primitive scan for secondary UV sets.
- * These still RENDER via the imported clone; the notice is about editability.
+ * The list is about editability, not about what draws.
  */
 export function detectUnsupportedGltfFeatures(json: {
   extensionsUsed?: string[];
@@ -953,10 +955,8 @@ export async function buildGltfImportOps(
   const animations = json.animations ?? [];
   const hasClips = animations.length > 0;
   // P7.10 (B13 Pass 3, #114): TransformClip no longer has a `time` input
-  // socket — its value carries `.sample(seconds)` and the renderer
-  // (GltfAssetR's useFrame) drives time at consumer cadence. The
-  // findTimeSource() / timeId plumbing is no longer needed for the
-  // animated path; left as dead code below (cleanup tracked as P7.10.x).
+  // socket — its value carries `.sample(seconds)` and whoever samples the
+  // clip supplies the time.
 
   const transformClipIds: string[] = animations.map((_, i) =>
     hashId('clip', args.assetRef, String(i)),
@@ -1152,8 +1152,8 @@ export async function buildGltfImportOps(
   // Wire connects in the locked deterministic order.
   // P7.10 (#114): the Time → TransformClip connect-loop is removed —
   // TransformClip no longer declares a `time` input socket. Time enters
-  // each clip via its `.sample(seconds)` method, called by GltfAssetR's
-  // useFrame at consumer cadence. The TimeSource node remains in the
+  // each clip via its `.sample(seconds)` method, supplied by whoever
+  // samples it. The TimeSource node remains in the
   // default project for save-format compatibility; it is now unused by
   // the animated-glTF chain and will be cleaned up in P7.10.x.
   for (let i = 0; i < animations.length; i++) {

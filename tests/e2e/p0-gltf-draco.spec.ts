@@ -17,8 +17,7 @@
 // the producer/loader side of the SceneFromDAG boundary; the DOM
 // surface is identical for any glTF.
 //
-// REF: #80, src/viewport/gltfLoaderConfig.ts,
-// src/viewport/SceneFromDAG.tsx GltfAssetR, public/assets/cube-draco.glb.
+// REF: #80, src/viewport/gltfLoaderConfig.ts, public/assets/cube-draco.glb.
 
 import { test, expect } from './_fixtures';
 

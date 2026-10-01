@@ -6,7 +6,7 @@
 //   - the coarse `ignoreSourceMaterial` flatten toggle defaults `false`
 //     (#131, D-05 — a SEPARATE primitive from the per-field set);
 //   - evaluate carries both onto the emitted MaterialValue so they flow down
-//     the `override?: MaterialValue` prop chain to GltfAssetR.
+//     the `override?: MaterialValue` prop chain to the draw.
 //
 // REF: PLAN.md Wave C (#124) + Wave E (#131); CONTEXT D-03/D-05; vyapti V28.
 

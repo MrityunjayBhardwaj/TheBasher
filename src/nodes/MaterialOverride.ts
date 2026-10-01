@@ -98,12 +98,12 @@ export const MaterialOverrideNode: NodeDefinition<MaterialOverrideParams, Materi
         emissive: params.emissive,
         emissiveIntensity: params.emissiveIntensity,
         // #124 (V28): the sparse authored set rides on the MaterialValue so it
-        // flows down the `override?: MaterialValue` prop chain to GltfAssetR.
+        // flows down the `override?: MaterialValue` prop chain to the draw.
         overridden: params.overridden,
         // #131 (D-05): the coarse flatten toggle rides the same prop chain.
         ignoreSourceMaterial: params.ignoreSourceMaterial,
         // v0.6 #2 (#178, W6): the per-submesh slot index rides the same
-        // `override?: MaterialValue` prop chain to GltfAssetR. undefined ⇒
+        // `override?: MaterialValue` prop chain. undefined ⇒
         // whole-child (every slot); a number ⇒ that slot only.
         slotIndex: params.slotIndex,
       },

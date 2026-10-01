@@ -281,7 +281,7 @@ describe('#638 who may speak of a material array', () => {
     expect(files.length).toBeGreaterThan(500);
   });
 
-  it('the resolution function is called from exactly the two mesh components', () => {
+  it('the resolution function is called from the scene renderer and nowhere else', () => {
     const files = sourceFiles();
     const callers = files
       .filter(([path, src]) => {

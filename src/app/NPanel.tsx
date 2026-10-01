@@ -3185,17 +3185,11 @@ function ParamRow({
     // authorable via a dropdown read from the node's paramSchema; a free string has
     // no options → falls through to the read-only row below.
     //
-    // ⚠️ THAT READ-ONLY ROW IS NOW LOAD-BEARING, AND IT IS #521. A material operator's
-    // `color`/`emissive` are free hex strings, so they land here and cannot be edited —
-    // and since #529 the data lane writes only what the director AUTHORED, which means
-    // those two channels are not merely awkward to set, they can no longer be set at all.
-    // Before #529 an unauthorable colour still applied, because the operator forced every
-    // channel unconditionally; the fix removed the forcing and left the gap visible.
-    //
-    // The descriptor deliberately still covers all six fields: the authored SET covers
-    // them and the fold consults them, so the coverage is correct and only the widget is
-    // missing. When #521 gives a bare hex param a real field, it must pass `overrideInfo`
-    // through like `NumericField` does, and colour becomes authorable with no change here.
+    // A material operator's `color`/`emissive` are free hex strings too, and until they
+    // had a control they landed in that read-only row and could not be authored at all
+    // (#521; #529 made the gap visible by writing only what the director AUTHORED). They
+    // declare a `color` widget now, so the declared-widget arm below draws them with
+    // `ColorParamField`, which passes `overrideInfo` through like `NumericField` does.
     const options = stringEnumOptions(nodeId, paramPath);
     if (options) {
       return (

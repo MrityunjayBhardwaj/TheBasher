@@ -71,8 +71,7 @@ export type SectionCtx = {
    *  created (loading a project re-parses the generic node shape, not each
    *  type's param schema), and an `.optional()` param never materializes at
    *  all. `MaterialOverride.slotIndex` is exactly that — asking the instance
-   *  would hide the slot selector until a slot was chosen, which is the control
-   *  you choose it with. */
+   *  would hide the slot row on every node that stores no slot. */
   ownsParam: (key: string) => boolean;
   /** "Does this node declare an INPUT SOCKET under `key`?" — the edge-side twin of
    *  `ownsParam`, read off the node type's declared `inputs` (#921).

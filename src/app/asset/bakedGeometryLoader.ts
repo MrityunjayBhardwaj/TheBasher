@@ -9,12 +9,12 @@
 // it; the resolved geometry is primed into geometryRegistry so the re-render is a
 // sync registry hit.
 //
-// This mirrors opfsLoader.ts (the glTF blob-URL suspense path) exactly:
+// The caches (the shape the glTF blob-URL loader had before #1053 removed it):
 //   urlCache    → geometryRegistry (the resolved-value cache, keyed by ref.key)
 //   promiseCache → in-flight reads, keyed by ref.key
 //   errorCache   → rejected reads, answered with an empty stand-in (#1308)
 //
-// REF: PLAN.md Wave 1 Task 2; opfsLoader.ts:30-111 (the suspense pattern);
+// REF: PLAN.md Wave 1 Task 2;
 //      bakedGeometryStore.ts (readBakedGeometry); geometryRegistry.ts (get/prime).
 
 import { BufferGeometry } from 'three';

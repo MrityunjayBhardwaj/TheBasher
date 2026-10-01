@@ -107,8 +107,8 @@ export function parseBvh(
       // It matters more since #924, which gave `loop` teeth: a looping clip's
       // root now accumulates travel every period rather than merely wrapping, so
       // an asserted `true` walks a one-shot jump or wave away from its own end.
-      // Turning it back on is one checkbox — `loop` is a schema'd boolean and
-      // `NPanel`'s BooleanField has rendered it since #136.
+      // Turning it back on is one dropdown — `loop` is a schema'd enum that
+      // `NPanel`'s EnumField renders.
       loop: 'hold',
       keyframes: scaleKeyframePositions(keyframes, unitScale),
     },

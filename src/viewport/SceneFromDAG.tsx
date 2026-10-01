@@ -29,9 +29,6 @@ import {
 } from 'react';
 import * as THREE from 'three';
 import { RectAreaLightUniformsLib } from 'three/examples/jsm/lights/RectAreaLightUniformsLib.js';
-// #88: SkeletonUtils.clone, not Object3D.clone — see the GltfAssetR clone site.
-// (SkeletonUtils is already a project dep; retarget.ts imports retargetClip from
-// the same module. This is a NEW `clone` named import.)
 import { channelPathForBand, type OverlayBand } from '../app/objectDataBand';
 import {
   dataLaneNodeIds,
@@ -215,7 +212,7 @@ export function SceneFromDAG({ outputName = 'render' }: SceneFromDAGProps) {
   // B13: at 8 Fox.glb instances react.p95 hit 24ms (H48 2nd-occurrence).
   //
   // Pass 3 lifts time INTO time-dependent VALUE shapes (TransformClipValue now
-  // carries `.sample(seconds)`). Animated consumers (GltfAssetR's useFrame)
+  // carries `.sample(seconds)`). Animated consumers
   // read live time locally via `useTimeStore.getState()` and invoke the
   // closure at consumer cadence. SceneFromDAG no longer needs to subscribe
   // to time at all — it re-renders ONLY on `useDagStore.state` changes.
@@ -2186,8 +2183,7 @@ function RenderChild({
 // resolveActiveCameraPoseAt. It:
 //   1. Narrow-subscribes the channel NODES targeting `pickId` (shallow → under
 //      structural sharing an unrelated edit leaves their refs untouched, so this
-//      re-renders ONLY when THIS node's channels change — the gltfAssetDeps/H48
-//      pattern). Layer-wired channels are excluded upstream (coexistence guard).
+//      re-renders ONLY when THIS node's channels change). Layer-wired channels are excluded upstream (coexistence guard).
 //   2. Builds their function-of-time values once per change (channelValuesFromNodes).
 //   3. In a useFrame, samples them at the live time SNAPSHOT (never a time
 //      subscription — H48) → overlayChannels onto the base value (the SAME overlay
@@ -3476,8 +3472,8 @@ function CharacterR({ value }: { value: CharacterValue }) {
   // #992 — the pose is a FUNCTION OF TIME, so this surface supplies the time
   // rather than receiving an answer at one instant. Subscribed rather than read
   // through `getState()` because this road draws declaratively (a <group> tree
-  // per bone) instead of writing transforms imperatively in a useFrame the way
-  // GltfAssetR does. That is not a new per-frame cost: `LocomotionState` carries
+  // per bone) instead of writing transforms imperatively in a useFrame.
+  // That is not a new per-frame cost: `LocomotionState` carries
   // a `Time` input, so the CharacterValue upstream of here is already rebuilt
   // every frame. Making this road lazy is the P2 placeholder rig's own job (real
   // skinning lands in P3), not this change's.

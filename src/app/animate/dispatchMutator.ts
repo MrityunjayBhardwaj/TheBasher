@@ -392,7 +392,7 @@ function channelNodeFor(valueType: 'number' | 'vec2' | 'vec3' | 'color' | 'quat'
  * Mesh-typed and patchTarget clones a SceneChild). Instead create a SINGLE
  * KeyframeChannel* targeting the node, the first sample baked into params; the
  * resolver finds it by target scan (resolveActiveCameraPoseAt for the camera,
- * directChannelNodesForTarget / GltfAssetR's material useFrame for the child).
+ * directChannelNodesForTarget for the child).
  * Subsequent keys flow through the EXISTING channel-id keyframe path (autoKey's
  * 'animated' branch), so only this first step is node-specific.
  *

@@ -1533,8 +1533,8 @@ export interface GltfAssetValue {
    * P7.5 — glTF TRS animation extraction (issue #81).
    *
    * Filled in by `buildGltfImportOps` at drop time: a sanitised
-   * scene-node-name → DAG target id map. `GltfAssetR` walks
-   * `gltf.scene` via `getObjectByName` and overrides per-child TRS
+   * scene-node-name → DAG target id map. Until #1053 the clone renderer
+   * walked `gltf.scene` via `getObjectByName` and overrode per-child TRS
    * with `transformClip.sample(currentTime)[name]` (P7.10 — the value's
    * sample method replaces the pre-baked `.tracks` shape). Default `{}`
    * so pre-7.5 projects (and the static-only fixture path) hydrate as no-ops.
@@ -1557,8 +1557,8 @@ export interface GltfAssetValue {
   /**
    * P151 (Apply-Transform, issue #151) — the sanitised child KEYS whose render
    * is suppressed because the child was baked into a standalone `BakedMesh`.
-   * `GltfAssetR` sets `clone.getObjectByName(key).visible = false` per entry, so
-   * the asset stops rendering that child by name (no double-render). Default `[]`
+   * Until #1053 the clone renderer set `clone.getObjectByName(key).visible = false`
+   * per entry, so the asset stopped rendering that child by name (no double-render). Default `[]`
    * so pre-151 values are no-ops (V10/H14-clean). Op-backed + undoable via the
    * Apply atomic composite's inverse `setParam`.
    */
@@ -1569,10 +1569,10 @@ export interface GltfAssetValue {
    * GLTFLoader clone agree on: the producer's KEY space (sanitizeBoneName + `__n`
    * dedup, `node_i` for unnamed nodes) DIVERGES from the clone's NAME space
    * (sanitizeNodeName + `_n` dedup, `''` for unnamed) on real exports, so ~28% of
-   * meshes are unaddressable by name. `GltfAssetR` reads it alongside
-   * `gltf.parser.associations` (which records the node index for every loaded
-   * object — GLTFLoader.js:4311) to stamp each clone object's
-   * `userData.basherGltfChildId`, so viewport drill-in addresses children by a
+   * meshes are unaddressable by name. Until #1053 the clone renderer read it
+   * alongside `gltf.parser.associations` (which records the node index for every
+   * loaded object — GLTFLoader.js:4311) to stamp each clone object's
+   * `userData.basherGltfChildId`, so viewport drill-in addressed children by a
    * stamped ID, not by name. Default `{}` so pre-UX#7 saves hydrate empty — the
    * renderer + drill fall back to name-match (V10/H14-clean — no version bump).
    */
