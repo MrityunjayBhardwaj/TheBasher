@@ -68,7 +68,7 @@ import {
 /**
  * Every file that may spell an importable extension, and the exact extensions it may spell.
  *
- * All five are glTF container logic. There is deliberately no motion entry: after #662 no
+ * All four are glTF container logic. There is deliberately no motion entry: after #662 no
  * file outside the category tests `.bvh` or `.fbx` at all, because those tests were the
  * cross-format ones.
  */
@@ -77,8 +77,6 @@ const DECLARED_SPELLERS: Readonly<Record<string, readonly ImportExt[]>> = {
   'src/app/asset/importGltf.ts': ['.gltf', '.glb'],
   // The lone-file escalation (a `.gltf` missing siblings) and the multi-`.glb` chooser.
   'src/app/asset/importPicker.ts': ['.gltf', '.glb'],
-  // Loading from OPFS: only a `.gltf` needs the resolver rewired to sibling URIs.
-  'src/app/asset/opfsLoader.ts': ['.gltf'],
   // KHR_materials_pbrSpecularGlossiness conversion differs by container.
   'src/app/asset/specGlossIngest.ts': ['.gltf', '.glb'],
   // Orphan-material rebind reads the container to find the material names.

@@ -4,17 +4,8 @@
 //   - Constants point at the right `public/` paths.
 //   - The decoder asset files physically exist on disk under `public/`
 //     (so a fresh `npm install` + `npm run build` will ship them).
-//   - drei's `useGLTF` is called with `useDraco='/draco/'` (string, not
-//     boolean) in the consumer — proved via grep in this same test, so
-//     a future refactor that drops the self-hosted path back to the
-//     drei CDN default fails CI loudly.
 //
-// The runtime KTX2 wiring (the `extendLoader` callback) is exercised by
-// the e2e test that loads a Draco-compressed `.glb` fixture; here we
-// only assert the *config* surface that doesn't need a browser.
-//
-// REF: #80, src/viewport/gltfLoaderConfig.ts, src/viewport/SceneFromDAG.tsx
-// (the GltfAssetR consumer).
+// REF: #80, src/viewport/gltfLoaderConfig.ts, src/app/asset/dracoDecoder.ts.
 
 import { describe, it, expect } from 'vitest';
 import { existsSync, readFileSync } from 'node:fs';
@@ -54,9 +45,9 @@ describe('gltfLoaderConfig — self-hosted decoder paths (#80)', () => {
 
   it('the Draco-compressed test fixture exists (asset-side proof)', () => {
     // Generated via `gltf-pipeline -i public/assets/cube.gltf -d -o
-    // public/assets/cube-draco.glb`. The e2e suite loads it to prove
-    // the runtime KTX2/Draco wiring works end-to-end; here we just
-    // assert the fixture is present so the e2e doesn't 404.
+    // public/assets/cube-draco.glb`. The e2e suite imports it through the
+    // Draco decoder; here we just assert the fixture is present so the e2e
+    // doesn't 404.
     expect(existsSync(join(PUBLIC, 'assets', 'cube-draco.glb'))).toBe(true);
     // Magic bytes check: a real GLB starts with the ASCII 'glTF'.
     const buf = readFileSync(join(PUBLIC, 'assets', 'cube-draco.glb'));
