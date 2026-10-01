@@ -12,7 +12,7 @@
 // is the same seam the picker/drop chains funnel through. Fixtures are the
 // three committed multi-file bundles under `public/fixtures/multifile/`
 // (flat, nested, spaced) plus the bundled single-file `cube-draco.glb`
-// (Draco-compressed, already proven loadable by p0-gltf-draco). No
+// (Draco-compressed, its native import is covered by p1063-draco-imports-native). No
 // synthetic-in-memory GLB shortcut — H41 says fixtures must exercise the
 // NEW path from day one so a future regression surfaces here, not at user
 // merge.
@@ -386,7 +386,7 @@ test('P7.9 (c) — single .glb layout = user-imports/<basename>/<basename>.glb (
   page.on('pageerror', (e) => loaderErrors.push(e.message));
 
   // The bundled cube-draco.glb is a single-file glTF (Draco-compressed)
-  // already proven loadable by p0-gltf-draco. Importing it via the ingest
+  // its native import is covered by p1063-draco-imports-native. Importing it via the ingest
   // seam exercises the single-file branch of `ingestGltfFolder` —
   // `locateEntryFile` picks the only `.glb` at depth 0 and writes one
   // file under `user-imports/<basename>/`.
