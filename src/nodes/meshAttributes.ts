@@ -226,7 +226,8 @@ export function faceRangeMaterialAttributes(
  * operator merges nothing: the geometry rides through with the same descriptor and the same
  * element counts, so every carried attribute still fits its own domain element-for-element
  * and the correct carriage is the IDENTITY. No order, no gather, no per-class verdict to take
- * — which is why `point` and `edge` survive here and are dropped there.
+ * — which is why `edge` survives here and is dropped there (`point` was dropped there too,
+ * until #716 and #754 gave it an order).
  *
  * `material_index` is REPLACED, never merged with: the spread puts the minted index last, so
  * a source that carried one of its own loses it to the assignment this call exists to write.
@@ -903,8 +904,9 @@ export function carriageForDomain(
  */
 
 export function mintTiledModifierAttributes(descriptor: GeometryDescriptor): string | null {
-  // Narrowing for `source`: `tiledFaceOrder` answers for exactly these three kinds, but that
-  // is its invariant and not something the type system carries back out here.
+  // Narrowing for `source`: `tiledFaceOrder` answers for exactly the four kinds named below
+  // (`bevel` joined at #825), but that is its invariant and not something the type system
+  // carries back out here.
   //
   // 🔴 `subset` IS HERE BECAUSE THE ORDER ALONE WAS NOT THE FIX (#719). #671 derived a
   // `subsetFaceOrder` precisely so a mask would not drop its source's per-face materials,

@@ -585,8 +585,8 @@ export function faceArityOf(descriptor: GeometryDescriptor): readonly number[] |
   }
 
   // Narrowed explicitly rather than inferred from a non-null order: `tiledFaceOrder` answers
-  // for exactly these three kinds, but that is its invariant and not something the type system
-  // carries back out here — the same narrowing `mintTiledModifierAttributes` writes, for the
+  // for these three kinds and for `bevel` (handled above), but that is its invariant and not
+  // something the type system carries back out here — the same narrowing `mintTiledModifierAttributes` writes, for the
   // same reason.
   if (descriptor.kind !== 'array' && descriptor.kind !== 'mirror' && descriptor.kind !== 'subset')
     return null;
