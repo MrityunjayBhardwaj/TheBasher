@@ -159,8 +159,9 @@ export type ScopeDomain = (typeof SCOPE_DOMAINS)[number];
  * entries used to read `until: '#959'` — the issue that exists to DECIDE the question, not a
  * consumer that would supply one. A self-referential `until` can never be discharged: close
  * that issue and the record points at a closed one, which is the failure #958 is open about
- * one file over. `corner` genuinely awaits a filed consumer (#786, the authored layer its own
- * reason already argues for). `point` awaits NOTHING FILED — the whole open backlog was
+ * one file over. `corner` awaited a filed consumer (#786, the authored layer) until that
+ * shipped as a WHOLE layer and named no subset, which left it where `point` is (#1420).
+ * `point` awaits NOTHING FILED — the whole open backlog was
  * censused and nothing would SELECT points — so it carries no `until` at all rather than a
  * target invented to fill the field. (#1196 since authors the first point-domain layer, a skin
  * binding on a stored mesh, and the deform that reads it, #393, reads every point whole: a
@@ -190,12 +191,11 @@ export const SCOPE_ABSENT: Readonly<Record<Exclude<KnownDomain, ScopeDomain>, Sc
       'is read whole by a deform and names no subset of points',
   },
   corner: {
-    kind: 'awaits-consumer',
+    kind: 'no-candidate',
     why:
-      'a corner count has been derivable since #776, but the two issues that want corner data ' +
-      'want a whole authored LAYER (#786) or a blend plan (#881), neither of which names a ' +
-      'subset; and a fragment shader has no corner input to resolve one against',
-    until: '#786',
+      'a corner count has been derivable since #776, but the two issues that wanted corner data ' +
+      'wanted a whole authored LAYER (#786, shipped) or a blend plan (#881), neither of which ' +
+      'names a subset; and a fragment shader has no corner input to resolve one against',
   },
 };
 

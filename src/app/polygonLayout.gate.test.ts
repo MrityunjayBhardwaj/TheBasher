@@ -164,7 +164,9 @@ describe('#769 — a polygon layout derived from a descriptor agrees with the ge
       // ⚠️ IT POINTED AT #770 UNTIL #770 SHIPPED. An `until` naming a phase that has landed is
       // a refusal telling its reader to wait for something that already happened, which is
       // worse than naming nothing — so the field moves with the obstruction it describes.
-      expect(v.until, d.kind).toBe('#777');
+      // It then pointed at #777 until #777 closed on its own falsifier (no consumer needs a
+      // derived rim), and by the same rule it now names nothing (#1420).
+      expect(v.until, d.kind).toBeUndefined();
     }
 
     // 🔴 THE SCOPED AND UNSCOPED ARMS NOW GIVE THE SAME REASON, AND THAT IS THE POINT.
