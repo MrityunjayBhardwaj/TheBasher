@@ -85,6 +85,9 @@ import { regenerationShifts } from './regenerationShift';
 import { validatePlan } from '../../agent/mutators/index';
 import { retargetMutator } from '../../agent/mutators/builders/retarget';
 import { buildSkeletonObjectOps } from '../../core/import/skeletonObject';
+import { bakePose } from '../animate/bakePose';
+import { evaluate } from '../../core/dag/evaluator';
+import type { PosedSkeletonValue } from '../../nodes/types';
 
 const store = () => useDagStore.getState();
 const dispatch = (ops: Op[]) => store().dispatchAtomic(ops, 'user', 'test');
@@ -235,7 +238,8 @@ describe('a regeneration names what it moved under a layer (#1226)', () => {
     await regenerate(producerId, 8);
     // Its first frame of full size: nothing keys this layer, so the motion's own frames are where it looked.
     expect(toasts().map((t) => t.message)).toEqual([
-      'The regenerated motion moved layered results: "hold spine" Spine moved 60° at 0.50 s.',
+      'The regenerated motion moved layered results: "hold spine" Spine moved 60° at 0.50 s. ' +
+        'To keep a character as it is through the next regeneration, select it and use “bake motion to keys”.',
     ]);
   });
 
@@ -329,5 +333,90 @@ describe('a regeneration names what it moved under a layer (#1226)', () => {
     const [warn] = toasts();
     expect(warn.message).toContain('"lift spine" Spine moved 60° at 0.50 s');
     expect(warn.message).toContain('"hero lean" Spine moved 60° at 1.00 s');
+  });
+});
+
+// #1230 — freezing a character: its computed motion baked to keys. The bake detaches the computed
+// source from the character's chain, so a later regeneration has nothing of that character to write.
+describe('a character whose motion was baked to keys is not moved by a regeneration (#1230)', () => {
+  beforeEach(() => {
+    registerAllNodes();
+    __resetGeneratedClipsForTests();
+    useAssetErrorStore.getState().clearAll();
+    useNotificationStore.getState().clear();
+  });
+
+  /** The Spine's rotation in the pose the Object is handed, at each of the walk's three frames. */
+  function spineAt(objectId: string): number[][] {
+    const top = edgeTarget(store().state.nodes[objectId], 'pose')!;
+    const pose = evaluate(store().state, top).value as PosedSkeletonValue;
+    return [0, 0.5, 1].map((t) => {
+      const spine = pose.sample(t).find((b) => b.name === 'Spine')!;
+      return [...spine.quaternion];
+    });
+  }
+
+  /** The largest angle, in degrees, between two samplings of the same three frames. */
+  function turned(was: number[][], now: number[][]): number {
+    return Math.max(
+      ...was.map((a, i) => {
+        const b = now[i];
+        const dot = Math.abs(a[0] * b[0] + a[1] * b[1] + a[2] * b[2] + a[3] * b[3]);
+        return (2 * Math.acos(Math.min(1, dot)) * 180) / Math.PI;
+      }),
+    );
+  }
+
+  function bake(objectId: string): void {
+    const baked = bakePose(store().state, {
+      object: objectId,
+      poses: { kind: 'every' },
+      interpolation: 'linear',
+      layerId: `${objectId}_frozen`,
+    });
+    if (!baked.ok) throw new Error(baked.reason);
+    expect(baked.report.detached).not.toBeNull();
+    dispatch(baked.ops as Op[]);
+  }
+
+  it('the baked character holds its pose at every frame; the unbaked one turns 60°', async () => {
+    const frozen = await layeredWalk();
+    const live = await layeredWalk({ fresh: false, layerId: 'layer_live' });
+    bake(frozen.objectId);
+
+    const frozenWas = spineAt(frozen.objectId);
+    const liveWas = spineAt(live.objectId);
+    await regenerate(frozen.producerId, 8);
+    // The same request again: served from the clip cache, so it bakes without generating.
+    dispatch([{ type: 'setParam', nodeId: live.producerId, paramPath: 'seed', value: 8 }] as Op[]);
+    expect(await cookMotionGenerations(live.producerId)).toMatchObject({ baked: 1 });
+
+    expect(turned(frozenWas, spineAt(frozen.objectId))).toBeLessThan(1e-4);
+    // The control: the same regeneration on a character that was not baked.
+    expect(turned(liveWas, spineAt(live.objectId))).toBeGreaterThan(59);
+  });
+
+  it('its layers are not reported as moved: nothing regenerated under them', async () => {
+    const { producerId, objectId } = await layeredWalk();
+    bake(objectId);
+    await regenerate(producerId, 8);
+    expect(toasts()).toEqual([]);
+  });
+
+  it('a notice that names a moved layer says how to freeze a character', async () => {
+    const { producerId } = await layeredWalk();
+    await regenerate(producerId, 8);
+    const [warn] = toasts().filter((t) => t.severity === 'warn');
+    expect(warn.message).toContain('“bake motion to keys”');
+  });
+
+  it('a notice with nothing moved does not bring it up', async () => {
+    const { producerId } = await layeredWalk();
+    await regenerate(producerId, 9);
+    expect(
+      toasts()
+        .map((t) => t.message)
+        .join(' '),
+    ).not.toContain('bake');
   });
 });

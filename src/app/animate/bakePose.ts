@@ -84,6 +84,11 @@ export type BakeResult =
   | { readonly ok: true; readonly ops: readonly Op[]; readonly report: BakeReport }
   | { readonly ok: false; readonly reason: string };
 
+/** What the bake is called wherever a director meets it: the inspector's button, its undo entry,
+ *  and the regeneration notice that points at it (#1230). One string, so none can name a control
+ *  the others renamed. */
+export const BAKE_POSE_LABEL = 'bake motion to keys';
+
 /** The id a bake of `objectId` takes by default. */
 export function bakedLayerIdFor(objectId: string): string {
   return `${objectId}_baked_pose`;

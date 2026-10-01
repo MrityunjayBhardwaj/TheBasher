@@ -14,7 +14,7 @@
 import { useState } from 'react';
 import { useDagStore } from '../../core/dag/store';
 import { dispatchMutatorFromUI } from './dispatchMutator';
-import { computedSourceOf, freeBakedLayerId } from './bakePose';
+import { BAKE_POSE_LABEL, computedSourceOf, freeBakedLayerId } from './bakePose';
 import { nodeDisplayName } from '../sceneTreeWalk';
 
 export function BakePoseConnector({ nodeId }: { nodeId: string }) {
@@ -35,7 +35,7 @@ export function BakePoseConnector({ nodeId }: { nodeId: string }) {
         interpolation: 'linear',
         layerId: freeBakedLayerId(state, nodeId),
       },
-      'bake motion to keys',
+      BAKE_POSE_LABEL,
     );
     setSaid(
       res.ok
@@ -69,7 +69,7 @@ export function BakePoseConnector({ nodeId }: { nodeId: string }) {
           title={`Bake ${nodeDisplayName(state.nodes, source.node)} into keys you can edit`}
           onClick={bake}
         >
-          bake motion to keys
+          {BAKE_POSE_LABEL}
         </button>
       </div>
       {said ? <Said said={said} /> : null}
