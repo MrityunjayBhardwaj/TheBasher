@@ -74,9 +74,12 @@ export interface ModelGenerationOptions {
   readonly pbr?: boolean;
   readonly textureQuality?: 'standard' | 'detailed';
   readonly geometryQuality?: 'standard' | 'detailed';
+  /** Image and multiview only; refused on a text request (#1408). */
   readonly textureAlignment?: 'original_image' | 'geometry';
   readonly autoSize?: boolean;
+  /** Refused on every request: no v3 request has it (#1408). */
   readonly style?: string;
+  /** Image and multiview only; refused on a text request (#1408). */
   readonly orientation?: 'default' | 'align_image';
   /** Determinism handles. The stub keys its output on the whole request. */
   readonly modelSeed?: number;
@@ -87,6 +90,7 @@ export interface TextModelRequest extends ModelGenerationOptions {
   readonly source: 'text';
   readonly prompt: string;
   readonly negativePrompt?: string;
+  /** Refused: v3 has no `pose_spec` (#1408). */
   readonly pose?: PoseControl;
 }
 
@@ -240,6 +244,32 @@ const SourceImageSchema = z.object({
   mimeType: z.string().trim().min(1, 'must not be empty'),
 });
 
+/**
+ * #1408 — A CONTROL THE SERVICE DOES NOT HAVE IS REFUSED, NOT DROPPED.
+ *
+ * These fields are still on the request type, and they used to pass validation and
+ * then go nowhere: Tripo's v3 request schemas list no `style` and no `pose_spec`
+ * anywhere, and the text-to-model request lists no `texture_alignment` or
+ * `orientation` (image and multiview requests do, and send them). A caller that set
+ * one got a model that ignored it, with no sign anything was ignored. That is an
+ * accepted-but-unhonoured field, which is worse than an absent one, because it
+ * reads as done.
+ *
+ * Here, in the shared contract rather than in the Tripo dialect, because both
+ * implementations validate against this: a stub that accepted what the real
+ * service drops would let a test prove that a control "works".
+ *
+ * REF: tripoDialect.ts — `modelCall` (what each request kind sends).
+ */
+function refusedControl(field: string, where: string) {
+  return z
+    .unknown()
+    .refine(
+      (value) => value === undefined,
+      `Tripo's v3 API has no \`${field}\` control on ${where}, so it would be dropped without effect — leave it out`,
+    );
+}
+
 const OptionsShape = {
   modelVersion: z.string().trim().min(1).optional(),
   faceLimit: z.number().int().positive().finite().max(MAX_FACE_LIMIT).optional(),
@@ -250,13 +280,11 @@ const OptionsShape = {
   geometryQuality: z.enum(['standard', 'detailed']).optional(),
   textureAlignment: z.enum(['original_image', 'geometry']).optional(),
   autoSize: z.boolean().optional(),
-  style: z.string().trim().min(1).optional(),
+  style: refusedControl('style', 'any request'),
   orientation: z.enum(['default', 'align_image']).optional(),
   modelSeed: z.number().int().finite().optional(),
   textureSeed: z.number().int().finite().optional(),
 };
-
-const RatioSchema = z.number().positive().finite();
 
 /**
  * The request contract, as a runtime schema rather than a bare interface.
@@ -272,16 +300,10 @@ export const ModelGenerationRequestSchema = z.discriminatedUnion('source', [
     source: z.literal('text'),
     prompt: z.string().trim().min(1, 'must not be empty'),
     negativePrompt: z.string().trim().min(1).optional(),
-    pose: z
-      .object({
-        headBodyHeightRatio: RatioSchema.optional(),
-        headBodyWidthRatio: RatioSchema.optional(),
-        legsBodyHeightRatio: RatioSchema.optional(),
-        armsBodyLengthRatio: RatioSchema.optional(),
-        spanOfLegs: RatioSchema.optional(),
-      })
-      .optional(),
     ...OptionsShape,
+    pose: refusedControl('pose', 'any request'),
+    textureAlignment: refusedControl('textureAlignment', 'a text-to-model request'),
+    orientation: refusedControl('orientation', 'a text-to-model request'),
   }),
   z.object({
     source: z.literal('image'),

@@ -210,6 +210,45 @@ describe('the request contract refuses rather than clamps', () => {
       await expect(cap.generateTaskOnly(bad as never)).rejects.toThrow(ModelRequestInvalidError);
     },
   );
+
+  // #1408 — a control the service does not have is refused by the CONTRACT, so the
+  // stub refuses it too and no test can prove it "works".
+  it.each([
+    ['style', { source: 'text', prompt: 'x', style: 'cartoon' }],
+    ['pose', { source: 'text', prompt: 'x', pose: { spanOfLegs: 1 } }],
+    ['textureAlignment', { source: 'text', prompt: 'x', textureAlignment: 'geometry' }],
+    ['orientation', { source: 'text', prompt: 'x', orientation: 'align_image' }],
+    [
+      'style',
+      {
+        source: 'multiview',
+        views: { front: { bytes: new Uint8Array([1]), mimeType: 'image/png' } },
+        style: 'cartoon',
+      },
+    ],
+  ])('refuses %s where the service has no such control, on both stub roads', async (field, bad) => {
+    const cap = new StubModelGenerationCapability();
+    for (const road of [cap.generate(bad as never), cap.generateTaskOnly(bad as never)]) {
+      const err = await road.catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(ModelRequestInvalidError);
+      expect((err as ModelRequestInvalidError).issues.join()).toContain(`${field}:`);
+    }
+  });
+
+  it.each(['image', 'multiview'] as const)(
+    'still accepts textureAlignment and orientation on a %s request, where they are sent',
+    (source) => {
+      const img = { bytes: new Uint8Array([1]), mimeType: 'image/png' };
+      const base = source === 'image' ? { source, image: img } : { source, views: { front: img } };
+      expect(() =>
+        assertValidModelRequest({
+          ...base,
+          textureAlignment: 'original_image',
+          orientation: 'default',
+        } as never),
+      ).not.toThrow();
+    },
+  );
 });
 
 describe('the service licence gate, now that the Tripo verdict is recorded', () => {
