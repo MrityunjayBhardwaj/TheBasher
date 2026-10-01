@@ -11,7 +11,6 @@ import {
   tripoFallbackOf,
   type TripoFallback,
 } from '../modelgen/TripoModelGenerationCapability';
-import type { TripoApiVersion } from '../modelgen/tripoDialect';
 import type { RiggingCapability } from './RiggingCapability';
 
 /**
@@ -29,7 +28,6 @@ export async function pickRigging(
   opts: {
     readonly baseUrl?: string;
     readonly fetchImpl?: typeof fetch;
-    readonly apiVersion?: TripoApiVersion;
   } = {},
   onFallback?: (fallback: TripoFallback) => void,
 ): Promise<RiggingCapability> {

@@ -46,7 +46,7 @@ export interface PersistedSettings {
    */
   motionGenModel: string;
   /**
-   * Tripo API key (`tsk_`-prefixed). Empty means text-to-3D runs on the offline
+   * Tripo API key (v3 documents no prefix; see `assertTripoKeyShape`). Empty means text-to-3D runs on the offline
    * stub, which is the default and costs nothing.
    *
    * 🔴 Stored in localStorage in the clear, like `comfyAuthHeader` beside it.

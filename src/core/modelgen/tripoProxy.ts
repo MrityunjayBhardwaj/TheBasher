@@ -20,9 +20,9 @@
 // Every request this client makes carries `Authorization: Bearer …`, which is
 // not a CORS-safelisted header, so a browser must preflight. Tripo answers the
 // preflight with 401 and no `Access-Control-Allow-Origin`, so the real request
-// is never sent. This holds for BOTH API generations — v2 and v3 were measured
-// separately — so it is a property of the service, not of a generation, and
-// migrating does not fix it.
+// is never sent. This held for BOTH API generations when both existed — v2 and v3
+// were measured separately — so it is a property of the service, not of a
+// generation, and migrating did not fix it.
 //
 // ## 🔑 ONLY THE API HOST IS BLOCKED. THE ASSET HOST IS NOT.
 //
@@ -50,7 +50,7 @@
 // REF: src/core/modelgen/tripoDialect.ts (the service's own address);
 //      vite.config.ts (the other reader); issue #804.
 
-import { TRIPO_API_VERSIONS, TRIPO_V2_BASE_URL, TRIPO_V3_BASE_URL } from './tripoDialect';
+import { TRIPO_API_VERSIONS, TRIPO_V3_BASE_URL } from './tripoDialect';
 import type { TripoApiVersion } from './tripoDialect';
 
 /**
@@ -73,7 +73,6 @@ export interface TripoProxyRoute {
 }
 
 const BASE_URL_OF: Record<TripoApiVersion, string> = {
-  v2: TRIPO_V2_BASE_URL,
   v3: TRIPO_V3_BASE_URL,
 };
 
@@ -91,8 +90,8 @@ function routeFor(version: TripoApiVersion): TripoProxyRoute {
     version,
     path: `${TRIPO_PROXY_PREFIX}/${version}`,
     target: url.origin,
-    // `pathname` keeps v2's `/v2/openapi` and v3's `/v3` without either being
-    // restated here. Trailing slashes are stripped so joining a dialect path
+    // `pathname` keeps the upstream prefix (v3's `/v3`) without restating it
+    // here. Trailing slashes are stripped so joining a dialect path
     // (which always begins with `/`) cannot produce a double slash.
     upstreamPrefix: url.pathname.replace(/\/+$/, ''),
   };
