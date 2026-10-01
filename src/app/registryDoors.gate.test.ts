@@ -150,15 +150,8 @@ const GEOMETRY_CONSUMERS: Record<string, Door> = {
   // whole job is that one read, so the shared scope resolver stays a pure function of its spine
   // and params and does not join this census.
   'src/app/edgeAngleSelection.ts': 'read',
-  // #1041 — an imported mesh's welded rims are its buffer's rims, so the descriptor-side rim door
-  // reaches the buffer for the kinds whose topology lives there (`gltf`, `baked`) and for derived
-  // kinds over them, through the ref every derived descriptor already carries as `source`. It
-  // takes the geometry to walk its index and weld its positions — `alignedSplitRims` and
-  // `weldByPosition`, both non-mutating — and writes to neither. A `read` for the reason
-  // `builtRims.ts` is one, one module over; the rim-consumer census for #1041 found no consumer
-  // that could not hold a ref, which is why the buffer is reached here rather than carried in the
-  // document.
-  'src/app/edgeIdentity.ts': 'read',
+  // (`edgeIdentity.ts` was here from #1041 to #1402: its rim door reached a clone-drawn import's
+  // buffer. Nothing's rims come off a buffer now, and the descriptor side opens no door again.)
   // #994 — the cube projection takes positions to project and writes to nothing. It is a
   // `read` for the same reason `uvAttributes.ts` is, and it is a SECOND consumer of that shape
   // rather than a widening of the first: the lift gathers a `uv` buffer, this gathers a

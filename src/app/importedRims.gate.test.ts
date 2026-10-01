@@ -2,12 +2,15 @@
 // alignment one it cannot have (#1025).
 //
 // ⚠️ #1053 — the `gltf` kind is gone, and with it every ground that recovered an imported mesh's
-// rims from its buffer (2, 4, 5, 10, 11, 13c, 22): the kind they measured no longer exists. What
-// stays pins the classification and that `baked`, the one buffer-only kind left, reaches none of
-// the road — it states no arity to walk a buffer against.
+// rims from its buffer (2, 4, 5, 10, 11, 13c, 22): the kind they measured no longer exists.
 //
-// REF: src/app/builtRims.ts (`alignedSplitRims`, `topologyIsBufferOnly`);
-//      src/app/uvAttributes.ts (`refusalFor`); issues #1025, #1053, #738.
+// ⚠️ #1402 — and then the road itself: with an import a stored `mesh`, the only kind whose buffers
+// live outside the descriptor is `baked`, which states no arity to walk a buffer against, so
+// nothing could reach it. Ground 1 classified kinds by which road they took and went with it.
+// What stays is the tripwire: `baked` has no rims, and ground 6 reds the day it could have.
+//
+// REF: src/app/builtRims.ts (`alignedSplitRims`); src/app/edgeIdentity.ts (`weldedPolygonsOf`);
+//      src/app/uvAttributes.ts (`refusalFor`); issues #1025, #1053, #1402, #738.
 
 import { describe, expect, it } from 'vitest';
 import * as THREE from 'three';
@@ -18,7 +21,7 @@ import {
   mirrorGeometryRef,
   sphereGeometryRef,
 } from './modifierGeometry';
-import { alignedSplitRims, builtPolygonRims, topologyIsBufferOnly } from './builtRims';
+import { alignedSplitRims, builtPolygonRims } from './builtRims';
 import { faceArityOf, faceElementStarts } from './faceCount';
 import { weldedPolygonsOf } from './edgeIdentity';
 import { getForRead, prime } from './geometryRegistry';
@@ -26,54 +29,27 @@ import { readMeshUVs } from './uvAttributes';
 
 const box = boxGeometryRef([1, 1, 1], null);
 
-describe('#1025 — which road a descriptor takes', () => {
-  it('1 — classified exhaustively, and the buffer-only set is the censused escape hatch', () => {
-    // Typed as a Record over the kind union: a new kind that is not classified here is a
-    // missing-property TYPE error rather than a silent default. `never` in the production
-    // switch closes "did you decide?"; this closes "decided the same way twice?".
-    const road: Record<GeometryDescriptor['kind'], 'substrate' | 'buffer-only'> = {
-      box: 'substrate',
-      sphere: 'substrate',
-      array: 'substrate',
-      mirror: 'substrate',
-      subset: 'substrate',
-      bevel: 'substrate',
-      uvProject: 'substrate',
-      mesh: 'substrate',
-      baked: 'buffer-only',
-    };
-    const kinds = Object.keys(road) as GeometryDescriptor['kind'][];
-    expect(kinds.length, 'every descriptor kind is classified').toBe(9);
-
-    for (const kind of kinds)
-      expect(
-        topologyIsBufferOnly({ kind } as GeometryDescriptor),
-        `${kind} — the road it takes through alignedSplitRims`,
-      ).toBe(road[kind] === 'buffer-only');
-
-    // The same two `weldedPolygonsOf`, `faceCountOf` and `pointCountOf` declare. Stated as an
-    // equality rather than two lists, so the day one of them widens this reds instead of
-    // drifting apart quietly.
-    expect(kinds.filter((k) => road[k] === 'buffer-only')).toEqual(['baked']);
-
-    // 🔴 AND IT IS NOT `polygonLayoutOf`'s `outside-the-descriptor` SET, which also holds
-    // `bevel`. Pinned because reusing that verdict is the obvious shortcut and it would put a
-    // bevel — whose welded rims ARE stated, and whose alignment check is real — on the road
-    // that has no check at all.
-    expect(topologyIsBufferOnly(bevelGeometryRef(box, 0.1).descriptor)).toBe(false);
-  });
-});
-
-describe('#1025 — the check that stands in for the alignment one', () => {
+describe('#1025 / #1402 — a baked mesh has no rims', () => {
   it('6 — baked stays refused, and it is the arity that refuses it', () => {
-    // Not a road question: a `baked` descriptor carries a vertex count and no face count, so
-    // there is no arity to walk a buffer against. It takes the buffer-only road and reaches
-    // none of it. This row is what reds the day a baked face count is captured without a decision.
+    // A `baked` descriptor carries a vertex count and no face count, so there is no arity to
+    // walk a buffer against. That is the ONE fact the buffer road's removal (#1402) rests on,
+    // so this row is what reds the day a baked face count is captured without a decision —
+    // and the decision then includes how its rims are recovered, because that road is gone.
     const baked: GeometryDescriptor = { kind: 'baked', hash: 'deadbeef', vertexCount: 24 };
     const ref: GeometryRef = { key: 'k|baked', descriptor: baked };
-    expect(topologyIsBufferOnly(baked)).toBe(true);
     expect(faceArityOf(baked)).toBeNull();
     expect(alignedSplitRims(ref, new THREE.BoxGeometry(1, 1, 1))).toBeNull();
+  });
+
+  it('6a — and holding its buffer changes nothing: asked by ref, primed, still no rims', () => {
+    // The ref-taking door (#1041) used to reach a buffer here. A primed bake is the input that
+    // would have exercised it; it answers null, by ref and by descriptor alike.
+    const baked: GeometryDescriptor = { kind: 'baked', hash: 'feedface', vertexCount: 24 };
+    const ref: GeometryRef = { key: 'k|baked-primed', descriptor: baked };
+    prime(ref, new THREE.BoxGeometry(1, 1, 1));
+    expect(getForRead(ref), 'the bake IS primed — the subject is real').not.toBeNull();
+    expect(weldedPolygonsOf(ref)).toBeNull();
+    expect(weldedPolygonsOf(baked)).toBeNull();
   });
 
   it('6b — and a baked mesh keeps its OWN reason, which is not an imported one', () => {

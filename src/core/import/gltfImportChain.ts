@@ -871,8 +871,8 @@ export function captureChildFaceCount(
  * primitives sit on the same four corners, so the door and a unioning capture both say 4 by
  * accident. Constructed with DISJOINT primitives, they part: door 3, union 6.
  *
- * `captureChildFaceCount` sums its primitives and leans on `alignedSplitRims`'s cross-source
- * check to refuse the disagreement later. This refuses to MINT the disagreement at all,
+ * `captureChildFaceCount` sums its primitives, and leant on a cross-source check on the rim road
+ * to refuse the disagreement later (that road went with the clone, #1402). This refuses to MINT the disagreement at all,
  * which is the stronger position of the two: a state with no constructor needs no guard. It
  * is why the two fields have deliberately different populations.
  *
