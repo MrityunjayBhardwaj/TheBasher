@@ -80,13 +80,14 @@ export const GltfAssetParams = z.object({
   /**
    * UX #7 / H90 — glTF node INDEX → post-dedup KEY (same key space as
    * `nodeNameMap`), captured at import by `buildNodeNameMap`. JSON object keys
-   * are strings, so the integer node index serialises as a string key. The
-   * renderer pairs this with `gltf.parser.associations` (node index per loaded
-   * object) to stamp each clone object's `userData.basherGltfChildId`, making
-   * viewport drill-in immune to the producer-key ↔ clone-name divergence that
-   * leaves ~28% of a real export's meshes unaddressable by name (H90).
-   * `.default({})` makes it additive: pre-UX#7 saves hydrate empty and fall back
-   * to name-match (V10/H14-clean — no schema-version bump). Mirrors the
+   * are strings, so the integer node index serialises as a string key. Until
+   * #1053 the clone renderer paired this with `gltf.parser.associations` (node
+   * index per loaded object) to stamp each clone object with its child id, which
+   * made viewport drill-in immune to the producer-key ↔ clone-name divergence
+   * that leaves ~28% of a real export's meshes unaddressable by name (H90).
+   * Nothing draws or picks with it now; the load converter still reads it to
+   * convert a saved clone import.
+   * `.default({})` makes it additive (V10/H14-clean — no schema-version bump). Mirrors the
    * nodeNameMap/childHierarchy/skins additive-param precedent.
    */
   keyByGltfNodeIndex: z.record(z.string(), z.string()).default({}),
