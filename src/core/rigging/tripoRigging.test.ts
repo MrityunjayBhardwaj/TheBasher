@@ -1,6 +1,6 @@
 // The Tripo rigging transport: what goes out, what comes back, and what is
-// refused. Every field asserted here is cited to the SDK source rather than
-// guessed — see RiggingCapability.ts for the REF block.
+// refused. Every path and field asserted here is the v3 dialect's
+// (`tripoDialect.ts`, `rigCheckCall` / `rigCall`) rather than guessed.
 
 import { describe, expect, it, vi } from 'vitest';
 import { TripoModelGenerationCapability } from '../modelgen/TripoModelGenerationCapability';
@@ -37,12 +37,10 @@ function renameBonesInPlace(glb: ArrayBuffer, from: string, to: string): ArrayBu
   return bytes.buffer as ArrayBuffer;
 }
 
-const KEY = 'tsk_test_key';
-// v2 wire, stated rather than inherited from the client's default — which is
-// now v3. See tripoV3.test.ts for the v3 half of the same contract.
+const KEY = 'tcli_test_key';
+// The v3 client — the only Tripo API left (#1403).
 const opts = {
   apiKey: KEY,
-  apiVersion: 'v2' as const,
   baseUrl: 'http://tripo.test',
   pollIntervalMs: 0,
 };
@@ -51,15 +49,17 @@ const opts = {
 function transport(
   output: Record<string, unknown>,
   glb: ArrayBuffer | null = synthesiseRiggedGlb(),
-): { fetchImpl: typeof fetch; sent: Record<string, unknown>[] } {
+): { fetchImpl: typeof fetch; sent: Record<string, unknown>[]; paths: string[] } {
   const sent: Record<string, unknown>[] = [];
+  const paths: string[] = [];
   const fetchImpl = (async (url: string | URL | Request, init?: RequestInit) => {
     const href = String(url);
-    if (href.endsWith('/task') && init?.method === 'POST') {
+    if (href.startsWith('http://tripo.test/animations/') && init?.method === 'POST') {
+      paths.push(href);
       sent.push(JSON.parse(String(init.body)) as Record<string, unknown>);
       return new Response(JSON.stringify({ data: { task_id: 'task-1' } }), { status: 200 });
     }
-    if (href.includes('/task/')) {
+    if (href.includes('/tasks/')) {
       return new Response(JSON.stringify({ data: { status: 'success', progress: 100, output } }), {
         status: 200,
       });
@@ -67,19 +67,17 @@ function transport(
     // the model download
     return new Response(glb ?? new ArrayBuffer(0), { status: 200 });
   }) as unknown as typeof fetch;
-  return { fetchImpl, sent };
+  return { fetchImpl, sent, paths };
 }
 
 describe('the pre-rig check', () => {
-  it('asks animate_prerigcheck for the named mesh and reports both answers', async () => {
-    const { fetchImpl, sent } = transport({ riggable: true, rig_type: 'quadruped' });
+  it('asks rig-check for the named mesh and reports both answers', async () => {
+    const { fetchImpl, sent, paths } = transport({ riggable: true, rig_type: 'quadruped' });
     const cap = new TripoModelGenerationCapability({ ...opts, fetchImpl });
     const check = await cap.checkRiggable({ sourceTaskId: 'mesh-9' });
 
-    expect(sent[0]).toMatchObject({
-      type: 'animate_prerigcheck',
-      original_model_task_id: 'mesh-9',
-    });
+    expect(paths[0]).toBe('http://tripo.test/animations/rig-check');
+    expect(sent[0]).toMatchObject({ input: 'mesh-9' });
     expect(check.riggable).toBe(true);
     expect(check.detectedRigType).toBe('quadruped');
   });
@@ -100,14 +98,14 @@ describe('the pre-rig check', () => {
 });
 
 describe('the rig call', () => {
-  it('sends animate_rig, pins glb, and forwards the body plan and the spec', async () => {
-    const { fetchImpl, sent } = transport({ model: 'http://tripo.test/out.glb' });
+  it('sends the rig call, pins glb, and forwards the body plan and the spec', async () => {
+    const { fetchImpl, sent, paths } = transport({ model_url: 'http://tripo.test/out.glb' });
     const cap = new TripoModelGenerationCapability({ ...opts, fetchImpl });
     await cap.rig({ sourceTaskId: 'mesh-9', rigType: 'biped', spec: 'mixamo' });
 
+    expect(paths[0]).toBe('http://tripo.test/animations/rig');
     expect(sent[0]).toMatchObject({
-      type: 'animate_rig',
-      original_model_task_id: 'mesh-9',
+      input: 'mesh-9',
       // Pinned, not exposed: the contract is that a rigged mesh takes the SAME
       // import road a dropped .glb takes, and fbx would fork it.
       out_format: 'glb',
@@ -117,7 +115,7 @@ describe('the rig call', () => {
   });
 
   it('defaults to a biped rigged to mixamo — the combination anything downstream can drive', async () => {
-    const { fetchImpl, sent } = transport({ model: 'http://tripo.test/out.glb' });
+    const { fetchImpl, sent } = transport({ model_url: 'http://tripo.test/out.glb' });
     const cap = new TripoModelGenerationCapability({ ...opts, fetchImpl });
     const result = await cap.rig({ sourceTaskId: 'mesh-9' });
     expect(sent[0]).toMatchObject({ rig_type: 'biped', spec: 'mixamo' });
@@ -132,13 +130,13 @@ describe('the rig call', () => {
     const foreign = await new StubRiggingCapability().rig({ sourceTaskId: 'x' });
     const swapped = renameBonesInPlace(foreign.glb, 'mixamorig_', 'tripoRIGx_');
 
-    const { fetchImpl } = transport({ model: 'http://tripo.test/out.glb' }, swapped);
+    const { fetchImpl } = transport({ model_url: 'http://tripo.test/out.glb' }, swapped);
     const cap = new TripoModelGenerationCapability({ ...opts, fetchImpl });
     await expect(cap.rig({ sourceTaskId: 'm', spec: 'mixamo' })).rejects.toThrow(/not Mixamo/);
   });
 
   it('accepts a rig that DID come back in the requested vocabulary', async () => {
-    const { fetchImpl } = transport({ model: 'http://tripo.test/out.glb' });
+    const { fetchImpl } = transport({ model_url: 'http://tripo.test/out.glb' });
     const cap = new TripoModelGenerationCapability({ ...opts, fetchImpl });
     const result = await cap.rig({ sourceTaskId: 'm', spec: 'mixamo' });
     expect(result.taskId).toBe('task-1');
@@ -150,7 +148,7 @@ describe('the rig call', () => {
     // ordinary import road names that one; reporting it as a wrong skeleton would
     // send whoever reads the message to the wrong place entirely.
     const { fetchImpl } = transport(
-      { model: 'http://tripo.test/out.glb' },
+      { model_url: 'http://tripo.test/out.glb' },
       new TextEncoder().encode('not a glb at all').buffer as ArrayBuffer,
     );
     const cap = new TripoModelGenerationCapability({ ...opts, fetchImpl });

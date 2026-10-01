@@ -8,15 +8,15 @@
 //                         Runs against the real gate. If it were mocked there,
 //                         the refusal test would pass for the wrong reason.
 //   - this file         — "given permission, does the client speak the API the
-//                         official SDK documents?"
+//                         v3 dialect documents?"
 //
 // The alternative — reaching into `MODEL_RECORDS` and pushing a row — was tried
 // and rejected: it mutates production state from a test, it broke on a field the
 // record derivation needs, and it is precisely the test-only backdoor this repo
 // refuses. A file-scoped mock states the assumption in the open.
 //
-// Every field name, endpoint and status string asserted here is read from
-// Tripo's official MIT SDK, mirrored at `ref/sources/tripo-python-sdk/`.
+// Every field name, endpoint and status string asserted here is read from the
+// v3 dialect, `tripoDialect.ts`, which cites the vendor's v3 documentation.
 
 import { describe, expect, it, vi } from 'vitest';
 
@@ -34,16 +34,13 @@ const { TripoModelGenerationCapability, TripoTaskFailedError, TripoApiError, ass
   await import('./TripoModelGenerationCapability');
 const { synthesiseGlb } = await import('./StubModelGenerationCapability');
 
-const KEY = 'tsk_test_key';
+const KEY = 'tcli_test_key';
 const TEXT = { source: 'text', prompt: 'a red chair' } as const;
 
-/** Every assertion in this file is about the v2 wire, so the version is STATED.
- *  It used to be the client's default; it is not any more, and a suite that
- *  silently followed the default would quietly stop testing what it names. */
+/** The client under test. It speaks v3, the only Tripo API left (#1403). */
 function client(fetchImpl: unknown, over: Record<string, unknown> = {}) {
   return new TripoModelGenerationCapability({
     apiKey: KEY,
-    apiVersion: 'v2',
     fetchImpl: fetchImpl as typeof fetch,
     sleepImpl: async () => {},
     ...over,
@@ -51,52 +48,44 @@ function client(fetchImpl: unknown, over: Record<string, unknown> = {}) {
 }
 
 describe('the key is checked for shape before anything else', () => {
-  it('rejects a key that is not tsk_-prefixed UNDER v2, where the prefix is documented', () => {
-    // A key pasted from the wrong field otherwise fails as an opaque 401 several
-    // seconds later, which sends the reader to the wrong problem.
-    expect(() => assertTripoKeyShape('sk-wrong-field', 'v2')).toThrow(/tsk_/);
-    expect(() => assertTripoKeyShape(KEY, 'v2')).not.toThrow();
-  });
-
   it('does NOT invent a prefix rule for v3, where the vendor documents none', () => {
-    // The failing arm of the version scoping, constructed. v3's documentation
-    // states no key format; a rule guessed from one observed key would refuse
-    // valid keys of a form nobody here has seen, and say why with confidence.
-    // The service's own 401 is the authority instead.
-    expect(() => assertTripoKeyShape('tcli_whatever_the_console_issues', 'v3')).not.toThrow();
-    expect(() => assertTripoKeyShape('sk-wrong-field', 'v3')).not.toThrow();
+    // v3's documentation states no key format; a rule guessed from one observed
+    // key would refuse valid keys of a form nobody here has seen, and say why
+    // with confidence. The service's own 401 is the authority instead.
+    expect(() => assertTripoKeyShape('tcli_whatever_the_console_issues')).not.toThrow();
+    expect(() => assertTripoKeyShape('sk-wrong-field')).not.toThrow();
   });
 
-  it('refuses an EMPTY key under both, because that one is not a guess', () => {
+  it('refuses an EMPTY key, because that one is not a guess', () => {
     // Emptiness means nothing was configured. That is knowable without any
-    // vendor documentation, so it is the one shape rule both versions share.
-    for (const version of ['v2', 'v3'] as const) {
-      expect(() => assertTripoKeyShape('', version)).toThrow(/No Tripo API key/);
-      expect(() => assertTripoKeyShape('   ', version)).toThrow(/No Tripo API key/);
-    }
+    // vendor documentation, so it is the one shape rule there is.
+    expect(() => assertTripoKeyShape('')).toThrow(/No Tripo API key/);
+    expect(() => assertTripoKeyShape('   ')).toThrow(/No Tripo API key/);
   });
 
-  it('a malformed key issues no request', async () => {
+  it('an empty key issues no request', async () => {
     const fetchImpl = vi.fn();
-    await expect(client(fetchImpl, { apiKey: 'nope' }).generate(TEXT)).rejects.toThrow(/tsk_/);
+    await expect(client(fetchImpl, { apiKey: '' }).generate(TEXT)).rejects.toThrow(
+      /No Tripo API key/,
+    );
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 });
 
 describe('create → poll → download', () => {
-  it('walks the three endpoints the SDK documents, in order', async () => {
+  it('walks the three endpoints the v3 dialect names, in order', async () => {
     const calls: string[] = [];
     const fetchImpl = vi.fn(async (url: string | URL, init?: RequestInit) => {
       const u = String(url);
       calls.push(`${init?.method ?? 'GET'} ${u}`);
-      if (u.endsWith('/task') && init?.method === 'POST') {
+      if (u.endsWith('/generation/text-to-model') && init?.method === 'POST') {
         return new Response(JSON.stringify({ code: 0, data: { task_id: 't1' } }), { status: 200 });
       }
-      if (u.includes('/task/t1')) {
+      if (u.includes('/tasks/t1')) {
         return new Response(
           JSON.stringify({
             code: 0,
-            data: { status: 'success', progress: 100, output: { pbr_model: 'https://cdn/x.glb' } },
+            data: { status: 'success', progress: 100, output: { model_url: 'https://cdn/x.glb' } },
           }),
           { status: 200 },
         );
@@ -109,12 +98,14 @@ describe('create → poll → download', () => {
     expect(result.taskId).toBe('t1');
     expect(result.glb.byteLength).toBeGreaterThan(0);
     expect(calls).toEqual([
-      'POST https://api.tripo3d.ai/v2/openapi/task',
-      'GET https://api.tripo3d.ai/v2/openapi/task/t1',
+      'POST https://openapi.tripo3d.ai/v3/generation/text-to-model',
+      'GET https://openapi.tripo3d.ai/v3/tasks/t1',
       'GET https://cdn/x.glb',
     ]);
     const body = JSON.parse((fetchImpl.mock.calls[0][1] as RequestInit).body as string);
-    expect(body).toMatchObject({ type: 'text_to_model', prompt: 'a red chair' });
+    // The request kind is carried by the path; v3 has no `type` discriminator.
+    expect(body).toMatchObject({ prompt: 'a red chair' });
+    expect(body).not.toHaveProperty('type');
   });
 
   it('keeps polling while the task is queued or running, then succeeds', async () => {
@@ -123,10 +114,10 @@ describe('create → poll → download', () => {
     const seen: number[] = [];
     const fetchImpl = vi.fn(async (url: string | URL, init?: RequestInit) => {
       const u = String(url);
-      if (u.endsWith('/task') && init?.method === 'POST') {
+      if (u.endsWith('/generation/text-to-model') && init?.method === 'POST') {
         return new Response(JSON.stringify({ code: 0, data: { task_id: 't1' } }), { status: 200 });
       }
-      if (u.includes('/task/t1')) {
+      if (u.includes('/tasks/t1')) {
         const status = statuses[i++];
         return new Response(
           JSON.stringify({
@@ -134,7 +125,7 @@ describe('create → poll → download', () => {
             data: {
               status,
               progress: i * 25,
-              output: status === 'success' ? { model: 'https://cdn/x.glb' } : {},
+              output: status === 'success' ? { model_url: 'https://cdn/x.glb' } : {},
             },
           }),
           { status: 200 },
@@ -148,15 +139,15 @@ describe('create → poll → download', () => {
     expect(seen).toEqual([25, 50, 75, 100]);
   });
 
-  it('prefers pbr_model, then model, then base_model', async () => {
+  it('prefers model_url, then the first of model_urls', async () => {
     const downloaded: string[] = [];
-    const make = (output: Record<string, string>) =>
+    const make = (output: Record<string, unknown>) =>
       vi.fn(async (url: string | URL, init?: RequestInit) => {
         const u = String(url);
-        if (u.endsWith('/task') && init?.method === 'POST') {
+        if (u.endsWith('/generation/text-to-model') && init?.method === 'POST') {
           return new Response(JSON.stringify({ code: 0, data: { task_id: 't' } }), { status: 200 });
         }
-        if (u.includes('/task/t')) {
+        if (u.includes('/tasks/t')) {
           return new Response(
             JSON.stringify({ code: 0, data: { status: 'success', progress: 100, output } }),
             { status: 200 },
@@ -166,15 +157,14 @@ describe('create → poll → download', () => {
         return new Response(synthesiseGlb(TEXT), { status: 200 });
       });
 
-    await client(make({ pbr_model: 'P', model: 'M', base_model: 'B' })).generate(TEXT);
-    await client(make({ model: 'M', base_model: 'B' })).generate(TEXT);
-    await client(make({ base_model: 'B' })).generate(TEXT);
-    expect(downloaded).toEqual(['P', 'M', 'B']);
+    await client(make({ model_url: 'P', model_urls: ['U', 'V'] })).generate(TEXT);
+    await client(make({ model_urls: ['U', 'V'] })).generate(TEXT);
+    expect(downloaded).toEqual(['P', 'U']);
   });
 
   it('fails legibly when a successful task carries no model URL', async () => {
     const fetchImpl = vi.fn(async (url: string | URL, init?: RequestInit) =>
-      String(url).endsWith('/task') && init?.method === 'POST'
+      String(url).endsWith('/generation/text-to-model') && init?.method === 'POST'
         ? new Response(JSON.stringify({ code: 0, data: { task_id: 't' } }), { status: 200 })
         : new Response(
             JSON.stringify({ code: 0, data: { status: 'success', progress: 100, output: {} } }),
@@ -216,7 +206,8 @@ describe('option names are mapped at this seam and nowhere else', () => {
       .generate(TEXT)
       .catch(() => undefined);
     const body = JSON.parse((fetchImpl.mock.calls[0][1] as RequestInit).body as string);
-    expect(Object.keys(body).sort()).toEqual(['prompt', 'type']);
+    // `model` is present because v3 marks it REQUIRED; the dialect fills its default.
+    expect(Object.keys(body).sort()).toEqual(['model', 'prompt']);
   });
 });
 
@@ -225,7 +216,7 @@ describe('terminal statuses and transport failures are distinguished', () => {
   for (const status of terminal) {
     it(`treats "${status}" as a task failure, not a transport error`, async () => {
       const fetchImpl = vi.fn(async (url: string | URL, init?: RequestInit) =>
-        String(url).endsWith('/task') && init?.method === 'POST'
+        String(url).endsWith('/generation/text-to-model') && init?.method === 'POST'
           ? new Response(JSON.stringify({ code: 0, data: { task_id: 't1' } }), { status: 200 })
           : new Response(JSON.stringify({ code: 0, data: { status, progress: 0 } }), {
               status: 200,
@@ -239,7 +230,7 @@ describe('terminal statuses and transport failures are distinguished', () => {
 
   const failWith = (data: Record<string, unknown>) =>
     vi.fn(async (url: string | URL, init?: RequestInit) =>
-      String(url).endsWith('/task') && init?.method === 'POST'
+      String(url).endsWith('/generation/text-to-model') && init?.method === 'POST'
         ? new Response(JSON.stringify({ code: 0, data: { task_id: 't1' } }), { status: 200 })
         : new Response(
             JSON.stringify({ code: 0, data: { status: 'failed', progress: 0, ...data } }),
@@ -259,8 +250,8 @@ describe('terminal statuses and transport failures are distinguished', () => {
   };
 
   it('#799 — two different causes of "failed" no longer read as the same sentence', async () => {
-    // The defect. v2 said what went wrong in the STATUS (`banned`, `expired`);
-    // v3 folded both into `failed` plus a code, and the reader declared only
+    // The defect. The retired API said what went wrong in the STATUS (`banned`,
+    // `expired`); v3 folded both into `failed` plus a code, and the reader declared only
     // status/progress/output — so moderation and a queue expiry produced one
     // identical string. One asks the director to rewrite their prompt, the other
     // to retry unchanged, and one sentence sends half of them to the wrong action.
@@ -275,7 +266,7 @@ describe('terminal statuses and transport failures are distinguished', () => {
 
   it('#799 — repeats what the service said WITHOUT claiming to know what it means', async () => {
     // Deliberately not interpreting. The field names and the two codes come from
-    // v3 DOCUMENTATION — there is no v3 SDK and the schema is behind auth — so
+    // v3 DOCUMENTATION — there is no v3 SDK and no machine-readable schema — so
     // naming `error_code` in the implementation would assert a fact nobody has
     // checked against the wire. A field nobody predicted is carried just as well,
     // which is the property that makes this grounded rather than a guess.
@@ -285,7 +276,7 @@ describe('terminal statuses and transport failures are distinguished', () => {
   });
 
   it('#799 — a failure that says nothing extra reads exactly as it always did', async () => {
-    // The v2 population, and the reason this is safe: every existing failure
+    // The detail-free population, and the reason this is safe: every existing failure
     // message is byte-identical, so nothing that reads these strings has to move.
     const plain = await failureOf({});
     expect(plain.message).toBe('Tripo task t1 ended as "failed".');
@@ -339,11 +330,11 @@ describe('terminal statuses and transport failures are distinguished', () => {
 
 describe('cancel is honest about what it can and cannot do', () => {
   it('stops our polling, and the generation rejects as cancelled', async () => {
-    // The SDK exposes NO cancel endpoint — `cancelled` is only a status the
+    // The v3 dialect names NO cancel endpoint — `cancelled` is only a status the
     // service may report — so this asserts the local behaviour actually
     // implemented, not an invented contract.
     const fetchImpl = vi.fn(async (url: string | URL, init?: RequestInit) =>
-      String(url).endsWith('/task') && init?.method === 'POST'
+      String(url).endsWith('/generation/text-to-model') && init?.method === 'POST'
         ? new Response(JSON.stringify({ code: 0, data: { task_id: 't1' } }), { status: 200 })
         : new Response(JSON.stringify({ code: 0, data: { status: 'running', progress: 10 } }), {
             status: 200,
@@ -366,7 +357,7 @@ describe('cancel is honest about what it can and cannot do', () => {
 describe('the whole generation is bounded', () => {
   it('gives up rather than polling for ever', async () => {
     const fetchImpl = vi.fn(async (url: string | URL, init?: RequestInit) =>
-      String(url).endsWith('/task') && init?.method === 'POST'
+      String(url).endsWith('/generation/text-to-model') && init?.method === 'POST'
         ? new Response(JSON.stringify({ code: 0, data: { task_id: 't1' } }), { status: 200 })
         : new Response(JSON.stringify({ code: 0, data: { status: 'running', progress: 1 } }), {
             status: 200,
@@ -389,7 +380,7 @@ describe('a network failure names its stage and says whether the URL was proxied
   // deliberately direct to the asset host. "The dev server's proxy did not
   // answer" and "a cross-origin download was blocked" are different problems,
   // and only the URL's shape says which happened.
-  const PROXIED = { baseUrl: '/__tripo/v2' };
+  const PROXIED = { baseUrl: '/__tripo/v3' };
   const IMAGE = {
     source: 'image',
     image: { bytes: new Uint8Array([1, 2, 3]), mimeType: 'image/png' },
@@ -402,14 +393,14 @@ describe('a network failure names its stage and says whether the URL was proxied
   function dieOnDownload() {
     return vi.fn(async (url: string | URL, init?: RequestInit) => {
       const u = String(url);
-      if (u.endsWith('/task') && init?.method === 'POST') {
+      if (u.endsWith('/generation/text-to-model') && init?.method === 'POST') {
         return new Response(JSON.stringify({ code: 0, data: { task_id: 't1' } }), { status: 200 });
       }
-      if (u.includes('/task/t1')) {
+      if (u.includes('/tasks/t1')) {
         return new Response(
           JSON.stringify({
             code: 0,
-            data: { status: 'success', progress: 100, output: { pbr_model: 'https://cdn/x.glb' } },
+            data: { status: 'success', progress: 100, output: { model_url: 'https://cdn/x.glb' } },
           }),
           { status: 200 },
         );
@@ -425,8 +416,8 @@ describe('a network failure names its stage and says whether the URL was proxied
 
     expect(err).toBeInstanceOf(Error);
     const message = (err as Error).message;
-    expect(message).toContain('Tripo POST /task');
-    expect(message).toContain('/__tripo/v2/task');
+    expect(message).toContain('Tripo POST /generation/text-to-model');
+    expect(message).toContain('/__tripo/v3/generation/text-to-model');
     expect(message).toContain('production');
     // The raw browser string survives as the cause, so nothing is hidden.
     expect(message).toContain('Failed to fetch');
@@ -489,14 +480,14 @@ describe('a network failure names its stage and says whether the URL was proxied
   it('re-throws an abort untouched, so a timeout is not dressed up as an unreachable host', async () => {
     const aborted = vi.fn(async (url: string | URL, init?: RequestInit) => {
       const u = String(url);
-      if (u.endsWith('/task') && init?.method === 'POST') {
+      if (u.endsWith('/generation/text-to-model') && init?.method === 'POST') {
         return new Response(JSON.stringify({ code: 0, data: { task_id: 't1' } }), { status: 200 });
       }
-      if (u.includes('/task/t1')) {
+      if (u.includes('/tasks/t1')) {
         return new Response(
           JSON.stringify({
             code: 0,
-            data: { status: 'success', progress: 100, output: { pbr_model: 'https://cdn/x.glb' } },
+            data: { status: 'success', progress: 100, output: { model_url: 'https://cdn/x.glb' } },
           }),
           { status: 200 },
         );
@@ -516,22 +507,21 @@ describe('a network failure names its stage and says whether the URL was proxied
 });
 
 describe('a page fetches the generated model same-origin; a node harness does not (#832)', () => {
-  const ASSET =
-    'https://tripo-data.rg1.data.tripo3d.com/x/tripo_pbr_model_x.glb?Policy=P&Signature=S';
+  const ASSET = 'https://tripo-data.rg1.data.tripo3d.com/x/tripo_model_x.glb?Policy=P&Signature=S';
 
   /** Succeeds through create+poll and hands back a real asset-host URL. */
   function scripted(seen: string[]) {
     return vi.fn(async (url: string | URL, init?: RequestInit) => {
       const u = String(url);
       seen.push(u);
-      if (u.endsWith('/task') && init?.method === 'POST') {
+      if (u.endsWith('/generation/text-to-model') && init?.method === 'POST') {
         return new Response(JSON.stringify({ code: 0, data: { task_id: 't1' } }), { status: 200 });
       }
-      if (u.includes('/task/t1')) {
+      if (u.includes('/tasks/t1')) {
         return new Response(
           JSON.stringify({
             code: 0,
-            data: { status: 'success', progress: 100, output: { pbr_model: ASSET } },
+            data: { status: 'success', progress: 100, output: { model_url: ASSET } },
           }),
           { status: 200 },
         );
@@ -542,7 +532,7 @@ describe('a page fetches the generated model same-origin; a node harness does no
 
   it('rewrites the download onto the same-origin forwarder when the API is proxied', async () => {
     const seen: string[] = [];
-    await client(scripted(seen), { baseUrl: '/__tripo/v2' }).generate(TEXT);
+    await client(scripted(seen), { baseUrl: '/__tripo/v3' }).generate(TEXT);
 
     const download = seen[seen.length - 1];
     expect(download.startsWith('/__tripo-asset?url=')).toBe(true);
@@ -569,41 +559,41 @@ describe('a page fetches the generated model same-origin; a node harness does no
     const f = vi.fn(async (url: string | URL, init?: RequestInit) => {
       const u = String(url);
       seen.push(u);
-      if (u.endsWith('/task') && init?.method === 'POST') {
+      if (u.endsWith('/generation/text-to-model') && init?.method === 'POST') {
         return new Response(JSON.stringify({ code: 0, data: { task_id: 't1' } }), { status: 200 });
       }
-      if (u.includes('/task/t1')) {
+      if (u.includes('/tasks/t1')) {
         return new Response(
           JSON.stringify({
             code: 0,
-            data: { status: 'success', progress: 100, output: { pbr_model: foreign } },
+            data: { status: 'success', progress: 100, output: { model_url: foreign } },
           }),
           { status: 200 },
         );
       }
       return new Response(synthesiseGlb(TEXT), { status: 200 });
     });
-    await client(f, { baseUrl: '/__tripo/v2' }).generate(TEXT);
+    await client(f, { baseUrl: '/__tripo/v3' }).generate(TEXT);
 
     expect(seen[seen.length - 1]).toBe(foreign);
   });
 });
 
 describe('a task can be run WITHOUT collecting its output (#833)', () => {
-  const ASSET = 'https://tripo-data.rg1.data.tripo3d.com/x/tripo_pbr_model_x.glb';
+  const ASSET = 'https://tripo-data.rg1.data.tripo3d.com/x/tripo_model_x.glb';
 
   function scripted(seen: string[]) {
     return vi.fn(async (url: string | URL, init?: RequestInit) => {
       const u = String(url);
       seen.push(`${init?.method ?? 'GET'} ${u}`);
-      if (u.endsWith('/task') && init?.method === 'POST') {
+      if (u.endsWith('/generation/text-to-model') && init?.method === 'POST') {
         return new Response(JSON.stringify({ code: 0, data: { task_id: 't1' } }), { status: 200 });
       }
-      if (u.includes('/task/t1')) {
+      if (u.includes('/tasks/t1')) {
         return new Response(
           JSON.stringify({
             code: 0,
-            data: { status: 'success', progress: 100, output: { pbr_model: ASSET } },
+            data: { status: 'success', progress: 100, output: { model_url: ASSET } },
           }),
           { status: 200 },
         );
@@ -619,11 +609,11 @@ describe('a task can be run WITHOUT collecting its output (#833)', () => {
     // narrowed return type would look identical from the caller's side while
     // still paying for the transfer.
     const seen: string[] = [];
-    const result = await client(scripted(seen), { baseUrl: '/__tripo/v2' }).generateTaskOnly(TEXT);
+    const result = await client(scripted(seen), { baseUrl: '/__tripo/v3' }).generateTaskOnly(TEXT);
 
     expect(result.taskId).toBe('t1');
     expect(result.modelVersion).toBe('unspecified');
-    expect(seen).toEqual(['POST /__tripo/v2/task', 'GET /__tripo/v2/task/t1']);
+    expect(seen).toEqual(['POST /__tripo/v3/generation/text-to-model', 'GET /__tripo/v3/tasks/t1']);
     expect(seen.some((c) => c.includes('tripo-asset') || c.includes(ASSET))).toBe(false);
   });
 
@@ -636,7 +626,7 @@ describe('a task can be run WITHOUT collecting its output (#833)', () => {
 
   it('collects the mesh of the task it already ran, on demand', async () => {
     const seen: string[] = [];
-    const task = await client(scripted(seen), { baseUrl: '/__tripo/v2' }).generateTaskOnly(TEXT);
+    const task = await client(scripted(seen), { baseUrl: '/__tripo/v3' }).generateTaskOnly(TEXT);
     const before = seen.length;
 
     const glb = await task.collectGlb();
@@ -649,21 +639,21 @@ describe('a task can be run WITHOUT collecting its output (#833)', () => {
 
   it('🔑 collecting does NOT create a second task — it would bill twice', async () => {
     const seen: string[] = [];
-    const task = await client(scripted(seen), { baseUrl: '/__tripo/v2' }).generateTaskOnly(TEXT);
+    const task = await client(scripted(seen), { baseUrl: '/__tripo/v3' }).generateTaskOnly(TEXT);
     await task.collectGlb();
 
-    // The thing that costs money is `POST /task`. It happens once, for the whole
+    // The thing that costs money is the generation POST. It happens once, for the whole
     // run-then-collect sequence. Asserting on the POST count rather than on the
     // returned bytes is what makes a re-run visible: a second task would return a
     // perfectly good mesh and look identical from the caller's side.
-    expect(seen.filter((c) => c === 'POST /__tripo/v2/task')).toHaveLength(1);
+    expect(seen.filter((c) => c === 'POST /__tripo/v3/generation/text-to-model')).toHaveLength(1);
   });
 
   it('FALSIFICATION: `generate` on the same script DOES download', async () => {
     // The pair. Without it the test above passes for a client that cannot reach
     // the asset host at all, which is a different bug wearing the same green.
     const seen: string[] = [];
-    const result = await client(scripted(seen), { baseUrl: '/__tripo/v2' }).generate(TEXT);
+    const result = await client(scripted(seen), { baseUrl: '/__tripo/v3' }).generate(TEXT);
 
     expect(result.glb.byteLength).toBeGreaterThan(0);
     expect(seen.length).toBe(3);
@@ -675,7 +665,7 @@ describe('a task can be run WITHOUT collecting its output (#833)', () => {
     // be a way to reach the service around a refusal.
     const seen: string[] = [];
     await expect(
-      client(scripted(seen), { baseUrl: '/__tripo/v2' }).generateTaskOnly({
+      client(scripted(seen), { baseUrl: '/__tripo/v3' }).generateTaskOnly({
         source: 'text',
         prompt: '   ',
       } as never),
@@ -686,7 +676,7 @@ describe('a task can be run WITHOUT collecting its output (#833)', () => {
   it('reports progress, so a caller sees the task run', async () => {
     const seen: string[] = [];
     const progress: number[] = [];
-    await client(scripted(seen), { baseUrl: '/__tripo/v2' }).generateTaskOnly(TEXT, (p) =>
+    await client(scripted(seen), { baseUrl: '/__tripo/v3' }).generateTaskOnly(TEXT, (p) =>
       progress.push(p.progress),
     );
     expect(progress.length).toBeGreaterThan(0);

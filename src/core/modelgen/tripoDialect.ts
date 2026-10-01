@@ -1,5 +1,11 @@
-// tripoDialect — everything that differs between Tripo's v2 and v3 APIs, in one
-// table, so the client that talks to them exists once.
+// tripoDialect — the wire contract of Tripo's API, in one table, so the client that
+// talks to it exists once.
+//
+// #1403 — v2 was REMOVED at its announced feature freeze (2026-10-01 00:00 UTC+8; its
+// endpoints stop accepting requests 2026-11-01). The table below held both generations
+// until then; the reasoning that follows is kept because it is why the contract is a
+// table the client holds rather than code spread through it, and a future v4 lands the
+// same way v2 was carried.
 //
 // WHY A DIALECT AND NOT A SECOND CLIENT. The two API generations share the parts
 // that carry the risk and the parts that carry the tests: Bearer auth, the
@@ -14,10 +20,8 @@
 // 🔴 GROUNDING STATUS DIFFERS BY VERSION, AND THAT IS THE MOST IMPORTANT THING
 // ON THIS PAGE.
 //
-//   v2 — SOURCE-VERIFIED. Every path, field and status below was read out of
-//        Tripo's official MIT-licensed Python SDK, mirrored at
-//        `ref/sources/tripo-python-sdk/`, and cross-checked against its Blender
-//        plugin. That SDK (`tripo3d` 0.4.2) is still the latest release on PyPI.
+//   v2 — was SOURCE-VERIFIED against Tripo's MIT-licensed Python SDK
+//        (`ref/sources/tripo-python-sdk/`). Removed; see above.
 //
 //   v3 — VENDOR-DOCUMENTED. There is no v3 source to read and no machine-
 //        readable schema at all: Tripo's own SDK is v2, and with a VALID KEY
@@ -48,13 +52,13 @@
 // (`{code, status, message, suggestion, request_id}`, HTTP 403, code 2010 for
 // insufficient credit). Both match what this client already reads.
 //
-// REF: ref/sources/tripo-python-sdk/tripo3d/client.py (v2, all of it);
-//      https://developers.tripo3d.ai/en/docs (v3, prose); issue #797.
+// REF: https://developers.tripo3d.ai/en/docs (v3, prose);
+//      https://developers.tripo3d.ai/en/docs/migration-v2-to-v3; issues #797, #1403.
 
 import type { ModelGenerationRequest } from './ModelGenerationCapability';
 
-export type TripoApiVersion = 'v2' | 'v3';
-export const TRIPO_API_VERSIONS: readonly TripoApiVersion[] = ['v2', 'v3'];
+export type TripoApiVersion = 'v3';
+export const TRIPO_API_VERSIONS: readonly TripoApiVersion[] = ['v3'];
 
 /** One HTTP call, as this dialect wants it written. */
 export interface TripoWireCall {
@@ -79,21 +83,15 @@ export interface TripoRigWireArgs {
   readonly sourceTaskId: string;
   readonly rigType: string;
   readonly spec: string;
-  /** The auto-rigging model version. v3 needs one; v2 has no such field. */
+  /** The auto-rigging model version. v3 needs one (its own default is invalid). */
   readonly modelVersion?: string;
 }
 
-/** The task fields this client reads. A superset across both versions: each
- *  dialect knows which of them its own service actually populates. */
+/** The task fields this client reads. */
 export interface TripoTaskOutput {
-  // v2 output URLs. REF: tripo3d/models.py:65-72.
-  model?: string;
-  base_model?: string;
-  pbr_model?: string;
-  // v3 output URLs. REF: v3 docs, TaskOutput.
+  // Output URLs. REF: v3 docs, TaskOutput.
   model_url?: string;
   model_urls?: string[];
-  // Both versions, same names — which is why the rig road needs no dialect.
   riggable?: boolean;
   rig_type?: string;
 }
@@ -114,7 +112,7 @@ export interface TripoDialect {
   readonly uploadTokenField: string;
   /**
    * Whether the service REQUIRES a model version on a generation request. v3
-   * marks `model` required; v2 treats it as optional.
+   * marks `model` required.
    */
   readonly requiresModelVersion: boolean;
   /** Used only where `requiresModelVersion` is true and the caller supplied none. */
@@ -129,7 +127,7 @@ export interface TripoDialect {
 }
 
 /** Drop `undefined` rather than sending it — an explicit null and an absent key
- *  mean different things to both versions, and only one of them is "unset". */
+ *  mean different things to the service, and only one of them is "unset". */
 function compact(source: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(source)) {
@@ -139,14 +137,12 @@ function compact(source: Record<string, unknown>): Record<string, unknown> {
 }
 
 /**
- * The generation options both versions spell the same way.
+ * The generation options every request kind spells the same way.
  *
- * Deliberately excludes the model version: v2 calls it `model_version` and v3
- * calls it `model` and requires it, so it is the dialect's business. Also
- * excludes `style`, `texture_alignment` and `orientation`, which the two
- * versions scope differently — each dialect adds back the ones its own
- * documented request schema lists, rather than sending a field to a service
- * whose contract does not name it.
+ * Deliberately excludes the model version (v3 calls it `model` and requires it,
+ * so it is the dialect's business), and `style`, `texture_alignment` and
+ * `orientation`, which v3's documented request schemas do not list — a field the
+ * contract does not name is not sent.
  */
 function sharedModelOptions(request: ModelGenerationRequest): Record<string, unknown> {
   return compact({
@@ -161,114 +157,6 @@ function sharedModelOptions(request: ModelGenerationRequest): Record<string, unk
     texture_seed: request.textureSeed,
   });
 }
-
-// ---------------------------------------------------------------------------
-// v2 — source-verified against the official Python SDK.
-// ---------------------------------------------------------------------------
-
-/** REF: ref/sources/tripo-python-sdk/tripo3d/client.py:25. */
-export const TRIPO_V2_BASE_URL = 'https://api.tripo3d.ai/v2/openapi';
-
-/**
- * 🔴 v2 HAS A PUBLISHED DEATH DATE. Both instants are UTC.
- *
- *   featureFreeze — 2026-10-01 00:00 UTC+8. No further feature updates or
- *                   technical support.
- *   endpointsOff  — 2026-11-01 00:00 UTC+8. "All V2 API endpoints will stop
- *                   accepting requests."
- *
- * This is why the v2 dialect is not simply deleted today: the vendor states v2
- * and v3 operate concurrently until then, and a transport with live callers is
- * removed on evidence rather than on tidiness. The evidence now exists and has a
- * date, so the removal is SCHEDULED rather than forgotten — `tripoV3.test.ts`
- * carries a gate that goes red at the freeze, which is a month before the
- * endpoints go dark. A decision you cannot take yet is a test that reds when it
- * becomes takeable.
- *
- * REF: https://developers.tripo3d.ai/en/docs/migration-v2-to-v3.
- */
-export const TRIPO_V2_RETIREMENT = {
-  featureFreeze: Date.parse('2026-09-30T16:00:00Z'),
-  endpointsOff: Date.parse('2026-10-31T16:00:00Z'),
-} as const;
-
-export const TRIPO_V2_DIALECT: TripoDialect = {
-  version: 'v2',
-  baseUrl: TRIPO_V2_BASE_URL,
-  // Asserted by the SDK itself (client.py:50-51) AND by the Blender plugin
-  // (operators.py:105). Two independent citations, so the check has teeth.
-  keyPrefix: 'tsk_',
-  balancePath: '/user/balance',
-  uploadPath: '/upload',
-  uploadTokenField: 'image_token',
-  requiresModelVersion: false,
-  defaultModelVersion: 'v2.5-20250123',
-
-  taskPath: (taskId) => `/task/${encodeURIComponent(taskId)}`,
-
-  modelCall(request, uploads) {
-    // v2 posts every task to ONE path and discriminates on a `type` field.
-    const shared = {
-      ...sharedModelOptions(request),
-      ...compact({
-        model_version: request.modelVersion,
-        style: request.style,
-        texture_alignment: request.textureAlignment,
-        orientation: request.orientation,
-      }),
-    };
-
-    if (request.source === 'text') {
-      const body: Record<string, unknown> = {
-        ...shared,
-        type: 'text_to_model',
-        prompt: request.prompt,
-      };
-      if (request.negativePrompt !== undefined) body.negative_prompt = request.negativePrompt;
-      const pose = poseSpecOf(request);
-      if (pose) body.pose_spec = pose;
-      return { path: '/task', body };
-    }
-
-    if (request.source === 'image') {
-      return { path: '/task', body: { ...shared, type: 'image_to_model', file: uploads.single } };
-    }
-
-    // The service takes the four views positionally, front first, with a null
-    // hole for a view that was not supplied.
-    return {
-      path: '/task',
-      body: { ...shared, type: 'multiview_to_model', files: uploads.views ?? [] },
-    };
-  },
-
-  rigCheckCall: (sourceTaskId) => ({
-    path: '/task',
-    body: { type: 'animate_prerigcheck', original_model_task_id: sourceTaskId },
-  }),
-
-  // NOTE: `modelVersion` is DROPPED here — v2's rig call has no such field.
-  // Same shape as `style` on v3: a real option one version carries and the other
-  // does not, pinned by a test so it reads as a version property rather than an
-  // accident.
-  rigCall: ({ sourceTaskId, rigType, spec }) => ({
-    path: '/task',
-    body: {
-      type: 'animate_rig',
-      original_model_task_id: sourceTaskId,
-      // `out_format` is pinned rather than exposed: the contract is that a
-      // rigged mesh takes the SAME import road a dropped .glb takes, and fbx
-      // would fork it. REF: client.py:1160.
-      out_format: 'glb',
-      rig_type: rigType,
-      spec,
-    },
-  }),
-
-  // pbr_model first: the textured PBR variant the plugin prefers, and this
-  // road carries materials through the same glTF chain.
-  modelUrlOf: (output) => output.pbr_model ?? output.model ?? output.base_model,
-};
 
 // ---------------------------------------------------------------------------
 // v3 — vendor-documented only. Every line here is a claim, not an observation.
@@ -408,7 +296,7 @@ export const TRIPO_V3_DIALECT: TripoDialect = {
         'Multiview generation on the v3 API needs all four views (front, left, back, right). ' +
           'How v3 writes an omitted slot in its positional array is not documented, and ' +
           'guessing shifts the remaining views onto the wrong faces rather than failing. ' +
-          'Supply four views, or use the v2 API, which takes a null hole.',
+          'Supply all four views.',
       );
     }
     return {
@@ -450,7 +338,6 @@ export const TRIPO_V3_DIALECT: TripoDialect = {
 };
 
 const DIALECTS: Record<TripoApiVersion, TripoDialect> = {
-  v2: TRIPO_V2_DIALECT,
   v3: TRIPO_V3_DIALECT,
 };
 
@@ -458,27 +345,5 @@ export function tripoDialect(version: TripoApiVersion): TripoDialect {
   return DIALECTS[version];
 }
 
-/**
- * Basher's default API version.
- *
- * v3 is what Tripo documents today and what its console appears to issue keys
- * for. v2 is kept because the v3 contract itself still carries
- * `original_model_task_id` fields it describes as "V2-compatible", which is the
- * vendor saying v2 is legacy rather than removed — and because removing a
- * transport nothing has proven dead is a separate decision with its own evidence.
- */
+/** Basher's API version — the only one left since v2's retirement (#1403). */
 export const DEFAULT_TRIPO_API_VERSION: TripoApiVersion = 'v3';
-
-/** The five pose ratios, v2 only. REF: ref/sources/tripo-3d-for-blender/__init__.py. */
-function poseSpecOf(request: ModelGenerationRequest): Record<string, unknown> | null {
-  if (request.source !== 'text' || !request.pose) return null;
-  const p = request.pose;
-  const spec = compact({
-    head_body_height_ratio: p.headBodyHeightRatio,
-    head_body_width_ratio: p.headBodyWidthRatio,
-    legs_body_height_ratio: p.legsBodyHeightRatio,
-    arms_body_length_ratio: p.armsBodyLengthRatio,
-    span_of_legs: p.spanOfLegs,
-  });
-  return Object.keys(spec).length > 0 ? spec : null;
-}

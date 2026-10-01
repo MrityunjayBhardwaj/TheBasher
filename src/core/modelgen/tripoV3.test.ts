@@ -1,8 +1,7 @@
-// The v3 transport — what goes out, what comes back, and every place it differs
-// from v2.
+// The v3 transport — what goes out and what comes back. (Until #1403 this also pinned
+// every place it differed from v2; v2 was retired at its feature freeze and removed.)
 //
-// 🔴 A NOTE ON WHAT THIS FILE CAN AND CANNOT PROVE. v2's suite asserts a wire
-// read out of Tripo's own SDK source. This one asserts a wire read out of
+// 🔴 A NOTE ON WHAT THIS FILE CAN AND CANNOT PROVE. It asserts a wire read out of
 // Tripo's DOCUMENTATION — there is no v3 source, and no machine-readable schema
 // either: with a valid key every schema path answers 404, so the prose is the
 // whole of it. (An earlier note here said the schema was published behind
@@ -12,10 +11,10 @@
 // which is worth having — but a green run here is not evidence about the running
 // service, and only a live call can now supply that.
 //
-// The tests that DO carry full weight regardless are the cross-version ones: a
-// v2-shaped response read by the v3 dialect, and the reverse. Those assert an
-// internal consistency that does not depend on the vendor being described
-// correctly.
+// The tests that DO carry full weight regardless are the legacy-shape ones: a
+// v2-shaped response (an output URL under `pbr_model`, an upload token under
+// `image_token`) is NOT read as a v3 one. Those assert an internal consistency
+// that does not depend on the vendor being described correctly.
 //
 // Same licence-gate mock as tripoTransport.test.ts, for the same reason: this
 // file asks "given permission, what does it say on the wire?" The refusal is
@@ -38,11 +37,9 @@ const { TripoModelGenerationCapability } = await import('./TripoModelGenerationC
 const { synthesiseGlb } = await import('./StubModelGenerationCapability');
 const { synthesiseRiggedGlb } = await import('../rigging/StubRiggingCapability');
 const {
-  TRIPO_V2_DIALECT,
   TRIPO_V3_DIALECT,
   TRIPO_V3_BASE_URL,
   TRIPO_V3_DEFAULT_MODEL_VERSION,
-  TRIPO_V2_RETIREMENT,
   TRIPO_V3_DEFAULT_RIG_MODEL,
   TRIPO_V3_RIG_MODEL_IGNORING_SPEC,
   DEFAULT_TRIPO_API_VERSION,
@@ -92,7 +89,6 @@ function transport(
 function client(fetchImpl: typeof fetch, over: Record<string, unknown> = {}) {
   return new TripoModelGenerationCapability({
     apiKey: KEY,
-    apiVersion: 'v3',
     baseUrl: 'http://tripo.test',
     pollIntervalMs: 0,
     fetchImpl,
@@ -104,18 +100,14 @@ function client(fetchImpl: typeof fetch, over: Record<string, unknown> = {}) {
 /** A v3-shaped successful output. */
 const V3_OUTPUT = { model_url: 'http://cdn.test/model.glb' };
 
-describe('v3 is the version the client speaks by default', () => {
-  it('defaults to v3, and to v3’s host', () => {
-    // Stated as a test because it is a behavioural default: a silent revert to
-    // v2 would otherwise change every request the app makes and break nothing
-    // that is currently asserted.
+describe('v3 is the version the client speaks', () => {
+  it('speaks v3, at v3’s host', () => {
     expect(DEFAULT_TRIPO_API_VERSION).toBe('v3');
     expect(TRIPO_V3_BASE_URL).toBe('https://openapi.tripo3d.ai/v3');
   });
 
-  it('a client constructed with no version walks v3’s paths', async () => {
+  it('a client walks v3’s paths', async () => {
     const { fetchImpl, sent } = transport(V3_OUTPUT);
-    // No apiVersion, no baseUrl override beyond the test host.
     const cap = new TripoModelGenerationCapability({
       apiKey: KEY,
       baseUrl: 'http://tripo.test',
@@ -173,13 +165,12 @@ describe('v3 REQUIRES a model version, so one is always sent', () => {
 });
 
 describe('the documented key prefix — and its absence — is a value, not a literal', () => {
-  it('v2 states a prefix, v3 states none', () => {
+  it('v3 states none', () => {
     // Read by TWO consumers: `assertTripoKeyShape` and the settings panel's
     // while-typing hint. Both derive it from here rather than typing `tsk_`,
     // because a hint that tells someone their VALID key looks wrong is worse
     // than no hint — it is a confident claim that sends them to re-copy a key
     // that was already right.
-    expect(TRIPO_V2_DIALECT.keyPrefix).toBe('tsk_');
     expect(TRIPO_V3_DIALECT.keyPrefix).toBeUndefined();
   });
 });
@@ -197,18 +188,6 @@ describe('options v3 does not document are DROPPED, not forwarded', () => {
     // rule. Refusing on it would build a hard failure on a soft reading. See the
     // issue for the open question.
   });
-
-  it('v2 still forwards `style`, so the drop is a v3 property and not a lost feature', () => {
-    // The comparison arm: without it, "v3 omits style" is indistinguishable from
-    // "style stopped working everywhere". Asserted against the dialect directly
-    // — body assembly is a pure function of the request, which is the whole
-    // reason uploading was split out of it.
-    const styled = { ...TEXT, style: 'person:person2cartoon' } as const;
-    expect(TRIPO_V2_DIALECT.modelCall(styled, {}).body).toMatchObject({
-      style: 'person:person2cartoon',
-    });
-    expect(TRIPO_V3_DIALECT.modelCall(styled, {}).body).not.toHaveProperty('style');
-  });
 });
 
 describe('the output URL moved, and reading the wrong one finds nothing', () => {
@@ -224,20 +203,16 @@ describe('the output URL moved, and reading the wrong one finds nothing', () => 
     expect(sent[2].url).toBe('http://cdn.test/b.glb');
   });
 
-  it('🔑 the rename is REAL: each dialect finds nothing in the other’s output', () => {
-    // The concrete regression the issue names, asserted in BOTH directions.
-    // This is the one claim in this file that does not depend on the vendor
-    // documentation being right — it is about our own two readers disagreeing,
-    // which is exactly what would have made a v3 task run, bill, and then look
-    // like a failure.
-    const v2Shaped = { pbr_model: 'http://cdn.test/v2.glb' };
+  it('🔑 the rename is REAL: a v2-shaped output reads as NO url, not as a model', () => {
+    // The concrete regression #797 named. It does not depend on the vendor
+    // documentation being right — a reader that accepted the legacy field would
+    // make a malformed response look like a model. Parsed from text, as wire data
+    // is: the legacy field is not in the output type any more (#1403).
+    const v2Shaped = JSON.parse('{"pbr_model":"http://cdn.test/v2.glb"}');
     const v3Shaped = { model_url: 'http://cdn.test/v3.glb' };
 
-    expect(TRIPO_V2_DIALECT.modelUrlOf(v2Shaped)).toBe('http://cdn.test/v2.glb');
     expect(TRIPO_V3_DIALECT.modelUrlOf(v2Shaped)).toBeUndefined();
-
     expect(TRIPO_V3_DIALECT.modelUrlOf(v3Shaped)).toBe('http://cdn.test/v3.glb');
-    expect(TRIPO_V2_DIALECT.modelUrlOf(v3Shaped)).toBeUndefined();
   });
 
   it('names the version’s own expected fields when a task carries no URL', async () => {
@@ -306,17 +281,6 @@ describe('uploads moved too, and the token changed its name', () => {
     expect(sent[1].body).not.toHaveProperty('file');
   });
 
-  it('v2 still sends the wrapped object, so the unification is a v3 property', () => {
-    // The comparison arm. Without it, "v3 sends a plain string" cannot be told
-    // apart from "the wrapper was dropped everywhere".
-    const uploaded = { single: { type: 'png', file_token: 'ftok' } };
-    const image = { source: 'image', image: IMAGE.image } as const;
-    expect(TRIPO_V2_DIALECT.modelCall(image, uploaded).body).toMatchObject({
-      file: { type: 'png', file_token: 'ftok' },
-    });
-    expect(TRIPO_V3_DIALECT.modelCall(image, uploaded).body).toMatchObject({ input: 'ftok' });
-  });
-
   it('a v2-shaped upload response is NOT accepted under v3', async () => {
     // The failing arm. v2 answers `data.image_token`; if the dialect's token
     // field were ignored, this would silently produce `file_token: undefined`
@@ -357,12 +321,6 @@ describe('the auto-rigging model is sent, and the default is the OLDER one on pu
       TRIPO_V3_DIALECT.rigCall({ ...args, modelVersion: TRIPO_V3_RIG_MODEL_IGNORING_SPEC }).body,
     ).toMatchObject({ model: TRIPO_V3_RIG_MODEL_IGNORING_SPEC });
   });
-
-  it('v2 has no such field, so it is dropped rather than sent somewhere it means nothing', () => {
-    const body = TRIPO_V2_DIALECT.rigCall({ ...args, modelVersion: 'v1.0-20240301' }).body;
-    expect(body).not.toHaveProperty('model');
-    expect(body).toMatchObject({ type: 'animate_rig', spec: 'mixamo' });
-  });
 });
 
 describe('a multiview hole is REFUSED on v3, not guessed', () => {
@@ -386,42 +344,6 @@ describe('a multiview hole is REFUSED on v3, not guessed', () => {
     expect(() => TRIPO_V3_DIALECT.modelCall(multiview, { views: withHole })).toThrow(
       /needs all four views/,
     );
-  });
-
-  it('v2 takes the null hole, so this is a v3 limit and not a lost capability', () => {
-    const withHole = [four[0], null, four[2], four[3]];
-    expect(TRIPO_V2_DIALECT.modelCall(multiview, { views: withHole }).body).toMatchObject({
-      files: withHole,
-    });
-  });
-});
-
-describe('v2 has a published death date, and this is the alarm', () => {
-  it('🔴 REDS AT THE FEATURE FREEZE — delete the v2 dialect when it fires', () => {
-    // Tripo has announced v2's retirement:
-    //   2026-10-01 00:00 UTC+8 — no further features or support
-    //   2026-11-01 00:00 UTC+8 — all v2 endpoints stop accepting requests
-    //
-    // The v2 dialect is kept until then because the vendor states both versions
-    // operate concurrently, and a transport with live callers is removed on
-    // evidence rather than tidiness. The evidence now exists AND has a date — so
-    // the removal is scheduled rather than remembered.
-    //
-    // WHEN THIS GOES RED: delete TRIPO_V2_DIALECT, its branch of every dialect
-    // method, the `apiVersion` option, and the v2 suites — then this test too.
-    // It fires a month before the endpoints go dark, which is the runway.
-    const now = Date.now();
-    expect(TRIPO_V2_RETIREMENT.featureFreeze).toBeLessThan(TRIPO_V2_RETIREMENT.endpointsOff);
-    expect(
-      now < TRIPO_V2_RETIREMENT.featureFreeze,
-      `Tripo v2 reached its feature freeze on ${new Date(TRIPO_V2_RETIREMENT.featureFreeze).toISOString()} ` +
-        `and its endpoints stop accepting requests on ${new Date(TRIPO_V2_RETIREMENT.endpointsOff).toISOString()}. ` +
-        'Remove the v2 dialect and everything that selects it — see the comment above this assertion.',
-    ).toBe(true);
-  });
-
-  it('the default is the version that is NOT being retired', () => {
-    expect(DEFAULT_TRIPO_API_VERSION).toBe('v3');
   });
 });
 
