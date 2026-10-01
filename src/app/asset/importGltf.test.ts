@@ -172,24 +172,20 @@ describe('importGltfFromOpfs — the road an import takes (#1049)', () => {
     expect(types).not.toContain('GltfAsset');
   });
 
-  it('sends a file the native model cannot hold down the clone road whole, and says why', async () => {
+  it('refuses a file the native model cannot hold, whole and by name, and writes nothing', async () => {
     // Sheen is a material lobe the native material does not hold (#1123).
-    const path = 'user-imports/sheen/sheen-quad.gltf';
-    await currentStorage.write(path, new Uint8Array(readFileSync('public/assets/sheen-quad.gltf')));
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    try {
-      await importGltfFromOpfs(path);
-      const types = Object.values(useDagStore.getState().state.nodes).map((n) => n.type);
-      expect(types).toContain('GltfAsset');
-      expect(types).not.toContain('PolyMeshData');
-      expect(warn.mock.calls.flat().join('\n')).toMatch(
-        /not as native geometry.*KHR_materials_sheen.*#1123/,
-      );
-    } finally {
-      warn.mockRestore();
-    }
-    expect(useImportRefreshStore.getState().tick).toBe(1);
-    expect(useAssetErrorStore.getState().errors[path]).toBeUndefined();
+    const path = 'user-imports/iridescence/iridescence-quad.gltf';
+    await currentStorage.write(
+      path,
+      new Uint8Array(readFileSync('public/assets/iridescence-quad.gltf')),
+    );
+    const before = Object.keys(useDagStore.getState().state.nodes).length;
+    await importGltfFromOpfs(path);
+    expect(Object.keys(useDagStore.getState().state.nodes)).toHaveLength(before);
+    expect(useAssetErrorStore.getState().errors[path]).toMatch(
+      /^import refused: .*KHR_materials_iridescence.*\(#1123\)$/,
+    );
+    expect(useImportRefreshStore.getState().tick).toBe(0);
   });
 });
 

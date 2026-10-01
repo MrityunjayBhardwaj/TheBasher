@@ -68,14 +68,11 @@ export interface ObjectSlotRow {
    *
    * `'ok'` — the slot has a material and the two fields describe it.
    * `'none'` — there is genuinely no material; the default swatch is an honest placeholder.
-   * `'elsewhere'` — a mounted asset clone owns what draws here and we hold no capture of it,
-   *   so `color` is a placeholder that **must not be presented as this slot's colour**.
    *
-   * Before this existed the last two were one value, and the panel drew the same default
-   * grey swatch for both — a lying label on an imported child that is on screen in whatever
-   * the asset gave it. The row carries the distinction so a surface cannot fail to meet it.
+   * A third answer, `'elsewhere'` (a clone-drawn slot whose material we never captured), went
+   * with the clone road in #1053: every imported material is captured into the model now.
    */
-  readonly answer: 'ok' | 'none' | 'elsewhere';
+  readonly answer: 'ok' | 'none';
 }
 
 /**
@@ -252,13 +249,6 @@ export function objectSlotTable(
  * A baked or absent slot has no inline spec to copy, so it hydrates from that slot's colour:
  * the closest thing to "unchanged" the override's type can express.
  *
- * ⚠️ AND ON AN `'elsewhere'` SLOT THE "NO PIXEL CHANGES" CLAIM ABOVE IS FALSE, which is
- * stated here rather than quietly relied on (#605 item 2). What draws is inside a mounted
- * asset clone; we hold no capture of it and cannot read one synchronously, so the seed is
- * the default grey and taking the slot over genuinely can change the picture. The behaviour
- * is unchanged — grey is the only value this function can produce — but the surface must say
- * so rather than offer the act as free. `ObjectSlotRow.answer` carries the fact.
- *
  * Null when the index is not a slot this object has — offer == accept, asked once here so
  * the panel cannot advertise a write this refuses ([[V108]]).
  */
@@ -279,10 +269,8 @@ export function buildOverrideSlotOp(
   const read = slotMaterialAt(mesh.materials, index);
   if (read.status === 'no-such-slot') return null;
 
-  // A material to copy hydrates from it. Both ABSENCES hydrate from the slot's colour — for
-  // `'none'` that is the closest thing to "unchanged" the override's type can express, and for
-  // `'elsewhere'` it is the only value available at all, which is the case the doc above says
-  // this function cannot keep its promise for.
+  // A material to copy hydrates from it. An absence hydrates from the slot's colour — the
+  // closest thing to "unchanged" the override's type can express.
   const slot = read.status === 'ok' ? read.material : null;
   const seed: InlineMaterialSpec =
     slot !== null && !isBakedMaterialSpec(slot)

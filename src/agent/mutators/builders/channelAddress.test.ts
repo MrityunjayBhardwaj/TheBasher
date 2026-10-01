@@ -1,11 +1,10 @@
-// #889 slice 2 — every channel-authoring mutator can name a bone, and naming a
-// bone that has no channel yet MINTS one instead of refusing.
+// channelAddress — how every channel-authoring mutator names the channel it writes to.
 //
-// The claim under test is not "a second spec form parses". It is that the whole
-// five-gate road works on the mint: the closure declares a node that does not
-// exist yet, the value-shape gate reads a type from an op rather than from
-// state, and the write lands on the seed the mint just took from the base pose. Each
-// of those is a separate place the road can be correct-looking and wrong.
+// #889 slice 2 added a `bone` form that minted a clone-road bone's channel on first edit. It went
+// with the clone road (#1053): a kept clone-road import is not drawn and stays exactly as saved, so
+// its saved bone channels are refused by id and there is no form left that mints one. What is
+// pinned here is the address XOR, that refusal on every authoring mutator, and that an ordinary
+// node's channel is untouched by it.
 
 import { describe, it, expect, beforeEach } from 'vitest';
 import { __resetRegistryForTests } from '../../../core/dag';
@@ -79,47 +78,6 @@ function bakedState(extraNodes?: Record<string, unknown>): DagState {
   });
 }
 
-const BONE_ADDRESS = { assetRef: ASSET, childName: BONE, component: 'rotation' as const };
-
-/** The same bone, carrying exactly ONE authored key at t=1. */
-function oneKeyState(): DagState {
-  return riggedState({
-    [ROT_CHANNEL]: {
-      id: ROT_CHANNEL,
-      type: 'KeyframeChannelVec3',
-      params: {
-        name: `${BONE} — rotation`,
-        target: BONE_ID,
-        childName: BONE,
-        assetRef: ASSET,
-        paramPath: 'rotation',
-        keyframes: [{ time: 1, value: [90, 0, 0], easing: 'linear' }],
-      },
-      inputs: {},
-    },
-  });
-}
-
-/** The same bone, carrying a channel with NO keys — the state a pre-#909 clear
- *  could leave behind, and the one a fresh removal does not create. */
-function emptyChannelState(): DagState {
-  return riggedState({
-    [ROT_CHANNEL]: {
-      id: ROT_CHANNEL,
-      type: 'KeyframeChannelVec3',
-      params: {
-        name: `${BONE} — rotation`,
-        target: BONE_ID,
-        childName: BONE,
-        assetRef: ASSET,
-        paramPath: 'rotation',
-        keyframes: [],
-      },
-      inputs: {},
-    },
-  });
-}
-
 /** Every mutator that takes a channel address, with a spec that is valid apart
  *  from the address itself. Listed rather than derived so a new authoring
  *  mutator has to be added here deliberately. */
@@ -142,108 +100,28 @@ describe('the address is an XOR, enforced at the schema', () => {
     // Not pedantry: a caller carrying both has not decided which thing it is
     // naming, and silently preferring one would make the other a lie that only
     // shows up when the two disagree.
-    const parsed = m.spec.safeParse({ ...rest, channelId: ROT_CHANNEL, bone: BONE_ADDRESS });
+    const parsed = m.spec.safeParse({
+      ...rest,
+      channelId: ROT_CHANNEL,
+      layer: { layerId: 'n_layer', bone: BONE, component: 'rotation' },
+    });
     expect(parsed.success).toBe(false);
   });
 
-  it.each(ADDRESSED)('$m.name accepts the bone form alone', ({ m, rest }) => {
-    expect(m.spec.safeParse({ ...rest, bone: BONE_ADDRESS }).success).toBe(true);
-  });
+  it.each(ADDRESSED)(
+    '$m.name no longer takes the clone road\u2019s bone form (#1053)',
+    ({ m, rest }) => {
+      // zod strips an unknown key, so the bone form alone is "names nothing" — refused, never a mint.
+      const parsed = m.spec.safeParse({
+        ...rest,
+        bone: { assetRef: ASSET, childName: BONE, component: 'rotation' },
+      });
+      expect(parsed.success).toBe(false);
+    },
+  );
 
   it.each(ADDRESSED)('$m.name accepts the id form alone, unchanged', ({ m, rest }) => {
     expect(m.spec.safeParse({ ...rest, channelId: ROT_CHANNEL }).success).toBe(true);
-  });
-});
-
-describe('keying a bone that has no channel', () => {
-  it('mints, seeded from the base pose, and passes all five gates', () => {
-    const state = riggedState();
-    expect(state.nodes[ROT_CHANNEL]).toBeUndefined();
-
-    const plan = validatePlan(
-      keyframeMutator,
-      { bone: BONE_ADDRESS, time: 0.5, value: [1, 2, 3] },
-      state,
-      'test',
-    );
-    expect(plan.ok).toBe(true);
-    if (!plan.ok) return;
-
-    const add = plan.ops.find((o) => o.type === 'addNode' && o.nodeId === ROT_CHANNEL);
-    const set = plan.ops.find((o) => o.type === 'setParam' && o.nodeId === ROT_CHANNEL);
-    expect(add).toBeDefined();
-    expect(set).toBeDefined();
-  });
-
-  it('the authored key lands ON the minted seed, not on emptiness', () => {
-    // A build that read `state` for the existing keyframes instead of reading
-    // the mint would produce a single-key channel here, and every structural
-    // assertion above would still pass.
-    const plan = validatePlan(
-      keyframeMutator,
-      { bone: BONE_ADDRESS, time: 0.5, value: [1, 2, 3] },
-      riggedState(),
-      'test',
-    );
-    expect(plan.ok).toBe(true);
-    if (!plan.ok) return;
-    const set = plan.ops.find((o) => o.type === 'setParam') as {
-      value: { time: number; value: number[] }[];
-    };
-    // The base-pose seed (rotation in DEGREES, as the import writes it) plus the authored one.
-    expect(set.value.map((k) => k.time)).toEqual([0, 0.5]);
-    expect(set.value[0].value).toEqual([10, 20, 30]);
-    expect(set.value[1].value).toEqual([1, 2, 3]);
-  });
-
-  it('never mints an empty channel', () => {
-    // An empty channel is a CLAIM, not silence: the band collects it and the
-    // sampler answers [0,0,0] at every time, so an empty mint would suppress
-    // the pose underneath and snap the bone to the origin on first touch.
-    const plan = validatePlan(
-      keyframeMutator,
-      { bone: { ...BONE_ADDRESS, component: 'scale' }, time: 0.5, value: [1, 1, 1] },
-      riggedState(),
-      'test',
-    );
-    expect(plan.ok).toBe(true);
-    if (!plan.ok) return;
-    const add = plan.ops.find((o) => o.type === 'addNode') as {
-      params: { keyframes: unknown[] };
-    };
-    expect(add.params.keyframes.length).toBeGreaterThan(0);
-  });
-});
-
-describe('the bone form on a bone that already HAS a channel', () => {
-  it('writes to it without minting, and stays inside the declared closure', () => {
-    // Gate 3 exempts a node introduced in the same plan, so the MINT road can
-    // never catch a closure that forgot to declare the channel. Only this road
-    // can.
-    const plan = validatePlan(
-      keyframeMutator,
-      { bone: BONE_ADDRESS, time: 0.5, value: [1, 2, 3] },
-      bakedState(),
-      'test',
-    );
-    expect(plan.ok).toBe(true);
-    if (!plan.ok) return;
-    expect(plan.ops.every((o) => o.type === 'setParam')).toBe(true);
-    expect(plan.ops.map((o) => ('nodeId' in o ? o.nodeId : null))).toEqual([ROT_CHANNEL]);
-  });
-
-  it('does not re-seed — a director’s edit is not replaced by a fresh seed', () => {
-    const state = bakedState();
-    const plan = validatePlan(
-      keyframeMutator,
-      { bone: BONE_ADDRESS, time: 0.25, value: [7, 7, 7] },
-      state,
-      'test',
-    );
-    expect(plan.ok).toBe(true);
-    if (!plan.ok) return;
-    const set = plan.ops[0] as unknown as { value: { time: number }[] };
-    expect(set.value.map((k) => k.time)).toEqual([0, 0.25, 1]);
   });
 });
 
@@ -254,7 +132,7 @@ describe('the agent surface says so', () => {
   // an enforcement the description does not mention is a refusal the caller
   // cannot predict and cannot read its way out of — the capability is present
   // and unreachable, and nothing else in the suite can see that.
-  it('every authoring mutator states the bone-form requirement in its description', () => {
+  it('every authoring mutator teaches the layer form and no longer offers the bone form', () => {
     const silent = (
       [
         ['keyframe', keyframeMutator],
@@ -267,9 +145,11 @@ describe('the agent surface says so', () => {
     )
       .filter(
         ([, m]) =>
-          !m.description.includes('is REFUSED for a') ||
-          // #1215 — and the layer form, a bone's keys where they live.
-          !m.description.includes('`layer` = {layerId, bone, component}'),
+          // #1215 — the layer form, a bone's keys where they live.
+          !m.description.includes('`layer` = {layerId, bone, component}') ||
+          // #1053 — the clone road's bone form is gone; a description offering it would send the
+          // model to a spec every mutator now refuses.
+          m.description.includes('{assetRef, childName, component}'),
       )
       .map(([n]) => n);
     // Named, not counted — a count says how many drifted, never which.
@@ -277,13 +157,10 @@ describe('the agent surface says so', () => {
   });
 });
 
-describe('the channelId form REFUSES a bone\u2019s channel (#889 slice 3)', () => {
-  // The refusal is the point, and it fires on a channel that EXISTS. Anything
-  // weaker is not a rule: addressing a bone by id works perfectly for as long
-  // as somebody has already edited that bone, so a caller written against one
-  // is green in every test that ran after an edit and silently wrong on the 22
-  // bones of 23 that nobody has touched. A gate that only refused a MISSING
-  // channel would refuse exactly the cases that already fail loudly.
+describe('a saved clone-road bone channel is refused by id (#889 slice 3, #1053)', () => {
+  // It fires on a channel that EXISTS: the channel belongs to an import the loader kept on the old
+  // imported-file structure, which is not drawn and must be found as saved when it converts. An edit
+  // would change a thing nobody can see.
   it('refuses, even though the channel is right there and the write would work', () => {
     const state = bakedState();
     expect(state.nodes[ROT_CHANNEL]).toBeDefined();
@@ -296,11 +173,11 @@ describe('the channelId form REFUSES a bone\u2019s channel (#889 slice 3)', () =
     );
     expect(plan.ok).toBe(false);
     if (plan.ok) return;
-    // The reason NAMES the bone and the component, so the fix is mechanical
-    // rather than a hunt for which of 23 bones the hash stood for.
+    // The reason NAMES the bone, the component and the file, and says why.
     expect(plan.reason).toContain(BONE);
     expect(plan.reason).toContain('rotation');
-    expect(plan.reason).toContain('bone: {assetRef, childName, component}');
+    expect(plan.reason).toContain(ASSET);
+    expect(plan.reason).toContain('saved on the old imported-file structure');
   });
 
   it('refuses on every authoring mutator, not just the one', () => {
@@ -342,7 +219,9 @@ describe('the channelId form REFUSES a bone\u2019s channel (#889 slice 3)', () =
         const plan = validatePlan(m as never, m.spec.parse(spec) as never, state, 't');
         return [name, plan] as const;
       })
-      .filter(([, plan]) => plan.ok || !plan.reason.includes('address a bone by its parts'))
+      .filter(
+        ([, plan]) => plan.ok || !plan.reason.includes('saved on the old imported-file structure'),
+      )
       .map(([n]) => n);
     // Named, not counted: a count cannot tell "all six refused for the right
     // reason" from "one of them refused for an unrelated schema error".
@@ -373,129 +252,5 @@ describe('the channelId form REFUSES a bone\u2019s channel (#889 slice 3)', () =
       'test',
     );
     expect(plan.ok).toBe(true);
-  });
-});
-
-describe('removeKeyframes addresses a bone but never mints', () => {
-  it('refuses on a bone that follows the clip, naming the state', () => {
-    const plan = validatePlan(
-      removeKeyframesMutator,
-      { bone: BONE_ADDRESS, scope: 'all' as const },
-      riggedState(),
-      'test',
-    );
-    expect(plan.ok).toBe(false);
-    if (plan.ok) return;
-    // The wording is load-bearing. Under copy-on-write "no channel" is the
-    // healthy condition of nearly every bone, so a refusal that says "not in
-    // DAG" reports health as a fault.
-    expect(plan.reason).toContain('follows the clip');
-    expect(plan.reason).not.toContain('not in DAG');
-    // The REASON is what this row rests on, and deliberately so. A row that only
-    // checked `ok === false` stayed green when the mutator was made to mint —
-    // it then failed in build for an unrelated reason, and read as proof of a
-    // refusal it was no longer making.
-  });
-
-  it('still removes ONE key from a bone that HAS an authored channel', () => {
-    // The channel keeps a key, so the removal is an edit to a track that
-    // survives — which is what this mutator is for.
-    const plan = validatePlan(
-      removeKeyframesMutator,
-      { bone: BONE_ADDRESS, scope: { time: 0 } },
-      bakedState(),
-      'test',
-    );
-    expect(plan.ok).toBe(true);
-    if (!plan.ok) return;
-    expect(plan.ops).toHaveLength(1);
-    expect(plan.ops.map((o) => ('nodeId' in o ? o.nodeId : null))).toEqual([ROT_CHANNEL]);
-    const set = plan.ops[0] as unknown as { value: { time: number }[] };
-    expect(set.value.map((k) => k.time)).toEqual([1]);
-  });
-
-  // 🔴 INVERTED BY #909. This asserted that `scope:'all'` on a bone SUCCEEDS and
-  // emitted one setParam. It does not any more, and the change cannot land
-  // silently: emptying a bone's channel in place leaves it claiming its
-  // component at [0,0,0], so the bone collapses to the origin instead of
-  // returning to the clip.
-  it('REFUSES a removal that would empty a bone\u2019s channel, by either road', () => {
-    const roads = [
-      ['all at once', { bone: BONE_ADDRESS, scope: 'all' as const }],
-      // The end state is the rule, not the scope: taking the keys one at a time
-      // reaches the same place, and a gate written against `scope:'all'` alone
-      // would wave this through. Measured before the fix — it did.
-      ['the last one by time', { bone: BONE_ADDRESS, scope: { time: 1 } }],
-    ] as const;
-    for (const [road, spec] of roads) {
-      // `bakedState` has two keys; drop one first so `{time:1}` is the last.
-      const state = road === 'the last one by time' ? oneKeyState() : bakedState();
-      const plan = validatePlan(removeKeyframesMutator, spec, state, 'test');
-      expect(plan.ok, road).toBe(false);
-      if (plan.ok) continue;
-      // The reason names the CONSEQUENCE, not the rule. "Not allowed" tells a
-      // director nothing; "renders the bone at the origin" tells them why they
-      // do not want it, and names the act that does what they meant.
-      expect(plan.reason, road).toContain('renders the bone at the origin');
-      expect(plan.reason, road).toContain(BONE);
-    }
-  });
-
-  it('does NOT refuse on an already-empty channel — that removal empties nothing', () => {
-    // The condition is "this removal would empty it", not "it is empty". A
-    // no-op reported as a fault is its own defect.
-    const plan = validatePlan(
-      removeKeyframesMutator,
-      { bone: BONE_ADDRESS, scope: 'all' as const },
-      emptyChannelState(),
-      'test',
-    );
-    expect(plan.ok).toBe(true);
-    if (!plan.ok) return;
-    expect(plan.ops).toEqual([]);
-  });
-
-  it('an ORDINARY node\u2019s channel may still be emptied in place', () => {
-    // The band's presence rule is specific to the glTF child road. Emptying an
-    // object's channel is the long-standing Blender Clear and must not move.
-    const plan = validatePlan(
-      removeKeyframesMutator,
-      { channelId: 'n_plain_channel', scope: 'all' as const },
-      bakedState({
-        n_plain_channel: {
-          id: 'n_plain_channel',
-          type: 'KeyframeChannelVec3',
-          params: {
-            name: 'cube position',
-            target: 'n_cube',
-            paramPath: 'position',
-            keyframes: [{ time: 0, value: [0, 0, 0], easing: 'linear' }],
-          },
-          inputs: {},
-        },
-      }),
-      'test',
-    );
-    expect(plan.ok).toBe(true);
-    if (!plan.ok) return;
-    expect(plan.ops).toHaveLength(1);
-  });
-});
-
-describe('a bone the asset does not have', () => {
-  it('is refused by name rather than minting a channel for nobody', () => {
-    const plan = validatePlan(
-      keyframeMutator,
-      {
-        bone: { assetRef: ASSET, childName: 'not_a_bone', component: 'rotation' as const },
-        time: 0,
-        value: [0, 0, 0],
-      },
-      riggedState(),
-      'test',
-    );
-    expect(plan.ok).toBe(false);
-    if (plan.ok) return;
-    expect(plan.reason).toContain('not_a_bone');
   });
 });

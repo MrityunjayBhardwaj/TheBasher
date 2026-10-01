@@ -1,116 +1,89 @@
 // #217 — imported glTF materials are fully tweakable in the inspector like a
 // native base object: the Render Options (double-sided / alpha cutout) and the
-// Texture Placement (UV tiling) controls now exist in the glTF material editor
-// and drive the rendered clone live.
+// Texture Placement (UV tiling) controls drive the drawn material live.
 //
-// THE PROOF (falsifiable, boundary-pair): import a glTF child → select it →
+// THE PROOF (falsifiable, boundary-pair): import a glTF → select its Object →
 // toggle a render option / edit a UV field IN THE INSPECTOR → assert BOTH the
-// DAG material (side A) AND the rendered three.js clone (side B, via
-// __basher_gltf_meshes — the same live seam the renderer's overlay feeds) change.
-// Pre-#217 these controls did not exist, so the clone's side/alphaTest/mapRepeat
-// could never change from the inspector.
+// DAG material (side A) AND the drawn three.js material (side B) change.
+//
+// #1053 — the imports arrive native and the clone road is retired, so both sides
+// are the native import's: the material on its `PolyMeshData`, and the mesh its
+// Object draws.
 
 import { test, expect } from './_fixtures';
 import { openInspectorSection } from './_inspectorSections';
-import { firstMaterialChild } from './_importedChild';
+import { drawnImportMeshes, firstMaterialMesh } from './_importedMesh';
 
 const FRONT_SIDE = 0;
 const DOUBLE_SIDE = 2; // THREE.FrontSide / THREE.DoubleSide
 
-interface MeshSummary {
-  name: string;
-  side: number | null;
-  alphaTest: number | null;
-  mapRepeat: [number, number] | null;
-}
 interface BasherWindow {
-  __basher_dag: {
-    getState: () => {
-      state: {
-        nodes: Record<string, { id: string; type: string; params: Record<string, unknown> }>;
-      };
-    };
-  };
   __basher_selection: { getState: () => { select: (id: string | null) => void } };
   __basher_ingestGltfFolder: (
     files: { relativePath: string; bytes: Uint8Array }[],
     folderName: string,
   ) => Promise<string>;
-  __basher_importGltf: (buffer: ArrayBuffer, assetRef: string) => Promise<unknown>;
-  __basher_writeOpfsBytes: (ref: string, bytes: Uint8Array) => Promise<void>;
-  __basher_gltf_meshes?: () => MeshSummary[];
 }
 
-async function ingest(page: import('@playwright/test').Page, file: string, folder: string) {
+async function importNative(page: import('@playwright/test').Page, file: string, folder: string) {
   await page.goto('/');
   await page.waitForFunction(
     () => typeof (window as unknown as BasherWindow).__basher_ingestGltfFolder === 'function',
   );
   await page.evaluate(
-    async ([f, name]) => {
-      const w = window as unknown as BasherWindow;
-      const bytes = new Uint8Array(await fetch(`/assets/${f}`).then((r) => r.arrayBuffer()));
-      await w.__basher_ingestGltfFolder([{ relativePath: f, bytes }], name);
+    async ({ file, folder }) => {
+      const bytes = new Uint8Array(await fetch(`/assets/${file}`).then((r) => r.arrayBuffer()));
+      await (window as unknown as BasherWindow).__basher_ingestGltfFolder(
+        [{ relativePath: file, bytes }],
+        folder,
+      );
     },
-    [file, folder] as const,
+    { file, folder },
   );
+  await expect.poll(async () => (await firstMaterialMesh(page))?.road).toBe('native');
 }
 
-/**
- * #1123 — import through `__basher_importGltf`, which never tries native, for a fixture a drop now
- * brings across native. This spec's subject is the clone road's inspector overlay, which still
- * serves every file the native road refuses.
- */
-async function importOnCloneRoad(page: import('@playwright/test').Page, file: string) {
-  await page.goto('/');
-  await page.waitForFunction(
-    () => typeof (window as unknown as BasherWindow).__basher_importGltf === 'function',
-  );
-  await page.evaluate(async (f) => {
-    const w = window as unknown as BasherWindow;
-    const buffer = await fetch(`/assets/${f}`).then((r) => r.arrayBuffer());
-    await w.__basher_writeOpfsBytes(`assets/${f}`, new Uint8Array(buffer));
-    await w.__basher_importGltf(buffer, `assets/${f}`);
-  }, file);
-}
-
-/** The first imported child that captured a material, + slot 0's geometry/uv/name.
- *  #389 — `id` is the DATA half's: that is where the material lives and what every
- *  inspector control below is keyed on. */
+/** The imported mesh's material: `id` is the DATA half's, which every inspector control is keyed on. */
 async function materialChild(page: import('@playwright/test').Page) {
-  const c = await firstMaterialChild(page);
+  const c = await firstMaterialMesh(page);
   if (!c) return null;
   const m0 = c.slots[0] as Record<string, unknown>;
-  return { id: c.dataId, geometry: m0.geometry, uvTransform: m0.uvTransform, name: m0.name };
+  return {
+    id: c.dataId,
+    objectId: c.objectId,
+    geometry: m0.geometry,
+    uvTransform: m0.uvTransform,
+    name: m0.name,
+  };
 }
 
-const firstMesh = (page: import('@playwright/test').Page) =>
-  page.evaluate(() => {
-    const w = window as unknown as BasherWindow;
-    return (w.__basher_gltf_meshes ? w.__basher_gltf_meshes() : [])[0] ?? null;
-  });
+const firstMesh = async (page: import('@playwright/test').Page) =>
+  (await drawnImportMeshes(page))[0] ?? null;
 
-async function selectAndOpen(page: import('@playwright/test').Page, id: string) {
+async function selectAndOpen(
+  page: import('@playwright/test').Page,
+  child: { id: string; objectId: string },
+) {
   await page.evaluate((nid) => {
     (window as unknown as BasherWindow).__basher_selection.getState().select(nid);
-  }, id);
+  }, child.objectId);
   await openInspectorSection(page, 'material');
-  await expect(page.getByTestId(`inspector-material-editor-${id}`)).toBeVisible();
+  await expect(page.getByTestId(`inspector-doublesided-${child.id}`)).toBeVisible();
 }
 
 test.describe('#217 — glTF material render-options + UV inspector controls', () => {
   test('toggling double-sided in the inspector flips the rendered side', async ({ page }) => {
-    await ingest(page, 'cube-draco.glb', 'ro-ds');
+    await importNative(page, 'cube-draco.glb', 'ro-ds');
     await expect.poll(async () => (await materialChild(page))?.id).toBeTruthy();
     const child = await materialChild(page);
-    await selectAndOpen(page, child!.id);
+    await selectAndOpen(page, child!);
 
-    // Pre-edit the clone is front-only.
+    // Pre-edit the mesh is front-only.
     await expect.poll(async () => (await firstMesh(page))?.side).toBe(FRONT_SIDE);
 
     await page.getByTestId(`inspector-doublesided-${child!.id}`).check();
 
-    // Side A — DAG material flag set; Side B — the clone renders double-sided.
+    // Side A — DAG material flag set; Side B — the mesh draws double-sided.
     await expect
       .poll(async () => {
         const g = (await materialChild(page))?.geometry as { doubleSided?: boolean } | undefined;
@@ -121,10 +94,10 @@ test.describe('#217 — glTF material render-options + UV inspector controls', (
   });
 
   test('setting alpha cutout in the inspector drives the rendered alphaTest', async ({ page }) => {
-    await ingest(page, 'cube-draco.glb', 'ro-ac');
+    await importNative(page, 'cube-draco.glb', 'ro-ac');
     await expect.poll(async () => (await materialChild(page))?.id).toBeTruthy();
     const child = await materialChild(page);
-    await selectAndOpen(page, child!.id);
+    await selectAndOpen(page, child!);
 
     await expect.poll(async () => (await firstMesh(page))?.alphaTest).toBe(0); // off by default
 
@@ -144,10 +117,10 @@ test.describe('#217 — glTF material render-options + UV inspector controls', (
   // #220 — the imported material name is a label (not appearance), so the proof is
   // the DAG side (side A) + the read-side: the field resyncs to the committed name.
   test('renaming a material in the inspector updates the DAG name', async ({ page }) => {
-    await ingest(page, 'cube-draco.glb', 'ro-name');
+    await importNative(page, 'cube-draco.glb', 'ro-name');
     await expect.poll(async () => (await materialChild(page))?.id).toBeTruthy();
     const child = await materialChild(page);
-    await selectAndOpen(page, child!.id);
+    await selectAndOpen(page, child!);
 
     const input = page.getByTestId(`inspector-material-name-${child!.id}`);
     await expect(input).toBeVisible();
@@ -161,13 +134,12 @@ test.describe('#217 — glTF material render-options + UV inspector controls', (
   });
 
   test('editing UV tiling in the inspector re-tiles the rendered map', async ({ page }) => {
-    // uv-transform-quad is textured (mapRepeat readable) and captures uvTransform.
-    await importOnCloneRoad(page, 'uv-transform-quad.gltf');
+    // uv-transform-quad is textured (its UV matrix readable) and captures uvTransform.
+    await importNative(page, 'uv-transform-quad.gltf', 'ro-uv');
     await expect.poll(async () => (await materialChild(page))?.id).toBeTruthy();
     const child = await materialChild(page);
-    await selectAndOpen(page, child!.id);
+    await selectAndOpen(page, child!);
 
-    // The Texture Placement section now renders for glTF (was native-only).
     const tilingX = page.getByTestId(`inspector-uvtransform-tilingX-${child!.id}`);
     await expect(tilingX).toBeVisible();
     await tilingX.fill('4');
@@ -181,6 +153,7 @@ test.describe('#217 — glTF material render-options + UV inspector controls', (
         return uv?.tiling?.[0];
       })
       .toBe(4);
-    await expect.poll(async () => (await firstMesh(page))?.mapRepeat?.[0]).toBe(4);
+    // The drawn UV matrix's x scale (column-major entry 0; the file's placement has no rotation).
+    await expect.poll(async () => (await firstMesh(page))?.mapUvMatrix?.[0]).toBeCloseTo(4, 9);
   });
 });

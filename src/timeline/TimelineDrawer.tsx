@@ -38,8 +38,6 @@ import { removeKeyframesMutator, validatePlan } from '../agent/mutators';
 // it drags the importer into the app↔agent cycle cluster the enumeration gate
 // watches. (This file already pays for that on the line above; adding to it
 // rather than widening it.)
-import { boneKeyOf } from '../agent/mutators/builders/channelAddress';
-import { dispatchRevertGltfChannel } from '../app/animate/dispatchMutator';
 import { useNotificationStore } from '../app/stores/notificationStore';
 import { Timebar } from '../app/Timebar';
 import { TimelineCanvas } from './TimelineCanvas';
@@ -48,7 +46,7 @@ import { LightStudioPanel } from './LightStudioPanel';
 import { NlaLanePane } from './NlaLanePane';
 import { ControllersDockPane } from './ControllersDockPane';
 import { SimplifyPopover } from './SimplifyPopover';
-import { rowFlag, rowFlagToggleOps } from '../app/animate/clipRowMint';
+import { rowFlag, rowFlagToggleOps } from '../app/animate/rowChannelWrite';
 import { parseLayerRowId } from './layerChannelRows';
 
 const DRAWER_HEIGHT_PX = 240;
@@ -283,8 +281,8 @@ function DockToolbar() {
     toggleActive('solo');
   }
 
-  // #1215 — one toggle for every row kind: nothing to flip (a clip row, a layer curve's solo) is a
-  // no-op, as a clip row always was.
+  // #1215 — one toggle for every row kind: nothing to flip (a read-only row, a layer curve's solo) is
+  // a no-op.
   function toggleActive(kind: 'mute' | 'solo') {
     if (!activeChannelId) return;
     const ops = rowFlagToggleOps(useDagStore.getState().state, activeChannelId, kind);
@@ -298,35 +296,12 @@ function DockToolbar() {
 
     const node = state.nodes[activeChannelId];
     if (!node) {
-      // A synthetic `clip:<bone>:<component>` row — read-only, no DAG node, so
-      // there is no authored edit to clear. It used to fall through to
-      // `validatePlan`, get "not in DAG", and return in silence; a director
-      // pressing Clear on a row they can see is owed an answer, and "there is
-      // nothing of yours here" is a different answer from "that failed".
+      // A row with no channel node of its own (a pose layer's curve, a read-only computed row).
+      // A director pressing Clear on a row they can see is owed an answer, not silence.
       notify({
         severity: 'info',
-        message: 'This row follows the clip — there are no edits of yours to clear.',
+        message: 'This row has no channel of its own for Clear to empty.',
       });
-      return;
-    }
-
-    // 🔑 ON A BONE, CLEAR IS A CHANNEL REMOVAL, NOT AN EMPTYING (#909).
-    //
-    // The band picks on PRESENCE, per component. Emptying a bone's channel in
-    // place leaves it claiming its component at [0,0,0], so the bone collapses
-    // to the origin while its neighbours keep walking — which reads as "Clear
-    // deleted my animation" rather than as "Clear undid my edit". Deleting the
-    // node returns the bone to the clip losslessly, because the clip was never
-    // touched. That is the act `dispatchRevertGltfChannel` has performed per
-    // bone since #121; the row points at ONE component, so it is asked for one.
-    const bone = boneKeyOf(node);
-    if (bone) {
-      const reverted = dispatchRevertGltfChannel(bone);
-      if (!reverted.ok) {
-        notify({ severity: 'warn', message: `Could not clear: ${reverted.reason}` });
-        return;
-      }
-      useTimelineSelection.getState().setActiveKeyframe(null);
       return;
     }
 

@@ -27,18 +27,16 @@
 // the SAME run. "The replaced one is right" alone passes a build that places every slot
 // identically; "the control is unchanged" alone passes a build that places nothing.
 //
-// REF: src/app/material/gltfMapOverlay.ts (`applyEditedMaps` — the subject),
-//      src/viewport/SceneFromDAG.tsx (the call site this file is the only cover for,
-//      and the `__basher_gltf_meshes` probe it reads), src/app/material/uvPlacement.ts;
-//      src/app/material/replacedMapPlacement.gate.test.ts (the unit half);
-//      issues #553, #550, #178.
-
-// #1123 — a drop now brings this fixture across native, so it imports through `__basher_importGltf`,
-// the entry that never tries native. This spec's subject is the clone road's per-map placement,
-// which still serves every file the native road refuses.
+// REF: src/app/material/uvPlacement.ts; app/material/replacedMapPlacement.gate.test.ts (the
+//      clone road's unit half; gone in #1053, at 9734f82e); issues #553, #550, #178.
+//
+// #1053 — the fixture imports native and the clone road (whose `applyEditedMaps` overlay this
+// file first pinned) is retired. The question is the same on the native road: a replaced map
+// draws with its slot's placement, read off the live material the import draws. The native road
+// places about the CENTRE, so the drawn pivot is [0.5, 0.5].
 
 import { test, expect, type Page } from './_fixtures';
-import { firstMaterialChild } from './_importedChild';
+import { firstMaterialMesh, importRoots } from './_importedMesh';
 import { openInspectorSection } from './_inspectorSections';
 
 /** A 1×1 red PNG — the replacement, chosen so its DIMENSIONS identify it. */
@@ -47,8 +45,6 @@ const RED_PNG_1PX =
 
 interface SlotPlacement {
   repeat: [number, number];
-  offset: [number, number];
-  rotation: number;
   center: [number, number];
 }
 interface BasherWindow {
@@ -60,12 +56,10 @@ interface BasherWindow {
     };
   };
   __basher_selection: { getState: () => { select: (id: string | null) => void } };
-  __basher_importGltf: (buffer: ArrayBuffer, assetRef: string) => Promise<unknown>;
-  __basher_writeOpfsBytes: (ref: string, bytes: Uint8Array) => Promise<void>;
-  __basher_gltf_meshes?: () => {
-    slotPlacements: Record<string, SlotPlacement>;
-    mapProbe?: { imageWidth?: number } | null;
-  }[];
+  __basher_ingestGltfFolder: (
+    files: { relativePath: string; bytes: Uint8Array }[],
+    folderName: string,
+  ) => Promise<string>;
 }
 
 /**
@@ -77,21 +71,49 @@ interface BasherWindow {
  * second import is present, which reads as a plausible, varied, entirely wrong answer
  * rather than as an obvious null. Every case asserts `n` is 1 before believing the rest.
  */
-function drawn(page: Page) {
-  return page.evaluate(() => {
-    const w = window as unknown as BasherWindow;
-    const all = w.__basher_gltf_meshes ? w.__basher_gltf_meshes() : [];
-    const m = all[0];
-    return m
-      ? { n: all.length, slots: m.slotPlacements, width: m.mapProbe?.imageWidth ?? null }
-      : { n: all.length, slots: null, width: null };
-  });
+async function drawn(
+  page: Page,
+): Promise<{ n: number; slots: Record<string, SlotPlacement> | null; width: number | null }> {
+  const roots = await importRoots(page);
+  return page.evaluate(
+    (ids) => {
+      type Tex = {
+        repeat: { x: number; y: number };
+        center: { x: number; y: number };
+        image?: { width?: number } | null;
+      } | null;
+      type O3 = {
+        isMesh?: boolean;
+        material?: Record<string, Tex>;
+        traverse: (f: (o: O3) => void) => void;
+      };
+      const scene = (
+        window as unknown as {
+          __basher_three: { getState: () => { scene: { getObjectByName: (n: string) => O3 } } };
+        }
+      ).__basher_three.getState().scene;
+      const all: Record<string, Tex>[] = [];
+      for (const id of ids)
+        scene.getObjectByName(id)?.traverse((o) => {
+          if (o.isMesh && o.material) all.push(o.material);
+        });
+      const m = all[0];
+      if (!m) return { n: all.length, slots: null, width: null };
+      const slots: Record<string, { repeat: [number, number]; center: [number, number] }> = {};
+      for (const slot of ['map', 'emissiveMap']) {
+        const t = m[slot];
+        if (t) slots[slot] = { repeat: [t.repeat.x, t.repeat.y], center: [t.center.x, t.center.y] };
+      }
+      return { n: all.length, slots, width: m.map?.image?.width ?? null };
+    },
+    roots.map((r) => r.rootId),
+  );
 }
 
 /** The imported child carrying a captured material, plus its IR placement fields.
  *  #389 — `id` is the DATA half's, which is where a material write is now addressed. */
 async function materialChild(page: Page) {
-  const child = await firstMaterialChild(page);
+  const child = await firstMaterialMesh(page);
   if (!child) return null;
   const m0 = child.slots[0] as Record<string, unknown>;
   // #389 — BOTH ids. The fused child was one node used for two different jobs; the split
@@ -108,7 +130,7 @@ async function materialChild(page: Page) {
 async function importAndSelect(page: Page, mutate: boolean, folder: string) {
   await page.goto('/');
   await page.waitForFunction(
-    () => typeof (window as unknown as BasherWindow).__basher_importGltf === 'function',
+    () => typeof (window as unknown as BasherWindow).__basher_ingestGltfFolder === 'function',
   );
   await page.evaluate(
     async ({ mutate, folder }) => {
@@ -126,9 +148,7 @@ async function importAndSelect(page: Page, mutate: boolean, folder: string) {
         json.materials[0].emissiveFactor = [1, 1, 1];
       }
       const bytes = new TextEncoder().encode(JSON.stringify(json));
-      const ref = `assets/${folder}.gltf`;
-      await w.__basher_writeOpfsBytes(ref, bytes);
-      await w.__basher_importGltf(bytes.buffer as ArrayBuffer, ref);
+      await w.__basher_ingestGltfFolder([{ relativePath: `${folder}.gltf`, bytes }], folder);
     },
     { mutate, folder },
   );
@@ -136,7 +156,7 @@ async function importAndSelect(page: Page, mutate: boolean, folder: string) {
   const child = (await materialChild(page))!;
   await page.evaluate((nid) => {
     (window as unknown as BasherWindow).__basher_selection.getState().select(nid);
-  }, child.id);
+  }, child.objectId);
   await openInspectorSection(page, 'material');
   // Wait for the FIXTURE's own texture to have reached the render before any premise is
   // read. Without this the `before` snapshot races the import: the DAG node exists well
@@ -169,7 +189,7 @@ test('#553 — a replaced map on a PER-MAP import draws with that slot’s own p
   const child = await importAndSelect(page, true, 'p553-permap');
 
   const before = await drawn(page);
-  expect(before.n).toBe(1); // premise: ONE glTF mesh, so `[0]` is unambiguous
+  expect(before.n).toBe(1); // premise: ONE imported mesh, so `[0]` is unambiguous
   expect(before?.slots?.map?.repeat).toEqual([2, 3]); // premise: albedo owns [2,3]
   expect(before?.slots?.emissiveMap?.repeat).toEqual([4, 4]); // premise: emissive owns [4,4]
   expect(before?.width).toBe(64); // premise: the fixture's image, not the replacement's
@@ -180,7 +200,7 @@ test('#553 — a replaced map on a PER-MAP import draws with that slot’s own p
   expect(after.n).toBe(1);
   // The defect drew [1,1] here — no placement at all.
   expect(after?.slots?.map?.repeat).toEqual([2, 3]);
-  expect(after?.slots?.map?.center).toEqual([0, 0]); // the glTF road's pivot (#551)
+  expect(after?.slots?.map?.center).toEqual([0.5, 0.5]); // the native road's centre pivot
   // …and the untouched slot is undisturbed, in the same run.
   expect(after?.slots?.emissiveMap?.repeat).toEqual([4, 4]);
 });
@@ -195,7 +215,7 @@ test('#553 — a replaced map on a UNIFORM import draws with the SHARED placemen
 
   expect((await materialChild(page))?.perMap).toBeUndefined(); // premise: no per-map bag
   const before = await drawn(page);
-  expect(before.n).toBe(1); // premise: ONE glTF mesh, so `[0]` is unambiguous
+  expect(before.n).toBe(1); // premise: ONE imported mesh, so `[0]` is unambiguous
   expect(before?.slots?.map?.repeat).toEqual([2, 3]); // the SHARED placement
   expect(before?.width).toBe(64);
 
@@ -204,5 +224,5 @@ test('#553 — a replaced map on a UNIFORM import draws with the SHARED placemen
   const after = await drawn(page);
   expect(after.n).toBe(1);
   expect(after?.slots?.map?.repeat).toEqual([2, 3]);
-  expect(after?.slots?.map?.center).toEqual([0, 0]);
+  expect(after?.slots?.map?.center).toEqual([0.5, 0.5]);
 });

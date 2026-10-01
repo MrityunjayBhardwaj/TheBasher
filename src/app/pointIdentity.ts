@@ -22,8 +22,8 @@
 // FALSE RATHER THAN STALE. It read: *"the arithmetic here is MUCH more partial than faces,
 // and §`pointCountOf` says why"*. The three derived kinds refused, on a measurement that is
 // still true and was still the wrong instrument — see `composePointWeld`. They now compose,
-// so the arithmetic is exactly as total as `faceCountOf`'s: everything but `gltf` and
-// `baked`. What #754 added instead is the composed MAP, and a parity that checks the layout
+// so the arithmetic is exactly as total as `faceCountOf`'s: everything but `baked`.
+// What #754 added instead is the composed MAP, and a parity that checks the layout
 // that map rests on rather than re-welding a merged buffer.
 //
 // ── WHY ITS OWN MODULE ────────────────────────────────────────────────────────────────
@@ -310,7 +310,7 @@ export function keptSourcePoints(
   descriptor: Extract<GeometryDescriptor, { kind: 'subset' }>,
 ): readonly number[] | null {
   // The SOURCE's rims, in topological ids. `null` here is the same escape hatch
-  // `faceCountOf` and `pointCountOf` declare — a `gltf` or `baked` source holds its buffers
+  // `faceCountOf` and `pointCountOf` declare — a `baked` source holds its buffers
   // elsewhere, so nothing on this side can say which points a face joins.
   const rims = weldedPolygonsOf(descriptor.source.descriptor);
   if (rims === null) return null;
@@ -418,7 +418,7 @@ export function tiledPointOrder(descriptor: GeometryDescriptor): TiledPointOrder
  *
  * ── WHAT STILL REFUSES, AND WHY THAT IS PERMANENT ────────────────────────────────────
  *
- * `gltf` and `baked` alone — their buffers live outside the descriptor, the same escape
+ * `baked` alone — its buffers live outside the descriptor, the same escape
  * hatch `faceCountOf` declares. A derived kind over one of those PROPAGATES that verdict
  * verbatim rather than minting its own, so the reason a caller reads still names the link
  * that actually could not answer.
@@ -439,23 +439,6 @@ export function pointCountOf(descriptor: GeometryDescriptor): CountVerdict {
       // the pole fans are what the split buffer duplicates; welding removes both.
       return counted(w * (h - 1) + 2);
     }
-    // #1040 — AN IMPORTED CHILD WHOSE POINT COUNT WAS WELDED AT IMPORT. The sibling of
-    // `faceCountOf`'s captured arm, and the reason it is a stored number rather than a
-    // derivation: a topological point is a WELD over the position bytes, and a descriptor
-    // carries no bytes. Measured against the loaded buffer on every fixture the real
-    // `GLTFLoader` can parse — 15 of 15 children agree, because both sides weld through
-    // `weldByPosition` rather than through two spellings of it.
-    case 'gltf': {
-      const points = descriptor.pointCount;
-      // 🔴 ABSENT IS NOT ZERO. A pre-#1040 save, a non-triangle child and a multi-primitive
-      // child all keep answering exactly as they did, which is what the escape hatch is for.
-      if (points === undefined)
-        return {
-          kind: 'outside-the-descriptor',
-          why: "a 'gltf' descriptor's buffers live in a loaded asset clone, and this child's import captured no point count, so nothing on it says how many points they hold",
-        };
-      return counted(points);
-    }
     case 'baked':
       return {
         kind: 'outside-the-descriptor',
@@ -465,7 +448,7 @@ export function pointCountOf(descriptor: GeometryDescriptor): CountVerdict {
     case 'mirror':
     case 'subset': {
       const source = pointCountOf(descriptor.source.descriptor);
-      // Propagated VERBATIM. A generator over a gltf is not a new kind of absence — it is the
+      // Propagated VERBATIM. A generator over a bake is not a new kind of absence — it is the
       // same one, seen from further down the chain, and the reason a caller reads still names
       // the link that actually could not answer.
       if (source.kind !== 'counted') return source;
@@ -543,11 +526,11 @@ export function pointCountOf(descriptor: GeometryDescriptor): CountVerdict {
  * covered-but-unhonoured grade.
  *
  * ⚠️ IT IS A SUPPLIER AND NOT A VALUE SO THAT THE REFUSING PATH PAYS NOTHING. A weld is a walk
- * of a whole position buffer, and the arms that decline here — `gltf` and `baked`, and every
+ * of a whole position buffer, and the arms that decline here — `baked`, and every
  * generator standing on one — return before the source is needed. Passed eagerly, an Array
- * over an imported mesh would weld that mesh on every first build to feed a check that
+ * over a baked mesh would weld that mesh on every first build to feed a check that
  * returns `null` on its first line. Measured cost of the walk it skips: 4.2 ms at 33 k points,
- * and an imported asset is routinely larger than that.
+ * and a baked asset is routinely larger than that.
  */
 /**
  * Is this geometry a bevel standing AT OR PAST its collision limit, where corners have met?

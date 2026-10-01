@@ -20,7 +20,21 @@
 //      vyapti V10/V32; hetvabhasa H14; issue #178.
 
 import { z } from 'zod';
-import type { BakedMaterialSpec, InlineMaterialSpec, UvPlacement } from './types';
+import { MATERIAL_MAP_SLOT_TABLE } from './types';
+import type {
+  BakedMapSlot,
+  BakedMaterialMaps,
+  BakedMaterialSpec,
+  BakedTextureMinFilter,
+  BakedTextureRef,
+  BakedTextureWrap,
+  InlineMaterialMaps,
+  InlineMaterialSpec,
+  IrMapSlot,
+  MaterialMapSlotRow,
+  SeededMapSlot,
+  UvPlacement,
+} from './types';
 
 /**
  * The roughness a pre-#178 material rendered at when no override was present.
@@ -51,14 +65,63 @@ export const CURRENT_LOOK_ROUGHNESS = 0.5;
  */
 export const STANDARD_BASE_COLOR = '#cccccc';
 
+// ── #1316 — sampler state by name ──────────────────────────────────────────────────────────
+//
+// A stored ref's wrap and filters are glTF's sampler vocabulary, named. Two tables turn the numbers
+// that reach us into those names: glTF's own enums (`sampler.schema.json`, what a file says) and
+// three.js's constants (`three/src/constants.js:70-81`, what a live texture says and what refs
+// written before #1316 hold). Only the texture loader turns a name back into a renderer constant.
+
+export const SAMPLER_WRAPS = ['repeat', 'clamp-to-edge', 'mirrored-repeat'] as const;
+export const SAMPLER_MAG_FILTERS = ['nearest', 'linear'] as const;
+export const SAMPLER_MIN_FILTERS = [
+  'nearest',
+  'linear',
+  'nearest-mipmap-nearest',
+  'linear-mipmap-nearest',
+  'nearest-mipmap-linear',
+  'linear-mipmap-linear',
+] as const;
+
+/** glTF's wrap enums → names. */
+export const WRAP_NAME_OF_GLTF: Readonly<Record<number, BakedTextureWrap>> = {
+  10497: 'repeat',
+  33071: 'clamp-to-edge',
+  33648: 'mirrored-repeat',
+};
+/** glTF's filter enums → names. */
+export const FILTER_NAME_OF_GLTF: Readonly<Record<number, BakedTextureMinFilter>> = {
+  9728: 'nearest',
+  9729: 'linear',
+  9984: 'nearest-mipmap-nearest',
+  9985: 'linear-mipmap-nearest',
+  9986: 'nearest-mipmap-linear',
+  9987: 'linear-mipmap-linear',
+};
+/** three.js's wrap constants → names (RepeatWrapping 1000, ClampToEdge 1001, MirroredRepeat 1002). */
+export const WRAP_NAME_OF_THREE: Readonly<Record<number, BakedTextureWrap>> = {
+  1000: 'repeat',
+  1001: 'clamp-to-edge',
+  1002: 'mirrored-repeat',
+};
+/** three.js's filter constants → names (NearestFilter 1003 … LinearMipmapLinearFilter 1008). */
+export const FILTER_NAME_OF_THREE: Readonly<Record<number, BakedTextureMinFilter>> = {
+  1003: 'nearest',
+  1004: 'nearest-mipmap-nearest',
+  1005: 'nearest-mipmap-linear',
+  1006: 'linear',
+  1007: 'linear-mipmap-nearest',
+  1008: 'linear-mipmap-linear',
+};
+
 // A persisted texture handle (mirrors BakedTextureRef in types.ts). Map slots are
 // null until W5 attaches an image.
 const bakedTextureRefSchema = z.object({
   hash: z.string(),
   colorSpace: z.enum(['srgb', 'srgb-linear', 'no-colorspace']),
   flipY: z.boolean(),
-  wrapS: z.number(),
-  wrapT: z.number(),
+  wrapS: z.enum(SAMPLER_WRAPS),
+  wrapT: z.enum(SAMPLER_WRAPS),
   // glTF direct-import captured-descriptor fields (texture-maps milestone). Both
   // OPTIONAL so a native baked ref / pre-milestone save re-parses unchanged
   // (V10/H14). zod strips unknown keys, so they MUST be declared here or a whole-
@@ -68,37 +131,97 @@ const bakedTextureRefSchema = z.object({
   // #1050 — declared for the same reason: stripped, a project image would be looked up in the
   // global store and never found.
   store: z.literal('project').optional(),
-  magFilter: z.number().optional(),
-  minFilter: z.number().optional(),
+  magFilter: z.enum(SAMPLER_MAG_FILTERS).optional(),
+  minFilter: z.enum(SAMPLER_MIN_FILTERS).optional(),
 });
 const mapSlot = bakedTextureRefSchema.nullable().default(null);
+
+/** A slot's rows, keyed by slot name — the real table, or a hand-minted one in a test. */
+type MapSlotRows = Readonly<Record<string, MaterialMapSlotRow>>;
+
 /**
- * The map slot names, DERIVED from {@link NULL_MAPS} rather than written out again, so
- * a seventh slot cannot be added to the IR and silently miss per-map placement (#550).
- * Declared after NULL_MAPS below; see `perMapUvTransform.gate.test.ts`, which pins this
- * list equal to the IR's own map keys in both directions.
+ * Every map slot, in {@link MATERIAL_MAP_SLOT_TABLE}'s order (#1324) — the one list the per-slot
+ * bags (placement, UV layer) and every loop over slots walk. `perMapUvTransform.gate.test.ts` pins
+ * it equal to the IR's own map keys in both directions.
  */
+export const MAP_UV_SLOTS = Object.keys(MATERIAL_MAP_SLOT_TABLE) as IrMapSlot[];
+
 // Exported so the glTF→OpenPBR converter (gltfMaterialToOpenpbr) seeds an IR with
 // the SAME empty-maps / identity-UV defaults the schema uses — one source, no drift.
-export const NULL_MAPS = {
-  albedo: null,
-  normal: null,
-  roughness: null,
-  metalness: null,
-  emissive: null,
-  ao: null,
-} as const;
-export const MAP_UV_SLOTS = Object.keys(NULL_MAPS) as (keyof typeof NULL_MAPS)[];
-const mapsSchema = z
-  .object({
-    albedo: mapSlot,
-    normal: mapSlot,
-    roughness: mapSlot,
-    metalness: mapSlot,
-    emissive: mapSlot,
-    ao: mapSlot,
-  })
-  .default({ ...NULL_MAPS });
+// Only the SEEDED slots: a later slot is absent until it holds a texture (see the table).
+export const NULL_MAPS = Object.fromEntries(
+  MAP_UV_SLOTS.filter((slot) => MATERIAL_MAP_SLOT_TABLE[slot].seeded).map((slot) => [slot, null]),
+) as { readonly [K in SeededMapSlot]: null };
+
+/** Every map slot in three's vocabulary — the baked snapshot's field names — in the table's order. */
+export const BAKED_MAP_SLOTS = MAP_UV_SLOTS.map((slot) => MATERIAL_MAP_SLOT_TABLE[slot].three);
+
+/**
+ * A baked snapshot's map fields from a per-slot lookup (#1324): every seeded slot present (null when
+ * it holds nothing), any other slot only when it holds a texture — absent means off, as in the IR.
+ */
+export function bakedMapsOf(
+  refOf: (slot: BakedMapSlot) => BakedTextureRef | null,
+  rows: MapSlotRows = MATERIAL_MAP_SLOT_TABLE,
+): BakedMaterialMaps {
+  const out: Record<string, BakedTextureRef | null> = {};
+  for (const { three, seeded } of Object.values(rows)) {
+    const ref = refOf(three as BakedMapSlot);
+    if (seeded || ref !== null) out[three] = ref;
+  }
+  return out as BakedMaterialMaps;
+}
+
+/** The baked snapshot's maps when it holds none. */
+export const NULL_BAKED_MAPS: BakedMaterialMaps = bakedMapsOf(() => null);
+
+/**
+ * One zod field per map slot, in the table's order. Statically a string-keyed object, because
+ * `Object.fromEntries` cannot carry the keys; code reads the IR through `InlineMaterialSpec`.
+ */
+function perMapSlot(field: (row: MaterialMapSlotRow) => z.ZodTypeAny, rows: MapSlotRows) {
+  return z.object(
+    Object.fromEntries(Object.entries(rows).map(([slot, row]) => [slot, field(row)])),
+  );
+}
+
+/**
+ * The `maps` object for a slot table (#1324): a seeded slot defaults to null, so every save's six
+ * slots re-parse as they always have; any other slot is optional with NO default, because a
+ * materialised `null` would re-key every saved material (the rule `mapUvTransformsSchema` states).
+ * Exported so a test can hand it a table with an unseeded row, which the live table has none of yet.
+ */
+export function mapsSchemaFor(rows: MapSlotRows) {
+  return perMapSlot(
+    (row) => (row.seeded ? mapSlot : bakedTextureRefSchema.nullable().optional()),
+    rows,
+  );
+}
+
+const mapsSchema = (
+  mapsSchemaFor(MATERIAL_MAP_SLOT_TABLE) as unknown as z.ZodType<
+    InlineMaterialMaps,
+    z.ZodTypeDef,
+    unknown
+  >
+).default({ ...NULL_MAPS });
+
+/**
+ * A serialized `maps` bag → the IR's (#1324), by the same rule as {@link mapsSchemaFor}: a seeded
+ * slot is always present (null when empty), any other only when the save holds it.
+ */
+export function hydrateMapsFor(
+  raw: Partial<Record<string, BakedTextureRef | null>> | undefined,
+  rows: MapSlotRows,
+): Record<string, BakedTextureRef | null> {
+  const out: Record<string, BakedTextureRef | null> = {};
+  for (const [slot, row] of Object.entries(rows)) {
+    const v = raw?.[slot];
+    if (row.seeded) out[slot] = v ?? null;
+    else if (v !== undefined) out[slot] = v;
+  }
+  return out;
+}
 
 // v0.6 #3 (#181) — the ONE shared UV placement (tiling/offset/rotation). IDENTITY
 // default so a pre-#3 project renders byte-identically (V10/H14). Every field +
@@ -133,16 +256,10 @@ const uvTransformSchema = z.object(uvPlacementFields).default({ ...IDENTITY_UV_T
  * exists, so a partial `setParam` on one component still refills its siblings. The
  * defaults belong inside a present slot, never on the map of slots.
  */
-const mapUvTransformsSchema = z
-  .object({
-    albedo: z.object(uvPlacementFields).optional(),
-    normal: z.object(uvPlacementFields).optional(),
-    roughness: z.object(uvPlacementFields).optional(),
-    metalness: z.object(uvPlacementFields).optional(),
-    emissive: z.object(uvPlacementFields).optional(),
-    ao: z.object(uvPlacementFields).optional(),
-  })
-  .optional();
+const mapUvTransformsSchema = perMapSlot(
+  () => z.object(uvPlacementFields).optional(),
+  MATERIAL_MAP_SLOT_TABLE,
+).optional();
 
 /**
  * #997 — which UV set each map slot samples. A non-negative integer per slot; absent
@@ -156,21 +273,30 @@ const mapUvTransformsSchema = z
  * the reference an empty name is the documented request for the ACTIVE layer, a fallback this
  * project does not have, so admitting it here would store a wish nothing can grant.
  */
-const mapUvLayersSchema = z
+const mapUvLayersSchema = perMapSlot(
+  () => z.string().min(1).optional(),
+  MATERIAL_MAP_SLOT_TABLE,
+).optional();
+
+/**
+ * #1123 — the normal map's and the occlusion map's strength. Absent means 1. `.optional()` with NO
+ * `.default()`, for the reason `mapUvTransformsSchema` states.
+ */
+const mapStrengthsSchema = z
   .object({
-    albedo: z.string().min(1).optional(),
-    normal: z.string().min(1).optional(),
-    roughness: z.string().min(1).optional(),
-    metalness: z.string().min(1).optional(),
-    emissive: z.string().min(1).optional(),
-    ao: z.string().min(1).optional(),
+    normal: z.number().optional(),
+    ao: z.number().optional(),
+    // #1327 — the coat normal map's strength.
+    coatNormal: z.number().optional(),
   })
   .optional();
 
 /**
  * The OpenPBR core-10 inline-material zod schema (layer 1 — NEW-node defaults).
- * Every field AND every nested object carries a `.default` so a partial `setParam`
- * whole-params re-parse (ops.ts) always fills siblings (R6).
+ * Every lobe field AND every nested object carries a `.default` so a partial `setParam`
+ * whole-params re-parse (ops.ts) always fills siblings (R6). The exceptions are the
+ * optional fields whose ABSENCE is the meaning (`mapUvTransforms`, `unsupported` and the
+ * like), each with its reason beside it.
  *
  * TAKES NO ARGUMENT ON PURPOSE (#394 D7). It used to take a `baseColorDefault` that
  * differed per primitive (box green, sphere blue) — that parameter WAS the whole
@@ -191,6 +317,9 @@ export function openpbrMaterialSchema() {
         .object({
           roughness: z.number().default(0.3), // OpenPBR new-box default (R1: NOT 0.5)
           ior: z.number().default(1.5),
+          // #1321 — optional, no default: absent is OpenPBR's 1 and white.
+          weight: z.number().optional(),
+          color: z.string().optional(),
         })
         .default({ roughness: 0.3, ior: 1.5 }),
       coat: z
@@ -202,8 +331,21 @@ export function openpbrMaterialSchema() {
       transmission: z
         .object({
           weight: z.number().default(0),
+          // #1322 — optional, no default: absent is no absorption.
+          color: z.string().optional(),
+          depth: z.number().optional(),
         })
         .default({ weight: 0 }),
+      // #1123 — the fuzz lobe: optional, no default on the lobe, OpenPBR's defaults inside it
+      // (`open_pbr_surface.mtlx`: fuzz_weight 0, fuzz_color 1,1,1, fuzz_roughness 0.5), so an edit
+      // on an absent lobe creates a whole one.
+      fuzz: z
+        .object({
+          weight: z.number().default(0),
+          color: z.string().default('#ffffff'),
+          roughness: z.number().default(0.5),
+        })
+        .optional(),
       emission: z
         .object({
           color: z.string().default('#000000'),
@@ -219,12 +361,17 @@ export function openpbrMaterialSchema() {
           // #1062 — the NAME of the colour layer this material reads (was `vertexColors: true`).
           colorLayer: z.string().min(1).optional(),
           doubleSided: z.boolean().optional(),
+          // #1322 — the glTF volume's thickness; absent keeps the transmissive default.
+          thickness: z.number().optional(),
         })
         .default({ opacity: 1 }),
       maps: mapsSchema,
       uvTransform: uvTransformSchema,
       mapUvTransforms: mapUvTransformsSchema,
       mapUvLayers: mapUvLayersSchema,
+      mapStrengths: mapStrengthsSchema,
+      // #1123 — unlit. Optional, absent means lit, and no default for the reason above.
+      unlit: z.literal(true).optional(),
       unsupported: z.record(z.string(), z.number()).optional(),
     })
     .default({});
@@ -265,6 +412,7 @@ interface PartialLobe {
   weight?: unknown;
   luminance?: unknown;
   opacity?: unknown;
+  depth?: unknown;
 }
 
 function num(v: unknown, fallback: number): number {
@@ -302,17 +450,21 @@ export function hydrateInlineMaterial(
     base?: PartialLobe;
     specular?: PartialLobe;
     coat?: PartialLobe;
+    fuzz?: PartialLobe;
     transmission?: PartialLobe;
     emission?: PartialLobe;
     geometry?: PartialLobe & {
       alphaCutoff?: unknown;
       colorLayer?: unknown;
       doubleSided?: unknown;
+      thickness?: unknown;
     };
     maps?: Partial<InlineMaterialSpec['maps']>;
     uvTransform?: { tiling?: unknown; offset?: unknown; rotation?: unknown };
     mapUvTransforms?: Record<string, { tiling?: unknown; offset?: unknown; rotation?: unknown }>;
     mapUvLayers?: Record<string, unknown>;
+    mapStrengths?: { normal?: unknown; ao?: unknown; coatNormal?: unknown };
+    unlit?: unknown;
     unsupported?: Record<string, number>;
   };
   const legacyColor = typeof m.color === 'string' ? m.color : undefined;
@@ -322,9 +474,24 @@ export function hydrateInlineMaterial(
       color: str(m.base?.color, legacyColor ?? baseColorDefault),
       metalness: num(m.base?.metalness, 0),
     },
-    specular: { roughness: num(m.specular?.roughness, 0.3), ior: num(m.specular?.ior, 1.5) },
+    specular: {
+      roughness: num(m.specular?.roughness, 0.3),
+      ior: num(m.specular?.ior, 1.5),
+      // #1321 — present only when set, for the reason the per-map fields give below.
+      ...(typeof m.specular?.weight === 'number' && Number.isFinite(m.specular.weight)
+        ? { weight: m.specular.weight }
+        : {}),
+      ...(typeof m.specular?.color === 'string' ? { color: m.specular.color } : {}),
+    },
     coat: { weight: num(m.coat?.weight, 0), roughness: num(m.coat?.roughness, 0) },
-    transmission: { weight: num(m.transmission?.weight, 0) },
+    transmission: {
+      weight: num(m.transmission?.weight, 0),
+      // #1322 — present only when set.
+      ...(typeof m.transmission?.color === 'string' ? { color: m.transmission.color } : {}),
+      ...(typeof m.transmission?.depth === 'number' && Number.isFinite(m.transmission.depth)
+        ? { depth: m.transmission.depth }
+        : {}),
+    },
     emission: {
       color: str(m.emission?.color, '#000000'),
       luminance: num(m.emission?.luminance, 0),
@@ -342,15 +509,11 @@ export function hydrateInlineMaterial(
       ...(typeof m.geometry?.doubleSided === 'boolean'
         ? { doubleSided: m.geometry.doubleSided }
         : {}),
+      ...(typeof m.geometry?.thickness === 'number' && Number.isFinite(m.geometry.thickness)
+        ? { thickness: m.geometry.thickness }
+        : {}),
     },
-    maps: {
-      albedo: m.maps?.albedo ?? null,
-      normal: m.maps?.normal ?? null,
-      roughness: m.maps?.roughness ?? null,
-      metalness: m.maps?.metalness ?? null,
-      emissive: m.maps?.emissive ?? null,
-      ao: m.maps?.ao ?? null,
-    },
+    maps: hydrateMapsFor(m.maps, MATERIAL_MAP_SLOT_TABLE) as InlineMaterialMaps,
     uvTransform: {
       tiling: vec2(m.uvTransform?.tiling, [1, 1]),
       offset: vec2(m.uvTransform?.offset, [0, 0]),
@@ -366,7 +529,40 @@ export function hydrateInlineMaterial(
   // #997 — the per-slot UV layer, conditional for exactly the reason above.
   const uvSets = hydrateMapUvLayers(m.mapUvLayers);
   const withUvSets = uvSets ? { ...withPerMap, mapUvLayers: uvSets } : withPerMap;
-  return m.unsupported ? { ...withUvSets, unsupported: m.unsupported } : withUvSets;
+  // #1123 — the map strengths, conditional for the same reason.
+  const strengths = hydrateMapStrengths(m.mapStrengths);
+  const withStrengths = strengths ? { ...withUvSets, mapStrengths: strengths } : withUvSets;
+  // #1123 — unlit, conditional for the same reason; anything but `true` reads as lit.
+  const withClass = m.unlit === true ? { ...withStrengths, unlit: true as const } : withStrengths;
+  // #1123 — the fuzz lobe, present only when the material has one, with OpenPBR's defaults inside.
+  const withFuzz =
+    m.fuzz && typeof m.fuzz === 'object'
+      ? {
+          ...withClass,
+          fuzz: {
+            weight: num(m.fuzz.weight, 0),
+            color: str(m.fuzz.color, '#ffffff'),
+            roughness: num(m.fuzz.roughness, 0.5),
+          },
+        }
+      : withClass;
+  return m.unsupported ? { ...withFuzz, unsupported: m.unsupported } : withFuzz;
+}
+
+/**
+ * #1123 — a serialized strength bag → the IR's, or `undefined` when it holds none. A value that is
+ * not a finite number is dropped, which reads as the default of 1.
+ */
+function hydrateMapStrengths(
+  raw: { normal?: unknown; ao?: unknown; coatNormal?: unknown } | undefined,
+): InlineMaterialSpec['mapStrengths'] | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const out: { normal?: number; ao?: number; coatNormal?: number } = {};
+  if (typeof raw.normal === 'number' && Number.isFinite(raw.normal)) out.normal = raw.normal;
+  if (typeof raw.ao === 'number' && Number.isFinite(raw.ao)) out.ao = raw.ao;
+  if (typeof raw.coatNormal === 'number' && Number.isFinite(raw.coatNormal))
+    out.coatNormal = raw.coatNormal;
+  return Object.keys(out).length > 0 ? out : undefined;
 }
 
 /**

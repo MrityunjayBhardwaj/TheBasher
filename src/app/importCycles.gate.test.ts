@@ -246,44 +246,40 @@ function namesImportedFrom(file: string, from: string): string[] {
   return names;
 }
 
-// ONE geometry ring, and it used to be two. #814 created a descriptor-side ring (bevelLayout,
-// edgeIdentity, faceCount, pointIdentity) and a built-side one (builtRims, geometryRegistry), both
-// for the same reason: a descriptor-side answer needs a built-side fact, or the reverse.
+// TWO geometry rings, as #814 made them: a descriptor-side ring (bevelLayout, edgeIdentity,
+// faceCount, pointIdentity) and a built-side one (builtRims, geometryRegistry), both for the same
+// reason — a descriptor-side answer needs a built-side fact, or the reverse.
 //
-// 🔴 #1041 MERGED THEM, AND IT WAS MEASURED RATHER THAN ALLOWED. An imported mesh's topology IS
-// its buffer, so a welded rim over one — and every edge answer composed from it, including a
-// derived kind over an import — has to reach the buffer from the descriptor side. At HEAD there
-// were 0 value imports from the descriptor ring into the built one and 17 names across 8
-// file-pairs the other way, so ANY such import closes the loop. Measured with this file's own
-// component check: removing either of the two new imports alone still merges them; removing both
-// restores the old pair. `cornerMaterialisation.ts` joins because it sits on
-// `geometryRegistry -> cornerMaterialisation -> faceCount`.
+// #1041 MERGED THEM INTO ONE, MEASURED RATHER THAN ALLOWED, AND #1402 PARTED THEM AGAIN. While an
+// imported mesh's topology was its buffer, a welded rim over one had to reach the buffer from the
+// descriptor side, and any value import from the descriptor ring into the built one closes the
+// loop (there were 0 such imports and 17 names across 8 file-pairs the other way). An import is a
+// stored `mesh` now and nothing's rims come off a buffer, so the two imports that merged them —
+// `edgeIdentity` and `bevelLayout` reading `builtRims` / the registry — are gone, and
+// `cornerMaterialisation.ts`, which sat on `geometryRegistry -> cornerMaterialisation ->
+// faceCount`, is in no cycle at all.
 //
-// The alternatives were costed, not dismissed: cutting the built-to-descriptor side is 17 names
-// across 8 file-pairs against 3 across 2; injecting the buffer reader instead of importing it
-// needs at least 22 call sites to carry a value that can only ever be `getForRead`.
+// The descriptor side reaching INTO the built side is what this pin now refuses again: a new
+// import that way re-merges the rings and reds the exact-set test below.
 //
-// What makes the merge acceptable is the rule below, and it had to be repaired first (#1043): it
-// compares files only within one ring entry, so it never saw the import that merged them, and it
-// read multi-line imports as module-level uses. Merged and repaired, it is green on the real code
-// and red on a planted single-line AND a planted multi-line module-level read.
+// The module-level rule below holds per ring. It was repaired at #1043: it compares files only
+// within one ring entry, and it read multi-line imports as module-level uses. It is green on the
+// real code and red on a planted single-line AND a planted multi-line module-level read.
 const GEOMETRY_RINGS = [
   [
     'src/app/bevelLayout.ts',
-    'src/app/builtRims.ts',
-    'src/app/cornerMaterialisation.ts',
     'src/app/edgeIdentity.ts',
     'src/app/faceCount.ts',
-    'src/app/geometryRegistry.ts',
     'src/app/pointIdentity.ts',
   ],
+  ['src/app/builtRims.ts', 'src/app/geometryRegistry.ts'],
 ];
 
 describe('#814 the import cycles, enumerated and held', () => {
   it('the product has exactly these runtime cycles — a new one anywhere is a red', () => {
     // 🔴 THE EXACT SET, NOT A COUNT AND NOT AN UPPER BOUND. Two of these predate this work by a
     // long way and are listed so they are KNOWN rather than merely present; the geometry one
-    // arrived with #814 as two rings, became one at #1041, and is the trade this file documents. Anything else appearing here is a
+    // arrived with #814 as two rings, was one from #1041 until #1402, and is the trade this file documents. Anything else appearing here is a
     // cycle someone added without noticing, which is the state that produced the `undefined`.
     expect(cyclicComponents()).toEqual([
       [
@@ -334,6 +330,7 @@ describe('#814 the import cycles, enumerated and held', () => {
         'src/app/transformChannelSource.ts',
       ],
       GEOMETRY_RINGS[0],
+      GEOMETRY_RINGS[1],
     ]);
   });
 

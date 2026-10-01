@@ -856,69 +856,46 @@ export function boot(): Promise<void> {
           return { skeletonId, motionId };
         };
       });
-      // P7.5 — glTF TRS animation import seam (issue #81). Mirrors the
-      // BVH/FBX seam shape; takes an ArrayBuffer + the assetRef the
-      // GltfAsset should reference. The e2e fixture stages clips via
-      // this entry point (H41 — fixtures via the NEW path from day one).
-      void import('../core/import/gltfImportChain').then((m) => {
-        w.__basher_importGltf = async (
-          buffer: ArrayBuffer,
-          assetRef: string,
-          resolveBuffer?: (uri: string) => Promise<Uint8Array>,
-        ) => {
-          const dag = useDagStore.getState();
-          const sceneRef = dag.state.outputs.scene;
-          if (!sceneRef) throw new Error('__basher_importGltf: project has no `scene` output');
-          // #90 — async: the importer resolves external/data-URI buffers.
-          // `resolveBuffer` is optional (embedded GLB / data-URI need none).
-          const result = await m.buildGltfImportOps(
-            { buffer, assetRef, sceneNodeId: sceneRef.node, resolveBuffer },
-            dag.state,
-          );
-          dag.dispatchAtomic(result.ops, 'user', `import gltf: ${assetRef}`);
-          return {
-            gltfAssetId: result.gltfAssetId,
-            clipSelectId: result.clipSelectId,
-            transformClipIds: result.transformClipIds,
-          };
-        };
-        // #1049 — the NATIVE road beside it: the file becomes stored polygon meshes and stops
-        // existing. A file the native model cannot hold yet is refused whole, by name, rather
-        // than half-imported. The clone road above is untouched until #1053 retires it.
-        w.__basher_importGltfNative = async (
-          buffer: ArrayBuffer,
-          assetRef: string,
-          resolveBuffer?: (uri: string) => Promise<Uint8Array>,
-        ) => {
-          const dag = useDagStore.getState();
-          const sceneRef = dag.state.outputs.scene;
-          if (!sceneRef) {
-            throw new Error('__basher_importGltfNative: project has no `scene` output');
-          }
-          const native = await import('../core/import/nativeGltfImport');
-          const { storeImageInOpenProject } = await import('./asset/importGltf');
-          const result = await native.buildNativeGltfImportOps({
-            buffer,
-            assetRef,
-            sceneNodeId: sceneRef.node,
-            resolveBuffer,
-            storeImage: storeImageInOpenProject,
-          });
-          if ('refused' in result) {
-            throw new Error(`native import refused: ${result.refused} (${result.issue})`);
-          }
-          dag.dispatchAtomic(result.ops, 'user', `import gltf (native): ${assetRef}`);
-          return { groupId: result.groupId, objectIds: result.objectIds };
-        };
-      });
+      // #1049 — the NATIVE road: the file becomes stored polygon meshes and stops existing. A
+      // file the native model cannot hold yet is refused whole, by name, rather than
+      // half-imported. (#1053 — the clone road's seam beside it, `__basher_importGltf`, is gone:
+      // a project saved with a clone import is made in e2e by loading a recording,
+      // `tests/e2e/_recordedSave.ts`.)
+      w.__basher_importGltfNative = async (
+        buffer: ArrayBuffer,
+        assetRef: string,
+        resolveBuffer?: (uri: string) => Promise<Uint8Array>,
+      ) => {
+        const dag = useDagStore.getState();
+        const sceneRef = dag.state.outputs.scene;
+        if (!sceneRef) {
+          throw new Error('__basher_importGltfNative: project has no `scene` output');
+        }
+        const native = await import('../core/import/nativeGltfImport');
+        const { storeImageInOpenProject } = await import('./asset/importGltf');
+        const { decodeDracoInBrowser } = await import('./asset/dracoDecoder');
+        const result = await native.buildNativeGltfImportOps({
+          buffer,
+          assetRef,
+          sceneNodeId: sceneRef.node,
+          resolveBuffer,
+          storeImage: storeImageInOpenProject,
+          decodeDraco: decodeDracoInBrowser,
+        });
+        if ('refused' in result) {
+          throw new Error(`native import refused: ${result.refused} (${result.issue})`);
+        }
+        dag.dispatchAtomic(result.ops, 'user', `import gltf (native): ${assetRef}`);
+        // #1384 — and what the import left behind on purpose, for a spec to read.
+        return { groupId: result.groupId, objectIds: result.objectIds, notices: result.notices };
+      };
       // P7.9 Wave D Task 8 — real-path ingestion seam (issue #110). Drives the
       // SHARED interactive chokepoint `ingestAndImportGltf`: resolve the entry
       // choice (the multi-glTF chooser, #214) → ingestGltfFolder (disk → OPFS
       // write) → importGltfFromOpfs (OPFS read → dispatchAtomic). Wave F e2e
       // uses this for the full write→ingest→dispatch→render pipeline; the #214
       // e2e drives the chooser through it. Returns '' if the chooser is
-      // dismissed. The existing __basher_importGltf seam above is left intact —
-      // it is the P7.5/P7.6 fixture entry (Chesterton).
+      // dismissed.
       w.__basher_ingestGltfFolder = async (
         files: ReadonlyArray<IngestFile>,
         folderName: string,

@@ -219,10 +219,11 @@ describe('#645 — the slot table is derived once, through the Object', () => {
     // arm that has an Object in reach.
     // #1152 — the same seven; the two `ObjectR` reads moved with the Object's own draw into
     // `ObjectSelfR` when `ObjectR` became "the Object, and its children in its space".
+    // 7 → 6 at #1053: `GltfAssetR` is gone with the clone road — a kept clone import is not
+    // drawn — so the caller #389 added leaves with the renderer it lived in.
     const road = invocationsOf('objectSlotsOf', PRODUCTION_ROADS);
-    expect(road).toHaveLength(7);
+    expect(road).toHaveLength(6);
     expect(road.map((c) => c.fn).sort()).toEqual([
-      'GltfAssetR',
       'ObjectMeshR',
       'ObjectSelfR',
       'ObjectSelfR',

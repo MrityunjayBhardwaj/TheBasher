@@ -41,6 +41,8 @@
 // pivots about the origin (`SceneFromDAG.tsx`, `applyGltfUvTransform`), the authored road
 // about the texture centre (`materialRegistry.ts`, `prep`). Identical numbers therefore
 // mean different placements on the two roads for any scale ≠ 1 or rotation ≠ 0.
+// #1053 — the glTF overlay road is gone (it drew the clone); a native import rebases a glTF
+// placement to the centre at import (`nativeGltfImport.ts`), so one apply road remains.
 //
 // So the pivot convention travels with the ROAD, not with the value — and the value this
 // slice starts writing is origin-pivot. Today nothing reads it at all, which means the
@@ -115,14 +117,50 @@ const SOURCE_OF: Record<Slot, (t: Khr) => GltfJsonMaterial> = {
   metalness: (t) => ({ pbrMetallicRoughness: { metallicRoughnessTexture: info(2, t) } }),
   emissive: (t) => ({ emissiveTexture: info(3, t) }),
   ao: (t) => ({ occlusionTexture: info(4, t) }),
+  // #1327 — the coat's three textures, inside `KHR_materials_clearcoat`.
+  coat: (t) => ({ extensions: { KHR_materials_clearcoat: { clearcoatTexture: info(5, t) } } }),
+  coatRoughness: (t) => ({
+    extensions: { KHR_materials_clearcoat: { clearcoatRoughnessTexture: info(6, t) } },
+  }),
+  coatNormal: (t) => ({
+    extensions: { KHR_materials_clearcoat: { clearcoatNormalTexture: info(7, t) } },
+  }),
+  // #1328 — the transmission texture, inside `KHR_materials_transmission`.
+  transmission: (t) => ({
+    extensions: { KHR_materials_transmission: { transmissionTexture: info(8, t) } },
+  }),
+  // #1331 — the volume's thickness texture, inside `KHR_materials_volume`.
+  thickness: (t) => ({ extensions: { KHR_materials_volume: { thicknessTexture: info(9, t) } } }),
+  // #1329 — the sheen's two textures, inside `KHR_materials_sheen`.
+  fuzzColor: (t) => ({ extensions: { KHR_materials_sheen: { sheenColorTexture: info(10, t) } } }),
+  fuzzRoughness: (t) => ({
+    extensions: { KHR_materials_sheen: { sheenRoughnessTexture: info(11, t) } },
+  }),
+  // #1330 — the specular's two textures, inside `KHR_materials_specular`.
+  specularWeight: (t) => ({
+    extensions: { KHR_materials_specular: { specularTexture: info(12, t) } },
+  }),
+  specularColor: (t) => ({
+    extensions: { KHR_materials_specular: { specularColorTexture: info(13, t) } },
+  }),
 };
 
-/** Deep-merge two material fragments — `pbrMetallicRoughness` holds three of the five
- *  texture slots, so a shallow spread would drop one of any two that share it. */
+/** Deep-merge two material fragments — `pbrMetallicRoughness` holds three of the core texture
+ *  slots and an extension can hold several (the coat's three), so a shallow spread would drop one
+ *  of any two that share either. Each extension merges by name. */
 function merge(a: GltfJsonMaterial, b: GltfJsonMaterial): GltfJsonMaterial {
   const pbr = { ...a.pbrMetallicRoughness, ...b.pbrMetallicRoughness };
+  const extA = (a.extensions ?? {}) as Record<string, object>;
+  const extB = (b.extensions ?? {}) as Record<string, object>;
+  const extensions = Object.fromEntries(
+    [...new Set([...Object.keys(extA), ...Object.keys(extB)])].map((k) => [
+      k,
+      { ...extA[k], ...extB[k] },
+    ]),
+  );
   const out: GltfJsonMaterial = { ...a, ...b };
   if (Object.keys(pbr).length > 0) out.pbrMetallicRoughness = pbr;
+  if (Object.keys(extensions).length > 0) out.extensions = extensions;
   return out;
 }
 
@@ -265,7 +303,8 @@ describe('#550 case 6 — the origin-pivot values have no reader, and that is EX
     // AUTHORED road's compile, so the values are already centre-pivot and carry unchanged.
     'src/app/animate/dispatchApplyTransform.ts':
       'AUTHORED road — bakes each slot’s resolved placement, centre pivot, unconverted',
-    'src/viewport/SceneFromDAG.tsx': 'glTF OVERLAY road — origin pivot, the captured convention',
+    // #1053 — `SceneFromDAG.tsx` left this list with the clone renderer (a kept clone import is
+    // not drawn); its surviving `BakedMeshR` places a bake's maps without naming this field.
     // #550 inspector slice — the EDIT side. Owns the field's presence so the panel
     // cannot reintroduce an empty bag; pass-through, no pivot conversion.
     'src/app/material/perMapPlacementEdit.ts':
@@ -295,12 +334,10 @@ describe('#550 case 6 — the origin-pivot values have no reader, and that is EX
    */
   const PIVOT_OF_ROAD: Record<string, 'CENTRE_PIVOT' | 'ORIGIN_PIVOT'> = {
     'src/app/materialRegistry.ts': 'CENTRE_PIVOT',
-    'src/viewport/applyGltfUvTransform.ts': 'ORIGIN_PIVOT',
-    // #553 — the glTF road's OTHER half. `applyGltfUvTransform` places the textures a
-    // child INHERITS from the imported clone; this one places the textures the director
-    // REPLACES, which arrive later from OPFS on a deferred pass. Same road, so the same
-    // pivot — it was the missing caller here that let a replaced map draw unplaced.
-    'src/app/material/gltfMapOverlay.ts': 'ORIGIN_PIVOT',
+    // #1053 — `applyGltfUvTransform.ts` (the clone road's inherited textures, ORIGIN_PIVOT) went with
+    // the clone renderer, its one caller.
+    // #553 — the glTF road's OTHER half, `gltfMapOverlay.ts` (replaced maps, ORIGIN_PIVOT),
+    // went with the clone renderer in #1053.
     // #1136 — `BakedMeshR` places the per-map placement a bake captured. The capture restates
     // whatever pivot the source drew with about the centre, so this road is the authored one's.
     'src/viewport/SceneFromDAG.tsx': 'CENTRE_PIVOT',

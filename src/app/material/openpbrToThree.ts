@@ -13,12 +13,16 @@
 //
 // REF: CONTEXT D-03 (core-10 table); PLAN W1 (1.5); vyapti V29/V32; #178.
 
+import { MATERIAL_MAP_SLOT_TABLE } from '../../nodes/types';
 import type {
+  BakedMaterialMaps,
   BakedTextureRef,
   InlineMaterialMaps,
   InlineMaterialSpec,
+  IrMapSlot,
   UvPlacement,
 } from '../../nodes/types';
+import { MAP_UV_SLOTS } from '../../nodes/materialSchema';
 import type { SlotPlacements } from './uvPlacement';
 
 /**
@@ -38,41 +42,21 @@ export const EMISSION_NIT_TO_INTENSITY = 1.0;
 export const DEFAULT_TRANSMISSION_THICKNESS = 0.5;
 
 /** The three.js map slots openpbrToThree emits (BakedTextureRef handle or null). */
-export interface ThreeMaterialMaps {
-  readonly map: BakedTextureRef | null;
-  readonly normalMap: BakedTextureRef | null;
-  readonly roughnessMap: BakedTextureRef | null;
-  readonly metalnessMap: BakedTextureRef | null;
-  readonly emissiveMap: BakedTextureRef | null;
-  readonly aoMap: BakedTextureRef | null;
-}
+export type ThreeMaterialMaps = BakedMaterialMaps;
 
 /** A per-slot UV placement bag in THREE's slot vocabulary (the compile output's). */
 export type ThreeMapUvTransforms = SlotPlacements<keyof ThreeMaterialMaps>;
 
 /**
- * The IR slot → three.js slot correspondence, stated ONCE for this whole compile
- * target and consumed by everything that needs it (the map handles and the per-map
- * placements). Keyed by `keyof InlineMaterialMaps`, so a seventh IR slot is a TYPE
- * error here rather than a slot that silently never reaches a texture.
- *
- * Both apply roads name their slots in THREE's vocabulary, so this is the only
- * place the two vocabularies meet. A second copy in the registry and a third in the
- * glTF overlay is exactly the shape that already cost this issue one bug at the
- * import end (six IR slots over five glTF texture fields).
+ * The IR slot → three.js slot correspondence, consumed by everything on this compile target that
+ * needs it (the map handles and the per-map placements). READ OFF the slot table (#1324), which is
+ * the one place the two vocabularies meet; a second copy in the registry and a third in the glTF
+ * overlay is exactly the shape that already cost one bug at the import end (six IR slots over five
+ * glTF texture fields).
  */
-export const THREE_SLOT_OF: {
-  readonly [K in keyof InlineMaterialMaps]: keyof ThreeMaterialMaps;
-} = {
-  albedo: 'map',
-  normal: 'normalMap',
-  roughness: 'roughnessMap',
-  metalness: 'metalnessMap',
-  emissive: 'emissiveMap',
-  ao: 'aoMap',
-};
-
-const IR_MAP_SLOTS = Object.keys(THREE_SLOT_OF) as (keyof InlineMaterialMaps)[];
+export const THREE_SLOT_OF = Object.fromEntries(
+  MAP_UV_SLOTS.map((slot) => [slot, MATERIAL_MAP_SLOT_TABLE[slot].three]),
+) as { readonly [K in IrMapSlot]: (typeof MATERIAL_MAP_SLOT_TABLE)[K]['three'] };
 
 /** Flat three.js MeshPhysicalMaterial parameter bag (the compile output). */
 export interface ThreeMaterialParams {
@@ -145,6 +129,32 @@ export interface ThreeMaterialParams {
    * access to. Absent rather than empty, same trap, same answer.
    */
   readonly mapUvLayers?: ThreeMapUvLayers;
+  /**
+   * #1123 — the normal map's strength, the IR's `mapStrengths.normal`. A STRENGTH, not three's
+   * signed `normalScale` vector: which way y points depends on the texture as uploaded, which only
+   * the builder holds (`normalScaleFor`, #1325). Absent means 1, and absent rather than 1, same trap.
+   */
+  readonly normalScale?: number;
+  /** #1123 — the occlusion map's strength (three's `aoMapIntensity`). Absent means 1. */
+  readonly aoMapIntensity?: number;
+  /** #1327 — the coat normal map's strength (unsigned; see `normalScale`). Absent means 1. */
+  readonly clearcoatNormalScale?: number;
+  /** #1123 — `'basic'`: build an unlit material. Absent means lit. */
+  readonly materialClass?: 'basic';
+  /** #1123 — the fuzz lobe as three's sheen (weight, sRGB hex colour, roughness). Absent: none. */
+  readonly sheen?: number;
+  readonly sheenColor?: string;
+  readonly sheenRoughness?: number;
+  /** #1321 — the specular lobe's weight and colour (sRGB hex). Absent: three's 1 and white. */
+  readonly specularIntensity?: number;
+  readonly specularColor?: string;
+  /**
+   * #1322 — Beer's-law absorption: three's `attenuationDistance` / `attenuationColor`, from the
+   * transmission lobe's depth and colour. Both absent unless a depth is set (a colour alone is
+   * OpenPBR's tint, which three has no way to draw).
+   */
+  readonly attenuationDistance?: number;
+  readonly attenuationColor?: string;
 }
 
 /** The UV layer a map slot samples, in THREE's slot vocabulary. */
@@ -170,7 +180,8 @@ export function openpbrToThree(ir: InlineMaterialSpec): ThreeMaterialParams {
     clearcoat: ir.coat.weight,
     clearcoatRoughness: ir.coat.roughness,
     transmission,
-    thickness: transmission > 0 ? DEFAULT_TRANSMISSION_THICKNESS : 0,
+    // #1322 — a file's volume thickness when it gives one; the default otherwise.
+    thickness: transmission > 0 ? (ir.geometry.thickness ?? DEFAULT_TRANSMISSION_THICKNESS) : 0,
     emissive: ir.emission.color,
     emissiveIntensity: ir.emission.luminance * EMISSION_NIT_TO_INTENSITY,
     opacity,
@@ -187,6 +198,28 @@ export function openpbrToThree(ir: InlineMaterialSpec): ThreeMaterialParams {
     uvTransform: ir.uvTransform, // v0.6 #3 — pass through; the renderer applies it
     // #550 — the key is OMITTED, not set to undefined, when there is nothing per-map.
     ...(perMap ? { mapUvTransforms: perMap } : {}),
+    // #1123 — the two map strengths, each omitted at its default for the same reason.
+    ...(ir.mapStrengths?.normal !== undefined ? { normalScale: ir.mapStrengths.normal } : {}),
+    ...(ir.mapStrengths?.ao !== undefined ? { aoMapIntensity: ir.mapStrengths.ao } : {}),
+    ...(ir.mapStrengths?.coatNormal !== undefined
+      ? { clearcoatNormalScale: ir.mapStrengths.coatNormal }
+      : {}),
+    // #1123 — unlit; omitted when lit, same reason.
+    ...(ir.unlit ? { materialClass: 'basic' as const } : {}),
+    // #1123 — fuzz → three's sheen, omitted without a lobe.
+    ...(ir.fuzz ? { sheen: ir.fuzz.weight } : {}),
+    ...(ir.fuzz ? { sheenColor: ir.fuzz.color } : {}),
+    ...(ir.fuzz ? { sheenRoughness: ir.fuzz.roughness } : {}),
+    // #1321 — omitted at OpenPBR's default, which is three's too.
+    ...(ir.specular.weight !== undefined ? { specularIntensity: ir.specular.weight } : {}),
+    ...(ir.specular.color !== undefined ? { specularColor: ir.specular.color } : {}),
+    // #1322 — absorption only with a depth.
+    ...(ir.transmission.depth !== undefined && ir.transmission.depth > 0
+      ? { attenuationDistance: ir.transmission.depth }
+      : {}),
+    ...(ir.transmission.depth !== undefined && ir.transmission.depth > 0
+      ? { attenuationColor: ir.transmission.color ?? '#ffffff' }
+      : {}),
   };
   // NOTE: ir.unsupported is intentionally NOT read — those lobes have no WebGL
   // MeshPhysical representation (v0.7 TSL backend renders them).
@@ -195,7 +228,11 @@ export function openpbrToThree(ir: InlineMaterialSpec): ThreeMaterialParams {
 /** The map handles, re-keyed into THREE's vocabulary through {@link THREE_SLOT_OF}. */
 function threeMaps(maps: InlineMaterialMaps): ThreeMaterialMaps {
   const out = {} as Record<keyof ThreeMaterialMaps, BakedTextureRef | null>;
-  for (const slot of IR_MAP_SLOTS) out[THREE_SLOT_OF[slot]] = maps[slot];
+  for (const slot of MAP_UV_SLOTS) {
+    // An unseeded slot the IR does not hold stays absent here too (#1324).
+    const ref = maps[slot];
+    if (ref !== undefined) out[THREE_SLOT_OF[slot]] = ref;
+  }
   return out;
 }
 
@@ -212,7 +249,7 @@ export function threeMapUvTransforms(
   // `-readonly` because a mapped type over ThreeMaterialMaps inherits its readonly
   // modifiers; this is the local builder, and the RETURNED type is readonly again.
   const out: { -readonly [K in keyof ThreeMaterialMaps]?: UvPlacement } = {};
-  for (const slot of IR_MAP_SLOTS) {
+  for (const slot of MAP_UV_SLOTS) {
     const placement = perMap[slot];
     if (placement) out[THREE_SLOT_OF[slot]] = placement;
   }
@@ -231,7 +268,7 @@ export function threeMapUvLayers(
 ): ThreeMapUvLayers | undefined {
   if (!perMap) return undefined;
   const out: { -readonly [K in keyof ThreeMaterialMaps]?: string } = {};
-  for (const slot of IR_MAP_SLOTS) {
+  for (const slot of MAP_UV_SLOTS) {
     const layer = perMap[slot];
     if (layer) out[THREE_SLOT_OF[slot]] = layer;
   }

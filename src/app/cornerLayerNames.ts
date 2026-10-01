@@ -54,11 +54,11 @@ export const COLOUR_BUFFER: string = cornerLayerBufferNames([{ type: 'float4' }]
  * build draws them — the order {@link cornerLayerBufferNames} turns into `uv`, `uv1`, … and
  * `color`.
  *
- * An EMPTY list means "this mesh has no layer list to resolve against", which is a different
- * claim from "this mesh has no layers": a `gltf` handle draws three's copy of the file, whose
- * buffers are numbered rather than named, and the road that draws it resolves by number
- * instead (`gltfMapOverlay`). Either way no name resolves here, which is the answer that
- * makes a material naming a layer decline rather than guess.
+ * An EMPTY list means the mesh carries no corner layer (a stored mesh with none, or a bevel over
+ * a source with no UV set), so no name resolves here, which is the answer that makes a material
+ * naming a layer decline rather than guess. Until #1053 it could also mean "no layer list to
+ * resolve against": a `gltf` handle drew three's copy of the file, whose buffers were numbered
+ * rather than named. Every arm now states its list.
  */
 export function cornerLayerNamesOf(descriptor: GeometryDescriptor): readonly NamedCornerLayer[] {
   switch (descriptor.kind) {
@@ -81,10 +81,6 @@ export function cornerLayerNamesOf(descriptor: GeometryDescriptor): readonly Nam
       // so whatever the source was named, one UV layer survives. That the OTHER layers are
       // dropped on the way in is #1119, not this module's to paper over.
       return PRIMITIVE_UV;
-
-    case 'gltf':
-      // The file's-copy road. Numbered buffers, no layer list — see the doc above.
-      return [];
 
     case 'array':
     case 'mirror':

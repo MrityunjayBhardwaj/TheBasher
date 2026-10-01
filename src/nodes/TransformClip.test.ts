@@ -217,8 +217,8 @@ describe('TransformClip evaluator', () => {
 
   // P7.10 — closure-reuse property: the SAME closure invoked at different
   // times produces the corresponding interpolated tracks. This is the
-  // mechanism that lets GltfAssetR's useFrame call .sample(currentTime)
-  // every frame without re-evaluating the DAG. Detection: a future revert
+  // mechanism that lets a reader call .sample(currentTime) every frame
+  // without re-evaluating the DAG. Detection: a future revert
   // that captures `seconds` at evaluate time (instead of as a parameter)
   // would fail this test — same closure would return the same tracks
   // regardless of the sample-time argument.

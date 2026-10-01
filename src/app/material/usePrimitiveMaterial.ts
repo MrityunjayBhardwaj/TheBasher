@@ -84,13 +84,12 @@
 //      docs/RENDER-RESOURCE-IDENTITY-DESIGN.md S3; issues #530, #533, #535, #536.
 
 import { useLayoutEffect } from 'react';
-import type * as THREE from 'three';
 import type { InlineMaterialSpec, MaterialValue } from '../../nodes/types';
-import { useBakedTexture } from '../asset/bakedTextureLoader';
+import { useBakedTextures } from '../asset/bakedTextureLoader';
 // The accessor surface, imported by NAME. `import * as materialRegistry` would name the
 // module and never the binding, which is exactly the door this seam exists to declare —
 // see `registryDoors.gate.test.ts` case 1, which refuses the namespace form outright.
-import { get as getMaterial, release, retain } from '../materialRegistry';
+import { get as getMaterial, release, retain, type PrimitiveMaterial } from '../materialRegistry';
 import { compilePrimitiveMaterial, primitiveMaterialInputs } from './primitiveMaterialInputs';
 import type { NamedCornerLayer } from '../cornerLayerNames';
 
@@ -111,20 +110,14 @@ export function usePrimitiveMaterial(
    * carries no layer list, so no name resolves and nothing is drawn that was not before.
    */
   layers: readonly NamedCornerLayer[],
-): THREE.MeshPhysicalMaterial {
+): PrimitiveMaterial {
   const compiled = compilePrimitiveMaterial(ir, override);
-  // v0.6 #2 (#178, W5) — suspense-load the 6 map slots UNCONDITIONALLY (rules-of-
-  // hooks safe; useBakedTexture(null) is a no-op). The OPFS read + decode lives in
-  // the loader hook, never in the resolver (V29). The ref carries the colorspace;
-  // re-assert it per slot in the registry's build (M5 — a data map as sRGB washes
-  // out), mirroring BakedMeshR's sRGB/linear split. This is why compiling and
-  // assembling are two calls: the refs to suspend on come out of the compile.
-  const mapTex = useBakedTexture(compiled.maps.map);
-  const normalTex = useBakedTexture(compiled.maps.normalMap);
-  const roughnessTex = useBakedTexture(compiled.maps.roughnessMap);
-  const metalnessTex = useBakedTexture(compiled.maps.metalnessMap);
-  const aoTex = useBakedTexture(compiled.maps.aoMap);
-  const emissiveTex = useBakedTexture(compiled.maps.emissiveMap);
+  // v0.6 #2 (#178, W5) — suspense-load every map slot the table names (#1324); a null or absent
+  // ref loads nothing. The OPFS read + decode lives in the loader hook, never in the resolver
+  // (V29). The ref carries the colorspace; re-assert it per slot in the registry's build (M5 — a
+  // data map as sRGB washes out), mirroring BakedMeshR. This is why compiling and assembling are
+  // two calls: the refs to suspend on come out of the compile.
+  const textures = useBakedTextures(compiled.maps);
   // Both halves from one pure place, so "same key ⇒ same spec" has a tier below the
   // browser to be checked at. v0.6 #3 (#181, W2)'s ONE shared UV placement travels on
   // the spec and is applied to all 6 map clones by the build.
@@ -135,14 +128,7 @@ export function usePrimitiveMaterial(
     shading,
     compiled,
     layers,
-    textures: {
-      map: mapTex,
-      normalMap: normalTex,
-      roughnessMap: roughnessTex,
-      metalnessMap: metalnessTex,
-      aoMap: aoTex,
-      emissiveMap: emissiveTex,
-    },
+    textures,
   });
   // The registry builds and owns the material AND its texture clones (V20 single
   // writer, moved one level out). `get` deliberately does not count holders — a

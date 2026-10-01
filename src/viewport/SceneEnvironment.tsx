@@ -55,7 +55,7 @@ export function SceneEnvironment({ value }: { value: EnvironmentValue | undefine
   // past Suspense. Wrap in AssetErrorBoundary so it surfaces in the asset banner
   // and renders nothing — the rest of the scene survives — instead of nuking the
   // viewport. Keyed by the source so a re-import / preset change remounts fresh
-  // and re-attempts (mirrors the GltfAssetR boundary at SceneFromDAG.tsx:549).
+  // and re-attempts.
   if (source.kind === 'preset') {
     const preset = isEnvPreset(source.name) ? source.name : 'studio';
     return (

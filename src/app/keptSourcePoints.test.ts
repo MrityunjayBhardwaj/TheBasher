@@ -32,7 +32,6 @@ import {
 import { keptSourcePoints, pointCountOf, weldByPosition } from './pointIdentity';
 import { faceArityOf, faceElementStarts } from './faceCount';
 import { getForRead } from './geometryRegistry';
-import { __clearGltfCloneRegistryForTests, registerGltfClone } from './asset/gltfCloneRegistry';
 
 const box = boxGeometryRef([1, 1, 1], null);
 const s8 = sphereGeometryRef(1, 8, 6, null);
@@ -128,25 +127,10 @@ describe('#712 — the derived list matches a compacted build', () => {
   });
 
   it('refuses a source whose buffers live elsewhere', () => {
-    const mesh = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshBasicMaterial());
-    mesh.name = 'Cube';
-    const group = new THREE.Group();
-    group.add(mesh);
-    registerGltfClone('u/kept-points.gltf', group);
-    try {
-      const descriptor: GeometryDescriptor = {
-        kind: 'gltf',
-        assetRef: 'u/kept-points.gltf',
-        childName: 'Cube',
-        faceCount: 12,
-      };
-      const imported: GeometryRef = { key: `k|${JSON.stringify(descriptor)}`, descriptor };
-      // A clone IS mounted, so this null is the descriptor's escape hatch and not an
-      // artefact of an empty registry — the control that #712's own measurement lacked.
-      expect(getForRead(imported)).not.toBeNull();
-      expect(keptSourcePoints(subsetOf(imported, '0'))).toBeNull();
-    } finally {
-      __clearGltfCloneRegistryForTests();
-    }
+    // #1053 — this row used a `gltf` source until that kind went; `baked` is the kind left whose
+    // bytes are outside the descriptor.
+    const descriptor: GeometryDescriptor = { kind: 'baked', hash: 'kept-points', vertexCount: 24 };
+    const elsewhere: GeometryRef = { key: `k|${JSON.stringify(descriptor)}`, descriptor };
+    expect(keptSourcePoints(subsetOf(elsewhere, '0'))).toBeNull();
   });
 });

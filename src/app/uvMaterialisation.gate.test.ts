@@ -26,13 +26,8 @@
 //      issues #786, #994, #776, #738, #1005.
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import {
-  availabilityOf,
-  clear,
-  drawnByAssetClone,
-  getForRead,
-  readGeometry,
-} from './geometryRegistry';
+import { BoxGeometry } from 'three';
+import { availabilityOf, clear, getForRead, prime, readGeometry } from './geometryRegistry';
 import { alignedSplitRims } from './builtRims';
 import {
   bevelGeometryRef,
@@ -246,20 +241,21 @@ describe('#786 the authored layer reaches the buffer', () => {
   });
 
   it('🔴 a source with NO polygons PASSES THROUGH rather than vanishing', () => {
-    // #738's set, and the regression this arm exists to prevent. An imported mesh states no face
-    // arity, so the projection cannot materialise anything over it. Answering the composed
-    // availability there would turn `drawnByAssetClone` false, send the Object looking for its
-    // own buffers, and draw NOTHING — a director watching their imported model disappear the
-    // moment they add a modifier. So it passes through, unchanged and still drawn.
-    const asset: GeometryRef = {
-      key: 'gltf|asset-a|Cube',
-      descriptor: { kind: 'gltf', assetRef: 'asset-a', childName: 'Cube' },
+    // #738's set, and the regression this arm exists to prevent: a source that states no face
+    // arity cannot have a layer materialised over it, so the projection hands back the source's
+    // own buffers unchanged rather than refusing to build and drawing nothing. The `gltf` kind
+    // was the motivating source until #1053; `baked` is the one left.
+    const source: GeometryRef = {
+      key: 'baked|uv-pass-through',
+      descriptor: { kind: 'baked', hash: 'uv-pass-through', vertexCount: 24 },
     };
-    const ref = uvProjectGeometryRef(asset, SIZE);
-    expect(availabilityOf(ref.descriptor)).toBe('clone');
-    expect(availabilityOf(ref.descriptor)).toBe(availabilityOf(asset.descriptor));
-    expect(drawnByAssetClone(ref.descriptor)).toBe(true);
-    // And the read door agrees with the availability rule — one answer, not two.
-    expect(readGeometry(ref).status).toBe('elsewhere');
+    const ref = uvProjectGeometryRef(source, SIZE);
+    expect(faceArityOf(source.descriptor)).toBeNull();
+    expect(availabilityOf(ref.descriptor)).toBe(availabilityOf(source.descriptor));
+    // Before the bytes land both wait; once they do, the projection IS the source's instance.
+    expect(readGeometry(ref).status).toBe('pending');
+    const primed = new BoxGeometry(1, 1, 1);
+    prime(source, primed);
+    expect(getForRead(ref)).toBe(primed);
   });
 });

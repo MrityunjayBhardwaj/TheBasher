@@ -51,23 +51,9 @@
 //      (container + accessors), src/app/meshGeometryData.ts (packing), src/nodes/PolyMeshData.ts;
 //      issues #1049, #1054, #1050, #1051, #1052, #393.
 
-import {
-  BufferAttribute,
-  BufferGeometry,
-  Matrix4,
-  Quaternion,
-  Vector3,
-  ClampToEdgeWrapping,
-  LinearFilter,
-  LinearMipmapLinearFilter,
-  LinearMipmapNearestFilter,
-  MirroredRepeatWrapping,
-  NearestFilter,
-  NearestMipmapLinearFilter,
-  NearestMipmapNearestFilter,
-  RepeatWrapping,
-} from 'three';
+import { BufferAttribute, BufferGeometry, Matrix4, Quaternion, Vector3 } from 'three';
 import type {
+  BakedTextureMagFilter,
   BakedTextureRef,
   InlineMaterialSpec,
   MeshCornerLayer,
@@ -78,6 +64,7 @@ import type {
   Vec3,
 } from '../../nodes/types';
 import type { Op } from '../dag/types';
+import * as MikkTSpace from 'three/examples/jsm/libs/mikktspace.module.js';
 import {
   decodeDataUri,
   parseGltfContainer,
@@ -91,7 +78,9 @@ import {
   hashId,
   type GltfImportChainArgs,
 } from './gltfImportChain';
-import { gltfJsonMaterialToOpenpbr } from './gltfJsonMaterialToOpenpbr';
+import { DRACO_EXTENSION, decodeDracoPrimitives, usesDraco, type DecodeDraco } from './gltfDraco';
+import { gltfJsonMaterialToOpenpbr, HELD_TEXTURE_PATHS } from './gltfJsonMaterialToOpenpbr';
+import { FILTER_NAME_OF_GLTF, WRAP_NAME_OF_GLTF } from '../../nodes/materialSchema';
 import { readNativeAnimations, type ClipGltfJson, type NativeAnimation } from './nativeGltfClip';
 import {
   leftBehindAsEmpty,
@@ -163,13 +152,23 @@ export interface NativeImportResult {
     readonly channels: readonly string[];
     readonly track: string | null;
   }[];
+  /**
+   * #1384 — what the file carried that the import left behind on purpose, one sentence each, for the
+   * surfaces that report an import (never the refusal banner: the import succeeded). Empty when
+   * nothing was left behind.
+   */
+  readonly notices: readonly string[];
 }
 
 /** The parts of a glTF document this road reads beyond what `GltfJson` declares. */
 type NativeGltfJson = GltfJson & {
   extensionsUsed?: string[];
   extensionsRequired?: string[];
-  textures?: { source?: number; sampler?: number }[];
+  textures?: {
+    source?: number;
+    sampler?: number;
+    extensions?: { EXT_texture_webp?: { source?: number } };
+  }[];
   images?: { uri?: string; bufferView?: number; mimeType?: string }[];
   samplers?: { wrapS?: number; wrapT?: number; magFilter?: number; minFilter?: number }[];
   meshes?: {
@@ -212,6 +211,28 @@ const HELD_ATTRIBUTES: ReadonlySet<string> = new Set([
   'WEIGHTS_0',
 ]);
 
+// #1381 — what a mesh may carry that the stored mesh DERIVES rather than holds. A file's tangents are
+// the MikkTSpace tangents of its own positions, normals and UVs (glTF 2.0 §3.7.2.1, `Specification.adoc:1768`),
+// Blender never reads them (no `TANGENT` in `io_scene_gltf2/blender/imp/`, 5.1.1) and a project
+// saves authored mesh data, never derived data. So they come across by being CHECKED and dropped:
+// `unreproducedTangents` refuses a file whose tangents MikkTSpace does not give back.
+const DERIVED_ATTRIBUTES: ReadonlySet<string> = new Set(['TANGENT']);
+
+// #1384 — every joint and weight set, `JOINTS_0`, `WEIGHTS_0`, `JOINTS_1`, …. On a mesh no node skins
+// they name joints of nothing, and Blender reads them only when the mesh is skinned
+// (`io_scene_gltf2/blender/imp/mesh.py:92`, 5.1.1): otherwise they are dropped, and so are they here,
+// with a notice (user decision, 2026-09-30).
+const SKIN_SET = /^(JOINTS|WEIGHTS)_\d+$/;
+
+/**
+ * #1381 — how far a file's tangent may sit from the MikkTSpace one before the file is refused.
+ * Measured 2026-09-30 over the Khronos tangent assets, MikkTSpace against the file's own `TANGENT`:
+ * mean 0.0001° (`NormalTangentMirrorTest`, 15,720 corners) and 0.046°, max 0.97°
+ * (`AnisotropyRotationTest`, 22,428); three's own non-MikkTSpace `computeTangents` reaches 10.6° on
+ * the first. Two degrees keeps float noise in and a different algorithm out.
+ */
+const TANGENT_TOLERANCE_DEGREES = 2;
+
 const COMPONENT_BYTES: Record<number, number> = {
   5120: 1,
   5121: 1,
@@ -252,6 +273,11 @@ function widenToRgba(rgb: Float32Array): Float32Array {
 // wider because three's loader decodes compression and quantization for it; this reader does not,
 // so those are refused here too. A missing entry refuses a file that could have come across, which
 // is the safe direction.
+const LIGHTS_EXTENSION = 'KHR_lights_punctual';
+
+/** #1320 — WebP texture sources. */
+const WEBP_EXTENSION = 'EXT_texture_webp';
+
 const HELD_EXTENSIONS = new Set([
   // #1123 — held per texture below, restated about the native material's pivot.
   'KHR_texture_transform',
@@ -259,35 +285,28 @@ const HELD_EXTENSIONS = new Set([
   'KHR_materials_clearcoat',
   'KHR_materials_transmission',
   'KHR_materials_emissive_strength',
+  // #1320 — a texture's WebP source is read when it is the only one (see `readTextureImage`).
+  WEBP_EXTENSION,
+  // #1123 — an unlit surface, the material's `unlit`.
+  'KHR_materials_unlit',
+  // #1123 — sheen, the material's `fuzz` lobe (its textures stay refused by slot).
+  'KHR_materials_sheen',
+  // #1321 — specular weight and colour, on the material's `specular` lobe (a colour above 1 is
+  // refused in `materialRefusal`; the textures stay refused by slot).
+  'KHR_materials_specular',
+  // #1322 — a volume: the transmission lobe's colour and depth, and `geometry.thickness` (the
+  // thickness texture stays refused by slot).
+  'KHR_materials_volume',
 ]);
 
-// #1050 — where a material may sample a texture and still arrive whole: the slots the IR captures
-// (`IR_SLOT_SOURCES` in the converter). A texture anywhere else, such as a clearcoat texture inside
-// an extension this road holds for its factors, would be read past and left behind.
-const HELD_TEXTURE_SLOTS = new Set([
-  'pbrMetallicRoughness.baseColorTexture',
-  'pbrMetallicRoughness.metallicRoughnessTexture',
-  'normalTexture',
-  'occlusionTexture',
-  'emissiveTexture',
-]);
+// #1050 — where a material may sample a texture and still arrive whole: the slots the IR captures,
+// read off the converter's slot sources (#1324). A texture anywhere else, such as a clearcoat
+// texture inside an extension this road holds for its factors, would be read past and left behind.
+const HELD_TEXTURE_SLOTS = HELD_TEXTURE_PATHS;
 
 // A glTF sampler's GL enums as three.js constants, by GLTFLoader's own tables and defaults
 // (`GLTFLoader.js:2198-2211`, `:3229-3232`, three r169), so a native texture samples as the clone
 // road's does. An absent or unknown value takes the loader's default.
-const THREE_FILTER_OF: Readonly<Record<number, number>> = {
-  9728: NearestFilter,
-  9729: LinearFilter,
-  9984: NearestMipmapNearestFilter,
-  9985: LinearMipmapNearestFilter,
-  9986: NearestMipmapLinearFilter,
-  9987: LinearMipmapLinearFilter,
-};
-const THREE_WRAP_OF: Readonly<Record<number, number>> = {
-  33071: ClampToEdgeWrapping,
-  33648: MirroredRepeatWrapping,
-  10497: RepeatWrapping,
-};
 
 /**
  * The vertex attributes a mesh carries that no render buffer slot draws, or `null` when a mesh is
@@ -304,10 +323,19 @@ const THREE_WRAP_OF: Readonly<Record<number, number>> = {
  *
  * #1052 — asked of EVERY primitive: the mesh they become holds the union of what they carry.
  */
-function undrawableAttributes(json: NativeGltfJson, meshIndex: number): NativeImportRefusal | null {
+function undrawableAttributes(
+  json: NativeGltfJson,
+  meshIndex: number,
+  skinned: boolean,
+): NativeImportRefusal | null {
   for (const prim of json.meshes?.[meshIndex]?.primitives ?? []) {
     const attributes = prim.attributes ?? {};
-    const undrawable = Object.keys(attributes).filter((name) => !HELD_ATTRIBUTES.has(name));
+    const undrawable = Object.keys(attributes).filter(
+      (name) =>
+        !HELD_ATTRIBUTES.has(name) &&
+        !DERIVED_ATTRIBUTES.has(name) &&
+        !(!skinned && SKIN_SET.test(name)),
+    );
     if (undrawable.length > 0) {
       return {
         refused: `mesh ${meshIndex} carries ${undrawable.join(', ')}, which a native mesh has no buffer slot to draw`,
@@ -324,6 +352,105 @@ function undrawableAttributes(json: NativeGltfJson, meshIndex: number): NativeIm
           issue: '#1063',
         };
       }
+    }
+  }
+  return null;
+}
+
+/**
+ * #1381 — a mesh whose `TANGENT` MikkTSpace does not reproduce, or `null` when every primitive's
+ * tangents are the ones the draw would derive (and so can be dropped without losing anything).
+ *
+ * Per primitive, as glTF defines the tangents it expects (`Specification.adoc`): computed from the
+ * positions, the normals and the UV set the NORMAL TEXTURE samples (`:1768`, `TEXCOORD_0` without
+ * one); ignored when the primitive has no normals (`:1760`), so those are dropped unchecked. Each
+ * corner's direction must lie within {@link TANGENT_TOLERANCE_DEGREES} and its handedness must
+ * match. MikkTSpace's W comes out negated against glTF's on every corner of both Khronos tangent
+ * assets (measured, 38,148 corners), which is why three's `computeMikkTSpaceTangents` negates it by
+ * default (`BufferGeometryUtils.js:14`); compared the same way here.
+ */
+async function unreproducedTangents(
+  json: NativeGltfJson,
+  buffers: Uint8Array[],
+  meshIndex: number,
+): Promise<NativeImportRefusal | null> {
+  const primitives = json.meshes?.[meshIndex]?.primitives ?? [];
+  for (const prim of primitives) {
+    const attributes = prim.attributes ?? {};
+    const tangentAccessor = attributes.TANGENT;
+    const normalAccessor = attributes.NORMAL;
+    if (typeof tangentAccessor !== 'number' || typeof normalAccessor !== 'number') continue;
+    const accessor = json.accessors?.[tangentAccessor] as
+      | { type?: string; componentType?: number }
+      | undefined;
+    if (accessor?.type !== 'VEC4' || accessor.componentType !== 5126) {
+      return {
+        refused: `mesh ${meshIndex} carries a TANGENT that is not four floats`,
+        issue: '#1381',
+      };
+    }
+    const elementBytes = elementBytesOf(json, tangentAccessor);
+    if (elementBytes !== undefined && interleaved(json, tangentAccessor, elementBytes)) {
+      return {
+        refused: `mesh ${meshIndex} stores interleaved vertex data, which this reader does not split`,
+        issue: '#1063',
+      };
+    }
+    const normalTexture = (
+      materialOf(json, typeof prim.material === 'number' ? prim.material : -1) as {
+        normalTexture?: { texCoord?: number };
+      }
+    ).normalTexture;
+    const set = typeof normalTexture?.texCoord === 'number' ? normalTexture.texCoord : 0;
+    const uvAccessor = attributes[`TEXCOORD_${set}`];
+    if (typeof uvAccessor !== 'number') {
+      return {
+        refused: `mesh ${meshIndex} carries tangents but no TEXCOORD_${set} to derive them from`,
+        issue: '#1381',
+      };
+    }
+    // Geometry only: the positions and corners the tangents sit on.
+    const read = readPrimitive(json, buffers, meshIndex, prim, false);
+    if ('refused' in read) return read;
+    const normals = readAccessor(json, buffers, normalAccessor);
+    const uvs = readAccessor(json, buffers, uvAccessor);
+    const tangents = readAccessor(json, buffers, tangentAccessor);
+    const n = read.corners.length;
+    const position = new Float32Array(n * 3);
+    const normal = new Float32Array(n * 3);
+    const texcoord = new Float32Array(n * 2);
+    for (let k = 0; k < n; k++) {
+      const v = read.corners[k];
+      position.set(read.positions.subarray(v * 3, v * 3 + 3), k * 3);
+      normal.set(normals.subarray(v * 3, v * 3 + 3), k * 3);
+      texcoord.set(uvs.subarray(v * 2, v * 2 + 2), k * 2);
+    }
+    await MikkTSpace.ready;
+    const derived = MikkTSpace.generateTangents(position, normal, texcoord);
+    let off = 0;
+    let worst = 0;
+    for (let k = 0; k < n; k++) {
+      const v = read.corners[k];
+      const [fx, fy, fz, fw] = tangents.subarray(v * 4, v * 4 + 4);
+      const [mx, my, mz, mw] = derived.subarray(k * 4, k * 4 + 4);
+      const lf = Math.hypot(fx, fy, fz);
+      const lm = Math.hypot(mx, my, mz);
+      const degrees =
+        lf > 0 && lm > 0
+          ? (Math.acos(Math.min(1, Math.max(-1, (fx * mx + fy * my + fz * mz) / (lf * lm)))) *
+              180) /
+            Math.PI
+          : 180;
+      if (degrees > TANGENT_TOLERANCE_DEGREES || Math.sign(fw) !== -Math.sign(mw)) {
+        off++;
+        worst = Math.max(worst, degrees);
+      }
+    }
+    if (off > 0) {
+      return {
+        refused: `mesh ${meshIndex} carries tangents that MikkTSpace does not reproduce (${off} of ${n} corners differ, by up to ${worst.toFixed(1)}°), so dropping them would change how it draws`,
+        issue: '#1381',
+      };
     }
   }
   return null;
@@ -361,15 +488,49 @@ function unsampledUvSet(
   return null;
 }
 
-/** The file-level reasons an import cannot be native yet, checked before any bytes are read. */
-function fileRefusal(json: NativeGltfJson): NativeImportRefusal | null {
-  if ((json.extensionsRequired?.length ?? 0) > 0) {
+/**
+ * The file-level reasons an import cannot be native yet, checked before any bytes are read.
+ * `decodesDraco`: the caller gave a Draco decoder, so Draco compression is read (#1063) rather than
+ * refused — it is decoded into ordinary accessors before anything else reads the document.
+ */
+function fileRefusal(json: NativeGltfJson, decodesDraco: boolean): NativeImportRefusal | null {
+  const required = json.extensionsRequired ?? [];
+  if (required.includes(DRACO_EXTENSION) && !decodesDraco) {
     return {
-      refused: `it requires extensions this reader does not implement (${json.extensionsRequired!.join(', ')})`,
+      refused: `it is Draco-compressed and no Draco decoder was given to the reader`,
       issue: '#1063',
     };
   }
-  const unheld = (json.extensionsUsed ?? []).filter((ext) => !HELD_EXTENSIONS.has(ext));
+  // #1320 — a file with no fallback image must require WebP, and this reader reads it.
+  const unimplemented = required.filter((ext) => ext !== DRACO_EXTENSION && ext !== WEBP_EXTENSION);
+  if (unimplemented.length > 0) {
+    return {
+      refused: `it requires extensions this reader does not implement (${unimplemented.join(', ')})`,
+      issue: '#1063',
+    };
+  }
+  // #1319 — a file's lights and cameras have no native node to arrive as yet. A camera needs no
+  // extension, so nothing below would catch it: its node would arrive as an empty Group and the
+  // camera would be gone without a word. Both are refused under the issue that brings them across,
+  // not under #1123, which is about what a material holds.
+  if ((json.extensionsUsed ?? []).includes(LIGHTS_EXTENSION)) {
+    return {
+      refused: `it carries lights (${LIGHTS_EXTENSION}), which a native import does not bring across yet`,
+      issue: '#1319',
+    };
+  }
+  const camera = json.nodes.findIndex(
+    (node) => typeof (node as { camera?: unknown }).camera === 'number',
+  );
+  if (camera >= 0) {
+    return {
+      refused: `node ${camera} ("${json.nodes[camera].name ?? ''}") is a camera, which a native import does not bring across yet`,
+      issue: '#1319',
+    };
+  }
+  const unheld = (json.extensionsUsed ?? []).filter(
+    (ext) => !HELD_EXTENSIONS.has(ext) && !(ext === DRACO_EXTENSION && decodesDraco),
+  );
   if (unheld.length > 0) {
     return {
       refused: `it uses ${unheld.join(', ')}, which a native import would drop`,
@@ -525,6 +686,7 @@ function readPrimitive(
   buffers: Uint8Array[],
   meshIndex: number,
   prim: NonNullable<NonNullable<NativeGltfJson['meshes']>[number]['primitives']>[number],
+  skinned: boolean,
 ): ReadPrimitive | NativeImportRefusal {
   const mode = prim.mode ?? TRIANGLES;
   if (mode !== TRIANGLES && mode !== TRIANGLE_STRIP && mode !== TRIANGLE_FAN) {
@@ -535,7 +697,7 @@ function readPrimitive(
   }
   if (prim.extensions?.KHR_draco_mesh_compression !== undefined) {
     return {
-      refused: `mesh ${meshIndex} is Draco-compressed, which this reader does not decode`,
+      refused: `mesh ${meshIndex} is Draco-compressed and no Draco decoder was given to the reader`,
       issue: '#1063',
     };
   }
@@ -562,8 +724,9 @@ function readPrimitive(
   // #1196 — "the number of JOINTS_n attribute sets MUST be equal to the number of WEIGHTS_n
   // attribute sets" (glTF 2.0 §Skins). Half a set binds a point to joints with no weights, or
   // weights to no joints, so it is refused as the malformed file it is.
-  const jointsAccessor = attributes.JOINTS_0;
-  const weightsAccessor = attributes.WEIGHTS_0;
+  // #1384 — read only for a mesh a node skins; otherwise they are dropped unread, as Blender does.
+  const jointsAccessor = skinned ? attributes.JOINTS_0 : undefined;
+  const weightsAccessor = skinned ? attributes.WEIGHTS_0 : undefined;
   if ((typeof jointsAccessor === 'number') !== (typeof weightsAccessor === 'number')) {
     return {
       refused: `mesh ${meshIndex} carries ${typeof jointsAccessor === 'number' ? 'JOINTS_0 without WEIGHTS_0' : 'WEIGHTS_0 without JOINTS_0'}, and they come in pairs`,
@@ -687,7 +850,7 @@ export function readGltfMesh(
   }
   const read: ReadPrimitive[] = [];
   for (const prim of primitives) {
-    const one = readPrimitive(json, buffers, meshIndex, prim);
+    const one = readPrimitive(json, buffers, meshIndex, prim, vertexGroups !== null);
     if ('refused' in one) return one;
     read.push(one);
   }
@@ -865,12 +1028,8 @@ function readVertexSkin(
   vertexGroups: readonly string[] | null,
 ): VertexSkin | NativeImportRefusal | null {
   if (read.every((one) => one.skinAccessors === undefined)) return null;
-  if (vertexGroups === null) {
-    return {
-      refused: `mesh ${meshIndex} carries JOINTS_0, but no node skins it, so its joint numbers name nothing`,
-      issue: '#1063',
-    };
-  }
+  // #1384 — unreachable with sets present: an unskinned mesh's reader skipped them. No skin, no read.
+  if (vertexGroups === null) return null;
   const joints = new Int32Array(vertices * 4);
   const weights = new Float32Array(vertices * 4);
   for (let i = 0; i < read.length; i++) {
@@ -921,6 +1080,12 @@ export interface NativeGltfImportArgs extends GltfImportChainArgs {
    * Required, so there is no road on which a textured file arrives with nowhere to put its pixels.
    */
   readonly storeImage: (bytes: Uint8Array, mime: string) => Promise<string>;
+  /**
+   * #1063 — decode a Draco-compressed primitive (`gltfDraco.ts`). Optional so a caller with no
+   * Draco file to read need not supply one; a Draco file read WITHOUT it is refused with its own
+   * reason, never as "this reader does not implement Draco". Every product door passes one.
+   */
+  readonly decodeDraco?: DecodeDraco;
 }
 
 interface TextureSite {
@@ -948,6 +1113,21 @@ function materialOf(json: NativeGltfJson, materialIndex: number): unknown {
 
 /** Why a material's textures cannot come across whole, or null. */
 function materialRefusal(json: NativeGltfJson, materialIndex: number): NativeImportRefusal | null {
+  // #1321 — the extension allows a specular colour above 1 (`KHR_materials_specular` README), which
+  // the material's sRGB hex colour cannot hold, and folding the excess into the weight is not the
+  // same draw (three multiplies `specularIntensity` into F90 as well as F0). Refused, not clamped.
+  const specular = (
+    materialOf(json, materialIndex) as {
+      extensions?: { KHR_materials_specular?: { specularColorFactor?: unknown } };
+    }
+  ).extensions?.KHR_materials_specular;
+  const specularColor = specular?.specularColorFactor;
+  if (Array.isArray(specularColor) && specularColor.some((c) => typeof c === 'number' && c > 1)) {
+    return {
+      refused: `material ${materialIndex} has a specular colour above 1, which the native material cannot hold`,
+      issue: '#1321',
+    };
+  }
   for (const { path, info } of textureSites(materialOf(json, materialIndex))) {
     const where = `material ${materialIndex} ${path}`;
     if (!HELD_TEXTURE_SLOTS.has(path)) {
@@ -970,18 +1150,6 @@ function materialRefusal(json: NativeGltfJson, materialIndex: number): NativeImp
     if (extensions.length > 0) {
       return {
         refused: `${where} uses ${extensions.join(', ')}, which a native import would drop`,
-        issue: '#1123',
-      };
-    }
-    if (path === 'normalTexture' && (info.scale ?? 1) !== 1) {
-      return {
-        refused: `${where} scales its normals by ${String(info.scale)}, which the native material does not hold`,
-        issue: '#1123',
-      };
-    }
-    if (path === 'occlusionTexture' && (info.strength ?? 1) !== 1) {
-      return {
-        refused: `${where} has occlusion strength ${String(info.strength)}, which the native material does not hold`,
         issue: '#1123',
       };
     }
@@ -1008,6 +1176,10 @@ function sniffImage(bytes: Uint8Array): string | null {
   if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) {
     return 'image/jpeg';
   }
+  // #1320 — `RIFF` <size> `WEBP`.
+  const ascii = (at: number, word: string) =>
+    [...word].every((c, i) => bytes[at + i] === c.charCodeAt(0));
+  if (bytes.length >= 12 && ascii(0, 'RIFF') && ascii(8, 'WEBP')) return 'image/webp';
   return null;
 }
 
@@ -1019,13 +1191,18 @@ async function readTextureImage(
   resolveBuffer: GltfImportChainArgs['resolveBuffer'],
 ): Promise<ReadImage | NativeImportRefusal> {
   const texture = json.textures?.[textureIndex];
-  if (typeof texture?.source !== 'number') {
+  // #1320 — the fallback `source` when there is one, else the WebP one. That is Blender's default
+  // (`import_webp_texture` is off, `blender/imp/texture.py` `get_source`); three's loader prefers
+  // the WebP, but both draw the same picture and the reference decides.
+  const webpSource = texture?.extensions?.EXT_texture_webp?.source;
+  const source = typeof texture?.source === 'number' ? texture.source : webpSource;
+  if (typeof source !== 'number') {
     return {
-      refused: `texture ${textureIndex} has no image of its own (a source inside an extension is not decoded)`,
+      refused: `texture ${textureIndex} has no image this reader can find`,
       issue: '#1063',
     };
   }
-  const image = json.images?.[texture.source];
+  const image = json.images?.[source];
   let bytes: Uint8Array | null = null;
   if (typeof image?.bufferView === 'number') {
     const view = json.bufferViews?.[image.bufferView];
@@ -1039,11 +1216,11 @@ async function readTextureImage(
     else if (resolveBuffer) bytes = await resolveBuffer(image.uri);
   }
   if (bytes === null) {
-    return { refused: `image ${texture.source} could not be read`, issue: '#1063' };
+    return { refused: `image ${source} could not be read`, issue: '#1063' };
   }
   const mime = sniffImage(bytes);
   if (mime === null) {
-    return { refused: `image ${texture.source} is neither PNG nor JPEG`, issue: '#1063' };
+    return { refused: `image ${source} is not PNG, JPEG or WebP`, issue: '#1063' };
   }
   return { bytes, mime };
 }
@@ -1135,6 +1312,7 @@ function withProjectImages(
   const maps = {} as { -readonly [K in keyof InlineMaterialSpec['maps']]: BakedTextureRef | null };
   for (const slot of Object.keys(material.maps) as (keyof InlineMaterialSpec['maps'])[]) {
     const captured = material.maps[slot];
+    if (captured === undefined) continue; // #1327 — an unseeded slot the file leaves empty
     if (captured === null) {
       maps[slot] = null;
       continue;
@@ -1153,13 +1331,21 @@ function withProjectImages(
       store: 'project',
       colorSpace: captured.colorSpace,
       flipY: false,
-      wrapS: THREE_WRAP_OF[sampler?.wrapS ?? -1] ?? RepeatWrapping,
-      wrapT: THREE_WRAP_OF[sampler?.wrapT ?? -1] ?? RepeatWrapping,
-      magFilter: THREE_FILTER_OF[sampler?.magFilter ?? -1] ?? LinearFilter,
-      minFilter: THREE_FILTER_OF[sampler?.minFilter ?? -1] ?? LinearMipmapLinearFilter,
+      // #1316 — the file's sampler by name. glTF's wrap default is REPEAT; with no filter the
+      // renderer's own defaults are written out (linear, trilinear), as they always were.
+      wrapS: WRAP_NAME_OF_GLTF[sampler?.wrapS ?? 10497] ?? 'repeat',
+      wrapT: WRAP_NAME_OF_GLTF[sampler?.wrapT ?? 10497] ?? 'repeat',
+      magFilter: magFilterName(sampler?.magFilter),
+      minFilter: FILTER_NAME_OF_GLTF[sampler?.minFilter ?? -1] ?? 'linear-mipmap-linear',
     };
   }
   return { ...material, maps };
+}
+
+/** #1316 — a magnification filter by name: only NEAREST and LINEAR are one (glTF sampler schema). */
+function magFilterName(gl: number | undefined): BakedTextureMagFilter {
+  const name = FILTER_NAME_OF_GLTF[gl ?? -1];
+  return name === 'nearest' ? 'nearest' : 'linear';
 }
 
 /**
@@ -1376,10 +1562,18 @@ async function buildNativeOps(
   args: NativeGltfImportArgs,
 ): Promise<NativeImportResult | NativeImportRefusal> {
   const { json: parsed, bin } = parseGltfContainer(args.buffer);
-  const json = parsed as NativeGltfJson;
-  const refusal = fileRefusal(json);
+  let json = parsed as NativeGltfJson;
+  const refusal = fileRefusal(json, args.decodeDraco !== undefined);
   if (refusal !== null) return refusal;
-  const buffers = await resolveBuffers(json, bin, args.resolveBuffer);
+  let buffers = await resolveBuffers(json, bin, args.resolveBuffer);
+  // #1063 — Draco primitives become ordinary accessors here, before anything below reads one, as
+  // Blender's importer decodes them (`gltfDraco.ts`). Without a decoder the primitive refusal below
+  // names it.
+  if (args.decodeDraco !== undefined && usesDraco(json)) {
+    const decoded = await decodeDracoPrimitives(json, buffers, args.decodeDraco);
+    if ('refused' in decoded) return decoded;
+    ({ json, buffers } = decoded);
+  }
   // #1051 — the clip is read with everything else that can refuse, before anything is stored.
   const read_ = readNativeAnimations(json as ClipGltfJson, buffers);
   if ('refused' in read_) return read_;
@@ -1448,16 +1642,32 @@ async function buildNativeOps(
   // mesh at all, and a list would slide every later node onto the wrong geometry (#1051).
   const meshes = new Map<number, MeshGeometryData>();
   const textures = new Set<number>();
+  const notices: string[] = [];
   for (let i = 0; i < json.nodes.length; i++) {
     const node = json.nodes[i];
     if (typeof node.mesh !== 'number') continue; // an empty: a transform and a parent, no geometry
     // ASKED HERE AND NOT IN THE READER, because it is not a question about reading: `readGltfMesh`
     // reads any attribute it is given, and what decides is whether the stored mesh would draw it.
-    const undrawable = undrawableAttributes(json, node.mesh as number);
-    if (undrawable !== null) return undrawable;
     // #393 — a skinned node's mesh names its joint numbers by the skeleton's own bone names.
     const vertexGroups =
       typeof node.skin === 'number' && read !== null ? read.skins[node.skin].vertexGroups : null;
+    // #1384 — skinned means the mesh has vertex groups to bind to: the one test the reader uses too.
+    const skinned = vertexGroups !== null;
+    const undrawable = undrawableAttributes(json, node.mesh as number, skinned);
+    if (undrawable !== null) return undrawable;
+    const unreproduced = await unreproducedTangents(json, buffers, node.mesh as number);
+    if (unreproduced !== null) return unreproduced;
+    if (!skinned) {
+      const sets = [
+        ...new Set(
+          (json.meshes![node.mesh as number].primitives ?? []).flatMap((prim) =>
+            Object.keys(prim.attributes ?? {}).filter((name) => SKIN_SET.test(name)),
+          ),
+        ),
+      ].sort();
+      const notice = `mesh ${node.mesh} carries ${sets.join(', ')}, but no node skins it, so they were dropped (as Blender drops them)`;
+      if (sets.length > 0 && !notices.includes(notice)) notices.push(notice);
+    }
     const data = readGltfMesh(json, buffers, node.mesh as number, vertexGroups);
     if ('refused' in data) return data;
     meshes.set(
@@ -1750,6 +1960,7 @@ async function buildNativeOps(
     skinSkeleton: (read?.skins ?? []).map((skin) => skin.skeleton),
     meshes: meshIds,
     takes,
+    notices,
   };
 }
 

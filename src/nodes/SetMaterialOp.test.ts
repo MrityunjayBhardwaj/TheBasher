@@ -172,7 +172,7 @@ describe('#638 SetMaterialOp — a partial range APPENDS, which nothing could ex
   });
 
   it('a source whose face count is not derivable REPLACES — the declared limit, pinned', () => {
-    // A glTF handle has no descriptor the face count can be read from, so there is no
+    // A baked handle has no descriptor the face count can be read from, so there is no
     // domain to write an assignment onto. Replacing is the honest answer: the director's
     // wired material still reaches the mesh. A table with no index behind it would report
     // one used slot and drop the wired material silently.
@@ -186,19 +186,19 @@ describe('#638 SetMaterialOp — a partial range APPENDS, which nothing could ex
     // "no assignment is authored, and the count is not derivable", and that is what it now
     // says. The state it used to cover — a partial assignment over a countless source,
     // silently ignored — is gone from the vocabulary, which is the point rather than a loss.
-    const gltfSource: MeshDataValue = {
+    const bakedSource: MeshDataValue = {
       kind: 'MeshData',
       geometry: {
-        key: 'gltf|asset-x|child-y',
-        descriptor: { kind: 'gltf', assetRef: 'asset-x', childName: 'child-y' },
+        key: 'baked|countless',
+        descriptor: { kind: 'baked', hash: 'countless', vertexCount: 24 },
       },
       material: SOURCE_MATERIAL,
       materialKey: null,
       attributeKey: null,
     };
-    const out = evalOp({}, gltfSource) as ModifiedDataValue;
+    const out = evalOp({}, bakedSource) as ModifiedDataValue;
     expect(Object.keys(out).sort()).toEqual(['geometry', 'kind', 'material']);
-    expect(out.geometry).toBe(gltfSource.geometry);
+    expect(out.geometry).toBe(bakedSource.geometry);
   });
 
   it('ONLY THE LOWEST op in a stack contributes a table — the declared limit, pinned', () => {
@@ -413,21 +413,21 @@ describe('ns-2 step 12 — the selection reaches the assignment', () => {
 
   it('🔴 an AUTHORED scope over a source with no derivable count THROWS BY NAME', () => {
     // Declared limit 3, and step 12 sharpens it rather than inheriting it. Without a scope
-    // a glTF source REPLACES — the row above pins that and it still holds. WITH one, the
+    // a countless source REPLACES — the row above pins that and it still holds. WITH one, the
     // author has asked for something the system cannot honour, and quietly writing the
     // material onto the whole mesh is the loudest wrong answer wearing the quietest
     // failure. The refusal comes from the resolver, before `evaluate` runs at all.
-    const gltfSource: MeshDataValue = {
+    const bakedSource: MeshDataValue = {
       kind: 'MeshData',
       geometry: {
-        key: 'gltf|asset-x|child-y',
-        descriptor: { kind: 'gltf', assetRef: 'asset-x', childName: 'child-y' },
+        key: 'baked|countless',
+        descriptor: { kind: 'baked', hash: 'countless', vertexCount: 24 },
       },
       material: SOURCE_MATERIAL,
       materialKey: null,
       attributeKey: null,
     };
-    expect(() => evalOp({ scope: '0-5' }, gltfSource)).toThrow(/cannot be honoured/);
+    expect(() => evalOp({ scope: '0-5' }, bakedSource)).toThrow(/cannot be honoured/);
   });
 
   it('an unparseable query cannot be AUTHORED, so it never reaches the resolver', () => {
@@ -443,7 +443,7 @@ describe('ns-2 step 12 — the selection reaches the assignment', () => {
 
 describe('#681 — what a MIGRATED range does when it meets a COUNTLESS source', () => {
   // The migration ladder is already pinned shape by shape above. What was never pinned is the
-  // CONSEQUENCE, and it is the one direction that got worse: over a glTF or baked handle the
+  // CONSEQUENCE, and it is the one direction that got worse: over a baked handle (or, until #1053, a glTF one) the
   // retired range was INERT (the operator could not build an assignment, so it took the
   // replace arm and the range did nothing), while an authored scope over the same source is a
   // named refusal — deliberately, because silently writing the material onto the whole mesh is
@@ -459,12 +459,12 @@ describe('#681 — what a MIGRATED range does when it meets a COUNTLESS source',
   // That is the fact that makes documenting it the proportionate answer rather than a
   // load-path repair.
 
-  /** A glTF handle: its buffers live in an asset clone, so no domain is derivable. */
+  /** A baked handle: its bytes live in OPFS, so no domain is derivable. */
   const countlessSource = (): MeshDataValue => ({
     kind: 'MeshData',
     geometry: {
-      key: 'gltf|asset-x|child-y',
-      descriptor: { kind: 'gltf', assetRef: 'asset-x', childName: 'child-y' },
+      key: 'baked|countless',
+      descriptor: { kind: 'baked', hash: 'countless', vertexCount: 24 },
     },
     material: SOURCE_MATERIAL,
     materialKey: null,

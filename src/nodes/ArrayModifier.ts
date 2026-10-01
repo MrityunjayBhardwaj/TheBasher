@@ -162,7 +162,7 @@ export const ArrayModifierNode: NodeDefinition<ArrayModifierParams, ObjectData> 
   // before this line could exist.
   //
   // ⚠️ `null` HERE COVERS TWO DIFFERENT SITUATIONS AND BOTH WANT AN UNSCOPED KEY: the
-  // resolver's declared "this value has no component domain" (a curve, a `gltf`/`baked`
+  // resolver's declared "this value has no component domain" (a curve, a `baked`
   // handle, an unwired spine), and an unscoped total selection. An AUTHORED scope over a
   // value that cannot carry one never arrives — it is a named throw from the resolver, one
   // frame earlier, on purpose.

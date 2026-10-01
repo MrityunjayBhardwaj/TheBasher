@@ -1,17 +1,15 @@
 // resolveEvaluatedMesh — the producer-agnostic projection suite (v0.6 #1, #150).
 // Proves ONE resolver projects BoxMesh, SphereMesh, AND GltfChild into one
-// EvaluatedMesh, that the geometry key is deterministic, and that the GltfChild
-// transform funnels through the SAME resolveGltfChildTrs band (H40 — no drift).
+// EvaluatedMesh, and that the geometry key is deterministic.
 //
 // REF: PLAN.md Wave 1 Task 2; hetvabhasa H40; vyapti V20.
 
 import { primaryMaterial } from './materialAssignment';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { applyOp, emptyDagState, type DagState } from '../core/dag';
+import { applyOp, emptyDagState, type DagState, type Op } from '../core/dag';
 import { __resetRegistryForTests } from '../core/dag';
 import { registerAllNodes } from '../nodes/registerAll';
 import { buildDefaultDagState } from '../core/project/default';
-import { resolveGltfChildTrs } from './resolveGltfChildTransform';
 import { resolveEvaluatedMesh } from './resolveEvaluatedMesh';
 import { makeSplitSphere } from '../test-utils/splitSphere';
 import { rowDataParams, splitOps } from '../test-utils/splitKinds';
@@ -92,46 +90,18 @@ describe('resolveEvaluatedMesh', () => {
     expect(mesh!.transform.scale).toEqual([1, 1, 1]); // C-1 guard
   });
 
-  it('projects a GltfChild: gltf geometry ref + transform via the ONE resolveGltfChildTrs band', () => {
+  it('resolves no mesh for a kept clone import — its Object is an Empty (#1053)', () => {
     let state = buildDefaultDagState();
-    const childTrs = {
-      position: [1, 2, 3] as [number, number, number],
-      rotation: [0, 90, 0] as [number, number, number],
-      scale: [2, 2, 2] as [number, number, number],
-    };
-    const overridden = { position: false, rotation: false, scale: true };
     for (const op of importedChildOps(GLTF_CHILD_ID, {
       assetRef: 'asset-1',
       childName: 'Mesh0',
-      position: childTrs.position,
-      rotation: childTrs.rotation,
-      scale: childTrs.scale,
-      overridden,
+      material: { base: { color: '#ff0000' } },
     })) {
       state = applyOp(state, op as Op).next;
     }
 
-    const mesh = resolveEvaluatedMesh(state, GLTF_CHILD_ID, ctxAt(0));
-    expect(mesh).not.toBeNull();
-    expect(mesh!.geometry.descriptor.kind).toBe('gltf');
-    expect(mesh!.geometry.descriptor).toEqual({
-      kind: 'gltf',
-      assetRef: 'asset-1',
-      childName: 'Mesh0',
-    });
-    expect(primaryMaterial(mesh!.materials)).toBeNull(); // #2 fills it later
-
-    // H40 — the resolver's transform.scale equals the ONE band's output for the
-    // same inputs (no parallel walk, no drift).
-    const expected = resolveGltfChildTrs({
-      base: childTrs,
-      clipTrack: undefined,
-      childNode: { ...childTrs, overridden },
-      bakedChannel: undefined,
-    });
-    expect(mesh!.transform.scale).toEqual([...expected.scale]);
-    expect(mesh!.transform.position).toEqual([...expected.position]);
-    expect(mesh!.transform.rotation).toEqual([...expected.rotation]);
+    // Nothing draws a kept import, so nothing is resolved for the renderer to draw.
+    expect(resolveEvaluatedMesh(state, GLTF_CHILD_ID, ctxAt(0))).toBeNull();
   });
 
   // #388 C5 — the read road for a baked PAIR. This branch used to narrow with

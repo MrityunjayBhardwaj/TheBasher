@@ -104,8 +104,8 @@ export function builtFaceNormals(
 /**
  * Every edge's angle in radians, index-aligned with {@link edgeSetOf}'s pairs — `0` to `PI`.
  *
- * `null` for exactly the descriptors the edge walk refuses (`gltf` and `baked` anywhere up the
- * chain, whose buffers live outside the descriptor) or whose split rims cannot be recovered.
+ * `null` for exactly the descriptors the edge walk refuses (`baked` anywhere up the chain,
+ * whose buffers live outside the descriptor) or whose split rims cannot be recovered.
  *
  * ⚠️ ZERO IS AN ANSWER AND NOT AN ABSENCE, which matters because three different edges give it:
  * a FLAT edge (its two faces are coplanar), a BOUNDARY edge (one face — every open mesh has
@@ -135,14 +135,6 @@ export function edgeAnglesOf(ref: GeometryRef, geometry: BufferGeometry): Float3
   // adjacency's face indices are positions in that same rim array. So a face index is in range by
   // construction, and the only lookup that can fail is a rim with no area — which is a `null`
   // normal, checked below and answered with Blender's zero.
-  //
-  // ⚠️ #1025 GAVE `alignedSplitRims` A SECOND ROAD THAT DOES NOT COMPARE AGAINST
-  // `weldedPolygonsOf` AT ALL — an imported mesh's rims come off its buffer, with its captured
-  // face count checked against that buffer instead. The sentence above stays TRUE HERE, and it
-  // is worth saying why rather than leaving it to hold by luck: that road serves exactly the
-  // kinds `edgeFaceAdjacencyOf` refuses on the line above, so a `ref` reaching this loop is
-  // always on the aligned road. If the adjacency ever answers for an imported mesh, this
-  // paragraph is the one that stops being true — and #848's cache premise goes with it.
   const angles = new Float32Array(adjacency.faces.length);
   for (let e = 0; e < adjacency.faces.length; e++) {
     const faces = adjacency.faces[e];

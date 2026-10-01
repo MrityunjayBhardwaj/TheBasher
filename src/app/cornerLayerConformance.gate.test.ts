@@ -254,12 +254,4 @@ describe('#1062 — the descriptor walk agrees with what the builders write', ()
       { name: UV_MAP, type: 'float2' },
     ]);
   });
-
-  it('a gltf handle offers NO layer list, which is not the same as no layers', () => {
-    // The file's-copy road resolves by NUMBER (`uvLayerIndex`), so this walk must decline
-    // rather than invent names three never gave those buffers.
-    // The real descriptor shape, uncast: a cast here hid a wrong shape from every tier, since
-    // vitest does not type-check and `npm run typecheck` excludes test files.
-    expect(cornerLayerNamesOf({ kind: 'gltf', assetRef: 'a', childName: 'c' })).toEqual([]);
-  });
 });

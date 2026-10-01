@@ -33,12 +33,12 @@
 
 import type { BufferGeometry } from 'three';
 import type { PolygonRim } from './polygonLayout';
-import type { GeometryDescriptor, GeometryRef } from '../nodes/types';
+import type { GeometryRef } from '../nodes/types';
 import { faceArityOf, faceElementStarts } from './faceCount';
 import { weldedPolygonsOf } from './edgeIdentity';
 import { composePointWeld, pointCountOf, weldByPosition } from './pointIdentity';
 import type { PointWeld } from './pointIdentity';
-import { getForRead, readGeometry } from './geometryRegistry';
+import { getForRead } from './geometryRegistry';
 import { bevelLayoutOf } from './bevelLayout';
 import { meshSplitLayout } from './polygonLayout';
 
@@ -46,13 +46,6 @@ import { meshSplitLayout } from './polygonLayout';
  * Cached per geometry. A built geometry is produced from exactly one descriptor, so its arity —
  * and therefore its rims — are fixed for its lifetime. That is the same assumption
  * `weldByPosition` already makes about a geometry's positions.
- *
- * ⚠️ AN ASSET CLONE'S BUFFER IS NOT BUILT FROM A DESCRIPTOR, so #1025 had to earn that sentence
- * back rather than inherit it: the buffer belongs to the imported asset and the face count
- * belongs to the descriptor, so two nodes naming one child with different captured counts share
- * this key. Measured — the second call receives the first's rims. `alignedSplitRims` refuses a
- * count that disagrees with the buffer before reaching here, and an imported arity is uniform,
- * so at most one arity gets this far for a given geometry and the assumption holds again.
  */
 const rimCache = new WeakMap<BufferGeometry, readonly PolygonRim[]>();
 
@@ -147,7 +140,7 @@ const KEY_STRIDE = 0x1000000;
  * primitive at the bottom of the chain is welded by position and every derived kind above it
  * composes, which is the same thing `pointCountOf` does and the reason its counts agree.
  *
- * `null` rather than a throw wherever the chain cannot answer: a `gltf` or `baked` source has no
+ * `null` rather than a throw wherever the chain cannot answer: a `baked` source has no
  * derivable point count, and a subset whose ratio is not a whole number of copies is not a
  * repetition at all. Both are refusals a caller must handle, not crashes.
  */
@@ -195,101 +188,9 @@ export function composedWeldOf(ref: GeometryRef): PointWeld | null {
 }
 
 /**
- * The kinds whose topology lives in a BUFFER rather than in the descriptor — the same two
- * `weldedPolygonsOf`, `faceCountOf` and `pointCountOf` declare as their escape hatch, and
- * censused with them.
- *
- * 🔴 NARROWED EXPLICITLY, AND IT IS NOT `polygonLayoutOf(d).kind === 'outside-the-descriptor'`.
- * That verdict covers `bevel` too, for a different reason — a bevel's SPLIT numbering is the
- * builder's own, while its WELDED rims are stated and its alignment self-check below is real.
- * Reusing it would put `bevel` on the unaligned road and silently retire a working check.
- *
- * 🔴 AND IT IS NOT `weldedPolygonsOf(d) === null`. That is null for genuine refusals as well —
- * a fractional block, a minted face, a derived kind over an imported source — and each of those
- * is a named absence a caller must keep receiving. Falling through on a null would widen every
- * one of them into an answer.
- */
-export function topologyIsBufferOnly(descriptor: GeometryDescriptor): boolean {
-  switch (descriptor.kind) {
-    case 'gltf':
-    case 'baked':
-      return true;
-    case 'box':
-    case 'sphere':
-    case 'array':
-    case 'mirror':
-    case 'subset':
-    case 'bevel':
-    case 'uvProject':
-    case 'mesh': // #1049 — a stored mesh states its topology in its data, the opposite of buffer-only.
-      return false;
-    default: {
-      const unreachable: never = descriptor;
-      throw new Error(`topologyIsBufferOnly: undeclared descriptor ${JSON.stringify(unreachable)}`);
-    }
-  }
-}
-
-/**
- * What a cache keyed on a DERIVED descriptor has to add to its key once its answer can depend on
- * a buffer that has not arrived yet (#1041) — `''` for a chain rooted at a procedural kind, and
- * the root buffer's read status (`ok` / `elsewhere` / `pending`) for one rooted at an import or
- * a bake.
- *
- * 🔴 WHY THIS EXISTS: A CACHED REFUSAL OUTLIVED THE WAIT IT DESCRIBED. #1041 let the welded-rim
- * door reach an imported mesh's buffer through the ref a derived descriptor carries, which made
- * an answer over an import depend on whether its clone is MOUNTED. `bevelLayoutOf` caches every
- * verdict, refusals included, on `source.key|scope`. Measured: a bevel over an array over an
- * import, asked before the mount, refused — and kept refusing after the mount, while the same
- * question asked mount-first laid out, and the uncached edge count over the same array flipped
- * from absent to 54. That is #708's defect — a wait reported as final and disproved a call later —
- * arriving by the rim road.
- *
- * The fix follows `bevelLayoutOf`'s own rule (#827): the key is the whole of what the layout
- * depends on, so what it newly depends on joins the key. A procedural chain contributes nothing
- * and its key stays byte-identical.
- *
- * ⚠️ ONLY THE ROOT IS READ, AND ONLY WHEN IT IS A BUFFER KIND. `readGeometry` on a procedural or
- * derived ref BUILDS it — from inside a pure descriptor function, and through `buildBevel` back
- * into `bevelLayoutOf` itself. On a `gltf` or `baked` root it only looks: the clone, or the
- * primed cache. The walk is a `never` switch so a tenth kind is a type error here, not a chain
- * that silently answers `''`.
- */
-export function bufferReachabilityOf(ref: GeometryRef): string {
-  const root = bufferRootOf(ref);
-  return root === null ? '' : readGeometry(root).status;
-}
-
-function bufferRootOf(ref: GeometryRef): GeometryRef | null {
-  const d = ref.descriptor;
-  switch (d.kind) {
-    case 'gltf':
-    case 'baked':
-      return ref;
-    case 'box':
-    case 'sphere':
-    case 'mesh': // #1049 — a stored mesh is its data; there is no buffer to wait for.
-      return null;
-    case 'array':
-    case 'mirror':
-    case 'subset':
-    case 'bevel':
-    case 'uvProject':
-      return bufferRootOf(d.source);
-    default: {
-      const unreachable: never = d;
-      throw new Error(`bufferRootOf: undeclared descriptor ${JSON.stringify(unreachable)}`);
-    }
-  }
-}
-
-/**
  * Every face's rim in SPLIT numbering, in this mesh's canonical corner order.
  *
- * There are two roads to that order, and which one a descriptor takes is a property of where its
- * topology lives, not of how much is known about it.
- *
- * ── ROAD A — THE SUBSTRATE STATES THE ORDER, SO THE WALK IS ROTATED ONTO IT ───────────────
+ * ── THE SUBSTRATE STATES THE ORDER, SO THE WALK IS ROTATED ONTO IT ───────────────────────
  *
  * A boundary walk starts wherever it happens to start, and a rim rotated by one corner bounds
  * the same face and fans to the same triangles. It is a DIFFERENT loop order, and the corner
@@ -302,38 +203,15 @@ function bufferRootOf(ref: GeometryRef): GeometryRef | null {
  * Returning `null` when no rotation matches is the self-check: the two derivations are supposed
  * to describe the same loop, so a failure to align is a genuine disagreement and not a shrug.
  *
- * ── ROAD B — THE BUFFER IS THE ONLY DERIVATION, SO IT IS ALSO THE CONVENTION (#1025) ──────
+ * ── THERE WAS A SECOND ROAD, FOR A MESH WHOSE TOPOLOGY WAS ONLY ITS BUFFER (#1025, #1028) ──
  *
- * 🔴 THE ALIGNMENT SELF-CHECK DOES NOT EXIST FOR AN IMPORTED MESH, AND SAYING SO IS THE POINT.
- * An imported mesh's topology is its index buffer and nothing else. The obvious way to reach
- * Road A — synthesise `welded` as `weld.map[raw[f][k]]` — produces an array that IS a function
- * of `raw`, so `rotateOnto` matches at `s = 0` for every face by construction. Measured: the
- * mapped rims of a mounted clone are identical to the walked ones. That gate would run, pass,
- * and mean nothing, and a silently vacuous gate is worse than a stated absent one. So no
- * synthetic `welded` is built here — the comparison is left unrepresentable rather than
- * documented and permitted.
- *
- * The rotation is not skipped either; it has no referent. Its job is to fix loop 0 to the
- * substrate's convention, and this kind has no substrate. **The walk's own order IS the
- * canonical corner order for an imported mesh** — stated here once, so that the next producer
- * of imported corner order aligns to this one instead of inventing a second.
- *
- * 🔑 WHAT REPLACES THE SELF-CHECK IS A CHECK ACROSS TWO REAL SOURCES, NOT A WEAKER VERSION OF
- * THE SAME ONE. `arity` comes from a face count captured at import and written into a save
- * file; the index buffer comes from the asset that loaded just now. They can disagree — an
- * asset re-exported with a different mesh, a save written against another child — and the
- * dangerous direction is SILENT: measured against a 12-triangle box, a captured count of 6
- * yields six well-formed rims and no refusal, so half the mesh leaves the corner domain
- * without a word. (An overcount walks off the end and refuses on its own.) `sum x 3 ===
- * index.count` is what catches it, and it is a genuine cross-source agreement rather than a
- * thing compared to itself.
- *
- * It also repairs `builtPolygonRims`'s cache rather than leaning on it: `rimCache` keys on the
- * GEOMETRY alone, on the stated assumption that a built geometry comes from exactly one
- * descriptor. An asset clone's buffer does not — two nodes can name one imported child with
- * different captured counts, and measured, the second call receives the first's rims. Because
- * `faceArityOf`'s imported arm returns a uniform array, the sum pins its length, so at most one
- * arity can pass this check for a given buffer and the assumption holds again.
+ * A clone-drawn import had no substrate to rotate onto, so its rims were the walk's own order,
+ * checked against a face count captured at import. An import is a stored `mesh` now and states
+ * its topology in its data (#1053), and the one kind left whose buffers live outside the
+ * descriptor — `baked` — states no face arity, so it returns on the first line below and always
+ * did. With no input able to reach it the road was removed (#1402), along with its unindexed
+ * closed form. A `baked` arity would need that road, or a better one, decided afresh:
+ * `importedRims.gate.test.ts` reds the day one appears.
  */
 export function alignedSplitRims(
   ref: GeometryRef,
@@ -341,20 +219,6 @@ export function alignedSplitRims(
 ): readonly PolygonRim[] | null {
   const arity = faceArityOf(ref.descriptor);
   if (arity === null) return null;
-
-  if (topologyIsBufferOnly(ref.descriptor)) {
-    let triangles = 0;
-    for (const n of arity) triangles += n;
-    const index = geometry.getIndex();
-    // #1028 — a glTF primitive may legally carry no `indices`, and the importer captures a
-    // count for it all the same, from the POSITION accessor. Censused: of the seven kinds the
-    // registry BUILDS, zero arrive without an index, so this belongs on the imported road and
-    // not inside `builtPolygonRims` — widening the shared walk would buy nothing and put a
-    // branch no substrate kind reaches in the path of every one of them.
-    if (index === null) return splitSoupRims(geometry, arity, triangles);
-    if (triangles * 3 !== index.count) return null;
-    return builtPolygonRims(geometry, arity, faceElementStarts(arity));
-  }
 
   const welded = weldedPolygonsOf(ref.descriptor);
   const weld = composedWeldOf(ref);
@@ -370,47 +234,6 @@ export function alignedSplitRims(
     out.push(aligned);
   }
   return out;
-}
-
-/**
- * The rims of a geometry with NO index buffer — a triangle soup, where every corner is already
- * its own vertex, so face `f` occupies exactly `[3f, 3f+1, 3f+2]` (#1028).
- *
- * ── WHY THIS IS A CLOSED FORM AND NOT A WALK ─────────────────────────────────────────────
- *
- * `rimOfFace` recovers a rim as the boundary cycle of a face's triangles, which works because
- * an interior fan edge is SHARED — walked once by each of the two triangles that meet on it.
- * In a split buffer nothing is shared: two triangles that meet along an edge name four distinct
- * vertices there, so a multi-triangle face's boundary is two disjoint cycles and the walk would
- * either refuse or return one triangle's rim as though it were the face's.
- *
- * 🔴 SO THE ARITY GUARD IS LOAD-BEARING, NOT DEFENSIVE. This answers only where every face is
- * ONE triangle, and then the rim is positional rather than derived. That holds for every
- * imported mesh today — `faceArityOf`'s imported arm returns a uniform array of ones, measured
- * at face counts 1, 12 and 100 — but it holds because of how that arm is written, not because
- * of anything a buffer guarantees. The day a kind on this road states a face of two triangles,
- * this refuses instead of quietly answering with a third of it.
- *
- * The agreement check is the same cross-source one the indexed road makes, against `position`
- * rather than the index: the count was captured at import, the buffer arrived from the asset.
- *
- * Not cached, deliberately — `builtPolygonRims` memoises because a boundary walk is expensive,
- * and a second cache keyed on the same geometry is a second place to get the key wrong for an
- * arithmetic expression that costs nothing.
- */
-function splitSoupRims(
-  geometry: BufferGeometry,
-  arity: readonly number[],
-  triangles: number,
-): readonly PolygonRim[] | null {
-  const position = geometry.getAttribute('position');
-  if (position === undefined) return null;
-  if (triangles * 3 !== position.count) return null;
-  for (const n of arity) if (n !== 1) return null;
-
-  const rims: PolygonRim[] = [];
-  for (let f = 0; f < arity.length; f++) rims.push([f * 3, f * 3 + 1, f * 3 + 2]);
-  return rims;
 }
 
 /** `split` rotated so that mapping it through `weld` reproduces `target` exactly, or `null`. */

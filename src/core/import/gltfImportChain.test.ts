@@ -23,7 +23,6 @@ import { radVec3ToDeg } from '../../viewport/rotation';
 import {
   buildGltfImportOps,
   buildNodeNameMap,
-  detectUnsupportedGltfFeatures,
   gltfSkeletonDagId,
   importGroupNodeIds,
 } from './gltfImportChain';
@@ -865,82 +864,6 @@ describe('importGroupNodeIds (#127 — break-refs GC footprint)', () => {
   it('returns [] for an assetRef with no nodes in the state', async () => {
     const { state } = await importedState('asset/anim.glb');
     expect(importGroupNodeIds('asset/other.glb', state)).toEqual([]);
-  });
-});
-
-describe('detectUnsupportedGltfFeatures (V38 no-silent-drop)', () => {
-  it('flags extensions NOT captured into the IR (sheen/volume/specular)', () => {
-    expect(
-      detectUnsupportedGltfFeatures({
-        extensionsUsed: ['KHR_materials_sheen', 'KHR_materials_volume', 'KHR_materials_specular'],
-      }),
-    ).toEqual(['KHR_materials_sheen', 'KHR_materials_volume', 'KHR_materials_specular']);
-  });
-
-  it('does NOT blanket-flag KHR_texture_transform (now captured into the shared uvTransform)', () => {
-    expect(detectUnsupportedGltfFeatures({ extensionsUsed: ['KHR_texture_transform'] })).toEqual(
-      [],
-    );
-  });
-
-  // #550 — the per-map texture-transform entry is GONE: each slot's placement is now
-  // captured, applied on both roads, and editable per map in the inspector, so an
-  // entry would be a false warning on a fully supported file. (A DAG-replaced map
-  // ignoring placement is real, but it belongs to the replaced-map road rather than to
-  // import fidelity, and hits a shared placement identically → #553.)
-  //
-  // ⚠️ NOTE WHAT THIS CASE CAN AND CANNOT SAY. It asserts that KHR_texture_transform
-  // produces no notice — it does NOT encode a per-map-DIFFERING material, because this
-  // function no longer accepts `materials` at all. That is the stronger half of the
-  // removal and the reason no runtime assertion is needed for it: re-introducing a
-  // per-map entry would first have to re-introduce the parameter, which is a change to
-  // the signature rather than a line quietly added to the body.
-  it('does NOT flag KHR_texture_transform — it is captured into the IR, per map or shared', () => {
-    expect(
-      detectUnsupportedGltfFeatures({
-        extensionsUsed: ['KHR_texture_transform'],
-        meshes: [{ primitives: [{ material: 0, attributes: { TEXCOORD_0: 0 } }] }],
-      }),
-    ).toEqual([]);
-  });
-
-  it('does NOT flag loader-handled or IR-captured extensions', () => {
-    expect(
-      detectUnsupportedGltfFeatures({
-        extensionsUsed: [
-          'KHR_draco_mesh_compression',
-          'KHR_texture_basisu',
-          'KHR_materials_ior',
-          'KHR_materials_clearcoat',
-          'KHR_materials_transmission',
-          'KHR_materials_emissive_strength',
-          'KHR_materials_unlit',
-        ],
-      }),
-    ).toEqual([]);
-  });
-
-  it('flags an unknown FUTURE extension (warns rather than silently drops)', () => {
-    expect(detectUnsupportedGltfFeatures({ extensionsUsed: ['KHR_materials_future'] })).toEqual([
-      'KHR_materials_future',
-    ]);
-  });
-
-  it('flags a secondary UV set (TEXCOORD_1+) from a primitive', () => {
-    expect(
-      detectUnsupportedGltfFeatures({
-        meshes: [{ primitives: [{ attributes: { POSITION: 0, TEXCOORD_0: 1, TEXCOORD_1: 2 } }] }],
-      }),
-    ).toEqual(['secondary UV set (TEXCOORD_1+)']);
-  });
-
-  it('returns [] for a fully-supported file', () => {
-    expect(
-      detectUnsupportedGltfFeatures({
-        extensionsUsed: ['KHR_materials_ior'],
-        meshes: [{ primitives: [{ attributes: { POSITION: 0, TEXCOORD_0: 1 } }] }],
-      }),
-    ).toEqual([]);
   });
 });
 

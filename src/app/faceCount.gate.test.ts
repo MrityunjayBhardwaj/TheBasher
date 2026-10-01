@@ -15,11 +15,8 @@
 // The non-derivable cases are censused exactly rather than left implicit: an escape hatch
 // that is not counted is an escape hatch that widens.
 //
-// ⚠️ AND SINCE #1023 THE HATCH IS A CAPTURE STATE, NOT A KIND. This header said "the two
-// non-derivable KINDS" while the census below has always built its gltf subject WITHOUT a
-// captured face count — so the rows were measuring an uncaptured import and reading as a
-// statement about imports. A captured one derives. #1029 made that difference a row rather
-// than leaving the distinction to prose that had already drifted twice elsewhere.
+// #1053 — one non-derivable kind is left, `baked`. The other, an imported `gltf` child whose
+// face count was never captured, went with the clone road.
 //
 // REF: src/app/faceCount.ts (`faceCountOf` — the leaf it now lives in);
 //      src/app/geometryRegistry.ts (the build); issues #633, #395, #638.
@@ -158,47 +155,29 @@ describe('#633 faceCountOf agrees with the built geometry', () => {
   });
 
   it('counts the not-derivable kinds EXACTLY', () => {
-    const notDerivable = (
-      [
-        { kind: 'gltf', assetRef: 'asset', childName: 'child' },
-        { kind: 'baked', hash: 'deadbeef', vertexCount: 24 },
-      ] as const
-    ).filter((descriptor) => faceCountOf(descriptor) === null);
+    const notDerivable = ([{ kind: 'baked', hash: 'deadbeef', vertexCount: 24 }] as const).filter(
+      (descriptor) => faceCountOf(descriptor) === null,
+    );
 
-    expect(notDerivable.map((d) => d.kind)).toEqual(['gltf', 'baked']);
+    expect(notDerivable.map((d) => d.kind)).toEqual(['baked']);
 
-    // 🔑 THE SUBJECT ABOVE IS AN UNCAPTURED IMPORT, AND THAT IS THE WHOLE DISTINCTION. The
-    // same child with a count captured at import DERIVES — so what the census counts is
-    // "nobody read the JSON", not "this is a gltf". Written as its own row because the two
-    // read identically at the call site and only this tells them apart.
-    const captured = {
-      kind: 'gltf',
-      assetRef: 'asset',
-      childName: 'child',
-      faceCount: 12,
-    } as const;
-    expect(faceCountOf(captured), 'a captured import derives its face count').toBe(12);
-    expect(faceArityOf(captured), 'and its arity').toHaveLength(12);
-    // #770 — AND THE ARITY DECLINES ON THE SAME TWO KINDS, WHICH IS THE WHOLE ESCAPE HATCH.
-    // Per-triangle material assignment became unconstructible in this app at #770; where it
-    // survives is here, and it survives because these two never reach the group derivation at
-    // all — the registry refuses by name when the arity is null, so an imported mesh keeps
-    // whatever ranges its loader built. A third kind answering `null` would be a third road on
-    // which groups are silently not derived, so the census is on the SET, never on a count.
+    // #770 — AND THE ARITY DECLINES ON THE SAME KIND, WHICH IS THE WHOLE ESCAPE HATCH. The
+    // registry refuses by name when the arity is null, so a second kind answering `null` would
+    // be a second road on which groups are silently not derived — the census is on the SET.
     for (const d of notDerivable) expect(faceArityOf(d), d.kind).toBeNull();
   });
 
   it('propagates non-derivability through a modifier rather than guessing', () => {
-    const gltf: GeometryRef = {
-      key: 'gltf|asset|child',
-      descriptor: { kind: 'gltf', assetRef: 'asset', childName: 'child' },
+    const baked: GeometryRef = {
+      key: 'baked|deadbeef',
+      descriptor: { kind: 'baked', hash: 'deadbeef', vertexCount: 24 },
     };
-    expect(faceCountOf(arrayGeometryRef(gltf, 3, [1, 0, 0]).descriptor)).toBeNull();
-    expect(faceCountOf(mirrorGeometryRef(gltf, 'x', 0).descriptor)).toBeNull();
+    expect(faceCountOf(arrayGeometryRef(baked, 3, [1, 0, 0]).descriptor)).toBeNull();
+    expect(faceCountOf(mirrorGeometryRef(baked, 'x', 0).descriptor)).toBeNull();
     // The arity propagates the same way, and this is not decoration: the registry declines to
     // lay out groups when it is null, so an arity that guessed where the count declined would
     // put a layout on a mesh whose triangles nothing here has counted.
-    expect(faceArityOf(arrayGeometryRef(gltf, 3, [1, 0, 0]).descriptor)).toBeNull();
-    expect(faceArityOf(mirrorGeometryRef(gltf, 'x', 0).descriptor)).toBeNull();
+    expect(faceArityOf(arrayGeometryRef(baked, 3, [1, 0, 0]).descriptor)).toBeNull();
+    expect(faceArityOf(mirrorGeometryRef(baked, 'x', 0).descriptor)).toBeNull();
   });
 });

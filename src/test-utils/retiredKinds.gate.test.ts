@@ -126,7 +126,8 @@ const ACCEPTED_CARRIERS: readonly { file: string; why: string; issue: string }[]
 /**
  * The files that must construct a retired kind FOREVER, because the relic is their subject
  * rather than their scaffolding. Not an allowlist — an allowlist excuses; this states a
- * category, and the category has exactly one member (it had two until #599).
+ * category, and the category has two members (one was dropped at #599 and came back when
+ * #594 taught the pattern to read raw literals).
  *
  * The distinction that decides membership: would the file still make its point if the relic
  * were replaced by a live kind? For every fixture #476 retargeted, yes — the relic was a

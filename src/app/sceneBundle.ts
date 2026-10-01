@@ -145,7 +145,8 @@ function isBakedGeometryDescriptor(
 function isBakedTextureRef(o: Record<string, unknown>): o is { hash: string; store?: unknown } {
   return (
     typeof o.hash === 'string' &&
-    // #178 S5 — an EMPTY hash is the glTF "cleared map" sentinel (CLEARED_MAP):
+    // #178 S5 — an EMPTY hash is the glTF "cleared map" sentinel (`CLEARED_MAP`, gone with the clone
+    // overlay in #1053; old saves still hold it):
     // it references no OPFS file, so it is NOT a collectable asset (it round-trips
     // as plain data in the node params, like null).
     o.hash !== '' &&

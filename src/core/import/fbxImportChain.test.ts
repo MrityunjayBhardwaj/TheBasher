@@ -280,24 +280,62 @@ describe('walk against Blender 5.1.1’s import of the same FBX', () => {
     expect(worstHead, 'of the rig height').toBeLessThan(1e-6);
     expect(worstDeg, 'degrees').toBeLessThan(0.01);
   });
+});
 
-  // #1279 — KNOWN WRONG, pinned so it cannot be forgotten. three r169's FBXLoader pairs each bone's
-  // X, Y and Z euler keys by index on X's times, and Blender's exporter simplifies each axis on its
-  // own, so between frame 1 and the end most bones turn the wrong way (22.5° worst, measured over
-  // every frame against Blender and against the source BVH). THIS ROW FAILS WHEN #1279 IS FIXED:
-  // replace it then with the same comparison at every oracle frame, under Blender's precision.
-  it('#1279 — at the middle and last frames, most bones still disagree with Blender', () => {
-    const { layer } = imported(WALK());
-    const first = worldAt(layer, 0);
-    let worstDeg = 0;
-    for (const f of ['60', '120']) {
-      const ours = worldAt(layer, (Number(f) - 1) / o.fps);
-      for (const [name, b] of Object.entries(o.frames[f])) {
-        const relTheirs = theirQ(b.quat).multiply(theirQ(o.frames['1'][name].quat).invert());
-        const relOurs = rotOf(ours.get(name)!).multiply(rotOf(first.get(name)!).invert());
-        worstDeg = Math.max(worstDeg, degrees(relTheirs, relOurs));
-      }
+// #1279 — every frame, not three. The exporter simplifies each euler axis of a bone on its own, so
+// its X, Y and Z curves are keyed at different times. Blender's importer takes the union of an
+// item's key times and fills each curve there linearly, with the property's initial value before a
+// curve's first key (`io_scene_fbx/import_fbx.py:711-739`, `_combine_curve_keyframe_times`, called at
+// `:1033`, Blender 5.1.1). three r169 paired the axes by index on X's times and held the others, so
+// between keys most bones turned the wrong way: measured 22.5° on the walk, 81.7° on the bar. The
+// oracles are Blender 5.1.1's default import of the same files (probe `q1279_every_frame_oracle.py`):
+// the walk at every 2nd frame, the bar at every frame, each pose bone's world quaternion (wxyz) and
+// head.
+type EveryFrame = { fps: number; frames: Record<string, Record<string, number[]>> };
+function againstBlenderEveryFrame(pose: PosedSkeletonValue, o: EveryFrame) {
+  const frames = Object.keys(o.frames).map(Number);
+  const heads = Object.values(o.frames[String(frames[0])]).map((v) => v[6]);
+  const height = Math.max(...heads) - Math.min(...heads);
+  let compared = 0;
+  let worstDeg = 0;
+  let worstHead = 0;
+  for (const f of frames) {
+    const ours = worldAt(pose, (f - 1) / o.fps);
+    for (const [name, v] of Object.entries(o.frames[String(f)])) {
+      const mine = ours.get(name);
+      if (!mine) continue;
+      compared += 1;
+      worstDeg = Math.max(worstDeg, degrees(rotOf(mine), theirQ(v)));
+      worstHead = Math.max(worstHead, headOf(mine).distanceTo(theirHead(v.slice(4))) / height);
     }
-    expect(worstDeg).toBeGreaterThan(10);
+  }
+  return { frames: frames.length, compared, worstDeg, worstHead };
+}
+
+describe('#1279 — the file’s motion plays as Blender plays it, at every frame', () => {
+  it('walk: all 94 bones at every 2nd frame', () => {
+    const r = againstBlenderEveryFrame(
+      imported(WALK()).layer,
+      oracle('blender-oracle-walk-fbx-every-2nd-frame.json') as unknown as EveryFrame,
+    );
+    expect(r.frames).toBe(60);
+    expect(r.compared).toBe(60 * 94);
+    // Measured 0.00384°, and 0.00382° at frame 1 alone, where every curve has a key: Blender's
+    // float32 at a finger's end bone, not the fill (before the fix: 22.3°). Heads 1.0e-5 of the
+    // rig height (before: 0.22).
+    expect(r.worstDeg, 'degrees').toBeLessThan(0.005);
+    expect(r.worstHead, 'of the rig height').toBeLessThan(2e-5);
+  });
+
+  it('keyed-scale bar: all three bones at every frame', () => {
+    const r = againstBlenderEveryFrame(
+      imported(KEYED_SCALE()).layer,
+      oracle('blender-oracle-keyed-bar-fbx-every-frame.json') as unknown as EveryFrame,
+    );
+    expect(r.frames).toBe(25);
+    expect(r.compared).toBe(25 * 3);
+    // Measured 1.8e-5° and 2.6e-6 of the bar (before the fix: 81.7° and 1.18).
+    expect(r.worstDeg, 'degrees').toBeLessThan(1e-4);
+    expect(r.worstHead, 'of the bar length').toBeLessThan(1e-5);
   });
 });

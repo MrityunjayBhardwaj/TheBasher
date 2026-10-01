@@ -219,7 +219,7 @@ function inAtom(atom: ScopeAtom, i: number, membership: ArrayLike<number> | null
  * it cannot be used to act on a scope, only to refuse one at the door.
  *
  * It is deliberately NOT total in the other direction either: a query that parses can still
- * be unhonourable against a particular value (an authored scope on a curve, or on a `gltf`
+ * be unhonourable against a particular value (an authored scope on a curve, or on a `baked`
  * handle whose face count is not derivable). Those depend on the SPINE, which a param schema
  * cannot see, and they remain named throws from `resolveComponentSelection`.
  */

@@ -1154,8 +1154,8 @@ describe('material edits on the clone road (slice 3)', () => {
           hash: 'img_elsewhere',
           colorSpace: 'srgb',
           flipY: false,
-          wrapS: 10497,
-          wrapT: 10497,
+          wrapS: 'repeat',
+          wrapT: 'repeat',
         },
       },
     ]);
@@ -1202,8 +1202,8 @@ describe('material edits on the clone road (slice 3)', () => {
           hash: 'img_elsewhere',
           colorSpace: 'srgb',
           flipY: false,
-          wrapS: 10497,
-          wrapT: 10497,
+          wrapS: 'repeat',
+          wrapT: 'repeat',
         },
       },
     ]);

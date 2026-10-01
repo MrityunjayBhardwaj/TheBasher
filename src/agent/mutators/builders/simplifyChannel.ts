@@ -113,7 +113,7 @@ export const simplifyChannelMutator: MutatorDefinition<SimplifyChannelSpec> = {
     const next: Keyframe[] = keyframes.filter((_, i) => keepMask[i]);
     if (next.length === keyframes.length) return []; // RDP kept everything
 
-    return [...resolved.mintOps, ...resolved.write({ keyframes: next })];
+    return resolved.write({ keyframes: next });
   },
 };
 

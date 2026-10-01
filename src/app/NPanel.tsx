@@ -37,13 +37,13 @@
 // viewport in <16ms because dispatch is sync + zustand subscribers
 // re-render before next frame).
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import {
   attachMapFromFile,
-  MATERIAL_MAP_SLOTS,
+  shownMapSlots,
   type MaterialMapSlot,
 } from './material/attachMapFromFile';
-import { CLEARED_MAP, isClearedMap, isImportedMap } from './material/gltfMapOverlay';
+import { DEFAULT_TRANSMISSION_THICKNESS } from './material/openpbrToThree';
 import {
   perMapPlacementRows,
   withSlotPlacement,
@@ -52,11 +52,9 @@ import {
 } from './material/perMapPlacementEdit';
 import { getStorage } from './boot';
 import { useAssetErrorStore } from './stores/assetErrorStore';
+import { LOBE_WEIGHT_WHEN_ABSENT } from '../nodes/types';
 import type { BakedTextureRef, Quat, RotationModeFields, UvPlacement, Vec3 } from '../nodes/types';
 import { useDagStore } from '../core/dag/store';
-import { importedChildOf } from './importedChild';
-import { useGltfMaterialStore } from './asset/gltfMaterialStore';
-import type { GltfMaterialSlot } from './asset/readGltfMaterials';
 import { getNodeType } from '../core/dag/registry';
 import { nodeRefCandidates, type NodeRefKind } from './nodeRefCandidates';
 import {
@@ -81,7 +79,6 @@ import {
 } from '../nodes/paramWidget';
 import { OptionsSelect } from './OptionsSelect';
 import type { NodeRef } from '../core/dag/types';
-import { countOverrideSlots } from './resolveOverrideSlots';
 import { resolveStackBase } from './operatorStack';
 import { useTimeStore } from './stores/timeStore';
 import {
@@ -133,8 +130,6 @@ import {
 } from './inspectorSectionBody';
 import { CostPreviewConnector } from './render/CostPreviewConnector';
 import { MotionGenerateCookConnector } from './asset/MotionGenerateCookConnector';
-import { RevertImportedClipConnector } from './animate/RevertImportedClipConnector';
-import { ClearBakedMotionConnector } from './animate/ClearBakedMotionConnector';
 import { BakePoseConnector } from './animate/BakePoseConnector';
 import { SceneEnvironmentControls } from './SceneEnvironmentControls';
 import { CameraLensControls } from './CameraLensControls';
@@ -1970,6 +1965,11 @@ interface MaterialFieldSpec {
   key: string;
   label: string;
   kind: 'number' | 'color';
+  /**
+   * #1123 — what the row shows when the material has no such lobe, for an OPTIONAL lobe: the value
+   * an edit would create it with. Absent for the lobes every material carries.
+   */
+  absent?: number | string;
 }
 const MATERIAL_LOBES: { lobe: string; label: string; fields: MaterialFieldSpec[] }[] = [
   {
@@ -1984,6 +1984,9 @@ const MATERIAL_LOBES: { lobe: string; label: string; fields: MaterialFieldSpec[]
     lobe: 'specular',
     label: 'Specular',
     fields: [
+      // #1321 — optional fields, shown at OpenPBR's defaults (weight 1, colour white) while absent.
+      { key: 'weight', label: 'weight', kind: 'number', absent: LOBE_WEIGHT_WHEN_ABSENT.specular },
+      { key: 'color', label: 'color', kind: 'color', absent: '#ffffff' },
       { key: 'roughness', label: 'roughness', kind: 'number' },
       { key: 'ior', label: 'ior', kind: 'number' },
     ],
@@ -1997,9 +2000,25 @@ const MATERIAL_LOBES: { lobe: string; label: string; fields: MaterialFieldSpec[]
     ],
   },
   {
+    // #1123 — OpenPBR's fuzz (glTF sheen). Optional: shown at OpenPBR's defaults until an edit
+    // creates it (`open_pbr_surface.mtlx`: weight 0, colour white, roughness 0.5).
+    lobe: 'fuzz',
+    label: 'Fuzz',
+    fields: [
+      { key: 'weight', label: 'weight', kind: 'number', absent: LOBE_WEIGHT_WHEN_ABSENT.fuzz },
+      { key: 'color', label: 'color', kind: 'color', absent: '#ffffff' },
+      { key: 'roughness', label: 'roughness', kind: 'number', absent: 0.5 },
+    ],
+  },
+  {
     lobe: 'transmission',
     label: 'Transmission',
-    fields: [{ key: 'weight', label: 'weight', kind: 'number' }],
+    fields: [
+      { key: 'weight', label: 'weight', kind: 'number' },
+      // #1322 — optional: absent is no absorption. OpenPBR's defaults while absent.
+      { key: 'color', label: 'color', kind: 'color', absent: '#ffffff' },
+      { key: 'depth', label: 'depth', kind: 'number', absent: 0 },
+    ],
   },
   {
     lobe: 'emission',
@@ -2016,6 +2035,32 @@ const MATERIAL_LOBES: { lobe: string; label: string; fields: MaterialFieldSpec[]
   },
 ];
 
+/** The object without one own key: absent, not set to `undefined` (a key walk would still see it). */
+function withoutKey<T extends Record<string, unknown>>(o: T, key: string): T {
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(o)) if (k !== key) out[k] = v;
+  return out as T;
+}
+
+/**
+ * #1123 — the map slots that carry a strength, with the row's label. The normal and occlusion
+ * maps (glTF scale / strength); #1327 — the coat normal (glTF `clearcoatNormalTexture.scale`).
+ */
+const MAP_STRENGTH_LABEL: Readonly<Partial<Record<MaterialMapSlot, string>>> = {
+  normal: 'normal strength',
+  ao: 'ao strength',
+  coatNormal: 'clearcoat normal strength',
+};
+type StrengthSlot = 'normal' | 'ao' | 'coatNormal';
+const hasStrength = (s: MaterialMapSlot): s is StrengthSlot => s in MAP_STRENGTH_LABEL;
+
+/** #1123 — a map's strength as the material holds it; absent means 1, both references' default. */
+function mapStrengthOf(material: Record<string, unknown>, slot: StrengthSlot): number {
+  const bag = material.mapStrengths as Partial<Record<StrengthSlot, unknown>> | undefined;
+  const v = bag?.[slot];
+  return typeof v === 'number' ? v : 1;
+}
+
 function isMaterialIR(v: unknown): v is Record<string, Record<string, unknown>> {
   return (
     typeof v === 'object' &&
@@ -2028,24 +2073,22 @@ function isMaterialIR(v: unknown): v is Record<string, Record<string, unknown>> 
 // ParamDiamond. A decode/persist failure surfaces via assetErrorStore (the MERGED
 // feedback surface), never a silent drop.
 //
-// ── THE EDIT LAYER HAS THREE STATES, AND THE ROW NEEDS A CONTROL FOR EACH (#937) ──────
+// ── A MAP IS THERE OR IT IS NOT: TWO STATES, AS BLENDER'S IMAGE TEXTURE (#1396, #1397) ──
 //
-// `null` = inherit whatever the source supplies (for an imported mesh, the clone's own
-// texture; for a native material, nothing). `CLEARED_MAP` = REMOVE it. A real
-// `BakedTextureRef` = replace it. The two sentinels both carry `hash: ''` and are told
-// apart by `gltfTexture` — see `gltfMapOverlay.ts`, which is where that rule lives.
+// The material holds its textures itself — a native material always did, and since #1053 an
+// import's material is native too (the importer filled the model and stopped existing). So the
+// row has the two states the value has: a ref → *replace* or *remove* (remove writes `null`);
+// `null` → *pick*. Blender's Image Texture node offers the same: open another image, or unlink.
 //
-// This row used to offer one button writing `null`, which collapsed "remove" and "revert"
-// into the same action and left `CLEARED_MAP` unreachable from anywhere in the app: #389
-// moved imported materials onto these generic rows, and the bespoke glTF row that owned
-// the third state went with the move. The renderer and the bundle both still honour the
-// sentinel, so the state remained legal, writable by a migration, and impossible to enter
-// or leave by hand.
+// It used to have three, derived for the clone road's overlay (#937): there `null` meant
+// "inherit the file's own texture", so "revert" wrote `null`, and removing needed an empty-hash
+// placeholder of its own. On a native material both lie. The file's texture read "● replaced"
+// and "revert to imported" DELETED it (#1396); "clear" wrote the placeholder, which the native
+// renderer loads as a file named `''` and draws magenta with a missing-file banner (#1397).
 //
-// Every state is derived from the VALUE alone — no store lookup and nothing glTF-shaped —
-// which is why this belongs on the generic row rather than on a kind-specific branch. A
-// native material simply never reaches the `imported` arm, so it sees exactly the one
-// button it saw before, and no native behaviour moves.
+// Any non-null value is "there", an empty-hash one included: the renderer loads every non-null
+// ref, so such a value (an old save's placeholder) draws, and *remove* is how it is repaired.
+// Nothing here writes one.
 function MapRow({
   nodeId,
   slot,
@@ -2060,20 +2103,7 @@ function MapRow({
   onSet: (value: BakedTextureRef | null, what: string) => void;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
-  // #937 — the three states, from the value alone. `imported` must be tested BEFORE
-  // `cleared`: both sentinels carry `hash: ''`, and only `gltfTexture` separates
-  // "inherit the clone's texture" from "remove it".
-  const importedTex = isImportedMap(mapRef);
-  const cleared = isClearedMap(mapRef);
-  const replaced = mapRef != null && !cleared && !importedTex;
-  const stateLabel = replaced
-    ? 'replaced'
-    : cleared
-      ? 'cleared'
-      : importedTex
-        ? 'imported'
-        : 'none';
-  const setMap = (value: BakedTextureRef | null, what: string) => onSet(value, what);
+  const present = mapRef != null;
   const onPick = async (file: File) => {
     try {
       const storage = await getStorage();
@@ -2089,15 +2119,12 @@ function MapRow({
     // #937 — a `role=group`, NOT a `<label>`. A label wraps a single labelable control,
     // and this row holds several buttons plus a hidden file input, so the label associates
     // with the FILE INPUT: clicking the slot name or the state text spuriously opens the OS
-    // file chooser. That is a live defect and not only an a11y one, and it predates the
-    // split — the generic row has always been a label; it simply had no imported material
-    // in front of it until #389 routed one here. The group's aria-label names the slot so
-    // the otherwise-generic pick/clear/revert buttons read in context, and each button
-    // ALSO carries its own slot-specific label so it is unambiguous alone (six map slots
-    // would otherwise read identically).
+    // file chooser. The group's aria-label names the slot so the otherwise-generic buttons
+    // read in context, and each button ALSO carries its own slot-specific label so it is
+    // unambiguous alone (six map slots would otherwise read identically).
     <div
       role="group"
-      aria-label={`${slot} map (${stateLabel})`}
+      aria-label={`${slot} map (${present ? 'set' : 'none'})`}
       className="flex items-center justify-between gap-2 px-3 py-1.5 text-[11px] text-fg/80"
     >
       <span className="font-mono text-fg/60">{slot}</span>
@@ -2106,47 +2133,28 @@ function MapRow({
           className="font-mono text-[10px] text-fg/40"
           data-testid={`inspector-map-state-${nodeId}-${slot}`}
         >
-          {replaced ? '● replaced' : cleared ? '— cleared' : importedTex ? '● imported' : '— none'}
+          {present ? '● set' : '— none'}
         </span>
         <button
           type="button"
-          aria-label={`${replaced ? 'Replace' : 'Pick'} ${slot} map`}
+          aria-label={`${present ? 'Replace' : 'Pick'} ${slot} map`}
           data-testid={`inspector-map-pick-${nodeId}-${slot}`}
           onClick={() => inputRef.current?.click()}
           className="rounded border border-border bg-muted px-2 py-0.5 text-[10px] text-fg/80 hover:text-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
         >
-          {replaced ? 'replace' : 'pick'}
+          {present ? 'replace' : 'pick'}
         </button>
-        {/* #937 — the two actions the edit layer needs, and the branch is on whether an
-            EDIT exists rather than on whether an imported texture does. An unedited slot
-            offers "clear" (write the sentinel: explicitly no texture); an edited one —
-            replaced or cleared — offers "revert" (drop the edit, back to inheriting).
-            That is the branch the bespoke glTF row used, restored verbatim rather than
-            narrowed: gating "clear" on a genuine imported descriptor reads as tighter but
-            silently removes the ability to state "this slot has no texture" for a slot
-            that merely happens to be empty, which is a different claim from inheriting
-            and is the one the bundle round-trip persists. */}
-        {!replaced && !cleared ? (
+        {present ? (
           <button
             type="button"
-            aria-label={`Clear ${slot} map`}
-            data-testid={`inspector-map-clear-${nodeId}-${slot}`}
-            onClick={() => setMap(CLEARED_MAP, 'clear')}
+            aria-label={`Remove ${slot} map`}
+            data-testid={`inspector-map-remove-${nodeId}-${slot}`}
+            onClick={() => onSet(null, 'remove')}
             className="rounded border border-border bg-muted px-2 py-0.5 text-[10px] text-fg/80 hover:text-warn focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
           >
-            clear
+            remove
           </button>
-        ) : (
-          <button
-            type="button"
-            aria-label={`Revert ${slot} map to imported`}
-            data-testid={`inspector-map-revert-${nodeId}-${slot}`}
-            onClick={() => setMap(null, 'revert')}
-            className="rounded border border-border bg-muted px-2 py-0.5 text-[10px] text-fg/80 hover:text-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
-          >
-            revert
-          </button>
-        )}
+        ) : null}
         <input
           ref={inputRef}
           type="file"
@@ -2290,18 +2298,47 @@ function UvTransformSection({
 // because it is a no-op" — it is hidden because it is UNSATISFIABLE on that road.
 function MaterialRenderOptions({
   geometry,
+  unlit,
   testidBase,
   onSet,
+  onUnlit,
 }: {
-  geometry: { alphaCutoff?: number; vertexColors?: boolean; doubleSided?: boolean };
+  geometry: {
+    alphaCutoff?: number;
+    vertexColors?: boolean;
+    doubleSided?: boolean;
+    thickness?: number;
+  };
+  /** #1123 — the surface draws unlit (glTF `KHR_materials_unlit`). */
+  unlit: boolean;
   testidBase: string;
-  onSet: (key: 'alphaCutoff' | 'vertexColors' | 'doubleSided', value: number | boolean) => void;
+  onSet: (
+    key: 'alphaCutoff' | 'vertexColors' | 'doubleSided' | 'thickness',
+    value: number | boolean,
+  ) => void;
+  onUnlit: (unlit: boolean) => void;
 }) {
   return (
     <div className="flex flex-col" data-testid={`inspector-render-options-${testidBase}`}>
       <div className="px-3 pb-0.5 pt-1.5 font-mono text-[10px] uppercase tracking-wide text-fg/40">
         Render Options
       </div>
+      <label className="flex items-center justify-between gap-2 px-3 py-1.5 text-[11px] text-fg/80">
+        <span
+          className="font-mono text-fg/60"
+          title="Draw the base colour and base map with no lighting. Other maps and lobes are kept but not drawn."
+        >
+          unlit
+        </span>
+        <input
+          type="checkbox"
+          checked={unlit}
+          aria-label="unlit"
+          data-testid={`inspector-unlit-${testidBase}`}
+          onChange={(e) => onUnlit(e.target.checked)}
+          className="h-3.5 w-3.5 cursor-pointer accent-accent"
+        />
+      </label>
       <label className="flex items-center justify-between gap-2 px-3 py-1.5 text-[11px] text-fg/80">
         <span className="font-mono text-fg/60">double-sided</span>
         <input
@@ -2332,6 +2369,29 @@ function MaterialRenderOptions({
             const n = parseFloat(e.target.value);
             if (Number.isNaN(n)) return;
             onSet('alphaCutoff', Math.min(Math.max(n, 0), 1));
+          }}
+          className="w-24 rounded border border-border bg-muted px-2 py-0.5 text-right font-mono text-xs text-fg focus-visible:border-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+        />
+      </label>
+      <label className="flex items-center justify-between gap-2 px-3 py-1.5 text-[11px] text-fg/80">
+        <span
+          className="font-mono text-fg/60"
+          title="How thick the volume under a transmissive surface is, in mesh units (glTF volume thickness). 0 is thin-walled."
+        >
+          volume thickness
+        </span>
+        <input
+          type="number"
+          step="0.05"
+          min={0}
+          // #1322 — absent draws the transmissive default, so that is what it shows.
+          value={geometry.thickness ?? DEFAULT_TRANSMISSION_THICKNESS}
+          aria-label="volume thickness"
+          data-testid={`inspector-thickness-${testidBase}`}
+          onChange={(e) => {
+            const n = parseFloat(e.target.value);
+            if (Number.isNaN(n)) return;
+            onSet('thickness', Math.max(n, 0));
           }}
           className="w-24 rounded border border-border bg-muted px-2 py-0.5 text-right font-mono text-xs text-fg focus-visible:border-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
         />
@@ -2419,7 +2479,12 @@ function MaterialRows({
    *  glTF `materials.<slot>.<lobe>.<field>`) — drives diamond + animation + read. */
   fieldPath: (lobe: string, key: string) => string;
   /** The authored base value (pre-evaluation) for a field. */
-  readValue: (lobe: string, key: string, kind: 'number' | 'color') => number | string;
+  readValue: (
+    lobe: string,
+    key: string,
+    kind: 'number' | 'color',
+    absent?: number | string,
+  ) => number | string;
   /** The UN-animated source write — caller-specific (native dotted setParam, glTF
    *  whole-`materials`-array replace, since setAtPath can't index an array, V53). */
   commitSource: (lobe: string, key: string, value: number | string) => void;
@@ -2465,7 +2530,7 @@ function MaterialRows({
           <div className="px-3 pb-0.5 pt-1.5 font-mono text-[10px] uppercase tracking-wide text-fg/40">
             {label}
           </div>
-          {fields.map(({ key, label: fieldLabel, kind }) => {
+          {fields.map(({ key, label: fieldLabel, kind, absent }) => {
             const path = fieldPath(lobe, key);
             const tid = testids(lobe, key);
             if (kind === 'color') {
@@ -2475,7 +2540,7 @@ function MaterialRows({
                   nodeId={nodeId}
                   paramPath={path}
                   label={fieldLabel}
-                  value={readValue(lobe, key, 'color') as string}
+                  value={readValue(lobe, key, 'color', absent) as string}
                   testidColor={tid.color}
                   testidHex={tid.colorHex}
                   onSource={(v) => commitSource(lobe, key, v)}
@@ -2489,7 +2554,7 @@ function MaterialRows({
                 nodeId={nodeId}
                 paramPath={path}
                 label={fieldLabel}
-                value={readValue(lobe, key, 'number') as number}
+                value={readValue(lobe, key, 'number', absent) as number}
                 testidInput={tid.num}
                 testidScrub={tid.scrub}
                 onSource={(v) => commitSource(lobe, key, v)}
@@ -2934,11 +2999,15 @@ function MaterialEditor({
         maskedBy={maskedBy}
         suppliedBy={suppliedBy}
         fieldPath={(lobe, key) => `${base}.${lobe}.${key}`}
-        readValue={(lobe, key, kind) => {
+        readValue={(lobe, key, kind, absent) => {
           const lobeObj = (material[lobe] ?? {}) as Record<string, unknown>;
           if (kind === 'color')
-            return typeof lobeObj[key] === 'string' ? (lobeObj[key] as string) : '#000000';
-          return typeof lobeObj[key] === 'number' ? (lobeObj[key] as number) : 0;
+            return typeof lobeObj[key] === 'string'
+              ? (lobeObj[key] as string)
+              : ((absent as string | undefined) ?? '#000000');
+          return typeof lobeObj[key] === 'number'
+            ? (lobeObj[key] as number)
+            : ((absent as number | undefined) ?? 0);
         }}
         commitSource={(lobe, key, value) =>
           commitField(`${lobe}.${key}`, value, `edit ${base}.${lobe}.${key}`)
@@ -2957,14 +3026,32 @@ function MaterialEditor({
         <div className="px-3 pb-0.5 pt-1.5 font-mono text-[10px] uppercase tracking-wide text-fg/40">
           Maps
         </div>
-        {MATERIAL_MAP_SLOTS.map((s) => (
-          <MapRow
-            key={s}
-            nodeId={nodeId}
-            slot={s}
-            mapRef={maps[s] ?? null}
-            onSet={(value, what) => commitField(`maps.${s}`, value, `${what} ${s} map`)}
-          />
+        {shownMapSlots(material).map((s) => (
+          <Fragment key={s}>
+            <MapRow
+              nodeId={nodeId}
+              slot={s}
+              mapRef={maps[s] ?? null}
+              onSet={(value, what) => commitField(`maps.${s}`, value, `${what} ${s} map`)}
+            />
+            {/* #1123 — the normal and occlusion maps carry a strength (glTF scale/strength,
+                Blender's Strength), shown under the map it acts on while that map is there.
+                Absent reads 1, both references' default; an edit creates the bag. */}
+            {hasStrength(s) && maps[s] ? (
+              <MaterialNumberRow
+                nodeId={nodeId}
+                paramPath={`${base}.mapStrengths.${s}`}
+                label={MAP_STRENGTH_LABEL[s]!}
+                value={mapStrengthOf(material, s)}
+                testidInput={`inspector-input-${nodeId}-${base}.mapStrengths.${s}`}
+                testidScrub={`inspector-scrub-${nodeId}-${base}.mapStrengths.${s}`}
+                onSource={(v) =>
+                  commitField(`mapStrengths.${s}`, v, `edit ${base}.mapStrengths.${s}`)
+                }
+                masked={maskedBy?.[`${base}.mapStrengths.${s}`] ?? suppliedBy}
+              />
+            ) : null}
+          </Fragment>
         ))}
       </div>
       {uvt ? (
@@ -3014,10 +3101,21 @@ function MaterialEditor({
             alphaCutoff?: number;
             vertexColors?: boolean;
             doubleSided?: boolean;
+            thickness?: number;
           }
         }
+        unlit={(material as { unlit?: unknown }).unlit === true}
         testidBase={nodeId}
         onSet={(key, value) => commitField(`geometry.${key}`, value, `set ${base}.geometry.${key}`)}
+        // #1123 — lit is the ABSENT key (the schema holds only `true`), so turning it off writes the
+        // material without the field rather than `unlit: false`, which would not parse.
+        onUnlit={(on) =>
+          commitField(
+            '',
+            on ? { ...material, unlit: true } : withoutKey(material, 'unlit'),
+            on ? 'make material unlit' : 'make material lit',
+          )
+        }
       />
     </div>
   );
@@ -3087,17 +3185,11 @@ function ParamRow({
     // authorable via a dropdown read from the node's paramSchema; a free string has
     // no options → falls through to the read-only row below.
     //
-    // ⚠️ THAT READ-ONLY ROW IS NOW LOAD-BEARING, AND IT IS #521. A material operator's
-    // `color`/`emissive` are free hex strings, so they land here and cannot be edited —
-    // and since #529 the data lane writes only what the director AUTHORED, which means
-    // those two channels are not merely awkward to set, they can no longer be set at all.
-    // Before #529 an unauthorable colour still applied, because the operator forced every
-    // channel unconditionally; the fix removed the forcing and left the gap visible.
-    //
-    // The descriptor deliberately still covers all six fields: the authored SET covers
-    // them and the fold consults them, so the coverage is correct and only the widget is
-    // missing. When #521 gives a bare hex param a real field, it must pass `overrideInfo`
-    // through like `NumericField` does, and colour becomes authorable with no change here.
+    // A material operator's `color`/`emissive` are free hex strings too, and until they
+    // had a control they landed in that read-only row and could not be authored at all
+    // (#521; #529 made the gap visible by writing only what the director AUTHORED). They
+    // declare a `color` widget now, so the declared-widget arm below draws them with
+    // `ColorParamField`, which passes `overrideInfo` through like `NumericField` does.
     const options = stringEnumOptions(nodeId, paramPath);
     if (options) {
       return (
@@ -3292,65 +3384,48 @@ function SetOriginControl({ nodeId }: { nodeId: string }) {
 }
 
 /**
- * v0.6 #2 (#178, W6 — D-05/D-07) — the per-submesh slot selector for a
- * MaterialOverride that wraps a MULTI-material glTF. Renders ONLY when the
- * target glTF has >=2 material slots (a primitive / single-material / not-yet-
- * loaded target shows nothing — the override is whole-child by nature). The
- * "which-slot" state IS the node's `slotIndex` param (no separate React state):
- * "All" clears it (undefined ⇒ every slot, backward-compat); a number addresses
- * that submesh. The SAME flat material controls below the selector author the
- * override; the selector only changes WHICH slot they target (D-05 — an
- * addressing dimension, not a second code path).
+ * v0.6 #2 (#178, W6 — D-05/D-07) — the per-submesh slot selector for a MaterialOverride. The
+ * "which-slot" state IS the node's `slotIndex` param: "All" clears it (undefined ⇒ every slot).
+ *
+ * #1053 — the slot COUNT was read off the live render clone of the glTF the override wrapped
+ * (`countOverrideSlots`), which went with the clone renderer; nothing counts a native mesh's slots
+ * here yet, and nothing reads `slotIndex` either (#1090). So the numbered buttons are gone, and the
+ * selector renders only for an override that already HOLDS a `slotIndex` — a saved one — to keep
+ * its "All" reset reachable: a persisted optional value must keep the control that clears it.
+ *
+ * #1412 — so it is a readout and a reset, not a choice: the held slot as text, and "All" as a plain
+ * button. A radio group here offered one option that could never be the checked one.
  */
 function SlotSelector({ nodeId }: { nodeId: string }) {
   const nodes = useDagStore((s) => s.state.nodes);
   const dispatch = useDagStore((s) => s.dispatch);
-  const slotCount = countOverrideSlots(nodes, nodeId);
   const params = (nodes[nodeId]?.params ?? {}) as { slotIndex?: number };
-  const current = typeof params.slotIndex === 'number' ? params.slotIndex : undefined;
-  // Hide the selector for whole-child targets (primitive / single-material /
-  // not-yet-loaded). EXCEPTION: if a slotIndex is already set, ALWAYS render so a
-  // STALE slotIndex (e.g. the asset later dropped below 2 slots → the override
-  // silently matches no slot) still has an "All" reset affordance. Without this
-  // the override would no-op with no UI to recover it.
-  if (slotCount < 2 && current === undefined) return null;
-  const setSlot = (slot: number | undefined) =>
-    dispatch(
-      { type: 'setParam', nodeId, paramPath: 'slotIndex', value: slot },
-      'user',
-      slot === undefined ? 'override all slots' : `override slot ${slot}`,
-    );
-  const slotButton = (label: string, slot: number | undefined, testid: string) => {
-    const active = current === slot;
-    return (
-      <button
-        key={testid}
-        type="button"
-        role="radio"
-        aria-checked={active}
-        data-testid={testid}
-        onClick={() => setSlot(slot)}
-        className={`rounded border px-2 py-0.5 text-[10px] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent ${
-          active
-            ? 'border-accent bg-accent/15 text-accent'
-            : 'border-border text-fg/70 hover:bg-muted hover:text-fg'
-        }`}
-      >
-        {label}
-      </button>
-    );
-  };
+  if (typeof params.slotIndex !== 'number') return null;
   return (
     <div
       data-testid={`inspector-slot-selector-${nodeId}`}
       className="flex flex-col gap-1 px-3 py-1.5"
     >
       <div className="font-mono text-[10px] uppercase tracking-wide text-fg/40">Submesh</div>
-      <div role="radiogroup" aria-label="Material slot" className="flex flex-wrap gap-1">
-        {slotButton('All', undefined, `inspector-slot-all-${nodeId}`)}
-        {Array.from({ length: slotCount }, (_, i) =>
-          slotButton(String(i), i, `inspector-slot-${nodeId}-${i}`),
-        )}
+      <div className="flex flex-wrap items-center gap-1">
+        <span data-testid={`inspector-slot-held-${nodeId}`} className="px-1 text-[10px] text-fg/70">
+          Slot {params.slotIndex}
+        </span>
+        <button
+          type="button"
+          data-testid={`inspector-slot-all-${nodeId}`}
+          title="Clear the slot so the override applies to every slot"
+          onClick={() =>
+            dispatch(
+              { type: 'setParam', nodeId, paramPath: 'slotIndex', value: undefined },
+              'user',
+              'override all slots',
+            )
+          }
+          className="rounded border border-border px-2 py-0.5 text-[10px] text-fg/70 hover:bg-muted hover:text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+        >
+          All
+        </button>
       </div>
     </div>
   );
@@ -3429,11 +3504,6 @@ function ObjectSlotRows({ nodeId }: { nodeId: string }) {
       {table.rows.map((row) => {
         const authored = params.slotOverrides?.[String(row.index)];
         const color = typeof authored?.base?.color === 'string' ? authored.base.color : row.color;
-        // #605 item 2 — the slot's material lives inside the mounted asset clone and we hold
-        // no capture of it, so `row.color` is a PLACEHOLDER here and drawing it as the swatch
-        // would state a colour nothing measured. Once the slot is overridden the authored
-        // value is a real answer again, which is why the override half is in the test.
-        const uncaptured = row.answer === 'elsewhere' && !row.overridden;
         return (
           <div key={row.index} className="flex flex-col">
             <div className="flex items-center justify-between gap-2 px-3 py-1.5 text-[11px]">
@@ -3441,23 +3511,11 @@ function ObjectSlotRows({ nodeId }: { nodeId: string }) {
                 <span
                   aria-hidden="true"
                   data-testid={`inspector-slot-swatch-${nodeId}-${row.index}`}
-                  data-answer={uncaptured ? 'elsewhere' : 'ok'}
-                  style={uncaptured ? undefined : { backgroundColor: row.color }}
-                  className={`h-3 w-3 shrink-0 rounded-sm border ${
-                    uncaptured ? 'border-dashed border-fg/40' : 'border-border'
-                  }`}
+                  style={{ backgroundColor: row.color }}
+                  className="h-3 w-3 shrink-0 rounded-sm border border-border"
                 />
                 <span>{row.index}</span>
                 {row.name ? <span className="text-fg/40">{row.name}</span> : null}
-                {uncaptured ? (
-                  <span
-                    data-testid={`inspector-slot-uncaptured-${nodeId}-${row.index}`}
-                    title="Not captured at import — the asset draws this slot."
-                    className="text-fg/40"
-                  >
-                    from asset
-                  </span>
-                ) : null}
               </span>
               <span className="flex items-center gap-1.5">
                 {/* The link state IN WORDS. "Object"/"Data" is the reference's own
@@ -3479,14 +3537,6 @@ function ObjectSlotRows({ nodeId }: { nodeId: string }) {
                       : `inspector-slot-override-${nodeId}-${row.index}`
                   }
                   onClick={() => (row.overridden ? handBack(row.index) : takeOver(row.index))}
-                  // Taking over a slot normally changes no pixel — it seeds from what the
-                  // slot already resolves to. That promise cannot be kept for a slot whose
-                  // material we never captured, so the offer says so instead of implying it.
-                  title={
-                    uncaptured
-                      ? 'This slot has no captured material — overriding it will change how it draws.'
-                      : undefined
-                  }
                   className="rounded border border-border px-2 py-0.5 text-[10px] text-fg/70 hover:bg-muted hover:text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
                 >
                   {row.overridden ? 'Revert' : 'Override'}
@@ -3554,77 +3604,9 @@ function ObjectSlotRows({ nodeId }: { nodeId: string }) {
   );
 }
 
-/** One read-only row inside the glTF material readout (label · value). */
-function ReadoutRow({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div className="flex items-center justify-between gap-3">
-      <span className="font-mono text-[10px] uppercase tracking-wide text-fg/40">{label}</span>
-      <span className="text-[11px] text-fg/70">{children}</span>
-    </div>
-  );
-}
-
-/** One render slot's embedded material, read-only. */
-function GltfMaterialSlotRow({ slot }: { slot: GltfMaterialSlot }) {
-  const num = (n: number | null) => (n == null ? '—' : n.toFixed(2));
-  return (
-    <div
-      data-testid={`gltf-material-slot-${slot.slot}`}
-      className="flex flex-col gap-0.5 rounded border border-border px-2 py-1.5"
-    >
-      <div className="flex items-center justify-between">
-        <span className="text-[11px] text-fg/80">{slot.materialName}</span>
-        <span className="font-mono text-[10px] text-fg/40">slot {slot.slot}</span>
-      </div>
-      <ReadoutRow label="base color">
-        {slot.color ? (
-          <span className="inline-flex items-center gap-1.5">
-            <span
-              aria-hidden
-              data-testid={`gltf-material-swatch-${slot.slot}`}
-              className="inline-block h-3 w-3 rounded-sm border border-border"
-              style={{ backgroundColor: slot.color }}
-            />
-            <span className="font-mono text-[10px] text-fg/60">{slot.color}</span>
-          </span>
-        ) : (
-          '—'
-        )}
-      </ReadoutRow>
-      <ReadoutRow label="metalness">{num(slot.metalness)}</ReadoutRow>
-      <ReadoutRow label="roughness">{num(slot.roughness)}</ReadoutRow>
-      {slot.opacity != null && slot.opacity < 1 ? (
-        <ReadoutRow label="opacity">{num(slot.opacity)}</ReadoutRow>
-      ) : null}
-      <ReadoutRow label="maps">{slot.maps.length > 0 ? slot.maps.join(', ') : '—'}</ReadoutRow>
-    </div>
-  );
-}
-
-// #389 — `GltfMapRow` lived here: one texture-map row of the glTF material editor
-// (replace / clear / reveal-in-place, with the S5 edit layer behind it). It went with
-// its only caller. Map editing for an imported mesh is not lost — `MaterialRows` draws
-// map rows for every data kind's `material`, which is now what an imported child has.
-
-function GltfMaterialReadout({ assetRef, childId }: { assetRef: string; childId: string | null }) {
-  const slots = useGltfMaterialStore((s) => s.byAsset[assetRef]);
-  const visible = (slots ?? []).filter((sl) => childId == null || sl.childId === childId);
-  if (visible.length === 0) {
-    return (
-      <div data-testid="gltf-material-readout-empty" className="px-3 py-1.5 text-[11px] text-fg/40">
-        {slots == null ? 'Materials load with the model…' : 'No materials on this part.'}
-      </div>
-    );
-  }
-  return (
-    <div data-testid="gltf-material-readout" className="flex flex-col gap-2 px-3 py-1.5">
-      {visible.map((sl) => (
-        <GltfMaterialSlotRow key={sl.slot} slot={sl} />
-      ))}
-    </div>
-  );
-}
-
+// #1053 — `GltfMaterialReadout` lived here: a read-only summary of a kept import's embedded
+// materials, published by the clone renderer as it mounted. That renderer is gone and nothing
+// published any more, so the readout could only say "Materials load with the model…" for ever.
 /** A collapsible section card. Header click toggles via
  *  inspectorSectionsStore; visual collapse combines user choice with
  *  the §5.8 default rule via resolveCollapsed. */
@@ -3952,18 +3934,6 @@ function QuaternionField({ nodeId, authored }: { nodeId: string; authored: Quat 
 
 const SECTION_CONTROL_RENDERERS: SectionControlRenderers = {
   slotSelector: (ctx) => <SlotSelector nodeId={ctx.paramsNodeId} />,
-  gltfMaterialReadout: (ctx) => (
-    <GltfMaterialReadout
-      assetRef={String((ctx.params as { assetRef?: unknown }).assetRef ?? '')}
-      // A child of an imported asset owns the name of the child it stands for;
-      // the whole-asset node does not. That possession is what "is this a
-      // child?" actually means here.
-      // Whole-asset only now (#389) — the table's gate no longer selects a child, so this
-      // is always the asset and the filter is always "all slots". Kept as an explicit null
-      // rather than dropped, because the prop still expresses the readout's own contract.
-      childId={null}
-    />
-  ),
   sceneEnvironment: (ctx) => <SceneEnvironmentControls nodeId={ctx.paramsNodeId} />,
   cameraLens: (ctx) => (
     <CameraLensControls nodeId={ctx.paramsNodeId} poseNodeId={ctx.objectNodeId} />
@@ -4620,16 +4590,6 @@ export function NPanel() {
           {node.type === 'MotionGenerate' ? (
             <MotionGenerateCookConnector producerId={node.id} />
           ) : null}
-          {(() => {
-            const gp = importedChildOf(dagState.nodes, node.id);
-            if (!gp) return null;
-            return <RevertImportedClipConnector assetRef={gp.assetRef} childName={gp.childName} />;
-          })()}
-          {/* #813 — the character-level counterpart of the per-bone revert above.
-              Not keyed on node.type: the outliner selects the import Group, so the
-              connector resolves the character through the bind road's own selection
-              walk and renders null when that finds no character with baked motion. */}
-          <ClearBakedMotionConnector nodeId={node.id} />
           {/* #1215 — an armature Object on computed motion bakes it into keys it can edit. */}
           <BakePoseConnector nodeId={node.id} />
         </>

@@ -26,8 +26,6 @@ import { validatePlan } from '../../agent/mutators/validate';
 import { useDiffStore, acceptSelectedOps } from '../../agent/diff/store';
 import { createFork } from '../../agent/diff/forkedDag';
 import { useDagStore } from '../../core/dag/store';
-import { gltfChannelDagId } from '../../core/import/gltfImportChain';
-import { clipRowMintOps } from './clipRowMint';
 import { resolveChannelAddress } from '../../agent/mutators/builders/channelAddress';
 import { rowAddress } from '../../timeline/layerChannelRows';
 import {
@@ -42,7 +40,6 @@ import {
   scanBasherControllers,
   type BasherControllerKind,
 } from '../../core/comfy/basherControllers';
-import { bakedChannelIdsForAssetRef } from '../bakedGltfChannels';
 import { bareChannelNodesForSubject } from '../nodeChannels';
 import { linkedDataNodeId } from '../resolveDataParamOwner';
 import { isCameraNode } from '../cameraNode';
@@ -290,275 +287,6 @@ export function dispatchRetimeKeyframe(args: RetimeKeyframeArgs): DispatchResult
   );
 }
 
-export interface BakeThenRetimeArgs {
-  /** The owning GltfAsset's assetRef. */
-  assetRef: string;
-  /** The bone's childName (the clip-track key). */
-  childName: string;
-  /** Which TRS component row was dragged (position/rotation/scale). */
-  component: 'position' | 'rotation' | 'scale';
-  /** The clip keyframe time the drag started FROM (exact, read off the clip). */
-  fromTime: number;
-  /** The sub-frame second to move the key TO. */
-  toTime: number;
-}
-
-/**
- * Copy-on-write composite (Phase 7.12 / D2): the FIRST timeline edit of a
- * clip-backed bone BAKES the bone's clip track into editable KeyframeChannel
- * nodes (D1's `mutator.timeline.bakeGltfChannel`) and THEN retimes the dragged
- * key on the now-real baked channel — both as ONE atomic undo entry (K6).
- *
- * Mirrors dispatchFirstKeyComposite's fork-evolve discipline: bake validates
- * against the base; the retime (removeKeyframes → keyframe) validates against the
- * FORKED post-bake state (the baked channel only exists in the fork). The baked
- * channel id is DETERMINISTIC (D1 / gltfChannelDagId), so the retime references
- * it without an intervening DAG round-trip. All ops are proposed in ONE diff →
- * one dispatchAtomic → one Cmd+Z reverts BOTH the bake and the edit.
- *
- * Any validate `!ok` → abort, mutate nothing (V13 closure gate fires per step).
- */
-export function dispatchBakeThenRetime(args: BakeThenRetimeArgs): DispatchResult {
-  const { assetRef, childName, component, fromTime, toTime } = args;
-  const intent = `Edit imported clip: ${childName}.${component}`;
-
-  const base = useDagStore.getState().state;
-
-  const removeKeyframes = getMutator('mutator.timeline.removeKeyframes');
-  const keyframe = getMutator('mutator.timeline.keyframe');
-  if (!removeKeyframes || !keyframe) {
-    return {
-      ok: false,
-      reason: 'Timeline Mutators not registered (removeKeyframes / keyframe).',
-    };
-  }
-
-  // 1 — mint the child's channel from the file's own clip: `bakeGltfChannel`
-  //     bakes the whole child from its TransformClip. (A motion bound onto a
-  //     clone rig minted per component from its AnimationClip here too, until
-  //     that road retired with the clone road's character half, #1053.)
-  const mint = clipRowMintOps(base, assetRef, childName, component);
-  if (!mint.ok) return { ok: false, reason: mint.reason };
-
-  // 2 — fork1 = base + mint ops (the channel now exists in the fork).
-  let fork1: DagState;
-  try {
-    fork1 = createFork(base, mint.ops as Op[]).fork;
-  } catch (err) {
-    return { ok: false, reason: `mint fork failed: ${(err as Error).message}` };
-  }
-
-  // 3 — the dragged component's channel id (deterministic, content-addressed).
-  const channelId = gltfChannelDagId(assetRef, childName, component);
-  const channel = fork1.nodes[channelId];
-  if (!channel) {
-    return { ok: false, reason: `channel "${channelId}" missing after mint.` };
-  }
-  // Read the sample at fromTime off the FORKED baked channel — its keyframes
-  // were seeded from the clip at the clip times, so the dragged key exists.
-  const cParams = (channel.params ?? {}) as {
-    keyframes?: Array<{ time: number; value: unknown; easing: 'linear' | 'cubic' }>;
-  };
-  const sample = (cParams.keyframes ?? []).find((k) => k.time === fromTime);
-  if (!sample) {
-    return { ok: false, reason: `no baked keyframe at fromTime ${fromTime} on ${channelId}.` };
-  }
-  const value = sample.value;
-  const easing = sample.easing;
-
-  // 4 — validate removeKeyframes({time:fromTime}) against fork1.
-  //
-  // Addressed by the BONE, not by `channelId`, even though the mint above has
-  // already put the channel in `fork1` and the id would resolve. The id form
-  // refuses a bone's channel on purpose (channelAddress.ts): a call site that
-  // holds an id holds a precondition — "this channel exists" — that it cannot
-  // export to the next reader, and this composite's precondition is true only
-  // because of a fork three steps up. The parts carry no precondition, and both
-  // steps below find the minted channel and add nothing.
-  const bone = { assetRef, childName, component };
-  const rParsed = removeKeyframes.spec.safeParse({ bone, scope: { time: fromTime } });
-  if (!rParsed.success) {
-    return { ok: false, reason: `removeKeyframes spec invalid: ${rParsed.error.message}` };
-  }
-  const rResult = validatePlan(removeKeyframes, rParsed.data, fork1, intent);
-  if (!rResult.ok) {
-    return { ok: false, reason: `removeKeyframes rejected: ${rResult.reason}` };
-  }
-
-  // 5 — fork2 = fork1 + removeKeyframes ops.
-  let fork2: DagState;
-  try {
-    fork2 = createFork(fork1, rResult.ops).fork;
-  } catch (err) {
-    return { ok: false, reason: `removeKeyframes fork failed: ${(err as Error).message}` };
-  }
-
-  // 6 — validate keyframe({time:toTime,value,easing}) against fork2.
-  const kParsed = keyframe.spec.safeParse({ bone, time: toTime, value, easing });
-  if (!kParsed.success) {
-    return { ok: false, reason: `keyframe spec invalid: ${kParsed.error.message}` };
-  }
-  const kResult = validatePlan(keyframe, kParsed.data, fork2, intent);
-  if (!kResult.ok) {
-    return { ok: false, reason: `keyframe rejected: ${kResult.reason}` };
-  }
-
-  // 7 — propose ALL ops (bake + remove + keyframe) as ONE diff with the COMBINED
-  //     closure, then accept → one dispatchAtomic → one Cmd+Z (K6).
-  const combinedClosure = unionClosureSpecs(
-    unionClosureSpecs(mint.closure, rResult.closure.spec),
-    kResult.closure.spec,
-  );
-  return proposeAndAccept(
-    base,
-    [...mint.ops, ...rResult.ops, ...kResult.ops],
-    intent,
-    [
-      'user:mutator.timeline.bakeGltfChannel',
-      'user:mutator.timeline.removeKeyframes',
-      'user:mutator.timeline.keyframe',
-    ],
-    combinedClosure,
-    [...mint.warnings, ...rResult.warnings, ...kResult.warnings],
-  );
-}
-
-export interface RevertGltfChannelArgs {
-  /** The owning GltfAsset's assetRef. */
-  assetRef: string;
-  /** The bone's childName. */
-  childName: string;
-  /**
-   * ONE component to revert, or omitted for the whole bone.
-   *
-   * The whole-bone form is the original (#121): the per-bone button in the
-   * inspector reverts a bone, because that is the unit a director points at
-   * there. The dopesheet points at a ROW, which is one component, and reverting
-   * all three from a row would take away a position track the director never
-   * touched — removal granularity has to match the granularity of the thing
-   * that created it, and copy-on-write mints per component (#889).
-   */
-  component?: 'position' | 'rotation' | 'scale';
-}
-
-/**
- * Revert a baked glTF bone to its imported clip (Phase 7.12 / D3). Structural,
- * NOT value-equality (R-4): DELETE the bone's baked KeyframeChannel node(s) →
- * the resolver's presence-based pick (resolveGltfChildTrs) finds no bakedChannel
- * present → falls through to the clip on BOTH the renderer (C2) AND the
- * read-side (C3). The clip was never deleted (D-02 coexist), so revert is
- * lossless. ONE atomic deleteNode op set = ONE undo (mirrors the import chain's
- * K6 atomicity).
- *
- * The baked-channel ids are deterministic (D1 / gltfChannelDagId), so the
- * targets are known without a scan — we only delete the ones that actually
- * exist in the DAG (a bone may carry 1–3 component channels). No-op (ok, zero
- * ops) when the bone has no baked channels (already on the clip).
- */
-export function dispatchRevertGltfChannel(args: RevertGltfChannelArgs): DispatchResult {
-  const { assetRef, childName, component } = args;
-  const components = component
-    ? ([component] as const)
-    : (['position', 'rotation', 'scale'] as const);
-  const targets = existingChannelIds(
-    components.map((c) => ({ assetRef, childName, component: c })),
-  );
-
-  // Nothing baked → already on the clip; revert is a no-op (not an error).
-  if (targets.length === 0) return { ok: true };
-
-  return dispatchMutatorFromUI(
-    'mutator.deleteNode',
-    { targetSelectors: targets },
-    `Revert ${childName}${component ? `.${component}` : ''} to imported clip`,
-  );
-}
-
-/** One channel to remove: which character, which bone, which component. */
-export interface ChannelAddress {
-  readonly assetRef: string;
-  readonly childName: string;
-  readonly component: 'position' | 'rotation' | 'scale';
-}
-
-/**
- * The deterministic ids of the named channels that ACTUALLY EXIST in the graph.
- *
- * 🔴 THE ONE PLACE THAT TURNS AN ADDRESS INTO AN ID, and both entry points below
- * reach it. `gltfChannelDagId` is how a minted channel is named, and a second
- * spelling of that derivation — a hand-built id, a different argument order —
- * would produce delete ops that hit nothing while reporting ok, which is a
- * button that silently does nothing.
- */
-function existingChannelIds(addresses: readonly ChannelAddress[]): string[] {
-  const base = useDagStore.getState().state;
-  const out: string[] = [];
-  for (const a of addresses) {
-    const id = gltfChannelDagId(a.assetRef, a.childName, a.component);
-    // NOT deduplicated here, and that is measured rather than assumed:
-    // `mutator.deleteNode` handed the same target twice plans ONE op and
-    // returns ok. A guard here would be a second spelling of a rule that
-    // already has one — and a second spelling is what this area keeps paying
-    // for. Two characters built from the same assetRef therefore collapse
-    // downstream, where the collapsing already lives.
-    if (base.nodes[id]) out.push(id);
-  }
-  return out;
-}
-
-export interface ClearBakedMotionArgs {
-  /** The character's `GltfAsset` assetRef. */
-  assetRef: string;
-  /** Readable character name, for the undo-entry label. */
-  label?: string;
-}
-
-/**
- * Clear a whole character's baked motion in ONE gesture (#813).
- *
- * The per-bone revert (`dispatchRevertGltfChannel`) has existed since #121, and
- * the second-clip refusal USED TO tell a director to "remove the existing baked
- * channels first" — an instruction that, on a 22-bone rig, meant finding and
- * clicking that button 22 times. That refusal is gone (#889 slice 3 removed the
- * eager bake, so a second bind has nothing to collide with); this gesture is not,
- * because clearing a character's motion in one act is worth having on its own.
- * A fan-out, not a new mechanism. No new node type, no new id scheme.
- *
- * 🔑 WHAT GETS DELETED IS WHAT THE RENDERER PLAYS. The id set comes from
- * `bakedChannelNodeIdsForAsset`, which shares its membership predicate with the
- * enumerator the renderer reads (`bakedChannelSamplersForAsset`). So "cleared"
- * means "this character has no baked motion on screen" — not "some channels were
- * removed". Deriving the set independently here (say, by walking the rig's bone
- * names) could leave a channel the renderer still plays, and the character would
- * keep moving after a success message — the H516 shape, one level up.
- *
- * Lossless, exactly as the per-bone revert is: the imported clip was never
- * deleted, so the resolver's presence-based pick falls back to it. ONE atomic
- * deleteNode op set = ONE undo for the whole character (K6).
- *
- * No-op (ok, zero ops) when the character has nothing baked — that is "already
- * clear", not an error, mirroring the per-bone revert.
- */
-export function dispatchClearBakedMotion(args: ClearBakedMotionArgs): DispatchResult {
-  const { assetRef, label } = args;
-  const base = useDagStore.getState().state;
-
-  // null (asset absent / no usable nodeNameMap) is a REFUSAL, not "already
-  // clear": the baked set is unknown, and announcing a successful clear that
-  // deleted nothing is the failure mode this whole area keeps producing.
-  const targets = bakedChannelIdsForAssetRef(base.nodes, assetRef);
-  if (targets === null) {
-    return { ok: false, reason: `no glTF asset in the scene carries assetRef ${assetRef}` };
-  }
-  if (targets.length === 0) return { ok: true };
-
-  return dispatchMutatorFromUI(
-    'mutator.deleteNode',
-    { targetSelectors: targets },
-    `Clear baked motion${label ? ` for ${label}` : ''}`,
-  );
-}
-
 export interface FirstKeyCompositeArgs {
   /** The SceneChild node whose param is being animated (e.g. n_box). */
   targetId: string;
@@ -664,7 +392,7 @@ function channelNodeFor(valueType: 'number' | 'vec2' | 'vec3' | 'color' | 'quat'
  * Mesh-typed and patchTarget clones a SceneChild). Instead create a SINGLE
  * KeyframeChannel* targeting the node, the first sample baked into params; the
  * resolver finds it by target scan (resolveActiveCameraPoseAt for the camera,
- * directChannelNodesForTarget / GltfAssetR's material useFrame for the child).
+ * directChannelNodesForTarget for the child).
  * Subsequent keys flow through the EXISTING channel-id keyframe path (autoKey's
  * 'animated' branch), so only this first step is node-specific.
  *
@@ -1037,8 +765,8 @@ function nextFreshNodeId(prefix: string, state: DagState): string {
  * "Push down" composite (UI-SPEC §2.7 LOCKED mechanism; Blender's term): convert
  * `targetId`'s bare KeyframeChannel* nodes into ONE Action + ONE Strip placing it
  * back at the channels' min key time, and DELETE the bare channels — all as ONE
- * atomic undo entry. The fork-evolve discipline mirrors dispatchBakeThenRetime
- * (`:295-393`): createAction validates vs base; addStrip vs the fork (the Action
+ * atomic undo entry. The fork-evolve discipline (it once mirrored
+ * `dispatchBakeThenRetime`, gone in #1053): createAction validates vs base; addStrip vs the fork (the Action
  * only exists there); deleteNode vs the twice-evolved fork; all ops proposed in
  * ONE diff with the UNIONED closure → one dispatchAtomic → one Cmd+Z.
  *

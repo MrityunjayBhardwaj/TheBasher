@@ -58,108 +58,6 @@ export interface GltfImportChainResult {
    *  unskinned asset — there is nothing to project (#807). */
   readonly skeletonIds: string[];
   readonly nodeNameMap: Record<string, string>;
-  /**
-   * NO-SILENT-DROP (V38, V53 fork-3) — glTF features present in the file that
-   * are NOT yet captured into Basher's editable OpenPBR IR. These RENDER (the
-   * imported three.js clone draws them and the scalar overlay never strips
-   * them), but they are not addressable/editable in the inspector. The app
-   * caller surfaces this via `assetErrorStore` so the limitation is visible
-   * rather than silent. Empty for a fully-supported import.
-   */
-  readonly unsupportedFeatures: string[];
-}
-
-// glTF extensions Basher either handles at the loader (DRACO/KTX2/Meshopt/
-// quantization) or captures into the OpenPBR IR (the scalar material lobes).
-// Anything in the file's `extensionsUsed` NOT listed here is surfaced as a
-// no-silent-drop notice — including FUTURE extensions we haven't seen, so a new
-// unknown feature warns instead of vanishing.
-const SUPPORTED_GLTF_EXTENSIONS = new Set<string>([
-  'KHR_draco_mesh_compression',
-  'KHR_texture_basisu',
-  'EXT_meshopt_compression',
-  'KHR_mesh_quantization',
-  'KHR_materials_ior',
-  'KHR_materials_clearcoat',
-  'KHR_materials_transmission',
-  'KHR_materials_emissive_strength',
-  'KHR_materials_unlit',
-  // Captured into the shared uvTransform when uniform across a material's textures;
-  // the per-map-DIFFERING case is flagged separately below (not by this blanket).
-  'KHR_texture_transform',
-]);
-
-/**
- * Detect glTF features the importer does NOT yet capture into the editable IR
- * (V38 no-silent-drop, V53 fork-3). Pure: reads `extensionsUsed` (authoritative
- * top-level list — catches sheen/volume/specular/KHR_texture_transform/etc. AND
- * any future unknown extension) plus a primitive scan for secondary UV sets.
- * These still RENDER via the imported clone; the notice is about editability.
- */
-export function detectUnsupportedGltfFeatures(json: {
-  extensionsUsed?: string[];
-  meshes?: { primitives?: { material?: number; attributes?: Record<string, number> }[] }[];
-}): string[] {
-  const out: string[] = [];
-  for (const ext of json.extensionsUsed ?? []) {
-    if (typeof ext === 'string' && !SUPPORTED_GLTF_EXTENSIONS.has(ext)) out.push(ext);
-  }
-  // KHR_texture_transform: uniform across a material's maps → the shared uvTransform;
-  // DIFFERING → each slot's own placement in `mapUvTransforms` (#550).
-  //
-  // THE ENTRY THAT WAS HERE IS GONE, and its removal condition was the one written
-  // beside it: "drop when the render + inspector slices land". Both have. Each clause
-  // of its stated reason was re-checked rather than assumed, because the entry had
-  // already survived one premature removal attempt on the strength of a premise that
-  // did not hold:
-  //   · "nothing reads the per-slot placements"      → false: `prep` and the glTF
-  //     overlay both resolve `perMap[slot] ?? shared`.
-  //   · "editing one does nothing"                   → false, observed in a browser:
-  //     editing a per-map row re-places that slot and only that slot.
-  //   · "a DAG-replaced map uses the shared placement" → false, and MEASURED to be
-  //     too generous: a replaced map draws with NO placement at all. But that is not
-  //     an import-fidelity limitation and not per-map — it hits a material carrying
-  //     only a shared placement identically, and it predates this work. It belongs to
-  //     the replaced-map road, and is tracked as its own defect (#553), not as a
-  //     footnote on what the importer captured.
-  // A slot with no captured entry uses the shared placement; that is what replacement
-  // means, not a gap. TEXCOORD_1+ below keeps its entry, but for a NARROWER reason than
-  // it used to give — see below.
-  //
-  // Secondary UV sets. The clause that stood here read *"the texCoord index is captured
-  // on the map descriptor, but a DAG-replaced map currently binds UV0 only"*, and the
-  // second half of that is no longer true (#997): the set is captured per slot onto the
-  // material (`InlineMaterialSpec.mapUvLayers`, which survives replacement where the map
-  // descriptor did not) and a replaced map now samples it. The inherited road never had
-  // the problem — three's own loader binds a captured texture to its set
-  // (`GLTFLoader.js:3354-3357`).
-  //
-  // 🔴 THE ENTRY STAYS, AND ITS REMAINING REASON IS STATED RATHER THAN INHERITED. What a
-  // director still cannot do is SEE or CHANGE the binding: there is no inspector control
-  // for a slot's UV set, and the 2D UV view draws one anonymous set
-  // (`resolveMeshUVSpace.ts` — its extension point says so), so a slot sampling set 1 is
-  // shown against set 0's layout. A second set also still reaches no ELEMENT data: the
-  // corner lift refuses for every imported mesh, first set included, because a `gltf`
-  // descriptor states no face arity (#738).
-  //
-  // ✅ THE OBSERVATION IS TAKEN, AND IT DID NOT LICENSE DELETING THIS ENTRY. The browser
-  // check this comment used to ask for — a replaced map on `two-uv-quad.gltf` drawing the
-  // centre quarter rather than the whole texture — now runs as
-  // `tests/e2e/p997-replaced-map-uv-set.spec.ts`, on real composited pixels, in both
-  // directions (the control on the default set draws the whole image), and it reds when
-  // either half of the wiring is deleted. What that discharged is the reason this entry
-  // USED to give. The three above are untouched by it and were each re-measured when the
-  // observation landed, so the notice keeps firing and its words stay true: the feature
-  // renders, and it is not editable. (Since #1062 that spec's subject imports native, so it now
-  // observes the native road; this notice fires only on the file's-copy road, for files refused
-  // for something else — `sheen-quad.gltf` is one.)
-  const multiUV = (json.meshes ?? []).some((m) =>
-    (m.primitives ?? []).some((p) =>
-      Object.keys(p.attributes ?? {}).some((a) => /^TEXCOORD_[1-9]/.test(a)),
-    ),
-  );
-  if (multiUV) out.push('secondary UV set (TEXCOORD_1+)');
-  return out;
 }
 
 export interface GltfImportChainArgs {
@@ -200,15 +98,16 @@ export function hashId(prefix: string, ...parts: string[]): string {
 /**
  * The content-addressed DAG id of a glTF child (bone) node. This is the SAME
  * derivation `buildNodeNameMap` uses at import (:120, `hashId('gltfChild',
- * assetRef, key)`), exported so the P7.12 copy-on-write bake mutator
- * (bakeGltfChannel, Wave D) stores `params.target` = the child's dagId without
- * re-deriving the hash by hand (single source of truth — BLOCK-2). Diverging
- * derivations would break the renderer's `nodeNameMap[childName] === target`
- * asset-membership check (bakedGltfChannels.ts) AND paramAnimationState's
+ * assetRef, key)`). Exported so the P7.12 copy-on-write bake mutator
+ * (bakeGltfChannel, Wave D — gone in #1053) stored `params.target` = the child's dagId
+ * without re-deriving the hash by hand (single source of truth — BLOCK-2); today the
+ * v9→v10 migration uses it to recognise channels saved in that shape. Diverging
+ * derivations would have broken the renderer's `nodeNameMap[childName] === target`
+ * asset-membership check (bakedGltfChannels.ts (gone in #1053; at 7e1356c7)) AND paramAnimationState's
  * `p.target === selectionNodeId` match (the bone's selection id IS this dagId).
  *
  * REF: src/core/import/gltfImportChain.ts:120 (the import-time derivation);
- *      src/app/bakedGltfChannels.ts (the consumer); PLAN 7.12 Wave D (BLOCK-2).
+ *      app/bakedGltfChannels.ts (gone in #1053; at 7e1356c7) (the consumer); PLAN 7.12 Wave D (BLOCK-2).
  */
 export function gltfChildDagId(assetRef: string, childName: string): string {
   return hashId('gltfChild', assetRef, childName);
@@ -240,7 +139,8 @@ export function gltfChildDataDagId(assetRef: string, childName: string): string 
  * `state.nodes[id]`). Namespaced `gltfChannel` so it can never collide with the
  * bone's own `gltfChild` id nor an authored channel id.
  *
- * REF: PLAN 7.12 Wave D (D1, V22 determinism); bakeGltfChannel.ts.
+ * REF: PLAN 7.12 Wave D (D1, V22 determinism); app/animate/bakeGltfChannel.ts (gone in
+ *      #1053; at 15c170c4); src/core/project/migrations.ts (the reader today).
  */
 export function gltfChannelDagId(assetRef: string, childName: string, component: string): string {
   return hashId('gltfChannel', assetRef, childName, component);
@@ -747,8 +647,8 @@ function buildClipKeyframes(
  * #178 (S2) — capture a glTF node's materials → OpenPBR IR, ONE per mesh
  * primitive (slot) in primitive order (the SAME order three.js builds child
  * meshes, so slot i ↔ the i-th sub-mesh under the node). Returns undefined when
- * the node has no mesh (an empty/bone — correctly no materials) so the GltfChild
- * omits the param and the renderer keeps the clone's embedded material. A
+ * the node has no mesh (an empty/bone — correctly no materials) so the child
+ * omits the param. A
  * primitive with no `material` index uses the glTF default material (the
  * converter's no-arg defaults: white, metallic 1, rough 1).
  */
@@ -859,14 +759,16 @@ export function captureChildFaceCount(
  *
  * ── 🔴 SINGLE-PRIMITIVE CHILDREN ONLY, AND THAT IS THE WHOLE OF THE POPULATION DECISION ──
  *
- * A glTF node with two primitives loads as a GROUP of two Meshes, and `firstMeshGeometry` —
- * the read door — reaches only the FIRST. So a count welded across every primitive describes
- * a buffer that no reader ever holds. `two-material-quad.gltf` cannot show this: its two
+ * A glTF node with two primitives loads as a GROUP of two Meshes, and the clone road's read
+ * door (`firstMeshGeometry`, gone with the clone renderer in #1053) reached only the FIRST. So
+ * a count welded across every primitive described a buffer that no reader held. (The capture
+ * still runs: the load converter rebuilds a saved clone import and diffs its params against
+ * the save, so it must keep writing what it wrote.) `two-material-quad.gltf` cannot show this: its two
  * primitives sit on the same four corners, so the door and a unioning capture both say 4 by
  * accident. Constructed with DISJOINT primitives, they part: door 3, union 6.
  *
- * `captureChildFaceCount` sums its primitives and leans on `alignedSplitRims`'s cross-source
- * check to refuse the disagreement later. This refuses to MINT the disagreement at all,
+ * `captureChildFaceCount` sums its primitives, and leant on a cross-source check on the rim road
+ * to refuse the disagreement later (that road went with the clone, #1402). This refuses to MINT the disagreement at all,
  * which is the stronger position of the two: a state with no constructor needs no guard. It
  * is why the two fields have deliberately different populations.
  *
@@ -934,9 +836,8 @@ export async function buildGltfImportOps(
   const buffers = await resolveBuffers(json, bin, args.resolveBuffer);
   const { nodeNameMap, keyByGltfNodeIndex, childHierarchy } = buildNodeNameMap(json, args.assetRef);
 
-  // Static chain ids (deterministic) — mirrors dropChain.ts:36-73 but
-  // content-addressed off assetRef so re-import of the same file
-  // produces identical Op stream.
+  // Static chain ids, content-addressed off assetRef so re-import of the
+  // same file produces an identical Op stream.
   const gltfAssetId = hashId('gltf', args.assetRef);
   const groupId = hashId('grp', args.assetRef);
   const position = args.position ?? [0, 0, 0];
@@ -948,10 +849,8 @@ export async function buildGltfImportOps(
   const animations = json.animations ?? [];
   const hasClips = animations.length > 0;
   // P7.10 (B13 Pass 3, #114): TransformClip no longer has a `time` input
-  // socket — its value carries `.sample(seconds)` and the renderer
-  // (GltfAssetR's useFrame) drives time at consumer cadence. The
-  // findTimeSource() / timeId plumbing is no longer needed for the
-  // animated path; left as dead code below (cleanup tracked as P7.10.x).
+  // socket — its value carries `.sample(seconds)` and whoever samples the
+  // clip supplies the time.
 
   const transformClipIds: string[] = animations.map((_, i) =>
     hashId('clip', args.assetRef, String(i)),
@@ -1027,7 +926,8 @@ export async function buildGltfImportOps(
   //
   // These pairs are still inputless as far as the SCENE is concerned (R-1): the
   // Object takes the data edge and nothing else, and reaches no scene parent, so
-  // it is drawn by the asset clone rather than by itself (`drawnByAssetClone`).
+  // it was drawn by the asset clone rather than by itself. Since #1053 nothing draws it:
+  // this road only rebuilds a saved clone import for the load converter to compare.
   // Emitted in the SAME atomic ops array (K6 — one Cmd+Z), BEFORE the
   // TransformClip/ClipSelect block so the chain order is locked.
   const childNodes = json.nodes ?? [];
@@ -1036,15 +936,16 @@ export async function buildGltfImportOps(
     const dagId = nodeNameMap[key];
     const dataId = gltfChildDataDagId(args.assetRef, key);
     const base = defaultTRS(childNodes[i]);
-    // #178 (S2) — capture this node's per-primitive materials as OpenPBR IR so
-    // the renderer/inspector treat them like native materials. `null` material for
-    // an empty/bone node → renderer keeps the clone's embedded material.
+    // #178 (S2) — capture this node's per-primitive materials as OpenPBR IR. `null`
+    // material for an empty/bone node. (Since #1053 nothing draws from these params; they
+    // are rebuilt so the load converter can diff a saved import against them.)
     const materials = captureChildMaterials(childNodes[i], json);
-    // #1023 — the child's own face count, so its descriptor can state one. Absent for a
+    // #1023 — the child's own face count (no descriptor reads it since #1053; the load
+    // converter's diff still does). Absent for a
     // child that is not an all-triangle mesh (a bone, an empty, lines or points), which
     // every reader must keep treating as "not captured" and never as zero.
     const faceCount = captureChildFaceCount(childNodes[i], json);
-    // #1040 — the child's own topological point count, so its descriptor can state one.
+    // #1040 — the child's own topological point count, kept for the same diff.
     // Absent for a pre-#1040 save, a non-triangle child, and a MULTI-PRIMITIVE child, whose
     // read door holds only the first primitive's buffer — see `captureChildPointCount`.
     const pointCount = captureChildPointCount(childNodes[i], json, buffers);
@@ -1116,7 +1017,6 @@ export async function buildGltfImportOps(
       transformClipIds: [],
       skeletonIds,
       nodeNameMap,
-      unsupportedFeatures: detectUnsupportedGltfFeatures(json),
     };
   }
 
@@ -1146,8 +1046,8 @@ export async function buildGltfImportOps(
   // Wire connects in the locked deterministic order.
   // P7.10 (#114): the Time → TransformClip connect-loop is removed —
   // TransformClip no longer declares a `time` input socket. Time enters
-  // each clip via its `.sample(seconds)` method, called by GltfAssetR's
-  // useFrame at consumer cadence. The TimeSource node remains in the
+  // each clip via its `.sample(seconds)` method, supplied by whoever
+  // samples it. The TimeSource node remains in the
   // default project for save-format compatibility; it is now unused by
   // the animated-glTF chain and will be cleaned up in P7.10.x.
   for (let i = 0; i < animations.length; i++) {
@@ -1171,6 +1071,5 @@ export async function buildGltfImportOps(
     transformClipIds,
     skeletonIds,
     nodeNameMap,
-    unsupportedFeatures: detectUnsupportedGltfFeatures(json),
   };
 }

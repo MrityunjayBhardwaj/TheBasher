@@ -71,8 +71,7 @@ export type SectionCtx = {
    *  created (loading a project re-parses the generic node shape, not each
    *  type's param schema), and an `.optional()` param never materializes at
    *  all. `MaterialOverride.slotIndex` is exactly that — asking the instance
-   *  would hide the slot selector until a slot was chosen, which is the control
-   *  you choose it with. */
+   *  would hide the slot row on every node that stores no slot. */
   ownsParam: (key: string) => boolean;
   /** "Does this node declare an INPUT SOCKET under `key`?" — the edge-side twin of
    *  `ownsParam`, read off the node type's declared `inputs` (#921).
@@ -95,7 +94,6 @@ export type SectionCtx = {
  *  so the union is what makes "declared but never wired" a compile error. */
 export type ControlKey =
   | 'slotSelector'
-  | 'gltfMaterialReadout'
   | 'sceneEnvironment'
   | 'cameraLens'
   | 'modifierStack'
@@ -190,18 +188,6 @@ export const SECTION_CONTROLS: Record<SectionId, readonly SectionControl[]> = {
       // Routes to no section of its own, so without this it would surface as a
       // raw row in the unrouted bucket beside the selector that renders it.
       omitRowKeys: ['slotIndex'],
-    },
-    {
-      key: 'gltfMaterialReadout',
-      // The WHOLE-ASSET node only (#389). The gate used to be "owns assetRef and captured
-      // no materials", which selected the fused child as well — correct then, wrong now:
-      // `GltfData` also owns `assetRef`, and it owns a real editable `material` besides, so
-      // the old gate would put a read-only readout in front of a material the director can
-      // actually edit. Worse, it would read EMPTY: the readout filters the clone's slots by
-      // the stamped child id, which is the OBJECT's, and the params node here is the data
-      // half. `childName` is the possession that separates the two.
-      applies: (c) => c.ownsParam('assetRef') && !c.ownsParam('childName'),
-      placement: 'before',
     },
     // #394 S3d — the material operator stack, the fourth OperatorStackRows caller.
     //

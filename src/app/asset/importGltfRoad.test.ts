@@ -7,7 +7,6 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { MemoryStorage } from '../../core/storage/MemoryStorage';
 import { __resetRegistryForTests } from '../../core/dag/registry';
 import { registerAllNodes } from '../../nodes/registerAll';
-import { buildDefaultDagState } from '../../core/project/default';
 
 const storage = new MemoryStorage();
 vi.mock('../boot', () => ({ getStorage: async () => storage }));
@@ -47,7 +46,7 @@ const shareTheMesh = (json: Json) => {
 
 async function road(path: string, bytes: Uint8Array) {
   await storage.write(path, bytes);
-  return buildGltfImportOpsFromOpfs(path, 'n_scene', buildDefaultDagState());
+  return buildGltfImportOpsFromOpfs(path, 'n_scene');
 }
 
 beforeEach(() => {
@@ -79,7 +78,7 @@ describe('the road a file takes into the project', () => {
     });
   });
 
-  it('the same refusal on a file with no skin: the clone road, as before', async () => {
+  it('the same refusal on a file with no skin: refused the same way — there is no second road', async () => {
     const result = await road(
       'user-imports/c/skinned-bar.glb',
       skinnedBarWith((json) => {
@@ -88,6 +87,12 @@ describe('the road a file takes into the project', () => {
         for (const node of json.nodes) delete node.skin;
       }),
     );
-    expect(result.road).toBe('clone');
+    expect(result).toEqual({
+      road: 'refused',
+      nativeRefusal: {
+        refused: expect.stringContaining('share mesh 0'),
+        issue: '#1061',
+      },
+    });
   });
 });

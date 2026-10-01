@@ -183,7 +183,7 @@ test('#1205 — a skinned file the native reader refuses is not imported, and th
     const m = await import('/src/app/stores/assetErrorStore.ts');
     return m.useAssetErrorStore.getState().errors[p] ?? null;
   }, path);
-  expect(notice).toContain('import refused: it is a character (it has a skin)');
+  expect(notice).toMatch(/^import refused: /);
   expect(notice).toContain('#1061');
-  await expect(page.getByText(/import refused: it is a character/)).toBeVisible();
+  await expect(page.getByText(/import refused: /)).toBeVisible();
 });

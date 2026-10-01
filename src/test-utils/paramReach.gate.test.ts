@@ -16,10 +16,12 @@
 //   2. A "NOBODY READS IT" ANSWER MUST NAME AN ISSUE, and an `unverified` answer must name
 //      one too. A gap with no issue is a gap nobody will close.
 //
-//   3. A NAMED READER MUST EXIST AND MENTION THE PARAM. Weak on purpose and documented as
-//      such — `zoom` is mentioned by the very file that drops it. It catches the careless
-//      case (a reader that does not mention the param at all) and nothing subtler. It is
-//      stated here so nobody reads a green gate as proof the reader really reads.
+//   3. A NAMED READER MUST EXIST AND MENTION THE PARAM IN CODE. Weak on purpose and documented
+//      as such — `zoom` is mentioned by the very file that drops it. It catches the careless
+//      case (a reader that does not name the param in code at all) and nothing subtler. It is
+//      stated here so nobody reads a green gate as proof the reader really reads. A comment, a
+//      file name or a message's text is NOT a mention (#1407); a reader that takes the params
+//      as a whole declares the expression that does, and that is what is looked for.
 //
 //   4. THE SEAM MEASUREMENT IS REPORTED, NOT DECLARED. The gate evaluates a real pair of each
 //      kind and works out where each param actually gets to. Nothing in the table restates
@@ -54,6 +56,7 @@ import {
   type SplitKindName,
 } from './splitKinds';
 import { hasReader, isUnverified, PARAM_READERS } from './paramReach';
+import { mentionsInCode, stripComments } from './sourceScan';
 
 const CTX: EvalCtx = { time: { frame: 0, seconds: 0, normalized: 0 } };
 const REPO_ROOT = join(__dirname, '..', '..');
@@ -163,9 +166,15 @@ describe('param-reach gate (#492)', () => {
           problems.push(`${kind}.${param}: named reader ${reader.by} does not exist`);
           continue;
         }
-        if (!new RegExp(`\\b${param}\\b`).test(src)) {
+        if (reader.whole !== undefined) {
+          if (!stripComments(src).includes(reader.whole)) {
+            problems.push(
+              `${kind}.${param}: ${reader.by} is named as reading every param through \`${reader.whole}\`, which is not in its code`,
+            );
+          }
+        } else if (!mentionsInCode(src, param)) {
           problems.push(
-            `${kind}.${param}: ${reader.by} is named as reading it but never mentions it`,
+            `${kind}.${param}: ${reader.by} is named as reading it but never mentions it in code`,
           );
         }
       }
@@ -210,6 +219,15 @@ describe('param-reach gate (#492)', () => {
     // disagrees with a road that is independently green, and one of them is broken.
     for (const kind of SPLIT_KIND_NAMES) {
       const observableRoot = SPLIT_KINDS[kind].observableDataParam.split('.')[0];
+      // #1053 — a kind whose render road answers NO: the roads assert that nothing draws, so
+      // the measurement must agree that its observable does NOT reach the renderer.
+      if (SPLIT_KINDS[kind].roadAnswers?.render?.reaches === false) {
+        expect(
+          measureSeams(kind)[observableRoot],
+          `${kind}: the render road answers NO, yet "${observableRoot}" reaches the renderer`,
+        ).not.toBe('render');
+        continue;
+      }
       expect(
         measureSeams(kind)[observableRoot],
         `${kind}: the observable "${observableRoot}" does not reach the renderer, but R3/R4 ` +

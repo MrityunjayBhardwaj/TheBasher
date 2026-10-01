@@ -2,13 +2,14 @@
 //
 // ── WHY A UV READ CANNOT ANSWER `null` ────────────────────────────────────────────────
 //
-// Three different situations produce "no UVs here", and they need three different responses
-// from the consumer:
+// Two different situations produce "no UVs here", and they need different responses from
+// the consumer:
 //
 //   loading   — the bytes exist and are in flight (a baked geometry's OPFS read). WAIT.
-//   elsewhere — this kind never keeps its buffers in the registry; they live in a loaded
-//               asset clone. LOOK SOMEWHERE ELSE.
 //   none      — there genuinely are none, and waiting will not help. RENDER UNTEXTURED.
+//
+// (A third, `elsewhere` — buffers in a loaded asset clone, LOOK SOMEWHERE ELSE — went with the
+// clone renderer in #1053.)
 //
 // Collapsing `loading` into `none` makes an in-flight read indistinguishable from a mesh
 // that has no UVs — the consumer renders untextured and calls it correct. That defect has
@@ -36,7 +37,7 @@
 import type { BufferAttribute, BufferGeometry } from 'three';
 import { readGeometry } from './geometryRegistry';
 import { polygonLayoutOf } from './polygonLayout';
-import { alignedSplitRims, topologyIsBufferOnly } from './builtRims';
+import { alignedSplitRims } from './builtRims';
 import { faceArityOf } from './faceCount';
 import { insert } from './attributeStore';
 import { extractUVIslands } from './uvIslands';
@@ -49,7 +50,6 @@ import type {
   UVAttributeVerdict,
 } from '../nodes/types';
 
-const ELSEWHERE: MeshUVRead = { status: 'elsewhere' };
 const LOADING: MeshUVRead = { status: 'loading' };
 const NONE: MeshUVRead = { status: 'none' };
 
@@ -97,7 +97,7 @@ function uvAttributeOf(
   if (polygons === null)
     // 🔑 STILL PROPAGATED VERBATIM, NEVER RE-WORDED — the discipline `edgeCountOf` keeps one
     // domain over, and the reason is the same as it was: minting a message here would have to
-    // guess which refusal fired. What CAN reach this line has narrowed to one case. A `gltf` or
+    // guess which refusal fired. What CAN reach this line has narrowed to one case. A
     // `baked` descriptor has no face arity, so there is nothing to walk the buffer against, and
     // `polygonLayoutOf` says exactly why — its buffers live outside the descriptor. That verdict
     // is permanent and is not #777's.
@@ -105,7 +105,7 @@ function uvAttributeOf(
     // The other way to arrive is a genuine disagreement: an arity exists, rims were recovered,
     // and no rotation of one reproduces the substrate's welded rim. That is a defect rather than
     // a wait, so it says so instead of borrowing a reason that would make it look expected.
-    return refusalFor(ref.descriptor, geometry);
+    return refusalFor(ref.descriptor);
 
   const components = 2;
   let corners = 0;
@@ -126,94 +126,14 @@ function uvAttributeOf(
  * The reason no corner-domain rims could be produced for `descriptor`.
  *
  * ⚠️ THE ARMS ARE KEPT APART ON PURPOSE, AND THE FIRST DRAFT OF THIS COLLAPSED THEM. Asking
- * `polygonLayoutOf` alone is not enough: an `array` whose SOURCE is a `gltf` or `baked` mesh has
+ * `polygonLayoutOf` alone is not enough: an `array` whose SOURCE is a `baked` mesh has
  * no face arity, so there is nothing to walk the index buffer against — but the layout verdict
  * for the ARRAY is `not-yet`, so a single `outside-the-descriptor` test falls through and reports
  * a DEFECT for what is an ordinary missing buffer. That is the same shape of error this module
  * already carries a warning about — a refusal borrowing a reason that belongs to another arm.
  * So the chain is walked to the descriptor that actually owns the absence.
- *
- * 🔴 #1025 ADDED THE FIRST ARM, AND IT HAD TO GO FIRST BECAUSE THE LAYOUT'S ANSWER IS WRONG
- * THERE. An imported mesh now recovers its rims from its buffer, so the only way one of them
- * arrives here holding a resolved geometry is that its CAPTURED face count disagrees with the
- * buffer that loaded. `polygonLayoutOf` would answer *"its buffers live in a loaded asset
- * clone"* — which describes a mesh that has not arrived, and this one has. A reader acting on
- * that would wait for a load that already happened. A wrong diagnosis is not a silence with
- * worse manners; it is an instruction.
- *
- * 🔴 AND THE SENTENCE NAMES TWO CAUSES RATHER THAN THE LIKELIER ONE, BECAUSE IT CANNOT TELL
- * THEM APART FROM HERE AND GUESSING WOULD REPEAT THE DEFECT ONE LEVEL DOWN. Measured against a
- * real `GLTFLoader` parse: a single-primitive child loads as a `Mesh` and the counts AGREE, so
- * an ordinary import is untouched by this arm. A child with two primitives loads as a `Group`
- * of two meshes — `captureChildFaceCount` sums both (4) while `firstMeshGeometry` reaches the
- * first (2). That is not a stale capture and re-importing would not move it; it is the
- * multi-primitive question `firstMeshGeometry` records as open. This arm has descriptor and
- * buffer and no view of the clone's shape, so it states what it observed and leaves the reader
- * both roads instead of sending them down one.
  */
-function refusalFor(descriptor: GeometryDescriptor, geometry: BufferGeometry): UVAttributeVerdict {
-  if (topologyIsBufferOnly(descriptor)) {
-    // 🔴 EVERY SENTENCE BELOW IS ABOUT AN IMPORTED MESH, AND `baked` SHARES THIS ROAD. The
-    // first draft of this block did not separate them and told a baked mesh it had been
-    // "imported before its face count was captured" — false twice over: it was authored here,
-    // not imported, and there is no import to redo. `polygonLayoutOf` already gives it the
-    // right reason (its bytes are in OPFS), so a baked descriptor falls through untouched.
-    // That is the same defect this block exists to remove, made one level up: a sentence
-    // written against the kind in mind and false for the other one on the same road.
-    const arity = faceArityOf(descriptor);
-    if (arity === null) {
-      // No count captured. The layout's sentence is true of the DESCRIPTOR and reads, to
-      // someone holding a mesh that has plainly loaded, as though the bytes were missing.
-      // What is missing is the readout, and a re-import is what supplies one.
-      if (descriptor.kind === 'gltf')
-        return {
-          kind: 'not-derivable',
-          why:
-            'this mesh was imported before its face count was captured, so nothing says how ' +
-            'to walk its buffer into polygons — re-importing the asset captures one',
-        };
-    } else {
-      let triangles = 0;
-      for (const n of arity) triangles += n;
-
-      // 🔴 #1028 DELETED THE SENTENCE THAT USED TO SIT HERE, rather than leaving it describing
-      // something that no longer happens. It said a non-indexed buffer "is a shape this walk
-      // does not read yet" — it reads it now, by closed form, because a split buffer puts
-      // face `f` at `[3f, 3f+1, 3f+2]`. What remains is the two ways that road can still fail,
-      // and they are different failures that wanted different sentences.
-      const index = geometry.getIndex();
-      const held = index === null ? geometry.getAttribute('position')?.count : index.count;
-      if (held === undefined)
-        return {
-          kind: 'not-derivable',
-          why: 'this mesh carries neither an index buffer nor positions, so there is nothing to read polygons out of',
-        };
-
-      if (triangles * 3 !== held)
-        return {
-          kind: 'not-derivable',
-          why:
-            `this mesh was imported as ${arity.length} faces (${triangles} triangles) and the ` +
-            `buffer reachable here holds ${held / 3}, so the count captured at import ` +
-            `is not this buffer's — either the asset changed since it was imported, or this ` +
-            `child has several primitives and only the first is reachable through a child name`,
-        };
-
-      // A split buffer shares nothing between triangles, so a face of two of them has a
-      // boundary in two disjoint pieces and no rim to recover. Every imported face is one
-      // triangle today, so this is unreachable through the imported road — it is here for the
-      // kind that states otherwise, which would otherwise be answered with a third of a face.
-      if (index === null && arity.some((n) => n !== 1))
-        return {
-          kind: 'not-derivable',
-          why:
-            `this mesh has no index buffer and states faces of more than one triangle. In a ` +
-            `split buffer two triangles of one face share no vertex, so the face has no single ` +
-            `rim to recover — welding its positions is what would join them`,
-        };
-    }
-  }
-
+function refusalFor(descriptor: GeometryDescriptor): UVAttributeVerdict {
   const layout = polygonLayoutOf(descriptor);
   if (layout.kind === 'outside-the-descriptor') return { kind: 'not-derivable', why: layout.why };
 
@@ -248,8 +168,6 @@ function refusalFor(descriptor: GeometryDescriptor, geometry: BufferGeometry): U
 export function readMeshUVs(ref: GeometryRef): MeshUVRead {
   const result = readGeometry(ref);
   switch (result.status) {
-    case 'elsewhere':
-      return ELSEWHERE;
     case 'pending':
       return LOADING;
     case 'none':

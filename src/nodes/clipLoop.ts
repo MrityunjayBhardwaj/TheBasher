@@ -9,8 +9,8 @@
 //     AnimationClip.loop  z.boolean().default(true)
 //
 // So an AnimationClip whose params omitted the key cycled, and a TransformClip
-// whose params omitted it clamped. `clipChannelRows` already had to normalise
-// the two at the one place they meet.
+// whose params omitted it clamped. `clipChannelRows` (gone in #1053) had to
+// normalise the two at the one place they met.
 //
 // The reference settles which default is right: F-Curve extrapolation is a
 // two-value enum defaulting to CONSTANT (hold), and cycling is DELIBERATELY
@@ -51,7 +51,7 @@
 //
 // REF: src/nodes/keyframeInterp.ts (ChannelExtend — the superset this draws
 //      from); src/nodes/AnimationClip.ts (clipExtendRules); src/nodes/
-//      TransformClip.ts (the time fold); src/timeline/clipChannelRows.ts (where
+//      TransformClip.ts (the time fold); timeline/clipChannelRows.ts (gone in #1053; at 15c170c4) (where
 //      the two used to be normalised); issues #930, #927, #924.
 
 import { z } from 'zod';

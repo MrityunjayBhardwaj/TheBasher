@@ -250,10 +250,7 @@ describe("#754 the composition — a generator's point identity comes from its s
 });
 
 describe('#744 an absence carries its own reason, and there is now only one kind', () => {
-  it('gltf and baked decline, and say why in their own words', () => {
-    const gltf = pointCountOf({ kind: 'gltf', assetRef: 'a', childName: 'c' });
-    expect(gltf.kind).toBe('outside-the-descriptor');
-    expect(gltf.kind === 'outside-the-descriptor' && gltf.why).toContain('asset clone');
+  it('baked declines, and says why in its own words', () => {
     const baked = pointCountOf({ kind: 'baked', hash: 'h', vertexCount: 24 });
     expect(baked.kind).toBe('outside-the-descriptor');
     expect(baked.kind === 'outside-the-descriptor' && baked.why).toContain('OPFS');
@@ -262,13 +259,13 @@ describe('#744 an absence carries its own reason, and there is now only one kind
   it('a derived kind over one of them PROPAGATES that reason rather than minting its own', () => {
     // The point of carrying the reason on the value: three links down a chain, the message
     // still names the link that actually could not answer.
-    const gltfRef = {
-      key: 'g',
-      descriptor: { kind: 'gltf' as const, assetRef: 'a', childName: 'c' },
+    const bakedRef = {
+      key: 'b',
+      descriptor: { kind: 'baked' as const, hash: 'h', vertexCount: 24 },
     };
-    const arrayed = pointCountOf({ kind: 'array', source: gltfRef, count: 3, offset: [2, 0, 0] });
-    expect(arrayed).toEqual(pointCountOf(gltfRef.descriptor));
-    expect(arrayed.kind === 'outside-the-descriptor' && arrayed.why).toContain("'gltf'");
+    const arrayed = pointCountOf({ kind: 'array', source: bakedRef, count: 3, offset: [2, 0, 0] });
+    expect(arrayed).toEqual(pointCountOf(bakedRef.descriptor));
+    expect(arrayed.kind === 'outside-the-descriptor' && arrayed.why).toContain("'baked'");
   });
 });
 
@@ -336,16 +333,16 @@ describe('#716 / #754 the parity check can construct its own failure', () => {
       return null;
     };
     const box = boxGeometryRef([1, 1, 1], null);
-    const gltfRef = {
-      key: 'g',
-      descriptor: { kind: 'gltf' as const, assetRef: 'a', childName: 'c' },
+    const bakedRef = {
+      key: 'b',
+      descriptor: { kind: 'baked' as const, hash: 'h', vertexCount: 24 },
     };
     // A refusing descriptor, and a GENERATOR standing on one — the case that would have cost
     // the most, since it has a real source geometry to walk.
-    expect(pointCountMismatch(gltfRef.descriptor, built(box), supplier)).toBeNull();
+    expect(pointCountMismatch(bakedRef.descriptor, built(box), supplier)).toBeNull();
     expect(
       pointCountMismatch(
-        { kind: 'array', source: gltfRef, count: 3, offset: [2, 0, 0] },
+        { kind: 'array', source: bakedRef, count: 3, offset: [2, 0, 0] },
         built(box),
         supplier,
       ),
@@ -369,8 +366,8 @@ describe('#716 / #754 the parity check can construct its own failure', () => {
     const mirrored = mirrorGeometryRef(box, 'x', 0);
     expect(pointCountMismatch(mirrored.descriptor, built(mirrored), () => source)).toBeNull();
     // A refusal is not a disagreement — the same rule `faceCountMismatch` holds.
-    const gltf = { kind: 'gltf' as const, assetRef: 'a', childName: 'c' };
-    expect(pointCountMismatch(gltf, built(box), () => null)).toBeNull();
+    const baked = { kind: 'baked' as const, hash: 'h', vertexCount: 24 };
+    expect(pointCountMismatch(baked, built(box), () => null)).toBeNull();
   });
 });
 

@@ -117,6 +117,24 @@ function buildKind(kind: SplitKindName): { state: DagState; objectId: string; da
   return { state, objectId, dataId };
 }
 
+/**
+ * #1053 — a kind whose render road answers NO (`roadAnswers.render`). Its rows below still
+ * build the fixture and apply the stimulus, then assert the NO as an equality: the Object's
+ * evaluated value carries no data, so the renderer receives nothing to draw.
+ */
+function assertDrawsNothing(kind: SplitKindName, state: DagState): void {
+  const answer = SPLIT_KINDS[kind].roadAnswers?.render;
+  const value = evaluate(state, `n_${kind}`, { ctx: CTX }).value as { data?: unknown };
+  expect(
+    value.data,
+    `${SPLIT_KINDS[kind].dataType}: its render road answers NO (${answer?.reaches === false ? answer.issue : ''}), ` +
+      `but the Object carries data — the NO is stale, and this kind now draws`,
+  ).toBeNull();
+}
+
+const drawsNothing = (kind: SplitKindName) =>
+  SPLIT_KINDS[kind].roadAnswers?.render?.reaches === false;
+
 describe.each(SPLIT_KIND_NAMES)('conformance roads — %s', (kind) => {
   const spec = SPLIT_KINDS[kind];
   const param = spec.observableDataParam;
@@ -130,6 +148,12 @@ describe.each(SPLIT_KIND_NAMES)('conformance roads — %s', (kind) => {
     // If the base value did not survive being written onto the data node, both roads
     // below would be comparing a default against a default and passing for free.
     const { state, dataId } = buildKind(kind);
+    if (drawsNothing(kind)) {
+      // The base is held on the data node even though nothing renders it.
+      expect(resolveEvaluatedParam(state, `n_${kind}`, param, CTX)?.value).toEqual(base);
+      assertDrawsNothing(kind, state);
+      return;
+    }
     const rendered = renderedValueForBand(
       spec.band,
       evaluate(state, `n_${kind}`, { ctx: CTX }).value,
@@ -149,6 +173,12 @@ describe.each(SPLIT_KIND_NAMES)('conformance roads — %s', (kind) => {
     // resolver reaches through the split for it (band-uniform — the same reach for all
     // four kinds).
     const read = resolveEvaluatedParam(state, objectId, param, CTX);
+    if (drawsNothing(kind)) {
+      // The read reports the document; the renderer is handed nothing to disagree with it.
+      expect(read?.value).toEqual(base);
+      assertDrawsNothing(kind, state);
+      return;
+    }
 
     // RENDER: the value the renderer for this band actually consumes.
     const rendered = renderedValueForBand(spec.band, evaluate(state, objectId, { ctx: CTX }).value);
@@ -207,6 +237,22 @@ describe.each(SPLIT_KIND_NAMES)('conformance roads — %s', (kind) => {
     }
 
     const { state, objectId } = buildKind(kind);
+    if (drawsNothing(kind)) {
+      // The stimulus, applied at the band path: it lands on no data, so nothing moves.
+      const rendered = renderedValueForBand(
+        spec.band,
+        evaluate(state, objectId, { ctx: CTX }).value,
+      );
+      const overlaid = overlayChannels(
+        rendered,
+        [channelAt(channelPathForBand(spec.band, param), spec.distinctValues[1])],
+        1,
+        0,
+      );
+      expect(spec.readRendered(overlaid)).toBeUndefined();
+      assertDrawsNothing(kind, state);
+      return;
+    }
     const renderBase = renderedValueForBand(
       spec.band,
       evaluate(state, objectId, { ctx: CTX }).value,
@@ -428,6 +474,12 @@ describe.each(SPLIT_KIND_NAMES)('R10 — wrong-half write — %s', (kind) => {
       value: overlaid,
     });
     expect(result.reportable).toBeUndefined();
+    if (drawsNothing(kind)) {
+      // The write lands on the data node, and still nothing draws.
+      expect(result.next.nodes[dataId].params).not.toEqual(state.nodes[dataId].params);
+      assertDrawsNothing(kind, result.next);
+      return;
+    }
     const rendered = renderedValueForBand(
       spec.band,
       evaluate(result.next, `n_${kind}`, { ctx: CTX }).value,

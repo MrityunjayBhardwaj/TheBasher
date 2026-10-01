@@ -11,10 +11,10 @@
 //   · Rename moves the folder and the scene is untouched (nothing followed, nothing had to).
 //   · Delete is not blocked, and the scene keeps drawing the import, across a reload.
 // A file the native reader refuses still arrives through the file's copy, as a `GltfAsset`
-// whose `assetRef` IS a reference; deleting its folder is blocked until break-refs. That path is
-// kept on a still-refused fixture (a Draco-compressed .glb, #1063 — a skinned file stopped being one
-// at #1205) and asserts its road, so it reds the day Draco goes native and the break-refs path
-// loses its last fixture. BVH/FBX leave no ref.
+// whose `assetRef` IS a reference; deleting its folder is blocked until break-refs. Since #1053 no
+// import makes one (a refused file is refused whole), so the only scene holding one is a project
+// saved before, whose import the load kept: that path loads a recorded save (`_recordedSave.ts`).
+// BVH/FBX leave no ref.
 //
 // REF: PLAN 7.14 Wave B (B4); CONTEXT D-03/D-05/D-06; issues #112, #1074, #1054;
 //      src/app/AssetLibrary.tsx (the ︙ menu + rename input + delete banner);
@@ -23,6 +23,7 @@
 
 import { test, expect } from './_fixtures';
 import { drawnImportMeshes, importRoots } from './_importedMesh';
+import { recordedSave, writeRecordedSave } from './_recordedSave';
 
 interface DagNode {
   type: string;
@@ -46,9 +47,6 @@ const FLAT_GLTF = [
   { urlPath: '/fixtures/multifile/flat/scene.bin', relativePath: 'scene.bin' },
   { urlPath: '/fixtures/multifile/flat/texture.png', relativePath: 'texture.png' },
 ];
-/** Still refused by the native reader (Draco, #1063), so it imports through the file's copy. */
-const DRACO_GLB = [{ urlPath: '/assets/cube-draco.glb', relativePath: 'cube-draco.glb' }];
-
 async function ingestGltf(
   page: import('@playwright/test').Page,
   name: string,
@@ -268,37 +266,42 @@ test('P7.14 (delete native import) — ︙ Delete is immediate and the scene kee
 test('P7.14 (delete referenced) — ︙ Delete of a referenced glTF blocks with a banner, then break-refs', async ({
   page,
 }) => {
+  // The fresh project this page opened is the one the recording was made from, so its node count
+  // is what is left once the import's footprint is gone.
   const baselineNodes = await dagNodeCount(page);
-  await ingestGltf(page, 'used-asset', DRACO_GLB);
-  // Still the clone road (Draco) — see the header. When Draco goes native this reds, and
-  // the break-refs path has no fixture left to run on.
+  // Recorded: a project saved with iridescence-quad.gltf on the clone road. The native reader
+  // refuses the file (KHR_materials_iridescence, #1123), so the load keeps the import as saved: a
+  // GltfAsset whose assetRef points at the folder.
+  const saved = recordedSave('clone-models/refused-iridescence');
+  const folder = saved.ref.split('/')[1];
+  await writeRecordedSave(page, saved);
+  await page.reload();
+  await expect(page.getByTestId('layout')).toBeVisible({ timeout: 10_000 });
   await expect.poll(async () => (await importRoots(page)).map((r) => r.road)).toEqual(['clone']);
-  // The import created a GltfAsset referencing the asset.
-  await expect
-    .poll(async () => await gltfAssetRefs(page))
-    .toContain('user-imports/used-asset/cube-draco.glb');
-  // The import added a whole footprint (GltfAsset + wrapper Group + child satellites), so the
-  // graph grew past baseline.
+  await expect.poll(async () => await gltfAssetRefs(page)).toContain(saved.ref);
+  // The kept import is a whole footprint (GltfAsset + wrapper Group + child satellites), so the
+  // graph is past baseline.
   expect(await dagNodeCount(page)).toBeGreaterThan(baselineNodes);
 
+  // The load says why the import was kept, and that notice covers the top toolbar until it is
+  // dismissed (#1410) — so dismiss it first, as a director would.
+  await page.getByRole('button', { name: `Dismiss error for model:${saved.ref}` }).click();
   await page.getByTestId('top-toolbar-assets').click();
-  await page.getByTestId('library-popover-menu-btn-used-asset').click();
-  await page.getByTestId('library-popover-menu-delete-used-asset').click();
+  await page.getByTestId(`library-popover-menu-btn-${folder}`).click();
+  await page.getByTestId(`library-popover-menu-delete-${folder}`).click();
 
   // Blocked: banner shown, asset NOT deleted.
   await expect(page.getByTestId('library-popover-delete-banner')).toBeVisible({ timeout: 5_000 });
-  expect(await opfsDirExists(page, 'used-asset')).toBe(true);
+  expect(await opfsDirExists(page, folder)).toBe(true);
 
   // Delete anyway → break refs.
-  await page.getByTestId('library-popover-delete-anyway-used-asset').click();
+  await page.getByTestId(`library-popover-delete-anyway-${folder}`).click();
 
-  await expect.poll(async () => await opfsDirExists(page, 'used-asset')).toBe(false);
-  await expect
-    .poll(async () => await gltfAssetRefs(page))
-    .not.toContain('user-imports/used-asset/cube-draco.glb');
+  await expect.poll(async () => await opfsDirExists(page, folder)).toBe(false);
+  await expect.poll(async () => await gltfAssetRefs(page)).not.toContain(saved.ref);
   // #127: the WHOLE import footprint is gone — no orphan wrapper Group, no child satellites,
   // no clip ghosts. Node count returns to baseline and zero nodes still carry the deleted
   // asset's ref.
   await expect.poll(async () => await dagNodeCount(page)).toBe(baselineNodes);
-  expect(await importTaggedNodeCount(page, 'user-imports/used-asset/')).toBe(0);
+  expect(await importTaggedNodeCount(page, `user-imports/${folder}/`)).toBe(0);
 });

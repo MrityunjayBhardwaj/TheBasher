@@ -63,9 +63,10 @@ export const GltfAssetParams = z.object({
   /**
    * P151 (Apply-Transform, issue #151) — the sanitised child KEYS (same key
    * space as `nodeNameMap`) whose RENDER is suppressed because the child was
-   * baked into a standalone `BakedMesh`. `GltfAssetR` sets
+   * baked into a standalone `BakedMesh`. Until #1053 the clone renderer set
    * `clone.getObjectByName(key).visible = false` for each entry, so the asset
-   * stops rendering that child by name (no double-render with the BakedMesh).
+   * stopped rendering that child by name (no double-render with the BakedMesh).
+   * A kept clone import is not drawn at all now; the param stays so old saves load.
    * This is an Op-backed param: the Apply composite appends the key here in the
    * SAME atomic `setParam`, and undo's inverse `setParam` un-suppresses (the
    * child renders again). `Object3D.visible=false` skips render + raycast for
@@ -79,13 +80,14 @@ export const GltfAssetParams = z.object({
   /**
    * UX #7 / H90 — glTF node INDEX → post-dedup KEY (same key space as
    * `nodeNameMap`), captured at import by `buildNodeNameMap`. JSON object keys
-   * are strings, so the integer node index serialises as a string key. The
-   * renderer pairs this with `gltf.parser.associations` (node index per loaded
-   * object) to stamp each clone object's `userData.basherGltfChildId`, making
-   * viewport drill-in immune to the producer-key ↔ clone-name divergence that
-   * leaves ~28% of a real export's meshes unaddressable by name (H90).
-   * `.default({})` makes it additive: pre-UX#7 saves hydrate empty and fall back
-   * to name-match (V10/H14-clean — no schema-version bump). Mirrors the
+   * are strings, so the integer node index serialises as a string key. Until
+   * #1053 the clone renderer paired this with `gltf.parser.associations` (node
+   * index per loaded object) to stamp each clone object with its child id, which
+   * made viewport drill-in immune to the producer-key ↔ clone-name divergence
+   * that leaves ~28% of a real export's meshes unaddressable by name (H90).
+   * Nothing draws or picks with it now; the load converter still reads it to
+   * convert a saved clone import.
+   * `.default({})` makes it additive (V10/H14-clean — no schema-version bump). Mirrors the
    * nodeNameMap/childHierarchy/skins additive-param precedent.
    */
   keyByGltfNodeIndex: z.record(z.string(), z.string()).default({}),
@@ -99,8 +101,8 @@ export const GltfAssetNode: NodeDefinition<GltfAssetParams, GltfAssetValue> = {
   cost: 'cheap',
   paramSchema: GltfAssetParams,
   inputs: {
-    // P7.5 — optional. When connected, `GltfAssetR` overrides per-child
-    // TRS via `nodeNameMap` keys. Closure walks via the 'animation'
+    // P7.5 — optional. When connected, the clone renderer overrode per-child
+    // TRS via `nodeNameMap` keys (until #1053). Closure walks via the 'animation'
     // EdgeKind (V13 — same as the AnimationLayer.animation socket).
     transformClip: { type: 'TransformClip', cardinality: 'single' },
   },

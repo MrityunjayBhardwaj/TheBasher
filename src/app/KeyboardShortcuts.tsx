@@ -69,7 +69,7 @@ import type { RotationModeFields } from '../nodes/types';
 import { getActiveCurvePoint } from './curvePointSelection';
 import { deleteCurvePoint, extrudeCurvePoint, toggleCurveClosed } from './curvePointCommands';
 import { useCurveSelectionStore } from './stores/curveSelectionStore';
-import { resolveRowChannelForWrite } from './animate/clipRowMint';
+import { resolveRowChannelForWrite } from './animate/rowChannelWrite';
 import { buildVec3Sampler, KeyframeChannelVec3Params } from '../nodes/KeyframeChannelVec3';
 import { sampleQuatKeyframes, type QuatKey } from '../nodes/keyframeInterp';
 import { parseLayerRowId } from '../timeline/layerChannelRows';
@@ -125,7 +125,7 @@ function buildKeyframeInsertOp(): Op[] | null {
   if (value === undefined) return null;
 
   const next = nextKeyframesAfterInsert(existing, time, value, easing);
-  return [...resolved.mintOps, ...resolved.write({ keyframes: next })];
+  return resolved.write({ keyframes: next });
 }
 
 /** The channel's target param — what an ordinary node currently holds. */
@@ -196,7 +196,7 @@ function buildKeyframeDeleteOp(): Op[] | null {
   // the last key means "stop overriding", which is a channel REMOVAL, and that
   // belongs with clearBakedMotion rather than here.
 
-  return [...resolved.mintOps, ...resolved.write({ keyframes: next })];
+  return resolved.write({ keyframes: next });
 }
 
 /** [ / ] seek helpers. Returns the time of the previous/next keyframe

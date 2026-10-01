@@ -1,6 +1,6 @@
 // Per-asset React error boundary (#83 gap 2).
 //
-// Wraps a single asset's render subtree (today: GltfAssetR). When the
+// Wraps a single asset's render subtree (today: the scene environment). When the
 // asset throws during load/parse — bad bytes, unsupported extension, a
 // missing multi-file sibling (#82), a Draco decode failure (#80) — the
 // boundary:
@@ -12,7 +12,7 @@
 //      scene (grid, lights, other meshes) keeps rendering.
 //
 // Why per-asset, not one boundary around <SceneFromDAG />: a single
-// bad asset must not nuke the entire viewport. Each GltfAssetR gets its
+// bad asset must not nuke the entire viewport. Each asset gets its
 // own boundary, keyed by assetRef at the call site so a swapped /
 // re-imported asset remounts fresh and re-attempts the load.
 //

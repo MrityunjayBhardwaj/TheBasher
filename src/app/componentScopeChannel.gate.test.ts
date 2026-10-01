@@ -340,7 +340,7 @@ describe('ns-2 step 9b — the omission is refused where both standing gates are
     ).toThrow(/ArrayModifier\.evaluate was called with no resolved selection/);
   });
 
-  it('all SIX scoped operators refuse it, and no unscoped one does', () => {
+  it('all SEVEN scoped operators refuse it, and no unscoped one does', () => {
     // Derived from the declarations, never a list: the population is whoever declares a
     // scope, so an operator that starts declaring one is covered the day it does.
     //
@@ -670,7 +670,7 @@ describe('ns-2 step 9b — the premises the hand-off rests on', () => {
     expect(make('Ns2ScopedOk', 'ObjectData')).not.toThrow();
   });
 
-  it('exactly SIX registered node types declare a `scope` param — three `target`, three `source`', () => {
+  it('exactly SEVEN registered node types declare a `scope` param — four `target`, three `source`', () => {
     // 🔴 THE FUSE BLEW AT STEP 12, AND THE DECISION IT WAS GUARDING IS TAKEN. It read
     // `declaring: []` and existed to red at the first declaration, because an unparseable
     // query is a named THROW and `evaluate` runs on the render road with no try/catch above

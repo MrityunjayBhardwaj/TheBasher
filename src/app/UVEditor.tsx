@@ -20,12 +20,48 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useDagStore } from '../core/dag/store';
 import { useSelectionStore } from './stores/selectionStore';
-import { resolveMeshUVSpace } from './resolveMeshUVSpace';
+import { isImportedChild } from './importedChild';
+import { resolveMeshUVSpace, type MeshUVSpace } from './resolveMeshUVSpace';
 import { usePanZoomCanvas } from './usePanZoomCanvas';
 
 // Opacity of the texture backdrop. Dimmed (Blender default) so the bright island
 // outlines stay readable on top of the image.
 const TEXTURE_DIM = 0.6;
+
+type StatusNode = { readonly id: string; readonly type: string };
+
+/**
+ * The pane's one-line status for the selection. Pure, so the sentence a director reads is
+ * testable without a canvas.
+ *
+ * #1412 — a kept clone-road import (#1053) resolves no mesh, the same as a mesh with no UVs, but
+ * the reason differs: it is not drawn at all. Asked with the SAME predicate Apply refuses on, so
+ * the two surfaces say the same thing about the same object.
+ */
+export function uvStatusLine(
+  nodes: Parameters<typeof isImportedChild>[0],
+  node: StatusNode | null,
+  space: MeshUVSpace,
+): string {
+  if (!node) return 'Select a mesh to view UVs.';
+  const source = space.uvs;
+  if (source.status === 'loading') return `${node.id} · ${node.type} — loading geometry…`;
+  if (source.uvs && source.uvs.islands.length > 0) {
+    const texture = space.texture;
+    const texNote =
+      texture.status === 'ok' && texture.image !== null
+        ? ` · ${texture.width}×${texture.height} texture`
+        : '';
+    const n = source.uvs.islands.length;
+    return `${node.id} · ${node.type} — ${n} island${n === 1 ? '' : 's'} · ${
+      source.uvs.triangleCount
+    } tris${source.uvs.sampled ? ' (sampled)' : ''}${texNote} (read-only).`;
+  }
+  if (isImportedChild(nodes, node.id)) {
+    return `${node.id} · ${node.type} — saved on the old imported-file structure and not drawn, so there is no UV layout to show.`;
+  }
+  return `${node.id} · ${node.type} — no UV layout.`;
+}
 
 export function UVEditor() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -71,19 +107,7 @@ export function UVEditor() {
   }, [source.uvs]);
 
   const hasTexture = texture.status === 'ok' && texture.image !== null;
-  const texNote = hasTexture ? ` · ${texture.width}×${texture.height} texture` : '';
-
-  const status = !node
-    ? 'Select a mesh to view UVs.'
-    : source.status === 'loading'
-      ? `${node.id} · ${node.type} — loading geometry…`
-      : source.uvs && source.uvs.islands.length > 0
-        ? `${node.id} · ${node.type} — ${source.uvs.islands.length} island${
-            source.uvs.islands.length === 1 ? '' : 's'
-          } · ${source.uvs.triangleCount} tris${
-            source.uvs.sampled ? ' (sampled)' : ''
-          }${texNote} (read-only).`
-        : `${node.id} · ${node.type} — no UV layout.`;
+  const status = uvStatusLine(dagState.nodes, node, space);
 
   // Pan/zoom + all the canvas boilerplate (DPR sizing, ResizeObserver, the view
   // transform) live in the ONE shared hook; this pane supplies only its fit-draw.

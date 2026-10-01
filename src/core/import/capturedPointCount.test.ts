@@ -2,9 +2,11 @@
 //
 // ── WHY THE ORACLE IS THE REAL LOADER AND NOT A FIXTURE OF MY OWN ────────────────────────
 //
-// The number this capture writes is compared, downstream, against `weldByPosition` of the
-// geometry a reader gets from the mounted clone. So the only oracle that means anything is
-// that same geometry, produced by the same `GLTFLoader` the app uses. Both sides weld through
+// The number this capture writes was compared, downstream, against `weldByPosition` of the
+// geometry a reader got from the mounted clone. Since #1053 nothing draws the clone, but the
+// load converter rebuilds a saved clone import and diffs every param against the save, so the
+// capture must still write what it always wrote. The oracle stays the geometry the clone road
+// read, produced by the same `GLTFLoader` the app uses. Both sides weld through
 // PRODUCTION's `weldByPosition` rather than through two spellings of it — an earlier probe for
 // this work hashed coordinates itself and split a sphere's seam column on negative zero, which
 // is exactly the disagreement this file exists to rule out.
@@ -17,7 +19,7 @@
 //   3  a multi-primitive child is refused, and the falsifier shows why it must be: with
 //      DISJOINT primitives the door and a unioning capture genuinely disagree
 //   4  absence is not zero
-//   5  `pointCountOf` reads it, and refuses without it
+//   5  (retired in #1053: `pointCountOf` read it off the `gltf` descriptor, which is gone)
 //
 // REF: src/core/import/gltfImportChain.ts (`captureChildPointCount`); src/app/pointIdentity.ts
 //      (`pointCountOf`, `weldByPosition`); src/app/importedMeshParity.gate.test.ts (the
@@ -28,11 +30,9 @@ import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { GLTFLoader } from 'three-stdlib';
 import * as THREE from 'three';
-import type { GeometryDescriptor } from '../../nodes/types';
 import { parseGltfContainer, resolveBuffers, type GltfJson } from './glb';
 import { captureChildPointCount } from './gltfImportChain';
-import { pointCountOf, weldByPosition } from '../../app/pointIdentity';
-import { firstMeshGeometry } from '../../app/firstMeshGeometry';
+import { weldByPosition } from '../../app/pointIdentity';
 
 function fixtureBuffer(name: string): ArrayBuffer {
   const n = readFileSync(resolve(process.cwd(), `public/assets/${name}`));
@@ -65,6 +65,21 @@ async function loadScene(name: string, bytes?: ArrayBuffer): Promise<THREE.Objec
   } catch {
     return null;
   }
+}
+
+/**
+ * The geometry the clone road read for a child: the first `isMesh` under the named node, the
+ * node itself included. Production's copy (`src/app/firstMeshGeometry.ts`) went with the clone
+ * renderer in #1053; it is kept here as the ORACLE's definition, because the capture below was
+ * written to agree with exactly this buffer and saved clone imports still carry what it wrote.
+ */
+function firstMeshGeometry(root: THREE.Object3D | undefined): THREE.BufferGeometry | null {
+  if (!root) return null;
+  let found: THREE.BufferGeometry | null = null;
+  root.traverse((o) => {
+    if (!found && (o as THREE.Mesh).isMesh) found = (o as THREE.Mesh).geometry;
+  });
+  return found;
 }
 
 async function parsed(name: string, bytes?: ArrayBuffer) {
@@ -213,28 +228,4 @@ describe('#1040 — a captured point count agrees with the buffer a reader holds
       ),
     ).toBeUndefined();
   }, 120000);
-
-  it('5 — `pointCountOf` reads it, and absence is not zero', () => {
-    const welded: GeometryDescriptor = {
-      kind: 'gltf',
-      assetRef: 'a/b.gltf',
-      childName: 'Cube',
-      faceCount: 12,
-      pointCount: 8,
-    };
-    const v = pointCountOf(welded);
-    expect(v.kind).toBe('counted');
-    if (v.kind === 'counted') expect(v.count).toBe(8);
-
-    // Uncaptured keeps refusing, and the refusal is the escape hatch and not a zero.
-    const bare: GeometryDescriptor = { kind: 'gltf', assetRef: 'a/b.gltf', childName: 'Cube' };
-    expect(pointCountOf(bare).kind).toBe('outside-the-descriptor');
-
-    // A genuinely empty child would be `counted(0)` — a different answer from "not captured",
-    // which is the whole reason the field is optional rather than defaulted.
-    const empty: GeometryDescriptor = { ...welded, pointCount: 0 };
-    const ev = pointCountOf(empty);
-    expect(ev.kind).toBe('counted');
-    if (ev.kind === 'counted') expect(ev.count).toBe(0);
-  });
 });

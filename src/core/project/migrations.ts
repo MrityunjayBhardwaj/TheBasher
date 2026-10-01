@@ -24,6 +24,12 @@ import { radVec3ToDeg } from '../../viewport/rotation';
 import type { Node } from '../dag/types';
 import { PROJECT_FORMAT_VERSION, type Project } from './schema';
 import { COLOR_LAYER, uvLayerName } from '../../nodes/attributes';
+import {
+  FILTER_NAME_OF_GLTF,
+  FILTER_NAME_OF_THREE,
+  WRAP_NAME_OF_GLTF,
+  WRAP_NAME_OF_THREE,
+} from '../../nodes/materialSchema';
 
 type FormatMigration = (raw: unknown) => unknown;
 
@@ -109,6 +115,10 @@ const formatMigrations: Record<number, FormatMigration> = {
   // v17 → v18 (#1225): locomotion reads the pose wire. `LocomotionState.clip` becomes `pose`,
   // re-pointed to the producer's pose output for v16's reason.
   17: migrateLocomotionClipToPose,
+  // v18 → v19 (#1316): a stored texture ref's sampler (wrap, filters) by NAME. The numbers were two
+  // vocabularies in one field — glTF's (10497) from the clone road, three's (1000) from the native
+  // road and director uploads — and both become the same name.
+  18: migrateSamplerNames,
 };
 
 // ── v1 → v2: AnimationLayer retirement (#199) ──────────────────────────────
@@ -1310,7 +1320,7 @@ function snapshotCurrentNodeVersions(nodes: Record<string, Node>): Record<string
 //      the clone rig's clip-seeded mint (`seedKeysFromClip`, retired with the
 //        clone road's character half, #1053), the derivation this mirrored
 //        key-for-key, including the radians→degrees boundary;
-//      src/agent/mutators/builders/bakeChannelOps.ts (the node shape + the
+//      agent/mutators/builders/bakeChannelOps.ts (gone in #1053; at 15c170c4) (the node shape + the
 //        `easing: 'linear'` the bake stamps); issues #915, #913, #889, #877.
 
 /** The eager bake's value for every non-keyframe field. A channel deviating in
@@ -1866,4 +1876,92 @@ export function migrateLocomotionClipToPose(raw: unknown): unknown {
     );
   }
   return { ...proj, formatVersion: 18 };
+}
+
+/**
+ * v18 → v19 (#1316) — a stored texture ref's sampler state by name.
+ *
+ * `wrapS`/`wrapT`/`magFilter`/`minFilter` were bare numbers, and one field held two numberings: the
+ * clone road stored the file's glTF enums (10497 = REPEAT) and the native road, director uploads and
+ * bakes stored three.js's constants (1000 = RepeatWrapping). Both become glTF's names. The two
+ * numberings share no value (glTF: 9728–9987 and 10497/33071/33648; three: 1000–1008), so a number
+ * says which it is.
+ *
+ * 🔑 RECOGNISED BY SHAPE, as the v13 pass is: a ref sits in a node's material maps, a baked
+ * snapshot's slots, a slot table, an override, and wherever the next node puts one. Anything with a
+ * string `hash`, a boolean `flipY` and a known `colorSpace` is a ref.
+ *
+ * A number neither table knows cannot have been written by this app. It becomes glTF's default
+ * (`repeat`; a filter is dropped, which means the renderer's default) and is COUNTED in the warning
+ * with its node, rather than thrown: a throw here would make the whole project unloadable over one
+ * sampler setting.
+ */
+export function migrateSamplerNames(raw: unknown): unknown {
+  const proj = raw as {
+    formatVersion?: number;
+    state?: { nodes?: Record<string, { params?: unknown }> };
+  };
+  const nodes = proj.state?.nodes;
+  if (!nodes) return { ...proj, formatVersion: 19 };
+
+  let renamed = 0;
+  const unknown: string[] = [];
+  const isRef = (o: Record<string, unknown>) =>
+    typeof o.hash === 'string' &&
+    typeof o.flipY === 'boolean' &&
+    (o.colorSpace === 'srgb' || o.colorSpace === 'srgb-linear' || o.colorSpace === 'no-colorspace');
+  const nameOf = (
+    value: number,
+    ...tables: Readonly<Record<number, string>>[]
+  ): string | undefined => {
+    for (const table of tables) if (table[value] !== undefined) return table[value];
+    return undefined;
+  };
+
+  const rewrite = (value: unknown, nodeId: string): void => {
+    if (Array.isArray(value)) {
+      for (const entry of value) rewrite(entry, nodeId);
+      return;
+    }
+    if (value === null || typeof value !== 'object') return;
+    const obj = value as Record<string, unknown>;
+    if (isRef(obj)) {
+      for (const key of ['wrapS', 'wrapT'] as const) {
+        const v = obj[key];
+        if (typeof v !== 'number') continue;
+        const name = nameOf(v, WRAP_NAME_OF_GLTF, WRAP_NAME_OF_THREE);
+        if (name === undefined) unknown.push(`${nodeId}.${key}=${v}`);
+        obj[key] = name ?? 'repeat';
+        renamed++;
+      }
+      for (const key of ['magFilter', 'minFilter'] as const) {
+        const v = obj[key];
+        if (typeof v !== 'number') continue;
+        let name = nameOf(v, FILTER_NAME_OF_GLTF, FILTER_NAME_OF_THREE);
+        // A magnification filter is only ever nearest or linear.
+        if (key === 'magFilter' && name !== 'nearest' && name !== 'linear') name = undefined;
+        if (name === undefined) {
+          unknown.push(`${nodeId}.${key}=${v}`);
+          delete obj[key];
+        } else {
+          obj[key] = name;
+        }
+        renamed++;
+      }
+      return;
+    }
+    for (const nested of Object.values(obj)) rewrite(nested, nodeId);
+  };
+
+  for (const [id, node] of Object.entries(nodes)) rewrite(node?.params, id);
+
+  if (renamed > 0) {
+    console.warn(
+      `[migrateSamplerNames] named ${renamed} texture sampler value(s) (#1316)` +
+        (unknown.length > 0
+          ? `; ${unknown.length} held a number neither glTF nor three.js uses and took the default: ${unknown.join(', ')}.`
+          : '.'),
+    );
+  }
+  return { ...proj, formatVersion: 19 };
 }

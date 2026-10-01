@@ -98,12 +98,12 @@ const OPT_OUTS: Record<string, string> = {
   'src/app/MultiSelectInspector.tsx':
     '(a) offers the transform fields only, and writes a field ONLY to a node whose own params already hold a vec3 there (the isVec3 guard skips the rest) — so it never writes past a node that does not own the field. Multi-select holds no rows by definition; the day it offers a DATA param (size, material) it needs the oracle and must leave this list.',
   // `src/app/KeyboardShortcuts.tsx` LEFT this list at #1215: its insert/delete-keyframe writes now go
-  // through the timeline row resolver's `write` (`resolveRowChannelForWrite`, clipRowMint.ts), which
+  // through the timeline row resolver's `write` (`resolveRowChannelForWrite`, rowChannelWrite.ts), which
   // lands a key wherever the row's curve lives — a channel node, or a pose layer's list — and which
   // is addressed from the timeline selection, never the node selection. The file no longer spells a
   // write, so it is no longer a road.
   // `src/timeline/TimelineCanvas.tsx` LEFT this list at #1215 too: its gutter mute/solo toggle now goes
-  // through `rowFlagToggleOps` (clipRowMint.ts), the same row resolver `write`, so a layer curve's
+  // through `rowFlagToggleOps` (rowChannelWrite.ts), the same row resolver `write`, so a layer curve's
   // mute lands in its layer. The file no longer spells a write.
   'src/timeline/LightStudioPanel.tsx':
     '(b) writes to ids from its OWN enumeration of lights and its own shading node, never to the raw selection.',

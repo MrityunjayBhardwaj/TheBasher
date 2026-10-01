@@ -91,7 +91,7 @@
 //                                    the whole mesh.
 //   NO scope, on a value with no     `null` — a DECLARED "nothing to resolve here", not an
 //   component domain                 error. Curves, lights, cameras, unwired spines and
-//                                    `gltf`/`baked` handles all sit on shipped modifier
+//                                    `baked` handles all sit on shipped modifier
 //                                    roads today (step 9b measured it), so refusing them
 //                                    would throw on the renderer's walk.
 //   an AUTHORED scope on one of      a NAMED THROW. The author asked for something that
@@ -284,7 +284,7 @@ function refuse(why: string): never {
  * derivation at all in ns-2* — a fact about the code, true for every descriptor, and an
  * author cannot reach it, which is why it THROWS and is not an arm of the verdict. An
  * `outside-the-descriptor` verdict says *this domain is derivable in principle and THIS
- * descriptor cannot say how many* — the `gltf` and `baked` arms, whose buffers live outside
+ * descriptor cannot say how many* — the `baked` arm, whose buffers live outside
  * the descriptor, and which are ordinary shipped values sitting on a modifier's spine right
  * now. See {@link resolveComponentSelection} for what the difference buys.
  *
@@ -336,25 +336,23 @@ export function componentCountOf(
       //
       // #744 — `faceCountOf` STILL SPEAKS `number | null`, AND THE LIFT HAPPENS HERE. Its
       // `null` has only ever meant one thing: its derived arms recurse, and come back null
-      // only when a `gltf` or `baked` sits somewhere up the chain. The collapse #744
+      // only when a `baked` sits somewhere up the chain. The collapse #744
       // describes was `pointCountOf`'s alone, so lifting `faceCountOf` too would rewrite
       // five in-module callers to buy a distinction that function does not draw.
       const faces = faceCountOf(descriptor);
       return faces === null
         ? {
             kind: 'outside-the-descriptor',
-            // ⚠️ NAMES BOTH CAUSES RATHER THAN THE LIKELIER ONE. Telling them apart needs a
-            // walk to the leaf of the source chain, and the two walks this repo already has
-            // cover different kind sets for different questions — so a third would be a third
-            // spelling, and guessing which cause fired would repeat the very defect this
-            // sentence was rewritten to remove. It states what is true of both.
-            why: `descriptor '${descriptor.kind}' resolves to a source whose faces this cannot count: either an imported mesh whose face count was never captured (re-importing captures one) or a 'baked' mesh, whose triangles live outside the descriptor`,
+            // One cause since #1053: it named two, an imported mesh whose face count was never
+            // captured and a `baked` one, and the first went with the `gltf` kind (an import is
+            // a stored `mesh` that states its polygons).
+            why: `descriptor '${descriptor.kind}' resolves to a 'baked' mesh, whose triangles live outside the descriptor`,
           }
         : { kind: 'counted', count: faces };
     }
     case 'point':
       // #716 gave this arm the TOPOLOGICAL count; #754 made it total for everything but the
-      // two kinds whose buffers are elsewhere, by composing a derived geometry's point
+      // kind whose buffers are elsewhere (`baked`), by composing a derived geometry's point
       // identity from its source's instead of position-welding the merged result.
       //
       // ⚠️ ANSWERING HERE DOES NOT WIDEN THE AUTHORING SURFACE, which is worth saying because
@@ -397,7 +395,7 @@ export function componentCountOf(
       return corners === null
         ? {
             kind: 'outside-the-descriptor',
-            why: `descriptor '${descriptor.kind}' resolves to a 'gltf' or 'baked' source, whose polygons live outside the descriptor`,
+            why: `descriptor '${descriptor.kind}' resolves to a 'baked' source, whose polygons live outside the descriptor`,
           }
         : { kind: 'counted', count: corners };
     }
@@ -551,7 +549,7 @@ function authoredScope(params: Readonly<Record<string, unknown>>): string | null
  *   an UNWIRED spine        the operator is mid-authoring; it already stays transparent.
  *   a curve / light / camera `modifierDataSource` says these carry no mesh face at all,
  *                            and the modifiers already pass them through unchanged.
- *   a `gltf` / `baked` handle  the buffers live outside the descriptor, so no count exists.
+ *   a `baked` handle        the buffers live outside the descriptor, so no count exists.
  *
  * 🔴 THE PLAN SAID TO REFUSE ALL THREE, AND THAT WAS MEASURED AS A PRODUCTION CRASH. This
  * resolver runs at the single `evaluate` call site, ahead of every ArrayModifier and

@@ -110,8 +110,15 @@
 //      issues #530, #532, #1062.
 
 import * as THREE from 'three';
-import { CENTRE_PIVOT, placeTexture, resolveSlotPlacement } from './material/uvPlacement';
+import {
+  CENTRE_PIVOT,
+  normalScaleFor,
+  placeTexture,
+  resolveSlotPlacement,
+} from './material/uvPlacement';
 import type { SlotPlacements } from './material/uvPlacement';
+import type { BakedMaterialMaps } from '../nodes/types';
+import { BAKED_MAP_COLOR_SPACE } from './asset/bakedTextureStore';
 
 /**
  * Everything a shared primitive material is made of — and the builder's ONLY
@@ -179,42 +186,55 @@ export interface PrimitiveMaterialSpec {
    */
   readonly mapUvChannels?: { readonly [K in keyof PrimitiveMaterialSpec['textures']]?: number };
   /**
+   * #1123 — the normal map's STRENGTH. three's `normalScale` is a vector whose y sign the build
+   * derives from the texture (`normalScaleFor`, #1325), so the spec holds the one number that is
+   * authored. Absent means 1, and ABSENT rather than 1 for the reason {@link mapUvTransforms} gives.
+   */
+  readonly normalScale?: number;
+  /** #1123 — the occlusion map's strength. Absent means three's default of 1. */
+  readonly aoMapIntensity?: number;
+  /** #1327 — the coat normal map's strength, unsigned like {@link normalScale}. Absent means 1. */
+  readonly clearcoatNormalScale?: number;
+  /**
+   * #1123 — `'basic'` builds an UNLIT `MeshBasicMaterial` from the colour, the base map and the
+   * surface flags alone, as three's glTF loader does for `KHR_materials_unlit`. Absent means lit.
+   */
+  readonly materialClass?: 'basic';
+  /** #1123 — the fuzz lobe, as three's sheen. All three absent when the material has none. */
+  readonly sheen?: number;
+  readonly sheenColor?: string;
+  readonly sheenRoughness?: number;
+  /** #1321 — the specular lobe's weight and colour. Absent: three's 1 and white. */
+  readonly specularIntensity?: number;
+  readonly specularColor?: string;
+  /** #1322 — absorption through the volume. Absent: three's none (distance Infinity). */
+  readonly attenuationDistance?: number;
+  readonly attenuationColor?: string;
+  /**
    * The RESOLVED map textures (already decoded + shared by hash), not the refs.
    * Resolution happens above this module, in the suspense hooks; keying on the
    * instance means a slot that is still loading and one that has loaded are
    * distinct materials rather than the same one at two moments.
    */
-  readonly textures: {
-    readonly map: THREE.Texture | null;
-    readonly normalMap: THREE.Texture | null;
-    readonly roughnessMap: THREE.Texture | null;
-    readonly metalnessMap: THREE.Texture | null;
-    readonly aoMap: THREE.Texture | null;
-    readonly emissiveMap: THREE.Texture | null;
-  };
+  readonly textures: { readonly [K in keyof BakedMaterialMaps]: THREE.Texture | null };
 }
 
 /** sRGB for colour maps, linear for data maps (M5 — a data map as sRGB washes out). */
-const MAP_COLOR_SPACE: Record<keyof PrimitiveMaterialSpec['textures'], THREE.ColorSpace> = {
-  map: THREE.SRGBColorSpace,
-  normalMap: THREE.LinearSRGBColorSpace,
-  roughnessMap: THREE.LinearSRGBColorSpace,
-  metalnessMap: THREE.LinearSRGBColorSpace,
-  aoMap: THREE.LinearSRGBColorSpace,
-  emissiveMap: THREE.SRGBColorSpace,
-};
+/** The slot table's colorspaces, in three's vocabulary (#1324). */
+const MAP_COLOR_SPACE: Readonly<Record<keyof PrimitiveMaterialSpec['textures'], THREE.ColorSpace>> =
+  BAKED_MAP_COLOR_SPACE;
 
 /**
- * The map slots, in one order. Derived from {@link MAP_COLOR_SPACE} rather than written
- * out again, so a seventh slot cannot be added to the spec and forgotten by a caller
- * assembling the texture half of an identity key (#536 S2).
+ * The map slots, in one order. Derived from {@link MAP_COLOR_SPACE} — itself the slot table's —
+ * so a slot cannot be added to the spec and forgotten by a caller assembling the texture half of an
+ * identity key (#536 S2).
  */
 export const MAP_SLOTS = Object.keys(
   MAP_COLOR_SPACE,
 ) as (keyof PrimitiveMaterialSpec['textures'])[];
 
 interface Entry {
-  readonly material: THREE.MeshPhysicalMaterial;
+  readonly material: PrimitiveMaterial;
   /** Committed holders. `get` never touches this — only `retain` / `release`. */
   count: number;
   /** An eviction is already queued for this entry (do not queue a second). */
@@ -275,7 +295,7 @@ export function get(
   key: string = keyOf(spec),
 ): {
   key: string;
-  material: THREE.MeshPhysicalMaterial;
+  material: PrimitiveMaterial;
 } {
   const hit = cache.get(key);
   if (hit) return { key, material: hit.material };
@@ -310,7 +330,10 @@ export function release(key: string): void {
   });
 }
 
-function build(spec: PrimitiveMaterialSpec): THREE.MeshPhysicalMaterial {
+/** What the registry builds: the lit physical material, or the unlit basic one (#1123). */
+export type PrimitiveMaterial = THREE.MeshPhysicalMaterial | THREE.MeshBasicMaterial;
+
+function build(spec: PrimitiveMaterialSpec): PrimitiveMaterial {
   // Textures are cached & SHARED by hash (bakedTextureLoader), so CLONE before
   // applying the UV transform — mutating the shared instance would cross-
   // contaminate every other material using that image. The clone shares the image
@@ -338,6 +361,25 @@ function build(spec: PrimitiveMaterialSpec): THREE.MeshPhysicalMaterial {
     return c;
   };
 
+  if (spec.materialClass === 'basic') {
+    // #1123 — unlit: colour, base map and the surface flags, nothing lit. three's GLTFLoader draws
+    // `KHR_materials_unlit` exactly so, skipping every other map (`materialType !== MeshBasicMaterial`),
+    // and Blender wires only the base colour into its Emission.
+    const b = new THREE.MeshBasicMaterial();
+    b.color = new THREE.Color(spec.color);
+    b.opacity = spec.opacity;
+    b.transparent = spec.transparent;
+    b.wireframe = spec.wireframe;
+    b.alphaTest = spec.alphaTest;
+    b.side = spec.side;
+    b.vertexColors = spec.vertexColors;
+    b.map = prep(spec.textures.map, 'map', MAP_COLOR_SPACE.map);
+    const channel = spec.mapUvChannels?.map;
+    if (channel !== undefined && b.map) b.map.channel = channel;
+    b.userData.__uvClones = clones;
+    return b;
+  }
+
   const m = new THREE.MeshPhysicalMaterial();
   m.color = new THREE.Color(spec.color);
   m.roughness = spec.roughness; // explicit — three default is 1 (D-03)
@@ -350,6 +392,17 @@ function build(spec: PrimitiveMaterialSpec): THREE.MeshPhysicalMaterial {
   m.clearcoat = spec.clearcoat;
   m.clearcoatRoughness = spec.clearcoatRoughness; // explicit — three default is 0
   m.transmission = spec.transmission;
+  // #1123 — the fuzz lobe; three's defaults (sheen 0) stand when the material has none.
+  if (spec.sheen !== undefined) m.sheen = spec.sheen;
+  if (spec.sheenColor !== undefined) m.sheenColor = new THREE.Color(spec.sheenColor);
+  if (spec.sheenRoughness !== undefined) m.sheenRoughness = spec.sheenRoughness;
+  // #1321 — the specular weight and colour.
+  if (spec.specularIntensity !== undefined) m.specularIntensity = spec.specularIntensity;
+  if (spec.specularColor !== undefined) m.specularColor = new THREE.Color(spec.specularColor);
+  // #1322 — the volume's absorption.
+  if (spec.attenuationDistance !== undefined) m.attenuationDistance = spec.attenuationDistance;
+  if (spec.attenuationColor !== undefined)
+    m.attenuationColor = new THREE.Color(spec.attenuationColor);
   m.thickness = spec.thickness;
   m.wireframe = spec.wireframe;
   m.alphaTest = spec.alphaTest; // #532 — explicit; three's default is 0
@@ -359,7 +412,7 @@ function build(spec: PrimitiveMaterialSpec): THREE.MeshPhysicalMaterial {
   // and the attribute cannot disagree — which is the whole reason it can live here now.
   m.vertexColors = spec.vertexColors;
   for (const slot of Object.keys(MAP_COLOR_SPACE) as (keyof typeof MAP_COLOR_SPACE)[]) {
-    m[slot] = prep(spec.textures[slot], slot, MAP_COLOR_SPACE[slot]);
+    m[slot] = prep(spec.textures[slot] ?? null, slot, MAP_COLOR_SPACE[slot]);
     // #1062 — the UV buffer this slot samples. Written on the CLONE `prep` just made (never
     // the shared instance), and only for a slot that resolved: three's default is 0, so an
     // absent entry is already the right answer and writing it would say nothing.
@@ -369,11 +422,19 @@ function build(spec: PrimitiveMaterialSpec): THREE.MeshPhysicalMaterial {
       if (texture) texture.channel = channel;
     }
   }
+  // #1325 — a normal map's green is image-up; on an unflipped (glTF) texture three's derived
+  // tangent frame points the other way, so y is negated. See `normalScaleFor`.
+  if (m.normalMap) m.normalScale.set(...normalScaleFor(m.normalMap, spec.normalScale));
+  if (spec.aoMapIntensity !== undefined) m.aoMapIntensity = spec.aoMapIntensity; // #1123
+  // #1327 — the coat's normal follows the same rule: three's loader negates its y too
+  // (`GLTFLoader.js:3469`).
+  if (m.clearcoatNormalMap)
+    m.clearcoatNormalScale.set(...normalScaleFor(m.clearcoatNormalMap, spec.clearcoatNormalScale));
   m.userData.__uvClones = clones;
   return m;
 }
 
-function dispose(material: THREE.MeshPhysicalMaterial): void {
+function dispose(material: PrimitiveMaterial): void {
   material.dispose();
   // Material.dispose does NOT free textures, and these clones are ours.
   (material.userData.__uvClones as THREE.Texture[] | undefined)?.forEach((t) => t.dispose());

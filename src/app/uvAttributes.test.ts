@@ -22,11 +22,6 @@ const bakedRef = (hash: string): GeometryRef => ({
   descriptor: { kind: 'baked', hash, vertexCount: 3 },
 });
 
-const gltfRef: GeometryRef = {
-  key: 'gltf|asset|child',
-  descriptor: { kind: 'gltf', assetRef: 'asset', childName: 'child' },
-};
-
 /** A triangle with positions and no `uv` attribute at all. */
 function uvlessTriangle(): BufferGeometry {
   const geom = new BufferGeometry();
@@ -167,10 +162,6 @@ describe('#635 absence says WHY', () => {
     expect(readMeshUVs(bakedRef('not-primed-yet')).status).toBe('loading');
   });
 
-  it('answers ELSEWHERE for buffers that live in a loaded asset clone', () => {
-    expect(readMeshUVs(gltfRef).status).toBe('elsewhere');
-  });
-
   it('answers NONE for a geometry that is built and genuinely has no UVs', () => {
     const ref = bakedRef('primed-without-uvs');
     prime(ref, uvlessTriangle());
@@ -221,7 +212,6 @@ describe('#635 absence says WHY', () => {
     for (const result of [
       readMeshUVs(boxGeometryRef([2, 2, 2], null)),
       readMeshUVs(bakedRef('never-primed')),
-      readMeshUVs(gltfRef),
     ]) {
       expect(result).not.toBeInstanceOf(Promise);
       expect(typeof result.status).toBe('string');

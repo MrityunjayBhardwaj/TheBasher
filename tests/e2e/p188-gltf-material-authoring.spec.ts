@@ -6,12 +6,15 @@
 //
 // THE PROOF (falsifiable): import cube-draco → select its imported child → expand the
 // MATERIAL section → click the metalness diamond. A KeyframeChannelNumber appears
-// with target=the GltfData id, paramPath='material.base.metalness', and ZERO
+// with target=the imported mesh's data id, paramPath='material.base.metalness', and ZERO
 // AnimationLayer nodes were created (an imported child is not a scene producer — wrapping
 // it in a layer would be the H104-adjacent break). The diamond then reads 'on-key'.
+//
+// #1053 — the imported child was a GltfChild until the clone road was retired; it is now the
+// native mesh's Object + PolyMeshData pair, and the diamond is the generic material editor's.
 
 import { test, expect } from './_fixtures';
-import { importedChild } from './_importedChild';
+import { firstMaterialMesh } from './_importedMesh';
 import { openInspectorSection } from './_inspectorSections';
 
 interface W {
@@ -32,11 +35,12 @@ interface W {
 type Page = import('@playwright/test').Page;
 
 // #389 — the DATA half's id. The diamond, the channel it mints and the autoKey spine
-// all address the node that OWNS the param, and after the split that is `GltfData`.
+// all address the node that OWNS the param — on the native road, the `PolyMeshData`.
 async function cubeChildIds(page: Page) {
-  const c = await importedChild(page, 'cube');
+  const c = await firstMaterialMesh(page);
+  if (c && c.road !== 'native') throw new Error(`cube-draco imported on the ${c.road} road`);
   // #389 — BOTH halves. The director SELECTS the Object; the material rows, and therefore
-  // the diamond's testid and the channel it mints, belong to the GltfData that owns the
+  // the diamond's testid and the channel it mints, belong to the data half that owns the
   // param. One id served both jobs before the split and neither serves both now.
   return c ? { objectId: c.objectId, dataId: c.dataId } : null;
 }
@@ -61,12 +65,16 @@ test.describe('#188 — glTF material keyframe authoring (H104, free-floating ch
         !!(window as unknown as W).__basher_dag &&
         !!(window as unknown as W).__basher_selection,
     );
+    // #1053 — the native road, through the door a drop takes (this ran on the clone road until the
+    // clone road was retired).
     await page.evaluate(async () => {
-      const w = window as unknown as W;
       const bytes = new Uint8Array(
         await fetch('/assets/cube-draco.glb').then((r) => r.arrayBuffer()),
       );
-      await w.__basher_ingestGltfFolder([{ relativePath: 'cube-draco.glb', bytes }], 'matauthor');
+      await (window as unknown as W).__basher_ingestGltfFolder(
+        [{ relativePath: 'cube-draco.glb', bytes }],
+        'matauthor',
+      );
     });
     await expect.poll(async () => (await cubeChildIds(page)) !== null).toBe(true);
     const ids = (await cubeChildIds(page))!;
@@ -99,7 +107,7 @@ test.describe('#188 — glTF material keyframe authoring (H104, free-floating ch
       })
       .toBe('found');
 
-    // ZERO AnimationLayer nodes — a GltfChild is not a scene producer, so the
+    // ZERO AnimationLayer nodes — an imported mesh's data half is not a scene producer, so the
     // first-key must NOT wrap it in a layer (the direct-channel road, V57).
     expect((await nodesOfType(page, 'AnimationLayer')).length).toBe(0);
 

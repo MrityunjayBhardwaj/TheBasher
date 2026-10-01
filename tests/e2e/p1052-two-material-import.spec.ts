@@ -10,9 +10,8 @@
 // wholly red quad with nothing thrown. So this reads, per import, the drawn mesh's material list and
 // its geometry's groups together: two materials, red then blue, over one group per slot.
 //
-// The six clone-road specs that use these fixtures import through `__basher_importGltf`, which never
-// tries the native road, so they keep covering the clone road. This file imports through the shared
-// chain (`__basher_ingestGltfFolder`), the road a drop or the picker takes.
+// This file imports through the shared chain (`__basher_ingestGltfFolder`), the road a drop or the
+// picker takes. (#1053 — the specs that used these fixtures on the clone road import native too.)
 //
 // REF: src/core/import/nativeGltfImport.ts (`readGltfMesh`, `primitiveSlots`),
 //      src/nodes/PolyMeshData.ts, src/nodes/meshAttributes.ts (`storedMeshAttributes`),

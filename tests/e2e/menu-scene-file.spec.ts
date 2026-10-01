@@ -18,6 +18,7 @@
 // import to mimic the real file write/read exactly.
 
 import { expect, test } from './_fixtures';
+import { recordedSave, writeRecordedSave } from './_recordedSave';
 
 interface Bundle {
   assets?: Record<string, string>;
@@ -57,17 +58,31 @@ async function exportBundle(page: EvalPage): Promise<Bundle> {
   });
 }
 
-/** Diverge the live scene: import a real .glb (adds a GltfAsset node + a
- *  user-imports OPFS asset). `folder` keeps successive imports from colliding. */
+/** Diverge the live scene: import a real .glb through the door a drop takes (adds its nodes). */
 async function ingestGltf(page: EvalPage, folder: string): Promise<void> {
-  await page.evaluate(async (name) => {
-    const w = window as unknown as SceneWindow;
-    // A file the scene keeps referencing: one the native reader still refuses (Draco, #1063), so it
-    // arrives through the file's copy. A native import stops referencing its file (#1049), and a
-    // skinned one comes in native since #1205.
-    const buf = new Uint8Array(await (await fetch('/assets/cube-draco.glb')).arrayBuffer());
-    await w.__basher_ingestGltfFolder!([{ relativePath: `${name}.glb`, bytes: buf }], name);
+  await page.evaluate(async (f) => {
+    const bytes = new Uint8Array(
+      await fetch('/assets/cube-draco.glb').then((r) => r.arrayBuffer()),
+    );
+    await (window as unknown as SceneWindow).__basher_ingestGltfFolder!(
+      [{ relativePath: `${f}.glb`, bytes }],
+      f,
+    );
   }, folder);
+}
+
+/**
+ * A scene that references a user-imports file. A native import stops referencing its file (#1049)
+ * and since #1053 a file the native reader refuses is refused whole, so the one scene that still
+ * holds such a reference is a project saved before, whose import the load kept: a recorded save
+ * (`_recordedSave.ts`) of a file the native reader refuses, loaded on the resume road.
+ */
+async function loadSceneReferencingAFile(page: EvalPage): Promise<void> {
+  await writeRecordedSave(page, recordedSave('clone-models/refused-iridescence'));
+  await page.reload();
+  await page.waitForFunction(
+    () => !!(window as unknown as SceneWindow).__basher_export_scene_bundle,
+  );
 }
 
 test.beforeEach(async ({ page }) => {
@@ -131,8 +146,8 @@ test('opening a scene is non-destructive: each open creates a distinct new proje
 test('embeds a referenced OPFS asset and rehydrates it on open (portable file)', async ({
   page,
 }) => {
-  // Import a glTF so the scene references a user-imports asset.
-  await ingestGltf(page, 'portable');
+  // A scene that references a user-imports asset.
+  await loadSceneReferencingAFile(page);
   await expect
     .poll(
       async () =>

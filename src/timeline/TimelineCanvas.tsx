@@ -95,11 +95,10 @@ import {
   DOPESHEET_DIAMOND_INSET_PX,
   DOPESHEET_GUTTER_GLYPH_BOX_PX,
 } from './timelineSettings';
-import { appendSelectionClipRows, type ChannelRow } from './clipChannelRows';
+import type { ChannelRow } from './channelRow';
 import { appendComputedSourceRows, appendLayerRows, computedSourceCache } from './layerChannelRows';
-import { resolveRowChannelForWrite, rowFlagToggleOps } from '../app/animate/clipRowMint';
-import { dispatchRetimeKeyframe, dispatchBakeThenRetime } from '../app/animate/dispatchMutator';
-import { parseClipRowId, assetRefForChild, type ClipRowComponent } from '../app/animate/bakeOnEdit';
+import { resolveRowChannelForWrite, rowFlagToggleOps } from '../app/animate/rowChannelWrite';
+import { dispatchRetimeKeyframe } from '../app/animate/dispatchMutator';
 import { nodeDisplayName } from '../app/sceneTreeWalk';
 
 /**
@@ -209,9 +208,8 @@ const CHANNEL_TYPES = new Set([
   'KeyframeChannelColor',
 ]);
 
-// ChannelRow now lives in clipChannelRows.ts (B1) so the read-only clip-row
-// flag is shared across the projector + this collector. Re-exported so
-// existing importers of TimelineCanvas's row contract keep working.
+// ChannelRow lives in channelRow.ts, shared with the layer and computed-source row
+// projectors. Re-exported so existing importers of TimelineCanvas's row contract keep working.
 export type { ChannelRow };
 
 /**
@@ -389,14 +387,14 @@ export function paintStaticLayer(
     ctx.font = '10px ui-monospace, monospace';
     ctx.textBaseline = 'middle';
     // Real channels reserve the gutter's right edge for the mute/solo glyphs;
-    // read-only clip rows have no DAG node to toggle, so they keep the full gutter.
+    // read-only rows have nothing to toggle, so they keep the full gutter.
     const nameMaxW = row.readOnly ? LABEL_GUTTER_PX - 7 : GUTTER_NAME_MAX_W;
     ctx.fillText(row.name, 5, rowTop + ROW_HEIGHT_PX / 2, nameMaxW);
 
     // Per-row mute/solo toggle glyphs (#263 follow-up) — a direct click target in
     // the gutter so a channel can be silenced/isolated without first making it the
     // active channel (the toolbar path). Off = dim (recedes until used); on =
-    // mute-orange / solo-amber. Skipped on read-only clip rows (no DAG node to
+    // mute-orange / solo-amber. Skipped on read-only rows (nothing to
     // toggle). Hit-tested by gutterGlyphHit (same geometry) in onPointerDown.
     if (!row.readOnly) {
       const gy = rowTop + ROW_HEIGHT_PX / 2;
@@ -542,12 +540,6 @@ export function TimelineCanvas({ duration }: { duration: number }) {
     fromTime: number;
     pointerClientX: number;
     canvasLeft: number;
-    // P7.12 D2 — set ONLY when the dragged row is a read-only imported clip row
-    // (B2's `clip:` namespace). Its presence routes endDrag through the
-    // copy-on-write bake-then-retime composite instead of the plain retime
-    // (the channel does not exist yet — the bake creates it). null = a real
-    // baked/authored channel drag (the existing path).
-    clipRow?: { assetRef: string; childName: string; component: ClipRowComponent };
   }>(null);
   // The ghost block's OWN idle-guard comparand — a SIBLING of
   // lastPlayheadXRef, never the playhead's. -1 = no ghost / cleared, so
@@ -560,14 +552,11 @@ export function TimelineCanvas({ duration }: { duration: number }) {
   // touches the DAG, only timeStore. `true` while a scrub pointer is captured.
   const scrubbingRef = useRef(false);
 
-  // P7.12 B2 — when a GltfChild (imported bone) is selected, append its
-  // read-only clip rows so its embedded animation is visible in the dopesheet
-  // without a bake. Suppressed once the bone is baked (FLAG-3 single-row-set).
-  // Pure: appendSelectionClipRows is a function of (baseRows, nodes, selection).
   const primaryNodeId = useSelectionStore((s) => s.primaryNodeId);
   // #1215 — a STABLE evaluator cache for the computed source rows: the source re-evaluates only when
   // its own inputs change, not on every edit elsewhere (the H40/H48 pattern, as SceneFromDAG's drivers).
   const sourceCache = useMemo(() => computedSourceCache(), []);
+  const setActiveChannel = useTimelineSelection((s) => s.setActiveChannel);
   const rows = useMemo(
     () =>
       // #1215 — below the layers, the computed motion the chain stands on, read-only until baked.
@@ -575,11 +564,7 @@ export function TimelineCanvas({ duration }: { duration: number }) {
         baseRows:
           // #1215 — the selected armature Object's pose layers: its keys, editable where they live.
           appendLayerRows({
-            baseRows: appendSelectionClipRows({
-              baseRows: collectChannelRows(nodes),
-              nodes,
-              selectedNodeId: primaryNodeId,
-            }),
+            baseRows: collectChannelRows(nodes),
             nodes,
             selectedNodeId: primaryNodeId,
           }),
@@ -590,22 +575,6 @@ export function TimelineCanvas({ duration }: { duration: number }) {
       }),
     [nodes, primaryNodeId, sourceCache],
   );
-
-  // P7.12 B2 — selection → active row. `setActiveChannel` had no production
-  // caller before this (research-flagged): selecting a channel row was a
-  // click-only affordance. Wire it for the imported-bone path so selecting a
-  // GltfChild in the viewport/NPanel surfaces its clip curve in the editor
-  // below WITHOUT a manual row click. We set the FIRST clip row (the bone's
-  // position component) active, and only when the current active channel is not
-  // already one of this bone's clip rows (so a user's manual component click is
-  // not stomped on every render).
-  const setActiveChannel = useTimelineSelection((s) => s.setActiveChannel);
-  useEffect(() => {
-    const clipRows = rows.filter((r) => r.readOnly && r.channelId.startsWith('clip:'));
-    if (clipRows.length === 0) return;
-    const alreadyActive = clipRows.some((r) => r.channelId === activeChannelId);
-    if (!alreadyActive) setActiveChannel(clipRows[0].channelId);
-  }, [rows, activeChannelId, setActiveChannel]);
 
   // P6 W10 UIR c-3 — the data-rendered-keyframes mirror attr (D-W9-4 data
   // contract) is the canvas's visual-correctness surrogate. The JSX used
@@ -1104,13 +1073,12 @@ export function TimelineCanvas({ duration }: { duration: number }) {
     // Gutter mute/solo glyph click (#263 follow-up) — toggle that row's channel
     // directly, WITHOUT first making it active (the toolbar path). Hit-tested
     // BEFORE row-activate + the diamond drag so a glyph click is a pure toggle:
-    // no selection change, no drag. Read-only clip rows have no DAG node → ignored.
+    // no selection change, no drag. Read-only rows have no glyphs → ignored.
     const glyph = gutterGlyphHit(px, py, rows.length);
     if (glyph) {
       const row = rows[glyph.rowIndex];
-      // Only REAL channel rows paint glyphs → only they swallow the click. A
-      // read-only clip row (no DAG node, no glyph) falls through to row-select
-      // below, preserving its existing gutter-click behavior.
+      // Only writable rows paint glyphs → only they swallow the click. A
+      // read-only row (no glyph) falls through to row-select below.
       if (row && !row.readOnly) {
         // #1215 — flipped where the curve lives (its node, or its entry in a pose layer).
         const ops = rowFlagToggleOps(useDagStore.getState().state, row.channelId, glyph.kind);
@@ -1157,30 +1125,6 @@ export function TimelineCanvas({ duration }: { duration: number }) {
           Math.abs(px - cx) <= DIAMOND_PX / 2 + slop &&
           Math.abs(py - cy) <= DIAMOND_PX / 2 + slop
         ) {
-          // P7.12 D2 — a read-only imported CLIP row (B2's `clip:` namespace)
-          // has no DAG node yet; its keyframe time comes straight off the
-          // projected clip row. Dragging it is the COPY-ON-WRITE trigger: store
-          // the clip-row context so endDrag bakes-then-retimes (R3). The bake +
-          // edit become ONE undo via dispatchBakeThenRetime.
-          const clip = parseClipRowId(row.channelId);
-          if (clip) {
-            const assetRef = assetRefForChild(useDagStore.getState().state.nodes, clip.childName);
-            if (!assetRef) continue;
-            dragRef.current = {
-              channelId: row.channelId,
-              rowIndex: r,
-              fromTime: kf.time, // the projected clip key time (exact)
-              pointerClientX: e.clientX,
-              canvasLeft: box.left,
-              clipRow: { assetRef, childName: clip.childName, component: clip.component },
-            };
-            useTimelineSelection.getState().setActiveKeyframe({
-              channelId: row.channelId,
-              time: kf.time,
-            });
-            canvas.setPointerCapture(e.pointerId);
-            return;
-          }
           // Read the EXACT stored sample time off the LIVE DAG — this
           // float becomes fromTime, the D-03 discriminator (NOT a
           // pointerup-recomputed seconds, or removeKeyframes silently
@@ -1253,27 +1197,13 @@ export function TimelineCanvas({ duration }: { duration: number }) {
       // An unmoved click is a no-op (exact !== — same discipline as the
       // seam's fromTime match).
       if (toTime !== drag.fromTime) {
-        if (drag.clipRow) {
-          // P7.12 D2 — FIRST edit of a clip-backed bone: bake the clip track
-          // into editable channels AND retime the dragged key, as ONE atomic
-          // undo (K6). The composite re-targets the now-real baked channel by
-          // its deterministic id (D1). On {ok:false} it aborted atomically.
-          dispatchBakeThenRetime({
-            assetRef: drag.clipRow.assetRef,
-            childName: drag.clipRow.childName,
-            component: drag.clipRow.component,
-            fromTime: drag.fromTime,
-            toTime,
-          });
-        } else {
-          // ONE seam call → atomic composite → one undo entry. On
-          // {ok:false} the seam aborted atomically; DAG already unchanged.
-          dispatchRetimeKeyframe({
-            channelId: drag.channelId,
-            fromTime: drag.fromTime,
-            toTime,
-          });
-        }
+        // ONE seam call → atomic composite → one undo entry. On
+        // {ok:false} the seam aborted atomically; DAG already unchanged.
+        dispatchRetimeKeyframe({
+          channelId: drag.channelId,
+          fromTime: drag.fromTime,
+          toTime,
+        });
       }
     }
     // Force the next tick to cleanly restore under the now-stale ghost.

@@ -1,11 +1,10 @@
-// glTF direct-import (V53, V38 no-silent-drop) — features the importer does not
-// yet capture into the editable IR (sheen/volume/specular, KHR_texture_transform,
-// secondary UV sets) are surfaced as a CONSOLE notice on import, not silently
-// dropped. The import stays FAITHFUL (the clone renders these), so this is a
-// notice — NOT the red `asset failed:` error banner (user decision 2026-06-20).
+// A file the native reader cannot hold is refused, whole and by name (#1053). There is no second
+// road to fall back to: until #1053 a file carrying a feature the native material does not hold
+// took the clone road and warned to the console. Now it writes nothing, and the refusal banner says
+// what the reader could not hold and which issue brings it across.
 //
-// THE PROOF: importing sheen-quad.gltf (KHR_materials_sheen + a TEXCOORD_1) emits
-// a console warning naming both limitations; the asset-error banner stays absent.
+// THE PROOF: importing iridescence-quad.gltf (KHR_materials_iridescence, #1123) through the product door adds
+// no node, shows the refusal naming the extension and its issue, and throws nothing on the page.
 
 import { test, expect } from './_fixtures';
 
@@ -14,41 +13,43 @@ interface BasherWindow {
     files: { relativePath: string; bytes: Uint8Array }[],
     folderName: string,
   ) => Promise<string>;
+  __basher_dag: { getState: () => { state: { nodes: Record<string, unknown> } } };
 }
 
-test('an import with not-yet-editable features warns to the console, not the error banner', async ({
+test('a file with a feature the native reader cannot hold is refused by name, and writes nothing', async ({
   page,
 }) => {
-  const warnings: string[] = [];
-  page.on('console', (m) => {
-    if (m.type() === 'warning') warnings.push(m.text());
-  });
+  const pageErrors: string[] = [];
+  page.on('pageerror', (e) => pageErrors.push(e.message));
 
   await page.goto('/');
-  await page.waitForFunction(
-    () => typeof (window as unknown as BasherWindow).__basher_ingestGltfFolder === 'function',
-  );
-  await page.evaluate(async () => {
+  await page.waitForFunction(() => {
+    const w = window as unknown as Partial<BasherWindow>;
+    return typeof w.__basher_ingestGltfFolder === 'function' && Boolean(w.__basher_dag);
+  });
+  const nodeCount = () =>
+    page.evaluate(
+      () =>
+        Object.keys((window as unknown as BasherWindow).__basher_dag.getState().state.nodes).length,
+    );
+  const before = await nodeCount();
+  const path = await page.evaluate(async () => {
     const w = window as unknown as BasherWindow;
     const bytes = new Uint8Array(
-      await fetch('/assets/sheen-quad.gltf').then((r) => r.arrayBuffer()),
+      await fetch('/assets/iridescence-quad.gltf').then((r) => r.arrayBuffer()),
     );
-    await w.__basher_ingestGltfFolder([{ relativePath: 'sheen-quad.gltf', bytes }], 'sheen');
+    return w.__basher_ingestGltfFolder(
+      [{ relativePath: 'iridescence-quad.gltf', bytes }],
+      'iridescence',
+    );
   });
 
-  // The console notice names BOTH limitations (the extension + the secondary UV set).
-  // Found by its own wording: since #1049 a second warning also names the extension —
-  // the one saying why this file took the clone road rather than arriving native.
-  await expect
-    .poll(() => warnings.find((t) => t.includes("aren't editable in Basher yet")))
-    .toContain('KHR_materials_sheen');
-  expect(warnings.find((t) => t.includes("aren't editable in Basher yet"))).toContain(
-    'secondary UV set',
-  );
-  // …and the road notice says why it is not native, naming the issue that brings it across.
-  // Sheen is a material lobe the native material does not hold (#1123); the second UV set is no
-  // longer a reason, since the native road carries it (#1062).
-  expect(warnings.find((t) => t.includes('not as native geometry'))).toContain('#1123');
-  // …and the import is NOT presented as a failure (no red error banner).
-  await expect(page.getByTestId('asset-error-banner')).toHaveCount(0);
+  const notice = await page.evaluate(async (p) => {
+    const m = await import('/src/app/stores/assetErrorStore.ts');
+    return m.useAssetErrorStore.getState().errors[p] ?? '';
+  }, path);
+  expect(notice).toMatch(/^import refused: .*KHR_materials_iridescence.*\(#1123\)$/);
+  await expect(page.getByText(/import refused: .*KHR_materials_iridescence/)).toBeVisible();
+  expect(await nodeCount()).toBe(before);
+  expect(pageErrors).toEqual([]);
 });

@@ -247,15 +247,155 @@ export interface UvPlacement {
   readonly rotation: number;
 }
 
-/** The 6 texture-map slots the inline material carries (W5 populates; null = none). */
-export interface InlineMaterialMaps {
-  readonly albedo: BakedTextureRef | null;
-  readonly normal: BakedTextureRef | null;
-  readonly roughness: BakedTextureRef | null;
-  readonly metalness: BakedTextureRef | null;
-  readonly emissive: BakedTextureRef | null;
-  readonly ao: BakedTextureRef | null;
+/**
+ * #1324 — THE material map slots: which inputs of a material take a texture, stated ONCE.
+ *
+ * Every consumer derives from this table rather than spelling the list again: the IR's
+ * `maps` type and schema, the per-map UV placement and UV layer bags, the compile's IR → three
+ * correspondence, the baked snapshot's fields and schema, the capture, both rebuild roads, the
+ * attach dialog and the inspector. Before it, the six slots were written out by hand at more than
+ * a dozen sites in two vocabularies, and a slot added at one site was silently missing at the rest.
+ *
+ * Per row:
+ *  - `three` — three.js's name for the slot, which is also the baked snapshot's field. The IR is
+ *    renderer-agnostic; this is the one place the two vocabularies meet.
+ *  - `colorSpace` — what the texels hold: colour maps are sRGB, data maps linear (a data map read
+ *    as sRGB washes out).
+ *  - `seeded` — present on every material as `null` when empty. The six original slots are, so
+ *    every save already carries them. A slot added later is NOT seeded: it is optional and absent
+ *    means no texture, because `materialKeyOf` walks every own key and a seeded new slot would
+ *    re-key every saved material.
+ *  - `label` — the slot's name in prose, for a reader.
+ *  - `weightOf` — the lobe whose weight must be above 0 for the map to draw (#1333).
+ *
+ * ORDER IS IDENTITY: `materialKeyOf` walks keys in insertion order and the schema inserts them in
+ * this order, so reordering rows re-keys every saved material. Append; never reorder.
+ */
+export const MATERIAL_MAP_SLOT_TABLE = {
+  albedo: { three: 'map', colorSpace: 'srgb', seeded: true, label: 'base color' },
+  normal: { three: 'normalMap', colorSpace: 'srgb-linear', seeded: true, label: 'normal' },
+  roughness: { three: 'roughnessMap', colorSpace: 'srgb-linear', seeded: true, label: 'roughness' },
+  metalness: { three: 'metalnessMap', colorSpace: 'srgb-linear', seeded: true, label: 'metalness' },
+  emissive: { three: 'emissiveMap', colorSpace: 'srgb', seeded: true, label: 'emissive' },
+  ao: { three: 'aoMap', colorSpace: 'srgb-linear', seeded: true, label: 'ambient occlusion' },
+  // #1327 — the coat lobe's textures (glTF `KHR_materials_clearcoat`): weight (R), roughness (G)
+  // and the coat's own normal. Not seeded, so a material without them keys as it always did.
+  coat: {
+    three: 'clearcoatMap',
+    colorSpace: 'srgb-linear',
+    seeded: false,
+    label: 'clearcoat',
+    weightOf: 'coat',
+  },
+  coatRoughness: {
+    three: 'clearcoatRoughnessMap',
+    colorSpace: 'srgb-linear',
+    seeded: false,
+    label: 'clearcoat roughness',
+    weightOf: 'coat',
+  },
+  coatNormal: {
+    three: 'clearcoatNormalMap',
+    colorSpace: 'srgb-linear',
+    seeded: false,
+    label: 'clearcoat normal',
+    weightOf: 'coat',
+  },
+  // #1328 — the transmission lobe's weight per texel (glTF `KHR_materials_transmission`, R).
+  transmission: {
+    three: 'transmissionMap',
+    colorSpace: 'srgb-linear',
+    seeded: false,
+    label: 'transmission',
+    weightOf: 'transmission',
+  },
+  // #1331 — the volume's thickness per texel (glTF `KHR_materials_volume`, G), scaling
+  // `geometry.thickness`. Shown with transmission: three draws a thickness only on a transmissive
+  // material.
+  thickness: {
+    three: 'thicknessMap',
+    colorSpace: 'srgb-linear',
+    seeded: false,
+    label: 'thickness',
+    weightOf: 'transmission',
+  },
+  // #1329 — the fuzz lobe's colour (glTF `KHR_materials_sheen`, RGB, sRGB) and roughness (A) per
+  // texel. three draws either only while `sheen` is above 0.
+  fuzzColor: {
+    three: 'sheenColorMap',
+    colorSpace: 'srgb',
+    seeded: false,
+    label: 'sheen color',
+    weightOf: 'fuzz',
+  },
+  fuzzRoughness: {
+    three: 'sheenRoughnessMap',
+    colorSpace: 'srgb-linear',
+    seeded: false,
+    label: 'sheen roughness',
+    weightOf: 'fuzz',
+  },
+  // #1330 — the specular lobe's weight (glTF `KHR_materials_specular`, A) and F0 colour (RGB, sRGB)
+  // per texel.
+  specularWeight: {
+    three: 'specularIntensityMap',
+    colorSpace: 'srgb-linear',
+    seeded: false,
+    label: 'specular',
+    weightOf: 'specular',
+  },
+  specularColor: {
+    three: 'specularColorMap',
+    colorSpace: 'srgb',
+    seeded: false,
+    label: 'specular color',
+    weightOf: 'specular',
+  },
+} as const satisfies Readonly<Record<string, MaterialMapSlotRow>>;
+
+/** One row of {@link MATERIAL_MAP_SLOT_TABLE}. */
+export interface MaterialMapSlotRow {
+  readonly three: string;
+  readonly colorSpace: BakedTextureRef['colorSpace'];
+  readonly seeded: boolean;
+  /** How a reader names the slot in prose (`base color`, `ambient occlusion`). */
+  readonly label: string;
+  /**
+   * #1333 — the lobe whose `weight` must be above 0 for this slot's map to draw, and so for the
+   * inspector to offer its row. Absent for the six original slots, which always draw.
+   */
+  readonly weightOf?: WeightedLobe;
 }
+
+/** The IR lobes that carry a `weight` (#1333). */
+export type WeightedLobe = 'coat' | 'transmission' | 'fuzz' | 'specular';
+
+/**
+ * #1330 — the weight a lobe draws with while its `weight` (or the whole lobe) is absent: OpenPBR's
+ * own defaults (`open_pbr_surface.mtlx`: specular_weight 1.0, transmission/fuzz/coat 0.0). Only
+ * specular is ON when absent — three's `specularIntensity` starts at 1 too — so a material that
+ * never set it still draws its specular maps.
+ */
+export const LOBE_WEIGHT_WHEN_ABSENT: Readonly<Record<WeightedLobe, number>> = {
+  coat: 0,
+  transmission: 0,
+  fuzz: 0,
+  specular: 1,
+};
+
+type MapSlotTable = typeof MATERIAL_MAP_SLOT_TABLE;
+/** A material map slot in the IR's vocabulary (`albedo`, `normal`, …). */
+export type IrMapSlot = keyof MapSlotTable;
+/** The slots every material carries (as null when empty) — the six every save already has. */
+export type SeededMapSlot = {
+  [K in IrMapSlot]: MapSlotTable[K]['seeded'] extends true ? K : never;
+}[IrMapSlot];
+type OptionalMapSlot = Exclude<IrMapSlot, SeededMapSlot>;
+
+/** The texture-map slots the inline material carries (null = none). Derived from the table. */
+export type InlineMaterialMaps = {
+  readonly [K in SeededMapSlot]: BakedTextureRef | null;
+} & { readonly [K in OptionalMapSlot]?: BakedTextureRef | null };
 
 /**
  * What a `'Material'` socket carries (#394 D1) — the FINISHED material, tagged.
@@ -286,12 +426,44 @@ export interface InlineMaterialSpec {
   readonly name: string;
   /** base_color (sRGB hex) + base_metalness [0..1]. */
   readonly base: { readonly color: string; readonly metalness: number };
-  /** specular_roughness [0..1] + specular_ior [1.0..2.33]. */
-  readonly specular: { readonly roughness: number; readonly ior: number };
+  /**
+   * specular_roughness [0..1] + specular_ior [1.0..2.33]. #1321 — `weight` (OpenPBR
+   * `specular_weight`, glTF `specularFactor`) and `color` (`specular_color`, sRGB hex) are OPTIONAL
+   * with no default: absent means OpenPBR's default, 1 and white (`open_pbr_surface.mtlx:16,18`),
+   * and a defaulted field would re-key every saved material (see {@link mapUvTransforms}).
+   */
+  readonly specular: {
+    readonly roughness: number;
+    readonly ior: number;
+    readonly weight?: number;
+    readonly color?: string;
+  };
   /** coat_weight [0..1] + coat_roughness [0..1]. */
   readonly coat: { readonly weight: number; readonly roughness: number };
-  /** transmission_weight [0..1] — auto-sets three `transparent` + `thickness`. */
-  readonly transmission: { readonly weight: number };
+  /**
+   * #1123 — OpenPBR's fuzz lobe (`fuzz_weight`, `fuzz_color`, `fuzz_roughness`): a sheen of fine
+   * fibres over the surface. glTF `KHR_materials_sheen` arrives as weight 1 with its colour and
+   * roughness, as both Blender's importer and three's loader take it. Colour is sRGB hex, as every
+   * colour in this spec is. Absent means no fuzz; a lobe created by an edit starts at OpenPBR's own
+   * defaults (weight 0, colour white, roughness 0.5).
+   *
+   * 🔴 OPTIONAL WITH NO `.default()` ON THE LOBE, for the reason {@link mapUvTransforms} states;
+   * the defaults live inside a present lobe.
+   */
+  readonly fuzz?: { readonly weight: number; readonly color: string; readonly roughness: number };
+  /**
+   * transmission_weight [0..1] — auto-sets three `transparent` + `thickness`. #1322 — `color` and
+   * `depth` are OpenPBR's `transmission_color` / `transmission_depth` (sRGB hex; mesh units): the
+   * colour light turns into after travelling `depth` through the medium (Beer's law), which is what
+   * glTF `KHR_materials_volume` calls `attenuationColor` / `attenuationDistance`. OPTIONAL, no
+   * default: absent means no absorption. A colour with no depth is OpenPBR's non-physical tint,
+   * which three cannot draw, so it is stored and not drawn.
+   */
+  readonly transmission: {
+    readonly weight: number;
+    readonly color?: string;
+    readonly depth?: number;
+  };
   /** emission_color (sRGB hex) + emission_luminance (cd/m², 1:1 → emissiveIntensity). */
   readonly emission: { readonly color: string; readonly luminance: number };
   /**
@@ -317,6 +489,13 @@ export interface InlineMaterialSpec {
     /** glTF direct-import — render both faces (three `side=DoubleSide`), captured
      *  from a material's `doubleSided:true`. Absent = front-only (the default). */
     readonly doubleSided?: boolean;
+    /**
+     * #1322 — how thick the volume under a transmissive surface is, in mesh units (glTF
+     * `KHR_materials_volume` `thicknessFactor`; three's `thickness`). 0 is thin-walled. A geometry
+     * hint beside the other glTF geometry hints here; OpenPBR has none. Absent keeps the
+     * `DEFAULT_TRANSMISSION_THICKNESS` every transmissive material drew with before it.
+     */
+    readonly thickness?: number;
   };
   /** Texture map slots (W5). */
   readonly maps: InlineMaterialMaps;
@@ -377,7 +556,7 @@ export interface InlineMaterialSpec {
    * 🔑 A LAYER NAME, NOT AN INDEX (#1062). It used to be the number glTF writes in `texCoord`,
    * which only ever meant "whatever the drawn geometry's nth UV buffer happens to be". A stored
    * mesh now carries NAMED UV layers, and its layers are not always the import's own — a
-   * projection authors one under its own name ({@link PROJECTED_UV}) — so an index cannot say
+   * projection authors one under its own name ({@link UV_PROJECT}) — so an index cannot say
    * which of them a slot samples. The reference addresses them by name for the same reason: a UV
    * Map node names the layer it reads (measured, and grounded in
    * `ref/GROUND_TRUTH_BLENDER_ATTRIBUTE_NAMING.md`).
@@ -388,6 +567,36 @@ export interface InlineMaterialSpec {
    * fall back to, and a silently black mesh is the failure #1062 set out to remove.
    */
   readonly mapUvLayers?: { readonly [K in keyof InlineMaterialMaps]?: string };
+  /**
+   * #1123 — how strongly a map acts: the normal map's bend (glTF `normalTexture.scale`, Blender's
+   * Normal Map node Strength) and the occlusion map's darkening (glTF `occlusionTexture.strength`,
+   * which Blender's importer mixes toward white as "Occlusion Strength"). Absent, or absent for a
+   * slot, means 1, the default of both. Only these two slots carry a strength in either reference,
+   * so only they can be written here.
+   *
+   * 🔴 OPTIONAL WITH NO `.default()`, for the reason {@link mapUvTransforms} states: a
+   * materialised bag re-keys every existing material.
+   */
+  readonly mapStrengths?: {
+    readonly normal?: number;
+    readonly ao?: number;
+    /** #1327 — the coat normal map's strength (glTF `clearcoatNormalTexture.scale`). */
+    readonly coatNormal?: number;
+  };
+  /**
+   * #1123 — draw the surface UNLIT: its base colour and base map as they are, with no lighting, no
+   * lobes and no other maps. glTF `KHR_materials_unlit`; three's loader draws it as a
+   * `MeshBasicMaterial`, and Blender's importer replaces the whole surface with an Emission of the
+   * base colour. A class of surface, not a lobe; the compile and the bake call it
+   * `materialClass: 'basic'`. Absent means lit.
+   *
+   * 🔴 NOT NAMED `materialClass` HERE: that key is the one discriminator between this spec and a
+   * {@link BakedMaterialSpec} (`isBakedMaterialSpec`), so an unlit material carrying it would be
+   * read as a baked snapshot.
+   *
+   * 🔴 OPTIONAL WITH NO `.default()`, for the reason {@link mapUvTransforms} states.
+   */
+  readonly unlit?: true;
   /**
    * OpenPBR lobes with NO classic-WebGL MeshPhysical representation
    * (subsurface*, transmission_scatter*, base_diffuse_roughness,
@@ -415,8 +624,14 @@ export interface BakedTextureRef {
   readonly colorSpace: 'srgb' | 'srgb-linear' | 'no-colorspace';
   /** glTF textures are flipY=false; preserve verbatim. */
   readonly flipY: boolean;
-  readonly wrapS: number;
-  readonly wrapT: number;
+  /**
+   * #1316 — how the texture repeats past [0, 1], by NAME. These were bare numbers, and one field held
+   * two numberings: glTF's (10497) from one import road and three.js's own constants (1000) from the
+   * other, told apart by nothing. Names are glTF's sampler vocabulary, lowercased
+   * (`sampler.schema.json`); only the texture loader turns one into a renderer constant.
+   */
+  readonly wrapS: BakedTextureWrap;
+  readonly wrapT: BakedTextureWrap;
   /**
    * glTF direct-import (texture-maps milestone) — the index of the IMPORTED glTF
    * texture this slot was captured from (`json.textures[gltfTexture]`). Present
@@ -441,22 +656,38 @@ export interface BakedTextureRef {
    */
   readonly store?: 'project';
   /**
-   * #1050 — the sampler's filters, as three.js constants (`NearestFilter` …). Absent means three's
-   * texture defaults, as every ref written before #1050 has. A native import writes both, because
-   * glTF files routinely sample NEAREST and the native draw would otherwise smooth them.
+   * #1050 — the sampler's filters, by name (#1316; they were three.js constants). Absent means the
+   * renderer's texture defaults, as every ref written before #1050 has. A native import writes
+   * both, because glTF files routinely sample NEAREST and the native draw would otherwise smooth
+   * them.
    */
-  readonly magFilter?: number;
-  readonly minFilter?: number;
+  readonly magFilter?: BakedTextureMagFilter;
+  readonly minFilter?: BakedTextureMinFilter;
 }
 
+/** #1316 — glTF's wrap modes, named (`sampler.schema.json`: 10497, 33071, 33648). */
+export type BakedTextureWrap = 'repeat' | 'clamp-to-edge' | 'mirrored-repeat';
+/** #1316 — glTF's magnification filters, named (9728, 9729). */
+export type BakedTextureMagFilter = 'nearest' | 'linear';
+/** #1316 — glTF's minification filters, named (9728, 9729, 9984–9987). */
+export type BakedTextureMinFilter =
+  | BakedTextureMagFilter
+  | 'nearest-mipmap-nearest'
+  | 'linear-mipmap-nearest'
+  | 'nearest-mipmap-linear'
+  | 'linear-mipmap-linear';
+
 /** The six map slots of a {@link BakedMaterialSpec}, in three.js's own names. */
-export type BakedMapSlot =
-  | 'map'
-  | 'normalMap'
-  | 'roughnessMap'
-  | 'metalnessMap'
-  | 'aoMap'
-  | 'emissiveMap';
+/** A map slot in three.js's vocabulary (`map`, `normalMap`, …) — the baked snapshot's field names. */
+export type BakedMapSlot = MapSlotTable[IrMapSlot]['three'];
+
+/**
+ * The baked snapshot's map refs, one field per slot (null when the source has none). A slot that is
+ * optional in the IR is optional here too, so a baked save from before it existed still reads.
+ */
+export type BakedMaterialMaps = {
+  readonly [K in MapSlotTable[SeededMapSlot]['three']]: BakedTextureRef | null;
+} & { readonly [K in MapSlotTable[OptionalMapSlot]['three']]?: BakedTextureRef | null };
 
 /**
  * The rich PBR material a BakedMesh carries — ONE shape for every source
@@ -473,7 +704,7 @@ export type BakedMapSlot =
  * reports ok. #1119, #1136, #1139 and #1140 were each one such field. A new one
  * belongs here AND in `BakedMaterialSpecSchema`, or the parse strips it on the way in.
  */
-export interface BakedMaterialSpec {
+export interface BakedMaterialSpec extends BakedMaterialMaps {
   readonly materialClass: 'standard' | 'physical' | 'basic';
   readonly color: string;
   readonly roughness: number;
@@ -482,13 +713,8 @@ export interface BakedMaterialSpec {
   readonly transparent: boolean;
   readonly emissive: string;
   readonly emissiveIntensity: number;
-  // map refs — null when the source has none (a Box bake leaves all null).
-  readonly map: BakedTextureRef | null;
-  readonly normalMap: BakedTextureRef | null;
-  readonly roughnessMap: BakedTextureRef | null;
-  readonly metalnessMap: BakedTextureRef | null;
-  readonly aoMap: BakedTextureRef | null;
-  readonly emissiveMap: BakedTextureRef | null;
+  // Map refs (`map`, `normalMap`, …) come from {@link BakedMaterialMaps} — null when the source has
+  // none (a Box bake leaves all null).
   /**
    * #1136 — each map's UV placement as it drew at bake time, restated about the CENTRE pivot
    * `BakedMeshR` places with. Only slots whose placement is not identity are listed, and the field
@@ -510,9 +736,22 @@ export interface BakedMaterialSpec {
    * diverge by inverting. `BakedMeshR` passes this through `threeSideFor` like every other road.
    */
   readonly doubleSided?: boolean;
+  /**
+   * #1123 — the normal map's STRENGTH as it drew. Never three's signed `normalScale.y`: the rebuild
+   * derives y's sign from the texture again (`normalScaleFor`, #1325), so storing the signed value
+   * would flip it twice. Absent means 1, so every save before this field reads as it did.
+   */
+  readonly normalScale?: number;
+  /** #1123 — the occlusion map's strength as it drew (three's `aoMapIntensity`). Absent means 1. */
+  readonly aoMapIntensity?: number;
   // physical-only extras (captured only when materialClass==='physical', Wave 3).
   readonly physical?: {
     readonly clearcoat?: number;
+    /**
+     * #1327 — the coat normal map's STRENGTH as it drew, unsigned for the reason `normalScale`
+     * gives (the rebuild derives y's sign from the texture). Absent means 1.
+     */
+    readonly clearcoatNormalScale?: number;
     /**
      * #1140 — how deep the refraction is (three's `thickness`). Transmission only refracts through
      * a material with thickness, so a captured `transmission` without this drew clear glass as a
@@ -523,7 +762,15 @@ export interface BakedMaterialSpec {
     readonly transmission?: number;
     readonly ior?: number;
     readonly sheen?: number;
+    /** #1123 — the fuzz lobe's colour (sRGB hex) and roughness, beside its weight above. */
+    readonly sheenColor?: string;
+    readonly sheenRoughness?: number;
     readonly specularIntensity?: number;
+    /** #1321 — the specular colour (sRGB hex), beside its weight above. Absent: white. */
+    readonly specularColor?: string;
+    /** #1322 — the volume's absorption. Absent: none. */
+    readonly attenuationDistance?: number;
+    readonly attenuationColor?: string;
   };
 }
 
@@ -551,48 +798,14 @@ export interface BakedMaterialSpec {
  * uses (#634).
  *
  * `indices` is `null` when the geometry carries no `material_index` attribute at all — a
- * road with no data half yet (glTF / baked). That is NOT "every face uses slot 0"; it is
+ * road with no data half yet (baked). That is NOT "every face uses slot 0"; it is
  * "this geometry cannot say", and the difference is why it is a null rather than a
  * synthesised array of zeros. The readers live in `src/app/materialAssignment.ts`.
  */
 export interface MaterialAssignment<M> {
   readonly slots: readonly M[];
   readonly indices: ArrayLike<number> | null;
-  /**
-   * WHAT AN ABSENT SLOT MEANS ON THIS MESH (#605 item 2).
-   *
-   * A `null` slot carried two meanings and had one spelling, and one producer wrote both.
-   * `GltfData.material` is `null` for a bone, an empty and a pre-#178 save — and the
-   * renderer's answer to that is *keep the clone's embedded material*, i.e. the material
-   * exists and we never captured it. A `materialSlots` entry is `null` for a primitive the
-   * glTF assigned no material at all. **"We do not have it" and "there is none" are not the
-   * same claim**, and every reader was giving them one answer: the inspector drew the
-   * default grey swatch for a child that is on screen in whatever the asset gave it.
-   *
-   * 🔴 IT IS A PROPERTY OF THE MESH, NOT OF THE SLOT, and that is why it sits here rather
-   * than widening `M`. Whether an unanswered slot can be answered elsewhere depends on
-   * where these buffers live — one fact for the whole assignment. Putting an `'elsewhere'`
-   * arm in the slot type would invite per-slot reasoning about a per-mesh condition, and
-   * would widen the material union at every consumer that never asks the question.
-   *
-   * The two sibling reads on {@link EvaluatedMesh} already draw this distinction and are
-   * keyed on the same condition — {@link MeshUVRead}'s `'elsewhere'` and
-   * `GeometryReadResult`'s. This was the last of the three still spelling it as `null`.
-   */
-  readonly absentSlot: AbsentSlotMeaning;
 }
-
-/**
- * Where the answer for an unanswered slot lives.
- *
- * `'none'` — there is no material, and looking elsewhere will not produce one.
- * `'elsewhere'` — a mounted asset clone owns what draws; we hold no capture of it.
- *
- * Deliberately NOT a boolean. `elsewhere: false` would read as "not elsewhere", which is a
- * statement about location rather than about the answer, and the two absences are what this
- * type exists to keep apart.
- */
-export type AbsentSlotMeaning = 'none' | 'elsewhere';
 
 /** Full TRS transform band (D-01) — separate from the geometry capability. */
 export interface MeshTransform {
@@ -709,69 +922,6 @@ export type GeometryDescriptor =
       readonly radius: number;
       readonly widthSegments: number;
       readonly heightSegments: number;
-    }
-  | {
-      readonly kind: 'gltf';
-      readonly assetRef: string;
-      readonly childName: string;
-      /**
-       * HOW MANY FACES THE IMPORTED CHILD HAS, captured from the glTF JSON at import (#1023).
-       *
-       * 🔑 THIS IS THE FIRST ELEMENT FACT AN IMPORTED MESH STATES ABOUT ITSELF, and it is
-       * what lets a `gltf` answer the model's face and corner questions at all. Before it,
-       * an imported mesh's triangles were never faces: the geometry was resolved and present
-       * in the asset clone, and every face- and corner-domain consumer still refused, because
-       * the arity that says how to walk an index buffer is a property of the DESCRIPTOR and
-       * this one stated none.
-       *
-       * 🔴 OPTIONAL, AND ABSENT MEANS "WE NEVER CAPTURED IT" — NEVER "there are no faces".
-       * Every save written before #1023 has no readout, and a child whose primitives are not
-       * all triangles gets none either (see `captureChildFaceCount`). Both must keep
-       * answering `null` exactly as they did, which is why a missing key may never be read
-       * as a zero. This is the same distinction `MaterialAssignment` draws for an unanswered
-       * material slot, and for the same reason: "we do not have it" and "there is none" are
-       * different claims, and giving them one spelling is how a consumer starts drawing a
-       * confident wrong answer.
-       *
-       * Faces and not corners or arity, because a glTF face is a TRIANGLE by construction —
-       * the format has no n-gon primitive mode (`GLTFLoader.js:3804-3832` takes triangles,
-       * strips and fans and throws on the rest). So corners are `3` per face and arity `1`
-       * per face, both derived at the one site that already states the fan rule. Storing
-       * three numbers where the format guarantees two of them would invite them to disagree.
-       *
-       * NOT part of the geometry cache key: two children of the same asset and child name
-       * are the same geometry and therefore the same count, so the key stays
-       * `gltf|<assetRef>|<childName>`.
-       */
-      readonly faceCount?: number;
-      /**
-       * HOW MANY TOPOLOGICAL POINTS THE IMPORTED CHILD HAS, welded at import (#1040).
-       *
-       * 🔑 THE SECOND ELEMENT FACT AN IMPORTED MESH STATES, and unlike the face count it is
-       * not read off the accessor TABLE — it needs the position bytes, because a topological
-       * point is a WELD and two buffer positions at one coordinate are one point. A box
-       * arrives as 24 split positions and 8 points; a sphere as 425 and 362. So this is the
-       * one capture that reads geometry rather than metadata.
-       *
-       * 🔴 OPTIONAL, AND ABSENT MEANS "WE NEVER CAPTURED IT" — the same rule
-       * {@link GeometryDescriptor} states for `faceCount` one field up, and it has three
-       * populations here: every save written before #1040, every child whose primitives are
-       * not all triangles, and — the one that is specific to this field — every
-       * MULTI-PRIMITIVE child.
-       *
-       * ⚠️ WHY MULTI-PRIMITIVE CHILDREN ARE EXCLUDED WHERE `faceCount` SUMS THEM. A glTF node
-       * with two primitives loads as a GROUP of two Meshes and `firstMeshGeometry` reaches
-       * only the FIRST, so a count welded across both primitives describes a buffer no reader
-       * holds. Measured with disjoint primitives: the read door sees 3 points, a unioning
-       * capture says 6. `faceCount` sums and relies on a cross-source check to refuse the
-       * disagreement; this field makes the disagreement UNREPRESENTABLE instead, which is the
-       * stronger of the two and the reason the populations of the two fields differ on
-       * purpose rather than by oversight.
-       *
-       * NOT part of the geometry cache key, for the reason `faceCount` is not: one asset and
-       * child name is one geometry and therefore one count.
-       */
-      readonly pointCount?: number;
     }
   | { readonly kind: 'baked'; readonly hash: string; readonly vertexCount: number }
   /**
@@ -1122,7 +1272,7 @@ export interface GeometryRef {
  * ── WHY THIS IS A TYPE AND NOT `number | null` ────────────────────────────────────────
  *
  * The `null` it replaces was carrying two unrelated facts (#744). One is permanent — a
- * `gltf` or `baked` descriptor's buffers live in a loaded asset clone or in OPFS, and
+ * `baked` descriptor's buffers live in OPFS (a `gltf` one's lived in an asset clone), and
  * nothing on the descriptor says how many elements they hold, so no amount of later work
  * makes that arm answerable HERE. The other was temporary: the three derived kinds refused
  * because a WELDED point count depends on whether copies coincide. #754 retires that second
@@ -1215,8 +1365,6 @@ export type MeshUVRead =
       /** The corner-domain layer, or the named reason it could not be lifted. */
       readonly attribute: UVAttributeVerdict;
     }
-  /** The buffers live in a loaded asset clone — ask it, not the registry. */
-  | { readonly status: 'elsewhere' }
   /** The bytes exist but have not been read in yet. Waiting helps. */
   | { readonly status: 'loading' }
   /** There genuinely are none. Waiting does not help. */
@@ -1254,8 +1402,8 @@ export interface EvaluatedMesh {
   readonly geometry: GeometryRef;
   /**
    * #635 — the UV read: the island projection when there is one, and otherwise WHICH kind
-   * of absence this is. Waiting, look-elsewhere and genuinely-none are three different
-   * answers requiring three different responses, and the single nullable field this
+   * of absence this is. Waiting and genuinely-none (and, until #1053, look-elsewhere) are
+   * different answers requiring different responses, and the single nullable field this
    * replaced could carry only their union.
    */
   readonly uvRead: MeshUVRead;
@@ -1385,8 +1533,8 @@ export interface GltfAssetValue {
    * P7.5 — glTF TRS animation extraction (issue #81).
    *
    * Filled in by `buildGltfImportOps` at drop time: a sanitised
-   * scene-node-name → DAG target id map. `GltfAssetR` walks
-   * `gltf.scene` via `getObjectByName` and overrides per-child TRS
+   * scene-node-name → DAG target id map. Until #1053 the clone renderer
+   * walked `gltf.scene` via `getObjectByName` and overrode per-child TRS
    * with `transformClip.sample(currentTime)[name]` (P7.10 — the value's
    * sample method replaces the pre-baked `.tracks` shape). Default `{}`
    * so pre-7.5 projects (and the static-only fixture path) hydrate as no-ops.
@@ -1409,8 +1557,8 @@ export interface GltfAssetValue {
   /**
    * P151 (Apply-Transform, issue #151) — the sanitised child KEYS whose render
    * is suppressed because the child was baked into a standalone `BakedMesh`.
-   * `GltfAssetR` sets `clone.getObjectByName(key).visible = false` per entry, so
-   * the asset stops rendering that child by name (no double-render). Default `[]`
+   * Until #1053 the clone renderer set `clone.getObjectByName(key).visible = false`
+   * per entry, so the asset stopped rendering that child by name (no double-render). Default `[]`
    * so pre-151 values are no-ops (V10/H14-clean). Op-backed + undoable via the
    * Apply atomic composite's inverse `setParam`.
    */
@@ -1421,10 +1569,10 @@ export interface GltfAssetValue {
    * GLTFLoader clone agree on: the producer's KEY space (sanitizeBoneName + `__n`
    * dedup, `node_i` for unnamed nodes) DIVERGES from the clone's NAME space
    * (sanitizeNodeName + `_n` dedup, `''` for unnamed) on real exports, so ~28% of
-   * meshes are unaddressable by name. `GltfAssetR` reads it alongside
-   * `gltf.parser.associations` (which records the node index for every loaded
-   * object — GLTFLoader.js:4311) to stamp each clone object's
-   * `userData.basherGltfChildId`, so viewport drill-in addresses children by a
+   * meshes are unaddressable by name. Until #1053 the clone renderer read it
+   * alongside `gltf.parser.associations` (which records the node index for every
+   * loaded object — GLTFLoader.js:4311) to stamp each clone object's
+   * `userData.basherGltfChildId`, so viewport drill-in addressed children by a
    * stamped ID, not by name. Default `{}` so pre-UX#7 saves hydrate empty — the
    * renderer + drill fall back to name-match (V10/H14-clean — no version bump).
    */
@@ -2258,7 +2406,7 @@ export interface ObjectValue extends RotationModeFields {
    * somewhere else", leaving the data node untouched. Keyed by decimal slot index.
    *
    * This is the field the rest of this file has been promising since #638. The paragraphs
-   * at `:540`, `:634` and `:1212` all say the slot TABLE is object-level and that this is
+   * on the `materialSlots` fields above all say the slot TABLE is object-level and that this is
    * what lets two objects share one mesh and still look different — and until this existed
    * they described a road that was not built: `materialSlots` sat on the data types only,
    * so two Objects reading one data node received the identical table with nothing in the

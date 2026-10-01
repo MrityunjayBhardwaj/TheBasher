@@ -25,6 +25,12 @@ import type { PrimitiveMaterialSpec } from './materialRegistry';
 
 afterEach(() => materialRegistry.clear());
 
+/** A lit build, narrowed by checking it rather than by assertion (#1123 added the basic one). */
+function lit(m: materialRegistry.PrimitiveMaterial): THREE.MeshPhysicalMaterial {
+  expect(m).toBeInstanceOf(THREE.MeshPhysicalMaterial);
+  return m as THREE.MeshPhysicalMaterial;
+}
+
 const BASE: PrimitiveMaterialSpec = {
   color: '#3366cc',
   roughness: 0.42,
@@ -47,6 +53,22 @@ const BASE: PrimitiveMaterialSpec = {
   alphaTest: 0.25,
   side: THREE.DoubleSide,
   uvTransform: { tiling: [2, 3], offset: [0.1, 0.2], rotation: 0.5 },
+  // #1123 — optional, so carried here explicitly (a field absent from BASE is invisible to
+  // both gates below), and away from three's default of 1 for the reason `side` is.
+  normalScale: 0.5,
+  aoMapIntensity: 0.7,
+  // #1327 — the coat normal's strength, the same way.
+  clearcoatNormalScale: 0.35,
+  // #1123 — the fuzz lobe as three's sheen, each away from three's default.
+  sheen: 0.4,
+  sheenColor: '#336699',
+  sheenRoughness: 0.6,
+  // #1321 — the specular weight and colour, each away from three's default.
+  specularIntensity: 0.4,
+  specularColor: '#ffbc89',
+  // #1322 — the volume's absorption, away from three's default (Infinity, white).
+  attenuationDistance: 0.5,
+  attenuationColor: '#7ccbff',
   textures: {
     map: null,
     normalMap: null,
@@ -122,8 +144,8 @@ describe('#530 — two meshes whose material resolves to the same thing share on
     const first = materialRegistry.get(BASE);
     const overridden = materialRegistry.get({ ...BASE, roughness: 0.13 });
     expect(overridden.material).not.toBe(first.material);
-    expect(overridden.material.roughness).toBe(0.13);
-    expect(first.material.roughness).toBe(0.42);
+    expect(lit(overridden.material).roughness).toBe(0.13);
+    expect(lit(first.material).roughness).toBe(0.42);
     expect(materialRegistry.size()).toBe(2);
   });
 });
@@ -190,10 +212,29 @@ describe('#530 — the build applies every scalar the spec carries', () => {
     // field turning optional and quietly leaving `BASE`, which would make both this gate
     // and the key gate blind to it while staying green. The count is the guard for that
     // direction, so it is meant to be edited deliberately.
-    expect(scalars.length).toBe(15);
+    expect(scalars.length).toBe(25);
+    // BASE's normal map is a flipped upload, so the drawn vector is (strength, strength); a
+    // strength is only drawn beside a normal map.
+    const withNormalMap = materialRegistry.get({
+      ...BASE,
+      textures: {
+        ...BASE.textures,
+        normalMap: new THREE.Texture(),
+        clearcoatNormalMap: new THREE.Texture(),
+      },
+    }).material;
     for (const [path, value] of scalars) {
-      const applied = material[path as keyof THREE.MeshPhysicalMaterial];
-      const actual = applied instanceof THREE.Color ? `#${applied.getHexString()}` : applied;
+      const drawnWithMap = path === 'normalScale' || path === 'clearcoatNormalScale';
+      const source = lit(drawnWithMap ? withNormalMap : material);
+      const applied = source[path as keyof THREE.MeshPhysicalMaterial];
+      // #1123 — `normalScale` is three's vector; the spec's strength is its x, which carries no
+      // upload-dependent sign (#1325's y does, and is pinned below).
+      const actual =
+        applied instanceof THREE.Color
+          ? `#${applied.getHexString()}`
+          : applied instanceof THREE.Vector2
+            ? applied.x
+            : applied;
       expect(actual, `${path} is specced but not applied`).toBe(value);
     }
   });
@@ -212,6 +253,107 @@ describe('#530 — the build applies every scalar the spec carries', () => {
     // on it would cross-contaminate all of them.
     expect(source.repeat.x).toBe(1);
     expect(source.rotation).toBe(0);
+  });
+});
+
+describe('#1325 — a normal map bends the surface toward image-up, whichever way it was uploaded', () => {
+  const normalMapped = (flipY: boolean) => {
+    const source = new THREE.Texture();
+    source.flipY = flipY;
+    // At the default strength: absent, which is what every material without a strength holds.
+    const atDefault: PrimitiveMaterialSpec = { ...BASE };
+    delete (atDefault as { normalScale?: number }).normalScale;
+    return lit(
+      materialRegistry.get({
+        ...atDefault,
+        textures: { ...BASE.textures, normalMap: source },
+      }).material,
+    );
+  };
+
+  it('an UNFLIPPED map (glTF) draws with y negated, as three`s own loader draws it', () => {
+    // Measured in the app: (1, 1) on a glTF map leaned the surface toward -Y where the file
+    // says +Y; GLTFLoader's (1, -1) leaned it toward +Y (#1325).
+    const m = normalMapped(false);
+    expect([m.normalScale.x, m.normalScale.y]).toEqual([1, -1]);
+  });
+
+  it('a FLIPPED map (an upload) keeps three`s default, which is right for it', () => {
+    const m = normalMapped(true);
+    expect([m.normalScale.x, m.normalScale.y]).toEqual([1, 1]);
+  });
+
+  it('#1123 — a strength scales both axes and keeps the upload`s sign on y', () => {
+    const source = new THREE.Texture();
+    source.flipY = false;
+    const { material } = materialRegistry.get({
+      ...BASE,
+      normalScale: 0.5,
+      textures: { ...BASE.textures, normalMap: source },
+    });
+    const m = lit(material);
+    expect([m.normalScale.x, m.normalScale.y]).toEqual([0.5, -0.5]);
+  });
+});
+
+describe('#1327 — the coat normal follows the same orientation rule as the normal map', () => {
+  const coatNormalMapped = (flipY: boolean, strength?: number) => {
+    const source = new THREE.Texture();
+    source.flipY = flipY;
+    // At the default strength: absent, which is what every material without one holds.
+    const spec: PrimitiveMaterialSpec = { ...BASE };
+    delete (spec as { clearcoatNormalScale?: number }).clearcoatNormalScale;
+    return lit(
+      materialRegistry.get({
+        ...spec,
+        ...(strength !== undefined ? { clearcoatNormalScale: strength } : {}),
+        textures: { ...BASE.textures, clearcoatNormalMap: source },
+      }).material,
+    );
+  };
+
+  it('an UNFLIPPED map (glTF) draws with y negated, as three`s loader draws it', () => {
+    const m = coatNormalMapped(false);
+    expect(m.clearcoatNormalMap).not.toBeNull();
+    expect([m.clearcoatNormalScale.x, m.clearcoatNormalScale.y]).toEqual([1, -1]);
+  });
+
+  it('a FLIPPED map (an upload) keeps three`s default', () => {
+    const m = coatNormalMapped(true);
+    expect([m.clearcoatNormalScale.x, m.clearcoatNormalScale.y]).toEqual([1, 1]);
+  });
+
+  it('its strength scales both axes and keeps the upload`s sign on y', () => {
+    const m = coatNormalMapped(false, 0.5);
+    expect([m.clearcoatNormalScale.x, m.clearcoatNormalScale.y]).toEqual([0.5, -0.5]);
+  });
+});
+
+describe('#1123 — an unlit spec builds a basic material from the colour and base map alone', () => {
+  it('is a MeshBasicMaterial carrying the colour, the base map clone and the surface flags', () => {
+    const map = new THREE.Texture();
+    const normal = new THREE.Texture();
+    const { material } = materialRegistry.get({
+      ...BASE,
+      materialClass: 'basic',
+      textures: { ...BASE.textures, map, normalMap: normal },
+    });
+    expect(material).toBeInstanceOf(THREE.MeshBasicMaterial);
+    const b = material as THREE.MeshBasicMaterial;
+    expect(`#${b.color.getHexString()}`).toBe(BASE.color);
+    expect(b.map).not.toBe(map); // the clone, placed, as the lit build does
+    expect(b.map!.repeat.x).toBe(2);
+    expect(b.opacity).toBe(BASE.opacity);
+    expect(b.alphaTest).toBe(BASE.alphaTest);
+    expect(b.side).toBe(BASE.side);
+    // Nothing lit comes across: three's loader skips every other map for an unlit material.
+    expect('normalMap' in b).toBe(false);
+  });
+
+  it('keys apart from the lit material it otherwise equals', () => {
+    expect(materialRegistry.keyOf({ ...BASE, materialClass: 'basic' })).not.toBe(
+      materialRegistry.keyOf(BASE),
+    );
   });
 });
 

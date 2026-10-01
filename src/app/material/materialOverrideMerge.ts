@@ -36,10 +36,9 @@
 // when nothing is connected. REF: docs.blender.org Principled BSDF + T79489;
 // three.js MeshStandardMaterial.copy (src/materials/MeshStandardMaterial.js:76-104).
 //
-// PURE — no three.js objects, no React, no state. The effect in
-// `SceneFromDAG.tsx` GltfAssetR consumes this, clones `source.clone()`, and sets
-// the returned fields onto the clone. It must NEVER touch a map reference: maps
-// survive via clone(), not via this helper.
+// PURE — no three.js objects, no React, no state. `composeMaterial.ts` and
+// `resolveMaterialFieldOwner.ts` consume this. It returns scalar fields only and
+// must NEVER touch a map reference.
 //
 // The `maps` argument is MAP PRESENCE, not the maps themselves — deliberately, so
 // each representation can answer it in its own vocabulary (a three.js material asks

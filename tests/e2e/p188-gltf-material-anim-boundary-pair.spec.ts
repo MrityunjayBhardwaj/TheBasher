@@ -2,11 +2,13 @@
 //
 // THE PROOF (the V56/p197 method — inject a free-floating channel, observe the
 // EVALUATED render): import cube-draco → inject a `material.base.metalness`
-// KeyframeChannelNumber targeting the cube's GltfChild dagId DIRECTLY (no
-// AnimationLayer — the glTF direct-channel road, V57) → scrub the playhead → the
-// RENDERED clone's metalness (read back through `__basher_gltf_meshes`, the same
-// live-three.js seam S3/S4 use) RAMPS with time. A KeyframeChannelColor on
-// `material.base.color` likewise drives the rendered colour.
+// KeyframeChannelNumber targeting the cube's data node DIRECTLY (no AnimationLayer —
+// the direct-channel road, V57) → scrub the playhead → the RENDERED metalness (read
+// off the live three.js material the import draws) RAMPS with time. A
+// KeyframeChannelColor on `material.base.color` likewise drives the rendered colour.
+//
+// #1053 — cube-draco arrives native (#1063) and the clone road is retired, so the cube
+// is the native import's `PolyMeshData`.
 //
 // This is side A == "the channel actually animates the rendered material". The
 // resolver side (overlayChannels) is unit-locked (overlayChannels.test.ts); here we
@@ -15,7 +17,7 @@
 // channel-overlaid value, metalness would freeze at its captured base.
 
 import { test, expect } from './_fixtures';
-import { importedChild } from './_importedChild';
+import { drawnImportMeshes, firstMaterialMesh } from './_importedMesh';
 
 interface BasherWindow {
   __basher_dag: {
@@ -31,29 +33,25 @@ interface BasherWindow {
     files: { relativePath: string; bytes: Uint8Array }[],
     folderName: string,
   ) => Promise<string>;
-  __basher_gltf_meshes?: () => {
-    name: string;
-    color: string | null;
-    metalness: number | null;
-  }[];
 }
 
 async function ingestCube(page: import('@playwright/test').Page): Promise<void> {
   await page.evaluate(async () => {
-    const w = window as unknown as BasherWindow;
     const bytes = new Uint8Array(
       await fetch('/assets/cube-draco.glb').then((r) => r.arrayBuffer()),
     );
-    await w.__basher_ingestGltfFolder([{ relativePath: 'cube-draco.glb', bytes }], 'matanim');
+    await (window as unknown as BasherWindow).__basher_ingestGltfFolder(
+      [{ relativePath: 'cube-draco.glb', bytes }],
+      'matanim',
+    );
   });
 }
 
-// #389 — the DATA half's id. A material channel, a diamond and a transient all address
-// the node that OWNS the param, and after the split that is `GltfData`. Aiming any of
-// them at the Object would resolve to a node that exists and a param that does not:
+// #389 — the DATA half's id. A material channel addresses the node that OWNS the param
+// (`PolyMeshData`); aimed at the Object it would resolve to a param that does not exist:
 // visible in the dopesheet, driving nothing, with nothing failing anywhere.
 async function cubeChildId(page: import('@playwright/test').Page) {
-  return (await importedChild(page, 'cube'))?.dataId ?? null;
+  return (await firstMaterialMesh(page))?.dataId ?? null;
 }
 
 async function setTime(page: import('@playwright/test').Page, seconds: number) {
@@ -62,14 +60,10 @@ async function setTime(page: import('@playwright/test').Page, seconds: number) {
   }, seconds);
 }
 
-const cubeSlot = (page: import('@playwright/test').Page) =>
-  page.evaluate(() => {
-    const w = window as unknown as BasherWindow;
-    const m = (w.__basher_gltf_meshes ? w.__basher_gltf_meshes() : []).find(
-      (s) => s.name === 'cube',
-    );
-    return m ? { color: m.color, metalness: m.metalness } : null;
-  });
+const cubeSlot = async (page: import('@playwright/test').Page) => {
+  const m = (await drawnImportMeshes(page))[0];
+  return m ? { color: m.color, metalness: m.metalness } : null;
+};
 
 async function ready(page: import('@playwright/test').Page) {
   await page.goto('/');
@@ -81,17 +75,18 @@ async function ready(page: import('@playwright/test').Page) {
   );
   await ingestCube(page);
   await expect.poll(() => cubeChildId(page)).not.toBeNull();
+  expect((await firstMaterialMesh(page))?.road).toBe('native');
   await expect.poll(async () => (await cubeSlot(page))?.metalness).not.toBeNull();
 }
 
 test.describe('#188 — glTF material-scalar animation (H40 boundary-pair)', () => {
-  test('a free-floating metalness channel RAMPS the rendered clone metalness (0→1 over t∈[0,1])', async ({
+  test('a free-floating metalness channel RAMPS the rendered metalness (0→1 over t∈[0,1])', async ({
     page,
   }) => {
     await ready(page);
     const childId = await cubeChildId(page);
 
-    // Free-floating channel — target the GltfData node id DIRECTLY, no layer (V57).
+    // Free-floating channel — target the data node id DIRECTLY, no layer (V57).
     await page.evaluate((id) => {
       (window as unknown as BasherWindow).__basher_dag.getState().dispatch(
         {
@@ -113,7 +108,7 @@ test.describe('#188 — glTF material-scalar animation (H40 boundary-pair)', () 
       );
     }, childId);
 
-    // Side A — the RENDERED clone metalness tracks the channel at each playhead.
+    // Side A — the RENDERED metalness tracks the channel at each playhead.
     await setTime(page, 0);
     await expect.poll(async () => (await cubeSlot(page))?.metalness).toBeCloseTo(0, 2);
     await setTime(page, 1);
@@ -123,7 +118,7 @@ test.describe('#188 — glTF material-scalar animation (H40 boundary-pair)', () 
     await expect.poll(async () => (await cubeSlot(page))?.metalness).toBeCloseTo(0.5, 2);
   });
 
-  test('a free-floating base.color channel drives the rendered clone colour', async ({ page }) => {
+  test('a free-floating base.color channel drives the rendered colour', async ({ page }) => {
     await ready(page);
     const childId = await cubeChildId(page);
 

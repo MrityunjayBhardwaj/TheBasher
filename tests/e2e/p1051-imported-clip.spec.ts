@@ -161,14 +161,14 @@ async function openFresh(page: Page) {
   await page.reload();
   await waitForEditor(page);
 }
-async function ingest(page: Page, mutate: string | null, folder: string) {
-  await page.evaluate(
+async function ingest(page: Page, mutate: string | null, folder: string): Promise<string> {
+  return page.evaluate(
     async ({ mutate, folder }) => {
       const w = window as unknown as W;
       const json = await fetch('/assets/anim-nested.gltf').then((r) => r.json());
       if (mutate) new Function('json', mutate)(json);
       const bytes = new TextEncoder().encode(JSON.stringify(json));
-      await w.__basher_ingestGltfFolder!([{ relativePath: 'anim-nested.gltf', bytes }], folder);
+      return w.__basher_ingestGltfFolder!([{ relativePath: 'anim-nested.gltf', bytes }], folder);
     },
     { mutate, folder },
   );
@@ -280,25 +280,36 @@ test('#1051 — the imported animation survives save and reload', async ({ page 
   await playsAsTheSpec(page, shape.groupId!, 'after reload');
 });
 
-test('#1051 — a clip this road cannot hold is refused by name, and the file still imports', async ({
+test('#1051 — a clip this road cannot hold is refused by name, and nothing is imported', async ({
   page,
 }) => {
   test.slow();
-  const warnings: string[] = [];
-  page.on('console', (m) => {
-    if (m.type() === 'warning') warnings.push(m.text());
-  });
+  const pageErrors: string[] = [];
+  page.on('pageerror', (e) => pageErrors.push(e.message));
   await openFresh(page);
-  // A morph weights track (#1060) takes the file's-copy road and the notice says why. (This row was
-  // a second clip until #1154 brought every animation across; observed in p1154-held-animations.)
-  // A CUBICSPLINE rotation used to be the other half; it imports native now (#1157, observed in
-  // p1157-cubicspline-rotation.spec.ts), so what is left of that case is the spec's own count
-  // rule: three values per key (`:3615`), and a file that breaks it is malformed.
-  await ingest(page, 'json.animations[0].channels[0].target.path = "weights";', 'p1051-weights');
-  await expect
-    .poll(() => warnings.find((t) => t.includes('not as native geometry')) ?? '')
-    .toContain('#1060');
-  await ingest(
+  const nodeCount = () =>
+    page.evaluate(
+      () => Object.keys((window as unknown as W).__basher_dag!.getState().state.nodes).length,
+    );
+  const refusalOf = (path: string) =>
+    page.evaluate(async (p) => {
+      const m = await import('/src/app/stores/assetErrorStore.ts');
+      return m.useAssetErrorStore.getState().errors[p] ?? '';
+    }, path);
+  const before = await nodeCount();
+  // #1053 — there is no second road: a file the native reader refuses is refused whole, by the
+  // name it gave, and writes nothing. A morph weights track is #1060's. (This row was a second clip
+  // until #1154 brought every animation across; observed in p1154-held-animations.)
+  const weights = await ingest(
+    page,
+    'json.animations[0].channels[0].target.path = "weights";',
+    'p1051-weights',
+  );
+  await expect.poll(() => refusalOf(weights)).toMatch(/^import refused: .*\(#1060\)$/);
+  // A CUBICSPLINE rotation imports native since #1157 (p1157-cubicspline-rotation.spec.ts); what is
+  // left of that case is the spec's own count rule: three values per key (`:3615`), and a file that
+  // breaks it is malformed.
+  const cubic = await ingest(
     page,
     [
       'const a = json.animations[0];',
@@ -308,10 +319,9 @@ test('#1051 — a clip this road cannot hold is refused by name, and the file st
     ].join('\n'),
     'p1051-cubic-rot',
   );
-  await expect
-    .poll(() => warnings.filter((t) => t.includes('not as native geometry')).join('\n'))
-    .toContain('#1063');
-  await expect(page.getByTestId('asset-error-banner')).toHaveCount(0);
+  await expect.poll(() => refusalOf(cubic)).toMatch(/^import refused: .*\(#1063\)$/);
+  expect(await nodeCount()).toBe(before);
+  expect(pageErrors).toEqual([]);
 });
 
 test('#1051 — Auto-Key on the imported cube keys the channel the import wrote', async ({

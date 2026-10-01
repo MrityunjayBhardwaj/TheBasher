@@ -154,7 +154,8 @@ describe('mutator catalog', () => {
     // 30 → 31 at #1242 — `animate.setPoseMemberMode`, a pose layer member's rotation mode.
     // 31 → 32 at #1201 — `animate.renameBone`.
     // 32 → 33 at #1215 — `animate.bakePose`.
-    expect(mutators).toHaveLength(33);
+    // 33 → 32 at #1053 — `timeline.bakeGltfChannel` retired with the clone road.
+    expect(mutators).toHaveLength(32);
     const names = mutators.map((m) => m.name).sort();
     expect(names).toEqual([
       'mutator.animate.bakePose',
@@ -183,7 +184,6 @@ describe('mutator catalog', () => {
       'mutator.shot.create',
       'mutator.timeline.addChannel',
       'mutator.timeline.addChannelModifier',
-      'mutator.timeline.bakeGltfChannel',
       'mutator.timeline.keyframe',
       'mutator.timeline.removeKeyframes',
       'mutator.timeline.setChannelExtend',
@@ -2307,7 +2307,8 @@ describe('agent.listMutators tool', () => {
     // 30 → 31 at #1242 — `animate.setPoseMemberMode`.
     // 31 → 32 at #1201 — `animate.renameBone`.
     // 32 → 33 at #1215 — `animate.bakePose`.
-    expect(parsed.mutators).toHaveLength(33);
+    // 33 → 32 at #1053 — `timeline.bakeGltfChannel` retired with the clone road.
+    expect(parsed.mutators).toHaveLength(32);
   });
 });
 
@@ -3938,7 +3939,6 @@ import {
   addAIPassMutator as _addAIPassM,
   addStitchMutator as _addStitchM,
   randomizeMutator as _randomizeM,
-  bakeGltfChannelMutator as _bakeGltfM,
   addModifierMutator as _addModifierM,
   addChannelModifierMutator as _addChannelModifierM,
   setChannelExtendMutator as _setChannelExtendM,
@@ -3952,8 +3952,6 @@ import {
 } from './index';
 import type { MutatorDefinition, MutatorValidationResult } from './index';
 import type { Op } from '../../core/dag/types';
-import { gltfChildDagId } from '../../core/import/gltfImportChain';
-import { importedChildOps } from '../../test-utils/importedChildFixture';
 
 describe('V14 deeper non-redundancy — Op-shape probe (issue #22)', () => {
   // A channel scene: collinear KeyframeChannelNumber so simplifyChannel
@@ -4098,68 +4096,6 @@ describe('V14 deeper non-redundancy — Op-shape probe (issue #22)', () => {
       from: { node: 'pb_skel', socket: 'out' },
       to: { node: 'pb_arm', socket: 'data' },
     }).next;
-  }
-
-  // P7.12 (#108) — a probe scene for bakeGltfChannel: GltfAsset → ClipSelect →
-  // TransformClip(walk) carrying a 2-key TRS track for `bone_1`, plus the
-  // GltfChild for `bone_1` (its dagId IS gltfChildDagId(assetRef, childName)).
-  const BAKE_ASSET = 'asset-probe';
-  function buildSceneForBake(): DagState {
-    let s = emptyDagState();
-    s = applyOp(s, {
-      type: 'addNode',
-      nodeId: 'bake_clip',
-      nodeType: 'TransformClip',
-      params: {
-        name: 'walk',
-        duration: 1.5,
-        keyframes: [
-          {
-            targetNodeId: 'bone_1',
-            time: 0,
-            position: [0, 0, 0],
-            rotation: [0, 0, 0],
-            scale: [1, 1, 1],
-          },
-          {
-            targetNodeId: 'bone_1',
-            time: 1.5,
-            position: [0, 2, 0],
-            rotation: [0, 90, 0],
-            scale: [1, 1, 1],
-          },
-        ],
-      },
-    }).next;
-    s = applyOp(s, {
-      type: 'addNode',
-      nodeId: 'bake_sel',
-      nodeType: 'ClipSelect',
-      params: { selectedClipName: 'walk' },
-    }).next;
-    s = applyOp(s, {
-      type: 'connect',
-      from: { node: 'bake_clip', socket: 'out' },
-      to: { node: 'bake_sel', socket: 'clips' },
-    }).next;
-    s = applyOp(s, {
-      type: 'addNode',
-      nodeId: 'bake_asset',
-      nodeType: 'GltfAsset',
-      params: { assetRef: BAKE_ASSET },
-    }).next;
-    s = applyOp(s, {
-      type: 'connect',
-      from: { node: 'bake_sel', socket: 'out' },
-      to: { node: 'bake_asset', socket: 'transformClip' },
-    }).next;
-    for (const op of importedChildOps(gltfChildDagId(BAKE_ASSET, 'bone_1'), {
-      assetRef: BAKE_ASSET,
-      childName: 'bone_1',
-    })) {
-      s = applyOp(s, op as Op).next;
-    }
-    return s;
   }
 
   // #283 Phase 4 (NLA agent mutators) — a scene carrying the Action/Strip/Track
@@ -4384,14 +4320,6 @@ describe('V14 deeper non-redundancy — Op-shape probe (issue #22)', () => {
         },
         seed: 42,
       },
-    },
-    // P7.12 (#108 / D1) — copy-on-write bake: 3 KeyframeChannelVec3 addNodes,
-    // ZERO connects (R4 edge-less bridge). Distinct op-shape from addChannel
-    // (which emits addNode + connect).
-    'mutator.timeline.bakeGltfChannel': {
-      mutator: _bakeGltfM as MutatorDefinition<unknown>,
-      build: buildSceneForBake,
-      spec: { assetRef: BAKE_ASSET, childName: 'bone_1' },
     },
     // #498 — RE-ANCHORED onto the SPLIT cube. This entry used `buildScene`, whose 'box'
     // is a fused `BoxMesh` — a retired relic that emits 'SceneObject', not 'ObjectData'.

@@ -42,7 +42,9 @@
 
 import { z } from 'zod';
 import type { NodeDefinition } from '../core/dag/types';
+import { MATERIAL_MAP_SLOT_TABLE } from './types';
 import type { BakedDataValue } from './types';
+import { SAMPLER_MAG_FILTERS, SAMPLER_MIN_FILTERS, SAMPLER_WRAPS } from './materialSchema';
 
 // The baked handle + material-face schemas live HERE, on the data half, and used to live on
 // the fused `BakedMesh` (#599). They moved because this is the node that owns them now: a
@@ -53,13 +55,14 @@ const BakedTextureRefSchema = z.object({
   hash: z.string(),
   colorSpace: z.enum(['srgb', 'srgb-linear', 'no-colorspace']),
   flipY: z.boolean(),
-  wrapS: z.number(),
-  wrapT: z.number(),
+  // #1316 — named, as the inline copy is.
+  wrapS: z.enum(SAMPLER_WRAPS),
+  wrapT: z.enum(SAMPLER_WRAPS),
   // #1050 — a bake of a native textured import keeps pointing at the project's image; zod strips
   // an undeclared key, which would send the load to the global store instead.
   store: z.literal('project').optional(),
-  magFilter: z.number().optional(),
-  minFilter: z.number().optional(),
+  magFilter: z.enum(SAMPLER_MAG_FILTERS).optional(),
+  minFilter: z.enum(SAMPLER_MIN_FILTERS).optional(),
 });
 
 /** Zod for one baked map's UV placement (#1136), about the centre pivot. */
@@ -68,6 +71,17 @@ const BakedPlacementSchema = z.object({
   offset: z.tuple([z.number(), z.number()]),
   rotation: z.number(),
 });
+
+/** The slot table's rows, as the baked snapshot names them (three's vocabulary). */
+const BAKED_MAP_ROWS = Object.values(MATERIAL_MAP_SLOT_TABLE);
+type BakedMapRow = (typeof BAKED_MAP_ROWS)[number];
+const nullableRef = BakedTextureRefSchema.nullable();
+/** The map fields' static shape, which `Object.fromEntries` cannot carry: one per row, by seeding. */
+type BakedMapFields = {
+  [R in BakedMapRow as R['three']]: R['seeded'] extends true
+    ? typeof nullableRef
+    : z.ZodOptional<typeof nullableRef>;
+};
 
 /** Zod for the rich `BakedMaterialSpec` (the ONE material face, M6). */
 export const BakedMaterialSpecSchema = z.object({
@@ -79,34 +93,47 @@ export const BakedMaterialSpecSchema = z.object({
   transparent: z.boolean(),
   emissive: z.string(),
   emissiveIntensity: z.number(),
-  map: BakedTextureRefSchema.nullable(),
-  normalMap: BakedTextureRefSchema.nullable(),
-  roughnessMap: BakedTextureRefSchema.nullable(),
-  metalnessMap: BakedTextureRefSchema.nullable(),
-  aoMap: BakedTextureRefSchema.nullable(),
-  emissiveMap: BakedTextureRefSchema.nullable(),
+  // One ref per map slot, from the slot table (#1324): null when the source has none, and absent
+  // allowed for a slot added after the six, so an older baked save still parses.
+  ...(Object.fromEntries(
+    BAKED_MAP_ROWS.map(({ three, seeded }) => [
+      three,
+      seeded ? nullableRef : nullableRef.optional(),
+    ]),
+  ) as BakedMapFields),
   // #1136 — declared, or zod strips it on every parse and the placement is lost on load.
   mapPlacements: z
     .object(
       Object.fromEntries(
-        (['map', 'normalMap', 'roughnessMap', 'metalnessMap', 'aoMap', 'emissiveMap'] as const).map(
-          (slot) => [slot, BakedPlacementSchema.optional()],
-        ),
+        BAKED_MAP_ROWS.map(({ three }) => [three, BakedPlacementSchema.optional()]),
       ),
     )
     .optional(),
   // #1140 — declared, or zod strips them on every parse and the cutout and the side are lost.
   alphaTest: z.number().optional(),
   doubleSided: z.boolean().optional(),
+  // #1123 — declared, or zod strips them on every parse and the map strengths are lost.
+  normalScale: z.number().optional(),
+  aoMapIntensity: z.number().optional(),
   physical: z
     .object({
       clearcoat: z.number().optional(),
+      // #1327 — declared, or zod strips it and a baked coat normal loses its strength.
+      clearcoatNormalScale: z.number().optional(),
       thickness: z.number().optional(),
       clearcoatRoughness: z.number().optional(),
       transmission: z.number().optional(),
       ior: z.number().optional(),
       sheen: z.number().optional(),
+      // #1123 — declared, or zod strips them and a baked fuzz loses its colour and roughness.
+      sheenColor: z.string().optional(),
+      sheenRoughness: z.number().optional(),
       specularIntensity: z.number().optional(),
+      // #1321 — declared, or zod strips it and a baked specular colour turns white.
+      specularColor: z.string().optional(),
+      // #1322 — declared, or zod strips them and baked glass loses its absorption.
+      attenuationDistance: z.number().optional(),
+      attenuationColor: z.string().optional(),
     })
     .optional(),
 });

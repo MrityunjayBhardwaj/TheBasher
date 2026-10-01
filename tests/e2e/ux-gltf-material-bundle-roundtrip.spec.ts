@@ -2,20 +2,21 @@
 // export → open round-trip, self-contained.
 //
 // THE PORTABILITY CLAIM (mirrors menu-scene-file.spec.ts's falsifier, V41/H77):
-// the edit-layer carries three kinds of material datum that must ALL survive a
+// the edited material carries two kinds of datum that must BOTH survive a
 // cross-machine open —
 //   - a SCALAR edit (base.color)         → lives in node params; DAG round-trip.
 //   - a REPLACED map (a BakedTextureRef) → its bytes must EMBED in the bundle and
 //                                          rehydrate to OPFS on open (the real
 //                                          portability test, not a proxy).
-//   - a CLEARED map (the empty-hash sentinel) → round-trips as plain data; it
-//                                          references no OPFS file, so it must NOT
-//                                          be embedded yet must still come back.
 //
 // The falsifier: after export we DELETE the replaced map's OPFS bytes, then open.
-// A working bundle rehydrates the bytes (exists → true) and the clone repaints
-// with the map (hasMap → true). A bundle that dropped the asset leaves exists
-// false and the render mapless — red.
+// A working bundle rehydrates the bytes (exists → true) and the mesh draws the map
+// again (its image decodes). A bundle that dropped the asset leaves exists false
+// and the render mapless — red.
+//
+// #1053 — cube-draco imports native and the clone road is retired. The CLEARED-map
+// sentinel this file also carried is a clone-road datum (it removed a texture the clone
+// inherited from its file; a native material inherits nothing), so it left with the road.
 //
 // Drives the DEV seams (no OS chooser): __basher_ingestGltfFolder /
 // __basher_export_scene_bundle / __basher_import_scene_bundle / __basher_opfs.
@@ -23,7 +24,7 @@
 // file write/read exactly.
 
 import { test, expect } from './_fixtures';
-import { importedChild } from './_importedChild';
+import { drawnImportMeshes, firstMaterialMesh } from './_importedMesh';
 import { openInspectorSection } from './_inspectorSections';
 
 interface Bundle {
@@ -49,7 +50,6 @@ interface W {
     exists: (p: string) => Promise<boolean>;
     delete: (p: string) => Promise<void>;
   };
-  __basher_gltf_meshes?: () => { name: string; color: string | null; hasMap: boolean }[];
 }
 
 type Page = import('@playwright/test').Page;
@@ -63,24 +63,24 @@ interface ChildMat {
   id: string;
   baseColor: unknown;
   albedo: unknown;
-  roughness: unknown;
 }
 
 async function ingestCube(page: Page): Promise<void> {
   await page.evaluate(async () => {
-    const w = window as unknown as W;
     const bytes = new Uint8Array(
       await fetch('/assets/cube-draco.glb').then((r) => r.arrayBuffer()),
     );
-    await w.__basher_ingestGltfFolder([{ relativePath: 'cube-draco.glb', bytes }], 'matround');
+    await (window as unknown as W).__basher_ingestGltfFolder(
+      [{ relativePath: 'cube-draco.glb', bytes }],
+      'matround',
+    );
   });
 }
 
-/** The cube's captured material datum (slot 0), re-found by childName so it
- *  survives the open (node ids are stable across bundleToProject).
- *  #389 — `id` is the DATA half's, which is where the material now lives. */
+/** The cube's material datum (slot 0), re-found after the open (node ids are stable across
+ *  bundleToProject). #389 — `id` is the DATA half's, which is where the material lives. */
 async function cubeMat(page: Page): Promise<ChildMat | null> {
-  const c = await importedChild(page, 'cube');
+  const c = await firstMaterialMesh(page);
   if (!c) return null;
   const m = c.slots[0] as Record<string, Record<string, unknown>> | undefined;
   const maps = (m?.maps ?? {}) as Record<string, unknown>;
@@ -89,23 +89,14 @@ async function cubeMat(page: Page): Promise<ChildMat | null> {
     objectId: c.objectId, // selection addresses the OBJECT
     baseColor: (m?.base as Record<string, unknown> | undefined)?.color ?? null,
     albedo: maps.albedo ?? null,
-    roughness: maps.roughness ?? null,
   };
 }
 
-const cubeHasMap = (page: Page) =>
-  page.evaluate(() => {
-    const w = window as unknown as W;
-    const m = (w.__basher_gltf_meshes ? w.__basher_gltf_meshes() : []).find(
-      (s) => s.name === 'cube',
-    );
-    return m ? m.hasMap : null;
-  });
+/** The drawn mesh's base map has decoded — the texture is on screen, not only referenced. */
+const cubeHasMap = async (page: Page) => (await drawnImportMeshes(page))[0]?.mapImageOk ?? null;
 
 test.describe('#178 S6 — edited glTF materials round-trip through a .basher bundle', () => {
-  test('scalar edit, replaced map (bytes), and cleared sentinel all survive export→open', async ({
-    page,
-  }) => {
+  test('a scalar edit and a replaced map (bytes) survive export→open', async ({ page }) => {
     await page.goto('/');
     await page.waitForFunction(() => !!(window as unknown as W).__basher_export_scene_bundle);
     await ingestCube(page);
@@ -136,17 +127,10 @@ test.describe('#178 S6 — edited glTF materials round-trip through a .basher bu
       .not.toBeNull();
     await expect.poll(() => cubeHasMap(page)).toBe(true);
 
-    // (3) CLEAR — write the empty-hash sentinel to the roughness slot.
-    await page.getByTestId(`inspector-map-clear-${child.id}-roughness`).click();
-    await expect
-      .poll(async () => (await cubeMat(page))?.roughness as { hash?: string } | null)
-      .toEqual(expect.objectContaining({ hash: '' }));
-
     const before = (await cubeMat(page))!;
     const albedoHash = (before.albedo as { hash: string }).hash;
 
-    // Export → the bundle must EMBED the replaced map's bytes (base64, non-empty)
-    // and must NOT embed the cleared sentinel (no file for an empty hash).
+    // Export → the bundle must EMBED the replaced map's bytes (base64, non-empty).
     const texKey = await page.evaluate(async () => {
       const w = window as unknown as W;
       const { bundle } = await w.__basher_export_scene_bundle();
@@ -181,7 +165,7 @@ test.describe('#178 S6 — edited glTF materials round-trip through a .basher bu
       )
       .toBe(true);
 
-    // All three material datums survive the open.
+    // Both material datums survive the open.
     await expect
       .poll(async () => (await cubeMat(page))?.baseColor, { timeout: 10_000 })
       .toBe('#1188ff');
@@ -191,13 +175,8 @@ test.describe('#178 S6 — edited glTF materials round-trip through a .basher bu
         return a?.hash ?? null;
       })
       .toBe(albedoHash);
-    await expect
-      .poll(async () => (await cubeMat(page))?.roughness as { hash?: string } | null)
-      .toEqual(expect.objectContaining({ hash: '' }));
-
-    // And the rendered clone repaints with the rehydrated replacement map (the
-    // overlay re-loads it from the rehydrated OPFS bytes). Wait for the async
-    // overlay (loads can't run inline) — an 800ms wait showed stale-green in S5.
+    // And the mesh draws the rehydrated replacement map (loaded from the rehydrated OPFS
+    // bytes). Polled: the load is async — an 800ms wait showed stale-green in S5.
     await expect.poll(() => cubeHasMap(page), { timeout: 10_000 }).toBe(true);
   });
 });

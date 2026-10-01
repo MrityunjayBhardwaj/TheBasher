@@ -373,16 +373,15 @@ describe('#776 — a corner is a polygon corner, at every sync-buildable descrip
   });
 
   it('11 — the escape hatch is named, and it is the same one every other domain declares', () => {
-    // `gltf` and `baked` keep their buffers outside the descriptor, so nothing here can say how
-    // many polygons they hold, let alone how many corners those polygons have.
-    expect(cornerCountOf({ kind: 'gltf', assetRef: 'a', childName: 'c' })).toBeNull();
+    // `baked` keeps its buffers outside the descriptor, so nothing here can say how many
+    // polygons it holds, let alone how many corners those polygons have.
     expect(cornerCountOf({ kind: 'baked', hash: 'h', vertexCount: 3 })).toBeNull();
     // And the refusal PROPAGATES through a derived chain rather than being minted fresh.
-    const overGltf = arrayGeometryRef(
-      { key: 'gltf|a|c', descriptor: { kind: 'gltf', assetRef: 'a', childName: 'c' } },
+    const overBaked = arrayGeometryRef(
+      { key: 'baked|h', descriptor: { kind: 'baked', hash: 'h', vertexCount: 3 } },
       3,
       [2, 0, 0],
     );
-    expect(cornerCountOf(overGltf.descriptor)).toBeNull();
+    expect(cornerCountOf(overBaked.descriptor)).toBeNull();
   });
 });

@@ -28,13 +28,19 @@
 //      V53 (the IR invariant + the DIRECT-IMPORTABILITY GAP block).
 
 import { Color, LinearSRGBColorSpace, SRGBColorSpace } from 'three';
+import { MATERIAL_MAP_SLOT_TABLE } from '../../nodes/types';
 import type {
   BakedTextureRef,
   InlineMaterialMaps,
   InlineMaterialSpec,
   UvPlacement,
 } from '../../nodes/types';
-import { NULL_MAPS, IDENTITY_UV_TRANSFORM, MAP_UV_SLOTS } from '../../nodes/materialSchema';
+import {
+  NULL_MAPS,
+  IDENTITY_UV_TRANSFORM,
+  MAP_UV_SLOTS,
+  WRAP_NAME_OF_GLTF,
+} from '../../nodes/materialSchema';
 import { COLOR_LAYER, uvLayerName } from '../../nodes/attributes';
 
 /** glTF default sampler wrap = REPEAT (10497) when a texture declares no sampler. */
@@ -54,6 +60,10 @@ interface GltfTextureTransform {
 interface GltfTextureInfo {
   index?: number;
   texCoord?: number;
+  /** `normalTexture` only (#1123). */
+  scale?: number;
+  /** `occlusionTexture` only (#1123). */
+  strength?: number;
   extensions?: { KHR_texture_transform?: GltfTextureTransform };
 }
 
@@ -76,27 +86,61 @@ const IDENTITY_SLOT_TRANSFORM: UvSlotTransform = { offset: [0, 0], scale: [1, 1]
  * The mapping is not one-to-one in either direction: glTF packs roughness (G) and
  * metalness (B) into a single `metallicRoughnessTexture`, so two IR slots read one
  * glTF field, and `ao` reads `occlusionTexture`, whose name matches nothing.
- * Colorspaces follow the glTF convention — baseColor/emissive sRGB, the rest linear.
+ * Each slot's colorspace is the slot table's (#1324), which follows the glTF convention —
+ * baseColor/emissive sRGB, the rest linear.
  */
 const IR_SLOT_SOURCES: {
-  readonly [K in keyof InlineMaterialMaps]: {
+  readonly [K in keyof InlineMaterialMaps]-?: {
+    /** The material path of the glTF texture this slot reads — also how a refusal names it. */
+    readonly path: string;
     readonly info: (mat: GltfJsonMaterial) => GltfTextureInfo | undefined;
-    readonly colorSpace: BakedTextureRef['colorSpace'];
   };
 } = {
-  albedo: { info: (m) => m.pbrMetallicRoughness?.baseColorTexture, colorSpace: 'srgb' },
-  normal: { info: (m) => m.normalTexture, colorSpace: 'srgb-linear' },
-  roughness: {
-    info: (m) => m.pbrMetallicRoughness?.metallicRoughnessTexture,
-    colorSpace: 'srgb-linear',
-  },
-  metalness: {
-    info: (m) => m.pbrMetallicRoughness?.metallicRoughnessTexture,
-    colorSpace: 'srgb-linear',
-  },
-  emissive: { info: (m) => m.emissiveTexture, colorSpace: 'srgb' },
-  ao: { info: (m) => m.occlusionTexture, colorSpace: 'srgb-linear' },
+  albedo: fromPath('pbrMetallicRoughness.baseColorTexture'),
+  normal: fromPath('normalTexture'),
+  roughness: fromPath('pbrMetallicRoughness.metallicRoughnessTexture'),
+  metalness: fromPath('pbrMetallicRoughness.metallicRoughnessTexture'),
+  emissive: fromPath('emissiveTexture'),
+  ao: fromPath('occlusionTexture'),
+  // #1327 — three's loader reads these into the coat's maps (`GLTFLoader.js:788-806`).
+  coat: fromPath('extensions.KHR_materials_clearcoat.clearcoatTexture'),
+  coatRoughness: fromPath('extensions.KHR_materials_clearcoat.clearcoatRoughnessTexture'),
+  coatNormal: fromPath('extensions.KHR_materials_clearcoat.clearcoatNormalTexture'),
+  // #1328 — three's loader reads it into `transmissionMap` (`GLTFLoader.js:1082`).
+  transmission: fromPath('extensions.KHR_materials_transmission.transmissionTexture'),
+  // #1331 — three's loader reads it into `thicknessMap` (`GLTFLoader.js:1136`).
+  thickness: fromPath('extensions.KHR_materials_volume.thicknessTexture'),
+  // #1329 — three reads them into `sheenColorMap` (sRGB) and `sheenRoughnessMap` (linear)
+  // (`GLTFLoader.js:1017`, `:1023`).
+  fuzzColor: fromPath('extensions.KHR_materials_sheen.sheenColorTexture'),
+  fuzzRoughness: fromPath('extensions.KHR_materials_sheen.sheenRoughnessTexture'),
+  // #1330 — three reads them into `specularIntensityMap` (linear) and `specularColorMap` (sRGB)
+  // (`GLTFLoader.js:1241`, `:1250`).
+  specularWeight: fromPath('extensions.KHR_materials_specular.specularTexture'),
+  specularColor: fromPath('extensions.KHR_materials_specular.specularColorTexture'),
 };
+
+/** A slot source read off its material path, so the path the refusal names is the path read. */
+function fromPath(path: string): (typeof IR_SLOT_SOURCES)[keyof typeof IR_SLOT_SOURCES] {
+  return {
+    path,
+    info: (mat) =>
+      path
+        .split('.')
+        .reduce<unknown>((o, k) => (o as Record<string, unknown> | undefined)?.[k], mat) as
+        | GltfTextureInfo
+        | undefined,
+  };
+}
+
+/**
+ * #1050 — the glTF texture paths the IR captures. A texture anywhere else is refused on the native
+ * road rather than read past and left behind; derived from the slot sources, so a slot added there
+ * is held here with no second list.
+ */
+export const HELD_TEXTURE_PATHS: ReadonlySet<string> = new Set(
+  Object.values(IR_SLOT_SOURCES).map((s) => s.path),
+);
 
 /** The normalized KHR_texture_transform for a present texture slot (identity when
  *  the slot has no transform); undefined when the slot is absent. */
@@ -206,6 +250,24 @@ function capturePerMapUvLayers(mat: GltfJsonMaterial): InlineMaterialSpec['mapUv
   return Object.keys(out).length > 0 ? out : undefined;
 }
 
+/**
+ * #1123 — the normal map's scale and the occlusion map's strength, for a map that is there and
+ * says something other than the default of 1. `undefined` when neither does, so an ordinary
+ * material keys exactly as it did.
+ */
+function captureMapStrengths(mat: GltfJsonMaterial): InlineMaterialSpec['mapStrengths'] {
+  const out: { normal?: number; ao?: number; coatNormal?: number } = {};
+  const normal = mat.normalTexture?.scale;
+  if (typeof normal === 'number' && normal !== 1) out.normal = normal;
+  const ao = mat.occlusionTexture?.strength;
+  if (typeof ao === 'number' && ao !== 1) out.ao = ao;
+  // #1327 — the coat normal's scale, as three's loader reads it (`GLTFLoader.js:808-812`).
+  const coatNormal = (IR_SLOT_SOURCES.coatNormal.info(mat) as { scale?: unknown } | undefined)
+    ?.scale;
+  if (typeof coatNormal === 'number' && coatNormal !== 1) out.coatNormal = coatNormal;
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
 function capturePerMapUvTransforms(mat: GltfJsonMaterial): InlineMaterialSpec['mapUvTransforms'] {
   if (!materialHasPerMapUvTransform(mat)) return undefined;
   const out: { -readonly [K in keyof InlineMaterialMaps]?: UvPlacement } = {};
@@ -268,8 +330,9 @@ function captureMap(
     hash: '', // lighter path — bytes ride in the embedded .glb (V41), not OPFS
     colorSpace,
     flipY: false, // glTF textures are always flipY=false
-    wrapS: sampler?.wrapS ?? GLTF_WRAP_REPEAT,
-    wrapT: sampler?.wrapT ?? GLTF_WRAP_REPEAT,
+    // #1316 — by name, as the native road writes it (this road stored glTF's numbers verbatim).
+    wrapS: WRAP_NAME_OF_GLTF[sampler?.wrapS ?? GLTF_WRAP_REPEAT] ?? 'repeat',
+    wrapT: WRAP_NAME_OF_GLTF[sampler?.wrapT ?? GLTF_WRAP_REPEAT] ?? 'repeat',
     gltfTexture: info.index,
   };
   // texCoord captured (no silent drop of the UV set) only when non-default; the
@@ -286,8 +349,11 @@ function captureMap(
 function captureMaps(mat: GltfJsonMaterial, tables: GltfTextureTables): InlineMaterialMaps {
   const out = {} as { -readonly [K in keyof InlineMaterialMaps]: BakedTextureRef | null };
   for (const slot of MAP_UV_SLOTS) {
-    const src = IR_SLOT_SOURCES[slot];
-    out[slot] = captureMap(src.info(mat), src.colorSpace, tables);
+    const { colorSpace, seeded } = MATERIAL_MAP_SLOT_TABLE[slot];
+    const ref = captureMap(IR_SLOT_SOURCES[slot].info(mat), colorSpace, tables);
+    // #1327 — an unseeded slot the file leaves empty stays ABSENT, as the schema has it: a
+    // written null would re-key every imported material that has no such texture.
+    if (seeded || ref !== null) out[slot] = ref;
   }
   return out;
 }
@@ -335,6 +401,33 @@ export function gltfJsonMaterialToOpenpbr(
   const emissiveStrength = ext.KHR_materials_emissive_strength as
     | { emissiveStrength?: number }
     | undefined;
+  // #1123 — sheen → OpenPBR fuzz at weight 1. Both references do so: Blender sets Sheen Weight 1
+  // (`blender/imp/pbrMetallicRoughness.py` `sheen`), three sets `sheen = 1` (`GLTFLoader.js:998`).
+  // The glTF defaults are a black colour and roughness 0.
+  // #1321 — specular weight and colour, onto the existing lobe; each written only when it is not
+  // OpenPBR's default (1, white), so an ordinary material keys as it did. A colour above 1 never
+  // reaches here: the native reader refuses it by name (an sRGB hex cannot hold it).
+  const specularExt = ext.KHR_materials_specular as
+    | { specularFactor?: number; specularColorFactor?: number[] }
+    | undefined;
+  const specularWeight = specularExt?.specularFactor;
+  const specularColor = specularExt?.specularColorFactor
+    ? linearRgbToSrgbHex(specularExt.specularColorFactor, [1, 1, 1])
+    : undefined;
+  // #1322 — the volume: attenuation → OpenPBR transmission colour/depth (same Beer's-law meaning:
+  // `KHR_materials_volume` README, `open_pbr_surface.mtlx` transmission_color/depth), written only
+  // only when the file gives a distance, since glTF's default (+Infinity, which JSON can only say by
+  // leaving it out) means no absorption and OpenPBR's depth 0 would turn the colour into a tint. The
+  // spec's range is (0, +inf), so a 0 is read as no distance. `thicknessFactor` →
+  // `geometry.thickness` (0 = thin-walled).
+  const volume = ext.KHR_materials_volume as
+    | { thicknessFactor?: number; attenuationDistance?: number; attenuationColor?: number[] }
+    | undefined;
+  const attenuationDistance = volume?.attenuationDistance;
+  const absorbs = typeof attenuationDistance === 'number' && attenuationDistance > 0;
+  const sheen = ext.KHR_materials_sheen as
+    | { sheenColorFactor?: number[]; sheenRoughnessFactor?: number }
+    | undefined;
   // baseColorFactor alpha drives opacity ONLY for alphaMode BLEND (OPAQUE/MASK
   // render fully opaque in three's metallic-roughness path).
   const bcf = pbr.baseColorFactor;
@@ -344,18 +437,38 @@ export function gltfJsonMaterialToOpenpbr(
   // `undefined` in unconditionally would re-key every material (H265).
   const perMap = capturePerMapUvTransforms(mat);
   const perUvSets = capturePerMapUvLayers(mat);
+  const strengths = captureMapStrengths(mat);
+  // #1123 — KHR_materials_unlit: the surface is drawn unlit (Blender: an Emission of base colour).
+  const unlit = mat.extensions?.KHR_materials_unlit !== undefined;
   return {
     name: mat.name || 'default',
     base: {
       color: linearRgbToSrgbHex(bcf, [1, 1, 1]),
       metalness: num(pbr.metallicFactor, 1),
     },
-    specular: { roughness: num(pbr.roughnessFactor, 1), ior: num(ior?.ior, 1.5) },
+    specular: {
+      roughness: num(pbr.roughnessFactor, 1),
+      ior: num(ior?.ior, 1.5),
+      ...(typeof specularWeight === 'number' && specularWeight !== 1
+        ? { weight: specularWeight }
+        : {}),
+      ...(specularColor !== undefined && specularColor !== '#ffffff'
+        ? { color: specularColor }
+        : {}),
+    },
     coat: {
       weight: num(coat?.clearcoatFactor, 0),
       roughness: num(coat?.clearcoatRoughnessFactor, 0),
     },
-    transmission: { weight: num(transmission?.transmissionFactor, 0) },
+    transmission: {
+      weight: num(transmission?.transmissionFactor, 0),
+      ...(absorbs
+        ? {
+            color: linearRgbToSrgbHex(volume?.attenuationColor, [1, 1, 1]),
+            depth: attenuationDistance,
+          }
+        : {}),
+    },
     emission: {
       color: linearRgbToSrgbHex(mat.emissiveFactor, [0, 0, 0]),
       luminance: num(emissiveStrength?.emissiveStrength, 1),
@@ -372,6 +485,8 @@ export function gltfJsonMaterialToOpenpbr(
       ...(prim?.vertexColors ? { colorLayer: COLOR_LAYER } : {}),
       // doubleSided → render both faces; captured so the DAG can override `side`.
       ...(mat.doubleSided ? { doubleSided: true } : {}),
+      // #1322 — the volume's thickness, whenever the file has a volume (its default is 0).
+      ...(volume ? { thickness: num(volume.thicknessFactor, 0) } : {}),
     },
     // Capture imported-texture descriptors when the JSON texture tables are
     // available (import path); fall back to NULL_MAPS for the clone-read oracle.
@@ -382,5 +497,16 @@ export function gltfJsonMaterialToOpenpbr(
     uvTransform: captureUvTransform(mat),
     ...(perMap ? { mapUvTransforms: perMap } : {}),
     ...(perUvSets ? { mapUvLayers: perUvSets } : {}),
+    ...(strengths ? { mapStrengths: strengths } : {}),
+    ...(unlit ? { unlit: true as const } : {}),
+    ...(sheen
+      ? {
+          fuzz: {
+            weight: 1,
+            color: linearRgbToSrgbHex(sheen.sheenColorFactor, [0, 0, 0]),
+            roughness: num(sheen.sheenRoughnessFactor, 0),
+          },
+        }
+      : {}),
   };
 }

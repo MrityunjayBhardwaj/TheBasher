@@ -37,14 +37,11 @@
 //      (`edgeIndicesByAngle`), src/app/faceCount.ts (the scanned switch). Issues #1039, #496,
 //      #862, #847.
 import { readFileSync } from 'node:fs';
-import * as THREE from 'three';
-import { afterEach, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { componentCountOf } from '../nodes/componentSelection';
 import { getForRead } from './geometryRegistry';
-import { arrayGeometryRef, bevelGeometryRef, mirrorGeometryRef } from './modifierGeometry';
-import { weldByPosition } from './pointIdentity';
+import { arrayGeometryRef, mirrorGeometryRef } from './modifierGeometry';
 import { meshGeometryRef, packMeshData } from './meshGeometryData';
-import { __clearGltfCloneRegistryForTests, registerGltfClone } from './asset/gltfCloneRegistry';
 import { stripComments } from '../test-utils/sourceScan';
 import type { GeometryDescriptor, GeometryRef } from '../nodes/types';
 
@@ -63,10 +60,6 @@ const sphere: GeometryRef = {
   key: 'sphere|1|8|6',
   descriptor: { kind: 'sphere', radius: 1, widthSegments: 8, heightSegments: 6 },
 };
-const gltf: GeometryRef = {
-  key: 'gltf|a|c',
-  descriptor: { kind: 'gltf', assetRef: 'a', childName: 'c', faceCount: 12 },
-};
 const baked: GeometryRef = {
   key: 'baked|dead',
   descriptor: { kind: 'baked', hash: 'deadbeef', vertexCount: 24 },
@@ -80,7 +73,6 @@ const baked: GeometryRef = {
 const REPRESENTATIVE: Record<GeometryDescriptor['kind'], GeometryRef> = {
   box,
   sphere,
-  gltf,
   baked,
   array: arrayGeometryRef(box, 3, [1, 0, 0]),
   mirror: mirrorGeometryRef(box, 'x', 0),
@@ -105,8 +97,6 @@ const REPRESENTATIVE: Record<GeometryDescriptor['kind'], GeometryRef> = {
 
 /** Composed refs over BUFFER sources — where a count and a buffer are most likely to diverge. */
 const COMPOSED: [string, GeometryRef][] = [
-  ['array(gltf)', arrayGeometryRef(gltf, 3, [1, 0, 0])],
-  ['mirror(gltf)', mirrorGeometryRef(gltf, 'x', 0)],
   ['array(baked)', arrayGeometryRef(baked, 3, [1, 0, 0])],
   ['mirror(baked)', mirrorGeometryRef(baked, 'x', 0)],
 ];
@@ -119,30 +109,9 @@ const COMPOSED: [string, GeometryRef][] = [
 // have stayed green forever while the path it guards changed underneath it: the assertion that
 // rots silently because its subject moved. So `dangerous` asks what the resolver asks.
 //
-// And the rows could not stay unmounted. An import's edge count only answers once its clone is
-// mounted, so an unmounted census examines exactly the rows where nothing can be dangerous. The
-// MOUNTED rows below are where "a counted edge count" is finally reachable for an import, which is
-// the whole premise this file was written to watch for.
-const MOUNTED_ASSET = 'u/1046-mounted.gltf';
-const MOUNTED_CHILD = 'Imported';
-
-function mountImportedBox(): GeometryRef {
-  const mesh = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshBasicMaterial());
-  mesh.name = MOUNTED_CHILD;
-  const group = new THREE.Group();
-  group.add(mesh);
-  registerGltfClone(MOUNTED_ASSET, group);
-  const descriptor: GeometryDescriptor = {
-    kind: 'gltf',
-    assetRef: MOUNTED_ASSET,
-    childName: MOUNTED_CHILD,
-    faceCount: 12,
-    pointCount: weldByPosition(new THREE.BoxGeometry(1, 1, 1)).points,
-  };
-  return { key: `k|${JSON.stringify(descriptor)}`, descriptor };
-}
-
-afterEach(() => __clearGltfCloneRegistryForTests());
+// #1053 — the MOUNTED rows that stood here (an import's edge count, read off its mounted clone's
+// buffer) went with the clone renderer, and the `gltf` kind with them. The stored-mesh
+// representative is the imported shape that states an edge count today.
 
 /** Does this ref have BOTH a derivable edge count and unreadable geometry? */
 function dangerous(ref: GeometryRef): boolean {
@@ -179,29 +148,16 @@ describe('#1039 — a derivable edge count implies readable geometry', () => {
       'control: a box DOES state an edge count, so the first half of the predicate is live',
     ).toBe('counted');
     expect(
-      getForRead(gltf),
-      'control: an unmounted clone IS unreadable, so the second half is live',
+      getForRead(baked),
+      'control: an unprimed bake IS unreadable, so the second half is live',
     ).toBeNull();
-
-    const imported = mountImportedBox();
-    const mounted: [string, GeometryRef][] = [
-      ['gltf (mounted)', imported],
-      ['array(gltf) (mounted)', arrayGeometryRef(imported, 3, [2, 0, 0])],
-      ['mirror(gltf) (mounted)', mirrorGeometryRef(imported, 'x', 2)],
-      ['bevel(gltf) (mounted)', bevelGeometryRef(imported, 0.1)],
-    ];
-    // POSITIVE CONTROL for the mounted rows — each must really STATE an edge count, or a row that
-    // silently refuses would make this census pass by examining nothing dangerous at all.
-    for (const [label, ref] of mounted)
-      expect(componentCountOf('edge', ref).kind, `control: ${label} states an edge count`).toBe(
-        'counted',
-      );
-    rows.push(...mounted);
 
     const bad = rows.filter(([, ref]) => dangerous(ref)).map(([label]) => label);
     // 17 → 18 at #1049: the stored-mesh representative, the first imported shape that states an
-    // edge count without anything to mount.
-    expect(rows.length, 'control: the census examined every row').toBe(18);
+    // edge count without anything to mount. 18 → 14 at #1053: the four MOUNTED rows went with the
+    // clone renderer (see above). 14 → 11 at #1053: the `gltf` representative and its two
+    // composed rows went with the kind.
+    expect(rows.length, 'control: the census examined every row').toBe(11);
     expect(
       bad,
       'A descriptor now states an edge count while its geometry cannot be read. That combination ' +

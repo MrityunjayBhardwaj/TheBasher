@@ -42,7 +42,11 @@ import type { ToolContext, ToolDefinition, ToolResult } from './types';
 import { MAX_FACE_LIMIT, describeRequest } from '../../core/modelgen';
 import type { ModelGenerationRequest } from '../../core/modelgen';
 import { ingestSingleFile } from '../../app/asset/importCommon';
-import { buildGltfImportOpsFromOpfs } from '../../app/asset/importGltf';
+import {
+  buildGltfImportOpsFromOpfs,
+  leftBehindNotice,
+  refusalNotice,
+} from '../../app/asset/importGltf';
 
 export const modelGenerateSchema = z.object({
   prompt: z
@@ -129,25 +133,22 @@ export const modelGenerateTool: ToolDefinition<ModelGenerateArgs> = {
 
     // V7 — the FORKED state, never the live store. The tool returns ops for the
     // Diff; the director accepts before anything in the graph changes.
-    const chain = await buildGltfImportOpsFromOpfs(opfsPath, sceneRef.node, ctx.dagState);
-    // #1205 — a skinned file the native reader refused is not imported at all.
+    const chain = await buildGltfImportOpsFromOpfs(opfsPath, sceneRef.node);
+    // #1053 — a file the native reader refused is not imported at all.
     if (chain.road === 'refused') {
       return {
         ops: [],
-        text: `Error: generated "${args.name ?? args.prompt}" (task ${taskId}) was saved to ${opfsPath} but not imported — it is a character (it has a skin), and ${chain.nativeRefusal.refused} (${chain.nativeRefusal.issue}).`,
+        text: `Error: generated "${args.name ?? args.prompt}" (task ${taskId}) was saved to ${opfsPath} but not imported — ${refusalNotice(chain.nativeRefusal)}.`,
       };
     }
-    const landed =
-      chain.road === 'native'
-        ? `native geometry under Group ${chain.groupId}`
-        : `GltfAsset ${chain.gltfAssetId} (not native: ${chain.nativeRefusal.refused}, ${chain.nativeRefusal.issue})`;
+    const landed = `native geometry under Group ${chain.groupId}`;
 
     return {
       ops: chain.ops,
       text:
         `Generated "${args.name ?? args.prompt}" (task ${taskId}) — imported from ` +
         `${opfsPath} as ${landed}. It is an ordinary imported ` +
-        `asset, with nothing in the graph marking it as generated.`,
+        `asset, with nothing in the graph marking it as generated.${leftBehindNotice(chain.notices)}`,
     };
   },
 };

@@ -68,16 +68,14 @@ import { arrayCopiesOf } from './arrayCopies';
  *
  * ⚠️ THE ESCAPE HATCH IS ABOUT A MISSING CAPTURE, NOT ABOUT A KIND — and this paragraph said
  * otherwise until #1029. It read *"the two `null` arms"*, naming `gltf` and `baked` as though
- * refusing were a property of being imported. Since #1023 an imported child carries the face
- * count read from the glTF JSON, and this function answers from it; measured, a captured
- * child answers and an uncaptured one refuses, so the arm turns on the readout and not on the
- * kind. An enumeration in that voice is reached for instead of the code, which is what makes
- * a stale one act as a wrong answer rather than a missing one.
+ * refusing were a property of being imported. From #1023 an imported child carried the face
+ * count read from the glTF JSON, and a captured child answered while an uncaptured one refused,
+ * so the arm turned on the readout and not on the kind. Since #1053 an import is a stored
+ * `mesh`, which answers from its own polygons. An enumeration in that voice is reached for
+ * instead of the code, which is what makes a stale one act as a wrong answer rather than a
+ * missing one.
  *
  * What refuses, and why, censused by that gate:
- *   `gltf` WITHOUT a captured count — every save written before #1023, and every child that
- *             is not an all-triangle mesh. An absent readout means nobody looked; it never
- *             means zero faces.
  *   `baked` — the descriptor carries a vertex count, not a face count, and the authoritative
  *             bytes are in OPFS. Deriving faces from vertices would be a guess about
  *             indexing, which is exactly the kind of agrees-today arithmetic this comment
@@ -171,12 +169,6 @@ export function faceCountOf(descriptor: GeometryDescriptor): number | null {
     // spelling here that could drift from the operator's actual output.
     case 'uvProject':
       return faceCountOf(descriptor.source.descriptor);
-    case 'gltf':
-      // #1023 — the count captured from the glTF JSON at import, when there was one.
-      // `?? null` is load-bearing: an ABSENT readout means the import never captured one
-      // (a pre-#1023 save, a bone, an empty, a child that is not all triangles) and must
-      // answer exactly as it did before this issue. It never means zero faces.
-      return descriptor.faceCount ?? null;
     case 'baked':
       // Still null, and NOT from `vertexCount`. That field is the RAW BUFFER's vertex
       // count — it names the OPFS blob and blunts the hash's collision surface — and a
@@ -571,21 +563,6 @@ const arityCache = new WeakMap<
   WeakMap<readonly number[], readonly number[]>
 >();
 
-/**
- * HOW MANY CORNERS AN IMPORTED glTF FACE HAS. Three, and it is a property of the FORMAT
- * rather than of any particular file (#1023).
- *
- * glTF has no n-gon primitive mode: `GLTFLoader.js:3788-3811` accepts TRIANGLES,
- * TRIANGLE_STRIP and TRIANGLE_FAN — converting the last two to triangles at load — and
- * throws on anything else at `:3832`. So a `gltf` descriptor's captured face count is a
- * TRIANGLE count, and both of the questions below follow from this one number.
- *
- * Stated once, here, because corners and arity are two readings of one fact and writing
- * them as two literals would let them drift. A box already demonstrates how easily that
- * hides: 24 corners and 36 triangle corners both look like plausible per-box integers.
- */
-const GLTF_FACE_CORNERS = 3;
-
 export function faceArityOf(descriptor: GeometryDescriptor): readonly number[] | null {
   const generated = polygonArityOf(descriptor);
   if (generated !== null) return generated;
@@ -607,19 +584,9 @@ export function faceArityOf(descriptor: GeometryDescriptor): readonly number[] |
     return verdict.kind === 'laid-out' ? verdict.layout.corners.map((n) => n - 2) : null;
   }
 
-  // #1023 — an imported child whose face count was captured. `- 2` is the fan rule, the
-  // same one `polygonArityOf` implements in the direction `fanToTriangles` reads it: a
-  // triangle fans to one triangle. This arm exists rather than riding the layout because
-  // the layout needs RIMS, and rims are the index buffer — buffer-scale data a descriptor
-  // has no business carrying. A count plus a format guarantee is all this answer needs.
-  if (descriptor.kind === 'gltf') {
-    const faces = descriptor.faceCount;
-    return faces === undefined ? null : new Array<number>(faces).fill(GLTF_FACE_CORNERS - 2);
-  }
-
   // Narrowed explicitly rather than inferred from a non-null order: `tiledFaceOrder` answers
-  // for exactly these three kinds, but that is its invariant and not something the type system
-  // carries back out here — the same narrowing `mintTiledModifierAttributes` writes, for the
+  // for these three kinds and for `bevel` (handled above), but that is its invariant and not
+  // something the type system carries back out here — the same narrowing `mintTiledModifierAttributes` writes, for the
   // same reason.
   if (descriptor.kind !== 'array' && descriptor.kind !== 'mirror' && descriptor.kind !== 'subset')
     return null;
@@ -686,12 +653,6 @@ export function faceCornersOf(descriptor: GeometryDescriptor): readonly number[]
     return verdict.kind === 'laid-out' ? verdict.layout.corners : null;
   }
 
-  // #1023 — the same captured count, read as corners. See {@link GLTF_FACE_CORNERS}.
-  if (descriptor.kind === 'gltf') {
-    const faces = descriptor.faceCount;
-    return faces === undefined ? null : new Array<number>(faces).fill(GLTF_FACE_CORNERS);
-  }
-
   // Narrowed explicitly for the reason {@link faceArityOf} states one function up.
   if (descriptor.kind !== 'array' && descriptor.kind !== 'mirror' && descriptor.kind !== 'subset')
     return null;
@@ -711,8 +672,8 @@ export function faceCornersOf(descriptor: GeometryDescriptor): readonly number[]
  * refuse, and the fourth and last domain to get one (#776, after #716's points and #718's edges).
  *
  * `number | null` rather than a `CountVerdict`, matching {@link faceCountOf} and not
- * `pointCountOf`: the `null` here has only ever meant one thing, a `gltf` or `baked` somewhere
- * up the source chain, and `componentSelection` lifts it into a named absence at the one site
+ * `pointCountOf`: the `null` here has only ever meant one thing, a source whose buffers live
+ * outside the descriptor somewhere up the chain (`baked` today; a `gltf` import until #1053), and `componentSelection` lifts it into a named absence at the one site
  * that needs the reason. A corner hangs off a face, so it answers exactly where a face does.
  */
 export function cornerCountOf(descriptor: GeometryDescriptor): number | null {
@@ -917,7 +878,7 @@ export function tiledCornerOrder(descriptor: GeometryDescriptor): TiledCornerOrd
  * numbers disagreed and a mesh that renders one material for reasons nobody can reconstruct.
  *
  * Returns `null` — meaning "no objection" — for a descriptor with no derivable arity
- * (`gltf` / `baked`), because there is nothing to disagree with, and for a geometry with no
+ * (`baked`), because there is nothing to disagree with, and for a geometry with no
  * index, which is a different condition with a different answer and is not this gate's to
  * refuse.
  */

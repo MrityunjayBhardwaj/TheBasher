@@ -8,7 +8,7 @@
 // this family.
 //
 // REF: src/app/animate/dispatchApplyTransform.ts (`bakedSpecFromInline`),
-//      src/app/animate/captureBakedMaterial.ts (`bakedSurface`),
+//      app/animate/captureBakedMaterial.ts (the clone road's half; gone in #1053, at b33f7988),
 //      src/viewport/SceneFromDAG.tsx (`bakedSurface`, the draw side); issues #1140, #1139, #1136.
 
 import { test, expect } from './_fixtures';

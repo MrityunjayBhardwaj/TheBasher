@@ -449,11 +449,11 @@ describe('#814 HALF C — what it refuses, and the drop it makes loud', () => {
   });
 
   it('11 — a source whose own buffers are outside the descriptor propagates, not invents', () => {
-    const gltf: GeometryRef = {
-      key: 'gltf|a|b',
-      descriptor: { kind: 'gltf', assetRef: 'a', childName: 'b' },
+    const baked: GeometryRef = {
+      key: 'baked|h',
+      descriptor: { kind: 'baked', hash: 'h', vertexCount: 3 },
     };
-    const bevel = bevelGeometryRef(gltf, 0.1);
+    const bevel = bevelGeometryRef(baked, 0.1);
     expect(faceCountOf(bevel.descriptor)).toBeNull();
     const points = pointCountOf(bevel.descriptor);
     expect(points.kind).toBe('outside-the-descriptor');

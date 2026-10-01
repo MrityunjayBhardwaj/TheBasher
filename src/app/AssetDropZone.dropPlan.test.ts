@@ -36,17 +36,14 @@ describe('planCatalogAssetDrop', () => {
     expect(planCatalogAssetDrop(stateWithScene(), 'motions/walk.bvh').kind).toBe('import');
   });
 
-  it('CONTROL — a plain library asset WITH a scene builds catalog ops into that scene (the no-scene branch is not vacuously always-taken)', () => {
-    const plan = planCatalogAssetDrop(stateWithScene('n_scene_42'), 'library/rock');
-    expect(plan.kind).toBe('ops');
-    // Narrow for the type checker, then assert the ops actually target the scene.
-    if (plan.kind !== 'ops') throw new Error('expected ops');
-    // The last op connects the new group into the scene node — proof the resolved
-    // sceneNodeId flowed through, i.e. the happy path did NOT fall into no-scene.
-    const lastConnect = plan.ops.at(-1);
-    expect(lastConnect).toMatchObject({
-      type: 'connect',
-      to: { node: 'n_scene_42', socket: 'children' },
+  // #1307 — a path in no import format used to become a GltfAsset reading it. It now goes to the
+  // extension dispatcher like any other, which refuses it by name (routeImportByExtension's own
+  // row in importBvhFbx.test.ts). This is also the control that the no-scene branch above is not
+  // taken for every path: the same path with a scene is routed.
+  it('a path in no import format WITH a scene goes to the dispatcher, never to a model node', () => {
+    expect(planCatalogAssetDrop(stateWithScene('n_scene_42'), 'library/rock')).toEqual({
+      kind: 'import',
+      path: 'library/rock',
     });
   });
 });

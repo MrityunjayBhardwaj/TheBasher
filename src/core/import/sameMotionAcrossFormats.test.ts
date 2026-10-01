@@ -15,7 +15,8 @@
 // and its glb re-import differ between keys by 0.1371° and 0.139 in heads at half frames, and by 0.0°
 // at whole frames (probe `q1211_glb_vs_bvh_midframes.py`). The rows below hold ours to the same shape.
 //
-// The .fbx arm joins when the FBX reader reads curves as Blender does (#1279).
+// The .fbx arm is not here yet. What held it back is gone — the FBX reader reads curves as Blender
+// does since #1279 — and adding it is #1211's remaining step.
 
 import { beforeEach, describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';

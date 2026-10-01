@@ -16,29 +16,39 @@
 
 import * as THREE from 'three';
 import type { StorageCapability } from '../../core/storage/StorageCapability';
-import type { BakedTextureRef } from '../../nodes/types';
-import { persistTexture, type PersistTextureHooks } from '../asset/bakedTextureStore';
+import { LOBE_WEIGHT_WHEN_ABSENT, MATERIAL_MAP_SLOT_TABLE } from '../../nodes/types';
+import type { BakedTextureRef, IrMapSlot, MaterialMapSlotRow } from '../../nodes/types';
+import { MAP_UV_SLOTS } from '../../nodes/materialSchema';
+import {
+  fromBakedColorSpace,
+  persistTexture,
+  type PersistTextureHooks,
+} from '../asset/bakedTextureStore';
 
-export type MaterialMapSlot = 'albedo' | 'normal' | 'roughness' | 'metalness' | 'emissive' | 'ao';
+/** A material map slot (IR vocabulary). The list and each slot's colour space are the slot table's (#1324). */
+export type MaterialMapSlot = IrMapSlot;
 
-export const MATERIAL_MAP_SLOTS: MaterialMapSlot[] = [
-  'albedo',
-  'normal',
-  'roughness',
-  'metalness',
-  'emissive',
-  'ao',
-];
+export const MATERIAL_MAP_SLOTS: readonly MaterialMapSlot[] = MAP_UV_SLOTS;
 
-/** The colorspace each map slot must carry (D-04). */
-const SLOT_COLORSPACE: Record<MaterialMapSlot, THREE.ColorSpace> = {
-  albedo: THREE.SRGBColorSpace,
-  emissive: THREE.SRGBColorSpace,
-  normal: THREE.LinearSRGBColorSpace,
-  roughness: THREE.LinearSRGBColorSpace,
-  metalness: THREE.LinearSRGBColorSpace,
-  ao: THREE.LinearSRGBColorSpace,
-};
+/**
+ * #1333 — the slots the inspector offers a map row for on this material. A lobe's slot shows only
+ * while its lobe's weight is above 0 (the table's `weightOf`): off, the map draws nothing and the
+ * row is clutter. A slot that already HOLDS a texture shows regardless, or turning a weight to 0
+ * would hide a stored map that could then be neither seen nor cleared.
+ */
+export function shownMapSlots(material: {
+  readonly maps?: unknown;
+  readonly [lobe: string]: unknown;
+}): readonly MaterialMapSlot[] {
+  const maps = (material.maps ?? {}) as Readonly<Record<string, unknown>>;
+  return MATERIAL_MAP_SLOTS.filter((slot) => {
+    const lobe = (MATERIAL_MAP_SLOT_TABLE[slot] as MaterialMapSlotRow).weightOf;
+    if (lobe === undefined || maps[slot] != null) return true;
+    // #1330 — an absent weight draws at OpenPBR's default: specular's is 1, the others' 0.
+    const weight = (material[lobe] as { weight?: unknown } | undefined)?.weight;
+    return (typeof weight === 'number' ? weight : LOBE_WEIGHT_WHEN_ABSENT[lobe]) > 0;
+  });
+}
 
 export interface AttachMapHooks {
   /** Override the File→Texture decode (test seam — happy-dom has no decoder). */
@@ -68,7 +78,7 @@ export async function attachMapFromFile(
     // Set the colorspace BEFORE persist so the ref captures it (M5). flipY keeps
     // the TextureLoader default (true) — the standard image-upload orientation
     // (glTF's flipY=false is a glTF-specific convention, not used for uploads).
-    texture.colorSpace = SLOT_COLORSPACE[slot];
+    texture.colorSpace = fromBakedColorSpace(MATERIAL_MAP_SLOT_TABLE[slot].colorSpace); // D-04
     return await persistTexture(storage, texture, hooks.persist);
   } finally {
     URL.revokeObjectURL(url);

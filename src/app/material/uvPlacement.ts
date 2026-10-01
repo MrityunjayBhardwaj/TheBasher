@@ -22,7 +22,8 @@
 //     a caller has to state which road it is. See #551 for the axis itself.
 //
 // REF: src/app/materialRegistry.ts (`build`/`prep` — the authored road, CENTRE),
-//      src/viewport/applyGltfUvTransform.ts (the glTF overlay road, ORIGIN),
+//      viewport/applyGltfUvTransform.ts (the glTF overlay road, ORIGIN; gone in #1053, at
+//      d7d19591 — the native importer rebases a glTF placement to the centre instead),
 //      src/app/material/openpbrToThree.ts (translates the IR's slot names to
 //      three's, once); issues #550, #551, #181.
 
@@ -109,4 +110,28 @@ export function rebasePlacementPivot(
     ],
     rotation: placement.rotation,
   };
+}
+
+/**
+ * #1325 — the `normalScale` a normal map draws with on a mesh WITHOUT a tangent attribute, which
+ * is every mesh this app draws (the native reader refuses tangents, #1125; primitives have none).
+ *
+ * three then derives the tangent frame from UV derivatives, and its bitangent follows the image's
+ * up only when the texture is uploaded flipped (`flipY: true`, three's convention, UV origin at
+ * the bottom-left). A texture uploaded unflipped (glTF's `flipY: false`, UV origin at the
+ * top-left) points that bitangent at image-DOWN, so the green channel would bend the surface the
+ * wrong way. three's own GLTFLoader negates `normalScale.y` for exactly this case
+ * (`GLTFLoader.js:3402`, `:3468`); the spec says green is +Y, image-up.
+ *
+ * Keyed on the texture's own orientation, never on where it came from: a map a director uploads
+ * keeps `flipY: true`, and three's default `(1, 1)` is right for it. Both draw builders call this
+ * (`materialRegistry.ts` `build`, `SceneFromDAG.tsx` `CapturedBakedMeshR`; a flattened bake draws
+ * through the registry), so they cannot disagree.
+ */
+export function normalScaleFor(
+  normalMap: Pick<THREE.Texture, 'flipY'>,
+  strength: number = 1,
+): [number, number] {
+  // #1123 — the strength scales both axes; only y's sign depends on the upload.
+  return [strength, normalMap.flipY ? strength : -strength];
 }

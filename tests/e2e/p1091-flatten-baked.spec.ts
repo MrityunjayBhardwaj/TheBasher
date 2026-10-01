@@ -6,10 +6,9 @@
 // primitive that is almost invisible: its captured spec is a frozen standard material with no
 // maps, so a map-aware composition already draws every one of the override's six scalars. The
 // difference only shows on a bake that captured something composition keeps — a texture map.
-// Applying the child of a clone-road import captures the live material, map included, so that
-// is the fixture: `uv-transform-quad.gltf` carries a base-colour texture, and the native
-// importer refuses it (KHR_texture_transform), so it arrives on the clone road and its Apply
-// bakes.
+// So the fixture is `uv-transform-quad.gltf`'s textured material on a box, baked by Apply
+// (#1053: the clone-road import this used to bake is retired; a primitive is the one live
+// producer of a textured `BakedData`, see `_bakeOnBox`).
 //
 // ── THE FLAG'S STATES, AND THE ONE THIS TIER CANNOT REACH ────────────────────────────
 //
@@ -22,8 +21,9 @@
 // ignored, and fails either composition step if it flattens without being asked. Read on the
 // drawn three.js material, the only tier that sees a renderer.
 //
-// Measured before the fix (same steps): flatten true still drew `MeshStandardMaterial` with
-// its map. After: `MeshPhysicalMaterial`, no map, the override's colour.
+// Measured before the fix (same steps, on the clone-road bake): flatten true still drew its map.
+// After: no map, the override's colour. A primitive bake captures a physical material, so the
+// material TYPE no longer tells the two arms apart; the map and the colour do.
 //
 // REF: src/viewport/SceneFromDAG.tsx (`BakedMeshR` → `FlattenedBakedMeshR`),
 //      src/app/material/flattenMaterial.ts, tests/e2e/p131-material-flatten.spec.ts (the native
@@ -31,10 +31,9 @@
 
 import { test, expect } from './_fixtures';
 import type { Page } from '@playwright/test';
-import { importedChildren } from './_importedChild';
+import { applyBox, boxWithImportedMaterial } from './_bakeOnBox';
 
-const ASSET_REF = 'assets/uv-transform-quad.gltf';
-const FIXTURE_URL = '/assets/uv-transform-quad.gltf';
+const BOX = 'n_p1091_box';
 const OVR = 'p1091_ovr';
 const OVR_COLOR = '#ff8800';
 
@@ -56,16 +55,11 @@ interface BasherWindow {
     };
   };
   __basher_three: { getState: () => { scene: unknown } };
-  __basher_importGltf: (buffer: ArrayBuffer, assetRef: string) => Promise<unknown>;
-  __basher_writeOpfsBytes: (ref: string, bytes: Uint8Array) => Promise<void>;
-  __basher_gltf_meshes?: () => { hasMap: boolean }[];
 }
 
 /**
  * The material of every VISIBLE mesh drawn under the top-level scene child named `name` (the pick
- * wrapper's id). #1108 — the bake now stays under the import's Group, and a nested object carries
- * no name (#501), so the spec reads under that Group; the clone it holds keeps the applied child
- * suppressed, which the visibility walk leaves out.
+ * wrapper's id): the box, then the override once it wraps the box.
  */
 async function drawn(page: Page, name: string): Promise<DrawnMaterial[] | null> {
   return page.evaluate((n) => {
@@ -161,67 +155,19 @@ test('#1091: flatten on an override over a baked mesh draws the override alone, 
   await expect(page.getByTestId('layout')).toBeVisible({ timeout: 30_000 });
   await page.waitForFunction(() => {
     const w = window as unknown as BasherWindow;
-    return Boolean(w.__basher_dag && w.__basher_importGltf && w.__basher_three?.getState().scene);
+    return Boolean(w.__basher_dag && w.__basher_three?.getState().scene);
   });
 
-  // Stage the clone-road import: bytes into OPFS where the clone loads them, then the graph.
-  await page.evaluate(
-    async ({ url, ref }) => {
-      const w = window as unknown as BasherWindow;
-      const buf = await (await fetch(url)).arrayBuffer();
-      await w.__basher_writeOpfsBytes(ref, new Uint8Array(buf));
-      await w.__basher_importGltf(buf, ref);
-    },
-    { url: FIXTURE_URL, ref: ASSET_REF },
+  await boxWithImportedMaterial(page, 'uv-transform-quad.gltf', 'p1091', BOX);
+  await applyBox(page, BOX);
+  // The Object keeps its id through the bake, and sits at the scene root.
+  const bakedId = BOX;
+  const holderId = await page.evaluate(
+    () => (window as unknown as BasherWindow).__basher_dag.getState().state.outputs.scene!.node,
   );
-  // Apply reads the LIVE clone, which mounts after the child exists in the graph.
-  await page.waitForFunction(() => {
-    const f = (window as unknown as BasherWindow).__basher_gltf_meshes;
-    const s = f ? f() : [];
-    return s.length === 1 && s[0].hasMap;
-  });
-  const children = await importedChildren(page, ASSET_REF);
-  expect(children).toHaveLength(1);
-
-  const applied = (await page.evaluate(async (id) => {
-    const mod = await import('/src/app/animate/dispatchApplyTransform.ts');
-    return mod.dispatchApplyTransform(id, 'all');
-  }, children[0].objectId)) as { ok: boolean; reason?: string; bakedId?: string };
-  expect(applied, applied.reason).toMatchObject({ ok: true });
-  const bakedId = applied.bakedId!;
-  const dataType = await page.evaluate((id) => {
-    const nodes = (window as unknown as BasherWindow).__basher_dag.getState().state.nodes;
-    const d = (nodes[id].inputs?.data as { node: string } | undefined)?.node;
-    return d ? nodes[d].type : null;
-  }, bakedId);
-  expect(dataType, 'the Apply baked (the subject is the baked road)').toBe('BakedData');
-
-  // #1108 — the bake is held by the import's Group, the top-level node the spec reads under.
-  const holder = await page.evaluate((id) => {
-    const dag = (window as unknown as BasherWindow).__basher_dag.getState().state;
-    const holders = Object.entries(dag.nodes).filter(([, n]) =>
-      Object.values(n.inputs ?? {})
-        .flat()
-        .some((e) => (e as { node?: string } | undefined)?.node === id),
-    );
-    const sceneKids = (dag.nodes[dag.outputs.scene!.node].inputs?.children ?? []) as {
-      node: string;
-    }[];
-    return holders.map(([key, n]) => ({
-      id: key,
-      type: n.type,
-      topLevel: sceneKids.some((e) => e.node === key),
-    }));
-  }, bakedId);
-  expect(holder, 'one top-level Group holds the bake').toEqual([
-    expect.objectContaining({ type: 'Group', topLevel: true }),
-  ]);
-  const holderId = holder[0].id;
 
   // Baseline: the bake captured the map.
-  await expect
-    .poll(() => drawn(page, holderId))
-    .toEqual([expect.objectContaining({ hasMap: true })]);
+  await expect.poll(() => drawn(page, BOX)).toEqual([expect.objectContaining({ hasMap: true })]);
 
   // Wrap the baked object in an override that does not name the flag (the schema writes false).
   await page.evaluate(
@@ -260,30 +206,30 @@ test('#1091: flatten on an override over a baked mesh draws the override alone, 
 
   // UNNAMED (false by default) → composition: the override tints, the captured map survives.
   await expect
-    .poll(() => drawn(page, holderId))
-    .toEqual([{ type: 'MeshStandardMaterial', hasMap: true, color: OVR_COLOR }]);
+    .poll(() => drawn(page, OVR))
+    .toEqual([expect.objectContaining({ hasMap: true, color: OVR_COLOR })]);
 
   // TRUE → flatten: a new material from the override alone; the captured map is gone.
   await setFlatten(page, true);
   await expect
-    .poll(() => drawn(page, holderId))
-    .toEqual([{ type: 'MeshPhysicalMaterial', hasMap: false, color: OVR_COLOR }]);
+    .poll(() => drawn(page, OVR))
+    .toEqual([expect.objectContaining({ hasMap: false, color: OVR_COLOR })]);
 
   // #489 — the flattened arm draws the baked Object's scale too, as the captured arm does. It used
   // to keep its own identity-scale copy, so scaling a flattened baked mesh changed nothing on screen.
-  const [unscaled] = (await drawnScale(page, holderId)) ?? [];
+  const [unscaled] = (await drawnScale(page, OVR)) ?? [];
   expect(unscaled, 'the flattened baked mesh is drawn').toBeTruthy();
   await setBakedScale(page, bakedId, [2, 2, 2]);
   const doubled = unscaled.map((s) => s * 2);
   const near = (got: number[][] | null) =>
     got?.length === 1 && got[0].every((s, i) => Math.abs(s - doubled[i]) < 1e-6);
-  await expect.poll(async () => near(await drawnScale(page, holderId))).toBe(true);
+  await expect.poll(async () => near(await drawnScale(page, OVR))).toBe(true);
 
   // FALSE → composition again, map restored: the flag is the only lever.
   await setFlatten(page, false);
   await expect
-    .poll(() => drawn(page, holderId))
-    .toEqual([{ type: 'MeshStandardMaterial', hasMap: true, color: OVR_COLOR }]);
+    .poll(() => drawn(page, OVR))
+    .toEqual([expect.objectContaining({ hasMap: true, color: OVR_COLOR })]);
   // …and the captured arm keeps drawing the same scale.
-  await expect.poll(async () => near(await drawnScale(page, holderId))).toBe(true);
+  await expect.poll(async () => near(await drawnScale(page, OVR))).toBe(true);
 });

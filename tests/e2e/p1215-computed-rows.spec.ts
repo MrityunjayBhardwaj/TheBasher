@@ -130,7 +130,6 @@ test('#1215 — a bound retarget shows read-only in the dopesheet until baked; t
   const rowIds = () =>
     page.evaluate(async (id) => {
       const tc = await import('/src/timeline/TimelineCanvas.tsx');
-      const clips = await import('/src/timeline/clipChannelRows.ts');
       const layers = await import('/src/timeline/layerChannelRows.ts');
       const state = (window as unknown as W).__basher_dag.getState().state as never as {
         nodes: never;
@@ -138,11 +137,7 @@ test('#1215 — a bound retarget shows read-only in the dopesheet until baked; t
       const nodes = state.nodes;
       const rows = layers.appendComputedSourceRows({
         baseRows: layers.appendLayerRows({
-          baseRows: clips.appendSelectionClipRows({
-            baseRows: tc.collectChannelRows(nodes),
-            nodes,
-            selectedNodeId: id,
-          }),
+          baseRows: tc.collectChannelRows(nodes),
           nodes,
           selectedNodeId: id,
         }),

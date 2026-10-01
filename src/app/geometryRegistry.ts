@@ -5,19 +5,18 @@
 //   this is a DERIVED cache, NOT authoritative state. It is keyed by the
 //   resolver's deterministic key (producer identity + params, §48), it is
 //   NEVER serialized into the DAG, and it never participates in Ops / undo /
-//   content-hashing. Heavy BufferGeometry buffers stay HERE (and, for glTF, in
-//   the loaded asset clone) — the DAG carries only the structure + a GeometryRef
-//   handle (Ousterhout interface-depth: simple ref, deep registry).
+//   content-hashing. Heavy BufferGeometry buffers stay HERE — the DAG carries only
+//   the structure + a GeometryRef handle (Ousterhout interface-depth: simple ref,
+//   deep registry).
 //
 // Determinism (§48): `get(ref)` builds-on-miss and returns the cached instance
 //   on-hit. Two refs with the same `key` resolve to the SAME instance (no churn);
 //   two refs with different params produce different keys (no false sharing).
 //
-// glTF scope (D-02 MINIMAL): the registry does NOT load glTF. A `gltf` descriptor
-//   keys the child by (assetRef, childName); the actual BufferGeometry lives in
-//   the GltfAsset's loaded three.js clone (GltfAssetR owns it, H45). `get()`
-//   returns null for a gltf ref — the consumer reads geometry from the asset
-//   clone, not from this registry.
+// glTF scope: the registry does NOT load glTF. An import is a stored `mesh`
+//   descriptor (#1049) whose data the importer filled, built here like a box.
+//   Until #1053 a `gltf` descriptor keyed a child of the loaded three.js clone
+//   instead, and its buffers lived there.
 //
 // baked scope (Phase 151): a `baked` geometry is AUTHORITATIVE (the product of
 //   applyMatrix4 on a clone, NOT rebuildable from params) — its bytes live in
@@ -69,15 +68,6 @@ import { cubeProjectedLayer } from './cubeProjection';
 import { materialiseCornerLayer } from './cornerMaterialisation';
 import { arrayCopiesOf } from './arrayCopies';
 import { newellNormal, planarWeights } from './polygonInterpolation';
-// #367 — where a glTF child's buffers actually live. A LEAF by the strictest measure in
-// `faceCountLeaf.gate.test.ts`: one TYPE import of `three` and no value imports at all, the
-// same bar `copyTransform` and `pointIdentity` met. The registry needs it because it is the
-// geometry model, and the model is the one place that should know where a kind's buffers are
-// — see `gltfCloneGeometry` below for why reaching for it here is not a fifth clone-arm.
-import { getGltfClone } from './asset/gltfCloneRegistry';
-// #367 — the same walk `resolveMeshUVSpace` makes into a clone, so the operator chain and the
-// UV editor cannot disagree about which mesh a glTF child is. See that module's header.
-import { firstMeshGeometry } from './firstMeshGeometry';
 import type { ScopeDomain } from '../nodes/attributes';
 import { buildMeshGeometry, CORNER_LAYER_SLOTS } from './meshGeometryData';
 
@@ -159,13 +149,11 @@ const primed = new Set<string>();
 /**
  * Resolve a GeometryRef to a cached three.js BufferGeometry, building on miss.
  *
- * Resolves a `gltf` ref THROUGH the mounted asset clone (#367) — see
- * {@link gltfCloneGeometry}. The registry still does not OWN that geometry; it stops
- * pretending it cannot find it. Null there means the clone has not mounted yet, which is
- * a WAIT and is typed as one by {@link readGeometry}. Returns null for a `baked` MISS — the bytes
- * live in OPFS and must be loaded asynchronously by the renderer hook, then
- * `prime`d (see header). Returns the SAME instance for repeated calls with an
- * identical key (cache hit).
+ * Returns null for a `baked` MISS — the bytes live in OPFS and must be loaded asynchronously
+ * by the renderer hook, then `prime`d (see header). Returns the SAME instance for repeated
+ * calls with an identical key (cache hit). (A `gltf` ref, read through the render clone since
+ * #367, went with the clone renderer in #1053: a kept clone-road import is an Empty that asks
+ * for no geometry.)
  *
  * `via` records which origin caused an INSERTION (see the block above). It is a
  * diagnostic, never a behavioural input — the two doors resolve identically, and this
@@ -174,51 +162,7 @@ const primed = new Set<string>();
  * DELIBERATELY NOT EXPORTED (#536 S3) — see the two doors below. Every caller
  * outside this module reaches the cache through one of them.
  */
-/**
- * A glTF child's buffers, read out of the mounted asset clone (#367).
- *
- * ── WHY THIS IS THE MODEL AND NOT A FIFTH CLONE-ARM ──────────────────────────────────
- *
- * `gltfCloneArms.gate.test.ts` ratchets the modules that reach `getGltfClone`, and its rule
- * is that the count may only go DOWN. This is a call to `getGltfClone`, so it has to answer
- * that gate rather than slip past it. The gate's own partition is the answer: it already
- * excludes `SceneFromDAG` because that file PRODUCES clones — "it is the thing being reached
- * into" — rather than reaching around the model. An ARM is a consumer that goes AROUND the
- * geometry model into the renderer because the model has nowhere to put imported buffers.
- * This is not that. This IS the geometry model, and it is the one place that should know
- * where a kind's buffers live. The gate now names three classes rather than two, and the
- * model class is capped at ONE member and asserted BY PATH, so a genuine fifth arm still reds.
- *
- * ── WHAT THIS DOES NOT DO ────────────────────────────────────────────────────────────
- *
- * It does not CACHE. The returned geometry belongs to the live clone the renderer is
- * drawing, so caching it would put a foreign, mutable, renderer-owned instance under a key
- * the sweep can evict and dispose — and the key `gltf|assetRef|childName` is not
- * content-derived, so a clone swap would leave it pointing at a disposed object. Reading
- * through on every call means the answer always describes the CURRENT clone, and it costs a
- * `Map` lookup plus a `traverse`, which is exactly what the four clone-arms already do.
- *
- * Not caching also keeps the null honest: the same ref answers `null` before the clone
- * mounts and geometry after, with nothing to invalidate in between. That is measured, and it
- * is what makes availability a re-render question rather than a negative-caching one.
- *
- * It also does not take OWNERSHIP. The caller must treat this exactly as the clone-arms do —
- * read it, never mutate it, clone before writing.
- */
-function gltfCloneGeometry(
-  descriptor: Extract<GeometryDescriptor, { kind: 'gltf' }>,
-): BufferGeometry | null {
-  const clone = getGltfClone(descriptor.assetRef);
-  if (!clone) return null;
-  // `childName` is a REQUIRED string on this descriptor member, so there is no whole-clone
-  // fallback to write: an absent name is not a state this type can be in. The earlier draft
-  // guarded it anyway and would have answered with the asset's first mesh — a different
-  // question, answered silently.
-  return firstMeshGeometry(clone.getObjectByName(descriptor.childName));
-}
-
 function get(ref: GeometryRef, via: GeometryGrowthSource): BufferGeometry | null {
-  if (ref.descriptor.kind === 'gltf') return gltfCloneGeometry(ref.descriptor);
   // 🔴 #786 — A PROJECTION USED TO RESOLVE TO ITS SOURCE'S INSTANCE HERE AND TAKE NO CACHE ENTRY,
   // AND THAT STOPPED BEING TRUE THE MOMENT THE LAYER REACHED THE BUFFER. What stood here read
   // *"`uvProject` authors an ATTRIBUTE LAYER; it moves no position and rewires no index, so there
@@ -265,16 +209,12 @@ function get(ref: GeometryRef, via: GeometryGrowthSource): BufferGeometry | null
 // object itself). Naming the door moves the answer to the import line, where
 // `registryDoors.gate.test.ts` can read it and hold the consumer set closed.
 //
-// 🔴 THE DOORS ARE NO LONGER THE SAME FUNCTION, AND THAT PARAGRAPH IS KEPT BELOW RATHER
-// THAN DELETED BECAUSE ITS PREDICTION CAME TRUE (#981). It read: *these are the same
-// function today, and that is a declared limit rather than an accident … the day someone
-// gives one door different behaviour it is a decision with a red test attached rather
-// than a silent divergence between two names that used to agree.* The decision arrived,
-// and the divergence is `drawnByAssetClone`: an ATTACH is a request to put buffers in the
-// scene graph, and buffers something else is already drawing must not be put there twice.
-// A READ has no such limit — Apply-Transform reads a glTF child's buffers out of the
-// mounted clone on purpose (`dispatchApplyTransform.ts`), which is why the narrowing
-// belongs on one door and not in `get`.
+// 🔴 THE DOORS DIVERGED ONCE AND ARE ONE FUNCTION AGAIN (#981, #1053). The paragraph above
+// predicted it: *the day someone gives one door different behaviour it is a decision with a red
+// test attached.* #981 made that decision — an ATTACH refused buffers a glTF asset clone was
+// already drawing, so one geometry was never put in the scene graph twice — and #1053 removed
+// the clone road that needed it. Both doors resolve through `get` identically again; the next
+// divergence is a decision in the same way.
 //
 // What is still true of the old paragraph: geometry has no refcount (unlike
 // `materialRegistry`), so `getForAttach` still has no bookkeeping to do; and `getForRead`
@@ -295,31 +235,15 @@ function get(ref: GeometryRef, via: GeometryGrowthSource): BufferGeometry | null
  * must be passed as a PROP and never adopted by `<primitive>` (#530/#533). If geometry
  * ever grows a refcount, it belongs on this door and not on {@link getForRead}.
  *
- * ── "IS THIS MINE TO DRAW" IS ANSWERED HERE, NOT AT THE DRAW SITE (#981) ──────────────
+ * #981 answered "is this mine to draw?" on this door — refs whose buffers a mounted glTF asset
+ * clone was already drawing resolved to null here, not at each draw site — and #1053 removed that
+ * clone road. A rule of that kind still belongs on the door rather than at a call site: a guard
+ * at one draw site is a guard the next site reaches past, which is how a two-primitive imported
+ * child once drew twice (#978).
  *
- * {@link drawnByAssetClone} refs resolve to null. Their buffers live inside a mounted
- * asset clone that `GltfAssetR` is already drawing, so attaching them puts the SAME
- * `BufferGeometry` instance in the scene graph twice — and on a skinned child the second
- * draw is the undeformed bind pose.
- *
- * 🔴 IT IS THE DOOR AND NOT A GUARD AT EACH CALL SITE, and that is the whole repair. The
- * test used to live at ONE of the three draw sites (`ObjectMeshR`), so the multi-slot fork
- * added later reached straight past it and a two-primitive imported child drew twice. A
- * rule enforced at a call site is a rule every future call site may decline; the same
- * omission is unconstructible here, because there is no unguarded spelling left to reach
- * for. Censusing the callers of the classifier could never have caught it either — the
- * defective site called neither the classifier nor any named exemption, so it contributed
- * nothing to the count (#978).
- *
- * ⚠️ THE NARROWING IS THIS DOOR'S ALONE. `getForRead` still resolves a clone-backed ref,
- * and must: Apply-Transform bakes a glTF child by reading exactly those buffers. Moving
- * this test down into `get` would break that road, which is why it sits here.
- *
- * Null cases are therefore: a clone-drawn ref (above), or a `baked` MISS the caller
- * resolves by suspending and priming.
+ * The one null case is a `baked` MISS, which the caller resolves by suspending and priming.
  */
 export function getForAttach(ref: GeometryRef): BufferGeometry | null {
-  if (drawnByAssetClone(ref.descriptor)) return null;
   return get(ref, 'attach');
 }
 
@@ -354,34 +278,22 @@ export function getForRead(ref: GeometryRef): BufferGeometry | null {
 
 // ── #630 — WHY THE ABSENCE HAS A REASON, AND WHY THE REASON LIVES HERE ─────────────────
 //
-// `get` returns null for THREE unrelated reasons, and which one it is changes what the
+// `get` returns null for TWO unrelated reasons, and which one it is changes what the
 // caller must do:
 //
-//   a `gltf` ref        → null only until the asset MOUNTS. The registry does not own loaded
-//                         glTF geometry; the asset clone does — and `get` DELEGATES to it
-//                         (`:220`), so a mounted child RESOLVES and an unmounted one reads
-//                         null. Null means WAIT FOR THE MOUNT.
-//
-//                         🔴 THIS READ "ALWAYS null / LOOK ELSEWHERE" UNTIL #1042, AND IT
-//                         WAS FALSE FROM #367 ONWARD. That change gave `get` the delegation
-//                         and updated {@link GeometryAvailability} forty lines below; this
-//                         block — the registry's own statement of who owns what — kept the
-//                         pre-#367 rule. Measured against a mounted clone with a box control:
-//                         `getForRead` returns a 24-vertex geometry and `readGeometry` reads
-//                         `ok`. A false constraint in the file that OWNS the rule is not inert:
-//                         it is the sentence that nearly argued #1041 into carrying
-//                         buffer-scale rims in the document, which #1025 had already closed
-//                         against. Named by `importedRims.gate.test.ts` ground 14 — named
-//                         rather than merely covered: six grounds there already red if this
-//                         delegation breaks, but each reds about RIMS, so none of them would
-//                         tell a reader the ownership rule had moved.
 //   a `baked` miss      → the authoritative bytes are in OPFS behind an async read that has
 //                         not happened yet. Null means WAIT — and it may well arrive.
 //   a procedural miss   → the registry builds procedural geometry synchronously on demand,
 //                         so a null here means `build` refused. Null means THERE GENUINELY
 //                         IS NONE, and waiting will not help.
 //
-// A caller handed a bare `null` has to re-derive which of the three it got by re-inspecting
+// There were three until #1053: a `gltf` ref read null until its asset clone MOUNTED (WAIT FOR
+// THE MOUNT), because `get` delegated to the clone from #367. This block said "always null /
+// look elsewhere" from #367 until #1042, and that false sentence in the file that owns the rule
+// nearly argued #1041 into carrying buffer-scale rims in the document. A rule's own statement
+// goes stale first, because nothing reds on prose.
+//
+// A caller handed a bare `null` has to re-derive which of the two it got by re-inspecting
 // `ref.descriptor.kind` — which means the rule is restated at every call site, and every
 // restatement is a place it can be got wrong or quietly fall out of date when a kind is
 // added. That is not hypothetical here: `resolveMeshUVSpace.ts` carried its own private copy
@@ -404,30 +316,18 @@ export function getForRead(ref: GeometryRef): BufferGeometry | null {
  *                  descriptor, i.e. there genuinely is no geometry.
  *   'primed'     — authoritative bytes live in OPFS and are primed after an async read.
  *                  A miss is "not read yet".
- *   'clone'      — the buffers live in a loaded glTF asset clone, never in the registry.
- *                  An absent clone is "still loading the asset".
- *   'mounting'   — a RECIPE rooted at a glTF source. The registry BUILDS it, unlike 'clone',
- *                  but only once the asset clone is mounted and `get` can reach the source's
- *                  buffers through it. A miss is "the asset has not mounted yet".
- *                  Composition only: no leaf kind is 'mounting'.
  *
- * 🔴 THIS CLASS REPLACED 'unreachable', AND #367 IS PRECISELY WHY. That class read "a RECIPE
- * whose source the registry can never `get`", and its own text named its expiry: "a miss is
- * permanent until #367 makes a glTF handle resolve for the operator chain." `get` now
- * delegates to the clone, so the build CAN succeed and nothing is permanently unreachable any
- * more. Keeping the old name would have left `readGeometry` answering `none` — declared to
- * mean "there genuinely is none, and waiting will not help" — and then answering `ok` one
- * mount later. That is the #708 defect arriving again by the clone road, so the class is
- * renamed with the behaviour rather than after it.
+ * #1053 removed two classes, `'clone'` (buffers in a loaded glTF asset clone) and `'mounting'`
+ * (a recipe over one), with the `gltf` kind that produced them: every import is native now.
  */
-export type GeometryAvailability = 'procedural' | 'primed' | 'clone' | 'mounting';
+export type GeometryAvailability = 'procedural' | 'primed';
 
 /**
  * The availability class of a geometry kind.
  *
  * Exhaustive, closed by a `never`. Adding an arm to `GeometryDescriptor` without declaring
  * how it becomes available is a COMPILE ERROR rather than a silent default — deliberately,
- * because a default would pick one of the three meanings for the new kind and be right by
+ * because a default would pick one of the meanings for the new kind and be right by
  * accident at best.
  *
  * 🔴 THAT SENTENCE USED TO NAME `GeometryRef`, AND IT WAS FALSE (ns-2 D8). The `never` was
@@ -447,8 +347,6 @@ export function availabilityOf(descriptor: GeometryDescriptor): GeometryAvailabi
       return 'procedural';
     case 'baked':
       return 'primed';
-    case 'gltf':
-      return 'clone';
     // ── #708 — A RECIPE ROOTED AT A BUFFER IS NOT PROCEDURAL ──────────────────────────
     //
     // These two used to sit in the 'procedural' arm above, classified by their OWN kind
@@ -460,44 +358,23 @@ export function availabilityOf(descriptor: GeometryDescriptor): GeometryAvailabi
     // its own answer one call later; that is a false statement, not a lost distinction.
     case 'array':
     case 'mirror':
-      return composedOverSource(availabilityOf(descriptor.source.descriptor));
+      return availabilityOf(descriptor.source.descriptor);
     // #671 — a subset is a recipe rooted at its source exactly as the generators are, so it
     // inherits by the SAME rule rather than a second one. It emits fewer faces than its
     // source; it does not become available any earlier or later than it.
     case 'subset':
-      return composedOverSource(availabilityOf(descriptor.source.descriptor));
+      return availabilityOf(descriptor.source.descriptor);
     // #814 — a bevel is a recipe rooted at its source by the same rule again. It emits MORE
     // faces than its source rather than fewer, and that changes nothing here: availability is
     // about whether the buffers can be reached, never about how many elements come out.
     case 'bevel':
-      return composedOverSource(availabilityOf(descriptor.source.descriptor));
-    // 🔴 #786 — COMPOSED NOW, AND IT WAS VERBATIM UNTIL THE PROJECTION STARTED BUILDING.
-    //
-    // #994's reason for the verbatim answer was sound and is now false, so it is restated rather
-    // than deleted: *"a projection builds nothing — `get` hands back the source's own instance —
-    // so over a `gltf` source its buffers ARE the asset clone's, and saying `mounting` here would
-    // be false in the one way that matters: `drawnByAssetClone` reads this answer, and a false
-    // `mounting` would let `getForAttach` put buffers into the scene graph that the clone is
-    // already drawing (#981)."*
-    //
-    // `buildUVProject` copies into buffers of its own, so over a mounted glTF child the
-    // projection's buffers are the REGISTRY's and `mounting` is the true answer — the same answer
-    // `array` and `bevel` give, for the same reason. The two rules differ on exactly one input
-    // class, a `gltf` or `baked` source, which is why the change is stated here instead of being
-    // left to look like a tidy-up: over a procedural source both rules agree and nothing could
-    // tell them apart.
-    //
-    // 🔴 AND IT IS COMPOSED ONLY WHEN THE PROJECTION ACTUALLY BUILDS. A source with no derivable
-    // polygon layout cannot be projected at all, and answering `mounting` for one would promise
-    // buffers the registry will never hold — measured consequence, before this line existed: a
-    // UV Project added to an IMPORTED mesh made the mesh DISAPPEAR. `mounting` turns
-    // `drawnByAssetClone` false, so the Object stops letting the clone draw it and asks for its
-    // own buffers; the build refuses because there are no rims; nothing is drawn. That is a
-    // worse answer than the no-op #1005 documents.
+      return availabilityOf(descriptor.source.descriptor);
+    // #786 — a projection is available exactly when its source is, whether it materialises a layer
+    // over that source or passes it through (see {@link projectionMaterialises}). The two used to
+    // differ over a `gltf` source — materialised buffers were the registry's, passed-through ones
+    // the asset clone's — and that distinction went with the kind in #1053.
     case 'uvProject':
-      return projectionMaterialises(descriptor)
-        ? composedOverSource(availabilityOf(descriptor.source.descriptor))
-        : availabilityOf(descriptor.source.descriptor);
+      return availabilityOf(descriptor.source.descriptor);
     // #1049 — built synchronously from the data the descriptor carries, exactly like a box. A miss
     // is malformed data, never a wait: nothing is loaded and nothing is mounted.
     case 'mesh':
@@ -515,9 +392,8 @@ export function availabilityOf(descriptor: GeometryDescriptor): GeometryAvailabi
  * ── WHY THE QUESTION EXISTS, AND WHY IT IS NOT A SPECIAL CASE ────────────────────────────
  *
  * Materialising a corner layer needs the source's polygon RIMS, and a rim needs a face arity.
- * An arity is null on exactly the descriptors whose face COUNT is — `gltf`, `baked`, or a chain
- * reaching one — which is #738's subject: an imported mesh arrives already triangulated and its
- * polygons are gone before this module sees it. So over those sources the projection genuinely
+ * An arity is null on exactly the descriptors whose face COUNT is — `baked`, or a chain reaching
+ * one (and, until #1053, a `gltf` import, #738's subject). So over those sources the projection genuinely
  * cannot do its job.
  *
  * The codebase's answer for an operator that cannot apply is already decided and written down in
@@ -532,10 +408,8 @@ export function availabilityOf(descriptor: GeometryDescriptor): GeometryAvailabi
  * the built DATA — how many corners happen to disagree, say — would make availability change
  * under a mesh, which is the landmine this deliberately is not.
  *
- * 🔴 WHAT IT COSTS TO GET WRONG, MEASURED. Answering `composedOverSource` unconditionally makes
- * `drawnByAssetClone` false for a projection over an imported mesh; the Object then asks for its
- * own buffers, `buildUVProject` refuses because there are no rims, and the mesh is simply not
- * drawn. A director who adds a UV Project to an imported model watches it disappear.
+ * 🔴 WHAT IT COSTS TO GET WRONG, MEASURED (#1005, on the retired clone road): a projection that
+ * tried to build over a source with no rims refused, and the mesh under it was simply not drawn.
  *
  * REF: src/app/faceCount.ts (`faceArityOf` — the null set); issues #786, #738, #1005.
  */
@@ -546,117 +420,6 @@ function projectionMaterialises(
 }
 
 /**
- * How a generator's availability follows from its SOURCE's — the composition rule, stated
- * once because the two generator arms above must not answer it differently.
- *
- * It is not identity, and the exception is the whole reason this is a function. A `clone`
- * source does not make the generator a `clone`: nothing loads an ARRAY of a glTF child into
- * an asset clone, so `elsewhere` ("look in the clone for this geometry") would be false —
- * the array's buffers are built BY THE REGISTRY, out of the source it reads through the
- * clone. A recipe over a clone is therefore `mounting`: buildable here, but not until the
- * asset mounts.
- *
- * 🔴 IT RETURNED `unreachable` UNTIL #367, and that answer was true only because `get`
- * declined the source. Now that `get` delegates, `unreachable` would be a statement the
- * registry disproves one mount later — the #708 defect, arriving by the clone road instead
- * of the baked one. Which is why the delegation and this arm are ONE change: shipping the
- * first without the second ships a known-false answer on purpose.
- *
- * Closed by a `never` like its caller: a fifth availability class must decide what it means
- * under composition rather than inherit an arm by accident.
- */
-function composedOverSource(source: GeometryAvailability): GeometryAvailability {
-  switch (source) {
-    // Buildable now, and the generator's own build is synchronous — the unchanged case.
-    case 'procedural':
-      return 'procedural';
-    // Buildable once the async read lands. The generator inherits the WAIT, which is the
-    // defect this function exists to fix.
-    case 'primed':
-      return 'primed';
-    // See the block above: the source is read out of the clone, and the recipe over it is
-    // built here — so it waits on the mount rather than being unreachable.
-    case 'clone':
-      return 'mounting';
-    // Already waiting further down the chain; a wait does not clear by nesting.
-    case 'mounting':
-      return 'mounting';
-    default: {
-      const unreachable: never = source;
-      return unreachable;
-    }
-  }
-}
-
-/**
- * Is this geometry ALREADY BEING DRAWN by something other than an Object? (#389)
- *
- * ── WHY THE RENDERER NEEDS TO ASK, AND WHY IT ASKS *HERE* ────────────────────────────
- *
- * `getForAttach` used to answer null for a `gltf` ref, so "can I draw this?" and "is this
- * mine to draw?" were the same question by accident. #367 separated them: the registry now
- * resolves a glTF child's buffers, and those buffers belong to the clone `GltfAssetR` is
- * already drawing. An Object over an unmodified glTF child would therefore draw a SECOND
- * mesh from one geometry — measured before this existed, on both a plain and a skinned
- * asset: mesh count 8 → 9 with the distinct-geometry count unchanged, and on the skinned
- * one the second draw was an ordinary `Mesh` wearing a `SkinnedMesh`'s geometry, i.e. the
- * undeformed bind pose.
- *
- * ── WHY IT IS THE AVAILABILITY CLASS AND NOT A KIND TEST ─────────────────────────────
- *
- * A `descriptor.kind === 'gltf'` test would select the same set TODAY and be a naming tier
- * — the mistake this module has already catalogued twice. The real property is the one
- * {@link availabilityOf} names: `'clone'` means "these buffers live in a loaded asset clone,
- * never in the registry", which is exactly the set something else is drawing.
- *
- * And it is the class that makes the composed case fall out correctly rather than needing
- * its own rule. A recipe OVER a glTF source is `'mounting'`, not `'clone'` — the registry
- * builds those buffers itself, nothing else is drawing them, and the Object must draw them.
- * Measured: an Array over an imported cube draws 72 positions (3 × 24) in its own material,
- * alongside the clone's original, with no shared-geometry double draw. One rule, both cases.
- *
- * Defined in terms of {@link availabilityOf} rather than beside it, for the reason
- * `getForRead` is defined in terms of `readGeometry`: one implementation, one rule. A second
- * predicate agreeing with this one today would diverge the first time a kind was added.
- */
-export function drawnByAssetClone(descriptor: GeometryDescriptor): boolean {
-  return availabilityOf(descriptor) === 'clone';
-}
-
-/**
- * WHICH clone child draws this descriptor — the `gltf` descriptor that addresses it, or
- * `null` when nothing in a clone draws it at all.
- *
- * {@link drawnByAssetClone} answers *whether*; this answers *which*, and they are one
- * question asked twice, so this is derived by the SAME recursion rather than beside it.
- * A consumer that needs the clone's own meshes — the UV editor reading a backdrop, anything
- * else that must look where the buffers actually are — cannot get there from a boolean.
- *
- * 🔴 AND IT IS NOT `descriptor.kind === 'gltf'`. That test selected the same set until
- * #738/#786 and does not now: a `uvProject` that cannot materialise passes its source's
- * availability straight through (see {@link projectionMaterialises}) and {@link get}
- * delegates its read to that source, so a projected imported mesh IS drawn by the clone
- * while its kind is `uvProject`. Measured consequence before this existed (#1015): the UV
- * editor gave such a mesh the same blank answer as a cube with no texture at all.
- *
- * The recursion is exactly the one {@link availabilityOf} runs, and the correspondence is
- * total rather than approximate: `'clone'` is produced by the `gltf` arm alone, and the only
- * arm that can propagate it upward is the non-materialising `uvProject` — every other
- * composed arm maps a `clone` source to `'mounting'` through {@link composedOverSource},
- * because the registry builds those buffers itself. So a `'clone'` descriptor is a `gltf`
- * one, or a chain of non-materialising projections rooted at a `gltf` one, and this walk
- * terminates at the address. `src/app/cloneAddress.gate.test.ts` holds the two in step.
- */
-export function cloneAddressOf(
-  descriptor: GeometryDescriptor,
-): Extract<GeometryDescriptor, { kind: 'gltf' }> | null {
-  if (descriptor.kind === 'gltf') return descriptor;
-  if (descriptor.kind === 'uvProject' && !projectionMaterialises(descriptor))
-    return cloneAddressOf(descriptor.source.descriptor);
-  return null;
-}
-
-/**
  * The result of a read: either the geometry, or the reason there isn't one.
  *
  * Discriminated on `status` so a consumer cannot read a geometry off an empty result, and
@@ -664,8 +427,6 @@ export function cloneAddressOf(
  */
 export type GeometryReadResult =
   | { readonly status: 'ok'; readonly geometry: BufferGeometry }
-  /** Look elsewhere — this kind's buffers never live in the registry. */
-  | { readonly status: 'elsewhere'; readonly availability: GeometryAvailability }
   /** Wait — the bytes exist but have not been read in yet. */
   | { readonly status: 'pending'; readonly availability: GeometryAvailability }
   /** There genuinely is none, and waiting will not help. */
@@ -682,20 +443,9 @@ export function readGeometry(ref: GeometryRef): GeometryReadResult {
   const geometry = get(ref, 'read');
   if (geometry) return { status: 'ok', geometry };
   switch (availability) {
-    case 'clone':
-      return { status: 'elsewhere', availability };
-    // Both are waits, and they are one arm because the CALLER's response is the same: hold
-    // the loading state and read again. What differs is who ends the wait — the OPFS read for
-    // 'primed', the renderer mounting a clone for 'mounting' (#367) — and that difference is
-    // carried in `availability`, which travels with the result for exactly this reason.
+    // A wait: the OPFS read ends it, and the caller holds the loading state and reads again.
     case 'primed':
-    case 'mounting':
       return { status: 'pending', availability };
-    // #367 — 'mounting' MOVED OUT of this arm and into 'pending' above, which is the whole
-    // point of the class. It used to sit here as 'unreachable' beside 'procedural' because
-    // the two genuinely shared "waiting will not help". They no longer do: a recipe over a
-    // glTF source becomes buildable the moment the asset mounts, so answering `none` here
-    // would be a statement this same function contradicts on the next call.
     case 'procedural':
       return { status: 'none', availability };
     default: {
@@ -945,8 +695,8 @@ function build(ref: GeometryRef): BufferGeometry | null {
   // property that made widening this module's import set safe in the first place.
   //
   // 🔴 A `null` HERE HAS AN EMPTY POPULATION, AND THAT IS CENSUSED RATHER THAN ASSERTED. An
-  // arity is null on exactly the descriptors whose face COUNT is — `gltf`, `baked`, or a chain
-  // reaching one — which `faceCount.gate.test.ts` holds as a set rather than a number, and
+  // arity is null on exactly the descriptors whose face COUNT is — `baked`, or a chain reaching
+  // one — which `faceCount.gate.test.ts` holds as a set rather than a number, and
   // those mint no `material_index` at all because `uniformMaterialAttributes` returns null for
   // them. So nothing can arrive here today. It is refused BY NAME anyway, on the same
   // principle the two refusals below it follow: the alternative is a mesh that renders in one
@@ -976,17 +726,17 @@ function build(ref: GeometryRef): BufferGeometry | null {
  * ── ns-2 step 8b — WHY THIS IS A `switch` CLOSED BY A `never` ─────────────────────────
  *
  * It was an if-chain ending in a bare `return null`, and that terminal line was doing two
- * unrelated jobs at once. For `gltf` and `baked` the null is the DECLARED answer — their
- * buffers live in an asset clone and in OPFS, and this function is not their builder. For a
+ * unrelated jobs at once. For `baked` (and, until #1053, `gltf`) the null is the DECLARED
+ * answer — its buffers live in OPFS, and this function is not their builder. For a
  * descriptor kind nobody taught this function about, the same null means "I have no idea
  * what this is", and the two were indistinguishable to every caller and to every reader.
  *
  * A new geometry operator therefore had a silent site here: register the node, add the union
  * arm, teach `faceCountOf` and `availabilityOf` because they refuse to compile, and this
  * function returns null forever. The renderer draws nothing, the registry warns nothing, and
- * the descriptor kind that nobody built looks exactly like a glTF child still loading.
+ * the descriptor kind that nobody built looked exactly like a glTF child still loading.
  *
- * The two answers are now separate: `gltf`/`baked` are cases that return null on purpose,
+ * The two answers are now separate: `baked` is a case that returns null on purpose,
  * and the seventh kind is a compile error at the `never`.
  *
  * 🔴 THE LIMIT, STATED HERE BECAUSE A LATER STEP DEPENDS ON KNOWING IT. A `never` closes over
@@ -1022,9 +772,8 @@ function buildFromDescriptor(d: GeometryDescriptor): BufferGeometry | null {
       return buildSubset(d);
     case 'bevel':
       return buildBevel(d);
-    // Declared nulls, not unknowns: the buffers are somewhere else on purpose (gltf in the
-    // loaded asset clone, baked in OPFS behind an async read that `prime` completes).
-    case 'gltf':
+    // A declared null, not an unknown: the bytes are in OPFS behind an async read that `prime`
+    // completes.
     case 'baked':
       return null;
     // #786 — REACHABLE NOW. This arm read `return null` and carried #994's reason for it: *"`get`
@@ -1129,9 +878,8 @@ function elementSubset(
   // variable number of triangles. Threaded from the caller rather than derived here for the
   // reason every other descriptor fact in this module is: the builders hold the descriptor and
   // this function holds a `BufferGeometry`, and re-deriving one from the other is the second
-  // spelling this file exists to avoid. `null` is a source whose arity is not derivable, which
-  // no caller can construct today — a `gltf` source never builds through here at all — and is
-  // refused by name rather than assumed away.
+  // spelling this file exists to avoid. `null` is a source whose arity is not derivable — a
+  // `baked` one — and is refused by name rather than assumed away.
   sourceArity: readonly number[] | null,
   scope: string | undefined,
   // Paired with `scope` by `scopeField`, so "a query at no class" has no constructor. Read
@@ -1999,7 +1747,7 @@ function buildUVProject(
   if (arity === null || rims === null) {
     // 🔴 THIS IS A DEFECT ARM, NOT THE ORDINARY MISSING-BUFFER ONE, AND THE DIFFERENCE IS THE
     // POINT. {@link projectionMaterialises} has already sent every source with no derivable face
-    // arity down the pass-through road, so a `gltf` or `baked` chain cannot arrive here — the
+    // arity down the pass-through road, so a `baked` chain cannot arrive here — the
     // `arity === null` half is unreachable through `get` and is written out anyway, because a
     // predicate and a builder agreeing today is not a reason for the builder to assume it.
     //

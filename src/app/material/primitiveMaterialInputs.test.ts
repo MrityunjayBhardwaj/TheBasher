@@ -151,6 +151,30 @@ const CORPUS: readonly World[] = [
   // absent from this corpus; it is pinned on its own below.)
   world('alphaTest', { ir: irWith({ geometry: { opacity: 1, alphaCutoff: 0.5 } }) }),
   world('side (doubleSided)', { ir: irWith({ geometry: { opacity: 1, doubleSided: true } }) }),
+  // #1123 — the two map strengths; a spec that drops one makes its world a duplicate of `base`.
+  world('normal strength', { ir: irWith({ mapStrengths: { normal: 0.5 } }) }),
+  world('occlusion strength', { ir: irWith({ mapStrengths: { ao: 0.3 } }) }),
+  // #1327 — the coat normal's strength, the same way.
+  world('coat normal strength', { ir: irWith({ mapStrengths: { coatNormal: 0.5 } }) }),
+  world('unlit', { ir: irWith({ unlit: true }) }),
+  world('fuzz', { ir: irWith({ fuzz: { weight: 1, color: '#ffffff', roughness: 0.3 } }) }),
+  world('fuzz colour', { ir: irWith({ fuzz: { weight: 1, color: '#ff0000', roughness: 0.3 } }) }),
+  world('specular weight', {
+    ir: irWith({ specular: { roughness: 0.72, ior: 1.5, weight: 0.4 } }),
+  }),
+  world('specular colour', {
+    ir: irWith({ specular: { roughness: 0.72, ior: 1.5, color: '#ffbc89' } }),
+  }),
+  world('volume depth', { ir: irWith({ transmission: { weight: 0.6, depth: 0.5 } }) }),
+  world('volume colour', {
+    ir: irWith({ transmission: { weight: 0.6, color: '#7ccbff', depth: 0.5 } }),
+  }),
+  world('volume thickness', {
+    ir: irWith({ transmission: { weight: 0.6 }, geometry: { opacity: 1, thickness: 0.2 } }),
+  }),
+  world('fuzz roughness', {
+    ir: irWith({ fuzz: { weight: 1, color: '#ffffff', roughness: 0.8 } }),
+  }),
   world('uvTransform', {
     ir: irWith({ uvTransform: { tiling: [2, 3], offset: [0.25, 0], rotation: 0.5 } }),
   }),
@@ -381,6 +405,19 @@ describe('#566 — every field the compile produces is carried on the spec, or e
     // what makes a declared correspondence necessary here rather than name equality.
     colorLayer: 'vertexColors',
     mapUvLayers: 'mapUvChannels',
+    // #1123 — the map strengths and the unlit class, each under the build's own name.
+    normalScale: 'normalScale',
+    aoMapIntensity: 'aoMapIntensity',
+    materialClass: 'materialClass',
+    sheen: 'sheen',
+    sheenColor: 'sheenColor',
+    sheenRoughness: 'sheenRoughness',
+    specularIntensity: 'specularIntensity',
+    specularColor: 'specularColor',
+    attenuationDistance: 'attenuationDistance',
+    attenuationColor: 'attenuationColor',
+    // #1327 — the coat normal's strength.
+    clearcoatNormalScale: 'clearcoatNormalScale',
   };
 
   /**
@@ -419,6 +456,14 @@ describe('#566 — every field the compile produces is carried on the spec, or e
       // #1062 — `mapUvLayers` is conditionally emitted too, so without a world naming a UV
       // layer the union is blind to it and every case in this file would be blind with it.
       irWith({ mapUvLayers: { albedo: 'UVMap.001' } }),
+      // #1123 — both strengths and the unlit class are conditional too. The strengths were
+      // missing here when they landed, and the source half could not see them either: their
+      // condition used `?.`, which the pattern below did not read (widened with this entry).
+      irWith({ mapStrengths: { normal: 0.5, ao: 0.3, coatNormal: 0.5 } }),
+      irWith({ unlit: true }),
+      irWith({ fuzz: { weight: 1, color: '#ffffff', roughness: 0.3 } }),
+      irWith({ specular: { roughness: 0.72, ior: 1.5, weight: 0.4, color: '#ffbc89' } }),
+      irWith({ transmission: { weight: 1, color: '#7ccbff', depth: 0.5 } }),
     ];
     const seen = new Set<string>();
     for (const ir of worlds)
@@ -443,12 +488,14 @@ describe('#566 — every field the compile produces is carried on the spec, or e
     // EXACT on both sides. A floor would pass a field that stopped being produced — which is
     // the direction that looks like cleanup and silently removes a rendering lobe.
     const produced = producedFields();
-    expect(produced.length).toBe(19);
-    expect(produced.filter((f) => f in CARRIED).length).toBe(19);
+    expect(produced.length).toBe(30);
+    expect(produced.filter((f) => f in CARRIED).length).toBe(30);
     expect(produced.filter((f) => f in EXCLUDED).length).toBe(0);
   });
 
   it('every CARRIED target really is a key of the assembled spec', () => {
+    // #1123 — the strengths and the class are conditional on the spec too, so the world below
+    // sets them.
     // Guards the map itself. A stale entry — right-hand side renamed, or the field dropped
     // from the assembly — would otherwise let the first case pass while nothing arrives.
     // #1062 — the IR must name BOTH layers and the layer list must RESOLVE them, or
@@ -461,6 +508,11 @@ describe('#566 — every field the compile produces is carried on the spec, or e
           mapUvTransforms: { albedo: { tiling: [2, 2], offset: [0, 0], rotation: 0 } },
           mapUvLayers: { albedo: 'UVMap.001' },
           geometry: { opacity: 1, colorLayer: 'Color' },
+          mapStrengths: { normal: 0.5, ao: 0.3, coatNormal: 0.5 },
+          unlit: true,
+          fuzz: { weight: 1, color: '#ffffff', roughness: 0.3 },
+          specular: { roughness: 0.72, ior: 1.5, weight: 0.4, color: '#ffbc89' },
+          transmission: { weight: 1, color: '#7ccbff', depth: 0.5 },
         }),
         undefined,
       ),
@@ -519,7 +571,11 @@ describe('#566 — every field the compile produces is carried on the spec, or e
     const src = stripComments(readFileSync(join(__dirname, '..', '..', '..', COMPILER), 'utf8'));
     const body = /export function openpbrToThree[\s\S]*?\n}/.exec(src);
     if (!body) throw new Error('could not find the openpbrToThree body');
-    return [...body[0].matchAll(/\.\.\.\([^?]*\?\s*\{\s*([A-Za-z0-9_]+)\s*:/g)].map((m) => m[1]);
+    // The condition may use optional chaining (`a?.b !== undefined ? {…}`, #1123), so a `?`
+    // followed by `.` is part of it; the first other `?` is the ternary's.
+    return [...body[0].matchAll(/\.\.\.\((?:[^?]|\?\.)*\?\s*\{\s*([A-Za-z0-9_]+)\s*:/g)].map(
+      (m) => m[1],
+    );
   };
 
   /**

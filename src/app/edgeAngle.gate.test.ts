@@ -39,6 +39,7 @@ import { getForRead } from './geometryRegistry';
 import { builtFaceNormals, edgeAnglesOf } from './edgeAngle';
 import { edgeCountOf, edgeFaceAdjacencyOf, edgeSetOf, weldedPolygonsOf } from './edgeIdentity';
 import { cornerCountOf } from './faceCount';
+import { meshGeometryRef, packMeshData } from './meshGeometryData';
 import type { GeometryDescriptor, GeometryRef } from '../nodes/types';
 
 const box = boxGeometryRef([1, 1, 1], null);
@@ -48,10 +49,20 @@ const bakedRef: GeometryRef = {
   key: 'baked|b',
   descriptor: { kind: 'baked', hash: 'b', vertexCount: 3 },
 };
-const gltfRef: GeometryRef = {
-  key: 'gltf|a|c',
-  descriptor: { kind: 'gltf', assetRef: 'a', childName: 'c' },
-};
+
+/** A tetrahedron as a stored mesh — the kind an import writes (#1049). */
+const TETRA: GeometryRef = meshGeometryRef(
+  packMeshData({
+    points: Float32Array.from([0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1]),
+    faceSizes: Uint32Array.from([3, 3, 3, 3]),
+    cornerPoints: Uint32Array.from([0, 2, 1, 0, 1, 3, 0, 3, 2, 1, 2, 3]),
+    cornerLayers: [],
+    cornerNormals: null,
+    faceLayers: [],
+    pointLayers: [],
+    vertexGroups: [],
+  }),
+);
 
 /** The population `builtRims.gate.test.ts` runs — every sync-buildable descriptor. */
 const SYNC_BUILDABLE: readonly GeometryRef[] = [
@@ -221,7 +232,7 @@ describe('#800 — composition, and the three different zeros', () => {
   });
 
   it('9 — the refusals are the edge walk’s own, propagated and not re-minted', () => {
-    for (const ref of [bakedRef, gltfRef, arrayGeometryRef(bakedRef, 2, [1, 0, 0])]) {
+    for (const ref of [bakedRef, arrayGeometryRef(bakedRef, 2, [1, 0, 0])]) {
       expect(edgeFaceAdjacencyOf(ref.descriptor), `${ref.key} adjacency`).toBeNull();
       const geometry = getForRead(ref);
       if (geometry !== undefined && geometry !== null)
@@ -356,7 +367,10 @@ describe('#848 — the premise the angle-limit cache key rests on', () => {
       // It authors an attribute layer and moves nothing, so the edge walk answers for it
       // exactly as it answers for the handle underneath.
       uvProject: 'keyed',
-      gltf: 'outside',
+      // #1049 — a stored mesh's key is a hash over its own points, so its positions cannot move
+      // under a fixed key. It was missing from this table until #1053 removed `gltf` and the
+      // count below stopped covering for it.
+      mesh: 'keyed',
       baked: 'outside',
     };
     const sample: Record<GeometryDescriptor['kind'], GeometryRef> = {
@@ -367,7 +381,7 @@ describe('#848 — the premise the angle-limit cache key rests on', () => {
       subset: subsetGeometryRef(box, '0-2', true),
       bevel: bevelGeometryRef(box, 0.1),
       uvProject: uvProjectGeometryRef(box, 2),
-      gltf: gltfRef,
+      mesh: TETRA,
       baked: bakedRef,
     };
 

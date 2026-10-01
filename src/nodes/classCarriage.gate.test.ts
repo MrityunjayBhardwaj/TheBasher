@@ -73,7 +73,8 @@ describe('the per-class carriage census', () => {
     // here"*. It took #716 AND #754 — the weld gave `point` a stable element to gather TO, and
     // the composition gave it an ORDER to gather THROUGH — but the mechanism is exactly as
     // written: the population shrank by an edit somebody made on purpose, never by a table
-    // quietly answering differently. `edge` is now the only one, and #718 is what removes it.
+    // quietly answering differently. `edge` is now the only one. #718 gave it an order and an
+    // identity; #783 (its `until`) is what removes it.
     const dropped = Object.entries(CLASS_CARRIAGE)
       .filter(([, v]) => v.kind === 'dropped')
       .map(([domain]) => domain)

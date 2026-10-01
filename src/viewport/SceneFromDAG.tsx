@@ -15,7 +15,6 @@
 //
 // REF: THESIS.md §11, vyapti V8.
 
-import { useGLTF } from '@react-three/drei';
 import { useFrame, useThree, type ThreeEvent } from '@react-three/fiber';
 import {
   createContext,
@@ -30,10 +29,6 @@ import {
 } from 'react';
 import * as THREE from 'three';
 import { RectAreaLightUniformsLib } from 'three/examples/jsm/lights/RectAreaLightUniformsLib.js';
-// #88: SkeletonUtils.clone, not Object3D.clone — see the GltfAssetR clone site.
-// (SkeletonUtils is already a project dep; retarget.ts imports retargetClip from
-// the same module. This is a NEW `clone` named import.)
-import { clone as cloneSkinned } from 'three/examples/jsm/utils/SkeletonUtils.js';
 import { channelPathForBand, type OverlayBand } from '../app/objectDataBand';
 import {
   dataLaneNodeIds,
@@ -42,34 +37,11 @@ import {
   overlayPathOn,
   type LaneOverlaySource,
 } from '../app/dataLaneOverlay';
-import { useResolvedAssetUrl } from '../app/asset/opfsLoader';
 import { useBakedGeometry } from '../app/asset/bakedGeometryLoader';
 import { getForAttach } from '../app/geometryRegistry';
-import { hydrateInlineMaterial } from '../nodes/materialSchema';
-import { useBakedTexture } from '../app/asset/bakedTextureLoader';
-import {
-  openpbrToThree,
-  threeMapUvTransforms,
-  type ThreeMaterialParams,
-} from '../app/material/openpbrToThree';
-import { applyGltfUvTransform, GLTF_UV_MAP_SLOTS } from './applyGltfUvTransform';
-import { registerGltfClone, unregisterGltfClone } from '../app/asset/gltfCloneRegistry';
-import { buildChildIdToObject, resolveChildObject } from './gltfChildObjects';
-import { readGltfMaterials, nearestChildId } from '../app/asset/readGltfMaterials';
-import {
-  importedChildDataId,
-  importedChildMaterials,
-  importedChildrenOf,
-  isImportedChildMaterialPath,
-} from '../app/importedChild';
-import { useGltfMaterialStore } from '../app/asset/gltfMaterialStore';
-import {
-  applyEditedMaps,
-  hasMapEdits,
-  type EditedMapPlacement,
-} from '../app/material/gltfMapOverlay';
-import { getStorage } from '../app/boot';
-import { useGltfLoaderExtend } from './gltfLoaderConfig';
+import { BAKED_MAP_SLOTS, hydrateInlineMaterial } from '../nodes/materialSchema';
+import { useBakedTextures } from '../app/asset/bakedTextureLoader';
+import { BAKED_MAP_COLOR_SPACE } from '../app/asset/bakedTextureStore';
 import { useSelectionStore } from '../app/stores/selectionStore';
 import { useAssetErrorStore } from '../app/stores/assetErrorStore';
 import { useTimeStore } from '../app/stores/timeStore';
@@ -84,11 +56,7 @@ import {
   overlayWithIdentity,
   type IdentifiedSceneObject,
 } from '../app/overlayWithIdentity';
-import {
-  channelValuesFromNodes,
-  directChannelTargetSet,
-  animatedAncestorSet,
-} from '../app/nodeChannels';
+import { directChannelTargetSet, animatedAncestorSet } from '../app/nodeChannels';
 import {
   layeredChannelValues,
   layeredChannelNodesForTarget,
@@ -136,22 +104,14 @@ import { usePlayheadFollow } from './usePlayheadFollow';
 import { resolveRigLightSources } from '../app/resolveRigLightSources';
 import { degVec3ToRad } from './rotation';
 import { selectNode } from './selectNodeOnClick';
-import { resolveAllChildTrs, type ChildOverride } from '../app/resolveGltfChildTransform';
-import { bakedChannelSamplersForAsset, sampleBakedChannel } from '../app/bakedGltfChannels';
-import { gltfAssetDepNodes } from '../app/gltfAssetDeps';
-import { bumpRenderCount } from '../perf/renderCounter';
-import type { BakedChannel } from '../app/resolveGltfChildTransform';
 import { evaluate, type EvaluatorCache } from '../core/dag/evaluator';
 import { createEvaluatorCache } from '../core/dag/evaluator';
 import { useDagStore } from '../core/dag/store';
 import { useStoreWithEqualityFn } from 'zustand/traditional';
 import { shallow } from 'zustand/shallow';
-import type { DagState } from '../core/dag/state';
 import { PostFx } from '../render/PostFx';
 import { SceneEnvironment } from './SceneEnvironment';
 import { DiffOverlay } from './DiffOverlay';
-import { AssetErrorBoundary } from './AssetErrorBoundary';
-import { resolveMaterialOverrideFields } from '../app/material/materialOverrideMerge';
 import { composeBakedMaterial } from '../app/material/composeMaterial';
 import { flattenedMaterial, flattens } from '../app/material/flattenMaterial';
 // #536 S3 — the ATTACH door on `materialRegistry`, extracted into its own module so the
@@ -164,14 +124,9 @@ import { cornerLayerNamesOf } from '../app/cornerLayerNames';
 // geometry, the assignment and the hydrated table, and draws whatever comes back.
 import { meshMaterialRefusal, resolveMeshMaterial } from '../app/resolveMeshMaterial';
 import { useSlotMaterials } from '../app/material/useSlotMaterials';
-import {
-  dataSlotsOnly,
-  materialAssignmentOf,
-  objectSlotsOf,
-  type ObjectSlotSource,
-} from '../app/materialAssignment';
+import { dataSlotsOnly, materialAssignmentOf, objectSlotsOf } from '../app/materialAssignment';
 import { threeSideFor } from '../app/material/threeSide';
-import { CENTRE_PIVOT, placeTexture } from '../app/material/uvPlacement';
+import { CENTRE_PIVOT, normalScaleFor, placeTexture } from '../app/material/uvPlacement';
 import { aimPatch, withResolvedRotation } from '../app/resolvedRotation';
 import type {
   AmbientLightValue,
@@ -182,7 +137,6 @@ import type {
   CharacterValue,
   DirectionalLightValue,
   GeometryRef,
-  GltfAssetValue,
   GroupValue,
   KeyframeChannelValue,
   LightValue,
@@ -258,7 +212,7 @@ export function SceneFromDAG({ outputName = 'render' }: SceneFromDAGProps) {
   // B13: at 8 Fox.glb instances react.p95 hit 24ms (H48 2nd-occurrence).
   //
   // Pass 3 lifts time INTO time-dependent VALUE shapes (TransformClipValue now
-  // carries `.sample(seconds)`). Animated consumers (GltfAssetR's useFrame)
+  // carries `.sample(seconds)`). Animated consumers
   // read live time locally via `useTimeStore.getState()` and invoke the
   // closure at consumer cadence. SceneFromDAG no longer needs to subscribe
   // to time at all — it re-renders ONLY on `useDagStore.state` changes.
@@ -880,6 +834,41 @@ function MeshScaleProbe() {
       mapOffset: [number, number] | null;
       mapRotation: number | null;
       mapCenter: [number, number] | null;
+      // #1123 / #1325 — the drawn normal-map vector (sign included) and occlusion strength.
+      normalScale: [number, number] | null;
+      aoMapIntensity: number | null;
+      // #1327 — the drawn coat maps (each one's image width, null when absent) and the coat
+      // normal's vector, sign included.
+      clearcoatMapWidth: number | null;
+      clearcoatRoughnessMapWidth: number | null;
+      clearcoatNormalMapWidth: number | null;
+      clearcoatNormalScale: [number, number] | null;
+      // #1328 — the drawn transmission map's image width, null when absent.
+      transmissionMapWidth: number | null;
+      // #1331 — the drawn thickness map's image width, null when absent.
+      thicknessMapWidth: number | null;
+      // #1329 — the drawn sheen maps' image widths, and the colour map's colour space (the first
+      // unseeded sRGB slot), null when absent.
+      sheenColorMapWidth: number | null;
+      sheenColorMapColorSpace: string | null;
+      sheenRoughnessMapWidth: number | null;
+      sheenRoughnessMapColorSpace: string | null;
+      // #1330 — the drawn specular maps' image widths and colour spaces, null when absent.
+      specularIntensityMapWidth: number | null;
+      specularIntensityMapColorSpace: string | null;
+      specularColorMapWidth: number | null;
+      specularColorMapColorSpace: string | null;
+      // #1123 — the drawn sheen (fuzz lobe): weight, colour and roughness.
+      sheen: number | null;
+      sheenColor: string | null;
+      sheenRoughness: number | null;
+      // #1321 — the drawn specular weight and colour.
+      specularIntensity: number | null;
+      specularColor: string | null;
+      // #1322 — the drawn volume: thickness and absorption.
+      thickness: number | null;
+      attenuationDistance: number | null;
+      attenuationColor: string | null;
     } | null => {
       const grp = byNodeId(nodeId);
       if (!grp) return null;
@@ -897,6 +886,9 @@ function MeshScaleProbe() {
       if (!mat) return null;
       const std = mat as THREE.MeshStandardMaterial;
       const phys = mat as THREE.MeshPhysicalMaterial;
+      // #1327 — a drawn map's image width: which image a slot holds, where `null` is no map.
+      const widthOf = (t: THREE.Texture | null | undefined) =>
+        t ? ((t.image as { width?: number } | undefined)?.width ?? 0) : null;
       const map = std.map ?? null;
       const image = map?.image as { width?: number } | undefined;
       return {
@@ -919,6 +911,40 @@ function MeshScaleProbe() {
         // so a Physical material ≈ Standard cost. Deterministic, not a timing race.
         clearcoat: typeof phys.clearcoat === 'number' ? phys.clearcoat : null,
         transmission: typeof phys.transmission === 'number' ? phys.transmission : null,
+        normalScale: std.normalMap ? [std.normalScale.x, std.normalScale.y] : null,
+        aoMapIntensity: std.aoMap ? std.aoMapIntensity : null,
+        clearcoatMapWidth: widthOf(phys.clearcoatMap),
+        clearcoatRoughnessMapWidth: widthOf(phys.clearcoatRoughnessMap),
+        clearcoatNormalMapWidth: widthOf(phys.clearcoatNormalMap),
+        clearcoatNormalScale: phys.clearcoatNormalMap
+          ? [phys.clearcoatNormalScale.x, phys.clearcoatNormalScale.y]
+          : null,
+        transmissionMapWidth: widthOf(phys.transmissionMap),
+        thicknessMapWidth: widthOf(phys.thicknessMap),
+        sheenColorMapWidth: widthOf(phys.sheenColorMap),
+        sheenColorMapColorSpace: phys.sheenColorMap ? phys.sheenColorMap.colorSpace : null,
+        sheenRoughnessMapWidth: widthOf(phys.sheenRoughnessMap),
+        sheenRoughnessMapColorSpace: phys.sheenRoughnessMap
+          ? phys.sheenRoughnessMap.colorSpace
+          : null,
+        specularIntensityMapWidth: widthOf(phys.specularIntensityMap),
+        specularIntensityMapColorSpace: phys.specularIntensityMap
+          ? phys.specularIntensityMap.colorSpace
+          : null,
+        specularColorMapWidth: widthOf(phys.specularColorMap),
+        specularColorMapColorSpace: phys.specularColorMap ? phys.specularColorMap.colorSpace : null,
+        sheen: typeof phys.sheen === 'number' ? phys.sheen : null,
+        sheenColor: phys.sheenColor ? `#${phys.sheenColor.getHexString()}` : null,
+        sheenRoughness: typeof phys.sheenRoughness === 'number' ? phys.sheenRoughness : null,
+        specularIntensity:
+          typeof phys.specularIntensity === 'number' ? phys.specularIntensity : null,
+        specularColor: phys.specularColor ? `#${phys.specularColor.getHexString()}` : null,
+        thickness: typeof phys.thickness === 'number' ? phys.thickness : null,
+        attenuationDistance:
+          typeof phys.attenuationDistance === 'number' && Number.isFinite(phys.attenuationDistance)
+            ? phys.attenuationDistance
+            : null,
+        attenuationColor: phys.attenuationColor ? `#${phys.attenuationColor.getHexString()}` : null,
       };
     };
     return () => {
@@ -1912,17 +1938,12 @@ const MeshChild = memo(function MeshChild({ value: raw, override, nodeId }: Mesh
     case 'OrthographicCamera':
       return null;
     case 'GltfAsset':
-      // #83 gap 2 — per-asset error boundary. A load/parse failure
-      // (bad bytes, unsupported extension, missing #82 sibling, Draco
-      // decode fail) is caught here, reported to the assetErrorStore,
-      // and rendered as nothing — so one broken asset can't blank the
-      // whole viewport. Keyed by assetRef so a swapped asset remounts
-      // fresh and re-attempts.
-      return (
-        <AssetErrorBoundary key={value.assetRef} assetRef={value.assetRef}>
-          <GltfAssetR value={value} override={override} />
-        </AssetErrorBoundary>
-      );
+      // #1053 — the clone road is retired. Every import is native or refused, and a SAVED clone
+      // import is converted on load (`convertCloneCharacters`). One the converter keeps — its file
+      // is gone, the native reader refuses it, or it carries an edit the converter cannot carry —
+      // draws NOTHING, and the load names it and why (user decision, 2026-09-30). Its nodes stay
+      // in the document as saved, so it converts on its own once that gap closes.
+      return null;
     case 'Transform':
       return <TransformR value={value} override={override} nodeId={nodeId} />;
     case 'Null':
@@ -2162,8 +2183,7 @@ function RenderChild({
 // resolveActiveCameraPoseAt. It:
 //   1. Narrow-subscribes the channel NODES targeting `pickId` (shallow → under
 //      structural sharing an unrelated edit leaves their refs untouched, so this
-//      re-renders ONLY when THIS node's channels change — the gltfAssetDeps/H48
-//      pattern). Layer-wired channels are excluded upstream (coexistence guard).
+//      re-renders ONLY when THIS node's channels change). Layer-wired channels are excluded upstream (coexistence guard).
 //   2. Builds their function-of-time values once per change (channelValuesFromNodes).
 //   3. In a useFrame, samples them at the live time SNAPSHOT (never a time
 //      subscription — H48) → overlayChannels onto the base value (the SAME overlay
@@ -2426,7 +2446,7 @@ function ModifiedMeshR({
       ref,
       'this modifier cannot load its source (glTF/baked-sourced modifiers are a follow-up)',
       // #711 — NOT "asset failed:". The registry classifies this exact state as still
-      // loading (`composedOverSource` maps a primed source through to primed), so the
+      // loading (`availabilityOf` maps a primed source through to primed), so the
       // default label would have the banner contradict the registry about the same
       // condition. The asset is fine; nothing on this road ever asks for it.
       'modifier blocked:',
@@ -2448,9 +2468,7 @@ function ModifiedMeshR({
   // hold one entry. It is sound BY POSITION, never by type — and a comment that grounds it
   // in the type instead invites the next reader to trust the collapse somewhere the fork
   // does not protect, which is exactly the defect #978 fixed one road over.
-  const draw = resolveMeshMaterial(geom, materialAssignmentOf(null, [inlineMat], value.geometry), [
-    material,
-  ]);
+  const draw = resolveMeshMaterial(geom, materialAssignmentOf(null, [inlineMat]), [material]);
   if (!draw) return null; // source not sync-buildable (glTF/baked) — surfaced above (#258)
   // #530 / #533 — a SHARED resource is passed as a PROP, never adopted by
   // <primitive>. `<primitive>` takes OWNERSHIP of the object it is handed (it stamps
@@ -2912,17 +2930,10 @@ function ObjectMeshR({
     // data, no mesh, nothing for a name to resolve against.
     data ? cornerLayerNamesOf(data.geometry.descriptor) : [],
   );
-  // #389 — an Object does not draw what the asset clone is already drawing: without that
-  // rule the pair draws a second mesh from one geometry, and on a skinned child the second
-  // draw is the undeformed bind pose. A recipe OVER a glTF source is not clone-drawn and is
-  // unaffected.
-  //
-  // #981 — THE TEST USED TO BE SPELLED HERE, and being spelled HERE is what let it be
-  // skipped. `MultiMaterialMeshR` — the fork this component's own note below points at —
-  // reached for the same door with no such test, so a two-primitive imported child drew
-  // twice while this one-primitive road was correct. `getForAttach` refuses a clone-drawn
-  // ref itself now, so this reads as an ordinary attach and there is no unguarded spelling
-  // left for a fourth draw site to find.
+  // #389 / #981 — an Object once had to not draw what the asset clone was already drawing
+  // (else one geometry drew twice, the second as the undeformed bind pose), and #981 moved
+  // that test from here onto `getForAttach` so no draw site could skip it. #1053 removed the
+  // clone renderer and with it the case: this is an ordinary attach.
   const geom = data ? getForAttach(data.geometry) : null;
   // #638 (ns-1b step 5) — the decision is the resolver's, not this component's, and the
   // REAL assignment is handed over rather than a synthesised single-slot one. This
@@ -2937,10 +2948,9 @@ function ObjectMeshR({
       ? // #645 — the Object's table, not the data's, and the SAME `slots` the material above
         // was hydrated from. Resolving twice here would be two answers to one question, and
         // the pair silently disagreeing is what made the override invisible before.
-        materialAssignmentOf(data.attributeKey, slots, data.geometry)
-      : // An Empty — no data, so no slots and nothing anywhere else to ask. `'none'` is the
-        // answer to a question about a mesh that is not there, not a claim about a clone.
-        { slots: [], indices: null, absentSlot: 'none' as const },
+        materialAssignmentOf(data.attributeKey, slots)
+      : // An Empty — no data, so no slots.
+        { slots: [], indices: null },
     [material],
   );
   if (!draw) return null; // an Empty (no data) or a non-sync-buildable handle
@@ -3023,7 +3033,7 @@ function MultiMaterialMeshR({
     cornerLayerNamesOf(geometry.descriptor),
   );
   const geom = getForAttach(geometry);
-  const assignment = materialAssignmentOf(attributeKey, slots, geometry);
+  const assignment = materialAssignmentOf(attributeKey, slots);
   const draw = resolveMeshMaterial(geom, assignment, materials);
   const refusal = meshMaterialRefusal(geom, assignment, materials);
   // A DEGRADATION IS REPORTED, NEVER SILENT. A mesh that should draw two materials and
@@ -3187,15 +3197,10 @@ function CapturedBakedMeshR({
   const shading = useViewportStore((s) => s.shading);
   const spec = value.material;
 
-  // Suspense-load each of the 6 fixed map slots UNCONDITIONALLY (rules-of-hooks
-  // safe — `useBakedTexture(null)` is a no-op; only present refs suspend). The
-  // OPFS read + decode lives in the loader hook, never in the pure resolver (V29).
-  const mapTex = useBakedTexture(spec.map);
-  const normalTex = useBakedTexture(spec.normalMap);
-  const roughnessTex = useBakedTexture(spec.roughnessMap);
-  const metalnessTex = useBakedTexture(spec.metalnessMap);
-  const aoTex = useBakedTexture(spec.aoMap);
-  const emissiveTex = useBakedTexture(spec.emissiveMap);
+  // Suspense-load every map slot the table names (#1324); a null or absent ref loads nothing,
+  // only present refs suspend. The OPFS read + decode lives in the loader hook, never in the pure
+  // resolver (V29).
+  const tex = useBakedTextures(spec);
 
   // The override composes onto the captured spec through the ONE shared rule
   // (`composeBakedMaterial`, #394 S3b) when present; otherwise the baked spec's
@@ -3216,16 +3221,11 @@ function CapturedBakedMeshR({
       };
 
   const material = useMemo(() => {
-    // Colorspace per slot (M5): base/emissive maps are sRGB; the data maps
-    // (normal/ao/roughness/metalness) are linear. The texture loader already
-    // restored the captured colorspace from the ref, but assign it AGAIN here so
-    // the render-side contract is explicit and self-documenting at the boundary.
-    const sRGB = (t: THREE.Texture | null) => {
-      if (t) t.colorSpace = THREE.SRGBColorSpace;
-      return t;
-    };
-    const linear = (t: THREE.Texture | null) => {
-      if (t) t.colorSpace = THREE.LinearSRGBColorSpace;
+    // Colorspace per slot (M5), the slot table's: colour maps sRGB, data maps linear. The texture
+    // loader already restored the captured colorspace from the ref, but assign it AGAIN here so
+    // the render-side contract is explicit at the boundary.
+    const inColorSpace = (t: THREE.Texture | null, slot: BakedMapSlot) => {
+      if (t) t.colorSpace = BAKED_MAP_COLOR_SPACE[slot];
       return t;
     };
     // #1136 — a slot baked with a placement draws a CLONE placed about the centre. The loaded
@@ -3250,7 +3250,7 @@ function CapturedBakedMeshR({
         transparent: scalar.transparent,
         wireframe: shading === 'wireframe',
       });
-      m.map = placed(sRGB(mapTex), 'map');
+      m.map = placed(inColorSpace(tex.map, 'map'), 'map');
       bakedSurface(m, spec);
       m.userData.__placedClones = clones;
       return m;
@@ -3274,12 +3274,17 @@ function CapturedBakedMeshR({
     // and `:185`), so honouring a captured set here would point a sampler at an
     // attribute that does not exist. The discharge is upstream — carry the second set
     // through the bake first; only then does binding it here mean anything.
-    m.map = placed(sRGB(mapTex), 'map');
-    m.normalMap = placed(linear(normalTex), 'normalMap');
-    m.roughnessMap = placed(linear(roughnessTex), 'roughnessMap');
-    m.metalnessMap = placed(linear(metalnessTex), 'metalnessMap');
-    m.aoMap = placed(linear(aoTex), 'aoMap');
-    m.emissiveMap = placed(sRGB(emissiveTex), 'emissiveMap');
+    // Every slot the table names (#1324), each by its three name.
+    const slots = m as unknown as Record<BakedMapSlot, THREE.Texture | null>;
+    for (const slot of BAKED_MAP_SLOTS) slots[slot] = placed(inColorSpace(tex[slot], slot), slot);
+    // #1325 — the same orientation rule the registry's builder applies (`normalScaleFor`).
+    if (m.normalMap) m.normalScale.set(...normalScaleFor(m.normalMap, spec.normalScale));
+    if (spec.aoMapIntensity !== undefined) m.aoMapIntensity = spec.aoMapIntensity; // #1123
+    // #1327 — the coat's normal, by the same orientation rule (`GLTFLoader.js:3469`).
+    if (m instanceof THREE.MeshPhysicalMaterial && m.clearcoatNormalMap)
+      m.clearcoatNormalScale.set(
+        ...normalScaleFor(m.clearcoatNormalMap, spec.physical?.clearcoatNormalScale),
+      );
     bakedSurface(m, spec);
     m.userData.__placedClones = clones;
 
@@ -3294,7 +3299,16 @@ function CapturedBakedMeshR({
       if (ph.thickness !== undefined) p.thickness = ph.thickness;
       if (ph.ior !== undefined) p.ior = ph.ior;
       if (ph.sheen !== undefined) p.sheen = ph.sheen;
+      // #1123 — without these a baked fuzz drew three's defaults: black and smooth.
+      if (ph.sheenColor !== undefined) p.sheenColor = new THREE.Color(ph.sheenColor);
+      if (ph.sheenRoughness !== undefined) p.sheenRoughness = ph.sheenRoughness;
       if (ph.specularIntensity !== undefined) p.specularIntensity = ph.specularIntensity;
+      // #1321 — without this a baked specular colour drew white.
+      if (ph.specularColor !== undefined) p.specularColor = new THREE.Color(ph.specularColor);
+      // #1322 — without these baked glass drew clear.
+      if (ph.attenuationDistance !== undefined) p.attenuationDistance = ph.attenuationDistance;
+      if (ph.attenuationColor !== undefined)
+        p.attenuationColor = new THREE.Color(ph.attenuationColor);
     }
     return m;
   }, [
@@ -3308,15 +3322,12 @@ function CapturedBakedMeshR({
     scalar.emissive,
     scalar.emissiveIntensity,
     shading,
-    mapTex,
-    normalTex,
-    roughnessTex,
-    metalnessTex,
-    aoTex,
-    emissiveTex,
+    tex,
     spec.mapPlacements,
     spec.alphaTest,
     spec.doubleSided,
+    spec.normalScale,
+    spec.aoMapIntensity,
   ]);
 
   // Dispose the built material when it is replaced or the node unmounts — it is
@@ -3337,1131 +3348,6 @@ function CapturedBakedMeshR({
       <primitive object={material} attach="material" />
     </mesh>
   );
-}
-
-/**
- * P7.7 (#91) — derive the imported-child override layer for one asset from the DAG
- * node table, keyed by childName. Pure projection (no mutation).
- *
- * V8 is FILE-ROOTED: a read-only state access under `src/viewport/` is clean —
- * V8 forbids dispatch/setState/mutation, not reads. The threading alternative
- * (a `childNodes` field on GltfAssetValue) is UNREACHABLE, not merely a
- * preference: an imported child has no edge INTO the asset, so GltfAsset.evaluate
- * has no input to reach the children through; the only way the evaluated value
- * could carry them is a raw sibling-state read inside the evaluator, which
- * violates V2 (pure evaluators are bit-exact over (params, inputs); a
- * sibling-filter-by-assetRef is not an input). So the viewport read-only filter is
- * the ONLY V2-respecting option.
- *
- * #389 — MEMBERSHIP now comes from the seam rather than from a param filter, because
- * after the split the two facts live on two nodes: `assetRef` is on the child's DATA
- * half and the POSE (with its `overridden` flags) is on the Object. The old single-node
- * filter cannot express that, and the version of it that compiles — filter the data
- * nodes — would return an override layer with no transform in it, which reads as
- * "no child overrides" and silently drops every posed bone.
- */
-function childOverridesForAsset(
-  nodes: DagState['nodes'],
-  assetRef: string,
-): Record<string, ChildOverride> {
-  const out: Record<string, ChildOverride> = {};
-  for (const [objectId, child] of importedChildrenOf(nodes, assetRef)) {
-    const p = nodes[objectId].params as {
-      position?: Vec3;
-      rotation?: Vec3;
-      scale?: Vec3;
-    };
-    if (!p.position || !p.rotation || !p.scale) continue;
-    out[child.childName] = {
-      position: p.position,
-      rotation: p.rotation,
-      scale: p.scale,
-      overridden: child.overridden,
-    };
-  }
-  return out;
-}
-
-// #178 (S3) — overlay a GltfChild's captured OpenPBR material (S2) onto the
-// imported clone material, PRESERVING the clone's texture maps (S2 captured
-// maps=null; textures stay with the clone until S5). For an UNEDITED material the
-// captured scalars ARE the glTF's own factors, so re-applying them onto the
-// still-textured clone is IDENTITY (colour × map is how glTF already composites)
-// → pixel parity. Clones the source (never mutates the shared drei-cached material
-// — V20/H36/H45 single-writer). Compiles through openpbrToThree (the one mapping
-// site, V29), so a DAG material renders exactly like a native Box/Sphere one.
-/**
- * Write the OpenPBR scalar/colour fields onto an EXISTING three.js material, IN
- * PLACE (no clone). The ONE field-mapping source (V20) shared by the static
- * overlay (`overlayDagMaterial`, which clones first) AND the per-frame material
- * animation (#188 `useFrame` below, which writes onto the already-cloned live
- * material — re-cloning per frame would churn GC). Property-guarded so an unlit
- * `MeshBasicMaterial` (KHR_materials_unlit — has `.color`/`.opacity` but no
- * `.roughness`/`.emissive`/physical lobes) doesn't throw. Maps are NEVER touched
- * (keep the clone's embedded/edited textures, S5).
- */
-function applyOpenpbrScalars(mat: THREE.Material, tp: ThreeMaterialParams): void {
-  const next = mat as THREE.MeshPhysicalMaterial;
-  next.color?.set(tp.color);
-  next.emissive?.set(tp.emissive);
-  if ('emissiveIntensity' in next) next.emissiveIntensity = tp.emissiveIntensity;
-  if ('opacity' in next) next.opacity = tp.opacity;
-  // Only ADD transparency — never strip what the loader set from alpha modes /
-  // extensions we don't capture yet (an edit lowering opacity still turns it on).
-  if ('transparent' in next) next.transparent = next.transparent === true || tp.transparent;
-  // alphaTest (glTF alphaMode:'MASK' cutout) + vertexColors (COLOR_0) — now
-  // CAPTURED into the IR, so apply from there. For an unedited import these equal
-  // what GLTFLoader already set on the clone (identity); editing alphaCutoff makes
-  // the cutout render respond. vertexColors only ever set to its captured value
-  // (the clone's shader is already compiled for it → no needsUpdate churn).
-  if ('alphaTest' in next) next.alphaTest = tp.alphaTest;
-  // #1062 — the compile carries the colour layer's NAME now, and the reduction to three's
-  // flag happens HERE, at this road's own boundary, because the answer is road-specific.
-  // This road draws three's copy of the file, which carries no layer list to resolve a name
-  // against — so the only question it can answer is whether a colour was asked for at all,
-  // which is exactly what the boolean meant before names existed. The native road resolves
-  // the name properly against the drawn mesh's layers (`cornerLayerNames.ts`). Same split as
-  // `uvLayerIndex` vs that module, for the same reason.
-  if ('vertexColors' in next) next.vertexColors = tp.colorLayer !== undefined;
-  // doubleSided → three `side`. Identity for an unedited import (matches the
-  // clone); editing re-clones first, so the new `side` compiles correctly. The
-  // mapping is shared with the native road's spec assembly (#532) rather than
-  // spelled twice — two sites and a two-valued function can only diverge by
-  // inversion, which is the divergence that reads as correct.
-  if ('side' in next) next.side = threeSideFor(tp.doubleSided);
-  // metalness/roughness ARE the captured glTF factors → applying them onto a
-  // mapped material is identity (the scalar multiplies its map, as in glTF).
-  if ('roughness' in next) next.roughness = tp.roughness;
-  if ('metalness' in next) next.metalness = tp.metalness;
-  // Physical-only lobes — silently no-op on a plain MeshStandardMaterial.
-  if ('ior' in next) next.ior = tp.ior;
-  if ('clearcoat' in next) next.clearcoat = tp.clearcoat;
-  if ('clearcoatRoughness' in next) next.clearcoatRoughness = tp.clearcoatRoughness;
-  if ('transmission' in next) next.transmission = tp.transmission;
-  if ('thickness' in next && tp.transmission > 0) next.thickness = tp.thickness;
-}
-
-function overlayDagMaterial(s: THREE.Material, ir: InlineMaterialSpec): THREE.Material {
-  const next = s.clone() as THREE.MeshPhysicalMaterial;
-  applyOpenpbrScalars(next, openpbrToThree(ir));
-  // maps: intentionally NOT touched — keep the clone's embedded textures (S5).
-  return next;
-}
-
-// #198 — one per-frame material-animation write target. `mat` is the slot's FINAL
-// owned material (a per-slot clone). `reapplyOverride`, when present, re-layers a
-// MaterialOverride tint's forced fields on top AFTER the animated base IR is
-// written each frame (channel-over-override composition); absent for plain
-// (un-overridden) animatable slots.
-interface AnimSlot {
-  mat: THREE.Material;
-  reapplyOverride?: () => void;
-}
-
-function GltfAssetR({ value, override }: { value: GltfAssetValue; override?: MaterialValue }) {
-  // H48 4th-occ gate — count this renderer's renders so the perf e2e can prove an
-  // unrelated edit re-renders it 0×. DEV-only no-op in production (renderCounter).
-  bumpRenderCount('GltfAssetR');
-  // useResolvedAssetUrl turns OPFS-relative paths (e.g. "assets/cube.gltf")
-  // into blob URLs; passthrough URLs (/foo, http://..., blob:) are returned
-  // as-is. Both this hook and useGLTF are suspense-driven; the Canvas-root
-  // Suspense boundary catches the throws.
-  const url = useResolvedAssetUrl(value.assetRef);
-  // #80: useDraco='/draco/' points at the SELF-HOSTED decoder (drei's
-  // default is the Google CDN at `Gltf.js:8` — non-deterministic per
-  // THESIS §48, and fails offline / behind a CSP; most real-world `.glb`
-  // exports use Draco mesh compression). `extendLoader` wires KTX2
-  // (Basis Universal texture compression — KHR_texture_basisu, common
-  // in size-optimised exports), which drei does NOT wire by default.
-  // Meshopt is already drei-default-on; nothing to do for it.
-  const extendLoader = useGltfLoaderExtend();
-  const gltf = useGLTF(url, '/draco/', true, extendLoader) as unknown as {
-    scene: THREE.Group;
-    // UX #7 / H90 — GLTFLoader records each loaded object's source glTF node
-    // index here (every node, named or not — GLTFLoader.js:4311). The drill
-    // stamp pairs it with the persisted keyByGltfNodeIndex.
-    parser?: { associations?: Map<object, { nodes?: number }> };
-  };
-  // P7.5 R1: do NOT share the clone across instances — the per-child
-  // TRS override below mutates this Object3D in-place. useMemo with
-  // gltf.scene as dependency gives one clone per (component-instance,
-  // source-scene) pair, which is correct here.
-  // #88: SkeletonUtils.clone, not Object3D.clone(true). Plain Object3D.clone
-  // leaves a cloned SkinnedMesh bound to the ORIGINAL bones — animating the
-  // cloned joints (via the TRS override below) then deforms nothing (the
-  // T-pose footgun). SkeletonUtils.clone rebinds SkinnedMesh.skeleton to the
-  // cloned bones so the per-child TRS drives real deformation. It is a safe
-  // superset: non-skinned subtrees fall through to standard clone, and the
-  // per-instance / mutates-in-place rationale above is unchanged (still one
-  // deep clone per component-instance).
-  const cloned = useMemo(() => cloneSkinned(gltf.scene) as THREE.Group, [gltf.scene]);
-  // Perf (H48 5th-occ follow-on) — a `name → Object3D` index built ONCE per clone.
-  // The per-frame TRS re-apply + the suppress effect address children BY NAME; the
-  // naive `cloned.getObjectByName(name)` is a recursive O(tree) search, so doing it
-  // for all N children EVERY FRAME is ~N² node-visits (≈500k/frame on a 700-node
-  // import) — the dominant cost when manipulating a child (measured ~415ms/frame on
-  // the cicada). One `traverse` here makes every lookup O(1). First-in-DFS wins, so
-  // it matches getObjectByName's pre-order semantics exactly (names are unique post
-  // sanitization, so this is identical behaviour, just indexed). Rebuilt only on a
-  // clone swap; TRS/visibility mutations never change names or structure, so the
-  // index stays valid for the clone's life.
-  const nameToObject = useMemo(() => {
-    const m = new Map<string, THREE.Object3D>();
-    cloned.traverse((o) => {
-      if (o.name && !m.has(o.name)) m.set(o.name, o);
-    });
-    return m;
-  }, [cloned]);
-  // childId → clone object, built from the stamps below (the H90/V44 by-id
-  // resolution for the per-child TRS + suppression consumers). A ref, not a
-  // memo: the stamps are applied in the effect below (post-render), so the map
-  // can only be built AFTER stamping — the effect populates it, and the
-  // consumers (later effects + the useFrame) read the populated ref.
-  const childIdToObject = useRef<Map<string, THREE.Object3D>>(new Map());
-  // #233 / H90 — stamp each clone object that maps to a GltfChild with its DAG
-  // node id, so viewport leaf-pick (buildPickChain) can address children by a
-  // STAMPED ID rather than by name. The producer's nodeNameMap KEY space
-  // (sanitizeBoneName + `__n` dedup, `node_i` for unnamed nodes) DIVERGES from
-  // three's GLTFLoader clone NAME space (sanitizeNodeName + `_n` dedup, `''` for
-  // unnamed) on real exports — ~28% of a dense model's meshes are unaddressable
-  // by name. The glTF node INDEX is the one correspondence both sides agree on:
-  // GLTFLoader records it on `gltf.parser.associations` for EVERY loaded object
-  // (GLTFLoader.js:4311), and the import persists `keyByGltfNodeIndex` (index →
-  // nodeNameMap key). We map original→clone by lockstep traversal — SkeletonUtils
-  // clones children in array order, so index-paired walk is exact — read each
-  // original's node index, and stamp the corresponding clone object. A
-  // material-split `<unnamed>` sub-mesh carries a `.meshes` association (no
-  // `.nodes`) → no stamp; the leaf-pick walk falls back to its nearest stamped
-  // ancestor, which is the right target. The childId is globally unique
-  // (content-addressed off assetRef), so it alone disambiguates which asset a hit
-  // belongs to — no separate asset stamp is needed. Mutation is confined to the
-  // per-instance clone (never the shared drei cache → no substrate leak,
-  // B-substrate-purity); `basherGltfChildId` is a new userData key (no V20
-  // single-writer collision with the TRS/material/visibility writers).
-  // REF: pickChain.ts; H90.
-  useEffect(() => {
-    const assoc = gltf.parser?.associations;
-    const keyByIndex = value.keyByGltfNodeIndex;
-    // PRIMARY: index-based stamp (robust to the key↔name divergence, H90).
-    if (assoc && Object.keys(keyByIndex).length > 0) {
-      const stack: Array<[THREE.Object3D, THREE.Object3D]> = [[gltf.scene, cloned]];
-      while (stack.length > 0) {
-        const pair = stack.pop();
-        if (!pair) break;
-        const [orig, clone] = pair;
-        const idx = assoc.get(orig)?.nodes;
-        if (idx !== undefined) {
-          const key = keyByIndex[String(idx)];
-          const childId = key != null ? value.nodeNameMap[key] : undefined;
-          if (childId) clone.userData.basherGltfChildId = childId;
-        }
-        const n = Math.min(orig.children.length, clone.children.length);
-        for (let i = 0; i < n; i++) stack.push([orig.children[i], clone.children[i]]);
-      }
-    } else {
-      // FALLBACK (pre-UX#7 saves: keyByGltfNodeIndex empty; or no associations) —
-      // stamp the subset whose names DO match. Drill keeps a name-match fallback
-      // for the unstamped remainder, so this is purely additive.
-      for (const [name, childId] of Object.entries(value.nodeNameMap)) {
-        const obj = nameToObject.get(name);
-        if (obj) obj.userData.basherGltfChildId = childId;
-      }
-    }
-    // Index the stamps so the TRS + suppression consumers can resolve a child by
-    // its STAMPED id (immune to the H90 name divergence), not by `o.name`.
-    childIdToObject.current = buildChildIdToObject(cloned);
-  }, [cloned, gltf, nameToObject, value.nodeNameMap, value.keyByGltfNodeIndex]);
-  const shading = useViewportStore((s) => s.shading);
-  // P7.7 (#91) — SUBSCRIBED read (NOT a getState() snapshot): a gizmo setParam on
-  // a GltfChild of THIS asset must re-render so the per-child override re-layers
-  // and re-applies. A snapshot would not be a React dependency → the manual
-  // override would silently never re-render (the H40 freeze / C2 snap-back).
-  //
-  // H48 4th-occurrence (#114-lineage) — but the OLD read subscribed to the WHOLE
-  // node table (`s.state.nodes`), whose ref flips on EVERY dispatch (ops.ts
-  // structural sharing replaces the `nodes` object even for an unrelated edit).
-  // So editing ANY node — a sibling box — re-rendered this heavy asset and
-  // re-walked all N nodes twice. On a ~700-node import that IS the "edit anything
-  // → the imported model re-renders at ~16fps" cost. Fix: subscribe to ONLY the
-  // nodes the layers depend on (this asset's GltfChild + baked KeyframeChannelVec3
-  // nodes), compared with zustand `shallow`. Under structural sharing every
-  // unchanged node keeps its ref, so an unrelated edit yields a shallow-EQUAL
-  // array → no emit → no re-render. A relevant edit flips exactly one element's
-  // ref → shallow detects it → re-render → re-layer (freeze guard preserved).
-  // gltfAssetDeps.ts holds the collector + its proof. [[H48]] [[B13]] [[H40]].
-  const depNodes = useStoreWithEqualityFn(
-    useDagStore,
-    (s) => gltfAssetDepNodes(s.state.nodes, value.assetRef, value.nodeNameMap),
-    shallow,
-  );
-  // The pre-filtered node subset the two layer-derivations read. Keying the memos
-  // on `depNodes` (stable across unrelated edits) keeps their results — and the
-  // useFrame dirty-check below — referentially stable too.
-  const depNodeMap = useMemo(() => {
-    const m: Record<string, (typeof depNodes)[number]> = {};
-    for (const n of depNodes) m[n.id] = n;
-    return m;
-  }, [depNodes]);
-  const childOverrides = useMemo(
-    () => childOverridesForAsset(depNodeMap, value.assetRef),
-    [depNodeMap, value.assetRef],
-  );
-  // P7.12 (#108, C2) — the BAKED-CHANNEL layer: per-bone KeyframeChannel nodes
-  // materialized by the copy-on-write bake (Wave D). SUBSCRIBED, like
-  // childOverrides — an edit produces a NEW `nodes` object so this memo re-derives
-  // and the next frame re-applies; but it does NOT subscribe to TIME (H48). The
-  // samplers are function-of-time closures (V24); the useFrame below invokes them
-  // at the same `seconds` snapshot it samples the clip at. Keyed by childName,
-  // scoped to this asset by nodeNameMap membership (BLOCK-2). Dormant until the
-  // bake mutator (D1) exists — no baked channel ⇒ empty map ⇒ pure clip behavior.
-  const bakedChannels = useMemo(
-    () => bakedChannelSamplersForAsset(depNodeMap, value.nodeNameMap),
-    [depNodeMap, value.nodeNameMap],
-  );
-  // #188 (v0.7 Phase 3) — the MATERIAL-CHANNEL band, keyed by the child's DATA node id
-  // → the function-of-time channel VALUES targeting that node's material paths.
-  //
-  // #389 — the key and the paths BOTH moved. A captured material is a fact about what the
-  // child IS, so it lives on the data half, and a channel authored through the ordinary
-  // split road (`resolveDataParamOwner`) therefore targets the data node under
-  // `material.<lobe>.<field>` / `materialSlots.<slot>.<lobe>.<field>`. Keying this map by
-  // the Object id, as the fused version did, would find nothing and read as "no animated
-  // materials" — green, silent, and wrong.
-  // Enumerated from depNodeMap (the narrow subscription — Slice 1 already filters
-  // material channels in, so editing one re-renders here and this memo re-derives,
-  // H40/H48), and built via the SHARED `channelValuesFromNodes` (one sampler source,
-  // no parallel walk — V24/V57). The H105 layer-wired guard is a NO-OP here: a
-  // material channel targets a GltfChild, which is NOT a scene producer, so no
-  // AnimationLayer ever wraps it — applying the guard would require scanning the
-  // whole node table (the H48 storm depNodeMap exists to avoid). Empty map ⇒ the
-  // useFrame below early-returns ⇒ a static glTF pays zero per-frame cost.
-  const materialChannelsByChild = useMemo(() => {
-    const byChild = new Map<string, ReturnType<typeof channelValuesFromNodes>>();
-    const nodesByChild = new Map<string, (typeof depNodeMap)[string][]>();
-    for (const node of Object.values(depNodeMap)) {
-      if (node.type !== 'KeyframeChannelNumber' && node.type !== 'KeyframeChannelColor') continue;
-      const p = node.params as { target?: unknown; paramPath?: unknown };
-      if (typeof p.target !== 'string' || !p.target) continue;
-      if (!isImportedChildMaterialPath(p.paramPath)) continue;
-      (nodesByChild.get(p.target) ?? nodesByChild.set(p.target, []).get(p.target)!).push(node);
-    }
-    for (const [childId, nodes] of nodesByChild) {
-      byChild.set(childId, channelValuesFromNodes(nodes));
-    }
-    return byChild;
-  }, [depNodeMap]);
-  // #99 (P7.13) — per-clone capture of the IMPORTED material(s), keyed by mesh
-  // uuid. The override effect re-derives from this ORIGINAL every time (never
-  // from an already-overridden clone), so changing/removing the override never
-  // compounds and removal restores faithfully. Reset on clone swap — declared
-  // ABOVE the override effect so on a `[cloned]` change React runs this reset
-  // first, then the override effect captures the new clone's fresh materials.
-  const overrideOriginals = useRef<Map<string, THREE.Material | THREE.Material[]>>(new Map());
-  useEffect(() => {
-    overrideOriginals.current = new Map();
-  }, [cloned]);
-  // #188 (v0.7 Phase 3) / #198 (Phase 4) — the per-frame material-animation WRITE
-  // TARGETS: each animatable slot's FINAL assigned material, keyed `childId` → array
-  // indexed by local slot (primitive order, the same `localSlotByChild` counter the
-  // override effect uses). `null` = NOT animatable (an array-material mesh, OR a slot
-  // a FLATTEN override claimed — flatten ignores the base IR so animating it is
-  // meaningless). A slot a MaterialOverride TINT claimed now records `{ mat,
-  // reapplyOverride }` (#198): the useFrame writes the animated base IR onto `mat`,
-  // then `reapplyOverride()` re-layers the tint's forced fields ON TOP — channel
-  // animates the base, tint wins for its forced channels (composition). Rebuilt by
-  // the override effect on every run (materials are re-cloned there); read by useFrame.
-  const childSlotMaterials = useRef<Map<string, (AnimSlot | null)[]>>(new Map());
-  // #99 (P7.13) — material override applied MATERIAL-FAITHFULLY. The old code
-  // replaced every mesh material with a fresh `new MeshStandardMaterial(7 scalars)`,
-  // which dropped imported maps (.map/.normalMap/.roughnessMap/.metalnessMap/
-  // .aoMap/.emissiveMap) and downgraded a MeshPhysicalMaterial (KHR clearcoat/
-  // transmission/sheen) to a plain MeshStandardMaterial — a textured asset
-  // flattened to a blob the instant any override applied (#99).
-  //
-  // The fix CLONES the source material (Material.clone = `new this.constructor()
-  // .copy(this)` → preserves the subclass AND all map refs; three.js 0.169
-  // Material.js:424 / MeshStandardMaterial.copy L76-104) and overlays ONLY the
-  // override fields that cannot corrupt richer source data (D-01 map-aware tint,
-  // resolveMaterialOverrideFields): color/emissive/opacity always; roughness/
-  // metalness only where the source has no corresponding map (those scalars
-  // multiply their maps).
-  //
-  // We assign a fresh CLONE per mesh and never mutate the source material's
-  // properties — `Mesh.copy` (Mesh.js:60) shares `.material` by reference across
-  // clones + the useGLTF cache, so in-place mutation would corrupt every instance
-  // (V20/H36/H45 single-writer landmine). Cloning + reassigning is the guard.
-  useEffect(() => {
-    const wireframe = useViewportStore.getState().shading === 'wireframe';
-    // #178 S5 — meshes whose GltfChild material carries EDIT-LAYER texture-map
-    // edits (a replaced or cleared slot). Collected during the synchronous
-    // traverse; the baked textures are loaded + applied to the FINAL assigned
-    // material asynchronously after the traverse (the load can't run inline). The
-    // `cancelled` flag drops a stale load when the effect re-runs first.
-    // #553 — the placement rides ALONG with the maps. The edit-layer pass lands
-    // after this traverse has painted the inherited textures, so it must place the
-    // texture it loads itself; carrying only `maps` is what let a replaced map
-    // reach the screen with no placement at all.
-    const mapWork: {
-      mesh: THREE.Mesh;
-      maps: InlineMaterialSpec['maps'];
-      placement: EditedMapPlacement;
-    }[] = [];
-    let cancelled = false;
-    // #131 (D-05) — the coarse flatten / clay path. When the override asks to
-    // ignore the source material, build a FRESH MeshStandardMaterial from the 7
-    // scalars and drop the source's maps + subclass BY INTENT (the honest,
-    // opt-in version of the old #99 wholesale-replace bug). This is a separate
-    // primitive from the per-field `overridden` set (which forces individual
-    // channels while keeping the clone + every other map): flatten ignores the
-    // set entirely and replaces wholesale. Still single-writer (V20/H36/H45):
-    // a fresh material per mesh, never a mutation of the shared source.
-    const flatten = (override as MaterialValue | undefined)?.ignoreSourceMaterial === true;
-    const clay = (o: MaterialValue): THREE.Material => {
-      const next = new THREE.MeshStandardMaterial({
-        color: new THREE.Color(o.color),
-        roughness: o.roughness,
-        metalness: o.metalness,
-        emissive: new THREE.Color(o.emissive),
-        emissiveIntensity: o.emissiveIntensity,
-        opacity: o.opacity,
-        transparent: o.opacity < 1,
-        wireframe,
-      });
-      return next;
-    };
-    // #198 — apply the override's map-aware tint fields onto an OWNED material IN
-    // PLACE. Extracted from `tint` so the per-frame material-animation loop can
-    // re-layer the SAME tint on top of the animated base IR without re-cloning (the
-    // clone is already owned). Reads map presence off `next` — clone() preserves the
-    // source map refs, so the force-vs-map decision is identical to reading the source.
-    // Property-guarded: GLTFLoader emits MeshStandard/MeshPhysical for normal meshes
-    // (all PBR fields present), but KHR_materials_unlit yields a MeshBasicMaterial —
-    // which has `.color`/`.opacity` but NO `.emissive`/`.roughness`/`.metalness`.
-    // Set each field only when it exists; an unconditional `.emissive.set()` would
-    // throw and break the whole traverse for an unlit asset.
-    const applyTintFields = (next: THREE.Material): void => {
-      const std = next as THREE.MeshStandardMaterial;
-      const fields = resolveMaterialOverrideFields(
-        override as MaterialValue,
-        {
-          roughnessMap: Boolean(std.roughnessMap),
-          metalnessMap: Boolean(std.metalnessMap),
-        },
-        (override as MaterialValue).overridden, // #124 (V28): per-field force-vs-map
-        // The layer below is an IMPORTED material — a source, not another authored
-        // layer — so this road keeps the map-aware cut unchanged (#529).
-        'map-aware',
-      );
-      // The four tints are never null on the map-aware road, so these guards change
-      // nothing here today; they exist because #529 made the TYPE honest, and a null
-      // that reached `.set()` would throw rather than skip.
-      if (fields.color !== null) std.color?.set(fields.color);
-      if (fields.emissive !== null) std.emissive?.set(fields.emissive);
-      if (fields.emissiveIntensity !== null && 'emissiveIntensity' in std)
-        std.emissiveIntensity = fields.emissiveIntensity;
-      if (fields.opacity !== null && 'opacity' in std) std.opacity = fields.opacity;
-      if (fields.transparent !== null && 'transparent' in std) std.transparent = fields.transparent;
-      if (fields.roughness !== null && 'roughness' in std) std.roughness = fields.roughness;
-      if (fields.metalness !== null && 'metalness' in std) std.metalness = fields.metalness;
-      // NB: wireframe is deliberately NOT set here. applyTintFields runs per-frame
-      // in the #198 composition reapplyOverride; the wireframe effect ([cloned,
-      // shading]) is the SOLE runtime owner of `.wireframe`, so re-applying a
-      // captured value here would overwrite a wireframe toggle made during
-      // playback. `tint` sets it once at effect time (below) for fresh clones the
-      // wireframe effect won't re-cover on an override-only change.
-    };
-    const tint = (s: THREE.Material): THREE.Material => {
-      const next = s.clone() as THREE.MeshStandardMaterial;
-      applyTintFields(next);
-      // Effect-time only (a fresh clone an override-only change makes, which the
-      // [cloned, shading] wireframe effect won't re-fire to cover); the per-frame
-      // reapplyOverride never reaches this.
-      if ('wireframe' in next) (next as THREE.MeshStandardMaterial).wireframe = wireframe;
-      return next;
-    };
-    // v0.6 #2 (#178, W6 — D-05/D-07) — per-submesh addressing. A "slot" is the
-    // i-th isMesh in this traverse (the SAME order the `__basher_gltf_meshes`
-    // seam reports, so an e2e's side-A read aligns with this apply). The override
-    // carries an optional `slotIndex`:
-    //   - undefined ⇒ apply to EVERY slot (the #99/#124 whole-child behaviour —
-    //     backward-compat; the p7.13/p124 e2e prove it stays byte-identical).
-    //   - a number ⇒ apply ONLY to that slot; every OTHER slot keeps its imported
-    //     material (so editing slot 1 leaves slot 0 untouched). Out-of-range ⇒ no
-    //     slot matches ⇒ no-op (range-safe).
-    const targetSlot = override ? (override as MaterialValue).slotIndex : undefined;
-    let slotIdx = -1;
-    // #178 (S3) — per-GltfChild local slot counter. A mesh maps to its GltfChild
-    // by the nearest stamped ancestor (the H90/readGltfMaterials rule); the i-th
-    // mesh under that child = the i-th captured material (primitive order).
-    const localSlotByChild = new Map<string, number>();
-    // #188 — rebuild the per-frame material-animation write targets each run (the
-    // materials below are freshly cloned/assigned). A slot records its FINAL
-    // material iff it is animatable (has a GltfChild, single material, no override
-    // tint); `null` otherwise so the local-slot index stays aligned.
-    childSlotMaterials.current = new Map();
-    const recordSlot = (id: string, localIdx: number, slot: AnimSlot | null) => {
-      const arr = childSlotMaterials.current.get(id) ?? [];
-      arr[localIdx] = slot;
-      childSlotMaterials.current.set(id, arr);
-    };
-    cloned.traverse((child) => {
-      const m = child as THREE.Mesh;
-      if (!m.isMesh) return;
-      slotIdx += 1;
-      // Capture the imported material(s) once, before any reassignment.
-      if (!overrideOriginals.current.has(m.uuid)) {
-        overrideOriginals.current.set(m.uuid, m.material);
-      }
-      const src = overrideOriginals.current.get(m.uuid)!;
-      // #178 (S3) — the DAG-material base: overlay this slot's captured OpenPBR IR
-      // onto the imported material (maps preserved). Absent (pre-#178 save / empty
-      // node / array-material mesh) → keep the imported material verbatim (V10/H14
-      // backward-compat). This base then feeds the MaterialOverride layer below.
-      const childId = nearestChildId(m);
-      let local = -1;
-      if (childId) {
-        local = (localSlotByChild.get(childId) ?? -1) + 1;
-        localSlotByChild.set(childId, local);
-      }
-      let dagBase: THREE.Material | THREE.Material[] = src;
-      if (childId && !Array.isArray(src)) {
-        // #389 — the captured table comes off the child's DATA half, flattened by the
-        // one rule (`materialSlots ?? [material]`) so slot indexing here cannot drift
-        // from the read side's `dataSlotsOnly`.
-        const irs = importedChildMaterials<InlineMaterialSpec>(depNodeMap, childId)?.slots;
-        const ir = irs?.[local] ?? undefined;
-        if (ir) {
-          dagBase = overlayDagMaterial(src, ir);
-          // #181 / V53 — apply the captured KHR_texture_transform onto the overlay's
-          // inherited map textures: each slot's OWN placement where the import
-          // captured one (#550), else the shared `uvTransform`. Identity for an
-          // unedited import (matches GLTFLoader); editing either re-overlays.
-          applyGltfUvTransform(dagBase, ir.uvTransform, threeMapUvTransforms(ir.mapUvTransforms));
-        }
-        // #178 S5 — defer this slot's edit-layer map application (replace/clear)
-        // to the async pass below; it lands on the FINAL material `m.material`.
-        if (ir && hasMapEdits(ir.maps)) {
-          // The IR's own vocabulary on BOTH sides here — the edit pass iterates IR
-          // slots, so `mapUvTransforms` is passed straight through with no
-          // translation (the inherited road needs one only because it walks the
-          // material's three.js-named slots).
-          mapWork.push({
-            mesh: m,
-            maps: ir.maps,
-            placement: {
-              shared: ir.uvTransform,
-              perMap: ir.mapUvTransforms,
-              // #997 — the UV set a REPLACED slot samples. The inherited road needs
-              // nothing: three's loader already bound the clone's texture to its set.
-              uvLayers: ir.mapUvLayers,
-            },
-          });
-        }
-      }
-      // The override applies to THIS slot iff it exists AND either it is a
-      // whole-child override (slotIndex undefined) or it addresses this exact
-      // slot. Anything else keeps the imported material — no override, or a
-      // per-slot override aimed at a DIFFERENT slot (the latter is what keeps
-      // slot 0 unchanged when the director edits slot 1).
-      const applies = Boolean(override) && (targetSlot === undefined || targetSlot === slotIdx);
-      if (!applies) {
-        // No override for this slot → render the DAG material (S3); if the child
-        // carries none, dagBase === src (the imported material), unchanged.
-        m.material = dagBase;
-        // #188 — this slot is animatable iff it has a GltfChild + a single material
-        // (the same scope overlayDagMaterial / per-child IR addressing requires).
-        if (childId && local >= 0) {
-          recordSlot(childId, local, Array.isArray(m.material) ? null : { mat: m.material });
-        }
-        return;
-      }
-      // Flatten ignores the base entirely (fresh clay per slot); the default path
-      // clones the DAG base and overlays the override's map-safe fields ON TOP.
-      const make = flatten ? () => clay(override as MaterialValue) : tint;
-      m.material = Array.isArray(dagBase) ? dagBase.map(make) : make(dagBase);
-      // #198 — channel-over-MaterialOverride COMPOSITION. A non-flatten TINT slot is
-      // now animatable: the per-frame loop writes the animated base IR onto this OWNED
-      // clone, then `reapplyOverride` re-layers the tint's forced fields ON TOP
-      // (channel animates the base, tint wins for its forced channels). FLATTEN claims
-      // the slot wholesale (clay ignores the base IR) → animating it is meaningless →
-      // null. An ARRAY-material slot is not single-material addressable → null.
-      if (childId && local >= 0) {
-        if (!flatten && !Array.isArray(m.material)) {
-          const claimed = m.material;
-          recordSlot(childId, local, {
-            mat: claimed,
-            reapplyOverride: () => applyTintFields(claimed),
-          });
-        } else {
-          recordSlot(childId, local, null);
-        }
-      }
-    });
-    // #178 S5 — apply edit-layer texture maps after the synchronous traverse has
-    // assigned every final material. Loads happen off the React cycle; the
-    // frameloop ("always") repaints once `needsUpdate` is set. `cancelled` (set
-    // by the cleanup below) drops a stale load when the effect re-runs first.
-    if (mapWork.length > 0) {
-      void (async () => {
-        const storage = await getStorage();
-        for (const w of mapWork) {
-          if (cancelled) return;
-          if (Array.isArray(w.mesh.material)) continue;
-          try {
-            await applyEditedMaps(w.mesh.material, w.maps, w.placement, storage, () => cancelled);
-          } catch {
-            // A missing/corrupt baked texture must not break the whole asset —
-            // the slot keeps its imported texture (the inherit default).
-          }
-        }
-      })();
-    }
-    // depNodeMap is a dep: editing a GltfChild's `materials` (S4) re-runs this
-    // effect so the new OpenPBR scalars re-overlay onto the clone.
-    return () => {
-      cancelled = true;
-    };
-  }, [cloned, override, depNodeMap]);
-  // Wireframe pass — flip every mesh material on the cloned scene. Runs
-  // independent of override so toggling shading after the override is
-  // applied still works.
-  useEffect(() => {
-    const wireframe = shading === 'wireframe';
-    cloned.traverse((child) => {
-      const m = child as THREE.Mesh;
-      if (!m.isMesh) return;
-      const mats = Array.isArray(m.material) ? m.material : [m.material];
-      for (const mat of mats) {
-        if (mat && 'wireframe' in mat) {
-          (mat as { wireframe: boolean }).wireframe = wireframe;
-        }
-      }
-    });
-  }, [cloned, shading]);
-  // P151 (#151, Apply-Transform) — double-render SUPPRESSION. When a glTF child
-  // is baked into a standalone BakedMesh (the Apply atomic composite), the asset
-  // must stop rendering that child by name, or it renders twice. This effect is
-  // the SOLE writer of `.visible` on the clone (a NEW property no TRS/material
-  // writer touches — no V20 collision). It first RESTORES every named child to
-  // visible, then hides the suppressed set, so removing a name (undo) un-hides
-  // the child in the same pass. `Object3D.visible=false` skips render + raycast
-  // for the subtree (three 0.169 propagates down), so a baked parent hides its
-  // descendants too — reversible, no clone surgery. Subscribed to
-  // value.suppressedChildren so the Apply setParam (new array ref) re-fires it.
-  // REF: PLAN.md Wave 4 Task 9; RESEARCH §M7; the GltfChild double-render guard.
-  useEffect(() => {
-    const suppressed = new Set(value.suppressedChildren);
-    const resolve = (name: string) =>
-      resolveChildObject(name, value.nodeNameMap, childIdToObject.current, nameToObject);
-    for (const name of Object.keys(value.nodeNameMap)) {
-      const child = resolve(name); // H90/V44 — by stamped id, name fallback
-      if (!child) continue;
-      child.visible = !suppressed.has(name);
-    }
-    // Suppressed names may not be in nodeNameMap (defensive — a baked child's
-    // key always is, but iterate the list too so an out-of-map key still hides).
-    for (const name of suppressed) {
-      const child = resolve(name);
-      if (child) child.visible = false;
-    }
-  }, [cloned, nameToObject, value.suppressedChildren, value.nodeNameMap]);
-  // P151 (#151, Apply-Transform) — register the mounted, post-override clone in
-  // the PRODUCTION-SAFE live-clone registry so the non-React Apply helper can read
-  // a GltfChild's resolved geometry + material off the exact object the renderer
-  // drew (the bake-what-renders source of truth, H58/H59). NOT DEV-gated (unlike
-  // __basher_gltf_meshes below) — Apply must work in production. Re-registers on
-  // clone swap; unregisters on unmount (guarded so a late unmount can't clobber a
-  // newer asset that re-took the assetRef). REF: gltfCloneRegistry.ts; Wave 4 t10.
-  useEffect(() => {
-    registerGltfClone(value.assetRef, cloned);
-    return () => unregisterGltfClone(value.assetRef, cloned);
-  }, [cloned, value.assetRef]);
-  // UX #8 — publish a READ-ONLY material projection of the clone for the
-  // inspector. The embedded glTF materials live only on this clone (not the
-  // DAG), so the inspector can't see them without this bridge. Reads the
-  // POST-override material (this effect is defined AFTER the override effect, so
-  // it runs after on every shared commit → what's actually drawn, Lokayata) and
-  // after the stamp effect (so each slot carries its childId). Cleared on
-  // unmount. REF: readGltfMaterials.ts, gltfMaterialStore.ts; UX-BACKLOG #8.
-  useEffect(() => {
-    useGltfMaterialStore.getState().publish(value.assetRef, readGltfMaterials(cloned));
-    return () => useGltfMaterialStore.getState().clearAsset(value.assetRef);
-  }, [cloned, override, value.assetRef]);
-  // P7.5 + P7.7 — per-child TRS override (consumer side of the H40
-  // boundary-pair). This is the SOLE writer of per-child TRS onto the clone
-  // (V20 / H36 / H33 — never add a second). It reads THREE layers and lets the
-  // ONE layering primitive (resolveAllChildTrs, B1) pick per-component:
-  //   manual GltfChild override (if overridden[field]) → clip track → base.
-  // The base for each name is the GltfChild node's seeded TRS (captured static
-  // base at import); with no node it falls back to the clip track.
-  //
-  // P7.7 REMOVED the old `if (!clip) return` early-out: children must still get
-  // their manual/base TRS even with NO animation. The per-name guard inside
-  // resolveAllChildTrs (omit names with neither node nor clip) replaces it.
-  //
-  // Rotation is degrees throughout the layering; convert at the THREE seam via
-  // degVec3ToRad (same call all other .rotation consumers in this file use).
-  //
-  // [[B13]] Pass 2 (PR #115) → Pass 3 (P7.10, this commit) — useFrame samples
-  // the closure-of-time directly from useTimeStore.getState(), NOT from a
-  // value.transformClip ref that changes per frame.
-  //
-  // Pre-P7.10 value.transformClip carried a pre-sampled `.tracks` map produced
-  // by TransformClip's evaluate at ctx.time. Its identity changed every
-  // playback frame, which forced SceneFromDAG (subscribed to time) to re-render
-  // and the whole React tree to walk per fox subtree — even with Pass 1's
-  // memo, the new prop ref defeated it. The Pass 2 useFrame moved the TRS-write
-  // loop OUT of React's commit, but the tree-walk itself stayed: H48's 2nd
-  // occurrence measured react.p95 still ≈24ms @ 8 foxes.
-  //
-  // Pass 3 (P7.10): TransformClipValue is now a function-of-time
-  // (`.sample(seconds)`). The cache key for TransformClip became stable across
-  // frames (its evaluate now takes no `time` input — input hashes don't flip),
-  // so value.transformClip is a referentially-stable closure across renders.
-  // The hot path moves entirely OUT of React: useFrame reads live time from
-  // useTimeStore (snapshot, fires every R3F rAF) and invokes the closure at
-  // consumer cadence. The dirty-check keys on (seconds, childOverrides) so the
-  // PAUSED case (seconds stable) skips the write loop, and an edit-while-playing
-  // setParam (new childOverrides ref) re-applies on the next frame.
-  //
-  // Correctness: useFrame runs in the R3F frameloop OUTSIDE React's commit;
-  // bones are updated in time for this frame's draw. The single-writer
-  // V20/H36/H33 invariant still holds (this is still the sole TRS-writer onto
-  // the clone). REF: PLAN 7.10 Wave C; H48 + B13 catalogue.
-  const lastApplied = useRef<{ seconds: number; overrides: unknown; baked: unknown } | null>(null);
-  useFrame(() => {
-    const seconds = useTimeStore.getState().seconds;
-    if (
-      lastApplied.current !== null &&
-      lastApplied.current.seconds === seconds &&
-      lastApplied.current.overrides === childOverrides &&
-      lastApplied.current.baked === bakedChannels
-    ) {
-      return;
-    }
-    // Sample the closure at live time. value.transformClip is a stable
-    // referentially-equal closure across renders (P7.10 cache invariance);
-    // .sample() is a pure call producing a fresh TRS map per invocation.
-    const tracks = value.transformClip?.sample(seconds) ?? null;
-    // P7.12 (#108, C2) — sample the baked-channel band at the SAME `seconds`
-    // snapshot, per component, keyed by childName. A present component wins over
-    // the clip (presence, R-4) inside resolveAllChildTrs. No new time
-    // subscription: the samplers are invoked here in the existing useFrame.
-    let bakedByName: Record<string, BakedChannel> | null = null;
-    for (const name of Object.keys(bakedChannels)) {
-      const baked = sampleBakedChannel(bakedChannels[name], seconds);
-      if (baked) (bakedByName ??= {})[name] = baked;
-    }
-    const resolved = resolveAllChildTrs({
-      names: Object.keys(value.nodeNameMap),
-      childByName: childOverrides,
-      tracks,
-      bakedByName,
-    });
-    for (const [name, trs] of Object.entries(resolved)) {
-      // H90/V44 — resolve by STAMPED id first (survives the producer↔clone name
-      // divergence), name fallback for pre-UX#7 saves.
-      const child = resolveChildObject(
-        name,
-        value.nodeNameMap,
-        childIdToObject.current,
-        nameToObject,
-      );
-      if (!child) continue;
-      child.position.set(trs.position[0], trs.position[1], trs.position[2]);
-      const radRot = degVec3ToRad(trs.rotation);
-      child.rotation.set(radRot[0], radRot[1], radRot[2]);
-      child.scale.set(trs.scale[0], trs.scale[1], trs.scale[2]);
-    }
-    lastApplied.current = { seconds, overrides: childOverrides, baked: bakedChannels };
-  });
-  // Re-apply on clone swap (asset reload) — the new clone has bind-pose TRS,
-  // and the dirty-check above would short-circuit if clip/overrides happen to
-  // be referentially equal to the last clone's apply.
-  useEffect(() => {
-    lastApplied.current = null;
-  }, [cloned]);
-  // #188 (v0.7 Phase 3) — the per-frame MATERIAL-ANIMATION write loop. The glTF
-  // material analogue of the TRS useFrame above: the override EFFECT establishes the
-  // material objects (clones, base IR overlay, override tint — the expensive,
-  // structural step), and THIS useFrame overlays the animated scalar deltas onto
-  // those already-cloned live materials each frame (cheap — re-cloning per frame
-  // would churn GC, the same reason TRS writes `child.position.set` instead of
-  // re-instantiating). Mirrors the TRS dirty-check exactly: snapshot live time (never
-  // a time subscription — H48), skip when (seconds, channels) are unchanged so a
-  // PAUSED scene pays nothing; early-out when no child animates a material.
-  const lastMaterialApplied = useRef<{
-    seconds: number;
-    channels: unknown;
-    transients: unknown;
-  } | null>(null);
-  useFrame(() => {
-    if (materialChannelsByChild.size === 0) return;
-    const seconds = useTimeStore.getState().seconds;
-    // #198 (Phase 4, item 4) — snapshot the transient SET (NEVER subscribe — H48,
-    // the frameloop is "always"). A material transient is held ONLY for an ANIMATED
-    // field (routeAnimatedGrab finds a channel), so the channel guard above already
-    // covers every child that can carry one; the transient just wins ON TOP below.
-    const transients = useTransientEditStore.getState().edits;
-    if (
-      lastMaterialApplied.current !== null &&
-      lastMaterialApplied.current.seconds === seconds &&
-      lastMaterialApplied.current.channels === materialChannelsByChild &&
-      lastMaterialApplied.current.transients === transients
-    ) {
-      return;
-    }
-    // Keyed by the OBJECT id, because that is what a clone's meshes resolve to
-    // (`nearestChildId` → `nodeNameMap`); the channels and transients are addressed to the
-    // DATA half. One hop reconciles the two, and doing it here rather than re-keying the
-    // channel map keeps `materialChannelsByChild` a faithful index of what was authored.
-    for (const [childId, slotMats] of childSlotMaterials.current) {
-      const dataId = importedChildDataId(depNodeMap, childId);
-      if (!dataId) continue;
-      const channels = materialChannelsByChild.get(dataId);
-      if (!channels) continue;
-      const captured = importedChildMaterials<InlineMaterialSpec>(depNodeMap, childId);
-      if (!captured) continue;
-      // Overlay the channels onto the EVALUATED materials (H40 — read evaluated, not
-      // a parallel sample) via the ONE overlay primitive (V57); weight 1 → the
-      // sampled value wins. `writeAt` indexes the `materials.<slot>.<lobe>.<field>`
-      // array path with NO setAtPath change (V53). One overlay per child handles all
-      // its slots/fields at once. THEN overlay the transient ON TOP (transient >
-      // channel — #198 item 4): an Auto-Key-OFF held edit on an animated material
-      // field previews live, the SAME overlayTransients the native DirectChannelsR
-      // uses (one band, two callers) so the RENDER matches the inspector read-side
-      // (resolveEvaluatedParam) — no H40 "snaps right back" divergence.
-      // Overlay onto the DATA HALF'S OWN PARAM SHAPE, so `writeAt` indexes the same
-      // paths the channels carry — `material.<lobe>.<field>` writes the scalar leaf, and
-      // `materialSlots.<n>.…` indexes the table. Then flatten by the one rule, so a
-      // single-primitive child (which stores no table) still yields slot 0.
-      const overlaid = overlayTransients(
-        overlayChannels(captured.base, channels, 1, seconds) ?? captured.base,
-        dataId,
-        transients,
-      );
-      if (!overlaid) continue;
-      // Through `objectSlotsOf` — the ONE derivation — and NOT through the `dataSlotsOnly`
-      // hatch (#645). The hatch is for a road with no Object in reach; this road has one,
-      // because after #389 an imported child IS an Object, and `childId` is its id. So a
-      // per-slot override the director set on this child wins here for the index it names,
-      // exactly as it does for a box — which is the rule #645 stated for every Object and
-      // this kind could not obey while it was fused.
-      //
-      // The order is the precedence: channel overlay first (it animates the BASE material),
-      // then the transient on top of that, then the Object's override applied per index
-      // last. That is `objectSlotTable.gate`'s own statement of the rule.
-      const animated = objectSlotsOf(
-        depNodeMap[childId]?.params as ObjectSlotSource<InlineMaterialSpec>,
-        overlaid,
-      );
-      for (let i = 0; i < slotMats.length; i += 1) {
-        const slot = slotMats[i];
-        const ir = animated[i];
-        // slot === null → not animatable (array-material / flatten-claimed slot); ir
-        // absent → fewer captured materials than clone slots. Both: leave untouched.
-        if (slot && ir) {
-          applyOpenpbrScalars(slot.mat, openpbrToThree(ir));
-          // #198 — re-layer the MaterialOverride tint's forced fields ON TOP of the
-          // animated base IR (channel-over-override composition). No-op for plain
-          // (un-overridden) animatable slots.
-          slot.reapplyOverride?.();
-        }
-      }
-    }
-    lastMaterialApplied.current = { seconds, channels: materialChannelsByChild, transients };
-  });
-  // Re-apply on a structural rebuild (clone swap / override change / dep edit) — the
-  // override effect (same deps) re-clones the materials, so the prior write targets
-  // are stale; clear the dirty-check so the next frame re-applies onto the fresh
-  // materials even if (seconds, channels) happen to be referentially equal.
-  useEffect(() => {
-    lastMaterialApplied.current = null;
-  }, [cloned, override, depNodeMap]);
-  // #88 (DEV-only) — observation seam for the skinned-deform e2e. The proof
-  // that #88 works is that a skin-bound VERTEX moves (not just that a joint
-  // Object3D animates — that already happens via the TRS effect above). That
-  // vertex only exists on the rendered cloned SkinnedMesh, which nothing
-  // exposes to e2e today. Mirror the gizmo's userData + window-getter pattern
-  // (Gizmo.tsx:254): expose a live reader over the first SkinnedMesh in the
-  // cloned tree. Read-only — no DAG mutation, no store writes (V8 clean).
-  // Single-skinned-asset assumption (the e2e loads one), same stance as the
-  // gizmo's single-selection getter.
-  useEffect(() => {
-    if (!import.meta.env.DEV) return;
-    let skinned: THREE.SkinnedMesh | null = null;
-    cloned.traverse((child) => {
-      if (skinned) return;
-      if ((child as THREE.SkinnedMesh).isSkinnedMesh) skinned = child as THREE.SkinnedMesh;
-    });
-    if (!skinned) return; // don't clobber a registered getter with a non-skinned sibling
-    const mesh: THREE.SkinnedMesh = skinned;
-    mesh.userData.__basher_skin = {
-      boneCount: mesh.skeleton ? mesh.skeleton.bones.length : 0,
-      bound: Boolean(mesh.skeleton && mesh.skeleton.bones.length > 0),
-      // Live reader: computes the CPU-skinned vertex (three 0.169) at CALL
-      // time, in world space, so reads at t=0 vs t=mid reflect the current
-      // bone-matrix palette. Call this inside page.evaluate (the function
-      // does not cross the Playwright boundary — its result does).
-      vertex: (i: number): [number, number, number] => {
-        const v = new THREE.Vector3();
-        mesh.getVertexPosition(i, v);
-        mesh.localToWorld(v);
-        return [v.x, v.y, v.z];
-      },
-      // P7.11 (#100) — the RENDER side of the H40 boundary-pair. The render
-      // skeleton's bones are in `skin.joints[]` order (GLTFLoader builds them
-      // that way, RESEARCH B1/B7), the SAME spine the pure `GltfSkeleton`
-      // projection emits. The correspondence is therefore BY INDEX: rendered
-      // bone i == projected `bones[i]` == `skin.joints[i]`. Read-only.
-      //
-      // 🔴 IT IS NOT BY NAME, AND IT NEVER WAS (#922). This string is in THREE's
-      // name space, not ours: GLTFLoader sanitises every node name as it loads
-      // (GLTFLoader.js:3655 → PropertyBinding.sanitizeNodeName, which REMOVES
-      // `[].:/`), so a Mixamo `mixamorig:Hips` arrives here as `mixamorigHips`
-      // while our params spell the same bone `mixamorig_Hips` (`sanitizeBoneName`
-      // REPLACES those characters). Measured on the tracked stand-in rig: direct
-      // comparison against the projected names matches 1 of 23 bones — only
-      // `Root`, the one joint with nothing to sanitise. Comparing them looks
-      // exactly like a broken bone map, and cost a debugging cycle in #921.
-      //
-      // To compare NAMES across this seam, put both sides through
-      // `canonicalBoneKey` (`core/import/retarget.ts`), which collapses
-      // separators and case and reconciles 23 of 23 on that same rig. There is no
-      // function from one spelling to the other — see boneNameSpaces.test.ts,
-      // which pins all of this and reds if either sanitiser's rule moves.
-      boneName: (i: number): string | null => mesh.skeleton?.bones[i]?.name ?? null,
-      // #808 — the correspondence the H40 pair should actually assert. The
-      // stamped `basherGltfChildId` is the ONE key both sides own: the import
-      // derives it from the glTF node INDEX (`nodeNameMap[key]`), and the stamp
-      // effect above writes it onto the clone object by that same index. So
-      // `boneChildId(i) === nodeNameMap[projected[i].name]` says "the rig the
-      // evaluator projects and the rig that renders are the same objects, bone
-      // for bone" WITHOUT comparing a name — which is the only honest way to say
-      // it, since the two sides spell bones differently and cannot be bridged
-      // (see boneNameSpaces.test.ts). Read at CALL time, like the readers above,
-      // so it does not depend on this effect running after the stamping one.
-      boneChildId: (i: number): string | null => {
-        const b = mesh.skeleton?.bones[i];
-        const id = (b?.userData as { basherGltfChildId?: unknown } | undefined)?.basherGltfChildId;
-        return typeof id === 'string' && id ? id : null;
-      },
-      // Bone local rotation (radians, XYZ Euler) at CALL time — drives the
-      // H46 rotation-delta proof (limbs rotate under playback; position is a
-      // constant bind offset → exact-zero false-negative if sampled instead).
-      boneRotation: (i: number): [number, number, number] | null => {
-        const b = mesh.skeleton?.bones[i];
-        if (!b) return null;
-        const e = new THREE.Euler().setFromQuaternion(b.quaternion, 'XYZ');
-        return [e.x, e.y, e.z];
-      },
-    };
-    const w = window as unknown as Record<string, unknown>;
-    w.__basher_gltf_skin = () =>
-      (mesh as unknown as { userData: Record<string, unknown> }).userData.__basher_skin ?? null;
-  }, [cloned]);
-  // P7.9 Wave F Task 12 (DEV-only) — observation seam for the disk-import
-  // Lokayata gate. The proof that a multi-file `.gltf` rendered TEXTURED is
-  // that one of the cloned Meshes carries a non-null `material.map`. That
-  // surface only exists on the cloned three.js tree — nothing else in the
-  // app exposes it. Mirror the `__basher_gltf_skin` pattern (line 597-599):
-  // a DEV-only window getter that walks the cloned tree and returns the
-  // serializable mesh summary. Read-only — no DAG mutation, no store writes
-  // (V8 clean). Single-asset assumption (the e2e loads one); a later asset
-  // mounting will clobber the getter, which is fine for the test.
-  useEffect(() => {
-    if (!import.meta.env.DEV) return;
-    const w = window as unknown as Record<string, unknown>;
-    w.__basher_gltf_meshes = () => {
-      const summary: Array<{
-        // v0.6 #2 (#178, W6) — the per-MESH slot index, matching the override
-        // effect's `slotIdx` (incremented per isMesh in the SAME traverse). A
-        // MaterialOverride with `slotIndex===slot` addresses exactly this entry.
-        // For a material-ARRAY mesh every entry shares the mesh's slot (the
-        // override treats one mesh = one slot, applying `make` to each array elem).
-        slot: number;
-        name: string;
-        hasMap: boolean;
-        mapImageOk: boolean;
-        color: string | null;
-        metalness: number | null;
-        roughness: number | null;
-        hasMetalnessMap: boolean;
-        hasRoughnessMap: boolean;
-        // glTF direct-import (texture-maps milestone) — the live three.js material
-        // flags GLTFLoader sets from alphaMode/COLOR_0/doubleSided. Exposed so the
-        // alphaMode + vertex-color slices can OBSERVE whether the clone already
-        // renders them (the reframing: the scalar overlay never strips these).
-        alphaTest: number | null;
-        transparent: boolean;
-        vertexColors: boolean;
-        side: number | null;
-        // The base-color map's UV transform (glTF KHR_texture_transform), so the
-        // texture-transform slice can boundary-pair the rendered repeat/offset/
-        // rotation against the captured `uvTransform`. null when the slot is empty.
-        mapRepeat: [number, number] | null;
-        mapOffset: [number, number] | null;
-        mapRotation: number | null;
-        // #550 — the SAME reading for EVERY map slot, because the placement became a
-        // per-slot property and a one-slot probe cannot observe a per-slot claim.
-        // Only slots that actually carry a texture appear. Includes `center`, since
-        // the two apply roads pivot differently and that is the axis of #551.
-        slotPlacements: Record<
-          string,
-          {
-            repeat: [number, number];
-            offset: [number, number];
-            rotation: number;
-            center: [number, number];
-          }
-        >;
-        // P151 Wave 4 t11 — the original child's WORLD-space bounds (three-way
-        // verts boundary-pair: original child == resolver baked == rendered baked)
-        // and its render VISIBILITY (suppression: false after the child is baked).
-        worldBounds: [number, number, number];
-        visible: boolean;
-        // P151 Wave 3 t7 (LOKAYATA PROBE) — per-`map` texture-readback diagnostic
-        // on the CLONED child material. The bake (Wave 4) must decide whether it
-        // can copy the ORIGINAL compressed bytes (path 1, lossless) or must fall
-        // back to a canvas readback (path 2). That decision hinges on whether a
-        // source-URI association survives `SkeletonUtils.clone` (RESEARCH §M4 —
-        // a MEDIUM-confidence runtime question). This field reports, for the base
-        // color `map`, which association-bearing surface is actually present so we
-        // OBSERVE the path rather than infer it.
-        mapProbe: {
-          // image dims — the canvas-readback path (2) needs a decoded image.
-          imageWidth: number;
-          imageHeight: number;
-          // path (1) candidates — three.js stores the glTF→texture link in
-          // different places depending on loader/clone behaviour. We report each
-          // independently so the probe shows EXACTLY which survived the clone.
-          hasUserDataSrcUri: boolean; // texture.userData.* sourceURI-ish key
-          hasSourceData: boolean; // texture.source?.data present (Source object)
-          sourceDataUri: string | null; // texture.source.data.src if it is a URI
-          imageSrc: string | null; // texture.image.src if the image is URL-backed
-        } | null;
-      }> = [];
-      // #550 — read every filled map slot's placement off the LIVE material. Enumerated
-      // from the same closed slot table the apply road uses, so a slot cannot be missed
-      // by a probe that was written before it existed.
-      const probeSlotPlacements = (mat: THREE.Material | null) => {
-        const out: Record<
-          string,
-          {
-            repeat: [number, number];
-            offset: [number, number];
-            rotation: number;
-            center: [number, number];
-          }
-        > = {};
-        const bag = mat as unknown as Record<string, THREE.Texture | null | undefined> | null;
-        if (!bag) return out;
-        for (const slot of GLTF_UV_MAP_SLOTS) {
-          const t = bag[slot];
-          if (!t) continue;
-          out[slot] = {
-            repeat: [t.repeat.x, t.repeat.y],
-            offset: [t.offset.x, t.offset.y],
-            rotation: t.rotation,
-            center: [t.center.x, t.center.y],
-          };
-        }
-        return out;
-      };
-      const probeMap = (map: THREE.Texture | null) => {
-        if (!map) return null;
-        const image = map.image as { width?: number; height?: number; src?: string } | undefined;
-        // three.Texture.userData is an arbitrary bag; a loader/importer may stash
-        // the source URI there. Scan for any key whose name hints at a source URI.
-        const ud = (map.userData ?? {}) as Record<string, unknown>;
-        const udKey = Object.keys(ud).find((k) => /uri|url|src|source|path/i.test(k));
-        // three 0.169 Texture.source is a `Source` wrapper; `.data` is the image.
-        const source = (map as { source?: { data?: { src?: string } } }).source;
-        const sourceData = source?.data;
-        return {
-          imageWidth: image?.width ?? 0,
-          imageHeight: image?.height ?? 0,
-          hasUserDataSrcUri:
-            udKey !== undefined &&
-            typeof ud[udKey] === 'string' &&
-            (ud[udKey] as string).length > 0,
-          hasSourceData: Boolean(sourceData),
-          sourceDataUri:
-            typeof sourceData?.src === 'string' && sourceData.src.length > 0
-              ? sourceData.src
-              : null,
-          imageSrc: typeof image?.src === 'string' && image.src.length > 0 ? image.src : null,
-        };
-      };
-      let meshSlot = -1;
-      cloned.traverse((child) => {
-        const m = child as THREE.Mesh;
-        if (!m.isMesh) return;
-        meshSlot += 1;
-        const mats = Array.isArray(m.material) ? m.material : [m.material];
-        for (const mat of mats) {
-          const map = (mat as { map?: THREE.Texture | null } | null)?.map ?? null;
-          const image = map?.image as { width?: number } | undefined;
-          // #99 — expose the live material color so the override e2e can prove
-          // the tint LANDED (hasMap survives is only half the goal). `#rrggbb`.
-          const col = (mat as { color?: THREE.Color } | null)?.color;
-          // #124 (V28) — expose the live scalar channels + their map presence so
-          // the force-a-mapped-channel e2e can boundary-pair observe the actual
-          // three.js material (H40/H59), not the override node params: forcing
-          // metalness=0 must land `.metalness===0` while `.metalnessMap` survives
-          // (the clone keeps the ref; the forced scalar zeroes its contribution).
-          const std = mat as {
-            metalness?: number;
-            roughness?: number;
-            metalnessMap?: THREE.Texture | null;
-            roughnessMap?: THREE.Texture | null;
-            alphaTest?: number;
-            transparent?: boolean;
-            vertexColors?: boolean;
-            side?: number;
-          } | null;
-          // P151 Wave 4 t11 — world bounds of THIS child mesh + its render
-          // visibility (false once suppressed by the bake). `visible` walks up the
-          // parent chain because three skips the subtree when ANY ancestor is
-          // hidden; getObjectByName(name).visible alone would miss that.
-          m.updateWorldMatrix(true, false);
-          const wb = new THREE.Vector3();
-          new THREE.Box3().setFromObject(m).getSize(wb);
-          let vis = true;
-          for (let o: THREE.Object3D | null = m; o; o = o.parent) {
-            if (!o.visible) {
-              vis = false;
-              break;
-            }
-          }
-          summary.push({
-            slot: meshSlot,
-            name: m.name ?? '',
-            hasMap: map !== null,
-            mapImageOk: Boolean(image && (image.width ?? 0) > 0),
-            color: col ? `#${col.getHexString()}` : null,
-            metalness: typeof std?.metalness === 'number' ? std.metalness : null,
-            roughness: typeof std?.roughness === 'number' ? std.roughness : null,
-            hasMetalnessMap: Boolean(std?.metalnessMap),
-            hasRoughnessMap: Boolean(std?.roughnessMap),
-            alphaTest: typeof std?.alphaTest === 'number' ? std.alphaTest : null,
-            transparent: std?.transparent === true,
-            vertexColors: std?.vertexColors === true,
-            side: typeof std?.side === 'number' ? std.side : null,
-            mapRepeat: map ? [map.repeat.x, map.repeat.y] : null,
-            mapOffset: map ? [map.offset.x, map.offset.y] : null,
-            mapRotation: map ? map.rotation : null,
-            slotPlacements: probeSlotPlacements(mat),
-            worldBounds: [wb.x, wb.y, wb.z],
-            visible: vis,
-            mapProbe: probeMap(map),
-          });
-        }
-      });
-      return summary;
-    };
-  }, [cloned]);
-  return <primitive object={cloned} />;
 }
 
 function TransformR({
@@ -4586,8 +3472,8 @@ function CharacterR({ value }: { value: CharacterValue }) {
   // #992 — the pose is a FUNCTION OF TIME, so this surface supplies the time
   // rather than receiving an answer at one instant. Subscribed rather than read
   // through `getState()` because this road draws declaratively (a <group> tree
-  // per bone) instead of writing transforms imperatively in a useFrame the way
-  // GltfAssetR does. That is not a new per-frame cost: `LocomotionState` carries
+  // per bone) instead of writing transforms imperatively in a useFrame.
+  // That is not a new per-frame cost: `LocomotionState` carries
   // a `Time` input, so the CharacterValue upstream of here is already rebuilt
   // every frame. Making this road lazy is the P2 placeholder rig's own job (real
   // skinning lands in P3), not this change's.

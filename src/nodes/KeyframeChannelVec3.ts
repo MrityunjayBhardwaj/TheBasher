@@ -119,8 +119,9 @@ export const KeyframeChannelVec3Params = z.object({
     )
     .optional(),
   // P7.12 #108 (BLOCK-2) — the COPY-ON-WRITE BAKE variant: when a glTF bone's
-  // imported clip track is materialized into per-bone channels (bakeGltfChannel,
-  // Wave D), each channel carries the bone's `childName` AND the owning asset's
+  // imported clip track was materialized into per-bone channels (bakeGltfChannel,
+  // Wave D — gone in #1053; saved channels still load, and the clone-character
+  // converter reads these two fields to find them), each channel carries the bone's `childName` AND the owning asset's
   // `assetRef` so the renderer/read-side resolver can enumerate it by name with
   // no per-frame nodeNameMap inverse scan. These MUST be declared on the schema —
   // the DAG stores zod-PARSED params (ops.ts applyAddNode), so an undeclared key
@@ -159,7 +160,7 @@ export type KeyframeChannelVec3Params = z.infer<typeof KeyframeChannelVec3Params
 /**
  * Build the function-of-time sampler for a vec3 channel (V24): sort the
  * keyframes ONCE, return a closure that interpolates per call. Exported so the
- * P7.12 baked-channel enumerator (`bakedGltfChannels.ts`, the resolver band)
+ * P7.12 baked-channel enumerator (`bakedGltfChannels.ts (gone in #1053; at 7e1356c7)`, the resolver band)
  * reuses the SAME interpolation as the node's evaluate — one source of the
  * sampling math, no per-frame ctx/inputs needed (BLOCK-1 shared logic).
  * Interpolation is `sampleVec3Keyframes` (cubic Bézier when a segment carries

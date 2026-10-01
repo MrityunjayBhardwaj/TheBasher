@@ -128,14 +128,6 @@ const HANDLE_KINDS: Record<
     // Must MOVE the key: two amounts are two geometries, even though they are one topology.
     probe: 0.25,
   },
-  gltf: {
-    producer: null,
-    ref: {
-      key: 'gltf|a|b',
-      descriptor: { kind: 'gltf', assetRef: 'a', childName: 'b' },
-    },
-    probe: 'z',
-  },
   baked: {
     producer: null,
     ref: {
@@ -247,10 +239,10 @@ describe('#537 — every param that feeds a geometry handle can reach it', () =>
   });
 
   it('leaves an asset-keyed handle strictly alone', () => {
-    // gltf and baked are keyed by an asset reference and by a content hash of bytes in OPFS.
-    // Re-minting either here would be a second spelling of a key this module does not own —
-    // and for `baked`, a fabricated hash pointing at bytes that do not exist.
-    for (const kind of ['gltf', 'baked']) {
+    // `baked` is keyed by a content hash of bytes in OPFS. Re-minting it here would be a second
+    // spelling of a key this module does not own, and a fabricated hash pointing at bytes that
+    // do not exist. (`gltf`, keyed by an asset reference, sat beside it until #1053.)
+    for (const kind of ['baked']) {
       const { ref } = HANDLE_KINDS[kind];
       expect(rebuildGeometryRef(ref, { hash: 'x', assetRef: 'y', size: [9, 9, 9] })).toBe(ref);
     }

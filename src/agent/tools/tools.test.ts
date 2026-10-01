@@ -29,6 +29,7 @@ vi.mock('../../app/boot', () => ({
   getStorage: async () => currentStorage,
 }));
 
+import { readFileSync } from 'node:fs';
 import {
   registerAllTools,
   getTool,
@@ -457,7 +458,9 @@ function animatedGlb(): Uint8Array {
       asset: { version: '2.0' },
       nodes: [{ name: 'Cube' }],
       accessors: [
-        { bufferView: 0, componentType: 5126, count: 2, type: 'SCALAR' },
+        // An animation input carries its min and max — the glTF spec requires them, and the
+        // native reader refuses one without (#1063).
+        { bufferView: 0, componentType: 5126, count: 2, type: 'SCALAR', min: [0], max: [1] },
         { bufferView: 1, componentType: 5126, count: 2, type: 'VEC3' },
       ],
       bufferViews: [
@@ -491,83 +494,77 @@ describe('library.import tool', () => {
     currentStorage = new MemoryStorage();
   });
 
-  it('non-glTF assetRef → the static 4-op drop chain, no clip nodes (twice-call)', async () => {
-    const ctx: ToolContext = { dagState: buildSceneBaseline() };
+  // #1307 — a motion file used to fall through to a static chain and become a GltfAsset reading
+  // it, reported "Imported". It now takes the chain the UI's motion import dispatches.
+  it.each([
+    ['assets/motion/walk.bvh', 'public/assets/motion/walk.bvh'],
+    ['user-imports/rig/rig.fbx', 'public/fixtures/anim/rig.fbx'],
+  ])(
+    '%s imports as a motion: skeleton, base pose layer, the Object that stands it',
+    async (assetRef, file) => {
+      await currentStorage.write(assetRef, new Uint8Array(readFileSync(file)));
+      const result = await libraryImportTool.handler(
+        { assetRef, position: [1, 0, 1] },
+        { dagState: buildSceneBaseline() },
+      );
+      const types = nodeTypesOf(result.ops);
+      expect(types).toContain('Skeleton');
+      expect(types).toContain('PoseLayer');
+      expect(types).toContain('Object');
+      expect(types).not.toContain('GltfAsset');
+      // The Object is wired into the scene the agent's fork holds.
+      expect(result.ops).toContainEqual(
+        expect.objectContaining({ type: 'connect', to: { node: 'scene', socket: 'children' } }),
+      );
+      // They apply to the fork as they stand — the Diff the user accepts is this.
+      let applied = buildSceneBaseline();
+      for (const op of result.ops) applied = applyOp(applied, op).next;
+      expect(Object.values(applied.nodes).filter((n) => n.type === 'Object')).toHaveLength(1);
+      expect(result.text).toMatch(/as a motion/);
+      expect(result.text).toMatch(/not bound to a character/);
+    },
+  );
 
-    const result1 = await libraryImportTool.handler(
-      { assetRef: 'assets/cube.fbx', position: [1, 0, 1] },
-      ctx,
+  it('a file in no import format is refused by name, with no ops', async () => {
+    const result = await libraryImportTool.handler(
+      { assetRef: 'library/rock.png', position: [0, 0, 0] },
+      { dagState: buildSceneBaseline() },
     );
-    const result2 = await libraryImportTool.handler(
-      { assetRef: 'assets/cube.fbx', position: [1, 0, 1] },
-      ctx,
+    expect(result.ops).toEqual([]);
+    expect(result.text).toMatch(
+      /^Error: library\/rock\.png was not imported .*\.gltf, \.glb, \.bvh, \.fbx/,
     );
-
-    // #222 — the import root is ONE transformable Group (no separate Transform).
-    expect(result1.ops.length).toBe(4);
-    expect(result2.ops.length).toBe(4);
-
-    // Structure: addNode gltf → addNode group → connect(gltf→grp) → connect(grp→scene)
-    const types1 = result1.ops.map((o) => o.type);
-    expect(types1).toEqual(['addNode', 'addNode', 'connect', 'connect']);
-    expect(result2.ops.map((o) => o.type)).toEqual(types1);
-
-    // Static path → GltfAsset → Group, NO Transform / TransformClip / ClipSelect.
-    expect(nodeTypesOf(result1.ops)).toEqual(['GltfAsset', 'Group']);
-
-    // Each connect references ids from preceding addNode calls.
-    const gltfId = (result1.ops[0] as { nodeId: string }).nodeId;
-    const grpId = (result1.ops[1] as { nodeId: string }).nodeId;
-    const connect1 = result1.ops[2] as { from: { node: string }; to: { node: string } };
-    const connect2 = result1.ops[3] as { from: { node: string }; to: { node: string } };
-
-    expect(connect1.from.node).toBe(gltfId);
-    expect(connect1.to.node).toBe(grpId);
-    expect(connect2.from.node).toBe(grpId);
-    expect(connect2.to.node).toBe('scene');
   });
 
   // #105 — the core parity proof: an animated glTF imported via the agent
   // tool now extracts TransformClip + ClipSelect, exactly like the UI drop
   // (buildGltfImportOps). Before the fix the tool emitted only the static
   // chain (silent #81-class drop on the agent surface).
-  it('animated glTF → extracts TransformClip + ClipSelect (parity with UI drop)', async () => {
+  it('animated glTF → its keys land as a channel on the node they animate (parity with UI drop)', async () => {
     const assetRef = 'assets/animated-cube.glb';
     await currentStorage.write(assetRef, animatedGlb());
     const ctx: ToolContext = { dagState: buildSceneBaseline() };
 
     const result = await libraryImportTool.handler({ assetRef, position: [0, 0, 0] }, ctx);
 
+    // #1053 — the agent surface takes the same one road the UI drop does (both go through
+    // `buildGltfImportOpsFromOpfs`), so the same file gives the same nodes. A file's animation
+    // arrives as a keyframe channel on the node it animates (#1051), never as a clip on an asset.
+    expect(result.text).toMatch(/^Imported /);
     const nodeTypes = nodeTypesOf(result.ops);
-    expect(nodeTypes).toContain('TransformClip');
-    expect(nodeTypes).toContain('ClipSelect');
-    // H40 boundary-pair — the agent path now produces the SAME node-type set
-    // the UI path emits for the same file (GltfAsset + the per-child
-    // the imported-child PAIR + Group + TransformClip + ClipSelect). #222: no separate
-    // Transform — the Group is the transformable import root.
-    expect(nodeTypes).toEqual(
-      expect.arrayContaining([
-        'GltfAsset',
-        'GltfData',
-        'Object',
-        'Group',
-        'TransformClip',
-        'ClipSelect',
-      ]),
-    );
-    // ClipSelect wires into the GltfAsset's transformClip socket.
-    const gltfAdd = result.ops.find((o) => o.type === 'addNode' && o.nodeType === 'GltfAsset') as {
-      nodeId: string;
-    };
-    const selToGltf = result.ops.find(
-      (o) =>
-        o.type === 'connect' && o.to.node === gltfAdd.nodeId && o.to.socket === 'transformClip',
-    );
-    expect(selToGltf).toBeDefined();
+    expect(nodeTypes).toContain('KeyframeChannelVec3');
+    expect(nodeTypes).not.toContain('GltfAsset');
+    expect(nodeTypes).not.toContain('TransformClip');
+    // A channel names the node it animates by its `target` param, as Auto-Key's does.
+    const added = result.ops.flatMap((o) => (o.type === 'addNode' ? [o] : []));
+    const channel = added.find((o) => o.nodeType === 'KeyframeChannelVec3')!;
+    const { target, paramPath } = channel.params as { target: string; paramPath: string };
+    expect(added.find((o) => o.nodeId === target)?.nodeType).toBe('Group');
+    expect(paramPath).toBe('position');
   });
 
-  // Falsification — a STATIC glTF yields NO ClipSelect / TransformClip.
-  it('static glTF → no ClipSelect / TransformClip (falsification)', async () => {
+  // Falsification — a STATIC glTF yields NO keyframe channel.
+  it('static glTF → no keyframe channel (falsification)', async () => {
     const assetRef = 'assets/static-cube.glb';
     await currentStorage.write(assetRef, staticGlb());
     const ctx: ToolContext = { dagState: buildSceneBaseline() };
@@ -575,18 +572,13 @@ describe('library.import tool', () => {
     const result = await libraryImportTool.handler({ assetRef }, ctx);
 
     const nodeTypes = nodeTypesOf(result.ops);
-    expect(nodeTypes).not.toContain('ClipSelect');
-    expect(nodeTypes).not.toContain('TransformClip');
-    // #1051 — this fixture's only node has no mesh, which was a native refusal ("an empty") and is
-    // now a Group, so the file no longer reaches the clone road at all. The claim under test is
-    // unchanged and still falsifies the row above: a file with no animation gets no clip nodes,
-    // whichever road carries it. The animated fixture keeps the clone road's own coverage.
+    expect(nodeTypes.filter((t) => t.startsWith('KeyframeChannel'))).toEqual([]);
     expect(nodeTypes).not.toContain('GltfAsset');
     expect(nodeTypes).toContain('Group');
   });
 
   // V22 — two imports of the same assetRef yield byte-identical node ids
-  // (buildGltfImportOps is content-addressed off assetRef via hashId).
+  // (the native import is content-addressed off assetRef).
   it('deterministic ids: same assetRef → identical node ids (V22)', async () => {
     const assetRef = 'assets/animated-cube.glb';
     await currentStorage.write(assetRef, animatedGlb());
@@ -597,6 +589,8 @@ describe('library.import tool', () => {
 
     const idsOf = (r: typeof a) =>
       r.ops.filter((o) => o.type === 'addNode').map((o) => (o as { nodeId: string }).nodeId);
+    // Non-empty first: two refusals would also compare equal, and say nothing about ids.
+    expect(idsOf(a).length).toBeGreaterThan(0);
     expect(idsOf(a)).toEqual(idsOf(b));
   });
 

@@ -57,12 +57,13 @@ const DOORS: Record<string, Door> = {
       'on it. Producers of keyframe sequences must call the wrapper, not this.',
   },
   'src/viewport/SceneFromDAG.tsx': {
-    count: 2,
+    // 2 → 1 (#1053): the bone-rotation accessor lived in the clone renderer, deleted with the
+    // clone road.
+    count: 1,
     kind: 'POINT_IN_TIME',
     why:
-      "Both are per-frame render reads: a look-at direction folded into one frame's " +
-      'TRS, and a bone-rotation accessor that reports the CURRENT pose. Neither is ' +
-      'stored as a keyframe, so nothing interpolates between two of them.',
+      "A per-frame render read: a look-at direction folded into one frame's TRS. It is " +
+      'not stored as a keyframe, so nothing interpolates between two of them.',
   },
   'src/app/resolveTrackTo.ts': {
     count: 1,

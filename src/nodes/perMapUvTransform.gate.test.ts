@@ -119,7 +119,22 @@ describe('#550 case 3 — per-map placement MUST reach the content key', () => {
 
 describe('#550 case 4 — the per-map slot list is DERIVED from the IR map slots', () => {
   it('equal in both directions, so a seventh map slot cannot miss per-map placement', () => {
-    expect([...MAP_UV_SLOTS].sort()).toEqual([...Object.keys(NULL_MAPS)].sort());
+    // The IR's map slots as its schema holds them: a material carrying a texture in EVERY slot
+    // this list names comes back with exactly those slots, so a slot the schema lacks is stripped
+    // and a slot the list lacks never appears. (Not `NULL_MAPS`: since #1327 a slot added later is
+    // not seeded, so the empty maps are only the original six.)
+    const ref = {
+      hash: 'h',
+      colorSpace: 'srgb-linear',
+      flipY: false,
+      wrapS: 'repeat',
+      wrapT: 'repeat',
+    };
+    const parsed = openpbrMaterialSchema().parse({
+      maps: Object.fromEntries(MAP_UV_SLOTS.map((slot) => [slot, ref])),
+    }) as InlineMaterialSpec;
+    expect(Object.keys(parsed.maps).sort()).toEqual([...MAP_UV_SLOTS].sort());
+    expect(MAP_UV_SLOTS).toEqual(expect.arrayContaining(Object.keys(NULL_MAPS)));
   });
 
   // BOTH roads, every slot. Covering only ONE road here was a real blind spot, and it

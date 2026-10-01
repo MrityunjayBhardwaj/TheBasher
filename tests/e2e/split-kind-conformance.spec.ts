@@ -71,6 +71,7 @@
 //      two sides); issues #471, #387.
 
 import { test, expect, type Page } from './_fixtures';
+import { recordedSave, writeRecordedSave } from './_recordedSave';
 import {
   dataIdFor,
   OBJECT_SECTIONS,
@@ -141,6 +142,12 @@ interface BasherWindow {
 interface RenderProbe {
   /** Read the quantity the held edit moves, from the live scene. Null until mounted. */
   signature: (page: Page, objectId: string) => Promise<number | string | null>;
+  /**
+   * #1053 — set, with the reason, for a kind the product no longer draws. Its render rows then
+   * assert that the pair draws NOTHING (the signature reads null after it would have mounted),
+   * instead of reading the expectations below, which record what it drew before.
+   */
+  drawsNothing?: string;
   /** What `signature` must read once the held edit is applied, given its resting value. */
   expectHeld: (resting: number | string) => HeldExpectation;
   /**
@@ -319,42 +326,6 @@ async function cameraFrustumFov(page: Page, objectId: string): Promise<number | 
   }, objectId);
 }
 
-/**
- * The colour of the mesh the ASSET CLONE draws for an imported child — the glTF band's
- * side A, and it needed its own reader rather than reusing `materialColor`.
- *
- * MEASURED before this row was written: `materialColor(objectId)` reads NULL for an
- * imported child, at every point in the row's life. That is not a mounting failure, it is
- * the design — `ObjectMeshR` resolves `getForAttach` only when `drawnByAssetClone` is
- * false (SceneFromDAG.tsx), and for a glTF child it is true, so the Object deliberately
- * draws nothing and `GltfAssetR`'s clone draws it instead. Reusing the per-object probe
- * would have made every row here fail as "nothing mounted" while the model was on screen.
- *
- * So the read goes through `__basher_gltf_meshes`, the seam that reports the live clone's
- * materials, keyed by the child's NAME. The name is resolved from the Object through the
- * same `data`-edge hop the product uses, never re-derived from the id — the id is
- * content-addressed off `(assetRef, childName)` and re-deriving it here would put a
- * second spelling of that hash in the test.
- */
-async function gltfCloneColor(page: Page, objectId: string): Promise<string | null> {
-  const childName = await page.evaluate((id) => {
-    const nodes = (window as unknown as BasherWindow).__basher_dag!.getState().state.nodes;
-    const dataId = nodes[id]?.inputs?.data?.node;
-    const data = dataId ? nodes[dataId] : undefined;
-    return data?.type === 'GltfData'
-      ? ((data.params as { childName?: string }).childName ?? null)
-      : null;
-  }, objectId);
-  if (childName === null) return null;
-  return page.evaluate((name) => {
-    const read = (
-      window as unknown as { __basher_gltf_meshes?: () => { name: string; color: string | null }[] }
-    ).__basher_gltf_meshes;
-    const m = (read ? read() : []).find((s) => s.name === name);
-    return m ? m.color : null;
-  }, childName);
-}
-
 const RENDER_PROBES: Record<SplitKindName, RenderProbe> = {
   box: {
     signature: materialColor,
@@ -499,10 +470,12 @@ const RENDER_PROBES: Record<SplitKindName, RenderProbe> = {
     what: "the rendered material's captured baked colour",
   },
   gltf: {
-    // The one kind whose Object draws NOTHING: `drawnByAssetClone` is true for a glTF
-    // child, so the pair's render is the asset clone's mesh. See `gltfCloneColor` — the
-    // per-object probe every other mesh band uses reads null here, always.
-    signature: gltfCloneColor,
+    // #1053 — the clone road is retired: a GltfAsset pair (a kept import) is NOT DRAWN (user
+    // decision, 2026-09-30). The per-object probe reads null for it, and the three render rows
+    // assert exactly that. The expectations below are what the asset clone drew before, kept as
+    // the record of the road this row used to measure.
+    signature: materialColor,
+    drawsNothing: 'a kept clone import is not drawn (#1053)',
     // MEASURED with the channel seeded FIRST, which is not a detail: a held edit only
     // exists on an animated param, and a transient applied to a static one is a state
     // the product never reaches. Measured without that step the clone does not move,
@@ -715,9 +688,11 @@ async function buildBakedRow(page: Page, restingColor: string) {
  * roads that read pixels see nothing. R7 and R8 pass on the hand-authored fixture for
  * exactly that reason, which is why the fixture survived until a rendering road asked.
  *
- * So the fixture drives the LIVE IMPORTER. Ingest the cube fixture through the same
- * `__basher_ingestGltfFolder` the app uses, let the real chain mint the pair, then write
- * the row's resting colour onto the data half.
+ * So the fixture is a pair the product really made. Since #1053 no import makes one — a file the
+ * native reader refuses is refused whole — and the only GltfData pair a user can have is one a load
+ * KEPT: a project saved on the clone road whose file the native reader still refuses. The row loads
+ * exactly that, a recorded save (`_recordedSave.ts`) of iridescence-quad.gltf, on the resume road,
+ * then writes the row's resting colour onto the data half.
  *
  * ⚠️ THE IDS MUST BE READ, NOT DERIVED — the same rule the baked row records, arrived at
  * from the other side. Both halves are content-addressed off `(assetRef, childName)`
@@ -726,53 +701,44 @@ async function buildBakedRow(page: Page, restingColor: string) {
  *
  * ⚠️ AND THE PAIR IS NOT WIRED TO THE SCENE ROOT, which makes this the one row where R1's
  * title is literally inaccurate. An imported child is deliberately edge-less: it reaches no
- * scene parent, and the asset clone draws it. Connecting it to `scene.children` to satisfy
+ * scene parent, and nothing draws it (the asset clone did until #1053). Connecting it to
+ * `scene.children` to satisfy
  * the phrasing would build a fixture the product never produces. The road's QUESTION — does
  * the data half's committed value reach the render with no channel, no constraint and no
  * transient — is asked in full; only the mounting path differs, which is the same latitude
  * `buildBakedRow` takes.
  */
+/** The kept import's one mesh child (iridescence-quad.gltf's node). */
+const GLTF_ROW_CHILD = 'SheenQuad';
+
 async function buildGltfRow(page: Page, restingColor: string) {
-  await page.waitForFunction(
-    () =>
-      typeof (window as unknown as { __basher_ingestGltfFolder?: unknown })
-        .__basher_ingestGltfFolder === 'function',
-    undefined,
-    { timeout: 20_000 },
-  );
-  await page.evaluate(async () => {
-    const w = window as unknown as {
-      __basher_ingestGltfFolder: (
-        files: { relativePath: string; bytes: Uint8Array }[],
-        folder: string,
-      ) => Promise<string>;
-    };
-    const bytes = new Uint8Array(
-      await fetch('/assets/cube-draco.glb').then((r) => r.arrayBuffer()),
-    );
-    await w.__basher_ingestGltfFolder([{ relativePath: 'cube-draco.glb', bytes }], 'conf-gltf');
-  });
+  const saved = recordedSave('clone-models/refused-iridescence');
+  await writeRecordedSave(page, saved);
+  await page.reload();
+  // The load says why it kept the import, and that notice covers the top toolbars until it is
+  // dismissed (#1410) — the roads below click them, so dismiss it first, as a director would.
+  await page.getByRole('button', { name: `Dismiss error for model:${saved.ref}` }).click();
 
   // Wait on the PAIR, not on a node type: `Object` alone is satisfied by the default
   // project's box before the import has done anything at all.
   await page.waitForFunction(
-    () => {
-      const nodes = (window as unknown as BasherWindow).__basher_dag!.getState().state.nodes;
+    (child) => {
+      const nodes = (window as unknown as BasherWindow).__basher_dag?.getState().state.nodes ?? {};
       return Object.keys(nodes).some((id) => {
         const dataId = nodes[id]?.inputs?.data?.node;
         return (
           nodes[id]?.type === 'Object' &&
           dataId !== undefined &&
           nodes[dataId]?.type === 'GltfData' &&
-          (nodes[dataId].params as { childName?: string }).childName === 'cube'
+          (nodes[dataId].params as { childName?: string }).childName === child
         );
       });
     },
-    undefined,
+    GLTF_ROW_CHILD,
     { timeout: 20_000 },
   );
 
-  const ids = await page.evaluate(() => {
+  const ids = await page.evaluate((child) => {
     const nodes = (window as unknown as BasherWindow).__basher_dag!.getState().state.nodes;
     for (const id of Object.keys(nodes)) {
       const dataId = nodes[id]?.inputs?.data?.node;
@@ -781,18 +747,21 @@ async function buildGltfRow(page: Page, restingColor: string) {
       if (
         nodes[id].type === 'Object' &&
         data?.type === 'GltfData' &&
-        (data.params as { childName?: string }).childName === 'cube'
+        (data.params as { childName?: string }).childName === child
       ) {
         return { objectId: id, dataId };
       }
     }
     return null;
-  });
-  expect(ids, 'gltf: the import minted no Object/GltfData pair for the cube child').not.toBeNull();
+  }, GLTF_ROW_CHILD);
+  expect(
+    ids,
+    `gltf: the kept import has no Object/GltfData pair for ${GLTF_ROW_CHILD}`,
+  ).not.toBeNull();
 
   // The row's resting colour, written onto the DATA half through the same whole-`material`
   // replace the inspector commits. Deliberately a WRITE and not a fixture value: the
-  // cube's own captured colour is #5af07a, so a road that reads the resting value from the
+  // quad's own captured colour is #e77c7c, so a road that reads the resting value from the
   // wrong half — or fails to write at all — reads that instead of #c81e5a and says so.
   await page.evaluate(
     ({ d, color }) => {
@@ -867,6 +836,20 @@ async function buildRow(page: Page, kind: SplitKindName) {
   return { objectId, dataId };
 }
 
+/**
+ * #1053 — a kind the product no longer draws: after the pair is built and the scene has had frames
+ * to mount it, the probe reads NOTHING for its Object.
+ */
+async function expectDrawsNothing(page: Page, probe: RenderProbe, objectId: string) {
+  await page.evaluate(
+    () =>
+      new Promise<void>((r) =>
+        requestAnimationFrame(() => requestAnimationFrame(() => requestAnimationFrame(() => r()))),
+      ),
+  );
+  expect(await probe.signature(page, objectId), probe.drawsNothing).toBeNull();
+}
+
 test.describe('the split-kind conformance matrix (browser tier)', () => {
   // Guard the guard, first: the probe table has to cover exactly the rows that exist.
   //
@@ -895,6 +878,7 @@ test.describe('the split-kind conformance matrix (browser tier)', () => {
 
     test(`R5 ${kind} — a HELD edit on the data half repaints the object`, async ({ page }) => {
       const { objectId, dataId } = await buildRow(page, kind);
+      if (probe.drawsNothing) return expectDrawsNothing(page, probe, objectId);
 
       // The param has to be ANIMATED before a held edit can exist at all. That is not a
       // detail of the fixture, it is the shape of the feature: dragging a static param
@@ -994,6 +978,7 @@ test.describe('the split-kind conformance matrix (browser tier)', () => {
       // observed the plain `MeshChild` arm — the arm almost every object in a real project
       // takes. The five kinds that were gaps on this road were gaps for that reason.
       const { objectId } = await buildRow(page, kind);
+      if (probe.drawsNothing) return expectDrawsNothing(page, probe, objectId);
 
       const drawn = await expectEventually(
         page,
@@ -1088,6 +1073,7 @@ test.describe('the split-kind conformance matrix (browser tier)', () => {
       // and it is the road both data-half reaches originally missed, so a kind can animate
       // correctly everywhere else and freeze the moment it is constrained.
       const { objectId } = await buildRow(page, kind);
+      if (probe.drawsNothing) return expectDrawsNothing(page, probe, objectId);
       await seedRowChannel(page, kind, objectId);
       await constrainRow(page, objectId);
 
@@ -1449,11 +1435,10 @@ const CONSTRAINT_WITNESS: Record<
     gltf: {
       // The same weakest-witness shape the light has, for a DIFFERENT and equally
       // structural reason, and it was measured rather than assumed: an imported child's
-      // Object draws nothing at all (`drawnByAssetClone`), so
+      // Object draws nothing at all (its data evaluates to none since #1053), so
       // `__basher_mesh_world_quaternion` has no mesh to report and returns null. There is
-      // no rendered orientation to observe because there is no rendered object — the
-      // clone carries the surface, and its per-child TRS is written by GltfAssetR's own
-      // override effect rather than by the band the other four mesh rows take.
+      // no rendered orientation to observe because there is no rendered object. (Before
+      // #1053 the clone carried the surface and the clone renderer wrote its per-child TRS.)
       //
       // Carrying the box's witness over would have recorded a null as a FAILURE to
       // constrain, which is a different claim from "this band has no orientation of its

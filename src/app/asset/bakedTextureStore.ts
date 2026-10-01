@@ -24,7 +24,7 @@
 //
 // Colorspace (M5/M8): a map loaded without its sRGB colorspace washes out on
 // reload. `BakedTextureRef.colorSpace` carries it; `loadBakedTexture` sets it
-// explicitly. The load is suspense-cached (mirrors opfsLoader.ts), the only async
+// explicitly. The load is suspense-cached (see bakedTextureLoader.ts), the only async
 // reader of the authoritative OPFS texture bytes.
 //
 // H45 / read-only capture: `persistTexture` READS `texture.image` (or copies
@@ -32,13 +32,21 @@
 // material is already a per-instance `s.clone()` (#99).
 //
 // REF: PLAN.md Wave 3 Task 7; RESEARCH §M4/§M5/§M8; bakedGeometryStore.ts (the
-//      mirrored content-hash store); opfsLoader.ts:30-111 (the suspense pattern);
+//      mirrored content-hash store);
 //      GROUND_TRUTH_GLTF.md §STAGE 3 (Texture associations).
 
 import * as THREE from 'three';
 import { hashValue } from '../../core/dag/hash';
 import type { StorageCapability } from '../../core/storage/StorageCapability';
-import type { BakedTextureRef } from '../../nodes/types';
+import type {
+  BakedMapSlot,
+  BakedTextureMagFilter,
+  BakedTextureMinFilter,
+  BakedTextureRef,
+  BakedTextureWrap,
+} from '../../nodes/types';
+import { WRAP_NAME_OF_THREE } from '../../nodes/materialSchema';
+import { MATERIAL_MAP_SLOT_TABLE } from '../../nodes/types';
 import { projectImagePath } from '../../core/project/projectImages';
 import { useProjectStore } from '../../core/project/store';
 
@@ -57,11 +65,19 @@ function toBakedColorSpace(cs: string): BakedTextureRef['colorSpace'] {
 }
 
 /** Inverse of {@link toBakedColorSpace}: the ref token → a three colorspace. */
-function fromBakedColorSpace(cs: BakedTextureRef['colorSpace']): THREE.ColorSpace {
+export function fromBakedColorSpace(cs: BakedTextureRef['colorSpace']): THREE.ColorSpace {
   if (cs === 'srgb') return THREE.SRGBColorSpace;
   if (cs === 'srgb-linear') return THREE.LinearSRGBColorSpace;
   return THREE.NoColorSpace;
 }
+
+/** Each map slot's three colorspace, by its three name — the slot table's, converted (#1324). */
+export const BAKED_MAP_COLOR_SPACE = Object.fromEntries(
+  Object.values(MATERIAL_MAP_SLOT_TABLE).map((row) => [
+    row.three,
+    fromBakedColorSpace(row.colorSpace),
+  ]),
+) as Readonly<Record<BakedMapSlot, THREE.ColorSpace>>;
 
 /** The OPFS file path for a baked texture, keyed by content hash + extension. */
 export function bakedTexturePath(hash: string, ext: string): string {
@@ -190,13 +206,18 @@ export async function persistTexture(
     hash: `${hash}.${ext}`,
     colorSpace: toBakedColorSpace(texture.colorSpace),
     flipY: texture.flipY,
-    wrapS: texture.wrapS,
-    wrapT: texture.wrapT,
+    // #1316 — by name; a live texture holds three's constants.
+    wrapS: WRAP_NAME_OF_THREE[texture.wrapS] ?? 'repeat',
+    wrapT: WRAP_NAME_OF_THREE[texture.wrapT] ?? 'repeat',
   };
 }
 
-/** Split a `BakedTextureRef.hash` ('<hash>.<ext>') into its OPFS path. */
-function refToPath(ref: BakedTextureRef): string {
+/**
+ * Split a `BakedTextureRef.hash` ('<hash>.<ext>') into its OPFS path. Exported so the loader can
+ * tell which file a cached failure was about (#1312): a project image's path moves with the open
+ * project while its cache key does not.
+ */
+export function refToPath(ref: BakedTextureRef): string {
   // #1050 — an image the project owns. Its key is relative to the project, so it resolves against
   // whichever project is open, and a project copied under a new id reads the same refs.
   if (ref.store === 'project') {
@@ -212,6 +233,32 @@ function refToPath(ref: BakedTextureRef): string {
   if (dot <= 0) return bakedTexturePath(ref.hash, 'png');
   return bakedTexturePath(ref.hash.slice(0, dot), ref.hash.slice(dot + 1));
 }
+
+/**
+ * #1316 — a stored sampler name → three's constant. Keyed by the full name unions, so a name the
+ * store can hold and this cannot draw is a type error, not an `undefined` handed to WebGL.
+ */
+export const THREE_WRAP_OF_NAME: Readonly<Record<BakedTextureWrap, THREE.Wrapping>> = {
+  repeat: THREE.RepeatWrapping,
+  'clamp-to-edge': THREE.ClampToEdgeWrapping,
+  'mirrored-repeat': THREE.MirroredRepeatWrapping,
+};
+export const THREE_MAG_FILTER_OF_NAME: Readonly<
+  Record<BakedTextureMagFilter, THREE.MagnificationTextureFilter>
+> = {
+  nearest: THREE.NearestFilter,
+  linear: THREE.LinearFilter,
+};
+export const THREE_MIN_FILTER_OF_NAME: Readonly<
+  Record<BakedTextureMinFilter, THREE.MinificationTextureFilter>
+> = {
+  nearest: THREE.NearestFilter,
+  linear: THREE.LinearFilter,
+  'nearest-mipmap-nearest': THREE.NearestMipmapNearestFilter,
+  'linear-mipmap-nearest': THREE.LinearMipmapNearestFilter,
+  'nearest-mipmap-linear': THREE.NearestMipmapLinearFilter,
+  'linear-mipmap-linear': THREE.LinearMipmapLinearFilter,
+};
 
 /**
  * Optional override of the texture decode step (test seam). happy-dom has no
@@ -243,13 +290,12 @@ export async function loadBakedTexture(
     // NoColorSpace + flipY=true, which is wrong for glTF maps.
     texture.colorSpace = fromBakedColorSpace(ref.colorSpace);
     texture.flipY = ref.flipY;
-    texture.wrapS = ref.wrapS as THREE.Wrapping;
-    texture.wrapT = ref.wrapT as THREE.Wrapping;
+    // #1316 — the one place a stored sampler name becomes three's constant.
+    texture.wrapS = THREE_WRAP_OF_NAME[ref.wrapS];
+    texture.wrapT = THREE_WRAP_OF_NAME[ref.wrapT];
     // #1050 — only when captured: a ref written before it keeps three's defaults, as it always did.
-    if (ref.magFilter !== undefined)
-      texture.magFilter = ref.magFilter as THREE.MagnificationTextureFilter;
-    if (ref.minFilter !== undefined)
-      texture.minFilter = ref.minFilter as THREE.MinificationTextureFilter;
+    if (ref.magFilter !== undefined) texture.magFilter = THREE_MAG_FILTER_OF_NAME[ref.magFilter];
+    if (ref.minFilter !== undefined) texture.minFilter = THREE_MIN_FILTER_OF_NAME[ref.minFilter];
     texture.needsUpdate = true;
     return texture;
   } finally {

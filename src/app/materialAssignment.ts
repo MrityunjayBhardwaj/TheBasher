@@ -42,9 +42,8 @@
 //      (the render consumer, and the owner of the decision); issues #634, #633, #638, #651.
 
 import { attributeAt, MATERIAL_INDEX } from '../nodes/attributes';
-import type { AbsentSlotMeaning, GeometryRef, MaterialAssignment } from '../nodes/types';
+import type { MaterialAssignment } from '../nodes/types';
 import { read } from './attributeStore';
-import { availabilityOf } from './geometryRegistry';
 
 /**
  * Pair the geometry's face attribute with the object's slot table.
@@ -56,36 +55,11 @@ import { availabilityOf } from './geometryRegistry';
 export function materialAssignmentOf<M>(
   attributeKey: string | null,
   slots: readonly M[],
-  geometry: GeometryRef,
 ): MaterialAssignment<M> {
-  const absentSlot = absentSlotMeaningOf(geometry);
-  if (attributeKey === null) return { slots, indices: null, absentSlot };
+  if (attributeKey === null) return { slots, indices: null };
   const attribute = attributeAt(read(attributeKey), MATERIAL_INDEX, 'face');
-  if (attribute === undefined) return { slots, indices: null, absentSlot };
-  return { slots, indices: attribute.data, absentSlot };
-}
-
-/**
- * Whether an unanswered slot on this mesh can be answered somewhere else (#605 item 2).
- *
- * 🔴 DERIVED HERE, FROM THE GEOMETRY, RATHER THAN CHOSEN BY THE CALLER. The seven fill
- * sites all hold the handle already, so handing it over is the whole of their obligation —
- * where passing a `'none' | 'elsewhere'` literal would make each of them decide, and a rule
- * every call site must opt into is a rule the next one declines. That is the exact shape
- * that produced #981 one module over, so it is not repeated here.
- *
- * Keyed on `availabilityOf`, the same classifier {@link MeshUVRead} and `GeometryReadResult`
- * key their own `'elsewhere'` on — one rule, three reads, rather than a third spelling that
- * agrees today. NOT `descriptor.kind === 'gltf'`: a recipe OVER an imported mesh is built by
- * the registry and its materials are ours, which a kind test gets wrong.
- *
- * ⚠️ CLASSIFIER, NOT A READ. `availabilityOf` takes a descriptor and returns a label; it
- * never touches the cache and never builds. Asking `readGeometry` here — the way
- * `readMeshUVs` legitimately does, because it needs the buffers — would make every material
- * read trigger a geometry build.
- */
-function absentSlotMeaningOf(geometry: GeometryRef): AbsentSlotMeaning {
-  return availabilityOf(geometry.descriptor) === 'clone' ? 'elsewhere' : 'none';
+  if (attribute === undefined) return { slots, indices: null };
+  return { slots, indices: attribute.data };
 }
 
 /** What one slot is made of, or which kind of nothing it is. */
@@ -93,18 +67,16 @@ export type SlotMaterial<M> =
   | { readonly status: 'ok'; readonly material: M }
   /** There is genuinely no material on this slot. */
   | { readonly status: 'none' }
-  /** A mounted asset clone owns what draws here, and we hold no capture of it. */
-  | { readonly status: 'elsewhere' }
   /** Not a slot this mesh has at all — a different question from either absence. */
   | { readonly status: 'no-such-slot' };
 
 /**
- * Read one slot with the THREE absences told apart.
+ * Read one slot with the absences told apart.
  *
  * ⚠️ THIS IS THE ROAD; `assignment.slots[i]` IS NOT. A bare index hands back `M | null |
- * undefined` and leaves the reader to collapse three different answers into whichever one it
+ * undefined` and leaves the reader to collapse different answers into whichever one it
  * happens to test for — which is what the inspector did, drawing the default grey swatch for
- * a slot whose material simply lives in the asset clone. Reading through here, a consumer
+ * a slot whose material lived in the asset clone (a third absence until #1053). Reading through here, a consumer
  * cannot fail to meet the distinction, because there is no arm to forget.
  */
 export function slotMaterialAt<M>(
@@ -115,7 +87,7 @@ export function slotMaterialAt<M>(
     return { status: 'no-such-slot' };
   const slot = assignment.slots[index];
   if (slot !== null && slot !== undefined) return { status: 'ok', material: slot };
-  return { status: assignment.absentSlot };
+  return { status: 'none' };
 }
 
 /**
@@ -167,10 +139,10 @@ export function primaryMaterial<M>(assignment: MaterialAssignment<M>): M | null 
  * {@link primaryMaterial}, and the road a consumer takes when it can act on the difference.
  *
  * ⚠️ {@link primaryMaterial} RETURNS `M | null`, AND THAT SIGNATURE IS WHERE THE DISTINCTION
- * DIES. `absentSlot` splits one `null` into *"there is no material"* and *"a mounted asset
- * clone owns what draws and we hold no capture of it"*; a projection narrowing to `M | null`
+ * DIES. The slot read tells *"there is no material"* from *"there is no such slot"* (and, until
+ * #1053, from *"a mounted asset clone owns what draws"*); a projection narrowing to `M | null`
  * re-merges them however carefully the split was built upstream, because there is nowhere in
- * that type for a third answer. No amount of care inside the body could preserve one, and no
+ * that type for a second answer. No amount of care inside the body could preserve one, and no
  * reviewer reading the body would see anything wrong — the tell is the return type.
  *
  * Measured (#1015): the UV editor resolved its backdrop through `primaryMaterial` and gave a

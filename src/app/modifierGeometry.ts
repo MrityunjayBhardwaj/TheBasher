@@ -590,12 +590,12 @@ function reboundAttributeKey(ref: GeometryRef, rebuilt: GeometryDescriptor): str
  * descriptor is built from — the caller uses that to avoid touching a handle a write never
  * reached.
  *
- * ⚠️ `gltf` and `baked` are deliberately returned untouched rather than rebuilt, and this is
- * the one arm worth reading twice. Their identity does not come from params at all — a glTF
- * child is keyed by (assetRef, childName) and a baked geometry by the CONTENT HASH of bytes
- * in OPFS, which is authoritative and not rebuildable from anything on the value. Minting a
- * key for either here would be a second spelling of a key this module does not own, and for
- * `baked` it would be a fabricated hash pointing at bytes that do not exist.
+ * ⚠️ `baked` is deliberately returned untouched rather than rebuilt, and this is the one arm
+ * worth reading twice. Its identity does not come from params at all — a baked geometry is
+ * keyed by the CONTENT HASH of bytes in OPFS, which is authoritative and not rebuildable from
+ * anything on the value. Minting a key here would be a second spelling of a key this module
+ * does not own: a fabricated hash pointing at bytes that do not exist. (`gltf`, keyed by
+ * (assetRef, childName), stood beside it until #1053.)
  *
  * ── #638 — THE BOX AND SPHERE ARMS NOW WRITE TO THE ATTRIBUTE STORE ───────────────────
  *
@@ -684,7 +684,6 @@ export function rebuildGeometryRef(
     // handle, not a param.
     case 'uvProject':
       return uvProjectGeometryRef(d.source, (values.size ?? d.size) as number);
-    case 'gltf':
     case 'baked':
     case 'mesh': // #1049 — no animatable field; a stored mesh changes only by a new params object.
       return ref;

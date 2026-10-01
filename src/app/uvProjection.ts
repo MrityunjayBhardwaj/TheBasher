@@ -89,7 +89,7 @@ export function projectMeshUVs(ref: GeometryRef): UVAttributeVerdict {
   }
   const result = readGeometry(ref);
   if (result.status !== 'ok') {
-    // Propagated as the read's own word, never re-worded. `elsewhere` and `pending` still
+    // Propagated as the read's own word, never re-worded. `pending` and `none` still
     // originate at the SOURCE — since #786 a projection BUILDS, but it can only build once its
     // source has, so an unbuilt source is what any non-`ok` status here is reporting — and a
     // caller that must decide whether to wait needs the reason that decides it, not this

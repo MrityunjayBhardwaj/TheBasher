@@ -13,6 +13,7 @@ import { emptyDagState } from '../core/dag/state';
 import { dagInspectTool } from './tools/dagInspect';
 import type { DagState } from '../core/dag/state';
 import type { ParamField } from './nodeCatalog';
+import { MATERIAL_MAP_SLOT_TABLE } from '../nodes/types';
 import {
   listNodeSchemas,
   nodeSchemaOf,
@@ -202,6 +203,10 @@ describe('node schema payload (#1007)', () => {
     // #1140 added three fields, because five node types each printed the whole material tree and
     // every field in it cost ~90 B five times over. The tree is printed once now (21,573 B total),
     // so a material field costs its own bytes and no more.
+    //
+    // #1326 hit the same line one level down: the six map slots' texture-ref body printed twelve
+    // times (IR + baked), and #1316's named sampler enums took it to 25,009 B. Each tree now prints
+    // its ref once (19,712 B before #1316), so a map slot costs a reference, not a body.
     expect(text.length).toBeLessThan(25_000);
     console.log(`[#1007] renderNodeCatalog = ${text.length} B over ${schemas.length} types`);
   });
@@ -223,31 +228,41 @@ describe('node schema payload (#1007)', () => {
       return list === '-' ? [] : (list.match(/(?:[^\s[]|\[[^\]]*\])+/g) ?? []);
     }
 
+    /**
+     * One list's paths, with every `x:=y` (#1326) replaced by the paths under `y` that the SAME list
+     * printed before it, re-read under `x`. A `y` that has not been printed yet is a broken payload.
+     */
+    function expandRepeats(fields: string[], blocks: Map<string, string[]>): string[] {
+      const out: string[] = [];
+      for (const f of fields) {
+        const repeat = /^([\w.]+):=([\w.]+)$/.exec(f);
+        const ref = /^(\w+):<(\w+)>$/.exec(f);
+        if (repeat) {
+          const [, x, y] = repeat;
+          const under = out.filter((p) => p === y || p.startsWith(`${y}.`));
+          expect(under.length, `${x}:=${y} refers to fields printed before it`).toBeGreaterThan(0);
+          out.push(...under.map((p) => x + p.slice(y.length)));
+        } else if (ref) {
+          const body = blocks.get(ref[2]);
+          expect(body, `the line refers to <${ref[2]}>, which must exist`).toBeDefined();
+          out.push(...body!.map((p) => `${ref[1]}.${p}`));
+        } else out.push(f.split(':')[0]);
+      }
+      return out;
+    }
+
     function pathsFromText(text: string): Map<string, string[]> {
       const blocks = new Map<string, string[]>();
       const byType = new Map<string, string[]>();
       for (const line of text.split('\n')) {
         const block = /^<(\w+)> = (.*)$/.exec(line);
         if (block) {
-          blocks.set(
-            block[1],
-            fieldsOf(block[2]).map((f) => f.split(':')[0]),
-          );
+          blocks.set(block[1], expandRepeats(fieldsOf(block[2]), blocks));
           continue;
         }
         const row = /^(\w+) \| in: .* \| out: .* \| params: (.*)$/.exec(line);
         if (!row) continue;
-        const fields = fieldsOf(row[2]);
-        byType.set(
-          row[1],
-          fields.flatMap((f) => {
-            const ref = /^(\w+):<(\w+)>$/.exec(f);
-            if (!ref) return [f.split(':')[0]];
-            const body = blocks.get(ref[2]);
-            expect(body, `the line refers to <${ref[2]}>, which must exist`).toBeDefined();
-            return body!.map((p) => `${ref[1]}.${p}`);
-          }),
-        );
+        byType.set(row[1], expandRepeats(fieldsOf(row[2]), blocks));
       }
       return byType;
     }
@@ -306,6 +321,66 @@ describe('node schema payload (#1007)', () => {
         text.split('\n').some((l) => l.startsWith(`${t} | `) && l.includes('material.')),
       );
       expect(printedInFull).toHaveLength(2);
+    });
+
+    it('a texture ref prints once per tree, not once per map slot (#1326)', () => {
+      // Two trees hold one ref per map slot: the material IR (inside <material>) and the baked
+      // snapshot (on BakedData, whose ref has no glTF fields and so is a DIFFERENT body). Each
+      // prints its ref body once; every other slot refers back to its first. `wrapS` is in every
+      // ref, so it counts printed copies: one per slot per tree before this fold.
+      const text = renderNodeCatalog(schemas);
+      expect(text.match(/\.wrapS:/g)).toHaveLength(2);
+      const [first, ...rest] = Object.entries(MATERIAL_MAP_SLOT_TABLE);
+      const material = text.split('\n').find((l) => l.startsWith('<material> = '))!;
+      const baked = text.split('\n').find((l) => l.startsWith('BakedData | '))!;
+      expect(rest.length).toBeGreaterThan(0);
+      for (const [slot, row] of rest) {
+        expect(material, slot).toContain(`maps.${slot}:=maps.${first[0]}`);
+        expect(baked, row.three).toContain(`material.${row.three}:=material.${first[1].three}`);
+      }
+    });
+
+    it('a subtree folds only onto one whose text is identical, its own entry included', () => {
+      // Minted by hand: the live registry has no near-miss to test against. `c` matches `a` in
+      // every child but is not nullable, so it may not claim a's fields — "same fields" would
+      // hide that `c` cannot be set to null. `d` differs in one child and must print in full.
+      const kids = (p: string) =>
+        Array.from({ length: 60 }, (_, i): ParamField => ({ path: `${p}.k${i}`, kind: 'number' }));
+      const slot = (p: string, nullable: boolean): ParamField[] => [
+        ...(nullable ? [{ path: p, kind: 'object' as const, nullable: true as const }] : []),
+        ...kids(p),
+      ];
+      const d = kids('s.d').map((f, i) => (i === 7 ? { ...f, kind: 'string' as const } : f));
+      const params = [...slot('s.a', true), ...slot('s.b', true), ...slot('s.c', false), ...d];
+      const line = renderNodeCatalog([
+        { type: 'T' as NodeSchema['type'], inputs: [], outputs: [], params },
+      ])
+        .split('\n')
+        .find((l) => l.startsWith('T | '))!;
+      expect(line).toContain('s.b:=s.a');
+      expect(line).not.toContain('s.c:=');
+      expect(line).toContain('s.c.k0:number');
+      expect(line).not.toContain('s.d:=');
+      expect(line).toContain('s.d.k7:string');
+    });
+
+    it('a copy inside a folded copy does not count toward the bar', () => {
+      // Minted by hand. `p.a` and `p.b` are identical and fold; each holds a `c` of ~275 B, and a
+      // third `c` stands alone under `q`. Only TWO copies of `c` are still printed (p.a.c, q.c),
+      // saving ~275 B — under the bar. Counting the one that went with `p.b` would claim ~550 B
+      // and fold `q.c` onto a copy for a saving the payload does not get.
+      const kids = (p: string, n: number) =>
+        Array.from({ length: n }, (_, i): ParamField => ({ path: `${p}.k${i}`, kind: 'number' }));
+      const parent = (p: string) => [...kids(`${p}.c`, 25), ...kids(`${p}.extra`, 20)];
+      const params = [...parent('p.a'), ...parent('p.b'), ...kids('q.c', 25)];
+      const line = renderNodeCatalog([
+        { type: 'T' as NodeSchema['type'], inputs: [], outputs: [], params },
+      ])
+        .split('\n')
+        .find((l) => l.startsWith('T | '))!;
+      expect(line).toContain('p.b:=p.a');
+      expect(line).not.toContain('q.c:=');
+      expect(line).toContain('q.c.k0:number');
     });
 
     it('a repeat too small to name stays inline', () => {

@@ -7,6 +7,7 @@ import {
   primitiveSlots,
   readGltfMesh,
   triangulate,
+  type NativeImportResult,
 } from './nativeGltfImport';
 import { attributeAt, MATERIAL_INDEX, SKIN_JOINTS, SKIN_WEIGHTS } from '../../nodes/attributes';
 import { read as readAttributes } from '../../app/attributeStore';
@@ -30,6 +31,7 @@ import { join } from 'node:path';
 import * as THREE from 'three';
 import { MemoryStorage } from '../storage';
 import { listProjectImages, projectImagePath, writeProjectImage } from '../project/projectImages';
+import { gltfJsonMaterialToOpenpbr } from './gltfJsonMaterialToOpenpbr';
 
 /** A store an import must never reach: a file with no images, or one refused before storing. */
 async function noImages(): Promise<string> {
@@ -110,6 +112,18 @@ function withSkinData(
   attributes.JOINTS_0 = accessors.length - 2;
   attributes.WEIGHTS_0 = accessors.length - 1;
   return { joints: accessors.length - 2, weights: accessors.length - 1 };
+}
+
+/**
+ * #1384 — a node skins the cube: two joint nodes (`A` over `B`) and one skin listing them, so the
+ * cube's joint sets are READ. Without it they are dropped unread, as Blender drops them.
+ */
+function skinTheCube(json: Record<string, unknown>): void {
+  const nodes = json.nodes as Record<string, unknown>[];
+  nodes.push({ name: 'A', children: [2] }, { name: 'B' });
+  (json.scenes as { nodes: number[] }[])[0].nodes.push(1);
+  json.skins = [{ joints: [1, 2] }];
+  nodes[0].skin = 0;
 }
 
 /** One binding row per cube vertex (24): all on joint 0, fully weighted. */
@@ -501,7 +515,7 @@ describe('#1196 — readGltfMesh reads a skin into point layers', () => {
     ]);
   });
 
-  it('refuses a joint number past the skin’s table, and joint numbers with no table at all', async () => {
+  it('refuses a joint number past the skin’s table, and reads no joints with no table at all', async () => {
     const joints = uniformJoints();
     joints[5] = [0, 2, 0, 0];
     const { json, bin } = parseGltfContainer(
@@ -514,7 +528,8 @@ describe('#1196 — readGltfMesh reads a skin into point layers', () => {
       refused: 'mesh 0 binds a vertex to joint 2, but its skin lists 2 joints',
       issue: '#1063',
     });
-    expect(readGltfMesh(json, buffers, 0)).toMatchObject({ issue: '#1063' });
+    // #1384 — no vertex groups: the mesh is unskinned, and its joint sets are dropped unread.
+    expect(readGltfMesh(json, buffers, 0)).toMatchObject({ pointLayers: [], vertexGroups: [] });
     expect(readGltfMesh(json, buffers, 0, ['A', 'B', 'C'])).not.toHaveProperty('refused');
   });
 
@@ -611,7 +626,9 @@ describe('#1052 — readGltfMesh reads every primitive into one mesh', () => {
 
   it('an attribute no buffer draws is refused on any primitive, not only the first', async () => {
     const json = twoPrimitiveFixture((prims) => {
-      prims[1].attributes.TANGENT = 0;
+      // A semantic glTF does not define and that is not an application's own (`_…`): nothing
+      // will ever draw it. (#1381 took `TANGENT`, which this row used to use, off the list.)
+      prims[1].attributes.FOO = 0;
     });
     const result = await buildNativeGltfImportOps({
       buffer: new TextEncoder().encode(JSON.stringify(json)).buffer as ArrayBuffer,
@@ -728,9 +745,12 @@ describe('buildNativeGltfImportOps', () => {
       'a texture in a slot the native material does not hold',
       () =>
         texturedFixture((json) => {
+          // A texture site no slot reads, inside an extension held for its factors. Named by hand
+          // so this row keeps its subject as lobe textures arrive: it used to be the clearcoat
+          // texture, which the material holds since #1327.
           json.extensionsUsed = ['KHR_materials_clearcoat'];
           materialOf(json).extensions = {
-            KHR_materials_clearcoat: { clearcoatFactor: 1, clearcoatTexture: { index: 0 } },
+            KHR_materials_clearcoat: { clearcoatFactor: 1, unreadTexture: { index: 0 } },
           };
         }),
       '#1123',
@@ -774,26 +794,11 @@ describe('buildNativeGltfImportOps', () => {
       'names its own UV set',
     ],
     [
-      'a normal map with a scale',
+      'an image that is not PNG, JPEG or WebP',
       () =>
         texturedFixture((json) => {
-          materialOf(json).normalTexture = { index: 0, scale: 2 };
-        }),
-      '#1123',
-    ],
-    [
-      'an occlusion map with a strength',
-      () =>
-        texturedFixture((json) => {
-          materialOf(json).occlusionTexture = { index: 0, strength: 0.5 };
-        }),
-      '#1123',
-    ],
-    [
-      'an image that is neither PNG nor JPEG',
-      () =>
-        texturedFixture((json) => {
-          json.images = [{ uri: 'data:image/webp;base64,UklGRiQAAABXRUJQVlA4IBgAAAAw' }];
+          // A GIF header: a format no glTF texture may be (#1320 made WebP readable).
+          json.images = [{ uri: 'data:image/gif;base64,R0lGODlhAQABAAAAACw=' }];
         }),
       '#1063',
     ],
@@ -819,6 +824,7 @@ describe('buildNativeGltfImportOps', () => {
       'a second joint set',
       () =>
         jsonFixture((json) => {
+          skinTheCube(json);
           const skin = withSkinData(json, uniformJoints(), uniformWeights());
           const attributes = cubeAttributes(json);
           attributes.JOINTS_1 = skin.joints;
@@ -827,21 +833,13 @@ describe('buildNativeGltfImportOps', () => {
       '#1125',
       'carries JOINTS_1, WEIGHTS_1,',
     ],
-    // The same file with ONE set passes that guard, which is what makes the row above its witness:
-    // it is refused one step later, because no node skins the mesh its joints would index.
-    [
-      'joint numbers on a mesh no node skins',
-      () =>
-        jsonFixture((json) => {
-          withSkinData(json, uniformJoints(), uniformWeights());
-        }),
-      '#1063',
-      'carries JOINTS_0, but no node skins it',
-    ],
+    // #1384 — the validator rows below skin the cube: on a mesh no node skins, joint sets are
+    // dropped unread (Blender reads them only for a skinned mesh), so nothing there would refuse.
     [
       'joints without weights',
       () =>
         jsonFixture((json) => {
+          skinTheCube(json);
           withSkinData(json, uniformJoints(), uniformWeights());
           delete cubeAttributes(json).WEIGHTS_0;
         }),
@@ -852,6 +850,7 @@ describe('buildNativeGltfImportOps', () => {
       'byte weights that are not normalised',
       () =>
         jsonFixture((json) => {
+          skinTheCube(json);
           withSkinData(json, uniformJoints(), uniformWeights(), {
             weightType: 5121,
             normalized: false,
@@ -900,8 +899,9 @@ describe('buildNativeGltfImportOps', () => {
           const attributes = cubeAttributes(json);
           attributes.TANGENT = attributes.NORMAL;
         }),
-      '#1125',
-      'carries TANGENT,',
+      // #1381 — tangents come across by being checked; a VEC3 one is malformed (glTF: VEC4 float).
+      '#1381',
+      'carries a TANGENT that is not four floats',
     ],
     [
       'a UV set numbered past a gap',
@@ -941,16 +941,17 @@ describe('buildNativeGltfImportOps', () => {
       'a material extension the native material does not draw',
       () =>
         jsonFixture((json) => {
-          json.extensionsUsed = ['KHR_materials_sheen'];
+          json.extensionsUsed = ['KHR_materials_iridescence'];
         }),
       '#1123',
     ],
-    // Sheen AND a second UV set: still refused, and now for the sheen alone.
+    // Iridescence AND a second UV set: still refused, and for the iridescence alone. (It was the
+    // sheen quad until sheen imported; iridescence stays refused, as Blender's importer drops it.)
     [
-      'the sheen quad',
-      () => fixture('public/assets/sheen-quad.gltf'),
+      'the iridescence quad',
+      () => fixture('public/assets/iridescence-quad.gltf'),
       '#1123',
-      'KHR_materials_sheen',
+      'KHR_materials_iridescence',
     ],
     [
       'two nodes sharing one mesh',
@@ -961,6 +962,33 @@ describe('buildNativeGltfImportOps', () => {
           (json.scenes as { nodes: number[] }[])[0].nodes.push(1);
         }),
       '#1061',
+    ],
+    // #1319 — a camera would be dropped (its node arrived as an empty Group), and a light is not a
+    // material feature: both are refused under the issue that brings them across.
+    [
+      'a camera',
+      () =>
+        jsonFixture((json) => {
+          json.cameras = [{ type: 'perspective', perspective: { yfov: 0.8, znear: 0.1 } }];
+          const nodes = json.nodes as Record<string, unknown>[];
+          nodes.push({ name: 'Cam', camera: 0, translation: [0, 1, 5] });
+          (json.scenes as { nodes: number[] }[])[0].nodes.push(nodes.length - 1);
+        }),
+      '#1319',
+      'node 1 ("Cam") is a camera',
+    ],
+    [
+      'a punctual light',
+      () =>
+        jsonFixture((json) => {
+          json.extensionsUsed = ['KHR_lights_punctual'];
+          json.extensions = { KHR_lights_punctual: { lights: [{ type: 'point' }] } };
+          const nodes = json.nodes as Record<string, unknown>[];
+          nodes.push({ name: 'Lamp', extensions: { KHR_lights_punctual: { light: 0 } } });
+          (json.scenes as { nodes: number[] }[])[0].nodes.push(nodes.length - 1);
+        }),
+      '#1319',
+      'KHR_lights_punctual',
     ],
     [
       'a mesh with morph targets',
@@ -1006,14 +1034,401 @@ describe('buildNativeGltfImportOps', () => {
       store: 'project',
       colorSpace: 'srgb',
       flipY: false,
-      wrapS: THREE.RepeatWrapping,
-      wrapT: THREE.RepeatWrapping,
-      magFilter: THREE.NearestFilter,
-      minFilter: THREE.NearestFilter,
+      // #1316 — the file's sampler by name: REPEAT and NEAREST.
+      wrapS: 'repeat',
+      wrapT: 'repeat',
+      magFilter: 'nearest',
+      minFilter: 'nearest',
     });
     const ops = JSON.stringify(result.ops);
     expect(ops).not.toContain('gltfTexture');
     expect(ops).not.toContain('data:image');
+  });
+
+  it("#1123 — a normal map's scale and an occlusion map's strength arrive native, on the material", async () => {
+    const result = await buildNativeGltfImportOps({
+      buffer: fixture('public/assets/normal-strength-quad.gltf'),
+      assetRef: 'user-imports/native/strength.gltf',
+      sceneNodeId: 'n_scene',
+      storeImage: async (_bytes, mime) => `img-${mime}`,
+    });
+    if ('refused' in result) throw new Error(result.refused);
+    const data = result.ops.find(
+      (op): op is Extract<Op, { type: 'addNode' }> =>
+        op.type === 'addNode' && op.nodeType === 'PolyMeshData',
+    )!;
+    const material = PolyMeshDataParams.parse(data.params).material!;
+    expect(material.mapStrengths).toEqual({ normal: 0.5, ao: 0.3 });
+    expect(material.maps.normal).not.toBeNull();
+    expect(material.maps.ao).not.toBeNull();
+  });
+
+  it('#1327 — the coat textures arrive native, each in its own slot, with the normal strength', async () => {
+    let n = 0;
+    const result = await buildNativeGltfImportOps({
+      buffer: fixture('public/assets/clearcoat-quad.gltf'),
+      assetRef: 'user-imports/native/clearcoat.gltf',
+      sceneNodeId: 'n_scene',
+      storeImage: async () => `img-${n++}`,
+    });
+    if ('refused' in result) throw new Error(result.refused);
+    const data = result.ops.find(
+      (op): op is Extract<Op, { type: 'addNode' }> =>
+        op.type === 'addNode' && op.nodeType === 'PolyMeshData',
+    )!;
+    const material = PolyMeshDataParams.parse(data.params).material!;
+    const { coat, coatRoughness, coatNormal } = material.maps;
+    for (const ref of [coat, coatRoughness, coatNormal]) {
+      expect(ref).toMatchObject({ store: 'project', colorSpace: 'srgb-linear', flipY: false });
+    }
+    // Three different images, so a slot that read another slot's texture would share a hash.
+    expect(new Set([coat?.hash, coatRoughness?.hash, coatNormal?.hash]).size).toBe(3);
+    expect(material.mapStrengths).toEqual({ coatNormal: 0.5 });
+    expect(material.coat).toEqual({ weight: 1, roughness: 0.3 });
+  });
+
+  it('#1328 — a transmission texture arrives native, in its own slot', async () => {
+    const result = await buildNativeGltfImportOps({
+      buffer: fixture('public/assets/transmission-quad.gltf'),
+      assetRef: 'user-imports/native/transmission.gltf',
+      sceneNodeId: 'n_scene',
+      storeImage: async () => 'img-t',
+    });
+    if ('refused' in result) throw new Error(result.refused);
+    const data = result.ops.find(
+      (op): op is Extract<Op, { type: 'addNode' }> =>
+        op.type === 'addNode' && op.nodeType === 'PolyMeshData',
+    )!;
+    const material = PolyMeshDataParams.parse(data.params).material!;
+    expect(material.maps.transmission).toMatchObject({
+      hash: 'img-t',
+      store: 'project',
+      colorSpace: 'srgb-linear',
+    });
+    expect(material.transmission.weight).toBe(1);
+    // Only the slot the file fills: the base colour has no texture here.
+    expect(material.maps.albedo).toBeNull();
+  });
+
+  it('#1331 — a volume thickness texture arrives native, beside the thickness it scales', async () => {
+    const result = await buildNativeGltfImportOps({
+      buffer: fixture('public/assets/thickness-quad.gltf'),
+      assetRef: 'user-imports/native/thickness.gltf',
+      sceneNodeId: 'n_scene',
+      storeImage: async () => 'img-th',
+    });
+    if ('refused' in result) throw new Error(result.refused);
+    const data = result.ops.find(
+      (op): op is Extract<Op, { type: 'addNode' }> =>
+        op.type === 'addNode' && op.nodeType === 'PolyMeshData',
+    )!;
+    const material = PolyMeshDataParams.parse(data.params).material!;
+    expect(material.maps.thickness).toMatchObject({ hash: 'img-th', store: 'project' });
+    expect(material.geometry.thickness).toBe(0.5);
+    expect(material.maps.transmission).toBeUndefined();
+  });
+
+  it('#1329 — sheen textures arrive native, colour as sRGB and roughness as data', async () => {
+    let n = 0;
+    const result = await buildNativeGltfImportOps({
+      buffer: fixture('public/assets/sheen-texture-quad.gltf'),
+      assetRef: 'user-imports/native/sheen.gltf',
+      sceneNodeId: 'n_scene',
+      storeImage: async () => `img-sh${n++}`,
+    });
+    if ('refused' in result) throw new Error(result.refused);
+    const data = result.ops.find(
+      (op): op is Extract<Op, { type: 'addNode' }> =>
+        op.type === 'addNode' && op.nodeType === 'PolyMeshData',
+    )!;
+    const material = PolyMeshDataParams.parse(data.params).material!;
+    expect(material.maps.fuzzColor).toMatchObject({ store: 'project', colorSpace: 'srgb' });
+    expect(material.maps.fuzzRoughness).toMatchObject({
+      store: 'project',
+      colorSpace: 'srgb-linear',
+    });
+    expect(material.maps.fuzzColor!.hash).not.toBe(material.maps.fuzzRoughness!.hash);
+    expect(material.fuzz).toEqual({ weight: 1, color: '#ffffff', roughness: 0.5 });
+  });
+
+  it('#1330 — specular textures arrive native with no weight written, colour as sRGB', async () => {
+    let n = 0;
+    const result = await buildNativeGltfImportOps({
+      buffer: fixture('public/assets/specular-texture-quad.gltf'),
+      assetRef: 'user-imports/native/specular.gltf',
+      sceneNodeId: 'n_scene',
+      storeImage: async () => `img-sp${n++}`,
+    });
+    if ('refused' in result) throw new Error(result.refused);
+    const data = result.ops.find(
+      (op): op is Extract<Op, { type: 'addNode' }> =>
+        op.type === 'addNode' && op.nodeType === 'PolyMeshData',
+    )!;
+    const material = PolyMeshDataParams.parse(data.params).material!;
+    expect(material.maps.specularColor).toMatchObject({ store: 'project', colorSpace: 'srgb' });
+    expect(material.maps.specularWeight).toMatchObject({
+      store: 'project',
+      colorSpace: 'srgb-linear',
+    });
+    expect(material.maps.specularColor!.hash).not.toBe(material.maps.specularWeight!.hash);
+    // The file gives no specularFactor: the weight stays absent, which draws at 1.
+    expect(material.specular.weight).toBeUndefined();
+  });
+
+  it('#1327 — a material with no coat texture holds no coat slot, so it keys as before', async () => {
+    const result = await buildNativeGltfImportOps({
+      buffer: texturedFixture(() => {}),
+      assetRef: 'user-imports/native/no-coat.gltf',
+      sceneNodeId: 'n_scene',
+      storeImage: async () => 'img',
+    });
+    if ('refused' in result) throw new Error(result.refused);
+    const data = result.ops.find(
+      (op): op is Extract<Op, { type: 'addNode' }> =>
+        op.type === 'addNode' && op.nodeType === 'PolyMeshData',
+    )!;
+    const maps = (data.params as { material: { maps: Record<string, unknown> } }).material.maps;
+    expect(Object.keys(maps)).toEqual([
+      'albedo',
+      'normal',
+      'roughness',
+      'metalness',
+      'emissive',
+      'ao',
+    ]);
+  });
+
+  it('#1123 — a strength of exactly 1 is the default and writes no field', async () => {
+    const buffer = texturedFixture((json) => {
+      materialOf(json).normalTexture = { index: 0, scale: 1 };
+      materialOf(json).occlusionTexture = { index: 0, strength: 1 };
+    });
+    const result = await buildNativeGltfImportOps({
+      buffer,
+      assetRef: 'user-imports/native/strength-one.gltf',
+      sceneNodeId: 'n_scene',
+      storeImage: async () => 'img',
+    });
+    if ('refused' in result) throw new Error(result.refused);
+    const data = result.ops.find(
+      (op): op is Extract<Op, { type: 'addNode' }> =>
+        op.type === 'addNode' && op.nodeType === 'PolyMeshData',
+    )!;
+    const material = PolyMeshDataParams.parse(data.params).material!;
+    expect(material.maps.normal).not.toBeNull();
+    expect('mapStrengths' in material).toBe(false);
+  });
+
+  it('#1123 — an unlit material arrives native as the basic class, its base map kept', async () => {
+    const result = await buildNativeGltfImportOps({
+      buffer: fixture('public/assets/unlit-quad.gltf'),
+      assetRef: 'user-imports/native/unlit.gltf',
+      sceneNodeId: 'n_scene',
+      storeImage: async () => 'img',
+    });
+    if ('refused' in result) throw new Error(`${result.refused} (${result.issue})`);
+    const data = result.ops.find(
+      (op): op is Extract<Op, { type: 'addNode' }> =>
+        op.type === 'addNode' && op.nodeType === 'PolyMeshData',
+    )!;
+    const material = PolyMeshDataParams.parse(data.params).material!;
+    expect(material.unlit).toBe(true);
+    // Not `materialClass`: that key is what tells a baked spec from this one.
+    expect('materialClass' in material).toBe(false);
+    expect(material.maps.albedo?.hash).toBe('img');
+  });
+
+  it('#1123 — a sheen material arrives native as the fuzz lobe, at weight 1 as both references take it', async () => {
+    const result = await buildNativeGltfImportOps({
+      buffer: fixture('public/assets/sheen-quad.gltf'),
+      assetRef: 'user-imports/native/sheen.gltf',
+      sceneNodeId: 'n_scene',
+      storeImage: async () => 'img',
+    });
+    if ('refused' in result) throw new Error(`${result.refused} (${result.issue})`);
+    const data = result.ops.find(
+      (op): op is Extract<Op, { type: 'addNode' }> =>
+        op.type === 'addNode' && op.nodeType === 'PolyMeshData',
+    )!;
+    // The file: sheenColorFactor [1,1,1] (linear, so white in sRGB) and roughness 0.3.
+    expect(PolyMeshDataParams.parse(data.params).material!.fuzz).toEqual({
+      weight: 1,
+      color: '#ffffff',
+      roughness: 0.3,
+    });
+  });
+
+  describe('#1322 — a volume', () => {
+    async function materialOfImport(buffer: ArrayBuffer) {
+      const result = await buildNativeGltfImportOps({
+        buffer,
+        assetRef: 'user-imports/native/volume.gltf',
+        sceneNodeId: 'n_scene',
+        storeImage: async () => 'img',
+      });
+      if ('refused' in result) throw new Error(`${result.refused} (${result.issue})`);
+      const data = result.ops.find(
+        (op): op is Extract<Op, { type: 'addNode' }> =>
+          op.type === 'addNode' && op.nodeType === 'PolyMeshData',
+      )!;
+      return PolyMeshDataParams.parse(data.params).material!;
+    }
+
+    it('arrives as transmission colour and depth, and the thickness on geometry', async () => {
+      // The fixture: attenuationColor [0.2, 0.6, 1] (linear) = #7ccbff, distance 0.5, thickness 0.2.
+      const m = await materialOfImport(fixture('public/assets/volume-quad.gltf'));
+      expect(m.transmission).toEqual({ weight: 1, color: '#7ccbff', depth: 0.5 });
+      expect(m.geometry.thickness).toBe(0.2);
+    });
+
+    it('with no attenuation distance (glTF: +Infinity, no absorption) it writes no colour or depth', async () => {
+      const m = await materialOfImport(
+        texturedFixture((json) => {
+          json.extensionsUsed = ['KHR_materials_transmission', 'KHR_materials_volume'];
+          materialOf(json).extensions = {
+            KHR_materials_transmission: { transmissionFactor: 1 },
+            KHR_materials_volume: { thicknessFactor: 0, attenuationColor: [0.2, 0.6, 1] },
+          };
+        }),
+      );
+      expect(m.transmission).toEqual({ weight: 1 });
+      // A thickness of 0 is the file saying thin-walled, and it is kept, not defaulted.
+      expect(m.geometry.thickness).toBe(0);
+    });
+
+    it('a distance of 0, outside the spec`s (0, +inf), is read as no absorption', async () => {
+      const m = await materialOfImport(
+        texturedFixture((json) => {
+          json.extensionsUsed = ['KHR_materials_transmission', 'KHR_materials_volume'];
+          materialOf(json).extensions = {
+            KHR_materials_transmission: { transmissionFactor: 1 },
+            KHR_materials_volume: { attenuationDistance: 0, attenuationColor: [0.2, 0.6, 1] },
+          };
+        }),
+      );
+      expect(m.transmission).toEqual({ weight: 1 });
+    });
+  });
+
+  describe('#1321 — specular weight and colour', () => {
+    async function specularOf(buffer: ArrayBuffer) {
+      const result = await buildNativeGltfImportOps({
+        buffer,
+        assetRef: 'user-imports/native/specular.gltf',
+        sceneNodeId: 'n_scene',
+        storeImage: async () => 'img',
+      });
+      if ('refused' in result) return result;
+      const data = result.ops.find(
+        (op): op is Extract<Op, { type: 'addNode' }> =>
+          op.type === 'addNode' && op.nodeType === 'PolyMeshData',
+      )!;
+      return PolyMeshDataParams.parse(data.params).material!.specular;
+    }
+    const withSpecular = (ext: Record<string, unknown>) =>
+      texturedFixture((json) => {
+        json.extensionsUsed = ['KHR_materials_specular'];
+        materialOf(json).extensions = { KHR_materials_specular: ext };
+      });
+
+    it('arrive on the existing specular lobe, the colour as sRGB hex', async () => {
+      // The fixture: specularFactor 0.4, specularColorFactor [1, 0.5, 0.25] (linear) = #ffbc89.
+      expect(await specularOf(fixture('public/assets/specular-quad.gltf'))).toEqual({
+        roughness: 0.8,
+        ior: 1.5,
+        weight: 0.4,
+        color: '#ffbc89',
+      });
+    });
+
+    it('at OpenPBR`s defaults (1, white) nothing is written, so the material keys as it did', async () => {
+      expect(
+        await specularOf(withSpecular({ specularFactor: 1, specularColorFactor: [1, 1, 1] })),
+      ).toEqual({ roughness: 0.8, ior: 1.5 });
+    });
+
+    it('a colour above 1, which the spec allows and an sRGB hex cannot hold, is refused by name', async () => {
+      expect(await specularOf(withSpecular({ specularColorFactor: [1.2, 1, 1] }))).toMatchObject({
+        issue: '#1321',
+        refused: expect.stringMatching(/specular colour above 1/),
+      });
+    });
+  });
+
+  it('#1123 — a lit material names no class, so it keys as it always did', async () => {
+    const result = await buildNativeGltfImportOps({
+      buffer: fixture(TEXTURED),
+      assetRef: 'user-imports/native/lit.gltf',
+      sceneNodeId: 'n_scene',
+      storeImage: async () => 'img',
+    });
+    if ('refused' in result) throw new Error(result.refused);
+    const data = result.ops.find(
+      (op): op is Extract<Op, { type: 'addNode' }> =>
+        op.type === 'addNode' && op.nodeType === 'PolyMeshData',
+    )!;
+    expect('unlit' in PolyMeshDataParams.parse(data.params).material!).toBe(false);
+  });
+
+  describe('#1320 — WebP textures, chosen the way Blender chooses by default', () => {
+    /** Import a fixture and report what was stored and what the albedo points at. */
+    async function importStoring(file: string) {
+      const stored: { mime: string; bytes: Uint8Array }[] = [];
+      const result = await buildNativeGltfImportOps({
+        buffer: fixture(file),
+        assetRef: `user-imports/native/${file}`,
+        sceneNodeId: 'n_scene',
+        storeImage: async (bytes, mime) => {
+          stored.push({ mime, bytes });
+          return `key-${stored.length}`;
+        },
+      });
+      if ('refused' in result) throw new Error(`${result.refused} (${result.issue})`);
+      const data = result.ops.find(
+        (op): op is Extract<Op, { type: 'addNode' }> =>
+          op.type === 'addNode' && op.nodeType === 'PolyMeshData',
+      )!;
+      return { stored, albedo: PolyMeshDataParams.parse(data.params).material?.maps.albedo };
+    }
+    const embedded = (file: string, image: number) => {
+      const uri = (JSON.parse(readFileSync(file, 'utf8')) as { images: { uri: string }[] }).images[
+        image
+      ].uri;
+      return Buffer.from(uri.slice(uri.indexOf(',') + 1), 'base64');
+    };
+
+    it('a WebP with a PNG fallback imports the fallback, as Blender does unless asked', async () => {
+      // Blender 5.1.1, default settings: `import_webp_texture` is off, so `get_source` returns the
+      // fallback when there is one (measured on this fixture: the PNG, red).
+      const file = 'public/assets/webp-fallback-quad.gltf';
+      const { stored, albedo } = await importStoring(file);
+      expect(stored.map((s) => s.mime)).toEqual(['image/png']);
+      expect(Buffer.from(stored[0].bytes)).toEqual(embedded(file, 1));
+      expect(albedo?.hash).toBe('key-1');
+    });
+
+    it('a WebP alone imports as WebP, its bytes stored as they are', async () => {
+      const file = 'public/assets/webp-only-quad.gltf';
+      const { stored, albedo } = await importStoring(file);
+      expect(stored.map((s) => s.mime)).toEqual(['image/webp']);
+      expect(Buffer.from(stored[0].bytes)).toEqual(embedded(file, 0));
+      expect(albedo?.hash).toBe('key-1');
+    });
+
+    it('bytes that say WebP in the header but not RIFF…WEBP are still refused by signature', async () => {
+      const buffer = texturedFixture((json) => {
+        json.images = [
+          { uri: `data:image/webp;base64,${Buffer.from('RIFF0000WEBX').toString('base64')}` },
+        ];
+      });
+      const result = await buildNativeGltfImportOps({
+        buffer,
+        assetRef: 'user-imports/native/not-webp.gltf',
+        sceneNodeId: 'n_scene',
+        storeImage: async () => 'k',
+      });
+      expect(result).toMatchObject({ issue: '#1063' });
+    });
   });
 
   it('#1123 — the UV-transform quad arrives native, its placement restated about the centre pivot', async () => {
@@ -1427,5 +1842,236 @@ describe('#1051 — a hierarchy comes across as parent edges', () => {
     // reading it as mesh 0 would refuse a file that is perfectly importable.
     const { ops } = await importNested(nestedFixture());
     expect(ops.some((o) => o.type === 'addNode' && o.nodeType === 'PolyMeshData')).toBe(true);
+  });
+});
+
+// #1316 — the probe from the issue, kept: one file through both import roads stores ONE sampler
+// value. Before, the clone road stored glTF's 10497 and the native road three's 1000.
+describe('#1316 — both import roads store the same sampler value', () => {
+  it('the textured quad`s albedo reads repeat/repeat on both', async () => {
+    const json = JSON.parse(readFileSync(TEXTURED, 'utf8')) as {
+      materials: Parameters<typeof gltfJsonMaterialToOpenpbr>[0][];
+      textures: { sampler?: number }[];
+      samplers: { wrapS?: number; wrapT?: number }[];
+    };
+    const clone = gltfJsonMaterialToOpenpbr(json.materials[0], {
+      textures: json.textures,
+      samplers: json.samplers,
+    }).maps.albedo;
+    const result = await buildNativeGltfImportOps({
+      buffer: fixture(TEXTURED),
+      assetRef: 'user-imports/native/probe.gltf',
+      sceneNodeId: 'n_scene',
+      storeImage: async () => 'img',
+    });
+    if ('refused' in result) throw new Error(result.refused);
+    const data = result.ops.find(
+      (op): op is Extract<Op, { type: 'addNode' }> =>
+        op.type === 'addNode' && op.nodeType === 'PolyMeshData',
+    )!;
+    const native = PolyMeshDataParams.parse(data.params).material!.maps.albedo;
+    expect({ wrapS: clone?.wrapS, wrapT: clone?.wrapT }).toEqual({
+      wrapS: native?.wrapS,
+      wrapT: native?.wrapT,
+    });
+    expect(native?.wrapS).toBe('repeat');
+  });
+});
+
+describe('#1381 — a file`s tangents are checked against MikkTSpace and dropped', () => {
+  // The geometry of Khronos's `NormalTangentMirrorTest` (CC BY 4.0, credited in the file): 15,720
+  // corners whose tangents Khronos authored, including mirrored UV islands.
+  const MIRROR = 'public/assets/tangent-mirror.glb';
+
+  /** The mirror fixture, its JSON and binary chunk edited in place and repacked as a GLB. */
+  function editedMirror(
+    edit: (json: Record<string, unknown>, floats: (accessor: number) => Float32Array) => void,
+  ): ArrayBuffer {
+    const bytes = new Uint8Array(fixture(MIRROR));
+    const view = new DataView(bytes.buffer);
+    const jsonLength = view.getUint32(12, true);
+    const json = JSON.parse(new TextDecoder().decode(bytes.subarray(20, 20 + jsonLength))) as {
+      accessors: { bufferView: number; count: number; type: string }[];
+      bufferViews: { byteOffset?: number }[];
+    } & Record<string, unknown>;
+    const bin = bytes.slice(28 + jsonLength);
+    const width: Record<string, number> = { VEC2: 2, VEC3: 3, VEC4: 4 };
+    edit(json, (accessor) => {
+      const a = json.accessors[accessor];
+      const offset = json.bufferViews[a.bufferView].byteOffset ?? 0;
+      return new Float32Array(bin.buffer, offset, a.count * width[a.type]);
+    });
+    let text = new TextEncoder().encode(JSON.stringify(json));
+    const padded = new Uint8Array(Math.ceil(text.length / 4) * 4).fill(0x20);
+    padded.set(text);
+    text = padded;
+    const out = new Uint8Array(12 + 8 + text.length + 8 + bin.length);
+    const o = new DataView(out.buffer);
+    o.setUint32(0, 0x46546c67, true);
+    o.setUint32(4, 2, true);
+    o.setUint32(8, out.length, true);
+    o.setUint32(12, text.length, true);
+    o.setUint32(16, 0x4e4f534a, true);
+    out.set(text, 20);
+    o.setUint32(20 + text.length, bin.length, true);
+    o.setUint32(24 + text.length, 0x004e4942, true);
+    out.set(bin, 28 + text.length);
+    return out.buffer;
+  }
+
+  const attributesOf = (json: Record<string, unknown>) =>
+    (json.meshes as { primitives: { attributes: Record<string, number> }[] }[])[0].primitives[0]
+      .attributes;
+
+  const importOf = (buffer: ArrayBuffer) =>
+    buildNativeGltfImportOps({
+      buffer,
+      assetRef: 'user-imports/native/mirror.glb',
+      sceneNodeId: 'n_scene',
+      storeImage: noImages,
+    });
+
+  beforeEach(() => {
+    __resetRegistryForTests();
+    registerAllNodes();
+  });
+
+  it('tangents MikkTSpace reproduces come across by being dropped: the mesh holds none', async () => {
+    const result = await importOf(fixture(MIRROR));
+    if ('refused' in result) throw new Error(result.refused);
+    const data = result.ops.find(
+      (op): op is Extract<Op, { type: 'addNode' }> =>
+        op.type === 'addNode' && op.nodeType === 'PolyMeshData',
+    )!;
+    const mesh = PolyMeshDataParams.parse(data.params).mesh!;
+    expect(mesh.cornerLayers.map((l) => l.name)).toEqual(['UVMap']);
+    expect(mesh.pointLayers).toEqual([]);
+  });
+
+  it('tangents turned 10° about the normal are refused, by count and angle', async () => {
+    const result = await importOf(
+      editedMirror((json, floats) => {
+        const t = floats(attributesOf(json).TANGENT);
+        const n = floats(attributesOf(json).NORMAL);
+        const [c, s] = [Math.cos((10 * Math.PI) / 180), Math.sin((10 * Math.PI) / 180)];
+        for (let v = 0; v < t.length / 4; v++) {
+          const [tx, ty, tz] = [t[v * 4], t[v * 4 + 1], t[v * 4 + 2]];
+          const [nx, ny, nz] = [n[v * 3], n[v * 3 + 1], n[v * 3 + 2]];
+          // Rodrigues about the normal (t ⟂ n): t cos θ + (n × t) sin θ.
+          t[v * 4] = tx * c + (ny * tz - nz * ty) * s;
+          t[v * 4 + 1] = ty * c + (nz * tx - nx * tz) * s;
+          t[v * 4 + 2] = tz * c + (nx * ty - ny * tx) * s;
+        }
+      }),
+    );
+    expect('refused' in result && result.issue).toBe('#1381');
+    expect('refused' in result && result.refused).toMatch(
+      /carries tangents that MikkTSpace does not reproduce \(15720 of 15720 corners differ, by up to 10\.\d°\)/,
+    );
+  });
+
+  it('tangents of the opposite handedness are refused', async () => {
+    const result = await importOf(
+      editedMirror((json, floats) => {
+        const t = floats(attributesOf(json).TANGENT);
+        for (let v = 0; v < t.length / 4; v++) t[v * 4 + 3] = -t[v * 4 + 3];
+      }),
+    );
+    expect('refused' in result && result.refused).toContain(
+      'MikkTSpace does not reproduce (15720 of 15720 corners differ',
+    );
+  });
+
+  it('tangents on a mesh with no normals are ignored, as glTF says, and it imports', async () => {
+    const result = await importOf(
+      editedMirror((json, floats) => {
+        const t = floats(attributesOf(json).TANGENT);
+        for (let v = 0; v < t.length / 4; v++) t[v * 4 + 3] = -t[v * 4 + 3];
+        delete attributesOf(json).NORMAL;
+      }),
+    );
+    expect('refused' in result ? result.refused : 'imported').toBe('imported');
+  });
+
+  it('tangents with no UV set to derive them from are refused by name', async () => {
+    const result = await importOf(
+      editedMirror((json) => {
+        delete attributesOf(json).TEXCOORD_0;
+      }),
+    );
+    expect('refused' in result && result.refused).toBe(
+      'mesh 0 carries tangents but no TEXCOORD_0 to derive them from',
+    );
+  });
+});
+
+describe('#1384 — joint sets on a mesh no node skins are dropped, as Blender drops them', () => {
+  beforeEach(() => {
+    __resetRegistryForTests();
+    registerAllNodes();
+  });
+
+  const importOf = (buffer: ArrayBuffer) =>
+    buildNativeGltfImportOps({
+      buffer,
+      assetRef: 'user-imports/native/cube.gltf',
+      sceneNodeId: 'n_scene',
+      storeImage: noImages,
+    });
+
+  const meshOf = (result: NativeImportResult) => {
+    const data = result.ops.find(
+      (op): op is Extract<Op, { type: 'addNode' }> =>
+        op.type === 'addNode' && op.nodeType === 'PolyMeshData',
+    )!;
+    return PolyMeshDataParams.parse(data.params).mesh!;
+  };
+
+  it('two sets on an unskinned cube: it imports, holds neither, and says what it left', async () => {
+    const result = await importOf(
+      jsonFixture((json) => {
+        const skin = withSkinData(json, uniformJoints(), uniformWeights());
+        const attributes = cubeAttributes(json);
+        attributes.JOINTS_1 = skin.joints;
+        attributes.WEIGHTS_1 = skin.weights;
+      }),
+    );
+    if ('refused' in result) throw new Error(result.refused);
+    expect(meshOf(result).pointLayers).toEqual([]);
+    expect(meshOf(result).vertexGroups).toEqual([]);
+    expect(result.notices).toEqual([
+      'mesh 0 carries JOINTS_0, JOINTS_1, WEIGHTS_0, WEIGHTS_1, but no node skins it, so they were dropped (as Blender drops them)',
+    ]);
+  });
+
+  it('half a set on an unskinned cube is dropped unread too, not refused as malformed', async () => {
+    const result = await importOf(
+      jsonFixture((json) => {
+        withSkinData(json, uniformJoints(), uniformWeights());
+        delete cubeAttributes(json).WEIGHTS_0;
+      }),
+    );
+    if ('refused' in result) throw new Error(result.refused);
+    expect(result.notices).toEqual([
+      'mesh 0 carries JOINTS_0, but no node skins it, so they were dropped (as Blender drops them)',
+    ]);
+  });
+
+  it('a cube with no joint sets leaves nothing behind', async () => {
+    const result = await importOf(fixture(CUBE));
+    if ('refused' in result) throw new Error(result.refused);
+    expect(result.notices).toEqual([]);
+  });
+
+  it('the same sets on a SKINNED cube are held, with no notice', async () => {
+    const result = await importOf(
+      jsonFixture((json) => {
+        skinTheCube(json);
+        withSkinData(json, uniformJoints(), uniformWeights());
+      }),
+    );
+    if ('refused' in result) throw new Error(result.refused);
+    expect(result.notices).toEqual([]);
+    expect(meshOf(result).pointLayers.map((l) => l.type)).toEqual(['int4', 'float4']);
   });
 });

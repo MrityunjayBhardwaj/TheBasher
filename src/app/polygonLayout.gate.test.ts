@@ -211,13 +211,10 @@ describe('#769 — a polygon layout derived from a descriptor agrees with the ge
       );
     }
 
-    for (const d of [
-      { kind: 'gltf', assetRef: 'a', childName: 'n' } as GeometryDescriptor,
-      { kind: 'baked', hash: 'h', vertexCount: 10 } as GeometryDescriptor,
-    ]) {
+    for (const d of [{ kind: 'baked', hash: 'h', vertexCount: 10 } as GeometryDescriptor]) {
       const v = polygonLayoutOf(d);
       expect(v.kind, d.kind).toBe('outside-the-descriptor');
-      // ...and it does NOT name an issue, because no issue makes an asset clone derivable.
+      // ...and it does NOT name an issue, because no issue makes baked bytes derivable.
       expect('until' in v, `${d.kind} must not promise a fix`).toBe(false);
     }
   });

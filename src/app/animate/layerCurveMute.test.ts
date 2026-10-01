@@ -26,7 +26,7 @@ import {
 import { __resetMutatorRegistryForTests, registerAllMutators } from '../../agent/mutators';
 import { useDiffStore } from '../../agent/diff/store';
 import { layerChannelRows, layerRowId } from '../../timeline/layerChannelRows';
-import { rowFlag, rowFlagToggleOps } from './clipRowMint';
+import { rowFlag, rowFlagToggleOps } from './rowChannelWrite';
 import { dispatchMutatorFromUI } from './dispatchMutator';
 import { poseLayerChain } from './poseChain';
 import type { GraphNodeLike } from './graphNodes';

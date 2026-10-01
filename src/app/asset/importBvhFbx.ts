@@ -25,6 +25,7 @@
 //      (the existing seams); bvhImportChain.ts / fbxImportChain.ts (the
 //      importers, unchanged).
 
+import type { DagState } from '../../core/dag/state';
 import { useDagStore } from '../../core/dag/store';
 import type { Op } from '../../core/dag/types';
 import { buildBvhImportOps } from '../../core/import/bvhImportChain';
@@ -93,12 +94,13 @@ function skeletonObjectOps(
   layerId: string,
   // #1101 — the name the import gave the motion, so the Object and its motion read the same.
   name: string,
+  // #1307 — the state the ops will land in: the live store for a drop, the agent's fork for a tool.
+  state: DagState,
 ): Op[] {
   const skeleton = ops.find((op) => op.type === 'addNode' && op.nodeId === skeletonId);
   const params = skeleton?.type === 'addNode' ? skeleton.params : undefined;
   const bones = (params as { bones?: BoneSpec[] } | undefined)?.bones ?? [];
   if (bones.length === 0) return [];
-  const { state } = useDagStore.getState();
   const sceneNodeId = state.outputs.scene?.node;
   if (!sceneNodeId) return [];
   // Blender names the armature after the file and never renames it after the action, so the name
@@ -112,23 +114,58 @@ function skeletonObjectOps(
   }).ops;
 }
 
+/** A motion import's ops, built and not yet dispatched (#1307). */
+export interface MotionImportOps extends MotionImportResult {
+  readonly ops: Op[];
+}
+
 /**
- * Read a `.bvh` from OPFS and import it as a Skeleton + its keys on a base pose layer (#1211).
+ * #1307 — the ops a `.bvh` or `.fbx` import makes, against a CALLER-SUPPLIED state, without
+ * dispatching: a Skeleton, the file's keys on a base pose layer (#1211) and the Object that
+ * stands it (#1056). Two callers, one chain — the drop/picker/Library import below dispatches
+ * them against the live store, and the agent's `library.import` returns them for its Diff (V7).
+ * Before this the agent had no motion road at all and minted a glTF node reading the file.
  *
- * BVH is TEXT: decode the bytes with TextDecoder before parsing. A wrong decode
- * (or a TimeSource-less project) throws inside `buildBvhImportOps`; the catch
- * routes it to assetErrorStore so the failure is visible, not swallowed.
+ * BVH is TEXT and is decoded before parsing; FBX is BINARY and is handed over as a fresh,
+ * non-shared ArrayBuffer (the OPFS read may back a SharedArrayBuffer — the same detach as the
+ * glTF road). Throws when the file cannot be read or parsed; each caller reports that its way.
  */
-export async function importBvhFromOpfs(path: string): Promise<MotionImportResult | null> {
+export async function buildMotionImportOpsFromOpfs(
+  path: string,
+  state: DagState,
+): Promise<MotionImportOps> {
+  const ext = importFormatOf(path)?.ext;
+  if (ext !== '.bvh' && ext !== '.fbx') throw new Error(`${path} is not a motion file`);
+  const storage = await getStorage();
+  const bytes = await storage.read(path);
+  const name = nameFromPath(path);
+  let built: { ops: Op[]; skeletonId: string; motionId: string };
+  if (ext === '.bvh') {
+    built = buildBvhImportOps({ text: new TextDecoder().decode(bytes), name });
+  } else {
+    const copy = new Uint8Array(bytes.byteLength);
+    copy.set(bytes);
+    built = buildFbxImportOps({ data: copy.buffer, name });
+  }
+  const { ops, skeletonId, motionId } = built;
+  return {
+    ops: [...ops, ...skeletonObjectOps(ops, skeletonId, motionId, name, state)],
+    skeletonId,
+    motionId,
+  };
+}
+
+/**
+ * Import a `.bvh` or `.fbx` from OPFS into the live project, as one undo step (K6).
+ *
+ * A wrong decode or a TimeSource-less project throws inside the builder; the catch routes it
+ * to assetErrorStore so the failure is visible, not swallowed.
+ */
+async function importMotionFromOpfs(path: string): Promise<MotionImportResult | null> {
   try {
-    const storage = await getStorage();
-    const bytes = await storage.read(path);
-    const text = new TextDecoder().decode(bytes);
     const dag = useDagStore.getState();
-    const name = nameFromPath(path);
-    const { ops, skeletonId, motionId } = buildBvhImportOps({ text, name });
-    const standIn = skeletonObjectOps(ops, skeletonId, motionId, name);
-    dag.dispatchAtomic([...ops, ...standIn], 'user', `import bvh: ${path}`);
+    const { ops, skeletonId, motionId } = await buildMotionImportOpsFromOpfs(path, dag.state);
+    dag.dispatchAtomic(ops, 'user', `import ${importFormatOf(path)!.ext.slice(1)}: ${path}`);
     // Bump AFTER dispatch (pre-mortem: a pre-dispatch bump re-enumerates the
     // My-Imports list before the import lands → stale/empty on failure).
     useImportRefreshStore.getState().bump();
@@ -141,31 +178,14 @@ export async function importBvhFromOpfs(path: string): Promise<MotionImportResul
   }
 }
 
-/**
- * Read a `.fbx` from OPFS and import it as a Skeleton + its keys on a base pose layer (#1211).
- *
- * FBX is BINARY: pass the raw ArrayBuffer straight to `buildFbxImportOps`
- * (`parseFbx` accepts ArrayBuffer | string). Detach a fresh, non-shared
- * ArrayBuffer (the OPFS read may back a SharedArrayBuffer) so the parser gets a
- * plain buffer — mirror of the glTF detach in buildGltfImportOpsFromOpfs.
- */
+/** Read a `.bvh` from OPFS and import it (`buildMotionImportOpsFromOpfs`). */
+export async function importBvhFromOpfs(path: string): Promise<MotionImportResult | null> {
+  return importMotionFromOpfs(path);
+}
+
+/** Read a `.fbx` from OPFS and import it (`buildMotionImportOpsFromOpfs`). */
 export async function importFbxFromOpfs(path: string): Promise<MotionImportResult | null> {
-  try {
-    const storage = await getStorage();
-    const bytes = await storage.read(path);
-    const copy = new Uint8Array(bytes.byteLength);
-    copy.set(bytes);
-    const dag = useDagStore.getState();
-    const name = nameFromPath(path);
-    const { ops, skeletonId, motionId } = buildFbxImportOps({ data: copy.buffer, name });
-    const standIn = skeletonObjectOps(ops, skeletonId, motionId, name);
-    dag.dispatchAtomic([...ops, ...standIn], 'user', `import fbx: ${path}`);
-    useImportRefreshStore.getState().bump();
-    return { skeletonId, motionId };
-  } catch (err) {
-    useAssetErrorStore.getState().report(path, `import failed: ${formatAssetError(err)}`);
-    return null;
-  }
+  return importMotionFromOpfs(path);
 }
 
 /**

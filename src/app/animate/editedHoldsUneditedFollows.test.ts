@@ -33,9 +33,9 @@
 // `src/app/asset/poseNativeBone.test.ts` ("rebinding a motion keeps the pose"): the bone nobody
 // posed plays the new motion, and the posed one keeps its pose, both read off the deformed skin.
 //
-// REF: issues #877, #887, #888, #889; src/app/resolveGltfChildTransform.ts
+// REF: issues #877, #887, #888, #889; app/resolveGltfChildTransform.ts (gone in #1053; at 7e1356c7)
 //      (the band ladder — presence wins, never value-equality);
-//      src/app/animate/ensureChannelForBone.ts (the mint);
+//      app/animate/ensureChannelForBone.ts (gone in #1053; at 15c170c4) (the mint, retired with the clone road);
 //      src/agent/tools/dagExec.ts (the universal mutation surface, an agent
 //      tool, which is what makes ROAD B reachable in this product).
 

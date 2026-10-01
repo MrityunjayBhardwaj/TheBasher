@@ -54,3 +54,52 @@ describe('partial material setParam re-parse (R6 — every sibling defaulted)', 
     expect(mat.base.metalness).toBe(0); // sibling lobe untouched
   });
 });
+
+// #1123 — the map strengths are an OPTIONAL bag with no default, so a material saved before it
+// has none. An inspector edit on that material must create it, not fail validation or vanish.
+describe('#1123 — an edit on an absent map-strength bag creates it', () => {
+  it('the default box has no bag, and setting one strength makes a bag holding only it', () => {
+    const state = buildDefaultDagState();
+    const before = state.nodes.n_box_data.params.material as InlineMaterialSpec;
+    expect('mapStrengths' in before).toBe(false);
+    const next = applyOp(state, setParam('material.mapStrengths.normal', 0.4)).next;
+    const mat = next.nodes.n_box_data.params.material as InlineMaterialSpec;
+    expect(mat.mapStrengths).toEqual({ normal: 0.4 });
+    expect(mat.base.color).toBe(before.base.color); // the rest of the material is untouched
+  });
+});
+
+// #1123 — THE PLAN'S OPEN QUESTION for the first new lobe: fuzz is optional with no default on the
+// lobe, so a material saved before it has none. An edit on one of its fields must create the WHOLE
+// lobe, its other fields at OpenPBR's defaults (`open_pbr_surface.mtlx`: colour white, roughness 0.5).
+describe('#1123 — an edit on an absent fuzz lobe creates the whole lobe', () => {
+  it('setting the weight on a box with no fuzz makes a lobe with the other fields defaulted', () => {
+    const state = buildDefaultDagState();
+    expect('fuzz' in (state.nodes.n_box_data.params.material as InlineMaterialSpec)).toBe(false);
+    const next = applyOp(state, setParam('material.fuzz.weight', 0.7)).next;
+    const mat = next.nodes.n_box_data.params.material as InlineMaterialSpec;
+    expect(mat.fuzz).toEqual({ weight: 0.7, color: '#ffffff', roughness: 0.5 });
+  });
+});
+
+// #1321 — the specular lobe always exists, but its weight and colour are optional fields inside it:
+// an edit on one must add that field alone and leave the other absent (absent means OpenPBR's default).
+describe('#1321 — an edit on an absent specular weight adds that field alone', () => {
+  it('setting the weight leaves the colour absent', () => {
+    const state = buildDefaultDagState();
+    const next = applyOp(state, setParam('material.specular.weight', 0.4)).next;
+    const mat = next.nodes.n_box_data.params.material as InlineMaterialSpec;
+    expect(mat.specular).toEqual({ roughness: 0.3, ior: 1.5, weight: 0.4 });
+  });
+});
+
+// #1322 — the transmission lobe's colour and depth are optional fields inside it: an edit on the
+// depth adds that field alone.
+describe('#1322 — an edit on an absent transmission depth adds that field alone', () => {
+  it('setting the depth leaves the colour absent', () => {
+    const state = buildDefaultDagState();
+    const next = applyOp(state, setParam('material.transmission.depth', 0.5)).next;
+    const mat = next.nodes.n_box_data.params.material as InlineMaterialSpec;
+    expect(mat.transmission).toEqual({ weight: 0, depth: 0.5 });
+  });
+});

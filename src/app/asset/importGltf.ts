@@ -7,7 +7,7 @@
 //   - the e2e `__basher_ingestGltfFolder` dev seam (Wave D)
 //
 // Why one core (B12, V20-adjacent): three call sites today already
-// re-implement read-OPFS → detach-buffer → buildGltfImportOps →
+// re-implement read-OPFS → detach-buffer → build the import ops →
 // dispatchAtomic in subtly divergent shapes. Collapsing them here
 // makes the glTF chokepoint a single audit point and matches the
 // V20 read-side discipline (one import, many surfaces).
@@ -15,7 +15,7 @@
 // What lives here:
 //   - `importGltfFromOpfs(path)` — extracted verbatim from
 //     `AssetDropZone.onDrop:67-90`. Reads OPFS bytes, detaches a fresh
-//     ArrayBuffer (SharedArrayBuffer concern), calls buildGltfImportOps
+//     ArrayBuffer (SharedArrayBuffer concern), builds the native import ops
 //     with the resolver-aware resolveBuffer, dispatches atomically,
 //     reports failures to assetErrorStore (not console.error — the
 //     silent-failure fix), and bumps the My-Imports refresh signal on
@@ -49,8 +49,6 @@
 // gltfImportChain.ts:72-83 (fnv1a id derivation); issue #110.
 
 import { useDagStore } from '../../core/dag/store';
-import { buildGltfImportOps, type GltfImportChainResult } from '../../core/import/gltfImportChain';
-import { parseGltfContainer } from '../../core/import/glb';
 import {
   buildNativeGltfImportOps,
   type NativeImportRefusal,
@@ -58,8 +56,6 @@ import {
 } from '../../core/import/nativeGltfImport';
 import { convertSpecGlossEntry } from './specGlossIngest';
 import { rebindOrphanMaterialsInEntry } from '../../core/import/rebindOrphanMaterials';
-import { SPEC_GLOSS_EXTENSION } from '../../core/import/specGlossToMetalRough';
-import type { DagState } from '../../core/dag/state';
 import { getStorage } from '../boot';
 import { writeProjectImage } from '../../core/project/projectImages';
 import { useProjectStore } from '../../core/project/store';
@@ -70,6 +66,7 @@ import {
 } from './opfsGltfResolver';
 import { formatAssetError, useAssetErrorStore } from '../stores/assetErrorStore';
 import { useImportRefreshStore } from '../stores/importRefreshStore';
+import { decodeDracoInBrowser } from './dracoDecoder';
 import {
   USER_IMPORTS_ROOT,
   resolveFreeImportName,
@@ -156,25 +153,16 @@ export function summarizeGltfEntry(bytes: Uint8Array): {
 
 /**
  * Non-dispatching core of the glTF import: read the OPFS bytes at `path`,
- * detach a plain ArrayBuffer, and build the deterministic import Op chain
- * against a CALLER-SUPPLIED DAG `state`, on one of two roads (#1049): the
- * native road (Group + per-node Object + PolyMeshData) when the file can be
- * native geometry, otherwise the clone road (GltfAsset + per-child Object +
- * GltfData + Group + — when the file carries embedded animations — N
- * TransformClip + 1 ClipSelect + connects). Returns a `GltfImportRoadResult`
+ * detach a plain ArrayBuffer, and build the deterministic native import Op
+ * chain (Group + per-node Object + PolyMeshData, #1049). A file the native
+ * reader cannot hold is refused whole, by the name the reader gave (#1053):
+ * there is no second road to fall back to. Returns a `GltfImportRoadResult`
  * saying which; the caller decides whether to dispatch.
  *
  * Two callers, one chokepoint (B12):
- *   - `importGltfFromOpfs` (disk path) passes the live store state and then
- *     `dispatchAtomic`s the result.
- *   - `library.import` (agent tool, V7) passes the FORKED `ctx.dagState` and
- *     returns the ops for the Diff to apply — it NEVER dispatches.
- *
- * Sharing this with the agent tool closes the #81-class silent drop on the
- * agent surface: before, `library.import` called the static
- * `buildAssetDropOps` (no clip extraction), so an animated glTF imported as
- * a static mesh. Now both surfaces extract clips identically (H40 boundary-
- * pair: same node-type set on both paths).
+ *   - `importGltfFromOpfs` (disk path) dispatches the result.
+ *   - `library.import` / `model.generate` (agent tools, V7) return the ops
+ *     for the Diff to apply — they NEVER dispatch.
  *
  * The `resolveBuffer` resolver mirrors the disk path verbatim
  * (`opfsSiblingPath` against the OPFS sibling dir) so multi-file `.gltf`
@@ -183,7 +171,6 @@ export function summarizeGltfEntry(bytes: Uint8Array): {
 export async function buildGltfImportOpsFromOpfs(
   path: string,
   sceneNodeId: string,
-  state: DagState,
 ): Promise<GltfImportRoadResult> {
   const storage = await getStorage();
   const bytes = await storage.read(path);
@@ -198,10 +185,9 @@ export async function buildGltfImportOpsFromOpfs(
     sceneNodeId,
     resolveBuffer: (uri: string) => storage.read(opfsSiblingPath(path, uri)),
     storeImage: storeImageInOpenProject,
+    decodeDraco: decodeDracoInBrowser,
   };
-  const skinned = isSkinned(copy.buffer);
-  // A reader failure is a refusal like any other: the file still arrives, through the road that
-  // can hold it (none, for a skinned file), and the notice says what the native reader could not do.
+  // A reader failure is a refusal like any other, and says what the native reader could not do.
   let native: NativeImportResult | NativeImportRefusal;
   try {
     native = await buildNativeGltfImportOps(args);
@@ -212,23 +198,11 @@ export async function buildGltfImportOpsFromOpfs(
     };
   }
   if (!('refused' in native)) return { road: 'native', ...native };
-  // #1205 — a skinned file is a character, and a character is native or it is not imported: the
-  // clone road's character features retire with #1053, and a character that arrived on it would be
-  // left unable to take a motion or have its bones posed. Refused whole, by the name the native
-  // reader gave (user decision on #1205, 2026-09-26).
-  if (skinned) return { road: 'refused', nativeRefusal: native };
-  return { road: 'clone', nativeRefusal: native, ...(await buildGltfImportOps(args, state)) };
-}
-
-/** Whether a file carries a skin — read off its JSON alone, so a file whose buffers the native
- *  reader cannot decode (#1063) still says so. A container that does not parse says no, and takes
- *  the road it always took. */
-function isSkinned(buffer: ArrayBuffer): boolean {
-  try {
-    return ((parseGltfContainer(buffer).json as { skins?: unknown[] }).skins?.length ?? 0) > 0;
-  } catch {
-    return false;
-  }
+  // #1053 — native or refused, never split and never a second road: an import the native reader
+  // cannot hold is refused whole, by the name it gave. A skinned file was the first to be refused
+  // this way (#1205, user decision 2026-09-26); every file is now, and the issue named on the
+  // refusal is the one that brings that file across.
+  return { road: 'refused', nativeRefusal: native };
 }
 
 /**
@@ -245,20 +219,27 @@ export async function storeImageInOpenProject(bytes: Uint8Array, mime: string): 
 /**
  * #1049 — which road an import took. Every product entry point (drop, picker, `library.import`,
  * `model.generate`, AI generation) comes through `buildGltfImportOpsFromOpfs`, so the road is
- * chosen once, here: the native road first, and when it refuses, the WHOLE import takes the clone
- * road instead, carrying the refusal so the caller can say why. One import is never split between
- * the two. As later steps delete their refusals (#1050, #1051, #393, #1052, #1060, #1061, #1123,
- * #1125), more files arrive native with no change here; #1053 removes the clone arm.
+ * chosen once, here: native, or refused whole with the reader's reason (#1053). As the refusals'
+ * own issues land (#1060, #1061, #1063, #1123, #1125), more files arrive native with no change here.
  */
 export type GltfImportRoadResult =
   | ({ readonly road: 'native' } & NativeImportResult)
-  | ({
-      readonly road: 'clone';
-      readonly nativeRefusal: NativeImportRefusal;
-    } & GltfImportChainResult)
-  // #1205 — a skinned file the native reader refused: nothing to write. No `ops`, on purpose, so
-  // every caller has to say so rather than dispatch an empty import that reads as a success.
+  // Nothing to write. No `ops`, on purpose, so every caller has to say so rather than dispatch an
+  // empty import that reads as a success.
   | { readonly road: 'refused'; readonly nativeRefusal: NativeImportRefusal };
+
+/** What a refused import says, on every surface that reports one. */
+export function refusalNotice(refusal: NativeImportRefusal): string {
+  return `import refused: ${refusal.refused} (${refusal.issue})`;
+}
+
+/**
+ * #1384 — what an import that SUCCEEDED left behind on purpose, as one sentence to append to a
+ * surface's report, or '' when it left nothing. Never the refusal banner: nothing was refused.
+ */
+export function leftBehindNotice(notices: readonly string[]): string {
+  return notices.length === 0 ? '' : ` Left behind: ${notices.join('; ')}.`;
+}
 
 export async function importGltfFromOpfs(path: string): Promise<void> {
   try {
@@ -268,52 +249,16 @@ export async function importGltfFromOpfs(path: string): Promise<void> {
       useAssetErrorStore.getState().report(path, 'import failed: project has no scene output');
       return;
     }
-    const result = await buildGltfImportOpsFromOpfs(
-      path,
-      sceneRef.node,
-      useDagStore.getState().state,
-    );
+    const result = await buildGltfImportOpsFromOpfs(path, sceneRef.node);
     if (result.road === 'refused') {
-      useAssetErrorStore
-        .getState()
-        .report(
-          path,
-          `import refused: it is a character (it has a skin), and ${result.nativeRefusal.refused} (${result.nativeRefusal.issue})`,
-        );
+      useAssetErrorStore.getState().report(path, refusalNotice(result.nativeRefusal));
       return;
     }
     dag.dispatchAtomic(result.ops, 'user', `import asset: ${path}`);
-    // NO-SILENT-DROP (V38, V53 fork-3). Two distinct notices:
-    //  (1) spec/gloss reaching here means an UN-converted source. Both .gltf and
-    //      .glb are auto-converted to metal-rough at ingest (#214 / #216), so
-    //      this normally never fires. It only survives when the ingest conversion
-    //      could not run (e.g. a malformed container parseGlb rejected), in which
-    //      case three r169 renders it INCORRECTLY (flat/untextured — it dropped
-    //      the spec-gloss plugin). A render-WRONG warning, not "renders fine".
-    //  (2) the rest are FAITHFUL: they render via the clone (the scalar overlay
-    //      never strips them); they're just not yet captured into the editable
-    //      IR. A console notice, NOT the red `asset failed:` banner.
-    // A native import has nothing to report: the native road refuses a file rather than drop what
-    // it carries (#1123, #1125), so everything below is about the clone road's copy of the file.
-    if (result.road === 'native') {
-      useImportRefreshStore.getState().bump();
-      return;
-    }
-    console.warn(
-      `glTF imported (${path}) through the file's own copy, not as native geometry: ${result.nativeRefusal.refused} (${result.nativeRefusal.issue}).`,
-    );
-    const specGloss = result.unsupportedFeatures.includes(SPEC_GLOSS_EXTENSION);
-    const faithful = result.unsupportedFeatures.filter((f) => f !== SPEC_GLOSS_EXTENSION);
-    if (specGloss) {
-      console.warn(
-        `glTF imported (${path}) still carries KHR_materials_pbrSpecularGlossiness — the ingest conversion could not run (malformed container?), so three.js renders it flat/untextured. Re-export the model and import again.`,
-      );
-    }
-    if (faithful.length > 0) {
-      console.warn(
-        `glTF imported OK (${path}). These features render but aren't editable in Basher yet: ${faithful.join(', ')}`,
-      );
-    }
+    // #1384 — a console notice, as the other no-silent-drop repairs on this path are (V38): the
+    // import succeeded, so the refusal banner would say the wrong thing.
+    if (result.notices.length > 0)
+      console.warn(`glTF import (${path}):${leftBehindNotice(result.notices)}`);
     // Bump AFTER dispatchAtomic returns (pre-mortem #3): a pre-dispatch
     // bump would cause the My-Imports list to re-enumerate before the
     // import succeeded, yielding stale/empty results on failure.

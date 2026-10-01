@@ -1,7 +1,7 @@
 // v0.6 #3 (#181, W1) — REAL UV display.
 //
 // THE FEATURE: the UVEditor shows the REAL UV layout of any mesh, extracted from
-// the actual BufferGeometry (resolver for box/sphere; loaded clone for glTF), via
+// the actual BufferGeometry (resolver for box/sphere; the stored mesh for an import), via
 // the ONE `resolveMeshUVs`/`extractUVIslands`. NOT the old synthetic Box/Sphere
 // unfold (uvLayout.ts).
 //
@@ -17,11 +17,10 @@
 //   per-island [0,0,1,1] bounds assertion FAILS (synthetic bounds are sub-regions).
 
 import { test, expect } from './_fixtures';
-import { importedChildren } from './_importedChild';
+import { firstMaterialMesh } from './_importedMesh';
 import { splitSphereOps } from './_splitSphere';
 
-const ASSET_REF = 'assets/two-material-textured-quad.gltf';
-const FIXTURE_URL = '/assets/two-material-textured-quad.gltf';
+const FIXTURE = 'two-material-textured-quad.gltf';
 
 interface UVIslandsResult {
   status: string;
@@ -45,9 +44,10 @@ interface BasherWindow {
       dispatchAtomic: (ops: Op[], source?: string, label?: string) => void;
     };
   };
-  __basher_importGltf?: (buffer: ArrayBuffer, assetRef: string) => Promise<{ gltfAssetId: string }>;
-  __basher_writeOpfsBytes?: (path: string, bytes: Uint8Array) => Promise<void>;
-  __basher_gltf_meshes?: () => { slot: number }[];
+  __basher_ingestGltfFolder?: (
+    files: { relativePath: string; bytes: Uint8Array }[],
+    folderName: string,
+  ) => Promise<string>;
 }
 
 test.describe('v0.6 #3 W1 — real UV display', () => {
@@ -131,39 +131,30 @@ test.describe('v0.6 #3 W1 — real UV display', () => {
     expect(uv.triangleCount).toBeGreaterThan(0);
   });
 
-  test('glTF child → real islands from the loaded clone geometry (not null)', async ({ page }) => {
+  // #1053 — the import arrives native; its islands come from the stored mesh (the clone road
+  // that read them off the loaded clone is retired).
+  test('an imported mesh → real islands from its stored geometry (not null)', async ({ page }) => {
     await page.goto('/');
     await page.waitForFunction(() => {
       const w = window as unknown as BasherWindow;
       return (
         typeof w.__basher_uv_islands === 'function' &&
-        typeof w.__basher_importGltf === 'function' &&
-        typeof w.__basher_writeOpfsBytes === 'function'
+        typeof w.__basher_ingestGltfFolder === 'function'
       );
     });
 
-    await page.evaluate(
-      async ({ url, ref }) => {
-        const w = window as unknown as BasherWindow;
-        const buf = await fetch(url).then((r) => r.arrayBuffer());
-        await w.__basher_writeOpfsBytes!(ref, new Uint8Array(buf));
-        await w.__basher_importGltf!(buf, ref);
-      },
-      { url: FIXTURE_URL, ref: ASSET_REF },
-    );
-    // Wait until the clone is rendered (both slots present) so its geometry exists.
-    await page.waitForFunction(() => {
+    await page.evaluate(async (file) => {
       const w = window as unknown as BasherWindow;
-      const s = w.__basher_gltf_meshes ? w.__basher_gltf_meshes() : [];
-      return s.length >= 1;
-    });
+      const bytes = new Uint8Array(await fetch(`/assets/${file}`).then((r) => r.arrayBuffer()));
+      await w.__basher_ingestGltfFolder!([{ relativePath: file, bytes }], 'p06-3');
+    }, FIXTURE);
+    await expect.poll(async () => (await firstMaterialMesh(page))?.road).toBe('native');
 
-    // Find an imported child's id from the DAG. #389 — the OBJECT half, which inherits
-    // the fused node's id, so every seam keyed on "the child" still answers to it.
-    const childId = (await importedChildren(page))[0]?.objectId ?? null;
+    // The OBJECT — the selection id every seam keyed on "the mesh" answers to.
+    const childId = (await firstMaterialMesh(page))?.objectId ?? null;
     expect(childId).not.toBeNull();
 
-    // The clone may need a tick to register; retry the seam until it resolves.
+    // The mesh may need a tick to register; retry the seam until it resolves.
     const uv = await page.evaluate(async (id: string) => {
       const w = window as unknown as BasherWindow;
       for (let i = 0; i < 40; i++) {
@@ -173,9 +164,9 @@ test.describe('v0.6 #3 W1 — real UV display', () => {
       }
       return w.__basher_uv_islands!(id);
     }, childId!);
-    console.log(`[p06-3 uv gltf-child ${childId}] ${JSON.stringify(uv)}`);
+    console.log(`[p06-3 uv imported ${childId}] ${JSON.stringify(uv)}`);
 
-    // Real loaded geometry → at least one island with real triangles (NOT null,
+    // Real stored geometry → at least one island with real triangles (NOT null,
     // NOT the synthetic placeholder the old UVEditor showed for glTF).
     expect(uv.status).toBe('ok');
     expect(uv.islandCount).toBeGreaterThanOrEqual(1);

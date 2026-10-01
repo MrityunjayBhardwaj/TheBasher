@@ -22,15 +22,13 @@
 //     the evaluator + every consumer that destructures scale). This closes the
 //     latent H40 where a static param-read diverged from an animated render for
 //     the #2/#3 (material/UV) consumers, one indirection deeper. No parallel walk.
-//   - GltfChild: the transform is delegated to `resolveEvaluatedTransform`
-//     (which funnels through the ONE `resolveGltfChildTrs` layering primitive —
-//     manual → baked → clip → base). When there is no render output to walk
-//     (the bare-node case), we fall back to `resolveGltfChildTrs` directly with
-//     the child's own params as base — STILL the one band, never a parallel walk.
+//   - an imported child (an `Object` over a `GltfData`) takes the same road as every
+//     other Object. Its own layering band (manual → baked → clip → base) was the
+//     clone renderer's, and went with it (#1053): a kept import is not drawn.
 //
 // geometry is a `GeometryRef` HANDLE (deterministic key, §48) — NEVER inlined
 // buffers (Ousterhout interface-depth). The registry (geometryRegistry.ts) builds
-// box/sphere on demand; glTF geometry lives in the loaded asset clone (H45).
+// every descriptor kind but `baked` on demand; a `baked` one is primed after its OPFS read.
 //
 // REF: PLAN.md Wave 1 Task 2; CONTEXT §B/§H; RESEARCH §B; vyapti V1/V20; hetvabhasa H40.
 
@@ -116,11 +114,7 @@ export function evaluatedMeshFromMeshData(
   // The data node's IR is the object's slot TABLE; the geometry's face attribute says which
   // slot each face uses. With every face on slot 0 this is byte-identically `data.material`,
   // which is the point: the read path moved first, while the answers still agreed.
-  const materials = materialAssignmentOf(
-    data.attributeKey,
-    objectSlotsOf(object, data),
-    data.geometry,
-  );
+  const materials = materialAssignmentOf(data.attributeKey, objectSlotsOf(object, data));
   const uvRead = readMeshUVs(data.geometry);
   return {
     geometry: data.geometry,
@@ -158,8 +152,9 @@ export function resolveEvaluatedMesh(
   // An imported child is now an `Object` over a `GltfData`, so the `node.type === 'Object'`
   // branch resolves it: the geometry handle comes from the data node's own evaluate (one
   // minter for the `gltf|<assetRef>|<childName>` key, where this branch was a second
-  // spelling of it), and the pose comes from `resolvePrimitiveTransform`, which walks
-  // `resolveEvaluatedTransform` and therefore still layers manual → baked → clip → base.
+  // spelling of it), and the pose comes from `resolvePrimitiveTransform`, as for any Object.
+  // (Its manual → baked → clip → base layering was the clone renderer's and went with it,
+  // #1053: a kept import is not drawn.)
   //
   // The materials answer IMPROVES rather than merely moving. This branch returned
   // `EMPTY_ASSIGNMENT` because a fused child had no data half to carry a slot table; the
@@ -241,7 +236,6 @@ export function resolveEvaluatedMesh(
     const modifierMaterials = materialAssignmentOf(
       source.attributeKey ?? null,
       objectSlotsOf(objectValue ?? null, source),
-      source.geometry,
     );
     const modifierUvs = readMeshUVs(source.geometry);
     return {
@@ -297,7 +291,7 @@ export function resolveEvaluatedMesh(
       // baked ref is not sync-buildable from the registry. Only the TRANSFORM differs
       // from the fused shape, and it differs the way every split kind's does — resolved
       // through the Object's own animated band rather than read off raw params.
-      const bakedMaterials = materialAssignmentOf(null, [data.material], data.geometry);
+      const bakedMaterials = materialAssignmentOf(null, [data.material]);
       const bakedUvs = readMeshUVs(data.geometry);
       return {
         geometry: data.geometry,
@@ -327,7 +321,6 @@ export function resolveEvaluatedMesh(
       const modifiedMaterials = materialAssignmentOf(
         data.attributeKey ?? null,
         objectSlotsOf(value, data),
-        modGeometry,
       );
       const modifiedUvs = readMeshUVs(modGeometry);
       return {

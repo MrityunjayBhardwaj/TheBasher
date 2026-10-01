@@ -125,22 +125,9 @@ describe('#646 — an imported mesh cannot carry a material ARRAY, on any road t
     expect(/\.material\s*=/.test(stripped)).toBe(false);
   });
 
-  it('C. the per-slot addressing that replaced the array road is present at all three sites', () => {
-    const src = read(REPO, 'src', 'viewport', 'SceneFromDAG.tsx');
-    expect(lines(src)).toBeGreaterThan(3000);
-    const stripped = stripComments(src);
-
-    // The three sites that make a multi-primitive import per-slot addressable. Proven end to
-    // end by tests/e2e/p06-2-per-submesh.spec.ts over a real two-primitive fixture; asserted
-    // here so a refactor cannot remove the capability while #646 still reads as open.
-    expect(/localSlotByChild\.set\(/.test(stripped)).toBe(true);
-    expect(/irs\?\.\[local\]/.test(stripped)).toBe(true);
-    expect(/targetSlot === slotIdx/.test(stripped)).toBe(true);
-
-    // And the guard itself STILL STANDS. It is dead today (rows A and B) and must stay:
-    // row B is the condition that revives it.
-    expect(/!Array\.isArray\(src\)/.test(stripped)).toBe(true);
-  });
+  // C. (#1053) The clone renderer's per-slot addressing (`localSlotByChild`, `irs?.[local]`,
+  // `targetSlot === slotIdx`) and its array guard were deleted with the clone road: a kept clone
+  // import is not drawn. A multi-primitive import is native now, its slots on the mesh (#1052).
 
   it('D. guards the guard — the parsers read code, not prose about it', () => {
     // A mention inside a comment must not count as an assignment, or row A would report a

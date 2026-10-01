@@ -219,27 +219,15 @@ describe('resolveEvaluatedTransform — GltfChild branch (P7.7 / #91)', () => {
   const ASSET_ID = 'n_gltf_asset';
   const CHILD_ID = 'n_gltf_child';
   const CHILD_NAME = 'Bone';
-  // Captured base TRS (seeded at import). Clip + override are deliberately
-  // distinct so each layer is observable, not trivially equal.
+  // Captured base TRS (seeded at import).
   const BASE_POS: [number, number, number] = [1, 0, 0];
   const BASE_ROT: [number, number, number] = [0, 0, 0];
   const BASE_SCALE: [number, number, number] = [1, 1, 1];
-  const OVERRIDE_POS: [number, number, number] = [5, 6, 7];
-  const CLIP_POS: [number, number, number] = [9, 9, 9];
-  const CLIP_ROT: [number, number, number] = [0, 45, 0];
-  // P7.12 (#108, C3) — the baked-channel layer (a per-bone KeyframeChannelVec3).
-  const BAKED_POS: [number, number, number] = [3, 3, 3];
 
-  /** Build a state with a GltfAsset (optionally carrying a transformClip
-   *  track for the child) + a GltfChild node. The GltfChild has NO render
-   *  edge (R-1 inputless), so it never matches the scene-child correspondence
-   *  loop — the trailing branch is the only path that resolves it. */
-  function buildGltfState(opts: {
-    overridden?: { position: boolean; rotation: boolean; scale: boolean };
-    overridePos?: [number, number, number];
-    withClip?: boolean;
-    bakedPos?: [number, number, number];
-  }): DagState {
+  /** Build a state with a GltfAsset + a GltfChild node, as a kept clone import saves them. The
+   *  GltfChild has NO render edge (R-1 inputless), so it never matches the scene-child
+   *  correspondence loop. */
+  function buildGltfState(): DagState {
     let state = buildDefaultDagState();
     const ops: Op[] = [
       {
@@ -254,146 +242,22 @@ describe('resolveEvaluatedTransform — GltfChild branch (P7.7 / #91)', () => {
       ...importedChildOps(CHILD_ID, {
         assetRef: ASSET_REF,
         childName: CHILD_NAME,
-        position: opts.overridePos ?? BASE_POS,
+        position: BASE_POS,
         rotation: BASE_ROT,
         scale: BASE_SCALE,
-        // Sparse (#389): omitted when nothing is flagged, mirroring the live Object
-        // schema, so the default fixture carries no key rather than three `false`s.
-        overridden: opts.overridden,
       }),
     ];
     for (const op of ops) state = applyOp(state, op).next;
-
-    if (opts.withClip) {
-      // Wire a real TransformClip producer into the GltfAsset's transformClip
-      // input. The track is keyed by `targetNodeId` = the childName key
-      // (gltfImportChain.ts:233 sets targetNodeId = the sanitised name key,
-      // and the renderer/resolver look it up by that key). A single keyframe
-      // clamps to its value at any time. The clip samples the project clock
-      // (n_time) so it evaluates without a separate Time mock.
-      state = applyOp(state, {
-        type: 'addNode',
-        nodeId: 'n_clip',
-        nodeType: 'TransformClip',
-        params: {
-          name: 'anim',
-          duration: 1,
-          keyframes: [
-            { targetNodeId: CHILD_NAME, time: 0, position: CLIP_POS, rotation: CLIP_ROT },
-          ],
-        },
-      }).next;
-      // P7.10 (#114): TransformClip no longer declares a `time` input
-      // socket. The Time→Clip wire is gone; time enters via the value's
-      // `.sample(seconds)` method (V3 amended), invoked by the consumer.
-      state = applyOp(state, {
-        type: 'connect',
-        from: { node: 'n_clip', socket: 'out' },
-        to: { node: ASSET_ID, socket: 'transformClip' },
-      }).next;
-    }
-
-    if (opts.bakedPos) {
-      // P7.12 (#108) — a baked per-bone KeyframeChannelVec3, keyed by BOTH
-      // params.target (= the GltfChild dagId) AND params.childName (BLOCK-2),
-      // edge-less (no AnimationLayer connect — the resolver enumerates it, R4).
-      state = applyOp(state, {
-        type: 'addNode',
-        nodeId: 'n_baked_pos',
-        nodeType: 'KeyframeChannelVec3',
-        params: {
-          name: 'baked',
-          target: CHILD_ID,
-          childName: CHILD_NAME,
-          assetRef: ASSET_REF,
-          paramPath: 'position',
-          keyframes: [{ time: 0, value: opts.bakedPos, easing: 'linear' }],
-        },
-      }).next;
-    }
     return state;
   }
 
-  // 1. OVERRIDDEN → the manual value wins over base (and over a clip if present).
-  it('returns the overridden value for an overridden GltfChild field', () => {
-    const state = buildGltfState({
-      overridden: { position: true, rotation: false, scale: false },
-      overridePos: OVERRIDE_POS,
-    });
-    const r = resolveEvaluatedTransform(state, CHILD_ID, ctxAt(0));
-    expect(r).not.toBeNull();
-    expect(r!.position).toEqual(OVERRIDE_POS); // manual layer wins
-    expect(r!.rotation).toEqual(BASE_ROT); // not overridden, no clip → base
-    expect(r!.scale).toEqual(BASE_SCALE);
+  // (#1053) The six rows that pinned how the gizmo layered a clone child's override, clip and
+  // baked channel are gone with the branch they read: a kept clone import is not drawn, so the
+  // read side has nothing to agree with, and resolves nothing.
+  it('a kept clone child resolves to nothing, as nothing draws it (#1053)', () => {
+    expect(resolveEvaluatedTransform(buildGltfState(), CHILD_ID, ctxAt(0))).toBeNull();
   });
 
-  // 2. NON-OVERRIDDEN + active clip → the clip track wins (clip over base);
-  //    an overridden field still wins over the clip (manual over clip).
-  it('a non-overridden child with an active clip resolves to the clip track', () => {
-    const state = buildGltfState({
-      overridden: { position: false, rotation: false, scale: false },
-      withClip: true,
-    });
-    const r = resolveEvaluatedTransform(state, CHILD_ID, ctxAt(0));
-    expect(r).not.toBeNull();
-    expect(r!.position).toEqual(CLIP_POS); // clip wins over base
-    expect(r!.rotation).toEqual(CLIP_ROT);
-    // scale has no clip track value distinct from base (clip seeded [1,1,1])
-    expect(r!.scale).toEqual(BASE_SCALE);
-  });
-
-  // 2b. Manual override beats the clip: overridden position + active clip →
-  //     the manual value, not the clip track (R-4 precedence).
-  it('an overridden field wins over the active clip track (R-4)', () => {
-    const state = buildGltfState({
-      overridden: { position: true, rotation: false, scale: false },
-      overridePos: OVERRIDE_POS,
-      withClip: true,
-    });
-    const r = resolveEvaluatedTransform(state, CHILD_ID, ctxAt(0));
-    expect(r).not.toBeNull();
-    expect(r!.position).toEqual(OVERRIDE_POS); // manual beats clip
-    expect(r!.rotation).toEqual(CLIP_ROT); // rotation not overridden → clip wins
-  });
-
-  // P7.12 (#108, C3, BLOCK-1) — the read-side baked-channel band. These mirror
-  // the renderer (C2): the read-side gizmo/NPanel evaluated TRS MUST layer the
-  // baked channel identically, or a baked-then-edited bone shows displayed ≠
-  // rendered (the #68/#77 second-surface class, H40).
-
-  // 2c. baked channel present + active clip → BAKED wins over clip (presence).
-  it('a baked channel wins over the clip on the read-side (presence, R-4)', () => {
-    const state = buildGltfState({ withClip: true, bakedPos: BAKED_POS });
-    const r = resolveEvaluatedTransform(state, CHILD_ID, ctxAt(0));
-    expect(r).not.toBeNull();
-    expect(r!.position).toEqual(BAKED_POS); // baked beats clip
-    expect(r!.rotation).toEqual(CLIP_ROT); // rotation has no baked band → clip
-  });
-
-  // 2d. baked value == base STILL beats the clip — presence, never value. A
-  //     director who keys a bone back to its base pose keeps the override.
-  it('a baked channel whose value equals base still beats the clip (presence not value)', () => {
-    const state = buildGltfState({ withClip: true, bakedPos: BASE_POS });
-    const r = resolveEvaluatedTransform(state, CHILD_ID, ctxAt(0));
-    expect(r).not.toBeNull();
-    expect(r!.position).toEqual(BASE_POS); // baked(==base) wins; the clip (CLIP_POS) does NOT resurface
-  });
-
-  // 2e. manual override beats the baked channel (the full 4-band order).
-  it('a manual override wins over the baked channel (manual > baked)', () => {
-    const state = buildGltfState({
-      overridden: { position: true, rotation: false, scale: false },
-      overridePos: OVERRIDE_POS,
-      withClip: true,
-      bakedPos: BAKED_POS,
-    });
-    const r = resolveEvaluatedTransform(state, CHILD_ID, ctxAt(0));
-    expect(r).not.toBeNull();
-    expect(r!.position).toEqual(OVERRIDE_POS); // manual beats baked + clip
-  });
-
-  // 3 (regression, H40). A box select still resolves via the EXISTING path —
-  //   the trailing branch must not shadow or reorder it.
   it('a box select still resolves via the existing scene-child path (H40)', () => {
     const state = buildAnimatedState();
     const r = resolveEvaluatedTransform(state, BOX_ID, ctxAt(0));
@@ -403,7 +267,7 @@ describe('resolveEvaluatedTransform — GltfChild branch (P7.7 / #91)', () => {
 
   // Identity-null still holds: a non-GltfChild, non-rendered node → null.
   it('returns null for a GltfAsset id (not a GltfChild, not a scene child)', () => {
-    const state = buildGltfState({});
+    const state = buildGltfState();
     expect(resolveEvaluatedTransform(state, ASSET_ID, ctxAt(0))).toBeNull();
   });
 });
