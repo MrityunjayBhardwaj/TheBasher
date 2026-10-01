@@ -647,8 +647,8 @@ function buildClipKeyframes(
  * #178 (S2) — capture a glTF node's materials → OpenPBR IR, ONE per mesh
  * primitive (slot) in primitive order (the SAME order three.js builds child
  * meshes, so slot i ↔ the i-th sub-mesh under the node). Returns undefined when
- * the node has no mesh (an empty/bone — correctly no materials) so the GltfChild
- * omits the param and the renderer keeps the clone's embedded material. A
+ * the node has no mesh (an empty/bone — correctly no materials) so the child
+ * omits the param. A
  * primitive with no `material` index uses the glTF default material (the
  * converter's no-arg defaults: white, metallic 1, rough 1).
  */
@@ -936,15 +936,16 @@ export async function buildGltfImportOps(
     const dagId = nodeNameMap[key];
     const dataId = gltfChildDataDagId(args.assetRef, key);
     const base = defaultTRS(childNodes[i]);
-    // #178 (S2) — capture this node's per-primitive materials as OpenPBR IR so
-    // the renderer/inspector treat them like native materials. `null` material for
-    // an empty/bone node → renderer keeps the clone's embedded material.
+    // #178 (S2) — capture this node's per-primitive materials as OpenPBR IR. `null`
+    // material for an empty/bone node. (Since #1053 nothing draws from these params; they
+    // are rebuilt so the load converter can diff a saved import against them.)
     const materials = captureChildMaterials(childNodes[i], json);
-    // #1023 — the child's own face count, so its descriptor can state one. Absent for a
+    // #1023 — the child's own face count (no descriptor reads it since #1053; the load
+    // converter's diff still does). Absent for a
     // child that is not an all-triangle mesh (a bone, an empty, lines or points), which
     // every reader must keep treating as "not captured" and never as zero.
     const faceCount = captureChildFaceCount(childNodes[i], json);
-    // #1040 — the child's own topological point count, so its descriptor can state one.
+    // #1040 — the child's own topological point count, kept for the same diff.
     // Absent for a pre-#1040 save, a non-triangle child, and a MULTI-PRIMITIVE child, whose
     // read door holds only the first primitive's buffer — see `captureChildPointCount`.
     const pointCount = captureChildPointCount(childNodes[i], json, buffers);

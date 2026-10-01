@@ -396,7 +396,7 @@ export const UV_MAP = 'UVMap';
  * program describes its mesh with the same words — and measured on the reference rather than
  * assumed: importing this repo's `two-uv-quad.gltf` yields exactly `UVMap` and `UVMap.001`.
  *
- * NOT every corner UV layer is named this way — {@link PROJECTED_UV} is not — so a consumer asking
+ * NOT every corner UV layer is named this way — {@link UV_PROJECT} is not — so a consumer asking
  * "which buffer does this layer draw to" must read the mesh's OWN layer list rather than parse a
  * name. This function names what an IMPORT writes; it does not define the vocabulary.
  *
@@ -436,7 +436,7 @@ export const SKIN_WEIGHTS = 'skin_weights';
  * file's-copy road draws, where three named the buffers `uv`, `uv1`, … in the file's own
  * `TEXCOORD` order, so the name's number IS the buffer. A mesh that carries its own ordered layer
  * list answers the same question from THAT list instead, and must: its layers need not be an
- * import's ({@link PROJECTED_UV} is not), so parsing their names would answer confidently about a
+ * import's ({@link UV_PROJECT} is not), so parsing their names would answer confidently about a
  * layer the mesh never had.
  *
  * `null` means "not one of these names", never `0` — the caller decides what to do with an

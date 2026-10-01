@@ -213,8 +213,7 @@ async function sampleQuad(page: Page, rootId: string) {
 
 /**
  * The quad is found through its import ROOT, not its name: the renderer names the root's group
- * with the root's node id on both roads, while the mesh itself carries the file's node name only
- * on the clone road (a native mesh is unnamed). Each fixture draws exactly one mesh.
+ * with the root's node id, and a native mesh is unnamed. Each fixture draws exactly one mesh.
  */
 async function captureQuad(page: Page, rootId: string) {
   const shot = (await page.screenshot()).toString('base64');

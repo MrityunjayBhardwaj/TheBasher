@@ -556,7 +556,7 @@ export interface InlineMaterialSpec {
    * 🔑 A LAYER NAME, NOT AN INDEX (#1062). It used to be the number glTF writes in `texCoord`,
    * which only ever meant "whatever the drawn geometry's nth UV buffer happens to be". A stored
    * mesh now carries NAMED UV layers, and its layers are not always the import's own — a
-   * projection authors one under its own name ({@link PROJECTED_UV}) — so an index cannot say
+   * projection authors one under its own name ({@link UV_PROJECT}) — so an index cannot say
    * which of them a slot samples. The reference addresses them by name for the same reason: a UV
    * Map node names the layer it reads (measured, and grounded in
    * `ref/GROUND_TRUTH_BLENDER_ATTRIBUTE_NAMING.md`).
@@ -798,7 +798,7 @@ export interface BakedMaterialSpec extends BakedMaterialMaps {
  * uses (#634).
  *
  * `indices` is `null` when the geometry carries no `material_index` attribute at all — a
- * road with no data half yet (glTF / baked). That is NOT "every face uses slot 0"; it is
+ * road with no data half yet (baked). That is NOT "every face uses slot 0"; it is
  * "this geometry cannot say", and the difference is why it is a null rather than a
  * synthesised array of zeros. The readers live in `src/app/materialAssignment.ts`.
  */
@@ -2406,7 +2406,7 @@ export interface ObjectValue extends RotationModeFields {
    * somewhere else", leaving the data node untouched. Keyed by decimal slot index.
    *
    * This is the field the rest of this file has been promising since #638. The paragraphs
-   * at `:540`, `:634` and `:1212` all say the slot TABLE is object-level and that this is
+   * on the `materialSlots` fields above all say the slot TABLE is object-level and that this is
    * what lets two objects share one mesh and still look different — and until this existed
    * they described a road that was not built: `materialSlots` sat on the data types only,
    * so two Objects reading one data node received the identical table with nothing in the

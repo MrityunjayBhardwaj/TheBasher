@@ -293,8 +293,10 @@ const mapStrengthsSchema = z
 
 /**
  * The OpenPBR core-10 inline-material zod schema (layer 1 — NEW-node defaults).
- * Every field AND every nested object carries a `.default` so a partial `setParam`
- * whole-params re-parse (ops.ts) always fills siblings (R6).
+ * Every lobe field AND every nested object carries a `.default` so a partial `setParam`
+ * whole-params re-parse (ops.ts) always fills siblings (R6). The exceptions are the
+ * optional fields whose ABSENCE is the meaning (`mapUvTransforms`, `unsupported` and the
+ * like), each with its reason beside it.
  *
  * TAKES NO ARGUMENT ON PURPOSE (#394 D7). It used to take a `baseColorDefault` that
  * differed per primitive (box green, sphere blue) — that parameter WAS the whole
