@@ -71,3 +71,68 @@ export function stripComments(src: string): string {
   }
   return out;
 }
+
+/**
+ * Does `src` name `word` in CODE — as an identifier, a property, a key, or a string that is
+ * exactly the word (`params['zoom']`, `paramPath: 'zoom'`)?
+ *
+ * Stricter than a whole-word search over {@link stripComments}' output, which still counts a
+ * word inside a longer string. That is how a file whose only mention was an error-message prefix
+ * (`"faceCount: descriptor … built"`) kept being accepted as the reader of a param named
+ * `faceCount` after the code that read it was deleted (#1407).
+ *
+ * String and template TEXT is blanked; the code inside a template's `${…}` is kept, and a plain
+ * string whose whole content is the word is kept, since that is how a param is addressed by key.
+ */
+export function mentionsInCode(src: string, word: string): boolean {
+  const code = stripComments(src);
+  let out = '';
+  let i = 0;
+  // A stack of what we are inside: a quote char, or '{' for a template's `${…}` expression.
+  const stack: string[] = [];
+  const top = () => stack[stack.length - 1];
+  while (i < code.length) {
+    const c = code[i];
+    const inside = top();
+    if (inside === "'" || inside === '"') {
+      // Plain string: find its end, keep the content only when it is exactly the word.
+      let j = i;
+      while (j < code.length && code[j] !== inside) j += code[j] === '\\' ? 2 : 1;
+      const content = code.slice(i, j);
+      out += content === word ? content : ' '.repeat(content.length);
+      out += inside;
+      stack.pop();
+      i = j + 1;
+      continue;
+    }
+    if (inside === '`') {
+      if (c === '\\') {
+        out += '  ';
+        i += 2;
+      } else if (c === '`') {
+        out += c;
+        stack.pop();
+        i += 1;
+      } else if (c === '$' && code[i + 1] === '{') {
+        out += '${';
+        stack.push('{');
+        i += 2;
+      } else {
+        out += c === '\n' ? '\n' : ' ';
+        i += 1;
+      }
+      continue;
+    }
+    // Code — either top level or inside a template expression.
+    if (c === "'" || c === '"' || c === '`') {
+      stack.push(c);
+    } else if (inside === '{' && c === '{') {
+      stack.push('{');
+    } else if (inside === '{' && c === '}') {
+      stack.pop();
+    }
+    out += c;
+    i += 1;
+  }
+  return new RegExp(`(?<![A-Za-z0-9_$])${word}(?![A-Za-z0-9_$])`).test(out);
+}

@@ -32,7 +32,9 @@
 //
 // HOW STRONG THE READER CHECK ACTUALLY IS — stated plainly, because overselling it would
 // reproduce the exact disease this module treats. The gate verifies that a named reader file
-// EXISTS and MENTIONS the param. That is a necessary condition, not a sufficient one, and
+// EXISTS and MENTIONS the param IN CODE — a comment, a file name or the text of a message does
+// not count (#1407: eleven rows were passing on prose alone, two of them naming code that had
+// been deleted). That is a necessary condition, not a sufficient one, and
 // there is a live counter-example in this very table: `zoom` appears in
 // `src/nodes/cameraRecompose.ts` and is nonetheless dropped by it. So a wrong `readBy` can
 // pass. What the gate does buy is totality — every param must have an answer, a new param
@@ -53,6 +55,13 @@ import type { SplitKindName } from './splitKinds';
 /** A named file reads this param. Verified to exist and to mention it — see the header. */
 export interface ReadBy {
   readonly by: string;
+  /**
+   * The reader takes the node's params as a WHOLE and never spells this one's name — a
+   * field-by-field diff, say. The gate cannot ask such a file to mention the param, so it asks
+   * for this expression instead: the code that takes the params. Without it the only way to
+   * name such a reader was to point at a file that happened to carry the word (#1407).
+   */
+  readonly whole?: string;
 }
 
 /** Nothing reads it. The defect this module exists to surface; must name an issue. */
@@ -84,14 +93,17 @@ const LIGHT_RECOMPOSE = 'src/nodes/lightRecompose.ts';
 const BAKED_RECOMPOSE = 'src/nodes/bakedRecompose.ts';
 const ACTIVE_CAMERA = 'src/app/activeCamera.ts';
 const CURVE_LINE = 'src/viewport/CurveLine.tsx';
-/**
- * The model's face- and corner-domain questions (#1023). A real reader and not a fold: these
- * read the captured count OFF the descriptor by name, and a gate pins what they answer.
- */
-const FACE_QUESTIONS = 'src/app/faceCount.ts';
 /** #1053 — the load converter, which reads a saved clone import to turn it native. */
 const CLONE_CONVERTER = 'src/app/asset/convertCloneCharacters.ts';
-const POINT_QUESTIONS = 'src/app/pointIdentity.ts';
+/**
+ * #1407 — the modules a caller named above DELEGATES to. The table used to name the caller, which
+ * carries the param only in prose; the read itself is one hop further in.
+ */
+const GEOMETRY_BUILDER = 'src/app/geometryRegistry.ts';
+const CURVE_SAMPLER = 'src/nodes/curveMath.ts';
+const CAMERA_NODE = 'src/app/cameraNode.ts';
+const CAMERA_DOF = 'src/app/cameraDof.ts';
+const MATERIAL_ASSIGNMENT = 'src/app/materialAssignment.ts';
 
 /**
  * A param folded into the geometry handle at evaluate time. Its reader is the geometry
@@ -119,7 +131,9 @@ export const PARAM_READERS: Record<SplitKindName, Record<string, ParamReader>> =
     material: { by: SCENE },
   },
   sphere: {
-    radius: { by: SCENE },
+    // Folded into the GeometryRef like the segment counts, but TRACED: the registry's sphere
+    // build reads it off the descriptor by name.
+    radius: { by: GEOMETRY_BUILDER },
     widthSegments: FOLDED_INTO_GEOMETRY(
       'no renderer mentions it — measured absent from every candidate. It is folded into ' +
         'the GeometryRef by SphereData.evaluate, so the real question is whether the ' +
@@ -132,8 +146,10 @@ export const PARAM_READERS: Record<SplitKindName, Record<string, ParamReader>> =
   },
   curve: {
     points: { by: CURVE_LINE },
-    closed: { by: SCENE },
-    resolution: { by: SCENE },
+    // Consumed at evaluate time into `samples`; the sampler is what reads both by name. The
+    // scene draws the samples and never sees either.
+    closed: { by: CURVE_SAMPLER },
+    resolution: { by: CURVE_SAMPLER },
   },
   light: {
     lightKind: {
@@ -158,7 +174,8 @@ export const PARAM_READERS: Record<SplitKindName, Record<string, ParamReader>> =
     tex: { by: LIGHT_RECOMPOSE },
   },
   camera: {
-    projection: { by: ACTIVE_CAMERA },
+    // The projection rule lives in `cameraNode.ts`; the pose resolver asks it.
+    projection: { by: CAMERA_NODE },
     fov: { by: ACTIVE_CAMERA },
     // The one this table was built to make visible. `CameraData.evaluate` emits it and
     // `recomposeCameraObject` drops it, so it is authored in the inspector, written to the
@@ -175,11 +192,12 @@ export const PARAM_READERS: Record<SplitKindName, Record<string, ParamReader>> =
     // `zoom` is — but unlike `zoom` it IS read, off the RAW params by the pose resolver. That
     // road is pinned as an equality by activeCamera.test.ts, so these are not defects; they
     // are a second road. Distinguishing them from `zoom` is the whole point of naming readers
-    // rather than trusting the seam measurement alone.
-    sensorSize: { by: ACTIVE_CAMERA },
-    dofEnabled: { by: ACTIVE_CAMERA },
-    focusDistance: { by: ACTIVE_CAMERA },
-    fStop: { by: ACTIVE_CAMERA },
+    // rather than trusting the seam measurement alone. The pose resolver hands the raw params to
+    // `resolveCameraDof`, and that is where the four lens fields are read by name.
+    sensorSize: { by: CAMERA_DOF },
+    dofEnabled: { by: CAMERA_DOF },
+    focusDistance: { by: CAMERA_DOF },
+    fStop: { by: CAMERA_DOF },
     focusOnTarget: { by: ACTIVE_CAMERA },
     lookAt: { by: ACTIVE_CAMERA },
     roll: { by: ACTIVE_CAMERA },
@@ -197,21 +215,14 @@ export const PARAM_READERS: Record<SplitKindName, Record<string, ParamReader>> =
     childName: { by: CLONE_CONVERTER },
     material: { by: CLONE_CONVERTER },
     materialSlots: { by: CLONE_CONVERTER },
-    // #1023 — the captured face count. A NAMED reader rather than a fold, which is why this
-    // is not `FOLDED_INTO_GEOMETRY` like the sphere's segment counts: those are handed to a
-    // geometry builder and nothing checks that the builder honoured them. This one is folded
-    // into the descriptor and then read back off it BY NAME — `faceCountOf`, `faceCornersOf`
-    // and `faceArityOf` each have a `gltf` arm — and `importedMeshParity.gate.test.ts` pins
-    // exactly what those three answer. No renderer reads it, and none should: it is an
-    // element fact for the model's own questions, not something that draws.
-    faceCount: { by: FACE_QUESTIONS },
-    // #1040 — the captured point count, and TRACED for exactly the reason its sibling above
-    // is: `pointCountOf` has a `gltf` arm that reads it off the descriptor BY NAME, and
-    // `importedMeshParity.gate.test.ts` pins what it answers. No renderer reads it, and none
-    // should — a point count is an element fact for the model's own questions, not something
-    // that draws. It is a SEPARATE reader from `faceCount`'s because the two questions live in
-    // different modules, and naming the module is the whole content of this table.
-    pointCount: { by: POINT_QUESTIONS },
+    // #1023 / #1040 — the captured face and point counts. Their readers were the `gltf` arms of
+    // the model's face and point questions, which went with the `gltf` geometry kind (#1053).
+    // What reads them now is the same converter, and not by name: it rebuilds the saved import
+    // and compares EVERY param field against the rebuild to find what the director edited. So
+    // the captures must keep writing exactly what old saves hold — a count that differed would
+    // read as an edit (#1407).
+    faceCount: { by: CLONE_CONVERTER, whole: 'was.params' },
+    pointCount: { by: CLONE_CONVERTER, whole: 'was.params' },
   },
   mesh: {
     // #1049 — the stored mesh itself, read BY NAME: `meshGeometryRef` decodes it and keys the
@@ -222,7 +233,7 @@ export const PARAM_READERS: Record<SplitKindName, Record<string, ParamReader>> =
     // The material, drawn by the same object road every MeshData producer's material takes.
     material: { by: SCENE },
     // #1052 — the slot table, drawn slot by slot against the mesh's `material_index` groups by
-    // the same object road, through `objectSlotsOf`.
-    materialSlots: { by: SCENE },
+    // the same object road, through `objectSlotsOf` — which is where the table is read by name.
+    materialSlots: { by: MATERIAL_ASSIGNMENT },
   },
 };
