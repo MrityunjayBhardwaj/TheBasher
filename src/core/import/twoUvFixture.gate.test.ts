@@ -11,7 +11,6 @@ import { describe, expect, it } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import zlib from 'node:zlib';
-import { detectUnsupportedGltfFeatures } from './gltfImportChain';
 
 const ASSETS = path.resolve(__dirname, '../../../public/assets');
 const read = (f: string) => JSON.parse(fs.readFileSync(path.join(ASSETS, f), 'utf8'));
@@ -228,14 +227,5 @@ describe('the two-UV fixture is real', () => {
       expect(a, `set 0 at (${lx}, ${ly}) must be the border colour`).toEqual(BORDER);
       expect(b, `set 1 at (${lx}, ${ly}) must be the centre colour`).toEqual(CENTRE);
     }
-  });
-
-  it('the importer flags the subject and stays silent on the control', () => {
-    expect(detectUnsupportedGltfFeatures(read('two-uv-quad.gltf'))).toContain(
-      'secondary UV set (TEXCOORD_1+)',
-    );
-    expect(detectUnsupportedGltfFeatures(read('one-uv-quad.gltf'))).not.toContain(
-      'secondary UV set (TEXCOORD_1+)',
-    );
   });
 });

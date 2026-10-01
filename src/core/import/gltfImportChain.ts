@@ -58,112 +58,6 @@ export interface GltfImportChainResult {
    *  unskinned asset — there is nothing to project (#807). */
   readonly skeletonIds: string[];
   readonly nodeNameMap: Record<string, string>;
-  /**
-   * NO-SILENT-DROP (V38, V53 fork-3) — glTF features present in the file that
-   * are NOT captured into Basher's editable OpenPBR IR. Until #1053 the clone
-   * renderer still drew them and the import surfaced this list as a notice.
-   * Today this chain runs only to rebuild a saved clone import for the load
-   * converter, and no product code reads the list. Empty for a fully-supported
-   * import.
-   */
-  readonly unsupportedFeatures: string[];
-}
-
-// glTF extensions the clone road either handled at three's loader (DRACO/KTX2/
-// Meshopt/quantization) or captured into the OpenPBR IR (the scalar material
-// lobes). That loader went with the clone renderer (#1053); what the native
-// reader accepts is decided in `nativeGltfImport.ts`, not here.
-// Anything in the file's `extensionsUsed` NOT listed here is surfaced as a
-// no-silent-drop notice — including FUTURE extensions we haven't seen, so a new
-// unknown feature warns instead of vanishing.
-const SUPPORTED_GLTF_EXTENSIONS = new Set<string>([
-  'KHR_draco_mesh_compression',
-  'KHR_texture_basisu',
-  'EXT_meshopt_compression',
-  'KHR_mesh_quantization',
-  'KHR_materials_ior',
-  'KHR_materials_clearcoat',
-  'KHR_materials_transmission',
-  'KHR_materials_emissive_strength',
-  'KHR_materials_unlit',
-  // Captured into the shared uvTransform when uniform across a material's textures;
-  // the per-map-DIFFERING case is flagged separately below (not by this blanket).
-  'KHR_texture_transform',
-]);
-
-/**
- * Detect glTF features the importer does NOT yet capture into the editable IR
- * (V38 no-silent-drop, V53 fork-3). Pure: reads `extensionsUsed` (authoritative
- * top-level list — catches volume/specular/iridescence/etc. AND
- * any future unknown extension) plus a primitive scan for secondary UV sets.
- * The list is about editability, not about what draws.
- */
-export function detectUnsupportedGltfFeatures(json: {
-  extensionsUsed?: string[];
-  meshes?: { primitives?: { material?: number; attributes?: Record<string, number> }[] }[];
-}): string[] {
-  const out: string[] = [];
-  for (const ext of json.extensionsUsed ?? []) {
-    if (typeof ext === 'string' && !SUPPORTED_GLTF_EXTENSIONS.has(ext)) out.push(ext);
-  }
-  // KHR_texture_transform: uniform across a material's maps → the shared uvTransform;
-  // DIFFERING → each slot's own placement in `mapUvTransforms` (#550).
-  //
-  // THE ENTRY THAT WAS HERE IS GONE, and its removal condition was the one written
-  // beside it: "drop when the render + inspector slices land". Both have. Each clause
-  // of its stated reason was re-checked rather than assumed, because the entry had
-  // already survived one premature removal attempt on the strength of a premise that
-  // did not hold:
-  //   · "nothing reads the per-slot placements"      → false: `prep` and the glTF
-  //     overlay both resolve `perMap[slot] ?? shared`.
-  //   · "editing one does nothing"                   → false, observed in a browser:
-  //     editing a per-map row re-places that slot and only that slot.
-  //   · "a DAG-replaced map uses the shared placement" → false, and MEASURED to be
-  //     too generous: a replaced map draws with NO placement at all. But that is not
-  //     an import-fidelity limitation and not per-map — it hits a material carrying
-  //     only a shared placement identically, and it predates this work. It belongs to
-  //     the replaced-map road, and is tracked as its own defect (#553), not as a
-  //     footnote on what the importer captured.
-  // A slot with no captured entry uses the shared placement; that is what replacement
-  // means, not a gap. TEXCOORD_1+ below keeps its entry, but for a NARROWER reason than
-  // it used to give — see below.
-  //
-  // Secondary UV sets. The clause that stood here read *"the texCoord index is captured
-  // on the map descriptor, but a DAG-replaced map currently binds UV0 only"*, and the
-  // second half of that is no longer true (#997): the set is captured per slot onto the
-  // material (`InlineMaterialSpec.mapUvLayers`, which survives replacement where the map
-  // descriptor did not) and a replaced map now samples it. The inherited road never had
-  // the problem — three's own loader binds a captured texture to its set
-  // (`GLTFLoader.js:3354-3357`).
-  //
-  // 🔴 THE ENTRY STAYS, AND ITS REMAINING REASON IS STATED RATHER THAN INHERITED. What a
-  // director still cannot do is SEE or CHANGE the binding: there is no inspector control
-  // for a slot's UV set, and the 2D UV view draws one anonymous set
-  // (`resolveMeshUVSpace.ts` — its extension point says so), so a slot sampling set 1 is
-  // shown against set 0's layout. (A native import carries every set as a named corner
-  // layer; the file's-copy road's corner lift refused them all, because a `gltf` descriptor
-  // stated no face arity (#738), until #1053 retired that descriptor.)
-  //
-  // ✅ THE OBSERVATION IS TAKEN, AND IT DID NOT LICENSE DELETING THIS ENTRY. The browser
-  // check this comment used to ask for — a replaced map on `two-uv-quad.gltf` drawing the
-  // centre quarter rather than the whole texture — now runs as
-  // `tests/e2e/p997-replaced-map-uv-set.spec.ts`, on real composited pixels, in both
-  // directions (the control on the default set draws the whole image), and it reds when
-  // either half of the wiring is deleted. What that discharged is the reason this entry
-  // USED to give. The three above are untouched by it and were each re-measured when the
-  // observation landed, so the notice keeps firing and its words stay true: the feature
-  // renders, and it is not editable. (Since #1062 that spec's subject imports native, so it now
-  // observes the native road; this notice fired only on the file's-copy road, for files the
-  // native reader refused for something else. Since #1053 such a file is refused whole and that
-  // road draws nothing, so "the feature renders" no longer holds anywhere this notice is built:
-  // only the load converter's comparison builds it.)
-  const multiUV = (json.meshes ?? []).some((m) =>
-    (m.primitives ?? []).some((p) =>
-      Object.keys(p.attributes ?? {}).some((a) => /^TEXCOORD_[1-9]/.test(a)),
-    ),
-  );
-  if (multiUV) out.push('secondary UV set (TEXCOORD_1+)');
-  return out;
 }
 
 export interface GltfImportChainArgs {
@@ -1122,7 +1016,6 @@ export async function buildGltfImportOps(
       transformClipIds: [],
       skeletonIds,
       nodeNameMap,
-      unsupportedFeatures: detectUnsupportedGltfFeatures(json),
     };
   }
 
@@ -1177,6 +1070,5 @@ export async function buildGltfImportOps(
     transformClipIds,
     skeletonIds,
     nodeNameMap,
-    unsupportedFeatures: detectUnsupportedGltfFeatures(json),
   };
 }
