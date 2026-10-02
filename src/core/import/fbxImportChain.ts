@@ -29,8 +29,9 @@
 
 import { parseFbx } from './fbx';
 import type { FbxMaterialSlot, FbxMeshRead, FbxSlotImage } from './fbxMesh';
+import type { FbxSceneRead } from './fbxScene';
 import { gltfJsonMaterialToOpenpbr, type GltfJsonMaterial } from './gltfJsonMaterialToOpenpbr';
-import { parentEdge, withCentrePivot, withProjectImages } from './modelImport';
+import { emptyOps, parentEdge, withCentrePivot, withProjectImages } from './modelImport';
 import { uniqueBoneName } from './nativeGltfSkeleton';
 import { skeletonObjectId } from './skeletonObject';
 import type { Op } from '../../core/dag/types';
@@ -191,12 +192,23 @@ export async function buildFbxImportOps(args: FbxImportChainArgs): Promise<FbxIm
     motionId: ids.layer,
     scaleChannels,
     dropped: { unknownBoneTracks, otherPropertyTracks, unparsedTracks: parsed.unparsedTracks },
-    meshOps: (sceneNodeId) =>
-      meshes.flatMap((mesh, i) =>
-        meshOps(mesh, `${ids.skeleton}_mesh${i}`, bones, ids.skeleton, sceneNodeId, imageKeys),
+    meshOps: (sceneNodeId) => [
+      ...meshes.flatMap((mesh, i) =>
+        mesh.vertexGroupBones === null
+          ? []
+          : skinnedMeshOps(
+              { ...mesh, vertexGroupBones: mesh.vertexGroupBones },
+              `${ids.skeleton}_mesh${i}`,
+              bones,
+              ids.skeleton,
+              sceneNodeId,
+              imageKeys,
+            ),
       ),
+      ...sceneOps(parsed.scene, meshes, bones, ids.skeleton, sceneNodeId, imageKeys),
+    ],
     meshCount: meshes.length,
-    notices: parsed.meshes.notices,
+    notices: [...parsed.meshes.notices, ...parsed.scene.notices],
   };
 }
 
@@ -267,24 +279,63 @@ function slotMaterial(
 }
 
 /**
- * #1429 — one mesh as Blender's FBX importer makes it: mesh data under an Object; skinned, an
- * Armature modifier on its stack pointed at the skeleton's Object, with no transform of its own;
- * unskinned, an Object of its own at the node's placement.
+ * #1434 — the file's scene as Blender's FBX importer lays it out (`fbxScene.ts`): each empty a Group,
+ * each unskinned mesh an Object, each under what it hangs from — a node written before it, the
+ * skeleton's Object (from a bone, named by `parentBone`, or from the armature), or `topId`. Every
+ * one in euler mode, as Blender's FBX import makes every object (`XYZ`, measured 4 of 4).
+ */
+function sceneOps(
+  scene: FbxSceneRead,
+  meshes: readonly FbxMeshRead[],
+  bones: readonly BoneSpec[],
+  skeletonId: string,
+  topId: string,
+  imageKeys: ReadonlyMap<number, StoredImage>,
+): Op[] {
+  const idOf = scene.nodes.map((node, k) =>
+    node.mesh === null ? `${skeletonId}_empty${k}` : `${skeletonId}_mesh${node.mesh}_object`,
+  );
+  const ops: Op[] = [];
+  const edges: Op[] = [];
+  scene.nodes.forEach((node, k) => {
+    const { parent } = node;
+    const transform = {
+      ...node.transform,
+      ...(parent?.kind === 'bone' ? { parentBone: bones[parent.bone].name } : {}),
+    };
+    if (node.mesh === null) ops.push(...emptyOps(idOf[k], transform, node.name));
+    else {
+      const id = `${skeletonId}_mesh${node.mesh}`;
+      ops.push(...meshOps(meshes[node.mesh], id, transform, imageKeys), {
+        type: 'connect',
+        from: { node: `${id}_data`, socket: 'out' },
+        to: { node: idOf[k], socket: 'data' },
+      });
+    }
+    const parentId =
+      parent === null
+        ? topId
+        : parent.kind === 'node'
+          ? idOf[parent.index]
+          : skeletonObjectId(skeletonId);
+    edges.push(parentEdge(idOf[k], parentId));
+  });
+  // Every edge after every node, as on the glTF road: an edge names two nodes that both exist.
+  return [...ops, ...edges];
+}
+
+/**
+ * #1429 — one mesh's data and its Object at `transform`, named. What feeds the Object's `data` is
+ * the caller's: the data itself (`sceneOps`), or an Armature modifier over it (`skinnedMeshOps`).
  */
 function meshOps(
   mesh: FbxMeshRead,
   id: string,
-  bones: readonly BoneSpec[],
-  skeletonId: string,
-  sceneNodeId: string,
+  transform: object,
   imageKeys: ReadonlyMap<number, StoredImage>,
 ): Op[] {
   const dataId = `${id}_data`;
   const objectId = `${id}_object`;
-  const data =
-    mesh.vertexGroupBones === null
-      ? mesh.data
-      : { ...mesh.data, vertexGroups: mesh.vertexGroupBones.map((b) => bones[b].name) };
   const slots = mesh.materials.map((slot) => slotMaterial(slot, imageKeys));
   const ops: Op[] = [
     {
@@ -292,46 +343,37 @@ function meshOps(
       nodeId: dataId,
       nodeType: 'PolyMeshData',
       params: {
-        mesh: packMeshData(data),
+        mesh: packMeshData(mesh.data),
         material: slots[0] ?? null,
         // Only for more than one slot: absent already means "one slot, and it is `material`".
         ...(slots.length > 1 ? { materialSlots: slots } : {}),
       },
     },
-    {
-      type: 'addNode',
-      nodeId: objectId,
-      nodeType: 'Object',
-      params:
-        mesh.placement === null
-          ? {
-              position: [0, 0, 0],
-              rotation: [0, 0, 0],
-              scale: [1, 1, 1],
-              rotationMode: 'quaternion',
-              quaternion: [0, 0, 0, 1],
-            }
-          : {
-              position: mesh.placement.position,
-              rotation: [0, 0, 0],
-              scale: mesh.placement.scale,
-              rotationMode: 'quaternion',
-              quaternion: mesh.placement.quaternion,
-            },
-    },
+    { type: 'addNode', nodeId: objectId, nodeType: 'Object', params: transform },
     { type: 'setMeta', nodeId: objectId, name: mesh.name },
   ];
-  if (mesh.vertexGroupBones === null) {
-    ops.push(
-      {
-        type: 'connect',
-        from: { node: dataId, socket: 'out' },
-        to: { node: objectId, socket: 'data' },
-      },
-      parentEdge(objectId, sceneNodeId),
-    );
-    return ops;
-  }
+  return ops;
+}
+
+/** Blender's skinned mesh: at identity, in euler mode, like every object its FBX import makes. */
+const IDENTITY = { position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] };
+
+/**
+ * #1429 — a skinned mesh as Blender's FBX importer makes it: an Armature modifier on its stack
+ * pointed at the skeleton's Object, with no transform of its own.
+ */
+function skinnedMeshOps(
+  mesh: FbxMeshRead & { readonly vertexGroupBones: readonly number[] },
+  id: string,
+  bones: readonly BoneSpec[],
+  skeletonId: string,
+  sceneNodeId: string,
+  imageKeys: ReadonlyMap<number, StoredImage>,
+): Op[] {
+  const data = { ...mesh.data, vertexGroups: mesh.vertexGroupBones.map((b) => bones[b].name) };
+  const ops = meshOps({ ...mesh, data }, id, IDENTITY, imageKeys);
+  const dataId = `${id}_data`;
+  const objectId = `${id}_object`;
   const modifierId = `${id}_armature`;
   const armatureObject = skeletonObjectId(skeletonId);
   ops.push(

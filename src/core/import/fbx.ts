@@ -49,6 +49,8 @@ import {
 import { scaleBonePositions, scaleKeyframePositions } from './unitScale';
 import type { ClipLoop } from '../../nodes/clipLoop';
 import { readFbxMeshes, type FbxMeshesRead } from './fbxMesh';
+import { readFbxScene, type FbxSceneRead } from './fbxScene';
+import { boneWorldMatrices } from '../../viewport/boneShape';
 
 export interface FbxSkeletonParams {
   readonly bones: readonly BoneSpec[];
@@ -93,6 +95,11 @@ export interface FbxImportResult {
   readonly unparsedTracks: number;
   /** #1429 — the file's meshes, and what of them was left out. */
   readonly meshes: FbxMeshesRead;
+  /**
+   * #1434 — the file's empties and unskinned meshes, each under what it hangs from, as Blender's
+   * FBX importer lays them out (`fbxScene.ts`). Never a node the rig reader claimed.
+   */
+  readonly scene: FbxSceneRead;
 }
 
 /**
@@ -188,28 +195,44 @@ export function parseFbx(input: ArrayBuffer | string, name = 'imported-fbx'): Fb
   );
   const unparsedTracks = read.unparsedTracks;
   // #1429 — read after the fold, which updates world matrices and leaves the scene untouched.
+  const meshOf = new Map<Object3D, number>();
   const meshes = readFbxMeshes(
     group,
     (bone) => (isBone(bone) ? bones.indexOf(sceneBoneOf(bone as Bone)) : -1),
     metresPerUnit,
+    meshOf,
   );
+  // #1434 — the rest of the file's scene. The rig reader says which nodes are its own: every node of
+  // the rig, and the armature node above each root, whose transform the fold put into the bones.
+  const armatures = armatureNodesOf(bones);
+  const rigBones = scaleBonePositions(skeletonBones, metresPerUnit);
+  const scene = readFbxScene(group, {
+    claimed: new Set([...bones, ...armatures]),
+    armatures,
+    boneIndexOf: (node) => bones.indexOf(isBone(node) ? sceneBoneOf(node as Bone) : node),
+    boneWorlds: boneWorldMatrices(rigBones),
+    meshOf,
+    metresPerUnit,
+  });
 
   if (!clip) {
     // Skeleton-only FBX — rare but valid (T-pose import). Empty clip.
     return {
-      skeletonParams: { bones: scaleBonePositions(skeletonBones, metresPerUnit) },
+      skeletonParams: { bones: rigBones },
       clipParams: { name, duration: 0, loop: 'hold', keyframes: [] },
       tracks: [],
       unparsedTracks: 0,
       meshes,
+      scene,
     };
   }
 
   return {
-    skeletonParams: { bones: scaleBonePositions(skeletonBones, metresPerUnit) },
+    skeletonParams: { bones: rigBones },
     tracks: scaleTrackPositions(tracks, metresPerUnit),
     unparsedTracks,
     meshes,
+    scene,
     clipParams: {
       name,
       duration: clip.duration > 0 ? clip.duration : 1,
@@ -453,6 +476,24 @@ function rigOf(bone: Bone): Object3D[] {
 }
 
 const isBone = (node: Object3D): boolean => (node as Bone).isBone === true;
+
+/**
+ * #1434 — the node above each root of the rig, when it is one of the file's (a node of the loader's
+ * own scene has no `ID`): Blender's armature Object (`import_fbx.py:2473-2497`), whose transform
+ * #1190 folds into the bones. Measured over every rigged fixture: `Rig`, `SkinnedBar`, or the file
+ * node the loader returned as its scene (`walk`).
+ */
+function armatureNodesOf(rig: readonly Object3D[]): Set<Object3D> {
+  const inRig = new Set(rig);
+  const armatures = new Set<Object3D>();
+  for (const node of rig) {
+    const above = node.parent;
+    if (above && !inRig.has(above) && (above as { ID?: unknown }).ID !== undefined) {
+      armatures.add(above);
+    }
+  }
+  return armatures;
+}
 
 /** A node is in the rig when it is a bone or has a bone under it (a fake bone). */
 function holdsABone(node: Object3D): boolean {

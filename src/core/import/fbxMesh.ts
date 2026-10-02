@@ -21,9 +21,10 @@
 // it), and what the glTF road does (#1218). The rig's bones are read in the scene's space in
 // metres (`parseFbx`), so a point's rest is where three's own skinning puts it at load, in metres.
 //
-// An UNSKINNED mesh stands as its own Object, carrying its node's world placement with the file's
-// unit folded into position and scale, its points as the file states them — Blender's icosphere in
-// the same file reads location 0 and scale 1, and so does this (×100 on the node, ×0.01 the unit).
+// An UNSKINNED mesh stands as its own Object, its points as the file states them in the node's own
+// frame, re-expressed in Y-up (`toYUp`, corner normals with them). Where the Object stands, and under
+// what, is the scene's to say (`fbxScene.ts`, #1434): Blender's split, so the icosphere in the same
+// file reads rotation 0 and scale 1, as it does in Blender (#1440).
 //
 // ── WHAT A SLOT SAMPLES (#1434) ───────────────────────────────────────────────────────────────
 //
@@ -38,20 +39,13 @@
 //      (`skinIntoArmatureSpace`, the same rest re-skin for glTF); src/core/import/modelImport.ts
 //      (`withProjectImages`, the images); issues #1429, #1430, #1434.
 
-import {
-  Matrix4,
-  Quaternion,
-  Vector3,
-  type Color,
-  type Material,
-  type Mesh,
-  type Object3D,
-} from 'three';
+import { Matrix4, Vector3, type Color, type Material, type Mesh, type Object3D } from 'three';
 import type { Group, SkinnedMesh } from 'three';
 import { COLOR_LAYER, MATERIAL_INDEX, uvLayerName } from '../../nodes/attributes';
 import { SKIN_SET_WIDTH, skinPointLayers } from '../../nodes/skinInfluences';
 import { decodeDataUri } from './glb';
 import { sniffImage } from './modelImport';
+import { toYUp } from './fbxScene';
 import type {
   MeshCornerLayer,
   MeshFaceLayer,
@@ -121,12 +115,6 @@ export interface FbxMeshRead {
   readonly data: MeshGeometryData;
   /** Skinned: each vertex group's bone, as an index into the rig `parseFbx` read. */
   readonly vertexGroupBones: readonly number[] | null;
-  /** Unskinned: where the Object stands, in metres. Skinned meshes stand at the armature. */
-  readonly placement: {
-    readonly position: Vec3;
-    readonly quaternion: [number, number, number, number];
-    readonly scale: Vec3;
-  } | null;
   /** One per slot, in the file's order; empty when the file gives the mesh none. */
   readonly materials: readonly FbxMaterialSlot[];
 }
@@ -149,6 +137,8 @@ export function readFbxMeshes(
   group: Group,
   rigIndexOf: (bone: Object3D) => number,
   metresPerUnit: number,
+  /** Filled with each UNSKINNED mesh's node and its index in the result, for the scene to place. */
+  meshOf?: Map<Object3D, number>,
 ): FbxMeshesRead {
   group.updateMatrixWorld(true);
   const meshes: FbxMeshRead[] = [];
@@ -169,7 +159,7 @@ export function readFbxMeshes(
     const skinned = (mesh as SkinnedMesh).isSkinnedMesh === true && polygons.weights.length > 0;
     const read = skinned
       ? readSkinned(mesh as SkinnedMesh, polygons, rigIndexOf, metresPerUnit)
-      : readPlain(mesh, polygons, metresPerUnit);
+      : readPlain(polygons);
     if ('refused' in read) {
       notices.push(`mesh "${name}" was left out: ${read.refused}`);
       return;
@@ -182,6 +172,7 @@ export function readFbxMeshes(
         `mesh "${name}" uses textures that were left out (${[...new Set(unheldMaps)].join('; ')}); its colours came across`,
       );
     }
+    if (!skinned) meshOf?.set(mesh, meshes.length);
     meshes.push({ name, ...read, materials: materials.map(({ slot }) => slot) });
   });
   return { meshes, images: images.list, notices };
@@ -406,31 +397,27 @@ function cornerAndFaceLayers(polygons: FbxPolygons): {
   return { cornerLayers, faceLayers };
 }
 
-function readPlain(
-  mesh: Mesh,
-  polygons: FbxPolygons,
-  metresPerUnit: number,
-): Omit<FbxMeshRead, 'name' | 'materials'> {
-  const position = new Vector3();
-  const quaternion = new Quaternion();
-  const scale = new Vector3();
-  mesh.matrixWorld.decompose(position, quaternion, scale);
+/** The file's triples (points or directions) in Y-up, `A · p` (`fbxScene.ts`). */
+function yUpTriples(values: readonly number[]): Float32Array {
+  const out = new Float32Array(values.length);
+  for (let i = 0; i + 2 < values.length; i += 3) {
+    out.set(toYUp(values[i], values[i + 1], values[i + 2]), i);
+  }
+  return out;
+}
+
+function readPlain(polygons: FbxPolygons): Omit<FbxMeshRead, 'name' | 'materials'> {
   return {
     data: {
-      points: Float32Array.from(polygons.points),
+      points: yUpTriples(polygons.points),
       faceSizes: Uint32Array.from(polygons.faceSizes),
       cornerPoints: Uint32Array.from(polygons.cornerPoints),
-      cornerNormals: polygons.normals === null ? null : Float32Array.from(polygons.normals),
+      cornerNormals: polygons.normals === null ? null : yUpTriples(polygons.normals),
       ...cornerAndFaceLayers(polygons),
       pointLayers: [],
       vertexGroups: [],
     },
     vertexGroupBones: null,
-    placement: {
-      position: position.multiplyScalar(metresPerUnit).toArray(),
-      quaternion: quaternion.toArray() as [number, number, number, number],
-      scale: scale.multiplyScalar(metresPerUnit).toArray(),
-    },
   };
 }
 
@@ -531,6 +518,5 @@ function readSkinned(
       vertexGroups: [],
     },
     vertexGroupBones,
-    placement: null,
   };
 }

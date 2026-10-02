@@ -82,6 +82,7 @@ function yUp(frame: OracleFrame): { t: Vector3; q: Quaternion; s: Vector3 } {
 describe.each([
   ['rigless-hierarchy-blender-default.glb', 'blender-oracle-fbx-rigless-hierarchy.json'],
   ['unskinned-edges-blender-default.glb', 'blender-oracle-fbx-unskinned-edges.json'],
+  ['rigged-scene-blender-default.glb', 'blender-oracle-fbx-rigged-scene.json'],
 ])('the two Blender oracles agree on where each Object is (%s)', (glb, oracleFile) => {
   const oracle = JSON.parse(readFileSync(`${DIR}/${oracleFile}`, 'utf8')) as Oracle;
   const worlds = glbWorlds(glb);

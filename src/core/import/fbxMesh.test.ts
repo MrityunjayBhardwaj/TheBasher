@@ -4,7 +4,7 @@
 import { readFileSync } from 'node:fs';
 import zlib from 'node:zlib';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { Color, Matrix4, Quaternion, Vector3, type Material, type Mesh } from 'three';
+import { Color, Matrix4, Vector3, type Material, type Mesh } from 'three';
 import { FBXLoader } from 'three/examples/jsm/loaders/FBXLoader.js';
 import { __resetRegistryForTests } from '../dag/registry';
 import { applyOp, evaluate } from '../dag';
@@ -22,6 +22,7 @@ import { parseFbx } from './fbx';
 import { imageHasAlpha, readFbxMeshes } from './fbxMesh';
 import { sniffImage } from './modelImport';
 import { openpbrToThree } from '../../app/material/openpbrToThree';
+import { resolveWorldTransform } from '../../app/resolveWorldTransform';
 
 const DIR = 'src/core/import/__fixtures__';
 const PANEL = `${DIR}/panel-five-influences-blender-default.fbx`;
@@ -190,15 +191,12 @@ describe('#1429 — an unskinned FBX mesh stands as an Object of its own', () =>
     const { mesh } = storedMesh(state, object.id);
     expect(Array.from(mesh.faceSizes)).toEqual(want.faceSizes);
     expect(mesh.points.length / 3).toBe(want.verts);
-    const p = object.params as {
-      position: number[];
-      scale: number[];
-      quaternion: [number, number, number, number];
-    };
-    const world = new Matrix4().compose(
-      new Vector3(...p.position),
-      new Quaternion(...p.quaternion),
-      new Vector3(...p.scale),
+    // Through the product's own world read: the Object's fields and the points it holds are
+    // Blender's split (#1434), and only their product is where Blender draws it.
+    const world = new Matrix4().fromArray(
+      resolveWorldTransform(state, object.id, {
+        time: { frame: 0, seconds: 0, normalized: 0 },
+      } as never)!.matrix,
     );
     const v = new Vector3();
     want.frames['1'].forEach((w, i) => {
