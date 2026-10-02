@@ -23,15 +23,27 @@
 // SCALE IS KEPT. The clip this road used to write dropped every scale track; they are channels now,
 // and counted (`scaleChannels`), so a file that scales a bone plays it.
 //
-// NOTHING IS DROPPED UNCOUNTED: a track on a node that is not a bone (Blender's export keys the
-// armature node itself), a track on a property that is not a transform, and a track whose name
-// does not parse are each counted in `dropped`.
+// A NODE THAT IS NOT A BONE (#1441) plays its keys as Object channels, the shape the glTF road and
+// Auto-Key write (`objectChannelOp`), in the form Blender's FBX import gives: `rotation` in Euler,
+// `position` and `scale`, all linear, folded as the node's transform is (`fbxScene.ts`).
+//
+// NOTHING IS DROPPED UNSAID: every track that plays nowhere is counted in `dropped` (even at zero)
+// and named in `notices`, the field every landing says — a count nothing reads is a silent loss
+// (#1441: the node tracks used to be counted into a field no product code read). The armature
+// node's own tracks are counted apart when they only hold its rest, which the bones already carry.
 
 import { parseFbx } from './fbx';
 import type { FbxMaterialSlot, FbxMeshRead, FbxSlotImage } from './fbxMesh';
-import type { FbxSceneRead } from './fbxScene';
+import type { FbxKeyTrack, FbxLeftOutReason, FbxSceneRead } from './fbxScene';
 import { gltfJsonMaterialToOpenpbr, type GltfJsonMaterial } from './gltfJsonMaterialToOpenpbr';
-import { emptyOps, parentEdge, withCentrePivot, withProjectImages } from './modelImport';
+import {
+  emptyOps,
+  objectChannelOp,
+  parentEdge,
+  withCentrePivot,
+  withProjectImages,
+  type ImportedTransform,
+} from './modelImport';
 import { uniqueBoneName } from './nativeGltfSkeleton';
 import { skeletonObjectId } from './skeletonObject';
 import type { Op } from '../../core/dag/types';
@@ -39,14 +51,17 @@ import { packMeshData } from '../../app/meshGeometryData';
 import type { BoneSpec, InlineMaterialSpec, Quat, Vec3 } from '../../nodes/types';
 import type { PoseLayerChannel, PoseLayerMember, PoseLayerParams } from '../../nodes/PoseLayer';
 
-/** What an FBX import left out of the layer, counted even at zero. */
+/** What of an FBX's animation plays nowhere in the import, counted even at zero. Each count above
+ *  zero is also said in the import's `notices`. */
 export interface FbxImportDropped {
-  /** Tracks on a node no bone of the skeleton is (the armature node, a mesh, a camera…). */
-  readonly unknownBoneTracks: number;
+  /** #1441 — tracks on a node that is not a bone, that play nowhere (`fbxScene.ts` says why). */
+  readonly nodeTracks: number;
   /** Tracks on a bone, on a property that is not position, quaternion or scale. */
   readonly otherPropertyTracks: number;
   /** Tracks whose name three wrote in a shape that names no node and property. */
   readonly unparsedTracks: number;
+  /** #1446 — the file's takes after the first. */
+  readonly otherTakes: number;
 }
 
 export interface FbxImportChainResult {
@@ -56,6 +71,11 @@ export interface FbxImportChainResult {
   readonly motionId: string;
   /** Scale channels on the layer: the tracks the clip road used to drop. */
   readonly scaleChannels: number;
+  /** #1441 — channels keying the file's empties and loose meshes. */
+  readonly objectChannels: number;
+  /** #1441 — tracks on the armature node that only hold its rest, which the bones already carry:
+   *  counted, and nothing of them lost. */
+  readonly armatureRestTracks: number;
   readonly dropped: FbxImportDropped;
   /**
    * #1429 — the ops that stand the file's meshes in the scene, for a scene node: each skinned mesh
@@ -66,7 +86,8 @@ export interface FbxImportChainResult {
   readonly meshOps: (sceneNodeId: string) => Op[];
   /** #1429 — how many meshes those ops stand. */
   readonly meshCount: number;
-  /** #1429 — what of the file's meshes was left out, each said once. Empty when nothing was. */
+  /** #1429 — what of the file was left out, each said once: its meshes, and (#1441) every count in
+   *  `dropped` above zero. Empty when nothing was. */
   readonly notices: readonly string[];
 }
 
@@ -114,14 +135,10 @@ export async function buildFbxImportOps(args: FbxImportChainArgs): Promise<FbxIm
   });
 
   const tracksOf = new Map<number, Map<TrackProperty, (typeof parsed.tracks)[number]>>();
-  let unknownBoneTracks = 0;
   let otherPropertyTracks = 0;
   for (const track of parsed.tracks) {
     const index = track.boneIndex;
-    if (index === null) {
-      unknownBoneTracks += 1;
-      continue;
-    }
+    if (index === null) continue; // #1441 — a node's: placed, or named as left out, by the scene pass
     if (!(track.property in COMPONENT)) {
       otherPropertyTracks += 1;
       continue;
@@ -186,12 +203,24 @@ export async function buildFbxImportOps(args: FbxImportChainArgs): Promise<FbxIm
     const key = await args.storeImage(image.bytes, image.mime);
     imageKeys.set(i, { key, hasAlpha: image.hasAlpha });
   }
+  const { scene } = parsed;
+  const dropped: FbxImportDropped = {
+    nodeTracks: scene.leftOut.length,
+    otherPropertyTracks,
+    unparsedTracks: parsed.unparsedTracks,
+    otherTakes: parsed.otherTakes.length,
+  };
   return {
     ops,
     skeletonId: ids.skeleton,
     motionId: ids.layer,
     scaleChannels,
-    dropped: { unknownBoneTracks, otherPropertyTracks, unparsedTracks: parsed.unparsedTracks },
+    objectChannels: scene.nodes.reduce(
+      (n, node) => n + (node.keys ? Object.keys(node.keys).length : 0),
+      0,
+    ),
+    armatureRestTracks: scene.armatureRestTracks,
+    dropped,
     meshOps: (sceneNodeId) => [
       ...meshes.flatMap((mesh, i) =>
         mesh.vertexGroupBones === null
@@ -208,9 +237,55 @@ export async function buildFbxImportOps(args: FbxImportChainArgs): Promise<FbxIm
       ...sceneOps(parsed.scene, meshes, bones, ids.skeleton, sceneNodeId, imageKeys),
     ],
     meshCount: meshes.length,
-    notices: [...parsed.meshes.notices, ...parsed.scene.notices],
+    notices: [
+      ...parsed.meshes.notices,
+      ...scene.notices,
+      ...leftOutNotices(scene.leftOut),
+      ...(otherPropertyTracks > 0
+        ? [
+            `${tracksSaid(otherPropertyTracks)} on a bone, on a property that is not a transform, did not play`,
+          ]
+        : []),
+      ...(dropped.unparsedTracks > 0
+        ? [`${tracksSaid(dropped.unparsedTracks)} whose names name no node did not play`]
+        : []),
+      ...(parsed.otherTakes.length > 0
+        ? [
+            `${parsed.otherTakes.length} more take${parsed.otherTakes.length === 1 ? '' : 's'} (${parsed.otherTakes.map((t) => `"${t}"`).join(', ')}) did not play: an import plays the file's first (#1446)`,
+          ]
+        : []),
+    ],
   };
 }
+
+const tracksSaid = (n: number) => `${n} track${n === 1 ? '' : 's'}`;
+
+/** #1441 — why a node's keys do not play, as the notice says it. */
+const LEFT_OUT_BECAUSE: Record<FbxLeftOutReason, string> = {
+  'no-node': 'no node of that name is brought across',
+  ambiguous: 'more than one node has that name, so the file does not say which they move',
+  'mesh-under-armature':
+    "a mesh parented to an armature plays no keys of its own, as in Blender's FBX import",
+  shear: "under its parent's stretch they would shear, which an Object cannot hold",
+  property: 'they key a property that is not a transform',
+  'armature-moves': "the skeleton's Object plays no keys of its own; its bones' keys play",
+};
+
+/** #1441 — one notice per reason, naming each node once. */
+function leftOutNotices(leftOut: FbxSceneRead['leftOut']): string[] {
+  const byReason = new Map<FbxLeftOutReason, Set<string>>();
+  for (const { node, reason } of leftOut) {
+    byReason.set(reason, (byReason.get(reason) ?? new Set()).add(node));
+  }
+  return [...byReason].map(
+    ([reason, nodes]) =>
+      `keys on ${[...nodes].map((n) => `"${n}"`).join(', ')} did not play: ${LEFT_OUT_BECAUSE[reason]}`,
+  );
+}
+
+/** #1441 — a keyed field as a channel's keys: linear, as Blender keys an FBX's animation (`:879`). */
+const linearKeys = (track: FbxKeyTrack) =>
+  track.times.map((time, i) => ({ time, value: track.values[i], easing: 'linear' as const }));
 
 // #1434 — the sampler tables a slot's textures index: texture 2i samples image i repeating, 2i + 1
 // clamped. Blender's image node defaults to Linear and, unclamped, to Repeat (oracle
@@ -299,7 +374,7 @@ function sceneOps(
   const edges: Op[] = [];
   scene.nodes.forEach((node, k) => {
     const { parent } = node;
-    const transform = {
+    const transform: ImportedTransform = {
       ...node.transform,
       ...(parent?.kind === 'bone' ? { parentBone: bones[parent.bone].name } : {}),
     };
@@ -319,6 +394,11 @@ function sceneOps(
           ? idOf[parent.index]
           : skeletonObjectId(skeletonId);
     edges.push(parentEdge(idOf[k], parentId));
+    // #1441 — its keys, as the channels Auto-Key would have made on the same params.
+    for (const field of ['position', 'rotation', 'scale'] as const) {
+      const track = node.keys?.[field];
+      if (track) ops.push(objectChannelOp(idOf[k], field, 'vec3', linearKeys(track)));
+    }
   });
   // Every edge after every node, as on the glTF road: an edge names two nodes that both exist.
   return [...ops, ...edges];
@@ -331,7 +411,7 @@ function sceneOps(
 function meshOps(
   mesh: FbxMeshRead,
   id: string,
-  transform: object,
+  transform: ImportedTransform,
   imageKeys: ReadonlyMap<number, StoredImage>,
 ): Op[] {
   const dataId = `${id}_data`;
@@ -356,7 +436,7 @@ function meshOps(
 }
 
 /** Blender's skinned mesh: at identity, in euler mode, like every object its FBX import makes. */
-const IDENTITY = { position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] };
+const IDENTITY: ImportedTransform = { position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] };
 
 /**
  * #1429 — a skinned mesh as Blender's FBX importer makes it: an Armature modifier on its stack

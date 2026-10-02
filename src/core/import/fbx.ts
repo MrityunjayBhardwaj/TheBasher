@@ -78,7 +78,7 @@ export interface FbxTrack {
   readonly bone: string;
   /** The bone of the rig this track keys — the k-th track on a name and property keys the k-th bone
    *  of that name, in rig order. Null when no bone of the rig has the name (the armature node, a
-   *  mesh…). */
+   *  mesh, an empty…): such a track is the scene pass's (#1441, `fbxScene.ts`). */
   readonly boneIndex: number | null;
   /** three's property name: `position`, `quaternion` (xyzw), `scale`, or anything else it wrote. */
   readonly property: string;
@@ -93,6 +93,8 @@ export interface FbxImportResult {
   readonly tracks: readonly FbxTrack[];
   /** Tracks of the first clip whose name does not parse as `node.property` — counted, not read. */
   readonly unparsedTracks: number;
+  /** #1446 — the names of the file's takes after the first, which nothing reads. */
+  readonly otherTakes: readonly string[];
   /** #1429 — the file's meshes, and what of them was left out. */
   readonly meshes: FbxMeshesRead;
   /**
@@ -175,8 +177,11 @@ export function parseFbx(input: ArrayBuffer | string, name = 'imported-fbx'): Fb
   if (bones.length === 0) {
     throw new Error('FBX contains no skeleton or skinned mesh — nothing to import.');
   }
-  // First animation clip wins. group.animations[] is THREE.AnimationClip[].
-  const clip = (group as unknown as { animations: ThreeAnimationClip[] }).animations[0];
+  // First animation clip wins. group.animations[] is THREE.AnimationClip[]. The rest are named, not
+  // read (#1446: which take an object plays when a file has several is an open question).
+  const takes = (group as unknown as { animations: ThreeAnimationClip[] }).animations;
+  const clip = takes[0];
+  const otherTakes = takes.slice(1).map((take) => take.name);
   // The clip's keys are read against the rest AS THE FILE HOLDS IT (a rotation-only bone's key
   // takes its position from that rest), and only then is the node above the rig folded into
   // both, so the two move together.
@@ -213,6 +218,11 @@ export function parseFbx(input: ArrayBuffer | string, name = 'imported-fbx'): Fb
     boneWorlds: boneWorldMatrices(rigBones),
     meshOf,
     metresPerUnit,
+    // #1441 — read before the fold, which touches only bones' tracks: these are the file's own
+    // values, in its units, and the scene pass folds them as it folds each node's transform.
+    tracks: read.tracks
+      .filter((track) => track.boneIndex === null)
+      .map(({ bone, property, times, values }) => ({ node: bone, property, times, values })),
   });
 
   if (!clip) {
@@ -222,6 +232,7 @@ export function parseFbx(input: ArrayBuffer | string, name = 'imported-fbx'): Fb
       clipParams: { name, duration: 0, loop: 'hold', keyframes: [] },
       tracks: [],
       unparsedTracks: 0,
+      otherTakes,
       meshes,
       scene,
     };
@@ -231,6 +242,7 @@ export function parseFbx(input: ArrayBuffer | string, name = 'imported-fbx'): Fb
     skeletonParams: { bones: rigBones },
     tracks: scaleTrackPositions(tracks, metresPerUnit),
     unparsedTracks,
+    otherTakes,
     meshes,
     scene,
     clipParams: {

@@ -12,6 +12,7 @@ import type {
   BakedTextureMagFilter,
   BakedTextureRef,
   InlineMaterialSpec,
+  Quat,
   UvPlacement,
   Vec3,
 } from '../../nodes/types';
@@ -102,9 +103,7 @@ export function withProjectImages(
     const textureIndex = captured.gltfTexture;
     const key = textureIndex === undefined ? undefined : imageKeys.get(textureIndex);
     if (textureIndex === undefined || key === undefined) {
-      throw new Error(
-        `nativeGltfImport: the ${slot} map was captured but its image was never stored`,
-      );
+      throw new Error(`import: the ${slot} map was captured but its image was never stored`);
     }
     const samplerIndex = tables.textures?.[textureIndex]?.sampler;
     const sampler = samplerIndex === undefined ? undefined : tables.samplers?.[samplerIndex];
@@ -151,11 +150,24 @@ export function importGroupOp(groupId: string, position: Vec3, pivot: Vec3): Op 
 }
 
 /**
+ * An imported node's own transform, as an Object or a Group holds it: euler (rotation in XYZ degrees)
+ * unless `rotationMode` says quaternion (#1153), and (#1210) the bone it hangs from, when it does.
+ */
+export interface ImportedTransform {
+  readonly position: Vec3;
+  readonly rotation: Vec3;
+  readonly scale: Vec3;
+  readonly rotationMode?: 'quaternion';
+  readonly quaternion?: Quat;
+  readonly parentBone?: string;
+}
+
+/**
  * #1051 — an empty, as a Group named by the file: Blender's Empty. It has no pivot of its own; the
  * file states an empty's transform about its own origin, and the import Group's pivot already places
  * the model as a whole.
  */
-export function emptyOps(emptyId: string, transform: object, name: string): Op[] {
+export function emptyOps(emptyId: string, transform: ImportedTransform, name: string): Op[] {
   return [
     { type: 'addNode', nodeId: emptyId, nodeType: 'Group', params: transform },
     { type: 'setMeta', nodeId: emptyId, name },

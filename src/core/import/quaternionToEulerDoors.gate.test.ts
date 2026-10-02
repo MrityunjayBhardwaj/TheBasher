@@ -169,7 +169,12 @@ describe('#876 — the quaternion→Euler door census', () => {
     // #876 fixed this in the glTF clone importer's clip builder, which assembled keyframes with
     // the canonical converter while the consumer lerped them. That builder is gone (#1424), so
     // the row names the producers that are left: each must still go through the wrapper.
-    for (const producer of ['src/core/import/threeAdapter.ts', 'src/core/import/fbx.ts'])
+    // #1441 — `fbxScene.ts` keys an FBX node's rotation as Euler, one key after another.
+    for (const producer of [
+      'src/core/import/threeAdapter.ts',
+      'src/core/import/fbx.ts',
+      'src/core/import/fbxScene.ts',
+    ])
       expect(readFileSync(producer, 'utf8'), producer).toMatch(/= continuousEuler\(/);
   });
 });

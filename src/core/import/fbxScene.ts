@@ -33,6 +33,25 @@
 // It assumes the file declares FBX's standard axes (Y up), as three's loader does: the loader never
 // reads the declared axes (#1444).
 //
+// ── KEYS (#1441) ──────────────────────────────────────────────────────────────────────────────
+//
+// Every case above is one shape: the Y-up local is `G · L · A⁻¹`, with `L` the node's own local as
+// three reads it and `G` a frame fixed per node — `A` under a written node, `s` at the top, and
+// `P⁻¹ · s · W(parent)` otherwise (`P` the Y-up world of what it hangs under, `W` three's world of its
+// own parent). A key replaces `L` and nothing else, so its keys go through the same `G`. When `G` is a
+// turn and one scale `k` (a similarity), each track folds on its own, exactly: a position `G · t`, a
+// rotation `Q · q · A⁻¹`, a scale `k` times itself with Y and Z swapped. When it is not, a turning key
+// would shear, and the keys are left out by name rather than kept wrong.
+//
+// Blender keys an object's `rotation_euler`, never a quaternion, decomposing each key continuously
+// from the one before (`import_fbx.py:702`, `quat_to_euler(rot, rot_mode, prev)`); Basher's euler is
+// XYZ degrees, so each key is the XYZ Euler of the folded quaternion, chained by `continuousEuler`.
+// Both play LINEAR between keys (`:879`). At a key the two agree exactly; between keys each lerps its
+// own Euler (Blender's in Z-up, ours in Y-up), so a turn about two axes at once can differ there.
+//
+// Blender plays no keys on a MESH whose parent is an armature (`import_fbx.py:1083-1086`): a mesh
+// under a bone or under the armature keeps its rest, and its keys are named as left out.
+//
 // ── WHICH NODES THIS WRITES (V: one reader per node) ──────────────────────────────────────────
 //
 // The rig reader claims its bones, the empties inside its chain, and the armature node above each
@@ -46,7 +65,7 @@
 
 import { Euler, Matrix4, Quaternion, Vector3, type Object3D } from 'three';
 import type { Vec3 } from '../../nodes/types';
-import { quaternionToEulerVec3 } from './threeAdapter';
+import { continuousEuler, quaternionToEulerVec3, sanitizeBoneName } from './threeAdapter';
 
 /** A node's transform as an Object or Group holds it in euler mode: rotation in XYZ degrees. */
 export interface FbxNodeTransform {
@@ -66,18 +85,68 @@ export type FbxNodeParent =
   /** Nothing: the top of the import. */
   | null;
 
+/** #1441 — one keyed field of a node at the file's own key times, folded as its transform is. */
+export interface FbxKeyTrack {
+  readonly times: readonly number[];
+  readonly values: readonly Vec3[];
+}
+
+/** #1441 — a node's keys, in its transform's units: rotation in XYZ degrees, continuous. */
+export interface FbxNodeKeys {
+  readonly position?: FbxKeyTrack;
+  readonly rotation?: FbxKeyTrack;
+  readonly scale?: FbxKeyTrack;
+}
+
 export interface FbxSceneNode {
   readonly name: string;
   /** The mesh it stands, as an index into the file's meshes, or null for an empty. */
   readonly mesh: number | null;
   readonly parent: FbxNodeParent;
   readonly transform: FbxNodeTransform;
+  /** #1441 — its keys, or null when it has none. */
+  readonly keys: FbxNodeKeys | null;
+}
+
+/** #1441 — a track of a node that is not a bone, as three's loader names it. */
+export interface FbxNodeTrack {
+  /** The node, spelled as `parseTrackName` spells it. */
+  readonly node: string;
+  readonly property: string;
+  readonly times: readonly number[];
+  readonly values: readonly number[];
+}
+
+/** #1441 — why a node's track does not play in the import. */
+export type FbxLeftOutReason =
+  /** No node of that name stands in the import: a curve, a skinned mesh, a bone outside the rig. */
+  | 'no-node'
+  /** More than one node has that name, so the track does not say which it moves. */
+  | 'ambiguous'
+  /** A mesh whose parent is an armature: Blender plays none of its keys. */
+  | 'mesh-under-armature'
+  /** Under its parent's stretch a key would shear. */
+  | 'shear'
+  /** A property that is not position, quaternion or scale. */
+  | 'property'
+  /** The armature node, keyed away from its rest: the skeleton's Object plays no keys of its own. */
+  | 'armature-moves';
+
+export interface FbxLeftOutTrack {
+  readonly node: string;
+  readonly property: string;
+  readonly reason: FbxLeftOutReason;
 }
 
 export interface FbxSceneRead {
   /** Every written node, each after the node it hangs under. */
   readonly nodes: readonly FbxSceneNode[];
   readonly notices: readonly string[];
+  /** #1441 — every node track that plays nowhere, and why. */
+  readonly leftOut: readonly FbxLeftOutTrack[];
+  /** #1441 — tracks on the armature node that hold its rest at every key. The fold already put that
+   *  rest into the bones (#1190), so nothing of them is lost. */
+  readonly armatureRestTracks: number;
 }
 
 export interface FbxSceneArgs {
@@ -92,12 +161,16 @@ export interface FbxSceneArgs {
   /** Each unskinned mesh node, to its index among the file's meshes. */
   readonly meshOf: ReadonlyMap<Object3D, number>;
   readonly metresPerUnit: number;
+  /** #1441 — the tracks of the read clip that key no bone of the rig. */
+  readonly tracks: readonly FbxNodeTrack[];
 }
 
 /** Z-up → Y-up: `(x, y, z) → (x, z, −y)`, a quarter turn about −X. */
 const A = new Quaternion().setFromAxisAngle(new Vector3(1, 0, 0), -Math.PI / 2);
 const A_INV = A.clone().invert();
 const A_MATRIX = new Matrix4().makeRotationFromQuaternion(A_INV);
+/** `G` under a written node: `A` itself. */
+const A_FRAME = new Matrix4().makeRotationFromQuaternion(A);
 const RAD2DEG = 180 / Math.PI;
 
 /** A point or direction of the file, in Y-up: `A · p`. */
@@ -120,6 +193,8 @@ export function readFbxScene(group: Object3D, args: FbxSceneArgs): FbxSceneRead 
   const nodes: FbxSceneNode[] = [];
   const notices: string[] = [];
   const indexOf = new Map<Object3D, number>();
+  /** Each written node's frame `G` (the header's KEYS). */
+  const frames: Matrix4[] = [];
   const sharedBy = new Map<string, string>();
 
   group.traverse((node) => {
@@ -178,21 +253,169 @@ export function readFbxScene(group: Object3D, args: FbxSceneArgs): FbxSceneRead 
 
     // The two exact cases first: directly under a written node, or at the top with nothing of the
     // file's above it (the loader's own scene, or no parent at all when it returned this node).
-    const transform =
-      parent?.kind === 'node' && node.parent === above
-        ? underWritten(node)
-        : parent === null && (node.parent === null || (node.parent === group && !isFileNode(group)))
-          ? atTop(node, s)
-          : decomposed(node, s, parent, args.boneWorlds, (i) => nodes[i]);
+    let transform: FbxNodeTransform;
+    let frame: Matrix4;
+    if (parent?.kind === 'node' && node.parent === above) {
+      transform = underWritten(node);
+      frame = A_FRAME;
+    } else if (
+      parent === null &&
+      (node.parent === null || (node.parent === group && !isFileNode(group)))
+    ) {
+      transform = atTop(node, s);
+      frame = new Matrix4().makeScale(s, s, s);
+    } else {
+      frame = decomposedFrame(node, s, parent, args.boneWorlds, (i) => nodes[i]);
+      transform = decomposed(node, frame);
+    }
     indexOf.set(node, nodes.length);
+    frames.push(frame);
     nodes.push({
       name: node.name || `Empty_${nodes.length}`,
       mesh: mesh ?? null,
       parent,
       transform,
+      keys: null,
     });
   });
-  return { nodes, notices };
+
+  // #1441 — each node track to the node it keys, folded through that node's frame.
+  const leftOut: FbxLeftOutTrack[] = [];
+  let armatureRestTracks = 0;
+  const byName = new Map<string, Object3D[]>();
+  group.traverse((node) => {
+    if ((node as { isBone?: boolean }).isBone || !isFileNode(node)) return;
+    const name = sanitizeBoneName(node.name);
+    byName.set(name, [...(byName.get(name) ?? []), node]);
+  });
+  const keyed = new Map<number, Map<string, FbxNodeTrack>>();
+  for (const track of args.tracks) {
+    const leave = (reason: FbxLeftOutReason) =>
+      leftOut.push({ node: track.node, property: track.property, reason });
+    const candidates = byName.get(track.node) ?? [];
+    if (candidates.length > 1) {
+      leave('ambiguous');
+      continue;
+    }
+    const node = candidates[0];
+    if (node && args.armatures.has(node)) {
+      if (holdsRest(node, track)) armatureRestTracks += 1;
+      else leave('armature-moves');
+      continue;
+    }
+    const k = node ? indexOf.get(node) : undefined;
+    if (k === undefined) {
+      leave('no-node');
+      continue;
+    }
+    if (!KEYED_PROPERTIES.has(track.property)) {
+      leave('property');
+      continue;
+    }
+    const { mesh, parent } = nodes[k];
+    if (mesh !== null && (parent?.kind === 'bone' || parent?.kind === 'armature')) {
+      leave('mesh-under-armature');
+      continue;
+    }
+    if (!similarityOf(frames[k])) {
+      leave('shear');
+      continue;
+    }
+    const own = keyed.get(k) ?? new Map<string, FbxNodeTrack>();
+    own.set(track.property, track);
+    keyed.set(k, own);
+  }
+  for (const [k, own] of keyed) {
+    nodes[k] = { ...nodes[k], keys: foldKeys(frames[k], own) };
+  }
+  return { nodes, notices, leftOut, armatureRestTracks };
+}
+
+const KEYED_PROPERTIES: ReadonlySet<string> = new Set(['position', 'quaternion', 'scale']);
+const RELATIVE = 1e-6;
+
+/** Whether every key of an armature node's track is the node's own local at load. */
+function holdsRest(node: Object3D, track: FbxNodeTrack): boolean {
+  const near = (a: number, b: number) =>
+    Math.abs(a - b) <= RELATIVE * Math.max(1, Math.abs(a), Math.abs(b));
+  const v = track.values;
+  if (track.property === 'quaternion') {
+    const q = node.quaternion;
+    for (let i = 0; i + 3 < v.length; i += 4) {
+      const dot = q.x * v[i] + q.y * v[i + 1] + q.z * v[i + 2] + q.w * v[i + 3];
+      if (!near(Math.abs(dot), 1)) return false;
+    }
+    return true;
+  }
+  const rest = track.property === 'position' ? node.position : node.scale;
+  if (track.property !== 'position' && track.property !== 'scale') return false;
+  for (let i = 0; i + 2 < v.length; i += 3) {
+    if (!near(v[i], rest.x) || !near(v[i + 1], rest.y) || !near(v[i + 2], rest.z)) return false;
+  }
+  return true;
+}
+
+/** `G` as one turn `q` and one positive scale `k`, or null when it stretches, shears or mirrors. */
+function similarityOf(frame: Matrix4): { k: number; q: Quaternion } | null {
+  const t = new Vector3();
+  const q = new Quaternion();
+  const scale = new Vector3();
+  frame.decompose(t, q, scale);
+  const k = scale.x;
+  if (!(k > 0) || Math.abs(scale.y - k) > RELATIVE * k || Math.abs(scale.z - k) > RELATIVE * k) {
+    return null;
+  }
+  const back = new Matrix4().compose(t, q, new Vector3(k, k, k));
+  const size = Math.max(1, ...frame.elements.map(Math.abs));
+  return back.elements.some((e, i) => Math.abs(e - frame.elements[i]) > RELATIVE * size)
+    ? null
+    : { k, q };
+}
+
+/**
+ * A node's tracks through its frame `G` (the header): each at its own key times, a position `G · t`,
+ * a rotation `Q · q · A⁻¹` as XYZ degrees chained key to key, a scale `k` times itself with Y and Z
+ * swapped. Only called with a similarity `G`.
+ */
+function foldKeys(frame: Matrix4, tracks: ReadonlyMap<string, FbxNodeTrack>): FbxNodeKeys {
+  const { k, q: turn } = similarityOf(frame)!;
+  const keys: { -readonly [K in keyof FbxNodeKeys]: FbxKeyTrack } = {};
+  const position = tracks.get('position');
+  if (position) {
+    const values: Vec3[] = [];
+    const p = new Vector3();
+    for (let i = 0; i < position.times.length; i++) {
+      const v = position.values;
+      p.set(v[3 * i], v[3 * i + 1], v[3 * i + 2]).applyMatrix4(frame);
+      values.push([p.x, p.y, p.z]);
+    }
+    keys.position = { times: position.times, values };
+  }
+  const quaternion = tracks.get('quaternion');
+  if (quaternion) {
+    const values: Vec3[] = [];
+    const q = new Quaternion();
+    // A SEQUENCE: each key's Euler is chained onto the one before (quaternionToEulerDoors census),
+    // as Blender chains its own (`quat_to_euler(rot, rot_mode, prev)`).
+    let previous: Vec3 | null = null;
+    for (let i = 0; i < quaternion.times.length; i++) {
+      const v = quaternion.values;
+      q.set(v[4 * i], v[4 * i + 1], v[4 * i + 2], v[4 * i + 3]);
+      const folded = turn.clone().multiply(q).multiply(A_INV);
+      previous = continuousEuler(quaternionToEulerVec3(folded), previous);
+      values.push([previous[0] * RAD2DEG, previous[1] * RAD2DEG, previous[2] * RAD2DEG]);
+    }
+    keys.rotation = { times: quaternion.times, values };
+  }
+  const scale = tracks.get('scale');
+  if (scale) {
+    const v = scale.values;
+    keys.scale = {
+      times: scale.times,
+      values: scale.times.map((_, i) => [k * v[3 * i], k * v[3 * i + 2], k * v[3 * i + 1]] as Vec3),
+    };
+  }
+  return keys;
 }
 
 /** `A · L · A⁻¹` of the node's own local transform: exact, the scale permuted. */
@@ -217,23 +440,30 @@ function atTop(node: Object3D, s: number): FbxNodeTransform {
 }
 
 /**
- * Every other case — under a bone, under the armature, under the top through a file node the
- * loader returned as its scene, or under a written node across claimed ones — from the matrices:
- * the parent's Y-up world inverted, times the node's. Recomposed and compared, so a placement an
- * Object cannot hold (a shear from a non-uniform scale under a turn) is refused rather than kept
- * wrong.
+ * The frame `G` of every other case — under a bone, under the armature, under the top through a file
+ * node the loader returned as its scene, or under a written node across claimed ones: the parent's
+ * Y-up world inverted, times three's world of the node's own parent, in metres. `G · L · A⁻¹` is then
+ * the node's Y-up world made local, since three's world of the node is its parent's times `L`.
  */
-function decomposed(
+function decomposedFrame(
   node: Object3D,
   s: number,
   parent: FbxNodeParent,
   boneWorlds: readonly Matrix4[],
   nodeAt: (i: number) => FbxSceneNode,
-): FbxNodeTransform {
+): Matrix4 {
   const unit = new Matrix4().makeScale(s, s, s);
-  const worldYUp = (n: Object3D) => unit.clone().multiply(n.matrixWorld).multiply(A_MATRIX);
-  const parentWorld = worldOf(parent, boneWorlds, nodeAt);
-  const local = parentWorld.clone().invert().multiply(worldYUp(node));
+  const above = node.parent ? node.parent.matrixWorld : new Matrix4();
+  return worldOf(parent, boneWorlds, nodeAt).invert().multiply(unit).multiply(above);
+}
+
+/**
+ * A node's local from its frame: `G · L · A⁻¹`, decomposed. Recomposed and compared, so a placement
+ * an Object cannot hold (a shear from a non-uniform scale under a turn) is refused rather than kept
+ * wrong.
+ */
+function decomposed(node: Object3D, frame: Matrix4): FbxNodeTransform {
+  const local = frame.clone().multiply(node.matrix).multiply(A_MATRIX);
   const position = new Vector3();
   const quaternion = new Quaternion();
   const scale = new Vector3();

@@ -319,6 +319,7 @@ describe('#1434 step 2 — what the scene cannot hold is refused by name', () =>
     boneWorlds: [],
     meshOf: new Map<Object3D, number>(),
     metresPerUnit: 1,
+    tracks: [],
   });
 
   it('a placement an Object cannot hold (a shear) is refused, not kept wrong', () => {

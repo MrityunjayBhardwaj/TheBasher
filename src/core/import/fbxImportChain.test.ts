@@ -128,15 +128,19 @@ describe('the layer’s shape is the one Blender’s FBX importer writes (walk, 
     // Blender's quaternion curves are the bones' alone (the armature Object rotates in euler).
     expect(count('quaternion') * 4).toBe(o.fcurvesByProperty.rotation_quaternion);
     // Its location and scale curves are the bones' plus the armature Object's own three each; those
-    // three tracks key no bone here, and are counted as dropped, not lost.
+    // three tracks key no bone here. They hold the armature's rest at every key, which the bones
+    // already carry (#1190), so they are counted apart and nothing is dropped (#1441).
     expect(count('position') * 3 + 3).toBe(o.fcurvesByProperty.location);
     expect(count('scale') * 3 + 3).toBe(o.fcurvesByProperty.scale);
     expect(result.scaleChannels).toBe(count('scale'));
+    expect(result.armatureRestTracks).toBe(3);
     expect(result.dropped).toEqual({
-      unknownBoneTracks: 3,
+      nodeTracks: 0,
       otherPropertyTracks: 0,
       unparsedTracks: 0,
+      otherTakes: 0,
     });
+    expect(result.notices).toEqual([]);
   });
 
   it('keys sit at the file’s own times, not one per frame: the exporter simplified them', async () => {
@@ -222,7 +226,8 @@ describe('scale the clip dropped is kept (keyed-scale bar, Blender default expor
   it('Bone1’s keyed scale plays as Blender plays it at five frames, and the heads match', async () => {
     const { layer, result } = await imported(KEYED_SCALE());
     expect(result.scaleChannels).toBe(2);
-    expect(result.dropped.unknownBoneTracks).toBe(3); // the armature node's own tracks
+    expect(result.armatureRestTracks).toBe(3); // the armature node's own, holding its rest
+    expect(result.dropped.nodeTracks).toBe(0);
     expect(o.frames['25'].Bone1.scale).toEqual([0.6, 1.8, 1.2]);
     expect(worstScale(layer)).toBeLessThan(1e-6);
 
