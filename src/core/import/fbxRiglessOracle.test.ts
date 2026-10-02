@@ -16,7 +16,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { Matrix4, Quaternion, Vector3 } from 'three';
-import { parseFbx } from './fbx';
+import { FBX_NOTHING_TO_IMPORT, parseFbx, readFbx } from './fbx';
 
 const DIR = resolve(process.cwd(), 'src/core/import/__fixtures__');
 
@@ -110,12 +110,24 @@ describe.each([
   );
 });
 
-describe('a file without a bone, today', () => {
-  // The door #1434 item 1 opens. When `parseFbx` reads a rigless file this goes red, and the test
-  // that replaces it states what lands instead.
-  it('is refused whole, by the reason the reader gives', () => {
+describe('a file without a bone', () => {
+  // #1434 step 4 — this used to pin the refusal of the rigless fixture; the file is now read as a
+  // model (what lands is `fbxModelLanding.test.ts`). A file with nothing at all is still refused.
+  it('is read as a model: its meshes and empties, and no rig', () => {
+    const read = readFbx(arrayBufferOf('rigless-hierarchy-blender-default.fbx'), 'rigless');
+    expect(read.kind).toBe('model');
+    expect(read.scene.nodes.map((n) => n.name).sort()).toEqual(['Cone', 'Cube', 'Holder', 'Plane']);
+  });
+
+  it('a file with no bone, mesh or empty is refused whole, by the reason the reader gives', () => {
+    expect(() => readFbx(arrayBufferOf('nothing-blender-default.fbx'), 'nothing')).toThrow(
+      FBX_NOTHING_TO_IMPORT,
+    );
+  });
+
+  it('the rig reader refuses a model by name, not with a skeleton of no bones', () => {
     expect(() =>
       parseFbx(arrayBufferOf('rigless-hierarchy-blender-default.fbx'), 'rigless'),
-    ).toThrow('FBX contains no skeleton or skinned mesh — nothing to import.');
+    ).toThrow('FBX holds no bone: it is a model, not a rig.');
   });
 });

@@ -64,6 +64,8 @@ async function imported(data: ArrayBuffer) {
     ids: { skeleton: 'sk', layer: 'layer' },
     storeImage,
   });
+  // Every file here holds a rig (#1434: one with no bone is a model, `fbxModelLanding.test.ts`).
+  if (result.kind === 'model') throw new Error('expected a rig');
   const state = apply(result.ops);
   return {
     result,

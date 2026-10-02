@@ -19,7 +19,7 @@
 // the armature's space at the rig's rest — what Blender makes of it (measured: `Mesh_0` and `Body`
 // are children of their armature, at location 0 and scale 1, with an Armature modifier pointed at
 // it), and what the glTF road does (#1218). The rig's bones are read in the scene's space in
-// metres (`parseFbx`), so a point's rest is where three's own skinning puts it at load, in metres.
+// metres (`readFbx`), so a point's rest is where three's own skinning puts it at load, in metres.
 //
 // An UNSKINNED mesh stands as its own Object, its points as the file states them in the node's own
 // frame, re-expressed in Y-up (`toYUp`, corner normals with them). Where the Object stands, and under
@@ -35,11 +35,20 @@
 // slot cannot draw as Blender does is left out and named. #1435 — a base colour image with an alpha
 // channel is the surface's alpha, drawn dithered, as Blender wires and draws it.
 //
-// REF: src/core/import/fbx.ts (`parseFbx`, the rig and the unit); src/core/import/nativeGltfImport.ts
+// REF: src/core/import/fbx.ts (`readFbx`, the rig and the unit); src/core/import/nativeGltfImport.ts
 //      (`skinIntoArmatureSpace`, the same rest re-skin for glTF); src/core/import/modelImport.ts
 //      (`withProjectImages`, the images); issues #1429, #1430, #1434.
 
-import { Matrix4, Vector3, type Color, type Material, type Mesh, type Object3D } from 'three';
+import {
+  Box3,
+  BufferAttribute,
+  Matrix4,
+  Vector3,
+  type Color,
+  type Material,
+  type Mesh,
+  type Object3D,
+} from 'three';
 import type { Group, SkinnedMesh } from 'three';
 import { COLOR_LAYER, MATERIAL_INDEX, uvLayerName } from '../../nodes/attributes';
 import { SKIN_SET_WIDTH, skinPointLayers } from '../../nodes/skinInfluences';
@@ -113,7 +122,7 @@ export interface FbxMeshRead {
    * and its `vertexGroups` are left empty: the bone NAMES are the import chain's to spell.
    */
   readonly data: MeshGeometryData;
-  /** Skinned: each vertex group's bone, as an index into the rig `parseFbx` read. */
+  /** Skinned: each vertex group's bone, as an index into the rig `readFbx` read. */
   readonly vertexGroupBones: readonly number[] | null;
   /** One per slot, in the file's order; empty when the file gives the mesh none. */
   readonly materials: readonly FbxMaterialSlot[];
@@ -125,13 +134,19 @@ export interface FbxMeshesRead {
   readonly images: readonly FbxImage[];
   /** What was left out, each said once, in words a director can act on. Empty when nothing was. */
   readonly notices: readonly string[];
+  /**
+   * #1434 — the centre of the box around every mesh read, where the file draws it at load, in Y-up
+   * metres: the import Group's pivot, as the glTF road's is the centre of its meshes' box
+   * (`computeGltfBoundsCenter`). A skinned mesh counts at its bind; the origin when there is none.
+   */
+  readonly centre: Vec3;
 }
 
 /**
  * Every mesh of the loaded file, read as the header says.
  *
  * `rigIndexOf` answers which bone of the rig a skin's bone stands for (or -1): the loader nests
- * per-skin copies of a bone, and `parseFbx` already knows how to find the one in the rig.
+ * per-skin copies of a bone, and `readFbx` already knows how to find the one in the rig.
  */
 export function readFbxMeshes(
   group: Group,
@@ -144,6 +159,7 @@ export function readFbxMeshes(
   const meshes: FbxMeshRead[] = [];
   const notices: string[] = [];
   const images = new ImageTable();
+  const box = new Box3();
   group.traverse((node) => {
     const mesh = node as Mesh;
     if (!mesh.isMesh) return;
@@ -174,8 +190,16 @@ export function readFbxMeshes(
     }
     if (!skinned) meshOf?.set(mesh, meshes.length);
     meshes.push({ name, ...read, materials: materials.map(({ slot }) => slot) });
+    // Read off the points, never written back: the loader's geometry is not this pass's to change.
+    const points = mesh.geometry.getAttribute('position');
+    if (points instanceof BufferAttribute) {
+      box.union(new Box3().setFromBufferAttribute(points).applyMatrix4(mesh.matrixWorld));
+    }
   });
-  return { meshes, images: images.list, notices };
+  const centre: Vec3 = box.isEmpty()
+    ? [0, 0, 0]
+    : (box.getCenter(new Vector3()).multiplyScalar(metresPerUnit).toArray() as Vec3);
+  return { meshes, images: images.list, notices, centre };
 }
 
 /** What the loader patch records for each texture the file links to a material (`basher #1434`). */

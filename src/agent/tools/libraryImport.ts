@@ -47,7 +47,9 @@ export const libraryImportTool: ToolDefinition<LibraryImportArgs> = {
     'a Group of Object + mesh data nodes when the file can become native geometry, otherwise ' +
     'a GltfAsset + Group chain that reads the file. A motion (.bvh, .fbx) imports as a ' +
     'skeleton with its keys on a base pose layer and an Object that stands it, not bound to a ' +
-    'character. A file in no import format is refused.',
+    'character; an .fbx with meshes or empties lands with them in a Group (a character), and ' +
+    'one with no bone as a model of meshes and empties in a Group. A file in no import format ' +
+    'is refused.',
   paramSchema: libraryImportSchema,
   async handler(args: LibraryImportArgs, ctx: ToolContext): Promise<ToolResult> {
     const sceneRef = ctx.dagState.outputs.scene;
@@ -89,12 +91,14 @@ export const libraryImportTool: ToolDefinition<LibraryImportArgs> = {
     // applied, and the text says so rather than claiming it. Binding it to a character is a
     // separate step on this surface (the UI's drop binds after dispatch, which a Diff cannot).
     const motion = await buildMotionImportOpsFromOpfs(args.assetRef, ctx.dagState);
-    return {
-      ops: [...motion.ops],
-      text:
-        (motion.meshCount ?? 0) > 0
-          ? `Imported ${args.assetRef} as a character: a skeleton (${motion.skeletonId}) with its keys on a base pose layer (${motion.motionId}) and ${motion.meshCount} mesh${motion.meshCount === 1 ? '' : 'es'}, standing where the file puts it.${leftBehindNotice(motion.notices)}`
-          : `Imported ${args.assetRef} as a motion: a skeleton (${motion.skeletonId}) with its keys on a base pose layer (${motion.motionId}), standing where the file puts it. It is not bound to a character.${leftBehindNotice(motion.notices)}`,
-    };
+    // #1434 — the text says what landed, by the kind the import decided.
+    const meshes = `${motion.meshCount} mesh${motion.meshCount === 1 ? '' : 'es'}`;
+    const said =
+      motion.kind === 'model'
+        ? `Imported ${args.assetRef} as a model: ${meshes} and the file's empties in a Group (${motion.groupId}), standing where the file puts them. It has no skeleton.`
+        : motion.kind === 'character'
+          ? `Imported ${args.assetRef} as a character: a skeleton (${motion.skeletonId}) with its keys on a base pose layer (${motion.motionId}) and ${meshes}, in a Group, standing where the file puts it.`
+          : `Imported ${args.assetRef} as a motion: a skeleton (${motion.skeletonId}) with its keys on a base pose layer (${motion.motionId}), standing where the file puts it. It is not bound to a character.`;
+    return { ops: [...motion.ops], text: `${said}${leftBehindNotice(motion.notices)}` };
   },
 };

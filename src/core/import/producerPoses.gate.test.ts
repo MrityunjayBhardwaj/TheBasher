@@ -28,7 +28,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { KeyframeTrack } from 'three';
 import { parseBvh } from './bvh';
-import { parseFbx } from './fbx';
+import { FBX_NOTHING_TO_IMPORT, readFbx } from './fbx';
 import type { MotionPose } from '../../nodes/types';
 import { alignedQuat } from '../../test-utils/poseSamples';
 
@@ -47,8 +47,11 @@ function parsePoses(rel: string): readonly MotionPose[] {
   const abs = resolve(process.cwd(), rel);
   if (rel.endsWith('.bvh')) return parseBvh(readFileSync(abs, 'utf8'), 'clip').clipParams.poses;
   const buf = readFileSync(abs);
-  return parseFbx(buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) as ArrayBuffer)
-    .clipParams.poses;
+  const read = readFbx(
+    buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) as ArrayBuffer,
+  );
+  // #1434 — a model has no rig, so no pose: it holds none to compare.
+  return read.kind === 'model' ? [] : read.clipParams.poses;
 }
 
 /** The same parse with three keeping its track values in float64. */
@@ -67,8 +70,7 @@ function referencePoses(rel: string): readonly MotionPose[] {
 const REFUSED: Record<string, string> = {
   'src/core/import/__fixtures__/rigged-scene-shared-mesh-blender-default.fbx':
     'FBX nodes "Plane" and "PlaneB" share one mesh, which an import does not bring across yet (#1061).',
-  'src/core/import/__fixtures__/rigless-hierarchy-blender-default.fbx':
-    'FBX contains no skeleton or skinned mesh — nothing to import.',
+  'src/core/import/__fixtures__/nothing-blender-default.fbx': FBX_NOTHING_TO_IMPORT,
   'src/core/import/__fixtures__/unskinned-edges-blender-default.fbx':
     'FBX node "Cam" is a camera, which an import does not bring across yet (#1319).',
 };

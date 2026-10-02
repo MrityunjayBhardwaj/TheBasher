@@ -20,6 +20,10 @@
 // #1429 — and every mesh in the file, as stored polygon meshes (`fbxMesh.ts`): a skinned one in
 // the rig's space at rest, with every weight the file gives it.
 //
+// #1434 — a file with no bone is a MODEL (`readFbx` → `FbxModelRead`): its meshes and empties as the
+// scene pass lays them out, with no skeleton and no motion, as Blender makes no armature for it. A
+// file with no bone, mesh or empty is refused whole (`FBX_NOTHING_TO_IMPORT`).
+//
 // THREE.FBXLoader is a full-JS parser (no FBX SDK). Some proprietary
 // FBX features (NURBS, certain subdivs) won't parse — fail loudly per
 // project_p31_plan honesty contract.
@@ -87,6 +91,8 @@ export interface FbxTrack {
 }
 
 export interface FbxImportResult {
+  /** #1434 — the file holds a rig: a skeleton and its motion, and whatever of the scene is with it. */
+  readonly kind: 'rig';
   readonly skeletonParams: FbxSkeletonParams;
   readonly clipParams: FbxClipParams;
   /** The first clip's tracks, in three's order; a track whose name does not parse is left out. */
@@ -103,6 +109,28 @@ export interface FbxImportResult {
    */
   readonly scene: FbxSceneRead;
 }
+
+/**
+ * #1434 — a file with no bone: its meshes and empties, as Blender's FBX import makes them, and no
+ * skeleton, no motion and nothing to bind. Blender makes no armature for such a file.
+ */
+export interface FbxModelRead {
+  readonly kind: 'model';
+  /** Tracks of the first clip whose name does not parse as `node.property` — counted, not read. */
+  readonly unparsedTracks: number;
+  /** #1446 — the names of the file's takes after the first, which nothing reads. */
+  readonly otherTakes: readonly string[];
+  readonly meshes: FbxMeshesRead;
+  /** Every empty and mesh of the file; never empty (a file with none is refused). */
+  readonly scene: FbxSceneRead;
+}
+
+/** #1434 — what an FBX holds: a rig (and what stands with it), or a model with no bone. */
+export type FbxRead = FbxImportResult | FbxModelRead;
+
+/** #1434 — the refusal of a file that holds nothing an import brings across. */
+export const FBX_NOTHING_TO_IMPORT =
+  'FBX holds no bone, mesh or empty that an import brings across — nothing to import.';
 
 /**
  * FBX's base length unit is the centimetre: `UnitScaleFactor` is centimetres per file unit, and
@@ -165,23 +193,21 @@ export function fbxMetresPerUnit(group: { userData?: Record<string, unknown> }):
  * generated clip's declared unit lands in its bones too (#790), and every stand-in Object
  * stays at scale 1.
  */
-export function parseFbx(input: ArrayBuffer | string, name = 'imported-fbx'): FbxImportResult {
+export function readFbx(input: ArrayBuffer | string, name = 'imported-fbx'): FbxRead {
   const loader = new FBXLoader();
   const group = loader.parse(input as ArrayBuffer, '');
   // FBXLoader.parse signature: (data: ArrayBuffer, path: string) → Group
-  // The path is used to resolve textures; we pass empty because textures are not carried yet
-  // (#1429 brings meshes and their colours; a texture is named in the import's notices).
+  // The path is used to resolve textures; we pass empty: an embedded image is read from the file's
+  // own bytes (#1434), and one that is only linked is named in the import's notices.
   const metresPerUnit = fbxMetresPerUnit(group);
-
-  const bones = extractBones(group);
-  if (bones.length === 0) {
-    throw new Error('FBX contains no skeleton or skinned mesh — nothing to import.');
-  }
   // First animation clip wins. group.animations[] is THREE.AnimationClip[]. The rest are named, not
   // read (#1446: which take an object plays when a file has several is an open question).
   const takes = (group as unknown as { animations: ThreeAnimationClip[] }).animations;
   const clip = takes[0];
   const otherTakes = takes.slice(1).map((take) => take.name);
+
+  const bones = extractBones(group);
+  if (bones.length === 0) return readModel(group, clip, otherTakes, metresPerUnit);
   // The clip's poses are read against the rest AS THE FILE HOLDS IT (a rotation-only bone takes
   // its position from that rest), and only then is the node above the rig folded into
   // both, so the two move together.
@@ -228,6 +254,7 @@ export function parseFbx(input: ArrayBuffer | string, name = 'imported-fbx'): Fb
   if (!clip) {
     // Skeleton-only FBX — rare but valid (T-pose import). Empty clip.
     return {
+      kind: 'rig',
       skeletonParams: { bones: rigBones },
       clipParams: { name, duration: 0, loop: 'hold', poses: [] },
       tracks: [],
@@ -239,6 +266,7 @@ export function parseFbx(input: ArrayBuffer | string, name = 'imported-fbx'): Fb
   }
 
   return {
+    kind: 'rig',
     skeletonParams: { bones: rigBones },
     tracks: scaleTrackPositions(tracks, metresPerUnit),
     unparsedTracks,
@@ -258,6 +286,54 @@ export function parseFbx(input: ArrayBuffer | string, name = 'imported-fbx'): Fb
       poses: scalePosePositions(poses, metresPerUnit),
     },
   };
+}
+
+/**
+ * The rig of a file that holds one — what every reader of a skeleton or its motion takes. Throws on a
+ * file with no bone, which is a model: the import reads every file through `readFbx`.
+ */
+export function parseFbx(input: ArrayBuffer | string, name = 'imported-fbx'): FbxImportResult {
+  const read = readFbx(input, name);
+  if (read.kind === 'model') throw new Error('FBX holds no bone: it is a model, not a rig.');
+  return read;
+}
+
+/**
+ * #1434 — a file with no bone, read as Blender's FBX import reads one: every mesh an Object and every
+ * empty a Group, each under the node it hangs from (`fbxScene.ts`), and a keyed node playing its keys.
+ * Nothing is claimed by a rig, so every node of the file is the scene pass's. A file that leaves the
+ * scene pass nothing to write holds nothing to import, and is refused whole, with what was left out.
+ */
+function readModel(
+  group: Group,
+  clip: ThreeAnimationClip | undefined,
+  otherTakes: readonly string[],
+  metresPerUnit: number,
+): FbxModelRead {
+  const read = clip ? readTracks(clip, []) : { tracks: [], unparsedTracks: 0 };
+  const meshOf = new Map<Object3D, number>();
+  const meshes = readFbxMeshes(group, () => -1, metresPerUnit, meshOf);
+  const scene = readFbxScene(group, {
+    claimed: new Set(),
+    armatures: new Set(),
+    boneIndexOf: () => -1,
+    boneWorlds: [],
+    meshOf,
+    metresPerUnit,
+    tracks: read.tracks.map(({ bone, property, times, values }) => ({
+      node: bone,
+      property,
+      times,
+      values,
+    })),
+  });
+  if (scene.nodes.length === 0) {
+    const said = [...meshes.notices, ...scene.notices];
+    throw new Error(
+      said.length === 0 ? FBX_NOTHING_TO_IMPORT : `${FBX_NOTHING_TO_IMPORT} (${said.join('; ')})`,
+    );
+  }
+  return { kind: 'model', unparsedTracks: read.unparsedTracks, otherTakes, meshes, scene };
 }
 
 /**

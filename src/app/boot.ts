@@ -872,13 +872,10 @@ export function boot(): Promise<void> {
           });
           const dag = useDagStore.getState();
           const label = name ?? 'imported';
-          const { ops, skeletonId, motionId, meshCount, notices } = landing.motionImportOps(
-            built,
-            label,
-            dag.state,
-          );
+          // #1434 — what landed (`kind`) and its ids: a model has a Group and no skeleton.
+          const { ops, ...landed } = landing.motionImportOps(built, label, dag.state);
           dag.dispatchAtomic(ops, 'user', `import fbx: ${label}`);
-          return { skeletonId, motionId, meshCount, notices };
+          return landed;
         };
       });
       // #1049 — the NATIVE road: the file becomes stored polygon meshes and stops existing. A

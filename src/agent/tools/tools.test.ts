@@ -525,6 +525,31 @@ describe('library.import tool', () => {
     },
   );
 
+  // #1434 — an FBX with no bone is a model: the text says so, and the ops hold no rig.
+  it('an FBX with no bone imports as a model, in a Group, with no skeleton', async () => {
+    const assetRef = 'user-imports/rigless/rigless.fbx';
+    await currentStorage.write(
+      assetRef,
+      new Uint8Array(
+        readFileSync('src/core/import/__fixtures__/rigless-hierarchy-blender-default.fbx'),
+      ),
+    );
+    const result = await libraryImportTool.handler(
+      { assetRef, position: [0, 0, 0] },
+      { dagState: buildSceneBaseline() },
+    );
+    const types = nodeTypesOf(result.ops);
+    expect(types).not.toContain('Skeleton');
+    expect(types).not.toContain('PoseLayer');
+    expect(result.text).toMatch(
+      /^Imported user-imports\/rigless\/rigless\.fbx as a model: 3 meshes/,
+    );
+    expect(result.text).toMatch(/It has no skeleton\.$/);
+    let applied = buildSceneBaseline();
+    for (const op of result.ops) applied = applyOp(applied, op).next;
+    expect(Object.values(applied.nodes).filter((n) => n.type === 'Object')).toHaveLength(3);
+  });
+
   it('a file in no import format is refused by name, with no ops', async () => {
     const result = await libraryImportTool.handler(
       { assetRef: 'library/rock.png', position: [0, 0, 0] },

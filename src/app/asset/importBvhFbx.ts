@@ -4,7 +4,9 @@
 // The BVH and FBX importers (`buildBvhImportOps` / `buildFbxImportOps`) emit a Skeleton and its
 // motion as keys on a base pose layer (#1211). #1429 — an FBX may also bring meshes, which stand
 // with the skeleton (`motionImportOps`); such a file is a character and is not bound onto another
-// (`landImportedMotion`). A BVH is motion only. Until now they were reachable
+// (`landImportedMotion`). #1434 — an FBX with no bone is a model: its meshes and empties, with no
+// skeleton and nothing to bind. A character and a model land in an import Group, as a glTF does.
+// A BVH is motion only. Until now they were reachable
 // only through the `__basher_importBvh` / `__basher_importFbx` dev seams
 // (boot.ts:240-255). This module is the missing INGESTION SURFACE: read the
 // OPFS bytes a drop/picker wrote, decode them per-format, build the op chain,
@@ -32,6 +34,8 @@ import type { Op } from '../../core/dag/types';
 import { buildBvhImportOps } from '../../core/import/bvhImportChain';
 import { buildFbxImportOps } from '../../core/import/fbxImportChain';
 import { buildSkeletonObjectOps, skeletonObjectId } from '../../core/import/skeletonObject';
+import { importGroupOp, parentEdge } from '../../core/import/modelImport';
+import type { FbxImportChainResult } from '../../core/import/fbxImportChain';
 import type { BoneSpec } from '../../nodes/types';
 import { getStorage } from '../boot';
 import { formatAssetError, useAssetErrorStore } from '../stores/assetErrorStore';
@@ -54,15 +58,29 @@ import { importFormatOf, UNSUPPORTED_FORMAT_MESSAGE, type ImportExt } from './im
  * is what lets a drop bind the motion to a character instead of stopping at "the
  * nodes exist somewhere".
  */
-export interface MotionImportResult {
+export type MotionImportResult =
+  | (BindableMotion & {
+      /**
+       * #1434 — a MOTION is a rig alone, and a landing binds it onto a character. A CHARACTER is a
+       * rig with meshes or empties beside it: it is not bound onto another, which would hide it.
+       */
+      readonly kind: 'motion' | 'character';
+      /** #1429 — how many meshes the file brought with its skeleton. */
+      readonly meshCount: number;
+    })
+  | {
+      /** #1434 — an FBX with no bone: no skeleton, no motion, nothing to bind. */
+      readonly kind: 'model';
+      /** The import Group its meshes and empties stand in. */
+      readonly groupId: string;
+      readonly meshCount: number;
+    };
+
+/** What a bind takes: a skeleton and the node its motion comes out of. */
+export interface BindableMotion {
   readonly skeletonId: string;
   /** #1211 — the node the motion comes out of: what a bind retargets from. */
   readonly motionId: string;
-  /**
-   * #1429 — how many meshes the file brought with its skeleton. A file with meshes is a CHARACTER,
-   * not a loose motion: it is not bound onto another character, which would hide it.
-   */
-  readonly meshCount?: number;
 }
 
 /** Strip the directory + extension to a display name for the import label. */
@@ -89,7 +107,7 @@ function nameFromPath(path: string): string {
  * so the rig stands at the file's own size and its Scale is the director's to set (#791) — as
  * Blender's BVH importer does, with a Scale defaulted to 1.0 and no detection code
  * (`io_anim_bvh/__init__.py:60-66`); the import selects the Object so that field is in front of
- * them (`landImportedMotion`). FBX declares its unit, and `parseFbx` has already read the rig in
+ * them (`landImportedMotion`). FBX declares its unit, and `readFbx` has already read the rig in
  * it (`fbxMetresPerUnit`, #1086). What used to stand here — a fit to 1.8 m measured on the
  * rig's frame 0 — was right for a person and silently wrong for anything else.
  */
@@ -100,20 +118,18 @@ function skeletonObjectOps(
   layerId: string,
   // #1101 — the name the import gave the motion, so the Object and its motion read the same.
   name: string,
-  // #1307 — the state the ops will land in: the live store for a drop, the agent's fork for a tool.
-  state: DagState,
+  // #1434 — what the Object hangs under: the scene node, or a character's import Group.
+  parentId: string,
 ): Op[] {
   const skeleton = ops.find((op) => op.type === 'addNode' && op.nodeId === skeletonId);
   const params = skeleton?.type === 'addNode' ? skeleton.params : undefined;
   const bones = (params as { bones?: BoneSpec[] } | undefined)?.bones ?? [];
   if (bones.length === 0) return [];
-  const sceneNodeId = state.outputs.scene?.node;
-  if (!sceneNodeId) return [];
   // Blender names the armature after the file and never renames it after the action, so the name
   // follows nothing.
   return buildSkeletonObjectOps({
     skeletonId,
-    sceneNodeId,
+    sceneNodeId: parentId,
     name,
     pose: { node: layerId, socket: 'out' },
     nameFollowsClip: false,
@@ -121,11 +137,11 @@ function skeletonObjectOps(
 }
 
 /** A motion import's ops, built and not yet dispatched (#1307). */
-export interface MotionImportOps extends MotionImportResult {
+export type MotionImportOps = MotionImportResult & {
   readonly ops: Op[];
   /** #1429 — what the file held that the import left out, each said once. Empty when nothing. */
   readonly notices: readonly string[];
-}
+};
 
 /**
  * #1307 — the ops a `.bvh` or `.fbx` import makes, against a CALLER-SUPPLIED state, without
@@ -149,7 +165,7 @@ export async function buildMotionImportOpsFromOpfs(
   const name = nameFromPath(path);
   if (ext === '.bvh') {
     return motionImportOps(
-      buildBvhImportOps({ text: new TextDecoder().decode(bytes), name }),
+      { ...buildBvhImportOps({ text: new TextDecoder().decode(bytes), name }), kind: 'motion' },
       name,
       state,
     );
@@ -163,42 +179,72 @@ export async function buildMotionImportOpsFromOpfs(
   );
 }
 
+/** A BVH's built import: a motion, and nothing of a scene. */
+interface BuiltBvh {
+  readonly kind: 'motion';
+  readonly ops: Op[];
+  readonly skeletonId: string;
+  readonly motionId: string;
+}
+
 /**
  * #1429 — a built motion import with what stands it in the scene: the skeleton's Object, then (an
- * FBX's) meshes, which hang under that Object and so go after it. Every FBX door takes this, the
- * dev seam included, so no door imports the rig and drops the meshes.
+ * FBX's) meshes and empties, which may hang under that Object and so go after it. Every FBX door
+ * takes this, the dev seam included, so no door imports the rig and drops the meshes.
+ *
+ * #1434 — by what the file is (`FbxImportKind`): a MOTION stands its rig under the scene, as a BVH's,
+ * and is bound by its landing; a CHARACTER stands rig, meshes and empties in an import Group; a MODEL
+ * stands its meshes and empties in one, with no rig at all. The Group sits at the origin and turns
+ * about the meshes' centre (`importGroupOp`), so it moves nothing the file placed.
  */
 export function motionImportOps(
-  built: {
-    readonly ops: Op[];
-    readonly skeletonId: string;
-    readonly motionId: string;
-    readonly meshOps?: (sceneNodeId: string) => Op[];
-    readonly meshCount?: number;
-    readonly notices?: readonly string[];
-  },
+  built: BuiltBvh | FbxImportChainResult,
   name: string,
   state: DagState,
 ): MotionImportOps {
-  const { ops, skeletonId, motionId } = built;
-  const standing = skeletonObjectOps(ops, skeletonId, motionId, name, state);
   const sceneNodeId = state.outputs.scene?.node;
-  const meshCount = built.meshCount ?? 0;
+  const meshCount = 'meshCount' in built ? built.meshCount : 0;
+  const notices = 'notices' in built ? built.notices : [];
+  const fbx = 'group' in built ? built : null;
+  // A character or a model lands in a Group; a motion stands as a BVH's does, beside nothing.
+  const group = fbx !== null && built.kind !== 'motion' ? fbx.group : null;
+  const parentId = group?.id ?? sceneNodeId;
+  // With no scene to stand in, nothing of the file has anywhere to go.
+  const landing =
+    sceneNodeId === undefined || group === null
+      ? []
+      : [importGroupOp(group.id, [0, 0, 0], group.pivot), parentEdge(group.id, sceneNodeId)];
+  const leftOut = (n: number) =>
+    n > 0
+      ? [`${n} mesh${n === 1 ? '' : 'es'} left out: the project has no scene to stand them in`]
+      : [];
+  if (built.kind === 'model') {
+    const placed = parentId !== undefined;
+    return {
+      kind: 'model',
+      groupId: built.group.id,
+      ops: placed ? [...built.ops, ...landing, ...built.meshOps(parentId)] : [],
+      meshCount: placed ? meshCount : 0,
+      notices: [...notices, ...(placed ? [] : leftOut(meshCount))],
+    };
+  }
+  const { ops, skeletonId, motionId } = built;
+  const standing =
+    parentId === undefined ? [] : skeletonObjectOps(ops, skeletonId, motionId, name, parentId);
   // With no scene to stand in, the skeleton has no Object either, and the meshes nowhere to go.
-  const placed = sceneNodeId !== undefined && standing.length > 0;
+  const placed = parentId !== undefined && standing.length > 0;
   return {
-    ops: [...ops, ...standing, ...(placed ? (built.meshOps?.(sceneNodeId) ?? []) : [])],
+    kind: built.kind,
+    ops: [
+      ...ops,
+      ...(placed ? landing : []),
+      ...standing,
+      ...(placed && fbx !== null ? fbx.meshOps(parentId) : []),
+    ],
     skeletonId,
     motionId,
     meshCount: placed ? meshCount : 0,
-    notices: [
-      ...(built.notices ?? []),
-      ...(!placed && meshCount > 0
-        ? [
-            `${meshCount} mesh${meshCount === 1 ? '' : 'es'} left out: the project has no scene to stand them in`,
-          ]
-        : []),
-    ],
+    notices: [...notices, ...(placed ? [] : leftOut(meshCount))],
   };
 }
 
@@ -211,17 +257,14 @@ export function motionImportOps(
 async function importMotionFromOpfs(path: string): Promise<MotionImportResult | null> {
   try {
     const dag = useDagStore.getState();
-    const { ops, skeletonId, motionId, meshCount, notices } = await buildMotionImportOpsFromOpfs(
-      path,
-      dag.state,
-    );
+    const { ops, notices, ...imported } = await buildMotionImportOpsFromOpfs(path, dag.state);
     dag.dispatchAtomic(ops, 'user', `import ${importFormatOf(path)!.ext.slice(1)}: ${path}`);
     // Bump AFTER dispatch (pre-mortem: a pre-dispatch bump re-enumerates the
     // My-Imports list before the import lands → stale/empty on failure).
     useImportRefreshStore.getState().bump();
     // #1429 — said where the glTF road says its own (`importGltf.ts`).
     if (notices.length > 0) console.warn(`FBX import (${path}):${leftBehindNotice(notices)}`);
-    return { skeletonId, motionId, meshCount };
+    return imported;
   } catch (err) {
     useAssetErrorStore.getState().report(path, `import failed: ${formatAssetError(err)}`);
     // `null` means "nothing landed", and the banner is already showing why. It is
@@ -282,9 +325,12 @@ const IMPORT_BY_EXT: Readonly<Record<ImportExt, (entryPath: string) => Promise<v
  * wants selected; the selection is then left where the bind found it.
  */
 function landImportedMotion(imported: MotionImportResult | null): void {
-  // #1429 — a file that brought its own meshes is a character: it stands where it landed.
-  const outcome = (imported?.meshCount ?? 0) > 0 ? null : bindImportedMotion(imported, 'imported');
-  if (!imported || outcome?.ok) return;
+  // #1434 — a model has no rig to bind or to select: it stands where it landed, as a glTF's does
+  // (selection after an import is #1442's, for both formats).
+  if (!imported || imported.kind === 'model') return;
+  // #1429 — a file that brought its own meshes or empties is a character: it stands where it landed.
+  const outcome = imported.kind === 'character' ? null : bindImportedMotion(imported, 'imported');
+  if (outcome?.ok) return;
   const objectId = skeletonObjectId(imported.skeletonId);
   if (!useDagStore.getState().state.nodes[objectId]) return;
   useSelectionStore.getState().select(objectId);
@@ -335,7 +381,7 @@ export async function routeImportByExtension(entryPath: string): Promise<void> {
  * bind that was attempted and refused.
  */
 export function bindImportedMotion(
-  imported: MotionImportResult | null,
+  imported: BindableMotion | null,
   arrival: MotionArrival,
 ): BindMotionOutcome | null {
   if (!imported) return null;
