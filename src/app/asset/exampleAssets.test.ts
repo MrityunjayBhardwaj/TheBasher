@@ -9,6 +9,7 @@
 import { describe, expect, it } from 'vitest';
 import { registerAllNodes } from '../../nodes/registerAll';
 import { buildAllExampleProjects } from '../../core/project/examples';
+import { OLD_IMPORT_NODE_TYPES, refuseOldImports } from '../../core/project/oldImports';
 import { ASSET_CATALOG } from './catalog';
 
 registerAllNodes();
@@ -46,9 +47,8 @@ describe('bundled examples refer only to seeded assets (#1282)', () => {
 describe('bundled examples are stored on the current structure (#1424)', () => {
   it('no example holds a node type only an old imported-file save has', async () => {
     const old = new Set([
-      'GltfAsset',
-      'GltfData',
-      'GltfSkeleton',
+      ...OLD_IMPORT_NODE_TYPES,
+      // Never refused on their own, but only ever made beside an old-structure import.
       'PoseOverride',
       'ClipSelect',
       'TransformClip',
@@ -63,5 +63,7 @@ describe('bundled examples are stored on the current structure (#1424)', () => {
         .map(([id, node]) => `${p.id} ${id} ${node.type}`),
     );
     expect(held).toEqual([]);
+    // And the load door's own answer: none is refused.
+    for (const p of projects) expect(() => refuseOldImports(p)).not.toThrow();
   });
 });

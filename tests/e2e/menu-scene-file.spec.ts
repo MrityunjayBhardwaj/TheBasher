@@ -18,7 +18,6 @@
 // import to mimic the real file write/read exactly.
 
 import { expect, test } from './_fixtures';
-import { recordedSave, writeRecordedSave } from './_recordedSave';
 
 interface Bundle {
   assets?: Record<string, string>;
@@ -69,20 +68,6 @@ async function ingestGltf(page: EvalPage, folder: string): Promise<void> {
       f,
     );
   }, folder);
-}
-
-/**
- * A scene that references a user-imports file. A native import stops referencing its file (#1049)
- * and since #1053 a file the native reader refuses is refused whole, so the one scene that still
- * holds such a reference is a project saved before, whose import the load kept: a recorded save
- * (`_recordedSave.ts`) of a file the native reader refuses, loaded on the resume road.
- */
-async function loadSceneReferencingAFile(page: EvalPage): Promise<void> {
-  await writeRecordedSave(page, recordedSave('clone-models/refused-iridescence'));
-  await page.reload();
-  await page.waitForFunction(
-    () => !!(window as unknown as SceneWindow).__basher_export_scene_bundle,
-  );
 }
 
 test.beforeEach(async ({ page }) => {
@@ -143,64 +128,11 @@ test('opening a scene is non-destructive: each open creates a distinct new proje
   expect(id2).not.toBe(id1);
 });
 
-test('embeds a referenced OPFS asset and rehydrates it on open (portable file)', async ({
-  page,
-}) => {
-  // A scene that references a user-imports asset.
-  await loadSceneReferencingAFile(page);
-  await expect
-    .poll(
-      async () =>
-        page.evaluate(() => {
-          const w = window as unknown as SceneWindow;
-          const nodes = w.__basher_dag?.getState().state.nodes ?? {};
-          return Object.values(nodes).filter((n) => n.type === 'GltfAsset').length;
-        }),
-      { timeout: 10_000 },
-    )
-    .toBeGreaterThan(0);
-
-  // Export → the bundle must EMBED the user-imports bytes (base64, non-empty).
-  const assetPath = await page.evaluate(async () => {
-    const w = window as unknown as SceneWindow;
-    const { bundle } = await w.__basher_export_scene_bundle!();
-    const keys = Object.keys(bundle.assets ?? {});
-    const key = keys.find((k) => k.startsWith('user-imports/'));
-    return key && (bundle.assets as Record<string, string>)[key].length > 0 ? key : null;
-  });
-  expect(assetPath).toBeTruthy();
-
-  const bundle = await exportBundle(page);
-
-  // Delete the asset from OPFS — confirm it's really gone.
-  await page.evaluate(
-    (p) => (window as unknown as SceneWindow).__basher_opfs!.delete(p),
-    assetPath!,
-  );
-  expect(
-    await page.evaluate(
-      (p) => (window as unknown as SceneWindow).__basher_opfs!.exists(p),
-      assetPath!,
-    ),
-  ).toBe(false);
-
-  // Open the bundle → the embedded bytes are rehydrated back to OPFS. (Broken
-  // rehydrate → exists stays false → this fails.)
-  await page.evaluate(
-    (b) => (window as unknown as SceneWindow).__basher_import_scene_bundle!(b),
-    bundle,
-  );
-  await expect
-    .poll(
-      async () =>
-        page.evaluate(
-          (p) => (window as unknown as SceneWindow).__basher_opfs!.exists(p),
-          assetPath!,
-        ),
-      { timeout: 10_000 },
-    )
-    .toBe(true);
-});
+// "Embeds a referenced file and rehydrates it on open" ran here against a `user-imports/` folder a
+// GltfAsset pointed at. No open project can hold that reference any more (a native import does not
+// refer to its file, and a project holding an old-structure import is refused, #1424). The same
+// claim is checked on the references that remain: a replaced texture map
+// (`ux-gltf-material-bundle-roundtrip.spec.ts`) and an environment file (`ux9-environment.spec.ts`).
 
 test('File menu surfaces the affordances: Save downloads a .basher file, Open opens a chooser', async ({
   page,
