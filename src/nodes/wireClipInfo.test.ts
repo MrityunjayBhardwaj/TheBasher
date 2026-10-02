@@ -17,6 +17,7 @@ import { registerAllNodes } from './registerAll';
 import { AnimationClipNode, AnimationClipParams, type ClipOutputs } from './AnimationClip';
 import { poseLayerClipInfo } from './PoseLayer';
 import type { ObjectValue, PosedSkeletonValue } from './types';
+import { clipNodeParams } from '../test-utils/bvhClip';
 
 const at = { ctx: { time: { frame: 0, seconds: 0, normalized: 0 } } };
 
@@ -34,12 +35,13 @@ function poseOf(state: DagState, id: string): PosedSkeletonValue {
 describe('a clip puts its range on the wire', () => {
   // soma-walk.bvh: 78 bones, 31 keys over 1 s, so rate 31 and 31 samples, one per key.
   it('soma-walk.bvh: [0, duration] at the rate three derives from the same keys', () => {
-    const { skeletonParams, clipParams } = parseBvh(
+    const parsed = parseBvh(
       readFileSync('public/fixtures/anim/soma-walk.bvh', 'utf8'),
       'soma-walk',
     );
+    const { skeletonParams, clipParams } = parsed;
     const { pose } = AnimationClipNode.evaluate(
-      AnimationClipParams.parse(clipParams),
+      AnimationClipParams.parse(clipNodeParams(parsed)),
       { skeleton: { kind: 'Skeleton', bones: skeletonParams.bones } },
       at.ctx,
     ) as ClipOutputs;
@@ -66,7 +68,7 @@ describe('a clip puts its range on the wire', () => {
 
   it('a clip with no keys has no range', () => {
     const { pose } = AnimationClipNode.evaluate(
-      AnimationClipParams.parse({ duration: 2, keyframes: [] }),
+      AnimationClipParams.parse({ duration: 2, poses: [] }),
       { skeleton: { kind: 'Skeleton', bones: [] } },
       at.ctx,
     ) as ClipOutputs;

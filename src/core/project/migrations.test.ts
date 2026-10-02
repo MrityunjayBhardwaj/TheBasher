@@ -59,7 +59,7 @@ import { defaultModifier } from '../../nodes/channelModifiers';
 import { buildDefaultDagState } from './default';
 import { retargetClip } from '../import/retarget';
 import { PROJECT_FORMAT_VERSION, ProjectSchema, type Project } from './schema';
-import { motionPosesFromKeyframes } from '../../nodes/AnimationClip';
+import { posesFromKeyframes } from '../import/keyframePoses';
 
 beforeEach(() => {
   __resetRegistryForTests();
@@ -3857,7 +3857,7 @@ describe('v16 → v17: the retarget reads the pose wire (#1225)', () => {
     });
     expect(value.poses.length).toBeGreaterThan(0);
     // #1225 — the value carries those keys as timed poses by bone name, through the one adapter.
-    expect(value.poses).toEqual(motionPosesFromKeyframes(direct.clipParams.keyframes, bones));
+    expect(value.poses).toEqual(posesFromKeyframes(direct.clipParams.keyframes, bones));
   });
 });
 

@@ -1,7 +1,7 @@
 // AnimationClip — DESCRIBE a keyframed clip over a Skeleton. The node does not
 // sample: it evaluates to an `AnimationClip` value carrying the clip's name,
-// duration, loop rule and keyframes, plus the rig those key indices are counted
-// against. The consumer that holds a `Time` does the sampling (#920).
+// duration, loop rule and timed poses, plus the rig the poses' bone names are
+// drawn from. The consumer that holds a `Time` does the sampling (#920).
 //
 // Inputs:
 //   - skeleton (Skeleton, single)
@@ -9,7 +9,7 @@
 // Output:
 //   - out (AnimationClip, single)
 //
-// Pure: same (params, inputs.skeleton) → same clip. The clip keyframes live in
+// Pure: same (params, inputs.skeleton) → same clip. The clip's poses live in
 // params, and nothing here reads `ctx.time`. This is the V3 first-use that
 // flips the invariant from NOT YET IMPLEMENTED → ALIGNED.
 //
@@ -33,7 +33,6 @@ import type {
   AnimationClipValue,
   AnimationKeyframe,
   BonePose,
-  MotionBonePose,
   MotionInterpolation,
   MotionPose,
   PosedSkeletonValue,
@@ -53,6 +52,7 @@ import { MotionClipLoopSchema, clipExtendRules, type ClipLoop } from './clipLoop
 import { nameParam } from './paramWidget';
 
 const Vec3Schema = z.tuple([z.number(), z.number(), z.number()]);
+const QuatSchema = z.tuple([z.number(), z.number(), z.number(), z.number()]);
 
 export const AnimationClipParams = z.object({
   name: nameParam('clip'),
@@ -95,13 +95,28 @@ export const AnimationClipParams = z.object({
    * existed, so a saved clip without it plays as it did and needs no migration.
    */
   interpolation: z.enum(['linear', 'constant']).default('linear'),
-  keyframes: z
+  /**
+   * #1227 — the motion, as the clip value carries it: timed poses, each holding bones BY NAME with
+   * whichever of a local position, a quaternion (xyzw) and a scale it states (`MotionPose`,
+   * Houdini's MotionClip). Sparse: a bone a pose leaves out is read from the nearest poses holding
+   * it, and a bone no pose holds keeps the rig's rest.
+   *
+   * Was `keyframes`: a key per bone INDEX with XYZ euler radians. An index only meant something
+   * against one rig's bone order, and the euler was turned into a quaternion on every read; saved
+   * clips moved here in project format 20 (`migrateClipKeysToPoses`).
+   */
+  poses: z
     .array(
       z.object({
-        bone: z.number().int().nonnegative(),
         time: z.number().nonnegative(),
-        position: Vec3Schema.default([0, 0, 0]),
-        rotation: Vec3Schema.default([0, 0, 0]),
+        bones: z.record(
+          z.string(),
+          z.object({
+            position: Vec3Schema.optional(),
+            quaternion: QuatSchema.optional(),
+            scale: Vec3Schema.optional(),
+          }),
+        ),
       }),
     )
     .default([]),
@@ -233,11 +248,10 @@ export function clipInfoOf(clip: {
 }
 
 /**
- * The most poses any one bone appears in. Memoised on the poses' identity (they are themselves
- * memoised per params, `motionPosesFromKeyframes`), so an evaluation whose params did not change
- * does not walk them: measured on the 78-bone, 9360-key walk.bvh, a re-evaluation with unchanged
- * params costs ~7 µs memoised against ~0.22 ms walked (#1237's promise, kept). The first evaluation
- * after the keys change pays the conversion, ~1.3 ms there.
+ * The most poses any one bone appears in. Memoised on the poses' identity (a clip's are its params'
+ * own array), so an evaluation whose params did not change does not walk them: measured on the
+ * 78-bone, 9360-key walk.bvh, a re-evaluation with unchanged params costs ~7 µs memoised against
+ * ~0.22 ms walked (#1237's promise, kept).
  */
 function densestBoneOf(poses: readonly MotionPose[]): number {
   const known = densestMemo.get(poses);
@@ -353,37 +367,21 @@ export function tracksOfPoses(
 }
 
 /**
- * #1225 — the ONE adapter from a clip's params (keys by bone INDEX, XYZ euler radians, no scale)
- * to the MotionClip value (timed poses, bones by NAME, quaternions): keys at one time become one
- * pose. A key whose index the rig does not have names no bone and is left out, as the index-keyed
- * sampler never reached it either. Step 8 of #1233 moves the params to this shape and deletes this.
- *
- * Memoised on the identity of the keys and the rig: an evaluation whose params did not change pays
- * nothing, the promise #1237 made for the samplers.
+ * A clip's stored poses, in time order. Every producer writes them sorted, so this is one walk that
+ * returns the stored array itself; params written out of order (by hand, by a tool) are sorted once
+ * per array, because the samplers below read a track as sorted. Memoised on the array's identity:
+ * an evaluation whose params did not change pays nothing (#1237).
  */
-export function motionPosesFromKeyframes(
-  keyframes: readonly AnimationKeyframe[],
-  bones: readonly { readonly name: string }[],
-): readonly MotionPose[] {
-  const known = posesMemo.get(keyframes)?.get(bones);
+function posesInTimeOrder(poses: readonly MotionPose[]): readonly MotionPose[] {
+  const known = orderedMemo.get(poses);
   if (known) return known;
-  const byTime = new Map<number, Record<string, MotionBonePose>>();
-  for (const k of keyframes) {
-    const name = bones[k.bone]?.name;
-    if (name === undefined) continue;
-    let held = byTime.get(k.time);
-    if (!held) byTime.set(k.time, (held = {}));
-    held[name] = { position: k.position, quaternion: quatFromEulerXYZ(k.rotation) };
-  }
-  const poses = [...byTime]
-    .sort(([a], [b]) => a - b)
-    .map(([time, held]) => ({ time, bones: held }));
-  let inner = posesMemo.get(keyframes);
-  if (!inner) posesMemo.set(keyframes, (inner = new WeakMap()));
-  inner.set(bones, poses);
-  return poses;
+  let sorted = true;
+  for (let i = 1; i < poses.length && sorted; i++) sorted = poses[i - 1].time <= poses[i].time;
+  const ordered = sorted ? poses : [...poses].sort((x, y) => x.time - y.time);
+  orderedMemo.set(poses, ordered);
+  return ordered;
 }
-const posesMemo = new WeakMap<object, WeakMap<object, readonly MotionPose[]>>();
+const orderedMemo = new WeakMap<readonly MotionPose[], readonly MotionPose[]>();
 
 /**
  * A per-bone-INDEX sampler over a clip's params, for the baked band (#888), which reaches a clip's
@@ -500,7 +498,7 @@ export const AnimationClipNode: NodeDefinition<AnimationClipParams, ClipOutputs>
         duration: params.duration,
         loop: params.loop,
         interpolation: params.interpolation,
-        // No rig, so no key names a bone.
+        // No rig, so no pose names a bone of one.
         poses: [],
         skeleton: { kind: 'Skeleton', bones: [] },
       });
@@ -512,8 +510,8 @@ export const AnimationClipNode: NodeDefinition<AnimationClipParams, ClipOutputs>
       duration: params.duration,
       loop: params.loop,
       interpolation: params.interpolation,
-      // #1225 — the keys as timed poses by bone name, through the one adapter.
-      poses: motionPosesFromKeyframes(params.keyframes, skeleton.bones),
+      // #1227 — the stored poses are the value's: bones by name, quaternions, nothing to convert.
+      poses: posesInTimeOrder(params.poses),
       // The rig the poses name bones on, travelling WITH them so a consumer
       // cannot pair one character's motion with another's rest (#901).
       skeleton,

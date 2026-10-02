@@ -78,7 +78,7 @@ function view(source: typeof SOURCE, target: typeof SOURCE, map = FULL_MAP) {
     clip: {
       id: 'clip',
       type: 'AnimationClip',
-      params: { name: 'walk', duration: 1, keyframes: [{ bone: 0, time: 0 }] },
+      params: { name: 'walk', duration: 1, poses: [{ time: 0, bones: { [SOURCE[0].name]: {} } }] },
       inputs: { skeleton: { node: 'srcRig' } },
     },
     map1: { id: 'map1', type: 'BoneNameMap', params: { name: 'bridge', map }, inputs: {} },

@@ -44,8 +44,9 @@
 // 🔶 SINCE #1053 NOTHING DRAWS THIS ORDER; A LOAD READS IT. The clone road's band that played
 // the winning clip retired with the clone road's character half, and a native character is posed
 // by its Object's one `pose` edge, so a second bind there replaces the first by construction. What
-// still reads the order is the load-time conversion of an old saved character (#1216): the clip
-// the clone played becomes the native bind. So the rows below pin the order itself, not a draw.
+// still reads the order is the v9 → v10 migration, on files saved with their keys by bone index
+// (the load-time conversion of #1216 retired with #1424). So the rows below pin the order itself,
+// on a node table shaped as such a file holds it, not a draw.
 //
 // REF: src/app/animate/boundClipsForAsset.ts (the sort that decides it);
 //      src/app/asset/bindMotionToCharacter.ts (the refusal set that does not
@@ -55,7 +56,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { __resetRegistryForTests, applyOp, emptyDagState, type DagState } from '../../core/dag';
 import { registerAllNodes } from '../../nodes/registerAll';
 import { gltfChildDagId, gltfSkeletonDagId } from '../../core/import/gltfImportChain';
-import { boundClipsForAsset } from './boundClipsForAsset';
+import { boundClipsForAsset, type GraphNodeLike } from './boundClipsForAsset';
 
 const ASSET = 'a';
 const BONES = ['b0', 'b1'];
@@ -82,7 +83,7 @@ function kfs(deg: number) {
 function twoClipsBound(
   activeId?: string,
   order: readonly string[] = ['n_out_z', 'n_out_a'],
-): DagState {
+): Record<string, GraphNodeLike> {
   let s: DagState = emptyDagState();
   s = applyOp(s, {
     type: 'addNode',
@@ -126,7 +127,6 @@ function twoClipsBound(
       params: {
         name: id,
         duration: 2,
-        keyframes: kfs(DEG[id]),
         ...(activeId === id ? { active: true } : {}),
       },
     }).next;
@@ -136,7 +136,18 @@ function twoClipsBound(
       to: { node: id, socket: 'skeleton' },
     }).next;
   }
-  return s;
+  // #1227 — the walk reads a project saved BEFORE format 20, where a clip's params hold its keys by
+  // bone index. The live schema stores poses, so the old keys are put on the node table here, as
+  // the raw file the migration hands the walk would carry them.
+  const nodes: Record<string, GraphNodeLike> = {};
+  for (const [id, n] of Object.entries(s.nodes)) {
+    nodes[id] = {
+      type: n.type,
+      params: id in DEG ? { ...(n.params as object), keyframes: kfs(DEG[id]) } : n.params,
+      inputs: n.inputs,
+    } as GraphNodeLike;
+  }
+  return nodes;
 }
 
 describe('a second bind on an already-bound character (#918)', () => {
@@ -146,7 +157,7 @@ describe('a second bind on an already-bound character (#918)', () => {
   });
 
   it('is ACCEPTED — nothing refuses it, whatever the comments used to say', () => {
-    const bound = boundClipsForAsset(twoClipsBound().nodes, ASSET);
+    const bound = boundClipsForAsset(twoClipsBound(), ASSET);
     expect(bound).toHaveLength(2);
     expect(bound.map((b) => b.clipId).sort()).toEqual(['n_out_a', 'n_out_z']);
   });
@@ -157,7 +168,7 @@ describe('a second bind on an already-bound character (#918)', () => {
     // byte-identical to what it has always been. Without this row the fix could
     // silently change what existing work does.
     const s = twoClipsBound();
-    expect(boundClipsForAsset(s.nodes, ASSET)[0].clipId).toBe('n_out_a');
+    expect(boundClipsForAsset(s, ASSET)[0].clipId).toBe('n_out_a');
   });
 
   // ── #907: THE PAIR THAT CARRIES THE CLAIM ────────────────────────────────
@@ -168,14 +179,14 @@ describe('a second bind on an already-bound character (#918)', () => {
     it('when the last-bound clip also sorts FIRST', () => {
       // Bound second AND sorts first. The old id-sort agreed here by luck.
       const s = twoClipsBound('n_out_a');
-      expect(boundClipsForAsset(s.nodes, ASSET)[0].clipId).toBe('n_out_a');
+      expect(boundClipsForAsset(s, ASSET)[0].clipId).toBe('n_out_a');
     });
 
     it('when the last-bound clip sorts LAST — the case the id order got wrong', () => {
       // Bind order reversed: `n_out_a` first, then `n_out_z`. The active clip
       // now sorts SECOND, so the old behaviour would hand the bone to `n_out_a`.
       const s = twoClipsBound('n_out_z', ['n_out_a', 'n_out_z']);
-      expect(boundClipsForAsset(s.nodes, ASSET)[0].clipId).toBe('n_out_z');
+      expect(boundClipsForAsset(s, ASSET)[0].clipId).toBe('n_out_z');
     });
 
     it('the predecessor is DEACTIVATED, not destroyed — it is still there to go back to', () => {
@@ -183,12 +194,12 @@ describe('a second bind on an already-bound character (#918)', () => {
       // discarding it: "unmute it again or delete it". A director may well want
       // two clips on a rig; what they could not do was say which one plays.
       const s = twoClipsBound('n_out_z', ['n_out_a', 'n_out_z']);
-      const bound = boundClipsForAsset(s.nodes, ASSET);
+      const bound = boundClipsForAsset(s, ASSET);
       expect(bound).toHaveLength(2);
       expect(bound.map((b) => b.clipId)).toEqual(['n_out_z', 'n_out_a']);
       // ...and the stood-down clip keeps every one of its keys.
-      expect(s.nodes['n_out_a'].params).toHaveProperty('keyframes');
-      expect((s.nodes['n_out_a'].params as { keyframes: unknown[] }).keyframes).toHaveLength(4);
+      expect(s['n_out_a'].params).toHaveProperty('keyframes');
+      expect((s['n_out_a'].params as { keyframes: unknown[] }).keyframes).toHaveLength(4);
     });
   });
 });

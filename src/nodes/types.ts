@@ -1863,8 +1863,7 @@ export interface AnimationClipValue {
    * pose a time and the bones it holds, BY NAME, each with a local position, a quaternion and a
    * scale where it states one. Poses are sparse: a bone missing from a pose is interpolated from
    * the nearest poses that hold it, and a bone no pose holds stays at the rig's rest. Sorted by
-   * time. Built from the node's params by `motionPosesFromKeyframes` until the params move to the
-   * same shape (#1233 step 8).
+   * time. A clip node's params store the same shape (#1227), so it hands them on as they are.
    */
   readonly poses: readonly MotionPose[];
   /** #1225 — between poses: `linear` (slerp for rotation) or `constant` (the pose at or before t),

@@ -28,6 +28,7 @@ import {
 } from '../../nodes/AnimationClip';
 import { wireKeyframes } from '../../nodes/RetargetClip';
 import { quatFromEulerXYZ } from '../../nodes/bonePose';
+import { clipNodeParams } from '../../test-utils/bvhClip';
 
 const POSITION_BOUND = 1e-6;
 const ROTATION_BOUND_DEG = 2e-3;
@@ -75,7 +76,7 @@ describe('a retarget reading the wire equals the retarget reading the clip', () 
         nameMap: preset.map,
       });
       const { pose } = AnimationClipNode.evaluate(
-        AnimationClipParams.parse(parsed.clipParams),
+        AnimationClipParams.parse(clipNodeParams(parsed)),
         { skeleton: { kind: 'Skeleton', bones: parsed.skeletonParams.bones } },
         undefined as never,
       ) as ClipOutputs;

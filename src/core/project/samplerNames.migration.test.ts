@@ -10,6 +10,7 @@
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { migrateProjectFormat, migrateSamplerNames } from './migrations';
+import { PROJECT_FORMAT_VERSION } from './schema';
 import { openpbrMaterialSchema } from '../../nodes/materialSchema';
 
 /** A migrated project's params, read by key. */
@@ -78,7 +79,8 @@ describe('#1316 — both old numberings become the same name', () => {
     const out = migrateProjectFormat(
       v18({ a: { params: { material: { maps: { albedo: ref({ wrapS: 1000, wrapT: 1000 }) } } } } }),
     ) as { formatVersion: number; state: { nodes: Record<string, { params: Tree }> } };
-    expect(out.formatVersion).toBe(19);
+    // The ladder runs on to the live format; this step is the one that named the sampler.
+    expect(out.formatVersion).toBe(PROJECT_FORMAT_VERSION);
     expect(out.state.nodes.a.params.material.maps.albedo.wrapS).toBe('repeat');
   });
 

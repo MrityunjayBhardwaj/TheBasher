@@ -82,7 +82,8 @@ import type {
   WireClipInfo,
 } from './types';
 import { clipLoopOf } from './clipLoop';
-import { motionPosesFromKeyframes, posedSkeletonFromClip } from './AnimationClip';
+import { posedSkeletonFromClip } from './AnimationClip';
+import { posesFromKeyframes } from '../core/import/keyframePoses';
 import { eulerXYZFromQuat } from './bonePose';
 import { nameParam } from './paramWidget';
 
@@ -240,7 +241,7 @@ export const RetargetClipNode: NodeDefinition<
       // Sampled from the source at its rate, so the samples read linearly between them.
       interpolation: 'linear',
       // #1225 — the retargeted keys as timed poses on the TARGET rig's bone names.
-      poses: motionPosesFromKeyframes(keyframes, target.bones),
+      poses: posesFromKeyframes(keyframes, target.bones),
       // The TARGET rig — the poses name its bones.
       skeleton: target,
     });

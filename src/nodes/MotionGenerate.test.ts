@@ -197,7 +197,12 @@ describe('MotionGenerate (#902)', () => {
     const hash = clipOf(s).generation!.requestHash;
     recordGeneratedClip(hash, {
       duration: 2.5,
-      keyframes: [{ bone: 0, time: 0, position: [0, 1, 0], rotation: [0, 0, 0] }],
+      poses: [
+        {
+          time: 0,
+          bones: { [RIG.bones[0].name]: { position: [0, 1, 0], quaternion: [0, 0, 0, 1] } },
+        },
+      ],
       skeleton: RIG,
       model: 'kimodo-base',
       worldOffsetXZ: [4, -2],
@@ -216,7 +221,7 @@ describe('MotionGenerate (#902)', () => {
     const hash = clipOf(s).generation!.requestHash;
     recordGeneratedClip(hash, {
       duration: 1,
-      keyframes: [],
+      poses: [],
       skeleton: RIG,
       model: 'm',
       worldOffsetXZ: [4, -2],
@@ -240,14 +245,14 @@ describe('MotionGenerate (#902)', () => {
     const hash = clipOf(s).generation!.requestHash;
     recordGeneratedClip(hash, {
       duration: 1,
-      keyframes: [],
+      poses: [],
       skeleton: RIG,
       model: 'm',
       worldOffsetXZ: null,
     });
     recordGeneratedClip(hash, {
       duration: 99,
-      keyframes: [],
+      poses: [],
       skeleton: RIG,
       model: 'm',
       worldOffsetXZ: null,

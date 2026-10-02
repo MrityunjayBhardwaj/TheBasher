@@ -9,7 +9,8 @@ import { retargetClipParamsFromNodes, bonesOfSkeletonNode } from './retargetFrom
 import { boundClipsForAsset, type GraphNodeLike } from './boundClipsForAsset';
 import { retargetClip } from '../../core/import/retarget';
 import { RetargetClipNode, RetargetClipParams } from '../../nodes/RetargetClip';
-import { motionPosesFromKeyframes, posedSkeletonFromClip } from '../../nodes/AnimationClip';
+import { posedSkeletonFromClip } from '../../nodes/AnimationClip';
+import { posesFromKeyframes } from '../../core/import/keyframePoses';
 import { buildClipBoneSamplers } from '../../nodes/AnimationClip';
 import { clipLoopOf } from '../../nodes/clipLoop';
 import type { AnimationKeyframe, BoneSpec, AnimationClipValue } from '../../nodes/types';
@@ -147,7 +148,7 @@ describe('retargetClipParamsFromNodes', () => {
     // RetargetClip.test.ts, so both views stay tied to this one params road.
     // #1225 — the node's value carries the keys as timed poses by bone name, through the one adapter.
     expect(viaEvaluate.out.poses).toEqual(
-      motionPosesFromKeyframes(
+      posesFromKeyframes(
         viaParams!.keyframes!,
         bonesOfSkeletonNode(g, 'n_gltfSkel')! as BoneSpec[],
       ),
