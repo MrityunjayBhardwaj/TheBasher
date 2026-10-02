@@ -28,7 +28,7 @@
 // special case.
 //
 // REF: src/core/project/migrations.ts;
-//      src/nodes/AnimationClip.ts (buildClipBoneSamplers); issues #888, #889, #1053.
+//      src/app/animate/retargetFromNodes.ts (`SavedClipKeys`); issues #888, #889, #1053, #1433.
 
 import { poseLayerChain } from './poseChain';
 import { edgeSocket, edgeTarget, type GraphNodeLike } from './graphNodes';

@@ -13,9 +13,9 @@
 // params, and nothing here reads `ctx.time`. This is the V3 first-use that
 // flips the invariant from NOT YET IMPLEMENTED → ALIGNED.
 //
-// Sampling: `buildClipBoneSamplers` below exposes the clip's own `sample(t)` so
+// Sampling: `posedSkeletonFromClip` below exposes the clip's own `sample(t)` so
 // a caller can invoke it at its own cadence. It is piecewise-linear between
-// adjacent keyframes per bone. Outside the authored key range the per-side
+// adjacent poses per bone (`clipTrackSampler`). Outside the authored key range the per-side
 // EXTEND rule decides, per
 // component: a looping clip cycles its rotation and cycles its position WITH
 // OFFSET, so a root that travels keeps travelling instead of teleporting home
@@ -31,7 +31,6 @@ import { z } from 'zod';
 import type { NodeDefinition, ResolvedInputs } from '../core/dag/types';
 import type {
   AnimationClipValue,
-  AnimationKeyframe,
   BonePose,
   MotionInterpolation,
   MotionPose,
@@ -47,7 +46,7 @@ import {
   type QuatKey,
   type Vec3Key,
 } from './keyframeInterp';
-import { quatFromEulerXYZ, restBonePose } from './bonePose';
+import { restBonePose } from './bonePose';
 import { MotionClipLoopSchema, clipExtendRules, type ClipLoop } from './clipLoop';
 import { nameParam } from './paramWidget';
 
@@ -138,39 +137,24 @@ export const AnimationClipParams = z.object({
 });
 export type AnimationClipParams = z.infer<typeof AnimationClipParams>;
 
-/** Group keyframes by bone, sorted ascending by time. Pure given (keyframes). */
-function groupByBone(keyframes: readonly AnimationKeyframe[]): Map<number, AnimationKeyframe[]> {
-  const map = new Map<number, AnimationKeyframe[]>();
-  for (const k of keyframes) {
-    const list = map.get(k.bone) ?? [];
-    list.push(k);
-    map.set(k.bone, list);
-  }
-  for (const list of map.values()) list.sort((a, b) => a.time - b.time);
-  return map;
-}
-
 // `clipExtendRules` MOVED to `./clipLoop.ts` at #930, unchanged in behaviour for
 // the two states a boolean could reach and extended with the third it could not.
 // It is shared because it is now the ONE mapping from transport intent to
 // per-component extend, and both clip carriers must agree about it — the whole
 // defect #930 records is two carriers disagreeing about this concept.
 //
-// THE one rule still: `evaluate` and the exported per-bone samplers both go
-// through it, so a clip sampled by the band and the same clip sampled by the
-// node cannot disagree about what happens outside the authored range. It MUST
+// THE one rule still: every bone of a clip's pose goes through it
+// (`clipTrackSampler`), so no reader of a clip can disagree about what happens
+// outside the authored range. It MUST
 // still match `cycleModifierFor` in agent/mutators/builders/bakeChannelOps.ts,
 // which makes the same split for a channel minted from a clip.
-
-/** A bone's pose as a function of wall-clock time — the clip's own sampling. */
-export type ClipBoneSampler = (seconds: number) => { position: Vec3; quaternion: Quat };
 
 /**
  * A clip, viewed as a posed rig — the ONE clip→pose adapter (#992, rung 2 of #900).
  *
  * Every clip's pose — an `AnimationClip`'s, a `RetargetClip`'s, a generation's — comes through
- * here, sampling each bone through the one `clipTrackSampler` the baked band also uses, so two
- * readers cannot hold two answers to where a bone is at t (#888).
+ * here, sampling each bone through the one `clipTrackSampler`, so two readers cannot hold two
+ * answers to where a bone is at t (#888).
  *
  * #1225 — it reads the MotionClip value: each bone's track is built from the timed poses BY NAME
  * (`tracksOfPoses`). A bone no pose holds keeps its rest, and so does any component a bone's poses
@@ -298,9 +282,9 @@ export type ClipTrackSampler = (seconds: number) => {
 };
 
 /**
- * #1225 — THE per-bone sampler every clip samples through: the node's pose (by bone name) and the
- * baked band's (by bone index, `buildClipBoneSamplers`) alike, so a bone cannot be in two places
- * at t depending on who asked.
+ * #1225 — THE per-bone sampler every clip samples through (its pose, by bone name), so a bone
+ * cannot be in two places at t depending on who asked. The index-keyed sampler the baked band read
+ * through retired with it (#1053, #1433).
  *
  * Linear between keys (`easing: 'linear'` states what a clip does rather than choosing for it; the
  * mint makes the identical call, bakeChannelOps.ts). Rotation slerps (#1202, #1223): glTF's rule for
@@ -322,8 +306,8 @@ export function clipTrackSampler(
   );
   return (seconds: number) => {
     // A non-positive or NaN duration has no time domain to extend over, so every time collapses to
-    // the first key rather than producing a pose of NaNs. The schema forbids it, but params are
-    // read straight off saved files by the baked band (#888), where nothing re-validated them.
+    // the first key rather than producing a pose of NaNs. The schema forbids it on a node's params,
+    // but a clip VALUE has other producers and nothing re-validates it (#888).
     const t = duration > 0 ? seconds : first;
     return {
       ...(track.position.length > 0
@@ -382,51 +366,6 @@ function posesInTimeOrder(poses: readonly MotionPose[]): readonly MotionPose[] {
   return ordered;
 }
 const orderedMemo = new WeakMap<readonly MotionPose[], readonly MotionPose[]>();
-
-/**
- * A per-bone-INDEX sampler over a clip's params, for the baked band (#888), which reaches a clip's
- * keys by bone index against the joints of a glTF asset. Every bone samples through the one
- * `clipTrackSampler`, so a bone the band draws and the same bone the clip's pose draws agree.
- * Bones with no keys are ABSENT from the map, so the caller can fall through to the bands below.
- * Callers writing into a degrees-valued euler band convert at that boundary (app/bakedGltfChannels.ts (gone in #1053; at 7e1356c7)).
- *
- * ⚠️ The copy-on-first-edit mint (`bakeChannelOps`) copies these keys into an euler channel, which
- * lerps its angles, so an edited bone can differ from an unedited one BETWEEN keys (at most 0.10°
- * walk, 1.29° run, 0.12° jump on the dense BVH clips) and agrees at every key. That copy retires in
- * step 6 of #1233 (bake). It also always writes LINEAR keys, so a bone edited on a `constant` clip
- * (#1225) ramps between keys where the clip steps; not taught, since the copy is what retires.
- */
-export function buildClipBoneSamplers(params: {
-  readonly keyframes: readonly AnimationKeyframe[];
-  readonly duration: number;
-  readonly loop: ClipLoop;
-  /** #1225 — the clip's interpolation; absent is linear, what a clip without it always did. */
-  readonly interpolation?: MotionInterpolation;
-}): Map<number, ClipBoneSampler> {
-  const out = new Map<number, ClipBoneSampler>();
-  const easing = params.interpolation ?? 'linear';
-  for (const [bone, keys] of groupByBone(params.keyframes)) {
-    if (keys.length === 0) continue;
-    const sampler = clipTrackSampler(
-      {
-        position: keys.map((k) => ({ time: k.time, value: k.position, easing })),
-        quaternion: keys.map((k) => ({
-          time: k.time,
-          value: quatFromEulerXYZ(k.rotation),
-          easing,
-        })),
-        scale: [],
-      },
-      params.duration,
-      params.loop,
-    );
-    out.set(bone, (seconds) => {
-      const got = sampler(seconds);
-      return { position: got.position!, quaternion: got.quaternion! };
-    });
-  }
-  return out;
-}
 
 /**
  * #1224 — both views of one clip: the keys (`out`), and the same keys as the pose wire (`pose`),

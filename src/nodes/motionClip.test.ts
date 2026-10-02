@@ -3,13 +3,10 @@
 // existing clip plays unchanged is pinned by comparing it with the index-keyed band sampler below
 // and was measured against the previous build (192,420 sampled values, max |Δ| = 0).
 
-import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { parseBvh, BVH_UNIT_SCALE_CENTIMETRES } from '../core/import/bvh';
 import {
   AnimationClipNode,
   AnimationClipParams,
-  buildClipBoneSamplers,
   posedSkeletonFromClip,
   type ClipOutputs,
 } from './AnimationClip';
@@ -17,8 +14,6 @@ import { quatFromEulerXYZ } from './bonePose';
 import { posesFromKeyframes } from '../core/import/keyframePoses';
 import { TransformClipParams } from './TransformClip';
 import type { AnimationClipValue, BoneSpec, MotionPose, Quat, Vec3 } from './types';
-import { posesToThreeClip } from '../core/import/threeAdapter';
-import { threeClipToKeys } from '../core/import/savedClipKeys';
 
 const BONES: BoneSpec[] = [
   { name: 'root', parent: -1, position: [0, 0, 0], rotation: [0, 0, 0] },
@@ -155,49 +150,6 @@ describe('the one conversion from index + euler keys to poses', () => {
   });
 });
 
-describe('a clip plays as the band plays it', () => {
-  it('soma-walk.bvh: the pose by name equals the index-keyed band sampler at keys, midpoints and past the ends', () => {
-    const { skeletonParams, clipParams } = parseBvh(
-      readFileSync('public/fixtures/anim/soma-walk.bvh', 'utf8'),
-      'walk',
-      BVH_UNIT_SCALE_CENTIMETRES,
-    );
-    // The band reads index + euler keys; a parser now writes poses (#1432), so the keys are the
-    // poses read back through the saved-keys road, and the pose under test is built from them.
-    const keyframes = threeClipToKeys(
-      posesToThreeClip('walk', clipParams.duration, clipParams.poses, skeletonParams.bones),
-      skeletonParams.bones,
-    );
-    for (const loop of ['hold', 'cycle', 'cycle-offset'] as const) {
-      const params = AnimationClipParams.parse({
-        name: clipParams.name,
-        duration: clipParams.duration,
-        loop,
-        poses: posesFromKeyframes(keyframes, skeletonParams.bones),
-      });
-      const { pose } = AnimationClipNode.evaluate(
-        params,
-        { skeleton: { kind: 'Skeleton', bones: skeletonParams.bones } },
-        undefined as never,
-      ) as ClipOutputs;
-      const band = buildClipBoneSamplers({ keyframes, duration: params.duration, loop });
-      const keyTimes = [...new Set(keyframes.map((k) => k.time))].sort((a, b) => a - b);
-      const times = [...keyTimes, 0.0166, 0.5 + 1 / 60, -0.3, 1.37, 2.5];
-      let compared = 0;
-      for (const t of times) {
-        const at = pose.sample(t);
-        for (const [bone, sampler] of band) {
-          const b = sampler(t);
-          expect(at[bone].position, `${loop} bone ${bone} t ${t}`).toEqual(b.position);
-          expect(at[bone].quaternion, `${loop} bone ${bone} t ${t}`).toEqual(b.quaternion);
-          compared++;
-        }
-      }
-      expect(compared).toBe(times.length * 78);
-    }
-  });
-});
-
 describe('Linear or Constant between poses (Houdini MotionClip Evaluate)', () => {
   const stepped = (interpolation: 'linear' | 'constant') =>
     clip(
@@ -224,7 +176,7 @@ describe('Linear or Constant between poses (Houdini MotionClip Evaluate)', () =>
     expect(pose.sample(0.5)[1].position).toEqual([0, 2, 0]);
   });
 
-  it('an AnimationClip node defaults to linear, and the band steps a constant clip as its pose does', () => {
+  it('an AnimationClip node defaults to linear, and steps a constant clip from its stored poses', () => {
     expect(AnimationClipParams.parse({}).interpolation).toBe('linear');
     const keyframes = [
       { bone: 1, time: 0, position: [0, 1, 0] as Vec3, rotation: [0, 0, 0] as Vec3 },
@@ -240,12 +192,13 @@ describe('Linear or Constant between poses (Houdini MotionClip Evaluate)', () =>
       { skeleton: { kind: 'Skeleton', bones: BONES } },
       undefined as never,
     ) as ClipOutputs;
-    const band = buildClipBoneSamplers({ ...params, keyframes }).get(1)!;
-    for (const t of [0, 0.25, 0.5, 0.99, 1]) {
-      expect(pose.sample(t)[1].position).toEqual(band(t).position);
-      expect(pose.sample(t)[1].quaternion).toEqual(band(t).quaternion);
+    // Held at the earlier pose up to the later one's time, and the later one from there.
+    for (const t of [0, 0.25, 0.5, 0.99]) {
+      expect(pose.sample(t)[1].position).toEqual([0, 1, 0]);
+      expect(pose.sample(t)[1].quaternion).toEqual(params.poses[0].bones[BONES[1].name].quaternion);
     }
-    expect(pose.sample(0.5)[1].position).toEqual([0, 1, 0]);
+    expect(pose.sample(1)[1].position).toEqual([0, 3, 0]);
+    expect(pose.sample(1)[1].quaternion).toEqual(params.poses[1].bones[BONES[1].name].quaternion);
   });
 });
 

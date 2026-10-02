@@ -2,11 +2,7 @@
 import { describe, expect, it } from 'vitest';
 import { Euler, Quaternion } from 'three';
 import { eulerXYZFromQuat, quatFromEulerXYZ, restBonePose } from './bonePose';
-import {
-  __clipPoseSamplerBuildsForTests,
-  buildClipBoneSamplers,
-  posedSkeletonFromClip,
-} from './AnimationClip';
+import { __clipPoseSamplerBuildsForTests, posedSkeletonFromClip } from './AnimationClip';
 import { sampleQuatKeyframesExtended, type QuatKey } from './keyframeInterp';
 import { slerp } from './quatMath';
 import { boneWorldMatrices, posedWorldMatrices } from '../viewport/boneShape';
@@ -96,9 +92,9 @@ describe('#1202 — a clip slerps between keys', () => {
     const half = (120 * Math.PI) / 360;
     const end: Quat = [axis[0] * Math.sin(half), axis[1] * Math.sin(half), 0, Math.cos(half)];
     const clip = clipOf([0, 0, 0], eulerXYZFromQuat(end));
-    const at = buildClipBoneSamplers(clip).get(0)!;
+    const at = posedSkeletonFromClip(clip);
     for (const u of [0.2, 0.5, 0.8]) {
-      expect(angleDeg(at(u).quaternion, slerp([0, 0, 0, 1], end, u))).toBeLessThan(1e-6);
+      expect(angleDeg(at.sample(u)[0].quaternion, slerp([0, 0, 0, 1], end, u))).toBeLessThan(1e-6);
     }
   });
 
@@ -136,9 +132,10 @@ describe('#1202 — a clip slerps between keys', () => {
     pose.sample(0.25);
     posedSkeletonFromClip(clip).sample(0.75);
     expect(__clipPoseSamplerBuildsForTests(), 'every later sample reuses them').toBe(before + 1);
-    // The same answer the samplers give when built directly.
-    const direct = buildClipBoneSamplers(clip).get(0)!(0.5);
-    expect(first[0].quaternion).toEqual(direct.quaternion);
+    // The same answer samplers built afresh give: a copy is another value, so it builds its own.
+    const fresh = posedSkeletonFromClip({ ...clip }).sample(0.5);
+    expect(__clipPoseSamplerBuildsForTests(), 'the copy built its own').toBe(before + 2);
+    expect(first[0].quaternion).toEqual(fresh[0].quaternion);
   });
 });
 
