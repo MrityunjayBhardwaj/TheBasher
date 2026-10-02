@@ -58,6 +58,7 @@ import { setPoseMemberModeMutator } from './builders/setPoseMemberMode';
 import { renameBoneMutator } from './builders/renameBone';
 import { bakePoseMutator } from './builders/bakePose';
 import { constrainMutator, unconstrainMutator } from './builders/constrain';
+import { setHiddenMutator } from './builders/setHidden';
 
 export {
   rotateMutator,
@@ -94,6 +95,7 @@ export {
   bakePoseMutator,
   constrainMutator,
   unconstrainMutator,
+  setHiddenMutator,
 };
 
 export function registerAllMutators(): void {
@@ -107,6 +109,8 @@ export function registerAllMutators(): void {
   registerMutator(setObjectSlotMaterialMutator);
   registerMutator(duplicateMutator);
   registerMutator(deleteNodeMutator);
+  // #1445 — the outliner eye's verb: #334 took setHidden off dag.exec, and this replaces it.
+  registerMutator(setHiddenMutator);
   // P3 Wave B — animation Mutators (THESIS §42, issue #34). v0.7 #199: the
   // AnimationLayer wrapper is retired (direct channels, V57). `addLayer` is gone;
   // `addChannel` now mints a FREE-FLOATING channel (no layer), then `keyframe`

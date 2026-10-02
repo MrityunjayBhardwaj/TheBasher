@@ -60,7 +60,8 @@ export const dagExecTool: ToolDefinition<DagExecArgs> = {
   name: 'dag.exec',
   description:
     'Execute batch Ops on the DAG — add, connect, disconnect, or set params on any node. ' +
-    'Deleting is not a raw op: use agent.proposePlan with mutator.deleteNode. The Ops are ' +
+    'Deleting is not a raw op: use agent.proposePlan with mutator.deleteNode. Hiding and ' +
+    'showing are not either: use mutator.setHidden. The Ops are ' +
     'validated and proposed as a diff for the user to accept or reject. Use dag.inspect first ' +
     'to understand the DAG state.',
   paramSchema: OpBatchSchema,

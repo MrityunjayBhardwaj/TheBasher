@@ -156,7 +156,8 @@ describe('mutator catalog', () => {
     // 32 → 33 at #1215 — `animate.bakePose`.
     // 33 → 32 at #1053 — `timeline.bakeGltfChannel` retired with the clone road.
     // 32 → 34 at #353 — `constrain` + `unconstrain`, the constraint family's verbs.
-    expect(mutators).toHaveLength(34);
+    // 34 → 35 at #1445 — `setHidden`, the outliner eye's verb (#334 took the raw op away).
+    expect(mutators).toHaveLength(35);
     const names = mutators.map((m) => m.name).sort();
     expect(names).toEqual([
       'mutator.animate.bakePose',
@@ -181,6 +182,7 @@ describe('mutator catalog', () => {
       'mutator.rotate',
       'mutator.scale',
       'mutator.setComponentScope',
+      'mutator.setHidden',
       'mutator.setMaterialColor',
       'mutator.setObjectSlotMaterial',
       'mutator.shot.create',
@@ -2312,7 +2314,8 @@ describe('agent.listMutators tool', () => {
     // 32 → 33 at #1215 — `animate.bakePose`.
     // 33 → 32 at #1053 — `timeline.bakeGltfChannel` retired with the clone road.
     // 32 → 34 at #353 — `constrain` + `unconstrain`.
-    expect(parsed.mutators).toHaveLength(34);
+    // 34 → 35 at #1445 — `setHidden`.
+    expect(parsed.mutators).toHaveLength(35);
   });
 });
 
@@ -3936,6 +3939,7 @@ import {
   cameraTrajectoryMutator as _cameraTrajM,
   constrainMutator as _constrainM,
   unconstrainMutator as _unconstrainM,
+  setHiddenMutator as _setHiddenM,
   poseBoneMutator as _poseBoneM,
   setPoseMemberModeMutator as _setPoseMemberModeM,
   renameBoneMutator as _renameBoneM,
@@ -4280,6 +4284,11 @@ describe('V14 deeper non-redundancy — Op-shape probe (issue #22)', () => {
         }).next,
       spec: { target: 'n_camera', type: 'TrackTo' },
     },
+    'mutator.setHidden': {
+      mutator: _setHiddenM as MutatorDefinition<unknown>,
+      build: buildDefaultDagState,
+      spec: { targetSelectors: ['n_box'], hidden: true },
+    },
     'mutator.animate.poseBone': {
       mutator: _poseBoneM as MutatorDefinition<unknown>,
       build: buildSceneForPoseBone,
@@ -4463,6 +4472,10 @@ describe('V14 deeper non-redundancy — Op-shape probe (issue #22)', () => {
           fromSocket: op.from.socket,
           toSocket: op.to.socket,
         };
+      // #1445 — the first probed mutator whose ops are not dag.exec's five: `setHidden`
+      // writes the target's view flag, and the flag's value is the shape.
+      case 'setHidden':
+        return { type: 'setHidden', hidden: op.hidden };
       default: {
         // Exhaustiveness: a new Op variant must extend this reducer or
         // the probe silently goes blind to it (the H36 trap one level
