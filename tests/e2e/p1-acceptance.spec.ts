@@ -149,6 +149,11 @@ test('P1#1 drag GLB → 6-op chain placed via dispatchAtomic; one Cmd+Z reverts'
   expect(reverted.anyResidual).toBe(false);
 });
 
+// #1424 — the placed asset is a NATIVE import now. This row used to mint a `GltfAsset` by hand;
+// since #1424 a project holding one is refused on load, so the reload below met the refusal, and the
+// round-trip it checks was no longer the one a director's project takes. What it checks is kept:
+// a placed library asset, saved and reloaded, comes back as it was — its placement exactly, and its
+// stored mesh byte for byte.
 test('P1#2 reload restores placed asset bit-exact (V4 migration runner round-trip)', async ({
   page,
 }) => {
@@ -159,44 +164,27 @@ test('P1#2 reload restores placed asset bit-exact (V4 migration runner round-tri
     { timeout: 10_000 },
   );
 
-  await page.evaluate(() => {
-    const w = window as unknown as DagWindow;
-    const dag = w.__basher_dag!.getState();
-    const sceneRef = dag.state.outputs.scene;
-    dag.dispatchAtomic(
-      [
-        {
-          type: 'addNode',
-          nodeId: 'p1_2g',
-          nodeType: 'GltfAsset',
-          params: { assetRef: 'assets/sphere.gltf' },
-        },
-        {
-          type: 'addNode',
-          nodeId: 'p1_2t',
-          nodeType: 'Transform',
-          params: { position: [1.5, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
-        },
-        {
-          type: 'connect',
-          from: { node: 'p1_2g', socket: 'out' },
-          to: { node: 'p1_2t', socket: 'target' },
-        },
-        { type: 'addNode', nodeId: 'p1_2r', nodeType: 'Group', params: {} },
-        {
-          type: 'connect',
-          from: { node: 'p1_2t', socket: 'out' },
-          to: { node: 'p1_2r', socket: 'children' },
-        },
-        {
-          type: 'connect',
-          from: { node: 'p1_2r', socket: 'out' },
-          to: { node: sceneRef.node, socket: 'children' },
-        },
-      ],
+  const placed = await page.evaluate(async () => {
+    const w = window as unknown as DagWindow & {
+      __basher_importGltfNative: (
+        buffer: ArrayBuffer,
+        assetRef: string,
+      ) => Promise<{ groupId: string; objectIds: string[] }>;
+    };
+    const buffer = await fetch('/assets/sphere.gltf').then((r) => r.arrayBuffer());
+    const { groupId, objectIds } = await w.__basher_importGltfNative(buffer, 'assets/sphere.gltf');
+    w.__basher_dag!.getState().dispatch(
+      { type: 'setParam', nodeId: groupId, paramPath: 'position', value: [1.5, 0, 0] },
       'user',
       'p1#2',
     );
+    const nodes = w.__basher_dag!.getState().state.nodes;
+    const dataOf = (id: string) => (nodes[id].inputs.data as { node: string }).node;
+    return {
+      groupId,
+      objectId: objectIds[0],
+      mesh: JSON.stringify(nodes[dataOf(objectIds[0])].params),
+    };
   });
 
   await page.keyboard.press('ControlOrMeta+s');
@@ -209,20 +197,21 @@ test('P1#2 reload restores placed asset bit-exact (V4 migration runner round-tri
     return Boolean(w.__basher_dag);
   });
 
-  const restored = await page.evaluate(() => {
-    const w = window as unknown as DagWindow;
-    const nodes = w.__basher_dag!.getState().state.nodes;
-    const g = nodes['p1_2g'];
-    const t = nodes['p1_2t'];
-    return {
-      assetRef: (g?.params as { assetRef?: string })?.assetRef,
-      position: (t?.params as { position?: number[] })?.position,
-      hasGroup: 'p1_2r' in nodes,
-    };
-  });
-  expect(restored.assetRef).toBe('assets/sphere.gltf');
+  const restored = await page.evaluate(
+    ({ groupId, objectId }) => {
+      const w = window as unknown as DagWindow;
+      const nodes = w.__basher_dag!.getState().state.nodes;
+      const object = nodes[objectId];
+      const data = object && (object.inputs.data as { node: string } | undefined)?.node;
+      return {
+        position: (nodes[groupId]?.params as { position?: number[] } | undefined)?.position,
+        mesh: data ? JSON.stringify(nodes[data].params) : null,
+      };
+    },
+    { groupId: placed.groupId, objectId: placed.objectId },
+  );
   expect(restored.position).toEqual([1.5, 0, 0]);
-  expect(restored.hasGroup).toBe(true);
+  expect(restored.mesh).toBe(placed.mesh);
 });
 
 test('P1#3 ScatterNode produces deterministic placement; setParam(density) changes it', async ({
