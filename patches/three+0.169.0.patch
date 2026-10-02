@@ -1,5 +1,5 @@
 diff --git a/node_modules/three/examples/jsm/loaders/FBXLoader.js b/node_modules/three/examples/jsm/loaders/FBXLoader.js
-index bc8d49a..b0093fc 100644
+index bc8d49a..f8eb79b 100644
 --- a/node_modules/three/examples/jsm/loaders/FBXLoader.js
 +++ b/node_modules/three/examples/jsm/loaders/FBXLoader.js
 @@ -908,6 +908,9 @@ class FBXTreeParser {
@@ -12,7 +12,102 @@ index bc8d49a..b0093fc 100644
  			sceneGraph = sceneGraph.children[ 0 ];
  
  		}
-@@ -2623,11 +2626,19 @@ class AnimationParser {
+@@ -1623,6 +1626,43 @@ class GeometryParser {
+ 
+ 		geo.setAttribute( 'position', positionAttribute );
+ 
++		// basher #1429 — the file's polygons as it states them, before triangulation: every control
++		// point (with the geometric transform), each face's corners, each corner's normal, UVs and
++		// colour, each face's material, and every skin weight of every control point (the buffers
++		// keep four).
++		{
++
++			const points = new Float32BufferAttribute( geoInfo.vertexPositions, 3 );
++			points.applyMatrix4( preTransform );
++			let normals = null;
++			if ( buffers.polygons.normals.length > 0 ) {
++
++				const normalAttribute = new Float32BufferAttribute( buffers.polygons.normals, 3 );
++				normalAttribute.applyNormalMatrix( new Matrix3().getNormalMatrix( preTransform ) );
++				normals = Array.from( normalAttribute.array );
++
++			}
++
++			const weights = [];
++			for ( const index in geoInfo.weightTable ) {
++
++				for ( const wt of geoInfo.weightTable[ index ] ) weights.push( Number( index ), wt.id, wt.weight );
++
++			}
++
++			geo.userData.fbxPolygons = {
++				points: Array.from( points.array ),
++				faceSizes: buffers.polygons.faceSizes,
++				cornerPoints: buffers.polygons.cornerPoints,
++				normals,
++				uvs: buffers.polygons.uvs,
++				colors: buffers.polygons.colors.length > 0 ? buffers.polygons.colors : null,
++				materialIndex: buffers.polygons.materialIndex.length > 0 ? buffers.polygons.materialIndex : null,
++				weights,
++			};
++
++		}
++
+ 		if ( buffers.colors.length > 0 ) {
+ 
+ 			geo.setAttribute( 'color', new Float32BufferAttribute( buffers.colors, 3 ) );
+@@ -1792,6 +1832,8 @@ class GeometryParser {
+ 			materialIndex: [],
+ 			vertexWeights: [],
+ 			weightsIndices: [],
++			// basher #1429 — see genGeometry.
++			polygons: { faceSizes: [], cornerPoints: [], normals: [], uvs: [], colors: [], materialIndex: [] },
+ 		};
+ 
+ 		let polygonIndex = 0;
+@@ -1830,12 +1872,14 @@ class GeometryParser {
+ 			let weights = [];
+ 
+ 			facePositionIndexes.push( vertexIndex * 3, vertexIndex * 3 + 1, vertexIndex * 3 + 2 );
++			buffers.polygons.cornerPoints.push( vertexIndex );
+ 
+ 			if ( geoInfo.color ) {
+ 
+ 				const data = getData( polygonVertexIndex, polygonIndex, vertexIndex, geoInfo.color );
+ 
+ 				faceColors.push( data[ 0 ], data[ 1 ], data[ 2 ] );
++				buffers.polygons.colors.push( data[ 0 ], data[ 1 ], data[ 2 ] );
+ 
+ 			}
+ 
+@@ -1914,6 +1958,7 @@ class GeometryParser {
+ 				const data = getData( polygonVertexIndex, polygonIndex, vertexIndex, geoInfo.normal );
+ 
+ 				faceNormals.push( data[ 0 ], data[ 1 ], data[ 2 ] );
++				buffers.polygons.normals.push( data[ 0 ], data[ 1 ], data[ 2 ] );
+ 
+ 			}
+ 
+@@ -1944,6 +1989,8 @@ class GeometryParser {
+ 
+ 					faceUVs[ i ].push( data[ 0 ] );
+ 					faceUVs[ i ].push( data[ 1 ] );
++					if ( buffers.polygons.uvs[ i ] === undefined ) buffers.polygons.uvs[ i ] = [];
++					buffers.polygons.uvs[ i ].push( data[ 0 ], data[ 1 ] );
+ 
+ 				} );
+ 
+@@ -1953,6 +2000,9 @@ class GeometryParser {
+ 
+ 			if ( endOfFace ) {
+ 
++				buffers.polygons.faceSizes.push( faceLength );
++				if ( materialIndex !== undefined ) buffers.polygons.materialIndex.push( materialIndex );
++
+ 				scope.genFace( buffers, geoInfo, facePositionIndexes, materialIndex, faceNormals, faceColors, faceUVs, faceWeights, faceWeightIndices, faceLength );
+ 
+ 				polygonIndex ++;
+@@ -2623,11 +2673,19 @@ class AnimationParser {
  
  									sceneGraph.traverse( function ( child ) {
  
@@ -34,7 +129,7 @@ index bc8d49a..b0093fc 100644
  
  										}
  
-@@ -2767,7 +2778,7 @@ class AnimationParser {
+@@ -2767,7 +2825,7 @@ class AnimationParser {
  
  		if ( rawTracks.R !== undefined && Object.keys( rawTracks.R.curves ).length > 0 ) {
  
@@ -43,7 +138,7 @@ index bc8d49a..b0093fc 100644
  			if ( rotationTrack !== undefined ) tracks.push( rotationTrack );
  
  		}
-@@ -2799,14 +2810,20 @@ class AnimationParser {
+@@ -2799,14 +2857,20 @@ class AnimationParser {
  
  	}
  
@@ -67,7 +162,7 @@ index bc8d49a..b0093fc 100644
  
  			times = result[ 0 ];
  			values = result[ 1 ];
-@@ -2936,61 +2953,39 @@ class AnimationParser {
+@@ -2936,61 +3000,39 @@ class AnimationParser {
  
  	getKeyframeTrackValues( times, curves, initialValue ) {
  
@@ -89,7 +184,8 @@ index bc8d49a..b0093fc 100644
 -
 -			// if there is an x value defined for this frame, use that
 -			if ( xIndex !== - 1 ) {
--
++			for ( let a = 0; a < 3; a ++ ) values.push( axes[ a ] ? this.sampleCurveValue( axes[ a ], time, initialValue[ a ] ) : initialValue[ a ] );
+ 
 -				const xValue = curves.x.values[ xIndex ];
 -				values.push( xValue );
 -				prevValue[ 0 ] = xValue;
@@ -102,8 +198,7 @@ index bc8d49a..b0093fc 100644
 -			}
 -
 -			if ( yIndex !== - 1 ) {
-+			for ( let a = 0; a < 3; a ++ ) values.push( axes[ a ] ? this.sampleCurveValue( axes[ a ], time, initialValue[ a ] ) : initialValue[ a ] );
- 
+-
 -				const yValue = curves.y.values[ yIndex ];
 -				values.push( yValue );
 -				prevValue[ 1 ] = yValue;

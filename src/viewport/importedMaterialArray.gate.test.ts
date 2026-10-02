@@ -11,8 +11,10 @@
 //
 //   glTF — three never BUILDS an array material. A multi-primitive mesh becomes a `Group` of
 //          single-material `Mesh`es, so each primitive arrives as its own addressable slot.
-//   FBX  — three's FBX loader DOES build one (`FBXLoader.js`, `if (materials.length > 1)`),
-//          but Basher imports no FBX geometry and no FBX materials: only a skeleton and its motion.
+//   FBX  — three's FBX loader DOES build one (`FBXLoader.js`, `if (materials.length > 1)`).
+//          Since #1429 Basher imports FBX meshes, and the array stops at the reader: each slot
+//          becomes a stored slot (name, colour, roughness) and each face its `material_index`, the
+//          native road a multi-primitive glTF takes (#1052). No three material is kept.
 //
 // So the array state is unreachable, and the capability #646 asks for was delivered instead by
 // the Group road plus per-slot IR addressing (row C).
@@ -24,10 +26,10 @@
 // starts rotting the moment it is written, and this cluster has already been bitten by exactly
 // that: #647's "what the fix requires" describes a widening that had already shipped.
 //
-// Row B is the one that earns its keep longest. It is a TRIPWIRE, not a tautology: the day
-// Basher imports FBX meshes, an array material becomes constructible, the guard stops being
-// dead, and this row goes red pointing straight at it. That is the whole reason the guard must
-// NOT be deleted on the strength of "it is unreachable" — it is unreachable *for now*.
+// Row B was a TRIPWIRE for the day Basher imported FBX meshes. That day came (#1429), and it
+// fired as designed. By then the guard it watched had gone with the clone renderer (#1053, row
+// C), so what the row now pins is the reason no array reaches a draw: the FBX reader's result
+// holds SLOTS, plain data, and never a three material.
 //
 // ── THE FAILURE MODE THIS GATE IS BUILT AGAINST ───────────────────────────────────────────
 //
@@ -98,31 +100,30 @@ describe('#646 — an imported mesh cannot carry a material ARRAY, on any road t
     expect(/const\s+group\s*=\s*new\s+Group\(\)/.test(stripped)).toBe(true);
   });
 
-  it('B. TRIPWIRE — Basher’s FBX import carries a skeleton and its motion, no geometry, no material', () => {
-    // three's FBX loader DOES build the array (`if ( materials.length > 1 ) material = materials`),
-    // so this row is what keeps the array unreachable — not the loader, but OUR narrow use of it.
+  it('B. (#1429) Basher’s FBX import reads three’s array into stored slots and keeps no material', () => {
+    // three's FBX loader DOES build the array (`if ( materials.length > 1 ) material = materials`).
     const loader = read(THREE_LOADERS, 'FBXLoader.js');
     expect(lines(loader)).toBeGreaterThan(3000);
     expect(/materials\.length\s*>\s*1/.test(stripComments(loader))).toBe(true);
 
-    const src = read(REPO, 'src', 'core', 'import', 'fbx.ts');
+    const src = read(REPO, 'src', 'core', 'import', 'fbxMesh.ts');
     expect(lines(src)).toBeGreaterThan(50);
+    // What a mesh's materials are once read: a slot is a name, a colour and a roughness. A field
+    // holding a three material here would carry the array past the reader.
+    const slot = interfaceBody(src, 'FbxMaterialSlot');
+    expect(slot).not.toBeNull();
+    expect(declaredFields(slot as string)).toEqual(['name', 'color', 'roughness']);
+    const mesh = interfaceBody(src, 'FbxMeshRead');
+    expect(mesh).not.toBeNull();
+    expect(/\bmaterials\s*:\s*readonly\s+FbxMaterialSlot\[\]/.test(mesh as string)).toBe(true);
 
-    const body = interfaceBody(src, 'FbxImportResult');
-    expect(body).not.toBeNull();
-    // Exactly these: the skeleton, its motion (as a clip and as the file's raw tracks, #1211) and
-    // the count of tracks left unread. Another field is the signal: geometry arriving is what makes
-    // an array material constructible and the SceneFromDAG guard live again.
-    expect(declaredFields(body as string)).toEqual([
-      'skeletonParams',
-      'clipParams',
-      'tracks',
-      'unparsedTracks',
-    ]);
-
-    const stripped = stripComments(src);
-    expect(/new\s+Mesh\s*\(/.test(stripped)).toBe(false);
-    expect(/\.material\s*=/.test(stripped)).toBe(false);
+    // And the chain writes them as the native slots, the multi-primitive glTF road's shape.
+    const chain = stripComments(read(REPO, 'src', 'core', 'import', 'fbxImportChain.ts'));
+    expect(/materialSlots\s*:\s*slots/.test(chain)).toBe(true);
+    for (const file of [src, chain]) {
+      expect(/new\s+Mesh\s*\(/.test(stripComments(file))).toBe(false);
+      expect(/\.material\s*=/.test(stripComments(file))).toBe(false);
+    }
   });
 
   // C. (#1053) The clone renderer's per-slot addressing (`localSlotByChild`, `irs?.[local]`,

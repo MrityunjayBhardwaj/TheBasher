@@ -1,4 +1,5 @@
-// FBX import → Op chain: a Skeleton and the file's motion as KEYS on a base pose layer (#1211).
+// FBX import → Op chain: a Skeleton and the file's motion as KEYS on a base pose layer (#1211),
+// and (#1429) the ops that stand the file's meshes beside it (`meshOps`, at the end of this file).
 //
 // ─────────────────────────────────────────────────────────────────────────
 // WHAT BLENDER'S FBX IMPORTER WRITES, AND SO WHAT THIS WRITES
@@ -27,9 +28,13 @@
 // does not parse are each counted in `dropped`.
 
 import { parseFbx } from './fbx';
+import type { FbxMaterialSlot, FbxMeshRead } from './fbxMesh';
+import { gltfJsonMaterialToOpenpbr } from './gltfJsonMaterialToOpenpbr';
 import { uniqueBoneName } from './nativeGltfSkeleton';
+import { skeletonObjectId } from './skeletonObject';
 import type { Op } from '../../core/dag/types';
-import type { BoneSpec, Quat, Vec3 } from '../../nodes/types';
+import { packMeshData } from '../../app/meshGeometryData';
+import type { BoneSpec, InlineMaterialSpec, Quat, Vec3 } from '../../nodes/types';
 import type { PoseLayerChannel, PoseLayerMember, PoseLayerParams } from '../../nodes/PoseLayer';
 
 /** What an FBX import left out of the layer, counted even at zero. */
@@ -50,6 +55,17 @@ export interface FbxImportChainResult {
   /** Scale channels on the layer: the tracks the clip road used to drop. */
   readonly scaleChannels: number;
   readonly dropped: FbxImportDropped;
+  /**
+   * #1429 — the ops that stand the file's meshes in the scene, for a scene node: each skinned mesh
+   * under the skeleton's Object with an Armature modifier on its stack, each other mesh as an Object
+   * of its own. They name the skeleton's Object, so they go after the ops that make it
+   * (`buildSkeletonObjectOps`). Empty for a file with no mesh.
+   */
+  readonly meshOps: (sceneNodeId: string) => Op[];
+  /** #1429 — how many meshes those ops stand. */
+  readonly meshCount: number;
+  /** #1429 — what of the file's meshes was left out, each said once. Empty when nothing was. */
+  readonly notices: readonly string[];
 }
 
 export interface FbxImportChainArgs {
@@ -155,11 +171,131 @@ export function buildFbxImportOps(args: FbxImportChainArgs): FbxImportChainResul
     },
   ];
 
+  const meshes = parsed.meshes.meshes;
   return {
     ops,
     skeletonId: ids.skeleton,
     motionId: ids.layer,
     scaleChannels,
     dropped: { unknownBoneTracks, otherPropertyTracks, unparsedTracks: parsed.unparsedTracks },
+    meshOps: (sceneNodeId) =>
+      meshes.flatMap((mesh, i) =>
+        meshOps(mesh, `${ids.skeleton}_mesh${i}`, bones, ids.skeleton, sceneNodeId),
+      ),
+    meshCount: meshes.length,
+    notices: parsed.meshes.notices,
   };
+}
+
+/** #1429 — a slot as the native material, through the one translation the import roads share. */
+function slotMaterial(slot: FbxMaterialSlot): InlineMaterialSpec {
+  return gltfJsonMaterialToOpenpbr({
+    name: slot.name,
+    pbrMetallicRoughness: {
+      baseColorFactor: [...slot.color, 1],
+      metallicFactor: 0,
+      roughnessFactor: slot.roughness,
+    },
+  });
+}
+
+/**
+ * #1429 — one mesh as Blender's FBX importer makes it: mesh data under an Object; skinned, an
+ * Armature modifier on its stack pointed at the skeleton's Object, with no transform of its own;
+ * unskinned, an Object of its own at the node's placement.
+ */
+function meshOps(
+  mesh: FbxMeshRead,
+  id: string,
+  bones: readonly BoneSpec[],
+  skeletonId: string,
+  sceneNodeId: string,
+): Op[] {
+  const dataId = `${id}_data`;
+  const objectId = `${id}_object`;
+  const data =
+    mesh.vertexGroupBones === null
+      ? mesh.data
+      : { ...mesh.data, vertexGroups: mesh.vertexGroupBones.map((b) => bones[b].name) };
+  const slots = mesh.materials.map(slotMaterial);
+  const ops: Op[] = [
+    {
+      type: 'addNode',
+      nodeId: dataId,
+      nodeType: 'PolyMeshData',
+      params: {
+        mesh: packMeshData(data),
+        material: slots[0] ?? null,
+        // Only for more than one slot: absent already means "one slot, and it is `material`".
+        ...(slots.length > 1 ? { materialSlots: slots } : {}),
+      },
+    },
+    {
+      type: 'addNode',
+      nodeId: objectId,
+      nodeType: 'Object',
+      params:
+        mesh.placement === null
+          ? {
+              position: [0, 0, 0],
+              rotation: [0, 0, 0],
+              scale: [1, 1, 1],
+              rotationMode: 'quaternion',
+              quaternion: [0, 0, 0, 1],
+            }
+          : {
+              position: mesh.placement.position,
+              rotation: [0, 0, 0],
+              scale: mesh.placement.scale,
+              rotationMode: 'quaternion',
+              quaternion: mesh.placement.quaternion,
+            },
+    },
+    { type: 'setMeta', nodeId: objectId, name: mesh.name },
+  ];
+  if (mesh.vertexGroupBones === null) {
+    ops.push(
+      {
+        type: 'connect',
+        from: { node: dataId, socket: 'out' },
+        to: { node: objectId, socket: 'data' },
+      },
+      {
+        type: 'connect',
+        from: { node: objectId, socket: 'out' },
+        to: { node: sceneNodeId, socket: 'children' },
+      },
+    );
+    return ops;
+  }
+  const modifierId = `${id}_armature`;
+  const armatureObject = skeletonObjectId(skeletonId);
+  ops.push(
+    { type: 'addNode', nodeId: modifierId, nodeType: 'ArmatureModifier', params: {} },
+    {
+      type: 'connect',
+      from: { node: dataId, socket: 'out' },
+      to: { node: modifierId, socket: 'target' },
+    },
+    {
+      type: 'connect',
+      from: { node: modifierId, socket: 'out' },
+      to: { node: objectId, socket: 'data' },
+    },
+    {
+      type: 'connect',
+      from: { node: armatureObject, socket: 'out' },
+      to: { node: modifierId, socket: 'armature' },
+    },
+    // Beside the armature's Object, not under it: that Object already feeds the modifier, and a
+    // child edge back would close a cycle. Both stand at identity in the scene, so the mesh is where
+    // Blender's child of the armature is; moved, the armature carries the points through the deform
+    // (its placement is the modifier's `armatureMatrix`).
+    {
+      type: 'connect',
+      from: { node: objectId, socket: 'out' },
+      to: { node: sceneNodeId, socket: 'children' },
+    },
+  );
+  return ops;
 }
