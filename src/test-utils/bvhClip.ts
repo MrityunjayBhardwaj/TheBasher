@@ -6,6 +6,22 @@
 
 import { BVH_UNIT_SCALE_METRES, parseBvh } from '../core/import/bvh';
 import type { Op } from '../core/dag/types';
+import type { ClipLoop } from '../nodes/clipLoop';
+import type { BoneSpec, MotionPose } from '../nodes/types';
+
+/** A parsed motion file as `AnimationClip` params: the parser's poses are the clip's (#1432). */
+export function clipNodeParams(parsed: {
+  readonly skeletonParams: { readonly bones: readonly BoneSpec[] };
+  readonly clipParams: {
+    readonly name: string;
+    readonly duration: number;
+    readonly loop: ClipLoop;
+    readonly poses: readonly MotionPose[];
+  };
+}): { name: string; duration: number; loop: ClipLoop; poses: MotionPose[] } {
+  const { name, duration, loop, poses } = parsed.clipParams;
+  return { name, duration, loop, poses: [...poses] };
+}
 
 export function buildBvhClipOps(args: {
   readonly text: string;
@@ -27,7 +43,12 @@ export function buildBvhClipOps(args: {
         nodeType: 'Skeleton',
         params: { bones: parsed.skeletonParams.bones },
       },
-      { type: 'addNode', nodeId: clip, nodeType: 'AnimationClip', params: parsed.clipParams },
+      {
+        type: 'addNode',
+        nodeId: clip,
+        nodeType: 'AnimationClip',
+        params: clipNodeParams(parsed),
+      },
       {
         type: 'connect',
         from: { node: skeleton, socket: 'out' },

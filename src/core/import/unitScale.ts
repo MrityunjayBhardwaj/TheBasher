@@ -10,7 +10,7 @@
 //
 // REF: src/core/import/bvh.ts (`parseBvh`), src/core/import/fbx.ts (`parseFbx`).
 
-import type { AnimationKeyframe, BoneSpec, Vec3 } from '../../nodes/types';
+import type { BoneSpec, MotionPose, Vec3 } from '../../nodes/types';
 
 const scaled = (v: Vec3, by: number): Vec3 => [v[0] * by, v[1] * by, v[2] * by];
 
@@ -20,11 +20,16 @@ export function scaleBonePositions(bones: readonly BoneSpec[], by: number): read
   return bones.map((bone) => ({ ...bone, position: scaled(bone.position, by) }));
 }
 
-/** Keyed positions carried into metres. */
-export function scaleKeyframePositions(
-  keyframes: readonly AnimationKeyframe[],
-  by: number,
-): readonly AnimationKeyframe[] {
-  if (by === 1) return keyframes;
-  return keyframes.map((kf) => ({ ...kf, position: scaled(kf.position, by) }));
+/** Posed positions carried into metres. */
+export function scalePosePositions(poses: readonly MotionPose[], by: number): MotionPose[] {
+  if (by === 1) return [...poses];
+  return poses.map((pose) => ({
+    time: pose.time,
+    bones: Object.fromEntries(
+      Object.entries(pose.bones).map(([name, held]) => [
+        name,
+        held.position ? { ...held, position: scaled(held.position, by) } : held,
+      ]),
+    ),
+  }));
 }

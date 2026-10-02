@@ -118,16 +118,16 @@ describe('a GENERATED motion clip drives the rig that comes back', () => {
       sourceClip: {
         name: soma.clipParams.name,
         duration: soma.clipParams.duration,
-        keyframes: soma.clipParams.keyframes,
+        poses: soma.clipParams.poses,
       },
       targetBones: skeleton.bones,
       nameMap: somaToMixamo().map,
     });
 
     // 3. It produced motion, and it landed on the rig's OWN bones.
-    expect(retargeted.clipParams.keyframes.length).toBeGreaterThan(0);
+    expect(retargeted.clipParams.poses.length).toBeGreaterThan(0);
     expect(retargeted.clipParams.duration).toBeCloseTo(soma.clipParams.duration, 6);
-    const touched = new Set(retargeted.clipParams.keyframes.map((k) => targetNames[k.bone]));
+    const touched = new Set(retargeted.clipParams.poses.flatMap((p) => Object.keys(p.bones)));
     for (const name of requiredBones()) expect(touched.has(name)).toBe(true);
   });
 

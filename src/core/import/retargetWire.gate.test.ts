@@ -3,7 +3,7 @@
 // `RetargetClip` samples its source wire over the range the wire carries (Houdini's `clipinfo`); a
 // clip's range puts those samples on the clip's keys, three's own rate rule (`SkeletonUtils.js:204`).
 // This gate runs every tracked BVH onto the stand-in glTF rig both ways — the clip's keys straight
-// into `retargetClip`, and the clip's pose sampled by `wireKeyframes` — and holds them together.
+// into `retargetClip`, and the clip's pose sampled by `wirePoses` — and holds them together.
 //
 // Measured 2026-09-25 over the 12 tracked BVHs: identical key counts, key times and rest
 // reconciliation; positions within 4.8e-7; rotations within 1.52e-3° (run.bvh; ≤ 4.2e-5° on the
@@ -20,14 +20,14 @@ import { projectGltfSkeleton } from './projectGltfSkeleton';
 import { parseBvh, BVH_UNIT_SCALE_CENTIMETRES } from './bvh';
 import { retargetClip } from './retarget';
 import { getBoneNameMapPreset } from './boneNameMaps';
-import type { BoneSpec, GltfSkinMetadata, Vec3 } from '../../nodes/types';
+import type { BoneSpec, GltfSkinMetadata, Quat } from '../../nodes/types';
 import {
   AnimationClipNode,
   AnimationClipParams,
   type ClipOutputs,
 } from '../../nodes/AnimationClip';
-import { wireKeyframes } from '../../nodes/RetargetClip';
-import { quatFromEulerXYZ } from '../../nodes/bonePose';
+import { wirePoses } from '../../nodes/RetargetClip';
+import { clipNodeParams } from '../../test-utils/bvhClip';
 
 const POSITION_BOUND = 1e-6;
 const ROTATION_BOUND_DEG = 2e-3;
@@ -43,10 +43,8 @@ async function targetRig(): Promise<readonly BoneSpec[]> {
   return projectGltfSkeleton(skin as unknown as GltfSkinMetadata).bones;
 }
 
-/** The angle between two XYZ-euler orientations, in degrees. */
-function angleDeg(a: Vec3, b: Vec3): number {
-  const qa = quatFromEulerXYZ(a);
-  const qb = quatFromEulerXYZ(b);
+/** The angle between two orientations, in degrees. */
+function angleDeg(qa: Quat, qb: Quat): number {
   const dot = Math.abs(qa[0] * qb[0] + qa[1] * qb[1] + qa[2] * qb[2] + qa[3] * qb[3]);
   return (2 * Math.acos(Math.min(1, dot)) * 180) / Math.PI;
 }
@@ -75,7 +73,7 @@ describe('a retarget reading the wire equals the retarget reading the clip', () 
         nameMap: preset.map,
       });
       const { pose } = AnimationClipNode.evaluate(
-        AnimationClipParams.parse(parsed.clipParams),
+        AnimationClipParams.parse(clipNodeParams(parsed)),
         { skeleton: { kind: 'Skeleton', bones: parsed.skeletonParams.bones } },
         undefined as never,
       ) as ClipOutputs;
@@ -85,30 +83,37 @@ describe('a retarget reading the wire equals the retarget reading the clip', () 
         sourceClip: {
           name: 'clip',
           duration: range.end - range.start,
-          keyframes: wireKeyframes(pose, range, range.rate),
+          poses: wirePoses(pose, range, range.rate),
           loop: range.loop,
         },
         targetBones: target,
         nameMap: preset.map,
       });
 
-      const a = viaClip.clipParams.keyframes;
-      const b = viaWire.clipParams.keyframes;
+      const a = viaClip.clipParams.poses;
+      const b = viaWire.clipParams.poses;
       expect(b.length, rel).toBe(a.length);
       expect(viaWire.clipParams.duration, rel).toBe(viaClip.clipParams.duration);
       expect(viaWire.restReconciliation.kind, rel).toBe(viaClip.restReconciliation.kind);
-      a.forEach((k, i) => {
-        expect(b[i].bone, rel).toBe(k.bone);
+      a.forEach((pose, i) => {
         // `toBe` is Object.is, so a one-frame source's NaN times (#1249) compare equal too.
-        expect(b[i].time, rel).toBe(k.time);
-        for (let c = 0; c < 3; c++) {
-          expect(Math.abs(b[i].position[c] - k.position[c]), rel).toBeLessThan(POSITION_BOUND);
+        expect(b[i].time, rel).toBe(pose.time);
+        expect(Object.keys(b[i].bones).sort(), rel).toEqual(Object.keys(pose.bones).sort());
+        for (const [name, held] of Object.entries(pose.bones)) {
+          const other = b[i].bones[name];
+          for (let c = 0; c < 3; c++) {
+            expect(Math.abs(other.position![c] - held.position![c]), rel).toBeLessThan(
+              POSITION_BOUND,
+            );
+          }
+          expect(angleDeg(other.quaternion!, held.quaternion!), rel).toBeLessThan(
+            ROTATION_BOUND_DEG,
+          );
+          compared++;
         }
-        expect(angleDeg(b[i].rotation, k.rotation), rel).toBeLessThan(ROTATION_BOUND_DEG);
-        compared++;
       });
     }
-    // At least: the six library motions alone retarget to 2760 keys each.
+    // At least: the six library motions alone retarget to 2760 bone poses each.
     expect(compared).toBeGreaterThanOrEqual(6 * 2760);
   }, 120_000);
 });

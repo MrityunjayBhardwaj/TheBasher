@@ -11,10 +11,10 @@
 //      vyapti V2 (purity), V3 (time-as-socket).
 
 import { BVHLoader } from 'three/examples/jsm/loaders/BVHLoader.js';
-import type { AnimationKeyframe, BoneSpec, Vec3 } from '../../nodes/types';
-import { bonesToSpec, clipToKeyframes } from './threeAdapter';
+import type { BoneSpec, MotionPose, Vec3 } from '../../nodes/types';
+import { bonesToSpec, clipToPoses } from './threeAdapter';
 import { readPosedJoints } from './bvhProfile';
-import { scaleBonePositions, scaleKeyframePositions } from './unitScale';
+import { scaleBonePositions, scalePosePositions } from './unitScale';
 import type { ClipLoop } from '../../nodes/clipLoop';
 
 export interface BvhSkeletonParams {
@@ -25,7 +25,8 @@ export interface BvhClipParams {
   readonly name: string;
   readonly duration: number;
   readonly loop: ClipLoop;
-  readonly keyframes: readonly AnimationKeyframe[];
+  /** The motion as timed poses on the skeleton's bone names (#1432). */
+  readonly poses: readonly MotionPose[];
 }
 
 export interface BvhImportResult {
@@ -80,11 +81,7 @@ export function parseBvh(
   const parsed = loader.parse(text);
 
   const bones = bonesToSpec(parsed.skeleton.bones);
-  const keyframes = replaceRestOffsetOnPosedJoints(
-    clipToKeyframes(parsed.clip, bones),
-    bones,
-    text,
-  );
+  const poses = replaceRestOffsetOnPosedJoints(clipToPoses(parsed.clip, bones), bones, text);
 
   return {
     skeletonParams: { bones: scaleBonePositions(bones, unitScale) },
@@ -110,7 +107,7 @@ export function parseBvh(
       // Turning it back on is one dropdown — `loop` is a schema'd enum that
       // `NPanel`'s EnumField renders.
       loop: 'hold',
-      keyframes: scaleKeyframePositions(keyframes, unitScale),
+      poses: scalePosePositions(poses, unitScale),
     },
   };
 }
@@ -147,22 +144,26 @@ export function parseBvh(
  * subtracting there would collapse every limb onto its parent.
  */
 function replaceRestOffsetOnPosedJoints(
-  keyframes: readonly AnimationKeyframe[],
+  poses: readonly MotionPose[],
   bones: readonly BoneSpec[],
   text: string,
-): readonly AnimationKeyframe[] {
+): readonly MotionPose[] {
   const posed = new Set(readPosedJoints(text));
-  if (posed.size === 0) return keyframes;
-  return keyframes.map((kf) => {
-    const bone = bones[kf.bone];
-    if (!bone || !posed.has(bone.name)) return kf;
-    return {
-      ...kf,
-      position: [
-        kf.position[0] - bone.position[0],
-        kf.position[1] - bone.position[1],
-        kf.position[2] - bone.position[2],
-      ] as Vec3,
-    };
-  });
+  if (posed.size === 0) return poses;
+  // A pose names a bone as `clipToPoses` resolved it: two of one name are the later one.
+  const restOf = new Map(bones.map((b) => [b.name, b.position]));
+  return poses.map((pose) => ({
+    time: pose.time,
+    bones: Object.fromEntries(
+      Object.entries(pose.bones).map(([name, held]) => {
+        const rest = restOf.get(name);
+        if (!rest || !posed.has(name) || !held.position) return [name, held];
+        const p = held.position;
+        return [
+          name,
+          { ...held, position: [p[0] - rest[0], p[1] - rest[1], p[2] - rest[2]] as Vec3 },
+        ];
+      }),
+    ),
+  }));
 }

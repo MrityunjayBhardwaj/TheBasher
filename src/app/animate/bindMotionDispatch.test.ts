@@ -228,7 +228,7 @@ describe('binding a motion to a character', () => {
       type: 'addNode',
       nodeId: 'n_clip_b',
       nodeType: 'AnimationClip',
-      params: { name: 'b', duration: 2, keyframes: [] },
+      params: { name: 'b', duration: 2, poses: [] },
     }).next;
     s = applyOp(s, {
       type: 'connect',
@@ -262,7 +262,7 @@ describe('binding a motion to a character', () => {
       type: 'addNode',
       nodeId: 'n_clip_b',
       nodeType: 'AnimationClip',
-      params: { name: 'b', duration: 2, keyframes: [] },
+      params: { name: 'b', duration: 2, poses: [] },
     }).next;
     s = applyOp(s, {
       type: 'connect',

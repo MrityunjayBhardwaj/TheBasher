@@ -86,7 +86,7 @@ describe('the stub is deterministic, and actually generates', () => {
     });
     const parsed = parseBvh(bvh, 'generated');
     expect(parsed.skeletonParams.bones.length).toBeGreaterThan(1);
-    expect(parsed.clipParams.keyframes.length).toBeGreaterThan(0);
+    expect(parsed.clipParams.poses.length).toBeGreaterThan(0);
   });
 
   it('samples at ITS OWN rate, and the clip states it (#790)', async () => {

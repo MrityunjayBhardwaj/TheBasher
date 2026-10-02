@@ -132,7 +132,7 @@ describe('collectSkeletonObjects', () => {
         type: 'addNode',
         nodeId: 'clip3',
         nodeType: 'AnimationClip',
-        params: { ...(base.nodes.clip.params as object), name: 'third', keyframes: [] },
+        params: { ...(base.nodes.clip.params as object), name: 'third', poses: [] },
       },
       {
         type: 'connect',

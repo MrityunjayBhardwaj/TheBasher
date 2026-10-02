@@ -162,7 +162,7 @@ export function mintMotionGenerateOps(
       // `'hold'` is what the old boolean `false` meant (#930): the clip is a
       // placeholder until the cook lands keys, and a placeholder that claimed to
       // cycle would extend nothing past a range it does not have yet.
-      params: { name, loop: 'hold', keyframes: [], sourceHash: '' },
+      params: { name, loop: 'hold', poses: [], sourceHash: '' },
     },
     {
       type: 'connect',

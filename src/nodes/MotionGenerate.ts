@@ -92,7 +92,6 @@ import { lookupGeneratedClip, lookupGenerationFailure } from '../core/motiongen/
 import type { NodeDefinition, ResolvedInputs } from '../core/dag/types';
 import type { AnimationClipValue, CurveDataValue, ObjectValue, SkeletonValue } from './types';
 import { widget } from './paramWidget';
-import { motionPosesFromKeyframes } from './AnimationClip';
 
 /**
  * Upper bound on requested clip length, mirroring the capability's own. Stated
@@ -243,8 +242,8 @@ export const MotionGenerateNode: NodeDefinition<MotionGenerateParams, AnimationC
         loop: 'hold',
         // A generator writes a pose per frame; they read linearly between.
         interpolation: 'linear',
-        // #1225 — the generated keys as timed poses by bone name, through the one adapter.
-        poses: motionPosesFromKeyframes(clip.keyframes, clip.skeleton.bones),
+        // The generated motion, as the timed poses it was recorded as (#1227).
+        poses: clip.poses,
         skeleton: clip.skeleton,
         // BOTH halves of the placement, always together. `worldRotationRadians`
         // is optional on the state — a clip cached before the facing half existed

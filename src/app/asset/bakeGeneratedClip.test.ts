@@ -27,7 +27,6 @@ import type {
   MotionGenerationCapability,
   MotionGenerationResult,
 } from '../../core/motiongen/MotionGenerationCapability';
-import { boundClipsForAsset, type GraphNodeLike } from '../animate/boundClipsForAsset';
 import { resolvePendingMotionGenerations } from './resolveMotionGenerate';
 import { bakeGeneratedClipOps, clipBakeStates } from './bakeGeneratedClip';
 
@@ -74,7 +73,7 @@ function graph(): DagState {
       type: 'addNode',
       nodeId: 'clip',
       nodeType: 'AnimationClip',
-      params: { name: 'placeholder', duration: 2, loop: 'cycle-offset', keyframes: [] },
+      params: { name: 'placeholder', duration: 2, loop: 'cycle-offset', poses: [] },
     },
     {
       type: 'connect',
@@ -89,14 +88,14 @@ function graph(): DagState {
   ] as Op[]);
 }
 
-/** The band's view of the graph, params-side, exactly as the render road reads it. */
-function bandSees(s: DagState): { clips: number; keyframes: number } {
-  const nodes: Record<string, GraphNodeLike> = {};
-  for (const [id, n] of Object.entries(s.nodes)) {
-    nodes[id] = { type: n.type, params: n.params, inputs: n.inputs } as GraphNodeLike;
-  }
-  const bound = boundClipsForAsset(nodes, ASSET_REF);
-  return { clips: bound.length, keyframes: bound.flatMap((b) => b.params.keyframes ?? []).length };
+/**
+ * What a reader of the clip's STORED params sees: the poses saved on the node, which is all a
+ * reload has. (Before #1227 this asked the clone road's params-only walk, `boundClipsForAsset`,
+ * which reads the key shape saved before format 20 and now serves one old migration.)
+ */
+function bandSees(s: DagState): { clips: number; poses: number } {
+  const poses = (s.nodes.clip.params as { poses?: unknown[] }).poses ?? [];
+  return { clips: poses.length > 0 ? 1 : 0, poses: poses.length };
 }
 
 /** The same graph plus the glTF rig the clip drives, so the band has an asset. */
@@ -148,27 +147,27 @@ describe('bakeGeneratedClipOps (#935)', () => {
   it('THE ROW THAT CARRIES THE PHASE: the render band sees the generated keys', async () => {
     let s = graphBoundToRig();
     // Before: the producer has a correct clip VALUE and the band sees nothing.
-    expect(bandSees(s)).toEqual({ clips: 0, keyframes: 0 });
+    expect(bandSees(s)).toEqual({ clips: 0, poses: 0 });
 
     await resolvePendingMotionGenerations(s, capability);
     s = apply(s, bakeGeneratedClipOps(s));
 
     const after = bandSees(s);
     expect(after.clips).toBe(1);
-    expect(after.keyframes).toBeGreaterThan(0);
+    expect(after.poses).toBeGreaterThan(0);
   });
 
-  it('#1225 — the params land exactly the generated keys, not a round trip through the poses', async () => {
+  it('#1227 — the params land exactly the generated poses', async () => {
     let s = graph();
     await resolvePendingMotionGenerations(s, capability);
     const producerId = clipBakeStates(s)[0].producerId;
     const generated = lookupGeneratedClip(
       (evaluate(s, producerId).value as AnimationClipValue).generation!.requestHash,
     )!;
-    expect(generated.keyframes.length).toBeGreaterThan(0);
+    expect(generated.poses.length).toBeGreaterThan(0);
     s = apply(s, bakeGeneratedClipOps(s));
-    const landed = (s.nodes.clip.params as { keyframes: unknown[] }).keyframes;
-    expect(landed).toEqual(generated.keyframes);
+    const landed = (s.nodes.clip.params as { poses: unknown[] }).poses;
+    expect(landed).toEqual(generated.poses);
   });
 
   // #900 RUNG 4, SETTLED — THE PREMISE THE DECISION RESTS ON.
@@ -191,7 +190,7 @@ describe('bakeGeneratedClipOps (#935)', () => {
     await resolvePendingMotionGenerations(s, capability);
 
     // The cache is WARM — the generation finished and its value is ready.
-    expect(bandSees(s)).toEqual({ clips: 0, keyframes: 0 });
+    expect(bandSees(s)).toEqual({ clips: 0, poses: 0 });
 
     // And the bake is the only thing that makes it visible. This half is the positive control:
     // without it the assertion above could pass on a fixture that can never show a clip at all.
@@ -227,7 +226,7 @@ describe('bakeGeneratedClipOps (#935)', () => {
     const ops = bakeGeneratedClipOps(s) as { nodeId: string; paramPath: string }[];
     const at = (p: string) => ops.findIndex((o) => o.paramPath === p);
     expect(ops[0]).toMatchObject({ nodeId: 'skel', paramPath: 'bones' });
-    expect(at('bones')).toBeLessThan(at('keyframes'));
+    expect(at('bones')).toBeLessThan(at('poses'));
     expect(at('sourceHash')).toBe(ops.length - 1);
   });
 
@@ -255,7 +254,7 @@ describe('bakeGeneratedClipOps (#935)', () => {
         type: 'addNode',
         nodeId: 'other',
         nodeType: 'AnimationClip',
-        params: { name: 'x', duration: 1, loop: 'hold', keyframes: [] },
+        params: { name: 'x', duration: 1, loop: 'hold', poses: [] },
       },
       {
         type: 'connect',
@@ -270,7 +269,7 @@ describe('bakeGeneratedClipOps (#935)', () => {
     let s = graph();
     await resolvePendingMotionGenerations(s, capability);
     s = apply(s, bakeGeneratedClipOps(s));
-    const baked = (s.nodes.clip.params as { keyframes: unknown[] }).keyframes.length;
+    const baked = (s.nodes.clip.params as { poses: unknown[] }).poses.length;
     expect(baked).toBeGreaterThan(0);
 
     // The director edits the request — the same move a control-point drag makes.
@@ -280,7 +279,7 @@ describe('bakeGeneratedClipOps (#935)', () => {
     // result still playing. This pair is what the affordance reads.
     expect(clipBakeStates(s)[0]).toMatchObject({ status: 'pending', stale: true, baked: true });
     // The motion is UNCHANGED. This is the row that says a drag does not blank it.
-    expect((s.nodes.clip.params as { keyframes: unknown[] }).keyframes.length).toBe(baked);
+    expect((s.nodes.clip.params as { poses: unknown[] }).poses.length).toBe(baked);
     expect(bakeGeneratedClipOps(s)).toEqual([]);
   });
 });

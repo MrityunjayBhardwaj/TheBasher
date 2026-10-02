@@ -21,7 +21,6 @@ import type {
   MotionGenerationRequest,
   MotionGenerationResult,
 } from '../../core/motiongen/MotionGenerationCapability';
-import { boundClipsForAsset, type GraphNodeLike } from '../animate/boundClipsForAsset';
 import { edgeTarget } from '../animate/graphNodes';
 import { resolvePendingMotionGenerations } from './resolveMotionGenerate';
 import { bakeGeneratedClipOps } from './bakeGeneratedClip';
@@ -96,13 +95,14 @@ function project(): DagState {
   ] as Op[]);
 }
 
-function bandSees(s: DagState): { clips: number; keyframes: number } {
-  const nodes: Record<string, GraphNodeLike> = {};
-  for (const [id, n] of Object.entries(s.nodes)) {
-    nodes[id] = { type: n.type, params: n.params, inputs: n.inputs } as GraphNodeLike;
-  }
-  const bound = boundClipsForAsset(nodes, ASSET_REF);
-  return { clips: bound.length, keyframes: bound.flatMap((b) => b.params.keyframes ?? []).length };
+/** What a reader of the clips' STORED params sees — the poses saved on the nodes (#1227; before it
+ *  this asked the clone road's params-only walk, which now reads only pre-format-20 files). */
+function bandSees(s: DagState): { clips: number; poses: number } {
+  const stored = Object.values(s.nodes)
+    .filter((n) => n.type === 'AnimationClip')
+    .map((n) => ((n.params as { poses?: unknown[] }).poses ?? []).length)
+    .filter((n) => n > 0);
+  return { clips: stored.length, poses: stored.reduce((a, b) => a + b, 0) };
 }
 
 const ARGS = { prompt: 'a slow walk', seed: 7, model: 'kimodo-base' } as const;
@@ -115,12 +115,12 @@ describe('mintMotionGenerateOps (#935)', () => {
 
   it('THE ROAD END TO END: mint on a curve, cook, and the band sees the keys', async () => {
     let s = project();
-    expect(bandSees(s)).toEqual({ clips: 0, keyframes: 0 });
+    expect(bandSees(s)).toEqual({ clips: 0, poses: 0 });
 
     const { ops, clipId } = mintMotionGenerateOps(s, { ...ARGS, curveObjectId: 'pathObj' });
     s = apply(s, ops);
     // Minted but not cooked: the clip exists and is empty, and nothing is claimed.
-    expect(bandSees(s)).toEqual({ clips: 0, keyframes: 0 });
+    expect(bandSees(s)).toEqual({ clips: 0, poses: 0 });
 
     // The clip's rig edge is the plain Skeleton the mint made; a director binds it
     // to the character, which is the step the band matches on.
@@ -143,7 +143,7 @@ describe('mintMotionGenerateOps (#935)', () => {
 
     const after = bandSees(s);
     expect(after.clips).toBe(1);
-    expect(after.keyframes).toBeGreaterThan(0);
+    expect(after.poses).toBeGreaterThan(0);
     // The curve reached the generator, which is the point of the path being an edge.
     expect(requests[0].constraints?.waypoints).toBeDefined();
   });
@@ -185,7 +185,7 @@ describe('mintMotionGenerateOps (#935)', () => {
     const { ops, clipId } = mintMotionGenerateOps(s, ARGS);
     s = apply(s, ops);
     expect((s.nodes[clipId].params as { sourceHash: string }).sourceHash).toBe('');
-    expect((s.nodes[clipId].params as { keyframes: unknown[] }).keyframes).toEqual([]);
+    expect((s.nodes[clipId].params as { poses: unknown[] }).poses).toEqual([]);
 
     const { cap } = capability();
     await resolvePendingMotionGenerations(s, cap);

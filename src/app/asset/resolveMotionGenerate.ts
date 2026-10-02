@@ -201,7 +201,8 @@ export async function resolvePendingMotionGenerations(
       const parsed = parseBvh(generated.bvh, params.prompt, generated.unitScale);
       recordGeneratedClip(requestHash, {
         duration: parsed.clipParams.duration,
-        keyframes: parsed.clipParams.keyframes,
+        // The parser's poses are the clip's poses (#1227, #1432).
+        poses: parsed.clipParams.poses,
         skeleton: { kind: 'Skeleton', bones: parsed.skeletonParams.bones },
         model: generated.model,
         worldOffsetXZ: generated.worldOffsetXZ,

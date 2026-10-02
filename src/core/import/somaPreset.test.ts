@@ -43,7 +43,7 @@ describe("what the generator's BVH actually looks like", () => {
     // debuggable. It does not mind.
     expect(somaBvh()).not.toContain('End Site');
     const parsed = parseBvh(somaBvh(), 'soma');
-    expect(parsed.clipParams.keyframes.length).toBeGreaterThan(0);
+    expect(parsed.clipParams.poses.length).toBeGreaterThan(0);
   });
 
   it('names joints bare — no namespace to sanitise away', () => {
@@ -101,7 +101,7 @@ describe('a generated SOMA clip drives a rig end to end', () => {
         nameMap: preset.map,
       });
       expect(result.unboundTargetBones).toEqual([]);
-      expect(result.clipParams.keyframes.length).toBeGreaterThan(0);
+      expect(result.clipParams.poses.length).toBeGreaterThan(0);
     });
   }
 

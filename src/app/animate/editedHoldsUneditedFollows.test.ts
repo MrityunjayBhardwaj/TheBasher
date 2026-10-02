@@ -44,6 +44,7 @@ import { __resetRegistryForTests, applyOp, emptyDagState, type DagState } from '
 import { registerAllNodes } from '../../nodes/registerAll';
 import { gltfChildDagId, gltfSkeletonDagId } from '../../core/import/gltfImportChain';
 import type { GltfSkinMetadata } from '../../nodes/types';
+import { quatFromEulerXYZ } from '../../nodes/bonePose';
 import { importedChildOps } from '../../test-utils/importedChildFixture';
 
 const ASSET = 'asset-copy-on-write';
@@ -72,11 +73,17 @@ function skin(): GltfSkinMetadata {
 const NODE_NAME_MAP = Object.fromEntries(BONES.map((n) => [n, gltfChildDagId(ASSET, n)]));
 
 /** Both bones rotate 0° → `endDeg` about Y over 2s. */
-function keyframesTo(endDeg: number) {
-  return BONES.flatMap((_, bone) => [
-    { bone, time: 0, position: [0, 0, 0], rotation: [0, 0, 0] },
-    { bone, time: 2, position: [0, 0, 0], rotation: [0, RAD(endDeg), 0] },
-  ]);
+function posesTo(endDeg: number) {
+  const at = (time: number, deg: number) => ({
+    time,
+    bones: Object.fromEntries(
+      BONES.map((name) => [
+        name,
+        { position: [0, 0, 0], quaternion: quatFromEulerXYZ([0, RAD(deg), 0]) },
+      ]),
+    ),
+  });
+  return [at(0, 0), at(2, endDeg)];
 }
 
 /** A character whose rig is driven by ONE bound AnimationClip, and no channels. */
@@ -108,7 +115,7 @@ function build(endDeg: number): DagState {
     type: 'addNode',
     nodeId: CLIP,
     nodeType: 'AnimationClip',
-    params: { name: 'walk', duration: 2, keyframes: keyframesTo(endDeg) },
+    params: { name: 'walk', duration: 2, poses: posesTo(endDeg) },
   }).next;
   s = applyOp(s, {
     type: 'connect',
@@ -132,13 +139,13 @@ function fresh(endDeg = 90): DagState {
   return build(endDeg);
 }
 
-/** ROAD B, the open one: rewrite the clip's keyframes under the live band. */
+/** ROAD B, the open one: rewrite the clip's poses under the live band. */
 function changeClipTo(state: DagState, endDeg: number): DagState {
   return applyOp(state, {
     type: 'setParam',
     nodeId: CLIP,
-    paramPath: 'keyframes',
-    value: keyframesTo(endDeg),
+    paramPath: 'poses',
+    value: posesTo(endDeg),
   } as never).next;
 }
 
@@ -158,18 +165,20 @@ describe('#887 — the three roads that could change a clip under a live band', 
         type: 'addNode',
         nodeId: CLIP,
         nodeType: 'AnimationClip',
-        params: { name: 'walk', duration: 2, keyframes: keyframesTo(999) },
+        params: { name: 'walk', duration: 2, poses: posesTo(999) },
       }),
     ).toThrow();
   });
 
-  it('ROAD B is OPEN — setParam on the clip keyframes is silently accepted, with no guard at the op layer', () => {
+  it('ROAD B is OPEN — setParam on the clip poses is silently accepted, with no guard at the op layer', () => {
     const s = changeClipTo(fresh(), -140);
-    const kfs = (s.nodes[CLIP].params as { keyframes: { rotation: number[] }[] }).keyframes;
+    const poses = (
+      s.nodes[CLIP].params as { poses: { bones: Record<string, { quaternion: number[] }> }[] }
+    ).poses;
     // Accepted, and the new value is really there. No mutator reaches this —
     // every keyframe mutator gates on a `KeyframeChannel*` node type — but
     // `dag.exec` takes raw setParam on any node and is an agent tool.
-    expect(kfs[1].rotation[1]).toBeCloseTo(RAD(-140), 10);
+    expect(poses[1].bones[FOLLOWS].quaternion).toEqual(quatFromEulerXYZ([0, RAD(-140), 0]));
   });
 
   it('ROAD C is OPEN — the clip can be removed while any authored channel survives', () => {

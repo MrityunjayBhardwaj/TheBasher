@@ -74,7 +74,7 @@ function mint(): { clipId: string } {
 
 const clipParams = (clipId: string) =>
   useDagStore.getState().state.nodes[clipId].params as {
-    keyframes: unknown[];
+    poses: unknown[];
     sourceHash: string;
   };
 
@@ -90,13 +90,13 @@ describe('cookMotionGenerations (#935)', () => {
 
   it('cooks a pending producer and the keys land in the clip, in ONE dispatch', async () => {
     const { clipId } = mint();
-    expect(clipParams(clipId).keyframes).toEqual([]);
+    expect(clipParams(clipId).poses).toEqual([]);
 
     const spy = vi.spyOn(useDagStore.getState(), 'dispatchAtomic');
     const out = await cookMotionGenerations();
 
     expect(out).toMatchObject({ generated: 1, failed: 0, baked: 1 });
-    expect(clipParams(clipId).keyframes.length).toBeGreaterThan(0);
+    expect(clipParams(clipId).poses.length).toBeGreaterThan(0);
     expect(clipParams(clipId).sourceHash).not.toBe('');
     // ONE undo entry for the whole cook, however many clips it refreshed.
     expect(spy).toHaveBeenCalledTimes(1);
@@ -119,7 +119,7 @@ describe('cookMotionGenerations (#935)', () => {
   it('an edited producer goes stale and KEEPS its keys until the next cook', async () => {
     const { clipId } = mint();
     await cookMotionGenerations();
-    const baked = clipParams(clipId).keyframes.length;
+    const baked = clipParams(clipId).poses.length;
     expect(baked).toBeGreaterThan(0);
     expect(hasStaleGenerations()).toBe(false);
 
@@ -134,7 +134,7 @@ describe('cookMotionGenerations (#935)', () => {
 
     // Stale, and the motion is untouched — the whole of lock/freeze.
     expect(hasStaleGenerations()).toBe(true);
-    expect(clipParams(clipId).keyframes.length).toBe(baked);
+    expect(clipParams(clipId).poses.length).toBe(baked);
 
     await cookMotionGenerations();
     expect(hasStaleGenerations()).toBe(false);
@@ -152,7 +152,7 @@ describe('cookMotionGenerations (#935)', () => {
     );
     // The clip is untouched, and the failure is terminal: a second cook does not
     // re-issue the request, so one unreachable server is not an unbounded stream.
-    expect(clipParams(clipId).keyframes).toEqual([]);
+    expect(clipParams(clipId).poses).toEqual([]);
     await cookMotionGenerations();
     expect(calls).toHaveLength(1);
   });

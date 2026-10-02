@@ -84,7 +84,7 @@ describe('the shipped preset lands on BOTH roads — the regression this guards'
       nameMap: PRESET!.map,
     });
     expect(result.unmappedSourceBones).toEqual([]);
-    expect(result.clipParams.keyframes.length).toBeGreaterThan(0);
+    expect(result.clipParams.poses.length).toBeGreaterThan(0);
   });
 
   it('retargets a BVH-spelled source through the same preset', () => {
@@ -98,7 +98,7 @@ describe('the shipped preset lands on BOTH roads — the regression this guards'
     // The leaves three's BVHLoader names ENDSITE are legitimately outside the
     // preset's vocabulary; every real joint binds.
     expect(result.unmappedSourceBones.every((n) => n.startsWith('ENDSITE'))).toBe(true);
-    expect(result.clipParams.keyframes.length).toBeGreaterThan(0);
+    expect(result.clipParams.poses.length).toBeGreaterThan(0);
   });
 });
 
@@ -128,6 +128,6 @@ describe('the same fixtures, with the roads swapped — the TARGET side', () => 
 
     expect(tgt.skeletonParams.bones).toHaveLength(22);
     expect(result.unboundTargetBones).toEqual([]);
-    expect(result.clipParams.keyframes.length).toBeGreaterThan(0);
+    expect(result.clipParams.poses.length).toBeGreaterThan(0);
   });
 });

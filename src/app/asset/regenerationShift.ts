@@ -30,6 +30,7 @@
 
 import { evaluate } from '../../core/dag/evaluator';
 import type { DagState } from '../../core/dag/state';
+import { BAKE_POSE_LABEL } from '../animate/bakePose';
 import { poseLayerChain } from '../animate/poseChain';
 import { playedChannels, type PoseLayerParams } from '../../nodes/PoseLayer';
 import { wirePoseTimes } from '../../nodes/RetargetClip';
@@ -265,7 +266,11 @@ export function regenerationNotices(
     });
     out.push({
       severity: 'warn',
-      message: `The regenerated motion moved layered results: ${items.join('; ')}.`,
+      // #1230 — the way out is said where the problem is: a character whose motion was baked to keys
+      // no longer reads the generated clip, so the next regeneration leaves it and its layers alone.
+      message:
+        `The regenerated motion moved layered results: ${items.join('; ')}. ` +
+        `To keep a character as it is through the next regeneration, select it and use “${BAKE_POSE_LABEL}”.`,
     });
   }
   if (report.uncompared.length > 0) {

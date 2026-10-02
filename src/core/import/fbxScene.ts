@@ -65,7 +65,8 @@
 
 import { Euler, Matrix4, Quaternion, Vector3, type Object3D } from 'three';
 import type { Vec3 } from '../../nodes/types';
-import { continuousEuler, quaternionToEulerVec3, sanitizeBoneName } from './threeAdapter';
+import { continuousEuler } from './savedClipKeys';
+import { quaternionToEulerVec3, sanitizeBoneName } from './threeAdapter';
 
 /** A node's transform as an Object or Group holds it in euler mode: rotation in XYZ degrees. */
 export interface FbxNodeTransform {

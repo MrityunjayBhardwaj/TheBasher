@@ -23,6 +23,7 @@ import { projectGltfSkeleton } from './projectGltfSkeleton';
 import { specToThreeSkeleton } from './threeAdapter';
 import { retargetClip } from './retarget';
 import type { AnimationKeyframe, BoneSpec, GltfSkinMetadata } from '../../nodes/types';
+import { posesFromKeyframes } from './keyframePoses';
 
 function fixtureBuffer(name: string): ArrayBuffer {
   const node = readFileSync(resolve(process.cwd(), `public/assets/${name}`));
@@ -170,14 +171,17 @@ describe('retarget consumes a real GltfSkeleton projection (P7.11 F5 — plumbin
     ];
     const result = retargetClip({
       sourceBones,
-      sourceClip: { name: 'wiggle', duration: 1, keyframes: sourceKfs },
+      sourceClip: {
+        name: 'wiggle',
+        duration: 1,
+        poses: posesFromKeyframes(sourceKfs, sourceBones),
+      },
       targetBones: gltfTargetBones,
       nameMap: Object.fromEntries(names.map((n) => [n, n])), // identity
     });
-    expect(result.clipParams.keyframes.length).toBeGreaterThan(0);
-    for (const kf of result.clipParams.keyframes) {
-      expect(kf.bone).toBeGreaterThanOrEqual(0);
-      expect(kf.bone).toBeLessThan(gltfTargetBones.length);
+    expect(result.clipParams.poses.length).toBeGreaterThan(0);
+    for (const pose of result.clipParams.poses) {
+      for (const bone of Object.keys(pose.bones)) expect(names).toContain(bone);
     }
     // Identity bridge over identical names binds every target bone.
     expect(result.unboundTargetBones).toEqual([]);
@@ -192,7 +196,7 @@ describe('retarget consumes a real GltfSkeleton projection (P7.11 F5 — plumbin
     ];
     const result = retargetClip({
       sourceBones,
-      sourceClip: { name: 'partial', duration: 1, keyframes: [] },
+      sourceClip: { name: 'partial', duration: 1, poses: [] },
       targetBones: gltfTargetBones,
       nameMap: { Bone0: 'Bone0' }, // Bone1 deliberately unmapped
     });
