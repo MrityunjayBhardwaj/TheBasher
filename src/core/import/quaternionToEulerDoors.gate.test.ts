@@ -14,7 +14,9 @@
 //
 // That defect has now been fixed TWICE at two different producers (#867 in
 // `clipToKeyframes`, #876 in `gltfImportChain`'s clip builder, removed with the
-// clone importer in #1424) because each road converts on its own. `continuousEuler` is a gate anyone can walk past by calling
+// clone importer in #1424) because each road converts on its own. Since #1432 the
+// motion producers write quaternions and convert nothing; `clipToKeyframes` lives
+// on, frozen, as `threeClipToKeys` for the one migration that reads saved keys. `continuousEuler` is a gate anyone can walk past by calling
 // `setFromQuaternion` directly. Until building a rotation CHANNEL from
 // quaternions is the only constructible road, this census is what stops the
 // third occurrence: it cannot prevent a bad call, but it refuses to let one be
@@ -53,7 +55,7 @@ const DOORS: Record<string, Door> = {
     kind: 'SEQUENCE',
     why:
       'THE PRIMITIVE. `quaternionToEulerVec3` is the raw canonical conversion, and ' +
-      '`continuousEuler` in this same file is the continuity-preserving wrapper built ' +
+      '`continuousEuler` (`savedClipKeys.ts`) is the continuity-preserving wrapper built ' +
       'on it. Producers of keyframe sequences must call the wrapper, not this.',
   },
   'src/viewport/SceneFromDAG.tsx': {
@@ -161,15 +163,19 @@ describe('#876 — the quaternion→Euler door census', () => {
       .map(([f]) => f);
     expect(sequenceDoors).toEqual(['src/core/import/threeAdapter.ts']);
 
-    const adapter = readFileSync('src/core/import/threeAdapter.ts', 'utf8');
-    expect(adapter).toContain('export function continuousEuler');
+    // The wrapper sits with the one road that still writes euler keys (#1432).
+    const saved = readFileSync('src/core/import/savedClipKeys.ts', 'utf8');
+    expect(saved).toContain('export function continuousEuler');
   });
 
   it('every producer of an Euler keyframe sequence calls the continuous converter', () => {
     // #876 fixed this in the glTF clone importer's clip builder, which assembled keyframes with
-    // the canonical converter while the consumer lerped them. That builder is gone (#1424), so
-    // the row names the producers that are left: each must still go through the wrapper.
-    for (const producer of ['src/core/import/threeAdapter.ts', 'src/core/import/fbx.ts'])
-      expect(readFileSync(producer, 'utf8'), producer).toMatch(/= continuousEuler\(/);
+    // the canonical converter while the consumer lerped them. That builder is gone (#1424), and
+    // since #1432 the parsers and the FBX fold write quaternions, so the producer left is the
+    // saved-keys road: it must still go through the wrapper.
+    expect(readFileSync('src/core/import/savedClipKeys.ts', 'utf8')).toMatch(/= continuousEuler\(/);
+    // And the parsers really do write none: a sequence built in either again must come back here.
+    for (const parser of ['src/core/import/threeAdapter.ts', 'src/core/import/fbx.ts'])
+      expect(readFileSync(parser, 'utf8'), parser).not.toMatch(/continuousEuler\(/);
   });
 });

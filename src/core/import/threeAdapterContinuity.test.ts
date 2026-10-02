@@ -1,7 +1,10 @@
-// Rotation continuity through the clip adapter (#867).
+// Rotation continuity through the saved-keys road (#867).
 //
-// `clipToKeyframes` stores rotations as an Euler triple, and the playback
-// sampler (`AnimationClip.ts`) interpolates those components LINEARLY. That
+// `threeClipToKeys` writes rotations as an Euler triple, as clips stored them
+// before format 20, and a sampler that interpolated those components LINEARLY
+// (as clips did then) needs consecutive keys on nearby branches. Since #1432 only
+// the v9 → v10 migration reads keys this way (`savedClipKeys.ts`), and it compares
+// against channels written through exactly this conversion. That
 // contract only holds if consecutive keyframes carry NEARBY representations of
 // the rotation. `Euler.setFromQuaternion` returns a CANONICAL triple, computed
 // per frame with no memory, so a smooth quaternion path can land on either side
@@ -13,7 +16,8 @@
 // degrees per step while the canonical X and Z flip by π.
 import { describe, it, expect } from 'vitest';
 import { Euler, Quaternion, Vector3 } from 'three';
-import { clipToKeyframes, continuousEuler, type ClipShape } from './threeAdapter';
+import type { ClipShape } from './threeAdapter';
+import { continuousEuler, threeClipToKeys } from './savedClipKeys';
 import type { BoneSpec, Vec3 } from '../../nodes/types';
 
 const DEG = 180 / Math.PI;
@@ -35,9 +39,9 @@ function ySweepClip(fromDeg: number, toDeg: number, steps: number): ClipShape {
 const quatOf = (r: readonly number[]) =>
   new Quaternion().setFromEuler(new Euler(r[0], r[1], r[2], 'XYZ'));
 
-describe('clipToKeyframes — rotation continuity (#867)', () => {
+describe('threeClipToKeys — rotation continuity (#867)', () => {
   it('emits no step whose Euler jump exceeds the rotation that actually happens', () => {
-    const keys = clipToKeyframes(ySweepClip(60, 120, 30), BONES);
+    const keys = threeClipToKeys(ySweepClip(60, 120, 30), BONES);
     expect(keys.length).toBeGreaterThan(10);
 
     let worstExcess = 0;
@@ -61,7 +65,7 @@ describe('clipToKeyframes — rotation continuity (#867)', () => {
 
   it('changes only the REPRESENTATION — every keyframe still holds its original rotation', () => {
     const clip = ySweepClip(60, 120, 30);
-    const keys = clipToKeyframes(clip, BONES);
+    const keys = threeClipToKeys(clip, BONES);
     const raw = clip.tracks[0].values;
     let worst = 0;
     for (let i = 0; i < keys.length; i++) {

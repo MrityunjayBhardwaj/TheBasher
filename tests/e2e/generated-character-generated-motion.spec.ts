@@ -667,17 +667,13 @@ async function walks(page: Page, pair: (typeof PAIRS)[number]): Promise<void> {
   // A bone's offset is the length of the bone ABOVE it, so the thigh is measured
   // at the knee and the shin at the ankle. SOMA's `LeftLeg` is the thigh.
   const sourceLegs = pair.sourceLegBones.reduce((sum, n) => sum + boneLen(n), 0);
-  const hipsBone = sourceBones.skeletonParams.bones.findIndex((b) => b.name === 'Hips');
-  const sourceKeys = sourceBones.clipParams.keyframes.filter(
-    (k) => k.bone === hipsBone && k.time <= sampleWindow,
-  );
+  // The Hips' keyed positions over the sampled window, off the parser's timed poses (#1432).
+  const sourceKeys = sourceBones.clipParams.poses
+    .filter((p) => p.time <= sampleWindow && p.bones.Hips?.position)
+    .map((p) => p.bones.Hips.position!);
   const sourceStride = Math.max(
     ...sourceKeys.map((k) =>
-      Math.hypot(
-        k.position[0] - sourceKeys[0].position[0],
-        k.position[1] - sourceKeys[0].position[1],
-        k.position[2] - sourceKeys[0].position[2],
-      ),
+      Math.hypot(k[0] - sourceKeys[0][0], k[1] - sourceKeys[0][1], k[2] - sourceKeys[0][2]),
     ),
   );
 

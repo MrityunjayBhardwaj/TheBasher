@@ -352,19 +352,12 @@ async function measure(bvhPath: string, bendBind?: BindBend): Promise<Measured> 
     sourceClip: {
       name: parsed.clipParams.name,
       duration: parsed.clipParams.duration,
-      keyframes: parsed.clipParams.keyframes,
+      poses: parsed.clipParams.poses,
     },
     targetBones: target,
     nameMap: preset.map,
   });
 
-  type K = { bone: number; time: number; rotation: number[]; position: number[] };
-  const index = (keys: readonly K[]) => {
-    const times = [...new Set(keys.map((k) => k.time))].sort((a, b) => a - b);
-    const by = new Map<number, K[]>();
-    for (const k of keys) by.set(k.time, [...(by.get(k.time) ?? []), k]);
-    return { times, by };
-  };
   // WHICH BRANCH — taken from the retarget's OWN report, not recomputed here. A
   // second copy of this decision beside the one that chose the offsets is free to
   // drift from it, and this row exists precisely because a claim about the branch
@@ -373,9 +366,10 @@ async function measure(bvhPath: string, bendBind?: BindBend): Promise<Measured> 
   const heading =
     out.restReconciliation.kind === 'aligned' ? out.restReconciliation.rotation : new Quaternion();
 
-  const S = index(parsed.clipParams.keyframes as unknown as K[]);
-  const T = index(out.clipParams.keyframes as unknown as K[]);
-  const frames = Math.min(S.times.length, T.times.length);
+  // One pose per time, in time order, on each rig's bone names.
+  const S = parsed.clipParams.poses;
+  const T = out.clipParams.poses;
+  const frames = Math.min(S.length, T.length);
 
   const byName = (bones: Bone[]) => new Map(bones.map((b) => [b.name, b]));
   const sByName = byName(sBind);
@@ -404,18 +398,18 @@ async function measure(bvhPath: string, bendBind?: BindBend): Promise<Measured> 
       .sub(new Vector3().setFromMatrixPosition(b.matrixWorld))
       .normalize();
   for (let i = 0; i < frames; i++) {
-    for (const k of S.by.get(S.times[i]) ?? []) {
-      const b = sBind[k.bone];
-      if (!b) continue;
-      b.rotation.set(k.rotation[0], k.rotation[1], k.rotation[2], 'XYZ');
-      b.position.set(k.position[0], k.position[1], k.position[2]);
+    for (const [name, held] of Object.entries(S[i].bones)) {
+      const b = sByName.get(name);
+      if (!b || !held.quaternion || !held.position) continue;
+      b.quaternion.set(...held.quaternion);
+      b.position.set(...held.position);
     }
     sBind[0].updateMatrixWorld(true);
-    for (const k of T.by.get(T.times[i]) ?? []) {
-      const b = tBind[k.bone];
-      if (!b) continue;
-      b.rotation.set(k.rotation[0], k.rotation[1], k.rotation[2], 'XYZ');
-      b.position.set(k.position[0], k.position[1], k.position[2]);
+    for (const [name, held] of Object.entries(T[i].bones)) {
+      const b = tByName.get(name);
+      if (!b || !held.quaternion || !held.position) continue;
+      b.quaternion.set(...held.quaternion);
+      b.position.set(...held.position);
     }
     tBind[0].updateMatrixWorld(true);
 
@@ -758,7 +752,7 @@ describe('#854 — the roll, per bone, on the branch this pair actually takes', 
         sourceClip: {
           name: parsed.clipParams.name,
           duration: parsed.clipParams.duration,
-          keyframes: parsed.clipParams.keyframes,
+          poses: parsed.clipParams.poses,
         },
         targetBones: target,
         nameMap: preset.map,

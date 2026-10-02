@@ -20,7 +20,8 @@ import {
   Skeleton,
   VectorKeyframeTrack,
 } from 'three';
-import { bonesToSpec, clipToKeyframes } from './threeAdapter';
+import { bonesToSpec, clipToPoses } from './threeAdapter';
+import { quatFromEulerXYZ } from '../../nodes/bonePose';
 
 function makeSkinnedGroup(): Group {
   const root = new Bone();
@@ -57,16 +58,18 @@ describe('threeAdapter via FBX-shaped input', () => {
     expect(spec[1].parent).toBe(0);
   });
 
-  it('clipToKeyframes merges position + quaternion tracks per bone', () => {
+  it('clipToPoses merges position + quaternion tracks into one pose per time (#1432)', () => {
     const bones = bonesToSpec([
       ((): Bone => {
         const b = new Bone();
         b.name = 'Hips';
+        b.rotation.set(0, 0.5, 0);
         return b;
       })(),
       ((): Bone => {
         const b = new Bone();
         b.name = 'Spine';
+        b.position.set(0, 0.5, 0);
         return b;
       })(),
     ]);
@@ -77,17 +80,51 @@ describe('threeAdapter via FBX-shaped input', () => {
       [0, 0, 0, 1, 0, 0.7071, 0, 0.7071],
     );
     const clip = new AnimationClip('test', 1, [positionTrack, rotationTrack]);
-    const kfs = clipToKeyframes(clip, bones);
-    // 4 entries: 2 (Hips at t=0, t=1) + 2 (Spine at t=0, t=1)
-    expect(kfs.length).toBe(4);
-    // Sorted by (time, bone)
-    for (let i = 1; i < kfs.length; i++) {
-      const prev = kfs[i - 1];
-      const cur = kfs[i];
-      expect(cur.time === prev.time ? cur.bone >= prev.bone : cur.time > prev.time).toBe(true);
-    }
-    // Hips at t=1 has position [0,2,0]
-    const hipsAt1 = kfs.find((k) => k.bone === 0 && k.time === 1);
-    expect(hipsAt1?.position).toEqual([0, 2, 0]);
+    const poses = clipToPoses(clip, bones);
+    // One pose per time, in time order, each holding both bones.
+    expect(poses.map((p) => p.time)).toEqual([0, 1]);
+    for (const p of poses) expect(Object.keys(p.bones).sort()).toEqual(['Hips', 'Spine']);
+    // Hips at t=1 has position [0,2,0], and its rest's rotation (it has no quaternion track).
+    expect(poses[1].bones.Hips.position).toEqual([0, 2, 0]);
+    expect(poses[1].bones.Hips.quaternion).toEqual(quatFromEulerXYZ(bones[0].rotation));
+    expect(bones[0].rotation[1]).toBeCloseTo(0.5, 12);
+    // Spine keeps its rest offset, and its quaternion is the track's, read as a unit quaternion
+    // (three holds track values as float32).
+    expect(poses[1].bones.Spine.position).toEqual([0, 0.5, 0]);
+    const q = poses[1].bones.Spine.quaternion!;
+    expect(Math.hypot(...q)).toBeCloseTo(1, 12);
+    expect(q[1]).toBeCloseTo(Math.SQRT1_2, 6);
+    expect(q[3]).toBeCloseTo(Math.SQRT1_2, 6);
+  });
+
+  it('clipToPoses reads a zero quaternion as no rotation, not as NaN', () => {
+    const bones = bonesToSpec([
+      ((): Bone => {
+        const b = new Bone();
+        b.name = 'Hips';
+        return b;
+      })(),
+    ]);
+    const clip = new AnimationClip('test', 1, [
+      new QuaternionKeyframeTrack('Hips.quaternion', [0], [0, 0, 0, 0]),
+    ]);
+    expect(clipToPoses(clip, bones)[0].bones.Hips.quaternion).toEqual([0, 0, 0, 1]);
+  });
+
+  it('clipToPoses names bones as the caller spells its rig, found by three’s spelling', () => {
+    // three's spelling replaces `:`; the caller's rig keeps it, index for index.
+    const bones = bonesToSpec([
+      ((): Bone => {
+        const b = new Bone();
+        b.name = 'mixamorig:Hips';
+        return b;
+      })(),
+    ]);
+    const clip = new AnimationClip('test', 1, [
+      new VectorKeyframeTrack('mixamorig_Hips.position', [0], [1, 2, 3]),
+    ]);
+    expect(Object.keys(clipToPoses(clip, bones)[0].bones)).toEqual(['mixamorig_Hips']);
+    const named = clipToPoses(clip, bones, [{ name: 'mixamorig:Hips' }]);
+    expect(named[0].bones['mixamorig:Hips'].position).toEqual([1, 2, 3]);
   });
 });

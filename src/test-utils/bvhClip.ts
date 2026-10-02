@@ -5,31 +5,22 @@
 // `buildBvhImportOps`), so product code does not import it.
 
 import { BVH_UNIT_SCALE_METRES, parseBvh } from '../core/import/bvh';
-import { posesFromKeyframes } from '../core/import/keyframePoses';
 import type { Op } from '../core/dag/types';
 import type { ClipLoop } from '../nodes/clipLoop';
-import type { AnimationKeyframe, BoneSpec, MotionPose } from '../nodes/types';
+import type { BoneSpec, MotionPose } from '../nodes/types';
 
-/**
- * A parsed motion file as `AnimationClip` params. A parser hands back keys by bone index with euler
- * angles; a clip stores timed poses by bone name (#1227), through the product's own conversion.
- */
+/** A parsed motion file as `AnimationClip` params: the parser's poses are the clip's (#1432). */
 export function clipNodeParams(parsed: {
   readonly skeletonParams: { readonly bones: readonly BoneSpec[] };
   readonly clipParams: {
     readonly name: string;
     readonly duration: number;
     readonly loop: ClipLoop;
-    readonly keyframes: readonly AnimationKeyframe[];
+    readonly poses: readonly MotionPose[];
   };
 }): { name: string; duration: number; loop: ClipLoop; poses: MotionPose[] } {
-  const { name, duration, loop, keyframes } = parsed.clipParams;
-  return {
-    name,
-    duration,
-    loop,
-    poses: posesFromKeyframes(keyframes, parsed.skeletonParams.bones),
-  };
+  const { name, duration, loop, poses } = parsed.clipParams;
+  return { name, duration, loop, poses: [...poses] };
 }
 
 export function buildBvhClipOps(args: {

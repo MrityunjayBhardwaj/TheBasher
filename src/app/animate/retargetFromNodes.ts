@@ -43,7 +43,7 @@
 //      src/app/animate/boundClipsForAsset.ts (the one walk that calls this);
 //      src/core/import/projectGltfSkeleton.ts; issue #901.
 
-import { retargetClip } from '../../core/import/retarget';
+import { retargetSavedKeys } from '../../core/import/savedClipKeys';
 import { projectGltfSkeleton } from '../../core/import/projectGltfSkeleton';
 import type { AnimationKeyframe, BoneSpec, GltfSkinMetadata } from '../../nodes/types';
 import { edgeTarget, type GraphNodeLike } from './graphNodes';
@@ -204,7 +204,7 @@ export function retargetClipParamsFromNodes(
   const cached = memo.get(k1)?.get(k2)?.get(k3)?.get(k4);
   if (cached) return cached;
 
-  const result = retargetClip({
+  const result = retargetSavedKeys({
     sourceBones,
     sourceClip: {
       name: typeof sourceParams.name === 'string' ? sourceParams.name : 'clip',

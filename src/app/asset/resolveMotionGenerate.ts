@@ -43,7 +43,6 @@ import type { AnimationClipValue } from '../../nodes/types';
 import type { MotionGenerateParams } from '../../nodes/MotionGenerate';
 import { waypointsFromCurve } from './motionPathFromCurve';
 import { clipBakeStates } from './bakeGeneratedClip';
-import { posesFromKeyframes } from '../../core/import/keyframePoses';
 
 /**
  * Hashes currently being generated.
@@ -202,8 +201,8 @@ export async function resolvePendingMotionGenerations(
       const parsed = parseBvh(generated.bvh, params.prompt, generated.unitScale);
       recordGeneratedClip(requestHash, {
         duration: parsed.clipParams.duration,
-        // The parser's keys (bone index, euler) become the clip's poses here, once (#1227).
-        poses: posesFromKeyframes(parsed.clipParams.keyframes, parsed.skeletonParams.bones),
+        // The parser's poses are the clip's poses (#1227, #1432).
+        poses: parsed.clipParams.poses,
         skeleton: { kind: 'Skeleton', bones: parsed.skeletonParams.bones },
         model: generated.model,
         worldOffsetXZ: generated.worldOffsetXZ,

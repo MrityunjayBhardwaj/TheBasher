@@ -11,7 +11,7 @@ import { __resetRegistryForTests, applyOp, evaluate } from '../core/dag';
 import type { DagState } from '../core/dag/state';
 import { buildDefaultDagState } from '../core/project/default';
 import { parseBvh } from '../core/import/bvh';
-import { paramsToThreeClip } from '../core/import/threeAdapter';
+import { posesToThreeClip } from '../core/import/threeAdapter';
 import { buildNativeGltfImportOps } from '../core/import/nativeGltfImport';
 import { registerAllNodes } from './registerAll';
 import { AnimationClipNode, AnimationClipParams, type ClipOutputs } from './AnimationClip';
@@ -45,10 +45,10 @@ describe('a clip puts its range on the wire', () => {
       { skeleton: { kind: 'Skeleton', bones: skeletonParams.bones } },
       at.ctx,
     ) as ClipOutputs;
-    const three = paramsToThreeClip(
+    const three = posesToThreeClip(
       clipParams.name,
       clipParams.duration,
-      clipParams.keyframes,
+      clipParams.poses,
       skeletonParams.bones,
     );
     const threeFps = Math.max(...three.tracks.map((t) => t.times.length)) / three.duration;

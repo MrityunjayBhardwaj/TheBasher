@@ -16,6 +16,7 @@ import { FBXLoader } from 'three/examples/jsm/loaders/FBXLoader.js';
 import { Matrix4, Vector3, type SkinnedMesh } from 'three';
 import { parseFbx } from './fbx';
 import { retargetClip } from './retarget';
+import { alignedQuat, poseSamples } from '../../test-utils/poseSamples';
 
 const read = (name: string): ArrayBuffer => {
   const buf = readFileSync(resolve(process.cwd(), 'public/fixtures/anim', name));
@@ -112,8 +113,8 @@ describe('parseFbx — a shared skeleton parses as the one skeleton it is', () =
   });
 
   it("a keyed bone's clip is the same as without the skins, when every moved axis is keyed", () => {
-    const shared = parseFbx(keyingEveryMovedAxis(TWO_SKINS), 'rig').clipParams.keyframes;
-    const plain = parseFbx(keyingEveryMovedAxis(ONE_SKELETON), 'rig').clipParams.keyframes;
+    const shared = parseFbx(keyingEveryMovedAxis(TWO_SKINS), 'rig').clipParams.poses;
+    const plain = parseFbx(keyingEveryMovedAxis(ONE_SKELETON), 'rig').clipParams.poses;
     expect(shared.length).toBeGreaterThan(0);
     expect(shared).toEqual(plain);
   });
@@ -122,15 +123,16 @@ describe('parseFbx — a shared skeleton parses as the one skeleton it is', () =
   // LAST match: the inner twin, at identity, so Hips' Y read 0. `patches/three+0.169.0.patch`
   // keeps the first match, the twin that holds the file's transform. This row reds without it.
   it("an axis the curve leaves unkeyed keeps the bone's value (#1182)", () => {
-    const shared = parseFbx(TWO_SKINS, 'rig').clipParams.keyframes;
+    const shared = parseFbx(TWO_SKINS, 'rig').clipParams.poses;
     expect(shared.length).toBeGreaterThan(0);
-    for (const k of shared) expect(k.position[1], "Hips' unkeyed Y").toBeCloseTo(0.01, 9);
-    expect(shared).toEqual(parseFbx(ONE_SKELETON, 'rig').clipParams.keyframes);
+    for (const p of shared)
+      expect(p.bones.Hips.position![1], "Hips' unkeyed Y").toBeCloseTo(0.01, 9);
+    expect(shared).toEqual(parseFbx(ONE_SKELETON, 'rig').clipParams.poses);
   });
 });
 
 describe('a bound character moves the same as from the same skeleton without the skins', () => {
-  it('retargets to the same keyframes', () => {
+  it('retargets to the same poses', () => {
     const target = parseFbx(ONE_SKELETON, 'rig').skeletonParams.bones;
     const nameMap = Object.fromEntries(target.map((b) => [b.name, b.name]));
     const run = (buf: ArrayBuffer) => {
@@ -140,17 +142,17 @@ describe('a bound character moves the same as from the same skeleton without the
         sourceClip: src.clipParams,
         targetBones: target,
         nameMap,
-      }).clipParams.keyframes;
+      }).clipParams.poses;
     };
-    const a = run(TWO_SKINS);
-    const b = run(ONE_SKELETON);
+    const a = poseSamples(run(TWO_SKINS));
+    const b = poseSamples(run(ONE_SKELETON));
     expect(a.length).toBeGreaterThan(0);
     expect(a.length).toBe(b.length);
     a.forEach((k, i) => {
-      for (let j = 0; j < 3; j++) {
-        expect(k.position[j]).toBeCloseTo(b[i].position[j], 9);
-        expect(k.rotation[j]).toBeCloseTo(b[i].rotation[j], 9);
-      }
+      expect(k.bone).toBe(b[i].bone);
+      const q = alignedQuat(k.quaternion!, b[i].quaternion!);
+      for (let j = 0; j < 3; j++) expect(k.position![j]).toBeCloseTo(b[i].position![j], 9);
+      for (let j = 0; j < 4; j++) expect(q[j]).toBeCloseTo(b[i].quaternion![j], 9);
     });
   });
 });

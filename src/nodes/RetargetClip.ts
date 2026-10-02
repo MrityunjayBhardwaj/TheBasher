@@ -75,16 +75,15 @@ import type { NodeDefinition, ResolvedInputs } from '../core/dag/types';
 import { retargetClip } from '../core/import/retarget';
 import type {
   AnimationClipValue,
-  AnimationKeyframe,
   BoneNameMapValue,
+  MotionBonePose,
+  MotionPose,
   PosedSkeletonValue,
   SkeletonValue,
   WireClipInfo,
 } from './types';
 import { clipLoopOf } from './clipLoop';
 import { posedSkeletonFromClip } from './AnimationClip';
-import { posesFromKeyframes } from '../core/import/keyframePoses';
-import { eulerXYZFromQuat } from './bonePose';
 import { nameParam } from './paramWidget';
 
 /** Both views of one retarget: the clip, and that same clip as a posed rig.
@@ -118,30 +117,26 @@ export function wirePoseTimes(range: WireClipInfo, rate: number): number[] {
 }
 
 /**
- * #1225 — the source wire as keys the retarget math reads: every bone, sampled `round(span · rate)`
- * times across the wire's range with both ends included (at least twice), at times counted from the
- * range's start. Three's retarget samples the same count over the same span, so on a clip's pose the
- * samples land on the clip's keys (`clipInfoOf`). Rotations leave as XYZ euler radians, the keys'
- * current spelling; three turns them straight back into the quaternions the wire gave.
+ * #1225 — the source wire as the poses the retarget math reads: every bone, sampled
+ * `round(span · rate)` times across the wire's range with both ends included (at least twice), at
+ * times counted from the range's start. Three's retarget samples the same count over the same span,
+ * so on a clip's pose the samples land on the clip's keys (`clipInfoOf`). Each bone leaves by its
+ * name on the source rig, with the quaternion the wire gave (#1432); scale is not read.
  */
-export function wireKeyframes(
+export function wirePoses(
   source: PosedSkeletonValue,
   range: WireClipInfo,
   rate: number,
-): AnimationKeyframe[] {
-  const keyframes: AnimationKeyframe[] = [];
-  for (const time of wirePoseTimes(range, rate)) {
-    const poses = source.sample(range.start + time);
-    poses.forEach((pose, bone) => {
-      keyframes.push({
-        bone,
-        time,
-        position: pose.position,
-        rotation: eulerXYZFromQuat(pose.quaternion),
-      });
+): MotionPose[] {
+  const bones = source.skeleton.bones;
+  return wirePoseTimes(range, rate).map((time) => {
+    const held: Record<string, MotionBonePose> = {};
+    source.sample(range.start + time).forEach((pose, bone) => {
+      const name = bones[bone]?.name;
+      if (name !== undefined) held[name] = { position: pose.position, quaternion: pose.quaternion };
     });
-  }
-  return keyframes;
+    return { time, bones: held };
+  });
 }
 
 export const RetargetClipParams = z.object({
@@ -219,7 +214,7 @@ export const RetargetClipNode: NodeDefinition<
       sourceClip: {
         name: range.name ?? 'clip',
         duration: range.end - range.start,
-        keyframes: wireKeyframes(source, range, params.sampleRate || range.rate),
+        poses: wirePoses(source, range, params.sampleRate || range.rate),
         // #919 — carried, so neither side decides the source's time domain for it.
         loop: clipLoopOf(range.loop),
       },
@@ -229,10 +224,10 @@ export const RetargetClipNode: NodeDefinition<
     });
 
     // Sampled from the range's start; placed back where the source plays it.
-    const keyframes =
+    const poses =
       range.start === 0
-        ? result.clipParams.keyframes
-        : result.clipParams.keyframes.map((k) => ({ ...k, time: k.time + range.start }));
+        ? result.clipParams.poses
+        : result.clipParams.poses.map((p) => ({ ...p, time: p.time + range.start }));
     return both({
       kind: 'AnimationClip',
       name: result.clipParams.name,
@@ -240,8 +235,8 @@ export const RetargetClipNode: NodeDefinition<
       loop: result.clipParams.loop,
       // Sampled from the source at its rate, so the samples read linearly between them.
       interpolation: 'linear',
-      // #1225 — the retargeted keys as timed poses on the TARGET rig's bone names.
-      poses: posesFromKeyframes(keyframes, target.bones),
+      // #1225 — timed poses on the TARGET rig's bone names, as the retarget returns them (#1432).
+      poses,
       // The TARGET rig — the poses name its bones.
       skeleton: target,
     });

@@ -17,6 +17,8 @@ import { quatFromEulerXYZ } from './bonePose';
 import { posesFromKeyframes } from '../core/import/keyframePoses';
 import { TransformClipParams } from './TransformClip';
 import type { AnimationClipValue, BoneSpec, MotionPose, Quat, Vec3 } from './types';
+import { posesToThreeClip } from '../core/import/threeAdapter';
+import { threeClipToKeys } from '../core/import/savedClipKeys';
 
 const BONES: BoneSpec[] = [
   { name: 'root', parent: -1, position: [0, 0, 0], rotation: [0, 0, 0] },
@@ -160,10 +162,16 @@ describe('a clip plays as the band plays it', () => {
       'walk',
       BVH_UNIT_SCALE_CENTIMETRES,
     );
+    // The band reads index + euler keys; a parser now writes poses (#1432), so the keys are the
+    // poses read back through the saved-keys road, and the pose under test is built from them.
+    const keyframes = threeClipToKeys(
+      posesToThreeClip('walk', clipParams.duration, clipParams.poses, skeletonParams.bones),
+      skeletonParams.bones,
+    );
     for (const loop of ['hold', 'cycle', 'cycle-offset'] as const) {
-      const { keyframes, ...rest } = clipParams;
       const params = AnimationClipParams.parse({
-        ...rest,
+        name: clipParams.name,
+        duration: clipParams.duration,
         loop,
         poses: posesFromKeyframes(keyframes, skeletonParams.bones),
       });

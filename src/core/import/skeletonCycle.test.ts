@@ -74,9 +74,10 @@ describe('retargetClip refuses a cyclic skeleton, naming the bone and the rig', 
   const clip = {
     name: 'c',
     duration: 1,
-    keyframes: [
-      { bone: 0, time: 0, position: [0, 0, 0], rotation: [0, 0, 0] },
-      { bone: 0, time: 1, position: [0, 0, 0], rotation: [0.1, 0, 0] },
+    // Timed poses by bone name (#1432). The refusal fires before any bone is read.
+    poses: [
+      { time: 0, bones: { a: { position: [0, 0, 0], quaternion: [0, 0, 0, 1] } } },
+      { time: 1, bones: { a: { position: [0, 0, 0], quaternion: [0.05, 0, 0, 0.99875] } } },
     ],
   };
   const cases = {

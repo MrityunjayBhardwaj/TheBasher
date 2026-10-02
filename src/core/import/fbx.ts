@@ -38,16 +38,15 @@ import {
   type AnimationClip as ThreeAnimationClip,
   type SkinnedMesh,
 } from 'three';
-import type { AnimationKeyframe, BoneSpec, Vec3 } from '../../nodes/types';
+import type { BoneSpec, MotionPose, Quat, Vec3 } from '../../nodes/types';
 import {
   bonesToSpec,
-  clipToKeyframes,
-  continuousEuler,
+  clipToPoses,
   parseTrackName,
   quaternionToEulerVec3,
   type ClipShape,
 } from './threeAdapter';
-import { scaleBonePositions, scaleKeyframePositions } from './unitScale';
+import { scaleBonePositions, scalePosePositions } from './unitScale';
 import type { ClipLoop } from '../../nodes/clipLoop';
 
 export interface FbxSkeletonParams {
@@ -58,17 +57,18 @@ export interface FbxClipParams {
   readonly name: string;
   readonly duration: number;
   readonly loop: ClipLoop;
-  readonly keyframes: readonly AnimationKeyframe[];
+  /** The motion as timed poses on the skeleton's bone names (#1432). */
+  readonly poses: readonly MotionPose[];
 }
 
 /**
  * #1211 — one of three's tracks at the file's own key times: a bone (sanitised as `bonesToSpec`
  * spells it), the property, and the times and flat values. What the import road's base pose layer
- * is built from, so the file's own key times and its scale survive; `clipParams` merges each bone's
- * times and drops scale.
+ * is built from, so the file's own key times and its scale survive; `clipParams` merges every bone's
+ * times into one pose per time and drops scale.
  *
  * The VALUES are the rig's, not the file's raw ones: they go through the same fold of the node above
- * the root (#1190) and the same unit (#1086) as the bones and the clip's keys, so a layer built from
+ * the root (#1190) and the same unit (#1086) as the bones and the clip's poses, so a layer built from
  * them keys the skeleton it stands on. Read raw, a Mixamo walk's positions stayed in centimetres
  * over a rest pose in metres.
  */
@@ -168,20 +168,20 @@ export function parseFbx(input: ArrayBuffer | string, name = 'imported-fbx'): Fb
   }
   // First animation clip wins. group.animations[] is THREE.AnimationClip[].
   const clip = (group as unknown as { animations: ThreeAnimationClip[] }).animations[0];
-  // The clip's keys are read against the rest AS THE FILE HOLDS IT (a rotation-only bone's key
-  // takes its position from that rest), and only then is the node above the rig folded into
+  // The clip's poses are read against the rest AS THE FILE HOLDS IT (a rotation-only bone takes
+  // its position from that rest), and only then is the node above the rig folded into
   // both, so the two move together.
   const fileRest = bonesToSpec(bones);
   const read = clip ? readTracks(clip, fileRest) : { tracks: [], unparsedTracks: 0 };
   const {
     bones: skeletonBones,
-    keyframes,
+    poses,
     tracks,
   } = foldTransformAboveRoots(
     group,
     bones,
     fileRest,
-    clip ? clipToKeyframes(clip as ClipShape, fileRest) : [],
+    clip ? clipToPoses(clip as ClipShape, fileRest) : [],
     read.tracks,
   );
   const unparsedTracks = read.unparsedTracks;
@@ -190,7 +190,7 @@ export function parseFbx(input: ArrayBuffer | string, name = 'imported-fbx'): Fb
     // Skeleton-only FBX — rare but valid (T-pose import). Empty clip.
     return {
       skeletonParams: { bones: scaleBonePositions(skeletonBones, metresPerUnit) },
-      clipParams: { name, duration: 0, loop: 'hold', keyframes: [] },
+      clipParams: { name, duration: 0, loop: 'hold', poses: [] },
       tracks: [],
       unparsedTracks: 0,
     };
@@ -210,13 +210,13 @@ export function parseFbx(input: ArrayBuffer | string, name = 'imported-fbx'): Fb
       // away from its own end instead of stopping there. The skeleton-only branch
       // above has always said `false`; these two now agree.
       loop: 'hold',
-      keyframes: scaleKeyframePositions(keyframes, metresPerUnit),
+      poses: scalePosePositions(poses, metresPerUnit),
     },
   };
 }
 
 /**
- * #1190 — fold the transform of the nodes ABOVE each root bone into that root, and into the keys.
+ * #1190 — fold the transform of the nodes ABOVE each root bone into that root, and into the poses.
  *
  * Blender writes an armature as a `Null` above the bones and puts its axis and unit conversion
  * on that node: on a Blender export it reads −90° about X and ×100. Starting at the bones, the
@@ -230,11 +230,12 @@ export function parseFbx(input: ArrayBuffer | string, name = 'imported-fbx'): Fb
  * Object instead, they would read −90° and ×100, which Blender never shows for this file.
  *
  * How it folds: with the transform above a root `T · R · k` (k a uniform scale), the root's
- * rest and keys become `T + R·(k·p)` and `R · q`, and every length below it scales by k — which
+ * rest and poses become `T + R·(k·p)` and `R · q`, and every length below it scales by k — which
  * is exactly what the rig's world pose was. A NON-uniform scale cannot fold into lengths and
  * rotations without shear, so it is refused rather than approximated. A root with nothing
  * above it but the loader's own group folds through identity; its values move by rounding only
- * (measured on `mixamo-samba.fbx`: 561 of 28537 keys, at most 7.1e-15 rad).
+ * (measured on `mixamo-samba.fbx` while the fold turned euler keys: 561 of 28537 keys, at most
+ * 7.1e-15 rad).
  *
  * Only the transform at load is read: a node above the rig that is itself animated keeps its
  * rest here (its track is not a bone's).
@@ -243,13 +244,15 @@ function foldTransformAboveRoots(
   group: Group,
   nodes: readonly Object3D[],
   rest: readonly BoneSpec[],
-  keyframes: readonly AnimationKeyframe[],
+  clipPoses: readonly MotionPose[],
   fileTracks: readonly FbxTrack[],
-): { bones: BoneSpec[]; keyframes: AnimationKeyframe[]; tracks: FbxTrack[] } {
+): { bones: BoneSpec[]; poses: MotionPose[]; tracks: FbxTrack[] } {
   group.updateMatrixWorld(true);
   const bones = rest.map((b) => ({ ...b }));
-  let keys = keyframes.map((k) => ({ ...k }));
+  let poses = [...clipPoses];
   let tracks = [...fileTracks];
+  // A pose names a bone as `clipToPoses` resolved it: two of one name are the later one.
+  const indexOf = new Map(rest.map((b, i) => [b.name, i]));
 
   rest.forEach((spec, root) => {
     if (spec.parent >= 0) return;
@@ -288,6 +291,10 @@ function foldTransformAboveRoots(
         turn.clone().multiply(new Quaternion().setFromEuler(new Euler(...r, 'XYZ'))),
       );
     const lengthen = (p: Vec3): Vec3 => [p[0] * k, p[1] * k, p[2] * k];
+    const turnQuat = (q: Quat): Quat => {
+      const t = turn.clone().multiply(new Quaternion(q[0], q[1], q[2], q[3]));
+      return [t.x, t.y, t.z, t.w];
+    };
 
     for (const i of inSubtree) {
       const b = bones[i];
@@ -296,25 +303,30 @@ function foldTransformAboveRoots(
           ? { ...b, position: placeRoot(b.position), rotation: turnRoot(b.rotation) }
           : { ...b, position: lengthen(b.position) };
     }
-    // The root's new angles are chained in time order onto the branch nearest the key before,
-    // as the import road already does (#867): the sampler interpolates Euler components
-    // linearly, and a freshly converted triple can sit a whole turn from its neighbour.
-    const rootAngles = new Map<AnimationKeyframe, Vec3>();
-    let previous: Vec3 | null = null;
-    for (const key of keys.filter((k) => k.bone === root).sort((a, b) => a.time - b.time)) {
-      previous = continuousEuler(turnRoot(key.rotation), previous);
-      rootAngles.set(key, previous);
-    }
-    keys = keys.map((key) => {
-      if (!inSubtree.has(key.bone)) return key;
-      const angles = rootAngles.get(key);
-      return angles
-        ? { ...key, position: placeRoot(key.position), rotation: angles }
-        : { ...key, position: lengthen(key.position) };
-    });
-    // #1211's tracks, folded as the keys are: the root's positions placed and its quaternions
-    // turned, every other position in the subtree lengthened. A quaternion is turned as one, so
-    // it needs none of the Euler branch-chaining above. Scale is a ratio and is left alone.
+    // The poses: the root's positions placed and its quaternions turned, every other position in
+    // the subtree lengthened.
+    poses = poses.map((pose) => ({
+      time: pose.time,
+      bones: Object.fromEntries(
+        Object.entries(pose.bones).map(([name, held]) => {
+          const i = indexOf.get(name);
+          if (i === undefined || !inSubtree.has(i)) return [name, held];
+          const { position, quaternion } = held;
+          if (i !== root)
+            return [name, position ? { ...held, position: lengthen(position) } : held];
+          return [
+            name,
+            {
+              ...held,
+              ...(position ? { position: placeRoot(position) } : {}),
+              ...(quaternion ? { quaternion: turnQuat(quaternion) } : {}),
+            },
+          ];
+        }),
+      ),
+    }));
+    // #1211's tracks, folded as the poses are: the root's positions placed and its quaternions
+    // turned, every other position in the subtree lengthened. Scale is a ratio and is left alone.
     tracks = tracks.map((track) => {
       if (track.boneIndex === null || !inSubtree.has(track.boneIndex)) return track;
       const v = track.values;
@@ -336,7 +348,7 @@ function foldTransformAboveRoots(
       return track;
     });
   });
-  return { bones, keyframes: keys, tracks };
+  return { bones, poses, tracks };
 }
 
 /**
@@ -374,7 +386,7 @@ function readTracks(
   return { tracks, unparsedTracks };
 }
 
-/** #1086's unit on the tracks' lengths — positions only, as `scaleKeyframePositions` does. */
+/** #1086's unit on the tracks' lengths — positions only, as `scalePosePositions` does. */
 function scaleTrackPositions(tracks: readonly FbxTrack[], by: number): readonly FbxTrack[] {
   if (by === 1) return tracks;
   return tracks.map((t) =>
