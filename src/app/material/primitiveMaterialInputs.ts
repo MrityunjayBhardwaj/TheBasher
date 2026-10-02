@@ -209,6 +209,8 @@ export function primitiveMaterialSpec(
     // what the build's enumeration cannot check. The mapping is shared with the glTF
     // road (`threeSide.ts`). `vertexColors` is deliberately NOT here — see below.
     alphaTest: compiled.alphaTest,
+    // #1435 — omitted unless dithered: the content key below walks own keys.
+    ...(compiled.alphaHash ? { alphaHash: true as const } : {}),
     side: threeSideFor(compiled.doubleSided),
     uvTransform: compiled.uvTransform,
     // #550 — per-slot placement, already in THREE's vocabulary. OMITTED when the

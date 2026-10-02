@@ -2222,6 +2222,19 @@ describe('#1139 — a primitive bakes the material it draws, maps and placement 
       expect(spec.doubleSided).toBe(true);
     });
 
+    it('#1435 — bakes the hashed alpha a dithered box draws with, and blends nothing', async () => {
+      const { spec } = await bakeBoxWith({ geometry: { opacity: 0.5, renderMethod: 'dithered' } });
+      expect([spec.alphaHash, spec.transparent, spec.opacity]).toEqual([true, false, 0.5]);
+    });
+
+    it('#1435 — an unlit dithered box bakes its hashed alpha too', async () => {
+      const { spec } = await bakeBoxWith({
+        unlit: true,
+        geometry: { opacity: 1, renderMethod: 'dithered' },
+      });
+      expect([spec.materialClass, spec.alphaHash]).toEqual(['basic', true]);
+    });
+
     it('bakes the thickness a transmissive material refracts through', async () => {
       const { drawn, spec } = await bakeBoxWith({ transmission: { weight: 0.5 } });
       expect(drawn.transmission.weight).toBe(0.5);
@@ -2236,6 +2249,7 @@ describe('#1139 — a primitive bakes the material it draws, maps and placement 
     it('a box drawing neither writes neither field, so earlier saves read as they did', async () => {
       const { spec } = await bakeBoxWith({});
       expect('alphaTest' in spec).toBe(false);
+      expect('alphaHash' in spec).toBe(false);
       expect('doubleSided' in spec).toBe(false);
     });
 
@@ -2249,7 +2263,7 @@ describe('#1139 — a primitive bakes the material it draws, maps and placement 
         paramPath: 'material',
         value: {
           ...current,
-          geometry: { opacity: 1, alphaCutoff: 0.4, doubleSided: true },
+          geometry: { opacity: 1, alphaCutoff: 0.4, doubleSided: true, renderMethod: 'dithered' },
           transmission: { weight: 0.5 },
         },
       }).next;
@@ -2271,6 +2285,7 @@ describe('#1139 — a primitive bakes the material it draws, maps and placement 
       const baked = Object.values(after.nodes).find((n) => n.type === 'BakedData');
       const spec = (baked?.params as { material: BakedMaterialSpec }).material;
       expect(spec.alphaTest).toBe(0.4);
+      expect(spec.alphaHash).toBe(true);
       expect(spec.doubleSided).toBe(true);
       expect(spec.physical?.thickness).toBe(DEFAULT_TRANSMISSION_THICKNESS);
     });

@@ -180,9 +180,10 @@ export async function buildFbxImportOps(args: FbxImportChainArgs): Promise<FbxIm
 
   const meshes = parsed.meshes.meshes;
   // #1434 — every image is stored once, after the whole file has been read.
-  const imageKeys = new Map<number, string>();
+  const imageKeys = new Map<number, StoredImage>();
   for (const [i, image] of parsed.meshes.images.entries()) {
-    imageKeys.set(i, await args.storeImage(image.bytes, image.mime));
+    const key = await args.storeImage(image.bytes, image.mime);
+    imageKeys.set(i, { key, hasAlpha: image.hasAlpha });
   }
   return {
     ops,
@@ -211,13 +212,19 @@ const SAMPLERS = [
 ];
 const textureOf = (t: FbxSlotImage): number => t.image * 2 + (t.clamp ? 1 : 0);
 
+/** #1434 — an image of the file as the project holds it; #1435 with whether it has alpha. */
+interface StoredImage {
+  readonly key: string;
+  readonly hasAlpha: boolean;
+}
+
 /**
  * #1429 — a slot as the native material, through the one translation the import roads share; #1434
  * its images as the glTF road's are, pointing at the project's copies.
  */
 function slotMaterial(
   slot: FbxMaterialSlot,
-  imageKeys: ReadonlyMap<number, string>,
+  imageKeys: ReadonlyMap<number, StoredImage>,
 ): InlineMaterialSpec {
   const material: GltfJsonMaterial = {
     name: slot.name,
@@ -243,12 +250,20 @@ function slotMaterial(
     textures: Array.from({ length: imageKeys.size * 2 }, (_, t) => ({ sampler: t % 2 })),
     samplers: SAMPLERS,
   };
-  const keys = new Map(used.map((t) => [textureOf(t), imageKeys.get(t.image)!]));
-  return withProjectImages(
+  const keys = new Map(used.map((t) => [textureOf(t), imageKeys.get(t.image)!.key]));
+  const native = withProjectImages(
     withCentrePivot(gltfJsonMaterialToOpenpbr(material, tables)),
     tables,
     keys,
   );
+  // #1435 — a base colour image with an alpha channel gives the surface its alpha, drawn dithered:
+  // Blender's FBX importer wires the image's Alpha into the material and sets that render method
+  // (`import_fbx.py`, the `image.depth == 32` pass; `node_shader_utils.py` `use_alpha`). glTF has
+  // no word for it, so it is said on the native material.
+  const base = slot.baseColorImage === undefined ? null : imageKeys.get(slot.baseColorImage.image)!;
+  return base?.hasAlpha
+    ? { ...native, geometry: { ...native.geometry, renderMethod: 'dithered' } }
+    : native;
 }
 
 /**
@@ -262,7 +277,7 @@ function meshOps(
   bones: readonly BoneSpec[],
   skeletonId: string,
   sceneNodeId: string,
-  imageKeys: ReadonlyMap<number, string>,
+  imageKeys: ReadonlyMap<number, StoredImage>,
 ): Op[] {
   const dataId = `${id}_data`;
   const objectId = `${id}_object`;

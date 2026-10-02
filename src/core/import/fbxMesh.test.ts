@@ -19,7 +19,9 @@ import { unpackMeshData, type PackedMeshData } from '../../app/meshGeometryData'
 import { motionImportOps } from '../../app/asset/importBvhFbx';
 import { buildFbxImportOps } from './fbxImportChain';
 import { parseFbx } from './fbx';
-import { readFbxMeshes } from './fbxMesh';
+import { imageHasAlpha, readFbxMeshes } from './fbxMesh';
+import { sniffImage } from './nativeGltfImport';
+import { openpbrToThree } from '../../app/material/openpbrToThree';
 
 const DIR = 'src/core/import/__fixtures__';
 const PANEL = `${DIR}/panel-five-influences-blender-default.fbx`;
@@ -174,6 +176,8 @@ describe('#1429 — a skinned FBX mesh arrives as Blender imports it', () => {
       blender.base.forEach((c, k) => expect(linear[k], `slot ${i} channel ${k}`).toBeCloseTo(c, 2));
       expect(slot.specular.roughness).toBeCloseTo(blender.roughness, 4);
       expect(slot.base.metalness).toBe(blender.metallic);
+      // #1435 — no image, so no image alpha: drawn as every untextured slot is.
+      expect(slot.geometry.renderMethod).toBeUndefined();
     });
   });
 });
@@ -245,10 +249,14 @@ interface OracleInput {
   size: [number, number];
   pixels: number[];
   extension: string;
+  depth: number;
+  image: string;
 }
 const TILE_ORACLE = JSON.parse(
   readFileSync(`${DIR}/blender-oracle-fbx-tile-textured.json`, 'utf8'),
-) as { materials: Record<string, { inputs: Record<string, OracleInput> }> };
+) as {
+  materials: Record<string, { inputs: Record<string, OracleInput>; surface_render_method: string }>;
+};
 
 /** An 8-bit RGB or RGBA PNG's texels, bottom row first as Blender lists them, in 0..1. */
 function pngTexels(png: Uint8Array): { size: [number, number]; pixels: number[] } {
@@ -333,9 +341,53 @@ describe('#1434 — an FBX slot’s images come across as the project’s own fi
       'repeat',
       'repeat',
     ]);
-    // Only the image's alpha stays behind, and says so (#1435).
-    expect(notices).toEqual([
-      'mesh "Tile" uses textures that were left out (TransparencyFactor: an image\'s alpha is not drawn yet (#1435)); its colours came across',
+    // #1435 — and nothing is left out: the transparency link names the base colour image, whose
+    // alpha the surface draws.
+    expect(notices).toEqual([]);
+  });
+
+  it('#1435 — the base colour image’s alpha is the surface’s, drawn dithered as Blender draws it', async () => {
+    const { state } = await imported(TILE, 'tile');
+    const { dataNode } = storedMesh(state, objectNamed(state, 'Tile').id);
+    const material = (state.nodes[dataNode].params as { material: InlineMaterialSpec }).material;
+    const oracle = TILE_ORACLE.materials['Tile/Textured'];
+    // Blender feeds Alpha from the base colour image (its own copy of the same file, the same
+    // texels) and sets the dithered render method.
+    expect(oracle.inputs.Alpha.image.startsWith(oracle.inputs['Base Color'].image)).toBe(true);
+    expect(oracle.inputs.Alpha.pixels).toEqual(oracle.inputs['Base Color'].pixels);
+    expect(oracle.surface_render_method).toBe('DITHERED');
+    expect(material.geometry.renderMethod).toBe('dithered');
+    // The map that carries it is the base colour map, whose texels hold the half-transparent one.
+    const base = pngTexels(stored[Number(material.maps.albedo!.hash.slice('img'.length))].bytes);
+    expect(base.pixels[15]).toBeCloseTo(0.502, 2);
+    // Drawn as three draws a hashed cutout, not blended.
+    const drawn = openpbrToThree(material);
+    expect([drawn.alphaHash, drawn.transparent]).toEqual([true, false]);
+  });
+
+  it('#1435 — every PNG colour type and WebP encoding has alpha exactly when Blender says so', () => {
+    // Blender's own answer for each image (`q19_image_alpha_depth.py`): depth 32 is alpha.
+    const oracle = JSON.parse(
+      readFileSync(`${DIR}/blender-oracle-image-alpha-depth.json`, 'utf8'),
+    ) as { images: { name: string; depth: number; base64: string }[] };
+    expect(oracle.images).toHaveLength(12);
+    const rows = oracle.images.map(({ name, base64 }) => {
+      const data = new Uint8Array(Buffer.from(base64, 'base64'));
+      return [name, imageHasAlpha(data, sniffImage(data)!)];
+    });
+    expect(rows).toEqual(oracle.images.map(({ name, depth }) => [name, depth === 32]));
+    // Both answers occur, so the rule is not passing by answering one way.
+    expect(new Set(rows.map(([, alpha]) => alpha))).toEqual(new Set([true, false]));
+  });
+
+  it('#1435 — an image has alpha exactly when Blender loads it at depth 32', () => {
+    const { images } = parseFbx(bytes(TILE), 'tile').meshes;
+    const inputs = TILE_ORACLE.materials['Tile/Textured'].inputs;
+    const depthOf = (file: string) =>
+      [inputs['Base Color'], inputs.Normal].find((i) => file.endsWith(i.image))!.depth;
+    expect(images.map((i) => [i.hasAlpha, depthOf(i.file) === 32])).toEqual([
+      [true, true],
+      [false, false],
     ]);
   });
 
@@ -349,6 +401,84 @@ describe('#1434 — an FBX slot’s images come across as the project’s own fi
   it('an untextured file stores no image', async () => {
     await imported(PANEL, 'panel');
     expect(stored).toEqual([]);
+  });
+});
+
+describe('#1435 — the image that gives the surface its alpha, in Blender’s order', () => {
+  // The tile links one RGBA image to DiffuseColor and to TransparencyFactor, and an RGB normal map.
+  const BASE = 'tile-textured.fbm/tex_base.png';
+  /** The tile's loader record, its links changed by `edit`, read again. */
+  function readLinks(edit: (links: Record<string, unknown>[]) => void) {
+    const group = new FBXLoader().parse(bytes(TILE), '');
+    group.traverse((node) => {
+      const mesh = node as Mesh;
+      if (mesh.isMesh) edit((mesh.material as Material).userData.fbxTextures);
+    });
+    const read = readFbxMeshes(group, () => 0, 1);
+    return { images: read.images, notices: read.notices.join('\n') };
+  }
+  const link = (links: Record<string, unknown>[], name: string) =>
+    links.find((t) => t.link === name)!;
+  /** The base colour becomes an RGB image of its own: the normal map's bytes, under a new name. */
+  const rgbBase = (links: Record<string, unknown>[]) => {
+    Object.assign(link(links, 'DiffuseColor'), {
+      file: 'rgb.png',
+      content: link(links, 'NormalMap').content,
+    });
+  };
+
+  it('the file as made: the base colour image has alpha, so nothing is left out', () => {
+    const { images, notices } = readLinks(() => {});
+    expect(images.map((i) => [i.file, i.hasAlpha])).toEqual([
+      [BASE, true],
+      ['tile-textured.fbm/tex_normal.png', false],
+    ]);
+    expect(notices).toBe('');
+  });
+
+  it('a base colour image with alpha overrides a transparency link to another image', () => {
+    const { notices } = readLinks((links) => {
+      Object.assign(link(links, 'TransparencyFactor'), {
+        file: 'other.png',
+        content: link(links, 'DiffuseColor').content,
+      });
+    });
+    expect(notices).toBe('');
+  });
+
+  it('a base colour without alpha and a transparency image WITH alpha: named, not stored', () => {
+    const { images, notices } = readLinks(rgbBase);
+    expect(images.map((i) => [i.file, i.hasAlpha])).toEqual([
+      ['rgb.png', false],
+      ['tile-textured.fbm/tex_normal.png', false],
+    ]);
+    expect(notices).toContain(
+      `TransparencyFactor: "${BASE}" gives the surface its alpha, and only the base colour image's alpha is drawn yet (#1439)`,
+    );
+  });
+
+  it('a transparency link to an image without alpha draws nothing, as Blender’s Alpha of 1', () => {
+    // To the base colour image itself, and to another RGB image: both opaque in Blender too.
+    for (const target of ['rgb.png', 'tile-textured.fbm/tex_normal.png']) {
+      const { notices } = readLinks((links) => {
+        rgbBase(links);
+        const source =
+          target === 'rgb.png' ? link(links, 'DiffuseColor') : link(links, 'NormalMap');
+        Object.assign(link(links, 'TransparencyFactor'), {
+          file: target,
+          content: source.content,
+        });
+      });
+      expect(notices, target).toBe('');
+    }
+  });
+
+  it('a transparency image that cannot be read is named', () => {
+    const { notices } = readLinks((links) => {
+      rgbBase(links);
+      link(links, 'TransparencyFactor').content = null;
+    });
+    expect(notices).toContain(`TransparencyFactor: "${BASE}" is not embedded in the file`);
   });
 });
 

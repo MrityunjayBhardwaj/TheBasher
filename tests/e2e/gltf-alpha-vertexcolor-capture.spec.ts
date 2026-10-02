@@ -1,5 +1,6 @@
 // glTF direct-import (texture-maps milestone, V53) — slices 2 & 3:
 //   (2) alphaMode:'MASK' + alphaCutoff  → cutout
+//   #1435 alphaMode:'BLEND'              → the texture's alpha drawn blended
 //   (3) vertex colors (COLOR_0)         → per-vertex tint
 //
 // Each test is a boundary pair: what the DRAWN three.js material carries (side B)
@@ -41,7 +42,14 @@ const firstDrawn = async (page: import('@playwright/test').Page) =>
 const capturedGeometry = async (page: import('@playwright/test').Page) => {
   const mesh = await firstMaterialMesh(page);
   const slot = mesh?.slots[0] as
-    | { geometry?: { alphaCutoff?: number; colorLayer?: string; doubleSided?: boolean } }
+    | {
+        geometry?: {
+          alphaCutoff?: number;
+          colorLayer?: string;
+          doubleSided?: boolean;
+          renderMethod?: string;
+        };
+      }
     | undefined;
   return slot?.geometry ?? null;
 };
@@ -68,6 +76,30 @@ test.describe('glTF alphaMode + vertex-color — drawn material + captured mater
     // side=DoubleSide (2) AND the captured flag.
     await expect.poll(async () => (await firstDrawn(page))?.side).toBe(2);
     await expect.poll(async () => (await capturedGeometry(page))?.doubleSided).toBe(true);
+  });
+
+  test('#1435 alphaMode:BLEND → drawn blended at an opaque factor; captured render method', async ({
+    page,
+  }) => {
+    await page.goto('/');
+    await page.waitForFunction(
+      () => typeof (window as unknown as BasherWindow).__basher_ingestGltfFolder === 'function',
+    );
+    // The cutout quad's RGBA texture with its mode set to BLEND and a factor alpha of 1, so only
+    // the mode can turn blending on: before #1435 this drew opaque.
+    await ingest(page, 'blend-alpha-quad.gltf', 'blend');
+    await expect.poll(async () => (await firstMaterialMesh(page))?.road).toBe('native');
+
+    // side B — the drawn material blends, with the texture's alpha in its map, and no cutout.
+    await expect
+      .poll(async () => {
+        const d = await firstDrawn(page);
+        return d && [d.transparent, d.alphaHash, d.alphaTest, d.hasMap];
+      })
+      .toEqual([true, false, 0, true]);
+
+    // side A — the importer captured the render method into the material.
+    await expect.poll(async () => (await capturedGeometry(page))?.renderMethod).toBe('blended');
   });
 
   test('COLOR_0 → native draws the Color layer; the material names it', async ({ page }) => {

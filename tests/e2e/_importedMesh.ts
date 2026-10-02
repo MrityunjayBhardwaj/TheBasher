@@ -89,6 +89,8 @@ export interface DrawnImportMesh {
   readonly metalness: number | null;
   readonly roughness: number | null;
   readonly alphaTest: number | null;
+  /** #1435 — the alpha drawn as a hashed cutout (a dithered surface). */
+  readonly alphaHash: boolean;
   readonly transparent: boolean;
   readonly vertexColors: boolean;
   readonly side: number | null;
@@ -322,6 +324,7 @@ export async function drawnImportMeshes(page: Page, rootId?: string): Promise<Dr
       metalness?: number;
       roughness?: number;
       alphaTest?: number;
+      alphaHash?: boolean;
       transparent?: boolean;
       vertexColors?: boolean;
       side?: number;
@@ -380,6 +383,7 @@ export async function drawnImportMeshes(page: Page, rootId?: string): Promise<Dr
             metalness: typeof mat?.metalness === 'number' ? mat.metalness : null,
             roughness: typeof mat?.roughness === 'number' ? mat.roughness : null,
             alphaTest: typeof mat?.alphaTest === 'number' ? mat.alphaTest : null,
+            alphaHash: mat?.alphaHash === true,
             transparent: mat?.transparent === true,
             vertexColors: mat?.vertexColors === true,
             side: typeof mat?.side === 'number' ? mat.side : null,

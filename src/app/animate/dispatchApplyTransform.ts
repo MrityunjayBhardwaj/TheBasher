@@ -322,6 +322,7 @@ function bakedSpecFromInline(material: InlineMaterialSpec | null): BakedMaterial
       map: drawn.maps.map,
       ...(Object.keys(placements).length > 0 ? { mapPlacements: placements } : {}),
       ...(drawn.alphaTest !== 0 ? { alphaTest: drawn.alphaTest } : {}),
+      ...(drawn.alphaHash ? { alphaHash: true as const } : {}),
       ...(drawn.doubleSided ? { doubleSided: true } : {}),
     };
   }
@@ -337,8 +338,9 @@ function bakedSpecFromInline(material: InlineMaterialSpec | null): BakedMaterial
     emissiveIntensity: drawn.emissiveIntensity,
     ...drawn.maps,
     ...(Object.keys(placements).length > 0 ? { mapPlacements: placements } : {}),
-    // #1140 — the cutout and the side, absent at three's defaults.
+    // #1140 — the cutout and the side, absent at three's defaults. #1435 — and the hashed alpha.
     ...(drawn.alphaTest !== 0 ? { alphaTest: drawn.alphaTest } : {}),
+    ...(drawn.alphaHash ? { alphaHash: true as const } : {}),
     ...(drawn.doubleSided ? { doubleSided: true } : {}),
     // #1123 — the map strengths, absent at their default of 1.
     ...(drawn.normalScale !== undefined ? { normalScale: drawn.normalScale } : {}),

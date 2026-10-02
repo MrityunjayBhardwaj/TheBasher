@@ -162,7 +162,8 @@ test('#1429 — an FBX with a skinned mesh imports, and draws where Blender defo
 // #1434 — an FBX whose material samples embedded images: the base colour and the normal map draw the
 // file's own images out of the project's image folder, the base colour unmultiplied, as Blender
 // draws them (`q18_fbx_texture_oracle.py`: both images 2×2, the base colour's socket linked). Saved
-// and reloaded, they still draw: only the project's own copies can supply them then.
+// and reloaded, they still draw: only the project's own copies can supply them then. #1435 — the
+// base colour image has alpha, and Blender draws it as the surface's, dithered: hashed, not blended.
 test('#1434 — an FBX’s embedded images draw from the project, and still do after a reload', async ({
   page,
 }) => {
@@ -194,9 +195,20 @@ test('#1434 — an FBX’s embedded images draw from the project, and still do a
       mapColorSpace: m.mapColorSpace,
       normalMapWidth: m.normalMapWidth,
       color: m.color,
+      alphaHash: m.alphaHash,
+      transparent: m.transparent,
     }));
   };
-  const AS_BLENDER = [{ mapWidth: 2, mapColorSpace: 'srgb', normalMapWidth: 2, color: '#ffffff' }];
+  const AS_BLENDER = [
+    {
+      mapWidth: 2,
+      mapColorSpace: 'srgb',
+      normalMapWidth: 2,
+      color: '#ffffff',
+      alphaHash: true,
+      transparent: false,
+    },
+  ];
   await expect.poll(drawn, { message: 'after import', timeout: 15_000 }).toEqual(AS_BLENDER);
 
   const projectId = (await page.evaluate(() => localStorage.getItem('basher.lastProjectId')))!;

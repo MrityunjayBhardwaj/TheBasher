@@ -3254,6 +3254,8 @@ function FlattenedBakedMeshR({
  */
 function bakedSurface(m: THREE.Material, spec: BakedMaterialSpec): void {
   if (spec.alphaTest !== undefined) m.alphaTest = spec.alphaTest;
+  // #1435 — the hashed alpha the source drew with; absent is three's default.
+  if (spec.alphaHash) m.alphaHash = true;
   if (spec.doubleSided !== undefined) m.side = threeSideFor(spec.doubleSided);
 }
 
@@ -3396,6 +3398,7 @@ function CapturedBakedMeshR({
     tex,
     spec.mapPlacements,
     spec.alphaTest,
+    spec.alphaHash,
     spec.doubleSided,
     spec.normalScale,
     spec.aoMapIntensity,

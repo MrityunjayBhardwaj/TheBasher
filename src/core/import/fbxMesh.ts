@@ -31,7 +31,8 @@
 // to it, by the link's name — read off the file, because three's loader drops the links it cannot
 // draw. Each link feeds the input Blender's importer feeds (`materialsOf`); an embedded image is
 // read once and stored by the import chain exactly as the glTF road stores its images. Anything a
-// slot cannot draw as Blender does is left out and named.
+// slot cannot draw as Blender does is left out and named. #1435 — a base colour image with an alpha
+// channel is the surface's alpha, drawn dithered, as Blender wires and draws it.
 //
 // REF: src/core/import/fbx.ts (`parseFbx`, the rig and the unit); src/core/import/nativeGltfImport.ts
 //      (`skinIntoArmatureSpace`, the same rest re-skin for glTF; `withProjectImages`, the images);
@@ -104,6 +105,11 @@ export interface FbxImage {
   readonly file: string;
   readonly bytes: Uint8Array;
   readonly mime: string;
+  /**
+   * #1435 — the image has an alpha channel: what Blender's FBX importer asks before it draws a
+   * diffuse image's alpha (`image.depth == 32`). See {@link imageHasAlpha}.
+   */
+  readonly hasAlpha: boolean;
 }
 
 export interface FbxMeshRead {
@@ -211,19 +217,61 @@ class ImageTable {
   add(texture: FbxTextureLink): number | string {
     const known = this.byFile.get(texture.file);
     if (known !== undefined) return known;
-    if (texture.content === null || texture.content === '') {
-      return `"${texture.file}" is not embedded in the file`;
-    }
-    const bytes =
-      typeof texture.content === 'string'
-        ? decodeDataUri(`data:;base64,${texture.content}`)
-        : new Uint8Array(texture.content);
-    const mime = sniffImage(bytes);
-    if (mime === null) return `"${texture.file}" is not PNG, JPEG or WebP`;
-    this.list.push({ file: texture.file, bytes, mime });
+    const image = decodeImage(texture);
+    if (typeof image === 'string') return image;
+    this.list.push(image);
     this.byFile.set(texture.file, this.list.length - 1);
     return this.list.length - 1;
   }
+}
+
+/** A linked texture's embedded image, read but not stored, or why it cannot be. */
+function decodeImage(texture: FbxTextureLink): FbxImage | string {
+  if (texture.content === null || texture.content === '') {
+    return `"${texture.file}" is not embedded in the file`;
+  }
+  const bytes =
+    typeof texture.content === 'string'
+      ? decodeDataUri(`data:;base64,${texture.content}`)
+      : new Uint8Array(texture.content);
+  const mime = sniffImage(bytes);
+  if (mime === null) return `"${texture.file}" is not PNG, JPEG or WebP`;
+  return { file: texture.file, bytes, mime, hasAlpha: imageHasAlpha(bytes, mime) };
+}
+
+/**
+ * #1435 — whether an image has an alpha channel, as Blender 5.1.1 loads it (`image.depth == 32`).
+ * Measured over every PNG colour type and both WebP encodings Blender writes: alpha for a PNG of
+ * colour type 4 (grey + alpha) or 6 (RGBA), and for ANY PNG with a `tRNS` chunk (palette, RGB or
+ * grey); none for RGB, grey or palette without one. A WebP has alpha when its `VP8X` header sets
+ * the alpha flag, or its lossless `VP8L` header sets `alpha_is_used`; plain lossy `VP8 ` has none.
+ * A JPEG never has alpha.
+ */
+export function imageHasAlpha(bytes: Uint8Array, mime: string): boolean {
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const tag = (at: number) => String.fromCharCode(...bytes.subarray(at, at + 4));
+  if (mime === 'image/png') {
+    if (bytes.length < 26) return false;
+    const colourType = bytes[25];
+    if (colourType === 4 || colourType === 6) return true;
+    // Walk the chunks to the first `IDAT`: `tRNS` must come before it.
+    for (let at = 8; at + 8 <= bytes.length; ) {
+      const type = tag(at + 4);
+      if (type === 'tRNS') return true;
+      if (type === 'IDAT' || type === 'IEND') return false;
+      at += 12 + view.getUint32(at);
+    }
+    return false;
+  }
+  if (mime === 'image/webp') {
+    if (bytes.length < 30) return false;
+    const chunk = tag(12);
+    if (chunk === 'VP8X') return (bytes[20] & 0x10) !== 0;
+    // VP8L: signature byte 0x2f, then 14 + 14 bits of size and the `alpha_is_used` bit.
+    if (chunk === 'VP8L') return ((view.getUint32(21, true) >>> 28) & 1) === 1;
+    return false;
+  }
+  return false;
 }
 
 /**
@@ -268,6 +316,7 @@ function materialsOf(
     };
     let baseColorImage: FbxSlotImage | null = null;
     let normalImage: FbxSlotImage | null = null;
+    const alphaLinks: FbxTextureLink[] = [];
     // A second image for an input it already has: Blender's loop keeps the last one, this the
     // first, so the other is named rather than silently disagreeing.
     const second = (texture: FbxTextureLink) =>
@@ -280,10 +329,27 @@ function materialsOf(
         if (normalImage === null) normalImage = take(texture);
         else second(texture);
       } else if (ALPHA_LINKS.has(texture.link)) {
-        // Blender draws the image's alpha as the surface's; a native material cannot yet (#1435).
-        unheldMaps.push(`${texture.link}: an image's alpha is not drawn yet (#1435)`);
+        alphaLinks.push(texture);
       } else {
         unheldMaps.push(`${texture.link}: a slot carries no image there yet`);
+      }
+    }
+    // #1435 — the alpha, by Blender's order (`import_fbx.py`, 5.1.1): a base colour image with an
+    // alpha channel feeds the surface's alpha and overrides any transparency link (the
+    // `image.depth == 32` pass, `copy_from`), and the slot draws it (`slotMaterial`). Otherwise a
+    // transparency link's image does, through its Alpha output — which is 1, so nothing to draw,
+    // when that image has no alpha channel (the base colour image's own case included). The one
+    // case left is an image with alpha that is not the base colour's (#1439); it is read to ask,
+    // and not stored.
+    if (baseColorImage === null || !images.list[baseColorImage.image].hasAlpha) {
+      for (const texture of alphaLinks) {
+        const image = decodeImage(texture);
+        if (typeof image === 'string') unheldMaps.push(`${texture.link}: ${image}`);
+        else if (image.hasAlpha) {
+          unheldMaps.push(
+            `${texture.link}: "${texture.file}" gives the surface its alpha, and only the base colour image's alpha is drawn yet (#1439)`,
+          );
+        }
       }
     }
     return {

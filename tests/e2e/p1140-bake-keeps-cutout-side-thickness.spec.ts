@@ -1,5 +1,5 @@
 // p1140 — Apply keeps the cutout, the side and the thickness the box drew with, through save and
-// reload.
+// reload; #1435 — and the hashed alpha a dithered surface draws with.
 //
 // Before #1140 the baked material spec had no field for any of the three, so a box drawing a 0.4
 // cutout, both faces and refracting glass baked into an opaque, front-only, flat-glass box — and
@@ -55,9 +55,9 @@ async function waitForEditor(page: Page): Promise<void> {
 /** The box's drawn surface: what a person sees as cutout, sidedness and refraction depth. */
 function boxSurface(
   page: Page,
-): Promise<{ alphaTest: number; side: number; thickness: number } | null> {
+): Promise<{ alphaTest: number; alphaHash: boolean; side: number; thickness: number } | null> {
   return page.evaluate((id) => {
-    type Mat = { alphaTest?: number; side?: number; thickness?: number };
+    type Mat = { alphaTest?: number; alphaHash?: boolean; side?: number; thickness?: number };
     type O3 = { isMesh?: boolean; material?: Mat | null; traverse: (f: (o: O3) => void) => void };
     const scene = (
       window as unknown as {
@@ -66,11 +66,13 @@ function boxSurface(
         };
       }
     ).__basher_three.getState().scene;
-    let found: { alphaTest: number; side: number; thickness: number } | null = null;
+    let found: { alphaTest: number; alphaHash: boolean; side: number; thickness: number } | null =
+      null;
     scene.getObjectByName(id)?.traverse((o) => {
       if (!o.isMesh || !o.material || found) return;
       found = {
         alphaTest: o.material.alphaTest ?? 0,
+        alphaHash: o.material.alphaHash === true,
         side: o.material.side ?? 0,
         thickness: o.material.thickness ?? 0,
       };
@@ -85,6 +87,7 @@ async function expectBoxDrawsSurface(page: Page, when: string): Promise<void> {
     .toBe(CUTOFF);
   const surface = (await boxSurface(page))!;
   expect(surface.side, `${when}: draws both faces`).toBe(DOUBLE_SIDE);
+  expect(surface.alphaHash, `${when}: draws its alpha hashed`).toBe(true);
   expect(surface.thickness, `${when}: glass refracts through a thickness`).toBeCloseTo(
     THICKNESS,
     9,
@@ -139,6 +142,7 @@ test('#1140 — a cutout, double-sided, transmissive box keeps all three through
                 ...(material.geometry as object),
                 alphaCutoff: cutoff,
                 doubleSided: true,
+                renderMethod: 'dithered',
               },
               transmission: { ...(material.transmission as object), weight: 0.5 },
             },

@@ -166,3 +166,21 @@ describe('#536 S1 — a material key minted by evaluation', () => {
     expect(v.material === null).toBe(v.materialKey === null);
   });
 });
+
+describe('#1435 — the render method hydrates, keys apart, and is absent at its default', () => {
+  it('keeps a known method, drops anything else, and adds no key when there is none', () => {
+    const geometryOf = (renderMethod: unknown) =>
+      hydrateInlineMaterial({ geometry: { opacity: 1, renderMethod } }).geometry;
+    expect(geometryOf('dithered').renderMethod).toBe('dithered');
+    expect(geometryOf('blended').renderMethod).toBe('blended');
+    expect('renderMethod' in geometryOf('hashed')).toBe(false);
+    expect('renderMethod' in geometryOf(undefined)).toBe(false);
+  });
+
+  it('a dithered material keys apart from the same material without it, which keys as before', () => {
+    const plain = hydrateInlineMaterial({ geometry: { opacity: 1 } });
+    const dithered = hydrateInlineMaterial({ geometry: { opacity: 1, renderMethod: 'dithered' } });
+    expect(materialKeyOf(dithered)).not.toBe(materialKeyOf(plain));
+    expect(materialKeyOf(hydrateInlineMaterial({}))).toBe(materialKeyOf(plain));
+  });
+});
