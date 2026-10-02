@@ -19,8 +19,8 @@ export const GltfAssetParams = z.object({
   assetRef: z.string().min(1),
   /**
    * P7.5 — glTF TRS animation extraction (issue #81). Sanitised
-   * scene-node-name → DAG target id, populated by `buildGltfImportOps`
-   * at drop time. The `.default({})` makes the field additive: pre-7.5
+   * scene-node-name → DAG target id, populated at drop time by the clone
+   * importer (removed in #1424; only an old save holds one). The `.default({})` makes the field additive: pre-7.5
    * saved projects with a GltfAsset node hydrate with an empty map,
    * which the renderer treats as "no per-child override available."
    * (V10 / H14-clean — no schema-version bump needed.)

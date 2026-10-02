@@ -1,64 +1,33 @@
-// glTF TRS animation import — Phase 7.5 Wave D (issue #81).
+// What is left of the glTF clone importer (Phase 7.5 Wave D, #81) after the clone road retired.
 //
-// Single sibling to buildFbxImportOps / buildBvhImportOps — the third
-// importer the deferred-glTF-clips note in fbxImportChain.ts:7 was
-// waiting for. Eager-parses GLB animations into N TransformClip Ops
-// + 1 ClipSelect Op + the existing static GltfAsset → Transform →
-// Group → Scene chain, all atomic.
+// This file used to build the whole clone import — a GltfAsset, a GltfData per mesh child, a
+// GltfSkeleton per skin, TransformClips and a ClipSelect. Nothing imports that way since #1421,
+// and the builder itself (`buildGltfImportOps`) went with its last caller, the load converter
+// (#1424). What stays is what other code still reads:
 //
-// Discipline (CONTEXT.md / RESEARCH.md):
-//   - **Deterministic** ids: content-addressed (fnv1a-32 over assetRef
-//     + suffix). No Math.random / Date.now anywhere in this file —
-//     V2 / THESIS §48.
-//   - **Single path**: always run this importer; emit a degenerate Op
-//     chain (no TransformClip / no ClipSelect / empty nodeNameMap) when
-//     `json.animations` is absent or empty. One call graph; one test
-//     surface.
-//   - **Rotation conversion at the seam**: quaternionToEulerVec3 →
-//     radians → radVec3ToDeg → degrees. Locked at B3 CHECKPOINT (see
-//     .planning/phases/7.5-gltf-transform-clip/SECTION-INVENTORY.md).
-//   - **Sanitised names**: scene-node names go through sanitizeBoneName
-//     (same THREE-reserved-char class as BVH bones); collisions get a
-//     `__N` suffix in JSON-array walk order.
-//   - **glTF defaults**: a node's static `translation / rotation / scale`
-//     fill any TRS channel a clip doesn't carry (glTF 2.0 §5.34).
+//   - `hashId` and the id helpers — content-addressed node ids (fnv1a-32 over assetRef + suffix,
+//     no Math.random / Date.now: V2 / THESIS §48). The native importer mints its ids with
+//     `hashId`; the frozen migrations address old imported children with `gltfChildDagId` /
+//     `gltfChannelDagId`; `importGroupNodeIds` is an old import's footprint in a saved graph.
+//   - `buildNodeNameMap` — sanitised, collision-suffixed scene-node names, in JSON-array walk
+//     order. The native importer keys its nodes with it.
+//   - `computeGltfBoundsCenter` — the native importer's default pivot.
+//   - `buildSkinMetadata` / `defaultTRS` — the shape a `GltfSkeleton` node holds. No production
+//     caller; tests of the skeleton projection and the retarget use it to make that shape. It
+//     goes when the node type does (#1425).
 //
-// REF: PLAN.md Wave D; CONTEXT D-01/D-02/D-03/D-06;
-// fbxImportChain.ts:7 (the abstraction note that earns its keep here).
+// REF: src/core/import/nativeGltfImport.ts; src/core/project/migrations.ts;
+//      src/app/asset/importCommon.ts; issues #81, #1053, #1424, #1425.
 
-import { BufferAttribute, BufferGeometry, Matrix4, Quaternion, Vector3 } from 'three';
+import { Matrix4, Quaternion, Vector3 } from 'three';
 import { radVec3ToDeg, type Vec3 } from '../../viewport/rotation';
-import { sanitizeBoneName, quaternionToEulerVec3, continuousEuler } from './threeAdapter';
-import { gltfJsonMaterialToOpenpbr } from './gltfJsonMaterialToOpenpbr';
-import type { InlineMaterialSpec } from '../../nodes/types';
-import {
-  parseGltfContainer,
-  resolveBuffers,
-  readAccessor,
-  type GltfAnimation,
-  type GltfJson,
-} from './glb';
-import type { Op } from '../dag/types';
+import { sanitizeBoneName, quaternionToEulerVec3 } from './threeAdapter';
+import { readAccessor, type GltfJson } from './glb';
 import type { DagState } from '../dag/state';
 // #389 — the ONE reader of "is this node an imported child, and what is it?". Imported
 // rather than re-spelled here for the reason its own header gives: the fused kind's
 // spelling used to live in fifteen places, and this module was one of them.
 import { importedChildDataId, importedChildrenOf } from '../../app/importedChild';
-// #1040 — PRODUCTION's weld, not a second spelling of it: the number this capture writes
-// is compared against `weldByPosition` of the loaded buffer at the read door, so both
-// sides must quantise, handle negative zero and join a seam column identically.
-import { weldByPosition } from '../../app/pointIdentity';
-
-export interface GltfImportChainResult {
-  readonly ops: Op[];
-  readonly gltfAssetId: string;
-  readonly clipSelectId: string | null;
-  readonly transformClipIds: string[];
-  /** One `GltfSkeleton` id per captured skin, in skins[] order. Empty for an
-   *  unskinned asset — there is nothing to project (#807). */
-  readonly skeletonIds: string[];
-  readonly nodeNameMap: Record<string, string>;
-}
 
 export interface GltfImportChainArgs {
   readonly buffer: ArrayBuffer;
@@ -114,25 +83,6 @@ export function gltfChildDagId(assetRef: string, childName: string): string {
 }
 
 /**
- * The content-addressed DAG id of an imported child's DATA half (#389).
- *
- * The OBJECT half keeps {@link gltfChildDagId} — it inherits the fused node's id, so every
- * clip target, channel `target`, constraint target, saved selection and `nodeNameMap` entry
- * that named the child still resolves with nothing re-pointed. Only the data node is new,
- * and it gets its own namespace so it can never collide with the child's id nor a baked
- * channel's.
- *
- * ⚠️ The MIGRATION does not use this, and that is not an oversight. A saved project may
- * already hold a node at any id, so the ladder mints through `freshDataId` and probes for
- * a collision — the same thing every split pass before this one does. The two derivations
- * name the same thing in different projects and never have to agree; what must be
- * deterministic is THIS one, so re-importing an asset is byte-identical (V22).
- */
-export function gltfChildDataDagId(assetRef: string, childName: string): string {
-  return hashId('gltfChildData', assetRef, childName);
-}
-
-/**
  * The content-addressed DAG id of a P7.12 baked KeyframeChannel for one bone's
  * TRS component (position/rotation/scale). Deterministic (V22): re-baking the
  * same bone yields the SAME ids, so the bake is idempotent (D1 guards on
@@ -160,8 +110,9 @@ export function gltfSkeletonDagId(assetRef: string, skinIndex: number): string {
 }
 
 /**
- * Every DAG node `buildGltfImportOps` emits for one `assetRef` — the "import
- * footprint" of a single imported glTF. Used by the My-Imports break-refs
+ * Every DAG node the clone importer emitted for one `assetRef` — the "import
+ * footprint" of a single glTF imported on the old structure (#1424: only an old
+ * save holds one). Used by the My-Imports break-refs
  * delete (#127) to GC the WHOLE subtree, not just the `GltfAsset` node, so a
  * referenced-asset delete leaves no orphan wrapper `Transform`/`Group`, no
  * inputless `GltfChild` satellites, and no `TransformClip`/`ClipSelect` ghosts.
@@ -172,7 +123,7 @@ export function gltfSkeletonDagId(assetRef: string, skinIndex: number): string {
  * satellites) are found by `params.assetRef` (authoritative — survives the
  * dedup-suffix key rename), and the structural wrappers that carry no assetRef
  * (`Transform`/`Group`/`ClipSelect`/`TransformClip`) are recomputed via the
- * same `hashId(prefix, assetRef, …)` derivation `buildGltfImportOps` uses.
+ * same `hashId(prefix, assetRef, …)` derivation the importer used.
  *
  * Crucially this NEVER over-reaches into user-wired nodes: a user-created
  * Transform has a random id, never `hashId('tx', assetRef)`, and never carries
@@ -181,8 +132,8 @@ export function gltfSkeletonDagId(assetRef: string, skinIndex: number): string {
  * that actually exist in `state` are returned (a clip-less import has no
  * clip/sel nodes; a re-saved older project may lack some).
  *
- * REF: src/core/import/gltfImportChain.ts:392 `buildGltfImportOps` (the emitter
- *      this mirrors); src/app/asset/importCommon.ts `deleteImportedAsset`
+ * REF: src/core/project/__fixtures__/clone-characters/placed.json (a recorded
+ *      footprint); src/app/asset/importCommon.ts `deleteImportedAsset`
  *      (the break-refs consumer); issue #127.
  */
 export function importGroupNodeIds(assetRef: string, state: DagState): string[] {
@@ -280,26 +231,6 @@ export function buildNodeNameMap(json: GltfJson, assetRef: string): NameMapResul
   return { nodeNameMap, keyByGltfNodeIndex, childHierarchy };
 }
 
-interface PartialKeyframe {
-  position?: Vec3;
-  /** DEGREES — the assembled//default value, matching `defaultTRS`. */
-  rotation?: Vec3;
-  /**
-   * #876 — RADIANS, and deliberately separate from `rotation`.
-   *
-   * A glTF rotation sampler stores quaternions, and the Euler triple that
-   * represents one is not unique. Converting each key on its own picks a
-   * CANONICAL representative with no memory of the previous key, and the
-   * consumer (`TransformClip`) lerps those components — so two keys either
-   * side of a branch cut interpolate the long way round. This field holds
-   * the raw conversion so continuity can be resolved LATER, in time order,
-   * once the per-target assemblage is sorted. Absent for a target with no
-   * rotation channel, which then falls back to the node's static TRS.
-   */
-  rotationRad?: Vec3;
-  scale?: Vec3;
-}
-
 /**
  * A complete static TRS — what a glTF node declares and what `defaultTRS`
  * yields. Deliberately NOT `Required<PartialKeyframe>`: since #876 that form
@@ -309,14 +240,6 @@ interface PartialKeyframe {
  * have.
  */
 interface StaticTRS {
-  position: Vec3;
-  rotation: Vec3;
-  scale: Vec3;
-}
-
-interface CompleteKeyframe {
-  targetNodeId: string;
-  time: number;
   position: Vec3;
   rotation: Vec3;
   scale: Vec3;
@@ -358,10 +281,6 @@ export function defaultTRS(node: GltfJson['nodes'][number]): StaticTRS {
     rotation: radVec3ToDeg(rotRad),
     scale: (node.scale ?? [1, 1, 1]) as Vec3,
   };
-}
-
-function addVec3(a: Vec3, b: Vec3): Vec3 {
-  return [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
 }
 
 /**
@@ -533,543 +452,4 @@ export function buildSkinMetadata(
       ...(skin.name !== undefined ? { name: skin.name } : {}),
     };
   });
-}
-
-function buildClipKeyframes(
-  animation: GltfAnimation,
-  json: GltfJson,
-  buffers: Uint8Array[],
-  keyByGltfNodeIndex: Record<number, string>,
-): { duration: number; keyframes: CompleteKeyframe[] } {
-  // Per-target per-time partial assemblage. We merge translation /
-  // rotation / scale channels onto the same (target, time) key, then
-  // fill missing components from the glTF node's static TRS (glTF 2.0
-  // §5.34 — "the channel's missing components use the corresponding
-  // values from the targeted node's transform").
-  const partial = new Map<string, Map<number, PartialKeyframe>>();
-  let duration = 0;
-  for (const channel of animation.channels) {
-    const sampler = animation.samplers[channel.sampler];
-    const targetIndex = channel.target.node;
-    const targetKey = keyByGltfNodeIndex[targetIndex];
-    if (!targetKey) continue;
-    const times = readAccessor(json, buffers, sampler.input);
-    const values = readAccessor(json, buffers, sampler.output);
-    for (let i = 0; i < times.length; i++) {
-      duration = Math.max(duration, times[i]);
-      let perTarget = partial.get(targetKey);
-      if (!perTarget) {
-        perTarget = new Map();
-        partial.set(targetKey, perTarget);
-      }
-      let kf = perTarget.get(times[i]);
-      if (!kf) {
-        kf = {};
-        perTarget.set(times[i], kf);
-      }
-      if (channel.target.path === 'translation') {
-        kf.position = [values[i * 3], values[i * 3 + 1], values[i * 3 + 2]];
-      } else if (channel.target.path === 'scale') {
-        kf.scale = [values[i * 3], values[i * 3 + 1], values[i * 3 + 2]];
-      } else if (channel.target.path === 'rotation') {
-        const quat = new Quaternion(
-          values[i * 4],
-          values[i * 4 + 1],
-          values[i * 4 + 2],
-          values[i * 4 + 3],
-        );
-        // #876 — DEFERRED ON PURPOSE. Converting here would be per-keyframe and
-        // memoryless; continuity is resolved below, where the times are sorted.
-        // Note this loop walks CHANNELS then samples, so `i` is only in time
-        // order within one channel and a target may be fed by more than one —
-        // which is exactly why the ordering has to be established first.
-        kf.rotationRad = quaternionToEulerVec3(quat);
-      }
-    }
-  }
-  // Flatten: every (target, time) gets the missing TRS components
-  // filled from the node's static defaults.
-  const keyframes: CompleteKeyframe[] = [];
-  for (const [targetKey, perTimeMap] of partial) {
-    // Stable ordering: target keys in node-index order; times ascending.
-    const times = [...perTimeMap.keys()].sort((a, b) => a - b);
-    // Resolve node index from keyByGltfNodeIndex inverse lookup; fallback
-    // to {0,0,0}/{0,0,0}/{1,1,1} if the lookup misses (shouldn't happen).
-    const nodeIndex = Object.entries(keyByGltfNodeIndex).find(([, v]) => v === targetKey)?.[0];
-    const node = nodeIndex !== undefined ? json.nodes[Number(nodeIndex)] : undefined;
-    const defaults = node
-      ? defaultTRS(node)
-      : ({
-          position: [0, 0, 0],
-          rotation: [0, 0, 0],
-          scale: [1, 1, 1],
-        } as StaticTRS);
-    // #876 — resolve rotation continuity HERE, walking `times` ascending, which
-    // is the same order (and the same per-target grouping) the consumer samples
-    // in. `continuousEuler` picks the representative nearest the previous frame
-    // instead of the canonical one, so a rotation crossing a branch cut no longer
-    // reads as a near-full turn to a component-wise lerp. Radians in, because
-    // that is the space its whole-turn and flip identities are written in;
-    // degrees out, because that is what the keyframe carries.
-    //
-    // This is the #867 fix applied to the road that never funnelled through
-    // `clipToKeyframes`. It is done at the PRODUCER for the same reason: the
-    // consumer's linear Euler lerp is correct for hand-authored curves, so
-    // repairing it there would break authored curves to fix imported ones.
-    let prevRad: Vec3 | null = null;
-    for (const t of times) {
-      const kf = perTimeMap.get(t)!;
-      let rotation = defaults.rotation;
-      if (kf.rotationRad) {
-        const continuous = continuousEuler(kf.rotationRad, prevRad);
-        prevRad = continuous;
-        rotation = radVec3ToDeg(continuous);
-      }
-      keyframes.push({
-        targetNodeId: targetKey,
-        time: t,
-        position: kf.position ?? defaults.position,
-        rotation,
-        scale: kf.scale ?? defaults.scale,
-      });
-    }
-  }
-  return { duration: duration > 0 ? duration : 1, keyframes };
-}
-
-// P7.10 (#114): `findTimeSource` removed — TransformClip no longer
-// declares a `time` input socket, so the importer no longer needs to
-// resolve a TimeSource singleton. The `state` parameter on
-// `buildGltfImportOps` is preserved for signature stability across the
-// boot.ts caller; flagged unused via the underscore prefix.
-
-/**
- * #178 (S2) — capture a glTF node's materials → OpenPBR IR, ONE per mesh
- * primitive (slot) in primitive order (the SAME order three.js builds child
- * meshes, so slot i ↔ the i-th sub-mesh under the node). Returns undefined when
- * the node has no mesh (an empty/bone — correctly no materials) so the child
- * omits the param. A
- * primitive with no `material` index uses the glTF default material (the
- * converter's no-arg defaults: white, metallic 1, rough 1).
- */
-function captureChildMaterials(
-  node: { mesh?: number },
-  json: {
-    meshes?: { primitives?: { material?: number; attributes?: Record<string, number> }[] }[];
-    materials?: Parameters<typeof gltfJsonMaterialToOpenpbr>[0][];
-    textures?: { sampler?: number }[];
-    samplers?: { wrapS?: number; wrapT?: number }[];
-  },
-): InlineMaterialSpec[] | undefined {
-  if (typeof node.mesh !== 'number') return undefined;
-  const mesh = json.meshes?.[node.mesh];
-  const prims = mesh?.primitives;
-  if (!Array.isArray(prims) || prims.length === 0) return undefined;
-  const mats = json.materials ?? [];
-  // The texture/sampler tables let the converter capture each material's texture
-  // slots → imported-texture descriptors (direct-import milestone, V53).
-  const tables = { textures: json.textures, samplers: json.samplers };
-  return prims.map((p) =>
-    gltfJsonMaterialToOpenpbr(
-      typeof p.material === 'number' ? (mats[p.material] ?? {}) : {},
-      tables,
-      // COLOR_0 lives on the PRIMITIVE, not the material → detect it here and pass
-      // the flag so the captured IR records vertex colours (V53 slice 3).
-      { vertexColors: p.attributes?.COLOR_0 !== undefined },
-    ),
-  );
-}
-
-/**
- * HOW MANY FACES AN IMPORTED CHILD HAS, read from the glTF JSON at import (#1023).
- *
- * The sibling of {@link captureChildMaterials} and deliberately the same shape: read a fact
- * out of the JSON at import, write it onto the child's params, and let the descriptor state
- * it afterwards. `GltfData.evaluate` mints its descriptor inside a pure evaluator with only
- * params in scope, so a fact that is not captured here can never be stated at all — which is
- * why an imported mesh's triangles were never faces.
- *
- * 🔑 NO GEOMETRY LOAD. Counts come from the accessor table, so this costs a few property
- * reads: the index accessor's `count` when the primitive is indexed, the POSITION
- * accessor's when it is not.
- *
- * ── WHY IT REFUSES RATHER THAN GUESSING ───────────────────────────────────────────────
- *
- * `undefined` means WE DID NOT CAPTURE IT, and every caller has to keep reading it that way
- * — never as "no faces". A child of lines or points is not a polygon mesh, and answering `0`
- * for it would be a confident wrong answer that every face-domain consumer would believe.
- * So a single non-triangle primitive refuses the whole child.
- *
- * ── THE THREE TRIANGLE MODES, GROUNDED ────────────────────────────────────────────────
- *
- * glTF has no n-gon primitive mode. `GLTFLoader.js:3788-3811` accepts TRIANGLES (4, and the
- * spec default when `mode` is absent), TRIANGLE_STRIP (5) and TRIANGLE_FAN (6), converting
- * the latter two through `toTrianglesDrawMode`, and throws on anything else at `:3832`.
- * That conversion's own arithmetic is `numberOfTriangles = index.count - 2`
- * (`BufferGeometryUtils.js:801`) for BOTH strip and fan — which is the rule below, taken
- * from the source rather than from the shape of the name.
- */
-export function captureChildFaceCount(
-  node: { mesh?: number },
-  json: Pick<GltfJson, 'meshes' | 'accessors'>,
-): number | undefined {
-  if (typeof node.mesh !== 'number') return undefined;
-  const prims = json.meshes?.[node.mesh]?.primitives;
-  if (!Array.isArray(prims) || prims.length === 0) return undefined;
-
-  let total = 0;
-  for (const p of prims) {
-    // Absent `mode` is TRIANGLES — the glTF default, not an unknown.
-    const mode = p.mode ?? 4;
-    if (mode !== 4 && mode !== 5 && mode !== 6) return undefined;
-
-    const accessor =
-      typeof p.indices === 'number' ? p.indices : (p.attributes?.POSITION ?? undefined);
-    if (typeof accessor !== 'number') return undefined;
-    const count = json.accessors?.[accessor]?.count;
-    if (typeof count !== 'number' || !Number.isFinite(count) || count < 0) return undefined;
-
-    // A primitive too short to make a single triangle contributes none, and is not a
-    // reason to refuse the child — a degenerate primitive is still a triangle primitive.
-    if (mode === 4) {
-      if (count % 3 !== 0) return undefined; // not a triangle list; do not guess
-      total += count / 3;
-    } else {
-      total += Math.max(0, count - 2);
-    }
-  }
-  return total;
-}
-
-/**
- * HOW MANY TOPOLOGICAL POINTS a child's mesh holds, welded from its POSITION bytes at import
- * (#1040) — or `undefined` when this import cannot say.
- *
- * ── WHY THIS ONE READS BYTES WHERE ITS SIBLING READS THE TABLE ───────────────────────────
- *
- * {@link captureChildFaceCount} needs only accessor COUNTS, so it never materialises a
- * vertex. A topological point cannot be counted that way: two buffer positions at one
- * coordinate are ONE point, and which ones coincide is a property of the numbers. A box
- * arrives as 24 split positions and welds to 8; a sphere 32x16 as 425 and welds to 362. So
- * this pays a weld, and the cost is stated rather than assumed: ~220-500 ns per point,
- * ~66 ms for a 131k-point mesh, once, at import. The weld is PRODUCTION's
- * {@link weldByPosition} and not a second spelling of it — quantisation, negative zero and
- * the seam-column rule all have to answer identically here and at the read door, or the
- * descriptor states a number the geometry disagrees with.
- *
- * ── 🔴 SINGLE-PRIMITIVE CHILDREN ONLY, AND THAT IS THE WHOLE OF THE POPULATION DECISION ──
- *
- * A glTF node with two primitives loads as a GROUP of two Meshes, and the clone road's read
- * door (`firstMeshGeometry`, gone with the clone renderer in #1053) reached only the FIRST. So
- * a count welded across every primitive described a buffer that no reader held. (The capture
- * still runs: the load converter rebuilds a saved clone import and diffs its params against
- * the save, so it must keep writing what it wrote.) `two-material-quad.gltf` cannot show this: its two
- * primitives sit on the same four corners, so the door and a unioning capture both say 4 by
- * accident. Constructed with DISJOINT primitives, they part: door 3, union 6.
- *
- * `captureChildFaceCount` sums its primitives, and leant on a cross-source check on the rim road
- * to refuse the disagreement later (that road went with the clone, #1402). This refuses to MINT the disagreement at all,
- * which is the stronger position of the two: a state with no constructor needs no guard. It
- * is why the two fields have deliberately different populations.
- *
- * ── WHAT ELSE ANSWERS `undefined`, ALL DELIBERATE ────────────────────────────────────────
- *
- * A node that is not a mesh (a bone, an empty); a child whose primitives are not all
- * triangle modes, matching its sibling's gate so the two captures describe one population;
- * a primitive with no POSITION or a POSITION that is not `VEC3`; and anything whose accessor
- * cannot be read at all — Draco-compressed geometry hides its bytes behind an extension and
- * `readAccessor` throws, which is caught here and reported as "not captured" rather than
- * failing the import of an otherwise good file.
- *
- * REF: src/app/pointIdentity.ts (`weldByPosition`, `pointCountOf`); src/core/import/glb.ts
- *      (`readAccessor`); issue #1040, and #1023/#1025 for the face-count sibling.
- */
-export function captureChildPointCount(
-  node: { mesh?: number },
-  json: GltfJson,
-  buffers: Uint8Array[],
-): number | undefined {
-  if (typeof node.mesh !== 'number') return undefined;
-  const prims = json.meshes?.[node.mesh]?.primitives;
-  if (!Array.isArray(prims) || prims.length === 0) return undefined;
-  // The population decision, and the one line that enforces it.
-  if (prims.length !== 1) return undefined;
-
-  const prim = prims[0];
-  // Absent `mode` is TRIANGLES — the glTF default, not an unknown. The same gate the face
-  // count applies, so a lines or points child is refused WHOLE by both.
-  const mode = prim.mode ?? 4;
-  if (mode !== 4 && mode !== 5 && mode !== 6) return undefined;
-
-  const accessorIndex = prim.attributes?.POSITION;
-  if (typeof accessorIndex !== 'number') return undefined;
-  const accessor = json.accessors?.[accessorIndex];
-  // `VEC3` checked rather than trusted: `readAccessor` widens whatever it finds into a flat
-  // float array, so a `VEC2` POSITION would weld pairs as though they were triplets and
-  // return a plausible wrong number.
-  if (accessor?.type !== 'VEC3') return undefined;
-
-  let positions: Float32Array;
-  try {
-    positions = readAccessor(json, buffers, accessorIndex);
-  } catch {
-    // Draco and any other unreadable encoding. Not captured, not an import failure.
-    return undefined;
-  }
-  if (positions.length !== accessor.count * 3) return undefined;
-
-  const geometry = new BufferGeometry();
-  geometry.setAttribute('position', new BufferAttribute(positions, 3));
-  const { points } = weldByPosition(geometry);
-  geometry.dispose();
-  return points;
-}
-
-export async function buildGltfImportOps(
-  args: GltfImportChainArgs,
-  _state: DagState,
-): Promise<GltfImportChainResult> {
-  // #90 — accept GLB or JSON-only `.gltf`; materialise every buffer
-  // (embedded / data-URI / external via the injected resolver) before
-  // reading any accessor.
-  const { json, bin } = parseGltfContainer(args.buffer);
-  const buffers = await resolveBuffers(json, bin, args.resolveBuffer);
-  const { nodeNameMap, keyByGltfNodeIndex, childHierarchy } = buildNodeNameMap(json, args.assetRef);
-
-  // Static chain ids, content-addressed off assetRef so re-import of the
-  // same file produces an identical Op stream.
-  const gltfAssetId = hashId('gltf', args.assetRef);
-  const groupId = hashId('grp', args.assetRef);
-  const position = args.position ?? [0, 0, 0];
-  // #222 — the model's bbox centre, baked as the import Group's pivot so it
-  // rotates/scales about its own centre. position is offset by +pivot below so
-  // the content stays where the glTF authored it while the gizmo sits at centre.
-  const pivot = computeGltfBoundsCenter(json);
-
-  const animations = json.animations ?? [];
-  const hasClips = animations.length > 0;
-  // P7.10 (B13 Pass 3, #114): TransformClip no longer has a `time` input
-  // socket — its value carries `.sample(seconds)` and whoever samples the
-  // clip supplies the time.
-
-  const transformClipIds: string[] = animations.map((_, i) =>
-    hashId('clip', args.assetRef, String(i)),
-  );
-  const clipSelectId = hasClips ? hashId('sel', args.assetRef) : null;
-
-  const ops: Op[] = [];
-
-  // P7.11 (#100, D-04) — capture per-skin bind metadata (joint keys + bind
-  // TRS + IBMs + parentJointIndex, all in skin.joints[] order) so the pure
-  // GltfSkeleton projection (Wave C) can build a Skeleton value from
-  // GltfAsset params alone. Buffers + childHierarchy are already resolved.
-  const skins = buildSkinMetadata(json, buffers, keyByGltfNodeIndex, childHierarchy);
-
-  // GltfAsset includes the deterministic nodeNameMap so the renderer
-  // can match Object3D.name → DAG target id without re-deriving, plus the
-  // childHierarchy (P7.7 #91) so the outliner (Wave D) can nest child rows
-  // by KEY without re-walking the glTF — pure projection, not render inputs.
-  // P7.11 adds the additive `skins` metadata in the SAME atomic op array
-  // (K6 — one Cmd+Z); both prod callers (boot.ts, importGltf.ts) get it free.
-  ops.push({
-    type: 'addNode',
-    nodeId: gltfAssetId,
-    nodeType: 'GltfAsset',
-    params: { assetRef: args.assetRef, nodeNameMap, childHierarchy, skins, keyByGltfNodeIndex },
-  });
-  // #807 — one `GltfSkeleton` per captured skin, in the SAME atomic array (K6).
-  //
-  // Until now nothing in the app ever created this node. It was defined by #100,
-  // registered, param-goldened and accepted by the retarget mutator, and every
-  // instance that had ever existed was hand-built by a test — so a character
-  // standing in the scene had no rig for motion to be retargeted onto, and #100's
-  // promise that "a dropped glTF rig participates in the DAG" held only in the
-  // test suite. Minting it here rather than lazily at the moment someone drops a
-  // clip means the rig is present and addressable — by the retarget road and by
-  // the agent — from the instant the character arrives, whether or not motion
-  // ever comes. An unskinned asset has no skins and therefore emits none: the
-  // node is a projection of captured skin data and has nothing to project.
-  //
-  // ⚠️ IT DOES NOT APPEAR IN THE OUTLINER, and that was checked rather than
-  // assumed. `SceneTree` walks the Scene's child bands and a rig node is a side
-  // node hanging off the asset, so it is reachable by id and invisible in the
-  // tree — even though `SceneTreeIcon` already has a branch waiting for it.
-  const skeletonIds: string[] = [];
-  for (let i = 0; i < skins.length; i++) {
-    const skeletonId = gltfSkeletonDagId(args.assetRef, i);
-    skeletonIds.push(skeletonId);
-    ops.push({
-      type: 'addNode',
-      nodeId: skeletonId,
-      nodeType: 'GltfSkeleton',
-      params: { skinIndex: i },
-    });
-    ops.push({
-      type: 'connect',
-      from: { node: gltfAssetId, socket: 'out' },
-      to: { node: skeletonId, socket: 'asset' },
-    });
-  }
-  // P7.7 (#91) / #389 — one Object + GltfData PAIR per scene child, in json.nodes
-  // INTEGER-INDEX order (NOT Object.keys — that order is incidental today
-  // and a future map-build change would silently reorder the Op stream,
-  // breaking V22). The OBJECT's dagId is the SAME content-addressed id already
-  // computed by buildNodeNameMap (hashId('gltfChild', assetRef, key)), so
-  // re-import is byte-identical and the renderer's name lookup matches — the
-  // split moved what a child IS onto a second node and left WHERE IT IS, and
-  // therefore its id, exactly where every consumer already looks for it.
-  //
-  // The Object is seeded with the child's captured base TRS (defaultTRS) and NO
-  // `overridden` key at all — sparse, so a freshly imported child carries only its
-  // base and the gizmo write path mints the flags on first edit (Wave C). Writing
-  // three explicit `false`s would be a format difference dressed as a default.
-  //
-  // These pairs are still inputless as far as the SCENE is concerned (R-1): the
-  // Object takes the data edge and nothing else, and reaches no scene parent, so
-  // it was drawn by the asset clone rather than by itself. Since #1053 nothing draws it:
-  // this road only rebuilds a saved clone import for the load converter to compare.
-  // Emitted in the SAME atomic ops array (K6 — one Cmd+Z), BEFORE the
-  // TransformClip/ClipSelect block so the chain order is locked.
-  const childNodes = json.nodes ?? [];
-  for (let i = 0; i < childNodes.length; i++) {
-    const key = keyByGltfNodeIndex[i];
-    const dagId = nodeNameMap[key];
-    const dataId = gltfChildDataDagId(args.assetRef, key);
-    const base = defaultTRS(childNodes[i]);
-    // #178 (S2) — capture this node's per-primitive materials as OpenPBR IR. `null`
-    // material for an empty/bone node. (Since #1053 nothing draws from these params; they
-    // are rebuilt so the load converter can diff a saved import against them.)
-    const materials = captureChildMaterials(childNodes[i], json);
-    // #1023 — the child's own face count (no descriptor reads it since #1053; the load
-    // converter's diff still does). Absent for a
-    // child that is not an all-triangle mesh (a bone, an empty, lines or points), which
-    // every reader must keep treating as "not captured" and never as zero.
-    const faceCount = captureChildFaceCount(childNodes[i], json);
-    // #1040 — the child's own topological point count, kept for the same diff.
-    // Absent for a pre-#1040 save, a non-triangle child, and a MULTI-PRIMITIVE child, whose
-    // read door holds only the first primitive's buffer — see `captureChildPointCount`.
-    const pointCount = captureChildPointCount(childNodes[i], json, buffers);
-    ops.push({
-      type: 'addNode',
-      nodeId: dataId,
-      nodeType: 'GltfData',
-      params: {
-        assetRef: args.assetRef,
-        childName: key,
-        // Slot 0 and the full table, the split every MeshData producer already uses.
-        // The table is written ONLY for a genuinely multi-primitive child: a one-entry
-        // array and an absent one are the same answer written two ways, and
-        // `dataSlotsOnly` derives the former from `material` (see GltfData.ts).
-        material: materials?.[0] ?? null,
-        ...(materials && materials.length > 1 ? { materialSlots: materials } : {}),
-        ...(faceCount === undefined ? {} : { faceCount }),
-        ...(pointCount === undefined ? {} : { pointCount }),
-      },
-    });
-    ops.push({
-      type: 'addNode',
-      nodeId: dagId,
-      nodeType: 'Object',
-      params: {
-        position: base.position,
-        rotation: base.rotation,
-        scale: base.scale,
-      },
-    });
-    ops.push({
-      type: 'connect',
-      from: { node: dataId, socket: 'out' },
-      to: { node: dagId, socket: 'data' },
-    });
-  }
-  // #222 — the import root is ONE transformable Group (Blender's parent/Empty),
-  // NOT a Group wrapping a separate Transform. The Group carries the drop
-  // position, so selecting it shows the gizmo and moves the whole model as a
-  // unit. `pivot` is the model's bbox centre (computed below) so the import
-  // rotates/scales about its own centre, not the world origin.
-  ops.push({
-    type: 'addNode',
-    nodeId: groupId,
-    nodeType: 'Group',
-    params: {
-      position: addVec3(position, pivot),
-      rotation: [0, 0, 0],
-      scale: [1, 1, 1],
-      pivot,
-    },
-  });
-  ops.push({
-    type: 'connect',
-    from: { node: gltfAssetId, socket: 'out' },
-    to: { node: groupId, socket: 'children' },
-  });
-  ops.push({
-    type: 'connect',
-    from: { node: groupId, socket: 'out' },
-    to: { node: args.sceneNodeId, socket: 'children' },
-  });
-
-  if (!hasClips) {
-    return {
-      ops,
-      gltfAssetId,
-      clipSelectId: null,
-      transformClipIds: [],
-      skeletonIds,
-      nodeNameMap,
-    };
-  }
-
-  // Emit one TransformClip per glTF animation, in animations[] order.
-  for (let i = 0; i < animations.length; i++) {
-    const anim = animations[i];
-    const { duration, keyframes } = buildClipKeyframes(anim, json, buffers, keyByGltfNodeIndex);
-    const name = anim.name ?? `clip_${i}`;
-    ops.push({
-      type: 'addNode',
-      nodeId: transformClipIds[i],
-      nodeType: 'TransformClip',
-      params: { name, duration, loop: 'hold', keyframes },
-    });
-  }
-
-  // ClipSelect picks the first animation's name by default so a fresh
-  // drop plays without user action.
-  const firstName = animations[0].name ?? 'clip_0';
-  ops.push({
-    type: 'addNode',
-    nodeId: clipSelectId!,
-    nodeType: 'ClipSelect',
-    params: { selectedClipName: firstName },
-  });
-
-  // Wire connects in the locked deterministic order.
-  // P7.10 (#114): the Time → TransformClip connect-loop is removed —
-  // TransformClip no longer declares a `time` input socket. Time enters
-  // each clip via its `.sample(seconds)` method, supplied by whoever
-  // samples it. The TimeSource node remains in the
-  // default project for save-format compatibility; it is now unused by
-  // the animated-glTF chain and will be cleaned up in P7.10.x.
-  for (let i = 0; i < animations.length; i++) {
-    ops.push({
-      type: 'connect',
-      from: { node: transformClipIds[i], socket: 'out' },
-      to: { node: clipSelectId!, socket: 'clips' },
-      index: i,
-    });
-  }
-  ops.push({
-    type: 'connect',
-    from: { node: clipSelectId!, socket: 'out' },
-    to: { node: gltfAssetId, socket: 'transformClip' },
-  });
-
-  return {
-    ops,
-    gltfAssetId,
-    clipSelectId,
-    transformClipIds,
-    skeletonIds,
-    nodeNameMap,
-  };
 }

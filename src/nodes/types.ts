@@ -1532,7 +1532,7 @@ export interface GltfAssetValue {
   /**
    * P7.5 — glTF TRS animation extraction (issue #81).
    *
-   * Filled in by `buildGltfImportOps` at drop time: a sanitised
+   * Filled in at drop time by the clone importer (removed in #1424): a sanitised
    * scene-node-name → DAG target id map. Until #1053 the clone renderer
    * walked `gltf.scene` via `getObjectByName` and overrode per-child TRS
    * with `transformClip.sample(currentTime)[name]` (P7.10 — the value's

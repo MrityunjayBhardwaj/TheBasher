@@ -346,10 +346,10 @@ export async function ingestGltfFolder(
     // KHR_materials_pbrSpecularGlossiness model imports flat-gray — the render
     // clone gets a default white material with NO textures, and the captured IR
     // is all-default (it reads only pbrMetallicRoughness). Convert the entry's
-    // materials → metal-rough HERE, before the OPFS write, so BOTH readers of the
-    // OPFS bytes — the render clone (GLTFLoader re-parses) AND the capture
-    // (buildGltfImportOps re-parses) — see one converted source (render ==
-    // capture, V37/H40). The dispatcher handles both containers (`.gltf` rewrites
+    // materials → metal-rough HERE, before the OPFS write, so every reader of the
+    // OPFS bytes sees one converted source (V37/H40). When this was written there
+    // were two — the render clone's GLTFLoader and the clone importer — and both
+    // are gone (#1053, #1424); the native reader is the one left. The dispatcher handles both containers (`.gltf` rewrites
     // the JSON + writes sibling MR textures; `.glb` repacks the binary container
     // with the baked MR map embedded as a data URI) and no-ops a metal-rough model.
     const conversion = await convertSpecGlossEntry(repairedEntry, files);

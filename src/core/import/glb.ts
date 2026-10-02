@@ -231,8 +231,8 @@ function padChunkTo4(bytes: Uint8Array, fill: number): Uint8Array {
  * Serialise a parsed GLB (`{ json, bin }`) back into GLB binary bytes — the
  * inverse of `parseGlb`. Used by the spec/gloss `.glb` ingest conversion (#216):
  * the `.glb`'s materials are converted in the JSON document, then the container
- * is repacked so BOTH OPFS readers (the render GLTFLoader and the capture
- * `buildGltfImportOps`) see normal metal-rough (render == capture, V37/H40).
+ * is repacked so whatever reads the OPFS bytes sees normal metal-rough (V37/H40) —
+ * today the native reader; the clone road's two readers are gone (#1053, #1424).
  *
  * Layout per glTF 2.0 §4.4: 12-byte header (magic | version 2 | total length),
  * the JSON chunk (UTF-8, padded with 0x20 SPACE to a 4-byte boundary), then —
