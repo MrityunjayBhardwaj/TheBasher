@@ -31,6 +31,7 @@
 //      counts this must not contradict); issues #769, #770, #736, #718.
 
 import type { GeometryDescriptor, MeshGeometryData } from '../nodes/types';
+import { skinJointsLayerName, skinSetCount, skinWeightsLayerName } from '../nodes/skinInfluences';
 
 /** One polygon's rim: source vertex indices, in the winding order the fan must follow. */
 export type PolygonRim = readonly number[];
@@ -135,9 +136,9 @@ export function meshDataProblem(data: MeshGeometryData): string | null {
 /**
  * #1196 — why a stored mesh's point layers or vertex groups are not well formed, or `null`.
  *
- * A mesh holds at most ONE set of four joints and weights, and never half a set: a vertex with more
- * than four influences arrives in glTF as a second set, which the importer refuses by name rather
- * than store a mesh that holds less than the file. Every joint number must name a vertex group the
+ * A mesh holds its influences in sets of four joints and weights, and never half a set. A point with
+ * more than four influences has further sets, each found by its name and numbered without gaps
+ * (#1430, `skinInfluences.ts`), so a mesh holds every influence its file states. Every joint number must name a vertex group the
  * mesh has, which glTF requires of the file too ("All joint values MUST be within the range of
  * joints in the skin", §Skins); a number past the table would bind a point to nothing.
  */
@@ -181,13 +182,16 @@ function pointLayerProblem(data: MeshGeometryData, pointCount: number): string |
       }
     }
   }
-  if (jointLayers > 1 || weightLayers > 1) {
-    return `${jointLayers} joint layers and ${weightLayers} weight layers, but a stored mesh holds one set of four`;
-  }
   if (jointLayers !== weightLayers) {
-    return jointLayers === 1
-      ? 'the mesh has joint numbers and no weights to go with them'
-      : 'the mesh has weights and no joint numbers to go with them';
+    return jointLayers > weightLayers
+      ? `the mesh has ${jointLayers} joint layers and ${weightLayers} weight layers; joint numbers come with the weights that go with them`
+      : `the mesh has ${weightLayers} weight layers and ${jointLayers} joint layers; weights come with the joint numbers they weigh`;
+  }
+  // #1430 — more than four influences are further SETS, and a set is found by its name
+  // (`skinInfluences.ts`). A second pair under any other name would be read by nothing.
+  const sets = skinSetCount(data);
+  if (jointLayers > 1 && sets !== jointLayers) {
+    return `${jointLayers} joint and weight layer pairs, but only ${sets} are influence sets: the next would be '${skinJointsLayerName(sets)}' with '${skinWeightsLayerName(sets)}', and sets are numbered without gaps`;
   }
   return null;
 }

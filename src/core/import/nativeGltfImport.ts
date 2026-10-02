@@ -94,13 +94,13 @@ import { CENTRE_PIVOT, ORIGIN_PIVOT, rebasePlacementPivot } from '../../app/mate
 import { weldByPosition } from '../../app/pointIdentity';
 import { packMeshData } from '../../app/meshGeometryData';
 import { MAX_COLOUR_LAYERS, MAX_UV_LAYERS } from '../../app/polygonLayout';
+import { COLOR_LAYER, MATERIAL_INDEX, uvLayerName } from '../../nodes/attributes';
 import {
-  COLOR_LAYER,
-  MATERIAL_INDEX,
-  SKIN_JOINTS,
-  SKIN_WEIGHTS,
-  uvLayerName,
-} from '../../nodes/attributes';
+  SKIN_SET_WIDTH,
+  skinLanes,
+  skinPointLayers,
+  type SkinLanes,
+} from '../../nodes/skinInfluences';
 
 /** The native parameter each animated glTF path drives. Rotation drives the quaternion, which is
  *  why every imported node is in quaternion mode. */
@@ -195,20 +195,18 @@ const TRIANGLE_FAN = 6;
 // road honours, not what the reader can read: derived from the slot counts rather than spelled, so it
 // cannot admit a layer the build has nowhere to draw.
 //
-// #1196 — and ONE set of joints and weights, which a stored mesh HOLDS as point layers, deformed by
-// the Armature modifier (#393) and drawn skinned (#1197). A second
-// set (`JOINTS_1`, a vertex with more than four influences) stays out on purpose and is refused by
-// name below: Blender keeps every set (`io_scene_gltf2/blender/imp/mesh.py:93-96`), three draws only
-// the first (`GLTFLoader.js:2232-2233`), and a native mesh holding the first alone would keep less
-// than the file, with the file gone. Refused — and only a skinned file carries joints, so it is not
-// imported at all (#1205: a skinned file never takes the clone road).
+// #1196 — and its joints and weights, which a stored mesh HOLDS as point layers, deformed by the
+// Armature modifier (#393) and drawn skinned (#1197). #1430 — EVERY set: a vertex with more than
+// four influences states them as `JOINTS_1`, `JOINTS_2`, …, Blender keeps every one
+// (`io_scene_gltf2/blender/imp/mesh.py:93-96`), and so does the stored mesh, as further sets of
+// point layers (`skinInfluences.ts`). They are not in this list because they are not drawn from a
+// buffer slot of their own: `SKIN_SET` below names them, held on a skinned mesh and dropped on one
+// no node skins.
 const HELD_ATTRIBUTES: ReadonlySet<string> = new Set([
   'POSITION',
   'NORMAL',
   ...Array.from({ length: MAX_UV_LAYERS }, (_, n) => `TEXCOORD_${n}`),
   ...Array.from({ length: MAX_COLOUR_LAYERS }, (_, n) => `COLOR_${n}`),
-  'JOINTS_0',
-  'WEIGHTS_0',
 ]);
 
 // #1381 — what a mesh may carry that the stored mesh DERIVES rather than holds. A file's tangents are
@@ -323,18 +321,11 @@ const HELD_TEXTURE_SLOTS = HELD_TEXTURE_PATHS;
  *
  * #1052 — asked of EVERY primitive: the mesh they become holds the union of what they carry.
  */
-function undrawableAttributes(
-  json: NativeGltfJson,
-  meshIndex: number,
-  skinned: boolean,
-): NativeImportRefusal | null {
+function undrawableAttributes(json: NativeGltfJson, meshIndex: number): NativeImportRefusal | null {
   for (const prim of json.meshes?.[meshIndex]?.primitives ?? []) {
     const attributes = prim.attributes ?? {};
     const undrawable = Object.keys(attributes).filter(
-      (name) =>
-        !HELD_ATTRIBUTES.has(name) &&
-        !DERIVED_ATTRIBUTES.has(name) &&
-        !(!skinned && SKIN_SET.test(name)),
+      (name) => !HELD_ATTRIBUTES.has(name) && !DERIVED_ATTRIBUTES.has(name) && !SKIN_SET.test(name),
     );
     if (undrawable.length > 0) {
       return {
@@ -677,8 +668,11 @@ interface ReadPrimitive {
   readonly uvAccessors: readonly number[];
   readonly colourAccessor: number | undefined;
   readonly normalAccessor: number | undefined;
-  /** #1196 — `JOINTS_0` and `WEIGHTS_0`, present together or not at all. */
-  readonly skinAccessors: { readonly joints: number; readonly weights: number } | undefined;
+  /**
+   * #1196, #1430 — every `JOINTS_n` / `WEIGHTS_n` pair, in set order; empty when the primitive has
+   * none. A set's two accessors are present together or not at all.
+   */
+  readonly skinAccessors: readonly { readonly joints: number; readonly weights: number }[];
 }
 
 function readPrimitive(
@@ -725,21 +719,32 @@ function readPrimitive(
   // attribute sets" (glTF 2.0 §Skins). Half a set binds a point to joints with no weights, or
   // weights to no joints, so it is refused as the malformed file it is.
   // #1384 — read only for a mesh a node skins; otherwise they are dropped unread, as Blender does.
-  const jointsAccessor = skinned ? attributes.JOINTS_0 : undefined;
-  const weightsAccessor = skinned ? attributes.WEIGHTS_0 : undefined;
-  if ((typeof jointsAccessor === 'number') !== (typeof weightsAccessor === 'number')) {
-    return {
-      refused: `mesh ${meshIndex} carries ${typeof jointsAccessor === 'number' ? 'JOINTS_0 without WEIGHTS_0' : 'WEIGHTS_0 without JOINTS_0'}, and they come in pairs`,
-      issue: '#1063',
-    };
-  }
-  const skinAccessors =
-    typeof jointsAccessor === 'number' && typeof weightsAccessor === 'number'
-      ? { joints: jointsAccessor, weights: weightsAccessor }
-      : undefined;
-  if (skinAccessors !== undefined) {
-    const problem = skinAccessorProblem(json, skinAccessors);
-    if (problem !== null) return { refused: `mesh ${meshIndex} ${problem}`, issue: '#1063' };
+  // #1430 — every set, numbered from 0 without gaps, as the UV sets are.
+  const skinAccessors: { joints: number; weights: number }[] = [];
+  if (skinned) {
+    const setNumbers = Object.keys(attributes)
+      .filter((name) => SKIN_SET.test(name))
+      .map((name) => Number(name.slice(name.indexOf('_') + 1)));
+    const sets = setNumbers.length === 0 ? 0 : Math.max(...setNumbers) + 1;
+    for (let n = 0; n < sets; n++) {
+      const joints = attributes[`JOINTS_${n}`];
+      const weights = attributes[`WEIGHTS_${n}`];
+      if (typeof joints !== 'number' && typeof weights !== 'number') {
+        return {
+          refused: `mesh ${meshIndex} carries a joint set past ${n} without JOINTS_${n} and WEIGHTS_${n}, and joint sets are numbered without gaps`,
+          issue: '#1063',
+        };
+      }
+      if (typeof joints !== 'number' || typeof weights !== 'number') {
+        return {
+          refused: `mesh ${meshIndex} carries ${typeof joints === 'number' ? `JOINTS_${n} without WEIGHTS_${n}` : `WEIGHTS_${n} without JOINTS_${n}`}, and they come in pairs`,
+          issue: '#1063',
+        };
+      }
+      const problem = skinAccessorProblem(json, { joints, weights }, n);
+      if (problem !== null) return { refused: `mesh ${meshIndex} ${problem}`, issue: '#1063' };
+      skinAccessors.push({ joints, weights });
+    }
   }
   // Each accessor's own element size, not a literal per attribute. For POSITION, NORMAL and the UV
   // sets this is the same number the literals used to spell, because a non-float one of those needs
@@ -749,8 +754,7 @@ function readPrimitive(
     normalAccessor,
     ...uvAccessors,
     colourAccessor,
-    jointsAccessor,
-    weightsAccessor,
+    ...skinAccessors.flatMap((set) => [set.joints, set.weights]),
   ]) {
     if (typeof accessorIndex !== 'number') continue;
     const elementBytes = elementBytesOf(json, accessorIndex);
@@ -797,18 +801,21 @@ function readPrimitive(
 function skinAccessorProblem(
   json: NativeGltfJson,
   skin: { readonly joints: number; readonly weights: number },
+  set: number,
 ): string | null {
   const joints = json.accessors?.[skin.joints];
   const weights = json.accessors?.[skin.weights];
-  if (!joints || !weights) return 'names a JOINTS_0 or WEIGHTS_0 accessor the file does not have';
+  if (!joints || !weights) {
+    return `names a JOINTS_${set} or WEIGHTS_${set} accessor the file does not have`;
+  }
   if (joints.type !== 'VEC4' || (joints.componentType !== 5121 && joints.componentType !== 5123)) {
-    return 'has a JOINTS_0 that is not four unsigned bytes or shorts';
+    return `has a JOINTS_${set} that is not four unsigned bytes or shorts`;
   }
   const normalised =
     (weights.componentType === 5121 || weights.componentType === 5123) &&
     (weights as { normalized?: boolean }).normalized === true;
   if (weights.type !== 'VEC4' || (weights.componentType !== 5126 && !normalised)) {
-    return 'has a WEIGHTS_0 that is not four floats or four normalised unsigned bytes or shorts';
+    return `has a WEIGHTS_${set} that is not four floats or four normalised unsigned bytes or shorts`;
   }
   return null;
 }
@@ -979,16 +986,14 @@ export function readGltfMesh(
   // #1196 — a point's binding is its vertices' binding: `splitByBinding` has made them all agree.
   const pointLayers: MeshPointLayer[] = [];
   if (skin !== null) {
-    const joints = new Int32Array(weld.points * 4);
-    const weights = new Float32Array(weld.points * 4);
+    const { width } = skin;
+    const joints = new Int32Array(weld.points * width);
+    const weights = new Float32Array(weld.points * width);
     for (let v = 0; v < vertices; v++) {
-      joints.set(skin.joints.subarray(v * 4, v * 4 + 4), weld.map[v] * 4);
-      weights.set(skin.weights.subarray(v * 4, v * 4 + 4), weld.map[v] * 4);
+      joints.set(skin.joints.subarray(v * width, (v + 1) * width), weld.map[v] * width);
+      weights.set(skin.weights.subarray(v * width, (v + 1) * width), weld.map[v] * width);
     }
-    pointLayers.push(
-      { name: SKIN_JOINTS, type: 'int4', data: joints },
-      { name: SKIN_WEIGHTS, type: 'float4', data: weights },
-    );
+    pointLayers.push(...skinPointLayers({ width, joints, weights }));
   }
 
   return {
@@ -1003,15 +1008,16 @@ export function readGltfMesh(
   };
 }
 
-/** #1196 — every vertex's four joints and four weights, one mesh-wide numbering. */
-interface VertexSkin {
-  readonly joints: Int32Array;
-  readonly weights: Float32Array;
-}
+/**
+ * #1196 — every vertex's joints and weights, one mesh-wide numbering: `skinInfluences.ts`'s lanes,
+ * per vertex rather than per point.
+ */
+type VertexSkin = SkinLanes;
 
 /**
- * #1196 — read every primitive's `JOINTS_0` and `WEIGHTS_0` into one numbering, or `null` when no
- * primitive carries them.
+ * #1196, #1430 — read every primitive's `JOINTS_n` and `WEIGHTS_n` into one numbering, or `null`
+ * when no primitive carries them. The mesh is as wide as its widest primitive; a primitive with
+ * fewer sets leaves the further lanes empty (joint 0 at weight 0).
  *
  * A joint number indexes the skin's `joints` list, so it means something only beside the names of
  * that list: `vertexGroups`, which the node that skins this mesh supplies. Joint numbers with no
@@ -1027,31 +1033,39 @@ function readVertexSkin(
   vertices: number,
   vertexGroups: readonly string[] | null,
 ): VertexSkin | NativeImportRefusal | null {
-  if (read.every((one) => one.skinAccessors === undefined)) return null;
+  const sets = Math.max(...read.map((one) => one.skinAccessors.length));
+  if (sets === 0) return null;
   // #1384 — unreachable with sets present: an unskinned mesh's reader skipped them. No skin, no read.
   if (vertexGroups === null) return null;
-  const joints = new Int32Array(vertices * 4);
-  const weights = new Float32Array(vertices * 4);
+  const width = sets * SKIN_SET_WIDTH;
+  const joints = new Int32Array(vertices * width);
+  const weights = new Float32Array(vertices * width);
   for (let i = 0; i < read.length; i++) {
-    const accessors = read[i].skinAccessors;
-    if (accessors === undefined) continue;
     const count = read[i].positions.length / 3;
-    const j = readAccessor(json, buffers, accessors.joints);
-    const w = readAccessor(json, buffers, accessors.weights);
-    if (j.length !== count * 4) return mismatched(meshIndex, 'JOINTS_0');
-    if (w.length !== count * 4) return mismatched(meshIndex, 'WEIGHTS_0');
-    for (let k = 0; k < j.length; k++) {
-      if (j[k] >= vertexGroups.length) {
-        return {
-          refused: `mesh ${meshIndex} binds a vertex to joint ${j[k]}, but its skin lists ${vertexGroups.length} joints`,
-          issue: '#1063',
-        };
+    for (let n = 0; n < read[i].skinAccessors.length; n++) {
+      const accessors = read[i].skinAccessors[n];
+      const j = readAccessor(json, buffers, accessors.joints);
+      const w = readAccessor(json, buffers, accessors.weights);
+      if (j.length !== count * SKIN_SET_WIDTH) return mismatched(meshIndex, `JOINTS_${n}`);
+      if (w.length !== count * SKIN_SET_WIDTH) return mismatched(meshIndex, `WEIGHTS_${n}`);
+      for (let k = 0; k < j.length; k++) {
+        if (j[k] >= vertexGroups.length) {
+          return {
+            refused: `mesh ${meshIndex} binds a vertex to joint ${j[k]}, but its skin lists ${vertexGroups.length} joints`,
+            issue: '#1063',
+          };
+        }
+      }
+      for (let v = 0; v < count; v++) {
+        const at = (vertexBase[i] + v) * width + n * SKIN_SET_WIDTH;
+        for (let k = 0; k < SKIN_SET_WIDTH; k++) {
+          joints[at + k] = j[v * SKIN_SET_WIDTH + k];
+          weights[at + k] = w[v * SKIN_SET_WIDTH + k];
+        }
       }
     }
-    joints.set(j, vertexBase[i] * 4);
-    weights.set(w, vertexBase[i] * 4);
   }
-  return { joints, weights };
+  return { width, joints, weights };
 }
 
 /** A position weld refined so that no point holds two different bindings (#1196). */
@@ -1062,7 +1076,9 @@ function splitByBinding(
   const map = new Uint32Array(byPosition.map.length);
   const seen = new Map<string, number>();
   for (let v = 0; v < map.length; v++) {
-    const key = `${byPosition.map[v]}|${skin.joints.subarray(v * 4, v * 4 + 4).join(',')}|${skin.weights.subarray(v * 4, v * 4 + 4).join(',')}`;
+    const from = v * skin.width;
+    const to = from + skin.width;
+    const key = `${byPosition.map[v]}|${skin.joints.subarray(from, to).join(',')}|${skin.weights.subarray(from, to).join(',')}`;
     let point = seen.get(key);
     if (point === undefined) {
       point = seen.size;
@@ -1371,9 +1387,9 @@ function skinIntoArmatureSpace(
   skeleton: NativeSkeleton,
   data: MeshGeometryData,
 ): MeshGeometryData {
-  const joints = data.pointLayers.find((l) => l.name === SKIN_JOINTS)?.data;
-  const weightLayer = data.pointLayers.find((l) => l.name === SKIN_WEIGHTS);
-  if (!joints || !weightLayer) return data;
+  const lanes = skinLanes(data);
+  if (lanes === null) return data;
+  const { joints, width } = lanes;
   const rest = boneWorldMatrices(skeleton.bones);
   const inverseBind =
     skin.inverseBindMatrices === undefined
@@ -1383,23 +1399,23 @@ function skinIntoArmatureSpace(
     const m = rest[skeleton.boneNodes.indexOf(node)].clone();
     return inverseBind ? m.multiply(new Matrix4().fromArray(inverseBind, j * 16)) : m;
   });
-  const weights = Float32Array.from(weightLayer.data);
+  const weights = Float32Array.from(lanes.weights);
   const points = new Float32Array(data.points.length);
   const perPoint: Matrix4[] = [];
   const v = new Vector3();
   for (let p = 0; p * 3 < points.length; p++) {
     let sum = 0;
-    for (let lane = 0; lane < 4; lane++) sum += weights[p * 4 + lane];
+    for (let lane = 0; lane < width; lane++) sum += weights[p * width + lane];
     if (sum === 0) {
-      weights[p * 4] = 1;
+      weights[p * width] = 1;
       sum = 1;
     }
     const m = new Matrix4().makeScale(0, 0, 0);
     m.elements[15] = 0;
-    for (let lane = 0; lane < 4; lane++) {
-      const w = weights[p * 4 + lane];
+    for (let lane = 0; lane < width; lane++) {
+      const w = weights[p * width + lane];
       if (!w) continue;
-      const e = jointMatrix[joints[p * 4 + lane]].elements;
+      const e = jointMatrix[joints[p * width + lane]].elements;
       for (let k = 0; k < 16; k++) m.elements[k] += (w / sum) * e[k];
     }
     perPoint.push(m);
@@ -1422,9 +1438,8 @@ function skinIntoArmatureSpace(
     ...data,
     points,
     cornerNormals,
-    pointLayers: data.pointLayers.map((l) =>
-      l === weightLayer ? { name: l.name, type: 'float4' as const, data: weights } : l,
-    ),
+    // The same sets, with the repaired weights.
+    pointLayers: skinPointLayers({ width, joints, weights }),
   };
 }
 
@@ -1653,7 +1668,7 @@ async function buildNativeOps(
       typeof node.skin === 'number' && read !== null ? read.skins[node.skin].vertexGroups : null;
     // #1384 — skinned means the mesh has vertex groups to bind to: the one test the reader uses too.
     const skinned = vertexGroups !== null;
-    const undrawable = undrawableAttributes(json, node.mesh as number, skinned);
+    const undrawable = undrawableAttributes(json, node.mesh as number);
     if (undrawable !== null) return undrawable;
     const unreproduced = await unreproducedTangents(json, buffers, node.mesh as number);
     if (unreproduced !== null) return unreproduced;

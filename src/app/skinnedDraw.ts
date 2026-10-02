@@ -28,13 +28,24 @@
 // A · Σ wᵢ (poseᵢ · restᵢ⁻¹) · A⁻¹ · v (`SkinnedMesh.applyBoneTransform`, three r169) — the
 // modifier's armature-space round trip, in the mesh's own space.
 //
+// ── A POINT WITH MORE THAN FOUR BONES IS DRAWN FROM THE DEFORM ITSELF (#1430) ─────────────────
+//
+// three's skinning shader sums four lanes per vertex. A mesh holds every influence its file states,
+// so a point may have more. Such a mesh is not drawn with the strongest four: it is drawn as an
+// ordinary mesh whose positions and normals are the Armature modifier's own answer, re-read when the
+// pose or the time changes (`buildDeformedDraw`), as Blender's viewport draws the evaluated mesh.
+// What decides is the mesh's points, not how many sets it stores: a mesh with a second set whose
+// every point still has at most four bones that found a group is skinned on the GPU, its lanes
+// packed into the four the shader has (`gpuSkinnable`).
+//
 // REF: src/nodes/armatureDeform.ts; src/core/import/threeAdapter.ts (`specToThreeSkeleton`);
 //      node_modules/three/src/objects/SkinnedMesh.js; issues #1197, #393.
 
 import { Bone, Matrix4, Skeleton } from 'three';
 import { specToThreeSkeleton } from '../core/import/threeAdapter';
 import { restBonePose } from '../nodes/bonePose';
-import { SKIN_JOINTS, SKIN_WEIGHTS } from '../nodes/attributes';
+import { sampleSkinDeform, sampleSkinDirections } from '../nodes/armatureDeform';
+import { SKIN_SET_WIDTH, skinLanes } from '../nodes/skinInfluences';
 import type {
   BonePose,
   MeshGeometryData,
@@ -119,31 +130,123 @@ function vertexBindings(
   mesh: MeshGeometryData,
   stillSlot: number,
 ): { skinIndex: Uint16Array; skinWeight: Float32Array } {
-  const joints = mesh.pointLayers.find((l) => l.name === SKIN_JOINTS)?.data;
-  const weights = mesh.pointLayers.find((l) => l.name === SKIN_WEIGHTS)?.data;
+  const lanes = skinLanes(mesh);
+  const width = lanes?.width ?? 0;
   const { vertexCorner } = meshSplitLayout(mesh);
   const skinIndex = new Uint16Array(vertexCorner.length * 4);
   const skinWeight = new Float32Array(vertexCorner.length * 4);
+  const found = (point: number, lane: number): boolean =>
+    lanes!.weights[point * width + lane] > 0 &&
+    (skin.boneOfGroup[lanes!.joints[point * width + lane]] ?? -1) >= 0;
   for (let v = 0; v < vertexCorner.length; v++) {
     const point = mesh.cornerPoints[vertexCorner[v]];
     let joined = 0;
-    if (joints && weights) {
-      for (let lane = 0; lane < 4; lane++) {
-        const w = weights[point * 4 + lane];
-        if (w > 0 && (skin.boneOfGroup[joints[point * 4 + lane]] ?? -1) >= 0) joined += w;
-      }
+    for (let lane = 0; lane < width; lane++) {
+      if (found(point, lane)) joined += lanes!.weights[point * width + lane];
     }
     if (joined <= CONTRIB_THRESHOLD) {
       skinIndex[v * 4] = stillSlot;
       skinWeight[v * 4] = 1;
       continue;
     }
-    for (let lane = 0; lane < 4; lane++) {
-      const j = joints![point * 4 + lane];
-      const w = weights![point * 4 + lane];
-      skinIndex[v * 4 + lane] = j;
-      skinWeight[v * 4 + lane] = w > 0 && (skin.boneOfGroup[j] ?? -1) >= 0 ? w / joined : 0;
+    if (width === SKIN_SET_WIDTH) {
+      // One set: each stored lane is a shader lane, as it has been since #1197.
+      for (let lane = 0; lane < 4; lane++) {
+        const j = lanes!.joints[point * 4 + lane];
+        skinIndex[v * 4 + lane] = j;
+        skinWeight[v * 4 + lane] = found(point, lane)
+          ? lanes!.weights[point * 4 + lane] / joined
+          : 0;
+      }
+      continue;
+    }
+    // #1430 — further sets: the lanes that found a bone, packed into the shader's four. The caller
+    // has checked there are at most four (`gpuSkinnable`).
+    let slot = 0;
+    for (let lane = 0; lane < width && slot < 4; lane++) {
+      if (!found(point, lane)) continue;
+      skinIndex[v * 4 + slot] = lanes!.joints[point * width + lane];
+      skinWeight[v * 4 + slot] = lanes!.weights[point * width + lane] / joined;
+      slot++;
     }
   }
   return { skinIndex, skinWeight };
+}
+
+/**
+ * #1430 — whether three's four-lane skinning shader can draw `mesh` deformed by `skin` exactly: no
+ * point has more than four lanes that carry weight AND found a bone. A lane whose group joined no
+ * bone moves nothing in the deform either, so it does not count.
+ */
+export function gpuSkinnable(skin: SkinDeformValue, mesh: MeshGeometryData): boolean {
+  const lanes = skinLanes(mesh);
+  if (lanes === null || lanes.width <= 4) return true;
+  const { joints, weights, width } = lanes;
+  for (let p = 0; p * width < weights.length; p++) {
+    let found = 0;
+    for (let lane = 0; lane < width; lane++) {
+      if (weights[p * width + lane] > 0 && (skin.boneOfGroup[joints[p * width + lane]] ?? -1) >= 0)
+        found++;
+    }
+    if (found > 4) return false;
+  }
+  return true;
+}
+
+export interface DeformedDraw {
+  /**
+   * Write the mesh at `seconds`, posed by `pose`, into a build's `position` and (when it has one)
+   * `normal` buffers, in `buildMeshGeometry`'s vertex order. `restNormal` is the build's normals as
+   * built. Returns false, and writes nothing, when neither the time nor the pose has changed since
+   * the last write.
+   */
+  readonly write: (
+    seconds: number,
+    pose: PosedSkeletonValue | null,
+    position: Float32Array,
+    normal: Float32Array | null,
+    restNormal: Float32Array | null,
+  ) => boolean;
+}
+
+/**
+ * #1430 — the draw of a mesh the GPU cannot skin exactly: every buffer vertex takes its point's
+ * place in the Armature modifier's own answer (`sampleSkinDeform`), and its normal turns by that
+ * point's blended matrix. Nothing is approximated, so what is drawn IS the evaluated deform.
+ */
+export function buildDeformedDraw(skin: SkinDeformValue, mesh: MeshGeometryData): DeformedDraw {
+  const { vertexCorner } = meshSplitLayout(mesh);
+  const pointOfVertex = Uint32Array.from(vertexCorner, (corner) => mesh.cornerPoints[corner]);
+  let last: { seconds: number; pose: PosedSkeletonValue | null } | null = null;
+  return {
+    write(seconds, pose, position, normal, restNormal) {
+      if (last !== null && last.seconds === seconds && last.pose === pose) return false;
+      last = { seconds, pose };
+      const posed = { ...skin, pose };
+      const points = sampleSkinDeform(posed, mesh, seconds);
+      for (let v = 0; v < pointOfVertex.length; v++) {
+        const p = pointOfVertex[v] * 3;
+        position[v * 3] = points[p];
+        position[v * 3 + 1] = points[p + 1];
+        position[v * 3 + 2] = points[p + 2];
+      }
+      if (normal !== null && restNormal !== null) {
+        const turn = sampleSkinDirections(posed, mesh, seconds);
+        for (let v = 0; v < pointOfVertex.length; v++) {
+          const m = pointOfVertex[v] * 9;
+          const x = restNormal[v * 3];
+          const y = restNormal[v * 3 + 1];
+          const z = restNormal[v * 3 + 2];
+          const nx = turn[m] * x + turn[m + 3] * y + turn[m + 6] * z;
+          const ny = turn[m + 1] * x + turn[m + 4] * y + turn[m + 7] * z;
+          const nz = turn[m + 2] * x + turn[m + 5] * y + turn[m + 8] * z;
+          const length = Math.hypot(nx, ny, nz) || 1;
+          normal[v * 3] = nx / length;
+          normal[v * 3 + 1] = ny / length;
+          normal[v * 3 + 2] = nz / length;
+        }
+      }
+      return true;
+    },
+  };
 }

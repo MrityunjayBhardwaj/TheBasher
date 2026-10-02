@@ -95,7 +95,14 @@ describe('#638 the count is a leaf', () => {
       './arrayCopies',
     ]);
     expect(importsOf('src/nodes/scopeQuery.ts')).toEqual([]);
-    expect(importsOf('src/app/polygonLayout.ts')).toEqual(['../nodes/types']);
+    // #1430 — widened by one: the stored mesh's validation asks `skinInfluences` which layer names
+    // are an influence set. That module is a leaf by the strictest bar here (one type import, no
+    // value import — asserted with the other leaves below), so it cannot lead back to this one.
+    expect(importsOf('src/app/polygonLayout.ts')).toEqual([
+      '../nodes/types',
+      '../nodes/skinInfluences',
+    ]);
+    expect(importsOf('src/nodes/skinInfluences.ts')).toEqual(['./types']);
   });
 
   it('is where the mint reads the count from — not `modifierGeometry`', () => {
@@ -269,7 +276,12 @@ describe('#638 the count is a leaf', () => {
     // one type import, no value imports at all.
     // #1049 — still exactly that, with a stored mesh's layout added: its data type is the same
     // single type import, which is why that half lives here rather than beside the build.
-    expect(importsOf('src/app/polygonLayout.ts')).toEqual(['../nodes/types']);
+    // #1430 — plus the influence-set names, from a module that imports one type and nothing else.
+    expect(importsOf('src/app/polygonLayout.ts')).toEqual([
+      '../nodes/types',
+      '../nodes/skinInfluences',
+    ]);
+    expect(importsOf('src/nodes/skinInfluences.ts')).toEqual(['./types']);
     // #1049 — the registry's newest import, pinned so the claim in its widening note is checked:
     // the day it reaches for the registry, a count or a store, it can close a ring through the
     // registry, and this row is what says so.

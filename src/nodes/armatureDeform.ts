@@ -23,7 +23,7 @@
 
 import { Matrix4, Vector3 } from 'three';
 import { boneWorldMatrices, posedWorldMatrices } from '../viewport/boneShape';
-import { SKIN_JOINTS, SKIN_WEIGHTS } from './attributes';
+import { skinLanes } from './skinInfluences';
 import type { BoneSpec, MeshGeometryData, PosedSkeletonValue, SkinDeformValue } from './types';
 
 /** Below this matched weight a point is left where it is — Blender's `contrib_threshold`. */
@@ -72,6 +72,54 @@ function skinningMatrices(skin: SkinDeformValue, seconds: number): Matrix4[] {
 }
 
 /**
+ * #1430 — what the deform does to a DIRECTION at each point of `mesh` at `seconds`: the linear part
+ * of the point's blended matrix, in the mesh's own space, nine numbers per point, column-major. A
+ * point the deform leaves at rest gets the identity.
+ *
+ * `sampleSkinDeform` states the rule as a sum of displacements; the same sum is one matrix per
+ * point, `A · (Σ wᵢ Mᵢ / Σ wᵢ) · A⁻¹`, and a normal turns by its linear part — what three's skinning
+ * shader does to a normal with its own four lanes (`skinnormal_vertex.glsl.js`). A draw that reads
+ * the deform instead of skinning on the GPU needs this to light the mesh as the GPU draw would.
+ */
+export function sampleSkinDirections(
+  skin: SkinDeformValue,
+  mesh: MeshGeometryData,
+  seconds: number,
+): Float32Array {
+  const points = mesh.points.length / 3;
+  const out = new Float32Array(points * 9);
+  for (let p = 0; p < points; p++) out[p * 9] = out[p * 9 + 4] = out[p * 9 + 8] = 1;
+  const lanes = skinLanes(mesh);
+  if (lanes === null) return out;
+  const { joints, weights, width } = lanes;
+  const toArmature = new Matrix4().fromArray(skin.armatureMatrix).invert();
+  const fromArmature = new Matrix4().fromArray(skin.armatureMatrix);
+  // Each bone's matrix taken into the mesh's space ONCE, so a point's blend is a plain weighted
+  // sum of nine numbers: A · (Σ w M) · A⁻¹ = Σ w (A · M · A⁻¹).
+  const bone = skinningMatrices(skin, seconds).map(
+    (m) => fromArmature.clone().multiply(m).multiply(toArmature).elements,
+  );
+  const LINEAR = [0, 1, 2, 4, 5, 6, 8, 9, 10];
+  const sum = new Float64Array(9);
+  for (let p = 0; p < points; p++) {
+    sum.fill(0);
+    let contrib = 0;
+    for (let lane = 0; lane < width; lane++) {
+      const weight = weights[p * width + lane];
+      if (!weight) continue;
+      const b = skin.boneOfGroup[joints[p * width + lane]] ?? -1;
+      if (b < 0) continue;
+      const e = bone[b];
+      for (let k = 0; k < 9; k++) sum[k] += weight * e[LINEAR[k]];
+      contrib += weight;
+    }
+    if (!(contrib > CONTRIB_THRESHOLD)) continue;
+    for (let k = 0; k < 9; k++) out[p * 9 + k] = sum[k] / contrib;
+  }
+  return out;
+}
+
+/**
  * Every point of `mesh` at `seconds`, deformed by `skin`, in the mesh's own space — xyz per point,
  * in the mesh's point order. A mesh without joint and weight layers comes back unmoved.
  */
@@ -81,9 +129,10 @@ export function sampleSkinDeform(
   seconds: number,
 ): Float32Array {
   const out = Float32Array.from(mesh.points);
-  const joints = mesh.pointLayers.find((l) => l.name === SKIN_JOINTS)?.data;
-  const weights = mesh.pointLayers.find((l) => l.name === SKIN_WEIGHTS)?.data;
-  if (!joints || !weights) return out;
+  // #1430 — every influence the mesh holds, however many sets it stores them in.
+  const lanes = skinLanes(mesh);
+  if (lanes === null) return out;
+  const { joints, weights, width } = lanes;
 
   const toArmature = new Matrix4().fromArray(skin.armatureMatrix).invert();
   const fromArmature = new Matrix4().fromArray(skin.armatureMatrix);
@@ -95,10 +144,10 @@ export function sampleSkinDeform(
     co.fromArray(out, p * 3).applyMatrix4(toArmature);
     delta.set(0, 0, 0);
     let contrib = 0;
-    for (let lane = 0; lane < 4; lane++) {
-      const weight = weights[p * 4 + lane];
+    for (let lane = 0; lane < width; lane++) {
+      const weight = weights[p * width + lane];
       if (!weight) continue;
-      const b = skin.boneOfGroup[joints[p * 4 + lane]] ?? -1;
+      const b = skin.boneOfGroup[joints[p * width + lane]] ?? -1;
       if (b < 0) continue;
       moved.copy(co).applyMatrix4(bone[b]).sub(co).multiplyScalar(weight);
       delta.add(moved);
