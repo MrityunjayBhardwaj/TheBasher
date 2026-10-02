@@ -10,10 +10,10 @@
 // points at `user-imports/<name>/` at all — the Blender model. So for a native import:
 //   · Rename moves the folder and the scene is untouched (nothing followed, nothing had to).
 //   · Delete is not blocked, and the scene keeps drawing the import, across a reload.
-// A file the native reader refuses still arrives through the file's copy, as a `GltfAsset`
-// whose `assetRef` IS a reference; deleting its folder is blocked until break-refs. Since #1053 no
-// import makes one (a refused file is refused whole), so the only scene holding one is a project
-// saved before, whose import the load kept: that path loads a recorded save (`_recordedSave.ts`).
+// Deleting a folder a scene still points at is blocked until break-refs. No open project can hold
+// such a pointer any more: no import makes one since #1053, and a project saved with one (a
+// `GltfAsset` whose `assetRef` is the reference) is refused on load (#1424). So that path has no
+// row here; `importCommon.test.ts` holds the helpers' own checks.
 // BVH/FBX leave no ref.
 //
 // REF: PLAN 7.14 Wave B (B4); CONTEXT D-03/D-05/D-06; issues #112, #1074, #1054;
@@ -23,7 +23,6 @@
 
 import { test, expect } from './_fixtures';
 import { drawnImportMeshes, importRoots } from './_importedMesh';
-import { recordedSave, writeRecordedSave } from './_recordedSave';
 
 interface DagNode {
   type: string;
@@ -83,36 +82,12 @@ async function opfsDirExists(
   }, name);
 }
 
-async function gltfAssetRefs(page: import('@playwright/test').Page): Promise<string[]> {
-  return page.evaluate(() => {
-    const w = window as unknown as BasherWindow;
-    return Object.values(w.__basher_dag.getState().state.nodes)
-      .filter((n) => n.type === 'GltfAsset')
-      .map((n) => (n.params as { assetRef?: string } | undefined)?.assetRef ?? '');
-  });
-}
-
 /** Total DAG node count — used to prove what an operation added or removed. */
 async function dagNodeCount(page: import('@playwright/test').Page): Promise<number> {
   return page.evaluate(
     () =>
       Object.keys((window as unknown as BasherWindow).__basher_dag.getState().state.nodes).length,
   );
-}
-
-/** Count of nodes carrying an assetRef containing `sub` (GltfAsset + the
- *  GltfChild satellites) — the assetRef-tagged slice of the import footprint. */
-async function importTaggedNodeCount(
-  page: import('@playwright/test').Page,
-  sub: string,
-): Promise<number> {
-  return page.evaluate((s) => {
-    const nodes = (window as unknown as BasherWindow).__basher_dag.getState().state.nodes;
-    return Object.values(nodes).filter((n) => {
-      const ref = (n.params as { assetRef?: string } | undefined)?.assetRef;
-      return typeof ref === 'string' && ref.includes(s);
-    }).length;
-  }, sub);
 }
 
 /** Whether any node's params mention `text` anywhere — "does the scene still point at this folder?" */
@@ -261,47 +236,4 @@ test('P7.14 (delete native import) — ︙ Delete is immediate and the scene kee
   await expect
     .poll(async () => (await drawnImportMeshes(page, rootId)).some((m) => m.hasMap && m.mapImageOk))
     .toBe(true);
-});
-
-test('P7.14 (delete referenced) — ︙ Delete of a referenced glTF blocks with a banner, then break-refs', async ({
-  page,
-}) => {
-  // The fresh project this page opened is the one the recording was made from, so its node count
-  // is what is left once the import's footprint is gone.
-  const baselineNodes = await dagNodeCount(page);
-  // Recorded: a project saved with iridescence-quad.gltf on the clone road. The native reader
-  // refuses the file (KHR_materials_iridescence, #1123), so the load keeps the import as saved: a
-  // GltfAsset whose assetRef points at the folder.
-  const saved = recordedSave('clone-models/refused-iridescence');
-  const folder = saved.ref.split('/')[1];
-  await writeRecordedSave(page, saved);
-  await page.reload();
-  await expect(page.getByTestId('layout')).toBeVisible({ timeout: 10_000 });
-  await expect.poll(async () => (await importRoots(page)).map((r) => r.road)).toEqual(['clone']);
-  await expect.poll(async () => await gltfAssetRefs(page)).toContain(saved.ref);
-  // The kept import is a whole footprint (GltfAsset + wrapper Group + child satellites), so the
-  // graph is past baseline.
-  expect(await dagNodeCount(page)).toBeGreaterThan(baselineNodes);
-
-  // The load says why the import was kept, and that notice covers the top toolbar until it is
-  // dismissed (#1410) — so dismiss it first, as a director would.
-  await page.getByRole('button', { name: `Dismiss error for model:${saved.ref}` }).click();
-  await page.getByTestId('top-toolbar-assets').click();
-  await page.getByTestId(`library-popover-menu-btn-${folder}`).click();
-  await page.getByTestId(`library-popover-menu-delete-${folder}`).click();
-
-  // Blocked: banner shown, asset NOT deleted.
-  await expect(page.getByTestId('library-popover-delete-banner')).toBeVisible({ timeout: 5_000 });
-  expect(await opfsDirExists(page, folder)).toBe(true);
-
-  // Delete anyway → break refs.
-  await page.getByTestId(`library-popover-delete-anyway-${folder}`).click();
-
-  await expect.poll(async () => await opfsDirExists(page, folder)).toBe(false);
-  await expect.poll(async () => await gltfAssetRefs(page)).not.toContain(saved.ref);
-  // #127: the WHOLE import footprint is gone — no orphan wrapper Group, no child satellites,
-  // no clip ghosts. Node count returns to baseline and zero nodes still carry the deleted
-  // asset's ref.
-  await expect.poll(async () => await dagNodeCount(page)).toBe(baselineNodes);
-  expect(await importTaggedNodeCount(page, `user-imports/${folder}/`)).toBe(0);
 });

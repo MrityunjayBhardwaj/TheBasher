@@ -10,9 +10,10 @@
 // `extensions.KHR_materials_pbrSpecularGlossiness`) → the captured IR is all
 // default too. A real model (gas_station: 74/74 spec-gloss) imports flat gray.
 //
-// WHERE it runs (the single source of truth): render (GLTFLoader via `useGLTF`)
-// and capture (`buildGltfImportOps`) BOTH independently re-parse the SAME OPFS
-// bytes. So converting the JSON ONCE at ingest — before the bytes are written to
+// WHERE it runs (the single source of truth): when this was written, render
+// (GLTFLoader via `useGLTF`) and capture (the clone importer) BOTH independently
+// re-parsed the SAME OPFS bytes; both are gone (#1053, #1424) and the native reader
+// is the one left. So converting the JSON ONCE at ingest — before the bytes are written to
 // OPFS (`ingestGltfFolder`) — is the only point that sits before BOTH readers.
 // Both then read normal metal-rough → render == capture for free (V37/H40). A
 // loader-plugin would fix render only and force a second converter for capture

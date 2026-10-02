@@ -1938,11 +1938,10 @@ const MeshChild = memo(function MeshChild({ value: raw, override, nodeId }: Mesh
     case 'OrthographicCamera':
       return null;
     case 'GltfAsset':
-      // #1053 — the clone road is retired. Every import is native or refused, and a SAVED clone
-      // import is converted on load (`convertCloneCharacters`). One the converter keeps — its file
-      // is gone, the native reader refuses it, or it carries an edit the converter cannot carry —
-      // draws NOTHING, and the load names it and why (user decision, 2026-09-30). Its nodes stay
-      // in the document as saved, so it converts on its own once that gap closes.
+      // #1053 — the clone road is retired: every import is native or refused. #1424 — a project
+      // SAVED with a clone import is refused on load (`refuseOldImports`), so no open project
+      // holds one and this arm is not reached; it draws nothing if it ever is. The node type and
+      // this arm are #1425's to retire.
       return null;
     case 'Transform':
       return <TransformR value={value} override={override} nodeId={nodeId} />;

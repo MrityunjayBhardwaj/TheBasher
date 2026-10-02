@@ -63,7 +63,6 @@ const OBJECT_NODE = 'src/nodes/ObjectNode.ts';
 const AUTHORING = 'src/app/objectSlotAuthoring.ts';
 /** The panel that draws the list. Reads the authored colour for its field; same rule. */
 const PANEL = 'src/app/NPanel.tsx';
-const CONVERT = 'src/app/asset/convertCloneCharacters.ts';
 
 /**
  * The production roads that resolve a slot table. Tests are excluded on purpose: a test
@@ -401,10 +400,9 @@ describe('#645 — the slot table is derived once, through the Object', () => {
     // row was the file's first multi-element comparison against that walk, so it was the
     // first that could pass locally and red on CI for no reason but the disk. Every other
     // census here compares against `[]`, one element, or a sorted list; this one now does too.
-    // #1216 — a saved clone-road character converting at load reads the record to COPY it whole onto
-    // the native Object (the authored question, never the drawn one: it composes nothing, which the
-    // composer row below still pins to the derivation alone).
-    expect([...readers].sort()).toEqual([ASSIGNMENT, AUTHORING, PANEL, CONVERT].sort());
+    // The load converter was a fourth reader from #1216 (it copied the record whole onto the native
+    // Object) until it was retired in #1424.
+    expect([...readers].sort()).toEqual([ASSIGNMENT, AUTHORING, PANEL].sort());
 
     // The precedence rule — an Object override wins for the index it names — appears ONCE,
     // at the derivation. A road that spelled it again would agree on every object that

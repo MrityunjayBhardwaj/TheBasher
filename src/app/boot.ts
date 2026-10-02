@@ -56,7 +56,7 @@ import {
 import { pickRigging } from '../core/rigging';
 import type { RiggingCapability } from '../core/rigging';
 import { useAssetErrorStore } from './stores/assetErrorStore';
-import { convertLoadedProject, reportCharacterConversion } from './asset/convertCloneCharacters';
+import { OldImportRefusal, refuseOldImports } from '../core/project/oldImports';
 
 /** The banner row a degraded text-to-3D reports under. Named for what a person
  *  asked for, because the banner renders "<ref> — <reason>". */
@@ -481,9 +481,17 @@ export function boot(): Promise<void> {
         }
       }
       if (project) {
-        persistLastProjectId(project.id);
-        await hydrateLoadedProject(storage, project);
-        useRouteStore.getState().openEditor();
+        try {
+          hydrateLoadedProject(project);
+          persistLastProjectId(project.id);
+          useRouteStore.getState().openEditor();
+        } catch (e) {
+          if (!(e instanceof OldImportRefusal)) throw e;
+          // #1424 — refused, and said so by the door. Not resumed again: clear the key and route
+          // home, where the project is still listed and can be deleted.
+          if (typeof localStorage !== 'undefined') localStorage.removeItem(LAST_PROJECT_KEY);
+          useRouteStore.getState().goHome();
+        }
       }
       // The rest behind the open project, not in front of it (#1290).
       void seedExamples(missingExamples.filter((id) => id !== lastId)).finally(examplesSeeded);
@@ -1336,30 +1344,40 @@ export async function switchProject(projectId: string): Promise<void> {
   // Auto-save the project we're leaving so unsaved DAG edits aren't lost.
   await saveCurrent();
   const project = await loadProject(storage, projectId);
+  // Hydrate first: a refused project (#1424) throws here and must not become the one to resume.
+  hydrateLoadedProject(project);
   persistLastProjectId(project.id);
-  await hydrateLoadedProject(storage, project);
 }
 
 /**
- * #1216 — the ONE way a LOADED project reaches the DAG store: its clone-road characters converted
- * first (`convertLoadedProject`), then set current and hydrated. Every loader goes through here —
- * resume, open, duplicate, `.basher` bundle — so no road hydrates a saved clone character as it was.
- * `loadConvertedProject.gate.test.ts` fails when a hydrate of a loaded project skips it.
+ * The ONE way a LOADED project reaches the DAG store: refused when it holds an import saved on the
+ * old imported-file structure (#1424 — nothing reads one any more), else set current and hydrated.
+ * Every loader goes through here — resume, open, duplicate, `.basher` bundle — so no road puts
+ * such an import in the editor. `loadedProjectDoor.gate.test.ts` fails when a hydrate of a loaded
+ * project skips it.
+ *
+ * A refusal is said here, as a toast that stays until dismissed (the Home screen has no banner),
+ * and then thrown: the caller must not go on to open the editor or remember the project.
  *
  * P6 W3 — hydrate triggers the dirty subscription, so setCurrent runs again after it (dirty=false,
- * lastSavedAt=project.updatedAt). A converted project is then marked dirty on purpose: what is in
- * the editor is not what is on disk until it is saved.
+ * lastSavedAt=project.updatedAt).
  */
-async function hydrateLoadedProject(storage: StorageCapability, loaded: Project): Promise<Project> {
-  const { project, report } = await convertLoadedProject(loaded, storage);
+function hydrateLoadedProject(project: Project): Project {
+  try {
+    refuseOldImports(project);
+  } catch (e) {
+    if (e instanceof OldImportRefusal)
+      useNotificationStore
+        .getState()
+        .notify({ severity: 'error', message: e.message, durationMs: 0 });
+    throw e;
+  }
   useProjectStore.getState().setCurrent(project);
   useDagStore.getState().hydrate({
     nodes: project.state.nodes,
     outputs: project.state.outputs,
   });
   useProjectStore.getState().setCurrent(project);
-  if (report.converted.length > 0) useProjectStore.getState().markDirty();
-  reportCharacterConversion(report, useAssetErrorStore.getState().report);
   return project;
 }
 
@@ -1418,8 +1436,8 @@ export async function duplicateCurrentProject(newName?: string): Promise<string>
   const newId = `proj_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
   const dup = await ioDuplicateProject(storage, current.id, newId, newName);
   // Switch to the duplicate.
+  hydrateLoadedProject(dup);
   persistLastProjectId(dup.id);
-  await hydrateLoadedProject(storage, dup);
   return newId;
 }
 
@@ -1526,7 +1544,14 @@ export async function importSceneBundle(bundle: SceneBundle): Promise<string> {
   // it opens as.
   const newId = `proj_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
 
-  // 1. Rehydrate embedded assets to OPFS BEFORE hydrating the DAG, so the
+  // 1. Compose a brand-new project (fresh id + timestamps) through the same
+  //    ladder loadProject uses (migrate → validate → migrate-nodes). First, and refused here
+  //    when it holds an old-structure import (#1424): a bundle that will not open writes
+  //    nothing into storage. Thrown without the door's toast — the caller reports it.
+  const project = bundleToProject(bundle, newId, Date.now());
+  refuseOldImports(project);
+
+  // 2. Rehydrate embedded assets to OPFS BEFORE hydrating the DAG, so the
   //    renderer's async loaders find the bytes on first mount.
   if (bundle.assets) {
     for (const [bundlePath, b64] of Object.entries(bundle.assets)) {
@@ -1536,13 +1561,10 @@ export async function importSceneBundle(bundle: SceneBundle): Promise<string> {
     }
   }
 
-  // 2. Compose a brand-new project (fresh id + timestamps) through the same
-  //    ladder loadProject uses (migrate → validate → migrate-nodes).
-  const project = bundleToProject(bundle, newId, Date.now());
   await saveProject(storage, project);
-  persistLastProjectId(project.id);
 
-  // 3. Hydrate, converting any clone-road character the bundle carries (#1216).
-  await hydrateLoadedProject(storage, project);
+  // 3. Hydrate through the one door, then remember it.
+  hydrateLoadedProject(project);
+  persistLastProjectId(project.id);
   return newId;
 }

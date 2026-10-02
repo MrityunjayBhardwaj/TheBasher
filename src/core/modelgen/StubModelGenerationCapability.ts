@@ -81,7 +81,7 @@ function canonicalise(request: ModelGenerationRequest): string {
 
 /**
  * A box whose proportions come from the request hash. Small enough to read in a
- * test, real enough that `parseGlb` → `buildGltfImportOps` treats it exactly as
+ * test, real enough that `parseGlb` → the native import treats it exactly as
  * it treats a file off disk.
  *
  * Exported so a test can assert the bytes the capability returns are the bytes

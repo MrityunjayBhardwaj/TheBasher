@@ -8,8 +8,8 @@
 // COMBINED-texture pixel conversion needs canvas IO, which is app-layer. This
 // module is the single seam ingestGltfFolder calls: parse the entry `.gltf` →
 // factor-convert (core) → bake an MR texture per combined-texture material →
-// re-serialize. Both OPFS readers (render's GLTFLoader, capture's
-// buildGltfImportOps) then see one converted source (render == capture, V37/H40).
+// re-serialize. Every reader of the OPFS bytes then sees one converted source
+// (V37/H40) — today the native reader; the clone road's two are gone (#1053, #1424).
 //
 // THE BAKED MR TEXTURE rides as a NEW glTF SIBLING (a normal image/texture entry
 // in the rewritten JSON + a PNG file written next to the `.gltf`), NOT the

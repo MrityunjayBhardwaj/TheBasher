@@ -13,8 +13,8 @@
 // between keyframes a few degrees apart.
 //
 // That defect has now been fixed TWICE at two different producers (#867 in
-// `clipToKeyframes`, #876 in `gltfImportChain`) because each road converts on
-// its own. `continuousEuler` is a gate anyone can walk past by calling
+// `clipToKeyframes`, #876 in `gltfImportChain`'s clip builder, removed with the
+// clone importer in #1424) because each road converts on its own. `continuousEuler` is a gate anyone can walk past by calling
 // `setFromQuaternion` directly. Until building a rotation CHANNEL from
 // quaternions is the only constructible road, this census is what stops the
 // third occurrence: it cannot prevent a bad call, but it refuses to let one be
@@ -165,12 +165,11 @@ describe('#876 — the quaternion→Euler door census', () => {
     expect(adapter).toContain('export function continuousEuler');
   });
 
-  it('the glTF import road uses the continuous converter, not the canonical one', () => {
-    // The specific regression #876 fixed: this road assembled keyframes with the
-    // canonical converter and the consumer lerped them.
-    const chain = readFileSync('src/core/import/gltfImportChain.ts', 'utf8');
-    expect(chain).toContain('continuousEuler(');
-    // And it must not have quietly reverted to converting per key at assembly time.
-    expect(chain).not.toMatch(/kf\.rotation\s*=\s*radVec3ToDeg\(quaternionToEulerVec3/);
+  it('every producer of an Euler keyframe sequence calls the continuous converter', () => {
+    // #876 fixed this in the glTF clone importer's clip builder, which assembled keyframes with
+    // the canonical converter while the consumer lerped them. That builder is gone (#1424), so
+    // the row names the producers that are left: each must still go through the wrapper.
+    for (const producer of ['src/core/import/threeAdapter.ts', 'src/core/import/fbx.ts'])
+      expect(readFileSync(producer, 'utf8'), producer).toMatch(/= continuousEuler\(/);
   });
 });

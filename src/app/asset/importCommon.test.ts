@@ -6,12 +6,12 @@
 // new files present, old gone, assetRef repointed, refresh bumped.
 
 import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useDagStore } from '../../core/dag/store';
 import type { Node } from '../../core/dag/types';
+import type { DagState } from '../../core/dag/state';
 import { MemoryStorage } from '../../core/storage/MemoryStorage';
-import { buildGltfImportOps, importGroupNodeIds } from '../../core/import/gltfImportChain';
+import { importGroupNodeIds } from '../../core/import/gltfImportChain';
 import { registerAllNodes } from '../../nodes/registerAll';
 import { useAssetErrorStore } from '../stores/assetErrorStore';
 import { useImportRefreshStore } from '../stores/importRefreshStore';
@@ -29,12 +29,6 @@ import {
 } from './importCommon';
 
 const enc = (s: string) => new TextEncoder().encode(s);
-
-/** The committed skinned-bar.glb (a bone hierarchy → multiple GltfChild). */
-function skinnedBarBuffer(): ArrayBuffer {
-  const node = readFileSync(resolve(process.cwd(), 'public/assets/skinned-bar.glb'));
-  return node.buffer.slice(node.byteOffset, node.byteOffset + node.byteLength) as ArrayBuffer;
-}
 
 function gltfAsset(id: string, assetRef: string): Node {
   return { id, type: 'GltfAsset', version: 1, params: { assetRef }, inputs: {} };
@@ -153,36 +147,36 @@ describe('deleteImportedAsset', () => {
   });
 
   it('referenced + breakRefs → removes the WHOLE import footprint, Scene anchor survives (#127)', async () => {
-    const assetRef = `${USER_IMPORTS_ROOT}/rig/scene.gltf`;
+    // A project SAVED with a skinned, animated clone import, as the app wrote it — the only
+    // place the footprint exists since the builder that made one was removed (#1424). Hydrated
+    // whole, so the content-addressed wrapper Group, the child pairs, the skeleton and the clip
+    // nodes are there with their true ids and edges. This exercises the op layer's actual
+    // disconnect-then-removeNode constraints — a wrong order would throw "still consumed" and
+    // the OPFS delete would never run.
+    const recorded = JSON.parse(
+      readFileSync('src/core/project/__fixtures__/clone-characters/placed.json', 'utf8'),
+    ) as { ref: string; project: { state: DagState } };
+    const assetRef = recorded.ref;
+    const folder = assetRef.split('/')[1];
     await currentStorage.write(assetRef, enc('glb'));
-    // Pre-hydrate the shared Scene anchor, then dispatch a REAL import chain so
-    // the content-addressed wrapper Transform/Group + GltfChild satellites
-    // (+ any clip nodes) exist with their true ids and edges. This exercises
-    // the op layer's actual disconnect-then-removeNode constraints — a wrong
-    // order would throw "still consumed" and the OPFS delete would never run.
-    useDagStore.getState().hydrate({
-      nodes: { n_scene: { id: 'n_scene', type: 'Scene', version: 1, params: {}, inputs: {} } },
-      outputs: {},
-    });
-    const built = await buildGltfImportOps(
-      { buffer: skinnedBarBuffer(), assetRef, sceneNodeId: 'n_scene' },
-      useDagStore.getState().state,
-    );
-    useDagStore.getState().dispatchAtomic(built.ops, 'user', 'import rig');
+    useDagStore.getState().hydrate(recorded.project.state);
+    const scene = Object.values(useDagStore.getState().state.nodes).find(
+      (n) => n.type === 'Scene',
+    )!.id;
 
     // The footprint is the whole subtree (GltfAsset + wrappers + N children),
     // not just the GltfAsset — the #127 bug was leaving all-but-GltfAsset behind.
     const footprint = importGroupNodeIds(assetRef, useDagStore.getState().state);
-    expect(footprint.length).toBeGreaterThan(2);
+    expect(footprint.length).toBe(11);
 
-    const res = await deleteImportedAsset('rig', { breakRefs: true });
+    const res = await deleteImportedAsset(folder, { breakRefs: true });
     expect(res.deleted).toBe(true);
-    // Every footprint node is gone — no orphan Transform/Group/GltfChild/clip ghosts.
+    // Every footprint node is gone — no orphan Group/child/skeleton/clip ghosts.
     for (const id of footprint) {
       expect(useDagStore.getState().state.nodes[id]).toBeUndefined();
     }
     // The shared Scene anchor (output-anchored, not content-addressed) survives.
-    expect(useDagStore.getState().state.nodes['n_scene']).toBeDefined();
+    expect(useDagStore.getState().state.nodes[scene]).toBeDefined();
     expect(await currentStorage.exists(assetRef)).toBe(false);
   });
 });

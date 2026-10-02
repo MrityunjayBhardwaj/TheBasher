@@ -17,10 +17,8 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { Euler, Matrix4, Quaternion, Vector3 } from 'three';
-import { buildGltfImportOps, buildNodeNameMap, buildSkinMetadata } from './gltfImportChain';
+import { buildNodeNameMap, buildSkinMetadata } from './gltfImportChain';
 import { parseGltfContainer, resolveBuffers, type GltfJson } from './glb';
-import type { Op } from '../dag/types';
-import type { DagState } from '../dag/state';
 import { GltfAssetParams } from '../../nodes/GltfAsset';
 import { SkeletonNode, SkeletonParams, type SkeletonOutputs } from '../../nodes/Skeleton';
 
@@ -62,15 +60,6 @@ function makeGlb(json: GltfJson, binBytes?: Uint8Array): ArrayBuffer {
     new Uint8Array(buf, cursor + 8, bin.length).set(bin);
   }
   return buf;
-}
-
-/** Minimal DagState shape — buildGltfImportOps only reads `_state` for
- *  signature stability post-P7.10 (no TimeSource discovery anymore). */
-function emptyState(): DagState {
-  return {
-    nodes: { n_scene: { id: 'n_scene', type: 'Scene', version: 1, params: {}, inputs: {} } },
-    outputs: {},
-  } as unknown as DagState;
 }
 
 /** Parse a committed fixture and resolve its buffers (sync — embedded BIN). */
@@ -202,64 +191,6 @@ describe('defaultTRS — matrix-form decomposition (P7.11 FLAG 1)', () => {
   });
 });
 
-describe('buildGltfImportOps — skins emitted on the GltfAsset op (P7.11 A3/A4)', () => {
-  function gltfAssetOp(ops: Op[]) {
-    const op = ops.find((o) => o.type === 'addNode' && o.nodeType === 'GltfAsset');
-    if (!op || op.type !== 'addNode') throw new Error('no GltfAsset addNode op');
-    return op.params as {
-      skins: Array<{
-        jointKeys: string[];
-        bindTRS: unknown[];
-        parentJointIndex: number[];
-        inverseBindMatrices: number[][];
-      }>;
-    };
-  }
-
-  it('V22 determinism: skins metadata deep-equal across two import runs', async () => {
-    const a = await buildGltfImportOps(
-      {
-        buffer: fixtureBuffer('skinned-bar.glb'),
-        assetRef: 'assets/skinned-bar.glb',
-        sceneNodeId: 'n_scene',
-      },
-      emptyState(),
-    );
-    const b = await buildGltfImportOps(
-      {
-        buffer: fixtureBuffer('skinned-bar.glb'),
-        assetRef: 'assets/skinned-bar.glb',
-        sceneNodeId: 'n_scene',
-      },
-      emptyState(),
-    );
-    const skinsA = gltfAssetOp(a.ops).skins;
-    const skinsB = gltfAssetOp(b.ops).skins;
-    expect(JSON.stringify(skinsA)).toBe(JSON.stringify(skinsB));
-  });
-
-  it('parallel-length on the emitted op: jointKeys == bindTRS == parentJointIndex == IBM', async () => {
-    const result = await buildGltfImportOps(
-      {
-        buffer: fixtureBuffer('skinned-bar.glb'),
-        assetRef: 'assets/skinned-bar.glb',
-        sceneNodeId: 'n_scene',
-      },
-      emptyState(),
-    );
-    const [skin] = gltfAssetOp(result.ops).skins;
-    const n = skin.jointKeys.length;
-    expect(n).toBe(2);
-    expect(skin.bindTRS).toHaveLength(n);
-    expect(skin.parentJointIndex).toHaveLength(n);
-    expect(skin.inverseBindMatrices).toHaveLength(n);
-  });
-});
-
-// Phase 7.11 Wave F (F4): the D-03/D-04 additive fields must not break
-// pre-7.11 saves or BVH/FBX-emitted Skeleton nodes. The fields are all
-// `.optional()` / `.default([])`, so a legacy param object lacking them
-// hydrates to the legacy shape and a legacy bone evaluates byte-identical.
 describe('back-compat — additive fields are non-breaking (P7.11 F4 / D-03)', () => {
   it('a pre-7.11 GltfAsset param object lacking `skins` hydrates to []', () => {
     // The shape a project saved BEFORE 7.11 carries: no `skins` key at all.

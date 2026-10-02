@@ -2895,10 +2895,9 @@ describe("eager channels v9 → v10: the retired bake's unauthored copies are dr
 
   // 🔶 TWO ROWS RETIRED WITH THE CLONE ROAD'S CHARACTER HALF (#1053). They measured the clone
   // band — the channels holding past the clip's end before the migration, the bound clip cycling
-  // and serving the same in-range motion after it. Nothing draws that band now: a saved clone
-  // character is converted at load (#1216), after this migration, and its clip becomes the native
-  // bind, measured vertex by vertex against a native import in
-  // `src/app/asset/convertCloneCharacterMotion.test.ts`. What this migration still owes is its
+  // and serving the same in-range motion after it. Nothing draws that band now, and a project
+  // holding a saved clone character is refused on load, after this migration (#1424; until then
+  // it was converted, #1216). What this migration still owes is its
   // predicate — drop only a bit-identical copy of the clip, keep every edit — and the rows below
   // pin that.
 

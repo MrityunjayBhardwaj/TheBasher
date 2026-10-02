@@ -628,8 +628,8 @@ export const SPLIT_KINDS: Record<SplitKindName, SplitKindSpec> = {
       childName: 'Cube',
       material: null,
     },
-    // The param the director sets and the converter carries when the import converts. Since
-    // #1053 it reaches no renderer (see `roadAnswers.render`), and the roads assert exactly that.
+    // The param a director set on an imported child. Since #1053 it reaches no renderer (see
+    // `roadAnswers.render`), and since #1424 a project holding the pair is refused on load.
     observableDataParam: 'material.base.color',
     // The standard '#cccccc' default and the '#808080' missing-material fallback are both
     // avoided, for the reason every kind above avoids them: a broken road returns the
@@ -642,15 +642,15 @@ export const SPLIT_KINDS: Record<SplitKindName, SplitKindSpec> = {
     // section would be a permanently empty card. See GltfData.ts.
     dataSections: ['material'],
     primaryWorkflows: [
-      'reopen a save whose import the load converter kept, and see it named rather than drawn',
+      'reopen a save that holds one, and be told by name that the project is refused',
     ],
     roadAnswers: {
       render: {
         reaches: false,
         why:
-          'every new import is native or refused, so a GltfData survives only in a save the ' +
-          'load converter kept; it evaluates to no data and its Object is an Empty',
-        issue: '#1053',
+          'every new import is native or refused, so a GltfData exists only in an old save, ' +
+          'and a project holding one is refused on load; it evaluates to no data',
+        issue: '#1424',
       },
     },
   },

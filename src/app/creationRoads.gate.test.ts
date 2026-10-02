@@ -95,8 +95,28 @@ const NO_CREATION_ROAD: Readonly<Record<string, string>> = {
   PoseOverride:
     "The clone road's hand-pose (#993), minted off a retarget chain by poseBone's retarget " +
     "anchor, which retired with the clone road's character half (#1053). Kept registered so a " +
-    'project saved with one still loads; the load converts it into a pose-layer member (#1216), ' +
-    'and the type itself retires in #1243.',
+    'project saved with one still parses; it only ever sat beside an old-structure import, and ' +
+    'a project holding one of those is refused on load (#1424). The type retires in #1243.',
+
+  // #1424 — the clone importer's five. The builder that minted them (`buildGltfImportOps`) is
+  // gone and nothing imports that way since #1421. They stay registered so an old project still
+  // parses, which is what lets the load refuse it BY NAME and Home keep listing it. #1425 retires
+  // the types themselves.
+  GltfAsset:
+    'An import saved on the old imported-file structure. No importer makes one (#1421); a ' +
+    'project holding one is refused on load (#1424). Registered so that project parses — #1425.',
+  GltfData:
+    "The old structure's per-mesh child, made only beside a GltfAsset (and by the frozen " +
+    'v9 → v10 migration). A project holding one is refused on load (#1424) — #1425.',
+  GltfSkeleton:
+    "The old structure's per-skin rig node, made only beside a GltfAsset. A project holding " +
+    'one is refused on load (#1424) — #1425.',
+  TransformClip:
+    "The old structure's embedded animation clip, made only beside a GltfAsset; a native " +
+    'import writes actions and strips instead. Not refused on its own, never made — #1425.',
+  ClipSelect:
+    "The old structure's clip switch, made only beside a GltfAsset with clips. Not refused on " +
+    'its own, never made — #1425.',
 
   RenderJob:
     'Opt-in by design, and the ONE type whose dag.exec road is documented rather than ' +

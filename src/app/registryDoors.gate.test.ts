@@ -343,13 +343,6 @@ const TOPOLOGY_WRITERS: Record<string, string> = {
   // component owns and disposes; the registry's instance is only ever read.
   'src/viewport/SceneFromDAG.tsx':
     'SkinnedMeshR clones the shared build and writes skin attributes on its own copy only',
-  // #1040 — the import capture, and it is the safe category by construction rather than by
-  // care: it is reached during IMPORT, before any descriptor for this child exists, so there
-  // is no registry instance for it to write through to even in principle. It fills a throwaway
-  // container with the POSITION accessor's floats, welds it to get a point count, disposes it,
-  // and returns an integer. Nothing it touches outlives the function.
-  'src/core/import/gltfImportChain.ts':
-    'fills a throwaway BufferGeometry from POSITION bytes to weld a point count, then disposes it',
   // #1049 — the native import reader, the same safe category for the same reason: it runs during
   // IMPORT, before any descriptor exists, fills a throwaway container with the POSITION floats to
   // weld the mesh's points, and disposes it. What it hands on is a stored mesh, not a geometry.
