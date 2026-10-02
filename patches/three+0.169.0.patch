@@ -1,8 +1,18 @@
 diff --git a/node_modules/three/examples/jsm/loaders/FBXLoader.js b/node_modules/three/examples/jsm/loaders/FBXLoader.js
-index bc8d49a..40ba230 100644
+index bc8d49a..6d9e2f5 100644
 --- a/node_modules/three/examples/jsm/loaders/FBXLoader.js
 +++ b/node_modules/three/examples/jsm/loaders/FBXLoader.js
-@@ -521,6 +521,34 @@ class FBXTreeParser {
+@@ -183,7 +183,8 @@ class FBXTreeParser {
+ 
+ 		if ( 'Connections' in fbxTree ) {
+ 
+-			const rawConnections = fbxTree.Connections.connections;
++			// basher #1449 — an empty scene's file has a Connections section with none in it.
++			const rawConnections = fbxTree.Connections.connections || [];
+ 
+ 			rawConnections.forEach( function ( rawConnection ) {
+ 
+@@ -521,6 +522,34 @@ class FBXTreeParser {
  		material.setValues( parameters );
  		material.name = name;
  
@@ -37,7 +47,7 @@ index bc8d49a..40ba230 100644
  		return material;
  
  	}
-@@ -908,6 +936,9 @@ class FBXTreeParser {
+@@ -908,6 +937,9 @@ class FBXTreeParser {
  		if ( sceneGraph.children.length === 1 && sceneGraph.children[ 0 ].isGroup ) {
  
  			sceneGraph.children[ 0 ].animations = animations;
@@ -47,7 +57,7 @@ index bc8d49a..40ba230 100644
  			sceneGraph = sceneGraph.children[ 0 ];
  
  		}
-@@ -1623,6 +1654,43 @@ class GeometryParser {
+@@ -1623,6 +1655,43 @@ class GeometryParser {
  
  		geo.setAttribute( 'position', positionAttribute );
  
@@ -91,7 +101,7 @@ index bc8d49a..40ba230 100644
  		if ( buffers.colors.length > 0 ) {
  
  			geo.setAttribute( 'color', new Float32BufferAttribute( buffers.colors, 3 ) );
-@@ -1792,6 +1860,8 @@ class GeometryParser {
+@@ -1792,6 +1861,8 @@ class GeometryParser {
  			materialIndex: [],
  			vertexWeights: [],
  			weightsIndices: [],
@@ -100,7 +110,7 @@ index bc8d49a..40ba230 100644
  		};
  
  		let polygonIndex = 0;
-@@ -1830,12 +1900,14 @@ class GeometryParser {
+@@ -1830,12 +1901,14 @@ class GeometryParser {
  			let weights = [];
  
  			facePositionIndexes.push( vertexIndex * 3, vertexIndex * 3 + 1, vertexIndex * 3 + 2 );
@@ -115,7 +125,7 @@ index bc8d49a..40ba230 100644
  
  			}
  
-@@ -1914,6 +1986,7 @@ class GeometryParser {
+@@ -1914,6 +1987,7 @@ class GeometryParser {
  				const data = getData( polygonVertexIndex, polygonIndex, vertexIndex, geoInfo.normal );
  
  				faceNormals.push( data[ 0 ], data[ 1 ], data[ 2 ] );
@@ -123,7 +133,7 @@ index bc8d49a..40ba230 100644
  
  			}
  
-@@ -1944,6 +2017,8 @@ class GeometryParser {
+@@ -1944,6 +2018,8 @@ class GeometryParser {
  
  					faceUVs[ i ].push( data[ 0 ] );
  					faceUVs[ i ].push( data[ 1 ] );
@@ -132,7 +142,7 @@ index bc8d49a..40ba230 100644
  
  				} );
  
-@@ -1953,6 +2028,9 @@ class GeometryParser {
+@@ -1953,6 +2029,9 @@ class GeometryParser {
  
  			if ( endOfFace ) {
  
@@ -142,7 +152,7 @@ index bc8d49a..40ba230 100644
  				scope.genFace( buffers, geoInfo, facePositionIndexes, materialIndex, faceNormals, faceColors, faceUVs, faceWeights, faceWeightIndices, faceLength );
  
  				polygonIndex ++;
-@@ -2623,11 +2701,19 @@ class AnimationParser {
+@@ -2623,11 +2702,19 @@ class AnimationParser {
  
  									sceneGraph.traverse( function ( child ) {
  
@@ -164,7 +174,7 @@ index bc8d49a..40ba230 100644
  
  										}
  
-@@ -2767,7 +2853,7 @@ class AnimationParser {
+@@ -2767,7 +2854,7 @@ class AnimationParser {
  
  		if ( rawTracks.R !== undefined && Object.keys( rawTracks.R.curves ).length > 0 ) {
  
@@ -173,7 +183,7 @@ index bc8d49a..40ba230 100644
  			if ( rotationTrack !== undefined ) tracks.push( rotationTrack );
  
  		}
-@@ -2799,14 +2885,20 @@ class AnimationParser {
+@@ -2799,14 +2886,20 @@ class AnimationParser {
  
  	}
  
@@ -197,7 +207,7 @@ index bc8d49a..40ba230 100644
  
  			times = result[ 0 ];
  			values = result[ 1 ];
-@@ -2936,61 +3028,39 @@ class AnimationParser {
+@@ -2936,61 +3029,39 @@ class AnimationParser {
  
  	getKeyframeTrackValues( times, curves, initialValue ) {
  
