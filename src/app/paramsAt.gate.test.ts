@@ -161,6 +161,9 @@ const CONSUMERS: Record<string, Decision> = {
   'src/app/uiEvaluatorCache.ts': indifferent('never-reads-the-graph'),
   'src/app/resolveMeshUVSpace.ts': authored('delegates-to-a-folding-resolver'),
   'src/app/asset/cookMotionGenerations.ts': authored('fixed-ctx-by-design'),
+  // `dispatchApplyTransform` left this table at #1053 (its evaluate went with the clone road);
+  // `canApplyTransform` takes its UI caller's cache (#1315), which brings it back for the TYPE only.
+  'src/app/animate/dispatchApplyTransform.ts': authored('delegates-to-a-folding-resolver'),
   // #902 — the motion resolver. It reads the generator's params AUTHORED and
   // evaluates at the default ctx, and both halves are the same claim: a
   // generation request must be time-invariant. If the playhead could change the
@@ -308,13 +311,14 @@ describe('#582 — who evaluates the graph, and which params they need', () => {
     // 48 → 52 at #1389, the same shape: two per-frame readers (the animatable-field hooks, the
     // composite viewer) and the composition export hold a cache for the resolver they already
     // called, and the composite core takes one.
-    // 52 → 49 at #1315, and nothing stopped evaluating: six UI readers that imported the evaluator
-    // only to create their own cache now share one (`uiEvaluatorCache`, +1), and two predicates
-    // that take a cache from their UI caller import its type (+2). 52 − 6 + 3 = 49.
-    // 49 → 51 at #1394, not a new road: the inspector's projection and the lane-overlay sources
+    // 52 → 50 at #1315, and nothing stopped evaluating: six UI readers that imported the evaluator
+    // only to create their own cache now share one (`uiEvaluatorCache`, +1), and three predicates
+    // that take a cache from their UI caller import its type (+3; `dispatchApplyTransform` had left
+    // at #1053 and comes back). 52 − 6 + 4 = 50.
+    // 50 → 52 at #1394, not a new road: the inspector's projection and the lane-overlay sources
     // import the cache type to hand the material-owner walk the shared UI cache (+2).
-    // 51 → 52 at #353: `mutator.constrain` creates the one cache its two precondition checks share.
-    expect(evaluatorConsumers()).toHaveLength(52); // 39 -> 40 at #935 (placement) (the motion resolver)
+    // 52 → 53 at #353: `mutator.constrain` creates the one cache its two precondition checks share.
+    expect(evaluatorConsumers()).toHaveLength(53); // 39 -> 40 at #935 (placement) (the motion resolver)
   });
 
   it('every reason is load-bearing — no member of any union is decorative', () => {

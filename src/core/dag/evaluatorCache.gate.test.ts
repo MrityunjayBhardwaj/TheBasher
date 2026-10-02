@@ -151,30 +151,10 @@ const ORIGINS: Record<string, Origin> = {
     frequency: 'per-action',
     why: 'Bake Pose click or agent mutator: one evaluation per dispatch.',
   },
-  'src/app/animate/dispatchApplyTransform.ts · dispatchApplyGltfChild → resolveEvaluatedMesh': {
-    count: 1,
-    frequency: 'per-action',
-    why: 'Apply Transform on an imported child.',
-  },
   'src/app/animate/dispatchApplyTransform.ts · dispatchApplyTransform → resolveEvaluatedMesh': {
     count: 1,
     frequency: 'per-action',
     why: 'Apply Transform menu or key.',
-  },
-  'src/app/animate/dispatchApplyTransform.ts · importedChildPlacement → resolveParentWorldMatrix': {
-    count: 1,
-    frequency: 'per-action',
-    why: 'Apply Transform on an imported child.',
-  },
-  'src/app/animate/dispatchApplyTransform.ts · importedChildPlacement → resolveWorldTransform': {
-    count: 1,
-    frequency: 'per-action',
-    why: 'Apply Transform on an imported child.',
-  },
-  'src/app/animate/dispatchApplyTransform.ts · isGltfChildClipDriven → evaluate': {
-    count: 1,
-    frequency: 'per-action',
-    why: 'Apply Transform on an imported child; the inline fresh cache dies with the action.',
   },
   'src/app/asset/bakeGeneratedClip.ts · bakeGeneratedClipOps → evaluate': {
     count: 1,
@@ -335,7 +315,6 @@ const TAKERS: string[] = [
   'evaluate@src/core/dag/evaluator.ts',
   'foldOverlays@src/app/cookState.ts',
   'gltfNodeWorldPosition@src/app/gltfNodeWorld.ts',
-  'gltfTerrainMeshes@src/app/geometrySampleSource.ts',
   'makeStatefulDriverChannelValue@src/app/statefulOps.ts',
   'nativeBoneWorldPosition@src/app/gltfNodeWorld.ts',
   'nodeRefCandidates@src/app/nodeRefCandidates.ts',
