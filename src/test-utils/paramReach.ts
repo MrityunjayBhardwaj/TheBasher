@@ -93,8 +93,15 @@ const LIGHT_RECOMPOSE = 'src/nodes/lightRecompose.ts';
 const BAKED_RECOMPOSE = 'src/nodes/bakedRecompose.ts';
 const ACTIVE_CAMERA = 'src/app/activeCamera.ts';
 const CURVE_LINE = 'src/viewport/CurveLine.tsx';
-/** #1053 — the load converter, which reads a saved clone import to turn it native. */
-const CLONE_CONVERTER = 'src/app/asset/convertCloneCharacters.ts';
+/**
+ * #1424 — a param of a node type no open project can hold: a project holding one is refused on
+ * load, so nothing reads it. The type stays registered so the refusal can name the project.
+ */
+const REFUSED_ON_LOAD: NoReader = {
+  none: true,
+  why: 'a project holding a GltfData is refused on load, so nothing reads its params',
+  issue: '#1425',
+};
 /**
  * #1407 — the modules a caller named above DELEGATES to. The table used to name the caller, which
  * carries the param only in prose; the read itself is one hop further in.
@@ -207,22 +214,15 @@ export const PARAM_READERS: Record<SplitKindName, Record<string, ParamReader>> =
     material: { by: BAKED_RECOMPOSE },
   },
   gltf: {
-    // #1053 — the clone renderer is gone (a kept clone import is not drawn), so what reads a saved
-    // clone child's params now is the load converter, which reads them to turn the child native:
-    // `assetRef` and `childName` to find it in the file, `material` and `materialSlots` to carry
-    // what the director set. Nothing draws from them any more.
-    assetRef: { by: CLONE_CONVERTER },
-    childName: { by: CLONE_CONVERTER },
-    material: { by: CLONE_CONVERTER },
-    materialSlots: { by: CLONE_CONVERTER },
-    // #1023 / #1040 — the captured face and point counts. Their readers were the `gltf` arms of
-    // the model's face and point questions, which went with the `gltf` geometry kind (#1053).
-    // What reads them now is the same converter, and not by name: it rebuilds the saved import
-    // and compares EVERY param field against the rebuild to find what the director edited. So
-    // the captures must keep writing exactly what old saves hold — a count that differed would
-    // read as an edit (#1407).
-    faceCount: { by: CLONE_CONVERTER, whole: 'was.params' },
-    pointCount: { by: CLONE_CONVERTER, whole: 'was.params' },
+    // The clone renderer went with #1053 and the load converter with #1424, which were the last
+    // two readers of a saved clone child's params. A project holding one is refused on load, so
+    // all six are read by nothing; the kind itself is #1425's to retire.
+    assetRef: REFUSED_ON_LOAD,
+    childName: REFUSED_ON_LOAD,
+    material: REFUSED_ON_LOAD,
+    materialSlots: REFUSED_ON_LOAD,
+    faceCount: REFUSED_ON_LOAD,
+    pointCount: REFUSED_ON_LOAD,
   },
   mesh: {
     // #1049 — the stored mesh itself, read BY NAME: `meshGeometryRef` decodes it and keys the
