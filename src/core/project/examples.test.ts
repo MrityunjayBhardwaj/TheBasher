@@ -77,6 +77,7 @@ describe('example projects (v0.6 #4 W4)', () => {
       'CurveData',
       'FollowPath',
       'TrackTo',
+      'Skeleton',
       'PolyMeshData',
       'ArmatureModifier',
     ])
