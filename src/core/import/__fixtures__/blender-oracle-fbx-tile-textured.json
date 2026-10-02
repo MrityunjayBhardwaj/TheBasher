@@ -1,0 +1,61 @@
+{
+  "blender": "5.1.1",
+  "probe": "ref/probes/blender-armature-deform/q18_fbx_texture_oracle.py",
+  "materials": {
+    "Tile/Textured": {
+      "inputs": {
+        "Base Color": {
+          "via": "TEX_IMAGE",
+          "from_socket": "Color",
+          "image": "tex_base.png",
+          "size": [2, 2],
+          "channels": 4,
+          "depth": 32,
+          "colorspace": "sRGB",
+          "packed": true,
+          "alpha_mode": "STRAIGHT",
+          "pixels": [
+            1.0, 0.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.502
+          ],
+          "extension": "REPEAT",
+          "interpolation": "Linear"
+        },
+        "Alpha": {
+          "via": "TEX_IMAGE",
+          "from_socket": "Alpha",
+          "image": "tex_base.png.002",
+          "size": [2, 2],
+          "channels": 4,
+          "depth": 32,
+          "colorspace": "Non-Color",
+          "packed": true,
+          "alpha_mode": "STRAIGHT",
+          "pixels": [
+            1.0, 0.0, 0.0, 1.0, 0.0, 1.0, 0.0, 1.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0, 1.0, 0.502
+          ],
+          "extension": "REPEAT",
+          "interpolation": "Linear"
+        },
+        "Normal": {
+          "via": "NORMAL_MAP",
+          "from_socket": "Normal",
+          "image": "tex_normal.png",
+          "size": [2, 2],
+          "channels": 4,
+          "depth": 24,
+          "colorspace": "Non-Color",
+          "packed": true,
+          "alpha_mode": "STRAIGHT",
+          "pixels": [
+            0.502, 0.502, 1.0, 1.0, 0.8, 0.502, 0.8, 1.0, 0.502, 0.8, 0.8, 1.0, 0.502, 0.502, 1.0,
+            1.0
+          ],
+          "extension": "REPEAT",
+          "interpolation": "Linear"
+        }
+      },
+      "blend_method": "HASHED",
+      "surface_render_method": "DITHERED"
+    }
+  }
+}

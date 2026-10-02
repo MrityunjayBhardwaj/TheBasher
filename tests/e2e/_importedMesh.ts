@@ -83,6 +83,8 @@ export interface DrawnImportMesh {
   readonly worldBounds: [number, number, number];
   readonly hasMetalnessMap: boolean;
   readonly hasRoughnessMap: boolean;
+  /** #1434 — the normal map's decoded width, or null with no normal map. */
+  readonly normalMapWidth: number | null;
   readonly color: string | null;
   readonly metalness: number | null;
   readonly roughness: number | null;
@@ -315,6 +317,7 @@ export async function drawnImportMeshes(page: Page, rootId?: string): Promise<Dr
       map?: Tex;
       metalnessMap?: Tex;
       roughnessMap?: Tex;
+      normalMap?: Tex;
       color?: { getHexString: () => string };
       metalness?: number;
       roughness?: number;
@@ -371,6 +374,8 @@ export async function drawnImportMeshes(page: Page, rootId?: string): Promise<Dr
             worldBounds,
             hasMetalnessMap: Boolean(mat?.metalnessMap),
             hasRoughnessMap: Boolean(mat?.roughnessMap),
+            normalMapWidth:
+              typeof mat?.normalMap?.image?.width === 'number' ? mat.normalMap.image.width : null,
             color: mat?.color ? `#${mat.color.getHexString()}` : null,
             metalness: typeof mat?.metalness === 'number' ? mat.metalness : null,
             roughness: typeof mat?.roughness === 'number' ? mat.roughness : null,

@@ -25,8 +25,17 @@
 // unit folded into position and scale, its points as the file states them — Blender's icosphere in
 // the same file reads location 0 and scale 1, and so does this (×100 on the node, ×0.01 the unit).
 //
+// ── WHAT A SLOT SAMPLES (#1434) ───────────────────────────────────────────────────────────────
+//
+// The patch also records, on each material's `userData.fbxTextures`, every texture the file links
+// to it, by the link's name — read off the file, because three's loader drops the links it cannot
+// draw. Each link feeds the input Blender's importer feeds (`materialsOf`); an embedded image is
+// read once and stored by the import chain exactly as the glTF road stores its images. Anything a
+// slot cannot draw as Blender does is left out and named.
+//
 // REF: src/core/import/fbx.ts (`parseFbx`, the rig and the unit); src/core/import/nativeGltfImport.ts
-//      (`skinIntoArmatureSpace`, the same rest re-skin for glTF); issues #1429, #1430.
+//      (`skinIntoArmatureSpace`, the same rest re-skin for glTF; `withProjectImages`, the images);
+//      issues #1429, #1430, #1434.
 
 import {
   Matrix4,
@@ -40,6 +49,8 @@ import {
 import type { Group, SkinnedMesh } from 'three';
 import { COLOR_LAYER, MATERIAL_INDEX, uvLayerName } from '../../nodes/attributes';
 import { SKIN_SET_WIDTH, skinPointLayers } from '../../nodes/skinInfluences';
+import { decodeDataUri } from './glb';
+import { sniffImage } from './nativeGltfImport';
 import type {
   MeshCornerLayer,
   MeshFaceLayer,
@@ -71,6 +82,28 @@ export interface FbxMaterialSlot {
   readonly name: string;
   readonly color: Vec3;
   readonly roughness: number;
+  /**
+   * #1434 — the images the slot samples, each an index into {@link FbxMeshesRead.images}: the
+   * base colour (`DiffuseColor`), and the normal map (`NormalMap` or `Bump`, which Blender reads
+   * as a normal map too) with its strength, `BumpFactor`.
+   */
+  readonly baseColorImage?: FbxSlotImage;
+  readonly normalImage?: FbxSlotImage & { readonly strength: number };
+}
+
+/** #1434 — a texture of a slot: which image, and whether it is clamped at the edges. */
+export interface FbxSlotImage {
+  readonly image: number;
+  /** Blender clamps both axes when the file clamps either (`import_fbx.py` `texture_mapping_set`). */
+  readonly clamp: boolean;
+}
+
+/** #1434 — an image a slot samples, as the file's own encoded bytes. */
+export interface FbxImage {
+  /** The file name the FBX gives it, for notices. */
+  readonly file: string;
+  readonly bytes: Uint8Array;
+  readonly mime: string;
 }
 
 export interface FbxMeshRead {
@@ -94,6 +127,8 @@ export interface FbxMeshRead {
 
 export interface FbxMeshesRead {
   readonly meshes: readonly FbxMeshRead[];
+  /** #1434 — every image a kept slot samples, once each however many slots sample it. */
+  readonly images: readonly FbxImage[];
   /** What was left out, each said once, in words a director can act on. Empty when nothing was. */
   readonly notices: readonly string[];
 }
@@ -112,6 +147,7 @@ export function readFbxMeshes(
   group.updateMatrixWorld(true);
   const meshes: FbxMeshRead[] = [];
   const notices: string[] = [];
+  const images = new ImageTable();
   group.traverse((node) => {
     const mesh = node as Mesh;
     if (!mesh.isMesh) return;
@@ -124,13 +160,6 @@ export function readFbxMeshes(
     if (Object.keys(mesh.geometry.morphAttributes).length > 0) {
       notices.push(`mesh "${name}" has shape keys, which were left out`);
     }
-    const materials = materialsOf(mesh);
-    const unheldMaps = materials.flatMap(({ unheldMaps }) => unheldMaps);
-    if (unheldMaps.length > 0) {
-      notices.push(
-        `mesh "${name}" uses textures (${[...new Set(unheldMaps)].join(', ')}), which were left out; its colours came across`,
-      );
-    }
     const skinned = (mesh as SkinnedMesh).isSkinnedMesh === true && polygons.weights.length > 0;
     const read = skinned
       ? readSkinned(mesh as SkinnedMesh, polygons, rigIndexOf, metresPerUnit)
@@ -139,13 +168,79 @@ export function readFbxMeshes(
       notices.push(`mesh "${name}" was left out: ${read.refused}`);
       return;
     }
+    // After the refusal: a mesh left out must not leave its images in the project.
+    const materials = materialsOf(mesh, images);
+    const unheldMaps = materials.flatMap(({ unheldMaps }) => unheldMaps);
+    if (unheldMaps.length > 0) {
+      notices.push(
+        `mesh "${name}" uses textures that were left out (${[...new Set(unheldMaps)].join('; ')}); its colours came across`,
+      );
+    }
     meshes.push({ name, ...read, materials: materials.map(({ slot }) => slot) });
   });
-  return { meshes, notices };
+  return { meshes, images: images.list, notices };
 }
 
-/** The mesh's slots, with the names of any texture maps the first slice does not carry. */
-function materialsOf(mesh: Mesh): { slot: FbxMaterialSlot; unheldMaps: string[] }[] {
+/** What the loader patch records for each texture the file links to a material (`basher #1434`). */
+interface FbxTextureLink {
+  /** The connection's name: `DiffuseColor`, `NormalMap`, `TransparencyFactor`… */
+  readonly link: string;
+  readonly layered: boolean;
+  readonly file: string;
+  /** The embedded image: bytes in a binary file, base64 in an ASCII one; null when not embedded. */
+  readonly content: ArrayBuffer | string | null;
+  readonly wrapU: number | null;
+  readonly wrapV: number | null;
+  readonly translation: number[] | null;
+  readonly rotation: number[] | null;
+  readonly scaling: number[] | null;
+}
+
+// #1434 — which Principled input a link feeds, by Blender's own table (`import_fbx.py:3946-3981`,
+// 5.1.1). Only the inputs a slot carries are listed; every other link is named in the notice.
+const BASE_COLOR_LINKS = new Set(['DiffuseColor', '3dsMax|maps|texmap_diffuse']);
+const NORMAL_LINKS = new Set(['NormalMap', 'Bump', '3dsMax|maps|texmap_bump']);
+const ALPHA_LINKS = new Set(['TransparentColor', 'TransparencyFactor']);
+
+/** #1434 — the file's images, each read once, keyed by the file name the FBX gives it. */
+class ImageTable {
+  readonly list: FbxImage[] = [];
+  private readonly byFile = new Map<string, number>();
+
+  /** The image's index, or why it cannot be drawn. */
+  add(texture: FbxTextureLink): number | string {
+    const known = this.byFile.get(texture.file);
+    if (known !== undefined) return known;
+    if (texture.content === null || texture.content === '') {
+      return `"${texture.file}" is not embedded in the file`;
+    }
+    const bytes =
+      typeof texture.content === 'string'
+        ? decodeDataUri(`data:;base64,${texture.content}`)
+        : new Uint8Array(texture.content);
+    const mime = sniffImage(bytes);
+    if (mime === null) return `"${texture.file}" is not PNG, JPEG or WebP`;
+    this.list.push({ file: texture.file, bytes, mime });
+    this.byFile.set(texture.file, this.list.length - 1);
+    return this.list.length - 1;
+  }
+}
+
+/**
+ * #1434 — a texture's placement, when the file moves, turns or scales it. Blender honours it on the
+ * image's mapping (`texture_mapping_set`); a slot does not carry it yet, and a map drawn unmoved
+ * would be the wrong picture, so the map is left out and named.
+ */
+function placed(texture: FbxTextureLink): boolean {
+  const off = (v: number[] | null, rest: number) => v !== null && v.some((c) => c !== rest);
+  return off(texture.translation, 0) || off(texture.rotation, 0) || off(texture.scaling, 1);
+}
+
+/** The mesh's slots, with the texture links a slot does not carry, each with its reason. */
+function materialsOf(
+  mesh: Mesh,
+  images: ImageTable,
+): { slot: FbxMaterialSlot; unheldMaps: string[] }[] {
   const list = (Array.isArray(mesh.material) ? mesh.material : [mesh.material]) as Material[];
   // The loader's own stand-in when the file gives a mesh no material: not a slot of the file.
   if (list.length === 1 && list[0].name === '__DEFAULT') return [];
@@ -153,11 +248,44 @@ function materialsOf(mesh: Mesh): { slot: FbxMaterialSlot; unheldMaps: string[] 
     const m = material as Material & {
       color?: Color;
       shininess?: number;
-    } & Record<string, unknown>;
+      bumpScale?: number;
+    };
     const shininess = Math.max(m.shininess ?? 20, 0);
-    const unheldMaps = Object.keys(m).filter(
-      (key) => /map$/i.test(key) && m[key] !== null && m[key] !== undefined,
-    );
+    const links = (m.userData.fbxTextures ?? []) as FbxTextureLink[];
+    const unheldMaps: string[] = [];
+    const take = (texture: FbxTextureLink): FbxSlotImage | null => {
+      const why = texture.layered
+        ? 'a layered texture'
+        : placed(texture)
+          ? `"${texture.file}" is moved, turned or scaled on the surface`
+          : null;
+      const image = why === null ? images.add(texture) : why;
+      if (typeof image === 'string') {
+        unheldMaps.push(`${texture.link}: ${image}`);
+        return null;
+      }
+      return { image, clamp: texture.wrapU === 1 || texture.wrapV === 1 };
+    };
+    let baseColorImage: FbxSlotImage | null = null;
+    let normalImage: FbxSlotImage | null = null;
+    // A second image for an input it already has: Blender's loop keeps the last one, this the
+    // first, so the other is named rather than silently disagreeing.
+    const second = (texture: FbxTextureLink) =>
+      unheldMaps.push(`${texture.link}: "${texture.file}" is a second image for the same input`);
+    for (const texture of links) {
+      if (BASE_COLOR_LINKS.has(texture.link)) {
+        if (baseColorImage === null) baseColorImage = take(texture);
+        else second(texture);
+      } else if (NORMAL_LINKS.has(texture.link)) {
+        if (normalImage === null) normalImage = take(texture);
+        else second(texture);
+      } else if (ALPHA_LINKS.has(texture.link)) {
+        // Blender draws the image's alpha as the surface's; a native material cannot yet (#1435).
+        unheldMaps.push(`${texture.link}: an image's alpha is not drawn yet (#1435)`);
+      } else {
+        unheldMaps.push(`${texture.link}: a slot carries no image there yet`);
+      }
+    }
     return {
       slot: {
         name: material.name,
@@ -167,6 +295,12 @@ function materialsOf(mesh: Mesh): { slot: FbxMaterialSlot; unheldMaps: string[] 
         // 0.8 in Blender, and 0.604 off three's material.
         color: fileColour(m.color),
         roughness: Math.min(1, Math.max(0, 1 - Math.sqrt(shininess) / 10)),
+        ...(baseColorImage === null ? {} : { baseColorImage }),
+        // `BumpFactor`, which three reads as `bumpScale` and Blender as the normal map's strength
+        // (`import_fbx.py:2104`); 1 when the file states none, in both.
+        ...(normalImage === null
+          ? {}
+          : { normalImage: { ...normalImage, strength: m.bumpScale ?? 1 } }),
       },
       unheldMaps,
     };

@@ -37,7 +37,7 @@ import { getStorage } from '../boot';
 import { formatAssetError, useAssetErrorStore } from '../stores/assetErrorStore';
 import { useImportRefreshStore } from '../stores/importRefreshStore';
 import { useSelectionStore } from '../stores/selectionStore';
-import { importGltfFromOpfs, leftBehindNotice } from './importGltf';
+import { importGltfFromOpfs, leftBehindNotice, storeImageInOpenProject } from './importGltf';
 import {
   bindMotionToCharacter,
   type BindMotionOutcome,
@@ -156,7 +156,11 @@ export async function buildMotionImportOpsFromOpfs(
   }
   const copy = new Uint8Array(bytes.byteLength);
   copy.set(bytes);
-  return motionImportOps(buildFbxImportOps({ data: copy.buffer, name }), name, state);
+  return motionImportOps(
+    await buildFbxImportOps({ data: copy.buffer, name, storeImage: storeImageInOpenProject }),
+    name,
+    state,
+  );
 }
 
 /**

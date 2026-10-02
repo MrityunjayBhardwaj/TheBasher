@@ -1179,7 +1179,7 @@ interface ReadImage {
 }
 
 /** The image type the bytes ARE, by signature. A declared `mimeType` is a claim; this is the file. */
-function sniffImage(bytes: Uint8Array): string | null {
+export function sniffImage(bytes: Uint8Array): string | null {
   if (
     bytes.length >= 8 &&
     bytes[0] === 0x89 &&
@@ -1242,11 +1242,6 @@ async function readTextureImage(
 }
 
 /**
- * A material with every captured texture pointing at the project's copy of its image. The captured
- * refs say "inherit the clone's texture" and carry GL enums; a native material has no clone, so each
- * becomes a project ref sampled the way the file asks.
- */
-/**
  * #1137 — what a mesh node's Object is called: the node's own name, else its mesh's, else
  * `Mesh_<mesh index>`. Blender 4.5.9's order exactly (`io_scene_gltf2/blender/imp/node.py:308-309`,
  * `imp/mesh.py:39`), including treating a blank name as absent.
@@ -1304,7 +1299,8 @@ function nodeTransformOf(node: NativeGltfJson['nodes'][number]): {
   };
 }
 
-function withCentrePivot(material: InlineMaterialSpec): InlineMaterialSpec {
+/** Exported for the FBX road (#1434), whose slots go through the same translation. */
+export function withCentrePivot(material: InlineMaterialSpec): InlineMaterialSpec {
   const rebase = (p: UvPlacement) => rebasePlacementPivot(p, ORIGIN_PIVOT, CENTRE_PIVOT);
   const perMap = material.mapUvTransforms;
   return {
@@ -1320,9 +1316,15 @@ function withCentrePivot(material: InlineMaterialSpec): InlineMaterialSpec {
   };
 }
 
-function withProjectImages(
+/**
+ * A material with every captured texture pointing at the project's copy of its image. The captured
+ * refs say "inherit the clone's texture" and carry GL enums; a native material has no clone, so each
+ * becomes a project ref sampled the way the file asks. `tables` holds the texture and sampler tables
+ * the refs index: a glTF file's own, or the ones the FBX road states for its slots (#1434).
+ */
+export function withProjectImages(
   material: InlineMaterialSpec,
-  json: NativeGltfJson,
+  tables: Pick<NativeGltfJson, 'textures' | 'samplers'>,
   imageKeys: ReadonlyMap<number, string>,
 ): InlineMaterialSpec {
   const maps = {} as { -readonly [K in keyof InlineMaterialSpec['maps']]: BakedTextureRef | null };
@@ -1340,8 +1342,8 @@ function withProjectImages(
         `nativeGltfImport: the ${slot} map was captured but its image was never stored`,
       );
     }
-    const samplerIndex = json.textures?.[textureIndex]?.sampler;
-    const sampler = samplerIndex === undefined ? undefined : json.samplers?.[samplerIndex];
+    const samplerIndex = tables.textures?.[textureIndex]?.sampler;
+    const sampler = samplerIndex === undefined ? undefined : tables.samplers?.[samplerIndex];
     maps[slot] = {
       hash: key,
       store: 'project',

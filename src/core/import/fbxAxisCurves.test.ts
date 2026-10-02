@@ -74,8 +74,16 @@ function rigRotating(axes: {
   return new TextEncoder().encode(text).buffer as ArrayBuffer;
 }
 
-function spineAt(data: ArrayBuffer, seconds: number): Quaternion {
-  const { ops } = buildFbxImportOps({ data, name: 'rig', ids: { skeleton: 'sk', layer: 'layer' } });
+/** These files sample no image; a store would be a regression the test should see. */
+const storeImage = (): Promise<string> => Promise.reject(new Error('this file stores no image'));
+
+async function spineAt(data: ArrayBuffer, seconds: number): Promise<Quaternion> {
+  const { ops } = await buildFbxImportOps({
+    data,
+    name: 'rig',
+    ids: { skeleton: 'sk', layer: 'layer' },
+    storeImage,
+  });
   let s = emptyDagState();
   for (const op of ops) s = applyOp(s, op).next;
   const pose = evaluate(s, 'layer', {
@@ -120,8 +128,8 @@ describe('#1279 — each axis is filled at every key time of the bone, as Blende
     [0, [0, 20, 30]],
     [0.5, [30, 50, 30]],
     [1, [60, 50, 30]],
-  ] as const)('at %f s Spine reads (%j)°', (seconds, [x, y, z]) => {
-    expect(degreesBetween(spineAt(file, seconds), eulerDeg(x, y, z))).toBeLessThan(1e-4);
+  ] as const)('at %f s Spine reads (%j)°', async (seconds, [x, y, z]) => {
+    expect(degreesBetween(await spineAt(file, seconds), eulerDeg(x, y, z))).toBeLessThan(1e-4);
   });
 
   it('the file is read at all: the rest alone would be a different rotation at 1 s', () => {

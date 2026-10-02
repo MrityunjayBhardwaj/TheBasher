@@ -859,14 +859,21 @@ export function boot(): Promise<void> {
       void Promise.all([
         import('../core/import/fbxImportChain'),
         import('./asset/importBvhFbx'),
-      ]).then(([m, landing]) => {
+        import('./asset/importGltf'),
+      ]).then(([m, landing, { storeImageInOpenProject }]) => {
         // #1429 — through the same assembly as every other FBX door: the skeleton's Object and the
         // file's meshes stand with it.
-        w.__basher_importFbx = (data: ArrayBuffer | string, name?: string) => {
+        // #1434 — its images go where every door's do: the open project's image folder.
+        w.__basher_importFbx = async (data: ArrayBuffer | string, name?: string) => {
+          const built = await m.buildFbxImportOps({
+            data,
+            name,
+            storeImage: storeImageInOpenProject,
+          });
           const dag = useDagStore.getState();
           const label = name ?? 'imported';
           const { ops, skeletonId, motionId, meshCount, notices } = landing.motionImportOps(
-            m.buildFbxImportOps({ data, name }),
+            built,
             label,
             dag.state,
           );

@@ -28,8 +28,9 @@
 // does not parse are each counted in `dropped`.
 
 import { parseFbx } from './fbx';
-import type { FbxMaterialSlot, FbxMeshRead } from './fbxMesh';
-import { gltfJsonMaterialToOpenpbr } from './gltfJsonMaterialToOpenpbr';
+import type { FbxMaterialSlot, FbxMeshRead, FbxSlotImage } from './fbxMesh';
+import { gltfJsonMaterialToOpenpbr, type GltfJsonMaterial } from './gltfJsonMaterialToOpenpbr';
+import { withCentrePivot, withProjectImages } from './nativeGltfImport';
 import { uniqueBoneName } from './nativeGltfSkeleton';
 import { skeletonObjectId } from './skeletonObject';
 import type { Op } from '../../core/dag/types';
@@ -73,6 +74,12 @@ export interface FbxImportChainArgs {
   readonly name?: string;
   /** Caller-supplied ids — tests pass deterministic ones. */
   readonly ids?: { skeleton: string; layer: string };
+  /**
+   * #1434 — store an image's encoded bytes in the project and return the key its texture ref names,
+   * as the glTF road's (`NativeGltfImportArgs.storeImage`). Required, so there is no road on which a
+   * textured file arrives with nowhere to put its pixels.
+   */
+  readonly storeImage: (bytes: Uint8Array, mime: string) => Promise<string>;
 }
 
 let counter = 0;
@@ -91,7 +98,7 @@ const COMPONENT = { position: 'position', quaternion: 'quaternion', scale: 'scal
 type TrackProperty = keyof typeof COMPONENT;
 const PROPERTIES = Object.keys(COMPONENT) as TrackProperty[];
 
-export function buildFbxImportOps(args: FbxImportChainArgs): FbxImportChainResult {
+export async function buildFbxImportOps(args: FbxImportChainArgs): Promise<FbxImportChainResult> {
   const name = args.name ?? 'imported-fbx';
   const parsed = parseFbx(args.data, name);
   const ids = args.ids ?? { skeleton: uniqueId('fbx_skel'), layer: uniqueId('fbx_motion') };
@@ -172,6 +179,11 @@ export function buildFbxImportOps(args: FbxImportChainArgs): FbxImportChainResul
   ];
 
   const meshes = parsed.meshes.meshes;
+  // #1434 — every image is stored once, after the whole file has been read.
+  const imageKeys = new Map<number, string>();
+  for (const [i, image] of parsed.meshes.images.entries()) {
+    imageKeys.set(i, await args.storeImage(image.bytes, image.mime));
+  }
   return {
     ops,
     skeletonId: ids.skeleton,
@@ -180,23 +192,63 @@ export function buildFbxImportOps(args: FbxImportChainArgs): FbxImportChainResul
     dropped: { unknownBoneTracks, otherPropertyTracks, unparsedTracks: parsed.unparsedTracks },
     meshOps: (sceneNodeId) =>
       meshes.flatMap((mesh, i) =>
-        meshOps(mesh, `${ids.skeleton}_mesh${i}`, bones, ids.skeleton, sceneNodeId),
+        meshOps(mesh, `${ids.skeleton}_mesh${i}`, bones, ids.skeleton, sceneNodeId, imageKeys),
       ),
     meshCount: meshes.length,
     notices: parsed.meshes.notices,
   };
 }
 
-/** #1429 — a slot as the native material, through the one translation the import roads share. */
-function slotMaterial(slot: FbxMaterialSlot): InlineMaterialSpec {
-  return gltfJsonMaterialToOpenpbr({
+// #1434 — the sampler tables a slot's textures index: texture 2i samples image i repeating, 2i + 1
+// clamped. Blender's image node defaults to Linear and, unclamped, to Repeat (oracle
+// `blender-oracle-fbx-tile-textured.json`); no filter is stated, so the renderer's linear ones apply,
+// as on the glTF road.
+const REPEAT = 10497;
+const CLAMP_TO_EDGE = 33071;
+const SAMPLERS = [
+  { wrapS: REPEAT, wrapT: REPEAT },
+  { wrapS: CLAMP_TO_EDGE, wrapT: CLAMP_TO_EDGE },
+];
+const textureOf = (t: FbxSlotImage): number => t.image * 2 + (t.clamp ? 1 : 0);
+
+/**
+ * #1429 — a slot as the native material, through the one translation the import roads share; #1434
+ * its images as the glTF road's are, pointing at the project's copies.
+ */
+function slotMaterial(
+  slot: FbxMaterialSlot,
+  imageKeys: ReadonlyMap<number, string>,
+): InlineMaterialSpec {
+  const material: GltfJsonMaterial = {
     name: slot.name,
     pbrMetallicRoughness: {
-      baseColorFactor: [...slot.color, 1],
+      // An image on the base colour replaces the colour: Blender links the image to the socket,
+      // whose own value then goes unread (oracle `blender-oracle-fbx-tile-textured.json`), while
+      // glTF would multiply the two.
+      baseColorFactor: slot.baseColorImage === undefined ? [...slot.color, 1] : [1, 1, 1, 1],
       metallicFactor: 0,
       roughnessFactor: slot.roughness,
+      ...(slot.baseColorImage === undefined
+        ? {}
+        : { baseColorTexture: { index: textureOf(slot.baseColorImage) } }),
     },
-  });
+    ...(slot.normalImage === undefined
+      ? {}
+      : {
+          normalTexture: { index: textureOf(slot.normalImage), scale: slot.normalImage.strength },
+        }),
+  };
+  const used = [slot.baseColorImage, slot.normalImage].filter((t) => t !== undefined);
+  const tables = {
+    textures: Array.from({ length: imageKeys.size * 2 }, (_, t) => ({ sampler: t % 2 })),
+    samplers: SAMPLERS,
+  };
+  const keys = new Map(used.map((t) => [textureOf(t), imageKeys.get(t.image)!]));
+  return withProjectImages(
+    withCentrePivot(gltfJsonMaterialToOpenpbr(material, tables)),
+    tables,
+    keys,
+  );
 }
 
 /**
@@ -210,6 +262,7 @@ function meshOps(
   bones: readonly BoneSpec[],
   skeletonId: string,
   sceneNodeId: string,
+  imageKeys: ReadonlyMap<number, string>,
 ): Op[] {
   const dataId = `${id}_data`;
   const objectId = `${id}_object`;
@@ -217,7 +270,7 @@ function meshOps(
     mesh.vertexGroupBones === null
       ? mesh.data
       : { ...mesh.data, vertexGroups: mesh.vertexGroupBones.map((b) => bones[b].name) };
-  const slots = mesh.materials.map(slotMaterial);
+  const slots = mesh.materials.map((slot) => slotMaterial(slot, imageKeys));
   const ops: Op[] = [
     {
       type: 'addNode',
