@@ -30,7 +30,7 @@
 import { parseFbx } from './fbx';
 import type { FbxMaterialSlot, FbxMeshRead, FbxSlotImage } from './fbxMesh';
 import { gltfJsonMaterialToOpenpbr, type GltfJsonMaterial } from './gltfJsonMaterialToOpenpbr';
-import { withCentrePivot, withProjectImages } from './nativeGltfImport';
+import { parentEdge, withCentrePivot, withProjectImages } from './modelImport';
 import { uniqueBoneName } from './nativeGltfSkeleton';
 import { skeletonObjectId } from './skeletonObject';
 import type { Op } from '../../core/dag/types';
@@ -328,11 +328,7 @@ function meshOps(
         from: { node: dataId, socket: 'out' },
         to: { node: objectId, socket: 'data' },
       },
-      {
-        type: 'connect',
-        from: { node: objectId, socket: 'out' },
-        to: { node: sceneNodeId, socket: 'children' },
-      },
+      parentEdge(objectId, sceneNodeId),
     );
     return ops;
   }
@@ -359,11 +355,7 @@ function meshOps(
     // child edge back would close a cycle. Both stand at identity in the scene, so the mesh is where
     // Blender's child of the armature is; moved, the armature carries the points through the deform
     // (its placement is the modifier's `armatureMatrix`).
-    {
-      type: 'connect',
-      from: { node: objectId, socket: 'out' },
-      to: { node: sceneNodeId, socket: 'children' },
-    },
+    parentEdge(objectId, sceneNodeId),
   );
   return ops;
 }

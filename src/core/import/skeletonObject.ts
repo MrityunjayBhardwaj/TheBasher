@@ -22,6 +22,7 @@
 
 import type { DagState } from '../dag/state';
 import type { Op } from '../dag/types';
+import { parentEdge } from './modelImport';
 
 /** The Object's id, derived from the skeleton's — one skeleton, one Object, reproducibly. */
 export function skeletonObjectId(skeletonId: string): string {
@@ -172,11 +173,7 @@ export function buildSkeletonObjectOps(args: SkeletonObjectArgs): {
         from: args.pose ?? { node: args.clipId, socket: 'pose' },
         to: { node: objectId, socket: 'pose' },
       },
-      {
-        type: 'connect',
-        from: { node: objectId, socket: 'out' },
-        to: { node: args.sceneNodeId, socket: 'children' },
-      },
+      parentEdge(objectId, args.sceneNodeId),
     ],
   };
 }

@@ -20,7 +20,7 @@ import { motionImportOps } from '../../app/asset/importBvhFbx';
 import { buildFbxImportOps } from './fbxImportChain';
 import { parseFbx } from './fbx';
 import { imageHasAlpha, readFbxMeshes } from './fbxMesh';
-import { sniffImage } from './nativeGltfImport';
+import { sniffImage } from './modelImport';
 import { openpbrToThree } from '../../app/material/openpbrToThree';
 
 const DIR = 'src/core/import/__fixtures__';

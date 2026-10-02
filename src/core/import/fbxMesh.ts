@@ -35,8 +35,8 @@
 // channel is the surface's alpha, drawn dithered, as Blender wires and draws it.
 //
 // REF: src/core/import/fbx.ts (`parseFbx`, the rig and the unit); src/core/import/nativeGltfImport.ts
-//      (`skinIntoArmatureSpace`, the same rest re-skin for glTF; `withProjectImages`, the images);
-//      issues #1429, #1430, #1434.
+//      (`skinIntoArmatureSpace`, the same rest re-skin for glTF); src/core/import/modelImport.ts
+//      (`withProjectImages`, the images); issues #1429, #1430, #1434.
 
 import {
   Matrix4,
@@ -51,7 +51,7 @@ import type { Group, SkinnedMesh } from 'three';
 import { COLOR_LAYER, MATERIAL_INDEX, uvLayerName } from '../../nodes/attributes';
 import { SKIN_SET_WIDTH, skinPointLayers } from '../../nodes/skinInfluences';
 import { decodeDataUri } from './glb';
-import { sniffImage } from './nativeGltfImport';
+import { sniffImage } from './modelImport';
 import type {
   MeshCornerLayer,
   MeshFaceLayer,
