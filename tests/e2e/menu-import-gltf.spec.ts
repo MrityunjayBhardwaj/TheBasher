@@ -45,6 +45,10 @@ test('File ▸ Import glTF… inserts a .glb model into the current scene (addit
 });
 
 test('selecting two .glb at once inserts two models (multi-model)', async ({ page }) => {
+  // The wait below may run to 25 s. The per-test cap is 30 s locally (60 s on CI, where this test
+  // spent 18.7 s with the wait at 8.3 s), so the cap is tripled for the wait to be the thing that
+  // reports a timeout, not the cap.
+  test.slow();
   expect(await gltfAssetCount(page)).toBe(0);
 
   await page.getByTestId('menu-file-button').click();
@@ -56,7 +60,13 @@ test('selecting two .glb at once inserts two models (multi-model)', async ({ pag
   // loop back to a single ingest leaves the count at 1 → this fails.
   await chooser.setFiles(['public/assets/skinned-bar.glb', 'public/assets/cube-draco.glb']);
 
-  await expect.poll(() => gltfAssetCount(page), { timeout: 10_000 }).toBe(2);
+  // #1422 — a budget sized to the work. The files import one after the other, and the second is
+  // Draco-compressed, so this wait is two imports plus a decoder's first load. Measured on a CI
+  // shard: one model lands in 3.6 s and the pair in 8.3 s — inside the 10 s this allowed by 1.7 s.
+  // Main went red on the one run in four where it had only the first model at 10 s, on the first
+  // try and on the retry. If this ever fails at 25 s it is a stalled import, not a tight budget.
+  // (Locally the whole test is ~4 s.)
+  await expect.poll(() => gltfAssetCount(page), { timeout: 25_000 }).toBe(2);
   await expect(page.getByTestId('asset-error-banner')).toHaveCount(0);
 });
 
