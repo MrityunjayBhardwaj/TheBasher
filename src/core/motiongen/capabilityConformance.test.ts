@@ -155,17 +155,19 @@ describe('#792 — a posed joint’s rest offset is REPLACED, not added', () => 
     const parsed = parseBvh(somaBvh(), 'soma', BVH_UNIT_SCALE_CENTIMETRES);
     const bones = parsed.skeletonParams.bones;
     const hips = bones.findIndex((b) => b.name === 'Hips');
+    const posedAt = (name: string) =>
+      parsed.clipParams.poses.map((p) => p.bones[name]).filter((held) => held !== undefined);
 
     // The fixture's Hips carries the same quantity twice, exactly as the real
     // exporter writes it: OFFSET 100cm is the REST pelvis, and a 96cm position
     // channel is the ANIMATED pelvis.
     expect(bones[hips].position[1]).toBeCloseTo(1, 6);
 
-    const keyed = parsed.clipParams.keyframes.filter((k) => k.bone === hips);
+    const keyed = posedAt('Hips');
     expect(keyed.length).toBeGreaterThan(0);
     // 0.96 is the pelvis. 1.96 was the pelvis plus its own rest height — a
     // character floating exactly one rest offset off the floor for the whole clip.
-    expect(keyed[0].position[1]).toBeCloseTo(0.96, 6);
+    expect(keyed[0].position![1]).toBeCloseTo(0.96, 6);
   });
 
   it('a rotation-only joint keeps its OFFSET as its translation', () => {
@@ -178,7 +180,7 @@ describe('#792 — a posed joint’s rest offset is REPLACED, not added', () => 
     const spine = bones.findIndex((b) => b.name === 'Spine1');
     expect(bones[spine].position[1]).toBeCloseTo(0.1, 6);
 
-    const keyed = parsed.clipParams.keyframes.filter((k) => k.bone === spine);
-    expect(keyed[0].position[1]).toBeCloseTo(0.1, 6);
+    const keyed = parsed.clipParams.poses.map((p) => p.bones.Spine1).filter((held) => held);
+    expect(keyed[0].position![1]).toBeCloseTo(0.1, 6);
   });
 });

@@ -39,7 +39,11 @@ function graph(map: Record<string, string>, extra: Record<string, GraphNodeLike>
     clip: {
       id: 'clip',
       type: 'AnimationClip',
-      params: { name: 'walk', duration: 1, keyframes: [{ bone: 0, time: 0 }] },
+      params: {
+        name: 'walk',
+        duration: 1,
+        poses: [{ time: 0, bones: { [SOURCE_BONES[0].name]: {} } }],
+      },
       inputs: { skeleton: { node: 'srcRig' } },
     },
     map1: { id: 'map1', type: 'BoneNameMap', params: { name: 'bridge', map }, inputs: {} },
@@ -418,7 +422,11 @@ function posedGraph(map: Record<string, string>) {
     clip: {
       id: 'clip',
       type: 'AnimationClip',
-      params: { name: 'walk', duration: 1, keyframes: [{ bone: 0, time: 0 }] },
+      params: {
+        name: 'walk',
+        duration: 1,
+        poses: [{ time: 0, bones: { [SOURCE_BONES[0].name]: {} } }],
+      },
       inputs: { skeleton: { node: 'srcRig' } },
     },
     map1: { id: 'map1', type: 'BoneNameMap', params: { name: 'bridge', map }, inputs: {} },

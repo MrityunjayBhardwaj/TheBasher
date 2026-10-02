@@ -84,7 +84,9 @@ import { NodeSchema, NodeIdSchema, NodeRefSchema } from '../dag/types';
 // v19 (#1316): a stored texture ref's wrap and filters are NAMES — glTF's sampler vocabulary —
 // instead of numbers that were glTF's on one road and three.js's on the other. See migrations.ts
 // formatMigrations[18].
-export const PROJECT_FORMAT_VERSION = 19;
+// v20 (#1227): an `AnimationClip` stores its motion as timed poses — bones by NAME, quaternions —
+// instead of a key per bone INDEX with XYZ euler angles. See migrations.ts formatMigrations[19].
+export const PROJECT_FORMAT_VERSION = 20;
 
 export const ProjectSchema = z.object({
   formatVersion: z.literal(PROJECT_FORMAT_VERSION),

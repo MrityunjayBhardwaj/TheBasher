@@ -76,24 +76,23 @@ describe('parseBvh', () => {
     expect(parseBvh(SYNTHETIC_BVH, 'wave').clipParams.loop).toBe('hold');
   });
 
-  it('emits keyframes for animated bones, sorted by (time, bone)', () => {
+  it('emits timed poses for animated bones, in time order (#1432)', () => {
     const r = parseBvh(SYNTHETIC_BVH, 'wave');
     expect(r.clipParams.name).toBe('wave');
     expect(r.clipParams.duration).toBeGreaterThan(0);
-    // Times monotonic.
-    for (let i = 1; i < r.clipParams.keyframes.length; i++) {
-      expect(r.clipParams.keyframes[i].time).toBeGreaterThanOrEqual(
-        r.clipParams.keyframes[i - 1].time,
-      );
+    // Times strictly increasing: one pose per time.
+    for (let i = 1; i < r.clipParams.poses.length; i++) {
+      expect(r.clipParams.poses[i].time).toBeGreaterThan(r.clipParams.poses[i - 1].time);
     }
-    // ArmL has a 45° Y rotation at frame 0, -45° at frame 1.
-    const armKfs = r.clipParams.keyframes.filter((k) => k.bone === 2);
-    expect(armKfs.length).toBeGreaterThanOrEqual(2);
-    // Quaternion → Euler (XYZ) lossy at the y-axis only — first kf should
-    // have a positive y rotation, second negative. ~45° = ~0.785 rad.
-    const ySigns = armKfs.map((k) => Math.sign(k.rotation[1]));
+    // ArmL has a 45° Y rotation at frame 0, -45° at frame 1: a turn about Y alone, so the
+    // quaternion's y carries the sign (taken against w, as q and -q are one rotation).
+    const arm = r.clipParams.poses.map((p) => p.bones.ArmL?.quaternion).filter((q) => q);
+    expect(arm.length).toBeGreaterThanOrEqual(2);
+    const ySigns = arm.map((q) => Math.sign(q![1] * q![3]));
     expect(ySigns).toContain(1);
     expect(ySigns).toContain(-1);
+    // A quaternion read off three's track, kept a unit one.
+    for (const q of arm) expect(Math.hypot(...q!)).toBeCloseTo(1, 12);
   });
 
   it('twice-call yields deep-equal output (V2 purity)', () => {
@@ -142,11 +141,8 @@ Frame Time: 0.0333333333333333
 0 0 0 0 0 0 0 100 5 0 0 0 0 3 0
 `;
 
-  const posOf = (name: string, text = REST_FRAME) => {
-    const parsed = parseBvh(text, 'rule');
-    const i = parsed.skeletonParams.bones.findIndex((b) => b.name === name);
-    return parsed.clipParams.keyframes.filter((k) => k.bone === i)[0].position;
-  };
+  const posOf = (name: string, text = REST_FRAME) =>
+    parseBvh(text, 'rule').clipParams.poses[0].bones[name].position!;
 
   it('a rest frame imports at its stated height, not at twice it', () => {
     // The self-refuting case: a reference pose whose whole purpose is to state
@@ -166,11 +162,9 @@ Frame Time: 0.0333333333333333
   });
 
   it('the animated channel still moves — replacing the offset is not zeroing it', () => {
-    const parsed = parseBvh(REST_FRAME, 'rule');
-    const hips = parsed.skeletonParams.bones.findIndex((b) => b.name === 'Hips');
-    const keyed = parsed.clipParams.keyframes.filter((k) => k.bone === hips);
-    expect(keyed[0].position[2]).toBeCloseTo(0, 6);
-    expect(keyed[1].position[2]).toBeCloseTo(5, 6);
+    const keyed = parseBvh(REST_FRAME, 'rule').clipParams.poses.map((p) => p.bones.Hips.position!);
+    expect(keyed[0][2]).toBeCloseTo(0, 6);
+    expect(keyed[1][2]).toBeCloseTo(5, 6);
   });
 
   it('the bind pose is untouched — only the keyed translation is recomposed', () => {

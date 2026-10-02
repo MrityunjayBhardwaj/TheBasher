@@ -35,12 +35,14 @@
 //      (the three-clause determinism contract — this is clause 3 made reachable);
 //      src/nodes/ComfyUIWorkflow.ts (the same shape, one lane over); issue #902.
 
-import type { AnimationKeyframe, SkeletonValue } from '../../nodes/types';
+import type { MotionPose, SkeletonValue } from '../../nodes/types';
 
 /** What a completed generation contributes to the clip the node evaluates to. */
 export interface GeneratedClip {
   readonly duration: number;
-  readonly keyframes: readonly AnimationKeyframe[];
+  /** The motion as timed poses on `skeleton`'s bone names — what the clip value carries and what
+   *  the bake stores (#1227). */
+  readonly poses: readonly MotionPose[];
   readonly skeleton: SkeletonValue;
   /** Echoed from the capability result — the checkpoint that actually ran. */
   readonly model: string;

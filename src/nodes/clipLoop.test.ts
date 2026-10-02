@@ -7,7 +7,8 @@
 
 import { describe, expect, it } from 'vitest';
 import { ClipLoopSchema, clipExtendRules, clipLoopOf, isCycling } from './clipLoop';
-import { AnimationClipParams, buildClipBoneSamplers } from './AnimationClip';
+import { AnimationClipParams } from './AnimationClip';
+import { keyedBoneSampler } from '../test-utils/clipValue';
 import { TransformClipParams } from './TransformClip';
 import { migrateClipLoopToTriState } from '../core/project/migrations';
 
@@ -32,7 +33,7 @@ const travelling = (loop: 'hold' | 'cycle' | 'cycle-offset') => ({
 });
 
 const zAt = (loop: 'hold' | 'cycle' | 'cycle-offset', t: number): number => {
-  const sampler = buildClipBoneSamplers(travelling(loop)).get(0)!;
+  const sampler = keyedBoneSampler(travelling(loop), 0);
   return sampler(t).position[2];
 };
 

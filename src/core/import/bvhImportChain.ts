@@ -29,12 +29,11 @@ import { readJointChannels } from './bvhProfile';
 import { sanitizeBoneName } from './threeAdapter';
 import { uniqueBoneName } from './nativeGltfSkeleton';
 import type { Op } from '../../core/dag/types';
-import type { BoneSpec, Vec3 } from '../../nodes/types';
+import type { BoneSpec, Quat, Vec3 } from '../../nodes/types';
 import {
   EULER_ORDERS,
   continuousEulerIn,
   eulerFromQuat,
-  quatFromEulerXYZ,
   type EulerOrder,
 } from '../../nodes/bonePose';
 import type { PoseLayerParams } from '../../nodes/PoseLayer';
@@ -123,11 +122,20 @@ export function buildBvhImportOps(args: BvhImportChainArgs): BvhImportChainResul
     jointOfBone.set(i, j);
   }
 
-  const byBone = new Map<number, (typeof parsed.clipParams.keyframes)[number][]>();
-  for (const k of parsed.clipParams.keyframes) {
-    const list = byBone.get(k.bone);
-    if (list) list.push(k);
-    else byBone.set(k.bone, [k]);
+  // The parser's poses, per bone index. A pose names a bone as the parser spelled it, before the
+  // spellings above were made unique; two of one name are the later one, as the parser resolved it.
+  const indexOfParsed = new Map(parsed.skeletonParams.bones.map((b, i) => [b.name, i]));
+  type Sample = { time: number; position: Vec3; quaternion: Quat };
+  const byBone = new Map<number, Sample[]>();
+  for (const pose of parsed.clipParams.poses) {
+    for (const [boneName, held] of Object.entries(pose.bones)) {
+      const i = indexOfParsed.get(boneName);
+      if (i === undefined || !held.position || !held.quaternion) continue;
+      const sample = { time: pose.time, position: held.position, quaternion: held.quaternion };
+      const list = byBone.get(i);
+      if (list) list.push(sample);
+      else byBone.set(i, [sample]);
+    }
   }
 
   const members: PoseLayerParams['members'] = [];
@@ -155,11 +163,7 @@ export function buildBvhImportOps(args: BvhImportChainArgs): BvhImportChainResul
         bone,
         component: 'rotation',
         keyframes: keys.map((k) => {
-          const e = continuousEulerIn(
-            eulerFromQuat(quatFromEulerXYZ(k.rotation), order),
-            prev,
-            order,
-          );
+          const e = continuousEulerIn(eulerFromQuat(k.quaternion, order), prev, order);
           prev = e;
           return {
             time: k.time,

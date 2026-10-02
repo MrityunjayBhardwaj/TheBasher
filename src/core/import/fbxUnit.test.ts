@@ -15,6 +15,7 @@ import { describe, expect, it } from 'vitest';
 import { FBXLoader } from 'three/examples/jsm/loaders/FBXLoader.js';
 import { fbxMetresPerUnit, parseFbx } from './fbx';
 import { retargetClip } from './retarget';
+import { alignedQuat, poseSamples } from '../../test-utils/poseSamples';
 
 const RIG_TEXT = readFileSync(resolve(process.cwd(), 'public/fixtures/anim/rig.fbx'), 'utf8');
 const UNIT_LINE = 'P: "UnitScaleFactor", "double", "Number", "",1';
@@ -68,11 +69,12 @@ describe('parseFbx — lengths come out in metres, in the declared unit', () => 
     const hips = parsed.skeletonParams.bones.find((b) => b.name === 'Hips')!;
     expect(hips.position[1]).toBeCloseTo(0.01, 9);
     const metres = parseFbx(rigDeclaring(100), 'rig');
-    const keys = parsed.clipParams.keyframes;
+    const keys = poseSamples(parsed.clipParams.poses);
+    const inMetres = poseSamples(metres.clipParams.poses);
     expect(keys.length).toBeGreaterThan(0);
     keys.forEach((k, i) => {
-      const m = metres.clipParams.keyframes[i];
-      for (let a = 0; a < 3; a++) expect(k.position[a]).toBeCloseTo(m.position[a] * 0.01, 9);
+      const m = inMetres[i];
+      for (let a = 0; a < 3; a++) expect(k.position![a]).toBeCloseTo(m.position![a] * 0.01, 9);
     });
   });
 
@@ -102,8 +104,9 @@ describe('parseFbx — lengths come out in metres, in the declared unit', () => 
       expect(b.rotation).toEqual(m.skeletonParams.bones[i].rotation);
       expect(b.scale).toEqual(m.skeletonParams.bones[i].scale);
     });
-    cm.clipParams.keyframes.forEach((k, i) => {
-      expect(k.rotation).toEqual(m.clipParams.keyframes[i].rotation);
+    const inMetres = poseSamples(m.clipParams.poses);
+    poseSamples(cm.clipParams.poses).forEach((k, i) => {
+      expect(k.quaternion).toEqual(inMetres[i].quaternion);
     });
   });
 
@@ -174,16 +177,16 @@ describe('the unit is invisible to a bound character', () => {
         sourceClip: src.clipParams,
         targetBones: target,
         nameMap,
-      }).clipParams.keyframes;
-    const a = run(cm);
-    const b = run(m);
+      }).clipParams.poses;
+    const a = poseSamples(run(cm));
+    const b = poseSamples(run(m));
     expect(a.length).toBeGreaterThan(0);
     expect(a.length).toBe(b.length);
     a.forEach((k, i) => {
-      for (let j = 0; j < 3; j++) {
-        expect(k.position[j]).toBeCloseTo(b[i].position[j], 6);
-        expect(k.rotation[j]).toBeCloseTo(b[i].rotation[j], 6);
-      }
+      expect(k.bone).toBe(b[i].bone);
+      const q = alignedQuat(k.quaternion!, b[i].quaternion!);
+      for (let j = 0; j < 3; j++) expect(k.position![j]).toBeCloseTo(b[i].position![j], 6);
+      for (let j = 0; j < 4; j++) expect(q[j]).toBeCloseTo(b[i].quaternion![j], 6);
     });
   });
 });

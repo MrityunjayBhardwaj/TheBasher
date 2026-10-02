@@ -7,13 +7,14 @@
 import { describe, expect, it } from 'vitest';
 import { retargetClipParamsFromNodes, bonesOfSkeletonNode } from './retargetFromNodes';
 import { boundClipsForAsset, type GraphNodeLike } from './boundClipsForAsset';
-import { retargetClip } from '../../core/import/retarget';
+import { retargetSavedKeys } from '../../core/import/savedClipKeys';
 import { RetargetClipNode, RetargetClipParams } from '../../nodes/RetargetClip';
-import { motionPosesFromKeyframes, posedSkeletonFromClip } from '../../nodes/AnimationClip';
-import { buildClipBoneSamplers } from '../../nodes/AnimationClip';
+import { posedSkeletonFromClip } from '../../nodes/AnimationClip';
+import { posesFromKeyframes } from '../../core/import/keyframePoses';
 import { clipLoopOf } from '../../nodes/clipLoop';
 import type { AnimationKeyframe, BoneSpec, AnimationClipValue } from '../../nodes/types';
-import { clipValueFromKeys } from '../../test-utils/clipValue';
+import { clipValueFromKeys, keyedBoneSampler } from '../../test-utils/clipValue';
+import { alignedQuat, poseSamples } from '../../test-utils/poseSamples';
 
 const ASSET_REF = 'asset://rig.glb';
 
@@ -107,7 +108,7 @@ describe('bonesOfSkeletonNode', () => {
 describe('retargetClipParamsFromNodes', () => {
   it('PARITY — resolves to exactly what the old bake materialised', () => {
     const params = retargetClipParamsFromNodes(graph(), graph().n_retarget);
-    const baked = retargetClip({
+    const baked = retargetSavedKeys({
       sourceBones: sourceBones(),
       sourceClip: { name: 'walk', duration: 1, loop: 'hold', keyframes: sourceKeys() },
       targetBones: bonesOfSkeletonNode(graph(), 'n_gltfSkel')! as BoneSpec[],
@@ -145,13 +146,24 @@ describe('retargetClipParamsFromNodes', () => {
     // #992/#974 — the node emits two views of one retarget, so the parity claim
     // names the `out` socket. `posed` is pinned against this same clip in
     // RetargetClip.test.ts, so both views stay tied to this one params road.
-    // #1225 — the node's value carries the keys as timed poses by bone name, through the one adapter.
-    expect(viaEvaluate.out.poses).toEqual(
-      motionPosesFromKeyframes(
+    // #1225 — the node's value carries timed poses by bone name; the params road writes the same
+    // retarget as saved keys (#1432). One math, two spellings: they agree to three's float32 tracks,
+    // which each road fills from its own rounding of the same rotation.
+    const viaKeys = poseSamples(
+      posesFromKeyframes(
         viaParams!.keyframes!,
         bonesOfSkeletonNode(g, 'n_gltfSkel')! as BoneSpec[],
       ),
     );
+    const viaPoses = poseSamples(viaEvaluate.out.poses);
+    expect(viaPoses.length).toBeGreaterThan(0);
+    expect(viaPoses.map((p) => [p.time, p.bone])).toEqual(viaKeys.map((p) => [p.time, p.bone]));
+    viaPoses.forEach((p, i) => {
+      const want = viaKeys[i];
+      const q = alignedQuat(p.quaternion!, want.quaternion!);
+      for (let a = 0; a < 3; a++) expect(p.position![a]).toBeCloseTo(want.position![a], 6);
+      for (let a = 0; a < 4; a++) expect(q[a]).toBeCloseTo(want.quaternion![a], 6);
+    });
     expect(viaParams!.duration).toBe(viaEvaluate.out.duration);
     expect(viaParams!.name).toBe(viaEvaluate.out.name);
   });
@@ -253,7 +265,7 @@ describe('boundClipsForAsset reads a RetargetClip', () => {
     // must drive the rig identically. Built from independent parses of the same
     // generators, so nothing is shared between the two sides.
     const viaGraph = boundClipsForAsset(graph(), ASSET_REF)[0];
-    const baked = retargetClip({
+    const baked = retargetSavedKeys({
       sourceBones: sourceBones(),
       sourceClip: { name: 'walk', duration: 1, loop: 'hold', keyframes: sourceKeys() },
       targetBones: bonesOfSkeletonNode(graph(), 'n_gltfSkel')! as BoneSpec[],
@@ -281,18 +293,21 @@ describe('boundClipsForAsset reads a RetargetClip', () => {
     // The two fixes only pay off together, and neither spec sees the composition:
     // #919 carries `loop` through the retarget, #924 turns `loop` into the extend
     // rule. Wired up, a motion authored to stop must stop. Sampled through the
-    // band the renderer actually consumes, so this is the consumer's answer.
+    // clip's own pose, which is what playback reads (#1433).
     const bound = boundClipsForAsset(graph(), ASSET_REF)[0];
-    const samplers = buildClipBoneSamplers({
-      keyframes: bound.params.keyframes ?? [],
-      duration: bound.params.duration ?? 1,
-      // The CARRIED value, not a boolean. `loop` has been a `ClipLoop` since #930;
-      // `clipLoopOf` maps anything it cannot interpret to 'hold' on purpose, so a
-      // boolean here collapsed BOTH branches to 'hold' and the row returned the same
-      // verdict for every value the carry could deliver (#955).
-      loop: clipLoopOf(bound.params.loop),
-    });
-    const sampler = [...samplers.values()][0];
+    const keyed = Math.min(...(bound.params.keyframes ?? []).map((k) => k.bone));
+    const sampler = keyedBoneSampler(
+      {
+        keyframes: bound.params.keyframes ?? [],
+        duration: bound.params.duration ?? 1,
+        // The CARRIED value, not a boolean. `loop` has been a `ClipLoop` since #930;
+        // `clipLoopOf` maps anything it cannot interpret to 'hold' on purpose, so a
+        // boolean here collapsed BOTH branches to 'hold' and the row returned the same
+        // verdict for every value the carry could deliver (#955).
+        loop: clipLoopOf(bound.params.loop),
+      },
+      keyed,
+    );
     const atEnd = sampler(1);
     const wayPast = sampler(9);
     // Held: nine seconds out reads exactly what the last key reads.
@@ -305,13 +320,14 @@ describe('boundClipsForAsset reads a RetargetClip', () => {
     // Same bound clip, same keys, cycle-offset instead of the carried 'hold': the root
     // accumulates a full travel per period and reads ~9x out at t=9. So the assertions
     // above discriminate, and a carry that delivered the wrong domain would red here.
-    const travelling = [
-      ...buildClipBoneSamplers({
+    const travelling = keyedBoneSampler(
+      {
         keyframes: bound.params.keyframes ?? [],
         duration: bound.params.duration ?? 1,
         loop: 'cycle-offset',
-      }).values(),
-    ][0];
+      },
+      keyed,
+    );
     expect(travelling(9).position[2]).toBeGreaterThan(atEnd.position[2] * 8);
   });
   it("#919 carries the source clip's ONE-SHOT domain instead of inventing a loop", () => {

@@ -43,10 +43,9 @@
 //      src/app/animate/boundClipsForAsset.ts (the one walk that calls this);
 //      src/core/import/projectGltfSkeleton.ts; issue #901.
 
-import { retargetClip } from '../../core/import/retarget';
+import { retargetSavedKeys } from '../../core/import/savedClipKeys';
 import { projectGltfSkeleton } from '../../core/import/projectGltfSkeleton';
-import type { AnimationClipParams } from '../../nodes/AnimationClip';
-import type { BoneSpec, GltfSkinMetadata } from '../../nodes/types';
+import type { AnimationKeyframe, BoneSpec, GltfSkinMetadata } from '../../nodes/types';
 import { edgeTarget, type GraphNodeLike } from './graphNodes';
 import { poseSkeletonIdOf } from './poseChain';
 import { clipLoopOf } from '../../nodes/clipLoop';
@@ -89,6 +88,16 @@ export function bonesOfSkeletonNode(
     return skin ? projectSkin(skin) : null;
   }
   return null;
+}
+
+/**
+ * A clip's keys as projects saved them before format 20: a key per bone INDEX, XYZ euler radians.
+ * Format 20 stores timed poses instead (#1227), so this is read only where a project is still in an
+ * older format — the v9 → v10 migration, which compares saved channels against these keys value for
+ * value and so needs them exactly as they were written.
+ */
+export interface SavedClipKeys {
+  readonly keyframes?: readonly AnimationKeyframe[];
 }
 
 type SourceParams = { name?: string; duration?: number; keyframes?: unknown; loop?: boolean };
@@ -162,10 +171,7 @@ export function retargetOperandsFromNodes(
  * because the key described only what the math reads and not everything the answer
  * carries. The name rides in `clipParams`, so it belongs in the key.
  */
-const memo = new WeakMap<
-  object,
-  WeakMap<object, WeakMap<object, Map<string, Partial<AnimationClipParams>>>>
->();
+const memo = new WeakMap<object, WeakMap<object, WeakMap<object, Map<string, SavedClipKeys>>>>();
 
 /**
  * The clip params a `RetargetClip` node resolves to, or null when its graph is
@@ -179,7 +185,7 @@ const memo = new WeakMap<
 export function retargetClipParamsFromNodes(
   nodes: Readonly<Record<string, GraphNodeLike>>,
   node: GraphNodeLike | undefined,
-): Partial<AnimationClipParams> | null {
+): SavedClipKeys | null {
   const operands = node ? retargetOperandsFromNodes(nodes, node) : null;
   if (!node || !operands) return null;
 
@@ -198,12 +204,12 @@ export function retargetClipParamsFromNodes(
   const cached = memo.get(k1)?.get(k2)?.get(k3)?.get(k4);
   if (cached) return cached;
 
-  const result = retargetClip({
+  const result = retargetSavedKeys({
     sourceBones,
     sourceClip: {
       name: typeof sourceParams.name === 'string' ? sourceParams.name : 'clip',
       duration: typeof sourceParams.duration === 'number' ? sourceParams.duration : 0,
-      keyframes: sourceParams.keyframes as AnimationClipParams['keyframes'],
+      keyframes: sourceParams.keyframes as readonly AnimationKeyframe[],
       // #919 — the source's own time domain travels with its keys.
       loop: clipLoopOf(sourceParams.loop),
     },
@@ -214,7 +220,7 @@ export function retargetClipParamsFromNodes(
   // Read-only in, read-only out: `retargetClip` returns readonly arrays and every
   // consumer of a BoundClip only reads. The cast widens the array type, not the
   // ownership — nothing here or downstream writes into it.
-  const params = result.clipParams as Partial<AnimationClipParams>;
+  const params: SavedClipKeys = result.clipParams;
 
   let l2 = memo.get(k1);
   if (!l2) memo.set(k1, (l2 = new WeakMap()));

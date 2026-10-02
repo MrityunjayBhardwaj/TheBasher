@@ -121,7 +121,7 @@ export function describeMotionCapabilityConformance(
       const result = await makeCapability().generate(request);
       const parsed = parseBvh(result.bvh, 'conformance', result.unitScale);
       expect(parsed.skeletonParams.bones.length).toBeGreaterThan(0);
-      expect(parsed.clipParams.keyframes.length).toBeGreaterThan(0);
+      expect(parsed.clipParams.poses.length).toBeGreaterThan(0);
     });
 
     it('STATES its own sampling rate in the clip, and the clip agrees with itself', async () => {
@@ -185,20 +185,26 @@ export function describeMotionCapabilityConformance(
       // IDENTITY rotations, so `0 * 0.01 === 0` and comparing bind rotations
       // holds just as well when the scale IS wrongly applied to them. The first
       // version of this test asserted exactly that and passed while rotations
-      // were being scaled. The keyframes are where the rotations are non-zero,
+      // were being scaled. The poses are where the rotations are not identity,
       // so that is where the property has to be checked — and the check is only
       // worth anything once something confirms there is a rotation to check.
-      const movingKeys = raw.clipParams.keyframes.filter((kf) => kf.rotation.some((v) => v !== 0));
-      expect(movingKeys.length).toBeGreaterThan(0);
+      const turned = raw.clipParams.poses.flatMap((pose) =>
+        Object.values(pose.bones).filter((b) => b.quaternion?.slice(0, 3).some((v) => v !== 0)),
+      );
+      expect(turned.length).toBeGreaterThan(0);
 
       raw.skeletonParams.bones.forEach((bone, i) => {
         const other = scaled.skeletonParams.bones[i];
         bone.position.forEach((v, axis) => expect(other.position[axis]).toBeCloseTo(v * 0.01, 9));
       });
-      raw.clipParams.keyframes.forEach((kf, i) => {
-        const other = scaled.clipParams.keyframes[i];
-        kf.position.forEach((v, axis) => expect(other.position[axis]).toBeCloseTo(v * 0.01, 9));
-        expect(other.rotation).toEqual(kf.rotation);
+      raw.clipParams.poses.forEach((pose, i) => {
+        for (const [name, held] of Object.entries(pose.bones)) {
+          const other = scaled.clipParams.poses[i].bones[name];
+          held.position!.forEach((v, axis) =>
+            expect(other.position![axis]).toBeCloseTo(v * 0.01, 9),
+          );
+          expect(other.quaternion).toEqual(held.quaternion);
+        }
       });
     });
 

@@ -5,7 +5,7 @@
 //   → THREE.Skeleton + THREE.AnimationClip + nameMap-as-options
 //   → SkeletonUtils.retargetClip                             [the math]
 //   → AnimationClip with target-bone-named tracks
-//   → POJO AnimationClipParams (via threeAdapter.clipToKeyframes)
+//   → timed poses on the target's bone names (via threeAdapter.clipToPoses)
 //
 // Why round-trip THREE: SkeletonUtils handles the bind-pose-aware
 // rebinding (bone hierarchies with different rest poses + scales) that
@@ -27,7 +27,6 @@ import {
   Quaternion,
   Matrix4,
   Vector3,
-  Euler,
   type Bone,
 } from 'three';
 
@@ -44,12 +43,12 @@ import {
 type RetargetClipOptionsWithOffsets = Parameters<typeof threeRetargetClip>[3] & {
   localOffsets?: Record<string, Matrix4>;
 };
-import type { AnimationKeyframe, BoneSpec } from '../../nodes/types';
+import type { BoneSpec, MotionPose, Quat } from '../../nodes/types';
 import {
   boneOnACycle,
   bonesToSpec,
-  clipToKeyframes,
-  paramsToThreeClip,
+  clipToPoses,
+  posesToThreeClip,
   specToThreeSkeleton,
 } from './threeAdapter';
 import {
@@ -67,7 +66,8 @@ export interface RetargetArgs {
   readonly sourceClip: {
     readonly name: string;
     readonly duration: number;
-    readonly keyframes: readonly AnimationKeyframe[];
+    /** The motion, as timed poses on the source rig's bone names (#1432). */
+    readonly poses: readonly MotionPose[];
     /** The source's own time domain. Retargeting changes WHICH RIG a motion plays
      *  on, never HOW IT ENDS, so this travels with the keys rather than being
      *  decided here (#919) — the same "keys and domain are one answer" rule #913
@@ -95,7 +95,8 @@ export interface RetargetResult {
     readonly name: string;
     readonly duration: number;
     readonly loop: ClipLoop;
-    readonly keyframes: readonly AnimationKeyframe[];
+    /** Timed poses on the TARGET rig's bone names, spelled as `targetBones` spells them. */
+    readonly poses: MotionPose[];
   };
   /** Source bones with no entry in nameMap and no match in the target — surface to UI. */
   readonly unmappedSourceBones: readonly string[];
@@ -373,13 +374,13 @@ export function resolveNameMapToTarget(
  */
 export function referenceWorldRotations(
   sourceBoneObjs: readonly Bone[],
-  localRotations: Readonly<Record<string, readonly [number, number, number]>>,
+  localRotations: Readonly<Record<string, Quat>>,
 ): Map<string, Quaternion> {
   const out = new Map<string, Quaternion>();
   const visit = (bone: Bone, parentWorld: Quaternion): void => {
     const posed = localRotations[bone.name];
     const local = posed
-      ? new Quaternion().setFromEuler(new Euler(posed[0], posed[1], posed[2], 'XYZ'))
+      ? new Quaternion(posed[0], posed[1], posed[2], posed[3])
       : bone.quaternion.clone();
     const world = parentWorld.clone().multiply(local);
     out.set(bone.name, world);
@@ -581,6 +582,69 @@ export function restDirectionLocalOffsets(
 }
 
 export function retargetClip(args: RetargetArgs): RetargetResult {
+  const { poses } = args.sourceClip;
+  // The clip's FIRST pose is the source's reference pose (#853, see `retargetThree`).
+  const first = poses.reduce<MotionPose | null>((a, p) => (a && a.time <= p.time ? a : p), null);
+  const referencePose: Record<string, Quat> = {};
+  for (const [name, held] of Object.entries(first?.bones ?? {})) {
+    if (held.quaternion) referencePose[name] = held.quaternion;
+  }
+  const run = retargetThree({
+    sourceBones: args.sourceBones,
+    sourceClip: posesToThreeClip(
+      args.sourceClip.name,
+      args.sourceClip.duration,
+      poses,
+      args.sourceBones,
+    ),
+    referencePose: first ? referencePose : null,
+    targetBones: args.targetBones,
+    nameMap: args.nameMap,
+  });
+  return {
+    clipParams: {
+      name: args.outputName ?? `${args.sourceClip.name}_retargeted`,
+      duration: run.retargeted.duration > 0 ? run.retargeted.duration : args.sourceClip.duration,
+      // Carried, not invented (#919). Every other field on this object derives
+      // from the source; `loop` alone used to be a literal, so a one-shot motion —
+      // a jump, a wave, a fall — silently became a looping one the moment it was
+      // retargeted, with nothing in the UI saying the time domain had changed.
+      loop: clipLoopOf(args.sourceClip.loop),
+      // Named as the caller's rig names its bones: `targetSpecs` is three's spelling of it.
+      poses: clipToPoses(run.retargeted, run.targetSpecs, args.targetBones),
+    },
+    unmappedSourceBones: run.unmappedSourceBones,
+    unboundTargetBones: run.unboundTargetBones,
+    restReconciliation: run.restReconciliation,
+  };
+}
+
+/** What `retargetThree` reads: the source motion already as three's clip, and its first pose. */
+export interface RetargetThreeArgs {
+  readonly sourceBones: readonly BoneSpec[];
+  readonly sourceClip: ThreeAnimationClip;
+  /** The source's local rotations at its earliest time, by bone name; null for a clip with none. */
+  readonly referencePose: Readonly<Record<string, Quat>> | null;
+  readonly targetBones: readonly BoneSpec[];
+  readonly nameMap: Readonly<Record<string, string>>;
+}
+
+/** The retarget as three runs it, before its clip is read back into any stored form. */
+export interface RetargetThreeResult {
+  readonly retargeted: ThreeAnimationClip;
+  /** The target rig as three holds it, read before the retarget poses it: track names resolve here. */
+  readonly targetSpecs: readonly BoneSpec[];
+  readonly unmappedSourceBones: readonly string[];
+  readonly unboundTargetBones: readonly string[];
+  readonly restReconciliation: RestReconciliation;
+}
+
+/**
+ * The retarget math, shared by the pose road (`retargetClip`) and the road that reads keys as saved
+ * before format 20 (`savedClipKeys.ts`). Each brings the source as three's clip and reads three's
+ * result back in its own form, so the math between them is one copy.
+ */
+export function retargetThree(args: RetargetThreeArgs): RetargetThreeResult {
   // #1183 — refused before anything walks a parent chain: a cyclic skeleton made
   // `shallowestMapped` loop forever, synchronously, freezing the tab.
   for (const [rig, bones] of [
@@ -609,12 +673,7 @@ export function retargetClip(args: RetargetArgs): RetargetResult {
   if (targetBoneObjs[0]) targetWrap.add(targetBoneObjs[0]);
   targetWrap.skeleton = targetSkeleton;
 
-  const sourceClip = paramsToThreeClip(
-    args.sourceClip.name,
-    args.sourceClip.duration,
-    args.sourceClip.keyframes,
-    args.sourceBones,
-  );
+  const sourceClip = args.sourceClip;
 
   // SkeletonUtils.retargetClip iterates TARGET bones and uses
   // options.names[targetBoneName] to find the matching source bone.
@@ -635,7 +694,7 @@ export function retargetClip(args: RetargetArgs): RetargetResult {
   //
   // `threeRetargetClip` poses the target skeleton frame by frame and leaves the
   // bone objects wherever the last frame put them — measured: every local
-  // translation flattened to [0,0,0]. `clipToKeyframes` falls back to
+  // translation flattened to [0,0,0]. `clipToPoses` falls back to
   // `bind.position` for a bone the clip does not translate, which is EVERY bone
   // here (a retarget emits quaternion tracks only, by design, because the target
   // keeps its own proportions). So reading the spec afterwards fed it a bind pose
@@ -684,18 +743,8 @@ export function retargetClip(args: RetargetArgs): RetargetResult {
   // is aligned by direction and never consults it; a bone without one — head,
   // hands, toe bases — has no direction to align and would otherwise inherit a
   // correction computed for a bone pointing somewhere else.
-  const referenceTime = args.sourceClip.keyframes.reduce(
-    (earliest, k) => Math.min(earliest, k.time),
-    Number.POSITIVE_INFINITY,
-  );
-  const referencePose: Record<string, readonly [number, number, number]> = {};
-  for (const keyframe of args.sourceClip.keyframes) {
-    if (keyframe.time !== referenceTime) continue;
-    const bone = args.sourceBones[keyframe.bone];
-    if (bone) referencePose[bone.name] = keyframe.rotation;
-  }
-  const sourceReference = Number.isFinite(referenceTime)
-    ? referenceWorldRotations(sourceBoneObjs, referencePose)
+  const sourceReference = args.referencePose
+    ? referenceWorldRotations(sourceBoneObjs, args.referencePose)
     : undefined;
 
   // ── RECONCILE THE TWO RESTS AS A WHOLE, WHEN THAT IS POSSIBLE AT ALL ──────
@@ -768,19 +817,9 @@ export function retargetClip(args: RetargetArgs): RetargetResult {
     retargetOptions,
   );
 
-  const keyframes = clipToKeyframes(retargeted, targetSpecs);
-
   return {
-    clipParams: {
-      name: args.outputName ?? `${args.sourceClip.name}_retargeted`,
-      duration: retargeted.duration > 0 ? retargeted.duration : args.sourceClip.duration,
-      // Carried, not invented (#919). Every other field on this object derives
-      // from the source; `loop` alone used to be a literal, so a one-shot motion —
-      // a jump, a wave, a fall — silently became a looping one the moment it was
-      // retargeted, with nothing in the UI saying the time domain had changed.
-      loop: clipLoopOf(args.sourceClip.loop),
-      keyframes,
-    },
+    retargeted,
+    targetSpecs,
     // The RESOLVED map, not the argument — otherwise the report describes a
     // lookup that did not happen and calls a bound bone unmapped.
     unmappedSourceBones: findUnmappedSource(args.sourceBones, nameMap, args.targetBones),

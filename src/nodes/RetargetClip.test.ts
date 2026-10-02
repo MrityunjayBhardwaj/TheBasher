@@ -7,7 +7,8 @@
 
 import { describe, expect, it } from 'vitest';
 import { RetargetClipNode, RetargetClipParams } from './RetargetClip';
-import { motionPosesFromKeyframes, posedSkeletonFromClip } from './AnimationClip';
+import { posedSkeletonFromClip } from './AnimationClip';
+import { posesFromKeyframes } from '../core/import/keyframePoses';
 import { PoseLayerNode, PoseLayerParams } from './PoseLayer';
 import { restPoseOf } from './Skeleton';
 import { retargetClip } from '../core/import/retarget';
@@ -106,15 +107,13 @@ describe('RetargetClip — the operator', () => {
         name: 'walk',
         duration: 1,
         loop: sourceClipValue().loop,
-        keyframes: sourceKeys(),
+        poses: posesFromKeyframes(sourceKeys(), sourceBones()),
       },
       targetBones: targetBones(),
       nameMap: nameMap(),
     });
-    // #1225 — the value carries the retargeted keys as timed poses on the target's bone names.
-    expect(value.poses).toEqual(
-      motionPosesFromKeyframes(expected.clipParams.keyframes, targetBones()),
-    );
+    // #1225 — the value carries the retarget's timed poses on the target's bone names.
+    expect(value.poses).toEqual(expected.clipParams.poses);
     expect(value.duration).toBe(expected.clipParams.duration);
     expect(value.name).toBe(expected.clipParams.name);
     expect(value.loop).toBe(expected.clipParams.loop);

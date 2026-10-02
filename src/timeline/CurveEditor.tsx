@@ -15,6 +15,7 @@ import { useTimeStore } from '../app/stores/timeStore';
 import { useSelectionStore } from '../app/stores/selectionStore';
 import { useTimelineSelection } from './timelineSelection';
 import { isKeyframeChannelNode } from '../app/animate/paramAnimationState';
+import { BAKE_POSE_LABEL } from '../app/animate/bakePose';
 import { EditableCurve } from './EditableCurve';
 import { isComputedRowId, layerChannelRows, parseLayerRowId } from './layerChannelRows';
 import { resolveRowChannelForWrite } from '../app/animate/rowChannelWrite';
@@ -74,7 +75,7 @@ export function CurveEditor({ duration }: { duration: number }) {
         data-testid="curve-editor"
         className="flex h-full items-center justify-center px-4 text-center text-xs text-fg-dim"
       >
-        Computed motion — “bake motion to keys” in the inspector makes its keys editable.
+        Computed motion — “{BAKE_POSE_LABEL}” in the inspector makes its keys editable.
       </div>
     );
   }

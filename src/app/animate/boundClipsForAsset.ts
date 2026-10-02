@@ -28,12 +28,11 @@
 // special case.
 //
 // REF: src/core/project/migrations.ts;
-//      src/nodes/AnimationClip.ts (buildClipBoneSamplers); issues #888, #889, #1053.
+//      src/app/animate/retargetFromNodes.ts (`SavedClipKeys`); issues #888, #889, #1053, #1433.
 
-import type { AnimationClipParams } from '../../nodes/AnimationClip';
 import { poseLayerChain } from './poseChain';
 import { edgeSocket, edgeTarget, type GraphNodeLike } from './graphNodes';
-import { retargetClipParamsFromNodes } from './retargetFromNodes';
+import { retargetClipParamsFromNodes, type SavedClipKeys } from './retargetFromNodes';
 
 // Re-exported so every existing importer of the walk keeps its one import site.
 export { edgeTarget };
@@ -44,7 +43,8 @@ export interface BoundClip {
   readonly clipId: string;
   /** bone INDEX → childName, from the skin's `jointKeys`. */
   readonly jointKeys: readonly string[];
-  readonly params: Partial<AnimationClipParams>;
+  /** The clip's keys in the shape saved before format 20 — this walk serves old-format files only. */
+  readonly params: SavedClipKeys;
 }
 
 /**
@@ -131,7 +131,7 @@ export function boundClipsForAsset(
       const params =
         clip.type === 'RetargetClip'
           ? retargetClipParamsFromNodes(nodes, clip)
-          : (clip.params as Partial<AnimationClipParams> | undefined);
+          : (clip.params as SavedClipKeys | undefined);
       if (!Array.isArray(params?.keyframes) || params.keyframes.length === 0) continue;
       out.push({ clipId, jointKeys: jointKeys as readonly string[], params });
     }

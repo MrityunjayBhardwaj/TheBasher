@@ -113,7 +113,7 @@ async function seedCharacter(page: import('@playwright/test').Page, opts?: { obs
             type: 'addNode',
             nodeId: 'p2_clip',
             nodeType: 'AnimationClip',
-            params: { name: 'walk', duration: 1, loop: 'cycle-offset', keyframes: [] },
+            params: { name: 'walk', duration: 1, loop: 'cycle-offset', poses: [] },
           },
           {
             type: 'addNode',
@@ -350,7 +350,7 @@ test("P2#4 multi-character isolation: setParam on A's locomotion does not flip B
           type: 'addNode',
           nodeId: `clip_${id}`,
           nodeType: 'AnimationClip',
-          params: { name: `walk_${id}`, duration: 1, loop: 'cycle-offset', keyframes: [] },
+          params: { name: `walk_${id}`, duration: 1, loop: 'cycle-offset', poses: [] },
         },
         {
           type: 'addNode',

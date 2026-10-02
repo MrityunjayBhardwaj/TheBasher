@@ -4,15 +4,16 @@
 //
 // Extracted from bvh.ts when fbx.ts landed — second use crossed the
 // dharana §4 threshold ("Wait for a second use"). Sole responsibility:
-// translate THREE-side shapes into BoneSpec[] + AnimationKeyframe[].
+// translate THREE-side shapes into BoneSpec[] + timed poses (MotionPose[]).
 //
 // Conversions:
 //   - Bone tree → BoneSpec[] with parent indices (DAG uses indices,
-//     THREE uses parent references).
-//   - QuaternionKeyframeTrack → Euler (XYZ order, matches Blender / Unity /
-//     Unreal / Godot per dcc-reference §1). Lossy at gimbal lock.
-//   - Per-bone tracks merged into flat (bone, time, position, rotation)
-//     keyframe entries; bones without a position track inherit bind-pose.
+//     THREE uses parent references). A bone's rest rotation is XYZ Euler.
+//   - Tracks → timed poses by bone name, quaternions read as quaternions
+//     (#1432); a bone keyed on one property takes the other from its rest.
+//
+// The index + Euler key form these used to produce survives only as saved
+// projects hold it, in `savedClipKeys.ts`.
 
 import {
   AnimationClip,
@@ -24,7 +25,8 @@ import {
   Skeleton,
   VectorKeyframeTrack,
 } from 'three';
-import type { AnimationKeyframe, BoneSpec, Vec3 } from '../../nodes/types';
+import type { BoneSpec, MotionBonePose, MotionPose, Quat, Vec3 } from '../../nodes/types';
+import { quatFromEulerXYZ } from '../../nodes/bonePose';
 
 /**
  * Sanitize a bone name for THREE-track-binding safety. THREE reserves
@@ -97,21 +99,28 @@ export interface ClipShape {
   }>;
 }
 
-export function clipToKeyframes(clip: ClipShape, bones: readonly BoneSpec[]): AnimationKeyframe[] {
-  type PerBoneTrack = {
-    times: Set<number>;
-    positionAt: Map<number, Vec3>;
-    rotationAt: Map<number, Vec3>;
-  };
+/**
+ * Three's tracks as timed poses by bone name (#1432): one pose per key time, holding every bone keyed
+ * at that time. A quaternion track is read as the quaternion it is. A bone keyed at a time on one
+ * property only takes the other from its rest: a rotation-only bone keeps its rest offset, a
+ * position-only one its rest rotation.
+ *
+ * A track's bone is found by name in `bones`, the spelling `bonesToSpec` gives (two bones of one name
+ * resolve to the later one). The pose names it as `names` does at that index: `bones` by default, or
+ * the caller's own spelling of the same rig when `bones` is three's.
+ */
+export function clipToPoses(
+  clip: ClipShape,
+  bones: readonly BoneSpec[],
+  names: readonly { readonly name: string }[] = bones,
+): MotionPose[] {
+  type PerBoneTrack = { positionAt: Map<number, Vec3>; quaternionAt: Map<number, Quat> };
   const indexByName = new Map<string, number>();
   bones.forEach((b, i) => indexByName.set(b.name, i));
   const perBone = new Map<number, PerBoneTrack>();
   const ensureBone = (idx: number): PerBoneTrack => {
     let entry = perBone.get(idx);
-    if (!entry) {
-      entry = { times: new Set(), positionAt: new Map(), rotationAt: new Map() };
-      perBone.set(idx, entry);
-    }
+    if (!entry) perBone.set(idx, (entry = { positionAt: new Map(), quaternionAt: new Map() }));
     return entry;
   };
 
@@ -120,59 +129,39 @@ export function clipToKeyframes(clip: ClipShape, bones: readonly BoneSpec[]): An
     if (!parsed) continue;
     const boneIdx = indexByName.get(parsed.bone);
     if (boneIdx === undefined) continue;
-
+    const v = track.values;
     if (parsed.property === 'position') {
+      const at = ensureBone(boneIdx).positionAt;
       for (let i = 0; i < track.times.length; i++) {
-        const t = track.times[i];
-        const v: Vec3 = [track.values[i * 3 + 0], track.values[i * 3 + 1], track.values[i * 3 + 2]];
-        const entry = ensureBone(boneIdx);
-        entry.times.add(t);
-        entry.positionAt.set(t, v);
+        at.set(track.times[i], [v[i * 3], v[i * 3 + 1], v[i * 3 + 2]]);
       }
     } else if (parsed.property === 'quaternion') {
+      const at = ensureBone(boneIdx).quaternionAt;
       for (let i = 0; i < track.times.length; i++) {
-        const t = track.times[i];
-        const q = new Quaternion(
-          track.values[i * 4 + 0],
-          track.values[i * 4 + 1],
-          track.values[i * 4 + 2],
-          track.values[i * 4 + 3],
-        );
-        const entry = ensureBone(boneIdx);
-        entry.times.add(t);
-        entry.rotationAt.set(t, quaternionToEulerVec3(q));
+        const [x, y, z, w] = [v[i * 4], v[i * 4 + 1], v[i * 4 + 2], v[i * 4 + 3]];
+        // three holds track values as float32, so a quaternion arrives a hair off unit; made unit
+        // here, as a pose's quaternion is. A zero one names no rotation and reads as none.
+        const n = Math.hypot(x, y, z, w);
+        at.set(track.times[i], n > 0 ? [x / n, y / n, z / n, w / n] : [0, 0, 0, 1]);
       }
     }
   }
 
-  const out: AnimationKeyframe[] = [];
-  for (const [boneIdx, track] of perBone.entries()) {
+  const byTime = new Map<number, Record<string, MotionBonePose>>();
+  for (const boneIdx of [...perBone.keys()].sort((x, y) => x - y)) {
+    const { positionAt, quaternionAt } = perBone.get(boneIdx)!;
     const bind = bones[boneIdx];
-    const times = Array.from(track.times).sort((a, b) => a - b);
-    // #867: walk this bone's own frames in time order and keep each rotation on
-    // the branch nearest the one before it. The chain runs only across frames
-    // that actually carry a rotation — a frame falling back to the bind pose is
-    // left exactly as it was, so bones with position-only tracks are untouched.
-    let previousRotation: Vec3 | null = null;
-    for (const t of times) {
-      const sampled = track.rotationAt.get(t);
-      let rotation: Vec3;
-      if (sampled === undefined) {
-        rotation = bind.rotation;
-      } else {
-        rotation = continuousEuler(sampled, previousRotation);
-        previousRotation = rotation;
-      }
-      out.push({
-        bone: boneIdx,
-        time: t,
-        position: track.positionAt.get(t) ?? bind.position,
-        rotation,
-      });
+    const name = names[boneIdx]?.name ?? bind.name;
+    for (const t of new Set([...positionAt.keys(), ...quaternionAt.keys()])) {
+      let held = byTime.get(t);
+      if (!held) byTime.set(t, (held = {}));
+      held[name] = {
+        position: positionAt.get(t) ?? bind.position,
+        quaternion: quaternionAt.get(t) ?? quatFromEulerXYZ(bind.rotation),
+      };
     }
   }
-  out.sort((a, b) => a.time - b.time || a.bone - b.bone);
-  return out;
+  return [...byTime].sort(([x], [y]) => x - y).map(([time, held]) => ({ time, bones: held }));
 }
 
 /** A three track name as the bone (sanitised) and property it keys, or null. */
@@ -187,46 +176,6 @@ export function parseTrackName(name: string): { bone: string; property: string }
 export function quaternionToEulerVec3(q: Quaternion): Vec3 {
   const e = new Euler().setFromQuaternion(q, 'XYZ');
   return [e.x, e.y, e.z] as const;
-}
-
-const TWO_PI = Math.PI * 2;
-
-/** Shift each component by whole turns to sit as close to `prev` as it can. */
-function snapTurns(cand: Vec3, prev: Vec3): Vec3 {
-  return [
-    cand[0] + TWO_PI * Math.round((prev[0] - cand[0]) / TWO_PI),
-    cand[1] + TWO_PI * Math.round((prev[1] - cand[1]) / TWO_PI),
-    cand[2] + TWO_PI * Math.round((prev[2] - cand[2]) / TWO_PI),
-  ] as const;
-}
-
-const spread = (a: Vec3, b: Vec3): number =>
-  Math.max(Math.abs(a[0] - b[0]), Math.abs(a[1] - b[1]), Math.abs(a[2] - b[2]));
-
-/**
- * The representation of the SAME rotation that sits nearest `prev` (#867).
- *
- * `Euler.setFromQuaternion` returns a CANONICAL triple — in XYZ order the middle
- * angle is confined to [-pi/2, pi/2], so a smooth rotation sweeping through that
- * boundary lands on the far side of it and the other two components jump by pi.
- * Nothing about the rotation changed; only the way it is written down. But the
- * playback sampler interpolates these components LINEARLY (`AnimationClip.ts`),
- * so a pair of keyframes written on opposite branches makes the bone travel the
- * long way round — measured at 361 degrees between two keys 1.4 degrees apart.
- *
- * Two families describe one rotation: the triple plus any whole turns per
- * component, and the flip `(x+pi, pi-y, z+pi)` plus whole turns. Both are
- * generated and the closer one wins. The flip identity is not assumed — it is
- * proven over random rotations in `threeAdapterContinuity.test.ts`.
- *
- * This is a representation change ONLY. Every keyframe still holds the rotation
- * it held before, which is the property the tests pin.
- */
-export function continuousEuler(e: Vec3, prev: Vec3 | null): Vec3 {
-  if (!prev) return e;
-  const direct = snapTurns(e, prev);
-  const flipped = snapTurns([e[0] + Math.PI, Math.PI - e[1], e[2] + Math.PI] as const, prev);
-  return spread(flipped, prev) < spread(direct, prev) ? flipped : direct;
 }
 
 // ---------------------------------------------------------------------------
@@ -322,39 +271,38 @@ export function specToThreeSkeleton(specs: readonly BoneSpec[]): {
 }
 
 /**
- * Build a THREE.AnimationClip from our flat keyframe model. Groups
- * keyframes by bone, emits one VectorKeyframeTrack (.position) and one
- * QuaternionKeyframeTrack (.quaternion) per bone that has keyframes.
+ * Build a THREE.AnimationClip from timed poses (#1432): one VectorKeyframeTrack (.position) and one
+ * QuaternionKeyframeTrack (.quaternion) per bone of `bones` the poses hold, keyed at the times that
+ * hold it. A held bone without a position or a quaternion takes its rest's. Scale is not carried:
+ * the retarget, the one caller, keeps the target's own proportions.
  */
-export function paramsToThreeClip(
+export function posesToThreeClip(
   name: string,
   duration: number,
-  keyframes: readonly AnimationKeyframe[],
+  poses: readonly MotionPose[],
   bones: readonly BoneSpec[],
 ): AnimationClip {
-  type PerBone = { times: number[]; positions: number[]; quats: number[] };
-  const grouped = new Map<number, PerBone>();
-  // Stable order: by bone, then time.
-  const sortedKfs = [...keyframes].sort((a, b) => a.bone - b.bone || a.time - b.time);
-  for (const kf of sortedKfs) {
-    let entry = grouped.get(kf.bone);
-    if (!entry) {
-      entry = { times: [], positions: [], quats: [] };
-      grouped.set(kf.bone, entry);
-    }
-    entry.times.push(kf.time);
-    entry.positions.push(kf.position[0], kf.position[1], kf.position[2]);
-    const q = new Quaternion().setFromEuler(
-      new Euler(kf.rotation[0], kf.rotation[1], kf.rotation[2], 'XYZ'),
-    );
-    entry.quats.push(q.x, q.y, q.z, q.w);
-  }
-
+  const ordered = [...poses].sort((a, b) => a.time - b.time);
   const tracks = [];
-  for (const [boneIdx, entry] of grouped.entries()) {
-    const boneName = bones[boneIdx]?.name ?? `bone_${boneIdx}`;
-    tracks.push(new VectorKeyframeTrack(`${boneName}.position`, entry.times, entry.positions));
-    tracks.push(new QuaternionKeyframeTrack(`${boneName}.quaternion`, entry.times, entry.quats));
+  const seen = new Set<string>();
+  for (const bone of bones) {
+    if (seen.has(bone.name)) continue;
+    seen.add(bone.name);
+    const times: number[] = [];
+    const positions: number[] = [];
+    const quats: number[] = [];
+    for (const pose of ordered) {
+      const held = pose.bones[bone.name];
+      if (!held) continue;
+      const p = held.position ?? bone.position;
+      const q = held.quaternion ?? quatFromEulerXYZ(bone.rotation);
+      times.push(pose.time);
+      positions.push(p[0], p[1], p[2]);
+      quats.push(q[0], q[1], q[2], q[3]);
+    }
+    if (times.length === 0) continue;
+    tracks.push(new VectorKeyframeTrack(`${bone.name}.position`, times, positions));
+    tracks.push(new QuaternionKeyframeTrack(`${bone.name}.quaternion`, times, quats));
   }
   return new AnimationClip(name, duration > 0 ? duration : -1, tracks);
 }

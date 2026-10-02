@@ -1,10 +1,11 @@
-// The clip's own per-bone sampler (`buildClipBoneSamplers`): what it does with params nothing
-// re-validated, and which time domain its extend rule runs over. These rows lived with the clone
-// road's clip band (#888), which read through this sampler; the band retired with the clone road's
-// character half (#1053), and the sampler's behaviour is kept here, where it lives.
+// A clip's per-bone sampling: what it does with params nothing re-validated, and which time domain
+// its extend rule runs over. These rows lived with the clone road's clip band (#888), then with the
+// index-keyed sampler it read through; both retired (#1053, #1433). The rules live in
+// `clipTrackSampler`, which the clip's own pose samples every bone through, so they are read there.
 
 import { describe, it, expect } from 'vitest';
-import { buildClipBoneSamplers } from './AnimationClip';
+import { keyedBoneSampler } from '../test-utils/clipValue';
+import type { AnimationKeyframe } from './types';
 
 describe('#888 — a clip’s params reach the sampler unre-validated, so it must survive them', () => {
   it('a non-positive or NaN duration folds to 0 rather than producing NaN poses', () => {
@@ -14,14 +15,17 @@ describe('#888 — a clip’s params reach the sampler unre-validated, so it mus
     // pose of NaNs: a limb that silently vanishes rather than an error anyone
     // can trace back here.
     for (const duration of [0, -1, Number.NaN]) {
-      const sampler = buildClipBoneSamplers({
-        duration,
-        loop: 'cycle-offset',
-        keyframes: [
-          { bone: 0, time: 0, position: [0, 1, 0], rotation: [0, 0, 0] },
-          { bone: 0, time: 1, position: [0, 9, 0], rotation: [0, 0, 0] },
-        ],
-      } as never).get(0)!;
+      const sampler = keyedBoneSampler(
+        {
+          duration,
+          loop: 'cycle-offset',
+          keyframes: [
+            { bone: 0, time: 0, position: [0, 1, 0], rotation: [0, 0, 0] },
+            { bone: 0, time: 1, position: [0, 9, 0], rotation: [0, 0, 0] },
+          ],
+        },
+        0,
+      );
       const p = sampler(0.5).position;
       expect(Number.isFinite(p[1])).toBe(true);
       expect(p[1]).toBe(1); // the first key, which is what "no time domain" means
@@ -47,15 +51,13 @@ describe('#888 — a clip’s params reach the sampler unre-validated, so it mus
 // ─────────────────────────────────────────────────────────────────────────
 describe('#924 the extend domain is the key range, not the declared duration', () => {
   /** Keys spanning [0,3] on a clip that CLAIMS duration 2 — deliberately unequal. */
-  const KEYS = [
+  const KEYS: AnimationKeyframe[] = [
     { bone: 0, time: 0, position: [0, 0, 0], rotation: [0, 0, 0] },
     { bone: 0, time: 3, position: [0, 3, 0], rotation: [0, 0, 0] },
   ];
 
   it('a non-looping clip holds its LAST KEY, not the value at `duration`', () => {
-    const s = buildClipBoneSamplers({ keyframes: KEYS, duration: 2, loop: 'hold' } as never).get(
-      0,
-    )!;
+    const s = keyedBoneSampler({ keyframes: KEYS, duration: 2, loop: 'hold' }, 0);
     // Inside the keys but past the declared duration: the authored key wins, so
     // this reads 2.5. Clamping to `duration` first would truncate the last third
     // of the authored motion and read 2.
@@ -65,11 +67,7 @@ describe('#924 the extend domain is the key range, not the declared duration', (
   });
 
   it('a looping clip cycles over the key range, so one period out is one key span', () => {
-    const s = buildClipBoneSamplers({
-      keyframes: KEYS,
-      duration: 2,
-      loop: 'cycle-offset',
-    } as never).get(0)!;
+    const s = keyedBoneSampler({ keyframes: KEYS, duration: 2, loop: 'cycle-offset' }, 0);
     // Period 3 (the key span), not 2 (the declared duration). At t = 3.5 the
     // mapped time is 0.5 and one span of travel has accumulated: 0.5 + 3 = 3.5.
     // A duration-period would map t = 3.5 to 1.5 and read a different number, so

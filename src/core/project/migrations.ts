@@ -21,6 +21,9 @@ import { boundClipsForAsset, boneIndexOf } from '../../app/animate/boundClipsFor
 import type { GraphNodeLike } from '../../app/animate/boundClipsForAsset';
 import { gltfChannelDagId, gltfChildDagId } from '../import/gltfImportChain';
 import { radVec3ToDeg } from '../../viewport/rotation';
+import { edgeTarget } from '../../app/animate/graphNodes';
+import { posesFromKeyframes } from '../import/keyframePoses';
+import type { AnimationKeyframe } from '../../nodes/types';
 import type { Node } from '../dag/types';
 import { PROJECT_FORMAT_VERSION, type Project } from './schema';
 import { COLOR_LAYER, uvLayerName } from '../../nodes/attributes';
@@ -119,6 +122,11 @@ const formatMigrations: Record<number, FormatMigration> = {
   // vocabularies in one field — glTF's (10497) from the clone road, three's (1000) from the native
   // road and director uploads — and both become the same name.
   18: migrateSamplerNames,
+  // v19 → v20 (#1227): an `AnimationClip`'s stored motion becomes timed poses, bones by NAME with
+  // quaternions — the shape the clip value already carried — instead of a key per bone INDEX with
+  // XYZ euler angles. The index is resolved through the clip's own skeleton edge, here, because
+  // nothing downstream holds the bone order a saved index was counted against.
+  19: migrateClipKeysToPoses,
 };
 
 // ── v1 → v2: AnimationLayer retirement (#199) ──────────────────────────────
@@ -1964,4 +1972,86 @@ export function migrateSamplerNames(raw: unknown): unknown {
     );
   }
   return { ...proj, formatVersion: 19 };
+}
+
+/**
+ * v19 → v20 (#1227) — a saved clip's keys become timed poses.
+ *
+ * `AnimationClip.keyframes` (a key per bone INDEX: `{ bone, time, position, rotation }`, rotation in
+ * XYZ euler radians) becomes `poses` (`{ time, bones: { <name>: { position, quaternion } } }`), the
+ * shape the clip value has carried since #1225. The conversion is `posesFromKeyframes`, the one
+ * every producer of a clip uses, so a migrated clip holds exactly the poses it evaluated to before.
+ *
+ * An index is a position in ONE rig's bone order, so it is named through the clip's own `skeleton`
+ * edge: a `Skeleton`'s `bones`, or — on a project still holding an old-structure import — a
+ * `GltfSkeleton`'s joint keys on its asset's skin. A key whose index that rig does not have, and
+ * every key of a clip with no rig to name it by, named no bone before either (the clip played
+ * nothing there); it is dropped and COUNTED in the warning with its node, not thrown.
+ */
+export function migrateClipKeysToPoses(raw: unknown): unknown {
+  const proj = raw as {
+    formatVersion?: number;
+    state?: { nodes?: Record<string, RawNode> };
+  };
+  const nodes = proj.state?.nodes;
+  if (!nodes) return { ...proj, formatVersion: 20 };
+  const graph = nodes as unknown as Readonly<Record<string, GraphNodeLike>>;
+
+  /** The bone names of the rig a clip's indices count against, in order; null with no such rig. */
+  const boneNamesOf = (clip: GraphNodeLike): { name: string }[] | null => {
+    const skeletonId = edgeTarget(clip, 'skeleton');
+    const skeleton = skeletonId ? graph[skeletonId] : undefined;
+    if (skeleton?.type === 'Skeleton') {
+      const bones = (skeleton.params as { bones?: unknown } | undefined)?.bones;
+      if (!Array.isArray(bones)) return null;
+      return bones.map((b) => ({ name: String((b as { name?: unknown } | null)?.name ?? '') }));
+    }
+    if (skeleton?.type === 'GltfSkeleton') {
+      const assetId = edgeTarget(skeleton, 'asset');
+      const skins = (assetId ? (graph[assetId]?.params as { skins?: unknown }) : undefined)?.skins;
+      const index = (skeleton.params as { skinIndex?: unknown } | undefined)?.skinIndex;
+      const skin = Array.isArray(skins)
+        ? (skins[typeof index === 'number' ? index : 0] as { jointKeys?: unknown } | undefined)
+        : undefined;
+      if (!Array.isArray(skin?.jointKeys)) return null;
+      return skin.jointKeys.map((key) => ({ name: String(key) }));
+    }
+    return null;
+  };
+
+  let converted = 0;
+  const dropped: string[] = [];
+  for (const [id, node] of Object.entries(nodes)) {
+    if (node?.type !== 'AnimationClip' || !node.params) continue;
+    const params = node.params as Record<string, unknown>;
+    if (!('keyframes' in params)) continue;
+    const saved = Array.isArray(params.keyframes) ? params.keyframes : [];
+    // Saved params are not re-parsed, so a key may lack what the schema defaulted.
+    const keys: AnimationKeyframe[] = saved.map((k) => {
+      const key = k as Partial<AnimationKeyframe>;
+      return {
+        bone: typeof key.bone === 'number' ? key.bone : -1,
+        time: typeof key.time === 'number' ? key.time : 0,
+        position: key.position ?? [0, 0, 0],
+        rotation: key.rotation ?? [0, 0, 0],
+      };
+    });
+    const bones = boneNamesOf(graph[id]) ?? [];
+    const poses = posesFromKeyframes(keys, bones);
+    const lost = keys.filter((k) => bones[k.bone] === undefined).length;
+    if (lost > 0) dropped.push(`${id} (${lost} of ${keys.length})`);
+    delete params.keyframes;
+    params.poses = poses;
+    converted++;
+  }
+
+  if (converted > 0) {
+    console.warn(
+      `[migrateClipKeysToPoses] ${converted} clip(s) now store timed poses by bone name (#1227)` +
+        (dropped.length > 0
+          ? `; keys naming no bone of the clip's rig were dropped: ${dropped.join(', ')}.`
+          : '.'),
+    );
+  }
+  return { ...proj, formatVersion: 20 };
 }

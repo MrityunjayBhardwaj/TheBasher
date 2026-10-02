@@ -21,7 +21,16 @@ import { specToThreeSkeleton } from './threeAdapter';
 import { retargetClip, resolveNameMapToSource, resolveNameMapToTarget } from './retarget';
 import { solveRestAlignment } from './restAlignment';
 import { getBoneNameMapPreset } from './boneNameMaps';
-import type { BoneSpec, GltfSkinMetadata } from '../../nodes/types';
+import type { BoneSpec, GltfSkinMetadata, MotionPose } from '../../nodes/types';
+
+/** Sets each bone a pose holds, found by name, to the pose's values; the rest are left as they were. */
+function poseRig(bones: readonly Bone[], pose: MotionPose): void {
+  for (const bone of bones) {
+    const held = pose.bones[bone.name];
+    if (held?.quaternion) bone.quaternion.set(...held.quaternion);
+    if (held?.position) bone.position.set(...held.position);
+  }
+}
 
 const RIG = resolve(process.cwd(), 'public/fixtures/rig/standin-character.glb');
 const DEGENERATE = resolve(process.cwd(), 'public/fixtures/anim/soma-walk.bvh');
@@ -75,20 +84,9 @@ describe('the two rests, on the tracked stand-in pair', () => {
     const b = clip(TPOSE);
     const worldOf = (parsed: ReturnType<typeof clip>) => {
       const { bones } = specToThreeSkeleton(parsed.skeletonParams.bones);
-      const times = [...new Set(parsed.clipParams.keyframes.map((k) => k.time))].sort(
-        (x, y) => x - y,
-      );
-      const byTime = new Map<number, typeof parsed.clipParams.keyframes>();
-      for (const k of parsed.clipParams.keyframes)
-        byTime.set(k.time, [...(byTime.get(k.time) ?? []), k]);
       const out = new Map<string, Vector3[]>();
-      for (const t of times) {
-        for (const k of byTime.get(t) ?? []) {
-          const bone = bones[k.bone];
-          if (!bone) continue;
-          bone.rotation.set(k.rotation[0], k.rotation[1], k.rotation[2], 'XYZ');
-          bone.position.set(k.position[0], k.position[1], k.position[2]);
-        }
+      for (const pose of parsed.clipParams.poses) {
+        poseRig(bones, pose);
         bones[0].updateMatrixWorld(true);
         for (const bone of bones) {
           const child = bone.children.find((c) => (c as Bone).isBone) as Bone | undefined;
@@ -200,20 +198,9 @@ describe('the two rests, on the tracked stand-in pair', () => {
 
       // contact frames, from the source
       const { bones: sp } = specToThreeSkeleton(parsed.skeletonParams.bones);
-      const times = [...new Set(parsed.clipParams.keyframes.map((k) => k.time))].sort(
-        (x, y) => x - y,
-      );
-      const byTime = new Map<number, typeof parsed.clipParams.keyframes>();
-      for (const k of parsed.clipParams.keyframes)
-        byTime.set(k.time, [...(byTime.get(k.time) ?? []), k]);
       const sourceY = new Map<string, number[]>();
-      for (const t of times) {
-        for (const k of byTime.get(t) ?? []) {
-          const b = sp[k.bone];
-          if (!b) continue;
-          b.rotation.set(k.rotation[0], k.rotation[1], k.rotation[2], 'XYZ');
-          b.position.set(k.position[0], k.position[1], k.position[2]);
-        }
+      for (const pose of parsed.clipParams.poses) {
+        poseRig(sp, pose);
         sp[0].updateMatrixWorld(true);
         for (const b of sp)
           sourceY.set(b.name, [
@@ -227,26 +214,15 @@ describe('the two rests, on the tracked stand-in pair', () => {
         sourceClip: {
           name: parsed.clipParams.name,
           duration: parsed.clipParams.duration,
-          keyframes: parsed.clipParams.keyframes,
+          poses: parsed.clipParams.poses,
         },
         targetBones: target,
         nameMap: preset.map,
       });
       const { bones: pose } = specToThreeSkeleton(target);
-      const outTimes = [...new Set(out.clipParams.keyframes.map((k) => k.time))].sort(
-        (x, y) => x - y,
-      );
-      const outBy = new Map<number, typeof out.clipParams.keyframes>();
-      for (const k of out.clipParams.keyframes)
-        outBy.set(k.time, [...(outBy.get(k.time) ?? []), k]);
       const roll = new Map<string, number[]>();
-      for (const t of outTimes) {
-        for (const k of outBy.get(t) ?? []) {
-          const b = pose[k.bone];
-          if (!b) continue;
-          b.rotation.set(k.rotation[0], k.rotation[1], k.rotation[2], 'XYZ');
-          b.position.set(k.position[0], k.position[1], k.position[2]);
-        }
+      for (const held of out.clipParams.poses) {
+        poseRig(pose, held);
         pose[0].updateMatrixWorld(true);
         for (const b of pose) {
           const d = restLocal.get(b.name);
@@ -340,7 +316,7 @@ describe('the travel a retarget writes onto the root', () => {
         sourceClip: {
           name: parsed.clipParams.name,
           duration: parsed.clipParams.duration,
-          keyframes: parsed.clipParams.keyframes,
+          poses: parsed.clipParams.poses,
         },
         targetBones: target,
         nameMap: getBoneNameMapPreset('somaToMixamo')!.map,
@@ -349,21 +325,9 @@ describe('the travel a retarget writes onto the root', () => {
       // The root's path in WORLD, composed the way playback composes it: the
       // emitted position track is local to its parent, and reading it there
       // would report a Y that has nothing to do with which way is up.
-      const times = [...new Set(out.clipParams.keyframes.map((k) => k.time))].sort((x, y) => x - y);
-      const byTime = new Map<number, Map<number, (typeof out.clipParams.keyframes)[number]>>();
-      for (const k of out.clipParams.keyframes) {
-        if (!byTime.has(k.time)) byTime.set(k.time, new Map());
-        byTime.get(k.time)!.set(k.bone, k);
-      }
       const { bones: pose } = specToThreeSkeleton(target);
-      const path = times.map((t) => {
-        const frame = byTime.get(t)!;
-        for (const [index, k] of frame) {
-          const bone = pose[index];
-          if (!bone) continue;
-          bone.rotation.set(k.rotation[0], k.rotation[1], k.rotation[2], 'XYZ');
-          if (k.position) bone.position.set(k.position[0], k.position[1], k.position[2]);
-        }
+      const path = out.clipParams.poses.map((held) => {
+        poseRig(pose, held);
         pose[0].updateMatrixWorld(true);
         return new Vector3().setFromMatrixPosition(pose[1].matrixWorld);
       });

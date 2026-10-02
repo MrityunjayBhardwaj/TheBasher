@@ -12,7 +12,7 @@ import { buildDefaultDagState, buildDefaultProject } from '../core/project/defau
 import { ProjectSchema, PROJECT_FORMAT_VERSION } from '../core/project/schema';
 import { registerAllNodes } from './registerAll';
 import { posedSkeletonFromClip } from './AnimationClip';
-import { eulerXYZFromQuat } from './bonePose';
+import { eulerXYZFromQuat, quatFromEulerXYZ } from './bonePose';
 import { SCATTER_MAX } from './ScatterNode';
 import { LocomotionStateNode, LocomotionStateParams } from './LocomotionState';
 import type { LocomotionStateValue } from './types';
@@ -738,10 +738,15 @@ describe('P2 — AnimationClip (pure, TIME-FREE — #920)', () => {
         name: 'walk',
         duration: 2,
         loop: 'cycle-offset',
-        keyframes: [
-          { bone: 1, time: 0, position: [0, 1, 0], rotation: [0, 0, 0] },
-          { bone: 1, time: 1, position: [0, 1, 0], rotation: [0, 0.5, 0] },
-          { bone: 1, time: 2, position: [0, 1, 0], rotation: [0, 0, 0] },
+        poses: [
+          { time: 0, bones: { torso: { position: [0, 1, 0], quaternion: [0, 0, 0, 1] } } },
+          {
+            time: 1,
+            bones: {
+              torso: { position: [0, 1, 0], quaternion: quatFromEulerXYZ([0, 0.5, 0]) },
+            },
+          },
+          { time: 2, bones: { torso: { position: [0, 1, 0], quaternion: [0, 0, 0, 1] } } },
         ],
       },
     }).next;
@@ -908,7 +913,7 @@ describe('P2 — LocomotionState + Character (pure, time-aware integrating chain
       type: 'addNode',
       nodeId: 'clip',
       nodeType: 'AnimationClip',
-      params: { name: 'walk', duration: 1, loop: 'cycle-offset', keyframes: [] },
+      params: { name: 'walk', duration: 1, loop: 'cycle-offset', poses: [] },
     }).next;
     state = applyOp(state, {
       type: 'addNode',
@@ -1036,7 +1041,7 @@ describe('P2 — multi-character cache isolation (acceptance #4)', () => {
         type: 'addNode',
         nodeId: `clip_${id}`,
         nodeType: 'AnimationClip',
-        params: { name: `walk_${id}`, duration: 1, loop: 'cycle-offset', keyframes: [] },
+        params: { name: `walk_${id}`, duration: 1, loop: 'cycle-offset', poses: [] },
       }).next;
       state = applyOp(state, {
         type: 'addNode',

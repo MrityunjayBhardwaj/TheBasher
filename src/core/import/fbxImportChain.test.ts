@@ -22,6 +22,7 @@ import { buildFbxImportOps } from './fbxImportChain';
 import { parseFbx } from './fbx';
 import type { PosedSkeletonValue } from '../../nodes/types';
 import type { PoseLayerParams } from '../../nodes/PoseLayer';
+import { clipNodeParams } from '../../test-utils/bvhClip';
 
 const FIXTURES = 'src/core/import/__fixtures__';
 function bytes(path: string): ArrayBuffer {
@@ -152,7 +153,12 @@ describe('the layer poses every bone as the old clip did, at every key', () => {
       const parsed = parseFbx(data(), 'walk');
       const clipState = apply([
         { type: 'addNode', nodeId: 'csk', nodeType: 'Skeleton', params: parsed.skeletonParams },
-        { type: 'addNode', nodeId: 'clip', nodeType: 'AnimationClip', params: parsed.clipParams },
+        {
+          type: 'addNode',
+          nodeId: 'clip',
+          nodeType: 'AnimationClip',
+          params: clipNodeParams(parsed),
+        },
         {
           type: 'connect',
           from: { node: 'csk', socket: 'out' },
@@ -162,7 +168,7 @@ describe('the layer poses every bone as the old clip did, at every key', () => {
       const clip = wire(clipState, 'clip', 'pose');
       const index = new Map(layer.skeleton.bones.map((b, i) => [b.name, i]));
       // Each track at its OWN key times. At a time only another track of the bone keys, the clip
-      // wrote the bone's rest position (`clipToKeyframes` falls back to the bind pose), which was
+      // wrote the bone's rest position (`clipToPoses` falls back to the bind pose), which was
       // never the file's value there, so those instants are not a "today" worth matching.
       let worstPos = 0;
       let worstDeg = 0;

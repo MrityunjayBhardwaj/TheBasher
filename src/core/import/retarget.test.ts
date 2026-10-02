@@ -17,8 +17,73 @@ import { Quaternion, Matrix4, Vector3, type Bone as ThreeBone } from 'three';
 import { sanitizeBoneName } from './threeAdapter';
 import { BONE_NAME_MAP_PRESETS, getBoneNameMapPreset } from './boneNameMaps';
 import { BONE_GROUP_PRESETS, getBoneGroupPreset } from './boneGroupPresets';
-import type { AnimationKeyframe, BoneSpec } from '../../nodes/types';
+import type { AnimationKeyframe, BoneSpec, GltfSkinMetadata, MotionPose } from '../../nodes/types';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { parseBvh, BVH_UNIT_SCALE_CENTIMETRES } from './bvh';
+import { parseGltfContainer, resolveBuffers } from './glb';
+import { buildNodeNameMap, buildSkinMetadata } from './gltfImportChain';
+import { projectGltfSkeleton } from './projectGltfSkeleton';
+import { retargetSavedKeys } from './savedClipKeys';
+import { alignedQuat, poseSamples } from '../../test-utils/poseSamples';
 import type { ClipLoop } from '../../nodes/clipLoop';
+import { posesFromKeyframes } from './keyframePoses';
+import { continuousEuler } from './savedClipKeys';
+import { eulerXYZFromQuat, quatFromEulerXYZ } from '../../nodes/bonePose';
+
+/**
+ * These rows state motion as keys (bone index, XYZ euler radians), which reads more plainly than a
+ * quaternion. `retargetClip` takes and returns timed poses (#1432): this hands it the keys as poses
+ * and reads its poses back as keys on the target rig, each bone's angles chained onto the branch
+ * nearest the key before (#867), so every row's numbers stay the ones it states.
+ */
+function retargetKeys(args: {
+  readonly sourceBones: readonly BoneSpec[];
+  readonly sourceClip: {
+    readonly name: string;
+    readonly duration: number;
+    readonly keyframes: readonly AnimationKeyframe[];
+    readonly loop?: ClipLoop;
+  };
+  readonly targetBones: readonly BoneSpec[];
+  readonly nameMap: Readonly<Record<string, string>>;
+  readonly outputName?: string;
+}) {
+  const { keyframes, ...clip } = args.sourceClip;
+  const result = retargetClip({
+    ...args,
+    sourceClip: { ...clip, poses: posesFromKeyframes(keyframes, args.sourceBones) },
+  });
+  const { poses, ...rest } = result.clipParams;
+  return {
+    ...result,
+    clipParams: { ...rest, keyframes: keysOf(poses, args.targetBones) },
+  };
+}
+
+/** Timed poses as keys on `bones`: sorted by (time, bone), angles continuous per bone. */
+function keysOf(poses: readonly MotionPose[], bones: readonly BoneSpec[]): AnimationKeyframe[] {
+  const indexOf = new Map(bones.map((b, i) => [b.name, i]));
+  const previous = new Map<number, AnimationKeyframe['rotation']>();
+  const out: AnimationKeyframe[] = [];
+  for (const pose of [...poses].sort((a, b) => a.time - b.time)) {
+    for (const [name, held] of Object.entries(pose.bones)) {
+      const bone = indexOf.get(name);
+      if (bone === undefined) continue;
+      const rotation = held.quaternion
+        ? continuousEuler(eulerXYZFromQuat(held.quaternion), previous.get(bone) ?? null)
+        : bones[bone].rotation;
+      if (held.quaternion) previous.set(bone, rotation);
+      out.push({
+        bone,
+        time: pose.time,
+        position: held.position ?? bones[bone].position,
+        rotation,
+      });
+    }
+  }
+  return out.sort((a, b) => a.time - b.time || a.bone - b.bone);
+}
 
 const SOURCE_BONES: BoneSpec[] = [
   { name: 'mixamorig_Hips', parent: -1, position: [0, 1, 0], rotation: [0, 0, 0] },
@@ -56,7 +121,7 @@ describe('retargetClip', () => {
       { bone: 1, time: 0, position: [0, 0.4, 0], rotation: [0, 0, 0] },
       { bone: 1, time: 1, position: [0, 0.4, 0], rotation: [0, 0.3, 0] },
     ];
-    const result = retargetClip({
+    const result = retargetKeys({
       sourceBones,
       sourceClip: { name: 'walk', duration: 1, keyframes: sourceKfs },
       targetBones,
@@ -71,13 +136,13 @@ describe('retargetClip', () => {
   });
 
   it('twice-call returns deep-equal output for the same inputs (V2)', () => {
-    const a = retargetClip({
+    const a = retargetKeys({
       sourceBones: SOURCE_BONES,
       sourceClip: { name: 'walk', duration: 1, keyframes: SOURCE_KFS },
       targetBones: TARGET_BONES,
       nameMap: { mixamorig_Hips: 'hips', mixamorig_Spine: 'spine' },
     });
-    const b = retargetClip({
+    const b = retargetKeys({
       sourceBones: SOURCE_BONES,
       sourceClip: { name: 'walk', duration: 1, keyframes: SOURCE_KFS },
       targetBones: TARGET_BONES,
@@ -91,7 +156,7 @@ describe('retargetClip', () => {
       ...SOURCE_BONES,
       { name: 'mixamorig_Tail', parent: 0, position: [0, 0, 0.2], rotation: [0, 0, 0] },
     ];
-    const result = retargetClip({
+    const result = retargetKeys({
       sourceBones: orphanSource,
       sourceClip: { name: 'wag', duration: 1, keyframes: [] },
       targetBones: TARGET_BONES,
@@ -105,7 +170,7 @@ describe('retargetClip', () => {
       ...TARGET_BONES,
       { name: 'tail', parent: 0, position: [0, 0, 0.2], rotation: [0, 0, 0] },
     ];
-    const result = retargetClip({
+    const result = retargetKeys({
       sourceBones: SOURCE_BONES,
       sourceClip: { name: 'walk', duration: 1, keyframes: SOURCE_KFS },
       targetBones: richerTarget,
@@ -140,7 +205,7 @@ describe('retarget onto a glTF rig via a non-identity name bridge (Wave D / D-01
     expect(bridge!.map['mixamorig_Hips']).toBe('Bone0');
     expect(bridge!.map['mixamorig_Spine']).toBe('Bone1');
 
-    const result = retargetClip({
+    const result = retargetKeys({
       sourceBones: SOURCE_BONES, // mixamorig_Hips / mixamorig_Spine
       sourceClip: { name: 'walk', duration: 1, keyframes: SOURCE_KFS },
       targetBones: GLTF_RIG_BONES, // glTF-native Bone0 / Bone1
@@ -163,7 +228,7 @@ describe('retarget onto a glTF rig via a non-identity name bridge (Wave D / D-01
     // With glTF-native names, an empty (or identity) map is a no-op: the
     // mixamorig_* source matches NO glTF joint key, so the bridge is what
     // makes binding succeed. A broken bridge is observable, not silent.
-    const result = retargetClip({
+    const result = retargetKeys({
       sourceBones: SOURCE_BONES,
       sourceClip: { name: 'walk', duration: 1, keyframes: SOURCE_KFS },
       targetBones: GLTF_RIG_BONES,
@@ -180,7 +245,7 @@ describe('the target keeps its own proportions (#828)', () => {
   // at its parent's origin, because every baked position channel carried [0,0,0].
   //
   // The chain: a retarget emits ROTATION tracks only (by design — the target keeps
-  // its proportions), `clipToKeyframes` therefore falls back to the bind pose for
+  // its proportions), `clipToPoses` therefore falls back to the bind pose for
   // position on every bone, and the bind pose was read AFTER `threeRetargetClip`
   // had already flattened the bone objects it poses. So "this bone has no position
   // track" resolved to "this bone is at the origin".
@@ -212,7 +277,7 @@ describe('the target keeps its own proportions (#828)', () => {
   ];
 
   it('keeps every bone at its own bind translation, never at the origin', () => {
-    const result = retargetClip({
+    const result = retargetKeys({
       sourceBones: armSource,
       sourceClip: { name: 'wave', duration: 1, keyframes: rotationOnly },
       targetBones: armTarget,
@@ -242,7 +307,7 @@ describe('the target keeps its own proportions (#828)', () => {
   it('still transfers the ROTATION, so this is not a clip that does nothing', () => {
     // The pair. A fix that stopped emitting keyframes at all would satisfy the
     // proportions check and destroy the feature.
-    const result = retargetClip({
+    const result = retargetKeys({
       sourceBones: armSource,
       sourceClip: { name: 'wave', duration: 1, keyframes: rotationOnly },
       targetBones: armTarget,
@@ -418,7 +483,7 @@ describe('bone-name spelling across import roads', () => {
       { bone: 1, time: 0, position: [0, 0.4, 0], rotation: [0, 0, 0] },
       { bone: 1, time: 1, position: [0, 0.4, 0], rotation: [0, 0.3, 0] },
     ];
-    const result = retargetClip({
+    const result = retargetKeys({
       sourceBones,
       sourceClip: { name: 'walk', duration: 1, keyframes },
       targetBones,
@@ -502,7 +567,7 @@ describe("the map's TARGET values resolve by the same rule as its source keys", 
       { name: 'mixamorig_Hips', parent: -1, position: [0, 1, 0], rotation: [0, 0, 0] },
       { name: 'mixamorig_Spine', parent: 0, position: [0, 0.4, 0], rotation: [0, 0, 0] },
     ];
-    const result = retargetClip({
+    const result = retargetKeys({
       sourceBones,
       sourceClip: { name: 'walk', duration: 1, keyframes: SOURCE_KFS },
       targetBones: fbxRig,
@@ -554,7 +619,7 @@ describe('a corrective root survives, and the root travels (#838, #839)', () => 
   ];
 
   const run = () =>
-    retargetClip({
+    retargetKeys({
       sourceBones: source,
       sourceClip: { name: 'walk', duration: 1, keyframes: walk },
       targetBones: target,
@@ -852,6 +917,10 @@ describe('a leaf bone gets its third degree of freedom from the joint above it (
     t_arm: 's_arm',
     t_hand: 's_hand',
   };
+  /** A reference stated in XYZ euler radians, as the local quaternions the composition reads. */
+  const localQuats = (euler: Record<string, readonly [number, number, number]>) =>
+    Object.fromEntries(Object.entries(euler).map(([n, e]) => [n, quatFromEulerXYZ(e)]));
+
   /** The source's reference pose: standing, arm down (the A-pose), wrist bent. */
   const REFERENCE: Record<string, readonly [number, number, number]> = {
     s_hips: [0, 0, Math.PI / 2],
@@ -870,7 +939,7 @@ describe('a leaf bone gets its third degree of freedom from the joint above it (
   const build = () => ({ src: specToThreeSkeleton(SRC), trg: specToThreeSkeleton(TRG) });
   const offsetsWith = (reference?: Record<string, readonly [number, number, number]>) => {
     const { src, trg } = build();
-    const ref = reference ? referenceWorldRotations(src.bones, reference) : undefined;
+    const ref = reference ? referenceWorldRotations(src.bones, localQuats(reference)) : undefined;
     return {
       offsets: restDirectionLocalOffsets(src.bones, trg.bones, MAP, ref),
       src,
@@ -940,13 +1009,13 @@ describe('a leaf bone gets its third degree of freedom from the joint above it (
     // (V20). A posed skeleton would silently change that answer.
     const { src } = build();
     const before = src.bones.map((b) => b.quaternion.clone());
-    referenceWorldRotations(src.bones, REFERENCE);
+    referenceWorldRotations(src.bones, localQuats(REFERENCE));
     src.bones.forEach((b, i) => expect(b.quaternion.angleTo(before[i])).toBeLessThan(1e-9));
   });
 
   it('a bone the reference does not name keeps its own rest rotation', () => {
     const { src } = build();
-    const composed = referenceWorldRotations(src.bones, REFERENCE);
+    const composed = referenceWorldRotations(src.bones, localQuats(REFERENCE));
     // `s_spine` is absent from REFERENCE, so it contributes its rest local —
     // identity here — and inherits only what the hips did.
     expect(composed.get('s_spine')!.angleTo(composed.get('s_hips')!)).toBeLessThan(1e-9);
@@ -1152,7 +1221,7 @@ describe('the retarget scale comes from the leg chain, not the hip offset (#846)
       { bone: hips, time: 0, position: [0, 1, 0], rotation: [0, 0, 0] },
       { bone: hips, time: 1, position: [0, 1, 4], rotation: [0, 0, 0] },
     ];
-    const out = retargetClip({
+    const out = retargetKeys({
       sourceBones: src,
       sourceClip: { name: 'walk', duration: 1, keyframes },
       targetBones: trg,
@@ -1182,7 +1251,7 @@ describe('the retarget scale comes from the leg chain, not the hip offset (#846)
     ) => {
       const hips = sourceBones.findIndex((b) => b.name === 's_hips');
       const start = sourceBones[hips].position;
-      const out = retargetClip({
+      const out = retargetKeys({
         sourceBones,
         sourceClip: {
           name: 'walk',
@@ -1380,7 +1449,7 @@ describe('two rests that correspond as poses are reconciled as a whole (#865)', 
         rotation: i === 4 ? [0.3, 0.2, -0.4] : [0, 0.15, 0],
       });
     });
-    const result = retargetClip({
+    const result = retargetKeys({
       sourceBones: SRC,
       sourceClip: { name: 'rest-then-move', duration: 1, keyframes },
       targetBones: TRG,
@@ -1434,7 +1503,7 @@ describe('two rests that correspond as poses are reconciled as a whole (#865)', 
       keyframes.push({ bone: i, time: 0, position: [...b.position], rotation: [0, 0, 0] });
       keyframes.push({ bone: i, time: 1, position: [...b.position], rotation: [0, 0.15, 0] });
     });
-    const result = retargetClip({
+    const result = retargetKeys({
       sourceBones: flat,
       sourceClip: { name: 'flat', duration: 1, keyframes },
       targetBones: TRG,
@@ -1473,20 +1542,20 @@ describe('#919 the retargeted clip carries the source time domain', () => {
   });
 
   it('a ONE-SHOT source produces a one-shot clip', () => {
-    expect(retargetClip(args('hold')).clipParams.loop).toBe('hold');
+    expect(retargetKeys(args('hold')).clipParams.loop).toBe('hold');
   });
 
   it('a LOOPING source produces a looping clip, offset and all', () => {
     // Stated alongside the row above so the pair shows the value is CARRIED and
     // not merely inverted — a hardcoded `hold` would satisfy the first row alone.
-    expect(retargetClip(args('cycle-offset')).clipParams.loop).toBe('cycle-offset');
+    expect(retargetKeys(args('cycle-offset')).clipParams.loop).toBe('cycle-offset');
   });
 
   it('carries CYCLE-IN-PLACE distinctly from cycle-with-offset', () => {
     // The third state a boolean could not spell (#930). Without this row the two
     // cycling modes could collapse into one on this road and both rows above
     // would still pass, because neither can tell them apart.
-    expect(retargetClip(args('cycle')).clipParams.loop).toBe('cycle');
+    expect(retargetKeys(args('cycle')).clipParams.loop).toBe('cycle');
   });
 
   it('a caller with no source clip to ask still gets the documented fallback', () => {
@@ -1499,17 +1568,117 @@ describe('#919 the retargeted clip carries the source time domain', () => {
     // holding, the sibling carrier already did, and an invented loop is the more
     // damaging guess since a wrongly-looping clip's root accumulates travel
     // forever rather than merely wrapping.
-    expect(retargetClip(args(undefined)).clipParams.loop).toBe('hold');
+    expect(retargetKeys(args(undefined)).clipParams.loop).toBe('hold');
   });
 
   it('nothing ELSE about the clip changes with the time domain', () => {
     // The domain must ride along without disturbing the motion: same keys, same
     // duration, same name. Without this the rows above pass on a retarget that
     // took a different road for a non-looping source.
-    const off = retargetClip(args('hold')).clipParams;
-    const on = retargetClip(args('cycle-offset')).clipParams;
+    const off = retargetKeys(args('hold')).clipParams;
+    const on = retargetKeys(args('cycle-offset')).clipParams;
     expect(off.keyframes).toEqual(on.keyframes);
     expect(off.duration).toBe(on.duration);
     expect(off.name).toBe(on.name);
+  });
+});
+
+/** The stand-in glTF character's rig (#850), as the retarget gates read it. */
+async function standinRig(): Promise<readonly BoneSpec[]> {
+  const buf = readFileSync(resolve(process.cwd(), 'public/fixtures/rig/standin-character.glb'));
+  const { json, bin } = parseGltfContainer(
+    buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) as ArrayBuffer,
+  );
+  const buffers = await resolveBuffers(json, bin);
+  const { keyByGltfNodeIndex, childHierarchy } = buildNodeNameMap(json, 'standin');
+  const [skin] = buildSkinMetadata(json, buffers, keyByGltfNodeIndex, childHierarchy);
+  return projectGltfSkeleton(skin as unknown as GltfSkinMetadata).bones;
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// #1432 — the pose road reads its source the way the saved-keys road reads keys.
+// ─────────────────────────────────────────────────────────────────────────
+describe('#1432 the pose road and the saved-keys road', () => {
+  it('retarget a flat-rest walk alike, leaves included: the reference is the FIRST pose', async () => {
+    // soma-walk.bvh's rest is rank-1, so the retarget takes the direction branch, where a leaf
+    // bone's third degree of freedom comes from the clip's first pose (#853). Both roads must take
+    // the same pose for it; a road that took another would turn every hand and foot differently.
+    const parsed = parseBvh(
+      readFileSync(resolve(process.cwd(), 'public/fixtures/anim/soma-walk.bvh'), 'utf8'),
+      'walk',
+      BVH_UNIT_SCALE_CENTIMETRES,
+    );
+    const sourceBones = parsed.skeletonParams.bones;
+    const preset = getBoneNameMapPreset('somaToMixamo')!;
+    const target = await standinRig();
+    const viaPoses = retargetClip({
+      sourceBones,
+      sourceClip: {
+        name: 'walk',
+        duration: parsed.clipParams.duration,
+        poses: parsed.clipParams.poses,
+      },
+      targetBones: target,
+      nameMap: preset.map,
+    });
+    expect(viaPoses.restReconciliation.kind).toBe('direction');
+    const viaKeys = retargetSavedKeys({
+      sourceBones,
+      sourceClip: {
+        name: 'walk',
+        duration: parsed.clipParams.duration,
+        keyframes: keysOf(parsed.clipParams.poses, sourceBones),
+      },
+      targetBones: target,
+      nameMap: preset.map,
+    });
+    const want = poseSamples(posesFromKeyframes(viaKeys.clipParams.keyframes, target));
+    const got = poseSamples(viaPoses.clipParams.poses);
+    expect(got.length).toBe(want.length);
+    expect(got.length).toBeGreaterThan(100);
+    let worst = 0;
+    got.forEach((p, i) => {
+      expect(p.bone).toBe(want[i].bone);
+      const q = alignedQuat(p.quaternion!, want[i].quaternion!);
+      for (let c = 0; c < 4; c++) worst = Math.max(worst, Math.abs(q[c] - want[i].quaternion![c]));
+    });
+    // Both roads fill three's float32 tracks from their own rounding of one rotation.
+    expect(worst).toBeLessThan(1e-5);
+    // FIRST BY TIME, not first in the array: the same poses handed over last-to-first retarget
+    // to the same clip.
+    const reversed = retargetClip({
+      sourceBones,
+      sourceClip: {
+        name: 'walk',
+        duration: parsed.clipParams.duration,
+        poses: [...parsed.clipParams.poses].reverse(),
+      },
+      targetBones: target,
+      nameMap: preset.map,
+    });
+    expect(reversed.clipParams.poses).toEqual(viaPoses.clipParams.poses);
+  });
+
+  it('a source pose that leaves out a position stands that bone at its rest offset', () => {
+    // Every source this repo has carries positions, so the fallback is stated rather than
+    // reached: leaving the hips' position out must retarget as writing the rest offset in.
+    const withPositions = posesFromKeyframes(SOURCE_KFS, SOURCE_BONES);
+    const withoutHips = withPositions.map((pose) => ({
+      time: pose.time,
+      bones: {
+        ...pose.bones,
+        mixamorig_Hips: { quaternion: pose.bones.mixamorig_Hips.quaternion },
+      },
+    }));
+    // The rows mean something only if the stated position IS the rest offset.
+    expect(withPositions[0].bones.mixamorig_Hips.position).toEqual(SOURCE_BONES[0].position);
+    const run = (poses: MotionPose[]) =>
+      retargetClip({
+        sourceBones: SOURCE_BONES,
+        sourceClip: { name: 'walk', duration: 1, poses },
+        targetBones: TARGET_BONES,
+        nameMap: { mixamorig_Hips: 'hips', mixamorig_Spine: 'spine' },
+      }).clipParams.poses;
+    expect(run(withoutHips)).toEqual(run(withPositions));
   });
 });

@@ -93,7 +93,6 @@ import { evaluate } from '../../core/dag/evaluator';
 import type { DagState } from '../../core/dag/state';
 import type { Op } from '../../core/dag/types';
 import { edgeTarget } from '../animate/graphNodes';
-import { lookupGeneratedClip } from '../../core/motiongen/generatedClipCache';
 import type { AnimationClipValue } from '../../nodes/types';
 
 /** One sink whose params are behind its producer, and the hash that will fix it. */
@@ -195,15 +194,12 @@ export function bakeGeneratedClipOps(state: DagState): Op[] {
     // lock/freeze exists to prevent.
     if (!stale || status !== 'ready') continue;
     const value = evaluate(state, producerId).value as AnimationClipValue;
-    // #1225 — the params still spell keys by bone index in XYZ euler (until #1233 step 8), and the
-    // value now carries timed poses; the generated keys themselves are in the generation cache the
-    // value was built from, so they land exactly as generated, with no quaternion round trip.
-    const generated = lookupGeneratedClip(value.generation!.requestHash);
-    if (!generated) continue;
+    // #1227 — the params are the value's own poses (bones by name, quaternions), so what lands is
+    // exactly what the producer evaluated to, with nothing converted on the way.
 
-    // The rig FIRST. A keyframe's `bone` is an index into the skeleton the keys
-    // were authored against, so params written in the other order leave a window
-    // — however brief, and it is a whole dispatch wide — where new indices
+    // The rig FIRST. A pose names its bones on the skeleton the motion was
+    // authored against, so params written in the other order leave a window
+    // — however brief, and it is a whole dispatch wide — where new names
     // address the old rig. The ops land atomically, but they land in order, and
     // an inverse applied halfway is exactly the state this ordering avoids.
     const skeletonId = edgeTarget(state.nodes[clipId], 'skeleton');
@@ -221,7 +217,7 @@ export function bakeGeneratedClipOps(state: DagState): Op[] {
       // what put a director's rename back to the generator's on every re-cook.
       { type: 'setParam', nodeId: clipId, paramPath: 'duration', value: value.duration },
       { type: 'setParam', nodeId: clipId, paramPath: 'loop', value: value.loop },
-      { type: 'setParam', nodeId: clipId, paramPath: 'keyframes', value: generated.keyframes },
+      { type: 'setParam', nodeId: clipId, paramPath: 'poses', value: value.poses },
       // LAST, and that is load-bearing: this is the receipt that the params above
       // were written. An inverse that stops partway leaves the hash unchanged, so
       // the clip still reads as stale and the next cook redoes it — rather than
