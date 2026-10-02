@@ -199,7 +199,9 @@ describe('HALF B — the hole is exercised where it can be reached', () => {
     if (verdict.kind !== 'refused') throw new Error('unreachable — asserted above');
     // Refused, not DROPPED: a drop is about a class and is true for every descriptor; this is
     // about this operator and this datum, which is the distinction `ClassCarriage` draws.
-    expect(verdict.until).toBe('#825');
+    // No `until` (#1420): #825 shipped the second map, so nothing filed lifts this — it is the
+    // contract on a minting operator that supplies none.
+    expect(verdict.until).toBeUndefined();
     expect(verdict.why).toMatch(/mint/i);
 
     // 🔑 #825 — AND THIS IS WHY THE ROW SURVIVED THAT ISSUE INSTEAD OF BEING DELETED BY IT.

@@ -278,11 +278,12 @@ export function meshWeldedRims(data: MeshGeometryData): readonly PolygonRim[] {
  * carriage table keeps a drop apart from a refusal: they answer different questions and a
  * caller can act on only one of them. `outside-the-descriptor` says the buffers live somewhere
  * this module cannot reach and no issue will change that. `not-yet` says the layout is
- * derivable in principle and names what it is waiting on.
+ * derivable in principle; `until` names the OPEN issue it waits on, and is absent when nothing
+ * filed would build it (#1420).
  */
 export type PolygonLayoutVerdict =
   | { readonly kind: 'laid-out'; readonly polygons: readonly PolygonRim[] }
-  | { readonly kind: 'not-yet'; readonly why: string; readonly until: string }
+  | { readonly kind: 'not-yet'; readonly why: string; readonly until?: string }
   | { readonly kind: 'outside-the-descriptor'; readonly why: string };
 
 /**
@@ -575,7 +576,8 @@ export function polygonLayoutOf(descriptor: GeometryDescriptor): PolygonLayoutVe
           `a '${descriptor.kind}' rim needs each copy's vertices offset by the source's SPLIT ` +
           `vertex count (24 for a box, not the 8 topological points 'pointCountOf' answers ` +
           `with), and the only thing that knows it reads a BUILT geometry`,
-        until: '#777',
+        // No `until` (#1420): #777 was closed on its own falsifier — no consumer ever needed a
+        // derived kind's rim, six of six composed without one — so nothing filed would build it.
       };
     }
     case 'baked':

@@ -544,7 +544,13 @@ export type ClassCarriage =
    * A refusal is a statement that correct-looking data would otherwise be produced, so it
    * warns by name, the way a misfit does.
    */
-  | { readonly kind: 'refused'; readonly why: string; readonly until: string }
+  /**
+   * `until` names the OPEN issue whose landing lifts the refusal, and is ABSENT when nothing
+   * filed would (#1420). Five of these once named an issue that had closed with the refusal
+   * still standing — a pointer to finished work is worse than none, so a refusal that waits
+   * on nothing filed says nothing rather than something false.
+   */
+  | { readonly kind: 'refused'; readonly why: string; readonly until?: string }
   | { readonly kind: 'foreign' };
 
 const FOREIGN: ClassCarriage = { kind: 'foreign' };
@@ -688,7 +694,10 @@ export function carriageForDomain(
   // out — DECLARE the type, and the value is transformed correctly under BOTH operators.
   if (SPATIALLY_TRANSFORMED.includes(data.type) && operator === 'mirror') {
     const rule = transformRuleFor(data.transform);
-    if (rule.kind === 'refused') return { kind: 'refused', why: rule.why, until: '#723' };
+    // No `until` (#1420): #723 shipped the transform types. What still refuses is a value that
+    // declares none (the remedy is to declare it), a quaternion under an improper matrix, and a
+    // per-element frame with no producer — and no open issue carries either of the last two.
+    if (rule.kind === 'refused') return { kind: 'refused', why: rule.why };
   }
   // A spatial transform type on a width that cannot hold a 3-vector is a producer error rather
   // than an unwritten rule, and it is refused rather than ignored: silently dropping the
@@ -703,7 +712,7 @@ export function carriageForDomain(
       why:
         `it declares the transform type '${data.transform}', which acts on a 3-vector, but ` +
         `its storage is '${data.type}'`,
-      until: '#723',
+      // A producer error, not an unwritten rule: nothing lifts it, so it names no issue (#1420).
     };
 
   switch (verdict.by) {
@@ -734,7 +743,8 @@ export function carriageForDomain(
             `'${operator}' mints faces that came from no source face, and a '${data.type}' at ` +
             `the '${domain}' domain can only be gathered THROUGH a source — a minted face has ` +
             `no value to gather and no rule for inventing one`,
-          until: '#825',
+          // No `until` (#1420): #825 shipped the second map, and every operator that mints
+          // supplies one. This arm is the contract on the NEXT minting operator, not a wait.
         };
       return {
         kind: 'laid-out',
@@ -806,10 +816,10 @@ export function carriageForDomain(
             `so a '${data.type}' at the '${domain}' domain has no order to be gathered through. ` +
             `The face and corner domains are unaffected: this refusal is about this datum's ` +
             `domain and not about the geometry`,
-          // #1040, not #605 — the refusal lifts exactly when an imported mesh can STATE a
-          // topological point count, which is measured capturable there. #605 is the
-          // material/UV half and would send a reader to the wrong place.
-          until: '#1040',
+          // No `until` (#1420). It named #1040 until that shipped: an import is a stored mesh
+          // now and states its point count. What is left is a bake, whose buffers are outside
+          // the descriptor — the absence `pointCountOf` calls `outside-the-descriptor`, which
+          // no filed issue changes.
         };
       return {
         kind: 'laid-out',
@@ -1069,7 +1079,7 @@ export function mintTiledModifierAttributes(descriptor: GeometryDescriptor): str
   // frame with no producer — so a single interpolated reason would print an attribute of one
   // kind beside an explanation belonging to another. Grouped by reason, each message names
   // only the attributes that reason is true of.
-  const byReason = new Map<string, { names: string[]; until: string }>();
+  const byReason = new Map<string, { names: string[]; until: string | undefined }>();
   for (const [name, verdict] of refused) {
     const entry = byReason.get(verdict.why) ?? { names: [], until: verdict.until };
     entry.names.push(`'${name}' (${carried[name].type} at ${carried[name].domain})`);
@@ -1077,7 +1087,8 @@ export function mintTiledModifierAttributes(descriptor: GeometryDescriptor): str
   }
   for (const [why, { names, until }] of byReason)
     console.warn(
-      `meshAttributes: '${descriptor.kind}' refuses to carry ${names.join(', ')} — ${why}; until ${until}`,
+      `meshAttributes: '${descriptor.kind}' refuses to carry ${names.join(', ')} — ${why}` +
+        (until === undefined ? '' : `; until ${until}`),
     );
   // Not "no attributes" but "none this road can lay out": a source carrying only point- or
   // edge-domain data reaches here and takes the historical road, which is why this is a

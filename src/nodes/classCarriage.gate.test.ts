@@ -31,6 +31,9 @@
 //      #722.
 
 import { describe, expect, it } from 'vitest';
+import { readdirSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { stripComments } from '../test-utils/sourceScan';
 import { CLASS_CARRIAGE, carriageForDomain } from './meshAttributes';
 import { ATTRIBUTE_TYPES, KNOWN_DOMAINS } from './attributes';
 import { boxGeometryRef } from '../app/modifierGeometry';
@@ -223,12 +226,13 @@ describe('the per-class carriage census', () => {
       'laid-out',
     );
 
-    // A refusal carries the same two fields a drop does — a reason someone can act on, and the
-    // issue that ends it — for the reason row 3 gives about drops.
+    // A refusal carries a reason someone can act on. Unlike a drop it names an issue only when
+    // an OPEN one would lift it (#1420): this one is lifted by DECLARING the transform type,
+    // which #723 already shipped, so it names none.
     const refusal = carriageForDomain(at('point', 'float3'), 'mirror', faces, corners, points);
     if (refusal.kind !== 'refused') throw new Error('unreachable — asserted above');
     expect(refusal.why.length).toBeGreaterThan(20);
-    expect(refusal.until).toMatch(/^#\d+$/);
+    expect(refusal.until).toBeUndefined();
   });
   it("9 — 🔴 #717 EXACTLY ONE TYPE IS REFUSED, AND THE WARNING'S SHAPE RESTS ON THAT", () => {
     // A TRIPWIRE, NOT A DESCRIPTION. `mintTiledModifierAttributes` names EVERY refused
@@ -264,5 +268,36 @@ describe('the per-class carriage census', () => {
         '`refused[0]` — give each refused attribute its own reason in `meshAttributes.ts` ' +
         'before widening this set',
     ).toEqual(['float3']);
+  });
+});
+
+describe('the issue a refusal waits on (#1420)', () => {
+  // An `until` is a pointer to an OPEN issue. Five of seven once named an issue that had closed
+  // with its refusal still standing, and nothing noticed: a test cannot read an issue's state.
+  // What a test CAN do is make the set of targets one deliberate list, so a new pointer is
+  // added on purpose and closing a listed issue has exactly one place to revisit.
+  //
+  // Each target below was OPEN on 2026-10-02 (`gh issue view`). When one closes, its site
+  // moves in the same change: to the open issue that carries what is left, or to no `until`.
+  const OPEN_TARGETS = ['#783', '#881'];
+
+  function productionSources(dir: string): string[] {
+    return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+      const path = join(dir, entry.name);
+      if (entry.isDirectory()) return productionSources(path);
+      return /\.tsx?$/.test(entry.name) && !/\.test\.tsx?$/.test(entry.name) ? [path] : [];
+    });
+  }
+
+  it('10 — every `until` in production names a listed, open issue', () => {
+    const src = join(__dirname, '..');
+    const targets = productionSources(src).flatMap((file) =>
+      [...stripComments(readFileSync(file, 'utf8')).matchAll(/\buntil: '(#\d+)'/g)].map(
+        (m) => m[1],
+      ),
+    );
+    // Vacuity guard: the scan must find the two it is known to hold.
+    expect(targets.length).toBeGreaterThan(0);
+    expect([...new Set(targets)].sort()).toEqual(OPEN_TARGETS);
   });
 });

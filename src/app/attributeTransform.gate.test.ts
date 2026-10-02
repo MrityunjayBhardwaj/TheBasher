@@ -34,7 +34,7 @@
 // REF: src/app/attributeTransform.ts; src/app/copyTransform.ts; src/nodes/attributes.ts
 //      (`TRANSFORM_TYPES`); ref/houdini/SOP.md:24; issue #723.
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { Matrix4, Vector3 } from 'three';
 import { TRANSFORM_TYPES, type AttributeData, type TransformType } from '../nodes/attributes';
 import { transformRuleFor } from './attributeTransform';
@@ -139,6 +139,23 @@ describe('#723 a declared transform type is honoured under a matrix', () => {
     expect(mirroredX(undefined, 0)).toBeNull();
     expect(mirroredX('quaternion', 0)).toBeNull();
     expect(mirroredX('matrix', 0)).toBeNull();
+  });
+
+  it('a refusal nothing filed would lift is warned WITHOUT an issue to wait for (#1420)', () => {
+    // The warning used to end "; until #723" — an issue that had shipped. The remedy for an
+    // undeclared value is to declare it, so the message names the attribute and the reason
+    // and points nowhere. An offset no other row uses, so the mint is not served from a memo.
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      expect(mirroredX(undefined, 7)).toBeNull();
+      const messages = warn.mock.calls.map((call) => String(call[0]));
+      const refusal = messages.filter((m) => m.includes('refuses to carry'));
+      expect(refusal).toHaveLength(1);
+      expect(refusal[0]).toContain('declares no transform type');
+      expect(refusal[0]).not.toMatch(/until|undefined/);
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it('the transform type is part of the content key, so two meanings cannot collide', () => {
