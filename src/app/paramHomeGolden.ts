@@ -160,7 +160,7 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
     '[material] assetRef=(unrouted) childName=(unrouted) material=material materialSlots=(unrouted) faceCount=(unrouted) pointCount=(unrouted)',
   GltfSkeleton: '[] skinIndex=(unrouted)',
   Group:
-    '[transform,constraint,driver,layout] position=transform rotation=transform scale=transform pivot=transform rotationMode=transform quaternion=transform',
+    '[transform,constraint,driver,layout] position=transform rotation=transform scale=transform pivot=transform rotationMode=transform quaternion=transform parentBone=(unrouted)',
   IDPass: '[render] width=(unrouted) height=(unrouted)',
   KeyframeChannelColor:
     '[channel,animate] name=(unrouted) target=(unrouted) paramPath=channel mute=(unrouted) solo=(unrouted) weight=animate blendMode=(unrouted) order=(unrouted) keyframes=channel',
@@ -394,4 +394,8 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
 // Merged with main (#1284 and its sibling on the AI track): +2 unrouted — `TrackTo.aimBone`, homed
 // like its sibling `aimNode`, and the other arrival counted by main's golden (236 → 238).
 //   types 90 · routed 144 · unrouted 246 + 2 = 248
-export const GOLDEN_TOTALS = { types: 90, routed: 144, unrouted: 248 } as const;
+//
+// #1447 appends `Group.parentBone`, unrouted as `Object.parentBone` is (#1210): an imported Empty
+// hung from a bone. +1 unrouted.
+//   types 90 · routed 144 · unrouted 248 + 1 = 249
+export const GOLDEN_TOTALS = { types: 90, routed: 144, unrouted: 249 } as const;

@@ -366,6 +366,8 @@ describe('a param declares its control on its schema (#872)', () => {
       // #1210 — a bone of the parent armature, by name. #1284's bone picker (`TrackTo.aimBone`)
       // offers a character's bones; pointing it at the parent's is what would retire this line.
       'Object.parentBone': CHOICE,
+      // #1447 — the same bone name on an imported Empty, which is a Group; the same picker retires it.
+      'Group.parentBone': CHOICE,
 
       'ClipSelect.selectedClipName': CHOICE,
       'LightData.tex': CHOICE,
@@ -413,7 +415,7 @@ describe('a param declares its control on its schema (#872)', () => {
     });
     // The denominator rides with the verdict — an empty `unacknowledged` from a loop that
     // never ran looks exactly like a pass.
-    expect(readOnly.length).toBe(18);
+    expect(readOnly.length).toBe(19); // 18 + `Group.parentBone` (#1447)
   });
 
   it('row 15 — a param owns the word for its EMPTY state, and the control owns the fallback (#1031)', () => {

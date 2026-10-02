@@ -1656,6 +1656,9 @@ export interface GroupValue extends RotationModeFields {
   // (childEdges/localMatrix) discriminate on `kind`; a light nested here renders
   // at the group-composed world via three.js `<group>` nesting.
   readonly children: readonly SceneObject[];
+  /** #1447 — the bone of its parent armature Object this Group hangs from, as `ObjectValue`'s
+   *  `parentBone` (#1210). Present only when set. */
+  readonly parentBone?: string;
 }
 
 export interface MaterialOverrideValue {
