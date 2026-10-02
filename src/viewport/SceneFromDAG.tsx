@@ -491,6 +491,10 @@ export function SceneFromDAG({ outputName = 'render' }: SceneFromDAGProps) {
           become selectable frustum objects (CameraHelpers). */}
       {value.scene.lights.map((light, i) => {
         const lid = lightRefs[i]?.node ?? null;
+        // #1448 — a hidden light renders nothing, exactly as a hidden child does (#227): null in
+        // its slot, so index `i` still lines up with `lightRefs`. Without this the outliner's eye
+        // dimmed the row while the light kept lighting the scene and the render.
+        if (lid != null && state.nodes[lid]?.meta?.hidden) return null;
         // #205 — a light targeted by an active Track-To aims via lookAt (V60); the
         // membership set is built once (O(N)) so this stays O(1) per light (B13).
         return (
@@ -526,6 +530,8 @@ export function SceneFromDAG({ outputName = 'render' }: SceneFromDAGProps) {
       {showLightHelpers
         ? value.scene.lights.map((light, i) => {
             const lid = lightRefs[i]?.node ?? null;
+            // #1448 — a hidden light draws no helper either.
+            if (lid != null && state.nodes[lid]?.meta?.hidden) return null;
             // [[V85]]/[[H132]] #241 — an animated light's helper follows the
             // evaluated value at the playhead; a static light keeps the static path.
             // #243 GAP 2 / #265 — a Track-To'd AIMABLE light (Area/Spot/Directional)

@@ -26,6 +26,7 @@ import { useRenameStore } from './stores/renameStore';
 import { RenameInput } from './RenameInput';
 import { SceneTreeIcon, iconKindForNode } from './SceneTreeIcon';
 import { buildSceneTreeRows, type TreeRow } from './sceneTreeWalk';
+import { isHideable as isHideableNode } from './sceneVisibility';
 import { buildDeleteNodesOps, buildDuplicateNodeOps } from './sceneNodeActions';
 import { selectActiveCameraNode } from './activeCamera';
 import { isCameraNode } from './cameraNode';
@@ -743,7 +744,10 @@ export function SceneTree({ filter = '' }: SceneTreeProps) {
           // type LITERALS — which is exactly how these four sites survived the slice-3 pass.
           const isCamera = isCameraNode(state, row.nodeId);
           const isActiveCamera = isCamera && row.nodeId === activeCameraId;
-          const isHideable = !filtering && row.depth === 1 && !isCamera;
+          // #1448 — the eye asks the same question the agent's hide verb asks (`isHideable`):
+          // a direct child or light of the scene that is not a camera. Depth 1 also holds the
+          // camera rows, and the light rows' eye used to set a flag the renderer never read.
+          const isHideable = !filtering && row.depth === 1 && isHideableNode(state, row.nodeId);
           const hidden = state.nodes[row.nodeId]?.meta?.hidden ?? false;
           return (
             <li
