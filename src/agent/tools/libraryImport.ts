@@ -91,7 +91,10 @@ export const libraryImportTool: ToolDefinition<LibraryImportArgs> = {
     const motion = await buildMotionImportOpsFromOpfs(args.assetRef, ctx.dagState);
     return {
       ops: [...motion.ops],
-      text: `Imported ${args.assetRef} as a motion: a skeleton (${motion.skeletonId}) with its keys on a base pose layer (${motion.motionId}), standing where the file puts it. It is not bound to a character.`,
+      text:
+        (motion.meshCount ?? 0) > 0
+          ? `Imported ${args.assetRef} as a character: a skeleton (${motion.skeletonId}) with its keys on a base pose layer (${motion.motionId}) and ${motion.meshCount} mesh${motion.meshCount === 1 ? '' : 'es'}, standing where the file puts it.${leftBehindNotice(motion.notices)}`
+          : `Imported ${args.assetRef} as a motion: a skeleton (${motion.skeletonId}) with its keys on a base pose layer (${motion.motionId}), standing where the file puts it. It is not bound to a character.${leftBehindNotice(motion.notices)}`,
     };
   },
 };

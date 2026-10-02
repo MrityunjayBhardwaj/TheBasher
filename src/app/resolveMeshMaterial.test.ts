@@ -263,9 +263,12 @@ describe('#638 who may speak of a material array', () => {
     'src/viewport/SceneFromDAG.tsx':
       'READS one on the glTF road, array-aware by declared type — and now also the two ' +
       'components that hand a resolved pair to a <mesh>',
+    // #1429 — three's FBX loader hands a mesh with several slots an array; the reader turns it
+    // into stored slots at once and keeps none of it (`importedMaterialArray.gate.test.ts` row B).
+    'src/core/import/fbxMesh.ts': 'READS three’s FBX array once, into stored slots; draws nothing',
   };
 
-  it('exactly two production modules are typed to hold a material array', () => {
+  it('exactly three production modules are typed to hold a material array', () => {
     const files = sourceFiles();
     const found = files
       .filter(([, src]) => /\bMaterial\s*\[\s*\]/.test(stripComments(src)))

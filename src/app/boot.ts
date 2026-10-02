@@ -856,12 +856,22 @@ export function boot(): Promise<void> {
           return { skeletonId, motionId };
         };
       });
-      void import('../core/import/fbxImportChain').then((m) => {
+      void Promise.all([
+        import('../core/import/fbxImportChain'),
+        import('./asset/importBvhFbx'),
+      ]).then(([m, landing]) => {
+        // #1429 — through the same assembly as every other FBX door: the skeleton's Object and the
+        // file's meshes stand with it.
         w.__basher_importFbx = (data: ArrayBuffer | string, name?: string) => {
           const dag = useDagStore.getState();
-          const { ops, skeletonId, motionId } = m.buildFbxImportOps({ data, name });
-          dag.dispatchAtomic(ops, 'user', `import fbx: ${name ?? 'imported'}`);
-          return { skeletonId, motionId };
+          const label = name ?? 'imported';
+          const { ops, skeletonId, motionId, meshCount, notices } = landing.motionImportOps(
+            m.buildFbxImportOps({ data, name }),
+            label,
+            dag.state,
+          );
+          dag.dispatchAtomic(ops, 'user', `import fbx: ${label}`);
+          return { skeletonId, motionId, meshCount, notices };
         };
       });
       // #1049 — the NATIVE road: the file becomes stored polygon meshes and stops existing. A

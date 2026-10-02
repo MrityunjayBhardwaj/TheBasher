@@ -17,9 +17,8 @@
 // and the first clip — multi-skeleton / multi-clip FBX files are rare in
 // director workflows; revisit if a real authoring case appears.
 //
-// SkinnedMesh geometry import is deferred to a later wave / phase.
-// The skeleton + clip alone are enough to drive Mixamo retargeting onto
-// existing rigs — which IS the load-bearing P3.1 use case.
+// #1429 — and every mesh in the file, as stored polygon meshes (`fbxMesh.ts`): a skinned one in
+// the rig's space at rest, with every weight the file gives it.
 //
 // THREE.FBXLoader is a full-JS parser (no FBX SDK). Some proprietary
 // FBX features (NURBS, certain subdivs) won't parse — fail loudly per
@@ -49,6 +48,7 @@ import {
 } from './threeAdapter';
 import { scaleBonePositions, scaleKeyframePositions } from './unitScale';
 import type { ClipLoop } from '../../nodes/clipLoop';
+import { readFbxMeshes, type FbxMeshesRead } from './fbxMesh';
 
 export interface FbxSkeletonParams {
   readonly bones: readonly BoneSpec[];
@@ -91,6 +91,8 @@ export interface FbxImportResult {
   readonly tracks: readonly FbxTrack[];
   /** Tracks of the first clip whose name does not parse as `node.property` — counted, not read. */
   readonly unparsedTracks: number;
+  /** #1429 — the file's meshes, and what of them was left out. */
+  readonly meshes: FbxMeshesRead;
 }
 
 /**
@@ -158,8 +160,8 @@ export function parseFbx(input: ArrayBuffer | string, name = 'imported-fbx'): Fb
   const loader = new FBXLoader();
   const group = loader.parse(input as ArrayBuffer, '');
   // FBXLoader.parse signature: (data: ArrayBuffer, path: string) → Group
-  // The path is used to resolve textures; we pass empty since we don't
-  // import meshes/textures in this wave.
+  // The path is used to resolve textures; we pass empty because textures are not carried yet
+  // (#1429 brings meshes and their colours; a texture is named in the import's notices).
   const metresPerUnit = fbxMetresPerUnit(group);
 
   const bones = extractBones(group);
@@ -185,6 +187,12 @@ export function parseFbx(input: ArrayBuffer | string, name = 'imported-fbx'): Fb
     read.tracks,
   );
   const unparsedTracks = read.unparsedTracks;
+  // #1429 — read after the fold, which updates world matrices and leaves the scene untouched.
+  const meshes = readFbxMeshes(
+    group,
+    (bone) => (isBone(bone) ? bones.indexOf(sceneBoneOf(bone as Bone)) : -1),
+    metresPerUnit,
+  );
 
   if (!clip) {
     // Skeleton-only FBX — rare but valid (T-pose import). Empty clip.
@@ -193,6 +201,7 @@ export function parseFbx(input: ArrayBuffer | string, name = 'imported-fbx'): Fb
       clipParams: { name, duration: 0, loop: 'hold', keyframes: [] },
       tracks: [],
       unparsedTracks: 0,
+      meshes,
     };
   }
 
@@ -200,6 +209,7 @@ export function parseFbx(input: ArrayBuffer | string, name = 'imported-fbx'): Fb
     skeletonParams: { bones: scaleBonePositions(skeletonBones, metresPerUnit) },
     tracks: scaleTrackPositions(tracks, metresPerUnit),
     unparsedTracks,
+    meshes,
     clipParams: {
       name,
       duration: clip.duration > 0 ? clip.duration : 1,
