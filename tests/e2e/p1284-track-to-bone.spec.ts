@@ -3,7 +3,7 @@
 //
 // Both sides of the boundary are the drawn ones: the look-through camera the viewport renders
 // with (`__basher_view_camera`) and the Hips bone the armature band draws (`__basher_armature`) —
-// the example's character opens native (#1216 converts its saved clone-road rig on load). The control
+// the example's character is stored native (#1424). The control
 // clears `aimBone` in the same page, which must turn the camera back to the character's origin —
 // so a pass cannot come from a camera that happened to face the Hips anyway.
 

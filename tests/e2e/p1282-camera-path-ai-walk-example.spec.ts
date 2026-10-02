@@ -15,7 +15,7 @@ type Vec3 = [number, number, number];
 interface Win {
   __basher_time?: { getState: () => { setTime: (s: number) => void } };
   /** The armature band's bones as drawn: world matrices, column-major. The example's character
-   *  opens native (#1216 converts its saved clone-road rig on load), so its bones are the band's. */
+   *  is stored native (#1424), so its bones are the band's. */
   __basher_armature?: { bones: number; names: string[]; matrices: number[][] };
   __basher_frustum_pose?: Record<string, { position: Vec3 }>;
 }

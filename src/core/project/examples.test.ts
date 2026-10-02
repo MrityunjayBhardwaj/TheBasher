@@ -66,11 +66,20 @@ describe('example projects (v0.6 #4 W4)', () => {
             bad.push(`${id}.${socket} -> missing ${(r as { node: string }).node}`);
     }
     // The denominator rides with the verdict: an empty list from a loop over nothing is not a pass.
-    expect(Object.keys(nodes).length).toBeGreaterThan(50);
+    // 27 nodes since the character is stored as native geometry (#1424); it was 71 on the old structure.
+    expect(Object.keys(nodes).length).toBeGreaterThan(20);
     expect(bad).toEqual([]);
     // What makes it this example: the generated walk, its path, and the camera's constraints.
     const types = Object.values(nodes).map((n) => n.type);
-    for (const t of ['MotionGenerate', 'AnimationClip', 'CurveData', 'FollowPath', 'TrackTo'])
+    for (const t of [
+      'MotionGenerate',
+      'AnimationClip',
+      'CurveData',
+      'FollowPath',
+      'TrackTo',
+      'PolyMeshData',
+      'ArmatureModifier',
+    ])
       expect(types, t).toContain(t);
   });
 

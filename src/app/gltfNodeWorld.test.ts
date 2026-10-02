@@ -6,15 +6,12 @@
 // the Hips while the armature Root and the character's Group stay where the walk began — which is
 // why aiming at the character is not aiming at the walker.
 
-import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { registerAllNodes } from '../nodes/registerAll';
 import { buildExampleProject } from '../core/project/examples';
 import { applyOp, type DagState } from '../core/dag';
 import { createEvaluatorCache } from '../core/dag/evaluator';
 import { characterAssetOf, characterNodeNames } from './characterParts';
-import { convertLoadedProject } from './asset/convertCloneCharacters';
-import { MemoryStorage } from '../core/storage/MemoryStorage';
 import { gltfNodeWorldPosition } from './gltfNodeWorld';
 import { resolveTrackToTarget } from './nodeConstraints';
 
@@ -28,18 +25,11 @@ const near = (got: readonly number[] | null, want: readonly number[], tol = 0.01
   for (let i = 0; i < 3; i++) expect(Math.abs(got![i] - want[i])).toBeLessThan(tol);
 };
 
-/** The example as a director gets it: opened through the load door, which turns its saved clone-road
- *  character native (#1216) — so the bones here are the armature's, drawn by the band. */
+/** The example as a director gets it. Its character is stored native (#1424), so the bones here
+ *  are the armature's, drawn by the band. */
 async function example() {
-  const storage = new MemoryStorage();
-  const glb = 'fixtures/rig/standin-character.glb';
-  await storage.write(glb, new Uint8Array(readFileSync(`public/${glb}`)));
-  const { project, report } = await convertLoadedProject(
-    await buildExampleProject('example_camera_path_ai_walk'),
-    storage,
-  );
-  expect(report.converted.map((c) => c.assetRef)).toEqual([glb]);
-  const state = project.state;
+  const { state } = await buildExampleProject('example_camera_path_ai_walk');
+  expect(Object.values(state.nodes).filter((n) => n.type === 'ArmatureModifier').length).toBe(1);
   const group = Object.values(state.nodes).find((n) => n.type === 'Group')!.id;
   const trackTo = Object.values(state.nodes).find((n) => n.type === 'TrackTo')!.id;
   return { state, group, trackTo };
