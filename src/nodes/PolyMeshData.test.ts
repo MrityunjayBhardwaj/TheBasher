@@ -324,27 +324,33 @@ describe('PolyMeshData version 3 → 4 and skin weights (#1196)', () => {
 
   it('refuses half a set: joints with no weights, and weights with no joints', () => {
     expect(refusal(bound({ pointLayers: [bound().pointLayers[0]] }))).toContain(
-      'joint numbers and no weights',
+      '1 joint layers and 0 weight layers',
     );
     expect(refusal(bound({ pointLayers: [bound().pointLayers[1]] }))).toContain(
-      'weights and no joint numbers',
+      '1 weight layers and 0 joint layers',
     );
   });
 
-  it('refuses a second set of four, which a stored mesh does not hold', () => {
+  it('#1430 — holds a second set of four under its set name, and refuses one under any other', () => {
     const [joints, weights] = bound().pointLayers;
-    expect(
-      refusal(
-        bound({
-          pointLayers: [
-            joints,
-            weights,
-            { ...joints, name: 'skin_joints.001' },
-            { ...weights, name: 'skin_weights.001' },
-          ],
-        }),
-      ),
-    ).toContain('2 joint layers and 2 weight layers, but a stored mesh holds one set of four');
+    const second = (jointsName: string, weightsName: string) =>
+      bound({
+        pointLayers: [
+          joints,
+          weights,
+          { ...joints, name: jointsName },
+          { ...weights, name: weightsName },
+        ],
+      });
+    expect(refusal(second('skin_joints_1', 'skin_weights_1'))).toBeUndefined();
+    // A pair nothing would read: not the next set's names.
+    expect(refusal(second('skin_joints.001', 'skin_weights.001'))).toContain(
+      "2 joint and weight layer pairs, but only 1 are influence sets: the next would be 'skin_joints_1' with 'skin_weights_1'",
+    );
+    // A gap: set 2 with no set 1.
+    expect(refusal(second('skin_joints_2', 'skin_weights_2'))).toContain(
+      'only 1 are influence sets',
+    );
   });
 
   it('refuses a negative weight, a layer of the wrong length, and two groups of one name', () => {

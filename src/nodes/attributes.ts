@@ -425,9 +425,12 @@ export const COLOR_LAYER = 'Color';
  * named group per bone, outside the attribute system (`io_scene_gltf2/blender/imp/mesh.py:358-368`).
  * The shape here is that data at glTF's width instead: a joint number indexes the mesh's own
  * `vertexGroups` table, and the table holds the names, as a Blender weight's group index does.
+ *
+ * #1430 — these two are the FIRST set. A point bound to more than four bones has further sets
+ * beside them (`skin_joints_1`, …, glTF's `JOINTS_1`, …); `skinInfluences.ts` names them and is the
+ * one reader of them all, which is why the names are declared there.
  */
-export const SKIN_JOINTS = 'skin_joints';
-export const SKIN_WEIGHTS = 'skin_weights';
+export { SKIN_JOINTS, SKIN_WEIGHTS } from './skinInfluences';
 
 /**
  * The `n` of {@link uvLayerName}, or `null` for a name that is not one of those.

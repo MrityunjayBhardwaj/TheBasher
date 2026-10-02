@@ -83,7 +83,14 @@ import { overlayChannels } from '../nodes/overlayChannels';
 import { recomposeLightObject } from '../nodes/lightRecompose';
 import { recomposeBakedObject } from '../nodes/bakedRecompose';
 import { recomposeModifiedObject } from '../nodes/modifiedRecompose';
-import { buildSkinnedDraw, skinnedDrawKey, type SkinnedDraw } from '../app/skinnedDraw';
+import {
+  buildDeformedDraw,
+  buildSkinnedDraw,
+  gpuSkinnable,
+  skinnedDrawKey,
+  type DeformedDraw,
+  type SkinnedDraw,
+} from '../app/skinnedDraw';
 import { buildPickChain, DRAWN_NODE_ID_KEY, type Obj3DLike } from './pickChain';
 import { useViewportStore } from '../app/stores/viewportStore';
 import { useLightBrushStore } from '../app/stores/lightBrushStore';
@@ -2499,9 +2506,41 @@ function ModifiedMeshR({
  * which states the rule; each frame poses the armature's bones at the playhead. What is drawn equals
  * the Armature modifier's `sampleSkinDeform` vertex for vertex (`skinnedDraw.test.ts`).
  *
+ * #1430 — a mesh with a point bound to more than four bones is past what that shader sums. It is
+ * drawn as an ordinary `Mesh` whose positions and normals are the modifier's own answer, written
+ * when the time or the pose changes (`buildDeformedDraw`): exact, with nothing dropped.
+ *
  * Frustum culling is off: the bounds three would test are the REST mesh's, and a deformed mesh
  * leaves them.
  */
+/** #1430 — write a deform-drawn mesh's buffers at `seconds`; nothing for a GPU-skinned one. */
+function writeDeformed(
+  built: {
+    geometry: THREE.BufferGeometry;
+    deformed: {
+      draw: DeformedDraw;
+      restPosition: Float32Array;
+      restNormal: Float32Array | null;
+    } | null;
+  },
+  seconds: number,
+  pose: SkinDeformValue['pose'],
+): void {
+  if (built.deformed === null) return;
+  const position = built.geometry.getAttribute('position') as THREE.BufferAttribute;
+  const normal = built.geometry.getAttribute('normal') as THREE.BufferAttribute | undefined;
+  const wrote = built.deformed.draw.write(
+    seconds,
+    pose,
+    position.array as Float32Array,
+    normal ? (normal.array as Float32Array) : null,
+    built.deformed.restNormal,
+  );
+  if (!wrote) return;
+  position.needsUpdate = true;
+  if (normal) normal.needsUpdate = true;
+}
+
 function SkinnedMeshR({
   pose,
   data,
@@ -2533,14 +2572,37 @@ function SkinnedMeshR({
   const buildKey = skinnedDrawKey(data.geometry.key, skin);
   const cache = useRef<{
     key: string;
-    built: { mesh: THREE.SkinnedMesh; draw: SkinnedDraw; geometry: THREE.BufferGeometry } | null;
+    built: {
+      mesh: THREE.Mesh;
+      geometry: THREE.BufferGeometry;
+      /** Skinned on the GPU… */
+      draw: SkinnedDraw | null;
+      /** …or drawn from the deform, with the build's normals as built (#1430). */
+      deformed: {
+        draw: DeformedDraw;
+        restPosition: Float32Array;
+        restNormal: Float32Array | null;
+      } | null;
+    } | null;
   } | null>(null);
   // A null build retries: a baked geometry arrives after its async read.
   if (cache.current?.key !== buildKey || cache.current.built === null) {
     const shared = getForAttach(data.geometry);
     const descriptor = data.geometry.descriptor;
     let next: NonNullable<typeof cache.current>['built'] = null;
-    if (shared && descriptor.kind === 'mesh') {
+    if (shared && descriptor.kind === 'mesh' && !gpuSkinnable(skin, descriptor.data)) {
+      const geometry = shared.clone();
+      const mesh = new THREE.Mesh(geometry);
+      mesh.frustumCulled = false;
+      const normal = geometry.getAttribute('normal') as THREE.BufferAttribute | undefined;
+      const deformed = {
+        draw: buildDeformedDraw(skin, descriptor.data),
+        restPosition: Float32Array.from(geometry.getAttribute('position').array),
+        restNormal: normal ? Float32Array.from(normal.array) : null,
+      };
+      next = { mesh, geometry, draw: null, deformed };
+      writeDeformed(next, useTimeStore.getState().seconds, skin.pose);
+    } else if (shared && descriptor.kind === 'mesh') {
       const draw = buildSkinnedDraw(skin, descriptor.data);
       const geometry = shared.clone();
       geometry.setAttribute('skinIndex', new THREE.Uint16BufferAttribute(draw.skinIndex, 4));
@@ -2550,7 +2612,7 @@ function SkinnedMeshR({
       mesh.bind(draw.skeleton, draw.bindMatrix);
       mesh.frustumCulled = false;
       draw.pose(useTimeStore.getState().seconds, skin.pose);
-      next = { mesh, draw, geometry };
+      next = { mesh, draw, geometry, deformed: null };
     }
     cache.current = { key: buildKey, built: next };
   }
@@ -2559,8 +2621,13 @@ function SkinnedMeshR({
   skinPose.current = skin.pose;
   useEffect(() => () => built?.geometry.dispose(), [built]);
   useFrame(() => {
-    built?.draw.pose(useTimeStore.getState().seconds, skinPose.current);
+    if (!built) return;
+    const seconds = useTimeStore.getState().seconds;
+    built.draw?.pose(seconds, skinPose.current);
+    writeDeformed(built, seconds, skinPose.current);
   });
+  // A number, so the effect below can depend on it: `skin` itself is a new object every frame.
+  const deformedBoneCount = skin.bones.length;
   // DEV-only — the skin seam the skinned e2e reads (`__basher_gltf_skin`), now on the native road
   // too (#1197): the clone road's shape, plus the vertex count and each vertex's REST position, so a
   // spec can find a vertex by where it rests rather than by a buffer index the two roads number
@@ -2568,12 +2635,17 @@ function SkinnedMeshR({
   useEffect(() => {
     if (!import.meta.env.DEV || !built) return;
     const mesh = built.mesh;
+    // A mesh drawn from the deform has no three skeleton: its bones are the skin's.
+    const boneCount =
+      mesh instanceof THREE.SkinnedMesh ? mesh.skeleton.bones.length : deformedBoneCount;
     const handle = {
-      boneCount: mesh.skeleton.bones.length,
-      bound: mesh.skeleton.bones.length > 0,
+      boneCount,
+      bound: boneCount > 0,
       count: mesh.geometry.attributes.position.count,
       rest: (i: number): [number, number, number] => {
-        const v = new THREE.Vector3().fromBufferAttribute(mesh.geometry.attributes.position, i);
+        const v = built.deformed
+          ? new THREE.Vector3().fromArray(built.deformed.restPosition, i * 3)
+          : new THREE.Vector3().fromBufferAttribute(mesh.geometry.attributes.position, i);
         mesh.localToWorld(v);
         return [v.x, v.y, v.z];
       },
@@ -2591,7 +2663,7 @@ function SkinnedMeshR({
       // Only its own: a clone-road asset may have registered the getter since.
       if (w.__basher_gltf_skin === getter) delete w.__basher_gltf_skin;
     };
-  }, [built]);
+  }, [built, deformedBoneCount]);
   if (!built) return null;
   return (
     <primitive

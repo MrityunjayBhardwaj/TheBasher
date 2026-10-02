@@ -26,7 +26,8 @@ import type {
 } from '../nodes/types';
 import { buildMeshGeometry } from './meshGeometryData';
 import { meshSplitLayout } from './polygonLayout';
-import { buildSkinnedDraw, skinnedDrawKey } from './skinnedDraw';
+import { buildDeformedDraw, buildSkinnedDraw, gpuSkinnable, skinnedDrawKey } from './skinnedDraw';
+import { skinLanes, skinPointLayers, skinSetCount } from '../nodes/skinInfluences';
 import { cloneForOverlay } from '../nodes/overlayChannels';
 import { clipValueFromKeys } from '../test-utils/clipValue';
 
@@ -253,5 +254,147 @@ describe('#1207 — the draw is built once per content, and the pose is read per
     expect(posed).not.toEqual(rest);
     // The same build, posed at 1 s and then with its pose taken away, draws the rest again.
     expectEqualEverywhere({ vertex: draw.restAfterPose(), point: rest });
+  });
+});
+
+// ── #1430 — a point bound to more than four bones ─────────────────────────────────────────────
+
+/**
+ * The Blender oracle for `skinned-many-influences.glb` (`scripts/gen-many-influence-fixture.mjs`):
+ * Blender 5.1.1's import, each vertex's evaluated position in glTF space at frames 12 and 24 of 24
+ * fps, keyed by where the vertex rests. Blender keeps all five influences of the vertex at (0, 2)
+ * and all six of the one at (1, 2).
+ */
+const BLENDER_MANY: Record<string, { half: number[]; one: number[] }> = {
+  '0,2': { half: [-0.191784, 1.431651, 0], one: [-0.108796, 0.871343, 0] },
+  '1,2': { half: [0.749267, 1.71226, 0], one: [0.674076, 1.370771, 0] },
+  '0,0': { half: [0, 0, 0], one: [0, 0, 0] },
+  '1,0': { half: [1.918731, -0.706495, 0], one: [3.077697, -0.707708, 0] },
+};
+const MANY = 'public/assets/skinned-many-influences.glb';
+const restKey = (mesh: MeshGeometryData, p: number): string =>
+  `${Math.round(mesh.points[p * 3])},${Math.round(mesh.points[p * 3 + 1])}`;
+
+describe('#1430 — every influence a file states is imported, deformed and drawn', () => {
+  it('a glTF with a second joint set imports, and the mesh stores both sets', async () => {
+    const { mesh } = await modifierOf(MANY);
+    expect(mesh.vertexGroups).toEqual(['Root', 'B1', 'B2', 'B3', 'B4', 'B5']);
+    expect(skinSetCount(mesh)).toBe(2);
+    const { joints, weights, width } = skinLanes(mesh)!;
+    expect(width).toBe(8);
+    // The vertex at (0, 2): five bones, the fifth in the second set.
+    const p = [0, 1, 2, 3].find((i) => restKey(mesh, i) === '0,2')!;
+    const held = Array.from({ length: width }, (_, lane) => [
+      joints[p * width + lane],
+      weights[p * width + lane],
+    ]).filter(([, w]) => w > 0);
+    expect(held.map(([j]) => j)).toEqual([1, 2, 3, 4, 5]);
+    [0.3, 0.25, 0.2, 0.15, 0.1].forEach((w, i) => expect(held[i][1]).toBeCloseTo(w, 6));
+  });
+
+  it.each([
+    [0.5, 'half'],
+    [1, 'one'],
+  ] as const)('the deform at %s s puts every point where Blender does', async (t, key) => {
+    const { skin, mesh } = await modifierOf(MANY);
+    const moved = sampleSkinDeform(skin, mesh, t);
+    expect(mesh.points.length / 3).toBe(4);
+    for (let p = 0; p < 4; p++) {
+      const want = BLENDER_MANY[restKey(mesh, p)][key];
+      want.forEach((v, k) => expect(moved[p * 3 + k]).toBeCloseTo(v, 4));
+    }
+  });
+
+  it('control: the same mesh with its second set dropped lands somewhere else', async () => {
+    const { skin, mesh } = await modifierOf(MANY);
+    const firstSetOnly = { ...mesh, pointLayers: mesh.pointLayers.slice(0, 2) };
+    expect(skinSetCount(firstSetOnly)).toBe(1);
+    const moved = sampleSkinDeform(skin, firstSetOnly, 1);
+    const p = [0, 1, 2, 3].find((i) => restKey(mesh, i) === '0,2')!;
+    const want = BLENDER_MANY['0,2'].one;
+    expect(Math.hypot(moved[p * 3] - want[0], moved[p * 3 + 1] - want[1])).toBeGreaterThan(0.05);
+  });
+
+  it('the four-lane shader cannot draw it, so it is drawn from the deform — and equals it', async () => {
+    const { skin, mesh } = await modifierOf(MANY);
+    expect(gpuSkinnable(skin, mesh)).toBe(false);
+    const geometry = buildMeshGeometry(mesh).geometry;
+    const position = Float32Array.from(geometry.getAttribute('position').array);
+    const restNormal = Float32Array.from(geometry.getAttribute('normal').array);
+    const normal = Float32Array.from(restNormal);
+    const draw = buildDeformedDraw(skin, mesh);
+    const { vertexCorner } = meshSplitLayout(mesh);
+    for (const [t, key] of [
+      [0.5, 'half'],
+      [1, 'one'],
+    ] as const) {
+      expect(draw.write(t, skin.pose, position, normal, restNormal)).toBe(true);
+      for (let v = 0; v < vertexCorner.length; v++) {
+        const p = mesh.cornerPoints[vertexCorner[v]];
+        const want = BLENDER_MANY[restKey(mesh, p)][key];
+        want.forEach((x, k) => expect(position[v * 3 + k]).toBeCloseTo(x, 4));
+      }
+    }
+    // The same time and pose again writes nothing; no pose puts every vertex back at rest.
+    expect(draw.write(1, skin.pose, position, normal, restNormal)).toBe(false);
+    expect(draw.write(1, null, position, normal, restNormal)).toBe(true);
+    for (let v = 0; v < vertexCorner.length; v++) {
+      const p = mesh.cornerPoints[vertexCorner[v]];
+      for (let k = 0; k < 3; k++)
+        expect(position[v * 3 + k]).toBeCloseTo(mesh.points[p * 3 + k], 6);
+    }
+    expect(Array.from(normal)).toEqual(Array.from(restNormal));
+  });
+
+  it('a normal turns with its point: a vertex wholly on one bone turns by that bone', async () => {
+    const { skin, mesh } = await modifierOf(MANY);
+    // Tilt the stored normals off the turning axis, so a turn about Z shows.
+    const tilted = {
+      ...mesh,
+      cornerNormals: mesh.cornerNormals!.map((_, i) => (i % 3 === 0 ? 1 : 0)),
+    };
+    const geometry = buildMeshGeometry(tilted).geometry;
+    const position = Float32Array.from(geometry.getAttribute('position').array);
+    const restNormal = Float32Array.from(geometry.getAttribute('normal').array);
+    const normal = Float32Array.from(restNormal);
+    buildDeformedDraw(skin, tilted).write(1, skin.pose, position, normal, restNormal);
+    const { vertexCorner } = meshSplitLayout(tilted);
+    const at = (key: string): number =>
+      Array.from(vertexCorner).findIndex((c) => restKey(tilted, tilted.cornerPoints[c]) === key);
+    // (1, 0) is wholly on B5, which turns 75° about Z at 1 s; (0, 0) is wholly on the still Root.
+    const b5 = at('1,0');
+    const a = (75 * Math.PI) / 180;
+    expect(normal[b5 * 3]).toBeCloseTo(Math.cos(a), 5);
+    expect(normal[b5 * 3 + 1]).toBeCloseTo(Math.sin(a), 5);
+    const root = at('0,0');
+    expect([normal[root * 3], normal[root * 3 + 1], normal[root * 3 + 2]]).toEqual([1, 0, 0]);
+  });
+
+  it('two sets with at most four bones per point stay on the GPU, packed, and draw the same', async () => {
+    const { skin, mesh: one } = await modifierOf('public/assets/skinned-bar.glb');
+    // skinned-bar's one set, spread over two: lane 0 moves to the second set's first lane.
+    const { joints, weights } = skinLanes(one)!;
+    const points = joints.length / 4;
+    const wideJoints = new Int32Array(points * 8);
+    const wideWeights = new Float32Array(points * 8);
+    for (let p = 0; p < points; p++) {
+      for (let lane = 0; lane < 4; lane++) {
+        const to = lane === 0 ? 4 : lane;
+        wideJoints[p * 8 + to] = joints[p * 4 + lane];
+        wideWeights[p * 8 + to] = weights[p * 4 + lane];
+      }
+    }
+    const mesh = {
+      ...one,
+      pointLayers: skinPointLayers({ width: 8, joints: wideJoints, weights: wideWeights }),
+    };
+    expect(skinSetCount(mesh)).toBe(2);
+    expect(gpuSkinnable(skin, mesh)).toBe(true);
+    const draw = drawn(skin, mesh);
+    for (const t of [0, 0.5, 1]) expectEqualEverywhere(draw.at(t));
+    const tip = draw.at(1);
+    const i = tip.point.findIndex((p) => Math.abs(p[0] + 0.978764) < 1e-3);
+    expect(i).toBeGreaterThanOrEqual(0);
+    expect(tip.vertex[i][1]).toBeCloseTo(1.286395, 3);
   });
 });

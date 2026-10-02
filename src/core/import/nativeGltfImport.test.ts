@@ -818,20 +818,31 @@ describe('buildNativeGltfImportOps', () => {
         }),
       '#1063',
     ],
-    // #1196 — a vertex with more than four influences carries a second set, which a stored mesh does
-    // not hold. Refused by the attribute guard, by name.
+    // #1430 — a second joint set is HELD now (see "two sets on a skinned cube" below). What is
+    // still refused is a set numbered past a missing one: sets run from 0 without gaps, as UV sets do.
     [
-      'a second joint set',
+      'a third joint set with no second',
       () =>
         jsonFixture((json) => {
           skinTheCube(json);
           const skin = withSkinData(json, uniformJoints(), uniformWeights());
           const attributes = cubeAttributes(json);
-          attributes.JOINTS_1 = skin.joints;
-          attributes.WEIGHTS_1 = skin.weights;
+          attributes.JOINTS_2 = skin.joints;
+          attributes.WEIGHTS_2 = skin.weights;
         }),
-      '#1125',
-      'carries JOINTS_1, WEIGHTS_1,',
+      '#1063',
+      'without JOINTS_1 and WEIGHTS_1, and joint sets are numbered without gaps',
+    ],
+    [
+      'a second joint set with no weights of its own',
+      () =>
+        jsonFixture((json) => {
+          skinTheCube(json);
+          const skin = withSkinData(json, uniformJoints(), uniformWeights());
+          cubeAttributes(json).JOINTS_1 = skin.joints;
+        }),
+      '#1063',
+      'carries JOINTS_1 without WEIGHTS_1',
     ],
     // #1384 — the validator rows below skin the cube: on a mesh no node skins, joint sets are
     // dropped unread (Blender reads them only for a skinned mesh), so nothing there would refuse.
@@ -2042,6 +2053,26 @@ describe('#1384 — joint sets on a mesh no node skins are dropped, as Blender d
     expect(result.notices).toEqual([
       'mesh 0 carries JOINTS_0, JOINTS_1, WEIGHTS_0, WEIGHTS_1, but no node skins it, so they were dropped (as Blender drops them)',
     ]);
+  });
+
+  it('#1430 — two sets on a skinned cube: it imports, and the mesh holds both', async () => {
+    const result = await importOf(
+      jsonFixture((json) => {
+        skinTheCube(json);
+        const skin = withSkinData(json, uniformJoints(), uniformWeights());
+        const attributes = cubeAttributes(json);
+        attributes.JOINTS_1 = skin.joints;
+        attributes.WEIGHTS_1 = skin.weights;
+      }),
+    );
+    if ('refused' in result) throw new Error(result.refused);
+    expect(meshOf(result).pointLayers.map((layer) => [layer.name, layer.type])).toEqual([
+      [SKIN_JOINTS, 'int4'],
+      [SKIN_WEIGHTS, 'float4'],
+      [`${SKIN_JOINTS}_1`, 'int4'],
+      [`${SKIN_WEIGHTS}_1`, 'float4'],
+    ]);
+    expect(result.notices).toEqual([]);
   });
 
   it('half a set on an unskinned cube is dropped unread too, not refused as malformed', async () => {
