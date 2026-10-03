@@ -8,7 +8,7 @@
 // hidden collection goes the same way its own eye would send it.
 
 import type { DagState } from '../core/dag/state';
-import type { NodeId } from '../core/dag/types';
+import type { NodeId, Op } from '../core/dag/types';
 
 const refsOf = (binding: unknown): NodeId[] =>
   (Array.isArray(binding) ? binding : binding ? [binding] : [])
@@ -36,4 +36,57 @@ export function hiddenByCollection(state: DagState): ReadonlySet<NodeId> {
     for (const member of collectionMembersOf(state, id)) out.add(member);
   }
   return out;
+}
+
+/**
+ * The scene's active collection — where an import links what it makes — or null when that is the
+ * scene itself: none chosen, or one chosen that the scene no longer holds (deleted or unlinked),
+ * which Blender likewise never leaves active.
+ */
+export function activeCollectionOf(state: DagState): NodeId | null {
+  const sceneId = state.outputs.scene?.node;
+  const chosen = (sceneId ? state.nodes[sceneId]?.params : undefined) as
+    | { activeCollection?: unknown }
+    | undefined;
+  const id = chosen?.activeCollection;
+  return typeof id === 'string' && sceneCollectionsOf(state).includes(id) ? id : null;
+}
+
+/** The op that makes `collectionId` the scene's active collection, or the scene itself (null). */
+export function setActiveCollectionOp(state: DagState, collectionId: NodeId | null): Op | null {
+  const sceneId = state.outputs.scene?.node;
+  if (!sceneId) return null;
+  return {
+    type: 'setParam',
+    nodeId: sceneId,
+    paramPath: 'activeCollection',
+    value: collectionId ?? undefined,
+  };
+}
+
+/**
+ * #1451 — an import's ops with every Object it makes linked into the active collection, as Blender's
+ * importers link each object they make (`import_fbx.py`, `import_bvh.py`, the glTF importer's
+ * single-scene case). An imported Empty is a Group here (`emptyOps`), and Blender links it too.
+ * Membership only: where each one hangs in the scene is the import's own. With the scene itself
+ * active, the ops are returned as they are.
+ */
+export function intoActiveCollection(state: DagState, ops: readonly Op[]): Op[] {
+  const collectionId = activeCollectionOf(state);
+  if (collectionId === null) return [...ops];
+  const made = ops.flatMap((op) =>
+    op.type === 'addNode' && (op.nodeType === 'Object' || op.nodeType === 'Group')
+      ? [op.nodeId]
+      : [],
+  );
+  return [
+    ...ops,
+    ...made.map(
+      (id): Op => ({
+        type: 'connect',
+        from: { node: id, socket: 'out' },
+        to: { node: collectionId, socket: 'members' },
+      }),
+    ),
+  ];
 }

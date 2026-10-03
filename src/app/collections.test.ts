@@ -10,7 +10,14 @@ import { collectionOps } from '../core/import/modelImport';
 import { buildSkeletonObjectOps } from '../core/import/skeletonObject';
 import { registerAllNodes } from '../nodes/registerAll';
 import { buildBvhClipOps } from '../test-utils/bvhClip';
-import { collectionMembersOf, hiddenByCollection, sceneCollectionsOf } from './collections';
+import {
+  activeCollectionOf,
+  collectionMembersOf,
+  hiddenByCollection,
+  intoActiveCollection,
+  sceneCollectionsOf,
+  setActiveCollectionOp,
+} from './collections';
 import { buildSceneTreeRows } from './sceneTreeWalk';
 import { collectSkeletonObjects } from './skeletonObjects';
 import { resolveWorldTransform } from './resolveWorldTransform';
@@ -100,5 +107,53 @@ describe('#1451 — a Collection', () => {
     expect(collectSkeletonObjects(build()).map((o) => o.id)).toEqual(['sk_object']);
     expect([...hiddenByCollection(build({ hidden: true }))]).toEqual(['sk_object']);
     expect(collectSkeletonObjects(build({ hidden: true }))).toEqual([]);
+  });
+});
+
+// #1451 — Blender's active collection: where an import links what it makes. The scene itself until
+// one is chosen; a chosen one the scene no longer holds is never active.
+describe('#1451 — the active collection', () => {
+  const made: Op[] = [
+    { type: 'addNode', nodeId: 'obj', nodeType: 'Object', params: {} },
+    { type: 'addNode', nodeId: 'empty', nodeType: 'Group', params: {} },
+    { type: 'addNode', nodeId: 'data', nodeType: 'BoxData', params: {} },
+  ];
+  const activate = (s: DagState, id: string | null) => apply(s, [setActiveCollectionOp(s, id)!]);
+
+  it('is the scene itself until one is chosen, and then that one', () => {
+    const s = build();
+    expect(activeCollectionOf(s)).toBeNull();
+    expect(activeCollectionOf(activate(s, 'col'))).toBe('col');
+    expect(activeCollectionOf(activate(activate(s, 'col'), null))).toBeNull();
+  });
+
+  it('is never one the scene no longer holds', () => {
+    const s = activate(build(), 'col');
+    const scene = s.outputs.scene!.node;
+    const unlinked = apply(s, [
+      {
+        type: 'disconnect',
+        from: { node: 'col', socket: 'out' },
+        to: { node: scene, socket: 'collections' },
+      },
+    ]);
+    expect(s.nodes[scene].params).toMatchObject({ activeCollection: 'col' });
+    expect(activeCollectionOf(unlinked)).toBeNull();
+  });
+
+  it('with the scene active, an import’s ops are left as they are', () => {
+    expect(intoActiveCollection(build(), made)).toEqual(made);
+  });
+
+  it('with a collection active, every Object and Empty the import makes is linked into it', () => {
+    const ops = intoActiveCollection(activate(build(), 'col'), made);
+    expect(ops.slice(0, made.length)).toEqual(made);
+    expect(ops.slice(made.length)).toEqual(
+      ['obj', 'empty'].map((id) => ({
+        type: 'connect',
+        from: { node: id, socket: 'out' },
+        to: { node: 'col', socket: 'members' },
+      })),
+    );
   });
 });

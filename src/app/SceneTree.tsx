@@ -26,6 +26,7 @@ import { useRenameStore } from './stores/renameStore';
 import { RenameInput } from './RenameInput';
 import { SceneTreeIcon, iconKindForNode } from './SceneTreeIcon';
 import { buildSceneTreeRows, type TreeRow } from './sceneTreeWalk';
+import { activeCollectionOf, setActiveCollectionOp } from './collections';
 import { buildDeleteNodesOps, buildDuplicateNodeOps } from './sceneNodeActions';
 import { selectActiveCameraNode } from './activeCamera';
 import { isCameraNode } from './cameraNode';
@@ -121,6 +122,7 @@ function CtxItem({
 
 export function SceneTree({ filter = '' }: SceneTreeProps) {
   const state = useDagStore((s) => s.state);
+  const activeCollection = activeCollectionOf(state);
   const dispatchAtomic = useDagStore((s) => s.dispatchAtomic);
   // #226 Slice 2 — the outliner reads the whole SET + the active id (not just
   // the primary) so ctrl/shift multi-select shows every member, with the active
@@ -289,7 +291,18 @@ export function SceneTree({ filter = '' }: SceneTreeProps) {
   //   set; Shift-click → select the inclusive range from the active row to the
   //   clicked row (the clicked row becomes active). Selection is a UI projection
   //   (V1/V8) — no DAG write.
+  // #1451 — Blender's active collection: clicking a collection makes it the one an import links its
+  // objects into, and clicking the scene makes the scene itself active again. Written only when it
+  // changes, so a second click adds no undo step.
+  function activateCollection(row: TreeRow) {
+    const wanted = row.nodeType === 'Collection' ? row.nodeId : row.depth === 0 ? null : undefined;
+    if (wanted === undefined || wanted === activeCollection) return;
+    const op = setActiveCollectionOp(state, wanted);
+    if (op) dispatchAtomic([op], 'user', 'set active collection');
+  }
+
   function onRowClick(e: ReactMouseEvent, row: TreeRow) {
+    activateCollection(row);
     if (e.metaKey || e.ctrlKey) {
       selectAdditive(row.nodeId);
       return;
@@ -760,6 +773,9 @@ export function SceneTree({ filter = '' }: SceneTreeProps) {
               ref={isActive ? activeRowRef : undefined}
               data-testid={`scene-tree-row-${row.nodeId}`}
               data-depth={row.depth}
+              data-active-collection={
+                row.nodeType === 'Collection' && row.nodeId === activeCollection ? true : undefined
+              }
               data-selected={isInSet || undefined}
               data-active={isActive || undefined}
               data-dragging={isDragging || undefined}
@@ -844,7 +860,14 @@ export function SceneTree({ filter = '' }: SceneTreeProps) {
                     className="grow rounded-sm border border-accent bg-bg-2 px-1 text-[13px] text-fg outline-none"
                   />
                 ) : (
-                  <span className={`grow truncate ${hidden ? 'opacity-40' : ''}`}>
+                  <span
+                    className={`grow truncate ${hidden ? 'opacity-40' : ''} ${
+                      // #1451 — the active collection reads as such, as Blender highlights it.
+                      row.nodeType === 'Collection' && row.nodeId === activeCollection
+                        ? 'font-semibold text-fg'
+                        : ''
+                    }`}
+                  >
                     {row.display}
                   </span>
                 )}

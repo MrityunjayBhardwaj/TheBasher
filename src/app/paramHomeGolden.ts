@@ -241,7 +241,7 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
   Scatter:
     '[mesh,driver,material] density=(unrouted) seed=(unrouted) bounds=(unrouted) scaleJitter=(unrouted) randomYaw=(unrouted)',
   Scene:
-    '[environment,layout] envSource=environment envIntensity=environment envRotationY=environment envBackground=environment',
+    '[environment,layout] envSource=environment envIntensity=environment envRotationY=environment envBackground=environment activeCollection=(unrouted)',
   // APPENDED at #638 — the face range. Unrouted like `muted`, and for the node's own
   // recorded reason: `SetMaterialOp` declares no inspector section at all, because its
   // reference authors this node in the graph editor and a titled empty card is the shape
@@ -399,4 +399,4 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
 // #1447 appends `Group.parentBone`, unrouted as `Object.parentBone` is (#1210): an imported Empty
 // hung from a bone. +1 unrouted.
 //   types 90 · routed 144 · unrouted 248 + 1 = 249
-export const GOLDEN_TOTALS = { types: 91, routed: 144, unrouted: 249 } as const;
+export const GOLDEN_TOTALS = { types: 91, routed: 144, unrouted: 250 } as const;

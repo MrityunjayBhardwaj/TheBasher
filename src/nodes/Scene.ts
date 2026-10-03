@@ -30,6 +30,12 @@ export const SceneParams = z
     envIntensity: z.number().default(1),
     envRotationY: z.number().default(0),
     envBackground: z.boolean().default(false),
+    /**
+     * #1451 — the active collection: where an import links what it makes, as Blender links an
+     * import's objects into the view layer's active collection. A collection id; absent (the
+     * default) means the scene itself. Appended last, so the frozen param-home row is appended to.
+     */
+    activeCollection: z.string().min(1).optional(),
   })
   .passthrough();
 export type SceneParams = z.infer<typeof SceneParams>;
