@@ -25,6 +25,7 @@ import { armaturePoseOf } from '../nodes/bonePose';
 import type { BoneSpec, ObjectValue, PosedSkeletonValue } from '../nodes/types';
 import { resolveWorldTransform } from './resolveWorldTransform';
 import { hierarchyChildIds } from './sceneHierarchy';
+import { hiddenByCollection } from './collections';
 
 export interface SkeletonObject {
   /** The Object node — what a click on its bones selects. */
@@ -55,13 +56,15 @@ export function collectSkeletonObjects(state: DagState, cache?: EvaluatorCache):
   const parentOf = new Map<string, string>();
   for (const node of nodes)
     for (const child of hierarchyChildIds(node)) parentOf.set(child, node.id);
+  // #1451 — a member of a hidden collection is hidden as if by its own eye.
+  const byCollection = hiddenByCollection(state);
   for (const node of nodes) {
     if (node.type !== 'Object') continue;
     // Hidden in the outliner ⇒ hidden here too, as `SceneFromDAG` hides a top-level node.
     // Without this the eye toggle would blank the Object's slot and leave its bones standing.
     // #1450 — and hidden when anything above it is: `SceneFromDAG` skips a hidden top-level node
     // with everything under it, so the bones of a rig in a hidden import Group go with its meshes.
-    if (hiddenFromHere(state, node.id, parentOf)) continue;
+    if (hiddenFromHere(state, node.id, parentOf, byCollection)) continue;
     const skeletonId = refNode(node.inputs.data);
     if (!skeletonId) continue;
     try {
@@ -94,15 +97,19 @@ export function collectSkeletonObjects(state: DagState, cache?: EvaluatorCache):
   return out;
 }
 
-/** True when `id` or any scene-graph parent above it is hidden. Stops on a cycle. */
+/**
+ * True when `id` or any scene-graph parent above it is hidden, by its own eye or by a hidden
+ * collection holding it (#1451). Stops on a cycle.
+ */
 function hiddenFromHere(
   state: DagState,
   id: string,
   parentOf: ReadonlyMap<string, string>,
+  byCollection: ReadonlySet<string>,
 ): boolean {
   const seen = new Set<string>();
   for (let at: string | undefined = id; at !== undefined && !seen.has(at); at = parentOf.get(at)) {
-    if (state.nodes[at]?.meta?.hidden) return true;
+    if (state.nodes[at]?.meta?.hidden || byCollection.has(at)) return true;
     seen.add(at);
   }
   return false;

@@ -43,6 +43,8 @@ const TREE_DRAG_MIME = 'application/x-basher-tree-row';
 // Row types that own a collapsible subtree and so get a chevron. GltfAsset
 // defaults COLLAPSED (node-flood, D-05); the rest default EXPANDED.
 const COLLAPSIBLE_TYPES = new Set([
+  // #1451 — a Collection's members list under it.
+  'Collection',
   'Group',
   'Transform',
   'MaterialOverride',
@@ -696,6 +698,7 @@ export function SceneTree({ filter = '' }: SceneTreeProps) {
     }
   }
 
+  const sceneRootId = state.outputs.scene?.node;
   return (
     <div
       data-testid="scene-tree"
@@ -743,7 +746,13 @@ export function SceneTree({ filter = '' }: SceneTreeProps) {
           // type LITERALS — which is exactly how these four sites survived the slice-3 pass.
           const isCamera = isCameraNode(state, row.nodeId);
           const isActiveCamera = isCamera && row.nodeId === activeCameraId;
-          const isHideable = !filtering && row.depth === 1 && !isCamera;
+          // #1451 — keyed on what the renderer honours rather than on depth: a Collection (its
+          // members go with it), and a node the SCENE holds directly, which is every depth-1 row
+          // and a collection member listed at depth 2 (still the scene's child).
+          const isHideable =
+            !filtering &&
+            !isCamera &&
+            (row.nodeType === 'Collection' || row.parent?.nodeId === sceneRootId);
           const hidden = state.nodes[row.nodeId]?.meta?.hidden ?? false;
           return (
             <li

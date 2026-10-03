@@ -141,6 +141,18 @@ export type LightValue =
 // implicit centre `resolveRigTarget` derived in #206/#207). The lights stay in
 // edge order (the renderer recovers their node ids by index-correspondence via
 // `resolveRigLightSources`, exactly as the Scene's direct `lights` do).
+/**
+ * #1451 (Collections, #397) — a Collection's value: how many Objects it holds. Membership is the
+ * node's `members` EDGES, read off the graph by whatever asks (the outliner, the viewport's hide);
+ * the value carries no transform and no children, so nothing can draw through it or be parented
+ * to it. Blender keeps the two apart the same way: a collection groups objects, parenting moves
+ * them, and an object is organised one way while parented another.
+ */
+export interface CollectionValue {
+  readonly kind: 'Collection';
+  readonly memberCount: number;
+}
+
 export interface LightRigValue {
   readonly kind: 'LightRig';
   readonly name: string;

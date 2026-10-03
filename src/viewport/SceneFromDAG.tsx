@@ -99,6 +99,7 @@ import { LightHelper } from './LightHelpers';
 import { CameraHelper } from './CameraHelpers';
 import { ArmatureHelper, type ReferenceRigInput } from './ArmatureHelper';
 import { collectSkeletonObjects, type SkeletonObject } from '../app/skeletonObjects';
+import { hiddenByCollection } from '../app/collections';
 import { retargetPairs } from '../app/animate/boundClipsForAsset';
 import {
   enumerateCameraNodeIds,
@@ -319,6 +320,9 @@ export function SceneFromDAG({ outputName = 'render' }: SceneFromDAGProps) {
     () => collectSkeletonObjects(state, cache),
     [state, cache],
   );
+  // #1451 — what the scene's hidden collections hide: checked at the top-level slot beside each
+  // node's own eye.
+  const hiddenMembers = useMemo(() => hiddenByCollection(state), [state]);
   // #165: editor-only camera frustums hide in rendered mode (production
   // parity) and the active camera's own frustum hides while looking through
   // it (you're inside it — drawing it would clutter the preview).
@@ -618,7 +622,9 @@ export function SceneFromDAG({ outputName = 'render' }: SceneFromDAGProps) {
         // the direct-channel / constraint maps rely on is preserved). The live
         // scene is what the offscreen still/animation render captures (V37), so a
         // skipped node is absent from the render too — one band, no #168 denylist.
-        if (cpid != null && state.nodes[cpid]?.meta?.hidden) return null;
+        // #1451 — and a member of a hidden collection, as Blender hides a collection's objects.
+        if (cpid != null && (state.nodes[cpid]?.meta?.hidden || hiddenMembers.has(cpid)))
+          return null;
         return (
           <SceneChildNode
             key={`mesh:${i}`}

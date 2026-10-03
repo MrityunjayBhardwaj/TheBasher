@@ -18,6 +18,7 @@ import { enumerateCameraNodeIds } from './activeCamera';
 import { importedChildOf } from './importedChild';
 import { chainSocketOf, isSceneLaneWrapper } from './operatorChain';
 import { hierarchySocketForKind } from './sceneHierarchy';
+import { collectionMembersOf, sceneCollectionsOf } from './collections';
 
 export interface TreeRow {
   /** Stable key for React. */
@@ -270,16 +271,39 @@ export function buildSceneTreeRows(state: DagState): TreeRow[] {
   });
   ctx.visited.add(sceneRef.node);
   const children = sceneNode.inputs.children;
-  if (Array.isArray(children)) {
-    children.forEach((ref, i) => {
-      ctx.visited.delete(ref.node);
-      walkOneAsChild(ctx, ref.node, 1, sceneRef.node, {
-        nodeId: sceneRef.node,
-        socket: 'children',
-        index: i,
-      });
+  const sceneChildren = Array.isArray(children) ? children : [];
+  // #1451 — the scene's collections first, as Blender's outliner lists a scene's collections, each
+  // with the scene objects it holds under it. A member keeps its scene `children` linkage (it is
+  // still the scene's child — a collection is membership, not a parent), so reordering and the eye
+  // act on it as on any top-level row. A collection row has no linkage: it is not dragged in this
+  // slice. A member nested under another Object is listed under that Object, as ever.
+  const collected = new Set<NodeId>();
+  for (const collectionId of sceneCollectionsOf(state)) {
+    const key = `${sceneRef.node}/collection/${collectionId}`;
+    ctx.rows.push({
+      key,
+      nodeId: collectionId,
+      nodeType: 'Collection',
+      depth: 1,
+      display: display(state, collectionId),
     });
+    for (const member of collectionMembersOf(state, collectionId)) {
+      const i = sceneChildren.findIndex((ref) => ref.node === member);
+      if (i < 0 || collected.has(member)) continue;
+      collected.add(member);
+      ctx.visited.delete(member);
+      walkOneAsChild(ctx, member, 2, key, { nodeId: sceneRef.node, socket: 'children', index: i });
+    }
   }
+  sceneChildren.forEach((ref, i) => {
+    if (collected.has(ref.node)) return;
+    ctx.visited.delete(ref.node);
+    walkOneAsChild(ctx, ref.node, 1, sceneRef.node, {
+      nodeId: sceneRef.node,
+      socket: 'children',
+      index: i,
+    });
+  });
   // #231 Inc 2a — project the scene's direct LIGHTS as depth-1 rows too (Blender
   // shows lights in the outliner). They were previously invisible here (only
   // viewport helper-pick selected them). Carrying `parent.socket: 'lights'` lets

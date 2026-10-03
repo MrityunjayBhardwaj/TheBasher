@@ -140,6 +140,7 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
   CameraSelect: '[layout] active=(unrouted)',
   Character: '[] name=(unrouted)',
   Clamp: '[] min=(unrouted) max=(unrouted)',
+  Collection: '[layout]',
   ClipSelect: '[animate] selectedClipName=(unrouted)',
   ColorCorrect:
     '[effect] brightness=(unrouted) contrast=(unrouted) saturation=(unrouted) muted=(unrouted)',
@@ -398,4 +399,4 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
 // #1447 appends `Group.parentBone`, unrouted as `Object.parentBone` is (#1210): an imported Empty
 // hung from a bone. +1 unrouted.
 //   types 90 · routed 144 · unrouted 248 + 1 = 249
-export const GOLDEN_TOTALS = { types: 90, routed: 144, unrouted: 249 } as const;
+export const GOLDEN_TOTALS = { types: 91, routed: 144, unrouted: 249 } as const;

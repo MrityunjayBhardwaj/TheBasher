@@ -117,6 +117,9 @@ export type SocketTypeName =
   // the scene. All profiles stay co-resident in the DAG (V34); switching is one
   // param → keyframeable (V57).
   | 'LightRig'
+  // #1451 (Collections, #397) — a named set of scene Objects: membership, never a transform. The
+  // Scene holds its collections as Blender's scene collection holds its children.
+  | 'Collection'
   | 'Shot'
   | 'Cut'
   // The Compositor (After Effects-style layer timeline) — docs/COMPOSITOR-DESIGN.md.

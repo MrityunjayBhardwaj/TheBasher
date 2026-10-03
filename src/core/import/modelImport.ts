@@ -150,6 +150,37 @@ export function importGroupOp(groupId: string, position: Vec3, pivot: Vec3): Op 
 }
 
 /**
+ * #1451 — the Collection an import lands in, named after the file, holding `memberIds`, and held by
+ * the scene. Blender's glTF importer links every object it makes into a collection named after the
+ * file's scene (`import_scene_as_collection`, default on; `io_scene_gltf2/blender/imp/node.py`), and
+ * every import here does the same whatever the format (user decision on #1434). Membership only:
+ * the members stay where the import hangs them in the scene, and nothing moves.
+ */
+export function collectionOps(
+  collectionId: string,
+  name: string,
+  memberIds: readonly string[],
+  sceneNodeId: string,
+): Op[] {
+  return [
+    { type: 'addNode', nodeId: collectionId, nodeType: 'Collection', params: {} },
+    { type: 'setMeta', nodeId: collectionId, name },
+    ...memberIds.map(
+      (id): Op => ({
+        type: 'connect',
+        from: { node: id, socket: 'out' },
+        to: { node: collectionId, socket: 'members' },
+      }),
+    ),
+    {
+      type: 'connect',
+      from: { node: collectionId, socket: 'out' },
+      to: { node: sceneNodeId, socket: 'collections' },
+    },
+  ];
+}
+
+/**
  * An imported node's own transform, as an Object or a Group holds it: euler (rotation in XYZ degrees)
  * unless `rotationMode` says quaternion (#1153), and (#1210) the bone it hangs from, when it does.
  */

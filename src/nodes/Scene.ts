@@ -48,6 +48,10 @@ export const SceneNode: NodeDefinition<SceneParams, SceneValue> = {
     // LightProfileSelect picks). Kept SEPARATE from `lights` so the direct-light
     // index-correspondence with `inputs.lights` stays byte-identical.
     lightRig: { type: 'LightRig', cardinality: 'single' },
+    // #1451 — the scene's collections, in outliner order, as Blender's scene collection holds its
+    // children. Membership only: the Objects they hold are the scene's `children` as ever, so
+    // nothing here reaches the render (`evaluate` does not read it).
+    collections: { type: 'Collection', cardinality: 'list' },
   },
   outputs: { out: { type: 'Scene', cardinality: 'single' } },
   inspectorSections: ['environment', 'layout'],
