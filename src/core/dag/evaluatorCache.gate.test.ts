@@ -251,23 +251,6 @@ const ORIGINS: Record<string, Origin> = {
     frequency: 'deliberate',
     why: 'Same as cookSolverStep: the injection is frame-dependent, so each step walks fresh.',
   },
-  'src/app/video/compileComfyBatch.ts · bakeBasherControllerValues → resolveEvaluatedParam': {
-    count: 1,
-    frequency: 'per-job',
-    why: 'Render coherent clip: one walk per frame x controller of the batch, each uncached; unmeasured (#1318).',
-    issue: 1318,
-  },
-  'src/app/video/compileComfyBatch.ts · bakeComfyBatchedTracks → resolveEvaluatedParam': {
-    count: 1,
-    frequency: 'per-job',
-    why: 'Render coherent clip: one walk per frame x param of the batch, each uncached; unmeasured (#1318).',
-    issue: 1318,
-  },
-  'src/render/dryRun.ts · dryRun → evaluate': {
-    count: 2,
-    frequency: 'per-action',
-    why: 'Cost preview Estimate click or the dry-run agent tool; evaluates one probe frame, not a loop (#1318).',
-  },
   'src/test-utils/evaluateNodeAlone.ts · evaluateNodeAlone → evaluate': {
     count: 1,
     frequency: 'once',
@@ -435,8 +418,11 @@ describe('#1386 — production walks that start with no cache held', () => {
       'pass',
       'pass',
     ]);
-    // The Comfy batch bakes were left for the census (#1318): they start with none.
-    expect(at('src/app/video/compileComfyBatch.ts', 'bakeComfyBatchedTracks')).toEqual(['none']);
+    // #1318 — each Comfy batch bake hands its one per-bake cache to every frame's read.
+    expect(at('src/app/video/compileComfyBatch.ts', 'bakeComfyBatchedTracks')).toEqual(['pass']);
+    expect(at('src/app/video/compileComfyBatch.ts', 'bakeBasherControllerValues')).toEqual([
+      'pass',
+    ]);
   });
 
   it('sees every function that takes a cache', () => {

@@ -19,7 +19,7 @@
 // REF: project_p5_context D-06; THESIS §28, §44, §51; vyapti V6 + V8.
 
 import type { ComfyInputs, ComfyUICapability, ComfyWorkflowJson } from '../core/comfy';
-import { evaluate } from '../core/dag/evaluator';
+import { createEvaluatorCache, evaluate } from '../core/dag/evaluator';
 import type { DagState } from '../core/dag/state';
 import type { EvalCtx, NodeId } from '../core/dag/types';
 import type { StorageCapability } from '../core/storage';
@@ -123,7 +123,10 @@ export async function dryRun(
     time: { frame: probeFrame, seconds: probeFrame / 30, normalized: 0 },
   };
 
-  // Resolve the Prompt + pass inputs at the probe frame.
+  // Resolve the Prompt + pass inputs at the probe frame, through ONE evaluator cache (#1318):
+  // each pass reads the same scene and camera, so without it every pass re-walked them, and on
+  // a scene holding a character re-ran its whole-clip retarget once per pass.
+  const cache = createEvaluatorCache();
   const promptBinding = node.inputs.prompt;
   if (!promptBinding || Array.isArray(promptBinding)) {
     throw new Error(
@@ -133,13 +136,14 @@ export async function dryRun(
   const prompt = evaluate(state, promptBinding.node, {
     ctx,
     socket: promptBinding.socket,
+    cache,
   }).value as PromptValue;
 
   const passBinding = node.inputs['pass-input'];
   const passRefs =
     passBinding === undefined ? [] : Array.isArray(passBinding) ? passBinding : [passBinding];
   const passes = passRefs.map(
-    (ref) => evaluate(state, ref.node, { ctx, socket: ref.socket }).value as ImageValue,
+    (ref) => evaluate(state, ref.node, { ctx, socket: ref.socket, cache }).value as ImageValue,
   );
 
   // Compile + submit. The compiler is injectable so Wave C wires the real

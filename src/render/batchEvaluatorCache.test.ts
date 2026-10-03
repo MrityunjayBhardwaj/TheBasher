@@ -4,7 +4,8 @@
 // a stitch's upstream for its metadata). Over a scene holding a character, every one of those
 // reached the walk's whole-clip `RetargetClip` again. Measured on the "Camera Path + AI Walk"
 // example over 6 frames, before the fix: render job 13 retargets, ComfyUI workflow 6, video
-// stitch 6. With one evaluator cache per run: 1 each.
+// stitch 6. With one evaluator cache per run: 1 each. The cost preview's dry run reads one frame,
+// but each of its passes walked the scene again: 2 retargets for two passes, now 1.
 //
 // The graph is the example's own, with a Beauty pass, a render job, a workflow and a stitch
 // wired onto its scene and camera, so the count comes from the real character chain.
@@ -18,7 +19,7 @@ import { applyOp, type DagState } from '../core/dag';
 import { StubComfyUICapability } from '../core/comfy';
 import { runRenderJob } from './runRenderJob';
 import { runComfyUIWorkflow } from './runComfyUIWorkflow';
-import { type CompileWorkflowFn } from './dryRun';
+import { dryRun, type CompileWorkflowFn } from './dryRun';
 import { runVideoStitch, stubVideoEncoder } from './runVideoStitch';
 import { stubEncoder } from './encoders/stubEncoder';
 
@@ -133,5 +134,35 @@ describe('#1318 — the batch render roads retarget the walk once per run', () =
       expect(report.framesEncoded).toBe(LAST_FRAME + 1);
     });
     expect({ workflow, stitch }).toEqual({ workflow: 1, stitch: 1 });
+  }, 120_000);
+
+  it('dry run: once for its probe frame, across two passes (was 2)', async () => {
+    let s2 = applyOp(state, {
+      type: 'addNode',
+      nodeId: 'depth',
+      nodeType: 'DepthPass',
+      params: {},
+    }).next;
+    for (const [from, to, socket] of [
+      ['n_scene', 'depth', 'scene'],
+      ['n_camera', 'depth', 'camera'],
+      ['n_time', 'depth', 'time'],
+      ['depth', 'cw', 'pass-input'],
+    ] as const)
+      s2 = applyOp(s2, {
+        type: 'connect',
+        from: { node: from, socket: 'out' },
+        to: { node: to, socket },
+      }).next;
+    const passes = s2.nodes.cw.inputs['pass-input'];
+    expect(Array.isArray(passes) ? passes.length : 0).toBe(2);
+    const n = await retargetsDuring(() =>
+      dryRun('cw', s2, {
+        capability: new StubComfyUICapability(),
+        storage: new MemoryStorage(),
+        compileWorkflow: compile,
+      }),
+    );
+    expect(n).toBe(1);
   }, 120_000);
 });

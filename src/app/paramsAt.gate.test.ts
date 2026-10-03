@@ -164,6 +164,9 @@ const CONSUMERS: Record<string, Decision> = {
   // `dispatchApplyTransform` left this table at #1053 (its evaluate went with the clone road);
   // `canApplyTransform` takes its UI caller's cache (#1315), which brings it back for the TYPE only.
   'src/app/animate/dispatchApplyTransform.ts': authored('delegates-to-a-folding-resolver'),
+  // #1318 — the Comfy batch bakes create one cache per bake for `resolveEvaluatedParam`, which
+  // folds the channels and drivers itself, so the state it is handed must stay authored.
+  'src/app/video/compileComfyBatch.ts': authored('delegates-to-a-folding-resolver'),
   // #902 — the motion resolver. It reads the generator's params AUTHORED and
   // evaluates at the default ctx, and both halves are the same claim: a
   // generation request must be time-invariant. If the playhead could change the
@@ -318,7 +321,9 @@ describe('#582 — who evaluates the graph, and which params they need', () => {
     // 50 → 52 at #1394, not a new road: the inspector's projection and the lane-overlay sources
     // import the cache type to hand the material-owner walk the shared UI cache (+2).
     // 52 → 53 at #353: `mutator.constrain` creates the one cache its two precondition checks share.
-    expect(evaluatorConsumers()).toHaveLength(53); // 39 -> 40 at #935 (placement) (the motion resolver)
+    // 53 → 54 at #1318, not a new road: the Comfy batch bakes create one cache per bake for the
+    // resolver they already called (uncached, a driver re-ran the walk's retarget every frame).
+    expect(evaluatorConsumers()).toHaveLength(54); // 39 -> 40 at #935 (placement) (the motion resolver)
   });
 
   it('every reason is load-bearing — no member of any union is decorative', () => {
