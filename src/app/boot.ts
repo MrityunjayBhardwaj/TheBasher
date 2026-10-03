@@ -848,12 +848,19 @@ export function boot(): Promise<void> {
       // P3.1 Wave A/B — BVH + FBX import demo seams. Library UI
       // integration lands in a follow-on wave; meanwhile the agent
       // (and console) can drive imports via these seams.
-      void import('../core/import/bvhImportChain').then((m) => {
+      // #1434 — through the same landing as every other BVH door: the rig's Object in the import's
+      // Group. Returns what landed (`kind`, its ids, the Group), as the FBX seam below does.
+      void Promise.all([
+        import('../core/import/bvhImportChain'),
+        import('./asset/importBvhFbx'),
+      ]).then(([m, landing]) => {
         w.__basher_importBvh = (text: string, name?: string) => {
           const dag = useDagStore.getState();
-          const { ops, skeletonId, motionId } = m.buildBvhImportOps({ text, name });
-          dag.dispatchAtomic(ops, 'user', `import bvh: ${name ?? 'imported'}`);
-          return { skeletonId, motionId };
+          const label = name ?? 'imported';
+          const built = { ...m.buildBvhImportOps({ text, name }), kind: 'motion' as const };
+          const { ops, ...landed } = landing.motionImportOps(built, label, dag.state);
+          dag.dispatchAtomic(ops, 'user', `import bvh: ${label}`);
+          return landed;
         };
       });
       void Promise.all([

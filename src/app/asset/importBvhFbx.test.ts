@@ -185,15 +185,25 @@ describe('#1056 — every imported motion stands in the scene as an Object', () 
       from: { node: result!.skeletonId, socket: 'out' },
       to: { node: objectId, socket: 'data' },
     });
+    // #1434 — in the import's Group, as every import stands, and the Group under the scene.
     expect(ops).toContainEqual({
       type: 'connect',
       from: { node: objectId, socket: 'out' },
+      to: { node: result!.groupId, socket: 'children' },
+    });
+    expect(ops).toContainEqual({
+      type: 'connect',
+      from: { node: result!.groupId, socket: 'out' },
       to: { node: 'n_scene', socket: 'children' },
     });
-    // And it landed: the Object is in the graph, a child of the scene.
+    // And it landed: the Object is in the graph, in its Group, the Group a child of the scene.
     const state = useDagStore.getState().state;
     expect(state.nodes[objectId]?.type).toBe('Object');
-    expect(state.nodes.n_scene.inputs.children).toEqual([{ node: objectId, socket: 'out' }]);
+    expect(state.nodes[result!.groupId]?.type).toBe('Group');
+    expect(state.nodes[result!.groupId].inputs.children).toEqual([
+      { node: objectId, socket: 'out' },
+    ]);
+    expect(state.nodes.n_scene.inputs.children).toEqual([{ node: result!.groupId, socket: 'out' }]);
   });
 
   // #1103 — the toast a director reads, through the road a drop, the picker and the
@@ -509,5 +519,56 @@ describe('ingestSingleFile', () => {
       'walk',
     );
     expect(out).toBe(`${USER_IMPORTS_ROOT}/walk-2/walk.bvh`);
+  });
+});
+
+// #1434 — every import lands in an import Group, as a glTF does, whatever the file holds: a motion
+// too (user decision on #1434). A motion's Group holds only its rig, so a bind that takes the motion
+// hides the GROUP — the viewport and the outliner's eye act on top-level nodes — and the rig goes
+// with it (#1450). Undo brings both back.
+describe('#1434 — a motion lands in its Group, and a bind hides that Group', () => {
+  const path = `${USER_IMPORTS_ROOT}/wave/wave.bvh`;
+  const fbxPath = `${USER_IMPORTS_ROOT}/rig/rig.fbx`;
+  const nodes = () => useDagStore.getState().state.nodes;
+
+  beforeEach(() => {
+    __resetMutatorRegistryForTests();
+    registerAllMutators();
+    useSelectionStore.getState().select(null);
+  });
+
+  it.each([
+    ['a BVH', () => currentStorage.write(path, new TextEncoder().encode(SYNTHETIC_BVH)), path],
+    ['a rig-only FBX', () => currentStorage.write(fbxPath, RIG_FBX_BYTES), fbxPath],
+  ])('%s stands its rig in a Group under the scene, about the origin', async (_, write, at) => {
+    await write();
+    const result = rigOf(at === path ? await importBvhFromOpfs(at) : await importFbxFromOpfs(at));
+    expect(result!.kind).toBe('motion');
+    const group = nodes()[result!.groupId];
+    expect(group?.type).toBe('Group');
+    expect(group.params).toMatchObject({ position: [0, 0, 0], pivot: [0, 0, 0] });
+    expect(group.inputs.children).toEqual([
+      { node: `${result!.skeletonId}_object`, socket: 'out' },
+    ]);
+    expect(nodes().n_scene.inputs.children).toEqual([{ node: result!.groupId, socket: 'out' }]);
+  });
+
+  it('a bind that takes the motion hides its Group, not the rig in it, and undo brings it back', async () => {
+    seedCharacter();
+    await currentStorage.write(path, new TextEncoder().encode(SYNTHETIC_BVH));
+    const before = new Set(Object.keys(nodes()));
+    await routeImportByExtension(path);
+    const group = Object.values(nodes()).find((n) => n.type === 'Group' && !before.has(n.id))!;
+    const rig = (group.inputs.children as { node: string }[])[0].node;
+    expect(Object.values(nodes()).some((n) => n.type === 'RetargetClip')).toBe(true);
+    expect(nodes()[group.id].meta?.hidden).toBe(true);
+    // The Group is the one that hides: the rig's own flag is untouched, and the rig is not drawn
+    // because its Group is hidden (`collectSkeletonObjects`, its own test — this store has no
+    // render output, so nothing in it is reachable to draw).
+    expect(nodes()[rig].meta?.hidden).toBeUndefined();
+
+    useDagStore.getState().undo();
+    expect(nodes()[group.id].meta?.hidden).toBeUndefined();
+    expect(Object.values(nodes()).some((n) => n.type === 'RetargetClip')).toBe(false);
   });
 });

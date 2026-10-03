@@ -100,13 +100,17 @@ test('#1056 — a BVH imported alone stands as an Object pointed at its skeleton
     const { state } = (window as unknown as Win).__basher_dag.getState();
     const obj = state.nodes[id];
     const dataRef = obj?.inputs.data as { node?: string } | undefined;
-    const scene = state.nodes[state.outputs.scene.node];
-    const children = (scene?.inputs.children as { node: string }[] | undefined) ?? [];
+    const childrenOf = (nodeId: string) =>
+      (state.nodes[nodeId]?.inputs.children as { node: string }[] | undefined) ?? [];
     const types = Object.values(state.nodes).map((n) => n.type);
+    // #1434 — in the import's own Group, as every import lands, and the Group in the scene.
+    const group = childrenOf(state.outputs.scene.node).find((c) =>
+      childrenOf(c.node).some((k) => k.node === id),
+    );
     return {
       objectType: obj?.type,
       dataType: dataRef?.node ? state.nodes[dataRef.node]?.type : undefined,
-      inScene: children.some((c) => c.node === id),
+      inScene: group !== undefined && state.nodes[group.node].type === 'Group',
       scale: obj?.params?.scale as number[] | undefined,
       gltfAssets: types.filter((t) => t === 'GltfAsset').length,
     };
@@ -299,32 +303,48 @@ test('#1056 — a motion dropped onto a character still gets its Object, hidden 
       const data = nodes[id].inputs.data as { node?: string } | undefined;
       return nodes[id].type === 'Object' && !!data?.node && nodes[data.node]?.type === 'Skeleton';
     });
+    // #1434 — the Object stands in the import's own Group, which holds nothing else, so the
+    // Group is what the bind hides; the Object's own flag stays as it was.
+    const groupId = added.find(
+      (id) =>
+        nodes[id].type === 'Group' &&
+        ((nodes[id].inputs.children as { node: string }[] | undefined) ?? []).some(
+          (c) => c.node === objectId,
+        ),
+    );
     return {
       objectId,
+      groupId,
       retargets: added.filter((id) => nodes[id].type === 'RetargetClip').length,
-      hidden: objectId ? nodes[objectId].meta?.hidden === true : null,
+      hidden: groupId ? nodes[groupId].meta?.hidden === true : null,
+      objectHidden: objectId ? nodes[objectId].meta?.hidden === true : null,
     };
   });
   // The bind happened — otherwise a hidden-or-not reading below says nothing about binding.
   expect(landed.retargets).toBe(1);
   // The import did not ask whether a character was there: the Object exists regardless…
   expect(landed.objectId).toBeDefined();
-  // …and the bind hid it, so no second rig stands beside the character.
+  // …and the bind hid its Group, so no second rig stands beside the character.
+  expect(landed.groupId).toBeDefined();
   expect(landed.hidden).toBe(true);
+  expect(landed.objectHidden).toBe(false);
   // The band draws the character's own armature and no second rig. null when the seam was never
   // written: a missing band must not read as "nothing drawn".
   await expect.poll(bandIds).toEqual([characterId]);
 
   // One undo takes the bind, and with it the hide.
   await page.evaluate(() => (window as unknown as Win).__basher_dag.getState().undo());
-  const afterUndo = await page.evaluate((id) => {
-    const { nodes } = (window as unknown as Win).__basher_dag.getState().state;
-    return {
-      retargets: Object.values(nodes).filter((n) => n.type === 'RetargetClip').length,
-      exists: Boolean(nodes[id]),
-      hidden: nodes[id]?.meta?.hidden === true,
-    };
-  }, landed.objectId!);
+  const afterUndo = await page.evaluate(
+    ({ id, groupId }) => {
+      const { nodes } = (window as unknown as Win).__basher_dag.getState().state;
+      return {
+        retargets: Object.values(nodes).filter((n) => n.type === 'RetargetClip').length,
+        exists: Boolean(nodes[id]),
+        hidden: nodes[groupId]?.meta?.hidden === true,
+      };
+    },
+    { id: landed.objectId!, groupId: landed.groupId! },
+  );
   expect(afterUndo).toEqual({ retargets: 0, exists: true, hidden: false });
   await expect.poll(bandIds).toEqual([characterId, landed.objectId].sort());
 });

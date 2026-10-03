@@ -5,8 +5,8 @@
 // motion as keys on a base pose layer (#1211). #1429 — an FBX may also bring meshes, which stand
 // with the skeleton (`motionImportOps`); such a file is a character and is not bound onto another
 // (`landImportedMotion`). #1434 — an FBX with no bone is a model: its meshes and empties, with no
-// skeleton and nothing to bind. A character and a model land in an import Group, as a glTF does.
-// A BVH is motion only. Until now they were reachable
+// skeleton and nothing to bind. Every BVH and FBX import lands in an import Group, as a glTF does,
+// whatever it holds. A BVH is motion only. Until now they were reachable
 // only through the `__basher_importBvh` / `__basher_importFbx` dev seams
 // (boot.ts:240-255). This module is the missing INGESTION SURFACE: read the
 // OPFS bytes a drop/picker wrote, decode them per-format, build the op chain,
@@ -36,7 +36,7 @@ import { buildFbxImportOps } from '../../core/import/fbxImportChain';
 import { buildSkeletonObjectOps, skeletonObjectId } from '../../core/import/skeletonObject';
 import { importGroupOp, parentEdge } from '../../core/import/modelImport';
 import type { FbxImportChainResult } from '../../core/import/fbxImportChain';
-import type { BoneSpec } from '../../nodes/types';
+import type { BoneSpec, Vec3 } from '../../nodes/types';
 import { getStorage } from '../boot';
 import { formatAssetError, useAssetErrorStore } from '../stores/assetErrorStore';
 import { useImportRefreshStore } from '../stores/importRefreshStore';
@@ -65,6 +65,8 @@ export type MotionImportResult =
        * rig with meshes or empties beside it: it is not bound onto another, which would hide it.
        */
       readonly kind: 'motion' | 'character';
+      /** #1434 — the import Group the file stands in. */
+      readonly groupId: string;
       /** #1429 — how many meshes the file brought with its skeleton. */
       readonly meshCount: number;
     })
@@ -118,7 +120,7 @@ function skeletonObjectOps(
   layerId: string,
   // #1101 — the name the import gave the motion, so the Object and its motion read the same.
   name: string,
-  // #1434 — what the Object hangs under: the scene node, or a character's import Group.
+  // #1434 — what the Object hangs under: the import's Group.
   parentId: string,
 ): Op[] {
   const skeleton = ops.find((op) => op.type === 'addNode' && op.nodeId === skeletonId);
@@ -179,12 +181,13 @@ export async function buildMotionImportOpsFromOpfs(
   );
 }
 
-/** A BVH's built import: a motion, and nothing of a scene. */
+/** A BVH's built import: a motion, and nothing of a scene but the Group it lands in. */
 interface BuiltBvh {
   readonly kind: 'motion';
   readonly ops: Op[];
   readonly skeletonId: string;
   readonly motionId: string;
+  readonly group: { readonly id: string; readonly pivot: Vec3 };
 }
 
 /**
@@ -192,10 +195,12 @@ interface BuiltBvh {
  * FBX's) meshes and empties, which may hang under that Object and so go after it. Every FBX door
  * takes this, the dev seam included, so no door imports the rig and drops the meshes.
  *
- * #1434 — by what the file is (`FbxImportKind`): a MOTION stands its rig under the scene, as a BVH's,
- * and is bound by its landing; a CHARACTER stands rig, meshes and empties in an import Group; a MODEL
- * stands its meshes and empties in one, with no rig at all. The Group sits at the origin and turns
- * about the meshes' centre (`importGroupOp`), so it moves nothing the file placed.
+ * #1434 — every import lands in an import Group under the scene, as a glTF does, whatever the file
+ * is (`FbxImportKind`): a MOTION stands its rig there and is bound by its landing (the bind then
+ * hides the Group, which holds nothing else — `standInHideTarget`); a CHARACTER stands rig, meshes
+ * and empties there; a MODEL its meshes and empties, with no rig at all. A BVH is a motion. The Group
+ * sits at the origin and turns about the meshes' centre, the origin when there are none
+ * (`importGroupOp`), so it moves nothing the file placed.
  */
 export function motionImportOps(
   built: BuiltBvh | FbxImportChainResult,
@@ -205,13 +210,12 @@ export function motionImportOps(
   const sceneNodeId = state.outputs.scene?.node;
   const meshCount = 'meshCount' in built ? built.meshCount : 0;
   const notices = 'notices' in built ? built.notices : [];
-  const fbx = 'group' in built ? built : null;
-  // A character or a model lands in a Group; a motion stands as a BVH's does, beside nothing.
-  const group = fbx !== null && built.kind !== 'motion' ? fbx.group : null;
-  const parentId = group?.id ?? sceneNodeId;
+  const fbx = 'meshOps' in built ? built : null;
+  const { group } = built;
   // With no scene to stand in, nothing of the file has anywhere to go.
+  const parentId = sceneNodeId === undefined ? undefined : group.id;
   const landing =
-    sceneNodeId === undefined || group === null
+    sceneNodeId === undefined
       ? []
       : [importGroupOp(group.id, [0, 0, 0], group.pivot), parentEdge(group.id, sceneNodeId)];
   const leftOut = (n: number) =>
@@ -222,7 +226,7 @@ export function motionImportOps(
     const placed = parentId !== undefined;
     return {
       kind: 'model',
-      groupId: built.group.id,
+      groupId: group.id,
       ops: placed ? [...built.ops, ...landing, ...built.meshOps(parentId)] : [],
       meshCount: placed ? meshCount : 0,
       notices: [...notices, ...(placed ? [] : leftOut(meshCount))],
@@ -235,6 +239,7 @@ export function motionImportOps(
   const placed = parentId !== undefined && standing.length > 0;
   return {
     kind: built.kind,
+    groupId: group.id,
     ops: [
       ...ops,
       ...(placed ? landing : []),

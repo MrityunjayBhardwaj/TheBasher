@@ -16,6 +16,7 @@ import { buildBvhImportOps } from './bvhImportChain';
 import {
   buildSkeletonObjectOps,
   skeletonObjectId,
+  standInHideTarget,
   standInObjectOf,
   standingObjectsOf,
 } from './skeletonObject';
@@ -265,5 +266,48 @@ describe('standInObjectOf (#1088)', () => {
     const state = withObject(skeletonObjectId('sk'), 'other');
     expect(standInObjectOf(state, 'sk')).toBeNull();
     expect(standInObjectOf(state, 'other')).toBeNull();
+  });
+});
+
+// #1434 — a bind hides the import Group a motion's rig stands alone in; the viewport and the
+// outliner's eye act on top-level nodes. A Group holding anything else is not hidden for the rig.
+describe('standInHideTarget (#1434)', () => {
+  /** An Object `rig`, and Groups `grp` (holding `held`) and `outer` (holding `grp`). */
+  function grouped(held: string[]): DagState {
+    let state = emptyDagState();
+    const ops: Op[] = [
+      ...['rig', 'mesh'].map(
+        (id): Op => ({ type: 'addNode', nodeId: id, nodeType: 'Object', params: {} }),
+      ),
+      ...['grp', 'outer'].map(
+        (id): Op => ({ type: 'addNode', nodeId: id, nodeType: 'Group', params: {} }),
+      ),
+      ...held.map(
+        (id): Op => ({
+          type: 'connect',
+          from: { node: id, socket: 'out' },
+          to: { node: 'grp', socket: 'children' },
+        }),
+      ),
+      {
+        type: 'connect',
+        from: { node: 'grp', socket: 'out' },
+        to: { node: 'outer', socket: 'children' },
+      },
+    ];
+    for (const op of ops) state = applyOp(state, op).next;
+    return state;
+  }
+
+  it('hides the Group the rig stands alone in — one level, not the Group above it', () => {
+    expect(standInHideTarget(grouped(['rig']), 'rig')).toBe('grp');
+  });
+
+  it('hides the rig itself when its Group holds anything else', () => {
+    expect(standInHideTarget(grouped(['rig', 'mesh']), 'rig')).toBe('rig');
+  });
+
+  it('hides the rig itself when no Group holds it', () => {
+    expect(standInHideTarget(grouped(['mesh']), 'rig')).toBe('rig');
   });
 });

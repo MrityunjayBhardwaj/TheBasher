@@ -512,15 +512,22 @@ describe('library.import tool', () => {
       expect(types).toContain('PoseLayer');
       expect(types).toContain('Object');
       expect(types).not.toContain('GltfAsset');
-      // The Object is wired into the scene the agent's fork holds.
-      expect(result.ops).toContainEqual(
-        expect.objectContaining({ type: 'connect', to: { node: 'scene', socket: 'children' } }),
-      );
+      // #1434 — the Object stands in the import's Group, and the Group in the scene the agent's
+      // fork holds, as every import lands.
       // They apply to the fork as they stand — the Diff the user accepts is this.
       let applied = buildSceneBaseline();
       for (const op of result.ops) applied = applyOp(applied, op).next;
-      expect(Object.values(applied.nodes).filter((n) => n.type === 'Object')).toHaveLength(1);
+      const objects = Object.values(applied.nodes).filter((n) => n.type === 'Object');
+      expect(objects).toHaveLength(1);
+      const groups = Object.values(applied.nodes).filter((n) => n.type === 'Group');
+      expect(groups).toHaveLength(1);
+      expect(groups[0].inputs.children).toEqual([{ node: objects[0].id, socket: 'out' }]);
+      expect(applied.nodes.scene.inputs.children).toContainEqual({
+        node: groups[0].id,
+        socket: 'out',
+      });
       expect(result.text).toMatch(/as a motion/);
+      expect(result.text).toContain(`in a Group (${groups[0].id})`);
       expect(result.text).toMatch(/not bound to a character/);
     },
   );

@@ -77,14 +77,15 @@ interface FbxImportChainCommon {
   readonly objectChannels: number;
   readonly dropped: FbxImportDropped;
   /**
-   * #1434 — the Group a character or a model lands in, as a glTF import does (user decision, #1434):
-   * an id, and the pivot it turns about — the centre of the file's meshes as drawn at load. The
-   * landing writes it at the origin with that pivot (`importGroupOp`), so it moves nothing.
+   * #1434 — the Group the import lands in, whatever it is, as a glTF import does (user decisions,
+   * #1434): an id, and the pivot it turns about — the centre of the file's meshes as drawn at load,
+   * the origin when there are none. The landing writes it at the origin with that pivot
+   * (`importGroupOp`), so it moves nothing.
    */
   readonly group: { readonly id: string; readonly pivot: Vec3 };
   /**
-   * #1429 — the ops that stand the file's meshes and empties, under `parentId` (the import Group, or
-   * a motion's scene node): each skinned mesh with an Armature modifier on its stack, each other mesh
+   * #1429 — the ops that stand the file's meshes and empties, under `parentId` (the import Group): each
+   * skinned mesh with an Armature modifier on its stack, each other mesh
    * and empty where the file hangs it. On a rig they name the skeleton's Object, so they go after the
    * ops that make it (`buildSkeletonObjectOps`). Empty for a file with neither.
    */

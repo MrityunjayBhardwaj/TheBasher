@@ -64,6 +64,35 @@ export function standInObjectOf(state: DagState, skeletonId: string): string | n
   return node?.type === 'Object' && dataSourceOf(node.inputs?.data) === skeletonId ? id : null;
 }
 
+/**
+ * #1434 — what a bind hides to step the stand-in `objectId` aside: the Group holding it when that
+ * Group holds nothing else, or the stand-in itself.
+ *
+ * Every import lands in an import Group, and a motion's Group holds only its rig. The viewport hides
+ * a hidden TOP-LEVEL node with everything under it (`SceneFromDAG`), and the outliner's eye sits on
+ * top-level rows only, so hiding the rig inside its Group would leave a row a director cannot
+ * unhide. Hiding the Group hides the rig with it (`collectSkeletonObjects`, #1450) and leaves the
+ * eye where the director looks. A Group that holds anything else, a character's mesh or a director's
+ * Object, is not hidden for the rig's sake. One level only: that is the reach the bind declares
+ * (`retarget.ts`, its closure).
+ */
+export function standInHideTarget(state: DagState, objectId: string): string {
+  const holders = Object.values(state.nodes).filter(
+    (n) => n.type === 'Group' && childIdsOf(n.inputs?.children).includes(objectId),
+  );
+  if (holders.length !== 1) return objectId;
+  const [group] = holders;
+  return childIdsOf(group.inputs?.children).length === 1 ? group.id : objectId;
+}
+
+/** The node ids a `children` socket holds, in order. */
+function childIdsOf(binding: unknown): string[] {
+  const list = Array.isArray(binding) ? binding : binding ? [binding] : [];
+  return list
+    .map((ref) => (ref as { node?: unknown } | undefined)?.node)
+    .filter((id): id is string => typeof id === 'string');
+}
+
 /** The node an input socket reads from, or null — one binding or the first of a list. */
 function dataSourceOf(binding: unknown): string | null {
   const one = (Array.isArray(binding) ? binding[0] : binding) as { node?: unknown } | undefined;

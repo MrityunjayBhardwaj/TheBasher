@@ -53,6 +53,11 @@ export interface BvhImportChainResult {
   readonly skeletonId: string;
   /** The base pose layer holding the file's keys: the motion, what a bind retargets from. */
   readonly motionId: string;
+  /**
+   * #1434 — the import Group the landing stands the rig in, as every import stands in one. A BVH
+   * holds no mesh, so it turns about the origin, as a glTF with none does (`computeGltfBoundsCenter`).
+   */
+  readonly group: { readonly id: string; readonly pivot: Vec3 };
   readonly dropped: BvhImportDropped;
 }
 
@@ -60,7 +65,7 @@ export interface BvhImportChainArgs {
   readonly text: string;
   readonly name?: string;
   /** Caller-supplied ids — tests pass deterministic ones. */
-  readonly ids?: { skeleton: string; layer: string };
+  readonly ids?: { skeleton: string; layer: string; group?: string };
   /**
    * Metres per BVH length unit. BVH declares no unit, so the road cannot derive one and whoever
    * produced the file has to say. Defaults to 1, what a file import has always assumed.
@@ -207,6 +212,7 @@ export function buildBvhImportOps(args: BvhImportChainArgs): BvhImportChainResul
     ops,
     skeletonId: ids.skeleton,
     motionId: ids.layer,
+    group: { id: args.ids?.group ?? uniqueId('bvh_group'), pivot: [0, 0, 0] },
     dropped: { restPositionTracks, restPositionMismatches, undeclaredTracks },
   };
 }
