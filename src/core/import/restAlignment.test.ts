@@ -501,6 +501,17 @@ describe('the offsets that go with an alignment', () => {
     ).toBeLessThan(1e-4);
   });
 
+  it('#1455 — the knee is NOT on the floor: the threshold sits below it', () => {
+    // On the untouched pair the knee sits at 0.29 of the rest's height above the
+    // floor — inside the 0.27–0.30 band the knees of every real rig measured
+    // fall in. A threshold that reached it would keep the whole shin on its own
+    // rest and stop absorbing a real pose gap there.
+    const src = specToThreeSkeleton(THREE_DIMENSIONAL).bones;
+    const trg = specToThreeSkeleton(YAWED).bones;
+    const { grounded } = alignedLocalOffsets(src, trg, MAP, new Quaternion());
+    expect([...grounded].sort()).toEqual(['t_foot', 't_toe']);
+  });
+
   it('#1455 — the SOURCE must stand on it too: a raised source foot is absorbed as before', () => {
     // The source's toe points straight up, so its foot's subtree leaves the
     // floor: the two rests no longer share a sole, and the gap is a pose again.
