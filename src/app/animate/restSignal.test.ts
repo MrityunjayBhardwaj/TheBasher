@@ -42,8 +42,18 @@ const yawed = (bs: typeof SOURCE) =>
     position: [b.position[2], b.position[1], -b.position[0]] as Vec3,
   }));
 
-/** Yawed, with the toe tilted 20° down: one bone of real anatomy to report. */
+/** Yawed, with the hand tilted 20° down: an arm resting lower than the source's,
+ *  the pose gap the retarget absorbs. The ARM since #1455 — a foot stands on the
+ *  floor in both rests and its gap is kept, which `TARGET_TOE_DOWN` pins. */
 const TARGET_ALIGNED = yawed(SOURCE).map((b) =>
+  b.name === 't_hand'
+    ? { ...b, position: [0, -0.2 * Math.sin(0.349), -0.2 * Math.cos(0.349)] as Vec3 }
+    : b,
+);
+
+/** Yawed, with the toe tilted 20° down: a foot whose joints sit differently under
+ *  a sole both rigs stand on (#1455). */
+const TARGET_TOE_DOWN = yawed(SOURCE).map((b) =>
   b.name === 't_toe'
     ? { ...b, position: [0.15 * Math.cos(0.349), -0.15 * Math.sin(0.349), 0] as Vec3 }
     : b,
@@ -100,18 +110,37 @@ function view(source: typeof SOURCE, target: typeof SOURCE, map = FULL_MAP) {
 
 describe('#960 — what a director is told when the rests could not be reconciled', () => {
   it('#866 — says nothing when the leftover anatomy is ABSORBED, and marks the row as such', () => {
-    // The toe is tilted 20° down, so the foot's rest disagrees with the source's
-    // by 20°. Before #866 that was the header's "20° rest gap at s_foot"; now the
-    // retarget folds it into the foot's offset, so there is nothing for a
+    // The hand is tilted 20° down, so the arm's rest disagrees with the source's
+    // by 20°. Before #866 that was the header's "20° rest gap at s_arm"; now the
+    // retarget folds it into the arm's offset, so there is nothing for a
     // director to act on — the row carries the fact, the header carries nothing.
     const v = view(SOURCE, TARGET_ALIGNED);
+    expect(v.restReconciliation.kind).toBe('aligned');
+    const arm = v.rows.find((r) => r.source === 's_arm');
+    expect(arm?.restGapDeg ?? 0, 'the fixture must actually disagree at the arm').toBeGreaterThan(
+      15,
+    );
+    expect(arm?.restGapAbsorbed, 'the aligned branch absorbs a gap it can').toBe(true);
+    expect(arm?.restGapGrounded, 'an arm does not stand on the floor').toBe(false);
+    expect(v.worstRestGap, 'an absorbed gap is not what is left').toBeNull();
+    expect(restSignal(v)).toBeNull();
+  });
+
+  it('#1455 — a foot both rigs stand on keeps its gap ON PURPOSE, marked grounded, and the header stays quiet', () => {
+    // The toe is tilted 20° down: the two feet disagree by 20° about where the
+    // ankle→ball chord points while both stand flat. Absorbing that tilted the
+    // X Bot's sole 18° toes-up on every step, so the retarget keeps it — and a
+    // kept gap is not a defect to report. Grounded, not absorbed: the row says
+    // which of the two happened.
+    const v = view(SOURCE, TARGET_TOE_DOWN);
     expect(v.restReconciliation.kind).toBe('aligned');
     const foot = v.rows.find((r) => r.source === 's_foot');
     expect(foot?.restGapDeg ?? 0, 'the fixture must actually disagree at the foot').toBeGreaterThan(
       15,
     );
-    expect(foot?.restGapAbsorbed, 'the aligned branch absorbs a gap it can').toBe(true);
-    expect(v.worstRestGap, 'an absorbed gap is not what is left').toBeNull();
+    expect(foot?.restGapGrounded, 'both rigs stand on this foot').toBe(true);
+    expect(foot?.restGapAbsorbed, 'a kept gap is not claimed as absorbed').toBe(false);
+    expect(v.worstRestGap, 'a deliberately kept gap is not a leftover to act on').toBeNull();
     expect(restSignal(v)).toBeNull();
   });
 
@@ -128,17 +157,20 @@ describe('#960 — what a director is told when the rests could not be reconcile
     for (let i = 0; i < 32; i++) {
       source.push(bone(`s_f${i}`, i === 0 ? 6 : source.length - 1, [0.02, 0, 0]));
     }
+    // The hand reversed, so the ARM opposes — not the toe it used to be (#1455):
+    // a foot both rigs stand on is kept before the antiparallel test is reached.
     const target = yawed(source).map((b) =>
-      b.name === 't_toe' ? { ...b, position: [-0.15, 0, 0] as Vec3 } : b,
+      b.name === 't_hand' ? { ...b, position: [0, 0, 0.2] as Vec3 } : b,
     );
     const map = Object.fromEntries(source.map((b) => [b.name, b.name.replace('s_', 't_')]));
     const v = view(source, target, map);
     expect(v.restReconciliation.kind, 'forty agreeing bones must carry one opposed one').toBe(
       'aligned',
     );
-    const foot = v.rows.find((r) => r.source === 's_foot');
-    expect(foot?.restGapAbsorbed, 'an opposed bone is refused, not absorbed').toBe(false);
-    expect(foot?.restGapDeg ?? 0).toBeGreaterThan(150);
+    const arm = v.rows.find((r) => r.source === 's_arm');
+    expect(arm?.restGapAbsorbed, 'an opposed bone is refused, not absorbed').toBe(false);
+    expect(arm?.restGapGrounded).toBe(false);
+    expect(arm?.restGapDeg ?? 0).toBeGreaterThan(150);
     const signal = restSignal(v);
     expect(signal).not.toBeNull();
     expect(signal!.branch).toBe('aligned');

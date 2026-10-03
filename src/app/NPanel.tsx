@@ -1736,16 +1736,21 @@ function BoneMapEditor({ nodeId }: { nodeId: string }) {
                   // about the two anatomies and a warn chip here would be a
                   // lying label of the kind #923 already removed once.
                   className={`font-mono text-[9px] ${
-                    !row.restGapAbsorbed && row.restGapDeg >= REST_GAP_ALARM_DEG
+                    !row.restGapAbsorbed &&
+                    !row.restGapGrounded &&
+                    row.restGapDeg >= REST_GAP_ALARM_DEG
                       ? 'text-warn'
                       : 'text-fg/40'
                   }`}
                   data-testid={`npanel-bone-map-gap-${row.source}`}
                   data-absorbed={row.restGapAbsorbed ? 'true' : 'false'}
+                  data-grounded={row.restGapGrounded ? 'true' : 'false'}
                   title={
                     row.restGapAbsorbed
                       ? `the two rigs point this bone ${row.restGapDeg.toFixed(1)}° apart at rest; absorbed by the retarget`
-                      : `the two rigs point this bone ${row.restGapDeg.toFixed(1)}° apart at rest, and it stays`
+                      : row.restGapGrounded
+                        ? `the two rigs point this bone ${row.restGapDeg.toFixed(1)}° apart at rest; both stand on it flat, so the retarget keeps the sole level and leaves this gap`
+                        : `the two rigs point this bone ${row.restGapDeg.toFixed(1)}° apart at rest, and it stays`
                   }
                 >
                   {row.restGapDeg.toFixed(0)}°

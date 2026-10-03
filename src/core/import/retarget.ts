@@ -808,8 +808,9 @@ export function retargetThree(args: RetargetThreeArgs): RetargetThreeResult {
         // alignment, chain ends included, so nothing here needs the clip's first
         // frame as a stand-in neutral — and since #866 every bone WITH a mapped
         // child also gets a per-bone direction term, so the two rests' remaining
-        // disagreement (the vendor pair's 21° arm droop, 30° at the feet) is
-        // absorbed rather than carried through the whole clip.
+        // disagreement (the vendor pair's 21° arm droop) is absorbed rather than
+        // carried through the whole clip. Bones both rests stand on — the feet —
+        // keep their own-rest delta instead, so the sole stays level (#1455).
         alignedLocalOffsets(sourceBoneObjs, targetBoneObjs, targetToSource, restAlignment.rotation)
           .offsets
       : restDirectionLocalOffsets(sourceBoneObjs, targetBoneObjs, targetToSource, sourceReference);

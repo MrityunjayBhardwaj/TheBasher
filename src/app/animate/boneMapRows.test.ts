@@ -476,19 +476,20 @@ describe('#960 — the panel names the bone the two rests disagree about', () =>
     expect(byName.get('Neck2')?.restGapDeg).toBeNull();
   });
 
-  it('#866 — the worst pairing is ABSORBED by the retarget, so nothing is left to lead with', () => {
+  it('#1455 — the worst pairing is a foot both rigs stand on, KEPT on purpose, so nothing is left to lead with', () => {
     // This row used to lead with LeftFoot -> foot.L at 45°, the worst pairing,
-    // because an average would hide it. The aligned branch now folds that gap
-    // into the foot's own offset: the row still carries the fact (a director
-    // judging the pairing can see the two anatomies differ), the header carries
-    // nothing, because there is nothing to act on.
+    // because an average would hide it. #866 then folded that gap into the
+    // foot's offset; #1455 keeps it instead, because both rigs stand on this
+    // foot and absorbing the chord tilts the sole. Either way the row carries the
+    // fact and the header carries nothing — and the row says WHICH happened.
     const view = boneMapView(posedGraph(POSED_MAP), 'rt');
     const foot = view!.rows.find((r) => r.source === 'LeftFoot');
     expect(foot?.restGapDeg ?? 0, 'the fixture must still disagree at the foot').toBeGreaterThan(
       30,
     );
-    expect(foot?.restGapAbsorbed, 'the aligned branch absorbs the foot').toBe(true);
-    expect(view!.worstRestGap, 'an absorbed gap is not what is left').toBeNull();
+    expect(foot?.restGapGrounded, 'both rigs stand on the foot, so its gap is kept').toBe(true);
+    expect(foot?.restGapAbsorbed, 'a kept gap is not claimed as absorbed').toBe(false);
+    expect(view!.worstRestGap, 'a deliberately kept gap is not what is left').toBeNull();
   });
 
   it('says nothing at all when the two rests agree', () => {
