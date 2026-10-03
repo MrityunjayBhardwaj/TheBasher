@@ -24,6 +24,7 @@ import type { DagState } from '../core/dag/state';
 import { armaturePoseOf } from '../nodes/bonePose';
 import type { BoneSpec, ObjectValue, PosedSkeletonValue } from '../nodes/types';
 import { resolveWorldTransform } from './resolveWorldTransform';
+import { hierarchyChildIds } from './sceneHierarchy';
 
 export interface SkeletonObject {
   /** The Object node — what a click on its bones selects. */
@@ -51,11 +52,16 @@ function refNode(binding: unknown): string | null {
 export function collectSkeletonObjects(state: DagState, cache?: EvaluatorCache): SkeletonObject[] {
   const out: SkeletonObject[] = [];
   const nodes = Object.values(state.nodes);
+  const parentOf = new Map<string, string>();
+  for (const node of nodes)
+    for (const child of hierarchyChildIds(node)) parentOf.set(child, node.id);
   for (const node of nodes) {
     if (node.type !== 'Object') continue;
     // Hidden in the outliner ⇒ hidden here too, as `SceneFromDAG` hides a top-level node.
     // Without this the eye toggle would blank the Object's slot and leave its bones standing.
-    if (node.meta?.hidden) continue;
+    // #1450 — and hidden when anything above it is: `SceneFromDAG` skips a hidden top-level node
+    // with everything under it, so the bones of a rig in a hidden import Group go with its meshes.
+    if (hiddenFromHere(state, node.id, parentOf)) continue;
     const skeletonId = refNode(node.inputs.data);
     if (!skeletonId) continue;
     try {
@@ -86,4 +92,18 @@ export function collectSkeletonObjects(state: DagState, cache?: EvaluatorCache):
     }
   }
   return out;
+}
+
+/** True when `id` or any scene-graph parent above it is hidden. Stops on a cycle. */
+function hiddenFromHere(
+  state: DagState,
+  id: string,
+  parentOf: ReadonlyMap<string, string>,
+): boolean {
+  const seen = new Set<string>();
+  for (let at: string | undefined = id; at !== undefined && !seen.has(at); at = parentOf.get(at)) {
+    if (state.nodes[at]?.meta?.hidden) return true;
+    seen.add(at);
+  }
+  return false;
 }

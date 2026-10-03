@@ -11,6 +11,7 @@ import type { DagState } from '../core/dag/state';
 import type { Op } from '../core/dag/types';
 import { buildBvhClipOps } from '../test-utils/bvhClip';
 import { buildSkeletonObjectOps } from '../core/import/skeletonObject';
+import { importGroupOp, parentEdge } from '../core/import/modelImport';
 import { buildDefaultDagState } from '../core/project/default';
 import { registerAllNodes } from '../nodes/registerAll';
 import { collectSkeletonObjects } from './skeletonObjects';
@@ -51,15 +52,23 @@ function apply(state: DagState, ops: readonly Op[]): DagState {
   return s;
 }
 
-/** The default project, one imported BVH, and (unless `inScene` is false) its skeleton Object. */
-function build({ inScene = true }: { inScene?: boolean } = {}): DagState {
+/**
+ * The default project, one imported BVH, and (unless `inScene` is false) its skeleton Object —
+ * standing under the scene, or in an import Group `grp` under it when `inGroup`.
+ */
+function build({
+  inScene = true,
+  inGroup = false,
+}: { inScene?: boolean; inGroup?: boolean } = {}): DagState {
   let s = buildDefaultDagState();
   const sceneNodeId = s.outputs.scene?.node;
   if (!sceneNodeId) throw new Error('default project has no scene output');
   s = apply(s, buildBvhClipOps({ text: BVH, ids: { skeleton: 'sk', clip: 'clip' } }).ops);
+  if (inGroup)
+    s = apply(s, [importGroupOp('grp', [0, 0, 0], [0, 0, 0]), parentEdge('grp', sceneNodeId)]);
   const { ops } = buildSkeletonObjectOps({
     skeletonId: 'sk',
-    sceneNodeId,
+    sceneNodeId: inGroup ? 'grp' : sceneNodeId,
     name: 'wave',
     clipId: 'clip',
     nameFollowsClip: true,
@@ -189,6 +198,19 @@ describe('collectSkeletonObjects', () => {
     const hidden: DagState = {
       ...s,
       nodes: { ...s.nodes, sk_object: { ...s.nodes.sk_object, meta: { hidden: true } } },
+    };
+    expect(collectSkeletonObjects(hidden)).toEqual([]);
+  });
+
+  // #1450 — the viewport skips a hidden top-level node with everything under it (`SceneFromDAG`),
+  // so a rig in a hidden import Group goes with the Group's meshes. The visible Group is the
+  // control: the same rig in it is drawn.
+  it('an Object in a hidden Group is not drawn, and in a visible one it is', () => {
+    const s = build({ inGroup: true });
+    expect(collectSkeletonObjects(s).map((o) => o.id)).toEqual(['sk_object']);
+    const hidden: DagState = {
+      ...s,
+      nodes: { ...s.nodes, grp: { ...s.nodes.grp, meta: { ...s.nodes.grp.meta, hidden: true } } },
     };
     expect(collectSkeletonObjects(hidden)).toEqual([]);
   });
