@@ -183,8 +183,9 @@ async function seedWorkflowGraph(page: import('@playwright/test').Page, frameEnd
  *
  * #543 — these steps are not slow by a fixed amount. Inside the app one OPFS call costs one render
  * frame (measured: 18.1 ms per call against an 18 ms frame; 0.1 ms on a bare page of the same
- * origin), and `OpfsStorage` makes several calls per operation. So Estimate takes about 60 render
- * frames and a 3-frame Submit about 120, whatever a frame costs. Headless Chromium draws with
+ * origin), and `OpfsStorage` makes several calls per operation. So Estimate takes about 43 render
+ * frames and a 3-frame Submit about 64, whatever a frame costs (60 and 120 before #1423 cached
+ * folder handles; measured in the editor, two runs each). Headless Chromium draws with
  * software GL, and on a CI runner a frame is ~125–150 ms, which put Submit past the fixed 15 s it
  * had while `test.slow()` raised only the test's total. The fixed waits passed or failed on the
  * runner's frame rate, not on the cost preview.
