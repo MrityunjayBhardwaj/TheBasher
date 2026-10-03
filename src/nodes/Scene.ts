@@ -30,6 +30,10 @@ export const SceneParams = z
     envIntensity: z.number().default(1),
     envRotationY: z.number().default(0),
     envBackground: z.boolean().default(false),
+    // #1287 — the scene's last frame at 60 fps: where playback loops and Render ▸ Animation
+    // stops (Blender's `scene.frame_end`). Defaulted to the 10 s every project played before it
+    // was stored, so an old project is unchanged. Read through `src/app/sceneRange.ts`.
+    frameEnd: z.number().int().min(1).default(600),
   })
   .passthrough();
 export type SceneParams = z.infer<typeof SceneParams>;

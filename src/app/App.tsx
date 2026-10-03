@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { AddMenu } from './AddMenu';
 import { boot } from './boot';
 import { Clock } from './Clock';
+import { SceneRangeSync } from './SceneRangeSync';
 import { Home } from './Home';
 import { KeyboardShortcuts } from './KeyboardShortcuts';
 import { Layout } from './Layout';
@@ -75,6 +76,7 @@ export function App() {
   return (
     <>
       <Clock />
+      <SceneRangeSync />
       <KeyboardShortcuts />
       <Layout />
       <AddMenu />

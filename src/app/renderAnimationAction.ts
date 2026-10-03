@@ -20,6 +20,7 @@ import { useDagStore } from '../core/dag/store';
 import { createEvaluatorCache, evaluate } from '../core/dag/evaluator';
 import { useProjectStore } from '../core/project/store';
 import { FRAMES_PER_SECOND, useTimeStore } from './stores/timeStore';
+import { sceneFrameEnd } from './sceneRange';
 import type { RenderOutputValue } from '../nodes/types';
 import { DEFAULT_RENDER_HEIGHT, DEFAULT_RENDER_WIDTH } from '../nodes/RenderOutput';
 import {
@@ -123,8 +124,10 @@ export async function renderAnimationToFile(
 
   const fps = FRAMES_PER_SECOND;
   const time = useTimeStore.getState();
-  // Inclusive of frame 0 AND the final duration frame.
-  const frameCount = Math.max(1, Math.floor(time.durationSeconds * fps) + 1);
+  // Inclusive of frame 0 AND the scene's End frame. #1287 — End is read off the graph being
+  // rendered (Blender's render reads `scene.frame_end`), not the UI store's playable range,
+  // which Video mode sizes to its composition while it is open.
+  const frameCount = sceneFrameEnd(state) + 1;
 
   // Pick the sink; MP4 → PNG-sequence fallback when WebCodecs is unavailable.
   let sink: FrameSink;

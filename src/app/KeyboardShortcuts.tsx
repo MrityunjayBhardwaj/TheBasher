@@ -42,6 +42,7 @@
 // next keyframes array locally (mirroring keyframeMutator's sort +
 // same-time-replace semantics) and emit a single setParam Op.
 
+import { sceneEndSeconds, setSceneEndAtPlayhead } from './sceneRange';
 import { useEffect } from 'react';
 import type { Op } from '../core/dag/types';
 import { useDagStore } from '../core/dag/store';
@@ -434,6 +435,20 @@ export function KeyboardShortcuts() {
       if (!cmd && e.altKey && !e.shiftKey && e.code === 'KeyA') {
         e.preventDefault();
         useSelectionStore.getState().clear();
+        return;
+      }
+
+      // #1287 — the scene's frame range, Blender's keys: Ctrl+End sets End at the playhead
+      // (anim.end_frame_set), Shift+Left / Shift+Right jump to the start / End (screen.frame_jump).
+      if (cmd && !e.shiftKey && !e.altKey && e.key === 'End') {
+        e.preventDefault();
+        setSceneEndAtPlayhead();
+        return;
+      }
+      if (!cmd && !e.altKey && e.shiftKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
+        e.preventDefault();
+        const dag = useDagStore.getState().state;
+        useTimeStore.getState().setTime(e.key === 'ArrowLeft' ? 0 : sceneEndSeconds(dag));
         return;
       }
 

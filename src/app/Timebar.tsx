@@ -19,12 +19,18 @@
 // exposed as the Tailwind `record` token (darkened to #cc2222 for the v0.6 #4
 // light palette so the armed border still clears SC 1.4.11 3:1).
 
+import { useDagStore } from '../core/dag/store';
 import { useAutoKeyStore } from './stores/autoKeyStore';
-import { useTimeStore } from './stores/timeStore';
+import { FRAMES_PER_SECOND, useTimeStore } from './stores/timeStore';
+import { sceneEndSeconds, setSceneEnd } from './sceneRange';
 
 export function Timebar() {
   const seconds = useTimeStore((s) => s.seconds);
   const duration = useTimeStore((s) => s.durationSeconds);
+  // #1287 — the playhead may go past End (Blender does not hold it inside the range).
+  const extent = useTimeStore((s) => s.extentSeconds);
+  // The scene's End, from the graph: the field edits the scene, whatever range is playing.
+  const sceneEnd = useDagStore((s) => sceneEndSeconds(s.state));
   const playing = useTimeStore((s) => s.playing);
   const autoKey = useAutoKeyStore((s) => s.enabled);
   return (
@@ -77,7 +83,7 @@ export function Timebar() {
       <input
         type="range"
         min={0}
-        max={duration}
+        max={Math.max(duration, extent)}
         step={0.01}
         value={seconds}
         onChange={(e) => useTimeStore.getState().setTime(parseFloat(e.target.value))}
@@ -87,6 +93,34 @@ export function Timebar() {
       <span className="w-24 text-right font-mono tabular-nums" data-testid="timebar-readout">
         {seconds.toFixed(2)}s / {duration.toFixed(2)}s
       </span>
+      {/* #1287 — the scene's End (Blender's Timeline header End). Committed on Enter or blur as
+          one undoable edit; `key` resets the draft when End changes elsewhere (undo, agent). */}
+      <label
+        className="flex items-center gap-1"
+        title="Scene End (Ctrl+End sets it at the playhead)"
+      >
+        End
+        <input
+          key={sceneEnd}
+          type="number"
+          min={1 / FRAMES_PER_SECOND}
+          step={1 / FRAMES_PER_SECOND}
+          defaultValue={sceneEnd.toFixed(2)}
+          onBlur={(e) => {
+            const typed = parseFloat(e.currentTarget.value);
+            if (Number.isFinite(typed)) setSceneEnd(typed);
+            // Show what End now is: a blank, a refused or a same-frame entry reads back the
+            // stored value rather than leaving the draft standing.
+            e.currentTarget.value = sceneEndSeconds(useDagStore.getState().state).toFixed(2);
+          }}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') e.currentTarget.blur();
+          }}
+          className="w-16 rounded border border-border bg-transparent px-1 font-mono tabular-nums"
+          data-testid="timebar-end"
+        />
+        s
+      </label>
     </div>
   );
 }

@@ -48,23 +48,31 @@ import { useThreeRef } from './character/threeRef';
 import { FRAMES_PER_SECOND, useTimeStore } from './stores/timeStore';
 import { resolveActiveCameraPoseAt } from './activeCamera';
 import { renderAnimationToFile } from './renderAnimationAction';
+import { buildSetSceneEndOps } from './sceneRange';
+import { applyOp } from '../core/dag';
 
 registerAllNodes();
 
-/** The example as a director opens it: it is stored native (#1424), so the load door changes nothing. */
+const FRAMES = 6;
+
+/** The example as a director opens it: it is stored native (#1424), so the load door changes
+ *  nothing. Its End is moved to frame FRAMES − 1 so the export is a handful of frames (#1287:
+ *  the export reads End off the graph it renders). */
 async function exampleState() {
   const project = await buildExampleProject('example_camera_path_ai_walk');
-  return project.state;
+  let state = project.state;
+  for (const op of buildSetSceneEndOps(state, (FRAMES - 1) / FRAMES_PER_SECOND))
+    state = applyOp(state, op).next;
+  return state;
 }
-
-const FRAMES = 6;
 
 describe('#1318 — Render ▸ Animation resolves the scene once per export', () => {
   beforeEach(() => {
     captured.poses = [];
     useThreeRef.setState({ gl: {} as never, scene: {} as never });
-    // A short timeline, so the export is a handful of frames: inclusive of 0 and the last.
-    useTimeStore.getState().setDuration((FRAMES - 1) / FRAMES_PER_SECOND);
+    // #1287 — the UI's playable range is something else, as while Video mode sizes it to a
+    // composition: the export follows the scene's End, not this.
+    useTimeStore.getState().setDuration(2);
     useTimeStore.getState().setTime(0);
   });
   afterEach(() => {

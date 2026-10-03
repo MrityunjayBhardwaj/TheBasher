@@ -49,13 +49,22 @@ export interface TimeStore {
   frame: number;
   /** Normalized 0..1 over the project duration. */
   normalized: number;
-  /** Total duration of the project's playable range. */
+  /** Total duration of the project's playable range: playback loops here. In 3D it is the
+   *  scene's End (#1287, `sceneRange.ts`); Video mode sizes it to the composition. */
   durationSeconds: number;
+  /** How far the playhead may go (#1287). Blender does not hold the playhead inside the frame
+   *  range, so content past End can be scrubbed to; the 3D timeline reaches to whichever ends
+   *  later, End or the content. Never below `durationSeconds`. */
+  extentSeconds: number;
   /** Whether the rAF clock is advancing time. */
   playing: boolean;
 
   setTime(seconds: number): void;
+  /** Set the playable range, and let the playhead reach exactly that far (Video mode). */
   setDuration(seconds: number): void;
+  /** #1287 — set the playable range (End) and how far past it the playhead may go. The playhead
+   *  is not moved by a change of End, as in Blender, unless it is now past the reach. */
+  setRange(endSeconds: number, extentSeconds: number): void;
   play(): void;
   pause(): void;
   toggle(): void;
@@ -68,6 +77,11 @@ function clampToDuration(seconds: number, duration: number): number {
   if (seconds < 0) return 0;
   if (seconds > duration) return duration;
   return seconds;
+}
+
+/** The playhead's reach: never short of the playable range. */
+function reachOf(duration: number, extent: number): number {
+  return Math.max(duration, Number.isFinite(extent) ? extent : 0);
 }
 
 function deriveFrame(seconds: number): number {
@@ -93,11 +107,12 @@ export const useTimeStore = create<TimeStore>((set, get) => ({
   frame: 0,
   normalized: 0,
   durationSeconds: DEFAULT_DURATION_SECONDS,
+  extentSeconds: DEFAULT_DURATION_SECONDS,
   playing: false,
 
   setTime(seconds) {
-    const { durationSeconds } = get();
-    const clamped = clampToDuration(seconds, durationSeconds);
+    const { durationSeconds, extentSeconds } = get();
+    const clamped = clampToDuration(seconds, reachOf(durationSeconds, extentSeconds));
     set({
       seconds: clamped,
       frame: deriveFrame(clamped),
@@ -113,9 +128,26 @@ export const useTimeStore = create<TimeStore>((set, get) => ({
     const clamped = clampToDuration(cur, next);
     set({
       durationSeconds: next,
+      extentSeconds: next,
       seconds: clamped,
       frame: deriveFrame(clamped),
       normalized: deriveNormalized(clamped, next),
+    });
+    mirrorFrame(deriveFrame(clamped));
+  },
+
+  setRange(endSeconds, extentSeconds) {
+    const end = Math.max(0.001, endSeconds);
+    const extent = reachOf(end, extentSeconds);
+    const { seconds: cur, durationSeconds, extentSeconds: prevExtent } = get();
+    if (end === durationSeconds && extent === prevExtent) return;
+    const clamped = clampToDuration(cur, extent);
+    set({
+      durationSeconds: end,
+      extentSeconds: extent,
+      seconds: clamped,
+      frame: deriveFrame(clamped),
+      normalized: deriveNormalized(clamped, end),
     });
     mirrorFrame(deriveFrame(clamped));
   },
@@ -133,15 +165,16 @@ export const useTimeStore = create<TimeStore>((set, get) => ({
   },
 
   tick(delta) {
-    const { playing, seconds, durationSeconds } = get();
+    const { playing, seconds, durationSeconds, extentSeconds } = get();
     if (!playing) return;
     let next = seconds + delta;
     // Loop at duration end so playback is observable in steady state without
-    // the user hitting reset every cycle.
+    // the user hitting reset every cycle. #1287 — a playhead already past End (scrubbed there)
+    // goes back to the start, as Blender's does.
     if (durationSeconds > 0 && next > durationSeconds) {
-      next = next % durationSeconds;
+      next = seconds >= durationSeconds ? 0 : next % durationSeconds;
     }
-    const clamped = clampToDuration(next, durationSeconds);
+    const clamped = clampToDuration(next, reachOf(durationSeconds, extentSeconds));
     set({
       seconds: clamped,
       frame: deriveFrame(clamped),

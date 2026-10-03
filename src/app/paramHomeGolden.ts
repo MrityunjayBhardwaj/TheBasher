@@ -22,6 +22,10 @@
 // is therefore: existing cells are frozen; new cells may join, in the same commit as the
 // param they record, and never with an edit to a cell already there.
 //
+// USED AGAIN (#1287): `Scene` appends `frameEnd=(unrouted)` — the scene's End is edited from the
+// Timebar (Blender's Timeline header), not an inspector section. `unrouted` 248 → 249, `routed`
+// untouched.
+//
 // USED AGAIN (#1210): `Object` appends `parentBone=(unrouted)` — the bone an Object is parented
 // to is written by the importer before any panel draws it (Blender shows it under Relations).
 // `unrouted` 236 → 237, `routed` untouched.
@@ -240,7 +244,7 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
   Scatter:
     '[mesh,driver,material] density=(unrouted) seed=(unrouted) bounds=(unrouted) scaleJitter=(unrouted) randomYaw=(unrouted)',
   Scene:
-    '[environment,layout] envSource=environment envIntensity=environment envRotationY=environment envBackground=environment',
+    '[environment,layout] envSource=environment envIntensity=environment envRotationY=environment envBackground=environment frameEnd=(unrouted)',
   // APPENDED at #638 — the face range. Unrouted like `muted`, and for the node's own
   // recorded reason: `SetMaterialOp` declares no inspector section at all, because its
   // reference authors this node in the graph editor and a titled empty card is the shape
@@ -394,4 +398,4 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
 // Merged with main (#1284 and its sibling on the AI track): +2 unrouted — `TrackTo.aimBone`, homed
 // like its sibling `aimNode`, and the other arrival counted by main's golden (236 → 238).
 //   types 90 · routed 144 · unrouted 246 + 2 = 248
-export const GOLDEN_TOTALS = { types: 90, routed: 144, unrouted: 248 } as const;
+export const GOLDEN_TOTALS = { types: 90, routed: 144, unrouted: 249 } as const;
