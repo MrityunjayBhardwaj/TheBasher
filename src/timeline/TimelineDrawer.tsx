@@ -144,7 +144,9 @@ export function TimelineDrawer() {
         >
           {open ? '▾' : '▴'}
         </button>
-        <div className="flex-1">
+        {/* min-w-0: the row is width-capped and clips, so the Timebar must shrink into it rather
+            than grow to its content (#1287's notice made the content wider than the island). */}
+        <div className="min-w-0 flex-1">
           <Timebar />
         </div>
       </div>

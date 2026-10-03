@@ -22,7 +22,9 @@
 import { useDagStore } from '../core/dag/store';
 import { useAutoKeyStore } from './stores/autoKeyStore';
 import { FRAMES_PER_SECOND, useTimeStore } from './stores/timeStore';
-import { sceneEndSeconds, setSceneEnd } from './sceneRange';
+import { useShallow } from 'zustand/react/shallow';
+import { sceneContentEnd, sceneEndSeconds, setSceneEnd } from './sceneRange';
+import { useEditorStore } from './stores/editorStore';
 
 export function Timebar() {
   const seconds = useTimeStore((s) => s.seconds);
@@ -31,6 +33,20 @@ export function Timebar() {
   const extent = useTimeStore((s) => s.extentSeconds);
   // The scene's End, from the graph: the field edits the scene, whatever range is playing.
   const sceneEnd = useDagStore((s) => sceneEndSeconds(s.state));
+  // #1287 — content that runs past End is said, not quietly cut: Blender leaves End alone when a
+  // longer clip arrives, and so does Basher, but it names what runs past and offers to extend.
+  const past = useDagStore(
+    useShallow((s) => {
+      const end = sceneContentEnd(s.state);
+      return { seconds: end.seconds, label: end.label };
+    }),
+  );
+  const space = useEditorStore((s) => s.space);
+  const runsPast = space !== 'video' && past.seconds > sceneEnd + 0.5 / FRAMES_PER_SECOND;
+  const pastSentence =
+    `${past.label ?? 'Animation'} runs to ${past.seconds.toFixed(2)}s, past End ` +
+    `(${sceneEnd.toFixed(2)}s): playback loops and Render ▸ Animation stops at End. ` +
+    'Extend moves End to where it ends.';
   const playing = useTimeStore((s) => s.playing);
   const autoKey = useAutoKeyStore((s) => s.enabled);
   return (
@@ -87,10 +103,13 @@ export function Timebar() {
         step={0.01}
         value={seconds}
         onChange={(e) => useTimeStore.getState().setTime(parseFloat(e.target.value))}
-        className="flex-1"
+        className="min-w-[4rem] flex-1"
         data-testid="timebar-scrub"
       />
-      <span className="w-24 text-right font-mono tabular-nums" data-testid="timebar-readout">
+      <span
+        className="w-24 shrink-0 whitespace-nowrap text-right font-mono tabular-nums"
+        data-testid="timebar-readout"
+      >
         {seconds.toFixed(2)}s / {duration.toFixed(2)}s
       </span>
       {/* #1287 — the scene's End (Blender's Timeline header End). Committed on Enter or blur as
@@ -121,6 +140,20 @@ export function Timebar() {
         />
         s
       </label>
+      {runsPast && (
+        // One compact control, because the island is narrow: what is wrong (⚠) and the fix
+        // (Extend to where the content ends). Who runs past, and what End does, are in its label.
+        <button
+          type="button"
+          data-testid="timebar-past-end"
+          aria-label={pastSentence}
+          title={pastSentence}
+          onClick={() => setSceneEnd(past.seconds)}
+          className="shrink-0 whitespace-nowrap rounded border border-warn/60 px-1.5 py-0.5 text-warn hover:bg-warn/15"
+        >
+          ⚠ Extend to {past.seconds.toFixed(2)}s
+        </button>
+      )}
     </div>
   );
 }
