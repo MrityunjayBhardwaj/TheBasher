@@ -25,6 +25,7 @@
 // what was formerly clearChannel; Simplify opens the SimplifyPopover). Track
 // filters + transport buttons + Cut/Copy/Paste land later (W7+).
 
+import { useTimelineSpan } from './timelineSpan';
 import { useState } from 'react';
 import { useTimeStore, FRAMES_PER_SECOND } from '../app/stores/timeStore';
 import { useViewportStore } from '../app/stores/viewportStore';
@@ -56,7 +57,8 @@ const TOOLBAR_HEIGHT_PX = 28;
 export function TimelineDrawer() {
   const open = useViewportStore((s) => s.timelineDrawerOpen);
   const toggle = useViewportStore((s) => s.toggleTimelineDrawer);
-  const duration = useTimeStore((s) => s.durationSeconds);
+  // #1287 — past the scene's End when content runs longer; that stretch is shaded.
+  const { span: duration, rangeEnd } = useTimelineSpan();
   const frame = useTimeStore((s) => s.frame);
   const activeTab = useTimelineDockStore((s) => s.activeTab);
   const setActiveTab = useTimelineDockStore((s) => s.setActiveTab);
@@ -89,7 +91,7 @@ export function TimelineDrawer() {
               className="absolute inset-0"
               style={{ display: activeTab === 'dopesheet' ? 'flex' : 'none' }}
             >
-              <TimelineCanvas duration={duration} />
+              <TimelineCanvas duration={duration} rangeEnd={rangeEnd} />
             </div>
             <div
               data-testid="curve-editor-pane"

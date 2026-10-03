@@ -158,6 +158,11 @@ const MUTED_ROW_ALPHA = 0.35;
  *  Decorative like LABEL_MUTED/LABEL_SOLO — NOT gated PALETTE tokens (the 6-key
  *  PALETTE contrast contract must stay exactly 6 keys). */
 const GLYPH_OFF = '#4b5157';
+/** #1287 — the stretch past the scene's End, dimmed the way Blender's animation editors shade
+ *  outside the frame range: what lies there is still drawn, and reads as not played. Decorative
+ *  like LABEL_MUTED (not a gated PALETTE token). */
+const OUT_OF_RANGE_SHADE = 'rgba(0, 0, 0, 0.5)';
+const RANGE_END_LINE = '#5a5f66';
 const GLYPH_MUTE_ON = '#e0774d';
 
 // The dopesheet-family layout metrics are single-sourced in timelineSettings.json
@@ -311,6 +316,8 @@ export function paintStaticLayer(
   activeChannelId: string | null,
   activeKeyframe?: { channelId: string; time: number } | null,
   view: TimelineView = DEFAULT_VIEW,
+  /** #1287 — the scene's End, when the timeline reaches past it (content runs longer). */
+  rangeEndSeconds?: number,
 ): number {
   const { cssW, cssH } = dims;
   ctx.clearRect(0, 0, cssW, cssH);
@@ -483,10 +490,25 @@ export function paintStaticLayer(
     }
   }
 
+  // ── #1287 — past End: shaded over everything, ruler included, with a line at End ──
+  if (rangeEndSeconds !== undefined && rangeEndSeconds < durationSeconds) {
+    const endX = Math.max(LABEL_GUTTER_PX, Math.round(fx(rangeEndSeconds * FPS)));
+    if (endX < cssW) {
+      ctx.fillStyle = OUT_OF_RANGE_SHADE;
+      ctx.fillRect(endX, 0, cssW - endX, cssH);
+      ctx.strokeStyle = RANGE_END_LINE;
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(endX + 0.5, 0);
+      ctx.lineTo(endX + 0.5, cssH);
+      ctx.stroke();
+    }
+  }
+
   return rendered;
 }
 
-export function TimelineCanvas({ duration }: { duration: number }) {
+export function TimelineCanvas({ duration, rangeEnd }: { duration: number; rangeEnd?: number }) {
   const nodes = useDagStore((s) => s.state.nodes);
   const activeChannelId = useTimelineSelection((s) => s.activeChannelId);
   const activeKeyframeId = useTimelineSelection((s) => s.activeKeyframeId);
@@ -711,7 +733,16 @@ export function TimelineCanvas({ duration }: { duration: number }) {
     // this same offscreen, so the static layer must live there first.
     offCtx.setTransform(1, 0, 0, 1, 0, 0);
     offCtx.scale(dpr, dpr);
-    paintStaticLayer(offCtx, rows, dims, durationSeconds, activeChannelId, activeKeyframeId, view);
+    paintStaticLayer(
+      offCtx,
+      rows,
+      dims,
+      durationSeconds,
+      activeChannelId,
+      activeKeyframeId,
+      view,
+      rangeEnd,
+    );
 
     visCtx.setTransform(1, 0, 0, 1, 0, 0);
     visCtx.clearRect(0, 0, backingW, backingH);
@@ -727,7 +758,7 @@ export function TimelineCanvas({ duration }: { duration: number }) {
     // overwritten by this repaint; reset the ghost idle-guard so the next
     // tick does not "restore" under a stale ghost x that no longer exists.
     lastGhostXRef.current = -1;
-  }, [nodes, activeChannelId, activeKeyframeId, durationSeconds, dims, dpr, rows, view]);
+  }, [nodes, activeChannelId, activeKeyframeId, durationSeconds, dims, dpr, rows, view, rangeEnd]);
 
   // ── C4: the imperative rAF playhead loop (the perf-critical hot path) ──
   //

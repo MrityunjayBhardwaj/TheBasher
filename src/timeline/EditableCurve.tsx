@@ -234,6 +234,8 @@ export function EditableCurve({
   const plotY1 = h;
   const dur = Math.max(duration, 0.0001);
   const totalFrames = Math.max(1, Math.round(dur * FPS));
+  // #1287 — the scene's End; the plot past it is shaded, as the dopesheet's is.
+  const rangeEnd = useTimeStore((st) => st.durationSeconds);
   const plotW = Math.max(plotX1 - plotX0, 1);
 
   // Value domain over every axis's keyframe values + handle extents, padded,
@@ -740,6 +742,29 @@ export function EditableCurve({
               />
             );
           }),
+        )}
+
+        {/* #1287 — past End: shaded, with a line at End (the dopesheet's treatment) */}
+        {rangeEnd < dur && timeToX(rangeEnd) < plotX1 && (
+          <g data-testid="curve-out-of-range">
+            <rect
+              x={Math.max(plotX0, timeToX(rangeEnd))}
+              y={0}
+              width={plotX1 - Math.max(plotX0, timeToX(rangeEnd))}
+              height={plotY1}
+              fill="rgba(0, 0, 0, 0.5)"
+              pointerEvents="none"
+            />
+            <line
+              x1={timeToX(rangeEnd)}
+              y1={0}
+              x2={timeToX(rangeEnd)}
+              y2={plotY1}
+              stroke="#5a5f66"
+              strokeWidth={1}
+              pointerEvents="none"
+            />
+          </g>
         )}
 
         {/* playhead */}

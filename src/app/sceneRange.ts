@@ -22,6 +22,9 @@
 import type { DagState } from '../core/dag/state';
 import type { Op } from '../core/dag/types';
 import { useDagStore } from '../core/dag/store';
+import { buildNlaLanes } from '../timeline/nlaLaneModel';
+import { isKeyframeChannelNode } from './animate/paramAnimationState';
+import { nodeDisplayName } from './sceneTreeWalk';
 import { FRAMES_PER_SECOND, useTimeStore } from './stores/timeStore';
 
 /** 10 s at 60 fps: what every project played before End was stored, so an old one is unchanged. */
@@ -45,6 +48,47 @@ export function sceneFrameEnd(state: DagState): number {
 /** The scene's End in seconds: where playback loops and the animation render stops. */
 export function sceneEndSeconds(state: DagState): number {
   return sceneFrameEnd(state) / FRAMES_PER_SECOND;
+}
+
+/** Where the scene's animated content ends, and what ends there (null when nothing does). */
+export interface ContentEnd {
+  readonly seconds: number;
+  /** The node whose content ends last, and its name as the outliner shows it. */
+  readonly nodeId: string | null;
+  readonly label: string | null;
+}
+
+/**
+ * #1287 — the latest time anything in the scene animates to: a keyframe on any channel, the end
+ * of any live NLA strip (the lane model's own placed span), and the length of any motion clip
+ * (a clip plays from 0 for its `duration`). Read off params, never by evaluating, so it costs no
+ * retarget. Content that ends before End leaves the range alone; content past it is what the
+ * timeline reaches to and the notice names.
+ */
+export function sceneContentEnd(state: DagState): ContentEnd {
+  let best: { seconds: number; nodeId: string } | null = null;
+  const consider = (seconds: number, nodeId: string) => {
+    if (Number.isFinite(seconds) && (best === null || seconds > best.seconds))
+      best = { seconds, nodeId };
+  };
+  for (const node of Object.values(state.nodes)) {
+    if (isKeyframeChannelNode(node)) {
+      const keys = (node.params as { keyframes?: readonly { time?: unknown }[] }).keyframes ?? [];
+      for (const k of keys) if (typeof k.time === 'number') consider(k.time, node.id);
+    } else if (node.type === 'AnimationClip') {
+      const duration = (node.params as { duration?: unknown }).duration;
+      if (typeof duration === 'number') consider(duration, node.id);
+    }
+  }
+  for (const row of buildNlaLanes(state.nodes).rows)
+    for (const strip of row.strips) if (strip.live) consider(strip.end, strip.stripId);
+  const found = best as { seconds: number; nodeId: string } | null;
+  if (!found) return { seconds: 0, nodeId: null, label: null };
+  return {
+    seconds: found.seconds,
+    nodeId: found.nodeId,
+    label: nodeDisplayName(state.nodes, found.nodeId),
+  };
 }
 
 /** The op that moves End to `seconds` (rounded to a frame, at least one), or none when it
