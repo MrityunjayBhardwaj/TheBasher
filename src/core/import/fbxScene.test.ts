@@ -74,7 +74,7 @@ async function imported(file: string): Promise<{ state: DagState; notices: reado
     await buildFbxImportOps({
       data: bytes(file),
       name: 'scene',
-      ids: { skeleton: 'sk', layer: 'motion', group: 'grp' },
+      ids: { skeleton: 'sk', layer: 'motion' },
       storeImage: () => Promise.resolve('img'),
     }),
     'scene',
@@ -246,19 +246,19 @@ describe('#1434 step 2 / #1440 — each object’s FIELDS read Blender’s split
 });
 
 describe('#1434 step 2 — the hierarchy is the file’s, as edges', () => {
-  it('each object hangs under its Blender parent; a top-level one under the import Group', async () => {
+  it('each object hangs under its Blender parent; a top-level one under the scene', async () => {
     const { state } = await imported(`${SCENE}.fbx`);
-    // #1434 — the Group stands under the scene (user decision: an FBX lands in one, as a glTF does),
-    // and holds the skeleton's Object with every top-level node.
-    expect(parentOf(state, 'grp')).toBe(state.outputs.scene!.node);
-    expect(parentOf(state, skeletonObjectId('sk'))).toBe('grp');
+    // #1451 — no wrapper Group: the skeleton's Object and every top-level node stand in the scene,
+    // as Blender's FBX importer stands them.
+    const scene = state.outputs.scene!.node;
+    expect(parentOf(state, skeletonObjectId('sk'))).toBe(scene);
     for (const name of PLACED) {
       const blender = ORACLE.objects[name];
       const parent = parentOf(state, named(state, name).id);
       if (blender.parent_type === 'BONE') {
         expect(parent, name).toBe(skeletonObjectId('sk'));
       } else if (blender.parent === null) {
-        expect(parent, name).toBe('grp');
+        expect(parent, name).toBe(scene);
       } else {
         expect(parent, name).toBe(named(state, blender.parent).id);
       }

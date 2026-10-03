@@ -15,7 +15,6 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { __resetRegistryForTests, applyOp, evaluate } from '../core/dag';
 import type { DagState } from '../core/dag/state';
-import { emptyDagState } from '../core/dag/state';
 import { useDagStore } from '../core/dag/store';
 import { buildNativeGltfImportOps } from '../core/import/nativeGltfImport';
 import { registerAllNodes } from '../nodes/registerAll';
@@ -30,6 +29,7 @@ import { useSelectionStore } from '../app/stores/selectionStore';
 import { useTimelineSelection } from './timelineSelection';
 import { layerRowId } from './layerChannelRows';
 import { CurveEditor } from './CurveEditor';
+import { sceneOnlyState } from '../test-utils/sceneOnlyState';
 
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -72,7 +72,7 @@ async function barWithBone0Position() {
     storeImage: async () => 'img',
   });
   if ('refused' in result) throw new Error(result.refused);
-  const state = result.ops.slice(0, -1).reduce((s, op) => applyOp(s, op).next, emptyDagState());
+  const state = result.ops.reduce((s, op) => applyOp(s, op).next, sceneOnlyState());
   const armature = Object.values(state.nodes).find(
     (n) =>
       state.nodes[(n.inputs.data as { node: string } | undefined)?.node ?? '']?.type === 'Skeleton',

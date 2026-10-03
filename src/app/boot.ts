@@ -914,9 +914,15 @@ export function boot(): Promise<void> {
         if ('refused' in result) {
           throw new Error(`native import refused: ${result.refused} (${result.issue})`);
         }
-        dag.dispatchAtomic(result.ops, 'user', `import gltf (native): ${assetRef}`);
+        // #1451 — linked into the active collection, as every import door links what it makes.
+        const { intoActiveCollection } = await import('./collections');
+        dag.dispatchAtomic(
+          intoActiveCollection(dag.state, result.ops),
+          'user',
+          `import gltf (native): ${assetRef}`,
+        );
         // #1384 — and what the import left behind on purpose, for a spec to read.
-        return { groupId: result.groupId, objectIds: result.objectIds, notices: result.notices };
+        return { objectIds: result.objectIds, notices: result.notices };
       };
       // P7.9 Wave D Task 8 — real-path ingestion seam (issue #110). Drives the
       // SHARED interactive chokepoint `ingestAndImportGltf`: resolve the entry

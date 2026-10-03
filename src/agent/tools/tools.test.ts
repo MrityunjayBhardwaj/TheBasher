@@ -512,28 +512,26 @@ describe('library.import tool', () => {
       expect(types).toContain('PoseLayer');
       expect(types).toContain('Object');
       expect(types).not.toContain('GltfAsset');
-      // #1434 — the Object stands in the import's Group, and the Group in the scene the agent's
-      // fork holds, as every import lands.
+      // #1451 — the Object stands in the scene the agent's fork holds, with no wrapper Group, as
+      // Blender's importer stands it; no collection is active, so it is linked into none.
       // They apply to the fork as they stand — the Diff the user accepts is this.
       let applied = buildSceneBaseline();
       for (const op of result.ops) applied = applyOp(applied, op).next;
       const objects = Object.values(applied.nodes).filter((n) => n.type === 'Object');
       expect(objects).toHaveLength(1);
-      const groups = Object.values(applied.nodes).filter((n) => n.type === 'Group');
-      expect(groups).toHaveLength(1);
-      expect(groups[0].inputs.children).toEqual([{ node: objects[0].id, socket: 'out' }]);
+      expect(Object.values(applied.nodes).some((n) => n.type === 'Group')).toBe(false);
       expect(applied.nodes.scene.inputs.children).toContainEqual({
-        node: groups[0].id,
+        node: objects[0].id,
         socket: 'out',
       });
       expect(result.text).toMatch(/as a motion/);
-      expect(result.text).toContain(`in a Group (${groups[0].id})`);
+      expect(result.text).not.toMatch(/Group|collection/);
       expect(result.text).toMatch(/not bound to a character/);
     },
   );
 
   // #1434 — an FBX with no bone is a model: the text says so, and the ops hold no rig.
-  it('an FBX with no bone imports as a model, in a Group, with no skeleton', async () => {
+  it('an FBX with no bone imports as a model, standing in the scene, with no skeleton', async () => {
     const assetRef = 'user-imports/rigless/rigless.fbx';
     await currentStorage.write(
       assetRef,

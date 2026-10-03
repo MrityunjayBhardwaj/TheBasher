@@ -15,9 +15,11 @@ import {
   collectionMembersOf,
   hiddenByCollection,
   intoActiveCollection,
+  newCollectionOps,
   sceneCollectionsOf,
   setActiveCollectionOp,
 } from './collections';
+import { buildDeleteNodesOps } from './sceneNodeActions';
 import { buildSceneTreeRows } from './sceneTreeWalk';
 import { collectSkeletonObjects } from './skeletonObjects';
 import { resolveWorldTransform } from './resolveWorldTransform';
@@ -155,5 +157,34 @@ describe('#1451 — the active collection', () => {
         to: { node: 'col', socket: 'members' },
       })),
     );
+  });
+});
+
+// #1451 — Blender's outliner New Collection, and what a delete does to membership: a collection
+// deleted leaves its objects in the scene, and an object deleted leaves no edge behind.
+describe('#1451 — making and deleting collections', () => {
+  it('New Collection names them as Blender does: Collection, then Collection.001', () => {
+    let s = buildDefaultDagState();
+    const names: string[] = [];
+    for (let i = 0; i < 3; i++) {
+      const made = newCollectionOps(s)!;
+      s = apply(s, made.ops);
+      names.push(s.nodes[made.collectionId].meta!.name!);
+    }
+    expect(names).toEqual(['Collection', 'Collection.001', 'Collection.002']);
+    expect(sceneCollectionsOf(s)).toHaveLength(3);
+  });
+
+  it('a deleted collection leaves its member standing in the scene', () => {
+    const s = apply(build(), buildDeleteNodesOps(build(), ['col']));
+    expect(s.nodes.col).toBeUndefined();
+    expect(s.nodes.sk_object).toBeDefined();
+    expect(sceneCollectionsOf(s)).toEqual([]);
+  });
+
+  it('a deleted member leaves its collection holding nothing', () => {
+    const s = apply(build(), buildDeleteNodesOps(build(), ['sk_object']));
+    expect(s.nodes.sk_object).toBeUndefined();
+    expect(collectionMembersOf(s, 'col')).toEqual([]);
   });
 });

@@ -58,6 +58,8 @@ import { convertSpecGlossEntry } from './specGlossIngest';
 import { rebindOrphanMaterialsInEntry } from '../../core/import/rebindOrphanMaterials';
 import { getStorage } from '../boot';
 import { writeProjectImage } from '../../core/project/projectImages';
+import type { DagState } from '../../core/dag/state';
+import { intoActiveCollection } from '../collections';
 import { useProjectStore } from '../../core/project/store';
 import {
   opfsSiblingPath,
@@ -170,8 +172,11 @@ export function summarizeGltfEntry(bytes: Uint8Array): {
  */
 export async function buildGltfImportOpsFromOpfs(
   path: string,
-  sceneNodeId: string,
+  // #1451 — the state the import lands in: its scene, and the active collection it links into.
+  state: DagState,
 ): Promise<GltfImportRoadResult> {
+  const sceneNodeId = state.outputs.scene?.node;
+  if (!sceneNodeId) throw new Error('import failed: project has no scene output');
   const storage = await getStorage();
   const bytes = await storage.read(path);
   // Detach a non-shared ArrayBuffer view for the importer. Uint8Array.buffer
@@ -197,7 +202,9 @@ export async function buildGltfImportOpsFromOpfs(
       issue: '#1063',
     };
   }
-  if (!('refused' in native)) return { road: 'native', ...native };
+  // #1451 — every Object it makes linked into the active collection, as Blender's importer links them.
+  if (!('refused' in native))
+    return { road: 'native', ...native, ops: intoActiveCollection(state, native.ops) };
   // #1053 — native or refused, never split and never a second road: an import the native reader
   // cannot hold is refused whole, by the name it gave. A skinned file was the first to be refused
   // this way (#1205, user decision 2026-09-26); every file is now, and the issue named on the
@@ -249,7 +256,7 @@ export async function importGltfFromOpfs(path: string): Promise<void> {
       useAssetErrorStore.getState().report(path, 'import failed: project has no scene output');
       return;
     }
-    const result = await buildGltfImportOpsFromOpfs(path, sceneRef.node);
+    const result = await buildGltfImportOpsFromOpfs(path, dag.state);
     if (result.road === 'refused') {
       useAssetErrorStore.getState().report(path, refusalNotice(result.nativeRefusal));
       return;

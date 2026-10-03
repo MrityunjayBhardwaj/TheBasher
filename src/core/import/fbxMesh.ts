@@ -39,16 +39,7 @@
 //      (`skinIntoArmatureSpace`, the same rest re-skin for glTF); src/core/import/modelImport.ts
 //      (`withProjectImages`, the images); issues #1429, #1430, #1434.
 
-import {
-  Box3,
-  BufferAttribute,
-  Matrix4,
-  Vector3,
-  type Color,
-  type Material,
-  type Mesh,
-  type Object3D,
-} from 'three';
+import { Matrix4, Vector3, type Color, type Material, type Mesh, type Object3D } from 'three';
 import type { Group, SkinnedMesh } from 'three';
 import { COLOR_LAYER, MATERIAL_INDEX, uvLayerName } from '../../nodes/attributes';
 import { SKIN_SET_WIDTH, skinPointLayers } from '../../nodes/skinInfluences';
@@ -134,12 +125,6 @@ export interface FbxMeshesRead {
   readonly images: readonly FbxImage[];
   /** What was left out, each said once, in words a director can act on. Empty when nothing was. */
   readonly notices: readonly string[];
-  /**
-   * #1434 — the centre of the box around every mesh read, where the file draws it at load, in Y-up
-   * metres: the import Group's pivot, as the glTF road's is the centre of its meshes' box
-   * (`computeGltfBoundsCenter`). A skinned mesh counts at its bind; the origin when there is none.
-   */
-  readonly centre: Vec3;
 }
 
 /**
@@ -159,7 +144,6 @@ export function readFbxMeshes(
   const meshes: FbxMeshRead[] = [];
   const notices: string[] = [];
   const images = new ImageTable();
-  const box = new Box3();
   group.traverse((node) => {
     const mesh = node as Mesh;
     if (!mesh.isMesh) return;
@@ -190,16 +174,8 @@ export function readFbxMeshes(
     }
     if (!skinned) meshOf?.set(mesh, meshes.length);
     meshes.push({ name, ...read, materials: materials.map(({ slot }) => slot) });
-    // Read off the points, never written back: the loader's geometry is not this pass's to change.
-    const points = mesh.geometry.getAttribute('position');
-    if (points instanceof BufferAttribute) {
-      box.union(new Box3().setFromBufferAttribute(points).applyMatrix4(mesh.matrixWorld));
-    }
   });
-  const centre: Vec3 = box.isEmpty()
-    ? [0, 0, 0]
-    : (box.getCenter(new Vector3()).multiplyScalar(metresPerUnit).toArray() as Vec3);
-  return { meshes, images: images.list, notices, centre };
+  return { meshes, images: images.list, notices };
 }
 
 /** What the loader patch records for each texture the file links to a material (`basher #1434`). */

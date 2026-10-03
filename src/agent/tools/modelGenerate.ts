@@ -133,7 +133,7 @@ export const modelGenerateTool: ToolDefinition<ModelGenerateArgs> = {
 
     // V7 — the FORKED state, never the live store. The tool returns ops for the
     // Diff; the director accepts before anything in the graph changes.
-    const chain = await buildGltfImportOpsFromOpfs(opfsPath, sceneRef.node);
+    const chain = await buildGltfImportOpsFromOpfs(opfsPath, ctx.dagState);
     // #1053 — a file the native reader refused is not imported at all.
     if (chain.road === 'refused') {
       return {
@@ -141,7 +141,7 @@ export const modelGenerateTool: ToolDefinition<ModelGenerateArgs> = {
         text: `Error: generated "${args.name ?? args.prompt}" (task ${taskId}) was saved to ${opfsPath} but not imported — ${refusalNotice(chain.nativeRefusal)}.`,
       };
     }
-    const landed = `native geometry under Group ${chain.groupId}`;
+    const landed = 'native geometry, standing where the file puts it';
 
     return {
       ops: chain.ops,

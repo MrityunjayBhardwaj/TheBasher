@@ -5,8 +5,8 @@
 // motion as keys on a base pose layer (#1211). #1429 — an FBX may also bring meshes, which stand
 // with the skeleton (`motionImportOps`); such a file is a character and is not bound onto another
 // (`landImportedMotion`). #1434 — an FBX with no bone is a model: its meshes and empties, with no
-// skeleton and nothing to bind. Every BVH and FBX import lands in an import Group, as a glTF does,
-// whatever it holds. A BVH is motion only. Until now they were reachable
+// skeleton and nothing to bind. #1451 — every import stands where Blender's does, with no wrapper,
+// linked into the active collection. A BVH is motion only. Until now they were reachable
 // only through the `__basher_importBvh` / `__basher_importFbx` dev seams
 // (boot.ts:240-255). This module is the missing INGESTION SURFACE: read the
 // OPFS bytes a drop/picker wrote, decode them per-format, build the op chain,
@@ -34,9 +34,9 @@ import type { Op } from '../../core/dag/types';
 import { buildBvhImportOps } from '../../core/import/bvhImportChain';
 import { buildFbxImportOps } from '../../core/import/fbxImportChain';
 import { buildSkeletonObjectOps, skeletonObjectId } from '../../core/import/skeletonObject';
-import { importGroupOp, parentEdge } from '../../core/import/modelImport';
+import { activeCollectionOf, intoActiveCollection } from '../collections';
 import type { FbxImportChainResult } from '../../core/import/fbxImportChain';
-import type { BoneSpec, Vec3 } from '../../nodes/types';
+import type { BoneSpec } from '../../nodes/types';
 import { getStorage } from '../boot';
 import { formatAssetError, useAssetErrorStore } from '../stores/assetErrorStore';
 import { useImportRefreshStore } from '../stores/importRefreshStore';
@@ -65,16 +65,16 @@ export type MotionImportResult =
        * rig with meshes or empties beside it: it is not bound onto another, which would hide it.
        */
       readonly kind: 'motion' | 'character';
-      /** #1434 — the import Group the file stands in. */
-      readonly groupId: string;
+      /** #1451 — the collection the import linked its objects into, or null for the scene itself. */
+      readonly collectionId: string | null;
       /** #1429 — how many meshes the file brought with its skeleton. */
       readonly meshCount: number;
     })
   | {
       /** #1434 — an FBX with no bone: no skeleton, no motion, nothing to bind. */
       readonly kind: 'model';
-      /** The import Group its meshes and empties stand in. */
-      readonly groupId: string;
+      /** #1451 — the collection the import linked its objects into, or null for the scene itself. */
+      readonly collectionId: string | null;
       readonly meshCount: number;
     };
 
@@ -120,7 +120,7 @@ function skeletonObjectOps(
   layerId: string,
   // #1101 — the name the import gave the motion, so the Object and its motion read the same.
   name: string,
-  // #1434 — what the Object hangs under: the import's Group.
+  // The scene node the Object stands under.
   parentId: string,
 ): Op[] {
   const skeleton = ops.find((op) => op.type === 'addNode' && op.nodeId === skeletonId);
@@ -181,13 +181,12 @@ export async function buildMotionImportOpsFromOpfs(
   );
 }
 
-/** A BVH's built import: a motion, and nothing of a scene but the Group it lands in. */
+/** A BVH's built import: a motion, and nothing of a scene. */
 interface BuiltBvh {
   readonly kind: 'motion';
   readonly ops: Op[];
   readonly skeletonId: string;
   readonly motionId: string;
-  readonly group: { readonly id: string; readonly pivot: Vec3 };
 }
 
 /**
@@ -195,12 +194,13 @@ interface BuiltBvh {
  * FBX's) meshes and empties, which may hang under that Object and so go after it. Every FBX door
  * takes this, the dev seam included, so no door imports the rig and drops the meshes.
  *
- * #1434 — every import lands in an import Group under the scene, as a glTF does, whatever the file
- * is (`FbxImportKind`): a MOTION stands its rig there and is bound by its landing (the bind then
- * hides the Group, which holds nothing else — `standInHideTarget`); a CHARACTER stands rig, meshes
- * and empties there; a MODEL its meshes and empties, with no rig at all. A BVH is a motion. The Group
- * sits at the origin and turns about the meshes' centre, the origin when there are none
- * (`importGroupOp`), so it moves nothing the file placed.
+ * #1451 — where Blender puts an import (`io_scene_fbx/import_fbx.py:2777` and `:2921`,
+ * `io_anim_bvh/import_bvh.py:350` and `:424`): every object the file makes stands in the scene where
+ * the file hangs it, with no wrapper, and is linked into the ACTIVE COLLECTION
+ * (`intoActiveCollection`) — membership, never a transform. By what the file is (#1434,
+ * `FbxImportKind`): a MOTION stands its rig and is bound by its landing (the bind hides the rig); a
+ * CHARACTER stands rig, meshes and empties; a MODEL its meshes and empties, with no rig at all. A BVH
+ * is a motion.
  */
 export function motionImportOps(
   built: BuiltBvh | FbxImportChainResult,
@@ -211,41 +211,37 @@ export function motionImportOps(
   const meshCount = 'meshCount' in built ? built.meshCount : 0;
   const notices = 'notices' in built ? built.notices : [];
   const fbx = 'meshOps' in built ? built : null;
-  const { group } = built;
-  // With no scene to stand in, nothing of the file has anywhere to go.
-  const parentId = sceneNodeId === undefined ? undefined : group.id;
-  const landing =
-    sceneNodeId === undefined
-      ? []
-      : [importGroupOp(group.id, [0, 0, 0], group.pivot), parentEdge(group.id, sceneNodeId)];
+  const collectionId = activeCollectionOf(state);
   const leftOut = (n: number) =>
     n > 0
       ? [`${n} mesh${n === 1 ? '' : 'es'} left out: the project has no scene to stand them in`]
       : [];
   if (built.kind === 'model') {
-    const placed = parentId !== undefined;
+    // With no scene to stand in, nothing of the file has anywhere to go.
+    const placed = sceneNodeId !== undefined;
     return {
       kind: 'model',
-      groupId: group.id,
-      ops: placed ? [...built.ops, ...landing, ...built.meshOps(parentId)] : [],
+      collectionId,
+      ops: placed ? intoActiveCollection(state, [...built.ops, ...built.meshOps(sceneNodeId)]) : [],
       meshCount: placed ? meshCount : 0,
       notices: [...notices, ...(placed ? [] : leftOut(meshCount))],
     };
   }
   const { ops, skeletonId, motionId } = built;
   const standing =
-    parentId === undefined ? [] : skeletonObjectOps(ops, skeletonId, motionId, name, parentId);
+    sceneNodeId === undefined
+      ? []
+      : skeletonObjectOps(ops, skeletonId, motionId, name, sceneNodeId);
   // With no scene to stand in, the skeleton has no Object either, and the meshes nowhere to go.
-  const placed = parentId !== undefined && standing.length > 0;
+  const placed = sceneNodeId !== undefined && standing.length > 0;
   return {
     kind: built.kind,
-    groupId: group.id,
-    ops: [
+    collectionId,
+    ops: intoActiveCollection(state, [
       ...ops,
-      ...(placed ? landing : []),
       ...standing,
-      ...(placed && fbx !== null ? fbx.meshOps(parentId) : []),
-    ],
+      ...(placed && fbx !== null ? fbx.meshOps(sceneNodeId) : []),
+    ]),
     skeletonId,
     motionId,
     meshCount: placed ? meshCount : 0,

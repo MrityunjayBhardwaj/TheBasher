@@ -88,11 +88,12 @@ describe('a director generating a mesh gets an ordinary imported asset', () => {
     ].sort();
     // Scene + TimeSource are the seed; the rest is what the import road produced.
     // #1049 — the stub's mesh (one node, one untextured primitive) is one the native model holds,
-    // so it arrives as native geometry: a Group over `Object` + `PolyMeshData`, and nothing that
+    // so it arrives as native geometry: an `Object` + `PolyMeshData` in the scene (no wrapper Group
+    // since #1451), and nothing that
     // reads the file. This row still proves the generation road took the SAME producer the
     // file-drop road takes rather than a parallel one (it named `GltfAsset` + `GltfData` while the
     // clone road was the only one).
-    expect(types).toEqual(['Group', 'Object', 'PolyMeshData', 'Scene', 'TimeSource']);
+    expect(types).toEqual(['Object', 'PolyMeshData', 'Scene', 'TimeSource']);
   });
 });
 
@@ -153,11 +154,10 @@ describe("the identical road — the phase's discriminating observation", () => 
       // than assumed, so a director's import that lost its names still diverges from the agent's.
       .concat(added.filter((n) => n.meta?.name !== undefined).map(() => 'setMeta'))
       // The import's connects, which the node table cannot report (a connect leaves no
-      // node behind). THREE for a native import (#1049): `data → object.data`,
-      // `object → group.children`, `group → scene.children`. The count is `1 + two per
-      // imported object`, and this fixture's GLB has exactly one. (The clone road also
-      // made three here, by a different sum: `2 + one per imported child`.)
-      .concat(['connect', 'connect', 'connect'])
+      // node behind). TWO for a native import with no wrapper Group (#1451): `data →
+      // object.data` and `object → scene.children`, two per imported object, and this
+      // fixture's GLB has exactly one.
+      .concat(['connect', 'connect'])
       .sort();
 
     expect(agentShape).toEqual(humanShape);

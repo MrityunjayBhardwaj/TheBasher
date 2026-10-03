@@ -2,9 +2,9 @@
 //
 // A file with no bone is a MODEL: Blender 5.1.1's FBX import of `rigless-hierarchy-blender-default.fbx`
 // (probe q20; oracle q21) makes an Empty `Holder` over a keyed `Cube` over a `Cone`, and a loose
-// `Plane`, with no armature. Ours writes the same Objects and Group, in an import Group (user decision
-// on #1434: an FBX lands in one, as a glTF does), and no Skeleton, no pose layer and nothing to bind.
-// The oracle compares WORLD placement, so the import Group's pivot must move nothing.
+// `Plane`, with no armature. Ours writes the same Objects and Group (the Empty), standing in the scene
+// as Blender stands them (#1451: no wrapper), and no Skeleton, no pose layer and nothing to bind.
+// The oracle compares WORLD placement.
 //
 // A node ABOVE the armature (`above-armature-one-take.fbx`, probe q26; oracle q21): Blender hangs
 // the armature under the Empty `Stand`, keyed upward. Ours folds `Stand`'s place into the bones and
@@ -22,7 +22,6 @@ import { registerAllNodes } from '../../nodes/registerAll';
 import { motionImportOps, type MotionImportOps } from '../../app/asset/importBvhFbx';
 import { resolveWorldTransform } from '../../app/resolveWorldTransform';
 import { buildFbxImportOps } from './fbxImportChain';
-import { computeGltfBoundsCenter } from './gltfImportChain';
 import { skeletonObjectId } from './skeletonObject';
 
 const DIR = 'src/core/import/__fixtures__';
@@ -77,7 +76,7 @@ async function imported(file: string): Promise<{ state: DagState; landed: Motion
     await buildFbxImportOps({
       data: bytes(file),
       name: 'file',
-      ids: { skeleton: 'sk', layer: 'motion', group: 'grp' },
+      ids: { skeleton: 'sk', layer: 'motion', model: 'mdl' },
       storeImage: () => Promise.resolve('img'),
     }),
     'file',
@@ -139,30 +138,17 @@ describe('#1434 — a file with no bone lands as a model', () => {
     expect(cube['25'].world_translation[2] - cube['1'].world_translation[2]).toBeCloseTo(1, 4);
   });
 
-  it('stands in an import Group under the scene, which holds every top-level Object', async () => {
+  it('stands in the scene as Blender stands it: each top-level Object under the scene, the rest under their parents', async () => {
     const { state, landed } = await imported(RIGLESS);
-    expect(landed.kind === 'model' && landed.groupId).toBe('grp');
-    expect(state.nodes.grp.type).toBe('Group');
-    expect(parentOf(state, 'grp')).toBe(state.outputs.scene!.node);
+    // #1451 — no wrapper Group, and with no collection active, linked into none.
+    expect(landed.kind === 'model' && landed.collectionId).toBeNull();
+    expect(Object.values(state.nodes).filter((n) => n.type === 'Group')).toHaveLength(1);
     for (const name of RIGLESS_OBJECTS) {
       const blender = RIGLESS_ORACLE.objects[name];
-      const want = blender.parent === null ? 'grp' : named(state, blender.parent).id;
+      const want =
+        blender.parent === null ? state.outputs.scene!.node : named(state, blender.parent).id;
       expect(parentOf(state, named(state, name).id), name).toBe(want);
     }
-  });
-
-  it('the Group turns about the centre of the meshes as drawn, and moves nothing', async () => {
-    const { state } = await imported(RIGLESS);
-    const { position, pivot } = state.nodes.grp.params as { position: number[]; pivot: number[] };
-    // Not the origin: a pivot left at zero would pass the placement rows trivially.
-    expect(Math.hypot(...pivot)).toBeGreaterThan(0.5);
-    expect(position).toEqual(pivot);
-    // The glTF road's pivot for Blender's glTF export of the same scene: the two formats agree on
-    // where every point is (V602), so a pivot computed alike lands alike.
-    const glb = readFileSync(`${DIR}/rigless-hierarchy-blender-default.glb`);
-    const json = JSON.parse(glb.subarray(20, 20 + glb.readUInt32LE(12)).toString('utf8'));
-    const want = computeGltfBoundsCenter(json);
-    for (let i = 0; i < 3; i++) expect(pivot[i]).toBeCloseTo(want[i], 4);
   });
 
   it.each(RIGLESS_OBJECTS.flatMap((name) => [1, 25].map((frame) => [name, frame] as const)))(
@@ -197,17 +183,18 @@ describe('#1434 — a node above the armature', () => {
     expect(held['25'].world_translation[2] - held['1'].world_translation[2]).toBeGreaterThan(1.9);
   });
 
-  it('lands as a character in the import Group, the skeleton’s Object at its top', async () => {
+  it('lands as a character, the skeleton’s Object at the top of the scene beside Stand', async () => {
     const { state, landed } = await imported(ABOVE);
     expect(landed.kind).toBe('character');
-    expect(parentOf(state, skeletonObjectId('sk'))).toBe('grp');
-    expect(parentOf(state, named(state, 'Stand').id)).toBe('grp');
+    const scene = state.outputs.scene!.node;
+    expect(parentOf(state, skeletonObjectId('sk'))).toBe(scene);
+    expect(parentOf(state, named(state, 'Stand').id)).toBe(scene);
   });
 
   it('says the skeleton does not follow the node above it', async () => {
     const { landed } = await imported(ABOVE);
     expect(landed.notices).toEqual([
-      'the armature "Rig" hangs under "Stand" in the file; its skeleton stands at the top of the import, where it is drawn at load, so moving or keying "Stand" does not carry it',
+      'the armature "Rig" hangs under "Stand" in the file; its skeleton stands at the top of the scene, where it is drawn at load, so moving or keying "Stand" does not carry it',
     ]);
   });
 

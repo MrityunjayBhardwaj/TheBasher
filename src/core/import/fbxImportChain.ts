@@ -77,14 +77,7 @@ interface FbxImportChainCommon {
   readonly objectChannels: number;
   readonly dropped: FbxImportDropped;
   /**
-   * #1434 — the Group the import lands in, whatever it is, as a glTF import does (user decisions,
-   * #1434): an id, and the pivot it turns about — the centre of the file's meshes as drawn at load,
-   * the origin when there are none. The landing writes it at the origin with that pivot
-   * (`importGroupOp`), so it moves nothing.
-   */
-  readonly group: { readonly id: string; readonly pivot: Vec3 };
-  /**
-   * #1429 — the ops that stand the file's meshes and empties, under `parentId` (the import Group): each
+   * #1429 — the ops that stand the file's meshes and empties, under `parentId` (the scene node): each
    * skinned mesh with an Armature modifier on its stack, each other mesh
    * and empty where the file hangs it. On a rig they name the skeleton's Object, so they go after the
    * ops that make it (`buildSkeletonObjectOps`). Empty for a file with neither.
@@ -120,9 +113,9 @@ export type FbxImportChainResult = FbxRigImportResult | FbxModelImportResult;
 export interface FbxImportChainArgs {
   readonly data: ArrayBuffer | string;
   readonly name?: string;
-  /** Caller-supplied ids — tests pass deterministic ones. `group` defaults to a fresh id; a model's
+  /** Caller-supplied ids — tests pass deterministic ones. `model` defaults to a fresh id; a model's
    *  nodes take their ids from it, as a rig's meshes take theirs from `skeleton`. */
-  readonly ids?: { skeleton: string; layer: string; group?: string };
+  readonly ids?: { skeleton: string; layer: string; model?: string };
   /**
    * #1434 — store an image's encoded bytes in the project and return the key its texture ref names,
    * as the glTF road's (`NativeGltfImportArgs.storeImage`). Required, so there is no road on which a
@@ -151,7 +144,8 @@ export async function buildFbxImportOps(args: FbxImportChainArgs): Promise<FbxIm
   const name = args.name ?? 'imported-fbx';
   const parsed = readFbx(args.data, name);
   const ids = args.ids ?? { skeleton: uniqueId('fbx_skel'), layer: uniqueId('fbx_motion') };
-  const group = { id: ids.group ?? uniqueId('fbx_group'), pivot: parsed.meshes.centre };
+  // #1434 — what a model's node ids are made from: it has no skeleton for an id to name.
+  const modelId = ids.model ?? uniqueId('fbx_model');
 
   const meshes = parsed.meshes.meshes;
   // #1434 — every image is stored once, after the whole file has been read.
@@ -178,9 +172,7 @@ export async function buildFbxImportOps(args: FbxImportChainArgs): Promise<FbxIm
       ops: [],
       objectChannels,
       dropped,
-      group,
-      // Its nodes are the Group's: a model has no skeleton for an id to name.
-      meshOps: (parentId) => sceneOps(scene, meshes, [], group.id, null, parentId, imageKeys),
+      meshOps: (parentId) => sceneOps(scene, meshes, [], modelId, null, parentId, imageKeys),
       meshCount: meshes.length,
       notices: [
         ...parsed.meshes.notices,
@@ -276,7 +268,6 @@ export async function buildFbxImportOps(args: FbxImportChainArgs): Promise<FbxIm
     objectChannels,
     armatureRestTracks: scene.armatureRestTracks,
     dropped,
-    group,
     meshOps: (parentId) => [
       ...meshes.flatMap((mesh, i) =>
         mesh.vertexGroupBones === null

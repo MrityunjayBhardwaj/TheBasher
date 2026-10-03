@@ -30,7 +30,9 @@
 // road-shaped (the clone captures `gltfTexture` + an empty hash; native stores the image in the
 // project and names it by content hash), and specs asserting on descriptors assert the road's own.
 //
-// Roots are identified by STRUCTURE, never by an id prefix: a scene child `Group` whose subtree holds
+// Roots are identified by STRUCTURE, never by an id prefix. #1451 — an import has no wrapper Group any
+// more: each node the file hangs at its root stands in the scene, so a root is a scene child
+// (`Group` or `Object`) whose subtree holds
 // a `GltfAsset` or an `Object` over `PolyMeshData` — directly, or at the bottom of the modifier chain
 // a character's mesh draws through (an Armature modifier over the mesh, #1205; before #1276 such a
 // character was invisible here). Only the importer writes `PolyMeshData` today; a
@@ -166,7 +168,11 @@ export async function importRoots(page: Page): Promise<ImportRoot[]> {
     };
     const out: { rootId: string; road: 'native' | 'clone' }[] = [];
     for (const id of refs(nodes[sceneId].inputs.children)) {
-      if (nodes[id]?.type !== 'Group') continue;
+      // #1451 — an import stands its root nodes in the scene with no wrapper, so a root is any
+      // scene child, a Group (an Empty, or an import Group in an older save) or an Object, whose
+      // subtree holds imported geometry. The default project's box is not one: its data is no
+      // `PolyMeshData`.
+      if (nodes[id]?.type !== 'Group' && nodes[id]?.type !== 'Object') continue;
       const road = roadOf(id);
       if (road) out.push({ rootId: id, road });
     }

@@ -46,7 +46,6 @@ import type { Node, Op } from '../../../core/dag/types';
 import { getBoneNameMapPreset, listBoneNameMapPresets } from '../../../core/import/boneNameMaps';
 import {
   skeletonObjectId,
-  standInHideTarget,
   standInObjectOf,
   standingObjectsOf,
 } from '../../../core/import/skeletonObject';
@@ -132,9 +131,6 @@ export const retargetMutator: MutatorDefinition<RetargetSpec> = {
         // Named, or else the one the import derived for the target skeleton; an Object pointed at
         // the skeleton by hand with layers under it needs `targetObjectId` to be reached.
         spec.targetObjectId ?? skeletonObjectId(spec.targetSkeletonId),
-        // #1434 — the source rig's own Object, so the import Group holding it is one 'parent' hop
-        // away: a bind hides that Group when the rig is all it holds (`standInHideTarget`).
-        skeletonObjectId(spec.sourceSkeletonId),
       ],
       // ONE 'parent' hop (#907) — the clips already bound to the target rig.
       //
@@ -342,10 +338,8 @@ export const retargetMutator: MutatorDefinition<RetargetSpec> = {
       spec.sourceSkeletonId === spec.targetSkeletonId
         ? null
         : standInObjectOf(_state, spec.sourceSkeletonId);
-    // #1434 — an import's rig stands in an import Group of its own, and the Group is what hides:
-    // the viewport and the outliner's eye act on top-level nodes (`standInHideTarget`).
     if (standIn !== null) {
-      ops.push({ type: 'setHidden', nodeId: standInHideTarget(_state, standIn), hidden: true });
+      ops.push({ type: 'setHidden', nodeId: standIn, hidden: true });
     }
 
     return ops;

@@ -68,12 +68,7 @@ import {
   resolveBuffers,
   type GltfJson,
 } from './glb';
-import {
-  buildNodeNameMap,
-  computeGltfBoundsCenter,
-  hashId,
-  type GltfImportChainArgs,
-} from './gltfImportChain';
+import { buildNodeNameMap, hashId, type GltfImportChainArgs } from './gltfImportChain';
 import { DRACO_EXTENSION, decodeDracoPrimitives, usesDraco, type DecodeDraco } from './gltfDraco';
 import { gltfJsonMaterialToOpenpbr, HELD_TEXTURE_PATHS } from './gltfJsonMaterialToOpenpbr';
 import { readNativeAnimations, type ClipGltfJson, type NativeAnimation } from './nativeGltfClip';
@@ -86,7 +81,7 @@ import {
 import { buildSkeletonObjectOps, skeletonObjectId } from './skeletonObject';
 import {
   emptyOps,
-  importGroupOp,
+  offsetTopLevel,
   objectChannelId,
   objectChannelOp,
   parentEdge,
@@ -118,7 +113,6 @@ export interface NativeImportRefusal {
 
 export interface NativeImportResult {
   readonly ops: Op[];
-  readonly groupId: string;
   readonly objectIds: readonly string[];
   /**
    * #1216 — the node standing for each glTF node, by the file's node index: its Object, or the
@@ -1538,11 +1532,10 @@ async function buildNativeOps(
       nativeSkeletonId(args.assetRef, keyByGltfNodeIndex[skeletons[i].boneNodes[0]]),
     );
 
-  const groupId = hashId('nativeGrp', args.assetRef);
-  const position: Vec3 = args.position ?? [0, 0, 0];
-  // The same pivot the clone road bakes into its import Group, so both roads place a model alike.
-  const pivot = computeGltfBoundsCenter(json);
-  const ops: Op[] = [importGroupOp(groupId, position, pivot)];
+  // #1451 — no wrapper: what the file hangs at its root stands under the scene, as Blender's glTF
+  // importer stands it (linked into the active collection by the caller, `intoActiveCollection`).
+  const rootId = args.sceneNodeId;
+  const ops: Op[] = [];
   const objectIds: string[] = [];
   const parentEdges: Op[] = [];
   const armatureEdges: Op[] = [];
@@ -1635,7 +1628,7 @@ async function buildNativeOps(
   for (let i = 0; i < json.nodes.length; i++) {
     const node = json.nodes[i];
     const key = keyByGltfNodeIndex[i];
-    const parentId = parentOfNode.has(i) ? idOfNode(parentOfNode.get(i)!) : groupId;
+    const parentId = parentOfNode.has(i) ? idOfNode(parentOfNode.get(i)!) : rootId;
     // #393 — a bone is data of the skeleton, not a node of the scene. The skeleton's standing
     // Object takes the place of the first bone below the armature, so it joins its parent's
     // children where the file's joint chain did.
@@ -1681,7 +1674,7 @@ async function buildNativeOps(
       : !skinnedElsewhere
         ? parentId
         : ownArmature === null || ownArmature === undefined
-          ? groupId
+          ? rootId
           : idOfNode(ownArmature);
     if (leftBehind) {
       const emptyId = idOfNode(i);
@@ -1797,7 +1790,6 @@ async function buildNativeOps(
   }
   ops.push(...heldObjectAnimationOps(args.assetRef, held, isBone, idOfNode));
 
-  ops.push(parentEdge(groupId, args.sceneNodeId));
   // #1216 — the ids above, gathered for a caller that must address them by the file's structure.
   const firstBoneKey = (s: number): string => keyByGltfNodeIndex[skeletons[s].boneNodes[0]];
   const skeletonIds = skeletons.map((skeleton, s) => ({
@@ -1835,8 +1827,8 @@ async function buildNativeOps(
         },
   );
   return {
-    ops,
-    groupId,
+    // #1451 — placed `position` away from where the file puts it, carried by its root nodes.
+    ops: offsetTopLevel(ops, rootId, args.position ?? [0, 0, 0]),
     objectIds,
     nodeIds,
     skeletons: skeletonIds,

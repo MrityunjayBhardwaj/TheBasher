@@ -12,7 +12,6 @@ import { readFileSync } from 'node:fs';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { __resetRegistryForTests, applyOp, evaluate } from '../../core/dag';
 import type { DagState } from '../../core/dag/state';
-import { emptyDagState } from '../../core/dag/state';
 import { useDagStore } from '../../core/dag/store';
 import type { Node } from '../../core/dag/types';
 import { buildNativeGltfImportOps } from '../../core/import/nativeGltfImport';
@@ -30,6 +29,7 @@ import { rowFlag, rowFlagToggleOps } from './rowChannelWrite';
 import { dispatchMutatorFromUI } from './dispatchMutator';
 import { poseLayerChain } from './poseChain';
 import type { GraphNodeLike } from './graphNodes';
+import { sceneOnlyState } from '../../test-utils/sceneOnlyState';
 
 beforeEach(() => {
   __resetRegistryForTests();
@@ -55,7 +55,7 @@ async function bar() {
     storeImage: async () => 'img',
   });
   if ('refused' in result) throw new Error(result.refused);
-  const state = result.ops.slice(0, -1).reduce((s, op) => applyOp(s, op).next, emptyDagState());
+  const state = result.ops.reduce((s, op) => applyOp(s, op).next, sceneOnlyState());
   const armature = Object.values(state.nodes).find(
     (n) =>
       state.nodes[(n.inputs.data as { node: string } | undefined)?.node ?? '']?.type === 'Skeleton',

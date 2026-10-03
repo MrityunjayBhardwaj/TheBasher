@@ -40,6 +40,8 @@ import { nodeDisplayName } from '../sceneTreeWalk';
 import { applyOp } from '../../core/dag';
 import { nativeCharacterOps } from '../../test-utils/nativeCharacter';
 import { __resetMutatorRegistryForTests, registerAllMutators } from '../../agent/mutators';
+import { collectionOps } from '../../core/import/modelImport';
+import { setActiveCollectionOp } from '../collections';
 
 // The committed ASCII FBX fixture (public/fixtures/anim/rig.fbx — 2-bone
 // skeleton, the same file the e2e fetches). Read as bytes so we exercise the
@@ -185,25 +187,16 @@ describe('#1056 — every imported motion stands in the scene as an Object', () 
       from: { node: result!.skeletonId, socket: 'out' },
       to: { node: objectId, socket: 'data' },
     });
-    // #1434 — in the import's Group, as every import stands, and the Group under the scene.
+    // #1451 — in the scene itself, with no wrapper, as Blender's importer stands it.
     expect(ops).toContainEqual({
       type: 'connect',
       from: { node: objectId, socket: 'out' },
-      to: { node: result!.groupId, socket: 'children' },
-    });
-    expect(ops).toContainEqual({
-      type: 'connect',
-      from: { node: result!.groupId, socket: 'out' },
       to: { node: 'n_scene', socket: 'children' },
     });
-    // And it landed: the Object is in the graph, in its Group, the Group a child of the scene.
+    // And it landed: the Object is in the graph, a child of the scene.
     const state = useDagStore.getState().state;
     expect(state.nodes[objectId]?.type).toBe('Object');
-    expect(state.nodes[result!.groupId]?.type).toBe('Group');
-    expect(state.nodes[result!.groupId].inputs.children).toEqual([
-      { node: objectId, socket: 'out' },
-    ]);
-    expect(state.nodes.n_scene.inputs.children).toEqual([{ node: result!.groupId, socket: 'out' }]);
+    expect(state.nodes.n_scene.inputs.children).toEqual([{ node: objectId, socket: 'out' }]);
   });
 
   // #1103 — the toast a director reads, through the road a drop, the picker and the
@@ -443,7 +436,7 @@ describe('importFbxFromOpfs', () => {
 });
 
 describe('routeImportByExtension', () => {
-  it('#1434 — an FBX with no bone lands as a model: a Group of its Objects, no rig, nothing bound', async () => {
+  it('#1434 — an FBX with no bone lands as a model: its Objects in the scene, no rig, nothing bound', async () => {
     // A character is in the scene, so a road that took the file for a motion would bind it.
     seedCharacter();
     useNotificationStore.setState({ toasts: [] });
@@ -459,8 +452,8 @@ describe('routeImportByExtension', () => {
     expect(types).not.toContain('Skeleton');
     expect(types).not.toContain('PoseLayer');
     expect(types.filter((t) => t === 'Object')).toHaveLength(3);
-    // The import Group, and Holder.
-    expect(types.filter((t) => t === 'Group')).toHaveLength(2);
+    // Holder, the file's Empty — and no wrapper Group of ours (#1451).
+    expect(types.filter((t) => t === 'Group')).toHaveLength(1);
     expect(useAssetErrorStore.getState().errors[path]).toBeUndefined();
     expect(useSelectionStore.getState().selectedNodeId).toBeNull();
     // No bind was tried: a bind says its outcome in a toast, whether it takes or not.
@@ -522,14 +515,25 @@ describe('ingestSingleFile', () => {
   });
 });
 
-// #1434 — every import lands in an import Group, as a glTF does, whatever the file holds: a motion
-// too (user decision on #1434). A motion's Group holds only its rig, so a bind that takes the motion
-// hides the GROUP — the viewport and the outliner's eye act on top-level nodes — and the rig goes
-// with it (#1450). Undo brings both back.
-describe('#1434 — a motion lands in its Group, and a bind hides that Group', () => {
+// #1451 — where Blender puts an import: every object it makes stands in the scene where the file
+// hangs it, with no wrapper, and is linked into the ACTIVE COLLECTION — none (the scene itself) until
+// the director chooses one. A bind that takes a motion hides the motion's own rig Object, which sits
+// at the top of the scene where the viewport and the outliner's eye both reach it.
+describe('#1451 — an import stands in the scene, linked into the active collection', () => {
   const path = `${USER_IMPORTS_ROOT}/wave/wave.bvh`;
   const fbxPath = `${USER_IMPORTS_ROOT}/rig/rig.fbx`;
   const nodes = () => useDagStore.getState().state.nodes;
+  const writeBvh = () => currentStorage.write(path, new TextEncoder().encode(SYNTHETIC_BVH));
+  const writeFbx = () => currentStorage.write(fbxPath, RIG_FBX_BYTES);
+  /** A collection `col` in the scene, made the active one. */
+  const activeCollection = () => {
+    const ops = collectionOps('col', 'props', [], 'n_scene');
+    let next = useDagStore.getState().state;
+    for (const op of ops) next = applyOp(next, op).next;
+    useDagStore
+      .getState()
+      .dispatchAtomic([...ops, setActiveCollectionOp(next, 'col')!], 'user', 'col');
+  };
 
   beforeEach(() => {
     __resetMutatorRegistryForTests();
@@ -538,37 +542,61 @@ describe('#1434 — a motion lands in its Group, and a bind hides that Group', (
   });
 
   it.each([
-    ['a BVH', () => currentStorage.write(path, new TextEncoder().encode(SYNTHETIC_BVH)), path],
-    ['a rig-only FBX', () => currentStorage.write(fbxPath, RIG_FBX_BYTES), fbxPath],
-  ])('%s stands its rig in a Group under the scene, about the origin', async (_, write, at) => {
-    await write();
-    const result = rigOf(at === path ? await importBvhFromOpfs(at) : await importFbxFromOpfs(at));
-    expect(result!.kind).toBe('motion');
-    const group = nodes()[result!.groupId];
-    expect(group?.type).toBe('Group');
-    expect(group.params).toMatchObject({ position: [0, 0, 0], pivot: [0, 0, 0] });
-    expect(group.inputs.children).toEqual([
-      { node: `${result!.skeletonId}_object`, socket: 'out' },
-    ]);
-    expect(nodes().n_scene.inputs.children).toEqual([{ node: result!.groupId, socket: 'out' }]);
+    ['a BVH', writeBvh, () => importBvhFromOpfs(path)],
+    ['a rig-only FBX', writeFbx, () => importFbxFromOpfs(fbxPath)],
+  ])(
+    '%s stands its rig straight under the scene, with no Group and no collection',
+    async (_, write, run) => {
+      await write();
+      const result = rigOf(await run());
+      expect(result!.kind).toBe('motion');
+      expect(result!.collectionId).toBeNull();
+      expect(nodes().n_scene.inputs.children).toEqual([
+        { node: `${result!.skeletonId}_object`, socket: 'out' },
+      ]);
+      expect(Object.values(nodes()).some((n) => n.type === 'Group')).toBe(false);
+    },
+  );
+
+  it.each([
+    ['a BVH', writeBvh, () => importBvhFromOpfs(path)],
+    ['a rig-only FBX', writeFbx, () => importFbxFromOpfs(fbxPath)],
+  ])(
+    '%s is linked into the active collection, and still stands in the scene',
+    async (_, write, run) => {
+      activeCollection();
+      await write();
+      const result = rigOf(await run());
+      const rig = `${result!.skeletonId}_object`;
+      expect(result!.collectionId).toBe('col');
+      expect(nodes().col.inputs.members).toEqual([{ node: rig, socket: 'out' }]);
+      expect(nodes().n_scene.inputs.children).toEqual([{ node: rig, socket: 'out' }]);
+    },
+  );
+
+  it('an FBX model links every Object and Empty it makes, the nested ones too', async () => {
+    activeCollection();
+    const at = `${USER_IMPORTS_ROOT}/rigless/rigless.fbx`;
+    await currentStorage.write(at, fixtureBytes('rigless-hierarchy-blender-default.fbx'));
+    await routeImportByExtension(at);
+    const members = (nodes().col.inputs.members as { node: string }[]).map((r) => r.node);
+    const names = members.map((id) => nodes()[id].meta?.name).sort();
+    // Holder (an Empty) over the Cube over the Cone, and the loose Plane: all four, as Blender links each.
+    expect(names).toEqual(['Cone', 'Cube', 'Holder', 'Plane']);
   });
 
-  it('a bind that takes the motion hides its Group, not the rig in it, and undo brings it back', async () => {
+  it('a bind that takes the motion hides the rig Object itself, and undo brings it back', async () => {
     seedCharacter();
-    await currentStorage.write(path, new TextEncoder().encode(SYNTHETIC_BVH));
+    await writeBvh();
     const before = new Set(Object.keys(nodes()));
     await routeImportByExtension(path);
-    const group = Object.values(nodes()).find((n) => n.type === 'Group' && !before.has(n.id))!;
-    const rig = (group.inputs.children as { node: string }[])[0].node;
+    const rig = Object.keys(nodes()).find(
+      (id) => !before.has(id) && nodes()[id].type === 'Object',
+    )!;
     expect(Object.values(nodes()).some((n) => n.type === 'RetargetClip')).toBe(true);
-    expect(nodes()[group.id].meta?.hidden).toBe(true);
-    // The Group is the one that hides: the rig's own flag is untouched, and the rig is not drawn
-    // because its Group is hidden (`collectSkeletonObjects`, its own test — this store has no
-    // render output, so nothing in it is reachable to draw).
-    expect(nodes()[rig].meta?.hidden).toBeUndefined();
-
+    expect(nodes()[rig].meta?.hidden).toBe(true);
     useDagStore.getState().undo();
-    expect(nodes()[group.id].meta?.hidden).toBeUndefined();
+    expect(nodes()[rig].meta?.hidden).toBeUndefined();
     expect(Object.values(nodes()).some((n) => n.type === 'RetargetClip')).toBe(false);
   });
 });

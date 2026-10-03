@@ -13,7 +13,6 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import * as THREE from 'three';
 import { __resetRegistryForTests, applyOp, evaluate } from '../../core/dag';
 import type { DagState } from '../../core/dag/state';
-import { emptyDagState } from '../../core/dag/state';
 import { buildDefaultDagState } from '../../core/project/default';
 import type { Op } from '../../core/dag/types';
 import { buildNativeGltfImportOps } from '../../core/import/nativeGltfImport';
@@ -26,6 +25,7 @@ import { renameBone } from './renameBone';
 import { renameBoneMutator } from '../../agent/mutators/builders/renameBone';
 import { validatePlan } from '../../agent/mutators/validate';
 import oracle from '../../core/import/__fixtures__/blender-oracle-1201.json';
+import { sceneOnlyState } from '../../test-utils/sceneOnlyState';
 
 beforeEach(() => {
   __resetRegistryForTests();
@@ -62,7 +62,7 @@ async function importBar(): Promise<{ state: DagState; armature: string; data: s
     storeImage: async () => 'img',
   });
   if ('refused' in result) throw new Error(result.refused);
-  const state = apply(emptyDagState(), result.ops.slice(0, -1));
+  const state = apply(sceneOnlyState(), result.ops);
   const armature = nodesOf(state, 'Object').find(
     (n) => state.nodes[(n.inputs.data as { node: string }).node]?.type === 'Skeleton',
   )!.id;

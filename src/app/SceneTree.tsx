@@ -26,7 +26,7 @@ import { useRenameStore } from './stores/renameStore';
 import { RenameInput } from './RenameInput';
 import { SceneTreeIcon, iconKindForNode } from './SceneTreeIcon';
 import { buildSceneTreeRows, type TreeRow } from './sceneTreeWalk';
-import { activeCollectionOf, setActiveCollectionOp } from './collections';
+import { activeCollectionOf, newCollectionOps, setActiveCollectionOp } from './collections';
 import { buildDeleteNodesOps, buildDuplicateNodeOps } from './sceneNodeActions';
 import { selectActiveCameraNode } from './activeCamera';
 import { isCameraNode } from './cameraNode';
@@ -483,6 +483,14 @@ export function SceneTree({ filter = '' }: SceneTreeProps) {
     const ops = buildSetActiveCameraOps(state, nodeId);
     if (ops && ops.length > 0) dispatchAtomic(ops, 'user', 'set active camera');
     if (closeMenu) setCtxMenu(null);
+  }
+
+  // #1451 — Blender's outliner New Collection: an empty collection in the scene, ready to be made
+  // active with a click.
+  function ctxNewCollection() {
+    const made = newCollectionOps(state);
+    if (made) dispatchAtomic(made.ops, 'user', 'new collection');
+    setCtxMenu(null);
   }
 
   function ctxDelete(nodeId: NodeId) {
@@ -975,6 +983,9 @@ export function SceneTree({ filter = '' }: SceneTreeProps) {
                     Set Active Camera
                   </CtxItem>
                 ) : null}
+                <CtxItem testId="outliner-ctx-new-collection" onClick={ctxNewCollection}>
+                  New Collection
+                </CtxItem>
                 <div className="my-1 h-px bg-border" />
                 <CtxItem testId="outliner-ctx-delete" onClick={() => ctxDelete(ctxMenu.nodeId)}>
                   {ctxTargetIds(ctxMenu.nodeId).length > 1

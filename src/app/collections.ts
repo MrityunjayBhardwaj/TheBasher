@@ -9,6 +9,7 @@
 
 import type { DagState } from '../core/dag/state';
 import type { NodeId, Op } from '../core/dag/types';
+import { collectionOps } from '../core/import/modelImport';
 
 const refsOf = (binding: unknown): NodeId[] =>
   (Array.isArray(binding) ? binding : binding ? [binding] : [])
@@ -89,4 +90,32 @@ export function intoActiveCollection(state: DagState, ops: readonly Op[]): Op[] 
       }),
     ),
   ];
+}
+
+/**
+ * The name Blender gives a new collection: "Collection", then "Collection.001", "Collection.002", …
+ * — the first not already taken by one of the scene's collections.
+ */
+export function newCollectionName(state: DagState): string {
+  const taken = new Set(sceneCollectionsOf(state).map((id) => state.nodes[id].meta?.name));
+  if (!taken.has('Collection')) return 'Collection';
+  for (let i = 1; ; i++) {
+    const name = `Collection.${String(i).padStart(3, '0')}`;
+    if (!taken.has(name)) return name;
+  }
+}
+
+/**
+ * #1451 — the outliner's New Collection, as Blender's: an empty collection the scene holds, named
+ * `newCollectionName`. Null with no scene. Membership comes later — an import into it once it is
+ * active, or (later in #397) moving objects in.
+ */
+export function newCollectionOps(state: DagState): { ops: Op[]; collectionId: NodeId } | null {
+  const sceneId = state.outputs.scene?.node;
+  if (!sceneId) return null;
+  let collectionId: NodeId;
+  do {
+    collectionId = `n_collection_${Math.floor(Math.random() * 36 ** 6).toString(36)}`;
+  } while (state.nodes[collectionId]);
+  return { ops: collectionOps(collectionId, newCollectionName(state), [], sceneId), collectionId };
 }

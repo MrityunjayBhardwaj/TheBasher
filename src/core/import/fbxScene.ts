@@ -329,7 +329,7 @@ export function readFbxScene(group: Object3D, args: FbxSceneArgs): FbxSceneRead 
   for (const [k, own] of keyed) {
     nodes[k] = { ...nodes[k], keys: foldKeys(frames[k], own) };
   }
-  // #1434 — a written node ABOVE an armature. The skeleton's Object stands at the top of the import
+  // #1434 — a written node ABOVE an armature. The skeleton's Object stands at the top of the scene
   // (the fold put the place of every node above the rig into its bones, #1190), so it is not that
   // node's child as in Blender: it stands where Blender draws it at load, and nothing that moves the
   // node later — its own keys included — carries the rig (measured, `above-armature-one-take.fbx`).
@@ -338,7 +338,7 @@ export function readFbxScene(group: Object3D, args: FbxSceneArgs): FbxSceneRead 
       const k = indexOf.get(above);
       if (k === undefined) continue;
       notices.push(
-        `the armature "${armature.name}" hangs under "${nodes[k].name}" in the file; its skeleton stands at the top of the import, where it is drawn at load, so moving or keying "${nodes[k].name}" does not carry it`,
+        `the armature "${armature.name}" hangs under "${nodes[k].name}" in the file; its skeleton stands at the top of the scene, where it is drawn at load, so moving or keying "${nodes[k].name}" does not carry it`,
       );
       break;
     }

@@ -1,7 +1,7 @@
 // #1434 — an FBX with no bone, brought in through the product's own door (File ▸ Import Folder…, the
-// OS file chooser), lands as a MODEL: its Objects in an import Group, with no Skeleton and no pose
-// layer, and the hierarchy, the placement at two frames and the material are Blender's. Saved and
-// reloaded, all of it still is.
+// OS file chooser), lands as a MODEL: its Objects standing in the scene as Blender stands them, with
+// no wrapper Group (#1451), no Skeleton and no pose layer, and the hierarchy, the placement at two
+// frames and the material are Blender's. Saved and reloaded, all of it still is.
 //
 // The oracle is Blender 5.1.1 importing its own default export of the scene
 // (`ref/probes/blender-armature-deform/q20_fbx_rigless_fixture.py` makes the file,
@@ -117,27 +117,23 @@ async function expectAsBlender(page: Page, when: string): Promise<void> {
   for (const name of NAMES) expect(ids[name], `${when}: one node named ${name}`).toHaveLength(1);
   const id = (name: string) => ids[name][0];
 
-  // A model: no Skeleton, no pose layer, and one import Group under the scene holding the file.
+  // A model: no Skeleton, no pose layer, and no Group but the file's own Empty (`Holder`).
   const landed = await page.evaluate(() => {
     const { nodes, outputs } = (window as unknown as BasherWindow).__basher_dag.getState().state;
-    const children = (id: string) => {
-      const c = nodes[id]?.inputs.children;
-      return (Array.isArray(c) ? c : c ? [c] : []).map((r: { node: string }) => r.node);
-    };
     return {
       types: Object.values(nodes).map((n) => n.type),
-      sceneGroups: children(outputs.scene!.node).filter((c) => nodes[c].type === 'Group'),
+      groups: Object.keys(nodes).filter((c) => nodes[c].type === 'Group'),
+      scene: outputs.scene!.node,
     };
   });
   expect(landed.types, when).not.toContain('Skeleton');
   expect(landed.types, when).not.toContain('PoseLayer');
-  expect(landed.sceneGroups, `${when}: the import Group`).toHaveLength(1);
-  const group = landed.sceneGroups[0];
+  expect(landed.groups, `${when}: only the file's Empty is a Group`).toEqual([id('Holder')]);
 
-  // The outliner shows Blender's hierarchy, the file's top-level Objects under the import Group.
+  // The outliner shows Blender's hierarchy, the file's top-level Objects under the scene.
   const parents = outlinerParents(await outlinerRows(page));
   for (const name of NAMES) {
-    const want = BLENDER[name].parent === null ? group : id(BLENDER[name].parent!);
+    const want = BLENDER[name].parent === null ? landed.scene : id(BLENDER[name].parent!);
     expect(parents.get(id(name)), `${when}: ${name}'s outliner parent`).toBe(want);
   }
 

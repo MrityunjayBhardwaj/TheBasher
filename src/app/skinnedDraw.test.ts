@@ -15,7 +15,6 @@ import { __resetRegistryForTests } from '../core/dag/registry';
 import { registerAllNodes } from '../nodes/registerAll';
 import { applyOp } from '../core/dag/ops';
 import { evaluate } from '../core/dag';
-import { emptyDagState } from '../core/dag/state';
 import { sampleSkinDeform, boneOfGroups } from '../nodes/armatureDeform';
 import { SKIN_JOINTS, SKIN_WEIGHTS } from '../nodes/attributes';
 import type {
@@ -30,6 +29,7 @@ import { buildDeformedDraw, buildSkinnedDraw, gpuSkinnable, skinnedDrawKey } fro
 import { skinLanes, skinPointLayers, skinSetCount } from '../nodes/skinInfluences';
 import { cloneForOverlay } from '../nodes/overlayChannels';
 import { clipValueFromKeys } from '../test-utils/clipValue';
+import { sceneOnlyState } from '../test-utils/sceneOnlyState';
 
 const CTX = { ctx: { time: { frame: 0, seconds: 0, normalized: 0 } } };
 
@@ -53,8 +53,8 @@ async function modifierOf(
     storeImage: async () => 'img',
   });
   if ('refused' in result) throw new Error(result.refused);
-  let state = emptyDagState();
-  for (const op of result.ops.slice(0, -1)) state = applyOp(state, op).next;
+  let state = sceneOnlyState();
+  for (const op of result.ops) state = applyOp(state, op).next;
   const id = Object.values(state.nodes).find((n) => n.type === 'ArmatureModifier')!.id;
   const value = evaluate(state, id, CTX).value as ModifiedDataValue;
   const descriptor = value.geometry.descriptor;

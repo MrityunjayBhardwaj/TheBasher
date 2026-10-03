@@ -214,6 +214,53 @@ export function parentEdge(child: string, parent: string): Op {
   };
 }
 
+/**
+ * #1451 — an import placed `offset` away from where the file puts it, with no Group to carry the
+ * offset: every node the import hangs straight under the scene (`sceneNodeId`'s `children`) is
+ * moved by it, and so are its position keys and their handles, as a parent's offset would carry
+ * them. Everything under those nodes rides with them. An offset of zero returns the ops as they are.
+ */
+export function offsetTopLevel(ops: readonly Op[], sceneNodeId: string, offset: Vec3): Op[] {
+  if (offset.every((c) => c === 0)) return [...ops];
+  const top = new Set(
+    ops.flatMap((op) =>
+      op.type === 'connect' && op.to.node === sceneNodeId && op.to.socket === 'children'
+        ? [op.from.node]
+        : [],
+    ),
+  );
+  const add = (v: readonly number[]): Vec3 => [
+    v[0] + offset[0],
+    v[1] + offset[1],
+    v[2] + offset[2],
+  ];
+  type Key = { value: Vec3; inHandle?: { value: Vec3 }; outHandle?: { value: Vec3 } };
+  const moved = (key: Key): Key => ({
+    ...key,
+    value: add(key.value),
+    ...(key.inHandle ? { inHandle: { ...key.inHandle, value: add(key.inHandle.value) } } : {}),
+    ...(key.outHandle ? { outHandle: { ...key.outHandle, value: add(key.outHandle.value) } } : {}),
+  });
+  return ops.map((op) => {
+    if (op.type !== 'addNode') return op;
+    const params = (op.params ?? {}) as Record<string, unknown>;
+    if (top.has(op.nodeId)) {
+      return {
+        ...op,
+        params: { ...params, position: add((params.position as Vec3) ?? [0, 0, 0]) },
+      };
+    }
+    if (
+      op.nodeType === 'KeyframeChannelVec3' &&
+      params.paramPath === 'position' &&
+      top.has(params.target as string)
+    ) {
+      return { ...op, params: { ...params, keyframes: (params.keyframes as Key[]).map(moved) } };
+    }
+    return op;
+  });
+}
+
 // ── Object animation ────────────────────────────────────────────────────────────────────────────
 
 /**
