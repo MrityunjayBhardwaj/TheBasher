@@ -13,6 +13,7 @@
 import type { DagState } from '../core/dag/state';
 import type { Op } from '../core/dag/types';
 import { DEFAULT_CAMERA_FAR, DEFAULT_CAMERA_NEAR } from '../nodes/CameraData';
+import { linkIntoActiveCollection } from './collections';
 
 /**
  * THE SCENE OBJECTS — everything the Add menu can put in the scene as a thing with a
@@ -157,6 +158,30 @@ function newId(prefix: string): string {
  *   tool.
  */
 export function buildAddPrimitiveOps(
+  state: DagState,
+  kind: PrimitiveKind,
+  position: Vec3,
+): AddResult | null {
+  const result = buildUnlinkedAddOps(state, kind, position);
+  const sceneId = state.outputs.scene?.node;
+  if (!result || !sceneId) return result;
+  // #1453 — what stands in the scene joins the active collection, as Blender links every object it
+  // adds. Only what the scene's `children` hold: a collection hides its members through that band
+  // (`SceneFromDAG`), and the lights band and floating cameras honour no hide yet, so a light linked
+  // in would be listed as hidden while it still lit the scene.
+  const standsInScene = result.ops.some(
+    (op) =>
+      op.type === 'connect' &&
+      op.from.node === result.newNodeId &&
+      op.to.node === sceneId &&
+      op.to.socket === 'children',
+  );
+  return standsInScene
+    ? { ...result, ops: linkIntoActiveCollection(state, result.ops, [result.newNodeId]) }
+    : result;
+}
+
+function buildUnlinkedAddOps(
   state: DagState,
   kind: PrimitiveKind,
   position: Vec3,

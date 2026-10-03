@@ -9,6 +9,7 @@ import type { Node, NodeId, Op } from '../core/dag/types';
 import { getNodeType } from '../core/dag/registry';
 import { idRefSweep, subjectReferrersInto, remapIdRefs } from '../core/dag/idRefSweep';
 import { chainSocketOf } from './operatorChain';
+import { collectionsHolding, membershipOps } from './collections';
 
 /**
  * #432 — a WRAPPER node consumes its subject through a chain EDGE and re-exposes it
@@ -324,6 +325,10 @@ export function buildDuplicateNodeOps(
     to: { node: parent.node, socket: parent.socket },
     index: parent.index + 1,
   });
+  // #1453 — each copy joins the collections its original is in, as Blender's Shift+D links a
+  // duplicate into its source's collections. Membership only: where it hangs is step 6's.
+  for (const [sourceId, cloneId] of idMap)
+    for (const c of collectionsHolding(state, sourceId)) ops.push(...membershipOps(c, [cloneId]));
 
   // 7. The id-reference universe (#434). A node OWNED BY a cloned node names its
   //    subject in params ([[H136]]), NOT via an edge, so the hierarchy walk above

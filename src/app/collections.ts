@@ -73,23 +73,42 @@ export function setActiveCollectionOp(state: DagState, collectionId: NodeId | nu
  * active, the ops are returned as they are.
  */
 export function intoActiveCollection(state: DagState, ops: readonly Op[]): Op[] {
-  const collectionId = activeCollectionOf(state);
-  if (collectionId === null) return [...ops];
   const made = ops.flatMap((op) =>
     op.type === 'addNode' && (op.nodeType === 'Object' || op.nodeType === 'Group')
       ? [op.nodeId]
       : [],
   );
-  return [
-    ...ops,
-    ...made.map(
-      (id): Op => ({
-        type: 'connect',
-        from: { node: id, socket: 'out' },
-        to: { node: collectionId, socket: 'members' },
-      }),
-    ),
-  ];
+  return linkIntoActiveCollection(state, ops, made);
+}
+
+/**
+ * #1453 — `ops` with each of `ids` linked into the active collection, as Blender links every object
+ * it adds (`bpy.ops.mesh.primitive_cube_add` lands in the active collection, the scene collection
+ * when that is active). With the scene itself active, the ops are returned as they are.
+ */
+export function linkIntoActiveCollection(
+  state: DagState,
+  ops: readonly Op[],
+  ids: readonly NodeId[],
+): Op[] {
+  const collectionId = activeCollectionOf(state);
+  return collectionId === null ? [...ops] : [...ops, ...membershipOps(collectionId, ids)];
+}
+
+/** The scene's collections that hold `id`, in the scene's order. */
+export function collectionsHolding(state: DagState, id: NodeId): NodeId[] {
+  return sceneCollectionsOf(state).filter((c) => collectionMembersOf(state, c).includes(id));
+}
+
+/** The edges that make each of `ids` a member of `collectionId`. */
+export function membershipOps(collectionId: NodeId, ids: readonly NodeId[]): Op[] {
+  return ids.map(
+    (id): Op => ({
+      type: 'connect',
+      from: { node: id, socket: 'out' },
+      to: { node: collectionId, socket: 'members' },
+    }),
+  );
 }
 
 /**
