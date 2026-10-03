@@ -10,9 +10,11 @@
 // e.intersections[0] and maps, through the node id stamped on the object that drew
 // it, to that Object). The chain math is unit-tested separately (pickChain.test.ts).
 //
-// Fixture: the flat multifile glTF (one textured child "Box") → a Group over ONE
-// Object, so the chain is [root, child] (single level); that's enough to
-// prove single-click→leaf and Alt+click→up end-to-end. The starter box is moved
+// Fixture: the flat multifile glTF (one textured child "Box") with its mesh node put under a
+// plain parent node (no transform) → the file's empty, a Group, over ONE Object, so the chain is
+// [root, child] (single level); that's enough to prove single-click→leaf and Alt+click→up
+// end-to-end. #1451 — an import has no wrapper Group any more: the flat file alone would land as
+// one Object standing in the scene, both leaf and root, with no level above it to select. The starter box is moved
 // aside so the imported model is the only thing under the click point.
 
 import { test, expect } from './_fixtures';
@@ -128,16 +130,25 @@ test('#233 single click selects the leaf under the cursor; Alt+click selects up;
     dag.dispatch({ type: 'removeNode', nodeId: 'n_light' }, 'user', 'rm light');
   });
 
-  // Import the flat glTF. #1071 — it is a file the native model holds, so it arrives as one
-  // `Object` over `PolyMeshData` under a `Group` root: the leaf is that Object, the level
-  // above it the Group.
+  // Import the flat glTF, its mesh node under a parent node. #1071 — it is a file the native
+  // model holds, so it arrives as one `Object` over `PolyMeshData` under the file's empty (a
+  // `Group`): the leaf is that Object, the level above it the Group.
   await page.evaluate(
     async ({ files: f, name }) => {
       const w = window as unknown as BasherWindow;
       const files: IngestFileShape[] = [];
       for (const spec of f) {
-        const buf = await fetch(spec.urlPath).then((r) => r.arrayBuffer());
-        files.push({ relativePath: spec.relativePath, bytes: new Uint8Array(buf) });
+        let bytes = new Uint8Array(await fetch(spec.urlPath).then((r) => r.arrayBuffer()));
+        if (spec.relativePath === 'scene.gltf') {
+          const gltf = JSON.parse(new TextDecoder().decode(bytes)) as {
+            nodes: Record<string, unknown>[];
+            scenes: { nodes: number[] }[];
+          };
+          gltf.nodes.push({ name: 'p233_parent', children: gltf.scenes[0].nodes });
+          gltf.scenes[0].nodes = [gltf.nodes.length - 1];
+          bytes = new TextEncoder().encode(JSON.stringify(gltf));
+        }
+        files.push({ relativePath: spec.relativePath, bytes });
       }
       await w.__basher_ingestGltfFolder!(files, name);
     },

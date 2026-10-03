@@ -48,7 +48,7 @@ import { importedChildren } from './_importedChild';
 
 export type ImportRoad = 'native' | 'clone';
 
-/** One import root: the transformable `Group` the importer put in the scene. */
+/** One import root: a node the import stood in the scene (#1451 — a file's own root node). */
 export interface ImportRoot {
   readonly rootId: string;
   readonly road: ImportRoad;
@@ -167,7 +167,10 @@ export async function importRoots(page: Page): Promise<ImportRoot[]> {
       return road;
     };
     const out: { rootId: string; road: 'native' | 'clone' }[] = [];
-    for (const id of refs(nodes[sceneId].inputs.children)) {
+    for (const child of refs(nodes[sceneId].inputs.children)) {
+      // A spec's MaterialOverride wrapping a root (`_importOverride.ts`) is looked through.
+      let id = child;
+      while (nodes[id]?.type === 'MaterialOverride') id = refs(nodes[id].inputs.target)[0] ?? '';
       // #1451 — an import stands its root nodes in the scene with no wrapper, so a root is any
       // scene child, a Group (an Empty, or an import Group in an older save) or an Object, whose
       // subtree holds imported geometry. The default project's box is not one: its data is no
@@ -180,7 +183,11 @@ export async function importRoots(page: Page): Promise<ImportRoot[]> {
   });
 }
 
-/** How many imports the scene holds, on either road. Poll it; a read before the import lands is 0. */
+/**
+ * How many import roots the scene holds, on either road — since #1451 one per node a file hangs at
+ * its root, so a file with several root nodes counts several. Poll it; a read before the import
+ * lands is 0.
+ */
 export async function importCount(page: Page): Promise<number> {
   return (await importRoots(page)).length;
 }

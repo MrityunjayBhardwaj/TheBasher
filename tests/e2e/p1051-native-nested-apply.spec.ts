@@ -4,9 +4,10 @@
 // The #1108 spec covers the same promise on the clone road, and has to force its file there now
 // that a hierarchy imports native. This is the native side of it: the same flat fixture with its
 // mesh node wrapped in a turned and lifted parent node, which now arrives as an Object under a Group
-// (the file's empty) under the import Group. The import Group is moved, turned and scaled, and the
-// child gets a transform of its own (a quaternion, since an imported node is in quaternion mode),
-// so every link of the chain is non-identity when Apply runs.
+// (the file's empty), and the empty stands in the scene with nothing above it (#1451). The empty is
+// moved and scaled on top of the file's own turn and lift, and the child gets a transform of its own
+// (a quaternion, since an imported node is in quaternion mode), so every link of the chain is
+// non-identity when Apply runs.
 //
 // Apply bakes the child's own transform into its mesh in place: the Object keeps its id and its
 // parent, its applied parts go to identity, and the drawn vertex set does not move. Re-turning the
@@ -194,17 +195,12 @@ for (const mask of ['all', 'location'] as const) {
     expect(root.road).toBe('native');
     const child = (await importedMeshes(page)).find((m) => m.rootId === root.rootId);
     expect(child, 'the import holds a mesh child').toBeTruthy();
+    // #1451 — the file's empty is the import's root, standing in the scene with no Group above it.
     const [parent] = await holdersOf(page, child!.objectId);
-    expect(parent, "the child hangs under the file's empty, not the import Group").not.toBe(
-      root.rootId,
-    );
-
-    const pivot = await page.evaluate(
-      (id) =>
-        (window as unknown as BasherWindow).__basher_dag!.getState().state.nodes[id].params
-          .pivot as Tuple3,
-      root.rootId,
-    );
+    expect(parent, "the child hangs under the file's empty, the import's root").toBe(root.rootId);
+    const own = await paramsOf(page, root.rootId);
+    expect(own.position, "the file's lift").toEqual([0, 2, 0]);
+    const p = own.position as Tuple3;
     await page.evaluate(
       ({ id, p, childId, turn }) => {
         (window as unknown as BasherWindow).__basher_dag!.getState().dispatchAtomic(
@@ -215,7 +211,6 @@ for (const mask of ['all', 'location'] as const) {
               paramPath: 'position',
               value: [p[0] + 3, p[1] + 1, p[2]],
             },
-            { type: 'setParam', nodeId: id, paramPath: 'rotation', value: [0, 0, 40] },
             { type: 'setParam', nodeId: id, paramPath: 'scale', value: [1.5, 1.5, 1.5] },
             { type: 'setParam', nodeId: childId, paramPath: 'position', value: [0.5, -0.25, 0.75] },
             { type: 'setParam', nodeId: childId, paramPath: 'quaternion', value: turn },
@@ -225,7 +220,7 @@ for (const mask of ['all', 'location'] as const) {
           'p1051 move import and child',
         );
       },
-      { id: root.rootId, p: pivot, childId: child!.objectId, turn: TURN },
+      { id: root.rootId, p, childId: child!.objectId, turn: TURN },
     );
 
     await expect

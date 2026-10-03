@@ -33,22 +33,34 @@ async function drawnSlots(page: Page): Promise<{ color: string; roughnessMap: bo
       color?: { getHexString: () => string };
       roughnessMap?: { image?: { width?: number } | null } | null;
     };
-    type O3 = { isMesh?: boolean; material?: Mat | Mat[]; traverse: (f: (o: O3) => void) => void };
+    type O3 = {
+      isMesh?: boolean;
+      material?: Mat | Mat[];
+      userData?: { basherNodeId?: string };
+      traverse: (f: (o: O3) => void) => void;
+    };
     const w = window as unknown as {
-      __basher_three: { getState: () => { scene: { getObjectByName: (n: string) => O3 } } };
+      __basher_three: {
+        getState: () => { scene: (O3 & { getObjectByName: (n: string) => O3 }) | null };
+      };
     };
     const out: { color: string; roughnessMap: boolean }[] = [];
-    w.__basher_three
-      .getState()
-      .scene.getObjectByName(id)
-      ?.traverse((o) => {
-        if (!o.isMesh) return;
-        for (const m of Array.isArray(o.material) ? o.material : [o.material])
-          out.push({
-            color: m?.color ? `#${m.color.getHexString()}` : '',
-            roughnessMap: (m?.roughnessMap?.image?.width ?? 0) > 0,
-          });
-      });
+    const scene = w.__basher_three.getState().scene;
+    if (!scene) return out;
+    // A scene child is drawn under its own id; a node drawn inside another (the import's root under
+    // a spec's override, #1451) carries its id as a stamp — `drawnImportMeshes`' own rule.
+    let stamped: O3 | undefined;
+    scene.traverse((o) => {
+      if (!stamped && o.userData?.basherNodeId === id) stamped = o;
+    });
+    (scene.getObjectByName(id) ?? stamped)?.traverse((o) => {
+      if (!o.isMesh) return;
+      for (const m of Array.isArray(o.material) ? o.material : [o.material])
+        out.push({
+          color: m?.color ? `#${m.color.getHexString()}` : '',
+          roughnessMap: (m?.roughnessMap?.image?.width ?? 0) > 0,
+        });
+    });
     return out;
   }, roots[0].rootId);
 }

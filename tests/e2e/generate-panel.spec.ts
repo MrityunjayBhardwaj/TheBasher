@@ -254,7 +254,7 @@ test('the Character road lands a rigged mesh on the ordinary glTF import road', 
 
   // 🔑 THE SHAPE, NOT THE COUNT — the same discipline the motion road uses. A
   // rigged character arrives as a native character (#1205): a Skeleton, and a mesh
-  // an Armature modifier deforms by it, under the import's Group. "More nodes
+  // an Armature modifier deforms by it, standing in the scene with no wrapper (#1451). "More nodes
   // appeared" would pass for an unrigged mesh, which is the one failure this road
   // exists to avoid; an unrigged mesh has neither a Skeleton nor a deform. Nothing of
   // the clone road: the file stopped existing when it was read.
@@ -262,7 +262,7 @@ test('the Character road lands a rigged mesh on the ordinary glTF import road', 
     after.filter((t) => t === type).length - before.filter((t) => t === type).length;
   expect(added('Skeleton')).toBe(1);
   expect(added('ArmatureModifier')).toBeGreaterThan(0);
-  expect(added('Group')).toBeGreaterThan(0);
+  expect(added('Object')).toBeGreaterThan(0);
   expect(after.filter((t) => /^Gltf|TransformClip|ClipSelect/.test(t))).toEqual([]);
 
   await expect(page.getByTestId('generate-prompt')).toHaveValue('');

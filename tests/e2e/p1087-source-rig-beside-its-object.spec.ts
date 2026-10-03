@@ -151,40 +151,29 @@ test('#1087 — the source rig and the unhidden rig Object both draw, told apart
         nodes[id].type === 'Object' &&
         nodes[ref(nodes[id].inputs.data)]?.type === 'Skeleton',
     );
-    // #1434 — the rig stands alone in the import's own Group, and that Group is what the bind hides
-    // and what the outliner's eye shows again.
-    const group = Object.keys(nodes).find(
-      (id) =>
-        nodes[id].type === 'Group' &&
-        ((nodes[id].inputs.children as { node: string }[] | undefined) ?? []).some(
-          (c) => c.node === rig,
-        ),
-    );
-    return { character, rig, group };
+    return { character, rig };
   });
   const objectId = ids.rig;
-  const groupId = ids.group;
   const characterId = ids.character;
   expect(characterId, 'no Armature modifier deforms the character — it is not native').not.toBe('');
   expect(
     objectId,
     'the drop stood no rig Object — every reading below would be vacuous',
   ).toBeDefined();
-  expect(groupId, 'the rig stands in no Group of its own').toBeDefined();
   expect(
     await page.evaluate(
       (id) =>
         (window as unknown as Win).__basher_dag.getState().state.nodes[id].meta?.hidden === true,
-      groupId!,
+      objectId!,
     ),
-    'the bind did not hide the rig’s Group — not the bound shape this row is about',
+    'the bind did not hide the rig Object — not the bound shape this row is about',
   ).toBe(true);
 
   // The director's two gestures: the View menu toggle, and the outliner eye.
   await page.getByTestId('menu-view').click();
   await page.getByTestId('menu-view-toggle-source-rig').click();
   await page.keyboard.press('Escape');
-  await page.getByTestId(`scene-tree-eye-${groupId}`).click();
+  await page.getByTestId(`scene-tree-eye-${objectId}`).click();
 
   // BOTH draw: the character plus the Object as armatures, and the overlay's own bones.
   await expect
