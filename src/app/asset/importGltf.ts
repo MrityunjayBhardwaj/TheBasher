@@ -59,6 +59,7 @@ import { rebindOrphanMaterialsInEntry } from '../../core/import/rebindOrphanMate
 import { getStorage } from '../boot';
 import { writeProjectImage } from '../../core/project/projectImages';
 import type { DagState } from '../../core/dag/state';
+import type { Vec3 } from '../../nodes/types';
 import { intoActiveCollection } from '../collections';
 import { useProjectStore } from '../../core/project/store';
 import {
@@ -174,6 +175,8 @@ export async function buildGltfImportOpsFromOpfs(
   path: string,
   // #1451 — the state the import lands in: its scene, and the active collection it links into.
   state: DagState,
+  // #1452 — where to place it, away from where the file puts it (the agent's `library.import`).
+  position?: Vec3,
 ): Promise<GltfImportRoadResult> {
   const sceneNodeId = state.outputs.scene?.node;
   if (!sceneNodeId) throw new Error('import failed: project has no scene output');
@@ -188,6 +191,7 @@ export async function buildGltfImportOpsFromOpfs(
     buffer: copy.buffer,
     assetRef: path,
     sceneNodeId,
+    ...(position ? { position } : {}),
     resolveBuffer: (uri: string) => storage.read(opfsSiblingPath(path, uri)),
     storeImage: storeImageInOpenProject,
     decodeDraco: decodeDracoInBrowser,

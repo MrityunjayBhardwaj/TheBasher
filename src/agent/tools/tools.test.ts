@@ -30,6 +30,7 @@ vi.mock('../../app/boot', () => ({
 }));
 
 import { readFileSync } from 'node:fs';
+import { resolveWorldTransform } from '../../app/resolveWorldTransform';
 import {
   registerAllTools,
   getTool,
@@ -605,6 +606,49 @@ describe('library.import tool', () => {
     expect(nodeTypes.filter((t) => t.startsWith('KeyframeChannel'))).toEqual([]);
     expect(nodeTypes).not.toContain('GltfAsset');
     expect(nodeTypes).toContain('Group');
+  });
+
+  // #1452 — `position` moves the import: what lands stands that far from where the file puts it,
+  // read off the WORLD the applied ops resolve to (never the text, which echoes the argument).
+  it('a glTF imported at a position lands there, its hierarchy riding along', async () => {
+    const assetRef = 'assets/placed.glb';
+    await currentStorage.write(
+      assetRef,
+      makeGlb({
+        asset: { version: '2.0' },
+        scene: 0,
+        scenes: [{ nodes: [0] }],
+        nodes: [
+          { name: 'Root', translation: [1, 2, 3], children: [1] },
+          { name: 'Leaf', translation: [0, 1, 0] },
+        ],
+      }),
+    );
+    const at = { time: { frame: 0, seconds: 0, normalized: 0 } } as never;
+    const worldOf = async (position: [number, number, number]) => {
+      const result = await libraryImportTool.handler(
+        { assetRef, position },
+        { dagState: buildSceneBaseline() },
+      );
+      let applied = buildSceneBaseline();
+      for (const op of result.ops) applied = applyOp(applied, op).next;
+      // The world is resolved off the render root, as the viewport draws it.
+      applied = {
+        ...applied,
+        outputs: { ...applied.outputs, render: { node: 'render', socket: 'out' } },
+      };
+      const named = (name: string) =>
+        Object.entries(applied.nodes).find(([, n]) => n.meta?.name === name)![0];
+      const world = (name: string) =>
+        resolveWorldTransform(applied, named(name), at)!.position.map((v) => +v.toFixed(6));
+      // The text says it was moved, not that the file's objects stand at the position.
+      expect(result.text).toBe(
+        `Imported ${assetRef}, moved [${position}] from where the file puts it`,
+      );
+      return { root: world('Root'), leaf: world('Leaf') };
+    };
+    expect(await worldOf([0, 0, 0])).toEqual({ root: [1, 2, 3], leaf: [1, 3, 3] });
+    expect(await worldOf([10, 0, -5])).toEqual({ root: [11, 2, -2], leaf: [11, 3, -2] });
   });
 
   // V22 — two imports of the same assetRef yield byte-identical node ids

@@ -44,7 +44,7 @@ export const libraryImportTool: ToolDefinition<LibraryImportArgs> = {
   description:
     'Import a library asset into the scene. ' +
     "Returns an Op[] that imports it into the Scene aggregator's children: a .glb or .gltf as " +
-    'Object + mesh data nodes, standing where the file puts them, or refused ' +
+    'Object + mesh data nodes, standing where the file puts them moved by `position`, or refused ' +
     'by name when it cannot become native geometry. A .bvh or .fbx stands where the file puts ' +
     'it: a motion as a skeleton with its keys on a base pose layer and an Object that stands it, ' +
     'not bound to a character; an .fbx with meshes or empties as a character, its rig standing ' +
@@ -74,7 +74,12 @@ export const libraryImportTool: ToolDefinition<LibraryImportArgs> = {
       };
     }
     if (format.family === 'model') {
-      const result = await buildGltfImportOpsFromOpfs(args.assetRef, ctx.dagState);
+      // #1452 — placed at the position the text below names.
+      const result = await buildGltfImportOpsFromOpfs(
+        args.assetRef,
+        ctx.dagState,
+        args.position as [number, number, number],
+      );
       // #1053 — a file the native reader refused is not imported at all.
       if (result.road === 'refused') {
         return {
@@ -84,7 +89,8 @@ export const libraryImportTool: ToolDefinition<LibraryImportArgs> = {
       }
       return {
         ops: result.ops,
-        text: `Imported ${args.assetRef} at [${args.position}]${leftBehindNotice(result.notices)}`,
+        // #1452 — `position` moves the file's top-level objects; it is not where each one stands.
+        text: `Imported ${args.assetRef}, moved [${args.position}] from where the file puts it${leftBehindNotice(result.notices)}`,
       };
     }
 
