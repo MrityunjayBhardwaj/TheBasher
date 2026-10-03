@@ -342,6 +342,7 @@ export async function drawnImportMeshes(page: Page, rootId?: string): Promise<Dr
         computeBoundingBox: () => void;
         attributes?: Record<string, unknown>;
       };
+      userData?: { basherNodeId?: string };
       getObjectByName: (n: string) => O3 | undefined;
       traverse: (f: (o: O3) => void) => void;
     };
@@ -350,7 +351,14 @@ export async function drawnImportMeshes(page: Page, rootId?: string): Promise<Dr
     const out: DrawnImportMesh[] = [];
     if (!scene) return out;
     for (const rootId of rootIds) {
-      const root = scene.getObjectByName(rootId);
+      // A top-level node's wrapper is named with its id; a nested one (an Object inside an import
+      // Group) is stamped with it instead (`DRAWN_NODE_ID_KEY` in `pickChain.ts`) — the product's
+      // own lookup (`byNodeId`, `SceneFromDAG.tsx`) reads both, in this order.
+      const stamped: O3[] = [];
+      scene.traverse((o) => {
+        if (o.userData?.basherNodeId === rootId) stamped.push(o);
+      });
+      const root = scene.getObjectByName(rootId) ?? stamped[0];
       if (!root) continue;
       root.traverse((o) => {
         if (!o.isMesh) return;
