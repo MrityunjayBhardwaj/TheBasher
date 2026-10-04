@@ -15,7 +15,7 @@ import { ingestAndImportGltf } from './asset/gltfEntryChoice';
 import { ingestSingleFile } from './asset/importCommon';
 import { routeImportByExtension } from './asset/importBvhFbx';
 import { isFamilyPath } from './asset/importFormats';
-import { dropItemsToFiles, plainFilesToFiles } from './asset/ingestReaders';
+import { dropToFiles } from './asset/ingestReaders';
 import { formatAssetError, useAssetErrorStore } from './stores/assetErrorStore';
 import { useNotificationStore } from './stores/notificationStore';
 import type { DagState } from '../core/dag/state';
@@ -182,21 +182,10 @@ export function AssetDropZone({ children }: Props) {
 
     void (async () => {
       try {
-        // Path 1: items API (preferred — exposes directory entries via
-        // webkitGetAsEntry, which is the only way to recover folder
-        // shape for drag-drop).
-        if (items.length > 0) {
-          const ingestFiles = await dropItemsToFiles(items as unknown as DataTransferItemList);
-          await routeIngest(ingestFiles, items);
-          return;
-        }
-        // Path 2: plain FileList (no items API). No directory shape is
-        // recoverable here — single or multi flat-file drops only.
-        if (fileList && fileList.length > 0) {
-          const ingestFiles = await plainFilesToFiles(fileList);
-          await routeIngest(ingestFiles, []);
-          return;
-        }
+        // The items door first (only it recovers a folder's shape), the plain
+        // FileList when the items give no entry (#1454).
+        const read = await dropToFiles(items as unknown as DataTransferItemList, fileList);
+        await routeIngest(read.files, read.viaItems ? items : []);
       } catch (err) {
         // `ingestGltfFolder` already reports + throws on "no glTF in
         // folder", so the banner is showing by the time this catch

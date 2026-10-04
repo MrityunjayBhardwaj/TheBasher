@@ -11,6 +11,8 @@
 //     non-negotiable fix.
 //   - `plainFilesToFiles(FileList)` — the no-folder OS-drop branch
 //     (single-file drop without `webkitGetAsEntry`).
+//   - `dropToFiles(items, files)` — picks between the two for a drop, falling
+//     back to the FileList when the items give no entry (#1454).
 //   - `inputFilesToFiles(FileList)` — picker-side. Prefers
 //     `file.webkitRelativePath` (the directory `<input>` pre-flattens
 //     nesting into it) and falls back to `file.name` (the single-file
@@ -120,6 +122,28 @@ export async function dropItemsToFiles(items: DataTransferItemList): Promise<Ing
   const out: IngestFile[] = [];
   for (const arr of nested) out.push(...arr);
   return out;
+}
+
+/**
+ * Read an OS drop into `IngestFile[]`, choosing between the two doors a drop offers.
+ * The items door comes first: only its `webkitGetAsEntry` entries carry a folder's
+ * shape. But an item can hold a file and still give no entry (Chromium returns
+ * `null` for a script-built `DataTransfer`, and other drag sources may too). When
+ * the items yield nothing and `files` holds files, the plain `FileList` is read
+ * instead, so such a drop imports rather than reporting "no files" (#1454).
+ * `viaItems` says which door answered, because only the items door can name a folder.
+ */
+export async function dropToFiles(
+  items: DataTransferItemList | null,
+  files: FileList | null,
+): Promise<{ files: IngestFile[]; viaItems: boolean }> {
+  if (items && items.length > 0) {
+    const fromItems = await dropItemsToFiles(items);
+    if (fromItems.length > 0 || !files || files.length === 0)
+      return { files: fromItems, viaItems: true };
+  }
+  if (files && files.length > 0) return { files: await plainFilesToFiles(files), viaItems: false };
+  return { files: [], viaItems: false };
 }
 
 /**
