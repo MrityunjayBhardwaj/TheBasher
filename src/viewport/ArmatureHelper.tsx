@@ -130,7 +130,7 @@ export function ArmatureHelper({
   /** What was last WRITTEN to the three materials, not read back from one. */
   const depthApplied = useRef<boolean | null>(null);
   /** The skeleton-Object set last drawn: a bone selection made against an older set may name a
-   *  bone that is no longer there, so it is cleared when the set changes. */
+   *  bone that is no longer there, so it is checked when the set changes. */
   const standaloneSignature = useRef('');
 
   const geometry = useMemo(() => {
@@ -277,7 +277,14 @@ export function ArmatureHelper({
     const standaloneInputs = skeletonObjects ?? [];
     const standaloneSig = standaloneInputs.map((o) => `${o.id}:${o.bones.length}`).join('|');
     if (standaloneSig !== standaloneSignature.current) {
-      if (standaloneSignature.current !== '') useBoneSelectionStore.getState().clear();
+      // #1339 — cleared only when the selected bone is no longer there. Edit mode changes a rig's
+      // bone count on purpose (an extrude selects the bone it made), and clearing on any change
+      // dropped that selection the moment it was made.
+      const sel = useBoneSelectionStore.getState();
+      if (standaloneSignature.current !== '' && sel.nodeId !== null) {
+        const owner = standaloneInputs.find((o) => o.id === sel.nodeId);
+        if (!owner || !owner.bones.some((b) => b.name === sel.boneName)) sel.clear();
+      }
       standaloneSignature.current = standaloneSig;
     }
     const playhead = useTimeStore.getState().seconds;

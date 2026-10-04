@@ -53,7 +53,14 @@ import {
 import { getStorage } from './boot';
 import { useAssetErrorStore } from './stores/assetErrorStore';
 import { LOBE_WEIGHT_WHEN_ABSENT } from '../nodes/types';
-import type { BakedTextureRef, Quat, RotationModeFields, UvPlacement, Vec3 } from '../nodes/types';
+import type {
+  BakedTextureRef,
+  BoneSpec,
+  Quat,
+  RotationModeFields,
+  UvPlacement,
+  Vec3,
+} from '../nodes/types';
 import { useDagStore } from '../core/dag/store';
 import { getNodeType } from '../core/dag/registry';
 import { nodeRefCandidates, type NodeRefKind } from './nodeRefCandidates';
@@ -102,6 +109,10 @@ import {
   shownBoneComponent,
 } from './animate/autoKeyCommit';
 import { useActiveBone } from './boneSelection';
+import { useArmatureMode } from './armatureMode';
+import { useArmatureModeStore } from './stores/armatureModeStore';
+import { editSkeletonFromUI } from './skeletonEditActions';
+import type { SkeletonEdit } from './animate/editSkeleton';
 import { useBoneSelectionStore } from './stores/boneSelectionStore';
 import {
   POSE_COMPONENTS,
@@ -4213,6 +4224,7 @@ function BoneNameField({
 
 function SelectedBoneSection() {
   const bone = useActiveBone();
+  const mode = useArmatureMode();
   if (!bone) return null;
   // Root first, and the bone itself is the last entry — shown emphasised rather
   // than repeated above the chain, so the same name is never printed twice.
@@ -4241,7 +4253,189 @@ function SelectedBoneSection() {
           {above.join(' → ')}
         </div>
       ) : null}
-      <BonePoseRow nodeId={bone.nodeId} boneName={bone.boneName} />
+      {/* #1339 — Edit mode edits the bone's REST; Pose mode poses it. */}
+      {mode === 'edit' ? (
+        <EditBoneRow nodeId={bone.nodeId} boneName={bone.boneName} />
+      ) : (
+        <BonePoseRow nodeId={bone.nodeId} boneName={bone.boneName} />
+      )}
+    </div>
+  );
+}
+
+const RAD = 180 / Math.PI;
+
+/**
+ * #1339 — the selected bone in Edit mode: its rest transform in its parent's frame, its parent, and
+ * the skeleton operations (Blender's Edit-mode Bone panel and Armature menu, in joint terms). Every
+ * control goes through `editSkeletonFromUI`, the road the Edit-mode keys and gizmo take, which
+ * dispatches the agent's verb — so a refusal here reads exactly as the agent's would.
+ */
+function EditBoneRow({ nodeId, boneName }: { nodeId: string; boneName: string }) {
+  const state = useDagStore((s) => s.state);
+  const bones = useMemo(() => {
+    const reach = rigReach(state, nodeId);
+    return reach
+      ? ((state.nodes[reach.skeleton].params as { bones?: BoneSpec[] }).bones ?? [])
+      : [];
+  }, [state, nodeId]);
+  const editChildren = useArmatureModeStore((s) => s.editChildren);
+  const setEditChildren = useArmatureModeStore((s) => s.setEditChildren);
+  const [cuts, setCuts] = useState(1);
+  const [refusal, setRefusal] = useState<string | null>(null);
+  const at = bones.findIndex((b) => b.name === boneName);
+  if (at < 0) return null;
+  const spec = bones[at];
+  const edit = (e: SkeletonEdit, label: string) => {
+    const res = editSkeletonFromUI(nodeId, e, label);
+    setRefusal(res.ok ? null : res.reason);
+  };
+  // A bone cannot take itself or anything below it as its parent.
+  const below = new Set<number>();
+  for (let i = 0; i < bones.length; i++) {
+    for (let k = i, hops = 0; k >= 0 && hops <= bones.length; k = bones[k].parent, hops++) {
+      if (k === at) {
+        below.add(i);
+        break;
+      }
+    }
+  }
+  const rows: { key: 'position' | 'rotation' | 'scale'; value: readonly number[]; step: string }[] =
+    [
+      { key: 'position', value: spec.position, step: '0.01' },
+      { key: 'rotation', value: spec.rotation.map((r) => r * RAD), step: '1' },
+      { key: 'scale', value: spec.scale ?? [1, 1, 1], step: '0.01' },
+    ];
+  const button =
+    'rounded border border-border px-1.5 py-0.5 font-mono text-[10px] text-fg/70 hover:text-fg';
+  return (
+    <div className="mt-2 flex flex-col gap-1" data-testid="edit-bone">
+      {rows.map(({ key, value, step }) => (
+        <div key={key} className="flex items-center gap-1 text-[11px] text-fg/80">
+          <span className="w-14 font-mono text-[10px] text-fg/50">{key}</span>
+          {(['x', 'y', 'z'] as const).map((axis, i) => (
+            <input
+              key={axis}
+              type="number"
+              step={step}
+              aria-label={`rest ${key} ${axis}`}
+              value={Math.round(value[i] * 1000) / 1000}
+              data-testid={`edit-bone-${key}-${axis}`}
+              className="w-full rounded border border-border bg-muted px-1.5 py-0.5 text-right font-mono text-[11px] text-fg focus-visible:border-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+              onChange={(e) => {
+                const n = parseFloat(e.target.value);
+                if (Number.isNaN(n)) return;
+                const v = [value[0], value[1], value[2]] as [number, number, number];
+                v[i] = n;
+                const out = key === 'rotation' ? (v.map((d) => d / RAD) as typeof v) : v;
+                edit(
+                  { op: 'transform', bone: boneName, [key]: out, children: editChildren },
+                  `set ${boneName} rest ${key}`,
+                );
+              }}
+            />
+          ))}
+        </div>
+      ))}
+      <label className="flex items-center gap-1 font-mono text-[10px] text-fg/60">
+        <input
+          type="checkbox"
+          data-testid="edit-bone-children-stay"
+          checked={editChildren === 'stay'}
+          onChange={(e) => setEditChildren(e.target.checked ? 'stay' : 'follow')}
+        />
+        children stay where they are
+      </label>
+      <div className="flex items-center gap-1 text-[11px] text-fg/80">
+        <span className="w-14 font-mono text-[10px] text-fg/50">parent</span>
+        <select
+          data-testid="edit-bone-parent"
+          aria-label="Bone parent"
+          value={spec.parent >= 0 ? bones[spec.parent].name : ''}
+          className="w-full rounded border border-border bg-muted px-1 py-0.5 font-mono text-[11px] text-fg"
+          onChange={(e) =>
+            edit(
+              { op: 'parent', bone: boneName, parent: e.target.value || null },
+              `parent ${boneName}`,
+            )
+          }
+        >
+          <option value="">(none: a root)</option>
+          {bones.map((b, i) =>
+            below.has(i) ? null : (
+              <option key={b.name} value={b.name}>
+                {b.name}
+              </option>
+            ),
+          )}
+        </select>
+      </div>
+      <div className="flex flex-wrap items-center gap-1">
+        <button
+          type="button"
+          className={button}
+          data-testid="edit-bone-extrude"
+          title="Add a child that continues the chain (E)"
+          onClick={() => edit({ op: 'extrude', from: boneName }, `extrude ${boneName}`)}
+        >
+          extrude
+        </button>
+        <button
+          type="button"
+          className={button}
+          data-testid="edit-bone-subdivide"
+          title="Split the link to this bone's child into equal pieces"
+          onClick={() => edit({ op: 'subdivide', bone: boneName, cuts }, `subdivide ${boneName}`)}
+        >
+          subdivide
+        </button>
+        <input
+          type="number"
+          min={1}
+          max={64}
+          value={cuts}
+          aria-label="Subdivide cuts"
+          data-testid="edit-bone-cuts"
+          className="w-10 rounded border border-border bg-muted px-1 py-0.5 text-right font-mono text-[10px] text-fg"
+          onChange={(e) => setCuts(Math.max(1, Math.min(64, parseInt(e.target.value, 10) || 1)))}
+        />
+        <button
+          type="button"
+          className={button}
+          data-testid="edit-bone-reroot"
+          title="Make this the root, reversing the chain above it"
+          onClick={() => edit({ op: 'reroot', bone: boneName }, `reroot at ${boneName}`)}
+        >
+          make root
+        </button>
+        <button
+          type="button"
+          className={button}
+          data-testid="edit-bone-delete"
+          title="Delete; its children go to its parent (X)"
+          onClick={() =>
+            edit({ op: 'delete', bone: boneName, reparent: true }, `delete ${boneName}`)
+          }
+        >
+          delete
+        </button>
+        <button
+          type="button"
+          className={button}
+          data-testid="edit-bone-delete-detach"
+          title="Delete; its children become roots where they stand"
+          onClick={() =>
+            edit({ op: 'delete', bone: boneName, reparent: false }, `delete ${boneName}`)
+          }
+        >
+          delete, children to roots
+        </button>
+      </div>
+      {refusal !== null ? (
+        <div className="font-mono text-[10px] text-warn" data-testid="edit-bone-refusal">
+          {refusal}
+        </div>
+      ) : null}
     </div>
   );
 }

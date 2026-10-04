@@ -23,13 +23,22 @@ export interface ArmatureModeStore {
   /** The armature Object the mode belongs to; null = object mode everywhere. */
   nodeId: string | null;
   mode: ArmatureMode;
+  /**
+   * #1339 — in Edit mode, whether moving a joint carries its children (`follow`) or leaves them
+   * where they stand (`stay`, Houdini's Child Compensate). Read by the Edit-mode gizmo and the
+   * inspector's rest fields, so the two move a joint the same way.
+   */
+  editChildren: 'follow' | 'stay';
   setMode: (nodeId: string, mode: ArmatureMode) => void;
+  setEditChildren: (v: 'follow' | 'stay') => void;
   clear: () => void;
 }
 
 export const useArmatureModeStore = create<ArmatureModeStore>((set) => ({
   nodeId: null,
   mode: 'object',
+  editChildren: 'follow',
+  setEditChildren: (editChildren) => set({ editChildren }),
   setMode: (nodeId, mode) =>
     set(mode === 'object' ? { nodeId: null, mode: 'object' } : { nodeId, mode }),
   clear: () => set({ nodeId: null, mode: 'object' }),

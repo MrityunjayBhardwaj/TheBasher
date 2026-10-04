@@ -43,7 +43,9 @@ import { boneDragLocal, boneGizmoSeed, memberDegrees } from './boneGizmoMath';
 import { layerValueForDrawn } from './animate/invertPoseStack';
 import type { Quat, Vec3 } from '../nodes/types';
 import type { PoseLayerParams } from '../nodes/PoseLayer';
-import type { EulerOrder } from '../nodes/bonePose';
+import { eulerXYZFromQuat, type EulerOrder } from '../nodes/bonePose';
+import { editSkeletonFromUI } from './skeletonEditActions';
+import { useArmatureModeStore } from './stores/armatureModeStore';
 
 const COMPONENT_OF: Record<GizmoMode, PoseComponent> = {
   translate: 'position',
@@ -86,7 +88,9 @@ export function BoneGizmo() {
   /** A refusal is said once per drag, not on every move. */
   const saidRef = useRef(false);
 
-  const live = mode === 'pose' && active !== null ? active : null;
+  // #1339 — Edit mode too: there the gizmo moves the bone's REST joint.
+  const editing = mode === 'edit';
+  const live = (mode === 'pose' || editing) && active !== null ? active : null;
   const object = useMemo(
     () =>
       live
@@ -101,8 +105,11 @@ export function BoneGizmo() {
   );
   const index = object && target ? object.bones.findIndex((b) => b.name === target.bone) : -1;
   const frames = useMemo(
-    () => (object && index >= 0 ? boneFrames(object, index, seconds) : null),
-    [object, index, seconds],
+    () =>
+      object && index >= 0
+        ? boneFrames(editing ? { ...object, pose: null } : object, index, seconds)
+        : null,
+    [object, index, seconds, editing],
   );
 
   // Seed the proxy where the bone stands, and re-seed as the pose plays — never mid-drag, where
@@ -127,12 +134,40 @@ export function BoneGizmo() {
 
   const end = useCallback(() => {
     dragRef.current = null;
-    endGizmoDrag(`pose ${live?.boneName ?? 'bone'}`);
-  }, [live]);
+    endGizmoDrag(`${editing ? 'edit' : 'pose'} ${live?.boneName ?? 'bone'}`);
+  }, [live, editing]);
 
   const onObjectChange = useCallback(() => {
     const d = dragRef.current;
     if (!proxy || !d || !live) return;
+    proxy.updateMatrixWorld(true);
+    if (editing) {
+      // #1339 — a rest edit: the joint's new local rest under its parent's rest, through the road
+      // the Edit-mode keys and panel take. Children follow or stay per the inspector's toggle.
+      const local = boneDragLocal(d.bone, d.proxy, proxy.matrixWorld, d.parent);
+      const component = COMPONENT_OF[useGizmoStore.getState().mode];
+      const value =
+        component === 'rotation'
+          ? eulerXYZFromQuat(local.quaternion)
+          : component === 'position'
+            ? local.position
+            : local.scale;
+      const res = editSkeletonFromUI(
+        live.nodeId,
+        {
+          op: 'transform',
+          bone: live.boneName,
+          [component]: value,
+          children: useArmatureModeStore.getState().editChildren,
+        },
+        `edit ${live.boneName}`,
+      );
+      if (!res.ok && !saidRef.current) {
+        saidRef.current = true;
+        useNotificationStore.getState().notify({ severity: 'info', message: res.reason });
+      }
+      return;
+    }
     const now = poseTargetForBone(
       useDagStore.getState().state,
       live.nodeId,
@@ -178,7 +213,7 @@ export function BoneGizmo() {
       saidRef.current = true;
       useNotificationStore.getState().notify({ severity: 'info', message: res.reason });
     }
-  }, [proxy, live]);
+  }, [proxy, live, editing]);
 
   // *** Dev-only observation seams — NOT user chrome (the curve point gizmo's shape). ***
   // Pointer simulation through TransformControls is fragile in headless Chromium, so e2e drives the
