@@ -1,8 +1,8 @@
 // #397 — Blender's Move to Collection menu (M in the viewport): the Scene Collection, each of the
 // scene's collections, and New Collection. Choosing one moves the selection there through one undo
 // entry (`moveToCollectionOps`), and says what it did, as Blender's "P moved to A" report does.
-// Lights and cameras stay out — their drawers honour no collection's hide yet — and the toast names
-// how many were left where they were.
+// What is not a scene object (a collection, a material, a data node) stays where it is, and the toast
+// names how many.
 
 import { useEffect, useRef } from 'react';
 import { useDagStore } from '../core/dag/store';
@@ -38,7 +38,7 @@ export function moveSelectionToCollection(target: MoveTarget): void {
   if (result.skipped.length > 0) {
     notify({
       severity: 'warn',
-      message: `${result.skipped.length} selected item${result.skipped.length === 1 ? '' : 's'} stayed where ${result.skipped.length === 1 ? 'it was' : 'they were'}: only objects in the scene join a collection, and lights and cameras can’t yet`,
+      message: `${result.skipped.length} selected item${result.skipped.length === 1 ? '' : 's'} stayed where ${result.skipped.length === 1 ? 'it was' : 'they were'}: only objects in the scene join a collection`,
     });
   }
 }

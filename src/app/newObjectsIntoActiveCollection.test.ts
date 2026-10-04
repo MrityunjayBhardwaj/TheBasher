@@ -1,7 +1,7 @@
 // #1453 — every object that stands in the scene joins the active collection, not only an import's.
 // Blender 5.1.1 (headless, observed): with a collection active, `primitive_cube_add` lands in it and
 // `object.duplicate` lands in its source's collections; with the scene collection active, an added
-// object joins none. Lights and cameras stay out until their drawers honour a hidden collection.
+// object joins none. Lights and cameras join too, now their drawers honour a hidden one.
 import { beforeEach, describe, expect, it } from 'vitest';
 import { __resetRegistryForTests, applyOp } from '../core/dag';
 import type { DagState } from '../core/dag/state';
@@ -58,14 +58,22 @@ describe('#1453 — Add links into the active collection', () => {
     expect(collectionMembersOf(s, col)).toEqual([]);
   });
 
-  it.each(['PointLight', 'PerspectiveCamera'] as const)(
-    'a %s stays out: its drawer honours no hidden collection yet',
+  it.each(['PointLight', 'DirectionalLight', 'PerspectiveCamera', 'OrthographicCamera'] as const)(
+    'a %s joins it too, and its hide hides it (#1453 — its drawer honours one now)',
     (kind) => {
       const { state, col } = withCollection(true);
-      const { state: s } = add(state, kind);
-      expect(collectionMembersOf(s, col)).toEqual([]);
+      const { state: s, id } = add(state, kind);
+      expect(collectionMembersOf(s, col)).toEqual([id]);
+      const hidden = apply(s, [{ type: 'setHidden', nodeId: col, hidden: true }]);
+      expect(hiddenByCollection(hidden).has(id)).toBe(true);
     },
   );
+
+  it.each(['Material', 'Math'] as const)('a %s is not a scene object and joins nothing', (kind) => {
+    const { state, col } = withCollection(true);
+    const { state: s } = add(state, kind);
+    expect(collectionMembersOf(s, col)).toEqual([]);
+  });
 });
 
 describe('#1453 — generated motion links its rig Object into the active collection', () => {

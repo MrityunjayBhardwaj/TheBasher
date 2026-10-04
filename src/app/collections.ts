@@ -10,6 +10,7 @@
 import type { DagState } from '../core/dag/state';
 import type { NodeId, Op } from '../core/dag/types';
 import { collectionOps } from '../core/import/modelImport';
+import { isCameraNode } from './cameraNode';
 
 const refsOf = (binding: unknown): NodeId[] =>
   (Array.isArray(binding) ? binding : binding ? [binding] : [])
@@ -151,21 +152,24 @@ export function newCollectionOps(state: DagState): { ops: Op[]; collectionId: No
 }
 
 /**
- * #397 — every node the scene holds through `children` edges, at any depth: what stands in the
- * scene and can therefore join a collection. Lights (the scene's own band) and cameras (floating)
- * are not here — they honour no collection's hide yet, so linking one would list it hidden while it
- * still lit or framed the shot.
+ * #397 — the scene's objects: what a collection can hold and an eye can hide. Every node the scene
+ * holds through its `children` and `lights` bands, at any depth, and every camera (#1453 — a
+ * camera floats outside the scene's bands, and Blender lists it in a collection like any object).
+ * Their drawers all honour `hiddenNodes`: the scene's children, the lights band and its helpers,
+ * and the camera frustums.
  */
-export function sceneHeldNodes(state: DagState): ReadonlySet<NodeId> {
+export function collectableNodes(state: DagState): ReadonlySet<NodeId> {
   const sceneId = state.outputs.scene?.node;
   const out = new Set<NodeId>();
-  const stack = sceneId ? refsOf(state.nodes[sceneId]?.inputs?.children) : [];
+  const scene = sceneId ? state.nodes[sceneId] : undefined;
+  const stack = [...refsOf(scene?.inputs?.children), ...refsOf(scene?.inputs?.lights)];
   while (stack.length > 0) {
     const id = stack.pop()!;
     if (out.has(id) || !state.nodes[id]) continue;
     out.add(id);
     stack.push(...refsOf(state.nodes[id].inputs?.children));
   }
+  if (scene) for (const id of Object.keys(state.nodes)) if (isCameraNode(state, id)) out.add(id);
   return out;
 }
 
@@ -178,7 +182,7 @@ export interface MoveToCollection {
   collectionId: NodeId | null;
   /** The ids moved, in the order given. */
   moved: NodeId[];
-  /** The ids given that the scene does not stand in it (lights, cameras, non-scene nodes). */
+  /** The ids given that are not scene objects (`collectableNodes`): data, collections, … */
   skipped: NodeId[];
 }
 
@@ -206,7 +210,7 @@ export function moveToCollectionOps(
     collectionId = target.collectionId;
     if (collectionId !== null && !sceneCollectionsOf(state).includes(collectionId)) return null;
   }
-  const held = sceneHeldNodes(state);
+  const held = collectableNodes(state);
   const moved: NodeId[] = [];
   const skipped: NodeId[] = [];
   for (const id of new Set(ids)) {

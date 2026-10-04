@@ -497,6 +497,9 @@ export function SceneFromDAG({ outputName = 'render' }: SceneFromDAGProps) {
           become selectable frustum objects (CameraHelpers). */}
       {value.scene.lights.map((light, i) => {
         const lid = lightRefs[i]?.node ?? null;
+        // #1453 — a hidden light (its eye, or a hidden collection) lights nothing, in the
+        // viewport and the render alike, as a hidden mesh draws nothing.
+        if (lid != null && hiddenIds.has(lid)) return null;
         // #205 — a light targeted by an active Track-To aims via lookAt (V60); the
         // membership set is built once (O(N)) so this stays O(1) per light (B13).
         return (
@@ -515,6 +518,7 @@ export function SceneFromDAG({ outputName = 'render' }: SceneFromDAGProps) {
           matching `rigLights`) so studio lights keep their Track-To aim + selection. */}
       {rigLights.map((light, i) => {
         const lid = rigLightSources[i] ?? null;
+        if (lid != null && hiddenIds.has(lid)) return null;
         return (
           <LightNode
             key={`rig-light:${lid ?? i}`}
@@ -532,6 +536,7 @@ export function SceneFromDAG({ outputName = 'render' }: SceneFromDAGProps) {
       {showLightHelpers
         ? value.scene.lights.map((light, i) => {
             const lid = lightRefs[i]?.node ?? null;
+            if (lid != null && hiddenIds.has(lid)) return null; // #1453 — with its light
             // [[V85]]/[[H132]] #241 — an animated light's helper follows the
             // evaluated value at the playhead; a static light keeps the static path.
             // #243 GAP 2 / #265 — a Track-To'd AIMABLE light (Area/Spot/Directional)
@@ -556,6 +561,7 @@ export function SceneFromDAG({ outputName = 'render' }: SceneFromDAGProps) {
       {showLightHelpers
         ? rigLights.map((light, i) => {
             const lid = rigLightSources[i] ?? null;
+            if (lid != null && hiddenIds.has(lid)) return null; // #1453 — with its light
             // #243 GAP 2 / #265 — a Track-To'd AIMABLE rig light follows its aim per frame.
             return lid &&
               (directChannelTargets.has(lid) ||
@@ -578,6 +584,9 @@ export function SceneFromDAG({ outputName = 'render' }: SceneFromDAGProps) {
         ? cameraNodeIds.map((id) => {
             const active = id === activeCameraId;
             if (active && lookThrough) return null;
+            // #1453 — a hidden camera (its eye, or a hidden collection) draws no frustum. As in
+            // Blender, hiding it does not stop the shot: the active camera still frames the render.
+            if (hiddenIds.has(id)) return null;
             // [[V85]]/[[H132]] #240 — an ANIMATED camera (direct channels or a
             // Track-To) follows the EVALUATED pose at the live playhead, parity with
             // meshes/lights; a static camera keeps the cheap frame-0 read. #242 GAP 1

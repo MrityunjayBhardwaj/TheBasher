@@ -203,26 +203,3 @@ test('#397 — a nested object moved into a collection hides with it, and its pa
   expect(await isDrawn(page, shape.parent), 'its parent is in no collection and stays').toBe(true);
   expect(errors).toEqual([]);
 });
-
-test('#397 — a light stays where it was, and the toast says so', async ({ page }) => {
-  await page.goto('/');
-  await expect(page.getByTestId('layout')).toBeVisible({ timeout: 15_000 });
-  const col = await newCollection(page);
-  // A light is an Object over a LightData, held in the scene's lights band.
-  const light = await page.evaluate(() => {
-    const nodes = (window as unknown as W).__basher_dag.getState().state.nodes;
-    return Object.values(nodes).find((n) => {
-      const data = n.inputs.data as { node?: string } | undefined;
-      return n.type === 'Object' && data?.node && nodes[data.node]?.type === 'LightData';
-    })?.id;
-  });
-  expect(light, 'the default scene has a light').toBeTruthy();
-  await page.evaluate(
-    (id) => (window as unknown as W).__basher_selection.getState().select(id),
-    light!,
-  );
-  await pressM(page);
-  await page.getByTestId(`move-to-collection-${col}`).click();
-  await expect(page.getByTestId('toast-warn').last()).toContainText('lights and cameras');
-  expect(await collectionsOf(page, light!)).toEqual([]);
-});

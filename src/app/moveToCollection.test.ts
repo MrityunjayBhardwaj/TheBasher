@@ -18,7 +18,7 @@ import {
   moveToCollectionOps,
   newCollectionOps,
   sceneCollectionsOf,
-  sceneHeldNodes,
+  collectableNodes,
 } from './collections';
 
 beforeEach(() => {
@@ -76,7 +76,7 @@ describe('#397 — Move to Collection', () => {
     const { state, A, B, P, C } = scene();
     expect(collectionsHolding(state, P)).toEqual([A, B]);
     expect(collectionsHolding(state, C)).toEqual([]);
-    expect(sceneHeldNodes(state).has(C)).toBe(true);
+    expect(collectableNodes(state).has(C)).toBe(true);
   });
 
   it('to A: P leaves B and stays in A alone; C is untouched', () => {
@@ -113,14 +113,14 @@ describe('#397 — Move to Collection', () => {
     expect(collectionsHolding(r.state, P)).toEqual([made[0]]);
   });
 
-  it('a light, a camera and the collection itself are skipped by name; the cube still moves', () => {
+  it('a light and a camera move like any object (#1453); the collection itself is skipped', () => {
     const { state: s0, A, P } = scene();
     const light = add(s0, 'PointLight');
     const cam = add(light.state, 'PerspectiveCamera');
     const r = move(cam.state, [light.id, P, cam.id, A], { collectionId: A });
-    expect(r.moved).toEqual([P]);
-    expect(r.skipped).toEqual([light.id, cam.id, A]);
-    expect(collectionMembersOf(r.state, A)).toEqual([P]);
+    expect(r.moved).toEqual([light.id, P, cam.id]);
+    expect(r.skipped).toEqual([A]);
+    expect(collectionMembersOf(r.state, A)).toEqual([P, light.id, cam.id]);
   });
 
   it('moving to where it already is changes nothing', () => {

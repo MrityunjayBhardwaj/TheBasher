@@ -26,7 +26,12 @@ import { useRenameStore } from './stores/renameStore';
 import { RenameInput } from './RenameInput';
 import { SceneTreeIcon, iconKindForNode } from './SceneTreeIcon';
 import { buildSceneTreeRows, type TreeRow } from './sceneTreeWalk';
-import { activeCollectionOf, newCollectionOps, setActiveCollectionOp } from './collections';
+import {
+  activeCollectionOf,
+  collectableNodes,
+  newCollectionOps,
+  setActiveCollectionOp,
+} from './collections';
 import { buildDeleteNodesOps, buildDuplicateNodeOps } from './sceneNodeActions';
 import { selectActiveCameraNode } from './activeCamera';
 import { isCameraNode } from './cameraNode';
@@ -720,7 +725,8 @@ export function SceneTree({ filter = '' }: SceneTreeProps) {
     }
   }
 
-  const sceneRootId = state.outputs.scene?.node;
+  // #1453 — every scene object can be hidden: its eye reaches its drawer at any depth (#1462).
+  const hideable = collectableNodes(state);
   return (
     <div
       data-testid="scene-tree"
@@ -752,14 +758,11 @@ export function SceneTree({ filter = '' }: SceneTreeProps) {
             (row.nodeType === 'GltfAsset'
               ? expandedAssets.has(row.nodeId)
               : !collapsedNodes.has(row.nodeId));
-          // #227 S4 — visibility. The eye lives on TOP-LEVEL rows (depth 1, the
-          // Scene's direct children) — the renderer skips exactly these by source
-          // node id, so the affordance can't lie. `hidden` dims the row + flips the
+          // #227 S4 — visibility. The eye lives on the rows whose drawer honours it, by
+          // source node id, so the affordance can't lie. `hidden` dims the row + flips the
           // glyph. Suppressed while filtering (same as the chevron).
-          // #231 Inc 3.2 — a camera row shows the active-marker / Set-Active
-          // affordance instead of the eye (the eye toggles `meta.hidden`, which the
-          // renderer only honours for top-level CHILDREN — a camera frustum isn't in
-          // that band, so the eye would be a lying affordance on a camera).
+          // #231 Inc 3.2 — a camera row shows the active-marker / Set-Active affordance.
+          // #1453 — and an eye beside it: the frustums now honour `meta.hidden`.
           // #387 C4 — keyed on POSSESSION, not on the type's NAME. A split camera is an
           // `Object` posing a `CameraData`, and `'Object'.endsWith('Camera')` is false, so
           // the name-shaped predicate silently stripped the active-camera marker, the
@@ -769,12 +772,11 @@ export function SceneTree({ filter = '' }: SceneTreeProps) {
           const isCamera = isCameraNode(state, row.nodeId);
           const isActiveCamera = isCamera && row.nodeId === activeCameraId;
           // #1451 — keyed on what the renderer honours rather than on depth: a Collection (its
-          // members go with it), and a node the SCENE holds directly, which is every depth-1 row
-          // and a collection member listed at depth 2 (still the scene's child).
+          // members go with it), and every scene object (`collectableNodes`) — #1462 made a hide
+          // reach a node alone at any depth, and #1453 made the lights band and the camera
+          // frustums honour it, so the eye is true on each of their rows.
           const isHideable =
-            !filtering &&
-            !isCamera &&
-            (row.nodeType === 'Collection' || row.parent?.nodeId === sceneRootId);
+            !filtering && (row.nodeType === 'Collection' || hideable.has(row.nodeId));
           const hidden = state.nodes[row.nodeId]?.meta?.hidden ?? false;
           return (
             <li
