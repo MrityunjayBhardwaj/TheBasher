@@ -163,3 +163,26 @@ describe('buildAddPrimitiveOps', () => {
     expect(a.description).toMatch(/cube/i);
   });
 });
+
+describe('#1339 — Add › Armature', () => {
+  it('stands one bone (two joints) on an armature Object, posed by its own rest, at the spawn point', async () => {
+    const { evaluate } = await import('../core/dag');
+    const { isArmatureObject } = await import('./armatureMode');
+    const { armaturePoseOf } = await import('../nodes/bonePose');
+    let state = seedSceneState();
+    const r = buildAddPrimitiveOps(state, 'Armature', [1, 0, 2])!;
+    for (const op of r.ops) state = applyOp(state, op).next;
+    expect(isArmatureObject(state, r.newNodeId)).toBe(true);
+    expect(state.nodes[r.newNodeId].params.position).toEqual([1, 0, 2]);
+    expect(state.nodes[r.dataNodeId!].params.bones).toEqual([
+      { name: 'Bone', parent: -1, position: [0, 0, 0], rotation: [0, 0, 0] },
+      { name: 'Bone_end', parent: 0, position: [0, 1, 0], rotation: [0, 0, 0] },
+    ]);
+    const object = evaluate(state, r.newNodeId).value as never;
+    const pose = armaturePoseOf(object);
+    expect(pose?.sample(0).map((b) => b.name)).toEqual(['Bone', 'Bone_end']);
+    // A child of the scene, so it draws.
+    const scene = state.nodes[state.outputs.scene!.node];
+    expect(JSON.stringify(scene.inputs.children)).toContain(r.newNodeId);
+  });
+});

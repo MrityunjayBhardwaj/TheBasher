@@ -12,6 +12,7 @@
 
 import type { DagState } from '../core/dag/state';
 import type { Op } from '../core/dag/types';
+import { buildSkeletonObjectOps } from '../core/import/skeletonObject';
 import { DEFAULT_CAMERA_FAR, DEFAULT_CAMERA_NEAR } from '../nodes/CameraData';
 
 /**
@@ -53,6 +54,8 @@ export const SCENE_OBJECT_KINDS = [
   // #321 — a Curve path: like a Null it is a standalone transformable scene object, so it
   // wires straight into scene.children (not a wrapper like Group/Transform).
   'Curve',
+  // #1339 — an armature: an Object whose data is a Skeleton of one bone, standing in its rest pose. Blender's Add › Armature; its bones are built from there in Edit mode.
+  'Armature',
 ] as const;
 export type SceneObjectKind = (typeof SCENE_OBJECT_KINDS)[number];
 
@@ -205,6 +208,48 @@ export function buildAddPrimitiveOps(
   // + chained mutators land on the Object (the posable half); the SphereData owns radius/segments
   // + material. This makes new spheres split-native — the same pair the load-migration produces
   // for old fused SphereMesh saves (K23) — so "Sphere" and the migration converge on one shape.
+  // #1339 — an armature: a Skeleton of one bone (`Bone` → `Bone_end`, below) and the Object
+  // standing it, posed by the skeleton's own rest pose — the shape every import road builds
+  // (`buildSkeletonObjectOps`), so a hand-built rig and an imported one are the same nodes.
+  if (kind === 'Armature') {
+    const dataId = newId('skel');
+    const built = buildSkeletonObjectOps({
+      skeletonId: dataId,
+      name: 'Armature',
+      sceneNodeId: sceneRef.node,
+      pose: { node: dataId, socket: 'pose' },
+      nameFollowsClip: false,
+    });
+    return {
+      ops: [
+        {
+          type: 'addNode',
+          nodeId: dataId,
+          nodeType: 'Skeleton',
+          // Blender's new armature is one bone, head at the origin and tail one unit up. Bones here
+          // are joints (a joint's tail is its child), so that bone is two: its head joint and the
+          // tail joint one unit up +Y, named `_end` as FBX names a chain's tip.
+          params: {
+            bones: [
+              { name: 'Bone', parent: -1, position: [0, 0, 0], rotation: [0, 0, 0] },
+              { name: 'Bone_end', parent: 0, position: [0, 1, 0], rotation: [0, 0, 0] },
+            ],
+          },
+        },
+        // The Object's TRS from the same table every split kind reads; the builder mints it at
+        // the origin, as an import stands a rig.
+        ...built.ops.map((op) =>
+          op.type === 'addNode' && op.nodeId === built.objectId
+            ? { ...op, params: paramsFor('Armature', position) }
+            : op,
+        ),
+      ],
+      description: `Add ${humanLabel('Armature')}`,
+      newNodeId: built.objectId,
+      dataNodeId: dataId,
+    };
+  }
+
   if (kind === 'Sphere') {
     const dataId = newId('data');
     const objId = newId('obj');
@@ -464,6 +509,7 @@ export function nodeTypeFor(kind: PrimitiveKind): string {
     case 'AreaLight':
     case 'PerspectiveCamera':
     case 'OrthographicCamera':
+    case 'Armature':
       return 'Object';
     default:
       return kind; // AmbientLight (stays fused), empties, compute nodes — direct mapping
@@ -496,6 +542,8 @@ function humanLabel(kind: PrimitiveKind): string {
       return 'material';
     case 'Curve':
       return 'curve';
+    case 'Armature':
+      return 'armature';
     case 'Cube':
       return 'cube';
     case 'Sphere':
@@ -630,6 +678,7 @@ function paramsFor(kind: PrimitiveKind, position: Vec3): Record<string, unknown>
     case 'Cube':
     case 'Sphere':
     case 'Curve':
+    case 'Armature':
     case 'DirectionalLight':
     case 'PointLight':
     case 'SpotLight':

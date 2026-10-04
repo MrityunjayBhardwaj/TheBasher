@@ -77,6 +77,8 @@ const GROUPS: MenuGroup[] = [
       // non-rendering, transformable scene object that exists to be REFERENCED (by
       // Follow-Path) rather than to be seen in the final image.
       { kind: 'Curve', label: 'Curve (Path)' },
+      // #1339 — Blender's Add › Armature: one joint, built out in Edit mode.
+      { kind: 'Armature', label: 'Armature' },
     ],
   },
   {
