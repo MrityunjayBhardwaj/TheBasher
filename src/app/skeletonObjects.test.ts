@@ -193,11 +193,17 @@ describe('collectSkeletonObjects', () => {
     expect(collectSkeletonObjects(build({ inScene: false }))).toEqual([]);
   });
 
+  /** #1503 — a node with its viewport flag off, as the outliner's eye leaves it. */
+  const viewportOff = <N extends { params: unknown }>(n: N): N => ({
+    ...n,
+    params: { ...(n.params as object), viewport: false },
+  });
+
   it('a hidden Object is not drawn', () => {
     const s = build();
     const hidden: DagState = {
       ...s,
-      nodes: { ...s.nodes, sk_object: { ...s.nodes.sk_object, meta: { hidden: true } } },
+      nodes: { ...s.nodes, sk_object: viewportOff(s.nodes.sk_object) },
     };
     expect(collectSkeletonObjects(hidden)).toEqual([]);
   });
@@ -210,14 +216,14 @@ describe('collectSkeletonObjects', () => {
     expect(collectSkeletonObjects(s).map((o) => o.id)).toEqual(['sk_object']);
     const groupHidden: DagState = {
       ...s,
-      nodes: { ...s.nodes, grp: { ...s.nodes.grp, meta: { ...s.nodes.grp.meta, hidden: true } } },
+      nodes: { ...s.nodes, grp: viewportOff(s.nodes.grp) },
     };
     expect(collectSkeletonObjects(groupHidden).map((o) => o.id)).toEqual(['sk_object']);
     const rigHidden: DagState = {
       ...groupHidden,
       nodes: {
         ...groupHidden.nodes,
-        sk_object: { ...groupHidden.nodes.sk_object, meta: { hidden: true } },
+        sk_object: viewportOff(groupHidden.nodes.sk_object),
       },
     };
     expect(collectSkeletonObjects(rigHidden)).toEqual([]);

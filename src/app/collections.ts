@@ -4,9 +4,11 @@
 //
 // HIDING. Blender hides a collection's objects with it, and hides each object on its own: a hidden
 // parent's children still draw where it puts them (#1462, observed in Blender 5.1.1 headless). An
-// object in several collections hides only when every one of them is hidden (#1481). The
-// viewport (`SceneFromDAG`) and the bone overlay (`collectSkeletonObjects`) both ask `hiddenNodes`,
-// so a member of a hidden collection goes the way its own eye would send it, and alone.
+// object in several collections hides only when every one of them is hidden (#1481). And the
+// viewport and the render are asked apart (#1503): the eye is the `viewport` param and the render
+// has its own `render` param, on Objects, Groups and Collections alike. The viewport
+// (`SceneFromDAG`) and the bone overlay (`collectSkeletonObjects`) ask `hiddenNodes(…, 'viewport')`;
+// the render (`renderToImage`) honours `'render'` through the stamps `SceneFromDAG` writes.
 
 import type { DagState } from '../core/dag/state';
 import type { NodeId, Op } from '../core/dag/types';
@@ -33,25 +35,72 @@ export function collectionMembersOf(state: DagState, collectionId: NodeId): Node
 }
 
 /**
- * Whether a collection of the scene is shown. Its own eye today; once collections nest (#397), a
- * collection with a hidden collection above it is not shown either — Blender 5.1.1 (headless,
- * 2026-10-04) hides O in A and in B-under-Parent with A and Parent off, B itself on.
+ * #1503 — what a visibility flag is for. Blender keeps the two apart: the eye is the viewport's,
+ * and the render has its own toggle — measured in Blender 5.1.1 (Cycles, headless): an object
+ * with its eye off still renders, and one with its render toggle off does not.
  */
-function collectionShown(state: DagState, collectionId: NodeId): boolean {
-  return !state.nodes[collectionId]?.meta?.hidden;
+export type VisibilityPurpose = 'viewport' | 'render';
+
+/** The node types that carry the `viewport` and `render` params (#1503): what the eye can hide. */
+export const VISIBILITY_TYPES: ReadonlySet<string> = new Set(['Object', 'Group', 'Collection']);
+
+/**
+ * #1503 — whether a node's own flag shows it for `purpose`. An absent flag shows it, so every
+ * node saved before the flags existed, and every node nobody hid, reads as shown.
+ */
+export function ownShown(
+  node: { params?: unknown } | undefined,
+  purpose: VisibilityPurpose,
+): boolean {
+  return (
+    (node?.params as Partial<Record<VisibilityPurpose, unknown>> | undefined)?.[purpose] !== false
+  );
 }
 
 /**
- * #1481 — every node its collections hide: one in at least one of the scene's collections, with
- * every collection holding it hidden. Blender 5.1.1 (headless, 2026-10-04): O in A and B stays
- * visible with A hidden and hides with A and B, for the viewport toggle and the render toggle
- * alike. A node in no collection belongs to the scene itself, which nothing here hides.
+ * #1503 — the op that sets a node's own flag for `purpose`, or null when it already reads that
+ * way (a write that changes nothing would still leave an undo step, #1191). Showing it clears the
+ * flag rather than writing `true`, so a save keeps only the flags someone turned off.
  */
-export function hiddenByCollection(state: DagState): ReadonlySet<NodeId> {
+export function setShownOp(
+  state: DagState,
+  nodeId: NodeId,
+  purpose: VisibilityPurpose,
+  shown: boolean,
+): Op | null {
+  const node = state.nodes[nodeId];
+  if (!node || !VISIBILITY_TYPES.has(node.type) || ownShown(node, purpose) === shown) return null;
+  return { type: 'setParam', nodeId, paramPath: purpose, value: shown ? undefined : false };
+}
+
+/**
+ * Whether a collection of the scene is shown for `purpose`. Its own flag today; once collections
+ * nest (#397), a collection with a hidden collection above it is not shown either — Blender 5.1.1
+ * (headless, 2026-10-04) hides O in A and in B-under-Parent with A and Parent off, B itself on.
+ */
+function collectionShown(
+  state: DagState,
+  collectionId: NodeId,
+  purpose: VisibilityPurpose,
+): boolean {
+  return ownShown(state.nodes[collectionId], purpose);
+}
+
+/**
+ * #1481 — every node its collections hide for `purpose`: one in at least one of the scene's
+ * collections, with every collection holding it hidden. Blender 5.1.1 (headless, 2026-10-04): O in
+ * A and B stays visible with A hidden and hides with A and B, for the viewport toggle and the
+ * render toggle alike. A node in no collection belongs to the scene itself, which nothing here
+ * hides.
+ */
+export function hiddenByCollection(
+  state: DagState,
+  purpose: VisibilityPurpose,
+): ReadonlySet<NodeId> {
   const shownIn = new Set<NodeId>();
   const heldBy = new Set<NodeId>();
   for (const id of sceneCollectionsOf(state)) {
-    const shown = collectionShown(state, id);
+    const shown = collectionShown(state, id, purpose);
     for (const member of collectionMembersOf(state, id)) {
       heldBy.add(member);
       if (shown) shownIn.add(member);
@@ -61,13 +110,15 @@ export function hiddenByCollection(state: DagState): ReadonlySet<NodeId> {
 }
 
 /**
- * #1462 — every node that is hidden itself: by its own eye (`meta.hidden`) or by a hidden collection
- * holding it. Never what hangs under one — Blender hides an object alone, and its children keep
- * drawing.
+ * #1462 #1503 — every node that is hidden itself for `purpose`: by its own flag, or by the
+ * collections holding it. Never what hangs under one — Blender hides an object alone, and its
+ * children keep drawing. The viewport asks for `'viewport'`, the render for `'render'`.
  */
-export function hiddenNodes(state: DagState): ReadonlySet<NodeId> {
-  const out = new Set<NodeId>(hiddenByCollection(state));
-  for (const node of Object.values(state.nodes)) if (node.meta?.hidden) out.add(node.id);
+export function hiddenNodes(state: DagState, purpose: VisibilityPurpose): ReadonlySet<NodeId> {
+  const out = new Set<NodeId>(hiddenByCollection(state, purpose));
+  for (const node of Object.values(state.nodes)) {
+    if (VISIBILITY_TYPES.has(node.type) && !ownShown(node, purpose)) out.add(node.id);
+  }
   return out;
 }
 

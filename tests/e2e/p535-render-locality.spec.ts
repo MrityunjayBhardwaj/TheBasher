@@ -597,20 +597,25 @@ test('#535 — hiding one object hides only it, and unhiding restores exactly wh
   const mineBefore = before.byOwner[A.obj];
 
   // This case exists because the op-union census demanded it, not because anyone thought
-  // of it: `setHidden` writes the very visibility this file's snapshot already reads, and
+  // of it: `setHidden` (now the `viewport` and `render` params, #1503) writes the very visibility this file's snapshot already reads, and
   // five hand-picked perturbations plus a self-review had all missed it. Measured: hiding
   // does not set `visible = false`, it takes the mesh OUT of the scene — so a hide that
   // leaked across subgraphs would blank a co-sharer outright.
   const hide = async (hidden: boolean) => {
     await page.evaluate(
       (a) => {
-        (window as unknown as UiWindow).__basher_dag
-          .getState()
-          .dispatchAtomic(
-            [{ type: 'setHidden', nodeId: a.obj, hidden: a.hidden }],
-            'user',
-            '#535 toggle one object',
-          );
+        (window as unknown as UiWindow).__basher_dag.getState().dispatchAtomic(
+          // #1503 — visibility is two params; both off is what `setHidden` did (the body
+          // leaves the scene), so the locality question this case asks is unchanged.
+          (['viewport', 'render'] as const).map((paramPath) => ({
+            type: 'setParam',
+            nodeId: a.obj,
+            paramPath,
+            value: a.hidden ? false : undefined,
+          })),
+          'user',
+          '#535 toggle one object',
+        );
       },
       { obj: A.obj, hidden },
     );

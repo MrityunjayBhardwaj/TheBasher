@@ -9,10 +9,12 @@
 // REF: THESIS.md §11, §53, krama K1 step 6.
 
 import { GizmoHelper, GizmoViewport, Grid, OrbitControls } from '@react-three/drei';
-import { Canvas, useThree } from '@react-three/fiber';
+import { Canvas, events as pointerEvents, useThree } from '@react-three/fiber';
+import type { RootState } from '@react-three/fiber';
 import { Suspense, useCallback, useEffect, useRef } from 'react';
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib';
 import { ACESFilmicToneMapping, NoToneMapping } from 'three';
+import type { Intersection } from 'three';
 import { GroundClick } from '../app/character/GroundClick';
 import { ThreeBridge } from '../app/character/ThreeBridge';
 import { Gizmo } from '../app/Gizmo';
@@ -37,6 +39,7 @@ import { BoxSelectOverlay } from './BoxSelectOverlay';
 import { useBoxSelectStore } from '../app/stores/boxSelectStore';
 import { SceneBgTestSeam } from './SceneBgTestSeam';
 import { SceneFromDAG } from './SceneFromDAG';
+import { isUnderRenderOnly } from '../app/renderVisibility';
 import { VIEWPORT_BG, VIEWPORT_GRID_CELL, VIEWPORT_GRID_SECTION } from './viewportColors';
 import { attachWheelZoom } from './wheelZoom';
 
@@ -118,6 +121,20 @@ function EditorOrbit() {
       // Default mouse map: rotate (LMB), zoom (wheel — `wheelZoom.ts`), pan (RMB / two-finger).
     />
   );
+}
+
+/**
+ * #1503 — R3F's pointer events, with every hit on a 'render-only' body dropped. Such a body (its
+ * viewport flag off, its render flag on) stays mounted, invisible, so the render can show it; three's
+ * raycaster does not skip invisible objects, so without this a click would select what the viewport
+ * does not draw. Only that stamp is filtered: every other hit, editor chrome included, is as it was.
+ */
+function viewportEvents(store: Parameters<typeof pointerEvents>[0]) {
+  return {
+    ...pointerEvents(store),
+    filter: (hits: Intersection[], _state: RootState) =>
+      hits.filter((hit) => !isUnderRenderOnly(hit.object)),
+  };
 }
 
 export function Viewport() {
@@ -235,6 +252,7 @@ export function Viewport() {
       <Canvas
         data-testid="viewport-canvas"
         dpr={[1, 2]}
+        events={viewportEvents}
         gl={{
           antialias: false,
           alpha: false,

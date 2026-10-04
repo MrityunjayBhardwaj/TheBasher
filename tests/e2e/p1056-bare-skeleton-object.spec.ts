@@ -16,7 +16,6 @@ interface DagNode {
   type: string;
   params?: Record<string, unknown>;
   inputs: Record<string, unknown>;
-  meta?: { hidden?: boolean };
 }
 interface Win {
   __basher_dag: {
@@ -302,7 +301,7 @@ test('#1056 — a motion dropped onto a character still gets its Object, hidden 
     return {
       objectId,
       retargets: added.filter((id) => nodes[id].type === 'RetargetClip').length,
-      hidden: objectId ? nodes[objectId].meta?.hidden === true : null,
+      hidden: objectId ? nodes[objectId].params?.viewport === false : null,
     };
   });
   // The bind happened — otherwise a hidden-or-not reading below says nothing about binding.
@@ -322,7 +321,7 @@ test('#1056 — a motion dropped onto a character still gets its Object, hidden 
     return {
       retargets: Object.values(nodes).filter((n) => n.type === 'RetargetClip').length,
       exists: Boolean(nodes[id]),
-      hidden: nodes[id]?.meta?.hidden === true,
+      hidden: nodes[id]?.params?.viewport === false,
     };
   }, landed.objectId!);
   expect(afterUndo).toEqual({ retargets: 0, exists: true, hidden: false });

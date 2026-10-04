@@ -4,6 +4,7 @@
 // REF: THESIS.md §12 (scene tree), §39.
 
 import { z } from 'zod';
+import { visibilityParams } from './visibilityParams';
 import type { NodeDefinition } from '../core/dag/types';
 import type { GroupValue, SceneObject } from './types';
 import { rotationModeFieldsOf, rotationModeParams } from './rotationMode';
@@ -33,6 +34,8 @@ export const GroupParams = z
      * Optional and absent unless set; appended last, so the frozen param-home row is appended to.
      */
     parentBone: z.string().min(1).optional(),
+    /** #1503 — shown in the viewport, and in the render (`visibilityParams`). Appended last. */
+    ...visibilityParams,
   })
   .passthrough();
 export type GroupParams = z.infer<typeof GroupParams>;

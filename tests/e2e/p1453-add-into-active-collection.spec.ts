@@ -34,9 +34,19 @@ const membersOf = (page: Page, id: string) =>
 const drawn = (page: Page, ids: string[]) =>
   page.evaluate(
     (list) =>
-      list.filter((id) =>
-        (window as unknown as W).__basher_three?.getState().scene?.getObjectByName(id),
-      ),
+      list.filter((id) => {
+        // #1503 — drawn means a VISIBLE mesh under its name: a body the render alone shows is
+        // mounted, invisible, inside the named group.
+        type O = { visible: boolean; isMesh?: boolean; parent: O | null; children: O[] };
+        const root = (window as unknown as W).__basher_three
+          ?.getState()
+          .scene?.getObjectByName(id) as O | undefined;
+        if (!root) return false;
+        for (let o: O | null = root; o; o = o.parent) if (!o.visible) return false;
+        const visibleMesh = (o: O): boolean =>
+          o.visible && (Boolean(o.isMesh) || o.children.some(visibleMesh));
+        return visibleMesh(root);
+      }),
     ids,
   );
 

@@ -45,6 +45,8 @@ const drawnAt = (page: Page, id: string) =>
     scene.updateMatrixWorld(true);
     let at: number[] | null = null;
     const walk = (o: O3, mine: boolean) => {
+      // #1503 — what the viewport draws: a body the render alone shows is mounted, invisible.
+      if ((o as unknown as { visible: boolean }).visible === false) return;
       const stamp = o.userData?.basherNodeId;
       const owner =
         o.name === target || stamp === target ? true : typeof stamp === 'string' ? false : mine;

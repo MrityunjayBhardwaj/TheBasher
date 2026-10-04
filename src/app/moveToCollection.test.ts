@@ -99,8 +99,10 @@ describe('#397 — Move to Collection', () => {
     const r = move(state, [C], { collectionId: B });
     expect(collectionMembersOf(r.state, B)).toEqual([P, C]);
     expect(collectionsHolding(r.state, P).length).toBe(2);
-    const hidden = apply(r.state, [{ type: 'setHidden', nodeId: B, hidden: true }]);
-    expect(hiddenByCollection(hidden).has(C)).toBe(true);
+    const hidden = apply(r.state, [
+      { type: 'setParam', nodeId: B, paramPath: 'viewport', value: false },
+    ]);
+    expect(hiddenByCollection(hidden, 'viewport').has(C)).toBe(true);
   });
 
   it('to a new collection: it is made, named as New Collection names one, and holds P alone', () => {
@@ -138,15 +140,17 @@ describe('#397 — Move to Collection', () => {
 describe('#1462 — a hidden node is hidden alone', () => {
   it('its own eye or its collections hide it, and never the child under it', () => {
     const { state, A, B, P, C } = scene();
-    expect([...hiddenNodes(state)]).toEqual([]);
-    const byEye = apply(state, [{ type: 'setHidden', nodeId: P, hidden: true }]);
-    expect([...hiddenNodes(byEye)]).toEqual([P]);
-    const byCollections = apply(state, [
-      { type: 'setHidden', nodeId: A, hidden: true },
-      { type: 'setHidden', nodeId: B, hidden: true },
+    expect([...hiddenNodes(state, 'viewport')]).toEqual([]);
+    const byEye = apply(state, [
+      { type: 'setParam', nodeId: P, paramPath: 'viewport', value: false },
     ]);
-    expect(hiddenNodes(byCollections).has(P)).toBe(true);
-    expect(hiddenNodes(byCollections).has(C)).toBe(false);
+    expect([...hiddenNodes(byEye, 'viewport')]).toEqual([P]);
+    const byCollections = apply(state, [
+      { type: 'setParam', nodeId: A, paramPath: 'viewport', value: false },
+      { type: 'setParam', nodeId: B, paramPath: 'viewport', value: false },
+    ]);
+    expect(hiddenNodes(byCollections, 'viewport').has(P)).toBe(true);
+    expect(hiddenNodes(byCollections, 'viewport').has(C)).toBe(false);
   });
 });
 
@@ -156,23 +160,34 @@ describe('#1481 — a node in several collections hides only when every one of t
   // the render toggle alike (Cycles: pixel mean 0.772 with A off, 0.0 with A and B).
   it('P in A and B: A hidden alone keeps P; A and B hide it; its own eye hides it regardless', () => {
     const { state, A, B, P, C } = scene();
-    const onlyA = apply(state, [{ type: 'setHidden', nodeId: A, hidden: true }]);
-    expect(hiddenByCollection(onlyA).has(P)).toBe(false);
-    expect(hiddenNodes(onlyA).has(P)).toBe(false);
-    const onlyB = apply(state, [{ type: 'setHidden', nodeId: B, hidden: true }]);
-    expect(hiddenNodes(onlyB).has(P)).toBe(false);
-    const both = apply(onlyA, [{ type: 'setHidden', nodeId: B, hidden: true }]);
-    expect(hiddenByCollection(both).has(P)).toBe(true);
-    const eye = apply(state, [{ type: 'setHidden', nodeId: P, hidden: true }]);
-    expect(hiddenNodes(eye).has(P)).toBe(true);
-    for (const s of [onlyA, onlyB, both, eye]) expect(hiddenNodes(s).has(C)).toBe(false);
+    const onlyA = apply(state, [
+      { type: 'setParam', nodeId: A, paramPath: 'viewport', value: false },
+    ]);
+    expect(hiddenByCollection(onlyA, 'viewport').has(P)).toBe(false);
+    expect(hiddenNodes(onlyA, 'viewport').has(P)).toBe(false);
+    const onlyB = apply(state, [
+      { type: 'setParam', nodeId: B, paramPath: 'viewport', value: false },
+    ]);
+    expect(hiddenNodes(onlyB, 'viewport').has(P)).toBe(false);
+    const both = apply(onlyA, [
+      { type: 'setParam', nodeId: B, paramPath: 'viewport', value: false },
+    ]);
+    expect(hiddenByCollection(both, 'viewport').has(P)).toBe(true);
+    const eye = apply(state, [
+      { type: 'setParam', nodeId: P, paramPath: 'viewport', value: false },
+    ]);
+    expect(hiddenNodes(eye, 'viewport').has(P)).toBe(true);
+    for (const s of [onlyA, onlyB, both, eye])
+      expect(hiddenNodes(s, 'viewport').has(C)).toBe(false);
   });
 
   it('a node in one collection still hides with it', () => {
     const { state, B, C } = scene();
     const moved = moveToCollectionOps(state, [C], { collectionId: B })!;
-    const s = apply(apply(state, moved.ops), [{ type: 'setHidden', nodeId: B, hidden: true }]);
+    const s = apply(apply(state, moved.ops), [
+      { type: 'setParam', nodeId: B, paramPath: 'viewport', value: false },
+    ]);
     expect(collectionsHolding(s, C)).toEqual([B]);
-    expect(hiddenNodes(s).has(C)).toBe(true);
+    expect(hiddenNodes(s, 'viewport').has(C)).toBe(true);
   });
 });

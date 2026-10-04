@@ -588,9 +588,10 @@ describe('#1100 — the motion’s own rig is placed at the path start', () => {
     const standIn = Object.values(state.nodes).find(
       (n) => n.type === 'Object' && n.id !== 'pathObj' && n.id !== 'charObj',
     );
-    expect(standIn?.meta?.hidden, 'the bind did not hide a stand-in — not the bound shape').toBe(
-      true,
-    );
+    expect(
+      ownShown(standIn, 'viewport'),
+      'the bind did not hide a stand-in — not the bound shape',
+    ).toBe(false);
 
     const { ops, refusals } = placeCookedMotionOps(state);
     expect(refusals).toEqual([]);
@@ -652,6 +653,7 @@ describe('#1100 — the motion’s own rig is placed at the path start', () => {
 // motion the director had already accepted. Money is the smaller half.
 
 import { motionCookOffer } from './cookMotionGenerations';
+import { ownShown } from '../collections';
 
 /** Counts what the service was actually asked to make. */
 function countingCapability(calls: string[]): MotionGenerationCapability {

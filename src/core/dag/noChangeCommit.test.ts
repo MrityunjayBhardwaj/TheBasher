@@ -21,6 +21,8 @@ function cube(): DagState {
 }
 
 const REAL: Op = { type: 'setParam', nodeId: 'n_box_data', paramPath: 'size', value: [2, 2, 2] };
+/** #1503 — the outliner's eye turning a node off: its `viewport` param. */
+const VIEWPORT_OFF: Op = { type: 'setParam', nodeId: 'n_box', paramPath: 'viewport', value: false };
 
 /** Every shape of "changed nothing" the live measurement found, one row each. */
 const NO_CHANGE: [string, Op][] = [
@@ -192,24 +194,9 @@ const NO_CHANGE_1191: [string, () => DagState, Op][] = [
     () => after([{ type: 'setMeta', nodeId: 'n_box', name: 'Box', nameFrom: 'n_box_data' }]),
     { type: 'setMeta', nodeId: 'n_box', name: 'Box', nameFrom: 'n_box_data' },
   ],
-  [
-    'setHidden: false on a visible node',
-    () => cube(),
-    { type: 'setHidden', nodeId: 'n_box', hidden: false },
-  ],
-  [
-    'setHidden: true on a hidden node',
-    () => after([{ type: 'setHidden', nodeId: 'n_box', hidden: true }]),
-    { type: 'setHidden', nodeId: 'n_box', hidden: true },
-  ],
-  [
-    'setHidden: false over a stored `hidden: false` key (left as it is)',
-    () => {
-      const s = cube();
-      return { ...s, nodes: { ...s.nodes, n_box: { ...s.nodes.n_box, meta: { hidden: false } } } };
-    },
-    { type: 'setHidden', nodeId: 'n_box', hidden: false },
-  ],
+  // #1503 — visibility is a param now (`viewport`), so the eye's repeat is a setParam repeat.
+  // Showing a node already shown never reaches here: `setShownOp` hands back no op for it.
+  ['the eye: viewport off on a node already off', () => after([VIEWPORT_OFF]), VIEWPORT_OFF],
   ['setSpareParam: the value it already holds', () => after([SPARE]), SPARE],
 ];
 
@@ -252,11 +239,7 @@ const NEAR_MISS_1191: [string, () => DagState, Op][] = [
 const REAL_1191: [string, () => DagState, Op][] = [
   ['connect: a new producer on an empty socket', () => withScene(cube()), childEdge],
   ['setMeta: a new name', () => cube(), { type: 'setMeta', nodeId: 'n_box', name: 'Zed' }],
-  [
-    'setHidden: hide a visible node',
-    () => cube(),
-    { type: 'setHidden', nodeId: 'n_box', hidden: true },
-  ],
+  ['the eye: hide a visible node (viewport off)', () => cube(), VIEWPORT_OFF],
   [
     'setSpareParam: a new value',
     () => after([SPARE]),
@@ -264,7 +247,7 @@ const REAL_1191: [string, () => DagState, Op][] = [
   ],
 ];
 
-describe('#1191 — connect / setMeta / setHidden / setSpareParam: nothing changed ⇒ the same state', () => {
+describe('#1191 — connect / setMeta / the eye / setSpareParam: nothing changed ⇒ the same state', () => {
   it.each(NO_CHANGE_1191)('%s', (_label, start, op) => {
     const s = start();
     const r = applyOp(s, op);

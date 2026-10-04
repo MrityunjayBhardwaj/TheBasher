@@ -67,7 +67,8 @@ function build({ hidden = false }: { hidden?: boolean } = {}): DagState {
     { type: 'setParam', nodeId: 'sk_object', paramPath: 'position', value: [3, 0, 0] },
   ]);
   s = apply(s, collectionOps('col', 'walk', ['sk_object'], scene));
-  if (hidden) s = apply(s, [{ type: 'setHidden', nodeId: 'col', hidden: true }]);
+  if (hidden)
+    s = apply(s, [{ type: 'setParam', nodeId: 'col', paramPath: 'viewport', value: false }]);
   return s;
 }
 
@@ -105,9 +106,9 @@ describe('#1451 — a Collection', () => {
   });
 
   it('hidden, it hides what it holds — the rig’s bones included — and visible, it hides nothing', () => {
-    expect([...hiddenByCollection(build())]).toEqual([]);
+    expect([...hiddenByCollection(build(), 'viewport')]).toEqual([]);
     expect(collectSkeletonObjects(build()).map((o) => o.id)).toEqual(['sk_object']);
-    expect([...hiddenByCollection(build({ hidden: true }))]).toEqual(['sk_object']);
+    expect([...hiddenByCollection(build({ hidden: true }), 'viewport')]).toEqual(['sk_object']);
     expect(collectSkeletonObjects(build({ hidden: true }))).toEqual([]);
   });
 });

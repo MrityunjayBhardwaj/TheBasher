@@ -56,7 +56,8 @@ export function collectSkeletonObjects(state: DagState, cache?: EvaluatorCache):
   // its body: without this the eye would blank the Object and leave its bones standing. #1462 —
   // only the rig itself: a hidden parent above it hides the parent alone, as in Blender, so the
   // bones stay with the meshes that still draw.
-  const hidden = hiddenNodes(state);
+  // #1503 — bones are viewport chrome (Blender never renders an armature), so the viewport flag.
+  const hidden = hiddenNodes(state, 'viewport');
   for (const node of nodes) {
     if (node.type !== 'Object') continue;
     if (hidden.has(node.id)) continue;

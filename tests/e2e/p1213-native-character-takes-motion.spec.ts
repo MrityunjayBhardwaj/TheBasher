@@ -15,7 +15,7 @@ interface Node {
   type: string;
   params: Record<string, unknown>;
   inputs: Record<string, unknown>;
-  meta?: { hidden?: boolean };
+  params?: { viewport?: boolean };
 }
 interface W {
   __basher_dag: {
@@ -115,7 +115,7 @@ test('#1213 — a motion binds to the native bar and its drawn skin plays it', a
       baseType: nodes[base].type,
       baseMuted: (nodes[base].params as { mute?: boolean }).mute === true,
       pose: nodes[base].inputs.pose,
-      standInHidden: nodes[stand.objectId].meta?.hidden === true,
+      standInHidden: nodes[stand.objectId].params?.viewport === false,
     };
   }, SWING_BVH);
 

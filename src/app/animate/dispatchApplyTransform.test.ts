@@ -393,7 +393,7 @@ describe('dispatchApplyTransform (primitives)', () => {
     state = applyAll(state, [
       { type: 'setParam', nodeId: PRIM_ID, paramPath: 'scale', value: [2, 2, 2] },
       { type: 'setMeta', nodeId: PRIM_ID, name: 'Hero', nameFrom: 'n_light' },
-      { type: 'setHidden', nodeId: PRIM_ID, hidden: true },
+      { type: 'setParam', nodeId: PRIM_ID, paramPath: 'viewport', value: false },
       {
         type: 'setSpareParam',
         nodeId: PRIM_ID,
@@ -429,12 +429,9 @@ describe('dispatchApplyTransform (primitives)', () => {
 
     const after = stateRef.current.nodes[PRIM_ID];
     expect(dataHalfOf(stateRef.current, PRIM_ID)?.type, 'the premise: it baked').toBe('BakedData');
-    expect(after.meta).toEqual({
-      name: 'Hero',
-      nameFrom: 'n_light',
-      hidden: true,
-      position: [40, 50],
-    });
+    expect(after.meta).toEqual({ name: 'Hero', nameFrom: 'n_light', position: [40, 50] });
+    // #1503 — hidden is the `viewport` param now, so it rides with the params below.
+    expect((after.params as { viewport?: boolean }).viewport).toBe(false);
     expect(after.spare).toEqual(before.spare);
     // Every param but the applied bands, and every input but the swapped data lane, as it was.
     const without = (o: unknown, keys: string[]) =>

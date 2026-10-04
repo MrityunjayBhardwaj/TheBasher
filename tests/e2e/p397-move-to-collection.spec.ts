@@ -11,6 +11,8 @@ interface O3 {
   isMesh?: boolean;
   userData?: Record<string, unknown>;
   traverse: (f: (o: O3) => void) => void;
+  traverseVisible: (f: (o: O3) => void) => void;
+  parent?: O3 | null;
 }
 interface W {
   __basher_dag: {
@@ -49,15 +51,38 @@ const collectionsOf = (page: Page, id: string) =>
       .sort();
   }, id);
 
-/** Whether three draws `id`: a top-level node by its name, a nested one by its identity group. */
+/**
+ * Whether the viewport draws `id`. Its own meshes are those under its name (a top-level node) or
+ * its identity group (a nested one), not inside another node's identity group. A node with a body
+ * is drawn when one of its own meshes is visible all the way up: a body the render alone shows
+ * stays mounted, invisible (#1503). A node with no body of its own (an empty) is drawn when its
+ * group is.
+ */
 const isDrawn = (page: Page, id: string) =>
   page.evaluate((target) => {
-    const scene = (window as unknown as W).__basher_three?.getState().scene;
-    let found = false;
-    scene?.traverse((o) => {
-      if (o.name === target || o.userData?.basherNodeId === target) found = true;
+    type O = O3 & { visible: boolean; isMesh?: boolean; parent?: O | null };
+    const scene = (window as unknown as W).__basher_three?.getState().scene as O | null | undefined;
+    const shown = (o: O | null | undefined) => {
+      for (let p = o; p; p = p.parent) if (!p.visible) return false;
+      return true;
+    };
+    let node: O | null = null;
+    let own = 0;
+    let ownShown = 0;
+    scene?.traverse((o: O) => {
+      if (!node && (o.name === target || o.userData?.basherNodeId === target)) node = o;
+      if (!o.isMesh) return;
+      for (let p: O | null | undefined = o; p; p = p.parent) {
+        const tag = p.userData?.basherNodeId;
+        if (tag === target || p.name === target) {
+          own++;
+          if (shown(o)) ownShown++;
+          break;
+        }
+        if (typeof tag === 'string') break;
+      }
     });
-    return found;
+    return own > 0 ? ownShown > 0 : node !== null && shown(node);
   }, id);
 
 async function newCollection(page: Page): Promise<string> {

@@ -30,7 +30,10 @@ import {
   activeCollectionOf,
   collectableNodes,
   newCollectionOps,
+  ownShown,
   setActiveCollectionOp,
+  setShownOp,
+  VISIBILITY_TYPES,
 } from './collections';
 import { buildDeleteNodesOps, buildDuplicateNodeOps } from './sceneNodeActions';
 import { selectActiveCameraNode } from './activeCamera';
@@ -94,6 +97,27 @@ function EyeIcon({ open }: { open: boolean }) {
       <path d="M1.5 8S3.8 3.5 8 3.5 14.5 8 14.5 8 12.2 12.5 8 12.5 1.5 8 1.5 8Z" />
       <circle cx="8" cy="8" r="2" />
       {!open ? <line x1="2.5" y1="13.5" x2="13.5" y2="2.5" /> : null}
+    </svg>
+  );
+}
+
+/** #1503 — the render toggle's glyph, Blender's outliner camera: struck through when off. */
+function RenderIcon({ on }: { on: boolean }) {
+  return (
+    <svg
+      width="13"
+      height="13"
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.3"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <rect x="1.5" y="4.5" width="9" height="7" rx="1" />
+      <path d="M10.5 7 14.5 5v6l-4-2" />
+      {!on ? <line x1="2.5" y1="13.5" x2="13.5" y2="2.5" /> : null}
     </svg>
   );
 }
@@ -469,16 +493,19 @@ export function SceneTree({ filter = '' }: SceneTreeProps) {
     setCtxMenu(null);
   }
 
-  // #227 S4 — toggle a node's visibility (one setHidden op → one undo). The
-  // renderer (SceneFromDAG) skips the hidden node's own body in the viewport AND the
-  // offscreen render (V37, one band); its children still draw (#1462, as Blender).
-  // v1 affordance is on top-level rows only.
+  // #227 S4 #1503 — the eye: a node's `viewport` flag (one setParam → one undo), as Blender's eye
+  // is the viewport's alone. The render keeps its own `render` flag, so an object hidden here still
+  // renders; its children still draw (#1462, as Blender).
   function toggleHidden(nodeId: NodeId, hidden: boolean) {
-    dispatchAtomic(
-      [{ type: 'setHidden', nodeId, hidden }],
-      'user',
-      hidden ? 'hide node' : 'show node',
-    );
+    const op = setShownOp(state, nodeId, 'viewport', !hidden);
+    if (op) dispatchAtomic([op], 'user', hidden ? 'hide node' : 'show node');
+  }
+
+  // #1503 — Blender's outliner render toggle ("Disable in Renders"): the node's `render` flag,
+  // apart from the eye, so a node can be seen and not rendered, or rendered and not seen.
+  function toggleRendered(nodeId: NodeId, rendered: boolean) {
+    const op = setShownOp(state, nodeId, 'render', rendered);
+    if (op) dispatchAtomic([op], 'user', rendered ? 'enable in renders' : 'disable in renders');
   }
 
   // #231 Inc 3.2 — make a camera the scene's active camera (Blender Ctrl-Numpad0).
@@ -762,7 +789,7 @@ export function SceneTree({ filter = '' }: SceneTreeProps) {
           // source node id, so the affordance can't lie. `hidden` dims the row + flips the
           // glyph. Suppressed while filtering (same as the chevron).
           // #231 Inc 3.2 — a camera row shows the active-marker / Set-Active affordance.
-          // #1453 — and an eye beside it: the frustums now honour `meta.hidden`.
+          // #1453 — and an eye beside it: the frustums honour the viewport flag.
           // #387 C4 — keyed on POSSESSION, not on the type's NAME. A split camera is an
           // `Object` posing a `CameraData`, and `'Object'.endsWith('Camera')` is false, so
           // the name-shaped predicate silently stripped the active-camera marker, the
@@ -775,9 +802,14 @@ export function SceneTree({ filter = '' }: SceneTreeProps) {
           // members go with it), and every scene object (`collectableNodes`) — #1462 made a hide
           // reach a node alone at any depth, and #1453 made the lights band and the camera
           // frustums honour it, so the eye is true on each of their rows.
+          // #1503 — and only on a node that carries the flag: a Transform or MaterialOverride
+          // wrapper draws no body of its own, so an eye on it would hide nothing.
           const isHideable =
-            !filtering && (row.nodeType === 'Collection' || hideable.has(row.nodeId));
-          const hidden = state.nodes[row.nodeId]?.meta?.hidden ?? false;
+            !filtering &&
+            VISIBILITY_TYPES.has(row.nodeType) &&
+            (row.nodeType === 'Collection' || hideable.has(row.nodeId));
+          const hidden = !ownShown(state.nodes[row.nodeId], 'viewport');
+          const rendered = ownShown(state.nodes[row.nodeId], 'render');
           return (
             <li
               key={row.key}
@@ -909,6 +941,28 @@ export function SceneTree({ filter = '' }: SceneTreeProps) {
                     className="shrink-0 text-[11px] leading-none text-fg-dim opacity-0 hover:text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent group-hover:opacity-100"
                   >
                     △
+                  </button>
+                ) : null}
+                {isHideable ? (
+                  <button
+                    type="button"
+                    tabIndex={-1}
+                    data-testid={`scene-tree-render-${row.nodeId}`}
+                    data-excluded={!rendered || undefined}
+                    aria-label={rendered ? 'Disable in renders' : 'Enable in renders'}
+                    aria-pressed={!rendered}
+                    title={rendered ? 'Disable in renders' : 'Enable in renders'}
+                    onDoubleClick={(e) => e.stopPropagation()} // never open rename
+                    onClick={(e) => {
+                      e.stopPropagation(); // toggle only — do NOT select the row
+                      toggleRendered(row.nodeId, !rendered);
+                    }}
+                    // As the eye: on hover, or always when off, so the way back is never invisible.
+                    className={`shrink-0 text-fg-dim hover:text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent ${
+                      rendered ? 'opacity-0 group-hover:opacity-100' : 'opacity-100'
+                    }`}
+                  >
+                    <RenderIcon on={rendered} />
                   </button>
                 ) : null}
                 {isHideable ? (

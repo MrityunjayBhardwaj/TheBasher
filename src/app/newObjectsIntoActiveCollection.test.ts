@@ -58,8 +58,10 @@ describe('#1453 — Add links into the active collection', () => {
       const { state, col } = withCollection(true);
       const { state: s, id } = add(state, kind);
       expect(collectionMembersOf(s, col)).toEqual([id]);
-      const hidden = apply(s, [{ type: 'setHidden', nodeId: col, hidden: true }]);
-      expect(hiddenByCollection(hidden).has(id)).toBe(true);
+      const hidden = apply(s, [
+        { type: 'setParam', nodeId: col, paramPath: 'viewport', value: false },
+      ]);
+      expect(hiddenByCollection(hidden, 'viewport').has(id)).toBe(true);
     },
   );
 
@@ -75,8 +77,10 @@ describe('#1453 — Add links into the active collection', () => {
       const { state, col } = withCollection(true);
       const { state: s, id } = add(state, kind);
       expect(collectionMembersOf(s, col)).toEqual([id]);
-      const hidden = apply(s, [{ type: 'setHidden', nodeId: col, hidden: true }]);
-      expect(hiddenByCollection(hidden).has(id)).toBe(true);
+      const hidden = apply(s, [
+        { type: 'setParam', nodeId: col, paramPath: 'viewport', value: false },
+      ]);
+      expect(hiddenByCollection(hidden, 'viewport').has(id)).toBe(true);
     },
   );
 
@@ -120,8 +124,8 @@ describe('#1453 — a duplicate joins its source’s collections', () => {
 
 /** Whether `id` is one of `col`'s members and its hide hides it — membership the drawers honour. */
 function joined(s: DagState, col: string, id: string): boolean {
-  const hidden = apply(s, [{ type: 'setHidden', nodeId: col, hidden: true }]);
-  return collectionMembersOf(s, col).includes(id) && hiddenByCollection(hidden).has(id);
+  const hidden = apply(s, [{ type: 'setParam', nodeId: col, paramPath: 'viewport', value: false }]);
+  return collectionMembersOf(s, col).includes(id) && hiddenByCollection(hidden, 'viewport').has(id);
 }
 
 describe('#1477 — the agent’s camera trajectory links its path into the active collection', () => {

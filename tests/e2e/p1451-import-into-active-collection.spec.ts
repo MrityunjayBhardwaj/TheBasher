@@ -39,7 +39,8 @@ Frame Time: 0.5
 interface Node {
   type: string;
   params: Record<string, unknown>;
-  meta?: { name?: string; hidden?: boolean };
+  meta?: { name?: string };
+  params?: { viewport?: boolean };
   inputs: Record<string, unknown>;
 }
 interface W {
@@ -64,7 +65,7 @@ const sceneState = (page: Page) =>
       collections: refs(scene.inputs.collections).map((id) => ({
         id,
         name: nodes[id].meta?.name ?? null,
-        hidden: nodes[id].meta?.hidden === true,
+        hidden: nodes[id].params?.viewport === false,
         members: refs(nodes[id].inputs.members),
       })),
       objects: Object.entries(nodes)
@@ -72,7 +73,7 @@ const sceneState = (page: Page) =>
         .map(([id, n]) => ({
           id,
           type: n.type,
-          hidden: n.meta?.hidden === true,
+          hidden: n.params?.viewport === false,
           rig: nodes[refs(n.inputs.data)[0]]?.type === 'Skeleton',
         })),
     };

@@ -41,7 +41,7 @@ import { applyOp } from '../../core/dag';
 import { nativeCharacterOps } from '../../test-utils/nativeCharacter';
 import { __resetMutatorRegistryForTests, registerAllMutators } from '../../agent/mutators';
 import { collectionOps } from '../../core/import/modelImport';
-import { setActiveCollectionOp } from '../collections';
+import { ownShown, setActiveCollectionOp } from '../collections';
 
 // The committed ASCII FBX fixture (public/fixtures/anim/rig.fbx — 2-bone
 // skeleton, the same file the e2e fetches). Read as bytes so we exercise the
@@ -594,9 +594,9 @@ describe('#1451 — an import stands in the scene, linked into the active collec
       (id) => !before.has(id) && nodes()[id].type === 'Object',
     )!;
     expect(Object.values(nodes()).some((n) => n.type === 'RetargetClip')).toBe(true);
-    expect(nodes()[rig].meta?.hidden).toBe(true);
+    expect(ownShown(nodes()[rig], 'viewport')).toBe(false);
     useDagStore.getState().undo();
-    expect(nodes()[rig].meta?.hidden).toBeUndefined();
+    expect(ownShown(nodes()[rig], 'viewport')).toBe(true);
     expect(Object.values(nodes()).some((n) => n.type === 'RetargetClip')).toBe(false);
   });
 });

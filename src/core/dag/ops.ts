@@ -137,8 +137,6 @@ export function applyOp(state: DagState, op: Op): ApplyResult {
       return followNames(state, applySetParam(state, op), op.nodeId);
     case 'setMeta':
       return followNames(state, applySetMeta(state, op), op.nodeId);
-    case 'setHidden':
-      return applySetHidden(state, op);
     case 'setSpareParam':
       return applySetSpareParam(state, op);
     case 'removeSpareParam':
@@ -640,28 +638,5 @@ function applySetMeta(state: DagState, op: Extract<Op, { type: 'setMeta' }>): Ap
     name: prior,
     ...(priorFrom !== undefined ? { nameFrom: priorFrom } : {}),
   };
-  return { next, inverse };
-}
-
-function applySetHidden(state: DagState, op: Extract<Op, { type: 'setHidden' }>): ApplyResult {
-  // #227 S4 — visibility. Like setMeta, `hidden` is node identity/view data, not
-  // a per-type param. `hidden: false` DELETES the key (the default is visible, so
-  // an unhidden node is byte-identical to one never hidden → minimal save diffs).
-  const node = getNode(state, op.nodeId);
-  const prior = node.meta?.hidden ?? false;
-  const meta = { ...node.meta };
-  if (op.hidden) meta.hidden = true;
-  else delete meta.hidden;
-  const nextMeta = Object.keys(meta).length === 0 ? undefined : meta;
-  // #1191 — judged by MEANING, unlike setMeta: this op owns one boolean, so the same
-  // visibility is no change and hands back the same state (#1189 contract). The only other
-  // difference it could make is normalizing a stored `hidden: false` / empty `meta` away;
-  // committing that would record an undo step that changes nothing visible and cannot put
-  // the stored key back (the inverse is `hidden: false`, which deletes it).
-  const next: DagState =
-    prior === op.hidden
-      ? state
-      : { ...state, nodes: { ...state.nodes, [node.id]: { ...node, meta: nextMeta } } };
-  const inverse: Op = { type: 'setHidden', nodeId: op.nodeId, hidden: prior };
   return { next, inverse };
 }

@@ -14,6 +14,7 @@
 // REF: docs/OBJECT-DATA-SPLIT-DESIGN.md §3.1; src/nodes/BoxData.ts (the data half).
 
 import { z } from 'zod';
+import { visibilityParams } from './visibilityParams';
 import type { NodeDefinition } from '../core/dag/types';
 import { openpbrMaterialSchema } from './materialSchema';
 import type { ObjectData, ObjectValue, PosedSkeletonValue, SceneObject } from './types';
@@ -81,6 +82,8 @@ export const ObjectParams = z.object({
    * appended to, not reordered.
    */
   parentBone: z.string().min(1).optional(),
+  /** #1503 — shown in the viewport, and in the render (`visibilityParams`). Appended last. */
+  ...visibilityParams,
 });
 export type ObjectParams = z.infer<typeof ObjectParams>;
 

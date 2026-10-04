@@ -17,7 +17,8 @@ interface SkinSeam {
 interface Node {
   type: string;
   params: Record<string, unknown>;
-  meta?: { name?: string; hidden?: boolean };
+  meta?: { name?: string };
+  params?: { viewport?: boolean };
   inputs: Record<string, unknown>;
 }
 interface BasherWindow {
@@ -120,7 +121,7 @@ test('#1429 — an FBX with a skinned mesh imports, and draws where Blender defo
     return {
       panel: panel ? data(panel[0]) : null,
       prop: prop ? data(prop[0]) : null,
-      rigHidden: rig ? Boolean(rig[1].meta?.hidden) : null,
+      rigHidden: rig ? rig[1].params?.viewport === false : null,
       retargets,
     };
   });
