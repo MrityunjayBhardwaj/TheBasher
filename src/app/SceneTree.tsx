@@ -465,8 +465,9 @@ export function SceneTree({ filter = '' }: SceneTreeProps) {
   }
 
   // #227 S4 — toggle a node's visibility (one setHidden op → one undo). The
-  // renderer (SceneFromDAG) skips a hidden top-level node in the viewport AND the
-  // offscreen render (V37, one band). v1 affordance is on top-level rows only.
+  // renderer (SceneFromDAG) skips the hidden node's own body in the viewport AND the
+  // offscreen render (V37, one band); its children still draw (#1462, as Blender).
+  // v1 affordance is on top-level rows only.
   function toggleHidden(nodeId: NodeId, hidden: boolean) {
     dispatchAtomic(
       [{ type: 'setHidden', nodeId, hidden }],

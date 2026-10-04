@@ -13,6 +13,7 @@ import {
   collectionsHolding,
   collectionMembersOf,
   hiddenByCollection,
+  hiddenNodes,
   membershipOps,
   moveToCollectionOps,
   newCollectionOps,
@@ -131,5 +132,17 @@ describe('#397 — Move to Collection', () => {
   it('a target the scene does not hold is refused', () => {
     const { state, P } = scene();
     expect(moveToCollectionOps(state, [P], { collectionId: 'n_nope' })).toBeNull();
+  });
+});
+
+describe('#1462 — a hidden node is hidden alone', () => {
+  it('its own eye or its collection hides it, and never the child under it', () => {
+    const { state, A, P, C } = scene();
+    expect([...hiddenNodes(state)]).toEqual([]);
+    const byEye = apply(state, [{ type: 'setHidden', nodeId: P, hidden: true }]);
+    expect([...hiddenNodes(byEye)]).toEqual([P]);
+    const byCollection = apply(state, [{ type: 'setHidden', nodeId: A, hidden: true }]);
+    expect(hiddenNodes(byCollection).has(P)).toBe(true);
+    expect(hiddenNodes(byCollection).has(C)).toBe(false);
   });
 });

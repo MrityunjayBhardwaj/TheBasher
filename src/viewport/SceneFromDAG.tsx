@@ -99,7 +99,7 @@ import { LightHelper } from './LightHelpers';
 import { CameraHelper } from './CameraHelpers';
 import { ArmatureHelper, type ReferenceRigInput } from './ArmatureHelper';
 import { collectSkeletonObjects, type SkeletonObject } from '../app/skeletonObjects';
-import { hiddenByCollection } from '../app/collections';
+import { hiddenNodes } from '../app/collections';
 import { retargetPairs } from '../app/animate/boundClipsForAsset';
 import {
   enumerateCameraNodeIds,
@@ -189,13 +189,16 @@ function ensureRectAreaInit() {
 interface OverlayMembership {
   readonly directChannelTargets: ReadonlySet<string>;
   readonly constraintTargets: ReadonlySet<string>;
-  /** #397 — the members of a hidden collection, read by flat id at any depth like the overlays. */
-  readonly hiddenMembers: ReadonlySet<string>;
+  /**
+   * #1462 — every node hidden itself, by its eye or a hidden collection (`hiddenNodes`), read by
+   * flat id at any depth like the overlays. Such a node skips its own body and nothing else.
+   */
+  readonly hiddenIds: ReadonlySet<string>;
 }
 const EMPTY_MEMBERSHIP: OverlayMembership = {
   directChannelTargets: new Set(),
   constraintTargets: new Set(),
-  hiddenMembers: new Set(),
+  hiddenIds: new Set(),
 };
 const OverlayMembershipContext = createContext<OverlayMembership>(EMPTY_MEMBERSHIP);
 
@@ -323,9 +326,10 @@ export function SceneFromDAG({ outputName = 'render' }: SceneFromDAGProps) {
     () => collectSkeletonObjects(state, cache),
     [state, cache],
   );
-  // #1451 — what the scene's hidden collections hide: checked at the top-level slot beside each
-  // node's own eye, and by flat id in every nested `RenderChild` (#397).
-  const hiddenMembers = useMemo(() => hiddenByCollection(state), [state]);
+  // #1462 — what is hidden itself, by its own eye or a hidden collection (#1451), read by flat id
+  // wherever a node draws (`MeshChild`): it skips its own body, and its children still draw, as
+  // Blender hides an object alone.
+  const hiddenIds = useMemo(() => hiddenNodes(state), [state]);
   // #165: editor-only camera frustums hide in rendered mode (production
   // parity) and the active camera's own frustum hides while looking through
   // it (you're inside it — drawing it would clutter the preview).
@@ -385,9 +389,9 @@ export function SceneFromDAG({ outputName = 'render' }: SceneFromDAGProps) {
   // the sig IS the content dependency (the sets are rebuilt each render by design).
   const overlaySig = `${[...directChannelTargets].sort().join(',')}|${[...constraintTargets]
     .sort()
-    .join(',')}|${[...hiddenMembers].sort().join(',')}`;
+    .join(',')}|${[...hiddenIds].sort().join(',')}`;
   const overlayMembership = useMemo<OverlayMembership>(
-    () => ({ directChannelTargets, constraintTargets, hiddenMembers }),
+    () => ({ directChannelTargets, constraintTargets, hiddenIds }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [overlaySig],
   );
@@ -620,19 +624,18 @@ export function SceneFromDAG({ outputName = 'render' }: SceneFromDAGProps) {
           all N (H48 / B13). */}
       {value.scene.children.map((child, i) => {
         const cpid = childRefs[i]?.node ?? null;
-        // #227 S4 — a hidden top-level node renders NOTHING (null in its slot, so
-        // the array index still corresponds to childRefs[i] — the band invariant
-        // the direct-channel / constraint maps rely on is preserved). The live
-        // scene is what the offscreen still/animation render captures (V37), so a
-        // skipped node is absent from the render too — one band, no #168 denylist.
-        // #1451 — and a member of a hidden collection, as Blender hides a collection's objects.
-        if (cpid != null && (state.nodes[cpid]?.meta?.hidden || hiddenMembers.has(cpid)))
-          return null;
+        // #227 S4 — a hidden top-level node draws nothing of its own. #1462 — but its children
+        // still draw (`MeshChild` skips only the hidden node's body), as Blender hides an object
+        // alone; its wrapper drops the node's name, so nothing reads the node as drawn. The live
+        // scene is what the offscreen still/animation render captures (V37), so a skipped body
+        // is absent from the render too — one band, no #168 denylist. #1451 — a member of a
+        // hidden collection is hidden the same way.
         return (
           <SceneChildNode
             key={`mesh:${i}`}
             value={child}
             pickId={cpid}
+            hidden={cpid != null && hiddenIds.has(cpid)}
             // v0.7 unification (#197) — a node animated by free-floating direct
             // channels (V57) overlays via DirectChannelsR. Membership tested
             // against the ONE pre-built set (O(N) total, not O(N²)).
@@ -1881,6 +1884,22 @@ const MeshChild = memo(function MeshChild({ value: raw, override, nodeId }: Mesh
   // value's orientation becomes the `rotation` every arm below already reads. Memoised on the
   // value: an euler value comes back as itself, so nothing that never opts in re-renders.
   const value = useMemo(() => withResolvedRotation(raw), [raw]);
+  // #1462 — a hidden node skips its own body and nothing else, as Blender hides an object alone:
+  // an Object still draws its children under its transform, a Group or a Transform (which have no
+  // body) draw as they are, and a leaf draws nothing.
+  const { hiddenIds } = useContext(OverlayMembershipContext);
+  if (nodeId != null && hiddenIds.has(nodeId)) {
+    switch (value.kind) {
+      case 'Object':
+        return <ObjectR value={value} override={override} nodeId={nodeId} hideSelf />;
+      case 'Group':
+      case 'Transform':
+      case 'MaterialOverride':
+        break;
+      default:
+        return null;
+    }
+  }
   switch (value.kind) {
     // #388 S5 / #415 S5 — no DAG node evaluates to a `BakedMeshValue` or a
     // `ModifiedMeshValue` any more (the fused baked kind is retired; the modifiers emit
@@ -2001,6 +2020,8 @@ interface SceneChildNodeProps {
   value: SceneChild;
   /** Producing DAG node id (for click-to-select + the MeshScaleProbe name). */
   pickId: string | null;
+  /** #1462 — the node is hidden: its wrapper carries no name, as nothing of its own is drawn. */
+  hidden: boolean;
   /** v0.7 (#197) — this node is driven by free-floating direct channels, so its
    *  value is overlaid by DirectChannelsR. A stable boolean (membership in the
    *  pre-built set) so the memo bails out for static nodes (H48). */
@@ -2032,6 +2053,7 @@ interface SceneChildNodeProps {
 const SceneChildNode = memo(function SceneChildNode({
   value,
   pickId,
+  hidden,
   hasDirectChannels,
   isConstrained,
 }: SceneChildNodeProps) {
@@ -2103,7 +2125,7 @@ const SceneChildNode = memo(function SceneChildNode({
     // v0.6 #1 (Wave 3, C-3) — name the wrapping group with its producer node id
     // so the DEV scale-probe seam (MeshScaleProbe) reads the REAL rendered
     // three.js object scale by node id (H40 side-A observation).
-    <group name={pickId ?? undefined} onClick={onClick}>
+    <group name={hidden ? undefined : (pickId ?? undefined)} onClick={onClick}>
       <OverlayDispatch
         value={value}
         nodeId={pickId}
@@ -2173,11 +2195,8 @@ function RenderChild({
   nodeId: string | null;
   override?: MaterialValue;
 }) {
-  const { directChannelTargets, constraintTargets, hiddenMembers } =
+  const { directChannelTargets, constraintTargets, hiddenIds } =
     useContext(OverlayMembershipContext);
-  // #397 — a nested member of a hidden collection draws nothing, with what hangs under it, as a
-  // hidden top-level member does (the scene's children map below).
-  if (nodeId != null && hiddenMembers.has(nodeId)) return null;
   const drawn = (
     <OverlayDispatch
       value={value}
@@ -2192,7 +2211,8 @@ function RenderChild({
   // that drew it (`buildPickChain`). This identity group is that mapping, written
   // here because every nested node is drawn through this one seam, whatever
   // produced it (an import's Objects, a user's Group, a Transform's child).
-  if (nodeId == null) return drawn;
+  // #1462 — a hidden node draws no body of its own, so nothing under it maps back to it.
+  if (nodeId == null || hiddenIds.has(nodeId)) return drawn;
   return <group userData={{ [DRAWN_NODE_ID_KEY]: nodeId }}>{drawn}</group>;
 }
 
@@ -2711,12 +2731,15 @@ function ObjectR({
   value,
   override,
   nodeId,
+  hideSelf = false,
 }: {
   value: ObjectValue;
   override?: MaterialValue;
   nodeId?: string | null;
+  /** #1462 — hidden: draw the children under this Object's transform, and not its own body. */
+  hideSelf?: boolean;
 }) {
-  const self = <ObjectSelfR value={value} override={override} />;
+  const self = hideSelf ? null : <ObjectSelfR value={value} override={override} />;
   if (!value.children || value.children.length === 0) return self;
   // Index-aligned with `value.children`, as in GroupR; an absent id degrades to the bare draw.
   const edges = nodeId ? childEdges(useDagStore.getState().state, nodeId, value) : [];

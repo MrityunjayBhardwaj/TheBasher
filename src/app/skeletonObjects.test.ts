@@ -202,17 +202,25 @@ describe('collectSkeletonObjects', () => {
     expect(collectSkeletonObjects(hidden)).toEqual([]);
   });
 
-  // #1450 — the viewport skips a hidden top-level node with everything under it (`SceneFromDAG`),
-  // so a rig in a hidden import Group goes with the Group's meshes. The visible Group is the
-  // control: the same rig in it is drawn.
-  it('an Object in a hidden Group is not drawn, and in a visible one it is', () => {
+  // #1462 — Blender hides an object alone (observed in Blender 5.1.1 headless: hiding a parent
+  // leaves its child visible), and the viewport draws a hidden Group's children, so a rig under a
+  // hidden Group keeps its bones. Hiding the rig itself is the control: then they go.
+  it('an Object in a hidden Group is still drawn; hidden itself, it is not', () => {
     const s = build({ inGroup: true });
     expect(collectSkeletonObjects(s).map((o) => o.id)).toEqual(['sk_object']);
-    const hidden: DagState = {
+    const groupHidden: DagState = {
       ...s,
       nodes: { ...s.nodes, grp: { ...s.nodes.grp, meta: { ...s.nodes.grp.meta, hidden: true } } },
     };
-    expect(collectSkeletonObjects(hidden)).toEqual([]);
+    expect(collectSkeletonObjects(groupHidden).map((o) => o.id)).toEqual(['sk_object']);
+    const rigHidden: DagState = {
+      ...groupHidden,
+      nodes: {
+        ...groupHidden.nodes,
+        sk_object: { ...groupHidden.nodes.sk_object, meta: { hidden: true } },
+      },
+    };
+    expect(collectSkeletonObjects(rigHidden)).toEqual([]);
   });
 
   // NEGATIVE CONTROL: only skeleton data qualifies. The default project already stands an

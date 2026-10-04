@@ -2,10 +2,10 @@
 // holds, and what a hidden one hides. A Collection is membership by `members` edges and never a
 // transform (`src/nodes/Collection.ts`), so every question about it is a read of those edges.
 //
-// HIDING. Blender hides a collection's objects with it. The viewport skips a hidden TOP-LEVEL node
-// with everything under it (`SceneFromDAG`), and the bone overlay skips a rig with a hidden node
-// above it (`collectSkeletonObjects`, #1450); both ask `hiddenByCollection` as well, so a member of a
-// hidden collection goes the same way its own eye would send it.
+// HIDING. Blender hides a collection's objects with it, and hides each object on its own: a hidden
+// parent's children still draw where it puts them (#1462, observed in Blender 5.1.1 headless). The
+// viewport (`SceneFromDAG`) and the bone overlay (`collectSkeletonObjects`) both ask `hiddenNodes`,
+// so a member of a hidden collection goes the way its own eye would send it, and alone.
 
 import type { DagState } from '../core/dag/state';
 import type { NodeId, Op } from '../core/dag/types';
@@ -36,6 +36,17 @@ export function hiddenByCollection(state: DagState): ReadonlySet<NodeId> {
     if (!state.nodes[id].meta?.hidden) continue;
     for (const member of collectionMembersOf(state, id)) out.add(member);
   }
+  return out;
+}
+
+/**
+ * #1462 — every node that is hidden itself: by its own eye (`meta.hidden`) or by a hidden collection
+ * holding it. Never what hangs under one — Blender hides an object alone, and its children keep
+ * drawing.
+ */
+export function hiddenNodes(state: DagState): ReadonlySet<NodeId> {
+  const out = new Set<NodeId>(hiddenByCollection(state));
+  for (const node of Object.values(state.nodes)) if (node.meta?.hidden) out.add(node.id);
   return out;
 }
 
