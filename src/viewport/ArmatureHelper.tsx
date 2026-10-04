@@ -321,6 +321,12 @@ export function ArmatureHelper({
       mesh.setMatrixAt(i, local);
     }
     mesh.instanceMatrix.needsUpdate = true;
+    // #1507 — three tests a click against the mesh's bounding sphere before any bone, and computes
+    // that sphere only when it is null (`InstancedMesh.raycast`). Kept, it stays where the bones
+    // stood at the first click, and a bone that has moved outside it since (a chain grown in Edit
+    // mode, a limb animated away) cannot be clicked. Dropped here, the next click measures it anew.
+    mesh.boundingSphere = null;
+    mesh.boundingBox = null;
 
     // ── the two display switches ────────────────────────────────────────────
     // Written every frame from the store rather than through a React effect:
