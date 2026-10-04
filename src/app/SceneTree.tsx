@@ -518,10 +518,11 @@ export function SceneTree({ filter = '' }: SceneTreeProps) {
     if (closeMenu) setCtxMenu(null);
   }
 
-  // #1451 — Blender's outliner New Collection: an empty collection in the scene, ready to be made
-  // active with a click.
+  // #1451 — Blender's outliner New Collection: an empty collection, ready to be made active with a
+  // click. #397 — it nests in the active collection, as Blender's nests in the selected one (here a
+  // clicked collection is the active one), and in the scene with the scene active.
   function ctxNewCollection() {
-    const made = newCollectionOps(state);
+    const made = newCollectionOps(state, activeCollection);
     if (made) dispatchAtomic(made.ops, 'user', 'new collection');
     setCtxMenu(null);
   }

@@ -155,12 +155,15 @@ export function importGroupOp(groupId: string, position: Vec3, pivot: Vec3): Op 
  * file's scene (`import_scene_as_collection`, default on; `io_scene_gltf2/blender/imp/node.py`), and
  * every import here does the same whatever the format (user decision on #1434). Membership only:
  * the members stay where the import hangs them in the scene, and nothing moves.
+ *
+ * `parentId` holds it: the scene, or (#397) a collection it nests in — both take it on their
+ * `collections` socket.
  */
 export function collectionOps(
   collectionId: string,
   name: string,
   memberIds: readonly string[],
-  sceneNodeId: string,
+  parentId: string,
 ): Op[] {
   return [
     { type: 'addNode', nodeId: collectionId, nodeType: 'Collection', params: {} },
@@ -175,7 +178,7 @@ export function collectionOps(
     {
       type: 'connect',
       from: { node: collectionId, socket: 'out' },
-      to: { node: sceneNodeId, socket: 'collections' },
+      to: { node: parentId, socket: 'collections' },
     },
   ];
 }

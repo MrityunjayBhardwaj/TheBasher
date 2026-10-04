@@ -29,7 +29,15 @@ export const CollectionNode: NodeDefinition<CollectionParams, CollectionValue> =
   pure: true,
   cost: 'cheap',
   paramSchema: CollectionParams,
-  inputs: { members: { type: 'SceneObject', cardinality: 'list' } },
+  inputs: {
+    members: { type: 'SceneObject', cardinality: 'list' },
+    // #397 — the collections nested in this one, as the scene's own `collections` holds the top
+    // ones (Blender's `Collection.children`). Named `collections`, never `children`: that socket
+    // is the transform hierarchy everywhere else (delete owns it, the outliner parents by it), and
+    // a collection is never a parent. One collection may sit in several; a cycle is refused by
+    // `connect` as Blender refuses one ("Collection 'P' already in collection 'C'").
+    collections: { type: 'Collection', cardinality: 'list' },
+  },
   outputs: { out: { type: 'Collection', cardinality: 'single' } },
   inspectorSections: ['layout'],
   home: {},

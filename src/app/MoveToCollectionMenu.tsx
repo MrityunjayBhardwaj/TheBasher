@@ -7,7 +7,7 @@
 import { useEffect, useRef } from 'react';
 import { useDagStore } from '../core/dag/store';
 import type { NodeId } from '../core/dag/types';
-import { moveToCollectionOps, sceneCollectionsOf, type MoveTarget } from './collections';
+import { collectionTreeOf, moveToCollectionOps, type MoveTarget } from './collections';
 import { nodeDisplayName } from './sceneTreeWalk';
 import { useMoveToCollectionMenuStore } from './stores/moveToCollectionMenuStore';
 import { useNotificationStore } from './stores/notificationStore';
@@ -64,14 +64,24 @@ export function MoveToCollectionMenu() {
 
   if (!open) return null;
 
-  const items: { key: string; label: string; target: MoveTarget }[] = [
-    { key: 'scene', label: 'Scene Collection', target: { collectionId: null } },
-    ...sceneCollectionsOf(state).map((id) => ({
-      key: id,
-      label: nodeDisplayName(state.nodes, id),
-      target: { collectionId: id },
-    })),
-    { key: 'new', label: '+ New Collection', target: { newCollection: true } as const },
+  // #397 — every collection, nested ones indented under the one holding them (once each: Blender's
+  // menu reaches a collection through any parent, and each reaches the same move).
+  const seen = new Set<NodeId>();
+  const items: { key: string; label: string; depth: number; target: MoveTarget }[] = [
+    { key: 'scene', label: 'Scene Collection', depth: 0, target: { collectionId: null } },
+    ...collectionTreeOf(state).flatMap((place) => {
+      if (seen.has(place.id)) return [];
+      seen.add(place.id);
+      return [
+        {
+          key: place.id,
+          label: nodeDisplayName(state.nodes, place.id),
+          depth: place.depth + 1,
+          target: { collectionId: place.id },
+        },
+      ];
+    }),
+    { key: 'new', label: '+ New Collection', depth: 0, target: { newCollection: true } as const },
   ];
   const W = 220;
   const H = 32 + items.length * 26;
@@ -95,6 +105,7 @@ export function MoveToCollectionMenu() {
               role="menuitem"
               data-testid={`move-to-collection-${item.key}`}
               className="flex w-full items-center px-3 py-1.5 text-left text-[11px] text-fg/80 hover:bg-muted"
+              style={{ paddingLeft: 12 + item.depth * 12 }}
               onClick={() => {
                 close();
                 moveSelectionToCollection(item.target);

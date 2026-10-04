@@ -18,7 +18,7 @@ import { enumerateCameraNodeIds } from './activeCamera';
 import { importedChildOf } from './importedChild';
 import { chainSocketOf, isSceneLaneWrapper } from './operatorChain';
 import { hierarchySocketForKind } from './sceneHierarchy';
-import { collectionMembersOf, sceneCollectionsOf } from './collections';
+import { childCollectionsOf, collectionMembersOf, sceneCollectionsOf } from './collections';
 import { resolveActiveRigNode, resolveRigLightSources } from './resolveRigLightSources';
 
 export interface TreeRow {
@@ -279,23 +279,36 @@ export function buildSceneTreeRows(state: DagState): TreeRow[] {
   // act on it as on any top-level row. A collection row has no linkage: it is not dragged in this
   // slice. A member nested under another Object is listed under that Object, as ever.
   const collected = new Set<NodeId>();
-  for (const collectionId of sceneCollectionsOf(state)) {
-    const key = `${sceneRef.node}/collection/${collectionId}`;
+  // #397 — a nested collection lists under the collection holding it, and under each one when it
+  // sits in several, as Blender's outliner lists one row per path. Its members list under it.
+  const walkCollection = (collectionId: NodeId, depth: number, parentKey: string) => {
+    const key = `${parentKey}/collection/${collectionId}`;
     ctx.rows.push({
       key,
       nodeId: collectionId,
       nodeType: 'Collection',
-      depth: 1,
+      depth,
       display: display(state, collectionId),
     });
+    for (const child of childCollectionsOf(state, collectionId)) {
+      if (!key.includes(`/collection/${child}/`) && !key.endsWith(`/collection/${child}`)) {
+        walkCollection(child, depth + 1, key);
+      }
+    }
     for (const member of collectionMembersOf(state, collectionId)) {
       const i = sceneChildren.findIndex((ref) => ref.node === member);
       if (i < 0 || collected.has(member)) continue;
       collected.add(member);
       ctx.visited.delete(member);
-      walkOneAsChild(ctx, member, 2, key, { nodeId: sceneRef.node, socket: 'children', index: i });
+      walkOneAsChild(ctx, member, depth + 1, key, {
+        nodeId: sceneRef.node,
+        socket: 'children',
+        index: i,
+      });
     }
-  }
+  };
+  for (const collectionId of sceneCollectionsOf(state))
+    walkCollection(collectionId, 1, sceneRef.node);
   sceneChildren.forEach((ref, i) => {
     if (collected.has(ref.node)) return;
     ctx.visited.delete(ref.node);

@@ -1,5 +1,5 @@
-// #1451 — Collections (#397), read off the graph: which collections the scene holds, what each one
-// holds, and what a hidden one hides. A Collection is membership by `members` edges and never a
+// #1451 — Collections (#397), read off the graph: which collections the scene holds, nested ones
+// too, what each one holds, and what a hidden one hides. A Collection is membership by `members` edges and never a
 // transform (`src/nodes/Collection.ts`), so every question about it is a read of those edges.
 //
 // HIDING. Blender hides a collection's objects with it, and hides each object on its own: a hidden
@@ -21,11 +21,54 @@ const refsOf = (binding: unknown): NodeId[] =>
     .map((r) => (r as { node?: unknown } | undefined)?.node)
     .filter((id): id is NodeId => typeof id === 'string');
 
-/** The collections the scene holds, in the scene's order. Empty with no scene. */
+/**
+ * The collections the scene holds itself (its top level), in the scene's order. Empty with no
+ * scene. Every collection in the scene, nested ones too, is `allCollectionsOf`.
+ */
 export function sceneCollectionsOf(state: DagState): NodeId[] {
   const sceneId = state.outputs.scene?.node;
   const scene = sceneId ? state.nodes[sceneId] : undefined;
   return refsOf(scene?.inputs?.collections).filter((id) => state.nodes[id]?.type === 'Collection');
+}
+
+/** #397 — the collections nested directly in `collectionId`, in its order. */
+export function childCollectionsOf(state: DagState, collectionId: NodeId): NodeId[] {
+  const node = state.nodes[collectionId];
+  return node?.type === 'Collection'
+    ? refsOf(node.inputs?.collections).filter((id) => state.nodes[id]?.type === 'Collection')
+    : [];
+}
+
+/** One place a collection sits in the scene's tree: how deep, and which collection holds it. */
+export interface CollectionPlace {
+  readonly id: NodeId;
+  /** 0 for one the scene holds itself. */
+  readonly depth: number;
+  /** The collection it is nested in; null for one the scene holds itself. */
+  readonly parent: NodeId | null;
+}
+
+/**
+ * #397 — the scene's collection tree, depth first in outliner order: each top collection, then
+ * what nests in it. A collection nested in two places is listed at both, as Blender's outliner
+ * (and its view layer) lists one per path — measured in Blender 5.1.1 headless: C in P and in Q
+ * has the layer paths [P, C] and [Q, C]. The graph refuses a cycle, so the walk ends.
+ */
+export function collectionTreeOf(state: DagState): CollectionPlace[] {
+  const out: CollectionPlace[] = [];
+  const walk = (id: NodeId, depth: number, parent: NodeId | null, path: ReadonlySet<NodeId>) => {
+    if (path.has(id)) return;
+    out.push({ id, depth, parent });
+    const below = new Set(path).add(id);
+    for (const child of childCollectionsOf(state, id)) walk(child, depth + 1, id, below);
+  };
+  for (const id of sceneCollectionsOf(state)) walk(id, 0, null, new Set());
+  return out;
+}
+
+/** #397 — every collection in the scene, nested ones too, once each, in outliner order. */
+export function allCollectionsOf(state: DagState): NodeId[] {
+  return [...new Set(collectionTreeOf(state).map((place) => place.id))];
 }
 
 /** The nodes a collection holds, in its order. */
@@ -74,16 +117,31 @@ export function setShownOp(
 }
 
 /**
- * Whether a collection of the scene is shown for `purpose`. Its own flag today; once collections
- * nest (#397), a collection with a hidden collection above it is not shown either — Blender 5.1.1
- * (headless, 2026-10-04) hides O in A and in B-under-Parent with A and Parent off, B itself on.
+ * #397 — which of the scene's collections are shown for `purpose`: one whose own flag is on, on
+ * at least one path from the scene down to it with every collection on the path shown. Blender
+ * 5.1.1 (headless): O in A and in B-under-Parent hides with A and Parent off, B itself on
+ * (2026-10-04); and C nested in both P and Q keeps its objects with P off, hides them with P and
+ * Q off (2026-10-05).
  */
-function collectionShown(
-  state: DagState,
-  collectionId: NodeId,
-  purpose: VisibilityPurpose,
-): boolean {
-  return ownShown(state.nodes[collectionId], purpose);
+function shownCollections(state: DagState, purpose: VisibilityPurpose): ReadonlySet<NodeId> {
+  const shown = new Set<NodeId>();
+  const tree = collectionTreeOf(state);
+  // Depth first, so a parent's place is decided before the places under it.
+  const placeShown: boolean[] = [];
+  tree.forEach((place, i) => {
+    let parentShown = true;
+    if (place.parent !== null) {
+      for (let j = i - 1; j >= 0; j--) {
+        if (tree[j].depth === place.depth - 1) {
+          parentShown = placeShown[j];
+          break;
+        }
+      }
+    }
+    placeShown[i] = parentShown && ownShown(state.nodes[place.id], purpose);
+    if (placeShown[i]) shown.add(place.id);
+  });
+  return shown;
 }
 
 /**
@@ -99,8 +157,9 @@ export function hiddenByCollection(
 ): ReadonlySet<NodeId> {
   const shownIn = new Set<NodeId>();
   const heldBy = new Set<NodeId>();
-  for (const id of sceneCollectionsOf(state)) {
-    const shown = collectionShown(state, id, purpose);
+  const shownCols = shownCollections(state, purpose);
+  for (const id of allCollectionsOf(state)) {
+    const shown = shownCols.has(id);
     for (const member of collectionMembersOf(state, id)) {
       heldBy.add(member);
       if (shown) shownIn.add(member);
@@ -133,7 +192,7 @@ export function activeCollectionOf(state: DagState): NodeId | null {
     | { activeCollection?: unknown }
     | undefined;
   const id = chosen?.activeCollection;
-  return typeof id === 'string' && sceneCollectionsOf(state).includes(id) ? id : null;
+  return typeof id === 'string' && allCollectionsOf(state).includes(id) ? id : null;
 }
 
 /** The op that makes `collectionId` the scene's active collection, or the scene itself (null). */
@@ -178,9 +237,9 @@ export function linkIntoActiveCollection(
   return collectionId === null ? [...ops] : [...ops, ...membershipOps(collectionId, ids)];
 }
 
-/** The scene's collections that hold `id`, in the scene's order. */
+/** The scene's collections that hold `id`, nested ones too, in outliner order. */
 export function collectionsHolding(state: DagState, id: NodeId): NodeId[] {
-  return sceneCollectionsOf(state).filter((c) => collectionMembersOf(state, c).includes(id));
+  return allCollectionsOf(state).filter((c) => collectionMembersOf(state, c).includes(id));
 }
 
 /** The edges that make each of `ids` a member of `collectionId`. */
@@ -199,7 +258,7 @@ export function membershipOps(collectionId: NodeId, ids: readonly NodeId[]): Op[
  * — the first not already taken by one of the scene's collections.
  */
 export function newCollectionName(state: DagState): string {
-  const taken = new Set(sceneCollectionsOf(state).map((id) => state.nodes[id].meta?.name));
+  const taken = new Set(allCollectionsOf(state).map((id) => state.nodes[id].meta?.name));
   if (!taken.has('Collection')) return 'Collection';
   for (let i = 1; ; i++) {
     const name = `Collection.${String(i).padStart(3, '0')}`;
@@ -208,18 +267,25 @@ export function newCollectionName(state: DagState): string {
 }
 
 /**
- * #1451 — the outliner's New Collection, as Blender's: an empty collection the scene holds, named
- * `newCollectionName`. Null with no scene. Membership comes later — an import into it once it is
- * active, or moving objects in (`moveToCollectionOps`).
+ * #1451 — New Collection, as Blender's: an empty collection named `newCollectionName`, held by
+ * `parent` — one of the scene's collections (#397), or the scene itself when null or not one of
+ * them. Blender's outliner nests it in the selected collection, else the scene
+ * (`outliner_collections.cc` `collection_new_exec`, v5.1.1); its Move to Collection menu makes one
+ * in the level it is picked from. Null with no scene. Membership comes later — an import into it
+ * once it is active, or moving objects in (`moveToCollectionOps`).
  */
-export function newCollectionOps(state: DagState): { ops: Op[]; collectionId: NodeId } | null {
+export function newCollectionOps(
+  state: DagState,
+  parent: NodeId | null = null,
+): { ops: Op[]; collectionId: NodeId } | null {
   const sceneId = state.outputs.scene?.node;
   if (!sceneId) return null;
+  const holder = parent !== null && allCollectionsOf(state).includes(parent) ? parent : sceneId;
   let collectionId: NodeId;
   do {
     collectionId = `n_collection_${Math.floor(Math.random() * 36 ** 6).toString(36)}`;
   } while (state.nodes[collectionId]);
-  return { ops: collectionOps(collectionId, newCollectionName(state), [], sceneId), collectionId };
+  return { ops: collectionOps(collectionId, newCollectionName(state), [], holder), collectionId };
 }
 
 /**
@@ -281,7 +347,7 @@ export function moveToCollectionOps(
     collectionId = made.collectionId;
   } else {
     collectionId = target.collectionId;
-    if (collectionId !== null && !sceneCollectionsOf(state).includes(collectionId)) return null;
+    if (collectionId !== null && !allCollectionsOf(state).includes(collectionId)) return null;
   }
   const held = collectableNodes(state);
   const moved: NodeId[] = [];
@@ -306,4 +372,54 @@ export function moveToCollectionOps(
     }
   }
   return { ops, collectionId, moved, skipped };
+}
+
+/**
+ * #397 — what deleting collections hands on, as Blender's Delete (not Delete Hierarchy) does
+ * (`BKE_collection_delete`, `collection.cc`, v5.1.1, `hierarchy == false`): each deleted
+ * collection's members and nested collections join every collection it sat in. One the scene held
+ * itself hands its nested collections to the scene, and its members to nothing — the scene
+ * collection is no collection here. A parent being deleted too passes them on up to its own.
+ * Nothing in `deleted` is handed on, and nothing joins where it already is.
+ */
+export function collectionDeleteRelinkOps(state: DagState, deleted: ReadonlySet<NodeId>): Op[] {
+  const sceneId = state.outputs.scene?.node;
+  if (!sceneId) return [];
+  const tree = collectionTreeOf(state);
+  const parentsOf = (id: NodeId) => [
+    ...new Set(tree.filter((p) => p.id === id).map((p) => p.parent)),
+  ];
+  // The surviving places a deleted collection hands on to: null is the scene.
+  const heirsOf = (id: NodeId, seen: Set<NodeId>): (NodeId | null)[] =>
+    parentsOf(id).flatMap((p) => {
+      if (p === null || !deleted.has(p)) return [p];
+      if (seen.has(p)) return [];
+      seen.add(p);
+      return heirsOf(p, seen);
+    });
+  const ops: Op[] = [];
+  const joined = new Set<string>();
+  const join = (from: NodeId, to: NodeId, socket: 'members' | 'collections', already: NodeId[]) => {
+    const key = `${from}>${to}.${socket}`;
+    if (already.includes(from) || joined.has(key)) return;
+    joined.add(key);
+    ops.push({ type: 'connect', from: { node: from, socket: 'out' }, to: { node: to, socket } });
+  };
+  for (const id of allCollectionsOf(state)) {
+    if (!deleted.has(id)) continue;
+    const heirs = [...new Set(heirsOf(id, new Set([id])))];
+    for (const heir of heirs) {
+      const to = heir ?? sceneId;
+      const held = heir === null ? sceneCollectionsOf(state) : childCollectionsOf(state, heir);
+      for (const child of childCollectionsOf(state, id)) {
+        if (!deleted.has(child)) join(child, to, 'collections', held);
+      }
+      if (heir === null) continue;
+      const members = collectionMembersOf(state, heir);
+      for (const member of collectionMembersOf(state, id)) {
+        if (!deleted.has(member)) join(member, heir, 'members', members);
+      }
+    }
+  }
+  return ops;
 }
