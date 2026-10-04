@@ -62,6 +62,7 @@ import { KeyframeChannelVec3Node, KeyframeChannelVec3Params } from './KeyframeCh
 import { KeyframeChannelQuatParams } from './KeyframeChannelQuat';
 import { resolveExtend, sampleQuatKeyframesExtended, type QuatKey } from './keyframeInterp';
 import { KeyframeChannelNumberNode, KeyframeChannelNumberParams } from './KeyframeChannelNumber';
+import { layerSampleTimes } from './wireSampleTimes';
 
 const Vec3Schema = z.tuple([z.number(), z.number(), z.number()]);
 const QuatSchema = z.tuple([z.number(), z.number(), z.number(), z.number()]);
@@ -365,37 +366,46 @@ export function poseLayerUnmatchedMembers(
 }
 
 /**
- * #1225 — the range a base layer's keys cover, and how densely, for the wire's `clip`: from the
- * earliest key to the latest, at the densest channel's key count over that span (the rule a clip's
- * range uses, `clipInfoOf`). The weight's keys are not motion and do not count. Nothing when the keys
- * span no time.
+ * #1225 — the range a base layer's keys cover, from the earliest key to the latest, and #1456 — the
+ * times that read every pose the layer holds: every key, and the fills each segment's interpolation
+ * needs (`layerSampleTimes`). The weight's keys are not motion and do not count. Nothing when the
+ * keys span no time.
  */
-export function poseLayerClipInfo(channels: readonly PoseLayerChannel[]): WireClipInfo | undefined {
-  // #1211 — memoised by the channel list's identity: a base layer holding a whole file's motion walks
-  // every key here (walk.bvh: 9,600, measured 12.9 µs of an 18.3 µs evaluation), and the list is the
-  // same array for as long as the layer's params are unchanged.
-  if (CLIP_INFO.has(channels)) return CLIP_INFO.get(channels);
-  const info = computeClipInfo(channels);
-  CLIP_INFO.set(channels, info);
+export function poseLayerClipInfo(
+  channels: readonly PoseLayerChannel[],
+  members: readonly PoseLayerMember[],
+): WireClipInfo | undefined {
+  // #1211 — memoised by the channel and member lists' identity: a base layer holding a whole file's
+  // motion walks every key here (walk.bvh: 9,600, measured 12.9 µs of an 18.3 µs evaluation), and
+  // the lists are the same arrays for as long as the layer's params are unchanged. The members are
+  // part of the key because a member's rotation mode decides which curve is read and how.
+  const known = CLIP_INFO.get(channels);
+  if (known && known.members === members) return known.info;
+  const info = computeClipInfo(channels, members);
+  CLIP_INFO.set(channels, { members, info });
   return info;
 }
 
-const CLIP_INFO = new WeakMap<readonly PoseLayerChannel[], WireClipInfo | undefined>();
+const CLIP_INFO = new WeakMap<
+  readonly PoseLayerChannel[],
+  { members: readonly PoseLayerMember[]; info: WireClipInfo | undefined }
+>();
 
-function computeClipInfo(channels: readonly PoseLayerChannel[]): WireClipInfo | undefined {
+function computeClipInfo(
+  channels: readonly PoseLayerChannel[],
+  members: readonly PoseLayerMember[],
+): WireClipInfo | undefined {
   let start = Infinity;
   let end = -Infinity;
-  let densest = 0;
   for (const c of channels) {
-    if (c.component === 'weight' || c.keyframes.length === 0) continue;
+    if (c.component === 'weight') continue;
     for (const k of c.keyframes) {
       if (k.time < start) start = k.time;
       if (k.time > end) end = k.time;
     }
-    densest = Math.max(densest, c.keyframes.length);
   }
   if (!(end > start)) return undefined;
-  return { start, end, rate: densest / (end - start) };
+  return { start, end, times: layerSampleTimes(channels, members, start, end) };
 }
 
 export const PoseLayerNode: NodeDefinition<PoseLayerParams, PosedSkeletonValue> = {
@@ -462,7 +472,7 @@ export const PoseLayerNode: NodeDefinition<PoseLayerParams, PosedSkeletonValue> 
 
     // #1225 — the base layer's keys ARE the character's motion, so they give the wire its range; any
     // other layer passes the incoming range through.
-    const keyed = isBase ? poseLayerClipInfo(params.channels) : undefined;
+    const keyed = isBase ? poseLayerClipInfo(params.channels, params.members) : undefined;
     // A base layer is named after the file's animation (Blender's action name), so its range is too.
     const range = isBase ? keyed && { ...keyed, name: params.name } : incoming.clip;
     const value: { -readonly [K in keyof PosedSkeletonValue]: PosedSkeletonValue[K] } = {

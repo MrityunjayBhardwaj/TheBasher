@@ -38,8 +38,9 @@
 
 import { create } from 'zustand';
 import { useViewportStore } from './viewportStore';
+import { FRAMES_PER_SECOND } from '../../core/sceneFrames';
 
-export const FRAMES_PER_SECOND = 60;
+export { FRAMES_PER_SECOND };
 const DEFAULT_DURATION_SECONDS = 10;
 
 export interface TimeStore {

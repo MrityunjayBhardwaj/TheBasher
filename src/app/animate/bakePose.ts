@@ -134,7 +134,7 @@ export function bakeTimes(
         reason: 'the motion has no range to take its poses from: name the times',
       };
     }
-    const every = wirePoseTimes(range, range.rate).map((t) => range.start + t);
+    const every = wirePoseTimes(range).map((t) => range.start + t);
     if (poses.kind === 'every') times = every;
     else {
       // Every Nth pose from the first, and the last always (Houdini's "Include Range Start: Always").

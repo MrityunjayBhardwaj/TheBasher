@@ -1788,14 +1788,20 @@ export interface PosedSkeletonValue {
 }
 
 /**
- * #1225 — a wire's range and rate. `round((end - start) · rate)` samples cover `[start, end]`, both
- * ends included: three's retarget rule (`SkeletonUtils.js:204,213-214`), under which a clip whose
- * densest bone has n keys is sampled n times, landing on its keys.
+ * #1225 — a wire's range, and #1456 — the times a consumer samples it at to read every pose it holds.
+ *
+ * The times are worked out by the producer, the one place that knows its keys and how they
+ * interpolate (`wireSampleTimes.ts`): every key, a frame before each key that closes a constant
+ * segment, and every scene frame inside a segment two samples can't reproduce. A retarget or a bake
+ * joins its samples with straight lines, so the times are what make that agree with the source at
+ * every frame. Blender's bake and Houdini's retarget read every frame; a linear source keeps just
+ * its keys, which agree with it everywhere and don't multiply a dense clip.
  */
 export interface WireClipInfo {
   readonly start: number;
   readonly end: number;
-  readonly rate: number;
+  /** Sorted, distinct, inside `[start, end]`, both ends included; at least one entry. */
+  readonly times: readonly number[];
   /** The motion's name, as `clipinfo` records the clip name. */
   readonly name?: string;
   /** What the motion does past its range (`clipinfo`'s end behaviour). Absent is hold. A retarget

@@ -49,6 +49,7 @@ import {
 import { restBonePose } from './bonePose';
 import { MotionClipLoopSchema, clipExtendRules, type ClipLoop } from './clipLoop';
 import { nameParam } from './paramWidget';
+import { clipSampleTimes } from './wireSampleTimes';
 
 const Vec3Schema = z.tuple([z.number(), z.number(), z.number()]);
 const QuatSchema = z.tuple([z.number(), z.number(), z.number(), z.number()]);
@@ -209,47 +210,45 @@ export function posedSkeletonFromClip(clip: AnimationClipValue): PosedSkeletonVa
 }
 
 /**
- * #1225 — a clip's range and rate on the wire: `[0, duration]` at the densest bone's key count over
- * the duration, three's own rule (`SkeletonUtils.js:204`), so a retarget reading the wire samples a
- * clip exactly where it sampled the clip's keys. Nothing on a clip with no duration or no keys.
+ * #1225 — a clip's range on the wire, `[0, duration]`, and #1456 — the times that read every pose it
+ * holds: its keys, and for a stepped clip the frame before each key (`clipSampleTimes`). Nothing on a
+ * clip with no duration or no poses.
  */
 export function clipInfoOf(clip: {
   readonly name: string;
   readonly duration: number;
   readonly loop: ClipLoop;
   readonly poses: readonly MotionPose[];
+  readonly interpolation?: 'linear' | 'constant';
 }): WireClipInfo | undefined {
-  if (!(clip.duration > 0)) return undefined;
-  const densest = densestBoneOf(clip.poses);
-  if (densest === 0) return undefined;
+  if (!(clip.duration > 0) || clip.poses.length === 0) return undefined;
   return {
     start: 0,
     end: clip.duration,
-    rate: densest / clip.duration,
+    times: sampleTimesOf(clip.poses, clip.duration, clip.interpolation ?? 'linear'),
     name: clip.name,
     loop: clip.loop,
   };
 }
 
 /**
- * The most poses any one bone appears in. Memoised on the poses' identity (a clip's are its params'
- * own array), so an evaluation whose params did not change does not walk them: measured on the
- * 78-bone, 9360-key walk.bvh, a re-evaluation with unchanged params costs ~7 µs memoised against
- * ~0.22 ms walked (#1237's promise, kept).
+ * Memoised on the poses' identity (a clip's are its params' own array), so an evaluation whose params
+ * did not change does not walk them: measured on the 78-bone, 9360-key walk.bvh, a re-evaluation with
+ * unchanged params cost ~7 µs memoised against ~0.22 ms walked (#1237's promise, kept).
  */
-function densestBoneOf(poses: readonly MotionPose[]): number {
-  const known = densestMemo.get(poses);
-  if (known !== undefined) return known;
-  const perBone = new Map<string, number>();
-  for (const pose of poses) {
-    for (const name of Object.keys(pose.bones)) perBone.set(name, (perBone.get(name) ?? 0) + 1);
-  }
-  let densest = 0;
-  for (const n of perBone.values()) densest = Math.max(densest, n);
-  densestMemo.set(poses, densest);
-  return densest;
+function sampleTimesOf(
+  poses: readonly MotionPose[],
+  duration: number,
+  interpolation: 'linear' | 'constant',
+): readonly number[] {
+  const key = `${duration}|${interpolation}`;
+  const known = timesMemo.get(poses);
+  if (known?.key === key) return known.times;
+  const times = clipSampleTimes(poses, 0, duration, interpolation);
+  timesMemo.set(poses, { key, times });
+  return times;
 }
-const densestMemo = new WeakMap<readonly MotionPose[], number>();
+const timesMemo = new WeakMap<readonly MotionPose[], { key: string; times: readonly number[] }>();
 
 let samplerBuilds = 0;
 /** How many times a clip's pose has built its samplers, since load — for tests of #1237. */

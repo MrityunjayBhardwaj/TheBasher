@@ -414,11 +414,16 @@ describe('#1215 — baking a retarget: the live link ends, the motion does not c
 });
 
 describe('#1215 — which poses, and what a bake refuses', () => {
-  const wire = (start: number, end: number, rate: number): PosedSkeletonValue => ({
+  /** A wire whose range carries `count` evenly spaced times, both ends included (#1456). */
+  const wire = (start: number, end: number, count: number): PosedSkeletonValue => ({
     kind: 'PosedSkeleton',
     skeleton: { kind: 'Skeleton', bones: [] },
     sample: () => [],
-    clip: { start, end, rate },
+    clip: {
+      start,
+      end,
+      times: Array.from({ length: count }, (_, i) => start + (i * (end - start)) / (count - 1)),
+    },
   });
 
   it('every Nth pose keeps the last, as Houdini’s thinning does', () => {
