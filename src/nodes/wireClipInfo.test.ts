@@ -157,6 +157,8 @@ describe('a base layer gives the wire its range; everything above passes it thro
         to: { node: armatureId, socket: 'pose' },
         replace: true,
       }).next;
+      // The range rides through unwidened (#1225). #1457: the times inside it may gain the layer's
+      // own; these two add none inside 0–1 s (keyed from 5 s; muted).
       expect(poseOf(s, id).clip, id).toEqual(range);
     }
   });

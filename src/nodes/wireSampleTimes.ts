@@ -24,7 +24,7 @@
 //      segment); src/nodes/PoseLayer.ts (`synchronizedSampler`, the euler read modes); issue #1456.
 
 import { FRAMES_PER_SECOND } from '../core/sceneFrames';
-import type { MotionPose } from './types';
+import type { MotionPose, WireClipInfo } from './types';
 import type { PoseLayerChannel, PoseLayerMember } from './PoseLayer';
 
 /** Two times closer than this are one time. Well under a frame, well over float noise. */
@@ -182,4 +182,40 @@ export function layerSampleTimes(
     }
   }
   return finish(start, end, times);
+}
+
+/**
+ * How a layer above the base blends its members into the pose arriving on its input, for sampling:
+ * `none` when two samples reproduce it (an override at full weight replaces, and a fixed rotation
+ * times a slerp is a slerp); `everywhere` for an override at a weight that is not 1 or is keyed;
+ * and, for an additive layer, the span its keyed ROTATIONS move over — two moving rotations
+ * multiplied are not a slerp, while an added position is a sum, which two samples reproduce.
+ */
+export type LayerBlend =
+  | { readonly kind: 'none' }
+  | { readonly kind: 'everywhere' }
+  | { readonly kind: 'while'; readonly start: number; readonly end: number };
+
+/**
+ * #1457 — the range a layer ABOVE the base hands on. The RANGE is the incoming one, unwidened: a
+ * layer passes the motion's range through, as Houdini's `clipinfo` detail attribute rides through
+ * SOPs (#1225), so keys it holds outside that range are not part of the motion. What it adds are
+ * TIMES inside the range: its own keys and their fills, and every scene frame where its blend is not
+ * a slerp between two samples (measured: a half-weight override over a 170° turn baked 8.6° off
+ * between the base's keys). With no incoming range there is no motion to read, and none is made.
+ */
+export function layeredWireRange(
+  incoming: WireClipInfo | undefined,
+  own: WireClipInfo | undefined,
+  blend: LayerBlend,
+): WireClipInfo | undefined {
+  if (!incoming || (!own && blend.kind === 'none')) return incoming;
+  const times = [...incoming.times, ...(own?.times ?? [])];
+  if (blend.kind === 'everywhere') framesInside(incoming.start, incoming.end, times);
+  if (blend.kind === 'while') {
+    const from = Math.max(blend.start, incoming.start);
+    const to = Math.min(blend.end, incoming.end);
+    if (to > from) framesInside(from, to, times);
+  }
+  return { ...incoming, times: finish(incoming.start, incoming.end, times) };
 }

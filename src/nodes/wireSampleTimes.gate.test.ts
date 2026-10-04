@@ -14,8 +14,14 @@
 // also pin that a source two samples already reproduce keeps exactly its keys, so a dense clip is
 // not multiplied.
 //
-// REF: src/nodes/wireSampleTimes.ts (the fills); src/core/import/retarget.ts (`retargetClip`, the
-//      re-timing around three's resampling); src/app/animate/bakePose.ts (`bakeTimes`); issue #1456.
+// #1457 adds the layers ABOVE a base: a layer keyed between the base's keys (what a fold reads at
+// the top of a chain — before, 2 keys and 90° off), an override at half weight and an additive
+// rotation over a moving base (blends no slerp follows), and the cases that must keep the base's
+// samples: a full-weight static override and an additive position.
+//
+// REF: src/nodes/wireSampleTimes.ts (the fills, `layeredWireRange`); src/nodes/PoseLayer.ts
+//      (`layerBlendOf`); src/core/import/retarget.ts (`retargetClip`, the re-timing around three's
+//      resampling); src/app/animate/bakePose.ts (`bakeTimes`); issues #1456, #1457.
 
 import { describe, expect, it } from 'vitest';
 import { Quaternion } from 'three';
@@ -60,6 +66,42 @@ function layer(
 
 const turnY = (degs: readonly number[]) => degs.map((d) => [0, d, 0] as const);
 
+/** #1457 — a layer ABOVE `pose`, with the given params: the shape a fold or a hand-pose takes. */
+function onTop(pose: PosedSkeletonValue, params: Record<string, unknown>): PosedSkeletonValue {
+  return PoseLayerNode.evaluate(
+    PoseLayerParams.parse({ name: 'above', ...params }),
+    { pose },
+    undefined as never,
+  ) as PosedSkeletonValue;
+}
+/** A base layer turning the HIPS, keyed only at its ends: what an upper layer sits on. */
+const hipsBase = (degs: readonly [number, number]) =>
+  PoseLayerNode.evaluate(
+    PoseLayerParams.parse({
+      name: 'base',
+      members: [{ bone: 'Hips', rotationMode: 'XYZ' }],
+      channels: [
+        {
+          bone: 'Hips',
+          component: 'rotation',
+          keyframes: [
+            { time: 0, value: [0, degs[0], 0], easing: 'linear' },
+            { time: 2, value: [0, degs[1], 0], easing: 'linear' },
+          ],
+        },
+      ],
+    }),
+    { pose: rest() },
+    undefined as never,
+  ) as PosedSkeletonValue;
+const spineKeys = (times: readonly number[], degs: readonly number[]) => [
+  {
+    bone: 'Spine',
+    component: 'rotation',
+    keyframes: times.map((time, i) => ({ time, value: [0, degs[i], 0], easing: 'linear' })),
+  },
+];
+
 function retargeted(source: PosedSkeletonValue): { posed: PosedSkeletonValue; samples: number } {
   const { out, posed } = RetargetClipNode.evaluate(
     RetargetClipParams.parse({}),
@@ -84,7 +126,8 @@ function baked(source: PosedSkeletonValue): { posed: PosedSkeletonValue; samples
   return { posed, samples: got.times.length };
 }
 
-/** The worst angle between the two spines over every scene frame of the source's range. */
+/** The worst angle between the two rigs, over every bone and every scene frame of the source's
+ *  range. */
 function worstOff(source: PosedSkeletonValue, result: PosedSkeletonValue): number {
   const { start, end } = source.clip!;
   let worst = 0;
@@ -94,9 +137,13 @@ function worstOff(source: PosedSkeletonValue, result: PosedSkeletonValue): numbe
     f++
   ) {
     const t = f / FRAMES_PER_SECOND;
-    const a = new Quaternion(...source.sample(t)[1].quaternion);
-    const b = new Quaternion(...result.sample(t)[1].quaternion);
-    worst = Math.max(worst, a.angleTo(b) * DEG);
+    const want = source.sample(t);
+    const got = result.sample(t);
+    want.forEach((pose, i) => {
+      const a = new Quaternion(...pose.quaternion);
+      const b = new Quaternion(...got[i].quaternion);
+      worst = Math.max(worst, a.angleTo(b) * DEG);
+    });
   }
   return worst;
 }
@@ -106,6 +153,8 @@ const ROWS: {
   readonly source: () => PosedSkeletonValue;
   /** Linear rows keep exactly their keys. */
   readonly samples?: number;
+  /** The roads compared with the source at every frame; both unless a row says why not. */
+  readonly exactOn?: readonly ('retarget' | 'bake')[];
 }[] = [
   {
     label: 'linear, keys at 0 / 0.1 / 2 s (the key three stepped over)',
@@ -141,6 +190,91 @@ const ROWS: {
       ]),
   },
   {
+    label: '#1457 — a layer above the base, keyed between its keys (a fold read at the top)',
+    source: () =>
+      onTop(hipsBase([0, 20]), {
+        members: [{ bone: 'Spine', rotationMode: 'XYZ' }],
+        channels: spineKeys([0, 0.5, 2], [0, 90, 0]),
+      }),
+    samples: 3,
+  },
+  {
+    label: '#1457 — an override at half weight over a moving base (the blend is no slerp)',
+    source: () =>
+      onTop(hipsBase([0, 170]), {
+        weight: 0.5,
+        members: [{ bone: 'Hips', rotationMode: 'XYZ', rotation: [90, 0, 0] }],
+      }),
+  },
+  {
+    label: '#1457 — an additive layer whose member moves, over a moving base',
+    source: () =>
+      onTop(hipsBase([0, 120]), {
+        mode: 'additive',
+        members: [{ bone: 'Hips', rotationMode: 'XYZ' }],
+        channels: [
+          {
+            bone: 'Hips',
+            component: 'rotation',
+            keyframes: [
+              { time: 0, value: [0, 0, 0], easing: 'linear' },
+              { time: 2, value: [90, 0, 0], easing: 'linear' },
+            ],
+          },
+        ],
+      }),
+  },
+  {
+    label: '#1457 — a full-weight static override above the base keeps the base samples',
+    source: () =>
+      onTop(hipsBase([0, 20]), {
+        members: [{ bone: 'Spine', rotationMode: 'XYZ', rotation: [0, 45, 0] }],
+      }),
+    samples: 2,
+    // The retarget reads a source's FIRST pose as its reference pose (#853), so a bend held from
+    // frame 0 is the source's rest to it, by design; the bake has no reference and is compared.
+    exactOn: ['bake'],
+  },
+  {
+    label: '#1457 — an additive rotation over part of the range fills frames only where it moves',
+    source: () =>
+      onTop(hipsBase([0, 120]), {
+        mode: 'additive',
+        members: [{ bone: 'Hips', rotationMode: 'XYZ' }],
+        channels: [
+          {
+            bone: 'Hips',
+            component: 'rotation',
+            keyframes: [
+              { time: 0, value: [0, 0, 0], easing: 'linear' },
+              { time: 0.5, value: [90, 0, 0], easing: 'linear' },
+            ],
+          },
+        ],
+      }),
+    // 0, 0.5 and 2 s, and the 29 frames inside 0–0.5 s: not every frame of the 2 s range.
+    samples: 32,
+  },
+  {
+    label: '#1457 — an additive layer moving only a position keeps the base samples (a sum)',
+    source: () =>
+      onTop(hipsBase([0, 20]), {
+        mode: 'additive',
+        members: [{ bone: 'Spine' }],
+        channels: [
+          {
+            bone: 'Spine',
+            component: 'position',
+            keyframes: [
+              { time: 0, value: [0, 0, 0], easing: 'linear' },
+              { time: 2, value: [0, 0.5, 0], easing: 'linear' },
+            ],
+          },
+        ],
+      }),
+    samples: 2,
+  },
+  {
     label: 'linear, 61 keys at 30/s (dense: kept as it is)',
     source: () =>
       layer(
@@ -161,10 +295,12 @@ describe('#1456 — a retarget and a bake agree with the wire at every scene fra
         ['bake', baked],
       ] as const) {
         const { posed, samples } = run(source);
-        const off = worstOff(source, posed);
-        expect(off, `${road}: ${off.toFixed(2)}° off the source at a scene frame`).toBeLessThan(
-          0.01,
-        );
+        if ((row.exactOn ?? ['retarget', 'bake']).includes(road)) {
+          const off = worstOff(source, posed);
+          expect(off, `${road}: ${off.toFixed(2)}° off the source at a scene frame`).toBeLessThan(
+            0.01,
+          );
+        }
         if (row.samples !== undefined) {
           expect(samples, `${road}: a source its keys reproduce keeps just its keys`).toBe(
             row.samples,

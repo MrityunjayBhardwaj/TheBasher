@@ -62,7 +62,7 @@ import { KeyframeChannelVec3Node, KeyframeChannelVec3Params } from './KeyframeCh
 import { KeyframeChannelQuatParams } from './KeyframeChannelQuat';
 import { resolveExtend, sampleQuatKeyframesExtended, type QuatKey } from './keyframeInterp';
 import { KeyframeChannelNumberNode, KeyframeChannelNumberParams } from './KeyframeChannelNumber';
-import { layerSampleTimes } from './wireSampleTimes';
+import { layerSampleTimes, layeredWireRange, type LayerBlend } from './wireSampleTimes';
 
 const Vec3Schema = z.tuple([z.number(), z.number(), z.number()]);
 const QuatSchema = z.tuple([z.number(), z.number(), z.number(), z.number()]);
@@ -366,6 +366,32 @@ export function poseLayerUnmatchedMembers(
 }
 
 /**
+ * #1457 — how this layer's blend reads for sampling (`LayerBlend`): nothing for a layer with no
+ * members or an override at full static weight; everywhere for an override at a weight that is not 1
+ * or is keyed; for an additive layer, the span its played rotation curves are keyed over.
+ */
+function layerBlendOf(params: PoseLayerParams): LayerBlend {
+  if (params.members.length === 0) return { kind: 'none' };
+  const played = playedChannels(params.channels);
+  if (params.mode === 'override') {
+    const weightKeyed = poseLayerChannelOf(played, '', 'weight') !== undefined;
+    return weightKeyed || (params.weight > 0 && params.weight < 1)
+      ? { kind: 'everywhere' }
+      : { kind: 'none' };
+  }
+  let start = Infinity;
+  let end = -Infinity;
+  for (const c of played) {
+    if (c.component !== 'rotation' && c.component !== 'quaternion') continue;
+    for (const k of c.keyframes) {
+      start = Math.min(start, k.time);
+      end = Math.max(end, k.time);
+    }
+  }
+  return end > start ? { kind: 'while', start, end } : { kind: 'none' };
+}
+
+/**
  * #1225 — the range a base layer's keys cover, from the earliest key to the latest, and #1456 — the
  * times that read every pose the layer holds: every key, and the fills each segment's interpolation
  * needs (`layerSampleTimes`). The weight's keys are not motion and do not count. Nothing when the
@@ -470,11 +496,14 @@ export const PoseLayerNode: NodeDefinition<PoseLayerParams, PosedSkeletonValue> 
       return built;
     };
 
-    // #1225 — the base layer's keys ARE the character's motion, so they give the wire its range; any
-    // other layer passes the incoming range through.
-    const keyed = isBase ? poseLayerClipInfo(params.channels, params.members) : undefined;
+    // #1225 — the base layer's keys ARE the character's motion, so they give the wire its range.
+    // #1457 — any other layer passes the incoming range through and adds, inside it, its own keys'
+    // times and every frame where its blend of two moving poses is not a slerp (`layeredWireRange`).
+    const keyed = poseLayerClipInfo(params.channels, params.members);
     // A base layer is named after the file's animation (Blender's action name), so its range is too.
-    const range = isBase ? keyed && { ...keyed, name: params.name } : incoming.clip;
+    const range = isBase
+      ? keyed && { ...keyed, name: params.name }
+      : layeredWireRange(incoming.clip, keyed, layerBlendOf(params));
     const value: { -readonly [K in keyof PosedSkeletonValue]: PosedSkeletonValue[K] } = {
       kind: 'PosedSkeleton',
       skeleton: upstream.skeleton,
