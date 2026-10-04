@@ -7,7 +7,7 @@
 //
 // Wire in, wire out. The layer holds the bones it touches (its MEMBERS) and their keys, and folds
 // them onto the incoming pose by its MODE and WEIGHT. A bone that is not a member passes through.
-// It absorbs `PoseOverride` (one bone, static values, no keys), which retires in #1243.
+// It absorbed `PoseOverride` (one bone, static values, no keys), retired in #1243.
 //
 // ── WHAT IT CORRESPONDS TO ──────────────────────────────────────────────────────────────────────
 //

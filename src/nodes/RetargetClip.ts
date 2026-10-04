@@ -48,7 +48,8 @@
 // socket anywhere, so a node emitting one would typecheck, validate, evaluate and
 // drive nothing. That was an accurate description of a gap, not a design
 // principle — and the gap was owned by this epic's own next rung. `PoseOverride`
-// (#974) is the consumer, so the lane now terminates somewhere.
+// (#974) was the first consumer; today a `PoseLayer` or an armature Object's `pose` takes it
+// (`PoseOverride` retired in #1243).
 //
 // THE `posed` OUTPUT IS ADDITIVE, and deliberately so. `out` stays an
 // `AnimationClip`: 47 production sites and 19 test files treat this node as a

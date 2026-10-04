@@ -179,7 +179,8 @@ export function registerAllMutators(): void {
 
   // #993 — the pose lane's AUTHOR. `PoseOverride` was registered, evaluated and
   // consumed by the render band while nothing in the codebase could bring one into
-  // existence; a lane is not shipped until something can author it.
+  // existence; a lane is not shipped until something can author it. It now authors
+  // into a native character's pose layer (#1244); `PoseOverride` itself retired (#1243).
   registerMutator(poseBoneMutator);
   // #1242 — a pose layer member's rotation mode, converted or resampled.
   registerMutator(setPoseMemberModeMutator);

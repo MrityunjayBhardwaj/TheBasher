@@ -9,7 +9,11 @@
 import { describe, expect, it } from 'vitest';
 import { registerAllNodes } from '../../nodes/registerAll';
 import { buildAllExampleProjects } from '../../core/project/examples';
-import { OLD_IMPORT_NODE_TYPES, refuseOldImports } from '../../core/project/oldImports';
+import {
+  OLD_IMPORT_NODE_TYPES,
+  RETIRED_NODE_TYPES,
+  refuseOldImports,
+} from '../../core/project/oldImports';
 import { ASSET_CATALOG } from './catalog';
 
 registerAllNodes();
@@ -48,8 +52,9 @@ describe('bundled examples are stored on the current structure (#1424)', () => {
   it('no example holds a node type only an old imported-file save has', async () => {
     const old = new Set([
       ...OLD_IMPORT_NODE_TYPES,
+      // Retired with the old structure, and refused on their own too (#1243).
+      ...RETIRED_NODE_TYPES,
       // Never refused on their own, but only ever made beside an old-structure import.
-      'PoseOverride',
       'ClipSelect',
       'TransformClip',
     ]);

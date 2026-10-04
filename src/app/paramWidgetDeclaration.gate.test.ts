@@ -254,7 +254,8 @@ describe('a param declares its control on its schema (#872)', () => {
       examined: true,
       // 25 since #1124 retired `MotionGenerate.name` — a generated motion's clip owns its name.
       // 26 at #1240: `PoseLayer.name`, through `nameParam` like every other.
-      nameCount: 26,
+      // 25 at #1243: `PoseOverride.name` retired with its type.
+      nameCount: 25,
       undeclared: [],
     });
   });
@@ -373,7 +374,6 @@ describe('a param declares its control on its schema (#872)', () => {
       // `LightProfileSelect.selectedProfile` left this list in #1064 — the first CHOICE to get
       // its picker. The stale-entry direction below is what makes that removal mandatory.
       'MotionGenerate.model': CHOICE,
-      'PoseOverride.bone': CHOICE,
     };
 
     let examined = 0;
@@ -414,7 +414,8 @@ describe('a param declares its control on its schema (#872)', () => {
     });
     // The denominator rides with the verdict — an empty `unacknowledged` from a loop that
     // never ran looks exactly like a pass.
-    expect(readOnly.length).toBe(16);
+    // 15 since #1243 retired `PoseOverride` and its `bone` with it.
+    expect(readOnly.length).toBe(15);
   });
 
   it('row 15 — a param owns the word for its EMPTY state, and the control owns the fallback (#1031)', () => {
@@ -477,8 +478,8 @@ describe('a param declares its control on its schema (#872)', () => {
       examined: true,
       // 25 `.name`s since #1124 retired `MotionGenerate.name`, the profile picker's word (#1064),
       // the bone picker's (#1284): an empty bone aims at "the object itself"; 28 at #1240
-      // (`PoseLayer.name`).
-      count: 28,
+      // (`PoseLayer.name`); 27 at #1243 (`PoseOverride.name` retired with its type).
+      count: 27,
     });
     expect(declaredWord.filter((k) => !k.endsWith('.name'))).toEqual([
       'LightProfileSelect.selectedProfile',

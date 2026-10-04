@@ -92,12 +92,6 @@ const NO_CREATION_ROAD: Readonly<Record<string, string>> = {
     'unwired. PoseLayer (#1240) is the reachable half; this is the socket type both ' +
     'ends speak, and no director authors one directly.',
 
-  PoseOverride:
-    "The clone road's hand-pose (#993), minted off a retarget chain by poseBone's retarget " +
-    "anchor, which retired with the clone road's character half (#1053). Kept registered so a " +
-    'project saved with one still parses; it only ever sat beside an old-structure import, and ' +
-    'a project holding one of those is refused on load (#1424). The type retires in #1243.',
-
   // #1424 — the clone importer's five. The builder that minted them (`buildGltfImportOps`) is
   // gone and nothing imports that way since #1421. They stay registered so an old project still
   // parses, which is what lets the load refuse it BY NAME and Home keep listing it. #1425 retires

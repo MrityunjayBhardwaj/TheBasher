@@ -155,7 +155,8 @@ describe('ns-2 step 3 — the bypass, censused with its category attached', () =
     // 87 -> 88 at #1049 (PolyMeshData), a data kind and NOT an operator.
     // 88 -> 89 at #393 (ArmatureModifier), an OPERATOR, so the operator census moves with it.
     // 89 -> 90 at #1240 (PoseLayer), a pose-wire layer and NOT an operator (no chain spine).
-    expect(listNodeTypes()).toHaveLength(90);
+    // 90 -> 89 at #1243 (PoseOverride retired, absorbed by PoseLayer), NOT an operator.
+    expect(listNodeTypes()).toHaveLength(89);
   });
 
   it('`muted` is declared ELEVEN times in source, and that is three different populations', () => {

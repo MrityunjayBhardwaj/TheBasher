@@ -128,7 +128,7 @@ export function whyNotHandPosable(
  * - `AnimationClip.pose` and `PosedSkeleton.out` (a procedural sway) stand the rig on their
  *   `skeleton` edge.
  * - `RetargetClip.posed` stands its TARGET rig (`skeleton`), which is what it poses.
- * - `PoseLayer.out` / `PoseOverride.out` pass the pose on their `pose` input through.
+ * - `PoseLayer.out` passes the pose on its `pose` input through.
  *
  * Null for anything else, an unwired input, or a cycle.
  */
@@ -150,7 +150,6 @@ export function poseSkeletonIdOf(
       case 'RetargetClip':
         return edgeTarget(node, 'skeleton');
       case 'PoseLayer':
-      case 'PoseOverride':
         cur = edgeTarget(node, 'pose');
         continue;
       default:

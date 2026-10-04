@@ -34,7 +34,7 @@ function poseOf(state: DagState, id: string): PosedSkeletonValue {
 }
 
 describe('a clip puts its range on the wire', () => {
-  // soma-walk.bvh: 78 bones, 31 keys over 1 s, so rate 31 and 31 samples, one per key.
+  // soma-walk.bvh: 78 bones, 31 keys over 1 s, so 31 samples, one per key.
   it('soma-walk.bvh: [0, duration] at the rate three derives from the same keys', () => {
     const parsed = parseBvh(
       readFileSync('public/fixtures/anim/soma-walk.bvh', 'utf8'),
@@ -147,7 +147,6 @@ describe('a base layer gives the wire its range; everything above passes it thro
         },
       ],
       ['quiet', 'PoseLayer', { mute: true, members: [{ bone: 'Bone1', rotation: [0, 0, 30] }] }],
-      ['hold', 'PoseOverride', { bone: 'Bone1', overridden: { rotation: true } }],
     ] as const) {
       const feed = s.nodes[armatureId].inputs.pose as { node: string; socket: string };
       s = applyOp(s, { type: 'addNode', nodeId: id, nodeType: type, params }).next;

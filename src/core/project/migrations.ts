@@ -12,6 +12,7 @@
 
 import { getNodeType } from '../dag/registry';
 import { normalizeRetiredParams } from './retiredLadders';
+import { RETIRED_NODE_TYPES } from './oldImports';
 // The ONE edge walk from clip to rig, and the ONE radians→degrees helper the
 // mint uses. Imported rather than re-implemented: a second copy of either would
 // compare unequal for reasons that have nothing to do with authoring, and the
@@ -1209,6 +1210,10 @@ export function migrateNodes(project: Project): Project {
 
 function migrateOneNode(node: Node): Node {
   const def = getNodeType(node.type);
+  // #1243 — a type retired with the old imported-file structure is passed through as saved, so the
+  // load reaches the door that refuses the project by name (`refuseOldImports`), rather than
+  // failing here on a type nothing registers.
+  if (!def && RETIRED_NODE_TYPES.includes(node.type)) return node;
   if (!def) {
     throw new Error(
       `Cannot migrate node ${node.id}: unknown type "${node.type}". Register the type before loading.`,

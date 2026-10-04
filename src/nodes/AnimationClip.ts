@@ -168,7 +168,7 @@ export type AnimationClipParams = z.infer<typeof AnimationClipParams>;
  * #1237 — built on the FIRST `sample`, not here. Every `AnimationClip` evaluates to its pose as well
  * as its keys (#1224), and building here cost ~893 µs per evaluation on `walk.bvh` against ~0.2 µs
  * without, on every graph change that reaches the clip, whether or not anything reads the pose.
- * An unsampled pose costs nothing, as `PosedSkeleton` and `PoseOverride` already promise.
+ * An unsampled pose costs nothing, as `PosedSkeleton` and `PoseLayer` already promise.
  */
 export function posedSkeletonFromClip(clip: AnimationClipValue): PosedSkeletonValue {
   const known = posedByClip.get(clip);

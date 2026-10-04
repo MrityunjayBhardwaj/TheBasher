@@ -424,11 +424,12 @@ describe('the agent-facing text offers only roads that exist (#758)', () => {
     // pose-bearing socket, so it cannot hold two poses at once. It is the first
     // consumer the pose lane has ever had — which is what makes the lane
     // terminate somewhere — and the property this row guards is untouched.
+    // #1243 retires it (absorbed by `PoseLayer`), and the census loses that entry.
     // #1203 adds a FIFTH, and it is not a fold: what poses an armature Object, exactly one, and the
     // Object has no other pose-bearing socket. #1224 re-types it from a clip (`action`) to the pose
     // wire (`pose`); still one, still single.
     // #1240 adds a SIXTH, and it is not a fold of two poses either: `PoseLayer` takes exactly one
-    // `PosedSkeleton` and folds its OWN keys onto it, as `PoseOverride` does. Chaining layers is
+    // `PosedSkeleton` and folds its OWN keys onto it, as the retired `PoseOverride` did (#1243). Chaining layers is
     // chaining nodes, one pose in each.
     // #1225 re-types `RetargetClip`'s input from a clip (`sourceClip`) to the pose wire (`source`);
     // still one, still single, and the node has no other pose-bearing socket. #1225 re-types
@@ -438,7 +439,6 @@ describe('the agent-facing text offers only roads that exist (#758)', () => {
       'LocomotionState.pose: PosedSkeleton (single)',
       'Object.pose: PosedSkeleton (single)',
       'PoseLayer.pose: PosedSkeleton (single)',
-      'PoseOverride.pose: PosedSkeleton (single)',
       'RetargetClip.source: PosedSkeleton (single)',
     ]);
   });

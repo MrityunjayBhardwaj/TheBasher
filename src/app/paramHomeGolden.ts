@@ -230,14 +230,10 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
   RenderOutput: '[render] postFx=(unrouted) width=(unrouted) height=(unrouted)',
   // #901 — one param, the output clip's name. Everything else it produces comes
   // from its three inputs, which is the point of the node.
-  // #974 — hand-posing. No `home` declared: the params are the override itself,
-  // not a routed view of somebody else's, so every cell is honestly unrouted.
-  // #1240 — the pose layer that absorbs PoseOverride. No `home` declared, for PoseOverride's
-  // reason: the params are the layer itself. Its controls arrive with the writers (#1244).
+  // #1240 — the pose layer that absorbed PoseOverride (retired, #1243). No `home` declared: the
+  // params are the layer itself. Its controls arrive with the writers (#1244).
   PoseLayer:
     '[animate] name=(unrouted) mode=(unrouted) weight=(unrouted) mute=(unrouted) solo=(unrouted) members=(unrouted) channels=(unrouted)',
-  PoseOverride:
-    '[animate] name=(unrouted) bone=(unrouted) position=(unrouted) rotation=(unrouted) overridden=(unrouted)',
   RetargetClip: '[animate] name=(unrouted) active=(unrouted) sampleRate=(unrouted)',
   SampleGeometry:
     '[] sourceGeometry=(unrouted) at=(unrouted) method=(unrouted) direction=(unrouted) orientation=(unrouted) farthest=(unrouted)',
@@ -398,4 +394,7 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
 // Merged with main (#1284 and its sibling on the AI track): +2 unrouted — `TrackTo.aimBone`, homed
 // like its sibling `aimNode`, and the other arrival counted by main's golden (236 → 238).
 //   types 90 · routed 144 · unrouted 246 + 2 = 248
-export const GOLDEN_TOTALS = { types: 90, routed: 144, unrouted: 249 } as const;
+//
+// #1243 retires `PoseOverride`, its five params all unrouted: −1 type, −5 unrouted.
+//   types 89 · routed 144 · unrouted 249 − 5 = 244
+export const GOLDEN_TOTALS = { types: 89, routed: 144, unrouted: 244 } as const;
