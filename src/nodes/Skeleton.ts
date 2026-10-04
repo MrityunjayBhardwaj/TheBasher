@@ -36,6 +36,9 @@ export const SkeletonParams = z.object({
         // field stays omitted (keeps value-equality clean for legacy saves).
         scale: Vec3.optional(),
         inverseBindMatrix: z.array(z.number()).length(16).optional(),
+        // #1340 — the IK solve's starting bend (`BoneSpec.preferredAngle`). Optional, no default,
+        // for the same value-equality reason as `scale`.
+        preferredAngle: Vec3.optional(),
       }),
     )
     // #1183 — a skeleton is a tree. A write whose parent chain loops is refused here,
@@ -97,6 +100,7 @@ export const SkeletonNode: NodeDefinition<SkeletonParams, SkeletonOutputs> = {
         // key). Back-compat: BVH/FBX + the 3-bone default are unchanged.
         ...(b.scale !== undefined ? { scale: b.scale } : {}),
         ...(b.inverseBindMatrix !== undefined ? { inverseBindMatrix: b.inverseBindMatrix } : {}),
+        ...(b.preferredAngle !== undefined ? { preferredAngle: b.preferredAngle } : {}),
       })),
     };
     return { out, pose: restPoseOf(out) };

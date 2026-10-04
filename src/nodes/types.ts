@@ -1699,6 +1699,12 @@ export interface BoneSpec {
    * the retarget adapter.
    */
   readonly inverseBindMatrix?: readonly number[];
+  /**
+   * #1340 — OPTIONAL preferred angle: the local rotation (XYZ euler radians, like `rotation`) an IK
+   * solve starts from, which decides which way a straight chain bends (Maya's joint preferred angle,
+   * `joint -spa`). Absent → none.
+   */
+  readonly preferredAngle?: Vec3;
 }
 
 export interface SkeletonValue {

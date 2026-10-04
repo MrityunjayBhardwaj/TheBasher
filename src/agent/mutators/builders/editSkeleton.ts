@@ -51,6 +51,20 @@ const Edit = z.discriminatedUnion('op', [
     scale: Vec3.optional(),
     children: z.enum(['follow', 'stay']).default('follow'),
   }),
+  // #1340 — orient a joint (or a chain) to its child, rolling +Z toward a direction.
+  z.object({
+    op: z.literal('orient'),
+    bone: BoneName,
+    up: z.discriminatedUnion('kind', [
+      z.object({ kind: z.literal('axis'), axis: Vec3 }),
+      z.object({ kind: z.literal('tangent'), axis: z.enum(['+X', '-X', '+Z', '-Z']) }),
+      z.object({ kind: z.literal('matchBone'), bone: BoneName }),
+      z.object({ kind: z.literal('point'), point: Vec3 }),
+    ]),
+    chain: z.boolean().optional(),
+    axisOnly: z.boolean().optional(),
+  }),
+  z.object({ op: z.literal('preferredAngle'), bone: BoneName, angle: Vec3.nullable() }),
 ]);
 
 const EditSkeletonSpec = z.object({
@@ -87,8 +101,9 @@ export const editSkeletonMutator: MutatorDefinition<EditSkeletonSpec> = {
   description:
     "Build or change an armature's rest skeleton, as Edit mode does. `edit.op`: add, extrude " +
     '(a child of a joint), subdivide (split the link to its one child), delete (children go to ' +
-    'its parent unless reparent is false), parent (null = root), reroot, or transform (rest ' +
-    'position/rotation/scale; children follow or stay). Joints that are not moved keep their place.',
+    'its parent unless reparent is false), parent (null = root), reroot, transform (rest ' +
+    'position/rotation/scale; children follow or stay), orient (aim +Y at the child, roll +Z ' +
+    'toward `up`), or preferredAngle (the IK start bend). Joints not moved keep their place.',
   spec: EditSkeletonSpec,
   specExample: { object: 'node_id', edit: { op: 'extrude', from: 'Bone' } },
   contract: {

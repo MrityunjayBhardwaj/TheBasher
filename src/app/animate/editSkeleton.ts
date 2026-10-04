@@ -73,7 +73,38 @@ export type SkeletonEdit =
       readonly rotation?: Vec3;
       readonly scale?: Vec3;
       readonly children: 'follow' | 'stay';
-    };
+    }
+  /**
+   * #1340 — orient `bone` (and with `chain`, everything below it): its +Y aims at its child (the
+   * mean of its children's heads), and its +Z turns about that aim toward `up` (Blender's Recalculate
+   * Roll, Maya's orient joint, Houdini's Orient Joints). A joint with no child keeps the way it
+   * points; within a `chain`, it takes its parent's orientation (Maya's end joints, zeroed). Heads
+   * stay where they are, and so does every joint not oriented.
+   */
+  | {
+      readonly op: 'orient';
+      readonly bone: string;
+      readonly up: OrientUp;
+      readonly chain?: boolean;
+      /** Blender's Shortest Rotation: flip the result when it would turn +Z more than 90°. */
+      readonly axisOnly?: boolean;
+    }
+  /** #1340 — store `bone`'s preferred angle (XYZ radians), or clear it with null. */
+  | { readonly op: 'preferredAngle'; readonly bone: string; readonly angle: Vec3 | null };
+
+/**
+ * #1340 — what an oriented joint's +Z turns toward, Blender's roll types in joint terms:
+ * - `axis`: a direction in the armature's space (Global ±X/±Y/±Z, or the view axis);
+ * - `tangent`: Local ±X / ±Z Tangent — the bisector of the bone and its parent bone (X), or their
+ *   cross product (Z), from the first ancestor that does not lie on a straight line;
+ * - `matchBone`: the +Z of another bone (Active Bone);
+ * - `point`: toward a point in the armature's space (Cursor).
+ */
+export type OrientUp =
+  | { readonly kind: 'axis'; readonly axis: Vec3 }
+  | { readonly kind: 'tangent'; readonly axis: '+X' | '-X' | '+Z' | '-Z' }
+  | { readonly kind: 'matchBone'; readonly bone: string }
+  | { readonly kind: 'point'; readonly point: Vec3 };
 
 export type SkeletonEditResult =
   | {
@@ -177,6 +208,64 @@ function settle(
   };
   for (let i = 0; i < next.length; i++) solve(i, 0);
   return next;
+}
+
+const _p = new THREE.Vector3();
+const _q = new THREE.Quaternion();
+const _s = new THREE.Vector3();
+const headOf = (m: THREE.Matrix4) => new THREE.Vector3().setFromMatrixPosition(m);
+const axisOf = (m: THREE.Matrix4, i: 0 | 1 | 2) =>
+  new THREE.Vector3().setFromMatrixColumn(m, i).normalize();
+
+/**
+ * The +Z an oriented joint turns toward, in the armature's space, or null when the rule gives none
+ * (a tangent on a straight chain to the root). `aim` is the joint's new +Y; `worlds` are the rest
+ * worlds, and `oriented` the frames already given to joints above it in this edit.
+ */
+function upFor(
+  bones: readonly BoneSpec[],
+  i: number,
+  aim: THREE.Vector3,
+  up: OrientUp,
+  worlds: readonly THREE.Matrix4[],
+  oriented: ReadonlyMap<number, THREE.Matrix4>,
+): THREE.Vector3 | null {
+  const head = headOf(worlds[i]);
+  switch (up.kind) {
+    case 'axis':
+      return new THREE.Vector3(...up.axis).normalize();
+    case 'point':
+      return new THREE.Vector3(...up.point).sub(head).normalize();
+    case 'matchBone': {
+      const k = bones.findIndex((b) => b.name === up.bone);
+      if (k < 0) return null;
+      return axisOf(oriented.get(k) ?? worlds[k], 2);
+    }
+    case 'tangent': {
+      // Blender: dir_a is the bone, dir_b runs from the parent bone's tail back to its head; walk
+      // up while the two lie on a line (`armature_edit.cc`, CALC_ROLL_TAN_*).
+      const v = new THREE.Vector3();
+      for (let at = i, p = bones[i].parent; p >= 0; at = p, p = bones[p].parent) {
+        const dirB = headOf(worlds[p]).sub(headOf(worlds[at])).normalize();
+        if (up.axis.endsWith('Z')) v.crossVectors(aim, dirB);
+        else v.addVectors(aim, dirB);
+        if (v.length() >= 1e-5) {
+          v.normalize();
+          return up.axis.startsWith('-') ? v.negate() : v;
+        }
+      }
+      return null;
+    }
+  }
+}
+
+/** A frame whose +Y is `aim` and whose +Z is `up` made perpendicular to it (Gram–Schmidt). */
+function frameFor(aim: THREE.Vector3, up: THREE.Vector3): THREE.Quaternion | null {
+  const z = up.clone().sub(aim.clone().multiplyScalar(up.dot(aim)));
+  if (z.length() < 1e-9) return null;
+  z.normalize();
+  const x = new THREE.Vector3().crossVectors(aim, z);
+  return new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().makeBasis(x, aim, z));
 }
 
 export function applySkeletonEdit(
@@ -312,6 +401,81 @@ export function applySkeletonEdit(
         next[path[k]] = { ...next[path[k]], parent: path[k - 1] };
       }
       return { ok: true, bones: settle(next, was, all), added: [], active: bones[at].name };
+    }
+
+    case 'orient': {
+      const at = find(edit.bone);
+      if (at === null) return missing(edit.bone);
+      const scope: number[] = [at];
+      if (edit.chain) {
+        for (let k = 0; k < scope.length; k++) scope.push(...childrenOf(bones, scope[k]));
+      }
+      // Parents first, so a joint's end-joint rule and a matched bone read frames already set.
+      const oriented = new Map<number, THREE.Matrix4>();
+      for (const i of scope) {
+        worlds[i].decompose(_p, _q, _s);
+        const head = _p.clone();
+        const scale = _s.clone();
+        const kids = childrenOf(bones, i);
+        const toKids = kids
+          .reduce((sum, k) => sum.add(headOf(worlds[k])), new THREE.Vector3())
+          .divideScalar(Math.max(kids.length, 1))
+          .sub(head);
+        let rotation: THREE.Quaternion | null = null;
+        if (kids.length > 0 && toKids.length() > 1e-9) {
+          const aim = toKids.normalize();
+          const up = upFor(bones, i, aim, edit.up, worlds, oriented);
+          rotation = up ? frameFor(aim, up) : null;
+          // No usable up (parallel to the aim, or a straight chain): only the aim changes, the
+          // current +Z made perpendicular to it.
+          rotation ??= frameFor(aim, axisOf(worlds[i], 2)) ?? _q.clone();
+          if (
+            edit.axisOnly &&
+            axisOf(worlds[i], 2).dot(new THREE.Vector3(0, 0, 1).applyQuaternion(rotation)) < 0
+          ) {
+            rotation =
+              frameFor(aim, new THREE.Vector3(0, 0, -1).applyQuaternion(rotation)) ?? rotation;
+          }
+        } else if (edit.chain && i !== at) {
+          // An end joint within a chain takes its parent's orientation (Maya's zeroed end joint).
+          const parent = oriented.get(bones[i].parent) ?? worlds[bones[i].parent];
+          rotation = new THREE.Quaternion().setFromRotationMatrix(
+            new THREE.Matrix4().extractRotation(parent),
+          );
+        } else {
+          // A lone end joint keeps the way it points and turns about it.
+          const aim = axisOf(worlds[i], 1);
+          const up = upFor(bones, i, aim, edit.up, worlds, oriented);
+          rotation = (up && frameFor(aim, up)) ?? _q.clone();
+        }
+        oriented.set(i, new THREE.Matrix4().compose(head, rotation, scale));
+      }
+      const target = new Map(was);
+      for (const [i, m] of oriented) target.set(bones[i].name, m);
+      return {
+        ok: true,
+        bones: settle(
+          bones.map((b) => ({ ...b })),
+          target,
+          all,
+        ),
+        added: [],
+        active: bones[at].name,
+      };
+    }
+
+    case 'preferredAngle': {
+      const at = find(edit.bone);
+      if (at === null) return missing(edit.bone);
+      const next = bones.map((b) => ({ ...b }));
+      if (edit.angle === null) {
+        const { preferredAngle: _gone, ...rest } = next[at] as BoneSpec & { preferredAngle?: Vec3 };
+        void _gone;
+        next[at] = rest;
+      } else {
+        next[at] = { ...next[at], preferredAngle: [...edit.angle] as Vec3 };
+      }
+      return { ok: true, bones: next, added: [], active: bones[at].name };
     }
 
     case 'transform': {

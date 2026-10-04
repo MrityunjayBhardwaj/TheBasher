@@ -181,3 +181,141 @@ describe('#1339 — every op keeps the joints it did not move where they stand',
     }
   });
 });
+
+describe('#1340 — orient and roll: each mode against a hand-computed frame', () => {
+  // A → B → C with heads at (0,0,0), (1,0,0), (1,1,0), each joint turned arbitrarily so no frame
+  // starts aligned: B's +Y must be turned to aim at C, and its +Z to the mode's direction.
+  const CHAIN: BoneSpec[] = (() => {
+    const heads = [
+      [0, 0, 0],
+      [1, 0, 0],
+      [1, 1, 0],
+    ];
+    const turns = [
+      [0.4, -0.7, 0.2],
+      [1.1, 0.3, -0.5],
+      [-0.2, 0.9, 0.6],
+    ];
+    // Locals that put each head where listed, under its parent's turned frame.
+    const out: BoneSpec[] = [];
+    let parentWorld = new THREE.Matrix4();
+    heads.forEach((h, i) => {
+      const world = new THREE.Matrix4().compose(
+        new THREE.Vector3(...h),
+        new THREE.Quaternion().setFromEuler(
+          new THREE.Euler(...(turns[i] as [number, number, number]), 'XYZ'),
+        ),
+        new THREE.Vector3(1, 1, 1),
+      );
+      const local = parentWorld.clone().invert().multiply(world);
+      const p = new THREE.Vector3();
+      const q = new THREE.Quaternion();
+      local.decompose(p, q, new THREE.Vector3());
+      const e = new THREE.Euler().setFromQuaternion(q, 'XYZ');
+      out.push({
+        name: 'ABC'[i],
+        parent: i - 1,
+        position: [p.x, p.y, p.z],
+        rotation: [e.x, e.y, e.z],
+      });
+      parentWorld = world;
+    });
+    return out;
+  })();
+  const was = worldOf(CHAIN);
+  const axes = (bones: readonly BoneSpec[], name: string) => {
+    const m = worldOf(bones).get(name)!;
+    return [0, 1, 2].map((c) =>
+      new THREE.Vector3()
+        .setFromMatrixColumn(m, c)
+        .toArray()
+        .map((v) => Math.round(v * 1e6) / 1e6 + 0),
+    );
+  };
+  const headsStay = (bones: readonly BoneSpec[]) => {
+    const now = worldOf(bones);
+    for (const n of ['A', 'B', 'C']) {
+      const a = new THREE.Vector3().setFromMatrixPosition(now.get(n)!);
+      const b = new THREE.Vector3().setFromMatrixPosition(was.get(n)!);
+      expect(a.distanceTo(b), `${n} head`).toBeLessThan(1e-9);
+    }
+  };
+  const orient = (up: unknown, extra: object = {}) =>
+    run({ op: 'orient', bone: 'B', up, ...extra } as SkeletonEdit, CHAIN).bones;
+
+  it('Global +Z: +Y aims at C (0,1,0), +Z is (0,0,1), +X is (1,0,0)', () => {
+    const b = orient({ kind: 'axis', axis: [0, 0, 1] });
+    expect(axes(b, 'B')).toEqual([
+      [1, 0, 0],
+      [0, 1, 0],
+      [0, 0, 1],
+    ]);
+    headsStay(b);
+    // A is not oriented, so it does not move at all.
+    expectSameWorld(worldOf(b).get('A')!, was.get('A')!, 'A');
+  });
+
+  it('Global +X: +Z is (1,0,0), +X = Y × Z = (0,0,−1)', () => {
+    expect(axes(orient({ kind: 'axis', axis: [1, 0, 0] }), 'B')).toEqual([
+      [0, 0, -1],
+      [0, 1, 0],
+      [1, 0, 0],
+    ]);
+  });
+
+  it('Local +Z Tangent: aim × (A − B) = (0,1,0) × (−1,0,0) = (0,0,1)', () => {
+    expect(axes(orient({ kind: 'tangent', axis: '+Z' }), 'B')[2]).toEqual([0, 0, 1]);
+    expect(axes(orient({ kind: 'tangent', axis: '-Z' }), 'B')[2]).toEqual([0, 0, -1]);
+  });
+
+  it('Local +X Tangent: the bisector (−1,1,0), made perpendicular to the aim, is (−1,0,0)', () => {
+    expect(axes(orient({ kind: 'tangent', axis: '+X' }), 'B')[2]).toEqual([-1, 0, 0]);
+  });
+
+  it('Cursor at (5,1,3): (4,1,3) made perpendicular to the aim is (0.8,0,0.6)', () => {
+    expect(axes(orient({ kind: 'point', point: [5, 1, 3] }), 'B')[2]).toEqual([0.8, 0, 0.6]);
+  });
+
+  it('Active Bone: +Z matches A’s +Z made perpendicular to the aim', () => {
+    const az = new THREE.Vector3().setFromMatrixColumn(was.get('A')!, 2);
+    const want = az.sub(new THREE.Vector3(0, az.y, 0)).normalize();
+    const got = axes(orient({ kind: 'matchBone', bone: 'A' }), 'B')[2];
+    got.forEach((v, i) => expect(v).toBeCloseTo(want.getComponent(i), 6));
+  });
+
+  it('a chain from A: each joint aims at its child, and the end joint takes its parent’s frame', () => {
+    const b = run(
+      { op: 'orient', bone: 'A', up: { kind: 'axis', axis: [0, 0, 1] }, chain: true },
+      CHAIN,
+    ).bones;
+    expect(axes(b, 'A')).toEqual([
+      [0, -1, 0],
+      [1, 0, 0],
+      [0, 0, 1],
+    ]);
+    expect(axes(b, 'B')).toEqual([
+      [1, 0, 0],
+      [0, 1, 0],
+      [0, 0, 1],
+    ]);
+    expect(axes(b, 'C')).toEqual(axes(b, 'B'));
+    headsStay(b);
+  });
+
+  it('Shortest Rotation flips the result rather than turn +Z past 90°', () => {
+    // B's +Z as it stands, and the up opposite it: without the flip +Z turns by more than 90°.
+    const bz = new THREE.Vector3().setFromMatrixColumn(was.get('B')!, 2);
+    const up = bz.clone().negate().toArray() as [number, number, number];
+    const flipped = axes(orient({ kind: 'axis', axis: up }, { axisOnly: true }), 'B')[2];
+    expect(new THREE.Vector3(...flipped).dot(bz)).toBeGreaterThan(0);
+    const plain = axes(orient({ kind: 'axis', axis: up }), 'B')[2];
+    expect(new THREE.Vector3(...plain).dot(bz)).toBeLessThan(0);
+  });
+
+  it('a preferred angle is stored on the bone, and cleared', () => {
+    const set = run({ op: 'preferredAngle', bone: 'B', angle: [0, 0, 0.5] }, CHAIN).bones;
+    expect(set[1].preferredAngle).toEqual([0, 0, 0.5]);
+    const cleared = run({ op: 'preferredAngle', bone: 'B', angle: null }, set).bones;
+    expect('preferredAngle' in cleared[1]).toBe(false);
+  });
+});

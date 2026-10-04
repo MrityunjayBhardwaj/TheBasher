@@ -112,7 +112,8 @@ import { useActiveBone } from './boneSelection';
 import { useArmatureMode } from './armatureMode';
 import { useArmatureModeStore } from './stores/armatureModeStore';
 import { editSkeletonFromUI } from './skeletonEditActions';
-import type { SkeletonEdit } from './animate/editSkeleton';
+import type { OrientUp, SkeletonEdit } from './animate/editSkeleton';
+import { collectSkeletonObjects } from './skeletonObjects';
 import { useBoneSelectionStore } from './stores/boneSelectionStore';
 import {
   POSE_COMPONENTS,
@@ -4265,6 +4266,55 @@ function SelectedBoneSection() {
 
 const RAD = 180 / Math.PI;
 
+/** #1340 — the orient menu: Blender's Recalculate Roll types (no 3D cursor here, so no Cursor). */
+const ORIENT_UPS: readonly { value: string; label: string }[] = [
+  { value: 'global+X', label: 'global +X' },
+  { value: 'global+Y', label: 'global +Y' },
+  { value: 'global+Z', label: 'global +Z' },
+  { value: 'global-X', label: 'global −X' },
+  { value: 'global-Y', label: 'global −Y' },
+  { value: 'global-Z', label: 'global −Z' },
+  { value: 'tangent+X', label: 'local +X tangent' },
+  { value: 'tangent-X', label: 'local −X tangent' },
+  { value: 'tangent+Z', label: 'local +Z tangent' },
+  { value: 'tangent-Z', label: 'local −Z tangent' },
+  { value: 'view', label: 'view axis' },
+];
+
+/**
+ * #1340 — a menu choice as the edit's `up`. A world direction (a global axis, the view) is taken into
+ * the armature's own space through its Object, as Blender does (`mul_m3_v3(imat, vec)` in
+ * `armature_calc_roll_exec`), because the skeleton's frames are in that space. Null when the view
+ * axis is asked for and there is no camera.
+ */
+function orientUpFor(choice: string, objectId: string): OrientUp | null {
+  if (choice.startsWith('tangent')) {
+    return { kind: 'tangent', axis: choice.slice('tangent'.length) as '+X' | '-X' | '+Z' | '-Z' };
+  }
+  let world: THREE.Vector3;
+  if (choice === 'view') {
+    const camera = useThreeRef.getState().camera;
+    if (!camera) return null;
+    // The view axis points from the scene toward the viewer: the camera's own +Z.
+    world = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 2);
+  } else {
+    const sign = choice[6] === '-' ? -1 : 1;
+    const k = 'XYZ'.indexOf(choice[7]);
+    world = new THREE.Vector3(k === 0 ? sign : 0, k === 1 ? sign : 0, k === 2 ? sign : 0);
+  }
+  const object = collectSkeletonObjects(useDagStore.getState().state, uiEvaluatorCache).find(
+    (o) => o.id === objectId,
+  );
+  if (object) {
+    const toArmature = new THREE.Matrix3()
+      .setFromMatrix4(new THREE.Matrix4().fromArray(object.world as number[]))
+      .invert();
+    world.applyMatrix3(toArmature);
+  }
+  world.normalize();
+  return { kind: 'axis', axis: [world.x, world.y, world.z] };
+}
+
 /**
  * #1339 — the selected bone in Edit mode: its rest transform in its parent's frame, its parent, and
  * the skeleton operations (Blender's Edit-mode Bone panel and Armature menu, in joint terms). Every
@@ -4283,6 +4333,9 @@ function EditBoneRow({ nodeId, boneName }: { nodeId: string; boneName: string })
   const setEditChildren = useArmatureModeStore((s) => s.setEditChildren);
   const [cuts, setCuts] = useState(1);
   const [refusal, setRefusal] = useState<string | null>(null);
+  const [orientUp, setOrientUp] = useState('global+Z');
+  const [orientChain, setOrientChain] = useState(false);
+  const [orientShortest, setOrientShortest] = useState(false);
   const at = bones.findIndex((b) => b.name === boneName);
   if (at < 0) return null;
   const spec = bones[at];
@@ -4430,6 +4483,95 @@ function EditBoneRow({ nodeId, boneName }: { nodeId: string; boneName: string })
         >
           delete, children to roots
         </button>
+      </div>
+      <div className="flex flex-wrap items-center gap-1 text-[11px] text-fg/80">
+        <span className="w-14 font-mono text-[10px] text-fg/50">orient</span>
+        <select
+          data-testid="edit-bone-orient-up"
+          aria-label="Roll +Z toward"
+          value={orientUp}
+          className="rounded border border-border bg-muted px-1 py-0.5 font-mono text-[10px] text-fg"
+          onChange={(e) => setOrientUp(e.target.value)}
+        >
+          {ORIENT_UPS.map((o) => (
+            <option key={o.value} value={o.value}>
+              {o.label}
+            </option>
+          ))}
+        </select>
+        <label className="flex items-center gap-0.5 font-mono text-[10px] text-fg/60">
+          <input
+            type="checkbox"
+            data-testid="edit-bone-orient-chain"
+            checked={orientChain}
+            onChange={(e) => setOrientChain(e.target.checked)}
+          />
+          chain
+        </label>
+        <label className="flex items-center gap-0.5 font-mono text-[10px] text-fg/60">
+          <input
+            type="checkbox"
+            data-testid="edit-bone-orient-shortest"
+            checked={orientShortest}
+            onChange={(e) => setOrientShortest(e.target.checked)}
+          />
+          shortest
+        </label>
+        <button
+          type="button"
+          className={button}
+          data-testid="edit-bone-orient"
+          title="Aim +Y at the child and roll +Z toward the chosen direction"
+          onClick={() => {
+            const up = orientUpFor(orientUp, nodeId);
+            if (!up) {
+              setRefusal('there is no view to take the direction from.');
+              return;
+            }
+            edit(
+              { op: 'orient', bone: boneName, up, chain: orientChain, axisOnly: orientShortest },
+              `orient ${boneName}`,
+            );
+          }}
+        >
+          orient
+        </button>
+      </div>
+      <div className="flex items-center gap-1 text-[11px] text-fg/80">
+        <span
+          className="w-14 font-mono text-[10px] text-fg/50"
+          title="The IK solve's starting bend"
+        >
+          pref. angle
+        </span>
+        {(['x', 'y', 'z'] as const).map((axis, i) => (
+          <input
+            key={axis}
+            type="number"
+            step="1"
+            aria-label={`preferred angle ${axis}`}
+            value={
+              spec.preferredAngle ? Math.round(spec.preferredAngle[i] * RAD * 1000) / 1000 : ''
+            }
+            placeholder="0"
+            data-testid={`edit-bone-preferred-${axis}`}
+            className="w-full rounded border border-border bg-muted px-1.5 py-0.5 text-right font-mono text-[11px] text-fg"
+            onChange={(e) => {
+              const n = parseFloat(e.target.value);
+              if (Number.isNaN(n)) return;
+              const v = (spec.preferredAngle ?? [0, 0, 0]).map((r) => r * RAD) as [
+                number,
+                number,
+                number,
+              ];
+              v[i] = n;
+              edit(
+                { op: 'preferredAngle', bone: boneName, angle: v.map((d) => d / RAD) as typeof v },
+                `set ${boneName} preferred angle`,
+              );
+            }}
+          />
+        ))}
       </div>
       {refusal !== null ? (
         <div className="font-mono text-[10px] text-warn" data-testid="edit-bone-refusal">
