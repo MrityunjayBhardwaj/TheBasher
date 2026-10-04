@@ -302,6 +302,9 @@ const TAKERS: string[] = [
   // #1337 — solving a placed bone back through a pose layer stack reads the pose under the layer;
   // the bone gizmo hands it the shared UI cache.
   'layerValueForDrawn@src/app/animate/invertPoseStack.ts',
+  // #1474 — the pose arriving under a layer at the playhead: the inversion above reads it, and
+  // "pose this bone" seeds from it; both hand it the shared UI cache.
+  'poseArriving@src/app/animate/invertPoseStack.ts',
   'makeStatefulDriverChannelValue@src/app/statefulOps.ts',
   'nativeBoneWorldPosition@src/app/gltfNodeWorld.ts',
   'nodeRefCandidates@src/app/nodeRefCandidates.ts',

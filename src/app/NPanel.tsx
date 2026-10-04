@@ -104,6 +104,7 @@ import { ParamDiamond } from './ParamDiamond';
 import {
   autoKeyCommit,
   commitObjectBonePose,
+  poseObjectBoneAsShown,
   keyObjectBonePose,
   routeAnimatedGrab,
   shownBoneComponent,
@@ -4067,9 +4068,9 @@ function ObjectBonePoseRow({ target }: { target: ObjectPoseTarget }) {
           type="button"
           className="w-full rounded border border-border px-2 py-1 font-mono text-[10px] text-fg/70 hover:text-fg"
           data-testid="inspector-bone-pose-add"
-          // Seeded at zero so asking for a pose is not itself a pose; the member then holds
-          // against the motion underneath, dragged back to zero or not.
-          onClick={() => said(commitObjectBonePose(target, 'rotation', [0, 0, 0]))}
+          // #1474 — seeded with the rotation the bone shows at the playhead, so asking for a pose
+          // is not itself a pose (a zero seed snapped a moving bone to rest).
+          onClick={() => said(poseObjectBoneAsShown(target))}
         >
           pose this bone
         </button>

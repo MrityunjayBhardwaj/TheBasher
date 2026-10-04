@@ -31,7 +31,7 @@ import {
   type PoseLayerParams,
 } from '../../nodes/PoseLayer';
 import { normalize, qmul, qpow } from '../../nodes/quatMath';
-import type { PosedSkeletonValue, Quat, Vec3 } from '../../nodes/types';
+import type { BonePose, PosedSkeletonValue, Quat, Vec3 } from '../../nodes/types';
 import type { GraphNodeLike } from './graphNodes';
 import { poseLayerChain } from './poseChain';
 import type { PoseComponent } from './poseTargetForBone';
@@ -47,6 +47,29 @@ const FRAME_0 = { time: { frame: 0, seconds: 0, normalized: 0 } } as const;
 const EPS = 1e-9;
 const clamp01 = (w: number) => (w < 0 ? 0 : w > 1 ? 1 : w);
 const conj = (q: Quat): Quat => [-q[0], -q[1], -q[2], q[3]];
+
+/** A pose wire end: the node and the socket a layer's or an Object's `pose` input reads. */
+export interface PoseFeed {
+  readonly node: string;
+  readonly socket?: string;
+}
+
+/**
+ * `bone`'s local pose as it arrives along `feed` at `seconds` — what a layer fed by it sees under
+ * itself — or undefined when nothing arrives or the arriving skeleton lacks the bone.
+ */
+export function poseArriving(
+  state: DagState,
+  feed: PoseFeed,
+  bone: string,
+  seconds: number,
+  cache?: EvaluatorCache,
+): BonePose | undefined {
+  const incoming = evaluate(state, feed.node, { cache, ctx: FRAME_0, socket: feed.socket ?? 'out' })
+    .value as PosedSkeletonValue | undefined;
+  const index = incoming?.skeleton.bones.findIndex((b) => b.name === bone) ?? -1;
+  return index >= 0 ? incoming!.sample(seconds)[index] : undefined;
+}
 
 /** A layer's contribution to one bone component at `seconds`, or null when it leaves it alone. */
 function contributionOf(
@@ -182,12 +205,9 @@ export function layerValueForDrawn(
   if (params.mode === 'override' && weight >= 1 - EPS) return { ok: true, value: out };
 
   // What arrives under the edited layer, for this bone, at this time.
-  const feed = state.nodes[layerId].inputs?.pose as { node: string; socket?: string } | undefined;
+  const feed = state.nodes[layerId].inputs?.pose as PoseFeed | undefined;
   if (!feed) return { ok: true, value: out };
-  const incoming = evaluate(state, feed.node, { cache, ctx: FRAME_0, socket: feed.socket ?? 'out' })
-    .value as PosedSkeletonValue | undefined;
-  const index = incoming?.skeleton.bones.findIndex((b) => b.name === bone) ?? -1;
-  const lowerPose = index >= 0 ? incoming!.sample(seconds)[index] : undefined;
+  const lowerPose = poseArriving(state, feed, bone, seconds, cache);
   if (!lowerPose) return { ok: true, value: out };
   const lower: ComponentValue =
     component === 'rotation'

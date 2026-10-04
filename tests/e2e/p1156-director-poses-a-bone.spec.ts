@@ -203,6 +203,24 @@ test('#1156 — a director poses the bone they clicked, through the same road th
   // THE OFFER. The control appears for a clicked bone on a rig a retarget drives; it is the
   // write half of a section that until now only read.
   await expect(page.getByTestId('inspector-bone-pose-add')).toBeVisible();
+  // The clicked bone as drawn now: its local pose out of the armature Object, at the playhead.
+  const shown = (id: string, bone: string) =>
+    page.evaluate(
+      async ([id, bone]) => {
+        const { evaluate } = await import('/src/core/dag/index.ts');
+        const { useTimeStore } = await import('/src/app/stores/timeStore.ts');
+        const { useDagStore } = await import('/src/core/dag/store.ts');
+        const seconds = useTimeStore.getState().seconds;
+        const value = evaluate(useDagStore.getState().state, id, {
+          ctx: { time: { frame: 0, seconds, normalized: 0 } },
+        } as never).value as {
+          pose: { sample: (t: number) => { name: string; quaternion: number[] }[] };
+        };
+        return value.pose.sample(seconds).find((b) => b.name === bone)!.quaternion;
+      },
+      [id, bone] as const,
+    );
+  const before = await shown(armatureId!, picked!);
   await page.getByTestId('inspector-bone-pose-add').click();
   await page.waitForTimeout(400);
 
@@ -219,8 +237,13 @@ test('#1156 — a director poses the bone they clicked, through the same road th
   // armature Object.
   expect(after, 'the gesture wrote no hand-pose layer').not.toBeNull();
   expect(after!.map((m) => m.bone)).toEqual([picked]);
-  // Seeded at zero: asking for a pose must not itself move the rig.
-  expect(after![0].rotation).toEqual([0, 0, 0]);
+  // Asking for a pose must not itself move the rig: the member starts from the rotation the bone
+  // shows (#1474). Here the clicked bone stands at identity at 0 s, so this checks only that the
+  // click moves nothing; a bone the clip is turning is p1474's.
+  const dot = Math.abs(
+    (await shown(armatureId!, picked!)).reduce((sum, x, k) => sum + x * before[k], 0),
+  );
+  expect(dot, 'the clicked bone turned when asked for a pose').toBeGreaterThan(1 - 1e-9);
 
   // And the offer is replaced by the thing it made — the ordinary param row, so editing a
   // pose is the same gesture as editing any other value.
