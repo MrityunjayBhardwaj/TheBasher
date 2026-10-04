@@ -157,7 +157,8 @@ describe('mutator catalog', () => {
     // 33 → 32 at #1053 — `timeline.bakeGltfChannel` retired with the clone road.
     // 32 → 34 at #353 — `constrain` + `unconstrain`, the constraint family's verbs.
     // 34 → 35 at #1445 — `setHidden`, the outliner eye's verb (#334 took the raw op away).
-    expect(mutators).toHaveLength(35);
+    // 35 → 36 at #1339 — `rig.editSkeleton`, Edit mode's skeleton operations.
+    expect(mutators).toHaveLength(36);
     const names = mutators.map((m) => m.name).sort();
     expect(names).toEqual([
       'mutator.animate.bakePose',
@@ -179,6 +180,7 @@ describe('mutator catalog', () => {
       'mutator.render.addAIPass',
       'mutator.render.addPass',
       'mutator.render.addStitch',
+      'mutator.rig.editSkeleton',
       'mutator.rotate',
       'mutator.scale',
       'mutator.setComponentScope',
@@ -2315,7 +2317,8 @@ describe('agent.listMutators tool', () => {
     // 33 → 32 at #1053 — `timeline.bakeGltfChannel` retired with the clone road.
     // 32 → 34 at #353 — `constrain` + `unconstrain`.
     // 34 → 35 at #1445 — `setHidden`.
-    expect(parsed.mutators).toHaveLength(35);
+    // 35 → 36 at #1339 — `rig.editSkeleton`.
+    expect(parsed.mutators).toHaveLength(36);
   });
 });
 
@@ -3943,6 +3946,7 @@ import {
   poseBoneMutator as _poseBoneM,
   setPoseMemberModeMutator as _setPoseMemberModeM,
   renameBoneMutator as _renameBoneM,
+  editSkeletonMutator as _editSkeletonM,
   bakePoseMutator as _bakePoseM,
   retargetMutator as _retargetM,
   addPassMutator as _addPassM,
@@ -4308,6 +4312,11 @@ describe('V14 deeper non-redundancy — Op-shape probe (issue #22)', () => {
       mutator: _renameBoneM as MutatorDefinition<unknown>,
       build: buildSceneForBoneRename,
       spec: { object: 'br_arm', bone: 'torso', name: 'spine' },
+    },
+    'mutator.rig.editSkeleton': {
+      mutator: _editSkeletonM as MutatorDefinition<unknown>,
+      build: buildSceneForBoneRename,
+      spec: { object: 'br_arm', edit: { op: 'extrude', from: 'torso' } },
     },
     'mutator.animation.retarget': {
       mutator: _retargetM as MutatorDefinition<unknown>,

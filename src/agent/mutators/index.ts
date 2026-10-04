@@ -56,6 +56,7 @@ import { setComponentScopeMutator } from './builders/setComponentScope';
 import { poseBoneMutator } from './builders/poseBone';
 import { setPoseMemberModeMutator } from './builders/setPoseMemberMode';
 import { renameBoneMutator } from './builders/renameBone';
+import { editSkeletonMutator } from './builders/editSkeleton';
 import { bakePoseMutator } from './builders/bakePose';
 import { constrainMutator, unconstrainMutator } from './builders/constrain';
 import { setHiddenMutator } from './builders/setHidden';
@@ -92,6 +93,7 @@ export {
   poseBoneMutator,
   setPoseMemberModeMutator,
   renameBoneMutator,
+  editSkeletonMutator,
   bakePoseMutator,
   constrainMutator,
   unconstrainMutator,
@@ -186,6 +188,7 @@ export function registerAllMutators(): void {
   registerMutator(setPoseMemberModeMutator);
   // #1201 — rename a bone, and every record that names it.
   registerMutator(renameBoneMutator);
+  registerMutator(editSkeletonMutator);
   // #1215 — bake computed motion into keys on a pose layer.
   registerMutator(bakePoseMutator);
 }
