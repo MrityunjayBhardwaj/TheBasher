@@ -31,6 +31,31 @@ export const RETIRED_NODE_TYPES: readonly string[] = ['PoseOverride'];
 interface NodeLike {
   readonly type: string;
   readonly params?: unknown;
+  readonly inputs?: unknown;
+}
+
+/** The file `node` names in its own `assetRef`, if any. */
+function ownFile(node: NodeLike): string | undefined {
+  const ref = (node.params as { assetRef?: unknown } | undefined)?.assetRef;
+  return typeof ref === 'string' && ref ? (ref.split('/').pop() ?? ref) : undefined;
+}
+
+/**
+ * #1458 — the file an old-structure node belongs to. A `GltfSkeleton` names no file of its own: it
+ * reads its file through its `asset` edge, from the `GltfAsset` that names it. A node whose edges
+ * reach no named old-structure node belongs to no file anyone can name.
+ */
+function fileOf(nodes: Readonly<Record<string, NodeLike>>, start: NodeLike): string | undefined {
+  const seen = new Set<NodeLike>();
+  for (let node: NodeLike | undefined = start; node && !seen.has(node); ) {
+    seen.add(node);
+    if (!OLD_IMPORT_NODE_TYPES.includes(node.type)) return undefined;
+    const own = ownFile(node);
+    if (own) return own;
+    const edge: unknown = (node.inputs as { asset?: { node?: unknown } } | undefined)?.asset?.node;
+    node = typeof edge === 'string' ? nodes[edge] : undefined;
+  }
+  return undefined;
 }
 
 /** The file name of each old-structure import in `nodes`, once per file, in first-seen order. */
@@ -38,8 +63,7 @@ export function oldImportFiles(nodes: Readonly<Record<string, NodeLike>>): strin
   const files: string[] = [];
   for (const node of Object.values(nodes)) {
     if (!OLD_IMPORT_NODE_TYPES.includes(node.type)) continue;
-    const ref = (node.params as { assetRef?: unknown } | undefined)?.assetRef;
-    const file = typeof ref === 'string' && ref ? (ref.split('/').pop() ?? ref) : 'an unnamed file';
+    const file = fileOf(nodes, node) ?? 'an unnamed file';
     if (!files.includes(file)) files.push(file);
   }
   return files;

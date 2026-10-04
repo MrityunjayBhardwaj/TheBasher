@@ -10,7 +10,9 @@ import { OldImportRefusal, oldImportFiles, refuseOldImports } from './oldImports
 
 registerAllNodes();
 
-type Recorded = { project: { name: string; state: { nodes: Record<string, { type: string }> } } };
+type Recorded = {
+  project: { name: string; state: { nodes: Record<string, { type: string; params?: unknown }> } };
+};
 const recorded = (name: string): Recorded =>
   JSON.parse(readFileSync(`src/core/project/__fixtures__/${name}.json`, 'utf8')) as Recorded;
 
@@ -34,21 +36,51 @@ describe('a project holding an old-structure import is refused (#1424)', () => {
     );
   });
 
-  it('a recorded character save is refused', () => {
+  it('a recorded character save is refused, naming its one file once (#1458)', () => {
     const { project } = recorded('clone-characters/placed');
-    expect(() => refuseOldImports(project)).toThrow(OldImportRefusal);
+    // Its skeleton names no file of its own: it reads the file through its `asset` edge.
+    const skeleton = Object.values(project.state.nodes).find((n) => n.type === 'GltfSkeleton');
+    expect((skeleton as { params?: { assetRef?: string } }).params?.assetRef).toBeUndefined();
+    expect(oldImportFiles(project.state.nodes)).toEqual(['skinned-bar.glb']);
+    expect(() => refuseOldImports(project)).toThrow(
+      /holds an import saved on the old imported-file structure \("skinned-bar\.glb"\).*Import the file again/,
+    );
   });
 
-  it('two files are both named', () => {
+  it('two files are both named, and a skeleton is named by the file its asset edge reaches', () => {
     const nodes = {
       a: { type: 'GltfAsset', params: { assetRef: 'user-imports/a/a.glb' } },
       b: { type: 'GltfData', params: { assetRef: 'user-imports/b/b.glb' } },
       c: { type: 'GltfData', params: { assetRef: 'user-imports/a/a.glb' } },
-      d: { type: 'GltfSkeleton', params: {} },
+      d: { type: 'GltfSkeleton', params: {}, inputs: { asset: { node: 'a', socket: 'out' } } },
+      e: { type: 'GltfAsset', params: { assetRef: 'user-imports/c/c.glb' } },
+      f: { type: 'GltfSkeleton', params: {}, inputs: { asset: { node: 'e', socket: 'out' } } },
     };
-    expect(oldImportFiles(nodes)).toEqual(['a.glb', 'b.glb', 'an unnamed file']);
+    expect(oldImportFiles(nodes)).toEqual(['a.glb', 'b.glb', 'c.glb']);
     expect(() => refuseOldImports({ name: 'P', state: { nodes } })).toThrow(
       /3 imports .*the files/,
+    );
+  });
+
+  it('a skeleton that reaches no named file is still counted, as an unnamed file', () => {
+    const nodes = {
+      a: { type: 'GltfAsset', params: { assetRef: 'user-imports/a/a.glb' } },
+      loose: { type: 'GltfSkeleton', params: {} },
+      dangling: { type: 'GltfSkeleton', params: {}, inputs: { asset: { node: 'gone' } } },
+      // An edge to a node that is not an old import names nothing.
+      elsewhere: { type: 'GltfSkeleton', params: {}, inputs: { asset: { node: 'mesh' } } },
+      mesh: { type: 'Mesh', params: { assetRef: 'user-imports/m/m.glb' } },
+    };
+    expect(oldImportFiles(nodes)).toEqual(['a.glb', 'an unnamed file']);
+    expect(oldImportFiles({ loose: nodes.loose })).toEqual(['an unnamed file']);
+    // Two skeletons wired to each other reach no file, and the walk ends.
+    const loop = {
+      x: { type: 'GltfSkeleton', params: {}, inputs: { asset: { node: 'y' } } },
+      y: { type: 'GltfSkeleton', params: {}, inputs: { asset: { node: 'x' } } },
+    };
+    expect(oldImportFiles(loop)).toEqual(['an unnamed file']);
+    expect(() => refuseOldImports({ name: 'P', state: { nodes: { loose: nodes.loose } } })).toThrow(
+      /holds an import .*\("an unnamed file"\)/,
     );
   });
 
