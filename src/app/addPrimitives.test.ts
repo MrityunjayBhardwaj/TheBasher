@@ -181,6 +181,12 @@ describe('#1339 — Add › Armature', () => {
     const object = evaluate(state, r.newNodeId).value as never;
     const pose = armaturePoseOf(object);
     expect(pose?.sample(0).map((b) => b.name)).toEqual(['Bone', 'Bone_end']);
+    // Stood on an empty base layer over the rest pose, as every import stands a rig, so hand-poses
+    // go into a layer of their own above it (#1339).
+    const { poseLayerChain } = await import('./animate/poseChain');
+    const chain = poseLayerChain(state.nodes as never, r.newNodeId);
+    expect(chain.layers).toHaveLength(1);
+    expect(chain.base).toBe(chain.layers[0]);
     // A child of the scene, so it draws.
     const scene = state.nodes[state.outputs.scene!.node];
     expect(JSON.stringify(scene.inputs.children)).toContain(r.newNodeId);

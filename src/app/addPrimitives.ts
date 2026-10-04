@@ -213,11 +213,17 @@ export function buildAddPrimitiveOps(
   // (`buildSkeletonObjectOps`), so a hand-built rig and an imported one are the same nodes.
   if (kind === 'Armature') {
     const dataId = newId('skel');
+    // The BASE layer every import stands a rig on (Skeleton.pose → base layer → Object.pose), empty
+    // until the rig is keyed — where a hand-built rig's motion lives, as Blender keys an armature
+    // into its action (named as Blender names one, `ArmatureAction`). Without it the first
+    // hand-pose layer sat straight on the rest pose and read as the base, which a hand-pose never
+    // writes, so posing a second bone was refused.
+    const baseId = newId('layer');
     const built = buildSkeletonObjectOps({
       skeletonId: dataId,
       name: 'Armature',
       sceneNodeId: sceneRef.node,
-      pose: { node: dataId, socket: 'pose' },
+      pose: { node: baseId, socket: 'out' },
       nameFollowsClip: false,
     });
     return {
@@ -235,6 +241,17 @@ export function buildAddPrimitiveOps(
               { name: 'Bone_end', parent: 0, position: [0, 1, 0], rotation: [0, 0, 0] },
             ],
           },
+        },
+        {
+          type: 'addNode',
+          nodeId: baseId,
+          nodeType: 'PoseLayer',
+          params: { name: 'ArmatureAction', mode: 'override', members: [] },
+        },
+        {
+          type: 'connect',
+          from: { node: dataId, socket: 'pose' },
+          to: { node: baseId, socket: 'pose' },
         },
         // The Object's TRS from the same table every split kind reads; the builder mints it at
         // the origin, as an import stands a rig.

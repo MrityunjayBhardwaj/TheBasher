@@ -90,4 +90,16 @@ describe('#1339 — mutator.rig.editSkeleton', () => {
     const notes = m.advisories!(spec, { nodes: new Set() } as never, state);
     expect(notes.join('\n')).toMatch(/still poses or keys "Bone_end"/);
   });
+
+  it('a hand-built armature takes a hand-pose on one bone and then another (#1339)', () => {
+    const { object } = armature();
+    for (const bone of ['Bone', 'Bone_end']) {
+      const res = dispatchMutatorFromUI(
+        'mutator.animate.poseBone',
+        { object, bone, rotation: [0, 0, 15] },
+        'pose',
+      );
+      expect(res.ok, `${bone}: ${JSON.stringify(res)}`).toBe(true);
+    }
+  });
 });
