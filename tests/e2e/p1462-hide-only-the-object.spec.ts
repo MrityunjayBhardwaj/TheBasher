@@ -135,5 +135,38 @@ test('#1462 — a hidden parent draws nothing of its own, and its child still dr
   await expect
     .poll(() => drawnAt(page, C), { message: 'C not in it, still drawn' })
     .toEqual([3, 2, 0]);
+
+  // #1481 — P in a second, shown collection too: Blender hides an object only when every
+  // collection holding it is hidden, so P draws again; hiding the second one hides it. Linked by
+  // hand — no product door links an object into a second collection yet (Shift+M, #397).
+  const beforeSecond = new Set(await nodeIds(page));
+  await page
+    .locator('[data-testid^="scene-tree-row-"][data-depth="0"]')
+    .first()
+    .click({ button: 'right' });
+  await page.getByTestId('outliner-ctx-new-collection').click();
+  await expect.poll(async () => (await nodeIds(page)).length).toBe(beforeSecond.size + 1);
+  const second = (await nodeIds(page)).find((id) => !beforeSecond.has(id))!;
+  await page.evaluate(
+    ({ P, second }) =>
+      (window as unknown as W).__basher_dag.getState().dispatchAtomic(
+        [
+          {
+            type: 'connect',
+            from: { node: P, socket: 'out' },
+            to: { node: second, socket: 'members' },
+          },
+        ],
+        'user',
+        'link P into a second collection',
+      ),
+    { P, second },
+  );
+  await expect
+    .poll(() => drawnAt(page, P), { message: 'P in a shown collection too' })
+    .toEqual([0, 2, 0]);
+  await page.getByTestId(`scene-tree-eye-${second}`).click();
+  await expect.poll(() => drawnAt(page, P), { message: 'both collections hidden' }).toBeNull();
+  await expect.poll(() => drawnAt(page, C)).toEqual([3, 2, 0]);
   expect(errors).toEqual([]);
 });

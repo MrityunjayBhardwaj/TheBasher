@@ -7,7 +7,7 @@
 // add a flag to Group").
 //
 // The name is the node's `meta.name`, as an Object's is; a hidden Collection (`meta.hidden`) hides
-// its members (`hiddenByCollection`).
+// its members (`hiddenByCollection`) — a member it shares with a shown collection stays (#1481).
 //
 // REF: issues #397, #1451; Blender 5.1.1 `io_scene_gltf2/blender/imp/node.py` (an import links its
 // objects into a Collection named after the file's scene).
