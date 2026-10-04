@@ -289,6 +289,7 @@ const TAKERS: string[] = [
   'appendComputedSourceRows@src/timeline/layerChannelRows.ts',
   'applyGhostPoseBand@src/viewport/DiffOverlay.tsx',
   'buildOverrideSlotOp@src/app/objectSlotAuthoring.ts',
+  'collectReferenceRigs@src/app/animate/referenceRigs.ts',
   'collectSkeletonObjects@src/app/skeletonObjects.ts',
   'computedSourceRows@src/timeline/layerChannelRows.ts',
   'curveSamplerFor@src/app/curveSampleSource.ts',

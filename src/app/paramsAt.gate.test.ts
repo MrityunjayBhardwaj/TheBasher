@@ -198,6 +198,12 @@ const CONSUMERS: Record<string, Decision> = {
   // this hands over, so evaluating at t here would sample the motion twice. It is handed the
   // authored state SceneFromDAG holds, like the source-rig read beside it.
   'src/app/skeletonObjects.ts': authored('fixed-ctx-by-design'),
+  // #1250 — the source rigs Show Source Rig draws, and why it skips the rest: the read that sat in
+  // SceneFromDAG, moved out so every skip reason is decided in one place the View menu can count.
+  // It evaluates each retarget's source wire and target rig at the default ctx, DELIBERATELY, for
+  // the reason the skeleton Objects beside it do: the helper samples the wire at the playhead per
+  // frame, so evaluating at t here would sample the motion twice.
+  'src/app/animate/referenceRigs.ts': authored('fixed-ctx-by-design'),
   // #1215 — the pose bake. It evaluates ONE point of a character's pose wire, a value that is
   // time-free by construction (`sample(seconds)` is the only way time enters it), and then samples
   // it itself at every time it keys. Evaluating at the playhead would change nothing but the hash,
@@ -323,7 +329,9 @@ describe('#582 — who evaluates the graph, and which params they need', () => {
     // 52 → 53 at #353: `mutator.constrain` creates the one cache its two precondition checks share.
     // 53 → 54 at #1318, not a new road: the Comfy batch bakes create one cache per bake for the
     // resolver they already called (uncached, a driver re-ran the walk's retarget every frame).
-    expect(evaluatorConsumers()).toHaveLength(54); // 39 -> 40 at #935 (placement) (the motion resolver)
+    // 54 → 55 at #1250, not a new road: the source-rig read moved out of SceneFromDAG (which
+    // still evaluates) into `referenceRigs.ts`, so its skip reasons can be counted.
+    expect(evaluatorConsumers()).toHaveLength(55); // 39 -> 40 at #935 (placement) (the motion resolver)
   });
 
   it('every reason is load-bearing — no member of any union is decorative', () => {

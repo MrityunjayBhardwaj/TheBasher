@@ -97,9 +97,14 @@ import { useLightBrushStore } from '../app/stores/lightBrushStore';
 import { buildLightBrushOp } from '../app/lightBrush';
 import { LightHelper } from './LightHelpers';
 import { CameraHelper } from './CameraHelpers';
-import { ArmatureHelper, type ReferenceRigInput } from './ArmatureHelper';
+import { ArmatureHelper } from './ArmatureHelper';
+import {
+  collectReferenceRigs,
+  referenceRigsReadout,
+  type ReferenceRig,
+  type ReferenceRigs,
+} from '../app/animate/referenceRigs';
 import { collectSkeletonObjects, type SkeletonObject } from '../app/skeletonObjects';
-import { retargetPairs } from '../app/animate/boundClipsForAsset';
 import {
   enumerateCameraNodeIds,
   resolveCameraDofAt,
@@ -162,8 +167,6 @@ import type {
   SpotLightValue,
   TransformValue,
   Vec3,
-  PosedSkeletonValue,
-  SkeletonValue,
 } from '../nodes/types';
 import { uiEvaluatorCache } from '../app/uiEvaluatorCache';
 
@@ -203,6 +206,8 @@ const OverlayMembershipContext = createContext<OverlayMembership>(EMPTY_MEMBERSH
  * that argument only holds while they are the same object.
  */
 const ROOT_CTX = { time: { frame: 0, seconds: 0, normalized: 0 } } as const;
+/** The source rigs while the overlay is off: one array, so the helper's props stay equal. */
+const NO_REFERENCE_RIGS: readonly ReferenceRig[] = [];
 
 interface SceneFromDAGProps {
   /** Override the named output to render. Defaults to 'render'. */
@@ -281,35 +286,6 @@ export function SceneFromDAG({ outputName = 'render' }: SceneFromDAGProps) {
   // Off by default: a reference rig is a diagnostic for judging the retarget by
   // eye, not scene furniture.
   const sourceRigVisible = useViewportStore((s) => s.sourceRigVisible);
-  const sourceRigs = useMemo<ReferenceRigInput[]>(() => {
-    if (!sourceRigVisible) return [];
-    const out: ReferenceRigInput[] = [];
-    for (const pair of retargetPairs(state.nodes)) {
-      try {
-        // #1250 — the source is whatever pose the retarget reads, evaluated on the socket its edge
-        // names: a clip's pose, a base layer's, a layer above it. The wire carries its own rig.
-        const pose = evaluate(state, pair.sourceId, { cache, socket: pair.sourceSocket }).value as
-          | PosedSkeletonValue
-          | undefined;
-        const target = evaluate(state, pair.targetSkeletonId, { cache, socket: 'out' }).value as
-          | SkeletonValue
-          | undefined;
-        if (!pose || pose.kind !== 'PosedSkeleton' || !pose.skeleton?.bones?.length) continue;
-        if (!target || !target.bones?.length) continue;
-        out.push({
-          id: pair.retargetId,
-          pose,
-          targetSkeletonId: pair.targetSkeletonId,
-        });
-      } catch {
-        // A half-wired or mid-edit graph draws no reference rig. This runs in a
-        // render path; throwing here would take the whole viewport down for a
-        // diagnostic overlay.
-        continue;
-      }
-    }
-    return out;
-  }, [state, cache, sourceRigVisible]);
   // #1056 — skeleton Objects: an Object whose data is a Skeleton draws nothing in its scene
   // slot (ObjectR's arm), because its body is its bones. Collected here, the one read path,
   // and handed to the armature band beside the source rigs; the band samples each clip at the
@@ -319,6 +295,27 @@ export function SceneFromDAG({ outputName = 'render' }: SceneFromDAGProps) {
     () => collectSkeletonObjects(state, cache),
     [state, cache],
   );
+  // #1250 — which source rigs can be drawn, and why each other retarget's is not: one collector
+  // decides every reason, so the View menu can say how many were drawn, zero included.
+  const referenceRigs = useMemo<ReferenceRigs | null>(
+    () =>
+      sourceRigVisible
+        ? collectReferenceRigs(state, new Set(skeletonObjects.map((o) => o.skeletonId)), cache)
+        : null,
+    [state, cache, sourceRigVisible, skeletonObjects],
+  );
+  const sourceRigs = referenceRigs?.rigs ?? NO_REFERENCE_RIGS;
+  useEffect(() => {
+    useViewportStore.getState().setSourceRigReadout(
+      referenceRigs
+        ? {
+            text: referenceRigsReadout(referenceRigs),
+            drawn: referenceRigs.rigs.length,
+            skipped: referenceRigs.skipped,
+          }
+        : null,
+    );
+  }, [referenceRigs]);
   // #165: editor-only camera frustums hide in rendered mode (production
   // parity) and the active camera's own frustum hides while looking through
   // it (you're inside it — drawing it would clutter the preview).

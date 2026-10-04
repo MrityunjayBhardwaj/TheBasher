@@ -33,6 +33,7 @@ import {
   resetDegenerateBasisCount,
 } from './boneShape';
 import { armatureBounds, referencePlacement } from './referenceRig';
+import type { ReferenceRig } from '../app/animate/referenceRigs';
 import { skeletonObjectFrames } from './skeletonObjectPose';
 import { useTimeStore } from '../app/stores/timeStore';
 import { useViewportStore } from '../app/stores/viewportStore';
@@ -41,7 +42,6 @@ import { useBoneSelectionStore } from '../app/stores/boneSelectionStore';
 import { getActiveBone } from '../app/boneSelection';
 import { selectNode, type SelectClickLike } from './selectNodeOnClick';
 import { pickBone } from './armaturePick';
-import type { PosedSkeletonValue } from '../nodes/types';
 import type { SkeletonObject } from '../app/skeletonObjects';
 
 /** Blender's default unselected bone wire. Chrome, so it reads as an overlay. */
@@ -68,18 +68,8 @@ const SOURCE_BONE_COLOR = '#ffb454';
  *  Rigs here run to ~78 bones (BVH) and a few hundred at the very most. */
 const MAX_BONES = 4096;
 
-/** A source rig to draw beside the character it drives (#977). */
-export interface ReferenceRigInput {
-  /** The retarget node's id — stable identity across frames. */
-  readonly id: string;
-  /** The SOURCE pose the retarget reads (#1250): a clip's, a base layer's, any pose wire. It
-   *  carries its own skeleton and samples itself at a time. */
-  readonly pose: PosedSkeletonValue;
-  /** The Skeleton node this retarget drives. A native character's armature Object stands exactly
-   *  this skeleton, so it is found by identity (#1273); a motion's own rig Object stands the
-   *  SOURCE skeleton, never a target, so it can never be taken for the character. */
-  readonly targetSkeletonId: string;
-}
+/** A source rig to draw beside the character it drives (#977), as `collectReferenceRigs` finds it. */
+export type ReferenceRigInput = ReferenceRig;
 
 /**
  * A bone name reduced to what every spelling of it agrees on, for the selected-bone highlight.
