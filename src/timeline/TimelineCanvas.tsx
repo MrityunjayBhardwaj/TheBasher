@@ -1108,9 +1108,53 @@ export function TimelineCanvas({ duration, rangeEnd }: { duration: number; range
     return localXToSeconds(clientX, box.left);
   }
 
+  /**
+   * #1485 — abandon the key drag in flight: nothing is written and the key stays where it was.
+   * The ghost's pixels are put back from the static cache here, because a drag that writes nothing
+   * brings no repaint to cover them.
+   */
+  function cancelDrag() {
+    if (!dragRef.current) return;
+    dragRef.current = null;
+    const x = lastGhostXRef.current;
+    lastGhostXRef.current = -1;
+    const visible = canvasRef.current;
+    const offscreen = offscreenRef.current;
+    const ctx = visible?.getContext('2d');
+    if (x < 0 || !offscreen || !ctx) return;
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    const restore = (atX: number, halfWidth: number) => {
+      const strip = playheadStripRect(atX, halfWidth, dims.cssH);
+      if (strip.w <= 0 || strip.h <= 0) return;
+      const [sx, sy, sw, sh] = [strip.x * dpr, strip.y * dpr, strip.w * dpr, strip.h * dpr];
+      ctx.drawImage(offscreen, sx, sy, sw, sh, sx, sy, sw, sh);
+    };
+    restore(x, PLAYHEAD_STRIP_HALF_WIDTH_PX + DIAMOND_PX);
+    // The ghost's strip may have cut into the playhead. Put the playhead's own strip back too and
+    // let the next tick stroke it fresh; re-stroking over a glow still on screen doubles the glow.
+    if (lastPlayheadXRef.current >= 0) restore(lastPlayheadXRef.current, PLAYHEAD_GLOW_HALF_PX);
+    lastPlayheadXRef.current = -1;
+  }
+
+  // #1485 — Escape cancels a key drag, as it cancels a transform in Blender. Capture phase, so the
+  // global Escape (which dismisses popovers) doesn't also run for the same press.
+  useEffect(() => {
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key !== 'Escape' || !dragRef.current) return;
+      e.preventDefault();
+      e.stopPropagation();
+      cancelDrag();
+    }
+    window.addEventListener('keydown', onKeyDown, true);
+    return () => window.removeEventListener('keydown', onKeyDown, true);
+  });
+
   function onPointerDown(e: React.PointerEvent<HTMLCanvasElement>) {
     const canvas = canvasRef.current;
     if (!canvas) return;
+    // #1485 — only the primary button scrubs or drags. A right-button press used to start a key
+    // drag; it is left for a context menu.
+    if (e.button !== 0) return;
     const box = canvas.getBoundingClientRect();
     const px = e.clientX - box.left;
     const py = e.clientY - box.top;
@@ -1225,6 +1269,11 @@ export function TimelineCanvas({ duration, rangeEnd }: { duration: number; range
     }
     const drag = dragRef.current;
     if (!drag) return;
+    // #1485 — a right-button press during a drag cancels it (a chorded press arrives as a move).
+    if ((e.buttons & 2) !== 0) {
+      cancelDrag();
+      return;
+    }
     // O(1): write the per-move data. NO setState, NO DAG, NO draw — the rAF
     // loop draws the ghost (V20 hot-path discipline). #1484: once the pointer
     // has travelled past the threshold the press stays a drag, even if it

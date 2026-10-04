@@ -400,6 +400,8 @@ export function EditableCurve({
     kind: 'key' | 'in' | 'out',
     axis: number,
   ) {
+    // #1485 — only the primary button drags a key or handle.
+    if (e.button !== 0) return;
     e.stopPropagation();
     (e.target as Element).setPointerCapture?.(e.pointerId);
     dragRef.current = {
@@ -450,6 +452,11 @@ export function EditableCurve({
     }
     const d = dragRef.current;
     if (!d || !draft) return;
+    // #1485 — a right-button press during a drag cancels it (a chorded press arrives as a move).
+    if ((e.buttons & 2) !== 0) {
+      cancelDrag();
+      return;
+    }
     // #1484 — below the drag threshold the press is a click: nothing moves.
     if (
       !d.dragging &&
@@ -512,6 +519,26 @@ export function EditableCurve({
     }
     setDraft(next);
   }
+
+  /** #1485 — abandon the drag in flight: the draft is dropped and nothing is written. */
+  function cancelDrag() {
+    dragRef.current = null;
+    frozenDomainRef.current = null;
+    setDraft(null);
+  }
+
+  // #1485 — Escape cancels a key or handle drag, as it cancels a transform in Blender. Capture
+  // phase, so the global Escape (which dismisses popovers) doesn't also run for the same press.
+  useEffect(() => {
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key !== 'Escape' || !dragRef.current) return;
+      e.preventDefault();
+      e.stopPropagation();
+      cancelDrag();
+    }
+    window.addEventListener('keydown', onKeyDown, true);
+    return () => window.removeEventListener('keydown', onKeyDown, true);
+  });
 
   function onPointerUp(e: React.PointerEvent) {
     // End a ruler scrub (no DAG commit — scrub only moved time).
