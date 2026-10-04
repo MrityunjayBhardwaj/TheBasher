@@ -1692,14 +1692,6 @@ export interface BoneSpec {
    */
   readonly scale?: Vec3;
   /**
-   * P7.11 (D-04) — OPTIONAL number[16] column-major model/skin-space inverse
-   * bind matrix, captured from a glTF skin. Absent → none (three.js
-   * reconstructs inverses from the bind pose; retarget does not consume it).
-   * Rides only on `GltfSkeleton`-produced bones, never round-tripped through
-   * the retarget adapter.
-   */
-  readonly inverseBindMatrix?: readonly number[];
-  /**
    * #1340 — OPTIONAL preferred angle: the local rotation (XYZ euler radians, like `rotation`) an IK
    * solve starts from, which decides which way a straight chain bends (Maya's joint preferred angle,
    * `joint -spa`). Absent → none.

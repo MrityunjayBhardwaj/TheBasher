@@ -55,16 +55,13 @@ describe('projectGltfSkeleton — pure projection (P7.11 C1)', () => {
     expect(bones[1].parent).toBe(0);
   });
 
-  it('skinned-bar.glb: IBM attached to the right bone (index i, column-major)', async () => {
+  it('#1342 — skinned-bar.glb: a projected bone carries no inverse bind matrix, though the skin declares them', async () => {
     const { skin } = await projectFixture('skinned-bar.glb');
+    // The capture still holds the file's matrices (this is not a vacuous absence)…
+    expect(skin.inverseBindMatrices).toHaveLength(2);
     const { bones } = projectGltfSkeleton(skin);
-    // Both bones carry their captured IBM (skin declares inverseBindMatrices).
-    expect(bones[0].inverseBindMatrix).toHaveLength(16);
-    expect(bones[1].inverseBindMatrix).toHaveLength(16);
-    // The 2nd joint's IBM carries the -1 translation Y anchor (RESEARCH B2).
-    expect(bones[1].inverseBindMatrix![13]).toBeCloseTo(-1, 5);
-    // It is the SAME datum the capture produced, attached at the same index.
-    expect(bones[1].inverseBindMatrix).toEqual(skin.inverseBindMatrices[1]);
+    // …but a bone is its rest only; the bind is derived from the rest where the skin is drawn.
+    for (const b of bones) expect('inverseBindMatrix' in b).toBe(false);
   });
 
   it('many-bone-rig.glb: 64 bones, index == joints position, parent in joints space', async () => {
@@ -78,7 +75,7 @@ describe('projectGltfSkeleton — pure projection (P7.11 C1)', () => {
     }
   });
 
-  it('omits inverseBindMatrix when the skin declares no IBMs (clean equality)', () => {
+  it('a skin that declares no IBMs projects the same bones (clean equality)', () => {
     const noIbmSkin: GltfSkinMetadata = {
       jointKeys: ['Root', 'Tip'],
       bindTRS: [

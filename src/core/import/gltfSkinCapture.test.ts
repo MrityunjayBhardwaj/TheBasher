@@ -204,7 +204,7 @@ describe('back-compat — additive fields are non-breaking (P7.11 F4 / D-03)', (
 
   it('the 3-bone default Skeleton evaluates with NO scale/IBM keys (BVH/FBX parity)', () => {
     const params = SkeletonParams.parse({}); // legacy = no scale/IBM authored
-    const { out } = SkeletonNode.evaluate(params, {}) as SkeletonOutputs;
+    const { out } = SkeletonNode.evaluate(params, {}, undefined as never) as SkeletonOutputs;
     expect(out.bones).toHaveLength(3);
     for (const b of out.bones) {
       // The optional fields must be ABSENT (not `undefined`) so a legacy
@@ -214,21 +214,37 @@ describe('back-compat — additive fields are non-breaking (P7.11 F4 / D-03)', (
     }
   });
 
-  it('a Skeleton WITH scale/IBM carries them through (the glTF-projected path)', () => {
+  it('a Skeleton WITH scale carries it through', () => {
     const params = SkeletonParams.parse({
+      bones: [
+        { name: 'j', parent: -1, position: [0, 0, 0], rotation: [0, 0, 0], scale: [2, 2, 2] },
+      ],
+    });
+    const { out } = SkeletonNode.evaluate(params, {}, undefined as never) as SkeletonOutputs;
+    expect(out.bones[0].scale).toEqual([2, 2, 2]);
+  });
+
+  // #1342 — the stored inverse bind matrix is retired without a migration: a project loads its
+  // params raw (`io.ts`, `NodeSchema.params` is unknown), so a bone still carrying the key must
+  // evaluate to a bone without it, and the schema a write passes must drop it.
+  it('a saved bone still carrying a stale inverseBindMatrix evaluates without it', () => {
+    const IDENTITY = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
+    const raw = {
       bones: [
         {
           name: 'j',
           parent: -1,
           position: [0, 0, 0],
           rotation: [0, 0, 0],
-          scale: [2, 2, 2],
-          inverseBindMatrix: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1],
+          inverseBindMatrix: IDENTITY,
         },
       ],
-    });
-    const { out } = SkeletonNode.evaluate(params, {}) as SkeletonOutputs;
-    expect(out.bones[0].scale).toEqual([2, 2, 2]);
-    expect(out.bones[0].inverseBindMatrix).toHaveLength(16);
+    } as unknown as SkeletonParams;
+    const { out } = SkeletonNode.evaluate(raw, {}, undefined as never) as SkeletonOutputs;
+    expect(out.bones).toEqual([
+      { name: 'j', parent: -1, position: [0, 0, 0], rotation: [0, 0, 0] },
+    ]);
+    const parsed = SkeletonParams.parse(raw);
+    expect('inverseBindMatrix' in parsed.bones[0]).toBe(false);
   });
 });

@@ -30,12 +30,15 @@ export const SkeletonParams = z.object({
         parent: z.number().int().min(-1),
         position: Vec3.default([0, 0, 0]),
         rotation: Vec3.default([0, 0, 0]),
-        // P7.11 (D-03) — OPTIONAL bind-pose extras. Absent on the 3-bone
-        // default + every BVH/FBX-emitted Skeleton (back-compat / F4); only a
-        // glTF-projected rig populates them. No `.default(...)` so an omitted
-        // field stays omitted (keeps value-equality clean for legacy saves).
+        // P7.11 (D-03) — OPTIONAL bind-pose scale. Absent on the 3-bone
+        // default + every BVH/FBX-emitted Skeleton (back-compat / F4). No
+        // `.default(...)` so an omitted field stays omitted (keeps value-equality
+        // clean for legacy saves).
+        // #1342 — there is no stored inverse bind matrix: the skin's bind is
+        // derived from the rest every evaluation (`skinnedDraw.ts`), so a rest
+        // edit re-derives it. No saved document ever carried one (only the
+        // runtime glTF projection did), so retiring it needs no migration.
         scale: Vec3.optional(),
-        inverseBindMatrix: z.array(z.number()).length(16).optional(),
         // #1340 — the IK solve's starting bend (`BoneSpec.preferredAngle`). Optional, no default,
         // for the same value-equality reason as `scale`.
         preferredAngle: Vec3.optional(),
@@ -95,11 +98,10 @@ export const SkeletonNode: NodeDefinition<SkeletonParams, SkeletonOutputs> = {
         parent: b.parent,
         position: b.position,
         rotation: b.rotation,
-        // P7.11 (D-03/D-04) — only spread when present so a legacy bone (no
-        // scale/IBM) produces a byte-identical BoneSpec (no `scale: undefined`
-        // key). Back-compat: BVH/FBX + the 3-bone default are unchanged.
+        // P7.11 (D-03) — only spread when present so a legacy bone (no scale)
+        // produces a byte-identical BoneSpec (no `scale: undefined` key).
+        // Back-compat: BVH/FBX + the 3-bone default are unchanged.
         ...(b.scale !== undefined ? { scale: b.scale } : {}),
-        ...(b.inverseBindMatrix !== undefined ? { inverseBindMatrix: b.inverseBindMatrix } : {}),
         ...(b.preferredAngle !== undefined ? { preferredAngle: b.preferredAngle } : {}),
       })),
     };
