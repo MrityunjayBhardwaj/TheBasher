@@ -4,7 +4,7 @@
 // sphere #384 Stage C), so the mechanism now runs entirely on the split Object → data road:
 //   - SC-1: Apply scale=[2,1,1] → the BakedMesh geometry bbox is 2×1×1 of the unit
 //     1×1×1 bbox; the new node's transform is identity.
-//   - the original node is removed, ONE BakedMesh added, edges rewired.
+//   - the Object stays (#1476); its data lane becomes ONE BakedData, every edge to it untouched.
 //   - ONE dispatchAtomic (one Cmd+Z).
 //   - the OPFS write is AWAITED before the Op composite (the bytes exist first).
 //   - SC-8: an animated TRS band rejects (D-04 dispatch-side belt).
@@ -359,10 +359,10 @@ describe('dispatchApplyTransform (primitives)', () => {
   });
 
   it("#412: the baked node keeps the user's name, not just the id", async () => {
-    // `meta` lives on the node, so removeNode drops it. With the id inherited, an object
-    // that keeps its constraints and its edges but loses its label reads as a different
-    // object to the only observer who matters. The outliner falls back to `node.id` and
-    // BakedMesh has no `name` param, so without this the row shows a raw id.
+    // An object that keeps its constraints and its edges but loses its label reads as a
+    // different object to the only observer who matters: the outliner falls back to `node.id`.
+    // The bake used to remove the node and carry the name back by hand; since #1476 the Object
+    // stays, so its name is never touched (the #1476 case below holds the rest of `meta`).
     const state = buildSplitSphereState();
     const named = applyOp(state, { type: 'setMeta', nodeId: PRIM_ID, name: 'Hero' }).next;
 
@@ -380,6 +380,77 @@ describe('dispatchApplyTransform (primitives)', () => {
     if (!result.ok) return;
 
     expect(stateRef.current.nodes[result.bakedId].meta?.name).toBe('Hero');
+  });
+
+  it('#1476: the baked Object is the same node, with everything it held but its pose and data', async () => {
+    // Blender 5.1.1 (observed headless): Apply keeps the same object — its name, its custom
+    // properties, its hidden state and its collections — and writes only into the mesh and the
+    // applied bands (GROUND_TRUTH_BLENDER_TRANSFORM_APPLY §1). The bake road used to remove the
+    // Object and re-add one under the same id, carrying back only the name, the consumer edges
+    // and the children, so a hidden flag, a linked name, its place in the graph editor and a
+    // spare param were all lost.
+    let state = buildSplitSphereState();
+    state = applyAll(state, [
+      { type: 'setParam', nodeId: PRIM_ID, paramPath: 'scale', value: [2, 2, 2] },
+      { type: 'setMeta', nodeId: PRIM_ID, name: 'Hero', nameFrom: 'n_light' },
+      { type: 'setHidden', nodeId: PRIM_ID, hidden: true },
+      {
+        type: 'setSpareParam',
+        nodeId: PRIM_ID,
+        key: 'wobble',
+        param: { type: 'float', value: 0.5 },
+      },
+      { type: 'addNode', nodeId: 'n_col', nodeType: 'Collection', params: {} },
+      {
+        type: 'connect',
+        from: { node: PRIM_ID, socket: 'out' },
+        to: { node: 'n_col', socket: 'members' },
+      },
+    ]);
+    const node = state.nodes[PRIM_ID];
+    state = {
+      ...state,
+      nodes: { ...state.nodes, [PRIM_ID]: { ...node, meta: { ...node.meta, position: [40, 50] } } },
+    };
+    const before = state.nodes[PRIM_ID];
+
+    const stateRef = { current: state };
+    const { fn } = makeDispatch(stateRef);
+    const result = await dispatchApplyTransform(PRIM_ID, 'all', {
+      state,
+      storage: new MemoryStorage(),
+      currentFrame: 0,
+      dispatchAtomic: fn,
+      setSelection: () => {},
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.bakedId).toBe(PRIM_ID);
+
+    const after = stateRef.current.nodes[PRIM_ID];
+    expect(dataHalfOf(stateRef.current, PRIM_ID)?.type, 'the premise: it baked').toBe('BakedData');
+    expect(after.meta).toEqual({
+      name: 'Hero',
+      nameFrom: 'n_light',
+      hidden: true,
+      position: [40, 50],
+    });
+    expect(after.spare).toEqual(before.spare);
+    // Every param but the applied bands, and every input but the swapped data lane, as it was.
+    const without = (o: unknown, keys: string[]) =>
+      Object.fromEntries(Object.entries(o as object).filter(([k]) => !keys.includes(k)));
+    const BANDS = ['position', 'rotation', 'scale'];
+    expect(without(after.params, BANDS)).toEqual(without(before.params, BANDS));
+    expect(after.params).toMatchObject({
+      position: [0, 0, 0],
+      rotation: [0, 0, 0],
+      scale: [1, 1, 1],
+    });
+    expect(without(after.inputs, ['data'])).toEqual(without(before.inputs, ['data']));
+    expect(stateRef.current.nodes.n_scene.inputs.children).toEqual(
+      state.nodes.n_scene.inputs.children,
+    );
+    expect(stateRef.current.nodes.n_col.inputs.members).toEqual(state.nodes.n_col.inputs.members);
   });
 
   it('#259/H140: rewires a SINGLE-cardinality consumer socket (a wrapper target) without rolling back', async () => {
