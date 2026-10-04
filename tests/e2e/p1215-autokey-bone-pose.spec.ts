@@ -84,7 +84,7 @@ test('#1215 — with Auto-Key on, editing a keyed bone rotation keys it at the p
   await expect(z).toHaveValue('0');
 
   // Key it at 0 s: the key button marks the rotation keyed.
-  const key = page.getByTestId('inspector-bone-pose-key');
+  const key = page.getByTestId('inspector-bone-pose-key-rotation');
   await key.click();
   await expect(key).toHaveAttribute('data-keyed', 'true');
 

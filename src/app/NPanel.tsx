@@ -96,13 +96,18 @@ import { applyTransformFromUi } from './animate/applyTransformAction';
 import { ParamDiamond } from './ParamDiamond';
 import {
   autoKeyCommit,
-  commitObjectBoneRotation,
-  keyObjectBoneRotation,
+  commitObjectBonePose,
+  keyObjectBonePose,
   routeAnimatedGrab,
+  shownBoneComponent,
 } from './animate/autoKeyCommit';
 import { useActiveBone } from './boneSelection';
 import { useBoneSelectionStore } from './stores/boneSelectionStore';
-import { poseTargetForBone, type ObjectPoseTarget } from './animate/poseTargetForBone';
+import {
+  POSE_COMPONENTS,
+  poseTargetForBone,
+  type ObjectPoseTarget,
+} from './animate/poseTargetForBone';
 import { renameBone, rigReach } from './animate/renameBone';
 import {
   boneMapView,
@@ -4029,66 +4034,80 @@ function BonePoseRow({ nodeId, boneName }: { nodeId: string; boneName: string })
  * under the Object; an edit after it rewrites that bone's member. A member is an entry in a list
  * found by bone name, so there is no param path for an ordinary param row to write.
  *
- * #1215 — the field shows the rotation as played at the playhead. Once the rotation is keyed in that
- * layer an edit is a key, as Blender's field auto-keys a keyed property (`commitObjectBoneRotation`),
- * and the key button keys what the field shows (`keyObjectBoneRotation`).
+ * #1215 — each field shows its component as played at the playhead. Once a component is keyed in
+ * that layer an edit is a key, as Blender's field auto-keys a keyed property (`commitObjectBonePose`),
+ * and its key button keys what the field shows (`keyObjectBonePose`).
+ *
+ * #1338 — position, rotation and scale, as Blender's pose-bone Transform panel has. A component the
+ * member does not author passes through from below; its field is empty with the bone's rest value as
+ * a placeholder, and typing one axis seeds the other two from that rest. (A member replaces the
+ * bone's local transform, so rest is the bone's bind transform, not zero.)
  */
 function ObjectBonePoseRow({ target }: { target: ObjectPoseTarget }) {
   const [refusal, setRefusal] = useState<string | null>(null);
   const said = (res: { ok: true } | { ok: false; reason: string }) =>
     setRefusal(res.ok ? null : res.reason);
-  const pose = (rotation: [number, number, number]) =>
-    said(commitObjectBoneRotation(target, rotation));
-  const rotation = target.rotation;
+  const posed = target.position !== null || target.rotation !== null || target.scale !== null;
   return (
     <div className="mt-2" data-testid="inspector-bone-pose">
-      {rotation === null ? (
+      {!posed ? (
         <button
           type="button"
           className="w-full rounded border border-border px-2 py-1 font-mono text-[10px] text-fg/70 hover:text-fg"
           data-testid="inspector-bone-pose-add"
           // Seeded at zero so asking for a pose is not itself a pose; the member then holds
           // against the motion underneath, dragged back to zero or not.
-          onClick={() => pose([0, 0, 0])}
+          onClick={() => said(commitObjectBonePose(target, 'rotation', [0, 0, 0]))}
         >
           pose this bone
         </button>
       ) : (
-        <div className="flex items-center gap-1 text-[11px] text-fg/80">
-          <button
-            type="button"
-            data-testid="inspector-bone-pose-key"
-            data-keyed={target.keyed || undefined}
-            aria-label={`Key ${target.bone} rotation at the playhead`}
-            title={
-              target.keyed
-                ? 'Keyed: click to key the rotation shown at the playhead. With Auto-Key on, an edit keys.'
-                : 'Click to key the rotation shown at the playhead.'
-            }
-            className={`select-none px-1 text-[11px] leading-none ${target.keyed ? 'text-warn' : 'text-fg/40'} focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent`}
-            onClick={() => said(keyObjectBoneRotation(target))}
-          >
-            {target.keyed ? '◆' : '◇'}
-          </button>
-          <span className="w-14 font-mono text-[10px] text-fg/50">rotation</span>
-          {(['x', 'y', 'z'] as const).map((axis, i) => (
-            <input
-              key={axis}
-              type="number"
-              step="1"
-              aria-label={`rotation ${axis}`}
-              value={Math.round(rotation[i] * 1000) / 1000}
-              data-testid={`inspector-bone-pose-rotation-${axis}`}
-              className="w-full rounded border border-border bg-muted px-1.5 py-0.5 text-right font-mono text-[11px] text-fg focus-visible:border-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
-              onChange={(e) => {
-                const next = parseFloat(e.target.value);
-                if (Number.isNaN(next)) return;
-                const r: [number, number, number] = [rotation[0], rotation[1], rotation[2]];
-                r[i] = next;
-                pose(r);
-              }}
-            />
-          ))}
+        <div className="flex flex-col gap-1">
+          {POSE_COMPONENTS.map((component) => {
+            const value = target[component];
+            const keyed = target.keyed[component];
+            const shown = shownBoneComponent(target, component);
+            return (
+              <div key={component} className="flex items-center gap-1 text-[11px] text-fg/80">
+                <button
+                  type="button"
+                  data-testid={`inspector-bone-pose-key-${component}`}
+                  data-keyed={keyed || undefined}
+                  disabled={value === null}
+                  aria-label={`Key ${target.bone} ${component} at the playhead`}
+                  title={
+                    keyed
+                      ? `Keyed: click to key the ${component} shown at the playhead. With Auto-Key on, an edit keys.`
+                      : `Click to key the ${component} shown at the playhead.`
+                  }
+                  className={`select-none px-1 text-[11px] leading-none ${keyed ? 'text-warn' : 'text-fg/40'} disabled:opacity-30 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent`}
+                  onClick={() => said(keyObjectBonePose(target, component))}
+                >
+                  {keyed ? '◆' : '◇'}
+                </button>
+                <span className="w-14 font-mono text-[10px] text-fg/50">{component}</span>
+                {(['x', 'y', 'z'] as const).map((axis, i) => (
+                  <input
+                    key={axis}
+                    type="number"
+                    step={component === 'rotation' ? '1' : '0.01'}
+                    aria-label={`${component} ${axis}`}
+                    value={value === null ? '' : Math.round(value[i] * 1000) / 1000}
+                    placeholder={String(Math.round(shown[i] * 1000) / 1000)}
+                    data-testid={`inspector-bone-pose-${component}-${axis}`}
+                    className="w-full rounded border border-border bg-muted px-1.5 py-0.5 text-right font-mono text-[11px] text-fg focus-visible:border-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+                    onChange={(e) => {
+                      const next = parseFloat(e.target.value);
+                      if (Number.isNaN(next)) return;
+                      const v: [number, number, number] = [shown[0], shown[1], shown[2]];
+                      v[i] = next;
+                      said(commitObjectBonePose(target, component, v));
+                    }}
+                  />
+                ))}
+              </div>
+            );
+          })}
         </div>
       )}
       {refusal !== null ? (

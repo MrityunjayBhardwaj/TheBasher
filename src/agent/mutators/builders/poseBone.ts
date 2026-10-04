@@ -45,6 +45,8 @@ const PoseBoneSpec = z.object({
   position: Vec3Schema.optional(),
   /** Authored local Euler rotation, DEGREES (the member's `ZYX` order, `handPoseOps`). */
   rotation: Vec3Schema.optional(),
+  /** #1338 — authored local scale, a factor per axis (1 = rest). */
+  scale: Vec3Schema.optional(),
 });
 export type PoseBoneSpec = z.infer<typeof PoseBoneSpec>;
 
@@ -83,9 +85,9 @@ export const poseBoneMutator: MutatorDefinition<PoseBoneSpec> = {
   description:
     'Hand-pose ONE bone of a character, held against the motion underneath. ' +
     '`object` is the armature Object: the pose goes into the pose layer feeding it, ' +
-    'one is inserted when there is none. Position is local translation; rotation is local ' +
-    'Euler DEGREES, and at least one of the two is required — a pose authoring neither is ' +
-    "inert. The bone is named in the skeleton's own spelling.",
+    'one is inserted when there is none. Position is local translation, rotation is local ' +
+    'Euler DEGREES, scale is a local factor per axis; at least one is required — a pose ' +
+    "authoring none is inert. The bone is named in the skeleton's own spelling.",
   spec: PoseBoneSpec,
   specExample: {
     object: 'node_id',
@@ -109,11 +111,11 @@ export const poseBoneMutator: MutatorDefinition<PoseBoneSpec> = {
     };
   },
   preconditions(spec, _closure, state) {
-    if (spec.position === undefined && spec.rotation === undefined) {
+    if (spec.position === undefined && spec.rotation === undefined && spec.scale === undefined) {
       return {
         ok: false,
         reason:
-          'poseBone needs position, rotation, or both — a pose authoring neither component is inert.',
+          'poseBone needs position, rotation or scale — a pose authoring no component is inert.',
       };
     }
     const bones = objectBonesOf(state, spec.object);
@@ -153,6 +155,7 @@ export const poseBoneMutator: MutatorDefinition<PoseBoneSpec> = {
     return handPoseOps(state, spec.object, spec.bone, {
       ...(spec.position !== undefined ? { position: spec.position } : {}),
       ...(spec.rotation !== undefined ? { rotation: spec.rotation } : {}),
+      ...(spec.scale !== undefined ? { scale: spec.scale } : {}),
     });
   },
 };
@@ -168,8 +171,7 @@ export const poseBoneMutator: MutatorDefinition<PoseBoneSpec> = {
  * With no layer feeding the Object, one is inserted between the Object and whatever posed it.
  *
  * The one builder of a hand-pose: this mutator, and a saved clone-road pose converting at load
- * (#1216), both call it. `scale` is written by the conversion only (a clone bone could be scaled by
- * hand); the mutator's spec has none.
+ * (#1216), both call it. #1338 — the mutator writes `scale` too, as the conversion always could.
  */
 export function handPoseOps(
   state: DagState,

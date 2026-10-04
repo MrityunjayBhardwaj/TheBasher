@@ -17,10 +17,12 @@ import { edgeTarget, type GraphNodeLike } from './graphNodes';
 import { handPoseLayerOf } from './poseChain';
 import {
   memberEulerDegreesAt,
+  memberVec3At,
   poseLayerChannelOf,
   type PoseLayerParams,
 } from '../../nodes/PoseLayer';
-import type { Vec3 } from '../../nodes/types';
+import type { BoneSpec, Vec3 } from '../../nodes/types';
+import { eulerFromQuat, quatFromEulerXYZ, type EulerOrder } from '../../nodes/bonePose';
 import { resolveBoneNames } from '../../core/import/retarget';
 
 /** #1244 — the pose goes into the layer feeding the armature Object. */
@@ -35,11 +37,30 @@ export interface ObjectPoseTarget {
    * member's order): its keyed curve's value there, else its static value; null when it has none.
    */
   readonly rotation: Vec3 | null;
+  /** #1338 — the bone's local position in that layer as played, or null when the member has none. */
+  readonly position: Vec3 | null;
+  /** #1338 — the bone's local scale in that layer as played, or null when the member has none. */
+  readonly scale: Vec3 | null;
+  /**
+   * #1338 — the bone at rest, in the member's units: what a component it does not author shows and
+   * seeds an axis edit with. A member REPLACES the bone's local transform (`restBonePose` is the
+   * transform it replaces), so rest is the bone's own bind position, rotation and scale, not zero.
+   */
+  readonly rest: Readonly<Record<PoseComponent, Vec3>>;
   /** #1215 — the layer a hand-pose writes (`handPoseLayerOf`), or null when one will be inserted. */
   readonly layerId: string | null;
-  /** #1215 — the rotation is keyed in that layer (a curve in the member's mode), so an edit is a key. */
-  readonly keyed: boolean;
+  /**
+   * #1215, #1338 — which components are keyed in that layer, so an edit of them is a key. A rotation
+   * counts only with a curve in the member's mode, as Blender ignores other modes' curves.
+   */
+  readonly keyed: Readonly<Record<PoseComponent, boolean>>;
 }
+
+const DEG = Math.PI / 180;
+
+/** #1338 — the parts of a bone a hand-pose writes. */
+export type PoseComponent = 'position' | 'rotation' | 'scale';
+export const POSE_COMPONENTS: readonly PoseComponent[] = ['position', 'rotation', 'scale'];
 
 /**
  * The pose target for a selected bone, or null when there is none to offer.
@@ -74,17 +95,31 @@ export function poseTargetForBone(
     const params = layerId ? (state.nodes[layerId].params as PoseLayerParams) : null;
     const member = params?.members.find((m) => m.bone === resolved);
     const channels = params?.channels ?? [];
-    const keyed =
-      member !== undefined &&
-      member.rotationMode !== 'quaternion' &&
-      poseLayerChannelOf(channels, resolved, 'rotation') !== undefined;
+    const spec = (data.params as { bones: BoneSpec[] }).bones.find((b) => b.name === resolved)!;
+    const order: EulerOrder =
+      member && member.rotationMode !== 'quaternion' ? member.rotationMode : 'ZYX';
+    const restRotation = eulerFromQuat(quatFromEulerXYZ(spec.rotation), order);
+    const has = (component: PoseComponent) =>
+      member !== undefined && poseLayerChannelOf(channels, resolved, component) !== undefined;
     return {
       kind: 'object',
       objectId: nodeId,
       bone: resolved,
       rotation: member ? memberEulerDegreesAt(member, channels, seconds) : null,
+      position: member ? memberVec3At(member, channels, 'position', seconds) : null,
+      scale: member ? memberVec3At(member, channels, 'scale', seconds) : null,
+      rest: {
+        position: [...spec.position] as Vec3,
+        // `+ 0` turns the conversion's -0 into 0, so a field shows 0, not -0.
+        rotation: restRotation.map((r) => r / DEG + 0) as unknown as Vec3,
+        scale: (spec.scale ? [...spec.scale] : [1, 1, 1]) as Vec3,
+      },
       layerId,
-      keyed,
+      keyed: {
+        position: has('position'),
+        rotation: has('rotation') && member?.rotationMode !== 'quaternion',
+        scale: has('scale'),
+      },
     };
   }
   return null;

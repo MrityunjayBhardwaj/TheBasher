@@ -303,6 +303,23 @@ export function memberEulerDegreesAt(
 }
 
 /**
+ * #1338 — a member's position or scale at `seconds`, as the layer plays it: the keyed curve (muted
+ * curves skipped), else its static value, else null (the member leaves the component alone). The
+ * position and scale counterpart of `memberEulerDegreesAt`, read the way `resolveMember` reads them.
+ */
+export function memberVec3At(
+  member: PoseLayerMember,
+  channels: readonly PoseLayerChannel[],
+  component: 'position' | 'scale',
+  seconds: number,
+): Vec3 | null {
+  const keys = poseLayerChannelOf(playedChannels(channels), member.bone, component);
+  if (keys) return vec3Sampler(keys)(seconds);
+  const value = member[component];
+  return value ? (value as Vec3) : null;
+}
+
+/**
  * A member's rotation over time, as the layer reads it: its keyed curve in the member's mode (a curve
  * for another mode ignored), else its static value, else null (the member leaves rotation alone).
  * Exported for the mode change (#1242), which must read the member exactly as the layer does.

@@ -179,9 +179,13 @@ describe('#1244 — hand-posing a native character', () => {
       objectId: armatureId,
       bone: 'Bone1',
       rotation: null,
+      position: null,
+      scale: null,
+      // #1338 — the bar's Bone1 binds 1 above Bone0, unrotated and unscaled.
+      rest: { position: [0, 1, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
       // #1215 — no hand-pose layer yet (the first pose inserts one), so nothing is keyed there.
       layerId: null,
-      keyed: false,
+      keyed: { position: false, rotation: false, scale: false },
     });
     expect(poseTargetForBone(state, armatureId, 'Tail')).toBeNull();
     pose(armatureId, 'Bone1', [0, 0, 25]);
@@ -323,6 +327,34 @@ describe('#1244 — hand-posing a native character', () => {
     );
   });
 
+  it('#1338 — position and scale pose through the agent verb, and the bone plays all three', async () => {
+    const { state, armatureId } = await bar();
+    useDagStore.getState().hydrate(state);
+    const res = dispatchMutatorFromUI(
+      'mutator.animate.poseBone',
+      { object: armatureId, bone: 'Bone1', position: [0.1, 0.2, 0.3], scale: [2, 1, 0.5] },
+      'pose position and scale',
+    );
+    expect(res.ok, JSON.stringify(res)).toBe(true);
+    const after = useDagStore.getState().state;
+    const t = poseTargetForBone(after, armatureId, 'Bone1', 0.5)!;
+    expect([t.position, t.scale, t.rotation]).toEqual([[0.1, 0.2, 0.3], [2, 1, 0.5], null]);
+    const value = evaluate(after, armatureId, at(0.5)).value as {
+      pose: { sample: (s: number) => { name: string; position: number[]; scale: number[] }[] };
+    };
+    const bone1 = value.pose.sample(0.5).find((b) => b.name === 'Bone1')!;
+    bone1.position.forEach((c, k) => expect(c).toBeCloseTo([0.1, 0.2, 0.3][k], 6));
+    bone1.scale.forEach((c, k) => expect(c).toBeCloseTo([2, 1, 0.5][k], 6));
+    // A later rotation-only pose keeps them: the member is rewritten, not replaced.
+    expect(pose(armatureId, 'Bone1', [0, 0, 10]).ok).toBe(true);
+    const kept = poseTargetForBone(useDagStore.getState().state, armatureId, 'Bone1', 0.5)!;
+    expect([kept.position, kept.scale, kept.rotation]).toEqual([
+      [0.1, 0.2, 0.3],
+      [2, 1, 0.5],
+      [0, 0, 10],
+    ]);
+  });
+
   it('refusals name themselves', async () => {
     const { state, armatureId } = await bar();
     useDagStore.getState().hydrate(state);
@@ -337,7 +369,7 @@ describe('#1244 — hand-posing a native character', () => {
       { object: armatureId, bone: 'Bone1' },
       'nothing',
     );
-    expect(nothing.ok === false && nothing.reason).toMatch(/needs position, rotation, or both/);
+    expect(nothing.ok === false && nothing.reason).toMatch(/needs position, rotation or scale/);
     expect(Object.keys(useDagStore.getState().state.nodes)).toHaveLength(before);
   });
 });
