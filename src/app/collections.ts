@@ -127,7 +127,7 @@ export function newCollectionName(state: DagState): string {
 /**
  * #1451 — the outliner's New Collection, as Blender's: an empty collection the scene holds, named
  * `newCollectionName`. Null with no scene. Membership comes later — an import into it once it is
- * active, or (later in #397) moving objects in.
+ * active, or moving objects in (`moveToCollectionOps`).
  */
 export function newCollectionOps(state: DagState): { ops: Op[]; collectionId: NodeId } | null {
   const sceneId = state.outputs.scene?.node;
@@ -137,4 +137,85 @@ export function newCollectionOps(state: DagState): { ops: Op[]; collectionId: No
     collectionId = `n_collection_${Math.floor(Math.random() * 36 ** 6).toString(36)}`;
   } while (state.nodes[collectionId]);
   return { ops: collectionOps(collectionId, newCollectionName(state), [], sceneId), collectionId };
+}
+
+/**
+ * #397 — every node the scene holds through `children` edges, at any depth: what stands in the
+ * scene and can therefore join a collection. Lights (the scene's own band) and cameras (floating)
+ * are not here — they honour no collection's hide yet, so linking one would list it hidden while it
+ * still lit or framed the shot.
+ */
+export function sceneHeldNodes(state: DagState): ReadonlySet<NodeId> {
+  const sceneId = state.outputs.scene?.node;
+  const out = new Set<NodeId>();
+  const stack = sceneId ? refsOf(state.nodes[sceneId]?.inputs?.children) : [];
+  while (stack.length > 0) {
+    const id = stack.pop()!;
+    if (out.has(id) || !state.nodes[id]) continue;
+    out.add(id);
+    stack.push(...refsOf(state.nodes[id].inputs?.children));
+  }
+  return out;
+}
+
+/** Where Move to Collection sends the selection: a collection, the scene itself (null), or new. */
+export type MoveTarget = { collectionId: NodeId | null } | { newCollection: true };
+
+export interface MoveToCollection {
+  ops: Op[];
+  /** The collection the selection now sits in; null for the scene itself. */
+  collectionId: NodeId | null;
+  /** The ids moved, in the order given. */
+  moved: NodeId[];
+  /** The ids given that the scene does not stand in it (lights, cameras, non-scene nodes). */
+  skipped: NodeId[];
+}
+
+/**
+ * #397 — Blender's Move to Collection (M), observed in Blender 5.1.1 headless: each selected object
+ * leaves every collection of the scene and joins the target alone; to the Scene Collection, it
+ * leaves them all. Only the selected objects move — a child stays in its own collections, as
+ * membership is never parenting. A new collection is made first and named as New Collection names
+ * one. Null when the target is not one of the scene's collections, or there is no scene.
+ */
+export function moveToCollectionOps(
+  state: DagState,
+  ids: readonly NodeId[],
+  target: MoveTarget,
+): MoveToCollection | null {
+  if (!state.outputs.scene?.node) return null;
+  const ops: Op[] = [];
+  let collectionId: NodeId | null;
+  if ('newCollection' in target) {
+    const made = newCollectionOps(state);
+    if (!made) return null;
+    ops.push(...made.ops);
+    collectionId = made.collectionId;
+  } else {
+    collectionId = target.collectionId;
+    if (collectionId !== null && !sceneCollectionsOf(state).includes(collectionId)) return null;
+  }
+  const held = sceneHeldNodes(state);
+  const moved: NodeId[] = [];
+  const skipped: NodeId[] = [];
+  for (const id of new Set(ids)) {
+    if (!held.has(id)) {
+      skipped.push(id);
+      continue;
+    }
+    moved.push(id);
+    const holding = collectionsHolding(state, id);
+    for (const c of holding) {
+      if (c === collectionId) continue;
+      ops.push({
+        type: 'disconnect',
+        from: { node: id, socket: 'out' },
+        to: { node: c, socket: 'members' },
+      });
+    }
+    if (collectionId !== null && !holding.includes(collectionId)) {
+      ops.push(...membershipOps(collectionId, [id]));
+    }
+  }
+  return { ops, collectionId, moved, skipped };
 }

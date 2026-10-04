@@ -189,10 +189,13 @@ function ensureRectAreaInit() {
 interface OverlayMembership {
   readonly directChannelTargets: ReadonlySet<string>;
   readonly constraintTargets: ReadonlySet<string>;
+  /** #397 — the members of a hidden collection, read by flat id at any depth like the overlays. */
+  readonly hiddenMembers: ReadonlySet<string>;
 }
 const EMPTY_MEMBERSHIP: OverlayMembership = {
   directChannelTargets: new Set(),
   constraintTargets: new Set(),
+  hiddenMembers: new Set(),
 };
 const OverlayMembershipContext = createContext<OverlayMembership>(EMPTY_MEMBERSHIP);
 
@@ -321,7 +324,7 @@ export function SceneFromDAG({ outputName = 'render' }: SceneFromDAGProps) {
     [state, cache],
   );
   // #1451 — what the scene's hidden collections hide: checked at the top-level slot beside each
-  // node's own eye.
+  // node's own eye, and by flat id in every nested `RenderChild` (#397).
   const hiddenMembers = useMemo(() => hiddenByCollection(state), [state]);
   // #165: editor-only camera frustums hide in rendered mode (production
   // parity) and the active camera's own frustum hides while looking through
@@ -382,9 +385,9 @@ export function SceneFromDAG({ outputName = 'render' }: SceneFromDAGProps) {
   // the sig IS the content dependency (the sets are rebuilt each render by design).
   const overlaySig = `${[...directChannelTargets].sort().join(',')}|${[...constraintTargets]
     .sort()
-    .join(',')}`;
+    .join(',')}|${[...hiddenMembers].sort().join(',')}`;
   const overlayMembership = useMemo<OverlayMembership>(
-    () => ({ directChannelTargets, constraintTargets }),
+    () => ({ directChannelTargets, constraintTargets, hiddenMembers }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [overlaySig],
   );
@@ -2170,7 +2173,11 @@ function RenderChild({
   nodeId: string | null;
   override?: MaterialValue;
 }) {
-  const { directChannelTargets, constraintTargets } = useContext(OverlayMembershipContext);
+  const { directChannelTargets, constraintTargets, hiddenMembers } =
+    useContext(OverlayMembershipContext);
+  // #397 — a nested member of a hidden collection draws nothing, with what hangs under it, as a
+  // hidden top-level member does (the scene's children map below).
+  if (nodeId != null && hiddenMembers.has(nodeId)) return null;
   const drawn = (
     <OverlayDispatch
       value={value}

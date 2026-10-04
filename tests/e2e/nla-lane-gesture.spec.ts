@@ -421,10 +421,10 @@ test('NLA 5C#5 — keyboard parity: ←/→ nudge start by 1 frame (Shift = 10) 
 });
 
 // #285 — the pane's handled keys must NOT double-fire the global shortcuts:
-// M is the app-wide projection toggle, S the Blender scale alias, Esc the
+// M is the app-wide Move to Collection (#397), S the Blender scale alias, Esc the
 // clear-3D-selection ladder. The pane stopPropagation-shields every key it
 // handles (the same class of shield the add-strip popover applies to Tab).
-test('NLA 5C#6 — pane keys are shielded: M keeps the projection, S keeps the tool, Esc keeps the 3D selection (#285)', async ({
+test('NLA 5C#6 — pane keys are shielded: M opens no Move to Collection, S keeps the tool, Esc keeps the 3D selection (#285)', async ({
   page,
 }) => {
   const errors: string[] = [];
@@ -486,7 +486,9 @@ test('NLA 5C#6 — pane keys are shielded: M keeps the projection, S keeps the t
   await expect(strip).toHaveAttribute('data-selected', 'false');
 
   const after = await seams();
-  expect(after.projection).toBe(before.projection); // M never reached the global toggle
+  expect(after.projection).toBe(before.projection);
+  // M never reached the global Move to Collection — with n_box selected, a leak would open it.
+  await expect(page.getByTestId('move-to-collection-menu')).toHaveCount(0);
   expect(after.tool).toBe(before.tool); // S never reached the scale alias
   expect(after.selected3d).toBe('n_box'); // Esc never reached the 3D clear
 
