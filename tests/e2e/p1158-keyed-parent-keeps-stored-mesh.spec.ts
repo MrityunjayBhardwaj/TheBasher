@@ -83,7 +83,7 @@ async function imported(page: Page) {
         !Array.isArray(n.inputs.data) &&
         data.some((d) => d.id === (n.inputs.data as { node: string } | undefined)?.node),
     );
-    // The mesh's parent is whoever holds it as a child: the import Group, a top-level scene child.
+    // The mesh's parent is whoever holds it as a child: the file's Pivot, a top-level scene child.
     const parent = object ? all.find((n) => childrenOf(n.id).includes(object.id)) : undefined;
     return {
       objectId: object?.id ?? null,
@@ -97,7 +97,7 @@ async function imported(page: Page) {
 /**
  * Where three actually draws the one mesh under `groupId`, in world space.
  *
- * Found by walking the import Group rather than by node id: only a TOP-LEVEL scene child carries
+ * Found by walking the Group rather than by node id: only a TOP-LEVEL scene child carries
  * its node id as the drawn object's NAME (`SceneChildNode` in `SceneFromDAG.tsx`); a nested object
  * carries it in `userData.basherNodeId` instead (#1075, written by `RenderChild`), which this
  * helper does not read.
@@ -146,14 +146,18 @@ test('#1158 — a keyed Group over an imported mesh survives save and reload, dr
   await waitForEditor(page, errors);
   await page.evaluate(async () => {
     const w = window as unknown as W;
-    const bytes = new Uint8Array(await fetch('/assets/cube.gltf').then((r) => r.arrayBuffer()));
-    await w.__basher_ingestGltfFolder!([{ relativePath: 'cube.gltf', bytes }], 'p1158');
+    // #1451 — an import has no wrapper Group, so the keyed Group is the file's own: nested-cube's
+    // `Pivot` empty at y 3, holding the cube at x 1.
+    const bytes = new Uint8Array(
+      await fetch('/assets/nested-cube.gltf').then((r) => r.arrayBuffer()),
+    );
+    await w.__basher_ingestGltfFolder!([{ relativePath: 'nested-cube.gltf', bytes }], 'p1158');
   });
   await expect.poll(async () => (await imported(page)).objectId).not.toBeNull();
   const shape = await imported(page);
   expect(shape.gltfNodes, 'the cube imported native, not through the clone road').toBe(0);
   expect(shape.parentType, 'the stored mesh sits under a Group').toBe('Group');
-  // Key the import Group: y 3 → 4 over two seconds.
+  // Key the Pivot: y 3 → 4 over two seconds.
   await page.evaluate((empty) => {
     const d = (
       window as unknown as { __basher_dag: { getState: () => { dispatch: (op: unknown) => void } } }
@@ -202,7 +206,7 @@ test('#1158 — a keyed Group over an imported mesh survives save and reload, dr
     await page.evaluate((s) => (window as unknown as W).__basher_time!.getState().setTime(s), t);
     await expect
       .poll(async () => (await drawnMeshWorld(page, shape.parentId!))?.map((v) => +v.toFixed(4)))
-      .toEqual([0, y, 0]);
+      .toEqual([1, y, 0]);
   }
   expect(errors, 'no page error: the editor stayed up').toEqual([]);
 });

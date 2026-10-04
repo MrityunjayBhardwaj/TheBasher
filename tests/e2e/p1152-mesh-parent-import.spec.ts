@@ -8,8 +8,8 @@
 //   Body (0, 1, 0) scale 2 · Lamp (0, 2, -2) scale 0.5 · Bulb (0, 2, 2) scale 0.4
 //
 // Read off the LIVE drawn meshes — what three draws, not what the graph says — then after a save
-// and a reload. The click on the Lamp selects the Lamp, and Alt+click walks up through Body to the
-// import root, as the Blender outliner's parent chain would.
+// and a reload. The click on the Lamp selects the Lamp, and Alt+click walks up to Body, the file's
+// root, as the Blender outliner's parent chain would.
 
 import { test, expect } from './_fixtures';
 import type { Page } from '@playwright/test';
@@ -71,17 +71,19 @@ const idNamed = (page: Page, name: string) =>
     );
   }, name);
 
-/** Where three draws the mesh a node drew, found by the node id its drawn group carries. */
+/** Where three draws the mesh a node drew, found by the node id its drawn group carries: a nested
+ *  node's stamp, or a top-level scene child's name (#1451 — the file's root is one now). */
 const drawn = (page: Page, id: string) =>
   page.evaluate((nid) => {
     const scene = (window as unknown as Partial<W>).__basher_three?.getState().scene;
     if (!scene) return null; // not mounted yet — the caller polls
+    const nodes = (window as unknown as W).__basher_dag.getState().state.nodes;
     const found: Array<{ at: number[]; scale: number } | null> = [null];
     scene.traverse((o) => {
       if (found[0] || !(o as import('three').Mesh).isMesh) return;
       // The NEAREST stamped ancestor must be this node: a mesh drawn by a child of it is not it.
       for (let p: import('three').Object3D | null = o; p; p = p.parent) {
-        const stamp = p.userData?.basherNodeId;
+        const stamp = p.userData?.basherNodeId ?? (nodes[p.name] ? p.name : undefined);
         if (!stamp) continue;
         if (stamp !== nid) return;
         o.updateWorldMatrix(true, false);
@@ -159,7 +161,7 @@ test('#1152 — a mesh that holds children imports native, drawn where Blender p
 
   await expectWhereBlenderPutsThem(page);
 
-  // The click chain: the Lamp under the cursor, then up through the Body to the import root.
+  // The click chain: the Lamp under the cursor, then up to the Body, the import's root.
   const lampId = (await idNamed(page, 'Lamp'))!;
   const pt = await page.evaluate((id) => {
     const { camera, scene } = (window as unknown as W).__basher_three.getState();
