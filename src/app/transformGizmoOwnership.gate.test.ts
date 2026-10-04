@@ -56,7 +56,8 @@ describe('#657 — the transform gizmo has exactly one lifetime owner', () => {
     }
 
     expect(offenders.sort()).toEqual([]);
-    expect(mountSites).toBe(4);
+    // #1336 — BoneGizmo is the fifth.
+    expect(mountSites).toBe(5);
   });
 
   it('keeps the disposal the wrapper exists for', () => {

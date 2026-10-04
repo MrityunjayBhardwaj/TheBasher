@@ -75,6 +75,7 @@ import { isCameraNode } from './cameraNode';
 import { cameraOrientationQuat, lookAtRollFromQuat } from './cameraOrientation';
 import { constraintTargetSet, resolveFollowedWorldPosition } from './nodeConstraints';
 import { useActiveCurvePoint } from './curvePointSelection';
+import { useArmatureMode } from './armatureMode';
 import { uiEvaluatorCache } from './uiEvaluatorCache';
 
 type Vec3 = [number, number, number];
@@ -1337,9 +1338,13 @@ export function Gizmo() {
   // The one accessor decides (curvePointSelection.ts) — never a second read of the raw
   // store, so what hides the gizmo and what mounts the point gizmo are the same fact.
   const curvePoint = useActiveCurvePoint();
+  // #1336 — an armature in Edit or Pose mode is worked on through its bones, so the OBJECT gizmo
+  // yields, as it does to a picked curve point: in Pose mode BoneGizmo mounts on the selected bone.
+  const armatureMode = useArmatureMode();
   let manipCount = 0;
   for (const id of selectedIds) if (getManipulable(nodes[id] ?? null)) manipCount++;
   if (curvePoint) return null;
+  if (armatureMode !== 'object') return null;
   if (manipCount > 1) return <MultiGizmo />;
   // #387 — possession, not type: post-split a camera's `type` is 'Object', so a type test
   // mounts SingleGizmo on a camera and a rotate drag writes `rotation`, which the camera
