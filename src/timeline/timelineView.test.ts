@@ -9,6 +9,7 @@ import {
   xToFrame,
   zoomAtFrame,
   panByPixels,
+  keyDragFrame,
   type TimelineView,
 } from './timelineView';
 import { keyframeToRect } from './timelineCanvasGeometry';
@@ -97,5 +98,21 @@ describe('panByPixels', () => {
   it('clamps scroll to [0,1]', () => {
     expect(panByPixels({ zoom: 2, scroll: 0.9 }, TOTAL, 1e6, WIDTH).scroll).toBe(1);
     expect(panByPixels({ zoom: 2, scroll: 0.1 }, TOTAL, -1e6, WIDTH).scroll).toBe(0);
+  });
+});
+
+describe('#1484 — keyDragFrame: where a dragged key lands', () => {
+  it('lands on the nearest whole frame', () => {
+    expect(keyDragFrame(60.34, TOTAL, false)).toBe(60);
+    expect(keyDragFrame(94.83, TOTAL, false)).toBe(95);
+  });
+  it('with Ctrl/⌘ (free) keeps the exact cursor frame', () => {
+    expect(keyDragFrame(94.83, TOTAL, true)).toBe(94.83);
+  });
+  it('stays inside [0, totalFrames], free or not', () => {
+    expect(keyDragFrame(-3.2, TOTAL, false)).toBe(0);
+    expect(keyDragFrame(-3.2, TOTAL, true)).toBe(0);
+    expect(keyDragFrame(612.7, TOTAL, false)).toBe(TOTAL);
+    expect(keyDragFrame(612.7, TOTAL, true)).toBe(TOTAL);
   });
 });

@@ -79,6 +79,8 @@ import {
 import {
   frameToX,
   xToFrame,
+  keyDragFrame,
+  KEY_DRAG_THRESHOLD_PX,
   visibleFrames,
   zoomAtFrame,
   panByPixels,
@@ -182,6 +184,48 @@ const MUTE_GLYPH_X0 = SOLO_GLYPH_X0 - GUTTER_GLYPH_BOX_PX; // left of solo (58)
 /** Right edge (CSS px) the channel-name text is truncated to, clearing the glyphs. */
 const GUTTER_NAME_MAX_W = MUTE_GLYPH_X0 - 7;
 const FPS = 60;
+
+/** A key drag in flight (P7.1, D-04): the gesture's whole state, owned by `dragRef`. */
+interface KeyDrag {
+  channelId: string;
+  rowIndex: number;
+  /** The EXACT stored sample time read off the live DAG at pointerdown (the D-03 discriminator). */
+  fromTime: number;
+  pointerClientX: number;
+  /** #1484 — where the press began, for the drag threshold. */
+  downClientX: number;
+  /** #1484 — the pointer has passed the drag threshold; the press is a drag from then on. */
+  dragging: boolean;
+  /** #1484 — Ctrl/⌘ held: drag between frames instead of snapping to them. */
+  free: boolean;
+  /** Read ONCE at pointerdown (perf — D-04, K13). */
+  canvasLeft: number;
+}
+
+/**
+ * #1484 — the time a key drag puts its key at, which the ghost draws and the commit writes: the
+ * key's own stored time, exactly, until the pointer has passed the drag threshold (so a click
+ * writes nothing, a key between frames included), then `keyDragFrame` of the cursor (the nearest
+ * whole frame, or the exact one with Ctrl/⌘).
+ */
+function landingSeconds(
+  drag: KeyDrag,
+  cssW: number,
+  totalFrames: number,
+  view: TimelineView,
+): number {
+  if (!drag.dragging) return drag.fromTime;
+  const raw = xToFrame(
+    drag.pointerClientX - drag.canvasLeft,
+    totalFrames,
+    view,
+    LABEL_GUTTER_PX,
+    Math.max(cssW - LABEL_GUTTER_PX, 0),
+    DIAMOND_INSET_PX,
+  );
+  return keyDragFrame(raw, totalFrames, drag.free) / FPS;
+}
+
 /** Half-width (CSS px) of the playhead's red glow — the rAF strip-restore must
  *  cover this so the glow leaves no trail. reze's glow is ~28px wide → 14 each
  *  side + AA slack. */
@@ -556,13 +600,7 @@ export function TimelineCanvas({ duration, rangeEnd }: { duration: number; range
   // is the EXACT stored sample float read off the live DAG at pointerdown
   // (the D-03 discriminator). `canvasLeft` is read ONCE at pointerdown —
   // calling getBoundingClientRect in the rAF tick is the K13 perf footgun.
-  const dragRef = useRef<null | {
-    channelId: string;
-    rowIndex: number;
-    fromTime: number;
-    pointerClientX: number;
-    canvasLeft: number;
-  }>(null);
+  const dragRef = useRef<null | KeyDrag>(null);
   // The ghost block's OWN idle-guard comparand — a SIBLING of
   // lastPlayheadXRef, never the playhead's. -1 = no ghost / cleared, so
   // the next tick after a commit restores cleanly under the stale ghost.
@@ -926,25 +964,11 @@ export function TimelineCanvas({ duration, rangeEnd }: { duration: number; range
           const drag = dragRef.current;
           if (drag) {
             const trackWidth = Math.max(cssW - LABEL_GUTTER_PX, 0);
-            // cursorX: canvas-relative px (incl. gutter). canvasLeft was read
-            // ONCE at pointerdown (NO getBoundingClientRect in the hot loop —
-            // the K13 perf footgun). Map through the shared zoom/pan view so
-            // the ghost snaps to the cursor's frame at the current zoom.
-            const cursorX = drag.pointerClientX - drag.canvasLeft;
-            const ghostFrameRaw = xToFrame(
-              cursorX,
-              totalFramesNow,
-              viewNow,
-              LABEL_GUTTER_PX,
-              trackWidth,
-              DIAMOND_INSET_PX,
-            );
-            const ghostFrame =
-              ghostFrameRaw < 0
-                ? 0
-                : ghostFrameRaw > totalFramesNow
-                  ? totalFramesNow
-                  : ghostFrameRaw;
+            // #1484 — the ghost is drawn where the commit will write (`landingSeconds`): on the
+            // key until the pointer passes the drag threshold, then the nearest whole frame (the
+            // exact cursor frame with Ctrl/⌘). canvasLeft was read ONCE at pointerdown (NO
+            // getBoundingClientRect in the hot loop — the K13 perf footgun).
+            const ghostFrame = landingSeconds(drag, cssW, totalFramesNow, viewNow) * FPS;
             const ghostX = frameToX(
               ghostFrame,
               totalFramesNow,
@@ -1173,6 +1197,9 @@ export function TimelineCanvas({ duration, rangeEnd }: { duration: number; range
             rowIndex: r,
             fromTime: liveSample.time,
             pointerClientX: e.clientX,
+            downClientX: e.clientX,
+            dragging: false,
+            free: e.ctrlKey || e.metaKey,
             canvasLeft: box.left, // read ONCE here (perf — D-04)
           };
           useTimelineSelection.getState().setActiveKeyframe({
@@ -1198,9 +1225,13 @@ export function TimelineCanvas({ duration, rangeEnd }: { duration: number; range
     }
     const drag = dragRef.current;
     if (!drag) return;
-    // O(1): write the only mutable per-move datum. NO setState, NO DAG,
-    // NO draw — the rAF loop draws the ghost (V20 hot-path discipline).
+    // O(1): write the per-move data. NO setState, NO DAG, NO draw — the rAF
+    // loop draws the ghost (V20 hot-path discipline). #1484: once the pointer
+    // has travelled past the threshold the press stays a drag, even if it
+    // comes back; Ctrl/⌘ is read live, so it can be pressed mid-drag.
     drag.pointerClientX = e.clientX;
+    if (Math.abs(e.clientX - drag.downClientX) >= KEY_DRAG_THRESHOLD_PX) drag.dragging = true;
+    drag.free = e.ctrlKey || e.metaKey;
   }
 
   function endDrag(e: React.PointerEvent<HTMLCanvasElement>, commit: boolean) {
@@ -1223,10 +1254,11 @@ export function TimelineCanvas({ duration, rangeEnd }: { duration: number; range
     } catch {
       /* capture may already be gone */
     }
+    // #1484 — a drag writes the time its ghost was drawn at. A press that never passed the drag
+    // threshold lands on the key's own time, so a click selects and writes nothing (exact !==,
+    // the same discipline as the seam's fromTime match).
     if (commit) {
-      const toTime = localXToSeconds(drag.pointerClientX, drag.canvasLeft);
-      // An unmoved click is a no-op (exact !== — same discipline as the
-      // seam's fromTime match).
+      const toTime = landingSeconds(drag, canvas?.clientWidth ?? 0, totalFrames, view);
       if (toTime !== drag.fromTime) {
         // ONE seam call → atomic composite → one undo entry. On
         // {ok:false} the seam aborted atomically; DAG already unchanged.

@@ -41,6 +41,8 @@ import { useTimelineViewStore } from './timelineViewStore';
 import {
   frameToX,
   xToFrame,
+  keyDragFrame,
+  KEY_DRAG_THRESHOLD_PX,
   visibleFrames,
   zoomAtFrame,
   panByPixels,
@@ -158,6 +160,11 @@ export function EditableCurve({
     index: number;
     axis: number;
     pointerId: number;
+    /** #1484 — where the press began, for the drag threshold. */
+    downX: number;
+    downY: number;
+    /** #1484 — the pointer has passed the drag threshold; the press is a drag from then on. */
+    dragging: boolean;
   } | null>(null);
   // The value domain captured at drag start. While a drag is live the domain is
   // FROZEN to this, so dragging a key past the old extent doesn't rescale the
@@ -395,7 +402,15 @@ export function EditableCurve({
   ) {
     e.stopPropagation();
     (e.target as Element).setPointerCapture?.(e.pointerId);
-    dragRef.current = { kind, index, axis, pointerId: e.pointerId };
+    dragRef.current = {
+      kind,
+      index,
+      axis,
+      pointerId: e.pointerId,
+      downX: e.clientX,
+      downY: e.clientY,
+      dragging: false,
+    };
     // Freeze the value domain to its PRE-drag value (the current `domain`,
     // computed from the unedited keyframes) so the curve doesn't rescale as
     // the dragged key/handle pushes past the old extent.
@@ -435,6 +450,14 @@ export function EditableCurve({
     }
     const d = dragRef.current;
     if (!d || !draft) return;
+    // #1484 — below the drag threshold the press is a click: nothing moves.
+    if (
+      !d.dragging &&
+      Math.hypot(e.clientX - d.downX, e.clientY - d.downY) < KEY_DRAG_THRESHOLD_PX
+    ) {
+      return;
+    }
+    d.dragging = true;
     const { px, py } = localPoint(e);
     const k = draft[d.index];
     const spanLeft = d.index > 0 ? k.time - draft[d.index - 1].time : dur / 4;
@@ -446,7 +469,10 @@ export function EditableCurve({
       // value of the grabbed AXIS drags freely (other components untouched).
       const lo = d.index > 0 ? draft[d.index - 1].time + 1e-3 : 0;
       const hi = d.index < draft.length - 1 ? draft[d.index + 1].time - 1e-3 : dur;
-      const nextTime = Math.min(Math.max(xToTime(px), lo), hi);
+      // #1484 — onto the nearest whole frame (Ctrl/⌘ drags between frames), then between
+      // the neighbours.
+      const landed = keyDragFrame(xToTime(px) * FPS, totalFrames, e.ctrlKey || e.metaKey) / FPS;
+      const nextTime = Math.min(Math.max(landed, lo), hi);
       const nextVal = yToValue(py);
       next = draft.map((kk, i) =>
         i !== d.index
@@ -495,6 +521,8 @@ export function EditableCurve({
       return;
     }
     const d = dragRef.current;
+    // #1484 — a click never moved the draft (`onPointerMove` waits for the drag threshold), and
+    // committing unchanged keys writes nothing.
     if (d && draft) {
       commit(draft.slice().sort((a, b) => a.time - b.time));
     }

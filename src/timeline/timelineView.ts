@@ -82,6 +82,24 @@ export function frameToX(
   return gutterPx + inset + ((frame - startFrame) / span) * innerWidth;
 }
 
+/**
+ * #1484 — how far the pointer must travel before a press on a key becomes a drag. Below it, the
+ * press is a click: it selects and writes nothing. Blender's default mouse drag threshold
+ * (Preferences › Input › Drag Threshold, 3 px).
+ */
+export const KEY_DRAG_THRESHOLD_PX = 3;
+
+/**
+ * #1484 — the frame a dragged key lands on: the nearest whole frame, clamped to
+ * `[0, totalFrames]`, or the exact cursor frame when `free` (Ctrl/⌘ held, which inverts snapping
+ * as it does in Blender). The dope sheet's ghost and its commit, and the curve editor's key drag,
+ * all call this, so a key lands on the frame it was drawn at.
+ */
+export function keyDragFrame(rawFrame: number, totalFrames: number, free: boolean): number {
+  const clamped = rawFrame < 0 ? 0 : rawFrame > totalFrames ? totalFrames : rawFrame;
+  return free ? clamped : Math.round(clamped);
+}
+
 /** Inverse of frameToX — a track-px x back to a (possibly fractional) frame. */
 export function xToFrame(
   x: number,
