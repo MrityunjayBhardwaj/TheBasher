@@ -69,6 +69,8 @@ export function TimelineDrawer() {
     <div
       data-testid="timeline-drawer"
       data-open={open}
+      // #1483 — keys pressed over this region belong to the timeline (KeyboardShortcuts).
+      data-key-region="timeline"
       role="region"
       aria-label={`Timeline — frame ${frame}`}
       className="flex w-full flex-col"

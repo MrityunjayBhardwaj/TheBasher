@@ -56,6 +56,7 @@ import { useChromeStore } from './stores/chromeStore';
 import { useEditorStore, type ActiveTool } from './stores/editorStore';
 import { useSelectionStore } from './stores/selectionStore';
 import { useRenameStore } from './stores/renameStore';
+import { useNotificationStore } from './stores/notificationStore';
 import { useBoxSelectStore } from './stores/boxSelectStore';
 import { getViewportSelectableIds } from './selectableNodes';
 import { buildDeleteNodesOps, buildDuplicateNodeOps } from './sceneNodeActions';
@@ -198,6 +199,28 @@ function buildKeyframeDeleteOp(): Op[] | null {
   // belongs with clearBakedMotion rather than here.
 
   return resolved.write({ keyframes: next });
+}
+
+/**
+ * #1483 — whether the pointer is over the timeline (dope sheet, curve editor, NLA…). A key pressed
+ * there belongs to the timeline, as Blender sends a key to the editor under the pointer. Read off
+ * the DOM's own hover state at the moment of the key, so nothing has to track it.
+ */
+export function pointerOverTimeline(): boolean {
+  return document.querySelector('[data-key-region="timeline"]')?.matches(':hover') ?? false;
+}
+
+/** #1483 — why Delete removed no key, in words for the notice. */
+function noKeyDeletedReason(): string {
+  const ref = useTimelineSelection.getState().activeKeyframeId;
+  if (!ref) return 'No key selected to delete.';
+  const resolved = resolveRowChannelForWrite(useDagStore.getState().state, ref.channelId);
+  const keys = (resolved?.params.keyframes as KeyframeSample[] | undefined) ?? [];
+  if (!keys.some((k) => k.time === ref.time)) return 'The selected key no longer exists.';
+  if (keys.length === 1) {
+    return "A channel keeps its last key. Use Clear to remove the channel's keys.";
+  }
+  return "This key can't be deleted.";
 }
 
 /** [ / ] seek helpers. Returns the time of the previous/next keyframe
@@ -636,6 +659,17 @@ export function KeyboardShortcuts() {
               useDagStore.getState().dispatchAtomic(kfOps, 'user', 'delete keyframe');
               useTimelineSelection.getState().setActiveKeyframe(null);
               e.preventDefault();
+              return;
+            }
+            // #1483 — with the pointer over the timeline, Delete is for keys and nothing else.
+            // Falling through here deleted the selected OBJECT: the key delete above clears the
+            // key selection, so a second Delete, the obvious way to delete the next key, reached
+            // the node delete below. Say why no key went instead.
+            if (pointerOverTimeline()) {
+              e.preventDefault();
+              useNotificationStore
+                .getState()
+                .notify({ severity: 'info', message: noKeyDeletedReason() });
               return;
             }
           }
