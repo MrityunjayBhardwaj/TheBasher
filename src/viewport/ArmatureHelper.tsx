@@ -37,9 +37,9 @@ import type { ReferenceRig } from '../app/animate/referenceRigs';
 import { skeletonObjectFrames } from './skeletonObjectPose';
 import { useTimeStore } from '../app/stores/timeStore';
 import { useViewportStore } from '../app/stores/viewportStore';
-import { useSelectionStore } from '../app/stores/selectionStore';
 import { useBoneSelectionStore } from '../app/stores/boneSelectionStore';
 import { getActiveBone } from '../app/boneSelection';
+import { armatureModeFor } from '../app/armatureMode';
 import { selectNode, type SelectClickLike } from './selectNodeOnClick';
 import { pickBone } from './armaturePick';
 import type { SkeletonObject } from '../app/skeletonObjects';
@@ -251,9 +251,11 @@ export function ArmatureHelper({
     // id, so an unroutable click still reaches OrbitControls, which is what
     // every other picker in the viewport does.
     if (!nodeId) return;
-    // #1056 — a first click on a skeleton Object's bones selects the OBJECT, as a click on an
-    // armature does in object mode. Its bones pick once it is the thing being worked on.
-    if (useSelectionStore.getState().primaryNodeId !== nodeId) {
+    // #1335 — in object mode a click on the bones selects the OBJECT, as a click on an armature
+    // does in Blender's object mode; its bones pick in Edit and Pose mode. (Before the modes, the
+    // second click on a selected rig picked a bone, which made every click on a selected
+    // character's torso a bone pick.)
+    if (armatureModeFor(nodeId) === 'object') {
       selectNode(nodeId, e);
       return;
     }
@@ -281,7 +283,11 @@ export function ArmatureHelper({
     const playhead = useTimeStore.getState().seconds;
     // #1179 — posed and placed by the SAME function Frame Selected measures, so the camera
     // fits exactly the bones drawn here.
-    const standalone = standaloneInputs.map((o) => skeletonObjectFrames(o, playhead));
+    // #1335 — the armature in Edit mode draws its REST bones: Edit mode edits the rest, and
+    // Blender draws edit bones, never the pose, there.
+    const standalone = standaloneInputs.map((o) =>
+      skeletonObjectFrames(armatureModeFor(o.id) === 'edit' ? { ...o, pose: null } : o, playhead),
+    );
     const armatures = standalone;
     const frames = armatures.flat();
 

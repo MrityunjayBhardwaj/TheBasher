@@ -56,6 +56,7 @@ import { useChromeStore } from './stores/chromeStore';
 import { useEditorStore, type ActiveTool } from './stores/editorStore';
 import { useSelectionStore } from './stores/selectionStore';
 import { useRenameStore } from './stores/renameStore';
+import { toggleArmatureMode } from './armatureMode';
 import { useNotificationStore } from './stores/notificationStore';
 import { useBoxSelectStore } from './stores/boxSelectStore';
 import { getViewportSelectableIds } from './selectableNodes';
@@ -475,6 +476,16 @@ export function KeyboardShortcuts() {
         return;
       }
 
+      // #1335 — Ctrl+Tab toggles Pose mode on a selected armature, as in Blender. Above the
+      // no-modifier guard, which would drop it. Chrome keeps Ctrl+Tab for switching browser tabs
+      // and never delivers it to the page, so the toolbar's mode menu is the road there for a
+      // director; the key is honoured wherever it arrives. Not an armature: the key falls through
+      // to the guard and does nothing, as before.
+      if (cmd && !e.altKey && !e.shiftKey && e.key === 'Tab' && toggleArmatureMode('pose')) {
+        e.preventDefault();
+        return;
+      }
+
       // Single-key shortcuts (only when no mod is held).
       if (cmd || e.altKey || e.shiftKey) return;
 
@@ -726,6 +737,12 @@ export function KeyboardShortcuts() {
           useViewportStore.getState().toggleCameraProjection();
           return;
         case 'Tab':
+          // #1335 — with an armature selected, Tab toggles Edit mode, as in Blender (Ctrl+Tab,
+          // Pose mode, is handled above the no-modifier guard).
+          if (toggleArmatureMode('edit')) {
+            e.preventDefault();
+            return;
+          }
           // Cycle editor space: 3D Viewport → 2D View → Video → 3D
           // (SPACE_CYCLE; Blender's Tab idiom, extended for the compositor).
           // Skip when the user is typing — already handled by isTypingTarget

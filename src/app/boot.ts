@@ -585,6 +585,11 @@ export function boot(): Promise<void> {
       void import('./stores/boneSelectionStore').then((m) => {
         w.__basher_bone = m.useBoneSelectionStore;
       });
+      // #1335 — the armature mode (Object / Edit / Pose): UI state, read by e2e to assert a mode
+      // switch writes nothing to the graph.
+      void import('./armatureMode').then((m) => {
+        w.__basher_armature_mode = { get: m.getArmatureMode, set: m.setArmatureMode };
+      });
       // v0.6 #4 W5 — threeRef (editor camera + controls target) exposed so the
       // click-to-select regression e2e (p6-w5-first-run) can project a box's
       // world position to canvas pixels and dispatch a REAL viewport click —

@@ -13,6 +13,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import * as THREE from 'three';
 import { canToggleViewLock, toggleViewLock } from './viewLock';
+import { useArmatureModeStore } from './stores/armatureModeStore';
 import { useBoneSelectionStore } from './stores/boneSelectionStore';
 import { useSelectionStore } from './stores/selectionStore';
 import { useViewportStore } from './stores/viewportStore';
@@ -36,6 +37,7 @@ describe('toggleViewLock', () => {
   beforeEach(() => {
     useViewportStore.getState().setViewLock(null);
     useBoneSelectionStore.getState().clear();
+    useArmatureModeStore.getState().clear();
     selectNode(null);
   });
 
@@ -53,8 +55,18 @@ describe('toggleViewLock', () => {
   it('carries the active bone, spelled as the live tree spells it', () => {
     selectNode('group-1');
     useBoneSelectionStore.getState().selectBone('group-1', 'mixamorigLeftLeg', ['Hips', 'LeftLeg']);
+    // #1335 — a bone is live in Pose (or Edit) mode; in object mode the lock takes the Object.
+    useArmatureModeStore.getState().setMode('group-1', 'pose');
     toggleViewLock();
     expect(useViewportStore.getState().viewLock?.boneName).toBe('mixamorigLeftLeg');
+  });
+
+  it('in object mode, locks to the Object even with a bone stored (#1335)', () => {
+    selectNode('group-1');
+    useBoneSelectionStore.getState().selectBone('group-1', 'mixamorigLeftLeg', ['Hips', 'LeftLeg']);
+    useArmatureModeStore.getState().clear();
+    toggleViewLock();
+    expect(useViewportStore.getState().viewLock).toEqual({ nodeId: 'group-1', boneName: null });
   });
 
   it('🔴 offers itself exactly when it will act', () => {

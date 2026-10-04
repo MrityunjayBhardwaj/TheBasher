@@ -175,8 +175,8 @@ test('#1156 — a director poses the bone they clicked, through the same road th
     .filter((t) => t.onScreen && t.name !== 'Root')
     .sort((a, b) => b.length - a.length);
 
-  // The armature Object (the one the mesh's Armature modifier deforms by) is selected first: its
-  // bones pick once it is the thing being worked on (Blender's object mode).
+  // The armature Object (the one the mesh's Armature modifier deforms by) is selected first, then
+  // put in Pose mode from the toolbar's mode menu: its bones pick in Pose mode (#1335).
   const armatureId = await page.evaluate(() => {
     const nodes = (window as unknown as Win).__basher_dag.getState().state.nodes;
     return (
@@ -186,6 +186,7 @@ test('#1156 — a director poses the bone they clicked, through the same road th
   });
   expect(armatureId, 'no Armature modifier — the character is not native').not.toBeNull();
   await page.getByTestId(`scene-tree-row-${armatureId}`).click();
+  await page.getByTestId('armature-mode').selectOption('pose');
   await page.waitForTimeout(300);
 
   let picked: string | null = null;

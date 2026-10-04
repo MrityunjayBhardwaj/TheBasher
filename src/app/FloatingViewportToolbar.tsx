@@ -41,6 +41,12 @@
 // REF: docs/UI-SPEC.md §5.7, §5.3; .planning/phases/v06.4-director-ux/PLAN.md
 // (W1-T3 — the single-pill inventory); memory/project_p6_w7_plan.md C1.
 
+import {
+  setArmatureMode,
+  useArmatureMode,
+  usePrimaryIsArmature,
+  type ArmatureMode,
+} from './armatureMode';
 import { useState, type ReactNode } from 'react';
 import { frameAll, frameSelected } from './character/framing';
 import { exportDagJson } from './exportDag';
@@ -286,6 +292,9 @@ export function FloatingViewportToolbar(): ReactNode {
   const toggleTimelineDrawer = useViewportStore((s) => s.toggleTimelineDrawer);
   const lookThrough = useViewportStore((s) => s.lookThroughCamera);
   const toggleLookThroughCamera = useViewportStore((s) => s.toggleLookThroughCamera);
+  // #1335 — the armature mode menu, shown while an armature is the primary selection.
+  const primaryIsArmature = usePrimaryIsArmature();
+  const armatureMode = useArmatureMode();
 
   // The asset Library lives in the LeftSidebar's "Assets" tab (UX backlog #6,
   // one home — V34). The toolbar button selects that tab and expands the
@@ -383,6 +392,25 @@ export function FloatingViewportToolbar(): ReactNode {
           </button>
         ))}
       </div>
+      {primaryIsArmature ? (
+        <>
+          <Divider />
+          {/* #1335 — Object / Edit / Pose for the selected armature (Blender's header mode
+              menu). Tab toggles Edit; Ctrl+Tab toggles Pose where the browser delivers it. */}
+          <select
+            value={armatureMode}
+            onChange={(e) => setArmatureMode(e.target.value as ArmatureMode)}
+            data-testid="armature-mode"
+            aria-label="Armature mode"
+            title="Armature mode (Tab: Edit, Ctrl+Tab: Pose)"
+            className="h-7 rounded-md border border-border bg-bg px-1.5 text-[11px] text-fg focus-visible:border-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+          >
+            <option value="object">Object mode</option>
+            <option value="edit">Edit mode</option>
+            <option value="pose">Pose mode</option>
+          </select>
+        </>
+      ) : null}
       <Divider />
       {/* Play ▶ transport (v0.6 #4 — the re-home for the deleted `run` mode;
           D-06: run became playback). Toggles useTimeStore.playing — the same
