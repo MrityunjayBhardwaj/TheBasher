@@ -245,6 +245,61 @@ describe('P7.1 — dispatchRetimeKeyframe (2-Mutator atomic composite, D-01/D-03
     expect(restored.map((k) => k.time).sort((a, b) => a - b)).toEqual([1.0, 2.0]);
   });
 
+  it('#1482 — the moved key keeps its ease, handle type and handles, and its neighbours are untouched', () => {
+    // The table #1482 was filed from: before the fix, the moved key lost `ease` and `handleType`
+    // and got new handles, the key before it gained an out handle, and the key after it had its in
+    // handle rewritten — a remove + insert, where the insert split the segment it landed in.
+    const keys = [
+      { time: 0, value: [0, 0, 0], easing: 'cubic' },
+      {
+        time: 1,
+        value: [5, 5, 5],
+        easing: 'cubic',
+        ease: 'out',
+        handleType: 'free',
+        inHandle: { time: -0.3, value: [4, 4, 4] },
+        outHandle: { time: 0.3, value: [5, 5, 5] },
+      },
+      {
+        time: 2,
+        value: [1, 1, 1],
+        easing: 'cubic',
+        handleType: 'aligned',
+        inHandle: { time: -0.4, value: [2, 2, 2] },
+        outHandle: { time: 0.4, value: [0, 0, 0] },
+      },
+      { time: 3, value: [0, 0, 0], easing: 'cubic' },
+    ];
+    useDagStore.getState().hydrate(seedWithSample(keys as never));
+
+    const res = dispatchRetimeKeyframe({
+      channelId: 'box_position_channel',
+      fromTime: 1,
+      toTime: 1.25,
+    });
+    expect(res).toEqual({ ok: true });
+
+    const after = (
+      useDagStore.getState().state.nodes['box_position_channel'].params as {
+        keyframes: unknown[];
+      }
+    ).keyframes;
+    expect(after).toEqual([keys[0], { ...keys[1], time: 1.25 }, keys[2], keys[3]]);
+    expect(useDagStore.getState().undoStack).toHaveLength(1);
+  });
+
+  it('#1482 — a move below 0 s is refused and writes nothing (the keyframe schema refuses it)', () => {
+    useDagStore.getState().hydrate(seedWithSample([{ time: 1.0, value: V, easing: 'cubic' }]));
+    const before = JSON.stringify(useDagStore.getState().state);
+    const res = dispatchRetimeKeyframe({
+      channelId: 'box_position_channel',
+      fromTime: 1.0,
+      toTime: -0.5,
+    });
+    expect(res.ok).toBe(false);
+    expect(JSON.stringify(useDagStore.getState().state)).toBe(before);
+  });
+
   it('no sample at fromTime → { ok:false }, DAG byte-unchanged', () => {
     useDagStore.getState().hydrate(seedWithSample([{ time: 1.0, value: V, easing: 'cubic' }]));
     const before = JSON.stringify(useDagStore.getState().state);
