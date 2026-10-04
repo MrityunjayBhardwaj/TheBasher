@@ -299,6 +299,9 @@ const TAKERS: string[] = [
   'evaluate@src/core/dag/evaluator.ts',
   'foldOverlays@src/app/cookState.ts',
   'gltfNodeWorldPosition@src/app/gltfNodeWorld.ts',
+  // #1337 — solving a placed bone back through a pose layer stack reads the pose under the layer;
+  // the bone gizmo hands it the shared UI cache.
+  'layerValueForDrawn@src/app/animate/invertPoseStack.ts',
   'makeStatefulDriverChannelValue@src/app/statefulOps.ts',
   'nativeBoneWorldPosition@src/app/gltfNodeWorld.ts',
   'nodeRefCandidates@src/app/nodeRefCandidates.ts',

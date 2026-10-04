@@ -11,6 +11,10 @@
 // So the gizmo, the panel and the agent produce the same ops for the same pose. The whole drag is
 // one undo step (`startGizmoDrag` / `endGizmoDrag`, shared with every other gizmo).
 //
+// #1337 — a drag places the bone as it is DRAWN, after every layer has blended, so the value is
+// solved back through the layer stack (`layerValueForDrawn`) before it is stored or keyed: into an
+// additive layer, or one at half weight, the bone then stays where the hand left it.
+//
 // The target is read from the graph at each move rather than taken from the last render, so a move
 // acts on the graph as it is then. (The layer a write lands in does not depend on it:
 // `handPoseOps` finds the layer itself.) Not pinned by a test: no case measured yet tells the two
@@ -35,7 +39,9 @@ import { useNotificationStore } from './stores/notificationStore';
 import { posedBoneMatrices } from '../nodes/armatureDeform';
 import { poseTargetForBone, type PoseComponent } from './animate/poseTargetForBone';
 import { commitObjectBonePose } from './animate/autoKeyCommit';
-import { boneDragValue, boneGizmoSeed } from './boneGizmoMath';
+import { boneDragLocal, boneGizmoSeed, memberDegrees } from './boneGizmoMath';
+import { layerValueForDrawn } from './animate/invertPoseStack';
+import type { Quat, Vec3 } from '../nodes/types';
 import type { PoseLayerParams } from '../nodes/PoseLayer';
 import type { EulerOrder } from '../nodes/bonePose';
 
@@ -142,8 +148,32 @@ export function BoneGizmo() {
     );
     const order: EulerOrder =
       member && member.rotationMode !== 'quaternion' ? member.rotationMode : 'ZYX';
-    const value = boneDragValue(component, d.bone, d.proxy, proxy.matrixWorld, d.parent, order);
-    const res = commitObjectBonePose(now, component, value);
+    const local = boneDragLocal(d.bone, d.proxy, proxy.matrixWorld, d.parent);
+    const drawn = component === 'rotation' ? local.quaternion : local[component];
+    // #1337 — what the layer must store so the bone is DRAWN where the hand put it, through every
+    // layer's blend. No layer yet: the first pose inserts an override at weight 1 on top, which
+    // stores the drawn value as it is.
+    const solved = now.layerId
+      ? layerValueForDrawn(
+          useDagStore.getState().state,
+          now.objectId,
+          now.layerId,
+          now.bone,
+          component,
+          drawn,
+          useTimeStore.getState().seconds,
+          uiEvaluatorCache,
+        )
+      : ({ ok: true, value: drawn } as const);
+    const res = solved.ok
+      ? commitObjectBonePose(
+          now,
+          component,
+          component === 'rotation'
+            ? memberDegrees(solved.value as Quat, order)
+            : (solved.value as Vec3),
+        )
+      : solved;
     if (!res.ok && !saidRef.current) {
       saidRef.current = true;
       useNotificationStore.getState().notify({ severity: 'info', message: res.reason });

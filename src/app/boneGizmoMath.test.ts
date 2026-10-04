@@ -1,6 +1,21 @@
 import { describe, expect, it } from 'vitest';
 import * as THREE from 'three';
-import { boneDragValue, boneGizmoSeed } from './boneGizmoMath';
+import { boneDragLocal, boneGizmoSeed, memberDegrees } from './boneGizmoMath';
+import type { PoseComponent } from './animate/poseTargetForBone';
+import type { EulerOrder } from '../nodes/bonePose';
+
+/** The drawn value of `component` in a member's units: what an override at weight 1 stores. */
+function boneDragValue(
+  component: PoseComponent,
+  bone0: THREE.Matrix4,
+  proxy0: THREE.Matrix4,
+  proxy: THREE.Matrix4,
+  parent: THREE.Matrix4,
+  order: EulerOrder,
+): readonly number[] {
+  const local = boneDragLocal(bone0, proxy0, proxy, parent);
+  return component === 'rotation' ? memberDegrees(local.quaternion, order) : local[component];
+}
 import { quatFromEuler } from '../nodes/bonePose';
 
 const DEG = Math.PI / 180;

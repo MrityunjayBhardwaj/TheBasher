@@ -409,6 +409,14 @@ function layerBlendOf(params: PoseLayerParams): LayerBlend {
 }
 
 /**
+ * #1337 — the layer's weight over time as it plays: its keyed weight curve (unless muted), else the
+ * static weight. Unclamped, as the evaluator reads it; the fold clamps it to [0, 1].
+ */
+export function poseLayerWeightOf(params: PoseLayerParams): (seconds: number) => number {
+  return weightOf(params, playedChannels(params.channels));
+}
+
+/**
  * #1225 — the range a base layer's keys cover, from the earliest key to the latest, and #1456 — the
  * times that read every pose the layer holds: every key, and the fills each segment's interpolation
  * needs (`layerSampleTimes`). The weight's keys are not motion and do not count. Nothing when the

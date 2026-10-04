@@ -198,6 +198,9 @@ const CONSUMERS: Record<string, Decision> = {
   // this hands over, so evaluating at t here would sample the motion twice. It is handed the
   // authored state SceneFromDAG holds, like the source-rig read beside it.
   'src/app/skeletonObjects.ts': authored('fixed-ctx-by-design'),
+  // #1337 — evaluates the wire feeding a pose layer at frame 0 and samples it at the playhead, as
+  // `skeletonObjects` does: the pose wire carries time in its `sample`, not in the ctx.
+  'src/app/animate/invertPoseStack.ts': authored('fixed-ctx-by-design'),
   // #1250 — the source rigs Show Source Rig draws, and why it skips the rest: the read that sat in
   // SceneFromDAG, moved out so every skip reason is decided in one place the View menu can count.
   // It evaluates each retarget's source wire and target rig at the default ctx, DELIBERATELY, for
@@ -331,7 +334,9 @@ describe('#582 — who evaluates the graph, and which params they need', () => {
     // resolver they already called (uncached, a driver re-ran the walk's retarget every frame).
     // 54 → 55 at #1250, not a new road: the source-rig read moved out of SceneFromDAG (which
     // still evaluates) into `referenceRigs.ts`, so its skip reasons can be counted.
-    expect(evaluatorConsumers()).toHaveLength(55); // 39 -> 40 at #935 (placement) (the motion resolver)
+    // 55 → 56 at #1337, a new road: keying a placed bone into a pose layer reads the pose that
+    // arrives under that layer, to solve the layer's blend backwards (declared above as fixed-ctx).
+    expect(evaluatorConsumers()).toHaveLength(56); // 39 -> 40 at #935 (placement) (the motion resolver)
   });
 
   it('every reason is load-bearing — no member of any union is decorative', () => {
