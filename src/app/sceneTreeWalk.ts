@@ -19,6 +19,7 @@ import { importedChildOf } from './importedChild';
 import { chainSocketOf, isSceneLaneWrapper } from './operatorChain';
 import { hierarchySocketForKind } from './sceneHierarchy';
 import { collectionMembersOf, sceneCollectionsOf } from './collections';
+import { resolveActiveRigNode, resolveRigLightSources } from './resolveRigLightSources';
 
 export interface TreeRow {
   /** Stable key for React. */
@@ -318,6 +319,16 @@ export function buildSceneTreeRows(state: DagState): TreeRow[] {
         socket: 'lights',
         index: i,
       });
+    });
+  }
+  // #1480 — and the active lighting profile's lights, the ones the rig band draws
+  // (`resolveRigLightSources`), so each has a row and an eye like a scene light. The row's parent is
+  // the rig's own `lights` list — the socket the light is wired to, which a drag reorders.
+  const rigId = resolveActiveRigNode(state);
+  if (rigId) {
+    resolveRigLightSources(state).forEach((lightId, i) => {
+      if (ctx.visited.has(lightId)) return;
+      walkOneAsChild(ctx, lightId, 1, sceneRef.node, { nodeId: rigId, socket: 'lights', index: i });
     });
   }
   // #231 Inc 3.2 — project the scene's CAMERAS as depth-1 rows (Blender shows

@@ -11,6 +11,7 @@ import type { DagState } from '../core/dag/state';
 import type { NodeId, Op } from '../core/dag/types';
 import { collectionOps } from '../core/import/modelImport';
 import { isCameraNode } from './cameraNode';
+import { resolveRigLightSources } from './resolveRigLightSources';
 
 const refsOf = (binding: unknown): NodeId[] =>
   (Array.isArray(binding) ? binding : binding ? [binding] : [])
@@ -153,10 +154,11 @@ export function newCollectionOps(state: DagState): { ops: Op[]; collectionId: No
 
 /**
  * #397 — the scene's objects: what a collection can hold and an eye can hide. Every node the scene
- * holds through its `children` and `lights` bands, at any depth, and every camera (#1453 — a
- * camera floats outside the scene's bands, and Blender lists it in a collection like any object).
- * Their drawers all honour `hiddenNodes`: the scene's children, the lights band and its helpers,
- * and the camera frustums.
+ * holds through its `children` and `lights` bands, at any depth, every camera (#1453 — a camera
+ * floats outside the scene's bands, and Blender lists it in a collection like any object), and the
+ * active lighting profile's lights (#1480 — `resolveRigLightSources`, the lights the rig band
+ * draws). Their drawers all honour `hiddenNodes`: the scene's children, the lights band and its
+ * helpers, the rig band, and the camera frustums.
  */
 export function collectableNodes(state: DagState): ReadonlySet<NodeId> {
   const sceneId = state.outputs.scene?.node;
@@ -170,6 +172,7 @@ export function collectableNodes(state: DagState): ReadonlySet<NodeId> {
     stack.push(...refsOf(state.nodes[id].inputs?.children));
   }
   if (scene) for (const id of Object.keys(state.nodes)) if (isCameraNode(state, id)) out.add(id);
+  for (const id of resolveRigLightSources(state)) if (state.nodes[id]) out.add(id);
   return out;
 }
 

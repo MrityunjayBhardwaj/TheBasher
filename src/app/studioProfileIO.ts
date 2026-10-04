@@ -22,6 +22,7 @@ import type { DagState } from '../core/dag/state';
 import type { Op } from '../core/dag/types';
 import { ensureProfileSelectOps, enumerateProfiles, uniqueProfileName } from './studioProfiles';
 import { nextConstraintOrder } from './nodeConstraints';
+import { linkIntoActiveCollection } from './collections';
 import { isAreaLightNode, lightParamsOf } from './lightNode';
 
 type Vec3 = [number, number, number];
@@ -262,5 +263,10 @@ export function buildImportProfilesOps(
     });
   }
 
-  return { ops, activatedName };
+  // #1480 — every light the file makes joins the active collection, as an importer links every
+  // object it makes (`intoActiveCollection`).
+  const lightIds = ops.flatMap((op) =>
+    op.type === 'addNode' && op.nodeType === 'Object' ? [op.nodeId] : [],
+  );
+  return { ops: linkIntoActiveCollection(state, ops, lightIds), activatedName };
 }

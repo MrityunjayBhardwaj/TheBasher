@@ -19,6 +19,7 @@ import type { DagState } from '../core/dag/state';
 import type { Op } from '../core/dag/types';
 import { resolveStudioLightTransform } from './resolveStudioLightTransform';
 import { nextConstraintOrder } from './nodeConstraints';
+import { linkIntoActiveCollection } from './collections';
 
 type Vec3 = [number, number, number];
 
@@ -117,5 +118,6 @@ export function buildAddStudioLightOps(
       },
     },
   ];
-  return { ops, lightId };
+  // #1480 — into the active collection, as every light the Add menu makes joins it (#1453).
+  return { ops: linkIntoActiveCollection(state, ops, [lightId]), lightId };
 }

@@ -49,7 +49,12 @@ export type EdgeKind =
   // rewrites through). A bone name is stored by value in records on BOTH sides of the armature Object
   // (its skeleton and layers upstream; the Armature modifiers, their mesh data and the retarget bone
   // maps downstream), which no single-direction kind reaches.
-  | 'rig';
+  | 'rig'
+  // #1477 — the scene's ACTIVE collection, from any root. Every object a plan adds joins it, as
+  // Blender links every object it adds into the active collection (`linkIntoActiveCollection`);
+  // that join is a `members` connect onto the collection, which no edge kind above reaches from a
+  // root the new object does not yet hang off. Reaches nothing when the scene itself is active.
+  | 'active-collection';
 
 export interface ClosureSpec {
   /** Root node ids the closure expands from. */

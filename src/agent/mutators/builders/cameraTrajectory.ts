@@ -82,6 +82,7 @@ import type { DagState } from '../../../core/dag/state';
 import type { NodeId, Op } from '../../../core/dag/types';
 import { isCameraNode } from '../../../app/cameraNode';
 import { nextConstraintOrder } from '../../../app/nodeConstraints';
+import { linkIntoActiveCollection } from '../../../app/collections';
 
 const Vec3Schema = z.tuple([z.number(), z.number(), z.number()]);
 
@@ -197,7 +198,8 @@ export const cameraTrajectoryMutator: MutatorDefinition<CameraTrajectorySpec> = 
         curveDataIdFor(spec),
         curveObjectIdFor(spec),
       ],
-      followedEdges: ['parent'],
+      // #1477 — the path's Object joins the active collection, so the plan reaches it.
+      followedEdges: ['parent', 'active-collection'],
     };
   },
   preconditions(spec, _closure, state) {
@@ -342,6 +344,7 @@ export const cameraTrajectoryMutator: MutatorDefinition<CameraTrajectorySpec> = 
       });
     }
 
-    return ops;
+    // #1477 — and into the active collection, as every object added to the scene joins it.
+    return linkIntoActiveCollection(state, ops, [objectId]);
   },
 };
