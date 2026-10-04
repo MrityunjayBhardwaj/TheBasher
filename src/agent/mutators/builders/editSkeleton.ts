@@ -65,6 +65,13 @@ const Edit = z.discriminatedUnion('op', [
     axisOnly: z.boolean().optional(),
   }),
   z.object({ op: z.literal('preferredAngle'), bone: BoneName, angle: Vec3.nullable() }),
+  // #1341 — mirror bones with a side in their name onto their twins.
+  z.object({
+    op: z.literal('symmetrize'),
+    bones: z.array(BoneName).min(1),
+    axis: z.enum(['X', 'Y', 'Z']).optional(),
+    direction: z.enum(['negative', 'positive']).optional(),
+  }),
 ]);
 
 const EditSkeletonSpec = z.object({
@@ -103,7 +110,8 @@ export const editSkeletonMutator: MutatorDefinition<EditSkeletonSpec> = {
     '(a child of a joint), subdivide (split the link to its one child), delete (children go to ' +
     'its parent unless reparent is false), parent (null = root), reroot, transform (rest ' +
     'position/rotation/scale; children follow or stay), orient (aim +Y at the child, roll +Z ' +
-    'toward `up`), or preferredAngle (the IK start bend). Joints not moved keep their place.',
+    'toward `up`), preferredAngle (the IK start bend), or symmetrize (mirror L/R-named bones onto ' +
+    'their twins, made or updated). Joints not moved keep their place.',
   spec: EditSkeletonSpec,
   specExample: { object: 'node_id', edit: { op: 'extrude', from: 'Bone' } },
   contract: {

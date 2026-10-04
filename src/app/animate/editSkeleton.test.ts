@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import * as THREE from 'three';
-import { applySkeletonEdit, boneNameFor, type SkeletonEdit } from './editSkeleton';
+import { applySkeletonEdit, boneNameFor, flipSideName, type SkeletonEdit } from './editSkeleton';
 import { boneWorldMatrices } from '../../viewport/boneShape';
 import type { BoneSpec } from '../../nodes/types';
 
@@ -317,5 +317,104 @@ describe('#1340 — orient and roll: each mode against a hand-computed frame', (
     expect(set[1].preferredAngle).toEqual([0, 0, 0.5]);
     const cleared = run({ op: 'preferredAngle', bone: 'B', angle: null }, set).bones;
     expect('preferredAngle' in cleared[1]).toBe(false);
+  });
+});
+
+describe('#1341 — symmetrize', () => {
+  it('flips a side in a name by Blender’s rules, plus a capitalised Left/Right word inside it', () => {
+    const cases: [string, string][] = [
+      ['Arm_L', 'Arm_R'],
+      ['arm-r', 'arm-l'],
+      ['hand l', 'hand r'],
+      ['L_hand', 'R_hand'],
+      ['Left_arm', 'Right_arm'],
+      ['arm_right', 'arm_left'],
+      ['RIGHTFOOT', 'LEFTFOOT'],
+      ['mixamorig_LeftArm', 'mixamorig_RightArm'],
+      ['mixamorig_RightHandIndex1', 'mixamorig_LeftHandIndex1'],
+      ['Spine', 'Spine'],
+      ['Hips', 'Hips'],
+      ['Ball', 'Ball'],
+    ];
+    for (const [a, b] of cases) expect(flipSideName(a), a).toBe(b);
+  });
+
+  // Spine sits on the plane (x = 0) with no turn, so it is its own mirror; a left arm hangs off it.
+  const BODY: BoneSpec[] = [
+    { name: 'Spine', parent: -1, position: [0, 1, 0], rotation: [0, 0, 0] },
+    { name: 'Arm_L', parent: 0, position: [0.3, 0.4, 0.05], rotation: [0.2, -0.4, -0.9] },
+    {
+      name: 'Hand_L',
+      parent: 1,
+      position: [0, 0.5, 0],
+      rotation: [0.3, 0.1, -0.2],
+      preferredAngle: [0, 0, 0.4],
+    },
+    { name: 'Tip_L', parent: 2, position: [0.02, 0.15, 0.01], rotation: [0, 0, 0] },
+  ];
+  const head = (bones: readonly BoneSpec[], n: string) =>
+    new THREE.Vector3().setFromMatrixPosition(worldOf(bones).get(n)!);
+
+  it('mirrors a left arm into a right one: heads at x → −x, parents by flipped name, preferred angle kept', () => {
+    const r = run({ op: 'symmetrize', bones: ['Arm_L', 'Hand_L', 'Tip_L'] }, BODY);
+    expect(r.added).toEqual(['Arm_R', 'Hand_R', 'Tip_R']);
+    expect(r.bones.slice(0, 4)).toEqual(BODY);
+    expect(parentName(r.bones, 'Arm_R')).toBe('Spine');
+    expect(parentName(r.bones, 'Hand_R')).toBe('Arm_R');
+    expect(parentName(r.bones, 'Tip_R')).toBe('Hand_R');
+    for (const side of ['Arm', 'Hand', 'Tip']) {
+      const l = head(r.bones, `${side}_L`);
+      expect(
+        head(r.bones, `${side}_R`).distanceTo(new THREE.Vector3(-l.x, l.y, l.z)),
+        side,
+      ).toBeLessThan(1e-9);
+    }
+    expect(r.bones.find((b) => b.name === 'Hand_R')!.preferredAngle).toEqual([0, 0, 0.4]);
+  });
+
+  it('equal rotations pose the two sides as mirror images', () => {
+    const twins = run({ op: 'symmetrize', bones: ['Arm_L', 'Hand_L', 'Tip_L'] }, BODY).bones;
+    // The same local rotation on both hands: the right tip lands at the left tip mirrored.
+    let posed = twins;
+    for (const n of ['Hand_L', 'Hand_R']) {
+      posed = run(
+        { op: 'transform', bone: n, rotation: [0.7, -0.3, 1.1], children: 'follow' },
+        posed,
+      ).bones;
+    }
+    const l = head(posed, 'Tip_L');
+    expect(head(posed, 'Tip_R').distanceTo(new THREE.Vector3(-l.x, l.y, l.z))).toBeLessThan(1e-9);
+  });
+
+  it('updates a twin that exists, and with both listed takes the −X side as the source by default', () => {
+    const twins = run({ op: 'symmetrize', bones: ['Arm_L', 'Hand_L', 'Tip_L'] }, BODY).bones;
+    // Move the left hand, then symmetrize both sides: the left (at +x here) is NOT the −X side.
+    const moved = run(
+      { op: 'transform', bone: 'Hand_L', position: [0, 0.8, 0], children: 'follow' },
+      twins,
+    ).bones;
+    const keepRight = run({ op: 'symmetrize', bones: ['Hand_L', 'Hand_R'] }, moved).bones;
+    // −X → +X: the right hand (x < 0) is the source, so the left hand is put back opposite it.
+    const r = head(keepRight, 'Hand_R');
+    expect(head(keepRight, 'Hand_L').distanceTo(new THREE.Vector3(-r.x, r.y, r.z))).toBeLessThan(
+      1e-9,
+    );
+    expect(r.distanceTo(head(moved, 'Hand_R'))).toBeLessThan(1e-9);
+    const fromLeft = run(
+      { op: 'symmetrize', bones: ['Hand_L', 'Hand_R'], direction: 'positive' },
+      moved,
+    ).bones;
+    const l = head(fromLeft, 'Hand_L');
+    expect(head(fromLeft, 'Hand_R').distanceTo(new THREE.Vector3(-l.x, l.y, l.z))).toBeLessThan(
+      1e-9,
+    );
+    expect(keepRight.length).toBe(moved.length);
+  });
+
+  it('refuses when nothing listed has a side', () => {
+    expect(applySkeletonEdit(BODY, { op: 'symmetrize', bones: ['Spine'] })).toMatchObject({
+      ok: false,
+      reason: expect.stringMatching(/side in its name/),
+    });
   });
 });

@@ -90,7 +90,19 @@ export type SkeletonEdit =
       readonly axisOnly?: boolean;
     }
   /** #1340 — store `bone`'s preferred angle (XYZ radians), or clear it with null. */
-  | { readonly op: 'preferredAngle'; readonly bone: string; readonly angle: Vec3 | null };
+  | { readonly op: 'preferredAngle'; readonly bone: string; readonly angle: Vec3 | null }
+  /**
+   * #1341 — make the skeleton symmetric across the armature's plane through the origin ⟂ `axis`:
+   * each of `bones` with a side in its name (`flipSideName`) gets a mirror twin, made or updated.
+   * When both twins are listed, `direction` picks the source, as Blender's does: `negative` copies
+   * the one on the − side onto the + side.
+   */
+  | {
+      readonly op: 'symmetrize';
+      readonly bones: readonly string[];
+      readonly axis?: 'X' | 'Y' | 'Z';
+      readonly direction?: 'negative' | 'positive';
+    };
 
 /**
  * #1340 — what an oriented joint's +Z turns toward, Blender's roll types in joint terms:
@@ -266,6 +278,35 @@ function frameFor(aim: THREE.Vector3, up: THREE.Vector3): THREE.Quaternion | nul
   z.normalize();
   const x = new THREE.Vector3().crossVectors(aim, z);
   return new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().makeBasis(x, aim, z));
+}
+
+/**
+ * #1341 — a bone name with its side flipped, or the name itself when it has no side. Blender's rules
+ * (`BLI_string_flip_side_name`): a side letter L/R (either case) after a final separator `.` `_`
+ * `-` or space, or before a leading one; or `left`/`right` (any case, kept) at the start or the end.
+ * ONE addition, measured on the example character: a capitalised `Left`/`Right` word inside the name
+ * (`mixamorig_LeftArm`), which Blender misses and Houdini's token rename finds.
+ */
+export function flipSideName(name: string): string {
+  const swap = (side: string) => {
+    const map: Record<string, string> = { L: 'R', R: 'L', l: 'r', r: 'l' };
+    return map[side] ?? side;
+  };
+  const suffix = /^(.*[._\- ])([LRlr])$/.exec(name);
+  if (suffix) return suffix[1] + swap(suffix[2]);
+  const prefix = /^([LRlr])([._\- ].*)$/.exec(name);
+  if (prefix) return swap(prefix[1]) + prefix[2];
+  const word = (w: string) =>
+    ({ left: 'right', right: 'left', Left: 'Right', Right: 'Left', LEFT: 'RIGHT', RIGHT: 'LEFT' })[
+      w
+    ] ?? w;
+  const ends = /^(left|right|Left|Right|LEFT|RIGHT)(.*)$/.exec(name);
+  if (ends) return word(ends[1]) + ends[2];
+  const tail = /^(.*?)(left|right|Left|Right|LEFT|RIGHT)$/.exec(name);
+  if (tail) return tail[1] + word(tail[2]);
+  const inner = /^(.*?[a-z0-9_])(Left|Right)([A-Z0-9_].*)$/.exec(name);
+  if (inner) return inner[1] + word(inner[2]) + inner[3];
+  return name;
 }
 
 export function applySkeletonEdit(
@@ -476,6 +517,78 @@ export function applySkeletonEdit(
         next[at] = { ...next[at], preferredAngle: [...edit.angle] as Vec3 };
       }
       return { ok: true, bones: next, added: [], active: bones[at].name };
+    }
+
+    case 'symmetrize': {
+      const axis = 'XYZ'.indexOf(edit.axis ?? 'X');
+      const normal = new THREE.Vector3(axis === 0 ? 1 : 0, axis === 1 ? 1 : 0, axis === 2 ? 1 : 0);
+      // The mirror S = I − 2nnᵀ, and the twin's frame is −S·R — a half turn about the normal, a
+      // proper rotation — so its local transform is the source's with the translation negated and
+      // the rotation unchanged, and equal rotations pose the two sides as mirror images (Maya's
+      // mirrorJoint behaviour).
+      const mirror = new THREE.Matrix4().makeScale(
+        axis === 0 ? -1 : 1,
+        axis === 1 ? -1 : 1,
+        axis === 2 ? -1 : 1,
+      );
+      const listed = new Set(edit.bones);
+      const sources: number[] = [];
+      for (const name of edit.bones) {
+        const i = find(name);
+        if (i === null) return missing(name);
+        const twin = flipSideName(name);
+        if (twin === name) continue; // no side, nothing to mirror (Blender skips it too)
+        const j = find(twin);
+        if (j !== null && listed.has(twin)) {
+          // Both listed: the direction decides which is the source, by head along the axis.
+          const delta = headOf(worlds[j]).getComponent(axis) - headOf(worlds[i]).getComponent(axis);
+          const iOnNegative = delta > 0;
+          if (delta === 0 || iOnNegative !== ((edit.direction ?? 'negative') === 'negative'))
+            continue;
+        }
+        sources.push(i);
+      }
+      if (sources.length === 0) {
+        return {
+          ok: false,
+          reason:
+            'nothing to mirror: none of the bones has a side in its name (L/R, Left/Right), so none has a twin.',
+        };
+      }
+      const next = bones.map((b) => ({ ...b }));
+      const target = new Map(was);
+      const names = new Set(next.map((b) => b.name));
+      const added: string[] = [];
+      // Twins first, so each twin's parent can be looked up by name below.
+      for (const i of sources) {
+        const twin = flipSideName(bones[i].name);
+        if (!names.has(twin)) {
+          names.add(twin);
+          added.push(twin);
+          next.push({ name: twin, parent: -1, position: [0, 0, 0], rotation: [0, 0, 0] });
+        }
+      }
+      const index = new Map(next.map((b, k) => [b.name, k]));
+      for (const i of sources) {
+        const src = bones[i];
+        const j = index.get(flipSideName(src.name))!;
+        const parentName = src.parent >= 0 ? bones[src.parent].name : null;
+        const twinParent =
+          parentName === null
+            ? -1
+            : (index.get(flipSideName(parentName)) ?? index.get(parentName)!);
+        next[j] = {
+          ...next[j],
+          parent: twinParent,
+          ...(src.preferredAngle ? { preferredAngle: [...src.preferredAngle] as Vec3 } : {}),
+        };
+        // Head at S·p; frame −S·R, which is the half turn about the normal applied to R.
+        const head = headOf(worlds[i]).applyMatrix4(mirror);
+        worlds[i].decompose(_p, _q, _s);
+        const rot = new THREE.Quaternion().setFromAxisAngle(normal, Math.PI).multiply(_q);
+        target.set(next[j].name, new THREE.Matrix4().compose(head, rot, _s.clone()));
+      }
+      return { ok: true, bones: settle(next, target, all), added, active: null };
     }
 
     case 'transform': {

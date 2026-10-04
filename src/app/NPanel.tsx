@@ -4455,6 +4455,26 @@ function EditBoneRow({ nodeId, boneName }: { nodeId: string; boneName: string })
         <button
           type="button"
           className={button}
+          data-testid="edit-bone-symmetrize"
+          title="Mirror this bone and everything below it onto the other side (L ↔ R by name)"
+          onClick={() => {
+            const scope = [at];
+            for (let k = 0; k < scope.length; k++) {
+              bones.forEach((b, i) => {
+                if (b.parent === scope[k]) scope.push(i);
+              });
+            }
+            edit(
+              { op: 'symmetrize', bones: scope.map((i) => bones[i].name) },
+              `symmetrize ${boneName}`,
+            );
+          }}
+        >
+          symmetrize
+        </button>
+        <button
+          type="button"
+          className={button}
           data-testid="edit-bone-reroot"
           title="Make this the root, reversing the chain above it"
           onClick={() => edit({ op: 'reroot', bone: boneName }, `reroot at ${boneName}`)}
