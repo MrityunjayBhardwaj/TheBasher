@@ -172,6 +172,49 @@ describe('#1511 — Apply Scale on an armature carries the scale into the rig', 
     }
   });
 
+  it('a plain child of the group (a prop, a nested group) stays where it is drawn', async () => {
+    // #1512 — the skeleton and skinned meshes take the scale into themselves; every other child is
+    // re-solved by the same compensation plain Apply uses (#1185). Turned and scaled props, and a
+    // group with a pivot, so a compensation that only moved positions would show.
+    const imported = await importBar();
+    const groupId = armatureGroupOf(imported);
+    const s = 2.5;
+    let before = apply(imported, [
+      { type: 'setParam', nodeId: groupId, paramPath: 'scale', value: [s, s, s] },
+      {
+        type: 'addNode',
+        nodeId: 'socket',
+        nodeType: 'Group',
+        params: { position: [-0.4, 0.2, 0], rotation: [10, 0, 20], pivot: [0.3, 0, 0] },
+      },
+      {
+        type: 'connect',
+        from: { node: 'socket', socket: 'out' },
+        to: { node: groupId, socket: 'children' },
+      },
+    ]);
+    before = makeSplitCube(before, {
+      objectId: 'prop',
+      position: [0.3, 0.4, -0.2],
+      rotation: [10, 25, 0],
+      scale: [0.5, 0.5, 0.5],
+      connectTo: { node: groupId, socket: 'children' },
+    }).state;
+
+    const { result, next: after } = await applied(before, groupId);
+    expect(result).toEqual({ ok: true, bakedId: groupId });
+    for (const id of ['prop', 'socket']) {
+      expect(hierarchyChildIds(after.nodes[groupId]), `${id} is still held`).toContain(id);
+      const was = resolveWorldTransform(before, id, at(0))!.matrix;
+      const now = resolveWorldTransform(after, id, at(0))!.matrix;
+      now.forEach((v, i) => expect(v, `${id} world[${i}]`).toBeCloseTo(was[i], 6));
+    }
+    // The group lost its scale, so the props had to be re-solved to stay put.
+    expect((after.nodes.prop.params as { position: number[] }).position).not.toEqual(
+      (before.nodes.prop.params as { position: number[] }).position,
+    );
+  });
+
   it('the rest is in the new units: every bone offset is the old one times the scale', async () => {
     const imported = await importBar();
     const groupId = armatureGroupOf(imported);
