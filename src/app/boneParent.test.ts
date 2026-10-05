@@ -100,3 +100,57 @@ describe('#1210 — an Object parented to a bone', () => {
       .forEach((c, k) => expect(c).toBeCloseTo(world.position[k], 6));
   });
 });
+
+describe('#1447 — a Group parented to a bone (an imported Empty) hangs from it as an Object does', () => {
+  /** A Group with the prop's own transform, under the armature's Object, named by the bone or not. */
+  async function withEmpty(parentBone: string | undefined) {
+    const { state: imported_, propId } = await imported();
+    let state = imported_;
+    const prop = state.nodes[propId].params as Record<string, unknown>;
+    const armature = Object.values(state.nodes).find((n) =>
+      ((n.inputs.children as { node: string }[] | undefined) ?? []).some((r) => r.node === propId),
+    )!;
+    const ops = [
+      {
+        type: 'addNode' as const,
+        nodeId: 'empty',
+        nodeType: 'Group',
+        params: {
+          position: prop.position,
+          rotation: prop.rotation,
+          scale: prop.scale,
+          rotationMode: prop.rotationMode,
+          quaternion: prop.quaternion,
+          ...(parentBone ? { parentBone } : {}),
+        },
+      },
+      {
+        type: 'connect' as const,
+        from: { node: 'empty', socket: 'out' },
+        to: { node: armature.id, socket: 'children' },
+      },
+    ];
+    for (const op of ops) state = applyOp(state, op).next;
+    return { state, propId };
+  }
+
+  it.each(BLENDER)(
+    'stands where the prop on the same bone stands at $seconds s',
+    async ({ seconds, origin }) => {
+      const { state, propId } = await withEmpty('Bone1');
+      const empty = resolveWorldTransform(state, 'empty', at(seconds))!;
+      const prop = resolveWorldTransform(state, propId, at(seconds))!;
+      empty.matrix.forEach((e, i) => expect(e, `element ${i}`).toBeCloseTo(prop.matrix[i], 9));
+      empty.position.forEach((c, k) => expect(c, `origin axis ${k}`).toBeCloseTo(origin[k], 4));
+    },
+  );
+
+  it('without the bone named, the same Group does not: the bone is what places it', async () => {
+    const { state, propId } = await withEmpty(undefined);
+    const empty = resolveWorldTransform(state, 'empty', at(1))!;
+    const prop = resolveWorldTransform(state, propId, at(1))!;
+    expect(
+      new THREE.Vector3(...empty.position).distanceTo(new THREE.Vector3(...prop.position)),
+    ).toBeGreaterThan(0.1);
+  });
+});

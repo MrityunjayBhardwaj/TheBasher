@@ -147,8 +147,8 @@ describe('#645 P1 — an Object can carry per-slot material overrides', () => {
   it('survives a JSON round trip, and an Object without one serializes byte-identical', () => {
     // OBSERVED, not inferred from the schema. `NodeSchema.params` is `z.unknown()`, so the
     // project file carries params opaquely and the no-migration claim rests on the field
-    // being plain JSON and absent by default — the same road `spare` and `meta.hidden`
-    // take, and for the same stated reason. Both halves are cheap to actually run, so
+    // being plain JSON and absent by default — the same road `spare` and the `viewport` /
+    // `render` flags take (#1503), and for the same stated reason. Both halves are cheap to actually run, so
     // they are run.
     const authored = ObjectParams.parse({
       slotOverrides: { '2': { name: 'accent', base: { color: '#00ff00' } } },

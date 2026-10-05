@@ -53,14 +53,10 @@
 
 import { BufferAttribute, BufferGeometry, Matrix4, Quaternion, Vector3 } from 'three';
 import type {
-  BakedTextureMagFilter,
-  BakedTextureRef,
-  InlineMaterialSpec,
   MeshCornerLayer,
   MeshFaceLayer,
   MeshGeometryData,
   MeshPointLayer,
-  UvPlacement,
   Vec3,
 } from '../../nodes/types';
 import type { Op } from '../dag/types';
@@ -72,15 +68,9 @@ import {
   resolveBuffers,
   type GltfJson,
 } from './glb';
-import {
-  buildNodeNameMap,
-  computeGltfBoundsCenter,
-  hashId,
-  type GltfImportChainArgs,
-} from './gltfImportChain';
+import { buildNodeNameMap, hashId, type GltfImportChainArgs } from './gltfImportChain';
 import { DRACO_EXTENSION, decodeDracoPrimitives, usesDraco, type DecodeDraco } from './gltfDraco';
 import { gltfJsonMaterialToOpenpbr, HELD_TEXTURE_PATHS } from './gltfJsonMaterialToOpenpbr';
-import { FILTER_NAME_OF_GLTF, WRAP_NAME_OF_GLTF } from '../../nodes/materialSchema';
 import { readNativeAnimations, type ClipGltfJson, type NativeAnimation } from './nativeGltfClip';
 import {
   leftBehindAsEmpty,
@@ -89,8 +79,17 @@ import {
   type NativeSkeleton,
 } from './nativeGltfSkeleton';
 import { buildSkeletonObjectOps, skeletonObjectId } from './skeletonObject';
+import {
+  emptyOps,
+  offsetTopLevel,
+  objectChannelId,
+  objectChannelOp,
+  parentEdge,
+  sniffImage,
+  withCentrePivot,
+  withProjectImages,
+} from './modelImport';
 import { boneWorldMatrices } from '../../viewport/boneShape';
-import { CENTRE_PIVOT, ORIGIN_PIVOT, rebasePlacementPivot } from '../../app/material/uvPlacement';
 import { weldByPosition } from '../../app/pointIdentity';
 import { packMeshData } from '../../app/meshGeometryData';
 import { MAX_COLOUR_LAYERS, MAX_UV_LAYERS } from '../../app/polygonLayout';
@@ -114,7 +113,6 @@ export interface NativeImportRefusal {
 
 export interface NativeImportResult {
   readonly ops: Op[];
-  readonly groupId: string;
   readonly objectIds: readonly string[];
   /**
    * #1216 — the node standing for each glTF node, by the file's node index: its Object, or the
@@ -1178,27 +1176,6 @@ interface ReadImage {
   readonly mime: string;
 }
 
-/** The image type the bytes ARE, by signature. A declared `mimeType` is a claim; this is the file. */
-function sniffImage(bytes: Uint8Array): string | null {
-  if (
-    bytes.length >= 8 &&
-    bytes[0] === 0x89 &&
-    bytes[1] === 0x50 &&
-    bytes[2] === 0x4e &&
-    bytes[3] === 0x47
-  ) {
-    return 'image/png';
-  }
-  if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) {
-    return 'image/jpeg';
-  }
-  // #1320 — `RIFF` <size> `WEBP`.
-  const ascii = (at: number, word: string) =>
-    [...word].every((c, i) => bytes[at + i] === c.charCodeAt(0));
-  if (bytes.length >= 12 && ascii(0, 'RIFF') && ascii(8, 'WEBP')) return 'image/webp';
-  return null;
-}
-
 /** The image a texture samples, as the file's own encoded bytes, or why it cannot be read. */
 async function readTextureImage(
   json: NativeGltfJson,
@@ -1242,11 +1219,6 @@ async function readTextureImage(
 }
 
 /**
- * A material with every captured texture pointing at the project's copy of its image. The captured
- * refs say "inherit the clone's texture" and carry GL enums; a native material has no clone, so each
- * becomes a project ref sampled the way the file asks.
- */
-/**
  * #1137 — what a mesh node's Object is called: the node's own name, else its mesh's, else
  * `Mesh_<mesh index>`. Blender 4.5.9's order exactly (`io_scene_gltf2/blender/imp/node.py:308-309`,
  * `imp/mesh.py:39`), including treating a blank name as absent.
@@ -1260,15 +1232,6 @@ function objectNameOf(json: NativeGltfJson, nodeIndex: number): string {
   return node.name || json.meshes?.[meshIndex]?.name || `Mesh_${meshIndex}`;
 }
 
-/**
- * #1123 — the material's placements restated about the pivot the native material draws with.
- *
- * The converter captures `KHR_texture_transform` as the file wrote it, about the UV origin, which is
- * right for the clone road (`applyGltfUvTransform` places with `ORIGIN_PIVOT`). A native material is
- * drawn by `materialRegistry`'s `build`, which places about `CENTRE_PIVOT`, so each placement is
- * restated once here and the file's convention stops existing. An identity placement comes back
- * unchanged, so an untransformed material keys exactly as before.
- */
 /**
  * A node's transform as Blender imports it: quaternion mode, holding the file's own quaternion
  * (`io_scene_gltf2/blender/imp/node.py:113-116`, every object, animated or not — measured in 4.5.9
@@ -1302,66 +1265,6 @@ function nodeTransformOf(node: NativeGltfJson['nodes'][number]): {
     rotationMode: 'quaternion',
     quaternion: (node.rotation ?? [0, 0, 0, 1]) as [number, number, number, number],
   };
-}
-
-function withCentrePivot(material: InlineMaterialSpec): InlineMaterialSpec {
-  const rebase = (p: UvPlacement) => rebasePlacementPivot(p, ORIGIN_PIVOT, CENTRE_PIVOT);
-  const perMap = material.mapUvTransforms;
-  return {
-    ...material,
-    uvTransform: rebase(material.uvTransform),
-    ...(perMap === undefined
-      ? {}
-      : {
-          mapUvTransforms: Object.fromEntries(
-            Object.entries(perMap).map(([slot, p]) => [slot, rebase(p as UvPlacement)]),
-          ) as InlineMaterialSpec['mapUvTransforms'],
-        }),
-  };
-}
-
-function withProjectImages(
-  material: InlineMaterialSpec,
-  json: NativeGltfJson,
-  imageKeys: ReadonlyMap<number, string>,
-): InlineMaterialSpec {
-  const maps = {} as { -readonly [K in keyof InlineMaterialSpec['maps']]: BakedTextureRef | null };
-  for (const slot of Object.keys(material.maps) as (keyof InlineMaterialSpec['maps'])[]) {
-    const captured = material.maps[slot];
-    if (captured === undefined) continue; // #1327 — an unseeded slot the file leaves empty
-    if (captured === null) {
-      maps[slot] = null;
-      continue;
-    }
-    const textureIndex = captured.gltfTexture;
-    const key = textureIndex === undefined ? undefined : imageKeys.get(textureIndex);
-    if (textureIndex === undefined || key === undefined) {
-      throw new Error(
-        `nativeGltfImport: the ${slot} map was captured but its image was never stored`,
-      );
-    }
-    const samplerIndex = json.textures?.[textureIndex]?.sampler;
-    const sampler = samplerIndex === undefined ? undefined : json.samplers?.[samplerIndex];
-    maps[slot] = {
-      hash: key,
-      store: 'project',
-      colorSpace: captured.colorSpace,
-      flipY: false,
-      // #1316 — the file's sampler by name. glTF's wrap default is REPEAT; with no filter the
-      // renderer's own defaults are written out (linear, trilinear), as they always were.
-      wrapS: WRAP_NAME_OF_GLTF[sampler?.wrapS ?? 10497] ?? 'repeat',
-      wrapT: WRAP_NAME_OF_GLTF[sampler?.wrapT ?? 10497] ?? 'repeat',
-      magFilter: magFilterName(sampler?.magFilter),
-      minFilter: FILTER_NAME_OF_GLTF[sampler?.minFilter ?? -1] ?? 'linear-mipmap-linear',
-    };
-  }
-  return { ...material, maps };
-}
-
-/** #1316 — a magnification filter by name: only NEAREST and LINEAR are one (glTF sampler schema). */
-function magFilterName(gl: number | undefined): BakedTextureMagFilter {
-  const name = FILTER_NAME_OF_GLTF[gl ?? -1];
-  return name === 'nearest' ? 'nearest' : 'linear';
 }
 
 /**
@@ -1629,23 +1532,10 @@ async function buildNativeOps(
       nativeSkeletonId(args.assetRef, keyByGltfNodeIndex[skeletons[i].boneNodes[0]]),
     );
 
-  const groupId = hashId('nativeGrp', args.assetRef);
-  const position: Vec3 = args.position ?? [0, 0, 0];
-  // The same pivot the clone road bakes into its import Group, so both roads place a model alike.
-  const pivot = computeGltfBoundsCenter(json);
-  const ops: Op[] = [
-    {
-      type: 'addNode',
-      nodeId: groupId,
-      nodeType: 'Group',
-      params: {
-        position: [position[0] + pivot[0], position[1] + pivot[1], position[2] + pivot[2]],
-        rotation: [0, 0, 0],
-        scale: [1, 1, 1],
-        pivot,
-      },
-    },
-  ];
+  // #1451 — no wrapper: what the file hangs at its root stands under the scene, as Blender's glTF
+  // importer stands it (linked into the active collection by the caller, `intoActiveCollection`).
+  const rootId = args.sceneNodeId;
+  const ops: Op[] = [];
   const objectIds: string[] = [];
   const parentEdges: Op[] = [];
   const armatureEdges: Op[] = [];
@@ -1738,7 +1628,7 @@ async function buildNativeOps(
   for (let i = 0; i < json.nodes.length; i++) {
     const node = json.nodes[i];
     const key = keyByGltfNodeIndex[i];
-    const parentId = parentOfNode.has(i) ? idOfNode(parentOfNode.get(i)!) : groupId;
+    const parentId = parentOfNode.has(i) ? idOfNode(parentOfNode.get(i)!) : rootId;
     // #393 — a bone is data of the skeleton, not a node of the scene. The skeleton's standing
     // Object takes the place of the first bone below the armature, so it joins its parent's
     // children where the file's joint chain did.
@@ -1753,22 +1643,8 @@ async function buildNativeOps(
     }
     if (typeof node.mesh !== 'number') {
       const emptyId = idOfNode(i);
-      ops.push(
-        {
-          type: 'addNode',
-          nodeId: emptyId,
-          nodeType: 'Group',
-          // No pivot of its own: the file states an empty's transform about its own origin, and the
-          // import Group's pivot already places the model as a whole.
-          params: nodeTransformOf(node),
-        },
-        { type: 'setMeta', nodeId: emptyId, name: node.name || `Empty_${i}` },
-      );
-      parentEdges.push({
-        type: 'connect',
-        from: { node: emptyId, socket: 'out' },
-        to: { node: parentId, socket: 'children' },
-      });
+      ops.push(...emptyOps(emptyId, nodeTransformOf(node), node.name || `Empty_${i}`));
+      parentEdges.push(parentEdge(emptyId, parentId));
       continue;
     }
     const data = meshes.get(i)!;
@@ -1798,19 +1674,12 @@ async function buildNativeOps(
       : !skinnedElsewhere
         ? parentId
         : ownArmature === null || ownArmature === undefined
-          ? groupId
+          ? rootId
           : idOfNode(ownArmature);
     if (leftBehind) {
       const emptyId = idOfNode(i);
-      ops.push(
-        { type: 'addNode', nodeId: emptyId, nodeType: 'Group', params: nodeTransformOf(node) },
-        { type: 'setMeta', nodeId: emptyId, name: node.name || `Empty_${i}` },
-      );
-      parentEdges.push({
-        type: 'connect',
-        from: { node: emptyId, socket: 'out' },
-        to: { node: parentId, socket: 'children' },
-      });
+      ops.push(...emptyOps(emptyId, nodeTransformOf(node), node.name || `Empty_${i}`));
+      parentEdges.push(parentEdge(emptyId, parentId));
     }
     // #1052 — one material per slot, numbered by the same function that wrote each face's slot.
     const slotMaterials = primitiveSlots(json, node.mesh as number).slots.map((slot) =>
@@ -1893,11 +1762,7 @@ async function buildNativeOps(
     }
     // Under a bone, after every parent edge: the armature's Object is written among them, and the
     // file may number the mesh before its bones.
-    (underBone ? armatureEdges : parentEdges).push({
-      type: 'connect',
-      from: { node: objectId, socket: 'out' },
-      to: { node: objectParentId, socket: 'children' },
-    });
+    (underBone ? armatureEdges : parentEdges).push(parentEdge(objectId, objectParentId));
     objectIds.push(objectId);
   }
   const nodeIds = json.nodes.map((_, i) => (isBone.has(i) ? null : idOfNode(i)));
@@ -1914,22 +1779,17 @@ async function buildNativeOps(
   for (const channel of clip.channels) {
     // #393 — a bone's channels are the skeleton's clip, written above.
     if (isBone.has(channel.node)) continue;
-    const target = idOfNode(channel.node);
-    const paramPath = CLIP_PARAM[channel.path];
-    ops.push({
-      type: 'addNode',
-      nodeId: `${target}_${paramPath}_channel`,
-      nodeType: channel.path === 'rotation' ? 'KeyframeChannelQuat' : 'KeyframeChannelVec3',
-      params: { name: paramPath, target, paramPath, keyframes: channel.keyframes },
-    });
+    ops.push(
+      objectChannelOp(
+        idOfNode(channel.node),
+        CLIP_PARAM[channel.path],
+        channel.path === 'rotation' ? 'quat' : 'vec3',
+        channel.keyframes,
+      ),
+    );
   }
   ops.push(...heldObjectAnimationOps(args.assetRef, held, isBone, idOfNode));
 
-  ops.push({
-    type: 'connect',
-    from: { node: groupId, socket: 'out' },
-    to: { node: args.sceneNodeId, socket: 'children' },
-  });
   // #1216 — the ids above, gathered for a caller that must address them by the file's structure.
   const firstBoneKey = (s: number): string => keyByGltfNodeIndex[skeletons[s].boneNodes[0]];
   const skeletonIds = skeletons.map((skeleton, s) => ({
@@ -1941,7 +1801,7 @@ async function buildNativeOps(
     ...new Set(
       animation.channels
         .filter((channel) => !isBone.has(channel.node))
-        .map((channel) => `${idOfNode(channel.node)}_${CLIP_PARAM[channel.path]}_channel`),
+        .map((channel) => objectChannelId(idOfNode(channel.node), CLIP_PARAM[channel.path])),
     ),
   ];
   const takes = read_.animations.map((animation, k) =>
@@ -1967,8 +1827,8 @@ async function buildNativeOps(
         },
   );
   return {
-    ops,
-    groupId,
+    // #1451 — placed `position` away from where the file puts it, carried by its root nodes.
+    ops: offsetTopLevel(ops, rootId, args.position ?? [0, 0, 0]),
     objectIds,
     nodeIds,
     skeletons: skeletonIds,

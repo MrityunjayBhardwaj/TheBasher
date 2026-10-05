@@ -114,7 +114,8 @@ describe('buildNativeGltfImportOps — a Draco file', () => {
     const result = await importCube(DRACO_CUBE, decodeDracoInNode);
     if ('refused' in result) throw new Error(result.refused);
     const types = result.ops.flatMap((op) => (op.type === 'addNode' ? [op.nodeType] : []));
-    expect(types.sort()).toEqual(['Group', 'Object', 'PolyMeshData']);
+    // #1451 — no wrapper Group: the Object stands under the scene, as Blender's importer stands it.
+    expect(types.sort()).toEqual(['Object', 'PolyMeshData']);
     expect(JSON.stringify(result.ops)).not.toContain('GltfAsset');
   });
 

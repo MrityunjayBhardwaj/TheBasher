@@ -35,17 +35,20 @@ describe('#1140 — the schema carries them, which is what makes them survive a 
     const parsed = BakedMaterialSpecSchema.parse({
       ...base,
       alphaTest: 0.4,
+      alphaHash: true,
       doubleSided: true,
       materialClass: 'physical',
       physical: { transmission: 0.5, thickness: 0.5 },
     });
-    expect(parsed).toMatchObject({ alphaTest: 0.4, doubleSided: true });
+    // #1435 — the hashed alpha too.
+    expect(parsed).toMatchObject({ alphaTest: 0.4, alphaHash: true, doubleSided: true });
     expect(parsed.physical).toMatchObject({ transmission: 0.5, thickness: 0.5 });
   });
 
   it('a spec saved before these fields parses with no key at all', () => {
     const parsed = BakedMaterialSpecSchema.parse(base);
     expect('alphaTest' in parsed).toBe(false);
+    expect('alphaHash' in parsed).toBe(false);
     expect('doubleSided' in parsed).toBe(false);
   });
 

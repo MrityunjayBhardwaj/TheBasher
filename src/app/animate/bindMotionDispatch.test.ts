@@ -33,6 +33,7 @@ import { __resetMutatorRegistryForTests, registerAllMutators } from '../../agent
 import { useDagStore } from '../../core/dag/store';
 import { useDiffStore } from '../../agent/diff/store';
 import { dispatchMutatorFromUI } from './dispatchMutator';
+import { ownShown } from '../collections';
 
 const BONES = ['mixamorig_Hips', 'mixamorig_Spine'];
 /** The character's skeleton, and the armature Object standing it (a native character, #1213). */
@@ -295,7 +296,7 @@ describe('binding a motion to a character', () => {
       to: { node: objectId, socket: 'data' },
     }).next;
   };
-  const isHidden = (id: string) => useDagStore.getState().state.nodes[id]?.meta?.hidden === true;
+  const isHidden = (id: string) => !ownShown(useDagStore.getState().state.nodes[id], 'viewport');
 
   it('hides the Object showing the source skeleton, in the SAME undo entry as the bind', () => {
     useDagStore

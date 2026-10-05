@@ -27,13 +27,21 @@ vi.mock('../boot', () => ({
 }));
 
 // Imported AFTER vi.mock so the modules pick up the mocked boot.
-import { importBvhFromOpfs, importFbxFromOpfs, routeImportByExtension } from './importBvhFbx';
+import {
+  importBvhFromOpfs,
+  importFbxFromOpfs,
+  routeImportByExtension,
+  type MotionImportResult,
+} from './importBvhFbx';
+import { FBX_NOTHING_TO_IMPORT } from '../../core/import/fbx';
 import { ingestSingleFile, USER_IMPORTS_ROOT } from './importCommon';
 import { chooseMotionTarget } from './bindMotionToCharacter';
 import { nodeDisplayName } from '../sceneTreeWalk';
 import { applyOp } from '../../core/dag';
 import { nativeCharacterOps } from '../../test-utils/nativeCharacter';
 import { __resetMutatorRegistryForTests, registerAllMutators } from '../../agent/mutators';
+import { collectionOps } from '../../core/import/modelImport';
+import { ownShown, setActiveCollectionOp } from '../collections';
 
 // The committed ASCII FBX fixture (public/fixtures/anim/rig.fbx — 2-bone
 // skeleton, the same file the e2e fetches). Read as bytes so we exercise the
@@ -43,6 +51,14 @@ const RIG_FBX_BYTES = new Uint8Array(
 );
 /** Where the FBX rows put their file, as the BVH rows use `path`. */
 const FBX_PATH = `${USER_IMPORTS_ROOT}/rig/rig.fbx`;
+
+/** #1434 — the import as a rig: these rows import rigs, and a model (no bone) has no skeleton. */
+const rigOf = (result: MotionImportResult | null) =>
+  result === null || result.kind === 'model' ? null : result;
+
+/** #1434 — a Blender-made fixture's bytes. */
+const fixtureBytes = (file: string) =>
+  new Uint8Array(readFileSync(resolve(process.cwd(), 'src/core/import/__fixtures__', file)));
 
 const SYNTHETIC_BVH = `HIERARCHY
 ROOT Hips
@@ -128,7 +144,7 @@ describe('importBvhFromOpfs', () => {
     await currentStorage.write(path, new TextEncoder().encode(SYNTHETIC_BVH));
 
     const dispatchSpy = vi.spyOn(useDagStore.getState(), 'dispatchAtomic');
-    const result = await importBvhFromOpfs(path);
+    const result = rigOf(await importBvhFromOpfs(path));
 
     expect(result).not.toBeNull();
     expect(dispatchSpy).toHaveBeenCalled();
@@ -144,7 +160,7 @@ describe('importBvhFromOpfs', () => {
     await currentStorage.write(path, new TextEncoder().encode('this is not a BVH file'));
 
     const dispatchSpy = vi.spyOn(useDagStore.getState(), 'dispatchAtomic');
-    const result = await importBvhFromOpfs(path);
+    const result = rigOf(await importBvhFromOpfs(path));
 
     expect(result).toBeNull();
     expect(dispatchSpy).not.toHaveBeenCalled();
@@ -158,7 +174,7 @@ describe('#1056 — every imported motion stands in the scene as an Object', () 
   it('the SAME dispatch adds an Object pointed at the skeleton', async () => {
     await currentStorage.write(path, new TextEncoder().encode(SYNTHETIC_BVH));
     const dispatchSpy = vi.spyOn(useDagStore.getState(), 'dispatchAtomic');
-    const result = await importBvhFromOpfs(path);
+    const result = rigOf(await importBvhFromOpfs(path));
 
     expect(dispatchSpy).toHaveBeenCalledTimes(1);
     const ops = dispatchSpy.mock.calls[0][0];
@@ -171,6 +187,7 @@ describe('#1056 — every imported motion stands in the scene as an Object', () 
       from: { node: result!.skeletonId, socket: 'out' },
       to: { node: objectId, socket: 'data' },
     });
+    // #1451 — in the scene itself, with no wrapper, as Blender's importer stands it.
     expect(ops).toContainEqual({
       type: 'connect',
       from: { node: objectId, socket: 'out' },
@@ -204,7 +221,7 @@ describe('#1056 — every imported motion stands in the scene as an Object', () 
 
   it('#1101 — the Object is named after the file, the same name its clip carries', async () => {
     await currentStorage.write(path, new TextEncoder().encode(SYNTHETIC_BVH));
-    const result = await importBvhFromOpfs(path);
+    const result = rigOf(await importBvhFromOpfs(path));
     const state = useDagStore.getState().state;
     const objectId = `${result!.skeletonId}_object`;
     expect(state.nodes[objectId]?.meta?.name).toBe('wave');
@@ -214,7 +231,7 @@ describe('#1056 — every imported motion stands in the scene as an Object', () 
 
   it('#1101 — renaming the Object in the outliner is the name the next notice uses', async () => {
     await currentStorage.write(path, new TextEncoder().encode(SYNTHETIC_BVH));
-    const result = await importBvhFromOpfs(path);
+    const result = rigOf(await importBvhFromOpfs(path));
     const objectId = `${result!.skeletonId}_object`;
     // The outliner's rename is this op (`RenameInput.tsx`).
     useDagStore
@@ -232,7 +249,7 @@ describe('#1056 — every imported motion stands in the scene as an Object', () 
 
   it('#1101 — one undo takes the Object and its name away with the rest of the import', async () => {
     await currentStorage.write(path, new TextEncoder().encode(SYNTHETIC_BVH));
-    const result = await importBvhFromOpfs(path);
+    const result = rigOf(await importBvhFromOpfs(path));
     const objectId = `${result!.skeletonId}_object`;
     expect(useDagStore.getState().state.nodes[objectId]?.meta?.name).toBe('wave');
     useDagStore.getState().undo();
@@ -246,7 +263,7 @@ describe('#1056 — every imported motion stands in the scene as an Object', () 
   // the inspector's name field is a `setParam` on the clip, the outliner's rename a `setMeta`.
   it('#1211 — renaming a BVH\u2019s motion leaves its Object\u2019s name, as Blender never renames the armature after its action', async () => {
     await currentStorage.write(path, new TextEncoder().encode(SYNTHETIC_BVH));
-    const result = await importBvhFromOpfs(path);
+    const result = rigOf(await importBvhFromOpfs(path));
     const objectId = `${result!.skeletonId}_object`;
     // Named after the file, and following nothing.
     expect(useDagStore.getState().state.nodes[objectId].meta).toEqual({ name: 'wave' });
@@ -265,7 +282,7 @@ describe('#1056 — every imported motion stands in the scene as an Object', () 
   it('#1211 — renaming an FBX\u2019s motion leaves its Object\u2019s name too: no import road follows its motion', async () => {
     // Name-following lives on the generation road alone now (`mintMotionGenerate.test.ts`, #1122).
     await currentStorage.write(FBX_PATH, RIG_FBX_BYTES);
-    const result = await importFbxFromOpfs(FBX_PATH);
+    const result = rigOf(await importFbxFromOpfs(FBX_PATH));
     const objectId = `${result!.skeletonId}_object`;
     expect(useDagStore.getState().state.nodes[objectId].meta).toEqual({ name: 'rig' });
     useDagStore
@@ -303,7 +320,7 @@ describe('#1056 — every imported motion stands in the scene as an Object', () 
 
     await currentStorage.write(path, new TextEncoder().encode(SYNTHETIC_BVH));
     const dispatchSpy = vi.spyOn(useDagStore.getState(), 'dispatchAtomic');
-    const result = await importBvhFromOpfs(path);
+    const result = rigOf(await importBvhFromOpfs(path));
     expect(dispatchSpy.mock.calls[0][0]).toContainEqual(
       expect.objectContaining({ nodeId: `${result!.skeletonId}_object`, nodeType: 'Object' }),
     );
@@ -324,7 +341,7 @@ describe('#1056 — every imported motion stands in the scene as an Object', () 
     const fbxPath = `${USER_IMPORTS_ROOT}/rig/rig.fbx`;
     await currentStorage.write(fbxPath, RIG_FBX_BYTES);
     const dispatchSpy = vi.spyOn(useDagStore.getState(), 'dispatchAtomic');
-    const result = await importFbxFromOpfs(fbxPath);
+    const result = rigOf(await importFbxFromOpfs(fbxPath));
     const ops = dispatchSpy.mock.calls[0][0];
     expect(ops).toContainEqual(
       expect.objectContaining({ nodeId: `${result!.skeletonId}_object`, nodeType: 'Object' }),
@@ -357,14 +374,14 @@ describe('#791 — a dropped BVH stands at file scale, and its Object is selecte
 
   it("the Object that stands a BVH is at scale 1 — the file's own size", async () => {
     await currentStorage.write(path, new TextEncoder().encode(SYNTHETIC_BVH));
-    const result = await importBvhFromOpfs(path);
+    const result = rigOf(await importBvhFromOpfs(path));
     expect(objectScale(result!.skeletonId)).toEqual([1, 1, 1]);
   });
 
   it('an FBX stands at scale 1 too — its declared unit is read at parse, so nothing is guessed (#1086)', async () => {
     const fbxPath = `${USER_IMPORTS_ROOT}/rig/rig.fbx`;
     await currentStorage.write(fbxPath, RIG_FBX_BYTES);
-    const result = await importFbxFromOpfs(fbxPath);
+    const result = rigOf(await importFbxFromOpfs(fbxPath));
     expect(objectScale(result!.skeletonId)).toEqual([1, 1, 1]);
   });
 
@@ -419,6 +436,39 @@ describe('importFbxFromOpfs', () => {
 });
 
 describe('routeImportByExtension', () => {
+  it('#1434 — an FBX with no bone lands as a model: its Objects in the scene, no rig, nothing bound', async () => {
+    // A character is in the scene, so a road that took the file for a motion would bind it.
+    seedCharacter();
+    useNotificationStore.setState({ toasts: [] });
+    const path = `${USER_IMPORTS_ROOT}/rigless/rigless.fbx`;
+    await currentStorage.write(path, fixtureBytes('rigless-hierarchy-blender-default.fbx'));
+    const dispatchSpy = vi.spyOn(useDagStore.getState(), 'dispatchAtomic');
+    await routeImportByExtension(path);
+
+    // One dispatch: the import, and no bind after it.
+    expect(dispatchSpy).toHaveBeenCalledTimes(1);
+    const added = dispatchSpy.mock.calls[0][0].filter((o) => o.type === 'addNode');
+    const types = added.map((o) => o.nodeType);
+    expect(types).not.toContain('Skeleton');
+    expect(types).not.toContain('PoseLayer');
+    expect(types.filter((t) => t === 'Object')).toHaveLength(3);
+    // Holder, the file's Empty — and no wrapper Group of ours (#1451).
+    expect(types.filter((t) => t === 'Group')).toHaveLength(1);
+    expect(useAssetErrorStore.getState().errors[path]).toBeUndefined();
+    expect(useSelectionStore.getState().selectedNodeId).toBeNull();
+    // No bind was tried: a bind says its outcome in a toast, whether it takes or not.
+    expect(useNotificationStore.getState().toasts.map((t) => t.message)).toEqual([]);
+  });
+
+  it('#1434 — an FBX with nothing in it is refused by name, in the banner', async () => {
+    const path = `${USER_IMPORTS_ROOT}/nothing/nothing.fbx`;
+    await currentStorage.write(path, fixtureBytes('nothing-blender-default.fbx'));
+    const dispatchSpy = vi.spyOn(useDagStore.getState(), 'dispatchAtomic');
+    await routeImportByExtension(path);
+    expect(dispatchSpy).not.toHaveBeenCalled();
+    expect(useAssetErrorStore.getState().errors[path]).toContain(FBX_NOTHING_TO_IMPORT);
+  });
+
   it('routes a .bvh entry to the BVH importer', async () => {
     const path = `${USER_IMPORTS_ROOT}/clip/clip.bvh`;
     await currentStorage.write(path, new TextEncoder().encode(SYNTHETIC_BVH));
@@ -462,5 +512,91 @@ describe('ingestSingleFile', () => {
       'walk',
     );
     expect(out).toBe(`${USER_IMPORTS_ROOT}/walk-2/walk.bvh`);
+  });
+});
+
+// #1451 — where Blender puts an import: every object it makes stands in the scene where the file
+// hangs it, with no wrapper, and is linked into the ACTIVE COLLECTION — none (the scene itself) until
+// the director chooses one. A bind that takes a motion hides the motion's own rig Object, which sits
+// at the top of the scene where the viewport and the outliner's eye both reach it.
+describe('#1451 — an import stands in the scene, linked into the active collection', () => {
+  const path = `${USER_IMPORTS_ROOT}/wave/wave.bvh`;
+  const fbxPath = `${USER_IMPORTS_ROOT}/rig/rig.fbx`;
+  const nodes = () => useDagStore.getState().state.nodes;
+  const writeBvh = () => currentStorage.write(path, new TextEncoder().encode(SYNTHETIC_BVH));
+  const writeFbx = () => currentStorage.write(fbxPath, RIG_FBX_BYTES);
+  /** A collection `col` in the scene, made the active one. */
+  const activeCollection = () => {
+    const ops = collectionOps('col', 'props', [], 'n_scene');
+    let next = useDagStore.getState().state;
+    for (const op of ops) next = applyOp(next, op).next;
+    useDagStore
+      .getState()
+      .dispatchAtomic([...ops, setActiveCollectionOp(next, 'col')!], 'user', 'col');
+  };
+
+  beforeEach(() => {
+    __resetMutatorRegistryForTests();
+    registerAllMutators();
+    useSelectionStore.getState().select(null);
+  });
+
+  it.each([
+    ['a BVH', writeBvh, () => importBvhFromOpfs(path)],
+    ['a rig-only FBX', writeFbx, () => importFbxFromOpfs(fbxPath)],
+  ])(
+    '%s stands its rig straight under the scene, with no Group and no collection',
+    async (_, write, run) => {
+      await write();
+      const result = rigOf(await run());
+      expect(result!.kind).toBe('motion');
+      expect(result!.collectionId).toBeNull();
+      expect(nodes().n_scene.inputs.children).toEqual([
+        { node: `${result!.skeletonId}_object`, socket: 'out' },
+      ]);
+      expect(Object.values(nodes()).some((n) => n.type === 'Group')).toBe(false);
+    },
+  );
+
+  it.each([
+    ['a BVH', writeBvh, () => importBvhFromOpfs(path)],
+    ['a rig-only FBX', writeFbx, () => importFbxFromOpfs(fbxPath)],
+  ])(
+    '%s is linked into the active collection, and still stands in the scene',
+    async (_, write, run) => {
+      activeCollection();
+      await write();
+      const result = rigOf(await run());
+      const rig = `${result!.skeletonId}_object`;
+      expect(result!.collectionId).toBe('col');
+      expect(nodes().col.inputs.members).toEqual([{ node: rig, socket: 'out' }]);
+      expect(nodes().n_scene.inputs.children).toEqual([{ node: rig, socket: 'out' }]);
+    },
+  );
+
+  it('an FBX model links every Object and Empty it makes, the nested ones too', async () => {
+    activeCollection();
+    const at = `${USER_IMPORTS_ROOT}/rigless/rigless.fbx`;
+    await currentStorage.write(at, fixtureBytes('rigless-hierarchy-blender-default.fbx'));
+    await routeImportByExtension(at);
+    const members = (nodes().col.inputs.members as { node: string }[]).map((r) => r.node);
+    const names = members.map((id) => nodes()[id].meta?.name).sort();
+    // Holder (an Empty) over the Cube over the Cone, and the loose Plane: all four, as Blender links each.
+    expect(names).toEqual(['Cone', 'Cube', 'Holder', 'Plane']);
+  });
+
+  it('a bind that takes the motion hides the rig Object itself, and undo brings it back', async () => {
+    seedCharacter();
+    await writeBvh();
+    const before = new Set(Object.keys(nodes()));
+    await routeImportByExtension(path);
+    const rig = Object.keys(nodes()).find(
+      (id) => !before.has(id) && nodes()[id].type === 'Object',
+    )!;
+    expect(Object.values(nodes()).some((n) => n.type === 'RetargetClip')).toBe(true);
+    expect(ownShown(nodes()[rig], 'viewport')).toBe(false);
+    useDagStore.getState().undo();
+    expect(ownShown(nodes()[rig], 'viewport')).toBe(true);
+    expect(Object.values(nodes()).some((n) => n.type === 'RetargetClip')).toBe(false);
   });
 });

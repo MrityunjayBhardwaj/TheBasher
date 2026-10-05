@@ -34,6 +34,12 @@ export const SceneParams = z
     // stops (Blender's `scene.frame_end`). Defaulted to the 10 s every project played before it
     // was stored, so an old project is unchanged. Read through `src/app/sceneRange.ts`.
     frameEnd: z.number().int().min(1).default(600),
+    /**
+     * #1451 — the active collection: where an import links what it makes, as Blender links an
+     * import's objects into the view layer's active collection. A collection id; absent (the
+     * default) means the scene itself. Appended last, so the frozen param-home row is appended to.
+     */
+    activeCollection: z.string().min(1).optional(),
   })
   .passthrough();
 export type SceneParams = z.infer<typeof SceneParams>;
@@ -52,6 +58,10 @@ export const SceneNode: NodeDefinition<SceneParams, SceneValue> = {
     // LightProfileSelect picks). Kept SEPARATE from `lights` so the direct-light
     // index-correspondence with `inputs.lights` stays byte-identical.
     lightRig: { type: 'LightRig', cardinality: 'single' },
+    // #1451 — the scene's collections, in outliner order, as Blender's scene collection holds its
+    // children. Membership only: the Objects they hold are the scene's `children` as ever, so
+    // nothing here reaches the render (`evaluate` does not read it).
+    collections: { type: 'Collection', cardinality: 'list' },
   },
   outputs: { out: { type: 'Scene', cardinality: 'single' } },
   inspectorSections: ['environment', 'layout'],

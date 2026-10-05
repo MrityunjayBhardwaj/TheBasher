@@ -115,6 +115,9 @@ export type SocketTypeName =
   // the scene. All profiles stay co-resident in the DAG (V34); switching is one
   // param → keyframeable (V57).
   | 'LightRig'
+  // #1451 (Collections, #397) — a named set of scene Objects: membership, never a transform. The
+  // Scene holds its collections as Blender's scene collection holds its children.
+  | 'Collection'
   | 'Shot'
   | 'Cut'
   // The Compositor (After Effects-style layer timeline) — docs/COMPOSITOR-DESIGN.md.
@@ -702,18 +705,15 @@ export const NodeSchema = z.object({
   params: z.unknown(),
   // #291 — optional spare-param collection keyed by name. ABSENT when a node has
   // no spare params (the overwhelming default) so existing projects serialize
-  // byte-identical — no migration needed (mirrors `meta.hidden`, #227 S4).
+  // byte-identical — no migration needed (as `meta.hidden` was, #227 S4, until #1503).
   spare: z.record(z.string(), SpareParamSchema).optional(),
   inputs: z.record(SocketIdSchema, InputBindingSchema),
   meta: z
     .object({
       name: z.string().optional(),
       position: z.tuple([z.number(), z.number()]).optional(),
-      // #227 S4 — per-object visibility. Absent/false = visible (the default, so
-      // existing projects need no migration); true = hidden in the viewport AND
-      // the render (the renderer skips it). Lives on meta, not a per-type param,
-      // because every node kind can be hidden uniformly (like meta.name).
-      hidden: z.boolean().optional(),
+      // #1503 — no `hidden` here any more: visibility is the `viewport` and `render` params
+      // (src/nodes/visibilityParams.ts). A saved `meta.hidden` migrates at load (v20 → v21).
       // #1122 — "this node's name is that node's name". While set, a change to the named
       // node's own name is copied onto `name` in the same state change (`applyOp`), so every
       // reader of `meta.name` stays true without learning about links. A director's rename
@@ -795,15 +795,10 @@ export const OpSetMetaSchema = z.object({
   nameFrom: NodeIdSchema.optional(),
 });
 
-// #227 S4 — visibility toggle. A dedicated op (not an `OpSetMeta` field) because
-// setMeta's `name: undefined` means CLEAR — there's no way to say "set hidden,
-// leave name untouched" in one op. `hidden` is an explicit boolean (no clear
-// semantics); the apply normalizes `false` away to keep saves minimal.
-export const OpSetHiddenSchema = z.object({
-  type: z.literal('setHidden'),
-  nodeId: NodeIdSchema,
-  hidden: z.boolean(),
-});
+// #1503 — there is no visibility op. Visibility is two params (`viewport`, `render`,
+// src/nodes/visibilityParams.ts) on the node types the eye can hide, written by `setParam`
+// (`setShownOp`, src/app/collections.ts). The `setHidden` op and `meta.hidden` it wrote (#227 S4)
+// are retired; a project saved with `meta.hidden` migrates at load (format v20 → v21).
 
 // #291 (Epic 1 Inc 0) — spare-param mutation. A dedicated op pair (not `setParam`)
 // because spare params are validated by SpareParamSchema, NOT the node's fixed
@@ -830,7 +825,6 @@ export const OpSchema = z.discriminatedUnion('type', [
   OpDisconnectSchema,
   OpSetParamSchema,
   OpSetMetaSchema,
-  OpSetHiddenSchema,
   OpSetSpareParamSchema,
   OpRemoveSpareParamSchema,
 ]);

@@ -45,6 +45,7 @@ function Svg({ children }: { children: ReactNode }): ReactNode {
 
 type IconKind =
   | 'scene'
+  | 'collection'
   | 'group'
   | 'transform'
   | 'material'
@@ -75,6 +76,8 @@ const MESH_DATA_STEMS: ReadonlySet<string> = new Set([
 
 function kindForNodeType(nodeType: string): IconKind {
   if (nodeType === 'Scene') return 'scene';
+  // #1451 — a Collection is a set, not a parent: its own glyph, never the Group's folder.
+  if (nodeType === 'Collection') return 'collection';
   if (nodeType === 'Group') return 'group';
   if (nodeType === 'Transform') return 'transform';
   if (nodeType === 'MaterialOverride') return 'material';
@@ -162,6 +165,13 @@ const GLYPHS: Record<IconKind, ReactNode> = {
     </>
   ),
   // Folder.
+  // A tray: a set of things, Blender's collection box.
+  collection: (
+    <>
+      <rect x="2.5" y="3.5" width="11" height="9" rx="1.5" />
+      <path d="M2.5 7h11" />
+    </>
+  ),
   group: (
     <>
       <path d="M2 4.5h4l1.2 1.5H14v6.5H2V4.5Z" />

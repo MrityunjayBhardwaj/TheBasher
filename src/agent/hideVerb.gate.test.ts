@@ -23,6 +23,8 @@ import { registerAllTools } from './tools';
 import { useDagStore } from '../core/dag/store';
 import { useAgentSessionStore } from './session/store';
 import { buildDefaultDagState } from '../core/project/default';
+import type { Op } from '../core/dag/types';
+import { ownShown } from '../app/collections';
 import type { LLMConfig } from './transport/types';
 
 const CONFIG: LLMConfig = { baseUrl: 'http://x', model: 'm', apiKey: 'k' };
@@ -75,8 +77,18 @@ function script(rounds: ((msgs: ChatMessage[]) => StreamChunk)[]): { seen: ChatM
   return { seen };
 }
 
-const hidden = (id: string) =>
-  useDiffStore.getState().pendingDiff?.forkState.nodes[id]?.meta?.hidden ?? false;
+// #1503 — hidden means off in the viewport and the render alike, as the verb sets it.
+const hidden = (id: string) => {
+  const node = useDiffStore.getState().pendingDiff?.forkState.nodes[id];
+  return !ownShown(node, 'viewport') && !ownShown(node, 'render');
+};
+const off = (shown: boolean): Op[] =>
+  (['viewport', 'render'] as const).map((purpose) => ({
+    type: 'setParam',
+    nodeId: 'n_light',
+    paramPath: purpose,
+    value: shown ? undefined : false,
+  }));
 
 describe('#1445 — the agent hides and shows through the verb', () => {
   it('"hide the light": the raw op is refused and changes nothing; the verb hides it', async () => {
@@ -103,17 +115,14 @@ describe('#1445 — the agent hides and shows through the verb', () => {
     expect(toolText(seen[1])).toMatch(/error|invalid/i);
     const pending = useDiffStore.getState().pendingDiff;
     expect(pending).not.toBeNull();
-    expect(pending!.ops).toEqual([{ type: 'setHidden', nodeId: 'n_light', hidden: true }]);
+    expect(pending!.ops).toEqual(off(false));
     expect(hidden('n_light')).toBe(true);
   });
 
   it('"show it again": the verb clears the flag on a hidden light', async () => {
     useDagStore
       .getState()
-      .hydrate(
-        applyOp(buildDefaultDagState(), { type: 'setHidden', nodeId: 'n_light', hidden: true })
-          .next,
-      );
+      .hydrate(off(false).reduce((s, op) => applyOp(s, op).next, buildDefaultDagState()));
     script([
       () =>
         toolCall('agent.proposePlan', {
@@ -127,7 +136,7 @@ describe('#1445 — the agent hides and shows through the verb', () => {
 
     expect(result.error).toBeNull();
     const pending = useDiffStore.getState().pendingDiff;
-    expect(pending!.ops).toEqual([{ type: 'setHidden', nodeId: 'n_light', hidden: false }]);
+    expect(pending!.ops).toEqual(off(true));
     expect(hidden('n_light')).toBe(false);
   });
 });

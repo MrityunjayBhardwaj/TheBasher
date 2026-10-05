@@ -12,7 +12,12 @@
 // REF: Phase 7.9 PLAN Wave B verify clauses; RESEARCH §1.
 
 import { describe, expect, it } from 'vitest';
-import { dropItemsToFiles, inputFilesToFiles, plainFilesToFiles } from './ingestReaders';
+import {
+  dropItemsToFiles,
+  dropToFiles,
+  inputFilesToFiles,
+  plainFilesToFiles,
+} from './ingestReaders';
 
 // ---------- stubs ----------
 
@@ -227,5 +232,39 @@ describe('inputFilesToFiles', () => {
 
     expect(out).toHaveLength(1);
     expect(out[0].relativePath).toBe('cube.glb');
+  });
+});
+
+// #1454 — a drop whose items give no entry still holds its files in `dataTransfer.files`.
+describe('dropToFiles', () => {
+  const bytes = new Uint8Array([9, 8]);
+
+  it('items with entries answer, and the FileList is not read', async () => {
+    const entry = stubFileEntry('/kit/a.glb', stubFile('a.glb', bytes));
+    const out = await dropToFiles(
+      stubItemList([stubItem(entry)]),
+      stubFileList([stubFile('other.glb', bytes)]),
+    );
+    expect(out.viaItems).toBe(true);
+    expect(out.files.map((f) => f.relativePath)).toEqual(['kit/a.glb']);
+  });
+
+  it('items with no entry fall back to the FileList, which then answers', async () => {
+    const out = await dropToFiles(
+      stubItemList([stubItem(null)]),
+      stubFileList([stubFile('cube.glb', bytes)]),
+    );
+    expect(out.viaItems).toBe(false);
+    expect(out.files.map((f) => f.relativePath)).toEqual(['cube.glb']);
+    expect(out.files[0].bytes).toEqual(bytes);
+  });
+
+  it('no items at all reads the FileList; nothing anywhere reads empty', async () => {
+    const plain = await dropToFiles(null, stubFileList([stubFile('m.bvh', bytes)]));
+    expect(plain).toMatchObject({ viaItems: false, files: [{ relativePath: 'm.bvh' }] });
+    expect(await dropToFiles(stubItemList([stubItem(null)]), stubFileList([]))).toEqual({
+      files: [],
+      viaItems: true,
+    });
   });
 });

@@ -146,6 +146,8 @@ export interface PrimitiveMaterialSpec {
   readonly wireframe: boolean;
   /** Alpha cutout threshold; 0 = off (#532). Authored as `geometry.alphaCutoff`. */
   readonly alphaTest: number;
+  /** #1435 — the alpha drawn hashed (`geometry.renderMethod: 'dithered'`); absent = off. */
+  readonly alphaHash?: true;
   /**
    * Which faces to render — three's own `Side`, translated from the IR's
    * `geometry.doubleSided` once, at the spec assembly (#532). Named for the property
@@ -371,6 +373,7 @@ function build(spec: PrimitiveMaterialSpec): PrimitiveMaterial {
     b.transparent = spec.transparent;
     b.wireframe = spec.wireframe;
     b.alphaTest = spec.alphaTest;
+    b.alphaHash = spec.alphaHash === true; // #1435 — explicit; three's default is false
     b.side = spec.side;
     b.vertexColors = spec.vertexColors;
     b.map = prep(spec.textures.map, 'map', MAP_COLOR_SPACE.map);
@@ -406,6 +409,7 @@ function build(spec: PrimitiveMaterialSpec): PrimitiveMaterial {
   m.thickness = spec.thickness;
   m.wireframe = spec.wireframe;
   m.alphaTest = spec.alphaTest; // #532 — explicit; three's default is 0
+  m.alphaHash = spec.alphaHash === true; // #1435 — explicit; three's default is false
   m.side = spec.side;
   // #1062 — explicit, and already resolved against the drawn geometry by the spec assembly.
   // This material is only ever handed to a mesh whose layers produced this spec, so the flag

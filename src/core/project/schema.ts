@@ -86,7 +86,10 @@ import { NodeSchema, NodeIdSchema, NodeRefSchema } from '../dag/types';
 // formatMigrations[18].
 // v20 (#1227): an `AnimationClip` stores its motion as timed poses — bones by NAME, quaternions —
 // instead of a key per bone INDEX with XYZ euler angles. See migrations.ts formatMigrations[19].
-export const PROJECT_FORMAT_VERSION = 20;
+// v21 (#1503): visibility is the `viewport` and `render` params, not `meta.hidden` — a hidden node
+// is saved off in both, which is what `meta.hidden` hid it from. See migrations.ts
+// formatMigrations[20].
+export const PROJECT_FORMAT_VERSION = 21;
 
 export const ProjectSchema = z.object({
   formatVersion: z.literal(PROJECT_FORMAT_VERSION),

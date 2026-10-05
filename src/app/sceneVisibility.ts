@@ -1,40 +1,36 @@
 // #1448 — which nodes can be hidden, asked in ONE place.
 //
-// `meta.hidden` is a view flag (#227): the renderer skips a hidden node, and the offscreen
-// render captures the live scene, so it is gone from both. It skips one only where the node
-// is a direct entry of the Scene's `children` or `lights` band (`SceneFromDAG`), so a flag set
-// anywhere else changes the row's glyph and nothing in the picture. Cameras are wired to
-// `scene.camera`, not into either band, and are never hidden this way.
+// #1503 moved visibility off `meta.hidden` into the `viewport` and `render` params, which only
+// the types in `VISIBILITY_TYPES` carry (`collections.ts`). The eye and every drawer honour
+// them through `hiddenNodes`, on a collection and on every scene object (`collectableNodes`):
+// the scene's children at any depth, its lights, the rig band's lights and the cameras. A flag
+// set anywhere else would change nothing in the picture.
 //
 // The outliner's eye and the agent's hide verb (#1445) both ask this, so neither can offer
 // to hide what the other refuses, and neither can report a hide the picture does not show.
 
 import type { DagState } from '../core/dag/state';
-import { isCameraNode } from './cameraNode';
+import type { NodeId } from '../core/dag/types';
+import { collectableNodes, VISIBILITY_TYPES } from './collections';
 
-type Ref = { node: string };
-
-function sceneBand(state: DagState, socket: 'children' | 'lights'): readonly Ref[] {
-  const sceneRef = state.outputs.scene;
-  const scene = sceneRef ? state.nodes[sceneRef.node] : undefined;
-  const refs = scene?.inputs[socket];
-  return Array.isArray(refs) ? (refs as Ref[]) : [];
-}
-
-/** Why `nodeId` cannot be hidden, or null when hiding it removes it from the picture. */
-export function hideRefusal(state: DagState, nodeId: string): string | null {
+/**
+ * Why `nodeId` cannot be hidden, or null when hiding it removes it from the picture.
+ * `collectable` is `collectableNodes(state)`, passed in by a caller that asks for many rows.
+ */
+export function hideRefusal(
+  state: DagState,
+  nodeId: string,
+  collectable: ReadonlySet<NodeId> = collectableNodes(state),
+): string | null {
   const node = state.nodes[nodeId];
   if (!node) return `"${nodeId}" is not in the scene graph.`;
-  if (isCameraNode(state, nodeId))
-    return `"${nodeId}" is a camera; cameras are chosen with Set Active Camera, not hidden.`;
-  const top =
-    sceneBand(state, 'children').some((r) => r.node === nodeId) ||
-    sceneBand(state, 'lights').some((r) => r.node === nodeId);
-  if (!top)
+  if (!VISIBILITY_TYPES.has(node.type))
     return (
-      `"${nodeId}" (${node.type}) is not a direct child or light of the scene, and only those ` +
-      'can be hidden; hide the top-level object that holds it.'
+      `"${nodeId}" (${node.type}) carries no visibility of its own; only objects, groups and ` +
+      'collections can be hidden. Hide the object that holds it.'
     );
+  if (node.type !== 'Collection' && !collectable.has(nodeId))
+    return `"${nodeId}" (${node.type}) is not in the scene, so hiding it would change nothing.`;
   return null;
 }
 

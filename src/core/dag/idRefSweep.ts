@@ -204,10 +204,10 @@ export function idRefsOutOf(node: NodeLike): string[] {
  *
  * This is the FINAL-STATE form of "does not silently dangle". The edge guard in
  * `removeNode` is per-op because edges are always explicitly torn down; an id-ref is a
- * param that can legitimately outlive a removeNode within one batch — Apply-Transform
- * removes a node and re-adds the baked mesh under the SAME id (#412 inheritance), so a
- * channel/constraint naming that id is momentarily dangling mid-batch yet whole once the
- * batch settles. The invariant that actually matters is therefore about the COMMITTED
+ * param that can legitimately outlive a removeNode within one batch — a batch may remove a
+ * node and re-add one under the SAME id (Apply-Transform did, #412, until #1476 kept the
+ * Object in place), so a channel/constraint naming that id is momentarily dangling
+ * mid-batch yet whole once the batch settles. The invariant that actually matters is therefore about the COMMITTED
  * state, not any transient: after a batch, no node points at a missing id. Checked at the
  * commit chokepoint (`dispatchAtomic`), only when a removeNode is present — the sole op
  * that can turn a live ref into a dangling one.

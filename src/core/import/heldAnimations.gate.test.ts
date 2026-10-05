@@ -19,7 +19,6 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { Matrix4, Vector3 } from 'three';
 import { applyOp, evaluate, __resetRegistryForTests } from '../dag';
 import type { DagState } from '../dag/state';
-import { emptyDagState } from '../dag/state';
 import { buildDefaultDagState } from '../project/default';
 import { registerAllNodes } from '../../nodes/registerAll';
 import { buildNativeGltfImportOps } from './nativeGltfImport';
@@ -27,6 +26,7 @@ import { resolveWorldTransform } from '../../app/resolveWorldTransform';
 import { sampleSkinDeform } from '../../nodes/armatureDeform';
 import type { ModifiedDataValue } from '../../nodes/types';
 import oracle from './__fixtures__/blender-oracle-1154.json';
+import { sceneOnlyState } from '../../test-utils/sceneOnlyState';
 
 beforeEach(() => {
   __resetRegistryForTests();
@@ -146,8 +146,8 @@ async function importBar() {
     storeImage: async () => 'img',
   });
   if ('refused' in result) throw new Error(result.refused);
-  let state = emptyDagState();
-  for (const op of result.ops.slice(0, -1)) state = applyOp(state, op).next;
+  let state = sceneOnlyState();
+  for (const op of result.ops) state = applyOp(state, op).next;
   return state;
 }
 

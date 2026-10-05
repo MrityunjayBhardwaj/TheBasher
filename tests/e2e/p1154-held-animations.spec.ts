@@ -54,9 +54,10 @@ async function waitForEditor(page: Page): Promise<void> {
 }
 
 /**
- * Where three draws B's triangle, in world space: found under the import Group (the Group whose
- * children include the Object named "B"), because only a top-level scene child carries its node id on
- * the drawn object (`SceneFromDAG.tsx`, #1075) — as p1051 finds its cube.
+ * Where three draws B's triangle, in world space: found under the import's top (the ancestor of the
+ * Object named "B" that the Scene holds directly; #1451 — no wrapper Group), because a top-level
+ * scene child carries its node id as the drawn object's name (`SceneFromDAG.tsx`) — as p1051 finds
+ * its cube.
  */
 async function drawnTriangle(page: Page): Promise<number[] | null> {
   return page.evaluate(() => {
@@ -66,11 +67,14 @@ async function drawnTriangle(page: Page): Promise<number[] | null> {
       (n) =>
         n.type === 'Object' && (n as unknown as { meta?: { name?: string } }).meta?.name === 'B',
     );
-    const group = nodes.find((n) => {
-      const kids = n.inputs.children;
-      return n.type === 'Group' && Array.isArray(kids) && kids.some((k) => k.node === b?.id);
-    });
-    if (!group) return null;
+    const holder = (id: string) =>
+      nodes.find((n) => {
+        const kids = n.inputs.children;
+        return Array.isArray(kids) && kids.some((k) => k.node === id);
+      });
+    let top = b;
+    while (top && holder(top.id) && holder(top.id)!.type !== 'Scene') top = holder(top.id);
+    if (!top || !holder(top.id)) return null;
     type O3 = {
       isMesh?: boolean;
       matrixWorld: { elements: number[] };
@@ -82,7 +86,7 @@ async function drawnTriangle(page: Page): Promise<number[] | null> {
     };
     scene.updateMatrixWorld(true);
     let found: number[] | null = null;
-    scene.getObjectByName(group.id)?.traverse((o) => {
+    scene.getObjectByName(top.id)?.traverse((o) => {
       if (!o.isMesh || found) return;
       const e = o.matrixWorld.elements;
       found = [e[12], e[13], e[14]];

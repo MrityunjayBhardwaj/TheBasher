@@ -128,6 +128,9 @@ const formatMigrations: Record<number, FormatMigration> = {
   // XYZ euler angles. The index is resolved through the clip's own skeleton edge, here, because
   // nothing downstream holds the bone order a saved index was counted against.
   19: migrateClipKeysToPoses,
+  // v20 → v21 (#1503): `meta.hidden` becomes the `viewport` and `render` params, both off — the eye
+  // hid a node from the viewport AND the render, and those are the two flags that say so now.
+  20: migrateHiddenToVisibilityParams,
 };
 
 // ── v1 → v2: AnimationLayer retirement (#199) ──────────────────────────────
@@ -2059,4 +2062,56 @@ export function migrateClipKeysToPoses(raw: unknown): unknown {
     );
   }
   return { ...proj, formatVersion: 20 };
+}
+
+/**
+ * v20 → v21 (#1503) — `meta.hidden` becomes the `viewport` and `render` params.
+ *
+ * `meta.hidden: true` hid a node from the viewport and the render alike, so it migrates to both
+ * flags off on the node types that carry them (Object, Group, Collection — `visibilityParams`), and
+ * the project shows and renders exactly what it did. On any other type the flag hid no body of its
+ * own (a Transform or MaterialOverride wrapper draws its children as they are; a kept clone-road
+ * import is not drawn at all), so it is dropped there — and COUNTED in the warning with its node,
+ * so the loss is never silent. Runs on raw JSON, before `ProjectSchema.parse`, which no longer
+ * admits `meta.hidden` and would strip it unseen.
+ */
+export function migrateHiddenToVisibilityParams(raw: unknown): unknown {
+  const proj = raw as {
+    formatVersion?: number;
+    state?: { nodes?: Record<string, RawNode & { meta?: Record<string, unknown> }> };
+  };
+  const nodes = proj.state?.nodes;
+  if (!nodes) return { ...proj, formatVersion: 21 };
+  const CARRIES = new Set(['Object', 'Group', 'Collection']);
+  const migrated: string[] = [];
+  const dropped: string[] = [];
+  const next: Record<string, RawNode & { meta?: Record<string, unknown> }> = {};
+  for (const [id, node] of Object.entries(nodes)) {
+    if (!node?.meta || !('hidden' in node.meta)) {
+      next[id] = node;
+      continue;
+    }
+    const { hidden, ...meta } = node.meta;
+    const out: RawNode & { meta?: Record<string, unknown> } = { ...node };
+    if (Object.keys(meta).length > 0) out.meta = meta;
+    else delete out.meta;
+    if (hidden === true) {
+      if (CARRIES.has(node.type ?? '')) {
+        out.params = { ...(node.params ?? {}), viewport: false, render: false };
+        migrated.push(id);
+      } else {
+        dropped.push(`${id} (${node.type})`);
+      }
+    }
+    next[id] = out;
+  }
+  if (migrated.length > 0 || dropped.length > 0) {
+    console.warn(
+      `[migrateHiddenToVisibilityParams] ${migrated.length} hidden node(s) now off in the viewport and the render (#1503)` +
+        (dropped.length > 0
+          ? `; ${dropped.length} on a type with no body of its own lost a flag that hid nothing: ${dropped.join(', ')}.`
+          : '.'),
+    );
+  }
+  return { ...proj, state: { ...proj.state, nodes: next }, formatVersion: 21 };
 }

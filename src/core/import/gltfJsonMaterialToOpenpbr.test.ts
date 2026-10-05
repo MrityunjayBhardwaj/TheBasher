@@ -78,6 +78,35 @@ describe('gltfJsonMaterialToOpenpbr', () => {
     expect(opaque.geometry.opacity).toBe(1);
   });
 
+  it('#1435 — the alpha mode decides how the texture’s alpha is drawn, as Blender’s importer sets it', () => {
+    // The issue's measured table, with a base colour texture and a factor alpha of 1: BLEND drew
+    // opaque (`transparent` false) before, because only a factor below 1 turned blending on.
+    const textured = (alphaMode: 'OPAQUE' | 'MASK' | 'BLEND') =>
+      gltfJsonMaterialToOpenpbr(
+        { alphaMode, pbrMetallicRoughness: { baseColorTexture: { index: 0 } } },
+        { textures: [{}], samplers: [] },
+      );
+    const rows = (['OPAQUE', 'MASK', 'BLEND'] as const).map((mode) => {
+      const ir = textured(mode);
+      const drawn = openpbrToThree(ir);
+      return [
+        mode,
+        ir.geometry.renderMethod ?? null,
+        drawn.transparent,
+        drawn.alphaTest,
+        drawn.alphaHash ?? false,
+        ir.maps.albedo !== null,
+      ];
+    });
+    // Blender: OPAQUE ignores alpha, MASK cuts at 0.5, BLEND blends (`material.py`
+    // `set_eevee_surface_render_method`, `pbrMetallicRoughness.py` `base_color`).
+    expect(rows).toEqual([
+      ['OPAQUE', null, false, 0, false, true],
+      ['MASK', null, false, 0.5, false, true],
+      ['BLEND', 'blended', true, 0, false, true],
+    ]);
+  });
+
   it('seeds NULL maps when no texture tables are passed (clone-read oracle path)', () => {
     const ir = gltfJsonMaterialToOpenpbr({
       pbrMetallicRoughness: { baseColorTexture: { index: 0 } },

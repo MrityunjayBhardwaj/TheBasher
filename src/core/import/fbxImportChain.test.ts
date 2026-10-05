@@ -54,8 +54,18 @@ const wire = (s: DagState, id: string, socket: string) =>
     socket,
   }).value as PosedSkeletonValue;
 
-function imported(data: ArrayBuffer) {
-  const result = buildFbxImportOps({ data, name: 'walk', ids: { skeleton: 'sk', layer: 'layer' } });
+/** These files sample no image; a store would be a regression the test should see. */
+const storeImage = (): Promise<string> => Promise.reject(new Error('this file stores no image'));
+
+async function imported(data: ArrayBuffer) {
+  const result = await buildFbxImportOps({
+    data,
+    name: 'walk',
+    ids: { skeleton: 'sk', layer: 'layer' },
+    storeImage,
+  });
+  // Every file here holds a rig (#1434: one with no bone is a model, `fbxModelLanding.test.ts`).
+  if (result.kind === 'model') throw new Error('expected a rig');
   const state = apply(result.ops);
   return {
     result,
@@ -107,8 +117,8 @@ beforeEach(() => {
 describe('the layer’s shape is the one Blender’s FBX importer writes (walk, Blender default export)', () => {
   const o = oracle('blender-oracle-walk-fbx.json');
 
-  it('every keyed bone is a quaternion member, keyed position + quaternion + scale, all linear', () => {
-    const { params, result } = imported(WALK());
+  it('every keyed bone is a quaternion member, keyed position + quaternion + scale, all linear', async () => {
+    const { params, result } = await imported(WALK());
     const count = (c: string) => params.channels.filter((ch) => ch.component === c).length;
     expect(o.blender).toMatch(/^5\.1/);
     expect(o.modes).toEqual(['QUATERNION']);
@@ -121,19 +131,23 @@ describe('the layer’s shape is the one Blender’s FBX importer writes (walk, 
     // Blender's quaternion curves are the bones' alone (the armature Object rotates in euler).
     expect(count('quaternion') * 4).toBe(o.fcurvesByProperty.rotation_quaternion);
     // Its location and scale curves are the bones' plus the armature Object's own three each; those
-    // three tracks key no bone here, and are counted as dropped, not lost.
+    // three tracks key no bone here. They hold the armature's rest at every key, which the bones
+    // already carry (#1190), so they are counted apart and nothing is dropped (#1441).
     expect(count('position') * 3 + 3).toBe(o.fcurvesByProperty.location);
     expect(count('scale') * 3 + 3).toBe(o.fcurvesByProperty.scale);
     expect(result.scaleChannels).toBe(count('scale'));
+    expect(result.armatureRestTracks).toBe(3);
     expect(result.dropped).toEqual({
-      unknownBoneTracks: 3,
+      nodeTracks: 0,
       otherPropertyTracks: 0,
       unparsedTracks: 0,
+      otherTakes: 0,
     });
+    expect(result.notices).toEqual([]);
   });
 
-  it('keys sit at the file’s own times, not one per frame: the exporter simplified them', () => {
-    const { params } = imported(WALK());
+  it('keys sit at the file’s own times, not one per frame: the exporter simplified them', async () => {
+    const { params } = await imported(WALK());
     const lengths = new Set(params.channels.map((c) => c.keyframes.length));
     expect(lengths.size).toBeGreaterThan(5);
     expect(Math.max(...lengths)).toBe(120);
@@ -148,8 +162,8 @@ describe('the layer poses every bone as the old clip did, at every key', () => {
     ['walk (Blender default export)', WALK],
     ['rig.fbx', RIG],
   ] as const) {
-    it(label, () => {
-      const { layer, params } = imported(data());
+    it(label, async () => {
+      const { layer, params } = await imported(data());
       const parsed = parseFbx(data(), 'walk');
       const clipState = apply([
         { type: 'addNode', nodeId: 'csk', nodeType: 'Skeleton', params: parsed.skeletonParams },
@@ -217,10 +231,11 @@ describe('scale the clip dropped is kept (keyed-scale bar, Blender default expor
   // (`Bone1_end`) is not one of ours; Bone0 and Bone1 are compared, and Bone1's scale directly
   // against Blender's pose bone, whose axes are the file's (the importer's bone reorientation is off
   // by default).
-  it('Bone1’s keyed scale plays as Blender plays it at five frames, and the heads match', () => {
-    const { layer, result } = imported(KEYED_SCALE());
+  it('Bone1’s keyed scale plays as Blender plays it at five frames, and the heads match', async () => {
+    const { layer, result } = await imported(KEYED_SCALE());
     expect(result.scaleChannels).toBe(2);
-    expect(result.dropped.unknownBoneTracks).toBe(3); // the armature node's own tracks
+    expect(result.armatureRestTracks).toBe(3); // the armature node's own, holding its rest
+    expect(result.dropped.nodeTracks).toBe(0);
     expect(o.frames['25'].Bone1.scale).toEqual([0.6, 1.8, 1.2]);
     expect(worstScale(layer)).toBeLessThan(1e-6);
 
@@ -238,8 +253,8 @@ describe('scale the clip dropped is kept (keyed-scale bar, Blender default expor
     expect(worstHead).toBeLessThan(1e-6);
   });
 
-  it('with the scale channels removed, Bone1 no longer scales as Blender’s does — the row can fail', () => {
-    const { params } = imported(KEYED_SCALE());
+  it('with the scale channels removed, Bone1 no longer scales as Blender’s does — the row can fail', async () => {
+    const { params } = await imported(KEYED_SCALE());
     const state = apply(
       [
         {
@@ -250,11 +265,14 @@ describe('scale the clip dropped is kept (keyed-scale bar, Blender default expor
         },
       ],
       apply(
-        buildFbxImportOps({
-          data: KEYED_SCALE(),
-          name: 'walk',
-          ids: { skeleton: 'sk', layer: 'layer' },
-        }).ops,
+        (
+          await buildFbxImportOps({
+            data: KEYED_SCALE(),
+            name: 'walk',
+            ids: { skeleton: 'sk', layer: 'layer' },
+            storeImage,
+          })
+        ).ops,
       ),
     );
     expect(worstScale(wire(state, 'layer', 'out'))).toBeGreaterThan(0.5);
@@ -264,8 +282,8 @@ describe('scale the clip dropped is kept (keyed-scale bar, Blender default expor
 describe('walk against Blender 5.1.1’s import of the same FBX', () => {
   const o = oracle('blender-oracle-walk-fbx.json');
 
-  it('at the first frame, where every curve has a key: every bone’s head and rotation', () => {
-    const { layer } = imported(WALK());
+  it('at the first frame, where every curve has a key: every bone’s head and rotation', async () => {
+    const { layer } = await imported(WALK());
     const ours = worldAt(layer, 0);
     const heights = Object.values(o.frames['1']).map((b) => b.head[2]);
     const HEIGHT = Math.max(...heights) - Math.min(...heights);
@@ -319,9 +337,9 @@ function againstBlenderEveryFrame(pose: PosedSkeletonValue, o: EveryFrame) {
 }
 
 describe('#1279 — the file’s motion plays as Blender plays it, at every frame', () => {
-  it('walk: all 94 bones at every 2nd frame', () => {
+  it('walk: all 94 bones at every 2nd frame', async () => {
     const r = againstBlenderEveryFrame(
-      imported(WALK()).layer,
+      (await imported(WALK())).layer,
       oracle('blender-oracle-walk-fbx-every-2nd-frame.json') as unknown as EveryFrame,
     );
     expect(r.frames).toBe(60);
@@ -333,9 +351,9 @@ describe('#1279 — the file’s motion plays as Blender plays it, at every fram
     expect(r.worstHead, 'of the rig height').toBeLessThan(2e-5);
   });
 
-  it('keyed-scale bar: all three bones at every frame', () => {
+  it('keyed-scale bar: all three bones at every frame', async () => {
     const r = againstBlenderEveryFrame(
-      imported(KEYED_SCALE()).layer,
+      (await imported(KEYED_SCALE())).layer,
       oracle('blender-oracle-keyed-bar-fbx-every-frame.json') as unknown as EveryFrame,
     );
     expect(r.frames).toBe(25);

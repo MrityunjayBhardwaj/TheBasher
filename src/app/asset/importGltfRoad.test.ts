@@ -7,6 +7,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { MemoryStorage } from '../../core/storage/MemoryStorage';
 import { __resetRegistryForTests } from '../../core/dag/registry';
 import { registerAllNodes } from '../../nodes/registerAll';
+import { sceneOnlyState } from '../../test-utils/sceneOnlyState';
 
 const storage = new MemoryStorage();
 vi.mock('../boot', () => ({ getStorage: async () => storage }));
@@ -46,7 +47,7 @@ const shareTheMesh = (json: Json) => {
 
 async function road(path: string, bytes: Uint8Array) {
   await storage.write(path, bytes);
-  return buildGltfImportOpsFromOpfs(path, 'n_scene');
+  return buildGltfImportOpsFromOpfs(path, sceneOnlyState());
 }
 
 beforeEach(() => {

@@ -71,29 +71,32 @@ async function imported(page: Page) {
         !Array.isArray(n.inputs.data) &&
         data.some((d) => d.id === (n.inputs.data as { node: string } | undefined)?.node),
     );
-    // The child's parent is whoever holds it as a child; the import Group is that node's parent.
-    const parent = object ? all.find((n) => childrenOf(n.id).includes(object.id)) : undefined;
-    const importGroup = parent ? all.find((n) => childrenOf(n.id).includes(parent.id)) : undefined;
+    // The child's parent is whoever holds it as a child. #1451 — no wrapper Group: the import's
+    // top is the ancestor the Scene holds directly, the one three draws under its own id.
+    const holder = (id: string) => all.find((n) => childrenOf(n.id).includes(id));
+    const parent = object ? holder(object.id) : undefined;
+    let top = object;
+    while (top && holder(top.id) && holder(top.id)!.type !== 'Scene') top = holder(top.id);
     return {
       objectId: object?.id ?? null,
       parentId: parent?.id ?? null,
       parentType: parent?.type ?? null,
       parentParams: (parent?.params ?? {}) as { position?: number[] },
-      importGroupId: importGroup?.id ?? null,
+      importTopId: top?.id ?? null,
       gltfNodes: all.filter((n) => n.type === 'GltfData' || n.type === 'GltfAsset').length,
     };
   });
 }
 
 /**
- * Where three actually draws the one mesh under `groupId`, in world space.
+ * Where three actually draws the one mesh under `topId`, in world space.
  *
- * Found by walking the import Group rather than by node id: only a TOP-LEVEL scene child carries
+ * Found by walking the import's top rather than by node id: only a TOP-LEVEL scene child carries
  * its node id on the drawn object (`SceneFromDAG.tsx:2038`), so a nested object has no name to look
  * up. That is #1075, and it is why a click inside an import selects the whole import — a gap this
  * change neither creates nor closes.
  */
-async function drawnMeshWorld(page: Page, groupId: string): Promise<number[] | null> {
+async function drawnMeshWorld(page: Page, topId: string): Promise<number[] | null> {
   return page.evaluate((id) => {
     type O3 = {
       isMesh?: boolean;
@@ -115,7 +118,7 @@ async function drawnMeshWorld(page: Page, groupId: string): Promise<number[] | n
       found = [e[12], e[13], e[14]];
     });
     return found;
-  }, groupId);
+  }, topId);
 }
 
 async function dispatch(page: Page, ops: unknown[]) {
@@ -185,7 +188,7 @@ async function importNestedCube(page: Page) {
 }
 
 /** Step through time and demand the gizmo sit on the drawn mesh at each step. */
-async function gizmoFollowsDraw(page: Page, groupId: string, drawn: Record<number, number[]>) {
+async function gizmoFollowsDraw(page: Page, topId: string, drawn: Record<number, number[]>) {
   const checked: number[] = [];
   for (const [t, want] of Object.entries(drawn)) {
     await page.evaluate(
@@ -194,7 +197,7 @@ async function gizmoFollowsDraw(page: Page, groupId: string, drawn: Record<numbe
     );
     // The drawn mesh first: the claim is read == drawn, so the draw must be where the test says.
     await expect
-      .poll(async () => (await drawnMeshWorld(page, groupId))?.map((v) => +v.toFixed(4)))
+      .poll(async () => (await drawnMeshWorld(page, topId))?.map((v) => +v.toFixed(4)))
       .toEqual(want);
     await expect
       .poll(async () =>
@@ -259,7 +262,7 @@ test('#1166 — the gizmo follows a nested object whose nested parent a strip mo
     (id) => (window as unknown as W).__basher_selection!.getState().select(id),
     shape.objectId!,
   );
-  await gizmoFollowsDraw(page, shape.importGroupId!, {
+  await gizmoFollowsDraw(page, shape.importTopId!, {
     1: [1, 4, 0],
     0: [1, 3, 0],
     2: [1, 5, 0],

@@ -13,6 +13,7 @@ import { buildDefaultDagState } from '../../../core/project/default';
 import { useDiffStore } from '../../diff';
 import { validatePlan } from '../validate';
 import type { MutatorValidationResult } from '../types';
+import { ownShown } from '../../../app/collections';
 import { hideRefusal } from '../../../app/sceneVisibility';
 import { setHiddenMutator } from './setHidden';
 
@@ -36,51 +37,64 @@ function propose(spec: unknown, state: DagState, ops: Op[]): DagState {
   return useDiffStore.getState().propose(state, ops, 'test', undefined, closure).forkState;
 }
 
-const hidden = (s: DagState, id: string) => s.nodes[id]?.meta?.hidden ?? false;
+// #1503 — hidden means off in the viewport and the render alike, as the verb sets it.
+const hidden = (s: DagState, id: string) =>
+  !ownShown(s.nodes[id], 'viewport') && !ownShown(s.nodes[id], 'render');
+
+/** The two param writes the verb emits for one node. */
+const flags = (nodeId: string, shown: boolean): Op[] =>
+  (['viewport', 'render'] as const).map((purpose) => ({
+    type: 'setParam',
+    nodeId,
+    paramPath: purpose,
+    value: shown ? undefined : false,
+  }));
+
+const hiddenState = (id: string) =>
+  flags(id, false).reduce((s, op) => applyOp(s, op).next, buildDefaultDagState());
 
 describe('#1445 — mutator.setHidden', () => {
   it('"hide the light": the light is hidden, and the store takes the plan', () => {
     const state = buildDefaultDagState();
     const spec = { targetSelectors: ['n_light'], hidden: true };
     const ops = okOps(plan(spec, state));
-    expect(ops).toEqual([{ type: 'setHidden', nodeId: 'n_light', hidden: true }]);
+    expect(ops).toEqual(flags('n_light', false));
     expect(hidden(propose(spec, state, ops), 'n_light')).toBe(true);
   });
 
-  it('"show it again": hidden false clears the flag, through the same gates', () => {
-    const state = applyOp(buildDefaultDagState(), {
-      type: 'setHidden',
-      nodeId: 'n_light',
-      hidden: true,
-    }).next;
+  it('"show it again": hidden false clears both flags, through the same gates', () => {
+    const state = hiddenState('n_light');
     const spec = { targetSelectors: ['n_light'], hidden: false };
     const ops = okOps(plan(spec, state));
-    expect(ops).toEqual([{ type: 'setHidden', nodeId: 'n_light', hidden: false }]);
-    expect(hidden(propose(spec, state, ops), 'n_light')).toBe(false);
+    expect(ops).toEqual(flags('n_light', true));
+    const after = propose(spec, state, ops);
+    expect(hidden(after, 'n_light')).toBe(false);
+    // Showing clears the flag rather than writing true, so a save keeps only what is off.
+    const params = after.nodes.n_light.params as Record<string, unknown>;
+    expect(params.viewport).toBeUndefined();
+    expect(params.render).toBeUndefined();
   });
 
   it('hides several at once, and a target already in the asked state emits nothing', () => {
-    const state = applyOp(buildDefaultDagState(), {
-      type: 'setHidden',
-      nodeId: 'n_box',
-      hidden: true,
-    }).next;
+    const state = hiddenState('n_box');
     const ops = okOps(plan({ targetSelectors: ['n_box', 'n_light'], hidden: true }, state));
-    expect(ops).toEqual([{ type: 'setHidden', nodeId: 'n_light', hidden: true }]);
+    expect(ops).toEqual(flags('n_light', false));
   });
 
-  it("refuses a camera with the outliner's own reason, and emits nothing", () => {
-    const state = buildDefaultDagState();
-    const r = plan({ targetSelectors: ['n_camera'], hidden: true }, state);
-    expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.reason).toBe(hideRefusal(state, 'n_camera'));
+  it('a node hidden for one purpose only gets just the other flag', () => {
+    const state = applyOp(buildDefaultDagState(), flags('n_box', false)[0]).next;
+    const ops = okOps(plan({ targetSelectors: ['n_box'], hidden: true }, state));
+    expect(ops).toEqual([flags('n_box', false)[1]]);
   });
 
-  it('refuses a data node: the object that holds it is what can be hidden', () => {
+  it('refuses a data node with the reason that names what to hide instead', () => {
     const state = buildDefaultDagState();
     const r = plan({ targetSelectors: ['n_light_data'], hidden: true }, state);
     expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.reason).toMatch(/not a direct child or light of the scene/);
+    if (!r.ok) {
+      expect(r.reason).toBe(hideRefusal(state, 'n_light_data'));
+      expect(r.reason).toMatch(/Hide the object that holds it/);
+    }
   });
 
   it('refuses a missing id by name', () => {
@@ -98,6 +112,7 @@ describe('#1445 — mutator.setHidden', () => {
     const accepted = ids.filter((id) => plan({ targetSelectors: [id], hidden: true }, state).ok);
     const offered = ids.filter((id) => hideRefusal(state, id) === null);
     expect(accepted).toEqual(offered);
-    expect(offered).toEqual(expect.arrayContaining(['n_box', 'n_light']));
+    expect(offered).toEqual(expect.arrayContaining(['n_box', 'n_light', 'n_camera']));
+    expect(offered).not.toContain('n_light_data');
   });
 });

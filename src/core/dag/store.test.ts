@@ -272,10 +272,11 @@ describe('DagStore — #435 id-reference dangle guard', () => {
     expect(useDagStore.getState().state.nodes.subject).toBeDefined();
   });
 
-  it('ALLOWS remove + re-add of the SAME id in one batch (the Apply-Transform pattern)', () => {
+  it('ALLOWS remove + re-add of the SAME id in one batch', () => {
     seedRefScene();
     const store = useDagStore.getState();
-    // #412 id inheritance: the subject is removed and re-created under the same id, so the
+    // #412 id inheritance (Apply-Transform's shape until #1476 kept the Object in place, and still
+    // a legal batch): the subject is removed and re-created under the same id, so the
     // referrer is momentarily dangling mid-batch yet whole once committed. A per-op guard
     // would (wrongly) reject this; the final-state guard accepts it.
     expect(() =>

@@ -18,6 +18,8 @@ import { enumerateCameraNodeIds } from './activeCamera';
 import { importedChildOf } from './importedChild';
 import { chainSocketOf, isSceneLaneWrapper } from './operatorChain';
 import { hierarchySocketForKind } from './sceneHierarchy';
+import { childCollectionsOf, collectionMembersOf, sceneCollectionsOf } from './collections';
+import { resolveActiveRigNode, resolveRigLightSources } from './resolveRigLightSources';
 
 export interface TreeRow {
   /** Stable key for React. */
@@ -270,16 +272,52 @@ export function buildSceneTreeRows(state: DagState): TreeRow[] {
   });
   ctx.visited.add(sceneRef.node);
   const children = sceneNode.inputs.children;
-  if (Array.isArray(children)) {
-    children.forEach((ref, i) => {
-      ctx.visited.delete(ref.node);
-      walkOneAsChild(ctx, ref.node, 1, sceneRef.node, {
+  const sceneChildren = Array.isArray(children) ? children : [];
+  // #1451 — the scene's collections first, as Blender's outliner lists a scene's collections, each
+  // with the scene objects it holds under it. A member keeps its scene `children` linkage (it is
+  // still the scene's child — a collection is membership, not a parent), so reordering and the eye
+  // act on it as on any top-level row. A collection row has no linkage: it is not dragged in this
+  // slice. A member nested under another Object is listed under that Object, as ever.
+  const collected = new Set<NodeId>();
+  // #397 — a nested collection lists under the collection holding it, and under each one when it
+  // sits in several, as Blender's outliner lists one row per path. Its members list under it.
+  const walkCollection = (collectionId: NodeId, depth: number, parentKey: string) => {
+    const key = `${parentKey}/collection/${collectionId}`;
+    ctx.rows.push({
+      key,
+      nodeId: collectionId,
+      nodeType: 'Collection',
+      depth,
+      display: display(state, collectionId),
+    });
+    for (const child of childCollectionsOf(state, collectionId)) {
+      if (!key.includes(`/collection/${child}/`) && !key.endsWith(`/collection/${child}`)) {
+        walkCollection(child, depth + 1, key);
+      }
+    }
+    for (const member of collectionMembersOf(state, collectionId)) {
+      const i = sceneChildren.findIndex((ref) => ref.node === member);
+      if (i < 0 || collected.has(member)) continue;
+      collected.add(member);
+      ctx.visited.delete(member);
+      walkOneAsChild(ctx, member, depth + 1, key, {
         nodeId: sceneRef.node,
         socket: 'children',
         index: i,
       });
+    }
+  };
+  for (const collectionId of sceneCollectionsOf(state))
+    walkCollection(collectionId, 1, sceneRef.node);
+  sceneChildren.forEach((ref, i) => {
+    if (collected.has(ref.node)) return;
+    ctx.visited.delete(ref.node);
+    walkOneAsChild(ctx, ref.node, 1, sceneRef.node, {
+      nodeId: sceneRef.node,
+      socket: 'children',
+      index: i,
     });
-  }
+  });
   // #231 Inc 2a — project the scene's direct LIGHTS as depth-1 rows too (Blender
   // shows lights in the outliner). They were previously invisible here (only
   // viewport helper-pick selected them). Carrying `parent.socket: 'lights'` lets
@@ -294,6 +332,16 @@ export function buildSceneTreeRows(state: DagState): TreeRow[] {
         socket: 'lights',
         index: i,
       });
+    });
+  }
+  // #1480 — and the active lighting profile's lights, the ones the rig band draws
+  // (`resolveRigLightSources`), so each has a row and an eye like a scene light. The row's parent is
+  // the rig's own `lights` list — the socket the light is wired to, which a drag reorders.
+  const rigId = resolveActiveRigNode(state);
+  if (rigId) {
+    resolveRigLightSources(state).forEach((lightId, i) => {
+      if (ctx.visited.has(lightId)) return;
+      walkOneAsChild(ctx, lightId, 1, sceneRef.node, { nodeId: rigId, socket: 'lights', index: i });
     });
   }
   // #231 Inc 3.2 — project the scene's CAMERAS as depth-1 rows (Blender shows

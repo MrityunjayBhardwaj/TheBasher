@@ -71,29 +71,32 @@ async function imported(page: Page) {
         !Array.isArray(n.inputs.data) &&
         data.some((d) => d.id === (n.inputs.data as { node: string } | undefined)?.node),
     );
-    // The child's parent is whoever holds it as a child; the import Group is that node's parent.
-    const parent = object ? all.find((n) => childrenOf(n.id).includes(object.id)) : undefined;
-    const importGroup = parent ? all.find((n) => childrenOf(n.id).includes(parent.id)) : undefined;
+    // The child's parent is whoever holds it as a child. #1451 — no wrapper Group: the import's
+    // top is the ancestor the Scene holds directly, the one three draws under its own id.
+    const holder = (id: string) => all.find((n) => childrenOf(n.id).includes(id));
+    const parent = object ? holder(object.id) : undefined;
+    let top = object;
+    while (top && holder(top.id) && holder(top.id)!.type !== 'Scene') top = holder(top.id);
     return {
       objectId: object?.id ?? null,
       parentId: parent?.id ?? null,
       parentType: parent?.type ?? null,
       parentParams: (parent?.params ?? {}) as { position?: number[] },
-      importGroupId: importGroup?.id ?? null,
+      importTopId: top?.id ?? null,
       gltfNodes: all.filter((n) => n.type === 'GltfData' || n.type === 'GltfAsset').length,
     };
   });
 }
 
 /**
- * Where three actually draws the one mesh under `groupId`, in world space.
+ * Where three actually draws the one mesh under `topId`, in world space.
  *
- * Found by walking the import Group rather than by node id: only a TOP-LEVEL scene child carries
+ * Found by walking the import's top rather than by node id: only a TOP-LEVEL scene child carries
  * its node id on the drawn object (`SceneFromDAG.tsx:2038`), so a nested object has no name to look
  * up. That is #1075, and it is why a click inside an import selects the whole import — a gap this
  * change neither creates nor closes.
  */
-async function drawnMeshWorld(page: Page, groupId: string): Promise<number[] | null> {
+async function drawnMeshWorld(page: Page, topId: string): Promise<number[] | null> {
   return page.evaluate((id) => {
     type O3 = {
       isMesh?: boolean;
@@ -115,7 +118,7 @@ async function drawnMeshWorld(page: Page, groupId: string): Promise<number[] | n
       found = [e[12], e[13], e[14]];
     });
     return found;
-  }, groupId);
+  }, topId);
 }
 
 test('#1051 — a cube under an empty imports native, and the empty moves it', async ({ page }) => {
@@ -147,12 +150,14 @@ test('#1051 — a cube under an empty imports native, and the empty moves it', a
   // The empty is a Group carrying the file's own transform (Blender writes an Empty here).
   expect(shape.parentType).toBe('Group');
   expect(shape.parentParams.position).toEqual([0, 3, 0]);
-  expect(shape.importGroupId, 'the empty hangs under the import Group').not.toBeNull();
+  expect(shape.importTopId, 'the empty stands in the scene itself, no wrapper Group').toBe(
+    shape.parentId,
+  );
 
   // THE POINT, read off the drawn mesh: the file puts the cube at (1, 0, 0) inside an empty at
   // (0, 3, 0), so it draws at (1, 3, 0). Drop the parent edge and it draws at (1, 0, 0) — the y is
   // the parent, and it is the whole difference between a hierarchy and a flat list.
-  const world = await drawnMeshWorld(page, shape.importGroupId!);
+  const world = await drawnMeshWorld(page, shape.importTopId!);
   expect(world, 'the imported cube is drawn').not.toBeNull();
   for (const [axis, expected] of [
     [0, 1],

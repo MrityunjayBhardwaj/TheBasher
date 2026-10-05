@@ -29,6 +29,7 @@ import { collectSkeletonObjects } from '../skeletonObjects';
 import { bindMotionToCharacter, characterTargets } from './bindMotionToCharacter';
 import { poseLayerChain } from '../animate/poseChain';
 import type { GraphNodeLike } from '../animate/graphNodes';
+import { ownShown } from '../collections';
 
 /** The retarget feeds the bottom of the Object's pose chain, and the base layer holding the file's
  *  own keys sits muted above it (#1211, as Blender swaps an armature's action). */
@@ -236,9 +237,10 @@ describe('#1213 — dropping a motion binds it to the native character', () => {
     expect(bound.mapped).toBe(2);
     const state = useDagStore.getState().state;
     expectBoundTo(state, armatureId, bound.clipId);
-    expect(state.nodes.swing_skel_object.meta?.hidden, 'the motion’s own rig steps aside').toBe(
-      true,
-    );
+    expect(
+      ownShown(state.nodes.swing_skel_object, 'viewport'),
+      'the motion’s own rig steps aside',
+    ).toBe(false);
 
     // The deform reads the bound motion: every vertex equals the deform driven by the retarget's
     // pose, the tip moves over the second, and it is not the bar's own clip.

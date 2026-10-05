@@ -248,17 +248,33 @@ for (const kind of ['Null', 'Group'] as const) {
   });
 }
 
-test('a followed glTF (its import-root Group) rides the path (#362 — glTF in the kind set)', async ({
+test('a followed glTF (its import root) rides the path (#362 — glTF in the kind set)', async ({
   page,
 }) => {
-  // §7 Phase 2 — glTF added to the kind set. A glTF's pose lives on its import-root Group
-  // (#222/V67), a bodyless container, so it follows exactly as a Group does (observed via
-  // its evaluated transform, which render == read fold through the same resolveConstraintPosition).
-  // Before the pose contract a glTF advertised an inert Constraints panel (#356); now the
-  // real posable thing — the Group — rides the path. Phase 3 promotes it to an Object.
+  // §7 Phase 2 — glTF added to the kind set. A glTF's pose lives on its import root (#222/V67).
+  // Before the pose contract a glTF advertised an inert Constraints panel (#356); now the real
+  // posable thing rides the path. #1451 — that root is the file's own node standing in the scene
+  // (cube-draco.glb's one Object, no wrapper Group), observed via its evaluated transform, which
+  // render == read fold through the same resolveConstraintPosition.
   await boot(page);
   await addPosedCurve(page);
   const seam = await seamPoint(page);
+  type Dag = {
+    __basher_dag: {
+      getState(): {
+        state: {
+          nodes: Record<string, { type: string; inputs: Record<string, unknown> }>;
+        };
+      };
+    };
+  };
+  const sceneKids = () =>
+    page.evaluate(() => {
+      const kids = (window as unknown as Dag).__basher_dag.getState().state.nodes['n_scene'].inputs
+        .children;
+      return (Array.isArray(kids) ? kids : []).map((k) => (k as { node: string }).node);
+    });
+  const before = await sceneKids();
   await page.evaluate(async () => {
     const w = window as unknown as UiWindow;
     const bytes = new Uint8Array(
@@ -266,23 +282,21 @@ test('a followed glTF (its import-root Group) rides the path (#362 — glTF in t
     );
     await w.__basher_ingestGltfFolder([{ relativePath: 'cube-draco.glb', bytes }], 'follow-gltf');
   });
-  // The import creates ONE Group root (V67). Wait for it, then follow it.
-  const groupId = await page
-    .waitForFunction(() => {
-      const st = (
-        window as unknown as {
-          __basher_dag: { getState(): { state: { nodes: Record<string, { type: string }> } } };
-        }
-      ).__basher_dag.getState().state.nodes;
-      return Object.entries(st).find(([, n]) => n.type === 'Group')?.[0] ?? null;
-    })
-    .then((h) => h.jsonValue() as Promise<string>);
-  await follow(page, [], groupId);
+  // The import adds ONE root to the scene. Wait for it, then follow it.
+  await expect.poll(async () => (await sceneKids()).length).toBe(before.length + 1);
+  const rootId = (await sceneKids()).find((id) => !before.includes(id))!;
+  expect(
+    await page.evaluate(
+      (id) => (window as unknown as Dag).__basher_dag.getState().state.nodes[id].type,
+      rootId,
+    ),
+  ).toBe('Object');
+  await follow(page, [], rootId);
   const t = await page.evaluate(
     (id) => (window as unknown as UiWindow).__basher_evaluated_transform(id),
-    groupId,
+    rootId,
   );
-  expect(t, 'the glTF import-root Group must resolve an evaluated transform').toBeTruthy();
+  expect(t, 'the glTF import root must resolve an evaluated transform').toBeTruthy();
   expect(gap(t!.position, seam), 'the followed glTF must ride the path').toBeLessThan(1e-3);
 });
 

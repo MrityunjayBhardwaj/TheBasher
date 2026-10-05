@@ -10,6 +10,7 @@
 import { z } from 'zod';
 import type { ToolDefinition, ToolContext, ToolResult } from './types';
 import type { Op } from '../../core/dag/types';
+import { linkIntoActiveCollection } from '../../app/collections';
 
 export const cameraSnapshotSchema = z.object({
   fov: z.number().positive().default(45).describe('Camera field of view in degrees'),
@@ -28,7 +29,8 @@ export const cameraSnapshotTool: ToolDefinition<CameraSnapshotArgs> = {
   description:
     'Create a new perspective camera from a camera pose: a CameraData node holding ' +
     'the lens and an Object that places it. The new camera is wired into the Scene ' +
-    'aggregator, replacing any existing camera. Returns an Op[] that the Diff system ' +
+    'aggregator, replacing any existing camera, and joins the active collection. ' +
+    'Returns an Op[] that the Diff system ' +
     'applies to the fork.',
   paramSchema: cameraSnapshotSchema,
   handler(args: CameraSnapshotArgs, ctx: ToolContext): ToolResult {
@@ -111,6 +113,10 @@ export const cameraSnapshotTool: ToolDefinition<CameraSnapshotArgs> = {
       to: { node: sceneRef.node, socket: 'camera' },
     });
 
-    return { ops, text: `Snapshot camera at [${args.position}] looking at [${args.lookAt}]` };
+    // #1504 — into the active collection, as the Add menu's cameras join it (#1453).
+    return {
+      ops: linkIntoActiveCollection(ctx.dagState, ops, [newId]),
+      text: `Snapshot camera at [${args.position}] looking at [${args.lookAt}]`,
+    };
   },
 };

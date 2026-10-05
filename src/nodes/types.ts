@@ -141,6 +141,18 @@ export type LightValue =
 // implicit centre `resolveRigTarget` derived in #206/#207). The lights stay in
 // edge order (the renderer recovers their node ids by index-correspondence via
 // `resolveRigLightSources`, exactly as the Scene's direct `lights` do).
+/**
+ * #1451 (Collections, #397) — a Collection's value: how many Objects it holds. Membership is the
+ * node's `members` EDGES, read off the graph by whatever asks (the outliner, the viewport's hide);
+ * the value carries no transform and no children, so nothing can draw through it or be parented
+ * to it. Blender keeps the two apart the same way: a collection groups objects, parenting moves
+ * them, and an object is organised one way while parented another.
+ */
+export interface CollectionValue {
+  readonly kind: 'Collection';
+  readonly memberCount: number;
+}
+
 export interface LightRigValue {
   readonly kind: 'LightRig';
   readonly name: string;
@@ -467,7 +479,8 @@ export interface InlineMaterialSpec {
   /** emission_color (sRGB hex) + emission_luminance (cd/m², 1:1 → emissiveIntensity). */
   readonly emission: { readonly color: string; readonly luminance: number };
   /**
-   * geometry_opacity [0..1] — auto-sets three `transparent` when <1.
+   * geometry_opacity [0..1] — auto-sets three `transparent` when <1, unless `renderMethod` says
+   * dithered, which draws it hashed instead (#1435).
    * `alphaCutoff` (glTF direct-import, texture-maps milestone) — the alphaTest
    * threshold captured from a glTF `alphaMode:'MASK'` material (default 0.5);
    * absent = not a cutout material (alphaTest 0). `vertexColors` — captured from
@@ -496,6 +509,17 @@ export interface InlineMaterialSpec {
      * `DEFAULT_TRANSMISSION_THICKNESS` every transmissive material drew with before it.
      */
     readonly thickness?: number;
+    /**
+     * #1435 — how the surface's alpha is drawn: its opacity times the base colour map's alpha.
+     * Blender's `surface_render_method`: `blended` sorts and blends (three's `transparent`),
+     * `dithered` draws a hashed cutout (three's `alphaHash`). Blender's glTF importer draws
+     * `alphaMode: BLEND` blended (`io_scene_gltf2/blender/imp/material.py`
+     * `set_eevee_surface_render_method`); its FBX importer draws a diffuse image that has alpha
+     * dithered (`import_fbx.py`, the `image.depth == 32` pass; `node_shader_utils.py`
+     * `use_alpha`). Absent: the alpha is drawn only when opacity is below 1, blended — what every
+     * material drew before this field.
+     */
+    readonly renderMethod?: 'blended' | 'dithered';
   };
   /** Texture map slots (W5). */
   readonly maps: InlineMaterialMaps;
@@ -728,6 +752,12 @@ export interface BakedMaterialSpec extends BakedMaterialMaps {
    * an ordinary bake and every save before this field read exactly as they did.
    */
   readonly alphaTest?: number;
+  /**
+   * #1435 — the source drew its alpha hashed (three's `alphaHash`, from the IR's
+   * `geometry.renderMethod: 'dithered'`). Absent when it did not, three's own default, so an
+   * ordinary bake and every save before this field read exactly as they did.
+   */
+  readonly alphaHash?: true;
   /**
    * #1140 — the source drew both faces. Absent when it drew front faces only.
    *
@@ -1638,6 +1668,9 @@ export interface GroupValue extends RotationModeFields {
   // (childEdges/localMatrix) discriminate on `kind`; a light nested here renders
   // at the group-composed world via three.js `<group>` nesting.
   readonly children: readonly SceneObject[];
+  /** #1447 — the bone of its parent armature Object this Group hangs from, as `ObjectValue`'s
+   *  `parentBone` (#1210). Present only when set. */
+  readonly parentBone?: string;
 }
 
 export interface MaterialOverrideValue {

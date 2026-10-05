@@ -24,6 +24,7 @@ import type { DagState } from '../core/dag/state';
 import { armaturePoseOf } from '../nodes/bonePose';
 import type { BoneSpec, ObjectValue, PosedSkeletonValue } from '../nodes/types';
 import { resolveWorldTransform } from './resolveWorldTransform';
+import { hiddenNodes } from './collections';
 
 export interface SkeletonObject {
   /** The Object node — what a click on its bones selects. */
@@ -51,11 +52,15 @@ function refNode(binding: unknown): string | null {
 export function collectSkeletonObjects(state: DagState, cache?: EvaluatorCache): SkeletonObject[] {
   const out: SkeletonObject[] = [];
   const nodes = Object.values(state.nodes);
+  // Hidden by its own eye or a hidden collection (#1451) ⇒ its bones go, as `SceneFromDAG` skips
+  // its body: without this the eye would blank the Object and leave its bones standing. #1462 —
+  // only the rig itself: a hidden parent above it hides the parent alone, as in Blender, so the
+  // bones stay with the meshes that still draw.
+  // #1503 — bones are viewport chrome (Blender never renders an armature), so the viewport flag.
+  const hidden = hiddenNodes(state, 'viewport');
   for (const node of nodes) {
     if (node.type !== 'Object') continue;
-    // Hidden in the outliner ⇒ hidden here too, as `SceneFromDAG` hides a top-level node.
-    // Without this the eye toggle would blank the Object's slot and leave its bones standing.
-    if (node.meta?.hidden) continue;
+    if (hidden.has(node.id)) continue;
     const skeletonId = refNode(node.inputs.data);
     if (!skeletonId) continue;
     try {

@@ -151,6 +151,10 @@ const CORPUS: readonly World[] = [
   // absent from this corpus; it is pinned on its own below.)
   world('alphaTest', { ir: irWith({ geometry: { opacity: 1, alphaCutoff: 0.5 } }) }),
   world('side (doubleSided)', { ir: irWith({ geometry: { opacity: 1, doubleSided: true } }) }),
+  // #1435 — the hashed alpha; a spec that drops it makes this world a duplicate of `base`.
+  world('alphaHash (dithered)', {
+    ir: irWith({ geometry: { opacity: 1, renderMethod: 'dithered' } }),
+  }),
   // #1123 — the two map strengths; a spec that drops one makes its world a duplicate of `base`.
   world('normal strength', { ir: irWith({ mapStrengths: { normal: 0.5 } }) }),
   world('occlusion strength', { ir: irWith({ mapStrengths: { ao: 0.3 } }) }),
@@ -384,6 +388,8 @@ describe('#566 — every field the compile produces is carried on the spec, or e
     opacity: 'opacity',
     transparent: 'transparent',
     alphaTest: 'alphaTest',
+    // #1435 — the hashed alpha, under three's own name.
+    alphaHash: 'alphaHash',
     // #532 — boolean→enum at the spec assembly, so every spec field lands on the material
     // under its own name and the downstream gate stays exact instead of needing an exemption.
     doubleSided: 'side',
@@ -464,6 +470,8 @@ describe('#566 — every field the compile produces is carried on the spec, or e
       irWith({ fuzz: { weight: 1, color: '#ffffff', roughness: 0.3 } }),
       irWith({ specular: { roughness: 0.72, ior: 1.5, weight: 0.4, color: '#ffbc89' } }),
       irWith({ transmission: { weight: 1, color: '#7ccbff', depth: 0.5 } }),
+      // #1435 — `alphaHash` is emitted only for a dithered surface.
+      irWith({ geometry: { opacity: 1, renderMethod: 'dithered' } }),
     ];
     const seen = new Set<string>();
     for (const ir of worlds)
@@ -488,8 +496,8 @@ describe('#566 — every field the compile produces is carried on the spec, or e
     // EXACT on both sides. A floor would pass a field that stopped being produced — which is
     // the direction that looks like cleanup and silently removes a rendering lobe.
     const produced = producedFields();
-    expect(produced.length).toBe(30);
-    expect(produced.filter((f) => f in CARRIED).length).toBe(30);
+    expect(produced.length).toBe(31);
+    expect(produced.filter((f) => f in CARRIED).length).toBe(31);
     expect(produced.filter((f) => f in EXCLUDED).length).toBe(0);
   });
 
@@ -507,7 +515,7 @@ describe('#566 — every field the compile produces is carried on the spec, or e
         irWith({
           mapUvTransforms: { albedo: { tiling: [2, 2], offset: [0, 0], rotation: 0 } },
           mapUvLayers: { albedo: 'UVMap.001' },
-          geometry: { opacity: 1, colorLayer: 'Color' },
+          geometry: { opacity: 1, colorLayer: 'Color', renderMethod: 'dithered' },
           mapStrengths: { normal: 0.5, ao: 0.3, coatNormal: 0.5 },
           unlit: true,
           fuzz: { weight: 1, color: '#ffffff', roughness: 0.3 },

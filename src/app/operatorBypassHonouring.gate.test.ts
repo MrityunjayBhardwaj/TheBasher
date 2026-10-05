@@ -329,7 +329,8 @@ describe('ns-2 step 5 — the bypass is honoured at ONE site', () => {
     // 88 -> 89 at #393 (ArmatureModifier), an operator, so both counts move by one together.
     // 89 -> 90 at #1240 (PoseLayer), NOT an operator, so the operator count does not move.
     // 90 -> 89 at #1243 (PoseOverride retired, absorbed by PoseLayer), NOT an operator.
-    expect(listNodeTypes()).toHaveLength(89);
+    // 89 -> 90 at #1451 (Collection), NOT an operator, so the operator count does not move.
+    expect(listNodeTypes()).toHaveLength(90);
     expect(operators()).toHaveLength(12);
     expect(declaredBypassParams()).toEqual(['muted']);
     expect(FILES.length).toBeGreaterThan(500);

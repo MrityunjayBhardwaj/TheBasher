@@ -16,6 +16,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useDagStore } from '../../core/dag/store';
 import { registerAllNodes } from '../../nodes/registerAll';
+import { listNodeTypes } from '../../core/dag';
+import { newCollectionOps, setActiveCollectionOp } from '../collections';
 import { useAssetErrorStore } from '../stores/assetErrorStore';
 import { useImportRefreshStore } from '../stores/importRefreshStore';
 import { useSettingsStore } from '../stores/settingsStore';
@@ -88,11 +90,12 @@ describe('a director generating a mesh gets an ordinary imported asset', () => {
     ].sort();
     // Scene + TimeSource are the seed; the rest is what the import road produced.
     // #1049 — the stub's mesh (one node, one untextured primitive) is one the native model holds,
-    // so it arrives as native geometry: a Group over `Object` + `PolyMeshData`, and nothing that
+    // so it arrives as native geometry: an `Object` + `PolyMeshData` in the scene (no wrapper Group
+    // since #1451), and nothing that
     // reads the file. This row still proves the generation road took the SAME producer the
     // file-drop road takes rather than a parallel one (it named `GltfAsset` + `GltfData` while the
     // clone road was the only one).
-    expect(types).toEqual(['Group', 'Object', 'PolyMeshData', 'Scene', 'TimeSource']);
+    expect(types).toEqual(['Object', 'PolyMeshData', 'Scene', 'TimeSource']);
   });
 });
 
@@ -153,14 +156,63 @@ describe("the identical road — the phase's discriminating observation", () => 
       // than assumed, so a director's import that lost its names still diverges from the agent's.
       .concat(added.filter((n) => n.meta?.name !== undefined).map(() => 'setMeta'))
       // The import's connects, which the node table cannot report (a connect leaves no
-      // node behind). THREE for a native import (#1049): `data → object.data`,
-      // `object → group.children`, `group → scene.children`. The count is `1 + two per
-      // imported object`, and this fixture's GLB has exactly one. (The clone road also
-      // made three here, by a different sum: `2 + one per imported child`.)
-      .concat(['connect', 'connect', 'connect'])
+      // node behind). TWO for a native import with no wrapper Group (#1451): `data →
+      // object.data` and `object → scene.children`, two per imported object, and this
+      // fixture's GLB has exactly one.
+      .concat(['connect', 'connect'])
       .sort();
 
     expect(agentShape).toEqual(humanShape);
+  });
+
+  it('#1478 — the description names no node type the import does not add', async () => {
+    // The agent plans from this text. The census in tools.test.ts only asks that a named type is
+    // registered, and `GltfAsset` and `GltfData` still are — so it stayed green while this text
+    // promised a wrapper Group and two file-reading nodes that #1451 and the native road removed.
+    const agent = await modelGenerateTool.handler(
+      { prompt: PROMPT },
+      {
+        dagState: useDagStore.getState().state,
+        modelCapability: capability as ModelGenerationCapability,
+        modelVersion: DEFAULT_MODEL_VERSION,
+      },
+    );
+    const added = new Set(agent.ops.flatMap((o) => (o.type === 'addNode' ? [o.nodeType] : [])));
+    expect(added.size, 'the premise: the import added nodes').toBeGreaterThan(0);
+    const registered = new Set(listNodeTypes());
+    const named = (modelGenerateTool.description.match(/\b[A-Z][A-Za-z0-9]*\b/g) ?? []).filter(
+      (word) => registered.has(word),
+    );
+    expect(named.filter((type) => !added.has(type))).toEqual([]);
+  });
+
+  it('#1478 — as the description says, the objects join the active collection', async () => {
+    const made = newCollectionOps(useDagStore.getState().state)!;
+    useDagStore
+      .getState()
+      .dispatchAtomic(
+        [...made.ops, setActiveCollectionOp(useDagStore.getState().state, made.collectionId)!],
+        'user',
+        'active collection',
+      );
+    const agent = await modelGenerateTool.handler(
+      { prompt: PROMPT },
+      {
+        dagState: useDagStore.getState().state,
+        modelCapability: capability as ModelGenerationCapability,
+        modelVersion: DEFAULT_MODEL_VERSION,
+      },
+    );
+    const objects = agent.ops.flatMap((o) =>
+      o.type === 'addNode' && o.nodeType === 'Object' ? [o.nodeId] : [],
+    );
+    const linked = agent.ops.flatMap((o) =>
+      o.type === 'connect' && o.to.node === made.collectionId && o.to.socket === 'members'
+        ? [o.from.node]
+        : [],
+    );
+    expect(objects.length, 'the premise: the import made an object').toBeGreaterThan(0);
+    expect(linked).toEqual(objects);
   });
 });
 

@@ -105,6 +105,12 @@ import {
   type ReferenceRigs,
 } from '../app/animate/referenceRigs';
 import { collectSkeletonObjects, type SkeletonObject } from '../app/skeletonObjects';
+import { hiddenNodes } from '../app/collections';
+import {
+  RENDER_VISIBILITY_KEY,
+  renderVisibilityStamps,
+  type RenderVisibilityStamp,
+} from '../app/renderVisibility';
 import {
   enumerateCameraNodeIds,
   resolveCameraDofAt,
@@ -191,12 +197,40 @@ function ensureRectAreaInit() {
 interface OverlayMembership {
   readonly directChannelTargets: ReadonlySet<string>;
   readonly constraintTargets: ReadonlySet<string>;
+  /**
+   * #1462 — every node hidden itself, by its flags or its collections (`hiddenNodes`), read by
+   * flat id at any depth like the overlays. Such a node skips its own body and nothing else.
+   * #1503 — hidden in the viewport AND the render: a node shown in only one of them keeps its
+   * body, stamped (`visibilityStamps`), so the render can show what the viewport does not.
+   */
+  readonly hiddenIds: ReadonlySet<string>;
+  /** #1503 — the nodes shown in exactly one of the viewport and the render, and which. */
+  readonly visibilityStamps: ReadonlyMap<string, RenderVisibilityStamp>;
 }
 const EMPTY_MEMBERSHIP: OverlayMembership = {
   directChannelTargets: new Set(),
   constraintTargets: new Set(),
+  hiddenIds: new Set(),
+  visibilityStamps: new Map(),
 };
 const OverlayMembershipContext = createContext<OverlayMembership>(EMPTY_MEMBERSHIP);
+
+/**
+ * #1503 — a node's body, stamped when the viewport and the render disagree about it: invisible
+ * here and shown by the render ('render-only'), or drawn here and hidden by the render
+ * ('viewport-only'). Unstamped, its children come back as they are, so a node shown in both (every
+ * node nobody hid) draws exactly as before. `withRenderVisibility` (renderVisibility.ts) reads it.
+ */
+function OwnVisibility({ nodeId, children }: { nodeId: string | null; children: ReactNode }) {
+  const { visibilityStamps } = useContext(OverlayMembershipContext);
+  const stamp = nodeId != null ? visibilityStamps.get(nodeId) : undefined;
+  if (!stamp) return <>{children}</>;
+  return (
+    <group visible={stamp !== 'render-only'} userData={{ [RENDER_VISIBILITY_KEY]: stamp }}>
+      {children}
+    </group>
+  );
+}
 
 /**
  * The context this component evaluates at — time FROZEN AT ZERO, by design (B13, #114).
@@ -316,6 +350,22 @@ export function SceneFromDAG({ outputName = 'render' }: SceneFromDAGProps) {
         : null,
     );
   }, [referenceRigs]);
+  // #1462 — what is hidden itself, by its own flags or its collections (#1451), read by flat id
+  // wherever a node draws (`MeshChild`): it skips its own body, and its children still draw, as
+  // Blender hides an object alone. #1503 — asked for the viewport and the render apart: hidden in
+  // both, the body is not mounted; shown in one, it is mounted under a stamp the render flips
+  // (`withRenderVisibility`, renderToImage.ts). Editor chrome — light helpers, camera frustums,
+  // bones — follows the viewport alone, since it never renders.
+  const viewportHidden = useMemo(() => hiddenNodes(state, 'viewport'), [state]);
+  const renderHidden = useMemo(() => hiddenNodes(state, 'render'), [state]);
+  const hiddenIds = useMemo(
+    () => new Set([...viewportHidden].filter((id) => renderHidden.has(id))),
+    [viewportHidden, renderHidden],
+  );
+  const visibilityStamps = useMemo(
+    () => renderVisibilityStamps(viewportHidden, renderHidden),
+    [viewportHidden, renderHidden],
+  );
   // #165: editor-only camera frustums hide in rendered mode (production
   // parity) and the active camera's own frustum hides while looking through
   // it (you're inside it — drawing it would clutter the preview).
@@ -375,9 +425,12 @@ export function SceneFromDAG({ outputName = 'render' }: SceneFromDAGProps) {
   // the sig IS the content dependency (the sets are rebuilt each render by design).
   const overlaySig = `${[...directChannelTargets].sort().join(',')}|${[...constraintTargets]
     .sort()
+    .join(',')}|${[...hiddenIds].sort().join(',')}|${[...visibilityStamps]
+    .map(([id, stamp]) => `${id}:${stamp}`)
+    .sort()
     .join(',')}`;
   const overlayMembership = useMemo<OverlayMembership>(
-    () => ({ directChannelTargets, constraintTargets }),
+    () => ({ directChannelTargets, constraintTargets, hiddenIds, visibilityStamps }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [overlaySig],
   );
@@ -488,21 +541,23 @@ export function SceneFromDAG({ outputName = 'render' }: SceneFromDAGProps) {
           become selectable frustum objects (CameraHelpers). */}
       {value.scene.lights.map((light, i) => {
         const lid = lightRefs[i]?.node ?? null;
-        // #1448 — a hidden light renders nothing, exactly as a hidden child does (#227): null in
-        // its slot, so index `i` still lines up with `lightRefs`. Without this the outliner's eye
-        // dimmed the row while the light kept lighting the scene and the render.
-        if (lid != null && state.nodes[lid]?.meta?.hidden) return null;
+        // #1453 — a light hidden in the viewport AND the render (its flags, or its collections)
+        // lights nothing, as such a mesh draws nothing. #1503 — hidden in only one, it is mounted
+        // under its stamp (`OwnVisibility`): an invisible light lights nothing in the viewport, and
+        // the render flips it on.
+        if (lid != null && hiddenIds.has(lid)) return null;
         // #205 — a light targeted by an active Track-To aims via lookAt (V60); the
         // membership set is built once (O(N)) so this stays O(1) per light (B13).
         return (
-          <LightNode
-            key={`light:${i}`}
-            value={light}
-            nodeId={lid}
-            constrained={lid != null && constraintTargets.has(lid)}
-            hasDirectChannels={lid != null && directChannelTargets.has(lid)}
-            followsPath={lid != null && followPathTargets.has(lid)}
-          />
+          <OwnVisibility key={`light:${i}`} nodeId={lid}>
+            <LightNode
+              value={light}
+              nodeId={lid}
+              constrained={lid != null && constraintTargets.has(lid)}
+              hasDirectChannels={lid != null && directChannelTargets.has(lid)}
+              followsPath={lid != null && followPathTargets.has(lid)}
+            />
+          </OwnVisibility>
         );
       })}
       {/* #208 — the active lighting PROFILE's lights, rendered as a parallel band.
@@ -510,15 +565,17 @@ export function SceneFromDAG({ outputName = 'render' }: SceneFromDAGProps) {
           matching `rigLights`) so studio lights keep their Track-To aim + selection. */}
       {rigLights.map((light, i) => {
         const lid = rigLightSources[i] ?? null;
+        if (lid != null && hiddenIds.has(lid)) return null;
         return (
-          <LightNode
-            key={`rig-light:${lid ?? i}`}
-            value={light}
-            nodeId={lid}
-            constrained={lid != null && constraintTargets.has(lid)}
-            hasDirectChannels={lid != null && directChannelTargets.has(lid)}
-            followsPath={lid != null && followPathTargets.has(lid)}
-          />
+          <OwnVisibility key={`rig-light:${lid ?? i}`} nodeId={lid}>
+            <LightNode
+              value={light}
+              nodeId={lid}
+              constrained={lid != null && constraintTargets.has(lid)}
+              hasDirectChannels={lid != null && directChannelTargets.has(lid)}
+              followsPath={lid != null && followPathTargets.has(lid)}
+            />
+          </OwnVisibility>
         );
       })}
       {/* Editor-only wireframe helpers — show position/direction/range
@@ -527,8 +584,7 @@ export function SceneFromDAG({ outputName = 'render' }: SceneFromDAGProps) {
       {showLightHelpers
         ? value.scene.lights.map((light, i) => {
             const lid = lightRefs[i]?.node ?? null;
-            // #1448 — a hidden light draws no helper either.
-            if (lid != null && state.nodes[lid]?.meta?.hidden) return null;
+            if (lid != null && viewportHidden.has(lid)) return null; // #1453 — with its light
             // [[V85]]/[[H132]] #241 — an animated light's helper follows the
             // evaluated value at the playhead; a static light keeps the static path.
             // #243 GAP 2 / #265 — a Track-To'd AIMABLE light (Area/Spot/Directional)
@@ -553,6 +609,7 @@ export function SceneFromDAG({ outputName = 'render' }: SceneFromDAGProps) {
       {showLightHelpers
         ? rigLights.map((light, i) => {
             const lid = rigLightSources[i] ?? null;
+            if (lid != null && viewportHidden.has(lid)) return null; // #1453 — with its light
             // #243 GAP 2 / #265 — a Track-To'd AIMABLE rig light follows its aim per frame.
             return lid &&
               (directChannelTargets.has(lid) ||
@@ -575,6 +632,9 @@ export function SceneFromDAG({ outputName = 'render' }: SceneFromDAGProps) {
         ? cameraNodeIds.map((id) => {
             const active = id === activeCameraId;
             if (active && lookThrough) return null;
+            // #1453 — a hidden camera (its eye, or a hidden collection) draws no frustum. As in
+            // Blender, hiding it does not stop the shot: the active camera still frames the render.
+            if (viewportHidden.has(id)) return null;
             // [[V85]]/[[H132]] #240 — an ANIMATED camera (direct channels or a
             // Track-To) follows the EVALUATED pose at the live playhead, parity with
             // meshes/lights; a static camera keeps the cheap frame-0 read. #242 GAP 1
@@ -621,17 +681,18 @@ export function SceneFromDAG({ outputName = 'render' }: SceneFromDAGProps) {
           all N (H48 / B13). */}
       {value.scene.children.map((child, i) => {
         const cpid = childRefs[i]?.node ?? null;
-        // #227 S4 — a hidden top-level node renders NOTHING (null in its slot, so
-        // the array index still corresponds to childRefs[i] — the band invariant
-        // the direct-channel / constraint maps rely on is preserved). The live
-        // scene is what the offscreen still/animation render captures (V37), so a
-        // skipped node is absent from the render too — one band, no #168 denylist.
-        if (cpid != null && state.nodes[cpid]?.meta?.hidden) return null;
+        // #227 S4 — a hidden top-level node draws nothing of its own. #1462 — but its children
+        // still draw (`MeshChild` skips only the hidden node's body), as Blender hides an object
+        // alone; its wrapper drops the node's name, so nothing reads the node as drawn. The live
+        // scene is what the offscreen still/animation render captures (V37), so a skipped body
+        // is absent from the render too — one band, no #168 denylist. #1451 — a member of a
+        // hidden collection is hidden the same way.
         return (
           <SceneChildNode
             key={`mesh:${i}`}
             value={child}
             pickId={cpid}
+            hidden={cpid != null && hiddenIds.has(cpid)}
             // v0.7 unification (#197) — a node animated by free-floating direct
             // channels (V57) overlays via DirectChannelsR. Membership tested
             // against the ONE pre-built set (O(N) total, not O(N²)).
@@ -706,6 +767,9 @@ function MeshScaleProbe() {
         if (!target && (o as THREE.Mesh).isMesh) target = o;
       });
       const obj: THREE.Object3D = target ?? grp;
+      // #1503 — null for a body the viewport does not draw: one with its viewport flag off stays
+      // mounted, invisible, so the render can show it, and is not "in the live scene" here.
+      for (let o: THREE.Object3D | null = obj; o; o = o.parent) if (!o.visible) return null;
       obj.updateWorldMatrix(true, false);
       const p = new THREE.Vector3();
       obj.getWorldPosition(p);
@@ -739,7 +803,9 @@ function MeshScaleProbe() {
     // `<group>` nesting composes a nested light's world exactly as it does a mesh's.
     w.__basher_light_world_positions = (): [number, number, number][] => {
       const out: [number, number, number][] = [];
-      scene.traverse((o) => {
+      // #1503 — the lights that light the viewport: a light with its viewport flag off is mounted,
+      // invisible, for the render, and three skips an invisible light as this walk does.
+      scene.traverseVisible((o) => {
         if ((o as THREE.Light).isLight) {
           o.updateWorldMatrix(true, false);
           const p = new THREE.Vector3();
@@ -1885,6 +1951,22 @@ const MeshChild = memo(function MeshChild({ value: raw, override, nodeId }: Mesh
   // value's orientation becomes the `rotation` every arm below already reads. Memoised on the
   // value: an euler value comes back as itself, so nothing that never opts in re-renders.
   const value = useMemo(() => withResolvedRotation(raw), [raw]);
+  // #1462 — a hidden node skips its own body and nothing else, as Blender hides an object alone:
+  // an Object still draws its children under its transform, a Group or a Transform (which have no
+  // body) draw as they are, and a leaf draws nothing.
+  const { hiddenIds } = useContext(OverlayMembershipContext);
+  if (nodeId != null && hiddenIds.has(nodeId)) {
+    switch (value.kind) {
+      case 'Object':
+        return <ObjectR value={value} override={override} nodeId={nodeId} hideSelf />;
+      case 'Group':
+      case 'Transform':
+      case 'MaterialOverride':
+        break;
+      default:
+        return null;
+    }
+  }
   switch (value.kind) {
     // #388 S5 / #415 S5 — no DAG node evaluates to a `BakedMeshValue` or a
     // `ModifiedMeshValue` any more (the fused baked kind is retired; the modifiers emit
@@ -2005,6 +2087,8 @@ interface SceneChildNodeProps {
   value: SceneChild;
   /** Producing DAG node id (for click-to-select + the MeshScaleProbe name). */
   pickId: string | null;
+  /** #1462 — the node is hidden: its wrapper carries no name, as nothing of its own is drawn. */
+  hidden: boolean;
   /** v0.7 (#197) — this node is driven by free-floating direct channels, so its
    *  value is overlaid by DirectChannelsR. A stable boolean (membership in the
    *  pre-built set) so the memo bails out for static nodes (H48). */
@@ -2036,6 +2120,7 @@ interface SceneChildNodeProps {
 const SceneChildNode = memo(function SceneChildNode({
   value,
   pickId,
+  hidden,
   hasDirectChannels,
   isConstrained,
 }: SceneChildNodeProps) {
@@ -2107,7 +2192,7 @@ const SceneChildNode = memo(function SceneChildNode({
     // v0.6 #1 (Wave 3, C-3) — name the wrapping group with its producer node id
     // so the DEV scale-probe seam (MeshScaleProbe) reads the REAL rendered
     // three.js object scale by node id (H40 side-A observation).
-    <group name={pickId ?? undefined} onClick={onClick}>
+    <group name={hidden ? undefined : (pickId ?? undefined)} onClick={onClick}>
       <OverlayDispatch
         value={value}
         nodeId={pickId}
@@ -2177,7 +2262,8 @@ function RenderChild({
   nodeId: string | null;
   override?: MaterialValue;
 }) {
-  const { directChannelTargets, constraintTargets } = useContext(OverlayMembershipContext);
+  const { directChannelTargets, constraintTargets, hiddenIds } =
+    useContext(OverlayMembershipContext);
   const drawn = (
     <OverlayDispatch
       value={value}
@@ -2192,7 +2278,8 @@ function RenderChild({
   // that drew it (`buildPickChain`). This identity group is that mapping, written
   // here because every nested node is drawn through this one seam, whatever
   // produced it (an import's Objects, a user's Group, a Transform's child).
-  if (nodeId == null) return drawn;
+  // #1462 — a hidden node draws no body of its own, so nothing under it maps back to it.
+  if (nodeId == null || hiddenIds.has(nodeId)) return drawn;
   return <group userData={{ [DRAWN_NODE_ID_KEY]: nodeId }}>{drawn}</group>;
 }
 
@@ -2711,12 +2798,20 @@ function ObjectR({
   value,
   override,
   nodeId,
+  hideSelf = false,
 }: {
   value: ObjectValue;
   override?: MaterialValue;
   nodeId?: string | null;
+  /** #1462 — hidden: draw the children under this Object's transform, and not its own body. */
+  hideSelf?: boolean;
 }) {
-  const self = <ObjectSelfR value={value} override={override} />;
+  // #1503 — a body shown in only one of the viewport and the render is stamped for the render.
+  const self = hideSelf ? null : (
+    <OwnVisibility nodeId={nodeId ?? null}>
+      <ObjectSelfR value={value} override={override} />
+    </OwnVisibility>
+  );
   if (!value.children || value.children.length === 0) return self;
   // Index-aligned with `value.children`, as in GroupR; an absent id degrades to the bare draw.
   const edges = nodeId ? childEdges(useDagStore.getState().state, nodeId, value) : [];
@@ -3267,6 +3362,8 @@ function FlattenedBakedMeshR({
  */
 function bakedSurface(m: THREE.Material, spec: BakedMaterialSpec): void {
   if (spec.alphaTest !== undefined) m.alphaTest = spec.alphaTest;
+  // #1435 — the hashed alpha the source drew with; absent is three's default.
+  if (spec.alphaHash) m.alphaHash = true;
   if (spec.doubleSided !== undefined) m.side = threeSideFor(spec.doubleSided);
 }
 
@@ -3409,6 +3506,7 @@ function CapturedBakedMeshR({
     tex,
     spec.mapPlacements,
     spec.alphaTest,
+    spec.alphaHash,
     spec.doubleSided,
     spec.normalScale,
     spec.aoMapIntensity,

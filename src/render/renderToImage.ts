@@ -42,6 +42,7 @@ import type { CameraPose } from '../app/activeCamera';
 import { cameraOrientationQuat } from '../app/cameraOrientation';
 import type { DofEffectSettings } from '../app/cameraDof';
 import { isEditorChrome } from '../app/editorChrome';
+import { withRenderVisibility } from '../app/renderVisibility';
 import type { PostFxConfig } from '../nodes/types';
 
 /** Which control pass to render. 'beauty' is the lit production frame (the #168
@@ -283,23 +284,27 @@ export async function renderSceneToImageCanvas(
     // Chrome is hidden for exactly the span that reads pixels, and restored by the
     // scope itself (#560) — the dispose below is the caller's own resource and is
     // deliberately NOT part of that span.
-    withEditorChromeHidden(scene, () => {
-      // Control pass (depth/normal) → material-override path into a raw target.
-      // Else: DoF on → postprocessing EffectComposer (bokeh matches the viewport,
-      // V37); DoF off → the fast manual MSAA path, byte-for-byte as before.
-      const pass = opts.pass ?? 'beauty';
-      const buf =
-        pass !== 'beauty'
-          ? renderViaPass(gl, scene, camera, width, height, pass, sc.readBuf, samples)
-          : opts.dof
-            ? renderViaComposer(gl, scene, camera, width, height, postFx, opts.dof, sc.readBuf)
-            : renderViaManual(gl, scene, camera, width, height, postFx, sc.target, sc.readBuf);
-      const flipped = flipRowsY(buf, width, height);
-      // Reuse the scratch ImageData buffer (set() copies into it) → no per-frame
-      // 8MB ImageData allocation on the animation path.
-      sc.imageData.data.set(flipped);
-      sc.ctx.putImageData(sc.imageData, 0, 0);
-    });
+    // #1503 — and with the render's own visibility: a body the viewport hides but the render
+    // includes is shown, and one the render excludes is hidden, for the same span.
+    withEditorChromeHidden(scene, () =>
+      withRenderVisibility(scene, () => {
+        // Control pass (depth/normal) → material-override path into a raw target.
+        // Else: DoF on → postprocessing EffectComposer (bokeh matches the viewport,
+        // V37); DoF off → the fast manual MSAA path, byte-for-byte as before.
+        const pass = opts.pass ?? 'beauty';
+        const buf =
+          pass !== 'beauty'
+            ? renderViaPass(gl, scene, camera, width, height, pass, sc.readBuf, samples)
+            : opts.dof
+              ? renderViaComposer(gl, scene, camera, width, height, postFx, opts.dof, sc.readBuf)
+              : renderViaManual(gl, scene, camera, width, height, postFx, sc.target, sc.readBuf);
+        const flipped = flipRowsY(buf, width, height);
+        // Reuse the scratch ImageData buffer (set() copies into it) → no per-frame
+        // 8MB ImageData allocation on the animation path.
+        sc.imageData.data.set(flipped);
+        sc.ctx.putImageData(sc.imageData, 0, 0);
+      }),
+    );
   } finally {
     if (!reuse) sc.dispose();
   }

@@ -16,7 +16,6 @@ import { readFileSync } from 'node:fs';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { __resetRegistryForTests, applyOp, evaluate } from '../../core/dag';
 import type { DagState } from '../../core/dag/state';
-import { emptyDagState } from '../../core/dag/state';
 import { useDagStore } from '../../core/dag/store';
 import { buildDefaultDagState } from '../../core/project/default';
 import type { Op } from '../../core/dag/types';
@@ -48,6 +47,7 @@ import {
 import { poseLayerChain } from './poseChain';
 import type { GraphNodeLike } from './graphNodes';
 import oracle from '../../core/import/__fixtures__/blender-oracle-1215.json';
+import { sceneOnlyState } from '../../test-utils/sceneOnlyState';
 
 beforeEach(() => {
   __resetRegistryForTests();
@@ -87,7 +87,7 @@ async function importNative(state: DagState, file: string, sceneNodeId: string):
     storeImage: async () => 'img',
   });
   if ('refused' in result) throw new Error(result.refused);
-  return apply(state, sceneNodeId === 'n_scene' ? result.ops.slice(0, -1) : result.ops);
+  return apply(state, result.ops);
 }
 
 const armatureOf = (state: DagState) =>
@@ -143,7 +143,7 @@ const FRAMES_KEYS_AND_MIDS = Array.from({ length: 9 }, (_, i) => i * 3);
 
 /** The bar with only its first animation playing (the held take muted, as imported). */
 async function bar() {
-  const state = await importNative(emptyDagState(), 'skinned-bar-two-clips.glb', 'n_scene');
+  const state = await importNative(sceneOnlyState(), 'skinned-bar-two-clips.glb', 'n_scene');
   const armature = armatureOf(state);
   const chain = poseLayerChain(graph(state), armature);
   return { state, armature, chain };

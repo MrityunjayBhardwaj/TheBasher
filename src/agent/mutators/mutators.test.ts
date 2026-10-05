@@ -4481,10 +4481,6 @@ describe('V14 deeper non-redundancy — Op-shape probe (issue #22)', () => {
           fromSocket: op.from.socket,
           toSocket: op.to.socket,
         };
-      // #1445 — the first probed mutator whose ops are not dag.exec's five: `setHidden`
-      // writes the target's view flag, and the flag's value is the shape.
-      case 'setHidden':
-        return { type: 'setHidden', hidden: op.hidden };
       default: {
         // Exhaustiveness: a new Op variant must extend this reducer or
         // the probe silently goes blind to it (the H36 trap one level

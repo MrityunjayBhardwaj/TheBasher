@@ -82,6 +82,8 @@ const ALL_TYPES = [
   'Character',
   'Clamp',
   'ClipSelect',
+  // #1451 — Collections (#397): named membership, no transform.
+  'Collection',
   'ColorCorrect',
   'ComfyUIWorkflow',
   'ComponentGroupOp',

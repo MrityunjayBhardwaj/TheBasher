@@ -17,6 +17,7 @@
 import { useThreeRef } from './threeRef';
 import { useDagStore } from '../../core/dag/store';
 import type { Op } from '../../core/dag/types';
+import { linkIntoActiveCollection } from '../collections';
 import { DEFAULT_CAMERA_FAR, DEFAULT_CAMERA_NEAR } from '../../nodes/CameraData';
 
 export async function snapshotCameraFromOrbit(): Promise<void> {
@@ -86,5 +87,6 @@ export async function snapshotCameraFromOrbit(): Promise<void> {
     to: { node: sceneRef.node, socket: 'camera' },
   });
 
-  dag.dispatchAtomic(ops, 'user', 'camera-from-view');
+  // #1504 — into the active collection, as the Add menu's cameras join it (#1453).
+  dag.dispatchAtomic(linkIntoActiveCollection(state, ops, [newId]), 'user', 'camera-from-view');
 }

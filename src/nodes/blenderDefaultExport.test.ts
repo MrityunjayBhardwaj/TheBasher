@@ -18,9 +18,9 @@ import { __resetRegistryForTests } from '../core/dag/registry';
 import { registerAllNodes } from './registerAll';
 import { applyOp } from '../core/dag/ops';
 import { evaluate } from '../core/dag';
-import { emptyDagState } from '../core/dag/state';
 import { sampleSkinDeform } from './armatureDeform';
 import type { ModifiedDataValue } from './types';
+import { sceneOnlyState } from '../test-utils/sceneOnlyState';
 
 type Oracle = Record<number, readonly (readonly [readonly number[], readonly number[]])[]>;
 
@@ -309,8 +309,8 @@ async function deformedAt(file: string) {
     storeImage: async () => 'img',
   });
   if ('refused' in result) throw new Error(result.refused);
-  let state = emptyDagState();
-  for (const op of result.ops.slice(0, -1)) state = applyOp(state, op).next;
+  let state = sceneOnlyState();
+  for (const op of result.ops) state = applyOp(state, op).next;
   const modifierId = Object.values(state.nodes).find((n) => n.type === 'ArmatureModifier')!.id;
   const value = evaluate(state, modifierId, {
     ctx: { time: { frame: 0, seconds: 0, normalized: 0 } },

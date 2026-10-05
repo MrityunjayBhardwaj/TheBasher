@@ -1,14 +1,14 @@
 // #227 Slice 4 — per-object visibility. The outliner eye on a top-level row
-// dispatches a `setHidden` op; the renderer (SceneFromDAG) skips the hidden node
-// in the live scene — which the offscreen render also captures (V37, one band) —
-// while it stays in the DAG (a view flag, not a structural delete). Undo restores.
+// turns the node's `viewport` param off (#1503 — the eye is the viewport's, as Blender's is; the
+// render keeps its own `render` flag); the viewport stops drawing it while it stays in the DAG
+// (a view flag, not a structural delete). Undo restores.
 
 import { expect, test } from './_fixtures';
 
 interface W {
   __basher_dag: {
     getState: () => {
-      state: { nodes: Record<string, { meta?: { hidden?: boolean } }> };
+      state: { nodes: Record<string, { params?: { viewport?: boolean } }> };
       dispatchAtomic: (ops: unknown[], source?: string, label?: string) => void;
       undo: () => void;
     };
@@ -20,10 +20,11 @@ interface W {
 const inLiveScene = (page: import('@playwright/test').Page) =>
   page.evaluate(() => (window as unknown as W).__basher_mesh_world_position('n_box') !== null);
 
-const metaHidden = (page: import('@playwright/test').Page) =>
+const viewportOff = (page: import('@playwright/test').Page) =>
   page.evaluate(
     () =>
-      (window as unknown as W).__basher_dag.getState().state.nodes['n_box']?.meta?.hidden ?? false,
+      (window as unknown as W).__basher_dag.getState().state.nodes['n_box']?.params?.viewport ===
+      false,
   );
 
 test('the outliner eye hides a top-level node in the live scene but keeps it in the DAG', async ({
@@ -39,12 +40,12 @@ test('the outliner eye hides a top-level node in the live scene but keeps it in 
   const eye = page.getByTestId('scene-tree-eye-n_box');
   await expect(eye).toHaveAttribute('aria-label', 'Hide');
 
-  // Click the eye → node leaves the live scene, the row marks hidden, meta.hidden set.
+  // Click the eye → the viewport stops drawing it, the row marks hidden, its viewport flag is off.
   await eye.click();
   await expect.poll(() => inLiveScene(page)).toBe(false);
   await expect(eye).toHaveAttribute('aria-label', 'Show');
   await expect(eye).toHaveAttribute('data-hidden', 'true');
-  expect(await metaHidden(page)).toBe(true);
+  expect(await viewportOff(page)).toBe(true);
   // Still in the DAG — hiding is a view flag, not a delete.
   expect(
     await page.evaluate(() =>
@@ -55,7 +56,7 @@ test('the outliner eye hides a top-level node in the live scene but keeps it in 
   // Undo restores visibility in one step.
   await page.evaluate(() => (window as unknown as W).__basher_dag.getState().undo());
   await expect.poll(() => inLiveScene(page)).toBe(true);
-  expect(await metaHidden(page)).toBe(false);
+  expect(await viewportOff(page)).toBe(false);
 });
 
 test('clicking the eye does not change the selection', async ({ page }) => {

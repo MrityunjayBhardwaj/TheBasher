@@ -13,6 +13,9 @@
 import { readFileSync } from 'node:fs';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useDagStore } from '../../core/dag/store';
+import { applyOp } from '../../core/dag';
+import { collectionOps } from '../../core/import/modelImport';
+import { setActiveCollectionOp } from '../collections';
 import { MemoryStorage } from '../../core/storage/MemoryStorage';
 import { registerAllNodes } from '../../nodes/registerAll';
 import { useAssetErrorStore } from '../stores/assetErrorStore';
@@ -155,9 +158,30 @@ describe('importGltfFromOpfs — the road an import takes (#1049)', () => {
     const types = Object.values(useDagStore.getState().state.nodes)
       .map((n) => n.type)
       .sort();
-    expect(types).toEqual(['Group', 'Object', 'PolyMeshData', 'Scene', 'TimeSource']);
+    // #1451 — no wrapper Group: the Object stands in the scene, as Blender's importer stands it.
+    expect(types).toEqual(['Object', 'PolyMeshData', 'Scene', 'TimeSource']);
     expect(useImportRefreshStore.getState().tick).toBe(1);
     expect(useAssetErrorStore.getState().errors[path]).toBeUndefined();
+  });
+
+  // #1451 — Blender links what an import makes into the active collection; the Object still stands
+  // in the scene, because a collection is membership and never a parent.
+  it('#1451 — with a collection active, the Object it makes is linked into it and stands in the scene', async () => {
+    const sceneId = useDagStore.getState().state.outputs.scene!.node;
+    const ops = collectionOps('col', 'props', [], sceneId);
+    let next = useDagStore.getState().state;
+    for (const op of ops) next = applyOp(next, op).next;
+    useDagStore
+      .getState()
+      .dispatchAtomic([...ops, setActiveCollectionOp(next, 'col')!], 'user', 'col');
+    const path = 'user-imports/cube/cube.gltf';
+    await currentStorage.write(path, new Uint8Array(readFileSync('public/assets/cube.gltf')));
+    await importGltfFromOpfs(path);
+
+    const { nodes } = useDagStore.getState().state;
+    const object = Object.values(nodes).find((n) => n.type === 'Object')!.id;
+    expect(nodes.col.inputs.members).toEqual([{ node: object, socket: 'out' }]);
+    expect(nodes[sceneId].inputs.children).toContainEqual({ node: object, socket: 'out' });
   });
 
   it('#1062 — a file carrying vertex colours now imports as native geometry', async () => {

@@ -1,13 +1,14 @@
-// #1448 — which nodes can be hidden: a direct child or light of the scene, never a camera,
-// never something nested under a top-level object. The renderer skips a hidden node in
-// exactly those two bands, so a flag set anywhere else would show in the outliner and not
-// in the picture.
+// #1448 — which nodes can be hidden: a scene object or a collection that carries the
+// visibility params (#1503). The drawers honour those flags on every scene object, at any depth,
+// and on collections, so a flag set anywhere else would show in the outliner and not in the
+// picture.
 
 import { beforeAll, describe, expect, it } from 'vitest';
 import { registerAllNodes } from '../nodes/registerAll';
 import { buildExampleProject } from '../core/project/examples';
 import { applyOp, type DagState } from '../core/dag';
 import { hideRefusal, isHideable } from './sceneVisibility';
+import { newCollectionOps } from './collections';
 
 let starter: DagState;
 
@@ -22,27 +23,27 @@ describe('which nodes can be hidden (#1448)', () => {
     expect((scene.inputs.children as { node: string }[]).map((r) => r.node)).toContain('n_box');
     expect((scene.inputs.lights as { node: string }[]).map((r) => r.node)).toContain('n_light');
     expect(starter.nodes.n_camera).toBeDefined();
+    expect(starter.nodes.n_light_data).toBeDefined();
   });
 
   it('a direct child of the scene can be hidden', () => {
     expect(hideRefusal(starter, 'n_box')).toBeNull();
   });
 
-  it('a direct light of the scene can be hidden', () => {
+  it('a light of the scene can be hidden', () => {
     expect(isHideable(starter, 'n_light')).toBe(true);
   });
 
-  it('a camera cannot: it is chosen, not hidden', () => {
-    // The camera's own reason, not the generic one: its id contains "camera", so a looser match
-    // would pass on the id alone.
-    expect(hideRefusal(starter, 'n_camera')).toMatch(/cameras are chosen with Set Active Camera/);
+  it('a camera can be hidden too: its frustum honours the flag (#1453)', () => {
+    expect(hideRefusal(starter, 'n_camera')).toBeNull();
   });
 
-  it("a top-level object's data node cannot: the band holds the object", () => {
-    expect(hideRefusal(starter, 'n_light_data')).toMatch(/not a direct child or light/);
+  it("an object's data node cannot: it carries no flag, and the reason says what to hide", () => {
+    expect(hideRefusal(starter, 'n_light_data')).toMatch(/carries no visibility of its own/);
+    expect(hideRefusal(starter, 'n_light_data')).toMatch(/Hide the object that holds it/);
   });
 
-  it('a node nested under a group cannot, and the reason says what to hide instead', () => {
+  it('a node nested under a group can be hidden on its own (#1462)', () => {
     let s = starter;
     const op = (o: Parameters<typeof applyOp>[1]) => {
       s = applyOp(s, o).next;
@@ -64,7 +65,23 @@ describe('which nodes can be hidden (#1448)', () => {
       to: { node: s.outputs.scene!.node, socket: 'children' },
     });
     expect(hideRefusal(s, 'grp')).toBeNull();
-    expect(hideRefusal(s, 'n_box')).toMatch(/top-level object that holds it/);
+    expect(hideRefusal(s, 'n_box')).toBeNull();
+  });
+
+  it('an object outside the scene cannot: hiding it would change nothing', () => {
+    const s = applyOp(starter, {
+      type: 'addNode',
+      nodeId: 'loose',
+      nodeType: 'Group',
+      params: {},
+    }).next;
+    expect(hideRefusal(s, 'loose')).toMatch(/is not in the scene/);
+  });
+
+  it('a collection can be hidden', () => {
+    const made = newCollectionOps(starter)!;
+    const s = made.ops.reduce((st, o) => applyOp(st, o).next, starter);
+    expect(hideRefusal(s, made.collectionId)).toBeNull();
   });
 
   it('a node that does not exist is refused by name', () => {

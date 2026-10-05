@@ -484,10 +484,11 @@ export function ArmatureHelper({
       refMesh.instanceMatrix.needsUpdate = true;
     }
 
-    if (count === 0) return;
-
     // DEV observation seam, the LightHelpers pattern: what the helper actually
     // drew this frame, so an e2e can assert on the rig rather than on pixels.
+    // #1450 — written at ZERO bones too. A `count === 0` return left over from
+    // when it guarded the drawing kept the last non-empty frame here, so a rig
+    // that stopped drawing still read as drawn.
     if (import.meta.env.DEV) {
       const w = window as unknown as {
         __basher_armature?: {

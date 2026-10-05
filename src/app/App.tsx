@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { AddMenu } from './AddMenu';
+import { MoveToCollectionMenu } from './MoveToCollectionMenu';
 import { boot } from './boot';
 import { Clock } from './Clock';
 import { SceneRangeSync } from './SceneRangeSync';
@@ -80,6 +81,7 @@ export function App() {
       <KeyboardShortcuts />
       <Layout />
       <AddMenu />
+      <MoveToCollectionMenu />
       <RenderAnimationProgress />
       <GltfEntryChooser />
       <SettingsModal />

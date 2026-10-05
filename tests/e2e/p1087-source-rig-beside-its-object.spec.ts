@@ -28,7 +28,7 @@ import { test, expect } from './_fixtures';
 interface DagNode {
   type: string;
   inputs: Record<string, unknown>;
-  meta?: { hidden?: boolean };
+  params?: { viewport?: boolean };
 }
 interface Win {
   __basher_dag: {
@@ -163,7 +163,8 @@ test('#1087 — the source rig and the unhidden rig Object both draw, told apart
   expect(
     await page.evaluate(
       (id) =>
-        (window as unknown as Win).__basher_dag.getState().state.nodes[id].meta?.hidden === true,
+        (window as unknown as Win).__basher_dag.getState().state.nodes[id].params?.viewport ===
+        false,
       objectId!,
     ),
     'the bind did not hide the rig Object — not the bound shape this row is about',

@@ -1,0 +1,250 @@
+{
+  "blender": "5.1.1",
+  "probe": "ref/probes/blender-armature-deform/q21_fbx_rigless_oracle.py",
+  "objects": {
+    "Cone": {
+      "type": "MESH",
+      "parent": "Cube",
+      "animated": false,
+      "frames": {
+        "1": {
+          "location": [0.0, 0.0, 2.0],
+          "rotation_euler": [0.0, -0.0, 0.0],
+          "rotation_mode": "XYZ",
+          "scale": [1.0, 1.0, 1.0],
+          "world_translation": [0.5, 0.86603, 3.0],
+          "world_scale": [0.5, 0.5, 0.5],
+          "world_quat_wxyz": [0.96593, 0.0, -0.0, 0.25882]
+        },
+        "25": {
+          "location": [0.0, 0.0, 2.0],
+          "rotation_euler": [0.0, -0.0, 0.0],
+          "rotation_mode": "XYZ",
+          "scale": [1.0, 1.0, 1.0],
+          "world_translation": [0.5, 0.86603, 3.0],
+          "world_scale": [0.5, 0.5, 0.5],
+          "world_quat_wxyz": [0.96593, 0.0, -0.0, 0.25882]
+        }
+      },
+      "parent_type": "OBJECT",
+      "parent_bone": null,
+      "data": "Cone",
+      "verts": 9,
+      "faces": 9,
+      "face_sizes": [3, 8],
+      "materials": []
+    },
+    "Cube": {
+      "type": "MESH",
+      "parent": "Holder",
+      "animated": false,
+      "frames": {
+        "1": {
+          "location": [0.0, 1.0, 0.0],
+          "rotation_euler": [0.0, -0.0, 0.0],
+          "rotation_mode": "XYZ",
+          "scale": [0.5, 0.5, 0.5],
+          "world_translation": [0.5, 0.86603, 2.0],
+          "world_scale": [0.5, 0.5, 0.5],
+          "world_quat_wxyz": [0.96593, 0.0, -0.0, 0.25882]
+        },
+        "25": {
+          "location": [0.0, 1.0, 0.0],
+          "rotation_euler": [0.0, -0.0, 0.0],
+          "rotation_mode": "XYZ",
+          "scale": [0.5, 0.5, 0.5],
+          "world_translation": [0.5, 0.86603, 2.0],
+          "world_scale": [0.5, 0.5, 0.5],
+          "world_quat_wxyz": [0.96593, 0.0, -0.0, 0.25882]
+        }
+      },
+      "parent_type": "OBJECT",
+      "parent_bone": null,
+      "data": "Cube.001",
+      "verts": 8,
+      "faces": 6,
+      "face_sizes": [4],
+      "materials": []
+    },
+    "Held": {
+      "type": "MESH",
+      "parent": "Rig",
+      "animated": false,
+      "frames": {
+        "1": {
+          "location": [0.5, 0.0, 0.0],
+          "rotation_euler": [0.0, -0.0, 0.0],
+          "rotation_mode": "XYZ",
+          "scale": [1.0, 1.0, 1.0],
+          "world_translation": [-2.5, -0.0, 1.0],
+          "world_scale": [1.0, 1.0, 1.0],
+          "world_quat_wxyz": [0.70711, 0.70711, 0.0, 0.0]
+        },
+        "25": {
+          "location": [0.5, 0.0, 0.0],
+          "rotation_euler": [0.0, -0.0, 0.0],
+          "rotation_mode": "XYZ",
+          "scale": [1.0, 1.0, 1.0],
+          "world_translation": [-2.5, -0.0, 1.0],
+          "world_scale": [1.0, 1.0, 1.0],
+          "world_quat_wxyz": [0.70711, 0.70711, 0.0, 0.0]
+        }
+      },
+      "parent_type": "BONE",
+      "parent_bone": "Arm",
+      "data": "Cube",
+      "verts": 8,
+      "faces": 6,
+      "face_sizes": [4],
+      "materials": []
+    },
+    "Holder": {
+      "type": "EMPTY",
+      "parent": null,
+      "animated": false,
+      "frames": {
+        "1": {
+          "location": [1.0, 0.0, 2.0],
+          "rotation_euler": [0.0, -0.0, 0.5236],
+          "rotation_mode": "XYZ",
+          "scale": [1.0, 1.0, 1.0],
+          "world_translation": [1.0, 0.0, 2.0],
+          "world_scale": [1.0, 1.0, 1.0],
+          "world_quat_wxyz": [0.96593, 0.0, -0.0, 0.25882]
+        },
+        "25": {
+          "location": [1.0, 0.0, 2.0],
+          "rotation_euler": [0.0, -0.0, 0.5236],
+          "rotation_mode": "XYZ",
+          "scale": [1.0, 1.0, 1.0],
+          "world_translation": [1.0, 0.0, 2.0],
+          "world_scale": [1.0, 1.0, 1.0],
+          "world_quat_wxyz": [0.96593, 0.0, -0.0, 0.25882]
+        }
+      },
+      "parent_type": "OBJECT",
+      "parent_bone": null,
+      "data": null
+    },
+    "Plane": {
+      "type": "MESH",
+      "parent": null,
+      "animated": false,
+      "frames": {
+        "1": {
+          "location": [-3.0, 3.0, 0.0],
+          "rotation_euler": [-0.0, 0.0, 0.0],
+          "rotation_mode": "XYZ",
+          "scale": [1.0, 1.0, 1.0],
+          "world_translation": [-3.0, 3.0, 0.0],
+          "world_scale": [1.0, 1.0, 1.0],
+          "world_quat_wxyz": [1.0, -0.0, 0.0, 0.0]
+        },
+        "25": {
+          "location": [-3.0, 3.0, 0.0],
+          "rotation_euler": [-0.0, 0.0, 0.0],
+          "rotation_mode": "XYZ",
+          "scale": [1.0, 1.0, 1.0],
+          "world_translation": [-3.0, 3.0, 0.0],
+          "world_scale": [1.0, 1.0, 1.0],
+          "world_quat_wxyz": [1.0, -0.0, 0.0, 0.0]
+        }
+      },
+      "parent_type": "OBJECT",
+      "parent_bone": null,
+      "data": "Plane",
+      "verts": 4,
+      "faces": 1,
+      "face_sizes": [4],
+      "materials": []
+    },
+    "Rig": {
+      "type": "ARMATURE",
+      "parent": null,
+      "animated": false,
+      "frames": {
+        "1": {
+          "location": [-3.0, 0.0, 0.0],
+          "rotation_euler": [-0.0, 0.0, 0.0],
+          "rotation_mode": "XYZ",
+          "scale": [1.0, 1.0, 1.0],
+          "world_translation": [-3.0, 0.0, 0.0],
+          "world_scale": [1.0, 1.0, 1.0],
+          "world_quat_wxyz": [1.0, -0.0, 0.0, 0.0]
+        },
+        "25": {
+          "location": [-3.0, 0.0, 0.0],
+          "rotation_euler": [-0.0, 0.0, 0.0],
+          "rotation_mode": "XYZ",
+          "scale": [1.0, 1.0, 1.0],
+          "world_translation": [-3.0, 0.0, 0.0],
+          "world_scale": [1.0, 1.0, 1.0],
+          "world_quat_wxyz": [1.0, -0.0, 0.0, 0.0]
+        }
+      },
+      "parent_type": "OBJECT",
+      "parent_bone": null,
+      "data": "Rig"
+    },
+    "Spike": {
+      "type": "MESH",
+      "parent": "Spun",
+      "animated": false,
+      "frames": {
+        "1": {
+          "location": [0.0, -0.0, 1.0],
+          "rotation_euler": [0.43633, 0.17453, -0.0],
+          "rotation_mode": "XYZ",
+          "scale": [1.0, 2.0, 0.5],
+          "world_translation": [0.60402, 2.65798, 1.71985],
+          "world_scale": [1.0, 2.0, 0.5],
+          "world_quat_wxyz": [0.73144, 0.44148, 0.36959, 0.36537]
+        },
+        "25": {
+          "location": [0.0, -0.0, 1.0],
+          "rotation_euler": [0.43633, 0.17453, -0.0],
+          "rotation_mode": "XYZ",
+          "scale": [1.0, 2.0, 0.5],
+          "world_translation": [0.60402, 2.65798, 1.71985],
+          "world_scale": [1.0, 2.0, 0.5],
+          "world_quat_wxyz": [0.73144, 0.44148, 0.36959, 0.36537]
+        }
+      },
+      "parent_type": "OBJECT",
+      "parent_bone": null,
+      "data": "Cone.001",
+      "verts": 7,
+      "faces": 7,
+      "face_sizes": [3, 6],
+      "materials": []
+    },
+    "Spun": {
+      "type": "EMPTY",
+      "parent": null,
+      "animated": false,
+      "frames": {
+        "1": {
+          "location": [0.0, 3.0, 1.0],
+          "rotation_euler": [0.76254, 0.09463, 0.95698],
+          "rotation_mode": "XYZ",
+          "scale": [1.0, 1.0, 1.0],
+          "world_translation": [0.0, 3.0, 1.0],
+          "world_scale": [1.0, 1.0, 1.0],
+          "world_quat_wxyz": [0.83113, 0.30973, 0.21011, 0.41127]
+        },
+        "25": {
+          "location": [0.0, 3.0, 1.0],
+          "rotation_euler": [0.76254, 0.09463, 0.95698],
+          "rotation_mode": "XYZ",
+          "scale": [1.0, 1.0, 1.0],
+          "world_translation": [0.0, 3.0, 1.0],
+          "world_scale": [1.0, 1.0, 1.0],
+          "world_quat_wxyz": [0.83113, 0.30973, 0.21011, 0.41127]
+        }
+      },
+      "parent_type": "OBJECT",
+      "parent_bone": null,
+      "data": null
+    }
+  }
+}

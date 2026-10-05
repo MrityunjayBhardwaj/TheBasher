@@ -112,6 +112,8 @@ export const BakedMaterialSpecSchema = z.object({
   // #1140 — declared, or zod strips them on every parse and the cutout and the side are lost.
   alphaTest: z.number().optional(),
   doubleSided: z.boolean().optional(),
+  // #1435 — declared for the same reason, or a dithered surface bakes opaque.
+  alphaHash: z.literal(true).optional(),
   // #1123 — declared, or zod strips them on every parse and the map strengths are lost.
   normalScale: z.number().optional(),
   aoMapIntensity: z.number().optional(),

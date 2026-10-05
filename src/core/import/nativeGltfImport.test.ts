@@ -22,7 +22,7 @@ import { cornerLayerBufferOf, cornerLayerNamesOf, uvChannelOf } from '../../app/
 import { __resetRegistryForTests } from '../dag/registry';
 import { registerAllNodes } from '../../nodes/registerAll';
 import { applyOp } from '../dag/ops';
-import { emptyDagState, type DagState } from '../dag/state';
+import type { DagState } from '../dag/state';
 import { PolyMeshDataNode, PolyMeshDataParams } from '../../nodes/PolyMeshData';
 import type { Op } from '../dag/types';
 import type { MeshDataValue } from '../../nodes/types';
@@ -32,6 +32,7 @@ import * as THREE from 'three';
 import { MemoryStorage } from '../storage';
 import { listProjectImages, projectImagePath, writeProjectImage } from '../project/projectImages';
 import { gltfJsonMaterialToOpenpbr } from './gltfJsonMaterialToOpenpbr';
+import { sceneOnlyState } from '../../test-utils/sceneOnlyState';
 
 /** A store an import must never reach: a file with no images, or one refused before storing. */
 async function noImages(): Promise<string> {
@@ -646,7 +647,7 @@ describe('buildNativeGltfImportOps', () => {
     registerAllNodes();
   });
 
-  it('writes a Group over one Object + PolyMeshData pair, and nothing that points at the file', async () => {
+  it('writes one Object + PolyMeshData pair under the scene, and nothing that points at the file', async () => {
     const result = await buildNativeGltfImportOps({
       buffer: fixture(CUBE),
       assetRef: 'user-imports/native/cube.gltf',
@@ -656,16 +657,20 @@ describe('buildNativeGltfImportOps', () => {
     if ('refused' in result) throw new Error(result.refused);
 
     const types = result.ops.flatMap((op) => (op.type === 'addNode' ? [op.nodeType] : []));
-    expect(types.sort()).toEqual(['Group', 'Object', 'PolyMeshData']);
+    // #1451 — no wrapper Group: Blender's importer stands the file's root nodes in the scene.
+    expect(types.sort()).toEqual(['Object', 'PolyMeshData']);
     expect(JSON.stringify(result.ops)).not.toContain('GltfAsset');
     expect(JSON.stringify(result.ops)).not.toContain('GltfData');
     expect(result.objectIds).toHaveLength(1);
 
-    // The ops apply as the DAG validates them; the last one wires the Group into the scene.
-    const last = result.ops[result.ops.length - 1] as Extract<Op, { type: 'connect' }>;
-    expect(last.to).toEqual({ node: 'n_scene', socket: 'children' });
-    let state: DagState = emptyDagState();
-    for (const op of result.ops.slice(0, -1)) state = applyOp(state, op).next;
+    // The ops apply as the DAG validates them; the Object is wired into the scene itself.
+    expect(result.ops).toContainEqual({
+      type: 'connect',
+      from: { node: result.objectIds[0], socket: 'out' },
+      to: { node: 'n_scene', socket: 'children' },
+    });
+    let state: DagState = sceneOnlyState();
+    for (const op of result.ops) state = applyOp(state, op).next;
     const objectId = result.objectIds[0];
     const dataEdge = state.nodes[objectId].inputs.data as { node: string } | undefined;
     expect(dataEdge?.node).toBeDefined();
@@ -691,8 +696,8 @@ describe('buildNativeGltfImportOps', () => {
       storeImage: async () => 'img',
     });
     if ('refused' in result) throw new Error(result.refused);
-    let state: DagState = emptyDagState();
-    for (const op of result.ops.slice(0, -1)) state = applyOp(state, op).next;
+    let state: DagState = sceneOnlyState();
+    for (const op of result.ops) state = applyOp(state, op).next;
     return result.objectIds.map((id) => nodeDisplayName(state.nodes, id));
   }
 
@@ -1602,7 +1607,7 @@ describe('buildNativeGltfImportOps', () => {
     });
     if ('refused' in result) throw new Error(result.refused);
     const types = result.ops.flatMap((op) => (op.type === 'addNode' ? [op.nodeType] : []));
-    expect(types.sort()).toEqual(['Group', 'Object', 'PolyMeshData']);
+    expect(types.sort()).toEqual(['Object', 'PolyMeshData']);
     const params = polyMeshParamsOf(result.ops);
     expect(params.materialSlots?.map((m) => m?.base.color.toLowerCase())).toEqual([
       '#ff0000',
@@ -1718,11 +1723,10 @@ describe('#1051 — a hierarchy comes across as parent edges', () => {
       ?.nodeType;
 
   it('an empty becomes a Group carrying the file’s transform and name', async () => {
-    const { ops, groupId } = await importNested(nestedFixture());
+    const { ops } = await importNested(nestedFixture());
     const parents = parentOf(ops);
-    const emptyId = Object.keys(parents).find(
-      (id) => typeOf(ops, id) === 'Group' && id !== groupId,
-    );
+    // #1451 — every Group an import writes is the file's: there is no wrapper Group of ours.
+    const emptyId = Object.keys(parents).find((id) => typeOf(ops, id) === 'Group');
     expect(emptyId, 'the empty node is written as a Group').toBeDefined();
     const added = ops.find(
       (o): o is Extract<Op, { type: 'addNode' }> => o.type === 'addNode' && o.nodeId === emptyId,
@@ -1751,7 +1755,7 @@ describe('#1051 — a hierarchy comes across as parent edges', () => {
       .params as Record<string, unknown>;
 
   it('every node holds the file’s own quaternion, in quaternion mode, as Blender imports it', async () => {
-    const { ops, groupId, objectIds } = await importNested(
+    const { ops, objectIds } = await importNested(
       nestedFixture((json) => {
         const nodes = json.nodes as Record<string, unknown>[];
         nodes[0].rotation = ROT_CUBE;
@@ -1770,8 +1774,6 @@ describe('#1051 — a hierarchy comes across as parent edges', () => {
         rotation: [0, 0, 0],
       });
     }
-    // The import Group is ours, not the file's: it keeps the euler mode every native node has.
-    expect(paramsOf(ops, groupId).rotationMode).toBeUndefined();
   });
 
   it('a matrix-form node holds the quaternion its matrix decomposes to', async () => {
@@ -1795,13 +1797,14 @@ describe('#1051 — a hierarchy comes across as parent edges', () => {
     (p.scale as number[]).forEach((v) => expect(v).toBeCloseTo(2, 12));
   });
 
-  it('the mesh node hangs under the empty, and the empty under the import Group', async () => {
-    const { ops, groupId, objectIds } = await importNested(nestedFixture());
+  it('the mesh node hangs under the empty, and the empty under the scene, as Blender stands them', async () => {
+    const { ops, objectIds } = await importNested(nestedFixture());
     const parents = parentOf(ops);
     const emptyId = parents[objectIds[0]];
-    expect(emptyId, 'the cube’s parent is not the import Group any more').not.toBe(groupId);
+    expect(emptyId, 'the cube’s parent is not the scene').not.toBe('n_scene');
     expect(typeOf(ops, emptyId)).toBe('Group');
-    expect(parents[emptyId], 'and the empty hangs under the import Group').toBe(groupId);
+    // #1451 — no wrapper Group: the file's root node stands in the scene itself.
+    expect(parents[emptyId], 'and the empty hangs under the scene').toBe('n_scene');
   });
 
   it('a child written BEFORE its parent still connects — glTF fixes no node order', async () => {

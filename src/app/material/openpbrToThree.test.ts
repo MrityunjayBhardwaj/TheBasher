@@ -70,6 +70,30 @@ describe('openpbrToThree (the one IR→three.js adapter)', () => {
     expect(t.transparent).toBe(true);
   });
 
+  it('#1435 — the render method draws the alpha blended or hashed, and nothing else moves', () => {
+    type Geometry = InlineMaterialSpec['geometry'];
+    const draw = (geometry: Geometry, transmission = 0) => {
+      const t = openpbrToThree(ir({ geometry, transmission: { weight: transmission } }));
+      return [t.transparent, t.alphaHash ?? false, 'alphaHash' in t];
+    };
+    // [transparent, alphaHash, the key present]
+    expect([
+      draw({ opacity: 1 }), // every material before this field
+      draw({ opacity: 0.5 }), // a factor below 1 still blends
+      draw({ opacity: 1, renderMethod: 'blended' }), // BLEND with an opaque factor blends too
+      draw({ opacity: 1, renderMethod: 'dithered' }), // hashed, not blended
+      draw({ opacity: 0.5, renderMethod: 'dithered' }), // the factor hashed as well, not blended
+      draw({ opacity: 1, renderMethod: 'dithered' }, 0.5), // transmission still needs blending
+    ]).toEqual([
+      [false, false, false],
+      [true, false, false],
+      [true, false, false],
+      [false, true, true],
+      [false, true, true],
+      [true, true, true],
+    ]);
+  });
+
   it('passes map refs through to three.js slot names', () => {
     const refStub = {
       hash: 'h',

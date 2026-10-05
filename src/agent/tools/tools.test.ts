@@ -30,6 +30,7 @@ vi.mock('../../app/boot', () => ({
 }));
 
 import { readFileSync } from 'node:fs';
+import { resolveWorldTransform } from '../../app/resolveWorldTransform';
 import {
   registerAllTools,
   getTool,
@@ -512,18 +513,48 @@ describe('library.import tool', () => {
       expect(types).toContain('PoseLayer');
       expect(types).toContain('Object');
       expect(types).not.toContain('GltfAsset');
-      // The Object is wired into the scene the agent's fork holds.
-      expect(result.ops).toContainEqual(
-        expect.objectContaining({ type: 'connect', to: { node: 'scene', socket: 'children' } }),
-      );
+      // #1451 — the Object stands in the scene the agent's fork holds, with no wrapper Group, as
+      // Blender's importer stands it; no collection is active, so it is linked into none.
       // They apply to the fork as they stand — the Diff the user accepts is this.
       let applied = buildSceneBaseline();
       for (const op of result.ops) applied = applyOp(applied, op).next;
-      expect(Object.values(applied.nodes).filter((n) => n.type === 'Object')).toHaveLength(1);
+      const objects = Object.values(applied.nodes).filter((n) => n.type === 'Object');
+      expect(objects).toHaveLength(1);
+      expect(Object.values(applied.nodes).some((n) => n.type === 'Group')).toBe(false);
+      expect(applied.nodes.scene.inputs.children).toContainEqual({
+        node: objects[0].id,
+        socket: 'out',
+      });
       expect(result.text).toMatch(/as a motion/);
+      expect(result.text).not.toMatch(/Group|collection/);
       expect(result.text).toMatch(/not bound to a character/);
     },
   );
+
+  // #1434 — an FBX with no bone is a model: the text says so, and the ops hold no rig.
+  it('an FBX with no bone imports as a model, standing in the scene, with no skeleton', async () => {
+    const assetRef = 'user-imports/rigless/rigless.fbx';
+    await currentStorage.write(
+      assetRef,
+      new Uint8Array(
+        readFileSync('src/core/import/__fixtures__/rigless-hierarchy-blender-default.fbx'),
+      ),
+    );
+    const result = await libraryImportTool.handler(
+      { assetRef, position: [0, 0, 0] },
+      { dagState: buildSceneBaseline() },
+    );
+    const types = nodeTypesOf(result.ops);
+    expect(types).not.toContain('Skeleton');
+    expect(types).not.toContain('PoseLayer');
+    expect(result.text).toMatch(
+      /^Imported user-imports\/rigless\/rigless\.fbx as a model: 3 meshes/,
+    );
+    expect(result.text).toMatch(/It has no skeleton\.$/);
+    let applied = buildSceneBaseline();
+    for (const op of result.ops) applied = applyOp(applied, op).next;
+    expect(Object.values(applied.nodes).filter((n) => n.type === 'Object')).toHaveLength(3);
+  });
 
   it('a file in no import format is refused by name, with no ops', async () => {
     const result = await libraryImportTool.handler(
@@ -575,6 +606,49 @@ describe('library.import tool', () => {
     expect(nodeTypes.filter((t) => t.startsWith('KeyframeChannel'))).toEqual([]);
     expect(nodeTypes).not.toContain('GltfAsset');
     expect(nodeTypes).toContain('Group');
+  });
+
+  // #1452 — `position` moves the import: what lands stands that far from where the file puts it,
+  // read off the WORLD the applied ops resolve to (never the text, which echoes the argument).
+  it('a glTF imported at a position lands there, its hierarchy riding along', async () => {
+    const assetRef = 'assets/placed.glb';
+    await currentStorage.write(
+      assetRef,
+      makeGlb({
+        asset: { version: '2.0' },
+        scene: 0,
+        scenes: [{ nodes: [0] }],
+        nodes: [
+          { name: 'Root', translation: [1, 2, 3], children: [1] },
+          { name: 'Leaf', translation: [0, 1, 0] },
+        ],
+      }),
+    );
+    const at = { time: { frame: 0, seconds: 0, normalized: 0 } } as never;
+    const worldOf = async (position: [number, number, number]) => {
+      const result = await libraryImportTool.handler(
+        { assetRef, position },
+        { dagState: buildSceneBaseline() },
+      );
+      let applied = buildSceneBaseline();
+      for (const op of result.ops) applied = applyOp(applied, op).next;
+      // The world is resolved off the render root, as the viewport draws it.
+      applied = {
+        ...applied,
+        outputs: { ...applied.outputs, render: { node: 'render', socket: 'out' } },
+      };
+      const named = (name: string) =>
+        Object.entries(applied.nodes).find(([, n]) => n.meta?.name === name)![0];
+      const world = (name: string) =>
+        resolveWorldTransform(applied, named(name), at)!.position.map((v) => +v.toFixed(6));
+      // The text says it was moved, not that the file's objects stand at the position.
+      expect(result.text).toBe(
+        `Imported ${assetRef}, moved [${position}] from where the file puts it`,
+      );
+      return { root: world('Root'), leaf: world('Leaf') };
+    };
+    expect(await worldOf([0, 0, 0])).toEqual({ root: [1, 2, 3], leaf: [1, 3, 3] });
+    expect(await worldOf([10, 0, -5])).toEqual({ root: [11, 2, -2], leaf: [11, 3, -2] });
   });
 
   // V22 — two imports of the same assetRef yield byte-identical node ids

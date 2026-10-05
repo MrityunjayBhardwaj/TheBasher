@@ -1,6 +1,6 @@
 // #1049 — a file the native model can hold arrives, through the product's own ingest road, as
-// native geometry: a Group over an ordinary `Object` + `PolyMeshData`, with nothing that reads the
-// file. It draws the way the default project's box draws, and deleting the source file and
+// native geometry: an ordinary `Object` + `PolyMeshData` standing in the scene (#1451 — no wrapper
+// Group), with nothing that reads the file. It draws the way the default project's box draws, and deleting the source file and
 // reloading changes nothing, because the mesh lives in the project.
 //
 // The control is the box every default project carries (`n_box`): both draws are read off the
@@ -94,25 +94,25 @@ async function nativeImport(page: Page) {
         !Array.isArray(n.inputs.data) &&
         data.some((d) => d.id === (n.inputs.data as { node: string } | undefined)?.node),
     );
-    const group = object
-      ? all.find(
-          (n) =>
-            n.type === 'Group' &&
-            Array.isArray(n.inputs.children) &&
-            n.inputs.children.some((c) => c.node === object.id),
-        )
-      : undefined;
+    // The import's top: the ancestor the Scene holds directly, which three draws under its id.
+    const holder = (id: string) =>
+      all.find(
+        (n) => Array.isArray(n.inputs.children) && n.inputs.children.some((c) => c.node === id),
+      );
+    let top = object;
+    while (top && holder(top.id) && holder(top.id)!.type !== 'Scene') top = holder(top.id);
     return {
       dataIds: data.map((d) => d.id),
       objectId: object?.id ?? null,
-      groupId: group?.id ?? null,
+      topId: top && holder(top.id) ? top.id : null,
+      topType: top?.type ?? null,
       types: all.map((n) => n.type),
     };
   });
 }
 
-/** Vertex counts of what is drawn under `groupId` and under the default box, in one frame. */
-async function drawn(page: Page, groupId: string): Promise<{ import: number[]; box: number[] }> {
+/** Vertex counts of what is drawn under `topId` and under the default box, in one frame. */
+async function drawn(page: Page, topId: string): Promise<{ import: number[]; box: number[] }> {
   return page.evaluate((gid) => {
     const out = { import: [] as number[], box: [] as number[] };
     type Node3 = {
@@ -136,11 +136,11 @@ async function drawn(page: Page, groupId: string): Promise<{ import: number[]; b
       else if (chain.includes('n_box')) out.box.push(count);
     });
     return out;
-  }, groupId);
+  }, topId);
 }
 
 test.describe('a glTF the native model can hold imports as native geometry (#1049)', () => {
-  test('arrives as Object + PolyMeshData under a Group, nothing reads the file, and it draws like the box', async ({
+  test('arrives as Object + PolyMeshData standing in the scene, nothing reads the file, and it draws like the box', async ({
     page,
   }) => {
     const errors: string[] = [];
@@ -153,15 +153,16 @@ test.describe('a glTF the native model can hold imports as native geometry (#104
       .poll(async () => (await nativeImport(page)).dataIds.length)
       .toBe(before.dataIds.length + 1);
     const after = await nativeImport(page);
-    expect(after.groupId).not.toBeNull();
+    expect(after.topId).not.toBeNull();
+    expect(after.topType, 'no wrapper Group over the import').not.toBe('Group');
     // Nothing on the clone road was written for this import.
     const count = (types: string[], t: string) => types.filter((x) => x === t).length;
     expect(count(after.types, 'GltfAsset')).toBe(count(before.types, 'GltfAsset'));
     expect(count(after.types, 'GltfData')).toBe(count(before.types, 'GltfData'));
 
     // The box control first, so a scene that draws nothing at all cannot pass as a match.
-    await expect.poll(async () => (await drawn(page, after.groupId!)).box).toEqual([24]);
-    await expect.poll(async () => (await drawn(page, after.groupId!)).import).toEqual([24]);
+    await expect.poll(async () => (await drawn(page, after.topId!)).box).toEqual([24]);
+    await expect.poll(async () => (await drawn(page, after.topId!)).import).toEqual([24]);
     await expect(page.getByTestId('asset-error-banner')).toHaveCount(0);
     expect(errors).toEqual([]);
   });
@@ -171,7 +172,7 @@ test.describe('a glTF the native model can hold imports as native geometry (#104
     page.on('pageerror', (e) => errors.push(e.message));
     await openFresh(page);
     const entryPath = await importCube(page);
-    await expect.poll(async () => (await nativeImport(page)).groupId).not.toBeNull();
+    await expect.poll(async () => (await nativeImport(page)).topId).not.toBeNull();
     const imported = await nativeImport(page);
 
     // Save explicitly and wait until the project file on disk holds the mesh data node.
@@ -208,10 +209,10 @@ test.describe('a glTF the native model can hold imports as native geometry (#104
     await page.reload();
     await waitForEditor(page);
     const reloaded = await nativeImport(page);
-    expect(reloaded.groupId).toBe(imported.groupId);
+    expect(reloaded.topId).toBe(imported.topId);
     expect(reloaded.dataIds).toEqual(imported.dataIds);
-    await expect.poll(async () => (await drawn(page, imported.groupId!)).box).toEqual([24]);
-    await expect.poll(async () => (await drawn(page, imported.groupId!)).import).toEqual([24]);
+    await expect.poll(async () => (await drawn(page, imported.topId!)).box).toEqual([24]);
+    await expect.poll(async () => (await drawn(page, imported.topId!)).import).toEqual([24]);
     await expect(page.getByTestId('asset-error-banner')).toHaveCount(0);
     expect(errors).toEqual([]);
   });
