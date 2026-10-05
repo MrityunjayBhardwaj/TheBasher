@@ -279,3 +279,68 @@ test('#1339 — the Edit-mode gizmo moves a joint; its children follow, or stay 
   await expect.poll(async () => (await skeletonBones(page))[1].parent).toBe(-1);
   expect(await head('Bone_end_001')).toEqual([0, 2.5, 0]);
 });
+
+test('#1526 — a second quick extrude keeps its bone selected; undoing it clears the selection', async ({
+  page,
+}) => {
+  // The viewport drops a selected bone the rig no longer has. The canvas is its own React root and
+  // can hold the rig one edit behind on a frame, so that is asked of the live graph. Forced here:
+  // frames held while the first extrude reaches the canvas, then the second key and one frame
+  // straight after it, before the canvas re-renders (CI's slow frames did this on their own).
+  test.setTimeout(90_000);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto('/');
+  await expect(page.getByTestId('layout')).toBeVisible({ timeout: 60_000 });
+  await page.waitForFunction(() =>
+    Boolean((window as unknown as W).__basher_three?.getState().controlsTarget),
+  );
+  await page.evaluate(async () => {
+    (window as unknown as W).__basher_three.getState().controlsTarget!.set(0, 0, 0);
+    const add = await import('/src/app/AddMenu.tsx');
+    add.addPrimitive('Armature');
+    const s = await import('/src/app/stores/selectionStore.ts');
+    const id = s.useSelectionStore.getState().primaryNodeId!;
+    const modes = await import('/src/app/stores/armatureModeStore.ts');
+    modes.useArmatureModeStore.getState().setMode(id, 'edit');
+    const b = await import('/src/app/stores/boneSelectionStore.ts');
+    b.useBoneSelectionStore.getState().selectBone(id, 'Bone_end', ['Bone', 'Bone_end']);
+  });
+  await expect(page.getByTestId('edit-bone')).toBeVisible();
+  await page.mouse.move(10, 450);
+
+  type Held = { __q: FrameRequestCallback[]; __raf: typeof requestAnimationFrame };
+  await page.evaluate(() => {
+    const w = window as unknown as Held;
+    w.__q = [];
+    w.__raf = window.requestAnimationFrame;
+    window.requestAnimationFrame = (cb) => (w.__q.push(cb), 0);
+  });
+  await page.keyboard.press('e');
+  await expect.poll(() => picked(page)).toBe('Bone_end_001');
+  await page.waitForTimeout(300);
+  const second = await page.evaluate(() => {
+    const w = window as unknown as Held & W;
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'e', code: 'KeyE', bubbles: true }));
+    const afterKey = w.__basher_bone.getState().boneName;
+    const frames = w.__q.splice(0);
+    frames.forEach((cb) => cb(performance.now()));
+    return { afterKey, afterFrame: w.__basher_bone.getState().boneName, frames: frames.length };
+  });
+  expect(second.afterKey).toBe('Bone_end_002');
+  expect(second.frames, 'a held frame ran after the key').toBeGreaterThan(0);
+  expect(second.afterFrame, 'the frame after the key keeps the new bone').toBe('Bone_end_002');
+  await page.evaluate(() => {
+    const w = window as unknown as Held;
+    window.requestAnimationFrame = w.__raf;
+    w.__q.splice(0).forEach((cb) => w.__raf(cb));
+  });
+  await page.waitForTimeout(300);
+  expect(await picked(page), 'still selected once frames run freely').toBe('Bone_end_002');
+
+  // A bone that really goes away still clears: undo takes the second extrude back.
+  await page.keyboard.press('ControlOrMeta+z');
+  await expect
+    .poll(async () => (await skeletonBones(page)).map((b) => b.name))
+    .toEqual(['Bone', 'Bone_end', 'Bone_end_001']);
+  await expect.poll(() => picked(page)).toBeNull();
+});

@@ -42,7 +42,9 @@ import { getActiveBone } from '../app/boneSelection';
 import { armatureModeFor } from '../app/armatureMode';
 import { selectNode, type SelectClickLike } from './selectNodeOnClick';
 import { pickBone } from './armaturePick';
-import type { SkeletonObject } from '../app/skeletonObjects';
+import { collectSkeletonObjects, type SkeletonObject } from '../app/skeletonObjects';
+import { useDagStore } from '../core/dag/store';
+import { uiEvaluatorCache } from '../app/uiEvaluatorCache';
 
 /** Blender's default unselected bone wire. Chrome, so it reads as an overlay. */
 const BONE_COLOR = '#c8d4e4';
@@ -280,9 +282,14 @@ export function ArmatureHelper({
       // #1339 — cleared only when the selected bone is no longer there. Edit mode changes a rig's
       // bone count on purpose (an extrude selects the bone it made), and clearing on any change
       // dropped that selection the moment it was made.
+      // #1526 — and "no longer there" is asked of the live graph, not of these props: the canvas is
+      // its own React root and can hold the rig one edit behind, so a second quick extrude's bone
+      // was missing here and its selection was cleared the frame after it was made.
       const sel = useBoneSelectionStore.getState();
       if (standaloneSignature.current !== '' && sel.nodeId !== null) {
-        const owner = standaloneInputs.find((o) => o.id === sel.nodeId);
+        const owner = collectSkeletonObjects(useDagStore.getState().state, uiEvaluatorCache).find(
+          (o) => o.id === sel.nodeId,
+        );
         if (!owner || !owner.bones.some((b) => b.name === sel.boneName)) sel.clear();
       }
       standaloneSignature.current = standaloneSig;
