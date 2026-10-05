@@ -1654,6 +1654,11 @@
         "kind": "number",
         "reach": "scene",
         "driver": null
+      },
+      "frameEnd": {
+        "kind": "number",
+        "reach": null,
+        "driver": null
       }
     },
     "Solver": {
