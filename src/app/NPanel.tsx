@@ -3333,10 +3333,21 @@ function ParamRow({
  * transform is animated it renders DISABLED
  * with the D-04 message (the dispatch-side guard is the belt; this is the chrome).
  */
+const APPLY_MASK_ORDER: readonly ApplyMask[] = ['all', 'location', 'rotation', 'scale'];
+
 function ApplyTransformControl({ nodeId }: { nodeId: string }) {
   const state = useDagStore((s) => s.state);
   const currentFrame = useTimeStore((s) => s.frame);
   const animated = isApplySourceAnimated(state, nodeId, currentFrame);
+  // #1513 — each mask is offered only when Apply would take it (an armature group takes only its
+  // scale). Memoised on the graph: this re-renders every frame for `currentFrame`.
+  const offered = useMemo(
+    () =>
+      new Set(
+        APPLY_MASK_ORDER.filter((mask) => canApplyTransform(state, nodeId, uiEvaluatorCache, mask)),
+      ),
+    [state, nodeId],
+  );
   const onApply = (mask: ApplyMask) => {
     // #1130 — a refusal is shown, never dropped.
     void applyTransformFromUi(nodeId, mask);
@@ -3350,11 +3361,11 @@ function ApplyTransformControl({ nodeId }: { nodeId: string }) {
       ) : null}
       <div className="flex items-center gap-1">
         <span className="font-mono text-[10px] uppercase tracking-wide text-fg/40">apply</span>
-        {(['all', 'location', 'rotation', 'scale'] as ApplyMask[]).map((mask) => (
+        {APPLY_MASK_ORDER.map((mask) => (
           <button
             key={mask}
             type="button"
-            disabled={animated}
+            disabled={animated || !offered.has(mask)}
             onClick={() => onApply(mask)}
             data-testid={`npanel-apply-${mask}`}
             className="rounded border border-border px-1.5 py-0.5 text-[10px] text-fg/70 hover:bg-muted hover:text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent disabled:opacity-40 disabled:hover:bg-transparent"

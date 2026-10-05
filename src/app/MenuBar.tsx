@@ -489,6 +489,19 @@ export function MenuBar() {
     selectedId && isPrimitive && isApplySourceAnimated(dag, selectedId, currentFrame),
   );
   const applyDisabled = !selectedId || !isPrimitive || applyAnimated;
+  // #1513 — each mask is offered only when Apply would take it (an armature group takes only its
+  // scale), asked through the same predicate. Memoised like `isPrimitive`.
+  const offeredMasks = useMemo(
+    () =>
+      new Set(
+        selectedId && isPrimitive
+          ? APPLY_MASKS.filter(({ mask }) =>
+              canApplyTransform(dag, selectedId, uiEvaluatorCache, mask),
+            ).map(({ mask }) => mask)
+          : [],
+      ),
+    [dag, selectedId, isPrimitive],
+  );
 
   return (
     <div
@@ -656,7 +669,7 @@ export function MenuBar() {
             <Item
               key={mask}
               label={label}
-              disabled={applyDisabled}
+              disabled={applyDisabled || !offeredMasks.has(mask)}
               onSelect={() => {
                 // #1130 — a refusal is shown, never dropped.
                 if (selectedId) void applyTransformFromUi(selectedId, mask);

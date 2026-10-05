@@ -521,15 +521,25 @@ const ZERO_CTX: EvalCtx = { time: { frame: 0, seconds: 0, normalized: 0 } };
  * offered, with no capability list to keep updated.
  *
  * Mesh-ness does not vary with time, so a zero ctx is exact for this question.
+ *
+ * #1513 — with a `mask`, the answer is for that one mask: an armature group takes only its scale,
+ * so Location and Rotation are not offered there (and All only while the group is unmoved). The
+ * same `armatureMaskRefusal` the dispatcher refuses with answers it. Without one, "can any mask".
  */
 export function canApplyTransform(
   state: DagState,
   nodeId: string,
   cache?: EvaluatorCache,
+  mask?: ApplyMask,
 ): boolean {
   const node = state.nodes[nodeId];
   // #1511 — a group holding a skeleton is an armature: its scale is applied into the rig.
-  if (node?.type === 'Group') return armatureSkeletonObjectsOf(state, nodeId).length > 0;
+  if (node?.type === 'Group') {
+    return (
+      armatureSkeletonObjectsOf(state, nodeId).length > 0 &&
+      (mask === undefined || armatureMaskRefusal(node, mask) === null)
+    );
+  }
   if (!node || !isBakeableWrapperType(node.type)) return false;
   // #1053 — the dispatcher refuses a kept clone-road import, so it is not offered either.
   if (isImportedChild(state.nodes, nodeId)) return false;
@@ -1090,6 +1100,25 @@ export function armatureSkeletonObjectsOf(state: DagState, groupId: string): str
   });
 }
 
+/**
+ * Why an armature group cannot apply `mask`, finishing the sentence `"<group>" …`, or null when it
+ * can. v1 carries only the scale into the rig, so Location and Rotation never can, and All only
+ * while the group is neither moved nor turned. The offer (`canApplyTransform`) and the refusal
+ * (`applyScaleIntoArmature`) both read this, so the panel never offers what Apply refuses (#1513).
+ */
+function armatureMaskRefusal(group: { params?: unknown }, mask: ApplyMask): string | null {
+  if (mask === 'location' || mask === 'rotation') {
+    return `holds a skeleton, and only its scale can be applied into the rig for now. Use Apply ▸ Scale.`;
+  }
+  const gp = (group.params ?? {}) as Partial<{ position: Vec3; rotation: Vec3 }>;
+  const moved = isVec3(gp.position) && gp.position.some((v) => v !== 0);
+  const turned = isVec3(gp.rotation) && gp.rotation.some((v) => v !== 0);
+  if (mask === 'all' && (moved || turned)) {
+    return `is moved or turned, and only its scale can be applied into the rig for now. Use Apply ▸ Scale.`;
+  }
+  return null;
+}
+
 const scaleVec = (v: readonly [number, number, number], s: number): [number, number, number] => [
   v[0] * s,
   v[1] * s,
@@ -1128,22 +1157,12 @@ function applyScaleIntoArmature(
     reason: `Apply: "${name}" ${why}`,
   });
   const group = state.nodes[groupId];
-  const gp = group.params as Partial<{ position: Vec3; rotation: Vec3; scale: Vec3; pivot: Vec3 }>;
-  const position = isVec3(gp.position) ? gp.position : ([0, 0, 0] as Vec3);
-  const rotation = isVec3(gp.rotation) ? gp.rotation : ([0, 0, 0] as Vec3);
+  const gp = group.params as Partial<{ scale: Vec3; pivot: Vec3 }>;
   const scale = isVec3(gp.scale) ? gp.scale : ([1, 1, 1] as Vec3);
   const pivot = isVec3(gp.pivot) ? gp.pivot : ([0, 0, 0] as Vec3);
 
-  if (mask === 'location' || mask === 'rotation') {
-    return refuse(
-      `holds a skeleton, and only its scale can be applied into the rig for now. Use Apply ▸ Scale.`,
-    );
-  }
-  if (mask === 'all' && (position.some((v) => v !== 0) || rotation.some((v) => v !== 0))) {
-    return refuse(
-      `is moved or turned, and only its scale can be applied into the rig for now. Use Apply ▸ Scale.`,
-    );
-  }
+  const maskRefusal = armatureMaskRefusal(group, mask);
+  if (maskRefusal) return refuse(maskRefusal);
   const s = scale[0];
   const tolerance = 1e-9 * Math.max(1, Math.abs(s));
   if (Math.abs(scale[1] - s) > tolerance || Math.abs(scale[2] - s) > tolerance) {

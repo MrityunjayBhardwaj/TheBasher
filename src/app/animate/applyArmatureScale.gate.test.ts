@@ -257,6 +257,40 @@ describe('#1511 — Apply Scale on an armature carries the scale into the rig', 
     if (plain) expect(canApplyTransform(imported, plain.id)).toBe(false);
   });
 
+  it('offers each mask exactly when Apply takes it: unmoved, moved, turned (#1513)', async () => {
+    // The panel and the menu disable a mask `canApplyTransform(…, mask)` says no to. Location and
+    // Rotation always refused on an armature group and were offered anyway; now the offer and the
+    // refusal read one answer. Each pose is scaled so the accepted masks really apply.
+    const imported = await importBar();
+    const groupId = armatureGroupOf(imported);
+    const poses: Record<string, Op[]> = {
+      unmoved: [],
+      moved: [{ type: 'setParam', nodeId: groupId, paramPath: 'position', value: [0, 1, 0] }],
+      turned: [{ type: 'setParam', nodeId: groupId, paramPath: 'rotation', value: [0, 30, 0] }],
+    };
+    const offeredBy: Record<string, ApplyMask[]> = {};
+    for (const [pose, ops] of Object.entries(poses)) {
+      const state = apply(imported, [
+        { type: 'setParam', nodeId: groupId, paramPath: 'scale', value: [2, 2, 2] },
+        ...ops,
+      ]);
+      offeredBy[pose] = [];
+      for (const mask of ['all', 'location', 'rotation', 'scale'] as const) {
+        const offered = canApplyTransform(state, groupId, undefined, mask);
+        const { result } = await applied(state, groupId, mask);
+        expect(offered, `${pose} · ${mask}: offered == accepted`).toBe(result.ok);
+        if (offered) offeredBy[pose].push(mask);
+      }
+    }
+    expect(offeredBy).toEqual({
+      unmoved: ['all', 'scale'],
+      moved: ['scale'],
+      turned: ['scale'],
+    });
+    // Without a mask the question is "can any mask", which stays yes.
+    expect(canApplyTransform(imported, groupId)).toBe(true);
+  });
+
   it('refuses what v1 cannot carry, by name, and writes nothing', async () => {
     const imported = await importBar();
     const groupId = armatureGroupOf(imported);
