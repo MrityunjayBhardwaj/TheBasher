@@ -281,6 +281,17 @@ export function motionCookOffer(
         stale: false,
       };
     }
+    // #1509 — characters of different sizes: no request lands them all, so at least one is off
+    // the path and "Up to date" would say otherwise. Live, because pressing it is how the cook's
+    // refusal — which names each character and its size — reaches the director.
+    if (fit.kind === 'mixed') {
+      return {
+        label: 'Fits one size only (characters differ)',
+        disabled: false,
+        status: row.status,
+        stale: false,
+      };
+    }
     return { label: 'Up to date', disabled: true, status: row.status, stale: false };
   }
   // Stale AND already baked is the drag: the clip keeps playing its last result,

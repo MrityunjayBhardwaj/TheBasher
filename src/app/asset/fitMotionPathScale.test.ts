@@ -220,6 +220,22 @@ describe('fitting a generated walk’s path to its character (#1285)', () => {
     expect(fitMotionPathScaleOps(s).ops).toEqual([]);
   });
 
+  it('the cook button does not say "Up to date" while characters of different sizes share the walk (#1509)', async () => {
+    const { cap } = recordingCapability();
+    const { s: cooked, producerId, clipId } = await mintAndCook(cap);
+    let s = bind(cooked, clipId, 'tall_skel', 'tall_walk');
+    // Fitted and cooked for the one character: the walk is right, and the button says so.
+    s = apply(s, fitMotionPathScaleOps(s).ops);
+    await resolvePendingMotionGenerations(s, cap);
+    s = apply(s, bakeGeneratedClipOps(s));
+    expect(motionCookOffer(s, producerId).label).toBe('Up to date');
+    s = bind(s, clipId, 'short_skel', 'short_walk');
+    expect(motionPathScaleFit(s, producerId).kind).toBe('mixed');
+    const offer = motionCookOffer(s, producerId);
+    expect(offer.label).toBe('Fits one size only (characters differ)');
+    expect(offer.disabled).toBe(false);
+  });
+
   it('the cook button offers a re-cook while the clip is current but the path is not fitted', async () => {
     const { cap } = recordingCapability();
     const { s: cooked, producerId, clipId } = await mintAndCook(cap);
