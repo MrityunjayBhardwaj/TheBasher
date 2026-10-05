@@ -28,7 +28,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { KeyframeTrack } from 'three';
 import { parseBvh } from './bvh';
-import { parseFbx } from './fbx';
+import { FBX_NOTHING_TO_IMPORT, readFbx } from './fbx';
 import type { MotionPose } from '../../nodes/types';
 import { alignedQuat } from '../../test-utils/poseSamples';
 
@@ -47,8 +47,11 @@ function parsePoses(rel: string): readonly MotionPose[] {
   const abs = resolve(process.cwd(), rel);
   if (rel.endsWith('.bvh')) return parseBvh(readFileSync(abs, 'utf8'), 'clip').clipParams.poses;
   const buf = readFileSync(abs);
-  return parseFbx(buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) as ArrayBuffer)
-    .clipParams.poses;
+  const read = readFbx(
+    buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) as ArrayBuffer,
+  );
+  // #1434 — a model has no rig, so no pose: it holds none to compare.
+  return read.kind === 'model' ? [] : read.clipParams.poses;
 }
 
 /** The same parse with three keeping its track values in float64. */
@@ -63,6 +66,15 @@ function referencePoses(rel: string): readonly MotionPose[] {
   }
 }
 
+/** #1434 — the tracked files the FBX reader refuses whole, by the reason it gives. */
+const REFUSED: Record<string, string> = {
+  'src/core/import/__fixtures__/rigged-scene-shared-mesh-blender-default.fbx':
+    'FBX nodes "Plane" and "PlaneB" share one mesh, which an import does not bring across yet (#1061).',
+  'src/core/import/__fixtures__/nothing-blender-default.fbx': FBX_NOTHING_TO_IMPORT,
+  'src/core/import/__fixtures__/unskinned-edges-blender-default.fbx':
+    'FBX node "Cam" is a camera, which an import does not bring across yet (#1319).',
+};
+
 describe('a parsed pose holds the rotation the file holds (#1432)', () => {
   const tracked = execFileSync('git', ['ls-files', '*.bvh', '*.fbx'], { encoding: 'utf8' })
     .split('\n')
@@ -74,8 +86,17 @@ describe('a parsed pose holds the rotation the file holds (#1432)', () => {
     let compared = 0;
     let worst = 0;
     let worstAt = '';
+    // #1434 — a file the reader refuses holds no pose to compare. Each is named with its reason, so
+    // a file that starts refusing (or stops) reds here instead of leaving the sweep quietly.
+    const refused: Record<string, string> = {};
     for (const rel of tracked) {
-      const got = parsePoses(rel);
+      let got: readonly MotionPose[];
+      try {
+        got = parsePoses(rel);
+      } catch (error) {
+        refused[rel] = (error as Error).message;
+        continue;
+      }
       const want = referencePoses(rel);
       // Times are float32 too, so poses pair by order; both runs hold the same number.
       expect(got.length, rel).toBe(want.length);
@@ -90,6 +111,7 @@ describe('a parsed pose holds the rotation the file holds (#1432)', () => {
         }
       });
     }
+    expect(refused).toEqual(REFUSED);
     expect(worst, `worst at ${worstAt}`).toBeLessThan(BOUND);
     // At least: the six library motions alone hold 7,000+ bone poses each.
     expect(compared).toBeGreaterThan(6 * 7000);

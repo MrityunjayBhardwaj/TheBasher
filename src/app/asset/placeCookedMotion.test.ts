@@ -26,7 +26,7 @@ import { poseLayerChain } from '../animate/poseChain';
 import { resolvePendingMotionGenerations } from './resolveMotionGenerate';
 import { bakeGeneratedClipOps } from './bakeGeneratedClip';
 import { mintMotionGenerateOps } from './mintMotionGenerate';
-import { placeCookedMotionOps } from './placeGeneratedMotion';
+import { placeCookedMotionOps, placementRootOf } from './placeGeneratedMotion';
 import * as THREE from 'three';
 import { buildDefaultDagState } from '../../core/project/default';
 import { collectSkeletonObjects } from '../skeletonObjects';
@@ -297,9 +297,18 @@ describe('placeCookedMotionOps (#935)', () => {
       (n) => n.type === 'Object' && s.nodes[edgeTarget(n, 'data') ?? '']?.type === 'Skeleton',
     )!.id;
     const barSkeleton = edgeTarget(s.nodes[armature], 'data')!;
-    const root = (s.nodes.scene.inputs.children as { node: string }[])
-      .map((c) => c.node)
-      .find((id) => s.nodes[id].type === 'Group')!;
+    // #1451 — no wrapper Group: the root is what the file hangs the rig under, found by the product's
+    // own walk. The skinned mesh must hang under the same root, or placing the rig would leave it.
+    const root = placementRootOf(s, { objectId: armature } as never)!;
+    // The mesh is the Object an Armature modifier deforms.
+    const mesh = Object.values(s.nodes).find(
+      (n) =>
+        n.type === 'Object' && s.nodes[edgeTarget(n, 'data') ?? '']?.type === 'ArmatureModifier',
+    )!.id;
+    expect(root, 'the rig hangs under the scene').not.toBeNull();
+    expect(placementRootOf(s, { objectId: mesh } as never), 'the mesh moves with the rig').toBe(
+      root,
+    );
 
     const { ops, clipId } = mintMotionGenerateOps(s, {
       prompt: 'a slow walk',
@@ -579,9 +588,10 @@ describe('#1100 — the motion’s own rig is placed at the path start', () => {
     const standIn = Object.values(state.nodes).find(
       (n) => n.type === 'Object' && n.id !== 'pathObj' && n.id !== 'charObj',
     );
-    expect(standIn?.meta?.hidden, 'the bind did not hide a stand-in — not the bound shape').toBe(
-      true,
-    );
+    expect(
+      ownShown(standIn, 'viewport'),
+      'the bind did not hide a stand-in — not the bound shape',
+    ).toBe(false);
 
     const { ops, refusals } = placeCookedMotionOps(state);
     expect(refusals).toEqual([]);
@@ -643,6 +653,7 @@ describe('#1100 — the motion’s own rig is placed at the path start', () => {
 // motion the director had already accepted. Money is the smaller half.
 
 import { motionCookOffer } from './cookMotionGenerations';
+import { ownShown } from '../collections';
 
 /** Counts what the service was actually asked to make. */
 function countingCapability(calls: string[]): MotionGenerationCapability {

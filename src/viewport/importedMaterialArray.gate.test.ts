@@ -108,11 +108,21 @@ describe('#646 — an imported mesh cannot carry a material ARRAY, on any road t
 
     const src = read(REPO, 'src', 'core', 'import', 'fbxMesh.ts');
     expect(lines(src)).toBeGreaterThan(50);
-    // What a mesh's materials are once read: a slot is a name, a colour and a roughness. A field
-    // holding a three material here would carry the array past the reader.
+    // What a mesh's materials are once read: a slot is a name, a colour, a roughness and (#1434)
+    // the images it samples, each an index into the file's images and a clamp. A field holding a
+    // three material or texture here would carry the array past the reader.
     const slot = interfaceBody(src, 'FbxMaterialSlot');
     expect(slot).not.toBeNull();
-    expect(declaredFields(slot as string)).toEqual(['name', 'color', 'roughness']);
+    expect(declaredFields(slot as string)).toEqual([
+      'name',
+      'color',
+      'roughness',
+      'baseColorImage',
+      'normalImage',
+    ]);
+    const image = interfaceBody(src, 'FbxSlotImage');
+    expect(image).not.toBeNull();
+    expect(declaredFields(image as string)).toEqual(['image', 'clamp']);
     const mesh = interfaceBody(src, 'FbxMeshRead');
     expect(mesh).not.toBeNull();
     expect(/\bmaterials\s*:\s*readonly\s+FbxMaterialSlot\[\]/.test(mesh as string)).toBe(true);

@@ -14,7 +14,7 @@ import { __resetRegistryForTests } from '../dag/registry';
 import { registerAllNodes } from '../../nodes/registerAll';
 import { applyOp } from '../dag/ops';
 import { evaluate } from '../dag';
-import { emptyDagState, type DagState } from '../dag/state';
+import type { DagState } from '../dag/state';
 import type { Op } from '../dag/types';
 import { poseLayerChain } from '../../app/animate/poseChain';
 import type { GraphNodeLike } from '../../app/animate/graphNodes';
@@ -26,6 +26,7 @@ import type {
   ObjectValue,
   PosedSkeletonValue,
 } from '../../nodes/types';
+import { sceneOnlyState } from '../../test-utils/sceneOnlyState';
 
 const SKINNED_BAR = 'public/assets/skinned-bar.glb';
 const STANDIN = 'public/fixtures/rig/standin-character.glb';
@@ -75,10 +76,10 @@ async function importSkinned(buffer: ArrayBuffer): Promise<NativeImportResult> {
   return result;
 }
 
-/** Every op but the last (the Group → scene edge, whose target this empty state lacks). */
+/** Every op, applied to a project holding only its scene (#1451: no wrapper Group to trim). */
 function applied(ops: readonly Op[]): DagState {
-  let state = emptyDagState();
-  for (const op of ops.slice(0, -1)) state = applyOp(state, op).next;
+  let state = sceneOnlyState();
+  for (const op of ops) state = applyOp(state, op).next;
   return state;
 }
 
@@ -112,17 +113,17 @@ describe('#393 step 1 — a skinned glTF’s joints become a skeleton', () => {
     const types = Object.values(state.nodes)
       .map((n) => n.type)
       .sort();
-    // The import Group, the mesh node's Object + PolyMeshData + the Armature modifier that deforms
-    // it, and the rig: Skeleton, its Object, and the base pose layer holding its keys (#1211). Before
-    // #393 the joints were two Group empties with a KeyframeChannelQuat on one; before #1211 the
-    // keys were an AnimationClip.
+    // The scene it lands in, the mesh node's Object + PolyMeshData + the Armature modifier that
+    // deforms it, and the rig: Skeleton, its Object, and the base pose layer holding its keys (#1211).
+    // No import Group (#1451). Before #393 the joints were two Group empties with a
+    // KeyframeChannelQuat on one; before #1211 the keys were an AnimationClip.
     expect(types).toEqual([
       'ArmatureModifier',
-      'Group',
       'Object',
       'Object',
       'PolyMeshData',
       'PoseLayer',
+      'Scene',
       'Skeleton',
     ]);
     const [skeletonId] = nodesOfType(state, 'Skeleton');

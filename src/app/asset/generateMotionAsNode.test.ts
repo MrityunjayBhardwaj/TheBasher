@@ -57,6 +57,7 @@ vi.mock('../boot', () => ({
 // Imported AFTER vi.mock so the module picks up the mocked boot.
 import { generateMotionAsNode } from './generateMotionAsNode';
 import { motionGenerateTool } from '../../agent/tools/motionGenerate';
+import { ownShown } from '../collections';
 
 function seedTime(): void {
   useDagStore.getState().hydrate({
@@ -354,7 +355,7 @@ describe('a generated motion stands its skeleton in the scene (#1078)', () => {
     const objectId = objectForClip(result.clipId);
     const object = state.nodes[objectId];
     expect(object?.type).toBe('Object');
-    expect(object.meta?.hidden).not.toBe(true);
+    expect(ownShown(object, 'viewport')).toBe(true);
     // Declared unit, so no normalising: the file road's rule does not apply here.
     expect((object.params as { scale: number[] }).scale).toEqual([1, 1, 1]);
 
@@ -384,14 +385,14 @@ describe('a generated motion stands its skeleton in the scene (#1078)', () => {
     const after = useDagStore.getState().state;
     // The bind happened — otherwise "hidden" says nothing about binding.
     expect(after.nodes[retargetedClipId(result.clipId, CHAR_SKEL)]).toBeDefined();
-    expect(after.nodes[objectId]?.meta?.hidden).toBe(true);
+    expect(ownShown(after.nodes[objectId], 'viewport')).toBe(false);
     expect(collectSkeletonObjects(after).some((o) => o.id === objectId)).toBe(false);
 
     // Nothing to place (no path), so the last entry is the bind.
     useDagStore.getState().undo();
     const undone = useDagStore.getState().state;
     expect(undone.nodes[retargetedClipId(result.clipId, CHAR_SKEL)]).toBeUndefined();
-    expect(undone.nodes[objectId]?.meta?.hidden === true).toBe(false);
+    expect(ownShown(undone.nodes[objectId], 'viewport')).toBe(true);
   });
 });
 

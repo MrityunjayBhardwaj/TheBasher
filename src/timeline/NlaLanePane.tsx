@@ -361,7 +361,7 @@ export function NlaLanePane() {
   // #285: every key the pane HANDLES must also stopPropagation — the global
   // KeyboardShortcuts listener is a bubble-phase window listener that never
   // checks defaultPrevented, so an un-stopped M/S/Esc double-fires the app
-  // shortcut (projection toggle / scale tool / clear 3D selection). Same
+  // shortcut (Move to Collection / scale tool / clear 3D selection). Same
   // shield class the add-strip popover applies to Tab.
   const onPaneKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (e.key !== 'Escape') return;
@@ -401,7 +401,7 @@ export function NlaLanePane() {
     }
     if (e.key === 'm' || e.key === 'M') {
       e.preventDefault();
-      e.stopPropagation(); // #285: M is the global projection toggle
+      e.stopPropagation(); // #285: M is the global Move to Collection (#397)
       commitNlaSetParam(strip.stripId, 'muted', !strip.stripMuted, 'toggle strip mute');
     }
   }, []);
@@ -457,7 +457,7 @@ export function NlaLanePane() {
       }
       if (e.key === 'm' || e.key === 'M') {
         e.preventDefault();
-        e.stopPropagation(); // #285: M is the global projection toggle
+        e.stopPropagation(); // #285: M is the global Move to Collection (#397)
         onToggleTrackMute(row);
         return;
       }

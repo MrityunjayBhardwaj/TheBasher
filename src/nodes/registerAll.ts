@@ -54,6 +54,7 @@ import { CameraDataNode } from './CameraData';
 import { LightDataNode } from './LightData';
 import { LightProfileSelectNode } from './LightProfileSelect';
 import { LightRigNode } from './LightRig';
+import { CollectionNode } from './Collection';
 import { LocomotionStateNode } from './LocomotionState';
 import { MaterialOverrideNode } from './MaterialOverride';
 import { MaterialOverrideOpNode } from './MaterialOverrideOp';
@@ -228,6 +229,8 @@ const ALL: NodeDefinition[] = [
   // LightProfileSelect (the ClipSelect pattern) picks one to feed the scene.
   LightRigNode as unknown as NodeDefinition,
   LightProfileSelectNode as unknown as NodeDefinition,
+  // #1451 — Collections (#397): a named set of scene Objects, membership and never a transform.
+  CollectionNode as unknown as NodeDefinition,
   // P7.5 — glTF TRS animation extraction (issue #81); pure node-indexed
   // sampler + multi-clip selector. See TransformClip.ts / ClipSelect.ts.
   TransformClipNode as unknown as NodeDefinition,

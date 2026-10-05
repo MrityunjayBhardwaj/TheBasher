@@ -29,7 +29,7 @@ interface DagNode {
   type: string;
   inputs: Record<string, unknown>;
   params: Record<string, unknown>;
-  meta?: { hidden?: boolean };
+  params?: { viewport?: boolean };
 }
 interface Win {
   __basher_dag: {
@@ -170,7 +170,7 @@ test('a motion generated through the panel onto a character hides its own rig, a
       producers: Object.values(nodes).filter((n) => n.type === 'MotionGenerate').length,
       retargets: Object.values(nodes).filter((n) => n.type === 'RetargetClip').length,
       objectId,
-      hidden: objectId ? nodes[objectId].meta?.hidden === true : null,
+      hidden: objectId ? nodes[objectId].params?.viewport === false : null,
     };
   });
   // The generate road, answered by the service — not a dropped file, not the offline stub.
@@ -201,7 +201,7 @@ test('a motion generated through the panel onto a character hides its own rig, a
     return {
       retargets: Object.values(nodes).filter((n) => n.type === 'RetargetClip').length,
       exists: Boolean(nodes[id]),
-      hidden: nodes[id]?.meta?.hidden === true,
+      hidden: nodes[id]?.params?.viewport === false,
     };
   }, landed.objectId!);
   expect(afterUndo).toEqual({ retargets: 0, exists: true, hidden: false });

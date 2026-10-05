@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { applyOp, OpError } from './ops';
 import { emptyDagState } from './state';
 import type { DagState, Op } from './types';
+import { OpSchema } from './types';
 import { seedTestRegistry } from './__fixtures__/testNodes';
 
 function withState(init: (s: DagState) => DagState): DagState {
@@ -518,53 +519,13 @@ describe('applyOp — setMeta (#224 rename)', () => {
   });
 });
 
-describe('applyOp — setHidden (#227 S4 visibility)', () => {
-  beforeEach(() => seedTestRegistry());
-
-  function withNode(): DagState {
-    return applyOp(emptyDagState(), {
-      type: 'addNode',
-      nodeId: 'n1',
-      nodeType: 'TestNumber',
-      params: { value: 1 },
-    }).next;
-  }
-
-  it('sets meta.hidden=true and returns an inverse restoring the prior (false)', () => {
-    const state = withNode();
-    const { next, inverse } = applyOp(state, { type: 'setHidden', nodeId: 'n1', hidden: true });
-    expect(next.nodes.n1.meta?.hidden).toBe(true);
-    expect(inverse).toEqual({ type: 'setHidden', nodeId: 'n1', hidden: false });
-  });
-
-  it('hidden=false DELETES the key and normalizes meta away when it is the only field', () => {
-    let state = withNode();
-    state = applyOp(state, { type: 'setHidden', nodeId: 'n1', hidden: true }).next;
-    state = applyOp(state, { type: 'setHidden', nodeId: 'n1', hidden: false }).next;
-    expect(state.nodes.n1.meta).toBeUndefined();
-  });
-
-  it('preserves other meta fields (name) when toggling visibility', () => {
-    let state = withNode();
-    state = applyOp(state, { type: 'setMeta', nodeId: 'n1', name: 'hero' }).next;
-    state = applyOp(state, { type: 'setHidden', nodeId: 'n1', hidden: true }).next;
-    expect(state.nodes.n1.meta).toEqual({ name: 'hero', hidden: true });
-    // un-hiding leaves the name intact
-    state = applyOp(state, { type: 'setHidden', nodeId: 'n1', hidden: false }).next;
-    expect(state.nodes.n1.meta).toEqual({ name: 'hero' });
-  });
-
-  it('round-trips through undo (apply then apply inverse restores state)', () => {
-    const state = withNode();
-    const { next, inverse } = applyOp(state, { type: 'setHidden', nodeId: 'n1', hidden: true });
-    const restored = applyOp(next, inverse).next;
-    expect(restored.nodes.n1.meta).toEqual(state.nodes.n1.meta);
-  });
-
-  it('throws on an unknown node id', () => {
-    expect(() =>
-      applyOp(emptyDagState(), { type: 'setHidden', nodeId: 'missing', hidden: true }),
-    ).toThrow();
+describe('#1503 — there is no setHidden op', () => {
+  // Visibility is the `viewport` and `render` params (src/nodes/visibilityParams.ts), written by
+  // setParam through `setShownOp`. A plan or a saved history still carrying the retired op is
+  // refused by name at the boundary rather than applied as something else.
+  it('the op schema refuses it', () => {
+    const r = OpSchema.safeParse({ type: 'setHidden', nodeId: 'n1', hidden: true });
+    expect(r.success).toBe(false);
   });
 });
 

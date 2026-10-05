@@ -114,8 +114,8 @@ export function __setTimeNowForTests(fn: () => number): void {
 
 // #435 — "does not silently dangle", in its FINAL-STATE form, on EVERY commit road.
 // `removeNode`'s per-op guard covers edges (always explicitly torn down); an id-
-// reference is a param that can legitimately outlive a removeNode mid-batch (Apply-
-// Transform re-adds the baked node under the SAME id, #412), so the invariant is about
+// reference is a param that can legitimately outlive a removeNode mid-batch (a batch may
+// re-add a node under the SAME id, as Apply-Transform did until #1476), so the invariant is about
 // the COMMITTED state, not a transient. Only a removeNode can turn a live ref into a
 // dangling one, so the scan runs ONLY then — leaving every drag / param edit untouched.
 // Called by all three commit paths (dispatch / dispatchBatch / dispatchAtomic) before

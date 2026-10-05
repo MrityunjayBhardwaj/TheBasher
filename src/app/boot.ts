@@ -848,30 +848,41 @@ export function boot(): Promise<void> {
       // P3.1 Wave A/B — BVH + FBX import demo seams. Library UI
       // integration lands in a follow-on wave; meanwhile the agent
       // (and console) can drive imports via these seams.
-      void import('../core/import/bvhImportChain').then((m) => {
+      // #1434 — through the same landing as every other BVH door: the rig's Object in the import's
+      // Group. Returns what landed (`kind`, its ids, the Group), as the FBX seam below does.
+      void Promise.all([
+        import('../core/import/bvhImportChain'),
+        import('./asset/importBvhFbx'),
+      ]).then(([m, landing]) => {
         w.__basher_importBvh = (text: string, name?: string) => {
           const dag = useDagStore.getState();
-          const { ops, skeletonId, motionId } = m.buildBvhImportOps({ text, name });
-          dag.dispatchAtomic(ops, 'user', `import bvh: ${name ?? 'imported'}`);
-          return { skeletonId, motionId };
+          const label = name ?? 'imported';
+          const built = { ...m.buildBvhImportOps({ text, name }), kind: 'motion' as const };
+          const { ops, ...landed } = landing.motionImportOps(built, label, dag.state);
+          dag.dispatchAtomic(ops, 'user', `import bvh: ${label}`);
+          return landed;
         };
       });
       void Promise.all([
         import('../core/import/fbxImportChain'),
         import('./asset/importBvhFbx'),
-      ]).then(([m, landing]) => {
+        import('./asset/importGltf'),
+      ]).then(([m, landing, { storeImageInOpenProject }]) => {
         // #1429 — through the same assembly as every other FBX door: the skeleton's Object and the
         // file's meshes stand with it.
-        w.__basher_importFbx = (data: ArrayBuffer | string, name?: string) => {
+        // #1434 — its images go where every door's do: the open project's image folder.
+        w.__basher_importFbx = async (data: ArrayBuffer | string, name?: string) => {
+          const built = await m.buildFbxImportOps({
+            data,
+            name,
+            storeImage: storeImageInOpenProject,
+          });
           const dag = useDagStore.getState();
           const label = name ?? 'imported';
-          const { ops, skeletonId, motionId, meshCount, notices } = landing.motionImportOps(
-            m.buildFbxImportOps({ data, name }),
-            label,
-            dag.state,
-          );
+          // #1434 — what landed (`kind`) and its ids: a model has a Group and no skeleton.
+          const { ops, ...landed } = landing.motionImportOps(built, label, dag.state);
           dag.dispatchAtomic(ops, 'user', `import fbx: ${label}`);
-          return { skeletonId, motionId, meshCount, notices };
+          return landed;
         };
       });
       // #1049 — the NATIVE road: the file becomes stored polygon meshes and stops existing. A
@@ -903,9 +914,15 @@ export function boot(): Promise<void> {
         if ('refused' in result) {
           throw new Error(`native import refused: ${result.refused} (${result.issue})`);
         }
-        dag.dispatchAtomic(result.ops, 'user', `import gltf (native): ${assetRef}`);
+        // #1451 — linked into the active collection, as every import door links what it makes.
+        const { intoActiveCollection } = await import('./collections');
+        dag.dispatchAtomic(
+          intoActiveCollection(dag.state, result.ops),
+          'user',
+          `import gltf (native): ${assetRef}`,
+        );
         // #1384 — and what the import left behind on purpose, for a spec to read.
-        return { groupId: result.groupId, objectIds: result.objectIds, notices: result.notices };
+        return { objectIds: result.objectIds, notices: result.notices };
       };
       // P7.9 Wave D Task 8 — real-path ingestion seam (issue #110). Drives the
       // SHARED interactive chokepoint `ingestAndImportGltf`: resolve the entry

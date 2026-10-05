@@ -478,6 +478,10 @@ export function gltfJsonMaterialToOpenpbr(
       // alphaMode:'MASK' → the alphaTest cutoff (glTF default 0.5). The clone
       // already renders cutout; capturing makes it DAG-addressable + editable.
       ...(mat.alphaMode === 'MASK' ? { alphaCutoff: num(mat.alphaCutoff, 0.5) } : {}),
+      // #1435 — alphaMode:'BLEND' → the alpha (the factor's times the base colour texture's,
+      // spec §3.9.4) drawn blended, whatever the factor: Blender's importer sets the render
+      // method from the mode alone (`material.py` `set_eevee_surface_render_method`).
+      ...(mat.alphaMode === 'BLEND' ? { renderMethod: 'blended' as const } : {}),
       // COLOR_0 → the colour layer this material reads, by name (#1062). The caller still reports
       // a boolean, because at that boundary the question really is "does this primitive carry a
       // colour at all" — glTF gives it no name. The name it arrives under is the reader's, so both

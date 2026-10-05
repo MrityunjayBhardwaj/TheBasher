@@ -8,12 +8,13 @@ import { __resetRegistryForTests } from '../core/dag/registry';
 import { registerAllNodes } from './registerAll';
 import { applyOp } from '../core/dag/ops';
 import { evaluate } from '../core/dag';
-import { emptyDagState, type DagState } from '../core/dag/state';
+import type { DagState } from '../core/dag/state';
 import { SKIN_JOINTS, SKIN_WEIGHTS } from './attributes';
 import { boneOfGroups, sampleSkinDeform } from './armatureDeform';
 import { cloneForOverlay } from './overlayChannels';
 import type { BoneSpec, MeshGeometryData, ModifiedDataValue, SkinDeformValue } from './types';
 import { clipValueFromKeys } from '../test-utils/clipValue';
+import { sceneOnlyState } from '../test-utils/sceneOnlyState';
 
 const CTX = { ctx: { time: { frame: 0, seconds: 0, normalized: 0 } } };
 
@@ -37,8 +38,8 @@ async function skinnedBar(): Promise<{ state: DagState; modifierId: string }> {
     storeImage: async () => 'img',
   });
   if ('refused' in result) throw new Error(result.refused);
-  let state = emptyDagState();
-  for (const op of result.ops.slice(0, -1)) state = applyOp(state, op).next;
+  let state = sceneOnlyState();
+  for (const op of result.ops) state = applyOp(state, op).next;
   // The import wires the stack itself: PolyMeshData → Armature → the mesh's Object, with the
   // skeleton's Object on the modifier's second input.
   const modifierId = Object.values(state.nodes).find((n) => n.type === 'ArmatureModifier')!.id;
@@ -104,8 +105,8 @@ describe('#1212 — a file whose bones carry scale channels held at rest comes a
       storeImage: async () => 'img',
     });
     if ('refused' in result) throw new Error(result.refused);
-    let state = emptyDagState();
-    for (const op of result.ops.slice(0, -1)) state = applyOp(state, op).next;
+    let state = sceneOnlyState();
+    for (const op of result.ops) state = applyOp(state, op).next;
     const modifierId = Object.values(state.nodes).find((n) => n.type === 'ArmatureModifier')!.id;
     return { result, state, modifierId };
   }
@@ -335,8 +336,8 @@ describe('#1218 — a skinned mesh under a moved armature stands in the armature
       storeImage: async () => 'img',
     });
     if ('refused' in result) throw new Error(result.refused);
-    let state = emptyDagState();
-    for (const op of result.ops.slice(0, -1)) state = applyOp(state, op).next;
+    let state = sceneOnlyState();
+    for (const op of result.ops) state = applyOp(state, op).next;
     const modifierId = Object.values(state.nodes).find((n) => n.type === 'ArmatureModifier')!.id;
     const objectId = Object.values(state.nodes).find(
       (n) =>
@@ -446,8 +447,8 @@ describe('#1218 — a skinned mesh under a moved armature stands in the armature
       storeImage: async () => 'img',
     });
     if ('refused' in result) throw new Error(result.refused);
-    let state = emptyDagState();
-    for (const op of result.ops.slice(0, -1)) state = applyOp(state, op).next;
+    let state = sceneOnlyState();
+    for (const op of result.ops) state = applyOp(state, op).next;
     const modifierId = Object.values(state.nodes).find((n) => n.type === 'ArmatureModifier')!.id;
     const mesh = Object.values(state.nodes).find(
       (n) => (n.inputs.data as { node?: string } | undefined)?.node === modifierId,
@@ -490,8 +491,8 @@ describe('#1218 — a skinned mesh under a moved armature stands in the armature
       storeImage: async () => 'img',
     });
     if ('refused' in result) throw new Error(result.refused);
-    let state = emptyDagState();
-    for (const op of result.ops.slice(0, -1)) state = applyOp(state, op).next;
+    let state = sceneOnlyState();
+    for (const op of result.ops) state = applyOp(state, op).next;
     const modifierId = Object.values(state.nodes).find((n) => n.type === 'ArmatureModifier')!.id;
     const mesh = Object.values(state.nodes).find(
       (n) => (n.inputs.data as { node?: string } | undefined)?.node === modifierId,

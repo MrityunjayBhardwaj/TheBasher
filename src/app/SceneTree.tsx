@@ -26,6 +26,15 @@ import { useRenameStore } from './stores/renameStore';
 import { RenameInput } from './RenameInput';
 import { SceneTreeIcon, iconKindForNode } from './SceneTreeIcon';
 import { buildSceneTreeRows, type TreeRow } from './sceneTreeWalk';
+import {
+  activeCollectionOf,
+  collectableNodes,
+  newCollectionOps,
+  ownShown,
+  setActiveCollectionOp,
+  setShownOp,
+  VISIBILITY_TYPES,
+} from './collections';
 import { buildDeleteNodesOps, buildDuplicateNodeOps } from './sceneNodeActions';
 import { selectActiveCameraNode } from './activeCamera';
 import { isCameraNode } from './cameraNode';
@@ -43,6 +52,8 @@ const TREE_DRAG_MIME = 'application/x-basher-tree-row';
 // Row types that own a collapsible subtree and so get a chevron. GltfAsset
 // defaults COLLAPSED (node-flood, D-05); the rest default EXPANDED.
 const COLLAPSIBLE_TYPES = new Set([
+  // #1451 — a Collection's members list under it.
+  'Collection',
   'Group',
   'Transform',
   'MaterialOverride',
@@ -90,6 +101,27 @@ function EyeIcon({ open }: { open: boolean }) {
   );
 }
 
+/** #1503 — the render toggle's glyph, Blender's outliner camera: struck through when off. */
+function RenderIcon({ on }: { on: boolean }) {
+  return (
+    <svg
+      width="13"
+      height="13"
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.3"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <rect x="1.5" y="4.5" width="9" height="7" rx="1" />
+      <path d="M10.5 7 14.5 5v6l-4-2" />
+      {!on ? <line x1="2.5" y1="13.5" x2="13.5" y2="2.5" /> : null}
+    </svg>
+  );
+}
+
 // One context-menu item — mirrors the MenuBar Item styling (audited tokens, no new
 // bg-/text- pair → W8 gate clean).
 function CtxItem({
@@ -119,6 +151,7 @@ function CtxItem({
 
 export function SceneTree({ filter = '' }: SceneTreeProps) {
   const state = useDagStore((s) => s.state);
+  const activeCollection = activeCollectionOf(state);
   const dispatchAtomic = useDagStore((s) => s.dispatchAtomic);
   // #226 Slice 2 — the outliner reads the whole SET + the active id (not just
   // the primary) so ctrl/shift multi-select shows every member, with the active
@@ -287,7 +320,18 @@ export function SceneTree({ filter = '' }: SceneTreeProps) {
   //   set; Shift-click → select the inclusive range from the active row to the
   //   clicked row (the clicked row becomes active). Selection is a UI projection
   //   (V1/V8) — no DAG write.
+  // #1451 — Blender's active collection: clicking a collection makes it the one an import links its
+  // objects into, and clicking the scene makes the scene itself active again. Written only when it
+  // changes, so a second click adds no undo step.
+  function activateCollection(row: TreeRow) {
+    const wanted = row.nodeType === 'Collection' ? row.nodeId : row.depth === 0 ? null : undefined;
+    if (wanted === undefined || wanted === activeCollection) return;
+    const op = setActiveCollectionOp(state, wanted);
+    if (op) dispatchAtomic([op], 'user', 'set active collection');
+  }
+
   function onRowClick(e: ReactMouseEvent, row: TreeRow) {
+    activateCollection(row);
     if (e.metaKey || e.ctrlKey) {
       selectAdditive(row.nodeId);
       return;
@@ -449,15 +493,19 @@ export function SceneTree({ filter = '' }: SceneTreeProps) {
     setCtxMenu(null);
   }
 
-  // #227 S4 — toggle a node's visibility (one setHidden op → one undo). The
-  // renderer (SceneFromDAG) skips a hidden top-level node in the viewport AND the
-  // offscreen render (V37, one band). v1 affordance is on top-level rows only.
+  // #227 S4 #1503 — the eye: a node's `viewport` flag (one setParam → one undo), as Blender's eye
+  // is the viewport's alone. The render keeps its own `render` flag, so an object hidden here still
+  // renders; its children still draw (#1462, as Blender).
   function toggleHidden(nodeId: NodeId, hidden: boolean) {
-    dispatchAtomic(
-      [{ type: 'setHidden', nodeId, hidden }],
-      'user',
-      hidden ? 'hide node' : 'show node',
-    );
+    const op = setShownOp(state, nodeId, 'viewport', !hidden);
+    if (op) dispatchAtomic([op], 'user', hidden ? 'hide node' : 'show node');
+  }
+
+  // #1503 — Blender's outliner render toggle ("Disable in Renders"): the node's `render` flag,
+  // apart from the eye, so a node can be seen and not rendered, or rendered and not seen.
+  function toggleRendered(nodeId: NodeId, rendered: boolean) {
+    const op = setShownOp(state, nodeId, 'render', rendered);
+    if (op) dispatchAtomic([op], 'user', rendered ? 'enable in renders' : 'disable in renders');
   }
 
   // #231 Inc 3.2 — make a camera the scene's active camera (Blender Ctrl-Numpad0).
@@ -468,6 +516,15 @@ export function SceneTree({ filter = '' }: SceneTreeProps) {
     const ops = buildSetActiveCameraOps(state, nodeId);
     if (ops && ops.length > 0) dispatchAtomic(ops, 'user', 'set active camera');
     if (closeMenu) setCtxMenu(null);
+  }
+
+  // #1451 — Blender's outliner New Collection: an empty collection, ready to be made active with a
+  // click. #397 — it nests in the active collection, as Blender's nests in the selected one (here a
+  // clicked collection is the active one), and in the scene with the scene active.
+  function ctxNewCollection() {
+    const made = newCollectionOps(state, activeCollection);
+    if (made) dispatchAtomic(made.ops, 'user', 'new collection');
+    setCtxMenu(null);
   }
 
   function ctxDelete(nodeId: NodeId) {
@@ -696,6 +753,8 @@ export function SceneTree({ filter = '' }: SceneTreeProps) {
     }
   }
 
+  // #1453 — every scene object can be hidden: its eye reaches its drawer at any depth (#1462).
+  const hideable = collectableNodes(state);
   return (
     <div
       data-testid="scene-tree"
@@ -727,14 +786,11 @@ export function SceneTree({ filter = '' }: SceneTreeProps) {
             (row.nodeType === 'GltfAsset'
               ? expandedAssets.has(row.nodeId)
               : !collapsedNodes.has(row.nodeId));
-          // #227 S4 — visibility. The eye lives on TOP-LEVEL rows (depth 1, the
-          // Scene's direct children) — the renderer skips exactly these by source
-          // node id, so the affordance can't lie. `hidden` dims the row + flips the
+          // #227 S4 — visibility. The eye lives on the rows whose drawer honours it, by
+          // source node id, so the affordance can't lie. `hidden` dims the row + flips the
           // glyph. Suppressed while filtering (same as the chevron).
-          // #231 Inc 3.2 — a camera row shows the active-marker / Set-Active
-          // affordance instead of the eye (the eye toggles `meta.hidden`, which the
-          // renderer only honours for top-level CHILDREN — a camera frustum isn't in
-          // that band, so the eye would be a lying affordance on a camera).
+          // #231 Inc 3.2 — a camera row shows the active-marker / Set-Active affordance.
+          // #1453 — and an eye beside it: the frustums honour the viewport flag.
           // #387 C4 — keyed on POSSESSION, not on the type's NAME. A split camera is an
           // `Object` posing a `CameraData`, and `'Object'.endsWith('Camera')` is false, so
           // the name-shaped predicate silently stripped the active-camera marker, the
@@ -743,14 +799,27 @@ export function SceneTree({ filter = '' }: SceneTreeProps) {
           // type LITERALS — which is exactly how these four sites survived the slice-3 pass.
           const isCamera = isCameraNode(state, row.nodeId);
           const isActiveCamera = isCamera && row.nodeId === activeCameraId;
-          const isHideable = !filtering && row.depth === 1 && !isCamera;
-          const hidden = state.nodes[row.nodeId]?.meta?.hidden ?? false;
+          // #1451 — keyed on what the renderer honours rather than on depth: a Collection (its
+          // members go with it), and every scene object (`collectableNodes`) — #1462 made a hide
+          // reach a node alone at any depth, and #1453 made the lights band and the camera
+          // frustums honour it, so the eye is true on each of their rows.
+          // #1503 — and only on a node that carries the flag: a Transform or MaterialOverride
+          // wrapper draws no body of its own, so an eye on it would hide nothing.
+          const isHideable =
+            !filtering &&
+            VISIBILITY_TYPES.has(row.nodeType) &&
+            (row.nodeType === 'Collection' || hideable.has(row.nodeId));
+          const hidden = !ownShown(state.nodes[row.nodeId], 'viewport');
+          const rendered = ownShown(state.nodes[row.nodeId], 'render');
           return (
             <li
               key={row.key}
               ref={isActive ? activeRowRef : undefined}
               data-testid={`scene-tree-row-${row.nodeId}`}
               data-depth={row.depth}
+              data-active-collection={
+                row.nodeType === 'Collection' && row.nodeId === activeCollection ? true : undefined
+              }
               data-selected={isInSet || undefined}
               data-active={isActive || undefined}
               data-dragging={isDragging || undefined}
@@ -835,7 +904,14 @@ export function SceneTree({ filter = '' }: SceneTreeProps) {
                     className="grow rounded-sm border border-accent bg-bg-2 px-1 text-[13px] text-fg outline-none"
                   />
                 ) : (
-                  <span className={`grow truncate ${hidden ? 'opacity-40' : ''}`}>
+                  <span
+                    className={`grow truncate ${hidden ? 'opacity-40' : ''} ${
+                      // #1451 — the active collection reads as such, as Blender highlights it.
+                      row.nodeType === 'Collection' && row.nodeId === activeCollection
+                        ? 'font-semibold text-fg'
+                        : ''
+                    }`}
+                  >
                     {row.display}
                   </span>
                 )}
@@ -866,6 +942,28 @@ export function SceneTree({ filter = '' }: SceneTreeProps) {
                     className="shrink-0 text-[11px] leading-none text-fg-dim opacity-0 hover:text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent group-hover:opacity-100"
                   >
                     △
+                  </button>
+                ) : null}
+                {isHideable ? (
+                  <button
+                    type="button"
+                    tabIndex={-1}
+                    data-testid={`scene-tree-render-${row.nodeId}`}
+                    data-excluded={!rendered || undefined}
+                    aria-label={rendered ? 'Disable in renders' : 'Enable in renders'}
+                    aria-pressed={!rendered}
+                    title={rendered ? 'Disable in renders' : 'Enable in renders'}
+                    onDoubleClick={(e) => e.stopPropagation()} // never open rename
+                    onClick={(e) => {
+                      e.stopPropagation(); // toggle only — do NOT select the row
+                      toggleRendered(row.nodeId, !rendered);
+                    }}
+                    // As the eye: on hover, or always when off, so the way back is never invisible.
+                    className={`shrink-0 text-fg-dim hover:text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent ${
+                      rendered ? 'opacity-0 group-hover:opacity-100' : 'opacity-100'
+                    }`}
+                  >
+                    <RenderIcon on={rendered} />
                   </button>
                 ) : null}
                 {isHideable ? (
@@ -943,6 +1041,9 @@ export function SceneTree({ filter = '' }: SceneTreeProps) {
                     Set Active Camera
                   </CtxItem>
                 ) : null}
+                <CtxItem testId="outliner-ctx-new-collection" onClick={ctxNewCollection}>
+                  New Collection
+                </CtxItem>
                 <div className="my-1 h-px bg-border" />
                 <CtxItem testId="outliner-ctx-delete" onClick={() => ctxDelete(ctxMenu.nodeId)}>
                   {ctxTargetIds(ctxMenu.nodeId).length > 1

@@ -68,17 +68,24 @@ test.describe('Spline ortho|persp projection toggle', () => {
     expect(back!.fov).not.toBeNull();
   });
 
-  test('M toggles projection perspective ↔ orthographic', async ({ page }) => {
+  test('Numpad 5 toggles projection perspective ↔ orthographic (Blender; M is Move to Collection, #397)', async ({
+    page,
+  }) => {
     await waitReady(page);
     expect((await readCam(page))!.isOrthographic).toBe(false);
 
-    // Press M → orthographic. Revert the KeyboardShortcuts M case → no flip → fails.
-    await page.keyboard.press('m');
+    // Press Numpad 5 → orthographic. Revert the KeyboardShortcuts Numpad5 case → no flip → fails.
+    await page.keyboard.press('Numpad5');
     await page.waitForTimeout(250);
     expect((await readCam(page))!.isOrthographic).toBe(true);
 
-    // Press M again → back to perspective.
-    await page.keyboard.press('m');
+    // Press Numpad 5 again → back to perspective.
+    await page.keyboard.press('Numpad5');
+    await page.waitForTimeout(250);
+    expect((await readCam(page))!.isOrthographic).toBe(false);
+
+    // The number row's 5 is not Numpad 5: drop the `e.code` guard → this flips → fails.
+    await page.keyboard.press('Digit5');
     await page.waitForTimeout(250);
     expect((await readCam(page))!.isOrthographic).toBe(false);
   });
@@ -104,7 +111,7 @@ test.describe('Spline ortho|persp projection toggle', () => {
     // Toggle to ortho — the swapped-in camera adopts the SAME position, not the
     // default boot pose. Revert the (project, projection) re-frame latch → the
     // fresh ortho camera sits at the origin → position diverges → this fails.
-    await page.keyboard.press('m');
+    await page.keyboard.press('Numpad5');
     await page.waitForTimeout(250);
     const after = await readCam(page);
     expect(after!.isOrthographic).toBe(true);

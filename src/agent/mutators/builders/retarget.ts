@@ -52,6 +52,7 @@ import {
 import { poseLayerChain, poseSkeletonIdOf } from '../../../app/animate/poseChain';
 import { getNodeType } from '../../../core/dag/registry';
 import type { GraphNodeLike } from '../../../app/animate/graphNodes';
+import { setShownOp } from '../../../app/collections';
 
 /** A retarget's source and target are `Skeleton` nodes. */
 function isSkeletonNode(node: Node): boolean {
@@ -339,7 +340,11 @@ export const retargetMutator: MutatorDefinition<RetargetSpec> = {
         ? null
         : standInObjectOf(_state, spec.sourceSkeletonId);
     if (standIn !== null) {
-      ops.push({ type: 'setHidden', nodeId: standIn, hidden: true });
+      // #1503 — off in the viewport and the render alike, as `meta.hidden` hid it from both.
+      for (const purpose of ['viewport', 'render'] as const) {
+        const op = setShownOp(_state, standIn, purpose, false);
+        if (op) ops.push(op);
+      }
     }
 
     return ops;

@@ -63,6 +63,7 @@
 import type { DagState } from '../../core/dag/state';
 import type { Op } from '../../core/dag/types';
 import { buildSkeletonObjectOps } from '../../core/import/skeletonObject';
+import { linkIntoActiveCollection } from '../collections';
 
 export interface MintMotionGenerateArgs {
   readonly prompt: string;
@@ -201,7 +202,8 @@ export function mintMotionGenerateOps(
   if (standIn) ops.push(...standIn.ops);
 
   return {
-    ops,
+    // #1453 — the Object that stands the rig joins the active collection, as an import's does.
+    ops: standIn ? linkIntoActiveCollection(state, ops, [standIn.objectId]) : ops,
     producerId: ids.producer,
     clipId: ids.clip,
     skeletonId: ids.skeleton,

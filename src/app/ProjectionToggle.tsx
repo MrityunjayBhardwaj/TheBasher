@@ -60,7 +60,7 @@ export function ProjectionToggle(): ReactNode {
             onClick={() => setCameraProjection(p.value)}
             data-testid={p.testId}
             data-active={active || undefined}
-            title={`${p.label === 'Persp' ? 'Perspective' : 'Orthographic'} projection (M)`}
+            title={`${p.label === 'Persp' ? 'Perspective' : 'Orthographic'} projection (Numpad 5)`}
             className={`rounded-md px-2 py-1 text-[11px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent ${
               active ? 'bg-bg-1 text-accent' : 'text-fg-dim hover:bg-bg-1 hover:text-fg'
             }`}

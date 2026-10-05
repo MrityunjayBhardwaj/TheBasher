@@ -169,19 +169,20 @@ test('P1#2 reload restores placed asset bit-exact (V4 migration runner round-tri
       __basher_importGltfNative: (
         buffer: ArrayBuffer,
         assetRef: string,
-      ) => Promise<{ groupId: string; objectIds: string[] }>;
+      ) => Promise<{ objectIds: string[] }>;
     };
     const buffer = await fetch('/assets/sphere.gltf').then((r) => r.arrayBuffer());
-    const { groupId, objectIds } = await w.__basher_importGltfNative(buffer, 'assets/sphere.gltf');
+    // #1451 — no wrapper Group: sphere.gltf's one node is an Object standing in the scene,
+    // so it is what the director moves.
+    const { objectIds } = await w.__basher_importGltfNative(buffer, 'assets/sphere.gltf');
     w.__basher_dag!.getState().dispatch(
-      { type: 'setParam', nodeId: groupId, paramPath: 'position', value: [1.5, 0, 0] },
+      { type: 'setParam', nodeId: objectIds[0], paramPath: 'position', value: [1.5, 0, 0] },
       'user',
       'p1#2',
     );
     const nodes = w.__basher_dag!.getState().state.nodes;
     const dataOf = (id: string) => (nodes[id].inputs.data as { node: string }).node;
     return {
-      groupId,
       objectId: objectIds[0],
       mesh: JSON.stringify(nodes[dataOf(objectIds[0])].params),
     };
@@ -198,17 +199,17 @@ test('P1#2 reload restores placed asset bit-exact (V4 migration runner round-tri
   });
 
   const restored = await page.evaluate(
-    ({ groupId, objectId }) => {
+    ({ objectId }) => {
       const w = window as unknown as DagWindow;
       const nodes = w.__basher_dag!.getState().state.nodes;
       const object = nodes[objectId];
       const data = object && (object.inputs.data as { node: string } | undefined)?.node;
       return {
-        position: (nodes[groupId]?.params as { position?: number[] } | undefined)?.position,
+        position: (object?.params as { position?: number[] } | undefined)?.position,
         mesh: data ? JSON.stringify(nodes[data].params) : null,
       };
     },
-    { groupId: placed.groupId, objectId: placed.objectId },
+    { objectId: placed.objectId },
   );
   expect(restored.position).toEqual([1.5, 0, 0]);
   expect(restored.mesh).toBe(placed.mesh);
@@ -444,6 +445,12 @@ test('P1#1b real drag-drop wire (library item → asset-drop-zone → store)', a
     { timeout: 10_000 },
   );
 
+  const groupsBefore = await page.evaluate(
+    () =>
+      Object.values((window as unknown as DagWindow).__basher_dag!.getState().state.nodes).filter(
+        (n) => n.type === 'Group',
+      ).length,
+  );
   const beforeNodeCount = await page.evaluate(() => {
     const w = window as unknown as DagWindow;
     return Object.keys(w.__basher_dag!.getState().state.nodes).length;
@@ -472,7 +479,7 @@ test('P1#1b real drag-drop wire (library item → asset-drop-zone → store)', a
   // fire-and-forget, so wait for the import to land before asserting.
   // #1049 — cube.gltf is a file the native model holds, so it arrives as native
   // geometry: one `PolyMeshData` (the mesh, stored in the project) under an
-  // ordinary `Object`, under the transformable import-root `Group`.
+  // ordinary `Object`. #1451 — that Object stands in the scene itself, no wrapper Group.
   await page.waitForFunction(
     () => {
       const w = window as unknown as DagWindow;
@@ -495,32 +502,25 @@ test('P1#1b real drag-drop wire (library item → asset-drop-zone → store)', a
       all.find(
         ([, n]) => n.type === 'Object' && dataIds.includes(refNode(n.inputs.data) ?? ''),
       )?.[0] ?? null;
-    const groupId =
-      all.find(
-        ([, n]) =>
-          n.type === 'Group' &&
-          Array.isArray(n.inputs.children) &&
-          n.inputs.children.some((c) => refNode(c) === objectId),
-      )?.[0] ?? null;
     const sceneId = w.__basher_dag!.getState().state.outputs.scene?.node;
     const sceneChildren = sceneId ? nodes[sceneId].inputs.children : undefined;
     return {
       nodeCount: all.length,
       dataCount: dataIds.length,
       objectId,
-      groupId,
-      groupInScene:
-        Array.isArray(sceneChildren) && sceneChildren.some((c) => refNode(c) === groupId),
+      groupCount: ofType('Group').length,
+      objectInScene:
+        Array.isArray(sceneChildren) && sceneChildren.some((c) => refNode(c) === objectId),
       cloneRoadNodes: ofType('GltfAsset').length + ofType('GltfData').length,
     };
   });
-  // Group + Object + PolyMeshData for cube.gltf's one scene node; nothing on the
+  // Object + PolyMeshData for cube.gltf's one scene node; no Group, and nothing on the
   // clone road (no GltfAsset, no GltfData).
-  expect(after.nodeCount).toBe(beforeNodeCount + 3);
+  expect(after.nodeCount).toBe(beforeNodeCount + 2);
   expect(after.dataCount).toBe(1);
   expect(after.objectId).not.toBeNull();
-  expect(after.groupId).not.toBeNull();
-  expect(after.groupInScene).toBe(true);
+  expect(after.groupCount).toBe(groupsBefore);
+  expect(after.objectInScene).toBe(true);
   expect(after.cloneRoadNodes).toBe(0);
 });
 

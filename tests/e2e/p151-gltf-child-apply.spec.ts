@@ -301,6 +301,12 @@ test('SC-5 undo: Apply → Cmd+Z → the original mesh data and pose restored, s
 test('M8 self-contained: Apply → delete the imported folder → reload → still renders textured', async ({
   page,
 }) => {
+  // #1436 — a budget sized to the work. This test imports, applies, deletes the imported folder,
+  // saves and reloads: ~17 s locally (ingest 3.6 s, the folder delete 3.5 s, save 1.4 s). Each step
+  // runs 3.6–5.4× slower on a slow CI runner (19.4 s, 15.7 s, 5.1 s on main's run for the #1426
+  // merge), which puts the whole at 68–85 s against a 60 s cap: it timed out there on both tries,
+  // with nothing stuck. Marked slow, the cap triples, so a failure means a stalled step.
+  test.slow();
   await ingest(page, 'p151-selfcontained');
   await expect.poll(async () => (await importRoots(page)).length).toBe(1);
   const imp = await importNamed(page, 0);

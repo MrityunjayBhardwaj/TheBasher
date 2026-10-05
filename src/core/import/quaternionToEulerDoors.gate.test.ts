@@ -171,9 +171,11 @@ describe('#876 — the quaternion→Euler door census', () => {
   it('every producer of an Euler keyframe sequence calls the continuous converter', () => {
     // #876 fixed this in the glTF clone importer's clip builder, which assembled keyframes with
     // the canonical converter while the consumer lerped them. That builder is gone (#1424), and
-    // since #1432 the parsers and the FBX fold write quaternions, so the producer left is the
-    // saved-keys road: it must still go through the wrapper.
-    expect(readFileSync('src/core/import/savedClipKeys.ts', 'utf8')).toMatch(/= continuousEuler\(/);
+    // since #1432 the parsers and the FBX fold write quaternions, so the producers left are the
+    // saved-keys road and, since #1441, `fbxScene.ts`, which keys an FBX node's rotation as Euler,
+    // one key after another: each must still go through the wrapper.
+    for (const producer of ['src/core/import/savedClipKeys.ts', 'src/core/import/fbxScene.ts'])
+      expect(readFileSync(producer, 'utf8'), producer).toMatch(/= continuousEuler\(/);
     // And the parsers really do write none: a sequence built in either again must come back here.
     for (const parser of ['src/core/import/threeAdapter.ts', 'src/core/import/fbx.ts'])
       expect(readFileSync(parser, 'utf8'), parser).not.toMatch(/continuousEuler\(/);

@@ -13,6 +13,7 @@
 import type { DagState } from '../core/dag/state';
 import type { Op } from '../core/dag/types';
 import { DEFAULT_CAMERA_FAR, DEFAULT_CAMERA_NEAR } from '../nodes/CameraData';
+import { linkIntoActiveCollection } from './collections';
 
 /**
  * THE SCENE OBJECTS — everything the Add menu can put in the scene as a thing with a
@@ -156,7 +157,38 @@ function newId(prefix: string): string {
  *   visible. The user wires them via drag-drop or the (future) connect
  *   tool.
  */
+const CAMERA_KINDS: ReadonlySet<PrimitiveKind> = new Set([
+  'PerspectiveCamera',
+  'OrthographicCamera',
+]);
+
 export function buildAddPrimitiveOps(
+  state: DagState,
+  kind: PrimitiveKind,
+  position: Vec3,
+): AddResult | null {
+  const result = buildUnlinkedAddOps(state, kind, position);
+  const sceneId = state.outputs.scene?.node;
+  if (!result || !sceneId) return result;
+  // #1453 — every object added joins the active collection, as Blender links every object it adds:
+  // what the scene's `children` or `lights` band holds, and a camera, which floats outside both.
+  // Each of those drawers honours a hidden collection (`SceneFromDAG`). A Material, a compute node
+  // or an unwired empty is not a scene object, and joins nothing.
+  const standsInScene =
+    CAMERA_KINDS.has(kind) ||
+    result.ops.some(
+      (op) =>
+        op.type === 'connect' &&
+        op.from.node === result.newNodeId &&
+        op.to.node === sceneId &&
+        (op.to.socket === 'children' || op.to.socket === 'lights'),
+    );
+  return standsInScene
+    ? { ...result, ops: linkIntoActiveCollection(state, result.ops, [result.newNodeId]) }
+    : result;
+}
+
+function buildUnlinkedAddOps(
   state: DagState,
   kind: PrimitiveKind,
   position: Vec3,

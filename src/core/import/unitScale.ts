@@ -8,7 +8,7 @@
 // the file declares, #1086) apply the same arithmetic, and two copies of it would be free to
 // disagree about which fields count as a length.
 //
-// REF: src/core/import/bvh.ts (`parseBvh`), src/core/import/fbx.ts (`parseFbx`).
+// REF: src/core/import/bvh.ts (`parseBvh`), src/core/import/fbx.ts (`readFbx`).
 
 import type { BoneSpec, MotionPose, Vec3 } from '../../nodes/types';
 

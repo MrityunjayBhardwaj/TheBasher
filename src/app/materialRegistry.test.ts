@@ -51,6 +51,8 @@ const BASE: PrimitiveMaterialSpec = {
   // the vacuity this whole enumeration exists to avoid. `vertexColors` is the third
   // compiled flag and is deliberately not on the spec — see the module header.
   alphaTest: 0.25,
+  // #1435 — optional, so carried here (see below), and away from three's default of false.
+  alphaHash: true,
   side: THREE.DoubleSide,
   uvTransform: { tiling: [2, 3], offset: [0.1, 0.2], rotation: 0.5 },
   // #1123 — optional, so carried here explicitly (a field absent from BASE is invisible to
@@ -212,7 +214,7 @@ describe('#530 — the build applies every scalar the spec carries', () => {
     // field turning optional and quietly leaving `BASE`, which would make both this gate
     // and the key gate blind to it while staying green. The count is the guard for that
     // direction, so it is meant to be edited deliberately.
-    expect(scalars.length).toBe(25);
+    expect(scalars.length).toBe(26);
     // BASE's normal map is a flipped upload, so the drawn vector is (strength, strength); a
     // strength is only drawn beside a normal map.
     const withNormalMap = materialRegistry.get({
@@ -345,6 +347,7 @@ describe('#1123 — an unlit spec builds a basic material from the colour and ba
     expect(b.map!.repeat.x).toBe(2);
     expect(b.opacity).toBe(BASE.opacity);
     expect(b.alphaTest).toBe(BASE.alphaTest);
+    expect(b.alphaHash).toBe(true);
     expect(b.side).toBe(BASE.side);
     // Nothing lit comes across: three's loader skips every other map for an unlit material.
     expect('normalMap' in b).toBe(false);

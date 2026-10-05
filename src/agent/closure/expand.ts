@@ -27,6 +27,7 @@ import type { ClosureEdge, ClosureSet, ClosureSpec, EdgeKind } from './types';
 import { buildIdRefIndex, idRefsOutOf } from '../../core/dag/idRefSweep';
 import { chainSocketOf, isDataLaneOperator } from '../../app/operatorChain';
 import { rigReach, rigReachNodes } from '../../app/animate/renameBone';
+import { activeCollectionOf } from '../../app/collections';
 
 const DEFAULT_MAX_DEPTH = 256;
 
@@ -165,6 +166,14 @@ function visitEdge(
     return;
   }
 
+  if (kind === 'active-collection') {
+    const collectionId = activeCollectionOf(state);
+    if (collectionId) {
+      enqueue(collectionId, from, kind, depth, seenInKind, seenEdges, visited, frontier, edges);
+    }
+    return;
+  }
+
   if (kind === 'rig') {
     const reach = rigReach(state, from);
     for (const id of reach ? rigReachNodes(reach) : []) {
@@ -294,10 +303,6 @@ export function opTargetNodeId(op: import('../../core/dag/types').Op): NodeId | 
     case 'setMeta':
       // #224 — rename mutates an existing node's identity (meta.name), so it
       // is closure-checked exactly like setParam.
-      return op.nodeId;
-    case 'setHidden':
-      // #227 S4 — visibility toggle mutates an existing node's meta, same as
-      // setMeta/setParam → closure-checked on the target node.
       return op.nodeId;
     case 'setSpareParam':
     case 'removeSpareParam':

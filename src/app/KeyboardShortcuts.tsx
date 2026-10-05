@@ -51,6 +51,8 @@ import { saveCurrent } from './boot';
 import { snapshotCameraFromOrbit } from './character/cameraFromView';
 import { frameAll, frameSelected } from './character/framing';
 import { useAddMenuStore } from './stores/addMenuStore';
+import { useMoveToCollectionMenuStore } from './stores/moveToCollectionMenuStore';
+import { useNotificationStore } from './stores/notificationStore';
 import { useChromeStore } from './stores/chromeStore';
 import { useEditorStore, type ActiveTool } from './stores/editorStore';
 import { useSelectionStore } from './stores/selectionStore';
@@ -264,6 +266,11 @@ function dismissTopmostTransient(): void {
     useAddMenuStore.getState().close();
     return;
   }
+  if (useMoveToCollectionMenuStore.getState().open) {
+    // 2b. Close an open Move to Collection menu (#397).
+    useMoveToCollectionMenuStore.getState().close();
+    return;
+  }
   // 3. Floor: clear the selection (the pre-existing Esc behavior). We do NOT
   // auto-close the docked timeline drawer — dismissing a docked surface on Esc
   // would surprise; the ladder only dismisses OVERLAY transients.
@@ -301,14 +308,18 @@ function isNativeUndoTarget(target: EventTarget | null): boolean {
   return target.tagName === 'TEXTAREA';
 }
 
-function openAddMenuAtViewportCenter(): void {
+function openAtViewportCenter(openAt: (x: number, y: number) => void): void {
   const slot = document.querySelector('[data-testid="viewport-slot"]') as HTMLElement | null;
   if (slot) {
     const r = slot.getBoundingClientRect();
-    useAddMenuStore.getState().openAt(r.left + r.width / 2, r.top + r.height / 2);
+    openAt(r.left + r.width / 2, r.top + r.height / 2);
     return;
   }
-  useAddMenuStore.getState().openAt(window.innerWidth / 2, window.innerHeight / 2);
+  openAt(window.innerWidth / 2, window.innerHeight / 2);
+}
+
+function openAddMenuAtViewportCenter(): void {
+  openAtViewportCenter(useAddMenuStore.getState().openAt);
 }
 
 export function KeyboardShortcuts() {
@@ -583,6 +594,15 @@ export function KeyboardShortcuts() {
         }
       }
 
+      // Toggle editor-view projection perspective ↔ orthographic: Blender's Numpad 5 (it was M,
+      // Spline's key, until #397 gave M to Move to Collection). Matched on the physical key, as its
+      // `key` is '5' with NumLock on and 'Clear' with it off; the number row's 5 stays free.
+      // Editor-session only (V8/V34) — EditorViewCamera swaps the one always-default editor camera.
+      if (e.code === 'Numpad5') {
+        useViewportStore.getState().toggleCameraProjection();
+        return;
+      }
+
       switch (e.key) {
         // G / R / S aliases — Blender idiom. Route through setActiveTool
         // so the canonical activeTool stays in sync (no parallel control
@@ -671,10 +691,17 @@ export function KeyboardShortcuts() {
           return;
         case 'm':
         case 'M':
-          // Toggle editor-view projection perspective ↔ orthographic (Spline's
-          // M shortcut; Blender uses Numpad 5). Editor-session only (V8/V34) —
-          // EditorViewCamera swaps the one always-default editor camera.
-          useViewportStore.getState().toggleCameraProjection();
+          // #397 — Move to Collection (Blender's M). Shift+M is Blender's Link to Collection,
+          // which Basher does not have yet, so it does nothing rather than move.
+          if (e.shiftKey) return;
+          if (useSelectionStore.getState().selectedNodeIds.size === 0) {
+            useNotificationStore
+              .getState()
+              .notify({ message: 'Select something to move to a collection' });
+            return;
+          }
+          e.preventDefault();
+          openAtViewportCenter(useMoveToCollectionMenuStore.getState().openAt);
           return;
         case 'Tab':
           // Cycle editor space: 3D Viewport → 2D View → Video → 3D

@@ -1,0 +1,98 @@
+{
+  "blender": "5.1.1",
+  "probe": "ref/probes/blender-armature-deform/q21_fbx_rigless_oracle.py",
+  "objects": {
+    "Icosphere": {
+      "type": "MESH",
+      "parent": null,
+      "animated": false,
+      "frames": {
+        "1": {
+          "location": [0.0, 0.0, 0.0],
+          "rotation_euler": [-0.0, 0.0, 0.0],
+          "rotation_mode": "XYZ",
+          "scale": [1.0, 1.0, 1.0],
+          "world_translation": [0.0, 0.0, 0.0],
+          "world_scale": [1.0, 1.0, 1.0],
+          "world_quat_wxyz": [1.0, -0.0, 0.0, 0.0]
+        },
+        "25": {
+          "location": [0.0, 0.0, 0.0],
+          "rotation_euler": [-0.0, 0.0, 0.0],
+          "rotation_mode": "XYZ",
+          "scale": [1.0, 1.0, 1.0],
+          "world_translation": [0.0, 0.0, 0.0],
+          "world_scale": [1.0, 1.0, 1.0],
+          "world_quat_wxyz": [1.0, -0.0, 0.0, 0.0]
+        }
+      },
+      "parent_type": "OBJECT",
+      "parent_bone": null,
+      "data": "Icosphere",
+      "verts": 42,
+      "faces": 80,
+      "face_sizes": [3],
+      "materials": []
+    },
+    "Mesh_0": {
+      "type": "MESH",
+      "parent": "SkinnedBar",
+      "animated": false,
+      "frames": {
+        "1": {
+          "location": [0.0, 0.0, 0.0],
+          "rotation_euler": [0.0, -0.0, 0.0],
+          "rotation_mode": "XYZ",
+          "scale": [1.0, 1.0, 1.0],
+          "world_translation": [0.0, 0.0, 0.0],
+          "world_scale": [1.0, 1.0, 1.0],
+          "world_quat_wxyz": [1.0, -0.0, -0.0, 0.0]
+        },
+        "25": {
+          "location": [0.0, 0.0, 0.0],
+          "rotation_euler": [0.0, -0.0, 0.0],
+          "rotation_mode": "XYZ",
+          "scale": [1.0, 1.0, 1.0],
+          "world_translation": [0.0, 0.0, 0.0],
+          "world_scale": [1.0, 1.0, 1.0],
+          "world_quat_wxyz": [1.0, -0.0, -0.0, 0.0]
+        }
+      },
+      "parent_type": "OBJECT",
+      "parent_bone": null,
+      "data": "Mesh_0",
+      "verts": 6,
+      "faces": 4,
+      "face_sizes": [3],
+      "materials": ["Material_0"]
+    },
+    "SkinnedBar": {
+      "type": "ARMATURE",
+      "parent": null,
+      "animated": true,
+      "frames": {
+        "1": {
+          "location": [0.0, 0.0, 0.0],
+          "rotation_euler": [-0.0, 0.0, 0.0],
+          "rotation_mode": "XYZ",
+          "scale": [1.0, 1.0, 1.0],
+          "world_translation": [0.0, 0.0, 0.0],
+          "world_scale": [1.0, 1.0, 1.0],
+          "world_quat_wxyz": [1.0, -0.0, 0.0, 0.0]
+        },
+        "25": {
+          "location": [0.0, 0.0, 0.0],
+          "rotation_euler": [-0.0, 0.0, 0.0],
+          "rotation_mode": "XYZ",
+          "scale": [1.0, 1.0, 1.0],
+          "world_translation": [0.0, 0.0, 0.0],
+          "world_scale": [1.0, 1.0, 1.0],
+          "world_quat_wxyz": [1.0, -0.0, 0.0, 0.0]
+        }
+      },
+      "parent_type": "OBJECT",
+      "parent_bone": null,
+      "data": "SkinnedBar"
+    }
+  }
+}

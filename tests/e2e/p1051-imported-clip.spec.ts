@@ -5,7 +5,7 @@
 // CUBICSPLINE translation whose tangents are far from any automatic handle.
 //
 // THE CLAIM IS READ OFF THE DRAWN MESH. The cube's drawn world matrix at t = 0 fixes the import's
-// own placement G (the import Group and its pivot, which the clip never touches); at every other
+// own placement G (whatever stands above the pivot, which the clip never touches); at every other
 // time the drawn matrix must equal G · Pivot(t) · Cube(t), where Pivot(t) and Cube(t) are computed
 // here from the spec's formulas (Appendix C), not from the code under test. The times are ordered so
 // each one draws somewhere new: a draw that stopped following time cannot pass by standing still.
@@ -125,7 +125,7 @@ function specLocal(t: number): Matrix4 {
 }
 
 /** The one drawn mesh under the import, as its world matrix. */
-async function drawnMatrix(page: Page, groupId: string): Promise<number[] | null> {
+async function drawnMatrix(page: Page, topId: string): Promise<number[] | null> {
   return page.evaluate((id) => {
     type O3 = {
       isMesh?: boolean;
@@ -142,7 +142,7 @@ async function drawnMatrix(page: Page, groupId: string): Promise<number[] | null
       if (o.isMesh && !found) found = [...o.matrixWorld.elements];
     });
     return found;
-  }, groupId);
+  }, topId);
 }
 const setTime = (page: Page, t: number) =>
   page.evaluate((s) => (window as unknown as W).__basher_time!.getState().setTime(s), t);
@@ -190,11 +190,18 @@ async function importShape(page: Page) {
     );
     const holds = (id: string) => (n: (typeof nodes)[number]) =>
       Array.isArray(n.inputs.children) && n.inputs.children.some((k) => k.node === id);
-    const pivot = cube ? nodes.find(holds(cube.id)) : undefined;
-    const group = pivot ? nodes.find(holds(pivot.id)) : undefined;
+    // #1451 — no wrapper Group: the import's top is the ancestor the Scene holds directly (here
+    // the file's pivot), the one three draws under its own id.
+    let top = cube;
+    for (
+      let h = top && nodes.find(holds(top.id));
+      h && h.type !== 'Scene';
+      h = nodes.find(holds(h.id))
+    )
+      top = h;
     return {
       cubeId: cube?.id ?? null,
-      groupId: group?.id ?? null,
+      topId: top && top !== cube ? top.id : null,
       gltfNodes: nodes.filter((n) => n.type === 'GltfData' || n.type === 'GltfAsset').length,
       channels: channels.map((c) => ({
         id: c.id,
@@ -208,17 +215,17 @@ async function importShape(page: Page) {
 }
 
 /** Calibrate G at t = 0 off the draw, then demand the draw be G · spec(t) at each time. */
-async function playsAsTheSpec(page: Page, groupId: string, label: string) {
+async function playsAsTheSpec(page: Page, topId: string, label: string) {
   await setTime(page, 0);
-  await expect.poll(() => drawnMatrix(page, groupId)).not.toBeNull();
-  const d0 = new Matrix4().fromArray((await drawnMatrix(page, groupId))!);
+  await expect.poll(() => drawnMatrix(page, topId)).not.toBeNull();
+  const d0 = new Matrix4().fromArray((await drawnMatrix(page, topId))!);
   const G = d0.multiply(specLocal(0).invert());
   const checked: number[] = [];
   for (const t of [1.25, 0.25, 1.75, 0.75, 2.5, 1, 0.4]) {
     await setTime(page, t);
     const want = G.clone().multiply(specLocal(t)).toArray();
     await expect
-      .poll(async () => maxDiff((await drawnMatrix(page, groupId))!, want), {
+      .poll(async () => maxDiff((await drawnMatrix(page, topId))!, want), {
         message: `${label}: the drawn cube at t=${t} is the spec's`,
       })
       .toBeLessThan(1e-4);
@@ -248,7 +255,7 @@ test('#1051 — an animated nested file imports native and plays as the spec def
   ).normalize();
   const slerp = new Quaternion().slerp(K1, 0.25);
   expect((2 * Math.acos(Math.min(1, Math.abs(lerp.dot(slerp))))) / D2R).toBeGreaterThan(1);
-  await playsAsTheSpec(page, shape.groupId!, 'imported');
+  await playsAsTheSpec(page, shape.topId!, 'imported');
 });
 
 test('#1051 — the imported animation survives save and reload', async ({ page }) => {
@@ -277,7 +284,7 @@ test('#1051 — the imported animation survives save and reload', async ({ page 
   await expect.poll(async () => (await importShape(page)).channels.length).toBe(5);
   const shape = await importShape(page);
   await page.evaluate(() => (window as unknown as W).__basher_time!.getState().pause());
-  await playsAsTheSpec(page, shape.groupId!, 'after reload');
+  await playsAsTheSpec(page, shape.topId!, 'after reload');
 });
 
 test('#1051 — a clip this road cannot hold is refused by name, and nothing is imported', async ({

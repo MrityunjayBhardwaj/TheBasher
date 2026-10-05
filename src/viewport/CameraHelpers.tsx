@@ -13,7 +13,7 @@
 //
 // REF: THESIS.md §11; vyapti V1, V8; sibling of LightHelpers.tsx.
 
-import { useMemo } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import * as THREE from 'three';
 import type { CameraPose } from '../app/activeCamera';
 import { useSelectionStore } from '../app/stores/selectionStore';
@@ -169,10 +169,24 @@ export function CameraHelper({ pose, pickId, active }: CameraHelperProps) {
   // DEV observation seam ([[V85]]/[[H132]] #240): record the EVALUATED pose this
   // frustum renders with, keyed by node id, so an e2e can assert the frustum
   // follows the playhead (not the static frame-0 read).
+  const recorded = useRef<CameraPose | null>(null);
   if (import.meta.env.DEV && pickId) {
     const w = window as unknown as { __basher_frustum_pose?: Record<string, CameraPose> };
     (w.__basher_frustum_pose ??= {})[pickId] = pose;
+    recorded.current = pose;
   }
+  // #1453 — and drop it when the frustum unmounts (a hidden camera draws none), so a missing entry
+  // means no frustum is drawn rather than one that once was. Only this frustum's own entry: when a
+  // camera's frustum is swapped for its follower, the new one writes during its render, before the
+  // old one's cleanup runs, and that entry must stand.
+  useEffect(() => {
+    if (!import.meta.env.DEV || !pickId) return;
+    return () => {
+      const w = window as unknown as { __basher_frustum_pose?: Record<string, CameraPose> };
+      if (w.__basher_frustum_pose?.[pickId] === recorded.current)
+        delete w.__basher_frustum_pose[pickId];
+    };
+  }, [pickId]);
 
   return (
     <group

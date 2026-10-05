@@ -70,6 +70,12 @@ export interface ThreeMaterialParams {
    *  changes the render; identity for an unedited import (matches the clone). */
   readonly alphaTest: number;
   /**
+   * #1435 — the alpha drawn as a hashed cutout: the IR's `geometry.renderMethod: 'dithered'`.
+   * Present only as `true`, never `false`, for the reason `mapUvTransforms` gives: this object
+   * flows into a generic content walk, and a materialised default re-keys every material.
+   */
+  readonly alphaHash?: true;
+  /**
    * #1062 — the NAME of the colour layer this material reads, absent when it reads none.
    *
    * 🔴 A NAME AND NOT three's `vertexColors` BOOLEAN, although this is three's vocabulary
@@ -170,8 +176,12 @@ export function openpbrToThree(ir: InlineMaterialSpec): ThreeMaterialParams {
   const perMapLayers = threeMapUvLayers(ir.mapUvLayers);
   const transmission = ir.transmission.weight;
   const opacity = ir.geometry.opacity;
-  // three needs `transparent` for BOTH a transmissive lobe AND a <1 opacity.
-  const transparent = transmission > 0 || opacity < 1;
+  // #1435 — how the alpha (opacity times the base map's alpha, which three multiplies in itself)
+  // is drawn. three needs `transparent` for a transmissive lobe, for a surface the IR says is
+  // blended, and for a <1 opacity unless the IR says dithered, which draws it hashed instead.
+  const method = ir.geometry.renderMethod;
+  const transparent =
+    transmission > 0 || method === 'blended' || (opacity < 1 && method !== 'dithered');
   return {
     color: ir.base.color,
     metalness: ir.base.metalness,
@@ -187,6 +197,8 @@ export function openpbrToThree(ir: InlineMaterialSpec): ThreeMaterialParams {
     opacity,
     transparent,
     alphaTest: ir.geometry.alphaCutoff ?? 0,
+    // #1435 — omitted unless dithered, for the omission rule below.
+    ...(method === 'dithered' ? { alphaHash: true as const } : {}),
     // #1062 — WHICH layer is asked for, carried through rather than reduced to a flag here.
     // OMITTED, never `undefined`, for the reason `mapUvTransforms` gives below: this object
     // flows into a generic content walk, and a materialised absent key re-keys every material.

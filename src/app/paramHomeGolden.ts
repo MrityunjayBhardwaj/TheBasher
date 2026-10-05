@@ -22,6 +22,10 @@
 // is therefore: existing cells are frozen; new cells may join, in the same commit as the
 // param they record, and never with an edit to a cell already there.
 //
+// USED AGAIN (#1503): `Object`, `Group` and `Collection` each append `viewport=(unrouted)
+// render=(unrouted)` — visibility moved off `meta.hidden` into two params, and no inspector card
+// draws them yet (the outliner's eye writes `viewport`). `unrouted` 250 → 256, `routed` untouched.
+//
 // USED AGAIN (#1210): `Object` appends `parentBone=(unrouted)` — the bone an Object is parented
 // to is written by the importer before any panel draws it (Blender shows it under Relations).
 // `unrouted` 236 → 237, `routed` untouched.
@@ -140,6 +144,7 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
   CameraSelect: '[layout] active=(unrouted)',
   Character: '[] name=(unrouted)',
   Clamp: '[] min=(unrouted) max=(unrouted)',
+  Collection: '[layout] viewport=(unrouted) render=(unrouted)',
   ClipSelect: '[animate] selectedClipName=(unrouted)',
   ColorCorrect:
     '[effect] brightness=(unrouted) contrast=(unrouted) saturation=(unrouted) muted=(unrouted)',
@@ -160,7 +165,7 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
     '[material] assetRef=(unrouted) childName=(unrouted) material=material materialSlots=(unrouted) faceCount=(unrouted) pointCount=(unrouted)',
   GltfSkeleton: '[] skinIndex=(unrouted)',
   Group:
-    '[transform,constraint,driver,layout] position=transform rotation=transform scale=transform pivot=transform rotationMode=transform quaternion=transform',
+    '[transform,constraint,driver,layout] position=transform rotation=transform scale=transform pivot=transform rotationMode=transform quaternion=transform parentBone=(unrouted) viewport=(unrouted) render=(unrouted)',
   IDPass: '[render] width=(unrouted) height=(unrouted)',
   KeyframeChannelColor:
     '[channel,animate] name=(unrouted) target=(unrouted) paramPath=channel mute=(unrouted) solo=(unrouted) weight=animate blendMode=(unrouted) order=(unrouted) keyframes=channel',
@@ -215,7 +220,7 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
   NormalPass: '[render] width=(unrouted) height=(unrouted)',
   Null: '[transform,constraint,driver] position=transform rotation=transform scale=transform',
   Object:
-    '[transform,constraint,driver,modifier,slots] position=transform rotation=transform scale=transform slotOverrides=slots overridden=(unrouted) rotationMode=transform quaternion=transform parentBone=(unrouted)',
+    '[transform,constraint,driver,modifier,slots] position=transform rotation=transform scale=transform slotOverrides=slots overridden=(unrouted) rotationMode=transform quaternion=transform parentBone=(unrouted) viewport=(unrouted) render=(unrouted)',
   ParamDriver:
     '[driver] target=(unrouted) paramPath=(unrouted) blendMode=(unrouted) order=(unrouted) mute=(unrouted) sourceSpare=(unrouted) sourceTransform=(unrouted) sourceTransformVec=(unrouted)',
   PosedSkeleton: '[] amplitude=(unrouted) frequency=(unrouted)',
@@ -240,7 +245,7 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
   Scatter:
     '[mesh,driver,material] density=(unrouted) seed=(unrouted) bounds=(unrouted) scaleJitter=(unrouted) randomYaw=(unrouted)',
   Scene:
-    '[environment,layout] envSource=environment envIntensity=environment envRotationY=environment envBackground=environment',
+    '[environment,layout] envSource=environment envIntensity=environment envRotationY=environment envBackground=environment activeCollection=(unrouted)',
   // APPENDED at #638 — the face range. Unrouted like `muted`, and for the node's own
   // recorded reason: `SetMaterialOp` declares no inspector section at all, because its
   // reference authors this node in the graph editor and a titled empty card is the shape
@@ -394,4 +399,8 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
 // Merged with main (#1284 and its sibling on the AI track): +2 unrouted — `TrackTo.aimBone`, homed
 // like its sibling `aimNode`, and the other arrival counted by main's golden (236 → 238).
 //   types 90 · routed 144 · unrouted 246 + 2 = 248
-export const GOLDEN_TOTALS = { types: 90, routed: 144, unrouted: 248 } as const;
+//
+// #1447 appends `Group.parentBone`, unrouted as `Object.parentBone` is (#1210): an imported Empty
+// hung from a bone. +1 unrouted.
+//   types 90 · routed 144 · unrouted 248 + 1 = 249
+export const GOLDEN_TOTALS = { types: 91, routed: 144, unrouted: 256 } as const;

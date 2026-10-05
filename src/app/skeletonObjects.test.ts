@@ -11,6 +11,7 @@ import type { DagState } from '../core/dag/state';
 import type { Op } from '../core/dag/types';
 import { buildBvhClipOps } from '../test-utils/bvhClip';
 import { buildSkeletonObjectOps } from '../core/import/skeletonObject';
+import { importGroupOp, parentEdge } from '../core/import/modelImport';
 import { buildDefaultDagState } from '../core/project/default';
 import { registerAllNodes } from '../nodes/registerAll';
 import { collectSkeletonObjects } from './skeletonObjects';
@@ -51,15 +52,23 @@ function apply(state: DagState, ops: readonly Op[]): DagState {
   return s;
 }
 
-/** The default project, one imported BVH, and (unless `inScene` is false) its skeleton Object. */
-function build({ inScene = true }: { inScene?: boolean } = {}): DagState {
+/**
+ * The default project, one imported BVH, and (unless `inScene` is false) its skeleton Object —
+ * standing under the scene, or in an import Group `grp` under it when `inGroup`.
+ */
+function build({
+  inScene = true,
+  inGroup = false,
+}: { inScene?: boolean; inGroup?: boolean } = {}): DagState {
   let s = buildDefaultDagState();
   const sceneNodeId = s.outputs.scene?.node;
   if (!sceneNodeId) throw new Error('default project has no scene output');
   s = apply(s, buildBvhClipOps({ text: BVH, ids: { skeleton: 'sk', clip: 'clip' } }).ops);
+  if (inGroup)
+    s = apply(s, [importGroupOp('grp', [0, 0, 0], [0, 0, 0]), parentEdge('grp', sceneNodeId)]);
   const { ops } = buildSkeletonObjectOps({
     skeletonId: 'sk',
-    sceneNodeId,
+    sceneNodeId: inGroup ? 'grp' : sceneNodeId,
     name: 'wave',
     clipId: 'clip',
     nameFollowsClip: true,
@@ -184,13 +193,40 @@ describe('collectSkeletonObjects', () => {
     expect(collectSkeletonObjects(build({ inScene: false }))).toEqual([]);
   });
 
+  /** #1503 — a node with its viewport flag off, as the outliner's eye leaves it. */
+  const viewportOff = <N extends { params: unknown }>(n: N): N => ({
+    ...n,
+    params: { ...(n.params as object), viewport: false },
+  });
+
   it('a hidden Object is not drawn', () => {
     const s = build();
     const hidden: DagState = {
       ...s,
-      nodes: { ...s.nodes, sk_object: { ...s.nodes.sk_object, meta: { hidden: true } } },
+      nodes: { ...s.nodes, sk_object: viewportOff(s.nodes.sk_object) },
     };
     expect(collectSkeletonObjects(hidden)).toEqual([]);
+  });
+
+  // #1462 — Blender hides an object alone (observed in Blender 5.1.1 headless: hiding a parent
+  // leaves its child visible), and the viewport draws a hidden Group's children, so a rig under a
+  // hidden Group keeps its bones. Hiding the rig itself is the control: then they go.
+  it('an Object in a hidden Group is still drawn; hidden itself, it is not', () => {
+    const s = build({ inGroup: true });
+    expect(collectSkeletonObjects(s).map((o) => o.id)).toEqual(['sk_object']);
+    const groupHidden: DagState = {
+      ...s,
+      nodes: { ...s.nodes, grp: viewportOff(s.nodes.grp) },
+    };
+    expect(collectSkeletonObjects(groupHidden).map((o) => o.id)).toEqual(['sk_object']);
+    const rigHidden: DagState = {
+      ...groupHidden,
+      nodes: {
+        ...groupHidden.nodes,
+        sk_object: viewportOff(groupHidden.nodes.sk_object),
+      },
+    };
+    expect(collectSkeletonObjects(rigHidden)).toEqual([]);
   });
 
   // NEGATIVE CONTROL: only skeleton data qualifies. The default project already stands an

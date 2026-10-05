@@ -72,12 +72,19 @@ async function character(page: Page) {
         nodes[id].type === 'PoseLayer' &&
         ((nodes[id].params.channels as unknown[] | undefined)?.length ?? 0) > 0,
     );
-    const group = Object.keys(nodes).find((id) => nodes[id].type === 'Group');
+    // #1451 — no import Group: the mesh hangs where the file hangs it, under the scene or under
+    // another of the file's nodes, and its row sits under that node's row.
+    const kids = (id: string) =>
+      ((nodes[id].inputs?.children as unknown as { node: string }[] | undefined) ?? []).map(
+        (c) => c.node,
+      );
+    const holder = Object.keys(nodes).find((id) => mesh !== undefined && kids(id).includes(mesh));
     return {
       armature: nodes[modifier]?.inputs?.armature?.node ?? null,
       mesh: mesh ?? null,
       base: base ?? null,
-      group: group ?? null,
+      holder: holder ?? null,
+      holderIsScene: holder !== undefined && nodes[holder].type === 'Scene',
     };
   });
 }
@@ -140,13 +147,16 @@ test.beforeEach(async ({ page }) => {
 test('a part of the character is selected from the outliner and gets the gizmo', async ({
   page,
 }) => {
-  const { mesh, group } = await character(page);
+  const { mesh, holder, holderIsScene } = await character(page);
+  expect(holder, 'the mesh hangs nowhere in the scene').not.toBeNull();
   await page.evaluate(() =>
     (window as unknown as W).__basher_chrome?.getState().setLeftSidebarCollapsed(false),
   );
-  await expect(page.getByTestId(`scene-tree-row-${group}`)).toBeVisible({ timeout: 10_000 });
   const row = page.getByTestId(`scene-tree-row-${mesh}`);
-  if (!(await row.isVisible())) await page.getByTestId(`scene-tree-toggle-${group}`).click();
+  if (!holderIsScene) {
+    await expect(page.getByTestId(`scene-tree-row-${holder}`)).toBeVisible({ timeout: 10_000 });
+    if (!(await row.isVisible())) await page.getByTestId(`scene-tree-toggle-${holder}`).click();
+  }
   await expect(row).toBeVisible({ timeout: 10_000 });
   await row.click();
   await expect(page.getByTestId('inspector')).toContainText(mesh!);

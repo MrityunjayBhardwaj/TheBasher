@@ -4,6 +4,7 @@
 // REF: THESIS.md §12 (scene tree), §39.
 
 import { z } from 'zod';
+import { visibilityParams } from './visibilityParams';
 import type { NodeDefinition } from '../core/dag/types';
 import type { GroupValue, SceneObject } from './types';
 import { rotationModeFieldsOf, rotationModeParams } from './rotationMode';
@@ -27,6 +28,14 @@ export const GroupParams = z
     pivot: Vec3.default([0, 0, 0]),
     /** #1153 — Blender's rotation mode, as on Object; an imported empty is a Group. */
     ...rotationModeParams,
+    /**
+     * #1447 — the bone of the parent armature Object this Group hangs from, as on Object (#1210):
+     * Blender parents any object to a bone, an Empty included, and an imported Empty is a Group.
+     * Optional and absent unless set; appended last, so the frozen param-home row is appended to.
+     */
+    parentBone: z.string().min(1).optional(),
+    /** #1503 — shown in the viewport, and in the render (`visibilityParams`). Appended last. */
+    ...visibilityParams,
   })
   .passthrough();
 export type GroupParams = z.infer<typeof GroupParams>;
@@ -64,6 +73,9 @@ export const GroupNode: NodeDefinition<GroupParams, GroupValue> = {
       // #1153 — only in quaternion mode, so an euler Group keeps the shape it always had.
       ...rotationModeFieldsOf(params),
       children: (inputs.children as SceneObject[] | undefined) ?? [],
+      // #1447 — only a Group parented to a bone names one, so every other keeps its shape. The
+      // armature's renderer and `resolveWorldTransform` read it off the child (`boneParentMatrix`).
+      ...(params.parentBone ? { parentBone: params.parentBone } : {}),
     };
   },
 };

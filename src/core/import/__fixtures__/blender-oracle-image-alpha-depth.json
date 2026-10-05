@@ -1,0 +1,66 @@
+{
+  "blender": "5.1.1",
+  "probe": "ref/probes/blender-armature-deform/q19_image_alpha_depth.py",
+  "images": [
+    {
+      "name": "png-grey-alpha.png",
+      "depth": 32,
+      "base64": "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAQAAADYv8WvAAAAEElEQVR4nGM40ZDynwFEAAAaLwVXoyrayAAAAABJRU5ErkJggg=="
+    },
+    {
+      "name": "png-grey-trns.png",
+      "depth": 32,
+      "base64": "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAAAAABX3VL4AAAAAnRSTlMAyOMsh7oAAAAOSURBVHicYziRwnAiBQAHcgJZ42hv/wAAAABJRU5ErkJggg=="
+    },
+    {
+      "name": "png-grey.png",
+      "depth": 8,
+      "base64": "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAAAAABX3VL4AAAADklEQVR4nGM4kcJwIgUAB3ICWeNob/8AAAAASUVORK5CYII="
+    },
+    {
+      "name": "png-palette-trns.png",
+      "depth": 32,
+      "base64": "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAMAAABFaP0WAAAABlBMVEX/AAAA/wDSh+9xAAAAAXRSTlOArV5bRgAAAA5JREFUeJxjYGBkYGAEAAALAANSKXiPAAAAAElFTkSuQmCC"
+    },
+    {
+      "name": "png-palette.png",
+      "depth": 24,
+      "base64": "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAMAAABFaP0WAAAABlBMVEX/AAAA/wDSh+9xAAAADklEQVR4nGNgYGRgYAQAAAsAA1IpeI8AAAAASUVORK5CYII="
+    },
+    {
+      "name": "png-rgb-trns.png",
+      "depth": 32,
+      "base64": "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAABnRSTlMA/wAAAACkwsAdAAAAEUlEQVR4nGP4z8DA8B+MgBgAHfAD/dPQfSYAAAAASUVORK5CYII="
+    },
+    {
+      "name": "png-rgb.png",
+      "depth": 24,
+      "base64": "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAEUlEQVR4nGP4z8DA8B+MgBgAHfAD/dPQfSYAAAAASUVORK5CYII="
+    },
+    {
+      "name": "png-rgba.png",
+      "depth": 32,
+      "base64": "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAEklEQVR4nGP4z8DQwPAfDCEMADxfBvtDmEI+AAAAAElFTkSuQmCC"
+    },
+    {
+      "name": "webp-rgb-lossless.webp",
+      "depth": 24,
+      "base64": "UklGRhwAAABXRUJQVlA4TBAAAAAvAUAAAAfQguJF/wMR0f8A"
+    },
+    {
+      "name": "webp-rgb-lossy.webp",
+      "depth": 24,
+      "base64": "UklGRjgAAABXRUJQVlA4ICwAAACQAQCdASoCAAIAAUAmJaACdLoAA5gA/vpXd/G83mta3/6gz/y0P/VofrcAAA=="
+    },
+    {
+      "name": "webp-rgba-lossless.webp",
+      "depth": 32,
+      "base64": "UklGRh4AAABXRUJQVlA4TBEAAAAvAUAAEAfQnG43pICBiOh/AAA="
+    },
+    {
+      "name": "webp-rgba-lossy.webp",
+      "depth": 32,
+      "base64": "UklGRloAAABXRUJQVlA4WAoAAAAQAAAAAQAAAQAAQUxQSAUAAAAAgICAgABWUDggLgAAANABAJ0BKgIAAgABQCYloAJ0ugH4AAOwAP7tTd/8wSvyDc6//vGf7jP9xn/u4AA="
+    }
+  ]
+}

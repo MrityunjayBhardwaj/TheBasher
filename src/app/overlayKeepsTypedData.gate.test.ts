@@ -16,6 +16,7 @@
 import { readFileSync } from 'node:fs';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { applyOp, evaluate, __resetRegistryForTests } from '../core/dag';
+import type { Op } from '../core/dag/types';
 import type { DagState } from '../core/dag/state';
 import { buildDefaultDagState } from '../core/project/default';
 import { registerAllNodes } from '../nodes/registerAll';
@@ -51,7 +52,29 @@ async function animatedImport() {
   let state: DagState = buildDefaultDagState();
   for (const op of result.ops) state = applyOp(state, op).next;
   const cube = result.objectIds[0];
-  const group = result.groupId;
+  // #1451 — an import stands its Object in the scene with no wrapper Group, so the parent this
+  // gate is about is made here: a Group under the scene holding the stored mesh.
+  const group = 'n_holder';
+  const sceneId = state.outputs.scene!.node;
+  for (const op of [
+    { type: 'addNode', nodeId: group, nodeType: 'Group', params: {} },
+    {
+      type: 'disconnect',
+      from: { node: cube, socket: 'out' },
+      to: { node: sceneId, socket: 'children' },
+    },
+    {
+      type: 'connect',
+      from: { node: cube, socket: 'out' },
+      to: { node: group, socket: 'children' },
+    },
+    {
+      type: 'connect',
+      from: { node: group, socket: 'out' },
+      to: { node: sceneId, socket: 'children' },
+    },
+  ] as Op[])
+    state = applyOp(state, op).next;
   state = applyOp(state, {
     type: 'addNode',
     nodeId: `${group}_position_channel`,
@@ -72,11 +95,11 @@ async function animatedImport() {
   };
   const refs = state.nodes[state.outputs.scene!.node].inputs.children as { node: string }[];
   const at = refs.findIndex((r) => r.node === group);
-  expect(at, 'the import Group is a scene child').toBeGreaterThanOrEqual(0);
+  expect(at, 'the Group is a scene child').toBeGreaterThanOrEqual(0);
   const pivot = { id: group, value: root.scene.children[at] };
   expect(
     childEdges(state, pivot.id, pivot.value).some((e) => e.id === cube),
-    'the cube sits directly under the import Group',
+    'the cube sits directly under the Group',
   ).toBe(true);
   return { state, cube, pivot };
 }

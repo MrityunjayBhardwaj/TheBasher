@@ -89,7 +89,7 @@ describe('#637 this phase ships no migration, and the absence is pinned', () => 
     registerAllNodes();
   });
 
-  it('has moved the project format version exactly eleven times since the freeze — #915, #920, #930, #389, #1062, #1203, #1224, #1225 twice, #1316, then #1227', () => {
+  it('has moved the project format version exactly twelve times since the freeze — #915, #920, #930, #389, #1062, #1203, #1224, #1225 twice, #1316, #1227, then #1503', () => {
     // 🔴 THIS ROW CHANGED SHAPE IN #915, AND THE HEADER ABOVE SAYS WHY IT MAY.
     //
     // It read `toBe(fixture().formatVersion)` — ns-1 shipped no migration, so the frozen
@@ -135,7 +135,10 @@ describe('#637 this phase ships no migration, and the absence is pinned', () => 
     // #1227 is the ELEVENTH: a clip's stored motion becomes timed poses by bone name. A saved key
     // names its bone by an index into one rig's bone order, which only a pass holding the clip's
     // skeleton edge can turn into a name.
-    const MIGRATIONS_SINCE_FREEZE = 11; // #915, #920, #930, #389, #1062, #1203, #1224, #1225 ×2, #1316, #1227
+    // #1503 is the TWELFTH: `meta.hidden` becomes the `viewport` and `render` params. The schema no
+    // longer admits the meta key, so only a pass over the raw file, before the parse strips it, can
+    // carry a hidden node across.
+    const MIGRATIONS_SINCE_FREEZE = 12; // #915, #920, #930, #389, #1062, #1203, #1224, #1225 ×2, #1316, #1227, #1503
     expect(PROJECT_FORMAT_VERSION).toBe(fixture().formatVersion + MIGRATIONS_SINCE_FREEZE);
   });
 

@@ -288,10 +288,10 @@ describe('#550 case 6 — the origin-pivot values have no reader, and that is EX
     'src/nodes/types.ts': 'declares the field',
     'src/nodes/materialSchema.ts': 'the two parse roads',
     'src/core/import/gltfJsonMaterialToOpenpbr.ts': 'the producer — captures KHR values',
-    // #1123 — the native importer takes the producer's origin-pivot values and restates each one
+    // #1123 — the native importers take the producer's origin-pivot values and restate each one
     // about the centre, the pivot native mesh data is drawn with, so no origin value reaches the
-    // AUTHORED road.
-    'src/core/import/nativeGltfImport.ts':
+    // AUTHORED road. One function for both formats (#1434, `withCentrePivot`).
+    'src/core/import/modelImport.ts':
       'restates the captured bag about the centre pivot — hands the AUTHORED road centre values',
     // #550 render slice — the readers, each with the road it feeds.
     'src/app/material/openpbrToThree.ts':

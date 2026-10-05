@@ -363,6 +363,8 @@ export function openpbrMaterialSchema() {
           doubleSided: z.boolean().optional(),
           // #1322 — the glTF volume's thickness; absent keeps the transmissive default.
           thickness: z.number().optional(),
+          // #1435 — how the alpha is drawn; absent keeps what every material drew before it.
+          renderMethod: z.enum(['blended', 'dithered']).optional(),
         })
         .default({ opacity: 1 }),
       maps: mapsSchema,
@@ -458,6 +460,7 @@ export function hydrateInlineMaterial(
       colorLayer?: unknown;
       doubleSided?: unknown;
       thickness?: unknown;
+      renderMethod?: unknown;
     };
     maps?: Partial<InlineMaterialSpec['maps']>;
     uvTransform?: { tiling?: unknown; offset?: unknown; rotation?: unknown };
@@ -511,6 +514,9 @@ export function hydrateInlineMaterial(
         : {}),
       ...(typeof m.geometry?.thickness === 'number' && Number.isFinite(m.geometry.thickness)
         ? { thickness: m.geometry.thickness }
+        : {}),
+      ...(m.geometry?.renderMethod === 'blended' || m.geometry?.renderMethod === 'dithered'
+        ? { renderMethod: m.geometry.renderMethod }
         : {}),
     },
     maps: hydrateMapsFor(m.maps, MATERIAL_MAP_SLOT_TABLE) as InlineMaterialMaps,

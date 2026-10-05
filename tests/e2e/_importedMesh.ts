@@ -30,7 +30,9 @@
 // road-shaped (the clone captures `gltfTexture` + an empty hash; native stores the image in the
 // project and names it by content hash), and specs asserting on descriptors assert the road's own.
 //
-// Roots are identified by STRUCTURE, never by an id prefix: a scene child `Group` whose subtree holds
+// Roots are identified by STRUCTURE, never by an id prefix. #1451 — an import has no wrapper Group any
+// more: each node the file hangs at its root stands in the scene, so a root is a scene child
+// (`Group` or `Object`) whose subtree holds
 // a `GltfAsset` or an `Object` over `PolyMeshData` — directly, or at the bottom of the modifier chain
 // a character's mesh draws through (an Armature modifier over the mesh, #1205; before #1276 such a
 // character was invisible here). Only the importer writes `PolyMeshData` today; a
@@ -46,7 +48,7 @@ import { importedChildren } from './_importedChild';
 
 export type ImportRoad = 'native' | 'clone';
 
-/** One import root: the transformable `Group` the importer put in the scene. */
+/** One import root: a node the import stood in the scene (#1451 — a file's own root node). */
 export interface ImportRoot {
   readonly rootId: string;
   readonly road: ImportRoad;
@@ -83,10 +85,14 @@ export interface DrawnImportMesh {
   readonly worldBounds: [number, number, number];
   readonly hasMetalnessMap: boolean;
   readonly hasRoughnessMap: boolean;
+  /** #1434 — the normal map's decoded width, or null with no normal map. */
+  readonly normalMapWidth: number | null;
   readonly color: string | null;
   readonly metalness: number | null;
   readonly roughness: number | null;
   readonly alphaTest: number | null;
+  /** #1435 — the alpha drawn as a hashed cutout (a dithered surface). */
+  readonly alphaHash: boolean;
   readonly transparent: boolean;
   readonly vertexColors: boolean;
   readonly side: number | null;
@@ -161,8 +167,15 @@ export async function importRoots(page: Page): Promise<ImportRoot[]> {
       return road;
     };
     const out: { rootId: string; road: 'native' | 'clone' }[] = [];
-    for (const id of refs(nodes[sceneId].inputs.children)) {
-      if (nodes[id]?.type !== 'Group') continue;
+    for (const child of refs(nodes[sceneId].inputs.children)) {
+      // A spec's MaterialOverride wrapping a root (`_importOverride.ts`) is looked through.
+      let id = child;
+      while (nodes[id]?.type === 'MaterialOverride') id = refs(nodes[id].inputs.target)[0] ?? '';
+      // #1451 — an import stands its root nodes in the scene with no wrapper, so a root is any
+      // scene child, a Group (an Empty, or an import Group in an older save) or an Object, whose
+      // subtree holds imported geometry. The default project's box is not one: its data is no
+      // `PolyMeshData`.
+      if (nodes[id]?.type !== 'Group' && nodes[id]?.type !== 'Object') continue;
       const road = roadOf(id);
       if (road) out.push({ rootId: id, road });
     }
@@ -170,7 +183,11 @@ export async function importRoots(page: Page): Promise<ImportRoot[]> {
   });
 }
 
-/** How many imports the scene holds, on either road. Poll it; a read before the import lands is 0. */
+/**
+ * How many import roots the scene holds, on either road — since #1451 one per node a file hangs at
+ * its root, so a file with several root nodes counts several. Poll it; a read before the import
+ * lands is 0.
+ */
 export async function importCount(page: Page): Promise<number> {
   return (await importRoots(page)).length;
 }
@@ -315,10 +332,12 @@ export async function drawnImportMeshes(page: Page, rootId?: string): Promise<Dr
       map?: Tex;
       metalnessMap?: Tex;
       roughnessMap?: Tex;
+      normalMap?: Tex;
       color?: { getHexString: () => string };
       metalness?: number;
       roughness?: number;
       alphaTest?: number;
+      alphaHash?: boolean;
       transparent?: boolean;
       vertexColors?: boolean;
       side?: number;
@@ -336,6 +355,7 @@ export async function drawnImportMeshes(page: Page, rootId?: string): Promise<Dr
         computeBoundingBox: () => void;
         attributes?: Record<string, unknown>;
       };
+      userData?: { basherNodeId?: string };
       getObjectByName: (n: string) => O3 | undefined;
       traverse: (f: (o: O3) => void) => void;
     };
@@ -344,7 +364,14 @@ export async function drawnImportMeshes(page: Page, rootId?: string): Promise<Dr
     const out: DrawnImportMesh[] = [];
     if (!scene) return out;
     for (const rootId of rootIds) {
-      const root = scene.getObjectByName(rootId);
+      // A top-level node's wrapper is named with its id; a nested one (an Object inside an import
+      // Group) is stamped with it instead (`DRAWN_NODE_ID_KEY` in `pickChain.ts`) — the product's
+      // own lookup (`byNodeId`, `SceneFromDAG.tsx`) reads both, in this order.
+      const stamped: O3[] = [];
+      scene.traverse((o) => {
+        if (o.userData?.basherNodeId === rootId) stamped.push(o);
+      });
+      const root = scene.getObjectByName(rootId) ?? stamped[0];
       if (!root) continue;
       root.traverse((o) => {
         if (!o.isMesh) return;
@@ -371,10 +398,13 @@ export async function drawnImportMeshes(page: Page, rootId?: string): Promise<Dr
             worldBounds,
             hasMetalnessMap: Boolean(mat?.metalnessMap),
             hasRoughnessMap: Boolean(mat?.roughnessMap),
+            normalMapWidth:
+              typeof mat?.normalMap?.image?.width === 'number' ? mat.normalMap.image.width : null,
             color: mat?.color ? `#${mat.color.getHexString()}` : null,
             metalness: typeof mat?.metalness === 'number' ? mat.metalness : null,
             roughness: typeof mat?.roughness === 'number' ? mat.roughness : null,
             alphaTest: typeof mat?.alphaTest === 'number' ? mat.alphaTest : null,
+            alphaHash: mat?.alphaHash === true,
             transparent: mat?.transparent === true,
             vertexColors: mat?.vertexColors === true,
             side: typeof mat?.side === 'number' ? mat.side : null,
