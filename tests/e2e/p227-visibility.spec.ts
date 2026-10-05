@@ -110,8 +110,13 @@ test('the outliner eye hides a top-level light: it leaves the live scene, and co
   await expect.poll(lights).toBe(before);
 });
 
-test('a camera row offers no eye: a camera is chosen, not hidden', async ({ page }) => {
+// #1453 — the camera frustums honour the flag, so a camera's row offers the eye as every scene
+// object's does (Blender hides a camera the same way); the hide verb asks the same rule.
+test('a camera row offers the eye, and the click hides the camera', async ({ page }) => {
   await page.goto('/');
   await expect(page.getByTestId('scene-tree-row-n_camera')).toBeVisible({ timeout: 15000 });
-  await expect(page.getByTestId('scene-tree-eye-n_camera')).toHaveCount(0);
+  const eye = page.getByTestId('scene-tree-eye-n_camera');
+  await expect(eye).toHaveAttribute('aria-label', 'Hide');
+  await eye.click();
+  await expect(eye).toHaveAttribute('data-hidden', 'true');
 });
