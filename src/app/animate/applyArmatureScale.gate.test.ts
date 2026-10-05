@@ -16,6 +16,7 @@ import type { Op } from '../../core/dag/types';
 import { buildDefaultDagState } from '../../core/project/default';
 import { buildNativeGltfImportOps } from '../../core/import/nativeGltfImport';
 import { registerAllNodes } from '../../nodes/registerAll';
+import { makeSplitCube } from '../../test-utils/splitCube';
 import { sampleSkinDeform } from '../../nodes/armatureDeform';
 import type { MeshGeometryData, ModifiedDataValue } from '../../nodes/types';
 import type { PoseLayerParams } from '../../nodes/PoseLayer';
@@ -125,16 +126,18 @@ function worstRelative(a: number[][], b: number[][]): number {
 
 async function applied(state: DagState, groupId: string, mask: ApplyMask = 'scale') {
   let next = state;
+  let dispatched = 0;
   const result = await dispatchApplyTransform(groupId, mask, {
     state,
     currentFrame: 0,
     dispatchAtomic: (ops) => {
+      dispatched++;
       next = apply(next, ops);
     },
     setSelection: () => {},
     clearTransients: () => {},
   });
-  return { result, next };
+  return { result, next, dispatched };
 }
 
 describe('#1511 — Apply Scale on an armature carries the scale into the rig', () => {
@@ -232,6 +235,212 @@ describe('#1511 — Apply Scale on an armature carries the scale into the rig', 
     ]);
     const all = await applied(turned, groupId, 'all');
     expect(all.result.ok).toBe(false);
+  });
+
+  // #1514 — every refusal v1 makes, each from the imported fixture with ONE thing added that v1
+  // cannot carry. Each must come back with its own words (a case built wrong would trip a different
+  // guard and fail the match) and dispatch nothing.
+  describe('refuses each thing it cannot carry yet, by name, and dispatches nothing', () => {
+    /** The fixture's ids: the armature group, its skeleton Object and data, the skinned Object
+     *  and its modifier, and the rig's pose layers. */
+    function rigOf(state: DagState) {
+      const group = armatureGroupOf(state);
+      const skeletonObject = armatureSkeletonObjectsOf(state, group)[0];
+      const skeleton = (state.nodes[skeletonObject].inputs!.data as { node: string }).node;
+      const skinned = hierarchyChildIds(state.nodes[group]).find((id) => id !== skeletonObject)!;
+      const modifier = (state.nodes[skinned].inputs!.data as { node: string }).node;
+      return { group, skeletonObject, skeleton, skinned, modifier, layers: clipsOf(state, group) };
+    }
+    type Rig = ReturnType<typeof rigOf>;
+    const keyed = (id: string, target: string, paramPath: string, values: number[][]): Op => ({
+      type: 'addNode',
+      nodeId: id,
+      nodeType: 'KeyframeChannelVec3',
+      params: {
+        name: paramPath,
+        target,
+        paramPath,
+        keyframes: values.map((value, i) => ({ time: i, value, easing: 'linear' })),
+      },
+    });
+    const scaled = (rig: Rig, s: number): Op => ({
+      type: 'setParam',
+      nodeId: rig.group,
+      paramPath: 'scale',
+      value: [s, s, s],
+    });
+    const objectOf = (id: string, data: string, parent: string): Op[] => [
+      { type: 'addNode', nodeId: id, nodeType: 'Object', params: {} },
+      { type: 'connect', from: { node: data, socket: 'out' }, to: { node: id, socket: 'data' } },
+      {
+        type: 'connect',
+        from: { node: id, socket: 'out' },
+        to: { node: parent, socket: 'children' },
+      },
+    ];
+
+    const CASES: {
+      readonly what: string;
+      readonly build: (state: DagState, rig: Rig) => DagState;
+      readonly reason: RegExp;
+    }[] = [
+      {
+        what: 'a zero scale',
+        build: (s, rig) => apply(s, [scaled(rig, 0)]),
+        reason: /has a scale of 0, which cannot be applied into a skeleton/,
+      },
+      {
+        what: 'a negative uniform scale',
+        build: (s, rig) => apply(s, [scaled(rig, -2)]),
+        reason: /has a scale of -2, which cannot be applied into a skeleton/,
+      },
+      {
+        what: 'a keyed group',
+        build: (s, rig) =>
+          apply(s, [
+            scaled(rig, 2),
+            keyed('k_group', rig.group, 'scale', [
+              [2, 2, 2],
+              [3, 3, 3],
+            ]),
+          ]),
+        reason: /the object or its geometry is animated/,
+      },
+      {
+        what: 'a second skeleton in the group',
+        build: (s, rig) =>
+          apply(s, [
+            scaled(rig, 2),
+            {
+              type: 'addNode',
+              nodeId: 'skeleton_2',
+              nodeType: 'Skeleton',
+              params: { bones: (s.nodes[rig.skeleton].params as SkeletonParams).bones },
+            },
+            ...objectOf('skeleton_2_object', 'skeleton_2', rig.group),
+          ]),
+        reason: /holds 2 skeletons/,
+      },
+      {
+        what: 'the skeleton also stood outside the group',
+        build: (s, rig) =>
+          apply(s, [scaled(rig, 2), ...objectOf('stand_in', rig.skeleton, s.outputs.scene!.node)]),
+        reason: /"stand_in" also stands outside it/,
+      },
+      {
+        what: 'an object parented under the skeleton',
+        build: (s, rig) =>
+          makeSplitCube(apply(s, [scaled(rig, 2)]), {
+            objectId: 'prop',
+            connectTo: { node: rig.skeletonObject, socket: 'children' },
+          }).state,
+        reason: /"prop" parented under it/,
+      },
+      {
+        what: 'a skinned mesh outside the group',
+        build: (s, rig) =>
+          apply(s, [
+            scaled(rig, 2),
+            {
+              type: 'disconnect',
+              from: { node: rig.skinned, socket: 'out' },
+              to: { node: rig.group, socket: 'children' },
+            },
+            {
+              type: 'connect',
+              from: { node: rig.skinned, socket: 'out' },
+              to: { node: s.outputs.scene!.node, socket: 'children' },
+            },
+          ]),
+        reason: /skins a mesh outside it/,
+      },
+      {
+        what: 'a keyframe channel node on the rig',
+        build: (s, rig) =>
+          apply(s, [
+            scaled(rig, 2),
+            keyed('k_rig', rig.skeletonObject, 'position', [
+              [0, 0, 0],
+              [0, 1, 0],
+            ]),
+          ]),
+        reason: /holds a rig keyed by ".*", a channel this Apply cannot rescale yet/,
+      },
+      {
+        what: 'an F-modifier on a position curve',
+        build: (s, rig) => {
+          const layer = rig.layers[0];
+          const p = s.nodes[layer].params as PoseLayerParams;
+          return apply(s, [
+            scaled(rig, 2),
+            {
+              type: 'setParam',
+              nodeId: layer,
+              paramPath: 'channels',
+              value: p.channels.map((c) =>
+                c.component === 'position'
+                  ? {
+                      ...c,
+                      modifiers: [
+                        {
+                          type: 'noise',
+                          blend: 'add',
+                          strength: 1,
+                          scale: 1,
+                          phase: 0,
+                          offset: 0,
+                          depth: 1,
+                        },
+                      ],
+                    }
+                  : c,
+              ),
+            },
+          ]);
+        },
+        reason: /position curve in ".*" has F-modifiers/,
+      },
+      {
+        what: 'a keyed skinned mesh',
+        build: (s, rig) =>
+          apply(s, [
+            scaled(rig, 2),
+            keyed('k_skin', rig.skinned, 'position', [
+              [0, 0, 0],
+              [0, 1, 0],
+            ]),
+          ]),
+        reason: /which is animated, and its keys would move it/,
+      },
+      {
+        what: 'the skinned mesh shared with an object outside',
+        build: (s, rig) =>
+          apply(s, [scaled(rig, 2), ...objectOf('twin', rig.modifier, s.outputs.scene!.node)]),
+        reason: /shares its mesh data with 1 other consumer/,
+      },
+    ];
+
+    it.each(CASES)('$what', async ({ build, reason }) => {
+      const imported = await importBar();
+      const before = build(imported, rigOf(imported));
+      const { result, next, dispatched } = await applied(before, armatureGroupOf(before));
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.reason).toMatch(reason);
+      expect(dispatched).toBe(0);
+      expect(next).toBe(before);
+    });
+
+    it('each case is refused for its own reason, not the plain fixture', async () => {
+      // The control: the fixture with only the scale set applies, so every refusal above is the
+      // one thing its case added.
+      const imported = await importBar();
+      const { result, dispatched } = await applied(
+        apply(imported, [scaled(rigOf(imported), 2)]),
+        armatureGroupOf(imported),
+      );
+      expect(result).toEqual({ ok: true, bakedId: armatureGroupOf(imported) });
+      expect(dispatched).toBe(1);
+    });
   });
 
   it('the group holds the skeleton directly (fixture guard)', async () => {
