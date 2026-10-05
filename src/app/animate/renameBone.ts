@@ -34,7 +34,7 @@
 
 import type { DagState } from '../../core/dag/state';
 import type { Node, Op } from '../../core/dag/types';
-import type { PoseLayerChannel, PoseLayerMember } from '../../nodes/PoseLayer';
+import type { PoseLayerChannel, PoseLayerIk, PoseLayerMember } from '../../nodes/PoseLayer';
 import type { SkeletonParams } from '../../nodes/Skeleton';
 import { uniqueBoneName } from '../../core/import/nativeGltfSkeleton';
 import { isPackedMeshData } from '../meshGeometryData';
@@ -224,6 +224,7 @@ export function renameBone(
     const params = state.nodes[id].params as {
       members?: PoseLayerMember[];
       channels?: PoseLayerChannel[];
+      ik?: PoseLayerIk;
     };
     const members = params.members ?? [];
     const channels = params.channels ?? [];
@@ -245,7 +246,28 @@ export function renameBone(
         value: channels.map((c) => (c.bone === oldName ? { ...c, bone: name } : c)),
       });
     }
-    if (namesMember || namesChannel) rewrittenLayers.push(id);
+    // #1343 — an ik layer names its chain and control bones by name too.
+    const ik = params.ik;
+    const namesIk =
+      ik !== undefined &&
+      [ik.root, ik.mid, ik.tip, ik.goal, ik.pole].some((bone) => bone === oldName);
+    if (namesIk) {
+      const swap = (bone: string) => (bone === oldName ? name : bone);
+      ops.push({
+        type: 'setParam',
+        nodeId: id,
+        paramPath: 'ik',
+        value: {
+          ...ik,
+          root: swap(ik.root),
+          mid: swap(ik.mid),
+          tip: swap(ik.tip),
+          goal: swap(ik.goal),
+          ...(ik.pole !== undefined ? { pole: swap(ik.pole) } : {}),
+        },
+      });
+    }
+    if (namesMember || namesChannel || namesIk) rewrittenLayers.push(id);
   }
 
   // Objects parented to the bone.

@@ -94,10 +94,37 @@ export function handPoseLayerOf(
   objectId: string,
 ): string | null {
   const { layers, base } = poseLayerChain(nodes, objectId);
-  for (const id of layers) {
+  // #1343 — a hand-pose is FK: only a layer the IK solves read from takes it.
+  for (const id of layers.slice(lowestIkLayer(nodes, layers) + 1)) {
     if (whyNotHandPosable(nodes, id, base) === null) return id;
   }
   return null;
+}
+
+/** #1343 — the index in `layers` of the lowest `ik` layer, or -1 when the chain has none. */
+function lowestIkLayer(
+  nodes: Readonly<Record<string, GraphNodeLike>>,
+  layers: readonly string[],
+): number {
+  for (let i = layers.length - 1; i >= 0; i--) {
+    if ((nodes[layers[i]].params as { mode?: unknown } | undefined)?.mode === 'ik') return i;
+  }
+  return -1;
+}
+
+/**
+ * #1343 — where a hand-pose layer goes when `handPoseLayerOf` finds none: the node whose `pose` input
+ * it is inserted under. That is the lowest `ik` layer, so the new layer is FK that every solve reads
+ * (Blender solves IK after every pose channel and constraint); with no ik layer, the Object itself.
+ * Inserted above an ik layer, a hand-pose would override the solve it should steer.
+ */
+export function handPoseInsertionOf(
+  nodes: Readonly<Record<string, GraphNodeLike>>,
+  objectId: string,
+): string {
+  const { layers } = poseLayerChain(nodes, objectId);
+  const at = lowestIkLayer(nodes, layers);
+  return at >= 0 ? layers[at] : objectId;
 }
 
 /** Why the chain layer `id` cannot take a hand-pose, or null when it can. The walk only passes

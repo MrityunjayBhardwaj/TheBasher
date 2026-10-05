@@ -71,6 +71,13 @@ export function poseArriving(
   return index >= 0 ? incoming!.sample(seconds)[index] : undefined;
 }
 
+/** #1343 — whether an ik layer's solve replaces `bone`'s local transform. */
+function ikDrives(params: PoseLayerParams, bone: string): boolean {
+  const ik = params.mode === 'ik' ? params.ik : undefined;
+  if (!ik) return false;
+  return bone === ik.root || bone === ik.mid || (ik.orientTip && bone === ik.tip);
+}
+
 /** A layer's contribution to one bone component at `seconds`, or null when it leaves it alone. */
 function contributionOf(
   params: PoseLayerParams,
@@ -176,6 +183,16 @@ export function layerValueForDrawn(
   let out: ComponentValue = drawn;
   for (const id of layers.slice(0, at)) {
     const params = state.nodes[id].params as PoseLayerParams;
+    // #1343 — an ik layer above replaces the chain's joints with a solve that depends on the very
+    // pose being edited, so no value below reproduces a drawn one. Blender lets the FK channel change
+    // with nothing to see at full influence; here the edit is refused while the solve shows at all.
+    const drives = ikDrives(params, bone);
+    if (drives && !params.mute && clamp01(poseLayerWeightOf(params)(seconds)) > 0) {
+      return {
+        ok: false,
+        reason: `the IK layer "${params.name}" above solves ${bone}'s ${component} here; move its goal bone, or blend the IK to 0 to pose it by hand.`,
+      };
+    }
     const c = contributionOf(params, bone, component, seconds);
     if (!c) continue;
     const lower = lowerFrom(out, c, component);
@@ -189,6 +206,9 @@ export function layerValueForDrawn(
   }
 
   const params = state.nodes[layerId].params as PoseLayerParams;
+  if (params.mode === 'ik') {
+    return { ok: false, reason: `"${params.name}" is an IK layer: it holds a chain, not poses.` };
+  }
   if (params.mute) {
     return {
       ok: false,

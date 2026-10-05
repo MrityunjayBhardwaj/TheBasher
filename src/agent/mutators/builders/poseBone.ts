@@ -27,7 +27,12 @@ import type { ClosureSet, ClosureSpec } from '../../closure/types';
 import type { DagState } from '../../../core/dag/state';
 import type { NodeId, Op } from '../../../core/dag/types';
 import { edgeTarget, type GraphNodeLike } from '../../../app/animate/graphNodes';
-import { handPoseLayerOf, poseLayerChain, whyNotHandPosable } from '../../../app/animate/poseChain';
+import {
+  handPoseInsertionOf,
+  handPoseLayerOf,
+  poseLayerChain,
+  whyNotHandPosable,
+} from '../../../app/animate/poseChain';
 import type { PoseLayerMember } from '../../../nodes/PoseLayer';
 import type { Vec3 } from '../../../nodes/types';
 
@@ -201,7 +206,9 @@ export function handPoseOps(
   }
 
   const layerId = poseLayerIdFor(objectId);
-  const feed = state.nodes[objectId].inputs?.pose as { node: string; socket: string } | undefined;
+  // #1343 — under the lowest ik layer when there is one (the FK its solve reads), else the Object.
+  const under = handPoseInsertionOf(asGraph(state), objectId);
+  const feed = state.nodes[under].inputs?.pose as { node: string; socket: string } | undefined;
   return [
     {
       type: 'addNode',
@@ -221,7 +228,7 @@ export function handPoseOps(
     {
       type: 'connect',
       from: { node: layerId, socket: 'out' },
-      to: { node: objectId, socket: 'pose' },
+      to: { node: under, socket: 'pose' },
       replace: true,
     },
   ];

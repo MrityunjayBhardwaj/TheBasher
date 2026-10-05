@@ -30,6 +30,8 @@ import type { Vec3 } from '../../nodes/types';
 import { eulerFromQuat } from '../../nodes/bonePose';
 import { poseArriving, type PoseFeed } from './invertPoseStack';
 import { uiEvaluatorCache } from '../uiEvaluatorCache';
+import { handPoseInsertionOf } from './poseChain';
+import type { GraphNodeLike } from './graphNodes';
 
 /**
  * THE single animated-param edit-route gate (P7.3 / D-02 — lifted here in
@@ -277,14 +279,20 @@ export function commitObjectBonePose(
  * #1474 — "pose this bone": the bone's first hand-pose, seeded with the rotation it already shows,
  * so asking for a pose changes nothing on screen (Blender's pose tools start from the evaluated
  * pose). The member goes into the hand-pose layer, or into a layer `poseBone` inserts under the
- * Object; either way what arrives under it is that layer's feed, or the Object's own, at the
+ * Object (#1343: under its lowest ik layer); either way what arrives under it is that layer's feed, or the Object's own, at the
  * playhead. An override member equal to what arrives under it leaves the bone as it was at any
  * weight, and every layer above sees the same input, so the drawn bone is unchanged. With nothing
  * arriving the bone stands at rest, so the seed is the rest (a member REPLACES the local transform).
  */
 export function poseObjectBoneAsShown(target: ObjectPoseTarget): Dispatched {
   const state = useDagStore.getState().state;
-  const under = target.layerId ?? target.objectId;
+  // #1343 — a new layer goes under the lowest ik layer, so what arrives there is that layer's feed.
+  const under =
+    target.layerId ??
+    handPoseInsertionOf(
+      state.nodes as unknown as Readonly<Record<string, GraphNodeLike>>,
+      target.objectId,
+    );
   const feed = state.nodes[under]?.inputs?.pose as PoseFeed | undefined;
   const arriving = feed
     ? poseArriving(state, feed, target.bone, useTimeStore.getState().seconds, uiEvaluatorCache)
