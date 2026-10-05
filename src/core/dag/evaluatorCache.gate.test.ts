@@ -76,6 +76,13 @@ const ORIGINS: Record<string, Origin> = {
     frequency: 'per-action',
     why: 'No production caller today; its own header asks the surface that wires it to hand a cache.',
   },
+  // #1508 — the path fit reads the world scale of each Object a walk poses, so a rig stored in
+  // centimetres is fitted in metres. The cook button's read hands it the UI cache.
+  'src/app/asset/fitMotionPathScale.ts · fitMotionPathScaleOps → motionPathScaleFit': {
+    count: 1,
+    frequency: 'per-action',
+    why: 'The Cook click or the motion-generate agent tool, once per producer.',
+  },
   'src/app/asset/placeGeneratedMotion.ts · placeCookedMotionOps → clipBakeStates': {
     count: 1,
     frequency: 'per-action',
@@ -280,6 +287,10 @@ const TAKERS: string[] = [
   'canWearMaterial@src/app/modifierGeometry.ts',
   'clipBakeStates@src/app/asset/bakeGeneratedClip.ts',
   'motionCookOffer@src/app/asset/cookMotionGenerations.ts',
+  // #1508 — the path fit: the producer's fit, each retarget's ratio, each posed Object's world scale.
+  'motionPathScaleFit@src/app/asset/fitMotionPathScale.ts',
+  'retargetRatios@src/app/asset/fitMotionPathScale.ts',
+  'posedWorldScales@src/app/asset/fitMotionPathScale.ts',
   'resolveMeshUVSpace@src/app/resolveMeshUVSpace.ts',
   'resolveDataKind@src/app/modifierGeometry.ts',
   'scanForFollow@src/viewport/followScan.ts',

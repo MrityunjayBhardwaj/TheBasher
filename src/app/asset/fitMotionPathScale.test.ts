@@ -69,7 +69,7 @@ function apply(s: DagState, ops: readonly Op[]): DagState {
 
 /** A character whose hips stand at `hipHeight` — a native `Skeleton`, the kind a bind retargets
  *  onto since the clone road's `GltfSkeleton` stopped being a bind target (#1053). */
-function characterOps(id: string, hipHeight: number): Op[] {
+function characterOps(id: string, hipHeight: number, unit = 1): Op[] {
   return [
     {
       type: 'addNode',
@@ -78,7 +78,7 @@ function characterOps(id: string, hipHeight: number): Op[] {
       params: {
         bones: [
           { name: 'Hips', parent: -1, position: [0, hipHeight, 0], rotation: [0, 0, 0] },
-          { name: 'Spine', parent: 0, position: [0, 0.5, 0], rotation: [0, 0, 0] },
+          { name: 'Spine', parent: 0, position: [0, 0.5 * unit, 0], rotation: [0, 0, 0] },
         ],
       },
     },
@@ -119,14 +119,18 @@ function bind(s: DagState, clipId: string, characterSkel: string, outputClipId: 
 }
 
 /** Mint along the path, cook once (the rig lands), bake. */
-async function mintAndCook(cap: MotionGenerationCapability, withPath = true) {
-  const mint = mintMotionGenerateOps(project(), {
+async function mintAndCook(
+  cap: MotionGenerationCapability,
+  withPath = true,
+  base: () => DagState = project,
+) {
+  const mint = mintMotionGenerateOps(base(), {
     prompt: 'a slow walk',
     seed: 7,
     model: 'kimodo-base',
     ...(withPath ? { curveObjectId: 'pathObj' } : {}),
   });
-  let s = apply(project(), mint.ops as Op[]);
+  let s = apply(base(), mint.ops as Op[]);
   await resolvePendingMotionGenerations(s, cap);
   s = apply(s, bakeGeneratedClipOps(s));
   return { s, producerId: mint.producerId, clipId: mint.clipId };
@@ -224,6 +228,107 @@ describe('fitting a generated walk’s path to its character (#1285)', () => {
     const offer = motionCookOffer(s, producerId);
     expect(offer.label).toBe('Re-cook (fit path to character)');
     expect(offer.disabled).toBe(false);
+  });
+});
+
+/** Characters that stand in a scene the render draws, each under a group scaled `groupScale`:
+ *  a rig stored in centimetres under 0.01 is the shape every Mixamo character imports as. */
+function sceneProject(chars: { id: string; hip: number; unit: number; groupScale: number }[]) {
+  return (): DagState => {
+    const ops: Op[] = [
+      { type: 'addNode', nodeId: 'n_scene', nodeType: 'Scene', params: {} },
+      {
+        type: 'addNode',
+        nodeId: 'n_render',
+        nodeType: 'RenderOutput',
+        params: { postFx: { tonemap: 'ACES', smaa: true } },
+      },
+      {
+        type: 'connect',
+        from: { node: 'n_scene', socket: 'out' },
+        to: { node: 'n_render', socket: 'scene' },
+      },
+    ] as Op[];
+    for (const c of chars) {
+      const g = c.groupScale;
+      ops.push(
+        ...characterOps(c.id, c.hip, c.unit),
+        { type: 'addNode', nodeId: `${c.id}_obj`, nodeType: 'Object', params: {} },
+        {
+          type: 'connect',
+          from: { node: `${c.id}_skel`, socket: 'out' },
+          to: { node: `${c.id}_obj`, socket: 'data' },
+        },
+        {
+          type: 'addNode',
+          nodeId: `${c.id}_grp`,
+          nodeType: 'Group',
+          params: { position: [0, 0, 0], rotation: [0, 0, 0], scale: [g, g, g] },
+        },
+        {
+          type: 'connect',
+          from: { node: `${c.id}_obj`, socket: 'out' },
+          to: { node: `${c.id}_grp`, socket: 'children' },
+        },
+        {
+          type: 'connect',
+          from: { node: `${c.id}_grp`, socket: 'out' },
+          to: { node: 'n_scene', socket: 'children' },
+        },
+      );
+    }
+    const s = apply(project(), ops);
+    return {
+      ...s,
+      outputs: {
+        scene: { node: 'n_scene', socket: 'out' },
+        render: { node: 'n_render', socket: 'out' },
+      },
+    };
+  };
+}
+
+describe('a rig stored in other units is fitted in world metres (#1508)', () => {
+  beforeEach(() => {
+    registerAllNodes();
+    __resetGeneratedClipsForTests();
+  });
+
+  // The same 1.2 m character twice: once in metres, once in centimetres under a 0.01 group.
+  const METRES = { id: 'm', hip: 1.2, unit: 1, groupScale: 1 };
+  const CENTIMETRES = { id: 'cm', hip: 120, unit: 100, groupScale: 0.01 };
+
+  async function fitAlone(c: typeof METRES) {
+    const { cap } = recordingCapability();
+    const { s: cooked, producerId, clipId } = await mintAndCook(cap, true, sceneProject([c]));
+    const s = bind(cooked, clipId, `${c.id}_skel`, `${c.id}_walk`);
+    return { s, fit: motionPathScaleFit(s, producerId), rig: appliedRatio(s, `${c.id}_walk`) };
+  }
+
+  it('a centimetre rig under 0.01 fits to what the same character in metres fits to', async () => {
+    const m = await fitAlone(METRES);
+    const cm = await fitAlone(CENTIMETRES);
+    // The fixture has the bug's shape: in its own units the cm rig reads 100× the metres one.
+    expect(cm.rig / m.rig).toBeCloseTo(100, 6);
+    expect(m.fit.kind).toBe('fit');
+    expect(cm.fit.kind).toBe('fit');
+    if (m.fit.kind !== 'fit' || cm.fit.kind !== 'fit') return;
+    expect(m.fit.scale).toBeCloseTo(m.rig, 9);
+    expect(cm.fit.scale).toBeCloseTo(m.fit.scale, 9);
+  });
+
+  it('the two together are one size, not "characters of different sizes"', async () => {
+    const { cap } = recordingCapability();
+    const {
+      s: cooked,
+      producerId,
+      clipId,
+    } = await mintAndCook(cap, true, sceneProject([METRES, CENTIMETRES]));
+    let s = bind(cooked, clipId, 'm_skel', 'm_walk');
+    s = bind(s, clipId, 'cm_skel', 'cm_walk');
+    const fit = motionPathScaleFit(s, producerId);
+    expect(fit.kind).toBe('fit');
+    expect(fitMotionPathScaleOps(s).refusals).toEqual([]);
   });
 });
 

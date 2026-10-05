@@ -31,16 +31,36 @@
 // curve with nothing said, so the scale is left as it is and the cook names both.
 // With no character bound, the motion's own rig is what plays it, at ratio 1.
 //
+// ─────────────────────────────────────────────────────────────────────────────
+// WHY THE RATIO IS TAKEN TO THE WORLD FIRST (#1508)
+// ─────────────────────────────────────────────────────────────────────────────
+// `rootTravelScale` answers in the TARGET SKELETON's own units — what the retarget
+// needs, because its output lives there. The path is drawn in world metres. A rig
+// stored in centimetres under a 0.01 group (every Mixamo character) reads 103.88
+// where the world answer is 1.04, so the request went out 100× too short. Blender
+// never compares a rig-space length across rigs or against the scene: it goes
+// through the object's world matrix first (`BKE_constraint_mat_convertspace`,
+// constraint.cc:258-305, v5.1.1). So the ratio is multiplied by the world scale of
+// the Object the retarget poses — its own scale and every group above it.
+//
 // REF: src/core/import/retarget.ts (`rootTravelScale` — the one derivation);
 //      src/app/animate/retargetFromNodes.ts (`retargetOperandsFromNodes`, the
 //      operands the retarget itself reads); src/nodes/MotionGenerate.ts
-//      (`pathScale`, and why it enters the hash); issue #1285.
+//      (`pathScale`, and why it enters the hash); src/app/resolveWorldTransform.ts
+//      (the world composition the render uses); issues #1285, #1508.
 
+import type { EvaluatorCache } from '../../core/dag/evaluator';
 import type { DagState } from '../../core/dag/state';
 import type { Op } from '../../core/dag/types';
 import { rootTravelScale } from '../../core/import/retarget';
-import { edgeTarget } from '../animate/graphNodes';
+import { standingObjectsOf } from '../../core/import/skeletonObject';
+import { edgeTarget, type GraphNodeLike } from '../animate/graphNodes';
+import { poseLayerChain } from '../animate/poseChain';
 import { retargetOperandsFromNodes } from '../animate/retargetFromNodes';
+import { resolveWorldTransform } from '../resolveWorldTransform';
+
+/** A rig's size does not move with the playhead; it is read at the start. */
+const AT_REST = { time: { frame: 0, seconds: 0, normalized: 0 } };
 
 /** Two ratios this close are one character size. Bone lengths come from the same
  *  bind pose every time, so this only absorbs float noise between two rigs that
@@ -60,10 +80,34 @@ export type PathScaleFit =
       readonly ratios: readonly { readonly retargetId: string; readonly scale: number }[];
     };
 
-/** The ratio every `RetargetClip` playing one of this producer's clips applies, by node. */
+/**
+ * World units per unit of each rig this retarget poses: one entry per Object that stands the
+ * retarget's skeleton AND plays it (its pose chain reads the retarget). None — a retarget nothing
+ * shows yet — is the rig's own units, 1, which is what the fit assumed before #1508.
+ *
+ * A non-uniform world scale has no single length ratio; its geometric mean is used.
+ */
+function posedWorldScales(state: DagState, retargetId: string, cache?: EvaluatorCache): number[] {
+  const skeletonId = edgeTarget(state.nodes[retargetId], 'skeleton');
+  if (!skeletonId) return [1];
+  const nodes = state.nodes as unknown as Readonly<Record<string, GraphNodeLike>>;
+  const scales = standingObjectsOf(state, skeletonId)
+    .filter((objectId) => poseLayerChain(nodes, objectId).source?.node === retargetId)
+    .map((objectId) => {
+      const world = resolveWorldTransform(state, objectId, AT_REST, cache);
+      // Not in the scene: nothing draws it, so its own units are all there is.
+      if (!world) return 1;
+      const [x, y, z] = world.scale;
+      return Math.cbrt(Math.abs(x * y * z));
+    });
+  return scales.length > 0 ? scales : [1];
+}
+
+/** The WORLD ratio every `RetargetClip` playing one of this producer's clips applies, by node. */
 function retargetRatios(
   state: DagState,
   producerId: string,
+  cache?: EvaluatorCache,
 ): { retargetId: string; scale: number }[] {
   const sinks = new Set(
     Object.keys(state.nodes).filter(
@@ -82,20 +126,27 @@ function retargetRatios(
     const { sourceBones, map, targetBones } = retargetOperandsFromNodes(state.nodes, node) ?? {};
     // A half-wired retarget drives nothing, so it has no size to fit.
     if (!sourceBones?.length || !map || !targetBones?.length) continue;
-    const scale = rootTravelScale(sourceBones, map, targetBones);
-    if (Number.isFinite(scale) && scale > 0) out.push({ retargetId: id, scale });
+    const rigRatio = rootTravelScale(sourceBones, map, targetBones);
+    for (const world of posedWorldScales(state, id, cache)) {
+      const scale = rigRatio * world;
+      if (Number.isFinite(scale) && scale > 0) out.push({ retargetId: id, scale });
+    }
   }
   return out;
 }
 
-export function motionPathScaleFit(state: DagState, producerId: string): PathScaleFit {
+export function motionPathScaleFit(
+  state: DagState,
+  producerId: string,
+  cache?: EvaluatorCache,
+): PathScaleFit {
   const node = state.nodes[producerId];
   if (!node || node.type !== 'MotionGenerate' || !edgeTarget(node, 'path')) {
     return { kind: 'no-path' };
   }
   const raw = (node.params as { pathScale?: unknown } | undefined)?.pathScale;
   const current = typeof raw === 'number' ? raw : 1;
-  const ratios = retargetRatios(state, producerId);
+  const ratios = retargetRatios(state, producerId, cache);
   if (ratios.length === 0) return { kind: 'fit', scale: 1, current };
   const [first] = ratios;
   if (ratios.every((r) => Math.abs(r.scale - first.scale) <= SAME_RATIO)) {

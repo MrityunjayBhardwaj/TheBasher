@@ -161,6 +161,10 @@ const CONSUMERS: Record<string, Decision> = {
   'src/app/uiEvaluatorCache.ts': indifferent('never-reads-the-graph'),
   'src/app/resolveMeshUVSpace.ts': authored('delegates-to-a-folding-resolver'),
   'src/app/asset/cookMotionGenerations.ts': authored('fixed-ctx-by-design'),
+  // #1508 — the path fit takes the cook button's cache (TYPE only) and hands the authored state to
+  // `resolveWorldTransform` at frame 0: a rig's size is read at rest, never at the playhead, for
+  // the same reason the request it feeds must be time-invariant (the motion resolver's row below).
+  'src/app/asset/fitMotionPathScale.ts': authored('fixed-ctx-by-design'),
   // `dispatchApplyTransform` left this table at #1053 (its evaluate went with the clone road);
   // `canApplyTransform` takes its UI caller's cache (#1315), which brings it back for the TYPE only.
   'src/app/animate/dispatchApplyTransform.ts': authored('delegates-to-a-folding-resolver'),
@@ -336,7 +340,9 @@ describe('#582 — who evaluates the graph, and which params they need', () => {
     // still evaluates) into `referenceRigs.ts`, so its skip reasons can be counted.
     // 55 → 56 at #1337, a new road: keying a placed bone into a pose layer reads the pose that
     // arrives under that layer, to solve the layer's blend backwards (declared above as fixed-ctx).
-    expect(evaluatorConsumers()).toHaveLength(56); // 39 -> 40 at #935 (placement) (the motion resolver)
+    // 56 → 57 at #1508, not a new road: the path fit hands the authored state to the world
+    // resolver at frame 0, to fit a centimetre rig in metres (declared above as fixed-ctx).
+    expect(evaluatorConsumers()).toHaveLength(57); // 39 -> 40 at #935 (placement) (the motion resolver)
   });
 
   it('every reason is load-bearing — no member of any union is decorative', () => {
