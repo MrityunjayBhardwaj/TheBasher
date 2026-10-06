@@ -1,5 +1,9 @@
 # Procedural Operators & Studio Lighting — Design
 
+> **What the graph is** (the three relationships, the node families, the six rules and every
+> difference from Houdini) is specified once in [`GRAPH.md`](GRAPH.md). This doc holds the
+> detail behind part of it.
+
 > Status: **DESIGN / not yet implemented.** Branch context: `ux-overhall`.
 > Captures the end-to-end architecture agreed in design discussion (2026-06-18).
 > This is a living contract — the foundation (typed operator chains) is durable;

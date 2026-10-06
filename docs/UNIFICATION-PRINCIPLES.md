@@ -1,5 +1,9 @@
 # Unification principles — what our shared surfaces key on, and what survives a node-based UI
 
+> **What the graph is** (the three relationships, the node families, the six rules and every
+> difference from Houdini) is specified once in [`GRAPH.md`](GRAPH.md). This doc holds the
+> detail behind part of it.
+
 Written 2026-07-25, while planning #458 (the shared inspector section-body dispatcher) as the
 prerequisite for #387 (the camera split).
 

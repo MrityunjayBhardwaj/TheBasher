@@ -1,5 +1,9 @@
 # Basher North Star
 
+> **What the graph is** (the three relationships, the node families, the six rules and every
+> difference from Houdini) is specified once in [`GRAPH.md`](GRAPH.md). This doc holds the
+> detail behind part of it.
+
 **Status:** consolidated 2026-08-11. Supersedes no document; sits above
 `OBJECT-DATA-SPLIT-DESIGN.md`, `OPERATORS-AND-LIGHTING-DESIGN.md` and the per-epic
 design docs, and under `THESIS.md`.

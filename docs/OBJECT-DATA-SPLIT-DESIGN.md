@@ -1,5 +1,9 @@
 # Object↔Data Split — One Thing That Owns A Transform
 
+> **What the graph is** (the three relationships, the node families, the six rules and every
+> difference from Houdini) is specified once in [`GRAPH.md`](GRAPH.md). This doc holds the
+> detail behind part of it.
+
 **Status:** DESIGN / proposed — **not approved for implementation.** No code until the Phase-0 checkpoint.
 **Tracking:** #231 (D — object↔data split + size-vs-scale; E — glTF children first-class). Sub-issues filed per phase on approval.
 **Supersedes the narrow framing of:** #356 (glTF constrainable-but-inert), #357 (the ghost's kind switch) — both become slices that fall out of this refactor.
