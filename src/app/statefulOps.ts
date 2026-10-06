@@ -36,6 +36,7 @@
 import { evaluate, type EvaluatorCache } from '../core/dag/evaluator';
 import { getNodeType } from '../core/dag/registry';
 import type { DagState } from '../core/dag/state';
+import { bindBodyInputs, bodyInputLeavesOf, type BodyInputLeaf } from '../core/dag/subnetworks';
 import type { EvalCtx, Node } from '../core/dag/types';
 import { FRAMES_PER_SECOND } from './stores/timeStore';
 import { lagStep } from '../nodes/valueMath';
@@ -269,61 +270,27 @@ function replayLag(
 //
 // The generalization of Lag: instead of a fixed `lagStep`, the per-frame step COOKS
 // the Solver's sub-network (the dependency closure of its `body` output node),
-// threading the previous frame's output into the network's Prev_Frame leaves and the
-// live input into its SolverInput leaves. This is Houdini's Solver SOP — Prev_Frame
+// binding the previous frame's output to the network's `prev` input and the
+// live input into the leaves that read `input` (#1548). This is Houdini's Solver SOP — Prev_Frame
 // (previous output) + Input_1 (live/seed), cooked every frame — on Basher's scalar
 // rail. Reuses everything Lag proved: the integrate core, the replay contract, the
 // fold, both H40 roads.
 
-/** The Prev_Frame + SolverInput leaves reachable from a Solver's `body` output node —
- *  the sub-network's feedback + live-input injection points. A pure closure walk over
- *  wired inputs (bounded by `seen`). A NESTED Solver is treated as a leaf boundary (its
- *  own closure is not merged in) — nested solvers are out of v1 scope. */
-function collectSolverLeaves(
-  state: DagState,
-  bodyNodeId: string,
-): { prevFrame: string[]; input: string[] } {
-  const prevFrame: string[] = [];
-  const input: string[] = [];
-  const seen = new Set<string>();
-  const stack: string[] = [bodyNodeId];
-  while (stack.length) {
-    const id = stack.pop()!;
-    if (seen.has(id)) continue;
-    seen.add(id);
-    const node = state.nodes[id];
-    if (!node) continue;
-    if (node.type === 'PrevFrame') prevFrame.push(id);
-    else if (node.type === 'SolverInput') input.push(id);
-    // Don't descend into a nested Solver — it manages its own sub-network (v1: unsupported).
-    if (id !== bodyNodeId && node.type === 'Solver') continue;
-    for (const binding of Object.values(node.inputs)) {
-      const refs = Array.isArray(binding) ? binding : binding ? [binding] : [];
-      for (const ref of refs) {
-        const nid = (ref as { node?: string } | undefined)?.node;
-        if (typeof nid === 'string' && !seen.has(nid)) stack.push(nid);
-      }
-    }
-  }
-  return { prevFrame, input };
-}
-
-/** Cook the sub-network once at `frame`, injecting `prev` into every Prev_Frame leaf and
- *  `input` into every SolverInput leaf (evaluate `overrides`). Returns the body node's
- *  value (0 if non-finite / unevaluable). No shared cache: the injection makes the
- *  sub-graph value frame-dependent and it is tiny, so a fresh walk per frame is both
- *  correct (no cross-frame poisoning) and cheap. */
+/** Cook the sub-network once at `frame`, binding `prev` and `input` to the leaves that read
+ *  them (#1548, evaluate `overrides`). Returns the body node's value (0 if non-finite /
+ *  unevaluable). No shared cache: the binding makes the sub-graph value frame-dependent and
+ *  it is tiny, so a fresh walk per frame is both correct (no cross-frame poisoning) and
+ *  cheap. */
 function cookSolverStep(
   state: DagState,
+  solverId: string,
   bodyNodeId: string,
-  leaves: { prevFrame: string[]; input: string[] },
+  leaves: readonly BodyInputLeaf[],
   prev: number,
   input: number,
   frame: number,
 ): number {
-  const overrides = new Map<string, unknown>();
-  for (const id of leaves.prevFrame) overrides.set(id, prev);
-  for (const id of leaves.input) overrides.set(id, input);
+  const overrides = bindBodyInputs(state, solverId, leaves, { prev, input });
   try {
     const v = evaluate(state, bodyNodeId, { ctx: ctxAtFrame(frame), overrides }).value;
     return typeof v === 'number' && Number.isFinite(v) ? v : 0;
@@ -349,10 +316,10 @@ function replaySolver(
 
   const bodyId = singleInputRef(node, 'body')?.node;
   if (!bodyId || !state.nodes[bodyId]) return inputAt(targetFrame);
-  const leaves = collectSolverLeaves(state, bodyId);
+  const leaves = bodyInputLeavesOf(state, node.id);
 
   return cachedIntegrate(state, node.id, seedFrame, targetFrame, inputAt, (prev, frame) =>
-    cookSolverStep(state, bodyId, leaves, prev, inputAt(frame), frame),
+    cookSolverStep(state, node.id, bodyId, leaves, prev, inputAt(frame), frame),
   );
 }
 
@@ -361,7 +328,7 @@ function replaySolver(
 // A scalar Solver carries ONE number forward; a 2nd-order spring's state is TWO Vec3s
 // (position + velocity), so the vec Solver carries a Vec3[] tuple. `bodies[i]` is the
 // sub-network output for slot i (bodies[0] = new position, bodies[1] = new velocity);
-// PrevFrameVec(slot) feeds back prevState[slot]; SolverInputVec injects the live target
+// `prevVec` element `slot` feeds back prevState[slot]; `inputVec` binds the live target
 // vector (a controller's whole position, the F2b Point road). The Solver's driven value
 // is slot 0 (position). Everything else — the seed+interval replay, determinism under
 // scrub, both H40 roads calling one `sample` — is EXACTLY Lag's/the scalar Solver's
@@ -385,56 +352,23 @@ function statefulInputVecAt(
   return src ? readTransformPositionAt(state, src.node, ctx, cache) : ORIGIN;
 }
 
-/** The vec sub-network leaves reachable from the Solver's `bodies` roots: PrevFrameVec
- *  (with its state `slot`) + SolverInputVec. A nested Solver is a leaf boundary (v1). */
-function collectSolverVecLeaves(
-  state: DagState,
-  roots: string[],
-): { prevFrame: { id: string; slot: number }[]; input: string[] } {
-  const prevFrame: { id: string; slot: number }[] = [];
-  const input: string[] = [];
-  const seen = new Set<string>();
-  const rootSet = new Set(roots);
-  const stack = [...roots];
-  while (stack.length) {
-    const id = stack.pop()!;
-    if (seen.has(id)) continue;
-    seen.add(id);
-    const node = state.nodes[id];
-    if (!node) continue;
-    if (node.type === 'PrevFrameVec') {
-      const slot = (node.params as { slot?: unknown }).slot;
-      prevFrame.push({ id, slot: typeof slot === 'number' ? slot : 0 });
-    } else if (node.type === 'SolverInputVec') {
-      input.push(id);
-    }
-    if (!rootSet.has(id) && node.type === 'Solver') continue; // nested Solver = leaf boundary
-    for (const binding of Object.values(node.inputs)) {
-      const refs = Array.isArray(binding) ? binding : binding ? [binding] : [];
-      for (const ref of refs) {
-        const nid = (ref as { node?: string } | undefined)?.node;
-        if (typeof nid === 'string' && !seen.has(nid)) stack.push(nid);
-      }
-    }
-  }
-  return { prevFrame, input };
-}
-
-/** Cook the tuple sub-network once at `frame`: inject prevState[slot] into each
- *  PrevFrameVec leaf + the live target into every SolverInputVec leaf, then evaluate
- *  each `bodies[i]` → the new value of slot i. Returns the full new state tuple. No
- *  shared cache — the injection makes the sub-graph frame-dependent (as the scalar cook). */
+/** Cook the tuple sub-network once at `frame`: bind `prevVec` (element `slot` = prevState
+ *  [slot]) and `inputVec` (the live target), then evaluate each `bodies[i]` → the new value of
+ *  slot i. Returns the full new state tuple. No shared cache — the binding makes the
+ *  sub-graph frame-dependent (as the scalar cook). */
 function cookSolverVecStep(
   state: DagState,
+  solverId: string,
   bodyRefs: { node: string; socket: string }[],
-  leaves: { prevFrame: { id: string; slot: number }[]; input: string[] },
+  leaves: readonly BodyInputLeaf[],
   prevState: Vec3[],
   input: Vec3,
   frame: number,
 ): Vec3[] {
-  const overrides = new Map<string, unknown>();
-  for (const { id, slot } of leaves.prevFrame) overrides.set(id, prevState[slot] ?? ORIGIN);
-  for (const id of leaves.input) overrides.set(id, input);
+  const overrides = bindBodyInputs(state, solverId, leaves, {
+    prevVec: prevState,
+    inputVec: input,
+  });
   const ctx = ctxAtFrame(frame);
   return bodyRefs.map((ref) => {
     try {
@@ -465,10 +399,7 @@ function replaySolverVec(
   if (bodyRefs.length === 0) return inputAt(targetFrame); // unfinished → the target, never NaN
 
   const slots = bodyRefs.length;
-  const leaves = collectSolverVecLeaves(
-    state,
-    bodyRefs.map((r) => r.node),
-  );
+  const leaves = bodyInputLeavesOf(state, node.id);
   const seedState = (frame: number): Vec3[] => {
     const s: Vec3[] = new Array(slots).fill(ORIGIN);
     s[0] = inputAt(frame); // slot 0 (position) starts on the target; other slots = origin
@@ -480,7 +411,8 @@ function replaySolverVec(
     seedFrame,
     targetFrame,
     seedState,
-    (prev, frame) => cookSolverVecStep(state, bodyRefs, leaves, prev, inputAt(frame), frame),
+    (prev, frame) =>
+      cookSolverVecStep(state, node.id, bodyRefs, leaves, prev, inputAt(frame), frame),
   );
   return result[0] ?? ORIGIN;
 }

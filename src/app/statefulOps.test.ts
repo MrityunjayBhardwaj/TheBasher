@@ -30,7 +30,7 @@ const MATH_ID = 'n_math';
 const FPS = 60;
 
 /** box + a scene-wired Null (tx=2) + a Solver whose sub-network is
- *  `Math(add){a←PrevFrame, b←SolverInput}` (a running accumulator of the live input),
+ *  `Math(add){a←prev, b←input}` (a running accumulator of the live input),
  *  wired into a ParamDriver overlaying box.material.metalness. The Null is wired into
  *  the scene so its transform resolves (the Solver's live input reads its `tx`). */
 function buildSolverAccumulatorState(): DagState {
@@ -49,8 +49,13 @@ function buildSolverAccumulatorState(): DagState {
     from: { node: NULL_ID, socket: 'out' },
     to: { node: 'n_scene', socket: 'children' },
   } as Op);
-  add({ type: 'addNode', nodeId: PREV_ID, nodeType: 'PrevFrame', params: {} } as Op);
-  add({ type: 'addNode', nodeId: INPUT_ID, nodeType: 'SolverInput', params: {} } as Op);
+  add({ type: 'addNode', nodeId: PREV_ID, nodeType: 'BodyInput', params: { input: 'prev' } } as Op);
+  add({
+    type: 'addNode',
+    nodeId: INPUT_ID,
+    nodeType: 'BodyInput',
+    params: { input: 'input' },
+  } as Op);
   add({ type: 'addNode', nodeId: MATH_ID, nodeType: 'Math', params: { op: 'add' } } as Op);
   add({
     type: 'connect',
@@ -182,7 +187,7 @@ describe('integrateLag — the pure interval/seed core', () => {
 // (position + velocity); the sub-network is the semi-implicit Euler recurrence
 //   newVel = prevVel + k·(target − prevPos) − c·prevVel   (slot 1)
 //   newPos = prevPos + newVel                             (slot 0)
-// built from Vec3Math nodes reading PrevFrameVec(slot)/SolverInputVec leaves. The
+// built from Vec3Math nodes reading `prevVec` (by slot) / `inputVec` leaves. The
 // controller (a keyframed Null stepping 0→5) is the live target.
 const SPRING_NULL = 'n_sp_null';
 function buildSpringState(k = 0.1, c = 0.1): { state: DagState; solverId: string } {
@@ -216,9 +221,24 @@ function buildSpringState(k = 0.1, c = 0.1): { state: DagState; solverId: string
       ],
     },
   } as Op);
-  add({ type: 'addNode', nodeId: N('in'), nodeType: 'SolverInputVec', params: {} } as Op);
-  add({ type: 'addNode', nodeId: N('pp'), nodeType: 'PrevFrameVec', params: { slot: 0 } } as Op);
-  add({ type: 'addNode', nodeId: N('pv'), nodeType: 'PrevFrameVec', params: { slot: 1 } } as Op);
+  add({
+    type: 'addNode',
+    nodeId: N('in'),
+    nodeType: 'BodyInputVec',
+    params: { input: 'inputVec' },
+  } as Op);
+  add({
+    type: 'addNode',
+    nodeId: N('pp'),
+    nodeType: 'BodyInputVec',
+    params: { input: 'prevVec', slot: 0 },
+  } as Op);
+  add({
+    type: 'addNode',
+    nodeId: N('pv'),
+    nodeType: 'BodyInputVec',
+    params: { input: 'prevVec', slot: 1 },
+  } as Op);
   const wire = (from: string, fs: string, to: string, ts: string) =>
     add({ type: 'connect', from: { node: from, socket: fs }, to: { node: to, socket: ts } } as Op);
   add({ type: 'addNode', nodeId: N('e'), nodeType: 'Vec3Math', params: { op: 'sub' } } as Op);
@@ -378,7 +398,7 @@ describe('the two edge-less hops through a stateful source', () => {
 
 describe('the Solver meta-op — a sub-network cooked every frame', () => {
   it('a Mix sub-network reproduces Lag EXACTLY (the engine proof)', () => {
-    // The Solver step over `Mix{a←PrevFrame, b←SolverInput, factor}` is
+    // The Solver step over `Mix{a←prev, b←input, factor}` is
     // lerp(prev, in, factor) == lagStep — so a Solver wrapping one Mix must produce the
     // byte-identical value Lag produces. Proven at the integrate core (pure, no state).
     const ramp = (f: number) => f;
@@ -410,7 +430,7 @@ describe('the Solver meta-op — a sub-network cooked every frame', () => {
   });
 
   it('cooks the sub-network per frame with Prev_Frame + live input injected (end-to-end)', () => {
-    // The accumulator Solver: Math(add){PrevFrame, SolverInput=Null.tx=2}. seed=2, then
+    // The accumulator Solver: Math(add){prev, input=Null.tx=2}. seed=2, then
     // out(f) = out(f−1) + 2. Exercises closure discovery + evaluate overrides + the fold.
     const state = buildSolverAccumulatorState();
     const cv = makeStatefulDriverChannelValue(
@@ -422,6 +442,78 @@ describe('the Solver meta-op — a sub-network cooked every frame', () => {
     expect(cv.sample(1 / FPS)).toBe(4);
     expect(cv.sample(2 / FPS)).toBe(6);
     expect(cv.sample(3 / FPS)).toBe(8);
+  });
+
+  it('#1548 — a Solver over Mix{prev, input} matches a Lag sample for sample, through the seam', () => {
+    // The parity the engine proof states at the integrate core, here through the real seam:
+    // the named inputs are found in the sub-network, bound per frame and cooked. The
+    // controller's x is keyframed so the input moves and the lag actually trails it.
+    let state = buildLagDrivenState();
+    const add = (op: Op) => {
+      state = applyOp(state, op).next;
+    };
+    add({
+      type: 'connect',
+      from: { node: NULL_ID, socket: 'out' },
+      to: { node: 'n_scene', socket: 'children' },
+    } as Op);
+    add({
+      type: 'addNode',
+      nodeId: 'n_tx',
+      nodeType: 'KeyframeChannelVec3',
+      params: {
+        name: 'position',
+        target: NULL_ID,
+        paramPath: 'position',
+        keyframes: [
+          { time: 0, value: [0, 0, 0], easing: 'linear' },
+          { time: 0.5, value: [6, 0, 0], easing: 'linear' },
+          { time: 1, value: [-3, 0, 0], easing: 'linear' },
+        ],
+      },
+    } as Op);
+    add({
+      type: 'addNode',
+      nodeId: PREV_ID,
+      nodeType: 'BodyInput',
+      params: { input: 'prev' },
+    } as Op);
+    add({
+      type: 'addNode',
+      nodeId: INPUT_ID,
+      nodeType: 'BodyInput',
+      params: { input: 'input' },
+    } as Op);
+    add({ type: 'addNode', nodeId: 'n_mix', nodeType: 'Mix', params: { factor: 0.3 } } as Op);
+    add({
+      type: 'connect',
+      from: { node: PREV_ID, socket: 'out' },
+      to: { node: 'n_mix', socket: 'a' },
+    } as Op);
+    add({
+      type: 'connect',
+      from: { node: INPUT_ID, socket: 'out' },
+      to: { node: 'n_mix', socket: 'b' },
+    } as Op);
+    add({
+      type: 'addNode',
+      nodeId: SOLVER_ID,
+      nodeType: 'Solver',
+      params: { seedFrame: 0, sourceTransform: { node: NULL_ID, channel: 'tx' } },
+    } as Op);
+    add({
+      type: 'connect',
+      from: { node: 'n_mix', socket: 'out' },
+      to: { node: SOLVER_ID, socket: 'body' },
+    } as Op);
+
+    const params = state.nodes[DRV_ID].params as ParamDriverParams;
+    const lag = makeStatefulDriverChannelValue(state, params, state.nodes[LAG_ID]);
+    const solver = makeStatefulDriverChannelValue(state, params, state.nodes[SOLVER_ID]);
+    const frames = [0, 1, 7, 15, 30, 31, 45, 60, 75];
+    const lagValues = frames.map((f) => lag.sample(f / FPS));
+    expect(new Set(lagValues).size).toBeGreaterThan(5); // the input moved, so the test can see a difference
+    expect(frames.map((f) => solver.sample(f / FPS))).toEqual(lagValues);
   });
 
   it('is scrub-deterministic — same frame lands the same value regardless of call order', () => {

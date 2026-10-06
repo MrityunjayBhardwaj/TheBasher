@@ -120,3 +120,78 @@ export function newSubnetworkViolation(before: DagState, after: DagState): strin
     'sub-network: duplicate it for the other use.'
   );
 }
+
+// ── #1548 — the sub-network's named inputs ──────────────────────────────────────
+//
+// An owner declares named inputs (`bodyInputs`); inside its sub-network a body-input leaf
+// (`bodyInputLeaf: true` — `BodyInput`, `BodyInputVec`) reads one by name. Cooking the
+// sub-network binds a value to each name: these two functions turn that binding into the
+// evaluator's `overrides`, so no owner has to know which leaf types exist.
+
+/** One body-input leaf of a sub-network: the input it reads and the element of it. */
+export interface BodyInputLeaf {
+  readonly id: NodeId;
+  readonly input: string;
+  readonly slot: number;
+}
+
+/**
+ * The body-input leaves that read `owner`'s inputs: every leaf in its sub-network that is not
+ * inside a NESTED owner's sub-network (those read the nested owner's inputs). A leaf whose
+ * name the owner doesn't declare, or declares with a different type than the leaf outputs,
+ * is left out: it reads its default.
+ */
+export function bodyInputLeavesOf(state: DagState, owner: NodeId): BodyInputLeaf[] {
+  const ownerNode = state.nodes[owner];
+  const declared = ownerNode ? getNodeType(ownerNode.type)?.bodyInputs : undefined;
+  if (!declared) return [];
+  const closure = subnetworkOf(state, owner);
+  const nested = new Set<NodeId>();
+  for (const id of closure) {
+    const inner = state.nodes[id];
+    if (inner && bodySocketsOf(inner.type).length > 0)
+      for (const n of subnetworkOf(state, id)) nested.add(n);
+  }
+  const out: BodyInputLeaf[] = [];
+  for (const id of closure) {
+    if (nested.has(id)) continue;
+    const node = state.nodes[id];
+    const def = node ? getNodeType(node.type) : undefined;
+    if (!node || !def?.bodyInputLeaf) continue;
+    const params = node.params as { input?: unknown; slot?: unknown };
+    if (typeof params.input !== 'string') continue;
+    const want = declared[params.input];
+    const outType = Object.values(def.outputs)[0]?.type;
+    if (!want || want.type !== outType) continue;
+    const slot = typeof params.slot === 'number' ? params.slot : 0;
+    out.push({ id, input: params.input, slot });
+  }
+  return out;
+}
+
+/**
+ * The evaluator `overrides` that bind `values` (input name → value) to `leaves`. A `list`
+ * input binds element `slot`; a slot past its end, or a name with no value, stays unbound
+ * and the leaf reads its default.
+ */
+export function bindBodyInputs(
+  state: DagState,
+  owner: NodeId,
+  leaves: readonly BodyInputLeaf[],
+  values: Readonly<Record<string, unknown>>,
+): Map<NodeId, unknown> {
+  const ownerNode = state.nodes[owner];
+  const declared = (ownerNode && getNodeType(ownerNode.type)?.bodyInputs) || {};
+  const overrides = new Map<NodeId, unknown>();
+  for (const leaf of leaves) {
+    if (!Object.prototype.hasOwnProperty.call(values, leaf.input)) continue;
+    const value = values[leaf.input];
+    if (declared[leaf.input]?.cardinality === 'list') {
+      if (!Array.isArray(value) || leaf.slot >= value.length) continue;
+      overrides.set(leaf.id, value[leaf.slot]);
+    } else {
+      overrides.set(leaf.id, value);
+    }
+  }
+  return overrides;
+}

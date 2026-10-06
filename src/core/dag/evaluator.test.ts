@@ -98,7 +98,7 @@ describe('evaluator', () => {
 
   it('overrides inject a node value, bypassing its evaluate + input walk', () => {
     // a=3, b=4 → sum 7. Override a to 100 → 100 + 4 = 104 (the Solver replay seam
-    // uses this to feed Prev_Frame / SolverInput leaves per frame).
+    // uses this to bind the Solver's `prev` / `input` leaves per frame).
     const state = buildSumGraph();
     const overrides = new Map<string, unknown>([['a', 100]]);
     expect(evaluate(state, 's', { overrides }).value).toBe(104);

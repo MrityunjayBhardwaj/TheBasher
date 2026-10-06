@@ -69,7 +69,9 @@ OUTPUTS ─── outputs.scene · outputs.render
    is the closure behind a node's inputs declared `body: true` (the Solver today, the Rig
    and Templates next). Every wire leaving a sub-network ends inside it or in its owner's
    body sockets, so a node belongs to at most one sub-network and the outside reaches it
-   only through the owner (`src/core/dag/subnetworks.ts`, #1547). The node view's levels
+   only through the owner (`src/core/dag/subnetworks.ts`, #1547). The owner declares the
+   sub-network's **named inputs** (`bodyInputs`), and a `BodyInput` leaf inside reads one by
+   name; the owner binds a value to each name when it cooks the sub-network (#1548). The node view's levels
    are computed from this, so the saved format has no nesting to migrate. Why flat:
    [OBJECT-DATA-SPLIT-DESIGN §2.2](OBJECT-DATA-SPLIT-DESIGN.md) ("on a DAG, pointer and
    containment are the same edge") and §2.4.

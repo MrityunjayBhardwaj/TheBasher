@@ -139,6 +139,8 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
   // edits it through the slot selector, which reads the param directly rather than by a home.
   PolyMeshData: '[material] mesh=(unrouted) material=material materialSlots=(unrouted)',
   BeautyPass: '[render] width=(unrouted) height=(unrouted)',
+  BodyInput: '[] input=(unrouted) slot=(unrouted)',
+  BodyInputVec: '[] input=(unrouted) slot=(unrouted)',
   BevelModifier:
     '[modifier] amount=modifier muted=modifier scope=modifier limitMethod=modifier angleLimit=modifier',
   BoneNameMap: '[] name=(unrouted) map=(unrouted)',
@@ -228,8 +230,6 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
   ParamDriver:
     '[driver] target=(unrouted) paramPath=(unrouted) blendMode=(unrouted) order=(unrouted) mute=(unrouted) sourceSpare=(unrouted) sourceTransform=(unrouted) sourceTransformVec=(unrouted)',
   PosedSkeleton: '[] amplitude=(unrouted) frequency=(unrouted)',
-  PrevFrame: '[]',
-  PrevFrameVec: '[] slot=(unrouted)',
   Prompt: '[render] text=(unrouted) negative=(unrouted) tags=(unrouted)',
   RenderJob: '[render] jobId=render frameStart=render frameEnd=render fps=render outputPath=render',
   RenderOutput: '[render] postFx=(unrouted) width=(unrouted) height=(unrouted)',
@@ -260,8 +260,6 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
   Shot: '[layout] name=layout startTime=(unrouted) endTime=(unrouted)',
   Skeleton: '[] bones=(unrouted)',
   Solver: '[] seedFrame=(unrouted) sourceTransform=(unrouted) sourceTransformVec=(unrouted)',
-  SolverInput: '[]',
-  SolverInputVec: '[]',
   SphereData:
     '[mesh,material] radius=mesh widthSegments=mesh heightSegments=mesh material=material',
   Strip:
@@ -415,4 +413,9 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
 // on top of it this branch adds `Scene.frameEnd` (+1), retires `PoseOverride` (−1 type, −5) and
 // appends `PoseLayer.ik` (+1).
 //   types 91 − 1 = 90 · routed 144 · unrouted 256 + 1 − 5 + 1 = 253
-export const GOLDEN_TOTALS = { types: 90, routed: 144, unrouted: 253 } as const;
+//
+// #1548 retires the Solver's four input leaves (`PrevFrame`, `SolverInput`, `PrevFrameVec`,
+// `SolverInputVec`) for `BodyInput` and `BodyInputVec`, each with `input` and `slot` unrouted:
+// −4 + 2 types; unrouted −1 (`PrevFrameVec.slot`) + 4.
+//   types 90 − 4 + 2 = 88 · routed 144 · unrouted 253 − 1 + 4 = 256
+export const GOLDEN_TOTALS = { types: 88, routed: 144, unrouted: 256 } as const;

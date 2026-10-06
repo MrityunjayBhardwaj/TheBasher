@@ -256,6 +256,22 @@ export interface InputDescriptor {
   body?: true;
 }
 
+/**
+ * #1548 — one NAMED input of a sub-network, declared by the node that owns it (the Solver's
+ * `prev`, `input`, `prevVec`, `inputVec`). Inside the sub-network a body-input leaf reads it by
+ * name (`BodyInput`, `BodyInputVec`); the owner binds a value to each name every time it cooks
+ * the sub-network (`bindBodyInputs`, `subnetworks.ts`). A `list` input is read one element at a
+ * time, by the leaf's `slot`.
+ *
+ * This is the word the evaluator was missing for "instantiate this sub-network with these
+ * bindings" (docs/OBJECT-DATA-SPLIT-DESIGN.md §12): before it, each live input was a leaf type
+ * of its own that the Solver's seam looked up by type name.
+ */
+export interface BodyInputDescriptor {
+  type: SocketTypeName;
+  cardinality: Cardinality;
+}
+
 // The two membership readers live in `socketMembership.ts` (#612) and are re-exported
 // here so every existing caller is unchanged. They were moved for ONE reason: that file
 // has no value imports, so a Playwright-reachable module can call them without dragging
@@ -451,6 +467,17 @@ export interface NodeDefinition<P = unknown, O = unknown> {
   paramSchema: z.ZodType<P, z.ZodTypeDef, unknown>;
   inputs: Record<SocketId, InputDescriptor>;
   outputs: Record<SocketId, OutputDescriptor>;
+  /**
+   * #1548 — the named inputs of the sub-network this node owns (see `BodyInputDescriptor`).
+   * Only a node with `body` sockets declares them.
+   */
+  bodyInputs?: Record<string, BodyInputDescriptor>;
+  /**
+   * #1548 — this node type is a body-input leaf: inside a sub-network it stands for the
+   * owner's input named by its `input` param (element `slot` of a `list` input), and its one
+   * output's type is the type it accepts. Outside a cook it evaluates to its own default.
+   */
+  bodyInputLeaf?: true;
   /**
    * #396 — WHICH input carries the CHAIN: the spine a stack walks down, as opposed
    * to an ARGUMENT the graph wires and the stack steps past. Absent = this node is

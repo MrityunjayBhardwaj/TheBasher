@@ -36,6 +36,13 @@
         "driver": null
       }
     },
+    "BodyInput": {
+      "slot": {
+        "kind": "number",
+        "reach": null,
+        "driver": null
+      }
+    },
     "BoxData": {
       "material.base.color": {
         "kind": "color",
