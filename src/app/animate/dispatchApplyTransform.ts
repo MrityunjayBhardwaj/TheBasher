@@ -1085,8 +1085,9 @@ function applyIntoStoredMesh(
 //
 // v1 applies a uniform scale only, and refuses by name what it cannot carry yet: a non-uniform or
 // non-positive scale, a keyed group, a moved or turned group asked to apply everything, two skeletons
-// in one group, a skeleton or skinned mesh used outside the group, a channel node or F-modifier on
-// the rig's motion, and anything parented under the skeleton. A retarget onto the rig needs nothing:
+// in one group, a skeleton or skinned mesh used outside the group, a channel node or a value
+// F-modifier on the rig's motion (Cycles is carried: it only re-times the scaled keys), and anything
+// parented under the skeleton. A retarget onto the rig needs nothing:
 // it re-derives its travel from the rest it reads (`rootTravelScale`).
 //
 // REF: ref/GROUND_TRUTH_BLENDER_TRANSFORM_APPLY.md §6; issue #1511.
@@ -1257,13 +1258,17 @@ function applyScaleIntoArmature(
   for (const layerId of layers) {
     const p = state.nodes[layerId].params as PoseLayerParams;
     for (const c of p.channels) {
-      const modded =
-        c.component === 'position' &&
-        ((c.modifiers?.length ?? 0) > 0 ||
-          (c.axisModifiers ?? []).some((m) => (m?.length ?? 0) > 0));
-      if (modded) {
+      if (c.component !== 'position') continue;
+      // #1540 — Cycles only remaps WHEN the keys are read, so its output is the scaled keys; a
+      // value modifier (Noise, Generator, Envelope, Limits…) adds or clamps a length in the old
+      // units that scaling the keys does not reach.
+      const valueModifier = [
+        ...(c.modifiers ?? []),
+        ...(c.axisModifiers ?? []).flatMap((m) => m ?? []),
+      ].find((m) => m.type !== 'cycles');
+      if (valueModifier) {
         return refuse(
-          `holds a rig whose "${c.bone}" position curve in "${nameOf(layerId)}" has F-modifiers, which this Apply cannot rescale yet.`,
+          `holds a rig whose "${c.bone}" position curve in "${nameOf(layerId)}" has a ${valueModifier.type} F-modifier, whose output this Apply cannot rescale yet.`,
         );
       }
     }

@@ -216,6 +216,60 @@ describe('#1511 — Apply Scale on an armature carries the scale into the rig', 
     );
   });
 
+  it('a cycled position curve applies, and nothing moves inside or past its keys (#1540)', async () => {
+    // Cycles only re-times the keys it repeats, so scaling the keys scales what it draws. Linear keys
+    // with a real slope (the fixture's are stepped and flat, where a cycle shows nothing between
+    // keys), cycled with an offset on both sides, sampled inside the keys and in three repeats.
+    const imported = await importBar();
+    const groupId = armatureGroupOf(imported);
+    const layers = clipsOf(imported, groupId);
+    const layer = layers.find((id) => !(imported.nodes[id].params as PoseLayerParams).mute)!;
+    const p = imported.nodes[layer].params as PoseLayerParams;
+    const cycled = (modifiers: unknown[]) =>
+      p.channels.map((c) =>
+        c.component === 'position' && c.bone === 'Bone0'
+          ? {
+              ...c,
+              modifiers,
+              keyframes: c.keyframes.map((k, i) => ({
+                ...k,
+                easing: 'linear',
+                value: [k.value[0], k.value[1] + 0.4 * i, k.value[2]],
+              })),
+            }
+          : c,
+      );
+    const cycles = {
+      type: 'cycles',
+      beforeMode: 'repeat-offset',
+      afterMode: 'repeat-offset',
+      beforeCycles: 0,
+      afterCycles: 0,
+    };
+    const base = apply(imported, [
+      { type: 'setParam', nodeId: groupId, paramPath: 'scale', value: [2.5, 2.5, 2.5] },
+    ]);
+    const setChannels = (modifiers: unknown[]): Op => ({
+      type: 'setParam',
+      nodeId: layer,
+      paramPath: 'channels',
+      value: cycled(modifiers),
+    });
+    const held = soloed(apply(base, [setChannels([])]), layer, layers);
+    const before = soloed(apply(base, [setChannels([cycles])]), layer, layers);
+    // The cycle is really there: past the keys it is not the held curve.
+    expect(worstRelative(skinnedWorld(held, 1.5), skinnedWorld(before, 1.5))).toBeGreaterThan(1e-2);
+
+    const { result, next: after } = await applied(before, groupId);
+    expect(result).toEqual({ ok: true, bakedId: groupId });
+    for (const t of [0, 0.5, 1, 1.5, 2.25, 3.75, -0.5]) {
+      expect(
+        worstRelative(skinnedWorld(before, t), skinnedWorld(after, t)),
+        `at ${t}s`,
+      ).toBeLessThan(1e-5);
+    }
+  });
+
   it('the rest is in the new units: every bone offset is the old one times the scale', async () => {
     const imported = await importBar();
     const groupId = armatureGroupOf(imported);
@@ -488,7 +542,7 @@ describe('#1511 — Apply Scale on an armature carries the scale into the rig', 
             },
           ]);
         },
-        reason: /position curve in ".*" has F-modifiers/,
+        reason: /position curve in ".*" has a noise F-modifier, whose output this Apply cannot/,
       },
       {
         what: 'a keyed skinned mesh',
