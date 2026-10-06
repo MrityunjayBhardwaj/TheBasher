@@ -247,6 +247,13 @@ export type AcceptedTypeSet = readonly [SocketTypeName, SocketTypeName, ...Socke
 export interface InputDescriptor {
   type: SocketTypeName | AcceptedTypeSet;
   cardinality: Cardinality;
+  /**
+   * #1547 — a BODY socket: what is wired here is the output of a sub-network this node
+   * owns (the Solver's `body`/`bodies`). The dependency closure behind every body socket of
+   * a node is that node's sub-network, and a node inside it may feed nothing outside it
+   * but the owner's body sockets (`subnetworks.ts`).
+   */
+  body?: true;
 }
 
 // The two membership readers live in `socketMembership.ts` (#612) and are re-exported

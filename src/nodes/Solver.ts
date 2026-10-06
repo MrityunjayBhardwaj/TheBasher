@@ -167,10 +167,12 @@ export const SolverNode: NodeDefinition<SolverParams, { out: number; outVec: Vec
   // rule). `bodies` = the VEC/TUPLE outputs, one per state slot (slot i ← bodies[i]),
   // for a tuple Solver (a spring: bodies[0]=new position, bodies[1]=new velocity). The
   // seam cooks the wired one's closure per frame, injecting Prev_Frame(Vec)/SolverInput(Vec).
-  // Wired, so the render subscription + cycle guard walk them.
+  // Wired, so the render subscription + cycle guard walk them. #1547 — both are BODY
+  // sockets: the closure behind them is this Solver's sub-network, and nothing in it may
+  // feed anything outside it (`src/core/dag/subnetworks.ts`).
   inputs: {
-    body: { type: 'Number', cardinality: 'single' },
-    bodies: { type: 'Vector3', cardinality: 'list' },
+    body: { type: 'Number', cardinality: 'single', body: true },
+    bodies: { type: 'Vector3', cardinality: 'list', body: true },
   },
   // Two output faces: `out` (Number, the scalar Solver) + `outVec` (Vector3, slot 0 of a
   // tuple Solver — the position a spring drives). A driver reads whichever matches its
