@@ -1725,13 +1725,11 @@ export interface BoneSpec {
    */
   readonly scale?: Vec3;
   /**
-   * P7.11 (D-04) — OPTIONAL number[16] column-major model/skin-space inverse
-   * bind matrix, captured from a glTF skin. Absent → none (three.js
-   * reconstructs inverses from the bind pose; retarget does not consume it).
-   * Rides only on `GltfSkeleton`-produced bones, never round-tripped through
-   * the retarget adapter.
+   * #1340 — OPTIONAL preferred angle: the local rotation (XYZ euler radians, like `rotation`) an IK
+   * solve starts from, which decides which way a straight chain bends (Maya's joint preferred angle,
+   * `joint -spa`). Absent → none.
    */
-  readonly inverseBindMatrix?: readonly number[];
+  readonly preferredAngle?: Vec3;
 }
 
 export interface SkeletonValue {
@@ -1821,14 +1819,20 @@ export interface PosedSkeletonValue {
 }
 
 /**
- * #1225 — a wire's range and rate. `round((end - start) · rate)` samples cover `[start, end]`, both
- * ends included: three's retarget rule (`SkeletonUtils.js:204,213-214`), under which a clip whose
- * densest bone has n keys is sampled n times, landing on its keys.
+ * #1225 — a wire's range, and #1456 — the times a consumer samples it at to read every pose it holds.
+ *
+ * The times are worked out by the producer, the one place that knows its keys and how they
+ * interpolate (`wireSampleTimes.ts`): every key, a frame before each key that closes a constant
+ * segment, and every scene frame inside a segment two samples can't reproduce. A retarget or a bake
+ * joins its samples with straight lines, so the times are what make that agree with the source at
+ * every frame. Blender's bake and Houdini's retarget read every frame; a linear source keeps just
+ * its keys, which agree with it everywhere and don't multiply a dense clip.
  */
 export interface WireClipInfo {
   readonly start: number;
   readonly end: number;
-  readonly rate: number;
+  /** Sorted, distinct, inside `[start, end]`, both ends included; at least one entry. */
+  readonly times: readonly number[];
   /** The motion's name, as `clipinfo` records the clip name. */
   readonly name?: string;
   /** What the motion does past its range (`clipinfo`'s end behaviour). Absent is hold. A retarget

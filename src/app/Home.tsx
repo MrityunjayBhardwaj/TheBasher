@@ -120,7 +120,9 @@ export function Home(): ReactNode {
       .then(() => listAllProjectMetadata())
       .then((p) => {
         if (!cancelled) setProjects(p);
-      });
+      })
+      // #1304 — "could not list" is logged, not an unhandled rejection; the list stays as it was.
+      .catch((e) => console.warn('home: could not list projects', e));
     return () => {
       cancelled = true;
     };

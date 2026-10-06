@@ -257,9 +257,10 @@ export const TRIPO_V3_DIALECT: TripoDialect = {
       const body: Record<string, unknown> = { ...shared, prompt: request.prompt };
       if (request.negativePrompt !== undefined) body.negative_prompt = request.negativePrompt;
       // NOTE: v3's documented TextToModelRequest lists no `style`,
-      // `texture_alignment`, `orientation` or `pose_spec`. They are dropped
-      // rather than forwarded — sending a field the contract does not name is
-      // how a request gets rejected wholesale, or worse, silently ignored.
+      // `texture_alignment`, `orientation` or `pose_spec`, so none is forwarded —
+      // sending a field the contract does not name is how a request gets
+      // rejected wholesale, or worse, silently ignored. A request carrying one
+      // never reaches here: the request contract refuses it (#1408).
       return { path: '/generation/text-to-model', body };
     }
 

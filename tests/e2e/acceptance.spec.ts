@@ -146,6 +146,9 @@ test('#4 save → reload restores identical state', async ({ page }) => {
   // Edit a value, save, reload, confirm it persisted.
   await page.getByTestId('inspector-vec-n_camera-position-x').fill('7.5');
   await page.getByTestId('inspector-vec-n_camera-position-x').press('Tab');
+  // #1305 — the dot must be SEEN before its absence can mean "saved": with no tab drawn yet there
+  // is no dot either, and the save below would pass without having finished.
+  await expect(page.getByTestId('project-tab-dirty-dot')).toHaveCount(1);
   await page.keyboard.press('ControlOrMeta+s');
   await expect(page.getByTestId('project-tab-dirty-dot')).toHaveCount(0);
 

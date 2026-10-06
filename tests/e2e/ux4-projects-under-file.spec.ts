@@ -37,7 +37,10 @@ test('#4 File ▸ Switch Project lists projects and switches the active one', as
   // Open File ▸ Switch Project: now lists ≥2, current copy carries the ✓ tick.
   await page.getByTestId('menu-file').click();
   await page.getByTestId('menu-file-switch').hover();
-  const items = page.locator('[data-testid^="menu-file-switch-"]');
+  // Projects only: the "Loading…" and "No projects" placeholders share the prefix (#1302).
+  const items = page.locator(
+    '[data-testid^="menu-file-switch-"]:not([data-testid="menu-file-switch-loading"]):not([data-testid="menu-file-switch-empty"])',
+  );
   await expect(items.first()).toBeVisible();
   // The list is fetched async on menu-open; poll until the duplicate lands.
   await expect.poll(() => items.count()).toBeGreaterThanOrEqual(2);

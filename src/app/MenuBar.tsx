@@ -10,7 +10,7 @@
 //
 // REF: THESIS.md §11, §15, §17.
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { buildDefaultDagState } from '../core/project';
 import { useDagStore } from '../core/dag/store';
 import { historyUndo, historyRedo } from './history';
@@ -55,6 +55,7 @@ import { openImportPicker, openGltfFilePicker, openMediaFilePicker } from './ass
 import { createNewComposition } from './video/newComposition';
 import { downloadSceneBundle, openSceneFilePicker } from './sceneFileActions';
 import { useFlyoutSide } from './menu/useFlyoutSide';
+import { uiEvaluatorCache } from './uiEvaluatorCache';
 
 // ---------------------------------------------------------------------------
 // Popover primitives — minimal, no library.
@@ -139,9 +140,11 @@ interface ItemProps {
   onSelect: () => void | Promise<void>;
   disabled?: boolean;
   testId?: string;
+  /** A tooltip: what a short label leaves out (#1250 — why a source rig was not drawn). */
+  title?: string;
 }
 
-function Item({ label, shortcut, onSelect, disabled, testId }: ItemProps) {
+function Item({ label, shortcut, onSelect, disabled, testId, title }: ItemProps) {
   return (
     <button
       type="button"
@@ -149,6 +152,7 @@ function Item({ label, shortcut, onSelect, disabled, testId }: ItemProps) {
       disabled={disabled}
       onClick={() => void onSelect()}
       data-testid={testId}
+      title={title}
       className="flex w-full items-center justify-between gap-3 px-3 py-1.5 text-left text-[11px] text-fg/80 hover:bg-muted focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent disabled:opacity-40 disabled:hover:bg-transparent"
     >
       <span>{label}</span>
@@ -393,6 +397,7 @@ export function MenuBar() {
   const axisWidgetVisible = useViewportStore((s) => s.axisWidgetVisible);
   const shading = useViewportStore((s) => s.shading);
   const sourceRigVisible = useViewportStore((s) => s.sourceRigVisible);
+  const sourceRigReadout = useViewportStore((s) => s.sourceRigReadout);
   const boneDisplay = useViewportStore((s) => s.boneDisplay);
   const bonesInFront = useViewportStore((s) => s.bonesInFront);
   const viewLock = useViewportStore((s) => s.viewLock);
@@ -441,13 +446,17 @@ export function MenuBar() {
   // when the File menu opens and when the current project changes (new /
   // duplicate / rename / delete bumps id or updatedAt). Same read seam
   // ProjectsMenu used (listAllProjectMetadata).
-  const [projects, setProjects] = useState<ProjectMetadata[]>([]);
+  // #1302 — null until the first read lands: "not read yet" must not print as "No projects".
+  const [projects, setProjects] = useState<ProjectMetadata[] | null>(null);
   useEffect(() => {
     if (open !== 'file') return;
     let cancelled = false;
-    void listAllProjectMetadata().then((p) => {
-      if (!cancelled) setProjects(p);
-    });
+    void listAllProjectMetadata()
+      .then((p) => {
+        if (!cancelled) setProjects(p);
+      })
+      // #1304 — "could not list" leaves the menu as it was; it never becomes "No projects".
+      .catch((e) => console.warn('File ▸ Switch Project: could not list projects', e));
     return () => {
       cancelled = true;
     };
@@ -469,7 +478,13 @@ export function MenuBar() {
   // Admitting every `Object` by type left this enabled for an Empty, which then failed with
   // an internal-sounding "could not resolve mesh" — offered and accepted now agree by
   // construction.
-  const isPrimitive = Boolean(selectedId && canApplyTransform(dag, selectedId));
+  // #1314 — memoised on (graph, selection): the answer depends on nothing else, and this component
+  // re-renders every frame for `currentFrame`. Asked per render, it evaluated the selection's mesh
+  // (a skinned character's whole-clip retarget) on every frame of playback.
+  const isPrimitive = useMemo(
+    () => Boolean(selectedId && canApplyTransform(dag, selectedId, uiEvaluatorCache)),
+    [dag, selectedId],
+  );
   const applyAnimated = Boolean(
     selectedId && isPrimitive && isApplySourceAnimated(dag, selectedId, currentFrame),
   );
@@ -493,7 +508,9 @@ export function MenuBar() {
       >
         <Item label="New Project…" onSelect={onNewProject} testId="menu-file-new" />
         <Submenu label="Switch Project" testId="menu-file-switch">
-          {projects.length === 0 ? (
+          {projects === null ? (
+            <Item label="Loading…" onSelect={() => {}} testId="menu-file-switch-loading" />
+          ) : projects.length === 0 ? (
             <Item label="No projects" onSelect={() => {}} testId="menu-file-switch-empty" />
           ) : (
             projects.map((p) => (
@@ -820,8 +837,18 @@ export function MenuBar() {
             (the leg-chain roll of #854/#960), not scene furniture, so it is
             off by default and lives here rather than in the always-visible
             floating toolbar. */}
+        {/* #1250 — while on, it says how many retargets' rigs it drew, zero included, and the
+            tooltip names why each other one was not: turning it on and seeing nothing must not
+            be the only answer. */}
         <Item
-          label={`${sourceRigVisible ? '✓ ' : '   '}Show Source Rig`}
+          label={`${sourceRigVisible ? '✓ ' : '   '}Show Source Rig${
+            sourceRigVisible && sourceRigReadout ? ` (${sourceRigReadout.text})` : ''
+          }`}
+          title={
+            sourceRigVisible && sourceRigReadout && sourceRigReadout.skipped.length > 0
+              ? sourceRigReadout.skipped.map((s) => `${s.retargetId}: ${s.reason}`).join('\n')
+              : undefined
+          }
           onSelect={() => useViewportStore.getState().toggleSourceRigVisible()}
           testId="menu-view-toggle-source-rig"
         />

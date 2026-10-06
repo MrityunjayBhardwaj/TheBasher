@@ -29,8 +29,11 @@
 // (#1259), so a quaternion is offered where the node composes it and listed as still where it
 // is dormant (euler mode), exactly as Blender keys one either way.
 //
-// Not here yet: Vec2 (the census places no compositor layer, #1259) and Image (a keyed image
-// input reaches nothing, #1257).
+// A Vec2 channel asks it too: the census places a composition and diffs its composited frame
+// (#1259), so a Layer's position and scale are offered and its anchor, which moves nothing drawn,
+// is not.
+//
+// Not here yet: Image (a keyed image input reaches nothing, #1257).
 //
 // REF: src/app/animatableParams.ts; src/core/comfy/comfySchedule.ts; src/app/paramDrivers.ts
 //      (`driverChannelValuesForTarget`, the road order); issues #1066, #1065, #1235, #1258.

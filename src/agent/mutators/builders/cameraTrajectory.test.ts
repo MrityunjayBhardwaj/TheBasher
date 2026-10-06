@@ -153,6 +153,61 @@ describe('#774 — a prompt becomes a wired, aimed camera trajectory', () => {
     ).toBe(true);
   });
 
+  // #1404 — WHICH constraint a second shot re-points. This used to be the first by sorted id,
+  // muted included, while `mutator.constrain` re-pointed the top live one. The ids below sort
+  // the WRONG member first on purpose, so the old rule reds.
+  describe('#1404 — it re-points the constraint the fold lets win', () => {
+    const withAims = (aims: { id: string; mute?: boolean; order: number }[]): DagState => {
+      let s = scene();
+      for (const a of aims)
+        s = applyOp(s, {
+          type: 'addNode',
+          nodeId: a.id,
+          nodeType: 'TrackTo',
+          params: {
+            target: cameraId(s),
+            aimNode: 'n_light',
+            mute: a.mute ?? false,
+            order: a.order,
+          },
+        }).next;
+      return s;
+    };
+    const aimed = (ops: Op[]) =>
+      ops
+        .filter((o): o is SetParamOp => o.type === 'setParam' && o.paramPath === 'aimNode')
+        .map((o) => o.nodeId);
+
+    it('a MUTED Track-To ON TOP of a live one: the live one is re-aimed', () => {
+      // Muted on top, so "the top of the stack" alone would pick it: only skipping muted
+      // members gets this right.
+      const s = withAims([
+        { id: 'a_aim_muted', mute: true, order: 1 },
+        { id: 'z_aim_live', order: 0 },
+      ]);
+      const ops = run(s, { cameraId: cameraId(s), subjectId: 'n_box', points: PATH });
+      expect(aimed(ops)).toEqual(['z_aim_live']);
+    });
+
+    it('two LIVE Track-Tos: the top of the stack is re-aimed, not the one that loses the fold', () => {
+      const s = withAims([
+        { id: 'a_aim_bottom', order: 0 },
+        { id: 'z_aim_top', order: 5 },
+      ]);
+      const ops = run(s, { cameraId: cameraId(s), subjectId: 'n_box', points: PATH });
+      expect(aimed(ops)).toEqual(['z_aim_top']);
+    });
+
+    it('only a MUTED Track-To: a live one is added rather than re-aiming the bypassed one', () => {
+      const s = withAims([{ id: 'a_aim_muted', mute: true, order: 0 }]);
+      const ops = run(s, { cameraId: cameraId(s), subjectId: 'n_box', points: PATH });
+      expect(aimed(ops)).toEqual([]);
+      expect(ops.some((o) => o.type === 'addNode' && (o as AddNodeOp).nodeType === 'TrackTo')).toBe(
+        true,
+      );
+    });
+  });
+
   it('refuses a camera with nothing to aim at, and a subject that is the camera', () => {
     const s0 = scene();
     const cam = cameraId(s0);

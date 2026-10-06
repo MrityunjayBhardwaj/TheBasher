@@ -66,7 +66,7 @@ export const MODEL_GENERATION_ERROR_REF = 'Text-to-3D';
  *  row: a real mesh with an invented skeleton is a different fact from an
  *  invented mesh, and a director needs to know which half degraded. */
 export const RIGGING_ERROR_REF = 'Rigging';
-import { pickStorage, type StorageCapability } from '../core/storage';
+import { isStorageNotFound, pickStorage, type StorageCapability } from '../core/storage';
 import { BrowserBlenderBridge, type BlenderBridgeCapability } from '../integrations/blender';
 import { registerAllNodes } from '../nodes/registerAll';
 // #1066 — fills the slot the keyframe channels' target/path pickers ask (a load-time side
@@ -464,8 +464,20 @@ export function boot(): Promise<void> {
       let project = null;
       try {
         project = await loadProject(storage, lastId);
-      } catch {
-        if (lastId === DEFAULT_PROJECT_ID) {
+      } catch (e) {
+        if (!isStorageNotFound(e)) {
+          // #1304 — the project is THERE and could not be read (locked, slow, corrupt, from a newer
+          // format). Rebuilding it here would save a blank scene over the director's work, so the
+          // file is left exactly as it is and the failure is said out loud. The resume key stays:
+          // the next boot tries again, which is what a transient failure needs.
+          console.warn(`boot: could not open project "${lastId}"`, e);
+          useNotificationStore.getState().notify({
+            severity: 'error',
+            message: `Couldn't open "${lastId}": ${(e as Error)?.message ?? String(e)}. The saved file was left untouched.`,
+            durationMs: 0,
+          });
+          useRouteStore.getState().goHome();
+        } else if (lastId === DEFAULT_PROJECT_ID) {
           // The canonical seed is always rebuildable — never strand the user on
           // home for the default id (it is also the e2e resume anchor). Preserve
           // the historical build-default-on-miss behavior for THIS id only.
@@ -572,6 +584,11 @@ export function boot(): Promise<void> {
       // reading the panel's rendering of the answer rather than the answer.
       void import('./stores/boneSelectionStore').then((m) => {
         w.__basher_bone = m.useBoneSelectionStore;
+      });
+      // #1335 — the armature mode (Object / Edit / Pose): UI state, read by e2e to assert a mode
+      // switch writes nothing to the graph.
+      void import('./armatureMode').then((m) => {
+        w.__basher_armature_mode = { get: m.getArmatureMode, set: m.setArmatureMode };
       });
       // v0.6 #4 W5 — threeRef (editor camera + controls target) exposed so the
       // click-to-select regression e2e (p6-w5-first-run) can project a box's

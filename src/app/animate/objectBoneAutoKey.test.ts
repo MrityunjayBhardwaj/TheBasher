@@ -25,7 +25,7 @@ import { characterTargets } from '../asset/bindMotionToCharacter';
 import { useAutoKeyStore } from '../stores/autoKeyStore';
 import { useTimeStore } from '../stores/timeStore';
 import { dispatchMutatorFromUI } from './dispatchMutator';
-import { commitObjectBoneRotation, keyObjectBoneRotation } from './autoKeyCommit';
+import { commitObjectBonePose, keyObjectBonePose, shownBoneComponent } from './autoKeyCommit';
 import { poseTargetForBone, type ObjectPoseTarget } from './poseTargetForBone';
 import { handPoseLayerOf, poseLayerChain } from './poseChain';
 import type { GraphNodeLike } from './graphNodes';
@@ -98,30 +98,30 @@ describe('#1215 — a native bone rotation keys where the hand-pose lives', () =
     const { armature, layer } = await posedBar();
     const t = target(armature, 0);
     expect(t.layerId).toBe(layer);
-    expect(t.keyed).toBe(false);
+    expect(t.keyed).toEqual({ position: false, rotation: false, scale: false });
     expect(t.rotation).toEqual([0, 0, 30]);
   });
 
   it('the key button keys the rotation shown, at the playhead, in that layer', async () => {
     const { armature, layer } = await posedBar();
     setTime(0.5);
-    const res = keyObjectBoneRotation(target(armature));
+    const res = keyObjectBonePose(target(armature), 'rotation');
     expect(res.ok, JSON.stringify(res)).toBe(true);
     const curve = curveOf(live(), layer)!;
     expect(curve.keyframes.map((k) => [k.time, k.value])).toEqual([[0.5, [0, 0, 30]]]);
-    expect(target(armature).keyed).toBe(true);
+    expect(target(armature).keyed).toEqual({ position: false, rotation: true, scale: false });
   });
 
   it('keyed + Auto-Key on: an edit is a key at the playhead; the field shows the curve as played', async () => {
     const { armature, layer } = await posedBar();
     setTime(0);
-    expect(keyObjectBoneRotation(target(armature)).ok).toBe(true);
+    expect(keyObjectBonePose(target(armature), 'rotation').ok).toBe(true);
     useAutoKeyStore.setState({ enabled: true });
     setTime(1);
     const staticBefore = (live().nodes[layer].params as PoseLayerParams).members.find(
       (m) => m.bone === 'Bone1',
     )!.rotation;
-    const res = commitObjectBoneRotation(target(armature), [0, 0, 90]);
+    const res = commitObjectBonePose(target(armature), 'rotation', [0, 0, 90]);
     expect(res.ok, JSON.stringify(res)).toBe(true);
 
     const curve = curveOf(live(), layer)!;
@@ -146,13 +146,43 @@ describe('#1215 — a native bone rotation keys where the hand-pose lives', () =
     ).toBeCloseTo(60, 3);
   });
 
+  it('#1338 — a component the member does not author shows the bone at rest, not zero', async () => {
+    const { armature } = await posedBar();
+    // A member replaces Bone1's local transform, which binds 1 above Bone0: rest position is
+    // (0, 1, 0), so typing x alone must keep y at 1 rather than drop the bone onto its parent.
+    expect(shownBoneComponent(target(armature), 'position')).toEqual([0, 1, 0]);
+    expect(shownBoneComponent(target(armature), 'scale')).toEqual([1, 1, 1]);
+    expect(shownBoneComponent(target(armature), 'rotation')).toEqual([0, 0, 30]);
+  });
+
+  it('#1338 — scale keys and auto-keys the same way, in its own curve', async () => {
+    const { armature, layer } = await posedBar();
+    expect(commitObjectBonePose(target(armature), 'scale', [1, 2, 1]).ok).toBe(true);
+    setTime(0);
+    expect(keyObjectBonePose(target(armature), 'scale').ok).toBe(true);
+    expect(target(armature).keyed).toEqual({ position: false, rotation: false, scale: true });
+    useAutoKeyStore.setState({ enabled: true });
+    setTime(1);
+    expect(commitObjectBonePose(target(armature), 'scale', [1, 3, 1]).ok).toBe(true);
+    const curve = (live().nodes[layer].params as PoseLayerParams).channels.find(
+      (c) => c.bone === 'Bone1' && c.component === 'scale',
+    )!;
+    expect(curve.keyframes.map((k) => [k.time, k.value])).toEqual([
+      [0, [1, 2, 1]],
+      [1, [1, 3, 1]],
+    ]);
+    expect(target(armature, 1).scale).toEqual([1, 3, 1]);
+    // The rotation curve was never made: each component keys alone.
+    expect(curveOf(live(), layer)).toBeUndefined();
+  });
+
   it('keyed + Auto-Key off: refused with the reason, nothing written', async () => {
     const { armature } = await posedBar();
     setTime(0);
-    expect(keyObjectBoneRotation(target(armature)).ok).toBe(true);
+    expect(keyObjectBonePose(target(armature), 'rotation').ok).toBe(true);
     const before = live();
     setTime(1);
-    const res = commitObjectBoneRotation(target(armature), [0, 0, 90]);
+    const res = commitObjectBonePose(target(armature), 'rotation', [0, 0, 90]);
     expect(res.ok).toBe(false);
     expect((res as { reason: string }).reason).toMatch(/Auto-Key/);
     expect(live()).toBe(before);
@@ -162,7 +192,7 @@ describe('#1215 — a native bone rotation keys where the hand-pose lives', () =
     const { armature, layer } = await posedBar();
     useAutoKeyStore.setState({ enabled: true });
     setTime(1);
-    const res = commitObjectBoneRotation(target(armature), [0, 0, 60]);
+    const res = commitObjectBonePose(target(armature), 'rotation', [0, 0, 60]);
     expect(res.ok, JSON.stringify(res)).toBe(true);
     expect(curveOf(live(), layer)).toBeUndefined();
     expect(target(armature).rotation).toEqual([0, 0, 60]);

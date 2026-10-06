@@ -33,8 +33,8 @@ import {
   ownShown,
   setActiveCollectionOp,
   setShownOp,
-  VISIBILITY_TYPES,
 } from './collections';
+import { hideRefusal } from './sceneVisibility';
 import { buildDeleteNodesOps, buildDuplicateNodeOps } from './sceneNodeActions';
 import { selectActiveCameraNode } from './activeCamera';
 import { isCameraNode } from './cameraNode';
@@ -805,10 +805,8 @@ export function SceneTree({ filter = '' }: SceneTreeProps) {
           // frustums honour it, so the eye is true on each of their rows.
           // #1503 — and only on a node that carries the flag: a Transform or MaterialOverride
           // wrapper draws no body of its own, so an eye on it would hide nothing.
-          const isHideable =
-            !filtering &&
-            VISIBILITY_TYPES.has(row.nodeType) &&
-            (row.nodeType === 'Collection' || hideable.has(row.nodeId));
+          // #1445 — asked through `hideRefusal`, the predicate the agent's hide verb asks too.
+          const isHideable = !filtering && hideRefusal(state, row.nodeId, hideable) === null;
           const hidden = !ownShown(state.nodes[row.nodeId], 'viewport');
           const rendered = ownShown(state.nodes[row.nodeId], 'render');
           return (

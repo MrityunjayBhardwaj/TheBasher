@@ -27,6 +27,7 @@ import { ParamDiamond } from './ParamDiamond';
 import { resolveEvaluatedParam } from './resolveEvaluatedParam';
 import { useTimeStore } from './stores/timeStore';
 import { DEFAULT_CAMERA_FAR, DEFAULT_CAMERA_NEAR } from '../nodes/CameraData';
+import { uiEvaluatorCache } from './uiEvaluatorCache';
 
 const ROW = 'flex items-center justify-between gap-2 px-3 py-1.5 text-[11px] text-fg/80';
 const LABEL = 'font-mono text-fg/60';
@@ -75,11 +76,15 @@ export function CameraLensControls({
   const seconds = useTimeStore((s) => s.seconds);
   const normalized = useTimeStore((s) => s.normalized);
   const playing = useTimeStore((s) => s.playing);
+  // #1314 — a stable cache: this re-reads the evaluated graph on every playhead change, and
+  // uncached that re-runs everything under the node (a character's whole-clip retarget) per frame.
+  const cache = uiEvaluatorCache;
   const evaluatedScalar = useMemo(() => {
     const ctx = { time: { frame, seconds, normalized } };
-    const at = (paramPath: string) => resolveEvaluatedParam(dagState, nodeId, paramPath, ctx);
+    const at = (paramPath: string) =>
+      resolveEvaluatedParam(dagState, nodeId, paramPath, ctx, cache);
     return { fov: at('fov'), near: at('near'), far: at('far') };
-  }, [dagState, nodeId, frame, seconds, normalized]);
+  }, [dagState, nodeId, frame, seconds, normalized, cache]);
 
   // #247 — when focus-on-target is on, the focus distance is DERIVED from the
   // evaluated pose (|position − lookAt|, channels + Track-To) — the same value the
@@ -90,7 +95,7 @@ export function CameraLensControls({
     const p = dagState.nodes[nodeId]?.params as { focusOnTarget?: unknown } | undefined;
     if (p?.focusOnTarget !== true) return null;
     try {
-      const pose = resolveCameraPoseAt(dagState, poseNodeId, seconds);
+      const pose = resolveCameraPoseAt(dagState, poseNodeId, seconds, cache);
       return round(
         Math.hypot(
           pose.lookAt[0] - pose.position[0],
@@ -101,7 +106,7 @@ export function CameraLensControls({
     } catch {
       return null;
     }
-  }, [dagState, nodeId, poseNodeId, seconds]);
+  }, [dagState, nodeId, poseNodeId, seconds, cache]);
 
   if (!node) return null;
   const params = (node.params ?? {}) as {

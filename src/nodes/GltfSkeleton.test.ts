@@ -50,7 +50,7 @@ function evalNode(asset: GltfAssetValue | undefined, skinIndex = 0): SkeletonVal
 }
 
 describe('GltfSkeleton node — purity + determinism (F2 / D-02 / V2)', () => {
-  it('twice-eval the same GltfAssetValue → deep-equal Skeleton (incl. scale + IBM)', () => {
+  it('twice-eval the same GltfAssetValue → deep-equal Skeleton (incl. scale)', () => {
     const av = assetValue([SKIN]);
     const a = evalNode(av);
     const b = evalNode(av);
@@ -58,7 +58,8 @@ describe('GltfSkeleton node — purity + determinism (F2 / D-02 / V2)', () => {
     // The projection actually populated the rig (not a vacuous empty equality).
     expect(a.bones).toHaveLength(2);
     expect(a.bones[1].scale).toEqual([2, 2, 2]);
-    expect(a.bones[1].inverseBindMatrix).toHaveLength(16);
+    // #1342 — the skin's matrices stay on the capture; a bone carries its rest only.
+    expect('inverseBindMatrix' in a.bones[1]).toBe(false);
   });
 
   it('selects the skin at `skinIndex`', () => {

@@ -7,7 +7,7 @@
 //
 // Wire in, wire out. The layer holds the bones it touches (its MEMBERS) and their keys, and folds
 // them onto the incoming pose by its MODE and WEIGHT. A bone that is not a member passes through.
-// It absorbs `PoseOverride` (one bone, static values, no keys), which retires in #1243.
+// It absorbed `PoseOverride` (one bone, static values, no keys), retired in #1243.
 //
 // ── WHAT IT CORRESPONDS TO ──────────────────────────────────────────────────────────────────────
 //
@@ -62,6 +62,8 @@ import { KeyframeChannelVec3Node, KeyframeChannelVec3Params } from './KeyframeCh
 import { KeyframeChannelQuatParams } from './KeyframeChannelQuat';
 import { resolveExtend, sampleQuatKeyframesExtended, type QuatKey } from './keyframeInterp';
 import { KeyframeChannelNumberNode, KeyframeChannelNumberParams } from './KeyframeChannelNumber';
+import { layerSampleTimes, layeredWireRange, type LayerBlend } from './wireSampleTimes';
+import { ikChainProblem, solveTwoBoneIk } from './twoBoneIk';
 
 const Vec3Schema = z.tuple([z.number(), z.number(), z.number()]);
 const QuatSchema = z.tuple([z.number(), z.number(), z.number(), z.number()]);
@@ -73,7 +75,11 @@ const QUAT_EXTENDS = ['hold', 'cycle', 'mirror'] as const;
 export const POSE_ROTATION_MODES = [...EULER_ORDERS, 'quaternion'] as const;
 export type PoseRotationMode = (typeof POSE_ROTATION_MODES)[number];
 
-export const POSE_LAYER_MODES = ['override', 'additive'] as const;
+/**
+ * #1343 — `ik`: the layer solves one two-bone chain (`ik`) toward a control bone of the same skeleton,
+ * and its weight blends the solve over the pose that arrives — the FK/IK switch. It holds no members.
+ */
+export const POSE_LAYER_MODES = ['override', 'additive', 'ik'] as const;
 export type PoseLayerMode = (typeof POSE_LAYER_MODES)[number];
 
 /** The fields a channel spec never carries here: the bound target (the bone is a field instead),
@@ -145,6 +151,22 @@ export const PoseLayerMemberSchema = z.object({
 });
 export type PoseLayerMember = z.infer<typeof PoseLayerMemberSchema>;
 
+/** #1343 — an `ik` layer's chain: joints, the control bones it reaches for, and how it reaches. */
+export const PoseLayerIkSchema = z.object({
+  root: z.string(),
+  mid: z.string(),
+  tip: z.string(),
+  /** The control bone the tip reaches. */
+  goal: z.string(),
+  /** The control bone the bend faces; absent, the arriving mid joint is the pole (Houdini). */
+  pole: z.string().optional(),
+  /** Degrees: which root axis faces the pole, X at 0, Z at 90 (Blender's pole angle). */
+  poleAngle: z.number().min(-180).max(180).default(0),
+  stretch: z.boolean().default(false),
+  orientTip: z.boolean().default(false),
+});
+export type PoseLayerIk = z.infer<typeof PoseLayerIkSchema>;
+
 export const PoseLayerParams = z.object({
   name: nameParam('pose-layer'),
   mode: z.enum(POSE_LAYER_MODES).default('override'),
@@ -157,6 +179,8 @@ export const PoseLayerParams = z.object({
   solo: z.boolean().default(false),
   members: z.array(PoseLayerMemberSchema).default([]),
   channels: z.array(PoseLayerChannelSchema).default([]),
+  /** #1343 — the chain an `ik` layer solves; read only in that mode. */
+  ik: PoseLayerIkSchema.optional(),
 });
 export type PoseLayerParams = z.infer<typeof PoseLayerParams>;
 
@@ -198,7 +222,12 @@ function synchronizedSampler(
   return (seconds) => sampleQuatKeyframesExtended(keys, seconds, before, after);
 }
 
-const BLEND: Record<PoseLayerMode, ChannelBlendMode> = { override: 'replace', additive: 'combine' };
+// #1343 — an ik layer blends its solve over what arrives as an override does (Houdini's Blend).
+const BLEND: Record<PoseLayerMode, ChannelBlendMode> = {
+  override: 'replace',
+  additive: 'combine',
+  ik: 'replace',
+};
 const DEG = Math.PI / 180;
 
 /**
@@ -302,6 +331,23 @@ export function memberEulerDegreesAt(
 }
 
 /**
+ * #1338 — a member's position or scale at `seconds`, as the layer plays it: the keyed curve (muted
+ * curves skipped), else its static value, else null (the member leaves the component alone). The
+ * position and scale counterpart of `memberEulerDegreesAt`, read the way `resolveMember` reads them.
+ */
+export function memberVec3At(
+  member: PoseLayerMember,
+  channels: readonly PoseLayerChannel[],
+  component: 'position' | 'scale',
+  seconds: number,
+): Vec3 | null {
+  const keys = poseLayerChannelOf(playedChannels(channels), member.bone, component);
+  if (keys) return vec3Sampler(keys)(seconds);
+  const value = member[component];
+  return value ? (value as Vec3) : null;
+}
+
+/**
  * A member's rotation over time, as the layer reads it: its keyed curve in the member's mode (a curve
  * for another mode ignored), else its static value, else null (the member leaves rotation alone).
  * Exported for the mode change (#1242), which must read the member exactly as the layer does.
@@ -365,37 +411,154 @@ export function poseLayerUnmatchedMembers(
 }
 
 /**
- * #1225 — the range a base layer's keys cover, and how densely, for the wire's `clip`: from the
- * earliest key to the latest, at the densest channel's key count over that span (the rule a clip's
- * range uses, `clipInfoOf`). The weight's keys are not motion and do not count. Nothing when the keys
- * span no time.
+ * #1457 — how this layer's blend reads for sampling (`LayerBlend`): nothing for a layer with no
+ * members or an override at full static weight; everywhere for an override at a weight that is not 1
+ * or is keyed; for an additive layer, the span its played rotation curves are keyed over.
  */
-export function poseLayerClipInfo(channels: readonly PoseLayerChannel[]): WireClipInfo | undefined {
-  // #1211 — memoised by the channel list's identity: a base layer holding a whole file's motion walks
-  // every key here (walk.bvh: 9,600, measured 12.9 µs of an 18.3 µs evaluation), and the list is the
-  // same array for as long as the layer's params are unchanged.
-  if (CLIP_INFO.has(channels)) return CLIP_INFO.get(channels);
-  const info = computeClipInfo(channels);
-  CLIP_INFO.set(channels, info);
+function layerBlendOf(params: PoseLayerParams): LayerBlend {
+  const played = playedChannels(params.channels);
+  // #1343 — an ik result moves between any two samples of what it reads (the goal, the FK), so the
+  // wire is read at every frame while the solve shows at all.
+  if (params.mode === 'ik') {
+    const weightKeyed = poseLayerChannelOf(played, '', 'weight') !== undefined;
+    return params.ik && (weightKeyed || params.weight > 0)
+      ? { kind: 'everywhere' }
+      : { kind: 'none' };
+  }
+  if (params.members.length === 0) return { kind: 'none' };
+  if (params.mode === 'override') {
+    const weightKeyed = poseLayerChannelOf(played, '', 'weight') !== undefined;
+    return weightKeyed || (params.weight > 0 && params.weight < 1)
+      ? { kind: 'everywhere' }
+      : { kind: 'none' };
+  }
+  let start = Infinity;
+  let end = -Infinity;
+  for (const c of played) {
+    if (c.component !== 'rotation' && c.component !== 'quaternion') continue;
+    for (const k of c.keyframes) {
+      start = Math.min(start, k.time);
+      end = Math.max(end, k.time);
+    }
+  }
+  return end > start ? { kind: 'while', start, end } : { kind: 'none' };
+}
+
+/**
+ * #1337 — the layer's weight over time as it plays: its keyed weight curve (unless muted), else the
+ * static weight. Unclamped, as the evaluator reads it; the fold clamps it to [0, 1].
+ */
+export function poseLayerWeightOf(params: PoseLayerParams): (seconds: number) => number {
+  return weightOf(params, playedChannels(params.channels));
+}
+
+/**
+ * #1225 — the range a base layer's keys cover, from the earliest key to the latest, and #1456 — the
+ * times that read every pose the layer holds: every key, and the fills each segment's interpolation
+ * needs (`layerSampleTimes`). The weight's keys are not motion and do not count. Nothing when the
+ * keys span no time.
+ */
+export function poseLayerClipInfo(
+  channels: readonly PoseLayerChannel[],
+  members: readonly PoseLayerMember[],
+): WireClipInfo | undefined {
+  // #1211 — memoised by the channel and member lists' identity: a base layer holding a whole file's
+  // motion walks every key here (walk.bvh: 9,600, measured 12.9 µs of an 18.3 µs evaluation), and
+  // the lists are the same arrays for as long as the layer's params are unchanged. The members are
+  // part of the key because a member's rotation mode decides which curve is read and how.
+  const known = CLIP_INFO.get(channels);
+  if (known && known.members === members) return known.info;
+  const info = computeClipInfo(channels, members);
+  CLIP_INFO.set(channels, { members, info });
   return info;
 }
 
-const CLIP_INFO = new WeakMap<readonly PoseLayerChannel[], WireClipInfo | undefined>();
+const CLIP_INFO = new WeakMap<
+  readonly PoseLayerChannel[],
+  { members: readonly PoseLayerMember[]; info: WireClipInfo | undefined }
+>();
 
-function computeClipInfo(channels: readonly PoseLayerChannel[]): WireClipInfo | undefined {
+function computeClipInfo(
+  channels: readonly PoseLayerChannel[],
+  members: readonly PoseLayerMember[],
+): WireClipInfo | undefined {
   let start = Infinity;
   let end = -Infinity;
-  let densest = 0;
   for (const c of channels) {
-    if (c.component === 'weight' || c.keyframes.length === 0) continue;
+    if (c.component === 'weight') continue;
     for (const k of c.keyframes) {
       if (k.time < start) start = k.time;
       if (k.time > end) end = k.time;
     }
-    densest = Math.max(densest, c.keyframes.length);
   }
   if (!(end > start)) return undefined;
-  return { start, end, rate: densest / (end - start) };
+  return { start, end, times: layerSampleTimes(channels, members, start, end) };
+}
+
+/**
+ * #1343 — why an `ik` layer solves nothing on `skeleton`, or null when it solves (or is not an ik
+ * layer). A layer that cannot solve hands the pose through untouched; this is the reason a surface
+ * shows for it.
+ */
+export function poseLayerIkProblem(
+  params: Pick<PoseLayerParams, 'mode' | 'ik'>,
+  skeleton: PosedSkeletonValue['skeleton'],
+): string | null {
+  if (params.mode !== 'ik') return null;
+  if (!params.ik) return 'it names no chain to solve';
+  return ikChainProblem(skeleton.bones, params.ik);
+}
+
+/** #1343 — an `ik` layer's output: the solved chain, blended over what arrives by the weight. */
+function ikLayerValue(
+  params: PoseLayerParams,
+  incoming: PosedSkeletonValue,
+  upstream: PosedSkeletonValue,
+  source: PosedSkeletonValue,
+): PosedSkeletonValue {
+  const chain = params.ik;
+  const bones = upstream.skeleton.bones;
+  if (!chain || ikChainProblem(bones, chain) !== null) return incoming;
+  const index = new Map(bones.map((b, i) => [b.name, i]));
+  const joints = [chain.root, chain.mid, ...(chain.orientTip ? [chain.tip] : [])].map(
+    (name) => index.get(name)!,
+  );
+  const weight = weightOf(params, playedChannels(params.channels));
+  const range = layeredWireRange(
+    incoming.clip,
+    poseLayerClipInfo(params.channels, params.members),
+    layerBlendOf(params),
+  );
+  return {
+    kind: 'PosedSkeleton',
+    skeleton: upstream.skeleton,
+    source,
+    ...(range ? { clip: range } : {}),
+    ...(params.solo || incoming.soloed === true ? { soloed: true } : {}),
+    sample: (seconds: number): readonly BonePose[] => {
+      const base = upstream.sample(seconds);
+      const w = Math.min(1, weight(seconds));
+      if (!(w > 0)) return base;
+      const solved = solveTwoBoneIk(bones, base, chain);
+      if (!solved) return base;
+      if (w >= 1) return solved;
+      const out = base.slice();
+      for (const i of joints) {
+        const at = base[i];
+        const to = solved[i];
+        if (!at || !to) continue;
+        const fold = (lower: unknown, value: unknown, type: 'vec3' | 'quat', path: string) =>
+          foldChannelValue(lower, [{ value, mode: BLEND.ik, influence: w }], type, path);
+        out[i] = {
+          name: at.name,
+          position: fold(at.position, to.position, 'vec3', 'position') as Vec3,
+          quaternion: fold(at.quaternion, to.quaternion, 'quat', 'rotation') as Quat,
+          scale: fold(at.scale, to.scale, 'vec3', 'scale') as Vec3,
+        };
+      }
+      return out;
+    },
+  };
 }
 
 export const PoseLayerNode: NodeDefinition<PoseLayerParams, PosedSkeletonValue> = {
@@ -421,6 +584,7 @@ export const PoseLayerNode: NodeDefinition<PoseLayerParams, PosedSkeletonValue> 
     // layers play together).
     const source = incoming.source ?? incoming;
     const upstream = params.solo && incoming.soloed !== true ? source : incoming;
+    if (params.mode === 'ik') return ikLayerValue(params, incoming, upstream, source);
     if (params.members.length === 0) {
       // Touching nothing. Soloed, it still silences every other layer: the source plays alone.
       return upstream === incoming
@@ -460,11 +624,14 @@ export const PoseLayerNode: NodeDefinition<PoseLayerParams, PosedSkeletonValue> 
       return built;
     };
 
-    // #1225 — the base layer's keys ARE the character's motion, so they give the wire its range; any
-    // other layer passes the incoming range through.
-    const keyed = isBase ? poseLayerClipInfo(params.channels) : undefined;
+    // #1225 — the base layer's keys ARE the character's motion, so they give the wire its range.
+    // #1457 — any other layer passes the incoming range through and adds, inside it, its own keys'
+    // times and every frame where its blend of two moving poses is not a slerp (`layeredWireRange`).
+    const keyed = poseLayerClipInfo(params.channels, params.members);
     // A base layer is named after the file's animation (Blender's action name), so its range is too.
-    const range = isBase ? keyed && { ...keyed, name: params.name } : incoming.clip;
+    const range = isBase
+      ? keyed && { ...keyed, name: params.name }
+      : layeredWireRange(incoming.clip, keyed, layerBlendOf(params));
     const value: { -readonly [K in keyof PosedSkeletonValue]: PosedSkeletonValue[K] } = {
       kind: 'PosedSkeleton',
       skeleton: upstream.skeleton,

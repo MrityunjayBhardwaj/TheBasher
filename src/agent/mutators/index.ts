@@ -56,7 +56,10 @@ import { setComponentScopeMutator } from './builders/setComponentScope';
 import { poseBoneMutator } from './builders/poseBone';
 import { setPoseMemberModeMutator } from './builders/setPoseMemberMode';
 import { renameBoneMutator } from './builders/renameBone';
+import { editSkeletonMutator } from './builders/editSkeleton';
 import { bakePoseMutator } from './builders/bakePose';
+import { constrainMutator, unconstrainMutator } from './builders/constrain';
+import { setHiddenMutator } from './builders/setHidden';
 
 export {
   rotateMutator,
@@ -90,7 +93,11 @@ export {
   poseBoneMutator,
   setPoseMemberModeMutator,
   renameBoneMutator,
+  editSkeletonMutator,
   bakePoseMutator,
+  constrainMutator,
+  unconstrainMutator,
+  setHiddenMutator,
 };
 
 export function registerAllMutators(): void {
@@ -104,6 +111,8 @@ export function registerAllMutators(): void {
   registerMutator(setObjectSlotMaterialMutator);
   registerMutator(duplicateMutator);
   registerMutator(deleteNodeMutator);
+  // #1445 — the outliner eye's verb: #334 took setHidden off dag.exec, and this replaces it.
+  registerMutator(setHiddenMutator);
   // P3 Wave B — animation Mutators (THESIS §42, issue #34). v0.7 #199: the
   // AnimationLayer wrapper is retired (direct channels, V57). `addLayer` is gone;
   // `addChannel` now mints a FREE-FLOATING channel (no layer), then `keyframe`
@@ -120,6 +129,10 @@ export function registerAllMutators(): void {
   // than a capability: a trajectory is about five Vec3s, which is what a language
   // model emits well, so no service, stub or transport is involved.
   registerMutator(cameraTrajectoryMutator);
+  // #353 — the constraint family's verbs: aim at / ride along, and remove. Their kind
+  // axis is ADDABLE_CONSTRAINTS itself, so a new constraint kind needs no mutator work.
+  registerMutator(constrainMutator);
+  registerMutator(unconstrainMutator);
   // P3.1 Wave C — animation retargeting
   registerMutator(retargetMutator);
   // P4 Wave C — render graph
@@ -168,12 +181,14 @@ export function registerAllMutators(): void {
 
   // #993 — the pose lane's AUTHOR. `PoseOverride` was registered, evaluated and
   // consumed by the render band while nothing in the codebase could bring one into
-  // existence; a lane is not shipped until something can author it.
+  // existence; a lane is not shipped until something can author it. It now authors
+  // into a native character's pose layer (#1244); `PoseOverride` itself retired (#1243).
   registerMutator(poseBoneMutator);
   // #1242 — a pose layer member's rotation mode, converted or resampled.
   registerMutator(setPoseMemberModeMutator);
   // #1201 — rename a bone, and every record that names it.
   registerMutator(renameBoneMutator);
+  registerMutator(editSkeletonMutator);
   // #1215 — bake computed motion into keys on a pose layer.
   registerMutator(bakePoseMutator);
 }

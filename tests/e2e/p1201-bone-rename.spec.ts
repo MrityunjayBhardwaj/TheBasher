@@ -57,6 +57,9 @@ test('#1201 — renaming a bone in the inspector leaves the drawn skin where it 
     const id = (nodes[modifier].inputs.armature as { node: string }).node;
     selection.useSelectionStore.getState().select(id);
     bones.useBoneSelectionStore.getState().selectBone(id, 'Bone1', ['Bone0', 'Bone1']);
+    // #1335 — a bone is live in Pose mode, which is where a director poses one.
+    const modes = await import('/src/app/stores/armatureModeStore.ts');
+    modes.useArmatureModeStore.getState().setMode(id, 'pose');
   });
 
   await expect

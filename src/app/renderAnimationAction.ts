@@ -20,6 +20,7 @@ import { useDagStore } from '../core/dag/store';
 import { createEvaluatorCache, evaluate } from '../core/dag/evaluator';
 import { useProjectStore } from '../core/project/store';
 import { FRAMES_PER_SECOND, useTimeStore } from './stores/timeStore';
+import { sceneFrameEnd } from './sceneRange';
 import type { RenderOutputValue } from '../nodes/types';
 import { DEFAULT_RENDER_HEIGHT, DEFAULT_RENDER_WIDTH } from '../nodes/RenderOutput';
 import {
@@ -75,13 +76,20 @@ export async function renderAnimationToFile(
 
   // Static render config (resolution + postFx), read once (V10/H14 defaults).
   const state = useDagStore.getState().state;
+  // #1318 — ONE evaluator cache for the whole export. `state` is captured once and cannot
+  // change under the loop, so a pure node (the walk's whole-clip retarget above all) is
+  // evaluated once, not once per frame per reader: without it `capture()` re-ran the
+  // retarget 3× per frame (19 runs for a 6-frame export of the Camera Path + AI Walk
+  // example; 1 with). Sharing it across frames is correct by construction: a time-dependent
+  // node's cache key carries the frame (`evaluator.ts`, `timePart`), a pure one's doesn't.
+  const cache = createEvaluatorCache();
   let width = DEFAULT_RENDER_WIDTH;
   let height = DEFAULT_RENDER_HEIGHT;
   let postFx: RenderOutputValue['postFx'] = { tonemap: 'ACES', smaa: true };
   const target = state.outputs.render;
   if (target) {
     const value = evaluate(state, target.node, {
-      cache: createEvaluatorCache(),
+      cache,
       ctx: FROZEN_TIME,
     }).value as RenderOutputValue;
     width = value.width || DEFAULT_RENDER_WIDTH;
@@ -116,8 +124,10 @@ export async function renderAnimationToFile(
 
   const fps = FRAMES_PER_SECOND;
   const time = useTimeStore.getState();
-  // Inclusive of frame 0 AND the final duration frame.
-  const frameCount = Math.max(1, Math.floor(time.durationSeconds * fps) + 1);
+  // Inclusive of frame 0 AND the scene's End frame. #1287 — End is read off the graph being
+  // rendered (Blender's render reads `scene.frame_end`), not the UI store's playable range,
+  // which Video mode sizes to its composition while it is open.
+  const frameCount = sceneFrameEnd(state) + 1;
 
   // Pick the sink; MP4 → PNG-sequence fallback when WebCodecs is unavailable.
   let sink: FrameSink;
@@ -163,7 +173,7 @@ export async function renderAnimationToFile(
           // waitForApply have advanced the playhead. Read the live seconds (just
           // set) and the captured DAG state (unchanged across frames). Same
           // resolver as the still + viewport → frame-for-frame parity.
-          const pose = resolveActiveCameraPoseAt(state, useTimeStore.getState().seconds);
+          const pose = resolveActiveCameraPoseAt(state, useTimeStore.getState().seconds, cache);
           return renderSceneToImageCanvas({ gl, scene, pose, width, height, postFx, dof }, scratch);
         },
       },

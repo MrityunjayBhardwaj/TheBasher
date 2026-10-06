@@ -42,6 +42,7 @@
 // next keyframes array locally (mirroring keyframeMutator's sort +
 // same-time-replace semantics) and emit a single setParam Op.
 
+import { sceneEndSeconds, setSceneEndAtPlayhead } from './sceneRange';
 import { useEffect } from 'react';
 import type { Op } from '../core/dag/types';
 import { useDagStore } from '../core/dag/store';
@@ -57,6 +58,9 @@ import { useChromeStore } from './stores/chromeStore';
 import { useEditorStore, type ActiveTool } from './stores/editorStore';
 import { useSelectionStore } from './stores/selectionStore';
 import { useRenameStore } from './stores/renameStore';
+import { getArmatureMode, toggleArmatureMode } from './armatureMode';
+import { getActiveBone } from './boneSelection';
+import { editSkeletonFromUI } from './skeletonEditActions';
 import { useBoxSelectStore } from './stores/boxSelectStore';
 import { getViewportSelectableIds } from './selectableNodes';
 import { buildDeleteNodesOps, buildDuplicateNodeOps } from './sceneNodeActions';
@@ -201,6 +205,28 @@ function buildKeyframeDeleteOp(): Op[] | null {
   return resolved.write({ keyframes: next });
 }
 
+/**
+ * #1483 — whether the pointer is over the timeline (dope sheet, curve editor, NLA…). A key pressed
+ * there belongs to the timeline, as Blender sends a key to the editor under the pointer. Read off
+ * the DOM's own hover state at the moment of the key, so nothing has to track it.
+ */
+export function pointerOverTimeline(): boolean {
+  return document.querySelector('[data-key-region="timeline"]')?.matches(':hover') ?? false;
+}
+
+/** #1483 — why Delete removed no key, in words for the notice. */
+function noKeyDeletedReason(): string {
+  const ref = useTimelineSelection.getState().activeKeyframeId;
+  if (!ref) return 'No key selected to delete.';
+  const resolved = resolveRowChannelForWrite(useDagStore.getState().state, ref.channelId);
+  const keys = (resolved?.params.keyframes as KeyframeSample[] | undefined) ?? [];
+  if (!keys.some((k) => k.time === ref.time)) return 'The selected key no longer exists.';
+  if (keys.length === 1) {
+    return "A channel keeps its last key. Use Clear to remove the channel's keys.";
+  }
+  return "This key can't be deleted.";
+}
+
 /** [ / ] seek helpers. Returns the time of the previous/next keyframe
  *  on the active channel relative to current time, or null when there
  *  isn't one. */
@@ -320,6 +346,13 @@ function openAtViewportCenter(openAt: (x: number, y: number) => void): void {
 
 function openAddMenuAtViewportCenter(): void {
   openAtViewportCenter(useAddMenuStore.getState().openAt);
+}
+
+/** #1339 — a refused skeleton edit says why, as an info notice, rather than doing nothing silently. */
+function sayIfRefused(outcome: { ok: true } | { ok: false; reason: string }): void {
+  if (!outcome.ok) {
+    useNotificationStore.getState().notify({ severity: 'info', message: outcome.reason });
+  }
 }
 
 export function KeyboardShortcuts() {
@@ -448,6 +481,47 @@ export function KeyboardShortcuts() {
         return;
       }
 
+      // #1287 — the scene's frame range, Blender's keys: Ctrl+End sets End at the playhead
+      // (anim.end_frame_set), Shift+Left / Shift+Right jump to the start / End (screen.frame_jump).
+      if (cmd && !e.shiftKey && !e.altKey && e.key === 'End') {
+        e.preventDefault();
+        setSceneEndAtPlayhead();
+        return;
+      }
+      if (!cmd && !e.altKey && e.shiftKey && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
+        e.preventDefault();
+        const dag = useDagStore.getState().state;
+        useTimeStore.getState().setTime(e.key === 'ArrowLeft' ? 0 : sceneEndSeconds(dag));
+        return;
+      }
+
+      // #1339 — Alt+P clears the selected bone's parent in Edit mode (Blender's Clear Parent),
+      // keeping it where it stands. Above the no-modifier guard, which would drop it.
+      if (e.altKey && !cmd && !e.shiftKey && e.code === 'KeyP' && getArmatureMode() === 'edit') {
+        const bone = getActiveBone();
+        if (bone) {
+          e.preventDefault();
+          sayIfRefused(
+            editSkeletonFromUI(
+              bone.nodeId,
+              { op: 'parent', bone: bone.boneName, parent: null },
+              'clear bone parent',
+            ),
+          );
+          return;
+        }
+      }
+
+      // #1335 — Ctrl+Tab toggles Pose mode on a selected armature, as in Blender. Above the
+      // no-modifier guard, which would drop it. Chrome keeps Ctrl+Tab for switching browser tabs
+      // and never delivers it to the page, so the toolbar's mode menu is the road there for a
+      // director; the key is honoured wherever it arrives. Not an armature: the key falls through
+      // to the guard and does nothing, as before.
+      if (cmd && !e.altKey && !e.shiftKey && e.key === 'Tab' && toggleArmatureMode('pose')) {
+        e.preventDefault();
+        return;
+      }
+
       // Single-key shortcuts (only when no mod is held).
       if (cmd || e.altKey || e.shiftKey) return;
 
@@ -492,6 +566,39 @@ export function KeyboardShortcuts() {
       // as it always has (E is still the rotate tool). This is the same context-override
       // shape as Delete-removes-a-keyframe-when-one-is-selected, below: the more specific
       // selection claims the key. Blender does the same — E is extrude in edit mode.
+      // #1339 — EDIT-MODE BONE KEYS, the same context-override shape as the curve point's: live
+      // only in an armature's Edit mode with a bone selected, so everywhere else E is still the
+      // rotate tool and Delete still deletes the selection. E extrudes a child from the bone (which
+      // becomes the selection); X or Delete deletes it, its children going to its parent, as
+      // Blender's Delete Bones does. Over the timeline, Delete stays the timeline's.
+      const editBone = getArmatureMode() === 'edit' ? getActiveBone() : null;
+      if (editBone && (e.key === 'e' || e.key === 'E')) {
+        e.preventDefault();
+        sayIfRefused(
+          editSkeletonFromUI(
+            editBone.nodeId,
+            { op: 'extrude', from: editBone.boneName },
+            'extrude bone',
+          ),
+        );
+        return;
+      }
+      if (
+        editBone &&
+        (e.key === 'x' || e.key === 'X' || e.key === 'Delete' || e.key === 'Backspace') &&
+        !pointerOverTimeline()
+      ) {
+        e.preventDefault();
+        sayIfRefused(
+          editSkeletonFromUI(
+            editBone.nodeId,
+            { op: 'delete', bone: editBone.boneName, reparent: true },
+            'delete bone',
+          ),
+        );
+        return;
+      }
+
       const activePoint = getActiveCurvePoint();
       if (activePoint && (e.key === 'e' || e.key === 'E')) {
         // Extrude: a new point after this one, which becomes the selection — grab it and
@@ -643,6 +750,17 @@ export function KeyboardShortcuts() {
               e.preventDefault();
               return;
             }
+            // #1483 — with the pointer over the timeline, Delete is for keys and nothing else.
+            // Falling through here deleted the selected OBJECT: the key delete above clears the
+            // key selection, so a second Delete, the obvious way to delete the next key, reached
+            // the node delete below. Say why no key went instead.
+            if (pointerOverTimeline()) {
+              e.preventDefault();
+              useNotificationStore
+                .getState()
+                .notify({ severity: 'info', message: noKeyDeletedReason() });
+              return;
+            }
           }
           // #322 — curve-point-delete override, the same shape as the keyframe one above: a
           // point sub-selection is MORE specific than the node selection, so it claims the
@@ -704,6 +822,12 @@ export function KeyboardShortcuts() {
           openAtViewportCenter(useMoveToCollectionMenuStore.getState().openAt);
           return;
         case 'Tab':
+          // #1335 — with an armature selected, Tab toggles Edit mode, as in Blender (Ctrl+Tab,
+          // Pose mode, is handled above the no-modifier guard).
+          if (toggleArmatureMode('edit')) {
+            e.preventDefault();
+            return;
+          }
           // Cycle editor space: 3D Viewport → 2D View → Video → 3D
           // (SPACE_CYCLE; Blender's Tab idiom, extended for the compositor).
           // Skip when the user is typing — already handled by isTypingTarget

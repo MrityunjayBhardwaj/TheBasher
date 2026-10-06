@@ -21,7 +21,7 @@
 //      src/app/ConstraintStackControls.tsx (the panel); src/app/operatorStack.ts (the
 //      SOP twin); docs/RELATIONAL-OPERATORS-DESIGN.md §8.
 
-import { createEvaluatorCache } from '../core/dag/evaluator';
+import { createEvaluatorCache, type EvaluatorCache } from '../core/dag/evaluator';
 import type { DagState } from '../core/dag/state';
 import type { Op } from '../core/dag/types';
 import type { ParamOption } from '../nodes/paramWidget';
@@ -32,16 +32,78 @@ import {
 } from './nodeConstraints';
 import type { StackRowEntry } from './OperatorStackRows';
 import { resolveWorldTransform } from './resolveWorldTransform';
+import { readCurveSampleAt } from './curveSampleSource';
 import { nodeDisplayName } from './sceneTreeWalk';
 import { characterNodeNames } from './characterParts';
+
+/** A constraint kind the user can add, and what it POINTS WITH.
+ *
+ *  #353 — `pointer` is the param naming the other node (the aim subject, the path) and
+ *  `pointeeProblem` is the RESOLVER's own test for whether that node can serve, or why not.
+ *  Both kinds degrade silently on a bad pointee — a Track-To whose `aimNode` has no world
+ *  position aims at `aimPoint` (`aimTargetWorld`), a Follow-Path whose `curve` samples
+ *  nothing contributes nothing to the fold — so a road that writes a pointee must ask first.
+ *  They live on the row so the agent's `mutator.constrain` reads its whole vocabulary from
+ *  here: a kind added to this list is speakable with no mutator change. */
+export interface AddableConstraint {
+  readonly type: string;
+  readonly label: string;
+  readonly pointer: string;
+  readonly pointeeProblem: (
+    state: DagState,
+    nodeId: string,
+    cache: EvaluatorCache,
+  ) => string | null;
+}
+
+const EVAL_AT_ZERO = { time: { frame: 0, seconds: 0, normalized: 0 } };
 
 /** The constraints the user can add from the "+ Add" menu. Follow-Path / Copy-Location
  *  join HERE (plus `isRelationalPoseNode` + registerAll) — as stack MEMBERS, never as a
  *  new bespoke panel. */
-export const ADDABLE_CONSTRAINTS: ReadonlyArray<{ type: string; label: string }> = [
-  { type: 'TrackTo', label: 'Track To' },
-  { type: 'FollowPath', label: 'Follow Path' },
+export const ADDABLE_CONSTRAINTS: ReadonlyArray<AddableConstraint> = [
+  {
+    type: 'TrackTo',
+    label: 'Track To',
+    pointer: 'aimNode',
+    pointeeProblem: (state, id, cache) =>
+      resolveWorldTransform(state, id, EVAL_AT_ZERO, cache) === null
+        ? `"${id}" has no place in the scene to aim at.`
+        : null,
+  },
+  {
+    type: 'FollowPath',
+    label: 'Follow Path',
+    pointer: 'curve',
+    pointeeProblem: (state, id, cache) =>
+      readCurveSampleAt(state, id, 0, EVAL_AT_ZERO, cache) === null
+        ? `"${id}" is not a path — a Follow-Path needs a Curve object to ride.`
+        : null,
+  },
 ];
+
+/**
+ * #1404 — the constraint a second request should RE-POINT rather than stack a rival beside: the
+ * LIVE member of `type` on `targetId` that the fold lets win, i.e. the top of the stack. One
+ * answer, because two roads asked it separately and answered differently (first by sorted id,
+ * muted included — which could re-aim a bypassed constraint and change nothing on screen, or
+ * the one the fold lets LOSE). Null when there is none, and the caller adds one.
+ */
+export function liveConstraintOfType(
+  state: DagState,
+  targetId: string,
+  type: string,
+): string | null {
+  const live = relationalPoseStackForTarget(state.nodes, targetId).filter(
+    (m) => state.nodes[m.nodeId]?.type === type,
+  );
+  return live.length > 0 ? live[live.length - 1].nodeId : null;
+}
+
+/** The addable row for `type`, or undefined. */
+export function addableConstraint(type: string): AddableConstraint | undefined {
+  return ADDABLE_CONSTRAINTS.find((c) => c.type === type);
+}
 
 /**
  * #1065 — the picker for a constraint's `target`, the object it constrains: every node the

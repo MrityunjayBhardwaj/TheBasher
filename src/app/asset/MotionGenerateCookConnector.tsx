@@ -23,11 +23,12 @@ import { useState } from 'react';
 import { useDagStore } from '../../core/dag/store';
 import type { NodeId } from '../../core/dag/types';
 import { cookMotionGenerations, motionCookOffer, placeCookedMotion } from './cookMotionGenerations';
+import { uiEvaluatorCache } from '../uiEvaluatorCache';
 
 export function MotionGenerateCookConnector({ producerId }: { producerId: NodeId }) {
   const state = useDagStore((s) => s.state);
   const [busy, setBusy] = useState(false);
-  const offer = motionCookOffer(state, producerId);
+  const offer = motionCookOffer(state, producerId, uiEvaluatorCache);
 
   async function run() {
     setBusy(true);

@@ -69,6 +69,7 @@
 
 import type { Texture } from 'three';
 import type { DagState } from '../core/dag/state';
+import type { EvaluatorCache } from '../core/dag/evaluator';
 import type { EvalCtx } from '../core/dag/types';
 import type {
   BakedMaterialSpec,
@@ -229,11 +230,15 @@ function textureSourceOf(
   }
 }
 
-export function resolveMeshUVSpace(state: DagState, nodeId: string): MeshUVSpace {
+export function resolveMeshUVSpace(
+  state: DagState,
+  nodeId: string,
+  cache?: EvaluatorCache,
+): MeshUVSpace {
   const node = state.nodes[nodeId];
   if (!node) return SPACE_NONE;
 
-  const mesh = resolveEvaluatedMesh(state, nodeId, STATIC_CTX);
+  const mesh = resolveEvaluatedMesh(state, nodeId, STATIC_CTX, cache);
 
   if (!mesh) {
     // Nothing resolves a mesh here — a light, a camera, an Empty (a kept clone-road import is

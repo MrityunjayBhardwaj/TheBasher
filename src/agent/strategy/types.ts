@@ -23,7 +23,9 @@ export type StrategyTopic =
   | 'aiRender'
   // #667 — the component scope query language. A director can type a scope since #872;
   // this is the road by which the agent learns the field exists and what it accepts.
-  | 'componentScope';
+  | 'componentScope'
+  // #353 — when to reach for mutator.constrain rather than keyframing a pose.
+  | 'constraints';
 
 export interface StrategyResource {
   topic: StrategyTopic;

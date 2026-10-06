@@ -62,9 +62,12 @@ test('#1215 — with Auto-Key on, editing a keyed bone rotation keys it at the p
     const nodes = w.__basher_dag.getState().state.nodes;
     const modifier = Object.entries(nodes).find(([, n]) => n.type === 'ArmatureModifier')![0];
     const id = (nodes[modifier].inputs.armature as { node: string }).node;
-    // What a click on the armature's bone does: select the Object, then the bone.
+    // What selecting the armature, entering Pose mode and clicking its bone does.
     selection.useSelectionStore.getState().select(id);
     bones.useBoneSelectionStore.getState().selectBone(id, 'Bone1', ['Bone0', 'Bone1']);
+    // #1335 — a bone is live in Pose mode, which is where a director poses one.
+    const modes = await import('/src/app/stores/armatureModeStore.ts');
+    modes.useArmatureModeStore.getState().setMode(id, 'pose');
     return id;
   });
 
@@ -81,7 +84,7 @@ test('#1215 — with Auto-Key on, editing a keyed bone rotation keys it at the p
   await expect(z).toHaveValue('0');
 
   // Key it at 0 s: the key button marks the rotation keyed.
-  const key = page.getByTestId('inspector-bone-pose-key');
+  const key = page.getByTestId('inspector-bone-pose-key-rotation');
   await key.click();
   await expect(key).toHaveAttribute('data-keyed', 'true');
 

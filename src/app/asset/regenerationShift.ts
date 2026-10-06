@@ -117,8 +117,8 @@ function keyTimes(params: PoseLayerParams): number[] {
 /** Every pose a wire's range holds, by the one rule a retarget samples and a bake keys by. */
 function clipFrames(pose: PosedSkeletonValue): number[] {
   const clip = pose.clip;
-  if (!clip || !(clip.end > clip.start) || !(clip.rate > 0)) return [];
-  return wirePoseTimes(clip, clip.rate).map((t) => clip.start + t);
+  if (!clip || !(clip.end > clip.start)) return [];
+  return wirePoseTimes(clip).map((t) => clip.start + t);
 }
 
 /** The angle between two rotations in degrees, each normalised first: float32 quaternions read a

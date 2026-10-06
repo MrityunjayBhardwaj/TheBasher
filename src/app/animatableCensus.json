@@ -1400,6 +1400,48 @@
         "driver": "scene"
       }
     },
+    "Object<PolyMeshData>": {
+      "position": {
+        "kind": "vec3",
+        "reach": "scene",
+        "driver": "scene"
+      },
+      "quaternion": {
+        "kind": "quat",
+        "reach": null
+      },
+      "rotation": {
+        "kind": "vec3",
+        "reach": "scene",
+        "driver": "scene"
+      },
+      "scale": {
+        "kind": "vec3",
+        "reach": "scene",
+        "driver": "scene"
+      }
+    },
+    "Object<PolyMeshData>@quaternion": {
+      "position": {
+        "kind": "vec3",
+        "reach": "scene",
+        "driver": "scene"
+      },
+      "quaternion": {
+        "kind": "quat",
+        "reach": "scene"
+      },
+      "rotation": {
+        "kind": "vec3",
+        "reach": null,
+        "driver": null
+      },
+      "scale": {
+        "kind": "vec3",
+        "reach": "scene",
+        "driver": "scene"
+      }
+    },
     "Object<SetMaterialOp>": {
       "position": {
         "kind": "vec3",
@@ -1533,6 +1575,56 @@
         "driver": null
       }
     },
+    "PolyMeshData": {
+      "material.base.color": {
+        "kind": "color",
+        "reach": "scene"
+      },
+      "material.base.metalness": {
+        "kind": "number",
+        "reach": "scene",
+        "driver": "scene"
+      },
+      "material.coat.roughness": {
+        "kind": "number",
+        "reach": "scene",
+        "driver": "scene"
+      },
+      "material.coat.weight": {
+        "kind": "number",
+        "reach": "scene",
+        "driver": "scene"
+      },
+      "material.emission.color": {
+        "kind": "color",
+        "reach": "scene"
+      },
+      "material.emission.luminance": {
+        "kind": "number",
+        "reach": "scene",
+        "driver": "scene"
+      },
+      "material.geometry.opacity": {
+        "kind": "number",
+        "reach": "scene",
+        "driver": "scene"
+      },
+      "material.specular.ior": {
+        "kind": "number",
+        "reach": "scene",
+        "driver": "scene"
+      },
+      "material.specular.roughness": {
+        "kind": "number",
+        "reach": "scene",
+        "driver": "scene"
+      },
+      "material.transmission.weight": {
+        "kind": "number",
+        "reach": "scene",
+        "driver": "scene"
+      }
+    },
     "RenderOutput": {
       "height": {
         "kind": "number",
@@ -1561,6 +1653,11 @@
       "envRotationY": {
         "kind": "number",
         "reach": "scene",
+        "driver": null
+      },
+      "frameEnd": {
+        "kind": "number",
+        "reach": null,
         "driver": null
       }
     },

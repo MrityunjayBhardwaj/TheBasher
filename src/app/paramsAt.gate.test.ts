@@ -140,9 +140,33 @@ const CONSUMERS: Record<string, Decision> = {
   'src/app/transformChannelSource.ts': authored('produces-an-overlay'),
   'src/app/paramDrivers.ts': authored('produces-an-overlay'),
   'src/app/statefulOps.ts': authored('produces-an-overlay'),
-  'src/viewport/EditorViewCamera.tsx': authored('delegates-to-a-folding-resolver'),
   'src/app/studioLightRig.ts': authored('delegates-to-a-folding-resolver'),
   'src/timeline/LightStudioPanel.tsx': authored('edits-authored-values'),
+  // #1388 — the view lock's scan imports only the `EvaluatorCache` type: it hands the authored
+  // state, and now the frame loop's stable cache, to `collectSkeletonObjects`, which reads the
+  // skeletons at frame 0 by design (its own row). No new road.
+  'src/viewport/followScan.ts': authored('fixed-ctx-by-design'),
+  // #1389 — the composite core and the composition export import the evaluator only for the
+  // cache (its type, or one per export run): each hands the authored state to
+  // `resolveEvaluatedParam`, as before. A layer param driven through pure nodes re-ran them once
+  // per read (24 walk retargets over a 6-frame export). No new road.
+  'src/app/video/compositeDecode.ts': authored('delegates-to-a-folding-resolver'),
+  'src/app/video/exportCompositionAction.ts': authored('delegates-to-a-folding-resolver'),
+  // #1315 — `uiEvaluatorCache` imports the evaluator only to create the one bounded cache the
+  // long-lived UI readers share; it evaluates nothing. The readers that held their own cache
+  // (#1314 #1388 #1389: the N panel fields, lens controls, curve handles, the editor camera, the
+  // animatable-field hooks, the composite viewer) now import that instead of the evaluator, and
+  // left this table. `resolveMeshUVSpace` and `cookMotionGenerations` import the cache
+  // TYPE only, to take one from their UI caller and hand it to the resolver they already called.
+  'src/app/uiEvaluatorCache.ts': indifferent('never-reads-the-graph'),
+  'src/app/resolveMeshUVSpace.ts': authored('delegates-to-a-folding-resolver'),
+  'src/app/asset/cookMotionGenerations.ts': authored('fixed-ctx-by-design'),
+  // `dispatchApplyTransform` left this table at #1053 (its evaluate went with the clone road);
+  // `canApplyTransform` takes its UI caller's cache (#1315), which brings it back for the TYPE only.
+  'src/app/animate/dispatchApplyTransform.ts': authored('delegates-to-a-folding-resolver'),
+  // #1318 — the Comfy batch bakes create one cache per bake for `resolveEvaluatedParam`, which
+  // folds the channels and drivers itself, so the state it is handed must stay authored.
+  'src/app/video/compileComfyBatch.ts': authored('delegates-to-a-folding-resolver'),
   // #902 — the motion resolver. It reads the generator's params AUTHORED and
   // evaluates at the default ctx, and both halves are the same claim: a
   // generation request must be time-invariant. If the playhead could change the
@@ -174,6 +198,15 @@ const CONSUMERS: Record<string, Decision> = {
   // this hands over, so evaluating at t here would sample the motion twice. It is handed the
   // authored state SceneFromDAG holds, like the source-rig read beside it.
   'src/app/skeletonObjects.ts': authored('fixed-ctx-by-design'),
+  // #1337 — evaluates the wire feeding a pose layer at frame 0 and samples it at the playhead, as
+  // `skeletonObjects` does: the pose wire carries time in its `sample`, not in the ctx.
+  'src/app/animate/invertPoseStack.ts': authored('fixed-ctx-by-design'),
+  // #1250 — the source rigs Show Source Rig draws, and why it skips the rest: the read that sat in
+  // SceneFromDAG, moved out so every skip reason is decided in one place the View menu can count.
+  // It evaluates each retarget's source wire and target rig at the default ctx, DELIBERATELY, for
+  // the reason the skeleton Objects beside it do: the helper samples the wire at the playhead per
+  // frame, so evaluating at t here would sample the motion twice.
+  'src/app/animate/referenceRigs.ts': authored('fixed-ctx-by-design'),
   // #1215 — the pose bake. It evaluates ONE point of a character's pose wire, a value that is
   // time-free by construction (`sample(seconds)` is the only way time enters it), and then samples
   // it itself at every time it keys. Evaluating at the playhead would change nothing but the hash,
@@ -196,6 +229,15 @@ const CONSUMERS: Record<string, Decision> = {
   // about edges, not time, and the answer is a list to choose from, not a pose. The value it
   // reads is discarded; only "placed or not" is kept.
   'src/app/constraintStack.ts': authored('fixed-ctx-by-design'),
+  // #353 — constrain's preconditions make one cache and ask the world resolver and the curve
+  // sampler whether the target and the pointee resolve. Both fold their own overlays, so the
+  // mutator must hand them what the director authored.
+  'src/agent/mutators/builders/constrain.ts': authored('delegates-to-a-folding-resolver'),
+  // #1394 — both import only the cache TYPE and forward the caller's cache to the
+  // material-owner walk. The projection is what the inspector edits; the lane sources are
+  // what the overlay folds. Neither may be handed folded params.
+  'src/app/exposeParams.ts': authored('edits-authored-values'),
+  'src/app/dataLaneOverlay.ts': authored('produces-an-overlay'),
   'src/app/cookState.ts': authored('mints-the-cooked-state'),
 
   // ── INDIFFERENT — the escape hatch, and the reason it is not the easy road ─────────
@@ -272,7 +314,29 @@ describe('#582 — who evaluates the graph, and which params they need', () => {
     // 45 → 44 at #1053: Apply on a clone-road child evaluated the owning `GltfAsset` to place the
     // bake under what the child drew under. That road baked off the live render clone, which went
     // with the clone renderer; Apply now refuses a kept import, so the evaluate and the row went.
-    expect(evaluatorConsumers()).toHaveLength(44); // 39 -> 40 at #935 (placement) (the motion resolver)
+    // 44 → 47 at #1314, and it is not three new roads: three per-playhead readers import the
+    // evaluator only to hold a stable cache for the resolvers they already called. Uncached, each
+    // re-read per frame re-evaluated the graph under the node — on the AI-walk example, the
+    // walk's whole-clip retarget, at ~3 fps.
+    // 47 → 48 at #1388, not a new road either: the view lock's scan takes the frame loop's cache
+    // for the rig collection it already delegated to (a rescan re-ran the walk's retarget).
+    // 48 → 52 at #1389, the same shape: two per-frame readers (the animatable-field hooks, the
+    // composite viewer) and the composition export hold a cache for the resolver they already
+    // called, and the composite core takes one.
+    // 52 → 50 at #1315, and nothing stopped evaluating: six UI readers that imported the evaluator
+    // only to create their own cache now share one (`uiEvaluatorCache`, +1), and three predicates
+    // that take a cache from their UI caller import its type (+3; `dispatchApplyTransform` had left
+    // at #1053 and comes back). 52 − 6 + 4 = 50.
+    // 50 → 52 at #1394, not a new road: the inspector's projection and the lane-overlay sources
+    // import the cache type to hand the material-owner walk the shared UI cache (+2).
+    // 52 → 53 at #353: `mutator.constrain` creates the one cache its two precondition checks share.
+    // 53 → 54 at #1318, not a new road: the Comfy batch bakes create one cache per bake for the
+    // resolver they already called (uncached, a driver re-ran the walk's retarget every frame).
+    // 54 → 55 at #1250, not a new road: the source-rig read moved out of SceneFromDAG (which
+    // still evaluates) into `referenceRigs.ts`, so its skip reasons can be counted.
+    // 55 → 56 at #1337, a new road: keying a placed bone into a pose layer reads the pose that
+    // arrives under that layer, to solve the layer's blend backwards (declared above as fixed-ctx).
+    expect(evaluatorConsumers()).toHaveLength(56); // 39 -> 40 at #935 (placement) (the motion resolver)
   });
 
   it('every reason is load-bearing — no member of any union is decorative', () => {
@@ -299,8 +363,9 @@ describe('#582 — who evaluates the graph, and which params they need', () => {
 
   it('the escape hatch stays small, and is named rather than counted', () => {
     // The failure mode this guards is the hatch becoming the default: a consumer that
-    // simply did not want to think declares itself indifferent. Three files, named, so
-    // widening it is a visible edit rather than a number ticking up.
+    // simply did not want to think declares itself indifferent. Named files, so widening it
+    // is a visible edit rather than a number ticking up. The fourth (#1315) creates the shared
+    // UI cache and evaluates nothing.
     const hatch = Object.entries(CONSUMERS)
       .filter(([, d]) => d.needs === 'indifferent')
       .map(([path]) => path)
@@ -308,6 +373,7 @@ describe('#582 — who evaluates the graph, and which params they need', () => {
     expect(hatch).toEqual([
       'src/app/nodeRefCandidates.ts',
       'src/app/resolveMaterialFieldOwner.ts',
+      'src/app/uiEvaluatorCache.ts',
       'src/perf/frameProfiler.ts',
     ]);
   });

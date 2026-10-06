@@ -38,6 +38,11 @@ import type { Op } from '../core/dag/types';
 import { buildDefaultDagState } from '../core/project/default';
 import { profileOptions } from '../nodes/LightProfileSelect';
 import { buildAddPrimitiveOps, SCENE_OBJECT_KINDS } from './addPrimitives';
+import { buildMediaClipOps } from './asset/importMediaClip';
+import { buildNativeGltfImportOps } from '../core/import/nativeGltfImport';
+import { readFileSync } from 'node:fs';
+import { buildAddLayerOps } from './video/addLayer';
+import { buildNewCompositionOps } from './video/newComposition';
 import { buildAddConstraintOps } from './constraintStack';
 import { stripChannelValuesForTarget } from './layeredChannels';
 import { resolveConstraintRotation } from './nodeConstraints';
@@ -249,7 +254,8 @@ describe('a param declares its control on its schema (#872)', () => {
       examined: true,
       // 25 since #1124 retired `MotionGenerate.name` — a generated motion's clip owns its name.
       // 26 at #1240: `PoseLayer.name`, through `nameParam` like every other.
-      nameCount: 26,
+      // 25 at #1243: `PoseOverride.name` retired with its type.
+      nameCount: 25,
       undeclared: [],
     });
   });
@@ -336,8 +342,6 @@ describe('a param declares its control on its schema (#872)', () => {
     const CHOICE =
       'selects from what exists at runtime — wants a picker over the live options, for the same reason';
     // #1066 — channel wiring whose picker waits on a measurement, each named.
-    const NO_VEC2_ROWS =
-      'the animatable census has no vec2 rows (compositor layers, uvTransform), so no list could be honest (#1259)';
     const NOTHING_READS_IMAGE =
       'a keyed ComfyUI image input reaches nothing in the batch, so there is no path to offer (#1257)';
 
@@ -360,12 +364,10 @@ describe('a param declares its control on its schema (#872)', () => {
       // Vec3, Color and Text channels' `target`/`paramPath` left it in #1066 — pickers over what
       // the census measured and what a ComfyUI batch reads — and so did ParamDriver's, once the
       // census measured drivers on their own (#1258), and Quat's once it measured both rotation
-      // modes (#1259). What stays has a named reason: a
+      // modes (#1259), and Vec2's once it measured compositor layers. What stays has a named reason: a
       // picker needs something that KNOWS which paths animate, and for these nothing does yet.
       'KeyframeChannelImage.paramPath': NOTHING_READS_IMAGE,
       'KeyframeChannelImage.target': NOTHING_READS_IMAGE,
-      'KeyframeChannelVec2.paramPath': NO_VEC2_ROWS,
-      'KeyframeChannelVec2.target': NO_VEC2_ROWS,
       // #1210 — a bone of the parent armature, by name. #1284's bone picker (`TrackTo.aimBone`)
       // offers a character's bones; pointing it at the parent's is what would retire this line.
       'Object.parentBone': CHOICE,
@@ -377,7 +379,6 @@ describe('a param declares its control on its schema (#872)', () => {
       // `LightProfileSelect.selectedProfile` left this list in #1064 — the first CHOICE to get
       // its picker. The stale-entry direction below is what makes that removal mandatory.
       'MotionGenerate.model': CHOICE,
-      'PoseOverride.bone': CHOICE,
     };
 
     let examined = 0;
@@ -418,7 +419,9 @@ describe('a param declares its control on its schema (#872)', () => {
     });
     // The denominator rides with the verdict — an empty `unacknowledged` from a loop that
     // never ran looks exactly like a pass.
-    expect(readOnly.length).toBe(20); // 18 + `Group.parentBone` (#1447) + `Scene.activeCollection` (#1451)
+    // 15 since #1243 retired `PoseOverride` and its `bone` with it; + `Group.parentBone` (#1447)
+    // + `Scene.activeCollection` (#1451) = 17.
+    expect(readOnly.length).toBe(17);
   });
 
   it('row 15 — a param owns the word for its EMPTY state, and the control owns the fallback (#1031)', () => {
@@ -481,8 +484,8 @@ describe('a param declares its control on its schema (#872)', () => {
       examined: true,
       // 25 `.name`s since #1124 retired `MotionGenerate.name`, the profile picker's word (#1064),
       // the bone picker's (#1284): an empty bone aims at "the object itself"; 28 at #1240
-      // (`PoseLayer.name`).
-      count: 28,
+      // (`PoseLayer.name`); 27 at #1243 (`PoseOverride.name` retired with its type).
+      count: 27,
     });
     expect(declaredWord.filter((k) => !k.endsWith('.name'))).toEqual([
       'LightProfileSelect.selectedProfile',
@@ -573,6 +576,8 @@ describe('a param declares its control on its schema (#872)', () => {
         'KeyframeChannelQuat.paramPath',
         'KeyframeChannelText.target',
         'KeyframeChannelText.paramPath',
+        'KeyframeChannelVec2.target',
+        'KeyframeChannelVec2.paramPath',
         'KeyframeChannelVec3.target',
         'KeyframeChannelVec3.paramPath',
         'LightProfileSelect.selectedProfile',
@@ -593,6 +598,8 @@ describe('a param declares its control on its schema (#872)', () => {
         'KeyframeChannelQuat.paramPath',
         'KeyframeChannelText.target',
         'KeyframeChannelText.paramPath',
+        'KeyframeChannelVec2.target',
+        'KeyframeChannelVec2.paramPath',
         'KeyframeChannelVec3.target',
         'KeyframeChannelVec3.paramPath',
         'LightProfileSelect.selectedProfile',
@@ -686,7 +693,7 @@ describe('a param declares its control on its schema (#872)', () => {
     expect(enabled('Strip', 'target')).toEqual(stripTargetRows(s).map((r) => r.id));
   });
 
-  it('row 20 — every channel target+path option animates once written, and nothing left out does (#1066)', () => {
+  it('row 20 — every channel target+path option animates once written, and nothing left out does (#1066)', async () => {
     // V558's property for the channel pickers, both ways, against each road's own answer:
     //   - a scene node: the measured census (`isAnimatable`) on EVERY concrete leaf of the
     //     channel's shape, so a path the picker drops or a pattern it mis-expands reds;
@@ -727,6 +734,22 @@ describe('a param declares its control on its schema (#872)', () => {
     });
     s = apply(s, bind.ok ? bind.ops : []);
     expect(bind.ok, 'the driver binds').toBe(true);
+    // #1259 — an imported mesh, as the census imports one: the native importer's Object over a
+    // PolyMeshData, left in the quaternion mode the importer writes, where its rotation keys land.
+    const cube = readFileSync('public/assets/cube.gltf');
+    const imported = await buildNativeGltfImportOps({
+      buffer: cube.buffer.slice(cube.byteOffset, cube.byteOffset + cube.byteLength) as ArrayBuffer,
+      assetRef: 'user-imports/census/cube.gltf',
+      sceneNodeId: s.outputs.scene!.node,
+      storeImage: async () => 'img',
+    });
+    if ('refused' in imported) throw new Error(imported.refused);
+    s = apply(s, imported.ops);
+    const importedObj = imported.objectIds[0];
+    expect(
+      s.nodes[importedObj]?.params.rotationMode,
+      'the importer leaves it in quaternion mode',
+    ).toBe('quaternion');
     // #1259 — a quaternion is a leaf only once held, as the census seeds it: every node whose
     // schema declares a rotation mode holds the identity, and one Sphere composes it.
     const posable = Object.values(s.nodes).filter((n) => {
@@ -746,6 +769,21 @@ describe('a param declares its control on its schema (#872)', () => {
     s = apply(s, [
       { type: 'setParam', nodeId: turned.obj, paramPath: 'quaternion', value: [0, 0, 0, 1] },
       { type: 'setParam', nodeId: turned.obj, paramPath: 'rotationMode', value: 'quaternion' },
+    ]);
+
+    // #1259 — a compositor layer, as the census places one: a composition holding a bare media
+    // layer. Its position and scale reach the composited frame; its anchor moves nothing.
+    s = apply(s, [
+      ...buildNewCompositionOps('comp', 'Composition 1'),
+      ...buildMediaClipOps('clip', 'clip', 'media/clip.png', {
+        mediaKind: 'image',
+        srcFps: 1,
+        srcFrames: 1,
+        durationSeconds: 0,
+        width: 64,
+        height: 64,
+      }),
+      ...buildAddLayerOps('layer', 'comp', 'clip', 'Layer 1'),
     ]);
 
     const META = { name: 'w', importedAt: 'fixed', fps: 30, frames: 24 };
@@ -786,6 +824,7 @@ describe('a param declares its control on its schema (#872)', () => {
 
     const CHANNELS = [
       ['KeyframeChannelNumber', 'number', 1, 9],
+      ['KeyframeChannelVec2', 'vec2', [0, 0], [4, 5]],
       ['KeyframeChannelVec3', 'vec3', [0, 0, 0], [1, 2, 3]],
       ['KeyframeChannelQuat', 'quat', [0, 0, 0, 1], [0.2, 0.3, 0.1, 0.927]],
       ['KeyframeChannelColor', 'color', '#000000', '#ffffff'],
@@ -795,7 +834,7 @@ describe('a param declares its control on its schema (#872)', () => {
       if (typeof v === 'number') return 'number';
       if (typeof v === 'string') return /^#[0-9a-fA-F]{6}$/.test(v) ? 'color' : null;
       if (Array.isArray(v) && v.every((x) => typeof x === 'number'))
-        return v.length === 3 ? 'vec3' : v.length === 4 ? 'quat' : null;
+        return ({ 2: 'vec2', 3: 'vec3', 4: 'quat' } as Record<number, string>)[v.length] ?? null;
       return null;
     };
     const leaves = (v: unknown, at: string[], out: [string, string][]) => {
@@ -897,6 +936,8 @@ describe('a param declares its control on its schema (#872)', () => {
         }
       }
       expect({ kind, offered: [...offered].sort() }).toEqual({ kind, offered: [...truth].sort() });
+      // The imported mesh is on both sides for a quaternion, not absent from both.
+      if (kind === 'quat') expect(offered).toContain(`${importedObj} quaternion`);
       counted[kind] = truth.length;
     }
     // The denominators ride with the verdict: an empty list on both sides would pass.

@@ -175,18 +175,45 @@ describe('the documented key prefix — and its absence — is a value, not a li
   });
 });
 
-describe('options v3 does not document are DROPPED, not forwarded', () => {
-  it('drops `style`, which v3’s request schemas do not list', async () => {
+describe('a control v3 does not have is REFUSED before anything is sent (#1408)', () => {
+  const IMAGE = {
+    source: 'image',
+    image: { bytes: new Uint8Array([1, 2, 3]), mimeType: 'image/png' },
+  } as const;
+
+  // These were once DROPPED silently, on the reasoning that v3's field list reaches
+  // us through vendor prose, so refusing on it would be a hard failure on a soft
+  // reading. But the same reading already decided the field is not sent; refusing
+  // changes only whether the caller is told. Were the prose wrong, the fix is to
+  // forward the field — the same under either behaviour.
+  it.each([
+    ['style on a text request', { ...TEXT, style: 'person:person2cartoon' }, /style/],
+    ['style on an image request', { ...IMAGE, style: 'person:person2cartoon' }, /style/],
+    ['pose on a text request', { ...TEXT, pose: { headBodyHeightRatio: 2 } }, /pose/],
+    [
+      'textureAlignment on a text request',
+      { ...TEXT, textureAlignment: 'geometry' },
+      /textureAlignment/,
+    ],
+    ['orientation on a text request', { ...TEXT, orientation: 'align_image' }, /orientation/],
+  ])('refuses %s, and nothing leaves the process', async (_label, request, field) => {
     const { fetchImpl, sent } = transport(V3_OUTPUT);
-    await client(fetchImpl).generate({ ...TEXT, style: 'person:person2cartoon' });
-    // Pinned rather than left to chance. Sending a field a contract does not
-    // name gets the request rejected wholesale or, worse, silently ignored.
-    expect(sent[0].body).not.toHaveProperty('style');
-    // 🔴 AND IT IS DROPPED SILENTLY, WHICH IS A KNOWN GAP, NOT A DECISION. It is
-    // not a refusal because v3's field list reaches us through vendor prose, not
-    // source — the same weak evidence that stopped us inventing a key-prefix
-    // rule. Refusing on it would build a hard failure on a soft reading. See the
-    // issue for the open question.
+    await expect(client(fetchImpl).generate(request as never)).rejects.toThrow(field);
+    expect(sent).toEqual([]);
+  });
+
+  it('forwards textureAlignment and orientation where v3 has them: image requests', async () => {
+    const { fetchImpl, sent } = transport(V3_OUTPUT);
+    await client(fetchImpl).generate({
+      ...IMAGE,
+      textureAlignment: 'geometry',
+      orientation: 'align_image',
+    });
+    expect(sent[1].url).toBe('http://tripo.test/generation/image-to-model');
+    expect(sent[1].body).toMatchObject({
+      texture_alignment: 'geometry',
+      orientation: 'align_image',
+    });
   });
 });
 

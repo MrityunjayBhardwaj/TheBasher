@@ -50,6 +50,7 @@
 //      walk), src/app/operatorChain.ts (the one lane walk); issues #522, #519, #516.
 
 import type { DagState } from '../core/dag/state';
+import type { EvaluatorCache } from '../core/dag/evaluator';
 import type { Node } from '../core/dag/types';
 import { linkedDataNodeId } from './resolveDataParamOwner';
 import { isDataLaneOperator, isMaterialLaneOperator, singleRef } from './operatorChain';
@@ -115,7 +116,11 @@ export function dataLaneNodes(state: DagState, targetId: string): Node[] {
  * Returns `[]` for a node with no linked data, which is what keeps every fused node's
  * overlay byte-identical to before this existed.
  */
-export function dataLaneOverlaySources(state: DagState, targetId: string): LaneOverlaySource[] {
+export function dataLaneOverlaySources(
+  state: DagState,
+  targetId: string,
+  cache?: EvaluatorCache,
+): LaneOverlaySource[] {
   const lane = dataLaneNodeIds(state, targetId);
   if (lane.length === 0) return [];
 
@@ -128,7 +133,7 @@ export function dataLaneOverlaySources(state: DagState, targetId: string): LaneO
   );
   if (!canMask) return lane.map((nodeId) => ({ nodeId }));
 
-  const owners = resolveMaterialFieldOwners(state, targetId);
+  const owners = resolveMaterialFieldOwners(state, targetId, cache);
   return lane.map((nodeId) => {
     const isOperator = isMaterialLaneOperator(state.nodes[nodeId]);
     const translate: Record<string, string> = {};

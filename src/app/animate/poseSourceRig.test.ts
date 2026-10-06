@@ -54,7 +54,7 @@ const TARGET_BONES: BoneSpec[] = [
 
 /** Every pose producer in one graph:
  *   swing_skel (Skeleton) · swing_clip (AnimationClip on swing_skel) · sway (PosedSkeleton on it)
- *   src_layer (PoseLayer over swing_skel.pose) · over (PoseOverride over src_layer)
+ *   src_layer (PoseLayer over swing_skel.pose)
  *   tgt (Skeleton) · r_layer (RetargetClip: src_layer → tgt) · r_clip (RetargetClip: swing_clip → tgt) */
 function graph(): DagState {
   let s = emptyDagState();
@@ -96,12 +96,6 @@ function graph(): DagState {
       type: 'connect',
       from: { node: 'swing_skel', socket: 'out' },
       to: { node: 'sway', socket: 'skeleton' },
-    },
-    { type: 'addNode', nodeId: 'over', nodeType: 'PoseOverride', params: { bone: 'Bone1' } },
-    {
-      type: 'connect',
-      from: { node: 'src_layer', socket: 'out' },
-      to: { node: 'over', socket: 'pose' },
     },
   ];
   for (const [id, sourceId, sourceSocket] of [
@@ -156,7 +150,6 @@ const PRODUCERS: Record<string, { id: string; socket: string }> = {
   Skeleton: { id: 'swing_skel', socket: 'pose' },
   AnimationClip: { id: 'swing_clip', socket: 'pose' },
   PoseLayer: { id: 'src_layer', socket: 'out' },
-  PoseOverride: { id: 'over', socket: 'out' },
   PosedSkeleton: { id: 'sway', socket: 'out' },
   RetargetClip: { id: 'r_layer', socket: 'posed' },
 };

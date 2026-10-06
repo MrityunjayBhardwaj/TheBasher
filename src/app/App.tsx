@@ -3,6 +3,7 @@ import { AddMenu } from './AddMenu';
 import { MoveToCollectionMenu } from './MoveToCollectionMenu';
 import { boot } from './boot';
 import { Clock } from './Clock';
+import { SceneRangeSync } from './SceneRangeSync';
 import { Home } from './Home';
 import { KeyboardShortcuts } from './KeyboardShortcuts';
 import { Layout } from './Layout';
@@ -62,8 +63,9 @@ export function App() {
   // be in the React tree while on the home, so the GL canvas mounts exactly once
   // (home XOR editor), never double-mounted.
   if (view === 'home') {
-    // #1424 — the toasts are here too: a project refused on open or on resume is said on this
-    // screen, which has no other place for a message.
+    // #1424, #1310 — the toasts are here too: a project refused on open or on resume, or a boot
+    // that could not open the project it was resuming, is said on this screen, which has no
+    // other place for a message.
     return (
       <>
         <Home />
@@ -75,6 +77,7 @@ export function App() {
   return (
     <>
       <Clock />
+      <SceneRangeSync />
       <KeyboardShortcuts />
       <Layout />
       <AddMenu />

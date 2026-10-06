@@ -49,6 +49,7 @@
 //      chain walk); PLAN-3 §3; issues #394, #518.
 
 import type { DagState } from '../core/dag/state';
+import type { EvaluatorCache } from '../core/dag/evaluator';
 import type { Node, NodeRef } from '../core/dag/types';
 import { getNodeType } from '../core/dag/registry';
 import { canApplyTransform } from './animate/dispatchApplyTransform';
@@ -524,6 +525,10 @@ export function exposeParams(
      *  and deliberately kept two; a third would be a regression paid for nothing. Omitted,
      *  the projection computes it itself, which is what every non-UI caller wants. */
     canApply?: boolean;
+    /** The caller's evaluator cache. The material masking below evaluates the layer under
+     *  a material override; a long-lived UI caller passes its shared cache so that walk
+     *  finds what the viewport already computed (#1394). */
+    cache?: EvaluatorCache;
   },
 ): ExposedParam[] {
   const selected = selectedId ? state.nodes[selectedId] : undefined;
@@ -600,7 +605,7 @@ export function exposeParams(
   // the byte-identical gate (§5 gate 1) comparing the same list it always did.
   return [
     ...promotedRowsFor(state, slotOf),
-    ...withMaterialMasking(state, selected.id, plans, out),
+    ...withMaterialMasking(state, selected.id, plans, out, opts?.cache),
   ];
 }
 
@@ -702,6 +707,7 @@ function withMaterialMasking(
   selectedId: string,
   plans: readonly NodePlan[],
   rows: readonly DerivedParam[],
+  cache?: EvaluatorCache,
 ): DerivedParam[] {
   // Two things can take authority over a material field: an operator in the lane, and a
   // producer wired into a `material` socket (a socket SUPERSEDES the param it shares a
@@ -711,7 +717,7 @@ function withMaterialMasking(
   );
   if (!canMask) return rows as DerivedParam[];
 
-  const owners = resolveMaterialFieldOwners(state, selectedId);
+  const owners = resolveMaterialFieldOwners(state, selectedId, cache);
   const labelOf = (nodeId: string) => {
     return nodeDisplayName(state.nodes, nodeId);
   };

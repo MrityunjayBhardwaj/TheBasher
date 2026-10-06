@@ -25,8 +25,13 @@ import { dispatchFirstKeyComposite, dispatchMutatorFromUI } from './dispatchMuta
 import { isKeyframeChannelNode, paramAnimationState } from './paramAnimationState';
 import { useAutoKeyStore } from '../stores/autoKeyStore';
 import { useTransientEditStore } from '../stores/transientEditStore';
-import type { ObjectPoseTarget } from './poseTargetForBone';
+import type { ObjectPoseTarget, PoseComponent } from './poseTargetForBone';
 import type { Vec3 } from '../../nodes/types';
+import { eulerFromQuat } from '../../nodes/bonePose';
+import { poseArriving, type PoseFeed } from './invertPoseStack';
+import { uiEvaluatorCache } from '../uiEvaluatorCache';
+import { handPoseInsertionOf } from './poseChain';
+import type { GraphNodeLike } from './graphNodes';
 
 /**
  * THE single animated-param edit-route gate (P7.3 / D-02 — lifted here in
@@ -222,58 +227,106 @@ export function autoKeyCommit(nodeId: string, paramPath: string, value: unknown)
 type Dispatched = { ok: true } | { ok: false; reason: string };
 
 /**
- * #1215 — the inspector's edit of a native bone's rotation, as Blender's pose-bone Rotation field
- * behaves under Auto-Key. A field's auto-key keys ONLY a property that already has an F-curve
- * (`button_anim_autokey` passes `only_if_property_keyed`, `interface_anim.cc:318-321`, and
- * `autokeyframe_property` returns early without one, `keyframing_auto.cc`); otherwise the edit just
- * sets the value. So:
+ * #1338 — a component of the bone as the pose row shows it: its value in the layer as played, else
+ * the bone's rest. An axis edit on a component the member has not authored seeds the other two axes
+ * with this, so typing one axis moves only that axis.
+ */
+export function shownBoneComponent(target: ObjectPoseTarget, component: PoseComponent): Vec3 {
+  return target[component] ?? target.rest[component];
+}
+
+/**
+ * #1215, #1338 — the inspector's edit of one component of a native bone (position, rotation or
+ * scale), as Blender's pose-bone fields behave under Auto-Key. A field's auto-key keys ONLY a
+ * property that already has an F-curve (`button_anim_autokey` passes `only_if_property_keyed`,
+ * `interface_anim.cc:318-321`, and `autokeyframe_property` returns early without one,
+ * `keyframing_auto.cc`); otherwise the edit just sets the value. So:
  *   - keyed in the layer the pose writes, Auto-Key ON  → a key at the playhead in that curve;
  *   - keyed, Auto-Key OFF → refused with the reason: the static value would sit under the curve and
  *     show nothing (Blender holds it until the next frame; that transient is #1256);
- *   - not keyed → the hand-pose itself: the member's static rotation (`mutator.animate.poseBone`).
+ *   - not keyed → the hand-pose itself: the member's static value (`mutator.animate.poseBone`).
  */
-export function commitObjectBoneRotation(target: ObjectPoseTarget, rotation: Vec3): Dispatched {
-  if (target.keyed && target.layerId !== null) {
+export function commitObjectBonePose(
+  target: ObjectPoseTarget,
+  component: PoseComponent,
+  value: Vec3,
+): Dispatched {
+  if (target.keyed[component] && target.layerId !== null) {
     if (!useAutoKeyStore.getState().enabled) {
       return {
         ok: false,
-        reason: `${target.bone}'s rotation is keyed here: turn on Auto-Key to key this change at the playhead.`,
+        reason: `${target.bone}'s ${component} is keyed here: turn on Auto-Key to key this change at the playhead.`,
       };
     }
     return dispatchMutatorFromUI(
       'mutator.timeline.keyframe',
       {
-        layer: { layerId: target.layerId, bone: target.bone, component: 'rotation' },
+        layer: { layerId: target.layerId, bone: target.bone, component },
         time: useTimeStore.getState().seconds,
-        value: rotation,
+        value,
       },
-      `Auto-Key ${target.bone} rotation`,
+      `Auto-Key ${target.bone} ${component}`,
     );
   }
   return dispatchMutatorFromUI(
     'mutator.animate.poseBone',
-    { object: target.objectId, bone: target.bone, rotation },
+    { object: target.objectId, bone: target.bone, [component]: value },
     `pose ${target.bone}`,
   );
 }
 
 /**
- * #1215 — the pose row's key button (Blender's I over a field): key the rotation the field shows at
- * the playhead, into the layer the pose writes. The first key creates the bone's curve there; with
- * a curve, it adds or replaces the key at this time. Offered once the bone has a rotation in that
- * layer, so there is always a value to key.
+ * #1474 — "pose this bone": the bone's first hand-pose, seeded with the rotation it already shows,
+ * so asking for a pose changes nothing on screen (Blender's pose tools start from the evaluated
+ * pose). The member goes into the hand-pose layer, or into a layer `poseBone` inserts under the
+ * Object (#1343: under its lowest ik layer); either way what arrives under it is that layer's feed, or the Object's own, at the
+ * playhead. An override member equal to what arrives under it leaves the bone as it was at any
+ * weight, and every layer above sees the same input, so the drawn bone is unchanged. With nothing
+ * arriving the bone stands at rest, so the seed is the rest (a member REPLACES the local transform).
  */
-export function keyObjectBoneRotation(target: ObjectPoseTarget): Dispatched {
-  if (target.layerId === null || target.rotation === null) {
-    return { ok: false, reason: `pose ${target.bone} first: there is no rotation to key yet.` };
+export function poseObjectBoneAsShown(target: ObjectPoseTarget): Dispatched {
+  const state = useDagStore.getState().state;
+  // #1343 — a new layer goes under the lowest ik layer, so what arrives there is that layer's feed.
+  const under =
+    target.layerId ??
+    handPoseInsertionOf(
+      state.nodes as unknown as Readonly<Record<string, GraphNodeLike>>,
+      target.objectId,
+    );
+  const feed = state.nodes[under]?.inputs?.pose as PoseFeed | undefined;
+  const arriving = feed
+    ? poseArriving(state, feed, target.bone, useTimeStore.getState().seconds, uiEvaluatorCache)
+    : undefined;
+  // `poseBone` stores a first rotation in ZYX; `+ 0` turns -0 into 0 for the field.
+  const rotation = arriving
+    ? (eulerFromQuat(arriving.quaternion, 'ZYX').map(
+        (r) => (r * 180) / Math.PI + 0,
+      ) as unknown as Vec3)
+    : target.rest.rotation;
+  return commitObjectBonePose(target, 'rotation', rotation);
+}
+
+/**
+ * #1215, #1338 — the pose row's key button for one component (Blender's I over a field): key the
+ * value the field shows at the playhead, into the layer the pose writes. The first key creates the
+ * bone's curve there; with a curve, it adds or replaces the key at this time. Offered once the bone
+ * has that component in the layer, so there is always a value to key.
+ */
+export function keyObjectBonePose(target: ObjectPoseTarget, component: PoseComponent): Dispatched {
+  const value = target[component];
+  if (target.layerId === null || value === null) {
+    return {
+      ok: false,
+      reason: `pose ${target.bone}'s ${component} first: there is nothing to key yet.`,
+    };
   }
   return dispatchMutatorFromUI(
     'mutator.timeline.keyframe',
     {
-      layer: { layerId: target.layerId, bone: target.bone, component: 'rotation' },
+      layer: { layerId: target.layerId, bone: target.bone, component },
       time: useTimeStore.getState().seconds,
-      value: target.rotation,
+      value,
     },
-    `Key ${target.bone} rotation`,
+    `Key ${target.bone} ${component}`,
   );
 }

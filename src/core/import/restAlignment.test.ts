@@ -307,19 +307,24 @@ describe('the offsets that go with an alignment', () => {
   });
 
   it('#866 — points a bone where the SOURCE points it, when the two rests disagree there', () => {
-    // The vendor case: one bone of real anatomy (the foot, via its toe) bent 40°
-    // away from the other rig's. Before #866 the target sat on its own bind at
-    // the source's rest and carried the 40° through every frame; now the offset
-    // carries the target's rest direction onto the source's, so at the source's
-    // rest the foot points where the source's foot points — and every other
-    // bone, whose rests already agree, still sits exactly on its bind.
+    // The vendor case: one bone (the upper arm, via its hand) resting 40° below
+    // the other rig's — an A-pose arm against a T-pose one. Before #866 the
+    // target sat on its own bind at the source's rest and carried the 40° through
+    // every frame; now the offset carries the target's rest direction onto the
+    // source's, so at the source's rest the arm points where the source's arm
+    // points — and every other bone, whose rests already agree, still sits
+    // exactly on its bind.
+    //
+    // The ARM, not the foot it used to be (#1455): a foot stands on the floor in
+    // both rests, so its gap is where each rig puts its joints under a flat sole
+    // and the builder keeps it. That case has its own rows below.
     const BENT = 40;
     const r = (BENT * Math.PI) / 180;
     const bent = YAWED.map((b) =>
-      b.name === 't_toe'
+      b.name === 't_hand'
         ? {
             ...b,
-            position: [0.15 * Math.cos(r), -0.15 * Math.sin(r), 0] as [number, number, number],
+            position: [0, -0.2 * Math.sin(r), -0.2 * Math.cos(r)] as [number, number, number],
           }
         : b,
     );
@@ -330,7 +335,7 @@ describe('the offsets that go with an alignment', () => {
     const { offsets, absorbed } = alignedLocalOffsets(src, trg, MAP, alignment.rotation);
     src[0].updateMatrixWorld(true);
     trg[0].updateMatrixWorld(true);
-    expect(absorbed, 'the bent bone is a direction the offset must absorb').toContain('t_foot');
+    expect(absorbed, 'the bent bone is a direction the offset must absorb').toContain('t_arm');
 
     const worldDir = (bone: Bone, child: Bone): Vector3 =>
       new Vector3()
@@ -342,32 +347,32 @@ describe('the offsets that go with an alignment', () => {
         new Quaternion().setFromRotationMatrix(bone.matrixWorld).invert(),
       );
 
-    const tFoot = trg.find((b) => b.name === 't_foot')!;
-    const tToe = trg.find((b) => b.name === 't_toe')!;
-    const sFoot = src.find((b) => b.name === 's_foot')!;
-    const sToe = src.find((b) => b.name === 's_toe')!;
-    // Before any correction the two feet disagree by the bend — the positive control.
+    const tArm = trg.find((b) => b.name === 't_arm')!;
+    const tHand = trg.find((b) => b.name === 't_hand')!;
+    const sArm = src.find((b) => b.name === 's_arm')!;
+    const sHand = src.find((b) => b.name === 's_hand')!;
+    // Before any correction the two arms disagree by the bend — the positive control.
     const gapBefore =
-      worldDir(tFoot, tToe).angleTo(worldDir(sFoot, sToe).applyQuaternion(alignment.rotation)) *
+      worldDir(tArm, tHand).angleTo(worldDir(sArm, sHand).applyQuaternion(alignment.rotation)) *
       DEG;
-    expect(gapBefore, 'the fixture must actually disagree at the foot').toBeGreaterThan(BENT - 5);
+    expect(gapBefore, 'the fixture must actually disagree at the arm').toBeGreaterThan(BENT - 5);
 
     // Through the pipeline at the source's rest: R · (R⁻¹ · B · D) applied to the
-    // foot's own rest direction lands on the heading-turned source direction.
+    // arm's own rest direction lands on the heading-turned source direction.
     const throughPipeline = alignment.rotation
       .clone()
-      .multiply(new Quaternion().setFromRotationMatrix(offsets['t_foot']));
-    const pointed = restLocal(tFoot, tToe).applyQuaternion(throughPipeline);
-    const wanted = worldDir(sFoot, sToe).applyQuaternion(alignment.rotation);
+      .multiply(new Quaternion().setFromRotationMatrix(offsets['t_arm']));
+    const pointed = restLocal(tArm, tHand).applyQuaternion(throughPipeline);
+    const wanted = worldDir(sArm, sHand).applyQuaternion(alignment.rotation);
     expect(
       pointed.angleTo(wanted) * DEG,
-      `the foot still points ${(pointed.angleTo(wanted) * DEG).toFixed(2)}° away from where the ` +
+      `the arm still points ${(pointed.angleTo(wanted) * DEG).toFixed(2)}° away from where the ` +
         `source points it — the direction term is not doing what its docstring says`,
     ).toBeLessThan(1e-4);
 
     // And the bones whose rests AGREE are untouched: D is the identity there.
     for (const bone of trg) {
-      if (MAP[bone.name] === undefined || bone.name === 't_foot') continue;
+      if (MAP[bone.name] === undefined || bone.name === 't_arm') continue;
       const bind = new Quaternion().setFromRotationMatrix(bone.matrixWorld);
       const q = alignment.rotation
         .clone()
@@ -387,10 +392,10 @@ describe('the offsets that go with an alignment', () => {
     // other side.
     const r = (40 * Math.PI) / 180;
     const bent = YAWED.map((b) =>
-      b.name === 't_toe'
+      b.name === 't_hand'
         ? {
             ...b,
-            position: [0.15 * Math.cos(r), -0.15 * Math.sin(r), 0] as [number, number, number],
+            position: [0, -0.2 * Math.sin(r), -0.2 * Math.cos(r)] as [number, number, number],
           }
         : b,
     );
@@ -400,18 +405,18 @@ describe('the offsets that go with an alignment', () => {
     if (alignment.kind !== 'aligned') throw new Error('this pair must align');
     const { offsets } = alignedLocalOffsets(src, trg, MAP, alignment.rotation);
     trg[0].updateMatrixWorld(true);
-    const tFoot = trg.find((b) => b.name === 't_foot')!;
-    const tToe = trg.find((b) => b.name === 't_toe')!;
-    const bind = new Quaternion().setFromRotationMatrix(tFoot.matrixWorld);
+    const tArm = trg.find((b) => b.name === 't_arm')!;
+    const tHand = trg.find((b) => b.name === 't_hand')!;
+    const bind = new Quaternion().setFromRotationMatrix(tArm.matrixWorld);
     // D alone: strip R⁻¹ · B off the front of the offset.
     const D = bind
       .clone()
       .invert()
       .multiply(alignment.rotation)
-      .multiply(new Quaternion().setFromRotationMatrix(offsets['t_foot']));
+      .multiply(new Quaternion().setFromRotationMatrix(offsets['t_arm']));
     const axisLocal = new Vector3()
-      .setFromMatrixPosition(tToe.matrixWorld)
-      .sub(new Vector3().setFromMatrixPosition(tFoot.matrixWorld))
+      .setFromMatrixPosition(tHand.matrixWorld)
+      .sub(new Vector3().setFromMatrixPosition(tArm.matrixWorld))
       .applyQuaternion(bind.clone().invert())
       .normalize();
     const twist = 2 * Math.atan2(new Vector3(D.x, D.y, D.z).dot(axisLocal), D.w) * DEG;
@@ -419,14 +424,13 @@ describe('the offsets that go with an alignment', () => {
       Math.abs(D.angleTo(new Quaternion()) * DEG),
       'D must be a real rotation here',
     ).toBeGreaterThan(30);
-    expect(
-      Math.abs(twist),
-      `D rolls the foot ${twist.toFixed(3)}° about its own axis`,
-    ).toBeLessThan(1e-6);
+    expect(Math.abs(twist), `D rolls the arm ${twist.toFixed(3)}° about its own axis`).toBeLessThan(
+      1e-6,
+    );
   });
 
   it('#866 — refuses a bone whose two rests are nearly opposite, and names it', () => {
-    // Point the target's toe the OTHER way. The minimal rotation between two
+    // Point the target's hand the OTHER way. The minimal rotation between two
     // opposite directions is undetermined up to a roll about the bone — exactly
     // the degree of freedom this term must not decide — so the bone keeps
     // R⁻¹ · B and is reported.
@@ -440,22 +444,101 @@ describe('the offsets that go with an alignment', () => {
     const reversed = THREE_DIMENSIONAL.map((b) => ({
       ...b,
       name: b.name.replace('s_', 't_'),
-      ...(b.name === 's_toe' ? { position: [0, 0, -0.15] as [number, number, number] } : {}),
+      ...(b.name === 's_hand' ? { position: [-0.2, 0, 0] as [number, number, number] } : {}),
     }));
     const src = specToThreeSkeleton(THREE_DIMENSIONAL).bones;
     const trg = specToThreeSkeleton(reversed).bones;
     const { offsets, absorbed, refused } = alignedLocalOffsets(src, trg, MAP, new Quaternion());
-    expect(refused).toEqual(['t_foot']);
-    expect(absorbed).not.toContain('t_foot');
+    expect(refused).toEqual(['t_arm']);
+    expect(absorbed).not.toContain('t_arm');
     expect(absorbed.length, 'every other directional bone is still absorbed').toBeGreaterThan(5);
     trg[0].updateMatrixWorld(true);
-    const tFoot = trg.find((b) => b.name === 't_foot')!;
-    const bind = new Quaternion().setFromRotationMatrix(tFoot.matrixWorld);
-    const q = new Quaternion().setFromRotationMatrix(offsets['t_foot']);
+    const tArm = trg.find((b) => b.name === 't_arm')!;
+    const bind = new Quaternion().setFromRotationMatrix(tArm.matrixWorld);
+    const q = new Quaternion().setFromRotationMatrix(offsets['t_arm']);
     expect(
       q.angleTo(bind) * DEG,
       'a refused bone keeps its bind, with no direction term',
     ).toBeLessThan(1e-4);
+  });
+
+  // #1455 — a foot both rigs stand on keeps its own-rest delta. The three rows
+  // pin the rule's three edges: kept when BOTH rests stand on it, absorbed the
+  // moment the source does not, and never kept for a bone whose subtree leaves
+  // the floor however low the bone itself sits.
+  const toeDown = (deg: number) =>
+    YAWED.map((b) =>
+      b.name === 't_toe'
+        ? {
+            ...b,
+            position: [
+              0.15 * Math.cos((deg * Math.PI) / 180),
+              -0.15 * Math.sin((deg * Math.PI) / 180),
+              0,
+            ] as [number, number, number],
+          }
+        : b,
+    );
+
+  it('#1455 — a foot BOTH rests stand on keeps its bind: no direction term, named grounded', () => {
+    const src = specToThreeSkeleton(THREE_DIMENSIONAL).bones;
+    const trg = specToThreeSkeleton(toeDown(40)).bones;
+    const alignment = solveRestAlignment(src, trg, MAP);
+    if (alignment.kind !== 'aligned') throw new Error('this pair must align');
+    const { offsets, absorbed, grounded } = alignedLocalOffsets(src, trg, MAP, alignment.rotation);
+    expect(grounded).toContain('t_foot');
+    expect(absorbed, 'kept and absorbed are exclusive').not.toContain('t_foot');
+    expect(grounded, 'nothing above the ankle stands on the floor').not.toContain('t_leg');
+    trg[0].updateMatrixWorld(true);
+    const tFoot = trg.find((b) => b.name === 't_foot')!;
+    const bind = new Quaternion().setFromRotationMatrix(tFoot.matrixWorld);
+    const q = alignment.rotation
+      .clone()
+      .multiply(new Quaternion().setFromRotationMatrix(offsets['t_foot']));
+    expect(
+      q.angleTo(bind) * DEG,
+      'a grounded foot sits on its own bind at the source rest, so its sole stays level',
+    ).toBeLessThan(1e-4);
+  });
+
+  it('#1455 — the knee is NOT on the floor: the threshold sits below it', () => {
+    // On the untouched pair the knee sits at 0.29 of the rest's height above the
+    // floor — inside the 0.27–0.30 band the knees of every real rig measured
+    // fall in. A threshold that reached it would keep the whole shin on its own
+    // rest and stop absorbing a real pose gap there.
+    const src = specToThreeSkeleton(THREE_DIMENSIONAL).bones;
+    const trg = specToThreeSkeleton(YAWED).bones;
+    const { grounded } = alignedLocalOffsets(src, trg, MAP, new Quaternion());
+    expect([...grounded].sort()).toEqual(['t_foot', 't_toe']);
+  });
+
+  it('#1455 — the SOURCE must stand on it too: a raised source foot is absorbed as before', () => {
+    // The source's toe points straight up, so its foot's subtree leaves the
+    // floor: the two rests no longer share a sole, and the gap is a pose again.
+    const raised = THREE_DIMENSIONAL.map((b) =>
+      b.name === 's_toe' ? { ...b, position: [0, 0.5, 0] as [number, number, number] } : b,
+    );
+    const src = specToThreeSkeleton(raised).bones;
+    const trg = specToThreeSkeleton(YAWED).bones;
+    const { absorbed, grounded } = alignedLocalOffsets(src, trg, MAP, new Quaternion());
+    expect(grounded).not.toContain('t_foot');
+    expect(absorbed).toContain('t_foot');
+  });
+
+  it('#1455 — a bone low on the floor whose CHILD is not is never kept', () => {
+    // A root parked at the floor with the hips above it — the shape of Kimodo's
+    // `Root`. Judged by its own position it is on the floor; judged by its
+    // subtree it is the whole body. Only the subtree reading is right.
+    const withRoot = (bs: BoneSpec[], prefix: string): BoneSpec[] => [
+      { name: `${prefix}root`, parent: -1, position: [0, 0, 0], rotation: [0, 0, 0] },
+      ...bs.map((b) => ({ ...b, parent: b.parent + 1 })),
+    ];
+    const src = specToThreeSkeleton(withRoot(THREE_DIMENSIONAL, 's_')).bones;
+    const trg = specToThreeSkeleton(withRoot(YAWED, 't_')).bones;
+    const map = { ...MAP, t_root: 's_root' };
+    const { grounded } = alignedLocalOffsets(src, trg, map, new Quaternion());
+    expect(grounded).not.toContain('t_root');
+    expect(grounded, 'the feet are still found under a root').toContain('t_foot');
   });
 
   it('#866 — refuses to build offsets from a source whose wrapper is already turned', () => {

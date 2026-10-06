@@ -43,6 +43,7 @@
 //      .planning/phases/nla-5-lane-ui/PLAN.md inc 5B/5C; sibling precedent
 //      src/app/video/LayerTimeline.tsx; hetvabhasa H95/H48/H70; issue #283.
 
+import { useTimelineSpan } from './timelineSpan';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useDagStore } from '../core/dag/store';
 import { useTimeStore, FRAMES_PER_SECOND } from '../app/stores/timeStore';
@@ -185,7 +186,8 @@ export function NlaLanePane() {
   );
 
   const seconds = useTimeStore((s) => s.seconds);
-  const duration = useTimeStore((s) => s.durationSeconds);
+  // #1287 — past the scene's End when content runs longer; that stretch is shaded.
+  const { span: duration, rangeEnd } = useTimelineSpan();
   const view = useTimelineViewStore((s) => s.view);
   const selectedStripId = useNlaSelectionStore((s) => s.selectedStripId);
   const selectedTrackId = useNlaSelectionStore((s) => s.selectedTrackId);
@@ -513,6 +515,7 @@ export function NlaLanePane() {
             className="relative min-w-0 flex-1 cursor-ew-resize border-b border-border bg-bg-2"
           >
             <RulerTicks totalFrames={totalFrames} view={view} />
+            <OutOfRangeShade rangeEnd={rangeEnd} totalFrames={totalFrames} view={view} />
           </div>
         </div>
 
@@ -661,7 +664,7 @@ function TrackRowView({
   onStripClick: (stripId: string) => void;
   onStripKeyDown: (e: React.KeyboardEvent, strip: NlaStripBlock) => void;
 }) {
-  const duration = useTimeStore((s) => s.durationSeconds);
+  const { span: duration, rangeEnd } = useTimelineSpan();
   const view = useTimelineViewStore((s) => s.view);
   const totalFrames = Math.max(1, Math.round(duration * FRAMES_PER_SECOND));
   const dimmed = row.muted || row.soloedOut;
@@ -762,6 +765,9 @@ function TrackRowView({
             onKeyDown={onStripKeyDown}
           />
         ))}
+        {/* Over the strips, like the dopesheet's shade over its keys: the part of a strip past
+            End reads as not played. It takes no pointer events, so the strip stays draggable. */}
+        <OutOfRangeShade rangeEnd={rangeEnd} totalFrames={totalFrames} view={view} />
       </div>
     </div>
   );
@@ -1178,5 +1184,29 @@ function AddStripButton({
     >
       {compact ? '＋' : '＋ Strip…'}
     </button>
+  );
+}
+
+/** #1287 — the lane past the scene's End, shaded like the dopesheet's (Blender shades outside
+ *  the frame range in every animation editor). Nothing when End is the timeline's end. */
+function OutOfRangeShade({
+  rangeEnd,
+  totalFrames,
+  view,
+}: {
+  rangeEnd: number;
+  totalFrames: number;
+  view: TimelineView;
+}) {
+  const left = secondsToPercent(rangeEnd, FRAMES_PER_SECOND, totalFrames, view);
+  if (left >= 100) return null;
+  const clamped = Math.max(0, left);
+  return (
+    <div
+      data-testid="nla-out-of-range"
+      aria-hidden="true"
+      className="pointer-events-none absolute inset-y-0 border-l border-border bg-black/50"
+      style={{ left: `${clamped}%`, width: `${100 - clamped}%` }}
+    />
   );
 }

@@ -178,6 +178,26 @@ async function seedWorkflowGraph(page: import('@playwright/test').Page, frameEnd
   );
 }
 
+/**
+ * How long a storage-bound step may take: a share of the test's own budget, not a fixed time.
+ *
+ * #543 — these steps are not slow by a fixed amount. Inside the app one OPFS call costs one render
+ * frame (measured: 18.1 ms per call against an 18 ms frame; 0.1 ms on a bare page of the same
+ * origin), and `OpfsStorage` makes several calls per operation. So Estimate takes about 43 render
+ * frames and a 3-frame Submit about 64, whatever a frame costs (60 and 120 before #1423 cached
+ * folder handles; measured in the editor, two runs each). Headless Chromium draws with
+ * software GL, and on a CI runner a frame is ~125–150 ms, which put Submit past the fixed 15 s it
+ * had while `test.slow()` raised only the test's total. The fixed waits passed or failed on the
+ * runner's frame rate, not on the cost preview.
+ *
+ * `test.info().timeout` already carries `test.slow()` and the CI multiplier, so the step's wait
+ * follows the same budget the test was given.
+ */
+const stepBudget = (share: number) => Math.floor(test.info().timeout * share);
+/** Estimate is about a third of the work of Estimate + a 3-frame Submit; Submit the other two. */
+const ESTIMATE_SHARE = 1 / 4;
+const SUBMIT_SHARE = 1 / 2;
+
 test('P5#C5.1 selecting a ComfyUIWorkflow node embeds CostPreview in Inspector', async ({
   page,
 }) => {
@@ -197,7 +217,9 @@ test('P5#C5.2 Estimate populates frames + estimated time + sample frame', async 
   await seedWorkflowGraph(page, 4);
   await page.getByTestId('cost-preview-estimate').click();
   // dryRun extrapolates frameEnd-frameStart+1 = 5.
-  await expect(page.getByTestId('cost-preview-frames')).toHaveText('5', { timeout: 10_000 });
+  await expect(page.getByTestId('cost-preview-frames')).toHaveText('5', {
+    timeout: stepBudget(ESTIMATE_SHARE),
+  });
   await expect(page.getByTestId('cost-preview-est-seconds')).toBeVisible();
   // Sample frame OR sample-missing fallback — both acceptable; one must appear.
   const sample = page.getByTestId('cost-preview-sample');
@@ -208,19 +230,18 @@ test('P5#C5.2 Estimate populates frames + estimated time + sample frame', async 
 });
 
 test('P5#C5.3 Submit runs the workflow and progress bar advances to N/N', async ({ page }) => {
-  // Legitimately slow: OPFS probe-write + per-frame setParam dispatch. ~10s
-  // in isolation, but the internal expects already budget 10s + 15s and the
-  // full e2e suite (workers:1, ~14 min) puts this well over the 30s per-test
-  // cap under CI contention. test.slow() triples the budget to 90s — the
-  // Playwright-idiomatic mechanism for a known-slow (not flaky) test.
+  // Legitimately slow, and by an amount set by the frame rate: see `stepBudget` (#543).
+  // test.slow() triples the test's budget, and each step below takes its share of that.
   test.slow();
   await seedWorkflowGraph(page, 2);
   await page.getByTestId('cost-preview-estimate').click();
-  await expect(page.getByTestId('cost-preview-frames')).toHaveText('3', { timeout: 10_000 });
+  await expect(page.getByTestId('cost-preview-frames')).toHaveText('3', {
+    timeout: stepBudget(ESTIMATE_SHARE),
+  });
   await page.getByTestId('cost-preview-submit').click();
   // The seam dispatches setParam(lastGoodFrame) per frame; the bar text
   // reflects framesDone/total. Final state: 3/3.
   await expect(page.getByTestId('cost-preview-progress-text')).toHaveText('3/3', {
-    timeout: 15_000,
+    timeout: stepBudget(SUBMIT_SHARE),
   });
 });

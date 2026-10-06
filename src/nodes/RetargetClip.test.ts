@@ -313,12 +313,16 @@ describe('RetargetClip reads the pose wire (#1225)', () => {
     expect(shifted.poses.length).toBeGreaterThan(0);
   });
 
-  it('`sampleRate` overrides the rate the wire carries', () => {
+  it('`sampleRate` samples on its own grid, in place of the times the wire carries', () => {
     const inputs = { source: sourcePose(), boneMap: boneMapValue(), skeleton: target() };
-    const times = (v: AnimationClipValue) => v.poses.length;
-    // The clip's own rate: 2 keys over 1 s, so 2 samples.
-    expect(times(evaluate(inputs))).toBe(2);
-    expect(times(evaluate(inputs, RetargetClipParams.parse({ sampleRate: 10 })))).toBe(10);
+    const times = (v: AnimationClipValue) => v.poses.map((p) => Math.round(p.time * 1e6) / 1e6);
+    // The wire's own times: the clip's 2 keys over 1 s.
+    expect(times(evaluate(inputs))).toEqual([0, 1]);
+    // #1456 — 10/s from the start, the end included: on the grid, as Houdini's Sample Rate. The old
+    // count rule spread 10 samples over the second and landed on none of the tenths between.
+    expect(times(evaluate(inputs, RetargetClipParams.parse({ sampleRate: 10 })))).toEqual([
+      0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1,
+    ]);
   });
 
   it('a wire with no range (a skeleton at rest) has no motion to retarget', () => {

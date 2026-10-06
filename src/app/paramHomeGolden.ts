@@ -22,6 +22,10 @@
 // is therefore: existing cells are frozen; new cells may join, in the same commit as the
 // param they record, and never with an edit to a cell already there.
 //
+// USED AGAIN (#1287): `Scene` appends `frameEnd=(unrouted)` — the scene's End is edited from the
+// Timebar (Blender's Timeline header), not an inspector section. `unrouted` 248 → 249, `routed`
+// untouched.
+//
 // USED AGAIN (#1503): `Object`, `Group` and `Collection` each append `viewport=(unrouted)
 // render=(unrouted)` — visibility moved off `meta.hidden` into two params, and no inspector card
 // draws them yet (the outliner's eye writes `viewport`). `unrouted` 250 → 256, `routed` untouched.
@@ -231,21 +235,18 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
   RenderOutput: '[render] postFx=(unrouted) width=(unrouted) height=(unrouted)',
   // #901 — one param, the output clip's name. Everything else it produces comes
   // from its three inputs, which is the point of the node.
-  // #974 — hand-posing. No `home` declared: the params are the override itself,
-  // not a routed view of somebody else's, so every cell is honestly unrouted.
-  // #1240 — the pose layer that absorbs PoseOverride. No `home` declared, for PoseOverride's
-  // reason: the params are the layer itself. Its controls arrive with the writers (#1244).
+  // #1240 — the pose layer that absorbed PoseOverride (retired, #1243). No `home` declared: the
+  // params are the layer itself. Its controls arrive with the writers (#1244).
+  // #1343 appends `ik` (an ik layer's chain), unrouted like the rest: its controls arrive with #1510.
   PoseLayer:
-    '[animate] name=(unrouted) mode=(unrouted) weight=(unrouted) mute=(unrouted) solo=(unrouted) members=(unrouted) channels=(unrouted)',
-  PoseOverride:
-    '[animate] name=(unrouted) bone=(unrouted) position=(unrouted) rotation=(unrouted) overridden=(unrouted)',
+    '[animate] name=(unrouted) mode=(unrouted) weight=(unrouted) mute=(unrouted) solo=(unrouted) members=(unrouted) channels=(unrouted) ik=(unrouted)',
   RetargetClip: '[animate] name=(unrouted) active=(unrouted) sampleRate=(unrouted)',
   SampleGeometry:
     '[] sourceGeometry=(unrouted) at=(unrouted) method=(unrouted) direction=(unrouted) orientation=(unrouted) farthest=(unrouted)',
   Scatter:
     '[mesh,driver,material] density=(unrouted) seed=(unrouted) bounds=(unrouted) scaleJitter=(unrouted) randomYaw=(unrouted)',
   Scene:
-    '[environment,layout] envSource=environment envIntensity=environment envRotationY=environment envBackground=environment activeCollection=(unrouted)',
+    '[environment,layout] envSource=environment envIntensity=environment envRotationY=environment envBackground=environment frameEnd=(unrouted) activeCollection=(unrouted)',
   // APPENDED at #638 — the face range. Unrouted like `muted`, and for the node's own
   // recorded reason: `SetMaterialOp` declares no inspector section at all, because its
   // reference authors this node in the graph editor and a titled empty card is the shape
@@ -403,4 +404,15 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
 // #1447 appends `Group.parentBone`, unrouted as `Object.parentBone` is (#1210): an imported Empty
 // hung from a bone. +1 unrouted.
 //   types 90 · routed 144 · unrouted 248 + 1 = 249
-export const GOLDEN_TOTALS = { types: 91, routed: 144, unrouted: 256 } as const;
+//
+// #1243 retires `PoseOverride`, its five params all unrouted: −1 type, −5 unrouted.
+//   types 89 · routed 144 · unrouted 249 − 5 = 244
+//
+// #1343 appends `PoseLayer.ik`, unrouted (see its row): +1 unrouted.
+//   types 89 · routed 144 · unrouted 244 + 1 = 245
+//
+// Merged with main (#1520, collections and visibility): main's side is types 91 · unrouted 256;
+// on top of it this branch adds `Scene.frameEnd` (+1), retires `PoseOverride` (−1 type, −5) and
+// appends `PoseLayer.ik` (+1).
+//   types 91 − 1 = 90 · routed 144 · unrouted 256 + 1 − 5 + 1 = 253
+export const GOLDEN_TOTALS = { types: 90, routed: 144, unrouted: 253 } as const;

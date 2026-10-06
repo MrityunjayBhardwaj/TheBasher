@@ -41,22 +41,6 @@ describe('threeAdapter — BoneSpec scale round-trip (P7.11 D-03)', () => {
     expect(back[0].scale).toEqual([2, 3, 4]);
     expect(back[1].scale).toEqual([1, 1, 1]);
   });
-
-  it('does NOT round-trip inverseBindMatrix through the adapter (retarget reconstructs inverses)', () => {
-    const specs: BoneSpec[] = [
-      {
-        name: 'root',
-        parent: -1,
-        position: [0, 0, 0],
-        rotation: [0, 0, 0],
-        inverseBindMatrix: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, -1, 0, 0, 1],
-      },
-    ];
-    const { bones } = specToThreeSkeleton(specs);
-    const back = bonesToSpec(bones);
-    // IBM is not an adapter-derived datum — it must not appear on the way back.
-    expect(back[0].inverseBindMatrix).toBeUndefined();
-  });
 });
 
 describe('a Skeleton is built with REAL bind inverses, not identity ones (#838)', () => {

@@ -67,6 +67,7 @@ import {
   enumerateMaterialStack,
   resolveStackBase,
 } from './operatorStack';
+import { uiEvaluatorCache } from './uiEvaluatorCache';
 
 /** PRESENTATION ONLY — the menu wording, and the ORDER, which is load-bearing here in a
  *  way it is not in the geometry stack: SET then OVERRIDE is the order the composition
@@ -108,7 +109,7 @@ export function MaterialStackControls({ nodeId }: { nodeId: string }) {
   // Not a data-lane source at all — a Material node, a glTF child, the scene-band
   // `MaterialOverride`. There is no stack here and there never will be. Render nothing
   // rather than an empty one (see the header).
-  const dataKind = resolveDataKind(state, base);
+  const dataKind = resolveDataKind(state, base, uiEvaluatorCache);
   if (dataKind === null) return null;
 
   const capability = dataSectionCapability(dataKind, 'material');
@@ -118,7 +119,7 @@ export function MaterialStackControls({ nodeId }: { nodeId: string }) {
   // action `buildAddMaterialOpOps` would refuse ([[V108]]). It is deliberately the
   // predicate and not `capability.state === 'supported'` spelled again here: one
   // phrasing, two readers.
-  const addable = canWearMaterial(state, base) ? offered : EMPTY_ADDABLE;
+  const addable = canWearMaterial(state, base, uiEvaluatorCache) ? offered : EMPTY_ADDABLE;
 
   function onAdd(type: string) {
     const res = buildAddMaterialOpOps(useDagStore.getState().state, base, type);

@@ -12,7 +12,7 @@
 //
 // The source is the POSE WIRE (#1225): a clip's pose, a character's base layer,
 // any point on a chain — sampled over the range the wire carries (Houdini's
-// `clipinfo`), at the rate it carries unless `sampleRate` says otherwise. A clip's
+// `clipinfo`), at the times it carries unless `sampleRate` says otherwise (#1456). A clip's
 // range lands the samples on its keys, so a clip retargets as it did when this
 // input took the clip itself (`retargetWire.gate.test.ts` pins the agreement).
 //
@@ -48,7 +48,8 @@
 // socket anywhere, so a node emitting one would typecheck, validate, evaluate and
 // drive nothing. That was an accurate description of a gap, not a design
 // principle — and the gap was owned by this epic's own next rung. `PoseOverride`
-// (#974) is the consumer, so the lane now terminates somewhere.
+// (#974) was the first consumer; today a `PoseLayer` or an armature Object's `pose` takes it
+// (`PoseOverride` retired in #1243).
 //
 // THE `posed` OUTPUT IS ADDITIVE, and deliberately so. `out` stays an
 // `AnimationClip`: 47 production sites and 19 test files treat this node as a
@@ -86,6 +87,14 @@ import { clipLoopOf } from './clipLoop';
 import { posedSkeletonFromClip } from './AnimationClip';
 import { nameParam } from './paramWidget';
 
+let retargetRuns = 0;
+/** How many times a retarget has run, since load. It costs a whole clip (~300 ms on the
+ *  "Camera Path + AI Walk" walk), so a caller that evaluates without a cache runs it per frame —
+ *  for tests of #1314. */
+export function __retargetRunsForTests(): number {
+  return retargetRuns;
+}
+
 /** Both views of one retarget: the clip, and that same clip as a posed rig.
  *  A `type` and not an `interface` on purpose — only a type alias gets TypeScript's
  *  implicit index signature, which is what makes it assignable to the
@@ -102,32 +111,31 @@ function both(out: AnimationClipValue): RetargetOutputs {
 }
 
 /**
- * The times of a wire's poses, counted from its range's start: `round(span · rate)` of them with both
- * ends included, or one at the start when that rounds below two. On a clip's pose they land on the
- * clip's keys (`clipInfoOf`). The one rule for "every pose" of a wire: the retarget samples by it, and
- * a bake keys by it (#1215).
+ * The times of a wire's poses, counted from its range's start. The one rule for "every pose" of a
+ * wire: the retarget samples by it, a bake keys by it (#1215), and a regeneration compares by it.
+ *
+ * #1456 — by default the times the range carries (`wireSampleTimes.ts`): every key, and the fills
+ * that make straight lines between the samples agree with the wire at every scene frame. A positive
+ * `rate` instead samples on that rate's own grid from the start, the end included, as Houdini's
+ * MotionClip Sample Rate does.
  */
-export function wirePoseTimes(range: WireClipInfo, rate: number): number[] {
+export function wirePoseTimes(range: WireClipInfo, rate = 0): number[] {
   const span = range.end - range.start;
-  const count = Math.max(1, Math.round(span * rate));
+  if (!(rate > 0)) return range.times.map((t) => t - range.start);
   const times: number[] = [];
-  // One sample is a single pose, at the start: three samples a one-key clip once too.
-  for (let i = 0; i < count; i++) times.push(count === 1 ? 0 : (i * span) / (count - 1));
+  const steps = Math.floor(span * rate + 1e-6);
+  for (let i = 0; i <= steps; i++) times.push(i / rate);
+  if (span - times[times.length - 1] > 1e-6) times.push(span);
   return times;
 }
 
 /**
- * #1225 — the source wire as the poses the retarget math reads: every bone, sampled
- * `round(span · rate)` times across the wire's range with both ends included (at least twice), at
- * times counted from the range's start. Three's retarget samples the same count over the same span,
- * so on a clip's pose the samples land on the clip's keys (`clipInfoOf`). Each bone leaves by its
- * name on the source rig, with the quaternion the wire gave (#1432); scale is not read.
+ * #1225 — the source wire as the poses the retarget math reads: every bone, at `wirePoseTimes`
+ * (the range's own times unless `rate` is positive), counted from the range's start. On a linear
+ * clip's pose the samples land on the clip's keys. Each bone leaves by its name on the source rig,
+ * with the quaternion the wire gave (#1432); scale is not read.
  */
-export function wirePoses(
-  source: PosedSkeletonValue,
-  range: WireClipInfo,
-  rate: number,
-): MotionPose[] {
+export function wirePoses(source: PosedSkeletonValue, range: WireClipInfo, rate = 0): MotionPose[] {
   const bones = source.skeleton.bones;
   return wirePoseTimes(range, rate).map((time) => {
     const held: Record<string, MotionBonePose> = {};
@@ -147,8 +155,9 @@ export const RetargetClipParams = z.object({
    *  on only one of them would leave the other's binds ordered by id. */
   active: z.boolean().default(false),
   /**
-   * #1225 — samples per second taken off the source wire, as Houdini's MotionClip Sample Rate. 0 (the
-   * default) uses the rate the wire carries, which is where the source's own keys sit.
+   * #1225 — samples per second taken off the source wire, on that rate's own grid from the range's
+   * start, as Houdini's MotionClip Sample Rate. 0 (the default) samples at the times the wire carries:
+   * the source's keys, plus the frames its curve needs between them (#1456).
    */
   sampleRate: z.number().nonnegative().default(0),
 });
@@ -208,13 +217,14 @@ export const RetargetClipNode: NodeDefinition<
       });
     }
 
+    retargetRuns++;
     const result = retargetClip({
       // The source rig travels on the wire, with the poses it indexes.
       sourceBones: source.skeleton.bones,
       sourceClip: {
         name: range.name ?? 'clip',
         duration: range.end - range.start,
-        poses: wirePoses(source, range, params.sampleRate || range.rate),
+        poses: wirePoses(source, range, params.sampleRate),
         // #919 — carried, so neither side decides the source's time domain for it.
         loop: clipLoopOf(range.loop),
       },

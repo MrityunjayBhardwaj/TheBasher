@@ -27,7 +27,7 @@
 // REF: THESIS.md §18-21, krama K3, vyapti V7 + V11.
 
 import type { LLMConfig, ChatMessage, AssistantToolCall, ToolSchema } from './transport/types';
-import { streamChatCompletion, buildToolSchemas } from './transport/openai';
+import { streamChatCompletion, buildToolSchemas, DEFAULT_MAX_TOKENS } from './transport/openai';
 import { getTool, listTools } from './tools/registry';
 import type { ToolContext, ToolDefinition, ToolResult } from './tools/types';
 import { useDagStore } from '../core/dag/store';
@@ -298,9 +298,10 @@ export async function runAgentTurn(config: LLMConfig, options: TurnOptions): Pro
   const availableTools = filterToolsByMode(listTools(), mode);
   const toolSchemas = buildToolSchemas(availableTools);
 
-  // A6: static prompt — rules + tool catalogue + op examples. Doesn't
-  // include DAG state. Re-sending it across rounds is cheap.
-  const systemPrompt = buildStaticSystemPrompt(mode, availableTools);
+  // A6: static prompt — rules + op examples. Doesn't include DAG state. The tool
+  // catalogue is NOT restated here: every name and description already travels in
+  // the request's `tools` array, and a second copy cost ~a fifth of round 1 (#334).
+  const systemPrompt = buildStaticSystemPrompt(mode);
 
   // A8: capture the prior session history BEFORE pushing the current user
   // message so we can thread it into the LLM context.
@@ -412,6 +413,10 @@ export async function runAgentTurn(config: LLMConfig, options: TurnOptions): Pro
       // back to the local estimate (#333). roundOutputChars accumulates the
       // streamed text + tool-call args so the estimate has an output term.
       let roundUsage: { prompt_tokens: number; completion_tokens: number } | undefined;
+      // #1405 — STICKY: one stream reports `length` on its finish chunk, then the usage chunk
+      // and `[DONE]` each arrive as another `done` defaulted to 'stop'. The last word is not
+      // the true one, so any `length` marks the round.
+      let roundCutAtOutputCap = false;
       let roundOutputChars = 0;
 
       // Per-round tool_choice override — used to force agent.identify
@@ -454,6 +459,7 @@ export async function runAgentTurn(config: LLMConfig, options: TurnOptions): Pro
             }
             case 'done': {
               if (chunk.usage) roundUsage = chunk.usage;
+              if (chunk.finish_reason === 'length') roundCutAtOutputCap = true;
               break;
             }
             case 'error': {
@@ -505,6 +511,21 @@ export async function runAgentTurn(config: LLMConfig, options: TurnOptions): Pro
           throw new Error(refusal);
         }
         previousRead = read;
+      }
+
+      // #1405 — the OUTPUT twin of #1057. A round the provider cut at `max_tokens` is not an
+      // answer: with no tool call it used to fall through to "text-only → turn complete" and
+      // end blank with no error (measured: a thinking model spent all 4096 tokens reasoning,
+      // 0 chars of content), and a tool call in it may be cut mid-arguments. Refused the same
+      // way — thrown, so nothing from the turn runs.
+      if (roundCutAtOutputCap) {
+        const cap = config.maxTokens ?? DEFAULT_MAX_TOKENS;
+        throw new Error(
+          `The model ran out of output before it finished answering: it hit the ${cap}-token ` +
+            `output cap (max_tokens)${toolCallAccumulators.size > 0 ? ' in the middle of a tool call' : ' without replying or calling a tool'}. ` +
+            `Nothing from this turn was run. Raise the output cap, or use a model or mode that ` +
+            `spends less of it on reasoning.`,
+        );
       }
 
       // A5 / #333: hard cost guard AFTER the round — catches a round whose
@@ -580,18 +601,24 @@ export async function runAgentTurn(config: LLMConfig, options: TurnOptions): Pro
         // target=newId)] fails gate-1, because the new id doesn't exist in the
         // round's initial DAG snapshot.
         //
-        // 🔴 A THROWN FORK IS HELD, NOT PROPAGATED FROM HERE. `createFork` re-validates
-        // every op against the live shape and throws when one references a node or
-        // socket that does not exist — which is a COMMON agent mistake, not a rare
-        // one. Before this moved, the throw happened below the answer, so the chat
-        // still carried `[dag.exec] Proposed N Op(s)` alongside the error. Throwing
-        // here instead would have silently taken that line away and made the failure
-        // less legible than it was. So the error waits until the call has been
-        // answered and the line written, and is rethrown unchanged.
+        // 🔴 A REFUSED FORK ANSWERS THE CALL; IT DOES NOT END THE TURN (#1401). `createFork`
+        // re-validates every op against the live shape and the op layer refuses one that
+        // references a node or socket that does not exist, or would orphan an edge — a
+        // COMMON agent mistake, not a rare one. It used to be held and rethrown after the
+        // answer, which kept the chat's `[dag.exec]` line (#1014) but ended the turn: the
+        // model had been told "Proposed N Op(s)" and never saw why. Now the refusal IS the
+        // answer — the model reads it and can correct itself this turn, the director reads
+        // the same line in the chat, and the refused batch contributes nothing.
+        //
+        // EVERY throw from the fork is treated as the refusal, not only `OpError`: measured,
+        // the op layer refuses in three shapes — `OpError` for most, a plain `Error` from
+        // `getNode` for a missing id ("Node not found", the commonest mistake of all) and
+        // another for a malformed op. A type test would have left the commonest one ending
+        // the turn exactly as before.
         let noOpReport = '';
         let critiqueReport = '';
         let maskedReport = '';
-        let forkError: unknown;
+        let forkRefusal: string | null = null;
         if (result.ops.length > 0) {
           try {
             const before = effectiveState;
@@ -619,15 +646,16 @@ export async function runAgentTurn(config: LLMConfig, options: TurnOptions): Pro
               ),
             );
           } catch (e) {
-            forkError = e;
+            forkRefusal = e instanceof Error ? e.message : String(e);
           }
         }
 
-        const resultMessage =
-          (result.text ?? `OK (${result.ops.length} ops)`) +
-          noOpReport +
-          maskedReport +
-          critiqueReport;
+        const resultMessage = forkRefusal
+          ? `ERROR: ${forkRefusal} — nothing in this batch was proposed. Fix the op and resend it.`
+          : (result.text ?? `OK (${result.ops.length} ops)`) +
+            noOpReport +
+            maskedReport +
+            critiqueReport;
         // Wave D telemetry: tool name + outcome + duration only. No
         // args, no DAG content, no prompt text. Killswitch-respecting.
         recordEvent({
@@ -649,10 +677,7 @@ export async function runAgentTurn(config: LLMConfig, options: TurnOptions): Pro
         // Surface the result to the user in the chat too (debuggability).
         sessionStore.appendToLastAssistant(`\n\n[${acc.name}] ${resultMessage}`);
 
-        // The held fork error, now that the call is answered and the line is written.
-        if (forkError) throw forkError;
-
-        if (result.ops.length > 0) {
+        if (result.ops.length > 0 && !forkRefusal) {
           for (const op of result.ops) {
             turnOps.push(op);
             turnOpSources.push(`agent:${acc.name}`);
@@ -900,9 +925,7 @@ function filterToolsByMode(tools: ToolDefinition[], mode: AgentMode): ToolDefini
 // Prompt construction
 // ---------------------------------------------------------------------------
 
-function buildStaticSystemPrompt(mode: AgentMode, tools: ToolDefinition[]): string {
-  const toolList = tools.map((t) => `  - ${t.name}: ${t.description}`).join('\n');
-
+function buildStaticSystemPrompt(mode: AgentMode): string {
   const opExamples = `
 Op shape examples (use inside dag.exec's "ops" array). Tokens like
 <sceneId> are PLACEHOLDERS — read the actual id from the Context
@@ -919,8 +942,8 @@ literal string "scene", "render", "ground" etc. as a node id.
 2. Wire the Object into scene children (replace <sceneId> with the actual scene id):
    {"type":"connect","from":{"node":"box1","socket":"out"},"to":{"node":"<sceneId>","socket":"children"}}
 
-3. Remove a node:
-   {"type":"removeNode","nodeId":"box1"}
+3. Delete a node — NOT a dag.exec op (dag.exec refuses removeNode). Use
+   agent.proposePlan({"mutator":"mutator.deleteNode","intent":"delete box1","spec":{"targetSelectors":["box1"]}})
 
 4. Change a param — geometry + material live on the BoxData; the transform
    (position/rotation/scale) lives on the Object:
@@ -944,9 +967,6 @@ Quick conventions (full guidance in strategy resources — call agent.getStrateg
   return [
     `You are Basher's AI agent — a director-first assistant for procedural 3D scene authoring.`,
     `Mode: ${mode}`,
-    ``,
-    `Available tools:`,
-    toolList,
     ``,
     `Rules:`,
     `- You NEVER mutate the scene directly. Mutation tools return Op[] that get proposed as a diff for the user to accept or reject.`,

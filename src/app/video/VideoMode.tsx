@@ -106,7 +106,8 @@ function CompositionShell({ comp }: { comp: ActiveComposition }) {
   const totalFrames = Math.max(1, comp.params.durationFrames ?? 150);
 
   // Size the GLOBAL playhead range to this comp WHILE in video mode, so playback
-  // loops at the comp boundary (the 3D default is 10s, unrelated). The video slot
+  // loops at the comp boundary (the 3D range is the scene's End, #1287 —
+  // SceneRangeSync puts it back when the space changes). The video slot
   // stays mounted (display:none) across space switches, so this is gated on the
   // active space — not an unmount — and restores the prior duration on exit.
   const space = useEditorStore((s) => s.space);

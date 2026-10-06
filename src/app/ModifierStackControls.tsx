@@ -36,6 +36,7 @@ import {
   enumerateModifierStack,
   resolveStackBase,
 } from './operatorStack';
+import { uiEvaluatorCache } from './uiEvaluatorCache';
 
 /**
  * PRESENTATION ONLY — the menu wording and the order it reads in. **Not membership.**
@@ -100,7 +101,7 @@ export function ModifierStackControls({ nodeId }: { nodeId: string }) {
   // it and using it only to pick a banner. `addable` is derived rather than static: an
   // add that `buildAddModifierOps` would refuse is not shown at all, so the panel cannot
   // advertise an action that silently does nothing.
-  const canAdd = canModifyGeometry(state, base);
+  const canAdd = canModifyGeometry(state, base, uiEvaluatorCache);
   // Derived once per mount, not per render: the registry is filled at boot and does not
   // move afterwards, so this keeps #498's stable prop identity while the MEMBERSHIP still
   // comes from the declarations rather than from a list beside the menu.
@@ -110,7 +111,7 @@ export function ModifierStackControls({ nodeId }: { nodeId: string }) {
   // The three-state answer, which `canModifyGeometry` alone cannot give: it is false for
   // a curve, a light and a camera alike, and those do not deserve the same sentence. A
   // curve is a tracked gap (#349); a camera has nothing to reshape and never will.
-  const dataKind = resolveDataKind(state, base);
+  const dataKind = resolveDataKind(state, base, uiEvaluatorCache);
   const capability = dataKind ? dataSectionCapability(dataKind, 'modifier') : null;
 
   // The residual banner: modifiers are present on a source that cannot be reshaped and

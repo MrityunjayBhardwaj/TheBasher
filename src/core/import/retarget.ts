@@ -581,6 +581,15 @@ export function restDirectionLocalOffsets(
   return offsets;
 }
 
+/** The most poses any one bone appears in: the frame count three samples a clip at. */
+function densestTrack(poses: readonly MotionPose[]): number {
+  const perBone = new Map<string, number>();
+  for (const pose of poses) {
+    for (const name of Object.keys(pose.bones)) perBone.set(name, (perBone.get(name) ?? 0) + 1);
+  }
+  return Math.max(0, ...perBone.values());
+}
+
 export function retargetClip(args: RetargetArgs): RetargetResult {
   const { poses } = args.sourceClip;
   // The clip's FIRST pose is the source's reference pose (#853, see `retargetThree`).
@@ -589,29 +598,60 @@ export function retargetClip(args: RetargetArgs): RetargetResult {
   for (const [name, held] of Object.entries(first?.bones ?? {})) {
     if (held.quaternion) referencePose[name] = held.quaternion;
   }
+  // #1249 — A ONE-POSE SOURCE IS ONE POSE, and three cannot time it. `SkeletonUtils.retargetClip`
+  // samples as many frames as the longest track has keys, `duration / (frames − 1)` apart
+  // (SkeletonUtils.js:203, 213-214), and stamps frame `i` at `i · delta` (:252). With one key per
+  // track that is one frame at `0 · ∞ = NaN`: measured, all 78 keys of a one-frame Kimodo pose came
+  // back at NaN. At duration 0 it is worse: `fps = 1 / 0` makes the frame count NaN, the loop never
+  // runs, and the pose came back with NO keys. Its values are right either way (frame 0 is sampled
+  // with the mixer at 0, :239), so three still does the math; only the sampling span and the stamp
+  // are ours. It gets a positive span to sample, and its one pose is timed where the source times it.
+  const sourceTimes = new Set(poses.map((p) => p.time));
+  const onePose = sourceTimes.size === 1;
+  // #1456 — THREE RESAMPLES BY COUNT. Its frame `i` sits at `i · duration / (frames − 1)`, so a source
+  // whose poses are not evenly spaced — a key at 0.1 s of a 0 / 0.1 / 2 s curve, or the frames a
+  // wire adds inside an eased segment — is read at times it holds no pose, and the in-between poses
+  // are lost (measured: 85° off at the key three stepped over). When some bone is keyed at every
+  // time, three samples one frame per time; the poses are moved onto three's evenly spaced frames
+  // for the math, and each frame is stamped back with its real time after. An evenly spaced source
+  // is moved nowhere. A source with no bone at every time keeps three's own sampling.
+  const ordered = [...sourceTimes].sort((a, b) => a - b);
+  const duration = onePose && !(args.sourceClip.duration > 0) ? 1 : args.sourceClip.duration;
+  const reTimed = !onePose && duration > 0 && densestTrack(poses) === ordered.length;
+  const frameOf = new Map(ordered.map((t, i) => [t, (i * duration) / (ordered.length - 1)]));
   const run = retargetThree({
     sourceBones: args.sourceBones,
     sourceClip: posesToThreeClip(
       args.sourceClip.name,
-      args.sourceClip.duration,
-      poses,
+      duration,
+      reTimed ? poses.map((p) => ({ ...p, time: frameOf.get(p.time)! })) : poses,
       args.sourceBones,
     ),
     referencePose: first ? referencePose : null,
     targetBones: args.targetBones,
     nameMap: args.nameMap,
   });
+  // Named as the caller's rig names its bones: `targetSpecs` is three's spelling of it.
+  const sampled = clipToPoses(run.retargeted, run.targetSpecs, args.targetBones);
+  const step = duration / (ordered.length - 1);
+  const outPoses = onePose
+    ? sampled.map((p) => ({ ...p, time: [...sourceTimes][0] }))
+    : reTimed
+      ? sampled.map((p) => ({ ...p, time: ordered[Math.round(p.time / step)] ?? p.time }))
+      : sampled;
   return {
     clipParams: {
       name: args.outputName ?? `${args.sourceClip.name}_retargeted`,
-      duration: run.retargeted.duration > 0 ? run.retargeted.duration : args.sourceClip.duration,
+      duration:
+        !onePose && run.retargeted.duration > 0
+          ? run.retargeted.duration
+          : args.sourceClip.duration,
       // Carried, not invented (#919). Every other field on this object derives
       // from the source; `loop` alone used to be a literal, so a one-shot motion —
       // a jump, a wave, a fall — silently became a looping one the moment it was
       // retargeted, with nothing in the UI saying the time domain had changed.
       loop: clipLoopOf(args.sourceClip.loop),
-      // Named as the caller's rig names its bones: `targetSpecs` is three's spelling of it.
-      poses: clipToPoses(run.retargeted, run.targetSpecs, args.targetBones),
+      poses: outPoses,
     },
     unmappedSourceBones: run.unmappedSourceBones,
     unboundTargetBones: run.unboundTargetBones,
@@ -793,8 +833,9 @@ export function retargetThree(args: RetargetThreeArgs): RetargetThreeResult {
         // alignment, chain ends included, so nothing here needs the clip's first
         // frame as a stand-in neutral — and since #866 every bone WITH a mapped
         // child also gets a per-bone direction term, so the two rests' remaining
-        // disagreement (the vendor pair's 21° arm droop, 30° at the feet) is
-        // absorbed rather than carried through the whole clip.
+        // disagreement (the vendor pair's 21° arm droop) is absorbed rather than
+        // carried through the whole clip. Bones both rests stand on — the feet —
+        // keep their own-rest delta instead, so the sole stays level (#1455).
         alignedLocalOffsets(sourceBoneObjs, targetBoneObjs, targetToSource, restAlignment.rotation)
           .offsets
       : restDirectionLocalOffsets(sourceBoneObjs, targetBoneObjs, targetToSource, sourceReference);

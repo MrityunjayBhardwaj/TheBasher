@@ -180,4 +180,55 @@ describe('#1215 — the timeline’s gestures edit a layer curve', () => {
     expect(after.keyframes.map((k) => k.time)).toEqual([from + 0.25]);
     expect(after.extendAfter).toBe('slope');
   });
+
+  it('#1482 — a key dragged on a many-key curve keeps its handles, and the rest of the curve is untouched', async () => {
+    const { base } = await bar();
+    const row = layerRowId({ layerId: base, bone: 'Bone0', component: 'position' });
+    const params = live().nodes[base].params as PoseLayerParams;
+    const original = params.channels.find((c) => c.bone === 'Bone0' && c.component === 'position')!;
+    // Three keys, the middle one with its own ease, handle type and handles, and a modifier on the
+    // curve: everything a remove + insert used to drop or rewrite.
+    const [k0] = original.keyframes;
+    const keys = [
+      { ...k0, time: 0 },
+      {
+        ...k0,
+        time: 0.5,
+        ease: 'out',
+        handleType: 'free',
+        inHandle: { time: -0.1, value: [0, 0.2, 0] },
+        outHandle: { time: 0.1, value: [0, -0.2, 0] },
+      },
+      { ...k0, time: 1 },
+    ];
+    useDagStore.getState().dispatchAtomic(
+      [
+        {
+          type: 'setParam',
+          nodeId: base,
+          paramPath: 'channels',
+          value: params.channels.map((c) =>
+            c === original
+              ? { ...c, keyframes: keys, modifiers: [{ type: 'noise', strength: 0.1 }] }
+              : c,
+          ),
+        },
+      ],
+      'user',
+    );
+    const before = curve(live(), base, 'Bone0', 'position')! as {
+      keyframes: unknown[];
+      modifiers?: unknown[];
+    };
+    // The seed landed: a rejected setParam would leave nothing here to lose.
+    expect(before.modifiers).toHaveLength(1);
+    expect(before.keyframes[1]).toMatchObject({ ease: 'out', handleType: 'free' });
+
+    const res = dispatchRetimeKeyframe({ channelId: row, fromTime: 0.5, toTime: 0.6 });
+    expect(res.ok, JSON.stringify(res)).toBe(true);
+
+    const after = curve(live(), base, 'Bone0', 'position')!;
+    const [b0, b1, b2] = before.keyframes as Record<string, unknown>[];
+    expect(after).toEqual({ ...before, keyframes: [b0, { ...b1, time: 0.6 }, b2] });
+  });
 });

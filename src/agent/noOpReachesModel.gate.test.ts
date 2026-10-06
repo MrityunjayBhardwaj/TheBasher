@@ -160,10 +160,12 @@ describe('#1014 — a surfaced no-op reaches the model, not only the DiffBar', (
     expect(text).not.toContain('rotation');
   });
 
-  it('a fork that THROWS still answers the call first — the debug line survives', async () => {
-    // createFork re-validates against the live shape and throws on a bad reference,
-    // which is a common agent mistake. Moving the fork above the answer would have
-    // quietly taken the chat's tool line away on exactly that path.
+  it('a fork that THROWS answers the call with the refusal — and the turn goes on (#1401)', async () => {
+    // createFork re-validates against the live shape and throws on a bad reference, which
+    // is a common agent mistake. #1014 kept the chat's tool line on this path by holding
+    // the throw until after the answer; the turn still ended, so the model — told
+    // "Proposed 1 Op(s)" — never saw why. #1401: the refusal IS the answer now, to both
+    // readers, and the refused batch contributes nothing.
     const bad: Op[] = [
       {
         type: 'connect',
@@ -171,18 +173,20 @@ describe('#1014 — a surfaced no-op reaches the model, not only the DiffBar', (
         to: { node: 'n_scene', socket: 'children' },
       },
     ] as Op[];
-    await turnWithOps(bad, 'connect a node that does not exist');
+    const roundTwo = await turnWithOps(bad, 'connect a node that does not exist');
+    // The MODEL's reader: the next round carries the op layer's own words.
+    const sent = toolText(roundTwo);
+    expect(sent).toContain('ERROR: Node not found: n_nope');
+    expect(sent).not.toContain('Proposed 1 Op(s)');
+    // The DIRECTOR's reader: the chat line survives (#1014) and says the same.
     const chat = useAgentSessionStore
       .getState()
       .session.messages.map((m) => String(m.content))
       .join('\n');
-    expect(chat).toContain('[dag.exec]');
-    const error = useAgentSessionStore.getState().session.error ?? '';
-    expect(error).not.toBe('');
-    // #1058 — under the old harness EVERY turn ended in a closure violation, so
-    // "there is an error" held whether or not the fork threw. The error has to be
-    // the fork's.
-    expect(error).not.toContain('Closure violation');
+    expect(chat).toContain('[dag.exec] ERROR: Node not found: n_nope');
+    // The turn went on to round 2 and ended cleanly; nothing from the refused batch is pending.
+    expect(useAgentSessionStore.getState().session.error ?? '').toBe('');
+    expect(useDiffStore.getState().pendingDiff).toBeNull();
   });
 
   it('the sentence the model reads is the sentence the director reads', () => {

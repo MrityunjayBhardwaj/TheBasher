@@ -136,9 +136,8 @@ const ALL_TYPES = [
   'ParamDriver',
   // #1049 — a stored polygon mesh's data half.
   'PolyMeshData',
-  // #1240 — a layer that edits the pose wire; absorbs PoseOverride (#1243).
+  // #1240 — a layer that edits the pose wire; absorbed PoseOverride (retired, #1243).
   'PoseLayer',
-  'PoseOverride',
   'PosedSkeleton',
   'PrevFrame',
   'PrevFrameVec',

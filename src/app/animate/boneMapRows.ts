@@ -94,7 +94,8 @@ export interface BoneMapRow {
   /**
    * Whether the retarget's per-bone direction term ABSORBS that gap (#866). On
    * the aligned branch every bone with a mapped child is absorbed unless its two
-   * rests are nearly opposite; an absorbed gap is information about the two
+   * rests are nearly opposite or both rigs stand on it (`restGapGrounded`,
+   * #1455); an absorbed gap is information about the two
    * anatomies, not a defect to act on, and it must never be coloured as one.
    * False on the direction branch and for a refused bone, where the gap stays.
    *
@@ -104,6 +105,14 @@ export interface BoneMapRow {
    * way and the two fields stay consistent.
    */
   readonly restGapAbsorbed: boolean;
+  /**
+   * Whether the gap is KEPT on purpose because the bone stands on the floor at
+   * rest in both rigs (#1455) — a foot or a toe. Its gap is where each rig puts
+   * its ankle and ball joints under a sole both hold flat; absorbing it tilted the
+   * sole. Never coloured as a defect, and never `restGapAbsorbed` as well: the
+   * retarget did not fold it in, and the panel says which of the two happened.
+   */
+  readonly restGapGrounded: boolean;
 }
 
 export interface BoneMapView {
@@ -152,7 +161,8 @@ export interface BoneMapView {
    * 🔴 READ THIS BEFORE `worstRestGap`. It decides which quantity that angle IS.
    * On `aligned` it is what the whole-rig rotation left behind — and since #866
    * the retarget absorbs that per bone, so a row's angle is information about
-   * the two anatomies (`restGapAbsorbed`) unless the bone was refused. On
+   * the two anatomies (`restGapAbsorbed`, or `restGapGrounded` for a foot both
+   * rigs stand on) unless the bone was refused. On
    * `direction` no rotation was applied, so the same number is the RAW
    * disagreement between two rests nobody reconciled, and on that branch the
    * roll about every bone is gone as well (#960, #987).
@@ -264,6 +274,8 @@ interface RestReport {
   /** Target bones whose gap the aligned offsets absorb — reported by the same
    *  builder the retarget runs, never re-derived here (#866). */
   readonly absorbed: ReadonlySet<string>;
+  /** Target bones kept on their own rest because both rigs stand on them (#1455). */
+  readonly grounded: ReadonlySet<string>;
 }
 
 const gapMemo = new WeakMap<object, WeakMap<object, WeakMap<object, RestReport>>>();
@@ -295,6 +307,10 @@ function restGapsCached(
   const source = specToThreeSkeleton(sourceBones).bones;
   const target = specToThreeSkeleton(targetBones).bones;
   const solved = solveRestAlignment(source, target, targetToSource);
+  const offsets =
+    solved.kind === 'aligned'
+      ? alignedLocalOffsets(source, target, targetToSource, solved.rotation)
+      : null;
   const answer: RestReport = {
     gaps: restDirectionDisagreement(
       source,
@@ -303,10 +319,8 @@ function restGapsCached(
       solved.kind === 'aligned' ? solved.rotation : undefined,
     ),
     reconciliation: solved,
-    absorbed:
-      solved.kind === 'aligned'
-        ? new Set(alignedLocalOffsets(source, target, targetToSource, solved.rotation).absorbed)
-        : new Set(),
+    absorbed: new Set(offsets?.absorbed ?? []),
+    grounded: new Set(offsets?.grounded ?? []),
   };
 
   let outer = gapMemo.get(a);
@@ -427,6 +441,7 @@ export function boneMapView(
         origin,
         restGapDeg: null,
         restGapAbsorbed: false,
+        restGapGrounded: false,
       };
     }
     // Only a row that DRIVES something gets an angle. An orphan's source bone is
@@ -434,7 +449,15 @@ export function boneMapView(
     // rest direction to disagree about — and a number beside them would read as
     // a measurement of a pairing that does not exist.
     if (!seen.has(source)) {
-      return { source, target, state: 'orphan', origin, restGapDeg: null, restGapAbsorbed: false };
+      return {
+        source,
+        target,
+        state: 'orphan',
+        origin,
+        restGapDeg: null,
+        restGapAbsorbed: false,
+        restGapGrounded: false,
+      };
     }
     const mapped = targetSet.has(target);
     return {
@@ -444,6 +467,7 @@ export function boneMapView(
       origin,
       restGapDeg: mapped ? (gaps.get(target) ?? null) : null,
       restGapAbsorbed: mapped && rest.absorbed.has(target),
+      restGapGrounded: mapped && rest.grounded.has(target),
     };
   });
 
@@ -483,7 +507,8 @@ export function boneMapView(
     // Over what is LEFT after the retarget's own correction (#866): an absorbed
     // gap is not a thing a director can act on, so it does not compete here.
     worstRestGap: rows.reduce<BoneMapView['worstRestGap']>((worst, r) => {
-      if (r.restGapDeg === null || r.target === null || r.restGapAbsorbed) return worst;
+      if (r.restGapDeg === null || r.target === null || r.restGapAbsorbed || r.restGapGrounded)
+        return worst;
       if (worst !== null && worst.deg >= r.restGapDeg) return worst;
       return { source: r.source, target: r.target, deg: r.restGapDeg };
     }, null),

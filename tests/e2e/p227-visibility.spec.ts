@@ -14,6 +14,7 @@ interface W {
     };
   };
   __basher_mesh_world_position: (id: string) => [number, number, number] | null;
+  __basher_light_world_positions: () => [number, number, number][];
 }
 
 const inLiveScene = (page: import('@playwright/test').Page) =>
@@ -81,4 +82,41 @@ test('clicking the eye does not change the selection', async ({ page }) => {
     'true',
   );
   await expect(page.getByTestId('scene-tree-row-n_box')).not.toHaveAttribute('data-active', 'true');
+});
+
+// #1448 — the eye on a LIGHT's row. The outliner offers it there (lights are depth-1 rows), and
+// it used to set the flag while the light kept lighting the scene: 4 lights before the click and
+// 4 after. The light band now skips a hidden light the way the children band skips a child.
+test('the outliner eye hides a top-level light: it leaves the live scene, and comes back', async ({
+  page,
+}) => {
+  await page.goto('/');
+  await page.waitForFunction(
+    () => typeof (window as unknown as W).__basher_light_world_positions === 'function',
+    { timeout: 15000 },
+  );
+  const lights = () =>
+    page.evaluate(() => (window as unknown as W).__basher_light_world_positions().length);
+  await expect.poll(lights).toBeGreaterThan(0);
+  const before = await lights();
+
+  const eye = page.getByTestId('scene-tree-eye-n_light');
+  await expect(eye).toHaveAttribute('aria-label', 'Hide');
+  await eye.click();
+  await expect(eye).toHaveAttribute('data-hidden', 'true');
+  await expect.poll(lights).toBe(before - 1);
+
+  await eye.click();
+  await expect.poll(lights).toBe(before);
+});
+
+// #1453 — the camera frustums honour the flag, so a camera's row offers the eye as every scene
+// object's does (Blender hides a camera the same way); the hide verb asks the same rule.
+test('a camera row offers the eye, and the click hides the camera', async ({ page }) => {
+  await page.goto('/');
+  await expect(page.getByTestId('scene-tree-row-n_camera')).toBeVisible({ timeout: 15000 });
+  const eye = page.getByTestId('scene-tree-eye-n_camera');
+  await expect(eye).toHaveAttribute('aria-label', 'Hide');
+  await eye.click();
+  await expect(eye).toHaveAttribute('data-hidden', 'true');
 });

@@ -19,6 +19,7 @@ import { GroundClick } from '../app/character/GroundClick';
 import { ThreeBridge } from '../app/character/ThreeBridge';
 import { Gizmo } from '../app/Gizmo';
 import { CurvePointHandles } from '../app/CurvePointHandles';
+import { BoneGizmo } from '../app/BoneGizmo';
 import { useCurveSelectionStore } from '../app/stores/curveSelectionStore';
 import { ProjectionToggle } from '../app/ProjectionToggle';
 import { useIsNarrowLayout } from '../app/hooks/useIsNarrowLayout';
@@ -339,6 +340,8 @@ export function Viewport() {
               object-selection onClick band and re-select (or drill into) the curve. The two
               gizmos never coexist — Gizmo yields the moment a point is picked. */}
           <CurvePointHandles />
+          {/* #1336 — the selected bone's gizmo in Pose mode; <Gizmo/> yields while a mode is on. */}
+          <BoneGizmo />
           {/* #226 — box-select: the in-Canvas projection + commit half. The DOM
               marquee + pointer capture is BoxSelectOverlay, below the Canvas. */}
           <BoxSelect />

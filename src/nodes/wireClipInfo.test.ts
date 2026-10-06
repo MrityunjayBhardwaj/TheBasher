@@ -1,9 +1,10 @@
-// #1225 — the pose wire says what time range it covers and how densely (Houdini's `clipinfo`), so a
-// consumer that samples the wire — a retarget — needs nothing but the wire.
+// #1225 — the pose wire says what time range it covers (Houdini's `clipinfo`) and, since #1456, the
+// times that read every pose it holds, so a consumer that samples the wire — a retarget, a bake —
+// needs nothing but the wire.
 //
-// The rate rule is three's own (`SkeletonUtils.js:204`): the densest track's key count over the
-// duration. A clip's range is checked against three deriving it from the same keys, so a retarget
-// that reads the range samples exactly where today's samples the keys.
+// A linear clip's times are its keys: checked here against the times three keys from the same poses,
+// so a retarget that reads the range samples where three samples the keys. The fills a curve needs
+// between keys are pinned in `wireSampleTimes.gate.test.ts`.
 
 import { readFileSync } from 'node:fs';
 import { beforeEach, describe, expect, it } from 'vitest';
@@ -33,7 +34,7 @@ function poseOf(state: DagState, id: string): PosedSkeletonValue {
 }
 
 describe('a clip puts its range on the wire', () => {
-  // soma-walk.bvh: 78 bones, 31 keys over 1 s, so rate 31 and 31 samples, one per key.
+  // soma-walk.bvh: 78 bones, 31 keys over 1 s, so 31 samples, one per key.
   it('soma-walk.bvh: [0, duration] at the rate three derives from the same keys', () => {
     const parsed = parseBvh(
       readFileSync('public/fixtures/anim/soma-walk.bvh', 'utf8'),
@@ -51,18 +52,20 @@ describe('a clip puts its range on the wire', () => {
       clipParams.poses,
       skeletonParams.bones,
     );
-    const threeFps = Math.max(...three.tracks.map((t) => t.times.length)) / three.duration;
+    // #1456 — a linear clip is sampled at its keys: the times three's tracks key, both ends
+    // included, and nothing between them (a slerp between keys is what its keys reproduce).
+    const keyTimes = [...new Set(three.tracks.flatMap((t) => [...t.times]))].sort((a, b) => a - b);
 
     expect(pose.clip).toEqual({
       start: 0,
       end: clipParams.duration,
-      rate: threeFps,
+      times: keyTimes,
       name: 'soma-walk',
       loop: clipParams.loop,
     });
     // The samples land on the keys: as many samples as the densest bone has keys.
     const densest = Math.max(...three.tracks.map((t) => t.times.length));
-    expect(Math.round((pose.clip!.end - pose.clip!.start) * pose.clip!.rate)).toBe(densest);
+    expect(pose.clip!.times).toHaveLength(densest);
     expect(densest).toBe(31);
   });
 
@@ -101,7 +104,11 @@ describe('a base layer gives the wire its range; everything above passes it thro
     const { state, armatureId, baseId } = await bar();
     expect(state.nodes[baseId].type).toBe('PoseLayer');
     const channels = (state.nodes[baseId].params as { channels: unknown[] }).channels;
-    const expected = poseLayerClipInfo(channels as Parameters<typeof poseLayerClipInfo>[0]);
+    const { members } = state.nodes[baseId].params as { members: unknown[] };
+    const expected = poseLayerClipInfo(
+      channels as Parameters<typeof poseLayerClipInfo>[0],
+      members as Parameters<typeof poseLayerClipInfo>[1],
+    );
     expect(expected).toBeDefined();
     // skinned-bar keys Bone1 from 0 to 1 s (#1211 fixture header).
     expect(expected!.start).toBe(0);
@@ -140,7 +147,6 @@ describe('a base layer gives the wire its range; everything above passes it thro
         },
       ],
       ['quiet', 'PoseLayer', { mute: true, members: [{ bone: 'Bone1', rotation: [0, 0, 30] }] }],
-      ['hold', 'PoseOverride', { bone: 'Bone1', overridden: { rotation: true } }],
     ] as const) {
       const feed = s.nodes[armatureId].inputs.pose as { node: string; socket: string };
       s = applyOp(s, { type: 'addNode', nodeId: id, nodeType: type, params }).next;
@@ -151,6 +157,8 @@ describe('a base layer gives the wire its range; everything above passes it thro
         to: { node: armatureId, socket: 'pose' },
         replace: true,
       }).next;
+      // The range rides through unwidened (#1225). #1457: the times inside it may gain the layer's
+      // own; these two add none inside 0–1 s (keyed from 5 s; muted).
       expect(poseOf(s, id).clip, id).toEqual(range);
     }
   });

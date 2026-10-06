@@ -82,6 +82,7 @@ import type { DagState } from '../../../core/dag/state';
 import type { NodeId, Op } from '../../../core/dag/types';
 import { isCameraNode } from '../../../app/cameraNode';
 import { nextConstraintOrder } from '../../../app/nodeConstraints';
+import { liveConstraintOfType } from '../../../app/constraintStack';
 import { linkIntoActiveCollection } from '../../../app/collections';
 
 const Vec3Schema = z.tuple([z.number(), z.number(), z.number()]);
@@ -113,11 +114,6 @@ const CameraTrajectorySpec = z.object({
 });
 export type CameraTrajectorySpec = z.infer<typeof CameraTrajectorySpec>;
 
-interface GraphNode {
-  readonly type: string;
-  readonly params?: Record<string, unknown>;
-}
-
 /** A stable slug for the deterministic ids, as `addChannel`/`poseBone` build theirs. */
 function safeName(name: string): string {
   return name.replace(/[^a-zA-Z0-9_-]/g, '_');
@@ -128,17 +124,6 @@ function curveDataIdFor(spec: CameraTrajectorySpec): NodeId {
 }
 function curveObjectIdFor(spec: CameraTrajectorySpec): NodeId {
   return spec.curveObjectId ?? `${spec.cameraId}_${safeName(spec.name)}_path`;
-}
-
-/** The first constraint of `type` already aimed at `cameraId`, or null. */
-function existingConstraint(state: DagState, type: string, cameraId: string): NodeId | null {
-  const ids = Object.keys(state.nodes).sort();
-  for (const id of ids) {
-    const node = state.nodes[id] as unknown as GraphNode;
-    if (node.type !== type) continue;
-    if ((node.params as { target?: unknown } | undefined)?.target === cameraId) return id;
-  }
-  return null;
 }
 
 export const cameraTrajectoryMutator: MutatorDefinition<CameraTrajectorySpec> = {
@@ -288,7 +273,7 @@ export const cameraTrajectoryMutator: MutatorDefinition<CameraTrajectorySpec> = 
       to: { node: sceneRef.node, socket: 'children' },
     });
 
-    const follow = existingConstraint(state, 'FollowPath', spec.cameraId);
+    const follow = liveConstraintOfType(state, spec.cameraId, 'FollowPath');
     if (follow) {
       ops.push({ type: 'setParam', nodeId: follow, paramPath: 'curve', value: objectId });
       ops.push({ type: 'setParam', nodeId: follow, paramPath: 'evalTime', value: spec.evalTime });
@@ -312,7 +297,7 @@ export const cameraTrajectoryMutator: MutatorDefinition<CameraTrajectorySpec> = 
       });
     }
 
-    const track = existingConstraint(state, 'TrackTo', spec.cameraId);
+    const track = liveConstraintOfType(state, spec.cameraId, 'TrackTo');
     const aimParams =
       spec.subjectId !== undefined
         ? { aimNode: spec.subjectId }

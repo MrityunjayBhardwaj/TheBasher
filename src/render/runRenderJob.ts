@@ -24,7 +24,7 @@
 // project_p4_prompt locked decisions ("main thread sync first; Worker
 // upgrade as Wave B.1 if perf demands").
 
-import { evaluate } from '../core/dag/evaluator';
+import { createEvaluatorCache, evaluate } from '../core/dag/evaluator';
 import { recomposeCameraObject } from '../nodes/cameraRecompose';
 import type { DagState } from '../core/dag/state';
 import type { EvalCtx, NodeId } from '../core/dag/types';
@@ -86,7 +86,16 @@ export async function runRenderJob(
   // Evaluate the RenderJob once at frame 0 to derive the metadata record.
   // The evaluator validates params via the node's zod schema, so we get
   // the typed JobResultValue back without re-parsing here.
-  const meta = evaluate(state, jobNodeId, { ctx: ctxForFrame(0, 30) }).value as JobResultValue;
+  //
+  // #1318 — ONE evaluator cache for the whole job. `state` doesn't change during it, so a
+  // pure node (a character's whole-clip retarget above all) is evaluated once, not once per
+  // frame per read: the pass, its scene and its camera are three separate walks, and without
+  // a shared cache a 6-frame job of the Camera Path + AI Walk example ran the retarget 13×.
+  // Correct across frames by construction: a time-dependent node's cache key carries the
+  // frame, a pure one's doesn't (`evaluator.ts`). Values held are descriptors, not pixels.
+  const cache = createEvaluatorCache();
+  const meta = evaluate(state, jobNodeId, { ctx: ctxForFrame(0, 30), cache })
+    .value as JobResultValue;
 
   // Resolve the connected pass node ids in dispatch order. Reading
   // `state.nodes[jobNodeId].inputs['pass-input']` directly so we keep the
@@ -102,7 +111,7 @@ export async function runRenderJob(
     const seconds = frame / fps;
     const ctx = ctxForFrame(frame, fps);
     for (const ref of passRefs) {
-      const passResult = evaluate(state, ref.node, { ctx, socket: ref.socket });
+      const passResult = evaluate(state, ref.node, { ctx, socket: ref.socket, cache });
       const pass = passResult.value as ImageValue;
       // Pass evaluators consume Scene + Camera via their own input
       // sockets — read those producers off the pass node's inputs so
@@ -115,7 +124,7 @@ export async function runRenderJob(
           `runRenderJob: pass "${ref.node}" missing single Scene or Camera input — cannot dispatch`,
         );
       }
-      const scene = evaluate(state, sceneRef.node, { ctx, socket: sceneRef.socket })
+      const scene = evaluate(state, sceneRef.node, { ctx, socket: sceneRef.socket, cache })
         .value as SceneValue;
       // #387 — this is a RAW `evaluate` + cast, not a socket gather, so it is its own
       // road and needs the recompose in its own right: a split camera reaching the
@@ -124,6 +133,7 @@ export async function runRenderJob(
       const cameraValue = evaluate(state, cameraRef.node, {
         ctx,
         socket: cameraRef.socket,
+        cache,
       }).value;
       const camera = recomposeCameraObject(cameraValue) ?? (cameraValue as CameraValue);
 

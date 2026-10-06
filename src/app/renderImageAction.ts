@@ -64,6 +64,11 @@ export async function renderActiveProjectBlob(pass: RenderPassKind = 'beauty'): 
 
   const state = useDagStore.getState().state;
   const target = state.outputs.render;
+  // #1385 — one cache for the whole still. The graph is read three times below (settings,
+  // camera pose, depth of field); on a camera that aims at a character each pose walk reaches
+  // its whole-clip retarget, so separate caches paid it per walk (4 per still). The graph
+  // cannot change during one still, and time-dependent nodes key on time, so sharing is exact.
+  const cache = createEvaluatorCache();
 
   // Resolve the render config (postFx + resolution). Defensive defaults so a
   // malformed / pre-#168 project never renders at NaN×NaN (V10/H14).
@@ -72,7 +77,7 @@ export async function renderActiveProjectBlob(pass: RenderPassKind = 'beauty'): 
   let postFx: RenderOutputValue['postFx'] = { tonemap: 'ACES', smaa: true };
   if (target) {
     const value = evaluate(state, target.node, {
-      cache: createEvaluatorCache(),
+      cache,
       ctx: FROZEN_TIME,
     }).value as RenderOutputValue;
     width = value.width || DEFAULT_RENDER_WIDTH;
@@ -85,7 +90,7 @@ export async function renderActiveProjectBlob(pass: RenderPassKind = 'beauty'): 
   // frames the shot at time T (matches the viewport look-through at the same
   // time). An unanimated camera resolves to the static authored pose.
   const seconds = useTimeStore.getState().seconds;
-  const pose = resolveActiveCameraPoseAt(state, seconds);
+  const pose = resolveActiveCameraPoseAt(state, seconds, cache);
   // UX #12 — depth of field, resolved through the SAME helper the live viewport uses
   // so the still's bokeh matches the screen. null when off → the fast manual render
   // path. (Aperture reads static here; framing is the #190 scope.) #247 —
@@ -107,7 +112,7 @@ export async function renderActiveProjectBlob(pass: RenderPassKind = 'beauty'): 
   // because changing which camera the DoF comes from changes what a rendered still looks
   // like, and that belongs in its own issue with its own observation, not in a signature
   // slice. See #483.
-  const dof = resolveCameraDofAt(state, activeCamera?.id, seconds);
+  const dof = resolveCameraDofAt(state, activeCamera?.id, seconds, cache);
   // Control passes (depth/normal) ignore DoF — they encode geometry, not a
   // photographic frame; the override path renders raw values without the bokeh.
   const blob = await renderSceneToPngBlob({

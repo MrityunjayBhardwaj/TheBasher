@@ -18,7 +18,7 @@
 // REF: project_p5_context D-05; vyapti V6 (capability) + V8
 // (file-rooted); dcc-reference §21 (codec id conventions).
 
-import { evaluate } from '../core/dag/evaluator';
+import { createEvaluatorCache, evaluate } from '../core/dag/evaluator';
 import type { DagState } from '../core/dag/state';
 import type { EvalCtx, NodeId } from '../core/dag/types';
 import type { StorageCapability } from '../core/storage';
@@ -131,6 +131,11 @@ export async function runVideoStitch(
     });
   }
 
+  // #1318 — ONE evaluator cache for the whole run: `state` doesn't change during it, so a
+  // pure node (a character's whole-clip retarget above all) is evaluated once, not once per
+  // frame. Correct across frames by construction: a time-dependent node's cache key carries
+  // the frame, a pure one's doesn't (`evaluator.ts`). Values held are descriptors, not pixels.
+  const cache = createEvaluatorCache();
   // Collect every frame's PNG bytes in dispatch order.
   const framesPng: Uint8Array[] = [];
   for (const upstream of upstreams) {
@@ -138,7 +143,7 @@ export async function runVideoStitch(
       // Evaluate at this frame so the ImageValue's sourceHash flips —
       // ensures any future caching layer keys per-frame correctly.
       const ctx: EvalCtx = { time: { frame, seconds: frame / fps, normalized: 0 } };
-      const value = evaluate(state, upstream.nodeId, { ctx }).value as ImageValue;
+      const value = evaluate(state, upstream.nodeId, { ctx, cache }).value as ImageValue;
       void value; // metadata only — we read bytes from disk.
 
       const path = framePath(upstream.outputPath, frame);

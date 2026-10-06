@@ -26,6 +26,7 @@
 //      H122 (toast, not banner) / H125 (in-flight dedup) / H126 (batchTimeoutMs) / H128.
 
 import { useDagStore } from '../../core/dag/store';
+import { createEvaluatorCache } from '../../core/dag/evaluator';
 import { pickStorage } from '../../core/storage';
 import { comfyHasNodeTypes, type ComfyProgressEvent } from '../../core/comfy';
 import { getComfyCapability } from '../boot';
@@ -96,6 +97,11 @@ export function bakeComfyBatchedTracks(
 ): InjectableTrack[] {
   const n = Math.max(1, frameEnd - frameStart + 1);
   const tracks: InjectableTrack[] = [];
+  // #1318 — ONE evaluator cache for the whole bake. The graph does not change during it, so a
+  // pure node a driver reaches (a character's whole-clip retarget above all) is evaluated once,
+  // not once per frame. Correct across frames by construction: a time-dependent node's cache
+  // key carries the frame and a pure one's does not (`evaluator.ts`).
+  const cache = createEvaluatorCache();
   for (const param of graph.params) {
     // Only keyframeable scalars become controllers. Structural (topology / batch-shape)
     // and enum / bool are read-only; image / video bind out-of-band (applyComfyImageBindings).
@@ -113,6 +119,7 @@ export function bakeComfyBatchedTracks(
         comfyNodeId,
         comfyParamPath(param.nodeId, param.inputName),
         ctx,
+        cache,
       );
       const v = r ? r.value : param.literal;
       values.push(
@@ -150,6 +157,8 @@ export function bakeBasherControllerValues(
 ): Record<string, (number | string | boolean)[]> {
   const n = Math.max(1, frameEnd - frameStart + 1);
   const out: Record<string, (number | string | boolean)[]> = {};
+  // #1318 — one cache for the whole bake, as in bakeComfyBatchedTracks above.
+  const cache = createEvaluatorCache();
   for (const decl of decls) {
     const values: (number | string | boolean)[] = [];
     for (let i = 0; i < n; i++) {
@@ -158,7 +167,13 @@ export function bakeBasherControllerValues(
       const ctx: EvalCtx = {
         time: { frame, seconds, normalized: durationFrames > 0 ? frame / durationFrames : 0 },
       };
-      const r = resolveEvaluatedParam(state, comfyNodeId, comfyControllerPath(decl.nodeId), ctx);
+      const r = resolveEvaluatedParam(
+        state,
+        comfyNodeId,
+        comfyControllerPath(decl.nodeId),
+        ctx,
+        cache,
+      );
       const v = r ? r.value : decl.defaultValue;
       values.push(
         typeof v === 'number' || typeof v === 'string' || typeof v === 'boolean'

@@ -83,7 +83,7 @@ describe('a retarget reading the wire equals the retarget reading the clip', () 
         sourceClip: {
           name: 'clip',
           duration: range.end - range.start,
-          poses: wirePoses(pose, range, range.rate),
+          poses: wirePoses(pose, range),
           loop: range.loop,
         },
         targetBones: target,

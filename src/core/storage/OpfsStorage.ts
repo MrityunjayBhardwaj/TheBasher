@@ -6,7 +6,14 @@
 //
 // REF: THESIS.md §33, krama K5 step 4, dharana B2.
 
-import type { StorageCapability, StorageQuota } from './StorageCapability';
+import {
+  StorageNotFoundError,
+  type StorageCapability,
+  type StorageQuota,
+} from './StorageCapability';
+
+/** OPFS says "absent" with a DOMException named NotFoundError (a missing file or directory). */
+const isOpfsNotFound = (e: unknown) => e instanceof DOMException && e.name === 'NotFoundError';
 
 /**
  * #1293 — operations on ONE path run one at a time; different paths still run in parallel.
@@ -37,9 +44,50 @@ function exclusive<T>(key: string, op: () => Promise<T>): Promise<T> {
   return run;
 }
 
+/**
+ * #1295 — dev-only: storage as slow as CI's. CI's OPFS took ~2.7 s per 3 MB write + read-back;
+ * locally it takes milliseconds, and CPU throttling leaves disk speed alone, so CI-only failures on
+ * save/load/list paths never reproduce here. Set before the app boots (a Playwright init script):
+ *
+ *   globalThis.__BASHER_SLOW_STORAGE__ = { msPerKb: 0.45 }
+ *
+ * Every byte written or read costs `msPerKb` per KB on ONE shared disk: operations on different
+ * paths queue for it, as they share a real disk's bandwidth. CI's two measurements bracket the
+ * rate: 0.45 matches its 3 MB write + read-back (2.7 s), 0.2 its 9.5 MB example write (4.1 s).
+ * Production builds never read it: `import.meta.env.DEV` is false there and the body drops out.
+ */
+interface SlowStorage {
+  msPerKb: number;
+}
+let diskFreeAt = 0;
+
+async function occupyDisk(byteCount: number): Promise<void> {
+  if (!import.meta.env.DEV) return;
+  const slow = (globalThis as { __BASHER_SLOW_STORAGE__?: SlowStorage }).__BASHER_SLOW_STORAGE__;
+  if (!slow || !(slow.msPerKb > 0)) return;
+  const now = performance.now();
+  diskFreeAt = Math.max(now, diskFreeAt) + (byteCount / 1024) * slow.msPerKb;
+  await new Promise((resolve) => setTimeout(resolve, diskFreeAt - now));
+}
+
 export class OpfsStorage implements StorageCapability {
   readonly id = 'opfs';
   readonly kind = 'opfs' as const;
+
+  /**
+   * #1423 — folder handles by path (`''` is the root folder), so an operation on a folder already
+   * seen costs only its file-level calls. Inside the app each awaited OPFS call costs about one
+   * render frame, and re-walking from the origin root on every call made a `write` two folders
+   * deep 12 calls, a `read` 6 and an `exists` 5.
+   *
+   * A handle names a path, not a folder: when its folder is removed (an empty folder through
+   * `delete`, or the whole root by a test) every call on it throws `NotFoundError`, and once the
+   * folder is recreated the same handle works again (measured in Chromium). So a cached handle is
+   * wrong only while its folder is absent, and then a walk from the root finds nothing either:
+   * a read, `exists`, `list` or `delete` that fails through the cache has its true answer. Only a
+   * write must recreate the folders, so it alone walks again from the root (`fileHandle`).
+   */
+  private readonly dirs = new Map<string, FileSystemDirectoryHandle>();
 
   constructor(private readonly rootName = 'basher') {}
 
@@ -71,12 +119,41 @@ export class OpfsStorage implements StorageCapability {
   }
 
   private async resolveDir(parts: string[], create: boolean): Promise<FileSystemDirectoryHandle> {
-    let dir = await this.getRoot();
-    for (const part of parts) {
-      if (part === '' || part === '.') continue;
-      dir = await dir.getDirectoryHandle(part, { create });
+    const names = parts.filter((part) => part !== '' && part !== '.');
+    // Start from the deepest folder on this path the cache already holds.
+    let depth = names.length;
+    let dir = this.dirs.get(names.join('/'));
+    while (!dir && depth > 0) dir = this.dirs.get(names.slice(0, --depth).join('/'));
+    if (!dir) {
+      dir = await this.getRoot();
+      this.dirs.set('', dir);
+    }
+    for (let i = depth; i < names.length; i++) {
+      dir = await dir.getDirectoryHandle(names[i], { create });
+      this.dirs.set(names.slice(0, i + 1).join('/'), dir);
     }
     return dir;
+  }
+
+  private async fileHandle(path: string, create: boolean): Promise<FileSystemFileHandle> {
+    const { dir, name } = this.split(path);
+    const open = async () => (await this.resolveDir(dir, create)).getFileHandle(name, { create });
+    if (!create) return open();
+    try {
+      return await open();
+    } catch (e) {
+      // A cached folder on this path was removed; walk from the root, creating it.
+      if (!isOpfsNotFound(e)) throw e;
+      this.dirs.clear();
+      return open();
+    }
+  }
+
+  private async readFile(fileHandle: FileSystemFileHandle): Promise<Uint8Array> {
+    const file = await fileHandle.getFile();
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    await occupyDisk(bytes.byteLength);
+    return bytes;
   }
 
   private split(path: string): { dir: string[]; name: string } {
@@ -103,9 +180,7 @@ export class OpfsStorage implements StorageCapability {
   }
 
   private async writeNow(path: string, bytes: Uint8Array): Promise<void> {
-    const { dir, name } = this.split(path);
-    const dirHandle = await this.resolveDir(dir, true);
-    const fileHandle = await dirHandle.getFileHandle(name, { create: true });
+    const fileHandle = await this.fileHandle(path, true);
     const writable = await fileHandle.createWritable();
     // Copy through a fresh ArrayBuffer to satisfy the strict BlobPart typing
     // in TS lib.dom (which excludes Uint8Array<SharedArrayBuffer>). At runtime
@@ -113,10 +188,11 @@ export class OpfsStorage implements StorageCapability {
     const ab = new ArrayBuffer(bytes.byteLength);
     new Uint8Array(ab).set(bytes);
     await writable.write(new Blob([ab]));
+    await occupyDisk(bytes.byteLength);
     await writable.close();
-    // Read-back verification (K5 step 4). Cheap: the data is hot in cache. Unqueued: this write
-    // already holds the path, so queueing it would wait on itself.
-    const verify = await this.readNow(path);
+    // Read-back verification (K5 step 4). Cheap: the data is hot in cache. Through the handle just
+    // written (#1423), so the path is not resolved a second time.
+    const verify = await this.readFile(fileHandle);
     if (verify.byteLength !== bytes.byteLength) {
       throw new Error(
         `OpfsStorage: read-back size mismatch on ${path} (wrote ${bytes.byteLength}, read ${verify.byteLength}). Likely OPFS quota exhausted.`,
@@ -125,18 +201,20 @@ export class OpfsStorage implements StorageCapability {
   }
 
   private async readNow(path: string): Promise<Uint8Array> {
-    const { dir, name } = this.split(path);
-    const dirHandle = await this.resolveDir(dir, false);
-    const fileHandle = await dirHandle.getFileHandle(name, { create: false });
-    const file = await fileHandle.getFile();
-    return new Uint8Array(await file.arrayBuffer());
+    let fileHandle: FileSystemFileHandle;
+    try {
+      fileHandle = await this.fileHandle(path, false);
+    } catch (e) {
+      // #1304 — only a missing file or directory is "absent"; every other failure stays itself.
+      if (isOpfsNotFound(e)) throw new StorageNotFoundError(path);
+      throw e;
+    }
+    return this.readFile(fileHandle);
   }
 
   async exists(path: string): Promise<boolean> {
-    const { dir, name } = this.split(path);
     try {
-      const dirHandle = await this.resolveDir(dir, false);
-      await dirHandle.getFileHandle(name, { create: false });
+      await this.fileHandle(path, false);
       return true;
     } catch {
       return false;
@@ -155,15 +233,22 @@ export class OpfsStorage implements StorageCapability {
 
   async list(dirPath: string): Promise<string[]> {
     const parts = dirPath.split('/').filter(Boolean);
-    const dirHandle = await this.resolveDir(parts, false);
-    const entries: string[] = [];
-    // FileSystemDirectoryHandle is async-iterable in modern browsers.
-    for await (const [entryName] of (
-      dirHandle as unknown as { entries(): AsyncIterable<[string, unknown]> }
-    ).entries()) {
-      entries.push(entryName);
+    try {
+      const dirHandle = await this.resolveDir(parts, false);
+      const entries: string[] = [];
+      // FileSystemDirectoryHandle is async-iterable in modern browsers.
+      for await (const [entryName] of (
+        dirHandle as unknown as { entries(): AsyncIterable<[string, unknown]> }
+      ).entries()) {
+        entries.push(entryName);
+      }
+      return entries;
+    } catch (e) {
+      // #1304 — a directory that does not exist has no children, as in every other backend.
+      // A removed folder's cached handle throws the same NotFoundError while iterating.
+      if (isOpfsNotFound(e)) return [];
+      throw e;
     }
-    return entries;
   }
 
   async quota(): Promise<StorageQuota | null> {

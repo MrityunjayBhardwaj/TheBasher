@@ -4,8 +4,8 @@
 // playhead — not inferred state. Each assertion is FALSIFIABLE.
 //
 // Two test-environment constraints shape these tests:
-//   1. Frame count is kept TINY (duration 0.05s → 4 frames). The default
-//      duration is 10s (601 frames); headless chromium THROTTLES rAF on a
+//   1. Frame count is kept TINY (the scene's End at frame 3 → 4 frames). The default
+//      End is 10s (601 frames); headless chromium THROTTLES rAF on a
 //      "hidden" page, so waitForApply (2 rAFs/frame) makes a long render exceed
 //      the 30s test timeout. In a real 60fps foreground browser the full render
 //      runs at speed — this is purely a CI-throughput cap.
@@ -19,11 +19,21 @@ import { unzipSync } from 'fflate';
 type RenderFormat = 'mp4' | 'png-sequence';
 
 interface W {
+  __basher_dag: {
+    getState: () => {
+      state: { outputs: { scene?: { node: string } } };
+      dispatch: (op: {
+        type: 'setParam';
+        nodeId: string;
+        paramPath: string;
+        value: unknown;
+      }) => void;
+    };
+  };
   __basher_time: {
     getState: () => {
       seconds: number;
       setTime: (s: number) => void;
-      setDuration: (s: number) => void;
     };
   };
   __basher_render_animation: (
@@ -54,11 +64,22 @@ async function waitReady(page: Page) {
   await page.waitForTimeout(200);
 }
 
-/** Set a tiny duration; returns the resulting frame count (floor(d·60)+1). */
+/**
+ * Make the render tiny; returns the resulting frame count (floor(d·60)+1). #1287 — the render
+ * stops at the scene's End (`frameEnd` on the Scene node, Blender's `scene.frame_end`), not at
+ * the timeline's duration, so the End is what has to move.
+ */
 async function setTinyDuration(page: Page, seconds: number): Promise<number> {
   return page.evaluate((s) => {
-    (window as unknown as W).__basher_time.getState().setDuration(s);
-    return Math.floor(s * 60) + 1;
+    const dag = (window as unknown as W).__basher_dag.getState();
+    const frameEnd = Math.floor(s * 60);
+    dag.dispatch({
+      type: 'setParam',
+      nodeId: dag.state.outputs.scene!.node,
+      paramPath: 'frameEnd',
+      value: frameEnd,
+    });
+    return frameEnd + 1;
   }, seconds);
 }
 

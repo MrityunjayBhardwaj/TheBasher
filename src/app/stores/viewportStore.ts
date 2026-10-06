@@ -92,6 +92,14 @@ export interface ViewportStore {
    *  it drives (#977). A diagnostic for judging the retarget by eye, not scene
    *  furniture — default OFF. */
   sourceRigVisible: boolean;
+  /** #1250 — what Show Source Rig drew, published by the scene read path while it is on: how many of
+   *  the retargets were drawn (zero included) and why each other one was not. Null while it is off.
+   *  Not persisted — recomputed live, like `viewportClipReadout`. */
+  sourceRigReadout: {
+    readonly text: string;
+    readonly drawn: number;
+    readonly skipped: readonly { readonly retargetId: string; readonly reason: string }[];
+  } | null;
   /** How the armature helper draws each bone (#973).
    *
    *  Blender's own set is `["OCTAHEDRAL","STICK","BBONE","ENVELOPE","WIRE"]`;
@@ -214,6 +222,7 @@ export interface ViewportStore {
   setGridVisible(visible: boolean): void;
   setAxisWidgetVisible(visible: boolean): void;
   setSourceRigVisible(visible: boolean): void;
+  setSourceRigReadout(readout: ViewportStore['sourceRigReadout']): void;
   setBoneDisplay(display: 'octahedral' | 'stick'): void;
   setShading(shading: ShadingMode): void;
   setLookThroughCamera(on: boolean): void;
@@ -259,6 +268,7 @@ export const useViewportStore = create<ViewportStore>((set, get) => ({
   gridVisible: true,
   axisWidgetVisible: true,
   sourceRigVisible: false,
+  sourceRigReadout: null,
   boneDisplay: 'octahedral',
   bonesInFront: true,
   // Default null — the pivot is the director's until they ask for it to travel.
@@ -302,6 +312,7 @@ export const useViewportStore = create<ViewportStore>((set, get) => ({
   setGridVisible: (gridVisible) => set({ gridVisible }),
   setAxisWidgetVisible: (axisWidgetVisible) => set({ axisWidgetVisible }),
   setSourceRigVisible: (sourceRigVisible) => set({ sourceRigVisible }),
+  setSourceRigReadout: (sourceRigReadout) => set({ sourceRigReadout }),
   setBoneDisplay: (boneDisplay) => set({ boneDisplay }),
   setShading: (shading) => set({ shading }),
   setLookThroughCamera: (lookThroughCamera) => set({ lookThroughCamera }),

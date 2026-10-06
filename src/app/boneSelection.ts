@@ -28,6 +28,8 @@
 //      src/viewport/ArmatureHelper.tsx (both the writer and the highlight);
 //      issue #973.
 
+import { armatureModeOf, type ArmatureMode } from './armatureMode';
+import { useArmatureModeStore } from './stores/armatureModeStore';
 import { useBoneSelectionStore } from './stores/boneSelectionStore';
 import { useSelectionStore } from './stores/selectionStore';
 
@@ -38,11 +40,21 @@ export interface ActiveBone {
   readonly chain: readonly string[];
 }
 
-/** The pure core — given the two states, is there a live bone selection? */
+/**
+ * The pure core — given the primary selection, the bone selection and the armature mode, is there
+ * a live bone selection?
+ *
+ * #1335 — a bone is live only in Edit or Pose mode. In object mode the armature is one thing, as
+ * in Blender, where the bone properties' transform panel polls for an edit bone or pose mode and
+ * a click picks the Object. The stored bone is kept, not cleared, so entering pose mode again
+ * finds the bone the director left selected, which is what Blender's per-bone select flag does.
+ */
 function activeBone(
   primaryNodeId: string | null,
   selection: { nodeId: string | null; boneName: string | null; chain: readonly string[] },
+  mode: ArmatureMode,
 ): ActiveBone | null {
+  if (mode === 'object') return null;
   if (!primaryNodeId || selection.nodeId !== primaryNodeId) return null;
   if (!selection.boneName) return null;
   return { nodeId: selection.nodeId, boneName: selection.boneName, chain: selection.chain };
@@ -51,7 +63,8 @@ function activeBone(
 /** Imperative read (the helper's per-frame fill — no React context in useFrame). */
 export function getActiveBone(): ActiveBone | null {
   const sel = useBoneSelectionStore.getState();
-  return activeBone(useSelectionStore.getState().primaryNodeId, sel);
+  const primary = useSelectionStore.getState().primaryNodeId;
+  return activeBone(primary, sel, armatureModeOf(primary, useArmatureModeStore.getState()));
 }
 
 /** Reactive read (the inspector). */
@@ -60,7 +73,13 @@ export function useActiveBone(): ActiveBone | null {
   const nodeId = useBoneSelectionStore((s) => s.nodeId);
   const boneName = useBoneSelectionStore((s) => s.boneName);
   const chain = useBoneSelectionStore((s) => s.chain);
-  return activeBone(primaryNodeId, { nodeId, boneName, chain });
+  const modeNode = useArmatureModeStore((s) => s.nodeId);
+  const mode = useArmatureModeStore((s) => s.mode);
+  return activeBone(
+    primaryNodeId,
+    { nodeId, boneName, chain },
+    armatureModeOf(primaryNodeId, { nodeId: modeNode, mode }),
+  );
 }
 
 export { activeBone };

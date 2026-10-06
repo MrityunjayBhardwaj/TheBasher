@@ -73,6 +73,7 @@ export interface IdentifyArgs {
 export type IdentifyStrategy =
   | 'exact-id'
   | 'selection'
+  | 'name'
   | 'type-filter'
   | 'color-match'
   | 'param-match';

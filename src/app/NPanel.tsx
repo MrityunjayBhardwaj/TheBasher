@@ -53,7 +53,14 @@ import {
 import { getStorage } from './boot';
 import { useAssetErrorStore } from './stores/assetErrorStore';
 import { LOBE_WEIGHT_WHEN_ABSENT } from '../nodes/types';
-import type { BakedTextureRef, Quat, RotationModeFields, UvPlacement, Vec3 } from '../nodes/types';
+import type {
+  BakedTextureRef,
+  BoneSpec,
+  Quat,
+  RotationModeFields,
+  UvPlacement,
+  Vec3,
+} from '../nodes/types';
 import { useDagStore } from '../core/dag/store';
 import { getNodeType } from '../core/dag/registry';
 import { nodeRefCandidates, type NodeRefKind } from './nodeRefCandidates';
@@ -96,13 +103,24 @@ import { applyTransformFromUi } from './animate/applyTransformAction';
 import { ParamDiamond } from './ParamDiamond';
 import {
   autoKeyCommit,
-  commitObjectBoneRotation,
-  keyObjectBoneRotation,
+  commitObjectBonePose,
+  poseObjectBoneAsShown,
+  keyObjectBonePose,
   routeAnimatedGrab,
+  shownBoneComponent,
 } from './animate/autoKeyCommit';
 import { useActiveBone } from './boneSelection';
+import { useArmatureMode } from './armatureMode';
+import { useArmatureModeStore } from './stores/armatureModeStore';
+import { editSkeletonFromUI } from './skeletonEditActions';
+import type { OrientUp, SkeletonEdit } from './animate/editSkeleton';
+import { collectSkeletonObjects } from './skeletonObjects';
 import { useBoneSelectionStore } from './stores/boneSelectionStore';
-import { poseTargetForBone, type ObjectPoseTarget } from './animate/poseTargetForBone';
+import {
+  POSE_COMPONENTS,
+  poseTargetForBone,
+  type ObjectPoseTarget,
+} from './animate/poseTargetForBone';
 import { renameBone, rigReach } from './animate/renameBone';
 import {
   boneMapView,
@@ -174,6 +192,7 @@ import {
   readOverriddenSet,
   type OverrideDescriptor,
 } from './overrideDescriptor';
+import { uiEvaluatorCache } from './uiEvaluatorCache';
 
 // #130 (D-04) — the per-field override decorator contract threaded into the
 // editable fields. `descriptor` names the set param + covered fields; `marked`
@@ -378,13 +397,20 @@ function NumericField({
       ),
     [dagState, nodeId, paramPath],
   );
+  // #1314 — a stable cache: this re-reads the evaluated graph on every playhead change, and
+  // uncached that re-runs everything under the node (a character's whole-clip retarget) per frame.
+  const cache = uiEvaluatorCache;
   const drivenValue = useMemo(() => {
     if (!driven) return null;
-    const r = resolveEvaluatedParam(dagState, nodeId, paramPath, {
-      time: { frame, seconds, normalized },
-    });
+    const r = resolveEvaluatedParam(
+      dagState,
+      nodeId,
+      paramPath,
+      { time: { frame, seconds, normalized } },
+      cache,
+    );
     return typeof r?.value === 'number' ? r.value : null;
-  }, [driven, dagState, nodeId, paramPath, frame, seconds, normalized]);
+  }, [driven, dagState, nodeId, paramPath, frame, seconds, normalized, cache]);
   const readOnly = driven || (playing && evaluated);
   const display = driven ? (drivenValue ?? value) : scrub.isDragging ? scrub.previewValue : value;
   return (
@@ -562,12 +588,19 @@ function VectorField({
   const normalized = useTimeStore((s) => s.normalized);
   const playing = useTimeStore((s) => s.playing);
   const dagState = useDagStore((s) => s.state);
+  // #1314 — a stable cache: this re-reads the evaluated graph on every playhead change, and
+  // uncached that re-runs everything under the node (a character's whole-clip retarget) per frame.
+  const cache = uiEvaluatorCache;
   const resolved = useMemo(
     () =>
-      resolveTransformParam(dagState, nodeId, paramPath, {
-        time: { frame, seconds, normalized },
-      }),
-    [dagState, nodeId, paramPath, frame, seconds, normalized],
+      resolveTransformParam(
+        dagState,
+        nodeId,
+        paramPath,
+        { time: { frame, seconds, normalized } },
+        cache,
+      ),
+    [dagState, nodeId, paramPath, frame, seconds, normalized, cache],
   );
   // #300 F2b — BOTH transform and non-transform Vec3 params are drivable now that the
   // transform read seam (resolveEvaluatedTransform → resolveTransformParam) folds drivers
@@ -589,11 +622,15 @@ function VectorField({
     // A driven TRANSFORM vec shows via `resolved` (the driver-aware transform seam), so
     // only the non-transform road reads the driven value through resolveEvaluatedParam.
     if (!driven || isTransformParam) return null;
-    const r = resolveEvaluatedParam(dagState, nodeId, paramPath, {
-      time: { frame, seconds, normalized },
-    });
+    const r = resolveEvaluatedParam(
+      dagState,
+      nodeId,
+      paramPath,
+      { time: { frame, seconds, normalized } },
+      cache,
+    );
     return isVec3(r?.value) ? r!.value : null;
-  }, [driven, isTransformParam, dagState, nodeId, paramPath, frame, seconds, normalized]);
+  }, [driven, isTransformParam, dagState, nodeId, paramPath, frame, seconds, normalized, cache]);
   // Per-param fallback (D-01): driven vec → resolved transform Vec3 → authored value.
   const effectiveValue: readonly number[] = drivenVec ?? resolved ?? value;
   // D-02: read-only while playing IFF this field is showing an evaluated
@@ -1004,7 +1041,14 @@ function NodeRefField({
   const nodes = useDagStore((s) => s.state.nodes);
   const state = useDagStore((s) => s.state);
   const candidates = useMemo(
-    () => nodeRefCandidates(state, kind, nodeId, { time: { frame: 0, seconds: 0, normalized: 0 } }),
+    () =>
+      nodeRefCandidates(
+        state,
+        kind,
+        nodeId,
+        { time: { frame: 0, seconds: 0, normalized: 0 } },
+        uiEvaluatorCache,
+      ),
     // `state` identity changes on every dispatch; `nodes` is the meaningful dep.
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [nodes, kind, nodeId],
@@ -1710,16 +1754,21 @@ function BoneMapEditor({ nodeId }: { nodeId: string }) {
                   // about the two anatomies and a warn chip here would be a
                   // lying label of the kind #923 already removed once.
                   className={`font-mono text-[9px] ${
-                    !row.restGapAbsorbed && row.restGapDeg >= REST_GAP_ALARM_DEG
+                    !row.restGapAbsorbed &&
+                    !row.restGapGrounded &&
+                    row.restGapDeg >= REST_GAP_ALARM_DEG
                       ? 'text-warn'
                       : 'text-fg/40'
                   }`}
                   data-testid={`npanel-bone-map-gap-${row.source}`}
                   data-absorbed={row.restGapAbsorbed ? 'true' : 'false'}
+                  data-grounded={row.restGapGrounded ? 'true' : 'false'}
                   title={
                     row.restGapAbsorbed
                       ? `the two rigs point this bone ${row.restGapDeg.toFixed(1)}° apart at rest; absorbed by the retarget`
-                      : `the two rigs point this bone ${row.restGapDeg.toFixed(1)}° apart at rest, and it stays`
+                      : row.restGapGrounded
+                        ? `the two rigs point this bone ${row.restGapDeg.toFixed(1)}° apart at rest; both stand on it flat, so the retarget keeps the sole level and leaves this gap`
+                        : `the two rigs point this bone ${row.restGapDeg.toFixed(1)}° apart at rest, and it stays`
                   }
                 >
                   {row.restGapDeg.toFixed(0)}°
@@ -3464,14 +3513,17 @@ function ObjectSlotRows({ nodeId }: { nodeId: string }) {
   const frame = useTimeStore((s) => s.frame);
   const seconds = useTimeStore((s) => s.seconds);
   const normalized = useTimeStore((s) => s.normalized);
-  const table = objectSlotTable(state, nodeId, { time: { frame, seconds, normalized } });
+  // #1387 — a stable cache: this body runs on every playhead change, and uncached each run
+  // re-evaluated everything under the Object (a character's whole-clip retarget, 4× a frame).
+  const cache = uiEvaluatorCache;
+  const table = objectSlotTable(state, nodeId, { time: { frame, seconds, normalized } }, cache);
 
   // No data to slot. Say WHICH of the three absences it is, through the same capability
   // table the section classification uses — an Empty, a tracked gap, or a category answer.
   // Reporting them all as "no mesh data" would encode #528 as a design decision, and would
   // leave that table a set of grounded answers nothing reads.
   if (!table) {
-    const absence = slotAbsenceOf(state, nodeId, { time: { frame, seconds, normalized } });
+    const absence = slotAbsenceOf(state, nodeId, { time: { frame, seconds, normalized } }, cache);
     return (
       <div
         className={`px-3 py-1.5 text-[11px] ${absence?.why === 'not-yet' ? 'text-warn' : 'text-fg/50'}`}
@@ -3899,11 +3951,14 @@ function QuaternionField({ nodeId, authored }: { nodeId: string; authored: Quat 
   const normalized = useTimeStore((s) => s.normalized);
   const playing = useTimeStore((s) => s.playing);
   const dagState = useDagStore((s) => s.state);
+  // #1314 — a stable cache: this re-reads the evaluated graph on every playhead change, and
+  // uncached that re-runs everything under the node (a character's whole-clip retarget) per frame.
+  const cache = uiEvaluatorCache;
   const evaluated = useMemo(
     () =>
-      resolveEvaluatedTransform(dagState, nodeId, { time: { frame, seconds, normalized } })
+      resolveEvaluatedTransform(dagState, nodeId, { time: { frame, seconds, normalized } }, cache)
         ?.quaternion ?? null,
-    [dagState, nodeId, frame, seconds, normalized],
+    [dagState, nodeId, frame, seconds, normalized, cache],
   );
   const animated = paramAnimationState(dagState, nodeId, 'quaternion', frame) !== 'none';
   const shown: Quat = animated && evaluated ? evaluated : authored;
@@ -3992,66 +4047,80 @@ function BonePoseRow({ nodeId, boneName }: { nodeId: string; boneName: string })
  * under the Object; an edit after it rewrites that bone's member. A member is an entry in a list
  * found by bone name, so there is no param path for an ordinary param row to write.
  *
- * #1215 — the field shows the rotation as played at the playhead. Once the rotation is keyed in that
- * layer an edit is a key, as Blender's field auto-keys a keyed property (`commitObjectBoneRotation`),
- * and the key button keys what the field shows (`keyObjectBoneRotation`).
+ * #1215 — each field shows its component as played at the playhead. Once a component is keyed in
+ * that layer an edit is a key, as Blender's field auto-keys a keyed property (`commitObjectBonePose`),
+ * and its key button keys what the field shows (`keyObjectBonePose`).
+ *
+ * #1338 — position, rotation and scale, as Blender's pose-bone Transform panel has. A component the
+ * member does not author passes through from below; its field is empty with the bone's rest value as
+ * a placeholder, and typing one axis seeds the other two from that rest. (A member replaces the
+ * bone's local transform, so rest is the bone's bind transform, not zero.)
  */
 function ObjectBonePoseRow({ target }: { target: ObjectPoseTarget }) {
   const [refusal, setRefusal] = useState<string | null>(null);
   const said = (res: { ok: true } | { ok: false; reason: string }) =>
     setRefusal(res.ok ? null : res.reason);
-  const pose = (rotation: [number, number, number]) =>
-    said(commitObjectBoneRotation(target, rotation));
-  const rotation = target.rotation;
+  const posed = target.position !== null || target.rotation !== null || target.scale !== null;
   return (
     <div className="mt-2" data-testid="inspector-bone-pose">
-      {rotation === null ? (
+      {!posed ? (
         <button
           type="button"
           className="w-full rounded border border-border px-2 py-1 font-mono text-[10px] text-fg/70 hover:text-fg"
           data-testid="inspector-bone-pose-add"
-          // Seeded at zero so asking for a pose is not itself a pose; the member then holds
-          // against the motion underneath, dragged back to zero or not.
-          onClick={() => pose([0, 0, 0])}
+          // #1474 — seeded with the rotation the bone shows at the playhead, so asking for a pose
+          // is not itself a pose (a zero seed snapped a moving bone to rest).
+          onClick={() => said(poseObjectBoneAsShown(target))}
         >
           pose this bone
         </button>
       ) : (
-        <div className="flex items-center gap-1 text-[11px] text-fg/80">
-          <button
-            type="button"
-            data-testid="inspector-bone-pose-key"
-            data-keyed={target.keyed || undefined}
-            aria-label={`Key ${target.bone} rotation at the playhead`}
-            title={
-              target.keyed
-                ? 'Keyed: click to key the rotation shown at the playhead. With Auto-Key on, an edit keys.'
-                : 'Click to key the rotation shown at the playhead.'
-            }
-            className={`select-none px-1 text-[11px] leading-none ${target.keyed ? 'text-warn' : 'text-fg/40'} focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent`}
-            onClick={() => said(keyObjectBoneRotation(target))}
-          >
-            {target.keyed ? '◆' : '◇'}
-          </button>
-          <span className="w-14 font-mono text-[10px] text-fg/50">rotation</span>
-          {(['x', 'y', 'z'] as const).map((axis, i) => (
-            <input
-              key={axis}
-              type="number"
-              step="1"
-              aria-label={`rotation ${axis}`}
-              value={Math.round(rotation[i] * 1000) / 1000}
-              data-testid={`inspector-bone-pose-rotation-${axis}`}
-              className="w-full rounded border border-border bg-muted px-1.5 py-0.5 text-right font-mono text-[11px] text-fg focus-visible:border-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
-              onChange={(e) => {
-                const next = parseFloat(e.target.value);
-                if (Number.isNaN(next)) return;
-                const r: [number, number, number] = [rotation[0], rotation[1], rotation[2]];
-                r[i] = next;
-                pose(r);
-              }}
-            />
-          ))}
+        <div className="flex flex-col gap-1">
+          {POSE_COMPONENTS.map((component) => {
+            const value = target[component];
+            const keyed = target.keyed[component];
+            const shown = shownBoneComponent(target, component);
+            return (
+              <div key={component} className="flex items-center gap-1 text-[11px] text-fg/80">
+                <button
+                  type="button"
+                  data-testid={`inspector-bone-pose-key-${component}`}
+                  data-keyed={keyed || undefined}
+                  disabled={value === null}
+                  aria-label={`Key ${target.bone} ${component} at the playhead`}
+                  title={
+                    keyed
+                      ? `Keyed: click to key the ${component} shown at the playhead. With Auto-Key on, an edit keys.`
+                      : `Click to key the ${component} shown at the playhead.`
+                  }
+                  className={`select-none px-1 text-[11px] leading-none ${keyed ? 'text-warn' : 'text-fg/40'} disabled:opacity-30 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent`}
+                  onClick={() => said(keyObjectBonePose(target, component))}
+                >
+                  {keyed ? '◆' : '◇'}
+                </button>
+                <span className="w-14 font-mono text-[10px] text-fg/50">{component}</span>
+                {(['x', 'y', 'z'] as const).map((axis, i) => (
+                  <input
+                    key={axis}
+                    type="number"
+                    step={component === 'rotation' ? '1' : '0.01'}
+                    aria-label={`${component} ${axis}`}
+                    value={value === null ? '' : Math.round(value[i] * 1000) / 1000}
+                    placeholder={String(Math.round(shown[i] * 1000) / 1000)}
+                    data-testid={`inspector-bone-pose-${component}-${axis}`}
+                    className="w-full rounded border border-border bg-muted px-1.5 py-0.5 text-right font-mono text-[11px] text-fg focus-visible:border-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+                    onChange={(e) => {
+                      const next = parseFloat(e.target.value);
+                      if (Number.isNaN(next)) return;
+                      const v: [number, number, number] = [shown[0], shown[1], shown[2]];
+                      v[i] = next;
+                      said(commitObjectBonePose(target, component, v));
+                    }}
+                  />
+                ))}
+              </div>
+            );
+          })}
         </div>
       )}
       {refusal !== null ? (
@@ -4157,6 +4226,7 @@ function BoneNameField({
 
 function SelectedBoneSection() {
   const bone = useActiveBone();
+  const mode = useArmatureMode();
   if (!bone) return null;
   // Root first, and the bone itself is the last entry — shown emphasised rather
   // than repeated above the chain, so the same name is never printed twice.
@@ -4185,7 +4255,350 @@ function SelectedBoneSection() {
           {above.join(' → ')}
         </div>
       ) : null}
-      <BonePoseRow nodeId={bone.nodeId} boneName={bone.boneName} />
+      {/* #1339 — Edit mode edits the bone's REST; Pose mode poses it. */}
+      {mode === 'edit' ? (
+        <EditBoneRow nodeId={bone.nodeId} boneName={bone.boneName} />
+      ) : (
+        <BonePoseRow nodeId={bone.nodeId} boneName={bone.boneName} />
+      )}
+    </div>
+  );
+}
+
+const RAD = 180 / Math.PI;
+
+/** #1340 — the orient menu: Blender's Recalculate Roll types (no 3D cursor here, so no Cursor). */
+const ORIENT_UPS: readonly { value: string; label: string }[] = [
+  { value: 'global+X', label: 'global +X' },
+  { value: 'global+Y', label: 'global +Y' },
+  { value: 'global+Z', label: 'global +Z' },
+  { value: 'global-X', label: 'global −X' },
+  { value: 'global-Y', label: 'global −Y' },
+  { value: 'global-Z', label: 'global −Z' },
+  { value: 'tangent+X', label: 'local +X tangent' },
+  { value: 'tangent-X', label: 'local −X tangent' },
+  { value: 'tangent+Z', label: 'local +Z tangent' },
+  { value: 'tangent-Z', label: 'local −Z tangent' },
+  { value: 'view', label: 'view axis' },
+];
+
+/**
+ * #1340 — a menu choice as the edit's `up`. A world direction (a global axis, the view) is taken into
+ * the armature's own space through its Object, as Blender does (`mul_m3_v3(imat, vec)` in
+ * `armature_calc_roll_exec`), because the skeleton's frames are in that space. Null when the view
+ * axis is asked for and there is no camera.
+ */
+function orientUpFor(choice: string, objectId: string): OrientUp | null {
+  if (choice.startsWith('tangent')) {
+    return { kind: 'tangent', axis: choice.slice('tangent'.length) as '+X' | '-X' | '+Z' | '-Z' };
+  }
+  let world: THREE.Vector3;
+  if (choice === 'view') {
+    const camera = useThreeRef.getState().camera;
+    if (!camera) return null;
+    // The view axis points from the scene toward the viewer: the camera's own +Z.
+    world = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 2);
+  } else {
+    const sign = choice[6] === '-' ? -1 : 1;
+    const k = 'XYZ'.indexOf(choice[7]);
+    world = new THREE.Vector3(k === 0 ? sign : 0, k === 1 ? sign : 0, k === 2 ? sign : 0);
+  }
+  const object = collectSkeletonObjects(useDagStore.getState().state, uiEvaluatorCache).find(
+    (o) => o.id === objectId,
+  );
+  if (object) {
+    const toArmature = new THREE.Matrix3()
+      .setFromMatrix4(new THREE.Matrix4().fromArray(object.world as number[]))
+      .invert();
+    world.applyMatrix3(toArmature);
+  }
+  world.normalize();
+  return { kind: 'axis', axis: [world.x, world.y, world.z] };
+}
+
+/**
+ * #1339 — the selected bone in Edit mode: its rest transform in its parent's frame, its parent, and
+ * the skeleton operations (Blender's Edit-mode Bone panel and Armature menu, in joint terms). Every
+ * control goes through `editSkeletonFromUI`, the road the Edit-mode keys and gizmo take, which
+ * dispatches the agent's verb — so a refusal here reads exactly as the agent's would.
+ */
+function EditBoneRow({ nodeId, boneName }: { nodeId: string; boneName: string }) {
+  const state = useDagStore((s) => s.state);
+  const bones = useMemo(() => {
+    const reach = rigReach(state, nodeId);
+    return reach
+      ? ((state.nodes[reach.skeleton].params as { bones?: BoneSpec[] }).bones ?? [])
+      : [];
+  }, [state, nodeId]);
+  const editChildren = useArmatureModeStore((s) => s.editChildren);
+  const setEditChildren = useArmatureModeStore((s) => s.setEditChildren);
+  const [cuts, setCuts] = useState(1);
+  const [refusal, setRefusal] = useState<string | null>(null);
+  const [orientUp, setOrientUp] = useState('global+Z');
+  const [orientChain, setOrientChain] = useState(false);
+  const [orientShortest, setOrientShortest] = useState(false);
+  const at = bones.findIndex((b) => b.name === boneName);
+  if (at < 0) return null;
+  const spec = bones[at];
+  const edit = (e: SkeletonEdit, label: string) => {
+    const res = editSkeletonFromUI(nodeId, e, label);
+    setRefusal(res.ok ? null : res.reason);
+  };
+  // A bone cannot take itself or anything below it as its parent.
+  const below = new Set<number>();
+  for (let i = 0; i < bones.length; i++) {
+    for (let k = i, hops = 0; k >= 0 && hops <= bones.length; k = bones[k].parent, hops++) {
+      if (k === at) {
+        below.add(i);
+        break;
+      }
+    }
+  }
+  const rows: { key: 'position' | 'rotation' | 'scale'; value: readonly number[]; step: string }[] =
+    [
+      { key: 'position', value: spec.position, step: '0.01' },
+      { key: 'rotation', value: spec.rotation.map((r) => r * RAD), step: '1' },
+      { key: 'scale', value: spec.scale ?? [1, 1, 1], step: '0.01' },
+    ];
+  const button =
+    'rounded border border-border px-1.5 py-0.5 font-mono text-[10px] text-fg/70 hover:text-fg';
+  return (
+    <div className="mt-2 flex flex-col gap-1" data-testid="edit-bone">
+      {rows.map(({ key, value, step }) => (
+        <div key={key} className="flex items-center gap-1 text-[11px] text-fg/80">
+          <span className="w-14 font-mono text-[10px] text-fg/50">{key}</span>
+          {(['x', 'y', 'z'] as const).map((axis, i) => (
+            <input
+              key={axis}
+              type="number"
+              step={step}
+              aria-label={`rest ${key} ${axis}`}
+              value={Math.round(value[i] * 1000) / 1000}
+              data-testid={`edit-bone-${key}-${axis}`}
+              className="w-full rounded border border-border bg-muted px-1.5 py-0.5 text-right font-mono text-[11px] text-fg focus-visible:border-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
+              onChange={(e) => {
+                const n = parseFloat(e.target.value);
+                if (Number.isNaN(n)) return;
+                const v = [value[0], value[1], value[2]] as [number, number, number];
+                v[i] = n;
+                const out = key === 'rotation' ? (v.map((d) => d / RAD) as typeof v) : v;
+                edit(
+                  { op: 'transform', bone: boneName, [key]: out, children: editChildren },
+                  `set ${boneName} rest ${key}`,
+                );
+              }}
+            />
+          ))}
+        </div>
+      ))}
+      <label className="flex items-center gap-1 font-mono text-[10px] text-fg/60">
+        <input
+          type="checkbox"
+          data-testid="edit-bone-children-stay"
+          checked={editChildren === 'stay'}
+          onChange={(e) => setEditChildren(e.target.checked ? 'stay' : 'follow')}
+        />
+        children stay where they are
+      </label>
+      <div className="flex items-center gap-1 text-[11px] text-fg/80">
+        <span className="w-14 font-mono text-[10px] text-fg/50">parent</span>
+        <select
+          data-testid="edit-bone-parent"
+          aria-label="Bone parent"
+          value={spec.parent >= 0 ? bones[spec.parent].name : ''}
+          className="w-full rounded border border-border bg-muted px-1 py-0.5 font-mono text-[11px] text-fg"
+          onChange={(e) =>
+            edit(
+              { op: 'parent', bone: boneName, parent: e.target.value || null },
+              `parent ${boneName}`,
+            )
+          }
+        >
+          <option value="">(none: a root)</option>
+          {bones.map((b, i) =>
+            below.has(i) ? null : (
+              <option key={b.name} value={b.name}>
+                {b.name}
+              </option>
+            ),
+          )}
+        </select>
+      </div>
+      <div className="flex flex-wrap items-center gap-1">
+        <button
+          type="button"
+          className={button}
+          data-testid="edit-bone-extrude"
+          title="Add a child that continues the chain (E)"
+          onClick={() => edit({ op: 'extrude', from: boneName }, `extrude ${boneName}`)}
+        >
+          extrude
+        </button>
+        <button
+          type="button"
+          className={button}
+          data-testid="edit-bone-subdivide"
+          title="Split the link to this bone's child into equal pieces"
+          onClick={() => edit({ op: 'subdivide', bone: boneName, cuts }, `subdivide ${boneName}`)}
+        >
+          subdivide
+        </button>
+        <input
+          type="number"
+          min={1}
+          max={64}
+          value={cuts}
+          aria-label="Subdivide cuts"
+          data-testid="edit-bone-cuts"
+          className="w-10 rounded border border-border bg-muted px-1 py-0.5 text-right font-mono text-[10px] text-fg"
+          onChange={(e) => setCuts(Math.max(1, Math.min(64, parseInt(e.target.value, 10) || 1)))}
+        />
+        <button
+          type="button"
+          className={button}
+          data-testid="edit-bone-symmetrize"
+          title="Mirror this bone and everything below it onto the other side (L ↔ R by name)"
+          onClick={() => {
+            const scope = [at];
+            for (let k = 0; k < scope.length; k++) {
+              bones.forEach((b, i) => {
+                if (b.parent === scope[k]) scope.push(i);
+              });
+            }
+            edit(
+              { op: 'symmetrize', bones: scope.map((i) => bones[i].name) },
+              `symmetrize ${boneName}`,
+            );
+          }}
+        >
+          symmetrize
+        </button>
+        <button
+          type="button"
+          className={button}
+          data-testid="edit-bone-reroot"
+          title="Make this the root, reversing the chain above it"
+          onClick={() => edit({ op: 'reroot', bone: boneName }, `reroot at ${boneName}`)}
+        >
+          make root
+        </button>
+        <button
+          type="button"
+          className={button}
+          data-testid="edit-bone-delete"
+          title="Delete; its children go to its parent (X)"
+          onClick={() =>
+            edit({ op: 'delete', bone: boneName, reparent: true }, `delete ${boneName}`)
+          }
+        >
+          delete
+        </button>
+        <button
+          type="button"
+          className={button}
+          data-testid="edit-bone-delete-detach"
+          title="Delete; its children become roots where they stand"
+          onClick={() =>
+            edit({ op: 'delete', bone: boneName, reparent: false }, `delete ${boneName}`)
+          }
+        >
+          delete, children to roots
+        </button>
+      </div>
+      <div className="flex flex-wrap items-center gap-1 text-[11px] text-fg/80">
+        <span className="w-14 font-mono text-[10px] text-fg/50">orient</span>
+        <select
+          data-testid="edit-bone-orient-up"
+          aria-label="Roll +Z toward"
+          value={orientUp}
+          className="rounded border border-border bg-muted px-1 py-0.5 font-mono text-[10px] text-fg"
+          onChange={(e) => setOrientUp(e.target.value)}
+        >
+          {ORIENT_UPS.map((o) => (
+            <option key={o.value} value={o.value}>
+              {o.label}
+            </option>
+          ))}
+        </select>
+        <label className="flex items-center gap-0.5 font-mono text-[10px] text-fg/60">
+          <input
+            type="checkbox"
+            data-testid="edit-bone-orient-chain"
+            checked={orientChain}
+            onChange={(e) => setOrientChain(e.target.checked)}
+          />
+          chain
+        </label>
+        <label className="flex items-center gap-0.5 font-mono text-[10px] text-fg/60">
+          <input
+            type="checkbox"
+            data-testid="edit-bone-orient-shortest"
+            checked={orientShortest}
+            onChange={(e) => setOrientShortest(e.target.checked)}
+          />
+          shortest
+        </label>
+        <button
+          type="button"
+          className={button}
+          data-testid="edit-bone-orient"
+          title="Aim +Y at the child and roll +Z toward the chosen direction"
+          onClick={() => {
+            const up = orientUpFor(orientUp, nodeId);
+            if (!up) {
+              setRefusal('there is no view to take the direction from.');
+              return;
+            }
+            edit(
+              { op: 'orient', bone: boneName, up, chain: orientChain, axisOnly: orientShortest },
+              `orient ${boneName}`,
+            );
+          }}
+        >
+          orient
+        </button>
+      </div>
+      <div className="flex items-center gap-1 text-[11px] text-fg/80">
+        <span
+          className="w-14 font-mono text-[10px] text-fg/50"
+          title="The IK solve's starting bend"
+        >
+          pref. angle
+        </span>
+        {(['x', 'y', 'z'] as const).map((axis, i) => (
+          <input
+            key={axis}
+            type="number"
+            step="1"
+            aria-label={`preferred angle ${axis}`}
+            value={
+              spec.preferredAngle ? Math.round(spec.preferredAngle[i] * RAD * 1000) / 1000 : ''
+            }
+            placeholder="0"
+            data-testid={`edit-bone-preferred-${axis}`}
+            className="w-full rounded border border-border bg-muted px-1.5 py-0.5 text-right font-mono text-[11px] text-fg"
+            onChange={(e) => {
+              const n = parseFloat(e.target.value);
+              if (Number.isNaN(n)) return;
+              const v = (spec.preferredAngle ?? [0, 0, 0]).map((r) => r * RAD) as [
+                number,
+                number,
+                number,
+              ];
+              v[i] = n;
+              edit(
+                { op: 'preferredAngle', bone: boneName, angle: v.map((d) => d / RAD) as typeof v },
+                `set ${boneName} preferred angle`,
+              );
+            }}
+          />
+        ))}
+      </div>
+      {refusal !== null ? (
+        <div className="font-mono text-[10px] text-warn" data-testid="edit-bone-refusal">
+          {refusal}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -4197,7 +4610,7 @@ export function NPanel() {
   // control appears exactly when the dispatcher would accept it (never for an Empty Object).
   // Selected down to a boolean so unrelated DAG changes don't re-render the panel.
   const canApply = useDagStore((s) =>
-    selectedId ? canApplyTransform(s.state, selectedId) : false,
+    selectedId ? canApplyTransform(s.state, selectedId, uiEvaluatorCache) : false,
   );
   // #415 — THE OBJECT'S `data` INPUT IS NO LONGER THE DATA NODE once a modifier is on it.
   // The stack splices into that very edge (`BoxData → Array → Object`), so `inputs.data`
@@ -4254,7 +4667,7 @@ export function NPanel() {
   // it, and letting the projection recompute would add a third evaluate per render.
   const dagState = useDagStore((s) => s.state);
   const projection = useMemo(
-    () => exposeParams(dagState, selectedId, { canApply }),
+    () => exposeParams(dagState, selectedId, { canApply, cache: uiEvaluatorCache }),
     [dagState, selectedId, canApply],
   );
   // #394 P3 (#518) — the linked-data block draws the base's rows AND the rows of every

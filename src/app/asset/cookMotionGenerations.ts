@@ -33,6 +33,7 @@
 
 import { useDagStore } from '../../core/dag/store';
 import type { DagState } from '../../core/dag/state';
+import type { EvaluatorCache } from '../../core/dag/evaluator';
 import { useNotificationStore } from '../stores/notificationStore';
 import {
   bakedClipIds,
@@ -243,8 +244,12 @@ export interface MotionCookOffer {
  * Scoped to ONE node, so the inspector never pays the whole-graph cost the
  * warning on `hasStaleGenerations` is about.
  */
-export function motionCookOffer(state: DagState, producerId: string): MotionCookOffer {
-  const row = clipBakeStates(state).find((c) => c.producerId === producerId);
+export function motionCookOffer(
+  state: DagState,
+  producerId: string,
+  cache?: EvaluatorCache,
+): MotionCookOffer {
+  const row = clipBakeStates(state, cache).find((c) => c.producerId === producerId);
   if (!row) {
     // A producer with no clip wired cannot be cooked into anything. Said out
     // loud rather than shown as a live button that would silently do nothing.

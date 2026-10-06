@@ -44,6 +44,7 @@
 //      click); src/viewport/EditorViewCamera.tsx (the frame); issues #984, #985.
 
 import * as THREE from 'three';
+import type { EvaluatorCache } from '../core/dag/evaluator';
 import type { DagState } from '../core/dag/state';
 import { collectSkeletonObjects, type SkeletonObject } from '../app/skeletonObjects';
 import { reachedFromSelection } from '../app/character/reachedFromSelection';
@@ -68,16 +69,21 @@ export interface FollowScan {
 /**
  * Walk the scene, and the graph, for everything a lock on `nodeId` could follow. Without a graph
  * there are no rigs: nothing in the scene stands for a native character.
+ *
+ * #1388 — the applier rescans on a cadence and passes its stable `cache`: collecting the rigs
+ * evaluates every armature's skeleton, and uncached that re-ran a character's whole-clip
+ * retarget on every rescan, playing or not.
  */
 export function scanForFollow(
   scene: THREE.Object3D,
   nodeId: string,
   dag: DagState | null,
+  cache?: EvaluatorCache,
 ): FollowScan {
   const reached = dag ? reachedFromSelection(dag, nodeId) : null;
   return {
     object: scene.getObjectByName(nodeId) ?? null,
-    rigs: reached && dag ? collectSkeletonObjects(dag).filter((o) => reached.has(o.id)) : [],
+    rigs: reached && dag ? collectSkeletonObjects(dag, cache).filter((o) => reached.has(o.id)) : [],
   };
 }
 

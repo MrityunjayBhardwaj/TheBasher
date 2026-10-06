@@ -26,7 +26,10 @@ import { validatePlan } from '../../agent/mutators/validate';
 import { useDiffStore, acceptSelectedOps } from '../../agent/diff/store';
 import { createFork } from '../../agent/diff/forkedDag';
 import { useDagStore } from '../../core/dag/store';
-import { resolveChannelAddress } from '../../agent/mutators/builders/channelAddress';
+import {
+  channelRootSelectors,
+  resolveChannelAddress,
+} from '../../agent/mutators/builders/channelAddress';
 import { rowAddress } from '../../timeline/layerChannelRows';
 import {
   importComfyGraph,
@@ -163,20 +166,13 @@ export interface RetimeKeyframeArgs {
 }
 
 /**
- * Retime composite (D-W9-7 / Phase 7.1): `removeKeyframes({scope:{time:
- * fromTime}})` → `keyframe({time:toTime,value,easing})` as ONE atomic
- * undo entry. This is a 2-Mutator PARAMETERIZATION of the existing
- * composite model (dispatchFirstKeyComposite) — NOT a new Mutator
- * (D-01). The original sample's `value` AND `easing` are captured from
- * the live DAG BEFORE the remove and passed explicitly into the
- * `keyframe` spec so the channel's per-type default-easing fallthrough
- * (keyframe.ts:105) does NOT silently change the easing (D-01
- * pre-mortem — losing easing on retime is the named defect).
+ * Retime (D-W9-7 / Phase 7.1): move the key at `fromTime` to `toTime` as ONE atomic undo entry.
  *
- * D-03 collision (last-wins) falls out of keyframe.ts:110's existing
- * replace-at-time against the post-remove fork — no new collision code.
- * Any validate `!ok` → abort, mutate nothing (mirrors
- * dispatchFirstKeyComposite's abort discipline; V13 closure gate fires).
+ * #1482 — the key moves whole and alone: every field it carries survives with only `time` changed,
+ * and no other key is written. A key already at `toTime` is replaced (D-03 last-wins). This was a
+ * remove + insert composite, which lost the key's ease, handle type and handles and let the insert
+ * reshape both neighbours. A missing key aborts and mutates nothing; so does a target time below 0,
+ * which every keyframe schema refuses (`time: nonnegative`) when the write is validated.
  */
 export function dispatchRetimeKeyframe(args: RetimeKeyframeArgs): DispatchResult {
   const { channelId, fromTime, toTime } = args;
@@ -202,88 +198,26 @@ export function dispatchRetimeKeyframe(args: RetimeKeyframeArgs): DispatchResult
     return { ok: false, reason: `no keyframe at fromTime ${fromTime}` };
   }
 
-  // 2 — capture value + easing BEFORE anything else (D-01 pre-mortem).
-  const value = sample.value;
-  const easing = sample.easing;
-
-  // #1215 — a layer curve holding ONE key: removing it first would remove the curve (a layer drops
-  // an emptied curve, as Blender does) and the insert would mint a fresh one without its extend and
-  // modifiers. With no neighbour to split against, moving the key in place is the whole retime.
-  if (address.layer && (params.keyframes ?? []).length === 1) {
-    return proposeAndAccept(
-      base,
-      resolved.write({ keyframes: [{ ...sample, time: toTime }] }),
-      intent,
-      ['user:mutator.timeline.keyframe'],
-      { rootSelectors: [address.layer.layerId], followedEdges: [] },
-      [],
-    );
-  }
-
-  const removeKeyframes = getMutator('mutator.timeline.removeKeyframes');
-  const keyframe = getMutator('mutator.timeline.keyframe');
-  if (!removeKeyframes || !keyframe) {
-    return {
-      ok: false,
-      reason: 'Timeline Mutators not registered (removeKeyframes / keyframe).',
-    };
-  }
-
-  // 3 — validate removeKeyframes({scope:{time:fromTime}}) vs base.
-  const rParsed = removeKeyframes.spec.safeParse({
-    ...address,
-    scope: { time: fromTime },
-  });
-  if (!rParsed.success) {
-    return {
-      ok: false,
-      reason: `removeKeyframes spec invalid: ${rParsed.error.message}`,
-    };
-  }
-  const rResult = validatePlan(removeKeyframes, rParsed.data, base, intent);
-  if (!rResult.ok) {
-    return { ok: false, reason: `removeKeyframes rejected: ${rResult.reason}` };
-  }
-
-  // 4 — fork1 = base + removeKeyframes ops.
-  let fork1: DagState;
-  try {
-    fork1 = createFork(base, rResult.ops).fork;
-  } catch (err) {
-    return {
-      ok: false,
-      reason: `removeKeyframes fork failed: ${(err as Error).message}`,
-    };
-  }
-
-  // 5 — validate keyframe({time:toTime,value,easing}) vs the FORKED
-  //     post-remove state (so D-03 last-wins lands via keyframe.ts:110's
-  //     existing replace-at-time against the post-remove occupant).
-  const kParsed = keyframe.spec.safeParse({
-    ...address,
-    time: toTime,
-    value,
-    easing,
-  });
-  if (!kParsed.success) {
-    return { ok: false, reason: `keyframe spec invalid: ${kParsed.error.message}` };
-  }
-  const kResult = validatePlan(keyframe, kParsed.data, fork1, intent);
-  if (!kResult.ok) {
-    return { ok: false, reason: `keyframe rejected: ${kResult.reason}` };
-  }
-
-  // 6 — propose ALL ops as ONE diff with the COMBINED closure (union of
-  //     the two Mutators' declared closure specs — reuse the existing
-  //     helper, do not invent), then accept → one Cmd+Z entry.
-  const combinedClosure = unionClosureSpecs(rResult.closure.spec, kResult.closure.spec);
+  // 2 — #1482: move the key IN PLACE, whole. It keeps every field it has (value, easing, ease,
+  //     handle type, both handles) with only its time changed, and no other key is touched. Handles
+  //     are offsets from their own key, so they travel with it; the neighbours' computed handles
+  //     (auto, auto-clamped, vector) follow at sample time (`keyframeInterp.ts`,
+  //     COMPUTED_HANDLE_TYPES). Removing and re-inserting instead, as this did before, kept only
+  //     value and easing, and the insert split the segment it landed in, rewriting both neighbours'
+  //     handles: right for adding a key, wrong for moving one. A key already at `toTime` is
+  //     replaced (D-03 last-wins). A layer's last key stays on its curve, so its extend and
+  //     modifiers stay too (#1215).
+  const moved = [
+    ...(params.keyframes ?? []).filter((k) => k !== sample && k.time !== toTime),
+    { ...sample, time: toTime },
+  ].sort((a, b) => a.time - b.time);
   return proposeAndAccept(
     base,
-    [...rResult.ops, ...kResult.ops],
+    resolved.write({ keyframes: moved }),
     intent,
-    ['user:mutator.timeline.removeKeyframes', 'user:mutator.timeline.keyframe'],
-    combinedClosure,
-    [...rResult.warnings, ...kResult.warnings],
+    ['user:mutator.timeline.keyframe'],
+    { rootSelectors: channelRootSelectors(address), followedEdges: [] },
+    [],
   );
 }
 

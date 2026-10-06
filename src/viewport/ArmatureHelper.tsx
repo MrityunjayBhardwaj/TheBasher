@@ -33,16 +33,18 @@ import {
   resetDegenerateBasisCount,
 } from './boneShape';
 import { armatureBounds, referencePlacement } from './referenceRig';
+import type { ReferenceRig } from '../app/animate/referenceRigs';
 import { skeletonObjectFrames } from './skeletonObjectPose';
 import { useTimeStore } from '../app/stores/timeStore';
 import { useViewportStore } from '../app/stores/viewportStore';
-import { useSelectionStore } from '../app/stores/selectionStore';
 import { useBoneSelectionStore } from '../app/stores/boneSelectionStore';
 import { getActiveBone } from '../app/boneSelection';
+import { armatureModeFor } from '../app/armatureMode';
 import { selectNode, type SelectClickLike } from './selectNodeOnClick';
 import { pickBone } from './armaturePick';
-import type { PosedSkeletonValue } from '../nodes/types';
-import type { SkeletonObject } from '../app/skeletonObjects';
+import { collectSkeletonObjects, type SkeletonObject } from '../app/skeletonObjects';
+import { useDagStore } from '../core/dag/store';
+import { uiEvaluatorCache } from '../app/uiEvaluatorCache';
 
 /** Blender's default unselected bone wire. Chrome, so it reads as an overlay. */
 const BONE_COLOR = '#c8d4e4';
@@ -68,18 +70,8 @@ const SOURCE_BONE_COLOR = '#ffb454';
  *  Rigs here run to ~78 bones (BVH) and a few hundred at the very most. */
 const MAX_BONES = 4096;
 
-/** A source rig to draw beside the character it drives (#977). */
-export interface ReferenceRigInput {
-  /** The retarget node's id — stable identity across frames. */
-  readonly id: string;
-  /** The SOURCE pose the retarget reads (#1250): a clip's, a base layer's, any pose wire. It
-   *  carries its own skeleton and samples itself at a time. */
-  readonly pose: PosedSkeletonValue;
-  /** The Skeleton node this retarget drives. A native character's armature Object stands exactly
-   *  this skeleton, so it is found by identity (#1273); a motion's own rig Object stands the
-   *  SOURCE skeleton, never a target, so it can never be taken for the character. */
-  readonly targetSkeletonId: string;
-}
+/** A source rig to draw beside the character it drives (#977), as `collectReferenceRigs` finds it. */
+export type ReferenceRigInput = ReferenceRig;
 
 /**
  * A bone name reduced to what every spelling of it agrees on, for the selected-bone highlight.
@@ -140,7 +132,7 @@ export function ArmatureHelper({
   /** What was last WRITTEN to the three materials, not read back from one. */
   const depthApplied = useRef<boolean | null>(null);
   /** The skeleton-Object set last drawn: a bone selection made against an older set may name a
-   *  bone that is no longer there, so it is cleared when the set changes. */
+   *  bone that is no longer there, so it is checked when the set changes. */
   const standaloneSignature = useRef('');
 
   const geometry = useMemo(() => {
@@ -261,9 +253,11 @@ export function ArmatureHelper({
     // id, so an unroutable click still reaches OrbitControls, which is what
     // every other picker in the viewport does.
     if (!nodeId) return;
-    // #1056 — a first click on a skeleton Object's bones selects the OBJECT, as a click on an
-    // armature does in object mode. Its bones pick once it is the thing being worked on.
-    if (useSelectionStore.getState().primaryNodeId !== nodeId) {
+    // #1335 — in object mode a click on the bones selects the OBJECT, as a click on an armature
+    // does in Blender's object mode; its bones pick in Edit and Pose mode. (Before the modes, the
+    // second click on a selected rig picked a bone, which made every click on a selected
+    // character's torso a bone pick.)
+    if (armatureModeFor(nodeId) === 'object') {
       selectNode(nodeId, e);
       return;
     }
@@ -285,13 +279,29 @@ export function ArmatureHelper({
     const standaloneInputs = skeletonObjects ?? [];
     const standaloneSig = standaloneInputs.map((o) => `${o.id}:${o.bones.length}`).join('|');
     if (standaloneSig !== standaloneSignature.current) {
-      if (standaloneSignature.current !== '') useBoneSelectionStore.getState().clear();
+      // #1339 — cleared only when the selected bone is no longer there. Edit mode changes a rig's
+      // bone count on purpose (an extrude selects the bone it made), and clearing on any change
+      // dropped that selection the moment it was made.
+      // #1526 — and "no longer there" is asked of the live graph, not of these props: the canvas is
+      // its own React root and can hold the rig one edit behind, so a second quick extrude's bone
+      // was missing here and its selection was cleared the frame after it was made.
+      const sel = useBoneSelectionStore.getState();
+      if (standaloneSignature.current !== '' && sel.nodeId !== null) {
+        const owner = collectSkeletonObjects(useDagStore.getState().state, uiEvaluatorCache).find(
+          (o) => o.id === sel.nodeId,
+        );
+        if (!owner || !owner.bones.some((b) => b.name === sel.boneName)) sel.clear();
+      }
       standaloneSignature.current = standaloneSig;
     }
     const playhead = useTimeStore.getState().seconds;
     // #1179 — posed and placed by the SAME function Frame Selected measures, so the camera
     // fits exactly the bones drawn here.
-    const standalone = standaloneInputs.map((o) => skeletonObjectFrames(o, playhead));
+    // #1335 — the armature in Edit mode draws its REST bones: Edit mode edits the rest, and
+    // Blender draws edit bones, never the pose, there.
+    const standalone = standaloneInputs.map((o) =>
+      skeletonObjectFrames(armatureModeFor(o.id) === 'edit' ? { ...o, pose: null } : o, playhead),
+    );
     const armatures = standalone;
     const frames = armatures.flat();
 
@@ -325,6 +335,12 @@ export function ArmatureHelper({
       mesh.setMatrixAt(i, local);
     }
     mesh.instanceMatrix.needsUpdate = true;
+    // #1507 — three tests a click against the mesh's bounding sphere before any bone, and computes
+    // that sphere only when it is null (`InstancedMesh.raycast`). Kept, it stays where the bones
+    // stood at the first click, and a bone that has moved outside it since (a chain grown in Edit
+    // mode, a limb animated away) cannot be clicked. Dropped here, the next click measures it anew.
+    mesh.boundingSphere = null;
+    mesh.boundingBox = null;
 
     // ── the two display switches ────────────────────────────────────────────
     // Written every frame from the store rather than through a React effect:

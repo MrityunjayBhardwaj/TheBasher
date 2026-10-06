@@ -47,7 +47,6 @@ import { degVec3ToRad } from '../../viewport/rotation';
  * contract (the input `bindTRS.rotation` is degrees — converted here).
  */
 export function projectGltfSkeleton(skin: GltfSkinMetadata): SkeletonValue {
-  const hasIbm = skin.inverseBindMatrices.length > 0;
   const bones: BoneSpec[] = skin.jointKeys.map((name, i): BoneSpec => {
     const trs = skin.bindTRS[i];
     const radRot = degVec3ToRad(trs.rotation);
@@ -59,10 +58,8 @@ export function projectGltfSkeleton(skin: GltfSkinMetadata): SkeletonValue {
       position: trs.position,
       rotation: [radRot[0], radRot[1], radRot[2]],
       scale: trs.scale,
-      // OMIT inverseBindMatrix when the skin declares no IBMs ([]) so a
-      // no-IBM rig produces a byte-identical BoneSpec (no `inverseBindMatrix:
-      // undefined` key) — keeps value-equality clean, mirroring Skeleton.ts.
-      ...(hasIbm ? { inverseBindMatrix: skin.inverseBindMatrices[i] } : {}),
+      // #1342 — no inverse bind matrix rides along: a bone carries its rest only, and the
+      // skin's bind is derived from that rest wherever it is drawn.
     };
     return bone;
   });

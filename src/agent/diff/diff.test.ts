@@ -19,6 +19,8 @@ import type { Op } from '../../core/dag/types';
 import { makeSplitCube } from '../../test-utils/splitCube';
 import { makeSplitCamera } from '../../test-utils/splitCamera';
 import { dataIdFor, splitOps } from '../../test-utils/splitKinds';
+import { deleteNodeMutator } from '../mutators/builders/deleteNode';
+import { buildDeleteNodesOps } from '../../app/sceneNodeActions';
 
 /**
  * The geometry half of the baseline `box`. Named because it is load-bearing rather than
@@ -463,6 +465,61 @@ describe('useDiffStore.propose — closure-preservation gate', () => {
     expect(diff.ops).toHaveLength(5);
     expect(diff.closure?.nodes.has(newSphereId)).toBe(true);
     expect(diff.closure?.nodes.has('scene')).toBe(true);
+  });
+  // #1400 — a delete's closure is rooted on the node it removes, which is GONE from the
+  // fork. Expanded against the fork alone the closure was empty, so the disconnects every
+  // wired delete must emit first (they target the CONSUMER) were refused, and the agent
+  // could not delete the light, the cube or the camera. The ops and the spec here are the
+  // shipped builder's and the shipped mutator's, not hand-written copies.
+  describe('#1400 — a delete of a WIRED node is inside its own closure', () => {
+    const deleteSpec = (ids: string[]): ClosureSpec =>
+      deleteNodeMutator.buildClosureSpec({ targetSelectors: ids });
+
+    it('THE PIN: deleteNode on a node the scene consumes is accepted, and both halves go', () => {
+      const state = buildScene();
+      const ops = buildDeleteNodesOps(state, ['box']);
+      // The premise: the batch disconnects the scene, i.e. an op whose target is a node
+      // only the ORIGINAL graph's walk from `box` can reach.
+      expect(ops).toContainEqual(
+        expect.objectContaining({ type: 'disconnect', to: { node: 'scene', socket: 'children' } }),
+      );
+      const diff = useDiffStore
+        .getState()
+        .propose(state, ops, 'del', undefined, deleteSpec(['box']));
+      expect(diff.forkState.nodes.box).toBeUndefined();
+      expect(diff.forkState.nodes[BOX_DATA]).toBeUndefined();
+      expect(diff.forkState.nodes.sibling).toBeDefined();
+    });
+
+    it('a disconnect aimed outside BOTH expansions is still refused', () => {
+      const state = buildScene();
+      const ops: Op[] = [
+        ...buildDeleteNodesOps(state, ['box']),
+        {
+          type: 'disconnect',
+          from: { node: dataIdFor('sibling'), socket: 'out' },
+          to: { node: 'sibling', socket: 'data' },
+        },
+      ];
+      expect(() =>
+        useDiffStore.getState().propose(state, ops, 'del', undefined, deleteSpec(['box'])),
+      ).toThrow(ClosurePreservationError);
+    });
+
+    it('a removeNode outside the declared scope is still refused', () => {
+      const state = buildScene();
+      const ops: Op[] = [
+        {
+          type: 'disconnect',
+          from: { node: 'sibling', socket: 'out' },
+          to: { node: 'scene', socket: 'children' },
+        },
+        { type: 'removeNode', nodeId: 'sibling' },
+      ];
+      expect(() =>
+        useDiffStore.getState().propose(state, ops, 'del', undefined, deleteSpec(['box'])),
+      ).toThrow(ClosurePreservationError);
+    });
   });
 });
 

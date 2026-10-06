@@ -16,7 +16,11 @@
 //
 // REF: THESIS.md §33, vyapti V6, dharana B2.
 
-import type { StorageCapability, StorageQuota } from './StorageCapability';
+import {
+  StorageNotFoundError,
+  type StorageCapability,
+  type StorageQuota,
+} from './StorageCapability';
 
 const DB_NAME_DEFAULT = 'basher';
 const STORE_NAME = 'files';
@@ -109,7 +113,7 @@ export class IndexedDbStorage implements StorageCapability {
 
   async read(path: string): Promise<Uint8Array> {
     const value = await this.withStore('readonly', (store) => awaitRequest(store.get(path)));
-    if (value === undefined) throw new Error(`IndexedDbStorage.read: not found: ${path}`);
+    if (value === undefined) throw new StorageNotFoundError(path);
     if (value instanceof ArrayBuffer) return new Uint8Array(value);
     if (ArrayBuffer.isView(value)) return new Uint8Array((value as ArrayBufferView).buffer);
     throw new Error(`IndexedDbStorage.read: unexpected stored shape at ${path}`);

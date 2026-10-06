@@ -27,6 +27,12 @@
 // arms and feet (constant across 109 frames — the gap riding along) to 0.0°.
 // The DIRECTION-branch rows are untouched: that branch still loses the roll.
 //
+// 🔴 SINCE #1455 THE FEET ARE EXEMPT FROM DIRECTION. A bone both rests stand on
+// keeps its own-rest delta, because its rest gap is joint placement under a flat
+// sole and pointing it away tilted the X Bot's sole 18° toes-up. On this pair
+// the feet's gap is 0.3°, so the DIRECTION rows still hold there; the sole
+// contract that replaces them lives in `retargetSole.gate.test.ts`.
+//
 // #854 — THE ROLL A DIRECTION-ALIGNED RETARGET CANNOT RECOVER, MEASURED PER BONE.
 //
 // Direction alignment carries a target bone onto the direction of its mapped
@@ -670,7 +676,9 @@ describe('#854 — the roll, per bone, on the branch this pair actually takes', 
     //
     // The second line is not a loss; it is the absorption, and the bound is the
     // gap itself.
-    const BONE = 'mixamorig_RightFoot';
+    // The FOREARM, not the foot it used to be (#1455): a foot stands on the floor
+    // in both rests, and the builder keeps its gap rather than absorbing it.
+    const BONE = 'mixamorig_RightForeArm';
     const plain = await measure(TPOSE);
     const bent = await measure(TPOSE, { bone: BONE, deg: 60 });
     expect(

@@ -111,3 +111,20 @@ export const ProjectSchema = z.object({
 export type Project = z.infer<typeof ProjectSchema>;
 
 export const PROJECT_FILENAME = 'project.json';
+
+/**
+ * #1302 — what a project picker shows, stored beside `project.json` so listing reads a few hundred
+ * bytes per project instead of every project in full (one example is a ~9.5 MB captured scene).
+ */
+export const PROJECT_META_FILENAME = 'meta.json';
+
+export const ProjectMetadataSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  createdAt: z.number(),
+  updatedAt: z.number(),
+  formatVersion: z.number(),
+  nodeCount: z.number().int().nonnegative(),
+});
+
+export type ProjectMetadata = z.infer<typeof ProjectMetadataSchema>;

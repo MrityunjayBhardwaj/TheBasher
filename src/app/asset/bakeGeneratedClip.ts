@@ -89,7 +89,7 @@
 //      src/app/animate/boundClipsForAsset.ts (the params-only read band);
 //      issues #935, #902.
 
-import { evaluate } from '../../core/dag/evaluator';
+import { evaluate, type EvaluatorCache } from '../../core/dag/evaluator';
 import type { DagState } from '../../core/dag/state';
 import type { Op } from '../../core/dag/types';
 import { edgeTarget } from '../animate/graphNodes';
@@ -145,13 +145,13 @@ export function producerOf(state: DagState, clipId: string): string | null {
 }
 
 /** Every clip/producer pair in the graph, in id order so the answer is stable. */
-export function clipBakeStates(state: DagState): ClipBakeState[] {
+export function clipBakeStates(state: DagState, cache?: EvaluatorCache): ClipBakeState[] {
   const out: ClipBakeState[] = [];
   for (const clipId of Object.keys(state.nodes).sort()) {
     if (state.nodes[clipId].type !== 'AnimationClip') continue;
     const producerId = producerOf(state, clipId);
     if (!producerId) continue;
-    const value = evaluate(state, producerId).value as AnimationClipValue;
+    const value = evaluate(state, producerId, { cache }).value as AnimationClipValue;
     const generation = value.generation;
     const bakedHash = (state.nodes[clipId].params as { sourceHash?: unknown }).sourceHash;
     const stale = generation !== undefined && bakedHash !== generation.requestHash;

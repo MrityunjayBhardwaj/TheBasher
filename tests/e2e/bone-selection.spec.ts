@@ -22,8 +22,8 @@
 //
 // THE ROAD (#1205): the character comes in through the product's import, so it is a native
 // character — its armature a skeleton Object in the band, its mesh deformed by an Armature
-// modifier — and the rule is Blender's object mode: the first click on the armature selects the
-// Object, and its bones pick once it is the thing being worked on.
+// modifier — and the rule is Blender's: in object mode a click on the armature selects the Object,
+// and its bones pick in Pose mode (#1335).
 //
 // THE TRACKED PAIR ONLY. `standin-character.glb` carries the same structure as
 // the vendor rig in 10 KB (#850) — a spec that needs an untracked 58 MB asset is
@@ -178,6 +178,18 @@ test('clicking a bone selects it, highlights it, and names it in the inspector',
     'a bone was selected before the character was — the pick gate is open when nothing is selected, ' +
       'so a click anywhere over a rigged character now takes the bone instead of the object',
   ).toBeNull();
+  // #1335 — and in object mode a click on a bone selects the armature, never the bone. The longest
+  // on-screen bone is the target, the same one the pose-mode loop below tries first.
+  await page.mouse.click(targets[0].x, targets[0].y);
+  await page.waitForTimeout(250);
+  expect(
+    await page.evaluate(
+      () => (window as unknown as Win).__basher_bone?.getState().boneName ?? null,
+    ),
+    'object mode picked a bone',
+  ).toBeNull();
+  // Bones pick in Pose mode, entered from the toolbar's mode menu.
+  await page.getByTestId('armature-mode').selectOption('pose');
 
   let picked: { name: string | null; chain: string[] } = { name: null, chain: [] };
   for (const t of targets.slice(0, 8)) {

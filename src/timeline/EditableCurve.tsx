@@ -41,6 +41,8 @@ import { useTimelineViewStore } from './timelineViewStore';
 import {
   frameToX,
   xToFrame,
+  keyDragFrame,
+  KEY_DRAG_THRESHOLD_PX,
   visibleFrames,
   zoomAtFrame,
   panByPixels,
@@ -158,6 +160,11 @@ export function EditableCurve({
     index: number;
     axis: number;
     pointerId: number;
+    /** #1484 — where the press began, for the drag threshold. */
+    downX: number;
+    downY: number;
+    /** #1484 — the pointer has passed the drag threshold; the press is a drag from then on. */
+    dragging: boolean;
   } | null>(null);
   // The value domain captured at drag start. While a drag is live the domain is
   // FROZEN to this, so dragging a key past the old extent doesn't rescale the
@@ -234,6 +241,8 @@ export function EditableCurve({
   const plotY1 = h;
   const dur = Math.max(duration, 0.0001);
   const totalFrames = Math.max(1, Math.round(dur * FPS));
+  // #1287 — the scene's End; the plot past it is shaded, as the dopesheet's is.
+  const rangeEnd = useTimeStore((st) => st.durationSeconds);
   const plotW = Math.max(plotX1 - plotX0, 1);
 
   // Value domain over every axis's keyframe values + handle extents, padded,
@@ -391,9 +400,19 @@ export function EditableCurve({
     kind: 'key' | 'in' | 'out',
     axis: number,
   ) {
+    // #1485 — only the primary button drags a key or handle.
+    if (e.button !== 0) return;
     e.stopPropagation();
     (e.target as Element).setPointerCapture?.(e.pointerId);
-    dragRef.current = { kind, index, axis, pointerId: e.pointerId };
+    dragRef.current = {
+      kind,
+      index,
+      axis,
+      pointerId: e.pointerId,
+      downX: e.clientX,
+      downY: e.clientY,
+      dragging: false,
+    };
     // Freeze the value domain to its PRE-drag value (the current `domain`,
     // computed from the unedited keyframes) so the curve doesn't rescale as
     // the dragged key/handle pushes past the old extent.
@@ -433,6 +452,19 @@ export function EditableCurve({
     }
     const d = dragRef.current;
     if (!d || !draft) return;
+    // #1485 — a right-button press during a drag cancels it (a chorded press arrives as a move).
+    if ((e.buttons & 2) !== 0) {
+      cancelDrag();
+      return;
+    }
+    // #1484 — below the drag threshold the press is a click: nothing moves.
+    if (
+      !d.dragging &&
+      Math.hypot(e.clientX - d.downX, e.clientY - d.downY) < KEY_DRAG_THRESHOLD_PX
+    ) {
+      return;
+    }
+    d.dragging = true;
     const { px, py } = localPoint(e);
     const k = draft[d.index];
     const spanLeft = d.index > 0 ? k.time - draft[d.index - 1].time : dur / 4;
@@ -444,7 +476,10 @@ export function EditableCurve({
       // value of the grabbed AXIS drags freely (other components untouched).
       const lo = d.index > 0 ? draft[d.index - 1].time + 1e-3 : 0;
       const hi = d.index < draft.length - 1 ? draft[d.index + 1].time - 1e-3 : dur;
-      const nextTime = Math.min(Math.max(xToTime(px), lo), hi);
+      // #1484 — onto the nearest whole frame (Ctrl/⌘ drags between frames), then between
+      // the neighbours.
+      const landed = keyDragFrame(xToTime(px) * FPS, totalFrames, e.ctrlKey || e.metaKey) / FPS;
+      const nextTime = Math.min(Math.max(landed, lo), hi);
       const nextVal = yToValue(py);
       next = draft.map((kk, i) =>
         i !== d.index
@@ -485,6 +520,26 @@ export function EditableCurve({
     setDraft(next);
   }
 
+  /** #1485 — abandon the drag in flight: the draft is dropped and nothing is written. */
+  function cancelDrag() {
+    dragRef.current = null;
+    frozenDomainRef.current = null;
+    setDraft(null);
+  }
+
+  // #1485 — Escape cancels a key or handle drag, as it cancels a transform in Blender. Capture
+  // phase, so the global Escape (which dismisses popovers) doesn't also run for the same press.
+  useEffect(() => {
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key !== 'Escape' || !dragRef.current) return;
+      e.preventDefault();
+      e.stopPropagation();
+      cancelDrag();
+    }
+    window.addEventListener('keydown', onKeyDown, true);
+    return () => window.removeEventListener('keydown', onKeyDown, true);
+  });
+
   function onPointerUp(e: React.PointerEvent) {
     // End a ruler scrub (no DAG commit — scrub only moved time).
     if (scrubbingRef.current) {
@@ -493,6 +548,8 @@ export function EditableCurve({
       return;
     }
     const d = dragRef.current;
+    // #1484 — a click never moved the draft (`onPointerMove` waits for the drag threshold), and
+    // committing unchanged keys writes nothing.
     if (d && draft) {
       commit(draft.slice().sort((a, b) => a.time - b.time));
     }
@@ -740,6 +797,29 @@ export function EditableCurve({
               />
             );
           }),
+        )}
+
+        {/* #1287 — past End: shaded, with a line at End (the dopesheet's treatment) */}
+        {rangeEnd < dur && timeToX(rangeEnd) < plotX1 && (
+          <g data-testid="curve-out-of-range">
+            <rect
+              x={Math.max(plotX0, timeToX(rangeEnd))}
+              y={0}
+              width={plotX1 - Math.max(plotX0, timeToX(rangeEnd))}
+              height={plotY1}
+              fill="rgba(0, 0, 0, 0.5)"
+              pointerEvents="none"
+            />
+            <line
+              x1={timeToX(rangeEnd)}
+              y1={0}
+              x2={timeToX(rangeEnd)}
+              y2={plotY1}
+              stroke="#5a5f66"
+              strokeWidth={1}
+              pointerEvents="none"
+            />
+          </g>
         )}
 
         {/* playhead */}

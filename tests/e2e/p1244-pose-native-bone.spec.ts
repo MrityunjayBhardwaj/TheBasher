@@ -54,9 +54,12 @@ test('#1244 — the pose row poses a native bone, and the drawn skin holds it', 
     const nodes = w.__basher_dag.getState().state.nodes;
     const modifier = Object.entries(nodes).find(([, n]) => n.type === 'ArmatureModifier')![0];
     const id = (nodes[modifier].inputs.armature as { node: string }).node;
-    // What a click on the armature's bone does: select the Object, then the bone.
+    // What selecting the armature, entering Pose mode and clicking its bone does.
     selection.useSelectionStore.getState().select(id);
     bones.useBoneSelectionStore.getState().selectBone(id, 'Bone1', ['Bone0', 'Bone1']);
+    // #1335 — a bone is live in Pose mode, which is where a director poses one.
+    const modes = await import('/src/app/stores/armatureModeStore.ts');
+    modes.useArmatureModeStore.getState().setMode(id, 'pose');
     return id;
   });
 

@@ -108,6 +108,52 @@ export const ANTIPARALLEL_REFUSAL_COSINE = -0.98;
 export const MIN_PAIRS = 4;
 
 /**
+ * How close to the floor, as a fraction of the rest's height, a bone and its
+ * whole subtree must sit to count as standing ON it (#1455).
+ *
+ * Measured on every upright rest held — three target rigs (X Bot, Tripo, the
+ * stand-in) and six source rests (Kimodo, SOMA): foot and toe joints sit at
+ * 0.000–0.070 of the rig's height above its lowest joint, and the next joint up,
+ * the knee, at 0.266–0.299. The threshold sits between the two clusters with
+ * about a factor of two either side.
+ */
+export const FLOOR_CONTACT_FRACTION = 0.15;
+
+/**
+ * The bones that stand on the floor at rest: the bone AND every joint below it
+ * sit within `FLOOR_CONTACT_FRACTION` of the rest's height above its lowest
+ * joint, measured along world up after `rotation`.
+ *
+ * The whole subtree, not one chord, so a root parked at the floor whose child is
+ * the hips never qualifies, and a foot qualifies only if its toes do too. A rest
+ * with no height (every joint at one level) names nothing rather than everything.
+ */
+function bonesOnFloor(bones: readonly Bone[], rotation: Quaternion): Set<string> {
+  const height = new Map<Bone, number>();
+  for (const bone of bones) {
+    height.set(
+      bone,
+      new Vector3().setFromMatrixPosition(bone.matrixWorld).applyQuaternion(rotation).y,
+    );
+  }
+  const ys = [...height.values()];
+  const floor = Math.min(...ys);
+  const span = Math.max(...ys) - floor;
+  const out = new Set<string>();
+  if (!(span > 1e-9)) return out;
+  const ceiling = floor + FLOOR_CONTACT_FRACTION * span;
+  const highest = (bone: Bone): number => {
+    let top = height.get(bone) ?? -Infinity;
+    for (const child of bone.children) {
+      if ((child as Bone).isBone) top = Math.max(top, highest(child as Bone));
+    }
+    return top;
+  };
+  for (const bone of bones) if (highest(bone) <= ceiling) out.add(bone.name);
+  return out;
+}
+
+/**
  * A rest whose second-largest direction eigenvalue falls below this lays every
  * bone on ONE axis, and no rotation can be solved from it.
  *
@@ -522,8 +568,10 @@ function rmsDisagreement(
  * So this is a residue the pipeline is entitled to leave, and the only honest
  * thing to do with it is SAY it. Measured on the pair a director actually gets
  * (mixamo-xbot driven by the generator's own BVH): 18.3° at both feet, 8.8° at
- * both shoulders, 0.0° at the arms — which is why that character's feet do not
- * sit the way the motion says they should, while its arms are perfect.
+ * both shoulders, 0.0° at the arms. Since #866 the aligned branch absorbs these
+ * per bone, and since #1455 the feet are KEPT instead (both rigs stand on them,
+ * so absorbing the chord tilts the sole) — this measures the gap, not what the
+ * retarget does with it.
  *
  * 🔴 IN WORLD, not in each bone's own frame. The two are different questions and
  * the own-frame one is the wrong one: measured on the stand-in pair, the foot's
@@ -694,6 +742,14 @@ export interface AlignedOffsets {
   readonly absorbed: readonly string[];
   readonly refused: readonly string[];
   /**
+   * Bones that stand on the floor at rest in BOTH rigs (#1455). They carry no
+   * direction term, on purpose: their rest gap is where each rig puts its ankle
+   * and ball joints relative to a sole both rigs hold flat, not a pose to undo.
+   * Turning the target's ankle→ball chord onto the source's tilted the X Bot's
+   * sole 18° toes-up on every step. Kept, so the sole stays where the source's is.
+   */
+  readonly grounded: readonly string[];
+  /**
    * The subset of `absorbed` whose direction came from the target rig's bone-axis
    * CONVENTION rather than from a mapped child (#999) — the leaves.
    *
@@ -723,6 +779,14 @@ export interface AlignedOffsets {
  * error between the target bone and the heading-turned source bone was CONSTANT
  * across 109 frames and equal, to a tenth of a degree, to the rest gap:
  * feet 29.7°/28.5°, forearms 28.4°/24.4°, upper arms 21.7°/21.0°.
+ *
+ * 🔴 THE FEET IN THAT LIST WERE THE WRONG KIND OF GAP (#1455). Both rests stand
+ * flat on the floor, so a foot's rest gap is where each rig puts its ankle and
+ * ball joints under that sole, not a pose. Pointing the chord where the source's
+ * points tilted the X Bot's sole 18° toes-up at every ground contact. A bone
+ * that stands on the floor in BOTH rests (`bonesOnFloor`) therefore gets no
+ * direction term, keeps its own-rest delta — the source's exact sole motion —
+ * and is reported in `grounded`. Everything else keeps `D_b`.
  *
  * A heading cannot express a disagreement that differs bone by bone, and this is
  * per-bone anatomy — left/right symmetric to a tenth of a degree. So the
@@ -788,9 +852,16 @@ export function alignedLocalOffsets(
   const convention = boneAxisConvention(targetBoneObjs);
   const sourceByName = new Map(sourceBoneObjs.map((b) => [b.name, b]));
 
+  // #1455 — read BEFORE the loop, off the same composed matrices the directions
+  // were. The source is measured turned by `rotation`, which is the frame its
+  // floor is the target's floor in.
+  const targetOnFloor = bonesOnFloor(targetBoneObjs, new Quaternion());
+  const sourceOnFloor = bonesOnFloor(sourceBoneObjs, rotation);
+
   const inverse = rotation.clone().invert();
   const offsets: Record<string, Matrix4> = {};
   const absorbed: string[] = [];
+  const grounded: string[] = [];
   const refused: string[] = [];
   const byConvention: string[] = [];
   for (const bone of targetBoneObjs) {
@@ -816,7 +887,9 @@ export function alignedLocalOffsets(
         ? (tailDirectionInWorld(sourceBone) ?? undefined)
         : undefined);
     const targetWorld = leafTarget;
-    if (targetWorld && sourceWorld) {
+    if (targetOnFloor.has(bone.name) && sourceOnFloor.has(sourceName)) {
+      grounded.push(bone.name);
+    } else if (targetWorld && sourceWorld) {
       if (measuredTarget === undefined) byConvention.push(bone.name);
       // Both directions expressed in the target bone's own bind frame, where the
       // offset is applied.
@@ -838,5 +911,5 @@ export function alignedLocalOffsets(
       inverse.clone().multiply(bind).multiply(correction),
     );
   }
-  return { offsets, absorbed, refused, byConvention };
+  return { offsets, absorbed, refused, byConvention, grounded };
 }

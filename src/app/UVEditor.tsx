@@ -23,6 +23,7 @@ import { useSelectionStore } from './stores/selectionStore';
 import { isImportedChild } from './importedChild';
 import { resolveMeshUVSpace, type MeshUVSpace } from './resolveMeshUVSpace';
 import { usePanZoomCanvas } from './usePanZoomCanvas';
+import { uiEvaluatorCache } from './uiEvaluatorCache';
 
 // Opacity of the texture backdrop. Dimmed (Blender default) so the bright island
 // outlines stay readable on top of the image.
@@ -81,7 +82,7 @@ export function UVEditor() {
   const space = useMemo(
     () =>
       primaryId
-        ? resolveMeshUVSpace(dagState, primaryId)
+        ? resolveMeshUVSpace(dagState, primaryId, uiEvaluatorCache)
         : {
             uvs: { uvs: null, status: 'none' as const },
             texture: { image: null, flipY: false, width: 0, height: 0, status: 'none' as const },

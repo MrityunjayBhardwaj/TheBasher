@@ -52,6 +52,7 @@ import { useSelectionStore } from './stores/selectionStore';
 import { useTimeStore } from './stores/timeStore';
 import { maybeSnapVec3 } from './stores/viewportStore';
 import type { Vec3 } from '../nodes/types';
+import { uiEvaluatorCache } from './uiEvaluatorCache';
 
 const HANDLE_COLOR = '#f0b357';
 const HANDLE_SELECTED_COLOR = '#ffffff';
@@ -162,6 +163,9 @@ export function CurvePointHandles() {
   // The ENTRIES ({id,co}[]) — each handle needs its point's stable id to pick by it. The
   // world geometry below still reads coordinate-only (co's); the id rides alongside.
   const entries = curveId ? curvePointEntriesOf(state, curveId) : null;
+  // #1314 — a stable cache: this re-reads the evaluated graph on every playhead change, and
+  // uncached that re-runs everything under the node (a character's whole-clip retarget) per frame.
+  const cache = uiEvaluatorCache;
 
   // The world matrix + the handles' world positions. Recomputed on any DAG or time change,
   // so handles follow a scrubbing/animated curve exactly as the drawn line does.
@@ -171,9 +175,12 @@ export function CurvePointHandles() {
     // The ONE world resolver — never a parallel walk. Null (curve not reachable as a scene
     // child) ⇒ identity, which is exactly what the sampling seam falls back to, so the
     // handles and the sampled path agree even in that degenerate case.
-    const wt = resolveWorldTransform(state, curveId, {
-      time: { frame, seconds, normalized },
-    });
+    const wt = resolveWorldTransform(
+      state,
+      curveId,
+      { time: { frame, seconds, normalized } },
+      cache,
+    );
     if (wt) m.fromArray(wt.matrix);
     const v = new THREE.Vector3();
     const out = entries.map((e) => {
@@ -181,7 +188,7 @@ export function CurvePointHandles() {
       return [v.x, v.y, v.z] as Vec3;
     });
     return { worldMatrix: m, worldPoints: out };
-  }, [state, curveId, entries, frame, seconds, normalized]);
+  }, [state, curveId, entries, frame, seconds, normalized, cache]);
 
   // Seed the point gizmo's proxy at the selected point's WORLD position, and capture the
   // matrix the drag will invert. Re-runs on scrub/param change so the gizmo display-follows

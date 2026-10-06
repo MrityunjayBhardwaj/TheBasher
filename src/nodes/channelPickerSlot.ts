@@ -15,7 +15,7 @@
 import type { DagState } from '../core/dag/state';
 import type { ParamOption } from './paramWidget';
 
-export type PickedChannelKind = 'number' | 'vec3' | 'quat' | 'color' | 'text';
+export type PickedChannelKind = 'number' | 'vec2' | 'vec3' | 'quat' | 'color' | 'text';
 
 export interface ChannelPickers {
   targetOptions(state: DagState, channelId: string, kind: PickedChannelKind): ParamOption[];

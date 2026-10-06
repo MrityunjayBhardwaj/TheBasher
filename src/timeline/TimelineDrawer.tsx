@@ -25,6 +25,7 @@
 // what was formerly clearChannel; Simplify opens the SimplifyPopover). Track
 // filters + transport buttons + Cut/Copy/Paste land later (W7+).
 
+import { useTimelineSpan } from './timelineSpan';
 import { useState } from 'react';
 import { useTimeStore, FRAMES_PER_SECOND } from '../app/stores/timeStore';
 import { useViewportStore } from '../app/stores/viewportStore';
@@ -56,7 +57,8 @@ const TOOLBAR_HEIGHT_PX = 28;
 export function TimelineDrawer() {
   const open = useViewportStore((s) => s.timelineDrawerOpen);
   const toggle = useViewportStore((s) => s.toggleTimelineDrawer);
-  const duration = useTimeStore((s) => s.durationSeconds);
+  // #1287 — past the scene's End when content runs longer; that stretch is shaded.
+  const { span: duration, rangeEnd } = useTimelineSpan();
   const frame = useTimeStore((s) => s.frame);
   const activeTab = useTimelineDockStore((s) => s.activeTab);
   const setActiveTab = useTimelineDockStore((s) => s.setActiveTab);
@@ -67,6 +69,8 @@ export function TimelineDrawer() {
     <div
       data-testid="timeline-drawer"
       data-open={open}
+      // #1483 — keys pressed over this region belong to the timeline (KeyboardShortcuts).
+      data-key-region="timeline"
       role="region"
       aria-label={`Timeline — frame ${frame}`}
       className="flex w-full flex-col"
@@ -89,7 +93,7 @@ export function TimelineDrawer() {
               className="absolute inset-0"
               style={{ display: activeTab === 'dopesheet' ? 'flex' : 'none' }}
             >
-              <TimelineCanvas duration={duration} />
+              <TimelineCanvas duration={duration} rangeEnd={rangeEnd} />
             </div>
             <div
               data-testid="curve-editor-pane"
@@ -142,7 +146,9 @@ export function TimelineDrawer() {
         >
           {open ? '▾' : '▴'}
         </button>
-        <div className="flex-1">
+        {/* min-w-0: the row is width-capped and clips, so the Timebar must shrink into it rather
+            than grow to its content (#1287's notice made the content wider than the island). */}
+        <div className="min-w-0 flex-1">
           <Timebar />
         </div>
       </div>
