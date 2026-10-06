@@ -215,12 +215,36 @@ export function idRefsOutOf(node: NodeLike): string[] {
 export function findDanglingIdRef(
   nodes: Readonly<Record<string, NodeLike>>,
 ): { node: string; missing: string } | null {
+  return danglingIdRefs(nodes)[0] ?? null;
+}
+
+/** Every id-reference in `nodes` that names a node not present, as referrer and missing id. */
+export function danglingIdRefs(
+  nodes: Readonly<Record<string, NodeLike>>,
+): { node: string; missing: string }[] {
+  const out: { node: string; missing: string }[] = [];
   for (const node of Object.values(nodes)) {
     for (const target of idRefsOutOf(node)) {
-      if (!nodes[target]) return { node: node.id, missing: target };
+      if (!nodes[target]) out.push({ node: node.id, missing: target });
     }
   }
-  return null;
+  return out;
+}
+
+/**
+ * The first dangling id-reference in `after` that `before` did not already hold (#1571), or
+ * null. A commit is refused for what IT strands, not for what the project arrived with: a
+ * reference saved before its param was declared (#1551), or written by an `addNode` naming an
+ * id that never existed, would otherwise make every later delete of anything throw.
+ */
+export function findNewDanglingIdRef(
+  before: Readonly<Record<string, NodeLike>>,
+  after: Readonly<Record<string, NodeLike>>,
+): { node: string; missing: string } | null {
+  const now = danglingIdRefs(after);
+  if (now.length === 0) return null;
+  const was = new Set(danglingIdRefs(before).map((d) => `${d.node}\0${d.missing}`));
+  return now.find((d) => !was.has(`${d.node}\0${d.missing}`)) ?? null;
 }
 
 /**
