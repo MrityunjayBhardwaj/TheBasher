@@ -50,7 +50,8 @@ import { z } from 'zod';
 import type { NodeDefinition } from '../core/dag/types';
 import type { Vec3 } from './types';
 import { TransformSourceSchema } from './ParamDriver';
-import { widget } from './paramWidget';
+import { bodyInputChoicesOf } from '../core/dag/subnetworks';
+import { optionsParam, type OptionsLock, type OptionsProvider } from './paramWidget';
 
 const NUMBER_OUT = { out: { type: 'Number', cardinality: 'single' } } as const;
 const VECTOR3_OUT = { out: { type: 'Vector3', cardinality: 'single' } } as const;
@@ -66,8 +67,24 @@ const ORIGIN: Vec3 = [0, 0, 0];
 // checks it: a Number leaf can't feed a Vector3 socket. They replace PrevFrame,
 // SolverInput, PrevFrameVec and SolverInputVec, which a v21 project migrates to
 // (`migrateSolverLeavesToBodyInputs`, src/core/project/migrations.ts).
+// #1569 — `input` is picked from what the leaf's owner declares for the leaf's type, because a
+// name the owner does not declare binds nothing and the leaf quietly reads 0. A stored name no
+// option offers is shown as not found; a leaf in no sub-network shows why it cannot be picked.
+const bodyInputOptions: OptionsProvider = (state, nodeId) =>
+  bodyInputChoicesOf(state, nodeId).names.map((name) => ({ value: name, label: name }));
+const bodyInputLock: OptionsLock = (state, nodeId) =>
+  bodyInputChoicesOf(state, nodeId).owners.length === 0
+    ? 'not inside a sub-network, so nothing feeds it'
+    : null;
+
 export const BodyInputParams = z.object({
-  input: widget('text', z.string().min(1).default('input')),
+  input: optionsParam(
+    z.string().min(1).default('input'),
+    bodyInputOptions,
+    undefined,
+    'name',
+    bodyInputLock,
+  ),
   slot: z.number().int().min(0).default(0),
 });
 export type BodyInputParams = z.infer<typeof BodyInputParams>;

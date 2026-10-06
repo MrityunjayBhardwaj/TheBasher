@@ -7,6 +7,7 @@ import type { DagState } from './state';
 import { emptyDagState } from './state';
 import {
   bindBodyInputs,
+  bodyInputChoicesOf,
   bodyInputLeavesOf,
   subnetworkOf,
   subnetworkViolations,
@@ -221,5 +222,64 @@ describe("#1548 — a sub-network reads its owner's inputs by name", () => {
     // Slot 5 is past the end of a two-element list: unbound, so the leaf reads its default.
     expect(bound.has('p5')).toBe(false);
     expect(bindBodyInputs(s, 's', leaves, {}).size).toBe(0);
+  });
+});
+
+describe('#1569 — a leaf is offered the inputs its owner declares, and told when it has none', () => {
+  /** The typo, the wrong-type leaf, a nested owner and a stray leaf, in one graph. */
+  function mixed(): DagState {
+    return apply(emptyDagState(), [
+      node('typo', 'BodyInput', { input: 'prve' }),
+      node('vec', 'BodyInputVec', { input: 'prev' }), // `prev` is a Number input
+      node('br', 'VecBreak3'),
+      wire('vec', 'br', 'v'),
+      node('inner', 'BodyInput', { input: 'prev' }),
+      node('s0', 'Solver'),
+      wire('inner', 's0', 'body'),
+      node('m', 'Math', { op: 'add' }),
+      wire('typo', 'm', 'a'),
+      wire('br', 'm', 'b', 'x'),
+      node('mix', 'Mix'),
+      wire('m', 'mix', 'a'),
+      wire('s0', 'mix', 'b'),
+      node('s', 'Solver'),
+      wire('mix', 's', 'body'),
+      node('stray', 'BodyInput', { input: 'prev' }),
+    ]);
+  }
+
+  it('names the owner, and the inputs it declares for the leaf’s own type', () => {
+    const s = mixed();
+    expect(bodyInputChoicesOf(s, 'typo')).toEqual({ owners: ['s'], names: ['prev', 'input'] });
+    expect(bodyInputChoicesOf(s, 'vec')).toEqual({ owners: ['s'], names: ['prevVec', 'inputVec'] });
+  });
+
+  it('a leaf inside a nested owner reads that owner, not the one around it', () => {
+    expect(bodyInputChoicesOf(mixed(), 'inner').owners).toEqual(['s0']);
+  });
+
+  it('a leaf in no sub-network has no owner and no choices', () => {
+    expect(bodyInputChoicesOf(mixed(), 'stray')).toEqual({ owners: [], names: [] });
+    expect(bodyInputChoicesOf(mixed(), 'no_such_node')).toEqual({ owners: [], names: [] });
+  });
+
+  it('every offered name binds the leaf once written, and no other name does', () => {
+    // Through the function the cook reads (`bodyInputLeavesOf`), both ways: an offered name
+    // that binds nothing is a picker that lies; a binding name left out cannot be picked.
+    const s = mixed();
+    let offered = 0;
+    for (const leaf of ['typo', 'vec', 'inner']) {
+      const { owners, names } = bodyInputChoicesOf(s, leaf);
+      const everyName = ['prev', 'input', 'prevVec', 'inputVec', 'prve', 'nope'];
+      for (const name of everyName) {
+        const written = apply(s, [
+          { type: 'setParam', nodeId: leaf, paramPath: 'input', value: name },
+        ]);
+        const bound = owners.some((o) => bodyInputLeavesOf(written, o).some((l) => l.id === leaf));
+        expect({ leaf, name, bound }).toEqual({ leaf, name, bound: names.includes(name) });
+        if (names.includes(name)) offered++;
+      }
+    }
+    expect(offered).toBe(6);
   });
 });

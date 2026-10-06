@@ -567,6 +567,8 @@ describe('a param declares its control on its schema (#872)', () => {
     expect({ examined: examined > 0, optionsWidget, withProvider }).toEqual({
       examined: true,
       optionsWidget: [
+        'BodyInput.input',
+        'BodyInputVec.input',
         'FollowPath.target',
         'KeyframeChannelColor.target',
         'KeyframeChannelColor.paramPath',
@@ -589,6 +591,8 @@ describe('a param declares its control on its schema (#872)', () => {
         'TrackTo.aimBone',
       ],
       withProvider: [
+        'BodyInput.input',
+        'BodyInputVec.input',
         'FollowPath.target',
         'KeyframeChannelColor.target',
         'KeyframeChannelColor.paramPath',

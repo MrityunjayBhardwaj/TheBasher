@@ -170,6 +170,38 @@ export function bodyInputLeavesOf(state: DagState, owner: NodeId): BodyInputLeaf
 }
 
 /**
+ * What a body-input leaf can read (#1569): the nodes whose inputs it reads, and the input names
+ * among them that would bind it. `owners` is every node whose sub-network holds the leaf directly
+ * (not through a nested owner's sub-network) — one, under the single-owner rule; empty when the
+ * leaf sits in no sub-network, where nothing binds it. `names` are the inputs those owners
+ * declare with the leaf's own output type, which is exactly what `bodyInputLeavesOf` binds.
+ */
+export function bodyInputChoicesOf(
+  state: DagState,
+  leafId: NodeId,
+): { readonly owners: NodeId[]; readonly names: string[] } {
+  const leaf = state.nodes[leafId];
+  const outType = leaf ? Object.values(getNodeType(leaf.type)?.outputs ?? {})[0]?.type : undefined;
+  const holding = Object.values(state.nodes)
+    .filter((n) => bodySocketsOf(n.type).length > 0)
+    .map((n) => ({ id: n.id, closure: subnetworkOf(state, n.id) }))
+    .filter((h) => h.closure.has(leafId));
+  // An owner holds the leaf directly unless another holder sits inside its sub-network: then
+  // the leaf belongs to that nested one.
+  const owners = holding
+    .filter((h) => !holding.some((other) => other.id !== h.id && h.closure.has(other.id)))
+    .map((h) => h.id);
+  const names: string[] = [];
+  for (const owner of owners) {
+    const declared = getNodeType(state.nodes[owner].type)?.bodyInputs ?? {};
+    for (const [name, desc] of Object.entries(declared)) {
+      if (desc.type === outType && !names.includes(name)) names.push(name);
+    }
+  }
+  return { owners, names };
+}
+
+/**
  * The evaluator `overrides` that bind `values` (input name → value) to `leaves`. A `list`
  * input binds element `slot`; a slot past its end, or a name with no value, stays unbound
  * and the leaf reads its default.
