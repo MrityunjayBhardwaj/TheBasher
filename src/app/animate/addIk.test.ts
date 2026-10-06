@@ -24,7 +24,7 @@ import { useDiffStore } from '../../agent/diff/store';
 import { dispatchMutatorFromUI } from './dispatchMutator';
 import { poseLayerChain } from './poseChain';
 import { posedWorldMatrices } from '../../viewport/boneShape';
-import { ikLayerIdFor, ikLayersOnBone, planAddIk } from './addIk';
+import { ikControlName, ikLayerIdFor, ikLayersOnBone, planAddIk } from './addIk';
 
 beforeEach(() => {
   __resetRegistryForTests();
@@ -317,5 +317,113 @@ describe('#1542 — the inspector says why an IK solves nothing', () => {
     const [onTip] = ikLayersOnBone(live(), ARM, 'tip');
     expect(onTip.problem).toMatch(/goal bone "tip_ik_goal" is not on this skeleton/);
     expect(layerActs()).toBe(false);
+  });
+});
+
+describe("#1341 — symmetrize mirrors an arm's IK with the arm", () => {
+  // spine → upper_L → lower_L → hand_L, bent at rest, off the mirror plane (x = 0).
+  const SIDED: BoneSpec[] = [
+    { name: 'spine', parent: -1, position: [0, 1, 0], rotation: [0.1, 0.2, 0] },
+    { name: 'upper_L', parent: 0, position: [0.4, 0.5, 0.1], rotation: [0.3, -0.4, -1.1] },
+    { name: 'lower_L', parent: 1, position: [0, 0.8, 0], rotation: [0.6, 0.2, 0.5] },
+    { name: 'hand_L', parent: 2, position: [0, 0.7, 0], rotation: [0, 0, 0] },
+  ];
+  const sidedRig = () =>
+    apply(buildDefaultDagState(), [
+      { type: 'addNode', nodeId: SKEL, nodeType: 'Skeleton', params: { bones: SIDED } },
+      { type: 'addNode', nodeId: ARM, nodeType: 'Object', params: {} },
+      { type: 'connect', from: { node: SKEL, socket: 'out' }, to: { node: ARM, socket: 'data' } },
+      { type: 'connect', from: { node: SKEL, socket: 'pose' }, to: { node: ARM, socket: 'pose' } },
+    ] as Op[]);
+  const symmetrize = () =>
+    dispatchMutatorFromUI(
+      'mutator.rig.editSkeleton',
+      { object: ARM, edit: { op: 'symmetrize', bones: ['upper_L', 'lower_L', 'hand_L'] } },
+      'symmetrize',
+    );
+  const ikLayers = () =>
+    poseLayerChain(live().nodes, ARM).layers.filter(
+      (id) => (live().nodes[id].params as PoseLayerParams).mode === 'ik',
+    );
+
+  it('control bones keep the side last, so they have twins', () => {
+    expect(ikControlName('hand_L', 'goal')).toBe('hand_ik_goal_L');
+    expect(ikControlName('hand.R', 'pole')).toBe('hand_ik_pole.R');
+    expect(ikControlName('mixamorig_LeftHand', 'goal')).toBe('mixamorig_LeftHand_ik_goal');
+    expect(ikControlName('tip', 'goal')).toBe('tip_ik_goal');
+  });
+
+  it('the twin arm gets a twin IK — its controls mirrored, and its chain does not move', () => {
+    useDagStore.getState().hydrate(sidedRig());
+    expect(addIk({ bone: 'hand_L', time: 0 }).ok).toBe(true);
+    const res = symmetrize();
+    expect(res.ok, JSON.stringify(res)).toBe(true);
+
+    const twinId = ikLayerIdFor(ARM, 'hand_R');
+    expect(ikLayers()).toContain(twinId);
+    const left = (live().nodes[ikLayerIdFor(ARM, 'hand_L')].params as PoseLayerParams).ik!;
+    const right = (live().nodes[twinId].params as PoseLayerParams).ik!;
+    expect(right).toMatchObject({
+      root: 'upper_R',
+      mid: 'lower_R',
+      tip: 'hand_R',
+      goal: 'hand_ik_goal_R',
+      pole: 'hand_ik_pole_R',
+    });
+    expect(Math.abs(right.poleAngle - left.poleAngle)).toBeCloseTo(180, 9);
+
+    // Mirror images: every right joint and control at the left one's x negated.
+    const at = drawn(0);
+    for (const name of ['upper', 'lower', 'hand', 'hand_ik_goal', 'hand_ik_pole']) {
+      const l = at.get(`${name}_L`)!;
+      expect(at.get(`${name}_R`)!.distanceTo(new Vector3(-l.x, l.y, l.z)), name).toBeLessThan(1e-6);
+    }
+    // The twin solve reproduces the twin pose: muting it moves nothing.
+    useDagStore
+      .getState()
+      .dispatchAtomic(
+        [{ type: 'setParam', nodeId: twinId, paramPath: 'mute', value: true }],
+        'user',
+        'mute',
+      );
+    expect(maxMove(drawn(0), at)).toBeLessThan(1e-6);
+  });
+
+  it('moving the twin goal moves the twin hand to it', () => {
+    useDagStore.getState().hydrate(sidedRig());
+    expect(addIk({ bone: 'hand_L', time: 0 }).ok).toBe(true);
+    expect(symmetrize().ok).toBe(true);
+    const to: Vec3 = [-0.9, 1.3, 0.5];
+    const res = dispatchMutatorFromUI(
+      'mutator.animate.poseBone',
+      { object: ARM, bone: 'hand_ik_goal_R', position: to },
+      'move goal',
+    );
+    expect(res.ok, JSON.stringify(res)).toBe(true);
+    expect(
+      drawn(0)
+        .get('hand_R')!
+        .distanceTo(new Vector3(...to)),
+    ).toBeLessThan(1e-6);
+  });
+
+  it('symmetrizing again updates the twin IK, it does not add a second', () => {
+    useDagStore.getState().hydrate(sidedRig());
+    expect(addIk({ bone: 'hand_L', time: 0 }).ok).toBe(true);
+    expect(symmetrize().ok).toBe(true);
+    // A change on the left side reaches the twin on the next symmetrize.
+    const leftId = ikLayerIdFor(ARM, 'hand_L');
+    const left = (live().nodes[leftId].params as PoseLayerParams).ik!;
+    useDagStore
+      .getState()
+      .dispatchAtomic(
+        [{ type: 'setParam', nodeId: leftId, paramPath: 'ik', value: { ...left, stretch: true } }],
+        'user',
+        'stretch',
+      );
+    expect(symmetrize().ok).toBe(true);
+    expect(ikLayers()).toHaveLength(2);
+    const right = (live().nodes[ikLayerIdFor(ARM, 'hand_R')].params as PoseLayerParams).ik!;
+    expect(right.stretch).toBe(true);
   });
 });

@@ -36,7 +36,7 @@ import { eulerXYZFromQuat, quatFromEulerXYZ } from '../../nodes/bonePose';
 import { poseLayerIkProblem, type PoseLayerIk, type PoseLayerParams } from '../../nodes/PoseLayer';
 import type { BonePose, BoneSpec, PosedSkeletonValue } from '../../nodes/types';
 import { posedWorldMatrices } from '../../viewport/boneShape';
-import { applySkeletonEdit } from './editSkeleton';
+import { applySkeletonEdit, flipSideName } from './editSkeleton';
 import { poseLayerChain } from './poseChain';
 import { rigReach } from './renameBone';
 
@@ -68,6 +68,16 @@ export type AddIkPlan =
 
 const FRAME_0 = { time: { frame: 0, seconds: 0, normalized: 0 } } as const;
 const EPS = 1e-9;
+
+/**
+ * #1341 — a control bone's name for `tip`, its side suffix kept LAST (`hand_L` → `hand_ik_goal_L`, as
+ * Rigify's `hand_ik.L`), so symmetrize's side rule flips it to the twin's. `hand_L_ik_goal` would have
+ * no side by that rule, and a mirrored IK would reach for the left goal.
+ */
+export function ikControlName(tip: string, role: 'goal' | 'pole'): string {
+  const side = /^(.*)([._\- ][LRlr])$/.exec(tip);
+  return side ? `${side[1]}_ik_${role}${side[2]}` : `${tip}_ik_${role}`;
+}
 
 /** The id of the ik layer Add › IK makes for `tip` on `objectId`. */
 export function ikLayerIdFor(objectId: string, tip: string): string {
@@ -246,7 +256,7 @@ export function planAddIk(state: DagState, req: AddIkRequest): AddIkPlan {
       op: 'add',
       parent: null,
       position: [C.x, C.y, C.z],
-      name: `${tip}_ik_goal`,
+      name: ikControlName(tip, 'goal'),
     });
     if (!made.ok) return made;
     goal = made.added[0];
@@ -264,7 +274,7 @@ export function planAddIk(state: DagState, req: AddIkRequest): AddIkPlan {
     op: 'add',
     parent: null,
     position: [P.x, P.y, P.z],
-    name: `${tip}_ik_pole`,
+    name: ikControlName(tip, 'pole'),
   });
   if (!pole.ok) return pole;
   next = pole.bones;
@@ -349,4 +359,113 @@ export function ikLayersOnBone(state: DagState, objectId: string, bone: string):
     });
   }
   return out;
+}
+
+/** The ik layers under `objectId` whose tip is one of `listed`, by layer id. */
+function ikLayersTipped(
+  state: DagState,
+  objectId: string,
+  listed: readonly string[],
+): { id: string; params: PoseLayerParams; ik: PoseLayerIk }[] {
+  const out: { id: string; params: PoseLayerParams; ik: PoseLayerIk }[] = [];
+  for (const id of poseLayerChain(state.nodes, objectId).layers) {
+    const params = state.nodes[id].params as PoseLayerParams;
+    if (params.mode === 'ik' && params.ik && listed.includes(params.ik.tip)) {
+      out.push({ id, params, ik: params.ik });
+    }
+  }
+  return out;
+}
+
+/**
+ * #1341 — the control bones symmetrize must mirror with `listed`: the goal and pole of every ik layer
+ * whose tip is listed. They are roots, never below the arm a director selects, so without this an arm
+ * mirrors and its IK's controls stay on the first side.
+ */
+export function ikControlsOf(
+  state: DagState,
+  objectId: string,
+  listed: readonly string[],
+): string[] {
+  const extra: string[] = [];
+  for (const { ik } of ikLayersTipped(state, objectId, listed)) {
+    for (const name of [ik.goal, ik.pole]) {
+      if (name !== undefined && !listed.includes(name) && !extra.includes(name)) extra.push(name);
+    }
+  }
+  return extra;
+}
+
+/**
+ * #1341 — the twin of each ik layer whose tip symmetrize mirrored: every bone it names flipped to its
+ * twin on `bonesAfter`, made (on top of the chain) or, when the twin tip already has an ik layer,
+ * updated in place, as symmetrize makes or updates twin bones.
+ *
+ * THE POLE ANGLE turns by a half turn. A twin's frame is the source's turned a half turn about the
+ * mirror normal (`H`, `editSkeleton.ts` symmetrize), so the twin root's `X·cos a + Z·sin a` is `H`
+ * of the source's, while the twin pole sits at the mirror image `S·p = −H·p`. Across the twin chain
+ * the solver's up vector therefore points AWAY from its pole at the same angle, and toward it at
+ * `a + 180°`.
+ *
+ * A layer whose root, mid or tip has no twin is left alone: its mirror would solve joints it shares
+ * with the source.
+ */
+export function mirroredIkOps(
+  state: DagState,
+  objectId: string,
+  listed: readonly string[],
+  bonesAfter: readonly BoneSpec[],
+): { ops: Op[]; mirrored: string[] } {
+  const names = new Set(bonesAfter.map((b) => b.name));
+  const twinOf = (name: string) => {
+    const twin = flipSideName(name);
+    return twin !== name && names.has(twin) ? twin : name;
+  };
+  const chain = poseLayerChain(state.nodes, objectId).layers;
+  const feed = state.nodes[objectId].inputs?.pose as { node: string; socket?: string } | undefined;
+  let top: { node: string; socket: string } | null = feed
+    ? { node: feed.node, socket: feed.socket ?? 'out' }
+    : null;
+  const ops: Op[] = [];
+  const mirrored: string[] = [];
+  let spliced = false;
+  for (const { params, ik } of ikLayersTipped(state, objectId, listed)) {
+    const [root, mid, tip] = [twinOf(ik.root), twinOf(ik.mid), twinOf(ik.tip)];
+    if (root === ik.root || mid === ik.mid || tip === ik.tip) continue;
+    const turned = ik.poleAngle + 180;
+    const twin: PoseLayerIk = {
+      ...ik,
+      root,
+      mid,
+      tip,
+      goal: twinOf(ik.goal),
+      ...(ik.pole !== undefined ? { pole: twinOf(ik.pole) } : {}),
+      poleAngle: turned > 180 ? turned - 360 : turned,
+    };
+    const existing = chain.find((id) => {
+      const p = state.nodes[id].params as PoseLayerParams;
+      return p.mode === 'ik' && p.ik?.tip === tip;
+    });
+    if (existing) {
+      ops.push({ type: 'setParam', nodeId: existing, paramPath: 'ik', value: twin });
+      mirrored.push(tip);
+      continue;
+    }
+    const id = ikLayerIdFor(objectId, tip);
+    if (state.nodes[id]) continue; // held by a node off the chain: not ours to overwrite
+    ops.push({
+      type: 'addNode',
+      nodeId: id,
+      nodeType: 'PoseLayer',
+      params: { name: `${tip} IK`, mode: 'ik', weight: params.weight, ik: twin },
+    });
+    if (top) ops.push({ type: 'connect', from: top, to: { node: id, socket: 'pose' } });
+    top = { node: id, socket: 'out' };
+    spliced = true;
+    mirrored.push(tip);
+  }
+  if (spliced && top) {
+    ops.push({ type: 'connect', from: top, to: { node: objectId, socket: 'pose' }, replace: true });
+  }
+  return { ops, mirrored };
 }

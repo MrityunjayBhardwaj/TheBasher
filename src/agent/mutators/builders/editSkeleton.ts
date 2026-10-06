@@ -20,6 +20,7 @@ import type { DagState } from '../../../core/dag/state';
 import type { Op } from '../../../core/dag/types';
 import { applySkeletonEdit, type SkeletonEdit } from '../../../app/animate/editSkeleton';
 import { rigReach } from '../../../app/animate/renameBone';
+import { ikControlsOf, mirroredIkOps } from '../../../app/animate/addIk';
 import type { PoseLayerParams } from '../../../nodes/PoseLayer';
 import type { BoneSpec } from '../../../nodes/types';
 
@@ -96,11 +97,28 @@ function skeletonOf(
   return { id: reach.skeleton, bones };
 }
 
+/**
+ * #1341 — the edit as run: a symmetrize also mirrors the goal and pole of each ik layer whose tip it
+ * mirrors (they are roots, never under the bones a director lists).
+ */
+function editAsRun(spec: EditSkeletonSpec, state: DagState): SkeletonEdit {
+  const edit = spec.edit as SkeletonEdit;
+  if (edit.op !== 'symmetrize') return edit;
+  return { ...edit, bones: [...edit.bones, ...ikControlsOf(state, spec.object, edit.bones)] };
+}
+
 function run(spec: EditSkeletonSpec, state: DagState) {
   const skel = skeletonOf(state, spec.object);
   if ('reason' in skel) return { ok: false as const, reason: skel.reason };
-  const result = applySkeletonEdit(skel.bones, spec.edit as SkeletonEdit);
+  const result = applySkeletonEdit(skel.bones, editAsRun(spec, state));
   return result.ok ? { ...result, skeletonId: skel.id } : result;
+}
+
+/** #1341 — a symmetrize's twin ik layers, made or updated; none for any other edit. */
+function ikMirrorOf(spec: EditSkeletonSpec, state: DagState, bonesAfter: readonly BoneSpec[]) {
+  return spec.edit.op === 'symmetrize'
+    ? mirroredIkOps(state, spec.object, spec.edit.bones, bonesAfter)
+    : { ops: [], mirrored: [] };
 }
 
 export const editSkeletonMutator: MutatorDefinition<EditSkeletonSpec> = {
@@ -111,7 +129,7 @@ export const editSkeletonMutator: MutatorDefinition<EditSkeletonSpec> = {
     'its parent unless reparent is false), parent (null = root), reroot, transform (rest ' +
     'position/rotation/scale; children follow or stay), orient (aim +Y at the child, roll +Z ' +
     'toward `up`), preferredAngle (the IK start bend), or symmetrize (mirror L/R-named bones onto ' +
-    'their twins, made or updated). Joints not moved keep their place.',
+    'their twins, made or updated, with the IK of any hand among them). Joints not moved keep their place.',
   spec: EditSkeletonSpec,
   specExample: { object: 'node_id', edit: { op: 'extrude', from: 'Bone' } },
   contract: {
@@ -122,7 +140,8 @@ export const editSkeletonMutator: MutatorDefinition<EditSkeletonSpec> = {
     lossy: [{ kind: 'delete', reason: 'The delete op removes a bone from the skeleton.' }],
   },
   buildClosureSpec(spec): ClosureSpec {
-    return { rootSelectors: [spec.object], followedEdges: ['rig'] };
+    // #1341 — `pose`: a symmetrize updates the twin ik layers in the Object's chain.
+    return { rootSelectors: [spec.object], followedEdges: ['rig', 'pose'] };
   },
   preconditions(spec, _closure, state) {
     const result = run(spec, state);
@@ -133,12 +152,15 @@ export const editSkeletonMutator: MutatorDefinition<EditSkeletonSpec> = {
     if (!result.ok) return [];
     return [
       { type: 'setParam', nodeId: result.skeletonId, paramPath: 'bones', value: result.bones },
+      ...ikMirrorOf(spec, state, result.bones).ops,
     ];
   },
   advisories(spec, _closure, state) {
     const result = run(spec, state);
     if (!result.ok) return [];
     const notes = result.added.length > 0 ? [`added ${result.added.join(', ')}`] : [];
+    const { mirrored } = ikMirrorOf(spec, state, result.bones);
+    if (mirrored.length > 0) notes.push(`mirrored the IK of ${mirrored.join(', ')}`);
     if (spec.edit.op !== 'delete') return notes;
     const gone = spec.edit.bone;
     const reach = rigReach(state, spec.object)!;
