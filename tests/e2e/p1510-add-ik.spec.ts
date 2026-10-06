@@ -199,4 +199,31 @@ test('#1510 — Shift+I adds an IK that leaves the skin still, and its goal then
   await expect(page.getByTestId('inspector-bone-add-ik-refusal')).toContainText(
     '"Bone0", the parent of "Bone1", has no parent',
   );
+
+  // #1542 — the tip's inspector names its IK; with the goal deleted, it says why nothing solves.
+  await page.evaluate(
+    async ([arm, t]) => {
+      const bones = await import('/src/app/stores/boneSelectionStore.ts');
+      bones.useBoneSelectionStore.getState().selectBone(arm, t, ['Bone0', 'Bone1', t]);
+    },
+    [armature, tip] as const,
+  );
+  // The refusal said for Bone1 is gone: it was not about this bone.
+  await expect(page.getByTestId('inspector-bone-add-ik-refusal')).toHaveCount(0);
+  const row = page.getByTestId(`inspector-bone-ik-${layerId}`);
+  await expect(row).toContainText(`reaches ${goal}`);
+  await expect(page.getByTestId(`inspector-bone-ik-problem-${layerId}`)).toHaveCount(0);
+  await page.evaluate(async (arm) => {
+    const { dispatchMutatorFromUI } = await import('/src/app/animate/dispatchMutator.ts');
+    const res = dispatchMutatorFromUI(
+      'mutator.rig.editSkeleton',
+      { object: arm, edit: { op: 'delete', bone: 'Bone1_tip_ik_goal', reparent: true } },
+      'delete goal',
+    );
+    if (!res.ok) throw new Error(JSON.stringify(res));
+  }, armature);
+  await expect(page.getByTestId(`inspector-bone-ik-problem-${layerId}`)).toContainText(
+    `the goal bone "${goal}" is not on this skeleton`,
+  );
+  await page.screenshot({ path: test.info().outputPath('4-goal-deleted-says-why.png') });
 });

@@ -113,6 +113,7 @@ import { useActiveBone } from './boneSelection';
 import { useArmatureMode } from './armatureMode';
 import { useArmatureModeStore } from './stores/armatureModeStore';
 import { addIkFromUI, editSkeletonFromUI } from './skeletonEditActions';
+import { ikLayersOnBone } from './animate/addIk';
 import type { OrientUp, SkeletonEdit } from './animate/editSkeleton';
 import { collectSkeletonObjects } from './skeletonObjects';
 import { useBoneSelectionStore } from './stores/boneSelectionStore';
@@ -4261,7 +4262,12 @@ function SelectedBoneSection() {
       ) : (
         <>
           <BonePoseRow nodeId={bone.nodeId} boneName={bone.boneName} />
-          <AddIkRow nodeId={bone.nodeId} boneName={bone.boneName} />
+          {/* Keyed by bone: a refusal said for one bone is not about the next one selected. */}
+          <AddIkRow
+            key={`${bone.nodeId}:${bone.boneName}`}
+            nodeId={bone.nodeId}
+            boneName={bone.boneName}
+          />
         </>
       )}
     </div>
@@ -4274,8 +4280,31 @@ function SelectedBoneSection() {
  */
 function AddIkRow({ nodeId, boneName }: { nodeId: string; boneName: string }) {
   const [refusal, setRefusal] = useState<string | null>(null);
+  const state = useDagStore((s) => s.state);
+  // #1542 — the ik layers naming this bone, each with why it solves nothing: a broken IK hands the
+  // pose through, which on screen is an arm that just does not reach.
+  const layers = useMemo(() => ikLayersOnBone(state, nodeId, boneName), [state, nodeId, boneName]);
   return (
     <div className="mt-2 flex flex-col gap-1">
+      {layers.map((layer) => (
+        <div
+          key={layer.id}
+          className="font-mono text-[10px] leading-tight"
+          data-testid={`inspector-bone-ik-${layer.id}`}
+          data-ik-problem={layer.problem ? 'true' : undefined}
+        >
+          <span className="text-fg/60">
+            IK “{layer.name}”: {layer.ik.root} → {layer.ik.mid} → {layer.ik.tip} reaches{' '}
+            {layer.ik.goal}
+            {layer.ik.pole ? `, pole ${layer.ik.pole}` : ''}
+          </span>
+          {layer.problem ? (
+            <span className="block text-warn" data-testid={`inspector-bone-ik-problem-${layer.id}`}>
+              solves nothing: {layer.problem}
+            </span>
+          ) : null}
+        </div>
+      ))}
       <button
         type="button"
         className="w-full rounded border border-border px-2 py-1 font-mono text-[10px] text-fg/70 hover:text-fg"

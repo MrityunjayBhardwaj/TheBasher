@@ -310,3 +310,43 @@ export function addIkOps(objectId: string, plan: Extract<AddIkPlan, { ok: true }
     },
   ];
 }
+
+/** An ik layer on an armature Object's chain that names a bone, and whether it solves. */
+export interface IkLayerOnBone {
+  readonly id: string;
+  readonly name: string;
+  readonly ik: PoseLayerIk;
+  /** The roles the bone plays in the layer's chain. */
+  readonly roles: readonly ('root' | 'mid' | 'tip' | 'goal' | 'pole')[];
+  /** Why the layer solves nothing (`poseLayerIkProblem`), or null when it solves. */
+  readonly problem: string | null;
+}
+
+/**
+ * #1542 — the ik layers under `objectId` that name `bone` in any role, each with the reason it solves
+ * nothing, or null. A layer that cannot solve hands the pose through untouched, so without this a
+ * broken IK looks like an arm that simply does not reach. The skeleton judged against is the one the
+ * Object stands, which every layer of its chain receives (the pose wire carries it from that node).
+ */
+export function ikLayersOnBone(state: DagState, objectId: string, bone: string): IkLayerOnBone[] {
+  const reach = rigReach(state, objectId);
+  if (!reach) return [];
+  const bones = ((state.nodes[reach.skeleton].params as { bones?: BoneSpec[] }).bones ??
+    []) as BoneSpec[];
+  const out: IkLayerOnBone[] = [];
+  for (const id of poseLayerChain(state.nodes, objectId).layers) {
+    const params = state.nodes[id].params as PoseLayerParams;
+    if (params.mode !== 'ik' || !params.ik) continue;
+    const ik = params.ik;
+    const roles = (['root', 'mid', 'tip', 'goal', 'pole'] as const).filter((r) => ik[r] === bone);
+    if (roles.length === 0) continue;
+    out.push({
+      id,
+      name: params.name ?? id,
+      ik,
+      roles,
+      problem: poseLayerIkProblem(params, { kind: 'Skeleton', bones }),
+    });
+  }
+  return out;
+}

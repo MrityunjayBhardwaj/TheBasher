@@ -24,7 +24,7 @@ import { useDiffStore } from '../../agent/diff/store';
 import { dispatchMutatorFromUI } from './dispatchMutator';
 import { poseLayerChain } from './poseChain';
 import { posedWorldMatrices } from '../../viewport/boneShape';
-import { ikLayerIdFor, planAddIk } from './addIk';
+import { ikLayerIdFor, ikLayersOnBone, planAddIk } from './addIk';
 
 beforeEach(() => {
   __resetRegistryForTests();
@@ -266,5 +266,56 @@ describe('#1510 — an existing goal', () => {
     expect(bones.map((b) => b.name).slice(count)).toEqual(['tip_ik_pole']);
     const after = drawn();
     expect(after.get('tip')!.distanceTo(after.get('ctrl')!)).toBeLessThan(1e-6);
+  });
+});
+
+describe('#1542 — the inspector says why an IK solves nothing', () => {
+  const setMute = (mute: boolean) =>
+    useDagStore
+      .getState()
+      .dispatchAtomic(
+        [{ type: 'setParam', nodeId: ikLayerIdFor(ARM, 'tip'), paramPath: 'mute', value: mute }],
+        'user',
+        'mute',
+      );
+  /** Whether the ik layer changes what is drawn: the drawn chain with it, against muted. */
+  const layerActs = () => {
+    const on = drawn();
+    setMute(true);
+    const off = drawn();
+    setMute(false);
+    return maxMove(new Map([...off].filter(([n]) => on.has(n))), on) > 1e-6;
+  };
+  const moveGoal = () =>
+    dispatchMutatorFromUI(
+      'mutator.animate.poseBone',
+      { object: ARM, bone: 'tip_ik_goal', position: [0.3, 1.9, 0.6] },
+      'move goal',
+    );
+
+  it('a solving layer names the bone in its roles and shows no problem, and it acts', () => {
+    useDagStore.getState().hydrate(rig());
+    expect(addIk({ bone: 'tip' }).ok).toBe(true);
+    expect(moveGoal().ok).toBe(true);
+    const [onTip] = ikLayersOnBone(live(), ARM, 'tip');
+    expect(onTip).toMatchObject({ id: ikLayerIdFor(ARM, 'tip'), roles: ['tip'], problem: null });
+    expect(ikLayersOnBone(live(), ARM, 'tip_ik_goal')[0].roles).toEqual(['goal']);
+    expect(ikLayersOnBone(live(), ARM, 'finger')).toEqual([]);
+    expect(layerActs()).toBe(true);
+  });
+
+  it('a deleted goal: the row gives the reason, and the layer indeed changes nothing', () => {
+    useDagStore.getState().hydrate(rig());
+    expect(addIk({ bone: 'tip' }).ok).toBe(true);
+    expect(moveGoal().ok).toBe(true);
+    const res = dispatchMutatorFromUI(
+      'mutator.rig.editSkeleton',
+      { object: ARM, edit: { op: 'delete', bone: 'tip_ik_goal', reparent: true } },
+      'delete goal',
+    );
+    expect(res.ok, JSON.stringify(res)).toBe(true);
+    const [onTip] = ikLayersOnBone(live(), ARM, 'tip');
+    expect(onTip.problem).toMatch(/goal bone "tip_ik_goal" is not on this skeleton/);
+    expect(layerActs()).toBe(false);
   });
 });
