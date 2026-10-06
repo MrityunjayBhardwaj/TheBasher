@@ -54,8 +54,11 @@ describe('mutator catalog — PICKER/DETAIL split (#332)', () => {
     // 155 B entry, first sentence + specExample only). 9 KB is still ~65% under the 26 KB it replaced;
     // what the pin guards against (the contract or full descriptions back in, pretty-print) each add
     // kilobytes and still fail here.
+    // RAISED 9216 → 10240 at #1510 (2026-10-06): measured 9,121 B with 36 mutators on main (95 B of
+    // headroom) and 9,250 B with `rig.addIk` (a 129 B entry, already trimmed to a one-clause summary
+    // and a two-field example). 10 KB is still ~60% under the 26 KB it replaced.
     const payload = listMutatorsTool.handler({}, ctx()).text;
-    expect(payload.length).toBeLessThan(9216);
+    expect(payload.length).toBeLessThan(10240);
   });
 
   it('every summary is a genuine prefix of its description — DERIVED, never authored', () => {

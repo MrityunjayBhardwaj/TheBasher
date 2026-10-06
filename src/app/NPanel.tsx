@@ -112,7 +112,7 @@ import {
 import { useActiveBone } from './boneSelection';
 import { useArmatureMode } from './armatureMode';
 import { useArmatureModeStore } from './stores/armatureModeStore';
-import { editSkeletonFromUI } from './skeletonEditActions';
+import { addIkFromUI, editSkeletonFromUI } from './skeletonEditActions';
 import type { OrientUp, SkeletonEdit } from './animate/editSkeleton';
 import { collectSkeletonObjects } from './skeletonObjects';
 import { useBoneSelectionStore } from './stores/boneSelectionStore';
@@ -4259,8 +4259,43 @@ function SelectedBoneSection() {
       {mode === 'edit' ? (
         <EditBoneRow nodeId={bone.nodeId} boneName={bone.boneName} />
       ) : (
-        <BonePoseRow nodeId={bone.nodeId} boneName={bone.boneName} />
+        <>
+          <BonePoseRow nodeId={bone.nodeId} boneName={bone.boneName} />
+          <AddIkRow nodeId={bone.nodeId} boneName={bone.boneName} />
+        </>
       )}
+    </div>
+  );
+}
+
+/**
+ * #1510 — Add › IK on the selected bone (Shift+I): the same road as the key, so a refusal reads here
+ * exactly as the key's notice and the agent's verb say it.
+ */
+function AddIkRow({ nodeId, boneName }: { nodeId: string; boneName: string }) {
+  const [refusal, setRefusal] = useState<string | null>(null);
+  return (
+    <div className="mt-2 flex flex-col gap-1">
+      <button
+        type="button"
+        className="w-full rounded border border-border px-2 py-1 font-mono text-[10px] text-fg/70 hover:text-fg"
+        data-testid="inspector-bone-add-ik"
+        title="Add a two-bone IK reaching from this joint, with a goal and a pole bone (Shift+I)"
+        onClick={() => {
+          const res = addIkFromUI(nodeId, boneName);
+          setRefusal(res.ok ? null : res.reason);
+        }}
+      >
+        add IK
+      </button>
+      {refusal ? (
+        <span
+          className="font-mono text-[10px] text-warn"
+          data-testid="inspector-bone-add-ik-refusal"
+        >
+          {refusal}
+        </span>
+      ) : null}
     </div>
   );
 }
