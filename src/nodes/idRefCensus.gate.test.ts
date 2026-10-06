@@ -10,11 +10,12 @@
 // object that keeps undeclared keys is a row that has to be acknowledged by name.
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
-import { getNodeType, listNodeTypes } from '../core/dag/registry';
+import { getNodeType, listNodeTypes, paramFieldsOf } from '../core/dag/registry';
 import type { NodeDefinition } from '../core/dag/types';
 import { idRefStringPath, paramStringPaths } from '../core/dag/paramStringPaths';
 import { NOT_A_NODE_ID, OPENPBR_VALUE_MOUNTS, OPENPBR_VALUE_STRINGS } from './idRefAcknowledged';
 import { openpbrMaterialSchema } from './materialSchema';
+import { optionsValueKindOf } from './paramWidget';
 import { registerAllNodes } from './registerAll';
 
 registerAllNodes();
@@ -188,6 +189,22 @@ describe('#1551 — every string a registered node can store is an id reference 
         .filter((key) => key in NOT_A_NODE_ID),
     );
     expect(both).toEqual([]);
+  });
+
+  it('a param whose picker says it holds a node id is declared as one', () => {
+    // The same fact is declared a second time, for the inspector: `optionsParam(…, 'nodeId')`
+    // (#1065). The two must agree, so an id the picker knows about cannot be acknowledged
+    // away here as a label.
+    const pickedIds = registered().flatMap((def) =>
+      Object.entries(paramFieldsOf(def) ?? {})
+        .filter(([, field]) => optionsValueKindOf(field) === 'nodeId')
+        .map(([key]) => ({ def, key })),
+    );
+    expect(pickedIds.length).toBeGreaterThan(8);
+    const undeclared = pickedIds
+      .filter(({ def, key }) => !(def.idRefs ?? []).some((ref) => ref.path === key))
+      .map(({ def, key }) => `${def.type}.${key}`);
+    expect(undeclared).toEqual([]);
   });
 
   it('the shared material list is the material schema, and each mount stores one', () => {
