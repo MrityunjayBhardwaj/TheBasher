@@ -69,6 +69,7 @@ import { linkedDataNodeId } from '../resolveDataParamOwner';
 import { resolveDataLaneBase } from '../operatorChain';
 import { dataLaneNodeIds } from '../dataLaneOverlay';
 import { isKeyframeChannelNode, paramAnimationState } from './paramAnimationState';
+import { driverStackForTarget } from '../paramDrivers';
 import { getStorage } from '../boot';
 import { useTimeStore } from '../stores/timeStore';
 import { isImportedChild } from '../importedChild';
@@ -1085,8 +1086,8 @@ function applyIntoStoredMesh(
 //
 // v1 applies a uniform scale only, and refuses by name what it cannot carry yet: a non-uniform or
 // non-positive scale, a keyed group, a moved or turned group asked to apply everything, two skeletons
-// in one group, a skeleton or skinned mesh used outside the group, a channel node or a value
-// F-modifier on the rig's motion (Cycles is carried: it only re-times the scaled keys), and anything
+// in one group, a skeleton or skinned mesh used outside the group, a channel node, a driver or a
+// value F-modifier on the rig's motion (Cycles is carried: it only re-times the scaled keys), and anything
 // parented under the skeleton. A retarget onto the rig needs nothing:
 // it re-derives its travel from the rest it reads (`rootTravelScale`).
 //
@@ -1242,6 +1243,19 @@ function applyScaleIntoArmature(
   if (channelNode) {
     return refuse(
       `holds a rig keyed by "${nameOf(channelNode.id)}", a channel this Apply cannot rescale yet.`,
+    );
+  }
+  // #1541 — a driver writes a computed number into one param of the rig. If that param is a
+  // length, the number stays and its units shrink under it, so whatever it drives jumps (measured:
+  // a driven skeleton Object went from 0.75 to 0.30). A driver can compute anything, so there is
+  // no rescaling it; it is refused like a channel. Muted ones too: unmuting one later would jump.
+  const [rigDriverTarget, rigDriver] =
+    [...rig]
+      .map((id) => [id, driverStackForTarget(state.nodes, id, undefined, true)[0]] as const)
+      .find(([, d]) => d !== undefined) ?? [];
+  if (rigDriverTarget && rigDriver) {
+    return refuse(
+      `holds a rig driven by "${nameOf(rigDriver.id)}" (on "${nameOf(rigDriverTarget)}"), a driver this Apply cannot rescale yet.`,
     );
   }
 

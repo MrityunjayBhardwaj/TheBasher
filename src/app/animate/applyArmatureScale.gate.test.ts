@@ -511,6 +511,51 @@ describe('#1511 — Apply Scale on an armature carries the scale into the rig', 
         reason: /holds a rig keyed by ".*", a channel this Apply cannot rescale yet/,
       },
       {
+        what: 'a driver on the rig (#1541)',
+        build: (s, rig) =>
+          apply(s, [
+            scaled(rig, 2),
+            { type: 'addNode', nodeId: 'c_drive', nodeType: 'Clamp', params: { min: 0.3, max: 1 } },
+            {
+              type: 'addNode',
+              nodeId: 'drive',
+              nodeType: 'ParamDriver',
+              params: {
+                target: rig.skeletonObject,
+                paramPath: 'position.1',
+                blendMode: 'replace',
+                order: 0,
+              },
+            },
+            {
+              type: 'connect',
+              from: { node: 'c_drive', socket: 'out' },
+              to: { node: 'drive', socket: 'in' },
+            },
+          ]),
+        reason: /holds a rig driven by ".*" \(on ".*"\), a driver this Apply cannot rescale yet/,
+      },
+      {
+        what: 'a muted driver on the rig (#1541)',
+        build: (s, rig) =>
+          apply(s, [
+            scaled(rig, 2),
+            {
+              type: 'addNode',
+              nodeId: 'drive',
+              nodeType: 'ParamDriver',
+              params: {
+                target: rig.layers[0],
+                paramPath: 'weight',
+                blendMode: 'replace',
+                order: 0,
+                mute: true,
+              },
+            },
+          ]),
+        reason: /holds a rig driven by ".*" \(on ".*"\), a driver this Apply cannot rescale yet/,
+      },
+      {
         what: 'an F-modifier on a position curve',
         build: (s, rig) => {
           const layer = rig.layers[0];
