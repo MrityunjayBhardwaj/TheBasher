@@ -3,6 +3,8 @@
 // in the viewport, bones included; and none of it is a transform — a member stands where it did.
 import { beforeEach, describe, expect, it } from 'vitest';
 import { __resetRegistryForTests, applyOp } from '../core/dag';
+import { findDanglingIdRef } from '../core/dag/idRefSweep';
+import { useDagStore } from '../core/dag/store';
 import type { DagState } from '../core/dag/state';
 import type { Op } from '../core/dag/types';
 import { buildDefaultDagState } from '../core/project/default';
@@ -142,6 +144,34 @@ describe('#1451 — the active collection', () => {
     ]);
     expect(s.nodes[scene].params).toMatchObject({ activeCollection: 'col' });
     expect(activeCollectionOf(unlinked)).toBeNull();
+  });
+
+  it('#1551 — deleting the active collection leaves the scene naming none', () => {
+    const s = activate(build(), 'col');
+    const scene = s.outputs.scene!.node;
+    expect(s.nodes[scene].params).toMatchObject({ activeCollection: 'col' });
+    const after = apply(s, buildDeleteNodesOps(s, ['col']));
+    expect(after.nodes.col).toBeUndefined();
+    // Absent, as choosing the scene itself leaves it: nothing is saved for the key.
+    expect((after.nodes[scene].params as { activeCollection?: string }).activeCollection).toBe(
+      undefined,
+    );
+    expect(JSON.stringify(after.nodes[scene].params)).not.toContain('activeCollection');
+    expect(findDanglingIdRef(after.nodes)).toBeNull();
+  });
+
+  it('#1571 — a project saved naming a collection that is gone still deletes things', () => {
+    // What a project looks like if its active collection was deleted before #1551: the scene
+    // still names it. Through the store, as the outliner's Delete goes.
+    const scene = build().outputs.scene!.node;
+    const stale = apply(build(), [
+      { type: 'setParam', nodeId: scene, paramPath: 'activeCollection', value: 'col_long_gone' },
+    ]);
+    useDagStore.getState().hydrate(stale);
+    const ops = buildDeleteNodesOps(stale, ['sk_object']);
+    expect(ops.some((op) => op.type === 'removeNode')).toBe(true);
+    expect(() => useDagStore.getState().dispatchAtomic(ops, 'user', 'delete')).not.toThrow();
+    expect(useDagStore.getState().state.nodes.sk_object).toBeUndefined();
   });
 
   it('with the scene active, an import’s ops are left as they are', () => {

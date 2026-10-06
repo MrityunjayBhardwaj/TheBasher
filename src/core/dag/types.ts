@@ -607,7 +607,8 @@ export interface NodeDefinition<P = unknown, O = unknown> {
    * surface: every entry renders an Inspector picker and removes the raw row
    * (NPanel.tsx:2881-2896/2903). "This param holds a node id" and "the user should
    * pick it from a dropdown" are different questions that only coincide on 6 of
-   * the 23 id-holding params. Folding them would (a) inject pickers nobody asked
+   * the 24 id-holding params (counted by `src/nodes/idRefCensus.gate.test.ts`, which
+   * also refuses an id-holding param that is not declared here — #1551). Folding them would (a) inject pickers nobody asked
    * for, (b) break `sourceTransform` — NodeRefField writes `{node}` wholesale
    * (NPanel.tsx:707), dropping the required `channel` — and (c) still not express
    * `Track.strips`, an ARRAY. Two concerns, two declarations.

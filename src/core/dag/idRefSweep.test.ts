@@ -129,6 +129,33 @@ describe('idRefSweep — argument refs are cleared, never cascaded', () => {
   });
 });
 
+describe('idRefSweep — a cleared id is a value the schema accepts (#1551)', () => {
+  it('clears an id whose schema refuses the empty string to absent, not to ""', () => {
+    // `Scene.activeCollection` is `z.string().min(1).optional()`: a `''` there fails the
+    // schema, and `setParam` would throw the whole delete away.
+    const s = idRefSweep(
+      nodes(['scn', 'Scene', { activeCollection: 'colActive' }], ['colActive', 'Collection', {}]),
+      ['colActive'],
+    );
+    expect([...s.remove]).toEqual(['colActive']);
+    const op = clearOf(s.ops, 'scn', 'activeCollection');
+    expect(op).toBeDefined();
+    expect(op?.value).toBeUndefined();
+  });
+
+  it('still clears an id whose schema takes the empty string to ""', () => {
+    const s = idRefSweep(
+      nodes(
+        ['pathCurve', 'Object', {}],
+        ['cube', 'Object', {}],
+        ['fp', 'FollowPath', { target: 'cube', curve: 'pathCurve' }],
+      ),
+      ['pathCurve'],
+    );
+    expect(clearOf(s.ops, 'fp', 'curve')?.value).toBe('');
+  });
+});
+
 describe('idRefSweep — ownership in the downward direction', () => {
   it('takes a Track’s strips with it', () => {
     const s = idRefSweep(
@@ -192,41 +219,10 @@ describe('findDanglingIdRef — the #435 final-state detector', () => {
 });
 
 describe('idRefs registry — drift guard', () => {
-  // The failure this prevents: someone adds a node type with a `target` (or another
-  // id-shaped param) and does not declare it, so the sweep silently skips it and the
-  // orphan family quietly reopens. A checklist a human must remember is not a
-  // mechanism; this walks the live registry instead.
-  const ID_SHAPED = ['target', 'aimNode', 'curve', 'action', 'strips'];
-
-  // Params whose NAME looks id-shaped but which provably hold something else.
-  // Each entry needs a reason, so the list cannot become a silent dumping ground.
-  const NOT_A_NODE_ID: Record<string, string> = {
-    'SpotLight.target': 'a vec3 aim POINT, not a node id',
-    'LightData.target': 'a vec3 spot aim POINT (#386 split of SpotLight.target), not a node id',
-    'TransformClip.target': 'a sanitised glTF scene-child key, not a DAG node id',
-  };
-
-  it('every id-shaped param on a registered node type is declared in idRefs', () => {
-    const undeclared: string[] = [];
-    for (const type of listNodeTypes()) {
-      const def = getNodeType(type);
-      if (!def) continue;
-      const parsed = def.paramSchema.safeParse({});
-      if (!parsed.success) continue; // no all-defaults shape to inspect
-      const params = parsed.data as Record<string, unknown>;
-      const declared = new Set((def.idRefs ?? []).map((r) => r.path.split('.')[0]));
-      for (const key of ID_SHAPED) {
-        if (!(key in params)) continue;
-        if (declared.has(key)) continue;
-        if (`${type}.${key}` in NOT_A_NODE_ID) continue;
-        // Only a STRING (or array of strings) can hold a node id.
-        const v = params[key];
-        const idShaped = typeof v === 'string' || Array.isArray(v);
-        if (idShaped) undeclared.push(`${type}.${key}`);
-      }
-    }
-    expect(undeclared).toEqual([]);
-  });
+  // "Is every id-holding param declared?" is answered by `src/nodes/idRefCensus.gate.test.ts`
+  // (#1551), which walks every string a schema can store. It replaced a check here that looked
+  // for five param NAMES at the top level of the parsed defaults, and so could not see a nested
+  // id, an optional one, or one under any other name (`Scene.activeCollection` was all three).
 
   it('every declared idRef path names a param that actually exists on the schema', () => {
     // Catches a typo'd or renamed path, which would otherwise make the sweep a silent

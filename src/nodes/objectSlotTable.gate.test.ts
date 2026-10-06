@@ -366,7 +366,12 @@ describe('#645 — the slot table is derived once, through the Object', () => {
     // `paramHomeGolden.ts` — a frozen DATA TABLE containing the string
     // `slotOverrides=(unrouted)` inside a string literal, which reads nothing at all. A
     // census over a name cannot tell a reader from a mention of one.
-    const READ = /\.slotOverrides\b|\{\s*slotOverrides\b/;
+    //
+    // #1551 — the same lesson a second time: `idRefAcknowledged.ts` is another data table, and
+    // its keys are `'Object.slotOverrides{}'` strings. A `Type.path` inside a quote is a mention,
+    // so a `.slotOverrides` that directly follows a quoted word is not counted. The three real
+    // readers below still have to be found, so this cannot quietly stop matching reads.
+    const READ = /(?<!['"`]\w*)\.slotOverrides\b|\{\s*slotOverrides\b/;
     const readers = productionSources()
       .filter((f) => f !== TYPES && f !== OBJECT_NODE)
       .filter((f) =>

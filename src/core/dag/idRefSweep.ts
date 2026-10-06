@@ -55,6 +55,21 @@ export function refIdsAt(params: unknown, path: string, shape: string): string[]
 }
 
 /**
+ * Whether `node`'s schema takes `''` at `path` (#1551). The sweep clears a plain id to the empty
+ * string, which is what an unbound `target` or `aimNode` already holds. A schema that refuses it
+ * (`Scene.activeCollection` is `z.string().min(1).optional()`) is cleared to absent instead:
+ * `setParam` re-validates the whole params object, so an empty the schema refuses would throw
+ * and take the entire delete with it.
+ */
+function acceptsEmptyString(node: NodeLike, path: string): boolean {
+  const def = getNodeType(node.type);
+  if (!def) return true;
+  const trial = structuredClone(node.params);
+  setAtPath(trial, path, '');
+  return def.paramSchema.safeParse(trial).success;
+}
+
+/**
  * Everything deleting `seedIds` implies for the id-reference universe.
  *
  * `remove` is the seeds plus every node transitively pulled in — the 'subject'
@@ -128,7 +143,12 @@ export function idRefSweep(
         // deliberately keeps the sibling fields (`sourceTransform.channel`,
         // `sourceSpare.key`) — dropping the whole object would silently switch a
         // driver back to its wired `in` road.
-        ops.push({ type: 'setParam', nodeId: node.id, paramPath: ref.path, value: '' });
+        ops.push({
+          type: 'setParam',
+          nodeId: node.id,
+          paramPath: ref.path,
+          value: acceptsEmptyString(node, ref.path) ? '' : undefined,
+        });
       }
     }
   }
