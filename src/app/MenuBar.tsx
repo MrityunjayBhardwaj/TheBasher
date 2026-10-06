@@ -27,6 +27,7 @@ import {
 import type { ProjectMetadata } from '../core/project/io';
 import {
   canApplyTransform,
+  applyMaskUnavailableReason,
   isApplySourceAnimated,
   type ApplyMask,
 } from './animate/dispatchApplyTransform';
@@ -502,6 +503,17 @@ export function MenuBar() {
       ),
     [dag, selectedId, isPrimitive],
   );
+  // #1525 — a mask that is not offered says why, in the words Apply would refuse with.
+  const maskReasons = useMemo(
+    () =>
+      new Map(
+        APPLY_MASKS.map(({ mask }) => [
+          mask,
+          selectedId ? applyMaskUnavailableReason(dag, selectedId, mask) : null,
+        ]),
+      ),
+    [dag, selectedId],
+  );
 
   return (
     <div
@@ -670,6 +682,7 @@ export function MenuBar() {
               key={mask}
               label={label}
               disabled={applyDisabled || !offeredMasks.has(mask)}
+              title={maskReasons.get(mask) ?? undefined}
               onSelect={() => {
                 // #1130 — a refusal is shown, never dropped.
                 if (selectedId) void applyTransformFromUi(selectedId, mask);

@@ -96,6 +96,7 @@ import {
 } from './objectSlotAuthoring';
 import {
   canApplyTransform,
+  applyMaskUnavailableReason,
   isApplySourceAnimated,
   type ApplyMask,
 } from './animate/dispatchApplyTransform';
@@ -3348,6 +3349,11 @@ function ApplyTransformControl({ nodeId }: { nodeId: string }) {
       ),
     [state, nodeId],
   );
+  // #1525 — a mask that is not offered says why, in the words Apply would refuse with.
+  const reasons = useMemo(
+    () => new Map(APPLY_MASK_ORDER.map((m) => [m, applyMaskUnavailableReason(state, nodeId, m)])),
+    [state, nodeId],
+  );
   const onApply = (mask: ApplyMask) => {
     // #1130 — a refusal is shown, never dropped.
     void applyTransformFromUi(nodeId, mask);
@@ -3366,6 +3372,7 @@ function ApplyTransformControl({ nodeId }: { nodeId: string }) {
             key={mask}
             type="button"
             disabled={animated || !offered.has(mask)}
+            title={reasons.get(mask) ?? undefined}
             onClick={() => onApply(mask)}
             data-testid={`npanel-apply-${mask}`}
             className="rounded border border-border px-1.5 py-0.5 text-[10px] text-fg/70 hover:bg-muted hover:text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent disabled:opacity-40 disabled:hover:bg-transparent"

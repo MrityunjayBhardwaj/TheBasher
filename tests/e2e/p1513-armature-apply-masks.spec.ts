@@ -83,6 +83,16 @@ test.describe('#1513 — an armature group is offered only the Apply masks it ta
     await expect(page.getByTestId('npanel-apply-all')).toBeEnabled();
     await expect(page.getByTestId('npanel-apply-location')).toBeDisabled();
     await expect(page.getByTestId('npanel-apply-rotation')).toBeDisabled();
+    // #1525 — a disabled mask says why, in the refusal's words; an offered one says nothing.
+    await expect(page.getByTestId('npanel-apply-location')).toHaveAttribute(
+      'title',
+      /only its scale can be applied into the rig for now\. Use Apply ▸ Scale\./,
+    );
+    await expect(page.getByTestId('npanel-apply-rotation')).toHaveAttribute(
+      'title',
+      /Apply ▸ Scale/,
+    );
+    await expect(page.getByTestId('npanel-apply-scale')).not.toHaveAttribute('title', /.+/);
 
     await page.getByTestId('npanel-apply-scale').click();
     await expect.poll(() => groupScale(page, group)).toEqual([1, 1, 1]);
@@ -93,6 +103,10 @@ test.describe('#1513 — an armature group is offered only the Apply masks it ta
     await stageArmature(page, { rotation: [0, 30, 0] });
     await expect(page.getByTestId('npanel-apply-transform')).toBeVisible({ timeout: 10_000 });
     await expect(page.getByTestId('npanel-apply-all')).toBeDisabled();
+    await expect(page.getByTestId('npanel-apply-all')).toHaveAttribute(
+      'title',
+      /is moved or turned/,
+    );
     await expect(page.getByTestId('npanel-apply-scale')).toBeEnabled();
   });
 
@@ -104,5 +118,10 @@ test.describe('#1513 — an armature group is offered only the Apply masks it ta
     await expect(page.getByTestId('menu-object-apply-all')).toBeEnabled();
     await expect(page.getByTestId('menu-object-apply-location')).toBeDisabled();
     await expect(page.getByTestId('menu-object-apply-rotation')).toBeDisabled();
+    await expect(page.getByTestId('menu-object-apply-location')).toHaveAttribute(
+      'title',
+      /Use Apply ▸ Scale\./,
+    );
+    await expect(page.getByTestId('menu-object-apply-scale')).not.toHaveAttribute('title', /.+/);
   });
 });

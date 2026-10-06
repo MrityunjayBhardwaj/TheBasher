@@ -26,6 +26,7 @@ import { hierarchyChildIds } from '../sceneHierarchy';
 import { poseLayerChain } from './poseChain';
 import type { GraphNodeLike } from './graphNodes';
 import {
+  applyMaskUnavailableReason,
   armatureSkeletonObjectsOf,
   canApplyTransform,
   dispatchApplyTransform,
@@ -279,6 +280,11 @@ describe('#1511 — Apply Scale on an armature carries the scale into the rig', 
         const offered = canApplyTransform(state, groupId, undefined, mask);
         const { result } = await applied(state, groupId, mask);
         expect(offered, `${pose} · ${mask}: offered == accepted`).toBe(result.ok);
+        // #1525 — what a disabled control says is the refusal, word for word; an offered one, nothing.
+        expect(
+          applyMaskUnavailableReason(state, groupId, mask),
+          `${pose} · ${mask}: the reason shown`,
+        ).toBe(result.ok ? null : result.reason);
         if (offered) offeredBy[pose].push(mask);
       }
     }
@@ -289,6 +295,13 @@ describe('#1511 — Apply Scale on an armature carries the scale into the rig', 
     });
     // Without a mask the question is "can any mask", which stays yes.
     expect(canApplyTransform(imported, groupId)).toBe(true);
+    // A node that is not an armature group has no mask-shaped reason: its masks are not restricted.
+    const skinned = hierarchyChildIds(imported.nodes[groupId]).find(
+      (id) => !armatureSkeletonObjectsOf(imported, groupId).includes(id),
+    )!;
+    for (const mask of ['all', 'location', 'rotation', 'scale'] as const) {
+      expect(applyMaskUnavailableReason(imported, skinned, mask)).toBeNull();
+    }
   });
 
   it('refuses what v1 cannot carry, by name, and writes nothing', async () => {

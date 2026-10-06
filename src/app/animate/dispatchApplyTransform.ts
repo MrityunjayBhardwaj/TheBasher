@@ -524,7 +524,8 @@ const ZERO_CTX: EvalCtx = { time: { frame: 0, seconds: 0, normalized: 0 } };
  *
  * #1513 — with a `mask`, the answer is for that one mask: an armature group takes only its scale,
  * so Location and Rotation are not offered there (and All only while the group is unmoved). The
- * same `armatureMaskRefusal` the dispatcher refuses with answers it. Without one, "can any mask".
+ * same `applyMaskUnavailableReason` the dispatcher refuses with answers it. Without one, "can any
+ * mask".
  */
 export function canApplyTransform(
   state: DagState,
@@ -537,7 +538,7 @@ export function canApplyTransform(
   if (node?.type === 'Group') {
     return (
       armatureSkeletonObjectsOf(state, nodeId).length > 0 &&
-      (mask === undefined || armatureMaskRefusal(node, mask) === null)
+      (mask === undefined || applyMaskUnavailableReason(state, nodeId, mask) === null)
     );
   }
   if (!node || !isBakeableWrapperType(node.type)) return false;
@@ -1119,6 +1120,23 @@ function armatureMaskRefusal(group: { params?: unknown }, mask: ApplyMask): stri
   return null;
 }
 
+/**
+ * Why Apply cannot take `mask` on `nodeId`, as the sentence Apply refuses with, or null when the
+ * mask is not what stands in the way (#1525). Only an armature group restricts masks today. A
+ * disabled control shows this as its tooltip, and `canApplyTransform(…, mask)` and the refusal both
+ * answer from it, so the reason shown is the reason it is disabled.
+ */
+export function applyMaskUnavailableReason(
+  state: DagState,
+  nodeId: string,
+  mask: ApplyMask,
+): string | null {
+  const node = state.nodes[nodeId];
+  if (node?.type !== 'Group' || armatureSkeletonObjectsOf(state, nodeId).length === 0) return null;
+  const why = armatureMaskRefusal(node, mask);
+  return why ? `Apply: "${nodeDisplayName(state.nodes, nodeId)}" ${why}` : null;
+}
+
 const scaleVec = (v: readonly [number, number, number], s: number): [number, number, number] => [
   v[0] * s,
   v[1] * s,
@@ -1161,8 +1179,8 @@ function applyScaleIntoArmature(
   const scale = isVec3(gp.scale) ? gp.scale : ([1, 1, 1] as Vec3);
   const pivot = isVec3(gp.pivot) ? gp.pivot : ([0, 0, 0] as Vec3);
 
-  const maskRefusal = armatureMaskRefusal(group, mask);
-  if (maskRefusal) return refuse(maskRefusal);
+  const maskRefusal = applyMaskUnavailableReason(state, groupId, mask);
+  if (maskRefusal) return { ok: false, reason: maskRefusal };
   const s = scale[0];
   const tolerance = 1e-9 * Math.max(1, Math.abs(s));
   if (Math.abs(scale[1] - s) > tolerance || Math.abs(scale[2] - s) > tolerance) {
