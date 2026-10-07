@@ -149,6 +149,7 @@ import {
 import { CostPreviewConnector } from './render/CostPreviewConnector';
 import { MotionGenerateCookConnector } from './asset/MotionGenerateCookConnector';
 import { BakePoseConnector } from './animate/BakePoseConnector';
+import { WrapInRigConnector } from './animate/WrapInRigConnector';
 import { SceneEnvironmentControls } from './SceneEnvironmentControls';
 import { CameraLensControls } from './CameraLensControls';
 import { ModifierStackControls } from './ModifierStackControls';
@@ -5007,6 +5008,8 @@ export function NPanel() {
           ) : null}
           {/* #1215 — an armature Object on computed motion bakes it into keys it can edit. */}
           <BakePoseConnector nodeId={node.id} />
+          {/* #1357 — an armature Object with IK layers on its wire moves them inside a Rig. */}
+          <WrapInRigConnector nodeId={node.id} />
         </>
       )}
     </aside>
