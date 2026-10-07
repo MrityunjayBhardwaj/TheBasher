@@ -86,6 +86,8 @@ import { validatePlan } from '../../agent/mutators/index';
 import { retargetMutator } from '../../agent/mutators/builders/retarget';
 import { buildSkeletonObjectOps } from '../../core/import/skeletonObject';
 import { bakePose } from '../animate/bakePose';
+import { poseLayerChain } from '../animate/poseChain';
+import { wrapInRig } from '../animate/wrapInRig';
 import { evaluate } from '../../core/dag/evaluator';
 import type { PosedSkeletonValue } from '../../nodes/types';
 
@@ -338,6 +340,103 @@ describe('a regeneration names what it moved under a layer (#1226)', () => {
 
 // #1230 — freezing a character: its computed motion baked to keys. The bake detaches the computed
 // source from the character's chain, so a later regeneration has nothing of that character to write.
+/** Put `layers` of `objectId`'s chain inside a Rig, through the same builder the UI uses. */
+function wrap(objectId: string, layers: readonly string[]): string {
+  const rigId = `${objectId}_rig`;
+  const res = wrapInRig(store().state, { object: objectId, layers, rigId, inputId: `${rigId}_in` });
+  expect(res.ok, JSON.stringify(res)).toBe(true);
+  if (res.ok) dispatch([...res.ops]);
+  return rigId;
+}
+
+describe('a layer inside a Rig is compared after a regeneration (#1577)', () => {
+  beforeEach(() => {
+    registerAllNodes();
+    __resetGeneratedClipsForTests();
+    useAssetErrorStore.getState().clearAll();
+    useNotificationStore.getState().clear();
+  });
+
+  it('a spine that turns 60° under the Rig names the layer inside it', async () => {
+    const { producerId, objectId } = await layeredWalk();
+    const rigId = wrap(objectId, ['layer_lift']);
+    // The premise: the layer is off the Object's own wire and inside the Rig.
+    const chain = poseLayerChain(store().state.nodes as never, objectId);
+    expect(chain.layers).toEqual([]);
+    expect(chain.allLayers).toEqual(['layer_lift']);
+    expect(edgeTarget(store().state.nodes[objectId], 'pose')).toBe(rigId);
+
+    await regenerate(producerId, 8);
+
+    const warn = toasts().filter((t) => t.severity === 'warn');
+    expect(warn).toHaveLength(1);
+    expect(warn[0].message).toContain('"lift spine" Spine moved 60° at 0.50 s');
+  });
+
+  it('the same motion under a new request says it looked inside the Rig', async () => {
+    const { producerId, objectId } = await layeredWalk();
+    wrap(objectId, ['layer_lift']);
+    await regenerate(producerId, 9);
+
+    expect(toasts().map((t) => t.message)).toEqual([
+      'Regenerated: 1 layer compared, no result moved.',
+    ]);
+  });
+
+  it('a member whose bone the new rig lacks is said for a layer inside a Rig too', async () => {
+    const { producerId, objectId } = await layeredWalk();
+    wrap(objectId, ['layer_lift']);
+    await regenerate(producerId, 10);
+
+    expect(toasts().map((t) => t.message)).toEqual([
+      'Could not compare every layer after regenerating: "lift spine": Spine is not in the rig on both sides.',
+    ]);
+  });
+
+  it('layers inside the Rig and on the wire over it are each compared once', async () => {
+    const { producerId, clipId, objectId } = await layeredWalk();
+    const rigId = wrap(objectId, ['layer_lift']);
+    // A second layer on the Object's own wire, over the Rig.
+    dispatch([
+      {
+        type: 'addNode',
+        nodeId: 'layer_over',
+        nodeType: 'PoseLayer',
+        params: {
+          name: 'over the rig',
+          mode: 'additive',
+          members: [{ bone: 'Spine', rotationMode: 'XYZ' }],
+          channels: [
+            {
+              bone: 'Spine',
+              component: 'rotation',
+              keyframes: [{ time: 1, value: [5, 0, 0], easing: 'linear' }],
+            },
+          ],
+        },
+      },
+      {
+        type: 'connect',
+        from: { node: rigId, socket: 'out' },
+        to: { node: 'layer_over', socket: 'pose' },
+      },
+      {
+        type: 'connect',
+        from: { node: 'layer_over', socket: 'out' },
+        to: { node: objectId, socket: 'pose' },
+        replace: true,
+      },
+    ] as Op[]);
+    const before = store().state;
+    await regenerate(producerId, 8);
+
+    const report = regenerationShifts(before, store().state, [clipId]);
+    expect(report.compared).toBe(2);
+    expect(report.moved.map((m) => m.layerId).sort()).toEqual(['layer_lift', 'layer_over']);
+    expect(report.uncompared).toEqual([]);
+  });
+});
+
 describe('a character whose motion was baked to keys is not moved by a regeneration (#1230)', () => {
   beforeEach(() => {
     registerAllNodes();

@@ -155,10 +155,14 @@ export function regenerationShifts(
 
   for (const objectId of Object.keys(after.nodes).sort()) {
     if (after.nodes[objectId].type !== 'Object') continue;
-    const { layers, source } = poseLayerChain(after.nodes, objectId);
-    if (layers.length === 0 || !source || !readsUpstream(after, source.node, clips)) continue;
+    // #1577 — `allLayers`, not `layers`: a Rig on the wire holds layers of its own (a corrective,
+    // an IK blend), and the motion regenerates under those as much as under the ones beside it.
+    // A layer inside a Rig evaluates on its own to what it gives there, its leaf reading what
+    // arrives on the Rig's `pose` input, so the comparison below needs nothing else.
+    const { allLayers, source } = poseLayerChain(after.nodes, objectId);
+    if (allLayers.length === 0 || !source || !readsUpstream(after, source.node, clips)) continue;
 
-    for (const layerId of layers) {
+    for (const layerId of allLayers) {
       const params = after.nodes[layerId].params as PoseLayerParams;
       const layerName = params.name;
       const say = (reason: string) => uncompared.push({ objectId, layerId, layerName, reason });
