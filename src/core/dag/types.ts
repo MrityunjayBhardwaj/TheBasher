@@ -44,8 +44,9 @@ export type InputBinding = z.infer<typeof InputBindingSchema>;
 // Type system across sockets (THESIS.md §8)
 // ---------------------------------------------------------------------------
 
-// V0.5 ships only the names; runtime uses nominal string equality. The full
-// converter-node story (THESIS.md §8) lands in P1+.
+// An input takes the types it declares (`inputAccepts`), plus any type that converts on the
+// way in: a Number into a Vector3 input, as Blender's implicit conversion does (#1549,
+// `socketConversion.ts`). Everything else is refused at `connect` with what would make it work.
 export type SocketTypeName =
   | 'Number'
   | 'Vector2'
@@ -199,7 +200,9 @@ export interface OutputDescriptor {
  * ⚠️ A SET IS NOT COERCION. `Number | Vector3` means the role receives whichever
  * was wired, UNCONVERTED — the consumer still discriminates at read time. It does
  * NOT mean a Number is broadcast to a Vector3. Conflating the two is how a type
- * system starts lying in a second way, and #609 ruled it out of scope.
+ * system starts lying in a second way, and #609 ruled it out of scope. Conversion exists
+ * since #1549, and it keeps this rule: it is consulted only for a type the socket does NOT
+ * accept, so a socket that takes both never converts one into the other.
  *
  * THAT RULING NOW HAS A REASON FROM SOURCE (#616). Blender declares exactly ONE
  * type per socket (`SocketDeclaration.socket_type`, a scalar enum) and solves this

@@ -34,6 +34,7 @@
 //      transformChannelSource.readTransformChannelAt; issue #297.
 
 import { evaluate, setStatefulReplay, type EvaluatorCache } from '../core/dag/evaluator';
+import { arriving, producedTypeOf } from '../core/dag/socketConversion';
 import { getNodeType } from '../core/dag/registry';
 import type { DagState } from '../core/dag/state';
 import { bindBodyInputs, bodyInputLeavesOf, type BodyInputLeaf } from '../core/dag/subnetworks';
@@ -385,9 +386,17 @@ function cookSolverVecStep(
     inputVec: input,
   });
   const ctx = ctxAtFrame(frame);
+  const bodiesInto = getNodeType(state.nodes[solverId]?.type ?? '')?.inputs.bodies;
   return bodyRefs.map((ref) => {
     try {
-      const v = evaluate(state, ref.node, { ctx, overrides, socket: ref.socket }).value;
+      // A body is read here, not through the Solver's own input resolution, so what the wire
+      // carries is converted here as it would be there (#1549: a Number body fills all three
+      // axes).
+      const v = arriving(
+        bodiesInto,
+        producedTypeOf(state, ref),
+        evaluate(state, ref.node, { ctx, overrides, socket: ref.socket }).value,
+      );
       return isVec3(v) ? v : ORIGIN;
     } catch {
       return ORIGIN;

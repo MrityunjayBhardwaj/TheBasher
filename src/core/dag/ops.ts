@@ -19,7 +19,8 @@ import type { DagState } from './state';
 import { getNode, hasNode, wouldCreateCycle } from './state';
 import { newSubnetworkViolation } from './subnetworks';
 import type { InputBinding, Node, NodeId, NodeRef, Op } from './types';
-import { acceptedTypes, inputAccepts, OpSchema, SpareParamSchema } from './types';
+import { acceptedTypes, OpSchema, SpareParamSchema } from './types';
+import { inputTakes, whyNotTaken } from './socketConversion';
 
 export class OpError extends Error {
   constructor(
@@ -231,9 +232,12 @@ function applyConnect(state: DagState, op: Extract<Op, { type: 'connect' }>): Ap
   // #609 — MEMBERSHIP, not equality: an input socket may accept a SET of types.
   // The message names the whole accepted set, so a rejection says what WOULD have
   // been taken rather than only what was offered.
-  if (!inputAccepts(inputDesc, outputDesc.type)) {
+  // #1549 — or a type the socket does not take but that converts on the way in (a Number into
+  // a Vector3). Anything else is refused with what would make it work.
+  if (!inputTakes(inputDesc, outputDesc.type)) {
     throw new OpError(
-      `connect: type mismatch ${producer.type}.${op.from.socket}:${outputDesc.type} → ${consumer.type}.${op.to.socket}:${acceptedTypes(inputDesc).join('|')}`,
+      `connect: type mismatch ${producer.type}.${op.from.socket}:${outputDesc.type} → ${consumer.type}.${op.to.socket}:${acceptedTypes(inputDesc).join('|')}` +
+        ` — ${whyNotTaken(inputDesc, outputDesc.type)}`,
       op,
     );
   }

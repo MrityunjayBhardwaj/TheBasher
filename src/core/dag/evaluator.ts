@@ -23,8 +23,9 @@ import { bypassSpineOf } from './chainBypass';
 import { hashString, hashValue, type ContentHash } from './hash';
 import { getNodeType, requireNodeType } from './registry';
 import type { DagState, EvaluableState } from './state';
+import { arriving, conversionsInto, producedTypeOf } from './socketConversion';
 import { bodyInputLeavesOf } from './subnetworks';
-import type { EvalCtx, NodeDefinition, NodeId, ResolvedInputs } from './types';
+import type { EvalCtx, InputDescriptor, NodeDefinition, NodeId, ResolvedInputs } from './types';
 // ns-2 step 9b — the FIRST value import from `src/nodes/**` into `src/core/dag/**`, and the
 // reason `modifierDataSource` was extracted to a leaf one commit earlier: the resolver's own
 // former home imports THIS module, so without that move the edge would have closed the cycle
@@ -308,6 +309,8 @@ function scopeFor(
 interface LeafFeed {
   readonly node: NodeId;
   readonly socket: string;
+  /** The owner's socket the producer is wired into: what the value arrives as (#1549). */
+  readonly into: InputDescriptor | undefined;
 }
 const statelessLeafFeeds = new WeakMap<object, Map<NodeId, LeafFeed>>();
 function statelessLeafFeedOf(state: EvaluableState, leaf: NodeId): LeafFeed | undefined {
@@ -321,7 +324,9 @@ function statelessLeafFeedOf(state: EvaluableState, leaf: NodeId): LeafFeed | un
       // unless a leaf's `input` is itself animated, which no surface offers.
       for (const found of bodyInputLeavesOf(state as DagState, owner.id)) {
         const ref = owner.inputs[found.input];
-        if (ref && !Array.isArray(ref)) feeds.set(found.id, ref);
+        if (ref && !Array.isArray(ref)) {
+          feeds.set(found.id, { ...ref, into: def.inputs[found.input] });
+        }
       }
     }
     statelessLeafFeeds.set(state.nodes, feeds);
@@ -382,6 +387,17 @@ export function evaluate(
   const memo = new Map<NodeId, EvalResult>();
   const onStack = new Set<NodeId>();
 
+  /** `value`, produced by `ref`, as it arrives in an input described by `into` (#1549). The
+   *  producer's type is looked up only for an input that has a conversion at all. */
+  function arrive(
+    into: InputDescriptor | undefined,
+    ref: { node: NodeId; socket: string },
+    value: unknown,
+  ): unknown {
+    if (!into || conversionsInto(into) === null) return value;
+    return arriving(into, producedTypeOf(state, ref), value);
+  }
+
   function evalNode(id: NodeId, depth: number): EvalResult {
     if (depth > DEPTH_LIMIT) {
       throw new Error(
@@ -429,7 +445,7 @@ export function evaluate(
         const sub = evalNode(feed.node, depth + 1);
         onStack.delete(id);
         const through: EvalResult = {
-          value: extractSocket(sub.value, feed.socket),
+          value: arrive(feed.into, feed, extractSocket(sub.value, feed.socket)),
           hash: hashString(`${feed.socket}:${sub.hash}`),
         };
         memo.set(id, through);
@@ -448,23 +464,26 @@ export function evaluate(
       }
     }
 
-    // Resolve inputs.
+    // Resolve inputs. A value of a type the socket does not take is converted as it arrives
+    // (#1549); the hash is the producer's, because whether a wire converts is fixed by the two
+    // node types and this node's cache key already carries its own.
     const resolved: ResolvedInputs = {};
     const inputHashes: Record<string, string | string[]> = {};
     for (const [socket, binding] of Object.entries(node.inputs)) {
+      const into = def.inputs[socket];
       if (Array.isArray(binding)) {
         const values: unknown[] = [];
         const hashes: string[] = [];
         for (const ref of binding) {
           const sub = evalNode(ref.node, depth + 1);
-          values.push(extractSocket(sub.value, ref.socket));
+          values.push(arrive(into, ref, extractSocket(sub.value, ref.socket)));
           hashes.push(`${ref.socket}:${sub.hash}`);
         }
         resolved[socket] = values;
         inputHashes[socket] = hashes;
       } else {
         const sub = evalNode(binding.node, depth + 1);
-        resolved[socket] = extractSocket(sub.value, binding.socket);
+        resolved[socket] = arrive(into, binding, extractSocket(sub.value, binding.socket));
         inputHashes[socket] = `${binding.socket}:${sub.hash}`;
       }
     }
