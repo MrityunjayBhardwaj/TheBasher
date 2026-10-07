@@ -6,12 +6,12 @@
 //                    wires its `out` → Solver.body (buildSetSolverBodyOps). The seam cooks
 //                    the closure of whatever is wired here.
 //   • Solver input — pick the live controller channel the sub-network reads (its
-//                    SolverInput leaves), same picker + ↔ range as Lag (buildSetLagSourceOps
+//                    `input` leaves), same picker + ↔ range as Lag (buildSetLagSourceOps
 //                    + buildSetDriverRemapOps). Optional (a pure-feedback solver reads 0).
 // `seedFrame` renders as an ordinary param row above.
 //
-// Authoring flow end to end: add a Null → grab/animate it; add Solver + PrevFrame +
-// SolverInput + compute nodes; wire the loop rule (e.g. Math(add){PrevFrame, SolverInput});
+// Authoring flow end to end: add a Null → grab/animate it; add Solver + Prev Frame +
+// Solver Input + compute nodes; wire the loop rule (e.g. Math(add){prev, input});
 // point `body` at the rule's output + `input` at the Null's channel here; bind the target
 // ← the Solver via the target param's ⛓ affordance (the Solver is a Number source).
 //
@@ -58,7 +58,7 @@ export function SolverControls({ nodeId }: { nodeId: string }) {
     (a, b) => a?.node === b?.node && a?.socket === b?.socket,
   );
 
-  // The live controller channel the sub-network reads (its SolverInput leaves).
+  // The live controller channel the sub-network reads (the leaves reading its `input`).
   const source = useStoreWithEqualityFn(
     useDagStore,
     (s) => {
@@ -246,14 +246,14 @@ export function SolverControls({ nodeId }: { nodeId: string }) {
         )}
       </div>
 
-      {/* Live input (the controller channel) → SolverInput leaves */}
+      {/* Live input (the controller channel) → the leaves reading `input` */}
       <div className="flex flex-col gap-1">
         <span className="text-[10px] uppercase tracking-wide text-fg/40">Solver input</span>
         {source ? (
           <span
             className="flex items-center gap-0.5 text-[10px] text-accent"
             data-testid={`inspector-solver-source-${nodeId}`}
-            title={`Feeding ${sourceLabel} into SolverInput`}
+            title={`Feeding ${sourceLabel} into the Solver's input`}
           >
             <span aria-hidden className="leading-none">
               〜

@@ -1,5 +1,9 @@
 # Basher North Star
 
+> **What the graph is** (the three relationships, the node families, the six rules and every
+> difference from Houdini) is specified once in [`GRAPH.md`](GRAPH.md). This doc holds the
+> detail behind part of it.
+
 **Status:** consolidated 2026-08-11. Supersedes no document; sits above
 `OBJECT-DATA-SPLIT-DESIGN.md`, `OPERATORS-AND-LIGHTING-DESIGN.md` and the per-epic
 design docs, and under `THESIS.md`.
@@ -201,15 +205,23 @@ base mesh
 They agree on evaluation _order_ and disagree on nearly everything else. Choosing per
 concern rather than picking a side is the whole design.
 
-| Concern                               | Blender                                        | Houdini                       | **Basher follows**                                                  |
-| ------------------------------------- | ---------------------------------------------- | ----------------------------- | ------------------------------------------------------------------- |
-| Modifier attachment                   | list on the Object                             | wired upstream nodes          | **Houdini** — the substrate already models operators as wired nodes |
-| Evaluation order                      | data generators, then stack, then transform    | SOP chain, then OBJ transform | **both** — they agree once flattened                                |
-| Material storage                      | on the data, per-slot data/object discriminant | primitive-class attribute     | **Houdini**, with Blender's per-slot override as a later capability |
-| Skin weight storage                   | separate legacy store                          | point attribute               | **Houdini** — one system, not two                                   |
-| Where deformation executes            | CPU, baked into evaluated data                 | CPU, cooked geometry          | **neither — see 4.4**                                               |
-| Morph target position in the pipeline | data-level, below the stack                    | n/a                           | **Blender** (measured)                                              |
-| Simulation                            | modifier + point cache                         | solver network + cache        | **both** — same shape                                               |
+| Concern                               | Blender                                        | Houdini                       | **Basher follows**                                                               |
+| ------------------------------------- | ---------------------------------------------- | ----------------------------- | -------------------------------------------------------------------------------- |
+| Modifier attachment                   | list on the Object                             | wired upstream nodes          | **Houdini** — the substrate already models operators as wired nodes              |
+| Evaluation order                      | data generators, then stack, then transform    | SOP chain, then OBJ transform | **both** — they agree once flattened                                             |
+| Material storage                      | on the data, per-slot data/object discriminant | primitive-class attribute     | **Houdini**, with Blender's per-slot override on the Object — see the note below |
+| Skin weight storage                   | separate legacy store                          | point attribute               | **Houdini** — one system, not two                                                |
+| Where deformation executes            | CPU, baked into evaluated data                 | CPU, cooked geometry          | **neither — see 4.4**                                                            |
+| Morph target position in the pipeline | data-level, below the stack                    | n/a                           | **Blender** (measured)                                                           |
+| Simulation                            | modifier + point cache                         | solver network + cache        | **both** — same shape                                                            |
+
+**Material storage is in transition.** That row is the target, and it was confirmed on
+2026-10-06 (#1544): each face stores a reference to its material node, and the slot list is
+derived. What ships today is Blender's shape instead — each face stores a `material_index`
+into a slot table on the data — because per-face attributes did not exist when it was built.
+The Object-level per-slot override already ships (`Object.slotOverrides`, #645). The move to
+the per-face reference, with its migration, is #1554; [GRAPH.md §5](GRAPH.md) records the
+decision.
 
 ### 4.4 Where Basher already diverged and won — do not regress these
 

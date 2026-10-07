@@ -55,6 +55,21 @@ export function refIdsAt(params: unknown, path: string, shape: string): string[]
 }
 
 /**
+ * Whether `node`'s schema takes `''` at `path` (#1551). The sweep clears a plain id to the empty
+ * string, which is what an unbound `target` or `aimNode` already holds. A schema that refuses it
+ * (`Scene.activeCollection` is `z.string().min(1).optional()`) is cleared to absent instead:
+ * `setParam` re-validates the whole params object, so an empty the schema refuses would throw
+ * and take the entire delete with it.
+ */
+function acceptsEmptyString(node: NodeLike, path: string): boolean {
+  const def = getNodeType(node.type);
+  if (!def) return true;
+  const trial = structuredClone(node.params);
+  setAtPath(trial, path, '');
+  return def.paramSchema.safeParse(trial).success;
+}
+
+/**
  * Everything deleting `seedIds` implies for the id-reference universe.
  *
  * `remove` is the seeds plus every node transitively pulled in — the 'subject'
@@ -128,7 +143,12 @@ export function idRefSweep(
         // deliberately keeps the sibling fields (`sourceTransform.channel`,
         // `sourceSpare.key`) — dropping the whole object would silently switch a
         // driver back to its wired `in` road.
-        ops.push({ type: 'setParam', nodeId: node.id, paramPath: ref.path, value: '' });
+        ops.push({
+          type: 'setParam',
+          nodeId: node.id,
+          paramPath: ref.path,
+          value: acceptsEmptyString(node, ref.path) ? '' : undefined,
+        });
       }
     }
   }
@@ -215,12 +235,36 @@ export function idRefsOutOf(node: NodeLike): string[] {
 export function findDanglingIdRef(
   nodes: Readonly<Record<string, NodeLike>>,
 ): { node: string; missing: string } | null {
+  return danglingIdRefs(nodes)[0] ?? null;
+}
+
+/** Every id-reference in `nodes` that names a node not present, as referrer and missing id. */
+export function danglingIdRefs(
+  nodes: Readonly<Record<string, NodeLike>>,
+): { node: string; missing: string }[] {
+  const out: { node: string; missing: string }[] = [];
   for (const node of Object.values(nodes)) {
     for (const target of idRefsOutOf(node)) {
-      if (!nodes[target]) return { node: node.id, missing: target };
+      if (!nodes[target]) out.push({ node: node.id, missing: target });
     }
   }
-  return null;
+  return out;
+}
+
+/**
+ * The first dangling id-reference in `after` that `before` did not already hold (#1571), or
+ * null. A commit is refused for what IT strands, not for what the project arrived with: a
+ * reference saved before its param was declared (#1551), or written by an `addNode` naming an
+ * id that never existed, would otherwise make every later delete of anything throw.
+ */
+export function findNewDanglingIdRef(
+  before: Readonly<Record<string, NodeLike>>,
+  after: Readonly<Record<string, NodeLike>>,
+): { node: string; missing: string } | null {
+  const now = danglingIdRefs(after);
+  if (now.length === 0) return null;
+  const was = new Set(danglingIdRefs(before).map((d) => `${d.node}\0${d.missing}`));
+  return now.find((d) => !was.has(`${d.node}\0${d.missing}`)) ?? null;
 }
 
 /**

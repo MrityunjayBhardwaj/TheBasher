@@ -22,7 +22,8 @@ export function OptionsSelect({
   /** The stored value, `""` for none. */
   value: string;
   options: readonly ParamOption[];
-  noneLabel: string;
+  /** Null when the param cannot be empty: no none row is offered. */
+  noneLabel: string | null;
   staleLabel?: (value: string) => string;
   onCommit: (value: string) => void;
 }) {

@@ -1,5 +1,9 @@
 # Object↔Data Split — One Thing That Owns A Transform
 
+> **What the graph is** (the three relationships, the node families, the six rules and every
+> difference from Houdini) is specified once in [`GRAPH.md`](GRAPH.md). This doc holds the
+> detail behind part of it.
+
 **Status:** DESIGN / proposed — **not approved for implementation.** No code until the Phase-0 checkpoint.
 **Tracking:** #231 (D — object↔data split + size-vs-scale; E — glTF children first-class). Sub-issues filed per phase on approval.
 **Supersedes the narrow framing of:** #356 (glTF constrainable-but-inert), #357 (the ghost's kind switch) — both become slices that fall out of this refactor.
@@ -646,6 +650,8 @@ An earlier draft asserted _"cache discrimination ✓ by design; edit-propagation
 `overrides` is **one map per `evaluate()` call, keyed by `NodeId`** (`evaluator.ts:100`). Twenty instances of one template all name the **same** leaf id ⇒ **two instances cannot coexist in a single `evaluate()` call** — each needs its own call + its own map, which is why instantiation lives in a **seam OUTSIDE the evaluator** (`statefulOps.ts`). **That is the actual reason behind `Solver.ts`'s _"Nested Solvers … are out of scope"_: the seam cannot re-enter itself** — a nested instance inside a closure has nobody to call `evaluate` for it.
 
 ⇒ **the seam is a workaround for a missing noun, sixth time this arc.** If a template instance were **a node the evaluator understood** (a `body` input + named parameter inputs), the evaluator would just walk it, and **nesting would fall out by recursion.** `SolverInput` = a hard-coded leaf standing in for "named knob"; the override map = a side-channel standing in for "argument binding." Both exist because the evaluator has **no word for _"instantiate this subgraph with these bindings."_** _(Observed: the 20×/1× cook counts. Read-not-observed: the single-call collision — it follows from the API shape; flagged as such.)_
+
+**Update, #1548:** the first half of that missing noun now exists. A node that owns a sub-network declares its **named inputs** (`bodyInputs`), and a generic leaf (`BodyInput`, `BodyInputVec`) reads one by name; `SolverInput` and its three siblings are gone, migrated at project format v22. The values still arrive through the override map, bound by name (`bindBodyInputs`, `src/core/dag/subnetworks.ts`), so the single-call collision and the nesting limit described above still stand until evaluation is re-entrant (#1558). The spec is [`GRAPH.md`](GRAPH.md).
 
 **Sequencing (unchanged conclusion, corrected grounding):** the split first — it generates live bugs _and_ makes "an instance **of what**" well-defined. Templates second, on the same engine, once instantiation is a node the evaluator walks (which is also what dissolves nesting). **Do not fuse them.**
 

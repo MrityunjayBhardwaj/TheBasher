@@ -87,8 +87,8 @@ export const COMPUTE_KINDS = [
   // replays it).
   'Lag',
   // Solver meta-op + its sub-network leaves (Epic 2). The Solver owns a sub-network cooked
-  // every frame (Houdini Solver SOP); PrevFrame/SolverInput are its feedback + live-input
-  // leaves.
+  // every frame (Houdini Solver SOP); Prev Frame / Solver Input add a `BodyInput` leaf
+  // reading its `prev` / `input` (#1548).
   'Solver',
   'PrevFrame',
   'SolverInput',
@@ -560,6 +560,10 @@ export function nodeTypeFor(kind: PrimitiveKind): string {
     case 'OrthographicCamera':
     case 'Armature':
       return 'Object';
+    // #1548 — the Solver's two inputs are one leaf type reading the input by name (paramsFor).
+    case 'PrevFrame':
+    case 'SolverInput':
+      return 'BodyInput';
     default:
       return kind; // AmbientLight (stays fused), empties, compute nodes — direct mapping
   }
@@ -768,10 +772,13 @@ function paramsFor(kind: PrimitiveKind, position: Vec3): Record<string, unknown>
     case 'SampleGeometry':
     case 'Lag':
     case 'Solver':
-    case 'PrevFrame':
-    case 'SolverInput':
-      // Solver meta-op + its leaves have full zod defaults (Solver.ts) and no position.
-      // SampleGeometry likewise (its refs are optional, set later in the inspector).
+      // The Solver has full zod defaults (Solver.ts) and no position. SampleGeometry
+      // likewise (its refs are optional, set later in the inspector).
       return {};
+    // #1548 — a body-input leaf names the Solver input it reads.
+    case 'PrevFrame':
+      return { input: 'prev', slot: 0 };
+    case 'SolverInput':
+      return { input: 'input', slot: 0 };
   }
 }

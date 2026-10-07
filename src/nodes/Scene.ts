@@ -64,6 +64,10 @@ export const SceneNode: NodeDefinition<SceneParams, SceneValue> = {
     collections: { type: 'Collection', cardinality: 'list' },
   },
   outputs: { out: { type: 'Scene', cardinality: 'single' } },
+  // #1551 — the active collection is another node's id. An 'argument': the collection exists
+  // without the scene naming it, so deleting it clears the choice and the scene itself is active
+  // again (Blender never leaves a deleted collection active).
+  idRefs: [{ path: 'activeCollection', shape: 'id', role: 'argument' }],
   inspectorSections: ['environment', 'layout'],
   home: {
     envSource: 'environment',

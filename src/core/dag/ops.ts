@@ -17,6 +17,7 @@ import { passRoleOf } from './passRole';
 import { requireNodeType } from './registry';
 import type { DagState } from './state';
 import { getNode, hasNode, wouldCreateCycle } from './state';
+import { newSubnetworkViolation } from './subnetworks';
 import type { InputBinding, Node, NodeId, NodeRef, Op } from './types';
 import { acceptedTypes, inputAccepts, OpSchema, SpareParamSchema } from './types';
 
@@ -125,12 +126,14 @@ export interface Reportable {
 
 export function applyOp(state: DagState, op: Op): ApplyResult {
   switch (op.type) {
+    // #1547 — the two ops that can add an edge are the two that can put a node in two
+    // sub-networks, or let something outside consume a node inside one.
     case 'addNode':
-      return applyAddNode(state, op);
+      return holdingSubnetworks(state, op, applyAddNode(state, op));
     case 'removeNode':
       return applyRemoveNode(state, op);
     case 'connect':
-      return applyConnect(state, op);
+      return holdingSubnetworks(state, op, applyConnect(state, op));
     case 'disconnect':
       return applyDisconnect(state, op);
     case 'setParam':
@@ -142,6 +145,15 @@ export function applyOp(state: DagState, op: Op): ApplyResult {
     case 'removeSpareParam':
       return applyRemoveSpareParam(state, op);
   }
+}
+
+/** #1547 — refuse an edge-adding op that leaves a sub-network with a second owner or an
+ *  outside consumer. Only violations the op itself introduced are refused. */
+function holdingSubnetworks(state: DagState, op: Op, result: ApplyResult): ApplyResult {
+  if (op.type === 'addNode' && !op.inputs) return result;
+  const reason = newSubnetworkViolation(state, result.next);
+  if (reason) throw new OpError(`${op.type}: ${reason}`, op);
+  return result;
 }
 
 function applyAddNode(state: DagState, op: Extract<Op, { type: 'addNode' }>): ApplyResult {

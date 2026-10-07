@@ -131,6 +131,9 @@ const formatMigrations: Record<number, FormatMigration> = {
   // v20 → v21 (#1503): `meta.hidden` becomes the `viewport` and `render` params, both off — the eye
   // hid a node from the viewport AND the render, and those are the two flags that say so now.
   20: migrateHiddenToVisibilityParams,
+  // v21 → v22 (#1548): the Solver's four input leaves become the two named body-input leaves —
+  // each reads the input it stood for by name, so no leaf type is tied to the Solver.
+  21: migrateSolverLeavesToBodyInputs,
 };
 
 // ── v1 → v2: AnimationLayer retirement (#199) ──────────────────────────────
@@ -2114,4 +2117,49 @@ export function migrateHiddenToVisibilityParams(raw: unknown): unknown {
     );
   }
   return { ...proj, state: { ...proj.state, nodes: next }, formatVersion: 21 };
+}
+
+/**
+ * v21 → v22 (#1548) — the Solver's input leaves become named body-input leaves.
+ *
+ * `PrevFrame`, `SolverInput`, `PrevFrameVec` and `SolverInputVec` were one leaf type per Solver
+ * input, found by the seam by type name. Each becomes `BodyInput` (Number) or `BodyInputVec`
+ * (Vector3) reading the input it stood for by name — `prev`, `input`, `prevVec` (keeping its
+ * `slot`), `inputVec`. The node id, its output socket (`out`) and every wire from it are
+ * unchanged, so the Solver cooks the same values. Runs on raw JSON, before `ProjectSchema.parse`,
+ * because the old types are no longer registered.
+ */
+export function migrateSolverLeavesToBodyInputs(raw: unknown): unknown {
+  const proj = raw as { formatVersion?: number; state?: { nodes?: Record<string, RawNode> } };
+  const nodes = proj.state?.nodes;
+  if (!nodes) return { ...proj, formatVersion: 22 };
+  const TO: Record<string, { type: string; input: string }> = {
+    PrevFrame: { type: 'BodyInput', input: 'prev' },
+    SolverInput: { type: 'BodyInput', input: 'input' },
+    PrevFrameVec: { type: 'BodyInputVec', input: 'prevVec' },
+    SolverInputVec: { type: 'BodyInputVec', input: 'inputVec' },
+  };
+  let converted = 0;
+  const next: Record<string, RawNode> = {};
+  for (const [id, node] of Object.entries(nodes)) {
+    const to = TO[node?.type ?? ''];
+    if (!to) {
+      next[id] = node;
+      continue;
+    }
+    const slot = (node.params as { slot?: unknown } | undefined)?.slot;
+    next[id] = {
+      ...node,
+      type: to.type,
+      version: 1,
+      params: { input: to.input, slot: typeof slot === 'number' ? slot : 0 },
+    };
+    converted++;
+  }
+  if (converted > 0) {
+    console.warn(
+      `[migrateSolverLeavesToBodyInputs] ${converted} Solver input leaf node(s) now read their input by name (#1548).`,
+    );
+  }
+  return { ...proj, state: { ...proj.state, nodes: next }, formatVersion: 22 };
 }

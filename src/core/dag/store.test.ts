@@ -307,6 +307,29 @@ describe('DagStore — #435 id-reference dangle guard', () => {
     expect(useDagStore.getState().state.nodes.subject).toBeDefined();
   });
 
+  it('a reference that was already dangling does not block an unrelated delete', () => {
+    seedRefScene();
+    const store = useDagStore.getState();
+    // A project can arrive holding a reference to a node that is gone: saved before its param
+    // was declared an id reference, or written by an `addNode` naming an id that never existed
+    // (adding is not checked). The guard is about what THIS batch leaves behind.
+    store.dispatchAtomic(
+      [
+        { type: 'addNode', nodeId: 'stale', nodeType: 'TestRefNode', params: { target: 'ghost' } },
+        { type: 'addNode', nodeId: 'bystander', nodeType: 'TestNumber', params: { value: 3 } },
+      ],
+      'user',
+      'seed a stale reference',
+    );
+    expect(() =>
+      store.dispatchAtomic([{ type: 'removeNode', nodeId: 'bystander' }], 'user', 'unrelated'),
+    ).not.toThrow();
+    expect(useDagStore.getState().state.nodes.bystander).toBeUndefined();
+    expect(() => store.dispatch({ type: 'removeNode', nodeId: 'subject' }, 'agent')).toThrow(
+      /"ref" would be left referencing removed node "subject"/,
+    );
+  });
+
   it('ALLOWS removing the referrer and its subject together', () => {
     seedRefScene();
     const store = useDagStore.getState();

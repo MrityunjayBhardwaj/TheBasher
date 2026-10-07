@@ -235,7 +235,7 @@ export function driverSubscriptionNodesForTarget<T extends NodeLike>(
     // through a transform-source PARAM REF (not a wired edge), which the input walk
     // below can't reach. Subscribe that controller so a gizmo drag on it rebuilds the
     // render memo. Both roads: a scalar channel (Lag/scalar Solver) and the vec whole-
-    // position (a vec Solver / spring's SolverInputVec).
+    // position (a vec Solver / spring's `inputVec`).
     const xf = transformSourceOf(node);
     if (xf && !seen.has(xf.node)) {
       seen.add(xf.node);

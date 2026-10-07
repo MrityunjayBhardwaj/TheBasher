@@ -16,22 +16,24 @@
 // lands the same value (H40 by contract, not by purity). Same contract as Lag; only
 // the per-frame STEP differs (cook a sub-graph vs. apply `lagStep`).
 //
-// The vocabulary is THREE node types:
-//   • Solver      — the meta-op. Its `body` input is wired to the sub-network's
-//                   OUTPUT node; the seam cooks that node's dependency closure once
-//                   per frame, threading the previous output back through PrevFrame.
-//   • PrevFrame   — the recurrence leaf (Houdini `Prev_Frame`): the solver's output
-//                   from the PREVIOUS frame. A pure 0-leaf here; the seam injects the
-//                   real value per frame (evaluate `overrides`).
-//   • SolverInput — the live-input leaf (Houdini `Input_1`): the solver's live input
-//                   at the CURRENT frame (its `sourceTransform` controller channel).
-//                   A pure 0-leaf here; the seam injects the value per frame.
+// The vocabulary is ONE owner and its named inputs (#1548):
+//   • Solver        — the meta-op. Its `body` input is wired to the sub-network's
+//                     OUTPUT node; the seam cooks that node's dependency closure once
+//                     per frame. It DECLARES the sub-network's named inputs
+//                     (`bodyInputs`): `prev` (Houdini `Prev_Frame`, the solver's output
+//                     from the previous frame), `input` (Houdini `Input_1`, its live
+//                     input at the current frame), and their vector twins.
+//   • BodyInput     — a leaf that reads one of those inputs BY NAME (a Number);
+//     BodyInputVec    the Vector3 twin. Nothing about them is Solver-specific: the Rig
+//                     and Template nodes declare their own names and use the same leaves.
+//                     The seam binds a value to each name per frame
+//                     (`bindBodyInputs`, src/core/dag/subnetworks.ts).
 //
-// Outside a Solver's closure PrevFrame/SolverInput are harmless 0-leaves — the seam
-// is the ONLY place they take meaning, exactly as Lag's integrated value lives only
-// in the seam and never in its passthrough `evaluate`.
+// Outside a cook the leaves are harmless 0 / origin leaves — the seam is the ONLY place
+// they take meaning, exactly as Lag's integrated value lives only in the seam and never
+// in its passthrough `evaluate`.
 //
-// Lag-parity (the engine proof): a sub-network of ONE `Mix{a←PrevFrame, b←SolverInput}`
+// Lag-parity (the engine proof): a sub-network of ONE `Mix{a←prev, b←input}`
 // is `lerp(prev, in, factor)` == `lagStep` — so a Solver wrapping it must produce the
 // byte-identical channel a Lag produces (statefulOps.test).
 //
@@ -48,80 +50,66 @@ import { z } from 'zod';
 import type { NodeDefinition } from '../core/dag/types';
 import type { Vec3 } from './types';
 import { TransformSourceSchema } from './ParamDriver';
+import { bodyInputChoicesOf } from '../core/dag/subnetworks';
+import { optionsParam, type OptionsLock, type OptionsProvider } from './paramWidget';
 
 const NUMBER_OUT = { out: { type: 'Number', cardinality: 'single' } } as const;
 const VECTOR3_OUT = { out: { type: 'Vector3', cardinality: 'single' } } as const;
 const ORIGIN: Vec3 = [0, 0, 0];
 
-// The sub-network leaves carry no params — their value is injected by the replay seam
-// (or 0 outside it). A named empty schema keeps the node-definition types honest.
-const LeafParams = z.object({});
-type LeafParams = z.infer<typeof LeafParams>;
-
-// ── PrevFrame — the recurrence leaf (Houdini Prev_Frame) ──────────────────────
-export const PrevFrameNode: NodeDefinition<LeafParams, number> = {
-  type: 'PrevFrame',
-  version: 1,
-  pure: true,
-  cost: 'cheap',
-  paramSchema: LeafParams,
-  inputs: {},
-  outputs: NUMBER_OUT,
-  // 0 outside replay. The replay seam (statefulOps.ts) overrides this node's value
-  // with the solver's PREVIOUS-frame output each frame (evaluate `overrides`).
-  evaluate: () => 0,
-};
-
-// ── SolverInput — the live-input leaf (Houdini Input_1) ───────────────────────
-export const SolverInputNode: NodeDefinition<LeafParams, number> = {
-  type: 'SolverInput',
-  version: 1,
-  pure: true,
-  cost: 'cheap',
-  paramSchema: LeafParams,
-  inputs: {},
-  outputs: NUMBER_OUT,
-  // 0 outside replay. The seam injects the solver's live input (its sourceTransform
-  // controller channel) at the current frame.
-  evaluate: () => 0,
-};
-
-// ── PrevFrameVec / SolverInputVec — the VEC recurrence/input leaves (S, #300) ──
+// ── BodyInput / BodyInputVec — the named-input leaves (#1548) ─────────────────
 //
-// The Vector3 twins of PrevFrame/SolverInput, for a TUPLE-state Solver (a 2nd-order
-// spring's state is TWO Vec3s: position + velocity). A tuple Solver carries a Vec3[]
-// state; PrevFrameVec's `slot` selects WHICH component it feeds back (slot 0 = position,
-// slot 1 = velocity, …), so one sub-network can read every state component. SolverInputVec
-// is the live target vector (the controller's whole position, the F2b Point road). Both
-// are 0-vec leaves here — the replay seam injects the real Vec3 per frame (overrides).
+// A leaf that stands for the owner's input named by its `input` param; `slot` picks one element of a `list`
+// input (a tuple Solver's `prevVec`: slot 0 = position, slot 1 = velocity). The value is
+// bound by the owner's seam per cook; outside one the leaf reads its default.
+//
+// Two types, not one, because a node's output type is fixed per type and `connect`
+// checks it: a Number leaf can't feed a Vector3 socket. They replace PrevFrame,
+// SolverInput, PrevFrameVec and SolverInputVec, which a v21 project migrates to
+// (`migrateSolverLeavesToBodyInputs`, src/core/project/migrations.ts).
+// #1569 — `input` is picked from what the leaf's owner declares for the leaf's type, because a
+// name the owner does not declare binds nothing and the leaf quietly reads 0. A stored name no
+// option offers is shown as not found; a leaf in no sub-network shows why it cannot be picked.
+const bodyInputOptions: OptionsProvider = (state, nodeId) =>
+  bodyInputChoicesOf(state, nodeId).names.map((name) => ({ value: name, label: name }));
+const bodyInputLock: OptionsLock = (state, nodeId) =>
+  bodyInputChoicesOf(state, nodeId).owners.length === 0
+    ? 'not inside a sub-network, so nothing feeds it'
+    : null;
 
-// PrevFrameVec carries a `slot` (which state component it reads back).
-export const PrevFrameVecParams = z.object({
+export const BodyInputParams = z.object({
+  input: optionsParam(
+    z.string().min(1).default('input'),
+    bodyInputOptions,
+    undefined,
+    'name',
+    bodyInputLock,
+  ),
   slot: z.number().int().min(0).default(0),
 });
-export type PrevFrameVecParams = z.infer<typeof PrevFrameVecParams>;
+export type BodyInputParams = z.infer<typeof BodyInputParams>;
 
-export const PrevFrameVecNode: NodeDefinition<PrevFrameVecParams, Vec3> = {
-  type: 'PrevFrameVec',
+export const BodyInputNode: NodeDefinition<BodyInputParams, number> = {
+  type: 'BodyInput',
   version: 1,
   pure: true,
   cost: 'cheap',
-  paramSchema: PrevFrameVecParams,
+  paramSchema: BodyInputParams,
   inputs: {},
-  outputs: VECTOR3_OUT,
-  // Origin outside replay; the seam overrides with prevState[slot] each frame.
-  evaluate: () => ORIGIN,
+  outputs: NUMBER_OUT,
+  bodyInputLeaf: true,
+  evaluate: () => 0,
 };
 
-export const SolverInputVecNode: NodeDefinition<LeafParams, Vec3> = {
-  type: 'SolverInputVec',
+export const BodyInputVecNode: NodeDefinition<BodyInputParams, Vec3> = {
+  type: 'BodyInputVec',
   version: 1,
   pure: true,
   cost: 'cheap',
-  paramSchema: LeafParams,
+  paramSchema: BodyInputParams,
   inputs: {},
   outputs: VECTOR3_OUT,
-  // Origin outside replay; the seam injects the live target vector each frame.
+  bodyInputLeaf: true,
   evaluate: () => ORIGIN,
 };
 
@@ -131,14 +119,14 @@ export const SolverParams = z.object({
    *  live input at this frame (Houdini's Input_1-seeds-Prev_Frame; Lag's seed rule).
    *  The interval [seedFrame, currentFrame] is what the seam re-cooks. */
   seedFrame: z.number().int().default(0),
-  /** The live per-frame input the sub-network reads through its SolverInput leaves:
+  /** The live per-frame input the sub-network reads as `input`:
    *  one TRANSFORM CHANNEL of a controller (an animated Null), the same road Lag and
    *  the #296 driver use — so the replay reads a genuinely time-varying scalar (a
    *  wired compute graph is time-invariant). ABSENT = the live input reads 0 (a pure
    *  feedback solver). Optional so a bare Solver serializes byte-identical. */
   sourceTransform: TransformSourceSchema.optional(),
   /** S (#300) — the VEC live input for a TUPLE-state Solver: a controller's WHOLE
-   *  evaluated position (the F2b Point road), injected into SolverInputVec leaves as
+   *  evaluated position (the F2b Point road), bound to `inputVec` as
    *  the target vector (a spring's rest target). Present ⇒ the vec/tuple replay path.
    *  Optional so a scalar Solver serializes byte-identical. */
   sourceTransformVec: z.object({ node: z.string() }).optional(),
@@ -166,19 +154,29 @@ export const SolverNode: NodeDefinition<SolverParams, { out: number; outVec: Vec
   // `body` = the SCALAR sub-network's OUTPUT node (the last compute node of the loop
   // rule). `bodies` = the VEC/TUPLE outputs, one per state slot (slot i ← bodies[i]),
   // for a tuple Solver (a spring: bodies[0]=new position, bodies[1]=new velocity). The
-  // seam cooks the wired one's closure per frame, injecting Prev_Frame(Vec)/SolverInput(Vec).
-  // Wired, so the render subscription + cycle guard walk them.
+  // seam cooks the wired one's closure per frame, binding the named inputs below.
+  // Wired, so the render subscription + cycle guard walk them. #1547 — both are BODY
+  // sockets: the closure behind them is this Solver's sub-network, and nothing in it may
+  // feed anything outside it (`src/core/dag/subnetworks.ts`).
   inputs: {
-    body: { type: 'Number', cardinality: 'single' },
-    bodies: { type: 'Vector3', cardinality: 'list' },
+    body: { type: 'Number', cardinality: 'single', body: true },
+    bodies: { type: 'Vector3', cardinality: 'list', body: true },
   },
   // Two output faces: `out` (Number, the scalar Solver) + `outVec` (Vector3, slot 0 of a
   // tuple Solver — the position a spring drives). A driver reads whichever matches its
   // target; the real integrated value comes from the replay seam, this is the degenerate
-  // point-in-time passthrough (Prev_Frame/SolverInput read 0/origin here).
+  // point-in-time passthrough (the body-input leaves read 0/origin here).
   outputs: {
     out: { type: 'Number', cardinality: 'single' },
     outVec: { type: 'Vector3', cardinality: 'single' },
+  },
+  // #1548 — the sub-network's named inputs. `prev`/`input` feed the scalar `body`;
+  // `prevVec` (one element per state slot) and `inputVec` feed the tuple `bodies`.
+  bodyInputs: {
+    prev: { type: 'Number', cardinality: 'single' },
+    input: { type: 'Number', cardinality: 'single' },
+    prevVec: { type: 'Vector3', cardinality: 'list' },
+    inputVec: { type: 'Vector3', cardinality: 'single' },
   },
   evaluate: (_params, inputs) => {
     const bodies = inputs.bodies as Vec3[] | undefined;

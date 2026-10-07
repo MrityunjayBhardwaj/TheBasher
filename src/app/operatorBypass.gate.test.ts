@@ -157,7 +157,8 @@ describe('ns-2 step 3 — the bypass, censused with its category attached', () =
     // 89 -> 90 at #1240 (PoseLayer), a pose-wire layer and NOT an operator (no chain spine).
     // 90 -> 89 at #1243 (PoseOverride retired, absorbed by PoseLayer), NOT an operator.
     // 89 -> 90 at #1451 (Collection), membership and NOT an operator.
-    expect(listNodeTypes()).toHaveLength(90);
+    // 90 -> 88 at #1548 (the Solver's four input leaves became BodyInput and BodyInputVec), NOT an operator.
+    expect(listNodeTypes()).toHaveLength(88);
   });
 
   it('`muted` is declared ELEVEN times in source, and that is three different populations', () => {

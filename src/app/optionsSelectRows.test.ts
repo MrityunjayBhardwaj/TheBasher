@@ -84,4 +84,16 @@ describe('optionsSelectRows (#1064)', () => {
     }
     expect({ examined, wrong }).toEqual({ examined: 20, wrong: [] });
   });
+
+  it('#1569 — a param that cannot be empty is offered no none row', () => {
+    expect(view(optionsSelectRows('Key', [KEY, RIM], null))).toEqual([
+      'Key|Key|enabled',
+      'Rim|Rim|enabled',
+    ]);
+    // A stored value no option offers still has its row.
+    expect(view(optionsSelectRows('Gone', [KEY], null))).toEqual([
+      'Gone|Gone — not found|disabled',
+      'Key|Key|enabled',
+    ]);
+  });
 });

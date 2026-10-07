@@ -1,7 +1,10 @@
 // #1503 — visibility, as two params: shown in the viewport, and included in the render. Blender
 // keeps the two apart — measured in Blender 5.1.1 (Cycles, headless): an object with its eye off
-// still renders, and one with its render toggle off does not — and so does Houdini (the display
-// flag and Render Visibility). Spread into ObjectParams, GroupParams and CollectionParams.
+// still renders, and one with its render toggle off does not. Houdini does not (#1546): at the
+// object level its one display flag hides a node from the viewport AND takes it out of the
+// objects a render considers (Mantra's Candidate Objects need the flag on; only Force Objects
+// ignores it), and a separate Render flag exists only inside a geometry network. Basher follows
+// Blender here. Spread into ObjectParams, GroupParams and CollectionParams.
 //
 // Blender's eye and its "Disable in Viewports" toggle are merged into one `viewport` flag: the eye
 // belongs to a view layer, and Basher has one scene and no view layers, so a second flag would be
