@@ -5,7 +5,7 @@
 // member starts from the rotation shown, so every skin vertex stays put (the issue's bound: < 1e-5).
 
 import type { Page } from '@playwright/test';
-import { test, expect } from './_fixtures';
+import { test, expect, settleViewFit } from './_fixtures';
 
 interface Node {
   type: string;
@@ -65,6 +65,8 @@ test('#1474 — "pose this bone" on a moving bone leaves the skin where it is dr
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto('/');
   await expect(page.getByTestId('layout')).toBeVisible({ timeout: 60_000 });
+  // #1523 — this spec writes the camera by hand: wait out the boot view fit, which would land after.
+  await settleViewFit(page);
   await page.waitForFunction(() =>
     Boolean((window as unknown as W).__basher_three?.getState().controlsTarget),
   );

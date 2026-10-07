@@ -10,7 +10,7 @@
 //   - on Bone1 (its parent is a root) the inspector's add IK says why it cannot.
 
 import type { Page } from '@playwright/test';
-import { test, expect } from './_fixtures';
+import { test, expect, settleViewFit } from './_fixtures';
 
 interface Node {
   type: string;
@@ -79,6 +79,8 @@ test('#1510 — Shift+I adds an IK that leaves the skin still, and its goal then
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto('/');
   await expect(page.getByTestId('layout')).toBeVisible({ timeout: 60_000 });
+  // #1523 — this spec writes the camera by hand: wait out the boot view fit, which would land after.
+  await settleViewFit(page);
   await page.waitForFunction(() =>
     Boolean((window as unknown as W).__basher_three?.getState().controlsTarget),
   );

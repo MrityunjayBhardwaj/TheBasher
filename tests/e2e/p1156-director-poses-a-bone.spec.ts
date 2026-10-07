@@ -46,7 +46,7 @@
 // the vendor rig in 10 KB (#850) — a spec that needs an untracked 58 MB asset is
 // a spec that skips on every runner.
 
-import { test, expect } from './_fixtures';
+import { test, expect, settleViewFit } from './_fixtures';
 import * as THREE from 'three';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -101,6 +101,8 @@ test('#1156 — a director poses the bone they clicked, through the same road th
   test.setTimeout(180_000);
   await page.goto('/');
   await expect(page.getByTestId('layout')).toBeVisible({ timeout: 20_000 });
+  // #1523 — this spec writes the camera by hand: wait out the boot view fit, which would land after.
+  await settleViewFit(page);
   await page.waitForFunction(
     () => Boolean((window as unknown as Win).__basher_ingestGltfFolder),
     null,
