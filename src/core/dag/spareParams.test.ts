@@ -11,8 +11,9 @@
 
 import { beforeEach, describe, expect, it } from 'vitest';
 import { applyOp, OpError } from './ops';
+import type { DagState } from './state';
 import { emptyDagState, wouldCreateCycle } from './state';
-import type { DagState, Node, SpareParam } from './types';
+import type { Node, SpareParam } from './types';
 import { seedTestRegistry } from './__fixtures__/testNodes';
 import { composeProject, loadProject, saveProject } from '../project/io';
 import { MemoryStorage } from '../storage/MemoryStorage';
@@ -159,9 +160,9 @@ describe('#291 driver-aware cycle guard (G6)', () => {
     // would miss this; with paramDeps it is caught.
     const state: DagState = { nodes: { a: node('a'), b: node('b') }, outputs: {} };
     const paramDeps = { a: ['b'] };
-    expect(wouldCreateCycle(state, 'a', 'b', 32, paramDeps)).toBe(true);
+    expect(wouldCreateCycle(state, 'a', 'b', paramDeps)).toBe(true);
     // Without the paramDeps the same query is (wrongly, pre-#291) considered safe.
-    expect(wouldCreateCycle(state, 'a', 'b', 32)).toBe(false);
+    expect(wouldCreateCycle(state, 'a', 'b')).toBe(false);
   });
 
   it('mixes wired edges and driver deps in one transitive walk', () => {
@@ -174,7 +175,7 @@ describe('#291 driver-aware cycle guard (G6)', () => {
       outputs: {},
     };
     const paramDeps = { b: ['a'] };
-    expect(wouldCreateCycle(state, 'c', 'a', 32, paramDeps)).toBe(true);
-    expect(wouldCreateCycle(state, 'c', 'a', 32)).toBe(false);
+    expect(wouldCreateCycle(state, 'c', 'a', paramDeps)).toBe(true);
+    expect(wouldCreateCycle(state, 'c', 'a')).toBe(false);
   });
 });

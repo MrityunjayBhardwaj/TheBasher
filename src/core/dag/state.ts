@@ -165,24 +165,25 @@ export function* edges(
  * those extra dependencies) so a driver cannot close a loop that the input-only
  * walk would miss. Omitting it preserves the exact pre-#291 behavior.
  *
- * REF: THESIS.md §10 (cycle detection by visited-set + depth limit).
+ * #1581 — the walk has no depth to stop at. It used to give up 32 nodes from `producer`, so a
+ * loop through 34 or more was not seen and the wire was stored. Nothing needs a limit here:
+ * the visited set ends the walk on any graph, and it runs on its own stack, not the call
+ * stack (the evaluator's `DEPTH_LIMIT` guards a recursion; this is not one).
  */
 export function wouldCreateCycle(
   state: DagState,
   producer: NodeId,
   consumer: NodeId,
-  depthLimit = 32,
   paramDeps?: Record<NodeId, NodeId[]>,
 ): boolean {
   if (producer === consumer) return true;
-  const stack: Array<{ id: NodeId; depth: number }> = [{ id: producer, depth: 0 }];
+  const stack: NodeId[] = [producer];
   const visited = new Set<NodeId>();
   while (stack.length) {
-    const { id, depth } = stack.pop()!;
+    const id = stack.pop()!;
     if (id === consumer) return true;
     if (visited.has(id)) continue;
     visited.add(id);
-    if (depth >= depthLimit) continue;
     const node = state.nodes[id];
     // A node absent from `state.nodes` can still carry param dependencies below,
     // so we don't `continue` on a missing node — only skip its input edges.
@@ -190,13 +191,13 @@ export function wouldCreateCycle(
       for (const binding of Object.values(node.inputs)) {
         const refs = Array.isArray(binding) ? binding : [binding];
         for (const ref of refs) {
-          if (!visited.has(ref.node)) stack.push({ id: ref.node, depth: depth + 1 });
+          if (!visited.has(ref.node)) stack.push(ref.node);
         }
       }
     }
     // #291 — also traverse driver/overlay dependencies for this node.
     for (const dep of paramDeps?.[id] ?? []) {
-      if (!visited.has(dep)) stack.push({ id: dep, depth: depth + 1 });
+      if (!visited.has(dep)) stack.push(dep);
     }
   }
   return false;
