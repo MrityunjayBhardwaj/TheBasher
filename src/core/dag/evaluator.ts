@@ -1,8 +1,8 @@
 // Evaluator: walks the DAG lazily, caches by content hash, detects cycles.
 //
 // Three responsibilities (THESIS.md §10):
-//   1. Resolve dependencies via topological sort (cycle detection: visited
-//      set + depth limit 32).
+//   1. Resolve dependencies via topological sort (cycle detection: the walk's own
+//      stack, exactly; `DEPTH_LIMIT` below guards the JS stack, not cycles).
 //   2. Cache by content hash. Invalidate downstream on param/input change.
 //   3. (P0 stub) Schedule by cost — `cheap`/`medium` run main thread inline;
 //      `expensive` will route to a worker in P1+. The hook lives here so
@@ -150,7 +150,20 @@ export function createEvaluatorCache(options: EvaluatorCacheOptions = {}): Evalu
   };
 }
 
-const DEPTH_LIMIT = 32;
+// How many nodes in a row one walk may descend (#1576).
+//
+// This is NOT the cycle guard: a cycle is caught exactly, by `onStack`, at any depth. It was 32,
+// and that made it a cap on content instead: a pose chain is one node per layer, so a character
+// could not have 32 layers in a row (measured 2026-10-07: 31 evaluate, 32 throw).
+//
+// What it protects is the JS stack, because `evalNode` recurses once per node. MEASURED
+// 2026-10-07 with the cap lifted, a chain of Math nodes: the walk overflows between 1,545 and
+// 1,594 nodes under vitest (node), and still evaluates at 3,000 from the app's evaluate seam in
+// Chromium. 512 is a third of the lower figure, which leaves room for a caller that is already
+// deep (a React render, a replay cooking a sub-network inside another walk) and is 16 times what
+// was allowed before. `topoSort` does not recurse, and keeps the same number so the two agree
+// on which graphs are too deep.
+export const DEPTH_LIMIT = 512;
 
 // Params-hash memo (perf — H48 6th occurrence). `hashValue(node.params)` over a
 // heavy imported asset (e.g. a glTF TransformClip with hundreds of per-bone tracks)
@@ -371,7 +384,10 @@ export function evaluate(
 
   function evalNode(id: NodeId, depth: number): EvalResult {
     if (depth > DEPTH_LIMIT) {
-      throw new Error(`Evaluator: depth limit ${DEPTH_LIMIT} exceeded at ${id}`);
+      throw new Error(
+        `Evaluator: "${nodeId}" is fed by more than ${DEPTH_LIMIT} nodes in a row (reached "${id}"); ` +
+          'the chain is too long to evaluate',
+      );
     }
     if (onStack.has(id)) {
       throw new Error(`Evaluator: cycle detected at ${id}`);
@@ -525,7 +541,10 @@ export function topoSort(state: DagState, root: NodeId): NodeId[] {
   while (stack.length) {
     const frame = stack[stack.length - 1];
     if (frame.depth > DEPTH_LIMIT) {
-      throw new Error(`topoSort: depth limit ${DEPTH_LIMIT} exceeded at ${frame.id}`);
+      throw new Error(
+        `topoSort: "${root}" is fed by more than ${DEPTH_LIMIT} nodes in a row (reached "${frame.id}"); ` +
+          'the chain is too long to order',
+      );
     }
     if (frame.visiting) {
       stack.pop();

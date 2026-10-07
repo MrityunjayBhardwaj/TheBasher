@@ -15,6 +15,7 @@ import {
 } from '../core/dag';
 import type { DagState } from '../core/dag/state';
 import { emptyDagState } from '../core/dag/state';
+import { DEPTH_LIMIT } from '../core/dag/evaluator';
 import { bodyInputChoicesOf, subnetworkOf } from '../core/dag/subnetworks';
 import type { Op } from '../core/dag/types';
 import type { BoneSpec, PosedSkeletonValue } from './types';
@@ -223,22 +224,23 @@ describe('#1357 — a Rig poses exactly as the layers inside it wired straight',
   });
 
   it('a sub-network deeper than the chain feeding it is counted from its Rig', () => {
-    // 20 layers of animation under the Rig and 20 inside it: 40 in a row unwrapped is past the
-    // evaluator's depth limit, and the Rig must not make its body pay for the chain below it.
+    // More layers under the Rig and inside it than one walk may descend in a row (#1576): the
+    // Rig must not make its body pay for the chain below it.
+    const EACH = Math.ceil(DEPTH_LIMIT * 0.6);
     const idle = (id: string, from: string, fromSocket = 'out'): Op[] => [
       node(id, 'PoseLayer', { name: id }),
       wire(from, id, 'pose', fromSocket),
     ];
     const ops: Op[] = [node('sk', 'Skeleton', { bones: BONES })];
     let at = 'sk';
-    for (let i = 0; i < 20; i++) {
+    for (let i = 0; i < EACH; i++) {
       ops.push(...idle(`a${i}`, at, i === 0 ? 'pose' : 'out'));
       at = `a${i}`;
     }
     const below = at;
     ops.push(node('in', 'BodyInputPose'));
     at = 'in';
-    for (let i = 0; i < 20; i++) {
+    for (let i = 0; i < EACH; i++) {
       ops.push(...idle(`b${i}`, at));
       at = `b${i}`;
     }
