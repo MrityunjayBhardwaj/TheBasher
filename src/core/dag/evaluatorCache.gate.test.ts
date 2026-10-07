@@ -146,6 +146,11 @@ const ORIGINS: Record<string, Origin> = {
     frequency: 'per-action',
     why: 'The slot take-over click.',
   },
+  'src/agent/mutators/builders/bindSkin.ts · plan → planBindSkin': {
+    count: 1,
+    frequency: 'per-action',
+    why: 'The agent binding a mesh to an armature: the mesh and the armature a capture reads, once per dispatch.',
+  },
   'src/app/animate/addIk.ts · drawnPose → evaluate': {
     count: 1,
     frequency: 'per-action',
@@ -281,6 +286,11 @@ const TAKERS: string[] = [
   'pointeeProblem@src/app/constraintStack.ts',
   'targetProblem@src/agent/mutators/builders/constrain.ts',
   'canApplyTransform@src/app/animate/dispatchApplyTransform.ts',
+  // #1353 — a bind reads the mesh and the armature as they evaluate; the panel hands these its
+  // shared cache, and the agent verb starts with none (its origin row below).
+  'captureStatusOf@src/app/animate/bindSkin.ts',
+  'planBindSkin@src/app/animate/bindSkin.ts',
+  'valueOf@src/app/animate/bindSkin.ts',
   'canModifyGeometry@src/app/modifierGeometry.ts',
   'canWearMaterial@src/app/modifierGeometry.ts',
   'clipBakeStates@src/app/asset/bakeGeneratedClip.ts',

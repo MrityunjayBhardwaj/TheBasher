@@ -210,6 +210,19 @@ const ROWS = [
     hash: '74ec7606',
   },
   {
+    // #1353 — the eighth geometry modifier and the thirteenth operator. It takes the same two
+    // inputs as the Armature modifier, and for the same reason needs a stored mesh on its spine:
+    // it passes anything else through, so a sphere would make its un-muted control pass with the
+    // bypass deleted. The mesh is the skinned triangle, whose bind an un-muted capture replaces.
+    // Hash measured at introduction.
+    type: 'CaptureModifier',
+    src: skinnedSrc,
+    armature: armatureObject,
+    // Stated, because this gate calls `evaluate` directly and no schema fills the defaults in.
+    params: { maxInfluences: 4, dropoff: 4 },
+    hash: '74ec7606',
+  },
+  {
     type: 'ArrayModifier',
     src: meshSrc('#111111'),
     params: { count: 3, offset: [2, 0, 0] },
@@ -332,8 +345,9 @@ describe('ns-2 step 5 — the bypass is honoured at ONE site', () => {
     // 89 -> 90 at #1451 (Collection), NOT an operator, so the operator count does not move.
     // 90 -> 88 at #1548 (the Solver's four input leaves became BodyInput and BodyInputVec), NOT an operator, so the operator count does not move.
     // 88 -> 90 at #1357 (Rig and its pose leaf BodyInputPose), NOT operators, so the operator count does not move.
-    expect(listNodeTypes()).toHaveLength(90);
-    expect(operators()).toHaveLength(12);
+    // 90 -> 91 at #1353 (CaptureModifier), an operator, so both counts move by one together.
+    expect(listNodeTypes()).toHaveLength(91);
+    expect(operators()).toHaveLength(13);
     expect(declaredBypassParams()).toEqual(['muted']);
     expect(FILES.length).toBeGreaterThan(500);
     // Every row below names a registered type — a typo would otherwise read as a clean set.

@@ -83,6 +83,8 @@ const ALL_TYPES = [
   // here: BoxData, SphereData, CurveData, LightData, and now CameraData.
   'CameraData',
   'CameraSelect',
+  // #1353 — skin weights for an armature, made on the mesh's own stack.
+  'CaptureModifier',
   'Character',
   'Clamp',
   'ClipSelect',

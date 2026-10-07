@@ -159,7 +159,8 @@ describe('ns-2 step 3 — the bypass, censused with its category attached', () =
     // 89 -> 90 at #1451 (Collection), membership and NOT an operator.
     // 90 -> 88 at #1548 (the Solver's four input leaves became BodyInput and BodyInputVec), NOT an operator.
     // 88 -> 90 at #1357 (Rig and its pose leaf BodyInputPose), NOT operators.
-    expect(listNodeTypes()).toHaveLength(90);
+    // 90 -> 91 at #1353 (CaptureModifier), an OPERATOR, so the operator census moves with it.
+    expect(listNodeTypes()).toHaveLength(91);
   });
 
   it('`muted` is declared ELEVEN times in source, and that is three different populations', () => {
@@ -171,6 +172,8 @@ describe('ns-2 step 3 — the bypass, censused with its category attached', () =
       // #818 — the fourth geometry modifier. It joins this census by declaring the field,
       // not by being added to a list, which is the whole property this row measures.
       ['src/nodes/BevelModifier.ts', 1],
+      // #1353 — the eighth geometry modifier, joining the same way: by declaring the field.
+      ['src/nodes/CaptureModifier.ts', 1],
       ['src/nodes/ColorCorrect.ts', 1],
       // #1027 — the sixth geometry modifier, joining the same way the fourth and fifth did:
       // by declaring the field, never by being added here.
@@ -196,6 +199,7 @@ describe('ns-2 step 3 — the bypass, censused with its category attached', () =
       'ArmatureModifier',
       'ArrayModifier',
       'BevelModifier',
+      'CaptureModifier', // #1353
       'ColorCorrect',
       'ComponentGroupOp',
       'MaskModifier',
@@ -215,6 +219,7 @@ describe('ns-2 step 3 — the bypass, censused with its category attached', () =
       'ArmatureModifier',
       'ArrayModifier',
       'BevelModifier',
+      'CaptureModifier', // #1353
       'ColorCorrect',
       'ComponentGroupOp',
       'MaskModifier',
@@ -262,7 +267,8 @@ describe('ns-2 step 3 — the bypass, censused with its category attached', () =
     // whose named param the schema does not declare.
     // 23 -> 24 at #393, the same mechanism a third time: `ArmatureModifier` names `muted`.
     // 24 -> 25 at #1240, on the `mute` side: `PoseLayer` is an animation layer, not an operator.
-    expect(zodDeclarations('muted').length + zodDeclarations('mute').length).toBe(25);
+    // 25 -> 26 at #1353, on the `muted` side: `CaptureModifier` names the param its bypass names.
+    expect(zodDeclarations('muted').length + zodDeclarations('mute').length).toBe(26);
     expect(
       registeredDeclaring('muted').filter((t) => registeredDeclaring('mute').includes(t)),
     ).toEqual([]);
@@ -316,6 +322,7 @@ describe('ns-2 step 3 — the bypass, censused with its category attached', () =
       'ArmatureModifier', // #393
       'ArrayModifier',
       'BevelModifier',
+      'CaptureModifier', // #1353
       'ColorCorrect',
       'ComponentGroupOp',
       'MaskModifier',
@@ -361,6 +368,7 @@ describe('ns-2 step 3 — the bypass, censused with its category attached', () =
       'ArmatureModifier', // #393
       'ArrayModifier',
       'BevelModifier',
+      'CaptureModifier', // #1353
       'ComponentGroupOp',
       'MaskModifier',
       'MirrorModifier',
@@ -382,7 +390,7 @@ describe('ns-2 step 3 — the bypass, censused with its category attached', () =
       // line, so the formatter breaks it one member per line and adds the comma the style
       // requires. This row extracts SOURCE TEXT, so it sees formatting as well as membership —
       // worth knowing before someone "cleans up" the expectation and reds the gate.
-      "'ArrayModifier', 'MirrorModifier', 'MaskModifier', 'BevelModifier', 'UVProjectModifier', 'ComponentGroupOp', 'ArmatureModifier',",
+      "'ArrayModifier', 'MirrorModifier', 'MaskModifier', 'BevelModifier', 'UVProjectModifier', 'ComponentGroupOp', 'ArmatureModifier', 'CaptureModifier',",
     );
 
     // STAYS (2/3) — the material tuple, for the same KIND of reason one level up: it defines

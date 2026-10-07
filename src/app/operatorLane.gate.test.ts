@@ -200,6 +200,9 @@ describe('ns-2 step 6 — the lane is derived, in one place, and it is total', (
       // #818 — the fourth geometry modifier. It lands on the data lane by having the sockets,
       // exactly as the row below insists is a DIFFERENT question from which stack offers it.
       BevelModifier: 'ObjectData',
+      // #1353 — the eighth geometry modifier. Like the Armature modifier its second input is the
+      // armature Object, and the lane is still the spine's.
+      CaptureModifier: 'ObjectData',
       ColorCorrect: 'Image',
       // #1027 — the sixth geometry modifier. Like the bevel above it lands on the data lane
       // by having the sockets, which stays a different question from which stack offers it.
@@ -229,6 +232,7 @@ describe('ns-2 step 6 — the lane is derived, in one place, and it is total', (
       'ArmatureModifier', // #393
       'ArrayModifier',
       'BevelModifier',
+      'CaptureModifier', // #1353
       'ComponentGroupOp',
       'MaskModifier',
       'MaterialOverrideOp',
@@ -240,6 +244,7 @@ describe('ns-2 step 6 — the lane is derived, in one place, and it is total', (
       'ArmatureModifier', // #393 — the seventh, a modifier by its own declaration
       'ArrayModifier',
       'BevelModifier',
+      'CaptureModifier', // #1353
       // #1027 — the sixth. It reshapes no geometry either; what it adds is a NAME for a set
       // of faces. A modifier by its own declaration and nothing else, same as the fifth.
       'ComponentGroupOp',
@@ -263,6 +268,7 @@ describe('ns-2 step 6 — the lane is derived, in one place, and it is total', (
       'ArmatureModifier', // #393
       'ArrayModifier',
       'BevelModifier',
+      'CaptureModifier', // #1353
       'ComponentGroupOp',
       'MaskModifier',
       'MaterialOverrideOp',
@@ -283,6 +289,7 @@ describe('ns-2 step 6 — the lane is derived, in one place, and it is total', (
       'ArmatureModifier', // #393 — the seventh, a modifier by its own declaration
       'ArrayModifier',
       'BevelModifier',
+      'CaptureModifier', // #1353
       // #1027 — the sixth. It reshapes no geometry either; what it adds is a NAME for a set
       // of faces. A modifier by its own declaration and nothing else, same as the fifth.
       'ComponentGroupOp',

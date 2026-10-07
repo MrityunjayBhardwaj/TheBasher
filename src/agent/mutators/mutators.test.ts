@@ -18,6 +18,7 @@ import { makeSplitSphere } from '../../test-utils/splitSphere';
 import { makeSplitLight } from '../../test-utils/splitLight';
 import { makeSplitCamera } from '../../test-utils/splitCamera';
 import { dataIdFor } from '../../test-utils/splitKinds';
+import { BIND, skinBindSceneOps } from '../../test-utils/skinBindScene';
 import { buildDefaultDagState } from '../../core/project/default';
 import {
   __resetMutatorRegistryForTests,
@@ -160,7 +161,8 @@ describe('mutator catalog', () => {
     // 35 → 36 at #1339 — `rig.editSkeleton`, Edit mode's skeleton operations.
     // 36 → 37 at #1510 — `rig.addIk`, Pose mode's Add › IK.
     // 37 → 38 at #1357 — `animate.wrapInRig`, the road in to the Rig node.
-    expect(mutators).toHaveLength(38);
+    // 38 → 39 at #1353 — `rig.bindSkin`, a mesh bound to an armature.
+    expect(mutators).toHaveLength(39);
     const names = mutators.map((m) => m.name).sort();
     expect(names).toEqual([
       'mutator.animate.bakePose',
@@ -184,6 +186,7 @@ describe('mutator catalog', () => {
       'mutator.render.addPass',
       'mutator.render.addStitch',
       'mutator.rig.addIk',
+      'mutator.rig.bindSkin',
       'mutator.rig.editSkeleton',
       'mutator.rotate',
       'mutator.scale',
@@ -2324,7 +2327,8 @@ describe('agent.listMutators tool', () => {
     // 35 → 36 at #1339 — `rig.editSkeleton`.
     // 36 → 37 at #1510 — `rig.addIk`.
     // 37 → 38 at #1357 — `animate.wrapInRig`.
-    expect(parsed.mutators).toHaveLength(38);
+    // 38 → 39 at #1353 — `rig.bindSkin`.
+    expect(parsed.mutators).toHaveLength(39);
   });
 });
 
@@ -3954,6 +3958,7 @@ import {
   renameBoneMutator as _renameBoneM,
   editSkeletonMutator as _editSkeletonM,
   addIkMutator as _addIkM,
+  bindSkinMutator as _bindSkinM,
   bakePoseMutator as _bakePoseM,
   wrapInRigMutator as _wrapInRigM,
   retargetMutator as _retargetM,
@@ -4358,6 +4363,13 @@ describe('V14 deeper non-redundancy — Op-shape probe (issue #22)', () => {
       mutator: _addIkM as MutatorDefinition<unknown>,
       build: buildSceneForBoneRename,
       spec: { object: 'br_arm', bone: 'head' },
+    },
+    'mutator.rig.bindSkin': {
+      mutator: _bindSkinM as MutatorDefinition<unknown>,
+      // A stored cylinder and a three-bone armature, neither imported (#1353).
+      build: () =>
+        skinBindSceneOps().reduce((s, op) => applyOp(s, op).next, buildDefaultDagState()),
+      spec: { mesh: BIND.mesh, armature: BIND.armature },
     },
     'mutator.animation.retarget': {
       mutator: _retargetM as MutatorDefinition<unknown>,

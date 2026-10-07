@@ -37,6 +37,7 @@ import {
   resolveStackBase,
 } from './operatorStack';
 import { uiEvaluatorCache } from './uiEvaluatorCache';
+import { SkinBindControls } from './SkinBindControls';
 
 /**
  * PRESENTATION ONLY — the menu wording and the order it reads in. **Not membership.**
@@ -66,6 +67,7 @@ const LABELS: Readonly<Record<string, string>> = {
   BevelModifier: 'Bevel',
   UVProjectModifier: 'UV Project',
   ArmatureModifier: 'Armature',
+  CaptureModifier: 'Capture Weights',
 };
 
 /** #498 — a module constant, not a fresh `[]` per render, so the rows keep a stable
@@ -143,51 +145,56 @@ export function ModifierStackControls({ nodeId }: { nodeId: string }) {
   }
 
   return (
-    <OperatorStackRows
-      testIdPrefix="modifier"
-      entries={stack}
-      addable={addable}
-      selectedNodeId={selectedNodeId}
-      emptyLabel="No modifiers."
-      onSelect={select}
-      onMute={onMute}
-      onMove={onMove}
-      onRemove={onRemove}
-      onAdd={onAdd}
-      banner={
-        // #498 — the banner now fires on the CAPABILITY, not on `stack.length > 0`. It
-        // used to explain modifiers that were already there and doing nothing; with the
-        // add refused, the section would otherwise be silently empty and the user would
-        // be left to guess why there is no "+ Add".
-        capability?.state === 'never' ? (
-          <p
-            data-testid="modifier-not-applicable"
-            className="rounded border border-border-strong bg-bg-2 px-1.5 py-1 text-fg-dim"
-          >
-            Modifiers reshape mesh data. {baseType} has no geometry to rewrite, so this stack stays
-            empty.
-          </p>
-        ) : capability?.state === 'not-yet' ? (
-          <p
-            data-testid="modifier-unsupported-source"
-            className="rounded border border-border-strong bg-warn/10 px-1.5 py-1 text-warn"
-          >
-            ⚠ Modifiers do not reshape {baseType} yet. This is a gap rather than a limit — see issue
-            #{capability.issue}.
-          </p>
-        ) : unsupportedSource ? (
-          // The residual case: a source that IS a modifiable kind but could not be
-          // evaluated (a cycle, a dangling ref). Rare, and worth its own sentence rather
-          // than being folded into either answer above.
-          <p
-            data-testid="modifier-unsupported-source"
-            className="rounded border border-border-strong bg-warn/10 px-1.5 py-1 text-warn"
-          >
-            ⚠ Modifiers only reshape mesh data (Box, Sphere, baked). This {baseType} source passes
-            through unchanged.
-          </p>
-        ) : null
-      }
-    />
+    <>
+      <OperatorStackRows
+        testIdPrefix="modifier"
+        entries={stack}
+        addable={addable}
+        selectedNodeId={selectedNodeId}
+        emptyLabel="No modifiers."
+        onSelect={select}
+        onMute={onMute}
+        onMove={onMove}
+        onRemove={onRemove}
+        onAdd={onAdd}
+        banner={
+          // #498 — the banner now fires on the CAPABILITY, not on `stack.length > 0`. It
+          // used to explain modifiers that were already there and doing nothing; with the
+          // add refused, the section would otherwise be silently empty and the user would
+          // be left to guess why there is no "+ Add".
+          capability?.state === 'never' ? (
+            <p
+              data-testid="modifier-not-applicable"
+              className="rounded border border-border-strong bg-bg-2 px-1.5 py-1 text-fg-dim"
+            >
+              Modifiers reshape mesh data. {baseType} has no geometry to rewrite, so this stack
+              stays empty.
+            </p>
+          ) : capability?.state === 'not-yet' ? (
+            <p
+              data-testid="modifier-unsupported-source"
+              className="rounded border border-border-strong bg-warn/10 px-1.5 py-1 text-warn"
+            >
+              ⚠ Modifiers do not reshape {baseType} yet. This is a gap rather than a limit — see
+              issue #{capability.issue}.
+            </p>
+          ) : unsupportedSource ? (
+            // The residual case: a source that IS a modifiable kind but could not be
+            // evaluated (a cycle, a dangling ref). Rare, and worth its own sentence rather
+            // than being folded into either answer above.
+            <p
+              data-testid="modifier-unsupported-source"
+              className="rounded border border-border-strong bg-warn/10 px-1.5 py-1 text-warn"
+            >
+              ⚠ Modifiers only reshape mesh data (Box, Sphere, baked). This {baseType} source passes
+              through unchanged.
+            </p>
+          ) : null
+        }
+      />
+      {/* #1353 — binding to an armature: the offer on a mesh, the armature an operator points at,
+          and what a capture did. */}
+      {canAdd ? <SkinBindControls nodeId={nodeId} base={base} /> : null}
+    </>
   );
 }

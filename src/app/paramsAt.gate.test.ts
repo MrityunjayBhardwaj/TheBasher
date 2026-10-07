@@ -217,6 +217,10 @@ const CONSUMERS: Record<string, Decision> = {
   // time-free pose wire the bake does and samples it at the `time` its spec carries, off the state the
   // mutator is handed; evaluating at the playhead would change nothing but the hash.
   'src/app/animate/addIk.ts': authored('fixed-ctx-by-design'),
+  // #1353 — a bind measures a mesh's REST points against an armature's REST bones. Neither is a
+  // function of time, so it evaluates the authored graph at the default ctx; the playhead would
+  // change nothing a capture reads.
+  'src/app/animate/bindSkin.ts': authored('fixed-ctx-by-design'),
   // #1215 — the dopesheet's read-only rows for a character's computed source. It evaluates the same
   // time-free wire the bake does, for the same answer (its pose times, `bakeTimes`), off the authored
   // state the timeline holds; the playhead would change nothing but the hash.
@@ -342,7 +346,9 @@ describe('#582 — who evaluates the graph, and which params they need', () => {
     // arrives under that layer, to solve the layer's blend backwards (declared above as fixed-ctx).
     // 56 → 57 at #1510, a new road: Add › IK reads the drawn pose to place the goal on the tip
     // (declared above as fixed-ctx).
-    expect(evaluatorConsumers()).toHaveLength(57); // 39 -> 40 at #935 (placement) (the motion resolver)
+    // 57 → 58 at #1353, a new road: binding a mesh reads its rest points and the armature's rest
+    // bones (declared above as fixed-ctx).
+    expect(evaluatorConsumers()).toHaveLength(58); // 39 -> 40 at #935 (placement) (the motion resolver)
   });
 
   it('every reason is load-bearing — no member of any union is decorative', () => {

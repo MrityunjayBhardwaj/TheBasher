@@ -91,6 +91,7 @@ describe('ns-2 step 4 — being an operator is ONE declaration', () => {
       'ArmatureModifier', // data lane — geometry (#393, the first that DEFORMS over time)
       'ArrayModifier', // data lane — geometry
       'BevelModifier', // data lane — geometry (#818/#814, the first that MINTS elements)
+      'CaptureModifier', // #1353
       'ColorCorrect', // effect lane
       'ComponentGroupOp', // data lane — geometry (#1027, the first whose VALUES are authored)
       'MaskModifier', // data lane — geometry (#668/#671, the first that REMOVES faces)
@@ -195,8 +196,12 @@ describe('ns-2 step 4 — being an operator is ONE declaration', () => {
     // `ObjectData` spine, and Blender's own Armature modifier can be limited to one vertex group
     // — a scope this could have and does not yet. Declared `'declined'`, never the false
     // `'no-component-domain'`.
+    //
+    // #1353 is the FIFTH, the same deferral again: `CaptureModifier` stands on an `ObjectData`
+    // spine, and Houdini's capture takes a point group — a scope this could have and does not yet.
     expect(where((c) => c.scope.kind === 'unscoped' && c.scope.why === 'declined')).toEqual([
       'ArmatureModifier',
+      'CaptureModifier',
       'UVProjectModifier',
     ]);
   });
@@ -221,6 +226,7 @@ describe('ns-2 step 4 — being an operator is ONE declaration', () => {
       'ArmatureModifier', // #393
       'ArrayModifier',
       'BevelModifier',
+      'CaptureModifier', // #1353
       'ComponentGroupOp',
       'MaskModifier',
       'MirrorModifier',

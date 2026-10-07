@@ -60,6 +60,7 @@ import { ComponentGroupOpNode } from './ComponentGroupOp';
 import { BevelModifierNode } from './BevelModifier';
 import { UVProjectModifierNode } from './UVProjectModifier';
 import { ArmatureModifierNode } from './ArmatureModifier';
+import { CaptureModifierNode } from './CaptureModifier';
 import { NavmeshNode } from './Navmesh';
 import { NormalPassNode } from './NormalPass';
 import { ParamDriverNode } from './ParamDriver';
@@ -205,6 +206,7 @@ const ALL: NodeDefinition[] = [
   // modifier — and because it is a geometry-lane operator: what flows through it is ObjectData.
   UVProjectModifierNode as unknown as NodeDefinition,
   ArmatureModifierNode as unknown as NodeDefinition,
+  CaptureModifierNode as unknown as NodeDefinition,
   // #1027 — THE SIXTH, AND THE FIRST WHOSE ATTRIBUTE VALUES THE AUTHOR SUPPLIES. UVProject
   // above also reshapes nothing and also authors a layer, but its values are a geometric
   // function and the author picks only a size; this one's values ARE the statement ("these
