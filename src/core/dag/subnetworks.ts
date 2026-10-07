@@ -121,6 +121,85 @@ export function newSubnetworkViolation(before: DagState, after: DagState): strin
   );
 }
 
+// ── #1579 — a node with its own history may not read the inputs of the Solver around it ──
+//
+// A Solver cooks its sub-network once a frame with its inputs bound to the leaves inside. A
+// Lag or a Solver met during that cook is replayed apart, from its own seed, in an evaluation
+// of its own where the outer leaves are not bound. So one that reads an outer leaf read 0, and
+// the outer result was a plausible wrong number (measured: 2, 2, 2, 2 against a hand-worked
+// 2, 4, 7, 12). Doing it properly means integrating the two together, the inner state carried
+// inside the outer one; until that exists the wire is refused, and the refusal says what works.
+//
+// Three operations can make one: `connect`, `addNode` with inputs, and a `setParam` that
+// renames the input a leaf reads (the inspector's picker). `ops.ts` asks after each.
+//
+// Only an owner that is itself stateful is concerned. A Rig is not cooked: the evaluator
+// resolves its leaves wherever they are asked, so a node inside one reads them correctly.
+
+export interface StatefulLeafRead {
+  /** The stateful node inside the sub-network. */
+  readonly inner: NodeId;
+  /** The stateful owner whose input it reads. */
+  readonly owner: NodeId;
+  /** The owner's leaf it reaches, and the input that leaf reads. */
+  readonly leaf: NodeId;
+  readonly input: string;
+}
+
+/** Every stateful node that sits inside a stateful owner's sub-network and reads one of that
+ *  owner's leaves, directly or through the nodes between. */
+export function statefulLeafReads(state: DagState): StatefulLeafRead[] {
+  const out: StatefulLeafRead[] = [];
+  for (const owner of Object.values(state.nodes)) {
+    if (getNodeType(owner.type)?.stateful !== true) continue;
+    if (bodySocketsOf(owner.type).length === 0) continue;
+    const leaves = new Map(bodyInputLeavesOf(state, owner.id).map((l) => [l.id, l.input]));
+    if (leaves.size === 0) continue;
+    for (const inner of subnetworkOf(state, owner.id)) {
+      const node = state.nodes[inner];
+      if (!node || getNodeType(node.type)?.stateful !== true) continue;
+      const seen = new Set<NodeId>();
+      const stack: NodeId[] = [inner];
+      while (stack.length) {
+        const id = stack.pop()!;
+        if (seen.has(id)) continue;
+        seen.add(id);
+        const input = leaves.get(id);
+        if (input !== undefined) {
+          out.push({ inner, owner: owner.id, leaf: id, input });
+          break;
+        }
+        for (const binding of Object.values(state.nodes[id]?.inputs ?? {})) {
+          const refs = Array.isArray(binding) ? binding : binding ? [binding] : [];
+          for (const ref of refs) if (!seen.has(ref.node)) stack.push(ref.node);
+        }
+      }
+    }
+  }
+  return out;
+}
+
+const readKeyOf = (r: StatefulLeafRead) => `${r.owner}\u0000${r.inner}\u0000${r.leaf}`;
+
+/** The first such read `after` holds that `before` did not, as the reason a write is refused,
+ *  or null. A project saved before the rule still loads and edits. */
+export function newStatefulLeafRead(before: DagState, after: DagState): string | null {
+  const now = statefulLeafReads(after);
+  if (now.length === 0) return null;
+  const had = new Set(statefulLeafReads(before).map(readKeyOf));
+  const fresh = now.find((r) => !had.has(readKeyOf(r)));
+  if (!fresh) return null;
+  const innerType = after.nodes[fresh.inner]?.type ?? 'node';
+  const ownerType = after.nodes[fresh.owner]?.type ?? 'node';
+  return (
+    `${innerType} "${fresh.inner}" is inside the sub-network of ${ownerType} "${fresh.owner}" and ` +
+    `would read its "${fresh.input}" input (through "${fresh.leaf}"). A ${innerType} keeps a ` +
+    `history of its own, replayed apart from the ${ownerType} around it, so it cannot see that ` +
+    `input yet. Build the step into "${fresh.owner}"'s own sub-network instead (a Mix of ` +
+    `"prev" and the input is a lag), or feed "${fresh.inner}" from outside the sub-network.`
+  );
+}
+
 // ── #1548 — the sub-network's named inputs ──────────────────────────────────────
 //
 // An owner declares named inputs (`bodyInputs`); inside its sub-network a body-input leaf

@@ -17,7 +17,7 @@ import { passRoleOf } from './passRole';
 import { requireNodeType } from './registry';
 import type { DagState } from './state';
 import { getNode, hasNode, wouldCreateCycle } from './state';
-import { newSubnetworkViolation } from './subnetworks';
+import { newStatefulLeafRead, newSubnetworkViolation } from './subnetworks';
 import type {
   InputBinding,
   InputDescriptor,
@@ -146,7 +146,7 @@ export function applyOp(state: DagState, op: Op): ApplyResult {
     case 'disconnect':
       return applyDisconnect(state, op);
     case 'setParam':
-      return followNames(state, applySetParam(state, op), op.nodeId);
+      return holdingLeafNames(state, op, followNames(state, applySetParam(state, op), op.nodeId));
     case 'setMeta':
       return followNames(state, applySetMeta(state, op), op.nodeId);
     case 'setSpareParam':
@@ -157,11 +157,27 @@ export function applyOp(state: DagState, op: Op): ApplyResult {
 }
 
 /** #1547 — refuse an edge-adding op that leaves a sub-network with a second owner or an
- *  outside consumer. Only violations the op itself introduced are refused. */
+ *  outside consumer. #1579 — or a Lag or Solver inside a Solver's sub-network reading that
+ *  Solver's inputs. Only violations the op itself introduced are refused. */
 function holdingSubnetworks(state: DagState, op: Op, result: ApplyResult): ApplyResult {
   if (op.type === 'addNode' && !op.inputs) return result;
-  const reason = newSubnetworkViolation(state, result.next);
+  const reason =
+    newSubnetworkViolation(state, result.next) ?? newStatefulLeafRead(state, result.next);
   if (reason) throw new OpError(`${op.type}: ${reason}`, op);
+  return result;
+}
+
+/** #1579 — a sub-network leaf reads the input its params name, so renaming that is the one way
+ *  to make a Lag read the Solver around it without adding a wire. Asked only of a leaf. */
+function holdingLeafNames(
+  state: DagState,
+  op: Extract<Op, { type: 'setParam' }>,
+  result: ApplyResult,
+): ApplyResult {
+  const node = state.nodes[op.nodeId];
+  if (!node || requireNodeType(node.type).bodyInputLeaf !== true) return result;
+  const reason = newStatefulLeafRead(state, result.next);
+  if (reason) throw new OpError(`setParam: ${reason}`, op);
   return result;
 }
 

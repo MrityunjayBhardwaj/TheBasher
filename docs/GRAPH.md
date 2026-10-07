@@ -74,7 +74,10 @@ OUTPUTS ─── outputs.scene · outputs.render
    name; the owner binds a value to each name when it cooks the sub-network (#1548). A
    stateful owner (the Solver) is cooked per frame by its replay seam, and the evaluator asks
    that seam whenever a walk reaches a stateful node, so a sub-network can hold another: each
-   cook is its own evaluation with its own bindings (#1558). A stateless one (the
+   cook is its own evaluation with its own bindings (#1558). One thing is refused for now: a
+   Lag or Solver inside a Solver's sub-network reading that Solver's own inputs. Its history
+   is replayed apart from the Solver around it, where those inputs are not bound, so it would
+   read 0; the wire is refused with what to do instead (#1579). A stateless one (the
    Rig, #1357) needs no cook: each named input is the owner's own socket of that name, and
    the evaluator makes the leaf read exactly what that socket's producer evaluates to, whether
    it is asked through the owner or of a node inside on its own. The node view's levels
