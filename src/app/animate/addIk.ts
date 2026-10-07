@@ -267,7 +267,12 @@ export function planAddIk(state: DagState, req: AddIkRequest): AddIkPlan {
       children: 'follow',
     });
     if (!turned.ok) return turned;
-    next = turned.bones;
+    // #1353 — a goal made here is a control: it moves no skin, so a capture skips it. (Blender's
+    // own goal is an Empty, which no mesh can be bound to at all.) A bone the user named as the
+    // goal keeps whatever it was.
+    const control = applySkeletonEdit(turned.bones, { op: 'deform', bone: goal, deform: false });
+    if (!control.ok) return control;
+    next = control.bones;
     added.push(goal);
   }
   const pole = applySkeletonEdit(next, {
@@ -277,7 +282,13 @@ export function planAddIk(state: DagState, req: AddIkRequest): AddIkPlan {
     name: ikControlName(tip, 'pole'),
   });
   if (!pole.ok) return pole;
-  next = pole.bones;
+  const poleControl = applySkeletonEdit(pole.bones, {
+    op: 'deform',
+    bone: pole.added[0],
+    deform: false,
+  });
+  if (!poleControl.ok) return poleControl;
+  next = poleControl.bones;
   added.push(pole.added[0]);
 
   const ik: PoseLayerIk = {

@@ -99,6 +99,8 @@ export type SkeletonEdit =
   | { readonly op: 'preferredAngle'; readonly bone: string; readonly angle: Vec3 | null }
   /** #1344 — store `bone`'s joint limits (radians from rest, per axis), or clear them with null. */
   | { readonly op: 'limits'; readonly bone: string; readonly limits: JointLimits | null }
+  /** #1353 — say whether `bone` moves skin. A bone that does not is skipped when weights are captured. */
+  | { readonly op: 'deform'; readonly bone: string; readonly deform: boolean }
   /**
    * #1341 — make the skeleton symmetric across the armature's plane through the origin ⟂ `axis`:
    * each of `bones` with a side in its name (`flipSideName`) gets a mirror twin, made or updated.
@@ -228,6 +230,13 @@ function settle(
   };
   for (let i = 0; i < next.length; i++) solve(i, 0);
   return next;
+}
+
+/** `bone` with its deform flag set: only `false` is stored, so a deforming bone carries no key. */
+function withDeform(bone: BoneSpec, deform: boolean): BoneSpec {
+  const { deform: _gone, ...rest } = bone;
+  void _gone;
+  return deform ? rest : { ...rest, deform: false };
 }
 
 const _p = new THREE.Vector3();
@@ -548,6 +557,14 @@ export function applySkeletonEdit(
       return { ok: true, bones: next, added: [], active: bones[at].name };
     }
 
+    case 'deform': {
+      const at = find(edit.bone);
+      if (at === null) return missing(edit.bone);
+      const next = bones.map((b) => ({ ...b }));
+      next[at] = withDeform(next[at], edit.deform);
+      return { ok: true, bones: next, added: [], active: bones[at].name };
+    }
+
     case 'symmetrize': {
       const axis = 'XYZ'.indexOf(edit.axis ?? 'X');
       const normal = new THREE.Vector3(axis === 0 ? 1 : 0, axis === 1 ? 1 : 0, axis === 2 ? 1 : 0);
@@ -607,7 +624,8 @@ export function applySkeletonEdit(
             ? -1
             : (index.get(flipSideName(parentName)) ?? index.get(parentName)!);
         next[j] = {
-          ...next[j],
+          // #1353 — the twin moves skin exactly when its source does (Blender copies the flag).
+          ...withDeform(next[j], src.deform !== false),
           parent: twinParent,
           ...(src.preferredAngle ? { preferredAngle: [...src.preferredAngle] as Vec3 } : {}),
           // #1344 — the twin's frame is the half turn of the source's, and a mirrored turn read in

@@ -52,6 +52,9 @@ export const SkeletonParams = z.object({
         limits: z
           .object({ x: AxisRange.optional(), y: AxisRange.optional(), z: AxisRange.optional() })
           .optional(),
+        // #1353 — `false` on a bone that moves no skin (`BoneSpec.deform`). Optional, no default,
+        // as above; a deforming bone carries no key.
+        deform: z.literal(false).optional(),
       }),
     )
     // #1183 — a skeleton is a tree. A write whose parent chain loops is refused here,
@@ -114,6 +117,7 @@ export const SkeletonNode: NodeDefinition<SkeletonParams, SkeletonOutputs> = {
         ...(b.scale !== undefined ? { scale: b.scale } : {}),
         ...(b.preferredAngle !== undefined ? { preferredAngle: b.preferredAngle } : {}),
         ...(b.limits !== undefined ? { limits: b.limits } : {}),
+        ...(b.deform === false ? { deform: false as const } : {}),
       })),
     };
     return { out, pose: restPoseOf(out) };

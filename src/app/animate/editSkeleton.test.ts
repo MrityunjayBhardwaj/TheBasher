@@ -337,6 +337,19 @@ describe('#1340 — orient and roll: each mode against a hand-computed frame', (
     const missing = applySkeletonEdit(CHAIN, { op: 'limits', bone: 'nope', limits: null });
     expect(missing.ok).toBe(false);
   });
+
+  it('#1353 — a bone is marked as not deforming, and unmarked: only `false` is ever stored', () => {
+    expect('deform' in CHAIN[1]).toBe(false);
+    const off = run({ op: 'deform', bone: 'B', deform: false }, CHAIN).bones;
+    expect(off[1].deform).toBe(false);
+    // The others are untouched, and nothing else about the bone changed.
+    expect(off.filter((b) => 'deform' in b).map((b) => b.name)).toEqual(['B']);
+    expect({ ...off[1], deform: undefined }).toEqual({ ...CHAIN[1], deform: undefined });
+    const on = run({ op: 'deform', bone: 'B', deform: true }, off).bones;
+    expect('deform' in on[1]).toBe(false);
+    expect(on).toEqual(CHAIN);
+    expect(applySkeletonEdit(CHAIN, { op: 'deform', bone: 'nope', deform: false }).ok).toBe(false);
+  });
 });
 
 describe('#1341 — symmetrize', () => {
@@ -389,6 +402,19 @@ describe('#1341 — symmetrize', () => {
       ).toBeLessThan(1e-9);
     }
     expect(r.bones.find((b) => b.name === 'Hand_R')!.preferredAngle).toEqual([0, 0, 0.4]);
+  });
+
+  it('#1353 — a twin deforms exactly when its source does, made or already there', () => {
+    const at = (bones: readonly BoneSpec[], name: string) => bones.find((b) => b.name === name)!;
+    // A control on the left: its new twin is a control too.
+    const off = BODY.map((b) => (b.name === 'Hand_L' ? { ...b, deform: false as const } : b));
+    const made = run({ op: 'symmetrize', bones: ['Arm_L', 'Hand_L'] }, off).bones;
+    expect(at(made, 'Hand_R').deform).toBe(false);
+    expect('deform' in at(made, 'Arm_R')).toBe(false);
+    // The source deforms again: the twin that was a control follows it back.
+    const back = made.map((b) => (b.name === 'Hand_L' ? at(BODY, 'Hand_L') : b));
+    const again = run({ op: 'symmetrize', bones: ['Arm_L', 'Hand_L'] }, back).bones;
+    expect('deform' in at(again, 'Hand_R')).toBe(false);
   });
 
   it('#1344 — a twin takes its source’s limits, and held at them the two arms are mirror images', () => {

@@ -136,6 +136,12 @@ describe('#1510 — Add › IK leaves the drawn pose where it was', () => {
     for (const name of ['tip_ik_goal', 'tip_ik_pole']) {
       expect(bones.find((b) => b.name === name)!.parent).toBe(-1);
     }
+    // #1353 — and both are controls: they move no skin, so a capture skips them. The chain's own
+    // bones still deform.
+    expect(bones.filter((b) => b.deform === false).map((b) => b.name)).toEqual([
+      'tip_ik_goal',
+      'tip_ik_pole',
+    ]);
   });
 
   it('at other times the solve reads the FK under it (the goal stays put, the tip reaches it)', () => {
@@ -264,6 +270,8 @@ describe('#1510 — an existing goal', () => {
     expect(addIk({ bone: 'tip', goal: 'ctrl' }).ok).toBe(true);
     const bones = (live().nodes[SKEL].params as { bones: BoneSpec[] }).bones;
     expect(bones.map((b) => b.name).slice(count)).toEqual(['tip_ik_pole']);
+    // #1353 — a bone the user named as the goal keeps deforming; only the pole made here does not.
+    expect(bones.filter((b) => b.deform === false).map((b) => b.name)).toEqual(['tip_ik_pole']);
     const after = drawn();
     expect(after.get('tip')!.distanceTo(after.get('ctrl')!)).toBeLessThan(1e-6);
   });
@@ -371,6 +379,14 @@ describe("#1341 — symmetrize mirrors an arm's IK with the arm", () => {
       pole: 'hand_ik_pole_R',
     });
     expect(Math.abs(right.poleAngle - left.poleAngle)).toBeCloseTo(180, 9);
+    // #1353 — the twin's controls are controls too.
+    const sided = (live().nodes[SKEL].params as { bones: BoneSpec[] }).bones;
+    expect(
+      sided
+        .filter((b) => b.deform === false)
+        .map((b) => b.name)
+        .sort(),
+    ).toEqual(['hand_ik_goal_L', 'hand_ik_goal_R', 'hand_ik_pole_L', 'hand_ik_pole_R']);
 
     // Mirror images: every right joint and control at the left one's x negated.
     const at = drawn(0);
