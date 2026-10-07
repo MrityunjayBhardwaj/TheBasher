@@ -112,7 +112,8 @@ import {
 import { useActiveBone } from './boneSelection';
 import { useArmatureMode } from './armatureMode';
 import { useArmatureModeStore } from './stores/armatureModeStore';
-import { editSkeletonFromUI } from './skeletonEditActions';
+import { addIkFromUI, editSkeletonFromUI } from './skeletonEditActions';
+import { ikLayersOnBone } from './animate/addIk';
 import type { OrientUp, SkeletonEdit } from './animate/editSkeleton';
 import { collectSkeletonObjects } from './skeletonObjects';
 import { useBoneSelectionStore } from './stores/boneSelectionStore';
@@ -4261,8 +4262,71 @@ function SelectedBoneSection() {
       {mode === 'edit' ? (
         <EditBoneRow nodeId={bone.nodeId} boneName={bone.boneName} />
       ) : (
-        <BonePoseRow nodeId={bone.nodeId} boneName={bone.boneName} />
+        <>
+          <BonePoseRow nodeId={bone.nodeId} boneName={bone.boneName} />
+          {/* Keyed by bone: a refusal said for one bone is not about the next one selected. */}
+          <AddIkRow
+            key={`${bone.nodeId}:${bone.boneName}`}
+            nodeId={bone.nodeId}
+            boneName={bone.boneName}
+          />
+        </>
       )}
+    </div>
+  );
+}
+
+/**
+ * #1510 — Add › IK on the selected bone (Shift+I): the same road as the key, so a refusal reads here
+ * exactly as the key's notice and the agent's verb say it.
+ */
+function AddIkRow({ nodeId, boneName }: { nodeId: string; boneName: string }) {
+  const [refusal, setRefusal] = useState<string | null>(null);
+  const state = useDagStore((s) => s.state);
+  // #1542 — the ik layers naming this bone, each with why it solves nothing: a broken IK hands the
+  // pose through, which on screen is an arm that just does not reach.
+  const layers = useMemo(() => ikLayersOnBone(state, nodeId, boneName), [state, nodeId, boneName]);
+  return (
+    <div className="mt-2 flex flex-col gap-1">
+      {layers.map((layer) => (
+        <div
+          key={layer.id}
+          className="font-mono text-[10px] leading-tight"
+          data-testid={`inspector-bone-ik-${layer.id}`}
+          data-ik-problem={layer.problem ? 'true' : undefined}
+        >
+          <span className="text-fg/60">
+            IK “{layer.name}”: {layer.ik.root} → {layer.ik.mid} → {layer.ik.tip} reaches{' '}
+            {layer.ik.goal}
+            {layer.ik.pole ? `, pole ${layer.ik.pole}` : ''}
+          </span>
+          {layer.problem ? (
+            <span className="block text-warn" data-testid={`inspector-bone-ik-problem-${layer.id}`}>
+              solves nothing: {layer.problem}
+            </span>
+          ) : null}
+        </div>
+      ))}
+      <button
+        type="button"
+        className="w-full rounded border border-border px-2 py-1 font-mono text-[10px] text-fg/70 hover:text-fg"
+        data-testid="inspector-bone-add-ik"
+        title="Add a two-bone IK reaching from this joint, with a goal and a pole bone (Shift+I)"
+        onClick={() => {
+          const res = addIkFromUI(nodeId, boneName);
+          setRefusal(res.ok ? null : res.reason);
+        }}
+      >
+        add IK
+      </button>
+      {refusal ? (
+        <span
+          className="font-mono text-[10px] text-warn"
+          data-testid="inspector-bone-add-ik-refusal"
+        >
+          {refusal}
+        </span>
+      ) : null}
     </div>
   );
 }
@@ -4596,6 +4660,65 @@ function EditBoneRow({ nodeId, boneName }: { nodeId: string; boneName: string })
           />
         ))}
       </div>
+      {/* #1344 — joint limits: how far the bone may turn from its rest, per axis. Posing and IK stop
+          at them. An axis switched on starts at a half turn each way (Blender's IK limit default). */}
+      {(['x', 'y', 'z'] as const).map((axis) => {
+        const range = spec.limits?.[axis];
+        const store = (next: readonly [number, number] | null) => {
+          const limits = { ...(spec.limits ?? {}) } as {
+            x?: readonly [number, number];
+            y?: readonly [number, number];
+            z?: readonly [number, number];
+          };
+          if (next) limits[axis] = next;
+          else delete limits[axis];
+          edit(
+            {
+              op: 'limits',
+              bone: boneName,
+              limits: Object.keys(limits).length > 0 ? limits : null,
+            },
+            `set ${boneName} ${axis} limit`,
+          );
+        };
+        return (
+          <div key={axis} className="flex items-center gap-1 text-[11px] text-fg/80">
+            <label
+              className="flex w-16 shrink-0 items-center gap-1 whitespace-nowrap font-mono text-[10px] text-fg/50"
+              title={`Limit how far the bone turns about its ${axis.toUpperCase()} axis from rest (degrees). Posing and IK stop at the limit.`}
+            >
+              <input
+                type="checkbox"
+                aria-label={`limit ${axis}`}
+                data-testid={`edit-bone-limit-${axis}`}
+                checked={range !== undefined}
+                onChange={(e) => store(e.target.checked ? [-Math.PI, Math.PI] : null)}
+              />
+              limit {axis}
+            </label>
+            {([0, 1] as const).map((end) => (
+              <input
+                key={end}
+                type="number"
+                step="1"
+                aria-label={`limit ${axis} ${end === 0 ? 'minimum' : 'maximum'}`}
+                disabled={range === undefined}
+                value={range ? Math.round(range[end] * RAD * 1000) / 1000 : ''}
+                placeholder={end === 0 ? 'min' : 'max'}
+                data-testid={`edit-bone-limit-${axis}-${end === 0 ? 'min' : 'max'}`}
+                className="w-full rounded border border-border bg-muted px-1.5 py-0.5 text-right font-mono text-[11px] text-fg disabled:opacity-40"
+                onChange={(e) => {
+                  const n = parseFloat(e.target.value);
+                  if (Number.isNaN(n) || !range) return;
+                  const next: [number, number] = [range[0], range[1]];
+                  next[end] = n / RAD;
+                  store(next);
+                }}
+              />
+            ))}
+          </div>
+        );
+      })}
       {refusal !== null ? (
         <div className="font-mono text-[10px] text-warn" data-testid="edit-bone-refusal">
           {refusal}

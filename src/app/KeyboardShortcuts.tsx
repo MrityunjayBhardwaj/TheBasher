@@ -60,7 +60,7 @@ import { useSelectionStore } from './stores/selectionStore';
 import { useRenameStore } from './stores/renameStore';
 import { getArmatureMode, toggleArmatureMode } from './armatureMode';
 import { getActiveBone } from './boneSelection';
-import { editSkeletonFromUI } from './skeletonEditActions';
+import { addIkFromUI, editSkeletonFromUI } from './skeletonEditActions';
 import { useBoxSelectStore } from './stores/boxSelectStore';
 import { getViewportSelectableIds } from './selectableNodes';
 import { buildDeleteNodesOps, buildDuplicateNodeOps } from './sceneNodeActions';
@@ -508,6 +508,17 @@ export function KeyboardShortcuts() {
               'clear bone parent',
             ),
           );
+          return;
+        }
+      }
+
+      // #1510 — Shift+I adds an IK to the selected bone in Pose mode (Blender's Add IK). Above the
+      // no-modifier guard, which would drop it; bare I stays Insert Keyframe.
+      if (e.shiftKey && !cmd && !e.altKey && e.code === 'KeyI' && getArmatureMode() === 'pose') {
+        const bone = getActiveBone();
+        if (bone) {
+          e.preventDefault();
+          sayIfRefused(addIkFromUI(bone.nodeId, bone.boneName));
           return;
         }
       }

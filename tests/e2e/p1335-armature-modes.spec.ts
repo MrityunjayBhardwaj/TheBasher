@@ -11,7 +11,7 @@
 
 import type { Page } from '@playwright/test';
 import * as THREE from 'three';
-import { test, expect } from './_fixtures';
+import { test, expect, settleViewFit } from './_fixtures';
 
 interface Node {
   type: string;
@@ -44,6 +44,8 @@ async function importBar(page: Page): Promise<string> {
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto('/');
   await expect(page.getByTestId('layout')).toBeVisible({ timeout: 60_000 });
+  // #1523 — this spec writes the camera by hand: wait out the boot view fit, which would land after.
+  await settleViewFit(page);
   await page.waitForFunction(() =>
     Boolean((window as unknown as W).__basher_dag?.getState().state.outputs.scene),
   );
@@ -154,7 +156,9 @@ test('Object → Pose → Edit → Object: what a click picks in each, and the g
   expect(b1.dir.dot(REST_DIR), 'at 0.9 s the clip has turned Bone1 off its rest').toBeLessThan(0.5);
   await page.mouse.click(b1.x, b1.y);
   await expect.poll(() => pickedBone(page)).toBe('Bone1');
-  expect(await highlighted(page)).toBe('Bone1');
+  // The highlight is published by the viewport's next frame, which a slow renderer has not run yet
+  // when the selection lands (#1523: read at once, it was still null under software GL).
+  await expect.poll(() => highlighted(page)).toBe('Bone1');
   await expect(page.getByTestId('inspector-selected-bone-name')).toHaveValue('Bone1');
 
   // EDIT (Tab): the rest bones are drawn, and a bone is still what a click picks.
@@ -168,13 +172,13 @@ test('Object → Pose → Edit → Object: what a click picks in each, and the g
   const b0 = await drawnBone(page, 'Bone0');
   await page.mouse.click(b0.x, b0.y);
   await expect.poll(() => pickedBone(page)).toBe('Bone0');
-  expect(await highlighted(page)).toBe('Bone0');
+  await expect.poll(() => highlighted(page)).toBe('Bone0');
 
   // OBJECT (Tab again): no bone is live, nothing is lit, the bones are posed again.
   await page.keyboard.press('Tab');
   await expect(menu).toHaveValue('object');
   await expect(page.getByTestId('inspector-selected-bone')).toHaveCount(0);
-  expect(await highlighted(page)).toBeNull();
+  await expect.poll(() => highlighted(page)).toBeNull();
   expect((await drawnBone(page, 'Bone1')).dir.dot(REST_DIR)).toBeLessThan(0.5);
 
   expect(await graph(page), 'a mode switch wrote to the graph').toBe(before);

@@ -22,6 +22,11 @@ import { boneOnACycle } from '../core/import/threeAdapter';
 
 const Vec3 = z.tuple([z.number(), z.number(), z.number()]);
 
+/** #1344 — one axis's range from rest: [min, max] radians, min not above max, within a half turn. */
+export const AxisRange = z
+  .tuple([z.number().min(-Math.PI), z.number().max(Math.PI)])
+  .refine(([min, max]) => min <= max, { message: 'the minimum is above the maximum' });
+
 export const SkeletonParams = z.object({
   bones: z
     .array(
@@ -42,6 +47,11 @@ export const SkeletonParams = z.object({
         // #1340 — the IK solve's starting bend (`BoneSpec.preferredAngle`). Optional, no default,
         // for the same value-equality reason as `scale`.
         preferredAngle: Vec3.optional(),
+        // #1344 — joint limits (`BoneSpec.limits`): an axis present is limited to [min, max] radians
+        // from rest. Optional, no default, as above.
+        limits: z
+          .object({ x: AxisRange.optional(), y: AxisRange.optional(), z: AxisRange.optional() })
+          .optional(),
       }),
     )
     // #1183 — a skeleton is a tree. A write whose parent chain loops is refused here,
@@ -103,6 +113,7 @@ export const SkeletonNode: NodeDefinition<SkeletonParams, SkeletonOutputs> = {
         // Back-compat: BVH/FBX + the 3-bone default are unchanged.
         ...(b.scale !== undefined ? { scale: b.scale } : {}),
         ...(b.preferredAngle !== undefined ? { preferredAngle: b.preferredAngle } : {}),
+        ...(b.limits !== undefined ? { limits: b.limits } : {}),
       })),
     };
     return { out, pose: restPoseOf(out) };

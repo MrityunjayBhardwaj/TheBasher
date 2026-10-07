@@ -42,6 +42,12 @@
 // `evaluate` runs once per graph change and builds nothing; the samplers are built on the first
 // `sample` and reused for every frame after (the rule #1237 set for clips).
 //
+// ── JOINT LIMITS (#1344) ────────────────────────────────────────────────────────────────────────
+//
+// A layer that plays hands on a pose inside the skeleton's joint limits (`jointLimits.ts`): every
+// limited bone, a member or not. So a hand pose, a key curve and an IK solve all stop at a limit, and
+// each layer above reads a pose already inside them. A wire no layer plays on is not clamped.
+//
 // REF: design ref/architecture/bone-channels-design.html (v7, step 3, D-A, D-E); src/nodes/foldChannel.ts
 //      (`foldChannelValue`); src/nodes/bonePose.ts (`quatFromEuler`); issues #1240, #1214, #1233.
 
@@ -64,6 +70,7 @@ import { resolveExtend, sampleQuatKeyframesExtended, type QuatKey } from './keyf
 import { KeyframeChannelNumberNode, KeyframeChannelNumberParams } from './KeyframeChannelNumber';
 import { layerSampleTimes, layeredWireRange, type LayerBlend } from './wireSampleTimes';
 import { ikChainProblem, solveTwoBoneIk } from './twoBoneIk';
+import { clampPoseToLimits, limitedBones } from './jointLimits';
 
 const Vec3Schema = z.tuple([z.number(), z.number(), z.number()]);
 const QuatSchema = z.tuple([z.number(), z.number(), z.number(), z.number()]);
@@ -444,6 +451,9 @@ function layerBlendOf(params: PoseLayerParams): LayerBlend {
   return end > start ? { kind: 'while', start, end } : { kind: 'none' };
 }
 
+/** #1344 — how a layer on a skeleton with joint limits reads for sampling: at every frame. */
+const HELD: LayerBlend = { kind: 'everywhere' };
+
 /**
  * #1337 — the layer's weight over time as it plays: its keyed weight curve (unless muted), else the
  * static weight. Unclamped, as the evaluator reads it; the fold clamps it to [0, 1].
@@ -524,11 +534,13 @@ function ikLayerValue(
     (name) => index.get(name)!,
   );
   const weight = weightOf(params, playedChannels(params.channels));
+  const limited = limitedBones(bones);
   const range = layeredWireRange(
     incoming.clip,
     poseLayerClipInfo(params.channels, params.members),
-    layerBlendOf(params),
+    limited.length > 0 ? HELD : layerBlendOf(params),
   );
+  const held = (pose: readonly BonePose[]) => clampPoseToLimits(bones, pose, limited);
   return {
     kind: 'PosedSkeleton',
     skeleton: upstream.skeleton,
@@ -538,10 +550,10 @@ function ikLayerValue(
     sample: (seconds: number): readonly BonePose[] => {
       const base = upstream.sample(seconds);
       const w = Math.min(1, weight(seconds));
-      if (!(w > 0)) return base;
+      if (!(w > 0)) return held(base);
       const solved = solveTwoBoneIk(bones, base, chain);
-      if (!solved) return base;
-      if (w >= 1) return solved;
+      if (!solved) return held(base);
+      if (w >= 1) return held(solved);
       const out = base.slice();
       for (const i of joints) {
         const at = base[i];
@@ -556,7 +568,7 @@ function ikLayerValue(
           scale: fold(at.scale, to.scale, 'vec3', 'scale') as Vec3,
         };
       }
-      return out;
+      return held(out);
     },
   };
 }
@@ -610,7 +622,11 @@ export const PoseLayerNode: NodeDefinition<PoseLayerParams, PosedSkeletonValue> 
       !params.solo;
 
     const blend = BLEND[params.mode];
-    let built: { members: ResolvedMember[]; weight: (seconds: number) => number } | null = null;
+    let built: {
+      members: ResolvedMember[];
+      weight: (seconds: number) => number;
+      limited: number[];
+    } | null = null;
     const build = () => {
       if (built) return built;
       const played = playedChannels(params.channels);
@@ -620,7 +636,11 @@ export const PoseLayerNode: NodeDefinition<PoseLayerParams, PosedSkeletonValue> 
         const index = indexOf.get(member.bone);
         if (index !== undefined) members.push(resolveMember(member, played, index));
       }
-      built = { members, weight: weightOf(params, played) };
+      built = {
+        members,
+        weight: weightOf(params, played),
+        limited: limitedBones(upstream.skeleton.bones),
+      };
       return built;
     };
 
@@ -629,9 +649,16 @@ export const PoseLayerNode: NodeDefinition<PoseLayerParams, PosedSkeletonValue> 
     // times and every frame where its blend of two moving poses is not a slerp (`layeredWireRange`).
     const keyed = poseLayerClipInfo(params.channels, params.members);
     // A base layer is named after the file's animation (Blender's action name), so its range is too.
+    // #1344 — a rotation stopped at a joint limit turns a corner where it meets the limit, which no
+    // two samples either side of it reproduce: on a skeleton with limits the wire is read at every
+    // frame (measured: a curve 0° → 80° held at 30°, read at its two keys only, is 18.75° off).
+    const limitsHold = limitedBones(upstream.skeleton.bones).length > 0;
     const range = isBase
-      ? keyed && { ...keyed, name: params.name }
-      : layeredWireRange(incoming.clip, keyed, layerBlendOf(params));
+      ? keyed && {
+          ...(limitsHold ? layeredWireRange(keyed, undefined, HELD)! : keyed),
+          name: params.name,
+        }
+      : layeredWireRange(incoming.clip, keyed, limitsHold ? HELD : layerBlendOf(params));
     const value: { -readonly [K in keyof PosedSkeletonValue]: PosedSkeletonValue[K] } = {
       kind: 'PosedSkeleton',
       skeleton: upstream.skeleton,
@@ -640,9 +667,13 @@ export const PoseLayerNode: NodeDefinition<PoseLayerParams, PosedSkeletonValue> 
       ...(params.solo || incoming.soloed === true ? { soloed: true } : {}),
       sample: (seconds: number): readonly BonePose[] => {
         const base = upstream.sample(seconds);
-        const { members, weight } = build();
+        const { members, weight, limited } = build();
+        // #1344 — whatever the layer does, it hands on a pose inside the skeleton's joint limits:
+        // a key curve past a limit plays clamped, as under Blender's Limit Rotation.
+        const held = (pose: readonly BonePose[]) =>
+          clampPoseToLimits(upstream.skeleton.bones, pose, limited);
         const influence = weight(seconds);
-        if (!(influence > 0) || members.length === 0) return base;
+        if (!(influence > 0) || members.length === 0) return held(base);
         // Copy-on-write: only member bones get a new entry.
         const out = base.slice();
         for (const m of members) {
@@ -661,7 +692,7 @@ export const PoseLayerNode: NodeDefinition<PoseLayerParams, PosedSkeletonValue> 
             scale: m.scale ? (fold(at.scale, m.scale(seconds), 'vec3', 'scale') as Vec3) : at.scale,
           };
         }
-        return out;
+        return held(out);
       },
     };
     if (isBase) value.source = value;

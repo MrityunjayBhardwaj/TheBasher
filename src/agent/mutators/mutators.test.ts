@@ -158,7 +158,8 @@ describe('mutator catalog', () => {
     // 32 → 34 at #353 — `constrain` + `unconstrain`, the constraint family's verbs.
     // 34 → 35 at #1445 — `setHidden`, the outliner eye's verb (#334 took the raw op away).
     // 35 → 36 at #1339 — `rig.editSkeleton`, Edit mode's skeleton operations.
-    expect(mutators).toHaveLength(36);
+    // 36 → 37 at #1510 — `rig.addIk`, Pose mode's Add › IK.
+    expect(mutators).toHaveLength(37);
     const names = mutators.map((m) => m.name).sort();
     expect(names).toEqual([
       'mutator.animate.bakePose',
@@ -180,6 +181,7 @@ describe('mutator catalog', () => {
       'mutator.render.addAIPass',
       'mutator.render.addPass',
       'mutator.render.addStitch',
+      'mutator.rig.addIk',
       'mutator.rig.editSkeleton',
       'mutator.rotate',
       'mutator.scale',
@@ -2318,7 +2320,8 @@ describe('agent.listMutators tool', () => {
     // 32 → 34 at #353 — `constrain` + `unconstrain`.
     // 34 → 35 at #1445 — `setHidden`.
     // 35 → 36 at #1339 — `rig.editSkeleton`.
-    expect(parsed.mutators).toHaveLength(36);
+    // 36 → 37 at #1510 — `rig.addIk`.
+    expect(parsed.mutators).toHaveLength(37);
   });
 });
 
@@ -3947,6 +3950,7 @@ import {
   setPoseMemberModeMutator as _setPoseMemberModeM,
   renameBoneMutator as _renameBoneM,
   editSkeletonMutator as _editSkeletonM,
+  addIkMutator as _addIkM,
   bakePoseMutator as _bakePoseM,
   retargetMutator as _retargetM,
   addPassMutator as _addPassM,
@@ -4317,6 +4321,11 @@ describe('V14 deeper non-redundancy — Op-shape probe (issue #22)', () => {
       mutator: _editSkeletonM as MutatorDefinition<unknown>,
       build: buildSceneForBoneRename,
       spec: { object: 'br_arm', edit: { op: 'extrude', from: 'torso' } },
+    },
+    'mutator.rig.addIk': {
+      mutator: _addIkM as MutatorDefinition<unknown>,
+      build: buildSceneForBoneRename,
+      spec: { object: 'br_arm', bone: 'head' },
     },
     'mutator.animation.retarget': {
       mutator: _retargetM as MutatorDefinition<unknown>,

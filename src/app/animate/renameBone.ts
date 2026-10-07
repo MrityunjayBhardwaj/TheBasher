@@ -359,3 +359,110 @@ export function renameBone(
     report: { name, skeleton: skeletonId, layers: rewrittenLayers, parented, meshes, maps, left },
   };
 }
+
+/**
+ * #1341 — a symmetrize's bone-map entries: for each of `listed` that has a twin on `bonesAfter`, every
+ * map entry naming it gets a twin entry — the twin on this rig's side, the other rig's bone with its
+ * side flipped — when that flipped bone exists on the other rig and nothing maps the twin yet.
+ *
+ * The counterpart of Blender's symmetrize on a bone constraint (measured, 5.1.1): the twin gets the
+ * constraint, its subtarget flipped when the flipped bone exists (`armature_add.cc`
+ * `update_duplicate_subtarget`: `Hand.L` copying `Ctl.L` → `Hand.R` copying `Ctl.R`). Symmetrize copies
+ * nothing else that names a bone there — no pose values, no keys, no bone-parented Object, no vertex
+ * group — and none is copied here.
+ *
+ * An entry against a bone with no side is not mirrored (Blender keeps the one subtarget for both; a
+ * map key holds one bone). A map another rig also reads on this side, or one read from a motion whose
+ * rig the graph does not say, is LEFT and named, as a rename leaves it.
+ */
+export function mirroredBoneMapOps(
+  state: DagState,
+  objectId: string,
+  listed: readonly string[],
+  bonesAfter: readonly { readonly name: string }[],
+  flip: (name: string) => string,
+): { ops: Op[]; mirrored: string[]; left: { node: string; why: string }[] } {
+  const none = { ops: [], mirrored: [], left: [] };
+  const reach = rigReach(state, objectId);
+  if (!reach) return none;
+  const names = new Set(bonesAfter.map((b) => b.name));
+  const twins = new Map<string, string>();
+  for (const bone of listed) {
+    const twin = flip(bone);
+    if (twin !== bone && names.has(bone) && names.has(twin)) twins.set(bone, twin);
+  }
+  if (twins.size === 0) return none;
+  const bonesOf = (skeleton: string | null) =>
+    skeleton === null
+      ? null
+      : ((state.nodes[skeleton]?.params as SkeletonParams | undefined)?.bones ?? null);
+  const mine = bonesAfter as SkeletonParams['bones'];
+  const retargets = reach.retargets.map((id) => state.nodes[id]);
+  const ops: Op[] = [];
+  const mirrored: string[] = [];
+  const left: { node: string; why: string }[] = [];
+  for (const mapId of reach.maps) {
+    const map = (state.nodes[mapId]?.params as { map?: Record<string, string> } | undefined)?.map;
+    if (!map) continue;
+    const readers = retargets.filter((r) => edgeTarget(r, 'boneMap') === mapId);
+    const targets = readers.map((r) => edgeTarget(r, 'skeleton'));
+    const sources = readers.map((r) => sourceSkeletonOf(state, r.id));
+    // Keys name the motion's bones, values the target rig's.
+    for (const side of ['target', 'source'] as const) {
+      const here = side === 'target' ? targets : sources;
+      const there = side === 'target' ? sources : targets;
+      if (!here.some((id) => id === reach.skeleton)) continue;
+      const entries = Object.entries(map).map(([from, to]) =>
+        side === 'target' ? { own: to, other: from } : { own: from, other: to },
+      );
+      const resolved = resolveBoneNames(
+        entries.map((e) => e.own),
+        mine,
+      );
+      const boneOf = (own: string) => resolved[own] ?? own;
+      const wanted = entries.filter(
+        (e) =>
+          twins.has(boneOf(e.own)) &&
+          flip(e.other) !== e.other &&
+          !entries.some((x) => boneOf(x.own) === twins.get(boneOf(e.own))),
+      );
+      if (wanted.length === 0) continue;
+      if (!here.every((id) => id === reach.skeleton)) {
+        left.push({
+          node: mapId,
+          why: 'its bone map is shared with another rig, so the mirrored bones were not added to it',
+        });
+        continue;
+      }
+      const others = there.map(bonesOf);
+      if (others.some((b) => b === null)) {
+        left.push({
+          node: mapId,
+          why: 'its bone map is read with a rig the graph does not say, so the mirrored bones were not added to it',
+        });
+        continue;
+      }
+      const next: Record<string, string> = { ...map };
+      const added: string[] = [];
+      for (const e of wanted) {
+        const flipped = flip(e.other);
+        // `resolveBoneNames` hands an unresolved name back as itself: the bone must really be there.
+        const onEvery = others.every((b) => {
+          const found = resolveBoneNames([flipped], b!)[flipped];
+          return b!.some((bone) => bone.name === found);
+        });
+        if (!onEvery) continue;
+        const twin = twins.get(boneOf(e.own))!;
+        const [from, to] = side === 'target' ? [flipped, twin] : [twin, flipped];
+        if (from in next) continue;
+        next[from] = to;
+        added.push(`${from} → ${to}`);
+      }
+      if (added.length === 0) continue;
+      ops.push({ type: 'setParam', nodeId: mapId, paramPath: 'map', value: next });
+      mirrored.push(...added);
+      break;
+    }
+  }
+  return { ops, mirrored, left };
+}

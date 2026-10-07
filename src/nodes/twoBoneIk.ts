@@ -31,12 +31,15 @@
 // exact. A straight chain has no bend plane: the mid joint's `preferredAngle` (Maya's joint
 // preferred angle, #1340) bends it first, when it has one.
 //
+// #1344 — a joint with limits stops at them (`heldAtLimits`, below), and the tip falls short.
+//
 // REF: ref/sources/blender-pose-ik-v5.1.1/intern_iksolver_IK_QJacobianSolver.cpp (pole);
 //      ikplugin_intern_iksolver_plugin.cc (chain, stretch); issue #1343.
 
 import { Matrix4, Quaternion, Vector3 } from 'three';
 import { posedWorldMatrices } from '../viewport/boneShape';
 import { quatFromEulerXYZ } from './bonePose';
+import { clampToLimits } from './jointLimits';
 import type { BonePose, BoneSpec, Quat, Vec3 } from './types';
 
 /** One chain: joint names in the skeleton, and how it reaches. */
@@ -268,6 +271,66 @@ export function solveTwoBoneIk(
       quaternion: [q.x, q.y, q.z, q.w] as Quat,
       scale: [sc.x, sc.y, sc.z] as Vec3,
     };
+  }
+  return heldAtLimits(bones, out, { r, m, t }, A, e, n, chain.orientTip ? W[2] : null);
+}
+
+/**
+ * #1344 — the solved chain stopped at its joints' limits. The mid joint first: held at its limit, the
+ * chain is a rigid shape that cannot reach, so the root turns it (the short way, which stays in the
+ * bend plane) until the tip lies on the line to the goal — the nearest it gets, and where Blender's
+ * solver leaves it (measured: forearm limited to -10°, tip 0.015 off that line after 500
+ * iterations). Then the root's own limits, which the tip simply falls short by. The side of the bend
+ * never flips to dodge a limit: a pole on the forbidden side leaves the joint at the limit (measured
+ * in Blender: limit [0°, 150°], pole behind, the forearm stays at 0°).
+ */
+function heldAtLimits(
+  bones: readonly BoneSpec[],
+  solved: BonePose[],
+  at: { r: number; m: number; t: number },
+  A: Vector3,
+  e: Vector3,
+  n: Vector3,
+  tipWorld: Matrix4 | null,
+): BonePose[] {
+  const { r, m, t } = at;
+  if (!bones[r].limits && !bones[m].limits) return solved;
+  const out = solved;
+  let moved = false;
+  const mid = clampToLimits(bones[m], out[m].quaternion);
+  if (mid !== out[m].quaternion) {
+    moved = true;
+    out[m] = { ...out[m], quaternion: mid };
+    const world = posedWorldMatrices(bones, out);
+    const reach = head(world[t]).sub(A);
+    if (reach.lengthSq() > EPS) {
+      reach.normalize();
+      // Pointing straight away from the goal there is no shortest turn: go round in the bend plane.
+      const turn =
+        reach.dot(e) < -1 + 1e-9
+          ? new Quaternion().setFromAxisAngle(n, Math.PI)
+          : new Quaternion().setFromUnitVectors(reach, e);
+      const aimed = about(A, new Matrix4().makeRotationFromQuaternion(turn)).multiply(world[r]);
+      const parent = bones[r].parent >= 0 ? world[bones[r].parent] : new Matrix4();
+      const p = new Vector3();
+      const q = new Quaternion();
+      const sc = new Vector3();
+      parent.clone().invert().multiply(aimed).decompose(p, q, sc);
+      out[r] = { ...out[r], quaternion: [q.x, q.y, q.z, q.w] as Quat };
+    }
+  }
+  const root = clampToLimits(bones[r], out[r].quaternion);
+  if (root !== out[r].quaternion) {
+    moved = true;
+    out[r] = { ...out[r], quaternion: root };
+  }
+  // The tip keeps the goal's rotation under the parent it now has.
+  if (moved && tipWorld) {
+    const world = posedWorldMatrices(bones, out);
+    const turn = new Quaternion().setFromRotationMatrix(new Matrix4().extractRotation(tipWorld));
+    const under = new Quaternion().setFromRotationMatrix(new Matrix4().extractRotation(world[m]));
+    const q = under.invert().multiply(turn);
+    out[t] = { ...out[t], quaternion: [q.x, q.y, q.z, q.w] as Quat };
   }
   return out;
 }

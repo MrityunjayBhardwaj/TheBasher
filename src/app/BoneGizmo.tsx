@@ -44,6 +44,7 @@ import { layerValueForDrawn } from './animate/invertPoseStack';
 import type { Quat, Vec3 } from '../nodes/types';
 import type { PoseLayerParams } from '../nodes/PoseLayer';
 import { eulerXYZFromQuat, type EulerOrder } from '../nodes/bonePose';
+import { clampToLimits } from '../nodes/jointLimits';
 import { editSkeletonFromUI } from './skeletonEditActions';
 import { useArmatureModeStore } from './stores/armatureModeStore';
 
@@ -184,7 +185,16 @@ export function BoneGizmo() {
     const order: EulerOrder =
       member && member.rotationMode !== 'quaternion' ? member.rotationMode : 'ZYX';
     const local = boneDragLocal(d.bone, d.proxy, proxy.matrixWorld, d.parent);
-    const drawn = component === 'rotation' ? local.quaternion : local[component];
+    // #1344 — a turn past the bone's joint limit is stored AT the limit, so the value kept is the
+    // value drawn and the bone leaves the limit the moment the hand turns back (Blender's Limit
+    // Rotation with Affect Transform; without it the stored value runs on past what is drawn).
+    const spec = object && index >= 0 ? object.bones[index] : null;
+    const drawn =
+      component === 'rotation'
+        ? spec
+          ? clampToLimits(spec, local.quaternion)
+          : local.quaternion
+        : local[component];
     // #1337 — what the layer must store so the bone is DRAWN where the hand put it, through every
     // layer's blend. No layer yet: the first pose inserts an override at weight 1 on top, which
     // stores the drawn value as it is.
@@ -213,7 +223,7 @@ export function BoneGizmo() {
       saidRef.current = true;
       useNotificationStore.getState().notify({ severity: 'info', message: res.reason });
     }
-  }, [proxy, live, editing]);
+  }, [proxy, live, editing, object, index]);
 
   // *** Dev-only observation seams — NOT user chrome (the curve point gizmo's shape). ***
   // Pointer simulation through TransformControls is fragile in headless Chromium, so e2e drives the
