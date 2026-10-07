@@ -451,6 +451,9 @@ function layerBlendOf(params: PoseLayerParams): LayerBlend {
   return end > start ? { kind: 'while', start, end } : { kind: 'none' };
 }
 
+/** #1344 — how a layer on a skeleton with joint limits reads for sampling: at every frame. */
+const HELD: LayerBlend = { kind: 'everywhere' };
+
 /**
  * #1337 — the layer's weight over time as it plays: its keyed weight curve (unless muted), else the
  * static weight. Unclamped, as the evaluator reads it; the fold clamps it to [0, 1].
@@ -531,12 +534,12 @@ function ikLayerValue(
     (name) => index.get(name)!,
   );
   const weight = weightOf(params, playedChannels(params.channels));
+  const limited = limitedBones(bones);
   const range = layeredWireRange(
     incoming.clip,
     poseLayerClipInfo(params.channels, params.members),
-    layerBlendOf(params),
+    limited.length > 0 ? HELD : layerBlendOf(params),
   );
-  const limited = limitedBones(bones);
   const held = (pose: readonly BonePose[]) => clampPoseToLimits(bones, pose, limited);
   return {
     kind: 'PosedSkeleton',
@@ -646,9 +649,16 @@ export const PoseLayerNode: NodeDefinition<PoseLayerParams, PosedSkeletonValue> 
     // times and every frame where its blend of two moving poses is not a slerp (`layeredWireRange`).
     const keyed = poseLayerClipInfo(params.channels, params.members);
     // A base layer is named after the file's animation (Blender's action name), so its range is too.
+    // #1344 — a rotation stopped at a joint limit turns a corner where it meets the limit, which no
+    // two samples either side of it reproduce: on a skeleton with limits the wire is read at every
+    // frame (measured: a curve 0° → 80° held at 30°, read at its two keys only, is 18.75° off).
+    const limitsHold = limitedBones(upstream.skeleton.bones).length > 0;
     const range = isBase
-      ? keyed && { ...keyed, name: params.name }
-      : layeredWireRange(incoming.clip, keyed, layerBlendOf(params));
+      ? keyed && {
+          ...(limitsHold ? layeredWireRange(keyed, undefined, HELD)! : keyed),
+          name: params.name,
+        }
+      : layeredWireRange(incoming.clip, keyed, limitsHold ? HELD : layerBlendOf(params));
     const value: { -readonly [K in keyof PosedSkeletonValue]: PosedSkeletonValue[K] } = {
       kind: 'PosedSkeleton',
       skeleton: upstream.skeleton,

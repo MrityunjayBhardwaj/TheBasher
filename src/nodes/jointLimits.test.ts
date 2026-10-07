@@ -289,6 +289,69 @@ describe('#1344 — a pose layer hands on a pose inside the limits', () => {
     expect(foreAt(wire, 0.25)).toBeCloseTo(20, 6);
   });
 
+  it('the wire lists times that read the corner where a curve meets its limit', () => {
+    // A base layer keyed 0° → 80° over a second: held at 30° from 0.375 s on.
+    const keyed = (bones: BoneSpec[]) =>
+      layer(
+        {
+          members: [{ bone: 'fore', rotationMode: 'XYZ' }],
+          channels: [
+            {
+              bone: 'fore',
+              component: 'rotation',
+              keyframes: [
+                { time: 0, value: [REST_X, 0, 0], easing: 'linear' },
+                { time: 1, value: [REST_X + 80, 0, 0], easing: 'linear' },
+              ],
+            },
+          ],
+        },
+        restWire(bones),
+      );
+    /** The worst error, in degrees, of reading the wire only at its listed times and slerping. */
+    const worst = (wire: PosedSkeletonValue) => {
+      const times = wire.clip!.times;
+      let off = 0;
+      for (let t = 0; t <= 1; t += 1 / 240) {
+        const k = Math.max(
+          1,
+          times.findIndex((x) => x >= t),
+        );
+        const [a, b] = [times[k - 1], times[k]];
+        const qa = new Quaternion(...wire.sample(a)[1].quaternion);
+        const qb = new Quaternion(...wire.sample(b)[1].quaternion);
+        const read = qa.slerp(qb, (t - a) / (b - a));
+        off = Math.max(off, read.angleTo(new Quaternion(...wire.sample(t)[1].quaternion)) / DEG);
+      }
+      return off;
+    };
+    const free = keyed(rig());
+    expect(free.clip!.times.length, 'a free linear curve needs only its keys').toBeLessThan(6);
+    expect(worst(free)).toBeLessThan(1e-4);
+    const heldWire = keyed(LIMITED);
+    expect(heldWire.clip!.name).toBe('hand');
+    expect(worst(heldWire)).toBeLessThan(2);
+  });
+
+  it('a layer above the base, and an ik layer, also hand on every frame when a limit can bite', () => {
+    const moving = (bones: BoneSpec[]): PosedSkeletonValue => ({
+      ...restWire(bones),
+      // Not a rest pose: a motion with a range, so the layers above are not the base.
+      rest: false,
+      clip: { start: 0, end: 1, times: [0, 1] },
+    });
+    const above = { members: [{ bone: 'upper', rotationMode: 'XYZ', rotation: [40, 0, 0] }] };
+    const silentIk = {
+      mode: 'ik',
+      weight: 0,
+      ik: { root: 'upper', mid: 'fore', tip: 'tip', goal: 'goal' },
+    };
+    for (const params of [above, silentIk]) {
+      expect(layer(params, moving(rig())).clip!.times, 'free: two samples do').toEqual([0, 1]);
+      expect(layer(params, moving(LIMITED)).clip!.times.length).toBeGreaterThan(10);
+    }
+  });
+
   it('a limited bone the layer has no member for is held too', () => {
     const below = restWire(LIMITED);
     const past: PosedSkeletonValue = {
