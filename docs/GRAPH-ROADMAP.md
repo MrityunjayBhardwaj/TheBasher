@@ -28,9 +28,12 @@ not cooked per frame, whose leaves the evaluator resolves itself.
 ### 2. Sub-networks grow up
 
 - #1558: sub-networks can nest. Needed once a Rig holds a Solver or another Rig.
+- #1576: a pose chain can be longer than 31 layers. Beside #1558 because both are about how
+  far one evaluation may reach.
 - #1574: a slot past the end of a list input reads the origin silently.
-- #1559: Lag and Spring become Solver presets, not node types.
 - #1549: socket types convert, or say a converter is needed.
+- #1579: a Solver or Lag inside a sub-network that reads the outer Solver's previous output.
+- #1580: `addNode` can create a wire of a type its socket does not take.
 
 ### 3. References
 
@@ -48,8 +51,14 @@ Both are derived from the query in #1553, so they follow it.
 ### 5. Templates
 
 - #1557: save a sub-network as a reusable node, with definitions stored once.
+- #1559: Lag and Spring become Solver presets, not node types.
 
 Before the document work because rig templates wait on it.
+
+#1559 was in step 2 and moved here. The issue calls a preset "the first real user of
+templates"; built before them it would be a one-off builder plus a format migration for old
+Lag nodes, and then be rebuilt as a template. The engine it needs is already proven: a Solver
+over one Mix node matches a Lag sample for sample.
 
 ### 6. The document is the graph
 
