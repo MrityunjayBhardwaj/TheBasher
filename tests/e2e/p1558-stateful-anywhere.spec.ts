@@ -147,3 +147,31 @@ test('#1558 — a Solver inside a Solver: the outer one sums the inner one', asy
   await at(page, 1, 0.3);
   await at(page, 2, 0.6);
 });
+
+test('#1558 — the inspector offers a Solver as another Solver`s rule, and it is replayed', async ({
+  page,
+}) => {
+  await boot(page);
+  await controller(page);
+  await accumulator(page, 'e_b');
+  await add(page, 'e_a', 'Solver', SOURCE);
+  await drive(page, 'e_a');
+
+  // Pick the inner Solver's output as the outer one's body, through the real picker.
+  await page.evaluate(() =>
+    (
+      window as unknown as { __basher_selection: { getState(): { select: (id: string) => void } } }
+    ).__basher_selection
+      .getState()
+      .select('e_a'),
+  );
+  await page.getByTestId('inspector-solver-body-set-e_a').click();
+  await page.getByTestId('inspector-solver-body-pick-e_a').selectOption('out:e_b:out');
+  await expect(page.getByTestId('inspector-solver-body-e_a')).toBeVisible();
+
+  // The outer rule is "be the inner Solver": A(0) is its seed, the input (0.1); from then on
+  // A(f) = B(f) = 0.1 + 0.1·f.
+  await at(page, 0, 0.1);
+  await at(page, 3, 0.4);
+  await at(page, 1, 0.2);
+});

@@ -208,6 +208,18 @@ describe('a sub-network inside a sub-network (#1558)', () => {
     expect(evaluated(b.state(), 'A')).toEqual([2, 6, 12, 20]);
   });
 
+  it('a Solver wired straight in as another Solver`s whole rule', () => {
+    const b = builder();
+    accumulator(b, 'B');
+    solver(b, 'A');
+    b.wire('B', 'A', 'body');
+    drive(b, 'A');
+    // A's rule is "be B": A(0) is its seed (its input, 2), then A(f) = B(f) = 2 + 2f. B has two
+    // outputs, so the cook must read the one that was wired.
+    expect(driven(b.state())).toEqual([2, 4, 6, 8]);
+    expect(evaluated(b.state(), 'A')).toEqual([2, 4, 6, 8]);
+  });
+
   it('three levels: a Solver inside a Solver inside a Solver', () => {
     const b = builder();
     accumulator(b, 'C');

@@ -291,7 +291,7 @@ function replayLag(
 function cookSolverStep(
   state: DagState,
   solverId: string,
-  bodyNodeId: string,
+  body: { node: string; socket?: string },
   leaves: readonly BodyInputLeaf[],
   prev: number,
   input: number,
@@ -299,7 +299,13 @@ function cookSolverStep(
 ): number {
   const overrides = bindBodyInputs(state, solverId, leaves, { prev, input });
   try {
-    const v = evaluate(state, bodyNodeId, { ctx: ctxAtFrame(frame), overrides }).value;
+    // The wired OUTPUT, not the node's whole value: a body with more than one output (another
+    // Solver, #1558) evaluates to a record, and reading that as a number gave 0.
+    const v = evaluate(state, body.node, {
+      ctx: ctxAtFrame(frame),
+      overrides,
+      socket: body.socket,
+    }).value;
     return typeof v === 'number' && Number.isFinite(v) ? v : 0;
   } catch {
     return 0;
@@ -321,12 +327,14 @@ function replaySolver(
   const targetFrame = Math.round(targetSeconds * FRAMES_PER_SECOND);
   const inputAt = (frame: number) => statefulInputAt(state, node, ctxAtFrame(frame), cache);
 
-  const bodyId = singleInputRef(node, 'body')?.node;
+  const bodyRef = singleInputRef(node, 'body');
+  const bodyId = bodyRef?.node;
   if (!bodyId || !state.nodes[bodyId]) return inputAt(targetFrame);
+  const body = { node: bodyId, socket: bodyRef.socket };
   const leaves = bodyInputLeavesOf(state, node.id);
 
   return cachedIntegrate(state, node.id, seedFrame, targetFrame, inputAt, (prev, frame) =>
-    cookSolverStep(state, node.id, bodyId, leaves, prev, inputAt(frame), frame),
+    cookSolverStep(state, node.id, body, leaves, prev, inputAt(frame), frame),
   );
 }
 
@@ -456,6 +464,13 @@ export function makeStatefulDriverChannelValue(
 // like the node's own output, so a consumer picks a socket off it as it would off `evaluate`.
 // A Solver gives both faces; the one whose body is unwired reads what its replay reads for an
 // unfinished Solver (the live input, or the origin).
+//
+// COST, MEASURED 2026-10-07 (vitest, node; a Math node behind a Solver that holds another
+// Solver, asked at frame 600): 32 ms for the first ask, which integrates both from their seed,
+// then 0.05 ms a frame going forward, because the history is kept per graph object
+// (`cachedIntegrate`). Handed a NEW graph object every frame the history is rebuilt each time:
+// 17 ms a frame at that depth. Every caller today passes the authored graph, which is stable
+// across a scrub; a caller that passes a per-frame fold of it would pay that.
 //
 // A node asked for while its own replay is running is a loop through a reference (a Lag whose
 // controller is driven by that Lag). It throws, and every caller of a replay reads a thrown

@@ -554,7 +554,7 @@ _Observe:_ open a pre-split `.basher` → renders identically, channels still bo
 
 **Phase 6 (#366) — Catalogue + memory.** Promote V-object, amend V78, re-derive dharana boundaries, retire the stale road-table prose in H170.
 
-**→ Milestone 2 — Templates / HDA.** Own design doc. **Nesting is its research question, up front** (`Solver.ts:40`: "Nested Solvers… out of scope"). Survey game-engine prefabs first (`dcc-reference.md` §24's own highest-value gap).
+**→ Milestone 2 — Templates / HDA.** Own design doc. **Nesting was its research question** (`Solver.ts` once read "Nested Solvers… out of scope"); owners that exist today nest since #1558, and what is left for templates is two instances sharing one definition (§12). Survey game-engine prefabs first (`dcc-reference.md` §24's own highest-value gap).
 
 > Phases 1–4 are independently shippable and parity-preserving. **If scope must shrink, stopping after Phase 3 still kills #356/#357 and the duck-types** — the split coexists with fused nodes indefinitely.
 
