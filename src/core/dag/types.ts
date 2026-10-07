@@ -301,7 +301,8 @@ export type NodeCost = 'cheap' | 'medium' | 'expensive';
 //   2. STATEFUL nodes (`stateful: true` — Lag, Solver) — deterministic given a SEED
 //      and an INTERVAL, not point-in-time. A single-frame evaluation of a lag is
 //      the wrong answer, not an imprecise one; the real value needs the previous
-//      output, produced by the replay seam. Determinism here is by contract, not
+//      output, produced by the replay seam, which the evaluator asks whenever a walk
+//      reaches such a node (#1558). Determinism here is by contract, not
 //      by purity. (The reference substrate's stateful channel operators behave the
 //      same way, so this is a property of the problem, not of our implementation.)
 //

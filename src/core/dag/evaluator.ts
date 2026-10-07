@@ -316,6 +316,40 @@ function statelessLeafFeedOf(state: EvaluableState, leaf: NodeId): LeafFeed | un
   return feeds.get(leaf);
 }
 
+// ── A STATEFUL NODE IS REPLAYED WHEREVER THE WALK REACHES IT (#1558) ─────────────────────────
+//
+// A stateful node (Lag, Solver) has no point-in-time value: its output at frame N needs its own
+// output at N-1, so its `evaluate` is a placeholder and the real value comes from a replay over
+// [seed, N]. The replay used to be reached from one place, a driver whose `in` the node feeds
+// directly. Everywhere else the walk ran the placeholder, so a Solver behind a Math node, a
+// Solver inside another Solver's sub-network and a Lag inside a Solver all read 0, and every one
+// of those wires was accepted (measured 2026-10-07: 0,0,0,0 and 2,2,2,2 against 2,4,6,8).
+//
+// So the walk asks the replay itself, at `ctx.time`. That is also what lets sub-networks nest:
+// the replay cooks a sub-network in its OWN `evaluate` call with its own `overrides`, and a
+// stateful node met inside that cook is replayed the same way, one level down. Bindings are
+// scoped to the call that made them, so an inner owner's never meet an outer owner's.
+//
+// The replay lives above this module (it reads controllers through the scene), so it is
+// registered, by `registerAllNodes`. A stateful node met with none registered is an error, never
+// the placeholder: the placeholder is a wrong number that looks like a right one.
+//
+// The result is hashed by its VALUE and is not stored in the content cache. What a stateful
+// node depends on includes a controller it reaches by reference and that controller's
+// animation, neither of which is in its cache key; the replay keeps its own history per graph.
+// Its inputs are not walked here: outside a cook they are the placeholder's, and the replay
+// evaluates what it needs.
+export type StatefulReplay = (
+  state: DagState,
+  nodeId: NodeId,
+  ctx: EvalCtx,
+  cache: EvaluatorCache | undefined,
+) => unknown;
+let statefulReplay: StatefulReplay | null = null;
+export function setStatefulReplay(replay: StatefulReplay | null): void {
+  statefulReplay = replay;
+}
+
 interface Frame {
   id: NodeId;
   depth: number;
@@ -357,6 +391,19 @@ export function evaluate(
     if (!node) throw new Error(`Evaluator: node not found: ${id}`);
     const def = requireNodeType(node.type);
 
+    // #1558 — a stateful node's value is its replay at this time, from any consumer.
+    if (def.stateful === true) {
+      if (!statefulReplay) {
+        throw new Error(
+          `Evaluator: ${node.type} "${id}" is stateful and no replay is registered, so it has no value`,
+        );
+      }
+      const value = statefulReplay(state as DagState, id, ctx, cache);
+      const replayed: EvalResult = { value, hash: hashValue(value) };
+      memo.set(id, replayed);
+      return replayed;
+    }
+
     onStack.add(id);
 
     // #1357 — a leaf inside a stateless owner's sub-network IS the producer its owner reads.
@@ -376,7 +423,8 @@ export function evaluate(
     // A stateless owner's own inputs first, so the producers its leaves read are evaluated at
     // the owner's depth and the sub-network finds them done. Its body's depth is then counted
     // from the owner, not added on top of the chain feeding it.
-    if (def.bodyInputs !== undefined && def.stateful !== true) {
+    // (A stateful owner never gets here: it was answered by its replay above.)
+    if (def.bodyInputs !== undefined) {
       for (const [socket, binding] of Object.entries(node.inputs)) {
         if (def.inputs[socket]?.body === true) continue;
         for (const ref of Array.isArray(binding) ? binding : [binding])

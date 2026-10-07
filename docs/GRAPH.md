@@ -72,7 +72,9 @@ OUTPUTS ─── outputs.scene · outputs.render
    only through the owner (`src/core/dag/subnetworks.ts`, #1547). The owner declares the
    sub-network's **named inputs** (`bodyInputs`), and a `BodyInput` leaf inside reads one by
    name; the owner binds a value to each name when it cooks the sub-network (#1548). A
-   stateful owner (the Solver) is cooked per frame by its replay seam. A stateless one (the
+   stateful owner (the Solver) is cooked per frame by its replay seam, and the evaluator asks
+   that seam whenever a walk reaches a stateful node, so a sub-network can hold another: each
+   cook is its own evaluation with its own bindings (#1558). A stateless one (the
    Rig, #1357) needs no cook: each named input is the owner's own socket of that name, and
    the evaluator makes the leaf read exactly what that socket's producer evaluates to, whether
    it is asked through the owner or of a node inside on its own. The node view's levels

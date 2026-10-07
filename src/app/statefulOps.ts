@@ -33,7 +33,7 @@
 //      Solver SOP); dharana B27; valueMath.lagStep; ParamDriver.makeParamDriverChannelValueFn;
 //      transformChannelSource.readTransformChannelAt; issue #297.
 
-import { evaluate, type EvaluatorCache } from '../core/dag/evaluator';
+import { evaluate, setStatefulReplay, type EvaluatorCache } from '../core/dag/evaluator';
 import { getNodeType } from '../core/dag/registry';
 import type { DagState } from '../core/dag/state';
 import { bindBodyInputs, bodyInputLeavesOf, type BodyInputLeaf } from '../core/dag/subnetworks';
@@ -68,10 +68,13 @@ interface NodeLike {
 
 /** The single wired input ref of a node's `socket`, if any (drivers/Lag use single
  *  cardinality). */
-function singleInputRef(node: NodeLike, socket: string): { node?: string } | undefined {
+function singleInputRef(
+  node: NodeLike,
+  socket: string,
+): { node?: string; socket?: string } | undefined {
   const binding = node.inputs?.[socket];
   const ref = Array.isArray(binding) ? binding[0] : binding;
-  return ref as { node?: string } | undefined;
+  return ref as { node?: string; socket?: string } | undefined;
 }
 
 /**
@@ -125,8 +128,12 @@ function statefulInputAt(
 ): number {
   const src = transformSourceOf(node);
   if (src) return readTransformChannelAt(state, src, ctx, cache);
+  // The producer of `in`, never the node itself: the evaluator answers a stateful node with
+  // this replay (#1558), so asking it for the node here would never return.
+  const ref = singleInputRef(node, 'in');
+  if (!ref?.node) return 0;
   try {
-    const v = evaluate(state, node.id, { cache, ctx }).value;
+    const v = evaluate(state, ref.node, { cache, ctx, socket: ref.socket }).value;
     return typeof v === 'number' && Number.isFinite(v) ? v : 0;
   } catch {
     return 0;
@@ -440,4 +447,114 @@ export function makeStatefulDriverChannelValue(
       ? (seconds: number) => replaySolver(state, statefulNode, seconds, cache)
       : (seconds: number) => replayLag(state, statefulNode, seconds, cache);
   return makeParamDriverChannelValueFn(driverParams, replay);
+}
+
+// ── The evaluator's road to the replay (#1558) ─────────────────────────────────
+//
+// What a stateful node evaluates to at `ctx.time`, for every consumer that is not a driver
+// reading it directly: a compute node behind it, another owner's sub-network holding it. Shaped
+// like the node's own output, so a consumer picks a socket off it as it would off `evaluate`.
+// A Solver gives both faces; the one whose body is unwired reads what its replay reads for an
+// unfinished Solver (the live input, or the origin).
+//
+// A node asked for while its own replay is running is a loop through a reference (a Lag whose
+// controller is driven by that Lag). It throws, and every caller of a replay reads a thrown
+// evaluate as 0.
+const replaying = new Set<string>();
+export function replayStatefulAt(
+  state: DagState,
+  nodeId: string,
+  ctx: EvalCtx,
+  cache?: EvaluatorCache,
+): unknown {
+  const node = state.nodes[nodeId];
+  if (!node) throw new Error(`replayStatefulAt: node not found: ${nodeId}`);
+  if (replaying.has(nodeId)) {
+    throw new Error(`replayStatefulAt: "${nodeId}" is read by its own replay`);
+  }
+  replaying.add(nodeId);
+  try {
+    const seconds = ctx.time.seconds;
+    if (node.type === 'Lag') return replayLag(state, node, seconds, cache);
+    if (node.type === 'Solver') {
+      return {
+        out: replaySolver(state, node, seconds, cache),
+        outVec: isVecSolver(node) ? replaySolverVec(state, node, seconds, cache) : ORIGIN,
+      };
+    }
+    // A stateful type this seam has no recurrence for. Answering it as a Lag would hand back a
+    // plausible number for a node nobody integrated.
+    throw new Error(`replayStatefulAt: no replay for stateful type ${node.type} ("${nodeId}")`);
+  } finally {
+    replaying.delete(nodeId);
+  }
+}
+
+/** Hands the evaluator its road to the replay. Called by `registerAllNodes`, beside the types
+ *  that need it; kept here so only this module, which already evaluates, names the evaluator. */
+export function registerStatefulReplay(): void {
+  setStatefulReplay(replayStatefulAt);
+}
+
+/** The wired `in` of a driver whose value can change with time because a stateful node sits
+ *  somewhere behind it, though not directly on it (that case is {@link statefulSourceOf}'s). */
+export function statefulUpstreamOf(
+  driverNode: NodeLike,
+  state: DagState,
+): { node: string; socket: string } | null {
+  const ref = singleInputRef(driverNode, 'in');
+  if (!ref?.node || typeof ref.socket !== 'string') return null;
+  const seen = new Set<string>();
+  const stack = [ref.node];
+  while (stack.length) {
+    const id = stack.pop()!;
+    if (seen.has(id)) continue;
+    seen.add(id);
+    const node = state.nodes[id];
+    if (!node) continue;
+    if (getNodeType(node.type)?.stateful) return { node: ref.node, socket: ref.socket };
+    for (const binding of Object.values(node.inputs)) {
+      for (const r of Array.isArray(binding) ? binding : [binding]) stack.push(r.node);
+    }
+  }
+  return null;
+}
+
+/**
+ * The folded channel value for a driver with a stateful node somewhere behind its `in`. The
+ * plain road folds the number the graph gives at the moment it is resolved, which is right only
+ * while that number does not move with time. Here `sample(seconds)` evaluates the graph AT
+ * `seconds`, so a reader that resolves once and samples many times (the two roads that must
+ * agree, render and read) gets the replayed value at each, as it does for a direct source.
+ * Scalar or vector is decided by what the graph gives now, as `ParamDriver.evaluate` decides it.
+ */
+export function makeStatefulUpstreamDriverChannelValue(
+  state: DagState,
+  driverParams: ParamDriverParams,
+  source: { node: string; socket: string },
+  ctx: EvalCtx,
+  cache?: EvaluatorCache,
+): KeyframeChannelValue {
+  const at = (seconds: number): unknown => {
+    try {
+      const frame = Math.round(seconds * FRAMES_PER_SECOND);
+      return evaluate(state, source.node, {
+        cache,
+        ctx: { time: { frame, seconds, normalized: 0 } },
+        socket: source.socket,
+      }).value;
+    } catch {
+      return undefined;
+    }
+  };
+  if (isVec3(at(ctx.time.seconds))) {
+    return makeParamDriverVec3ChannelValueFn(driverParams, (seconds) => {
+      const v = at(seconds);
+      return isVec3(v) ? v : ORIGIN;
+    });
+  }
+  return makeParamDriverChannelValueFn(driverParams, (seconds) => {
+    const v = at(seconds);
+    return typeof v === 'number' && Number.isFinite(v) ? v : 0;
+  });
 }

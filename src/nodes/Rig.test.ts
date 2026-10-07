@@ -249,7 +249,9 @@ describe('#1357 — a Rig poses exactly as the layers inside it wired straight',
 
   it('a stateful owner is left to its seam: the evaluator binds nothing for it', () => {
     // A stateful owner with a socket named like one of its sub-network inputs. Its seam decides
-    // what `input` is each frame; a plain evaluate must leave the leaf at its default.
+    // what `input` is each frame, so the evaluator must not resolve the leaf to that socket's
+    // producer as it does for a Rig: asked on its own, the leaf reads its default. (The owner
+    // itself is answered by its replay, #1558; this type has none, which is its own error.)
     const NUMBER = { type: 'Number', cardinality: 'single' } as const;
     registerNodeType({
       type: 'Seven',
@@ -281,7 +283,8 @@ describe('#1357 — a Rig poses exactly as the layers inside it wired straight',
       wire('seven', 'owner', 'input'),
     ]);
     expect(evaluate(s, 'seven').value).toBe(7);
-    expect(evaluate(s, 'owner').value).toBe(0);
+    expect(evaluate(s, 'leaf').value).toBe(0);
+    expect(() => evaluate(s, 'owner')).toThrow(/no replay for stateful type SeamOwned/);
   });
 
   it('a Rig inside a Rig: each leaf reads its own Rig', () => {

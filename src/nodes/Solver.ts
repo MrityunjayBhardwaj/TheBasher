@@ -31,7 +31,8 @@
 //
 // Outside a cook the leaves are harmless 0 / origin leaves — the seam is the ONLY place
 // they take meaning, exactly as Lag's integrated value lives only in the seam and never
-// in its passthrough `evaluate`.
+// in its passthrough `evaluate`. The evaluator never runs that passthrough: it answers a
+// stateful node with the seam's replay at the time asked, for any consumer (#1558).
 //
 // Lag-parity (the engine proof): a sub-network of ONE `Mix{a←prev, b←input}`
 // is `lerp(prev, in, factor)` == `lagStep` — so a Solver wrapping it must produce the
@@ -39,7 +40,10 @@
 //
 // Scope (v1): SCALAR state (a single Number fed back). Structured/tuple Prev_Frame
 // (→ 2nd-order Spring pos+velocity, multi-accumulators) is the next increment on this
-// same contract. Nested Solvers (a Solver inside a Solver's closure) are out of scope.
+// same contract. A Solver (or a Lag) inside a Solver's sub-network is replayed on its own
+// when the outer cook reaches it, so sub-networks nest (#1558). What does not work yet: a
+// stateful node INSIDE a sub-network whose own input is fed by the outer Solver's `prev`
+// (the inner history would have to be integrated together with the outer one).
 //
 // REF: GROUND_TRUTH_HOUDINI_DRIVERS_CONTROLLERS.md §5a (Solver SOP: Prev_Frame +
 //      Input_1, cooked every frame); https://www.sidefx.com/docs/houdini/nodes/sop/solver.html;

@@ -653,6 +653,8 @@ An earlier draft asserted _"cache discrimination ✓ by design; edit-propagation
 
 **Update, #1548:** the first half of that missing noun now exists. A node that owns a sub-network declares its **named inputs** (`bodyInputs`), and a generic leaf (`BodyInput`, `BodyInputVec`) reads one by name; `SolverInput` and its three siblings are gone, migrated at project format v22. The values still arrive through the override map, bound by name (`bindBodyInputs`, `src/core/dag/subnetworks.ts`), so the single-call collision and the nesting limit described above still stand until evaluation is re-entrant (#1558). The spec is [`GRAPH.md`](GRAPH.md).
 
+**Update, #1558:** evaluation is re-entrant for owners that exist today. The evaluator answers a stateful node with its replay wherever the walk meets it, and each cook is its own `evaluate` call with its own override map, so a Solver inside a Solver (three levels measured) and a Solver behind a compute node evaluate correctly. The single-call collision above is **not** dissolved: it needs two instances that name the same leaf id, which only a stored definition shared by instances can produce, and that is #1557.
+
 **Sequencing (unchanged conclusion, corrected grounding):** the split first — it generates live bugs _and_ makes "an instance **of what**" well-defined. Templates second, on the same engine, once instantiation is a node the evaluator walks (which is also what dissolves nesting). **Do not fuse them.**
 
 _Findings filed: #359 (the cache-key comment drift), #360 (override evaluate passes no cache + the NodeId-keyed single-call collision). `.anvi/dcc-reference.md` §24 amended with the measured numbers._

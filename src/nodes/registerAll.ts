@@ -85,6 +85,7 @@ import { NullNode } from './Null';
 import { CurveDataNode } from './CurveData';
 import { VideoStitchNode } from './VideoStitch';
 import { WalkPathNode } from './WalkPath';
+import { registerStatefulReplay } from '../app/statefulOps';
 
 const ALL: NodeDefinition[] = [
   // Time (P2 — the only impure source; pure consumers wire to it)
@@ -317,4 +318,7 @@ export function registerAllNodes(): void {
   for (const def of ALL) {
     if (!getNodeType(def.type)) registerNodeType(def);
   }
+  // #1558 — the evaluator answers a stateful node (Lag, Solver) with its replay. Set here, with
+  // the types that need it, so no graph holding one can be evaluated before it exists.
+  registerStatefulReplay();
 }

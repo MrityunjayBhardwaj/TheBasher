@@ -33,7 +33,12 @@ import {
   readTransformChannelAt,
   readTransformPositionAt,
 } from './transformChannelSource';
-import { statefulSourceOf, makeStatefulDriverChannelValue } from './statefulOps';
+import {
+  statefulSourceOf,
+  statefulUpstreamOf,
+  makeStatefulDriverChannelValue,
+  makeStatefulUpstreamDriverChannelValue,
+} from './statefulOps';
 import {
   geometrySampleSourceOf,
   geometrySampleRefOf,
@@ -311,6 +316,17 @@ export function driverParamDeps(
 ): Record<NodeId, NodeId[]> {
   const deps: Record<NodeId, NodeId[]> = {};
   for (const node of Object.values(nodes)) {
+    // #297, widened by #1558 — a stateful node (Lag, Solver) reads its controller through a
+    // param ref the guard's input walk cannot follow. Named for EVERY such node, not only one
+    // wired straight into a driver: the evaluator replays a stateful node wherever it sits, so
+    // a Solver behind a Math node reads its controller just the same. Both source roads, the
+    // scalar channel and the whole position.
+    if (node.type !== 'ParamDriver') {
+      const xf = transformSourceOf(node);
+      if (xf) (deps[node.id] ??= []).push(xf.node);
+      const xfVec = transformVecSourceOf(node);
+      if (xfVec) (deps[node.id] ??= []).push(xfVec.node);
+    }
     if (!isBoundDriver(node)) continue;
     const target = ((node.params ?? {}) as DriverParams).target as string;
     (deps[target] ??= []).push(node.id);
@@ -328,15 +344,6 @@ export function driverParamDeps(
     // whose controller (transitively) already reads the target is rejected as a cycle.
     const transformVec = transformVecSourceOf(node);
     if (transformVec) (deps[node.id] ??= []).push(transformVec.node);
-    // #297 — the stateful road: driver → (wired) Lag → (param-ref) controller. The
-    // driver→Lag edge is a real wired edge the guard's input walk sees; the
-    // Lag→controller hop is a transform param-ref it can't. Add it so a bind whose
-    // Lag reads a controller that (transitively) reads the target is rejected (G6).
-    const inRef = node.inputs?.in;
-    const inSrcId = (Array.isArray(inRef) ? inRef[0] : inRef) as { node?: string } | undefined;
-    const lag = inSrcId?.node ? nodes[inSrcId.node] : undefined;
-    const lagXf = lag ? transformSourceOf(lag) : null;
-    if (lag && lagXf) (deps[lag.id] ??= []).push(lagXf.node);
     // #300 follow-up — the geometry-sample road: driver → (wired) SampleGeometry →
     // (param-ref) terrain + query controller. The driver→SampleGeometry edge is wired (the
     // guard's input walk sees it); add the SampleGeometry→terrain/at param-ref hops so a
@@ -452,7 +459,20 @@ export function driverChannelValuesForTarget(
             ),
           );
         } else {
-          out.push(evaluate(state, node.id, { cache, ctx }).value as KeyframeChannelValue);
+          // #1558 — a stateful node further back (a Solver behind a Math node) makes the
+          // graph's value move with time, so it folds as a function of the playhead too.
+          const upstream = statefulUpstreamOf(node, state);
+          out.push(
+            upstream
+              ? makeStatefulUpstreamDriverChannelValue(
+                  state,
+                  node.params as ParamDriverParams,
+                  upstream,
+                  ctx,
+                  cache,
+                )
+              : (evaluate(state, node.id, { cache, ctx }).value as KeyframeChannelValue),
+          );
         }
       }
     } catch {
