@@ -34,6 +34,9 @@ not cooked per frame, whose leaves the evaluator resolves itself.
 - #1549: socket types convert, or say a converter is needed.
 - #1579: a Solver or Lag inside a sub-network that reads the outer Solver's previous output.
 - #1580: `addNode` can create a wire of a type its socket does not take.
+- #1581: a wire that closes a loop through 34 or more nodes. Beside #1580: both are a check
+  `connect` makes that had a way round it.
+- #1577: a regeneration compares the layers inside a Rig.
 
 ### 3. References
 
@@ -79,6 +82,11 @@ over one Mix node matches a Lag sample for sample.
 - #1554: material assignment as a per-face reference, with its migration (decided in #1544).
 - #1555: each operator declares what it does to every attribute, in one table.
 - #606: operators materialise their source instead of holding a handle.
+- #1582: a Lag or Solver inside a Solver reads that Solver's inputs, the two integrated
+  together. Refused since #1579; it may be easier once templates (#1557) settle what a
+  sub-network's state is.
+- #1583: every wire added re-checks the sub-network rules over the whole graph. Wants a large
+  import timed first.
 
 ## Decisions this order is waiting on
 
