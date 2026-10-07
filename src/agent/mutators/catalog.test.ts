@@ -13,7 +13,8 @@
 // round costs ~22 KB of re-sent schema/prompt overhead, dwarfing the ~2 KB of
 // examples it would defer).
 //
-// These tests pin the win (the byte ceiling — the durable regression guard),
+// These tests pin the win (compact, three keys, a one-sentence summary and a small example per
+// entry — the durable regression guard; a total byte ceiling was it until #1575),
 // prove the summary is DERIVED from the description so it can never drift, and
 // prove #23 survives (the specExample the model copies is still inline).
 
@@ -41,24 +42,51 @@ describe('mutator catalog — PICKER/DETAIL split (#332)', () => {
     registerAllMutators();
   });
 
-  it('the listMutators PICKER result stays under a hard byte ceiling', () => {
-    // THE REGRESSION PIN. The old full-metadata payload measured 26,116 B on
-    // the wire — the single tool result that tipped a turn over the cost guard.
-    // The new picker (name + first-sentence summary + specExample, contract
-    // DROPPED, compact) measures ~7 KB. Re-adding the contract, un-trimming the
-    // descriptions, or re-adding pretty-print fails HERE, loudly, instead of
-    // silently re-inflating every agent turn. 8 KB leaves headroom for a few
-    // new mutators; still ~70% under the 26 KB it replaced.
-    // RAISED 8192 → 9216 at #1201 (2026-09-25): measured 8,190 B with 31 mutators — two bytes of
-    // headroom, so no new mutator of any size could fit — and 8,346 B with `animate.renameBone` (a
-    // 155 B entry, first sentence + specExample only). 9 KB is still ~65% under the 26 KB it replaced;
-    // what the pin guards against (the contract or full descriptions back in, pretty-print) each add
-    // kilobytes and still fail here.
-    // RAISED 9216 → 10240 at #1510 (2026-10-06): measured 9,121 B with 36 mutators on main (95 B of
-    // headroom) and 9,250 B with `rig.addIk` (a 129 B entry, already trimmed to a one-clause summary
-    // and a two-field example). 10 KB is still ~60% under the 26 KB it replaced.
-    const payload = listMutatorsTool.handler({}, ctx()).text;
-    expect(payload.length).toBeLessThan(10240);
+  // THE REGRESSION PIN (#332, reshaped at #1575). The old full-metadata payload measured 26,116 B on
+  // the wire — the single tool result that tipped a turn over the cost guard. The picker is name +
+  // first-sentence summary + specExample, contract DROPPED, compact.
+  //
+  // It was pinned by a TOTAL byte ceiling, which could not tell a regression (the contract back, a
+  // paragraph for a summary, pretty-print: kilobytes each) from growth (one honest mutator: 113–461 B).
+  // So each new mutator tripped it and the fix was to raise it — 8192 → 9216 at #1201, 9216 → 10240
+  // at #1510 — while the regression it was written for sat inside the headroom: `setPoseMemberMode`
+  // shipped a 306-character "summary", its whole description. The pin is now on what it guards,
+  // per entry and by name, so an honest mutator passes untouched and each regression fails.
+  //
+  // No total: the picker is ~2.3k tokens a call against a 150k-token turn budget. At ~250 B a
+  // mutator, 100 of them is ~25 KB; the answer then is listing by namespace, not a byte cap.
+  const wire = (): { text: string; mutators: Record<string, unknown>[] } => {
+    const { text } = listMutatorsTool.handler({}, ctx()) as { text: string };
+    return {
+      text,
+      mutators: (JSON.parse(text) as { mutators: Record<string, unknown>[] }).mutators,
+    };
+  };
+
+  it('the PICKER on the wire is compact, and carries exactly name + summary + specExample', () => {
+    const { text, mutators } = wire();
+    // Pretty-print is pure overhead the model re-parses every round.
+    expect(text).toBe(JSON.stringify(JSON.parse(text)));
+    expect(mutators).toHaveLength(listMutators().length);
+    for (const m of mutators) {
+      // The ~5 KB contract (and the full description) stay behind getMutator.
+      expect(Object.keys(m).sort(), String(m.name)).toEqual(['name', 'specExample', 'summary']);
+    }
+  });
+
+  it('every PICKER summary is one sentence, and every specExample is small', () => {
+    // 220: the longest honest summary measures 205 (`timeline.setKeyframeInterp`, 2026-10-07). A
+    // run-on is what `firstSentence` returns when the first sentence is followed by something it
+    // does not read as a boundary (a lower-case word): the measured ones were 306–552 characters.
+    // 256 B: the largest example measures 233 (`camera.trajectory`).
+    const long = wire()
+      .mutators.filter((m) => String(m.summary).length > 220)
+      .map((m) => `${String(m.name)}: ${String(m.summary).length}-character summary`);
+    expect(long, 'end the first sentence before a capital or a backtick').toEqual([]);
+    const big = wire()
+      .mutators.filter((m) => JSON.stringify(m.specExample).length > 256)
+      .map((m) => `${String(m.name)}: ${JSON.stringify(m.specExample).length} B specExample`);
+    expect(big, 'a specExample is the smallest spec that parses, not a tour').toEqual([]);
   });
 
   it('every summary is a genuine prefix of its description — DERIVED, never authored', () => {
