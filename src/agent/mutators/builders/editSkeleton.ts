@@ -18,8 +18,12 @@ import type { MutatorDefinition } from '../types';
 import type { ClosureSpec } from '../../closure/types';
 import type { DagState } from '../../../core/dag/state';
 import type { Op } from '../../../core/dag/types';
-import { applySkeletonEdit, type SkeletonEdit } from '../../../app/animate/editSkeleton';
-import { rigReach } from '../../../app/animate/renameBone';
+import {
+  applySkeletonEdit,
+  flipSideName,
+  type SkeletonEdit,
+} from '../../../app/animate/editSkeleton';
+import { mirroredBoneMapOps, rigReach } from '../../../app/animate/renameBone';
 import { ikControlsOf, mirroredIkOps } from '../../../app/animate/addIk';
 import type { PoseLayerParams } from '../../../nodes/PoseLayer';
 import type { BoneSpec } from '../../../nodes/types';
@@ -130,6 +134,13 @@ function ikMirrorOf(spec: EditSkeletonSpec, state: DagState, bonesAfter: readonl
     : { ops: [], mirrored: [] };
 }
 
+/** #1341 — a symmetrize's twin bone-map entries; none for any other edit. */
+function mapMirrorOf(spec: EditSkeletonSpec, state: DagState, bonesAfter: readonly BoneSpec[]) {
+  return spec.edit.op === 'symmetrize'
+    ? mirroredBoneMapOps(state, spec.object, spec.edit.bones, bonesAfter, flipSideName)
+    : { ops: [], mirrored: [], left: [] };
+}
+
 export const editSkeletonMutator: MutatorDefinition<EditSkeletonSpec> = {
   name: 'mutator.rig.editSkeleton',
   description:
@@ -139,7 +150,8 @@ export const editSkeletonMutator: MutatorDefinition<EditSkeletonSpec> = {
     'position/rotation/scale; children follow or stay), orient (aim +Y at the child, roll +Z ' +
     'toward `up`), preferredAngle (the IK start bend), limits (per axis [min, max] radians from ' +
     'rest, which posing and IK stop at; null clears), or symmetrize (mirror L/R-named bones onto ' +
-    'their twins, made or updated, with the IK of any hand among them). Joints not moved keep their place.',
+    'their twins, made or updated, with the IK of any hand among them and their retarget bone-map ' +
+    'entries). Joints not moved keep their place.',
   spec: EditSkeletonSpec,
   specExample: { object: 'node_id', edit: { op: 'extrude', from: 'Bone' } },
   contract: {
@@ -163,6 +175,7 @@ export const editSkeletonMutator: MutatorDefinition<EditSkeletonSpec> = {
     return [
       { type: 'setParam', nodeId: result.skeletonId, paramPath: 'bones', value: result.bones },
       ...ikMirrorOf(spec, state, result.bones).ops,
+      ...mapMirrorOf(spec, state, result.bones).ops,
     ];
   },
   advisories(spec, _closure, state) {
@@ -171,6 +184,9 @@ export const editSkeletonMutator: MutatorDefinition<EditSkeletonSpec> = {
     const notes = result.added.length > 0 ? [`added ${result.added.join(', ')}`] : [];
     const { mirrored } = ikMirrorOf(spec, state, result.bones);
     if (mirrored.length > 0) notes.push(`mirrored the IK of ${mirrored.join(', ')}`);
+    const maps = mapMirrorOf(spec, state, result.bones);
+    if (maps.mirrored.length > 0) notes.push(`mapped ${maps.mirrored.join(', ')}`);
+    for (const l of maps.left) notes.push(`${l.node}: ${l.why}`);
     if (spec.edit.op !== 'delete') return notes;
     const gone = spec.edit.bone;
     const reach = rigReach(state, spec.object)!;
