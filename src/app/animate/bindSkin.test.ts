@@ -9,7 +9,8 @@ import type { Op } from '../../core/dag/types';
 import { registerAllNodes } from '../../nodes/registerAll';
 import { sampleSkinDeform } from '../../nodes/armatureDeform';
 import { quatFromEulerXYZ, restBonePose } from '../../nodes/bonePose';
-import { planCapture } from '../../nodes/CaptureModifier';
+import { Matrix4 } from 'three';
+import { captureBonesOf, planCapture } from '../../nodes/CaptureModifier';
 import { skinLanes } from '../../nodes/skinInfluences';
 import type {
   MeshGeometryData,
@@ -231,6 +232,23 @@ describe('#1353 — only deforming bones are captured', () => {
     const { mesh } = bound(state);
     expect(mesh.vertexGroups).toEqual([...BIND.bones, 'goal']);
     expect(weights(mesh, ringPoint(3))).toEqual({ goal: 1 });
+  });
+});
+
+describe('#1353 — two bones of one name', () => {
+  it('only the first is measured against: a group joins the first bone of its name', () => {
+    const bones = captureBonesOf(
+      [
+        { name: 'Arm', parent: -1, position: [0, 0, 0], rotation: [0, 0, 0] },
+        { name: 'Arm', parent: -1, position: [5, 0, 0], rotation: [0, 0, 0] },
+        { name: 'Leg', parent: -1, position: [0, 5, 0], rotation: [0, 0, 0] },
+      ],
+      new Matrix4(),
+    );
+    expect(bones.map((b) => [b.name, b.head])).toEqual([
+      ['Arm', [0, 0, 0]],
+      ['Leg', [0, 5, 0]],
+    ]);
   });
 });
 
