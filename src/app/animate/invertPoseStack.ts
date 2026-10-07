@@ -71,6 +71,37 @@ export function poseArriving(
   return index >= 0 ? incoming!.sample(seconds)[index] : undefined;
 }
 
+const componentOf = (pose: BonePose, component: PoseComponent): ComponentValue =>
+  component === 'rotation'
+    ? pose.quaternion
+    : component === 'position'
+      ? pose.position
+      : pose.scale;
+
+/**
+ * #1357 — whether the Rig `rigId` hands `bone`'s `component` on changed at `seconds`: what leaves it
+ * compared with what arrives on its `pose` input. Measured on the evaluated wire, because what a
+ * sub-network does to a bone is not readable from its params. A rotation is the same rotation under
+ * either sign of its quaternion.
+ */
+function rigChanges(
+  state: DagState,
+  rigId: string,
+  bone: string,
+  component: PoseComponent,
+  seconds: number,
+  cache?: EvaluatorCache,
+): boolean {
+  const feed = state.nodes[rigId].inputs?.pose as PoseFeed | undefined;
+  const after = poseArriving(state, { node: rigId, socket: 'out' }, bone, seconds, cache);
+  const before = feed ? poseArriving(state, feed, bone, seconds, cache) : undefined;
+  if (!after || !before) return true;
+  const a = componentOf(after, component);
+  const b = componentOf(before, component);
+  const same = (sign: number) => a.every((x, i) => Math.abs(x - sign * b[i]) <= 1e-9);
+  return !(same(1) || (component === 'rotation' && same(-1)));
+}
+
 /** #1343 — whether an ik layer's solve replaces `bone`'s local transform. */
 function ikDrives(params: PoseLayerParams, bone: string): boolean {
   const ik = params.mode === 'ik' ? params.ik : undefined;
@@ -169,9 +200,18 @@ export function layerValueForDrawn(
   cache?: EvaluatorCache,
 ): Inverted {
   const nodes = state.nodes as unknown as Readonly<Record<string, GraphNodeLike>>;
-  const { layers } = poseLayerChain(nodes, objectId);
-  const at = layers.indexOf(layerId);
-  if (at < 0) return { ok: false, reason: `"${layerId}" is not in this armature's pose layers.` };
+  const { layers, hops, allLayers } = poseLayerChain(nodes, objectId);
+  const at = hops.findIndex((h) => h.id === layerId && h.kind === 'layer');
+  if (at < 0) {
+    // #1357 — a layer inside a Rig is the rig's own logic: what it must hold for a drawn pose
+    // depends on the rest of that sub-network, which this walk does not invert.
+    return allLayers.includes(layerId)
+      ? {
+          ok: false,
+          reason: `"${layerId}" is inside a Rig: set its values in the inspector, or pose a layer under the Rig.`,
+        }
+      : { ok: false, reason: `"${layerId}" is not in this armature's pose layers.` };
+  }
   if (layers.some((id) => (state.nodes[id].params as PoseLayerParams).solo)) {
     return {
       ok: false,
@@ -181,7 +221,19 @@ export function layerValueForDrawn(
 
   // Remove each layer above, top down: what the edited layer must output.
   let out: ComponentValue = drawn;
-  for (const id of layers.slice(0, at)) {
+  for (const { id, kind } of hops.slice(0, at)) {
+    if (kind === 'rig') {
+      // #1357 — a Rig above is arbitrary logic over the pose being edited. Where it hands this
+      // bone's component through untouched (a control bone it only reads), the value below is the
+      // value drawn. Where it changes it, no value below can be worked out from here.
+      if (rigChanges(state, id, bone, component, seconds, cache)) {
+        return {
+          ok: false,
+          reason: `the Rig "${id}" above sets ${bone}'s ${component} here; move the bones it reads, or pose a layer above the Rig.`,
+        };
+      }
+      continue;
+    }
     const params = state.nodes[id].params as PoseLayerParams;
     // #1343 — an ik layer above replaces the chain's joints with a solve that depends on the very
     // pose being edited, so no value below reproduces a drawn one. Blender lets the FK channel change
@@ -229,12 +281,7 @@ export function layerValueForDrawn(
   if (!feed) return { ok: true, value: out };
   const lowerPose = poseArriving(state, feed, bone, seconds, cache);
   if (!lowerPose) return { ok: true, value: out };
-  const lower: ComponentValue =
-    component === 'rotation'
-      ? lowerPose.quaternion
-      : component === 'position'
-        ? lowerPose.position
-        : lowerPose.scale;
+  const lower: ComponentValue = componentOf(lowerPose, component);
   const value = stripFrom(out, lower, weight, params.mode === 'additive', component);
   if (value === null) {
     return {
