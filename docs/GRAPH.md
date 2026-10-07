@@ -149,6 +149,7 @@ change or defer, and why), here.
 
 ## 7. Where the detail lives
 
+- [GRAPH-ROADMAP](GRAPH-ROADMAP.md): the order this milestone is built in, and why.
 - [OBJECT-DATA-SPLIT-DESIGN](OBJECT-DATA-SPLIT-DESIGN.md): the Object/data boundary, flat
   storage, and why Templates come later (§12).
 - [UNIFICATION-PRINCIPLES](UNIFICATION-PRINCIPLES.md): what shared surfaces key on, and why
