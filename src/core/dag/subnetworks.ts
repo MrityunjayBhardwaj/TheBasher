@@ -202,6 +202,46 @@ export function bodyInputChoicesOf(
 }
 
 /**
+ * What a body-input leaf's `slot` means where it sits (#1574).
+ *
+ * - `'no-owner'`: the leaf is in no sub-network, or names an input its owner does not declare
+ *   for its type. `input` already says so (#1569); `slot` has nothing to add.
+ * - `'single'`: the input is one value. `slot` does nothing.
+ * - `'list'`: the input has `length` elements, as many as the owner's `sizedBy` socket has
+ *   wires. `filled` is whether the leaf's slot is one of them. A slot past the end binds nothing
+ *   and the leaf reads its default (`bindBodyInputs`).
+ */
+export type BodyInputSlot =
+  | { readonly kind: 'no-owner' }
+  | { readonly kind: 'single' }
+  | {
+      readonly kind: 'list';
+      readonly slot: number;
+      readonly length: number;
+      readonly filled: boolean;
+      readonly owner: NodeId;
+      readonly sizedBy: string;
+    };
+
+export function bodyInputSlotOf(state: DagState, leafId: NodeId): BodyInputSlot {
+  const leaf = state.nodes[leafId];
+  const params = (leaf?.params ?? {}) as { input?: unknown; slot?: unknown };
+  if (!leaf || typeof params.input !== 'string') return { kind: 'no-owner' };
+  const outType = Object.values(getNodeType(leaf.type)?.outputs ?? {})[0]?.type;
+  for (const owner of bodyInputChoicesOf(state, leafId).owners) {
+    const ownerNode = state.nodes[owner];
+    const want = getNodeType(ownerNode.type)?.bodyInputs?.[params.input];
+    if (!want || want.type !== outType) continue;
+    if (want.cardinality !== 'list' || want.sizedBy === undefined) return { kind: 'single' };
+    const binding = ownerNode.inputs[want.sizedBy];
+    const length = Array.isArray(binding) ? binding.length : binding ? 1 : 0;
+    const slot = typeof params.slot === 'number' ? params.slot : 0;
+    return { kind: 'list', slot, length, filled: slot < length, owner, sizedBy: want.sizedBy };
+  }
+  return { kind: 'no-owner' };
+}
+
+/**
  * The evaluator `overrides` that bind `values` (input name → value) to `leaves`. A `list`
  * input binds element `slot`; a slot past its end, or a name with no value, stays unbound
  * and the leaf reads its default.

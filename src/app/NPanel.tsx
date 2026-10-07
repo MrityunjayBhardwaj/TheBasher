@@ -78,9 +78,11 @@ import {
   optionsLockOf,
   optionsOf,
   optionsValueKindOf,
+  paramStandingOf,
   placeholderOf,
   type OptionsProvider,
   type ParamOption,
+  type ParamStandingProvider,
   type ParamWidget,
   widgetOf,
 } from '../nodes/paramWidget';
@@ -3173,6 +3175,39 @@ function MaterialEditor({
   );
 }
 
+/**
+ * A row whose param declares a standing (#1574): what the param means depends on where the
+ * node sits in the graph, so the row subscribes to the graph, which an ordinary row does not.
+ * `'unused'` draws nothing; `'note'` draws the ordinary row with the sentence under it.
+ */
+function StandingParamRow({
+  standing,
+  ...row
+}: Parameters<typeof ParamRow>[0] & { standing: ParamStandingProvider }) {
+  // `nodes` is the meaningful dep: a rewire or a param edit anywhere can change the answer.
+  const nodes = useDagStore((s) => s.state.nodes);
+  const at = useMemo(
+    () => standing(useDagStore.getState().state, row.nodeId),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [nodes, standing, row.nodeId],
+  );
+  if (at?.kind === 'unused') return null;
+  return (
+    <>
+      <ParamRow {...row} standingApplied />
+      {at?.kind === 'note' && (
+        <div
+          role="note"
+          data-testid={`inspector-param-note-${row.nodeId}-${row.paramPath}`}
+          className="mx-3 mb-1 rounded border border-border-strong bg-warn/10 px-2 py-1 text-[10px] text-warn"
+        >
+          {at.text}
+        </div>
+      )}
+    </>
+  );
+}
+
 function ParamRow({
   nodeId,
   paramPath,
@@ -3180,10 +3215,13 @@ function ParamRow({
   overrideInfo,
   maskedBy,
   suppliedBy,
+  standingApplied,
 }: {
   nodeId: string;
   paramPath: string;
   value: unknown;
+  /** Set by {@link StandingParamRow} on the row it wraps, so the row is not wrapped again. */
+  standingApplied?: boolean;
   overrideInfo?: OverrideInfo;
   /** #394 P4 — fields on this row a later layer supplies, keyed by full param path. A
    *  material row carries up to six (one per channel); a flat scalar row carries at most
@@ -3194,6 +3232,23 @@ function ParamRow({
    *  has no socket that shadows it. */
   suppliedBy?: MaskSource;
 }) {
+  // #1574 — a param whose row depends on where its node sits is drawn by the wrapper above.
+  if (!standingApplied && !paramPath.includes('.')) {
+    const standing = paramStandingOf(fieldSchemaOf(nodeId, paramPath));
+    if (standing) {
+      return (
+        <StandingParamRow
+          standing={standing}
+          nodeId={nodeId}
+          paramPath={paramPath}
+          value={value}
+          overrideInfo={overrideInfo}
+          maskedBy={maskedBy}
+          suppliedBy={suppliedBy}
+        />
+      );
+    }
+  }
   // v0.6 #2 (#178, W3) — the inline material IR renders the lobe-grouped editor
   // INSTEAD of the (complex — Pro mode) fallback. Closes NPanel:636 for primitives.
   if (paramPath === 'material' && isMaterialIR(value)) {

@@ -283,6 +283,28 @@ function assertBodyInputDeclarations(def: NodeDefinition): void {
         'but has no input marked `body: true`, so it owns no sub-network to bind them in.',
     );
   }
+  // #1574 — a list input says which of the owner's list sockets gives its length, so a leaf's
+  // slot can be told apart from one nothing fills. A single input has no length to state.
+  for (const [name, want] of Object.entries(def.bodyInputs ?? {})) {
+    const sizer = want.sizedBy === undefined ? undefined : def.inputs[want.sizedBy];
+    const why =
+      want.cardinality !== 'list'
+        ? want.sizedBy !== undefined
+          ? 'it is a single value, which has no length'
+          : null
+        : want.sizedBy === undefined
+          ? 'a list input must say which input gives its length (`sizedBy`)'
+          : !sizer
+            ? `it has no input socket "${want.sizedBy}"`
+            : sizer.cardinality !== 'list'
+              ? `"${want.sizedBy}" carries one value, so it cannot give a length`
+              : null;
+    if (why) {
+      throw new Error(
+        `registerNodeType(${def.type}): the sub-network input "${name}" is sized wrongly: ${why}.`,
+      );
+    }
+  }
   // #1357 — a stateless owner has no seam to bind its sub-network: the evaluator binds each
   // named input to the owner's own socket of that name (`evaluator.ts`). So the name must be one
   // of its sockets, outside the body, carrying one value of the declared type.

@@ -54,8 +54,14 @@ import { z } from 'zod';
 import type { NodeDefinition } from '../core/dag/types';
 import type { Vec3 } from './types';
 import { TransformSourceSchema } from './ParamDriver';
-import { bodyInputChoicesOf } from '../core/dag/subnetworks';
-import { optionsParam, type OptionsLock, type OptionsProvider } from './paramWidget';
+import { bodyInputChoicesOf, bodyInputSlotOf } from '../core/dag/subnetworks';
+import {
+  optionsParam,
+  standingParam,
+  type OptionsLock,
+  type OptionsProvider,
+  type ParamStandingProvider,
+} from './paramWidget';
 
 const NUMBER_OUT = { out: { type: 'Number', cardinality: 'single' } } as const;
 const VECTOR3_OUT = { out: { type: 'Vector3', cardinality: 'single' } } as const;
@@ -81,6 +87,24 @@ export const bodyInputLock: OptionsLock = (state, nodeId) =>
     ? 'not inside a sub-network, so nothing feeds it'
     : null;
 
+// #1574 — `slot` picks one element of a LIST input. On a single input it does nothing, so its
+// row is not drawn; on a list it is checked against how many elements the owner fills, because
+// a slot past the end binds nothing and the leaf quietly reads its default. A leaf with no
+// owner, or a name its owner does not declare, is `input`'s to report (#1569).
+export const bodyInputSlotStanding: ParamStandingProvider = (state, nodeId) => {
+  const at = bodyInputSlotOf(state, nodeId);
+  if (at.kind !== 'list') return { kind: 'unused' };
+  if (at.filled) return null;
+  const has =
+    at.length === 0
+      ? `nothing is wired into its ${at.sizedBy}`
+      : `its ${at.sizedBy} fill ${at.length === 1 ? 'slot 0 only' : `slots 0 to ${at.length - 1}`}`;
+  return {
+    kind: 'note',
+    text: `nothing fills slot ${at.slot}: ${has}, so this reads its default`,
+  };
+};
+
 export const BodyInputParams = z.object({
   input: optionsParam(
     z.string().min(1).default('input'),
@@ -89,7 +113,7 @@ export const BodyInputParams = z.object({
     'name',
     bodyInputLock,
   ),
-  slot: z.number().int().min(0).default(0),
+  slot: standingParam(z.number().int().min(0).default(0), bodyInputSlotStanding),
 });
 export type BodyInputParams = z.infer<typeof BodyInputParams>;
 
@@ -179,7 +203,8 @@ export const SolverNode: NodeDefinition<SolverParams, { out: number; outVec: Vec
   bodyInputs: {
     prev: { type: 'Number', cardinality: 'single' },
     input: { type: 'Number', cardinality: 'single' },
-    prevVec: { type: 'Vector3', cardinality: 'list' },
+    // One element per state slot: slot i is what `bodies[i]` computed last frame (#1574).
+    prevVec: { type: 'Vector3', cardinality: 'list', sizedBy: 'bodies' },
     inputVec: { type: 'Vector3', cardinality: 'single' },
   },
   evaluate: (_params, inputs) => {

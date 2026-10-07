@@ -270,6 +270,14 @@ export interface InputDescriptor {
 export interface BodyInputDescriptor {
   type: SocketTypeName;
   cardinality: Cardinality;
+  /**
+   * #1574 — for a `list` input, the owner's own list socket whose wires say how many elements
+   * it has: element `i` exists exactly when that socket has a wire `i`. The Solver's `prevVec`
+   * is `sizedBy: 'bodies'`, because slot `i` of the previous state is what `bodies[i]` computed.
+   * Required for a list, so a leaf's `slot` can be checked against something: a slot past the end
+   * binds nothing and the leaf reads its default (`bindBodyInputs`).
+   */
+  sizedBy?: string;
 }
 
 // The two membership readers live in `socketMembership.ts` (#612) and are re-exported

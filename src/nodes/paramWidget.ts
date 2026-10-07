@@ -231,6 +231,42 @@ export function optionsValueKindOf(schema: unknown): OptionsValueKind {
   return VALUE_KINDS.get(schema) ?? 'name';
 }
 
+/**
+ * Where a param stands on one node right now (#1574), for a param whose meaning depends on the
+ * graph around the node and not only on its own value.
+ *
+ * - `'unused'`: the param does nothing here, so its row is not drawn. A row that can be edited
+ *   and changes nothing reads as a control. The value is kept; the row returns when it matters.
+ * - `'note'`: the row is drawn with this sentence under it. For a value that is accepted and
+ *   stored but that nothing honours where the node sits.
+ * - `null`: an ordinary row.
+ *
+ * Like {@link widget}, this never changes what the schema accepts.
+ */
+export type ParamStanding =
+  | { readonly kind: 'unused' }
+  | { readonly kind: 'note'; readonly text: string }
+  | null;
+export type ParamStandingProvider = (state: DagState, nodeId: string) => ParamStanding;
+
+/** Schema instance → its standing. Weak and keyed by identity for {@link WIDGETS}' reasons. */
+const STANDINGS = new WeakMap<object, ParamStandingProvider>();
+
+/** Declare how `schema`'s row depends on where its node sits, and return the SAME schema. */
+export function standingParam<S extends z.ZodTypeAny>(
+  schema: S,
+  standing: ParamStandingProvider,
+): S {
+  STANDINGS.set(schema, standing);
+  return schema;
+}
+
+/** The standing this schema declares, or `undefined` if its row never depends on the graph. */
+export function paramStandingOf(schema: unknown): ParamStandingProvider | undefined {
+  if (schema === null || typeof schema !== 'object') return undefined;
+  return STANDINGS.get(schema);
+}
+
 /** The options provider this schema declares, or `undefined` if it declares none. */
 export function optionsOf(schema: unknown): OptionsProvider | undefined {
   if (schema === null || typeof schema !== 'object') return undefined;
