@@ -4660,6 +4660,65 @@ function EditBoneRow({ nodeId, boneName }: { nodeId: string; boneName: string })
           />
         ))}
       </div>
+      {/* #1344 — joint limits: how far the bone may turn from its rest, per axis. Posing and IK stop
+          at them. An axis switched on starts at a half turn each way (Blender's IK limit default). */}
+      {(['x', 'y', 'z'] as const).map((axis) => {
+        const range = spec.limits?.[axis];
+        const store = (next: readonly [number, number] | null) => {
+          const limits = { ...(spec.limits ?? {}) } as {
+            x?: readonly [number, number];
+            y?: readonly [number, number];
+            z?: readonly [number, number];
+          };
+          if (next) limits[axis] = next;
+          else delete limits[axis];
+          edit(
+            {
+              op: 'limits',
+              bone: boneName,
+              limits: Object.keys(limits).length > 0 ? limits : null,
+            },
+            `set ${boneName} ${axis} limit`,
+          );
+        };
+        return (
+          <div key={axis} className="flex items-center gap-1 text-[11px] text-fg/80">
+            <label
+              className="flex w-16 shrink-0 items-center gap-1 whitespace-nowrap font-mono text-[10px] text-fg/50"
+              title={`Limit how far the bone turns about its ${axis.toUpperCase()} axis from rest (degrees). Posing and IK stop at the limit.`}
+            >
+              <input
+                type="checkbox"
+                aria-label={`limit ${axis}`}
+                data-testid={`edit-bone-limit-${axis}`}
+                checked={range !== undefined}
+                onChange={(e) => store(e.target.checked ? [-Math.PI, Math.PI] : null)}
+              />
+              limit {axis}
+            </label>
+            {([0, 1] as const).map((end) => (
+              <input
+                key={end}
+                type="number"
+                step="1"
+                aria-label={`limit ${axis} ${end === 0 ? 'minimum' : 'maximum'}`}
+                disabled={range === undefined}
+                value={range ? Math.round(range[end] * RAD * 1000) / 1000 : ''}
+                placeholder={end === 0 ? 'min' : 'max'}
+                data-testid={`edit-bone-limit-${axis}-${end === 0 ? 'min' : 'max'}`}
+                className="w-full rounded border border-border bg-muted px-1.5 py-0.5 text-right font-mono text-[11px] text-fg disabled:opacity-40"
+                onChange={(e) => {
+                  const n = parseFloat(e.target.value);
+                  if (Number.isNaN(n) || !range) return;
+                  const next: [number, number] = [range[0], range[1]];
+                  next[end] = n / RAD;
+                  store(next);
+                }}
+              />
+            ))}
+          </div>
+        );
+      })}
       {refusal !== null ? (
         <div className="font-mono text-[10px] text-warn" data-testid="edit-bone-refusal">
           {refusal}

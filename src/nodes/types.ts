@@ -1730,6 +1730,16 @@ export interface BoneSpec {
    * `joint -spa`). Absent → none.
    */
   readonly preferredAngle?: Vec3;
+  /**
+   * #1344 — OPTIONAL joint limits: per axis, how far the bone may turn from its rest (radians, XYZ
+   * euler in its own axes). A pose layer hands on a pose inside them and the IK solve stops a joint
+   * at them (`jointLimits.ts`). Absent → free.
+   */
+  readonly limits?: {
+    readonly x?: readonly [number, number];
+    readonly y?: readonly [number, number];
+    readonly z?: readonly [number, number];
+  };
 }
 
 export interface SkeletonValue {

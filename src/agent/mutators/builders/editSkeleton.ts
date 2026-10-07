@@ -23,6 +23,7 @@ import { rigReach } from '../../../app/animate/renameBone';
 import { ikControlsOf, mirroredIkOps } from '../../../app/animate/addIk';
 import type { PoseLayerParams } from '../../../nodes/PoseLayer';
 import type { BoneSpec } from '../../../nodes/types';
+import { AxisRange } from '../../../nodes/Skeleton';
 
 const Vec3 = z.tuple([z.number(), z.number(), z.number()]);
 const BoneName = z.string().min(1);
@@ -66,6 +67,14 @@ const Edit = z.discriminatedUnion('op', [
     axisOnly: z.boolean().optional(),
   }),
   z.object({ op: z.literal('preferredAngle'), bone: BoneName, angle: Vec3.nullable() }),
+  // #1344 — joint limits: per axis [min, max] radians from rest; an axis left out is free.
+  z.object({
+    op: z.literal('limits'),
+    bone: BoneName,
+    limits: z
+      .object({ x: AxisRange.optional(), y: AxisRange.optional(), z: AxisRange.optional() })
+      .nullable(),
+  }),
   // #1341 — mirror bones with a side in their name onto their twins.
   z.object({
     op: z.literal('symmetrize'),
@@ -128,7 +137,8 @@ export const editSkeletonMutator: MutatorDefinition<EditSkeletonSpec> = {
     '(a child of a joint), subdivide (split the link to its one child), delete (children go to ' +
     'its parent unless reparent is false), parent (null = root), reroot, transform (rest ' +
     'position/rotation/scale; children follow or stay), orient (aim +Y at the child, roll +Z ' +
-    'toward `up`), preferredAngle (the IK start bend), or symmetrize (mirror L/R-named bones onto ' +
+    'toward `up`), preferredAngle (the IK start bend), limits (per axis [min, max] radians from ' +
+    'rest, which posing and IK stop at; null clears), or symmetrize (mirror L/R-named bones onto ' +
     'their twins, made or updated, with the IK of any hand among them). Joints not moved keep their place.',
   spec: EditSkeletonSpec,
   specExample: { object: 'node_id', edit: { op: 'extrude', from: 'Bone' } },

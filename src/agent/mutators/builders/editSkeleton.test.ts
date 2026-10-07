@@ -61,6 +61,27 @@ describe('#1339 — mutator.rig.editSkeleton', () => {
     }
   });
 
+  it('#1344 — sets a bone’s joint limits, undoes exactly, and refuses a range that cannot hold', () => {
+    const { object, skeleton } = armature();
+    const before = JSON.stringify(useDagStore.getState().state.nodes);
+    const res = edit(object, { op: 'limits', bone: 'Bone', limits: { x: [-0.5, 1.2] } });
+    expect(res.ok, JSON.stringify(res)).toBe(true);
+    expect(bones(skeleton)[0].limits).toEqual({ x: [-0.5, 1.2] });
+    const held = useDagStore.getState().state;
+    for (const bad of [{ x: [1, 0] }, { z: [-4, 0] }]) {
+      expect(
+        edit(object, { op: 'limits', bone: 'Bone', limits: bad }).ok,
+        JSON.stringify(bad),
+      ).toBe(false);
+      expect(useDagStore.getState().state).toBe(held);
+    }
+    expect(edit(object, { op: 'limits', bone: 'Bone', limits: null }).ok).toBe(true);
+    expect('limits' in bones(skeleton)[0]).toBe(false);
+    useDagStore.getState().undo();
+    useDagStore.getState().undo();
+    expect(JSON.stringify(useDagStore.getState().state.nodes)).toBe(before);
+  });
+
   it('refuses what it cannot do by saying why, and writes nothing', () => {
     const { object } = armature();
     const before = useDagStore.getState().state;
