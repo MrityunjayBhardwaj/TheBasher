@@ -21,9 +21,9 @@
 
 import { bypassSpineOf } from './chainBypass';
 import { hashString, hashValue, type ContentHash } from './hash';
-import { requireNodeType } from './registry';
+import { getNodeType, requireNodeType } from './registry';
 import type { DagState, EvaluableState } from './state';
-import { bodyInputLeavesOf, type BodyInputLeaf } from './subnetworks';
+import { bodyInputLeavesOf } from './subnetworks';
 import type { EvalCtx, NodeDefinition, NodeId, ResolvedInputs } from './types';
 // ns-2 step 9b — the FIRST value import from `src/nodes/**` into `src/core/dag/**`, and the
 // reason `modifierDataSource` was extracted to a leaf one commit earlier: the resolver's own
@@ -261,14 +261,20 @@ function scopeFor(
   );
 }
 
-// ── A STATELESS OWNER BINDS ITS OWN SUB-NETWORK (#1357) ──────────────────────────────────────
+// ── A STATELESS OWNER'S SUB-NETWORK READS ITS OWNER'S INPUTS (#1357) ─────────────────────────
 //
 // A node that owns a sub-network and is not `stateful` (the Rig) names, in `bodyInputs`, inputs
 // its sub-network reads; each is one of its own wired sockets (refused at registration
-// otherwise). Before the body sockets are walked, every leaf reading such an input is bound to
-// what that socket evaluated to: the SAME value, by reference, under the SAME hash. So a
-// sub-network computes exactly what its nodes would compute wired straight to the producer, and
-// its cache entries are keyed by the producer like any other consumer's.
+// otherwise). A leaf reading such an input evaluates to what that socket's producer evaluates
+// to: the SAME value, by reference, under the SAME hash. So a sub-network computes exactly what
+// its nodes would compute wired straight to the producer, and its cache entries are keyed by the
+// producer like any other consumer's.
+//
+// The leaf finds its owner, not the other way round. A stateless owner gives a leaf only one
+// possible value, so the answer does not depend on where the evaluation started: asked through
+// the owner (a render) or of a node inside on its own (the inspector on a layer inside a Rig),
+// the leaf reads the same pose. Binding on the way in through the owner would leave the second
+// reader with an empty pose.
 //
 // Here, and not in a seam above the evaluator, because the body is read by everything that reads
 // the owner's output (the viewport, a render, a bake, an export, the agent): one place, as the
@@ -277,26 +283,37 @@ function scopeFor(
 // and two different poses of one skeleton would share a key.
 //
 // A stateful owner (the Solver) is left to its replay seam, which binds per frame through
-// `overrides`. A leaf evaluated outside its owner (as the root, or in a graph that breaks the
-// single-owner rule) is unbound and reads its own default.
+// `overrides`. A leaf no stateless owner holds reads its own default.
 //
-// The leaves of an owner depend only on the node table, which is replaced on every commit and
-// shared between them, so they are remembered per table.
-const statelessLeaves = new WeakMap<object, Map<NodeId, readonly BodyInputLeaf[]>>();
-function statelessLeavesOf(state: EvaluableState, owner: NodeId): readonly BodyInputLeaf[] {
-  let perOwner = statelessLeaves.get(state.nodes);
-  if (!perOwner) {
-    perOwner = new Map();
-    statelessLeaves.set(state.nodes, perOwner);
+// Which leaf reads which producer depends only on the node table, which is replaced on every
+// commit and shared between them, so it is worked out once per table, and only when a leaf is
+// first evaluated: a graph with no leaves never pays for it. It reads every node's type once.
+// MEASURED 2026-10-07 (vitest, node, 2,024 nodes, a Rig over a 20-layer sub-network, uncached
+// `evaluate` of the Rig, 300 calls): 0.063 ms a call on one table against 0.047 ms for the same
+// layers wired straight; with a new node table on every call (a fold while an overlay plays
+// builds one a frame) 0.96 ms against 0.57 ms, so about 0.4 ms per new table at that size.
+interface LeafFeed {
+  readonly node: NodeId;
+  readonly socket: string;
+}
+const statelessLeafFeeds = new WeakMap<object, Map<NodeId, LeafFeed>>();
+function statelessLeafFeedOf(state: EvaluableState, leaf: NodeId): LeafFeed | undefined {
+  let feeds = statelessLeafFeeds.get(state.nodes);
+  if (!feeds) {
+    feeds = new Map();
+    for (const owner of Object.values(state.nodes)) {
+      const def = getNodeType(owner.type);
+      if (!def?.bodyInputs || def.stateful === true) continue;
+      // Only `nodes` is read, and the leaves of a sub-network are the same folded or authored
+      // unless a leaf's `input` is itself animated, which no surface offers.
+      for (const found of bodyInputLeavesOf(state as DagState, owner.id)) {
+        const ref = owner.inputs[found.input];
+        if (ref && !Array.isArray(ref)) feeds.set(found.id, ref);
+      }
+    }
+    statelessLeafFeeds.set(state.nodes, feeds);
   }
-  let leaves = perOwner.get(owner);
-  if (!leaves) {
-    // Only `nodes` is read, and the leaves of a sub-network are the same folded or authored
-    // unless a leaf's `input` is itself animated, which no surface offers.
-    leaves = bodyInputLeavesOf(state as DagState, owner);
-    perOwner.set(owner, leaves);
-  }
-  return leaves;
+  return feeds.get(leaf);
 }
 
 interface Frame {
@@ -317,8 +334,6 @@ export function evaluate(
   // multiple downstream consumers share an upstream.
   const memo = new Map<NodeId, EvalResult>();
   const onStack = new Set<NodeId>();
-  // #1357 — what each body-input leaf of a stateless owner reads, set by the owner on the way in.
-  const bound = new Map<NodeId, EvalResult>();
 
   function evalNode(id: NodeId, depth: number): EvalResult {
     if (depth > DEPTH_LIMIT) {
@@ -338,21 +353,35 @@ export function evaluate(
       memo.set(id, injected);
       return injected;
     }
-    const boundTo = bound.get(id);
-    if (boundTo) {
-      memo.set(id, boundTo);
-      return boundTo;
-    }
     const node = state.nodes[id];
     if (!node) throw new Error(`Evaluator: node not found: ${id}`);
     const def = requireNodeType(node.type);
 
     onStack.add(id);
 
-    // #1357 — a stateless owner binds its sub-network's leaves before any input is walked, so
-    // the order its sockets were wired in does not matter.
+    // #1357 — a leaf inside a stateless owner's sub-network IS the producer its owner reads.
+    if (def.bodyInputLeaf === true) {
+      const feed = statelessLeafFeedOf(state, id);
+      if (feed) {
+        const sub = evalNode(feed.node, depth + 1);
+        onStack.delete(id);
+        const through: EvalResult = {
+          value: extractSocket(sub.value, feed.socket),
+          hash: hashString(`${feed.socket}:${sub.hash}`),
+        };
+        memo.set(id, through);
+        return through;
+      }
+    }
+    // A stateless owner's own inputs first, so the producers its leaves read are evaluated at
+    // the owner's depth and the sub-network finds them done. Its body's depth is then counted
+    // from the owner, not added on top of the chain feeding it.
     if (def.bodyInputs !== undefined && def.stateful !== true) {
-      bindStatelessLeaves(id, node.inputs, depth);
+      for (const [socket, binding] of Object.entries(node.inputs)) {
+        if (def.inputs[socket]?.body === true) continue;
+        for (const ref of Array.isArray(binding) ? binding : [binding])
+          evalNode(ref.node, depth + 1);
+      }
     }
 
     // Resolve inputs.
@@ -414,24 +443,6 @@ export function evaluate(
     if (cache) cache.set(cacheKey, result);
     memo.set(id, result);
     return result;
-  }
-
-  /** Bind each leaf of stateless owner `owner` to the result of the owner input it names. */
-  function bindStatelessLeaves(
-    owner: NodeId,
-    inputs: EvaluableState['nodes'][string]['inputs'],
-    depth: number,
-  ) {
-    for (const leaf of statelessLeavesOf(state, owner)) {
-      const ref = inputs[leaf.input];
-      if (!ref || Array.isArray(ref)) continue;
-      // Memoised, so the input walk that follows finds it already evaluated.
-      const sub = evalNode(ref.node, depth + 1);
-      bound.set(leaf.id, {
-        value: extractSocket(sub.value, ref.socket),
-        hash: hashString(`${ref.socket}:${sub.hash}`),
-      });
-    }
   }
 
   const result = evalNode(nodeId, 0);

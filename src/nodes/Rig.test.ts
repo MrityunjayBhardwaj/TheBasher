@@ -201,10 +201,50 @@ describe('#1357 — a Rig poses exactly as the layers inside it wired straight',
     expect(bodyInputChoicesOf(s, 'in')).toEqual({ owners: ['rig'], names: ['pose'] });
   });
 
-  it('outside its Rig a leaf reads no pose', () => {
-    expect(pose(wrapped(), 'in').skeleton.bones).toHaveLength(0);
-    // The node above it, asked on its own, solves over that empty pose: nothing binds it.
-    expect(pose(wrapped(), 'twist').sample(0)).toEqual([]);
+  it('a node inside a Rig, asked on its own, reads what it reads through the Rig', () => {
+    // What the inspector does when a layer inside is selected: it evaluates that layer, not the Rig.
+    const s = wrapped();
+    const cache = createEvaluatorCache();
+    expect(pose(s, 'in', { cache })).toBe(pose(s, 'anim', { cache }));
+    expect(samples(pose(s, 'twist'))).toEqual(samples(pose(s, 'rig')));
+    expect(samples(pose(s, 'ik'))).toEqual(samples(pose(unwrapped(), 'ik')));
+  });
+
+  it('a leaf no Rig holds reads no pose', () => {
+    const s = apply(wrapped(), [
+      {
+        type: 'disconnect',
+        from: { node: 'twist', socket: 'out' },
+        to: { node: 'rig', socket: 'body' },
+      },
+    ] as Op[]);
+    expect(pose(s, 'in').skeleton.bones).toHaveLength(0);
+    expect(pose(s, 'twist').sample(0)).toEqual([]);
+  });
+
+  it('a sub-network deeper than the chain feeding it is counted from its Rig', () => {
+    // 20 layers of animation under the Rig and 20 inside it: 40 in a row unwrapped is past the
+    // evaluator's depth limit, and the Rig must not make its body pay for the chain below it.
+    const idle = (id: string, from: string, fromSocket = 'out'): Op[] => [
+      node(id, 'PoseLayer', { name: id }),
+      wire(from, id, 'pose', fromSocket),
+    ];
+    const ops: Op[] = [node('sk', 'Skeleton', { bones: BONES })];
+    let at = 'sk';
+    for (let i = 0; i < 20; i++) {
+      ops.push(...idle(`a${i}`, at, i === 0 ? 'pose' : 'out'));
+      at = `a${i}`;
+    }
+    const below = at;
+    ops.push(node('in', 'BodyInputPose'));
+    at = 'in';
+    for (let i = 0; i < 20; i++) {
+      ops.push(...idle(`b${i}`, at));
+      at = `b${i}`;
+    }
+    ops.push(node('rig', 'Rig'), wire(at, 'rig', 'body'), wire(below, 'rig', 'pose'));
+    const s = apply(emptyDagState(), ops);
+    expect(pose(s, 'rig').skeleton.bones).toHaveLength(BONES.length);
   });
 
   it('a stateful owner is left to its seam: the evaluator binds nothing for it', () => {

@@ -73,8 +73,9 @@ OUTPUTS ─── outputs.scene · outputs.render
    sub-network's **named inputs** (`bodyInputs`), and a `BodyInput` leaf inside reads one by
    name; the owner binds a value to each name when it cooks the sub-network (#1548). A
    stateful owner (the Solver) is cooked per frame by its replay seam. A stateless one (the
-   Rig, #1357) is bound by the evaluator itself: each named input is the owner's own socket
-   of that name, and the leaf reads exactly what that socket evaluated to. The node view's levels
+   Rig, #1357) needs no cook: each named input is the owner's own socket of that name, and
+   the evaluator makes the leaf read exactly what that socket's producer evaluates to, whether
+   it is asked through the owner or of a node inside on its own. The node view's levels
    are computed from this, so the saved format has no nesting to migrate. Why flat:
    [OBJECT-DATA-SPLIT-DESIGN §2.2](OBJECT-DATA-SPLIT-DESIGN.md) ("on a DAG, pointer and
    containment are the same edge") and §2.4.

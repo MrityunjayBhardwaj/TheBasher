@@ -14,9 +14,11 @@
 // The Solver cooks its sub-network once per frame, because its value at frame N depends on its own
 // output at N−1. A pose does not: a `PosedSkeletonValue` carries `sample(seconds)`, so a layer
 // evaluates once per graph change and time is asked of the value afterwards. The Rig is therefore
-// an ordinary pure node, and the evaluator binds its sub-network's input (`evaluator.ts`, "a
-// stateless owner"): the leaf evaluates to exactly what the Rig's `pose` input evaluated to, by
-// reference. That is why wrapping layers in a Rig changes nothing they compute.
+// an ordinary pure node, and the evaluator resolves its sub-network's input (`evaluator.ts`, "a
+// stateless owner"): the leaf evaluates to exactly what the Rig's `pose` input evaluates to, by
+// reference, whether it is asked through the Rig or of a node inside on its own. That is why
+// wrapping layers in a Rig changes nothing they compute, and why a layer inside one can be
+// inspected like any other.
 //
 // ── WHAT IT DECLARES ────────────────────────────────────────────────────────────────────────────
 //
@@ -38,7 +40,7 @@ import { bodyInputLock, bodyInputOptions } from './Solver';
 
 const POSE = { type: 'PosedSkeleton', cardinality: 'single' } as const;
 
-/** What the leaf reads where nothing binds it: a pose of no bones. */
+/** What the leaf reads when no Rig holds it: a pose of no bones. */
 const NO_POSE: PosedSkeletonValue = {
   kind: 'PosedSkeleton',
   skeleton: { kind: 'Skeleton', bones: [] },

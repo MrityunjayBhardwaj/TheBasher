@@ -21,9 +21,9 @@ never waiting on this one.
 - #1357: rig logic lives in one sub-network on the pose wire.
 
 It is first because the rigging work needs somewhere to put things. It builds on the
-single-owner rule and named inputs (rule 2 in GRAPH.md §4). Two things have to be designed
-before it is written: how a stateless sub-network on the pose wire is evaluated, and an
-input leaf that carries a pose (today's leaves carry a number or a vector).
+single-owner rule and named inputs (rule 2 in GRAPH.md §4), and adds the two things a
+sub-network on the pose wire needs: an input leaf that carries a pose, and an owner that is
+not cooked per frame, whose leaves the evaluator resolves itself.
 
 ### 2. Sub-networks grow up
 
