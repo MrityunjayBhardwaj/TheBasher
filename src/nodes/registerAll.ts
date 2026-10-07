@@ -28,13 +28,7 @@ import { ColorCorrectNode } from './ColorCorrect';
 import { CompositionNode } from './Composition';
 import { COMPUTE_NODES } from './computeNodes';
 import { LagNode } from './Lag';
-import {
-  SolverNode,
-  PrevFrameNode,
-  SolverInputNode,
-  PrevFrameVecNode,
-  SolverInputVecNode,
-} from './Solver';
+import { SolverNode, BodyInputNode, BodyInputVecNode } from './Solver';
 import { SampleGeometryNode } from './geometryQuery';
 import { CutNode } from './Cut';
 import { LayerNode } from './Layer';
@@ -273,13 +267,11 @@ const ALL: NodeDefinition[] = [
   // Solver meta-op — the 3rd OpNet instance (epic #290 Epic 2). A node owning a
   // user-authored sub-network cooked every frame with a Prev_Frame feedback + seed
   // (Houdini Solver SOP). Generalizes Lag's fixed recurrence to any per-frame rule;
-  // PrevFrame/SolverInput are the sub-network's feedback + live-input leaves, injected
-  // by the replay seam (statefulOps.ts). Stateful like Lag → replayed, not evaluated.
+  // BodyInput/BodyInputVec read the sub-network's named inputs, bound by the replay seam
+  // (statefulOps.ts, #1548). Stateful like Lag → replayed, not evaluated.
   SolverNode as unknown as NodeDefinition,
-  PrevFrameNode as unknown as NodeDefinition,
-  SolverInputNode as unknown as NodeDefinition,
-  PrevFrameVecNode as unknown as NodeDefinition,
-  SolverInputVecNode as unknown as NodeDefinition,
+  BodyInputNode as unknown as NodeDefinition,
+  BodyInputVecNode as unknown as NodeDefinition,
   // Geometry query — SampleGeometry (epic #290 vec-rail follow-up). The compute rail's
   // GEOMETRY reader: drops a vertical ray onto a terrain mesh and outputs the ground
   // point under a query controller's world XZ. Seam-resolved (needs world triangles →

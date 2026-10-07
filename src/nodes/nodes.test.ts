@@ -73,6 +73,8 @@ const ALL_TYPES = [
   'BakedData',
   'BeautyPass',
   'BevelModifier',
+  'BodyInput',
+  'BodyInputVec',
   'BoneNameMap',
   'BoxData',
   // #387 (Stage C · C4) — the camera's data half. Every split kind adds its data type
@@ -139,8 +141,6 @@ const ALL_TYPES = [
   // #1240 — a layer that edits the pose wire; absorbed PoseOverride (retired, #1243).
   'PoseLayer',
   'PosedSkeleton',
-  'PrevFrame',
-  'PrevFrameVec',
   'Prompt',
   'RenderJob',
   'RenderOutput',
@@ -155,8 +155,6 @@ const ALL_TYPES = [
   'Shot',
   'Skeleton',
   'Solver',
-  'SolverInput',
-  'SolverInputVec',
   'SphereData',
   'Strip',
   'TimeSource',

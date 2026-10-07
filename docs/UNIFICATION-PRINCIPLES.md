@@ -1,5 +1,9 @@
 # Unification principles — what our shared surfaces key on, and what survives a node-based UI
 
+> **What the graph is** (the three relationships, the node families, the six rules and every
+> difference from Houdini) is specified once in [`GRAPH.md`](GRAPH.md). This doc holds the
+> detail behind part of it.
+
 Written 2026-07-25, while planning #458 (the shared inspector section-body dispatcher) as the
 prerequisite for #387 (the camera split).
 
@@ -114,6 +118,8 @@ network levels or subnets (§2.2). Two of its findings decide the answer here:
   "instantiate this subgraph with these bindings"; `SolverInput` is already a promoted parameter
   hard-coded as a dedicated leaf type because that word does not exist. On a DAG, a template instance
   is _the same edge_ as fan-out with a non-empty override map.
+  _(Since #1548 the first half of that word exists: an owner declares named inputs and a generic
+  `BodyInput` leaf reads one by name. See [`GRAPH.md`](GRAPH.md).)_
 
 So subgraphs arrive as **a node the evaluator understands** — a `body` input plus named parameter
 inputs. There will still be a node, and it will still have a type; but the type will be something

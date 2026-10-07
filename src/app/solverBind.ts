@@ -6,7 +6,7 @@
 //               seam cooks the closure of whatever is wired here. Set = rewire (disconnect
 //               the old body edge, connect the new one); clear = disconnect.
 //   • the LIVE input — the Solver's `sourceTransform` (a controller transform channel),
-//               injected into the sub-network's SolverInput leaves each frame. Same shape
+//               bound to the sub-network's `input` each frame. Same shape
 //               + builder story as Lag's input (buildSetLagSourceOps is node-agnostic and
 //               reused; the range is set by the shared buildSetDriverRemapOps).
 //
@@ -68,7 +68,7 @@ export function buildSetSolverBodyOps(
 // position. The recurrence (semi-implicit Euler, per-frame k/c absorbing dt):
 //   newVel = prevVel + k·(target − prevPos) − c·prevVel   (slot 1)
 //   newPos = prevPos + newVel                             (slot 0)
-// so the target (a controller Null's whole position, injected via SolverInputVec) is
+// so the target (a controller Null's whole position, bound to `inputVec`) is
 // followed with overshoot + settle. Lag/Spring becoming SAVED sub-networks (not node
 // types) is the meta-op's whole point — this is the first such saved network.
 
@@ -134,10 +134,25 @@ export function buildSpringOps(state: DagState, req: SpringRequest): SpringBuild
   const wire = (from: NodeRef, to: NodeRef): Op => ({ type: 'connect', from, to });
 
   const ops: Op[] = [
-    // Leaves: the live target (SolverInputVec) + the two feedback slots (PrevFrameVec).
-    { type: 'addNode', nodeId: id('in'), nodeType: 'SolverInputVec', params: {} },
-    { type: 'addNode', nodeId: id('pp'), nodeType: 'PrevFrameVec', params: { slot: 0 } },
-    { type: 'addNode', nodeId: id('pv'), nodeType: 'PrevFrameVec', params: { slot: 1 } },
+    // Leaves (#1548): the live target (`inputVec`) + the two feedback slots (`prevVec`).
+    {
+      type: 'addNode',
+      nodeId: id('in'),
+      nodeType: 'BodyInputVec',
+      params: { input: 'inputVec', slot: 0 },
+    },
+    {
+      type: 'addNode',
+      nodeId: id('pp'),
+      nodeType: 'BodyInputVec',
+      params: { input: 'prevVec', slot: 0 },
+    },
+    {
+      type: 'addNode',
+      nodeId: id('pv'),
+      nodeType: 'BodyInputVec',
+      params: { input: 'prevVec', slot: 1 },
+    },
     // e = target − prevPos
     { type: 'addNode', nodeId: id('e'), nodeType: 'Vec3Math', params: { op: 'sub' } },
     wire(out(id('in')), { node: id('e'), socket: 'a' }),

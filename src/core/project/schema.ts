@@ -89,7 +89,9 @@ import { NodeSchema, NodeIdSchema, NodeRefSchema } from '../dag/types';
 // v21 (#1503): visibility is the `viewport` and `render` params, not `meta.hidden` — a hidden node
 // is saved off in both, which is what `meta.hidden` hid it from. See migrations.ts
 // formatMigrations[20].
-export const PROJECT_FORMAT_VERSION = 21;
+// v22 (#1548): the Solver's input leaves (PrevFrame, SolverInput and their Vec twins) are
+// `BodyInput`/`BodyInputVec` reading the input by name. See migrations.ts formatMigrations[21].
+export const PROJECT_FORMAT_VERSION = 22;
 
 export const ProjectSchema = z.object({
   formatVersion: z.literal(PROJECT_FORMAT_VERSION),

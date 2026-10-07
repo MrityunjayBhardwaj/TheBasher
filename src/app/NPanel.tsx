@@ -1155,7 +1155,9 @@ function OptionsParamField({
         testid={`inspector-options-${nodeId}-${paramPath}`}
         value={value}
         options={options}
-        noneLabel={`— ${none} —`}
+        // #1569 — a param whose schema refuses "" has no none to pick; offering one would
+        // dispatch a write the schema throws on.
+        noneLabel={field && !field.safeParse('').success ? null : `— ${none} —`}
         staleLabel={staleLabel}
         onCommit={(next) =>
           dispatch({ type: 'setParam', nodeId, paramPath, value: next }, 'user', `set ${paramPath}`)

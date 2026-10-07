@@ -13,7 +13,7 @@
 import { create } from 'zustand';
 import { applyOp, validateOp } from './ops';
 import type { Reportable } from './ops';
-import { findDanglingIdRef } from './idRefSweep';
+import { findNewDanglingIdRef } from './idRefSweep';
 import type { DagState } from './state';
 import { emptyDagState } from './state';
 import type { Diff, InverseOp, Op } from './types';
@@ -121,9 +121,13 @@ export function __setTimeNowForTests(fn: () => number): void {
 // Called by all three commit paths (dispatch / dispatchBatch / dispatchAtomic) before
 // their `set()`, so a rejected batch never mutates the store and no future commit road
 // can reopen the raw-removeNode hole. Closes the dag.exec road no per-caller sweep reaches.
-function assertNoDanglingIdRef(ops: readonly Op[], nextState: DagState): void {
+//
+// #1571 — ONLY WHAT THIS COMMIT STRANDS. A reference that was already dangling before it is
+// left alone: the scan used to read the whole committed state, so one stale reference anywhere
+// in a project refused every later delete of anything.
+function assertNoDanglingIdRef(ops: readonly Op[], prevState: DagState, nextState: DagState): void {
   if (!ops.some((o) => o.type === 'removeNode')) return;
-  const dangling = findDanglingIdRef(nextState.nodes);
+  const dangling = findNewDanglingIdRef(prevState.nodes, nextState.nodes);
   if (dangling) {
     throw new Error(
       `dispatch: node "${dangling.node}" would be left referencing removed node ` +
@@ -149,7 +153,7 @@ export const useDagStore = create<DagStore>((set, get) => ({
     const validated = validateOp(op);
     const prev = get().state;
     const { next, inverse, reportable } = applyOp(prev, validated);
-    assertNoDanglingIdRef([validated], next); // #435
+    assertNoDanglingIdRef([validated], prev, next); // #435
     const inv: InverseOp = { forward: validated, inverse };
     // #1189 — an op that changed nothing hands back the SAME state object (applyOp's
     // contract). It commits nothing: no state set (so the unsaved flag and autosave, which
@@ -218,7 +222,7 @@ export const useDagStore = create<DagStore>((set, get) => ({
         description,
       });
     }
-    assertNoDanglingIdRef(ops, working); // #435
+    assertNoDanglingIdRef(ops, get().state, working); // #435
     // Inside a drag transaction: mutate state, buffer the records (flat).
     if (interaction) {
       if (interaction.entries.length === 0) {
@@ -267,7 +271,7 @@ export const useDagStore = create<DagStore>((set, get) => ({
         description,
       });
     }
-    assertNoDanglingIdRef(ops, working); // #435 — throw before set(); store stays whole
+    assertNoDanglingIdRef(ops, get().state, working); // #435 — throw before set(); store stays whole
     // Inside a drag transaction: append the ops FLAT to the buffer (not as a nested
     // group) so the whole gesture stays ONE flat undo entry.
     if (interaction) {

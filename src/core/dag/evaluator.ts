@@ -194,7 +194,7 @@ export interface EvaluateOptions {
   /** Per-node value injection: for every id present, the evaluator returns the mapped
    *  value INSTEAD of running that node's `evaluate` (its inputs are not walked). The
    *  Solver replay seam (statefulOps.ts) uses this to feed the previous-frame output
-   *  into Prev_Frame leaves and the live input into SolverInput leaves each frame — the
+   *  into the leaves reading `prev` and the live input into those reading `input` each frame — the
    *  temporal-feedback mechanism the pure evaluator (one frame, no previous output)
    *  can't express. The injected value is folded into downstream input-hashes (so a
    *  changed injection invalidates correctly); the seam cooks with no shared cache, so

@@ -247,6 +247,29 @@ export type AcceptedTypeSet = readonly [SocketTypeName, SocketTypeName, ...Socke
 export interface InputDescriptor {
   type: SocketTypeName | AcceptedTypeSet;
   cardinality: Cardinality;
+  /**
+   * #1547 — a BODY socket: what is wired here is the output of a sub-network this node
+   * owns (the Solver's `body`/`bodies`). The dependency closure behind every body socket of
+   * a node is that node's sub-network, and a node inside it may feed nothing outside it
+   * but the owner's body sockets (`subnetworks.ts`).
+   */
+  body?: true;
+}
+
+/**
+ * #1548 — one NAMED input of a sub-network, declared by the node that owns it (the Solver's
+ * `prev`, `input`, `prevVec`, `inputVec`). Inside the sub-network a body-input leaf reads it by
+ * name (`BodyInput`, `BodyInputVec`); the owner binds a value to each name every time it cooks
+ * the sub-network (`bindBodyInputs`, `subnetworks.ts`). A `list` input is read one element at a
+ * time, by the leaf's `slot`.
+ *
+ * This is the word the evaluator was missing for "instantiate this sub-network with these
+ * bindings" (docs/OBJECT-DATA-SPLIT-DESIGN.md §12): before it, each live input was a leaf type
+ * of its own that the Solver's seam looked up by type name.
+ */
+export interface BodyInputDescriptor {
+  type: SocketTypeName;
+  cardinality: Cardinality;
 }
 
 // The two membership readers live in `socketMembership.ts` (#612) and are re-exported
@@ -445,6 +468,17 @@ export interface NodeDefinition<P = unknown, O = unknown> {
   inputs: Record<SocketId, InputDescriptor>;
   outputs: Record<SocketId, OutputDescriptor>;
   /**
+   * #1548 — the named inputs of the sub-network this node owns (see `BodyInputDescriptor`).
+   * Only a node with `body` sockets declares them.
+   */
+  bodyInputs?: Record<string, BodyInputDescriptor>;
+  /**
+   * #1548 — this node type is a body-input leaf: inside a sub-network it stands for the
+   * owner's input named by its `input` param (element `slot` of a `list` input), and its one
+   * output's type is the type it accepts. Outside a cook it evaluates to its own default.
+   */
+  bodyInputLeaf?: true;
+  /**
    * #396 — WHICH input carries the CHAIN: the spine a stack walks down, as opposed
    * to an ARGUMENT the graph wires and the stack steps past. Absent = this node is
    * not a chain node at all (a leaf producer, a poser, a sink).
@@ -573,7 +607,8 @@ export interface NodeDefinition<P = unknown, O = unknown> {
    * surface: every entry renders an Inspector picker and removes the raw row
    * (NPanel.tsx:2881-2896/2903). "This param holds a node id" and "the user should
    * pick it from a dropdown" are different questions that only coincide on 6 of
-   * the 23 id-holding params. Folding them would (a) inject pickers nobody asked
+   * the 24 id-holding params (counted by `src/nodes/idRefCensus.gate.test.ts`, which
+   * also refuses an id-holding param that is not declared here — #1551). Folding them would (a) inject pickers nobody asked
    * for, (b) break `sourceTransform` — NodeRefField writes `{node}` wholesale
    * (NPanel.tsx:707), dropping the required `channel` — and (c) still not express
    * `Track.strips`, an ARRAY. Two concerns, two declarations.

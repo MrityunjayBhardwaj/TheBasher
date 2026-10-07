@@ -89,7 +89,7 @@ describe('#637 this phase ships no migration, and the absence is pinned', () => 
     registerAllNodes();
   });
 
-  it('has moved the project format version exactly twelve times since the freeze — #915, #920, #930, #389, #1062, #1203, #1224, #1225 twice, #1316, #1227, then #1503', () => {
+  it('has moved the project format version exactly thirteen times since the freeze — #915, #920, #930, #389, #1062, #1203, #1224, #1225 twice, #1316, #1227, #1503, then #1548', () => {
     // 🔴 THIS ROW CHANGED SHAPE IN #915, AND THE HEADER ABOVE SAYS WHY IT MAY.
     //
     // It read `toBe(fixture().formatVersion)` — ns-1 shipped no migration, so the frozen
@@ -138,7 +138,10 @@ describe('#637 this phase ships no migration, and the absence is pinned', () => 
     // #1503 is the TWELFTH: `meta.hidden` becomes the `viewport` and `render` params. The schema no
     // longer admits the meta key, so only a pass over the raw file, before the parse strips it, can
     // carry a hidden node across.
-    const MIGRATIONS_SINCE_FREEZE = 12; // #915, #920, #930, #389, #1062, #1203, #1224, #1225 ×2, #1316, #1227, #1503
+    // #1548 is the THIRTEENTH: the Solver's four input leaf types become two leaves that read the
+    // input by name. The old types are no longer registered, so only a pass over the raw file can
+    // rename a saved leaf before the load looks its type up.
+    const MIGRATIONS_SINCE_FREEZE = 13; // #915, #920, #930, #389, #1062, #1203, #1224, #1225 ×2, #1316, #1227, #1503, #1548
     expect(PROJECT_FORMAT_VERSION).toBe(fixture().formatVersion + MIGRATIONS_SINCE_FREEZE);
   });
 

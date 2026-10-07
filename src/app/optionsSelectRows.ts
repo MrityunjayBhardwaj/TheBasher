@@ -36,13 +36,14 @@ export interface OptionsSelectModel {
  *   disabled: it is there to be seen, not chosen.
  * - A **none** row, value `""`, labelled by `noneLabel` — unless an option already carries
  *   `""`. Then that option IS what `""` selects, and a second row with the same value would
- *   claim a "none" the param cannot express.
+ *   claim a "none" the param cannot express. A `null` label says the same thing outright
+ *   (#1569): the param's schema refuses `""`, so there is no none to offer.
  * - Then every option, a disabled one labelled with its reason.
  */
 export function optionsSelectRows(
   stored: string,
   options: readonly ParamOption[],
-  noneLabel: string,
+  noneLabel: string | null,
   staleLabel: (value: string) => string = (v) => `${v} — not found`,
 ): OptionsSelectModel {
   const rows: OptionRow[] = [];
@@ -50,7 +51,7 @@ export function optionsSelectRows(
   if (stale) {
     rows.push({ key: 'stale', value: stored, label: staleLabel(stored), disabled: true, stale });
   }
-  if (!options.some((o) => o.value === '')) {
+  if (noneLabel !== null && !options.some((o) => o.value === '')) {
     rows.push({ key: 'none', value: '', label: noneLabel, disabled: false, stale: false });
   }
   options.forEach((o, i) => {

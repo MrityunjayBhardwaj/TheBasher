@@ -267,12 +267,52 @@ export function paramFieldsOf(
   return schema instanceof z.ZodObject ? (schema.shape as Record<string, unknown>) : null;
 }
 
+/**
+ * #1570 — refuse a body-input declaration nothing would honour (#1548).
+ *
+ * `bodyInputs` names the inputs of the sub-network a node owns, and `bodyInputLeaf` marks a
+ * type that reads one by name. Each is read far from where it is declared
+ * (`bodyInputLeavesOf`, `subnetworks.ts`), and each mistake below fails the same way: the
+ * leaf is not bound, it reads its default, and nothing says so. So they are refused here,
+ * where the type is named, as `assertChainDeclaration` does for the chain.
+ */
+function assertBodyInputDeclarations(def: NodeDefinition): void {
+  if (def.bodyInputs && !Object.values(def.inputs).some((d) => d.body === true)) {
+    throw new Error(
+      `registerNodeType(${def.type}): declares bodyInputs (${Object.keys(def.bodyInputs).join(', ')}) ` +
+        'but has no input marked `body: true`, so it owns no sub-network to bind them in.',
+    );
+  }
+  if (!def.bodyInputLeaf) return;
+  const outputs = Object.keys(def.outputs);
+  if (outputs.length !== 1) {
+    throw new Error(
+      `registerNodeType(${def.type}): a body-input leaf has exactly one output, whose type is ` +
+        `the input type it reads; this declares ${outputs.length} (${outputs.join(', ') || 'none'}).`,
+    );
+  }
+  if (Object.keys(def.inputs).length > 0) {
+    throw new Error(
+      `registerNodeType(${def.type}): a body-input leaf takes its value from its owner, so it ` +
+        `has no inputs of its own; this declares ${Object.keys(def.inputs).join(', ')}.`,
+    );
+  }
+  const fields = paramFieldsOf(def);
+  if (!fields || !('input' in fields)) {
+    throw new Error(
+      `registerNodeType(${def.type}): a body-input leaf names the input it reads in an ` +
+        "`input` param, and this type's params have none.",
+    );
+  }
+}
+
 export function registerNodeType<P, O>(def: NodeDefinition<P, O>): void {
   if (registry.has(def.type)) {
     throw new Error(`Node type already registered: ${def.type}`);
   }
   assertInputDescriptors(def as unknown as NodeDefinition);
   assertChainDeclaration(def as unknown as NodeDefinition);
+  assertBodyInputDeclarations(def as unknown as NodeDefinition);
   registry.set(def.type, def as unknown as NodeDefinition);
 }
 
