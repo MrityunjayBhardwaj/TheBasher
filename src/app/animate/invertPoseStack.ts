@@ -229,7 +229,7 @@ export function layerValueForDrawn(
       if (rigChanges(state, id, bone, component, seconds, cache)) {
         return {
           ok: false,
-          reason: `the Rig "${id}" above sets ${bone}'s ${component} here; move the bones it reads, or pose a layer above the Rig.`,
+          reason: `the Rig "${id}" above sets ${bone}'s ${component} here; move the control bones it reads instead.`,
         };
       }
       continue;
