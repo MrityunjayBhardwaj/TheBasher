@@ -15,6 +15,8 @@
 
 import { edgeTarget, type GraphNodeLike } from './graphNodes';
 import type { PoseLayerParams } from '../../nodes/PoseLayer';
+import { bodyInputChoicesOf } from '../../core/dag/subnetworks';
+import type { DagState } from '../../core/dag/state';
 
 /** The pose layers under an armature Object, and the source they edit. */
 export interface PoseLayerChain {
@@ -156,6 +158,10 @@ export function whyNotHandPosable(
  *   `skeleton` edge.
  * - `RetargetClip.posed` stands its TARGET rig (`skeleton`), which is what it poses.
  * - `PoseLayer.out` passes the pose on its `pose` input through.
+ * - `Rig.out` (#1357) is what its sub-network hands back on `body`; with none wired, the pose on
+ *   its `pose` input.
+ * - `BodyInputPose.out` is the input of its Rig that it names. Asked of the node table, that is
+ *   the rig it stands INSIDE its Rig; evaluated on its own, outside one, it stands none.
  *
  * Null for anything else, an unwired input, or a cycle.
  */
@@ -179,6 +185,17 @@ export function poseSkeletonIdOf(
       case 'PoseLayer':
         cur = edgeTarget(node, 'pose');
         continue;
+      case 'Rig':
+        cur = edgeTarget(node, 'body') ?? edgeTarget(node, 'pose');
+        continue;
+      case 'BodyInputPose': {
+        // The one ownership walk (`subnetworks.ts`); it reads the node table only.
+        const [owner] = bodyInputChoicesOf({ nodes } as unknown as DagState, cur).owners;
+        const input = (node.params as { input?: unknown } | undefined)?.input;
+        cur =
+          owner !== undefined && typeof input === 'string' ? edgeTarget(nodes[owner], input) : null;
+        continue;
+      }
       default:
         return null;
     }

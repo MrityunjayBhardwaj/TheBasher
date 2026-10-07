@@ -66,12 +66,15 @@ OUTPUTS ─── outputs.scene · outputs.render
 1. **A thing is a node only if it has its own inputs, parameters or animation.** Bones,
    keyframes, UV islands and face groups are data inside a value, not nodes.
 2. **Flat storage, derived nesting, single owner.** The graph is stored flat. A sub-network
-   is the closure behind a node's inputs declared `body: true` (the Solver today, the Rig
-   and Templates next). Every wire leaving a sub-network ends inside it or in its owner's
+   is the closure behind a node's inputs declared `body: true` (the Solver and the Rig
+   today, Templates next). Every wire leaving a sub-network ends inside it or in its owner's
    body sockets, so a node belongs to at most one sub-network and the outside reaches it
    only through the owner (`src/core/dag/subnetworks.ts`, #1547). The owner declares the
    sub-network's **named inputs** (`bodyInputs`), and a `BodyInput` leaf inside reads one by
-   name; the owner binds a value to each name when it cooks the sub-network (#1548). The node view's levels
+   name; the owner binds a value to each name when it cooks the sub-network (#1548). A
+   stateful owner (the Solver) is cooked per frame by its replay seam. A stateless one (the
+   Rig, #1357) is bound by the evaluator itself: each named input is the owner's own socket
+   of that name, and the leaf reads exactly what that socket evaluated to. The node view's levels
    are computed from this, so the saved format has no nesting to migrate. Why flat:
    [OBJECT-DATA-SPLIT-DESIGN §2.2](OBJECT-DATA-SPLIT-DESIGN.md) ("on a DAG, pointer and
    containment are the same edge") and §2.4.

@@ -127,6 +127,27 @@ function graph(): DagState {
       },
     );
   }
+  // #1357 — a Rig over the source layer, holding one layer that reads its leaf.
+  ops.push(
+    { type: 'addNode', nodeId: 'rig_in', nodeType: 'BodyInputPose', params: {} },
+    { type: 'addNode', nodeId: 'rig_layer', nodeType: 'PoseLayer', params: { name: 'in-rig' } },
+    {
+      type: 'connect',
+      from: { node: 'rig_in', socket: 'out' },
+      to: { node: 'rig_layer', socket: 'pose' },
+    },
+    { type: 'addNode', nodeId: 'rig', nodeType: 'Rig', params: {} },
+    {
+      type: 'connect',
+      from: { node: 'rig_layer', socket: 'out' },
+      to: { node: 'rig', socket: 'body' },
+    },
+    {
+      type: 'connect',
+      from: { node: 'src_layer', socket: 'out' },
+      to: { node: 'rig', socket: 'pose' },
+    },
+  );
   for (const op of ops) s = applyOp(s, op).next;
   return s;
 }
@@ -152,7 +173,11 @@ const PRODUCERS: Record<string, { id: string; socket: string }> = {
   PoseLayer: { id: 'src_layer', socket: 'out' },
   PosedSkeleton: { id: 'sway', socket: 'out' },
   RetargetClip: { id: 'r_layer', socket: 'posed' },
+  Rig: { id: 'rig', socket: 'out' },
+  BodyInputPose: { id: 'rig_in', socket: 'out' },
 };
+/** #1357 — a leaf carries a pose only inside its Rig, so its wire is read there, not on its own. */
+const READ_INSIDE: Record<string, string> = { BodyInputPose: 'rig' };
 
 beforeEach(() => {
   __resetRegistryForTests();
@@ -173,7 +198,8 @@ describe('poseSkeletonIdOf — the params-side answer agrees with the wire', () 
     it(`${type}: the rig the walk names is the rig on the evaluated wire`, () => {
       const s = graph();
       expect(s.nodes[p.id]?.type).toBe(type);
-      const wire = evaluate(s, p.id, { ...AT0, socket: p.socket }).value as PosedSkeletonValue;
+      const wire = evaluate(s, READ_INSIDE[type] ?? p.id, { ...AT0, socket: p.socket })
+        .value as PosedSkeletonValue;
       expect(wire.kind).toBe('PosedSkeleton');
       const rigId = poseSkeletonIdOf(nodesOf(s), p.id);
       expect(rigId).not.toBeNull();
@@ -182,6 +208,20 @@ describe('poseSkeletonIdOf — the params-side answer agrees with the wire', () 
       expect(rig.bones.length).toBeGreaterThan(0);
     });
   }
+
+  it('#1357 — a Rig stands what its sub-network hands back, else the pose it was given', () => {
+    let s = graph();
+    expect(poseSkeletonIdOf(nodesOf(s), 'rig')).toBe('swing_skel');
+    // With no sub-network wired, it stands the pose it was given.
+    s = applyOp(s, {
+      type: 'disconnect',
+      from: { node: 'rig_layer', socket: 'out' },
+      to: { node: 'rig', socket: 'body' },
+    }).next;
+    expect(poseSkeletonIdOf(nodesOf(s), 'rig')).toBe('swing_skel');
+    // A leaf no Rig holds stands nothing.
+    expect(poseSkeletonIdOf(nodesOf(s), 'rig_in')).toBeNull();
+  });
 
   it('the retarget stands its TARGET rig, not its source', () => {
     expect(poseSkeletonIdOf(nodesOf(graph()), 'r_layer')).toBe('tgt');

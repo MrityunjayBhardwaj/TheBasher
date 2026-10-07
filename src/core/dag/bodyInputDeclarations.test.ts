@@ -27,10 +27,30 @@ describe('#1570 — body-input declarations are refused when nothing would honou
       register({
         ...base,
         type: 'Owner',
+        stateful: true,
         inputs: { body: { ...NUMBER, body: true } },
         bodyInputs: { prev: NUMBER },
       }),
     ).not.toThrow();
+  });
+
+  // #1357 — nothing cooks a stateless owner's sub-network but the evaluator, which binds each
+  // named input to the owner's own socket of that name.
+  it('a stateless owner reads each named input from its own socket of that name', () => {
+    const BODY = { body: { ...NUMBER, body: true } } as const;
+    const owner = (type: string, inputs: object, bodyInputs: object) =>
+      register({ ...base, type, inputs: { ...BODY, ...inputs }, bodyInputs });
+    expect(() => owner('NoSocket', {}, { pose: NUMBER })).toThrow(
+      /NoSocket.*"pose".*no input socket of that name/s,
+    );
+    expect(() => owner('BodyNamed', {}, { body: NUMBER })).toThrow(/BodyNamed.*is a body socket/s);
+    expect(() =>
+      owner('WrongType', { pose: { type: 'Vector3', cardinality: 'single' } }, { pose: NUMBER }),
+    ).toThrow(/WrongType.*carries Vector3, not Number/s);
+    expect(() =>
+      owner('Listed', { pose: { type: 'Number', cardinality: 'list' } }, { pose: NUMBER }),
+    ).toThrow(/Listed.*only a single-value input/s);
+    expect(() => owner('Fine', { pose: NUMBER }, { pose: NUMBER })).not.toThrow();
   });
 
   const leaf = { ...base, bodyInputLeaf: true, paramSchema: z.object({ input: z.string() }) };
@@ -58,12 +78,17 @@ describe('#1570 — body-input declarations are refused when nothing would honou
   it('the shipped types pass, and the check had something to look at', () => {
     registerAllNodes();
     const defs = listNodeTypes().map((t) => getNodeType(t)!);
-    expect(defs.filter((d) => d.bodyInputs).map((d) => d.type)).toEqual(['Solver']);
+    expect(
+      defs
+        .filter((d) => d.bodyInputs)
+        .map((d) => d.type)
+        .sort(),
+    ).toEqual(['Rig', 'Solver']);
     expect(
       defs
         .filter((d) => d.bodyInputLeaf)
         .map((d) => d.type)
         .sort(),
-    ).toEqual(['BodyInput', 'BodyInputVec']);
+    ).toEqual(['BodyInput', 'BodyInputPose', 'BodyInputVec']);
   });
 });

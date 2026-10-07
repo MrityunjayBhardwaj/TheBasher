@@ -78,6 +78,12 @@ const REPO_ROOT = process.cwd();
  * conditions that earned them (#918's shape, one layer up).
  */
 const NO_CREATION_ROAD: Readonly<Record<string, string>> = {
+  Rig:
+    'The container half of #1357 landed first: the node, its leaf and how the evaluator binds ' +
+    'them. Its road in is wrapping pose layers that already exist (a Rig added bare has nothing ' +
+    "inside and nothing to wire it with), and that gesture is the same issue's next commit.",
+  BodyInputPose:
+    'Minted only together with the Rig that owns it, by the wrap gesture: see Rig above (#1357).',
   Character:
     'The P3 locomotion species — see #998. The generate panel\'s "character" kind imports ' +
     'a glTF; it does not mint this. Dormant, and its only surface (GroundClick) correctly ' +

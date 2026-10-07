@@ -70,9 +70,9 @@ const ORIGIN: Vec3 = [0, 0, 0];
 // #1569 — `input` is picked from what the leaf's owner declares for the leaf's type, because a
 // name the owner does not declare binds nothing and the leaf quietly reads 0. A stored name no
 // option offers is shown as not found; a leaf in no sub-network shows why it cannot be picked.
-const bodyInputOptions: OptionsProvider = (state, nodeId) =>
+export const bodyInputOptions: OptionsProvider = (state, nodeId) =>
   bodyInputChoicesOf(state, nodeId).names.map((name) => ({ value: name, label: name }));
-const bodyInputLock: OptionsLock = (state, nodeId) =>
+export const bodyInputLock: OptionsLock = (state, nodeId) =>
   bodyInputChoicesOf(state, nodeId).owners.length === 0
     ? 'not inside a sub-network, so nothing feeds it'
     : null;

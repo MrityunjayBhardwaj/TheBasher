@@ -283,6 +283,29 @@ function assertBodyInputDeclarations(def: NodeDefinition): void {
         'but has no input marked `body: true`, so it owns no sub-network to bind them in.',
     );
   }
+  // #1357 — a stateless owner has no seam to bind its sub-network: the evaluator binds each
+  // named input to the owner's own socket of that name (`evaluator.ts`). So the name must be one
+  // of its sockets, outside the body, carrying one value of the declared type.
+  if (def.bodyInputs && def.stateful !== true) {
+    for (const [name, want] of Object.entries(def.bodyInputs)) {
+      const socket = def.inputs[name];
+      const why = !socket
+        ? 'it has no input socket of that name'
+        : socket.body === true
+          ? 'that socket is a body socket'
+          : socket.type !== want.type
+            ? `that socket carries ${String(socket.type)}, not ${want.type}`
+            : socket.cardinality !== 'single' || want.cardinality !== 'single'
+              ? 'only a single-value input can be bound this way'
+              : null;
+      if (why) {
+        throw new Error(
+          `registerNodeType(${def.type}): declares the sub-network input "${name}", which a ` +
+            `node that is not stateful reads from its own "${name}" input, but ${why}.`,
+        );
+      }
+    }
+  }
   if (!def.bodyInputLeaf) return;
   const outputs = Object.keys(def.outputs);
   if (outputs.length !== 1) {

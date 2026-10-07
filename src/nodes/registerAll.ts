@@ -29,6 +29,7 @@ import { CompositionNode } from './Composition';
 import { COMPUTE_NODES } from './computeNodes';
 import { LagNode } from './Lag';
 import { SolverNode, BodyInputNode, BodyInputVecNode } from './Solver';
+import { RigNode, BodyInputPoseNode } from './Rig';
 import { SampleGeometryNode } from './geometryQuery';
 import { CutNode } from './Cut';
 import { LayerNode } from './Layer';
@@ -272,6 +273,9 @@ const ALL: NodeDefinition[] = [
   SolverNode as unknown as NodeDefinition,
   BodyInputNode as unknown as NodeDefinition,
   BodyInputVecNode as unknown as NodeDefinition,
+  // #1357 — the Rig: a sub-network on the pose wire, and the leaf that reads its incoming pose.
+  RigNode as unknown as NodeDefinition,
+  BodyInputPoseNode as unknown as NodeDefinition,
   // Geometry query — SampleGeometry (epic #290 vec-rail follow-up). The compute rail's
   // GEOMETRY reader: drops a vertical ray onto a terrain mesh and outputs the ground
   // point under a query controller's world XZ. Seam-resolved (needs world triangles →

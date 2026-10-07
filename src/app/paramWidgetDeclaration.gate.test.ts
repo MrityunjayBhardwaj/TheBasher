@@ -568,6 +568,7 @@ describe('a param declares its control on its schema (#872)', () => {
       examined: true,
       optionsWidget: [
         'BodyInput.input',
+        'BodyInputPose.input',
         'BodyInputVec.input',
         'FollowPath.target',
         'KeyframeChannelColor.target',
@@ -592,6 +593,7 @@ describe('a param declares its control on its schema (#872)', () => {
       ],
       withProvider: [
         'BodyInput.input',
+        'BodyInputPose.input',
         'BodyInputVec.input',
         'FollowPath.target',
         'KeyframeChannelColor.target',

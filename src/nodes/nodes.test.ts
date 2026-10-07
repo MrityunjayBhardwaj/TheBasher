@@ -74,6 +74,8 @@ const ALL_TYPES = [
   'BeautyPass',
   'BevelModifier',
   'BodyInput',
+  // #1357 — the pose-carrying leaf a Rig's sub-network reads its incoming pose through.
+  'BodyInputPose',
   'BodyInputVec',
   'BoneNameMap',
   'BoxData',
@@ -146,6 +148,8 @@ const ALL_TYPES = [
   'RenderOutput',
   // #901 — the retarget as an operator (sourceClip + boneMap + rig -> clip).
   'RetargetClip',
+  // #1357 — rig logic as one sub-network on the pose wire.
+  'Rig',
   'SampleGeometry',
   'Scatter',
   'Scene',

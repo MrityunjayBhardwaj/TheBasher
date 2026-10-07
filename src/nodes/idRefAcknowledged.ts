@@ -139,6 +139,7 @@ export const NOT_A_NODE_ID: Readonly<Record<string, string>> = {
   'BakedData.material.physical.attenuationColor': COLOUR,
   'BevelModifier.scope': GROUP,
   'BodyInput.input': BODY_INPUT,
+  'BodyInputPose.input': BODY_INPUT,
   'BodyInputVec.input': BODY_INPUT,
   'BoneNameMap.name': LABEL,
   'BoneNameMap.map{key}': BONE,

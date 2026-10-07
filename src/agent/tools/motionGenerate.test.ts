@@ -388,7 +388,11 @@ describe('the agent-facing text offers only roads that exist (#758)', () => {
     for (const type of listNodeTypes()) {
       const def = getNodeType(type);
       for (const [socket, spec] of Object.entries(def?.inputs ?? {})) {
-        const s = spec as { type: string; cardinality?: string };
+        const s = spec as { type: string; cardinality?: string; body?: true };
+        // #1357 — a BODY socket is not a second pose arriving: it is where the node's own
+        // sub-network hands back what it made of the pose on the other socket. A Rig takes one
+        // pose in and gives one out; nothing in it folds two.
+        if (s.body === true) continue;
         if (s.type === 'AnimationClip' || s.type === 'PosedSkeleton') {
           found.push(`${type}.${socket}: ${s.type} (${s.cardinality})`);
         }
@@ -434,12 +438,14 @@ describe('the agent-facing text offers only roads that exist (#758)', () => {
     // #1225 re-types `RetargetClip`'s input from a clip (`sourceClip`) to the pose wire (`source`);
     // still one, still single, and the node has no other pose-bearing socket. #1225 re-types
     // `LocomotionState`'s the same way (`clip` → `pose`); still one, still single.
+    // #1357 adds `Rig.pose`: one pose in. Its `body` socket is left out of the census above.
     expect(poseConsumingSockets()).toEqual([
       'AnimationClip.source: AnimationClip (single)',
       'LocomotionState.pose: PosedSkeleton (single)',
       'Object.pose: PosedSkeleton (single)',
       'PoseLayer.pose: PosedSkeleton (single)',
       'RetargetClip.source: PosedSkeleton (single)',
+      'Rig.pose: PosedSkeleton (single)',
     ]);
   });
 
