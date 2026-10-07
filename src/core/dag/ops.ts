@@ -18,7 +18,15 @@ import { requireNodeType } from './registry';
 import type { DagState } from './state';
 import { getNode, hasNode, wouldCreateCycle } from './state';
 import { newSubnetworkViolation } from './subnetworks';
-import type { InputBinding, Node, NodeId, NodeRef, Op } from './types';
+import type {
+  InputBinding,
+  InputDescriptor,
+  Node,
+  NodeId,
+  NodeRef,
+  Op,
+  OutputDescriptor,
+} from './types';
 import { acceptedTypes, OpSchema, SpareParamSchema } from './types';
 import { inputTakes, whyNotTaken } from './socketConversion';
 
@@ -169,6 +177,31 @@ function applyAddNode(state: DagState, op: Extract<Op, { type: 'addNode' }>): Ap
       op,
     );
   }
+  // #1580 — `inputs` is the second door a wire comes in by, and it used to be unguarded: a
+  // pose into a Number socket, a socket the type does not have, a producer that is not in the
+  // graph. Every wire here answers to the rule `connect` applies, one wire at a time.
+  for (const [socket, binding] of Object.entries(op.inputs ?? {})) {
+    const inputDesc = requireInput('addNode', op, op.nodeType, socket);
+    const given = Array.isArray(binding);
+    // A list on a single socket has no reading. The other way round is left alone: a lone
+    // wire on a list socket is what `connect` itself reads as a list of one.
+    if (given && inputDesc.cardinality !== 'list') {
+      throw new OpError(
+        `addNode: ${op.nodeType}.${socket} carries one wire and was given a list of ${binding.length}`,
+        op,
+      );
+    }
+    const held: NodeRef[] = [];
+    for (const ref of given ? binding : [binding]) {
+      // The node is not in the graph yet, so nothing can consume it: the only loop an
+      // addNode can close is onto itself, and that needs no walk.
+      if (ref.node === op.nodeId) {
+        throw new OpError(`addNode: would create a cycle (${ref.node} → ${op.nodeId})`, op);
+      }
+      requireWire('addNode', op, state, op.nodeType, socket, inputDesc, ref, held);
+      held.push(ref);
+    }
+  }
   const node: Node = {
     id: op.nodeId,
     type: op.nodeType,
@@ -215,19 +248,43 @@ function applyRemoveNode(state: DagState, op: Extract<Op, { type: 'removeNode' }
   return { next, inverse };
 }
 
-function applyConnect(state: DagState, op: Extract<Op, { type: 'connect' }>): ApplyResult {
-  const consumer = getNode(state, op.to.node);
-  const producer = getNode(state, op.from.node);
-  const consumerDef = requireNodeType(consumer.type);
-  const producerDef = requireNodeType(producer.type);
-
-  const inputDesc = consumerDef.inputs[op.to.socket];
+/** The input `socket` of a `consumerType` node, or the refusal that it has none. */
+function requireInput(
+  door: 'addNode' | 'connect',
+  op: Op,
+  consumerType: string,
+  socket: string,
+): InputDescriptor {
+  const inputDesc = requireNodeType(consumerType).inputs[socket];
   if (!inputDesc) {
-    throw new OpError(`connect: ${consumer.type} has no input socket '${op.to.socket}'`, op);
+    throw new OpError(`${door}: ${consumerType} has no input socket '${socket}'`, op);
   }
-  const outputDesc = producerDef.outputs[op.from.socket];
+  return inputDesc;
+}
+
+/** #1580 — whether ONE wire may enter ONE input, for every operation that can create a wire
+ *  (`addNode` through its `inputs`, and `connect`; `wireDoors.test.ts` derives that set). The
+ *  refusal reads the same from either door apart from the operation's name.
+ *
+ *  `held` is what the socket holds before this wire: its wires in the graph for `connect`,
+ *  the ones earlier in the same list for `addNode`.
+ *
+ *  Not here: the loop check. `connect` walks for it; an `addNode` cannot close one except onto
+ *  itself, so it does not pay for a walk per wire on an import of thousands of nodes. */
+function requireWire(
+  door: 'addNode' | 'connect',
+  op: Op,
+  state: DagState,
+  consumerType: string,
+  socket: string,
+  inputDesc: InputDescriptor,
+  ref: NodeRef,
+  held: readonly NodeRef[],
+): OutputDescriptor {
+  const producer = getNode(state, ref.node);
+  const outputDesc = requireNodeType(producer.type).outputs[ref.socket];
   if (!outputDesc) {
-    throw new OpError(`connect: ${producer.type} has no output socket '${op.from.socket}'`, op);
+    throw new OpError(`${door}: ${producer.type} has no output socket '${ref.socket}'`, op);
   }
   // #609 — MEMBERSHIP, not equality: an input socket may accept a SET of types.
   // The message names the whole accepted set, so a rejection says what WOULD have
@@ -236,21 +293,11 @@ function applyConnect(state: DagState, op: Extract<Op, { type: 'connect' }>): Ap
   // a Vector3). Anything else is refused with what would make it work.
   if (!inputTakes(inputDesc, outputDesc.type)) {
     throw new OpError(
-      `connect: type mismatch ${producer.type}.${op.from.socket}:${outputDesc.type} → ${consumer.type}.${op.to.socket}:${acceptedTypes(inputDesc).join('|')}` +
+      `${door}: type mismatch ${producer.type}.${ref.socket}:${outputDesc.type} → ${consumerType}.${socket}:${acceptedTypes(inputDesc).join('|')}` +
         ` — ${whyNotTaken(inputDesc, outputDesc.type)}`,
       op,
     );
   }
-  if (wouldCreateCycle(state, op.from.node, op.to.node)) {
-    throw new OpError(`connect: would create a cycle (${op.from.node} → ${op.to.node})`, op);
-  }
-
-  const ref: NodeRef = { node: op.from.node, socket: op.from.socket };
-  const prior = consumer.inputs[op.to.socket];
-  let nextBinding: InputBinding;
-  let inverse: Op;
-  let reportable: Reportable | undefined;
-
   // #608 — AT MOST ONE PRODUCER PER ROLE on a list socket. A list is the right
   // shape for "several passes feed this job" and the wrong shape for "two of them
   // are the depth pass": the reader downstream then has to pick one and report the
@@ -262,16 +309,35 @@ function applyConnect(state: DagState, op: Extract<Op, { type: 'connect' }>): Ap
   // ordered frames VideoStitch encodes — stays unconstrained, which is what makes
   // this a rule about roles rather than a cap on list length.
   if (inputDesc.cardinality === 'list' && outputDesc.role !== undefined) {
-    const existing = Array.isArray(prior) ? prior : prior ? [prior] : [];
-    for (const held of existing) {
-      if (passRoleOf(state, held) !== outputDesc.role) continue;
+    for (const other of held) {
+      if (passRoleOf(state, other) !== outputDesc.role) continue;
       throw new OpError(
-        `connect: ${consumer.type}.${op.to.socket} already holds a ${outputDesc.role} pass ` +
-          `("${held.node}"); a role may be bound once. Disconnect it first.`,
+        `${door}: ${consumerType}.${socket} already holds a ${outputDesc.role} pass ` +
+          `("${other.node}"); a role may be bound once. Disconnect it first.`,
         op,
       );
     }
   }
+  return outputDesc;
+}
+
+function applyConnect(state: DagState, op: Extract<Op, { type: 'connect' }>): ApplyResult {
+  const consumer = getNode(state, op.to.node);
+  // The producer is looked up before the socket, as it always was: a wire from a node that is
+  // not in the graph says so first.
+  getNode(state, op.from.node);
+  const inputDesc = requireInput('connect', op, consumer.type, op.to.socket);
+  const ref: NodeRef = { node: op.from.node, socket: op.from.socket };
+  const prior = consumer.inputs[op.to.socket];
+  const held = Array.isArray(prior) ? prior : prior ? [prior] : [];
+  requireWire('connect', op, state, consumer.type, op.to.socket, inputDesc, ref, held);
+  if (wouldCreateCycle(state, op.from.node, op.to.node)) {
+    throw new OpError(`connect: would create a cycle (${op.from.node} → ${op.to.node})`, op);
+  }
+
+  let nextBinding: InputBinding;
+  let inverse: Op;
+  let reportable: Reportable | undefined;
 
   if (inputDesc.cardinality === 'list') {
     const existing = Array.isArray(prior) ? [...prior] : prior ? [prior] : [];
