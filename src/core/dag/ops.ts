@@ -17,7 +17,12 @@ import { passRoleOf } from './passRole';
 import { requireNodeType } from './registry';
 import type { DagState } from './state';
 import { getNode, hasNode, wouldCreateCycle } from './state';
-import { newStatefulLeafRead, newSubnetworkViolation } from './subnetworks';
+import {
+  carrySubnetworkOwners,
+  newStatefulLeafRead,
+  newSubnetworkViolation,
+  reachesSubnetwork,
+} from './subnetworks';
 import type {
   InputBinding,
   InputDescriptor,
@@ -134,19 +139,29 @@ export interface Reportable {
 }
 
 export function applyOp(state: DagState, op: Op): ApplyResult {
+  const result = applyUnguarded(state, op);
+  // #1583 — which nodes own a sub-network follows the graph through every operation, so the
+  // rules below never have to walk the graph to find them.
+  carrySubnetworkOwners(state, result.next, op);
+  // #1547 — the two ops that can add an edge are the two that can put a node in two
+  // sub-networks, or let something outside consume a node inside one.
+  if (op.type === 'addNode' || op.type === 'connect') return holdingSubnetworks(state, op, result);
+  if (op.type === 'setParam') return holdingLeafNames(state, op, result);
+  return result;
+}
+
+function applyUnguarded(state: DagState, op: Op): ApplyResult {
   switch (op.type) {
-    // #1547 — the two ops that can add an edge are the two that can put a node in two
-    // sub-networks, or let something outside consume a node inside one.
     case 'addNode':
-      return holdingSubnetworks(state, op, applyAddNode(state, op));
+      return applyAddNode(state, op);
     case 'removeNode':
       return applyRemoveNode(state, op);
     case 'connect':
-      return holdingSubnetworks(state, op, applyConnect(state, op));
+      return applyConnect(state, op);
     case 'disconnect':
       return applyDisconnect(state, op);
     case 'setParam':
-      return holdingLeafNames(state, op, followNames(state, applySetParam(state, op), op.nodeId));
+      return followNames(state, applySetParam(state, op), op.nodeId);
     case 'setMeta':
       return followNames(state, applySetMeta(state, op), op.nodeId);
     case 'setSpareParam':
@@ -156,11 +171,24 @@ export function applyOp(state: DagState, op: Op): ApplyResult {
   }
 }
 
+/** The nodes an edge-adding op wires FROM. */
+function producersOf(op: Extract<Op, { type: 'addNode' | 'connect' }>): NodeId[] {
+  if (op.type === 'connect') return [op.from.node];
+  return Object.values(op.inputs ?? {}).flatMap((binding) =>
+    (Array.isArray(binding) ? binding : [binding]).map((ref) => ref.node),
+  );
+}
+
 /** #1547 — refuse an edge-adding op that leaves a sub-network with a second owner or an
  *  outside consumer. #1579 — or a Lag or Solver inside a Solver's sub-network reading that
- *  Solver's inputs. Only violations the op itself introduced are refused. */
-function holdingSubnetworks(state: DagState, op: Op, result: ApplyResult): ApplyResult {
-  if (op.type === 'addNode' && !op.inputs) return result;
+ *  Solver's inputs. Only violations the op itself introduced are refused. #1583 — and only a
+ *  wire whose producer ends up inside a sub-network is asked: no other wire can introduce one. */
+function holdingSubnetworks(
+  state: DagState,
+  op: Extract<Op, { type: 'addNode' | 'connect' }>,
+  result: ApplyResult,
+): ApplyResult {
+  if (!reachesSubnetwork(result.next, producersOf(op))) return result;
   const reason =
     newSubnetworkViolation(state, result.next) ?? newStatefulLeafRead(state, result.next);
   if (reason) throw new OpError(`${op.type}: ${reason}`, op);
@@ -168,7 +196,8 @@ function holdingSubnetworks(state: DagState, op: Op, result: ApplyResult): Apply
 }
 
 /** #1579 — a sub-network leaf reads the input its params name, so renaming that is the one way
- *  to make a Lag read the Solver around it without adding a wire. Asked only of a leaf. */
+ *  to make a Lag read the Solver around it without adding a wire. Asked only of a leaf, and
+ *  (#1583) only of one that sits inside a sub-network. */
 function holdingLeafNames(
   state: DagState,
   op: Extract<Op, { type: 'setParam' }>,
@@ -176,6 +205,7 @@ function holdingLeafNames(
 ): ApplyResult {
   const node = state.nodes[op.nodeId];
   if (!node || requireNodeType(node.type).bodyInputLeaf !== true) return result;
+  if (!reachesSubnetwork(result.next, [op.nodeId])) return result;
   const reason = newStatefulLeafRead(state, result.next);
   if (reason) throw new OpError(`setParam: ${reason}`, op);
   return result;

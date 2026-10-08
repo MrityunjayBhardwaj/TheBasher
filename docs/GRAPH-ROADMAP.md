@@ -85,8 +85,8 @@ over one Mix node matches a Lag sample for sample.
 - #1582: a Lag or Solver inside a Solver reads that Solver's inputs, the two integrated
   together. Refused since #1579; it may be easier once templates (#1557) settle what a
   sub-network's state is.
-- #1583: every wire added re-checks the sub-network rules over the whole graph. Wants a large
-  import timed first.
+- #1585: applying an operation costs more the larger the graph is. Found by timing a large
+  import for #1583, which took the sub-network rules out of that cost.
 
 ## Decisions this order is waiting on
 

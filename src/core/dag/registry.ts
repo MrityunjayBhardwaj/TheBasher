@@ -359,6 +359,14 @@ export function registerNodeType<P, O>(def: NodeDefinition<P, O>): void {
   assertChainDeclaration(def as unknown as NodeDefinition);
   assertBodyInputDeclarations(def as unknown as NodeDefinition);
   registry.set(def.type, def as unknown as NodeDefinition);
+  epoch++;
+}
+
+/** Changes whenever the set of registered types does, so an answer derived from a node's type
+ *  and kept beside a graph (#1583) can tell it was derived under other definitions. */
+let epoch = 0;
+export function registryEpoch(): number {
+  return epoch;
 }
 
 export function getNodeType(type: NodeTypeId): NodeDefinition | undefined {
@@ -382,4 +390,5 @@ export function snapshotRegistry(): Record<NodeTypeId, NodeDefinition> {
 /** Test-only: clear and re-seed the registry. Never call from app code. */
 export function __resetRegistryForTests(): void {
   registry.clear();
+  epoch++;
 }
