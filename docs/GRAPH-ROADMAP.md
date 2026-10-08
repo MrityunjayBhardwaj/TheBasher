@@ -87,6 +87,8 @@ over one Mix node matches a Lag sample for sample.
   sub-network's state is.
 - #1585: applying an operation costs more the larger the graph is. Found by timing a large
   import for #1583, which took the sub-network rules out of that cost.
+- #1586: an edit the graph refuses is undone silently in the inspector. It belongs beside #1567
+  (every UI gesture goes through the 8 operations): the same count of doors answers both.
 
 ## Decisions this order is waiting on
 
