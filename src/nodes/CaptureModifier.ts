@@ -36,8 +36,25 @@
 // about it, because a mesh that does not move looks the same whether nothing was captured or the
 // bone was never turned.
 //
-// REF: src/nodes/captureWeights.ts (the rule); src/nodes/ArmatureModifier.ts (the reader);
-//      src/nodes/skinInfluences.ts; ref/GROUND_TRUTH_AUTO_SKIN_WEIGHTS.md §10.2; issue #1353.
+// ── TWO WAYS OF MEASURING "NEAR" (#1539) ────────────────────────────────────────────────────────
+//
+// `method` picks how far a point is from a bone. `proximity` is the straight line
+// (`captureWeights.ts`): quick, and right wherever the nearest bone in space is the bone the skin
+// belongs to. `voxel` is the way through the mesh's own volume (`captureVoxel.ts`): an arm lying
+// beside the torso is far from the spine by that measure, however close it is in space. Both hand
+// back the same thing, so everything after this node is the same for either.
+//
+// Each method reads its own settings (`dropoff` for the one, `resolution` and `falloff` for the
+// other), and only the settings the chosen method reads enter the geometry key: turning a setting
+// the method ignores computes nothing again.
+//
+// The voxel method runs here, in `evaluate`, like the other: measured in Node on this machine
+// (2026-10-08) it takes about half a second for 72 bones and 24,746 points at 128, and the result
+// is kept per stored mesh below, so a pose edit never pays it twice.
+//
+// REF: src/nodes/captureWeights.ts, src/nodes/captureVoxel.ts (the two rules);
+//      src/nodes/ArmatureModifier.ts (the reader); src/nodes/skinInfluences.ts;
+//      ref/GROUND_TRUTH_AUTO_SKIN_WEIGHTS.md §10.2; issues #1353, #1539.
 
 import { z } from 'zod';
 import type { NodeDefinition } from '../core/dag/types';
@@ -48,18 +65,43 @@ import { modifierDataSource, slotTableThrough } from '../app/modifierDataSource'
 import { refWithAttributeKey } from '../app/modifierGeometry';
 import { localMatrix } from '../app/resolveWorldTransform';
 import { boneWorldMatrices, placeBones } from '../viewport/boneShape';
-import { captureByProximity, type CaptureBone } from './captureWeights';
+import { captureByVoxel } from './captureVoxel';
+import { captureByProximity, type CaptureBone, type CapturedWeights } from './captureWeights';
 import { mintMeshAttributes } from './meshAttributes';
 import { SKIN_JOINTS, SKIN_WEIGHTS, skinPointLayers } from './skinInfluences';
 
+export const CAPTURE_METHODS = ['proximity', 'voxel'] as const;
+export type CaptureMethod = (typeof CAPTURE_METHODS)[number];
+
 export const CaptureModifierParams = z.object({
+  /**
+   * How a point's distance to a bone is measured: in a straight line, or through the mesh's own
+   * volume (Maya's Closest Distance and Geodesic Voxel bind methods, `skinCluster-cmd-2025.txt:90-97`).
+   */
+  method: z.enum(CAPTURE_METHODS).default('proximity'),
   /** The most bones one point is bound to — Maya's and Houdini's Max Influences. */
   maxInfluences: z.number().int().min(1).max(16).default(4),
   /**
-   * How sharply a bone's hold falls with distance — Maya's Dropoff Rate, with its default and its
-   * documented range (`bind-skin-options.txt:230-232`). Higher keeps each bone's hold closer to it.
+   * `proximity` only. How sharply a bone's hold falls with distance — Maya's Dropoff Rate, with its
+   * default and its documented range (`bind-skin-options.txt:230-232`). Higher keeps each bone's
+   * hold closer to it.
    */
   dropoff: z.number().min(0.1).max(100).default(4),
+  /**
+   * `voxel` only. Cubes along the mesh's longest side. Two parts closer together than about three
+   * cubes are joined, and take each other's bones (Maya says the same of its own:
+   * `bind-skin-options-2025.txt:160-164`); a finer grid costs more. Maya defaults to 256 on the GPU
+   * (`geomBind.txt:37-41`); 128 here, where it runs on one thread.
+   */
+  resolution: z.number().int().min(16).max(256).default(128),
+  /**
+   * `voxel` only. 0 smooth to 1 rigid: `a` in the method's falloff (`captureVoxel.ts`), from the
+   * inverse square of distance at 0 to the inverse fourth power at 1. Maya's Falloff runs the same
+   * way over the same range and defaults to 0.2 (`bind-skin-options-2025.txt:151-155`); whether
+   * Maya's number IS `a` is not in any source held (the 2013 paper is paywalled), so the default is
+   * Maya's and the meaning is this formula's.
+   */
+  falloff: z.number().min(0).max(1).default(0.2),
   /**
    * Stack mute-bypass. The param CARRIES the state; `chain.bypass` below names it and the
    * evaluator honours it, handing the spine value back without running `evaluate`.
@@ -68,10 +110,30 @@ export const CaptureModifierParams = z.object({
 });
 export type CaptureModifierParams = z.infer<typeof CaptureModifierParams>;
 
+/** What decides a capture's weights: every param but the mute. */
+export type CaptureSettings = Omit<CaptureModifierParams, 'muted'>;
+
+/**
+ * `given` with the schema's own defaults for whatever it leaves out (or holds as `undefined`) —
+ * THE one place a missing setting gets its value, for a caller that holds params no schema has
+ * filled (a bind request, a node's raw params).
+ */
+export function captureSettingsOf(given: Partial<CaptureSettings>): CaptureSettings {
+  return CaptureModifierParams.omit({ muted: true }).parse(given);
+}
+
+/** The settings `method` reads, in a fixed order: what its results depend on besides the mesh. */
+function settingsRead(settings: CaptureSettings): readonly (string | number)[] {
+  return settings.method === 'voxel'
+    ? ['voxel', settings.maxInfluences, settings.resolution, settings.falloff]
+    : ['proximity', settings.maxInfluences, settings.dropoff];
+}
+
 /** What a capture did, or the reason it did nothing. */
 export type CapturePlan =
   | {
       readonly kind: 'captured';
+      readonly method: CaptureMethod;
       readonly data: MeshGeometryData;
       /** The geometry key of `data`, before its attribute component. */
       readonly key: string;
@@ -80,6 +142,13 @@ export type CapturePlan =
       readonly points: number;
       /** How many points no bone holds: they stay at rest when the others move. */
       readonly unbound: number;
+      /**
+       * `voxel`: how many points no bone reached through the volume, bound by straight-line
+       * distance instead. 0 by proximity.
+       */
+      readonly unreached: number;
+      /** `voxel`: the bones in no filled part of the volume, which nothing is measured from. */
+      readonly outside: readonly string[];
     }
   | { readonly kind: 'refused'; readonly reason: string };
 
@@ -119,7 +188,7 @@ const lastPlan = new WeakMap<
 export function planCapture(
   src: ObjectData | undefined,
   armature: ObjectValue | undefined,
-  params: Pick<CaptureModifierParams, 'maxInfluences' | 'dropoff'>,
+  params: CaptureSettings,
 ): CapturePlan {
   if (!src) return { kind: 'refused', reason: 'no mesh is connected below it.' };
   const source = modifierDataSource(src);
@@ -159,15 +228,24 @@ export function planCapture(
     [
       'capture',
       source.geometry.key,
-      params.maxInfluences,
-      params.dropoff,
+      ...settingsRead(params),
       JSON.stringify(bones.map((b) => [b.name, b.head, b.tail])),
     ].join('|'),
   )}`;
   const hit = lastPlan.get(mesh.data);
   if (hit?.key === key) return hit.plan;
 
-  const captured = captureByProximity(mesh.data.points, bones, params);
+  const captured: CapturedWeights | null =
+    params.method === 'voxel'
+      ? captureByVoxel(mesh.data, bones, params)
+      : captureByProximity(mesh.data.points, bones, params);
+  if (captured === null) {
+    return {
+      kind: 'refused',
+      reason:
+        'the mesh has no faces, or no size, so it has no inside to measure through: use the proximity method.',
+    };
+  }
   const data: MeshGeometryData = {
     ...mesh.data,
     pointLayers: [
@@ -180,11 +258,14 @@ export function planCapture(
   };
   const plan: CapturePlan = {
     kind: 'captured',
+    method: params.method,
     data,
     key,
     bones: bones.length,
     points: mesh.data.points.length / 3,
     unbound: captured.unbound,
+    unreached: captured.unreached,
+    outside: captured.outside,
   };
   lastPlan.set(mesh.data, { key, plan });
   return plan;
@@ -194,7 +275,9 @@ export const CaptureModifierNode: NodeDefinition<CaptureModifierParams, ObjectDa
   type: 'CaptureModifier',
   version: 1,
   pure: true,
-  cost: 'cheap',
+  // By proximity it is tens of milliseconds; by voxel, half a second for a 72-bone character at
+  // 128 and several at 256. Nothing reads `cost` today — the label is for whoever does.
+  cost: 'medium',
   paramSchema: CaptureModifierParams,
   inputs: {
     target: { type: 'ObjectData', cardinality: 'single' },
@@ -211,8 +294,11 @@ export const CaptureModifierNode: NodeDefinition<CaptureModifierParams, ObjectDa
   },
   inspectorSections: ['modifier'],
   home: {
+    method: 'modifier',
     maxInfluences: 'modifier',
     dropoff: 'modifier',
+    resolution: 'modifier',
+    falloff: 'modifier',
     muted: 'modifier',
   },
   evaluate(params, inputs) {

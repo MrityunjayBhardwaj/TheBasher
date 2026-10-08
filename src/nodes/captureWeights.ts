@@ -64,10 +64,17 @@ export interface CapturedWeights {
   readonly vertexGroups: readonly string[];
   /** How many points no bone holds. They stay at rest when the others move. */
   readonly unbound: number;
+  /**
+   * How many points no bone reached by the method's own measure, and were bound by straight-line
+   * distance instead. Always 0 by proximity, which has no other measure.
+   */
+  readonly unreached: number;
+  /** The bones the method could not measure from at all, by name. None by proximity. */
+  readonly outside: readonly string[];
 }
 
 /** The distance from `(px, py, pz)` to the segment `head → tail`. */
-function distanceToSegment(px: number, py: number, pz: number, bone: CaptureBone): number {
+export function distanceToSegment(px: number, py: number, pz: number, bone: CaptureBone): number {
   const [hx, hy, hz] = bone.head;
   const ax = bone.tail[0] - hx;
   const ay = bone.tail[1] - hy;
@@ -143,5 +150,5 @@ export function captureByProximity(
     }
     for (let lane = 0; lane < used; lane++) weights[p * width + lane] /= total;
   }
-  return { lanes: { width, joints, weights }, vertexGroups, unbound };
+  return { lanes: { width, joints, weights }, vertexGroups, unbound, unreached: 0, outside: [] };
 }

@@ -16,6 +16,7 @@ import {
   ARMATURE_INPUT_TYPES,
   armatureObjectsIn,
   armatureOf,
+  captureIsWhole,
   captureStatusOf,
   captureStatusText,
   planBindSkin,
@@ -70,9 +71,9 @@ export function SkinBindControls({ nodeId, base }: { nodeId: string; base: strin
         {status ? (
           <p
             data-testid="capture-status"
-            data-captured={status.kind === 'captured' && status.unbound === 0}
+            data-captured={captureIsWhole(status)}
             className={
-              status.kind === 'captured' && status.unbound === 0
+              captureIsWhole(status)
                 ? 'text-fg-dim'
                 : 'rounded border border-border-strong bg-warn/10 px-1.5 py-1 text-warn'
             }

@@ -219,7 +219,7 @@ const ROWS = [
     src: skinnedSrc,
     armature: armatureObject,
     // Stated, because this gate calls `evaluate` directly and no schema fills the defaults in.
-    params: { maxInfluences: 4, dropoff: 4 },
+    params: { method: 'proximity', maxInfluences: 4, dropoff: 4, resolution: 128, falloff: 0.2 },
     hash: '74ec7606',
   },
   {

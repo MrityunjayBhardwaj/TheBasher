@@ -150,8 +150,10 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
     '[camera] projection=camera fov=camera zoom=camera near=camera far=camera sensorSize=camera dofEnabled=camera focusDistance=camera fStop=camera focusOnTarget=camera lookAt=camera roll=camera',
   CameraSelect: '[layout] active=(unrouted)',
   // #1353 — three cells, all on the stack card: the two settings a capture has and the mute. The
-  // armature is an INPUT, as it is on `ArmatureModifier`.
-  CaptureModifier: '[modifier] maxInfluences=modifier dropoff=modifier muted=modifier',
+  // armature is an INPUT, as it is on `ArmatureModifier`. #1539 adds three more on the same card:
+  // the method, and the two settings only the voxel method reads.
+  CaptureModifier:
+    '[modifier] method=modifier maxInfluences=modifier dropoff=modifier resolution=modifier falloff=modifier muted=modifier',
   Character: '[] name=(unrouted)',
   Clamp: '[] min=(unrouted) max=(unrouted)',
   Collection: '[layout] viewport=(unrouted) render=(unrouted)',
@@ -430,4 +432,8 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
 // #1353 adds `CaptureModifier` as a wholly new node type: +1 type, +3 routed (`maxInfluences`,
 // `dropoff`, `muted`). Nothing existing moved:
 //   types 90 + 1 = 91 · routed 144 + 3 = 147 · unrouted 257
-export const GOLDEN_TOTALS = { types: 91, routed: 147, unrouted: 257 } as const;
+//
+// #1539 appends three cells to `CaptureModifier` (`method`, `resolution`, `falloff`), all routed
+// to its own card. No type added, nothing existing moved:
+//   types 91 · routed 147 + 3 = 150 · unrouted 257
+export const GOLDEN_TOTALS = { types: 91, routed: 150, unrouted: 257 } as const;

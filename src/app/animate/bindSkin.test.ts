@@ -10,7 +10,12 @@ import { registerAllNodes } from '../../nodes/registerAll';
 import { sampleSkinDeform } from '../../nodes/armatureDeform';
 import { quatFromEulerXYZ, restBonePose } from '../../nodes/bonePose';
 import { Matrix4 } from 'three';
-import { captureBonesOf, planCapture } from '../../nodes/CaptureModifier';
+import {
+  captureBonesOf,
+  captureSettingsOf,
+  planCapture,
+  type CaptureSettings,
+} from '../../nodes/CaptureModifier';
 import { skinLanes } from '../../nodes/skinInfluences';
 import type {
   MeshGeometryData,
@@ -22,9 +27,12 @@ import type {
 import { meshDataProblem } from '../polygonLayout';
 import { sceneOnlyState } from '../../test-utils/sceneOnlyState';
 import { BIND, ringPoint, skinBindSceneOps } from '../../test-utils/skinBindScene';
+import { cylinderMesh } from '../../test-utils/cylinderMesh';
+import { packMeshData } from '../meshGeometryData';
 import {
   armatureObjectsIn,
   armatureOf,
+  captureIsWhole,
   captureStatusOf,
   captureStatusText,
   planBindSkin,
@@ -43,7 +51,7 @@ beforeEach(() => {
 });
 
 /** Bind the cylinder and return the graph with what its stack now evaluates to. */
-function bound(state = scene, req: { maxInfluences?: number; dropoff?: number } = {}) {
+function bound(state = scene, req: Partial<CaptureSettings> = {}) {
   const plan = planBindSkin(state, { mesh: BIND.mesh, armature: BIND.armature, ...req });
   if (!plan.ok) throw new Error(plan.reason);
   const next = run(state, plan.ops);
@@ -332,7 +340,7 @@ describe('#1353 — a Capture in a stack says what it did', () => {
     const { state, plan } = bound();
     const below = evaluate(state, plan.deformId, CTX).value as ObjectData;
     const armature = evaluate(state, BIND.armature, CTX).value as ObjectValue;
-    const above = planCapture(below, armature, { maxInfluences: 4, dropoff: 4 });
+    const above = planCapture(below, armature, captureSettingsOf({}));
     expect(above).toEqual({
       kind: 'refused',
       reason: expect.stringContaining('move Capture below the Armature modifier'),
@@ -343,11 +351,14 @@ describe('#1353 — a Capture in a stack says what it did', () => {
     expect(
       captureStatusText({
         kind: 'captured',
+        method: 'proximity',
         data: {} as MeshGeometryData,
         key: 'k',
         bones: 1,
         points: 10,
         unbound: 2,
+        unreached: 0,
+        outside: [],
       }),
     ).toBe('10 points bound to 1 bone. 2 of them are held by no bone and stay at rest.');
   });
@@ -357,7 +368,7 @@ describe('#1353 — a Capture in a stack says what it did', () => {
     // Re-capture the captured mesh with one influence: the four-lane bind is gone.
     const armature = evaluate(state, BIND.armature, CTX).value as ObjectValue;
     const captured = evaluate(state, plan.captureId, CTX).value as ObjectData;
-    const again = planCapture(captured, armature, { maxInfluences: 1, dropoff: 4 });
+    const again = planCapture(captured, armature, captureSettingsOf({ maxInfluences: 1 }));
     if (again.kind !== 'captured') throw new Error(again.reason);
     expect(again.data.pointLayers.map((l) => l.name)).toEqual(['skin_joints', 'skin_weights']);
     expect(weights(again.data, ringPoint(1.25))).toEqual({ 'Bone.001': 1 });
@@ -366,5 +377,157 @@ describe('#1353 — a Capture in a stack says what it did', () => {
 
   it('the armatures a bind can point at are the Objects holding a skeleton', () => {
     expect(armatureObjectsIn(scene)).toEqual([BIND.armature]);
+  });
+});
+
+describe('#1539 — the voxel method: the same bind, distance measured through the mesh', () => {
+  it('a setting left out takes the Capture node’s own default, in one place', () => {
+    expect(captureSettingsOf({})).toEqual({
+      method: 'proximity',
+      maxInfluences: 4,
+      dropoff: 4,
+      resolution: 128,
+      falloff: 0.2,
+    });
+    expect(captureSettingsOf({ method: 'voxel', resolution: undefined, falloff: 1 })).toEqual({
+      method: 'voxel',
+      maxInfluences: 4,
+      dropoff: 4,
+      resolution: 128,
+      falloff: 1,
+    });
+  });
+
+  it('a bind by voxel stores the method on the Capture, and weights the open tube whole', () => {
+    const { plan, state, mesh, value } = bound(scene, { method: 'voxel', resolution: 64 });
+    expect(state.nodes[plan.captureId].params).toMatchObject({ method: 'voxel', resolution: 64 });
+    expect(plan.capture).toMatchObject({ method: 'voxel', unbound: 0, unreached: 0, outside: [] });
+    // The same layers and the same groups the proximity bind writes: the reader cannot tell.
+    expect(mesh.pointLayers.map((l) => l.name)).toEqual(['skin_joints', 'skin_weights']);
+    expect(mesh.vertexGroups).toEqual([...BIND.bones]);
+    expect(value.skin!.boneOfGroup).toEqual([0, 1, 2]);
+    expect(meshDataProblem(mesh)).toBeNull();
+    for (let p = 0; p < BIND.radial * BIND.rings; p++) {
+      expect(Object.values(weights(mesh, p)).reduce((s, w) => s + w, 0)).toBeCloseTo(1, 5);
+    }
+    // Beside the middle of the middle bone, near the inverse square of distance: 1 : 0.2 : 0.2.
+    expect(weights(mesh, ringPoint(1.5))['Bone.001']).toBeCloseTo(1 / 1.4, 1);
+    const status = captureStatusOf(state, plan.captureId)!;
+    expect(captureStatusText(status)).toBe('104 points bound to 3 bones.');
+    expect(captureIsWhole(status)).toBe(true);
+  });
+
+  it('turning the middle bone bends the voxel-bound tube: the foot stays and the top follows', () => {
+    const { value, mesh } = bound(scene, { method: 'voxel', resolution: 64 });
+    const out = sampleSkinDeform(posed(value, 'Bone.001', [0, 0, Math.PI / 2]), mesh, 0);
+    const at = (p: number) => [out[p * 3], out[p * 3 + 1], out[p * 3 + 2]];
+    // The foot ring is held by the first bone, which did not turn — but not by it alone. At
+    // falloff 0.2 weight goes near the inverse square of distance, 1 : 0.059 : 0.015 here, so the
+    // two turned bones hold 7% of the foot and carry it 7% of the 1.46 they would carry it rigidly.
+    const foot = at(ringPoint(0));
+    const moved = Math.hypot(foot[0] - 0.25, foot[1]);
+    expect(moved).toBeGreaterThan(0.05);
+    expect(moved).toBeLessThan(0.13);
+    // A falloff of 1 is the inverse fourth power, and the foot stays.
+    const rigid = bound(scene, { method: 'voxel', resolution: 64, falloff: 1 });
+    const held = sampleSkinDeform(
+      posed(rigid.value, 'Bone.001', [0, 0, Math.PI / 2]),
+      rigid.mesh,
+      0,
+    );
+    expect(Math.hypot(held[ringPoint(0) * 3] - 0.25, held[ringPoint(0) * 3 + 1])).toBeLessThan(
+      0.02,
+    );
+    // The top ring (rest (0.25, 3, 0)) is carried a quarter turn about the joint at y = 1, to
+    // (-2, 1.25, 0), less the little the first bone still holds of it.
+    const top = at(ringPoint(3));
+    expect(top[0]).toBeLessThan(-1.8);
+    expect(top[1]).toBeCloseTo(1.25, 0);
+    // The ring at the joint goes part of the way: a blend, not a step.
+    const joint = at(ringPoint(1));
+    expect(joint[0]).toBeGreaterThan(0.02);
+    expect(joint[0]).toBeLessThan(0.23);
+  });
+
+  it('only the settings the method reads make a new capture', () => {
+    const key = (req: Partial<CaptureSettings>) => bound(scene, req).value.geometry.key;
+    const voxel = key({ method: 'voxel', resolution: 32 });
+    expect(voxel).not.toBe(key({ method: 'proximity' }));
+    expect(key({ method: 'voxel', resolution: 48 })).not.toBe(voxel);
+    expect(key({ method: 'voxel', resolution: 32, falloff: 0.9 })).not.toBe(voxel);
+    expect(key({ method: 'voxel', resolution: 32, maxInfluences: 2 })).not.toBe(voxel);
+    // `dropoff` is the proximity method's; `resolution` and `falloff` are this one's.
+    expect(key({ method: 'voxel', resolution: 32, dropoff: 9 })).toBe(voxel);
+    expect(key({ method: 'proximity', resolution: 32, falloff: 0.9 })).toBe(key({}));
+    // And a capture already made is handed back, not made again.
+    expect(bound(scene, { method: 'voxel', resolution: 32 }).mesh).toBe(
+      bound(scene, { method: 'voxel', resolution: 32, dropoff: 9 }).mesh,
+    );
+  });
+
+  it('a bone standing outside the mesh is named in the sentence, and the capture is not whole', () => {
+    // The armature moved a unit aside: no bone is in the tube, so every point falls back.
+    const moved = run(scene, [
+      { type: 'setParam', nodeId: BIND.armature, paramPath: 'position', value: [1, 0, 0] } as Op,
+    ]);
+    const { state, plan } = bound(moved, { method: 'voxel', resolution: 32 });
+    const status = captureStatusOf(state, plan.captureId)!;
+    expect(captureStatusText(status)).toBe(
+      '104 points bound to 3 bones. 104 could not be reached through the mesh’s inside and are bound by straight-line distance instead. 3 bones lie outside the mesh’s volume, so nothing is measured from them: Bone, Bone.001, Bone.002.'.replace(
+        /’/g,
+        "'",
+      ),
+    );
+    expect(captureIsWhole(status)).toBe(false);
+    // The same armature by proximity has nothing to report.
+    const near = bound(moved);
+    expect(captureIsWhole(captureStatusOf(near.state, near.plan.captureId)!)).toBe(true);
+  });
+
+  it('the sentence names three outside bones and counts the rest; one bone reads as one', () => {
+    const base = {
+      kind: 'captured' as const,
+      method: 'voxel' as const,
+      data: {} as MeshGeometryData,
+      key: 'k',
+      bones: 9,
+      points: 10,
+      unbound: 0,
+      unreached: 0,
+    };
+    expect(captureStatusText({ ...base, outside: ['a', 'b', 'c', 'd', 'e'] })).toBe(
+      "10 points bound to 9 bones. 5 bones lie outside the mesh's volume, so nothing is measured from them: a, b, c and 2 more.",
+    );
+    expect(captureStatusText({ ...base, outside: ['a'] })).toBe(
+      "10 points bound to 9 bones. 1 bone lies outside the mesh's volume, so nothing is measured from it: a.",
+    );
+    expect(captureIsWhole({ ...base, outside: [] })).toBe(true);
+    expect(captureIsWhole({ ...base, outside: ['a'] })).toBe(false);
+    expect(captureIsWhole({ ...base, outside: [], unreached: 1 })).toBe(false);
+    expect(captureIsWhole({ ...base, outside: [], unbound: 1 })).toBe(false);
+    expect(captureIsWhole({ kind: 'refused', reason: 'x' })).toBe(false);
+  });
+
+  it('a mesh with points and no faces has no inside: voxel refuses it by name, proximity binds it', () => {
+    const tube = cylinderMesh(BIND);
+    const points = packMeshData({
+      ...tube,
+      faceSizes: new Uint32Array(0),
+      cornerPoints: new Uint32Array(0),
+    });
+    const faceless = run(scene, [
+      { type: 'setParam', nodeId: BIND.meshData, paramPath: 'mesh', value: points } as Op,
+    ]);
+    const refused = planBindSkin(faceless, {
+      mesh: BIND.mesh,
+      armature: BIND.armature,
+      method: 'voxel',
+    });
+    expect(refused).toEqual({
+      ok: false,
+      reason:
+        'the mesh has no faces, or no size, so it has no inside to measure through: use the proximity method.',
+    });
+    expect(planBindSkin(faceless, { mesh: BIND.mesh, armature: BIND.armature }).ok).toBe(true);
   });
 });

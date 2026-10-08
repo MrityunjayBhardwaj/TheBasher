@@ -23,8 +23,10 @@ import { isArmatureObject } from '../armatureMode';
 import { canModifyGeometry } from '../modifierGeometry';
 import { buildAddModifierOps, enumerateModifierStack, resolveStackBase } from '../operatorStack';
 import {
+  captureSettingsOf,
   planCapture,
-  type CaptureModifierParams,
+  type CaptureMethod,
+  type CaptureSettings,
   type CapturePlan,
 } from '../../nodes/CaptureModifier';
 import { edgeSocket, edgeTarget } from './graphNodes';
@@ -37,8 +39,12 @@ export interface BindSkinRequest {
   readonly mesh: NodeId;
   /** The armature Object. */
   readonly armature: NodeId;
+  /** Each left out takes the Capture node's own default. */
+  readonly method?: CaptureMethod;
   readonly maxInfluences?: number;
   readonly dropoff?: number;
+  readonly resolution?: number;
+  readonly falloff?: number;
 }
 
 export type BindSkinPlan =
@@ -102,10 +108,13 @@ export function planBindSkin(
   }
   // What the capture would read: the top of the stack as it stands, and the armature Object.
   const top = stack.length > 0 ? stack[stack.length - 1].nodeId : base;
-  const params: Pick<CaptureModifierParams, 'maxInfluences' | 'dropoff'> = {
-    maxInfluences: req.maxInfluences ?? 4,
-    dropoff: req.dropoff ?? 4,
-  };
+  const params: CaptureSettings = captureSettingsOf({
+    method: req.method,
+    maxInfluences: req.maxInfluences,
+    dropoff: req.dropoff,
+    resolution: req.resolution,
+    falloff: req.falloff,
+  });
   const capture = planCapture(
     valueOf(state, top, cache) as ObjectData | undefined,
     valueOf(state, req.armature, cache) as ObjectValue | undefined,
@@ -163,19 +172,44 @@ export function captureStatusOf(
   if (node?.type !== 'CaptureModifier') return null;
   const target = edgeTarget(node, 'target');
   const armature = armatureOf(state, nodeId);
-  const params = node.params as Partial<CaptureModifierParams>;
   return planCapture(
     target === null ? undefined : (valueOf(state, target, cache) as ObjectData | undefined),
     armature === null ? undefined : (valueOf(state, armature, cache) as ObjectValue | undefined),
-    { maxInfluences: params.maxInfluences ?? 4, dropoff: params.dropoff ?? 4 },
+    captureSettingsOf(node.params as Partial<CaptureSettings>),
   );
 }
 
 /** One sentence for a capture's result — the line the inspector prints under the operator. */
 export function captureStatusText(plan: CapturePlan): string {
   if (plan.kind === 'refused') return `Nothing is captured: ${plan.reason}`;
-  const held = `${plan.points} points bound to ${plan.bones} bone${plan.bones === 1 ? '' : 's'}.`;
-  return plan.unbound === 0
-    ? held
-    : `${held} ${plan.unbound} of them are held by no bone and stay at rest.`;
+  const said = [`${plan.points} points bound to ${plan.bones} bone${plan.bones === 1 ? '' : 's'}.`];
+  if (plan.unbound > 0) {
+    said.push(`${plan.unbound} of them are held by no bone and stay at rest.`);
+  }
+  if (plan.unreached > 0) {
+    said.push(
+      `${plan.unreached} could not be reached through the mesh's inside and are bound by straight-line distance instead.`,
+    );
+  }
+  if (plan.outside.length > 0) {
+    const shown = plan.outside.slice(0, OUTSIDE_NAMED).join(', ');
+    const more = plan.outside.length - OUTSIDE_NAMED;
+    said.push(
+      `${plan.outside.length} bone${plan.outside.length === 1 ? ' lies' : 's lie'} outside the mesh's volume, so nothing is measured from ${plan.outside.length === 1 ? 'it' : 'them'}: ${shown}${more > 0 ? ` and ${more} more` : ''}.`,
+    );
+  }
+  return said.join(' ');
+}
+
+/** How many outside bones the status line names before it counts the rest. */
+const OUTSIDE_NAMED = 3;
+
+/** Did the capture bind every point the way its method measures, from every bone? */
+export function captureIsWhole(plan: CapturePlan): boolean {
+  return (
+    plan.kind === 'captured' &&
+    plan.unbound === 0 &&
+    plan.unreached === 0 &&
+    plan.outside.length === 0
+  );
 }
