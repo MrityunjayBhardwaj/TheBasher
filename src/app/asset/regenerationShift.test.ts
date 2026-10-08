@@ -273,9 +273,7 @@ describe('a regeneration names what it moved under a layer (#1226)', () => {
     // A character of its own: a rig standing at rest, as a dropped model's does.
     const stand = buildSkeletonObjectOps({
       skeletonId: 'tskel',
-      bones: bones as never,
       sceneNodeId: 'n_scene',
-      normalise: false,
       name: 'hero',
       pose: { node: 'tskel', socket: 'pose' },
       nameFollowsClip: false,
