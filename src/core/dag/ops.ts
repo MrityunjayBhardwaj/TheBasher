@@ -139,35 +139,176 @@ export interface Reportable {
 }
 
 export function applyOp(state: DagState, op: Op): ApplyResult {
-  const result = applyUnguarded(state, op);
+  return applyWith(state, op, undefined);
+}
+
+// ── #1585 — a batch is applied on ONE copy of the graph ─────────────────────────
+//
+// An operation makes the next graph by copying the `nodes` record and changing one entry. One
+// edit paying for that copy is fine. An import paying it per operation is not: 13,751
+// operations into a graph growing to 5,019 nodes spent 6.4 s of 7.6 s copying (measured), and
+// another 1.0 s reading every node after each rename to find the nodes that follow a name.
+//
+// `applyOps` copies the record once, on the first operation that writes, and every later one
+// writes into that copy. Nothing outside can see the copy until `applyOps` returns it, and the
+// graph it was given is never written, so a batch that throws half way leaves nothing behind.
+// Each operation runs the same code and the same checks as `applyOp`; the only difference is
+// where a write lands (`putNode`).
+
+interface Draft {
+  /** The batch's own copy of the record, made at its first write. */
+  nodes: Record<NodeId, Node> | null;
+  /** What each node this OPERATION wrote was before it (undefined: it was not there). Cleared
+   *  per operation: it is how the graph before the operation is still known after the write. */
+  readonly touched: Map<NodeId, Node | undefined>;
+  /** Which nodes follow each node's name (`meta.nameFrom`), built the first time a name
+   *  changes and kept true by every write after it. */
+  followers: Map<NodeId, Set<NodeId>> | null;
+  /** How many wires leave each node, built the first time a node is removed and kept true by
+   *  every write after it: undoing an import removes thousands of nodes, and asking each
+   *  time whether anything still consumes one meant reading every node's inputs. */
+  consumed: Map<NodeId, number> | null;
+}
+
+export interface AppliedOp {
+  /** The operation as validated: what an undo entry records as its forward. */
+  readonly forward: Op;
+  readonly inverse: Op;
+  /** Whether the operation moved the graph (#1189: one that did not leaves no undo step). */
+  readonly changed: boolean;
+  readonly reportable?: Reportable;
+}
+
+/**
+ * Validate and apply `ops` in order, as `validateOp` + `applyOp` would one by one, and return
+ * the graph after the last with what each did. Throws what the first refused operation throws;
+ * `state` is untouched either way. A batch that changes nothing returns `state` itself.
+ */
+export function applyOps(
+  state: DagState,
+  ops: readonly unknown[],
+): { next: DagState; applied: AppliedOp[] } {
+  const draft: Draft = { nodes: null, touched: new Map(), followers: null, consumed: null };
+  const applied: AppliedOp[] = [];
+  let working = state;
+  for (const raw of ops) {
+    const forward = validateOp(raw);
+    draft.touched.clear();
+    const { next, inverse, reportable } = applyWith(working, forward, draft);
+    const step = { forward, inverse, changed: next !== working };
+    applied.push(reportable ? { ...step, reportable } : step);
+    working = next;
+  }
+  return { next: working, applied };
+}
+
+/** The graph with `id` set to `node`, or without it when `node` is undefined. The one place a
+ *  write lands: a copy of the record for a single operation, the batch's own record for a batch. */
+function putNode(
+  state: DagState,
+  draft: Draft | undefined,
+  id: NodeId,
+  node: Node | undefined,
+): DagState {
+  if (!draft) {
+    if (node !== undefined) return { ...state, nodes: { ...state.nodes, [id]: node } };
+    const { [id]: _removed, ...rest } = state.nodes;
+    void _removed;
+    return { ...state, nodes: rest };
+  }
+  if (draft.nodes === null) draft.nodes = { ...state.nodes };
+  else if (state.nodes !== draft.nodes) throw new Error('applyOps: a write outside the batch');
+  const nodes = draft.nodes;
+  const prior = nodes[id];
+  if (!draft.touched.has(id)) draft.touched.set(id, prior);
+  if (draft.followers) refollow(draft.followers, id, prior?.meta?.nameFrom, node?.meta?.nameFrom);
+  if (draft.consumed && prior?.inputs !== node?.inputs) {
+    if (prior) countWires(draft.consumed, prior, -1);
+    if (node) countWires(draft.consumed, node, 1);
+  }
+  if (node === undefined) delete nodes[id];
+  else nodes[id] = node;
+  return { ...state, nodes };
+}
+
+/** The graph as it was before the operation being applied wrote to it. */
+function beforeWrites(state: DagState, draft: Draft | undefined): DagState {
+  if (!draft || state.nodes !== draft.nodes || draft.touched.size === 0) return state;
+  const nodes = { ...draft.nodes };
+  for (const [id, prior] of draft.touched) {
+    if (prior === undefined) delete nodes[id];
+    else nodes[id] = prior;
+  }
+  return { ...state, nodes };
+}
+
+function countWires(consumed: Map<NodeId, number>, consumer: Node, by: 1 | -1): void {
+  for (const binding of Object.values(consumer.inputs)) {
+    for (const ref of Array.isArray(binding) ? binding : [binding]) {
+      consumed.set(ref.node, (consumed.get(ref.node) ?? 0) + by);
+    }
+  }
+}
+
+function consumedIn(nodes: Readonly<Record<NodeId, Node>>): Map<NodeId, number> {
+  const consumed = new Map<NodeId, number>();
+  for (const node of Object.values(nodes)) countWires(consumed, node, 1);
+  return consumed;
+}
+
+function followersOf(nodes: Readonly<Record<NodeId, Node>>): Map<NodeId, Set<NodeId>> {
+  const followers = new Map<NodeId, Set<NodeId>>();
+  for (const node of Object.values(nodes))
+    refollow(followers, node.id, undefined, node.meta?.nameFrom);
+  return followers;
+}
+
+function refollow(
+  followers: Map<NodeId, Set<NodeId>>,
+  id: NodeId,
+  was: NodeId | undefined,
+  now: NodeId | undefined,
+): void {
+  if (was === now) return;
+  if (was !== undefined) followers.get(was)?.delete(id);
+  if (now === undefined) return;
+  const set = followers.get(now);
+  if (set) set.add(id);
+  else followers.set(now, new Set([id]));
+}
+
+function applyWith(state: DagState, op: Op, draft: Draft | undefined): ApplyResult {
+  const result = applyUnguarded(state, op, draft);
   // #1583 — which nodes own a sub-network follows the graph through every operation, so the
   // rules below never have to walk the graph to find them.
   carrySubnetworkOwners(state, result.next, op);
   // #1547 — the two ops that can add an edge are the two that can put a node in two
   // sub-networks, or let something outside consume a node inside one.
-  if (op.type === 'addNode' || op.type === 'connect') return holdingSubnetworks(state, op, result);
-  if (op.type === 'setParam') return holdingLeafNames(state, op, result);
+  if (op.type === 'addNode' || op.type === 'connect') {
+    return holdingSubnetworks(state, op, result, draft);
+  }
+  if (op.type === 'setParam') return holdingLeafNames(state, op, result, draft);
   return result;
 }
 
-function applyUnguarded(state: DagState, op: Op): ApplyResult {
+function applyUnguarded(state: DagState, op: Op, draft: Draft | undefined): ApplyResult {
   switch (op.type) {
     case 'addNode':
-      return applyAddNode(state, op);
+      return applyAddNode(state, op, draft);
     case 'removeNode':
-      return applyRemoveNode(state, op);
+      return applyRemoveNode(state, op, draft);
     case 'connect':
-      return applyConnect(state, op);
+      return applyConnect(state, op, draft);
     case 'disconnect':
-      return applyDisconnect(state, op);
+      return applyDisconnect(state, op, draft);
     case 'setParam':
-      return followNames(state, applySetParam(state, op), op.nodeId);
+      return followNames(state, applySetParam(state, op, draft), op.nodeId, draft);
     case 'setMeta':
-      return followNames(state, applySetMeta(state, op), op.nodeId);
+      return followNames(state, applySetMeta(state, op, draft), op.nodeId, draft);
     case 'setSpareParam':
-      return applySetSpareParam(state, op);
+      return applySetSpareParam(state, op, draft);
     case 'removeSpareParam':
-      return applyRemoveSpareParam(state, op);
+      return applyRemoveSpareParam(state, op, draft);
   }
 }
 
@@ -187,10 +328,12 @@ function holdingSubnetworks(
   state: DagState,
   op: Extract<Op, { type: 'addNode' | 'connect' }>,
   result: ApplyResult,
+  draft: Draft | undefined,
 ): ApplyResult {
   if (!reachesSubnetwork(result.next, producersOf(op))) return result;
+  const before = beforeWrites(state, draft);
   const reason =
-    newSubnetworkViolation(state, result.next) ?? newStatefulLeafRead(state, result.next);
+    newSubnetworkViolation(before, result.next) ?? newStatefulLeafRead(before, result.next);
   if (reason) throw new OpError(`${op.type}: ${reason}`, op);
   return result;
 }
@@ -202,16 +345,21 @@ function holdingLeafNames(
   state: DagState,
   op: Extract<Op, { type: 'setParam' }>,
   result: ApplyResult,
+  draft: Draft | undefined,
 ): ApplyResult {
   const node = state.nodes[op.nodeId];
   if (!node || requireNodeType(node.type).bodyInputLeaf !== true) return result;
   if (!reachesSubnetwork(result.next, [op.nodeId])) return result;
-  const reason = newStatefulLeafRead(state, result.next);
+  const reason = newStatefulLeafRead(beforeWrites(state, draft), result.next);
   if (reason) throw new OpError(`setParam: ${reason}`, op);
   return result;
 }
 
-function applyAddNode(state: DagState, op: Extract<Op, { type: 'addNode' }>): ApplyResult {
+function applyAddNode(
+  state: DagState,
+  op: Extract<Op, { type: 'addNode' }>,
+  draft: Draft | undefined,
+): ApplyResult {
   if (hasNode(state, op.nodeId)) {
     throw new OpError(`addNode: id already exists: ${op.nodeId}`, op);
   }
@@ -255,23 +403,29 @@ function applyAddNode(state: DagState, op: Extract<Op, { type: 'addNode' }>): Ap
     params: paramsParsed.data,
     inputs: op.inputs ?? {},
   };
-  const next: DagState = {
-    ...state,
-    nodes: { ...state.nodes, [op.nodeId]: node },
-  };
+  const next = putNode(state, draft, op.nodeId, node);
   const inverse: Op = { type: 'removeNode', nodeId: op.nodeId };
   return { next, inverse };
 }
 
-function applyRemoveNode(state: DagState, op: Extract<Op, { type: 'removeNode' }>): ApplyResult {
+function applyRemoveNode(
+  state: DagState,
+  op: Extract<Op, { type: 'removeNode' }>,
+  draft: Draft | undefined,
+): ApplyResult {
   const node = getNode(state, op.nodeId);
   // Refuse if any other node still consumes this one — caller must disconnect
   // first. This keeps undo composable: removeNode does not silently dangle.
-  for (const consumer of Object.values(state.nodes)) {
-    for (const binding of Object.values(consumer.inputs)) {
-      const refs = Array.isArray(binding) ? binding : [binding];
-      if (refs.some((r) => r.node === op.nodeId)) {
-        throw new OpError(`removeNode: ${op.nodeId} is still consumed by ${consumer.id}`, op);
+  // #1585 — in a batch the number of wires leaving each node is known, so only a node that
+  // is consumed is searched for its consumer, to name it.
+  const consumed = draft ? (draft.consumed ??= consumedIn(state.nodes)) : undefined;
+  if (!consumed || (consumed.get(op.nodeId) ?? 0) > 0) {
+    for (const consumer of Object.values(state.nodes)) {
+      for (const binding of Object.values(consumer.inputs)) {
+        const refs = Array.isArray(binding) ? binding : [binding];
+        if (refs.some((r) => r.node === op.nodeId)) {
+          throw new OpError(`removeNode: ${op.nodeId} is still consumed by ${consumer.id}`, op);
+        }
       }
     }
   }
@@ -281,9 +435,7 @@ function applyRemoveNode(state: DagState, op: Extract<Op, { type: 'removeNode' }
       throw new OpError(`removeNode: ${op.nodeId} is bound as output '${name}'`, op);
     }
   }
-  const { [op.nodeId]: _removed, ...rest } = state.nodes;
-  void _removed;
-  const next: DagState = { ...state, nodes: rest };
+  const next = putNode(state, draft, op.nodeId, undefined);
   const inverse: Op = {
     type: 'addNode',
     nodeId: node.id,
@@ -367,7 +519,11 @@ function requireWire(
   return outputDesc;
 }
 
-function applyConnect(state: DagState, op: Extract<Op, { type: 'connect' }>): ApplyResult {
+function applyConnect(
+  state: DagState,
+  op: Extract<Op, { type: 'connect' }>,
+  draft: Draft | undefined,
+): ApplyResult {
   const consumer = getNode(state, op.to.node);
   // The producer is looked up before the socket, as it always was: a wire from a node that is
   // not in the graph says so first.
@@ -455,22 +611,20 @@ function applyConnect(state: DagState, op: Extract<Op, { type: 'connect' }>): Ap
   // hands back the same state (the #1189 contract, `sameParamValue` below). A list socket
   // is not covered: connecting there always inserts, so the list really does grow.
   const unchanged = sameParamValue(prior, nextBinding);
-  const next: DagState = unchanged
+  const next = unchanged
     ? state
-    : {
-        ...state,
-        nodes: {
-          ...state.nodes,
-          [consumer.id]: {
-            ...consumer,
-            inputs: { ...consumer.inputs, [op.to.socket]: nextBinding },
-          },
-        },
-      };
+    : putNode(state, draft, consumer.id, {
+        ...consumer,
+        inputs: { ...consumer.inputs, [op.to.socket]: nextBinding },
+      });
   return reportable ? { next, inverse, reportable } : { next, inverse };
 }
 
-function applyDisconnect(state: DagState, op: Extract<Op, { type: 'disconnect' }>): ApplyResult {
+function applyDisconnect(
+  state: DagState,
+  op: Extract<Op, { type: 'disconnect' }>,
+  draft: Draft | undefined,
+): ApplyResult {
   const consumer = getNode(state, op.to.node);
   const def = requireNodeType(consumer.type);
   const inputDesc = def.inputs[op.to.socket];
@@ -506,15 +660,16 @@ function applyDisconnect(state: DagState, op: Extract<Op, { type: 'disconnect' }
     delete inputs[op.to.socket];
   }
   const nextNode: Node = { ...consumer, inputs };
-  const next: DagState = {
-    ...state,
-    nodes: { ...state.nodes, [consumer.id]: nextNode },
-  };
+  const next = putNode(state, draft, consumer.id, nextNode);
   const inverse: Op = { type: 'connect', from: op.from, to: op.to };
   return { next, inverse };
 }
 
-function applySetParam(state: DagState, op: Extract<Op, { type: 'setParam' }>): ApplyResult {
+function applySetParam(
+  state: DagState,
+  op: Extract<Op, { type: 'setParam' }>,
+  draft: Draft | undefined,
+): ApplyResult {
   const node = getNode(state, op.nodeId);
   const def = requireNodeType(node.type);
   const prior = getAtPath(node.params, op.paramPath);
@@ -538,9 +693,6 @@ function applySetParam(state: DagState, op: Extract<Op, { type: 'setParam' }>): 
   // stripped-write flag below still fires: the refusal stays visible, it just no longer
   // commits.
   const unchanged = sameParamValue(node.params, parsed.data);
-  const next: DagState = unchanged
-    ? state
-    : { ...state, nodes: { ...state.nodes, [node.id]: { ...node, params: parsed.data } } };
   const inverse: Op = {
     type: 'setParam',
     nodeId: op.nodeId,
@@ -577,9 +729,10 @@ function applySetParam(state: DagState, op: Extract<Op, { type: 'setParam' }>): 
     // across the unit tier (a log here when `next !== state`) found exactly one hit, the
     // row in `ops.reportable.test.ts` that documented the residue.
     //
-    // So the refusal hands back the state it was given. `next` is discarded rather than
-    // never built, because the strip is only detectable AFTER the parse — which is also
-    // why this cannot be folded into the `unchanged` check above.
+    // So the refusal hands back the state it was given, and the write below is never made
+    // (#1585: in a batch a write lands in place, so one made and then set aside would stay).
+    // The strip is only detectable AFTER the parse, which is why this cannot be folded into
+    // the `unchanged` check above.
     const rootKey = paramRootKey(op.paramPath);
     const rootSurvived =
       rootKey === '' || Object.prototype.hasOwnProperty.call(parsed.data as object, rootKey);
@@ -607,6 +760,7 @@ function applySetParam(state: DagState, op: Extract<Op, { type: 'setParam' }>): 
       },
     };
   }
+  const next = unchanged ? state : putNode(state, draft, node.id, { ...node, params: parsed.data });
   return { next, inverse };
 }
 
@@ -649,6 +803,7 @@ function isPlainRecord(v: object): v is Record<string, unknown> {
 function applySetSpareParam(
   state: DagState,
   op: Extract<Op, { type: 'setSpareParam' }>,
+  draft: Draft | undefined,
 ): ApplyResult {
   const node = getNode(state, op.nodeId);
   const parsed = SpareParamSchema.safeParse(op.param);
@@ -660,15 +815,12 @@ function applySetSpareParam(
   }
   const prior = node.spare?.[op.key];
   // #1191 — the value it already holds changes nothing: the same state (#1189 contract).
-  const next: DagState = sameParamValue(prior, parsed.data)
+  const next = sameParamValue(prior, parsed.data)
     ? state
-    : {
-        ...state,
-        nodes: {
-          ...state.nodes,
-          [node.id]: { ...node, spare: { ...(node.spare ?? {}), [op.key]: parsed.data } },
-        },
-      };
+    : putNode(state, draft, node.id, {
+        ...node,
+        spare: { ...(node.spare ?? {}), [op.key]: parsed.data },
+      });
   // Inverse: restore the prior value if the key existed, else remove the new key.
   const inverse: Op = prior
     ? { type: 'setSpareParam', nodeId: op.nodeId, key: op.key, param: prior }
@@ -679,6 +831,7 @@ function applySetSpareParam(
 function applyRemoveSpareParam(
   state: DagState,
   op: Extract<Op, { type: 'removeSpareParam' }>,
+  draft: Draft | undefined,
 ): ApplyResult {
   const node = getNode(state, op.nodeId);
   const prior = node.spare?.[op.key];
@@ -693,7 +846,7 @@ function applyRemoveSpareParam(
     ...node,
     spare: Object.keys(nextSpare).length > 0 ? nextSpare : undefined,
   };
-  const next: DagState = { ...state, nodes: { ...state.nodes, [node.id]: nextNode } };
+  const next = putNode(state, draft, node.id, nextNode);
   const inverse: Op = { type: 'setSpareParam', nodeId: op.nodeId, key: op.key, param: prior };
   return { next, inverse };
 }
@@ -709,23 +862,48 @@ function applyRemoveSpareParam(
  *
  * One hop. A follower's own followers are not walked, so a hand-edited loop cannot spin.
  */
-function followNames(prev: DagState, result: ApplyResult, sourceId: NodeId): ApplyResult {
-  const before = prev.nodes[sourceId];
+function followNames(
+  prev: DagState,
+  result: ApplyResult,
+  sourceId: NodeId,
+  draft: Draft | undefined,
+): ApplyResult {
+  // In a batch the write has already landed in `prev`'s record, so what the source was is
+  // what the write recorded.
+  const before = draft?.touched.has(sourceId) ? draft.touched.get(sourceId) : prev.nodes[sourceId];
   const after = result.next.nodes[sourceId];
   if (!before || !after || ownName(before) === ownName(after)) return result;
   const name = followableName(after);
   if (name === undefined) return result;
+  const stale = (node: Node | undefined): node is Node =>
+    node !== undefined &&
+    node.id !== sourceId &&
+    node.meta?.nameFrom === sourceId &&
+    node.meta.name !== name;
+  const renamed = (node: Node): Node => ({ ...node, meta: { ...node.meta, name } });
+  if (draft) {
+    // #1585 — the followers are known, not searched for: reading every node after every
+    // rename was 1.0 s of a 5,019-node import.
+    const followers = (draft.followers ??= followersOf(result.next.nodes));
+    let next = result.next;
+    for (const id of [...(followers.get(sourceId) ?? [])]) {
+      const node = next.nodes[id];
+      if (stale(node)) next = putNode(next, draft, id, renamed(node));
+    }
+    return next === result.next ? result : { ...result, next };
+  }
   let nodes = result.next.nodes;
   for (const node of Object.values(nodes)) {
-    if (node.id === sourceId || node.meta?.nameFrom !== sourceId || node.meta.name === name) {
-      continue;
-    }
-    nodes = { ...nodes, [node.id]: { ...node, meta: { ...node.meta, name } } };
+    if (stale(node)) nodes = { ...nodes, [node.id]: renamed(node) };
   }
   return nodes === result.next.nodes ? result : { ...result, next: { ...result.next, nodes } };
 }
 
-function applySetMeta(state: DagState, op: Extract<Op, { type: 'setMeta' }>): ApplyResult {
+function applySetMeta(
+  state: DagState,
+  op: Extract<Op, { type: 'setMeta' }>,
+  draft: Draft | undefined,
+): ApplyResult {
   // #224 — rename. `meta` is node identity data, not a per-type param, so this
   // bypasses paramSchema (validated only by OpSchema's `name: string?`). Other
   // meta fields (graph `position`) are preserved; an undefined name DELETES the
@@ -757,9 +935,9 @@ function applySetMeta(state: DagState, op: Extract<Op, { type: 'setMeta' }>): Ap
   // #1191 — judged on the WHOLE resulting meta, not on the name alone: a write that keeps
   // the name but drops a `nameFrom` link, or clears a name, is a change; one that lands on
   // exactly the meta already there is not, and hands back the same state (#1189 contract).
-  const next: DagState = sameParamValue(node.meta, nextMeta)
+  const next = sameParamValue(node.meta, nextMeta)
     ? state
-    : { ...state, nodes: { ...state.nodes, [node.id]: { ...node, meta: nextMeta } } };
+    : putNode(state, draft, node.id, { ...node, meta: nextMeta });
   const inverse: Op = {
     type: 'setMeta',
     nodeId: op.nodeId,

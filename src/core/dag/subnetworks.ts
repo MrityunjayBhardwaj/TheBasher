@@ -76,7 +76,6 @@ export function subnetworkOwnersOf(state: DagState): readonly NodeId[] {
 /** The owners of `after`, from the owners of `before` and the operation between them. Does
  *  nothing when `before` was never asked: the first ask walks the graph. */
 export function carrySubnetworkOwners(before: DagState, after: DagState, op: Op): void {
-  if (after.nodes === before.nodes) return;
   const known = ownersByNodes.get(before.nodes);
   if (!known || known.epoch !== registryEpoch()) return;
   let owners = known.owners;
@@ -85,6 +84,9 @@ export function carrySubnetworkOwners(before: DagState, after: DagState, op: Op)
   } else if (op.type === 'removeNode') {
     if (owners.includes(op.nodeId)) owners = owners.filter((id) => id !== op.nodeId);
   }
+  // A batch writes every operation into one record (#1585), so before and after can be the
+  // same record: what is known of it is replaced, not left standing.
+  if (after.nodes === before.nodes && owners === known.owners) return;
   ownersByNodes.set(after.nodes, { epoch: known.epoch, owners });
 }
 
