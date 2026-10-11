@@ -101,18 +101,22 @@ describe('#609 — an input socket accepts a SET of types', () => {
     // Byte-identical but for the accepted set — this pair IS the discriminator.
     registerConsumer('TmpTakesNumber', 'Number');
     registerConsumer('TmpTakesNumberOrVec3', ['Number', 'Vector3']);
+    // #1590 — a Vector3 now CONVERTS into a Number input, so that pair no longer separates a
+    // membership gate from an equality gate. An Image has no conversion into a Number.
+    registerProducer('TmpEmitsImage', 'Image');
+    registerConsumer('TmpTakesNumberOrImage', ['Number', 'Image']);
   });
 
   it('THE DISCRIMINATOR: the same producer is refused by one socket and taken by its set-declaring twin', () => {
-    // An equality gate returns the SAME answer for both — 'Vector3' !== 'Number' in each
+    // An equality gate returns the SAME answer for both — 'Image' !== 'Number' in each
     // case, because it can only ever ask "is this THE type". Only a membership gate can
     // separate them. If these two ever agree, the gate has gone back to equality and this
     // whole change is cosmetic.
-    expect(() => wire('TmpEmitsVec3', 'TmpTakesNumber')).toThrow(/type mismatch/);
-    expect(() => wire('TmpEmitsVec3', 'TmpTakesNumberOrVec3')).not.toThrow();
+    expect(() => wire('TmpEmitsImage', 'TmpTakesNumber')).toThrow(/type mismatch/);
+    expect(() => wire('TmpEmitsImage', 'TmpTakesNumberOrImage')).not.toThrow();
 
     // And the edge really landed — a gate that returns early leaves no binding behind.
-    const state = wire('TmpEmitsVec3', 'TmpTakesNumberOrVec3');
+    const state = wire('TmpEmitsImage', 'TmpTakesNumberOrImage');
     expect(state.nodes['n_dst'].inputs['in']).toEqual({ node: 'n_src', socket: 'out' });
   });
 

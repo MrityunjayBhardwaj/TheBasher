@@ -25,7 +25,7 @@ beforeEach(() => {
   registerAllNodes();
   // Two producers that declare the same pass role, one that declares none, and a consumer
   // with a list of images: the smallest graph the one-role-once rule can be broken on. And a
-  // Vector3 producer, for the refusal that names a way forward.
+  // Vector3 producer, for the wire that converts on its way into a Number.
   for (const [type, role] of [
     ['DepthA', 'depth'],
     ['DepthB', 'depth'],
@@ -196,13 +196,6 @@ const REFUSALS: Refusal[] = [
     says: /^type mismatch Skeleton\.pose:PosedSkeleton → Math\.a:Number — there is no conversion/,
   },
   {
-    name: 'a type with a way forward',
-    consumerType: 'Math',
-    socket: 'a',
-    refs: [{ node: 'vec', socket: 'out' }],
-    says: /^type mismatch Vec\.out:Vector3 → Math\.a:Number — .*VecBreak3/,
-  },
-  {
     name: 'an input socket the node type does not have',
     consumerType: 'Math',
     socket: 'nope',
@@ -267,6 +260,8 @@ describe('#1580 — every door refuses the same wires, in the same words', () =>
       ['Math', 'a', [{ node: 'm0', socket: 'out' }]],
       // #1549: a Number converts into a Vector3 input, from this door too.
       ['VecBreak3', 'v', [{ node: 'm0', socket: 'out' }]],
+      // #1590: and a Vector3 into a Number input.
+      ['Math', 'b', [{ node: 'vec', socket: 'out' }]],
       // One depth pass beside an image that declares no role.
       [
         'Stack',

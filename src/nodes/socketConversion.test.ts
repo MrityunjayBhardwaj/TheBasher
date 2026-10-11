@@ -33,6 +33,17 @@ beforeEach(() => {
     outputs: { out: NUMBER },
     evaluate: () => 7,
   } as never);
+  // A Vector3 whose axes all differ, so an average can be told from any one axis.
+  registerNodeType({
+    type: 'ThreeSixTwelve',
+    version: 1,
+    pure: true,
+    cost: 'cheap',
+    paramSchema: z.object({}),
+    inputs: {},
+    outputs: { out: VECTOR3 },
+    evaluate: () => [3, 6, 12],
+  } as never);
 });
 
 const apply = (state: DagState, ops: readonly Op[]) =>
@@ -154,15 +165,59 @@ describe('a type a socket already takes is never converted (#1549)', () => {
   });
 });
 
-describe('a wire that cannot convert says why (#1549)', () => {
-  it('a Vector3 into a Number input names the node that picks an axis', () => {
-    const s = apply(emptyDagState(), [node('vec', 'MakeVec3'), node('sum', 'Math', { op: 'add' })]);
-    expect(() => apply(s, [wire('vec', 'sum', 'a')])).toThrow(
-      'connect: type mismatch MakeVec3.out:Vector3 → Math.a:Number — a Vector3 holds three ' +
-        'numbers and none is picked for you: wire it through a VecBreak3 node and take x, y or z',
-    );
+describe('a Vector3 into a Number input (#1590)', () => {
+  it('the premise: the vector is [3, 6, 12]', () => {
+    const s = apply(emptyDagState(), [node('vec', 'ThreeSixTwelve')]);
+    expect(evaluate(s, 'vec').value).toEqual([3, 6, 12]);
   });
 
+  it('is accepted and arrives as the average of its axes, as Blender averages them', () => {
+    const s = apply(emptyDagState(), [
+      node('vec', 'ThreeSixTwelve'),
+      node('seven', 'Seven'),
+      node('sum', 'Math', { op: 'add' }),
+      wire('vec', 'sum', 'a'),
+      wire('seven', 'sum', 'b'),
+    ]);
+    // (3 + 6 + 12) / 3 = 7, plus 7. Not the first axis (10), the sum (28) or the length (20.7).
+    expect(evaluate(s, 'sum').value).toBe(14);
+  });
+
+  it('is the same from the other door, a node added already wired', () => {
+    const s = apply(emptyDagState(), [
+      node('vec', 'ThreeSixTwelve'),
+      {
+        type: 'addNode',
+        nodeId: 'sum',
+        nodeType: 'Math',
+        params: { op: 'add' },
+        inputs: { a: { node: 'vec', socket: 'out' } },
+      } as Op,
+    ]);
+    expect(evaluate(s, 'sum').value).toBe(7);
+  });
+
+  it('there and back: a Number through a Vector3 input and out through a Number input', () => {
+    const s = apply(emptyDagState(), [
+      node('seven', 'Seven'),
+      node('sum', 'Vec3Math', { op: 'add' }),
+      wire('seven', 'sum', 'a'),
+      node('back', 'Math', { op: 'add' }),
+      wire('sum', 'back', 'a'),
+    ]);
+    expect(evaluate(s, 'back').value).toBe(7);
+  });
+
+  it('a value that is not a vector passes through untouched', () => {
+    const into = requireNodeType('Math').inputs.a;
+    expect(arriving(into, 'Vector3', [3, 6, 12])).toBe(7);
+    expect(arriving(into, 'Vector3', undefined)).toBeUndefined();
+    expect(arriving(into, 'Vector3', [1, 2])).toEqual([1, 2]);
+    expect(arriving(into, 'Number', 5)).toBe(5);
+  });
+});
+
+describe('a wire that cannot convert says why (#1549)', () => {
   it('two types with nothing between them names both and says a converter is needed', () => {
     const s = apply(emptyDagState(), [
       node('sk', 'Skeleton', { bones: [] }),
@@ -184,7 +239,7 @@ describe('a wire that cannot convert says why (#1549)', () => {
 });
 
 describe('every pair of plain-value types that can meet has an answer (#1549)', () => {
-  it('each is taken as it is, converted, or refused with a way forward', () => {
+  it('each is taken as it is or converted; none is refused', () => {
     // The plain-value types any socket carries. A new one (a Color socket, a Boolean socket)
     // lands here with no answer for its pairs and reddens this test.
     const VALUE: readonly SocketTypeName[] = [
@@ -198,7 +253,7 @@ describe('every pair of plain-value types that can meet has an answer (#1549)', 
     const produced = new Set<SocketTypeName>();
     const inputs: { at: string; desc: ReturnType<typeof requireNodeType>['inputs'][string] }[] = [];
     for (const id of listNodeTypes()) {
-      if (id === 'Seven') continue;
+      if (id === 'Seven' || id === 'ThreeSixTwelve') continue;
       const def = requireNodeType(id);
       for (const out of Object.values(def.outputs)) {
         if (VALUE.includes(out.type)) produced.add(out.type);
@@ -219,8 +274,9 @@ describe('every pair of plain-value types that can meet has an answer (#1549)', 
         else answers.refused += 1;
       }
     }
-    // 19 inputs × 2 produced types = 38. Number inputs (14): take a Number, refuse a Vector3.
-    // Vector3 inputs (4): take a Vector3, convert a Number. The one that takes both: 2 taken.
-    expect(answers).toEqual({ taken: 20, converted: 4, refused: 14 });
+    // 19 inputs × 2 produced types = 38. Number inputs (14): take a Number, convert a Vector3
+    // (#1590; refused before). Vector3 inputs (4): take a Vector3, convert a Number. The one
+    // that takes both: 2 taken.
+    expect(answers).toEqual({ taken: 20, converted: 18, refused: 0 });
   });
 });

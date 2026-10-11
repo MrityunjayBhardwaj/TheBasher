@@ -4,7 +4,7 @@
 // and the result is DRAWN: a Solver's number feeds a Vec3Math's vector input, which drives the
 // starter cube's position. Read on both roads at three playhead positions. The Solver is an
 // accumulator of a controller held at x = 0.1, so its number at frame f is 0.1 + 0.1·f. The
-// opposite wire, a Vector3 into a Number input, is still refused, and says what to do instead.
+// opposite wire, a Vector3 into a Number input, converts too (#1590): the average of its axes.
 
 import type { Page } from '@playwright/test';
 import { expect, test } from './_fixtures';
@@ -124,40 +124,32 @@ test('#1549 — a Number into a Vector3 input moves the cube on all three axes',
   await at(page, 1, 0.2);
 });
 
-test('#1549 — a Vector3 into a Number input is refused, with what to do instead', async ({
+test('#1590 — a Vector3 into a Number input arrives as the average of its axes', async ({
   page,
 }) => {
   await boot(page);
-  await add(page, 'e_vec', 'MakeVec3');
-  await add(page, 'e_sum', 'Math', { op: 'add' });
-  const refused = await page.evaluate(() => {
-    try {
-      (window as unknown as W).__basher_dag.getState().dispatch(
-        {
-          type: 'connect',
-          from: { node: 'e_vec', socket: 'out' },
-          to: { node: 'e_sum', socket: 'a' },
-        },
-        'user',
-        'e2e',
-      );
-      return null;
-    } catch (e) {
-      return (e as Error).message;
-    }
+  await controller(page);
+  // Two accumulators with different starts, so the vector's axes differ: [a, b, 0].
+  await accumulator(page, 'e_a');
+  await add(page, 'e_make', 'MakeVec3');
+  await wire(page, 'e_a', 'e_make', 'x');
+  await wire(page, 'e_a', 'e_make', 'y');
+  // The wire under test: `e_make.out` is a Vector3, `e_avg.a` takes a Number.
+  await add(page, 'e_avg', 'Math', { op: 'add' });
+  await wire(page, 'e_make', 'e_avg', 'a');
+  // Back out through a Vector3 input, onto the cube: the average on all three axes.
+  await add(page, 'e_vec', 'Vec3Math', { op: 'add' });
+  await wire(page, 'e_avg', 'e_vec', 'a');
+  await add(page, 'e_drv', 'ParamDriver', {
+    target: 'n_box',
+    paramPath: 'position',
+    blendMode: 'replace',
+    order: 0,
   });
-  expect(refused).toContain('type mismatch MakeVec3.out:Vector3 → Math.a:Number');
-  expect(refused).toContain('wire it through a VecBreak3 node and take x, y or z');
-  // And nothing was wired.
-  const wired = await page.evaluate(
-    () =>
-      (
-        window as unknown as {
-          __basher_dag: {
-            getState(): { state: { nodes: Record<string, { inputs: Record<string, unknown> }> } };
-          };
-        }
-      ).__basher_dag.getState().state.nodes['e_sum'].inputs,
-  );
-  expect(wired).toEqual({});
+  await wire(page, 'e_vec', 'e_drv', 'in');
+
+  // The accumulator reads 0.1 at frame 0 and 0.4 at frame 3 (the test above). The vector is
+  // [a, a, 0], so its average is two thirds of a.
+  await at(page, 0, (0.1 * 2) / 3);
+  await at(page, 3, (0.4 * 2) / 3);
 });
