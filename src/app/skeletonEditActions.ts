@@ -12,6 +12,8 @@ import { dispatchMutatorFromUI } from './animate/dispatchMutator';
 import { applySkeletonEdit, type SkeletonEdit } from './animate/editSkeleton';
 import { rigReach } from './animate/renameBone';
 import { useBoneSelectionStore } from './stores/boneSelectionStore';
+import { useTimeStore } from './stores/timeStore';
+import { planAddIk } from './animate/addIk';
 import type { BoneSpec } from '../nodes/types';
 
 /** The skeleton's bones under an armature Object, or null when it is not one. */
@@ -55,5 +57,27 @@ export function editSkeletonFromUI(
   } else {
     useBoneSelectionStore.getState().clear();
   }
+  return { ok: true };
+}
+
+/**
+ * #1510 — Add › IK on `bone` (the tip joint) of the armature `objectId`, Pose mode's Shift+I: the
+ * agent's verb at the playhead, so the goal starts where the tip is drawn now. The new goal bone is
+ * then selected, as an extrude selects its new bone: moving it is what a director does next.
+ */
+export function addIkFromUI(objectId: string, bone: string): EditOutcome {
+  const seconds = useTimeStore.getState().seconds;
+  const planned = planAddIk(useDagStore.getState().state, { object: objectId, bone, seconds });
+  if (!planned.ok) return planned;
+  const res = dispatchMutatorFromUI(
+    'mutator.rig.addIk',
+    { object: objectId, bone, time: seconds },
+    `add IK to ${bone}`,
+  );
+  if (!res.ok) return res;
+  const goal = planned.layer.ik.goal;
+  useBoneSelectionStore
+    .getState()
+    .selectBone(objectId, goal, boneChain(armatureBones(objectId) ?? [], goal));
   return { ok: true };
 }

@@ -57,6 +57,7 @@ import { poseBoneMutator } from './builders/poseBone';
 import { setPoseMemberModeMutator } from './builders/setPoseMemberMode';
 import { renameBoneMutator } from './builders/renameBone';
 import { editSkeletonMutator } from './builders/editSkeleton';
+import { addIkMutator } from './builders/addIk';
 import { bakePoseMutator } from './builders/bakePose';
 import { wrapInRigMutator } from './builders/wrapInRig';
 import { constrainMutator, unconstrainMutator } from './builders/constrain';
@@ -95,6 +96,7 @@ export {
   setPoseMemberModeMutator,
   renameBoneMutator,
   editSkeletonMutator,
+  addIkMutator,
   bakePoseMutator,
   wrapInRigMutator,
   constrainMutator,
@@ -191,6 +193,8 @@ export function registerAllMutators(): void {
   // #1201 — rename a bone, and every record that names it.
   registerMutator(renameBoneMutator);
   registerMutator(editSkeletonMutator);
+  // #1510 — Add › IK on a tip joint: goal and pole bones and an ik layer, in one step.
+  registerMutator(addIkMutator);
   // #1215 — bake computed motion into keys on a pose layer.
   registerMutator(bakePoseMutator);
   // #1357 — the layers over a character's motion, moved inside one Rig node.

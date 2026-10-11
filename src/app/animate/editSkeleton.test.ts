@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import * as THREE from 'three';
 import { applySkeletonEdit, boneNameFor, flipSideName, type SkeletonEdit } from './editSkeleton';
-import { boneWorldMatrices } from '../../viewport/boneShape';
+import { boneWorldMatrices, posedWorldMatrices } from '../../viewport/boneShape';
+import { quatFromEulerXYZ, restBonePose } from '../../nodes/bonePose';
+import { clampToLimits } from '../../nodes/jointLimits';
 import type { BoneSpec } from '../../nodes/types';
 
 // A chain with turns and a (uniform) scale in it, and a branch, so a world/local mix-up shows:
@@ -318,6 +320,23 @@ describe('#1340 — orient and roll: each mode against a hand-computed frame', (
     const cleared = run({ op: 'preferredAngle', bone: 'B', angle: null }, set).bones;
     expect('preferredAngle' in cleared[1]).toBe(false);
   });
+
+  it('#1344 — joint limits are stored per axis, replaced, cleared, and refused when they cannot hold', () => {
+    const set = run({ op: 'limits', bone: 'B', limits: { x: [-0.2, 0.5] } }, CHAIN).bones;
+    expect(set[1].limits).toEqual({ x: [-0.2, 0.5] });
+    expect(set[0]).toEqual(CHAIN[0]);
+    const two = run({ op: 'limits', bone: 'B', limits: { x: [0, 1], z: [-1, 0] } }, set).bones;
+    expect(two[1].limits).toEqual({ x: [0, 1], z: [-1, 0] });
+    for (const none of [null, {}]) {
+      const cleared = run({ op: 'limits', bone: 'B', limits: none }, two).bones;
+      expect('limits' in cleared[1]).toBe(false);
+    }
+    const upsideDown = applySkeletonEdit(CHAIN, { op: 'limits', bone: 'B', limits: { y: [1, 0] } });
+    expect(upsideDown).toMatchObject({ ok: false });
+    expect(!upsideDown.ok && upsideDown.reason).toMatch(/"B".*minimum is above/);
+    const missing = applySkeletonEdit(CHAIN, { op: 'limits', bone: 'nope', limits: null });
+    expect(missing.ok).toBe(false);
+  });
 });
 
 describe('#1341 — symmetrize', () => {
@@ -370,6 +389,33 @@ describe('#1341 — symmetrize', () => {
       ).toBeLessThan(1e-9);
     }
     expect(r.bones.find((b) => b.name === 'Hand_R')!.preferredAngle).toEqual([0, 0, 0.4]);
+  });
+
+  it('#1344 — a twin takes its source’s limits, and held at them the two arms are mirror images', () => {
+    // A limit on every axis, none symmetric about zero: a wrong sign on any axis would show.
+    const limits = { x: [-0.3, 0.7], y: [0.1, 0.4], z: [-0.9, -0.2] } as const;
+    const body = BODY.map((b) => (b.name === 'Hand_L' ? { ...b, limits } : b));
+    const r = run({ op: 'symmetrize', bones: ['Arm_L', 'Hand_L', 'Tip_L'] }, body);
+    const at = (n: string) => r.bones.findIndex((b) => b.name === n);
+    expect(r.bones[at('Hand_R')].limits).toEqual(limits);
+    // Turn each hand far past every limit the same way, hold it at its limits, and compare tips.
+    const posed = (hand: string, tip: string) => {
+      const pose = r.bones.map(restBonePose);
+      const i = at(hand);
+      const far = new THREE.Quaternion(...quatFromEulerXYZ(r.bones[i].rotation)).multiply(
+        new THREE.Quaternion(...quatFromEulerXYZ([2, 2, -2])),
+      );
+      const held = clampToLimits(r.bones[i], [far.x, far.y, far.z, far.w]);
+      expect(held, `${hand} must be outside its limits`).not.toEqual([far.x, far.y, far.z, far.w]);
+      pose[i] = { ...pose[i], quaternion: held };
+      return new THREE.Vector3().setFromMatrixPosition(posedWorldMatrices(r.bones, pose)[at(tip)]);
+    };
+    const l = posed('Hand_L', 'Tip_L');
+    const rest = head(r.bones, 'Tip_L');
+    expect(l.distanceTo(rest), 'the held pose must move the tip').toBeGreaterThan(0.01);
+    expect(posed('Hand_R', 'Tip_R').distanceTo(new THREE.Vector3(-l.x, l.y, l.z))).toBeLessThan(
+      1e-9,
+    );
   });
 
   it('equal rotations pose the two sides as mirror images', () => {

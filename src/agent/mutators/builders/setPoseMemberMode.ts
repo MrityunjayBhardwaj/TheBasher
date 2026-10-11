@@ -97,7 +97,9 @@ export const setPoseMemberModeMutator: MutatorDefinition<SetPoseMemberModeSpec> 
   name: 'mutator.animate.setPoseMemberMode',
   description:
     "Set a pose-layer bone's rotation mode, keeping its pose. " +
-    "rotationMode is an euler order as Blender names it (XYZ … ZYX) or 'quaternion'; eulerInterp " +
+    // Back-ticked, so the first sentence ends above: a lower-case word after its period is not a
+    // boundary to `firstSentence`, and the picker's summary became this whole description (#1575).
+    "`rotationMode` is an euler order as Blender names it (XYZ … ZYX) or 'quaternion'; eulerInterp " +
     "'quaternion' slerps an euler curve between keys. method 'convert' keeps the key times (exact " +
     "at keys), 'resample' keys every frame at fps (exact everywhere).",
   spec: SetPoseMemberModeSpec,

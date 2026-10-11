@@ -34,6 +34,12 @@ import { boneWorldMatrices } from '../../viewport/boneShape';
 import { eulerXYZFromQuat, quatFromEulerXYZ } from '../../nodes/bonePose';
 import { sanitizeBoneName } from '../../core/import/threeAdapter';
 import type { BoneSpec, Vec3 } from '../../nodes/types';
+import {
+  LIMIT_AXES,
+  limitsProblem,
+  type AxisLimit,
+  type JointLimits,
+} from '../../nodes/jointLimits';
 
 export type SkeletonEdit =
   /** A new joint: a root, or a child of `parent`, at `position` in its parent's frame. */
@@ -91,6 +97,8 @@ export type SkeletonEdit =
     }
   /** #1340 — store `bone`'s preferred angle (XYZ radians), or clear it with null. */
   | { readonly op: 'preferredAngle'; readonly bone: string; readonly angle: Vec3 | null }
+  /** #1344 — store `bone`'s joint limits (radians from rest, per axis), or clear them with null. */
+  | { readonly op: 'limits'; readonly bone: string; readonly limits: JointLimits | null }
   /**
    * #1341 — make the skeleton symmetric across the armature's plane through the origin ⟂ `axis`:
    * each of `bones` with a side in its name (`flipSideName`) gets a mirror twin, made or updated.
@@ -519,6 +527,27 @@ export function applySkeletonEdit(
       return { ok: true, bones: next, added: [], active: bones[at].name };
     }
 
+    case 'limits': {
+      const at = find(edit.bone);
+      if (at === null) return missing(edit.bone);
+      const next = bones.map((b) => ({ ...b }));
+      const kept: { x?: AxisLimit; y?: AxisLimit; z?: AxisLimit } = {};
+      for (const axis of LIMIT_AXES) {
+        const range = edit.limits?.[axis];
+        if (range) kept[axis] = [range[0], range[1]];
+      }
+      const problem = limitsProblem(kept);
+      if (problem !== null) return { ok: false, reason: `"${edit.bone}": ${problem}` };
+      if (Object.keys(kept).length === 0) {
+        const { limits: _gone, ...rest } = next[at];
+        void _gone;
+        next[at] = rest;
+      } else {
+        next[at] = { ...next[at], limits: kept };
+      }
+      return { ok: true, bones: next, added: [], active: bones[at].name };
+    }
+
     case 'symmetrize': {
       const axis = 'XYZ'.indexOf(edit.axis ?? 'X');
       const normal = new THREE.Vector3(axis === 0 ? 1 : 0, axis === 1 ? 1 : 0, axis === 2 ? 1 : 0);
@@ -581,6 +610,9 @@ export function applySkeletonEdit(
           ...next[j],
           parent: twinParent,
           ...(src.preferredAngle ? { preferredAngle: [...src.preferredAngle] as Vec3 } : {}),
+          // #1344 — the twin's frame is the half turn of the source's, and a mirrored turn read in
+          // it has the source's own angles: the limits copy as they are.
+          ...(src.limits ? { limits: { ...src.limits } } : {}),
         };
         // Head at S·p; frame −S·R, which is the half turn about the normal applied to R.
         const head = headOf(worlds[i]).applyMatrix4(mirror);

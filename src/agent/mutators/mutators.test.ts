@@ -158,8 +158,9 @@ describe('mutator catalog', () => {
     // 32 → 34 at #353 — `constrain` + `unconstrain`, the constraint family's verbs.
     // 34 → 35 at #1445 — `setHidden`, the outliner eye's verb (#334 took the raw op away).
     // 35 → 36 at #1339 — `rig.editSkeleton`, Edit mode's skeleton operations.
-    // 36 → 37 at #1357 — `animate.wrapInRig`, the road in to the Rig node.
-    expect(mutators).toHaveLength(37);
+    // 36 → 37 at #1510 — `rig.addIk`, Pose mode's Add › IK.
+    // 37 → 38 at #1357 — `animate.wrapInRig`, the road in to the Rig node.
+    expect(mutators).toHaveLength(38);
     const names = mutators.map((m) => m.name).sort();
     expect(names).toEqual([
       'mutator.animate.bakePose',
@@ -182,6 +183,7 @@ describe('mutator catalog', () => {
       'mutator.render.addAIPass',
       'mutator.render.addPass',
       'mutator.render.addStitch',
+      'mutator.rig.addIk',
       'mutator.rig.editSkeleton',
       'mutator.rotate',
       'mutator.scale',
@@ -2320,8 +2322,9 @@ describe('agent.listMutators tool', () => {
     // 32 → 34 at #353 — `constrain` + `unconstrain`.
     // 34 → 35 at #1445 — `setHidden`.
     // 35 → 36 at #1339 — `rig.editSkeleton`.
-    // 36 → 37 at #1357 — `animate.wrapInRig`.
-    expect(parsed.mutators).toHaveLength(37);
+    // 36 → 37 at #1510 — `rig.addIk`.
+    // 37 → 38 at #1357 — `animate.wrapInRig`.
+    expect(parsed.mutators).toHaveLength(38);
   });
 });
 
@@ -3950,6 +3953,7 @@ import {
   setPoseMemberModeMutator as _setPoseMemberModeM,
   renameBoneMutator as _renameBoneM,
   editSkeletonMutator as _editSkeletonM,
+  addIkMutator as _addIkM,
   bakePoseMutator as _bakePoseM,
   wrapInRigMutator as _wrapInRigM,
   retargetMutator as _retargetM,
@@ -4349,6 +4353,11 @@ describe('V14 deeper non-redundancy — Op-shape probe (issue #22)', () => {
       mutator: _editSkeletonM as MutatorDefinition<unknown>,
       build: buildSceneForBoneRename,
       spec: { object: 'br_arm', edit: { op: 'extrude', from: 'torso' } },
+    },
+    'mutator.rig.addIk': {
+      mutator: _addIkM as MutatorDefinition<unknown>,
+      build: buildSceneForBoneRename,
+      spec: { object: 'br_arm', bone: 'head' },
     },
     'mutator.animation.retarget': {
       mutator: _retargetM as MutatorDefinition<unknown>,

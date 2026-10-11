@@ -9,7 +9,7 @@
 //   - at 1 s the weight is 1: the drawn tip joint sits on the drawn goal, and the bar has moved.
 
 import type { Page } from '@playwright/test';
-import { test, expect } from './_fixtures';
+import { test, expect, settleViewFit } from './_fixtures';
 
 interface Node {
   type: string;
@@ -72,6 +72,8 @@ test('#1343 — an ik layer reaches the control bone, and its keyed weight switc
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto('/');
   await expect(page.getByTestId('layout')).toBeVisible({ timeout: 60_000 });
+  // #1523 — this spec writes the camera by hand: wait out the boot view fit, which would land after.
+  await settleViewFit(page);
   await page.waitForFunction(() =>
     Boolean((window as unknown as W).__basher_three?.getState().controlsTarget),
   );

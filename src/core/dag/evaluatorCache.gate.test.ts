@@ -146,6 +146,11 @@ const ORIGINS: Record<string, Origin> = {
     frequency: 'per-action',
     why: 'The slot take-over click.',
   },
+  'src/app/animate/addIk.ts · drawnPose → evaluate': {
+    count: 1,
+    frequency: 'per-action',
+    why: 'Add › IK (Shift+I, the inspector button, or the agent verb): the drawn pose the goal is placed on.',
+  },
   'src/app/animate/bakePose.ts · bakePose → evaluate': {
     count: 1,
     frequency: 'per-action',

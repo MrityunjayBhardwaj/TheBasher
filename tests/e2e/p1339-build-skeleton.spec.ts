@@ -9,7 +9,7 @@
 
 import type { Page } from '@playwright/test';
 import * as THREE from 'three';
-import { test, expect } from './_fixtures';
+import { test, expect, settleViewFit } from './_fixtures';
 
 interface Bone {
   name: string;
@@ -95,6 +95,12 @@ async function clickBone(page: Page, name: string) {
     );
   const cx = box.x + ((ndc.x + 1) / 2) * box.width;
   const cy = box.y + ((1 - ndc.y) / 2) * box.height;
+  // #1523 — an aim off the canvas clicks nothing and reads as "the wrong bone is picked" (the old
+  // selection stays). Say what happened instead: the camera is not where this test put it.
+  expect(
+    Math.abs(ndc.x) < 1 && Math.abs(ndc.y) < 1,
+    `"${name}" is off the canvas at (${cx.toFixed(0)}, ${cy.toFixed(0)}): something moved the camera`,
+  ).toBe(true);
   await page.mouse.click(cx, cy);
   await expect.poll(() => picked(page)).toBe(name);
 }
@@ -109,6 +115,13 @@ test('#1339 — a skeleton built by hand in Edit mode, and every step undone exa
   await page.waitForFunction(() =>
     Boolean((window as unknown as W).__basher_three?.getState().controlsTarget),
   );
+
+  // #1523 — the boot view fit keeps writing the camera until it settles (45 still frames). On a slow
+  // renderer it was still running when this test framed the chain by hand below, and landed after:
+  // the camera ended at the fit's pose, the bone aimed at sat above the canvas, and the click reached
+  // nothing. Measured under software GL: camera at (1.88, 1.25, 1.88) instead of (0, 1.5, 6), the
+  // click at y = -108 px. Wait for the fit before writing the camera.
+  await settleViewFit(page);
 
   // Add places a new object at the view's orbit target: the origin, so the heads below are the
   // skeleton's own numbers.
@@ -204,6 +217,7 @@ test('#1339 — the Edit-mode gizmo moves a joint; its children follow, or stay 
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto('/');
   await expect(page.getByTestId('layout')).toBeVisible({ timeout: 60_000 });
+  await settleViewFit(page);
   await page.waitForFunction(() =>
     Boolean((window as unknown as W).__basher_three?.getState().controlsTarget),
   );
@@ -291,6 +305,7 @@ test('#1526 — a second quick extrude keeps its bone selected; undoing it clear
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto('/');
   await expect(page.getByTestId('layout')).toBeVisible({ timeout: 60_000 });
+  await settleViewFit(page);
   await page.waitForFunction(() =>
     Boolean((window as unknown as W).__basher_three?.getState().controlsTarget),
   );

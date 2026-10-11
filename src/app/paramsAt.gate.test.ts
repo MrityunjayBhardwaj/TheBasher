@@ -213,6 +213,10 @@ const CONSUMERS: Record<string, Decision> = {
   // and a bake whose keys depended on where the scrubber stood would be the bug. It reads the state
   // the mutator is handed, authored, as the bind beside it does.
   'src/app/animate/bakePose.ts': authored('fixed-ctx-by-design'),
+  // #1510 — Add › IK places its goal where the tip is DRAWN at the playhead. It evaluates the same
+  // time-free pose wire the bake does and samples it at the `time` its spec carries, off the state the
+  // mutator is handed; evaluating at the playhead would change nothing but the hash.
+  'src/app/animate/addIk.ts': authored('fixed-ctx-by-design'),
   // #1215 — the dopesheet's read-only rows for a character's computed source. It evaluates the same
   // time-free wire the bake does, for the same answer (its pose times, `bakeTimes`), off the authored
   // state the timeline holds; the playhead would change nothing but the hash.
@@ -336,7 +340,9 @@ describe('#582 — who evaluates the graph, and which params they need', () => {
     // still evaluates) into `referenceRigs.ts`, so its skip reasons can be counted.
     // 55 → 56 at #1337, a new road: keying a placed bone into a pose layer reads the pose that
     // arrives under that layer, to solve the layer's blend backwards (declared above as fixed-ctx).
-    expect(evaluatorConsumers()).toHaveLength(56); // 39 -> 40 at #935 (placement) (the motion resolver)
+    // 56 → 57 at #1510, a new road: Add › IK reads the drawn pose to place the goal on the tip
+    // (declared above as fixed-ctx).
+    expect(evaluatorConsumers()).toHaveLength(57); // 39 -> 40 at #935 (placement) (the motion resolver)
   });
 
   it('every reason is load-bearing — no member of any union is decorative', () => {

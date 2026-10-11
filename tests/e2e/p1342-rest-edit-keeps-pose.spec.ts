@@ -8,7 +8,7 @@
 // lands at (−0.5, 1.7, 0). Before the joint moved it landed at (−1, 1.2, 0) (p1244's oracle).
 
 import type { Page } from '@playwright/test';
-import { test, expect } from './_fixtures';
+import { test, expect, settleViewFit } from './_fixtures';
 
 interface Node {
   type: string;
@@ -63,6 +63,8 @@ test('#1342 — a joint moved in Edit mode keeps its hand-pose, and the skin ben
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto('/');
   await expect(page.getByTestId('layout')).toBeVisible({ timeout: 60_000 });
+  // #1523 — this spec writes the camera by hand: wait out the boot view fit, which would land after.
+  await settleViewFit(page);
   await page.waitForFunction(() =>
     Boolean((window as unknown as W).__basher_three?.getState().controlsTarget),
   );
