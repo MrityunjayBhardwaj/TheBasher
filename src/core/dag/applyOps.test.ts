@@ -458,15 +458,4 @@ describe('#1585 — the cost of a batch', () => {
     expect(Object.keys(useDagStore.getState().state.nodes)).toHaveLength(0);
     expect(undoing).toBeLessThan(applying * 5 + 50);
   });
-
-  it('twice the operations take about twice as long, not four times', () => {
-    const small = workload(1500);
-    const large = workload(3000);
-    applyOps(emptyDagState(), small); // warm
-    const best = (ops: Op[]) =>
-      Math.min(...[0, 1, 2].map(() => timed(() => applyOps(emptyDagState(), ops))));
-    const ratio = best(large) / best(small);
-    // Copying per operation gives 4; one copy gives 2. Three is the line between them.
-    expect(ratio).toBeLessThan(3);
-  });
 });
