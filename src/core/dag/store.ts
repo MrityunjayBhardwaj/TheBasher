@@ -11,7 +11,7 @@
 // REF: THESIS.md §50, krama K2 + K10.
 
 import { create } from 'zustand';
-import { applyOp, applyOps, validateOp } from './ops';
+import { applyOp, applyOps, GraphRefusal, validateOp } from './ops';
 import type { Reportable } from './ops';
 import { findNewDanglingIdRef } from './idRefSweep';
 import type { DagState } from './state';
@@ -129,7 +129,7 @@ function assertNoDanglingIdRef(ops: readonly Op[], prevState: DagState, nextStat
   if (!ops.some((o) => o.type === 'removeNode')) return;
   const dangling = findNewDanglingIdRef(prevState.nodes, nextState.nodes);
   if (dangling) {
-    throw new Error(
+    throw new GraphRefusal(
       `dispatch: node "${dangling.node}" would be left referencing removed node ` +
         `"${dangling.missing}". Clear or remove the referrer in the same batch.`,
     );
