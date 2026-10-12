@@ -5,6 +5,7 @@
 // mounting — V8/K1 step 6), or stale eval state (DAG hydrated before its
 // node types are registered).
 
+import { installGraphRefusalNotices } from './graphRefusalNotice';
 import { Box3, Vector3 } from 'three';
 import { evaluate as evaluateDag } from '../core/dag/evaluator';
 import { materialAssignmentReport } from './materialAssignment';
@@ -351,6 +352,8 @@ let bootPromise: Promise<void> | null = null;
 export function boot(): Promise<void> {
   if (bootPromise) return bootPromise;
   bootPromise = (async () => {
+    // #1586 — first, so an edit refused at any point after this says why on screen.
+    installGraphRefusalNotices();
     registerAllNodes();
     registerAllTools();
     registerAllMutators();

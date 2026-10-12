@@ -35,7 +35,20 @@ import type {
 import { acceptedTypes, OpSchema, SpareParamSchema } from './types';
 import { inputTakes, whyNotTaken } from './socketConversion';
 
-export class OpError extends Error {
+/**
+ * #1586 — the graph declining an edit: an operation it will not apply (`OpError`), or a batch
+ * that would leave a reference pointing at a removed node. Its message is written for the
+ * person who made the edit, so the app can show it; any other error from a dispatch (a
+ * malformed operation) is a bug in the caller and is not one of these.
+ */
+export class GraphRefusal extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'GraphRefusal';
+  }
+}
+
+export class OpError extends GraphRefusal {
   constructor(
     message: string,
     readonly op: Op,

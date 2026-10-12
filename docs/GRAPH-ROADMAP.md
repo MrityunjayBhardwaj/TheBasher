@@ -85,8 +85,6 @@ over one Mix node matches a Lag sample for sample.
 - #1582: a Lag or Solver inside a Solver reads that Solver's inputs, the two integrated
   together. Refused since #1579; it may be easier once templates (#1557) settle what a
   sub-network's state is.
-- #1586: an edit the graph refuses is undone silently in the inspector. It belongs beside #1567
-  (every UI gesture goes through the 8 operations): the same count of doors answers both.
 
 ## Decisions this order is waiting on
 

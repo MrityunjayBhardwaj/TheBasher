@@ -11,15 +11,15 @@
 // A census of the registry on 2026-10-07 (90 node types): the only plain-value types any
 // socket carries are Number (14 inputs, 14 outputs) and Vector3 (4 inputs, 6 outputs), plus
 // one input that takes either (`ParamDriver.in`). No socket carries a Color, a Boolean, a
-// Vector2 or a Quaternion; those live in params. So two pairs can meet and be refused:
+// Vector2 or a Quaternion; those live in params. So two pairs can meet, and both convert as
+// Blender converts them:
 //
-//   Number → Vector3   CONVERTED. Blender's `float_to_float3` (`type_conversions.cc:50`):
-//                      the number on all three axes. Nothing is lost.
-//   Vector3 → Number   REFUSED, with the way forward. Blender converts this too, by averaging
-//                      the axes (`float3_to_float`, `type_conversions.cc:153`), and that is the
-//                      one place this table deliberately does not follow it: an average of
-//                      x, y and z is a number nobody asked for, and the node that picks an axis
-//                      (`VecBreak3`) already exists. Recorded in docs/GRAPH.md §6.
+//   Number → Vector3   Blender's `float_to_float3` (`type_conversions.cc:50`): the number on
+//                      all three axes. Nothing is lost.
+//   Vector3 → Number   Blender's `float3_to_float` (`type_conversions.cc:153`): the average of
+//                      the three axes. #1549 refused this one, pointing at `VecBreak3`; #1590
+//                      follows the reference. A graph that wants one axis still wires a
+//                      `VecBreak3`.
 //
 // ── A TYPE THE SOCKET ALREADY TAKES IS NEVER CONVERTED ────────────────────────────────────
 //
@@ -51,13 +51,12 @@ type Convert = (value: unknown) => unknown;
  *  untouched: an unevaluable producer must stay recognisable as one downstream. */
 const CONVERSIONS: Readonly<Record<string, Convert>> = {
   'Number>Vector3': (v) => (typeof v === 'number' ? [v, v, v] : v),
+  'Vector3>Number': (v) => (isVec3(v) ? (v[0] + v[1] + v[2]) / 3 : v),
 };
 
-/** Pairs that are refused on purpose, and what to do instead. */
-const WAY_FORWARD: Readonly<Record<string, string>> = {
-  'Vector3>Number':
-    'a Vector3 holds three numbers and none is picked for you: wire it through a VecBreak3 node and take x, y or z',
-};
+function isVec3(v: unknown): v is [number, number, number] {
+  return Array.isArray(v) && v.length === 3 && v.every((axis) => typeof axis === 'number');
+}
 
 const perInput = new WeakMap<InputDescriptor, ReadonlyMap<SocketTypeName, Convert> | null>();
 
@@ -107,13 +106,8 @@ export function arriving(
   return convert ? convert(value) : value;
 }
 
-/** Why a wire carrying `produced` cannot enter `desc`, for the refusal: the way forward where
- *  one exists, otherwise that no conversion does. */
+/** Why a wire carrying `produced` cannot enter `desc`, for the refusal. */
 export function whyNotTaken(desc: InputDescriptor, produced: SocketTypeName): string {
   const wanted = acceptedTypes(desc);
-  for (const to of wanted) {
-    const way = WAY_FORWARD[`${produced}>${to}`];
-    if (way) return way;
-  }
   return `there is no conversion from ${produced} to ${wanted.join(' or ')}, so a converter node is needed between them`;
 }
