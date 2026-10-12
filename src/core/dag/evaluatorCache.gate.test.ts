@@ -311,6 +311,10 @@ const TAKERS: string[] = [
   // "pose this bone" seeds from it; both hand it the shared UI cache.
   'poseArriving@src/app/animate/invertPoseStack.ts',
   'makeStatefulDriverChannelValue@src/app/statefulOps.ts',
+  // #1558 — a driver with a stateful node further back, and the evaluator's own road to the
+  // replay: both are handed the cache their caller holds and pass it on.
+  'makeStatefulUpstreamDriverChannelValue@src/app/statefulOps.ts',
+  'replayStatefulAt@src/app/statefulOps.ts',
   'nativeBoneWorldPosition@src/app/gltfNodeWorld.ts',
   'nodeRefCandidates@src/app/nodeRefCandidates.ts',
   'objectSlotTable@src/app/objectSlotAuthoring.ts',
@@ -340,6 +344,7 @@ const TAKERS: string[] = [
   'resolveTrackToTarget@src/app/nodeConstraints.ts',
   'resolveTransformParam@src/app/resolveTransformParam.ts',
   'resolveWorldTransform@src/app/resolveWorldTransform.ts',
+  'rigChanges@src/app/animate/invertPoseStack.ts',
   'slotAbsenceOf@src/app/objectSlotAuthoring.ts',
   'statefulInputAt@src/app/statefulOps.ts',
   'statefulInputVecAt@src/app/statefulOps.ts',

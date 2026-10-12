@@ -1,8 +1,8 @@
 // Evaluator: walks the DAG lazily, caches by content hash, detects cycles.
 //
 // Three responsibilities (THESIS.md §10):
-//   1. Resolve dependencies via topological sort (cycle detection: visited
-//      set + depth limit 32).
+//   1. Resolve dependencies via topological sort (cycle detection: the walk's own
+//      stack, exactly; `DEPTH_LIMIT` below guards the JS stack, not cycles).
 //   2. Cache by content hash. Invalidate downstream on param/input change.
 //   3. (P0 stub) Schedule by cost — `cheap`/`medium` run main thread inline;
 //      `expensive` will route to a worker in P1+. The hook lives here so
@@ -21,9 +21,11 @@
 
 import { bypassSpineOf } from './chainBypass';
 import { hashString, hashValue, type ContentHash } from './hash';
-import { requireNodeType } from './registry';
+import { getNodeType, requireNodeType } from './registry';
 import type { DagState, EvaluableState } from './state';
-import type { EvalCtx, NodeDefinition, NodeId, ResolvedInputs } from './types';
+import { arriving, conversionsInto, producedTypeOf } from './socketConversion';
+import { bodyInputLeavesOf } from './subnetworks';
+import type { EvalCtx, InputDescriptor, NodeDefinition, NodeId, ResolvedInputs } from './types';
 // ns-2 step 9b — the FIRST value import from `src/nodes/**` into `src/core/dag/**`, and the
 // reason `modifierDataSource` was extracted to a leaf one commit earlier: the resolver's own
 // former home imports THIS module, so without that move the edge would have closed the cycle
@@ -149,7 +151,20 @@ export function createEvaluatorCache(options: EvaluatorCacheOptions = {}): Evalu
   };
 }
 
-const DEPTH_LIMIT = 32;
+// How many nodes in a row one walk may descend (#1576).
+//
+// This is NOT the cycle guard: a cycle is caught exactly, by `onStack`, at any depth. It was 32,
+// and that made it a cap on content instead: a pose chain is one node per layer, so a character
+// could not have 32 layers in a row (measured 2026-10-07: 31 evaluate, 32 throw).
+//
+// What it protects is the JS stack, because `evalNode` recurses once per node. MEASURED
+// 2026-10-07 with the cap lifted, a chain of Math nodes: the walk overflows between 1,545 and
+// 1,594 nodes under vitest (node), and still evaluates at 3,000 from the app's evaluate seam in
+// Chromium. 512 is a third of the lower figure, which leaves room for a caller that is already
+// deep (a React render, a replay cooking a sub-network inside another walk) and is 16 times what
+// was allowed before. `topoSort` does not recurse, and keeps the same number so the two agree
+// on which graphs are too deep.
+export const DEPTH_LIMIT = 512;
 
 // Params-hash memo (perf — H48 6th occurrence). `hashValue(node.params)` over a
 // heavy imported asset (e.g. a glTF TransformClip with hundreds of per-bone tracks)
@@ -260,6 +275,99 @@ function scopeFor(
   );
 }
 
+// ── A STATELESS OWNER'S SUB-NETWORK READS ITS OWNER'S INPUTS (#1357) ─────────────────────────
+//
+// A node that owns a sub-network and is not `stateful` (the Rig) names, in `bodyInputs`, inputs
+// its sub-network reads; each is one of its own wired sockets (refused at registration
+// otherwise). A leaf reading such an input evaluates to what that socket's producer evaluates
+// to: the SAME value, by reference, under the SAME hash. So a sub-network computes exactly what
+// its nodes would compute wired straight to the producer, and its cache entries are keyed by the
+// producer like any other consumer's.
+//
+// The leaf finds its owner, not the other way round. A stateless owner gives a leaf only one
+// possible value, so the answer does not depend on where the evaluation started: asked through
+// the owner (a render) or of a node inside on its own (the inspector on a layer inside a Rig),
+// the leaf reads the same pose. Binding on the way in through the owner would leave the second
+// reader with an empty pose.
+//
+// Here, and not in a seam above the evaluator, because the body is read by everything that reads
+// the owner's output (the viewport, a render, a bake, an export, the agent): one place, as the
+// bypass and the component scope are. The hash is the producer's own and never `hashValue` of
+// the value: a pose is a `sample` function over a skeleton, a function stringifies to nothing,
+// and two different poses of one skeleton would share a key.
+//
+// A stateful owner (the Solver) is left to its replay seam, which binds per frame through
+// `overrides`. A leaf no stateless owner holds reads its own default.
+//
+// Which leaf reads which producer depends only on the node table, which is replaced on every
+// commit and shared between them, so it is worked out once per table, and only when a leaf is
+// first evaluated: a graph with no leaves never pays for it. It reads every node's type once.
+// MEASURED 2026-10-07 (vitest, node, 2,024 nodes, a Rig over a 20-layer sub-network, uncached
+// `evaluate` of the Rig, 300 calls): 0.063 ms a call on one table against 0.047 ms for the same
+// layers wired straight; with a new node table on every call (a fold while an overlay plays
+// builds one a frame) 0.96 ms against 0.57 ms, so about 0.4 ms per new table at that size.
+interface LeafFeed {
+  readonly node: NodeId;
+  readonly socket: string;
+  /** The owner's socket the producer is wired into: what the value arrives as (#1549). */
+  readonly into: InputDescriptor | undefined;
+}
+const statelessLeafFeeds = new WeakMap<object, Map<NodeId, LeafFeed>>();
+function statelessLeafFeedOf(state: EvaluableState, leaf: NodeId): LeafFeed | undefined {
+  let feeds = statelessLeafFeeds.get(state.nodes);
+  if (!feeds) {
+    feeds = new Map();
+    for (const owner of Object.values(state.nodes)) {
+      const def = getNodeType(owner.type);
+      if (!def?.bodyInputs || def.stateful === true) continue;
+      // Only `nodes` is read, and the leaves of a sub-network are the same folded or authored
+      // unless a leaf's `input` is itself animated, which no surface offers.
+      for (const found of bodyInputLeavesOf(state as DagState, owner.id)) {
+        const ref = owner.inputs[found.input];
+        if (ref && !Array.isArray(ref)) {
+          feeds.set(found.id, { ...ref, into: def.inputs[found.input] });
+        }
+      }
+    }
+    statelessLeafFeeds.set(state.nodes, feeds);
+  }
+  return feeds.get(leaf);
+}
+
+// ── A STATEFUL NODE IS REPLAYED WHEREVER THE WALK REACHES IT (#1558) ─────────────────────────
+//
+// A stateful node (Lag, Solver) has no point-in-time value: its output at frame N needs its own
+// output at N-1, so its `evaluate` is a placeholder and the real value comes from a replay over
+// [seed, N]. The replay used to be reached from one place, a driver whose `in` the node feeds
+// directly. Everywhere else the walk ran the placeholder, so a Solver behind a Math node, a
+// Solver inside another Solver's sub-network and a Lag inside a Solver all read 0, and every one
+// of those wires was accepted (measured 2026-10-07: 0,0,0,0 and 2,2,2,2 against 2,4,6,8).
+//
+// So the walk asks the replay itself, at `ctx.time`. That is also what lets sub-networks nest:
+// the replay cooks a sub-network in its OWN `evaluate` call with its own `overrides`, and a
+// stateful node met inside that cook is replayed the same way, one level down. Bindings are
+// scoped to the call that made them, so an inner owner's never meet an outer owner's.
+//
+// The replay lives above this module (it reads controllers through the scene), so it is
+// registered, by `registerAllNodes`. A stateful node met with none registered is an error, never
+// the placeholder: the placeholder is a wrong number that looks like a right one.
+//
+// The result is hashed by its VALUE and is not stored in the content cache. What a stateful
+// node depends on includes a controller it reaches by reference and that controller's
+// animation, neither of which is in its cache key; the replay keeps its own history per graph.
+// Its inputs are not walked here: outside a cook they are the placeholder's, and the replay
+// evaluates what it needs.
+export type StatefulReplay = (
+  state: DagState,
+  nodeId: NodeId,
+  ctx: EvalCtx,
+  cache: EvaluatorCache | undefined,
+) => unknown;
+let statefulReplay: StatefulReplay | null = null;
+export function setStatefulReplay(replay: StatefulReplay | null): void {
+  statefulReplay = replay;
+}
+
 interface Frame {
   id: NodeId;
   depth: number;
@@ -279,9 +387,23 @@ export function evaluate(
   const memo = new Map<NodeId, EvalResult>();
   const onStack = new Set<NodeId>();
 
+  /** `value`, produced by `ref`, as it arrives in an input described by `into` (#1549). The
+   *  producer's type is looked up only for an input that has a conversion at all. */
+  function arrive(
+    into: InputDescriptor | undefined,
+    ref: { node: NodeId; socket: string },
+    value: unknown,
+  ): unknown {
+    if (!into || conversionsInto(into) === null) return value;
+    return arriving(into, producedTypeOf(state, ref), value);
+  }
+
   function evalNode(id: NodeId, depth: number): EvalResult {
     if (depth > DEPTH_LIMIT) {
-      throw new Error(`Evaluator: depth limit ${DEPTH_LIMIT} exceeded at ${id}`);
+      throw new Error(
+        `Evaluator: "${nodeId}" is fed by more than ${DEPTH_LIMIT} nodes in a row (reached "${id}"); ` +
+          'the chain is too long to evaluate',
+      );
     }
     if (onStack.has(id)) {
       throw new Error(`Evaluator: cycle detected at ${id}`);
@@ -301,25 +423,67 @@ export function evaluate(
     if (!node) throw new Error(`Evaluator: node not found: ${id}`);
     const def = requireNodeType(node.type);
 
+    // #1558 — a stateful node's value is its replay at this time, from any consumer.
+    if (def.stateful === true) {
+      if (!statefulReplay) {
+        throw new Error(
+          `Evaluator: ${node.type} "${id}" is stateful and no replay is registered, so it has no value`,
+        );
+      }
+      const value = statefulReplay(state as DagState, id, ctx, cache);
+      const replayed: EvalResult = { value, hash: hashValue(value) };
+      memo.set(id, replayed);
+      return replayed;
+    }
+
     onStack.add(id);
 
-    // Resolve inputs.
+    // #1357 — a leaf inside a stateless owner's sub-network IS the producer its owner reads.
+    if (def.bodyInputLeaf === true) {
+      const feed = statelessLeafFeedOf(state, id);
+      if (feed) {
+        const sub = evalNode(feed.node, depth + 1);
+        onStack.delete(id);
+        const through: EvalResult = {
+          value: arrive(feed.into, feed, extractSocket(sub.value, feed.socket)),
+          hash: hashString(`${feed.socket}:${sub.hash}`),
+        };
+        memo.set(id, through);
+        return through;
+      }
+    }
+    // A stateless owner's own inputs first, so the producers its leaves read are evaluated at
+    // the owner's depth and the sub-network finds them done. Its body's depth is then counted
+    // from the owner, not added on top of the chain feeding it.
+    // (A stateful owner never gets here: it was answered by its replay above.)
+    if (def.bodyInputs !== undefined) {
+      for (const [socket, binding] of Object.entries(node.inputs)) {
+        if (def.inputs[socket]?.body === true) continue;
+        for (const ref of Array.isArray(binding) ? binding : [binding])
+          evalNode(ref.node, depth + 1);
+      }
+    }
+
+    // Resolve inputs. A value of a type the socket does not take is converted as it arrives
+    // (#1549); the hash is the producer's, because whether a wire converts is fixed by the two
+    // node types and this node's cache key already carries its own.
     const resolved: ResolvedInputs = {};
     const inputHashes: Record<string, string | string[]> = {};
     for (const [socket, binding] of Object.entries(node.inputs)) {
+      const into = def.inputs[socket];
       if (Array.isArray(binding)) {
         const values: unknown[] = [];
         const hashes: string[] = [];
         for (const ref of binding) {
           const sub = evalNode(ref.node, depth + 1);
-          values.push(extractSocket(sub.value, ref.socket));
+          values.push(arrive(into, ref, extractSocket(sub.value, ref.socket)));
           hashes.push(`${ref.socket}:${sub.hash}`);
         }
         resolved[socket] = values;
         inputHashes[socket] = hashes;
       } else {
         const sub = evalNode(binding.node, depth + 1);
-        resolved[socket] = extractSocket(sub.value, binding.socket);
+        resolved[socket] = arrive(into, binding, extractSocket(sub.value, binding.socket));
         inputHashes[socket] = `${binding.socket}:${sub.hash}`;
       }
     }
@@ -396,7 +560,10 @@ export function topoSort(state: DagState, root: NodeId): NodeId[] {
   while (stack.length) {
     const frame = stack[stack.length - 1];
     if (frame.depth > DEPTH_LIMIT) {
-      throw new Error(`topoSort: depth limit ${DEPTH_LIMIT} exceeded at ${frame.id}`);
+      throw new Error(
+        `topoSort: "${root}" is fed by more than ${DEPTH_LIMIT} nodes in a row (reached "${frame.id}"); ` +
+          'the chain is too long to order',
+      );
     }
     if (frame.visiting) {
       stack.pop();

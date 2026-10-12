@@ -125,7 +125,7 @@ export function buildSpringOps(state: DagState, req: SpringRequest): SpringBuild
   if (!targetId || !controllerId) return { ok: false, reason: 'missing target or controller' };
   // G6 — the driven target will depend on the controller through the spring's Solver.
   // Reject if the controller already (transitively) depends on the target.
-  if (wouldCreateCycle(state, controllerId, targetId, 32, driverParamDeps(state.nodes))) {
+  if (wouldCreateCycle(state, controllerId, targetId, driverParamDeps(state.nodes))) {
     return { ok: false, reason: 'spring would create a driver cycle' };
   }
 

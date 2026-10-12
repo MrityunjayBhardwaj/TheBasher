@@ -32,9 +32,6 @@ import { buildSetSolverBodyOps } from './solverBind';
 
 const DEFAULT_REMAP: DriverRemap = { inMin: 0, inMax: 1, outMin: 0, outMax: 1 };
 
-// A body output can't itself be a stateful node (nested Solvers/Lag are out of v1 scope).
-const STATEFUL_TYPES = new Set(['Solver', 'Lag']);
-
 interface XfSource {
   node: string;
   channel: string;
@@ -170,12 +167,10 @@ export function SolverControls({ nodeId }: { nodeId: string }) {
     );
   }
 
+  // Any computed output, a Solver's or a Lag's included: the evaluator replays a stateful node
+  // wherever a cook reaches it, so one can be another Solver's whole rule (#1558).
   const bodyOptions = () =>
-    driverSourceOptions(useDagStore.getState().state, nodeId).filter(
-      (o) =>
-        o.kind === 'output' &&
-        !STATEFUL_TYPES.has(useDagStore.getState().state.nodes[o.ref.node]?.type ?? ''),
-    );
+    driverSourceOptions(useDagStore.getState().state, nodeId).filter((o) => o.kind === 'output');
   const inputOptions = () =>
     driverSourceOptions(useDagStore.getState().state, nodeId).filter((o) => o.kind === 'transform');
 

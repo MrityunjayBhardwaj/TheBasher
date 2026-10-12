@@ -212,8 +212,11 @@ function layerSkeletonBones(state: DagState, layerId: string): string[] | null {
   let at = layerId;
   const limit = Object.keys(state.nodes).length;
   for (let hops = 0; hops <= limit; hops++) {
+    // #1357 — a layer inside a Rig feeds the Rig's `body`; one under a Rig feeds its `pose`.
+    const reads = (n: { inputs?: Record<string, unknown> }, socket: string) =>
+      (n.inputs?.[socket] as { node?: string } | undefined)?.node === at;
     const next = Object.values(state.nodes).find(
-      (n) => (n.inputs?.pose as { node?: string } | undefined)?.node === at,
+      (n) => reads(n, 'pose') || (n.type === 'Rig' && reads(n, 'body')),
     );
     if (!next) return null;
     if (next.type === 'Object') {
@@ -223,7 +226,7 @@ function layerSkeletonBones(state: DagState, layerId: string): string[] | null {
       const parsed = SkeletonParams.safeParse(skeleton.params ?? {});
       return parsed.success ? parsed.data.bones.map((b) => b.name) : null;
     }
-    if (next.type !== 'PoseLayer') return null;
+    if (next.type !== 'PoseLayer' && next.type !== 'Rig') return null;
     at = next.id;
   }
   return null;

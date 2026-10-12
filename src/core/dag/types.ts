@@ -44,8 +44,9 @@ export type InputBinding = z.infer<typeof InputBindingSchema>;
 // Type system across sockets (THESIS.md §8)
 // ---------------------------------------------------------------------------
 
-// V0.5 ships only the names; runtime uses nominal string equality. The full
-// converter-node story (THESIS.md §8) lands in P1+.
+// An input takes the types it declares (`inputAccepts`), plus any type that converts on the
+// way in: a Number into a Vector3 input, as Blender's implicit conversion does (#1549,
+// `socketConversion.ts`). Everything else is refused at `connect` with what would make it work.
 export type SocketTypeName =
   | 'Number'
   | 'Vector2'
@@ -199,7 +200,9 @@ export interface OutputDescriptor {
  * ⚠️ A SET IS NOT COERCION. `Number | Vector3` means the role receives whichever
  * was wired, UNCONVERTED — the consumer still discriminates at read time. It does
  * NOT mean a Number is broadcast to a Vector3. Conflating the two is how a type
- * system starts lying in a second way, and #609 ruled it out of scope.
+ * system starts lying in a second way, and #609 ruled it out of scope. Conversion exists
+ * since #1549, and it keeps this rule: it is consulted only for a type the socket does NOT
+ * accept, so a socket that takes both never converts one into the other.
  *
  * THAT RULING NOW HAS A REASON FROM SOURCE (#616). Blender declares exactly ONE
  * type per socket (`SocketDeclaration.socket_type`, a scalar enum) and solves this
@@ -270,6 +273,14 @@ export interface InputDescriptor {
 export interface BodyInputDescriptor {
   type: SocketTypeName;
   cardinality: Cardinality;
+  /**
+   * #1574 — for a `list` input, the owner's own list socket whose wires say how many elements
+   * it has: element `i` exists exactly when that socket has a wire `i`. The Solver's `prevVec`
+   * is `sizedBy: 'bodies'`, because slot `i` of the previous state is what `bodies[i]` computed.
+   * Required for a list, so a leaf's `slot` can be checked against something: a slot past the end
+   * binds nothing and the leaf reads its default (`bindBodyInputs`).
+   */
+  sizedBy?: string;
 }
 
 // The two membership readers live in `socketMembership.ts` (#612) and are re-exported
@@ -301,7 +312,8 @@ export type NodeCost = 'cheap' | 'medium' | 'expensive';
 //   2. STATEFUL nodes (`stateful: true` — Lag, Solver) — deterministic given a SEED
 //      and an INTERVAL, not point-in-time. A single-frame evaluation of a lag is
 //      the wrong answer, not an imprecise one; the real value needs the previous
-//      output, produced by the replay seam. Determinism here is by contract, not
+//      output, produced by the replay seam, which the evaluator asks whenever a walk
+//      reaches such a node (#1558). Determinism here is by contract, not
 //      by purity. (The reference substrate's stateful channel operators behave the
 //      same way, so this is a property of the problem, not of our implementation.)
 //

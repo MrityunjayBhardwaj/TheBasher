@@ -1,15 +1,15 @@
 diff --git a/src/core/dag/ops.ts b/src/core/dag/ops.ts
-index 7774ff3..0160d83 100644
+index 7fc8d47e..41cdfc82 100644
 --- a/src/core/dag/ops.ts
 +++ b/src/core/dag/ops.ts
-@@ -215,7 +215,9 @@ function applyConnect(state: DagState, op: Extract<Op, { type: 'connect' }>): Ap
-   // #609 — MEMBERSHIP, not equality: an input socket may accept a SET of types.
-   // The message names the whole accepted set, so a rejection says what WOULD have
+@@ -489,7 +489,9 @@ function requireWire(
    // been taken rather than only what was offered.
--  if (!inputAccepts(inputDesc, outputDesc.type)) {
+   // #1549 — or a type the socket does not take but that converts on the way in (a Number into
+   // a Vector3). Anything else is refused with what would make it work.
+-  if (!inputTakes(inputDesc, outputDesc.type)) {
 +  // DISCARD HARNESS: the answer is computed, then thrown away at the point of use.
-+  inputAccepts(inputDesc, outputDesc.type);
++  inputTakes(inputDesc, outputDesc.type);
 +  if (false as boolean) {
      throw new OpError(
-       `connect: type mismatch ${producer.type}.${op.from.socket}:${outputDesc.type} → ${consumer.type}.${op.to.socket}:${acceptedTypes(inputDesc).join('|')}`,
-       op,
+       `${door}: type mismatch ${producer.type}.${ref.socket}:${outputDesc.type} → ${consumerType}.${socket}:${acceptedTypes(inputDesc).join('|')}` +
+         ` — ${whyNotTaken(inputDesc, outputDesc.type)}`,

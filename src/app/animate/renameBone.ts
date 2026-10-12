@@ -42,7 +42,7 @@ import { chainSocketOf } from '../operatorChain';
 import { producerOf } from '../asset/bakeGeneratedClip';
 import { resolveBoneNames } from '../../core/import/retarget';
 import { edgeTarget } from './graphNodes';
-import { poseLayerChain } from './poseChain';
+import { poseLayerChain, poseSkeletonIdOf } from './poseChain';
 
 /** What a rename did: the name the bone now has, each record rewritten, and each one left as it was. */
 export interface BoneRenameReport {
@@ -75,18 +75,9 @@ const inputList = (node: Node | undefined, socket: string): string[] => {
  * starts somewhere else — then which rig it reads cannot be told from the graph.
  */
 function sourceSkeletonOf(state: DagState, retargetId: string): string | null {
-  let at = edgeTarget(state.nodes[retargetId], 'source');
-  for (let hops = 0; at && hops <= Object.keys(state.nodes).length; hops++) {
-    const node = state.nodes[at];
-    if (!node) return null;
-    if (node.type === 'Skeleton') return at;
-    if (node.type === 'AnimationClip' || node.type === 'RetargetClip') {
-      return edgeTarget(node, 'skeleton');
-    }
-    if (node.type !== 'PoseLayer') return null;
-    at = edgeTarget(node, 'pose');
-  }
-  return null;
+  // The one params-side walk of the pose wire (`poseSkeletonIdOf`), so a Rig on the way is passed
+  // through here as it is everywhere else (#1357).
+  return poseSkeletonIdOf(state.nodes, edgeTarget(state.nodes[retargetId], 'source'));
 }
 
 /** The mesh data an operator stack reads, walked down its chain from `start`; null when none is. */
@@ -136,7 +127,8 @@ export function rigReach(state: DagState, objectId: string): RigReach | null {
   return {
     skeleton,
     armatures,
-    layers: unique(armatures.flatMap((id) => poseLayerChain(state.nodes, id).layers)),
+    // #1357 — the layers inside a Rig on the wire name bones too (an ik chain, a corrective).
+    layers: unique(armatures.flatMap((id) => poseLayerChain(state.nodes, id).allLayers)),
     children: unique(armatures.flatMap((id) => inputList(state.nodes[id], 'children'))),
     meshes: unique(
       nodes

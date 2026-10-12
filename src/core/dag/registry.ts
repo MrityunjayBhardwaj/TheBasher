@@ -283,6 +283,51 @@ function assertBodyInputDeclarations(def: NodeDefinition): void {
         'but has no input marked `body: true`, so it owns no sub-network to bind them in.',
     );
   }
+  // #1574 — a list input says which of the owner's list sockets gives its length, so a leaf's
+  // slot can be told apart from one nothing fills. A single input has no length to state.
+  for (const [name, want] of Object.entries(def.bodyInputs ?? {})) {
+    const sizer = want.sizedBy === undefined ? undefined : def.inputs[want.sizedBy];
+    const why =
+      want.cardinality !== 'list'
+        ? want.sizedBy !== undefined
+          ? 'it is a single value, which has no length'
+          : null
+        : want.sizedBy === undefined
+          ? 'a list input must say which input gives its length (`sizedBy`)'
+          : !sizer
+            ? `it has no input socket "${want.sizedBy}"`
+            : sizer.cardinality !== 'list'
+              ? `"${want.sizedBy}" carries one value, so it cannot give a length`
+              : null;
+    if (why) {
+      throw new Error(
+        `registerNodeType(${def.type}): the sub-network input "${name}" is sized wrongly: ${why}.`,
+      );
+    }
+  }
+  // #1357 — a stateless owner has no seam to bind its sub-network: the evaluator binds each
+  // named input to the owner's own socket of that name (`evaluator.ts`). So the name must be one
+  // of its sockets, outside the body, carrying one value of the declared type.
+  if (def.bodyInputs && def.stateful !== true) {
+    for (const [name, want] of Object.entries(def.bodyInputs)) {
+      const socket = def.inputs[name];
+      const why = !socket
+        ? 'it has no input socket of that name'
+        : socket.body === true
+          ? 'that socket is a body socket'
+          : socket.type !== want.type
+            ? `that socket carries ${String(socket.type)}, not ${want.type}`
+            : socket.cardinality !== 'single' || want.cardinality !== 'single'
+              ? 'only a single-value input can be bound this way'
+              : null;
+      if (why) {
+        throw new Error(
+          `registerNodeType(${def.type}): declares the sub-network input "${name}", which a ` +
+            `node that is not stateful reads from its own "${name}" input, but ${why}.`,
+        );
+      }
+    }
+  }
   if (!def.bodyInputLeaf) return;
   const outputs = Object.keys(def.outputs);
   if (outputs.length !== 1) {
@@ -314,6 +359,14 @@ export function registerNodeType<P, O>(def: NodeDefinition<P, O>): void {
   assertChainDeclaration(def as unknown as NodeDefinition);
   assertBodyInputDeclarations(def as unknown as NodeDefinition);
   registry.set(def.type, def as unknown as NodeDefinition);
+  epoch++;
+}
+
+/** Changes whenever the set of registered types does, so an answer derived from a node's type
+ *  and kept beside a graph (#1583) can tell it was derived under other definitions. */
+let epoch = 0;
+export function registryEpoch(): number {
+  return epoch;
 }
 
 export function getNodeType(type: NodeTypeId): NodeDefinition | undefined {
@@ -337,4 +390,5 @@ export function snapshotRegistry(): Record<NodeTypeId, NodeDefinition> {
 /** Test-only: clear and re-seed the registry. Never call from app code. */
 export function __resetRegistryForTests(): void {
   registry.clear();
+  epoch++;
 }

@@ -11,7 +11,7 @@
 // REF: THESIS.md §50, krama K2 + K10.
 
 import { create } from 'zustand';
-import { applyOp, validateOp } from './ops';
+import { applyOp, applyOps, validateOp } from './ops';
 import type { Reportable } from './ops';
 import { findNewDanglingIdRef } from './idRefSweep';
 import type { DagState } from './state';
@@ -207,18 +207,18 @@ export const useDagStore = create<DagStore>((set, get) => ({
     // built from it, so an op that changed nothing leaves no step. `result` stays
     // index-aligned with `ops` for the caller.
     const changed: InverseOp[] = [];
-    for (const op of ops) {
-      const validated = validateOp(op);
-      const { next, inverse } = applyOp(working, validated);
-      const inv: InverseOp = { forward: validated, inverse };
-      if (next !== working) changed.push(inv);
-      working = next;
+    // #1585 — the whole batch is applied on one copy of the graph (`applyOps`).
+    const batch = applyOps(working, ops);
+    working = batch.next;
+    for (const step of batch.applied) {
+      const inv: InverseOp = { forward: step.forward, inverse: step.inverse };
+      if (step.changed) changed.push(inv);
       result.push(inv);
       newActivity.push({
         id: ++activityCounter,
         timestamp: timeNow(),
         source,
-        op: validated,
+        op: step.forward,
         description,
       });
     }
@@ -256,18 +256,18 @@ export const useDagStore = create<DagStore>((set, get) => ({
     // built from it, so an op that changed nothing leaves no step. `result` stays
     // index-aligned with `ops` for the caller.
     const changed: InverseOp[] = [];
-    for (const op of ops) {
-      const validated = validateOp(op);
-      const { next, inverse } = applyOp(working, validated);
-      const inv: InverseOp = { forward: validated, inverse };
-      if (next !== working) changed.push(inv);
-      working = next;
+    // #1585 — the whole batch is applied on one copy of the graph (`applyOps`).
+    const batch = applyOps(working, ops);
+    working = batch.next;
+    for (const step of batch.applied) {
+      const inv: InverseOp = { forward: step.forward, inverse: step.inverse };
+      if (step.changed) changed.push(inv);
       result.push(inv);
       newActivity.push({
         id: ++activityCounter,
         timestamp: timeNow(),
         source,
-        op: validated,
+        op: step.forward,
         description,
       });
     }
@@ -346,10 +346,7 @@ export const useDagStore = create<DagStore>((set, get) => ({
     let working = get().state;
     if (isAtomic(last)) {
       // Replay inverses in REVERSE order — last op applied is first to undo.
-      for (let i = last.entries.length - 1; i >= 0; i--) {
-        const inv = validateOp(last.entries[i].inverse);
-        working = applyOp(working, inv).next;
-      }
+      working = applyOps(working, last.entries.map((e) => e.inverse).reverse()).next;
     } else {
       const inv = validateOp(last.inverse);
       working = applyOp(working, inv).next;
@@ -369,13 +366,15 @@ export const useDagStore = create<DagStore>((set, get) => ({
     let working = get().state;
     let pushBack: UndoEntry;
     if (isAtomic(last)) {
-      const fresh: InverseOp[] = [];
-      for (const e of last.entries) {
-        const f = validateOp(e.forward);
-        const { next, inverse } = applyOp(working, f);
-        working = next;
-        fresh.push({ forward: f, inverse });
-      }
+      const batch = applyOps(
+        working,
+        last.entries.map((e) => e.forward),
+      );
+      working = batch.next;
+      const fresh: InverseOp[] = batch.applied.map((step) => ({
+        forward: step.forward,
+        inverse: step.inverse,
+      }));
       pushBack = { __atomic: true, description: last.description, entries: fresh };
     } else {
       const f = validateOp(last.forward);

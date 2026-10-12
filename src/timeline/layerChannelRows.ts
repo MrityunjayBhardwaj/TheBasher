@@ -70,12 +70,14 @@ export function rowAddress(rowId: string): ChannelAddressed {
 
 /** The rows of every layer under `objectId`, top of the chain first. */
 export function layerChannelRows(nodes: Record<string, Node>, objectId: string): ChannelRow[] {
-  const { layers } = poseLayerChain(
+  // #1357 — a Rig on the wire shows the layers inside it, where the Rig sits (an IK blend is keyed
+  // there).
+  const { allLayers } = poseLayerChain(
     nodes as unknown as Readonly<Record<string, GraphNodeLike>>,
     objectId,
   );
   const rows: ChannelRow[] = [];
-  for (const layerId of layers) {
+  for (const layerId of allLayers) {
     const params = nodes[layerId].params as PoseLayerParams;
     const layerName = params.name || layerId;
     for (const channel of params.channels ?? []) {

@@ -15,11 +15,44 @@
 
 import { edgeTarget, type GraphNodeLike } from './graphNodes';
 import type { PoseLayerParams } from '../../nodes/PoseLayer';
+import { bodyInputChoicesOf, subnetworkOf } from '../../core/dag/subnetworks';
+import type { DagState } from '../../core/dag/state';
+
+/**
+ * #1357 — the node types the chain walk passes THROUGH, and how each reads on the way: a pose
+ * layer, or a Rig (the pose on its `pose` input, changed by its sub-network). Both read the pose
+ * below them on a socket named `pose`. Every other node with a pose output is where a chain
+ * starts. `poseChain.test.ts` checks the registry against these two lists, so a new node that
+ * takes a pose and gives one is named here or there before it ships.
+ */
+export const POSE_CHAIN_HOPS = { PoseLayer: 'layer', Rig: 'rig' } as const;
+/** Takes a pose and gives one, and is still where a chain STARTS: what it gives is another rig's. */
+export const POSE_CHAIN_SOURCES_WITH_A_POSE_INPUT = ['RetargetClip'] as const;
+
+export type PoseHopKind = (typeof POSE_CHAIN_HOPS)[keyof typeof POSE_CHAIN_HOPS];
+/** One node the chain passes through. */
+export interface PoseHop {
+  readonly id: string;
+  readonly kind: PoseHopKind;
+}
 
 /** The pose layers under an armature Object, and the source they edit. */
 export interface PoseLayerChain {
-  /** `PoseLayer` ids from the Object down: `[0]` feeds the Object, the last reads the source. */
+  /**
+   * `PoseLayer` ids on the Object's own wire, from the Object down: `[0]` is the top one, the last
+   * the lowest. A Rig on the wire is passed through, so layers above and below it are both here;
+   * the layers INSIDE a Rig are not (`allLayers`).
+   */
   readonly layers: readonly string[];
+  /** #1357 — every node the wire passes through, layers and Rigs, from the Object down. */
+  readonly hops: readonly PoseHop[];
+  /** #1357 — the node whose `pose` input reads the source: the lowest hop, or the Object. */
+  readonly bottom: string;
+  /**
+   * #1357 — every pose layer that can hold a bone name or a key for this Object: `layers`, with
+   * each Rig replaced, in place, by the layers inside its sub-network.
+   */
+  readonly allLayers: readonly string[];
   /** Where the bottom of the chain reads its pose — a clip's `pose`, a retarget's `posed`, a
    *  skeleton's rest `pose` — or null when nothing feeds it. */
   readonly source: { readonly node: string; readonly socket: string } | null;
@@ -37,7 +70,8 @@ export interface PoseLayerChain {
  * lane (the bind, which rewires the chain's bottom, and the pose writers, which edit its top).
  *
  * Walked PRODUCER-side from the Object's `pose` input, one hop at a time, while the producer is a
- * `PoseLayer`; the first producer that is not one is the source. Unlike the clone road's override
+ * `PoseLayer` or a `Rig` (#1357, passed through on its `pose` input); the first producer that is
+ * neither is the source. Unlike the clone road's override
  * chain there is no fork to guard: every hop reads a single-cardinality input. Bounded by the node
  * count so a malformed graph cannot spin.
  */
@@ -45,36 +79,65 @@ export function poseLayerChain(
   nodes: Readonly<Record<string, GraphNodeLike>>,
   objectId: string,
 ): PoseLayerChain {
-  const layers: string[] = [];
+  const hops: PoseHop[] = [];
+  const seen = new Set<string>();
+  const done = (source: PoseLayerChain['source']): PoseLayerChain => {
+    const layers = hops.filter((h) => h.kind === 'layer').map((h) => h.id);
+    return {
+      layers,
+      hops,
+      bottom: hops[hops.length - 1]?.id ?? objectId,
+      allLayers: hops.flatMap((h) => (h.kind === 'layer' ? [h.id] : layersInsideRig(nodes, h.id))),
+      source,
+      base: source ? baseOf(nodes, hops, source) : null,
+    };
+  };
   let at = nodes[objectId];
   const limit = Object.keys(nodes).length;
-  for (let hops = 0; at && hops <= limit; hops++) {
+  for (let n = 0; at && n <= limit; n++) {
     const binding = at.inputs?.pose as { node?: string; socket?: string } | undefined;
     const producer = binding?.node;
-    if (typeof producer !== 'string' || !nodes[producer]) {
-      return { layers, source: null, base: null };
+    if (typeof producer !== 'string' || !nodes[producer]) return done(null);
+    const kind = (POSE_CHAIN_HOPS as Record<string, PoseHopKind | undefined>)[nodes[producer].type];
+    if (kind === undefined || seen.has(producer)) {
+      return done({ node: producer, socket: binding?.socket ?? 'out' });
     }
-    if (nodes[producer].type !== 'PoseLayer' || layers.includes(producer)) {
-      const source = { node: producer, socket: binding?.socket ?? 'out' };
-      return { layers, source, base: baseOf(nodes, layers, source) };
-    }
-    layers.push(producer);
+    seen.add(producer);
+    hops.push({ id: producer, kind });
     at = nodes[producer];
   }
-  return { layers, source: null, base: null };
+  return done(null);
 }
 
-/** The bottom layer, when it is an override layer reading a skeleton's rest pose. */
+/**
+ * #1357 — the pose layers inside a Rig's sub-network: down its own wire from `body` first (top to
+ * bottom, as a chain reads), then any other layer the sub-network holds, by id. A Rig nested
+ * inside is part of the sub-network, so its layers are here too.
+ */
+function layersInsideRig(nodes: Readonly<Record<string, GraphNodeLike>>, rigId: string): string[] {
+  // The one ownership walk (`subnetworks.ts`); it reads the node table only.
+  const inside = subnetworkOf({ nodes } as unknown as DagState, rigId);
+  const out: string[] = [];
+  let at = edgeTarget(nodes[rigId], 'body');
+  while (at && inside.has(at) && !out.includes(at) && nodes[at]?.type === 'PoseLayer') {
+    out.push(at);
+    at = edgeTarget(nodes[at], 'pose');
+  }
+  const rest = [...inside].filter((id) => nodes[id]?.type === 'PoseLayer' && !out.includes(id));
+  return [...out, ...rest.sort()];
+}
+
+/** The lowest hop, when it is an override layer reading a skeleton's rest pose. */
 function baseOf(
   nodes: Readonly<Record<string, GraphNodeLike>>,
-  layers: readonly string[],
+  hops: readonly PoseHop[],
   source: { readonly node: string; readonly socket: string },
 ): string | null {
-  const bottom = layers[layers.length - 1];
-  if (bottom === undefined) return null;
+  const bottom = hops[hops.length - 1];
+  if (bottom === undefined || bottom.kind !== 'layer') return null;
   if (nodes[source.node]?.type !== 'Skeleton' || source.socket !== 'pose') return null;
-  const mode = (nodes[bottom].params as { mode?: unknown } | undefined)?.mode;
-  return mode === undefined || mode === 'override' ? bottom : null;
+  const mode = (nodes[bottom.id].params as { mode?: unknown } | undefined)?.mode;
+  return mode === undefined || mode === 'override' ? bottom.id : null;
 }
 
 /**
@@ -93,38 +156,42 @@ export function handPoseLayerOf(
   nodes: Readonly<Record<string, GraphNodeLike>>,
   objectId: string,
 ): string | null {
-  const { layers, base } = poseLayerChain(nodes, objectId);
-  // #1343 — a hand-pose is FK: only a layer the IK solves read from takes it.
-  for (const id of layers.slice(lowestIkLayer(nodes, layers) + 1)) {
-    if (whyNotHandPosable(nodes, id, base) === null) return id;
+  const { hops, base } = poseLayerChain(nodes, objectId);
+  // #1343 — a hand-pose is FK: only a layer the solves read from takes it.
+  for (const hop of hops.slice(lowestSolve(nodes, hops) + 1)) {
+    if (hop.kind === 'layer' && whyNotHandPosable(nodes, hop.id, base) === null) return hop.id;
   }
   return null;
 }
 
-/** #1343 — the index in `layers` of the lowest `ik` layer, or -1 when the chain has none. */
-function lowestIkLayer(
+/**
+ * The index in `hops` of the lowest SOLVE, or -1 when the chain has none: an `ik` layer (#1343), or
+ * a Rig (#1357), which is rig logic reading the animation below it.
+ */
+function lowestSolve(
   nodes: Readonly<Record<string, GraphNodeLike>>,
-  layers: readonly string[],
+  hops: readonly PoseHop[],
 ): number {
-  for (let i = layers.length - 1; i >= 0; i--) {
-    if ((nodes[layers[i]].params as { mode?: unknown } | undefined)?.mode === 'ik') return i;
+  for (let i = hops.length - 1; i >= 0; i--) {
+    if (hops[i].kind === 'rig') return i;
+    if ((nodes[hops[i].id].params as { mode?: unknown } | undefined)?.mode === 'ik') return i;
   }
   return -1;
 }
 
 /**
  * #1343 — where a hand-pose layer goes when `handPoseLayerOf` finds none: the node whose `pose` input
- * it is inserted under. That is the lowest `ik` layer, so the new layer is FK that every solve reads
- * (Blender solves IK after every pose channel and constraint); with no ik layer, the Object itself.
- * Inserted above an ik layer, a hand-pose would override the solve it should steer.
+ * it is inserted under. That is the lowest solve (an `ik` layer, or a Rig, #1357), so the new layer is
+ * FK that every solve reads (Blender solves IK after every pose channel and constraint); with no
+ * solve, the Object itself. Inserted above a solve, a hand-pose would override what it should steer.
  */
 export function handPoseInsertionOf(
   nodes: Readonly<Record<string, GraphNodeLike>>,
   objectId: string,
 ): string {
-  const { layers } = poseLayerChain(nodes, objectId);
-  const at = lowestIkLayer(nodes, layers);
-  return at >= 0 ? layers[at] : objectId;
+  const { hops } = poseLayerChain(nodes, objectId);
+  const at = lowestSolve(nodes, hops);
+  return at >= 0 ? hops[at].id : objectId;
 }
 
 /** Why the chain layer `id` cannot take a hand-pose, or null when it can. The walk only passes
@@ -156,6 +223,10 @@ export function whyNotHandPosable(
  *   `skeleton` edge.
  * - `RetargetClip.posed` stands its TARGET rig (`skeleton`), which is what it poses.
  * - `PoseLayer.out` passes the pose on its `pose` input through.
+ * - `Rig.out` (#1357) is what its sub-network hands back on `body`; with none wired, the pose on
+ *   its `pose` input.
+ * - `BodyInputPose.out` is the input of its Rig that it names. Asked of the node table, that is
+ *   the rig it stands INSIDE its Rig; evaluated on its own, outside one, it stands none.
  *
  * Null for anything else, an unwired input, or a cycle.
  */
@@ -179,6 +250,17 @@ export function poseSkeletonIdOf(
       case 'PoseLayer':
         cur = edgeTarget(node, 'pose');
         continue;
+      case 'Rig':
+        cur = edgeTarget(node, 'body') ?? edgeTarget(node, 'pose');
+        continue;
+      case 'BodyInputPose': {
+        // The one ownership walk (`subnetworks.ts`); it reads the node table only.
+        const [owner] = bodyInputChoicesOf({ nodes } as unknown as DagState, cur).owners;
+        const input = (node.params as { input?: unknown } | undefined)?.input;
+        cur =
+          owner !== undefined && typeof input === 'string' ? edgeTarget(nodes[owner], input) : null;
+        continue;
+      }
       default:
         return null;
     }

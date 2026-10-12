@@ -87,7 +87,7 @@ export function buildBindDriverOps(state: DagState, req: DriverBindRequest): Dri
   // `source` already (transitively, via wired edges + existing driver overlays, incl.
   // the spare road via driverParamDeps) depends on `target`, which would close the loop
   // target ← driver ← source → … → target.
-  if (wouldCreateCycle(state, srcNode, targetId, 32, driverParamDeps(state.nodes))) {
+  if (wouldCreateCycle(state, srcNode, targetId, driverParamDeps(state.nodes))) {
     return { ok: false, reason: 'binding would create a driver cycle' };
   }
   // #315 — land the new driver on TOP of whatever already drives this band, instead of

@@ -16,14 +16,16 @@
 // a sub-network nested inside another, whose whole closure lies inside the outer one.
 //
 // Only an edge can break the rule, so only the ops that add edges are checked (`connect`,
-// and `addNode` with inputs). Removing an edge or a node only shrinks closures. A project
-// saved before the rule may already break it; the check refuses only NEW violations, so
-// such a project still loads and edits, and `subnetworkViolations` names what it holds.
+// and `addNode` with inputs), and of those only a wire whose producer ends up inside a
+// sub-network (`reachesSubnetwork`, #1583). Removing an edge or a node only shrinks closures.
+// A project saved before the rule may already break it; the check refuses only NEW
+// violations, so such a project still loads and edits, and `subnetworkViolations` names what
+// it holds.
 
 import type { DagState } from './state';
 import { edges } from './state';
-import { getNodeType } from './registry';
-import type { NodeId } from './types';
+import { getNodeType, registryEpoch } from './registry';
+import type { NodeId, Op } from './types';
 
 export interface SubnetworkViolation {
   /** The node inside the sub-network. */
@@ -43,6 +45,67 @@ function bodySocketsOf(type: string): readonly string[] {
   return Object.entries(def.inputs)
     .filter(([, desc]) => desc.body === true)
     .map(([socket]) => socket);
+}
+
+// ── #1583 — which nodes own a sub-network, known without walking the graph ──────
+//
+// Both rules below start from the owners, and finding them meant reading every node's type.
+// An import adds thousands of wires to a graph that holds no Solver or Rig at all, and paid
+// that walk twice per wire (measured: 6.4 s of a 14.3 s import of 5,019 nodes). The owners of
+// a graph are kept beside its `nodes` record instead. `applyOp` carries them from the graph
+// before an operation to the graph after it, which only `addNode` and `removeNode` can change;
+// a graph that was never asked (a project just loaded) is walked once, the first time.
+
+const ownersByNodes = new WeakMap<
+  DagState['nodes'],
+  { readonly epoch: number; readonly owners: readonly NodeId[] }
+>();
+
+/** Every node whose type declares a body socket, in the order the graph holds them. */
+export function subnetworkOwnersOf(state: DagState): readonly NodeId[] {
+  const known = ownersByNodes.get(state.nodes);
+  if (known && known.epoch === registryEpoch()) return known.owners;
+  const owners: NodeId[] = [];
+  for (const node of Object.values(state.nodes)) {
+    if (bodySocketsOf(node.type).length > 0) owners.push(node.id);
+  }
+  ownersByNodes.set(state.nodes, { epoch: registryEpoch(), owners });
+  return owners;
+}
+
+/** The owners of `after`, from the owners of `before` and the operation between them. Does
+ *  nothing when `before` was never asked: the first ask walks the graph. */
+export function carrySubnetworkOwners(before: DagState, after: DagState, op: Op): void {
+  const known = ownersByNodes.get(before.nodes);
+  if (!known || known.epoch !== registryEpoch()) return;
+  let owners = known.owners;
+  if (op.type === 'addNode') {
+    if (bodySocketsOf(op.nodeType).length > 0) owners = [...owners, op.nodeId];
+  } else if (op.type === 'removeNode') {
+    if (owners.includes(op.nodeId)) owners = owners.filter((id) => id !== op.nodeId);
+  }
+  // A batch writes every operation into one record (#1585), so before and after can be the
+  // same record: what is known of it is replaced, not left standing.
+  if (after.nodes === before.nodes && owners === known.owners) return;
+  ownersByNodes.set(after.nodes, { epoch: known.epoch, owners });
+}
+
+/**
+ * Whether any of `nodes` sits inside a sub-network of `state`.
+ *
+ * This is what lets an operation skip both rules: a wire can only make a new violation of
+ * either if its producer ends up inside some owner's sub-network. A sub-network is closed
+ * upstream, so a wire that extends one, leaves one, or joins two nodes inside one all have
+ * their producer inside it; any other wire leaves every sub-network, and so both rules'
+ * answers, exactly as they were. The cost is the size of the sub-networks, not of the graph.
+ */
+export function reachesSubnetwork(state: DagState, nodes: readonly NodeId[]): boolean {
+  if (nodes.length === 0) return false;
+  for (const owner of subnetworkOwnersOf(state)) {
+    const closure = subnetworkOf(state, owner);
+    if (nodes.some((id) => closure.has(id))) return true;
+  }
+  return false;
 }
 
 /** Every node behind `owner`'s body sockets, walked upstream over wired inputs. */
@@ -72,11 +135,10 @@ export function subnetworkOf(state: DagState, owner: NodeId): Set<NodeId> {
 
 /** Every wire that leaves a sub-network other than into its owner's body sockets. */
 export function subnetworkViolations(state: DagState): SubnetworkViolation[] {
-  const owners: { id: NodeId; bodies: ReadonlySet<string> }[] = [];
-  for (const node of Object.values(state.nodes)) {
-    const sockets = bodySocketsOf(node.type);
-    if (sockets.length > 0) owners.push({ id: node.id, bodies: new Set(sockets) });
-  }
+  const owners = subnetworkOwnersOf(state).map((id) => ({
+    id,
+    bodies: new Set(bodySocketsOf(state.nodes[id].type)),
+  }));
   if (owners.length === 0) return [];
 
   const consumers = new Map<NodeId, { consumer: NodeId; socket: string }[]>();
@@ -118,6 +180,85 @@ export function newSubnetworkViolation(before: DagState, after: DagState): strin
     `"${fresh.inside}" is inside the sub-network of ${ownerType} "${fresh.owner}", so it can't ` +
     `also feed "${fresh.outside}" (${fresh.socket}), which is outside it. A node belongs to one ` +
     'sub-network: duplicate it for the other use.'
+  );
+}
+
+// ── #1579 — a node with its own history may not read the inputs of the Solver around it ──
+//
+// A Solver cooks its sub-network once a frame with its inputs bound to the leaves inside. A
+// Lag or a Solver met during that cook is replayed apart, from its own seed, in an evaluation
+// of its own where the outer leaves are not bound. So one that reads an outer leaf read 0, and
+// the outer result was a plausible wrong number (measured: 2, 2, 2, 2 against a hand-worked
+// 2, 4, 7, 12). Doing it properly means integrating the two together, the inner state carried
+// inside the outer one; until that exists the wire is refused, and the refusal says what works.
+//
+// Three operations can make one: `connect`, `addNode` with inputs, and a `setParam` that
+// renames the input a leaf reads (the inspector's picker). `ops.ts` asks after each.
+//
+// Only an owner that is itself stateful is concerned. A Rig is not cooked: the evaluator
+// resolves its leaves wherever they are asked, so a node inside one reads them correctly.
+
+export interface StatefulLeafRead {
+  /** The stateful node inside the sub-network. */
+  readonly inner: NodeId;
+  /** The stateful owner whose input it reads. */
+  readonly owner: NodeId;
+  /** The owner's leaf it reaches, and the input that leaf reads. */
+  readonly leaf: NodeId;
+  readonly input: string;
+}
+
+/** Every stateful node that sits inside a stateful owner's sub-network and reads one of that
+ *  owner's leaves, directly or through the nodes between. */
+export function statefulLeafReads(state: DagState): StatefulLeafRead[] {
+  const out: StatefulLeafRead[] = [];
+  for (const ownerId of subnetworkOwnersOf(state)) {
+    const owner = state.nodes[ownerId];
+    if (getNodeType(owner.type)?.stateful !== true) continue;
+    const leaves = new Map(bodyInputLeavesOf(state, owner.id).map((l) => [l.id, l.input]));
+    if (leaves.size === 0) continue;
+    for (const inner of subnetworkOf(state, owner.id)) {
+      const node = state.nodes[inner];
+      if (!node || getNodeType(node.type)?.stateful !== true) continue;
+      const seen = new Set<NodeId>();
+      const stack: NodeId[] = [inner];
+      while (stack.length) {
+        const id = stack.pop()!;
+        if (seen.has(id)) continue;
+        seen.add(id);
+        const input = leaves.get(id);
+        if (input !== undefined) {
+          out.push({ inner, owner: owner.id, leaf: id, input });
+          break;
+        }
+        for (const binding of Object.values(state.nodes[id]?.inputs ?? {})) {
+          const refs = Array.isArray(binding) ? binding : binding ? [binding] : [];
+          for (const ref of refs) if (!seen.has(ref.node)) stack.push(ref.node);
+        }
+      }
+    }
+  }
+  return out;
+}
+
+const readKeyOf = (r: StatefulLeafRead) => `${r.owner}\u0000${r.inner}\u0000${r.leaf}`;
+
+/** The first such read `after` holds that `before` did not, as the reason a write is refused,
+ *  or null. A project saved before the rule still loads and edits. */
+export function newStatefulLeafRead(before: DagState, after: DagState): string | null {
+  const now = statefulLeafReads(after);
+  if (now.length === 0) return null;
+  const had = new Set(statefulLeafReads(before).map(readKeyOf));
+  const fresh = now.find((r) => !had.has(readKeyOf(r)));
+  if (!fresh) return null;
+  const innerType = after.nodes[fresh.inner]?.type ?? 'node';
+  const ownerType = after.nodes[fresh.owner]?.type ?? 'node';
+  return (
+    `${innerType} "${fresh.inner}" is inside the sub-network of ${ownerType} "${fresh.owner}" and ` +
+    `would read its "${fresh.input}" input (through "${fresh.leaf}"). A ${innerType} keeps a ` +
+    `history of its own, replayed apart from the ${ownerType} around it, so it cannot see that ` +
+    `input yet. Build the step into "${fresh.owner}"'s own sub-network instead (a Mix of ` +
+    `"prev" and the input is a lag), or feed "${fresh.inner}" from outside the sub-network.`
   );
 }
 
@@ -199,6 +340,46 @@ export function bodyInputChoicesOf(
     }
   }
   return { owners, names };
+}
+
+/**
+ * What a body-input leaf's `slot` means where it sits (#1574).
+ *
+ * - `'no-owner'`: the leaf is in no sub-network, or names an input its owner does not declare
+ *   for its type. `input` already says so (#1569); `slot` has nothing to add.
+ * - `'single'`: the input is one value. `slot` does nothing.
+ * - `'list'`: the input has `length` elements, as many as the owner's `sizedBy` socket has
+ *   wires. `filled` is whether the leaf's slot is one of them. A slot past the end binds nothing
+ *   and the leaf reads its default (`bindBodyInputs`).
+ */
+export type BodyInputSlot =
+  | { readonly kind: 'no-owner' }
+  | { readonly kind: 'single' }
+  | {
+      readonly kind: 'list';
+      readonly slot: number;
+      readonly length: number;
+      readonly filled: boolean;
+      readonly owner: NodeId;
+      readonly sizedBy: string;
+    };
+
+export function bodyInputSlotOf(state: DagState, leafId: NodeId): BodyInputSlot {
+  const leaf = state.nodes[leafId];
+  const params = (leaf?.params ?? {}) as { input?: unknown; slot?: unknown };
+  if (!leaf || typeof params.input !== 'string') return { kind: 'no-owner' };
+  const outType = Object.values(getNodeType(leaf.type)?.outputs ?? {})[0]?.type;
+  for (const owner of bodyInputChoicesOf(state, leafId).owners) {
+    const ownerNode = state.nodes[owner];
+    const want = getNodeType(ownerNode.type)?.bodyInputs?.[params.input];
+    if (!want || want.type !== outType) continue;
+    if (want.cardinality !== 'list' || want.sizedBy === undefined) return { kind: 'single' };
+    const binding = ownerNode.inputs[want.sizedBy];
+    const length = Array.isArray(binding) ? binding.length : binding ? 1 : 0;
+    const slot = typeof params.slot === 'number' ? params.slot : 0;
+    return { kind: 'list', slot, length, filled: slot < length, owner, sizedBy: want.sizedBy };
+  }
+  return { kind: 'no-owner' };
 }
 
 /**

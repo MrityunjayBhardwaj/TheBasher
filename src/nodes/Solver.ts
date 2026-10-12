@@ -31,7 +31,8 @@
 //
 // Outside a cook the leaves are harmless 0 / origin leaves — the seam is the ONLY place
 // they take meaning, exactly as Lag's integrated value lives only in the seam and never
-// in its passthrough `evaluate`.
+// in its passthrough `evaluate`. The evaluator never runs that passthrough: it answers a
+// stateful node with the seam's replay at the time asked, for any consumer (#1558).
 //
 // Lag-parity (the engine proof): a sub-network of ONE `Mix{a←prev, b←input}`
 // is `lerp(prev, in, factor)` == `lagStep` — so a Solver wrapping it must produce the
@@ -39,7 +40,10 @@
 //
 // Scope (v1): SCALAR state (a single Number fed back). Structured/tuple Prev_Frame
 // (→ 2nd-order Spring pos+velocity, multi-accumulators) is the next increment on this
-// same contract. Nested Solvers (a Solver inside a Solver's closure) are out of scope.
+// same contract. A Solver (or a Lag) inside a Solver's sub-network is replayed on its own
+// when the outer cook reaches it, so sub-networks nest (#1558). What does not work yet: a
+// stateful node INSIDE a sub-network whose own input is fed by the outer Solver's `prev`
+// (the inner history would have to be integrated together with the outer one).
 //
 // REF: GROUND_TRUTH_HOUDINI_DRIVERS_CONTROLLERS.md §5a (Solver SOP: Prev_Frame +
 //      Input_1, cooked every frame); https://www.sidefx.com/docs/houdini/nodes/sop/solver.html;
@@ -50,8 +54,14 @@ import { z } from 'zod';
 import type { NodeDefinition } from '../core/dag/types';
 import type { Vec3 } from './types';
 import { TransformSourceSchema } from './ParamDriver';
-import { bodyInputChoicesOf } from '../core/dag/subnetworks';
-import { optionsParam, type OptionsLock, type OptionsProvider } from './paramWidget';
+import { bodyInputChoicesOf, bodyInputSlotOf } from '../core/dag/subnetworks';
+import {
+  optionsParam,
+  standingParam,
+  type OptionsLock,
+  type OptionsProvider,
+  type ParamStandingProvider,
+} from './paramWidget';
 
 const NUMBER_OUT = { out: { type: 'Number', cardinality: 'single' } } as const;
 const VECTOR3_OUT = { out: { type: 'Vector3', cardinality: 'single' } } as const;
@@ -70,12 +80,30 @@ const ORIGIN: Vec3 = [0, 0, 0];
 // #1569 — `input` is picked from what the leaf's owner declares for the leaf's type, because a
 // name the owner does not declare binds nothing and the leaf quietly reads 0. A stored name no
 // option offers is shown as not found; a leaf in no sub-network shows why it cannot be picked.
-const bodyInputOptions: OptionsProvider = (state, nodeId) =>
+export const bodyInputOptions: OptionsProvider = (state, nodeId) =>
   bodyInputChoicesOf(state, nodeId).names.map((name) => ({ value: name, label: name }));
-const bodyInputLock: OptionsLock = (state, nodeId) =>
+export const bodyInputLock: OptionsLock = (state, nodeId) =>
   bodyInputChoicesOf(state, nodeId).owners.length === 0
     ? 'not inside a sub-network, so nothing feeds it'
     : null;
+
+// #1574 — `slot` picks one element of a LIST input. On a single input it does nothing, so its
+// row is not drawn; on a list it is checked against how many elements the owner fills, because
+// a slot past the end binds nothing and the leaf quietly reads its default. A leaf with no
+// owner, or a name its owner does not declare, is `input`'s to report (#1569).
+export const bodyInputSlotStanding: ParamStandingProvider = (state, nodeId) => {
+  const at = bodyInputSlotOf(state, nodeId);
+  if (at.kind !== 'list') return { kind: 'unused' };
+  if (at.filled) return null;
+  const has =
+    at.length === 0
+      ? `nothing is wired into its ${at.sizedBy}`
+      : `its ${at.sizedBy} fill ${at.length === 1 ? 'slot 0 only' : `slots 0 to ${at.length - 1}`}`;
+  return {
+    kind: 'note',
+    text: `nothing fills slot ${at.slot}: ${has}, so this reads its default`,
+  };
+};
 
 export const BodyInputParams = z.object({
   input: optionsParam(
@@ -85,7 +113,7 @@ export const BodyInputParams = z.object({
     'name',
     bodyInputLock,
   ),
-  slot: z.number().int().min(0).default(0),
+  slot: standingParam(z.number().int().min(0).default(0), bodyInputSlotStanding),
 });
 export type BodyInputParams = z.infer<typeof BodyInputParams>;
 
@@ -175,7 +203,8 @@ export const SolverNode: NodeDefinition<SolverParams, { out: number; outVec: Vec
   bodyInputs: {
     prev: { type: 'Number', cardinality: 'single' },
     input: { type: 'Number', cardinality: 'single' },
-    prevVec: { type: 'Vector3', cardinality: 'list' },
+    // One element per state slot: slot i is what `bodies[i]` computed last frame (#1574).
+    prevVec: { type: 'Vector3', cardinality: 'list', sizedBy: 'bodies' },
     inputVec: { type: 'Vector3', cardinality: 'single' },
   },
   evaluate: (_params, inputs) => {

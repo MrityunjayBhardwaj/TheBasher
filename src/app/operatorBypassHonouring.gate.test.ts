@@ -331,7 +331,8 @@ describe('ns-2 step 5 — the bypass is honoured at ONE site', () => {
     // 90 -> 89 at #1243 (PoseOverride retired, absorbed by PoseLayer), NOT an operator.
     // 89 -> 90 at #1451 (Collection), NOT an operator, so the operator count does not move.
     // 90 -> 88 at #1548 (the Solver's four input leaves became BodyInput and BodyInputVec), NOT an operator, so the operator count does not move.
-    expect(listNodeTypes()).toHaveLength(88);
+    // 88 -> 90 at #1357 (Rig and its pose leaf BodyInputPose), NOT operators, so the operator count does not move.
+    expect(listNodeTypes()).toHaveLength(90);
     expect(operators()).toHaveLength(12);
     expect(declaredBypassParams()).toEqual(['muted']);
     expect(FILES.length).toBeGreaterThan(500);

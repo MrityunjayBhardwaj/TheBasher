@@ -364,7 +364,7 @@ export const retargetMutator: MutatorDefinition<RetargetSpec> = {
  * (#1216) both call it.
  */
 export function bindPosedOps(state: DagState, retargetId: string, objectId: string): Op[] {
-  const { layers, base } = poseLayerChain(
+  const { bottom, base } = poseLayerChain(
     state.nodes as unknown as Readonly<Record<string, GraphNodeLike>>,
     objectId,
   );
@@ -375,7 +375,7 @@ export function bindPosedOps(state: DagState, retargetId: string, objectId: stri
   ops.push({
     type: 'connect',
     from: { node: retargetId, socket: 'posed' },
-    to: { node: layers.length > 0 ? layers[layers.length - 1] : objectId, socket: 'pose' },
+    to: { node: bottom, socket: 'pose' },
     replace: true,
   });
   return ops;

@@ -59,6 +59,7 @@ import { renameBoneMutator } from './builders/renameBone';
 import { editSkeletonMutator } from './builders/editSkeleton';
 import { addIkMutator } from './builders/addIk';
 import { bakePoseMutator } from './builders/bakePose';
+import { wrapInRigMutator } from './builders/wrapInRig';
 import { constrainMutator, unconstrainMutator } from './builders/constrain';
 import { setHiddenMutator } from './builders/setHidden';
 
@@ -97,6 +98,7 @@ export {
   editSkeletonMutator,
   addIkMutator,
   bakePoseMutator,
+  wrapInRigMutator,
   constrainMutator,
   unconstrainMutator,
   setHiddenMutator,
@@ -195,4 +197,6 @@ export function registerAllMutators(): void {
   registerMutator(addIkMutator);
   // #1215 — bake computed motion into keys on a pose layer.
   registerMutator(bakePoseMutator);
+  // #1357 — the layers over a character's motion, moved inside one Rig node.
+  registerMutator(wrapInRigMutator);
 }

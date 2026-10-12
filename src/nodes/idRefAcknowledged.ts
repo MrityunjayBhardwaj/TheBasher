@@ -23,7 +23,8 @@ const PACKED = 'packed numeric data';
 const STORAGE = 'a file or asset key in project storage';
 const PARAM_PATH = 'a parameter path on the target, not a node';
 const BODY_INPUT = 'the name of an input the owning node declares (`bodyInputs`)';
-const KEYED_VALUE = 'the keyed value itself: text or a colour';
+const KEYED_VALUE = 'the keyed value itself: text, a colour or an image reference';
+const SPARE_KEY = 'the name of a spare parameter on the source node';
 const BONE = 'a bone name inside a skeleton';
 const IMPORT_KEY = 'a key naming a child inside an imported asset, never a graph node';
 const SUB_ELEMENT = 'an id unique within this node only (a curve point)';
@@ -138,6 +139,7 @@ export const NOT_A_NODE_ID: Readonly<Record<string, string>> = {
   'BakedData.material.physical.attenuationColor': COLOUR,
   'BevelModifier.scope': GROUP,
   'BodyInput.input': BODY_INPUT,
+  'BodyInputPose.input': BODY_INPUT,
   'BodyInputVec.input': BODY_INPUT,
   'BoneNameMap.name': LABEL,
   'BoneNameMap.map{key}': BONE,
@@ -215,16 +217,16 @@ export const NOT_A_NODE_ID: Readonly<Record<string, string>> = {
   'Object.slotOverrides{key}': SLOT_INDEX,
   'Object.parentBone': BONE,
   'ParamDriver.paramPath': PARAM_PATH,
-  'ParamDriver.sourceSpare.key': PARAM_PATH,
+  'ParamDriver.sourceSpare.key': SPARE_KEY,
   'PolyMeshData.mesh.points': PACKED,
   'PolyMeshData.mesh.faceSizes': PACKED,
   'PolyMeshData.mesh.cornerPoints': PACKED,
-  'PolyMeshData.mesh.cornerLayers[].name': LABEL,
+  'PolyMeshData.mesh.cornerLayers[].name': LAYER,
   'PolyMeshData.mesh.cornerLayers[].data': PACKED,
   'PolyMeshData.mesh.cornerNormals': PACKED,
-  'PolyMeshData.mesh.faceLayers[].name': LABEL,
+  'PolyMeshData.mesh.faceLayers[].name': LAYER,
   'PolyMeshData.mesh.faceLayers[].data': PACKED,
-  'PolyMeshData.mesh.pointLayers[].name': LABEL,
+  'PolyMeshData.mesh.pointLayers[].name': LAYER,
   'PolyMeshData.mesh.pointLayers[].data': PACKED,
   'PolyMeshData.mesh.vertexGroups[]': GROUP,
   'PoseLayer.name': LABEL,
@@ -247,7 +249,7 @@ export const NOT_A_NODE_ID: Readonly<Record<string, string>> = {
   'Scene.envSource.assetRef': STORAGE,
   'SetMaterialOp.scope': GROUP,
   'Shot.name': LABEL,
-  'Skeleton.bones[].name': LABEL,
+  'Skeleton.bones[].name': BONE,
   'Strip.name': LABEL,
   'Track.name': LABEL,
   'TrackTo.name': LABEL,

@@ -554,7 +554,7 @@ _Observe:_ open a pre-split `.basher` → renders identically, channels still bo
 
 **Phase 6 (#366) — Catalogue + memory.** Promote V-object, amend V78, re-derive dharana boundaries, retire the stale road-table prose in H170.
 
-**→ Milestone 2 — Templates / HDA.** Own design doc. **Nesting is its research question, up front** (`Solver.ts:40`: "Nested Solvers… out of scope"). Survey game-engine prefabs first (`dcc-reference.md` §24's own highest-value gap).
+**→ Milestone 2 — Templates / HDA.** Own design doc. **Nesting was its research question** (`Solver.ts` once read "Nested Solvers… out of scope"); owners that exist today nest since #1558, and what is left for templates is two instances sharing one definition (§12). Survey game-engine prefabs first (`dcc-reference.md` §24's own highest-value gap).
 
 > Phases 1–4 are independently shippable and parity-preserving. **If scope must shrink, stopping after Phase 3 still kills #356/#357 and the duck-types** — the split coexists with fused nodes indefinitely.
 
@@ -652,6 +652,8 @@ An earlier draft asserted _"cache discrimination ✓ by design; edit-propagation
 ⇒ **the seam is a workaround for a missing noun, sixth time this arc.** If a template instance were **a node the evaluator understood** (a `body` input + named parameter inputs), the evaluator would just walk it, and **nesting would fall out by recursion.** `SolverInput` = a hard-coded leaf standing in for "named knob"; the override map = a side-channel standing in for "argument binding." Both exist because the evaluator has **no word for _"instantiate this subgraph with these bindings."_** _(Observed: the 20×/1× cook counts. Read-not-observed: the single-call collision — it follows from the API shape; flagged as such.)_
 
 **Update, #1548:** the first half of that missing noun now exists. A node that owns a sub-network declares its **named inputs** (`bodyInputs`), and a generic leaf (`BodyInput`, `BodyInputVec`) reads one by name; `SolverInput` and its three siblings are gone, migrated at project format v22. The values still arrive through the override map, bound by name (`bindBodyInputs`, `src/core/dag/subnetworks.ts`), so the single-call collision and the nesting limit described above still stand until evaluation is re-entrant (#1558). The spec is [`GRAPH.md`](GRAPH.md).
+
+**Update, #1558:** evaluation is re-entrant for owners that exist today. The evaluator answers a stateful node with its replay wherever the walk meets it, and each cook is its own `evaluate` call with its own override map, so a Solver inside a Solver (three levels measured) and a Solver behind a compute node evaluate correctly. The single-call collision above is **not** dissolved: it needs two instances that name the same leaf id, which only a stored definition shared by instances can produce, and that is #1557.
 
 **Sequencing (unchanged conclusion, corrected grounding):** the split first — it generates live bugs _and_ makes "an instance **of what**" well-defined. Templates second, on the same engine, once instantiation is a node the evaluator walks (which is also what dissolves nesting). **Do not fuse them.**
 

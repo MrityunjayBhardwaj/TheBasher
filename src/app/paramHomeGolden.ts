@@ -140,6 +140,7 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
   PolyMeshData: '[material] mesh=(unrouted) material=material materialSlots=(unrouted)',
   BeautyPass: '[render] width=(unrouted) height=(unrouted)',
   BodyInput: '[] input=(unrouted) slot=(unrouted)',
+  BodyInputPose: '[] input=(unrouted)',
   BodyInputVec: '[] input=(unrouted) slot=(unrouted)',
   BevelModifier:
     '[modifier] amount=modifier muted=modifier scope=modifier limitMethod=modifier angleLimit=modifier',
@@ -241,6 +242,7 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
   PoseLayer:
     '[animate] name=(unrouted) mode=(unrouted) weight=(unrouted) mute=(unrouted) solo=(unrouted) members=(unrouted) channels=(unrouted) ik=(unrouted)',
   RetargetClip: '[animate] name=(unrouted) active=(unrouted) sampleRate=(unrouted)',
+  Rig: '[]',
   SampleGeometry:
     '[] sourceGeometry=(unrouted) at=(unrouted) method=(unrouted) direction=(unrouted) orientation=(unrouted) farthest=(unrouted)',
   Scatter:
@@ -418,4 +420,7 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
 // `SolverInputVec`) for `BodyInput` and `BodyInputVec`, each with `input` and `slot` unrouted:
 // −4 + 2 types; unrouted −1 (`PrevFrameVec.slot`) + 4.
 //   types 90 − 4 + 2 = 88 · routed 144 · unrouted 253 − 1 + 4 = 256
-export const GOLDEN_TOTALS = { types: 88, routed: 144, unrouted: 256 } as const;
+//
+// #1357 adds `Rig` (no params) and its pose leaf `BodyInputPose` (`input`, unrouted):
+//   types 88 + 2 = 90 · routed 144 · unrouted 256 + 1 = 257
+export const GOLDEN_TOTALS = { types: 90, routed: 144, unrouted: 257 } as const;

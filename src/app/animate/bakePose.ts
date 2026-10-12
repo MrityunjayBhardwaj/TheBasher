@@ -181,6 +181,18 @@ export function bakePose(state: DagState, args: BakePoseArgs): BakeResult {
     if (index < 0) {
       return { ok: false, reason: `“${args.at}” is not a pose layer under “${args.object}”` };
     }
+    // #1357 — a bake folds what is under the layer by muting it, and a Rig cannot be muted: it would
+    // run again over the baked keys. So a layer above a Rig is not a point to bake at.
+    const hopAt = chain.hops.findIndex((h) => h.id === args.at);
+    const rigUnder = chain.hops.slice(hopAt + 1).find((h) => h.kind === 'rig');
+    if (rigUnder) {
+      return {
+        ok: false,
+        reason:
+          `the Rig “${rigUnder.id}” is under “${args.at}” and would run again over the baked ` +
+          'keys: bake a layer under the Rig',
+      };
+    }
     point = { node: args.at, socket: 'out' };
     folded = chain.layers.slice(index);
   } else {
@@ -215,7 +227,7 @@ export function bakePose(state: DagState, args: BakePoseArgs): BakeResult {
   const params = bakedLayerParams(wire, times, args.interpolation);
   const bones = wire.skeleton.bones;
 
-  const bottom = chain.layers[chain.layers.length - 1] ?? args.object;
+  const bottom = chain.bottom;
   const detached = computedSourceOf(state, args.object);
   const ops: Op[] = [
     { type: 'addNode', nodeId: args.layerId, nodeType: 'PoseLayer', params },

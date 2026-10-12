@@ -159,13 +159,15 @@ describe('mutator catalog', () => {
     // 34 → 35 at #1445 — `setHidden`, the outliner eye's verb (#334 took the raw op away).
     // 35 → 36 at #1339 — `rig.editSkeleton`, Edit mode's skeleton operations.
     // 36 → 37 at #1510 — `rig.addIk`, Pose mode's Add › IK.
-    expect(mutators).toHaveLength(37);
+    // 37 → 38 at #1357 — `animate.wrapInRig`, the road in to the Rig node.
+    expect(mutators).toHaveLength(38);
     const names = mutators.map((m) => m.name).sort();
     expect(names).toEqual([
       'mutator.animate.bakePose',
       'mutator.animate.poseBone',
       'mutator.animate.renameBone',
       'mutator.animate.setPoseMemberMode',
+      'mutator.animate.wrapInRig',
       'mutator.animation.retarget',
       'mutator.camera.trajectory',
       'mutator.constrain',
@@ -2321,7 +2323,8 @@ describe('agent.listMutators tool', () => {
     // 34 → 35 at #1445 — `setHidden`.
     // 35 → 36 at #1339 — `rig.editSkeleton`.
     // 36 → 37 at #1510 — `rig.addIk`.
-    expect(parsed.mutators).toHaveLength(37);
+    // 37 → 38 at #1357 — `animate.wrapInRig`.
+    expect(parsed.mutators).toHaveLength(38);
   });
 });
 
@@ -3952,6 +3955,7 @@ import {
   editSkeletonMutator as _editSkeletonM,
   addIkMutator as _addIkM,
   bakePoseMutator as _bakePoseM,
+  wrapInRigMutator as _wrapInRigM,
   retargetMutator as _retargetM,
   addPassMutator as _addPassM,
   addAIPassMutator as _addAIPassM,
@@ -4097,6 +4101,29 @@ describe('V14 deeper non-redundancy — Op-shape probe (issue #22)', () => {
       ],
     }).next;
     return s;
+  }
+
+  // #1357 — the bone-rename scene with a second layer over its base, which is what a wrap takes
+  // (the base layer is the character's motion and is refused).
+  function buildSceneForRigWrap(): DagState {
+    let s = buildSceneForBoneRename();
+    s = applyOp(s, {
+      type: 'addNode',
+      nodeId: 'wr_layer',
+      nodeType: 'PoseLayer',
+      params: { name: 'over', mode: 'additive', members: [] },
+    }).next;
+    s = applyOp(s, {
+      type: 'connect',
+      from: { node: 'br_layer', socket: 'out' },
+      to: { node: 'wr_layer', socket: 'pose' },
+    }).next;
+    return applyOp(s, {
+      type: 'connect',
+      from: { node: 'wr_layer', socket: 'out' },
+      to: { node: 'br_arm', socket: 'pose' },
+      replace: true,
+    }).next;
   }
 
   function buildSceneForPoseBone(): DagState {
@@ -4311,6 +4338,11 @@ describe('V14 deeper non-redundancy — Op-shape probe (issue #22)', () => {
       mutator: _bakePoseM as MutatorDefinition<unknown>,
       build: buildSceneForPoseBake,
       spec: { object: 'br_arm', at: 'br_layer', poses: { nth: 2 } },
+    },
+    'mutator.animate.wrapInRig': {
+      mutator: _wrapInRigM as MutatorDefinition<unknown>,
+      build: buildSceneForRigWrap,
+      spec: { object: 'br_arm', layers: ['wr_layer'] },
     },
     'mutator.animate.renameBone': {
       mutator: _renameBoneM as MutatorDefinition<unknown>,

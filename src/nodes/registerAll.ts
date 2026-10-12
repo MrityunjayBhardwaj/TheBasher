@@ -29,6 +29,7 @@ import { CompositionNode } from './Composition';
 import { COMPUTE_NODES } from './computeNodes';
 import { LagNode } from './Lag';
 import { SolverNode, BodyInputNode, BodyInputVecNode } from './Solver';
+import { RigNode, BodyInputPoseNode } from './Rig';
 import { SampleGeometryNode } from './geometryQuery';
 import { CutNode } from './Cut';
 import { LayerNode } from './Layer';
@@ -84,6 +85,7 @@ import { NullNode } from './Null';
 import { CurveDataNode } from './CurveData';
 import { VideoStitchNode } from './VideoStitch';
 import { WalkPathNode } from './WalkPath';
+import { registerStatefulReplay } from '../app/statefulOps';
 
 const ALL: NodeDefinition[] = [
   // Time (P2 — the only impure source; pure consumers wire to it)
@@ -272,6 +274,9 @@ const ALL: NodeDefinition[] = [
   SolverNode as unknown as NodeDefinition,
   BodyInputNode as unknown as NodeDefinition,
   BodyInputVecNode as unknown as NodeDefinition,
+  // #1357 — the Rig: a sub-network on the pose wire, and the leaf that reads its incoming pose.
+  RigNode as unknown as NodeDefinition,
+  BodyInputPoseNode as unknown as NodeDefinition,
   // Geometry query — SampleGeometry (epic #290 vec-rail follow-up). The compute rail's
   // GEOMETRY reader: drops a vertical ray onto a terrain mesh and outputs the ground
   // point under a query controller's world XZ. Seam-resolved (needs world triangles →
@@ -313,4 +318,7 @@ export function registerAllNodes(): void {
   for (const def of ALL) {
     if (!getNodeType(def.type)) registerNodeType(def);
   }
+  // #1558 — the evaluator answers a stateful node (Lag, Solver) with its replay. Set here, with
+  // the types that need it, so no graph holding one can be evaluated before it exists.
+  registerStatefulReplay();
 }
