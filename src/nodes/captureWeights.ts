@@ -34,9 +34,8 @@
 // A point with no weight stays at rest while its neighbours move (`armatureDeform.ts`,
 // `CONTRIB_THRESHOLD`), and nothing downstream says so. Under this rule every point with a finite
 // position is held by at least one bone, so the count is zero unless a position is not a number —
-// and it is still measured and returned, because the methods that follow this one (voxel geodesic,
-// surface heat) do leave points unheld and the reader of `unbound` must not have to know which
-// method ran.
+// and it is still measured and returned, because the methods beside this one (voxel, heat) return
+// the same shape, and the reader of `unbound` must not have to know which method ran.
 //
 // REF: src/nodes/skinInfluences.ts (the lanes written); src/nodes/armatureDeform.ts (the reader);
 //      ref/GROUND_TRUTH_AUTO_SKIN_WEIGHTS.md §10.2; issue #1353.
@@ -69,7 +68,10 @@ export interface CapturedWeights {
    * distance instead. Always 0 by proximity, which has no other measure.
    */
   readonly unreached: number;
-  /** The bones the method could not measure from at all, by name. None by proximity. */
+  /**
+   * The bones the method left holding nothing, by name: by `voxel`, those it could not measure
+   * from at all; by `heat`, those that hold no point. None by proximity.
+   */
   readonly outside: readonly string[];
 }
 

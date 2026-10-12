@@ -186,17 +186,22 @@ export function captureStatusText(plan: CapturePlan): string {
   if (plan.unbound > 0) {
     said.push(`${plan.unbound} of them are held by no bone and stay at rest.`);
   }
+  const heat = plan.method === 'heat';
   if (plan.unreached > 0) {
     said.push(
-      `${plan.unreached} could not be reached through the mesh's inside and are bound by straight-line distance instead.`,
+      heat
+        ? `${plan.unreached} are on parts with no bone in sight from inside, and are bound by nearness instead.`
+        : `${plan.unreached} could not be reached through the mesh's inside and are bound by straight-line distance instead.`,
     );
   }
   if (plan.outside.length > 0) {
+    const one = plan.outside.length === 1;
     const shown = plan.outside.slice(0, OUTSIDE_NAMED).join(', ');
     const more = plan.outside.length - OUTSIDE_NAMED;
-    said.push(
-      `${plan.outside.length} bone${plan.outside.length === 1 ? ' lies' : 's lie'} outside the mesh's volume, so nothing is measured from ${plan.outside.length === 1 ? 'it' : 'them'}: ${shown}${more > 0 ? ` and ${more} more` : ''}.`,
-    );
+    const why = heat
+      ? `${plan.outside.length} bone${one ? ' holds' : 's hold'} no point`
+      : `${plan.outside.length} bone${one ? ' lies' : 's lie'} outside the mesh's volume, so nothing is measured from ${one ? 'it' : 'them'}`;
+    said.push(`${why}: ${shown}${more > 0 ? ` and ${more} more` : ''}.`);
   }
   return said.join(' ');
 }

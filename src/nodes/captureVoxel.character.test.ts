@@ -3,6 +3,7 @@
 // does not grow with the number of bones.
 import { readFileSync } from 'node:fs';
 import { beforeAll, describe, expect, it } from 'vitest';
+import { bytesMadeBy } from '../test-utils/bytesMadeBy';
 import { xbotArmsDown, type XbotArmsDown } from '../test-utils/xbotArmsDown';
 import { captureByProximity, type CaptureBone, type CapturedWeights } from './captureWeights';
 import { captureByVoxel } from './captureVoxel';
@@ -114,40 +115,6 @@ describe('#1539 — an arm at the side of a character', () => {
     expect(armsThrough.most).toBeLessThan(0.01);
   });
 });
-
-/** Every byte of typed array made while `run` runs. Nothing made inside is freed before it
- *  returns, so this is at least the most it ever held. */
-function bytesMadeBy(run: () => void): number {
-  const kinds = [
-    'Float32Array',
-    'Float64Array',
-    'Int32Array',
-    'Uint32Array',
-    'Int16Array',
-    'Uint16Array',
-    'Int8Array',
-    'Uint8Array',
-  ] as const;
-  const scope = globalThis as unknown as Record<string, unknown>;
-  const kept = kinds.map((kind) => scope[kind]);
-  let bytes = 0;
-  kinds.forEach((kind, i) => {
-    scope[kind] = new Proxy(kept[i] as object, {
-      construct(target, args) {
-        const made = Reflect.construct(target as never, args) as { byteLength: number };
-        // A view onto a buffer that already exists makes nothing.
-        if (!(args[0] instanceof ArrayBuffer)) bytes += made.byteLength;
-        return made;
-      },
-    });
-  });
-  try {
-    run();
-  } finally {
-    kinds.forEach((kind, i) => (scope[kind] = kept[i]));
-  }
-  return bytes;
-}
 
 describe('#1539 — the memory a capture takes', () => {
   /** 72 bones: the fixture's 67 and five more up the spine. */

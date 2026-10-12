@@ -47,7 +47,10 @@ export const bindSkinMutator: MutatorDefinition<BindSkinSpec> = {
     '"nearest" is measured: "proximity" in a straight line, falling off by `dropoff`; "voxel" ' +
     "through the mesh's own volume on a grid of `resolution`, falling off by `falloff` — use it " +
     'when one part lies beside another (an arm at the side), where proximity gives one part the ' +
-    "other's bones; parts nearer than about three grid cubes still join. Bones marked " +
+    'other\'s bones; parts nearer than about three grid cubes still join. "heat" along the ' +
+    "mesh's surface, with no settings of its own — use it for fingers and other parts that " +
+    'touch; it is refused on a single connected skin of very many points (hundreds of ' +
+    'thousands), where "voxel" is the one to use. Bones marked ' +
     'deform=false (controls, IK goals) get no weights. Refuses a mesh that is already bound, or ' +
     'one with no stored points (a box or a sphere).',
   spec: BindSkinSpec,

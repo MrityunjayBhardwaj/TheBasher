@@ -531,3 +531,138 @@ describe('#1539 — the voxel method: the same bind, distance measured through t
     expect(planBindSkin(faceless, { mesh: BIND.mesh, armature: BIND.armature }).ok).toBe(true);
   });
 });
+
+describe('#1356 — the heat method: the same bind, distance measured along the skin', () => {
+  it('a bind by heat stores the method on the Capture, and weights the open tube whole', () => {
+    const { plan, state, mesh, value } = bound(scene, { method: 'heat' });
+    expect(state.nodes[plan.captureId].params).toMatchObject({ method: 'heat', maxInfluences: 4 });
+    expect(plan.capture).toMatchObject({ method: 'heat', unbound: 0, unreached: 0, outside: [] });
+    // The same layers and the same groups the other two methods write: the reader cannot tell.
+    expect(mesh.pointLayers.map((l) => l.name)).toEqual(['skin_joints', 'skin_weights']);
+    expect(mesh.vertexGroups).toEqual([...BIND.bones]);
+    expect(value.skin!.boneOfGroup).toEqual([0, 1, 2]);
+    expect(meshDataProblem(mesh)).toBeNull();
+    for (let p = 0; p < BIND.radial * BIND.rings; p++) {
+      expect(Object.values(weights(mesh, p)).reduce((s, w) => s + w, 0)).toBeCloseTo(1, 5);
+    }
+    expect(weights(mesh, ringPoint(0.5))['Bone']).toBeGreaterThan(0.85);
+    expect(weights(mesh, ringPoint(1.5))['Bone.001']).toBeGreaterThan(0.75);
+    const status = captureStatusOf(state, plan.captureId)!;
+    expect(captureStatusText(status)).toBe('104 points bound to 3 bones.');
+    expect(captureIsWhole(status)).toBe(true);
+  });
+
+  it('turning the middle bone bends the heat-bound tube: the foot stays and the top follows', () => {
+    const { value, mesh } = bound(scene, { method: 'heat' });
+    const out = sampleSkinDeform(posed(value, 'Bone.001', [0, 0, Math.PI / 2]), mesh, 0);
+    const at = (p: number) => [out[p * 3], out[p * 3 + 1], out[p * 3 + 2]];
+    // The foot ring is the first bone's but for a little: it stays within a few hundredths.
+    const foot = at(ringPoint(0));
+    expect(Math.hypot(foot[0] - 0.25, foot[1])).toBeLessThan(0.05);
+    // The top ring (rest (0.25, 3, 0)) is carried a quarter turn about the joint at y = 1, to
+    // (-2, 1.25, 0).
+    const top = at(ringPoint(3));
+    expect(top[0]).toBeLessThan(-1.9);
+    expect(top[1]).toBeCloseTo(1.25, 1);
+    // The ring at the joint goes part of the way: a blend, not a step.
+    const joint = at(ringPoint(1));
+    expect(joint[0]).toBeGreaterThan(0.02);
+    expect(joint[0]).toBeLessThan(0.23);
+  });
+
+  it('only the one setting the method reads makes a new capture', () => {
+    const key = (req: Partial<CaptureSettings>) => bound(scene, req).value.geometry.key;
+    const heat = key({ method: 'heat' });
+    expect(heat).not.toBe(key({ method: 'proximity' }));
+    expect(heat).not.toBe(key({ method: 'voxel', resolution: 32 }));
+    expect(key({ method: 'heat', maxInfluences: 2 })).not.toBe(heat);
+    // `dropoff` is the proximity method's; `resolution` and `falloff` the voxel method's.
+    expect(key({ method: 'heat', dropoff: 9 })).toBe(heat);
+    expect(key({ method: 'heat', resolution: 48, falloff: 0.9 })).toBe(heat);
+    // And a capture already made is handed back, not made again.
+    expect(bound(scene, { method: 'heat' }).mesh).toBe(
+      bound(scene, { method: 'heat', resolution: 48, dropoff: 9 }).mesh,
+    );
+  });
+
+  it('a tube with its bones beside it has none in sight: it is bound by nearness, and the sentence says so', () => {
+    // The armature moved a unit aside: from the wall facing it the bones are in front, and from
+    // the far wall the near one is in the way.
+    const moved = run(scene, [
+      { type: 'setParam', nodeId: BIND.armature, paramPath: 'position', value: [1, 0, 0] } as Op,
+    ]);
+    const { state, plan } = bound(moved, { method: 'heat' });
+    const status = captureStatusOf(state, plan.captureId)!;
+    expect(captureStatusText(status)).toBe(
+      '104 points bound to 3 bones. 104 are on parts with no bone in sight from inside, and are bound by nearness instead.',
+    );
+    expect(captureIsWhole(status)).toBe(false);
+  });
+
+  it('the sentence names three bones that hold nothing and counts the rest; one bone reads as one', () => {
+    const base = {
+      kind: 'captured' as const,
+      method: 'heat' as const,
+      data: {} as MeshGeometryData,
+      key: 'k',
+      bones: 9,
+      points: 10,
+      unbound: 0,
+      unreached: 0,
+    };
+    expect(captureStatusText({ ...base, outside: ['a', 'b', 'c', 'd', 'e'] })).toBe(
+      '10 points bound to 9 bones. 5 bones hold no point: a, b, c and 2 more.',
+    );
+    expect(captureStatusText({ ...base, outside: ['a'] })).toBe(
+      '10 points bound to 9 bones. 1 bone holds no point: a.',
+    );
+    expect(captureIsWhole({ ...base, outside: ['a'] })).toBe(false);
+  });
+
+  it('a mesh with points and no faces has no surface: heat refuses it by name', () => {
+    const tube = cylinderMesh(BIND);
+    const points = packMeshData({
+      ...tube,
+      faceSizes: new Uint32Array(0),
+      cornerPoints: new Uint32Array(0),
+    });
+    const faceless = run(scene, [
+      { type: 'setParam', nodeId: BIND.meshData, paramPath: 'mesh', value: points } as Op,
+    ]);
+    expect(
+      planBindSkin(faceless, { mesh: BIND.mesh, armature: BIND.armature, method: 'heat' }),
+    ).toEqual({
+      ok: false,
+      reason:
+        'the mesh has no faces, or no size, so it has no surface for heat to spread over: use the proximity method.',
+    });
+  });
+
+  it('one skin too big to work heat out across without freezing is refused by name, and the refusal is kept', () => {
+    // 266,240 points in one piece: with three bones, just past the limit.
+    const big = packMeshData(
+      cylinderMesh({ radius: BIND.radius, height: BIND.height, radial: 512, rings: 520 }),
+    );
+    const dense = run(scene, [
+      { type: 'setParam', nodeId: BIND.meshData, paramPath: 'mesh', value: big } as Op,
+    ]);
+    const refused = planBindSkin(dense, {
+      mesh: BIND.mesh,
+      armature: BIND.armature,
+      method: 'heat',
+    });
+    expect(refused).toEqual({
+      ok: false,
+      reason:
+        "the mesh's largest piece has 266240 points, and heat is worked out across a whole piece for each of the 3 bones: on a piece that size the app would stand frozen. Use the voxel method, which does not grow that way.",
+    });
+    // A Capture already on such a mesh says the same, and does not ask the mesh again to say it.
+    const near = bound(dense);
+    const heat = run(near.state, [
+      { type: 'setParam', nodeId: near.plan.captureId, paramPath: 'method', value: 'heat' } as Op,
+    ]);
+    const status = captureStatusOf(heat, near.plan.captureId)!;
+    expect(captureStatusText(status)).toMatch(/^Nothing is captured: the mesh's largest piece has/);
+    expect(captureStatusOf(heat, near.plan.captureId)).toBe(status);
+  });
+});

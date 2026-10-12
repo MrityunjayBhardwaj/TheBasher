@@ -65,6 +65,9 @@
 // cubes) and joined at 64 (2.2). Maya says the same of its own
 // (`bind-skin-options-2025.txt:160-164`). Distance spreads only through shared faces, never corner
 // to corner, so a layer of empty cubes between two parts keeps them apart however it is slanted.
+// Fingers are closer than that on any grid this runs at: measured on that character (2026-10-12),
+// 6,029 of 7,965 finger points took another finger's bones at 128 and 5,438 at 256. The heat
+// method (`captureHeat.ts`) measures along the skin instead, and is the one for those.
 //
 // And the grid still shows a little: on a straight tube, where the right answer is known, weights
 // are within 0.035 of it at 11 cubes across and within 0.02 at 21.

@@ -36,25 +36,33 @@
 // about it, because a mesh that does not move looks the same whether nothing was captured or the
 // bone was never turned.
 //
-// ── TWO WAYS OF MEASURING "NEAR" (#1539) ────────────────────────────────────────────────────────
+// ── THREE WAYS OF MEASURING "NEAR" (#1539, #1356) ───────────────────────────────────────────────
 //
 // `method` picks how far a point is from a bone. `proximity` is the straight line
 // (`captureWeights.ts`): quick, and right wherever the nearest bone in space is the bone the skin
 // belongs to. `voxel` is the way through the mesh's own volume (`captureVoxel.ts`): an arm lying
-// beside the torso is far from the spine by that measure, however close it is in space. Both hand
-// back the same thing, so everything after this node is the same for either.
+// beside the torso is far from the spine by that measure, however close it is in space. `heat` is
+// the way along the skin (`captureHeat.ts`): two fingers touching side by side are a long way
+// apart by that measure, where the other two join them. All hand back the same thing, so
+// everything after this node is the same for any of them.
 //
-// Each method reads its own settings (`dropoff` for the one, `resolution` and `falloff` for the
-// other), and only the settings the chosen method reads enter the geometry key: turning a setting
-// the method ignores computes nothing again.
+// Each method reads its own settings (`dropoff` for the first, `resolution` and `falloff` for the
+// second, none of its own for the third), and only the settings the chosen method reads enter the
+// geometry key: turning a setting the method ignores computes nothing again.
 //
-// The voxel method runs here, in `evaluate`, like the other: measured in Node on this machine
-// (2026-10-08) it takes about half a second for 72 bones and 24,746 points at 128, and the result
-// is kept per stored mesh below, so a pose edit never pays it twice.
+// The voxel and heat methods run here, in `evaluate`, like the other: measured in Node on this
+// machine for a 24,746-point character, voxel takes about half a second at 128 with 72 bones
+// (2026-10-08) and heat about 0.15 s with 67 (2026-10-12). The result is kept per stored mesh
+// below, so a pose edit never pays it twice.
 //
-// REF: src/nodes/captureWeights.ts, src/nodes/captureVoxel.ts (the two rules);
-//      src/nodes/ArmatureModifier.ts (the reader); src/nodes/skinInfluences.ts;
-//      ref/GROUND_TRUTH_AUTO_SKIN_WEIGHTS.md §10.2; issues #1353, #1539.
+// Heat is that quick there because that character is 95 small pieces. Its cost grows with the size
+// of a PIECE to the power one and a half (`heatLoad`): one skin of 38,400 points and 20 bones took
+// 3.9 s, and of 199,680, 54 s. A capture past `HEAT_WORK_LIMIT` is refused by name rather than
+// left to freeze the app.
+//
+// REF: src/nodes/captureWeights.ts, src/nodes/captureVoxel.ts, src/nodes/captureHeat.ts (the
+//      three rules); src/nodes/ArmatureModifier.ts (the reader); src/nodes/skinInfluences.ts;
+//      ref/GROUND_TRUTH_AUTO_SKIN_WEIGHTS.md §10.2; issues #1353, #1539, #1356.
 
 import { z } from 'zod';
 import type { NodeDefinition } from '../core/dag/types';
@@ -65,18 +73,20 @@ import { modifierDataSource, slotTableThrough } from '../app/modifierDataSource'
 import { refWithAttributeKey } from '../app/modifierGeometry';
 import { localMatrix } from '../app/resolveWorldTransform';
 import { boneWorldMatrices, placeBones } from '../viewport/boneShape';
+import { captureByHeat, HEAT_WORK_LIMIT, heatLoad } from './captureHeat';
 import { captureByVoxel } from './captureVoxel';
 import { captureByProximity, type CaptureBone, type CapturedWeights } from './captureWeights';
 import { mintMeshAttributes } from './meshAttributes';
 import { SKIN_JOINTS, SKIN_WEIGHTS, skinPointLayers } from './skinInfluences';
 
-export const CAPTURE_METHODS = ['proximity', 'voxel'] as const;
+export const CAPTURE_METHODS = ['proximity', 'voxel', 'heat'] as const;
 export type CaptureMethod = (typeof CAPTURE_METHODS)[number];
 
 export const CaptureModifierParams = z.object({
   /**
-   * How a point's distance to a bone is measured: in a straight line, or through the mesh's own
-   * volume (Maya's Closest Distance and Geodesic Voxel bind methods, `skinCluster-cmd-2025.txt:90-97`).
+   * How a point's distance to a bone is measured: in a straight line, through the mesh's own
+   * volume, or along its surface (Maya's Closest Distance, Geodesic Voxel and Heat Map bind
+   * methods, `skinCluster-cmd-2025.txt:90-97`; Blender's "With Automatic Weights" is the third).
    */
   method: z.enum(CAPTURE_METHODS).default('proximity'),
   /** The most bones one point is bound to — Maya's and Houdini's Max Influences. */
@@ -124,9 +134,11 @@ export function captureSettingsOf(given: Partial<CaptureSettings>): CaptureSetti
 
 /** The settings `method` reads, in a fixed order: what its results depend on besides the mesh. */
 function settingsRead(settings: CaptureSettings): readonly (string | number)[] {
-  return settings.method === 'voxel'
-    ? ['voxel', settings.maxInfluences, settings.resolution, settings.falloff]
-    : ['proximity', settings.maxInfluences, settings.dropoff];
+  if (settings.method === 'voxel') {
+    return ['voxel', settings.maxInfluences, settings.resolution, settings.falloff];
+  }
+  if (settings.method === 'heat') return ['heat', settings.maxInfluences];
+  return ['proximity', settings.maxInfluences, settings.dropoff];
 }
 
 /** What a capture did, or the reason it did nothing. */
@@ -143,11 +155,14 @@ export type CapturePlan =
       /** How many points no bone holds: they stay at rest when the others move. */
       readonly unbound: number;
       /**
-       * `voxel`: how many points no bone reached through the volume, bound by straight-line
-       * distance instead. 0 by proximity.
+       * How many points no bone reached by the method's own measure (`voxel`: through the volume;
+       * `heat`: over the surface), bound by straight-line distance instead. 0 by proximity.
        */
       readonly unreached: number;
-      /** `voxel`: the bones in no filled part of the volume, which nothing is measured from. */
+      /**
+       * `voxel`: the bones in no filled part of the volume, which nothing is measured from.
+       * `heat`: the bones that end up holding no point.
+       */
       readonly outside: readonly string[];
     }
   | { readonly kind: 'refused'; readonly reason: string };
@@ -235,15 +250,31 @@ export function planCapture(
   const hit = lastPlan.get(mesh.data);
   if (hit?.key === key) return hit.plan;
 
+  if (params.method === 'heat') {
+    // Asked before the capture, and kept like one: the asking is itself a pass over the mesh.
+    const load = heatLoad(mesh.data, bones.length);
+    if (load !== null && load.work > HEAT_WORK_LIMIT) {
+      const plan: CapturePlan = {
+        kind: 'refused',
+        reason: `the mesh's largest piece has ${load.largest} points, and heat is worked out across a whole piece for each of the ${bones.length} bones: on a piece that size the app would stand frozen. Use the voxel method, which does not grow that way.`,
+      };
+      lastPlan.set(mesh.data, { key, plan });
+      return plan;
+    }
+  }
   const captured: CapturedWeights | null =
     params.method === 'voxel'
       ? captureByVoxel(mesh.data, bones, params)
-      : captureByProximity(mesh.data.points, bones, params);
+      : params.method === 'heat'
+        ? captureByHeat(mesh.data, bones, params)
+        : captureByProximity(mesh.data.points, bones, params);
   if (captured === null) {
     return {
       kind: 'refused',
       reason:
-        'the mesh has no faces, or no size, so it has no inside to measure through: use the proximity method.',
+        params.method === 'heat'
+          ? 'the mesh has no faces, or no size, so it has no surface for heat to spread over: use the proximity method.'
+          : 'the mesh has no faces, or no size, so it has no inside to measure through: use the proximity method.',
     };
   }
   const data: MeshGeometryData = {
@@ -276,7 +307,9 @@ export const CaptureModifierNode: NodeDefinition<CaptureModifierParams, ObjectDa
   version: 1,
   pure: true,
   // By proximity it is tens of milliseconds; by voxel, half a second for a 72-bone character at
-  // 128 and several at 256. Nothing reads `cost` today — the label is for whoever does.
+  // 128 and several at 256; by heat, a sixth of a second for the same character and seconds for
+  // one skin of tens of thousands of points. Nothing reads `cost` today — the label is for whoever
+  // does.
   cost: 'medium',
   paramSchema: CaptureModifierParams,
   inputs: {
