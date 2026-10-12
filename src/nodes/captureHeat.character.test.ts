@@ -1,7 +1,7 @@
 // #1356 — what the heat method is for, measured on a character: fingers standing half a millimetre
 // apart keep their own bones where the voxel grid and straight-line distance do not, an arm hanging
 // beside a leg still does, and the parts it cannot bind by its own measure are counted.
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { bytesMadeBy } from '../test-utils/bytesMadeBy';
 import { xbotArmsDown } from '../test-utils/xbotArmsDown';
@@ -15,9 +15,15 @@ const FINGERS = ['Thumb', 'Index', 'Middle', 'Ring', 'Pinky'];
 const ARM = /(Left|Right)(ForeArm|Hand)/;
 const LEG = /Hips|UpLeg|Leg$|Foot|Toe/;
 
+/** A vendor character that cannot be redistributed, so it is not in the repository. Every row
+ *  here is measured on it and is skipped, by name, where the file is absent (CI). */
+const XBOT = 'public/assets/mixamo-xbot.glb';
+const ABSENT = !existsSync(XBOT);
+
 let bytes: ArrayBuffer;
 beforeAll(() => {
-  const file = readFileSync('public/assets/mixamo-xbot.glb');
+  if (ABSENT) return;
+  const file = readFileSync(XBOT);
   bytes = file.buffer.slice(file.byteOffset, file.byteOffset + file.byteLength) as ArrayBuffer;
 });
 
@@ -93,7 +99,7 @@ async function character(degrees: number) {
   };
 }
 
-describe('#1356 — fingers that touch, and an arm at the side', () => {
+describe.skipIf(ABSENT)('#1356 — fingers that touch, and an arm at the side', () => {
   it('the fingers are a twentieth of a voxel apart: the grid joins them, heat does not', async () => {
     const { xbot, fingers, legs } = await character(75);
     const near = captureByProximity(xbot.mesh.points, xbot.bones, { maxInfluences: 4, dropoff: 4 });

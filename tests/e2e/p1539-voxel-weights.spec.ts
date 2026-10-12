@@ -12,6 +12,7 @@
 // neighbours. A quarter turn of the middle bone about Z carries the middle and top bones' share,
 // 1.2/1.4, of the way to (−0.5, 1.25, 0): (−0.393, 1.286, 0).
 
+import { existsSync } from 'node:fs';
 import type { Page } from '@playwright/test';
 import { test, expect, settleViewFit } from './_fixtures';
 
@@ -311,6 +312,9 @@ test('#1539 — an open tube bound by voxel distance bends smoothly, and says ev
 test('#1539 — 72 bones at 128 in the browser: the time it takes and the memory it holds', async ({
   page,
 }, testInfo) => {
+  // The character is a vendor file that cannot be redistributed, so it is not in the repository:
+  // this row runs where the file is present and is skipped, by name, where it is not (CI).
+  test.skip(!existsSync('public/assets/mixamo-xbot.glb'), 'the vendor character is not present');
   test.setTimeout(180_000);
   await boot(page);
   const measured = await page.evaluate(async () => {

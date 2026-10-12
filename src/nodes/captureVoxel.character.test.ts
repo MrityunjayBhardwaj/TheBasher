@@ -1,7 +1,7 @@
 // #1539 — the two things the voxel method is for, measured on a character: an arm hanging beside a
 // leg keeps its own bones where straight-line distance does not, and the memory a capture takes
 // does not grow with the number of bones.
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { bytesMadeBy } from '../test-utils/bytesMadeBy';
 import { xbotArmsDown, type XbotArmsDown } from '../test-utils/xbotArmsDown';
@@ -17,11 +17,17 @@ const SHARE = 0.05;
 const ARM = /(Left|Right)(ForeArm|Hand)/;
 const LEG = /Hips|UpLeg|Leg$|Foot|Toe/;
 
+/** A vendor character that cannot be redistributed, so it is not in the repository. Every row
+ *  here is measured on it and is skipped, by name, where the file is absent (CI). */
+const XBOT = 'public/assets/mixamo-xbot.glb';
+const ABSENT = !existsSync(XBOT);
+
 let xbot: XbotArmsDown;
 /** Per point: 1 a forearm or hand point, 2 a hips or leg point, 0 neither — by the FILE's weights. */
 let part: Uint8Array;
 beforeAll(async () => {
-  const file = readFileSync('public/assets/mixamo-xbot.glb');
+  if (ABSENT) return;
+  const file = readFileSync(XBOT);
   xbot = await xbotArmsDown(
     file.buffer.slice(file.byteOffset, file.byteOffset + file.byteLength) as ArrayBuffer,
     DEGREES,
@@ -62,7 +68,7 @@ function crossed(got: CapturedWeights, which: 1 | 2): { over: number; most: numb
   return { over, most, of };
 }
 
-describe('#1539 — an arm at the side of a character', () => {
+describe.skipIf(ABSENT)('#1539 — an arm at the side of a character', () => {
   it('the fixture is what it says: 67 bones, hands a few centimetres from the thighs', () => {
     expect(xbot.bones).toHaveLength(67);
     expect(xbot.mesh.points.length / 3).toBe(24746);
@@ -116,7 +122,7 @@ describe('#1539 — an arm at the side of a character', () => {
   });
 });
 
-describe('#1539 — the memory a capture takes', () => {
+describe.skipIf(ABSENT)('#1539 — the memory a capture takes', () => {
   /** 72 bones: the fixture's 67 and five more up the spine. */
   const seventyTwo = (): CaptureBone[] => [
     ...xbot.bones,

@@ -12,6 +12,7 @@
 // Then the cost of the method where it will run: a 24,746-point character with 67 bones, timed and
 // its memory counted in this browser.
 
+import { existsSync } from 'node:fs';
 import type { Page } from '@playwright/test';
 import { test, expect, settleViewFit } from './_fixtures';
 
@@ -305,6 +306,9 @@ test('#1356 — two fingers a hair apart: bound by heat, bending one leaves the 
 test('#1356 — a 67-bone character by heat in the browser: the time it takes and the memory it holds', async ({
   page,
 }, testInfo) => {
+  // The character is a vendor file that cannot be redistributed, so it is not in the repository:
+  // this row runs where the file is present and is skipped, by name, where it is not (CI).
+  test.skip(!existsSync('public/assets/mixamo-xbot.glb'), 'the vendor character is not present');
   test.setTimeout(180_000);
   await boot(page);
   const measured = await page.evaluate(async () => {
