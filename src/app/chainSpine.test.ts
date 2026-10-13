@@ -171,6 +171,7 @@ describe('#396 — the chain spine is declared, not named', () => {
       'ArmatureModifier', // data lane — geometry (#393, the first that DEFORMS: points move over time)
       'ArrayModifier', // data lane — geometry
       'BevelModifier', // data lane — geometry (#818/#814, the first that MINTS elements)
+      'CaptureModifier', // #1353
       'ColorCorrect', // effect lane
       'ComponentGroupOp', // data lane — geometry (#1027, the first whose VALUES are authored)
       'MaskModifier', // data lane — geometry (#668/#671, the first that REMOVES faces)

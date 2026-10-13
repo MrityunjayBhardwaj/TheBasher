@@ -105,6 +105,7 @@ describe('ns-2 step 7 — membership is derived from the declaration', () => {
       'ArmatureModifier',
       'ArrayModifier',
       'BevelModifier',
+      'CaptureModifier', // #1353
       // #1027 — the sixth. It reshapes no geometry either; what it adds is a NAME for a set
       // of faces. A modifier by its own declaration and nothing else, same as the fifth.
       'ComponentGroupOp',
@@ -132,6 +133,7 @@ describe('ns-2 step 7 — membership is derived from the declaration', () => {
       'ArmatureModifier',
       'ArrayModifier',
       'BevelModifier',
+      'CaptureModifier', // #1353
       // #1027 — the sixth. It reshapes no geometry either; what it adds is a NAME for a set
       // of faces. A modifier by its own declaration and nothing else, same as the fifth.
       'ComponentGroupOp',
@@ -146,6 +148,7 @@ describe('ns-2 step 7 — membership is derived from the declaration', () => {
       'ArrayModifier',
       'ArmatureModifier',
       'BevelModifier',
+      'CaptureModifier', // #1353
       'ComponentGroupOp',
       'MaskModifier',
       'MirrorModifier',

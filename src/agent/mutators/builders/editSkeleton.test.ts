@@ -87,6 +87,18 @@ describe('#1339 — mutator.rig.editSkeleton', () => {
     expect(JSON.stringify(useDagStore.getState().state.nodes)).toBe(before);
   });
 
+  it('#1353 — marks a bone as not deforming, and the evaluated skeleton carries it', () => {
+    const { object, skeleton } = armature();
+    expect(edit(object, { op: 'deform', bone: 'Bone', deform: false }).ok).toBe(true);
+    expect(bones(skeleton)[0].deform).toBe(false);
+    const value = evaluate(useDagStore.getState().state, skeleton, {
+      ctx: { time: { frame: 0, seconds: 0, normalized: 0 } } as never,
+    }).value as { out: { bones: { name: string; deform?: false }[] } };
+    expect(value.out.bones.filter((b) => b.deform === false).map((b) => b.name)).toEqual(['Bone']);
+    expect(edit(object, { op: 'deform', bone: 'Bone', deform: true }).ok).toBe(true);
+    expect('deform' in bones(skeleton)[0]).toBe(false);
+  });
+
   it('refuses what it cannot do by saying why, and writes nothing', () => {
     const { object } = armature();
     const before = useDagStore.getState().state;

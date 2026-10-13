@@ -1740,6 +1740,12 @@ export interface BoneSpec {
     readonly y?: readonly [number, number];
     readonly z?: readonly [number, number];
   };
+  /**
+   * #1353 — OPTIONAL deform flag (Blender's bone Deform, `BONE_NO_DEFORM` inverted): `false` on a
+   * bone that moves no skin — a control, an IK goal, a pole. Capturing weights skips it. Absent →
+   * the bone deforms; only `false` is ever stored.
+   */
+  readonly deform?: false;
 }
 
 export interface SkeletonValue {

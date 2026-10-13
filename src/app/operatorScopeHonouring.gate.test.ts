@@ -239,8 +239,10 @@ describe('ns-2 step 17 — a declared scope is HONOURED, not merely declared', (
     const exempt = listNodeTypes().filter((t) => getNodeType(t)?.chain?.scope.kind === 'unscoped');
     // #393 — `ArmatureModifier` is the fifth, excused the way `UVProjectModifier` is: a
     // `'declined'` deferral on an `ObjectData` spine (Blender's vertex-group limit, not built).
+    // #1353 — `CaptureModifier` is the sixth, by the same `'declined'` deferral (a point group).
     expect(exempt.sort()).toEqual([
       'ArmatureModifier',
+      'CaptureModifier',
       'ColorCorrect',
       'MaterialOverride',
       'Transform',

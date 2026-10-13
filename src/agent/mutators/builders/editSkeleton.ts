@@ -79,6 +79,8 @@ const Edit = z.discriminatedUnion('op', [
       .object({ x: AxisRange.optional(), y: AxisRange.optional(), z: AxisRange.optional() })
       .nullable(),
   }),
+  // #1353 — whether the bone moves skin; a bone that does not is skipped when weights are captured.
+  z.object({ op: z.literal('deform'), bone: BoneName, deform: z.boolean() }),
   // #1341 — mirror bones with a side in their name onto their twins.
   z.object({
     op: z.literal('symmetrize'),
@@ -149,7 +151,8 @@ export const editSkeletonMutator: MutatorDefinition<EditSkeletonSpec> = {
     'its parent unless reparent is false), parent (null = root), reroot, transform (rest ' +
     'position/rotation/scale; children follow or stay), orient (aim +Y at the child, roll +Z ' +
     'toward `up`), preferredAngle (the IK start bend), limits (per axis [min, max] radians from ' +
-    'rest, which posing and IK stop at; null clears), or symmetrize (mirror L/R-named bones onto ' +
+    'rest, which posing and IK stop at; null clears), deform (false = a control that moves no ' +
+    'skin, skipped when weights are captured), or symmetrize (mirror L/R-named bones onto ' +
     'their twins, made or updated, with the IK of any hand among them and their retarget bone-map ' +
     'entries). Joints not moved keep their place.',
   spec: EditSkeletonSpec,

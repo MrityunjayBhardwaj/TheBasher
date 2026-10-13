@@ -4716,6 +4716,26 @@ function EditBoneRow({ nodeId, boneName }: { nodeId: string; boneName: string })
           />
         ))}
       </div>
+      {/* #1353 — whether the bone moves skin. A control (an IK goal, a pole) does not, and capturing
+          weights skips it. */}
+      <label
+        className="flex items-center gap-1 font-mono text-[10px] text-fg/50"
+        title="Whether this bone moves skin. Switch it off for a control: capturing weights skips it."
+      >
+        <input
+          type="checkbox"
+          aria-label="deform"
+          data-testid="edit-bone-deform"
+          checked={spec.deform !== false}
+          onChange={(e) =>
+            edit(
+              { op: 'deform', bone: boneName, deform: e.target.checked },
+              `set ${boneName} deform`,
+            )
+          }
+        />
+        deform
+      </label>
       {/* #1344 — joint limits: how far the bone may turn from its rest, per axis. Posing and IK stop
           at them. An axis switched on starts at a half turn each way (Blender's IK limit default). */}
       {(['x', 'y', 'z'] as const).map((axis) => {
