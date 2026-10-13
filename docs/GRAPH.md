@@ -43,6 +43,13 @@ what happens to the target?" (see the `idRefs` doc comment in `src/core/dag/type
 Delete (#1560), duplicate (#1561) and the agent's view of a node (#1553) are derived from
 these three relationships, not written per node type.
 
+One reference is stored outside the parameters: a node whose name follows another's holds that
+node's id in `meta.nameFrom`. The same walker reads it, so deleting the followed node clears
+the link and the follower keeps the name it has. `relationsOf` (`src/core/dag/idRefSweep.ts`)
+answers every relationship of a node at once: wires in and out, references in and out, name
+followers and sub-network membership. A loop that runs through a reference is stored and
+named by `referenceCycles`, not refused; a loop of wires alone is still refused.
+
 ## 3. The node families
 
 ```

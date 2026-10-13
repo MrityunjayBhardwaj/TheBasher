@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { buildDeleteNodesOps, buildDuplicateNodeOps } from './sceneNodeActions';
 import { registerAllNodes } from '../nodes/registerAll';
 import { applyOp, emptyDagState } from '../core/dag';
+import { danglingIdRefs } from '../core/dag/idRefSweep';
 import { evaluate } from '../core/dag/evaluator';
 import { buildAddModifierOps, findConsumer, resolveStackBase } from './operatorStack';
 import { buildDefaultDagState } from '../core/project/default';
@@ -759,5 +760,41 @@ describe('#394 S4 — a duplicated Object SHARES its Material node', () => {
     expect(colorOf(edited, 'data_copy')).toBe(EDITED);
     // Non-vacuous: the edit really did change something (both were LINKED before).
     expect(EDITED).not.toBe(LINKED);
+  });
+});
+
+// #1553 — a name follower is a relationship like a channel's target, so the delete door clears
+// it. Before, the follower kept `nameFrom` pointing at a node that was gone.
+describe('buildDeleteNodesOps — a node following a deleted node’s name (#1553)', () => {
+  const scene = (): DagState =>
+    (
+      [
+        { type: 'addNode', nodeId: 'src', nodeType: 'Math', params: {} },
+        { type: 'addNode', nodeId: 'named', nodeType: 'Math', params: {} },
+        { type: 'setMeta', nodeId: 'src', name: 'walk' },
+        { type: 'setMeta', nodeId: 'named', name: 'stale', nameFrom: 'src' },
+        { type: 'addNode', nodeId: 'other', nodeType: 'Math', params: {} },
+      ] as Op[]
+    ).reduce((state, op) => applyOp(state, op).next, emptyDagState());
+
+  it('the follower keeps the name it had and stops following', () => {
+    const before = scene();
+    expect(before.nodes.named.meta).toEqual({ name: 'walk', nameFrom: 'src' });
+    const after = buildDeleteNodesOps(before, ['src']).reduce(
+      (state, op) => applyOp(state, op).next,
+      before,
+    );
+    expect(after.nodes.src).toBeUndefined();
+    expect(after.nodes.named.meta).toEqual({ name: 'walk' });
+    expect(danglingIdRefs(after.nodes)).toEqual([]);
+  });
+
+  it('CONTROL: deleting an unrelated node leaves the link alone', () => {
+    const before = scene();
+    const after = buildDeleteNodesOps(before, ['other']).reduce(
+      (state, op) => applyOp(state, op).next,
+      before,
+    );
+    expect(after.nodes.named.meta).toEqual({ name: 'walk', nameFrom: 'src' });
   });
 });
