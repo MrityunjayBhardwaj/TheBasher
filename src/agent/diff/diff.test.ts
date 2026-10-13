@@ -252,8 +252,10 @@ describe('useDiffStore', () => {
       dispatched = { description };
     });
     expect(dispatched).not.toBeNull();
-    // Sorted ASCII: duplicate < scale.
-    expect(dispatched!.description).toBe('(partial) agent:mutator.duplicate, agent:mutator.scale');
+    // #1612 — the accepted part is said in plain words (a move and a resize of the box, the
+    // rotate left out), not as the tools that proposed it.
+    expect(dispatched!.description).toBe('(partial) Changed box');
+    expect(dispatched!.description).not.toMatch(/mutator|agent:/);
   });
 
   it('acceptSelectedOps returns false when nothing selected', () => {

@@ -23,6 +23,7 @@ import {
   opTargetNodeId,
 } from '../closure/expand';
 import type { ClosureSet, ClosureSpec } from '../closure/types';
+import { describeChange } from '../describeChange';
 
 export type DiffStatus = 'idle' | 'pending' | 'previewing' | 'applied' | 'rejected';
 
@@ -253,20 +254,12 @@ export function acceptSelectedOps(
 }
 
 function buildPartialDescription(diff: PendingDiff): string {
-  if (diff.opSources && diff.opSources.length === diff.ops.length) {
-    const acceptedSources = new Set<string>();
-    for (let i = 0; i < diff.ops.length; i++) {
-      if (diff.selected[i]) acceptedSources.add(diff.opSources[i]);
-    }
-    // #21: sort to make the undo title deterministic. Set iteration is
-    // insertion-order in modern JS, but the insertion order itself is
-    // op-emission-order — which a future Mutator refactor could shuffle
-    // without anyone realising the user-visible undo string changed
-    // with it. Locale-independent ASCII sort keeps test fixtures stable.
-    const list = [...acceptedSources].sort().join(', ');
-    return list ? `(partial) ${list}` : `(partial) ${diff.description}`;
-  }
-  return `(partial) ${diff.description}`;
+  // #1612 — what the accepted part does, in the words the whole diff used: the ops say it,
+  // read against the state the diff was proposed on. (It used to list the accepted ops'
+  // sources, `agent:mutator.duplicate, agent:mutator.scale`, which named tools, not changes.)
+  const accepted = diff.ops.filter((_, i) => diff.selected[i]);
+  const said = describeChange(diff.originalState, accepted);
+  return `(partial) ${said || diff.description}`;
 }
 
 /**
