@@ -1392,3 +1392,46 @@ describe('buildDeleteNodesOps — a collection never keeps a deleted group’s c
     expect(after.nodes.G2.inputs.children).toEqual([{ node: 'n_box', socket: 'out' }]);
   });
 });
+
+describe('buildDuplicateNodeOps — an original read on a single socket (#1630)', () => {
+  const duplicated = (id: string) => {
+    const s = buildDefaultDagState();
+    const res = buildDuplicateNodeOps(s, id);
+    if (!res) return { s, after: null, res };
+    useDagStore.getState().hydrate(s);
+    useDagStore.getState().dispatchAtomic(res.ops, 'user', 'duplicate');
+    return { s, after: useDagStore.getState().state, res };
+  };
+
+  it('the fixture: the default scene reads its camera on a single socket', () => {
+    expect(buildDefaultDagState().nodes.n_scene.inputs.camera).toEqual({
+      node: 'n_camera',
+      socket: 'out',
+    });
+  });
+
+  it('duplicating the scene camera leaves the scene on the original and adds a second camera', () => {
+    const { after, res } = duplicated('n_camera');
+    expect(after!.nodes.n_scene.inputs.camera).toEqual({ node: 'n_camera', socket: 'out' });
+    const copy = after!.nodes[res!.newRootId];
+    expect(copy.type).toBe('Object');
+    const copyData = (copy.inputs.data as { node: string }).node;
+    expect(copyData).not.toBe('n_camera_data');
+    expect(after!.nodes[copyData].type).toBe('CameraData');
+  });
+
+  it('CONTROL: a cube and a light are still copied in right after the original', () => {
+    expect(duplicated('n_box').after!.nodes.n_scene.inputs.children).toEqual([
+      { node: 'n_box', socket: 'out' },
+      { node: 'n_box_copy', socket: 'out' },
+    ]);
+    expect(duplicated('n_light').after!.nodes.n_scene.inputs.lights).toEqual([
+      { node: 'n_light', socket: 'out' },
+      { node: 'n_light_copy', socket: 'out' },
+    ]);
+  });
+
+  it('a data node, read on its Object’s single socket, has nothing to be duplicated as', () => {
+    expect(buildDuplicateNodeOps(buildDefaultDagState(), 'n_box_data')).toBeNull();
+  });
+});

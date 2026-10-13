@@ -17,6 +17,7 @@ import {
   wireOwnership,
 } from '../core/dag/idRefSweep';
 import { subnetworkOf } from '../core/dag/subnetworks';
+import { isCameraNode } from './cameraNode';
 import {
   collectionDeleteRelinkOps,
   collectionsHolding,
@@ -417,6 +418,14 @@ export function buildDuplicateNodeOps(
     }
   }
   if (!parent) return null;
+  // #1630 — a parent that reads the original on a SINGLE socket has no sibling position to
+  // give: wiring the copy in displaced the original, so Shift+D on the scene's camera made
+  // the copy the scene's camera. A camera's copy is left unwired instead, which is how every
+  // camera but the active one already sits (Add ▸ Camera wires none either) and Blender keeps
+  // the scene's camera where it was. Anything else there has nothing to be duplicated as.
+  const parentIsList =
+    getNodeType(state.nodes[parent.node].type)?.inputs?.[parent.socket]?.cardinality === 'list';
+  if (!parentIsList && !isCameraNode(state, rootId)) return null;
 
   // 2. Subtree = root + hierarchy descendants (DFS over children/target).
   const subtree: NodeId[] = [];
@@ -471,12 +480,14 @@ export function buildDuplicateNodeOps(
     }
   }
   // 6. Wire the clone root as a sibling immediately after the original.
-  ops.push({
-    type: 'connect',
-    from: { node: idMap.get(rootId)!, socket: parent.fromSocket },
-    to: { node: parent.node, socket: parent.socket },
-    index: parent.index + 1,
-  });
+  if (parentIsList) {
+    ops.push({
+      type: 'connect',
+      from: { node: idMap.get(rootId)!, socket: parent.fromSocket },
+      to: { node: parent.node, socket: parent.socket },
+      index: parent.index + 1,
+    });
+  }
   // #1453 — each copy joins the collections its original is in, as Blender's Shift+D links a
   // duplicate into its source's collections. Membership only: where it hangs is step 6's.
   for (const [sourceId, cloneId] of idMap)
