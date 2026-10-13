@@ -27,6 +27,7 @@ import type { MutatorDefinition } from '../types';
 import type { ClosureSet, ClosureSpec } from '../../closure/types';
 import type { DagState } from '../../../core/dag/state';
 import type { NodeId, Op } from '../../../core/dag/types';
+import { animatablePathsOf, missingParamPath } from '../../../app/animatableParams';
 import { resolveExposedTarget } from '../../../app/exposeParams';
 
 const ValueType = z.enum(['number', 'vec3', 'quat', 'color']);
@@ -87,6 +88,19 @@ function shapeOk(valueType: ValueType, value: unknown): boolean {
   }
 }
 
+/** What a `valueType` channel does animate on `target`, and on the data node it poses. */
+function animatableHint(state: DagState, target: NodeId, valueType: ValueType): string {
+  const dataId = (state.nodes[target]?.inputs as { data?: { node?: string } } | undefined)?.data
+    ?.node;
+  const paths = [
+    ...(animatablePathsOf(state, target, valueType) ?? []),
+    ...(dataId ? (animatablePathsOf(state, dataId, valueType) ?? []) : []),
+  ];
+  return paths.length > 0
+    ? `A ${valueType} channel on it can animate: ${paths.join(', ')}.`
+    : `Nothing on it is measured to animate with a ${valueType} channel.`;
+}
+
 function defaultEasing(valueType: ValueType): 'linear' | 'cubic' {
   // Per project_p3_plan: cubic for vec3/quat/color (spatial / smooth feel),
   // linear for scalar (predictable when scrubbing).
@@ -137,6 +151,18 @@ export const addChannelMutator: MutatorDefinition<AddChannelSpec> = {
       return {
         ok: false,
         reason: `initialKeyframe.value shape does not match valueType="${spec.valueType}".`,
+      };
+    }
+    // #1552 — a path that certainly names no parameter is refused here, the authoring door,
+    // with what does animate. "Cannot say" (a ComfyUI input, a node the census never placed, a
+    // parameter something else supplies) is let through: could-not-look is not nothing-there.
+    const missing = missingParamPath(state, spec.target, spec.paramPath, spec.valueType);
+    if (missing) {
+      return {
+        ok: false,
+        reason:
+          `"${spec.paramPath}" is not a parameter of "${spec.target}": ${missing.reason}. ` +
+          animatableHint(state, spec.target, spec.valueType),
       };
     }
     return { ok: true };

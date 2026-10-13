@@ -20,6 +20,7 @@
 import type { DagState } from '../core/dag/state';
 import { wouldCreateCycle } from '../core/dag/state';
 import type { NodeRef, Op } from '../core/dag/types';
+import { missingParamPath } from './animatableParams';
 import { driverParamDeps, nextDriverOrder } from './paramDrivers';
 
 const BODY = 'body';
@@ -128,6 +129,9 @@ export function buildSpringOps(state: DagState, req: SpringRequest): SpringBuild
   if (wouldCreateCycle(state, controllerId, targetId, driverParamDeps(state.nodes))) {
     return { ok: false, reason: 'spring would create a driver cycle' };
   }
+  // #1552 — a spring on a path that certainly names no parameter would drive nothing.
+  const missing = missingParamPath(state, targetId, paramPath, 'vec3', { mechanism: 'driver' });
+  if (missing) return { ok: false, reason: `'${paramPath}' is not a parameter: ${missing.reason}` };
 
   const id = idFor;
   const out = (n: string): NodeRef => ({ node: n, socket: 'out' });

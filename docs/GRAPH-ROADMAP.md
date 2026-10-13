@@ -88,10 +88,6 @@ over one Mix node matches a Lag sample for sample.
 
 ## Decisions this order is waiting on
 
-- #1552: what to do with a path that does not exist. The issue asks for a check against the
-  target's parameter schema; that would refuse legitimate paths, because a channel writes
-  onto the evaluated value, not the schema. The choice is between refusing only when the
-  measured list of animatable paths is certain, and reporting without refusing.
 - #1545: three differences from Houdini (GRAPH.md §6 rows 19, 22 and 29) each need
   keep, change or defer, with the reason.
 

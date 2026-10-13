@@ -2468,21 +2468,61 @@ describe('mutator.timeline.addChannel (free-floating, V57)', () => {
     if (op.type === 'addNode') expect(op.nodeId).toBe('box_material_base_color_channel');
   });
 
+  // Each on a parameter the box really has: a path that names none is refused (#1552).
   it.each([
-    ['number', 'KeyframeChannelNumber'],
-    ['vec3', 'KeyframeChannelVec3'],
-    ['quat', 'KeyframeChannelQuat'],
-    ['color', 'KeyframeChannelColor'],
-  ])('valueType=%s → nodeType=%s', (valueType, nodeType) => {
+    ['number', 'KeyframeChannelNumber', 'material.base.metalness'],
+    ['vec3', 'KeyframeChannelVec3', 'position'],
+    ['quat', 'KeyframeChannelQuat', 'quaternion'],
+    ['color', 'KeyframeChannelColor', 'material.base.color'],
+  ])('valueType=%s → nodeType=%s', (valueType, nodeType, paramPath) => {
     const state = buildSceneWithTime();
+    const r = validatePlan(addChannelMutator, { target: 'box', paramPath, valueType }, state, 't');
+    expect(r.ok).toBe(true);
+    if (r.ok && r.ops[0].type === 'addNode') expect(r.ops[0].nodeType).toBe(nodeType);
+  });
+
+  // #1552 — the authoring door refuses a path that certainly names no parameter, and only that.
+  it.each(['positoin', 'nosuchleaf', 'no.such.path'])(
+    'refuses "%s", a path the box does not have, and says what does animate',
+    (paramPath) => {
+      const r = validatePlan(
+        addChannelMutator,
+        { target: 'box', paramPath, valueType: 'vec3' },
+        buildSceneWithTime(),
+        't',
+      );
+      expect(r.ok).toBe(false);
+      if (!r.ok) {
+        expect(r.reason).toContain(`"${paramPath}" is not a parameter of "box"`);
+        expect(r.reason).toContain('can animate: position, rotation, scale');
+      }
+    },
+  );
+
+  it('CONTROL: still accepts a path it cannot judge (a ComfyUI input, in no schema)', () => {
+    const state = applyOp(buildSceneWithTime(), {
+      type: 'addNode',
+      nodeId: 'wf',
+      nodeType: 'ComfyUIWorkflow',
+      params: {},
+    }).next;
     const r = validatePlan(
       addChannelMutator,
-      { target: 'box', paramPath: 'p', valueType },
+      { target: 'wf', paramPath: 'comfy:6.text', valueType: 'number' },
       state,
       't',
     );
     expect(r.ok).toBe(true);
-    if (r.ok && r.ops[0].type === 'addNode') expect(r.ops[0].nodeType).toBe(nodeType);
+  });
+
+  it('CONTROL: the raw operation still stores a channel on a missing path', () => {
+    const next = applyOp(buildSceneWithTime(), {
+      type: 'addNode',
+      nodeId: 'raw',
+      nodeType: 'KeyframeChannelVec3',
+      params: { name: 'x', target: 'box', paramPath: 'positoin', keyframes: [] },
+    }).next;
+    expect(next.nodes.raw).toBeDefined();
   });
 
   it('rejects when target is not in the DAG (gate 4)', () => {

@@ -18,6 +18,7 @@ import type { DagState } from '../core/dag/state';
 import { wouldCreateCycle } from '../core/dag/state';
 import type { NodeRef, Op } from '../core/dag/types';
 import { getNodeType } from '../core/dag/registry';
+import { missingParamPath } from './animatableParams';
 import { driverNodesForTarget, driverParamDeps, nextDriverOrder } from './paramDrivers';
 import { TRANSFORM_CHANNELS, type TransformChannel } from '../nodes/ParamDriver';
 
@@ -90,6 +91,15 @@ export function buildBindDriverOps(state: DagState, req: DriverBindRequest): Dri
   if (wouldCreateCycle(state, srcNode, targetId, driverParamDeps(state.nodes))) {
     return { ok: false, reason: 'binding would create a driver cycle' };
   }
+  // #1552 — a driver on a path that certainly names no parameter would drive nothing.
+  const missing = missingParamPath(
+    state,
+    targetId,
+    paramPath,
+    source.kind === 'transformVec' ? 'vec3' : 'number',
+    { mechanism: 'driver' },
+  );
+  if (missing) return { ok: false, reason: `'${paramPath}' is not a parameter: ${missing.reason}` };
   // #315 — land the new driver on TOP of whatever already drives this band, instead of
   // the hardcoded 0 every road used to write. An empty band → 0 (byte-identical); a
   // SECOND driver on the band → 1, so the two no longer tie and fall back to node-table

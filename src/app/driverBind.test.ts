@@ -42,7 +42,8 @@ const addSpare = (nodeId: string, key: string, value: number): Op => ({
 });
 
 const BOX_ID = 'n_box';
-const PARAM = 'material.metalness';
+// A parameter the cube really has: a path that names none is refused at this door (#1552).
+const PARAM = 'material.base.metalness';
 const DEFAULT_REMAP = { inMin: 0, inMax: 1, outMin: 0, outMax: 1 };
 
 function withNodes(...ops: Op[]): DagState {
@@ -452,7 +453,7 @@ describe('driverBind — the Vector3 road (vec target drive)', () => {
     const state = withNodes(addMakeVec3('mv1'));
     const res = buildBindDriverOps(state, {
       targetId: BOX_ID,
-      paramPath: 'material.emissive',
+      paramPath: 'material.emission.color',
       source: vecSource('mv1'),
       driverId: 'drvV',
     });
@@ -525,7 +526,7 @@ describe('buildBindDriverOps — the new driver lands on top of its band (#315)'
     const state = withNodes(addClamp('c1'), addClamp('c2'), addDriver('d1', BOX_ID, PARAM));
     const r = buildBindDriverOps(state, {
       targetId: BOX_ID,
-      paramPath: 'material.roughness', // a different band — does not contend with d1
+      paramPath: 'material.specular.roughness', // a different band — does not contend with d1
       source: outSource('c2'),
       driverId: 'd2',
     });

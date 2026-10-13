@@ -10,6 +10,7 @@ import type { ToolDefinition, ToolContext } from './types';
 import { getNodeType } from '../../core/dag/registry';
 import { renderNodeCatalog } from '../nodeCatalog';
 import { referenceCycles, relationsOf, type NodeRelations } from '../../core/dag/idRefSweep';
+import { brokenReferences } from '../../app/animatableParams';
 import { readBaseParam } from '../../app/readBaseParam';
 import type { DagState } from '../../core/dag/state';
 import { paramsForAgent } from '../paramsForAgent';
@@ -37,7 +38,8 @@ export const dagInspectTool: ToolDefinition<DagInspectArgs> = {
     'a channel on it is driven at playback, so writing it changes the base value ' +
     'and not what is rendered. It also lists consumers (what this node is wired into), ' +
     'nameFollowers (nodes whose name follows this one), and referenceCycles when the ' +
-    'node sits on a loop of references.',
+    'node sits on a loop of references. brokenReferences lists a channel or driver ' +
+    'aimed at a node or a parameter path that does not exist: it animates nothing.',
   paramSchema: dagInspectSchema,
   handler(args: DagInspectArgs, ctx: ToolContext): { ops: []; text: string } {
     const { dagState } = ctx;
@@ -59,6 +61,7 @@ export const dagInspectTool: ToolDefinition<DagInspectArgs> = {
         });
 
         const cycles = referenceCycles(dagState);
+        const broken = brokenReferences(dagState);
         const text = JSON.stringify(
           {
             nodes: nodeList,
@@ -66,6 +69,8 @@ export const dagInspectTool: ToolDefinition<DagInspectArgs> = {
             nodeCount: nodeList.length,
             // #1553 — a loop of references is stored, not refused, so it is said here.
             referenceCycles: cycles.length > 0 ? cycles : undefined,
+            // #1552 — and so is a reference aimed at a node or a parameter that is not there.
+            brokenReferences: broken.length > 0 ? broken : undefined,
           },
           null,
           2,
@@ -103,6 +108,10 @@ export const dagInspectTool: ToolDefinition<DagInspectArgs> = {
             insideSubnetworkOf: some(relations.insideSubnetworkOf),
             subnetwork: some(relations.subnetwork),
             referenceCycles: some(relations.cycles),
+            // #1552 — the broken references this node holds, or that are aimed at it.
+            brokenReferences: some(
+              brokenReferences(dagState).filter((b) => b.node === node.id || b.target === node.id),
+            ),
           },
           null,
           2,

@@ -50,6 +50,15 @@ answers every relationship of a node at once: wires in and out, references in an
 followers and sub-network membership. A loop that runs through a reference is stored and
 named by `referenceCycles`, not refused; a loop of wires alone is still refused.
 
+A reference can also be aimed at nothing: a node that is gone, or a parameter path the target
+does not have. What happens depends on the door, as in Blender. The agent's authoring door
+refuses a path that is certainly missing and lists what does animate; "certainly" means the
+measured list of animatable paths placed that kind of node and has no such path, and the
+node's own schema drops a value written there. A raw operation and a loaded project keep such
+a reference, so an older project still loads, and `brokenReferences`
+(`src/app/animatableParams.ts`) lists it. Nothing is stored to mark it, so a reference that
+resolves again simply leaves the list.
+
 ## 3. The node families
 
 ```
