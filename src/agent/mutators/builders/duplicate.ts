@@ -1,6 +1,6 @@
 // duplicate Mutator — clone a target into the same scene aggregator.
 //
-// #437 — DELEGATE to the one shared authority (`buildDuplicateNodeOps`) instead
+// #437 — DELEGATE to the one shared authority (`buildDuplicateNodesOps`) instead
 // of reimplementing, exactly as `deleteNodeMutator` now delegates to
 // `buildDeleteNodesOps` (#424). This builder used to be a SECOND, independent
 // answer to "duplicate a node", and the more broken of the two: it cloned only

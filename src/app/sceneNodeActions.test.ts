@@ -1,8 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import {
   buildDeleteNodesOps,
-  buildDuplicateNodeOps,
   buildDuplicateNodesOps,
+  type DuplicateOptions,
 } from './sceneNodeActions';
 import { registerAllNodes } from '../nodes/registerAll';
 import { applyOp, emptyDagState } from '../core/dag';
@@ -27,6 +27,16 @@ import type { MeshDataValue } from '../nodes/types';
 // test has to ask. Without it the sweep silently finds nothing — the same class of
 // quiet failure this whole change is about.
 registerAllNodes();
+
+/** One root through the real builder, in the `{ ops, newRootId }` shape these cases read. */
+function buildDuplicateNodeOps(
+  state: DagState,
+  rootId: string,
+  options?: DuplicateOptions,
+): { ops: Op[]; newRootId: string } | null {
+  const res = buildDuplicateNodesOps(state, [rootId], options);
+  return res ? { ops: res.ops, newRootId: res.newRootIds[0] } : null;
+}
 
 // Minimal fake DAG — the builders read only node.type / params / inputs and emit
 // ops; they don't validate schema, so a plain object suffices for unit coverage.

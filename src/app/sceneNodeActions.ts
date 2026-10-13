@@ -622,20 +622,3 @@ export function buildDuplicateNodesOps(
 
   return { ops, newRootIds: roots.map((root) => idMap.get(root.id)!) };
 }
-
-/**
- * {@link buildDuplicateNodesOps} for ONE root, in the shape its first callers took. The
- * second argument is the options, or the bare `reserved` id-space the agent used to pass.
- */
-export function buildDuplicateNodeOps(
-  state: DagState,
-  rootId: NodeId,
-  options?: DuplicateOptions | Set<NodeId>,
-): { ops: Op[]; newRootId: NodeId } | null {
-  const res = buildDuplicateNodesOps(
-    state,
-    [rootId],
-    options instanceof Set ? { reserved: options } : options,
-  );
-  return res ? { ops: res.ops, newRootId: res.newRootIds[0] } : null;
-}

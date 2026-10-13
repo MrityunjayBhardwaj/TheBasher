@@ -1649,7 +1649,7 @@ const sprungScene = (): DagState => {
 
 describe('duplicate mutator', () => {
   it('emits addNode + connect chain into the same consumer', () => {
-    // #437 — the agent now delegates to the shared buildDuplicateNodeOps, so the
+    // #437 — the agent now delegates to the shared buildDuplicateNodesOps, so the
     // clone id follows the outliner's `_copy` scheme (not the old agent-only
     // `_copy1`) and the offset lands in a POST-HOC setParam rather than baked into
     // addNode.params (the shared builder copies params verbatim). box sits at
@@ -1687,16 +1687,16 @@ describe('duplicate mutator', () => {
   it('chained duplication: the clone of a clone is a wired sibling (unified _copy suffix)', () => {
     // #437 — after delegating to the shared builder, the agent inherits the
     // outliner's Blender Shift+D id scheme: box → box_copy → box_copy_copy.
-    // (The old agent-only stripping to box_copy1/box_copy2 is gone; Blender's
-    // `.001` renumbering is a documented non-goal in either path.)
+    // (The old agent-only stripping to box_copy1/box_copy2 is gone. This is the node ID;
+    // a NAMED node's copy is named with Blender's `.001` numbering since #1561.)
     //
     // The chained node MUST be wired into the scene first — an unparented node
-    // has no consumer, so buildDuplicateNodeOps returns null and there is nothing
+    // has no consumer, so buildDuplicateNodesOps returns null and there is nothing
     // to assert. The prior version of this test skipped its assertion silently
     // because it never wired box_copy1 (H180: a test that asserts nothing).
     let state = buildScene();
     // First duplication: box → box_copy, folded into state so the clone is real
-    // and wired (buildDuplicateNodeOps sibling-connects it under scene.children).
+    // and wired (buildDuplicateNodesOps sibling-connects it under scene.children).
     const first = validatePlan(
       duplicateMutator,
       { targetSelectors: ['box'], offset: [1, 0, 0] },
@@ -1900,7 +1900,7 @@ describe('duplicate mutator', () => {
   // duplicate authority: it declared `lossy: animation` and shared the source's
   // channels outright (the copy's keyframes moved the ORIGINAL), never recursed
   // into a Group's children, and ignored constraints / drivers / strips. Now it
-  // delegates to buildDuplicateNodeOps — the outliner's builder, taught by
+  // delegates to buildDuplicateNodesOps — the outliner's builder, taught by
   // #433/#434 to clone the whole id-reference universe. These tests pin the
   // reconciliations the delegation crosses at the AGENT boundary; the deep
   // per-family id-ref correctness is the shared builder's own tests
