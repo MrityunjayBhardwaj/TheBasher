@@ -1626,6 +1626,27 @@ describe('randomize mutator', () => {
   });
 });
 
+// A cube sprung to a Null: driver ← Solver ← a nine-node sub-network (#1560, #1561).
+const sprungScene = (): DagState => {
+  let s = buildDefaultDagState();
+  for (const op of [
+    { type: 'addNode', nodeId: 'ctl', nodeType: 'Null', params: {} },
+    {
+      type: 'connect',
+      from: { node: 'ctl', socket: 'out' },
+      to: { node: 'n_scene', socket: 'children' },
+    },
+  ] as Op[])
+    s = applyOp(s, op).next;
+  const built = buildSpringOps(s, {
+    targetId: 'n_box',
+    controllerId: 'ctl',
+    idFor: (k) => `sp_${k}`,
+  });
+  if (!built.ok) throw new Error(built.reason);
+  return built.ops.reduce((acc, op) => applyOp(acc, op).next, s);
+};
+
 describe('duplicate mutator', () => {
   it('emits addNode + connect chain into the same consumer', () => {
     // #437 — the agent now delegates to the shared buildDuplicateNodeOps, so the
@@ -1997,6 +2018,91 @@ describe('duplicate mutator', () => {
     });
   });
 
+  // #1561 — the agent's duplicate is the shared builder with every target in ONE call.
+  const twoCubes = (): DagState => {
+    let s = buildDefaultDagState();
+    for (const op of [
+      {
+        type: 'addNode',
+        nodeId: 'b_data',
+        nodeType: 'BoxData',
+        params: structuredClone(buildDefaultDagState().nodes.n_box_data.params),
+      },
+      { type: 'addNode', nodeId: 'B', nodeType: 'Object', params: { position: [3, 0, 0] } },
+      {
+        type: 'connect',
+        from: { node: 'b_data', socket: 'out' },
+        to: { node: 'B', socket: 'data' },
+      },
+      {
+        type: 'connect',
+        from: { node: 'B', socket: 'out' },
+        to: { node: 'n_scene', socket: 'children' },
+      },
+      {
+        type: 'addNode',
+        nodeId: 'aim',
+        nodeType: 'TrackTo',
+        params: { target: 'n_box', aimNode: 'B' },
+      },
+    ] as Op[])
+      s = applyOp(s, op).next;
+    return s;
+  };
+
+  it('#1561 two targets in one plan: a constraint between them points at the copies', () => {
+    const state = twoCubes();
+    const result = validatePlan(
+      duplicateMutator,
+      { targetSelectors: ['n_box', 'B'], offset: [0, 2, 0] },
+      state,
+      'dup pair',
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    let s = state;
+    for (const op of result.ops) s = applyOp(s, op).next;
+    expect(s.nodes.aim_copy.params).toMatchObject({ target: 'n_box_copy', aimNode: 'B_copy' });
+    expect(s.nodes.aim.params).toMatchObject({ target: 'n_box', aimNode: 'B' });
+    // Each copied root is offset from its own original.
+    expect((s.nodes.B_copy.params as { position: number[] }).position).toEqual([3, 2, 0]);
+  });
+
+  it('#1561 linked: the copy reads its original’s data; CONTROL: without it the data is copied', () => {
+    const state = buildDefaultDagState();
+    const run = (linked: boolean) => {
+      const result = validatePlan(
+        duplicateMutator,
+        { targetSelectors: ['n_box'], offset: [1, 0, 0], linked },
+        state,
+        'dup',
+      );
+      if (!result.ok) throw new Error(JSON.stringify(result));
+      return result.ops.reduce((acc, op) => applyOp(acc, op).next, state);
+    };
+    expect(run(true).nodes.n_box_copy.inputs.data).toEqual({ node: 'n_box_data', socket: 'out' });
+    expect(run(true).nodes.n_box_data_copy).toBeUndefined();
+    expect(run(false).nodes.n_box_copy.inputs.data).toEqual({
+      node: 'n_box_data_copy',
+      socket: 'out',
+    });
+  });
+
+  it('#1561 a sprung cube duplicates through the agent: the copied Solver is in scope', () => {
+    const state = sprungScene();
+    const result = validatePlan(
+      duplicateMutator,
+      { targetSelectors: ['n_box'], offset: [1, 0, 0] },
+      state,
+      'dup',
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const s = result.ops.reduce((acc, op) => applyOp(acc, op).next, state);
+    expect(s.nodes.sp_solver_copy).toBeDefined();
+    expect(s.nodes.sp_driver_copy.inputs.in).toEqual({ node: 'sp_solver_copy', socket: 'outVec' });
+  });
+
   it('multi-target: duplicating the same node twice mints distinct ids (threaded id-space)', () => {
     // #437 reconcile #2 — the shared builder mints _copy ids from state.nodes alone,
     // so two back-to-back calls in one build() would both pick `box_copy` and collide
@@ -2129,25 +2235,6 @@ describe('deleteNode mutator', () => {
   // #1560 — the shared delete now crosses from a reference to a wire to a sub-network in one
   // go, and no single edge kind did: the driver is reached from the cube by id-ref, the Solver
   // from the driver by a wire. Without the 'owned' kind gate 3 rejected the mutator's own ops.
-  const sprungScene = (): DagState => {
-    let s = buildDefaultDagState();
-    for (const op of [
-      { type: 'addNode', nodeId: 'ctl', nodeType: 'Null', params: {} },
-      {
-        type: 'connect',
-        from: { node: 'ctl', socket: 'out' },
-        to: { node: 'n_scene', socket: 'children' },
-      },
-    ] as Op[])
-      s = applyOp(s, op).next;
-    const built = buildSpringOps(s, {
-      targetId: 'n_box',
-      controllerId: 'ctl',
-      idFor: (k) => `sp_${k}`,
-    });
-    if (!built.ok) throw new Error(built.reason);
-    return built.ops.reduce((acc, op) => applyOp(acc, op).next, s);
-  };
 
   it('#1560 a sprung cube deletes through the agent: its driver, Solver and sub-network are in scope', () => {
     const state = sprungScene();

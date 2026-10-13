@@ -63,7 +63,7 @@ import { getActiveBone } from './boneSelection';
 import { addIkFromUI, editSkeletonFromUI } from './skeletonEditActions';
 import { useBoxSelectStore } from './stores/boxSelectStore';
 import { getViewportSelectableIds } from './selectableNodes';
-import { buildDeleteNodesOps, buildDuplicateNodeOps } from './sceneNodeActions';
+import { buildDeleteNodesOps, buildDuplicateNodesOps } from './sceneNodeActions';
 import { buildSetActiveCameraOps } from './setActiveCamera';
 import { useViewportStore } from './stores/viewportStore';
 import { keyParamFromTransient } from './animate/autoKeyCommit';
@@ -422,18 +422,25 @@ export function KeyboardShortcuts() {
         return;
       }
 
-      // Shift + D — duplicate the active node's subtree as a sibling (#227 Slice 3,
-      // Blender's idiom). Selects the copy. Checked before the single-key guard.
-      if (!cmd && e.shiftKey && (e.key === 'd' || e.key === 'D')) {
+      // Shift + D — duplicate the selection as siblings; Alt + D — the same, LINKED (#1561,
+      // Blender's two idioms): the copies share their originals' data and get their own
+      // transform and animation. Every selected node is copied in one step, so a reference
+      // between two of them points at the copies. Selects the copies. Checked before the
+      // single-key guard. `e.code`, because Alt+D types a different character on a Mac.
+      const deepDuplicate = e.shiftKey && !e.altKey && (e.key === 'd' || e.key === 'D');
+      const linkedDuplicate = e.altKey && !e.shiftKey && e.code === 'KeyD';
+      if (!cmd && (deepDuplicate || linkedDuplicate)) {
         e.preventDefault();
         const sel = useSelectionStore.getState();
-        const primary = sel.primaryNodeId;
-        if (primary) {
-          const res = buildDuplicateNodeOps(useDagStore.getState().state, primary);
-          if (res) {
-            useDagStore.getState().dispatchAtomic(res.ops, 'user', 'duplicate node');
-            sel.select(res.newRootId);
-          }
+        const ids = [...sel.selectedNodeIds];
+        const res = buildDuplicateNodesOps(useDagStore.getState().state, ids, {
+          linked: linkedDuplicate,
+        });
+        if (res) {
+          useDagStore
+            .getState()
+            .dispatchAtomic(res.ops, 'user', linkedDuplicate ? 'duplicate linked' : 'duplicate');
+          sel.selectMany(res.newRootIds);
         }
         return;
       }

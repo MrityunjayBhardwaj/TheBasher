@@ -11,6 +11,7 @@ import {
   buildIdRefIndex,
   idRefsByRole,
   idRefSweep,
+  nameSourceOf,
   subjectReferrersInto,
   remapIdRefs,
   stackSocketOf,
@@ -181,11 +182,10 @@ export function buildDeleteNodesOps(state: DagState, ids: readonly NodeId[]): Op
   // survives in the file while unreachable from `scene` — invisible, unrenderable,
   // unrecoverable through the UI, and growing the save every time.
   //
-  // `target` is deliberately NOT owned here even though OWNED_SOCKETS below lists
-  // it for duplicate: that socket is the WRAPPER road (Transform/MaterialOverride/
-  // modifiers), where deleting the wrapper must not delete the mesh it wraps — it
-  // needs a splice-out instead. Tracked as #432; duplicate and delete genuinely
-  // differ on it, exactly as Blender's Shift+D and X differ.
+  // A stack socket (a modifier's `target`, a pose layer's `pose`) is deliberately NOT owned
+  // when the node holding it is deleted on its own: deleting a modifier must not delete the
+  // mesh it wraps, it needs a splice-out instead (#432). Duplicate copies through the same
+  // socket, so the two verbs differ there, exactly as Blender's Shift+D and X differ.
   //
   // Both are guarded on EXCLUSIVITY: a shared node (another surviving consumer
   // still points at it) stays, and removeNode would refuse it anyway. Walked to a
@@ -359,112 +359,187 @@ function freshId(base: string, taken: Set<string>): string {
   return id;
 }
 
-/** The sockets the duplicate walk FOLLOWS to gather the subtree — i.e. the nodes a
- *  clone OWNS and therefore deep-copies (Blender Shift+D duplicates the object AND
- *  its data). A Group aggregates `children`; Transform/MaterialOverride wrap a single
- *  `target`; a split Object (#365) owns its geometry/material through `data`. Any
- *  OTHER input (a shared material node, a geometry source) is NOT followed — it stays
- *  shared by the clone (re-pointed to the same original node). Without `data` here a
- *  duplicated split Object would keep pointing at the ORIGINAL BoxData (a linked copy:
- *  recolour one, both change) — not the independent copy Shift+D promises. */
-const OWNED_SOCKETS = ['children', 'target', 'data'];
-
 function refsOf(binding: unknown): { node: string; socket: string }[] {
   if (Array.isArray(binding)) return binding as { node: string; socket: string }[];
   return binding ? [binding as { node: string; socket: string }] : [];
 }
 
-/**
- * Ops to DUPLICATE the scene subtree rooted at `rootId` (Blender Shift-D): deep-copy
- * the node + its OWNED descendants (children / wrapper target / a split Object's `data`
- * node) with fresh ids, re-wire the internal edges among the clones, keep every OTHER
- * (non-owned) input shared with the original, and connect the new root as a sibling
- * right AFTER the original.
- * Returns the ops (one atomic → one undo) + the new root id to select, or null when
- * the node isn't a wired scene child (nothing to duplicate-as-sibling).
- *
- * Undo-safe order: addNode all clones (empty inputs) → connect internal edges →
- * connect root to parent. The reverse (disconnect edges, then removeNode) never hits
- * the "removeNode refuses while consumed" rule. `meta` is intentionally NOT copied —
- * addNode carries none, and a duplicate showing its own id avoids two nodes claiming
- * the same explicit name (Blender's `.001` suffix is a documented non-goal).
- */
-export function buildDuplicateNodeOps(
-  state: DagState,
-  rootId: NodeId,
+/** How a duplicate treats what the copied nodes read. */
+export interface DuplicateOptions {
   /**
-   * Optional id-space to reserve across calls. `buildDuplicateNodeOps` is
-   * single-root and mints fresh `_copy` ids from `state.nodes` alone, so two
-   * back-to-back calls against the SAME state (e.g. the agent duplicating
-   * `['a','b']` at once) can independently pick the same `_copy` id and
-   * collide. Pass one shared Set across the batch: every id this call mints is
-   * added to it, and every id already in it is treated as taken. UI callers
-   * (one root per Shift-D) omit it and are unaffected.
+   * Blender's Alt+D (#1561). The copy shares everything its original reads by wire (its data
+   * and modifier stack, its pose stack, a driver's source) and gets its own transform and its
+   * own channels, constraints and drivers. Children are still copied, each linked the same
+   * way. Default false: Blender's Shift+D, which copies what the original owns.
    */
-  reserved?: Set<NodeId>,
-): { ops: Op[]; newRootId: NodeId } | null {
-  if (!state.nodes[rootId]) return null;
+  linked?: boolean;
+  /**
+   * Ids to treat as taken, shared across calls against the SAME state. Every id this call
+   * mints is added to it. One call now takes several roots, so only a caller that builds two
+   * batches from one state needs it.
+   */
+  reserved?: Set<NodeId>;
+  /** The same for the names a copy is given (`Cube.001`), so two batches do not hand out one. */
+  reservedNames?: Set<string>;
+}
 
-  // 1. The parent edge to clone the new root beside (first consumer of rootId).
-  let parent: { node: string; socket: string; fromSocket: string; index: number } | null = null;
-  for (const [consumerId, consumer] of Object.entries(state.nodes)) {
-    for (const [socket, binding] of Object.entries(consumer.inputs)) {
-      const refs = refsOf(binding);
-      for (let i = 0; i < refs.length; i++) {
-        if (refs[i]?.node === rootId && !parent) {
-          parent = { node: consumerId, socket, fromSocket: refs[i].socket, index: i };
-        }
-      }
+/**
+ * Whether a duplicate COPIES what is wired into `socket` of `node`, or leaves it shared (#1561).
+ *
+ * Read from the same declaration delete reads (`wireOwnership`): a deep duplicate copies what
+ * the node owns, whichever way it owns it, and shares the rest (a Material, the armature a
+ * modifier names). A linked duplicate copies only the hierarchy, a socket that takes scene
+ * objects, so a group's copy still holds copies of its children while every copy reads its
+ * original's data.
+ */
+function copiesThrough(node: Node, socket: string, linked: boolean): boolean {
+  if (!wireOwnership(node.type, socket)) return false;
+  if (!linked) return true;
+  return getNodeType(node.type)?.inputs?.[socket]?.type === 'SceneObject';
+}
+
+/** `name` with Blender's numeric suffix replaced by the first free one: `Cube` → `Cube.001`. */
+function numberedName(name: string, taken: Set<string>): string {
+  const base = name.replace(/\.\d{3,}$/, '');
+  for (let i = 1; ; i++) {
+    const candidate = `${base}.${String(i).padStart(3, '0')}`;
+    if (!taken.has(candidate)) {
+      taken.add(candidate);
+      return candidate;
     }
   }
-  if (!parent) return null;
-  // #1630 — a parent that reads the original on a SINGLE socket has no sibling position to
-  // give: wiring the copy in displaced the original, so Shift+D on the scene's camera made
-  // the copy the scene's camera. A camera's copy is left unwired instead, which is how every
-  // camera but the active one already sits (Add ▸ Camera wires none either) and Blender keeps
-  // the scene's camera where it was. Anything else there has nothing to be duplicated as.
-  const parentIsList =
-    getNodeType(state.nodes[parent.node].type)?.inputs?.[parent.socket]?.cardinality === 'list';
-  if (!parentIsList && !isCameraNode(state, rootId)) return null;
+}
 
-  // 2. Subtree = root + hierarchy descendants (DFS over children/target).
-  const subtree: NodeId[] = [];
+/**
+ * Ops to DUPLICATE the scene subtrees rooted at `rootIds`, as one atomic batch (→ one undo),
+ * with the ids of the new roots in the order asked. Null when none of them can be duplicated.
+ *
+ * WHAT IS COPIED is read off the graph's own declarations, the same ones delete reads:
+ *   • by wire, what each copied node OWNS (`wireOwnership`): children, an Object's data and the
+ *     whole operator stack under it, its pose stack, a driver's source, and the sub-network
+ *     behind a body socket, copied whole so the one-owner rule holds (#1547);
+ *   • by reference, the sidecars that name a copied node as their SUBJECT: its channels,
+ *     constraints, drivers and NLA strips (#434), and then what THOSE own by wire.
+ * Everything else a copy reads stays shared with the original. Every id a copy holds is
+ * re-pointed through one map (wires, declared references, a followed name), so a reference
+ * between two nodes copied in the same call lands on the copies, and one to a node outside
+ * still points outside, as Blender's Shift+D on a parent and child together does.
+ *
+ * `linked` shares instead of copying everything that is not hierarchy (see `DuplicateOptions`).
+ *
+ * WHERE A COPY GOES: right after its original, in the list the original is read on. A root
+ * that sits inside another root's subtree is copied as part of it and is not wired a second
+ * time. A camera read on a single socket is left unwired (#1630).
+ *
+ * NAMES: a copy of a named node takes the name with the next free number (`Cube.001`), as
+ * Blender and Houdini both do. A copy whose original followed another node's name follows the
+ * copy of that node when it was copied too, else the same node.
+ *
+ * Undo-safe order: every copy is added with empty inputs, then wires are made reader-first
+ * (the order the walk found them in), so a node inside a copied sub-network is never wired
+ * from inside to a node that is not yet inside it.
+ */
+export function buildDuplicateNodesOps(
+  state: DagState,
+  rootIds: readonly NodeId[],
+  options: DuplicateOptions = {},
+): { ops: Op[]; newRootIds: NodeId[] } | null {
+  const linked = options.linked === true;
+  const readers = readersIndex(state);
+
+  // 1. Where each root is read from: the first reader that is not a collection listing it.
+  //    A root nothing reads, or one read on a single socket that is not a camera, has no
+  //    place to be duplicated into.
+  interface Placed {
+    id: NodeId;
+    parent: Reader & { index: number };
+    isList: boolean;
+  }
+  const placed: Placed[] = [];
+  for (const id of [...new Set(rootIds)]) {
+    if (!state.nodes[id]) continue;
+    const reader = (readers.get(id) ?? []).find((r) => !isMembershipWire(state, r.node, r.socket));
+    if (!reader) continue;
+    const isList =
+      getNodeType(state.nodes[reader.node].type)?.inputs?.[reader.socket]?.cardinality === 'list';
+    if (!isList && !isCameraNode(state, id)) continue;
+    const index = refsOf(state.nodes[reader.node].inputs[reader.socket]).findIndex(
+      (ref) => ref?.node === id,
+    );
+    placed.push({ id, parent: { ...reader, index }, isList });
+  }
+  if (placed.length === 0) return null;
+
+  // 2. The nodes to copy, in the order the walk reaches them (a reader before what it reads).
+  const order: NodeId[] = [];
   const seen = new Set<NodeId>();
   const visit = (id: NodeId) => {
-    if (seen.has(id)) return;
     const node = state.nodes[id];
-    if (!node) return;
+    if (!node || seen.has(id)) return;
     seen.add(id);
-    subtree.push(id);
-    for (const socket of OWNED_SOCKETS) {
-      for (const ref of refsOf(node.inputs[socket])) if (ref?.node) visit(ref.node);
+    order.push(id);
+    let ownsBody = false;
+    for (const [socket, binding] of Object.entries(node.inputs ?? {})) {
+      if (!copiesThrough(node, socket, linked)) continue;
+      if (wireOwnership(node.type, socket) === 'body') ownsBody = true;
+      for (const ref of refsOf(binding)) if (ref?.node) visit(ref.node);
     }
+    // The whole sub-network, not just what the body socket reaches first: a node inside may
+    // feed only another node inside, and one left out would be shared by two owners.
+    if (ownsBody) for (const inside of subnetworkOf(state, id)) visit(inside);
   };
-  visit(rootId);
+  for (const root of placed) visit(root.id);
+  // A root already reached from another root is part of that root's copy.
+  const reachedFromAnother = new Set<NodeId>();
+  for (const root of placed) {
+    const below = new Set<NodeId>();
+    const walk = (id: NodeId) => {
+      const node = state.nodes[id];
+      if (!node || below.has(id)) return;
+      below.add(id);
+      for (const [socket, binding] of Object.entries(node.inputs ?? {})) {
+        if (!copiesThrough(node, socket, linked)) continue;
+        for (const ref of refsOf(binding)) if (ref?.node) walk(ref.node);
+      }
+    };
+    walk(root.id);
+    for (const other of placed) {
+      if (other.id !== root.id && below.has(other.id)) reachedFromAnother.add(other.id);
+    }
+  }
+  // The sidecars of everything copied, and what they own in turn, until nothing is added.
+  for (let grew = true; grew; ) {
+    grew = false;
+    for (const referrer of subjectReferrersInto(state.nodes, seen)) {
+      visit(referrer.id);
+      grew = true;
+    }
+  }
 
-  // 3. Fresh ids for every clone. Seed with any ids a prior call in this batch
-  //    already reserved so a multi-target duplicate can't mint colliding _copy ids.
+  // 3. Fresh ids.
   const taken = new Set<NodeId>(Object.keys(state.nodes));
-  if (reserved) for (const id of reserved) taken.add(id);
+  if (options.reserved) for (const id of options.reserved) taken.add(id);
   const idMap = new Map<NodeId, NodeId>();
-  for (const id of subtree) idMap.set(id, freshId(id, taken));
+  for (const id of order) idMap.set(id, freshId(id, taken));
+  const remap = (id: NodeId) => idMap.get(id) ?? id;
 
   const ops: Op[] = [];
-  // 4. addNode clones (empty inputs — edges are separate connect ops, undo-safe).
-  for (const id of subtree) {
+  // 4. Every copy, with every id its params hold re-pointed (a subject lands on the copy; an
+  //    argument stays on the original unless that was copied too).
+  for (const id of order) {
     const node = state.nodes[id];
     ops.push({
       type: 'addNode',
       nodeId: idMap.get(id)!,
       nodeType: node.type,
-      params: structuredClone(node.params),
+      params: remapIdRefs(node, remap),
     });
   }
-  // 5. Re-wire EVERY input edge of each clone: a ref into the subtree points to the
-  //    matching clone; any other ref stays shared with the original.
-  for (const id of subtree) {
+  // 5. Every input wire of every copy: from the copy when its producer was copied, else from
+  //    the original, which is what "shared" means.
+  for (const id of order) {
     const node = state.nodes[id];
-    for (const [socket, binding] of Object.entries(node.inputs)) {
+    for (const [socket, binding] of Object.entries(node.inputs ?? {})) {
       const refs = refsOf(binding);
       const isList = Array.isArray(binding);
       for (let i = 0; i < refs.length; i++) {
@@ -472,71 +547,37 @@ export function buildDuplicateNodeOps(
         if (!ref?.node) continue;
         ops.push({
           type: 'connect',
-          from: { node: idMap.get(ref.node) ?? ref.node, socket: ref.socket },
+          from: { node: remap(ref.node), socket: ref.socket },
           to: { node: idMap.get(id)!, socket },
           ...(isList ? { index: i } : {}),
         });
       }
     }
   }
-  // 6. Wire the clone root as a sibling immediately after the original.
-  if (parentIsList) {
+  // 6. Each copied root goes in right after its original. Roots in one list are placed from
+  //    the first to the last, each index moved along by the copies already put in before it.
+  const roots = placed.filter((root) => !reachedFromAnother.has(root.id));
+  const inserted = new Map<string, number>();
+  for (const root of [...roots].sort((a, b) => a.parent.index - b.parent.index)) {
+    if (!root.isList) continue;
+    const list = `${root.parent.node}\u0000${root.parent.socket}`;
+    const before = inserted.get(list) ?? 0;
     ops.push({
       type: 'connect',
-      from: { node: idMap.get(rootId)!, socket: parent.fromSocket },
-      to: { node: parent.node, socket: parent.socket },
-      index: parent.index + 1,
+      from: { node: idMap.get(root.id)!, socket: root.parent.fromSocket },
+      to: { node: root.parent.node, socket: root.parent.socket },
+      index: root.parent.index + 1 + before,
     });
+    inserted.set(list, before + 1);
   }
   // #1453 — each copy joins the collections its original is in, as Blender's Shift+D links a
   // duplicate into its source's collections. Membership only: where it hangs is step 6's.
   for (const [sourceId, cloneId] of idMap)
     for (const c of collectionsHolding(state, sourceId)) ops.push(...membershipOps(c, [cloneId]));
 
-  // 7. The id-reference universe (#434). A node OWNED BY a cloned node names its
-  //    subject in params ([[H136]]), NOT via an edge, so the hierarchy walk above
-  //    missed all of it — a keyframe channel, a Track-To / Follow-Path constraint, a
-  //    param driver, an NLA strip. This was CHANNELS-ONLY before #434, so the copy of
-  //    a constrained object silently lost its constraint. Now it clones every SUBJECT
-  //    referrer and remaps every id it holds through `idMap`: the subject ref lands on
-  //    the clone, while an argument ref (an aim target, a followed curve, a played
-  //    Action) stays shared with the original unless that target was itself cloned —
-  //    the exact rule step 5 applies to wired edges.
-  //
-  //    Fresh ids for ALL referrers first, so remap is order-independent and a strip's
-  //    Track-membership pass below can find the clone.
-  const referrers = subjectReferrersInto(state.nodes, seen);
-  for (const r of referrers) idMap.set(r.id, freshId(r.id, taken));
-  for (const r of referrers) {
-    const cloneId = idMap.get(r.id)!;
-    ops.push({
-      type: 'addNode',
-      nodeId: cloneId,
-      nodeType: r.type,
-      params: remapIdRefs(r, (id) => idMap.get(id) ?? id),
-    });
-    // A ParamDriver carries a WIRED source edge (`in`); rewire it like any
-    // other input — shared with the original unless it fell inside the clone. The
-    // pure-sidecar referrers (channels, constraints, strips) have `inputs: {}`, so
-    // this loop is empty for them.
-    for (const [socket, binding] of Object.entries(r.inputs)) {
-      for (const ref of refsOf(binding)) {
-        if (!ref?.node) continue;
-        ops.push({
-          type: 'connect',
-          from: { node: idMap.get(ref.node) ?? ref.node, socket: ref.socket },
-          to: { node: cloneId, socket },
-        });
-      }
-    }
-  }
-
-  // 8. A Strip is only active through its Track's `strips` list (the resolver reaches
-  //    strips only via tracks — Track.strips is the single route to a Strip). A cloned
-  //    strip that no track lists is inert debris, so append each to every track that
-  //    listed its original — the duplicate plays in the same NLA arrangement as its
-  //    source. Whole-array replace (Track.strips is one value-typed param), matching
-  //    how addStrip appends.
+  // 7. A Strip is only active through its Track's `strips` list (the resolver reaches strips
+  //    only via tracks). A copied strip that no track lists is inert, so each is appended to
+  //    every track that listed its original. Whole-array replace, matching how addStrip appends.
   for (const [id, node] of Object.entries(state.nodes)) {
     if (node.type !== 'Track') continue;
     const strips = ((node.params as { strips?: string[] }).strips ?? []) as string[];
@@ -550,9 +591,51 @@ export function buildDuplicateNodeOps(
     });
   }
 
-  // Publish every id this call minted (subtree clones + referrer clones, all in
-  // idMap's values) so a subsequent call in the same batch won't reuse them.
-  if (reserved) for (const cloneId of idMap.values()) reserved.add(cloneId);
+  // 8. Names. `addNode` carries none, so each is a `setMeta` on the copy. A named original
+  //    gives its copy the next free number; a follower's copy follows the copy of what its
+  //    original followed, and reads that node's (new) name.
+  const names = options.reservedNames ?? new Set<string>();
+  for (const node of Object.values(state.nodes)) if (node.meta?.name) names.add(node.meta.name);
+  const copyName = new Map<NodeId, string>();
+  for (const id of order) {
+    const node = state.nodes[id];
+    if (node.meta?.name && nameSourceOf(node) === undefined) {
+      copyName.set(id, numberedName(node.meta.name, names));
+    }
+  }
+  for (const id of order) {
+    const node = state.nodes[id];
+    const source = nameSourceOf(node);
+    if (source !== undefined) {
+      ops.push({
+        type: 'setMeta',
+        nodeId: idMap.get(id)!,
+        name: copyName.get(source) ?? node.meta?.name,
+        nameFrom: remap(source),
+      });
+    } else if (copyName.has(id)) {
+      ops.push({ type: 'setMeta', nodeId: idMap.get(id)!, name: copyName.get(id) });
+    }
+  }
 
-  return { ops, newRootId: idMap.get(rootId)! };
+  if (options.reserved) for (const cloneId of idMap.values()) options.reserved.add(cloneId);
+
+  return { ops, newRootIds: roots.map((root) => idMap.get(root.id)!) };
+}
+
+/**
+ * {@link buildDuplicateNodesOps} for ONE root, in the shape its first callers took. The
+ * second argument is the options, or the bare `reserved` id-space the agent used to pass.
+ */
+export function buildDuplicateNodeOps(
+  state: DagState,
+  rootId: NodeId,
+  options?: DuplicateOptions | Set<NodeId>,
+): { ops: Op[]; newRootId: NodeId } | null {
+  const res = buildDuplicateNodesOps(
+    state,
+    [rootId],
+    options instanceof Set ? { reserved: options } : options,
+  );
+  return res ? { ops: res.ops, newRootId: res.newRootIds[0] } : null;
 }

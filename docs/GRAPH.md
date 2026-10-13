@@ -62,6 +62,20 @@ socket has to choose. One delete function applies it (`buildDeleteNodesOps`,
 that remove a driver. Children still go with a deleted parent; handing them up to the
 grandparent is #1517, which waits on the keep-position reparent in #1516.
 
+Duplicate reads the same table (`buildDuplicateNodesOps`, same file). A **deep** duplicate
+(Shift+D) copies what the original owns by wire, whole sub-networks included, and the sidecars
+that name it as their subject (channels, constraints, drivers, strips); what it does not own
+stays shared (a Material, an aim target, an Action). A **linked** duplicate (Alt+D) copies the
+object, its children and its sidecars, and shares everything else it reads, so editing the
+mesh, a modifier or the pose changes both. Several nodes duplicated together share one id
+map, so a reference between two of them lands on the copies. A copy of a named node takes the
+name with the next free number, and a copy that followed another node's name follows that
+node's copy when it was copied too.
+
+Two things differ from Blender on purpose. A linked duplicate shares its modifiers along with
+its mesh, because here they sit on the data wire and in Blender they belong to the object.
+And a parent's children are copied with it, where Blender copies only what is selected.
+
 One reference is stored outside the parameters: a node whose name follows another's holds that
 node's id in `meta.nameFrom`. The same walker reads it, so deleting the followed node clears
 the link and the follower keeps the name it has. `relationsOf` (`src/core/dag/idRefSweep.ts`)

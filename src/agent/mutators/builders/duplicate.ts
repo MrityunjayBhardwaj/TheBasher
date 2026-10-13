@@ -13,32 +13,30 @@
 // two-authorities divergence in the duplicate direction. Now three callers
 // (outliner, Duplicate key, agent) share one implementation.
 //
-// Not a drop-in — the delegate is single-root and offset-free, so `build`
-// reconciles four things the shared builder doesn't do itself:
-//   1. offset       — the shared builder copies position verbatim; the agent
-//                     applies `spec.offset` (default [1,0,0]) via a post-hoc
-//                     setParam on the returned newRootId.
-//   2. multi-target — the mutator takes targetSelectors[]; the builder is
-//                     single-root and mints fresh _copy ids from state.nodes
-//                     alone, so two targets could collide. A shared `reserved`
-//                     id-space is threaded across the calls.
-//   3. closure      — the delegated ops touch the edge-less sidecars, so the
-//                     closure follows ['parent','children','data','id-ref'] (the
-//                     deleteNode set) or gate 3 rejects this mutator's own ops.
-//   4. contract     — animation channels are now deep-cloned, so `animation`
-//                     moves from lossy to preserves.
+// What `build` adds to the shared builder (#1561 made it multi-root, deep or linked):
+//   1. offset       — the shared builder copies position verbatim; the agent applies
+//                     `spec.offset` (default [1,0,0]) to each copied root.
+//   2. twice        — a target named twice is asked for two copies, so the targets still
+//                     owed one are copied in a further pass, ids and names held back.
+//   3. closure      — the delegated ops touch the edge-less sidecars, so the closure follows
+//                     ['parent','children','data','id-ref'] or gate 3 rejects this mutator's
+//                     own ops. Every other op lands on a node the plan itself adds.
+//   4. contract     — animation channels are deep-cloned, so `animation` is preserved.
 
 import { z } from 'zod';
 import type { MutatorDefinition } from '../types';
 import type { ClosureSet, ClosureSpec } from '../../closure/types';
 import type { DagState } from '../../../core/dag/state';
 import type { Op, NodeId } from '../../../core/dag/types';
-import { buildDuplicateNodeOps } from '../../../app/sceneNodeActions';
+import { buildDuplicateNodesOps } from '../../../app/sceneNodeActions';
 
 const DuplicateSpec = z.object({
   targetSelectors: z.array(z.string().min(1)).min(1),
   /** Optional offset added to the duplicate's position. Default: [1, 0, 0]. */
   offset: z.tuple([z.number(), z.number(), z.number()]).default([1, 0, 0]),
+  /** #1561 — Blender's Alt+D: the copy shares its original's data (mesh and modifiers, pose,
+   *  driver sources) and gets its own transform and animation. Absent or false: Shift+D. */
+  linked: z.boolean().optional(),
 });
 export type DuplicateSpec = z.infer<typeof DuplicateSpec>;
 
@@ -51,10 +49,13 @@ export const duplicateMutator: MutatorDefinition<DuplicateSpec> = {
     'data node) AND the animation that belongs to the source — keyframe ' +
     'channels, constraints, drivers, and NLA strips are cloned and re-pointed at ' +
     'the clone, so editing the copy never moves the original. Shared assets (an ' +
-    'aim target, a followed curve, a reusable Action) stay shared. Position is ' +
-    'offset by `offset` (default [1,0,0]).',
+    'aim target, a followed curve, a reusable Action, a Material) stay shared. ' +
+    'All targets are copied in one step, so a constraint between two of them ' +
+    'points at the copies. `linked: true` is Alt+D: the copy shares its ' +
+    "original's data (edit the mesh or a modifier and both change) and keeps its " +
+    'own transform and animation. Position is offset by `offset` (default [1,0,0]).',
   spec: DuplicateSpec,
-  specExample: { targetSelectors: ['node_id'], offset: [1, 0, 0] },
+  specExample: { targetSelectors: ['node_id'], offset: [1, 0, 0], linked: false },
   contract: {
     requiredEdges: ['parent'],
     requiredNodeTypes: [],
@@ -85,34 +86,49 @@ export const duplicateMutator: MutatorDefinition<DuplicateSpec> = {
     return { ok: true };
   },
   build(spec, _closure: ClosureSet, state: DagState): Op[] {
-    const ops: Op[] = [];
-    // One id-space shared across every target so back-to-back clones of the same
-    // base can't mint colliding _copy ids (#437 reconcile #2).
+    // #1561 — ONE call for every target, so the copies share one id map: a reference between
+    // two targets lands on the copies, and no two copies can mint the same id. It was one call
+    // per target with a shared id-space, which kept the ids apart and nothing else.
+    //
+    // A target named TWICE is asked for two copies (#437). Each further pass copies the targets
+    // still owed one, against the same state, with the ids and names already minted held back.
     const reserved = new Set<NodeId>();
-
-    for (const sourceId of spec.targetSelectors) {
-      const res = buildDuplicateNodeOps(state, sourceId, reserved);
-      // null == the target is not a wired scene child (nothing to duplicate as a
-      // sibling). The outliner and Duplicate key no-op here too; the agent matches
-      // rather than forking its own answer.
+    const reservedNames = new Set<string>();
+    const ops: Op[] = [];
+    const newRootIds: NodeId[] = [];
+    const owed = [...spec.targetSelectors];
+    while (owed.length > 0) {
+      const pass = [...new Set(owed)];
+      for (const id of pass) owed.splice(owed.indexOf(id), 1);
+      const res = buildDuplicateNodesOps(state, pass, {
+        linked: spec.linked === true,
+        reserved,
+        reservedNames,
+      });
+      // null == no target in this pass is a wired scene child (nothing to duplicate as a
+      // sibling). The outliner and the Duplicate keys no-op here too; the agent matches them.
       if (!res) continue;
       ops.push(...res.ops);
+      newRootIds.push(...res.newRootIds);
+    }
 
-      // #437 reconcile #1 — offset. The shared builder copies position verbatim;
-      // the agent nudges the clone by `spec.offset` so it's visibly distinct.
-      // Only when the source actually carries a 3-vector position (a data-only or
-      // positionless node has none — setParam of an absent field is silently
-      // dropped, so guard rather than emit a dead op).
-      const sourcePos = (state.nodes[sourceId]?.params as { position?: unknown }).position;
-      if (Array.isArray(sourcePos) && sourcePos.length === 3) {
+    // #437 reconcile #1 — offset. The shared builder copies position verbatim; the agent
+    // nudges each copied root by `spec.offset` so it's visibly distinct. Only when the source
+    // carries a 3-vector position (setParam of an absent field is silently dropped, so guard
+    // rather than emit a dead op). A target copied as part of another target's subtree is not
+    // a root and moves with its parent.
+    for (const newRootId of newRootIds) {
+      const added = ops.find((op) => op.type === 'addNode' && op.nodeId === newRootId);
+      const position = (added as { params?: { position?: unknown } } | undefined)?.params?.position;
+      if (Array.isArray(position) && position.length === 3) {
         ops.push({
           type: 'setParam',
-          nodeId: res.newRootId,
+          nodeId: newRootId,
           paramPath: 'position',
           value: [
-            (sourcePos[0] as number) + spec.offset[0],
-            (sourcePos[1] as number) + spec.offset[1],
-            (sourcePos[2] as number) + spec.offset[2],
+            (position[0] as number) + spec.offset[0],
+            (position[1] as number) + spec.offset[1],
+            (position[2] as number) + spec.offset[2],
           ],
         });
       }

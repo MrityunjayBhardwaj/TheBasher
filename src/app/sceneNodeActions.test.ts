@@ -1,12 +1,16 @@
 import { describe, it, expect } from 'vitest';
-import { buildDeleteNodesOps, buildDuplicateNodeOps } from './sceneNodeActions';
+import {
+  buildDeleteNodesOps,
+  buildDuplicateNodeOps,
+  buildDuplicateNodesOps,
+} from './sceneNodeActions';
 import { registerAllNodes } from '../nodes/registerAll';
 import { applyOp, emptyDagState } from '../core/dag';
 import { danglingIdRefs } from '../core/dag/idRefSweep';
 import { evaluate } from '../core/dag/evaluator';
 import { buildAddModifierOps, findConsumer, resolveStackBase } from './operatorStack';
 import { useDagStore } from '../core/dag/store';
-import { subnetworkOf } from '../core/dag/subnetworks';
+import { subnetworkOf, subnetworkViolations } from '../core/dag/subnetworks';
 import { buildSpringOps, type SpringNodeKey } from './solverBind';
 import { buildRemoveDriverOps } from './driverStack';
 import { buildUnbindDriverOps } from './driverBind';
@@ -538,7 +542,8 @@ describe('buildDuplicateNodeOps', () => {
     expect(clone!.params.aimNode).toBe('aimNull'); // argument → shared original
   });
 
-  it('clones a ParamDriver, re-pointing target and rewiring its wired source shared', () => {
+  // A driver on `box` reading one Math node by wire.
+  const drivenState = () => {
     const state = fakeState();
     (state.nodes as Record<string, unknown>).cmp = {
       id: 'cmp',
@@ -552,18 +557,35 @@ describe('buildDuplicateNodeOps', () => {
       params: { target: 'box', paramPath: 'position' },
       inputs: { in: { node: 'cmp', socket: 'out' } },
     };
-    const res = buildDuplicateNodeOps(state, 'box')!;
+    return state;
+  };
+  const sourceOf = (res: NonNullable<ReturnType<typeof buildDuplicateNodeOps>>, driverId: string) =>
+    (
+      res.ops.find(
+        (o) =>
+          o.type === 'connect' &&
+          (o as { to: { node: string; socket: string } }).to.node === driverId &&
+          (o as { to: { socket: string } }).to.socket === 'in',
+      ) as { from: { node: string } } | undefined
+    )?.from.node;
+
+  it('clones a ParamDriver, re-pointing target, and copies the source it owns (#1561)', () => {
+    // A driver owns its `in` wire, so a deep duplicate gives the copy its own source: changing
+    // the copy's must not change the original's. It stayed shared until #1561.
+    const res = buildDuplicateNodeOps(drivenState(), 'box')!;
     const clone = addNodeOf(res, 'ParamDriver');
     expect(clone).toBeDefined();
     expect(clone!.params.target).toBe('box_copy');
-    // its wired compute source stays shared with the original (not cloned).
-    const wire = res.ops.find(
-      (o) =>
-        o.type === 'connect' &&
-        (o as { to: { node: string; socket: string } }).to.node === clone!.nodeId &&
-        (o as { to: { socket: string } }).to.socket === 'in',
-    ) as { from: { node: string } } | undefined;
-    expect(wire?.from.node).toBe('cmp');
+    expect(sourceOf(res, clone!.nodeId)).toBe('cmp_copy');
+    expect(addNodeOf(res, 'Math')?.nodeId).toBe('cmp_copy');
+  });
+
+  it('a LINKED duplicate copies the driver and shares its source (#1561)', () => {
+    const res = buildDuplicateNodeOps(drivenState(), 'box', { linked: true })!;
+    const clone = addNodeOf(res, 'ParamDriver');
+    expect(clone!.params.target).toBe('box_copy');
+    expect(sourceOf(res, clone!.nodeId)).toBe('cmp');
+    expect(addNodeOf(res, 'Math')).toBeUndefined();
   });
 
   it('clears the nested source id only, preserving the sibling channel', () => {
@@ -1433,5 +1455,399 @@ describe('buildDuplicateNodeOps — an original read on a single socket (#1630)'
 
   it('a data node, read on its Object’s single socket, has nothing to be duplicated as', () => {
     expect(buildDuplicateNodeOps(buildDefaultDagState(), 'n_box_data')).toBeNull();
+  });
+});
+
+describe('buildDuplicateNodesOps — one duplicate rule, deep and linked (#1561)', () => {
+  const node = (nodeId: string, nodeType: string, params: Record<string, unknown> = {}): Op =>
+    ({ type: 'addNode', nodeId, nodeType, params }) as Op;
+  const wire = (from: string, to: string, socket: string, fromSocket = 'out'): Op =>
+    ({ type: 'connect', from: { node: from, socket: fromSocket }, to: { node: to, socket } }) as Op;
+  const fold = (s: DagState, ops: readonly Op[]) =>
+    ops.reduce((acc, op) => applyOp(acc, op).next, s);
+  // Committed through the real store, so a copy the one-owner rule refuses fails here.
+  const commit = (s: DagState, ids: string[], linked = false) => {
+    const res = buildDuplicateNodesOps(s, ids, { linked });
+    if (!res) throw new Error('nothing to duplicate');
+    useDagStore.getState().hydrate(s);
+    useDagStore.getState().dispatchAtomic(res.ops, 'user', 'duplicate');
+    const after = useDagStore.getState().state;
+    expect(subnetworkViolations(after)).toEqual([]);
+    expect(danglingIdRefs(after.nodes)).toEqual([]);
+    useDagStore.getState().undo();
+    expect(useDagStore.getState().state.nodes).toEqual(s.nodes);
+    return { after, roots: res.newRootIds };
+  };
+  const added = (s: DagState, after: DagState) =>
+    Object.keys(after.nodes)
+      .filter((id) => !s.nodes[id])
+      .sort();
+  const children = (s: DagState) =>
+    ((s.nodes.n_scene.inputs.children ?? []) as { node: string }[]).map((r) => r.node);
+
+  const stacked = () => {
+    let s = buildDefaultDagState();
+    for (const type of ['ArrayModifier', 'MirrorModifier']) {
+      s = fold(s, buildAddModifierOps(s, resolveStackBase(s, 'n_box'), type, {})!.ops as Op[]);
+    }
+    return s;
+  };
+  const sprung = () => {
+    const s = fold(buildDefaultDagState(), [
+      node('ctl', 'Null'),
+      wire('ctl', 'n_scene', 'children'),
+    ]);
+    const built = buildSpringOps(s, {
+      targetId: 'n_box',
+      controllerId: 'ctl',
+      idFor: (k: SpringNodeKey) => `sp_${k}`,
+    });
+    if (!built.ok) throw new Error(built.reason);
+    return fold(s, built.ops);
+  };
+  const BONES = [
+    { name: 'upper', parent: -1, position: [0, 0, 0], rotation: [0, 0, 0] },
+    { name: 'lower', parent: 0, position: [0, 1, 0], rotation: [0, 0, 0] },
+  ];
+  const layer = (id: string, bone: string, mode?: string) =>
+    node(id, 'PoseLayer', {
+      name: id,
+      ...(mode ? { mode } : {}),
+      members: [{ bone, rotationMode: 'XYZ', rotation: [0, 10, 0] }],
+    });
+  const armature = (rig: boolean) => {
+    let s = fold(buildDefaultDagState(), [
+      node('n_skel', 'Skeleton', { bones: BONES }),
+      layer('L1', 'lower'),
+      wire('n_skel', 'L1', 'pose', 'pose'),
+      layer('L2', 'lower', 'additive'),
+      wire('L1', 'L2', 'pose'),
+      layer('L3', 'upper', 'additive'),
+      wire('L2', 'L3', 'pose'),
+      node('ARM', 'Object'),
+      wire('L3', 'ARM', 'pose'),
+      wire('n_skel', 'ARM', 'data'),
+      wire('ARM', 'n_scene', 'children'),
+    ]);
+    if (rig) {
+      const w = wrapInRig(s, {
+        object: 'ARM',
+        rigId: 'RIG',
+        inputId: 'RIG_in',
+        layers: ['L2', 'L3'],
+      } as never);
+      if (!w.ok) throw new Error(w.reason);
+      s = fold(s, w.ops);
+    }
+    return s;
+  };
+
+  describe('deep (Shift+D) copies what the original owns', () => {
+    it('CONTROL: a plain cube gets its own data and nothing else', () => {
+      const s = buildDefaultDagState();
+      const { after } = commit(s, ['n_box']);
+      expect(added(s, after)).toEqual(['n_box_copy', 'n_box_data_copy']);
+    });
+
+    it('the whole modifier stack and the base data', () => {
+      const s = stacked();
+      const { after } = commit(s, ['n_box']);
+      expect(added(s, after)).toHaveLength(4);
+      const top = (after.nodes.n_box_copy.inputs.data as { node: string }).node;
+      expect(top).not.toBe((s.nodes.n_box.inputs.data as { node: string }).node);
+      expect(s.nodes[top]).toBeUndefined();
+    });
+
+    it('the pose stack under an armature Object, so posing the copy cannot pose the original', () => {
+      const s = armature(false);
+      const { after } = commit(s, ['ARM']);
+      expect(added(s, after)).toEqual(['ARM_copy', 'L1_copy', 'L2_copy', 'L3_copy', 'n_skel_copy']);
+      expect(after.nodes.ARM_copy.inputs.pose).toEqual({ node: 'L3_copy', socket: 'out' });
+      expect(after.nodes.L1_copy.inputs.pose).toEqual({ node: 'n_skel_copy', socket: 'pose' });
+      expect(after.nodes.ARM.inputs.pose).toEqual({ node: 'L3', socket: 'out' });
+    });
+
+    it('a Rig and everything inside it, as a second sub-network with its own owner', () => {
+      const s = armature(true);
+      const { after } = commit(s, ['ARM']);
+      expect(after.nodes.ARM_copy.inputs.pose).toEqual({ node: 'RIG_copy', socket: 'out' });
+      expect([...subnetworkOf(after, 'RIG_copy')].sort()).toEqual([
+        'L2_copy',
+        'L3_copy',
+        'RIG_in_copy',
+      ]);
+      expect([...subnetworkOf(after, 'RIG')].sort()).toEqual(['L2', 'L3', 'RIG_in']);
+    });
+
+    it('a node inside a sub-network that no owning wire reaches is copied with it', () => {
+      // Inside this Rig, `PS` reads `SK2` on a socket that owns nothing, so the ownership walk
+      // stops at `PS`. `SK2` is inside the sub-network all the same, and a copy of the Rig that
+      // left it shared would have two owners reading it, which the store refuses.
+      const s = fold(armature(false), [
+        node('SK2', 'Skeleton', { bones: BONES }),
+        node('PS', 'PosedSkeleton', {}),
+        wire('SK2', 'PS', 'skeleton'),
+        node('RIG', 'Rig'),
+        wire('L3', 'RIG', 'pose'),
+        wire('PS', 'RIG', 'body'),
+        {
+          type: 'connect',
+          from: { node: 'RIG', socket: 'out' },
+          to: { node: 'ARM', socket: 'pose' },
+          replace: true,
+        } as Op,
+      ]);
+      expect([...subnetworkOf(s, 'RIG')].sort()).toEqual(['PS', 'SK2']);
+      const { after } = commit(s, ['ARM']);
+      expect([...subnetworkOf(after, 'RIG_copy')].sort()).toEqual(['PS_copy', 'SK2_copy']);
+      expect(after.nodes.PS_copy.inputs.skeleton).toEqual({ node: 'SK2_copy', socket: 'out' });
+    });
+
+    it('a spring: the copy gets its own driver, Solver and sub-network, on the same controller', () => {
+      const s = sprung();
+      const { after } = commit(s, ['n_box']);
+      expect(added(s, after)).toHaveLength(2 + 1 + 1 + 9);
+      expect(after.nodes.sp_driver_copy.inputs.in).toEqual({
+        node: 'sp_solver_copy',
+        socket: 'outVec',
+      });
+      expect(after.nodes.sp_driver.inputs.in).toEqual({ node: 'sp_solver', socket: 'outVec' });
+      expect([...subnetworkOf(after, 'sp_solver_copy')]).toHaveLength(9);
+      // The controller is an ARGUMENT of the Solver: the copy reads the one Null too.
+      expect(JSON.stringify(s.nodes.sp_solver.params)).toContain('"ctl"');
+      expect(JSON.stringify(after.nodes.sp_solver_copy.params)).toContain('"ctl"');
+      expect(after.nodes.ctl_copy).toBeUndefined();
+    });
+
+    it('a sidecar of something a sidecar owns is copied too (a channel on a driver’s source)', () => {
+      const s = fold(buildDefaultDagState(), [
+        node('k', 'Math', {}),
+        node('drv', 'ParamDriver', { target: 'n_box', paramPath: 'position.0' }),
+        wire('k', 'drv', 'in'),
+        node('kch', 'KeyframeChannelNumber', {
+          target: 'k',
+          paramPath: 'b',
+          keyframes: [{ time: 0, value: 1, easing: 'linear' }],
+        }),
+      ]);
+      const { after } = commit(s, ['n_box']);
+      expect(added(s, after)).toEqual([
+        'drv_copy',
+        'k_copy',
+        'kch_copy',
+        'n_box_copy',
+        'n_box_data_copy',
+      ]);
+      expect((after.nodes.kch_copy.params as { target: string }).target).toBe('k_copy');
+    });
+
+    it('a Rig or a Solver on its own has no sibling position, so there is nothing to duplicate', () => {
+      expect(buildDuplicateNodesOps(armature(true), ['RIG'])).toBeNull();
+      expect(buildDuplicateNodesOps(sprung(), ['sp_solver'])).toBeNull();
+    });
+  });
+
+  describe('linked (Alt+D) shares what the original reads', () => {
+    it('a cube: one new Object reading the SAME stack', () => {
+      const s = stacked();
+      const { after } = commit(s, ['n_box'], true);
+      expect(added(s, after)).toEqual(['n_box_copy']);
+      expect(after.nodes.n_box_copy.inputs.data).toEqual(s.nodes.n_box.inputs.data);
+      expect(children(after)).toEqual(['n_box', 'n_box_copy']);
+    });
+
+    it('deleting one of the two keeps the shared stack; deleting both takes it', () => {
+      const { after } = commit(stacked(), ['n_box'], true);
+      const top = (after.nodes.n_box.inputs.data as { node: string }).node;
+      const one = fold(after, buildDeleteNodesOps(after, ['n_box']));
+      expect(one.nodes[top]).toBeDefined();
+      expect(one.nodes.n_box_data).toBeDefined();
+      const both = fold(after, buildDeleteNodesOps(after, ['n_box', 'n_box_copy']));
+      expect(both.nodes[top]).toBeUndefined();
+      expect(both.nodes.n_box_data).toBeUndefined();
+    });
+
+    it('Shift+D on a linked copy gives it its own data again', () => {
+      const { after } = commit(stacked(), ['n_box'], true);
+      const deep = commit(after, ['n_box_copy']);
+      const copy = deep.after.nodes[deep.roots[0]];
+      expect(copy.inputs.data).not.toEqual(after.nodes.n_box.inputs.data);
+    });
+
+    it('an armature Object: the pose stack and the skeleton stay shared', () => {
+      const s = armature(true);
+      const { after } = commit(s, ['ARM'], true);
+      expect(added(s, after)).toEqual(['ARM_copy']);
+      expect(after.nodes.ARM_copy.inputs.pose).toEqual(s.nodes.ARM.inputs.pose);
+      expect(after.nodes.ARM_copy.inputs.data).toEqual(s.nodes.ARM.inputs.data);
+    });
+
+    it('its own channels all the same: a keyframe channel on the Object is copied', () => {
+      const s = fold(buildDefaultDagState(), [
+        node('ch', 'KeyframeChannelVec3', {
+          target: 'n_box',
+          paramPath: 'position',
+          keyframes: [{ time: 0, value: [0, 0, 0], easing: 'linear' }],
+        }),
+      ]);
+      const { after } = commit(s, ['n_box'], true);
+      expect(added(s, after)).toEqual(['ch_copy', 'n_box_copy']);
+      expect((after.nodes.ch_copy.params as { target: string }).target).toBe('n_box_copy');
+    });
+
+    it('a group: its children are copied, each reading its original’s data', () => {
+      const s = fold(buildDefaultDagState(), [
+        node('G', 'Group'),
+        wire('G', 'n_scene', 'children'),
+        {
+          type: 'disconnect',
+          from: { node: 'n_box', socket: 'out' },
+          to: { node: 'n_scene', socket: 'children' },
+        } as Op,
+        wire('n_box', 'G', 'children'),
+      ]);
+      const { after } = commit(s, ['G'], true);
+      expect(added(s, after)).toEqual(['G_copy', 'n_box_copy']);
+      expect(after.nodes.G_copy.inputs.children).toEqual([{ node: 'n_box_copy', socket: 'out' }]);
+      expect(after.nodes.n_box_copy.inputs.data).toEqual({ node: 'n_box_data', socket: 'out' });
+    });
+  });
+
+  describe('several roots in one call', () => {
+    // Two cubes; a Track-To on A aims at B, a second one aims at the light (outside).
+    const pair = () =>
+      fold(buildDefaultDagState(), [
+        node(
+          'b_data',
+          'BoxData',
+          structuredClone(buildDefaultDagState().nodes.n_box_data.params) as Record<
+            string,
+            unknown
+          >,
+        ),
+        node('B', 'Object'),
+        wire('b_data', 'B', 'data'),
+        wire('B', 'n_scene', 'children'),
+        node('aimB', 'TrackTo', { target: 'n_box', aimNode: 'B' }),
+        node('aimOut', 'TrackTo', { target: 'n_box', aimNode: 'n_light' }),
+      ]);
+
+    it('a reference between two copied nodes lands on the copies; one to outside stays outside', () => {
+      const { after } = commit(pair(), ['n_box', 'B']);
+      expect(after.nodes.aimB_copy.params).toMatchObject({
+        target: 'n_box_copy',
+        aimNode: 'B_copy',
+      });
+      expect(after.nodes.aimOut_copy.params).toMatchObject({
+        target: 'n_box_copy',
+        aimNode: 'n_light',
+      });
+    });
+
+    it('CONTROL: copied alone, the same reference keeps aiming at the original', () => {
+      const { after } = commit(pair(), ['n_box']);
+      expect(after.nodes.aimB_copy.params).toMatchObject({ target: 'n_box_copy', aimNode: 'B' });
+    });
+
+    it('each copy goes in right after its own original, whatever order they were asked in', () => {
+      for (const ids of [
+        ['n_box', 'B'],
+        ['B', 'n_box'],
+      ]) {
+        const { after, roots } = commit(pair(), ids);
+        expect(children(after)).toEqual(['n_box', 'n_box_copy', 'B', 'B_copy']);
+        expect(roots).toEqual(ids.map((id) => `${id}_copy`));
+      }
+    });
+
+    it('a root inside another root is copied once, as part of it', () => {
+      const s = fold(buildDefaultDagState(), [
+        node('G', 'Group'),
+        wire('G', 'n_scene', 'children'),
+        {
+          type: 'disconnect',
+          from: { node: 'n_box', socket: 'out' },
+          to: { node: 'n_scene', socket: 'children' },
+        } as Op,
+        wire('n_box', 'G', 'children'),
+      ]);
+      const { after, roots } = commit(s, ['n_box', 'G']);
+      expect(roots).toEqual(['G_copy']);
+      expect(added(s, after)).toEqual(['G_copy', 'n_box_copy', 'n_box_data_copy']);
+      expect(after.nodes.G.inputs.children).toEqual([{ node: 'n_box', socket: 'out' }]);
+    });
+
+    it('the same id asked twice is one copy, wired in once', () => {
+      const s = buildDefaultDagState();
+      const { after, roots } = commit(s, ['n_box', 'n_box']);
+      expect(added(s, after)).toEqual(['n_box_copy', 'n_box_data_copy']);
+      expect(children(after)).toEqual(['n_box', 'n_box_copy']);
+      expect(roots).toEqual(['n_box_copy']);
+    });
+  });
+
+  describe('names', () => {
+    const named = () =>
+      fold(buildDefaultDagState(), [
+        { type: 'setMeta', nodeId: 'n_box', name: 'Hero' } as Op,
+        node('src', 'Object'),
+        wire('src', 'n_scene', 'children'),
+        { type: 'setMeta', nodeId: 'src', name: 'Walk' } as Op,
+        { type: 'setMeta', nodeId: 'n_light', name: 'Walk', nameFrom: 'src' } as Op,
+      ]);
+
+    it('a named original gives its copy the next free number, and the next copy the one after', () => {
+      const first = commit(named(), ['n_box']).after;
+      expect(first.nodes.n_box_copy.meta).toEqual({ name: 'Hero.001' });
+      expect(first.nodes.n_box.meta).toEqual({ name: 'Hero' });
+      const second = commit(first, ['n_box_copy']);
+      expect(second.after.nodes[second.roots[0]].meta).toEqual({ name: 'Hero.002' });
+    });
+
+    it('CONTROL: an unnamed original gives its copy no name', () => {
+      const { after } = commit(buildDefaultDagState(), ['n_box']);
+      expect(after.nodes.n_box_copy.meta).toBeUndefined();
+    });
+
+    it('a follower copied alone keeps following the node its original followed', () => {
+      const { after } = commit(named(), ['n_light']);
+      expect(after.nodes.n_light_copy.meta).toEqual({ name: 'Walk', nameFrom: 'src' });
+    });
+
+    it('a follower copied WITH its source follows the copy of the source, by its new name', () => {
+      const { after } = commit(named(), ['n_light', 'src']);
+      expect(after.nodes.src_copy.meta).toEqual({ name: 'Walk.001' });
+      expect(after.nodes.n_light_copy.meta).toEqual({ name: 'Walk.001', nameFrom: 'src_copy' });
+      expect(after.nodes.n_light.meta).toEqual({ name: 'Walk', nameFrom: 'src' });
+    });
+  });
+
+  it('a collection listing the original is not where the copy is wired in', () => {
+    // The collection is read BEFORE the scene when readers are listed in graph order here.
+    let s = fold(buildDefaultDagState(), [
+      node('P', 'Object'),
+      {
+        type: 'disconnect',
+        from: { node: 'n_box', socket: 'out' },
+        to: { node: 'n_scene', socket: 'children' },
+      } as Op,
+    ]);
+    s = fold(s, newCollectionOps(s, null)!.ops);
+    const coll = Object.keys(s.nodes).find((id) => s.nodes[id].type === 'Collection')!;
+    s = fold(s, [
+      ...membershipOps(coll, ['n_box']),
+      node('late', 'Group'),
+      wire('late', 'n_scene', 'children'),
+      wire('n_box', 'late', 'children'),
+    ]);
+    const { after } = commit(s, ['n_box']);
+    expect(after.nodes.late.inputs.children).toEqual([
+      { node: 'n_box', socket: 'out' },
+      { node: 'n_box_copy', socket: 'out' },
+    ]);
+    expect((after.nodes[coll].inputs.members as { node: string }[]).map((r) => r.node)).toEqual([
+      'n_box',
+      'n_box_copy',
+    ]);
   });
 });
