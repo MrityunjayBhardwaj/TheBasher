@@ -187,3 +187,53 @@ describe('applyOp — #1008 a stripped write is caught at every depth', () => {
     expect(result.reportable).toBeUndefined();
   });
 });
+
+describe('applyOp — #1572 Scene, Group and Collection report a mistyped key like every node', () => {
+  beforeEach(() => {
+    registerAllNodes();
+  });
+
+  // Each row: a key the type does not declare, and one it does (the control).
+  const rows = [
+    { nodeType: 'Scene', real: { path: 'envIntensity', value: 2 } },
+    { nodeType: 'Group', real: { path: 'position', value: [3, 4, 5] } },
+    { nodeType: 'Collection', real: { path: 'viewport', value: false } },
+  ] as const;
+
+  for (const row of rows) {
+    const added = () =>
+      applyOp(emptyDagState(), {
+        type: 'addNode',
+        nodeId: 'n_it',
+        nodeType: row.nodeType,
+        params: { notAParam: 'n_other' },
+      }).next;
+
+    it(`${row.nodeType}: a key the schema does not declare is not stored at creation`, () => {
+      expect(added().nodes.n_it.params).not.toHaveProperty('notAParam');
+    });
+
+    it(`${row.nodeType}: writing one is flagged and changes nothing`, () => {
+      const state = added();
+      const result = applyOp(state, {
+        type: 'setParam',
+        nodeId: 'n_it',
+        paramPath: 'positoin',
+        value: [1, 2, 3],
+      });
+      expect(result.reportable?.badge).toBe('stripped-write');
+      expect(result.next).toBe(state);
+    });
+
+    it(`CONTROL ${row.nodeType}: a declared key is written and not flagged`, () => {
+      const result = applyOp(added(), {
+        type: 'setParam',
+        nodeId: 'n_it',
+        paramPath: row.real.path,
+        value: row.real.value,
+      });
+      expect(result.reportable).toBeUndefined();
+      expect(result.next.nodes.n_it.params[row.real.path]).toEqual(row.real.value);
+    });
+  }
+});

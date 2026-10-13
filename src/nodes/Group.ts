@@ -20,24 +20,22 @@ const Vec3 = z.tuple([z.number(), z.number(), z.number()]);
 // sits at the centre. ALL FOUR default to identity / [0,0,0], so a pre-#222
 // Group (params `{}`) hydrates to a bare, in-place group — byte-identical
 // render, now additionally movable (V10/H14 — additive, no schema bump).
-export const GroupParams = z
-  .object({
-    position: Vec3.default([0, 0, 0]),
-    rotation: Vec3.default([0, 0, 0]),
-    scale: Vec3.default([1, 1, 1]),
-    pivot: Vec3.default([0, 0, 0]),
-    /** #1153 — Blender's rotation mode, as on Object; an imported empty is a Group. */
-    ...rotationModeParams,
-    /**
-     * #1447 — the bone of the parent armature Object this Group hangs from, as on Object (#1210):
-     * Blender parents any object to a bone, an Empty included, and an imported Empty is a Group.
-     * Optional and absent unless set; appended last, so the frozen param-home row is appended to.
-     */
-    parentBone: z.string().min(1).optional(),
-    /** #1503 — shown in the viewport, and in the render (`visibilityParams`). Appended last. */
-    ...visibilityParams,
-  })
-  .passthrough();
+export const GroupParams = z.object({
+  position: Vec3.default([0, 0, 0]),
+  rotation: Vec3.default([0, 0, 0]),
+  scale: Vec3.default([1, 1, 1]),
+  pivot: Vec3.default([0, 0, 0]),
+  /** #1153 — Blender's rotation mode, as on Object; an imported empty is a Group. */
+  ...rotationModeParams,
+  /**
+   * #1447 — the bone of the parent armature Object this Group hangs from, as on Object (#1210):
+   * Blender parents any object to a bone, an Empty included, and an imported Empty is a Group.
+   * Optional and absent unless set; appended last, so the frozen param-home row is appended to.
+   */
+  parentBone: z.string().min(1).optional(),
+  /** #1503 — shown in the viewport, and in the render (`visibilityParams`). Appended last. */
+  ...visibilityParams,
+});
 export type GroupParams = z.infer<typeof GroupParams>;
 
 export const GroupNode: NodeDefinition<GroupParams, GroupValue> = {

@@ -6,8 +6,8 @@
 // every place every registered schema can store a string (`paramStringPaths`) and requires each
 // one to be declared in `idRefs` or named in `idRefAcknowledged.ts` with what it holds instead.
 //
-// What it cannot see is printed, never assumed away: a schema it cannot read is a failure, and an
-// object that keeps undeclared keys is a row that has to be acknowledged by name.
+// What it cannot see is printed, never assumed away: a schema it cannot read is a failure, and so
+// is an object that keeps undeclared keys (#1572: no registered schema does).
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import { getNodeType, listNodeTypes, paramFieldsOf } from '../core/dag/registry';
@@ -165,6 +165,18 @@ describe('#1551 — every string a registered node can store is an id reference 
   it('reads every registered schema', () => {
     expect(listNodeTypes().length).toBeGreaterThan(80);
     expect(census.unreadable).toEqual([]);
+  });
+
+  it('no registered schema keeps keys it does not declare', () => {
+    // #1572 — an undeclared key cannot be listed, so an id stored in one is invisible to delete,
+    // to duplicate and to the agent. Scene, Group and Collection were the last three that kept
+    // them. Declare the key in the schema rather than reopening it.
+    const open = registered().flatMap((def) =>
+      paramStringPaths(def.paramSchema)
+        .filter((row) => row.kind === 'open')
+        .map((row) => `${def.type}.${row.path}`),
+    );
+    expect(open).toEqual([]);
   });
 
   it('every string-capable param is declared in idRefs or acknowledged as something else', () => {

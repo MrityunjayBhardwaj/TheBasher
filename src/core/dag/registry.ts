@@ -247,7 +247,7 @@ function assertChainDeclaration(def: NodeDefinition): void {
  * whole point. Measured on this repo's zod:
  *
  *     z.object({...})                  instanceof ✓   — the ordinary case
- *     z.object({...}).passthrough()    instanceof ✓   — `Group` and `Scene` take this road
+ *     z.object({...}).passthrough()    instanceof ✓   — no registered node does (#1572)
  *     z.object({...}).refine(...)      instanceof ✗   — and `.shape` is `undefined`
  *     z.object({...}).transform(...)   instanceof ✗   — likewise
  *     z.union([...])                   instanceof ✗   — likewise

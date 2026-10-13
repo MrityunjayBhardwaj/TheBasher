@@ -33,8 +33,6 @@ const FOREIGN = "another system's own keys (a ComfyUI graph, an importer's lefto
 const TEXT = 'free text';
 const BY_NAME = "a choice among wired inputs, made by the input's display name";
 const RETIRED = 'retired: nothing reads or writes it since the clone rig went (#1053)';
-const OPEN =
-  'this schema keeps keys it does not declare, so what they hold cannot be listed (#1572)';
 
 /**
  * The strings inside one OpenPBR material value (`openpbrMaterialSchema`), relative to wherever
@@ -146,7 +144,6 @@ export const NOT_A_NODE_ID: Readonly<Record<string, string>> = {
   'BoneNameMap.map{}': BONE,
   'Character.name': LABEL,
   'ClipSelect.selectedClipName': BY_NAME,
-  'Collection.*': OPEN,
   'ComfyUIWorkflow.graph.apiJson{key}': FOREIGN,
   'ComfyUIWorkflow.graph.apiJson{}': FOREIGN,
   'ComfyUIWorkflow.graph.meta.name': LABEL,
@@ -173,7 +170,6 @@ export const NOT_A_NODE_ID: Readonly<Record<string, string>> = {
   'GltfAsset.keyByGltfNodeIndex{}': IMPORT_KEY,
   'GltfData.assetRef': STORAGE,
   'GltfData.childName': IMPORT_KEY,
-  'Group.*': OPEN,
   'Group.parentBone': BONE,
   'KeyframeChannelColor.name': LABEL,
   'KeyframeChannelColor.paramPath': PARAM_PATH,
@@ -244,7 +240,6 @@ export const NOT_A_NODE_ID: Readonly<Record<string, string>> = {
   'RenderJob.jobId': TEXT,
   'RenderJob.outputPath': STORAGE,
   'RetargetClip.name': LABEL,
-  'Scene.*': OPEN,
   'Scene.envSource.name': LABEL,
   'Scene.envSource.assetRef': STORAGE,
   'SetMaterialOp.scope': GROUP,
