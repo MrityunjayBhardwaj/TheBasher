@@ -1263,3 +1263,58 @@ describe('buildDeleteNodesOps — what a deleted node takes with it (#1560)', ()
     });
   });
 });
+
+describe('buildDeleteNodesOps — the cost does not grow with what is deleted (#1629)', () => {
+  // Counted, not timed: how many times the builder enumerates the whole node table. It used to
+  // do so once per deleted node, twice over (4.3 s for a group of 2,000 cubes).
+  const groupOf = (count: number): DagState => {
+    const data = buildDefaultDagState().nodes.n_box_data.params;
+    const ops: Op[] = [
+      { type: 'addNode', nodeId: 'G', nodeType: 'Group', params: {} },
+      {
+        type: 'connect',
+        from: { node: 'G', socket: 'out' },
+        to: { node: 'n_scene', socket: 'children' },
+      },
+    ];
+    for (let i = 0; i < count; i++) {
+      ops.push(
+        { type: 'addNode', nodeId: `d${i}`, nodeType: 'BoxData', params: structuredClone(data) },
+        { type: 'addNode', nodeId: `o${i}`, nodeType: 'Object', params: {} },
+        {
+          type: 'connect',
+          from: { node: `d${i}`, socket: 'out' },
+          to: { node: `o${i}`, socket: 'data' },
+        },
+        {
+          type: 'connect',
+          from: { node: `o${i}`, socket: 'out' },
+          to: { node: 'G', socket: 'children' },
+        },
+      );
+    }
+    return ops.reduce((acc, op) => applyOp(acc, op).next, buildDefaultDagState());
+  };
+  const walksToDelete = (count: number) => {
+    const s = groupOf(count);
+    let walks = 0;
+    const counted = {
+      ...s,
+      nodes: new Proxy(s.nodes, {
+        ownKeys(target) {
+          walks++;
+          return Reflect.ownKeys(target);
+        },
+      }),
+    } as DagState;
+    const ops = buildDeleteNodesOps(counted, ['G']);
+    expect(ops.filter((op) => op.type === 'removeNode')).toHaveLength(1 + 2 * count);
+    return walks;
+  };
+
+  it('a group of 200 enumerates the graph as often as a group of 20', () => {
+    const small = walksToDelete(20);
+    expect(small).toBeGreaterThan(0); // the counter sees the builder at all
+    expect(walksToDelete(200)).toBe(small);
+  });
+});

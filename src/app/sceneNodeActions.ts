@@ -43,14 +43,46 @@ function spineOf(node: Node | undefined): string | null {
   return node ? stackSocketOf(node.type) : null;
 }
 
-/** Every node+input-socket consuming `(producerId, 'out')`. */
-function outConsumers(state: DagState, producerId: NodeId): { node: string; socket: string }[] {
-  const out: { node: string; socket: string }[] = [];
+/** One wire, seen from the node it leaves: who reads it, on which socket, from which output. */
+interface Reader {
+  readonly node: NodeId;
+  readonly socket: string;
+  readonly fromSocket: string;
+}
+
+/**
+ * Who reads each node, built ONCE per delete (#1629). Every question below ("does anything
+ * else still read this?", "who has to be disconnected from it?", "what read this modifier?")
+ * used to read every node in the graph, once per node being deleted: 4.3 s for a group of
+ * 2,000 cubes. Entries keep the graph's own order (reader, then socket, then position), so the
+ * ops come out in the order they always did.
+ */
+function readersIndex(state: DagState): Map<NodeId, Reader[]> {
+  const index = new Map<NodeId, Reader[]>();
   for (const [cid, c] of Object.entries(state.nodes)) {
-    for (const [socket, binding] of Object.entries(c.inputs)) {
-      if (refsOf(binding).some((ref) => ref?.node === producerId && ref?.socket === 'out')) {
-        out.push({ node: cid, socket });
+    for (const [socket, binding] of Object.entries(c.inputs ?? {})) {
+      for (const ref of refsOf(binding)) {
+        if (!ref?.node) continue;
+        const entry = { node: cid, socket, fromSocket: ref.socket };
+        const list = index.get(ref.node);
+        if (list) list.push(entry);
+        else index.set(ref.node, [entry]);
       }
+    }
+  }
+  return index;
+}
+
+/** Every node+input-socket consuming `(producerId, 'out')`, once per socket. */
+function outConsumers(
+  readers: ReadonlyMap<NodeId, Reader[]>,
+  producerId: NodeId,
+): { node: string; socket: string }[] {
+  const out: { node: string; socket: string }[] = [];
+  for (const r of readers.get(producerId) ?? []) {
+    if (r.fromSocket !== 'out') continue;
+    if (!out.some((o) => o.node === r.node && o.socket === r.socket)) {
+      out.push({ node: r.node, socket: r.socket });
     }
   }
   return out;
@@ -67,6 +99,7 @@ function outConsumers(state: DagState, producerId: NodeId): { node: string; sock
  *  two Objects share is spliced into the one that stays. */
 function survivingConsumerAbove(
   state: DagState,
+  readers: ReadonlyMap<NodeId, Reader[]>,
   wrapperId: NodeId,
   idSet: Set<NodeId>,
 ): { node: string; socket: string } | null {
@@ -74,7 +107,7 @@ function survivingConsumerAbove(
   const guard = new Set<NodeId>();
   while (!guard.has(cursor)) {
     guard.add(cursor);
-    const consumers = outConsumers(state, cursor);
+    const consumers = outConsumers(readers, cursor);
     const surviving = consumers.find((c) => !idSet.has(c.node));
     if (surviving) return surviving;
     const above = consumers.find(
@@ -132,6 +165,7 @@ function consumersFirst(
  */
 export function buildDeleteNodesOps(state: DagState, ids: readonly NodeId[]): Op[] {
   const idSet = new Set<NodeId>(ids);
+  const readers = readersIndex(state);
   const allIds = [...idSet];
 
   // ── Direction 1: what the deleted nodes OWN, through edges. ──────────────────
@@ -205,10 +239,8 @@ export function buildDeleteNodesOps(state: DagState, ids: readonly NodeId[]): Op
           for (const ref of refsOf(binding)) {
             const ownedId = ref?.node;
             if (!ownedId || reachedAsOwned.has(ownedId) || !state.nodes[ownedId]) continue;
-            const hasSurvivingConsumer = Object.entries(state.nodes).some(
-              ([cid, c]) =>
-                !idSet.has(cid) &&
-                Object.values(c.inputs).some((b) => refsOf(b).some((r) => r?.node === ownedId)),
+            const hasSurvivingConsumer = (readers.get(ownedId) ?? []).some(
+              (r) => !idSet.has(r.node),
             );
             if (hasSurvivingConsumer || isStillNamed(ownedId)) continue;
             take(ownedId);
@@ -258,20 +290,13 @@ export function buildDeleteNodesOps(state: DagState, ids: readonly NodeId[]): Op
   // sat in, as Blender's Delete does, before it goes.
   const ops: Op[] = [...sweep.ops, ...collectionDeleteRelinkOps(state, idSet)];
   for (const nodeId of consumersFirst(state, allIds, idSet)) {
-    for (const [consumerId, consumer] of Object.entries(state.nodes)) {
-      if (idSet.has(consumerId)) continue; // being deleted too — its removeNode covers it
-      for (const [socketName, binding] of Object.entries(consumer.inputs)) {
-        const refs = Array.isArray(binding) ? binding : binding ? [binding] : [];
-        for (const ref of refs) {
-          if (ref && ref.node === nodeId) {
-            ops.push({
-              type: 'disconnect',
-              from: { node: nodeId, socket: ref.socket },
-              to: { node: consumerId, socket: socketName },
-            });
-          }
-        }
-      }
+    for (const reader of readers.get(nodeId) ?? []) {
+      if (idSet.has(reader.node)) continue; // being deleted too — its removeNode covers it
+      ops.push({
+        type: 'disconnect',
+        from: { node: nodeId, socket: reader.fromSocket },
+        to: { node: reader.node, socket: reader.socket },
+      });
     }
     ops.push({ type: 'removeNode', nodeId });
   }
@@ -301,7 +326,7 @@ export function buildDeleteNodesOps(state: DagState, ids: readonly NodeId[]): Op
     const subject = refsOf(node!.inputs?.[spineOf(node)!])[0];
     // Subject also being deleted → nothing to keep alive.
     if (!subject?.node || idSet.has(subject.node)) continue;
-    const consumer = survivingConsumerAbove(state, nodeId, idSet);
+    const consumer = survivingConsumerAbove(state, readers, nodeId, idSet);
     if (!consumer) continue;
     ops.push({
       type: 'connect',
