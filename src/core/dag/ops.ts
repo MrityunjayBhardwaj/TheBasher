@@ -644,6 +644,7 @@ function applyDisconnect(
   if (!inputDesc) {
     throw new OpError(`disconnect: ${consumer.type} has no input socket '${op.to.socket}'`, op);
   }
+  let listIndex: number | undefined;
   const prior = consumer.inputs[op.to.socket];
   if (prior === undefined) {
     throw new OpError(`disconnect: nothing connected at ${consumer.id}.${op.to.socket}`, op);
@@ -657,6 +658,7 @@ function applyDisconnect(
         op,
       );
     }
+    listIndex = idx;
     const nextList = [...prior.slice(0, idx), ...prior.slice(idx + 1)];
     if (nextList.length === 0) {
       delete inputs[op.to.socket];
@@ -674,7 +676,15 @@ function applyDisconnect(
   }
   const nextNode: Node = { ...consumer, inputs };
   const next = putNode(state, draft, consumer.id, nextNode);
-  const inverse: Op = { type: 'connect', from: op.from, to: op.to };
+  // #1622 — the inverse of a disconnect from a LIST puts the entry back where it was. Without the
+  // position a `connect` appends, so undoing a delete moved the object to the end of its
+  // parent's list.
+  const inverse: Op = {
+    type: 'connect',
+    from: op.from,
+    to: op.to,
+    ...(listIndex !== undefined ? { index: listIndex } : {}),
+  };
   return { next, inverse };
 }
 

@@ -604,3 +604,55 @@ describe('inverse round-trip — every op restores prior state', () => {
     expect(snapshot(back)).toBe(before);
   });
 });
+
+describe('applyOp — a disconnect from a list is undone in place (#1622)', () => {
+  beforeEach(() => seedTestRegistry());
+
+  const listOfThree = (): DagState => {
+    let s = emptyDagState();
+    const ops: Op[] = [
+      { type: 'addNode', nodeId: 'a', nodeType: 'TestNumber', params: { value: 1 } },
+      { type: 'addNode', nodeId: 'b', nodeType: 'TestNumber', params: { value: 2 } },
+      { type: 'addNode', nodeId: 'c', nodeType: 'TestNumber', params: { value: 3 } },
+      { type: 'addNode', nodeId: 'sum', nodeType: 'TestSumList', params: {} },
+      { type: 'connect', from: { node: 'a', socket: 'out' }, to: { node: 'sum', socket: 'items' } },
+      { type: 'connect', from: { node: 'b', socket: 'out' }, to: { node: 'sum', socket: 'items' } },
+      { type: 'connect', from: { node: 'c', socket: 'out' }, to: { node: 'sum', socket: 'items' } },
+    ];
+    for (const op of ops) s = applyOp(s, op).next;
+    return s;
+  };
+  const order = (s: DagState) =>
+    (s.nodes.sum.inputs.items as { node: string }[]).map((r) => r.node);
+
+  it.each(['a', 'b', 'c'])('disconnecting %s and applying the inverse restores the order', (id) => {
+    const state = listOfThree();
+    const cut = applyOp(state, {
+      type: 'disconnect',
+      from: { node: id, socket: 'out' },
+      to: { node: 'sum', socket: 'items' },
+    });
+    expect(order(cut.next)).not.toContain(id);
+    expect(order(applyOp(cut.next, cut.inverse).next)).toEqual(['a', 'b', 'c']);
+  });
+
+  it('the inverse of a disconnect from a SINGLE socket carries no position', () => {
+    let s = emptyDagState();
+    for (const op of [
+      { type: 'addNode', nodeId: 'a', nodeType: 'TestNumber', params: { value: 1 } },
+      { type: 'addNode', nodeId: 's', nodeType: 'TestSum', params: {} },
+      { type: 'connect', from: { node: 'a', socket: 'out' }, to: { node: 's', socket: 'a' } },
+    ] as Op[])
+      s = applyOp(s, op).next;
+    const cut = applyOp(s, {
+      type: 'disconnect',
+      from: { node: 'a', socket: 'out' },
+      to: { node: 's', socket: 'a' },
+    });
+    expect(cut.inverse).toEqual({
+      type: 'connect',
+      from: { node: 'a', socket: 'out' },
+      to: { node: 's', socket: 'a' },
+    });
+  });
+});
