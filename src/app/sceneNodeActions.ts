@@ -29,22 +29,28 @@ function isTargetWrapperNode(node: Node | undefined): boolean {
   return !!chainSocketOf(node) && !!getNodeType(node!.type)?.outputs['out'];
 }
 
-/** First node+input-socket consuming `(producerId, 'out')`, or null. Linear-chain
- *  model — a wrapper has one `out` consumer (fan-out is outside v1 scope). */
-function outConsumer(state: DagState, producerId: NodeId): { node: string; socket: string } | null {
+/** Every node+input-socket consuming `(producerId, 'out')`. */
+function outConsumers(state: DagState, producerId: NodeId): { node: string; socket: string }[] {
+  const out: { node: string; socket: string }[] = [];
   for (const [cid, c] of Object.entries(state.nodes)) {
     for (const [socket, binding] of Object.entries(c.inputs)) {
-      for (const ref of refsOf(binding)) {
-        if (ref?.node === producerId && ref?.socket === 'out') return { node: cid, socket };
+      if (refsOf(binding).some((ref) => ref?.node === producerId && ref?.socket === 'out')) {
+        out.push({ node: cid, socket });
       }
     }
   }
-  return null;
+  return out;
 }
 
 /** The nearest SURVIVING consumer above `wrapperId`, hopping over any wrappers that
  *  are themselves being deleted — so deleting a whole stack (scene → Mirror → Array →
- *  mesh) still splices the surviving base back to the surviving consumer (scene). */
+ *  mesh) still splices the surviving base back to the surviving consumer (scene).
+ *
+ *  #1620 — it hops over a deleted WRAPPER that read this one on its spine, and over nothing
+ *  else. A deleted Object at the top of a stack ends the walk: what read the Object (the
+ *  scene) takes scene objects, not the data the stack carries, and offering it the data
+ *  refused the whole delete. A surviving consumer is preferred to a deleted one, so a stack
+ *  two Objects share is spliced into the one that stays. */
 function survivingConsumerAbove(
   state: DagState,
   wrapperId: NodeId,
@@ -54,10 +60,15 @@ function survivingConsumerAbove(
   const guard = new Set<NodeId>();
   while (!guard.has(cursor)) {
     guard.add(cursor);
-    const c = outConsumer(state, cursor);
-    if (!c) return null;
-    if (!idSet.has(c.node)) return c;
-    cursor = c.node; // consumer is also being deleted — hop over it
+    const consumers = outConsumers(state, cursor);
+    const surviving = consumers.find((c) => !idSet.has(c.node));
+    if (surviving) return surviving;
+    const above = consumers.find(
+      (c) =>
+        isTargetWrapperNode(state.nodes[c.node]) && chainSocketOf(state.nodes[c.node]) === c.socket,
+    );
+    if (!above) return null;
+    cursor = above.node; // a deleted wrapper on the same stack — hop over it
   }
   return null;
 }
@@ -91,22 +102,40 @@ export function buildDeleteNodesOps(state: DagState, ids: readonly NodeId[]): Op
   // fixpoint so a group inside a group goes all the way down, and appended
   // PARENT-BEFORE-CHILD so each removeNode runs once its consumer is gone
   // (removeNode refuses while an output is still consumed).
+  //
+  // #1620 — ownership carries on DOWN THE STACK. An Object's `data` names the TOP of its
+  // operator stack (#415), so stopping there took the top modifier and left the rest of the
+  // stack and the base data behind, for the splice below to hand to the scene. A node reached
+  // as OWNED also owns what it reads on its declared spine (`chainSocketOf`), under the same
+  // exclusivity guard, which is the walk the agent's closure already makes for `data`
+  // (`socketCarriesKind`, src/agent/closure/expand.ts). A wrapper the caller asked to delete
+  // is NOT reached as owned unless a deleted owner holds it, so deleting a modifier on its own
+  // still keeps the mesh and splices. Run to a fixpoint, because a wrapper named by the caller
+  // becomes owned only once its Object is known to be going too.
   const OWNED_ON_DELETE = ['children', 'data'] as const;
-  for (let i = 0; i < allIds.length; i++) {
-    const owner = state.nodes[allIds[i]];
-    if (!owner) continue;
-    for (const socket of OWNED_ON_DELETE) {
-      for (const ref of refsOf(owner.inputs?.[socket])) {
-        const ownedId = ref?.node;
-        if (!ownedId || idSet.has(ownedId) || !state.nodes[ownedId]) continue;
-        const hasSurvivingConsumer = Object.entries(state.nodes).some(
-          ([cid, c]) =>
-            !idSet.has(cid) &&
-            Object.values(c.inputs).some((b) => refsOf(b).some((r) => r?.node === ownedId)),
-        );
-        if (!hasSurvivingConsumer) {
-          idSet.add(ownedId);
-          allIds.push(ownedId); // appended → this loop keeps walking into it
+  const reachedAsOwned = new Set<NodeId>();
+  for (let changed = true; changed; ) {
+    changed = false;
+    for (let i = 0; i < allIds.length; i++) {
+      const owner = state.nodes[allIds[i]];
+      if (!owner) continue;
+      const spine = reachedAsOwned.has(owner.id) ? chainSocketOf(owner) : null;
+      for (const socket of spine ? [...OWNED_ON_DELETE, spine] : OWNED_ON_DELETE) {
+        for (const ref of refsOf(owner.inputs?.[socket])) {
+          const ownedId = ref?.node;
+          if (!ownedId || reachedAsOwned.has(ownedId) || !state.nodes[ownedId]) continue;
+          const hasSurvivingConsumer = Object.entries(state.nodes).some(
+            ([cid, c]) =>
+              !idSet.has(cid) &&
+              Object.values(c.inputs).some((b) => refsOf(b).some((r) => r?.node === ownedId)),
+          );
+          if (hasSurvivingConsumer) continue;
+          reachedAsOwned.add(ownedId);
+          changed = true;
+          if (!idSet.has(ownedId)) {
+            idSet.add(ownedId);
+            allIds.push(ownedId); // appended → this loop keeps walking into it
+          }
         }
       }
     }

@@ -5,6 +5,7 @@ import { applyOp, emptyDagState } from '../core/dag';
 import { danglingIdRefs } from '../core/dag/idRefSweep';
 import { evaluate } from '../core/dag/evaluator';
 import { buildAddModifierOps, findConsumer, resolveStackBase } from './operatorStack';
+import { useDagStore } from '../core/dag/store';
 import { buildDefaultDagState } from '../core/project/default';
 import type { DagState } from '../core/dag/state';
 import type { Op } from '../core/dag/types';
@@ -796,5 +797,156 @@ describe('buildDeleteNodesOps — a node following a deleted node’s name (#155
       before,
     );
     expect(after.nodes.named.meta).toEqual({ name: 'walk', nameFrom: 'src' });
+  });
+});
+
+describe('buildDeleteNodesOps — an Object that carries a modifier stack (#1620)', () => {
+  // Schema-valid and folded through the real store, because the failure was a REFUSAL at the
+  // commit: the ops looked plausible and the store threw on one of them.
+  const withStack = (count: number) => {
+    let s = buildDefaultDagState();
+    const mods: string[] = [];
+    for (let i = 0; i < count; i++) {
+      const add = buildAddModifierOps(s, resolveStackBase(s, 'n_box'), 'ArrayModifier', {})!;
+      s = (add.ops as Op[]).reduce((acc, op) => applyOp(acc, op).next, s);
+      mods.push(add.modifierId);
+    }
+    return { s, mods };
+  };
+  const commit = (s: DagState, ids: string[]) => {
+    useDagStore.getState().hydrate(s);
+    useDagStore.getState().dispatchAtomic(buildDeleteNodesOps(s, ids), 'user', 'delete');
+    return useDagStore.getState().state;
+  };
+  const sceneChildren = (s: DagState) =>
+    ((s.nodes.n_scene.inputs.children ?? []) as { node: string }[]).map((r) => r.node);
+
+  it('CONTROL: the plain cube deletes with its data', () => {
+    const after = commit(buildDefaultDagState(), ['n_box']);
+    expect(after.nodes.n_box).toBeUndefined();
+    expect(after.nodes.n_box_data).toBeUndefined();
+  });
+
+  it.each([1, 2, 3])('deletes the Object, all %i modifier(s) and the base data', (count) => {
+    const { s, mods } = withStack(count);
+    const after = commit(s, ['n_box']);
+    for (const id of ['n_box', 'n_box_data', ...mods]) expect(after.nodes[id]).toBeUndefined();
+    expect(sceneChildren(after)).not.toContain('n_box');
+    // One undo step brings every node and wire back.
+    useDagStore.getState().undo();
+    expect(useDagStore.getState().state.nodes).toEqual(s.nodes);
+  });
+
+  it('a Group holding that Object takes the whole stack with it', () => {
+    const { s, mods } = withStack(2);
+    const grouped = (
+      [
+        { type: 'addNode', nodeId: 'G', nodeType: 'Group', params: {} },
+        {
+          type: 'connect',
+          from: { node: 'G', socket: 'out' },
+          to: { node: 'n_scene', socket: 'children' },
+        },
+        {
+          type: 'disconnect',
+          from: { node: 'n_box', socket: 'out' },
+          to: { node: 'n_scene', socket: 'children' },
+        },
+        {
+          type: 'connect',
+          from: { node: 'n_box', socket: 'out' },
+          to: { node: 'G', socket: 'children' },
+        },
+      ] as Op[]
+    ).reduce((acc, op) => applyOp(acc, op).next, s);
+    const after = commit(grouped, ['G']);
+    for (const id of ['G', 'n_box', 'n_box_data', ...mods]) expect(after.nodes[id]).toBeUndefined();
+  });
+
+  // Two Objects reading ONE stack (a linked duplicate, built by hand).
+  const shared = () => {
+    const { s, mods } = withStack(2);
+    const top = (s.nodes.n_box.inputs.data as { node: string }).node;
+    const state = (
+      [
+        { type: 'addNode', nodeId: 'twin', nodeType: 'Object', params: {} },
+        {
+          type: 'connect',
+          from: { node: top, socket: 'out' },
+          to: { node: 'twin', socket: 'data' },
+        },
+        {
+          type: 'connect',
+          from: { node: 'twin', socket: 'out' },
+          to: { node: 'n_scene', socket: 'children' },
+        },
+      ] as Op[]
+    ).reduce((acc, op) => applyOp(acc, op).next, s);
+    return { state, mods, top };
+  };
+
+  it('a stack two Objects share stays when one of them is deleted', () => {
+    const { state, mods, top } = shared();
+    const after = commit(state, ['n_box']);
+    expect(after.nodes.n_box).toBeUndefined();
+    for (const id of ['n_box_data', ...mods]) expect(after.nodes[id]).toBeDefined();
+    expect(after.nodes.twin.inputs.data).toEqual({ node: top, socket: 'out' });
+  });
+
+  it('the Object and its top modifier named together take the rest of the stack too', () => {
+    const { s, mods } = withStack(2);
+    const top = (s.nodes.n_box.inputs.data as { node: string }).node;
+    const after = commit(s, ['n_box', top]);
+    for (const id of ['n_box', 'n_box_data', ...mods]) expect(after.nodes[id]).toBeUndefined();
+  });
+
+  it('a shared top modifier deleted with ONE of its Objects is spliced into the Object that stays', () => {
+    const { state, mods, top } = shared();
+    const below = (state.nodes[top].inputs.target as { node: string }).node;
+    const after = commit(state, ['n_box', top]);
+    expect(after.nodes.n_box).toBeUndefined();
+    expect(after.nodes[top]).toBeUndefined();
+    expect(mods).toContain(below);
+    expect(after.nodes.twin.inputs.data).toEqual({ node: below, socket: 'out' });
+    expect(after.nodes.n_box_data).toBeDefined();
+  });
+
+  it('a deleted Object ends the splice: data something else still reads is never offered to the scene', () => {
+    // `twin` reads the LOWER modifier directly, so it survives the delete of the cube and its
+    // top modifier. The top modifier's only reader is the deleted cube, and what read the cube
+    // is the scene, which takes scene objects and not the data the stack carries.
+    const { s, mods } = withStack(2);
+    const top = (s.nodes.n_box.inputs.data as { node: string }).node;
+    const below = (s.nodes[top].inputs.target as { node: string }).node;
+    const state = (
+      [
+        { type: 'addNode', nodeId: 'twin', nodeType: 'Object', params: {} },
+        {
+          type: 'connect',
+          from: { node: below, socket: 'out' },
+          to: { node: 'twin', socket: 'data' },
+        },
+        {
+          type: 'connect',
+          from: { node: 'twin', socket: 'out' },
+          to: { node: 'n_scene', socket: 'children' },
+        },
+      ] as Op[]
+    ).reduce((acc, op) => applyOp(acc, op).next, s);
+    const after = commit(state, ['n_box', top]);
+    expect(after.nodes.n_box).toBeUndefined();
+    expect(after.nodes[top]).toBeUndefined();
+    expect(mods).toContain(below);
+    expect(after.nodes.twin.inputs.data).toEqual({ node: below, socket: 'out' });
+    expect(sceneChildren(after)).toEqual(['twin']);
+  });
+
+  it('CONTROL: a modifier deleted on its own keeps the Object and the mesh', () => {
+    const { s, mods } = withStack(2);
+    const after = commit(s, [mods[0]]);
+    expect(after.nodes[mods[0]]).toBeUndefined();
+    expect(after.nodes.n_box).toBeDefined();
+    expect(after.nodes.n_box_data).toBeDefined();
+    expect(after.nodes[mods[1]]).toBeDefined();
   });
 });
