@@ -192,6 +192,28 @@
         "driver": null
       }
     },
+    "CaptureModifier": {
+      "dropoff": {
+        "kind": "number",
+        "reach": null,
+        "driver": null
+      },
+      "falloff": {
+        "kind": "number",
+        "reach": null,
+        "driver": null
+      },
+      "maxInfluences": {
+        "kind": "number",
+        "reach": null,
+        "driver": null
+      },
+      "resolution": {
+        "kind": "number",
+        "reach": null,
+        "driver": null
+      }
+    },
     "Clamp": {
       "max": {
         "kind": "number",
@@ -1027,6 +1049,48 @@
         "kind": "vec3",
         "reach": null,
         "driver": null
+      }
+    },
+    "Object<CaptureModifier>": {
+      "position": {
+        "kind": "vec3",
+        "reach": "scene",
+        "driver": "scene"
+      },
+      "quaternion": {
+        "kind": "quat",
+        "reach": null
+      },
+      "rotation": {
+        "kind": "vec3",
+        "reach": "scene",
+        "driver": "scene"
+      },
+      "scale": {
+        "kind": "vec3",
+        "reach": "scene",
+        "driver": "scene"
+      }
+    },
+    "Object<CaptureModifier>@quaternion": {
+      "position": {
+        "kind": "vec3",
+        "reach": "scene",
+        "driver": "scene"
+      },
+      "quaternion": {
+        "kind": "quat",
+        "reach": "scene"
+      },
+      "rotation": {
+        "kind": "vec3",
+        "reach": null,
+        "driver": null
+      },
+      "scale": {
+        "kind": "vec3",
+        "reach": "scene",
+        "driver": "scene"
       }
     },
     "Object<ComponentGroupOp>": {
