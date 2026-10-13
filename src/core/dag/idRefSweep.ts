@@ -352,6 +352,36 @@ export function remapIdRefs(node: NodeLike, remap: (id: string) => string): unkn
   return params;
 }
 
+// ── #1560 — what a WIRE owns ───────────────────────────────────────────────────────────────
+//
+// A reference says what it owns in its `idRefs` row. A wire says it on the socket it enters
+// (`InputDescriptor.owns`, `body`), and delete and duplicate both ask here, so neither keeps a
+// list of socket names of its own. Two lists is how an Object's stack came to be copied whole by
+// one verb and half-deleted by the other (#1620).
+
+/** How the node holding `socket` relates to what is wired into it. See `InputDescriptor.owns`. */
+export type WireOwnership = 'always' | 'stack' | 'body';
+
+export function wireOwnership(nodeType: string, socket: string): WireOwnership | null {
+  const def = getNodeType(nodeType);
+  const decl = def?.inputs?.[socket];
+  if (!def || !decl) return null;
+  if (decl.body) return 'body';
+  if (decl.owns) return decl.owns;
+  // An operator's declared spine is the stack it sits on (13 types, all through `chain`).
+  return def.chain?.input === socket ? 'stack' : null;
+}
+
+/** The socket `nodeType` reads the rest of its stack on, or null when it sits on none. */
+export function stackSocketOf(nodeType: string): string | null {
+  const def = getNodeType(nodeType);
+  if (!def) return null;
+  for (const socket of Object.keys(def.inputs ?? {})) {
+    if (wireOwnership(nodeType, socket) === 'stack') return socket;
+  }
+  return null;
+}
+
 // ── #1553 — every relationship of a node, from one query ─────────────────────────────
 //
 // A node relates to others four ways: a wire (`inputs`), a declared reference in a param

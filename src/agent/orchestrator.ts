@@ -1177,6 +1177,9 @@ const KNOWN_EDGE_KINDS_LIST = [
   'rig',
   // #1477 — the scene's active collection, which every object a plan adds joins.
   'active-collection',
+  // #1560 — what the shared delete takes with a node: its sidecars, what it owns by reference
+  // or by wire, and the sub-network behind a body socket.
+  'owned',
 ] as const satisfies readonly EdgeKind[];
 
 // Compile-time bidirectional exhaustiveness — fails tsc if EdgeKind

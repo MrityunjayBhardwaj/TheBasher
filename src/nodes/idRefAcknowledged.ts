@@ -253,3 +253,71 @@ export const NOT_A_NODE_ID: Readonly<Record<string, string>> = {
   'TransformClip.keyframes[].targetNodeId': IMPORT_KEY,
   'VideoStitch.outputPath': STORAGE,
 };
+
+/**
+ * #1560 — the input sockets that OWN NOTHING: what is wired here is left alone when the node
+ * holding the socket is deleted, and stays shared when it is duplicated. Everything else says
+ * what it owns on the socket (`InputDescriptor.owns`, `body`, or an operator's `chain.input`).
+ *
+ * A socket has to be in one place or the other (`idRefCensus.gate.test.ts`), so a new one is a
+ * choice someone made. The two that were never chosen, a pose layer's `pose` and a Solver's
+ * `body`, are how deleting a character left its whole pose stack in the file.
+ */
+export const SHARED_WIRES: readonly string[] = [
+  'AnimationClip.skeleton',
+  'AnimationClip.source',
+  'ArmatureModifier.armature',
+  'BeautyPass.camera',
+  'BeautyPass.scene',
+  'BeautyPass.time',
+  'BoxData.material',
+  'CameraSelect.cameras',
+  'CaptureModifier.armature',
+  'Character.locomotion',
+  'ClipSelect.clips',
+  'Collection.collections',
+  'Collection.members',
+  'ComfyUIWorkflow.pass-input',
+  'ComfyUIWorkflow.prompt',
+  'ComfyUIWorkflow.time',
+  'Composition.layers',
+  'Cut.from',
+  'Cut.to',
+  'DepthPass.camera',
+  'DepthPass.scene',
+  'DepthPass.time',
+  'GltfAsset.transformClip',
+  'GltfSkeleton.asset',
+  'IDPass.camera',
+  'IDPass.scene',
+  'IDPass.time',
+  'Layer.source',
+  'LightProfileSelect.rigs',
+  'LightRig.lights',
+  'LocomotionState.path',
+  'LocomotionState.pose',
+  'LocomotionState.time',
+  'MotionGenerate.path',
+  'NormalPass.camera',
+  'NormalPass.scene',
+  'NormalPass.time',
+  'PosedSkeleton.skeleton',
+  'RenderJob.pass-input',
+  'RenderJob.time',
+  'RenderOutput.scene',
+  'RetargetClip.skeleton',
+  'RetargetClip.source',
+  'Scatter.assets',
+  'Scene.camera',
+  'Scene.children',
+  'Scene.collections',
+  'Scene.lightRig',
+  'Scene.lights',
+  'SetMaterialOp.material',
+  'Shot.camera',
+  'Shot.scene',
+  'SphereData.material',
+  'VideoStitch.pass-input',
+  'VideoStitch.time',
+  'WalkPath.navmesh',
+];

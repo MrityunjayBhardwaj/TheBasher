@@ -24,7 +24,15 @@
 import type { DagState } from '../../core/dag/state';
 import type { Node, NodeId } from '../../core/dag/types';
 import type { ClosureEdge, ClosureSet, ClosureSpec, EdgeKind } from './types';
-import { buildIdRefIndex, idRefsOutOf } from '../../core/dag/idRefSweep';
+import {
+  buildIdRefIndex,
+  idRefsByRole,
+  idRefsOutOf,
+  refIdsAt,
+  wireOwnership,
+} from '../../core/dag/idRefSweep';
+import { getNodeType } from '../../core/dag/registry';
+import { subnetworkOf } from '../../core/dag/subnetworks';
 import { chainSocketOf, isDataLaneOperator } from '../../app/operatorChain';
 import { rigReach, rigReachNodes } from '../../app/animate/renameBone';
 import { activeCollectionOf } from '../../app/collections';
@@ -179,6 +187,31 @@ function visitEdge(
     for (const id of reach ? rigReachNodes(reach) : []) {
       enqueue(id, from, kind, depth, seenInKind, seenEdges, visited, frontier, edges);
     }
+    return;
+  }
+
+  if (kind === 'owned') {
+    const self = state.nodes[from];
+    if (!self) return;
+    const reach = (id: NodeId) =>
+      enqueue(id, from, kind, depth, seenInKind, seenEdges, visited, frontier, edges);
+    for (const referrer of idRefsInto.get(from) ?? []) {
+      const node = state.nodes[referrer];
+      if (node && idRefsByRole(node).subject.includes(from)) reach(referrer);
+    }
+    for (const ref of getNodeType(self.type)?.idRefs ?? []) {
+      if (ref.owns) for (const id of refIdsAt(self.params, ref.path, ref.shape)) reach(id);
+    }
+    let ownsBody = false;
+    for (const [socket, binding] of Object.entries(self.inputs)) {
+      const owns = wireOwnership(self.type, socket);
+      if (!owns) continue;
+      if (owns === 'body') ownsBody = true;
+      for (const ref of Array.isArray(binding) ? binding : binding ? [binding] : []) {
+        if (ref?.node) reach(ref.node);
+      }
+    }
+    if (ownsBody) for (const inside of subnetworkOf(state, from)) reach(inside);
     return;
   }
 

@@ -7,8 +7,16 @@
 import type { DagState } from '../core/dag/state';
 import type { Node, NodeId, Op } from '../core/dag/types';
 import { getNodeType } from '../core/dag/registry';
-import { idRefSweep, subjectReferrersInto, remapIdRefs } from '../core/dag/idRefSweep';
-import { chainSocketOf } from './operatorChain';
+import {
+  buildIdRefIndex,
+  idRefsByRole,
+  idRefSweep,
+  subjectReferrersInto,
+  remapIdRefs,
+  stackSocketOf,
+  wireOwnership,
+} from '../core/dag/idRefSweep';
+import { subnetworkOf } from '../core/dag/subnetworks';
 import { collectionDeleteRelinkOps, collectionsHolding, membershipOps } from './collections';
 
 /**
@@ -26,7 +34,13 @@ import { collectionDeleteRelinkOps, collectionsHolding, membershipOps } from './
  * socket — or which has a SECOND same-typed input that is an argument, not a subject.
  */
 function isTargetWrapperNode(node: Node | undefined): boolean {
-  return !!chainSocketOf(node) && !!getNodeType(node!.type)?.outputs['out'];
+  return !!spineOf(node) && !!getNodeType(node!.type)?.outputs['out'];
+}
+
+/** The socket `node` reads the rest of its stack on (#1560): an operator's declared chain
+ *  socket, a pose layer's or a Rig's `pose`. Asked of the declaration, as `wireOwnership` is. */
+function spineOf(node: Node | undefined): string | null {
+  return node ? stackSocketOf(node.type) : null;
 }
 
 /** Every node+input-socket consuming `(producerId, 'out')`. */
@@ -64,8 +78,7 @@ function survivingConsumerAbove(
     const surviving = consumers.find((c) => !idSet.has(c.node));
     if (surviving) return surviving;
     const above = consumers.find(
-      (c) =>
-        isTargetWrapperNode(state.nodes[c.node]) && chainSocketOf(state.nodes[c.node]) === c.socket,
+      (c) => isTargetWrapperNode(state.nodes[c.node]) && spineOf(state.nodes[c.node]) === c.socket,
     );
     if (!above) return null;
     cursor = above.node; // a deleted wrapper on the same stack — hop over it
@@ -143,40 +156,68 @@ export function buildDeleteNodesOps(state: DagState, ids: readonly NodeId[]): Op
   // #1620 — ownership carries on DOWN THE STACK. An Object's `data` names the TOP of its
   // operator stack (#415), so stopping there took the top modifier and left the rest of the
   // stack and the base data behind, for the splice below to hand to the scene. A node reached
-  // as OWNED also owns what it reads on its declared spine (`chainSocketOf`), under the same
+  // as OWNED also owns what it reads on its declared spine (`stackSocketOf`), under the same
   // exclusivity guard, which is the walk the agent's closure already makes for `data`
   // (`socketCarriesKind`, src/agent/closure/expand.ts). A wrapper the caller asked to delete
   // is NOT reached as owned unless a deleted owner holds it, so deleting a modifier on its own
   // still keeps the mesh and splices. Run to a fixpoint, because a wrapper named by the caller
   // becomes owned only once its Object is known to be going too.
-  const OWNED_ON_DELETE = ['children', 'data'] as const;
+  // #1560 — WHICH wires own is read off the socket (`wireOwnership`), not listed here. The two
+  // names this used to carry (`children`, `data`) are now what Object and Group declare, beside
+  // an armature Object's `pose`, a driver's `in` and the operands of the compute nodes behind
+  // it; a pose layer's `pose` is a stack like an operator's spine. And a BODY socket takes the
+  // whole sub-network behind it: a node inside feeds nothing but that sub-network and its
+  // owner (#1547), so once the owner goes nothing can read it.
   const reachedAsOwned = new Set<NodeId>();
-  for (let changed = true; changed; ) {
-    changed = false;
-    for (let i = 0; i < allIds.length; i++) {
-      const owner = state.nodes[allIds[i]];
-      if (!owner) continue;
-      const spine = reachedAsOwned.has(owner.id) ? chainSocketOf(owner) : null;
-      for (const socket of spine ? [...OWNED_ON_DELETE, spine] : OWNED_ON_DELETE) {
-        for (const ref of refsOf(owner.inputs?.[socket])) {
-          const ownedId = ref?.node;
-          if (!ownedId || reachedAsOwned.has(ownedId) || !state.nodes[ownedId]) continue;
-          const hasSurvivingConsumer = Object.entries(state.nodes).some(
-            ([cid, c]) =>
-              !idSet.has(cid) &&
-              Object.values(c.inputs).some((b) => refsOf(b).some((r) => r?.node === ownedId)),
-          );
-          if (hasSurvivingConsumer) continue;
-          reachedAsOwned.add(ownedId);
-          changed = true;
-          if (!idSet.has(ownedId)) {
-            idSet.add(ownedId);
-            allIds.push(ownedId); // appended → this loop keeps walking into it
+  const take = (id: NodeId) => {
+    reachedAsOwned.add(id);
+    if (idSet.has(id)) return;
+    idSet.add(id);
+    allIds.push(id); // appended → the loop below keeps walking into it
+  };
+  // "Nothing else uses it" counts a REFERENCE as a use too (#1560): a compute node that lost its
+  // last wire but whose spare param another driver still reads is still in use, and taking it
+  // would silently clear that driver's source. Only an 'argument' reference counts. A 'subject'
+  // one is a sidecar of the node (its own channel), which goes with it and keeps nothing alive.
+  const namedBy = buildIdRefIndex(state.nodes);
+  const isStillNamed = (id: NodeId) =>
+    (namedBy.get(id) ?? []).some((referrerId) => {
+      const referrer = state.nodes[referrerId];
+      return !!referrer && !idSet.has(referrerId) && idRefsByRole(referrer).argument.includes(id);
+    });
+  const takeOwned = () => {
+    for (let changed = true; changed; ) {
+      changed = false;
+      for (let i = 0; i < allIds.length; i++) {
+        const owner = state.nodes[allIds[i]];
+        if (!owner) continue;
+        for (const [socket, binding] of Object.entries(owner.inputs ?? {})) {
+          const kind = wireOwnership(owner.type, socket);
+          if (kind === 'body') {
+            for (const inside of subnetworkOf(state, owner.id)) {
+              if (reachedAsOwned.has(inside) || !state.nodes[inside]) continue;
+              take(inside);
+              changed = true;
+            }
+            continue;
+          }
+          if (kind !== 'always' && !(kind === 'stack' && reachedAsOwned.has(owner.id))) continue;
+          for (const ref of refsOf(binding)) {
+            const ownedId = ref?.node;
+            if (!ownedId || reachedAsOwned.has(ownedId) || !state.nodes[ownedId]) continue;
+            const hasSurvivingConsumer = Object.entries(state.nodes).some(
+              ([cid, c]) =>
+                !idSet.has(cid) &&
+                Object.values(c.inputs).some((b) => refsOf(b).some((r) => r?.node === ownedId)),
+            );
+            if (hasSurvivingConsumer || isStillNamed(ownedId)) continue;
+            take(ownedId);
+            changed = true;
           }
         }
       }
     }
-  }
+  };
 
   // ── Direction 2: the id-reference universe (params, not edges). ──────────────
   // [[H136]] a free-floating KeyframeChannel names its target via `params.target`,
@@ -187,13 +228,24 @@ export function buildDeleteNodesOps(state: DagState, ids: readonly NodeId[]): Op
   // next node kind is covered by declaring a field rather than by remembering to
   // edit this site. Runs AFTER the owned GC above so a channel bound to a GC'd
   // BoxData — or to a group's deleted child — is caught too.
-  const sweep = idRefSweep(state.nodes, allIds);
-  for (const sweptId of sweep.remove) {
-    if (!idSet.has(sweptId)) {
-      idSet.add(sweptId);
-      allIds.push(sweptId);
+  //
+  // #1560 — the two directions feed each other, so they run in turn until neither adds a node.
+  // A driver is swept with the cube it drives, and only then is it known that the Solver wired
+  // into that driver has lost its last reader; the Solver's sub-network follows in the next turn.
+  let sweep: ReturnType<typeof idRefSweep>;
+  let grew: boolean;
+  do {
+    takeOwned();
+    sweep = idRefSweep(state.nodes, allIds);
+    grew = false;
+    for (const sweptId of sweep.remove) {
+      if (!idSet.has(sweptId)) {
+        idSet.add(sweptId);
+        allIds.push(sweptId);
+        grew = true;
+      }
     }
-  }
+  } while (grew);
 
   // Clearing the surviving 'argument' refs (an aim target, a followed curve, a
   // controller) comes FIRST: those nodes outlive this delete, and the clear is what
@@ -246,7 +298,7 @@ export function buildDeleteNodesOps(state: DagState, ids: readonly NodeId[]): Op
     // The SUBJECT rides the spine. Reading it by the name `target` would, on a wrapper
     // with a second same-typed input, be a coin-flip between the subject and an
     // argument — and reconnecting the wrong one is a silent rewire (#396).
-    const subject = refsOf(node!.inputs?.[chainSocketOf(node)!])[0];
+    const subject = refsOf(node!.inputs?.[spineOf(node)!])[0];
     // Subject also being deleted → nothing to keep alive.
     if (!subject?.node || idSet.has(subject.node)) continue;
     const consumer = survivingConsumerAbove(state, nodeId, idSet);

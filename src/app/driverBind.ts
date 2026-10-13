@@ -19,6 +19,7 @@ import { wouldCreateCycle } from '../core/dag/state';
 import type { NodeRef, Op } from '../core/dag/types';
 import { getNodeType } from '../core/dag/registry';
 import { missingParamPath } from './animatableParams';
+import { buildDeleteNodesOps } from './sceneNodeActions';
 import { driverNodesForTarget, driverParamDeps, nextDriverOrder } from './paramDrivers';
 import { TRANSFORM_CHANNELS, type TransformChannel } from '../nodes/ParamDriver';
 
@@ -199,9 +200,11 @@ export function buildBindDriverOps(state: DagState, req: DriverBindRequest): Dri
 /** The forward Op to UNbind a target param: remove every ParamDriver bound to
  *  (targetId, paramPath). Usually one; robust to duplicates. Empty when none. */
 export function buildUnbindDriverOps(state: DagState, targetId: string, paramPath: string): Op[] {
-  return driverNodesForTarget(state.nodes, targetId)
+  const ids = driverNodesForTarget(state.nodes, targetId)
     .filter((d) => (d.params as { paramPath?: unknown }).paramPath === paramPath)
-    .map((d) => ({ type: 'removeNode', nodeId: d.id }));
+    .map((d) => d.id);
+  // #1560 — through the shared delete, so a source only these drivers read goes with them.
+  return ids.length > 0 ? buildDeleteNodesOps(state, ids) : [];
 }
 
 /** A transform-channel range map (#296 S3): the "map the transform to a range" model. */

@@ -35,6 +35,7 @@
 import type { DagState } from '../core/dag/state';
 import type { Node, Op } from '../core/dag/types';
 import { driverStackForTarget, isDriverMuted } from './paramDrivers';
+import { buildDeleteNodesOps } from './sceneNodeActions';
 import type { StackRowEntry } from './OperatorStackRows';
 import { nodeDisplayName } from './sceneTreeWalk';
 import { transformSourceOf, transformVecSourceOf } from './transformChannelSource';
@@ -163,11 +164,13 @@ export function buildMoveDriverOps(
   ];
 }
 
-/** Remove a driver. Edge-less on the target side → nothing to unwire there; the node goes.
- *  Its SOURCE (the compute node feeding `in`) is left alone on purpose: it may be shared
- *  with other drivers, and it is an ordinary graph node the user can delete themselves. */
+/** Remove a driver, through the shared delete (#1560). Its SOURCE (the compute node feeding
+ *  `in`) used to be left alone on purpose, as "an ordinary graph node the user can delete
+ *  themselves" — but no gesture deletes one, so removing a spring left its Solver and the nine
+ *  nodes inside it in the file for good. The driver owns that wire now: the source goes when
+ *  this was its last reader, and a source another driver still reads stays. */
 export function buildRemoveDriverOps(state: DagState, driverId: string): Op[] | null {
   const node = state.nodes[driverId];
   if (!node || node.type !== 'ParamDriver') return null;
-  return [{ type: 'removeNode', nodeId: driverId }];
+  return buildDeleteNodesOps(state, [driverId]);
 }

@@ -128,10 +128,32 @@ describe('driverBind', () => {
       connect('c1', 'drv1'),
     );
     const ops = buildUnbindDriverOps(state, BOX_ID, PARAM);
-    expect(ops).toEqual([{ type: 'removeNode', nodeId: 'drv1' }]);
+    // #1560 — unbind goes through the shared delete, and a driver owns its source: `c1` had
+    // no other reader, so it goes too. Left behind it could not be reached again to remove.
+    expect(ops).toEqual([
+      { type: 'removeNode', nodeId: 'drv1' },
+      { type: 'removeNode', nodeId: 'c1' },
+    ]);
     let next = state;
     for (const op of ops) next = applyOp(next, op).next;
     expect(driverTargetSet(next.nodes).has(BOX_ID)).toBe(false);
+  });
+
+  it('buildUnbindDriverOps leaves a source another driver still reads', () => {
+    const state = withNodes(
+      addClamp('c1'),
+      addDriver('drv1', BOX_ID, PARAM),
+      connect('c1', 'drv1'),
+      addDriver('drv2', BOX_ID, 'scale.0'),
+      connect('c1', 'drv2'),
+    );
+    expect(buildUnbindDriverOps(state, BOX_ID, PARAM)).toEqual([
+      { type: 'removeNode', nodeId: 'drv1' },
+    ]);
+  });
+
+  it('buildUnbindDriverOps on a param nothing drives emits nothing', () => {
+    expect(buildUnbindDriverOps(withNodes(addClamp('c1')), BOX_ID, PARAM)).toEqual([]);
   });
 
   it('driverSourceOptions lists Number-output nodes, excluding the target + drivers', () => {

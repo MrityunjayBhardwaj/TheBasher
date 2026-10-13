@@ -186,7 +186,7 @@ export const RetargetClipNode: NodeDefinition<
      * point on a chain. Its `clip` range says what to sample; the source rig travels on it.
      */
     source: { type: 'PosedSkeleton', cardinality: 'single' },
-    boneMap: { type: 'BoneNameMap', cardinality: 'single' },
+    boneMap: { type: 'BoneNameMap', cardinality: 'single', owns: 'always' },
     skeleton: { type: 'Skeleton', cardinality: 'single' },
   },
   outputs: {

@@ -44,7 +44,7 @@ export const GroupNode: NodeDefinition<GroupParams, GroupValue> = {
   pure: true,
   cost: 'cheap',
   paramSchema: GroupParams,
-  inputs: { children: { type: 'SceneObject', cardinality: 'list' } },
+  inputs: { children: { type: 'SceneObject', cardinality: 'list', owns: 'always' } },
   outputs: { out: { type: 'SceneObject', cardinality: 'single' } },
   inspectorSections: ['transform', 'constraint', 'driver', 'layout'],
   home: {

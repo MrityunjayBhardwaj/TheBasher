@@ -54,7 +54,15 @@ export type EdgeKind =
   // Blender links every object it adds into the active collection (`linkIntoActiveCollection`);
   // that join is a `members` connect onto the collection, which no edge kind above reaches from a
   // root the new object does not yet hang off. Reaches nothing when the scene itself is active.
-  | 'active-collection';
+  | 'active-collection'
+  // #1560 — what goes WITH a node when it is deleted: the sidecars that name it as their subject,
+  // what it owns by reference (a Track's strips), what it owns by wire (`InputDescriptor.owns`:
+  // an Object's data and pose, a driver's source, the rest of a stack) and the sub-network
+  // behind a body socket. One walk across all four, because a delete crosses them in one go
+  // (cube → its driver → the Solver wired into it → the Solver's sub-network) and the kinds
+  // above never hand over to each other. It reads the same declarations the delete builder
+  // reads, without the "nothing else uses it" check, so it is the widest the delete can reach.
+  | 'owned';
 
 export interface ClosureSpec {
   /** Root node ids the closure expands from. */

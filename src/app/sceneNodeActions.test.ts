@@ -6,6 +6,12 @@ import { danglingIdRefs } from '../core/dag/idRefSweep';
 import { evaluate } from '../core/dag/evaluator';
 import { buildAddModifierOps, findConsumer, resolveStackBase } from './operatorStack';
 import { useDagStore } from '../core/dag/store';
+import { subnetworkOf } from '../core/dag/subnetworks';
+import { buildSpringOps, type SpringNodeKey } from './solverBind';
+import { buildRemoveDriverOps } from './driverStack';
+import { buildUnbindDriverOps } from './driverBind';
+import { buildNewMaterialOps } from './materialLink';
+import { wrapInRig } from './animate/wrapInRig';
 import { buildDefaultDagState } from '../core/project/default';
 import type { DagState } from '../core/dag/state';
 import type { Op } from '../core/dag/types';
@@ -1000,5 +1006,260 @@ describe('buildDeleteNodesOps — the order the ids arrive in (#1621)', () => {
         .map((op) => (op as { nodeId: string }).nodeId);
     expect(removed(['G', 'n_box'])).toEqual(['G', 'n_box', 'n_box_data']);
     expect(removed(['n_box', 'G'])).toEqual(['G', 'n_box', 'n_box_data']);
+  });
+});
+
+describe('buildDeleteNodesOps — what a deleted node takes with it (#1560)', () => {
+  // Every case is committed through the real store, and names both what must go and what must stay.
+  const node = (nodeId: string, nodeType: string, params: Record<string, unknown> = {}): Op =>
+    ({ type: 'addNode', nodeId, nodeType, params }) as Op;
+  const wire = (from: string, to: string, socket: string, fromSocket = 'out'): Op =>
+    ({ type: 'connect', from: { node: from, socket: fromSocket }, to: { node: to, socket } }) as Op;
+  const fold = (s: DagState, ops: readonly Op[]) =>
+    ops.reduce((acc, op) => applyOp(acc, op).next, s);
+  const commit = (s: DagState, ids: string[]) => {
+    useDagStore.getState().hydrate(s);
+    useDagStore.getState().dispatchAtomic(buildDeleteNodesOps(s, ids), 'user', 'delete');
+    const after = useDagStore.getState().state;
+    // One undo step puts every node and wire back.
+    useDagStore.getState().undo();
+    expect(useDagStore.getState().state.nodes).toEqual(s.nodes);
+    return after;
+  };
+  const gone = (after: DagState, ids: readonly string[]) =>
+    ids.filter((id) => after.nodes[id] !== undefined);
+  const kept = (after: DagState, ids: readonly string[]) =>
+    ids.filter((id) => after.nodes[id] === undefined);
+
+  // A cube sprung to a Null: driver ← Solver ← a nine-node sub-network.
+  const sprung = () => {
+    const s = fold(buildDefaultDagState(), [
+      node('ctl', 'Null'),
+      wire('ctl', 'n_scene', 'children'),
+    ]);
+    const built = buildSpringOps(s, {
+      targetId: 'n_box',
+      controllerId: 'ctl',
+      idFor: (k: SpringNodeKey) => `sp_${k}`,
+    });
+    if (!built.ok) throw new Error(built.reason);
+    return fold(s, built.ops);
+  };
+  const INSIDE = ['sp_in', 'sp_pp', 'sp_pv', 'sp_e', 'sp_ke', 'sp_cv', 'sp_acc', 'sp_nv', 'sp_np'];
+
+  describe('a sub-network goes with its owner', () => {
+    it('the fixture is a Solver owning nine nodes', () => {
+      expect([...subnetworkOf(sprung(), 'sp_solver')].sort()).toEqual([...INSIDE].sort());
+    });
+
+    it('deleting the Solver takes its sub-network and leaves the driver and the cube', () => {
+      const after = commit(sprung(), ['sp_solver']);
+      expect(gone(after, ['sp_solver', ...INSIDE])).toEqual([]);
+      expect(kept(after, ['sp_driver', 'n_box', 'ctl'])).toEqual([]);
+    });
+
+    it('deleting the sprung cube takes the driver, then the Solver, then its sub-network', () => {
+      const after = commit(sprung(), ['n_box']);
+      expect(gone(after, ['n_box', 'n_box_data', 'sp_driver', 'sp_solver', ...INSIDE])).toEqual([]);
+      expect(kept(after, ['ctl'])).toEqual([]);
+    });
+
+    it('removing the driver (the inspector ✕ and Unbind) takes the Solver it alone read', () => {
+      for (const ops of [
+        buildRemoveDriverOps(sprung(), 'sp_driver')!,
+        buildUnbindDriverOps(sprung(), 'n_box', 'position'),
+      ]) {
+        const s = sprung();
+        useDagStore.getState().hydrate(s);
+        useDagStore.getState().dispatchAtomic(ops, 'user', 'remove driver');
+        const after = useDagStore.getState().state;
+        expect(gone(after, ['sp_driver', 'sp_solver', ...INSIDE])).toEqual([]);
+        expect(kept(after, ['n_box', 'ctl'])).toEqual([]);
+      }
+    });
+
+    it('CONTROL: a Solver a second driver still reads stays, with its sub-network', () => {
+      const s = fold(sprung(), [
+        node('other', 'ParamDriver', { target: 'ctl', paramPath: 'scale' }),
+        wire('sp_solver', 'other', 'in', 'outVec'),
+      ]);
+      const after = commit(s, ['sp_driver']);
+      expect(gone(after, ['sp_driver'])).toEqual([]);
+      expect(kept(after, ['sp_solver', 'other', ...INSIDE])).toEqual([]);
+    });
+
+    it('a node deleted INSIDE takes the leaf only it read, and nothing else', () => {
+      const s = sprung();
+      useDagStore.getState().hydrate(s);
+      useDagStore.getState().dispatchAtomic(buildDeleteNodesOps(s, ['sp_e']), 'user', 'delete');
+      const after = useDagStore.getState().state;
+      expect(gone(after, ['sp_e', 'sp_in'])).toEqual([]);
+      expect(kept(after, ['sp_solver', 'sp_pp', 'sp_ke', 'sp_np'])).toEqual([]);
+      // #1623 — undoing THIS delete is refused today: the node is added back before anything
+      // inside reads it, so for one step it counts as outside its own sub-network. Pinned here
+      // so the day that is fixed this line goes red and the undo is asserted like every other.
+      expect(() => useDagStore.getState().undo()).toThrow(/inside the sub-network/);
+    });
+  });
+
+  describe('a driver owns its source', () => {
+    const driven = (extra: Op[] = []) =>
+      fold(buildDefaultDagState(), [
+        node('k', 'Math', {}),
+        node('k0', 'Math', {}),
+        wire('k0', 'k', 'a'),
+        node('drv', 'ParamDriver', { target: 'n_box', paramPath: 'position.0' }),
+        wire('k', 'drv', 'in'),
+        ...extra,
+      ]);
+
+    it('deleting the cube takes the compute chain only its driver read', () => {
+      const after = commit(driven(), ['n_box']);
+      expect(gone(after, ['n_box', 'drv', 'k', 'k0'])).toEqual([]);
+    });
+
+    it('CONTROL: a source a driver on another object still reads stays', () => {
+      const after = commit(
+        driven([
+          node('drv2', 'ParamDriver', { target: 'n_light', paramPath: 'position.0' }),
+          wire('k', 'drv2', 'in'),
+        ]),
+        ['n_box'],
+      );
+      expect(gone(after, ['n_box', 'drv'])).toEqual([]);
+      expect(kept(after, ['k', 'k0', 'drv2'])).toEqual([]);
+    });
+
+    it('a source another driver names by reference (its spare param) stays, and the reference holds', () => {
+      const s = fold(driven(), [
+        {
+          type: 'setSpareParam',
+          nodeId: 'k',
+          param: { key: 'gain', type: 'float', value: 2 },
+        } as unknown as Op,
+        node('drv2', 'ParamDriver', {
+          target: 'n_light',
+          paramPath: 'position.0',
+          sourceSpare: { node: 'k', key: 'gain' },
+        }),
+      ]);
+      const after = commit(s, ['n_box']);
+      expect(gone(after, ['n_box', 'drv'])).toEqual([]);
+      expect(kept(after, ['k', 'drv2'])).toEqual([]);
+      expect((after.nodes.drv2.params as { sourceSpare: { node: string } }).sourceSpare.node).toBe(
+        'k',
+      );
+    });
+  });
+
+  // An armature Object over three pose layers: Skeleton.pose → L1 → L2 → L3 → ARM.pose.
+  const BONES = [
+    { name: 'upper', parent: -1, position: [0, 0, 0], rotation: [0, 0, 0] },
+    { name: 'lower', parent: 0, position: [0, 1, 0], rotation: [0, 0, 0] },
+  ];
+  const layer = (id: string, bone: string, mode?: string) =>
+    node(id, 'PoseLayer', {
+      name: id,
+      ...(mode ? { mode } : {}),
+      members: [{ bone, rotationMode: 'XYZ', rotation: [0, 10, 0] }],
+    });
+  const armature = () =>
+    fold(buildDefaultDagState(), [
+      node('n_skel', 'Skeleton', { bones: BONES }),
+      layer('L1', 'lower'),
+      wire('n_skel', 'L1', 'pose', 'pose'),
+      layer('L2', 'lower', 'additive'),
+      wire('L1', 'L2', 'pose'),
+      layer('L3', 'upper', 'additive'),
+      wire('L2', 'L3', 'pose'),
+      node('ARM', 'Object'),
+      wire('L3', 'ARM', 'pose'),
+      wire('n_skel', 'ARM', 'data'),
+      wire('ARM', 'n_scene', 'children'),
+    ]);
+  const rigged = () => {
+    const s = armature();
+    const w = wrapInRig(s, {
+      object: 'ARM',
+      rigId: 'RIG',
+      inputId: 'RIG_in',
+      layers: ['L2', 'L3'],
+    } as never);
+    if (!w.ok) throw new Error(w.reason);
+    return fold(s, w.ops);
+  };
+
+  describe('the pose stack under an armature Object', () => {
+    it('deleting the Object takes the skeleton and every layer', () => {
+      const after = commit(armature(), ['ARM']);
+      expect(gone(after, ['ARM', 'n_skel', 'L1', 'L2', 'L3'])).toEqual([]);
+    });
+
+    it('with the layers in a Rig, the Rig and its input go too', () => {
+      const s = rigged();
+      expect([...subnetworkOf(s, 'RIG')].sort()).toEqual(['L2', 'L3', 'RIG_in']);
+      const after = commit(s, ['ARM']);
+      expect(gone(after, ['ARM', 'n_skel', 'L1', 'L2', 'L3', 'RIG', 'RIG_in'])).toEqual([]);
+    });
+
+    it('CONTROL: a pose stack a second Object reads stays when one of them is deleted', () => {
+      const s = fold(armature(), [
+        node('TWIN', 'Object'),
+        wire('L3', 'TWIN', 'pose'),
+        wire('n_skel', 'TWIN', 'data'),
+        wire('TWIN', 'n_scene', 'children'),
+      ]);
+      const after = commit(s, ['ARM']);
+      expect(gone(after, ['ARM'])).toEqual([]);
+      expect(kept(after, ['n_skel', 'L1', 'L2', 'L3', 'TWIN'])).toEqual([]);
+      expect(after.nodes.TWIN.inputs.pose).toEqual({ node: 'L3', socket: 'out' });
+    });
+
+    it('a layer deleted from the middle is spliced out: the stack stays whole', () => {
+      const after = commit(armature(), ['L2']);
+      expect(gone(after, ['L2'])).toEqual([]);
+      expect(kept(after, ['L1', 'L3', 'ARM', 'n_skel'])).toEqual([]);
+      expect(after.nodes.L3.inputs.pose).toEqual({ node: 'L1', socket: 'out' });
+      expect(after.nodes.ARM.inputs.pose).toEqual({ node: 'L3', socket: 'out' });
+    });
+
+    it('the top layer deleted hands the Object the layer below', () => {
+      const after = commit(armature(), ['L3']);
+      expect(after.nodes.ARM.inputs.pose).toEqual({ node: 'L2', socket: 'out' });
+    });
+
+    it('a deleted Rig takes the layers inside it and hands the Object the pose it read', () => {
+      const after = commit(rigged(), ['RIG']);
+      expect(gone(after, ['RIG', 'RIG_in', 'L2', 'L3'])).toEqual([]);
+      expect(kept(after, ['L1', 'ARM', 'n_skel'])).toEqual([]);
+      expect(after.nodes.ARM.inputs.pose).toEqual({ node: 'L1', socket: 'out' });
+    });
+
+    it('a layer deleted inside a Rig is spliced out inside it', () => {
+      const after = commit(rigged(), ['L3']);
+      expect(gone(after, ['L3'])).toEqual([]);
+      expect(after.nodes.RIG.inputs.body).toEqual({ node: 'L2', socket: 'out' });
+      expect(after.nodes.L2.inputs.pose).toEqual({ node: 'RIG_in', socket: 'out' });
+    });
+  });
+
+  describe('what a delete leaves alone', () => {
+    it('a Material stays when the last cube using it is deleted', () => {
+      const made = buildNewMaterialOps(buildDefaultDagState(), 'n_box_data', 'MAT')!;
+      const after = commit(fold(buildDefaultDagState(), made.ops), ['n_box']);
+      expect(gone(after, ['n_box', 'n_box_data'])).toEqual([]);
+      expect(kept(after, ['MAT'])).toEqual([]);
+    });
+
+    it('an Action stays when the object its strip was placed on is deleted', () => {
+      const s = fold(buildDefaultDagState(), [
+        node('act', 'Action', { name: 'wave', channels: [] }),
+        node('strip', 'Strip', { target: 'n_box', action: 'act', start: 7 }),
+        node('trk', 'Track', { strips: ['strip'], order: 0 }),
+      ]);
+      const after = commit(s, ['n_box']);
+      expect(gone(after, ['n_box', 'strip'])).toEqual([]);
+      expect(kept(after, ['act', 'trk'])).toEqual([]);
+    });
   });
 });

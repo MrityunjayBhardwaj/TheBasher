@@ -13,7 +13,13 @@ import { z } from 'zod';
 import { getNodeType, listNodeTypes, paramFieldsOf } from '../core/dag/registry';
 import type { NodeDefinition } from '../core/dag/types';
 import { idRefStringPath, paramStringPaths } from '../core/dag/paramStringPaths';
-import { NOT_A_NODE_ID, OPENPBR_VALUE_MOUNTS, OPENPBR_VALUE_STRINGS } from './idRefAcknowledged';
+import {
+  NOT_A_NODE_ID,
+  OPENPBR_VALUE_MOUNTS,
+  OPENPBR_VALUE_STRINGS,
+  SHARED_WIRES,
+} from './idRefAcknowledged';
+import { wireOwnership } from '../core/dag/idRefSweep';
 import { openpbrMaterialSchema } from './materialSchema';
 import { optionsValueKindOf } from './paramWidget';
 import { registerAllNodes } from './registerAll';
@@ -257,6 +263,85 @@ describe('#1551 — every string a registered node can store is an id reference 
         "Track.strips:argument",
         "TrackTo.aimNode:argument",
         "TrackTo.target:subject",
+      ]
+    `);
+  });
+});
+
+describe('#1560 — every input socket says what it owns, or is listed as owning nothing', () => {
+  const sockets = () =>
+    registered().flatMap((def) =>
+      Object.keys(getNodeType(def.type)?.inputs ?? {}).map((socket) => ({
+        key: `${def.type}.${socket}`,
+        owns: wireOwnership(def.type, socket),
+      })),
+    );
+
+  it('reads the real registry', () => {
+    expect(sockets().length).toBeGreaterThan(90);
+  });
+
+  it('no socket is undecided: it owns, or it is acknowledged as shared', () => {
+    const undecided = sockets()
+      .filter((s) => s.owns === null && !SHARED_WIRES.includes(s.key))
+      .map((s) => s.key);
+    expect(undecided).toEqual([]);
+  });
+
+  it('no acknowledgement outlives its socket, or contradicts what the socket declares', () => {
+    const byKey = new Map(sockets().map((s) => [s.key, s.owns]));
+    expect(SHARED_WIRES.filter((key) => !byKey.has(key))).toEqual([]);
+    expect(SHARED_WIRES.filter((key) => byKey.get(key))).toEqual([]);
+    expect(new Set(SHARED_WIRES).size).toBe(SHARED_WIRES.length);
+  });
+
+  it('the sockets that own, by how', () => {
+    const owning = sockets()
+      .filter((s) => s.owns)
+      .map((s) => `${s.key}:${s.owns}`)
+      .sort();
+    expect(owning).toMatchInlineSnapshot(`
+      [
+        "ArmatureModifier.target:stack",
+        "ArrayModifier.target:stack",
+        "BevelModifier.target:stack",
+        "CaptureModifier.target:stack",
+        "Clamp.in:always",
+        "ColorCorrect.target:stack",
+        "ComponentGroupOp.target:stack",
+        "CurveRemap.in:always",
+        "Fit.in:always",
+        "Group.children:always",
+        "Lag.in:always",
+        "MakeVec3.x:always",
+        "MakeVec3.y:always",
+        "MakeVec3.z:always",
+        "MaskModifier.target:stack",
+        "MaterialOverride.target:stack",
+        "MaterialOverrideOp.target:stack",
+        "Math.a:always",
+        "Math.b:always",
+        "MirrorModifier.target:stack",
+        "Mix.a:always",
+        "Mix.b:always",
+        "Noise.t:always",
+        "Object.children:always",
+        "Object.data:always",
+        "Object.pose:always",
+        "ParamDriver.in:always",
+        "PoseLayer.pose:stack",
+        "RetargetClip.boneMap:always",
+        "Rig.body:body",
+        "Rig.pose:stack",
+        "SetMaterialOp.target:stack",
+        "Solver.bodies:body",
+        "Solver.body:body",
+        "Transform.target:stack",
+        "UVProjectModifier.target:stack",
+        "Vec3Math.a:always",
+        "Vec3Math.b:always",
+        "Vec3Math.s:always",
+        "VecBreak3.v:always",
       ]
     `);
   });

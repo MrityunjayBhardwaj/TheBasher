@@ -20,6 +20,8 @@ import { makeSplitCamera } from '../../test-utils/splitCamera';
 import { dataIdFor } from '../../test-utils/splitKinds';
 import { BIND, skinBindSceneOps } from '../../test-utils/skinBindScene';
 import { buildDefaultDagState } from '../../core/project/default';
+import { buildSpringOps } from '../../app/solverBind';
+import { expandClosure } from '../closure/expand';
 import {
   __resetMutatorRegistryForTests,
   getMutator,
@@ -2122,6 +2124,54 @@ describe('deleteNode mutator', () => {
     // whether or not the splice happened, so that check passes with the splice deleted.
     // What actually has to be re-joined is the DATA lane. → [[H218]]
     expect(findConsumer(s, seeded.dataId)).toEqual({ node: 'box', socket: 'data' });
+  });
+
+  // #1560 — the shared delete now crosses from a reference to a wire to a sub-network in one
+  // go, and no single edge kind did: the driver is reached from the cube by id-ref, the Solver
+  // from the driver by a wire. Without the 'owned' kind gate 3 rejected the mutator's own ops.
+  const sprungScene = (): DagState => {
+    let s = buildDefaultDagState();
+    for (const op of [
+      { type: 'addNode', nodeId: 'ctl', nodeType: 'Null', params: {} },
+      {
+        type: 'connect',
+        from: { node: 'ctl', socket: 'out' },
+        to: { node: 'n_scene', socket: 'children' },
+      },
+    ] as Op[])
+      s = applyOp(s, op).next;
+    const built = buildSpringOps(s, {
+      targetId: 'n_box',
+      controllerId: 'ctl',
+      idFor: (k) => `sp_${k}`,
+    });
+    if (!built.ok) throw new Error(built.reason);
+    return built.ops.reduce((acc, op) => applyOp(acc, op).next, s);
+  };
+
+  it('#1560 a sprung cube deletes through the agent: its driver, Solver and sub-network are in scope', () => {
+    const state = sprungScene();
+    const result = validatePlan(deleteNodeMutator, { targetSelectors: ['n_box'] }, state, 'del');
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    let s = state;
+    for (const op of result.ops) s = applyOp(s, op).next;
+    const left = Object.keys(s.nodes).filter(
+      (id) => id.startsWith('sp_') || id.startsWith('n_box'),
+    );
+    expect(left).toEqual([]);
+    expect(s.nodes.ctl).toBeDefined();
+  });
+
+  it('#1560 CONTROL: the scope reaches what a delete can take and not an unrelated object', () => {
+    const closure = expandClosure(
+      deleteNodeMutator.buildClosureSpec({ targetSelectors: ['n_box'] }),
+      sprungScene(),
+    );
+    expect(closure.nodes.has('sp_solver')).toBe(true);
+    expect(closure.nodes.has('sp_e')).toBe(true);
+    expect(closure.nodes.has('n_light')).toBe(false);
+    expect(closure.nodes.has('n_light_data')).toBe(false);
   });
 });
 

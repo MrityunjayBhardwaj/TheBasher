@@ -43,6 +43,25 @@ what happens to the target?" (see the `idRefs` doc comment in `src/core/dag/type
 Delete (#1560), duplicate (#1561) and the agent's view of a node (#1553) are derived from
 these three relationships, not written per node type.
 
+A wire says what it owns on the socket it enters (`owns` on the input, `InputDescriptor` in
+`src/core/dag/types.ts`), and `wireOwnership` (`src/core/dag/idRefSweep.ts`) is the one reader:
+
+| The socket says  | Deleting the node that holds it                                                                             | Examples                                                      |
+| ---------------- | ----------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
+| `owns: 'always'` | takes what is wired in, when nothing else reads it or names it                                              | an Object's `data`, `pose` and `children`; a driver's `in`    |
+| `owns: 'stack'`  | on its own: the node is spliced out and the stack stays whole. Reached as owned: the rest of the stack goes | a modifier's chain socket; a pose layer's and a Rig's `pose`  |
+| `body: true`     | takes the whole sub-network behind it                                                                       | a Solver's `body` and `bodies`; a Rig's `body`                |
+| nothing          | leaves it alone                                                                                             | a Material; the camera a pass renders; a collection's members |
+
+So deleting a cube takes its modifiers and data, a driver on it, the Solver only that driver
+read and everything inside that Solver; a Material or an Action it used stays, because a
+picker still lists it. Every input socket is in one row of this table or the other: a test
+lists the ones that own nothing (`SHARED_WIRES`, `src/nodes/idRefAcknowledged.ts`), so a new
+socket has to choose. One delete function applies it (`buildDeleteNodesOps`,
+`src/app/sceneNodeActions.ts`), for the Delete key, the outliner, the agent and the buttons
+that remove a driver. Children still go with a deleted parent; handing them up to the
+grandparent is #1517, which waits on the keep-position reparent in #1516.
+
 One reference is stored outside the parameters: a node whose name follows another's holds that
 node's id in `meta.nameFrom`. The same walker reads it, so deleting the followed node clears
 the link and the follower keeps the name it has. `relationsOf` (`src/core/dag/idRefSweep.ts`)

@@ -579,7 +579,7 @@ export const PoseLayerNode: NodeDefinition<PoseLayerParams, PosedSkeletonValue> 
   pure: true,
   cost: 'cheap',
   paramSchema: PoseLayerParams,
-  inputs: { pose: { type: 'PosedSkeleton', cardinality: 'single' } },
+  inputs: { pose: { type: 'PosedSkeleton', cardinality: 'single', owns: 'stack' } },
   outputs: { out: { type: 'PosedSkeleton', cardinality: 'single' } },
   inspectorSections: ['animate'],
   evaluate(params, inputs: ResolvedInputs): PosedSkeletonValue {

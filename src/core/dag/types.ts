@@ -257,6 +257,23 @@ export interface InputDescriptor {
    * but the owner's body sockets (`subnetworks.ts`).
    */
   body?: true;
+  /**
+   * #1560 — what happens to the node wired here when the node holding this socket goes, and
+   * what a duplicate does with it. The wire-side twin of an `idRefs` row's `owns`.
+   *
+   *  - `'always'`: this node owns its producer. Deleting this node takes the producer too when
+   *    nothing else reads it; a deep duplicate copies it. An Object's `data`, `pose` and
+   *    `children`; a driver's `in`.
+   *  - `'stack'`: the producer is the REST OF THE STACK this node sits on. Deleted on its own,
+   *    this node is spliced out and the producer is handed to whoever read this node. Reached
+   *    as owned (the Object at the top is going), it takes the producer with it. A pose layer's
+   *    `pose`. An operator's `chain.input` reads as `'stack'` without saying so here.
+   *  - absent: shared. The producer is left alone (a Material, a camera a pass renders).
+   *
+   * A `body` socket needs neither: its whole sub-network goes with the owner.
+   * Read through `wireOwnership` (src/core/dag/idRefSweep.ts), never off the descriptor.
+   */
+  owns?: 'always' | 'stack';
 }
 
 /**

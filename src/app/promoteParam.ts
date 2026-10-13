@@ -87,6 +87,7 @@ import type { Vec3 } from '../nodes/types';
 import { buildAddPrimitiveOps } from './addPrimitives';
 import { buildBindDriverOps } from './driverBind';
 import { exposeParams } from './exposeParams';
+import { buildDeleteNodesOps } from './sceneNodeActions';
 
 /** The numeric spare types the `ch()` road can drive a scalar param with. */
 export type NumericSpareType = 'float' | 'int';
@@ -267,5 +268,7 @@ export function buildPromoteParamOps(state: DagState, req: PromoteRequest): Prom
  * lives (#294).
  */
 export function buildUnpromoteDriveOps(state: DagState, driverId: string): Op[] {
-  return state.nodes[driverId] ? [{ type: 'removeNode', nodeId: driverId }] : [];
+  // #1560 — through the shared delete. A control's drive reads a spare param by reference, not
+  // by wire, so this is still the driver alone; the rule is asked, not assumed.
+  return state.nodes[driverId] ? buildDeleteNodesOps(state, [driverId]) : [];
 }
