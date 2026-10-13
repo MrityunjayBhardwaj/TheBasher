@@ -74,6 +74,43 @@ function survivingConsumerAbove(
 }
 
 /**
+ * `ids` reordered so every node comes AFTER the nodes in `idSet` that read it (#1621).
+ *
+ * A wire from one deleted node into another is not disconnected ("its own removeNode covers
+ * it"), which holds only when the reader is removed first: `removeNode` refuses a node whose
+ * output is still read. The ids a caller passes arrive in selection order, so a child picked
+ * before its parent used to refuse the whole delete. Otherwise the given order is kept, so a
+ * batch that was already safe emits the ops it always did.
+ */
+function consumersFirst(
+  state: DagState,
+  ids: readonly NodeId[],
+  idSet: ReadonlySet<NodeId>,
+): NodeId[] {
+  const readers = new Map<NodeId, NodeId[]>();
+  for (const id of ids) {
+    for (const binding of Object.values(state.nodes[id]?.inputs ?? {})) {
+      for (const ref of refsOf(binding)) {
+        if (!ref?.node || !idSet.has(ref.node)) continue;
+        const list = readers.get(ref.node);
+        if (list) list.push(id);
+        else readers.set(ref.node, [id]);
+      }
+    }
+  }
+  const out: NodeId[] = [];
+  const placed = new Set<NodeId>();
+  const place = (id: NodeId) => {
+    if (placed.has(id)) return;
+    placed.add(id); // wires cannot form a loop (`connect` refuses one), so this only dedupes
+    for (const reader of readers.get(id) ?? []) place(reader);
+    out.push(id);
+  };
+  for (const id of ids) place(id);
+  return out;
+}
+
+/**
  * Ops to delete `ids` in one atomic batch (→ one undo). `removeNode` refuses to
  * remove a node whose output is still consumed, so every consumer edge into a
  * deleted node is disconnected FIRST (consumers also being deleted are skipped —
@@ -168,7 +205,7 @@ export function buildDeleteNodesOps(state: DagState, ids: readonly NodeId[]): Op
   // #397 — a deleted collection hands its members and nested collections to the collections it
   // sat in, as Blender's Delete does, before it goes.
   const ops: Op[] = [...sweep.ops, ...collectionDeleteRelinkOps(state, idSet)];
-  for (const nodeId of allIds) {
+  for (const nodeId of consumersFirst(state, allIds, idSet)) {
     for (const [consumerId, consumer] of Object.entries(state.nodes)) {
       if (idSet.has(consumerId)) continue; // being deleted too — its removeNode covers it
       for (const [socketName, binding] of Object.entries(consumer.inputs)) {

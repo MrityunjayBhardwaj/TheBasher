@@ -950,3 +950,55 @@ describe('buildDeleteNodesOps — an Object that carries a modifier stack (#1620
     expect(after.nodes[mods[1]]).toBeDefined();
   });
 });
+
+describe('buildDeleteNodesOps — the order the ids arrive in (#1621)', () => {
+  const grouped = () =>
+    (
+      [
+        { type: 'addNode', nodeId: 'G', nodeType: 'Group', params: {} },
+        {
+          type: 'connect',
+          from: { node: 'G', socket: 'out' },
+          to: { node: 'n_scene', socket: 'children' },
+        },
+        {
+          type: 'disconnect',
+          from: { node: 'n_box', socket: 'out' },
+          to: { node: 'n_scene', socket: 'children' },
+        },
+        {
+          type: 'connect',
+          from: { node: 'n_box', socket: 'out' },
+          to: { node: 'G', socket: 'children' },
+        },
+      ] as Op[]
+    ).reduce((acc, op) => applyOp(acc, op).next, buildDefaultDagState());
+
+  it.each([
+    [['G', 'n_box']], // CONTROL: parent first always worked
+    [['n_box', 'G']],
+    [['n_box', 'n_box_data']], // CONTROL: the Object before its data always worked
+    [['n_box_data', 'n_box']],
+    [['n_box_data', 'n_box', 'G']],
+  ])('deletes %j whatever the order', (ids) => {
+    const s = grouped();
+    useDagStore.getState().hydrate(s);
+    useDagStore.getState().dispatchAtomic(buildDeleteNodesOps(s, ids), 'user', 'delete');
+    const after = useDagStore.getState().state;
+    for (const id of ['G', 'n_box', 'n_box_data']) {
+      if (ids.includes(id) || id !== 'G') expect(after.nodes[id]).toBeUndefined();
+    }
+    useDagStore.getState().undo();
+    expect(useDagStore.getState().state.nodes).toEqual(s.nodes);
+  });
+
+  it('keeps the given order when it was already safe', () => {
+    const s = grouped();
+    const removed = (ids: string[]) =>
+      buildDeleteNodesOps(s, ids)
+        .filter((op) => op.type === 'removeNode')
+        .map((op) => (op as { nodeId: string }).nodeId);
+    expect(removed(['G', 'n_box'])).toEqual(['G', 'n_box', 'n_box_data']);
+    expect(removed(['n_box', 'G'])).toEqual(['G', 'n_box', 'n_box_data']);
+  });
+});
