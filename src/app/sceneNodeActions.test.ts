@@ -11,6 +11,7 @@ import { buildSpringOps, type SpringNodeKey } from './solverBind';
 import { buildRemoveDriverOps } from './driverStack';
 import { buildUnbindDriverOps } from './driverBind';
 import { buildNewMaterialOps } from './materialLink';
+import { membershipOps, newCollectionOps } from './collections';
 import { wrapInRig } from './animate/wrapInRig';
 import { buildDefaultDagState } from '../core/project/default';
 import type { DagState } from '../core/dag/state';
@@ -1316,5 +1317,78 @@ describe('buildDeleteNodesOps — the cost does not grow with what is deleted (#
     const small = walksToDelete(20);
     expect(small).toBeGreaterThan(0); // the counter sees the builder at all
     expect(walksToDelete(200)).toBe(small);
+  });
+});
+
+describe('buildDeleteNodesOps — a collection never keeps a deleted group’s child (#1628)', () => {
+  const grouped = () => {
+    let s = (
+      [
+        { type: 'addNode', nodeId: 'G', nodeType: 'Group', params: {} },
+        {
+          type: 'connect',
+          from: { node: 'G', socket: 'out' },
+          to: { node: 'n_scene', socket: 'children' },
+        },
+        {
+          type: 'disconnect',
+          from: { node: 'n_box', socket: 'out' },
+          to: { node: 'n_scene', socket: 'children' },
+        },
+        {
+          type: 'connect',
+          from: { node: 'n_box', socket: 'out' },
+          to: { node: 'G', socket: 'children' },
+        },
+      ] as Op[]
+    ).reduce((acc, op) => applyOp(acc, op).next, buildDefaultDagState());
+    s = newCollectionOps(s, null)!.ops.reduce((acc, op) => applyOp(acc, op).next, s);
+    const coll = Object.keys(s.nodes).find((id) => s.nodes[id].type === 'Collection')!;
+    s = membershipOps(coll, ['n_box']).reduce((acc, op) => applyOp(acc, op).next, s);
+    return { s, coll };
+  };
+  const commit = (s: DagState, ids: string[]) => {
+    useDagStore.getState().hydrate(s);
+    useDagStore.getState().dispatchAtomic(buildDeleteNodesOps(s, ids), 'user', 'delete');
+    return useDagStore.getState().state;
+  };
+
+  it('the fixture: the cube is under the group AND in the collection', () => {
+    const { s, coll } = grouped();
+    expect(s.nodes.G.inputs.children).toEqual([{ node: 'n_box', socket: 'out' }]);
+    expect(s.nodes[coll].inputs.members).toEqual([{ node: 'n_box', socket: 'out' }]);
+  });
+
+  it('deleting the group takes the child and its data, and the collection stops listing it', () => {
+    const { s, coll } = grouped();
+    const after = commit(s, ['G']);
+    expect(after.nodes.n_box).toBeUndefined();
+    expect(after.nodes.n_box_data).toBeUndefined();
+    expect(after.nodes[coll]).toBeDefined();
+    expect(after.nodes[coll].inputs.members ?? []).toEqual([]);
+    useDagStore.getState().undo();
+    expect(useDagStore.getState().state.nodes).toEqual(s.nodes);
+  });
+
+  it('CONTROL: a child a second group still holds stays', () => {
+    const { s } = grouped();
+    const two = (
+      [
+        { type: 'addNode', nodeId: 'G2', nodeType: 'Group', params: {} },
+        {
+          type: 'connect',
+          from: { node: 'G2', socket: 'out' },
+          to: { node: 'n_scene', socket: 'children' },
+        },
+        {
+          type: 'connect',
+          from: { node: 'n_box', socket: 'out' },
+          to: { node: 'G2', socket: 'children' },
+        },
+      ] as Op[]
+    ).reduce((acc, op) => applyOp(acc, op).next, s);
+    const after = commit(two, ['G']);
+    expect(after.nodes.n_box).toBeDefined();
+    expect(after.nodes.G2.inputs.children).toEqual([{ node: 'n_box', socket: 'out' }]);
   });
 });

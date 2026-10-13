@@ -17,7 +17,12 @@ import {
   wireOwnership,
 } from '../core/dag/idRefSweep';
 import { subnetworkOf } from '../core/dag/subnetworks';
-import { collectionDeleteRelinkOps, collectionsHolding, membershipOps } from './collections';
+import {
+  collectionDeleteRelinkOps,
+  collectionsHolding,
+  isMembershipWire,
+  membershipOps,
+} from './collections';
 
 /**
  * #432 — a WRAPPER node consumes its subject through a chain EDGE and re-exposes it
@@ -239,8 +244,10 @@ export function buildDeleteNodesOps(state: DagState, ids: readonly NodeId[]): Op
           for (const ref of refsOf(binding)) {
             const ownedId = ref?.node;
             if (!ownedId || reachedAsOwned.has(ownedId) || !state.nodes[ownedId]) continue;
+            // #1628 — a collection listing it as a member is not a reader: left to count, every
+            // child of a deleted group that sat in a collection stayed in the file, undrawn.
             const hasSurvivingConsumer = (readers.get(ownedId) ?? []).some(
-              (r) => !idSet.has(r.node),
+              (r) => !idSet.has(r.node) && !isMembershipWire(state, r.node, r.socket),
             );
             if (hasSurvivingConsumer || isStillNamed(ownedId)) continue;
             take(ownedId);

@@ -242,6 +242,15 @@ export function collectionsHolding(state: DagState, id: NodeId): NodeId[] {
   return allCollectionsOf(state).filter((c) => collectionMembersOf(state, c).includes(id));
 }
 
+/**
+ * Whether the wire into `socket` of `readerId` is a collection listing a member (#1628).
+ * Membership is a label on an object, not a use of it: a collection never keeps a node alive,
+ * as deleting an object in Blender takes it out of every collection it was in.
+ */
+export function isMembershipWire(state: DagState, readerId: NodeId, socket: string): boolean {
+  return socket === 'members' && state.nodes[readerId]?.type === 'Collection';
+}
+
 /** The edges that make each of `ids` a member of `collectionId`. */
 export function membershipOps(collectionId: NodeId, ids: readonly NodeId[]): Op[] {
   return ids.map(
