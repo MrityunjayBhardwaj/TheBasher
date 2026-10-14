@@ -41,6 +41,8 @@ import type { Op } from '../../core/dag/types';
 import { rootTravelScale } from '../../core/import/retarget';
 import { edgeTarget } from '../animate/graphNodes';
 import { retargetOperandsFromNodes } from '../animate/retargetFromNodes';
+import { standingObjectsOf } from '../../core/import/skeletonObject';
+import { resolveWorldTransform } from '../resolveWorldTransform';
 
 /** Two ratios this close are one character size. Bone lengths come from the same
  *  bind pose every time, so this only absorbs float noise between two rigs that
@@ -61,6 +63,28 @@ export type PathScaleFit =
     };
 
 /** The ratio every `RetargetClip` playing one of this producer's clips applies, by node. */
+/** Frame 0, as the path is read (motionPathFromCurve's PATH_CTX): placement is a frame-0 fact. */
+const FIT_CTX = { time: { frame: 0, seconds: 0, normalized: 0 } } as const;
+
+/**
+ * The world length of one unit of `skeletonId`'s rig, once per Object that stands it in the scene
+ * — the uniform part of each one's world scale. Empty when none is reachable from the scene, which
+ * the caller reads as 1: a rig nothing places is in world units by default. Two Objects at two
+ * scales are two entries, so a rig stood twice at different sizes is refused as `mixed` like two
+ * characters would be.
+ */
+function worldUnitsOf(state: DagState, skeletonId: string): number[] {
+  const units: number[] = [];
+  for (const objectId of standingObjectsOf(state, skeletonId)) {
+    const world = resolveWorldTransform(state, objectId, FIT_CTX);
+    if (!world) continue;
+    const [x, y, z] = world.scale.map(Math.abs);
+    const unit = Math.cbrt(x * y * z);
+    if (Number.isFinite(unit) && unit > 0) units.push(unit);
+  }
+  return units;
+}
+
 function retargetRatios(
   state: DagState,
   producerId: string,
@@ -82,8 +106,18 @@ function retargetRatios(
     const { sourceBones, map, targetBones } = retargetOperandsFromNodes(state.nodes, node) ?? {};
     // A half-wired retarget drives nothing, so it has no size to fit.
     if (!sourceBones?.length || !map || !targetBones?.length) continue;
-    const scale = rootTravelScale(sourceBones, map, targetBones);
-    if (Number.isFinite(scale) && scale > 0) out.push({ retargetId: id, scale });
+    // #1633 — the leg ratio is in each RIG's units; the walk lands in the WORLD. A rig imported
+    // from centimetres stands under a group scaled 0.01, so the rig ratio is ~100× the one the
+    // path sees. Carry it to the world through each side's standing Object.
+    const rigRatio = rootTravelScale(sourceBones, map, targetBones);
+    const sourceSkeleton = edgeTarget(state.nodes[source], 'skeleton');
+    const targetSkeleton = edgeTarget(node, 'skeleton');
+    const sourceUnit = sourceSkeleton ? (worldUnitsOf(state, sourceSkeleton)[0] ?? 1) : 1;
+    const targetUnits = targetSkeleton ? worldUnitsOf(state, targetSkeleton) : [];
+    for (const targetUnit of targetUnits.length > 0 ? targetUnits : [1]) {
+      const scale = (rigRatio * targetUnit) / sourceUnit;
+      if (Number.isFinite(scale) && scale > 0) out.push({ retargetId: id, scale });
+    }
   }
   return out;
 }
