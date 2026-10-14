@@ -43,7 +43,10 @@ function placeInWorld(frames: readonly BoneFrame[], world: readonly number[]): B
 
 /** The Object's bones in world space at `seconds`: posed by its pose, or at rest when it has none. */
 export function skeletonObjectFrames(o: SkeletonObject, seconds: number): BoneFrame[] {
-  return placeInWorld(poseTransforms(o.bones, o.pose ? o.pose.sample(seconds) : null), o.world);
+  return placeInWorld(
+    poseTransforms(o.bones, o.pose ? o.pose.sample(seconds) : null),
+    o.worldAt(seconds),
+  );
 }
 
 /**

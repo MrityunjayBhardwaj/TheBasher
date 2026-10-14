@@ -359,6 +359,8 @@ const TAKERS: string[] = [
   'resolveTrackToTarget@src/app/nodeConstraints.ts',
   'resolveTransformParam@src/app/resolveTransformParam.ts',
   'resolveWorldTransform@src/app/resolveWorldTransform.ts',
+  // #1638 — forwards the caller's cache to the world resolver at each playhead it is asked.
+  'worldMatrixAt@src/app/resolveWorldTransform.ts',
   'rigChanges@src/app/animate/invertPoseStack.ts',
   'slotAbsenceOf@src/app/objectSlotAuthoring.ts',
   'statefulInputAt@src/app/statefulOps.ts',
