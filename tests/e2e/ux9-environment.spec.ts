@@ -338,3 +338,91 @@ test('UX #9 — a corrupt HDRI surfaces an error and does NOT crash the viewport
     "Cannot read properties of undefined (reading 'image')",
   ]);
 });
+
+// #1639 — one strength for the light the environment gives AND the sky the camera sees, as
+// Blender's World strength. Before, `envIntensity` reached `environmentIntensity` only: a night
+// scene lit at 0.35 still showed its sky at full brightness and read as dusk.
+test('UX #9 — the environment intensity dims the visible sky with the lighting', async ({
+  page,
+}) => {
+  await page.evaluate(async () => {
+    const w = window as unknown as EnvWindow;
+    const bytes = new Uint8Array(
+      await fetch('/fixtures/env/test.hdr').then((r) => r.arrayBuffer()),
+    );
+    const assetRef = await w.__basher_importEnvHdri!(bytes, 'test.hdr');
+    const dag = w.__basher_dag.getState();
+    const sceneId = dag.state.outputs.scene!.node;
+    dag.dispatchAtomic(
+      [
+        {
+          type: 'setParam',
+          nodeId: sceneId,
+          paramPath: 'envSource',
+          value: { kind: 'file', assetRef },
+        },
+        { type: 'setParam', nodeId: sceneId, paramPath: 'envBackground', value: true },
+      ],
+      'e2e',
+      'env file as the sky',
+    );
+  });
+  await waitEnv(page, { env: true, bg: true });
+
+  const at = async (intensity: number) => {
+    await page.evaluate((intensity) => {
+      const w = window as unknown as EnvWindow;
+      const dag = w.__basher_dag.getState();
+      const sceneId = dag.state.outputs.scene!.node;
+      dag.dispatchAtomic(
+        [{ type: 'setParam', nodeId: sceneId, paramPath: 'envIntensity', value: intensity }],
+        'e2e',
+        'env intensity',
+      );
+    }, intensity);
+    await expect
+      .poll(() =>
+        page.evaluate(() => {
+          const s = (
+            window as unknown as {
+              __basher_three: { getState(): { scene: { environmentIntensity: number } } };
+            }
+          ).__basher_three.getState().scene;
+          return s.environmentIntensity;
+        }),
+      )
+      .toBe(intensity);
+    return page.evaluate(async () => {
+      const w = window as unknown as EnvWindow & {
+        __basher_three: { getState(): { scene: { backgroundIntensity: number } } };
+      };
+      const png = (await w.__basher_render_png!())!;
+      const img = new Image();
+      img.src = png.dataUrl;
+      await img.decode();
+      const c = document.createElement('canvas');
+      c.width = img.width;
+      c.height = img.height;
+      const g = c.getContext('2d')!;
+      g.drawImage(img, 0, 0);
+      // A corner of the frame: sky, nothing of the scene in front of it.
+      const [r, gr, b] = g.getImageData(
+        Math.round(img.width * 0.03),
+        Math.round(img.height * 0.05),
+        1,
+        1,
+      ).data;
+      return {
+        sky: (r + gr + b) / 3,
+        background: w.__basher_three.getState().scene.backgroundIntensity,
+      };
+    });
+  };
+  const full = await at(1);
+  const dim = await at(0.2);
+  expect(full.background).toBe(1);
+  expect(dim.background).toBe(0.2);
+  // Tone mapping compresses the step (measured 255 → 169 for 1 → 0.2); before the fix the sky
+  // did not move at all.
+  expect(dim.sky).toBeLessThan(full.sky - 40);
+});

@@ -1541,8 +1541,8 @@ function LightHelperFollower({
 // useFrame re-applies the SAMPLED channel values onto the LIVE scene each frame (live
 // time snapshot, never a subscription — H48), writing EXACTLY the props
 // SceneEnvironment sets so there is no jump at t=0 (intensity → environmentIntensity;
-// rotationY° → environmentRotation.y + backgroundRotation.y; backgroundIntensity is
-// left at drei's default, matching the static path). The env is a scene PROPERTY (not
+// rotationY° → environmentRotation.y + backgroundRotation.y; intensity → backgroundIntensity
+// too, as the static path sets it since #1639). The env is a scene PROPERTY (not
 // a node value), so this is an imperative ref-write like the camera, not a
 // value-recompute like the mesh/light overlays. Mounted only when the Scene node
 // carries channels, so a static scene pays nothing.
@@ -1558,6 +1558,7 @@ function SceneEnvChannelsR({ sceneNodeId }: { sceneNodeId: string }) {
       if (typeof v !== 'number') continue;
       if (ch.paramPath === 'envIntensity') {
         scene.environmentIntensity = v;
+        scene.backgroundIntensity = v;
       } else if (ch.paramPath === 'envRotationY') {
         const rad = (v * Math.PI) / 180;
         scene.environmentRotation.set(0, rad, 0);
