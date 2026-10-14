@@ -67,7 +67,8 @@ import { charactersDrivenByClip, type DrivenCharacter } from '../animate/boundCl
 import { edgeTarget } from '../animate/graphNodes';
 import { clipBakeStates } from './bakeGeneratedClip';
 import { evaluate } from '../../core/dag/evaluator';
-import type { AnimationClipValue } from '../../nodes/types';
+import type { AnimationClipValue, RotationModeFields } from '../../nodes/types';
+import { rotationWriteOf, withResolvedRotation } from '../resolvedRotation';
 
 /** What placing a character did, or why it could not. A void return would be the
  *  same trap the bind path was fixed for: four situations collapsing into one
@@ -146,6 +147,22 @@ function threeYawDegrees(rotationRadians: number): number {
 }
 
 /**
+ * #1634 — the op that turns `nodeId` to `yawDeg` about Y, keeping its X/Z tilt, through the node's
+ * own rotation mode. A native import's root holds a QUATERNION, and in that mode `rotation` is
+ * overwritten by the quaternion before anything draws, so a facing written there never happened.
+ * `rotationWriteOf` is the one writer every other rotation edit already goes through.
+ */
+function facingOp(nodeId: string, params: unknown, yawDeg: number): Op {
+  const fields = (params ?? {}) as RotationModeFields & { rotation?: unknown };
+  const current = vec3Param(
+    withResolvedRotation({ ...fields, rotation: vec3Param(fields, 'rotation') }),
+    'rotation',
+  );
+  const write = rotationWriteOf(fields, [current[0], yawDeg, current[2]]);
+  return { type: 'setParam', nodeId, paramPath: write.paramPath, value: write.value };
+}
+
+/**
  * Move a character so its motion starts where the path was drawn.
  *
  * `offsetXZ` is the generator's `worldOffsetXZ`: world metres, and the first
@@ -180,7 +197,6 @@ export function placeCharacterAtPathStart(
   const params = state.nodes[groupId]?.params;
   const position = vec3Param(params, 'position');
   const pivot = vec3Param(params, 'pivot');
-  const rotation = vec3Param(params, 'rotation');
 
   // 🔴 THE SIGN IS MEASURED, NOT DERIVED. `worldRotationRadians` is an angle in
   // the waypoint frame (+X = 0, +Z = +pi/2); `Group.rotation` is degrees into a
@@ -192,7 +208,7 @@ export function placeCharacterAtPathStart(
   // so a character asked to set off toward +Z (angle +pi/2) needs euler.y =
   // -90 deg. Guessing this is a coin flip whose wrong face is a character walking
   // backwards down a correct path — plausible enough to be blamed on the model.
-  const yawDeg = rotationRadians === null ? rotation[1] : threeYawDegrees(rotationRadians);
+  const yawDeg = rotationRadians === null ? null : threeYawDegrees(rotationRadians);
 
   // Effective translation is `position - pivot` (see the header) only while the
   // rotation is identity. In general the content's world start is
@@ -213,14 +229,7 @@ export function placeCharacterAtPathStart(
   // dropped at a height stays there; X and Z of the rotation are untouched for
   // the same reason — only the ground-plane facing is ours to state.
   const ops: Op[] = [{ type: 'setParam', nodeId: groupId, paramPath: 'position', value: next }];
-  if (rotationRadians !== null) {
-    ops.push({
-      type: 'setParam',
-      nodeId: groupId,
-      paramPath: 'rotation',
-      value: [rotation[0], yawDeg, rotation[2]] as [number, number, number],
-    });
-  }
+  if (yawDeg !== null) ops.push(facingOp(groupId, params, yawDeg));
 
   return {
     ok: true,
@@ -272,7 +281,6 @@ export function placeStandInAtPathStart(
 
   const params = state.nodes[objectId]?.params;
   const position = vec3Param(params, 'position');
-  const rotation = vec3Param(params, 'rotation');
   const ops: Op[] = [
     {
       type: 'setParam',
@@ -282,16 +290,7 @@ export function placeStandInAtPathStart(
     },
   ];
   if (rotationRadians !== null) {
-    ops.push({
-      type: 'setParam',
-      nodeId: objectId,
-      paramPath: 'rotation',
-      value: [rotation[0], threeYawDegrees(rotationRadians), rotation[2]] as [
-        number,
-        number,
-        number,
-      ],
-    });
+    ops.push(facingOp(objectId, params, threeYawDegrees(rotationRadians)));
   }
   return { ok: true, ops };
 }
