@@ -832,7 +832,8 @@ export function TimelineCanvas({ duration, rangeEnd }: { duration: number; range
           // stale-closure mitigation, and the single source of truth so
           // ref↔store cannot diverge here). dpr/duration via the
           // C3-synced refs, never render scope.
-          const seconds = useTimeStore.getState().seconds;
+          // #1594 — the playhead is film time (the ruler's clock), not scene time.
+          const seconds = useTimeStore.getState().filmSeconds;
           const frame = useViewportStore.getState().currentFrameRef.current;
           const dprNow = dprRef.current;
           const durationNow = durationRef.current;
@@ -1060,7 +1061,7 @@ export function TimelineCanvas({ duration, rangeEnd }: { duration: number; range
         const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
         const next = current.zoom * factor;
         if (next <= MIN_ZOOM && current.zoom <= MIN_ZOOM) return; // already fit
-        const anchorFrame = useTimeStore.getState().seconds * FPS;
+        const anchorFrame = useTimeStore.getState().filmSeconds * FPS;
         useTimelineViewStore.getState().setView(zoomAtFrame(current, total, anchorFrame, next));
       } else {
         const deltaPx = e.deltaX !== 0 ? e.deltaX : e.deltaY;

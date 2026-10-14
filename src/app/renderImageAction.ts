@@ -89,7 +89,8 @@ export async function renderActiveProjectBlob(pass: RenderPassKind = 'beauty'): 
   // #190 — the EVALUATED pose at the current playhead, so a keyframed camera
   // frames the shot at time T (matches the viewport look-through at the same
   // time). An unanimated camera resolves to the static authored pose.
-  const seconds = useTimeStore.getState().seconds;
+  // #1594 — the camera's clock is the playhead (film time); the scene was drawn at scene time.
+  const seconds = useTimeStore.getState().filmSeconds;
   const pose = resolveActiveCameraPoseAt(state, seconds, cache);
   // UX #12 — depth of field, resolved through the SAME helper the live viewport uses
   // so the still's bokeh matches the screen. null when off → the fast manual render

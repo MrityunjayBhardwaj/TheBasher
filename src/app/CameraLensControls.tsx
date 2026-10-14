@@ -72,8 +72,9 @@ export function CameraLensControls({
   // drives the field during playback (`playing && resolved !== null`, the NPanel
   // D-02 gate). Subscribing here is what makes the fields re-render on scrub.
   const dagState = useDagStore((s) => s.state);
-  const frame = useTimeStore((s) => s.frame);
-  const seconds = useTimeStore((s) => s.seconds);
+  // #1594 — a camera's lens runs on the playhead (film time), as the renderer reads it.
+  const frame = useTimeStore((s) => s.filmFrame);
+  const seconds = useTimeStore((s) => s.filmSeconds);
   const normalized = useTimeStore((s) => s.normalized);
   const playing = useTimeStore((s) => s.playing);
   // #1314 — a stable cache: this re-reads the evaluated graph on every playhead change, and

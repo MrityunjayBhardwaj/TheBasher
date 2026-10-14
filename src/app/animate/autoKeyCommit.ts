@@ -19,6 +19,7 @@
 //
 // REF: issue #68 / #149, CONTEXT D-02, NPanel.tsx P7 Wave D, vyapti V1/V13.
 
+import { clockFor } from '../subjectClock';
 import { useDagStore } from '../../core/dag/store';
 import { useTimeStore } from '../stores/timeStore';
 import { dispatchFirstKeyComposite, dispatchMutatorFromUI } from './dispatchMutator';
@@ -75,7 +76,7 @@ export function routeAnimatedGrab(selectedId: string, paramPath: string, value: 
   // v0.7 #199: the selected node IS the animated node — no AnimationLayer wrapper
   // to unwrap (V57). The animation check + transient/keyframe land on it directly.
   const targetId = selectedId;
-  const grabFrame = useTimeStore.getState().frame;
+  const grabFrame = clockFor(state, targetId, paramPath).frame;
   const animated = paramAnimationState(state, targetId, paramPath, grabFrame) !== 'none';
   if (!animated) return false; // un-animated → raw setParam, byte-identical
 
@@ -148,9 +149,9 @@ export function keyParamFromTransient(
   paramPath: string,
   authoredValue: unknown,
 ): { ok: true } | { ok: false; reason: string } {
-  const seconds = useTimeStore.getState().seconds;
-  const frame = useTimeStore.getState().frame;
   const dagState = useDagStore.getState().state;
+  // #1594 — on the subject's own clock: a camera keys at the playhead, the scene at scene time.
+  const { seconds, frame } = clockFor(dagState, nodeId, paramPath);
   const transient = useTransientEditStore.getState().get(nodeId, paramPath);
   const v = transient ? transient.value : authoredValue;
 
@@ -193,9 +194,9 @@ export function keyParamFromTransient(
 export function autoKeyCommit(nodeId: string, paramPath: string, value: unknown): void {
   if (!useAutoKeyStore.getState().enabled) return; // OFF → byte-identical pre-P7
 
-  const seconds = useTimeStore.getState().seconds;
-  const frame = useTimeStore.getState().frame;
   const dagState = useDagStore.getState().state;
+  // #1594 — on the subject's own clock (see keyParamFromTransient).
+  const { seconds, frame } = clockFor(dagState, nodeId, paramPath);
   // v0.7 #199: the key lands on the node directly — no AnimationLayer wrapper (V57).
   const targetId = nodeId;
 

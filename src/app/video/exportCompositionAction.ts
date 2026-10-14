@@ -106,7 +106,7 @@ export async function exportCompositionToFile(
   useRenderAnimationStore.getState().begin(sink.format, frameCount, () => ctrl.abort());
 
   const time = useTimeStore.getState();
-  const restoreSeconds = time.seconds;
+  const restoreSeconds = time.filmSeconds;
   const restoreDuration = time.durationSeconds;
   const wasPlaying = time.playing;
   useTimeStore.getState().pause();

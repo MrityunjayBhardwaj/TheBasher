@@ -27,6 +27,7 @@ import { keyParamFromTransient, resolveChannel } from './animate/autoKeyCommit';
 import { paramAnimationState } from './animate/paramAnimationState';
 import { diamondActivation } from './animate/rowChannelWrite';
 import { useTimeStore } from './stores/timeStore';
+import { runsOnFilmTime } from './subjectClock';
 import { keyOf, useTransientEditStore } from './stores/transientEditStore';
 
 export function ParamDiamond({
@@ -44,9 +45,12 @@ export function ParamDiamond({
    *  (H95 — duplicate testids break a strict locator). */
   testid?: string;
 }) {
-  const frame = useTimeStore((s) => s.frame);
+  const sceneFrame = useTimeStore((s) => s.frame);
+  const filmFrame = useTimeStore((s) => s.filmFrame);
   const nodes = useDagStore((s) => s.state.nodes);
   const dagState = useDagStore((s) => s.state);
+  // #1594 — a camera's keys sit on the playhead's clock, everything else's on the scene's.
+  const frame = runsOnFilmTime(dagState, nodeId, paramPath) ? filmFrame : sceneFrame;
 
   // ONE STATE. There were two (#908): whether this param had an authored channel (which gates the
   // delete path) and whether anything animated it, including a clone-road bone's file clip (which

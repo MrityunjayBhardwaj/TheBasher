@@ -120,6 +120,7 @@ export function EditableCurve({
   write,
   duration,
   seconds,
+  filmClock = false,
 }: {
   /** The timeline row id (a channel node's id, or a `layer:` row) — the key-selection key. */
   channelId: string;
@@ -131,7 +132,10 @@ export function EditableCurve({
   /** The ops that land `fields` on the curve where it lives (the channel address resolver's write). */
   write: (fields: Record<string, unknown>) => readonly Op[];
   duration: number;
+  /** The playhead on this curve's clock (scene time, or film time when `filmClock`). */
   seconds: number;
+  /** #1594 — the curve's keys are on the playhead's clock (a camera, the Scene speed). */
+  filmClock?: boolean;
 }) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const [size, setSize] = useState({ w: 600, h: 200 });
@@ -440,14 +444,18 @@ export function EditableCurve({
     if (py <= plotY0 && px >= plotX0) {
       scrubbingRef.current = true;
       (e.currentTarget as Element).setPointerCapture?.(e.pointerId);
-      useTimeStore.getState().setTime(xToTime(px));
+      // #1594 — the curve's x is its keys' time; the playhead is film time.
+      const ts = useTimeStore.getState();
+      ts.setTime(filmClock ? xToTime(px) : ts.timeMap.filmAt(xToTime(px)));
     }
   }
 
   function onPointerMove(e: React.PointerEvent) {
     // Ruler scrub: drive time as the cursor moves (setTime clamps to duration).
     if (scrubbingRef.current) {
-      useTimeStore.getState().setTime(xToTime(localPoint(e).px));
+      const ts = useTimeStore.getState();
+      const x = xToTime(localPoint(e).px);
+      ts.setTime(filmClock ? x : ts.timeMap.filmAt(x));
       return;
     }
     const d = dragRef.current;

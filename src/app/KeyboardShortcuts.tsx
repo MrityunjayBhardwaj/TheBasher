@@ -42,6 +42,7 @@
 // next keyframes array locally (mirroring keyframeMutator's sort +
 // same-time-replace semantics) and emit a single setParam Op.
 
+import { clockFor } from './subjectClock';
 import { sceneEndSeconds, setSceneEndAtPlayhead } from './sceneRange';
 import { useEffect } from 'react';
 import type { Op } from '../core/dag/types';
@@ -121,7 +122,12 @@ function buildKeyframeInsertOp(): Op[] | null {
   const resolved = resolveRowChannelForWrite(dagState, rowChannelId);
   if (!resolved || !isKeyframeChannelNode({ type: resolved.nodeType })) return null;
 
-  const time = useTimeStore.getState().seconds;
+  // #1594 — on the channel's subject's clock: a camera keys at the playhead, the scene at scene time.
+  const { target, paramPath } = resolved.params as { target?: unknown; paramPath?: unknown };
+  const time =
+    typeof target === 'string'
+      ? clockFor(dagState, target, typeof paramPath === 'string' ? paramPath : undefined).seconds
+      : useTimeStore.getState().seconds;
   const easing = DEFAULT_EASING_BY_TYPE[resolved.nodeType] ?? 'linear';
   const existing = (resolved.params.keyframes as KeyframeSample[] | undefined) ?? [];
 
@@ -669,8 +675,8 @@ export function KeyboardShortcuts() {
           const selectedId = useSelectionStore.getState().primaryNodeId;
           if (selectedId) {
             const state = useDagStore.getState().state;
-            const seconds = useTimeStore.getState().seconds;
-            const frame = useTimeStore.getState().frame;
+            // #1594 — the selection's own clock (a camera is read at the playhead).
+            const { seconds, frame } = clockFor(state, selectedId);
             const evalT = resolveEvaluatedTransform(state, selectedId, {
               time: { frame, seconds, normalized: 0 },
             });
@@ -702,12 +708,15 @@ export function KeyboardShortcuts() {
         // [ / ] — seek to previous / next keyframe on active channel.
         if (e.key === '[') {
           const t = findAdjacentKeyframeTime('prev');
-          if (t !== null) useTimeStore.getState().setTime(t);
+          // #1594 — a key sits at scene time; the playhead goes to where it is first on screen.
+          if (t !== null)
+            useTimeStore.getState().setTime(useTimeStore.getState().timeMap.filmAt(t));
           return;
         }
         if (e.key === ']') {
           const t = findAdjacentKeyframeTime('next');
-          if (t !== null) useTimeStore.getState().setTime(t);
+          if (t !== null)
+            useTimeStore.getState().setTime(useTimeStore.getState().timeMap.filmAt(t));
           return;
         }
       }
