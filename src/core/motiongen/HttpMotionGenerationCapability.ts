@@ -29,6 +29,20 @@ export interface HttpMotionOptions {
 
 const DEFAULT_TIMEOUT_MS = 120_000;
 
+/**
+ * #1635 — the generator's canonical facing, as an angle in the waypoint frame (`headingAngle`,
+ * `atan2(z, x)`): **+Z**. Frame 0 is pinned to it, and a heading on the wire is `[cos, sin]` of
+ * the yaw measured FROM it — `[dir.z, dir.x]`.
+ *
+ * Measured against the live server (Kimodo-SOMA-RP-v1.1, 3 s, seed 7, Hips yaw read from the
+ * BVH): a free run goes +Z at yaw 0; a +Z path with `[1, 0]` runs forward at yaw ≈ −2°; a +X
+ * path with `[0, 1]` runs forward at yaw ≈ 85°; a +X path with `[1, 0]` STRAFES at yaw ≈ 0°.
+ * The SOMA rest pose puts `LeftLeg` at +X with Y up, so yaw 0 faces +Z. This used to be +X with
+ * `[x, z]` on the wire — the same yaw numbers read the other way — and every walk generated
+ * along a path travelled it sideways.
+ */
+const CANONICAL_HEADING = Math.PI / 2;
+
 export class HttpMotionGenerationCapability implements MotionGenerationCapability {
   readonly id = 'http-motion-generation';
   readonly kind = 'http' as const;
@@ -89,7 +103,9 @@ export class HttpMotionGenerationCapability implements MotionGenerationCapabilit
     // halves of the placement stay independent. Rotating about the world origin
     // would move it, and the returned offset would then need turning too — a
     // coupling with no reason to exist.
-    const rotation = headings?.length ? headingAngle(headings[0]) : null;
+    // #1635 — the canonical facing is +Z (`CANONICAL_HEADING`), so the turn is the start
+    // heading's angle LESS +Z's: a path that already sets off along +Z goes out unturned.
+    const rotation = headings?.length ? headingAngle(headings[0]) - CANONICAL_HEADING : null;
     const origin = waypoints?.length ? waypoints[0] : { x: 0, z: 0 };
     const sent =
       rotation === null || !waypoints?.length
@@ -173,7 +189,8 @@ export class HttpMotionGenerationCapability implements MotionGenerationCapabilit
           // Derived rather than required, because every existing caller supplies
           // a path and means "walk along it"; a caller wanting something else
           // passes `constraints.headings`, which this defers to.
-          ...(sentHeadings?.length ? { headings: sentHeadings.map((h) => [h.x, h.z]) } : {}),
+          // #1635 — `[cos, sin]` of the yaw from +Z, i.e. `[z, x]`: see `CANONICAL_HEADING`.
+          ...(sentHeadings?.length ? { headings: sentHeadings.map((h) => [h.z, h.x]) } : {}),
           format: 'bvh',
         }),
         signal: controller.signal,

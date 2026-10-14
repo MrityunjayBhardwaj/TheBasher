@@ -198,15 +198,16 @@ export function placeCharacterAtPathStart(
   const position = vec3Param(params, 'position');
   const pivot = vec3Param(params, 'pivot');
 
-  // 🔴 THE SIGN IS MEASURED, NOT DERIVED. `worldRotationRadians` is an angle in
-  // the waypoint frame (+X = 0, +Z = +pi/2); `Group.rotation` is degrees into a
-  // THREE Euler, whose Y rotation has the OPPOSITE handedness. Observed:
+  // 🔴 THE SIGN IS MEASURED, NOT DERIVED. `worldRotationRadians` is a turn in
+  // the waypoint frame (`atan2(z, x)`, so +pi/2 takes +X to +Z); `Group.rotation`
+  // is degrees into a THREE Euler, whose Y rotation has the OPPOSITE handedness.
+  // Observed:
   //
   //     euler.y = +90 deg  takes (1, 0, 0) -> (0, 0, -1)   i.e. -Z
   //     euler.y = -90 deg  takes (1, 0, 0) -> (0, 0, +1)   i.e. +Z
   //
-  // so a character asked to set off toward +Z (angle +pi/2) needs euler.y =
-  // -90 deg. Guessing this is a coin flip whose wrong face is a character walking
+  // so a turn of +pi/2 needs euler.y = -90 deg. (The clip sets off along +Z, the
+  // generator's canonical facing, #1635; the turn is what takes it onto the path.) Guessing this is a coin flip whose wrong face is a character walking
   // backwards down a correct path — plausible enough to be blamed on the model.
   const yawDeg = rotationRadians === null ? null : threeYawDegrees(rotationRadians);
 
