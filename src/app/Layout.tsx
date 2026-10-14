@@ -187,7 +187,10 @@ export function Layout() {
         // longer reserved columns; they float as absolute islands over the
         // viewport (mounted inside <main>), so the viewport reads full-width
         // behind them (Spline ③/④ sidebars float over the canvas).
-        gridTemplateColumns: '1fr',
+        // #1637 — `minmax(0, …)`: a bare `1fr` is `minmax(auto, 1fr)`, so the column
+        // grew to its widest row's content — 38 project tabs made the editor 4,334 px in
+        // a 1,512 px window and put the viewport's centre off-screen.
+        gridTemplateColumns: 'minmax(0, 1fr)',
         // v0.6 #4 W1 — the Chrome (save/breadcrumb) + TopToolbar bands were
         // consolidated (Chrome → ProjectTabs identity bar; TopToolbar → the
         // floating pill). Two top rows remain: R1 projectTabs + R2 menu.
