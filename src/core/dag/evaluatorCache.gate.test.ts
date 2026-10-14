@@ -171,6 +171,11 @@ const ORIGINS: Record<string, Origin> = {
     frequency: 'per-action',
     why: 'Cook or Generate click, or the motion-generate agent tool.',
   },
+  'src/app/asset/fitMotionPathScale.ts · worldUnitsOf → resolveWorldTransform': {
+    count: 1,
+    frequency: 'per-action',
+    why: 'Motion cook: reads each standing rig Object’s frame-0 world scale to fit the path (#1633).',
+  },
   'src/app/asset/motionPathFromCurve.ts · waypointsFromCurve → curveSamplerFor': {
     count: 1,
     frequency: 'per-action',
