@@ -253,6 +253,9 @@ export function Viewport() {
       <Canvas
         data-testid="viewport-canvas"
         dpr={[1, 2]}
+        // #1644 — PCF-soft shadow maps; which lights cast and which meshes cast and
+        // receive is decided per render in contentShadows.ts.
+        shadows
         events={viewportEvents}
         gl={{
           antialias: false,

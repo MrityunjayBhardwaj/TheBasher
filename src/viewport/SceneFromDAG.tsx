@@ -121,6 +121,7 @@ import {
 import { usePlayheadFollow } from './usePlayheadFollow';
 import { resolveRigLightSources } from '../app/resolveRigLightSources';
 import { degVec3ToRad } from './rotation';
+import { installContentShadow } from './contentShadows';
 import { selectNode } from './selectNodeOnClick';
 import { evaluate } from '../core/dag/evaluator';
 import { useDagStore } from '../core/dag/store';
@@ -1648,6 +1649,7 @@ function DirectionalLightR({
   // aim point). Skip the authored-target useEffect while constrained so the two
   // don't fight; toggling the constraint off re-runs it (constrained is a dep).
   useLightTargetAim(nodeId ?? null, constrained ?? false, ref);
+  useContentShadow(ref);
   useEffect(() => {
     if (constrained) return;
     const light = ref.current;
@@ -1675,9 +1677,18 @@ function DirectionalLightR({
       intensity={intensity}
       color={value.color}
       position={value.position as [number, number, number]}
-      castShadow={false}
     />
   );
+}
+
+/** #1644 — a sun, spot or point light casts, as in Blender. `installContentShadow` is
+ *  idempotent, so running it after every render costs a WeakSet lookup. */
+function useContentShadow(
+  ref: React.RefObject<THREE.DirectionalLight | THREE.SpotLight | THREE.PointLight | null>,
+) {
+  useEffect(() => {
+    if (ref.current) installContentShadow(ref.current);
+  });
 }
 
 function AmbientLightR({ value }: { value: AmbientLightValue }) {
@@ -1685,10 +1696,13 @@ function AmbientLightR({ value }: { value: AmbientLightValue }) {
 }
 
 function PointLightR({ value }: { value: PointLightValue }) {
+  const ref = useRef<THREE.PointLight | null>(null);
+  useContentShadow(ref);
   // Power scales with scale-vec volume product (see scalePower above).
   const intensity = value.intensity * scalePower(value.scale);
   return (
     <pointLight
+      ref={ref as React.MutableRefObject<THREE.PointLight>}
       intensity={intensity}
       color={value.color}
       position={value.position as [number, number, number]}
@@ -1708,6 +1722,7 @@ function SpotLightR({
   constrained?: boolean;
 }) {
   const ref = useRef<THREE.SpotLight | null>(null);
+  useContentShadow(ref);
   // #265 — a Track-To on this light OWNS the aim (per-frame, `.target` → world
   // aim point). Skip the authored-target useEffect while constrained so the two
   // don't fight; toggling the constraint off re-runs it (constrained is a dep).
