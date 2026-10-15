@@ -181,6 +181,9 @@ interface Draft {
    *  every write after it: undoing an import removes thousands of nodes, and asking each
    *  time whether anything still consumes one meant reading every node's inputs. */
   consumed: Map<NodeId, number> | null;
+  /** #1623 — the last operation that could have broken a sub-network rule, named in the
+   *  refusal. A batch is judged on the graph it ends in, so it is asked once, at the end. */
+  subnetworkCheck: Extract<Op, { type: 'addNode' | 'connect' | 'setParam' }> | null;
 }
 
 export interface AppliedOp {
@@ -201,7 +204,13 @@ export function applyOps(
   state: DagState,
   ops: readonly unknown[],
 ): { next: DagState; applied: AppliedOp[] } {
-  const draft: Draft = { nodes: null, touched: new Map(), followers: null, consumed: null };
+  const draft: Draft = {
+    nodes: null,
+    touched: new Map(),
+    followers: null,
+    consumed: null,
+    subnetworkCheck: null,
+  };
   const applied: AppliedOp[] = [];
   let working = state;
   for (const raw of ops) {
@@ -211,6 +220,15 @@ export function applyOps(
     const step = { forward, inverse, changed: next !== working };
     applied.push(reportable ? { ...step, reportable } : step);
     working = next;
+  }
+  // #1623 — the sub-network rules are asked of the graph the batch ends in, as the store asks
+  // the dangling-reference rule. Asked after each operation, they refused the undo of a delete
+  // inside a sub-network: the node comes back with its input wires one operation before the
+  // wire that puts it back inside, and for that one operation it counted as outside.
+  if (draft.subnetworkCheck) {
+    const reason = newSubnetworkViolation(state, working) ?? newStatefulLeafRead(state, working);
+    if (reason)
+      throw new OpError(`${draft.subnetworkCheck.type}: ${reason}`, draft.subnetworkCheck);
   }
   return { next: working, applied };
 }
@@ -344,6 +362,10 @@ function holdingSubnetworks(
   draft: Draft | undefined,
 ): ApplyResult {
   if (!reachesSubnetwork(result.next, producersOf(op))) return result;
+  if (draft) {
+    draft.subnetworkCheck = op; // #1623 — asked once the batch has ended (`applyOps`)
+    return result;
+  }
   const before = beforeWrites(state, draft);
   const reason =
     newSubnetworkViolation(before, result.next) ?? newStatefulLeafRead(before, result.next);
@@ -363,6 +385,10 @@ function holdingLeafNames(
   const node = state.nodes[op.nodeId];
   if (!node || requireNodeType(node.type).bodyInputLeaf !== true) return result;
   if (!reachesSubnetwork(result.next, [op.nodeId])) return result;
+  if (draft) {
+    draft.subnetworkCheck = op; // #1623 — asked once the batch has ended (`applyOps`)
+    return result;
+  }
   const reason = newStatefulLeafRead(beforeWrites(state, draft), result.next);
   if (reason) throw new OpError(`setParam: ${reason}`, op);
   return result;

@@ -1128,10 +1128,23 @@ describe('buildDeleteNodesOps — what a deleted node takes with it (#1560)', ()
       const after = useDagStore.getState().state;
       expect(gone(after, ['sp_e', 'sp_in'])).toEqual([]);
       expect(kept(after, ['sp_solver', 'sp_pp', 'sp_ke', 'sp_np'])).toEqual([]);
-      // #1623 — undoing THIS delete is refused today: the node is added back before anything
-      // inside reads it, so for one step it counts as outside its own sub-network. Pinned here
-      // so the day that is fixed this line goes red and the undo is asserted like every other.
-      expect(() => useDagStore.getState().undo()).toThrow(/inside the sub-network/);
+      // #1623 — the node comes back with its input wires one operation before the wire that
+      // puts it back inside; the batch is judged on where it ends, so the undo goes through.
+      useDagStore.getState().undo();
+      expect(useDagStore.getState().state.nodes).toEqual(s.nodes);
+    });
+
+    it('#1623: every single node inside the Solver deletes and undoes back to the same graph', () => {
+      const s = sprung();
+      const inside = Object.keys(s.nodes).filter((id) => INSIDE.includes(id));
+      expect(inside.length).toBe(INSIDE.length);
+      for (const id of inside) {
+        useDagStore.getState().hydrate(s);
+        useDagStore.getState().dispatchAtomic(buildDeleteNodesOps(s, [id]), 'user', 'delete');
+        expect(useDagStore.getState().state.nodes[id]).toBeUndefined();
+        useDagStore.getState().undo();
+        expect(useDagStore.getState().state.nodes).toEqual(s.nodes);
+      }
     });
   });
 
@@ -1273,6 +1286,19 @@ describe('buildDeleteNodesOps — what a deleted node takes with it (#1560)', ()
       expect(gone(after, ['L3'])).toEqual([]);
       expect(after.nodes.RIG.inputs.body).toEqual({ node: 'L2', socket: 'out' });
       expect(after.nodes.L2.inputs.pose).toEqual({ node: 'RIG_in', socket: 'out' });
+    });
+
+    it('#1623: every single node inside a Rig deletes and undoes back to the same graph', () => {
+      const s = rigged();
+      const inside = [...subnetworkOf(s, 'RIG')].sort();
+      expect(inside).toEqual(['L2', 'L3', 'RIG_in']);
+      for (const id of inside) {
+        useDagStore.getState().hydrate(s);
+        useDagStore.getState().dispatchAtomic(buildDeleteNodesOps(s, [id]), 'user', 'delete');
+        expect(useDagStore.getState().state.nodes[id]).toBeUndefined();
+        useDagStore.getState().undo();
+        expect(useDagStore.getState().state.nodes).toEqual(s.nodes);
+      }
     });
   });
 

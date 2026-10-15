@@ -11,7 +11,13 @@
 
 import { beforeEach, describe, expect, it } from 'vitest';
 import { z } from 'zod';
-import { __resetRegistryForTests, applyOp, evaluate, registerNodeType } from '../core/dag';
+import {
+  __resetRegistryForTests,
+  applyOp,
+  applyOps,
+  evaluate,
+  registerNodeType,
+} from '../core/dag';
 import type { DagState } from '../core/dag/state';
 import { statefulLeafReads, subnetworkViolations } from '../core/dag/subnetworks';
 import type { EvalCtx, Node, Op } from '../core/dag/types';
@@ -224,6 +230,38 @@ describe('#1579 — the third door: naming the input a leaf reads', () => {
       rename('prev'),
     ]);
     expect(r.refusedAt).toBe(-1);
+  });
+});
+
+describe('#1623 — the same rule, asked of a batch where it ends', () => {
+  const batch = (steps: readonly Step[], from = base()) => applyOps(from, steps.map(asOp));
+
+  it('a batch that ends with the Lag reading the Solver`s input is refused, in the same words', () => {
+    expect(() => batch([...NODES, ...SUM, FEED, BODY])).toThrow(REFUSAL);
+    expect(() => batch([...NODES, ...SUM, BODY, FEED])).toThrow(REFUSAL);
+  });
+
+  it('the rename that makes the read is the operation named', () => {
+    const unbound = NODES.map((s) =>
+      'type' in s && s.type === 'addNode' && s.nodeId === 'O_feed'
+        ? node('O_feed', 'BodyInput', { input: 'nothing-the-solver-declares' })
+        : s,
+    );
+    const rename: Op = { type: 'setParam', nodeId: 'O_feed', paramPath: 'input', value: 'prev' };
+    expect(() => batch([...unbound, ...SUM, FEED, BODY, rename])).toThrow(
+      REFUSAL.replace(/^connect: /, 'setParam: '),
+    );
+  });
+
+  it('a batch that reads the input for a moment and ends reading nothing is taken', () => {
+    const { next } = batch([
+      ...NODES,
+      ...SUM,
+      FEED,
+      BODY,
+      { type: 'setParam', nodeId: 'O_feed', paramPath: 'input', value: 'nothing' },
+    ]);
+    expect(statefulLeafReads(next)).toEqual([]);
   });
 });
 
