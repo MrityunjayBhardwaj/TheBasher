@@ -2641,6 +2641,10 @@ function writeDeformed(
   if (!wrote) return;
   position.needsUpdate = true;
   if (normal) normal.needsUpdate = true;
+  // #1610 — three tests a click against the geometry's bounds before any triangle, and measures
+  // them only while they are null. The positions just moved, so the next click measures again.
+  built.geometry.boundingSphere = null;
+  built.geometry.boundingBox = null;
 }
 
 function SkinnedMeshR({
@@ -2726,6 +2730,19 @@ function SkinnedMeshR({
     if (!built) return;
     const seconds = useTimeStore.getState().seconds;
     built.draw?.pose(seconds, skinPose.current);
+    // #1610 — a skinned mesh keeps its own bounds, measured from the posed vertices the first time
+    // a click asks and never again (`SkinnedMesh.raycast`). The bones just moved, so they are
+    // dropped: a character that has walked away from where it was imported is still under the
+    // pointer. Measured again only when something asks (the same rule as the bones, #1507).
+    if (built.draw && built.mesh instanceof THREE.SkinnedMesh) {
+      // three's types call these always present; its raycast is what reads null as "measure".
+      const bounds = built.mesh as unknown as {
+        boundingSphere: THREE.Sphere | null;
+        boundingBox: THREE.Box3 | null;
+      };
+      bounds.boundingSphere = null;
+      bounds.boundingBox = null;
+    }
     writeDeformed(built, seconds, skinPose.current);
   });
   // A number, so the effect below can depend on it: `skin` itself is a new object every frame.
