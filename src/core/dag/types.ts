@@ -800,6 +800,10 @@ export const OpAddNodeSchema = z.object({
   nodeType: NodeTypeIdSchema,
   params: z.unknown(),
   inputs: z.record(SocketIdSchema, InputBindingSchema).optional(),
+  // #1672 — everything else a node holds, so `removeNode`'s inverse brings the node back whole.
+  // Without them, undoing a delete returned the node without its name or user parameters.
+  meta: NodeSchema.shape.meta,
+  spare: NodeSchema.shape.spare,
 });
 
 export const OpRemoveNodeSchema = z.object({

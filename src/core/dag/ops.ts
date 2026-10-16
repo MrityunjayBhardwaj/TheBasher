@@ -448,6 +448,8 @@ function applyAddNode(
     version: def.version,
     params: paramsParsed.data,
     inputs: op.inputs ?? {},
+    ...(op.spare !== undefined ? { spare: op.spare } : {}),
+    ...(op.meta !== undefined ? { meta: op.meta } : {}),
   };
   const next = putNode(state, draft, op.nodeId, node);
   const inverse: Op = { type: 'removeNode', nodeId: op.nodeId };
@@ -488,6 +490,8 @@ function applyRemoveNode(
     nodeType: node.type,
     params: node.params,
     inputs: node.inputs,
+    ...(node.spare !== undefined ? { spare: node.spare } : {}),
+    ...(node.meta !== undefined ? { meta: node.meta } : {}),
   };
   return { next, inverse };
 }

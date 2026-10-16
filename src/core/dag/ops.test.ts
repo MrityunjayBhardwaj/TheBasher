@@ -105,6 +105,42 @@ describe('applyOp — removeNode', () => {
     }).next;
     expect(() => applyOp(state, { type: 'removeNode', nodeId: 'a' })).toThrow(OpError);
   });
+
+  // #1672 — undo replays the inverse, so a delete undone must bring back everything the node
+  // held, not only its params and wires.
+  it('undoing a delete brings the node back whole: name, name link, position, user params', () => {
+    let state = emptyDagState();
+    for (const id of ['src', 'n1']) {
+      state = applyOp(state, {
+        type: 'addNode',
+        nodeId: id,
+        nodeType: 'TestNumber',
+        params: { value: 1 },
+      }).next;
+    }
+    state = applyOp(state, { type: 'setMeta', nodeId: 'src', name: 'Hero' }).next;
+    state = applyOp(state, { type: 'setMeta', nodeId: 'n1', name: 'Hero', nameFrom: 'src' }).next;
+    state = applyOp(state, {
+      type: 'setSpareParam',
+      nodeId: 'n1',
+      key: 'k',
+      param: { type: 'float', value: 2 },
+    }).next;
+    state = {
+      ...state,
+      nodes: {
+        ...state.nodes,
+        n1: { ...state.nodes.n1, meta: { ...state.nodes.n1.meta, position: [4, 5] } },
+      },
+    };
+    const before = state.nodes.n1;
+    const removed = applyOp(state, { type: 'removeNode', nodeId: 'n1' });
+    const restored = applyOp(removed.next, OpSchema.parse(removed.inverse)).next;
+    expect(restored.nodes.n1).toEqual(before);
+    // The link is live again: renaming the source renames the restored node.
+    const renamed = applyOp(restored, { type: 'setMeta', nodeId: 'src', name: 'Villain' }).next;
+    expect(renamed.nodes.n1.meta?.name).toBe('Villain');
+  });
 });
 
 describe('applyOp — connect/disconnect', () => {
