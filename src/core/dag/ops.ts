@@ -969,6 +969,7 @@ function applySetMeta(
   // meta fields (graph `position`) are preserved; an undefined name DELETES the
   // override key so the label cleanly falls back to the node id.
   const node = getNode(state, op.nodeId);
+  if (op.position !== undefined) return applySetPosition(state, op, node, draft);
   const prior = node.meta?.name;
   const priorFrom = node.meta?.nameFrom;
   const meta = { ...node.meta };
@@ -1004,5 +1005,27 @@ function applySetMeta(
     name: prior,
     ...(priorFrom !== undefined ? { nameFrom: priorFrom } : {}),
   };
+  return { next, inverse };
+}
+
+/** #1562 — a setMeta carrying `position`: writes where the node sits in the node view and
+ *  nothing else; `null` clears it. The inverse puts back the position that was there. */
+function applySetPosition(
+  state: DagState,
+  op: Extract<Op, { type: 'setMeta' }>,
+  node: Node,
+  draft: Draft | undefined,
+): ApplyResult {
+  if (op.name !== undefined || op.nameFrom !== undefined) {
+    throw new OpError('setMeta: a position is set on its own, not with a name', op);
+  }
+  const meta: NonNullable<Node['meta']> = { ...node.meta };
+  if (op.position === null) delete meta.position;
+  else meta.position = [op.position![0], op.position![1]];
+  const nextMeta = Object.keys(meta).length === 0 ? undefined : meta;
+  const next = sameParamValue(node.meta, nextMeta)
+    ? state
+    : putNode(state, draft, node.id, { ...node, meta: nextMeta });
+  const inverse: Op = { type: 'setMeta', nodeId: op.nodeId, position: node.meta?.position ?? null };
   return { next, inverse };
 }

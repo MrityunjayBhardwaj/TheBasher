@@ -856,11 +856,15 @@ export const OpSetParamSchema = z.object({
 // #1122 — `nameFrom` links the name to another node's (see `NodeSchema.meta.nameFrom`). A
 // setMeta WITHOUT it clears the link, because a name written without one is a name someone
 // chose; the inverse carries the prior link back, so undoing a rename resumes following.
+// #1562 — `position` places the node in the node view. A setMeta carrying it writes the
+// position and nothing else (a name in the same op is refused), `null` clears it, and a setMeta
+// without it leaves the position where it was — so every rename keeps meaning what it meant.
 export const OpSetMetaSchema = z.object({
   type: z.literal('setMeta'),
   nodeId: NodeIdSchema,
   name: z.string().optional(),
   nameFrom: NodeIdSchema.optional(),
+  position: z.tuple([z.number(), z.number()]).nullable().optional(),
 });
 
 // #1503 — there is no visibility op. Visibility is two params (`viewport`, `render`,

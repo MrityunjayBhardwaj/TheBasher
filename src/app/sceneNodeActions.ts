@@ -591,7 +591,8 @@ export function buildDuplicateNodesOps(
     });
   }
 
-  // 8. Names. `addNode` carries none, so each is a `setMeta` on the copy. A named original
+  // 8. Names. Each is a `setMeta` on the copy, not `addNode`'s `meta`: a copy's name is not its
+  //    original's (#1672 gave `addNode` a `meta` for undo, not for this). A named original
   //    gives its copy the next free number; a follower's copy follows the copy of what its
   //    original followed, and reads that node's (new) name.
   const names = options.reservedNames ?? new Set<string>();

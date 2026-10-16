@@ -23,7 +23,7 @@ The graph changes only through these operations (`OpSchema`, `src/core/dag/types
 | `addNode` / `removeNode`             | Add a node (optionally with its wires) or delete it |
 | `connect` / `disconnect`             | Add or remove a wire into a socket                  |
 | `setParam`                           | Change a parameter value                            |
-| `setMeta`                            | Rename a node (node positions join it in #1562)     |
+| `setMeta`                            | Rename a node, or place it in the node view (#1562) |
 | `setSpareParam` / `removeSpareParam` | Add or remove a user parameter on any node          |
 
 Every operation carries its source: `user`, `agent`, `macro` or `render` (`OpSource`,
