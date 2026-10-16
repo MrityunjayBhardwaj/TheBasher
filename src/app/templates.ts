@@ -1,11 +1,12 @@
 // #1557 — templates inside a project: a sub-network saved once and used as many times as wanted.
 //
 // A template is a reusable sub-network, the way a Houdini digital asset is a reusable subnet: its
-// definition lives in the project's library (`core/project/library.ts`) and is a node type while
-// the project is open, and each INSTANCE is a node of that type with a real copy of the body
+// definition is a `TemplateDefinition` node in the graph and a node type while it is there
+// (`core/dag/templates.ts`), and each INSTANCE is a node of that type with a real copy of the body
 // behind its `body` socket (#1557 D1). Exporting a template to a file of its own is #1660.
 //
-// Three things here, each a plan of ordinary operations so one undo takes it back:
+// Three things here, each a plan of ordinary operations, so one undo takes it back and the agent
+// can make it:
 //
 // - `planCollapseToTemplate`, Houdini's collapse-to-subnet then create-asset in one step. The
 //   selected nodes become the body. Each wire coming in from outside becomes an input of the
@@ -20,16 +21,17 @@
 
 import { getNodeType } from '../core/dag/registry';
 import { useDagStore } from '../core/dag/store';
-import { useProjectStore } from '../core/project/store';
 import { producedTypeOf } from '../core/dag/socketConversion';
 import { subnetworkOf } from '../core/dag/subnetworks';
 import type { DagState } from '../core/dag/state';
 import type { InputBinding, Node, NodeId, NodeRef, Op } from '../core/dag/types';
 import {
   TEMPLATE_BODY_SOCKET,
+  TEMPLATE_DEFINITION_TYPE,
   TEMPLATE_TYPE_PREFIX,
+  templatesOf,
   type TemplateDefinition,
-} from '../core/project/library';
+} from '../core/dag/templates';
 
 /** The body-input leaf that reads an input of each type a template can take. */
 const LEAF_FOR_TYPE: Readonly<Record<string, string>> = {
@@ -78,7 +80,7 @@ export function planCollapseToTemplate(
   const inside = new Set(selection.filter((id) => state.nodes[id]));
   if (inside.size === 0) return { ok: false, reason: 'nothing is selected' };
   const typeName = `${TEMPLATE_TYPE_PREFIX}${asName(name, 'Template')}`;
-  if (getNodeType(typeName))
+  if (templatesOf(state).has(typeName))
     return { ok: false, reason: `a template "${typeName}" already exists in this project` };
   if (state.nodes[instanceId]) return { ok: false, reason: `"${instanceId}" is already a node` };
 
@@ -259,6 +261,14 @@ export function planCollapseToTemplate(
       body: { nodes: bodyNodes, out },
     }),
   );
+  // The definition first: its node defines the type the instance is added as.
+  const holder = unique(`tpl_${asName(name, 'Template')}`, new Set(Object.keys(state.nodes)));
+  ops.unshift({
+    type: 'addNode',
+    nodeId: holder,
+    nodeType: TEMPLATE_DEFINITION_TYPE,
+    params: { definition, keep: false },
+  });
   return { ok: true, definition, ops };
 }
 
@@ -347,11 +357,7 @@ export function matchInstanceBody(
   return match.size === Object.keys(def.body.nodes).length ? match : null;
 }
 
-// ── The two actions: the library first, then the graph ──────────────────────────────────────
-//
-// The definition goes into the library before the graph changes, because the instance's type
-// must exist when its `addNode` is applied. If the graph then refuses the plan, the library is
-// put back, so a refused collapse leaves nothing behind.
+// ── The two actions ─────────────────────────────────────────────────────────────────────────
 
 /** An id for a new instance of `type`, free in `state`. */
 function instanceIdFor(state: DagState, type: string): NodeId {
@@ -365,37 +371,31 @@ export type TemplateActionResult =
   | { readonly ok: true; readonly type: string; readonly instance: NodeId }
   | { readonly ok: false; readonly reason: string };
 
-/** Collapse the selected nodes into a new template of the open project, the selection becoming
- *  its first instance. One undo takes the graph back; the definition stays in the library. */
+/** Collapse the selected nodes into a new template, the selection becoming its first
+ *  instance. One undo takes it all back, the definition included. */
 export function collapseSelectionToTemplate(
   selection: readonly NodeId[],
   name: string,
 ): TemplateActionResult {
-  const project = useProjectStore.getState();
-  const library = project.current?.library;
-  if (!library) return { ok: false, reason: 'no project is open' };
   const state = useDagStore.getState().state;
-  const probe = `${TEMPLATE_TYPE_PREFIX}${asName(name, 'Template')}`;
-  const instance = instanceIdFor(state, probe);
+  const instance = instanceIdFor(state, `${TEMPLATE_TYPE_PREFIX}${asName(name, 'Template')}`);
   const plan = planCollapseToTemplate(state, selection, name, instance);
   if (!plan.ok) return plan;
-  project.setLibrary({ templates: [...library.templates, plan.definition] });
   try {
     useDagStore
       .getState()
       .dispatchAtomic(plan.ops, 'user', `collapse into ${plan.definition.label}`);
   } catch (e) {
-    useProjectStore.getState().setLibrary(library);
     return { ok: false, reason: (e as Error).message };
   }
   return { ok: true, type: plan.definition.type, instance };
 }
 
-/** Add an instance of the open project's template `type`. */
+/** Add an instance of the graph's template `type`. */
 export function addTemplateInstance(type: string): TemplateActionResult {
-  const def = useProjectStore.getState().current?.library.templates.find((t) => t.type === type);
-  if (!def) return { ok: false, reason: `this project has no template "${type}"` };
   const state = useDagStore.getState().state;
+  const def = templatesOf(state).get(type)?.definition;
+  if (!def) return { ok: false, reason: `this project has no template "${type}"` };
   const instance = instanceIdFor(state, type);
   try {
     useDagStore

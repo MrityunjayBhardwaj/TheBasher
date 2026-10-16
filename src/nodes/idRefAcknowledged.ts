@@ -33,6 +33,14 @@ const FOREIGN = "another system's own keys (a ComfyUI graph, an importer's lefto
 const TEXT = 'free text';
 const BY_NAME = "a choice among wired inputs, made by the input's display name";
 const RETIRED = 'retired: nothing reads or writes it since the clone rig went (#1053)';
+// #1557 — a template's definition holds a copy of its body: nodes keyed by a name local to the
+// definition, so a node, input or socket name there names something of the template's own.
+const TEMPLATE_LOCAL = "a name inside the template's own body, not a node of the graph";
+const TEMPLATE_TYPE = "a node type name (the template's own, or a body node's)";
+// 🔴 NOT settled: a body node's params can name a graph node by id (a Solver's `sourceTransform`),
+// and nothing follows it yet. Listed so the gate is answered; the gap is #1661.
+const TEMPLATE_BODY_PARAMS =
+  "a body node's own params, copied into each instance; an id among them is followed by nothing yet (#1661)";
 
 /**
  * The strings inside one OpenPBR material value (`openpbrMaterialSchema`), relative to wherever
@@ -100,6 +108,28 @@ const mounted = Object.fromEntries(
 
 export const NOT_A_NODE_ID: Readonly<Record<string, string>> = {
   ...mounted,
+  'TemplateDefinition.definition.type': TEMPLATE_TYPE,
+  'TemplateDefinition.definition.label': LABEL,
+  'TemplateDefinition.definition.inputs{key}': TEMPLATE_LOCAL,
+  'TemplateDefinition.definition.inputs{}.type': 'a socket type name',
+  'TemplateDefinition.definition.output.type': 'a socket type name',
+  'TemplateDefinition.definition.body.nodes{key}': TEMPLATE_LOCAL,
+  'TemplateDefinition.definition.body.nodes{}.id': TEMPLATE_LOCAL,
+  'TemplateDefinition.definition.body.nodes{}.type': TEMPLATE_TYPE,
+  'TemplateDefinition.definition.body.nodes{}.params': TEMPLATE_BODY_PARAMS,
+  'TemplateDefinition.definition.body.nodes{}.spare{key}': SPARE_KEY,
+  'TemplateDefinition.definition.body.nodes{}.spare{}.value': TEMPLATE_BODY_PARAMS,
+  'TemplateDefinition.definition.body.nodes{}.spare{}.home.section': 'an inspector section name',
+  'TemplateDefinition.definition.body.nodes{}.spare{}.home.label': LABEL,
+  'TemplateDefinition.definition.body.nodes{}.inputs{key}': 'a socket name',
+  'TemplateDefinition.definition.body.nodes{}.inputs{}.node': TEMPLATE_LOCAL,
+  'TemplateDefinition.definition.body.nodes{}.inputs{}.socket': 'a socket name',
+  'TemplateDefinition.definition.body.nodes{}.inputs{}[].node': TEMPLATE_LOCAL,
+  'TemplateDefinition.definition.body.nodes{}.inputs{}[].socket': 'a socket name',
+  'TemplateDefinition.definition.body.nodes{}.meta.name': LABEL,
+  'TemplateDefinition.definition.body.nodes{}.meta.nameFrom': TEMPLATE_LOCAL,
+  'TemplateDefinition.definition.body.out.node': TEMPLATE_LOCAL,
+  'TemplateDefinition.definition.body.out.socket': 'a socket name',
   'Action.name': LABEL,
   'Action.channels[].name': LABEL,
   'Action.channels[].paramPath': PARAM_PATH,

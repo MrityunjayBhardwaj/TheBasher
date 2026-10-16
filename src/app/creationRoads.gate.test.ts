@@ -134,6 +134,12 @@ const NO_CREATION_ROAD: Readonly<Record<string, string>> = {
     'The Shot/Cut editorial species (THESIS §42), shipped as data in Wave A with its ' +
     'authoring surface never built. The compositor is where editorial lives now.',
 
+  TemplateDefinition:
+    'A template held in the graph (#1557). Made by collapsing a selection into a template ' +
+    '(`collapseSelectionToTemplate`, src/app/templates.ts), which no surface offers yet: the ' +
+    "app has no node-graph editor, so its doors are the agent's and the scene tree's, built " +
+    'next under #1557. Remove this entry when the first one lands.',
+
   Scatter:
     "THESIS §29's proof that procedural generation is substrate. It evaluates, renders " +
     '(ScatterR) and carries a scene-tree icon, and nothing has ever been able to create ' +

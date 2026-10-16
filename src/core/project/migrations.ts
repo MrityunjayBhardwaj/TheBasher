@@ -10,6 +10,7 @@
 //
 // REF: THESIS.md §52, krama K5 step 7.
 
+import { TEMPLATE_DEFINITION_TYPE } from '../dag/templates';
 import { getNodeType } from '../dag/registry';
 import { normalizeRetiredParams } from './retiredLadders';
 import { RETIRED_NODE_TYPES } from './oldImports';
@@ -134,8 +135,6 @@ const formatMigrations: Record<number, FormatMigration> = {
   // v21 → v22 (#1548): the Solver's four input leaves become the two named body-input leaves —
   // each reads the input it stood for by name, so no leaf type is tied to the Solver.
   21: migrateSolverLeavesToBodyInputs,
-  // v22 → v23 (#1557): a project carries a template library; a file saved earlier has none.
-  22: addEmptyLibrary,
 };
 
 // ── v1 → v2: AnimationLayer retirement (#199) ──────────────────────────────
@@ -1205,28 +1204,43 @@ export function migrateProjectFormat(raw: unknown): unknown {
  * its registered version using its node-type's migration ladder.
  */
 export function migrateNodes(project: Project): Project {
-  // #1557 — a node of one of the project's own template types is not registered while the file
-  // is read (its type is defined when the project is opened, `syncLibraryTypes`). Its type
-  // declares nothing a saved version could predate, so it is taken as saved. The templates'
-  // bodies are nodes of built-in types like any other, and step up the same ladder.
-  const templateTypes = new Set(project.library.templates.map((t) => t.type));
+  // #1557 — an instance of one of the graph's own templates has a type no one has registered while
+  // the file is read: its definition node defines it when the graph reaches the DAG store. Its
+  // type declares nothing a saved version could predate, so it is taken as saved. A definition's
+  // body is nodes of built-in types like any other, and steps up the same ladder.
+  const templateTypes = new Set<string>();
+  for (const node of Object.values(project.state.nodes)) {
+    const type = templateDefinitionOf(node)?.type;
+    if (typeof type === 'string') templateTypes.add(type);
+  }
   const migrate = (node: Node) => (templateTypes.has(node.type) ? node : migrateOneNode(node));
   const migratedNodes: Record<string, Node> = {};
   for (const [id, node] of Object.entries(project.state.nodes)) {
-    migratedNodes[id] = migrate(node);
+    migratedNodes[id] = migrateTemplateBody(migrate(node), migrate);
   }
-  const templates = project.library.templates.map((t) => ({
-    ...t,
-    body: {
-      ...t.body,
-      nodes: Object.fromEntries(Object.entries(t.body.nodes).map(([k, n]) => [k, migrate(n)])),
-    },
-  }));
   return {
     ...project,
     state: { ...project.state, nodes: migratedNodes },
-    library: { templates },
     nodeVersions: snapshotCurrentNodeVersions(migratedNodes),
+  };
+}
+
+type RawDefinition = { type?: unknown; body?: { nodes?: Record<string, Node> } };
+const templateDefinitionOf = (node: Node): RawDefinition | undefined =>
+  node.type === TEMPLATE_DEFINITION_TYPE
+    ? (node.params as { definition?: RawDefinition } | undefined)?.definition
+    : undefined;
+
+/** A definition node with every node of its body stepped up its ladder; any other node as it is. */
+function migrateTemplateBody(node: Node, migrate: (n: Node) => Node): Node {
+  const definition = templateDefinitionOf(node);
+  const body = definition?.body?.nodes;
+  if (!definition || !body) return node;
+  const nodes = Object.fromEntries(Object.entries(body).map(([k, n]) => [k, migrate(n)]));
+  const params = node.params as Record<string, unknown>;
+  return {
+    ...node,
+    params: { ...params, definition: { ...definition, body: { ...definition.body, nodes } } },
   };
 }
 
@@ -2178,11 +2192,4 @@ export function migrateSolverLeavesToBodyInputs(raw: unknown): unknown {
     );
   }
   return { ...proj, state: { ...proj.state, nodes: next }, formatVersion: 22 };
-}
-
-// ── v22 → v23: the template library (#1557) ──────────────────────────────────
-// A project saved before templates defines none.
-export function addEmptyLibrary(raw: unknown): unknown {
-  const proj = raw as Record<string, unknown>;
-  return { ...proj, library: { templates: [] }, formatVersion: 23 };
 }

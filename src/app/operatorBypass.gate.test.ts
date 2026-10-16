@@ -160,7 +160,8 @@ describe('ns-2 step 3 — the bypass, censused with its category attached', () =
     // 90 -> 88 at #1548 (the Solver's four input leaves became BodyInput and BodyInputVec), NOT an operator.
     // 88 -> 90 at #1357 (Rig and its pose leaf BodyInputPose), NOT operators.
     // 90 -> 91 at #1353 (CaptureModifier), an OPERATOR, so the operator census moves with it.
-    expect(listNodeTypes()).toHaveLength(91);
+    // 91 -> 92 at #1557 (TemplateDefinition, a template held in the graph), NOT an operator.
+    expect(listNodeTypes()).toHaveLength(92);
   });
 
   it('`muted` is declared ELEVEN times in source, and that is three different populations', () => {

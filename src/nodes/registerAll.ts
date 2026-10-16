@@ -29,6 +29,7 @@ import { CompositionNode } from './Composition';
 import { COMPUTE_NODES } from './computeNodes';
 import { LagNode } from './Lag';
 import { SolverNode, BodyInputNode, BodyInputVecNode } from './Solver';
+import { TemplateDefinitionNode } from './TemplateDefinition';
 import { RigNode, BodyInputPoseNode } from './Rig';
 import { SampleGeometryNode } from './geometryQuery';
 import { CutNode } from './Cut';
@@ -276,6 +277,8 @@ const ALL: NodeDefinition[] = [
   SolverNode as unknown as NodeDefinition,
   BodyInputNode as unknown as NodeDefinition,
   BodyInputVecNode as unknown as NodeDefinition,
+  // #1557 — a template's definition, held in the graph.
+  TemplateDefinitionNode as unknown as NodeDefinition,
   // #1357 — the Rig: a sub-network on the pose wire, and the leaf that reads its incoming pose.
   RigNode as unknown as NodeDefinition,
   BodyInputPoseNode as unknown as NodeDefinition,

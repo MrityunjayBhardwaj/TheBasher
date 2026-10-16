@@ -10,6 +10,7 @@
 //
 // REF: THESIS.md §50, krama K2 + K10.
 
+import { syncTemplateTypes } from './templates';
 import { create } from 'zustand';
 import { applyOp, applyOps, GraphRefusal, validateOp } from './ops';
 import type { Reportable } from './ops';
@@ -401,3 +402,10 @@ export const useDagStore = create<DagStore>((set, get) => ({
     });
   },
 }));
+
+// #1557 — the registered template types are exactly this graph's, after every change: a
+// dispatch, an undo or redo, a load. Subscribed here, when the store is made, so this runs before
+// any other listener reads the new graph.
+useDagStore.subscribe((now, before) => {
+  if (now.state.nodes !== before.state.nodes) syncTemplateTypes(now.state);
+});

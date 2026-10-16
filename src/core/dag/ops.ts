@@ -12,6 +12,7 @@
 // REF: THESIS.md §9 (five primitives), §50, App. B; krama K2 (op dispatch
 // lifecycle).
 
+import { followDefinition } from './templates';
 import { followableName, ownName } from './nodeName';
 import { passRoleOf } from './passRole';
 import { requireNodeType } from './registry';
@@ -310,6 +311,12 @@ function refollow(
 
 function applyWith(state: DagState, op: Op, draft: Draft | undefined): ApplyResult {
   const result = applyUnguarded(state, op, draft);
+  // #1557 — a template's definition node defines its type as it lands, so the same batch can add
+  // an instance of it; a second definition of one type is refused.
+  if (op.type === 'addNode' || op.type === 'setParam') {
+    const refused = followDefinition(result.next, op.nodeId);
+    if (refused) throw new OpError(`${op.type}: ${refused}`, op);
+  }
   // #1583 — which nodes own a sub-network follows the graph through every operation, so the
   // rules below never have to walk the graph to find them.
   carrySubnetworkOwners(state, result.next, op);

@@ -1,6 +1,6 @@
 // #1557 — a sub-network collapsed into a template, instanced again, saved and opened again.
 
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 import { __resetRegistryForTests, applyOp, applyOps } from '../core/dag';
 import { evaluate } from '../core/dag/evaluator';
 import type { DagState } from '../core/dag/state';
@@ -9,8 +9,13 @@ import { subnetworkOf, subnetworkViolations } from '../core/dag/subnetworks';
 import type { Op } from '../core/dag/types';
 import { buildDefaultDagState } from '../core/project/default';
 import { composeProject, loadProject, saveProject } from '../core/project/io';
-import { EMPTY_LIBRARY, LibrarySchema, syncLibraryTypes } from '../core/project/library';
-import { useProjectStore } from '../core/project/store';
+import { getNodeType } from '../core/dag/registry';
+import {
+  TemplateDefinitionSchema,
+  syncTemplateTypes,
+  templatesOf,
+  type TemplateDefinition,
+} from '../core/dag/templates';
 import { MemoryStorage } from '../core/storage/MemoryStorage';
 import { registerAllNodes } from '../nodes/registerAll';
 import {
@@ -102,18 +107,16 @@ const solverLag = () =>
   ]);
 const LAG_BODY = ['sol', 'add', 'mul', 'sub', 'prev', 'inp'];
 
-/** Open a project holding `state` and no templates. */
-function open(state: DagState) {
-  useProjectStore
-    .getState()
-    .setCurrent(composeProject({ id: 'p', name: 'p', state, library: EMPTY_LIBRARY }));
-  useDagStore.getState().hydrate(state);
-}
+/** Open `state` in the DAG store. */
+const open = (state: DagState) => useDagStore.getState().hydrate(state);
+/** The definition of `type` the open graph holds. */
+const definitionOf = (type: string): TemplateDefinition => templatesOf(dag()).get(type)!.definition;
 
 beforeEach(() => {
   __resetRegistryForTests();
   registerAllNodes();
-  syncLibraryTypes(EMPTY_LIBRARY);
+  useDagStore.getState().reset();
+  syncTemplateTypes({ nodes: {} });
 });
 
 describe('#1557 — collapsing a selection into a template', () => {
@@ -130,19 +133,22 @@ describe('#1557 — collapsing a selection into a template', () => {
     // The selected nodes kept their ids, and are now the instance's body.
     expect([...subnetworkOf(s, 'n_scale_1')].sort()).toEqual(['mul', 'n_scale_1_in_kfit', 'two']);
     expect(subnetworkViolations(s)).toEqual([]);
-    const def = useProjectStore.getState().current!.library.templates[0];
-    expect(LibrarySchema.safeParse({ templates: [def] }).success).toBe(true);
+    const def = definitionOf('template.Scale');
+    expect(TemplateDefinitionSchema.safeParse(def).success).toBe(true);
     expect(def.inputs).toEqual({ kfit: { type: 'Number' } });
     expect(def.output).toEqual({ type: 'Number' });
   });
 
-  it('one undo puts the graph back exactly', () => {
+  it('one undo puts the graph back exactly, and takes the template with it', () => {
     open(arithmetic());
     const before = stable(dag());
     collapseSelectionToTemplate(['mul', 'two'], 'Scale');
     expect(stable(dag())).not.toBe(before);
+    expect(getNodeType('template.Scale')).toBeDefined();
     useDagStore.getState().undo();
     expect(stable(dag())).toBe(before);
+    expect(templatesOf(dag()).size).toBe(0);
+    expect(getNodeType('template.Scale')).toBeUndefined();
   });
 
   it('a Solver and its body collapse into a template that lags exactly as the Solver did', () => {
@@ -182,7 +188,7 @@ describe('#1557 — collapsing a selection into a template', () => {
     open(arithmetic());
     collapseSelectionToTemplate(['mul', 'two'], 'Scale');
     addTemplateInstance('template.Scale');
-    const def = useProjectStore.getState().current!.library.templates[0];
+    const def = definitionOf(dag().nodes.n_scale_1?.type ?? dag().nodes.n_diff_1.type);
     const first = matchInstanceBody(dag(), 'n_scale_1', def);
     expect(first && Object.fromEntries(first)).toEqual({
       mul: 'mul',
@@ -225,7 +231,7 @@ describe('#1557 — collapsing a selection into a template', () => {
       ]),
     );
     expect(collapseSelectionToTemplate(['br', 'd'], 'Diff').ok).toBe(true);
-    const def = useProjectStore.getState().current!.library.templates[0];
+    const def = definitionOf(dag().nodes.n_scale_1?.type ?? dag().nodes.n_diff_1.type);
     expect(matchInstanceBody(dag(), 'n_diff_1', def)).not.toBeNull();
     const swapped = applyOps(dag(), [
       { type: 'connect', from: { node: 'br', socket: 'y' }, to: { node: 'd', socket: 'a' } },
@@ -238,17 +244,12 @@ describe('#1557 — collapsing a selection into a template', () => {
     open(arithmetic());
     collapseSelectionToTemplate(['mul', 'two'], 'Scale');
     addTemplateInstance('template.Scale');
-    const current = useProjectStore.getState().current!;
     const storage = new MemoryStorage();
-    await saveProject(
-      storage,
-      composeProject({ id: 'p', name: 'p', state: dag(), library: current.library }),
-    );
-    useProjectStore.getState().setCurrent(null);
-    expect(() => at(dag(), 'n_scale_1')).toThrow(); // its type is gone with the project
+    await saveProject(storage, composeProject({ id: 'p', name: 'p', state: dag() }));
+    open(buildDefaultDagState());
+    expect(getNodeType('template.Scale')).toBeUndefined(); // gone with the graph that defined it
     const loaded = await loadProject(storage, 'p');
-    useProjectStore.getState().setCurrent(loaded);
-    useDagStore.getState().hydrate(loaded.state);
+    open(loaded.state);
     expect(at(dag(), 'n_scale_1')).toBe(0.5);
     expect(at(dag(), 'n_scale_2')).toBe(0); // its `kfit` is not wired, so its leaf reads 0
   });
@@ -286,34 +287,14 @@ describe('#1557 — what cannot be collapsed, and why', () => {
       /"(prev|inp)" reads the inputs of "sol" and is not selected/,
     );
   });
-  it('a refused collapse leaves the library as it was', () => {
+  it('a name already taken is refused, and the graph is left as it was', () => {
     open(arithmetic());
-    const r = collapseSelectionToTemplate(['two'], 'T'); // `two` alone: its output feeds `mul`… fine
-    expect(r.ok).toBe(true);
-    const lib = useProjectStore.getState().current!.library;
-    const again = collapseSelectionToTemplate(['kfit'], 'T');
-    expect(again).toEqual({
+    expect(collapseSelectionToTemplate(['two'], 'T').ok).toBe(true);
+    const before = dag();
+    expect(collapseSelectionToTemplate(['kfit'], 'T')).toEqual({
       ok: false,
       reason: 'a template "template.T" already exists in this project',
     });
-    expect(useProjectStore.getState().current!.library).toBe(lib);
-  });
-
-  it('a collapse the graph refuses takes its definition back out of the library', () => {
-    open(arithmetic());
-    const lib = useProjectStore.getState().current!.library;
-    const spy = vi.spyOn(useDagStore.getState(), 'dispatchAtomic').mockImplementation(() => {
-      throw new Error('refused');
-    });
-    try {
-      expect(collapseSelectionToTemplate(['mul', 'two'], 'Scale')).toEqual({
-        ok: false,
-        reason: 'refused',
-      });
-    } finally {
-      spy.mockRestore();
-    }
-    expect(useProjectStore.getState().current!.library).toEqual(lib);
-    expect(collapseSelectionToTemplate(['mul', 'two'], 'Scale').ok).toBe(true);
+    expect(dag()).toBe(before);
   });
 });

@@ -17,7 +17,6 @@
 // D-UX-12 (unsaved indicator).
 
 import { create } from 'zustand';
-import { EMPTY_LIBRARY, LibrarySchema, syncLibraryTypes, type Library } from './library';
 import type { Project } from './schema';
 
 export interface ProjectStore {
@@ -33,9 +32,6 @@ export interface ProjectStore {
    *  exist in the new project until something dispatches. */
   setCurrent: (project: Project | null) => void;
   patchMeta: (patch: Partial<Pick<Project, 'name' | 'updatedAt'>>) => void;
-  /** #1557 — replace the open project's template library: its types follow at once, and the
-   *  project is dirty. Not part of undo, as Houdini's asset definitions are not. */
-  setLibrary: (library: Library) => void;
   /** Called by the boot dispatcher subscription on every dag state
    *  transition (post-hydrate). Flips dirty=true; idempotent. */
   markDirty: () => void;
@@ -48,26 +44,14 @@ export const useProjectStore = create<ProjectStore>((set) => ({
   current: null,
   dirty: false,
   lastSavedAt: null,
-  // #1557 — the open project's templates are node types while it is open. Every road that opens
-  // a project (resume, open, new, duplicate, delete's fallback, a `.basher` bundle) sets it here
-  // BEFORE hydrating its graph, so a node of a template type never meets an unregistered type.
-  setCurrent: (project) => {
-    syncLibraryTypes(project?.library ?? EMPTY_LIBRARY);
+  setCurrent: (project) =>
     set({
       current: project,
       dirty: false,
       lastSavedAt: project ? project.updatedAt : null,
-    });
-  },
+    }),
   patchMeta: (patch) =>
     set((s) => (s.current ? { current: { ...s.current, ...patch, updatedAt: Date.now() } } : s)),
-  setLibrary: (library) =>
-    set((s) => {
-      if (!s.current) return s;
-      const parsed = LibrarySchema.parse(library);
-      syncLibraryTypes(parsed);
-      return { current: { ...s.current, library: parsed, updatedAt: Date.now() }, dirty: true };
-    }),
   markDirty: () => set({ dirty: true }),
   markSaved: () => set({ dirty: false, lastSavedAt: Date.now() }),
 }));

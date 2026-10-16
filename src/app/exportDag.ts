@@ -16,7 +16,6 @@
 
 import { detachGraph, type DagState } from '../core/dag/state';
 import { useDagStore } from '../core/dag/store';
-import { EMPTY_LIBRARY, type Library } from '../core/project/library';
 import { PROJECT_FORMAT_VERSION } from '../core/project/schema';
 import { useProjectStore } from '../core/project/store';
 
@@ -25,9 +24,6 @@ export interface DagExportPayload {
   id: string;
   name: string;
   state: DagState;
-  /** #1557 — the templates the graph's instances are nodes of: without them, re-importing it
-   *  would meet node types nothing defines. */
-  library: Library;
   exportedAt: number;
 }
 
@@ -43,7 +39,7 @@ export interface DagExportPayload {
  * and boot.ts use when serialising the live state.
  */
 export function buildDagExportPayload(
-  project: { id: string; name: string; library?: Library },
+  project: { id: string; name: string },
   dag: DagState,
   exportedAt: number,
 ): DagExportPayload {
@@ -52,7 +48,6 @@ export function buildDagExportPayload(
     id: project.id,
     name: project.name,
     state: detachGraph(dag),
-    library: project.library ?? EMPTY_LIBRARY,
     exportedAt,
   };
 }
