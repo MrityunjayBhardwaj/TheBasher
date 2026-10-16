@@ -26,6 +26,7 @@
 
 import { z } from 'zod';
 import { NodeSchema, NodeIdSchema, NodeRefSchema } from '../dag/types';
+import { LibrarySchema } from './library';
 
 // v4 (#384 Stage C · C1): split each fused SphereMesh into Object + SphereData —
 // the per-kind repeat of the v3 box split. See migrations.ts formatMigrations[3].
@@ -91,7 +92,12 @@ import { NodeSchema, NodeIdSchema, NodeRefSchema } from '../dag/types';
 // formatMigrations[20].
 // v22 (#1548): the Solver's input leaves (PrevFrame, SolverInput and their Vec twins) are
 // `BodyInput`/`BodyInputVec` reading the input by name. See migrations.ts formatMigrations[21].
-export const PROJECT_FORMAT_VERSION = 22;
+// v23 (#1557): a project carries a template library beside its graph (`library.ts`). A file saved
+// earlier has none, and is given an empty one. See migrations.ts formatMigrations[22].
+// 🔴 A later FORMAT pass that rewrites nodes must rewrite the library's body nodes too: a template's
+// body is copied into every instance, so a body node left on the old shape comes back on the next
+// instance.
+export const PROJECT_FORMAT_VERSION = 23;
 
 export const ProjectSchema = z.object({
   formatVersion: z.literal(PROJECT_FORMAT_VERSION),
@@ -108,6 +114,8 @@ export const ProjectSchema = z.object({
     nodes: z.record(NodeIdSchema, NodeSchema),
     outputs: z.record(z.string(), NodeRefSchema),
   }),
+  /** #1557 — the templates this project defines, each a node type while it is open. */
+  library: LibrarySchema,
 });
 
 export type Project = z.infer<typeof ProjectSchema>;

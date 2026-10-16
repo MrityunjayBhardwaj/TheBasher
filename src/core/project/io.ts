@@ -17,6 +17,7 @@
 
 import { detachGraph, type DagState } from '../dag/state';
 import type { StorageCapability } from '../storage';
+import { EMPTY_LIBRARY, type Library } from './library';
 import { migrateNodes, migrateProjectFormat } from './migrations';
 import { copyProjectImages, deleteProjectImages } from './projectImages';
 import { repairAndWarn } from './repairRoleBindings';
@@ -41,6 +42,8 @@ export interface ComposeProjectArgs {
   state: DagState;
   createdAt?: number;
   updatedAt?: number;
+  /** #1557 — the project's templates; none when absent. */
+  library?: Library;
 }
 
 /**
@@ -83,6 +86,7 @@ export function composeProject(args: ComposeProjectArgs): Project {
       nodes: args.state.nodes,
       outputs: args.state.outputs,
     }),
+    library: args.library ?? EMPTY_LIBRARY,
   };
 }
 

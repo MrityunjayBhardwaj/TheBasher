@@ -89,7 +89,7 @@ describe('#637 this phase ships no migration, and the absence is pinned', () => 
     registerAllNodes();
   });
 
-  it('has moved the project format version exactly thirteen times since the freeze — #915, #920, #930, #389, #1062, #1203, #1224, #1225 twice, #1316, #1227, #1503, then #1548', () => {
+  it('has moved the project format version exactly fourteen times since the freeze — #915, #920, #930, #389, #1062, #1203, #1224, #1225 twice, #1316, #1227, #1503, #1548, then #1557', () => {
     // 🔴 THIS ROW CHANGED SHAPE IN #915, AND THE HEADER ABOVE SAYS WHY IT MAY.
     //
     // It read `toBe(fixture().formatVersion)` — ns-1 shipped no migration, so the frozen
@@ -141,7 +141,9 @@ describe('#637 this phase ships no migration, and the absence is pinned', () => 
     // #1548 is the THIRTEENTH: the Solver's four input leaf types become two leaves that read the
     // input by name. The old types are no longer registered, so only a pass over the raw file can
     // rename a saved leaf before the load looks its type up.
-    const MIGRATIONS_SINCE_FREEZE = 13; // #915, #920, #930, #389, #1062, #1203, #1224, #1225 ×2, #1316, #1227, #1503, #1548
+    // #1557 is the FOURTEENTH: a project carries a template library beside its graph. The schema
+    // requires it, so a file saved earlier is given an empty one.
+    const MIGRATIONS_SINCE_FREEZE = 14; // #915, #920, #930, #389, #1062, #1203, #1224, #1225 ×2, #1316, #1227, #1503, #1548, #1557
     expect(PROJECT_FORMAT_VERSION).toBe(fixture().formatVersion + MIGRATIONS_SINCE_FREEZE);
   });
 

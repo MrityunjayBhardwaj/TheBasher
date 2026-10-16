@@ -17,6 +17,7 @@
 // D-UX-12 (unsaved indicator).
 
 import { create } from 'zustand';
+import { EMPTY_LIBRARY, syncLibraryTypes } from './library';
 import type { Project } from './schema';
 
 export interface ProjectStore {
@@ -44,12 +45,17 @@ export const useProjectStore = create<ProjectStore>((set) => ({
   current: null,
   dirty: false,
   lastSavedAt: null,
-  setCurrent: (project) =>
+  // #1557 — the open project's templates are node types while it is open. Every road that opens
+  // a project (resume, open, new, duplicate, delete's fallback, a `.basher` bundle) sets it here
+  // BEFORE hydrating its graph, so a node of a template type never meets an unregistered type.
+  setCurrent: (project) => {
+    syncLibraryTypes(project?.library ?? EMPTY_LIBRARY);
     set({
       current: project,
       dirty: false,
       lastSavedAt: project ? project.updatedAt : null,
-    }),
+    });
+  },
   patchMeta: (patch) =>
     set((s) => (s.current ? { current: { ...s.current, ...patch, updatedAt: Date.now() } } : s)),
   markDirty: () => set({ dirty: true }),

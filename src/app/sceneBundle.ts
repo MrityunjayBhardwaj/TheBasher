@@ -46,6 +46,7 @@ import type { DagState } from '../core/dag/state';
 import type { StorageCapability } from '../core/storage/StorageCapability';
 import { PROJECT_FORMAT_VERSION, ProjectSchema, type Project } from '../core/project/schema';
 import { migrateNodes, migrateProjectFormat } from '../core/project/migrations';
+import { EMPTY_LIBRARY } from '../core/project/library';
 import { repairAndWarn } from '../core/project/repairRoleBindings';
 import { USER_IMPORTS_ROOT, listFilesDeep } from './asset/importCommon';
 import { BAKED_GEOMETRY_ROOT, bakedGeometryPath } from './asset/bakedGeometryStore';
@@ -82,6 +83,9 @@ export const SceneBundleSchema = z.object({
     nodes: z.record(z.string(), z.unknown()),
     outputs: z.record(z.string(), z.unknown()),
   }),
+  /** #1557 — the project's template library, loose like `state` (the gate is `ProjectSchema`).
+   *  Absent in a bundle written before templates, or by the DAG-only export: no templates. */
+  library: z.unknown().optional(),
   /** OPFS path → base64 bytes. Absent/empty = a DAG-only (reference) bundle. */
   assets: z.record(z.string(), z.string()).optional(),
 });
@@ -330,6 +334,7 @@ export function bundleToProject(bundle: SceneBundle, newId: string, now: number)
     // ProjectSchema seed (the real per-node versions live on each node).
     nodeVersions: {},
     state: bundle.state,
+    library: bundle.library ?? EMPTY_LIBRARY,
   };
   const migrated = migrateProjectFormat(normalized);
   const validated = ProjectSchema.parse(migrated);

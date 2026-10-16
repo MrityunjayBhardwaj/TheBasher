@@ -1355,6 +1355,7 @@ export async function saveCurrent(): Promise<void> {
     state: dag,
     createdAt: meta.createdAt,
     updatedAt: Date.now(),
+    library: meta.library,
   });
   await saveProject(storage, project);
   useProjectStore.getState().setCurrent(project);
@@ -1564,6 +1565,7 @@ export async function buildSceneBundleForCurrent(): Promise<BuiltSceneBundle> {
     name: meta.name,
     exportedAt: Date.now(),
     state: { nodes: detached.nodes, outputs: detached.outputs },
+    library: 'library' in meta ? meta.library : undefined,
     assets: Object.keys(assets).length > 0 ? assets : undefined,
   };
   return { bundle, missingAssets };

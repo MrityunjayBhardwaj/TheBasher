@@ -32,12 +32,15 @@
 import { applyOp, emptyDagState, type DagState } from '../dag';
 import type { Op } from '../dag/types';
 import { composeProject, type Project } from './index';
+import type { Library } from './library';
 import { PROJECT_FORMAT_VERSION } from './schema';
 
 /** A scene the app saved, as File ▸ Save Scene as .basher… writes it. */
 interface CapturedScene {
   readonly formatVersion: number;
   readonly state: DagState;
+  /** #1557 — the templates the scene was saved with. */
+  readonly library?: Library;
 }
 
 type ExampleDef = {
@@ -222,6 +225,7 @@ export async function buildExampleProject(id: string): Promise<Project> {
     id: def.id,
     name: def.name,
     state: { ...emptyDagState(), ...scene.state },
+    library: scene.library,
   });
 }
 

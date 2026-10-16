@@ -41,6 +41,7 @@ function projectWith(passBindings: Array<{ node: string; socket: string }>): Pro
     updatedAt: 1,
     nodeVersions: { RenderJob: 1, DepthPass: 1, BeautyPass: 1, MediaClip: 1 },
     state: { nodes, outputs: {} },
+    library: { templates: [] },
   } as unknown as Project;
 }
 

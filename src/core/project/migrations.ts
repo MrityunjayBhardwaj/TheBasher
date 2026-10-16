@@ -134,6 +134,8 @@ const formatMigrations: Record<number, FormatMigration> = {
   // v21 → v22 (#1548): the Solver's four input leaves become the two named body-input leaves —
   // each reads the input it stood for by name, so no leaf type is tied to the Solver.
   21: migrateSolverLeavesToBodyInputs,
+  // v22 → v23 (#1557): a project carries a template library; a file saved earlier has none.
+  22: addEmptyLibrary,
 };
 
 // ── v1 → v2: AnimationLayer retirement (#199) ──────────────────────────────
@@ -1203,13 +1205,27 @@ export function migrateProjectFormat(raw: unknown): unknown {
  * its registered version using its node-type's migration ladder.
  */
 export function migrateNodes(project: Project): Project {
+  // #1557 — a node of one of the project's own template types is not registered while the file
+  // is read (its type is defined when the project is opened, `syncLibraryTypes`). Its type
+  // declares nothing a saved version could predate, so it is taken as saved. The templates'
+  // bodies are nodes of built-in types like any other, and step up the same ladder.
+  const templateTypes = new Set(project.library.templates.map((t) => t.type));
+  const migrate = (node: Node) => (templateTypes.has(node.type) ? node : migrateOneNode(node));
   const migratedNodes: Record<string, Node> = {};
   for (const [id, node] of Object.entries(project.state.nodes)) {
-    migratedNodes[id] = migrateOneNode(node);
+    migratedNodes[id] = migrate(node);
   }
+  const templates = project.library.templates.map((t) => ({
+    ...t,
+    body: {
+      ...t.body,
+      nodes: Object.fromEntries(Object.entries(t.body.nodes).map(([k, n]) => [k, migrate(n)])),
+    },
+  }));
   return {
     ...project,
     state: { ...project.state, nodes: migratedNodes },
+    library: { templates },
     nodeVersions: snapshotCurrentNodeVersions(migratedNodes),
   };
 }
@@ -2162,4 +2178,11 @@ export function migrateSolverLeavesToBodyInputs(raw: unknown): unknown {
     );
   }
   return { ...proj, state: { ...proj.state, nodes: next }, formatVersion: 22 };
+}
+
+// ── v22 → v23: the template library (#1557) ──────────────────────────────────
+// A project saved before templates defines none.
+export function addEmptyLibrary(raw: unknown): unknown {
+  const proj = raw as Record<string, unknown>;
+  return { ...proj, library: { templates: [] }, formatVersion: 23 };
 }
