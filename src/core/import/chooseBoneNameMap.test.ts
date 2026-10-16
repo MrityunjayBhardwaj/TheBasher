@@ -81,4 +81,140 @@ describe('chooseBoneNameMap', () => {
     expect(choice!.total).toBe(SOMA_SOURCE.length);
     expect(choice!.presetId).toBe('somaToMixamo');
   });
+
+  // #1632 — the two bare-named rigs a character actually arrives with. Both share
+  // enough names with SOMA (Hips, the arms, LeftLeg/LeftFoot…) that the identity map
+  // scores 16 — and four of those sixteen are the WRONG bones: SOMA's LeftLeg is the
+  // thigh, theirs is the shin. Measured in the app on a Meshy-rigged character before
+  // the fix: identity won, the thighs were never driven.
+  describe('bare-named Mixamo-style rigs (#1632)', () => {
+    /** The full skeleton a Kimodo SOMA clip arrives with (78 bones, read from the app). */
+    const SOMA_FULL = [
+      'Root',
+      'Hips',
+      'Spine1',
+      'Spine2',
+      'Chest',
+      'Neck1',
+      'Neck2',
+      'Head',
+      'HeadEnd',
+      'Jaw',
+      'LeftEye',
+      'RightEye',
+      'LeftShoulder',
+      'LeftArm',
+      'LeftForeArm',
+      'LeftHand',
+      'LeftHandThumb1',
+      'LeftHandIndex1',
+      'RightShoulder',
+      'RightArm',
+      'RightForeArm',
+      'RightHand',
+      'RightHandThumb1',
+      'RightHandIndex1',
+      'LeftLeg',
+      'LeftShin',
+      'LeftFoot',
+      'LeftToeBase',
+      'LeftToeEnd',
+      'RightLeg',
+      'RightShin',
+      'RightFoot',
+      'RightToeBase',
+      'RightToeEnd',
+    ];
+    /** Meshy's auto-rig (24 joints, read from a Meshy-rigged GLB in the app). */
+    const MESHY = [
+      'Hips',
+      'Spine02',
+      'Spine01',
+      'Spine',
+      'neck',
+      'Head',
+      'head_end',
+      'headfront',
+      'LeftShoulder',
+      'LeftArm',
+      'LeftForeArm',
+      'LeftHand',
+      'RightShoulder',
+      'RightArm',
+      'RightForeArm',
+      'RightHand',
+      'LeftUpLeg',
+      'LeftLeg',
+      'LeftFoot',
+      'LeftToeBase',
+      'RightUpLeg',
+      'RightLeg',
+      'RightFoot',
+      'RightToeBase',
+    ];
+    /** Mixamo exported without the `mixamorig_` namespace. */
+    const MIXAMO_BARE = [
+      'Hips',
+      'Spine',
+      'Spine1',
+      'Spine2',
+      'Neck',
+      'Head',
+      'HeadTop_End',
+      'LeftShoulder',
+      'LeftArm',
+      'LeftForeArm',
+      'LeftHand',
+      'RightShoulder',
+      'RightArm',
+      'RightForeArm',
+      'RightHand',
+      'LeftUpLeg',
+      'LeftLeg',
+      'LeftFoot',
+      'LeftToeBase',
+      'LeftToe_End',
+      'RightUpLeg',
+      'RightLeg',
+      'RightFoot',
+      'RightToeBase',
+      'RightToe_End',
+    ];
+    /** Where a choice sends `name` — through the preset or the custom map. */
+    const sends = (choice: ReturnType<typeof chooseBoneNameMap>, name: string) =>
+      choice!.customMap?.[name] ?? getBoneNameMapPreset(choice!.presetId!)!.map[name];
+
+    it('binds SOMA onto a Meshy rig thigh-to-thigh, spine by parentage', () => {
+      const choice = chooseBoneNameMap(SOMA_FULL, MESHY);
+      expect(choice!.presetId).toBe('somaToMeshy');
+      expect(sends(choice, 'LeftLeg')).toBe('LeftUpLeg');
+      expect(sends(choice, 'LeftShin')).toBe('LeftLeg');
+      expect(sends(choice, 'RightLeg')).toBe('RightUpLeg');
+      expect(sends(choice, 'Spine1')).toBe('Spine02');
+      expect(sends(choice, 'Chest')).toBe('Spine');
+      expect(sends(choice, 'Neck1')).toBe('neck');
+    });
+
+    it('binds SOMA onto bare Mixamo thigh-to-thigh', () => {
+      const choice = chooseBoneNameMap(SOMA_FULL, MIXAMO_BARE);
+      expect(choice!.presetId).toBe('somaToMixamoBare');
+      expect(sends(choice, 'LeftLeg')).toBe('LeftUpLeg');
+      expect(sends(choice, 'LeftShin')).toBe('LeftLeg');
+      expect(sends(choice, 'Spine1')).toBe('Spine');
+      expect(sends(choice, 'Neck1')).toBe('Neck');
+    });
+
+    it('every bridge lands every bone it declares on its own rig', () => {
+      // A bridge naming a bone its rig lacks drops that bone silently. That neither bridge
+      // wins on the OTHER's rig is the two cases above — they share most names, and a spine
+      // mapped by the wrong convention would bend the torso at the wrong joint.
+      for (const [rig, id] of [
+        [MESHY, 'somaToMeshy'],
+        [MIXAMO_BARE, 'somaToMixamoBare'],
+      ] as const) {
+        const map = getBoneNameMapPreset(id)!.map;
+        for (const to of Object.values(map)) expect(rig, `${id} → ${to}`).toContain(to);
+      }
+    });
+  });
 });

@@ -109,9 +109,16 @@ const lightPos = (page: import('@playwright/test').Page, id: string) =>
     return w.__basher_dag.getState().state.nodes[id]?.params?.position ?? null;
   }, id);
 
-/** Click the on-screen pixel where the cube (n_box, world origin) renders — by
- *  projecting its world position through the live editor camera (the
- *  p6-w5-first-run pattern), so the click lands on the mesh regardless of framing. */
+/** Click the on-screen pixel where the cube (n_box) renders — by projecting a point on
+ *  it through the live editor camera (the p6-w5-first-run pattern), so the click lands
+ *  on the mesh regardless of framing.
+ *
+ *  The point is the centre of the TOP face, not the cube's centre: the editor camera
+ *  looks down on it, and the panels float OVER the canvas. Once light helpers stopped
+ *  counting toward the framed bounds (#1631) the cube filled more of the view and its
+ *  centre fell under the agent input — the click typed into a textarea, and the brush
+ *  test read that as "the brush did nothing". The pixel is asserted to be the canvas,
+ *  so an overlay is named instead of masquerading as a product failure. */
 async function clickCube(page: import('@playwright/test').Page): Promise<void> {
   await page.waitForFunction(
     () => (window as unknown as BrushWindow).__basher_three.getState().camera != null,
@@ -123,13 +130,23 @@ async function clickCube(page: import('@playwright/test').Page): Promise<void> {
     if (!pos) return null;
     cam.updateMatrixWorld();
     cam.matrixWorldInverse.copy(cam.matrixWorld).invert();
-    // The cube was moved to [0,4,0] (upper viewport); project its centre straight.
-    const v = cam.position.clone().set(pos[0], pos[1], pos[2]).project(cam);
+    // The cube is moved to [0,4,0] at size 3 (see addRigLight): its top face is at +1.5.
+    const v = cam.position
+      .clone()
+      .set(pos[0], pos[1] + 1.5, pos[2])
+      .project(cam);
     const canvas = document.querySelector('[data-testid="viewport"] canvas') as HTMLCanvasElement;
     const r = canvas.getBoundingClientRect();
     return { x: r.left + (v.x * 0.5 + 0.5) * r.width, y: r.top + (-v.y * 0.5 + 0.5) * r.height };
   });
   if (!pt) throw new Error('could not project n_box');
+  const under = await page.evaluate(
+    (p) => document.elementFromPoint(p.x, p.y)?.tagName ?? null,
+    pt,
+  );
+  expect(under, `the cube's on-screen point is covered by a ${under}, not the canvas`).toBe(
+    'CANVAS',
+  );
   await page.mouse.click(pt.x, pt.y);
 }
 
