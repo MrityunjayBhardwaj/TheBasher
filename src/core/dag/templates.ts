@@ -79,7 +79,7 @@ export const TemplateDefinitionSchema = z
         message: `"${TEMPLATE_BODY_SOCKET}" is the socket the body hangs from, so no input can take it`,
       });
     for (const [name, input] of Object.entries(def.inputs)) {
-      const want = CONTROLLER_INPUTS[input.type as keyof typeof CONTROLLER_INPUTS];
+      const want = REPLAY_INPUTS[input.type as keyof typeof REPLAY_INPUTS];
       if (want && name !== want)
         ctx.addIssue({
           code: 'custom',
@@ -198,7 +198,14 @@ export const CONTROLLER_INPUTS = {
   TransformSource: 'sourceTransform',
   TransformSourceVec: 'sourceTransformVec',
 } as const;
-const isController = (type: string) => type in CONTROLLER_INPUTS;
+/** The Solver params an instance can hold for the stateful node inside: its controller, and the
+ *  frame its replay starts from. Each is the Solver's own param, and the instance's value is
+ *  the one the replay reads (Houdini: the inner parm references the promoted one). */
+export const REPLAY_INPUTS = { ...CONTROLLER_INPUTS, SeedFrame: 'seedFrame' } as const;
+/** The input an instance can hold for the live value a stateful node inside trails when no
+ *  controller is named: a Lag's own `in`, read in the same order a Lag reads it. */
+export const LIVE_INPUT = 'in';
+const isReplayInput = (type: string) => type in REPLAY_INPUTS;
 
 function solverType(): NodeDefinition {
   const solver = getNodeType('Solver');
@@ -214,7 +221,7 @@ export function templateInstanceParams(def: TemplateDefinition) {
   for (const [name, input] of Object.entries(def.inputs)) {
     const param = INPUT_PARAM[input.type];
     if (param) shape[name] = param();
-    if (isController(input.type))
+    if (isReplayInput(input.type))
       shape[name] = (solverType().paramSchema as z.AnyZodObject).shape[name];
   }
   return TemplateInstanceParams.extend(shape);
@@ -227,11 +234,11 @@ const single = (type: string): InputDescriptor =>
 export function templateNodeType(def: TemplateDefinition): NodeDefinition {
   const inputs: Record<string, InputDescriptor> = {};
   const bodyInputs: Record<string, InputDescriptor> = {};
-  const controllers = Object.entries(def.inputs)
-    .filter(([, input]) => isController(input.type))
+  const held = Object.entries(def.inputs)
+    .filter(([, input]) => isReplayInput(input.type))
     .map(([name]) => name);
   for (const [name, input] of Object.entries(def.inputs)) {
-    if (isController(input.type)) continue;
+    if (isReplayInput(input.type)) continue;
     // What feeds an input is the instance's, as what fed the body's nodes was theirs before a
     // collapse (a Math's `a`, a Lag's `in`): deleting the instance takes it when nothing else
     // reads it, and a deep duplicate copies it (#1560).
@@ -248,13 +255,13 @@ export function templateNodeType(def: TemplateDefinition): NodeDefinition {
     inputs,
     outputs: { out: single(def.output.type) },
     bodyInputs,
-    ...(controllers.length
+    ...(held.length
       ? {
           idRefs: (solverType().idRefs ?? []).filter((r) =>
-            controllers.some((c) => r.path === c || r.path.startsWith(`${c}.`)),
+            held.some((c) => r.path === c || r.path.startsWith(`${c}.`)),
           ),
           refParams: Object.fromEntries(
-            Object.entries(solverType().refParams ?? {}).filter(([k]) => controllers.includes(k)),
+            Object.entries(solverType().refParams ?? {}).filter(([k]) => held.includes(k)),
           ),
         }
       : {}),

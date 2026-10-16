@@ -358,6 +358,8 @@ const TAKERS: string[] = [
   'slotAbsenceOf@src/app/objectSlotAuthoring.ts',
   'statefulInputAt@src/app/statefulOps.ts',
   'statefulInputVecAt@src/app/statefulOps.ts',
+  // #1559 — an enclosing template instance's `in`, read with the replay's own cache.
+  'liveInputOf@src/app/statefulOps.ts',
   'underParent@src/app/resolveWorldTransform.ts',
   'walk@src/app/resolveWorldTransform.ts',
   'walkParent@src/app/resolveWorldTransform.ts',

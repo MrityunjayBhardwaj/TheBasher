@@ -199,6 +199,15 @@ export function planCollapseToTemplate(
     }
   }
 
+  // …and the frame their replay starts from, when they all start from the same one.
+  const seeds = [...inside]
+    .filter((id) => getNodeType(state.nodes[id].type)?.stateful === true)
+    .map((id) => (state.nodes[id].params as { seedFrame?: unknown } | undefined)?.seedFrame ?? 0);
+  if (seeds.length > 0 && seeds.every((v) => v === seeds[0]) && typeof seeds[0] === 'number') {
+    controller.seedFrame = seeds[0];
+    inputs.seedFrame = { type: 'SeedFrame' };
+  }
+
   // The plan: a leaf per input, wired where its producer was; the instance over the body; the
   // outside rewired from the body's output to the instance's.
   const ops: Op[] = [];

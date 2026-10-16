@@ -16,7 +16,11 @@ import { validatePlan } from '../agent/mutators/validate';
 import { addTemplateInstanceMutator } from '../agent/mutators/builders/templates';
 import { driverParamDeps, driverSubscriptionNodesForTarget } from './paramDrivers';
 import { buildDeleteNodesOps } from './sceneNodeActions';
-import { collapseSelectionToTemplate, planCollapseToTemplate } from './templates';
+import {
+  collapseSelectionToTemplate,
+  planCollapseToTemplate,
+  planTemplateInstance,
+} from './templates';
 
 const FPS = 60;
 const FRAMES = [0, 1, 7, 15, 30, 31, 45, 60];
@@ -201,5 +205,56 @@ describe('#1559 — two instances, two controllers', () => {
       (s.nodes.n_lag_1.params as { sourceTransform?: { node?: string } }).sourceTransform?.node ??
         '',
     ).not.toBe('nul');
+  });
+});
+
+describe('#1559 — the instance holds the replay’s start frame and the Lag’s `in`', () => {
+  beforeEach(() => {
+    collapseSelectionToTemplate(BODY, 'Lag');
+  });
+
+  it('a collapse lifts the start frame, and the instance’s is the one the replay reads', () => {
+    expect(dag().nodes.n_lag_1.params).toMatchObject({ seedFrame: 0 });
+    store().dispatchAtomic([
+      { type: 'setParam', nodeId: 'n_lag_1', paramPath: 'seedFrame', value: 15 },
+      {
+        type: 'setParam',
+        nodeId: 'n_lag_1',
+        paramPath: 'sourceTransform',
+        value: { node: 'nul2', channel: 'tx' },
+      },
+      { type: 'setParam', nodeId: 'ref_sol', paramPath: 'seedFrame', value: 15 },
+    ]);
+    const s = dag();
+    expect(FRAMES.map((f) => at(s, 'n_lag_1', f))).toEqual(FRAMES.map((f) => at(s, 'ref_sol', f)));
+    // …and it is not the body Solver's own, which still says 0.
+    expect((s.nodes.sol.params as { seedFrame: number }).seedFrame).toBe(0);
+  });
+
+  it('with no controller, a Solver inside reads the instance’s `in`: wired, else its value', () => {
+    const lag = templatesOf(dag()).get('template.Lag')!.definition;
+    const { sourceTransform: _drop, ...rest } = lag.inputs;
+    void _drop;
+    const definition = {
+      ...lag,
+      type: 'template.LagIn',
+      label: 'LagIn',
+      inputs: { ...rest, in: { type: 'Number' } },
+    };
+    store().dispatchAtomic([
+      {
+        type: 'addNode',
+        nodeId: 'tpl_in',
+        nodeType: 'TemplateDefinition',
+        params: { definition, keep: false },
+      },
+    ]);
+    store().dispatchAtomic(planTemplateInstance(dag(), definition, 'li', { in: 5 }));
+    expect(FRAMES.map((f) => at(dag(), 'li', f))).toEqual(FRAMES.map(() => 5));
+    store().dispatchAtomic([
+      node('three', 'Fit', { outMin: 3, outMax: 3 }),
+      wire('three', 'li', 'in'),
+    ]);
+    expect(FRAMES.map((f) => at(dag(), 'li', f))).toEqual(FRAMES.map(() => 3));
   });
 });

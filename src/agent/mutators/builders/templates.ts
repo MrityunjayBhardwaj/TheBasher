@@ -22,6 +22,7 @@ import type { NodeRef, Op } from '../../../core/dag/types';
 import { getNodeType } from '../../../core/dag/registry';
 import {
   CONTROLLER_INPUTS,
+  REPLAY_INPUTS,
   templatesOf,
   type TemplateDefinition,
 } from '../../../core/dag/templates';
@@ -233,7 +234,7 @@ export const addTemplateInstanceMutator: MutatorDefinition<AddTemplateInstanceSp
   advisories(spec, _closure, state) {
     const r = resolve(spec, state);
     if (!r.ok) return [];
-    const sockets = Object.entries(r.def.inputs).filter(([, i]) => !(i.type in CONTROLLER_INPUTS));
+    const sockets = Object.entries(r.def.inputs).filter(([, i]) => !(i.type in REPLAY_INPUTS));
     const unwired = sockets
       .map(([n]) => n)
       .filter((n) => !spec.inputs?.[n] && spec.values?.[n] === undefined);
