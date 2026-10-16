@@ -21,7 +21,7 @@
 
 import { bypassSpineOf } from './chainBypass';
 import { hashString, hashValue, type ContentHash } from './hash';
-import { getNodeType, requireNodeType } from './registry';
+import { getNodeType, registryEpoch, requireNodeType } from './registry';
 import type { DagState, EvaluableState } from './state';
 import { arriving, conversionsInto, producedTypeOf } from './socketConversion';
 import { bodyInputLeavesOf } from './subnetworks';
@@ -312,9 +312,15 @@ interface LeafFeed {
   /** The owner's socket the producer is wired into: what the value arrives as (#1549). */
   readonly into: InputDescriptor | undefined;
 }
-const statelessLeafFeeds = new WeakMap<object, Map<NodeId, LeafFeed>>();
+// It is worked out from the owners' types too, so it is kept with the registry's epoch and
+// worked out again once a type is redefined (#1647).
+const statelessLeafFeeds = new WeakMap<
+  object,
+  { readonly epoch: number; readonly feeds: Map<NodeId, LeafFeed> }
+>();
 function statelessLeafFeedOf(state: EvaluableState, leaf: NodeId): LeafFeed | undefined {
-  let feeds = statelessLeafFeeds.get(state.nodes);
+  const known = statelessLeafFeeds.get(state.nodes);
+  let feeds = known && known.epoch === registryEpoch() ? known.feeds : undefined;
   if (!feeds) {
     feeds = new Map();
     for (const owner of Object.values(state.nodes)) {
@@ -329,7 +335,7 @@ function statelessLeafFeedOf(state: EvaluableState, leaf: NodeId): LeafFeed | un
         }
       }
     }
-    statelessLeafFeeds.set(state.nodes, feeds);
+    statelessLeafFeeds.set(state.nodes, { epoch: registryEpoch(), feeds });
   }
   return feeds.get(leaf);
 }

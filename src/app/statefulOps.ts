@@ -35,7 +35,7 @@
 
 import { evaluate, setStatefulReplay, type EvaluatorCache } from '../core/dag/evaluator';
 import { arriving, producedTypeOf } from '../core/dag/socketConversion';
-import { getNodeType } from '../core/dag/registry';
+import { getNodeType, registryEpoch } from '../core/dag/registry';
 import type { DagState } from '../core/dag/state';
 import { bindBodyInputs, bodyInputLeavesOf, type BodyInputLeaf } from '../core/dag/subnetworks';
 import type { EvalCtx, Node } from '../core/dag/types';
@@ -217,7 +217,12 @@ interface HistoryBlock<T> {
   readonly states: T[];
 }
 
-const historyCache = new WeakMap<DagState, Map<string, HistoryBlock<unknown>>>();
+// What a step computes depends on the types of the nodes it cooks, so the history is kept with
+// the registry's epoch and started again once a type is redefined (#1647).
+const historyCache = new WeakMap<
+  DagState,
+  { readonly epoch: number; readonly perNode: Map<string, HistoryBlock<unknown>> }
+>();
 
 /**
  * Cached {@link integrate}: same result, but the per-frame states are memoized per
@@ -238,10 +243,11 @@ export function cachedIntegrate<T>(
   if (targetFrame - seedFrame > MAX_REPLAY_FRAMES) {
     return integrate(seedFrame, targetFrame, seedAt, step); // clamp regime → uncached, bounded
   }
-  let perNode = historyCache.get(state);
+  const known = historyCache.get(state);
+  let perNode = known && known.epoch === registryEpoch() ? known.perNode : undefined;
   if (!perNode) {
     perNode = new Map();
-    historyCache.set(state, perNode);
+    historyCache.set(state, { epoch: registryEpoch(), perNode });
   }
   let block = perNode.get(nodeId) as HistoryBlock<T> | undefined;
   if (!block || block.seedFrame !== seedFrame) {
