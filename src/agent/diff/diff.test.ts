@@ -80,6 +80,45 @@ function buildBaselineDag(): DagState {
 // Forked DAG
 // ---------------------------------------------------------------------------
 
+// #1664 — the preview judges a plan as the store does: the sub-network rules on the graph the plan
+// ends in (#1623), not after each operation.
+describe('createFork — the sub-network rules are asked once, at the end of the plan', () => {
+  const driven = (): DagState =>
+    (
+      [
+        { type: 'addNode', nodeId: 'k', nodeType: 'Fit', params: {} },
+        {
+          type: 'addNode',
+          nodeId: 'drv',
+          nodeType: 'ParamDriver',
+          params: { target: 'x', paramPath: 'p', blendMode: 'replace', order: 0 },
+        },
+        { type: 'connect', from: { node: 'k', socket: 'out' }, to: { node: 'drv', socket: 'in' } },
+      ] as Op[]
+    ).reduce((s, op) => applyOp(s, op).next, emptyDagState());
+  // `k` moves behind a Solver's body; for one operation it feeds the Solver and the driver both.
+  const wrap: Op[] = [
+    {
+      type: 'addNode',
+      nodeId: 'sol',
+      nodeType: 'Solver',
+      params: {},
+      inputs: { body: { node: 'k', socket: 'out' } },
+    },
+    { type: 'connect', from: { node: 'sol', socket: 'out' }, to: { node: 'drv', socket: 'in' } },
+  ];
+
+  it('accepts a plan that passes through a node in two places and ends with it in one', () => {
+    const { fork, inverseOps } = createFork(driven(), wrap);
+    expect(fork.nodes.drv.inputs.in).toEqual({ node: 'sol', socket: 'out' });
+    expect(inverseOps).toHaveLength(2);
+  });
+
+  it('refuses a plan that ends with the node in two places', () => {
+    expect(() => createFork(driven(), wrap.slice(0, 1))).toThrow(/belongs to one sub-network/);
+  });
+});
+
 describe('createFork', () => {
   it('returns identical fork + empty inverses for empty ops', () => {
     const state = buildBaselineDag();
