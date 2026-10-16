@@ -13,7 +13,8 @@
 // What the type declares, worked out from the definition's interface alone (`templateNodeType`):
 // - one Number/Vector3/… socket per input, and the same name as a named input of its body, so a
 //   body-input leaf reading `k` reads whatever is wired into the instance's `k` (#1548, #1357);
-// - a `body` socket of the output's type, which owns the instance's copy of the body;
+// - a `body` socket of the output's type, which owns the instance's copy of the body, and each
+//   input owns what feeds it (`owns: 'always'`), so delete and duplicate follow both (#1560);
 // - one output, `out`: the body's value. An instance keeps no history of its own, so a Solver
 //   inside one reads its inputs on every frame (#1645).
 //
@@ -193,7 +194,10 @@ export function templateNodeType(def: TemplateDefinition): NodeDefinition {
   const inputs: Record<string, InputDescriptor> = {};
   const bodyInputs: Record<string, InputDescriptor> = {};
   for (const [name, input] of Object.entries(def.inputs)) {
-    inputs[name] = single(input.type);
+    // What feeds an input is the instance's, as what fed the body's nodes was theirs before a
+    // collapse (a Math's `a`, a Lag's `in`): deleting the instance takes it when nothing else
+    // reads it, and a deep duplicate copies it (#1560).
+    inputs[name] = { ...single(input.type), owns: 'always' };
     bodyInputs[name] = single(input.type);
   }
   inputs[TEMPLATE_BODY_SOCKET] = { ...single(def.output.type), body: true };

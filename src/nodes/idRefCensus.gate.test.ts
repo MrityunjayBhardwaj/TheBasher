@@ -8,7 +8,7 @@
 //
 // What it cannot see is printed, never assumed away: a schema it cannot read is a failure, and so
 // is an object that keeps undeclared keys (#1572: no registered schema does).
-import { describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import { getNodeType, listNodeTypes, paramFieldsOf } from '../core/dag/registry';
 import type { NodeDefinition } from '../core/dag/types';
@@ -20,6 +20,10 @@ import {
   SHARED_WIRES,
 } from './idRefAcknowledged';
 import { wireOwnership } from '../core/dag/idRefSweep';
+import { applyOps } from '../core/dag/ops';
+import { emptyDagState } from '../core/dag/state';
+import { syncTemplateTypes } from '../core/dag/templates';
+import { planCollapseToTemplate } from '../app/templates';
 import { openpbrMaterialSchema } from './materialSchema';
 import { optionsValueKindOf } from './paramWidget';
 import { registerAllNodes } from './registerAll';
@@ -269,6 +273,35 @@ describe('#1551 — every string a registered node can store is an id reference 
 });
 
 describe('#1560 — every input socket says what it owns, or is listed as owning nothing', () => {
+  // #1557 — a template's type is defined only while its definition is in a graph, so the registry
+  // this census reads holds none unless one is made. One is made here by the collapse the product
+  // runs, over a Number and a Vector3 input, so its sockets are asked like every other type's.
+  beforeAll(() => {
+    const plan = planCollapseToTemplate(
+      applyOps(emptyDagState(), [
+        { type: 'addNode', nodeId: 'n', nodeType: 'Fit', params: {} },
+        { type: 'addNode', nodeId: 'v', nodeType: 'MakeVec3', params: {} },
+        { type: 'addNode', nodeId: 'b', nodeType: 'VecBreak3', params: {} },
+        { type: 'connect', from: { node: 'v', socket: 'out' }, to: { node: 'b', socket: 'v' } },
+        { type: 'addNode', nodeId: 'm', nodeType: 'Math', params: {} },
+        { type: 'connect', from: { node: 'n', socket: 'out' }, to: { node: 'm', socket: 'a' } },
+        { type: 'connect', from: { node: 'b', socket: 'x' }, to: { node: 'm', socket: 'b' } },
+        { type: 'addNode', nodeId: 'r', nodeType: 'Math', params: {} },
+        { type: 'connect', from: { node: 'm', socket: 'out' }, to: { node: 'r', socket: 'a' } },
+      ]).next,
+      ['m', 'b'],
+      'Census',
+      'inst',
+    );
+    if (!plan.ok) throw new Error(plan.reason);
+    applyOps(emptyDagState(), plan.ops.slice(0, 1)); // the definition node defines the type
+  });
+  afterAll(() => syncTemplateTypes({ nodes: {} }));
+
+  it('reads a template type too', () => {
+    expect(listNodeTypes()).toContain('template.Census');
+  });
+
   const sockets = () =>
     registered().flatMap((def) =>
       Object.keys(getNodeType(def.type)?.inputs ?? {}).map((socket) => ({
@@ -342,6 +375,9 @@ describe('#1560 — every input socket says what it owns, or is listed as owning
         "Vec3Math.b:always",
         "Vec3Math.s:always",
         "VecBreak3.v:always",
+        "template.Census.body:body",
+        "template.Census.n:always",
+        "template.Census.v:always",
       ]
     `);
   });

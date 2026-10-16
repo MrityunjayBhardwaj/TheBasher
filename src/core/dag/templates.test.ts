@@ -88,7 +88,7 @@ describe('#1557 — the type a definition declares', () => {
   it('a socket and a named input per input, a body socket, and one output', () => {
     const def = templateNodeType(SCALE);
     expect(def.type).toBe('template.Scale');
-    expect(def.inputs).toEqual({ k: NUM, body: { ...NUM, body: true } });
+    expect(def.inputs).toEqual({ k: { ...NUM, owns: 'always' }, body: { ...NUM, body: true } });
     expect(def.bodyInputs).toEqual({ k: NUM });
     expect(def.outputs).toEqual({ out: NUM });
     expect(def.stateful).toBeUndefined();

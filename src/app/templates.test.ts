@@ -18,6 +18,7 @@ import {
 } from '../core/dag/templates';
 import { MemoryStorage } from '../core/storage/MemoryStorage';
 import { registerAllNodes } from '../nodes/registerAll';
+import { buildDeleteNodesOps, buildDuplicateNodesOps } from './sceneNodeActions';
 import {
   addTemplateInstance,
   collapseSelectionToTemplate,
@@ -296,5 +297,73 @@ describe('#1557 — what cannot be collapsed, and why', () => {
       reason: 'a template "template.T" already exists in this project',
     });
     expect(dag()).toBe(before);
+  });
+});
+
+// #1560 — delete and duplicate read what a socket owns (`wireOwnership`); an instance's `body` owns
+// its copy of the body and each input owns what feeds it. Through the builders the product runs.
+describe('#1557 — delete and duplicate follow an instance', () => {
+  const live = () => new Set(Object.keys(dag().nodes));
+
+  it('deleting an instance takes its body and the producer only it read, nothing else', () => {
+    open(arithmetic());
+    collapseSelectionToTemplate(['mul', 'two'], 'Scale');
+    addTemplateInstance('template.Scale');
+    useDagStore
+      .getState()
+      .dispatchAtomic(
+        [node('k3', 'Fit', { outMin: 3, outMax: 3 }), wire('k3', 'n_scale_2', 'kfit')],
+        'user',
+        'wire',
+      );
+    const body = [
+      ...matchInstanceBody(dag(), 'n_scale_2', definitionOf('template.Scale'))!.values(),
+    ];
+    useDagStore
+      .getState()
+      .dispatchAtomic(buildDeleteNodesOps(dag(), ['n_scale_2']), 'user', 'delete');
+    const after = live();
+    expect(body.filter((id) => after.has(id))).toEqual([]);
+    expect(after.has('n_scale_2')).toBe(false);
+    expect(after.has('k3')).toBe(false); // read by nothing else
+    expect(after.has('n_scale_1')).toBe(true);
+    expect(at(dag(), 'n_scale_1')).toBe(0.5);
+    expect(subnetworkViolations(dag())).toEqual([]);
+  });
+
+  it('an input producer something else still reads is left', () => {
+    open(arithmetic());
+    collapseSelectionToTemplate(['mul', 'two'], 'Scale');
+    addTemplateInstance('template.Scale');
+    useDagStore
+      .getState()
+      .dispatchAtomic([wire('kfit', 'n_scale_2', 'kfit')], 'user', 'share kfit');
+    useDagStore
+      .getState()
+      .dispatchAtomic(buildDeleteNodesOps(dag(), ['n_scale_2']), 'user', 'delete');
+    expect(live().has('kfit')).toBe(true);
+    expect(at(dag(), 'n_scale_1')).toBe(0.5);
+  });
+
+  it('duplicating the box copies its driver, the instance it reads and a body of its own', () => {
+    open(arithmetic());
+    collapseSelectionToTemplate(['mul', 'two'], 'Scale');
+    const before = live();
+    const dup = buildDuplicateNodesOps(dag(), ['n_box']);
+    expect(dup).not.toBeNull();
+    useDagStore.getState().dispatchAtomic(dup!.ops, 'user', 'duplicate');
+    const s = dag();
+    const added = Object.values(s.nodes).filter((n) => !before.has(n.id));
+    const copies = added.filter((n) => n.type === 'template.Scale');
+    expect(copies).toHaveLength(1);
+    const copy = copies[0].id;
+    const map = matchInstanceBody(s, copy, definitionOf('template.Scale'));
+    expect(map, 'the copy is an instance of the same template').not.toBeNull();
+    const original = matchInstanceBody(s, 'n_scale_1', definitionOf('template.Scale'))!;
+    expect([...map!.values()].filter((id) => [...original.values()].includes(id))).toEqual([]);
+    expect(at(s, copy)).toBe(0.5);
+    expect(s.nodes[copy].params).toEqual(s.nodes.n_scale_1.params);
+    expect(subnetworkViolations(s)).toEqual([]);
+    expect(templatesOf(s).size).toBe(1); // one definition, two instances
   });
 });
