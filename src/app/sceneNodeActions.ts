@@ -44,7 +44,13 @@ function outConsumer(state: DagState, producerId: NodeId): { node: string; socke
 
 /** The nearest SURVIVING consumer above `wrapperId`, hopping over any wrappers that
  *  are themselves being deleted — so deleting a whole stack (scene → Mirror → Array →
- *  mesh) still splices the surviving base back to the surviving consumer (scene). */
+ *  mesh) still splices the surviving base back to the surviving consumer (scene).
+ *
+ *  #1673 — it hops over deleted WRAPPERS only. A deleted Object or Group above the
+ *  wrapper means the chain's owner is going, so nothing survives above it: null. Hopping
+ *  past the Object too once reached the scene and wired a bare mesh into
+ *  `Scene.children`, which the op layer refuses — so a skinned character could not be
+ *  deleted at all. */
 function survivingConsumerAbove(
   state: DagState,
   wrapperId: NodeId,
@@ -57,7 +63,8 @@ function survivingConsumerAbove(
     const c = outConsumer(state, cursor);
     if (!c) return null;
     if (!idSet.has(c.node)) return c;
-    cursor = c.node; // consumer is also being deleted — hop over it
+    if (!isTargetWrapperNode(state.nodes[c.node])) return null; // its owner is going too
+    cursor = c.node; // a deleted wrapper — hop over it
   }
   return null;
 }
@@ -86,27 +93,50 @@ export function buildDeleteNodesOps(state: DagState, ids: readonly NodeId[]): Op
   // needs a splice-out instead. Tracked as #432; duplicate and delete genuinely
   // differ on it, exactly as Blender's Shift+D and X differ.
   //
-  // Both are guarded on EXCLUSIVITY: a shared node (another surviving consumer
+  // #1673 — except when nothing survives ABOVE the wrapper. An Armature modifier is
+  // the data of a skinned mesh's Object; delete the Object and the modifier goes with
+  // it through `data`, and then there is no surviving chain to splice the mesh back
+  // into. The mesh belongs to the Object that is going, as Blender drops an object's
+  // data when nothing else uses it — so that wrapper owns its subject too.
+  //
+  // All of it is guarded on EXCLUSIVITY: a shared node (another surviving consumer
   // still points at it) stays, and removeNode would refuse it anyway. Walked to a
-  // fixpoint so a group inside a group goes all the way down, and appended
-  // PARENT-BEFORE-CHILD so each removeNode runs once its consumer is gone
-  // (removeNode refuses while an output is still consumed).
-  const OWNED_ON_DELETE = ['children', 'data'] as const;
-  for (let i = 0; i < allIds.length; i++) {
-    const owner = state.nodes[allIds[i]];
-    if (!owner) continue;
-    for (const socket of OWNED_ON_DELETE) {
-      for (const ref of refsOf(owner.inputs?.[socket])) {
-        const ownedId = ref?.node;
-        if (!ownedId || idSet.has(ownedId) || !state.nodes[ownedId]) continue;
-        const hasSurvivingConsumer = Object.entries(state.nodes).some(
-          ([cid, c]) =>
-            !idSet.has(cid) &&
-            Object.values(c.inputs).some((b) => refsOf(b).some((r) => r?.node === ownedId)),
-        );
-        if (!hasSurvivingConsumer) {
-          idSet.add(ownedId);
-          allIds.push(ownedId); // appended → this loop keeps walking into it
+  // TRUE fixpoint — passes repeat until nothing is added — because exclusivity can
+  // only be judged once every consumer is known: a skeleton Object is consumed by its
+  // group AND by the modifier that poses with it, and the modifier is only marked
+  // after the skeleton is first visited (#1673). The set only grows, so a node judged
+  // owned stays owned. Appended PARENT-BEFORE-CHILD so each removeNode runs once its
+  // consumer is gone (removeNode refuses while an output is still consumed).
+  //
+  // #1673 — and an armature Object OWNS its `pose` (the PoseLayer it is posed by, and
+  // through it the Skeleton), as a Blender armature object owns its pose. Without it a
+  // deleted character left its Skeleton and PoseLayer in the file, unreachable.
+  const OWNED_ON_DELETE = ['children', 'data', 'pose'] as const;
+  const ownedSocketsOf = (ownerId: NodeId): readonly string[] => {
+    const owner = state.nodes[ownerId];
+    return isTargetWrapperNode(owner) && !survivingConsumerAbove(state, ownerId, idSet)
+      ? [...OWNED_ON_DELETE, chainSocketOf(owner)!]
+      : OWNED_ON_DELETE;
+  };
+  for (let grew = true; grew; ) {
+    grew = false;
+    for (let i = 0; i < allIds.length; i++) {
+      const owner = state.nodes[allIds[i]];
+      if (!owner) continue;
+      for (const socket of ownedSocketsOf(allIds[i])) {
+        for (const ref of refsOf(owner.inputs?.[socket])) {
+          const ownedId = ref?.node;
+          if (!ownedId || idSet.has(ownedId) || !state.nodes[ownedId]) continue;
+          const hasSurvivingConsumer = Object.entries(state.nodes).some(
+            ([cid, c]) =>
+              !idSet.has(cid) &&
+              Object.values(c.inputs).some((b) => refsOf(b).some((r) => r?.node === ownedId)),
+          );
+          if (!hasSurvivingConsumer) {
+            idSet.add(ownedId);
+            allIds.push(ownedId); // appended → this pass keeps walking into it
+            grew = true;
+          }
         }
       }
     }
