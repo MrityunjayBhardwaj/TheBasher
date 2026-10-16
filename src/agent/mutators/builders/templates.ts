@@ -111,6 +111,10 @@ const AddTemplateInstanceSpec = z.object({
   template: z.string().min(1),
   /** What each input of the template reads: a node id (its `out`) or `{ node, socket }`. */
   inputs: z.record(z.string().min(1), SocketRef).optional(),
+  /** A value for an input left unwired (a number, or [x, y, z] for a Vector3 input). */
+  values: z
+    .record(z.string().min(1), z.union([z.number(), z.tuple([z.number(), z.number(), z.number()])]))
+    .optional(),
   /** Where the instance's output goes: the input socket of a node. */
   outputTo: z.object({ node: z.string().min(1), socket: z.string().min(1) }).optional(),
   /** The instance's id; defaults to `n_<name>_<n>`. */
@@ -147,6 +151,27 @@ function resolve(spec: AddTemplateInstanceSpec, state: DagState): Resolved {
     const from = refOf(r);
     if (!state.nodes[from.node]) return { ok: false, reason: `"${from.node}" is not a node` };
   }
+  for (const [name, value] of Object.entries(spec.values ?? {})) {
+    const input = def.inputs[name];
+    const want = input?.type === 'Number' ? 'number' : input?.type === 'Vector3' ? 'object' : null;
+    if (!want)
+      return {
+        ok: false,
+        reason: input
+          ? `${type}'s input "${name}" is a ${input.type}, which takes a wire, not a value`
+          : `${type} has no input "${name}" (its inputs: ${Object.keys(def.inputs).join(', ') || 'none'})`,
+      };
+    if (typeof value !== want)
+      return {
+        ok: false,
+        reason: `"${name}" is a ${input.type}: give ${want === 'number' ? 'a number' : '[x, y, z]'}`,
+      };
+    if (spec.inputs?.[name])
+      return {
+        ok: false,
+        reason: `"${name}" is given both a wire and a value; the wire would win`,
+      };
+  }
   if (spec.outputTo) {
     const consumer = state.nodes[spec.outputTo.node];
     if (!consumer) return { ok: false, reason: `"${spec.outputTo.node}" is not a node` };
@@ -163,7 +188,8 @@ export const addTemplateInstanceMutator: MutatorDefinition<AddTemplateInstanceSp
   name: 'mutator.graph.addTemplateInstance',
   description:
     "Add an instance of one of the project's templates, a fresh copy of its body. " +
-    'Wire its inputs with `inputs` (input name → node id, or { node, socket }) and its output ' +
+    'Wire its inputs with `inputs` (input name → node id, or { node, socket }), or give an ' +
+    'unwired Number or Vector3 input a value of its own with `values`, and wire its output ' +
     'with `outputTo` (a node and one of its input sockets). The templates a project has are its ' +
     'TemplateDefinition nodes; make one with mutator.graph.collapseToTemplate.',
   spec: AddTemplateInstanceSpec,
@@ -191,7 +217,7 @@ export const addTemplateInstanceMutator: MutatorDefinition<AddTemplateInstanceSp
   build(spec, _closure, state): Op[] {
     const r = resolve(spec, state);
     if (!r.ok) throw new Error(r.reason);
-    const ops = planTemplateInstance(state, r.def, r.instance);
+    const ops = planTemplateInstance(state, r.def, r.instance, { ...spec.values });
     for (const [name, from] of Object.entries(spec.inputs ?? {}))
       ops.push({ type: 'connect', from: refOf(from), to: { node: r.instance, socket: name } });
     if (spec.outputTo)
@@ -201,10 +227,12 @@ export const addTemplateInstanceMutator: MutatorDefinition<AddTemplateInstanceSp
   advisories(spec, _closure, state) {
     const r = resolve(spec, state);
     if (!r.ok) return [];
-    const unwired = Object.keys(r.def.inputs).filter((n) => !spec.inputs?.[n]);
+    const unwired = Object.keys(r.def.inputs).filter((n) => !spec.inputs?.[n] && !spec.values?.[n]);
     const notes = [`instance "${r.instance}" of ${r.def.type}`];
     if (unwired.length)
-      notes.push(`inputs left unwired, read as their defaults: ${unwired.join(', ')}`);
+      notes.push(
+        `inputs left unwired, read as the instance's values (0 unless set): ${unwired.join(', ')}`,
+      );
     if (!spec.outputTo) notes.push('its output is read by nothing yet');
     return notes;
   },

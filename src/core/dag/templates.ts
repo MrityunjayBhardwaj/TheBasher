@@ -50,6 +50,8 @@ const TEMPLATE_TYPE = /^template\.[A-Za-z][A-Za-z0-9_]*$/;
 const INPUT_NAME = /^[A-Za-z][A-Za-z0-9_]*$/;
 /** The socket an instance's copy of the body hangs from. Not a name an input can take. */
 export const TEMPLATE_BODY_SOCKET = 'body';
+/** An instance's lock (#1557 D4). Not a name an input can take: each input is a param too (D6). */
+export const TEMPLATE_LOCKED_PARAM = 'locked';
 
 export const TemplateDefinitionSchema = z
   .object({
@@ -74,6 +76,12 @@ export const TemplateDefinitionSchema = z
         code: 'custom',
         path: ['inputs', TEMPLATE_BODY_SOCKET],
         message: `"${TEMPLATE_BODY_SOCKET}" is the socket the body hangs from, so no input can take it`,
+      });
+    if (TEMPLATE_LOCKED_PARAM in def.inputs)
+      ctx.addIssue({
+        code: 'custom',
+        path: ['inputs', TEMPLATE_LOCKED_PARAM],
+        message: `"${TEMPLATE_LOCKED_PARAM}" is an instance's lock, so no input can take it`,
       });
     for (const [key, node] of Object.entries(def.body.nodes)) {
       if (node.id !== key)
@@ -158,6 +166,25 @@ export const TemplateInstanceParams = z.object({ locked: z.boolean().default(tru
 export const isLocked = (node: Node): boolean =>
   (node.params as { locked?: unknown } | undefined)?.locked !== false;
 
+/** #1557 D6 — the param an instance holds for an input of each type: its value while the input's
+ *  socket is unwired, the way a Houdini asset's promoted parameter is (a wire overrides it). The
+ *  default is what a body-input leaf of that type reads with nothing bound, so an instance made
+ *  before inputs had params computes the same. A pose has no value to type in. */
+const INPUT_PARAM: Readonly<Record<string, () => z.ZodTypeAny>> = {
+  Number: () => z.number().default(0),
+  Vector3: () => z.tuple([z.number(), z.number(), z.number()]).default([0, 0, 0]),
+};
+
+/** The params an instance of `def` holds: its lock, and a value for each input that has one. */
+export function templateInstanceParams(def: TemplateDefinition) {
+  const shape: Record<string, z.ZodTypeAny> = {};
+  for (const [name, input] of Object.entries(def.inputs)) {
+    const param = INPUT_PARAM[input.type];
+    if (param) shape[name] = param();
+  }
+  return TemplateInstanceParams.extend(shape);
+}
+
 const single = (type: string): InputDescriptor =>
   ({ type: type as SocketTypeName, cardinality: 'single' }) as InputDescriptor;
 
@@ -175,7 +202,7 @@ export function templateNodeType(def: TemplateDefinition): NodeDefinition {
     version: 1,
     pure: true,
     cost: 'cheap',
-    paramSchema: TemplateInstanceParams,
+    paramSchema: templateInstanceParams(def),
     inputs,
     outputs: { out: single(def.output.type) },
     bodyInputs,

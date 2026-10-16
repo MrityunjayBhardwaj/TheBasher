@@ -28,6 +28,7 @@ import type { InputBinding, Node, NodeId, NodeRef, Op } from '../core/dag/types'
 import {
   TEMPLATE_BODY_SOCKET,
   TEMPLATE_DEFINITION_TYPE,
+  TEMPLATE_LOCKED_PARAM,
   TEMPLATE_TYPE_PREFIX,
   templatesOf,
   type TemplateDefinition,
@@ -132,7 +133,7 @@ export function planCollapseToTemplate(
   // The wires coming in become inputs: one per producer, named after it.
   const inputs: Record<string, { type: string }> = {};
   const inputOf = new Map<string, string>();
-  const names = new Set<string>([TEMPLATE_BODY_SOCKET]);
+  const names = new Set<string>([TEMPLATE_BODY_SOCKET, TEMPLATE_LOCKED_PARAM]);
   const entering: { consumer: NodeId; socket: string; ref: NodeRef; index: number }[] = [];
   for (const id of inside) {
     const node = state.nodes[id];
@@ -275,12 +276,13 @@ export function planCollapseToTemplate(
   return { ok: true, definition, ops };
 }
 
-/** A new instance of `def`, `instanceId`, with a fresh copy of its body. Its inputs are left for
- *  the caller to wire. */
+/** A new instance of `def`, `instanceId`, with a fresh copy of its body and `params` (its lock,
+ *  and a value for an input it will not wire). Its inputs are left for the caller to wire. */
 export function planTemplateInstance(
   state: DagState,
   def: TemplateDefinition,
   instanceId: NodeId,
+  params: Record<string, unknown> = {},
 ): Op[] {
   const taken = new Set(Object.keys(state.nodes));
   if (taken.has(instanceId)) throw new Error(`"${instanceId}" is already a node`);
@@ -314,7 +316,7 @@ export function planTemplateInstance(
     type: 'addNode',
     nodeId: instanceId,
     nodeType: def.type,
-    params: {},
+    params,
     inputs: { [TEMPLATE_BODY_SOCKET]: map(def.body.out) },
   });
   return ops;

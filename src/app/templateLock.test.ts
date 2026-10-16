@@ -66,8 +66,8 @@ beforeEach(() => {
 
 describe('#1557 D4 — a locked instance', () => {
   it('is how every instance starts', () => {
-    expect(dag().nodes.n_scale_1.params).toEqual({ locked: true });
-    expect(dag().nodes.n_scale_2.params).toEqual({ locked: true });
+    expect(dag().nodes.n_scale_1.params).toMatchObject({ locked: true });
+    expect(dag().nodes.n_scale_2.params).toMatchObject({ locked: true });
   });
 
   it('refuses an edit inside it, on each commit road, and the graph stays as it was', () => {
@@ -85,7 +85,7 @@ describe('#1557 D4 — a locked instance', () => {
 
   it('can still be deleted with its body, and unlocked', () => {
     store().dispatchAtomic([set('n_scale_2', 'locked', false)]);
-    expect(dag().nodes.n_scale_2.params).toEqual({ locked: false });
+    expect(dag().nodes.n_scale_2.params).toMatchObject({ locked: false });
     const body = [
       ...matchInstanceBody(
         dag(),
@@ -192,7 +192,7 @@ describe('#1557 D4 — what the lock does not police', () => {
         { type: 'disconnect', from: { node: k, socket: 'out' }, to: { node: mul, socket: 'b' } },
       ] as Op[]),
     );
-    expect(dag().nodes.n_scale_2.params).toEqual({ locked: true });
+    expect(dag().nodes.n_scale_2.params).toMatchObject({ locked: true });
     expect(() => store().dispatch(set(mul, 'op', 'add'))).not.toThrow();
     expect(dag().nodes[bodyNode('n_scale_1', 'mul')].params).toMatchObject({ op: 'mul' });
   });

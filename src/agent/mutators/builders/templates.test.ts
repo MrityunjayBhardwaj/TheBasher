@@ -164,7 +164,9 @@ describe('#1557 — mutator.graph.addTemplateInstance', () => {
     const r = plan(addTemplateInstanceMutator, { template: 'template.Lag' });
     expect(r.ok).toBe(true);
     if (!r.ok) return;
-    expect(r.warnings).toContain('inputs left unwired, read as their defaults: kfit');
+    expect(r.warnings).toContain(
+      "inputs left unwired, read as the instance's values (0 unless set): kfit",
+    );
     expect(r.warnings).toContain('its output is read by nothing yet');
   });
 
