@@ -761,3 +761,132 @@ describe('#394 S4 — a duplicated Object SHARES its Material node', () => {
     expect(EDITED).not.toBe(LINKED);
   });
 });
+
+describe('buildDeleteNodesOps — #1673 a group holding a skinned character', () => {
+  // As every skinned import stands it: scene → Armature group → { skeleton Object, mesh
+  // Object }, the mesh Object's data an Armature modifier over the mesh, posed by the
+  // skeleton Object.
+  const skinnedState = (): DagState =>
+    ({
+      nodes: {
+        scene: {
+          id: 'scene',
+          type: 'Scene',
+          params: {},
+          inputs: { children: [{ node: 'grp', socket: 'out' }] },
+        },
+        grp: {
+          id: 'grp',
+          type: 'Group',
+          params: {},
+          inputs: {
+            children: [
+              { node: 'skel', socket: 'out' },
+              { node: 'obj', socket: 'out' },
+            ],
+          },
+        },
+        // The skeleton Object as an import stands it: its data the Skeleton, its pose a
+        // PoseLayer over that Skeleton's rest pose.
+        skel: {
+          id: 'skel',
+          type: 'Object',
+          params: {},
+          inputs: {
+            data: { node: 'skelData', socket: 'out' },
+            pose: { node: 'pl', socket: 'out' },
+          },
+        },
+        skelData: { id: 'skelData', type: 'Skeleton', params: {}, inputs: {} },
+        pl: {
+          id: 'pl',
+          type: 'PoseLayer',
+          params: {},
+          inputs: { pose: { node: 'skelData', socket: 'pose' } },
+        },
+        obj: {
+          id: 'obj',
+          type: 'Object',
+          params: {},
+          inputs: { data: { node: 'mod', socket: 'out' } },
+        },
+        mod: {
+          id: 'mod',
+          type: 'ArmatureModifier',
+          params: {},
+          inputs: {
+            target: { node: 'mesh', socket: 'out' },
+            armature: { node: 'skel', socket: 'out' },
+          },
+        },
+        mesh: { id: 'mesh', type: 'PolyMeshData', params: {}, inputs: {} },
+      },
+      outputs: { scene: { node: 'scene' } },
+    }) as unknown as DagState;
+
+  const removedBy = (ops: Op[]) =>
+    ops.filter((o) => o.type === 'removeNode').map((o) => (o as { nodeId: string }).nodeId);
+
+  it('deletes the whole character — group, both objects, the modifier, the mesh, the skeleton and its pose — and wires nothing', () => {
+    const ops = buildDeleteNodesOps(skinnedState(), ['grp']);
+    expect(removedBy(ops).sort()).toEqual(['grp', 'mesh', 'mod', 'obj', 'pl', 'skel', 'skelData']);
+    // The bug: the deleted modifier was "spliced" out by wiring its mesh into the scene.
+    expect(ops.some((o) => o.type === 'connect')).toBe(false);
+  });
+
+  it('the batch applies: every node is gone and the scene holds nothing', () => {
+    const ops = buildDeleteNodesOps(skinnedState(), ['grp']);
+    const s = ops.reduce((acc, op) => applyOp(acc, op).next, skinnedState());
+    expect(Object.keys(s.nodes)).toEqual(['scene']);
+    expect(s.nodes.scene.inputs.children ?? []).toEqual([]);
+  });
+
+  it('KEEPS a mesh another surviving object still uses, and does not wire it into the scene', () => {
+    const s = skinnedState();
+    (s.nodes as Record<string, unknown>).other = {
+      id: 'other',
+      type: 'Object',
+      params: {},
+      inputs: { data: { node: 'mesh', socket: 'out' } },
+    };
+    (s.nodes.scene.inputs.children as unknown[]).push({ node: 'other', socket: 'out' });
+    const ops = buildDeleteNodesOps(s, ['grp']);
+    expect(removedBy(ops)).not.toContain('mesh');
+    expect(ops.some((o) => o.type === 'connect')).toBe(false);
+  });
+
+  it('KEEPS a skeleton a surviving modifier still poses with', () => {
+    const s = skinnedState();
+    const N = s.nodes as Record<string, unknown>;
+    N.mesh2 = { id: 'mesh2', type: 'PolyMeshData', params: {}, inputs: {} };
+    N.mod2 = {
+      id: 'mod2',
+      type: 'ArmatureModifier',
+      params: {},
+      inputs: {
+        target: { node: 'mesh2', socket: 'out' },
+        armature: { node: 'skel', socket: 'out' },
+      },
+    };
+    N.obj2 = {
+      id: 'obj2',
+      type: 'Object',
+      params: {},
+      inputs: { data: { node: 'mod2', socket: 'out' } },
+    };
+    (s.nodes.scene.inputs.children as unknown[]).push({ node: 'obj2', socket: 'out' });
+    const ops = buildDeleteNodesOps(s, ['grp']);
+    expect(removedBy(ops)).not.toContain('skel');
+    expect(removedBy(ops)).toEqual(expect.arrayContaining(['grp', 'obj', 'mod', 'mesh']));
+  });
+
+  it('deleting ONLY the modifier still splices the mesh back into its surviving object (control)', () => {
+    const ops = buildDeleteNodesOps(skinnedState(), ['mod']);
+    expect(removedBy(ops)).toEqual(['mod']);
+    expect(ops).toContainEqual({
+      type: 'connect',
+      from: { node: 'mesh', socket: 'out' },
+      to: { node: 'obj', socket: 'data' },
+    });
+  });
+});
