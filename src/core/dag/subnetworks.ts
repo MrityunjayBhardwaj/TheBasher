@@ -276,46 +276,63 @@ export interface BodyInputLeaf {
   readonly slot: number;
 }
 
+/** Whether `ownerType` declares `input` for a leaf whose output is `outType`. */
+function declares(ownerType: string, input: string, outType: string | undefined): boolean {
+  const want = getNodeType(ownerType)?.bodyInputs?.[input];
+  return want !== undefined && want.type === outType;
+}
+
+/** A leaf's name and output type, or null for a node that is not a body-input leaf. */
+function leafReadOf(
+  state: DagState,
+  id: NodeId,
+): { readonly input: string; readonly outType: string | undefined } | null {
+  const node = state.nodes[id];
+  const def = node ? getNodeType(node.type) : undefined;
+  if (!node || !def?.bodyInputLeaf) return null;
+  const input = (node.params as { input?: unknown }).input;
+  if (typeof input !== 'string') return null;
+  return { input, outType: Object.values(def.outputs)[0]?.type };
+}
+
 /**
- * The body-input leaves that read `owner`'s inputs: every leaf in its sub-network that is not
- * inside a NESTED owner's sub-network (those read the nested owner's inputs). A leaf whose
- * name the owner doesn't declare, or declares with a different type than the leaf outputs,
- * is left out: it reads its default.
+ * The body-input leaves that read `owner`'s inputs.
+ *
+ * #1645 — a leaf binds the way a name is scoped in code: to the NEAREST owner around it that
+ * declares its name for its type. A nested owner hides only the names it declares itself, so a
+ * leaf inside a Solver that sits inside a template reads the template's `k` (the Solver declares
+ * no `k`), and its `prev` stays the Solver's. A leaf no owner declares the name for is left out
+ * everywhere: it reads its default.
  */
 export function bodyInputLeavesOf(state: DagState, owner: NodeId): BodyInputLeaf[] {
   const ownerNode = state.nodes[owner];
-  const declared = ownerNode ? getNodeType(ownerNode.type)?.bodyInputs : undefined;
-  if (!declared) return [];
+  if (!ownerNode || !getNodeType(ownerNode.type)?.bodyInputs) return [];
   const closure = subnetworkOf(state, owner);
-  const nested = new Set<NodeId>();
+  const nested: { readonly type: string; readonly closure: Set<NodeId> }[] = [];
   for (const id of closure) {
     const inner = state.nodes[id];
     if (inner && bodySocketsOf(inner.type).length > 0)
-      for (const n of subnetworkOf(state, id)) nested.add(n);
+      nested.push({ type: inner.type, closure: subnetworkOf(state, id) });
   }
   const out: BodyInputLeaf[] = [];
   for (const id of closure) {
-    if (nested.has(id)) continue;
-    const node = state.nodes[id];
-    const def = node ? getNodeType(node.type) : undefined;
-    if (!node || !def?.bodyInputLeaf) continue;
-    const params = node.params as { input?: unknown; slot?: unknown };
-    if (typeof params.input !== 'string') continue;
-    const want = declared[params.input];
-    const outType = Object.values(def.outputs)[0]?.type;
-    if (!want || want.type !== outType) continue;
-    const slot = typeof params.slot === 'number' ? params.slot : 0;
-    out.push({ id, input: params.input, slot });
+    const read = leafReadOf(state, id);
+    if (!read || !declares(ownerNode.type, read.input, read.outType)) continue;
+    if (nested.some((n) => n.closure.has(id) && declares(n.type, read.input, read.outType)))
+      continue;
+    const slot = (state.nodes[id].params as { slot?: unknown }).slot;
+    out.push({ id, input: read.input, slot: typeof slot === 'number' ? slot : 0 });
   }
   return out;
 }
 
 /**
- * What a body-input leaf can read (#1569): the nodes whose inputs it reads, and the input names
- * among them that would bind it. `owners` is every node whose sub-network holds the leaf directly
- * (not through a nested owner's sub-network) — one, under the single-owner rule; empty when the
- * leaf sits in no sub-network, where nothing binds it. `names` are the inputs those owners
- * declare with the leaf's own output type, which is exactly what `bodyInputLeavesOf` binds.
+ * What a body-input leaf can read (#1569): the nodes whose inputs it can read, and the input
+ * names among them that would bind it. `owners` is every node whose sub-network holds the leaf,
+ * nearest first (#1645: a nested owner's leaf can also read a name only an owner further out
+ * declares); empty when the leaf sits in no sub-network, where nothing binds it. `names` are
+ * the inputs those owners declare with the leaf's own output type, which is exactly what
+ * `bodyInputLeavesOf` binds.
  */
 export function bodyInputChoicesOf(
   state: DagState,
@@ -327,11 +344,10 @@ export function bodyInputChoicesOf(
     .filter((n) => bodySocketsOf(n.type).length > 0)
     .map((n) => ({ id: n.id, closure: subnetworkOf(state, n.id) }))
     .filter((h) => h.closure.has(leafId));
-  // An owner holds the leaf directly unless another holder sits inside its sub-network: then
-  // the leaf belongs to that nested one.
-  const owners = holding
-    .filter((h) => !holding.some((other) => other.id !== h.id && h.closure.has(other.id)))
-    .map((h) => h.id);
+  // An owner sits nearer the leaf than every holder whose sub-network holds it, so the one
+  // holding fewest others comes first.
+  const outer = (h: { closure: Set<NodeId> }) => holding.filter((o) => h.closure.has(o.id)).length;
+  const owners = holding.sort((a, b) => outer(a) - outer(b)).map((h) => h.id);
   const names: string[] = [];
   for (const owner of owners) {
     const declared = getNodeType(state.nodes[owner].type)?.bodyInputs ?? {};
@@ -340,6 +356,16 @@ export function bodyInputChoicesOf(
     }
   }
   return { owners, names };
+}
+
+/** The owner whose input a body-input leaf reads (#1645: the nearest one that declares its
+ *  name for its type), or undefined when none does and the leaf reads its default. */
+export function bodyInputOwnerOf(state: DagState, leafId: NodeId): NodeId | undefined {
+  const read = leafReadOf(state, leafId);
+  if (!read) return undefined;
+  return bodyInputChoicesOf(state, leafId).owners.find((owner) =>
+    declares(state.nodes[owner].type, read.input, read.outType),
+  );
 }
 
 /**

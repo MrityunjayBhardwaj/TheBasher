@@ -9,6 +9,7 @@ import {
   bindBodyInputs,
   bodyInputChoicesOf,
   bodyInputLeavesOf,
+  bodyInputOwnerOf,
   subnetworkOf,
   subnetworkViolations,
 } from './subnetworks';
@@ -340,7 +341,9 @@ describe('#1569 — a leaf is offered the inputs its owner declares, and told wh
   });
 
   it('a leaf inside a nested owner reads that owner, not the one around it', () => {
-    expect(bodyInputChoicesOf(mixed(), 'inner').owners).toEqual(['s0']);
+    // #1645 — both hold it, nearest first; the nearest one that declares its name binds it.
+    expect(bodyInputChoicesOf(mixed(), 'inner').owners).toEqual(['s0', 's']);
+    expect(bodyInputOwnerOf(mixed(), 'inner')).toBe('s0');
   });
 
   it('a leaf in no sub-network has no owner and no choices', () => {

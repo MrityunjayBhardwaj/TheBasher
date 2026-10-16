@@ -15,7 +15,7 @@
 
 import { edgeTarget, type GraphNodeLike } from './graphNodes';
 import type { PoseLayerParams } from '../../nodes/PoseLayer';
-import { bodyInputChoicesOf, subnetworkOf } from '../../core/dag/subnetworks';
+import { bodyInputOwnerOf, subnetworkOf } from '../../core/dag/subnetworks';
 import type { DagState } from '../../core/dag/state';
 
 /**
@@ -254,8 +254,9 @@ export function poseSkeletonIdOf(
         cur = edgeTarget(node, 'body') ?? edgeTarget(node, 'pose');
         continue;
       case 'BodyInputPose': {
-        // The one ownership walk (`subnetworks.ts`); it reads the node table only.
-        const [owner] = bodyInputChoicesOf({ nodes } as unknown as DagState, cur).owners;
+        // The one ownership walk (`subnetworks.ts`); it reads the node table only. The owner is
+        // the one the leaf reads, which is not always the nearest around it (#1645).
+        const owner = bodyInputOwnerOf({ nodes } as unknown as DagState, cur);
         const input = (node.params as { input?: unknown } | undefined)?.input;
         cur =
           owner !== undefined && typeof input === 'string' ? edgeTarget(nodes[owner], input) : null;
