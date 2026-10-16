@@ -32,7 +32,7 @@
 // defined registered until the store's next change.
 
 import { z } from 'zod';
-import { defineNodeType, isDefinedNodeType, undefineNodeType } from './registry';
+import { defineNodeType, getNodeType, isDefinedNodeType, undefineNodeType } from './registry';
 import type { DagState } from './state';
 import { NodeRefSchema, NodeSchema } from './types';
 import type {
@@ -78,6 +78,15 @@ export const TemplateDefinitionSchema = z
         path: ['inputs', TEMPLATE_BODY_SOCKET],
         message: `"${TEMPLATE_BODY_SOCKET}" is the socket the body hangs from, so no input can take it`,
       });
+    for (const [name, input] of Object.entries(def.inputs)) {
+      const want = CONTROLLER_INPUTS[input.type as keyof typeof CONTROLLER_INPUTS];
+      if (want && name !== want)
+        ctx.addIssue({
+          code: 'custom',
+          path: ['inputs', name],
+          message: `a ${input.type} input is the Solver's own "${want}", so it is named that`,
+        });
+    }
     if (TEMPLATE_LOCKED_PARAM in def.inputs)
       ctx.addIssue({
         code: 'custom',
@@ -176,12 +185,37 @@ const INPUT_PARAM: Readonly<Record<string, () => z.ZodTypeAny>> = {
   Vector3: () => z.tuple([z.number(), z.number(), z.number()]).default([0, 0, 0]),
 };
 
-/** The params an instance of `def` holds: its lock, and a value for each input that has one. */
+/**
+ * #1559 — the controller a stateful node inside trails (a Lag's or a Solver's `sourceTransform`,
+ * a spring's `sourceTransformVec`), held by each instance so two instances can trail two
+ * controllers (Houdini: a promoted node-path parameter the inner node reads). Not a socket: a
+ * controller is named, not wired. The param IS the Solver's own (its name, schema, node
+ * reference and picker, read off the registered Solver type), so every reader that already
+ * reads that param off a node in a driver's closure reads it off the instance unchanged, and
+ * the replay reads it for a stateful node inside with none of its own (`statefulOps`).
+ */
+export const CONTROLLER_INPUTS = {
+  TransformSource: 'sourceTransform',
+  TransformSourceVec: 'sourceTransformVec',
+} as const;
+const isController = (type: string) => type in CONTROLLER_INPUTS;
+
+function solverType(): NodeDefinition {
+  const solver = getNodeType('Solver');
+  if (!solver)
+    throw new Error('a template with a controller input needs the Solver type registered');
+  return solver;
+}
+
+/** The params an instance of `def` holds: its lock, a value for each input that has one, and
+ *  its controller. */
 export function templateInstanceParams(def: TemplateDefinition) {
   const shape: Record<string, z.ZodTypeAny> = {};
   for (const [name, input] of Object.entries(def.inputs)) {
     const param = INPUT_PARAM[input.type];
     if (param) shape[name] = param();
+    if (isController(input.type))
+      shape[name] = (solverType().paramSchema as z.AnyZodObject).shape[name];
   }
   return TemplateInstanceParams.extend(shape);
 }
@@ -193,7 +227,11 @@ const single = (type: string): InputDescriptor =>
 export function templateNodeType(def: TemplateDefinition): NodeDefinition {
   const inputs: Record<string, InputDescriptor> = {};
   const bodyInputs: Record<string, InputDescriptor> = {};
+  const controllers = Object.entries(def.inputs)
+    .filter(([, input]) => isController(input.type))
+    .map(([name]) => name);
   for (const [name, input] of Object.entries(def.inputs)) {
+    if (isController(input.type)) continue;
     // What feeds an input is the instance's, as what fed the body's nodes was theirs before a
     // collapse (a Math's `a`, a Lag's `in`): deleting the instance takes it when nothing else
     // reads it, and a deep duplicate copies it (#1560).
@@ -210,6 +248,16 @@ export function templateNodeType(def: TemplateDefinition): NodeDefinition {
     inputs,
     outputs: { out: single(def.output.type) },
     bodyInputs,
+    ...(controllers.length
+      ? {
+          idRefs: (solverType().idRefs ?? []).filter((r) =>
+            controllers.some((c) => r.path === c || r.path.startsWith(`${c}.`)),
+          ),
+          refParams: Object.fromEntries(
+            Object.entries(solverType().refParams ?? {}).filter(([k]) => controllers.includes(k)),
+          ),
+        }
+      : {}),
     evaluate: (_params: unknown, values: Record<string, unknown>) => values[TEMPLATE_BODY_SOCKET],
   } as unknown as NodeDefinition;
 }

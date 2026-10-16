@@ -20,7 +20,11 @@ import type { ClosureSpec } from '../../closure/types';
 import type { DagState } from '../../../core/dag/state';
 import type { NodeRef, Op } from '../../../core/dag/types';
 import { getNodeType } from '../../../core/dag/registry';
-import { templatesOf, type TemplateDefinition } from '../../../core/dag/templates';
+import {
+  CONTROLLER_INPUTS,
+  templatesOf,
+  type TemplateDefinition,
+} from '../../../core/dag/templates';
 import {
   instanceIdFor,
   planCollapseToTemplate,
@@ -111,10 +115,9 @@ const AddTemplateInstanceSpec = z.object({
   template: z.string().min(1),
   /** What each input of the template reads: a node id (its `out`) or `{ node, socket }`. */
   inputs: z.record(z.string().min(1), SocketRef).optional(),
-  /** A value for an input left unwired (a number, or [x, y, z] for a Vector3 input). */
-  values: z
-    .record(z.string().min(1), z.union([z.number(), z.tuple([z.number(), z.number(), z.number()])]))
-    .optional(),
+  /** A value for an input left unwired (a number, or [x, y, z] for a Vector3 input), or the
+   *  controller a stateful node inside trails (`sourceTransform`: { node, channel }). */
+  values: z.record(z.string().min(1), z.unknown()).optional(),
   /** Where the instance's output goes: the input socket of a node. */
   outputTo: z.object({ node: z.string().min(1), socket: z.string().min(1) }).optional(),
   /** The instance's id; defaults to `n_<name>_<n>`. */
@@ -151,20 +154,23 @@ function resolve(spec: AddTemplateInstanceSpec, state: DagState): Resolved {
     const from = refOf(r);
     if (!state.nodes[from.node]) return { ok: false, reason: `"${from.node}" is not a node` };
   }
+  // Each value is checked against the instance's own param (D6's value, or the controller).
+  const params = getNodeType(type)!.paramSchema as z.AnyZodObject;
   for (const [name, value] of Object.entries(spec.values ?? {})) {
     const input = def.inputs[name];
-    const want = input?.type === 'Number' ? 'number' : input?.type === 'Vector3' ? 'object' : null;
-    if (!want)
+    const param = input ? params.shape[name] : undefined;
+    if (!input || !param)
       return {
         ok: false,
         reason: input
           ? `${type}'s input "${name}" is a ${input.type}, which takes a wire, not a value`
           : `${type} has no input "${name}" (its inputs: ${Object.keys(def.inputs).join(', ') || 'none'})`,
       };
-    if (typeof value !== want)
+    const parsed = param.safeParse(value);
+    if (!parsed.success)
       return {
         ok: false,
-        reason: `"${name}" is a ${input.type}: give ${want === 'number' ? 'a number' : '[x, y, z]'}`,
+        reason: `"${name}" is a ${input.type}: ${parsed.error.issues.map((i: { message: string }) => i.message).join('; ')}`,
       };
     if (spec.inputs?.[name])
       return {
@@ -227,12 +233,20 @@ export const addTemplateInstanceMutator: MutatorDefinition<AddTemplateInstanceSp
   advisories(spec, _closure, state) {
     const r = resolve(spec, state);
     if (!r.ok) return [];
-    const unwired = Object.keys(r.def.inputs).filter((n) => !spec.inputs?.[n] && !spec.values?.[n]);
+    const sockets = Object.entries(r.def.inputs).filter(([, i]) => !(i.type in CONTROLLER_INPUTS));
+    const unwired = sockets
+      .map(([n]) => n)
+      .filter((n) => !spec.inputs?.[n] && spec.values?.[n] === undefined);
+    const controllers = Object.entries(r.def.inputs)
+      .filter(([n, i]) => i.type in CONTROLLER_INPUTS && spec.values?.[n] === undefined)
+      .map(([n]) => n);
     const notes = [`instance "${r.instance}" of ${r.def.type}`];
     if (unwired.length)
       notes.push(
         `inputs left unwired, read as the instance's values (0 unless set): ${unwired.join(', ')}`,
       );
+    if (controllers.length)
+      notes.push(`it trails no controller until ${controllers.join(' / ')} is set`);
     if (!spec.outputTo) notes.push('its output is read by nothing yet');
     return notes;
   },

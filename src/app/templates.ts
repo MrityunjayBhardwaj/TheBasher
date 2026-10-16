@@ -26,6 +26,7 @@ import { subnetworkOf } from '../core/dag/subnetworks';
 import type { DagState } from '../core/dag/state';
 import type { InputBinding, Node, NodeId, NodeRef, Op } from '../core/dag/types';
 import {
+  CONTROLLER_INPUTS,
   TEMPLATE_BODY_SOCKET,
   TEMPLATE_DEFINITION_TYPE,
   TEMPLATE_LOCKED_PARAM,
@@ -175,6 +176,29 @@ export function planCollapseToTemplate(
     inputs[input] = { type };
   }
 
+  // #1559 — the controller a stateful node in the selection trails moves onto the instance, so a
+  // second instance can trail another one. One per template: two different ones are refused.
+  const controller: Record<string, unknown> = {};
+  const trailing: { id: NodeId; name: string }[] = [];
+  for (const id of inside) {
+    const node = state.nodes[id];
+    if (getNodeType(node.type)?.stateful !== true) continue;
+    for (const [type, name] of Object.entries(CONTROLLER_INPUTS)) {
+      const value = (node.params as Record<string, unknown> | undefined)?.[name];
+      if (value === undefined) continue;
+      if (name in controller && JSON.stringify(controller[name]) !== JSON.stringify(value))
+        return {
+          ok: false,
+          reason:
+            `"${trailing.find((t) => t.name === name)!.id}" and "${id}" trail different ` +
+            `controllers; a template holds one, so collapse them into two`,
+        };
+      controller[name] = value;
+      inputs[name] = { type };
+      trailing.push({ id, name });
+    }
+  }
+
   // The plan: a leaf per input, wired where its producer was; the instance over the body; the
   // outside rewired from the body's output to the instance's.
   const ops: Op[] = [];
@@ -209,9 +233,12 @@ export function planCollapseToTemplate(
     type: 'addNode',
     nodeId: instanceId,
     nodeType: typeName,
-    params: {},
+    params: JSON.parse(JSON.stringify(controller)),
     inputs: instanceInputs,
   });
+  // The first instance's nodes are its body, so they hand the controller to it too.
+  for (const t of trailing)
+    ops.push({ type: 'setParam', nodeId: t.id, paramPath: t.name, value: undefined });
   for (const r of outsideReads) {
     const to = { node: r.consumer, socket: r.socket };
     const index = refsOf(state.nodes[r.consumer].inputs[r.socket]).findIndex(
@@ -242,7 +269,11 @@ export function planCollapseToTemplate(
       id,
       type: node.type,
       version: node.version,
-      params: node.params,
+      params: Object.fromEntries(
+        Object.entries((node.params ?? {}) as Record<string, unknown>).filter(
+          ([k]) => !trailing.some((t) => t.id === id && t.name === k),
+        ),
+      ),
       inputs: rewired,
     };
   }

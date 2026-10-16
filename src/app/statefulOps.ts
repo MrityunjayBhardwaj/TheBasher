@@ -37,7 +37,13 @@ import { evaluate, setStatefulReplay, type EvaluatorCache } from '../core/dag/ev
 import { arriving, producedTypeOf } from '../core/dag/socketConversion';
 import { getNodeType, registryEpoch } from '../core/dag/registry';
 import type { DagState } from '../core/dag/state';
-import { bindBodyInputs, bodyInputLeavesOf, type BodyInputLeaf } from '../core/dag/subnetworks';
+import {
+  bindBodyInputs,
+  bodyInputLeavesOf,
+  holdersOf,
+  type BodyInputLeaf,
+} from '../core/dag/subnetworks';
+import { TEMPLATE_TYPE_PREFIX } from '../core/dag/templates';
 import type { EvalCtx, Node } from '../core/dag/types';
 import { FRAMES_PER_SECOND } from './stores/timeStore';
 import { lagStep } from '../nodes/valueMath';
@@ -121,6 +127,35 @@ function ctxAtFrame(frame: number): EvalCtx {
  *  animated Null). If the node carries no transform source, fall back to its wired
  *  `in` (its passthrough evaluate) — time-invariant unless fed a time source, so the
  *  lag simply converges to that constant. A bad evaluate reads 0. */
+// #1559 — the controller of a stateful node that has none of its own and nothing wired into
+// `in`: the one held by the nearest template instance whose sub-network holds it (Houdini: an
+// asset's promoted node-path parameter, read by the node inside). Only a template's: an outer
+// Solver's own controller is its own input, not a default for the nodes it holds. Worked out
+// once per node table and registry epoch (which nodes hold which depends on types, #1647).
+const enclosingControllers = new WeakMap<
+  object,
+  { readonly epoch: number; readonly byNode: Map<string, Node | null> }
+>();
+function enclosingControllerOwner(state: DagState, nodeId: string): Node | null {
+  const known = enclosingControllers.get(state.nodes);
+  let byNode = known && known.epoch === registryEpoch() ? known.byNode : undefined;
+  if (!byNode) {
+    byNode = new Map();
+    enclosingControllers.set(state.nodes, { epoch: registryEpoch(), byNode });
+  }
+  if (!byNode.has(nodeId)) {
+    const owner = holdersOf(state, nodeId)
+      .map((id) => state.nodes[id])
+      .find(
+        (n) =>
+          n.type.startsWith(TEMPLATE_TYPE_PREFIX) &&
+          (transformSourceOf(n) !== null || transformVecSourceOf(n) !== null),
+      );
+    byNode.set(nodeId, owner ?? null);
+  }
+  return byNode.get(nodeId)!;
+}
+
 function statefulInputAt(
   state: DagState,
   node: Node,
@@ -132,7 +167,11 @@ function statefulInputAt(
   // The producer of `in`, never the node itself: the evaluator answers a stateful node with
   // this replay (#1558), so asking it for the node here would never return.
   const ref = singleInputRef(node, 'in');
-  if (!ref?.node) return 0;
+  if (!ref?.node) {
+    const owner = enclosingControllerOwner(state, node.id);
+    const held = owner && transformSourceOf(owner);
+    return held ? readTransformChannelAt(state, held, ctx, cache) : 0;
+  }
   try {
     const v = evaluate(state, ref.node, { cache, ctx, socket: ref.socket }).value;
     return typeof v === 'number' && Number.isFinite(v) ? v : 0;
@@ -370,7 +409,9 @@ function statefulInputVecAt(
   ctx: EvalCtx,
   cache?: EvaluatorCache,
 ): Vec3 {
-  const src = transformVecSourceOf(node);
+  const own = transformVecSourceOf(node);
+  const owner = own ? null : enclosingControllerOwner(state, node.id);
+  const src = own ?? (owner && transformVecSourceOf(owner));
   return src ? readTransformPositionAt(state, src.node, ctx, cache) : ORIGIN;
 }
 

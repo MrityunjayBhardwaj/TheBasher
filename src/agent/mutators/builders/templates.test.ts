@@ -98,7 +98,9 @@ describe('#1557 — mutator.graph.collapseToTemplate', () => {
     const r = accept(collapseToTemplateMutator, { nodes: LAG_BODY, name: 'Lag' });
     expect(r.ok, r.ok ? '' : r.reason).toBe(true);
     if (!r.ok) return;
-    expect(r.warnings.join('\n')).toContain('template.Lag: inputs kfit (Number), output Number');
+    expect(r.warnings.join('\n')).toContain(
+      'template.Lag: inputs kfit (Number), sourceTransform (TransformSource), output Number',
+    );
     expect(r.warnings.join('\n')).toContain('first instance "n_lag_1"');
     const s = dag();
     expect(s.nodes.drv.inputs.in).toEqual({ node: 'n_lag_1', socket: 'out' });
@@ -176,7 +178,8 @@ describe('#1557 — mutator.graph.addTemplateInstance', () => {
     if (!r.ok) expect(r.reason).toContain('(it has template.Lag)');
     const bad = plan(addTemplateInstanceMutator, { template: 'Lag', inputs: { k: 'kfit' } });
     expect(bad.ok).toBe(false);
-    if (!bad.ok) expect(bad.reason).toContain('has no input "k" (its inputs: kfit)');
+    if (!bad.ok)
+      expect(bad.reason).toContain('has no input "k" (its inputs: kfit, sourceTransform)');
   });
 });
 
@@ -189,7 +192,7 @@ describe('#1557 — the agent reads a definition by its interface', () => {
     expect(shown.definition).toEqual({
       type: 'template.Lag',
       label: 'Lag',
-      inputs: { kfit: { type: 'Number' } },
+      inputs: { kfit: { type: 'Number' }, sourceTransform: { type: 'TransformSource' } },
       output: { type: 'Number' },
       body: {
         nodes: 7,
@@ -201,6 +204,6 @@ describe('#1557 — the agent reads a definition by its interface', () => {
     const text = dagInspectTool.handler({ scope: 'node', nodeId: holder }, {
       dagState: dag(),
     } as never);
-    expect((text as { text: string }).text).not.toContain('sourceTransform');
+    expect((text as { text: string }).text).not.toContain('seedFrame');
   });
 });

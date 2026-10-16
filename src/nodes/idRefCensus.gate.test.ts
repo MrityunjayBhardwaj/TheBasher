@@ -76,6 +76,51 @@ const registered = (): CensusDef[] =>
     return def;
   });
 
+// #1557 — a template's type is defined only while its definition is in a graph, so the registry
+// this census reads holds none unless one is made. One is made here by the collapse the product
+// runs, over a Number and a Vector3 input, so its sockets are asked like every other type's.
+beforeAll(() => {
+  const plan = planCollapseToTemplate(
+    applyOps(emptyDagState(), [
+      { type: 'addNode', nodeId: 'n', nodeType: 'Fit', params: {} },
+      { type: 'addNode', nodeId: 'v', nodeType: 'MakeVec3', params: {} },
+      { type: 'addNode', nodeId: 'b', nodeType: 'VecBreak3', params: {} },
+      { type: 'connect', from: { node: 'v', socket: 'out' }, to: { node: 'b', socket: 'v' } },
+      { type: 'addNode', nodeId: 'm', nodeType: 'Math', params: {} },
+      { type: 'connect', from: { node: 'n', socket: 'out' }, to: { node: 'm', socket: 'a' } },
+      { type: 'connect', from: { node: 'b', socket: 'x' }, to: { node: 'm', socket: 'b' } },
+      { type: 'addNode', nodeId: 'r', nodeType: 'Math', params: {} },
+      { type: 'connect', from: { node: 'm', socket: 'out' }, to: { node: 'r', socket: 'a' } },
+    ]).next,
+    ['m', 'b'],
+    'Census',
+    'inst',
+  );
+  if (!plan.ok) throw new Error(plan.reason);
+  applyOps(emptyDagState(), plan.ops.slice(0, 1)); // the definition node defines the type
+  // #1559 — and one whose Solver trails a controller, which its instances then hold.
+  const lag = planCollapseToTemplate(
+    applyOps(emptyDagState(), [
+      { type: 'addNode', nodeId: 'p', nodeType: 'BodyInput', params: { input: 'prev' } },
+      {
+        type: 'addNode',
+        nodeId: 's',
+        nodeType: 'Solver',
+        params: { sourceTransform: { node: 'c', channel: 'tx' } },
+      },
+      { type: 'connect', from: { node: 'p', socket: 'out' }, to: { node: 's', socket: 'body' } },
+      { type: 'addNode', nodeId: 'r', nodeType: 'Math', params: {} },
+      { type: 'connect', from: { node: 's', socket: 'out' }, to: { node: 'r', socket: 'a' } },
+    ]).next,
+    ['s', 'p'],
+    'CensusLag',
+    'inst',
+  );
+  if (!lag.ok) throw new Error(lag.reason);
+  applyOps(emptyDagState(), lag.ops.slice(0, 1));
+});
+afterAll(() => syncTemplateTypes({ nodes: {} }));
+
 describe('#1551 — the census itself can fail', () => {
   const fake = (paramSchema: z.ZodTypeAny, idRefs?: NodeDefinition['idRefs']): CensusDef => ({
     type: 'Fake',
@@ -267,39 +312,17 @@ describe('#1551 — every string a registered node can store is an id reference 
         "Track.strips:argument",
         "TrackTo.aimNode:argument",
         "TrackTo.target:subject",
+        "template.CensusLag.sourceTransform.node:argument",
       ]
     `);
   });
 });
 
 describe('#1560 — every input socket says what it owns, or is listed as owning nothing', () => {
-  // #1557 — a template's type is defined only while its definition is in a graph, so the registry
-  // this census reads holds none unless one is made. One is made here by the collapse the product
-  // runs, over a Number and a Vector3 input, so its sockets are asked like every other type's.
-  beforeAll(() => {
-    const plan = planCollapseToTemplate(
-      applyOps(emptyDagState(), [
-        { type: 'addNode', nodeId: 'n', nodeType: 'Fit', params: {} },
-        { type: 'addNode', nodeId: 'v', nodeType: 'MakeVec3', params: {} },
-        { type: 'addNode', nodeId: 'b', nodeType: 'VecBreak3', params: {} },
-        { type: 'connect', from: { node: 'v', socket: 'out' }, to: { node: 'b', socket: 'v' } },
-        { type: 'addNode', nodeId: 'm', nodeType: 'Math', params: {} },
-        { type: 'connect', from: { node: 'n', socket: 'out' }, to: { node: 'm', socket: 'a' } },
-        { type: 'connect', from: { node: 'b', socket: 'x' }, to: { node: 'm', socket: 'b' } },
-        { type: 'addNode', nodeId: 'r', nodeType: 'Math', params: {} },
-        { type: 'connect', from: { node: 'm', socket: 'out' }, to: { node: 'r', socket: 'a' } },
-      ]).next,
-      ['m', 'b'],
-      'Census',
-      'inst',
+  it('reads template types too', () => {
+    expect(listNodeTypes()).toEqual(
+      expect.arrayContaining(['template.Census', 'template.CensusLag']),
     );
-    if (!plan.ok) throw new Error(plan.reason);
-    applyOps(emptyDagState(), plan.ops.slice(0, 1)); // the definition node defines the type
-  });
-  afterAll(() => syncTemplateTypes({ nodes: {} }));
-
-  it('reads a template type too', () => {
-    expect(listNodeTypes()).toContain('template.Census');
   });
 
   const sockets = () =>
@@ -378,6 +401,7 @@ describe('#1560 — every input socket says what it owns, or is listed as owning
         "template.Census.body:body",
         "template.Census.n:always",
         "template.Census.v:always",
+        "template.CensusLag.body:body",
       ]
     `);
   });

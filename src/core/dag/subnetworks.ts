@@ -340,14 +340,7 @@ export function bodyInputChoicesOf(
 ): { readonly owners: NodeId[]; readonly names: string[] } {
   const leaf = state.nodes[leafId];
   const outType = leaf ? Object.values(getNodeType(leaf.type)?.outputs ?? {})[0]?.type : undefined;
-  const holding = Object.values(state.nodes)
-    .filter((n) => bodySocketsOf(n.type).length > 0)
-    .map((n) => ({ id: n.id, closure: subnetworkOf(state, n.id) }))
-    .filter((h) => h.closure.has(leafId));
-  // An owner sits nearer the leaf than every holder whose sub-network holds it, so the one
-  // holding fewest others comes first.
-  const outer = (h: { closure: Set<NodeId> }) => holding.filter((o) => h.closure.has(o.id)).length;
-  const owners = holding.sort((a, b) => outer(a) - outer(b)).map((h) => h.id);
+  const owners = holdersOf(state, leafId);
   const names: string[] = [];
   for (const owner of owners) {
     const declared = getNodeType(state.nodes[owner].type)?.bodyInputs ?? {};
@@ -356,6 +349,18 @@ export function bodyInputChoicesOf(
     }
   }
   return { owners, names };
+}
+
+/** Every node whose sub-network holds `id`, nearest first. */
+export function holdersOf(state: DagState, id: NodeId): NodeId[] {
+  const holding = Object.values(state.nodes)
+    .filter((n) => bodySocketsOf(n.type).length > 0)
+    .map((n) => ({ id: n.id, closure: subnetworkOf(state, n.id) }))
+    .filter((h) => h.closure.has(id));
+  // An owner sits nearer than every holder whose sub-network holds it, so the one holding fewest
+  // others comes first.
+  const outer = (h: { closure: Set<NodeId> }) => holding.filter((o) => h.closure.has(o.id)).length;
+  return holding.sort((a, b) => outer(a) - outer(b)).map((h) => h.id);
 }
 
 /** The owner whose input a body-input leaf reads (#1645: the nearest one that declares its

@@ -164,7 +164,7 @@ describe('#1557 D6 — the agent gives an unwired input its value', () => {
   it('refuses a value of the wrong shape, for an input it lacks, or beside a wire', () => {
     const wrong = plan({ template: 'Scale', values: { kfit: [1, 2, 3] } });
     expect(wrong.ok).toBe(false);
-    if (!wrong.ok) expect(wrong.reason).toContain('give a number');
+    if (!wrong.ok) expect(wrong.reason).toContain('"kfit" is a Number: Expected number');
     const none = plan({ template: 'Scale', values: { k: 1 } });
     expect(none.ok).toBe(false);
     const both = plan({ template: 'Scale', values: { kfit: 1 }, inputs: { kfit: 'kfit' } });
