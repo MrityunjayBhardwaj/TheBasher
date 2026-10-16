@@ -61,7 +61,14 @@ export const TemplateDefinitionSchema = z
     /** What a person reads in the node list. */
     label: z.string().min(1),
     /** Each input is a socket on the instance and a named input of its body. */
-    inputs: z.record(z.string().regex(INPUT_NAME), z.object({ type: z.string().min(1) })),
+    inputs: z.record(
+      z.string().regex(INPUT_NAME),
+      z.object({
+        type: z.string().min(1),
+        /** What an instance holds for it until set (#1557 D6): a Lag's factor is 0.2. */
+        default: z.union([z.number(), z.tuple([z.number(), z.number(), z.number()])]).optional(),
+      }),
+    ),
     /** The type of the instance's output, and of its body. */
     output: z.object({ type: z.string().min(1) }),
     /** The body, its nodes keyed by a name local to the definition (each node's `id` is its
@@ -180,9 +187,11 @@ export const isLocked = (node: Node): boolean =>
  *  socket is unwired, the way a Houdini asset's promoted parameter is (a wire overrides it). The
  *  default is what a body-input leaf of that type reads with nothing bound, so an instance made
  *  before inputs had params computes the same. A pose has no value to type in. */
-const INPUT_PARAM: Readonly<Record<string, () => z.ZodTypeAny>> = {
-  Number: () => z.number().default(0),
-  Vector3: () => z.tuple([z.number(), z.number(), z.number()]).default([0, 0, 0]),
+const VEC3 = z.tuple([z.number(), z.number(), z.number()]);
+const INPUT_PARAM: Readonly<Record<string, (d: unknown) => z.ZodTypeAny>> = {
+  Number: (d) => z.number().default(typeof d === 'number' ? d : 0),
+  Vector3: (d) =>
+    VEC3.default(VEC3.safeParse(d).success ? (d as [number, number, number]) : [0, 0, 0]),
 };
 
 /**
@@ -220,7 +229,7 @@ export function templateInstanceParams(def: TemplateDefinition) {
   const shape: Record<string, z.ZodTypeAny> = {};
   for (const [name, input] of Object.entries(def.inputs)) {
     const param = INPUT_PARAM[input.type];
-    if (param) shape[name] = param();
+    if (param) shape[name] = param(input.default);
     if (isReplayInput(input.type))
       shape[name] = (solverType().paramSchema as z.AnyZodObject).shape[name];
   }

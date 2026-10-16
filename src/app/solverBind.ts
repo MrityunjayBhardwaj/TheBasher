@@ -112,32 +112,26 @@ const DEFAULT_STIFFNESS = 0.12;
 const DEFAULT_DAMPING = 0.14;
 
 /**
- * The Op chain that builds a spring driving `targetId.paramPath` from `controllerId`,
- * or a rejection when it would create a driver cycle (G6 — the controller transitively
- * reading back the target). `dispatchAtomic` computes the inverse (removeNode/disconnect)
- * for undo, so the whole spring is one undo entry.
+ * A spring's sub-network and its Solver: the leaves, the five Vec3Math steps and the Solver
+ * over `[newPos, newVel]` trailing `controllerId`. Shared by the spring preset's definition
+ * (`builtinTemplates.ts`), so the preset is the network this builder has always written.
  */
-export function buildSpringOps(state: DagState, req: SpringRequest): SpringBuildResult {
-  const { targetId, controllerId, idFor } = req;
-  const paramPath = req.paramPath ?? 'position';
-  const k = req.stiffness ?? DEFAULT_STIFFNESS;
-  const c = req.damping ?? DEFAULT_DAMPING;
-  const seedFrame = req.seedFrame ?? 0;
-  if (!targetId || !controllerId) return { ok: false, reason: 'missing target or controller' };
-  // G6 — the driven target will depend on the controller through the spring's Solver.
-  // Reject if the controller already (transitively) depends on the target.
-  if (wouldCreateCycle(state, controllerId, targetId, driverParamDeps(state.nodes))) {
-    return { ok: false, reason: 'spring would create a driver cycle' };
-  }
-  // #1552 — a spring on a path that certainly names no parameter would drive nothing.
-  const missing = missingParamPath(state, targetId, paramPath, 'vec3', { mechanism: 'driver' });
-  if (missing) return { ok: false, reason: `'${paramPath}' is not a parameter: ${missing.reason}` };
-
+export function springBodyOps(req: {
+  controllerId: string;
+  stiffness: number;
+  damping: number;
+  seedFrame: number;
+  idFor: (key: SpringNodeKey) => string;
+}): Op[] {
+  const { controllerId, idFor } = req;
+  const k = req.stiffness;
+  const c = req.damping;
+  const seedFrame = req.seedFrame;
   const id = idFor;
   const out = (n: string): NodeRef => ({ node: n, socket: 'out' });
   const wire = (from: NodeRef, to: NodeRef): Op => ({ type: 'connect', from, to });
 
-  const ops: Op[] = [
+  return [
     // Leaves (#1548): the live target (`inputVec`) + the two feedback slots (`prevVec`).
     {
       type: 'addNode',
@@ -188,6 +182,35 @@ export function buildSpringOps(state: DagState, req: SpringRequest): SpringBuild
     },
     wire(out(id('np')), { node: id('solver'), socket: 'bodies' }),
     wire(out(id('nv')), { node: id('solver'), socket: 'bodies' }),
+  ];
+}
+
+/**
+ * The Op chain that builds a spring driving `targetId.paramPath` from `controllerId`,
+ * or a rejection when it would create a driver cycle (G6 — the controller transitively
+ * reading back the target). `dispatchAtomic` computes the inverse (removeNode/disconnect)
+ * for undo, so the whole spring is one undo entry.
+ */
+export function buildSpringOps(state: DagState, req: SpringRequest): SpringBuildResult {
+  const { targetId, controllerId, idFor } = req;
+  const paramPath = req.paramPath ?? 'position';
+  const k = req.stiffness ?? DEFAULT_STIFFNESS;
+  const c = req.damping ?? DEFAULT_DAMPING;
+  const seedFrame = req.seedFrame ?? 0;
+  if (!targetId || !controllerId) return { ok: false, reason: 'missing target or controller' };
+  // G6 — the driven target will depend on the controller through the spring's Solver.
+  // Reject if the controller already (transitively) depends on the target.
+  if (wouldCreateCycle(state, controllerId, targetId, driverParamDeps(state.nodes))) {
+    return { ok: false, reason: 'spring would create a driver cycle' };
+  }
+  // #1552 — a spring on a path that certainly names no parameter would drive nothing.
+  const missing = missingParamPath(state, targetId, paramPath, 'vec3', { mechanism: 'driver' });
+  if (missing) return { ok: false, reason: `'${paramPath}' is not a parameter: ${missing.reason}` };
+
+  const id = idFor;
+  const wire = (from: NodeRef, to: NodeRef): Op => ({ type: 'connect', from, to });
+  const ops: Op[] = [
+    ...springBodyOps({ controllerId, stiffness: k, damping: c, seedFrame, idFor }),
     // The vec driver: target.paramPath ← Solver.outVec (slot 0, the sprung position).
     {
       type: 'addNode',
