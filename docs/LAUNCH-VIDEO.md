@@ -40,6 +40,8 @@ This document is the whole plan for the launch video: who it is for, what it cla
 
 | Decision                                                                              | Taken by | Date       |
 | ------------------------------------------------------------------------------------- | -------- | ---------- |
+| The runner is the Sketchfab "Cyberpunk character" by 4d_Bob (CC-BY-4.0, credited)     | User     | 2026-10-16 |
+| The pursuer is a rigged mecha firing a bullet or rocket, supplied by the user         | User     | 2026-10-16 |
 | This cut opens on a prepared scene; the one-sentence scene waits for the second cut   | User     | 2026-10-16 |
 | Level 6 swaps the set (alley to plaza); the procedural alley waits for the second cut | User     | 2026-10-16 |
 | The launch speaks to a general audience: directors and anyone who wants full control  | User     | 2026-10-12 |
@@ -356,7 +358,7 @@ Conventions: **Screen** is what is captured. **Action** is what the hand does. *
 - **Caption:** _The world._
 - **Sound:** the music returns, building.
 - **Needs:** the plaza as a set the chase project can take in place of the alley, in one gesture that is one undo step. The runner's path, the pursuer's position and the bullet's line have to make sense in the plaza too, including a wall for the bullet to hit (7.1).
-- **Decided 2026-10-16:** a set swap replaces the one-slider alley in this cut. The plaza was built and saved during the alley-run tests; swapping it into the chase project has not been tried. The procedural alley is a second-cut beat (#1597).
+- **Decided 2026-10-16:** a set swap replaces the one-slider alley in this cut. The plaza was built and saved during the alley-run tests; swapping it into the chase project has not been tried (#1662). The procedural alley is a second-cut beat (#1597).
 
 **Shot 6.2 (71–73 s)**
 
@@ -480,19 +482,19 @@ Every word that appears on screen, in order. Nothing else is written on the pict
 
 ### 11.1 Assets
 
-| Asset             | Requirement                                                              | State                                                                        |
-| ----------------- | ------------------------------------------------------------------------ | ---------------------------------------------------------------------------- |
-| Runner            | Stylised, rigged, with finger bones; a licence that allows marketing use | Not chosen                                                                   |
-| Pursuer           | A second figure, clearly different in silhouette and colour              | Not chosen                                                                   |
-| Gun and bullet    | Simple, slightly oversized; the bullet with a short trail                | Not built                                                                    |
-| Alley             | A night alley set                                                        | Built in Blender for the alley-run tests; static                             |
-| Plaza             | A night plaza set the alley can be swapped for                           | Built and saved during the alley-run tests; not yet a set the chase can take |
-| Run               | A fast run that reads at knee height                                     | Generated runs checked: usable trimmed and sped up (#1600)                   |
-| Draw-and-fire     | Plant, raise, fire, recoil                                               | Not chosen                                                                   |
-| Sparks            | A short burst at a point                                                 | Not built                                                                    |
-| Two AI looks      | Graphic-novel ink and photoreal night, both stable across twelve seconds | Not chosen                                                                   |
-| Two "wrong" clips | For the cold open, cleared for use                                       | Not made                                                                     |
-| Music             | About 110 seconds, cleared                                               | Not commissioned                                                             |
+| Asset             | Requirement                                                              | State                                                                                                                                                     |
+| ----------------- | ------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Runner            | Stylised, rigged, with finger bones; a licence that allows marketing use | Chosen 2026-10-16: "Cyberpunk character" by 4d_Bob, CC-BY-4.0 (credit owed); 56 joints, 30 of them finger joints. Its run (ActorCore) is not yet paid for |
+| Pursuer           | A second figure, clearly different in silhouette and colour              | Chosen 2026-10-16: a rigged mecha firing a bullet or rocket; the user supplies it                                                                         |
+| Gun and bullet    | Simple, slightly oversized; the bullet with a short trail                | Not built                                                                                                                                                 |
+| Alley             | A night alley set                                                        | Built in Blender for the alley-run tests; static                                                                                                          |
+| Plaza             | A night plaza set the alley can be swapped for                           | Built and saved during the alley-run tests; not yet a set the chase can take                                                                              |
+| Run               | A fast run that reads at knee height                                     | Generated runs checked: usable trimmed and sped up (#1600)                                                                                                |
+| Draw-and-fire     | Plant, raise, fire, recoil                                               | Not chosen                                                                                                                                                |
+| Sparks            | A short burst at a point                                                 | Not built                                                                                                                                                 |
+| Two AI looks      | Graphic-novel ink and photoreal night, both stable across twelve seconds | Not chosen                                                                                                                                                |
+| Two "wrong" clips | For the cold open, cleared for use                                       | Not made                                                                                                                                                  |
+| Music             | About 110 seconds, cleared                                               | Not commissioned                                                                                                                                          |
 
 ### 11.2 The demo project
 
@@ -521,16 +523,16 @@ Surveyed on main at `707cb2da` on 2026-10-12, by reading the code and the open i
 
 Re-read on 2026-10-12 against the script. None of these blocks filming; an earlier draft of this section overstated them.
 
-| Issue        | What it is                                                                     | Needed?                                                                                                                                                  |
-| ------------ | ------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| #1563        | A read-only node view (after #1562, stored node positions)                     | Only if the six-second graph shot stays in the video (open decision 7)                                                                                   |
-| #1281        | A saved scene does not carry its imported assets                               | Not to film in one browser. Yes to publish the demo project, or to move the shoot to another machine                                                     |
-| #1048, #1047 | An imported textured piece with a modifier is not drawn, or takes down the app | Only if the alley is built from imported textured pieces under an Array or Scatter; check under the alley work                                           |
-| #1463        | The dope sheet shows 7 of a character's 1,407 rows                             | No. The script never opens the dope sheet                                                                                                                |
-| #1492        | The timeline panel can't be resized                                            | No. Nice for framing the timeline                                                                                                                        |
-| #1500        | The layer panel's empty state shows AI tool names                              | No. Only visible if that empty panel is on screen; covered by the vocabulary walk                                                                        |
-| #1399        | A second motion cannot be layered over a character's first                     | Now yes, for one beat: the generated fire has no recoil (#1600), and a hand-keyed recoil over it needs this. Without it the shot is fired without a kick |
-| #1475        | "Generate, tweak by hand, done, as one non-destructive graph"                  | A related goal, not a dependency. Nothing in the script waits on it                                                                                      |
+| Issue        | What it is                                                                     | Needed?                                                                                                                                                                                                                      |
+| ------------ | ------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| #1563        | A read-only node view (after #1562, stored node positions)                     | Only if the six-second graph shot stays in the video (open decision 7)                                                                                                                                                       |
+| #1281        | A saved scene does not carry its imported assets                               | Not to film in one browser. Yes to publish the demo project, or to move the shoot to another machine                                                                                                                         |
+| #1048, #1047 | An imported textured piece with a modifier is not drawn, or takes down the app | Only if the alley is built from imported textured pieces under an Array or Scatter; check under the alley work                                                                                                               |
+| #1463        | The dope sheet shows 7 of a character's 1,407 rows                             | No. The script never opens the dope sheet                                                                                                                                                                                    |
+| #1492        | The timeline panel can't be resized                                            | No. Nice for framing the timeline                                                                                                                                                                                            |
+| #1500        | The layer panel's empty state shows AI tool names                              | No. Only visible if that empty panel is on screen; covered by the vocabulary walk                                                                                                                                            |
+| #1399        | A second motion cannot be layered over a character's first                     | Conditional on the pursuer's rig (2026-10-16). If the mecha's fire comes keyed, or is keyed by hand, the recoil is in the same keys and this is not needed. If the fire is generated, a hand-keyed recoil over it needs this |
+| #1475        | "Generate, tweak by hand, done, as one non-destructive graph"                  | A related goal, not a dependency. Nothing in the script waits on it                                                                                                                                                          |
 
 **Found by the checks and the alley tests, 2026-10-12 to 14.** "Fixed locally" means fixed and tested on a local branch that is not yet merged.
 
@@ -687,8 +689,8 @@ Claims the video does **not** make: world's first, easiest, fastest, real-time A
 | -------------------------------------------------------------- | ---------- | ------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | A viewer reads the opening as "Basher made this from a prompt" | Medium     | Trust, once someone tries it                                                   | The cold open's prompt stays on the competitor's screen; level 1 shows opening a project; no caption or post says a sentence made it                            |
 | There is no scene-wide slow motion                             | High       | No centrepiece                                                                 | Build it second; fall back to a hard freeze                                                                                                                     |
-| Generated run and fire motions look floaty                     | Measured   | The chase is not intense: runs top at 5.1 m/s, arms tucked, no recoil (#1600)  | Trim the wind-up, speed the clip about 1.5×, cut tighter and lower, key the recoil by hand (#1399)                                                              |
-| The hero figures look like test assets                         | High       | The ending falls flat                                                          | Choose the figures before anything else                                                                                                                         |
+| Generated run and fire motions look floaty                     | Measured   | The chase is not intense: runs top at 5.1 m/s, arms tucked, no recoil (#1600)  | Trim the wind-up, speed the clip about 1.5×, cut tighter and lower, key the recoil by hand (#1399 only if the fire is generated)                                |
+| The hero figures look like test assets                         | High       | The ending falls flat                                                          | Figures chosen 2026-10-16 (runner: cyberpunk character; pursuer: a mecha)                                                                                       |
 | A gunshot at a person limits where the video can run           | Medium     | Paid placement refused on some platforms; a harder tone for a general audience | Keep a second version with a stylised projectile (a dart, an arrow, a thrown blade). The structure is identical.                                                |
 | Insider vocabulary visible in panels                           | High       | A director feels it is a 3D package                                            | Measured 2026-10-13: the outliner shows `n_box`, the inspector shows spare params and data types (#1625, #1627). Fix those two before shooting; collapse panels |
 | The AI look flickers across twelve seconds                     | Medium     | The final film looks cheap                                                     | Pick looks for stability; fast cuts hide more than a slow shot does                                                                                             |
@@ -703,7 +705,7 @@ Claims the video does **not** make: world's first, easiest, fastest, real-time A
 1. Is the tag "a procedural 3D film studio in your browser"?
 2. Is "world's first" off the screen?
 3. A bullet, or a stylised projectile? Or both versions?
-4. Who are the two figures, and who makes or licenses them?
+4. ~~Who are the two figures, and who makes or licenses them?~~ Decided 2026-10-16: the runner is the cyberpunk character (CC-BY-4.0, credited); the pursuer is a rigged mecha the user supplies.
 5. Which two AI looks?
 6. Captions only, or a voice as well?
 7. Does the graph appear at all for a general audience, or only on the landing page?
@@ -718,7 +720,7 @@ Claims the video does **not** make: world's first, easiest, fastest, real-time A
 2. Decide how the whole scene slows, and build it.
 3. Try an AI look on a posed, lit frame.
 4. Generate a run and a draw-and-fire; judge them honestly.
-5. Choose the two figures.
+5. ~~Choose the two figures.~~ Done 2026-10-16.
 6. Build the shots panel and timeline cuts.
 7. ~~Build the alley from one length value.~~ Second cut (#1597). This cut: swap the alley for the plaza.
 8. Settle the conditional issues in §12.2.
