@@ -64,8 +64,12 @@ import { ADDABLE_CONSTRAINTS } from './constraintStack';
 import { operatorTypesInSection } from './operatorChain';
 import { PASS_NODE_TYPE_BY_KIND } from '../agent/mutators/builders/addPass';
 import { listMutators } from '../agent/mutators/catalog';
+import { collapseToTemplateMutator } from '../agent/mutators/builders/templates';
 import { registerAllMutators } from '../agent/mutators';
 import type { OperatorSection } from '../core/dag/types';
+import type { Op } from '../core/dag/types';
+import { emptyDagState } from '../core/dag/state';
+import { applyOp } from '../core/dag/ops';
 
 const REPO_ROOT = process.cwd();
 
@@ -133,12 +137,6 @@ const NO_CREATION_ROAD: Readonly<Record<string, string>> = {
   Cut:
     'The Shot/Cut editorial species (THESIS §42), shipped as data in Wave A with its ' +
     'authoring surface never built. The compositor is where editorial lives now.',
-
-  TemplateDefinition:
-    'A template held in the graph (#1557). Made by collapsing a selection into a template ' +
-    '(`collapseSelectionToTemplate`, src/app/templates.ts), which no surface offers yet: the ' +
-    "app has no node-graph editor, so its doors are the agent's and the scene tree's, built " +
-    'next under #1557. Remove this entry when the first one lands.',
 
   Scatter:
     "THESIS §29's proof that procedural generation is substrate. It evaluates, renders " +
@@ -255,6 +253,22 @@ function variableRoads(): Road[] {
   }
   for (const type of Object.values(PASS_NODE_TYPE_BY_KIND))
     found.push({ type, road: 'mutator.render.addPass' });
+  // #1557 — the collapse mutator passes its types through as constants. Asked by running it on a
+  // three-node graph and reading the types its plan adds.
+  {
+    const collapse = collapseToTemplateMutator;
+    const ops: Op[] = [
+      { type: 'addNode', nodeId: 'a', nodeType: 'Fit', params: {} },
+      { type: 'addNode', nodeId: 'b', nodeType: 'Math', params: {} },
+      { type: 'addNode', nodeId: 'c', nodeType: 'Math', params: {} },
+      { type: 'connect', from: { node: 'a', socket: 'out' }, to: { node: 'b', socket: 'a' } },
+      { type: 'connect', from: { node: 'b', socket: 'out' }, to: { node: 'c', socket: 'a' } },
+    ];
+    const state = ops.reduce((s, op) => applyOp(s, op).next, emptyDagState());
+    const spec = collapse.spec.parse({ nodes: ['b'], name: 'RoadProbe' });
+    for (const op of collapse.build(spec, { nodes: new Set(), edges: [] } as never, state))
+      if (op.type === 'addNode') found.push({ type: op.nodeType, road: collapse.name });
+  }
   return found;
 }
 

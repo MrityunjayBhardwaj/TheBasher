@@ -79,7 +79,7 @@ export function planCollapseToTemplate(
 ): CollapsePlan {
   const inside = new Set(selection.filter((id) => state.nodes[id]));
   if (inside.size === 0) return { ok: false, reason: 'nothing is selected' };
-  const typeName = `${TEMPLATE_TYPE_PREFIX}${asName(name, 'Template')}`;
+  const typeName = templateTypeFor(name);
   if (templatesOf(state).has(typeName))
     return { ok: false, reason: `a template "${typeName}" already exists in this project` };
   if (state.nodes[instanceId]) return { ok: false, reason: `"${instanceId}" is already a node` };
@@ -360,12 +360,26 @@ export function matchInstanceBody(
 // ── The two actions ─────────────────────────────────────────────────────────────────────────
 
 /** An id for a new instance of `type`, free in `state`. */
-function instanceIdFor(state: DagState, type: string): NodeId {
+export function instanceIdFor(state: DagState, type: string): NodeId {
   const base = `n_${type.slice(TEMPLATE_TYPE_PREFIX.length).toLowerCase()}`;
   let n = 1;
   while (state.nodes[`${base}_${n}`]) n++;
   return `${base}_${n}`;
 }
+
+/** The type of the template `state` holds named `name`: its type (`template.Lag`), the name in
+ *  it (`Lag`) or its label. */
+export function templateTypeNamed(state: DagState, name: string): string | undefined {
+  const all = templatesOf(state);
+  if (all.has(name)) return name;
+  if (all.has(`${TEMPLATE_TYPE_PREFIX}${name}`)) return `${TEMPLATE_TYPE_PREFIX}${name}`;
+  for (const [type, { definition }] of all) if (definition.label === name) return type;
+  return undefined;
+}
+
+/** The type a template named `name` gets. */
+export const templateTypeFor = (name: string) =>
+  `${TEMPLATE_TYPE_PREFIX}${asName(name, 'Template')}`;
 
 export type TemplateActionResult =
   | { readonly ok: true; readonly type: string; readonly instance: NodeId }
@@ -378,7 +392,7 @@ export function collapseSelectionToTemplate(
   name: string,
 ): TemplateActionResult {
   const state = useDagStore.getState().state;
-  const instance = instanceIdFor(state, `${TEMPLATE_TYPE_PREFIX}${asName(name, 'Template')}`);
+  const instance = instanceIdFor(state, templateTypeFor(name));
   const plan = planCollapseToTemplate(state, selection, name, instance);
   if (!plan.ok) return plan;
   try {

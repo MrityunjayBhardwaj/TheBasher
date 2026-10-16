@@ -63,6 +63,7 @@ import { bakePoseMutator } from './builders/bakePose';
 import { wrapInRigMutator } from './builders/wrapInRig';
 import { constrainMutator, unconstrainMutator } from './builders/constrain';
 import { setHiddenMutator } from './builders/setHidden';
+import { addTemplateInstanceMutator, collapseToTemplateMutator } from './builders/templates';
 
 export {
   rotateMutator,
@@ -101,6 +102,8 @@ export {
   bindSkinMutator,
   bakePoseMutator,
   wrapInRigMutator,
+  collapseToTemplateMutator,
+  addTemplateInstanceMutator,
   constrainMutator,
   unconstrainMutator,
   setHiddenMutator,
@@ -203,4 +206,7 @@ export function registerAllMutators(): void {
   registerMutator(bakePoseMutator);
   // #1357 — the layers over a character's motion, moved inside one Rig node.
   registerMutator(wrapInRigMutator);
+  // #1557 — a project's templates: collapse nodes into one, and add more instances of it.
+  registerMutator(collapseToTemplateMutator);
+  registerMutator(addTemplateInstanceMutator);
 }

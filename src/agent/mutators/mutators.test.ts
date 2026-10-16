@@ -164,7 +164,8 @@ describe('mutator catalog', () => {
     // 36 → 37 at #1510 — `rig.addIk`, Pose mode's Add › IK.
     // 37 → 38 at #1357 — `animate.wrapInRig`, the road in to the Rig node.
     // 38 → 39 at #1353 — `rig.bindSkin`, a mesh bound to an armature.
-    expect(mutators).toHaveLength(39);
+    // 39 → 41 at #1557 — `graph.collapseToTemplate` + `graph.addTemplateInstance`.
+    expect(mutators).toHaveLength(41);
     const names = mutators.map((m) => m.name).sort();
     expect(names).toEqual([
       'mutator.animate.bakePose',
@@ -178,6 +179,8 @@ describe('mutator catalog', () => {
       'mutator.deleteNode',
       'mutator.duplicate',
       'mutator.geometry.addModifier',
+      'mutator.graph.addTemplateInstance',
+      'mutator.graph.collapseToTemplate',
       'mutator.nla.addStrip',
       'mutator.nla.createAction',
       'mutator.nla.setStripBlend',
@@ -2465,7 +2468,8 @@ describe('agent.listMutators tool', () => {
     // 36 → 37 at #1510 — `rig.addIk`.
     // 37 → 38 at #1357 — `animate.wrapInRig`.
     // 38 → 39 at #1353 — `rig.bindSkin`.
-    expect(parsed.mutators).toHaveLength(39);
+    // 39 → 41 at #1557 — `graph.collapseToTemplate` + `graph.addTemplateInstance`.
+    expect(parsed.mutators).toHaveLength(41);
   });
 });
 
@@ -4138,6 +4142,8 @@ import {
   bindSkinMutator as _bindSkinM,
   bakePoseMutator as _bakePoseM,
   wrapInRigMutator as _wrapInRigM,
+  collapseToTemplateMutator as _collapseM,
+  addTemplateInstanceMutator as _instanceM,
   retargetMutator as _retargetM,
   addPassMutator as _addPassM,
   addAIPassMutator as _addAIPassM,
@@ -4156,6 +4162,7 @@ import {
 } from './index';
 import type { MutatorDefinition, MutatorValidationResult } from './index';
 import type { Op } from '../../core/dag/types';
+import { applyOps } from '../../core/dag/ops';
 
 describe('V14 deeper non-redundancy — Op-shape probe (issue #22)', () => {
   // A channel scene: collinear KeyframeChannelNumber so simplifyChannel
@@ -4382,6 +4389,41 @@ describe('V14 deeper non-redundancy — Op-shape probe (issue #22)', () => {
     }).next;
   }
 
+  // #1557 — a Fit read by a Math read by a driver on the box: the Math collapses into a template.
+  function buildSceneForTemplate(): DagState {
+    const ops: Op[] = [
+      { type: 'addNode', nodeId: 'tk', nodeType: 'Fit', params: {} },
+      { type: 'addNode', nodeId: 'tm', nodeType: 'Math', params: {} },
+      { type: 'connect', from: { node: 'tk', socket: 'out' }, to: { node: 'tm', socket: 'a' } },
+      {
+        type: 'addNode',
+        nodeId: 'td',
+        nodeType: 'ParamDriver',
+        params: {
+          target: 'n_box',
+          paramPath: 'material.metalness',
+          blendMode: 'replace',
+          order: 0,
+        },
+      },
+      { type: 'connect', from: { node: 'tm', socket: 'out' }, to: { node: 'td', socket: 'in' } },
+    ];
+    return ops.reduce((s, op) => applyOp(s, op).next, buildDefaultDagState());
+  }
+  function buildSceneWithTemplate(): DagState {
+    const scene = buildSceneForTemplate();
+    const r = validatePlan(
+      _collapseM as MutatorDefinition<unknown>,
+      { nodes: ['tm'], name: 'Scale' },
+      scene,
+      'probe setup',
+    );
+    if (!r.ok) throw new Error(r.reason);
+    // One batch, as the store applies it: halfway through, the Math feeds the instance and the
+    // driver both, which only the graph the batch ends in is judged on (#1623).
+    return applyOps(scene, r.ops).next;
+  }
+
   interface ProbeEntry {
     mutator: MutatorDefinition<unknown>;
     build: () => DagState;
@@ -4520,6 +4562,16 @@ describe('V14 deeper non-redundancy — Op-shape probe (issue #22)', () => {
       mutator: _bakePoseM as MutatorDefinition<unknown>,
       build: buildSceneForPoseBake,
       spec: { object: 'br_arm', at: 'br_layer', poses: { nth: 2 } },
+    },
+    'mutator.graph.collapseToTemplate': {
+      mutator: _collapseM as MutatorDefinition<unknown>,
+      build: buildSceneForTemplate,
+      spec: { nodes: ['tm'], name: 'Scale' },
+    },
+    'mutator.graph.addTemplateInstance': {
+      mutator: _instanceM as MutatorDefinition<unknown>,
+      build: buildSceneWithTemplate,
+      spec: { template: 'Scale', inputs: { tk: 'tk' } },
     },
     'mutator.animate.wrapInRig': {
       mutator: _wrapInRigM as MutatorDefinition<unknown>,
