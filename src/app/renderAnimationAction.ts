@@ -150,7 +150,8 @@ export async function renderAnimationToFile(
   const ctrl = new AbortController();
   useRenderAnimationStore.getState().begin(sink.format, frameCount, () => ctrl.abort());
 
-  const restoreSeconds = time.seconds;
+  // #1594 — the playhead (film time) is what `setTime` takes back.
+  const restoreSeconds = time.filmSeconds;
   const wasPlaying = time.playing;
   useTimeStore.getState().pause();
 
@@ -173,7 +174,8 @@ export async function renderAnimationToFile(
           // waitForApply have advanced the playhead. Read the live seconds (just
           // set) and the captured DAG state (unchanged across frames). Same
           // resolver as the still + viewport → frame-for-frame parity.
-          const pose = resolveActiveCameraPoseAt(state, useTimeStore.getState().seconds, cache);
+          // #1594 — the camera at this frame's FILM time; the scene was drawn at its scene time.
+          const pose = resolveActiveCameraPoseAt(state, useTimeStore.getState().filmSeconds, cache);
           return renderSceneToImageCanvas({ gl, scene, pose, width, height, postFx, dof }, scratch);
         },
       },

@@ -19,6 +19,7 @@ import { BAKE_POSE_LABEL } from '../app/animate/bakePose';
 import { EditableCurve } from './EditableCurve';
 import { isComputedRowId, layerChannelRows, parseLayerRowId } from './layerChannelRows';
 import { resolveRowChannelForWrite } from '../app/animate/rowChannelWrite';
+import { runsOnFilmTime } from '../app/subjectClock';
 
 interface VecKey {
   time: number;
@@ -32,6 +33,7 @@ export function CurveEditor({ duration }: { duration: number }) {
   const dagState = useDagStore((s) => s.state);
   const nodes = dagState.nodes;
   const seconds = useTimeStore((s) => s.seconds);
+  const filmSeconds = useTimeStore((s) => s.filmSeconds);
 
   // #163 — when no channel row is explicitly active, fall back to a channel of
   // the SELECTED object so the curve editor isn't empty after keying. Grounded:
@@ -94,11 +96,15 @@ export function CurveEditor({ duration }: { duration: number }) {
     );
   }
 
-  const params = curve.params as { keyframes?: VecKey[]; paramPath?: string };
+  const params = curve.params as { keyframes?: VecKey[]; paramPath?: string; target?: string };
   const keyframes = (params.keyframes ?? []).slice().sort((a, b) => a.time - b.time);
   const layer = parseLayerRowId(channelId);
   const paramPath = params.paramPath ?? layer?.component ?? '';
   const nodeType = curve.nodeType;
+  // #1594 — a camera's curve, and the Scene speed's, are on the playhead's clock; every other
+  // curve is on scene time. The playhead and the ruler scrub follow the curve's own clock.
+  const filmClock =
+    typeof params.target === 'string' && runsOnFilmTime(dagState, params.target, paramPath);
 
   // Authored Number / Vec3 channel → the reze-style editable graph editor
   // (UX #11). Curves are sampled THROUGH the shared keyframeInterp inside
@@ -113,7 +119,8 @@ export function CurveEditor({ duration }: { duration: number }) {
         curve={curve.params}
         write={curve.write}
         duration={duration}
-        seconds={seconds}
+        seconds={filmClock ? filmSeconds : seconds}
+        filmClock={filmClock}
       />
     );
   }

@@ -31,7 +31,7 @@ import { FRAMES_PER_SECOND, useTimeStore } from './stores/timeStore';
 export const DEFAULT_SCENE_FRAME_END = 600;
 
 /** The Scene node the project renders (`outputs.scene`), or null. */
-function sceneNodeId(state: DagState): string | null {
+export function sceneNodeId(state: DagState): string | null {
   const ref = state.outputs.scene;
   return ref && state.nodes[ref.node]?.type === 'Scene' ? ref.node : null;
 }
@@ -110,5 +110,5 @@ export function setSceneEnd(seconds: number): void {
 
 /** Blender's Set End Frame (Ctrl+End): End moves to the playhead. */
 export function setSceneEndAtPlayhead(): void {
-  setSceneEnd(useTimeStore.getState().seconds);
+  setSceneEnd(useTimeStore.getState().filmSeconds);
 }

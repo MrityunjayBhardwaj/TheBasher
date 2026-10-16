@@ -28,11 +28,16 @@ import { useTimeStore } from '../app/stores/timeStore';
 export function usePlayheadFollow<T>(
   sample: (seconds: number) => T,
   signature: (value: T) => string = (v) => JSON.stringify(v),
+  clock: 'scene' | 'film' = 'scene',
 ): T {
-  const [value, setValue] = useState<T>(() => sample(useTimeStore.getState().seconds));
+  // #1594 — `clock` picks the time handed to `sample`: scene time (default — everything in the
+  // scene), or the playhead's film time (a camera, which keeps real time in a slowed scene).
+  const now = () =>
+    clock === 'film' ? useTimeStore.getState().filmSeconds : useTimeStore.getState().seconds;
+  const [value, setValue] = useState<T>(() => sample(now()));
   const sigRef = useRef<string>(signature(value));
   useFrame(() => {
-    const next = sample(useTimeStore.getState().seconds);
+    const next = sample(now());
     const sig = signature(next);
     if (sig === sigRef.current) return;
     sigRef.current = sig;

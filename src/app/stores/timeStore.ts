@@ -27,7 +27,7 @@
 // freeze the escape-hatch playhead during scrub and on duration change.
 // timeStore's three setters are the single chokepoint where `frame`
 // mutates, so writing the mirror here makes the invariant
-// `currentFrameRef.current === useTimeStore.getState().frame`
+// `currentFrameRef.current === useTimeStore.getState().filmFrame` (the playhead; #1594)
 // hold by construction after EVERY state transition (playback AND scrub AND
 // duration change) — never-diverge by single-writer. Cross-store call is
 // call-time `getState()` (no module-top-level cycle); both are
@@ -43,13 +43,31 @@ import { FRAMES_PER_SECOND } from '../../core/sceneFrames';
 export { FRAMES_PER_SECOND };
 const DEFAULT_DURATION_SECONDS = 10;
 
+/** #1594 — film time → scene time, and back (`src/app/sceneClock.ts`). Identity until a scene
+ *  is slowed; `SceneTimeSync` installs the rendered Scene's clock. */
+export interface TimeMap {
+  sceneAt(film: number): number;
+  filmAt(scene: number): number;
+}
+
+const IDENTITY_MAP: TimeMap = { sceneAt: (f) => f, filmAt: (s) => s };
+
 export interface TimeStore {
-  /** Current scrub time in seconds. */
+  /** SCENE time in seconds (#1594): what everything in the scene is sampled and keyed at.
+   *  Equal to `filmSeconds` unless the Scene's speed is changed. */
   seconds: number;
-  /** Frame index at FRAMES_PER_SECOND (derived from `seconds`). */
+  /** Scene frame index at FRAMES_PER_SECOND (derived from `seconds`). */
   frame: number;
-  /** Normalized 0..1 over the project duration. */
+  /** #1594 — the PLAYHEAD in seconds (film time): the ruler, playback, render frames, the
+   *  scene's End, and the camera's own animation. Every setter below moves this; `seconds`
+   *  follows through the time map. */
+  filmSeconds: number;
+  /** The playhead's frame index (derived from `filmSeconds`). */
+  filmFrame: number;
+  /** Normalized 0..1 over the project duration (film time). */
   normalized: number;
+  /** #1594 — the film → scene time map in force. */
+  timeMap: TimeMap;
   /** Total duration of the project's playable range: playback loops here. In 3D it is the
    *  scene's End (#1287, `sceneRange.ts`); Video mode sizes it to the composition. */
   durationSeconds: number;
@@ -60,7 +78,10 @@ export interface TimeStore {
   /** Whether the rAF clock is advancing time. */
   playing: boolean;
 
+  /** Move the playhead to film time `seconds`. */
   setTime(seconds: number): void;
+  /** #1594 — install the scene clock; scene time is re-derived at the current playhead. */
+  setTimeMap(map: TimeMap | null): void;
   /** Set the playable range, and let the playhead reach exactly that far (Video mode). */
   setDuration(seconds: number): void;
   /** #1287 — set the playable range (End) and how far past it the playhead may go. The playhead
@@ -89,6 +110,18 @@ function deriveFrame(seconds: number): number {
   return Math.round(seconds * FRAMES_PER_SECOND);
 }
 
+/** The canonical time fields at playhead `film`, under `map`. */
+function at(film: number, duration: number, map: TimeMap) {
+  const seconds = map === IDENTITY_MAP ? film : map.sceneAt(film);
+  return {
+    filmSeconds: film,
+    filmFrame: deriveFrame(film),
+    seconds,
+    frame: deriveFrame(seconds),
+    normalized: deriveNormalized(film, duration),
+  };
+}
+
 function deriveNormalized(seconds: number, duration: number): number {
   if (duration <= 0) return 0;
   return seconds / duration;
@@ -100,56 +133,51 @@ function deriveNormalized(seconds: number, duration: number): number {
  *  cross-store reference is resolved at call time via `getState()` (no
  *  module-init cycle). See D-W9-1, D-W9-9. */
 function mirrorFrame(frame: number): void {
+  // #1594 — the escape hatch draws the PLAYHEAD, so it carries the film frame.
   useViewportStore.getState().currentFrameRef.current = frame;
 }
 
 export const useTimeStore = create<TimeStore>((set, get) => ({
   seconds: 0,
   frame: 0,
+  filmSeconds: 0,
+  filmFrame: 0,
   normalized: 0,
+  timeMap: IDENTITY_MAP,
   durationSeconds: DEFAULT_DURATION_SECONDS,
   extentSeconds: DEFAULT_DURATION_SECONDS,
   playing: false,
 
   setTime(seconds) {
-    const { durationSeconds, extentSeconds } = get();
+    const { durationSeconds, extentSeconds, timeMap } = get();
     const clamped = clampToDuration(seconds, reachOf(durationSeconds, extentSeconds));
-    set({
-      seconds: clamped,
-      frame: deriveFrame(clamped),
-      normalized: deriveNormalized(clamped, durationSeconds),
-    });
+    set(at(clamped, durationSeconds, timeMap));
     // Mirror after the canonical state is committed (single chokepoint).
     mirrorFrame(deriveFrame(clamped));
   },
 
+  setTimeMap(map) {
+    const next = map ?? IDENTITY_MAP;
+    const { filmSeconds, durationSeconds, timeMap } = get();
+    if (next === timeMap) return;
+    set({ timeMap: next, ...at(filmSeconds, durationSeconds, next) });
+  },
+
   setDuration(seconds) {
     const next = Math.max(0.001, seconds);
-    const { seconds: cur } = get();
+    const { filmSeconds: cur, timeMap } = get();
     const clamped = clampToDuration(cur, next);
-    set({
-      durationSeconds: next,
-      extentSeconds: next,
-      seconds: clamped,
-      frame: deriveFrame(clamped),
-      normalized: deriveNormalized(clamped, next),
-    });
+    set({ durationSeconds: next, extentSeconds: next, ...at(clamped, next, timeMap) });
     mirrorFrame(deriveFrame(clamped));
   },
 
   setRange(endSeconds, extentSeconds) {
     const end = Math.max(0.001, endSeconds);
     const extent = reachOf(end, extentSeconds);
-    const { seconds: cur, durationSeconds, extentSeconds: prevExtent } = get();
+    const { filmSeconds: cur, durationSeconds, extentSeconds: prevExtent, timeMap } = get();
     if (end === durationSeconds && extent === prevExtent) return;
     const clamped = clampToDuration(cur, extent);
-    set({
-      durationSeconds: end,
-      extentSeconds: extent,
-      seconds: clamped,
-      frame: deriveFrame(clamped),
-      normalized: deriveNormalized(clamped, end),
-    });
+    set({ durationSeconds: end, extentSeconds: extent, ...at(clamped, end, timeMap) });
     mirrorFrame(deriveFrame(clamped));
   },
 
@@ -166,7 +194,7 @@ export const useTimeStore = create<TimeStore>((set, get) => ({
   },
 
   tick(delta) {
-    const { playing, seconds, durationSeconds, extentSeconds } = get();
+    const { playing, filmSeconds: seconds, durationSeconds, extentSeconds, timeMap } = get();
     if (!playing) return;
     let next = seconds + delta;
     // Loop at duration end so playback is observable in steady state without
@@ -176,11 +204,7 @@ export const useTimeStore = create<TimeStore>((set, get) => ({
       next = seconds >= durationSeconds ? 0 : next % durationSeconds;
     }
     const clamped = clampToDuration(next, reachOf(durationSeconds, extentSeconds));
-    set({
-      seconds: clamped,
-      frame: deriveFrame(clamped),
-      normalized: deriveNormalized(clamped, durationSeconds),
-    });
+    set(at(clamped, durationSeconds, timeMap));
     mirrorFrame(deriveFrame(clamped));
   },
 }));

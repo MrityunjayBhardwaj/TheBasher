@@ -68,6 +68,7 @@ function channelExtendArgs(
   return [before, after, cyclesBefore, cyclesAfter, p.modifiers];
 }
 import { resolveCameraSelectIndex } from '../nodes/CameraSelect';
+import { sceneClockOf } from './sceneClock';
 import { resolveTrackToTarget, resolveConstraintPosition } from './nodeConstraints';
 import { resolveParentWorldMatrix } from './resolveWorldTransform';
 import { composeCameraPoseWithParent } from './cameraOrientation';
@@ -308,7 +309,8 @@ export function resolveActiveCameraPoseAt(
   return resolveCameraPoseAt(state, node.id, seconds, cache);
 }
 
-/** [[V85]]/[[H132]] — the EVALUATED pose of ANY camera node at clip-time `seconds`
+/** [[V85]]/[[H132]] — the EVALUATED pose of ANY camera node at FILM time `seconds` (#1594: the
+ *  playhead, not scene time — pass `useTimeStore.filmSeconds`)
  *  (not only the active one): static base + keyframe channels + Track-To aim +
  *  parent-group world. `resolveActiveCameraPoseAt` is this applied to the active
  *  node; the camera-frustum FOLLOWER (SceneFromDAG) applies it per camera so every
@@ -378,7 +380,17 @@ export function resolveCameraPoseAt(
   // fixed aimPoint), through the SAME resolver meshes use. It takes over the
   // lookAt (over the static param + any lookAt channel above). null → no camera
   // constraint → the channel/static lookAt stands (byte-identical to pre-#204).
-  const ctx = { time: { frame: Math.round(seconds * 60), seconds, normalized: 0 } };
+  //
+  // #1594 — TWO CLOCKS. `seconds` is FILM time (the playhead): the camera's own keys above, its
+  // path below and its cuts run on it, so a camera keeps moving while the scene is slowed. What
+  // it aims at and what it hangs from are scene things, read at SCENE time — so it can circle a
+  // frozen runner. Identical when the scene runs at speed 1.
+  const filmCtx = { time: { frame: Math.round(seconds * 60), seconds, normalized: 0 } };
+  const sceneSeconds = sceneClockOf(state).sceneAt(seconds);
+  const ctx =
+    sceneSeconds === seconds
+      ? filmCtx
+      : { time: { frame: Math.round(sceneSeconds * 60), seconds: sceneSeconds, normalized: 0 } };
 
   // #339 Follow-Path — a camera is posed by THIS resolver, not by the mesh road
   // (ConstrainedR / resolveEvaluatedTransform), so the POSITION band has to be folded here
@@ -392,7 +404,7 @@ export function resolveCameraPoseAt(
   // (position → lookAt) downstream by `cameraOrientationQuat`. Move the camera and the aim
   // follows for free. `resolveConstraintPosition` returns PARENT-LOCAL, which is exactly
   // what the parent compose below expects.
-  const followed = resolveConstraintPosition(state, node.id, ctx, cache);
+  const followed = resolveConstraintPosition(state, node.id, filmCtx, cache);
   if (followed) {
     pose ??= { ...base };
     pose.position = followed;

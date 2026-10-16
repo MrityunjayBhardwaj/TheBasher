@@ -517,7 +517,7 @@ export function SceneFromDAG({ outputName = 'render' }: SceneFromDAGProps) {
   const activeDof = resolveCameraDofAt(
     state,
     activeCameraId,
-    useTimeStore.getState().seconds,
+    useTimeStore.getState().filmSeconds,
     uiEvaluatorCache,
   );
 
@@ -1468,8 +1468,11 @@ function DirectChannelsLightR({
 // that is the walk's whole-clip retarget, three times a frame (~3 fps, idle or playing).
 function CameraFrustumFollower({ cameraId, active }: { cameraId: string; active: boolean }) {
   const cache = uiEvaluatorCache;
-  const pose = usePlayheadFollow((seconds) =>
-    resolveCameraPoseAt(useDagStore.getState().state, cameraId, seconds, cache),
+  // #1594 — a camera follows the playhead (film time), not the scene's slowed clock.
+  const pose = usePlayheadFollow(
+    (seconds) => resolveCameraPoseAt(useDagStore.getState().state, cameraId, seconds, cache),
+    undefined,
+    'film',
   );
   return <CameraHelper pose={pose} pickId={cameraId} active={active} />;
 }
