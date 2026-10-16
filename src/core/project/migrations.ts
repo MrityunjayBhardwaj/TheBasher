@@ -11,6 +11,8 @@
 // REF: THESIS.md §52, krama K5 step 7.
 
 import { TEMPLATE_DEFINITION_TYPE } from '../dag/templates';
+import { builtinDefinition } from '../../app/builtinTemplates';
+import { planTemplateInstance } from '../../app/templates';
 import { getNodeType } from '../dag/registry';
 import { normalizeRetiredParams } from './retiredLadders';
 import { RETIRED_NODE_TYPES } from './oldImports';
@@ -135,6 +137,9 @@ const formatMigrations: Record<number, FormatMigration> = {
   // v21 → v22 (#1548): the Solver's four input leaves become the two named body-input leaves —
   // each reads the input it stood for by name, so no leaf type is tied to the Solver.
   21: migrateSolverLeavesToBodyInputs,
+  // v22 → v23 (#1559): each Lag node becomes an instance of the built-in Lag template, holding the
+  // Lag's factor, start frame and controller, reading its `in`, under the Lag's own id.
+  22: migrateLagNodesToTemplate,
 };
 
 // ── v1 → v2: AnimationLayer retirement (#199) ──────────────────────────────
@@ -2192,4 +2197,66 @@ export function migrateSolverLeavesToBodyInputs(raw: unknown): unknown {
     );
   }
   return { ...proj, state: { ...proj.state, nodes: next }, formatVersion: 22 };
+}
+
+/**
+ * v22 → v23 (#1559) — each Lag node becomes an instance of the built-in Lag template.
+ *
+ * Lag is a Solver preset now (`src/app/builtinTemplates.ts`). Each saved Lag becomes an instance
+ * under the SAME id, so every wire from its `out` and every id that names it still finds it,
+ * holding what the Lag held (factor, start frame, controller) and wired to what fed its `in`; its
+ * body is a fresh copy of the built-in body, and the built-in definition is added once. The
+ * instance computes what the Lag computed, frame for frame (`builtinTemplates.test.ts`). Runs on
+ * raw JSON, before `ProjectSchema.parse`.
+ */
+export function migrateLagNodesToTemplate(raw: unknown): unknown {
+  const proj = raw as { formatVersion?: number; state?: { nodes?: Record<string, RawNode> } };
+  const nodes = proj.state?.nodes;
+  const lags = Object.entries(nodes ?? {}).filter(([, n]) => n?.type === 'Lag');
+  if (!nodes || lags.length === 0) return { ...proj, formatVersion: 23 };
+  const definition = builtinDefinition('Lag');
+  const next: Record<string, RawNode> = { ...nodes };
+  let holder = 'tpl_Lag';
+  for (let n = 2; next[holder]; n++) holder = `tpl_Lag_${n}`;
+  next[holder] = {
+    id: holder,
+    type: TEMPLATE_DEFINITION_TYPE,
+    version: 1,
+    params: { definition, keep: false } as unknown as Record<string, unknown>,
+    inputs: {},
+  };
+  for (const [id, lag] of lags) {
+    const p = (lag.params ?? {}) as {
+      factor?: unknown;
+      seedFrame?: unknown;
+      sourceTransform?: unknown;
+    };
+    const params: Record<string, unknown> = {
+      locked: true,
+      factor: typeof p.factor === 'number' ? p.factor : 0.2,
+      seedFrame: typeof p.seedFrame === 'number' ? p.seedFrame : 0,
+      in: 0,
+      ...(p.sourceTransform !== undefined ? { sourceTransform: p.sourceTransform } : {}),
+    };
+    const { [id]: _self, ...others } = next;
+    void _self;
+    const ops = planTemplateInstance({ nodes: others } as never, definition, id, params);
+    for (const op of ops) {
+      if (op.type !== 'addNode') continue;
+      next[op.nodeId] = {
+        id: op.nodeId,
+        type: op.nodeType,
+        version: op.nodeId === id ? 1 : (getNodeType(op.nodeType)?.version ?? 1),
+        params: op.params as Record<string, unknown>,
+        inputs: {
+          ...((op.inputs ?? {}) as Record<string, RawRef | RawRef[]>),
+          ...(op.nodeId === id && lag.inputs?.in ? { in: lag.inputs.in } : {}),
+        },
+      };
+    }
+  }
+  console.warn(
+    `[migrateLagNodesToTemplate] ${lags.length} Lag node(s) are now instances of the built-in Lag template (#1559).`,
+  );
+  return { ...proj, state: { ...proj.state, nodes: next }, formatVersion: 23 };
 }

@@ -72,8 +72,8 @@ function asV21(state: DagState) {
 }
 
 describe('#1548 — v21 → v22: Solver input leaves read their input by name', () => {
-  it('the app writes v22', () => {
-    expect(PROJECT_FORMAT_VERSION).toBe(22);
+  it('the v21 → v22 step is on the ladder, and the app writes past it', () => {
+    expect(PROJECT_FORMAT_VERSION).toBeGreaterThanOrEqual(22);
   });
 
   it('turns each old leaf into the named leaf it stood for, and nothing else changes', () => {
@@ -83,7 +83,7 @@ describe('#1548 — v21 → v22: Solver input leaves read their input by name', 
       expect.arrayContaining(['PrevFrame', 'SolverInput', 'PrevFrameVec', 'SolverInputVec']),
     );
     const migrated = migrateProjectFormat(raw) as { formatVersion: number; state: DagState };
-    expect(migrated.formatVersion).toBe(22);
+    expect(migrated.formatVersion).toBe(PROJECT_FORMAT_VERSION);
     expect(migrated.state).toEqual(JSON.parse(JSON.stringify(before)));
   });
 
@@ -112,7 +112,7 @@ describe('#1548 — v21 → v22: Solver input leaves read their input by name', 
     const storage = new MemoryStorage();
     await storage.write('projects/p/project.json', new TextEncoder().encode(JSON.stringify(saved)));
     const loaded = await loadProject(storage, 'p');
-    expect(loaded.formatVersion).toBe(22);
+    expect(loaded.formatVersion).toBe(PROJECT_FORMAT_VERSION);
     expect(loaded.state.nodes).toEqual(JSON.parse(JSON.stringify(before.nodes)));
     expect(Object.keys(loaded.nodeVersions).sort()).toEqual(
       ['BodyInput', 'BodyInputVec', 'Math', 'Solver', 'Vec3Math'].sort(),

@@ -91,7 +91,9 @@ import { NodeSchema, NodeIdSchema, NodeRefSchema } from '../dag/types';
 // formatMigrations[20].
 // v22 (#1548): the Solver's input leaves (PrevFrame, SolverInput and their Vec twins) are
 // `BodyInput`/`BodyInputVec` reading the input by name. See migrations.ts formatMigrations[21].
-export const PROJECT_FORMAT_VERSION = 22;
+// v23 (#1559): a Lag is an instance of the built-in Lag template, not a Lag node. See
+// migrations.ts formatMigrations[22].
+export const PROJECT_FORMAT_VERSION = 23;
 
 export const ProjectSchema = z.object({
   formatVersion: z.literal(PROJECT_FORMAT_VERSION),
