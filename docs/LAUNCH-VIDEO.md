@@ -276,9 +276,9 @@ Conventions: **Screen** is what is captured. **Action** is what the hand does. *
 
 **Shot 2.2 (26–29 s)**
 
-- **Action:** the second shot is selected. A move is picked from a short list — push in — and the camera drives toward the gun.
+- **Action:** the second shot is selected. Its camera is keyed closer to the gun across the shot — a push in — and the camera drives toward it while its aim holds.
 - **Caption:** none.
-- **Needs:** a camera move picker in the interface.
+- **Needs:** nothing new. A push-in is the camera's own keys, as in Blender, which has no move picker either. Observed 2026-10-17 in the plaza scene: the camera eased from 3.19 m to 2.23 m from the runner over two seconds, aim held (`plaza-run-v2.basher`). The picker (#1596) was closed as not needed.
 
 **Shot 2.3 (29–32 s)**
 
@@ -513,7 +513,7 @@ Surveyed on main at `707cb2da` on 2026-10-12, by reading the code and the open i
 | 1   | ~~A scene from one sentence~~: **second cut** (#1593)           | 1.2      | The AI has separate tools (add a mesh, import from the library, generate a model, generate motion, walk-to, create a shot, move a camera). Nothing found chains them from one sentence. |
 | 2   | One control that slows the whole scene                          | 3.1, 5.3 | Per-clip retiming exists. No scene-wide speed control was found.                                                                                                                        |
 | 3   | A shots panel, and cuts editable on the timeline                | 2.1, 2.3 | Shot and Cut nodes exist and the AI can create a shot. No panel was found.                                                                                                              |
-| 4   | A camera move picker                                            | 2.2      | Moves exist as something the AI can do. No picker was found in the interface.                                                                                                           |
+| 4   | ~~A camera move picker~~: **not needed** (#1596 closed)         | 2.2      | Blender has no move picker; a push-in is keyed on the camera. Done that way in the plaza scene on 2026-10-17.                                                                           |
 | 5   | ~~An alley driven by one length value~~: **second cut** (#1597) | 6.1      | Array and Scatter operators exist. No set built from them does.                                                                                                                         |
 | 6   | Sparks, or any short burst effect                               | 7.1      | No particle system was found.                                                                                                                                                           |
 | 7   | A read-only graph view                                          | 9.1      | Not built. Planned as the last step of the Graph milestone (#1563), after stored node positions (#1562).                                                                                |
@@ -587,7 +587,7 @@ Considered and left off the launch path. Each is a large build and none appears 
 5. **The set swap (beats 6.1, 6.2).**
 6. **The conditional issues in §12.2,** once the choices they hang on are made.
 7. **Everything marked "in the code, not run",** in one sitting, on the demo project.
-8. **Sparks, the move picker, the look control, the graph view (items 6, 4, 8, 7).**
+8. **Sparks, the look control, the graph view (items 6, 8, 7).**
 
 Items 1 and 5 of §12.1 (the one-sentence scene and the procedural alley) are in the second cut.
 
@@ -726,7 +726,7 @@ Claims the video does **not** make: world's first, easiest, fastest, real-time A
 8. Settle the conditional issues in §12.2.
 9. Build the demo project with a checkpoint per level.
 10. Run every remaining beat once on the demo project; fix or cut.
-11. Build sparks, the move picker, the look control and the graph view.
+11. Build sparks, the look control and the graph view.
 12. Commission the music.
 13. Rehearse to the count, shoot one take per beat.
 14. Edit the full cut, then the cut-downs.
