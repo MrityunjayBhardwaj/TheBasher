@@ -42,6 +42,7 @@ import {
   resolveChannelAddress,
   superRefineChannelAddress,
 } from './channelAddress';
+import { isDiscreteParamAt } from '../../../nodes/paramWidget';
 
 /** The KeyframeChannel node types that carry the broadened per-keyframe interp /
  *  ease / handle vocabulary (Number/Vec2/Vec3, from #272/#273). Color keeps the
@@ -172,6 +173,22 @@ export const setKeyframeInterpMutator: MutatorDefinition<SetKeyframeInterpSpec> 
       return {
         ok: false,
         reason: `channel "${resolved.channelId}" is ${view.type}; per-keyframe interpolation/handles apply only to KeyframeChannel{Number,Vec2,Vec3,Quat}.`,
+      };
+    }
+    // #1663 — a choice (the active camera) has nothing between its values, so its keys are a
+    // step whatever is stored, and the reader holds them regardless. Storing another easing would
+    // draw a ramp that never plays: refuse it by name rather than write a curve that lies.
+    const { target, paramPath } = view.params as { target?: unknown; paramPath?: unknown };
+    if (
+      spec.easing !== undefined &&
+      spec.easing !== 'constant' &&
+      typeof target === 'string' &&
+      typeof paramPath === 'string' &&
+      isDiscreteParamAt(state.nodes[target]?.type, paramPath)
+    ) {
+      return {
+        ok: false,
+        reason: `${target}.${paramPath} picks one of several things, so its keys are always 'constant': the switch lands on the key.`,
       };
     }
     // Defense-in-depth vs the spec `.refine()` (only fires at safeParse): an

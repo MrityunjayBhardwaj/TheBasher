@@ -121,6 +121,7 @@ export function EditableCurve({
   duration,
   seconds,
   filmClock = false,
+  stepped = false,
 }: {
   /** The timeline row id (a channel node's id, or a `layer:` row) — the key-selection key. */
   channelId: string;
@@ -136,6 +137,9 @@ export function EditableCurve({
   seconds: number;
   /** #1594 — the curve's keys are on the playhead's clock (a camera, the Scene speed). */
   filmClock?: boolean;
+  /** #1663 — the curve drives a choice (the active camera): every key is a step, however it is
+   *  stored, because that is how it plays. Drawn as a step; its interpolation is not offered. */
+  stepped?: boolean;
 }) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const [size, setSize] = useState({ w: 600, h: 200 });
@@ -236,7 +240,11 @@ export function EditableCurve({
   const isVec = isVec3Channel(channelType);
   const axes = useMemo(() => (isVec ? [0, 1, 2] : [0]), [isVec]);
   const colors = axisColors(channelType, paramPath);
-  const keys = draft ?? keyframes;
+  // #1663 — a choice plays as a step whatever its keys store (the reader holds them), so it is
+  // DRAWN as one: what the editor shows is what the cut does (H40).
+  const keys = stepped
+    ? (draft ?? keyframes).map((k) => ({ ...k, easing: 'constant' as Easing }))
+    : (draft ?? keyframes);
 
   const { w, h } = size;
   const plotX0 = LABEL_W;
@@ -609,6 +617,8 @@ export function EditableCurve({
           <select
             value={keys[activeIndex].easing}
             data-testid="curve-interp-select"
+            disabled={stepped}
+            title={stepped ? 'A camera cut always lands on its key' : undefined}
             className="rounded border border-border bg-bg-2 px-0.5 py-px font-mono text-[10px] text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
             onChange={(e) => setActiveKeyInterp({ easing: e.target.value as Easing })}
           >

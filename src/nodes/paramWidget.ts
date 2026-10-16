@@ -46,6 +46,7 @@
 
 import { z } from 'zod';
 import type { DagState } from '../core/dag/state';
+import { getNodeType, paramFieldsOf } from '../core/dag/registry';
 
 /**
  * The controls a declared param can ask for.
@@ -265,6 +266,58 @@ export function standingParam<S extends z.ZodTypeAny>(
 export function paramStandingOf(schema: unknown): ParamStandingProvider | undefined {
   if (schema === null || typeof schema !== 'object') return undefined;
   return STANDINGS.get(schema);
+}
+
+/**
+ * #1663 — a param whose values are CHOICES, not amounts: there is nothing between one value and
+ * the next, so a keyed curve on it holds each key until the next one and switches exactly there.
+ *
+ * Blender takes the same answer from the property's type (animrig `fcurve.cc`
+ * `fcurve_flags_for_property_type`: an enum or boolean is `FCURVE_DISCRETE_VALUES`) and honours it
+ * twice: a key inserted on such a curve is stored CONSTANT whatever was asked for
+ * (`initialize_bezt`), and evaluation holds the previous key whatever a key says
+ * (`bke_fcurve.cc` `fcurve_eval_keyframes_interpolate`). Basher does both too — the key-writing
+ * doors store `'constant'` ({@link keyEasingFor}), and the reader of the param holds — so a key
+ * written by a door that forgot, or saved before this existed, still switches on its key.
+ *
+ * An int is NOT automatically discrete: a count or a seed is an amount, and rounding along a line
+ * is right for it (Blender's `PROP_INT` → `FCURVE_INT_VALUES`, still linear). Only a param that
+ * picks one of several things says so here. Like {@link widget}, this never changes what the
+ * schema accepts.
+ */
+const DISCRETE = new WeakSet<object>();
+
+/** Declare `schema` a choice rather than an amount, and return the SAME schema. */
+export function discreteParam<S extends z.ZodTypeAny>(schema: S): S {
+  DISCRETE.add(schema);
+  return schema;
+}
+
+/** Whether this schema declared itself a choice ({@link discreteParam}). */
+export function isDiscreteParam(schema: unknown): boolean {
+  return schema !== null && typeof schema === 'object' && DISCRETE.has(schema);
+}
+
+/** Whether `paramPath` on a node of `nodeType` is a choice. Unknown type or path → false. */
+export function isDiscreteParamAt(nodeType: string | undefined, paramPath: string): boolean {
+  if (nodeType === undefined) return false;
+  const def = getNodeType(nodeType);
+  const fields = def ? paramFieldsOf(def) : null;
+  return isDiscreteParam(fields?.[paramPath]);
+}
+
+/**
+ * The easing a key written on `nodeType.paramPath` is STORED with: `'constant'` for a choice,
+ * whatever the caller asked for (Blender forces it the same way); otherwise `requested`. Every
+ * door that writes a key on a node's param asks this, so the curve that is drawn is the curve
+ * that plays.
+ */
+export function keyEasingFor<E extends string>(
+  nodeType: string | undefined,
+  paramPath: string,
+  requested: E,
+): E | 'constant' {
+  return isDiscreteParamAt(nodeType, paramPath) ? 'constant' : requested;
 }
 
 /** The options provider this schema declares, or `undefined` if it declares none. */

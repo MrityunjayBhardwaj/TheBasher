@@ -80,11 +80,12 @@ import { resolveRowChannelForWrite } from './animate/rowChannelWrite';
 import { buildVec3Sampler, KeyframeChannelVec3Params } from '../nodes/KeyframeChannelVec3';
 import { sampleQuatKeyframes, type QuatKey } from '../nodes/keyframeInterp';
 import { parseLayerRowId } from '../timeline/layerChannelRows';
+import { keyEasingFor } from '../nodes/paramWidget';
 
 interface KeyframeSample {
   time: number;
   value: unknown;
-  easing: 'linear' | 'cubic';
+  easing: 'linear' | 'cubic' | 'constant';
 }
 
 const DEFAULT_EASING_BY_TYPE: Record<string, 'linear' | 'cubic'> = {
@@ -102,7 +103,7 @@ function nextKeyframesAfterInsert(
   existing: ReadonlyArray<KeyframeSample>,
   time: number,
   value: unknown,
-  easing: 'linear' | 'cubic',
+  easing: KeyframeSample['easing'],
 ): KeyframeSample[] {
   const filtered = existing.filter((k) => k.time !== time);
   return [...filtered, { time, value, easing }].sort((a, b) => a.time - b.time);
@@ -128,7 +129,12 @@ function buildKeyframeInsertOp(): Op[] | null {
     typeof target === 'string'
       ? clockFor(dagState, target, typeof paramPath === 'string' ? paramPath : undefined).seconds
       : useTimeStore.getState().seconds;
-  const easing = DEFAULT_EASING_BY_TYPE[resolved.nodeType] ?? 'linear';
+  // #1663 — a choice (the active camera) is keyed stepped, whatever the channel type defaults to.
+  const easing = keyEasingFor(
+    typeof target === 'string' ? dagState.nodes[target]?.type : undefined,
+    typeof paramPath === 'string' ? paramPath : '',
+    DEFAULT_EASING_BY_TYPE[resolved.nodeType] ?? 'linear',
+  );
   const existing = (resolved.params.keyframes as KeyframeSample[] | undefined) ?? [];
 
   const value = resolved.keyFromCurve

@@ -68,6 +68,7 @@ function channelExtendArgs(
   return [before, after, cyclesBefore, cyclesAfter, p.modifiers];
 }
 import { resolveCameraSelectIndex } from '../nodes/CameraSelect';
+import { isDiscreteParamAt } from '../nodes/paramWidget';
 import { sceneClockOf } from './sceneClock';
 import { resolveTrackToTarget, resolveConstraintPosition } from './nodeConstraints';
 import { resolveParentWorldMatrix } from './resolveWorldTransform';
@@ -171,7 +172,15 @@ function sampleCameraSelectActive(state: DagState, selectNode: Node, seconds?: n
     const sorted = [...(keyframes as Parameters<typeof sampleScalarKeyframes>[0])].sort(
       (a, b) => a.time - b.time,
     );
-    return sampleScalarKeyframesExtended(sorted, seconds, ...channelExtendArgs(ch.params));
+    // #1663 — `active` is a choice, so every segment HOLDS its key and switches on the next,
+    // whatever the stored easing says: a linear key (saved before the key doors stored
+    // 'constant', or written by a door that forgot) would otherwise cut halfway between two keys
+    // and show every camera whose index lies between them. Blender holds a discrete curve the
+    // same way at evaluation, not only at insert (`bke_fcurve.cc` `fcurve_eval_keyframes_interpolate`).
+    const held = isDiscreteParamAt(selectNode.type, 'active')
+      ? sorted.map((k) => ({ time: k.time, value: k.value, easing: 'constant' as const }))
+      : sorted;
+    return sampleScalarKeyframesExtended(held, seconds, ...channelExtendArgs(ch.params));
   }
   return base;
 }

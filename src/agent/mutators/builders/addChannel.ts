@@ -28,6 +28,7 @@ import type { ClosureSet, ClosureSpec } from '../../closure/types';
 import type { DagState } from '../../../core/dag/state';
 import type { NodeId, Op } from '../../../core/dag/types';
 import { resolveExposedTarget } from '../../../app/exposeParams';
+import { keyEasingFor } from '../../../nodes/paramWidget';
 
 const ValueType = z.enum(['number', 'vec3', 'quat', 'color']);
 type ValueType = z.infer<typeof ValueType>;
@@ -189,7 +190,12 @@ export const addChannelMutator: MutatorDefinition<AddChannelSpec> = {
                 {
                   time: spec.initialKeyframe.time,
                   value: spec.initialKeyframe.value,
-                  easing: spec.initialKeyframe.easing ?? defaultEasing(spec.valueType),
+                  // #1663 — a key on a choice (the active camera) is stored stepped.
+                  easing: keyEasingFor(
+                    state.nodes[target]?.type,
+                    paramPath,
+                    spec.initialKeyframe.easing ?? defaultEasing(spec.valueType),
+                  ),
                 },
               ]
             : [],

@@ -26,11 +26,14 @@ import { z } from 'zod';
 import type { NodeDefinition, ResolvedInputs } from '../core/dag/types';
 import type { CameraValue, SceneObject } from './types';
 import { recomposeCameraObject } from './cameraRecompose';
+import { discreteParam } from './paramWidget';
 
 export const CameraSelectParams = z.object({
   /** Index of the live camera into the `cameras` list (edge order). Clamped to a
-   *  valid slot by `resolveCameraSelectIndex`; keyframeable → camera cuts. */
-  active: z.number().int().default(0),
+   *  valid slot by `resolveCameraSelectIndex`; keyframeable → camera cuts. A CHOICE, not an
+   *  amount (#1663): a key holds until the next one, so a cut lands on its key and never passes
+   *  through the cameras between two indices. */
+  active: discreteParam(z.number().int().default(0)),
 });
 export type CameraSelectParams = z.infer<typeof CameraSelectParams>;
 

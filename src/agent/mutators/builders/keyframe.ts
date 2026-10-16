@@ -16,6 +16,7 @@ import type { MutatorDefinition } from '../types';
 import type { ClosureSet, ClosureSpec } from '../../closure/types';
 import type { DagState } from '../../../core/dag/state';
 import type { Op } from '../../../core/dag/types';
+import { isDiscreteParamAt } from '../../../nodes/paramWidget';
 import {
   KEYFRAME_INTERPS,
   EASE_DIRS,
@@ -105,7 +106,7 @@ export const keyframeMutator: MutatorDefinition<KeyframeSpec> = {
     "curve 'sine'|'quad'|'quart'|'quint'|'expo'|'circ'|'back'|'bounce'|'elastic' " +
     "(these + `ease` 'in'|'out'|'inout' and `handleType` apply to Number/Vec2/Vec3 " +
     'channels; Quat takes only linear|cubic|constant, Color only linear|cubic). Omitting easing takes the ' +
-    'interpolation of the segment the key lands in (the channel default for a first or second key). Use mutator.timeline.addChannel to create a channel on an ' +
+    "interpolation of the segment the key lands in (the channel default for a first or second key). A key on a choice (the active camera, CameraSelect.active) is always stored 'constant' so a cut lands on its key. Use mutator.timeline.addChannel to create a channel on an " +
     'ordinary node. To re-interp keys you already placed, ' +
     'use mutator.timeline.setKeyframeInterp.' +
     CHANNEL_ADDRESS_DOC,
@@ -239,6 +240,20 @@ export const keyframeMutator: MutatorDefinition<KeyframeSpec> = {
         const split = splitSegmentForKey(prev, after, key as HandledKey);
         if (split) next.splice(i - 1, 3, split.a as Key, split.key as Key, split.b as Key);
       }
+    }
+
+    // #1663 — a key on a choice (the active camera) is stored stepped whatever this call or a
+    // neighbour asked for, as Blender's `initialize_bezt` forces CONSTANT on a discrete curve, so
+    // the curve the editor draws is the one that plays. Re-keying an existing time is covered too.
+    const { target, paramPath } = view.params as { target?: unknown; paramPath?: unknown };
+    const targetType = typeof target === 'string' ? state.nodes[target]?.type : undefined;
+    if (isDiscreteParamAt(targetType, typeof paramPath === 'string' ? paramPath : '')) {
+      next = next.map((k) => {
+        if (k.time !== spec.time) return k;
+        const held: Key = { ...k, easing: 'constant' };
+        delete held.ease; // a direction means nothing on a step
+        return held;
+      });
     }
 
     return resolved.write({ keyframes: next });
