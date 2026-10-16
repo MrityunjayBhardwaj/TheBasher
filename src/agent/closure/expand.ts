@@ -345,6 +345,9 @@ export function opTargetNodeId(op: import('../../core/dag/types').Op): NodeId | 
     case 'connect':
     case 'disconnect':
       return op.to.node;
+    case 'setOutput':
+      // #1550 — the node an output is bound to is the one gaining the flag; an unbind names none.
+      return op.ref?.node ?? null;
   }
 }
 

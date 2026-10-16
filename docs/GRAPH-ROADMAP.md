@@ -69,7 +69,7 @@ over one Mix node matches a Lag sample for sample.
 - #1562: node positions are stored.
 - #1565: no document state outside the graph.
 - #1566: every relationship kind survives a save and load.
-- #1567: every UI gesture goes through the 8 operations.
+- #1567: every UI gesture goes through the 9 operations (8 until #1550 added `setOutput`).
 
 ### 7. Seeing it
 

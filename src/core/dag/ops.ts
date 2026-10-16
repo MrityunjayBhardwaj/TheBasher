@@ -33,7 +33,7 @@ import type {
   Op,
   OutputDescriptor,
 } from './types';
-import { acceptedTypes, OpSchema, SpareParamSchema } from './types';
+import { acceptedTypes, OpSchema, OUTPUT_SOCKET_TYPES, SpareParamSchema } from './types';
 import { inputTakes, whyNotTaken } from './socketConversion';
 
 /**
@@ -347,7 +347,44 @@ function applyUnguarded(state: DagState, op: Op, draft: Draft | undefined): Appl
       return applySetSpareParam(state, op, draft);
     case 'removeSpareParam':
       return applyRemoveSpareParam(state, op, draft);
+    case 'setOutput':
+      return applySetOutput(state, op);
   }
+}
+
+/** #1550 — bind a named output to a node's output socket, or unbind it. Only the outputs the app
+ *  reads exist, and each takes the one socket type its readers take; the inverse binds back
+ *  what was there. Writes `outputs` only, so a batch's node record is untouched. */
+function applySetOutput(state: DagState, op: Extract<Op, { type: 'setOutput' }>): ApplyResult {
+  const wants = OUTPUT_SOCKET_TYPES[op.name];
+  if (wants === undefined) {
+    throw new OpError(
+      `setOutput: there is no output '${op.name}' (outputs: ${Object.keys(OUTPUT_SOCKET_TYPES).join(', ')})`,
+      op,
+    );
+  }
+  const prior = state.outputs[op.name];
+  if (op.ref !== null) {
+    const node = getNode(state, op.ref.node);
+    const socket = requireNodeType(node.type).outputs[op.ref.socket];
+    if (!socket) {
+      throw new OpError(`setOutput: ${node.type} has no output '${op.ref.socket}'`, op);
+    }
+    if (socket.type !== wants) {
+      throw new OpError(
+        `setOutput: '${op.name}' takes a ${wants}, and ${op.ref.node}.${op.ref.socket} is a ${socket.type}`,
+        op,
+      );
+    }
+  }
+  const inverse: Op = { type: 'setOutput', name: op.name, ref: prior ?? null };
+  if (op.ref === null ? prior === undefined : sameParamValue(prior, op.ref)) {
+    return { next: state, inverse };
+  }
+  const outputs = { ...state.outputs };
+  if (op.ref === null) delete outputs[op.name];
+  else outputs[op.name] = { node: op.ref.node, socket: op.ref.socket };
+  return { next: { ...state, outputs }, inverse };
 }
 
 /** The nodes an edge-adding op wires FROM. */

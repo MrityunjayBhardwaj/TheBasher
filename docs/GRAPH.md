@@ -7,7 +7,7 @@ other doc needs fixing.
 **In one sentence:** Basher's graph is one flat, typed graph of nodes, and that graph is the
 saved document. Every relationship in it is a **wire**, a **reference** or an **attribute**.
 Everything else (the outliner, the modifier stacks, the inspector, the node view) is a view
-of the graph, and every change to it is one of the **8 operations**.
+of the graph, and every change to it is one of the **9 operations**.
 
 ## 1. The document
 
@@ -25,6 +25,7 @@ The graph changes only through these operations (`OpSchema`, `src/core/dag/types
 | `setParam`                           | Change a parameter value                            |
 | `setMeta`                            | Rename a node, or place it in the node view (#1562) |
 | `setSpareParam` / `removeSpareParam` | Add or remove a user parameter on any node          |
+| `setOutput`                          | Bind `scene` or `render` to a node (#1550)          |
 
 Every operation carries its source: `user`, `agent`, `macro` or `render` (`OpSource`,
 `src/core/dag/store.ts`). The agent has no other door into the document (THESIS §18,
@@ -139,7 +140,7 @@ OUTPUTS ─── outputs.scene · outputs.render
 4. **Time lives inside values.** A channel's value carries `sample(seconds)`, the Scene owns
    its frame range, and nothing cooks per frame. That keeps the content-keyed cache flat
    when you scrub ([NORTH-STAR §4.4](NORTH-STAR.md)).
-5. **Every gesture records graph data through the 8 operations.** Nothing in the document
+5. **Every gesture records graph data through the 9 operations.** Nothing in the document
    is mutated outside an operation, and the agent issues the same operations as the UI.
    Where a gesture edits geometry, it adds an operator rather than changing data in place:
    moving UVs adds a UV edit operator, marking a seam writes an edge group, assigning a

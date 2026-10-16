@@ -890,6 +890,21 @@ export const OpRemoveSpareParamSchema = z.object({
   key: z.string().min(1),
 });
 
+// #1550 — which node the app draws (`scene`) and renders (`render`): Houdini's display and
+// render flags. `ref: null` unbinds, which only the inverse of binding a name that was unbound
+// needs. The socket must carry the type that output's readers take (`OUTPUT_SOCKET_TYPES`).
+export const OpSetOutputSchema = z.object({
+  type: z.literal('setOutput'),
+  name: z.string(),
+  ref: NodeRefSchema.nullable(),
+});
+
+/** #1550 — the named outputs a project has, and the socket type each one's readers take. */
+export const OUTPUT_SOCKET_TYPES: Readonly<Record<string, string>> = {
+  scene: 'Scene',
+  render: 'RenderOutput',
+};
+
 export const OpSchema = z.discriminatedUnion('type', [
   OpAddNodeSchema,
   OpRemoveNodeSchema,
@@ -899,6 +914,7 @@ export const OpSchema = z.discriminatedUnion('type', [
   OpSetMetaSchema,
   OpSetSpareParamSchema,
   OpRemoveSpareParamSchema,
+  OpSetOutputSchema,
 ]);
 export type Op = z.infer<typeof OpSchema>;
 

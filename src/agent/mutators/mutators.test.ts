@@ -165,7 +165,8 @@ describe('mutator catalog', () => {
     // 37 → 38 at #1357 — `animate.wrapInRig`, the road in to the Rig node.
     // 38 → 39 at #1353 — `rig.bindSkin`, a mesh bound to an armature.
     // 39 → 41 at #1557 — `graph.collapseToTemplate` + `graph.addTemplateInstance`.
-    expect(mutators).toHaveLength(41);
+    // 41 → 42 at #1550 — `setOutput`, the display and render flags.
+    expect(mutators).toHaveLength(42);
     const names = mutators.map((m) => m.name).sort();
     expect(names).toEqual([
       'mutator.animate.bakePose',
@@ -199,6 +200,7 @@ describe('mutator catalog', () => {
       'mutator.setHidden',
       'mutator.setMaterialColor',
       'mutator.setObjectSlotMaterial',
+      'mutator.setOutput',
       'mutator.shot.create',
       'mutator.timeline.addChannel',
       'mutator.timeline.addChannelModifier',
@@ -2470,7 +2472,8 @@ describe('agent.listMutators tool', () => {
     // 37 → 38 at #1357 — `animate.wrapInRig`.
     // 38 → 39 at #1353 — `rig.bindSkin`.
     // 39 → 41 at #1557 — `graph.collapseToTemplate` + `graph.addTemplateInstance`.
-    expect(parsed.mutators).toHaveLength(41);
+    // 41 → 42 at #1550 — `setOutput`.
+    expect(parsed.mutators).toHaveLength(42);
   });
 });
 
@@ -4135,6 +4138,7 @@ import {
   constrainMutator as _constrainM,
   unconstrainMutator as _unconstrainM,
   setHiddenMutator as _setHiddenM,
+  setOutputMutator as _setOutputM,
   poseBoneMutator as _poseBoneM,
   setPoseMemberModeMutator as _setPoseMemberModeM,
   renameBoneMutator as _renameBoneM,
@@ -4549,6 +4553,19 @@ describe('V14 deeper non-redundancy — Op-shape probe (issue #22)', () => {
       build: buildDefaultDagState,
       spec: { targetSelectors: ['n_box'], hidden: true },
     },
+    'mutator.setOutput': {
+      mutator: _setOutputM as MutatorDefinition<unknown>,
+      // A second render output to bind: the default's one is already bound, an empty plan.
+      build: () =>
+        applyOp(buildDefaultDagState(), {
+          type: 'addNode',
+          nodeId: 'n_render_2',
+          nodeType: 'RenderOutput',
+          params: { postFx: { tonemap: 'ACES', smaa: true }, width: 640, height: 480 },
+          inputs: { scene: { node: 'n_scene', socket: 'out' } },
+        }).next,
+      spec: { output: 'render', targetSelectors: ['n_render_2'] },
+    },
     'mutator.animate.poseBone': {
       mutator: _poseBoneM as MutatorDefinition<unknown>,
       build: buildSceneForPoseBone,
@@ -4764,6 +4781,13 @@ describe('V14 deeper non-redundancy — Op-shape probe (issue #22)', () => {
           fromSocket: op.from.socket,
           toSocket: op.to.socket,
         };
+      case 'setMeta':
+        return { type: 'setMeta', position: op.position !== undefined };
+      case 'setSpareParam':
+      case 'removeSpareParam':
+        return { type: op.type, key: op.key };
+      case 'setOutput':
+        return { type: 'setOutput', name: op.name };
       default: {
         // Exhaustiveness: a new Op variant must extend this reducer or
         // the probe silently goes blind to it (the H36 trap one level

@@ -80,6 +80,12 @@ const EXEMPT: Record<string, string> = {
   removeSpareParam:
     'The inverse of `setSpareParam`, and inert for the same measured reason: dispatching it ' +
     'changed nothing drawn.',
+  setOutput:
+    'Rebinds which node the app draws or renders (#1550): a whole-picture choice, not an edit ' +
+    'of a subgraph, so locality does not apply. Measured 2026-10-17 in a browser: rebinding ' +
+    '`render` to a second RenderOutput on the same scene changed the post-fx picture and left ' +
+    'all 9 drawn meshes identical (object, geometry and material uuids); undo restored the ' +
+    'picture exactly.',
 };
 
 /** Op types the spec actually dispatches, read from source with comments blanked. */
@@ -156,8 +162,9 @@ describe('#535 — the locality spec perturbs every verb the graph has', () => {
     }
   });
 
-  it('exempts exactly three ops — an exact count, so growing the set is a decision', () => {
+  it('exempts exactly four ops — an exact count, so growing the set is a decision', () => {
     // Floored, this stays green while the exempt set swallows the union one op at a time.
-    expect(Object.keys(EXEMPT)).toHaveLength(3);
+    // 3 → 4 at #1550: `setOutput`, measured (its entry above).
+    expect(Object.keys(EXEMPT)).toHaveLength(4);
   });
 });

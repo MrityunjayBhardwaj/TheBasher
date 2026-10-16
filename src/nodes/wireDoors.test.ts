@@ -75,7 +75,7 @@ const bare = (nodeId: string, nodeType: string): AddNode => ({
 const apply = (state: DagState, ops: readonly Op[]): DagState =>
   ops.reduce((s, op) => applyOp(s, op).next, state);
 
-/** A skeleton, two numbers, a vector and three image producers, with one wire (m0 → m1). */
+/** A skeleton, two numbers, a vector, three image producers and a scene, with one wire (m0 → m1). */
 function seeded(): DagState {
   return apply(emptyDagState(), [
     bare('skel', 'Skeleton'),
@@ -85,6 +85,7 @@ function seeded(): DagState {
     bare('db', 'DepthB'),
     bare('plain', 'Plain'),
     bare('vec', 'Vec'),
+    bare('scn', 'Scene'),
     { type: 'connect', from: { node: 'm0', socket: 'out' }, to: { node: 'm1', socket: 'a' } },
   ]);
 }
@@ -128,6 +129,7 @@ const samples = (): Record<Op['type'], Op> => ({
     param: { type: 'float', value: 1 },
   },
   removeSpareParam: { type: 'removeSpareParam', nodeId: 'm0', key: 'extra' },
+  setOutput: { type: 'setOutput', name: 'scene', ref: { node: 'scn', socket: 'out' } },
 });
 
 type Door = (consumerId: string, consumerType: string, socket: string, refs: NodeRef[]) => Op[];
