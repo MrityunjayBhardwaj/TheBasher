@@ -14,7 +14,7 @@ import { splitCameraOps } from './_splitCamera';
 test.setTimeout(120_000);
 
 type Ref = { node: string; socket: string };
-type Key = { time: number; value: number; easing: string };
+type Key = { time: number; value: string; easing: string };
 interface W {
   __basher_dag: {
     getState: () => {
@@ -129,25 +129,28 @@ test('a cut keyed by the agent and by K lands on its key and skips the camera be
   page,
 }) => {
   const { sel, order } = await boot(page);
-  const seedIndex = order.indexOf('n_camera');
-  const thirdIndex = order.indexOf(CAM3);
-  expect(Math.abs(thirdIndex - seedIndex), 'a camera sits between the two keyed ones').toBe(2);
+  // #1668 — a cut names its camera. The two keyed cameras still sit with one between them in the
+  // switch's list, so a cut passing through positions would show it.
+  expect(
+    Math.abs(order.indexOf(CAM3) - order.indexOf('n_camera')),
+    'a camera sits between the two keyed ones',
+  ).toBe(2);
   const seedX = await drawnCameraX(page, 0);
 
   // Door 1 — the agent adds the channel with its first key (asking for linear).
   const add = await page.evaluate(
-    ({ sel, seedIndex }) =>
+    ({ sel }) =>
       (window as unknown as W).__basher_dispatchMutator(
         'mutator.timeline.addChannel',
         {
           target: sel,
           paramPath: 'active',
-          valueType: 'number',
-          initialKeyframe: { time: 0, value: seedIndex, easing: 'linear' },
+          valueType: 'text',
+          initialKeyframe: { time: 0, value: 'n_camera', easing: 'linear' },
         },
         'cut',
       ),
-    { sel, seedIndex },
+    { sel },
   );
   expect(add.ok, add.reason).toBe(true);
   const ch = await page.evaluate(
@@ -161,22 +164,22 @@ test('a cut keyed by the agent and by K lands on its key and skips the camera be
 
   // Door 2 — K on the timeline at 2 s, with the active camera set to the third one.
   await page.evaluate(
-    ({ sel, thirdIndex, ch }) => {
+    ({ sel, CAM3, ch }) => {
       const w = window as unknown as W;
       w.__basher_dag
         .getState()
-        .dispatch({ type: 'setParam', nodeId: sel, paramPath: 'active', value: thirdIndex });
+        .dispatch({ type: 'setParam', nodeId: sel, paramPath: 'active', value: CAM3 });
       w.__basher_viewport.getState().setTimelineDrawerOpen(true);
       w.__basher_timeline_selection.getState().setActiveChannel(ch);
       w.__basher_time.getState().setTime(2);
     },
-    { sel, thirdIndex, ch },
+    { sel, CAM3, ch },
   );
   await page.keyboard.press('k');
   await expect.poll(async () => (await keysOf(page, ch!)).length).toBe(2);
   expect(await keysOf(page, ch!)).toEqual([
-    { time: 0, value: seedIndex, easing: 'constant' },
-    { time: 2, value: thirdIndex, easing: 'constant' },
+    { time: 0, value: 'n_camera', easing: 'constant' },
+    { time: 2, value: CAM3, easing: 'constant' },
   ]);
 
   // What the viewport draws through, every other frame.
@@ -188,57 +191,4 @@ test('a cut keyed by the agent and by K lands on its key and skips the camera be
   expect(xs.at(-1), 'on the key').toBe(40);
   expect(xs.includes(20), 'the camera between is never drawn').toBe(false);
   await page.screenshot({ path: 'test-results/p1663-on-the-key.png' });
-});
-
-test('linear keys saved before #1663 still cut on the key, and the curve shows a locked step', async ({
-  page,
-}) => {
-  const { sel, order } = await boot(page);
-  const seedX = await drawnCameraX(page, 0);
-  const CH = 'p1663_legacy';
-  await page.evaluate(
-    ({ sel, CH, a, b }) => {
-      const w = window as unknown as W;
-      w.__basher_dag.getState().dispatchAtomic(
-        [
-          {
-            type: 'addNode',
-            nodeId: CH,
-            nodeType: 'KeyframeChannelNumber',
-            params: {
-              name: 'active',
-              target: sel,
-              paramPath: 'active',
-              keyframes: [
-                { time: 0, value: a, easing: 'linear' },
-                { time: 2, value: b, easing: 'linear' },
-              ],
-            },
-          },
-        ],
-        'user',
-        'p1663 legacy seed',
-      );
-    },
-    { sel, CH, a: order.indexOf('n_camera'), b: order.indexOf(CAM3) },
-  );
-  const xs = await camerasOver(page);
-  expect(
-    xs.slice(0, -1).every((x) => x === seedX),
-    `before the key: ${xs.join(',')}`,
-  ).toBe(true);
-  expect(xs.at(-1)).toBe(40);
-
-  await page.evaluate((id) => {
-    const w = window as unknown as W;
-    w.__basher_viewport.getState().setTimelineDrawerOpen(true);
-    w.__basher_timeline_dock.getState().setActiveTab('curve');
-    w.__basher_timeline_selection.getState().setActiveChannel(id);
-    w.__basher_timeline_selection.getState().setActiveKeyframe({ channelId: id, time: 2 });
-  }, CH);
-  const interp = page.getByTestId('curve-interp-select');
-  await expect(interp).toBeVisible({ timeout: 10_000 });
-  await expect(interp).toHaveValue('constant');
-  await expect(interp).toBeDisabled();
-  await page.screenshot({ path: 'test-results/p1663-curve-step.png' });
 });

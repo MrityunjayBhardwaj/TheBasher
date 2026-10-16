@@ -6,14 +6,15 @@
 //
 // Every key is written 'constant' — a choice holds until the next key (#1663) — and the cuts
 // channel is the one the resolver samples (`cutChannelOf`), so what the panel writes is what plays.
+// #1668 — each key holds the id of the camera it cuts to, never its place in the switch's list.
 
 import { applyOp, type DagState } from '../core/dag';
-import type { NodeRef, Op } from '../core/dag/types';
-import { enumerateCameraNodeIds, selectActiveCameraNode } from './activeCamera';
+import type { Op } from '../core/dag/types';
+import { enumerateCameraNodeIds, listedCameraIds, selectActiveCameraNode } from './activeCamera';
 import { buildSetActiveCameraOps } from './setActiveCamera';
 import { cameraSelectOf, cutChannelOf } from './shots';
 
-type Key = { time: number; value: number; easing: string };
+type Key = { time: number; value: string; easing: string };
 
 /** Apply `ops` to `state` in order (the panel builds later ops against the earlier ones' result). */
 function applied(state: DagState, ops: readonly Op[]): DagState {
@@ -23,13 +24,10 @@ function applied(state: DagState, ops: readonly Op[]): DagState {
 }
 
 /**
- * Ops that guarantee a camera switch exists and lists `cameraId`, plus that camera's index in it.
- * Null when the scene has no camera socket or `cameraId` is not a camera.
+ * Ops that guarantee a camera switch exists and lists `cameraId`. Null when the scene has no
+ * camera socket or `cameraId` is not a camera.
  */
-function ensureListed(
-  state: DagState,
-  cameraId: string,
-): { ops: Op[]; selectId: string; index: number } | null {
+function ensureListed(state: DagState, cameraId: string): { ops: Op[]; selectId: string } | null {
   const ops: Op[] = [];
   let s = state;
   if (!cameraSelectOf(s)) {
@@ -44,17 +42,14 @@ function ensureListed(
   }
   const select = cameraSelectOf(s);
   if (!select) return null;
-  const listed = ((select.inputs.cameras ?? []) as NodeRef[]).map((r) => r.node);
-  let index = listed.indexOf(cameraId);
-  if (index < 0) {
+  if (!listedCameraIds(select).includes(cameraId)) {
     ops.push({
       type: 'connect',
       from: { node: cameraId, socket: 'out' },
       to: { node: select.id, socket: 'cameras' },
     });
-    index = listed.length;
   }
-  return { ops, selectId: select.id, index };
+  return { ops, selectId: select.id };
 }
 
 /**
@@ -77,13 +72,13 @@ export function buildCutOps(state: DagState, at: number, cameraId: string): Op[]
       if (!held) return null;
       ops.push(...held.ops);
       s = applied(s, held.ops);
-      keys.push({ time: 0, value: held.index, easing: 'constant' });
+      keys.push({ time: 0, value: before, easing: 'constant' });
     }
-    keys.push({ time: at, value: listed.index, easing: 'constant' });
+    keys.push({ time: at, value: cameraId, easing: 'constant' });
     ops.push({
       type: 'addNode',
       nodeId: `${listed.selectId}_active_channel`,
-      nodeType: 'KeyframeChannelNumber',
+      nodeType: 'KeyframeChannelText',
       params: { name: 'active', target: listed.selectId, paramPath: 'active', keyframes: keys },
     });
     return ops;
@@ -92,7 +87,7 @@ export function buildCutOps(state: DagState, at: number, cameraId: string): Op[]
   const existing = (channel.params as { keyframes?: Key[] }).keyframes ?? [];
   const next = [
     ...existing.filter((k) => k.time !== at),
-    { time: at, value: listed.index, easing: 'constant' },
+    { time: at, value: cameraId, easing: 'constant' },
   ].sort((a, b) => a.time - b.time);
   ops.push({ type: 'setParam', nodeId: channel.id, paramPath: 'keyframes', value: next });
   return ops;

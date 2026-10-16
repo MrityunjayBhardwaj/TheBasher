@@ -232,8 +232,8 @@ const ALL: NodeDefinition[] = [
   TransformClipNode as unknown as NodeDefinition,
   ClipSelectNode as unknown as NodeDefinition,
   // #231 Inc 3 — multi-camera "active" model. CameraSelect (the ClipSelect
-  // pattern) picks the active camera by index to feed Scene.camera; `active` is
-  // keyframeable → camera cuts. selectActiveCameraNode resolves through it.
+  // pattern) picks the camera its `active` names (#1668: by id) to feed Scene.camera;
+  // `active` is keyframeable → camera cuts. selectActiveCameraNode resolves through it.
   CameraSelectNode as unknown as NodeDefinition,
   ShotNode as unknown as NodeDefinition,
   CutNode as unknown as NodeDefinition,

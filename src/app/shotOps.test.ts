@@ -75,15 +75,15 @@ describe('#1595 — shots panel edits', () => {
     expect(buildRemoveCutOps(s, 3), 'no cut at 3 s').toBeNull();
   });
 
-  it('every key the panel writes is a step', () => {
+  it('every key the panel writes is a step naming its camera', () => {
     let s = threeLooseCameras();
     s = run(s, buildCutOps(s, 2, 'cam3'));
     s = run(s, buildCutOps(s, 5, 'cam2'));
-    const ch = Object.values(s.nodes).find((n) => n.type === 'KeyframeChannelNumber')!;
-    const easings = (ch.params as { keyframes: { easing: string }[] }).keyframes.map(
-      (k) => k.easing,
-    );
-    expect(easings).toEqual(['constant', 'constant', 'constant']);
+    const ch = Object.values(s.nodes).find((n) => n.type === 'KeyframeChannelText')!;
+    const keys = (ch.params as { keyframes: { value: string; easing: string }[] }).keyframes;
+    expect(keys.map((k) => k.easing)).toEqual(['constant', 'constant', 'constant']);
+    // #1668 — and each key names the camera it cuts to, not its place in the switch's list.
+    expect(keys.map((k) => k.value)).toEqual(['n_camera', 'cam3', 'cam2']);
   });
 
   it('a scene with one camera has nothing to cut to', () => {

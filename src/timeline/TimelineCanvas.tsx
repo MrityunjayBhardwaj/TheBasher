@@ -255,6 +255,10 @@ const CHANNEL_TYPES = new Set([
   'KeyframeChannelVec3',
   'KeyframeChannelQuat',
   'KeyframeChannelColor',
+  // #1668 — a step channel's keys are keys too: the film's camera cuts are a text channel (each
+  // key naming its camera), and the dopesheet is where a cut is retimed. The set predates text
+  // channels rather than leaving them out on purpose.
+  'KeyframeChannelText',
 ]);
 
 // ChannelRow lives in channelRow.ts, shared with the layer and computed-source row

@@ -90,14 +90,13 @@ export async function snapshotCameraFromOrbit(): Promise<void> {
     to: { node: newId, socket: 'data' },
   });
   if (switchId) {
-    const listed = Array.isArray(select!.inputs.cameras) ? select!.inputs.cameras.length : 0;
-    // A connect with no index appends (ops.ts), so the new camera's index is the list's length.
     ops.push({
       type: 'connect',
       from: { node: newId, socket: 'out' },
       to: { node: switchId, socket: 'cameras' },
     });
-    ops.push({ type: 'setParam', nodeId: switchId, paramPath: 'active', value: listed });
+    // #1668 — `active` names the camera it shows.
+    ops.push({ type: 'setParam', nodeId: switchId, paramPath: 'active', value: newId });
   } else {
     ops.push({
       type: 'connect',

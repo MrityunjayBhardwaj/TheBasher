@@ -320,6 +320,45 @@ export function keyEasingFor<E extends string>(
   return isDiscreteParamAt(nodeType, paramPath) ? 'constant' : requested;
 }
 
+/**
+ * #1668 — the channel type a key on `nodeType.paramPath` MUST be written into, when the param
+ * decides it rather than the value's shape; otherwise null. A choice that names a node (the active
+ * camera: `discreteParam(optionsParam(…, 'nodeId'))`) keys a text channel, each key holding the id
+ * of the node it picks. Every key door asks this: going by shape, a string reads as a colour.
+ */
+export function declaredKeyChannelType(
+  nodeType: string | undefined,
+  paramPath: string,
+): 'KeyframeChannelText' | null {
+  if (nodeType === undefined) return null;
+  const def = getNodeType(nodeType);
+  const schema = def ? paramFieldsOf(def)?.[paramPath] : undefined;
+  return isDiscreteParam(schema) && optionsValueKindOf(schema) === 'nodeId'
+    ? 'KeyframeChannelText'
+    : null;
+}
+
+/**
+ * #1668 — the node ids a key on a node choice may name right now: what the param's own picker
+ * offers (enabled options only), which by the provider rule is exactly what its resolver reads.
+ * Null when `paramPath` is not a node choice.
+ */
+export function offeredNodeIds(
+  state: DagState,
+  nodeId: string,
+  paramPath: string,
+): string[] | null {
+  const nodeType = state.nodes[nodeId]?.type;
+  if (declaredKeyChannelType(nodeType, paramPath) === null) return null;
+  const def = nodeType ? getNodeType(nodeType) : undefined;
+  const provider = optionsOf(def ? paramFieldsOf(def)?.[paramPath] : undefined);
+  return provider
+    ? provider(state, nodeId)
+        .filter((o) => o.disabledReason === undefined)
+        .map((o) => o.value)
+    : [];
+}
+
 /** The options provider this schema declares, or `undefined` if it declares none. */
 export function optionsOf(schema: unknown): OptionsProvider | undefined {
   if (schema === null || typeof schema !== 'object') return undefined;

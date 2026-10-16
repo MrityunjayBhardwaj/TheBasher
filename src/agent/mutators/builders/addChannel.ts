@@ -28,9 +28,11 @@ import type { ClosureSet, ClosureSpec } from '../../closure/types';
 import type { DagState } from '../../../core/dag/state';
 import type { NodeId, Op } from '../../../core/dag/types';
 import { resolveExposedTarget } from '../../../app/exposeParams';
-import { keyEasingFor } from '../../../nodes/paramWidget';
+import { declaredKeyChannelType, keyEasingFor, offeredNodeIds } from '../../../nodes/paramWidget';
 
-const ValueType = z.enum(['number', 'vec3', 'quat', 'color']);
+// #1668 — 'text': a step channel of strings. A choice that names a node (CameraSelect.active, the
+// film's camera cuts) is keyed with it, each key holding the id of the camera it cuts to.
+const ValueType = z.enum(['number', 'vec3', 'quat', 'color', 'text']);
 type ValueType = z.infer<typeof ValueType>;
 
 const InitialKeyframeSchema = z
@@ -58,6 +60,7 @@ const NODE_TYPE_BY_VALUE: Record<ValueType, string> = {
   vec3: 'KeyframeChannelVec3',
   quat: 'KeyframeChannelQuat',
   color: 'KeyframeChannelColor',
+  text: 'KeyframeChannelText',
 };
 
 /** Sanitize a paramPath for id use EXACTLY as dispatchDirectFirstKey does
@@ -84,14 +87,15 @@ function shapeOk(valueType: ValueType, value: unknown): boolean {
         Array.isArray(value) && value.length === 4 && value.every((x) => typeof x === 'number')
       );
     case 'color':
+    case 'text':
       return typeof value === 'string';
   }
 }
 
 function defaultEasing(valueType: ValueType): 'linear' | 'cubic' {
   // Per project_p3_plan: cubic for vec3/quat/color (spatial / smooth feel),
-  // linear for scalar (predictable when scrubbing).
-  return valueType === 'number' ? 'linear' : 'cubic';
+  // linear for scalar (predictable when scrubbing). A text channel steps; 'linear' is inert.
+  return valueType === 'number' || valueType === 'text' ? 'linear' : 'cubic';
 }
 
 export const addChannelMutator: MutatorDefinition<AddChannelSpec> = {
@@ -138,6 +142,27 @@ export const addChannelMutator: MutatorDefinition<AddChannelSpec> = {
       return {
         ok: false,
         reason: `initialKeyframe.value shape does not match valueType="${spec.valueType}".`,
+      };
+    }
+    // #1668 — a choice that names a node is keyed by the node's id in a text channel, and a key
+    // may only name a node the param can pick (for the active camera: one wired into the switch).
+    const targetType = state.nodes[spec.target]?.type;
+    const declared = declaredKeyChannelType(targetType, spec.paramPath);
+    if (declared && NODE_TYPE_BY_VALUE[spec.valueType] !== declared) {
+      return {
+        ok: false,
+        reason: `${targetType}.${spec.paramPath} names a node: key it with valueType "text", each key holding that node's id.`,
+      };
+    }
+    const offered = offeredNodeIds(state, spec.target, spec.paramPath);
+    if (
+      offered &&
+      spec.initialKeyframe &&
+      !offered.includes(spec.initialKeyframe.value as string)
+    ) {
+      return {
+        ok: false,
+        reason: `"${String(spec.initialKeyframe.value)}" is not one ${targetType}.${spec.paramPath} can pick (it can pick: ${offered.join(', ') || 'nothing yet'}).`,
       };
     }
     return { ok: true };
