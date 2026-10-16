@@ -1,10 +1,15 @@
 # Basher launch video — end to end
 
-**Status:** draft 3, 2026-10-14. Nothing here is shot yet.
+**Status:** draft 4, 2026-10-16. Nothing here is shot yet.
 **Owner of the decisions:** Mrityunjay. Where a choice below is a recommendation and not a decision, it says so.
 **Storyboard:** 27 sketched key frames, one per beat of §8, in [`launch/storyboard.html`](launch/storyboard.html). They are composition sketches; the interface in them is a placeholder.
 **Tracking:** milestone "Launch Video", tracking issue #1608.
 **What changed from draft 1:** the film inside the video is now a foot chase that ends in bullet time, not a quiet moment under a streetlamp. A car chase was considered and left out (§6.5).
+**What changed from draft 3:** two beats move to a second cut of the video, made once the product can do them (decided 2026-10-16):
+
+- **The one-sentence scene is out of this cut** (#1593). Getting the AI to build the whole chase predictably from one sentence needs more than this cut has time for. Level 1 now opens on the chase, prepared in advance and saved as a project, and the video never says or shows that a sentence made it. The prompt stays only on the competitor's side, in the cold open.
+- **The procedural alley is out of this cut** (#1597, now in the Procedural Core milestone, #1659). Level 6 now swaps the whole set, from the alley to a plaza, and the replay shows that nothing placed in it moved.
+
 **What changed from draft 2:** the first four checks were run in the app (#1600–#1603) and their results are folded in, beat by beat. In short:
 
 - **The runner runs; it does not sprint.** Generated runs top out at 3.1–5.1 m/s against a real sprint's 7–9 (#1600). The film is written for a fast run and gets its pace from the cutting and the low camera (§6.2).
@@ -22,7 +27,7 @@ This document is the whole plan for the launch video: who it is for, what it cla
 
 - **What it is:** a 110-second film of someone directing a twelve-second chase in Basher, in a browser tab.
 - **Who it is for:** directors, and anyone who wants full control and authorship over their film.
-- **The one idea:** Basher is _progressively granular_. You start with a sentence. You can stop there. Or you can go down, level by level — the shots, the timing, a single fingertip, a single light, the whole world, the graph underneath — and nothing you already decided is lost on the way.
+- **The one idea:** Basher is _progressively granular_. You start with a scene. You can stop there. Or you can go down, level by level — the shots, the timing, a single fingertip, a single light, the whole world, the graph underneath — and nothing you already decided is lost on the way.
 - **The image:** a bullet hanging in the air between a running figure's fingers while the camera travels around it.
 - **Why that image:** freezing a moment and moving the camera through it, with everything exactly where it was, is the one thing a prompt-to-video tool cannot do. It is the control claim in a single frame.
 - **The line:** _Direct your film. As far down as you want to go._
@@ -33,21 +38,23 @@ This document is the whole plan for the launch video: who it is for, what it cla
 
 ## 2. Decisions
 
-| Decision                                                                             | Taken by | Date       |
-| ------------------------------------------------------------------------------------ | -------- | ---------- |
-| The launch speaks to a general audience: directors and anyone who wants full control | User     | 2026-10-12 |
-| The organising idea is "progressively granular"                                      | User     | 2026-10-12 |
-| The video must stand out on ease of use                                              | User     | 2026-10-12 |
-| The video must show fully controllable films                                         | User     | 2026-10-12 |
-| The Light Studio is in the video                                                     | User     | 2026-10-12 |
-| The film inside is an intense foot chase; the villain fires while the hero runs      | User     | 2026-10-12 |
-| Bullet time, in slow motion, when the shot changes                                   | User     | 2026-10-12 |
-| No car chase                                                                         | User     | 2026-10-12 |
-| A placed light stays in the world; the rim light does not travel with the runner     | User     | 2026-10-14 |
-| "World's first" is not put on screen (§5)                                            | Proposed | open       |
-| The tag line is "a procedural 3D film studio in your browser"                        | Proposed | open       |
-| No voiceover; captions carry the script                                              | Proposed | open       |
-| The projectile is a bullet, not a stylised stand-in (§18)                            | Proposed | open       |
+| Decision                                                                              | Taken by | Date       |
+| ------------------------------------------------------------------------------------- | -------- | ---------- |
+| This cut opens on a prepared scene; the one-sentence scene waits for the second cut   | User     | 2026-10-16 |
+| Level 6 swaps the set (alley to plaza); the procedural alley waits for the second cut | User     | 2026-10-16 |
+| The launch speaks to a general audience: directors and anyone who wants full control  | User     | 2026-10-12 |
+| The organising idea is "progressively granular"                                       | User     | 2026-10-12 |
+| The video must stand out on ease of use                                               | User     | 2026-10-12 |
+| The video must show fully controllable films                                          | User     | 2026-10-12 |
+| The Light Studio is in the video                                                      | User     | 2026-10-12 |
+| The film inside is an intense foot chase; the villain fires while the hero runs       | User     | 2026-10-12 |
+| Bullet time, in slow motion, when the shot changes                                    | User     | 2026-10-12 |
+| No car chase                                                                          | User     | 2026-10-12 |
+| A placed light stays in the world; the rim light does not travel with the runner      | User     | 2026-10-14 |
+| "World's first" is not put on screen (§5)                                             | Proposed | open       |
+| The tag line is "a procedural 3D film studio in your browser"                         | Proposed | open       |
+| No voiceover; captions carry the script                                               | Proposed | open       |
+| The projectile is a bullet, not a stylised stand-in (§18)                             | Proposed | open       |
 
 ---
 
@@ -79,11 +86,11 @@ This document is the whole plan for the launch video: who it is for, what it cla
 
 ### 4.1 The promise
 
-Start with a sentence, go as deep as you want, never hit a wall, never lose what you already decided.
+Start with a scene, go as deep as you want, never hit a wall, never lose what you already decided.
 
 ### 4.2 The four claims the video has to prove
 
-1. **It is easy at the top.** One sentence makes a chase worth watching.
+1. **It is easy at the top.** Open the scene, press play, and you could stop there.
 2. **It is controllable all the way down.** Shots, timing, performance, light, world, graph.
 3. **It handles speed.** A fast, cut, multi-character sequence stays exactly as directed.
 4. **The scene is the film.** What you direct in 3D is what the AI render delivers, and it is the same tomorrow.
@@ -128,7 +135,7 @@ A check of competitors' own sites and trade coverage on 2026-10-12. None of it i
 **So the video claims by showing, not by saying.** The four things no competitor page shows:
 
 1. A frozen moment re-shot from a new camera with nothing regenerated (§8, level 3).
-2. A global, procedural change that leaves a fine detail intact (§8, level 6).
+2. A change to the whole world, a new set, that leaves a fine detail intact (§8, level 6).
 3. One undo across the director's edits and the AI's (§8, level 7).
 4. The light you placed in 3D surviving into the AI render (§8, level 8).
 
@@ -187,12 +194,12 @@ Vehicles make a strong second video once mechanical rigs exist (wheels and suspe
 | Part                      | Time      | Job                                                             |
 | ------------------------- | --------- | --------------------------------------------------------------- |
 | Cold open: the wall       | 0–9 s     | Name the pain in the viewer's own experience                    |
-| Level 1: the scene        | 9–22 s    | Ease: one sentence, one watchable chase, "stop here"            |
+| Level 1: the scene        | 9–22 s    | Ease: open the scene, one watchable chase, "stop here"          |
 | Level 2: the shots        | 22–32 s   | Three shots, a camera dragged by hand, a cut moved              |
 | Level 3: the timing       | 32–44 s   | Everything slows together; the camera travels the frozen moment |
 | Level 4: the performance  | 44–56 s   | A head, a shoulder, then a fingertip                            |
 | Level 5: the light        | 56–66 s   | Light Studio: place the flash, drag a rim, key it               |
-| Level 6: the world        | 66–73 s   | Procedural: one slider, the alley grows, nothing lost           |
+| Level 6: the world        | 66–73 s   | The set changes from alley to plaza; nothing placed is lost     |
 | Level 7: the collaborator | 73–80 s   | Ask the AI; one undo for both of you                            |
 | Level 8: the look         | 80–88 s   | AI render: two looks, the same frame                            |
 | The bottom                | 88–93 s   | The graph: every decision is still there                        |
@@ -235,18 +242,19 @@ Conventions: **Screen** is what is captured. **Action** is what the hand does. *
 
 **Shot 1.1 (9–12 s)**
 
-- **Screen:** a browser window. The address bar is visible for one second, then the view pushes in to the Basher viewport, empty.
-- **Caption:** _Start with a sentence._
+- **Screen:** a browser window. The address bar is visible for one second, then the view pushes in to the Basher viewport with the chase project open, paused on its first frame.
+- **Caption:** _Start with a scene._ (proposed wording)
 - **Sound:** a single low pulse.
-- **Needs:** a clean first-run editor with no starter box and no open panels.
+- **Needs:** the demo project (§11.2) opening cleanly, with no panels open and no starter objects in it.
 
 **Shot 1.2 (12–18 s)**
 
-- **Action:** the same sentence is typed into Basher's chat. The alley, the runner, the pursuer, the gun and a camera assemble. The chase plays once at full speed, bullet and all.
+- **Action:** play is pressed. The chase plays once at full speed, bullet and all.
 - **Caption:** none.
 - **Sound:** running feet, a shot.
-- **Needs:** one sentence producing a set, two characters with their own motion, a fired projectile and a camera, in one take. **This is the shot the whole video depends on.**
-- **Checked (#1600):** two characters with one generated motion each play together without errors, and the draw-and-fire reads clearly as aiming. A dropped motion binds only to the character that is selected, so any step that adds motion by hand selects the character first. The one-sentence scene itself is still untried.
+- **Needs:** the prepared chase: the alley, two characters with their own motion, a fired projectile and a camera, saved as a project and playing at full speed in one take.
+- **Honesty (decided 2026-10-16):** the scene is prepared in advance. Nothing in this beat, the captions or the post says or implies that a sentence made it. Building a scene from one sentence is a second-cut beat (#1593).
+- **Checked (#1600):** two characters with one generated motion each play together without errors, and the draw-and-fire reads clearly as aiming. A dropped motion binds only to the character that is selected, so any step that adds motion by hand selects the character first. Making it from one sentence was measured on #1593 and moved to the second cut.
 
 **Shot 1.3 (18–22 s)**
 
@@ -344,17 +352,17 @@ Conventions: **Screen** is what is captured. **Action** is what the hand does. *
 **Shot 6.1 (66–71 s)**
 
 - **Screen:** the view pulls back above the alley.
-- **Action:** one slider is dragged. The alley runs three blocks longer; fire escapes, bins and doorways repeat and re-scatter into the distance.
+- **Action:** the set is swapped in one gesture: the alley goes, and a night plaza takes its place. The runner, the pursuer, the bullet, the lights and the cameras stay exactly where they are.
 - **Caption:** _The world._
 - **Sound:** the music returns, building.
-- **Needs:** an alley whose length and dressing are driven by one value.
-- **Note (2026-10-14):** the alley built in Blender for the alley-run tests is one static imported set. It looks the part but has no length to drag. This beat still needs build item 5, or the fallback in §12.6.
+- **Needs:** the plaza as a set the chase project can take in place of the alley, in one gesture that is one undo step. The runner's path, the pursuer's position and the bullet's line have to make sense in the plaza too, including a wall for the bullet to hit (7.1).
+- **Decided 2026-10-16:** a set swap replaces the one-slider alley in this cut. The plaza was built and saved during the alley-run tests; swapping it into the chase project has not been tried. The procedural alley is a second-cut beat (#1597).
 
 **Shot 6.2 (71–73 s)**
 
 - **Action:** a quick replay of the bullet-time shot. The pose, the light and the fingertip are exactly as they were.
 - **Caption:** _Change everything. Lose nothing._
-- **Needs:** the performance and lighting surviving a change to the set, with no visible pause.
+- **Needs:** the performance and lighting surviving the set swap, with no visible pause.
 
 ### Level 7 — the collaborator (73–80 s)
 
@@ -368,7 +376,7 @@ Conventions: **Screen** is what is captured. **Action** is what the hand does. *
 
 **Shot 7.2 (76–80 s)**
 
-- **Action:** undo — the sparks go. Undo — the alley shortens. Redo, redo — both return.
+- **Action:** undo — the sparks go. Undo — the alley is back. Redo, redo — the plaza and the sparks return.
 - **Caption:** _Or take it back. Yours and the AI's, one undo._
 - **Sound:** two clicks back, two forward.
 - **Needs:** the AI's edit and the director's edit in the same undo history, each one step.
@@ -396,7 +404,7 @@ Conventions: **Screen** is what is captured. **Action** is what the hand does. *
 
 **Shot 9.1 (88–93 s)**
 
-- **Action:** the viewport pulls back and the scene dissolves into its graph. Each decision made above lights up in the order it was made: scene, shots, speed, pose, light, alley, sparks, look.
+- **Action:** the viewport pulls back and the scene dissolves into its graph. Each decision made above lights up in the order it was made: scene, shots, speed, pose, light, set, sparks, look.
 - **Caption:** _All the way down. Or not at all._
 - **Sound:** the music thins to one pulse.
 - **Needs:** a read-only graph view of this project, legible at 1080p, with readable names.
@@ -429,7 +437,7 @@ Conventions: **Screen** is what is captured. **Action** is what the hand does. *
 Every word that appears on screen, in order. Nothing else is written on the picture.
 
 1. _You asked for one change._
-2. _Start with a sentence._
+2. _Start with a scene._ (proposed wording)
 3. _You could stop here._
 4. _The shots._
 5. _The cut._
@@ -472,18 +480,19 @@ Every word that appears on screen, in order. Nothing else is written on the pict
 
 ### 11.1 Assets
 
-| Asset             | Requirement                                                              | State                                                      |
-| ----------------- | ------------------------------------------------------------------------ | ---------------------------------------------------------- |
-| Runner            | Stylised, rigged, with finger bones; a licence that allows marketing use | Not chosen                                                 |
-| Pursuer           | A second figure, clearly different in silhouette and colour              | Not chosen                                                 |
-| Gun and bullet    | Simple, slightly oversized; the bullet with a short trail                | Not built                                                  |
-| Alley             | One block that tiles; fire escapes, bins and doors as separate pieces    | Not built                                                  |
-| Run               | A fast run that reads at knee height                                     | Generated runs checked: usable trimmed and sped up (#1600) |
-| Draw-and-fire     | Plant, raise, fire, recoil                                               | Not chosen                                                 |
-| Sparks            | A short burst at a point                                                 | Not built                                                  |
-| Two AI looks      | Graphic-novel ink and photoreal night, both stable across twelve seconds | Not chosen                                                 |
-| Two "wrong" clips | For the cold open, cleared for use                                       | Not made                                                   |
-| Music             | About 110 seconds, cleared                                               | Not commissioned                                           |
+| Asset             | Requirement                                                              | State                                                                        |
+| ----------------- | ------------------------------------------------------------------------ | ---------------------------------------------------------------------------- |
+| Runner            | Stylised, rigged, with finger bones; a licence that allows marketing use | Not chosen                                                                   |
+| Pursuer           | A second figure, clearly different in silhouette and colour              | Not chosen                                                                   |
+| Gun and bullet    | Simple, slightly oversized; the bullet with a short trail                | Not built                                                                    |
+| Alley             | A night alley set                                                        | Built in Blender for the alley-run tests; static                             |
+| Plaza             | A night plaza set the alley can be swapped for                           | Built and saved during the alley-run tests; not yet a set the chase can take |
+| Run               | A fast run that reads at knee height                                     | Generated runs checked: usable trimmed and sped up (#1600)                   |
+| Draw-and-fire     | Plant, raise, fire, recoil                                               | Not chosen                                                                   |
+| Sparks            | A short burst at a point                                                 | Not built                                                                    |
+| Two AI looks      | Graphic-novel ink and photoreal night, both stable across twelve seconds | Not chosen                                                                   |
+| Two "wrong" clips | For the cold open, cleared for use                                       | Not made                                                                     |
+| Music             | About 110 seconds, cleared                                               | Not commissioned                                                             |
 
 ### 11.2 The demo project
 
@@ -497,16 +506,16 @@ Surveyed on main at `707cb2da` on 2026-10-12, by reading the code and the open i
 
 ### 12.1 Must be built
 
-| #   | What                                                                 | For beat | On main today                                                                                                                                                                           |
-| --- | -------------------------------------------------------------------- | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1   | A scene from one sentence: set, two characters, a projectile, camera | 1.2      | The AI has separate tools (add a mesh, import from the library, generate a model, generate motion, walk-to, create a shot, move a camera). Nothing found chains them from one sentence. |
-| 2   | One control that slows the whole scene                               | 3.1, 5.3 | Per-clip retiming exists. No scene-wide speed control was found.                                                                                                                        |
-| 3   | A shots panel, and cuts editable on the timeline                     | 2.1, 2.3 | Shot and Cut nodes exist and the AI can create a shot. No panel was found.                                                                                                              |
-| 4   | A camera move picker                                                 | 2.2      | Moves exist as something the AI can do. No picker was found in the interface.                                                                                                           |
-| 5   | An alley driven by one length value                                  | 6.1      | Array and Scatter operators exist. No set built from them does.                                                                                                                         |
-| 6   | Sparks, or any short burst effect                                    | 7.1      | No particle system was found.                                                                                                                                                           |
-| 7   | A read-only graph view                                               | 9.1      | Not built. Planned as the last step of the Graph milestone (#1563), after stored node positions (#1562).                                                                                |
-| 8   | Applying an AI look in one gesture                                   | 8.1, 8.2 | AI, depth, normal and ID passes and the ComfyUI handoff exist, with one look preset. No one-click control was found.                                                                    |
+| #   | What                                                            | For beat | On main today                                                                                                                                                                           |
+| --- | --------------------------------------------------------------- | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | ~~A scene from one sentence~~: **second cut** (#1593)           | 1.2      | The AI has separate tools (add a mesh, import from the library, generate a model, generate motion, walk-to, create a shot, move a camera). Nothing found chains them from one sentence. |
+| 2   | One control that slows the whole scene                          | 3.1, 5.3 | Per-clip retiming exists. No scene-wide speed control was found.                                                                                                                        |
+| 3   | A shots panel, and cuts editable on the timeline                | 2.1, 2.3 | Shot and Cut nodes exist and the AI can create a shot. No panel was found.                                                                                                              |
+| 4   | A camera move picker                                            | 2.2      | Moves exist as something the AI can do. No picker was found in the interface.                                                                                                           |
+| 5   | ~~An alley driven by one length value~~: **second cut** (#1597) | 6.1      | Array and Scatter operators exist. No set built from them does.                                                                                                                         |
+| 6   | Sparks, or any short burst effect                               | 7.1      | No particle system was found.                                                                                                                                                           |
+| 7   | A read-only graph view                                          | 9.1      | Not built. Planned as the last step of the Graph milestone (#1563), after stored node positions (#1562).                                                                                |
+| 8   | Applying an AI look in one gesture                              | 8.1, 8.2 | AI, depth, normal and ID passes and the ComfyUI handoff exist, with one look preset. No one-click control was found.                                                                    |
 
 ### 12.2 Issues already filed, and how each relates
 
@@ -551,7 +560,8 @@ Re-read on 2026-10-12 against the script. None of these blocks filming; an earli
 | 5.1      | Light Brush places a light from a click                   | Lands on the mirror direction on a moving character, measured with two workarounds (#1603); #1610 and #1611 remove them, tested separately | **Verified** with workarounds; rerun after merge                |
 | 5.2      | Drag a light puck, one undo step                          | 12-step drag, one undo step, exact restore (#1603)                                                                                         | **Verified**                                                    |
 | 5.3      | A keyed light brightness, correct through slow motion     | Keyed brightness plays and scrubs (#1603); slow motion waits on #1594                                                                      | Half verified                                                   |
-| 6.2      | Pose and light survive the set change                     | Follows from the graph; never tried on this scene                                                                                          | Not verified                                                    |
+| 6.1      | The plaza swapped in for the alley in one gesture         | The plaza is saved as its own project; never swapped into the chase                                                                        | Not verified                                                    |
+| 6.2      | Pose and light survive the set swap                       | Follows from the graph; never tried on this scene                                                                                          | Not verified                                                    |
 | 7.2      | One undo across the director's and the AI's edits         | Two steps, exact restore both ways; the AI's edit lands on Apply (#1602)                                                                   | **Verified**                                                    |
 | 8.1, 8.2 | The look keeps the placed light and the pose              | A restyle outside Basher keeps the pose, loses framing and light (#1601); Basher's own pass not run                                        | **Not proven**                                                  |
 
@@ -568,24 +578,25 @@ Considered and left off the launch path. Each is a large build and none appears 
 
 ### 12.5 The order to check and build
 
-1. **The one-sentence scene (item 1).** If it cannot make a watchable chase in one take, level 1 is rewritten.
-2. **Scene-wide slow motion (item 2).** Without it there is no bullet time; this is the centrepiece.
-3. **The AI look keeping light and pose (beats 8.1, 8.2).** It decides whether the fourth claim is true.
-4. **Two characters with generated run and fire motions.**
-5. **The shots panel and cuts (item 3).**
-6. **The alley (item 5).**
-7. **The conditional issues in §12.2,** once the choices they hang on are made.
-8. **Everything marked "in the code, not run",** in one sitting, on the demo project.
-9. **Sparks, the move picker, the look control, the graph view (items 6, 4, 8, 7).**
+1. **Scene-wide slow motion (item 2).** Without it there is no bullet time; this is the centrepiece.
+2. **The AI look keeping light and pose (beats 8.1, 8.2).** It decides whether the fourth claim is true.
+3. **Two characters with generated run and fire motions.**
+4. **The shots panel and cuts (item 3).**
+5. **The set swap (beats 6.1, 6.2).**
+6. **The conditional issues in §12.2,** once the choices they hang on are made.
+7. **Everything marked "in the code, not run",** in one sitting, on the demo project.
+8. **Sparks, the move picker, the look control, the graph view (items 6, 4, 8, 7).**
+
+Items 1 and 5 of §12.1 (the one-sentence scene and the procedural alley) are in the second cut.
 
 ### 12.6 What each failure costs
 
 | If this fails                | Then                                                                                                        |
 | ---------------------------- | ----------------------------------------------------------------------------------------------------------- |
-| One-sentence scene           | Rewrite level 1 as "open an example and make it yours". The ease claim weakens; the descent still holds.    |
+| One-sentence scene           | Taken (2026-10-16): level 1 opens on the prepared scene. The ease claim is weaker; the descent still holds. |
 | Scene-wide slow motion       | No bullet time. Fall back to a hard freeze on one frame with a camera move around it; weaker, still unique. |
 | Shots panel                  | Show the three shots on the timeline only. Lose "on the right", keep the cuts.                              |
-| One-slider alley             | One slider on an existing array (the fire escapes only). Smaller, still true.                               |
+| Set swap                     | Cut level 6 and its caption. Keep 7.2 on the sparks and one hand edit.                                      |
 | Sparks                       | Ask the AI for "a flash of light where it hits" instead. Uses lights, which exist.                          |
 | Shared undo                  | Cut 7.2. Keep "Ask". This loses a claim no competitor makes — fix the product if at all possible.           |
 | The look keeps the light     | End level 8 at one look as a finishing pass; drop "Same film. Every time."                                  |
@@ -653,37 +664,37 @@ Proposals, not decisions.
 
 Every claim the video makes, and what makes it true.
 
-| Claim, as shown                               | True when                                                                      |
-| --------------------------------------------- | ------------------------------------------------------------------------------ |
-| One sentence makes a chase                    | Beat 1.2 is one unbroken take                                                  |
-| It runs in a browser                          | The address bar is on screen in 1.1 and the take continues                     |
-| Slow the whole scene with one control         | Beat 3.1 is one drag, and every moving thing slows together                    |
-| Re-shoot a frozen moment from anywhere        | Beat 3.2: only the camera changes between two plays of the same moment         |
-| You can control a fingertip                   | Beat 4.2 — verified                                                            |
-| You can place a light by clicking the subject | Beat 5.1 on the hero figure                                                    |
-| Changing the world loses nothing              | Beat 6.2 replays the same pose with no cut between slider and replay           |
-| The AI's edits and yours share one undo       | Beat 7.2 is one take                                                           |
-| The same film under different looks           | Beats 8.1 and 8.2 share a frame that can be overlaid. **Not yet true** (#1601) |
-| "Procedural"                                  | Beat 6.1 is a parameter, not a swap between two saved scenes                   |
+| Claim, as shown                               | True when                                                                                                                           |
+| --------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| Open the scene and it plays                   | Beat 1.2 is one unbroken take of the saved project                                                                                  |
+| It runs in a browser                          | The address bar is on screen in 1.1 and the take continues                                                                          |
+| Slow the whole scene with one control         | Beat 3.1 is one drag, and every moving thing slows together                                                                         |
+| Re-shoot a frozen moment from anywhere        | Beat 3.2: only the camera changes between two plays of the same moment                                                              |
+| You can control a fingertip                   | Beat 4.2 — verified                                                                                                                 |
+| You can place a light by clicking the subject | Beat 5.1 on the hero figure                                                                                                         |
+| Changing the world loses nothing              | Beat 6.2 replays the same pose with no cut between the swap and the replay                                                          |
+| The AI's edits and yours share one undo       | Beat 7.2 is one take                                                                                                                |
+| The same film under different looks           | Beats 8.1 and 8.2 share a frame that can be overlaid. **Not yet true** (#1601)                                                      |
+| "Procedural" (closing tag only)               | The scene is one graph of decisions, shown in 9.1. No beat in this cut shows a procedural parameter; that is the second cut (#1597) |
 
-Claims the video does **not** make: world's first, easiest, fastest, real-time AI render, better than any named tool.
+Claims the video does **not** make: world's first, easiest, fastest, real-time AI render, better than any named tool, a scene made from one sentence.
 
 ---
 
 ## 18. Risks
 
-| Risk                                                         | Likelihood | Effect                                                                         | Answer                                                                                                                                                          |
-| ------------------------------------------------------------ | ---------- | ------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| The first-sentence result is not watchable                   | High       | The ease claim fails                                                           | Check first; fall back to "open an example"                                                                                                                     |
-| There is no scene-wide slow motion                           | High       | No centrepiece                                                                 | Build it second; fall back to a hard freeze                                                                                                                     |
-| Generated run and fire motions look floaty                   | Measured   | The chase is not intense: runs top at 5.1 m/s, arms tucked, no recoil (#1600)  | Trim the wind-up, speed the clip about 1.5×, cut tighter and lower, key the recoil by hand (#1399)                                                              |
-| The hero figures look like test assets                       | High       | The ending falls flat                                                          | Choose the figures before anything else                                                                                                                         |
-| A gunshot at a person limits where the video can run         | Medium     | Paid placement refused on some platforms; a harder tone for a general audience | Keep a second version with a stylised projectile (a dart, an arrow, a thrown blade). The structure is identical.                                                |
-| Insider vocabulary visible in panels                         | High       | A director feels it is a 3D package                                            | Measured 2026-10-13: the outliner shows `n_box`, the inspector shows spare params and data types (#1625, #1627). Fix those two before shooting; collapse panels |
-| The AI look flickers across twelve seconds                   | Medium     | The final film looks cheap                                                     | Pick looks for stability; fast cuts hide more than a slow shot does                                                                                             |
-| A competitor ships the same beat before launch               | Medium     | A "nobody else" beat becomes ordinary                                          | Claim nothing by comparison in the video itself                                                                                                                 |
-| A viewer calls it faked                                      | Low        | Trust                                                                          | Publish raw takes and the project                                                                                                                               |
-| The video promises depth the product cannot hold in real use | Medium     | Churn after sign-up                                                            | Every beat must be repeatable by a new user on the demo project                                                                                                 |
+| Risk                                                           | Likelihood | Effect                                                                         | Answer                                                                                                                                                          |
+| -------------------------------------------------------------- | ---------- | ------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A viewer reads the opening as "Basher made this from a prompt" | Medium     | Trust, once someone tries it                                                   | The cold open's prompt stays on the competitor's screen; level 1 shows opening a project; no caption or post says a sentence made it                            |
+| There is no scene-wide slow motion                             | High       | No centrepiece                                                                 | Build it second; fall back to a hard freeze                                                                                                                     |
+| Generated run and fire motions look floaty                     | Measured   | The chase is not intense: runs top at 5.1 m/s, arms tucked, no recoil (#1600)  | Trim the wind-up, speed the clip about 1.5×, cut tighter and lower, key the recoil by hand (#1399)                                                              |
+| The hero figures look like test assets                         | High       | The ending falls flat                                                          | Choose the figures before anything else                                                                                                                         |
+| A gunshot at a person limits where the video can run           | Medium     | Paid placement refused on some platforms; a harder tone for a general audience | Keep a second version with a stylised projectile (a dart, an arrow, a thrown blade). The structure is identical.                                                |
+| Insider vocabulary visible in panels                           | High       | A director feels it is a 3D package                                            | Measured 2026-10-13: the outliner shows `n_box`, the inspector shows spare params and data types (#1625, #1627). Fix those two before shooting; collapse panels |
+| The AI look flickers across twelve seconds                     | Medium     | The final film looks cheap                                                     | Pick looks for stability; fast cuts hide more than a slow shot does                                                                                             |
+| A competitor ships the same beat before launch                 | Medium     | A "nobody else" beat becomes ordinary                                          | Claim nothing by comparison in the video itself                                                                                                                 |
+| A viewer calls it faked                                        | Low        | Trust                                                                          | Publish raw takes and the project                                                                                                                               |
+| The video promises depth the product cannot hold in real use   | Medium     | Churn after sign-up                                                            | Every beat must be repeatable by a new user on the demo project                                                                                                 |
 
 ---
 
@@ -697,18 +708,19 @@ Claims the video does **not** make: world's first, easiest, fastest, real-time A
 6. Captions only, or a voice as well?
 7. Does the graph appear at all for a general audience, or only on the landing page?
 8. What is the launch date, and what is allowed to slip: the date or a level?
+9. Which set does the finished film (10.1) play in? 7.2 as written ends in the plaza, while the film's logline and the sparks on the wall assume the alley. Either the film moves to the plaza, or 7.2 ends on the alley without the sparks.
 
 ---
 
 ## 20. The work, in order
 
-1. Try the one-sentence scene in the app as it stands.
+1. ~~Try the one-sentence scene in the app as it stands.~~ Done (#1593): measured, then moved to the second cut.
 2. Decide how the whole scene slows, and build it.
 3. Try an AI look on a posed, lit frame.
 4. Generate a run and a draw-and-fire; judge them honestly.
 5. Choose the two figures.
 6. Build the shots panel and timeline cuts.
-7. Build the alley from one length value.
+7. ~~Build the alley from one length value.~~ Second cut (#1597). This cut: swap the alley for the plaza.
 8. Settle the conditional issues in §12.2.
 9. Build the demo project with a checkpoint per level.
 10. Run every remaining beat once on the demo project; fix or cut.
@@ -720,4 +732,4 @@ Claims the video does **not** make: world's first, easiest, fastest, real-time A
 
 Steps 1 to 4 decide whether the script above survives. Everything after them is production.
 
-**Where they stand (2026-10-14):** step 1 not tried. Step 2 is #1594, not started. Step 3 run outside Basher only: the pose holds, the frame and the light do not; the in-app run waits on a ComfyUI server. Step 4 done: usable with a trim, a speed-up and a hand-keyed recoil. Step 5 under way in the alley-run tests: a generated character rigged outside Basher, run along a path after fixes #1632–#1635.
+**Where they stand (2026-10-16):** step 1 measured and moved to the second cut (#1593), and step 7 likewise (#1597). Step 2 (#1594) is built on a local branch, not yet merged. As of 2026-10-14: Step 2 is #1594, not started. Step 3 run outside Basher only: the pose holds, the frame and the light do not; the in-app run waits on a ComfyUI server. Step 4 done: usable with a trim, a speed-up and a hand-keyed recoil. Step 5 under way in the alley-run tests: a generated character rigged outside Basher, run along a path after fixes #1632–#1635.
