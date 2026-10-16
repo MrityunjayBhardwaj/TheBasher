@@ -9,7 +9,8 @@
 
 import type { DagState } from '../../core/dag/state';
 import type { Op, InverseOp } from '../../core/dag/types';
-import { applyOps, type Reportable } from '../../core/dag/ops';
+import { applyOps, GraphRefusal, type Reportable } from '../../core/dag/ops';
+import { templateEdits } from '../../core/dag/templates';
 import { resolveDataParamOwner } from '../../app/resolveDataParamOwner';
 
 export interface ForkResult {
@@ -46,7 +47,12 @@ export function createFork(state: DagState, ops: Op[]): ForkResult {
     return { fork: { ...state, nodes: { ...state.nodes } }, inverseOps: [], reportable: [] };
   }
 
-  const { next, applied } = applyOps(state, ops);
+  const { next: planned, applied } = applyOps(state, ops);
+  // #1557 D4 — what the plan does to a template's other instances, shown as the store will commit
+  // it (the store works it out again on accept, from the plan's own operations).
+  const edits = templateEdits(state, planned);
+  if ('refusal' in edits) throw new GraphRefusal(edits.refusal);
+  const next = edits.ops.length ? applyOps(planned, edits.ops).next : planned;
   const fork: DagState = { ...next, nodes: { ...next.nodes } };
   const inverseOps: InverseOp[] = applied.map((a) => ({ forward: a.forward, inverse: a.inverse }));
   // The owner a stripped write names is read off the graph the plan ends in (`withOwner`).

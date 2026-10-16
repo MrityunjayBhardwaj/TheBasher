@@ -57,7 +57,9 @@ export const collapseToTemplateMutator: MutatorDefinition<CollapseToTemplateSpec
     'The nodes must give the outside exactly one output, and every one of them must feed it. ' +
     'Each wire coming in from outside becomes an input of the template (Number, Vector3 or ' +
     'PosedSkeleton), named after the node it comes from, and the instance reads it there. ' +
-    'Add more instances with mutator.graph.addTemplateInstance.',
+    'Add more instances with mutator.graph.addTemplateInstance. Instances are locked: their ' +
+    "body cannot be edited. Set an instance's `locked` param to false (dag.exec setParam) and a " +
+    'param edit inside it changes the template, its definition and every instance at once.',
   spec: CollapseToTemplateSpec,
   specExample: { nodes: ['node_id'], name: 'Lag' },
   contract: {

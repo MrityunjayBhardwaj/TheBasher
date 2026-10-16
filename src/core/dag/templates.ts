@@ -34,7 +34,16 @@ import { z } from 'zod';
 import { defineNodeType, isDefinedNodeType, undefineNodeType } from './registry';
 import type { DagState } from './state';
 import { NodeRefSchema, NodeSchema } from './types';
-import type { InputDescriptor, Node, NodeDefinition, NodeId, SocketTypeName } from './types';
+import type {
+  InputBinding,
+  InputDescriptor,
+  Node,
+  NodeDefinition,
+  NodeId,
+  NodeRef,
+  Op,
+  SocketTypeName,
+} from './types';
 
 export const TEMPLATE_TYPE_PREFIX = 'template.';
 const TEMPLATE_TYPE = /^template\.[A-Za-z][A-Za-z0-9_]*$/;
@@ -141,6 +150,14 @@ export function templatesOf(
   return out;
 }
 
+/** An instance's params. `locked` (#1557 D4): its body follows the definition and cannot be
+ *  edited in place; unlocked, an edit inside it is an edit of the template. */
+export const TemplateInstanceParams = z.object({ locked: z.boolean().default(true) });
+
+/** Whether an instance is locked. A node saved before the param existed reads as locked. */
+export const isLocked = (node: Node): boolean =>
+  (node.params as { locked?: unknown } | undefined)?.locked !== false;
+
 const single = (type: string): InputDescriptor =>
   ({ type: type as SocketTypeName, cardinality: 'single' }) as InputDescriptor;
 
@@ -158,7 +175,7 @@ export function templateNodeType(def: TemplateDefinition): NodeDefinition {
     version: 1,
     pure: true,
     cost: 'cheap',
-    paramSchema: z.object({}),
+    paramSchema: TemplateInstanceParams,
     inputs,
     outputs: { out: single(def.output.type) },
     bodyInputs,
@@ -219,4 +236,148 @@ export function withoutUnusedTemplates<S extends Pick<DagState, 'nodes'>>(state:
     delete nodes[node.id];
   }
   return nodes ? { ...state, nodes } : state;
+}
+
+const refsOf = (binding: InputBinding | undefined): NodeRef[] =>
+  Array.isArray(binding) ? binding : binding ? [binding] : [];
+
+/**
+ * Which node of `instanceId`'s body stands for each node of `def`'s body (definition key → node
+ * id), found by walking both from the output socket by socket. Null when the body no longer has
+ * the definition's shape: a wire, a node's type or the set of nodes differs.
+ */
+export function matchInstanceBody(
+  state: Pick<DagState, 'nodes'>,
+  instanceId: NodeId,
+  def: TemplateDefinition,
+): Map<string, NodeId> | null {
+  const instance = state.nodes[instanceId];
+  const root = instance?.inputs[TEMPLATE_BODY_SOCKET];
+  if (!instance || instance.type !== def.type || !root || Array.isArray(root)) return null;
+  if (root.socket !== def.body.out.socket) return null;
+  const match = new Map<string, NodeId>();
+  const claimed = new Set<NodeId>();
+  const pair = (key: string, id: NodeId): boolean => {
+    const known = match.get(key);
+    if (known !== undefined) return known === id;
+    if (claimed.has(id)) return false;
+    const want = def.body.nodes[key];
+    const have = state.nodes[id];
+    if (!want || !have || want.type !== have.type) return false;
+    match.set(key, id);
+    claimed.add(id);
+    const sockets = new Set([...Object.keys(want.inputs), ...Object.keys(have.inputs)]);
+    for (const socket of sockets) {
+      const a = refsOf(want.inputs[socket]);
+      const b = refsOf(have.inputs[socket]);
+      if (a.length !== b.length) return false;
+      for (let i = 0; i < a.length; i++) {
+        if (a[i].socket !== b[i].socket || !pair(a[i].node, b[i].node)) return false;
+      }
+    }
+    return true;
+  };
+  if (!pair(def.body.out.node, root.node)) return null;
+  return match.size === Object.keys(def.body.nodes).length ? match : null;
+}
+
+// ── Editing a template through an instance (#1557 D4) ──────────────────────────────────────
+
+export type TemplateEdits = { readonly ops: Op[] } | { readonly refusal: string };
+
+const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
+
+/**
+ * What a committed change from `prev` to `next` does to the templates it edits, Houdini's way:
+ * an edit inside a LOCKED instance is refused; a parameter edit inside an UNLOCKED one is an edit
+ * of the template, so the operations returned apply it to the definition and to the node at the
+ * same place in every other instance (`matchInstanceBody`). An edit that changes a body's shape
+ * is refused for now (#1665).
+ *
+ * Asked by the commit doors (the DAG store's three dispatches, and the agent's preview), never by
+ * undo, redo or a load: what a commit wrote together, undo takes back together, and a refusal
+ * there would make undo disagree with the edit it undoes (the #1646 lesson).
+ *
+ * Only instances whose body matched their definition before the change are asked. A drifted
+ * instance is ordinary nodes as far as its definition is concerned.
+ */
+export function templateEdits(
+  prev: Pick<DagState, 'nodes'>,
+  next: Pick<DagState, 'nodes'>,
+): TemplateEdits {
+  if (prev.nodes === next.nodes) return { ops: [] };
+  const templates = templatesOf(prev);
+  if (templates.size === 0) return { ops: [] };
+  const changed = new Set<NodeId>();
+  for (const id of new Set([...Object.keys(prev.nodes), ...Object.keys(next.nodes)]))
+    if (prev.nodes[id] !== next.nodes[id]) changed.add(id);
+
+  // type → definition key → the params the edit gave it, and which instance gave them.
+  const edits = new Map<string, Map<string, { params: unknown; from: NodeId }>>();
+  for (const instance of Object.values(prev.nodes)) {
+    const template = templates.get(instance.type);
+    const after = next.nodes[instance.id];
+    if (!template || !after) continue; // not an instance, or removed with its body
+    const def = template.definition;
+    const before = matchInstanceBody(prev, instance.id, def);
+    if (!before) continue;
+    const touched = [...before].filter(([, id]) => changed.has(id));
+    if (touched.length === 0) continue;
+    const [, first] = touched[0];
+    if (isLocked(after))
+      return {
+        refusal:
+          `"${first}" is inside "${instance.id}", an instance of ${def.type} that is locked; ` +
+          `unlock it to edit the template`,
+      };
+    const now = matchInstanceBody(next, instance.id, def);
+    // The same nodes at the same places: a socket moved to a new node of the same type still
+    // matches the definition's shape, with another node at that place.
+    if (!now || [...before].some(([key, id]) => now.get(key) !== id))
+      return {
+        refusal:
+          `adding, removing or rewiring nodes inside "${instance.id}" (${def.type}) is not ` +
+          `supported yet, only parameter edits that reach every instance (#1665)`,
+      };
+    for (const [key, id] of touched) {
+      const params = next.nodes[id].params;
+      if (same(params, prev.nodes[id].params)) continue;
+      const byKey = edits.get(def.type) ?? new Map();
+      edits.set(def.type, byKey);
+      const prior = byKey.get(key);
+      if (prior && !same(prior.params, params))
+        return {
+          refusal:
+            `"${prior.from}" and "${instance.id}" edit the same node of ${def.type} ` +
+            `differently in one change`,
+        };
+      byKey.set(key, { params, from: instance.id });
+    }
+  }
+
+  const ops: Op[] = [];
+  for (const [type, byKey] of edits) {
+    const { node: holder, definition } = templates.get(type)!;
+    const nodes = { ...definition.body.nodes };
+    for (const [key, { params }] of byKey) nodes[key] = { ...nodes[key], params } as Node;
+    ops.push({
+      type: 'setParam',
+      nodeId: holder,
+      paramPath: 'definition',
+      value: { ...definition, body: { ...definition.body, nodes } },
+    });
+    for (const other of Object.values(next.nodes)) {
+      if (other.type !== type) continue;
+      const map = matchInstanceBody(next, other.id, definition);
+      if (!map) continue;
+      for (const [key, { params }] of byKey) {
+        const id = map.get(key)!;
+        const have = (next.nodes[id].params ?? {}) as Record<string, unknown>;
+        for (const [path, value] of Object.entries(params as Record<string, unknown>))
+          if (!same(have[path], value))
+            ops.push({ type: 'setParam', nodeId: id, paramPath: path, value });
+      }
+    }
+  }
+  return { ops };
 }

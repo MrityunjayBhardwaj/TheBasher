@@ -33,6 +33,9 @@ import {
   type TemplateDefinition,
 } from '../core/dag/templates';
 
+// Moved to the core with D4 (the store reads it on every commit); kept importable from here.
+export { matchInstanceBody } from '../core/dag/templates';
+
 /** The body-input leaf that reads an input of each type a template can take. */
 const LEAF_FOR_TYPE: Readonly<Record<string, string>> = {
   Number: 'BodyInput',
@@ -315,46 +318,6 @@ export function planTemplateInstance(
     inputs: { [TEMPLATE_BODY_SOCKET]: map(def.body.out) },
   });
   return ops;
-}
-
-/**
- * Which node of `instanceId`'s body stands for each node of `def`'s body (definition key → node
- * id), found by walking both from the output socket by socket. Null when the body no longer has
- * the definition's shape: a wire, a node's type or the set of nodes differs.
- */
-export function matchInstanceBody(
-  state: DagState,
-  instanceId: NodeId,
-  def: TemplateDefinition,
-): Map<string, NodeId> | null {
-  const instance = state.nodes[instanceId];
-  const root = instance?.inputs[TEMPLATE_BODY_SOCKET];
-  if (!instance || instance.type !== def.type || !root || Array.isArray(root)) return null;
-  if (root.socket !== def.body.out.socket) return null;
-  const match = new Map<string, NodeId>();
-  const claimed = new Set<NodeId>();
-  const pair = (key: string, id: NodeId): boolean => {
-    const known = match.get(key);
-    if (known !== undefined) return known === id;
-    if (claimed.has(id)) return false;
-    const want = def.body.nodes[key];
-    const have = state.nodes[id];
-    if (!want || !have || want.type !== have.type) return false;
-    match.set(key, id);
-    claimed.add(id);
-    const sockets = new Set([...Object.keys(want.inputs), ...Object.keys(have.inputs)]);
-    for (const socket of sockets) {
-      const a = refsOf(want.inputs[socket]);
-      const b = refsOf(have.inputs[socket]);
-      if (a.length !== b.length) return false;
-      for (let i = 0; i < a.length; i++) {
-        if (a[i].socket !== b[i].socket || !pair(a[i].node, b[i].node)) return false;
-      }
-    }
-    return true;
-  };
-  if (!pair(def.body.out.node, root.node)) return null;
-  return match.size === Object.keys(def.body.nodes).length ? match : null;
 }
 
 // ── The two actions ─────────────────────────────────────────────────────────────────────────
