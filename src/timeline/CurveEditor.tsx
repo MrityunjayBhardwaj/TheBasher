@@ -20,6 +20,7 @@ import { EditableCurve } from './EditableCurve';
 import { isComputedRowId, layerChannelRows, parseLayerRowId } from './layerChannelRows';
 import { resolveRowChannelForWrite } from '../app/animate/rowChannelWrite';
 import { runsOnFilmTime } from '../app/subjectClock';
+import { isDiscreteParamAt } from '../nodes/paramWidget';
 
 interface VecKey {
   time: number;
@@ -121,6 +122,10 @@ export function CurveEditor({ duration }: { duration: number }) {
         duration={duration}
         seconds={filmClock ? filmSeconds : seconds}
         filmClock={filmClock}
+        stepped={
+          typeof params.target === 'string' &&
+          isDiscreteParamAt(dagState.nodes[params.target]?.type, paramPath)
+        }
       />
     );
   }

@@ -151,9 +151,40 @@ describe('activeCamera — CameraSelect resolve-through (#231 Inc 3)', () => {
     // ([10,0,0]). The pose resolver reads the active camera AT that time.
     expect(resolveActiveCameraPoseAt(state, 0).position).toEqual([3, 2, 3]);
     expect(resolveActiveCameraPoseAt(state, 1).position).toEqual([10, 0, 0]);
-    // Mid-interpolation rounds: 0.4 → still camera 0, 0.6 → camera 1 (the cut snaps).
-    expect(resolveActiveCameraPoseAt(state, 0.4).position).toEqual([3, 2, 3]);
-    expect(resolveActiveCameraPoseAt(state, 0.6).position).toEqual([10, 0, 0]);
+    // #1663 — the cut lands ON the key, not where a line through the two indices crosses .5:
+    // these keys are stored linear, and `active` is a choice, so the reader holds camera 0 up to
+    // the frame before the key. (Before #1663 0.6 s was already camera 1.)
+    expect(resolveActiveCameraPoseAt(state, 0.6).position).toEqual([3, 2, 3]);
+    expect(resolveActiveCameraPoseAt(state, 0.99).position).toEqual([3, 2, 3]);
+  });
+
+  it('#1663 — keying index 0 then index 2 never shows the camera between them', () => {
+    let state = buildMultiCamera(0);
+    state = makeSplitCamera(state, { objectId: 'n_cam3', position: [20, 0, 0] }).state;
+    state = applyOp(state, {
+      type: 'connect',
+      from: { node: 'n_cam3', socket: 'out' },
+      to: { node: 'n_camsel', socket: 'cameras' },
+    }).next;
+    state = applyOp(state, {
+      type: 'addNode',
+      nodeId: 'ch_active',
+      nodeType: 'KeyframeChannelNumber',
+      params: {
+        name: 'active',
+        target: 'n_camsel',
+        paramPath: 'active',
+        // Stored LINEAR on purpose: a project saved before #1663, or a door that forgot.
+        keyframes: [
+          { time: 0, value: 0, easing: 'linear' },
+          { time: 2, value: 2, easing: 'linear' },
+        ],
+      },
+    }).next;
+    const seen = new Set<string | undefined>();
+    for (let f = 0; f < 48; f++) seen.add(selectActiveCameraNode(state, f / 24)?.id);
+    expect([...seen]).toEqual(['n_camera']);
+    expect(selectActiveCameraNode(state, 2)?.id).toBe('n_cam3');
   });
 
   it('the STATIC selector (no seconds) ignores the keyframed active — editor "now"', () => {
