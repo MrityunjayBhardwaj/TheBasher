@@ -138,6 +138,11 @@ const NO_CREATION_ROAD: Readonly<Record<string, string>> = {
     'The Shot/Cut editorial species (THESIS §42), shipped as data in Wave A with its ' +
     'authoring surface never built. The compositor is where editorial lives now.',
 
+  Lag:
+    'A Lag is an instance of the built-in Lag template since #1559: Add › Lag places one ' +
+    '(`placeBuiltin`, src/app/builtinTemplates.ts). The node type stays registered so a project ' +
+    'saved with Lag nodes still loads and runs them.',
+
   Scatter:
     "THESIS §29's proof that procedural generation is substrate. It evaluates, renders " +
     '(ScatterR) and carries a scene-tree icon, and nothing has ever been able to create ' +

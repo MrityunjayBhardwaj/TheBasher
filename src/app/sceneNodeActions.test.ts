@@ -11,7 +11,8 @@ import { evaluate } from '../core/dag/evaluator';
 import { buildAddModifierOps, findConsumer, resolveStackBase } from './operatorStack';
 import { useDagStore } from '../core/dag/store';
 import { subnetworkOf, subnetworkViolations } from '../core/dag/subnetworks';
-import { buildSpringOps, type SpringNodeKey } from './solverBind';
+import type { SpringNodeKey } from './solverBind';
+import { rawSpringOps } from '../test-utils/rawSpring';
 import { buildRemoveDriverOps } from './driverStack';
 import { buildUnbindDriverOps } from './driverBind';
 import { buildNewMaterialOps } from './materialLink';
@@ -1070,12 +1071,13 @@ describe('buildDeleteNodesOps — what a deleted node takes with it (#1560)', ()
       node('ctl', 'Null'),
       wire('ctl', 'n_scene', 'children'),
     ]);
-    const built = buildSpringOps(s, {
-      targetId: 'n_box',
-      controllerId: 'ctl',
-      idFor: (k: SpringNodeKey) => `sp_${k}`,
-    });
-    if (!built.ok) throw new Error(built.reason);
+    const built = {
+      ops: rawSpringOps(s, {
+        targetId: 'n_box',
+        controllerId: 'ctl',
+        idFor: (k: SpringNodeKey) => `sp_${k}`,
+      }),
+    };
     return fold(s, built.ops);
   };
   const INSIDE = ['sp_in', 'sp_pp', 'sp_pv', 'sp_e', 'sp_ke', 'sp_cv', 'sp_acc', 'sp_nv', 'sp_np'];
@@ -1533,12 +1535,13 @@ describe('buildDuplicateNodesOps — one duplicate rule, deep and linked (#1561)
       node('ctl', 'Null'),
       wire('ctl', 'n_scene', 'children'),
     ]);
-    const built = buildSpringOps(s, {
-      targetId: 'n_box',
-      controllerId: 'ctl',
-      idFor: (k: SpringNodeKey) => `sp_${k}`,
-    });
-    if (!built.ok) throw new Error(built.reason);
+    const built = {
+      ops: rawSpringOps(s, {
+        targetId: 'n_box',
+        controllerId: 'ctl',
+        idFor: (k: SpringNodeKey) => `sp_${k}`,
+      }),
+    };
     return fold(s, built.ops);
   };
   const BONES = [

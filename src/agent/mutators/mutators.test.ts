@@ -20,7 +20,7 @@ import { makeSplitCamera } from '../../test-utils/splitCamera';
 import { dataIdFor } from '../../test-utils/splitKinds';
 import { BIND, skinBindSceneOps } from '../../test-utils/skinBindScene';
 import { buildDefaultDagState } from '../../core/project/default';
-import { buildSpringOps } from '../../app/solverBind';
+import { rawSpringOps } from '../../test-utils/rawSpring';
 import { expandClosure } from '../closure/expand';
 import {
   __resetMutatorRegistryForTests,
@@ -1641,12 +1641,13 @@ const sprungScene = (): DagState => {
     },
   ] as Op[])
     s = applyOp(s, op).next;
-  const built = buildSpringOps(s, {
-    targetId: 'n_box',
-    controllerId: 'ctl',
-    idFor: (k) => `sp_${k}`,
-  });
-  if (!built.ok) throw new Error(built.reason);
+  const built = {
+    ops: rawSpringOps(s, {
+      targetId: 'n_box',
+      controllerId: 'ctl',
+      idFor: (k) => `sp_${k}`,
+    }),
+  };
   return built.ops.reduce((acc, op) => applyOp(acc, op).next, s);
 };
 

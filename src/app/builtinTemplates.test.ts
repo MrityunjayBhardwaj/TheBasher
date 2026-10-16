@@ -10,8 +10,9 @@ import { syncTemplateTypes, templatesOf } from '../core/dag/templates';
 import type { Op } from '../core/dag/types';
 import { buildDefaultDagState } from '../core/project/default';
 import { registerAllNodes } from '../nodes/registerAll';
+import { buildAddPrimitiveOps } from './addPrimitives';
 import { builtinDefinition, placeBuiltin } from './builtinTemplates';
-import { buildSpringOps } from './solverBind';
+import { buildSpringOps, springBodyOps } from './solverBind';
 
 const FRAMES = Array.from({ length: 61 }, (_, f) => f);
 const node = (nodeId: string, nodeType: string, params: Record<string, unknown> = {}): Op =>
@@ -111,22 +112,19 @@ describe('#1559 — the Lag preset is the Lag node', () => {
 });
 
 describe('#1559 — the Spring preset is the spring network', () => {
-  /** Today's spring on the box, from `buildSpringOps`, and a preset instance beside it. */
-  function both(stiffness?: number, damping?: number) {
-    const built = buildSpringOps(dag(), {
-      targetId: 'n_box',
-      controllerId: 'nul',
-      idFor: (k) => `sp_${k}`,
-      ...(stiffness !== undefined ? { stiffness } : {}),
-      ...(damping !== undefined ? { damping } : {}),
-    });
-    if (!built.ok) throw new Error(built.reason);
-    store().dispatchAtomic(built.ops);
-    place('Spring', 'pre', {
-      sourceTransformVec: { node: 'nul' },
-      ...(stiffness !== undefined ? { stiffness } : {}),
-      ...(damping !== undefined ? { damping } : {}),
-    });
+  /** The network a spring was before it was a preset (`springBodyOps`, the body `buildSpringOps`
+   *  wrote for every spring), and a preset instance beside it. */
+  function both(stiffness = 0.12, damping = 0.14) {
+    store().dispatchAtomic(
+      springBodyOps({
+        controllerId: 'nul',
+        stiffness,
+        damping,
+        seedFrame: 0,
+        idFor: (k) => `sp_${k}`,
+      }),
+    );
+    place('Spring', 'pre', { sourceTransformVec: { node: 'nul' }, stiffness, damping });
     const s = dag();
     return {
       network: FRAMES.map((f) => value(s, 'sp_solver', f, 'outVec')),
@@ -178,5 +176,49 @@ describe('#1559 — a built-in is copied into the project once', () => {
     const r = placeBuiltin(dag(), 'Lag', 'x', {});
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.reason).toContain('its own template.Lag');
+  });
+});
+
+describe('#1559 — a spring bound to a target is a Spring instance', () => {
+  it('buildSpringOps places one, its driver reading the instance', () => {
+    const r = buildSpringOps(dag(), {
+      targetId: 'n_box',
+      controllerId: 'nul',
+      idFor: (k) => `s_${k}`,
+    });
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    store().dispatchAtomic(r.ops);
+    const s = dag();
+    expect(s.nodes.s_solver.type).toBe('template.Spring');
+    expect(s.nodes.s_solver.params).toMatchObject({
+      sourceTransformVec: { node: 'nul' },
+      stiffness: 0.12,
+      damping: 0.14,
+    });
+    expect(s.nodes.s_driver.inputs.in).toEqual({ node: 's_solver', socket: 'out' });
+    springBodyOps({
+      controllerId: 'nul',
+      stiffness: 0.12,
+      damping: 0.14,
+      seedFrame: 0,
+      idFor: (k) => `ref_${k}`,
+    }).forEach((op) => store().dispatchAtomic([op]));
+    const t = dag();
+    expect(FRAMES.map((f) => value(t, 's_solver', f))).toEqual(
+      FRAMES.map((f) => value(t, 'ref_solver', f, 'outVec')),
+    );
+  });
+});
+
+describe('#1559 — Add › Lag places a Lag instance', () => {
+  it('through the Add menu’s own builder, with a Lag’s default factor', () => {
+    const r = buildAddPrimitiveOps(dag(), 'Lag', [0, 0, 0]);
+    expect(r).not.toBeNull();
+    store().dispatchAtomic(r!.ops);
+    const placed = dag().nodes[r!.newNodeId];
+    expect(placed.type).toBe('template.Lag');
+    expect(placed.params).toMatchObject({ locked: true, factor: 0.2, seedFrame: 0, in: 0 });
+    expect(Object.values(dag().nodes).filter((n) => n.type === 'Lag')).toEqual([]);
   });
 });

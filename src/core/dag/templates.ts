@@ -179,6 +179,15 @@ export function templatesOf(
  *  edited in place; unlocked, an edit inside it is an edit of the template. */
 export const TemplateInstanceParams = z.object({ locked: z.boolean().default(true) });
 
+/** Whether nodes of `type` hold `param` because they are template instances that declare it (a
+ *  Lag preset's `sourceTransform`, #1559). False for a type that is not a template's. */
+export function instanceHolds(type: string, param: string): boolean {
+  if (!type.startsWith(TEMPLATE_TYPE_PREFIX)) return false;
+  const shape = (getNodeType(type)?.paramSchema as { shape?: Record<string, unknown> } | undefined)
+    ?.shape;
+  return !!shape && param in shape;
+}
+
 /** Whether an instance is locked. A node saved before the param existed reads as locked. */
 export const isLocked = (node: Node): boolean =>
   (node.params as { locked?: unknown } | undefined)?.locked !== false;

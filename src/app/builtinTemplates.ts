@@ -15,13 +15,13 @@
 //   and damping read through `Vec3Math.s` so each instance holds its own (0.12 / 0.14).
 //
 // REF: src/app/templates.ts (`planCollapseToTemplate`, `planTemplateInstance`);
-//      src/nodes/valueMath.ts (`lagStep`); src/app/solverBind.ts (`springBodyOps`); #1559.
+//      src/nodes/valueMath.ts (`lagStep`); src/app/springBody.ts (`springBodyOps`); #1559.
 
 import { applyOps } from '../core/dag/ops';
 import { emptyDagState, type DagState } from '../core/dag/state';
 import { templatesOf, type TemplateDefinition } from '../core/dag/templates';
 import type { NodeId, Op } from '../core/dag/types';
-import { springBodyOps } from './solverBind';
+import { springBodyOps } from './springBody';
 import { planCollapseToTemplate, planTemplateInstance } from './templates';
 
 export const BUILTIN_TEMPLATES = ['Lag', 'Spring'] as const;

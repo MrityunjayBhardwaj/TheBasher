@@ -14,6 +14,7 @@ import type { DagState } from '../core/dag/state';
 import type { Op } from '../core/dag/types';
 import { buildSkeletonObjectOps } from '../core/import/skeletonObject';
 import { DEFAULT_CAMERA_FAR, DEFAULT_CAMERA_NEAR } from '../nodes/CameraData';
+import { placeBuiltin } from './builtinTemplates';
 import { linkIntoActiveCollection } from './collections';
 
 /**
@@ -467,6 +468,15 @@ function buildUnlinkedAddOps(
     };
   }
 
+  // #1559 — a Lag is an instance of the built-in Lag template, its definition copied into the
+  // project the first time one is added.
+  if (kind === 'Lag') {
+    const id = newId(prefixFor(kind));
+    const placed = placeBuiltin(state, 'Lag', id);
+    if (!placed.ok) return null;
+    return { ops: placed.ops, description: `Add ${humanLabel(kind)}`, newNodeId: id };
+  }
+
   const id = newId(prefixFor(kind));
   const ops: Op[] = [];
   const params = paramsFor(kind, position);
@@ -542,6 +552,9 @@ function isSolverKind(kind: PrimitiveKind): boolean {
  *  scene object ends up creatable but un-referrable (#324). */
 export function nodeTypeFor(kind: PrimitiveKind): string {
   switch (kind) {
+    // #1559 — an instance of the built-in Lag template, not a Lag node.
+    case 'Lag':
+      return 'template.Lag';
     // #365 Ph5a / #384 C1 / #385 C2 / #386 C3 / #387 C4 — a Cube, Sphere, Curve, the four
     // posable lights AND both cameras are all the object↔data split; the node the director
     // selects and refers to is the Object (the BoxData/SphereData/CurveData/LightData/
