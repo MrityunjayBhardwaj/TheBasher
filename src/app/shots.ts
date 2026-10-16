@@ -12,10 +12,15 @@
 //
 // Blender's equivalent is a timeline marker bound to a camera (Bind Camera to Markers): the marker
 // is the cut, the camera is the shot, and the list is read off the markers.
+//
+// #1668 — a key names its camera. A key whose camera has been deleted (or taken out of the switch)
+// is not a cut: the resolver skips it and the shot before runs on, so it starts no row here either.
 
 import type { DagState } from '../core/dag';
 import type { Node, NodeRef } from '../core/dag/types';
-import { selectActiveCameraNode } from './activeCamera';
+import { cutChannelOf, listedCameraIds, selectActiveCameraNode } from './activeCamera';
+
+export { cutChannelOf };
 
 export interface Shot {
   /** 0-based position in the film. */
@@ -36,7 +41,7 @@ export interface ShotsView {
   readonly selectId: string | null;
   /** The channel keying `selectId.active`, or null when nothing is keyed yet. */
   readonly channelId: string | null;
-  /** The cameras the select can pick, in index order (edge order). */
+  /** The cameras the select can pick, in wire order. */
   readonly cameraIds: readonly string[];
   readonly shots: readonly Shot[];
 }
@@ -51,31 +56,17 @@ export function cameraSelectOf(state: DagState): Node | null {
   return node?.type === 'CameraSelect' ? node : null;
 }
 
-/** The channel keying `select.active` — the same one the resolver samples (first match). */
-export function cutChannelOf(state: DagState, selectId: string): Node | null {
-  for (const n of Object.values(state.nodes)) {
-    if (n.type !== 'KeyframeChannelNumber') continue;
-    const p = n.params as { target?: unknown; paramPath?: unknown };
-    if (p.target === selectId && p.paramPath === 'active') return n;
-  }
-  return null;
-}
-
 /** The film's shots, from the active camera's keys. `end` is the film's length in seconds. */
 export function shotsOf(state: DagState, end: number): ShotsView {
   const select = cameraSelectOf(state);
-  const cameraIds = select
-    ? ((Array.isArray(select.inputs.cameras) ? select.inputs.cameras : []) as NodeRef[]).map(
-        (r) => r.node,
-      )
-    : [];
+  const cameraIds = select ? listedCameraIds(select) : [];
   const channel = select ? cutChannelOf(state, select.id) : null;
   const keyTimes = channel
     ? [
         ...new Set(
-          ((channel.params as { keyframes?: { time: number }[] }).keyframes ?? []).map(
-            (k) => k.time,
-          ),
+          ((channel.params as { keyframes?: { time: number; value: unknown }[] }).keyframes ?? [])
+            .filter((k) => cameraIds.includes(k.value as string))
+            .map((k) => k.time),
         ),
       ].sort((a, b) => a - b)
     : [];

@@ -166,18 +166,11 @@ export const setKeyframeInterpMutator: MutatorDefinition<SetKeyframeInterpSpec> 
     if (!view) {
       return { ok: false, reason: `channel "${resolved.channelId}" could not be resolved.` };
     }
-    if (view.type === 'KeyframeChannelQuat') {
-      const refusal = quatRefusal(spec, resolved.channelId);
-      if (refusal) return { ok: false, reason: refusal };
-    } else if (!INTERP_CHANNEL_TYPES.has(view.type)) {
-      return {
-        ok: false,
-        reason: `channel "${resolved.channelId}" is ${view.type}; per-keyframe interpolation/handles apply only to KeyframeChannel{Number,Vec2,Vec3,Quat}.`,
-      };
-    }
     // #1663 — a choice (the active camera) has nothing between its values, so its keys are a
     // step whatever is stored, and the reader holds them regardless. Storing another easing would
     // draw a ramp that never plays: refuse it by name rather than write a curve that lies.
+    // Asked FIRST (#1668): a cut channel is a text channel, and "is KeyframeChannelText" would
+    // not tell the caller why.
     const { target, paramPath } = view.params as { target?: unknown; paramPath?: unknown };
     if (
       spec.easing !== undefined &&
@@ -189,6 +182,15 @@ export const setKeyframeInterpMutator: MutatorDefinition<SetKeyframeInterpSpec> 
       return {
         ok: false,
         reason: `${target}.${paramPath} picks one of several things, so its keys are always 'constant': the switch lands on the key.`,
+      };
+    }
+    if (view.type === 'KeyframeChannelQuat') {
+      const refusal = quatRefusal(spec, resolved.channelId);
+      if (refusal) return { ok: false, reason: refusal };
+    } else if (!INTERP_CHANNEL_TYPES.has(view.type)) {
+      return {
+        ok: false,
+        reason: `channel "${resolved.channelId}" is ${view.type}; per-keyframe interpolation/handles apply only to KeyframeChannel{Number,Vec2,Vec3,Quat}.`,
       };
     }
     // Defense-in-depth vs the spec `.refine()` (only fires at safeParse): an

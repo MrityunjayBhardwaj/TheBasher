@@ -97,17 +97,18 @@ describe('snapshotCameraFromOrbit', () => {
     for (const op of buildSetActiveCameraOps(s, 'cam') ?? []) s = applyOp(s, op).next;
     const sel = (s.nodes.scene.inputs.camera as { node: string }).node;
     expect(s.nodes[sel].type).toBe('CameraSelect');
+    const [first, second] = (s.nodes[sel].inputs.cameras as { node: string }[]).map((r) => r.node);
     s = applyOp(s, {
       type: 'addNode',
       nodeId: 'cuts',
-      nodeType: 'KeyframeChannelNumber',
+      nodeType: 'KeyframeChannelText',
       params: {
         name: 'active',
         target: sel,
         paramPath: 'active',
         keyframes: [
-          { time: 0, value: 0, easing: 'constant' },
-          { time: 2, value: 1, easing: 'constant' },
+          { time: 0, value: first, easing: 'constant' },
+          { time: 2, value: second, easing: 'constant' },
         ],
       },
     }).next;
@@ -122,7 +123,7 @@ describe('snapshotCameraFromOrbit', () => {
     expect(listed).toHaveLength(3);
     const fresh = listed[2];
     expect(after.state.nodes[fresh].params).toMatchObject({ position: [2, 3, 4] });
-    expect(after.state.nodes[sel].params.active).toBe(2);
+    expect(after.state.nodes[sel].params.active).toBe(fresh);
     // ...and the keyed cut still plays: camera 1 before 2 s, camera 2 from it.
     expect(selectActiveCameraNode(after.state, 1)?.id).toBe(listed[0]);
     expect(selectActiveCameraNode(after.state, 2)?.id).toBe('cam2');

@@ -56,7 +56,9 @@ export const KeyframeChannelTextParams = z.object({
         value: z.string(),
         // Step channels ignore easing, but the keyframe schema carries it for
         // uniformity with the interpolated channels (the dopesheet writes it).
-        easing: z.enum(['linear', 'cubic']).default('linear'),
+        // #1668 — 'constant' too: a key on a choice (a camera cut names its camera here) is
+        // stored constant by every key door (#1663), and the stored easing should say what plays.
+        easing: z.enum(['linear', 'cubic', 'constant']).default('linear'),
       }),
     )
     .default([]),

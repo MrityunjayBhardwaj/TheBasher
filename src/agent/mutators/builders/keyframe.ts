@@ -16,7 +16,11 @@ import type { MutatorDefinition } from '../types';
 import type { ClosureSet, ClosureSpec } from '../../closure/types';
 import type { DagState } from '../../../core/dag/state';
 import type { Op } from '../../../core/dag/types';
-import { isDiscreteParamAt } from '../../../nodes/paramWidget';
+import {
+  declaredKeyChannelType,
+  isDiscreteParamAt,
+  offeredNodeIds,
+} from '../../../nodes/paramWidget';
 import {
   KEYFRAME_INTERPS,
   EASE_DIRS,
@@ -106,7 +110,7 @@ export const keyframeMutator: MutatorDefinition<KeyframeSpec> = {
     "curve 'sine'|'quad'|'quart'|'quint'|'expo'|'circ'|'back'|'bounce'|'elastic' " +
     "(these + `ease` 'in'|'out'|'inout' and `handleType` apply to Number/Vec2/Vec3 " +
     'channels; Quat takes only linear|cubic|constant, Color only linear|cubic). Omitting easing takes the ' +
-    "interpolation of the segment the key lands in (the channel default for a first or second key). A key on a choice (the active camera, CameraSelect.active) is always stored 'constant' so a cut lands on its key. Use mutator.timeline.addChannel to create a channel on an " +
+    "interpolation of the segment the key lands in (the channel default for a first or second key). A key on a choice (the active camera, CameraSelect.active) is always stored 'constant' so a cut lands on its key. A camera cut's key holds the camera's node id (a text channel), and must name a camera wired into the switch. Use mutator.timeline.addChannel to create a channel on an " +
     'ordinary node. To re-interp keys you already placed, ' +
     'use mutator.timeline.setKeyframeInterp.' +
     CHANNEL_ADDRESS_DOC,
@@ -163,6 +167,27 @@ export const keyframeMutator: MutatorDefinition<KeyframeSpec> = {
         ok: false,
         reason: `value shape does not match channel type "${view.type}".`,
       };
+    }
+    // #1668 — a key on a choice that names a node (the active camera) holds the node's id in a
+    // text channel, and may only name a node the param can pick — one wired into the switch.
+    // Anything else would be stored and then silently skipped by the resolver.
+    const { target, paramPath } = view.params as { target?: unknown; paramPath?: unknown };
+    if (typeof target === 'string' && typeof paramPath === 'string') {
+      const targetType = state.nodes[target]?.type;
+      const declared = declaredKeyChannelType(targetType, paramPath);
+      if (declared && view.type !== declared) {
+        return {
+          ok: false,
+          reason: `${targetType}.${paramPath} names a node; its keys belong in a ${declared} holding that node's id, not a ${view.type}.`,
+        };
+      }
+      const offered = offeredNodeIds(state, target, paramPath);
+      if (offered && !offered.includes(spec.value as string)) {
+        return {
+          ok: false,
+          reason: `"${String(spec.value)}" is not one ${targetType}.${paramPath} can pick (it can pick: ${offered.join(', ') || 'nothing yet'}).`,
+        };
+      }
     }
     return { ok: true };
   },

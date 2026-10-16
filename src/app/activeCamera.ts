@@ -67,8 +67,7 @@ function channelExtendArgs(
   );
   return [before, after, cyclesBefore, cyclesAfter, p.modifiers];
 }
-import { resolveCameraSelectIndex } from '../nodes/CameraSelect';
-import { isDiscreteParamAt } from '../nodes/paramWidget';
+import { pickCameraSelect } from '../nodes/CameraSelect';
 import { sceneClockOf } from './sceneClock';
 import { resolveTrackToTarget, resolveConstraintPosition } from './nodeConstraints';
 import { resolveParentWorldMatrix } from './resolveWorldTransform';
@@ -110,8 +109,7 @@ function isVec3(v: unknown): v is [number, number, number] {
  *  identity) or null when no scene / no camera is wired.
  *
  *  #231 Inc 3 — when a `CameraSelect` feeds `scene.camera` (the multi-camera
- *  model), this resolves THROUGH it to the active camera node (by `active` index,
- *  V44 index-correspondence on `inputs.cameras`). A camera wired DIRECTLY (every
+ *  model), this resolves THROUGH it to the camera its `active` names (#1668). A camera wired DIRECTLY (every
  *  pre-change project) is returned unchanged — the fallback, no migration. Pass
  *  `seconds` to honour a keyframed `active` (camera CUTS at that frame); omit it
  *  for the static "active now" used by the editor look-through + outliner marker. */
@@ -131,58 +129,70 @@ export function selectActiveCameraNode(state: DagState, seconds?: number): Node 
   return node;
 }
 
-/** Resolve a `CameraSelect` to its active camera NODE (id-side of the switch,
- *  mirroring `CameraSelect.evaluate`'s value-side). Recovers the camera id from
- *  `inputs.cameras[active].node` (edge order, V44) using the SHARED
- *  `resolveCameraSelectIndex` clamp so render == resolver (H40). */
+/** The camera ids wired into `selectNode`, in wire order — the list its pick runs over. */
+export function listedCameraIds(selectNode: Node): string[] {
+  const raw = selectNode.inputs.cameras;
+  const edges = (Array.isArray(raw) ? raw : raw ? [raw] : []) as NodeRef[];
+  return edges.map((e) => e.node);
+}
+
+/** Resolve a `CameraSelect` to its active camera NODE (id-side of the switch, mirroring
+ *  `CameraSelect.evaluate`'s value-side). Both run the SAME `pickCameraSelect` over the camera ids
+ *  in wire order, so render == resolver (H40). */
 function resolveActiveCameraFromSelect(
   state: DagState,
   selectNode: Node,
   seconds?: number,
 ): Node | null {
-  const edges = Array.isArray(selectNode.inputs.cameras)
-    ? (selectNode.inputs.cameras as NodeRef[])
-    : [];
-  const idx = resolveCameraSelectIndex(
-    sampleCameraSelectActive(state, selectNode, seconds),
-    edges.length,
-  );
+  const listed = listedCameraIds(selectNode);
+  const idx = pickCameraSelect(cutCameraIdAt(state, selectNode, listed, seconds), listed);
   if (idx === null) return null;
-  const camId = edges[idx]?.node;
-  if (!camId) return null;
-  return state.nodes[camId] ?? null;
+  return state.nodes[listed[idx]] ?? null;
 }
 
-/** The CameraSelect's `active` index at `seconds` — static param, overlaid by a
- *  `KeyframeChannelNumber` targeting this node's `active` paramPath (the same
- *  free-floating-channel mechanism every other animatable param uses, V57). Omit
- *  `seconds` → the static authored index. */
-function sampleCameraSelectActive(state: DagState, selectNode: Node, seconds?: number): number {
-  const params = selectNode.params as { active?: unknown };
-  const base = typeof params.active === 'number' ? params.active : 0;
-  if (seconds === undefined) return base;
-  for (const ch of Object.values(state.nodes)) {
-    if (ch.type !== 'KeyframeChannelNumber') continue;
-    const p = ch.params as { target?: unknown; paramPath?: unknown; keyframes?: unknown };
-    if (p.target !== selectNode.id || p.paramPath !== 'active') continue;
-    const keyframes = Array.isArray(p.keyframes) ? p.keyframes : [];
-    if (keyframes.length === 0) continue;
-    // Same defensive sort the camera-pose scalar branch uses (#200): the sampler
-    // walks adjacent pairs with no internal sort.
-    const sorted = [...(keyframes as Parameters<typeof sampleScalarKeyframes>[0])].sort(
-      (a, b) => a.time - b.time,
-    );
-    // #1663 — `active` is a choice, so every segment HOLDS its key and switches on the next,
-    // whatever the stored easing says: a linear key (saved before the key doors stored
-    // 'constant', or written by a door that forgot) would otherwise cut halfway between two keys
-    // and show every camera whose index lies between them. Blender holds a discrete curve the
-    // same way at evaluation, not only at insert (`bke_fcurve.cc` `fcurve_eval_keyframes_interpolate`).
-    const held = isDiscreteParamAt(selectNode.type, 'active')
-      ? sorted.map((k) => ({ time: k.time, value: k.value, easing: 'constant' as const }))
-      : sorted;
-    return sampleScalarKeyframesExtended(held, seconds, ...channelExtendArgs(ch.params));
+/** The channel keying `selectId.active` — the film's cuts, each key naming its camera (#1668).
+ *  The one the resolver samples and the shots panel reads and writes. */
+export function cutChannelOf(state: DagState, selectId: string): Node | null {
+  for (const n of Object.values(state.nodes)) {
+    if (n.type !== 'KeyframeChannelText') continue;
+    const p = n.params as { target?: unknown; paramPath?: unknown };
+    if (p.target === selectId && p.paramPath === 'active') return n;
   }
-  return base;
+  return null;
+}
+
+/**
+ * The camera id the switch names at `seconds`: its static `active`, overlaid by the cut keys
+ * (`cutChannelOf`). Omit `seconds` → the static `active`.
+ *
+ * #1668 — Blender's rule for camera markers (`BKE_scene_camera_switch_find`, scene.cc): a key whose
+ * camera is not among `listed` (deleted, or taken out of the switch) is SKIPPED, so the shot before
+ * it runs on; the live key is the last one at or before `seconds`; before the first key, the
+ * left-most key's camera holds. The keys are left as they are, so an undo that brings the camera
+ * back brings its cuts back with it. With no key naming a listed camera, the static `active` stands.
+ * The keys hold their camera by construction (a text key is a step), which is what #1663 needs of
+ * a choice.
+ */
+export function cutCameraIdAt(
+  state: DagState,
+  selectNode: Node,
+  listed: readonly string[],
+  seconds?: number,
+): string {
+  const params = selectNode.params as { active?: unknown };
+  const base = typeof params.active === 'string' ? params.active : '';
+  if (seconds === undefined) return base;
+  const channel = cutChannelOf(state, selectNode.id);
+  const keys = (channel?.params as { keyframes?: { time: number; value: unknown }[] } | undefined)
+    ?.keyframes;
+  if (!Array.isArray(keys)) return base;
+  const live = keys
+    .filter((k): k is { time: number; value: string } => listed.includes(k.value as string))
+    .sort((a, b) => a.time - b.time);
+  if (live.length === 0) return base;
+  let picked = live[0];
+  for (const k of live) if (k.time <= seconds) picked = k;
+  return picked.value;
 }
 
 /** Every camera NODE id in the DAG, in stable enumeration order (Object.values

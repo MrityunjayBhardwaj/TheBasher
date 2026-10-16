@@ -59,13 +59,13 @@ describe('activeCamera — selectActiveCameraNode', () => {
 });
 
 // #231 Inc 3 — the multi-camera "active" model. A CameraSelect feeds scene.camera;
-// `selectActiveCameraNode` resolves THROUGH it to the active camera node (by index,
-// keyframeable → cuts). A direct-wired camera (every pre-change project) still
-// resolves to itself — the fallback, no migration.
+// `selectActiveCameraNode` resolves THROUGH it to the camera its `active` names (#1668: by id,
+// keyframeable → cuts, each key naming its camera). A direct-wired camera (every pre-change
+// project) still resolves to itself — the fallback, no migration.
 describe('activeCamera — CameraSelect resolve-through (#231 Inc 3)', () => {
-  /** Default project + a 2nd camera + a CameraSelect wired into scene.camera.
-   *  cameras edge order: [n_camera (idx 0), n_cam2 (idx 1)]. */
-  function buildMultiCamera(active = 0): DagState {
+  /** Default project + a 2nd camera + a CameraSelect wired into scene.camera, listing
+   *  [n_camera, n_cam2] in that wire order. */
+  function buildMultiCamera(active = 'n_camera'): DagState {
     let state = buildDefaultDagState();
     // #387 C4 — the fused camera node type is retired; a camera is an Object posing a
     // CameraData. `position` on the Object, the lens on the data half.
@@ -81,7 +81,6 @@ describe('activeCamera — CameraSelect resolve-through (#231 Inc 3)', () => {
       nodeType: 'CameraSelect',
       params: { active },
     }).next;
-    // Edge order defines the index (V44): n_camera first, then n_cam2.
     state = applyOp(state, {
       type: 'connect',
       from: { node: 'n_camera', socket: 'out' },
@@ -103,24 +102,44 @@ describe('activeCamera — CameraSelect resolve-through (#231 Inc 3)', () => {
     return state;
   }
 
-  it('resolves through CameraSelect to the active camera node (active:0)', () => {
-    const node = selectActiveCameraNode(buildMultiCamera(0));
-    expect(node?.id).toBe('n_camera');
+  /** A third camera at x=20, wired last into the switch. */
+  function withThird(state: DagState): DagState {
+    let s = makeSplitCamera(state, { objectId: 'n_cam3', position: [20, 0, 0] }).state;
+    s = applyOp(s, {
+      type: 'connect',
+      from: { node: 'n_cam3', socket: 'out' },
+      to: { node: 'n_camsel', socket: 'cameras' },
+    }).next;
+    return s;
+  }
+
+  /** The cut channel: a text channel on `active`, each key naming a camera. */
+  function withCuts(state: DagState, keys: [number, string][]): DagState {
+    return applyOp(state, {
+      type: 'addNode',
+      nodeId: 'ch_active',
+      nodeType: 'KeyframeChannelText',
+      params: {
+        name: 'active',
+        target: 'n_camsel',
+        paramPath: 'active',
+        keyframes: keys.map(([time, value]) => ({ time, value, easing: 'constant' })),
+      },
+    }).next;
+  }
+
+  it('resolves through CameraSelect to the camera `active` names', () => {
+    expect(selectActiveCameraNode(buildMultiCamera('n_camera'))?.id).toBe('n_camera');
+    expect(selectActiveCameraNode(buildMultiCamera('n_cam2'))?.id).toBe('n_cam2');
   });
 
-  it('resolves to the 2nd camera when active:1', () => {
-    const node = selectActiveCameraNode(buildMultiCamera(1));
-    expect(node?.id).toBe('n_cam2');
-  });
-
-  it('clamps an out-of-range active to the last camera (matches the value side)', () => {
-    const node = selectActiveCameraNode(buildMultiCamera(9));
-    expect(node?.id).toBe('n_cam2');
+  it('an empty `active`, or one naming a camera the switch does not list, picks the first camera (matches the value side)', () => {
+    expect(selectActiveCameraNode(buildMultiCamera(''))?.id).toBe('n_camera');
+    expect(selectActiveCameraNode(buildMultiCamera('n_gone'))?.id).toBe('n_camera');
   });
 
   it('the resolved active camera drives the pose', () => {
-    // active:1 → n_cam2 at [10,0,0] with fov 60.
-    const pose = resolveActiveCameraPose(buildMultiCamera(1));
+    const pose = resolveActiveCameraPose(buildMultiCamera('n_cam2'));
     expect(pose.position).toEqual([10, 0, 0]);
     expect(pose.fov).toBe(60);
   });
@@ -130,83 +149,116 @@ describe('activeCamera — CameraSelect resolve-through (#231 Inc 3)', () => {
     expect(selectActiveCameraNode(buildDefaultDagState())?.id).toBe('n_camera');
   });
 
-  it('CUTS the pose between cameras when `active` is keyframed (camera cut)', () => {
-    let state = buildMultiCamera(0);
-    // Keyframe the CameraSelect's `active` index 0→1 over [0,1]s.
-    state = applyOp(state, {
-      type: 'addNode',
-      nodeId: 'ch_active',
-      nodeType: 'KeyframeChannelNumber',
-      params: {
-        name: 'active',
-        target: 'n_camsel',
-        paramPath: 'active',
-        keyframes: [
-          { time: 0, value: 0, easing: 'linear' },
-          { time: 1, value: 1, easing: 'linear' },
-        ],
-      },
-    }).next;
-    // At t=0 the live camera is n_camera ([3,2,3]); at t=1 it cuts to n_cam2
-    // ([10,0,0]). The pose resolver reads the active camera AT that time.
+  it('CUTS the pose between cameras on the key (camera cut)', () => {
+    const state = withCuts(buildMultiCamera(), [
+      [0, 'n_camera'],
+      [1, 'n_cam2'],
+    ]);
+    // At t=0 the live camera is n_camera ([3,2,3]); from t=1 it is n_cam2 ([10,0,0]).
     expect(resolveActiveCameraPoseAt(state, 0).position).toEqual([3, 2, 3]);
-    expect(resolveActiveCameraPoseAt(state, 1).position).toEqual([10, 0, 0]);
-    // #1663 — the cut lands ON the key, not where a line through the two indices crosses .5:
-    // these keys are stored linear, and `active` is a choice, so the reader holds camera 0 up to
-    // the frame before the key. (Before #1663 0.6 s was already camera 1.)
-    expect(resolveActiveCameraPoseAt(state, 0.6).position).toEqual([3, 2, 3]);
     expect(resolveActiveCameraPoseAt(state, 0.99).position).toEqual([3, 2, 3]);
+    expect(resolveActiveCameraPoseAt(state, 1).position).toEqual([10, 0, 0]);
   });
 
-  it('#1663 — keying index 0 then index 2 never shows the camera between them', () => {
-    let state = buildMultiCamera(0);
-    state = makeSplitCamera(state, { objectId: 'n_cam3', position: [20, 0, 0] }).state;
-    state = applyOp(state, {
-      type: 'connect',
-      from: { node: 'n_cam3', socket: 'out' },
-      to: { node: 'n_camsel', socket: 'cameras' },
-    }).next;
-    state = applyOp(state, {
-      type: 'addNode',
-      nodeId: 'ch_active',
-      nodeType: 'KeyframeChannelNumber',
-      params: {
-        name: 'active',
-        target: 'n_camsel',
-        paramPath: 'active',
-        // Stored LINEAR on purpose: a project saved before #1663, or a door that forgot.
-        keyframes: [
-          { time: 0, value: 0, easing: 'linear' },
-          { time: 2, value: 2, easing: 'linear' },
-        ],
-      },
-    }).next;
+  it('#1663 — cutting from the first camera to the third never shows the one wired between them', () => {
+    const state = withCuts(withThird(buildMultiCamera()), [
+      [0, 'n_camera'],
+      [2, 'n_cam3'],
+    ]);
     const seen = new Set<string | undefined>();
     for (let f = 0; f < 48; f++) seen.add(selectActiveCameraNode(state, f / 24)?.id);
     expect([...seen]).toEqual(['n_camera']);
     expect(selectActiveCameraNode(state, 2)?.id).toBe('n_cam3');
   });
 
-  it('the STATIC selector (no seconds) ignores the keyframed active — editor "now"', () => {
-    let state = buildMultiCamera(0);
-    state = applyOp(state, {
-      type: 'addNode',
-      nodeId: 'ch_active',
-      nodeType: 'KeyframeChannelNumber',
-      params: {
-        name: 'active',
-        target: 'n_camsel',
-        paramPath: 'active',
-        keyframes: [
-          { time: 0, value: 0, easing: 'linear' },
-          { time: 1, value: 1, easing: 'linear' },
-        ],
-      },
-    }).next;
-    // selectActiveCameraNode WITHOUT seconds → static param (0) → n_camera.
+  it('the STATIC selector (no seconds) ignores the cuts — editor "now"', () => {
+    const state = withCuts(buildMultiCamera('n_camera'), [
+      [0, 'n_camera'],
+      [1, 'n_cam2'],
+    ]);
     expect(selectActiveCameraNode(state)?.id).toBe('n_camera');
-    // WITH seconds=1 → the cut camera.
     expect(selectActiveCameraNode(state, 1)?.id).toBe('n_cam2');
+  });
+
+  describe('#1668 — a cut whose camera is gone is skipped (Blender: BKE_scene_camera_switch_find)', () => {
+    const cuts: [number, string][] = [
+      [0, 'n_camera'],
+      [1, 'n_cam2'],
+      [2, 'n_cam3'],
+    ];
+    const unwire = (s: DagState, id: string) =>
+      applyOp(s, {
+        type: 'disconnect',
+        from: { node: id, socket: 'out' },
+        to: { node: 'n_camsel', socket: 'cameras' },
+      }).next;
+    const at = (s: DagState) => [0, 1, 1.5, 2, 3].map((t) => selectActiveCameraNode(s, t)?.id);
+
+    it('control: every cut plays on its own camera', () => {
+      expect(at(withCuts(withThird(buildMultiCamera()), cuts))).toEqual([
+        'n_camera',
+        'n_cam2',
+        'n_cam2',
+        'n_cam3',
+        'n_cam3',
+      ]);
+    });
+
+    // The shot before a removed cut is never the switch's FIRST camera here: the first camera is
+    // also what a cut naming a missing camera falls to, so it would pass without the skip.
+    it('taking the MIDDLE camera out: the shot before runs on, the later cut keeps its camera', () => {
+      const s = unwire(
+        withCuts(withThird(buildMultiCamera()), [
+          [0, 'n_cam3'],
+          [1, 'n_cam2'],
+          [2, 'n_camera'],
+        ]),
+        'n_cam2',
+      );
+      expect(at(s)).toEqual(['n_cam3', 'n_cam3', 'n_cam3', 'n_camera', 'n_camera']);
+    });
+
+    it('taking the camera of the FIRST cut out: before the first live cut, its camera holds', () => {
+      const s = unwire(
+        withCuts(withThird(buildMultiCamera('n_cam2')), [
+          [0, 'n_camera'],
+          [1, 'n_cam3'],
+          [2, 'n_cam2'],
+        ]),
+        'n_camera',
+      );
+      expect(at(s)).toEqual(['n_cam3', 'n_cam3', 'n_cam3', 'n_cam2', 'n_cam2']);
+    });
+
+    it('wiring it back brings its cut back, with no key edited', () => {
+      let s = unwire(withCuts(withThird(buildMultiCamera()), cuts), 'n_cam2');
+      s = applyOp(s, {
+        type: 'connect',
+        from: { node: 'n_cam2', socket: 'out' },
+        to: { node: 'n_camsel', socket: 'cameras' },
+      }).next;
+      expect(at(s)).toEqual(['n_camera', 'n_cam2', 'n_cam2', 'n_cam3', 'n_cam3']);
+    });
+
+    it('no cut names a listed camera: the static `active` stands', () => {
+      const s = withCuts(buildMultiCamera('n_cam2'), [[0, 'n_gone']]);
+      expect(selectActiveCameraNode(s, 0)?.id).toBe('n_cam2');
+    });
+
+    it('a number channel on `active` (saved before v23, never migrated) is not read as cuts', () => {
+      const s = applyOp(buildMultiCamera('n_cam2'), {
+        type: 'addNode',
+        nodeId: 'ch_old',
+        nodeType: 'KeyframeChannelNumber',
+        params: {
+          name: 'active',
+          target: 'n_camsel',
+          paramPath: 'active',
+          keyframes: [{ time: 0, value: 0, easing: 'constant' }],
+        },
+      }).next;
+      expect(selectActiveCameraNode(s, 0)?.id).toBe('n_cam2');
+    });
   });
 });
 

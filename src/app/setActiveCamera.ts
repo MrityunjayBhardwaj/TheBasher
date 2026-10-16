@@ -8,8 +8,8 @@
 // DIRECTLY to Scene.camera (byte-identical to every pre-Inc-3 project). The
 // `CameraSelect` switch node materializes only when the scene holds 2+ cameras
 // and you make a NON-active one active — at that point all cameras are gathered
-// into one CameraSelect (in `enumerateCameraNodeIds` order, the index it
-// addresses by, V44) and it is rewired into Scene.camera. Once a CameraSelect
+// into one CameraSelect (in `enumerateCameraNodeIds` order; `active` names the
+// chosen camera by id, #1668) and it is rewired into Scene.camera. Once a CameraSelect
 // exists, "set active" is just a `setParam active` (+ a connect if the camera
 // isn't yet in the selector).
 //
@@ -41,11 +41,11 @@ function uniqueId(base: string, nodes: DagState['nodes']): string {
  *
  * Three shapes:
  *  - **CameraSelect already feeds Scene.camera** → connect the camera into the
- *    selector if it isn't already, then `setParam active` to its index.
+ *    selector if it isn't already, then `setParam active` to its id (#1668).
  *  - **≤1 camera in the scene** → wire it DIRECTLY into Scene.camera (no selector
  *    — the lazy model keeps single-camera scenes selector-free).
  *  - **2+ cameras, currently direct/none** → lazily insert a CameraSelect wiring
- *    ALL cameras (enumeration order), active = the chosen camera's index, and
+ *    ALL cameras (enumeration order), active = the chosen camera's id, and
  *    rewire it into Scene.camera.
  */
 export function buildSetActiveCameraOps(state: DagState, cameraNodeId: string): Op[] | null {
@@ -70,18 +70,17 @@ export function buildSetActiveCameraOps(state: DagState, cameraNodeId: string): 
     const edges = Array.isArray(wiredNode.inputs.cameras)
       ? (wiredNode.inputs.cameras as NodeRef[])
       : [];
-    let idx = edges.findIndex((e) => e.node === cameraNodeId);
     const ops: Op[] = [];
-    if (idx < 0) {
+    if (!edges.some((e) => e.node === cameraNodeId)) {
       // The camera isn't in the selector yet (e.g. freshly added) → append it.
       ops.push({
         type: 'connect',
         from: { node: cameraNodeId, socket: 'out' },
         to: { node: selId, socket: 'cameras' },
       });
-      idx = edges.length; // connect with no index appends at the end (ops.ts)
     }
-    ops.push({ type: 'setParam', nodeId: selId, paramPath: 'active', value: idx });
+    // #1668 — `active` names the camera, so it stays on it whatever later edits the list.
+    ops.push({ type: 'setParam', nodeId: selId, paramPath: 'active', value: cameraNodeId });
     return ops;
   }
 
@@ -103,14 +102,13 @@ export function buildSetActiveCameraOps(state: DagState, cameraNodeId: string): 
   }
 
   // 2+ cameras → lazily insert the CameraSelect, gathering ALL cameras in
-  // enumeration order (the index it addresses by), active = the chosen one.
+  // enumeration order, active = the chosen one.
   const selId = uniqueId('n_camera_select', state.nodes);
-  const activeIdx = cams.indexOf(cameraNodeId);
   ops.push({
     type: 'addNode',
     nodeId: selId,
     nodeType: 'CameraSelect',
-    params: { active: activeIdx < 0 ? 0 : activeIdx },
+    params: { active: cameraNodeId },
   });
   for (const cid of cams) {
     ops.push({
