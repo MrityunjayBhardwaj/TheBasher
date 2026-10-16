@@ -136,6 +136,22 @@ describe('#1557 — what a library may hold', () => {
       }),
     ).toMatch(/id is its key \("two"\), not "deux"/);
   });
+  it('refuses a body node that does not feed the output, and a wire to a node the body lacks', () => {
+    const lone = body('lone', 'Fit', {});
+    expect(
+      refused({
+        templates: [{ ...SCALE, body: { ...SCALE.body, nodes: { ...SCALE.body.nodes, lone } } }],
+      }),
+    ).toMatch(/"lone" does not feed the body's output/);
+    const stray = body('mul', 'Math', { op: 'mul' }, { a: { node: 'gone', socket: 'out' } });
+    expect(
+      refused({
+        templates: [
+          { ...SCALE, body: { ...SCALE.body, nodes: { ...SCALE.body.nodes, mul: stray } } },
+        ],
+      }),
+    ).toMatch(/"mul" reads "gone", which is not a node of the body/);
+  });
   it('refuses two definitions of one type', () => {
     expect(refused({ templates: [SCALE, SCALE] })).toMatch(/two templates define "template.Scale"/);
   });

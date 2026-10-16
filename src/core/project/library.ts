@@ -66,6 +66,35 @@ export const TemplateDefinitionSchema = z
         path: ['body', 'out', 'node'],
         message: `the body's output names "${def.body.out.node}", which is not a node of the body`,
       });
+    // The body is what its output reads, and only that: an instance's copy is the closure behind
+    // its `body` socket, so a node that feeds nothing would be copied and then belong to nothing,
+    // and a wire to a node the body lacks would point out of every instance.
+    const reached = new Set<string>();
+    const stack = [def.body.out.node];
+    while (stack.length) {
+      const key = stack.pop()!;
+      const node = def.body.nodes[key];
+      if (!node || reached.has(key)) continue;
+      reached.add(key);
+      for (const [socket, binding] of Object.entries(node.inputs)) {
+        for (const ref of Array.isArray(binding) ? binding : [binding]) {
+          if (def.body.nodes[ref.node]) stack.push(ref.node);
+          else
+            ctx.addIssue({
+              code: 'custom',
+              path: ['body', 'nodes', key, 'inputs', socket],
+              message: `"${key}" reads "${ref.node}", which is not a node of the body`,
+            });
+        }
+      }
+    }
+    for (const key of Object.keys(def.body.nodes))
+      if (def.body.nodes[def.body.out.node] && !reached.has(key))
+        ctx.addIssue({
+          code: 'custom',
+          path: ['body', 'nodes', key],
+          message: `"${key}" does not feed the body's output`,
+        });
   });
 export type TemplateDefinition = z.infer<typeof TemplateDefinitionSchema>;
 
