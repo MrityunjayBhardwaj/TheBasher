@@ -10,6 +10,9 @@ import { expect, test } from './_fixtures';
 
 const TABS = 14;
 
+// Up to 14 project creations at up to ~5 s each under load.
+test.setTimeout(120_000);
+
 test('many open projects scroll inside the tab strip; the editor keeps the window width', async ({
   page,
 }) => {
@@ -24,7 +27,9 @@ test('many open projects scroll inside the tab strip; the editor keeps the windo
   while ((await tabs.count()) < TABS) {
     const before = await tabs.count();
     await page.getByTestId('project-tab-new').click();
-    await expect.poll(() => tabs.count()).toBeGreaterThan(before);
+    // A new project is written to storage before its tab appears: 0.8–5.1 s each on a loaded
+    // machine (measured 2026-10-16), so the default 5 s poll failed at whichever click was slowest.
+    await expect.poll(() => tabs.count(), { timeout: 20_000 }).toBeGreaterThan(before);
   }
 
   const m = await page.evaluate(() => {
