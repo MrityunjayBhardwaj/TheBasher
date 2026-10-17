@@ -285,7 +285,9 @@ export function Layout() {
           className="overflow-hidden rounded-2xl border border-border bg-bg-2/95 shadow-xl shadow-black/40 backdrop-blur-md"
           onContextMenu={(e) => e.stopPropagation()}
         >
-          <GraphView active={space === 'graph'} />
+          {/* Mounted only while open: unlike the 3D Canvas there is no GPU state to keep, and a
+              hidden graph would otherwise rebuild itself on every scene change. */}
+          {space === 'graph' && <GraphView />}
         </div>
         {/* Video mode (the third editor space) — the AE-style compositor. Like
             the 2D View it swaps in via display:none (Canvas stays mounted, K1

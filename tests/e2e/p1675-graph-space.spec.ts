@@ -1,6 +1,6 @@
 // #1675 — the Graph editor space, against the REAL app: View ▸ Editor Space ▸ Graph draws the live
 // scene as nodes, a node clicked there is selected in the app (the inspector shows it), a node
-// selected in the app is marked in the graph, and Tab leaves the Graph for the 3D View. Unwiring the
+// selected in the app is marked in the graph, and Tab leaves the Graph for the 3D View, unmounting it. Unwiring the
 // menu item, the slot, or the selection hand-off drops one of these assertions.
 
 import { expect, test } from './_fixtures';
@@ -56,4 +56,6 @@ test('View ▸ Editor Space ▸ Graph draws the scene and shares the selection',
   await page.getByTestId('graph-view-canvas').click({ position: { x: 5, y: 5 } });
   await page.keyboard.press('Tab');
   await expect(layout).toHaveAttribute('data-space', 'view3d');
+  // Closed, the graph is not mounted at all, so it does no work while the 3D View is up.
+  await expect(page.getByTestId('graph-view')).toHaveCount(0);
 });
