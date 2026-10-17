@@ -59,6 +59,40 @@ describe('#1550 — mutator.setOutput', () => {
     expect(useDagStore.getState().state.outputs).toEqual(state.outputs);
   });
 
+  it('"show the second scene": the render output is rewired too, and one undo puts both back', () => {
+    // #1674 — the rewire lands on the render output, which the new scene is not yet wired to, so
+    // the closure gate has to reach it.
+    const state = applyOp(buildDefaultDagState(), {
+      type: 'addNode',
+      nodeId: 'n_scene_2',
+      nodeType: 'Scene',
+      params: {},
+    }).next;
+    const spec = { output: 'scene', targetSelectors: ['n_scene_2'] };
+    const r = plan(spec, state);
+    if (!r.ok) throw new Error(`gate ${r.gate}: ${r.reason}`);
+    expect(r.ops.map((op) => op.type)).toEqual(['setOutput', 'connect']);
+    useDiffStore.getState().reset();
+    const closure = setOutputMutator.buildClosureSpec(setOutputMutator.spec.parse(spec));
+    const fork = useDiffStore
+      .getState()
+      .propose(state, r.ops, 'test', undefined, closure).forkState;
+    expect(fork.nodes.n_render.inputs.scene).toEqual({ node: 'n_scene_2', socket: 'out' });
+
+    const store = useDagStore.getState();
+    store.reset();
+    store.hydrate(state);
+    useDagStore.getState().dispatchAtomic(r.ops, 'agent', 'show n_scene_2');
+    expect(useDagStore.getState().state.outputs.scene.node).toBe('n_scene_2');
+    expect(useDagStore.getState().state.nodes.n_render.inputs.scene).toEqual({
+      node: 'n_scene_2',
+      socket: 'out',
+    });
+    useDagStore.getState().undo();
+    expect(useDagStore.getState().state.outputs).toEqual(state.outputs);
+    expect(useDagStore.getState().state.nodes.n_render).toEqual(state.nodes.n_render);
+  });
+
   it('refuses a node of the wrong kind, in words, before any op', () => {
     const r = plan({ output: 'render', targetSelectors: ['n_scene'] }, withSecondRender());
     expect(r.ok).toBe(false);

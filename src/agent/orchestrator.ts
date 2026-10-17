@@ -1180,6 +1180,8 @@ const KNOWN_EDGE_KINDS_LIST = [
   // #1560 — what the shared delete takes with a node: its sidecars, what it owns by reference
   // or by wire, and the sub-network behind a body socket.
   'owned',
+  // #1674 — the nodes bound as the app's named outputs, which a scene rebind rewires.
+  'outputs',
 ] as const satisfies readonly EdgeKind[];
 
 // Compile-time bidirectional exhaustiveness — fails tsc if EdgeKind

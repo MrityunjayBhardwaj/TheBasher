@@ -182,6 +182,13 @@ function visitEdge(
     return;
   }
 
+  if (kind === 'outputs') {
+    for (const ref of Object.values(state.outputs)) {
+      enqueue(ref.node, from, kind, depth, seenInKind, seenEdges, visited, frontier, edges);
+    }
+    return;
+  }
+
   if (kind === 'rig') {
     const reach = rigReach(state, from);
     for (const id of reach ? rigReachNodes(reach) : []) {

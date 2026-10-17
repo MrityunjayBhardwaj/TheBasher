@@ -18,14 +18,14 @@ table, no selection-owned data, no side store a reload depends on (#1565 audits 
 
 The graph changes only through these operations (`OpSchema`, `src/core/dag/types.ts`):
 
-| Operation                            | What it does                                        |
-| ------------------------------------ | --------------------------------------------------- |
-| `addNode` / `removeNode`             | Add a node (optionally with its wires) or delete it |
-| `connect` / `disconnect`             | Add or remove a wire into a socket                  |
-| `setParam`                           | Change a parameter value                            |
-| `setMeta`                            | Rename a node, or place it in the node view (#1562) |
-| `setSpareParam` / `removeSpareParam` | Add or remove a user parameter on any node          |
-| `setOutput`                          | Bind `scene` or `render` to a node (#1550)          |
+| Operation                            | What it does                                                                               |
+| ------------------------------------ | ------------------------------------------------------------------------------------------ |
+| `addNode` / `removeNode`             | Add a node (optionally with its wires) or delete it                                        |
+| `connect` / `disconnect`             | Add or remove a wire into a socket                                                         |
+| `setParam`                           | Change a parameter value                                                                   |
+| `setMeta`                            | Rename a node, or place it in the node view (#1562)                                        |
+| `setSpareParam` / `removeSpareParam` | Add or remove a user parameter on any node                                                 |
+| `setOutput`                          | Bind `scene` or `render` to a node (#1550); its doors keep the render on the scene (#1674) |
 
 Every operation carries its source: `user`, `agent`, `macro` or `render` (`OpSource`,
 `src/core/dag/store.ts`). The agent has no other door into the document (THESIS §18,

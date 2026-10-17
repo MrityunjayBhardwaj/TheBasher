@@ -1,7 +1,7 @@
 // setOutput Mutator — choose which node the app draws (`scene`) or renders (`render`) (#1550).
 //
-// Houdini's display and render flags. The question is asked once, in `setOutputOps`, which the
-// UI's door asks too.
+// The question is asked once, in `setOutputOps`, which the UI's door asks too. One scene at a
+// time (#1674): binding either output keeps the render output reading the scene output.
 //
 // Spec: { output, targetSelectors: [nodeId] }.
 
@@ -24,13 +24,19 @@ export const setOutputMutator: MutatorDefinition<SetOutputSpec> = {
   name: 'mutator.setOutput',
   description:
     'Make a node the scene the viewport draws (output "scene", a Scene node) or the render ' +
-    'output a render uses (output "render", a RenderOutput node). Undo puts the old one back.',
+    'output a render uses (output "render", a RenderOutput node). The render output always ' +
+    'renders the scene output, so binding one moves the other with it. Undo puts both back.',
   spec: SetOutputSpec,
   specExample: { output: 'render', targetSelectors: ['node_id'] },
   contract: { requiredEdges: [], requiredNodeTypes: [], preserves: [] },
   buildClosureSpec(spec): ClosureSpec {
-    // The op names only the node being bound.
-    return { rootSelectors: spec.targetSelectors, followedEdges: [] };
+    // The node being bound, the nodes bound now (a new scene rewires the render output, #1674)
+    // and, one hop up, the scene a new render output reads, which comes with it.
+    return {
+      rootSelectors: spec.targetSelectors,
+      followedEdges: ['outputs', 'children'],
+      depthByKind: { children: 1 },
+    };
   },
   preconditions(spec, _closure, state) {
     const result = setOutputOps(state, spec.output, spec.targetSelectors[0]);

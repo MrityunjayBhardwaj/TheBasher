@@ -62,7 +62,11 @@ export type EdgeKind =
   // (cube → its driver → the Solver wired into it → the Solver's sub-network) and the kinds
   // above never hand over to each other. It reads the same declarations the delete builder
   // reads, without the "nothing else uses it" check, so it is the widest the delete can reach.
-  | 'owned';
+  | 'owned'
+  // #1674 — the nodes bound as the app's named outputs (`outputs.scene`, `outputs.render`), from
+  // any root. Rebinding the scene rewires the render output's `scene` input, and the render
+  // output is not wired to the new scene until that op lands, so no edge kind above reaches it.
+  | 'outputs';
 
 export interface ClosureSpec {
   /** Root node ids the closure expands from. */
