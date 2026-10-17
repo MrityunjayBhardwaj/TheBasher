@@ -500,6 +500,27 @@ export function resolveWorldTransform(
 }
 
 /**
+ * #1638 — `nodeId`'s world matrix at any playhead, for a reader that samples something else at
+ * the playhead too (a rig's pose). Resolved at that time through this one resolver, so keyed travel
+ * on the node or any ancestor arrives exactly as the renderer folds it; `atRest` (the frame-0 matrix
+ * the caller already holds) stands in where the node is not reachable at that time.
+ */
+export function worldMatrixAt(
+  state: DagState,
+  nodeId: string,
+  atRest: readonly number[],
+  cache?: EvaluatorCache,
+): (seconds: number) => readonly number[] {
+  return (seconds) =>
+    resolveWorldTransform(
+      state,
+      nodeId,
+      { time: { frame: Math.round(seconds * 60), seconds, normalized: 0 } },
+      cache,
+    )?.matrix ?? atRest;
+}
+
+/**
  * The world matrix of `selectedId`'s PARENT — the accumulated ancestor transform
  * the node hangs under — or **null** when the node has no non-trivial parent. Used
  * by the gizmo (#230) to anchor in world space and convert a drag back to the

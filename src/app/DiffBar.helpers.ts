@@ -6,7 +6,7 @@
 // new external deps). What CAN be unit-tested in vitest is the pure
 // data shaping that drives the `data-testid="diffbar-…"` markers:
 //
-//   - `countBySource`        → drives `diffbar-sources`
+//   - `countBySource`        → the tools behind a diff, on hover over its title (#1612)
 //   - `extractTimeRange`     → drives `diffbar-time-range`
 //   - `formatTimeRange`      → text inside `diffbar-time-range`
 //   - `hasMetaToShow`        → drives the strip's visibility
@@ -118,15 +118,9 @@ export function formatSeconds(n: number): string {
  * to OR in `timeRange !== null` after Wave D landed it).
  */
 export function hasMetaToShow(args: {
-  sourceCounts: readonly SourceCount[];
   closureNodeCount: number;
   warningsCount: number;
   timeRange: TimeRange | null;
 }): boolean {
-  return (
-    args.sourceCounts.length > 1 ||
-    args.closureNodeCount > 0 ||
-    args.warningsCount > 0 ||
-    args.timeRange !== null
-  );
+  return args.closureNodeCount > 0 || args.warningsCount > 0 || args.timeRange !== null;
 }

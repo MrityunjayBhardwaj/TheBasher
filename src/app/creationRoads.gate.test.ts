@@ -141,7 +141,7 @@ const NO_CREATION_ROAD: Readonly<Record<string, string>> = {
   Lag:
     'A Lag is an instance of the built-in Lag template since #1559: Add › Lag places one ' +
     '(`placeBuiltin`, src/app/builtinTemplates.ts), and a project saved with Lag nodes loads ' +
-    'them as instances (format v23). The type stays registered until it is retired.',
+    'them as instances (format v24). The type stays registered until it is retired.',
 
   Scatter:
     "THESIS §29's proof that procedural generation is substrate. It evaluates, renders " +

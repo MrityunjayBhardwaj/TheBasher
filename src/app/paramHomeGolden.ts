@@ -26,6 +26,9 @@
 // Timebar (Blender's Timeline header), not an inspector section. `unrouted` 248 → 249, `routed`
 // untouched.
 //
+// USED AGAIN (#1594): `Scene` appends `timeSpeed=(unrouted)` — the scene's speed is edited from the
+// Timebar beside End, not an inspector section. `unrouted` 257 → 258, `routed` untouched.
+//
 // USED AGAIN (#1503): `Object`, `Group` and `Collection` each append `viewport=(unrouted)
 // render=(unrouted)` — visibility moved off `meta.hidden` into two params, and no inspector card
 // draws them yet (the outliner's eye writes `viewport`). `unrouted` 250 → 256, `routed` untouched.
@@ -253,7 +256,7 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
   Scatter:
     '[mesh,driver,material] density=(unrouted) seed=(unrouted) bounds=(unrouted) scaleJitter=(unrouted) randomYaw=(unrouted)',
   Scene:
-    '[environment,layout] envSource=environment envIntensity=environment envRotationY=environment envBackground=environment frameEnd=(unrouted) activeCollection=(unrouted)',
+    '[environment,layout] envSource=environment envIntensity=environment envRotationY=environment envBackground=environment frameEnd=(unrouted) activeCollection=(unrouted) timeSpeed=(unrouted)',
   // APPENDED at #638 — the face range. Unrouted like `muted`, and for the node's own
   // recorded reason: `SetMaterialOp` declares no inspector section at all, because its
   // reference authors this node in the graph editor and a titled empty card is the shape
@@ -439,6 +442,7 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
 //   types 91 · routed 147 + 3 = 150 · unrouted 257
 //
 // #1557 adds `TemplateDefinition`, a template held in the graph, with `definition` and `keep`
-// unrouted (no inspector card shows a definition yet). Nothing existing moved:
-//   types 91 + 1 = 92 · routed 150 · unrouted 257 + 2 = 259
-export const GOLDEN_TOTALS = { types: 92, routed: 150, unrouted: 259 } as const;
+// unrouted (no inspector card shows a definition yet). #1594 appends `Scene.timeSpeed`, unrouted
+// as `Scene.frameEnd` is (both live in the Timebar). Nothing existing moved:
+//   types 91 + 1 = 92 · routed 150 · unrouted 257 + 2 + 1 = 260
+export const GOLDEN_TOTALS = { types: 92, routed: 150, unrouted: 260 } as const;

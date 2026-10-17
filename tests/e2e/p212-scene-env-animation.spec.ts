@@ -27,7 +27,11 @@ interface EnvWindow {
   };
   __basher_three: {
     getState: () => {
-      scene: { environment: unknown | null; environmentIntensity?: number } | null;
+      scene: {
+        environment: unknown | null;
+        environmentIntensity?: number;
+        backgroundIntensity?: number;
+      } | null;
     };
   };
   __basher_selection?: { getState: () => { select: (id: string) => void } };
@@ -63,6 +67,14 @@ async function resolved(page: Page, sceneId: string, seconds: number): Promise<n
     },
     { sceneId, c: ctxAt(seconds) },
   );
+}
+
+/** #1639 — the sky's strength, which the animated overlay writes beside the lighting's. */
+async function liveBackgroundIntensity(page: Page): Promise<number | null> {
+  return page.evaluate(() => {
+    const i = (window as unknown as EnvWindow).__basher_three.getState().scene?.backgroundIntensity;
+    return typeof i === 'number' ? i : null;
+  });
 }
 
 async function liveIntensity(page: Page): Promise<number | null> {
@@ -155,11 +167,21 @@ test.describe('#212 seam B — scene environment animates end-to-end', () => {
     expect(keys, 'envIntensity channel has 2 keys').toBe(2);
 
     // OBSERVE resolver AND live render (scene.environmentIntensity) across time
-    const rows: { t: number; resolved: number | null; live: number | null }[] = [];
+    const rows: {
+      t: number;
+      resolved: number | null;
+      live: number | null;
+      sky: number | null;
+    }[] = [];
     for (const t of [0, 2]) {
       await setTime(page, t);
       await page.waitForTimeout(120); // let the seam-B useFrame apply
-      rows.push({ t, resolved: await resolved(page, sceneId, t), live: await liveIntensity(page) });
+      rows.push({
+        t,
+        resolved: await resolved(page, sceneId, t),
+        live: await liveIntensity(page),
+        sky: await liveBackgroundIntensity(page),
+      });
     }
     console.log(
       `\n[p212 ENV] environmentIntensity by time:` +
@@ -173,5 +195,8 @@ test.describe('#212 seam B — scene environment animates end-to-end', () => {
     expect(rows[0].live).toBeCloseTo(rows[0].resolved!, 1);
     expect(rows[1].live).toBeCloseTo(rows[1].resolved!, 1);
     expect(rows[1].live).not.toBeCloseTo(rows[0].live ?? 0, 1);
+    // #1639 — the visible sky takes the same strength at every frame.
+    expect(rows[0].sky).toBeCloseTo(rows[0].resolved!, 1);
+    expect(rows[1].sky).toBeCloseTo(rows[1].resolved!, 1);
   });
 });

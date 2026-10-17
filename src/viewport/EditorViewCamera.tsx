@@ -443,7 +443,8 @@ export function EditorViewCamera() {
   useFrame(() => {
     const cam = ref.current;
     if (!cam || !lookThrough) return;
-    const seconds = useTimeStore.getState().seconds;
+    // #1594 — the camera runs on the playhead (film time), not on the scene's slowed clock.
+    const seconds = useTimeStore.getState().filmSeconds;
     const evalPose = resolveActiveCameraPoseAt(
       useDagStore.getState().state,
       seconds,

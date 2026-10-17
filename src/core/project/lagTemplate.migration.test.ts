@@ -1,4 +1,4 @@
-// #1559 — v22 → v23: each Lag node becomes an instance of the built-in Lag template, under its own
+// #1559 — v23 → v24: each Lag node becomes an instance of the built-in Lag template, under its own
 // id, and computes what the Lag computed, frame for frame. Through the real load door.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { __resetRegistryForTests, applyOps, type DagState } from '../dag';
@@ -64,9 +64,12 @@ function v22(): DagState {
   ]).next;
 }
 
-async function loadAsV22(state: DagState) {
+/** `state` as a file saved at `formatVersion`, loaded through the whole ladder. A v22 file
+ *  takes the camera-cut step (#1668) and then this one; a v23 file, as the launch build saved it
+ *  before the two lines merged, takes this one alone. */
+async function loadAs(formatVersion: number, state: DagState) {
   const saved = {
-    formatVersion: 22,
+    formatVersion,
     id: 'p',
     name: 'old lags',
     createdAt: 0,
@@ -81,14 +84,24 @@ async function loadAsV22(state: DagState) {
   return loaded;
 }
 
-describe('#1559 — v22 → v23: a Lag node becomes a Lag instance', () => {
-  it('the app writes v23', () => {
-    expect(PROJECT_FORMAT_VERSION).toBe(23);
+describe('#1559 — v23 → v24: a Lag node becomes a Lag instance', () => {
+  it('the app writes v24', () => {
+    expect(PROJECT_FORMAT_VERSION).toBe(24);
+  });
+
+  it('a project the launch build saved at v23 still has its Lags migrated', async () => {
+    // The renumbering is for this file: #1668 also took v23, and the launch build saved projects
+    // at it with their Lag nodes untouched. Were this step still 22 → 23 they would load as Lags.
+    const loaded = await loadAs(23, v22());
+    expect(loaded.formatVersion).toBe(24);
+    const s = useDagStore.getState().state;
+    expect(Object.values(s.nodes).filter((n) => n.type === 'Lag')).toEqual([]);
+    expect(s.nodes.lag.type).toBe('template.Lag');
   });
 
   it('each Lag becomes an instance under its own id, holding what it held', async () => {
-    const loaded = await loadAsV22(v22());
-    expect(loaded.formatVersion).toBe(23);
+    const loaded = await loadAs(22, v22());
+    expect(loaded.formatVersion).toBe(24);
     const s = useDagStore.getState().state;
     expect(Object.values(s.nodes).filter((n) => n.type === 'Lag')).toEqual([]);
     expect(s.nodes.lag.type).toBe('template.Lag');
@@ -108,14 +121,14 @@ describe('#1559 — v22 → v23: a Lag node becomes a Lag instance', () => {
     const lag = FRAMES.map((f) => value(before, 'lag', f));
     const lag2 = FRAMES.map((f) => value(before, 'lag2', f));
     expect(new Set(lag).size).toBeGreaterThan(10);
-    await loadAsV22(before);
+    await loadAs(22, before);
     const s = useDagStore.getState().state;
     expect(FRAMES.map((f) => value(s, 'lag', f))).toEqual(lag);
     expect(FRAMES.map((f) => value(s, 'lag2', f))).toEqual(lag2);
   });
 
   it('a Lag added afterwards reuses the migrated definition', async () => {
-    await loadAsV22(v22());
+    await loadAs(22, v22());
     const r = placeBuiltin(useDagStore.getState().state, 'Lag', 'later');
     expect(r.ok).toBe(true);
     if (r.ok)

@@ -27,7 +27,7 @@ import type { DagState } from '../core/dag/state';
 import type { EvalCtx } from '../core/dag/types';
 import type { GltfAssetValue } from '../nodes/types';
 import { resolveEvaluatedTransform } from './resolveEvaluatedTransform';
-import { resolveWorldTransform } from './resolveWorldTransform';
+import { resolveWorldTransform, worldMatrixAt } from './resolveWorldTransform';
 import { characterAssetOf, nativeRigsOf } from './characterParts';
 import type { SkeletonObject } from './skeletonObjects';
 import { armaturePoseOf } from '../nodes/bonePose';
@@ -118,7 +118,7 @@ const FRAME_0: EvalCtx = { time: { frame: 0, seconds: 0, normalized: 0 } };
 
 /**
  * The armature Object `objectId` as the band draws it — the same fields `collectSkeletonObjects`
- * builds for it (rest bones and world at frame 0, the Object's pose wire). Built here rather than
+ * builds for it (rest bones, world at frame 0 and at any playhead, the Object's pose wire). Built here rather than
  * read from that module because it would close a runtime import cycle through
  * `resolveWorldTransform` → `nodeConstraints` → this module (#814's gate). Null when it draws
  * nothing.
@@ -143,6 +143,7 @@ function drawnArmature(
       id: objectId,
       skeletonId,
       world: world.matrix,
+      worldAt: worldMatrixAt(state, objectId, world.matrix, cache),
       bones: data.bones,
       pose: armaturePoseOf(value),
       clipCount: 0, // a drawing diagnostic; nothing on this road reads it

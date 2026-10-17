@@ -274,6 +274,15 @@ export interface InputDescriptor {
    * Read through `wireOwnership` (src/core/dag/idRefSweep.ts), never off the descriptor.
    */
   owns?: 'always' | 'stack';
+  /**
+   * #1668 — a `list` socket whose node picks among its elements BY WHICH NODE EACH ONE IS, not by
+   * where it sits in the list. The evaluator then also hands `evaluate` the id of the node behind
+   * each element, in wire order, read with {@link inputSourceIds}. The camera switch needs it: a
+   * cut names its camera, and a value alone does not say which camera it came from. The cache key
+   * already carries each producer's id (its hash is of a key that starts with it), so this adds no
+   * input the key does not see.
+   */
+  sourceIds?: true;
 }
 
 /**
@@ -361,6 +370,22 @@ export interface EvalCtx {
 
 export interface ResolvedInputs {
   [socket: string]: unknown;
+}
+
+/** Where the evaluator puts a {@link InputDescriptor.sourceIds} socket's ids. `#` cannot start
+ *  or sit in a socket name, so this never collides with a socket. */
+export function sourceIdsKey(socket: string): string {
+  return `${socket}#sourceIds`;
+}
+
+/**
+ * #1668 — the id of the node behind each element of list socket `socket`, in wire order, when the
+ * socket declared {@link InputDescriptor.sourceIds}; otherwise (not declared, or `evaluate` called
+ * by hand without them) null, so a caller can tell "no ids" from "no elements".
+ */
+export function inputSourceIds(inputs: ResolvedInputs, socket: string): readonly string[] | null {
+  const ids = inputs[sourceIdsKey(socket)];
+  return Array.isArray(ids) ? (ids as string[]) : null;
 }
 
 /**

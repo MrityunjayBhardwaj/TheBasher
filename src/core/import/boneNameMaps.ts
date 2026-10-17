@@ -213,6 +213,33 @@ const SOMA_TO_MIXAMO: Readonly<Record<string, string>> = {
   RightToeBase: 'mixamorig_RightToeBase',
 };
 
+// #1632 — the same bridge for a character whose Mixamo-style names arrive WITHOUT the
+// namespace. Both roads do it: Mixamo's own exports with the prefix stripped, and every
+// auto-rigger that copies Mixamo's vocabulary. Without these, SOMA→Mixamo scores 0 on such
+// a rig and the shared-name map wins — 16 bones, four of them the wrong ones, because the
+// note above is exactly the trap a name match falls into.
+//
+// Derived from SOMA_TO_MIXAMO rather than retyped, so the legs stay written against the
+// parentage in ONE place.
+const SOMA_TO_MIXAMO_BARE: Readonly<Record<string, string>> = Object.fromEntries(
+  Object.entries(SOMA_TO_MIXAMO).map(([soma, mixamo]) => [soma, mixamo.replace(/^mixamorig_/, '')]),
+);
+
+// Meshy's auto-rig: Mixamo's limb names, bare, but its own spine — numbered DOWNWARD from the
+// chest and with a lower-case neck. Read from a Meshy-rigged GLB's parentage, not its names:
+//
+//     Hips → Spine02 → Spine01 → Spine → neck → Head        (shoulders hang off `Spine`)
+//
+// so SOMA's Spine1 (first above the hips) is Meshy's Spine02, and SOMA's Chest — the joint the
+// shoulders hang from — is Meshy's `Spine`.
+const SOMA_TO_MESHY: Readonly<Record<string, string>> = {
+  ...SOMA_TO_MIXAMO_BARE,
+  Spine1: 'Spine02',
+  Spine2: 'Spine01',
+  Chest: 'Spine',
+  Neck1: 'neck',
+};
+
 export const BONE_NAME_MAP_PRESETS: readonly BoneNameMapPreset[] = [
   {
     id: 'mixamoToGltf',
@@ -255,6 +282,20 @@ export const BONE_NAME_MAP_PRESETS: readonly BoneNameMapPreset[] = [
     source: 'SOMA (generated motion)',
     target: 'Mixamo',
     map: SOMA_TO_MIXAMO,
+  },
+  {
+    id: 'somaToMixamoBare',
+    name: 'SOMA → Mixamo humanoid (no prefix)',
+    source: 'SOMA (generated motion)',
+    target: 'Mixamo, bare names',
+    map: SOMA_TO_MIXAMO_BARE,
+  },
+  {
+    id: 'somaToMeshy',
+    name: 'SOMA → Meshy auto-rig',
+    source: 'SOMA (generated motion)',
+    target: 'Meshy',
+    map: SOMA_TO_MESHY,
   },
 ];
 

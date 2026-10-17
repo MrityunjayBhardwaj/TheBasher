@@ -252,5 +252,11 @@ then nested-camera pose builds on it.
   ClipSelect) or by **name** (stable across reorder)? **Recommendation: index**
   for parity with the existing ClipSelect/LightProfileSelect precedent; revisit
   if reorder churn bites.
+  **Revisited (#1668, 2026-10-16): by camera id.** The churn bit: deleting any camera
+  moved every later camera up one place in the list while the cut keys kept their old
+  numbers, so shots that never used the deleted camera changed camera. Blender's camera
+  marker holds the camera object, and `BKE_scene_camera_switch_find` skips a marker whose
+  camera is gone. `active` and each cut key now hold the camera's node id; a cut whose
+  camera is gone is skipped and the shot before runs on. Saved v22 files are migrated.
 - **Q-C (Inc 4 in or out):** is flattening Scene top-level part of THIS milestone
   or the next? **Recommendation: out** (separate increment after A + B land).

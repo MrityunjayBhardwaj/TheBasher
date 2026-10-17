@@ -28,6 +28,7 @@ export function EnvironmentFile({
       map={texture}
       background={background}
       environmentIntensity={intensity}
+      backgroundIntensity={intensity}
       environmentRotation={rotation}
       backgroundRotation={rotation}
     />

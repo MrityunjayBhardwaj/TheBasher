@@ -144,9 +144,10 @@ export interface MotionGenerationResult {
    *
    * The THIRD thing this result declares that the clip cannot say, and the exact
    * twin of `worldOffsetXZ`: generation canonicalises frame 0's HEADING to zero
-   * as well as its position, so a clip whose character should set off toward +Z
-   * comes back setting off toward +X. Where `worldOffsetXZ` is the translation
-   * that was rebased away, this is the rotation that was.
+   * as well as its position, so a clip whose character should set off toward +X
+   * comes back setting off toward +Z — the generator's canonical facing (#1635).
+   * Where `worldOffsetXZ` is the translation that was rebased away, this is the
+   * rotation that was: the turn that takes +Z onto the requested start heading.
    *
    * It differs from `worldOffsetXZ` in ONE way worth stating: the server neither
    * performs nor reports it. The canonical heading is a known constant, so the

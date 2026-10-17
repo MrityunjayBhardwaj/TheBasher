@@ -216,6 +216,69 @@ describe('fitting a generated walk’s path to its character (#1285)', () => {
     expect(fitMotionPathScaleOps(s).ops).toEqual([]);
   });
 
+  // #1633 — the leg ratio is in each RIG's units; the walk lands in the WORLD. A character
+  // imported from a centimetre file has its skeleton under a group scaled 0.01, so the rig ratio
+  // (target cm per source metre) is ~100× the world one. Measured in the app before the fix: a
+  // Meshy character fitted at 50.78 and covered 0.5 m of a 49.6 m path.
+  it('fits by the WORLD ratio when the character stands under a scaled group', async () => {
+    const { cap } = recordingCapability();
+    const { s: cooked, producerId, clipId } = await mintAndCook(cap);
+    let s = bind(cooked, clipId, 'tall_skel', 'tall_walk');
+    const rigRatio = appliedRatio(s, 'tall_walk');
+    s = apply(s, [
+      { type: 'addNode', nodeId: 'tall_obj', nodeType: 'Object', params: {} },
+      {
+        type: 'connect',
+        from: { node: 'tall_skel', socket: 'out' },
+        to: { node: 'tall_obj', socket: 'data' },
+      },
+      {
+        type: 'addNode',
+        nodeId: 'cm_group',
+        nodeType: 'Group',
+        params: { scale: [0.01, 0.01, 0.01] },
+      },
+      {
+        type: 'connect',
+        from: { node: 'tall_obj', socket: 'out' },
+        to: { node: 'cm_group', socket: 'children' },
+      },
+      { type: 'addNode', nodeId: 'n_scene', nodeType: 'Scene', params: {} },
+      {
+        type: 'connect',
+        from: { node: 'cm_group', socket: 'out' },
+        to: { node: 'n_scene', socket: 'children' },
+      },
+    ] as Op[]);
+    s = apply(s, [
+      {
+        type: 'addNode',
+        nodeId: 'n_render',
+        nodeType: 'RenderOutput',
+        params: { postFx: { tonemap: 'ACES', smaa: true }, width: 1920, height: 1080 },
+      },
+      {
+        type: 'connect',
+        from: { node: 'n_scene', socket: 'out' },
+        to: { node: 'n_render', socket: 'scene' },
+      },
+    ] as Op[]);
+    // The world walk starts at the render output, as the viewport's does.
+    s = {
+      ...s,
+      outputs: {
+        ...s.outputs,
+        scene: { node: 'n_scene', socket: 'out' },
+        render: { node: 'n_render', socket: 'out' },
+      },
+    };
+
+    const fit = motionPathScaleFit(s, producerId);
+    expect(fit.kind).toBe('fit');
+    // Not the rig ratio: that would ask for a path 100× too short.
+    expect((fit as { scale: number }).scale).toBeCloseTo(rigRatio * 0.01, 9);
+  });
+
   it('the cook button offers a re-cook while the clip is current but the path is not fitted', async () => {
     const { cap } = recordingCapability();
     const { s: cooked, producerId, clipId } = await mintAndCook(cap);

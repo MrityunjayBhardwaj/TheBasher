@@ -187,7 +187,13 @@ export function buildDeleteNodesOps(state: DagState, ids: readonly NodeId[]): Op
   // mesh it wraps, it needs a splice-out instead (#432). Duplicate copies through the same
   // socket, so the two verbs differ there, exactly as Blender's Shift+D and X differ.
   //
-  // Both are guarded on EXCLUSIVITY: a shared node (another surviving consumer
+  // #1673 — except when nothing survives ABOVE the wrapper. An Armature modifier is
+  // the data of a skinned mesh's Object; delete the Object and the modifier goes with
+  // it through `data`, and then there is no surviving chain to splice the mesh back
+  // into. The mesh belongs to the Object that is going, as Blender drops an object's
+  // data when nothing else uses it — so that wrapper owns its subject too.
+  //
+  // All of it is guarded on EXCLUSIVITY: a shared node (another surviving consumer
   // still points at it) stays, and removeNode would refuse it anyway. Walked to a
   // fixpoint so a group inside a group goes all the way down, and appended
   // PARENT-BEFORE-CHILD so each removeNode runs once its consumer is gone

@@ -48,6 +48,7 @@ import { linkedDataNodeId } from '../resolveDataParamOwner';
 import { isCameraNode } from '../cameraNode';
 import { stripDriveRefusal } from '../stripDrive';
 import { ActionChannelSchema, type ActionChannel } from '../../nodes/Action';
+import { declaredKeyChannelType, keyEasingFor } from '../../nodes/paramWidget';
 import type { ClosureSpec } from '../../agent/closure/types';
 import type { DagState } from '../../core/dag/state';
 import type { Op } from '../../core/dag/types';
@@ -347,14 +348,24 @@ function dispatchDirectFirstKey(
 ): DispatchResult {
   const { targetId, paramPath, value, seconds } = args;
   const intent = `Animate ${targetId}.${paramPath}`;
-  const valueType = inferValueType(value);
-  if (!valueType || !opts.allowed.includes(valueType)) {
+  // #1668 — a choice that names a node (the active camera) keys a text channel whose keys hold
+  // the id; going by shape, a string would read as a colour.
+  const declared = declaredKeyChannelType(base.nodes[targetId]?.type, paramPath);
+  const valueType = declared ? null : inferValueType(value);
+  if (declared && typeof value !== 'string') {
+    return { ok: false, reason: `"${paramPath}" names a node; its key holds that node's id.` };
+  }
+  if (!declared && (!valueType || !opts.allowed.includes(valueType))) {
     return {
       ok: false,
       reason: `${opts.surface} param "${paramPath}" is not keyframe-able (expected ${opts.allowed.join(' or ')}).`,
     };
   }
-  const { nodeType, easing } = channelNodeFor(valueType);
+  const { nodeType, easing: byValue } = declared
+    ? { nodeType: declared, easing: 'linear' as const }
+    : channelNodeFor(valueType!);
+  // #1663 — a choice (the active camera) is keyed stepped, whatever its value type defaults to.
+  const easing = keyEasingFor(base.nodes[targetId]?.type, paramPath, byValue);
   const channelId = `${targetId}_${safePath(paramPath)}_channel`;
   // First-key only fires for an un-animated param, so the channel should not yet
   // exist; guard rather than emit a colliding addNode.

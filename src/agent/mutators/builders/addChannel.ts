@@ -27,10 +27,17 @@ import type { MutatorDefinition } from '../types';
 import type { ClosureSet, ClosureSpec } from '../../closure/types';
 import type { DagState } from '../../../core/dag/state';
 import type { NodeId, Op } from '../../../core/dag/types';
-import { animatablePathsOf, missingParamPath } from '../../../app/animatableParams';
+import {
+  animatablePathsOf,
+  missingParamPath,
+  type ChannelValueKind,
+} from '../../../app/animatableParams';
 import { resolveExposedTarget } from '../../../app/exposeParams';
+import { declaredKeyChannelType, keyEasingFor, offeredNodeIds } from '../../../nodes/paramWidget';
 
-const ValueType = z.enum(['number', 'vec3', 'quat', 'color']);
+// #1668 — 'text': a step channel of strings. A choice that names a node (CameraSelect.active, the
+// film's camera cuts) is keyed with it, each key holding the id of the camera it cuts to.
+const ValueType = z.enum(['number', 'vec3', 'quat', 'color', 'text']);
 type ValueType = z.infer<typeof ValueType>;
 
 const InitialKeyframeSchema = z
@@ -58,6 +65,7 @@ const NODE_TYPE_BY_VALUE: Record<ValueType, string> = {
   vec3: 'KeyframeChannelVec3',
   quat: 'KeyframeChannelQuat',
   color: 'KeyframeChannelColor',
+  text: 'KeyframeChannelText',
 };
 
 /** Sanitize a paramPath for id use EXACTLY as dispatchDirectFirstKey does
@@ -84,12 +92,13 @@ function shapeOk(valueType: ValueType, value: unknown): boolean {
         Array.isArray(value) && value.length === 4 && value.every((x) => typeof x === 'number')
       );
     case 'color':
+    case 'text':
       return typeof value === 'string';
   }
 }
 
 /** What a `valueType` channel does animate on `target`, and on the data node it poses. */
-function animatableHint(state: DagState, target: NodeId, valueType: ValueType): string {
+function animatableHint(state: DagState, target: NodeId, valueType: ChannelValueKind): string {
   const dataId = (state.nodes[target]?.inputs as { data?: { node?: string } } | undefined)?.data
     ?.node;
   const paths = [
@@ -103,8 +112,8 @@ function animatableHint(state: DagState, target: NodeId, valueType: ValueType): 
 
 function defaultEasing(valueType: ValueType): 'linear' | 'cubic' {
   // Per project_p3_plan: cubic for vec3/quat/color (spatial / smooth feel),
-  // linear for scalar (predictable when scrubbing).
-  return valueType === 'number' ? 'linear' : 'cubic';
+  // linear for scalar (predictable when scrubbing). A text channel steps; 'linear' is inert.
+  return valueType === 'number' || valueType === 'text' ? 'linear' : 'cubic';
 }
 
 export const addChannelMutator: MutatorDefinition<AddChannelSpec> = {
@@ -153,16 +162,40 @@ export const addChannelMutator: MutatorDefinition<AddChannelSpec> = {
         reason: `initialKeyframe.value shape does not match valueType="${spec.valueType}".`,
       };
     }
+    // #1668 — a choice that names a node is keyed by the node's id in a text channel, and a key
+    // may only name a node the param can pick (for the active camera: one wired into the switch).
+    const targetType = state.nodes[spec.target]?.type;
+    const declared = declaredKeyChannelType(targetType, spec.paramPath);
+    if (declared && NODE_TYPE_BY_VALUE[spec.valueType] !== declared) {
+      return {
+        ok: false,
+        reason: `${targetType}.${spec.paramPath} names a node: key it with valueType "text", each key holding that node's id.`,
+      };
+    }
+    const offered = offeredNodeIds(state, spec.target, spec.paramPath);
+    if (
+      offered &&
+      spec.initialKeyframe &&
+      !offered.includes(spec.initialKeyframe.value as string)
+    ) {
+      return {
+        ok: false,
+        reason: `"${String(spec.initialKeyframe.value)}" is not one ${targetType}.${spec.paramPath} can pick (it can pick: ${offered.join(', ') || 'nothing yet'}).`,
+      };
+    }
     // #1552 — a path that certainly names no parameter is refused here, the authoring door,
     // with what does animate. "Cannot say" (a ComfyUI input, a node the census never placed, a
     // parameter something else supplies) is let through: could-not-look is not nothing-there.
-    const missing = missingParamPath(state, spec.target, spec.paramPath, spec.valueType);
-    if (missing) {
+    // A text channel names a node (#1668), which the census of animatable paths does not measure,
+    // and the two checks above have already judged it.
+    const kind = spec.valueType === 'text' ? null : spec.valueType;
+    const missing = kind && missingParamPath(state, spec.target, spec.paramPath, kind);
+    if (kind && missing) {
       return {
         ok: false,
         reason:
           `"${spec.paramPath}" is not a parameter of "${spec.target}": ${missing.reason}. ` +
-          animatableHint(state, spec.target, spec.valueType),
+          animatableHint(state, spec.target, kind),
       };
     }
     return { ok: true };
@@ -215,7 +248,12 @@ export const addChannelMutator: MutatorDefinition<AddChannelSpec> = {
                 {
                   time: spec.initialKeyframe.time,
                   value: spec.initialKeyframe.value,
-                  easing: spec.initialKeyframe.easing ?? defaultEasing(spec.valueType),
+                  // #1663 — a key on a choice (the active camera) is stored stepped.
+                  easing: keyEasingFor(
+                    state.nodes[target]?.type,
+                    paramPath,
+                    spec.initialKeyframe.easing ?? defaultEasing(spec.valueType),
+                  ),
                 },
               ]
             : [],

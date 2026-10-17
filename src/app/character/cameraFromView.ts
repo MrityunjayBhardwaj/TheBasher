@@ -40,8 +40,16 @@ export async function snapshotCameraFromOrbit(): Promise<void> {
   const camAny = cam as unknown as { isPerspectiveCamera?: boolean; fov?: number };
   const fov = camAny.isPerspectiveCamera && typeof camAny.fov === 'number' ? camAny.fov : 45;
 
+  // #1667 — once a scene has several cameras, `Scene.camera` is fed by a CameraSelect whose keyed
+  // `active` holds the film's cuts. Re-routing `Scene.camera` to the new camera unhooked that
+  // switch, and every cut silently stopped playing. With a switch in place the new camera joins
+  // its list and becomes the active one instead — what the outliner's Set Active does — so the
+  // switch, and the cuts on it, stay wired. A directly wired camera is still replaced: the old
+  // one stays in the scene, unwired, as every camera that is not active sits (#1630).
+  const select = existing ? state.nodes[existing.node] : undefined;
+  const switchId = select?.type === 'CameraSelect' ? select.id : null;
   const ops: Op[] = [];
-  if (existing) {
+  if (existing && !switchId) {
     ops.push({
       type: 'disconnect',
       from: existing,
@@ -81,11 +89,21 @@ export async function snapshotCameraFromOrbit(): Promise<void> {
     from: { node: dataId, socket: 'out' },
     to: { node: newId, socket: 'data' },
   });
-  ops.push({
-    type: 'connect',
-    from: { node: newId, socket: 'out' },
-    to: { node: sceneRef.node, socket: 'camera' },
-  });
+  if (switchId) {
+    ops.push({
+      type: 'connect',
+      from: { node: newId, socket: 'out' },
+      to: { node: switchId, socket: 'cameras' },
+    });
+    // #1668 — `active` names the camera it shows.
+    ops.push({ type: 'setParam', nodeId: switchId, paramPath: 'active', value: newId });
+  } else {
+    ops.push({
+      type: 'connect',
+      from: { node: newId, socket: 'out' },
+      to: { node: sceneRef.node, socket: 'camera' },
+    });
+  }
 
   // #1504 — into the active collection, as the Add menu's cameras join it (#1453).
   dag.dispatchAtomic(linkIntoActiveCollection(state, ops, [newId]), 'user', 'camera-from-view');

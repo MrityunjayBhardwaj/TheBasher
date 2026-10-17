@@ -60,7 +60,7 @@ function boneFrames(
   index: number,
   seconds: number,
 ): { bone: THREE.Matrix4; parent: THREE.Matrix4 } {
-  const world = new THREE.Matrix4().fromArray(object.world as number[]);
+  const world = new THREE.Matrix4().fromArray(object.worldAt(seconds) as number[]);
   const posed = posedBoneMatrices(object.bones, object.pose, seconds);
   const p = object.bones[index].parent;
   return {

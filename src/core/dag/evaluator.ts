@@ -26,6 +26,7 @@ import type { DagState, EvaluableState } from './state';
 import { arriving, conversionsInto, producedTypeOf } from './socketConversion';
 import { bodyInputLeavesOf } from './subnetworks';
 import type { EvalCtx, InputDescriptor, NodeDefinition, NodeId, ResolvedInputs } from './types';
+import { sourceIdsKey } from './types';
 // ns-2 step 9b — the FIRST value import from `src/nodes/**` into `src/core/dag/**`, and the
 // reason `modifierDataSource` was extracted to a leaf one commit earlier: the resolver's own
 // former home imports THIS module, so without that move the edge would have closed the cycle
@@ -507,6 +508,8 @@ export function evaluate(
         }
         resolved[socket] = values;
         inputHashes[socket] = hashes;
+        // #1668 — a socket that picks by identity also gets who each element is.
+        if (into?.sourceIds === true) resolved[sourceIdsKey(socket)] = binding.map((r) => r.node);
       } else {
         const sub = evalNode(binding.node, depth + 1);
         resolved[socket] = arrive(into, binding, extractSocket(sub.value, binding.socket));

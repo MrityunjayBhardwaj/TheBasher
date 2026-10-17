@@ -288,6 +288,7 @@ describe('#1551 — every string a registered node can store is an id reference 
       .sort();
     expect(declared).toMatchInlineSnapshot(`
       [
+        "CameraSelect.active:argument",
         "FollowPath.curve:argument",
         "FollowPath.target:subject",
         "KeyframeChannelColor.target:subject",

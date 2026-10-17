@@ -206,8 +206,8 @@ describe('#387 slice 4 — the other seven gathers', () => {
     expect(cam.position).toEqual([7, 1, -4]);
   });
 
-  it('CameraSelect recomposes the picked candidate, and picks by the same index', () => {
-    // Two split cameras with DIFFERENT lenses, `active: 1`. Asserting the second one's fov
+  it('CameraSelect recomposes the picked candidate, and picks by the camera it names', () => {
+    // Two split cameras with DIFFERENT lenses, `active: 'n_camB'` (#1668: by id). Asserting the second one's fov
     // proves the recompose happens AFTER the pick — a recompose that ran over the
     // candidate list first could reorder or drop entries and this would catch it.
     let s = applyAll(emptyDagState(), splitCameraOps('n_camA'));
@@ -216,7 +216,7 @@ describe('#387 slice 4 — the other seven gathers', () => {
       type: 'addNode',
       nodeId: 'n_sel',
       nodeType: 'CameraSelect',
-      params: { active: 1 },
+      params: { active: 'n_camB' },
     }).next;
     for (const id of ['n_camA', 'n_camB']) {
       s = applyOp(s, {

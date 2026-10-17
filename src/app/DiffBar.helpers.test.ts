@@ -15,7 +15,6 @@ import {
   formatSeconds,
   formatTimeRange,
   hasMetaToShow,
-  type SourceCount,
   type TimeRange,
 } from './DiffBar.helpers';
 
@@ -49,22 +48,18 @@ describe('countBySource', () => {
 
 describe('hasMetaToShow', () => {
   const empty = {
-    sourceCounts: [{ source: 'agent', count: 5 }] as SourceCount[],
     closureNodeCount: 0,
     warningsCount: 0,
     timeRange: null as TimeRange | null,
   };
 
   it('hides the strip when no signal is present', () => {
-    // Single source (length 1) + zero closure + zero warnings + null
-    // timeRange → nothing to show.
+    // Zero closure + zero warnings + null timeRange → nothing to show. (#1612 — which tools
+    // proposed the ops no longer lights the strip; it is on hover over the title.)
     expect(hasMetaToShow(empty)).toBe(false);
   });
 
   it('shows the strip when any single signal lights up', () => {
-    expect(
-      hasMetaToShow({ ...empty, sourceCounts: [...empty.sourceCounts, empty.sourceCounts[0]] }),
-    ).toBe(true);
     expect(hasMetaToShow({ ...empty, closureNodeCount: 1 })).toBe(true);
     expect(hasMetaToShow({ ...empty, warningsCount: 1 })).toBe(true);
     expect(hasMetaToShow({ ...empty, timeRange: { min: 0, max: 1 } })).toBe(true);

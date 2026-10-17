@@ -358,25 +358,52 @@ function renderViaManual(
   }
 }
 
-/** The bounding sphere of the VISIBLE scene content (chrome already hidden by the
- *  caller's hide-pass, so invisible objects are skipped — matching exactly what
- *  renders). Used to normalize the depth pass over the content's own depth range
- *  rather than the whole camera frustum. Returns null when nothing visible. */
-function visibleContentSphere(scene: THREE.Scene): THREE.Sphere | null {
+/** The bounding sphere of the scene content that actually DRAWS. Used to normalize the depth pass
+ *  over the content's own depth range rather than the whole camera frustum. Returns null when
+ *  nothing draws.
+ *
+ *  #1613 — two things it must agree with the renderer on, and once did not:
+ *  - A hidden object hides its whole subtree. The chrome hide-pass flips `visible` on a chrome
+ *    ROOT and leaves its children's own flag alone, so asking each mesh for its own flag counted
+ *    the 40-unit editor grid, and a single character came out within four grey levels.
+ *  - A skinned mesh is drawn where its bones put it, not where its stored (bind-pose) geometry
+ *    lies, so its box is measured from the posed vertices. */
+export function visibleContentSphere(scene: THREE.Object3D): THREE.Sphere | null {
   const box = new THREE.Box3();
   let any = false;
-  scene.traverse((o) => {
-    if (!o.visible) return;
+  const visit = (o: THREE.Object3D): void => {
+    if (!o.visible) return; // …and nothing under it draws either
     const mesh = o as THREE.Mesh;
-    if (!mesh.isMesh || !mesh.geometry) return;
-    if (!mesh.geometry.boundingBox) mesh.geometry.computeBoundingBox();
-    const bb = mesh.geometry.boundingBox;
-    if (!bb) return;
-    box.union(bb.clone().applyMatrix4(mesh.matrixWorld));
-    any = true;
-  });
+    if (mesh.isMesh && mesh.geometry) {
+      const bb = localDrawnBox(mesh);
+      if (bb && !bb.isEmpty()) {
+        box.union(bb.applyMatrix4(mesh.matrixWorld));
+        any = true;
+      }
+    }
+    for (const child of o.children) visit(child);
+  };
+  visit(scene);
   if (!any || box.isEmpty()) return null;
   return box.getBoundingSphere(new THREE.Sphere());
+}
+
+/** A mesh's box in its own space, as drawn: posed for a skinned mesh, the geometry's otherwise.
+ *  Always a fresh box the caller may transform. */
+function localDrawnBox(mesh: THREE.Mesh): THREE.Box3 | null {
+  const skinned = mesh as THREE.SkinnedMesh;
+  if (skinned.isSkinnedMesh && skinned.skeleton) {
+    // The posed box is measured into the mesh's own slot; put back what was there, because a
+    // click reads that slot too and would trust a box measured for this one frame.
+    const slot = skinned as unknown as { boundingBox: THREE.Box3 | null };
+    const before = slot.boundingBox;
+    skinned.computeBoundingBox();
+    const posed = slot.boundingBox ? slot.boundingBox.clone() : null;
+    slot.boundingBox = before;
+    return posed;
+  }
+  if (!mesh.geometry.boundingBox) mesh.geometry.computeBoundingBox();
+  return mesh.geometry.boundingBox ? mesh.geometry.boundingBox.clone() : null;
 }
 
 /** The [near, far] eye-space range to normalize the depth pass over: the visible
@@ -407,12 +434,23 @@ function depthRange(scene: THREE.Scene, camera: THREE.Camera): { near: number; f
 function makeLinearDepthMaterial(near: number, far: number): THREE.ShaderMaterial {
   return new THREE.ShaderMaterial({
     uniforms: { uNear: { value: near }, uFar: { value: far } },
+    // #1613 — three's own vertex steps, not `modelViewMatrix * position`: a skinned mesh's stored
+    // positions are its bind pose, and only the skinning step moves them to where the character
+    // is drawn. Without it the depth pass showed a posed character in its T-pose while the beauty
+    // and normal passes of the same frame showed the pose. The morph and instancing steps ride
+    // along for the same reason: the override must place a vertex where the real material does.
     vertexShader: /* glsl */ `
+      #include <common>
+      #include <morphtarget_pars_vertex>
+      #include <skinning_pars_vertex>
       varying float vViewZ;
       void main() {
-        vec4 mv = modelViewMatrix * vec4(position, 1.0);
-        vViewZ = -mv.z; // distance in front of the camera (eye space)
-        gl_Position = projectionMatrix * mv;
+        #include <skinbase_vertex>
+        #include <begin_vertex>
+        #include <morphtarget_vertex>
+        #include <skinning_vertex>
+        #include <project_vertex>
+        vViewZ = -mvPosition.z; // distance in front of the camera (eye space)
       }`,
     fragmentShader: /* glsl */ `
       uniform float uNear;

@@ -39,6 +39,13 @@ export const SceneParams = z.object({
    * default) means the scene itself. Appended last, so the frozen param-home row is appended to.
    */
   activeCollection: z.string().min(1).optional(),
+  /**
+   * #1594 — how fast the scene runs against the playhead: 1 is real time, 0.05 near-frozen,
+   * 0 holds the moment (bullet time). Keyable; scene time is this speed added up over the
+   * playhead (`src/app/sceneClock.ts`). Every time-driven thing in the scene follows it; a
+   * camera's own animation does not. Defaulted to 1, so an old project plays unchanged.
+   */
+  timeSpeed: z.number().min(0).default(1),
 });
 export type SceneParams = z.infer<typeof SceneParams>;
 

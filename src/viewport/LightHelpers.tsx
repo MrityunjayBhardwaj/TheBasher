@@ -40,8 +40,23 @@ export interface LightHelperProps {
   pickId: string | null;
 }
 
-/** Top-level dispatcher — returns the right helper for the light kind. */
+/** Top-level dispatcher — returns the right helper for the light kind, as editor chrome.
+ *
+ *  The chrome flag is declared HERE, once, and not per kind. Declared per kind, only the
+ *  directional helper ever carried it: the point, spot and area helpers drew their
+ *  wireframes into every rendered image and animation frame (#1631), because the render's
+ *  hide-pass hides only what declares itself. A flagged parent hides the whole subtree
+ *  (three's visibility inherits; `sceneBounds` prunes it), so a kind added later is chrome
+ *  without having to remember. */
 export function LightHelper({ value, pickId }: LightHelperProps) {
+  return (
+    <group userData={{ editorChrome: true }}>
+      <LightHelperOfKind value={value} pickId={pickId} />
+    </group>
+  );
+}
+
+function LightHelperOfKind({ value, pickId }: LightHelperProps) {
   // DEV observation seam ([[V85]]/[[H132]] #241): record the EVALUATED value this
   // helper renders with, keyed by node id, so an e2e can assert the wireframe helper
   // follows the playhead (not the static frame-0 read).
@@ -133,7 +148,6 @@ function DirectionalLightHelper({
       position={value.position as [number, number, number]}
       scale={scale}
       onClick={selectNodeOnClick(pickId)}
-      userData={{ editorChrome: true }}
     >
       <mesh quaternion={ringQuat}>
         <ringGeometry args={[0.18, 0.22, 24]} />

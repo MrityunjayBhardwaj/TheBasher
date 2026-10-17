@@ -4430,7 +4430,9 @@ function orientUpFor(choice: string, objectId: string): OrientUp | null {
   );
   if (object) {
     const toArmature = new THREE.Matrix3()
-      .setFromMatrix4(new THREE.Matrix4().fromArray(object.world as number[]))
+      .setFromMatrix4(
+        new THREE.Matrix4().fromArray(object.worldAt(useTimeStore.getState().seconds) as number[]),
+      )
       .invert();
     world.applyMatrix3(toArmature);
   }

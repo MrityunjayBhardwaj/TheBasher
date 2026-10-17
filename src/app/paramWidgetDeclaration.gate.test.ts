@@ -484,10 +484,12 @@ describe('a param declares its control on its schema (#872)', () => {
       examined: true,
       // 25 `.name`s since #1124 retired `MotionGenerate.name`, the profile picker's word (#1064),
       // the bone picker's (#1284): an empty bone aims at "the object itself"; 28 at #1240
-      // (`PoseLayer.name`); 27 at #1243 (`PoseOverride.name` retired with its type).
-      count: 27,
+      // (`PoseLayer.name`); 27 at #1243 (`PoseOverride.name` retired with its type); 28 at #1668:
+      // the camera switch's empty `active` is "first camera".
+      count: 28,
     });
     expect(declaredWord.filter((k) => !k.endsWith('.name'))).toEqual([
+      'CameraSelect.active',
       'LightProfileSelect.selectedProfile',
       'TrackTo.aimBone',
     ]);
@@ -570,6 +572,7 @@ describe('a param declares its control on its schema (#872)', () => {
         'BodyInput.input',
         'BodyInputPose.input',
         'BodyInputVec.input',
+        'CameraSelect.active',
         'FollowPath.target',
         'KeyframeChannelColor.target',
         'KeyframeChannelColor.paramPath',
@@ -595,6 +598,7 @@ describe('a param declares its control on its schema (#872)', () => {
         'BodyInput.input',
         'BodyInputPose.input',
         'BodyInputVec.input',
+        'CameraSelect.active',
         'FollowPath.target',
         'KeyframeChannelColor.target',
         'KeyframeChannelColor.paramPath',

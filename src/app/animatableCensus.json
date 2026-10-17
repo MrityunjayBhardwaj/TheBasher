@@ -1730,6 +1730,11 @@
         "kind": "number",
         "reach": null,
         "driver": null
+      },
+      "timeSpeed": {
+        "kind": "number",
+        "reach": null,
+        "driver": null
       }
     },
     "Solver": {

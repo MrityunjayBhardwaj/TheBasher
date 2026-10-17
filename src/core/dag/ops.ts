@@ -857,8 +857,54 @@ function applySetParam(
       },
     };
   }
+  // 🔴 #1636 — A KEY LOST INSIDE THE WRITTEN VALUE. The check above reads the path; a
+  // list or object written AT the path survives the parse even when zod strips a key
+  // inside it. Measured: a Cycles modifier on every channel of a pose layer, one write of
+  // `channels` — the quaternion channels have no `modifiers` field, lost it, and the run
+  // froze at its last key while the write committed with nothing said. Same refusal as a
+  // path that does not exist: nothing commits, the badge names where the key went.
+  const lost = lostKeyIn(op.value, getAtPath(parsed.data, op.paramPath), '');
+  if (lost !== null) {
+    return {
+      next: state,
+      inverse,
+      reportable: {
+        badge: 'stripped-write',
+        nodeId: op.nodeId,
+        paramPath: op.paramPath,
+        reason: `${node.type} has no field at ${lost}`,
+      },
+    };
+  }
   const next = unchanged ? state : putNode(state, draft, node.id, { ...node, params: parsed.data });
   return { next, inverse };
+}
+
+/**
+ * #1636 — the first key the caller WROTE that the parse did not keep, as a path below the
+ * written one (`[1].modifiers`), else null. Only keys that were written and then lost count:
+ * a key the schema adds (a default) is fine, an `undefined` written value is not a key, and
+ * lists whose lengths differ cannot be aligned, so they are not judged (conservative — it
+ * can miss a strip, never invent one).
+ */
+function lostKeyIn(written: unknown, kept: unknown, at: string): string | null {
+  if (Array.isArray(written)) {
+    if (!Array.isArray(kept) || kept.length !== written.length) return null;
+    for (let i = 0; i < written.length; i += 1) {
+      const lost = lostKeyIn(written[i], kept[i], `${at}[${i}]`);
+      if (lost !== null) return lost;
+    }
+    return null;
+  }
+  if (typeof written !== 'object' || written === null || !isPlainRecord(written)) return null;
+  if (typeof kept !== 'object' || kept === null || !isPlainRecord(kept)) return null;
+  for (const [k, v] of Object.entries(written)) {
+    if (v === undefined) continue;
+    if (!Object.prototype.hasOwnProperty.call(kept, k)) return `${at}.${k}`.replace(/^\./, '');
+    const lost = lostKeyIn(v, kept[k], `${at}.${k}`);
+    if (lost !== null) return lost;
+  }
+  return null;
 }
 
 /**

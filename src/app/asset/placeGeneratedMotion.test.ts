@@ -10,7 +10,12 @@
 import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
 import type { DagState } from '../../core/dag/state';
-import { placeCharacterAtPathStart, placementRootOf } from './placeGeneratedMotion';
+import {
+  placeCharacterAtPathStart,
+  placeStandInAtPathStart,
+  placementRootOf,
+} from './placeGeneratedMotion';
+import { withResolvedRotation } from '../resolvedRotation';
 
 /**
  * The node shape a native character import produces, as far as placement reads it: the armature
@@ -282,5 +287,69 @@ describe('#897 — the facing half of the same placement', () => {
     if (!out.ok) return;
     const written = out.ops.find((o) => (o as { paramPath: string }).paramPath === 'rotation');
     expect((written as { value: [number, number, number] }).value).toEqual([12, -90, 56]);
+  });
+});
+
+// #1634 — a native import's root group holds its orientation as a QUATERNION, and in that mode
+// `withResolvedRotation` replaces `rotation` with the quaternion's before anything draws. A
+// facing written to `rotation` is dead there: measured in the app, the group read rotation
+// [0,-78.45,0] over quaternion [0,0,0,1] and the run set off across the alley, not down it.
+// These rows read the result the way the renderer does — through the resolve — so a write to
+// the dead field reds them.
+describe('#1634 — the facing lands on a quaternion-mode node', () => {
+  /** The params a node has after `ops`, oriented the way the draw reads them. */
+  function drawnRotation(
+    params: Record<string, unknown>,
+    ops: readonly { paramPath?: string; value?: unknown }[],
+  ): [number, number, number] {
+    const next = { ...params };
+    for (const o of ops) if (o.paramPath) next[o.paramPath] = o.value;
+    return withResolvedRotation(next as { rotation: [number, number, number] }).rotation;
+  }
+
+  it('turns a quaternion-mode character root to face along the path', () => {
+    const state = characterState();
+    const params = (state.nodes.n_group as { params: Record<string, unknown> }).params;
+    params.rotationMode = 'quaternion';
+    params.quaternion = [0, 0, 0, 1];
+    const out = placeCharacterAtPathStart(state, RIG, [3, 1], Math.PI / 2); // +Z
+    expect(out.ok).toBe(true);
+    if (!out.ok) return;
+    const rotation = drawnRotation(params, out.ops as never);
+    const { forward } = walkThroughThree(
+      [
+        ...out.ops.filter((o) => (o as { paramPath: string }).paramPath === 'position'),
+        { paramPath: 'rotation', value: rotation },
+      ] as never,
+      [0, 0, 0],
+    );
+    expect(forward.x).toBeCloseTo(0, 6);
+    expect(forward.z).toBeCloseTo(1, 6);
+  });
+
+  it('turns a quaternion-mode stand-in the same way', () => {
+    const params: Record<string, unknown> = {
+      position: [0, 0, 0],
+      rotation: [0, 0, 0],
+      rotationMode: 'quaternion',
+      quaternion: [0, 0, 0, 1],
+    };
+    const state = {
+      nodes: { n_stand: { id: 'n_stand', type: 'Object', params } },
+      outputs: {},
+    } as unknown as DagState;
+    const out = placeStandInAtPathStart(state, 'n_stand', [3, 1], Math.PI / 2);
+    expect(out.ok).toBe(true);
+    if (!out.ok) return;
+    expect(drawnRotation(params, out.ops as never)[1]).toBeCloseTo(-90, 6);
+  });
+
+  it('still writes an euler node’s facing to `rotation`, as before', () => {
+    const out = placeCharacterAtPathStart(characterState(), RIG, [0, 0], Math.PI / 2);
+    expect(out.ok).toBe(true);
+    if (!out.ok) return;
+    const paths = out.ops.map((o) => (o as { paramPath: string }).paramPath);
+    expect(paths).toContain('rotation');
+    expect(paths).not.toContain('quaternion');
   });
 });
