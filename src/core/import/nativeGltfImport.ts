@@ -229,31 +229,6 @@ const SKIN_SET = /^(JOINTS|WEIGHTS)_\d+$/;
  */
 const TANGENT_TOLERANCE_DEGREES = 2;
 
-const COMPONENT_BYTES: Record<number, number> = {
-  5120: 1,
-  5121: 1,
-  5122: 2,
-  5123: 2,
-  5125: 4,
-  5126: 4,
-};
-const TYPE_COMPONENTS: Record<string, number> = { SCALAR: 1, VEC2: 2, VEC3: 3, VEC4: 4 };
-
-/**
- * The stride a TIGHTLY PACKED view of this accessor would have, or `undefined` when the accessor
- * declares a type or component this reader has no size for.
- *
- * Read off the accessor rather than spelled per attribute: a colour is VEC3 or VEC4 and may be a
- * normalised byte or short, so no single literal describes it.
- */
-function elementBytesOf(json: NativeGltfJson, accessorIndex: number): number | undefined {
-  const accessor = json.accessors?.[accessorIndex];
-  if (!accessor) return undefined;
-  const components = TYPE_COMPONENTS[accessor.type];
-  const bytes = COMPONENT_BYTES[accessor.componentType];
-  return components === undefined || bytes === undefined ? undefined : components * bytes;
-}
-
 /** A VEC3 colour as RGBA: glTF says a colour carrying no alpha is opaque (2.0 §3.7.2.1). */
 function widenToRgba(rgb: Float32Array): Float32Array {
   const out = new Float32Array((rgb.length / 3) * 4);
@@ -376,13 +351,6 @@ async function unreproducedTangents(
       return {
         refused: `mesh ${meshIndex} carries a TANGENT that is not four floats`,
         issue: '#1381',
-      };
-    }
-    const elementBytes = elementBytesOf(json, tangentAccessor);
-    if (elementBytes !== undefined && interleaved(json, tangentAccessor, elementBytes)) {
-      return {
-        refused: `mesh ${meshIndex} stores interleaved vertex data, which this reader does not split`,
-        issue: '#1063',
       };
     }
     const normalTexture = (
@@ -583,14 +551,6 @@ function readIndices(
   return out;
 }
 
-/** Is the accessor's view interleaved? `readAccessor` reads contiguous elements and would misread one. */
-function interleaved(json: NativeGltfJson, accessorIndex: number, elementBytes: number): boolean {
-  const accessor = json.accessors?.[accessorIndex];
-  const view = accessor ? json.bufferViews?.[accessor.bufferView] : undefined;
-  const stride = (view as { byteStride?: number } | undefined)?.byteStride;
-  return typeof stride === 'number' && stride !== elementBytes;
-}
-
 /** Vertex numbers in draw order → triangle corners, by three's `toTrianglesDrawMode` rule. */
 export function triangulate(order: Uint32Array, mode: number): Uint32Array | null {
   if (mode === TRIANGLES) return order.length % 3 === 0 ? order : null;
@@ -744,26 +704,6 @@ function readPrimitive(
       skinAccessors.push({ joints, weights });
     }
   }
-  // Each accessor's own element size, not a literal per attribute. For POSITION, NORMAL and the UV
-  // sets this is the same number the literals used to spell, because a non-float one of those needs
-  // `KHR_mesh_quantization`, which `fileRefusal` has already turned away.
-  for (const accessorIndex of [
-    positionAccessor,
-    normalAccessor,
-    ...uvAccessors,
-    colourAccessor,
-    ...skinAccessors.flatMap((set) => [set.joints, set.weights]),
-  ]) {
-    if (typeof accessorIndex !== 'number') continue;
-    const elementBytes = elementBytesOf(json, accessorIndex);
-    if (elementBytes !== undefined && interleaved(json, accessorIndex, elementBytes)) {
-      return {
-        refused: `mesh ${meshIndex} stores interleaved vertex data, which this reader does not split`,
-        issue: '#1063',
-      };
-    }
-  }
-
   const positions = readAccessor(json, buffers, positionAccessor);
   const vertices = positions.length / 3;
   const order =

@@ -344,12 +344,40 @@ describe('#1062 — readGltfMesh carries every UV set and the colour as named la
     expect(colour!.data[11]).toBeCloseTo(128 / 255, 5);
   });
 
-  it('a genuinely interleaved colour is still refused', () => {
-    // Same colour, a stride that is not its element size: `readAccessor` reads contiguously and
-    // would misread it, so the file must be refused rather than drawn wrong.
-    const { json, buffers } = byteColourTriangle(16);
-    const data = readGltfMesh(json, buffers, 0);
-    expect('refused' in data && data.refused).toContain('interleaved');
+  it('#1063 — interleaved vertex data is split, and reads as the tightly packed file does', () => {
+    // Position and colour share one view, 16 bytes per vertex: 12 of float position, then 4 of
+    // byte colour. Each accessor must come back as its own values only, never its neighbour's.
+    const packed = byteColourTriangle(4);
+    const positions = new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]);
+    const colours = new Uint8Array([255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 128]);
+    const bytes = new Uint8Array(48);
+    for (let v = 0; v < 3; v++) {
+      bytes.set(new Uint8Array(positions.buffer, v * 12, 12), v * 16);
+      bytes.set(colours.subarray(v * 4, v * 4 + 4), v * 16 + 12);
+    }
+    const json = {
+      accessors: [
+        { bufferView: 0, componentType: 5126, count: 3, type: 'VEC3' },
+        {
+          bufferView: 0,
+          byteOffset: 12,
+          componentType: 5121,
+          count: 3,
+          type: 'VEC4',
+          normalized: true,
+        },
+      ],
+      bufferViews: [{ buffer: 0, byteOffset: 0, byteLength: 48, byteStride: 16 }],
+      meshes: [{ primitives: [{ attributes: { POSITION: 0, COLOR_0: 1 } }] }],
+    } as unknown as Parameters<typeof readGltfMesh>[0];
+    const interleaved = readGltfMesh(json, [bytes], 0);
+    const tight = readGltfMesh(packed.json, packed.buffers, 0);
+    if ('refused' in interleaved) throw new Error(interleaved.refused);
+    if ('refused' in tight) throw new Error(tight.refused);
+    expect(Array.from(interleaved.points)).toEqual(Array.from(tight.points));
+    const colourOf = (d: typeof tight) =>
+      Array.from(d.cornerLayers.find((l) => l.name === 'Color')!.data);
+    expect(colourOf(interleaved)).toEqual(colourOf(tight));
   });
 
   it('stops at the first TEXCOORD number the file does not have', () => {
