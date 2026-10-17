@@ -157,8 +157,10 @@ const TITLE =
 test(TITLE, async ({ page }) => {
   // Wall time follows the machine's load, not the code (#1262: 597 rows took 14.3 min at load 13
   // and 23.1 min at load 24, on one commit). The cap is there to catch a hang, so it sits well
-  // above both.
-  test.setTimeout(2_700_000);
+  // above both. The whole census (no part, as CENSUS_WRITE needs) is about three parts' worth:
+  // measured 2026-10-17 at 16 + 15 + 16 min per part, so a whole run passed 45 min and timed out
+  // before it could write. A part keeps the old cap.
+  test.setTimeout(PART ? 2_700_000 : 5_400_000);
   if (PART && process.env.CENSUS_WRITE === '1')
     throw new Error('CENSUS_WRITE needs the whole census — unset CENSUS_PART');
   page.on('pageerror', (e) => console.log('CENSUS pageerror: ' + e.message.slice(0, 300)));

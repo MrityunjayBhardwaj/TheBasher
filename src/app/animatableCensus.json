@@ -384,18 +384,6 @@
         "driver": "scene"
       }
     },
-    "Lag": {
-      "factor": {
-        "kind": "number",
-        "reach": null,
-        "driver": null
-      },
-      "seedFrame": {
-        "kind": "number",
-        "reach": null,
-        "driver": null
-      }
-    },
     "Layer": {
       "inPoint": {
         "kind": "number",
@@ -1809,6 +1797,88 @@
         "driver": "scene"
       }
     },
+    "TemplateDefinition": {
+      "definition.body.nodes.gap.version": {
+        "kind": "number",
+        "reach": null,
+        "driver": null
+      },
+      "definition.body.nodes.input.params.slot": {
+        "kind": "number",
+        "reach": null,
+        "driver": null
+      },
+      "definition.body.nodes.input.version": {
+        "kind": "number",
+        "reach": null,
+        "driver": null
+      },
+      "definition.body.nodes.k.params.max": {
+        "kind": "number",
+        "reach": null,
+        "driver": null
+      },
+      "definition.body.nodes.k.params.min": {
+        "kind": "number",
+        "reach": null,
+        "driver": null
+      },
+      "definition.body.nodes.k.version": {
+        "kind": "number",
+        "reach": null,
+        "driver": null
+      },
+      "definition.body.nodes.next.version": {
+        "kind": "number",
+        "reach": null,
+        "driver": null
+      },
+      "definition.body.nodes.preset_in_factor.params.slot": {
+        "kind": "number",
+        "reach": null,
+        "driver": null
+      },
+      "definition.body.nodes.preset_in_factor.version": {
+        "kind": "number",
+        "reach": null,
+        "driver": null
+      },
+      "definition.body.nodes.prev.params.slot": {
+        "kind": "number",
+        "reach": null,
+        "driver": null
+      },
+      "definition.body.nodes.prev.version": {
+        "kind": "number",
+        "reach": null,
+        "driver": null
+      },
+      "definition.body.nodes.solver.params.seedFrame": {
+        "kind": "number",
+        "reach": null,
+        "driver": null
+      },
+      "definition.body.nodes.solver.version": {
+        "kind": "number",
+        "reach": null,
+        "driver": null
+      },
+      "definition.body.nodes.step.version": {
+        "kind": "number",
+        "reach": null,
+        "driver": null
+      },
+      "definition.inputs.factor.default": {
+        "kind": "number",
+        "reach": null,
+        "driver": null
+      },
+      "definition.inputs.in.default": {
+        "kind": "number",
+        "reach": null,
+        "driver": null
+      }
+    },
     "TrackTo": {
       "aimPoint": {
         "kind": "vec3",
@@ -1852,6 +1922,23 @@
     },
     "Vec3Math": {
       "scalar": {
+        "kind": "number",
+        "reach": null,
+        "driver": null
+      }
+    },
+    "template.Lag": {
+      "factor": {
+        "kind": "number",
+        "reach": null,
+        "driver": null
+      },
+      "in": {
+        "kind": "number",
+        "reach": null,
+        "driver": null
+      },
+      "seedFrame": {
         "kind": "number",
         "reach": null,
         "driver": null
