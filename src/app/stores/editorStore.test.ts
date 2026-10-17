@@ -32,6 +32,18 @@ describe('editorStore — space', () => {
     useEditorStore.getState().toggleSpace();
     expect(useEditorStore.getState().space).toBe('view3d');
   });
+
+  it('#1675 — Tab never lands on the Graph space, and from it returns to the 3D View', () => {
+    const seen = new Set<string>();
+    for (let i = 0; i < 6; i++) {
+      useEditorStore.getState().toggleSpace();
+      seen.add(useEditorStore.getState().space);
+    }
+    expect(seen.has('graph')).toBe(false);
+    useEditorStore.getState().setSpace('graph');
+    useEditorStore.getState().toggleSpace();
+    expect(useEditorStore.getState().space).toBe('view3d');
+  });
 });
 
 describe('editorStore — activeTool', () => {
