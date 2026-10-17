@@ -25,9 +25,11 @@ import { FRAMES_PER_SECOND, useTimeStore } from './stores/timeStore';
 import { useShallow } from 'zustand/react/shallow';
 import { sceneContentEnd, sceneEndSeconds, setSceneEnd } from './sceneRange';
 import { useEditorStore } from './stores/editorStore';
+import { SceneSpeedField } from './SceneSpeedField';
 
 export function Timebar() {
-  const seconds = useTimeStore((s) => s.seconds);
+  // #1594 — the transport shows and moves the playhead (film time).
+  const seconds = useTimeStore((s) => s.filmSeconds);
   const duration = useTimeStore((s) => s.durationSeconds);
   // #1287 — the playhead may go past End (Blender does not hold it inside the range).
   const extent = useTimeStore((s) => s.extentSeconds);
@@ -140,6 +142,7 @@ export function Timebar() {
         />
         s
       </label>
+      {space !== 'video' && <SceneSpeedField />}
       {runsPast && (
         // One compact control, because the island is narrow: what is wrong (⚠) and the fix
         // (Extend to where the content ends). Who runs past, and what End does, are in its label.

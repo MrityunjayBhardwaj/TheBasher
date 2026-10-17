@@ -18,6 +18,8 @@ import { collectSkeletonObjects } from './skeletonObjects';
 import { evaluate } from '../core/dag/evaluator';
 import { restBonePose } from '../nodes/bonePose';
 import type { PosedSkeletonValue } from '../nodes/types';
+import { skeletonObjectFrames } from '../viewport/skeletonObjectPose';
+import { gltfNodeWorldPosition } from './gltfNodeWorld';
 
 /** A clip node's pose output, sampled — what an Object wired to it should play. */
 function clipPoseAt(state: DagState, clipId: string, seconds: number) {
@@ -238,5 +240,53 @@ describe('collectSkeletonObjects', () => {
     );
     expect(otherObjects.length).toBeGreaterThan(0);
     expect(collectSkeletonObjects(s).map((r) => r.id)).toEqual(['sk_object']);
+  });
+});
+
+// #1638 — the pose is sampled at the playhead, so the placement must be too. A rig whose
+// Group travels kept its bones at the frame-0 spot while the mesh ran on: 10 m behind after
+// 2 s at 5 m/s in the alley run, the pose itself exact once that shift was taken out.
+describe('#1638 — a rig whose parent travels carries its bones along', () => {
+  /** The rig in an import Group whose position is keyed 0 → 10 m along z over 2 s. */
+  function travelling(): DagState {
+    return applyOp(build({ inGroup: true }), {
+      type: 'addNode',
+      nodeId: 'grp_position_channel',
+      nodeType: 'KeyframeChannelVec3',
+      params: {
+        name: 'position',
+        target: 'grp',
+        paramPath: 'position',
+        keyframes: [
+          { time: 0, value: [0, 0, 0], easing: 'linear' },
+          { time: 2, value: [0, 0, 10], easing: 'linear' },
+        ],
+      },
+    }).next;
+  }
+  const hipsZ = (state: DagState, seconds: number) => {
+    const [rig] = collectSkeletonObjects(state);
+    return skeletonObjectFrames(rig, seconds).find((f) => f.name === 'Hips')!.head[2];
+  };
+
+  it('the drawn bones are where the Group stands at the playhead', () => {
+    const state = travelling();
+    expect(hipsZ(state, 0)).toBeCloseTo(0, 6);
+    expect(hipsZ(state, 1)).toBeCloseTo(5, 6);
+    expect(hipsZ(state, 2)).toBeCloseTo(10, 6);
+  });
+
+  it('CONTROL: with no keys the placement is the frame-0 one at every playhead', () => {
+    const state = build({ inGroup: true });
+    expect(hipsZ(state, 0)).toBeCloseTo(hipsZ(state, 2), 9);
+  });
+
+  it('a constraint aimed at a bone reads the bone where it is drawn', () => {
+    const state = travelling();
+    const at = (seconds: number) => ({ time: { frame: seconds * 60, seconds, normalized: 0 } });
+    const hips0 = gltfNodeWorldPosition(state, 'grp', 'Hips', at(0));
+    const hips2 = gltfNodeWorldPosition(state, 'grp', 'Hips', at(2));
+    expect(hips0).not.toBeNull();
+    expect(hips2![2] - hips0![2]).toBeCloseTo(10, 6);
   });
 });

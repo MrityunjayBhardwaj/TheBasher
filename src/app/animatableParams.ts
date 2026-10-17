@@ -36,12 +36,15 @@
 // REF: tests/e2e/p1235-animatable-census.spec.ts (the measurement); src/app/animatableCensus.json
 //      (its committed result); issues #1235, #1066, #1069, #1239, #474, #193.
 
+import { danglingIdRefs, idRefsByRole } from '../core/dag/idRefSweep';
+import { applyOp } from '../core/dag/ops';
 import type { DagState } from '../core/dag/state';
 import census from './animatableCensus.json';
 import { exposedTargetResolver, type ExposedTarget } from './exposeParams';
 import { constraintStackForTarget, followPathStackForTarget } from './nodeConstraints';
 import { chainSocketOf, isDataLaneOperator, singleRef } from './operatorChain';
 import { driverStackForTarget } from './paramDrivers';
+import { readBaseParam } from './readBaseParam';
 
 /** The value kinds a keyframe channel carries, named as `addChannel` names them. */
 export type ChannelValueKind = 'number' | 'vec2' | 'vec3' | 'quat' | 'color';
@@ -319,4 +322,146 @@ export function animatablePathsOf(
     .filter(([, r]) => r.kind === kind && reachFor(r, mechanism) != null)
     .map(([p]) => p)
     .filter((p) => p.includes('*') || !suppliedElsewhere(state, nodeId, p, ask.asker));
+}
+
+// ── #1552 — a path that names no parameter ───────────────────────────────────────────
+//
+// "The census found no such path" is not "there is no such path". The census keys the leaves a
+// freshly placed node HOLDS, so an optional parameter nobody set is not in it, and neither is
+// one component of a vector. And "the schema has no such path" is not it either: a ComfyUI
+// input (`comfy:6.text`) is in no schema and animates. A path is called missing only when both
+// agree, and only on a subject the census placed:
+//
+//   1. the census measured this node's subject, and has no row for the path, and
+//   2. the node's own schema drops a value written there (the test `setParam` already makes).
+//
+// Anything else is "cannot say", and a caller must let it through. Blender draws the same line
+// by door: `keyframe_insert` and `driver_add` refuse a property that is not found
+// (python/intern/bpy_rna_anim.cc), while an F-curve built through the data API on a missing
+// path is stored, because "there are some legit situations where some channels will not
+// exist" (blenkernel/intern/anim_sys.cc).
+
+/** A value of each kind, to ask a schema whether it keeps one written at a path. */
+const SAMPLE_OF_KIND: Readonly<Record<ChannelValueKind, unknown>> = {
+  number: 0,
+  vec2: [0, 0],
+  vec3: [0, 0, 0],
+  quat: [0, 0, 0, 1],
+  color: '#000000',
+};
+
+export interface MissingParamPath {
+  /** The node the path was looked for on, after following it to the node that owns it. */
+  readonly nodeId: string;
+  readonly paramPath: string;
+  /** Why it is missing, in words that do not repeat the path. */
+  readonly reason: string;
+  /** The paths on that node a `kind` overlay does animate, for a caller to offer instead. */
+  readonly animatable: readonly string[];
+}
+
+/**
+ * (`nodeId`, `paramPath`) when it certainly names no parameter, or null when it names one or
+ * the question cannot be answered (see above). Never null for "nothing moves": a parameter
+ * that exists and is not read is `isAnimatable`'s `still`.
+ */
+export function missingParamPath(
+  state: DagState,
+  nodeId: string,
+  paramPath: string,
+  kind: ChannelValueKind,
+  ask: AnimatableAsk = {},
+): MissingParamPath | null {
+  if (!state.nodes[nodeId]) return null;
+  // A data parameter named on an Object lives on its data node, under that node's spelling.
+  const owner = perState(state).ownerOf(nodeId, paramPath);
+  const at = owner ?? { nodeId, paramPath };
+  const node = state.nodes[at.nodeId];
+  if (!node) return null;
+  const context = animatableContextOf(state, at.nodeId);
+  if (!('subject' in context)) return null;
+  const rows = CENSUS.subjects[context.subject];
+  if (!rows) return null;
+  const pattern = animatablePathPattern(at.paramPath);
+  if (rows[pattern] || CENSUS.notMeasured.some((n) => new RegExp(n.pattern).test(pattern)))
+    return null;
+  let trial;
+  try {
+    trial = applyOp(state, {
+      type: 'setParam',
+      nodeId: at.nodeId,
+      paramPath: at.paramPath,
+      value: SAMPLE_OF_KIND[kind],
+    });
+  } catch {
+    // The schema refused the sample outright, which says nothing about the path.
+    return null;
+  }
+  if (trial.reportable?.badge !== 'stripped-write') return null;
+  return {
+    nodeId: at.nodeId,
+    paramPath: at.paramPath,
+    reason: trial.reportable.reason,
+    animatable: animatablePathsOf(state, at.nodeId, kind, ask) ?? [],
+  };
+}
+
+/** The kind an overlay node carries, or null for one this table cannot ask about. */
+function overlayKindOf(type: string): { kind: ChannelValueKind; ask: AnimatableAsk } | null {
+  switch (type) {
+    case 'KeyframeChannelNumber':
+      return { kind: 'number', ask: {} };
+    case 'KeyframeChannelVec2':
+      return { kind: 'vec2', ask: {} };
+    case 'KeyframeChannelVec3':
+      return { kind: 'vec3', ask: {} };
+    case 'KeyframeChannelQuat':
+      return { kind: 'quat', ask: {} };
+    case 'KeyframeChannelColor':
+      return { kind: 'color', ask: {} };
+    case 'ParamDriver':
+      return { kind: 'number', ask: { mechanism: 'driver' } };
+    default:
+      return null;
+  }
+}
+
+export interface BrokenReference {
+  /** The channel, driver or other node holding the reference. */
+  readonly node: string;
+  readonly type: string;
+  /** The node it names. */
+  readonly target: string;
+  readonly paramPath?: string;
+  readonly problem: string;
+}
+
+/**
+ * Every reference in the graph that is aimed at nothing (#1552): a node that is not there, or
+ * a parameter path that certainly names none. Derived when asked and stored nowhere, so a
+ * reference that starts resolving again (the node is restored, the path is fixed) simply
+ * leaves the list, as a Blender driver's `is_valid` recovers.
+ */
+export function brokenReferences(state: DagState): BrokenReference[] {
+  const out: BrokenReference[] = danglingIdRefs(state.nodes).map((d) => ({
+    node: d.node,
+    type: state.nodes[d.node].type,
+    target: d.missing,
+    problem: 'names a node that is not in the graph',
+  }));
+  for (const node of Object.values(state.nodes)) {
+    const overlay = overlayKindOf(node.type);
+    if (!overlay) continue;
+    const target = idRefsByRole(node).subject[0];
+    const paramPath = readBaseParam(node, 'paramPath');
+    if (!target || !state.nodes[target] || typeof paramPath !== 'string' || !paramPath) continue;
+    const missing = missingParamPath(state, target, paramPath, overlay.kind, {
+      ...overlay.ask,
+      asker: node.id,
+    });
+    if (missing) {
+      out.push({ node: node.id, type: node.type, target, paramPath, problem: missing.reason });
+    }
+  }
+  return out;
 }

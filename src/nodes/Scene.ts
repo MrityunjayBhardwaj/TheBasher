@@ -24,24 +24,29 @@ export const EnvSourceSchema = z.discriminatedUnion('kind', [
 // fields: an old project's Scene node (params `{}`) parses to `kind:'none'` —
 // the V10/H14 two-layer default (here in the zod `.default(...)` AND defensively
 // at the renderer consumer). Version stays 1 (additive defaults, no migration).
-export const SceneParams = z
-  .object({
-    envSource: EnvSourceSchema.default({ kind: 'none' }),
-    envIntensity: z.number().default(1),
-    envRotationY: z.number().default(0),
-    envBackground: z.boolean().default(false),
-    // #1287 — the scene's last frame at 60 fps: where playback loops and Render ▸ Animation
-    // stops (Blender's `scene.frame_end`). Defaulted to the 10 s every project played before it
-    // was stored, so an old project is unchanged. Read through `src/app/sceneRange.ts`.
-    frameEnd: z.number().int().min(1).default(600),
-    /**
-     * #1451 — the active collection: where an import links what it makes, as Blender links an
-     * import's objects into the view layer's active collection. A collection id; absent (the
-     * default) means the scene itself. Appended last, so the frozen param-home row is appended to.
-     */
-    activeCollection: z.string().min(1).optional(),
-  })
-  .passthrough();
+export const SceneParams = z.object({
+  envSource: EnvSourceSchema.default({ kind: 'none' }),
+  envIntensity: z.number().default(1),
+  envRotationY: z.number().default(0),
+  envBackground: z.boolean().default(false),
+  // #1287 — the scene's last frame at 60 fps: where playback loops and Render ▸ Animation
+  // stops (Blender's `scene.frame_end`). Defaulted to the 10 s every project played before it
+  // was stored, so an old project is unchanged. Read through `src/app/sceneRange.ts`.
+  frameEnd: z.number().int().min(1).default(600),
+  /**
+   * #1451 — the active collection: where an import links what it makes, as Blender links an
+   * import's objects into the view layer's active collection. A collection id; absent (the
+   * default) means the scene itself. Appended last, so the frozen param-home row is appended to.
+   */
+  activeCollection: z.string().min(1).optional(),
+  /**
+   * #1594 — how fast the scene runs against the playhead: 1 is real time, 0.05 near-frozen,
+   * 0 holds the moment (bullet time). Keyable; scene time is this speed added up over the
+   * playhead (`src/app/sceneClock.ts`). Every time-driven thing in the scene follows it; a
+   * camera's own animation does not. Defaulted to 1, so an old project plays unchanged.
+   */
+  timeSpeed: z.number().min(0).default(1),
+});
 export type SceneParams = z.infer<typeof SceneParams>;
 
 export const SceneNode: NodeDefinition<SceneParams, SceneValue> = {

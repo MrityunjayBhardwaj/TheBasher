@@ -257,6 +257,32 @@ export interface InputDescriptor {
    * but the owner's body sockets (`subnetworks.ts`).
    */
   body?: true;
+  /**
+   * #1560 — what happens to the node wired here when the node holding this socket goes, and
+   * what a duplicate does with it. The wire-side twin of an `idRefs` row's `owns`.
+   *
+   *  - `'always'`: this node owns its producer. Deleting this node takes the producer too when
+   *    nothing else reads it; a deep duplicate copies it. An Object's `data`, `pose` and
+   *    `children`; a driver's `in`.
+   *  - `'stack'`: the producer is the REST OF THE STACK this node sits on. Deleted on its own,
+   *    this node is spliced out and the producer is handed to whoever read this node. Reached
+   *    as owned (the Object at the top is going), it takes the producer with it. A pose layer's
+   *    `pose`. An operator's `chain.input` reads as `'stack'` without saying so here.
+   *  - absent: shared. The producer is left alone (a Material, a camera a pass renders).
+   *
+   * A `body` socket needs neither: its whole sub-network goes with the owner.
+   * Read through `wireOwnership` (src/core/dag/idRefSweep.ts), never off the descriptor.
+   */
+  owns?: 'always' | 'stack';
+  /**
+   * #1668 — a `list` socket whose node picks among its elements BY WHICH NODE EACH ONE IS, not by
+   * where it sits in the list. The evaluator then also hands `evaluate` the id of the node behind
+   * each element, in wire order, read with {@link inputSourceIds}. The camera switch needs it: a
+   * cut names its camera, and a value alone does not say which camera it came from. The cache key
+   * already carries each producer's id (its hash is of a key that starts with it), so this adds no
+   * input the key does not see.
+   */
+  sourceIds?: true;
 }
 
 /**
@@ -344,6 +370,22 @@ export interface EvalCtx {
 
 export interface ResolvedInputs {
   [socket: string]: unknown;
+}
+
+/** Where the evaluator puts a {@link InputDescriptor.sourceIds} socket's ids. `#` cannot start
+ *  or sit in a socket name, so this never collides with a socket. */
+export function sourceIdsKey(socket: string): string {
+  return `${socket}#sourceIds`;
+}
+
+/**
+ * #1668 — the id of the node behind each element of list socket `socket`, in wire order, when the
+ * socket declared {@link InputDescriptor.sourceIds}; otherwise (not declared, or `evaluate` called
+ * by hand without them) null, so a caller can tell "no ids" from "no elements".
+ */
+export function inputSourceIds(inputs: ResolvedInputs, socket: string): readonly string[] | null {
+  const ids = inputs[sourceIdsKey(socket)];
+  return Array.isArray(ids) ? (ids as string[]) : null;
 }
 
 /**
@@ -783,6 +825,10 @@ export const OpAddNodeSchema = z.object({
   nodeType: NodeTypeIdSchema,
   params: z.unknown(),
   inputs: z.record(SocketIdSchema, InputBindingSchema).optional(),
+  // #1672 — everything else a node holds, so `removeNode`'s inverse brings the node back whole.
+  // Without them, undoing a delete returned the node without its name or user parameters.
+  meta: NodeSchema.shape.meta,
+  spare: NodeSchema.shape.spare,
 });
 
 export const OpRemoveNodeSchema = z.object({
@@ -835,11 +881,15 @@ export const OpSetParamSchema = z.object({
 // #1122 — `nameFrom` links the name to another node's (see `NodeSchema.meta.nameFrom`). A
 // setMeta WITHOUT it clears the link, because a name written without one is a name someone
 // chose; the inverse carries the prior link back, so undoing a rename resumes following.
+// #1562 — `position` places the node in the node view. A setMeta carrying it writes the
+// position and nothing else (a name in the same op is refused), `null` clears it, and a setMeta
+// without it leaves the position where it was — so every rename keeps meaning what it meant.
 export const OpSetMetaSchema = z.object({
   type: z.literal('setMeta'),
   nodeId: NodeIdSchema,
   name: z.string().optional(),
   nameFrom: NodeIdSchema.optional(),
+  position: z.tuple([z.number(), z.number()]).nullable().optional(),
 });
 
 // #1503 — there is no visibility op. Visibility is two params (`viewport`, `render`,
@@ -865,6 +915,21 @@ export const OpRemoveSpareParamSchema = z.object({
   key: z.string().min(1),
 });
 
+// #1550 — which node the app draws (`scene`) and renders (`render`): Houdini's display and
+// render flags. `ref: null` unbinds, which only the inverse of binding a name that was unbound
+// needs. The socket must carry the type that output's readers take (`OUTPUT_SOCKET_TYPES`).
+export const OpSetOutputSchema = z.object({
+  type: z.literal('setOutput'),
+  name: z.string(),
+  ref: NodeRefSchema.nullable(),
+});
+
+/** #1550 — the named outputs a project has, and the socket type each one's readers take. */
+export const OUTPUT_SOCKET_TYPES: Readonly<Record<string, string>> = {
+  scene: 'Scene',
+  render: 'RenderOutput',
+};
+
 export const OpSchema = z.discriminatedUnion('type', [
   OpAddNodeSchema,
   OpRemoveNodeSchema,
@@ -874,6 +939,7 @@ export const OpSchema = z.discriminatedUnion('type', [
   OpSetMetaSchema,
   OpSetSpareParamSchema,
   OpRemoveSpareParamSchema,
+  OpSetOutputSchema,
 ]);
 export type Op = z.infer<typeof OpSchema>;
 

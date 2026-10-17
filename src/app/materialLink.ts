@@ -104,9 +104,9 @@ export interface MaterialCandidate {
  *
  * ⚠️ DECLARED LIMIT: an unnamed Material shows its ID, because `nodeDisplayName` reads
  * `meta.name` and nothing seeds one at creation. That is the repo's convention rather
- * than a gap here — `buildDuplicateNodeOps` states it explicitly, and Blender's `.001`
- * suffixing is a documented non-goal — so a material is named the way every other node
- * is named: by renaming it. The IR carries its own `material.name`, which glTF import
+ * than a gap here: a node has a name once someone gives it one, and only a copy of a NAMED
+ * node is named for it (`buildDuplicateNodesOps`, Blender's `.001`, #1561). So a material is
+ * named the way every other node is named: by renaming it. The IR carries its own `material.name`, which glTF import
  * populates; wiring that into the display name would be a SECOND naming authority, and
  * nothing mints a Material from glTF yet, so it is deliberately not done here.
  */

@@ -1076,8 +1076,9 @@ function CameraGizmo() {
   const camId = useSelectionStore((s) => s.primaryNodeId);
   const mode = useGizmoStore((s) => s.mode);
   const orientation = useGizmoStore((s) => s.orientation);
-  const seconds = useTimeStore((s) => s.seconds);
-  const frame = useTimeStore((s) => s.frame);
+  // #1594 — the camera is posed on the playhead (film time), as `resolveActiveCameraPoseAt` reads it.
+  const seconds = useTimeStore((s) => s.filmSeconds);
+  const frame = useTimeStore((s) => s.filmFrame);
   const normalized = useTimeStore((s) => s.normalized);
   const playing = useTimeStore((s) => s.playing);
 

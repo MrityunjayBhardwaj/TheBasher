@@ -282,14 +282,22 @@ describe('#814 the import cycles, enumerated and held', () => {
     // arrived with #814 as two rings, was one from #1041 until #1402, and is the trade this file documents. Anything else appearing here is a
     // cycle someone added without noticing, which is the state that produced the `undefined`.
     expect(cyclicComponents()).toEqual([
+      // #1552 — `animatableParams` and `dagInspect` joined this one knowingly. The agent's
+      // add-channel door and its node inspection now ask the measured list whether a path names
+      // a parameter, and that list follows a data parameter to its owner through `exposeParams`,
+      // which has always been here. All three new edges are call-time only: `addChannel` calls it
+      // inside `preconditions`, `dagInspect` inside its handler, and `animatableParams` calls
+      // `exposeParams` inside `perState`; nothing is read at module load.
       [
         'src/agent/mutators/builders/addChannel.ts',
         'src/agent/mutators/builders/randomize.ts',
         'src/agent/mutators/builders/setMaterialColor.ts',
         'src/agent/mutators/index.ts',
+        'src/agent/tools/dagInspect.ts',
         'src/agent/tools/index.ts',
         'src/agent/tools/libraryImport.ts',
         'src/agent/tools/modelGenerate.ts',
+        'src/app/animatableParams.ts',
         'src/app/animate/dispatchApplyTransform.ts',
         'src/app/asset/bakedTextureLoader.ts',
         'src/app/asset/gltfEntryChoice.ts',

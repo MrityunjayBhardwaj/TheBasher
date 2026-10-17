@@ -9,7 +9,8 @@
 
 import type { DagState } from '../../core/dag/state';
 import type { Op, InverseOp } from '../../core/dag/types';
-import { applyOp, validateOp, type Reportable } from '../../core/dag/ops';
+import { applyOps, GraphRefusal, type Reportable } from '../../core/dag/ops';
+import { templateEdits } from '../../core/dag/templates';
 import { resolveDataParamOwner } from '../../app/resolveDataParamOwner';
 
 export interface ForkResult {
@@ -27,8 +28,13 @@ export interface ForkResult {
 
 /**
  * Clone a DAG state (shallow copy — node records are immutable within the
- * DagState shape so a spread is sufficient) and apply `ops` sequentially.
+ * DagState shape so a spread is sufficient) and apply `ops` as one batch.
  * Returns the forked state and the inverse ops needed to undo the sequence.
+ *
+ * #1664 — one batch (`applyOps`), as the store applies the plan once it is
+ * accepted: the sub-network rules are asked of the graph the plan ends in
+ * (#1623), so a plan that passes through a node sitting in two places halfway
+ * through a rewire is accepted here exactly when the store would accept it.
  *
  * Throws on any op validation failure — Pre-condition is that ops were
  * already validated by the tool handler's zod schema, but applyOp re-
@@ -41,26 +47,23 @@ export function createFork(state: DagState, ops: Op[]): ForkResult {
     return { fork: { ...state, nodes: { ...state.nodes } }, inverseOps: [], reportable: [] };
   }
 
-  const inverseOps: InverseOp[] = [];
-  const reportable: (Reportable | null)[] = [];
-  let fork: DagState = { ...state, nodes: { ...state.nodes } };
-
-  for (let i = 0; i < ops.length; i++) {
-    const op = ops[i];
-    const validated = validateOp(op);
-    const result = applyOp(fork, validated);
-    reportable.push(withOwner(fork, result.reportable));
-    fork = result.next;
-    inverseOps.push({ forward: validated, inverse: result.inverse });
-  }
-
+  const { next: planned, applied } = applyOps(state, ops);
+  // #1557 D4 — what the plan does to a template's other instances, shown as the store will commit
+  // it (the store works it out again on accept, from the plan's own operations).
+  const edits = templateEdits(state, planned);
+  if ('refusal' in edits) throw new GraphRefusal(edits.refusal);
+  const next = edits.ops.length ? applyOps(planned, edits.ops).next : planned;
+  const fork: DagState = { ...next, nodes: { ...next.nodes } };
+  const inverseOps: InverseOp[] = applied.map((a) => ({ forward: a.forward, inverse: a.inverse }));
+  // The owner a stripped write names is read off the graph the plan ends in (`withOwner`).
+  const reportable = applied.map((a) => withOwner(fork, a.reportable));
   return { fork, inverseOps, reportable };
 }
 
 /**
  * #1189 — a write refused because it aimed at the wrong half of a split object names the
  * half that owns the param, so the model (and the director reading the DiffBar) can re-aim
- * in one step. Read against the state the op was applied TO. The reach stays the reader's:
+ * in one step. Read against the graph the plan ends in. The reach stays the reader's:
  * the op is still refused — an outer node reaches an inner value only explicitly (promote),
  * never by the op layer forwarding it.
  */

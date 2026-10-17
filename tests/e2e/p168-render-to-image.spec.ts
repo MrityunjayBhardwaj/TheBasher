@@ -479,6 +479,78 @@ test.describe('#168 render to image', () => {
     expect(after.saturated - before.saturated).toBe(0);
   });
 
+  test('a point, a spot and an area light add no helper to the image (#1631)', async ({ page }) => {
+    await waitReady(page);
+    const before = (await renderAndSample(page))!;
+
+    // The default scene's one light is DIRECTIONAL — the only kind whose helper declared
+    // itself chrome — so every case above passed while the other three kinds drew their
+    // wireframes into each exported frame (observed in an MP4: point-light range spheres
+    // across the whole shot). Each light is added dark, so the only thing it can change
+    // in the image is its helper.
+    const added = await page.evaluate(async () => {
+      const w = window as unknown as BasherWindow & {
+        __basher_addPrimitive: (
+          kind: string,
+          at: [number, number, number],
+        ) => { nodeId: string; dataNodeId: string | null } | null;
+        __basher_dag: {
+          getState: () => { dispatch: (op: unknown, actor: string, label: string) => unknown };
+        };
+      };
+      // A light is an Object (what the helper is keyed by) over a LightData (what holds
+      // `intensity` and `distance`) — measured, the two ids differ.
+      const objects: string[] = [];
+      const data: string[] = [];
+      for (const kind of ['PointLight', 'SpotLight', 'AreaLight']) {
+        const r = w.__basher_addPrimitive(kind, [0.4, 0.6, 0.4]);
+        if (!r?.dataNodeId) return null;
+        objects.push(r.nodeId);
+        data.push(r.dataNodeId);
+        w.__basher_dag
+          .getState()
+          .dispatch(
+            { type: 'setParam', nodeId: r.dataNodeId, paramPath: 'intensity', value: 0 },
+            'user',
+            'e2e',
+          );
+      }
+      // A range sphere the camera sits inside of — the shape that crossed the whole MP4.
+      w.__basher_dag
+        .getState()
+        .dispatch(
+          { type: 'setParam', nodeId: data[0], paramPath: 'distance', value: 3 },
+          'user',
+          'e2e',
+        );
+      w.__basher_selection!.getState().select(null);
+      const frame = () => new Promise((r) => requestAnimationFrame(() => r(null)));
+      for (let i = 0; i < 30; i++) await frame();
+      return objects;
+    });
+    expect(added, 'all three lights were added').not.toBeNull();
+
+    // The premise: each new light's helper is really mounted in the live scene when the
+    // render runs. Without it the absence below is unearned — a viewport in Rendered
+    // shading mounts no helpers at all, and the image would match for that reason alone.
+    const drawn = await page.evaluate(
+      (ids) =>
+        ids.filter((id) =>
+          Boolean(
+            (window as unknown as { __basher_lighthelper_value?: Record<string, unknown> })
+              .__basher_lighthelper_value?.[id],
+          ),
+        ),
+      added!,
+    );
+    expect(drawn, 'every added light mounted its helper').toEqual(added);
+
+    const after = (await renderAndSample(page))!;
+    // Drop the flag at the LightHelper dispatcher → the wireframes render in `after`
+    // only → this fails.
+    expect(after.saturated - before.saturated).toBe(0);
+  });
+
   test('File ▸ Render Image shows the result in the 2D view, then Save downloads the PNG', async ({
     page,
   }) => {

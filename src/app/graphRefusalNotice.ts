@@ -25,7 +25,7 @@ import { useNotificationStore } from './stores/notificationStore';
 
 /** The op name a refusal opens with: said by the graph for a log, noise to a person. */
 const OP_PREFIX =
-  /^(?:addNode|removeNode|connect|disconnect|setParam|setMeta|setSpareParam|removeSpareParam|dispatch): /;
+  /^(?:addNode|removeNode|connect|disconnect|setParam|setMeta|setSpareParam|removeSpareParam|setOutput|dispatch): /;
 const SCHEMA = /^params failed schema for ([^:]+): ([\s\S]+)$/;
 const LONGEST = 400;
 

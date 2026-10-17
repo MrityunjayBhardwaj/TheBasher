@@ -9,11 +9,25 @@ import { create } from 'zustand';
 
 export type AgentMode = 'read-only' | 'copilot' | 'sandbox';
 
+/**
+ * One tool call the agent made, as the chat keeps it (#1612): the tool and its raw answer, shown
+ * only when the steps are opened. `refused` marks an answer the op layer turned down.
+ */
+export interface ToolStep {
+  tool: string;
+  detail: string;
+  refused: boolean;
+}
+
 export interface Message {
   id: string;
   role: 'user' | 'assistant';
   content: string;
   toolCallIds?: string[];
+  /** #1612 — what the round changed, in plain words; shown with the message. */
+  summary?: string;
+  /** #1612 — the round's tool calls, raw; behind a disclosure. */
+  steps?: ToolStep[];
   timestamp: number;
 }
 
@@ -38,11 +52,17 @@ export interface AgentSessionStore {
   addMessage: (msg: Omit<Message, 'id' | 'timestamp'>) => void;
   updateLastAssistantMessage: (content: string) => void;
   appendToLastAssistant: (text: string) => void;
+  addStepToLastAssistant: (step: ToolStep) => void;
+  setLastAssistantSummary: (summary: string) => void;
+  markSummariesNotApplied: (fromIndex: number) => void;
   setStreaming: (v: boolean) => void;
   setError: (err: string | null) => void;
   addTokenUsage: (input: number, output: number) => void;
   reset: () => void;
 }
+
+/** #1612 — how a bubble's summary reads once its turn stopped before anything was proposed. */
+export const NOT_APPLIED = 'Not applied, the turn stopped first:';
 
 let msgCounter = 0;
 
@@ -103,6 +123,38 @@ export const useAgentSessionStore = create<AgentSessionStore>((set) => ({
       }
       return { session: { ...s.session, messages: msgs } };
     }),
+  addStepToLastAssistant: (step) =>
+    set((s) => {
+      const msgs = [...s.session.messages];
+      const last = msgs[msgs.length - 1];
+      if (last && last.role === 'assistant') {
+        msgs[msgs.length - 1] = { ...last, steps: [...(last.steps ?? []), step] };
+      }
+      return { session: { ...s.session, messages: msgs } };
+    }),
+  setLastAssistantSummary: (summary) =>
+    set((s) => {
+      const msgs = [...s.session.messages];
+      const last = msgs[msgs.length - 1];
+      if (last && last.role === 'assistant') {
+        msgs[msgs.length - 1] = { ...last, summary };
+      }
+      return { session: { ...s.session, messages: msgs } };
+    }),
+  markSummariesNotApplied: (fromIndex) =>
+    set((s) => ({
+      session: {
+        ...s.session,
+        messages: s.session.messages.map((m, i) =>
+          i < fromIndex || !m.summary || m.summary.startsWith(NOT_APPLIED)
+            ? m
+            : {
+                ...m,
+                summary: `${NOT_APPLIED} ${m.summary[0].toLowerCase()}${m.summary.slice(1)}`,
+              },
+        ),
+      },
+    })),
   reset: () => set({ session: { ...INITIAL_SESSION, id: `session_${Date.now().toString(36)}` } }),
 }));
 

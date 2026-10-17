@@ -65,6 +65,9 @@ export function SceneEnvironment({ value }: { value: EnvironmentValue | undefine
             preset={preset}
             background={env.background}
             environmentIntensity={env.intensity}
+            // #1639 — the sky the camera sees takes the same strength as the light it gives,
+            // as Blender's World strength does; left at 1, a night scene at 0.35 read as dusk.
+            backgroundIntensity={env.intensity}
             environmentRotation={rotation}
             backgroundRotation={rotation}
           />

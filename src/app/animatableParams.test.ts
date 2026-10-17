@@ -13,12 +13,15 @@ import { buildAddPrimitiveOps, type PrimitiveKind } from './addPrimitives';
 import { buildAddModifierOps } from './operatorStack';
 import { buildAddConstraintOps } from './constraintStack';
 import { buildBindDriverOps } from './driverBind';
+import { buildSpringOps } from './solverBind';
 import { buildNewMaterialOps } from './materialLink';
 import {
   animatablePathPattern,
   animatablePathsOf,
   animatableSubjectOf,
+  brokenReferences,
   isAnimatable,
+  missingParamPath,
 } from './animatableParams';
 
 beforeEach(() => {
@@ -339,5 +342,169 @@ describe('animatablePathsOf — a picker list', () => {
     let s = buildDefaultDagState();
     s = applyOp(s, { type: 'addNode', nodeId: 'shot', nodeType: 'Shot', params: {} }).next;
     expect(animatablePathsOf(s, 'shot', 'number')).toBeNull();
+  });
+});
+
+// ── #1552 — a path that names no parameter ───────────────────────────────────────────
+
+describe('missingParamPath — certain, or silent (#1552)', () => {
+  const base = () => buildDefaultDagState();
+
+  it('names a path neither the census nor the schema has, and offers what does animate', () => {
+    for (const path of ['positoin', 'nosuchleaf', 'no.such.path']) {
+      const missing = missingParamPath(base(), 'n_box', path, 'vec3');
+      expect(missing, path).not.toBeNull();
+      expect(missing!.nodeId, path).toBe('n_box');
+      expect(missing!.animatable, path).toEqual(['position', 'rotation', 'scale']);
+    }
+  });
+
+  it('CONTROL: a parameter the node has is never missing', () => {
+    expect(missingParamPath(base(), 'n_box', 'position', 'vec3')).toBeNull();
+    // Measured as not moving anything: that is `still`, a different answer from missing.
+    expect(isAnimatable(base(), 'n_box', 'quaternion', 'quat').answer).toBe('still');
+    expect(missingParamPath(base(), 'n_box', 'quaternion', 'quat')).toBeNull();
+  });
+
+  it('follows a data parameter named on the Object to the node that owns it', () => {
+    expect(missingParamPath(base(), 'n_box', 'material.base.color', 'color')).toBeNull();
+    const missing = missingParamPath(base(), 'n_box_data', 'material.base.colr', 'color');
+    expect(missing?.nodeId).toBe('n_box_data');
+    expect(missing?.animatable).toContain('material.base.color');
+  });
+
+  it('says nothing when the schema keeps the path, though the census has no row for it', () => {
+    // `parentBone` is a parameter of an Object that no placed cube holds, so the census never
+    // keyed it. It is not missing: the schema keeps a value written there.
+    expect(isAnimatable(base(), 'n_box', 'parentBone', 'color')).toMatchObject({
+      answer: 'unmeasured',
+      reason: expect.stringContaining('the census found no parentBone'),
+    });
+    expect(missingParamPath(base(), 'n_box', 'parentBone', 'color')).toBeNull();
+    // And a sample the schema refuses outright says nothing about the path either.
+    expect(missingParamPath(base(), 'n_box', 'position.0', 'vec3')).toBeNull();
+  });
+
+  it('says nothing about a node the census never placed, whatever its schema says', () => {
+    const s = applyOp(base(), {
+      type: 'addNode',
+      nodeId: 'wf',
+      nodeType: 'ComfyUIWorkflow',
+      params: {},
+    }).next;
+    expect(animatableSubjectOf(s, 'wf')).toBe('ComfyUIWorkflow');
+    // A ComfyUI input is in no schema, and animates.
+    expect(missingParamPath(s, 'wf', 'comfy:6.text', 'number')).toBeNull();
+    expect(missingParamPath(s, 'wf', 'controller:10', 'number')).toBeNull();
+  });
+
+  it('says nothing under an operator stack, which the census does not measure', () => {
+    let s = base();
+    // The control first: the same question on the bare mesh has an answer.
+    expect(missingParamPath(s, 'n_box_data', 'nosuchleaf', 'number')).not.toBeNull();
+    for (const op of buildAddModifierOps(s, 'n_box_data', 'UVProjectModifier')!.ops)
+      s = applyOp(s, op).next;
+    expect(missingParamPath(s, 'n_box_data', 'nosuchleaf', 'number')).toBeNull();
+  });
+
+  it('says nothing about a node that is not there', () => {
+    expect(missingParamPath(base(), 'ghost', 'position', 'vec3')).toBeNull();
+  });
+});
+
+describe('brokenReferences — a raw operation is stored, and reported (#1552)', () => {
+  const channel = (nodeId: string, target: string, paramPath: string) =>
+    ({
+      type: 'addNode',
+      nodeId,
+      nodeType: 'KeyframeChannelVec3',
+      params: { name: paramPath, target, paramPath, keyframes: [] },
+    }) as const;
+  const build = (...ops: Parameters<typeof applyOp>[1][]) =>
+    ops.reduce((state, op) => applyOp(state, op).next, buildDefaultDagState());
+
+  it('a channel on a missing path is accepted by the raw door and listed', () => {
+    const s = build(channel('ch_typo', 'n_box', 'positoin'));
+    expect(s.nodes.ch_typo).toBeDefined();
+    expect(brokenReferences(s)).toEqual([
+      {
+        node: 'ch_typo',
+        type: 'KeyframeChannelVec3',
+        target: 'n_box',
+        paramPath: 'positoin',
+        problem: 'Object has no such parameter',
+      },
+    ]);
+  });
+
+  it('a channel on a node that is not there is listed too', () => {
+    const s = build(channel('ch_ghost', 'ghost', 'position'));
+    expect(brokenReferences(s)).toEqual([
+      {
+        node: 'ch_ghost',
+        type: 'KeyframeChannelVec3',
+        target: 'ghost',
+        problem: 'names a node that is not in the graph',
+      },
+    ]);
+  });
+
+  it('a driver on a missing path is listed', () => {
+    const s = build({
+      type: 'addNode',
+      nodeId: 'drv',
+      nodeType: 'ParamDriver',
+      params: { target: 'n_light_data', paramPath: 'intensty' },
+    });
+    expect(brokenReferences(s).map((b) => [b.node, b.paramPath])).toEqual([['drv', 'intensty']]);
+  });
+
+  it('CONTROL: working channels and drivers are not listed', () => {
+    const s = build(channel('ch_ok', 'n_box', 'position'), {
+      type: 'addNode',
+      nodeId: 'drv_ok',
+      nodeType: 'ParamDriver',
+      params: { target: 'n_light_data', paramPath: 'intensity' },
+    });
+    expect(brokenReferences(s)).toEqual([]);
+    expect(brokenReferences(buildDefaultDagState())).toEqual([]);
+  });
+
+  it('a reference that resolves again leaves the list, with nothing stored to clear', () => {
+    const broken = build(channel('ch_typo', 'n_box', 'positoin'));
+    const fixed = applyOp(broken, {
+      type: 'setParam',
+      nodeId: 'ch_typo',
+      paramPath: 'paramPath',
+      value: 'position',
+    }).next;
+    expect(brokenReferences(broken)).toHaveLength(1);
+    expect(brokenReferences(fixed)).toEqual([]);
+  });
+});
+
+describe('the driver authoring doors refuse a path that names no parameter (#1552)', () => {
+  const null_ = (state: DagState) => place(state, 'Cube');
+  const source = (node: string) =>
+    ({ kind: 'transform', id: 's', label: 's', node, channel: 'tx' }) as const;
+
+  it('bind refuses a mistyped path, and takes the real one', () => {
+    const { s, obj } = null_(buildDefaultDagState());
+    const req = { targetId: 'n_light_data', source: source(obj), driverId: 'drv' };
+    expect(buildBindDriverOps(s, { ...req, paramPath: 'intensty' })).toEqual({
+      ok: false,
+      reason: "'intensty' is not a parameter: LightData has no such parameter",
+    });
+    expect(buildBindDriverOps(s, { ...req, paramPath: 'intensity' }).ok).toBe(true);
+  });
+
+  it('spring refuses a mistyped path, and takes the real one', () => {
+    const { s, obj } = null_(buildDefaultDagState());
+    const req = { targetId: 'n_box', controllerId: obj, idFor: (n: string) => `sp_${n}` };
+    expect(buildSpringOps(s, { ...req, paramPath: 'positoin' })).toEqual({
+      ok: false,
+      reason: "'positoin' is not a parameter: Object has no such parameter",
+    });
+    expect(buildSpringOps(s, { ...req, paramPath: 'position' }).ok).toBe(true);
   });
 });

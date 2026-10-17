@@ -250,7 +250,7 @@ export const ParamDriverNode: NodeDefinition<ParamDriverParams, KeyframeChannelV
   // along — `asVec3` was already the guard, and the socket merely agreed with it.
   // Accepting two types is NOT coercion: a Number arrives a Number.
   inputs: {
-    in: { type: ['Number', 'Vector3'], cardinality: 'single' },
+    in: { type: ['Number', 'Vector3'], cardinality: 'single', owns: 'always' },
   },
   // Introspection-only output (like Constraint/Strip/Track): the driver is enumerated
   // + overlay-resolved by the target's followers, never wired into the render graph.

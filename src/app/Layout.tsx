@@ -45,6 +45,7 @@ import { NPanel } from './NPanel';
 import { ProjectTabs } from './ProjectTabs';
 import { TimelineDrawer } from '../timeline/TimelineDrawer';
 import { TwoDView } from './TwoDView';
+import { GraphView } from './GraphView';
 import { VideoMode } from './video/VideoMode';
 import { Viewport } from '../viewport/Viewport';
 import { useIsNarrowLayout } from './hooks/useIsNarrowLayout';
@@ -175,6 +176,12 @@ export function Layout() {
     width: twoDViewWidth,
     zIndex: 15,
   };
+  // #1675 — the Graph space is the same bounded center surface as the 2D View, so the outliner
+  // and inspector stay beside it: a node clicked in the graph shows its params there.
+  const graphViewStyle: CSSProperties = {
+    ...twoDViewStyle,
+    display: space === 'graph' ? 'block' : 'none',
+  };
   return (
     <div
       data-testid="layout"
@@ -187,7 +194,10 @@ export function Layout() {
         // longer reserved columns; they float as absolute islands over the
         // viewport (mounted inside <main>), so the viewport reads full-width
         // behind them (Spline ③/④ sidebars float over the canvas).
-        gridTemplateColumns: '1fr',
+        // #1637 — `minmax(0, …)`: a bare `1fr` is `minmax(auto, 1fr)`, so the column
+        // grew to its widest row's content — 38 project tabs made the editor 4,334 px in
+        // a 1,512 px window and put the viewport's centre off-screen.
+        gridTemplateColumns: 'minmax(0, 1fr)',
         // v0.6 #4 W1 — the Chrome (save/breadcrumb) + TopToolbar bands were
         // consolidated (Chrome → ProjectTabs identity bar; TopToolbar → the
         // floating pill). Two top rows remain: R1 projectTabs + R2 menu.
@@ -268,6 +278,16 @@ export function Layout() {
           onContextMenu={(e) => e.stopPropagation()}
         >
           <TwoDView />
+        </div>
+        <div
+          style={graphViewStyle}
+          data-testid="graph-slot"
+          className="overflow-hidden rounded-2xl border border-border bg-bg-2/95 shadow-xl shadow-black/40 backdrop-blur-md"
+          onContextMenu={(e) => e.stopPropagation()}
+        >
+          {/* Mounted only while open: unlike the 3D Canvas there is no GPU state to keep, and a
+              hidden graph would otherwise rebuild itself on every scene change. */}
+          {space === 'graph' && <GraphView />}
         </div>
         {/* Video mode (the third editor space) — the AE-style compositor. Like
             the 2D View it swaps in via display:none (Canvas stays mounted, K1

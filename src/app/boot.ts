@@ -709,8 +709,8 @@ export function boot(): Promise<void> {
             buildAddConstraintOps: constraints.buildAddConstraintOps,
             buildNewMaterialOps: material.buildNewMaterialOps,
             buildBindDriverOps: driver.buildBindDriverOps,
-            // #1259 — whether `type`'s schema DECLARES `key`. A dispatch cannot say: a passthrough
-            // schema (Scene) accepts any param, so a write that sticks is not a declaration.
+            // #1259 — whether `type`'s schema DECLARES `key`, read off the schema itself and not
+            // inferred from a write that sticks.
             declaresParam: (type: string, key: string) => {
               const shape = (
                 getNodeType(type)?.paramSchema as { shape?: Record<string, unknown> } | undefined

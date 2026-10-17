@@ -10,6 +10,7 @@
 //
 // REF: THESIS.md §50, krama K2 + K10.
 
+import { syncTemplateTypes, templateEdits } from './templates';
 import { create } from 'zustand';
 import { applyOp, applyOps, GraphRefusal, validateOp } from './ops';
 import type { Reportable } from './ops';
@@ -136,6 +137,23 @@ function assertNoDanglingIdRef(ops: readonly Op[], prevState: DagState, nextStat
   }
 }
 
+// #1557 D4 — an edit inside a template instance, on every commit road (never undo, redo or a
+// load): refused inside a locked instance, and inside an unlocked one carried to the definition
+// and every other instance as further operations of the same commit. Throws before `set()`.
+function withTemplateEdits(
+  prev: DagState,
+  next: DagState,
+): { next: DagState; carried: InverseOp[] } {
+  const edits = templateEdits(prev, next);
+  if ('refusal' in edits) throw new GraphRefusal(`dispatch: ${edits.refusal}`);
+  if (edits.ops.length === 0) return { next, carried: [] };
+  const batch = applyOps(next, edits.ops);
+  const carried = batch.applied
+    .filter((a) => a.changed)
+    .map((a) => ({ forward: a.forward, inverse: a.inverse }));
+  return { next: batch.next, carried };
+}
+
 // Module-scoped open interaction (a drag transaction). Not in the zustand state
 // because per-move dispatches read/append it synchronously many times per second;
 // keeping it out of the reactive state avoids needless subscriber churn. Flushed by
@@ -152,9 +170,40 @@ export const useDagStore = create<DagStore>((set, get) => ({
   dispatch(op, source = 'user', description) {
     const validated = validateOp(op);
     const prev = get().state;
-    const { next, inverse, reportable } = applyOp(prev, validated);
-    assertNoDanglingIdRef([validated], prev, next); // #435
+    const { next: applied, inverse, reportable } = applyOp(prev, validated);
+    assertNoDanglingIdRef([validated], prev, applied); // #435
     const inv: InverseOp = { forward: validated, inverse };
+    // #1557 D4 — what the op does to a template's other instances lands in the same step.
+    const { next: following, carried } = withTemplateEdits(prev, applied);
+    if (carried.length > 0) {
+      const entries = [inv, ...carried];
+      const next = following;
+      const entry: ActivityEntry = {
+        id: ++activityCounter,
+        timestamp: timeNow(),
+        source,
+        op: validated,
+        description,
+      };
+      if (interaction) {
+        if (interaction.entries.length === 0) {
+          interaction.source = source;
+          interaction.description = description ?? '';
+        }
+        interaction.entries.push(...entries);
+        set({ state: next });
+        return inv;
+      }
+      const group: AtomicGroup = { __atomic: true, description: description ?? '', entries };
+      set((s) => ({
+        state: next,
+        undoStack: [...s.undoStack, group],
+        redoStack: [],
+        activity: [...s.activity, entry],
+      }));
+      return inv;
+    }
+    const next = applied;
     // #1189 — an op that changed nothing hands back the SAME state object (applyOp's
     // contract). It commits nothing: no state set (so the unsaved flag and autosave, which
     // key on the reference, stay put) and no undo step. The activity entry IS kept, so a
@@ -209,7 +258,9 @@ export const useDagStore = create<DagStore>((set, get) => ({
     const changed: InverseOp[] = [];
     // #1585 — the whole batch is applied on one copy of the graph (`applyOps`).
     const batch = applyOps(working, ops);
-    working = batch.next;
+    // #1557 D4 — the template edits the batch makes, carried in the same commit.
+    const { next: following, carried } = withTemplateEdits(working, batch.next);
+    working = following;
     for (const step of batch.applied) {
       const inv: InverseOp = { forward: step.forward, inverse: step.inverse };
       if (step.changed) changed.push(inv);
@@ -219,6 +270,16 @@ export const useDagStore = create<DagStore>((set, get) => ({
         timestamp: timeNow(),
         source,
         op: step.forward,
+        description,
+      });
+    }
+    for (const inv of carried) {
+      changed.push(inv);
+      newActivity.push({
+        id: ++activityCounter,
+        timestamp: timeNow(),
+        source,
+        op: inv.forward,
         description,
       });
     }
@@ -258,7 +319,9 @@ export const useDagStore = create<DagStore>((set, get) => ({
     const changed: InverseOp[] = [];
     // #1585 — the whole batch is applied on one copy of the graph (`applyOps`).
     const batch = applyOps(working, ops);
-    working = batch.next;
+    // #1557 D4 — the template edits the batch makes, carried in the same commit.
+    const { next: following, carried } = withTemplateEdits(working, batch.next);
+    working = following;
     for (const step of batch.applied) {
       const inv: InverseOp = { forward: step.forward, inverse: step.inverse };
       if (step.changed) changed.push(inv);
@@ -268,6 +331,16 @@ export const useDagStore = create<DagStore>((set, get) => ({
         timestamp: timeNow(),
         source,
         op: step.forward,
+        description,
+      });
+    }
+    for (const inv of carried) {
+      changed.push(inv);
+      newActivity.push({
+        id: ++activityCounter,
+        timestamp: timeNow(),
+        source,
+        op: inv.forward,
         description,
       });
     }
@@ -401,3 +474,10 @@ export const useDagStore = create<DagStore>((set, get) => ({
     });
   },
 }));
+
+// #1557 — the registered template types are exactly this graph's, after every change: a
+// dispatch, an undo or redo, a load. Subscribed here, when the store is made, so this runs before
+// any other listener reads the new graph.
+useDagStore.subscribe((now, before) => {
+  if (now.state.nodes !== before.state.nodes) syncTemplateTypes(now.state);
+});

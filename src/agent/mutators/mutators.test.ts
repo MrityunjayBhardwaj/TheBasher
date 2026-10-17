@@ -20,6 +20,8 @@ import { makeSplitCamera } from '../../test-utils/splitCamera';
 import { dataIdFor } from '../../test-utils/splitKinds';
 import { BIND, skinBindSceneOps } from '../../test-utils/skinBindScene';
 import { buildDefaultDagState } from '../../core/project/default';
+import { rawSpringOps } from '../../test-utils/rawSpring';
+import { expandClosure } from '../closure/expand';
 import {
   __resetMutatorRegistryForTests,
   getMutator,
@@ -162,7 +164,9 @@ describe('mutator catalog', () => {
     // 36 → 37 at #1510 — `rig.addIk`, Pose mode's Add › IK.
     // 37 → 38 at #1357 — `animate.wrapInRig`, the road in to the Rig node.
     // 38 → 39 at #1353 — `rig.bindSkin`, a mesh bound to an armature.
-    expect(mutators).toHaveLength(39);
+    // 39 → 41 at #1557 — `graph.collapseToTemplate` + `graph.addTemplateInstance`.
+    // 41 → 42 at #1550 — `setOutput`, the display and render flags.
+    expect(mutators).toHaveLength(42);
     const names = mutators.map((m) => m.name).sort();
     expect(names).toEqual([
       'mutator.animate.bakePose',
@@ -176,6 +180,8 @@ describe('mutator catalog', () => {
       'mutator.deleteNode',
       'mutator.duplicate',
       'mutator.geometry.addModifier',
+      'mutator.graph.addTemplateInstance',
+      'mutator.graph.collapseToTemplate',
       'mutator.nla.addStrip',
       'mutator.nla.createAction',
       'mutator.nla.setStripBlend',
@@ -194,6 +200,7 @@ describe('mutator catalog', () => {
       'mutator.setHidden',
       'mutator.setMaterialColor',
       'mutator.setObjectSlotMaterial',
+      'mutator.setOutput',
       'mutator.shot.create',
       'mutator.timeline.addChannel',
       'mutator.timeline.addChannelModifier',
@@ -1624,9 +1631,31 @@ describe('randomize mutator', () => {
   });
 });
 
+// A cube sprung to a Null: driver ← Solver ← a nine-node sub-network (#1560, #1561).
+const sprungScene = (): DagState => {
+  let s = buildDefaultDagState();
+  for (const op of [
+    { type: 'addNode', nodeId: 'ctl', nodeType: 'Null', params: {} },
+    {
+      type: 'connect',
+      from: { node: 'ctl', socket: 'out' },
+      to: { node: 'n_scene', socket: 'children' },
+    },
+  ] as Op[])
+    s = applyOp(s, op).next;
+  const built = {
+    ops: rawSpringOps(s, {
+      targetId: 'n_box',
+      controllerId: 'ctl',
+      idFor: (k) => `sp_${k}`,
+    }),
+  };
+  return built.ops.reduce((acc, op) => applyOp(acc, op).next, s);
+};
+
 describe('duplicate mutator', () => {
   it('emits addNode + connect chain into the same consumer', () => {
-    // #437 — the agent now delegates to the shared buildDuplicateNodeOps, so the
+    // #437 — the agent now delegates to the shared buildDuplicateNodesOps, so the
     // clone id follows the outliner's `_copy` scheme (not the old agent-only
     // `_copy1`) and the offset lands in a POST-HOC setParam rather than baked into
     // addNode.params (the shared builder copies params verbatim). box sits at
@@ -1664,16 +1693,16 @@ describe('duplicate mutator', () => {
   it('chained duplication: the clone of a clone is a wired sibling (unified _copy suffix)', () => {
     // #437 — after delegating to the shared builder, the agent inherits the
     // outliner's Blender Shift+D id scheme: box → box_copy → box_copy_copy.
-    // (The old agent-only stripping to box_copy1/box_copy2 is gone; Blender's
-    // `.001` renumbering is a documented non-goal in either path.)
+    // (The old agent-only stripping to box_copy1/box_copy2 is gone. This is the node ID;
+    // a NAMED node's copy is named with Blender's `.001` numbering since #1561.)
     //
     // The chained node MUST be wired into the scene first — an unparented node
-    // has no consumer, so buildDuplicateNodeOps returns null and there is nothing
+    // has no consumer, so buildDuplicateNodesOps returns null and there is nothing
     // to assert. The prior version of this test skipped its assertion silently
     // because it never wired box_copy1 (H180: a test that asserts nothing).
     let state = buildScene();
     // First duplication: box → box_copy, folded into state so the clone is real
-    // and wired (buildDuplicateNodeOps sibling-connects it under scene.children).
+    // and wired (buildDuplicateNodesOps sibling-connects it under scene.children).
     const first = validatePlan(
       duplicateMutator,
       { targetSelectors: ['box'], offset: [1, 0, 0] },
@@ -1877,7 +1906,7 @@ describe('duplicate mutator', () => {
   // duplicate authority: it declared `lossy: animation` and shared the source's
   // channels outright (the copy's keyframes moved the ORIGINAL), never recursed
   // into a Group's children, and ignored constraints / drivers / strips. Now it
-  // delegates to buildDuplicateNodeOps — the outliner's builder, taught by
+  // delegates to buildDuplicateNodesOps — the outliner's builder, taught by
   // #433/#434 to clone the whole id-reference universe. These tests pin the
   // reconciliations the delegation crosses at the AGENT boundary; the deep
   // per-family id-ref correctness is the shared builder's own tests
@@ -1993,6 +2022,91 @@ describe('duplicate mutator', () => {
       expect(duplicateMutator.contract.preserves).toContain('animation');
       expect(duplicateMutator.contract.lossy ?? []).toHaveLength(0);
     });
+  });
+
+  // #1561 — the agent's duplicate is the shared builder with every target in ONE call.
+  const twoCubes = (): DagState => {
+    let s = buildDefaultDagState();
+    for (const op of [
+      {
+        type: 'addNode',
+        nodeId: 'b_data',
+        nodeType: 'BoxData',
+        params: structuredClone(buildDefaultDagState().nodes.n_box_data.params),
+      },
+      { type: 'addNode', nodeId: 'B', nodeType: 'Object', params: { position: [3, 0, 0] } },
+      {
+        type: 'connect',
+        from: { node: 'b_data', socket: 'out' },
+        to: { node: 'B', socket: 'data' },
+      },
+      {
+        type: 'connect',
+        from: { node: 'B', socket: 'out' },
+        to: { node: 'n_scene', socket: 'children' },
+      },
+      {
+        type: 'addNode',
+        nodeId: 'aim',
+        nodeType: 'TrackTo',
+        params: { target: 'n_box', aimNode: 'B' },
+      },
+    ] as Op[])
+      s = applyOp(s, op).next;
+    return s;
+  };
+
+  it('#1561 two targets in one plan: a constraint between them points at the copies', () => {
+    const state = twoCubes();
+    const result = validatePlan(
+      duplicateMutator,
+      { targetSelectors: ['n_box', 'B'], offset: [0, 2, 0] },
+      state,
+      'dup pair',
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    let s = state;
+    for (const op of result.ops) s = applyOp(s, op).next;
+    expect(s.nodes.aim_copy.params).toMatchObject({ target: 'n_box_copy', aimNode: 'B_copy' });
+    expect(s.nodes.aim.params).toMatchObject({ target: 'n_box', aimNode: 'B' });
+    // Each copied root is offset from its own original.
+    expect((s.nodes.B_copy.params as { position: number[] }).position).toEqual([3, 2, 0]);
+  });
+
+  it('#1561 linked: the copy reads its original’s data; CONTROL: without it the data is copied', () => {
+    const state = buildDefaultDagState();
+    const run = (linked: boolean) => {
+      const result = validatePlan(
+        duplicateMutator,
+        { targetSelectors: ['n_box'], offset: [1, 0, 0], linked },
+        state,
+        'dup',
+      );
+      if (!result.ok) throw new Error(JSON.stringify(result));
+      return result.ops.reduce((acc, op) => applyOp(acc, op).next, state);
+    };
+    expect(run(true).nodes.n_box_copy.inputs.data).toEqual({ node: 'n_box_data', socket: 'out' });
+    expect(run(true).nodes.n_box_data_copy).toBeUndefined();
+    expect(run(false).nodes.n_box_copy.inputs.data).toEqual({
+      node: 'n_box_data_copy',
+      socket: 'out',
+    });
+  });
+
+  it('#1561 a sprung cube duplicates through the agent: the copied Solver is in scope', () => {
+    const state = sprungScene();
+    const result = validatePlan(
+      duplicateMutator,
+      { targetSelectors: ['n_box'], offset: [1, 0, 0] },
+      state,
+      'dup',
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const s = result.ops.reduce((acc, op) => applyOp(acc, op).next, state);
+    expect(s.nodes.sp_solver_copy).toBeDefined();
+    expect(s.nodes.sp_driver_copy.inputs.in).toEqual({ node: 'sp_solver_copy', socket: 'outVec' });
   });
 
   it('multi-target: duplicating the same node twice mints distinct ids (threaded id-space)', () => {
@@ -2122,6 +2236,35 @@ describe('deleteNode mutator', () => {
     // whether or not the splice happened, so that check passes with the splice deleted.
     // What actually has to be re-joined is the DATA lane. → [[H218]]
     expect(findConsumer(s, seeded.dataId)).toEqual({ node: 'box', socket: 'data' });
+  });
+
+  // #1560 — the shared delete now crosses from a reference to a wire to a sub-network in one
+  // go, and no single edge kind did: the driver is reached from the cube by id-ref, the Solver
+  // from the driver by a wire. Without the 'owned' kind gate 3 rejected the mutator's own ops.
+
+  it('#1560 a sprung cube deletes through the agent: its driver, Solver and sub-network are in scope', () => {
+    const state = sprungScene();
+    const result = validatePlan(deleteNodeMutator, { targetSelectors: ['n_box'] }, state, 'del');
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    let s = state;
+    for (const op of result.ops) s = applyOp(s, op).next;
+    const left = Object.keys(s.nodes).filter(
+      (id) => id.startsWith('sp_') || id.startsWith('n_box'),
+    );
+    expect(left).toEqual([]);
+    expect(s.nodes.ctl).toBeDefined();
+  });
+
+  it('#1560 CONTROL: the scope reaches what a delete can take and not an unrelated object', () => {
+    const closure = expandClosure(
+      deleteNodeMutator.buildClosureSpec({ targetSelectors: ['n_box'] }),
+      sprungScene(),
+    );
+    expect(closure.nodes.has('sp_solver')).toBe(true);
+    expect(closure.nodes.has('sp_e')).toBe(true);
+    expect(closure.nodes.has('n_light')).toBe(false);
+    expect(closure.nodes.has('n_light_data')).toBe(false);
   });
 });
 
@@ -2328,7 +2471,9 @@ describe('agent.listMutators tool', () => {
     // 36 → 37 at #1510 — `rig.addIk`.
     // 37 → 38 at #1357 — `animate.wrapInRig`.
     // 38 → 39 at #1353 — `rig.bindSkin`.
-    expect(parsed.mutators).toHaveLength(39);
+    // 39 → 41 at #1557 — `graph.collapseToTemplate` + `graph.addTemplateInstance`.
+    // 41 → 42 at #1550 — `setOutput`.
+    expect(parsed.mutators).toHaveLength(42);
   });
 });
 
@@ -2468,21 +2613,61 @@ describe('mutator.timeline.addChannel (free-floating, V57)', () => {
     if (op.type === 'addNode') expect(op.nodeId).toBe('box_material_base_color_channel');
   });
 
+  // Each on a parameter the box really has: a path that names none is refused (#1552).
   it.each([
-    ['number', 'KeyframeChannelNumber'],
-    ['vec3', 'KeyframeChannelVec3'],
-    ['quat', 'KeyframeChannelQuat'],
-    ['color', 'KeyframeChannelColor'],
-  ])('valueType=%s → nodeType=%s', (valueType, nodeType) => {
+    ['number', 'KeyframeChannelNumber', 'material.base.metalness'],
+    ['vec3', 'KeyframeChannelVec3', 'position'],
+    ['quat', 'KeyframeChannelQuat', 'quaternion'],
+    ['color', 'KeyframeChannelColor', 'material.base.color'],
+  ])('valueType=%s → nodeType=%s', (valueType, nodeType, paramPath) => {
     const state = buildSceneWithTime();
+    const r = validatePlan(addChannelMutator, { target: 'box', paramPath, valueType }, state, 't');
+    expect(r.ok).toBe(true);
+    if (r.ok && r.ops[0].type === 'addNode') expect(r.ops[0].nodeType).toBe(nodeType);
+  });
+
+  // #1552 — the authoring door refuses a path that certainly names no parameter, and only that.
+  it.each(['positoin', 'nosuchleaf', 'no.such.path'])(
+    'refuses "%s", a path the box does not have, and says what does animate',
+    (paramPath) => {
+      const r = validatePlan(
+        addChannelMutator,
+        { target: 'box', paramPath, valueType: 'vec3' },
+        buildSceneWithTime(),
+        't',
+      );
+      expect(r.ok).toBe(false);
+      if (!r.ok) {
+        expect(r.reason).toContain(`"${paramPath}" is not a parameter of "box"`);
+        expect(r.reason).toContain('can animate: position, rotation, scale');
+      }
+    },
+  );
+
+  it('CONTROL: still accepts a path it cannot judge (a ComfyUI input, in no schema)', () => {
+    const state = applyOp(buildSceneWithTime(), {
+      type: 'addNode',
+      nodeId: 'wf',
+      nodeType: 'ComfyUIWorkflow',
+      params: {},
+    }).next;
     const r = validatePlan(
       addChannelMutator,
-      { target: 'box', paramPath: 'p', valueType },
+      { target: 'wf', paramPath: 'comfy:6.text', valueType: 'number' },
       state,
       't',
     );
     expect(r.ok).toBe(true);
-    if (r.ok && r.ops[0].type === 'addNode') expect(r.ops[0].nodeType).toBe(nodeType);
+  });
+
+  it('CONTROL: the raw operation still stores a channel on a missing path', () => {
+    const next = applyOp(buildSceneWithTime(), {
+      type: 'addNode',
+      nodeId: 'raw',
+      nodeType: 'KeyframeChannelVec3',
+      params: { name: 'x', target: 'box', paramPath: 'positoin', keyframes: [] },
+    }).next;
+    expect(next.nodes.raw).toBeDefined();
   });
 
   it('rejects when target is not in the DAG (gate 4)', () => {
@@ -3953,6 +4138,7 @@ import {
   constrainMutator as _constrainM,
   unconstrainMutator as _unconstrainM,
   setHiddenMutator as _setHiddenM,
+  setOutputMutator as _setOutputM,
   poseBoneMutator as _poseBoneM,
   setPoseMemberModeMutator as _setPoseMemberModeM,
   renameBoneMutator as _renameBoneM,
@@ -3961,6 +4147,8 @@ import {
   bindSkinMutator as _bindSkinM,
   bakePoseMutator as _bakePoseM,
   wrapInRigMutator as _wrapInRigM,
+  collapseToTemplateMutator as _collapseM,
+  addTemplateInstanceMutator as _instanceM,
   retargetMutator as _retargetM,
   addPassMutator as _addPassM,
   addAIPassMutator as _addAIPassM,
@@ -3979,6 +4167,7 @@ import {
 } from './index';
 import type { MutatorDefinition, MutatorValidationResult } from './index';
 import type { Op } from '../../core/dag/types';
+import { applyOps } from '../../core/dag/ops';
 
 describe('V14 deeper non-redundancy — Op-shape probe (issue #22)', () => {
   // A channel scene: collinear KeyframeChannelNumber so simplifyChannel
@@ -4205,6 +4394,41 @@ describe('V14 deeper non-redundancy — Op-shape probe (issue #22)', () => {
     }).next;
   }
 
+  // #1557 — a Fit read by a Math read by a driver on the box: the Math collapses into a template.
+  function buildSceneForTemplate(): DagState {
+    const ops: Op[] = [
+      { type: 'addNode', nodeId: 'tk', nodeType: 'Fit', params: {} },
+      { type: 'addNode', nodeId: 'tm', nodeType: 'Math', params: {} },
+      { type: 'connect', from: { node: 'tk', socket: 'out' }, to: { node: 'tm', socket: 'a' } },
+      {
+        type: 'addNode',
+        nodeId: 'td',
+        nodeType: 'ParamDriver',
+        params: {
+          target: 'n_box',
+          paramPath: 'material.metalness',
+          blendMode: 'replace',
+          order: 0,
+        },
+      },
+      { type: 'connect', from: { node: 'tm', socket: 'out' }, to: { node: 'td', socket: 'in' } },
+    ];
+    return ops.reduce((s, op) => applyOp(s, op).next, buildDefaultDagState());
+  }
+  function buildSceneWithTemplate(): DagState {
+    const scene = buildSceneForTemplate();
+    const r = validatePlan(
+      _collapseM as MutatorDefinition<unknown>,
+      { nodes: ['tm'], name: 'Scale' },
+      scene,
+      'probe setup',
+    );
+    if (!r.ok) throw new Error(r.reason);
+    // One batch, as the store applies it: halfway through, the Math feeds the instance and the
+    // driver both, which only the graph the batch ends in is judged on (#1623).
+    return applyOps(scene, r.ops).next;
+  }
+
   interface ProbeEntry {
     mutator: MutatorDefinition<unknown>;
     build: () => DagState;
@@ -4329,6 +4553,19 @@ describe('V14 deeper non-redundancy — Op-shape probe (issue #22)', () => {
       build: buildDefaultDagState,
       spec: { targetSelectors: ['n_box'], hidden: true },
     },
+    'mutator.setOutput': {
+      mutator: _setOutputM as MutatorDefinition<unknown>,
+      // A second render output to bind: the default's one is already bound, an empty plan.
+      build: () =>
+        applyOp(buildDefaultDagState(), {
+          type: 'addNode',
+          nodeId: 'n_render_2',
+          nodeType: 'RenderOutput',
+          params: { postFx: { tonemap: 'ACES', smaa: true }, width: 640, height: 480 },
+          inputs: { scene: { node: 'n_scene', socket: 'out' } },
+        }).next,
+      spec: { output: 'render', targetSelectors: ['n_render_2'] },
+    },
     'mutator.animate.poseBone': {
       mutator: _poseBoneM as MutatorDefinition<unknown>,
       build: buildSceneForPoseBone,
@@ -4343,6 +4580,16 @@ describe('V14 deeper non-redundancy — Op-shape probe (issue #22)', () => {
       mutator: _bakePoseM as MutatorDefinition<unknown>,
       build: buildSceneForPoseBake,
       spec: { object: 'br_arm', at: 'br_layer', poses: { nth: 2 } },
+    },
+    'mutator.graph.collapseToTemplate': {
+      mutator: _collapseM as MutatorDefinition<unknown>,
+      build: buildSceneForTemplate,
+      spec: { nodes: ['tm'], name: 'Scale' },
+    },
+    'mutator.graph.addTemplateInstance': {
+      mutator: _instanceM as MutatorDefinition<unknown>,
+      build: buildSceneWithTemplate,
+      spec: { template: 'Scale', inputs: { tk: 'tk' } },
     },
     'mutator.animate.wrapInRig': {
       mutator: _wrapInRigM as MutatorDefinition<unknown>,
@@ -4534,6 +4781,13 @@ describe('V14 deeper non-redundancy — Op-shape probe (issue #22)', () => {
           fromSocket: op.from.socket,
           toSocket: op.to.socket,
         };
+      case 'setMeta':
+        return { type: 'setMeta', position: op.position !== undefined };
+      case 'setSpareParam':
+      case 'removeSpareParam':
+        return { type: op.type, key: op.key };
+      case 'setOutput':
+        return { type: 'setOutput', name: op.name };
       default: {
         // Exhaustiveness: a new Op variant must extend this reducer or
         // the probe silently goes blind to it (the H36 trap one level

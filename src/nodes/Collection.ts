@@ -20,7 +20,7 @@ import { visibilityParams } from './visibilityParams';
 
 // #1503 — a collection's own viewport and render flags; a member hides only when every
 // collection holding it is hidden (#1481). Not keyable, as Blender's collection toggles are not.
-export const CollectionParams = z.object({ ...visibilityParams }).passthrough();
+export const CollectionParams = z.object({ ...visibilityParams });
 export type CollectionParams = z.infer<typeof CollectionParams>;
 
 export const CollectionNode: NodeDefinition<CollectionParams, CollectionValue> = {

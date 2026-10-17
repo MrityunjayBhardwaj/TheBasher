@@ -239,10 +239,10 @@ const MATERIAL_ACCESSORS = ['get', 'retain', 'release'];
  * tolerated (#541). Keyed by file because the sweep below is per-file.
  *
  * This is the exception list to `getForRead`'s rule, and it is checked rather than
- * described: an undeclared fourth writer reds, and a declared one that goes away reds too,
+ * described: an undeclared extra writer reds, and a declared one that goes away reds too,
  * so the list cannot quietly become fiction in either direction.
  *
- * All three are benign for ONE reason, and it does not generalise: `boundingBox` is an
+ * All four are benign for ONE reason, and it does not generalise: `boundingBox` is an
  * idempotent derived cache of the geometry's own attribute data, so every writer computes
  * the same answer. That is a property of THAT FIELD, not of the seam. If anything ever
  * replaces attribute data on a shared instance in place, a stale `boundingBox` survives
@@ -255,6 +255,8 @@ const SHARED_GEOMETRY_WRITERS: Record<string, string> = {
   // importer census by construction — these two are why this case exists at all.
   'src/viewport/sceneBounds.ts': 'lazily fills boundingBox while walking the live scene',
   'src/render/renderToImage.ts': 'same shape as sceneBounds, on the offline render path',
+  // #1644 — the sun's shadow box is fitted to the content box inside every shadow pass.
+  'src/viewport/contentShadows.ts': 'same shape as sceneBounds, inside each shadow pass',
 };
 
 /**

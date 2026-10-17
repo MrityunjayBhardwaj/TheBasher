@@ -32,8 +32,10 @@ import {
 // removeNode stays: it is refused in the handler below, and that refusal carries the
 // redirect to mutator.deleteNode. Dropped from the union, a raw delete would fail
 // validation with a generic error instead.
+// #1672 — `addNode`'s `meta` and `spare` exist so an undone delete brings a node back whole;
+// they stay off the raw surface for the same reason setMeta and the spare-param ops do.
 const DagExecOpSchema = z.discriminatedUnion('type', [
-  OpAddNodeSchema,
+  OpAddNodeSchema.omit({ meta: true, spare: true }),
   OpRemoveNodeSchema,
   OpConnectSchema,
   OpDisconnectSchema,

@@ -23,7 +23,12 @@ const PACKED = 'packed numeric data';
 const STORAGE = 'a file or asset key in project storage';
 const PARAM_PATH = 'a parameter path on the target, not a node';
 const BODY_INPUT = 'the name of an input the owning node declares (`bodyInputs`)';
-const KEYED_VALUE = 'the keyed value itself: text, a colour or an image reference';
+// #1668 — on the channel cutting a camera switch, a text key holds the id of the camera the cut
+// picks. It is NOT declared on purpose: the resolver skips a key whose camera is gone, so a delete
+// leaves the cut in place and one undo brings it back. #1669 declares it once the walker can see
+// ids held in keys, and deletes the cut with its camera.
+const KEYED_VALUE =
+  "the keyed value itself: text, a colour or an image reference; on a camera switch's cut channel, a camera id resolved when sampled and skipped once that camera is gone (#1668, declared by #1669)";
 const SPARE_KEY = 'the name of a spare parameter on the source node';
 const BONE = 'a bone name inside a skeleton';
 const IMPORT_KEY = 'a key naming a child inside an imported asset, never a graph node';
@@ -33,8 +38,14 @@ const FOREIGN = "another system's own keys (a ComfyUI graph, an importer's lefto
 const TEXT = 'free text';
 const BY_NAME = "a choice among wired inputs, made by the input's display name";
 const RETIRED = 'retired: nothing reads or writes it since the clone rig went (#1053)';
-const OPEN =
-  'this schema keeps keys it does not declare, so what they hold cannot be listed (#1572)';
+// #1557 — a template's definition holds a copy of its body: nodes keyed by a name local to the
+// definition, so a node, input or socket name there names something of the template's own.
+const TEMPLATE_LOCAL = "a name inside the template's own body, not a node of the graph";
+const TEMPLATE_TYPE = "a node type name (the template's own, or a body node's)";
+// 🔴 NOT settled: a body node's params can name a graph node by id (a Solver's `sourceTransform`),
+// and nothing follows it yet. Listed so the gate is answered; the gap is #1661.
+const TEMPLATE_BODY_PARAMS =
+  "a body node's own params, copied into each instance; an id among them is followed by nothing yet (#1661)";
 
 /**
  * The strings inside one OpenPBR material value (`openpbrMaterialSchema`), relative to wherever
@@ -102,6 +113,28 @@ const mounted = Object.fromEntries(
 
 export const NOT_A_NODE_ID: Readonly<Record<string, string>> = {
   ...mounted,
+  'TemplateDefinition.definition.type': TEMPLATE_TYPE,
+  'TemplateDefinition.definition.label': LABEL,
+  'TemplateDefinition.definition.inputs{key}': TEMPLATE_LOCAL,
+  'TemplateDefinition.definition.inputs{}.type': 'a socket type name',
+  'TemplateDefinition.definition.output.type': 'a socket type name',
+  'TemplateDefinition.definition.body.nodes{key}': TEMPLATE_LOCAL,
+  'TemplateDefinition.definition.body.nodes{}.id': TEMPLATE_LOCAL,
+  'TemplateDefinition.definition.body.nodes{}.type': TEMPLATE_TYPE,
+  'TemplateDefinition.definition.body.nodes{}.params': TEMPLATE_BODY_PARAMS,
+  'TemplateDefinition.definition.body.nodes{}.spare{key}': SPARE_KEY,
+  'TemplateDefinition.definition.body.nodes{}.spare{}.value': TEMPLATE_BODY_PARAMS,
+  'TemplateDefinition.definition.body.nodes{}.spare{}.home.section': 'an inspector section name',
+  'TemplateDefinition.definition.body.nodes{}.spare{}.home.label': LABEL,
+  'TemplateDefinition.definition.body.nodes{}.inputs{key}': 'a socket name',
+  'TemplateDefinition.definition.body.nodes{}.inputs{}.node': TEMPLATE_LOCAL,
+  'TemplateDefinition.definition.body.nodes{}.inputs{}.socket': 'a socket name',
+  'TemplateDefinition.definition.body.nodes{}.inputs{}[].node': TEMPLATE_LOCAL,
+  'TemplateDefinition.definition.body.nodes{}.inputs{}[].socket': 'a socket name',
+  'TemplateDefinition.definition.body.nodes{}.meta.name': LABEL,
+  'TemplateDefinition.definition.body.nodes{}.meta.nameFrom': TEMPLATE_LOCAL,
+  'TemplateDefinition.definition.body.out.node': TEMPLATE_LOCAL,
+  'TemplateDefinition.definition.body.out.socket': 'a socket name',
   'Action.name': LABEL,
   'Action.channels[].name': LABEL,
   'Action.channels[].paramPath': PARAM_PATH,
@@ -146,7 +179,6 @@ export const NOT_A_NODE_ID: Readonly<Record<string, string>> = {
   'BoneNameMap.map{}': BONE,
   'Character.name': LABEL,
   'ClipSelect.selectedClipName': BY_NAME,
-  'Collection.*': OPEN,
   'ComfyUIWorkflow.graph.apiJson{key}': FOREIGN,
   'ComfyUIWorkflow.graph.apiJson{}': FOREIGN,
   'ComfyUIWorkflow.graph.meta.name': LABEL,
@@ -173,7 +205,6 @@ export const NOT_A_NODE_ID: Readonly<Record<string, string>> = {
   'GltfAsset.keyByGltfNodeIndex{}': IMPORT_KEY,
   'GltfData.assetRef': STORAGE,
   'GltfData.childName': IMPORT_KEY,
-  'Group.*': OPEN,
   'Group.parentBone': BONE,
   'KeyframeChannelColor.name': LABEL,
   'KeyframeChannelColor.paramPath': PARAM_PATH,
@@ -244,7 +275,6 @@ export const NOT_A_NODE_ID: Readonly<Record<string, string>> = {
   'RenderJob.jobId': TEXT,
   'RenderJob.outputPath': STORAGE,
   'RetargetClip.name': LABEL,
-  'Scene.*': OPEN,
   'Scene.envSource.name': LABEL,
   'Scene.envSource.assetRef': STORAGE,
   'SetMaterialOp.scope': GROUP,
@@ -258,3 +288,71 @@ export const NOT_A_NODE_ID: Readonly<Record<string, string>> = {
   'TransformClip.keyframes[].targetNodeId': IMPORT_KEY,
   'VideoStitch.outputPath': STORAGE,
 };
+
+/**
+ * #1560 — the input sockets that OWN NOTHING: what is wired here is left alone when the node
+ * holding the socket is deleted, and stays shared when it is duplicated. Everything else says
+ * what it owns on the socket (`InputDescriptor.owns`, `body`, or an operator's `chain.input`).
+ *
+ * A socket has to be in one place or the other (`idRefCensus.gate.test.ts`), so a new one is a
+ * choice someone made. The two that were never chosen, a pose layer's `pose` and a Solver's
+ * `body`, are how deleting a character left its whole pose stack in the file.
+ */
+export const SHARED_WIRES: readonly string[] = [
+  'AnimationClip.skeleton',
+  'AnimationClip.source',
+  'ArmatureModifier.armature',
+  'BeautyPass.camera',
+  'BeautyPass.scene',
+  'BeautyPass.time',
+  'BoxData.material',
+  'CameraSelect.cameras',
+  'CaptureModifier.armature',
+  'Character.locomotion',
+  'ClipSelect.clips',
+  'Collection.collections',
+  'Collection.members',
+  'ComfyUIWorkflow.pass-input',
+  'ComfyUIWorkflow.prompt',
+  'ComfyUIWorkflow.time',
+  'Composition.layers',
+  'Cut.from',
+  'Cut.to',
+  'DepthPass.camera',
+  'DepthPass.scene',
+  'DepthPass.time',
+  'GltfAsset.transformClip',
+  'GltfSkeleton.asset',
+  'IDPass.camera',
+  'IDPass.scene',
+  'IDPass.time',
+  'Layer.source',
+  'LightProfileSelect.rigs',
+  'LightRig.lights',
+  'LocomotionState.path',
+  'LocomotionState.pose',
+  'LocomotionState.time',
+  'MotionGenerate.path',
+  'NormalPass.camera',
+  'NormalPass.scene',
+  'NormalPass.time',
+  'PosedSkeleton.skeleton',
+  'RenderJob.pass-input',
+  'RenderJob.time',
+  'RenderOutput.scene',
+  'RetargetClip.skeleton',
+  'RetargetClip.source',
+  'Scatter.assets',
+  'Scene.camera',
+  'Scene.children',
+  'Scene.collections',
+  'Scene.lightRig',
+  'Scene.lights',
+  'SetMaterialOp.material',
+  'Shot.camera',
+  'Shot.scene',
+  'SphereData.material',
+  'VideoStitch.pass-input',
+  'VideoStitch.time',
+  'WalkPath.navmesh',
+];

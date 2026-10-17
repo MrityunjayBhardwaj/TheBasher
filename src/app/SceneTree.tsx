@@ -35,7 +35,7 @@ import {
   setShownOp,
 } from './collections';
 import { hideRefusal } from './sceneVisibility';
-import { buildDeleteNodesOps, buildDuplicateNodeOps } from './sceneNodeActions';
+import { buildDeleteNodesOps, buildDuplicateNodesOps } from './sceneNodeActions';
 import { selectActiveCameraNode } from './activeCamera';
 import { isCameraNode } from './cameraNode';
 import { buildSetActiveCameraOps } from './setActiveCamera';
@@ -470,12 +470,14 @@ export function SceneTree({ filter = '' }: SceneTreeProps) {
     setCtxMenu(null);
   }
 
-  // Duplicate the node's subtree as a sibling and select the copy (#227 Slice 3).
-  function ctxDuplicate(nodeId: NodeId) {
-    const res = buildDuplicateNodeOps(state, nodeId);
+  // Duplicate the targets' subtrees as siblings and select the copies (#227 Slice 3). The
+  // whole selection is copied in one step when the row is part of it. `linked` is Blender's
+  // Alt+D (#1561): the copies share their originals' data.
+  function ctxDuplicate(nodeId: NodeId, linked = false) {
+    const res = buildDuplicateNodesOps(state, ctxTargetIds(nodeId), { linked });
     if (res) {
-      dispatchAtomic(res.ops, 'user', 'duplicate node');
-      select(res.newRootId);
+      dispatchAtomic(res.ops, 'user', linked ? 'duplicate linked' : 'duplicate');
+      selectMany(res.newRootIds);
     }
     setCtxMenu(null);
   }
@@ -1023,6 +1025,12 @@ export function SceneTree({ filter = '' }: SceneTreeProps) {
                   onClick={() => ctxDuplicate(ctxMenu.nodeId)}
                 >
                   Duplicate
+                </CtxItem>
+                <CtxItem
+                  testId="outliner-ctx-duplicate-linked"
+                  onClick={() => ctxDuplicate(ctxMenu.nodeId, true)}
+                >
+                  Duplicate Linked
                 </CtxItem>
                 <CtxItem
                   testId="outliner-ctx-select-hierarchy"

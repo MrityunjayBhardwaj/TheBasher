@@ -15,6 +15,7 @@
 
 import { useMemo, useState } from 'react';
 import { useStoreWithEqualityFn } from 'zustand/traditional';
+import { instanceHolds } from '../core/dag/templates';
 import { useDagStore } from '../core/dag/store';
 import {
   driverSourceOptions,
@@ -32,6 +33,11 @@ interface LagSource {
   remap?: DriverRemap;
 }
 
+/** A Lag node, or a template instance holding the controller its Solver trails (#1559): both
+ *  keep it in `sourceTransform`, which the builders below write. */
+const trailsAController = (type: string) =>
+  type === 'Lag' || instanceHolds(type, 'sourceTransform');
+
 export function LagSourceControls({ nodeId }: { nodeId: string }) {
   const dispatchAtomic = useDagStore((s) => s.dispatchAtomic);
   // The Lag's current transform source (identity-stable ref → re-renders only when it
@@ -40,13 +46,13 @@ export function LagSourceControls({ nodeId }: { nodeId: string }) {
     useDagStore,
     (s) => {
       const node = s.state.nodes[nodeId];
-      if (!node || node.type !== 'Lag') return null;
+      if (!node || !trailsAController(node.type)) return null;
       const xf = (node.params as { sourceTransform?: LagSource }).sourceTransform;
       return xf?.node && xf.channel ? xf : null;
     },
     Object.is,
   );
-  const isLag = useDagStore((s) => s.state.nodes[nodeId]?.type === 'Lag');
+  const isLag = useDagStore((s) => trailsAController(s.state.nodes[nodeId]?.type ?? ''));
   const [picking, setPicking] = useState(false);
   const [rangeDraft, setRangeDraft] = useState<DriverRemap | null>(null);
 

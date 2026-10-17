@@ -120,6 +120,8 @@ export function EditableCurve({
   write,
   duration,
   seconds,
+  filmClock = false,
+  stepped = false,
 }: {
   /** The timeline row id (a channel node's id, or a `layer:` row) — the key-selection key. */
   channelId: string;
@@ -131,7 +133,13 @@ export function EditableCurve({
   /** The ops that land `fields` on the curve where it lives (the channel address resolver's write). */
   write: (fields: Record<string, unknown>) => readonly Op[];
   duration: number;
+  /** The playhead on this curve's clock (scene time, or film time when `filmClock`). */
   seconds: number;
+  /** #1594 — the curve's keys are on the playhead's clock (a camera, the Scene speed). */
+  filmClock?: boolean;
+  /** #1663 — the curve drives a choice (the active camera): every key is a step, however it is
+   *  stored, because that is how it plays. Drawn as a step; its interpolation is not offered. */
+  stepped?: boolean;
 }) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const [size, setSize] = useState({ w: 600, h: 200 });
@@ -232,7 +240,11 @@ export function EditableCurve({
   const isVec = isVec3Channel(channelType);
   const axes = useMemo(() => (isVec ? [0, 1, 2] : [0]), [isVec]);
   const colors = axisColors(channelType, paramPath);
-  const keys = draft ?? keyframes;
+  // #1663 — a choice plays as a step whatever its keys store (the reader holds them), so it is
+  // DRAWN as one: what the editor shows is what the cut does (H40).
+  const keys = stepped
+    ? (draft ?? keyframes).map((k) => ({ ...k, easing: 'constant' as Easing }))
+    : (draft ?? keyframes);
 
   const { w, h } = size;
   const plotX0 = LABEL_W;
@@ -440,14 +452,18 @@ export function EditableCurve({
     if (py <= plotY0 && px >= plotX0) {
       scrubbingRef.current = true;
       (e.currentTarget as Element).setPointerCapture?.(e.pointerId);
-      useTimeStore.getState().setTime(xToTime(px));
+      // #1594 — the curve's x is its keys' time; the playhead is film time.
+      const ts = useTimeStore.getState();
+      ts.setTime(filmClock ? xToTime(px) : ts.timeMap.filmAt(xToTime(px)));
     }
   }
 
   function onPointerMove(e: React.PointerEvent) {
     // Ruler scrub: drive time as the cursor moves (setTime clamps to duration).
     if (scrubbingRef.current) {
-      useTimeStore.getState().setTime(xToTime(localPoint(e).px));
+      const ts = useTimeStore.getState();
+      const x = xToTime(localPoint(e).px);
+      ts.setTime(filmClock ? x : ts.timeMap.filmAt(x));
       return;
     }
     const d = dragRef.current;
@@ -601,6 +617,8 @@ export function EditableCurve({
           <select
             value={keys[activeIndex].easing}
             data-testid="curve-interp-select"
+            disabled={stepped}
+            title={stepped ? 'A camera cut always lands on its key' : undefined}
             className="rounded border border-border bg-bg-2 px-0.5 py-px font-mono text-[10px] text-fg focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent"
             onChange={(e) => setActiveKeyInterp({ easing: e.target.value as Easing })}
           >

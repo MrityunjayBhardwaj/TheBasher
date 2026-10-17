@@ -21,7 +21,9 @@
 // REF: src/core/dag/types.ts (the `idRefs` declaration + role/owns semantics);
 //      src/app/sceneNodeActions.ts (the UI authority); issues #421, #424, #431.
 
-import { getNodeType } from './registry';
+import { getNodeType, registryEpoch } from './registry';
+import type { DagState } from './state';
+import { subnetworkOf, subnetworkOwnersOf } from './subnetworks';
 import type { NodeId, Op } from './types';
 
 /** Minimal node shape this walker reads (a DagState node subset). */
@@ -29,6 +31,17 @@ interface NodeLike {
   readonly id: string;
   readonly type: string;
   readonly params?: unknown;
+  readonly meta?: { readonly name?: string; readonly nameFrom?: string };
+}
+
+/**
+ * The node whose name `node` follows (`meta.nameFrom`, #1122), or undefined (#1553). It is an id
+ * held outside params, so no `idRefs` row can declare it; it is read here so the walker that
+ * answers "what points at this node" answers for it too.
+ */
+export function nameSourceOf(node: NodeLike): string | undefined {
+  const from = node.meta?.nameFrom;
+  return typeof from === 'string' && from ? from : undefined;
 }
 
 function atPath(params: unknown, path: string): unknown {
@@ -120,6 +133,12 @@ export function idRefSweep(
   const ops: Op[] = [];
   for (const node of Object.values(nodes)) {
     if (remove.has(node.id)) continue;
+    // #1553 — a node following a removed node's name keeps the name it has and stops
+    // following: a `setMeta` without `nameFrom` is exactly that.
+    const source = nameSourceOf(node);
+    if (source !== undefined && remove.has(source)) {
+      ops.push({ type: 'setMeta', nodeId: node.id, name: node.meta?.name });
+    }
     const refs = getNodeType(node.type)?.idRefs;
     if (!refs) continue;
     for (const ref of refs) {
@@ -247,6 +266,9 @@ export function danglingIdRefs(
     for (const target of idRefsOutOf(node)) {
       if (!nodes[target]) out.push({ node: node.id, missing: target });
     }
+    // #1553 — a followed name is an id too, and its source can be removed like any other.
+    const source = nameSourceOf(node);
+    if (source !== undefined && !nodes[source]) out.push({ node: node.id, missing: source });
   }
   return out;
 }
@@ -328,4 +350,325 @@ export function remapIdRefs(node: NodeLike, remap: (id: string) => string): unkn
     }
   }
   return params;
+}
+
+// ── #1560 — what a WIRE owns ───────────────────────────────────────────────────────────────
+//
+// A reference says what it owns in its `idRefs` row. A wire says it on the socket it enters
+// (`InputDescriptor.owns`, `body`), and delete and duplicate both ask here, so neither keeps a
+// list of socket names of its own. Two lists is how an Object's stack came to be copied whole by
+// one verb and half-deleted by the other (#1620).
+
+/** How the node holding `socket` relates to what is wired into it. See `InputDescriptor.owns`. */
+export type WireOwnership = 'always' | 'stack' | 'body';
+
+export function wireOwnership(nodeType: string, socket: string): WireOwnership | null {
+  const def = getNodeType(nodeType);
+  const decl = def?.inputs?.[socket];
+  if (!def || !decl) return null;
+  if (decl.body) return 'body';
+  if (decl.owns) return decl.owns;
+  // An operator's declared spine is the stack it sits on (13 types, all through `chain`).
+  return def.chain?.input === socket ? 'stack' : null;
+}
+
+/** The socket `nodeType` reads the rest of its stack on, or null when it sits on none. */
+export function stackSocketOf(nodeType: string): string | null {
+  const def = getNodeType(nodeType);
+  if (!def) return null;
+  for (const socket of Object.keys(def.inputs ?? {})) {
+    if (wireOwnership(nodeType, socket) === 'stack') return socket;
+  }
+  return null;
+}
+
+// ── #1553 — every relationship of a node, from one query ─────────────────────────────
+//
+// A node relates to others four ways: a wire (`inputs`), a declared reference in a param
+// (`idRefs`), a followed name (`meta.nameFrom`), and membership of a sub-network (the closure
+// behind an owner's body sockets, src/core/dag/subnetworks.ts). Each already had a reader; no
+// caller could ask for all four, and name followers had none outside the reducer. `relationsOf`
+// composes the readers that exist and adds nothing of its own to walk.
+//
+// Wires and references stay separate lists, as Houdini keeps `inputs()` / `outputs()` apart
+// from `references()` / `dependents()`: a wire carries a value, a reference names a node.
+
+/** A wire, seen from the node asked about. */
+export interface WireRelation {
+  /** The node at the other end. */
+  readonly node: NodeId;
+  /** The input socket the wire enters, on whichever node consumes it. */
+  readonly socket: string;
+}
+
+/** A declared reference, seen from the node asked about. */
+export interface RefRelation {
+  /** The node at the other end. */
+  readonly node: NodeId;
+  /** The param path on the REFERRER that holds the id. */
+  readonly path: string;
+  readonly role: 'subject' | 'argument';
+  readonly owns: boolean;
+}
+
+export interface NodeRelations {
+  /** What this node consumes by wire. */
+  readonly wiresIn: readonly WireRelation[];
+  /** What consumes this node by wire. */
+  readonly wiresOut: readonly WireRelation[];
+  /** The nodes this one names in a param. */
+  readonly refsOut: readonly RefRelation[];
+  /** The nodes that name this one in a param. */
+  readonly refsIn: readonly RefRelation[];
+  /** The node whose name this one follows, or null. */
+  readonly follows: NodeId | null;
+  /** The nodes following this one's name. */
+  readonly followers: readonly NodeId[];
+  /** The sub-network owners whose closure holds this node (outermost last when nested). */
+  readonly insideSubnetworkOf: readonly NodeId[];
+  /** The nodes in this node's own sub-network; empty unless it owns one. */
+  readonly subnetwork: readonly NodeId[];
+  /** Every reference cycle this node sits on, each as the ids in dependency order. */
+  readonly cycles: readonly (readonly NodeId[])[];
+}
+
+interface RelationIndex {
+  readonly epoch: number;
+  readonly wiresOut: ReadonlyMap<NodeId, WireRelation[]>;
+  readonly refsIn: ReadonlyMap<NodeId, RefRelation[]>;
+  readonly followers: ReadonlyMap<NodeId, NodeId[]>;
+  readonly memberOf: ReadonlyMap<NodeId, NodeId[]>;
+  readonly subnetworks: ReadonlyMap<NodeId, NodeId[]>;
+  cycles: readonly (readonly NodeId[])[] | null;
+}
+
+// Built once per graph and kept beside its `nodes` record, the way `subnetworkOwnersOf` keeps
+// the owners: every write makes a new record, so a held index can never describe another graph.
+const relationIndexByNodes = new WeakMap<DagState['nodes'], RelationIndex>();
+
+function pushTo<K, V>(map: Map<K, V[]>, key: K, value: V): void {
+  const list = map.get(key);
+  if (list) list.push(value);
+  else map.set(key, [value]);
+}
+
+function wiresInto(node: { readonly inputs: DagState['nodes'][string]['inputs'] }): WireRelation[] {
+  const out: WireRelation[] = [];
+  for (const [socket, binding] of Object.entries(node.inputs)) {
+    for (const ref of Array.isArray(binding) ? binding : [binding]) {
+      out.push({ node: ref.node, socket });
+    }
+  }
+  return out;
+}
+
+function refsOutOf(node: NodeLike): RefRelation[] {
+  const out: RefRelation[] = [];
+  for (const ref of getNodeType(node.type)?.idRefs ?? []) {
+    for (const target of refIdsAt(node.params, ref.path, ref.shape)) {
+      out.push({ node: target, path: ref.path, role: ref.role, owns: ref.owns === true });
+    }
+  }
+  return out;
+}
+
+function relationIndexOf(state: DagState): RelationIndex {
+  const known = relationIndexByNodes.get(state.nodes);
+  if (known && known.epoch === registryEpoch()) return known;
+  const wiresOut = new Map<NodeId, WireRelation[]>();
+  const refsIn = new Map<NodeId, RefRelation[]>();
+  const followers = new Map<NodeId, NodeId[]>();
+  for (const node of Object.values(state.nodes)) {
+    for (const wire of wiresInto(node)) pushTo(wiresOut, wire.node, { ...wire, node: node.id });
+    for (const ref of refsOutOf(node)) pushTo(refsIn, ref.node, { ...ref, node: node.id });
+    const source = nameSourceOf(node);
+    if (source !== undefined) pushTo(followers, source, node.id);
+  }
+  const memberOf = new Map<NodeId, NodeId[]>();
+  const subnetworks = new Map<NodeId, NodeId[]>();
+  for (const owner of subnetworkOwnersOf(state)) {
+    const closure = [...subnetworkOf(state, owner)];
+    subnetworks.set(owner, closure);
+    for (const id of closure) pushTo(memberOf, id, owner);
+  }
+  // A nested owner sits inside the outer one, so the smaller closure is the nearer owner.
+  for (const owners of memberOf.values()) {
+    owners.sort((a, b) => subnetworks.get(a)!.length - subnetworks.get(b)!.length);
+  }
+  const index: RelationIndex = {
+    epoch: registryEpoch(),
+    wiresOut,
+    refsIn,
+    followers,
+    memberOf,
+    subnetworks,
+    cycles: null,
+  };
+  relationIndexByNodes.set(state.nodes, index);
+  return index;
+}
+
+/**
+ * Every relationship `nodeId` has, in both directions (#1553). The one answer to "what is
+ * connected to this node" for delete, duplicate, the agent and the node view. A node that is
+ * not in the graph has none; what still names it is in `refsIn` and `followers`.
+ */
+export function relationsOf(state: DagState, nodeId: NodeId): NodeRelations {
+  const index = relationIndexOf(state);
+  const node = state.nodes[nodeId];
+  return {
+    wiresIn: node ? wiresInto(node) : [],
+    wiresOut: index.wiresOut.get(nodeId) ?? [],
+    refsOut: node ? refsOutOf(node) : [],
+    refsIn: index.refsIn.get(nodeId) ?? [],
+    follows: (node && nameSourceOf(node)) ?? null,
+    followers: index.followers.get(nodeId) ?? [],
+    insideSubnetworkOf: index.memberOf.get(nodeId) ?? [],
+    subnetwork: index.subnetworks.get(nodeId) ?? [],
+    cycles: referenceCycles(state).filter((cycle) => cycle.includes(nodeId)),
+  };
+}
+
+// ── What depends on what ──────────────────────────────────────────────────────────────
+//
+// A node is read two ways, and a cycle finder that merges them cries wolf. A WIRE hands over a
+// node's cooked value. An 'argument' reference reads the node's own resolved parameters (the
+// transform a Track-To aims at, the channel a Lag follows), not what it cooks from its inputs.
+// So a camera in a Group that aims at the Group is no cycle, though the Group is wired to the
+// camera: the aim reads the Group's transform, which does not need the camera. Blender draws
+// the same line between an object's transform and its geometry in its dependency graph.
+//
+// Each node is therefore three points, and an arrow reads "needs":
+//
+//   value(n)  -> value(p)   for every wire p -> n
+//   value(n)  -> params(n)
+//   params(n) -> value(s)   for every 'subject' sidecar s of n (a channel, driver, constraint)
+//   value(r)  -> params(t)  for every 'argument' reference r -> t
+//   name(f)   -> name(s)    for a followed name
+//
+// Not modelled: an 'argument' reference whose reader cooks the node it names. A cycle that
+// closes only through such a read is not reported.
+
+const PARAMS = '\u0000params';
+const NAME = '\u0000name';
+
+function dependencies(nodes: DagState['nodes']): Map<string, string[]> {
+  const needs = new Map<string, string[]>();
+  const add = (dependent: string, on: string) => {
+    const list = needs.get(dependent);
+    if (!list) needs.set(dependent, [on]);
+    else if (!list.includes(on)) list.push(on);
+  };
+  for (const node of Object.values(nodes)) {
+    add(node.id, node.id + PARAMS);
+    for (const wire of wiresInto(node)) if (nodes[wire.node]) add(node.id, wire.node);
+    for (const ref of refsOutOf(node)) {
+      if (!nodes[ref.node]) continue;
+      if (ref.role === 'subject') add(ref.node + PARAMS, node.id);
+      else add(node.id, ref.node + PARAMS);
+    }
+    const source = nameSourceOf(node);
+    if (source !== undefined && nodes[source]) add(node.id + NAME, source + NAME);
+  }
+  return needs;
+}
+
+/** The node ids along a path of points, each node once per visit. */
+function nodesAlong(path: readonly string[]): NodeId[] {
+  const out: NodeId[] = [];
+  for (const point of path) {
+    const cut = point.indexOf('\u0000');
+    const id = cut < 0 ? point : point.slice(0, cut);
+    if (out[out.length - 1] !== id) out.push(id);
+  }
+  if (out.length > 1 && out[0] === out[out.length - 1]) out.pop();
+  return out;
+}
+
+/**
+ * Every cycle that runs through at least one reference (#1553), each as the node ids in
+ * dependency order: each needs the next, and the last needs the first. A node that needs
+ * itself is a cycle of one. One cycle is reported per knot of mutually dependent nodes.
+ *
+ * Reported, not refused. Blender stores a constraint or driver cycle and names it when the
+ * scene evaluates (`Dependency cycle detected`, depsgraph/intern/builder/deg_builder_cycle.cc);
+ * Houdini's dependency view draws a circular reference in red. A cycle of WIRES alone is a
+ * different thing and stays refused at `connect`, so none can be stored to be found here.
+ */
+export function referenceCycles(state: DagState): readonly (readonly NodeId[])[] {
+  const index = relationIndexOf(state);
+  if (index.cycles) return index.cycles;
+  const needs = dependencies(state.nodes);
+  const cycles: NodeId[][] = [];
+  // Tarjan's strongly connected components, on its own stack so a long chain cannot overflow
+  // the call stack (as `wouldCreateCycle` does, #1581).
+  const order = new Map<string, number>();
+  const low = new Map<string, number>();
+  const onStack = new Set<string>();
+  const stack: string[] = [];
+  let next = 0;
+  for (const root of needs.keys()) {
+    if (order.has(root)) continue;
+    const work: { id: string; at: number }[] = [{ id: root, at: 0 }];
+    while (work.length) {
+      const frame = work[work.length - 1];
+      if (frame.at === 0) {
+        order.set(frame.id, next);
+        low.set(frame.id, next);
+        next += 1;
+        stack.push(frame.id);
+        onStack.add(frame.id);
+      }
+      const deps = needs.get(frame.id) ?? [];
+      if (frame.at < deps.length) {
+        const dep = deps[frame.at];
+        frame.at += 1;
+        if (!order.has(dep)) work.push({ id: dep, at: 0 });
+        else if (onStack.has(dep)) low.set(frame.id, Math.min(low.get(frame.id)!, order.get(dep)!));
+        continue;
+      }
+      work.pop();
+      const parent = work[work.length - 1];
+      if (parent) low.set(parent.id, Math.min(low.get(parent.id)!, low.get(frame.id)!));
+      if (low.get(frame.id) !== order.get(frame.id)) continue;
+      const knot: string[] = [];
+      for (;;) {
+        const id = stack.pop()!;
+        onStack.delete(id);
+        knot.push(id);
+        if (id === frame.id) break;
+      }
+      if (knot.length > 1 || deps.includes(frame.id)) {
+        cycles.push(nodesAlong(cycleThrough(needs, new Set(knot), frame.id)));
+      }
+    }
+  }
+  index.cycles = cycles;
+  return cycles;
+}
+
+/** One closed path inside `knot` that starts and ends at `start`, following `needs`. */
+function cycleThrough(
+  needs: ReadonlyMap<string, readonly string[]>,
+  knot: ReadonlySet<string>,
+  start: string,
+): string[] {
+  // Breadth-first from `start` to the nearest node that needs `start` back: the shortest
+  // cycle through it, which is the one worth reading.
+  const cameFrom = new Map<string, string | null>([[start, null]]);
+  const queue: string[] = [start];
+  while (queue.length) {
+    const id = queue.shift()!;
+    for (const dep of needs.get(id) ?? []) {
+      if (dep === start) {
+        const path: string[] = [];
+        for (let at: string | null = id; at !== null; at = cameFrom.get(at) ?? null) path.push(at);
+        return path.reverse();
+      }
+      if (!knot.has(dep) || cameFrom.has(dep)) continue;
+      cameFrom.set(dep, id);
+      queue.push(dep);
+    }
+  }
+  return [start];
 }

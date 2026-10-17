@@ -187,3 +187,151 @@ describe('applyOp — #1008 a stripped write is caught at every depth', () => {
     expect(result.reportable).toBeUndefined();
   });
 });
+
+describe('applyOp — #1572 Scene, Group and Collection report a mistyped key like every node', () => {
+  beforeEach(() => {
+    registerAllNodes();
+  });
+
+  // Each row: a key the type does not declare, and one it does (the control).
+  const rows = [
+    { nodeType: 'Scene', real: { path: 'envIntensity', value: 2 } },
+    { nodeType: 'Group', real: { path: 'position', value: [3, 4, 5] } },
+    { nodeType: 'Collection', real: { path: 'viewport', value: false } },
+  ] as const;
+
+  for (const row of rows) {
+    const added = () =>
+      applyOp(emptyDagState(), {
+        type: 'addNode',
+        nodeId: 'n_it',
+        nodeType: row.nodeType,
+        params: { notAParam: 'n_other' },
+      }).next;
+
+    it(`${row.nodeType}: a key the schema does not declare is not stored at creation`, () => {
+      expect(added().nodes.n_it.params).not.toHaveProperty('notAParam');
+    });
+
+    it(`${row.nodeType}: writing one is flagged and changes nothing`, () => {
+      const state = added();
+      const result = applyOp(state, {
+        type: 'setParam',
+        nodeId: 'n_it',
+        paramPath: 'positoin',
+        value: [1, 2, 3],
+      });
+      expect(result.reportable?.badge).toBe('stripped-write');
+      expect(result.next).toBe(state);
+    });
+
+    it(`CONTROL ${row.nodeType}: a declared key is written and not flagged`, () => {
+      const result = applyOp(added(), {
+        type: 'setParam',
+        nodeId: 'n_it',
+        paramPath: row.real.path,
+        value: row.real.value,
+      });
+      expect(result.reportable).toBeUndefined();
+      expect(result.next.nodes.n_it.params[row.real.path]).toEqual(row.real.value);
+    });
+  }
+});
+
+// #1636 — the path survives, a key inside the written value does not. A pose layer's
+// quaternion channel has no `modifiers` (a rotation loops by `extendAfter`), so a Cycles
+// modifier written on it inside a `channels` list was stripped by the parse while the list
+// itself survived — the path check saw `channels`, said nothing, and the write committed.
+describe('applyOp — #1636 a key lost INSIDE the written value', () => {
+  beforeEach(() => {
+    registerAllNodes();
+  });
+
+  const cycles = {
+    type: 'cycles',
+    beforeMode: 'repeat',
+    afterMode: 'repeat',
+    beforeCycles: 0,
+    afterCycles: 0,
+  };
+  const quatKeys = [
+    { time: 0, value: [0, 0, 0, 1], easing: 'linear' },
+    { time: 0.6, value: [0, 0.7071, 0, 0.7071], easing: 'linear' },
+  ];
+  const positionChannel = {
+    name: 'c',
+    bone: 'Hips',
+    component: 'position',
+    keyframes: [{ time: 0, value: [0, 0, 0], easing: 'linear' }],
+    modifiers: [cycles],
+  };
+  function layer() {
+    return applyOp(emptyDagState(), {
+      type: 'addNode',
+      nodeId: 'pl',
+      nodeType: 'PoseLayer',
+      params: {},
+    }).next;
+  }
+
+  it('refuses a Cycles modifier on a quaternion channel, naming where it was dropped', () => {
+    const state = layer();
+    const result = applyOp(state, {
+      type: 'setParam',
+      nodeId: 'pl',
+      paramPath: 'channels',
+      value: [
+        positionChannel,
+        {
+          name: 'c',
+          bone: 'Hips',
+          component: 'quaternion',
+          keyframes: quatKeys,
+          modifiers: [cycles],
+        },
+      ],
+    });
+    expect(result.reportable?.badge).toBe('stripped-write');
+    expect(result.reportable?.paramPath).toBe('channels');
+    expect(result.reportable?.reason).toBe('PoseLayer has no field at [1].modifiers');
+    // Nothing commits — not even the position channel that would have kept its modifier.
+    expect(result.next).toBe(state);
+  });
+
+  it('CONTROL: the same list with the rotation looping by extendAfter commits', () => {
+    const result = applyOp(layer(), {
+      type: 'setParam',
+      nodeId: 'pl',
+      paramPath: 'channels',
+      value: [
+        positionChannel,
+        {
+          name: 'c',
+          bone: 'Hips',
+          component: 'quaternion',
+          keyframes: quatKeys,
+          extendAfter: 'cycle',
+        },
+      ],
+    });
+    expect(result.reportable).toBeUndefined();
+    const channels = (result.next.nodes.pl.params as { channels: Array<Record<string, unknown>> })
+      .channels;
+    expect(channels[1].extendAfter).toBe('cycle');
+  });
+
+  it('CONTROL: keys the schema fills in by default, and an undefined written key, are not a loss', () => {
+    // The written channel omits mute/weight/blendMode/order (defaults land) and spells
+    // `extendAfter: undefined` — neither is a key that was written and then lost.
+    const result = applyOp(layer(), {
+      type: 'setParam',
+      nodeId: 'pl',
+      paramPath: 'channels',
+      value: [
+        { bone: 'Hips', component: 'quaternion', keyframes: quatKeys, extendAfter: undefined },
+      ],
+    });
+    expect(result.reportable).toBeUndefined();
+    expect((result.next.nodes.pl.params as { channels: unknown[] }).channels).toHaveLength(1);
+  });
+});

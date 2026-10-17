@@ -63,6 +63,8 @@ import { bakePoseMutator } from './builders/bakePose';
 import { wrapInRigMutator } from './builders/wrapInRig';
 import { constrainMutator, unconstrainMutator } from './builders/constrain';
 import { setHiddenMutator } from './builders/setHidden';
+import { setOutputMutator } from './builders/setOutput';
+import { addTemplateInstanceMutator, collapseToTemplateMutator } from './builders/templates';
 
 export {
   rotateMutator,
@@ -101,9 +103,12 @@ export {
   bindSkinMutator,
   bakePoseMutator,
   wrapInRigMutator,
+  collapseToTemplateMutator,
+  addTemplateInstanceMutator,
   constrainMutator,
   unconstrainMutator,
   setHiddenMutator,
+  setOutputMutator,
 };
 
 export function registerAllMutators(): void {
@@ -119,6 +124,8 @@ export function registerAllMutators(): void {
   registerMutator(deleteNodeMutator);
   // #1445 — the outliner eye's verb: #334 took setHidden off dag.exec, and this replaces it.
   registerMutator(setHiddenMutator);
+  // #1550 — the display and render flags: which node the app draws and renders.
+  registerMutator(setOutputMutator);
   // P3 Wave B — animation Mutators (THESIS §42, issue #34). v0.7 #199: the
   // AnimationLayer wrapper is retired (direct channels, V57). `addLayer` is gone;
   // `addChannel` now mints a FREE-FLOATING channel (no layer), then `keyframe`
@@ -203,4 +210,7 @@ export function registerAllMutators(): void {
   registerMutator(bakePoseMutator);
   // #1357 — the layers over a character's motion, moved inside one Rig node.
   registerMutator(wrapInRigMutator);
+  // #1557 — a project's templates: collapse nodes into one, and add more instances of it.
+  registerMutator(collapseToTemplateMutator);
+  registerMutator(addTemplateInstanceMutator);
 }

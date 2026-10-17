@@ -163,6 +163,8 @@ const ALL_TYPES = [
   'Solver',
   'SphereData',
   'Strip',
+  // #1557 — a template's definition, held in the graph.
+  'TemplateDefinition',
   'TimeSource',
   'Track',
   'TrackTo',

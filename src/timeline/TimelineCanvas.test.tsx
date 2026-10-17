@@ -109,6 +109,26 @@ describe('collectChannelRows', () => {
     expect(rows.map((r) => r.channelId)).toEqual(['ch1']);
   });
 
+  it("#1668 — a text channel is a row: the film's camera cuts are retimed on the dopesheet", () => {
+    const cuts = {
+      id: 'cuts',
+      type: 'KeyframeChannelText',
+      inputs: {},
+      params: {
+        name: 'active',
+        target: 'sel',
+        paramPath: 'active',
+        keyframes: [
+          { time: 2, value: 'cam3', easing: 'constant' },
+          { time: 0, value: 'n_camera', easing: 'constant' },
+        ],
+      },
+    } as unknown as Node;
+    const rows = collectChannelRows({ cuts });
+    expect(rows.map((r) => r.channelId)).toEqual(['cuts']);
+    expect(rows[0].keyframes.map((k) => k.time)).toEqual([0, 2]);
+  });
+
   it('ignores non-channel node types', () => {
     const mesh = { id: 'm', type: 'Object', inputs: {}, params: {} } as unknown as Node;
     expect(collectChannelRows({ m: mesh })).toEqual([]);

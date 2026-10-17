@@ -44,6 +44,7 @@ import type { IdentifyResult } from './identify/types';
 import { recordEvent } from './telemetry';
 import { useAgentSessionStore, summarizeDag, type AgentMode } from './session/store';
 import type { Op, NodeId } from '../core/dag/types';
+import { describeChange } from './describeChange';
 import type { ComfyUICapability } from '../core/comfy';
 import type { MotionGenerationCapability } from '../core/motiongen';
 import type { ModelGenerationCapability } from '../core/modelgen';
@@ -312,6 +313,8 @@ export async function runAgentTurn(config: LLMConfig, options: TurnOptions): Pro
 
   // Push the user message to session (UI history).
   sessionStore.addMessage({ role: 'user', content: message });
+  // #1612 — where this turn's bubbles start, so a turn that stops can take back what they said.
+  const turnStartsAt = useAgentSessionStore.getState().session.messages.length;
   sessionStore.setStreaming(true);
   sessionStore.setError(null);
 
@@ -557,6 +560,12 @@ export async function runAgentTurn(config: LLMConfig, options: TurnOptions): Pro
       // proposePlan targeting a sphere mesh.add just spawned). Evolves as
       // each tool within this round produces ops.
       let effectiveState = createFork(currentDagState, turnOps).fork;
+      // #1612 — what this round changed, said once in plain words on its chat bubble. Read
+      // against the state the round started from, so three cubes added by three calls read as
+      // "Added 3 cubes", not three lines.
+      const roundStart = effectiveState;
+      const roundOps: Op[] = [];
+      let roundRefused = 0;
       const ctx: ToolContext = {
         dagState: effectiveState,
         selectedNodeIds,
@@ -674,13 +683,21 @@ export async function runAgentTurn(config: LLMConfig, options: TurnOptions): Pro
           content: resultMessage,
         });
 
-        // Surface the result to the user in the chat too (debuggability).
-        sessionStore.appendToLastAssistant(`\n\n[${acc.name}] ${resultMessage}`);
+        // #1612 — the call and its raw answer stay reachable for anyone who wants them, but
+        // behind the bubble's "steps" disclosure, not in its text: a director reads the
+        // round's summary below, never a tool name, its JSON or a minted id.
+        sessionStore.addStepToLastAssistant({
+          tool: acc.name,
+          detail: resultMessage,
+          refused: resultMessage.startsWith('ERROR:'),
+        });
+        if (resultMessage.startsWith('ERROR:')) roundRefused++;
 
         if (result.ops.length > 0 && !forkRefusal) {
           for (const op of result.ops) {
             turnOps.push(op);
             turnOpSources.push(`agent:${acc.name}`);
+            roundOps.push(op);
           }
           turnMutationToolNames.push(acc.name);
 
@@ -754,6 +771,18 @@ export async function runAgentTurn(config: LLMConfig, options: TurnOptions): Pro
         }
       }
 
+      const roundSummary = [
+        describeChange(roundStart, roundOps),
+        roundRefused === 0
+          ? ''
+          : roundRefused === 1
+            ? 'One step was refused; the agent was told why.'
+            : `${roundRefused} steps were refused; the agent was told why.`,
+      ]
+        .filter(Boolean)
+        .join('. ');
+      if (roundSummary) sessionStore.setLastAssistantSummary(roundSummary);
+
       // F1: append the assistant turn (with tool_calls) and the tool
       // results to the conversation, in the exact order the spec requires.
       messages.push({
@@ -783,15 +812,17 @@ export async function runAgentTurn(config: LLMConfig, options: TurnOptions): Pro
     // other (the diff store is single-pending).
     if (turnOps.length > 0) {
       mutationToolCallCount += turnMutationToolNames.length;
-      const description = turnMutationToolNames.join(', ');
+      // F2: re-read at propose time — state may have changed since the
+      // last round's read.
+      const baseState = useDagStore.getState().state;
+      // #1612 — the review bar's title and the undo step's name: what the turn did, in the
+      // words the chat used, not the tool names that did it (`mesh.add, mesh.add, mesh.add`).
+      const description = describeChange(baseState, turnOps) || turnMutationToolNames.join(', ');
       // V13 closure-preservation. Precedence:
       //   1. Mutator-declared closure (Wave C) — exact, contract-driven.
       //   2. Selection / Identify-resolved roots (Wave A + B) — fallback.
       //   3. None → vacuous gate (additive prompts).
       const closureSpec = turnMutatorClosureSpec ?? inferClosureSpec(identifiedSelectors);
-      // F2: re-read at propose time — state may have changed since the
-      // last round's read.
-      const baseState = useDagStore.getState().state;
       try {
         useDiffStore
           .getState()
@@ -823,6 +854,9 @@ export async function runAgentTurn(config: LLMConfig, options: TurnOptions): Pro
       error = (err as Error).message ?? 'Unknown error';
     }
     sessionStore.setError(error);
+    // #1612 — a turn that stops here never proposes what its rounds did (the propose runs after
+    // the round loop), so a bubble's "Added 3 cubes" would describe work that never landed.
+    useAgentSessionStore.getState().markSummariesNotApplied(turnStartsAt);
   } finally {
     sessionStore.setStreaming(false);
   }
@@ -1177,6 +1211,11 @@ const KNOWN_EDGE_KINDS_LIST = [
   'rig',
   // #1477 — the scene's active collection, which every object a plan adds joins.
   'active-collection',
+  // #1560 — what the shared delete takes with a node: its sidecars, what it owns by reference
+  // or by wire, and the sub-network behind a body socket.
+  'owned',
+  // #1674 — the nodes bound as the app's named outputs, which a scene rebind rewires.
+  'outputs',
 ] as const satisfies readonly EdgeKind[];
 
 // Compile-time bidirectional exhaustiveness — fails tsc if EdgeKind

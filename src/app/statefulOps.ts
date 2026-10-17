@@ -35,9 +35,15 @@
 
 import { evaluate, setStatefulReplay, type EvaluatorCache } from '../core/dag/evaluator';
 import { arriving, producedTypeOf } from '../core/dag/socketConversion';
-import { getNodeType } from '../core/dag/registry';
+import { getNodeType, registryEpoch } from '../core/dag/registry';
 import type { DagState } from '../core/dag/state';
-import { bindBodyInputs, bodyInputLeavesOf, type BodyInputLeaf } from '../core/dag/subnetworks';
+import {
+  bindBodyInputs,
+  bodyInputLeavesOf,
+  holdersOf,
+  type BodyInputLeaf,
+} from '../core/dag/subnetworks';
+import { LIVE_INPUT, REPLAY_INPUTS, TEMPLATE_TYPE_PREFIX } from '../core/dag/templates';
 import type { EvalCtx, Node } from '../core/dag/types';
 import { FRAMES_PER_SECOND } from './stores/timeStore';
 import { lagStep } from '../nodes/valueMath';
@@ -121,6 +127,65 @@ function ctxAtFrame(frame: number): EvalCtx {
  *  animated Null). If the node carries no transform source, fall back to its wired
  *  `in` (its passthrough evaluate) — time-invariant unless fed a time source, so the
  *  lag simply converges to that constant. A bad evaluate reads 0. */
+// #1559 — what a stateful node inside a template reads from the instance holding it (Houdini: an
+// asset's promoted parameters, read by the node inside): the controller it trails when it names
+// none and has nothing wired, the instance's `in` when no controller is named at all (a Lag's own
+// order), and the frame its replay starts from. The nearest template instance whose sub-network
+// holds the node and that declares any of these. Only a template's: an outer Solver's own
+// controller is its own input, not a default for the nodes it holds. Worked out once per node
+// table and registry epoch (which nodes hold which depends on types, #1647).
+const enclosingInstances = new WeakMap<
+  object,
+  { readonly epoch: number; readonly byNode: Map<string, Node | null> }
+>();
+function holdsReplayInputs(node: Node): boolean {
+  if (!node.type.startsWith(TEMPLATE_TYPE_PREFIX)) return false;
+  const def = getNodeType(node.type);
+  const params = (def?.paramSchema as { shape?: Record<string, unknown> } | undefined)?.shape ?? {};
+  return (
+    Object.values(REPLAY_INPUTS).some((name) => name in params) || LIVE_INPUT in (def?.inputs ?? {})
+  );
+}
+function enclosingInstance(state: DagState, nodeId: string): Node | null {
+  const known = enclosingInstances.get(state.nodes);
+  let byNode = known && known.epoch === registryEpoch() ? known.byNode : undefined;
+  if (!byNode) {
+    byNode = new Map();
+    enclosingInstances.set(state.nodes, { epoch: registryEpoch(), byNode });
+  }
+  if (!byNode.has(nodeId)) {
+    const owner = holdersOf(state, nodeId)
+      .map((id) => state.nodes[id])
+      .find(holdsReplayInputs);
+    byNode.set(nodeId, owner ?? null);
+  }
+  return byNode.get(nodeId)!;
+}
+
+/** The frame a stateful node's replay starts from: the enclosing instance's when it holds one. */
+function seedFrameOf(state: DagState, node: Node): number {
+  const owner = enclosingInstance(state, node.id);
+  const held = (owner?.params as { seedFrame?: unknown } | undefined)?.seedFrame;
+  const own = (node.params as { seedFrame?: unknown } | undefined)?.seedFrame;
+  const v = typeof held === 'number' ? held : own;
+  return typeof v === 'number' ? Math.round(v) : 0;
+}
+
+/** An instance's `in` at `ctx`: what is wired into it, else its own value (#1557 D6). */
+function liveInputOf(state: DagState, owner: Node, ctx: EvalCtx, cache?: EvaluatorCache): number {
+  const ref = singleInputRef(owner, LIVE_INPUT);
+  if (!ref?.node) {
+    const v = (owner.params as Record<string, unknown> | undefined)?.[LIVE_INPUT];
+    return typeof v === 'number' && Number.isFinite(v) ? v : 0;
+  }
+  try {
+    const v = evaluate(state, ref.node, { cache, ctx, socket: ref.socket }).value;
+    return typeof v === 'number' && Number.isFinite(v) ? v : 0;
+  } catch {
+    return 0;
+  }
+}
+
 function statefulInputAt(
   state: DagState,
   node: Node,
@@ -132,7 +197,14 @@ function statefulInputAt(
   // The producer of `in`, never the node itself: the evaluator answers a stateful node with
   // this replay (#1558), so asking it for the node here would never return.
   const ref = singleInputRef(node, 'in');
-  if (!ref?.node) return 0;
+  if (!ref?.node) {
+    const owner = enclosingInstance(state, node.id);
+    if (!owner) return 0;
+    const held = transformSourceOf(owner);
+    return held
+      ? readTransformChannelAt(state, held, ctx, cache)
+      : liveInputOf(state, owner, ctx, cache);
+  }
   try {
     const v = evaluate(state, ref.node, { cache, ctx, socket: ref.socket }).value;
     return typeof v === 'number' && Number.isFinite(v) ? v : 0;
@@ -217,7 +289,12 @@ interface HistoryBlock<T> {
   readonly states: T[];
 }
 
-const historyCache = new WeakMap<DagState, Map<string, HistoryBlock<unknown>>>();
+// What a step computes depends on the types of the nodes it cooks, so the history is kept with
+// the registry's epoch and started again once a type is redefined (#1647).
+const historyCache = new WeakMap<
+  DagState,
+  { readonly epoch: number; readonly perNode: Map<string, HistoryBlock<unknown>> }
+>();
 
 /**
  * Cached {@link integrate}: same result, but the per-frame states are memoized per
@@ -238,10 +315,11 @@ export function cachedIntegrate<T>(
   if (targetFrame - seedFrame > MAX_REPLAY_FRAMES) {
     return integrate(seedFrame, targetFrame, seedAt, step); // clamp regime → uncached, bounded
   }
-  let perNode = historyCache.get(state);
+  const known = historyCache.get(state);
+  let perNode = known && known.epoch === registryEpoch() ? known.perNode : undefined;
   if (!perNode) {
     perNode = new Map();
-    historyCache.set(state, perNode);
+    historyCache.set(state, { epoch: registryEpoch(), perNode });
   }
   let block = perNode.get(nodeId) as HistoryBlock<T> | undefined;
   if (!block || block.seedFrame !== seedFrame) {
@@ -263,9 +341,9 @@ function replayLag(
   targetSeconds: number,
   cache?: EvaluatorCache,
 ): number {
-  const params = (node.params ?? {}) as { factor?: unknown; seedFrame?: unknown };
+  const params = (node.params ?? {}) as { factor?: unknown };
   const factor = typeof params.factor === 'number' ? params.factor : 0.2;
-  const seedFrame = typeof params.seedFrame === 'number' ? Math.round(params.seedFrame) : 0;
+  const seedFrame = seedFrameOf(state, node);
   const targetFrame = Math.round(targetSeconds * FRAMES_PER_SECOND);
   const inputAt = (frame: number) => statefulInputAt(state, node, ctxAtFrame(frame), cache);
   // The Lag preset of the cached integrator (its pure oracle is `integrateLag`).
@@ -323,8 +401,7 @@ function replaySolver(
   targetSeconds: number,
   cache?: EvaluatorCache,
 ): number {
-  const params = (node.params ?? {}) as { seedFrame?: unknown };
-  const seedFrame = typeof params.seedFrame === 'number' ? Math.round(params.seedFrame) : 0;
+  const seedFrame = seedFrameOf(state, node);
   const targetFrame = Math.round(targetSeconds * FRAMES_PER_SECOND);
   const inputAt = (frame: number) => statefulInputAt(state, node, ctxAtFrame(frame), cache);
 
@@ -364,7 +441,9 @@ function statefulInputVecAt(
   ctx: EvalCtx,
   cache?: EvaluatorCache,
 ): Vec3 {
-  const src = transformVecSourceOf(node);
+  const own = transformVecSourceOf(node);
+  const owner = own ? null : enclosingInstance(state, node.id);
+  const src = own ?? (owner && transformVecSourceOf(owner));
   return src ? readTransformPositionAt(state, src.node, ctx, cache) : ORIGIN;
 }
 
@@ -415,8 +494,7 @@ function replaySolverVec(
   targetSeconds: number,
   cache?: EvaluatorCache,
 ): Vec3 {
-  const params = (node.params ?? {}) as { seedFrame?: unknown };
-  const seedFrame = typeof params.seedFrame === 'number' ? Math.round(params.seedFrame) : 0;
+  const seedFrame = seedFrameOf(state, node);
   const targetFrame = Math.round(targetSeconds * FRAMES_PER_SECOND);
   const bodyRefs = multiInputRefs(node, 'bodies');
   const inputAt = (frame: number) => statefulInputVecAt(state, node, ctxAtFrame(frame), cache);

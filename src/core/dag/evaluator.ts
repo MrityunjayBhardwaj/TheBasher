@@ -21,11 +21,12 @@
 
 import { bypassSpineOf } from './chainBypass';
 import { hashString, hashValue, type ContentHash } from './hash';
-import { getNodeType, requireNodeType } from './registry';
+import { getNodeType, registryEpoch, requireNodeType } from './registry';
 import type { DagState, EvaluableState } from './state';
 import { arriving, conversionsInto, producedTypeOf } from './socketConversion';
 import { bodyInputLeavesOf } from './subnetworks';
 import type { EvalCtx, InputDescriptor, NodeDefinition, NodeId, ResolvedInputs } from './types';
+import { sourceIdsKey } from './types';
 // ns-2 step 9b — the FIRST value import from `src/nodes/**` into `src/core/dag/**`, and the
 // reason `modifierDataSource` was extracted to a leaf one commit earlier: the resolver's own
 // former home imports THIS module, so without that move the edge would have closed the cycle
@@ -306,15 +307,29 @@ function scopeFor(
 // `evaluate` of the Rig, 300 calls): 0.063 ms a call on one table against 0.047 ms for the same
 // layers wired straight; with a new node table on every call (a fold while an overlay plays
 // builds one a frame) 0.96 ms against 0.57 ms, so about 0.4 ms per new table at that size.
-interface LeafFeed {
-  readonly node: NodeId;
-  readonly socket: string;
-  /** The owner's socket the producer is wired into: what the value arrives as (#1549). */
-  readonly into: InputDescriptor | undefined;
-}
-const statelessLeafFeeds = new WeakMap<object, Map<NodeId, LeafFeed>>();
+//
+// #1557 D6 — an input whose socket is unwired reads the owner's param of the same name, when the
+// owner holds one (a template instance's per-instance value, Houdini's promoted parameter: a wire
+// overrides it). The param is read off the node table the leaf is evaluated against, like every
+// other param: a keyframed value reaches it only where that table was folded at t first, which
+// the driver road does not do today for any compute node's params (#575).
+type LeafFeed =
+  | {
+      readonly node: NodeId;
+      readonly socket: string;
+      /** The owner's socket the producer is wired into: what the value arrives as (#1549). */
+      readonly into: InputDescriptor | undefined;
+    }
+  | { readonly owner: NodeId; readonly param: string };
+// It is worked out from the owners' types too, so it is kept with the registry's epoch and
+// worked out again once a type is redefined (#1647).
+const statelessLeafFeeds = new WeakMap<
+  object,
+  { readonly epoch: number; readonly feeds: Map<NodeId, LeafFeed> }
+>();
 function statelessLeafFeedOf(state: EvaluableState, leaf: NodeId): LeafFeed | undefined {
-  let feeds = statelessLeafFeeds.get(state.nodes);
+  const known = statelessLeafFeeds.get(state.nodes);
+  let feeds = known && known.epoch === registryEpoch() ? known.feeds : undefined;
   if (!feeds) {
     feeds = new Map();
     for (const owner of Object.values(state.nodes)) {
@@ -326,10 +341,12 @@ function statelessLeafFeedOf(state: EvaluableState, leaf: NodeId): LeafFeed | un
         const ref = owner.inputs[found.input];
         if (ref && !Array.isArray(ref)) {
           feeds.set(found.id, { ...ref, into: def.inputs[found.input] });
+        } else if (!ref && Object.prototype.hasOwnProperty.call(owner.params ?? {}, found.input)) {
+          feeds.set(found.id, { owner: owner.id, param: found.input });
         }
       }
     }
-    statelessLeafFeeds.set(state.nodes, feeds);
+    statelessLeafFeeds.set(state.nodes, { epoch: registryEpoch(), feeds });
   }
   return feeds.get(leaf);
 }
@@ -441,6 +458,16 @@ export function evaluate(
     // #1357 — a leaf inside a stateless owner's sub-network IS the producer its owner reads.
     if (def.bodyInputLeaf === true) {
       const feed = statelessLeafFeedOf(state, id);
+      if (feed && 'param' in feed) {
+        const value = (state.nodes[feed.owner].params as Record<string, unknown>)[feed.param];
+        onStack.delete(id);
+        const held: EvalResult = {
+          value,
+          hash: hashString(`param:${feed.owner}:${feed.param}:${hashValue(value)}`),
+        };
+        memo.set(id, held);
+        return held;
+      }
       if (feed) {
         const sub = evalNode(feed.node, depth + 1);
         onStack.delete(id);
@@ -481,6 +508,8 @@ export function evaluate(
         }
         resolved[socket] = values;
         inputHashes[socket] = hashes;
+        // #1668 — a socket that picks by identity also gets who each element is.
+        if (into?.sourceIds === true) resolved[sourceIdsKey(socket)] = binding.map((r) => r.node);
       } else {
         const sub = evalNode(binding.node, depth + 1);
         resolved[socket] = arrive(into, binding, extractSocket(sub.value, binding.socket));

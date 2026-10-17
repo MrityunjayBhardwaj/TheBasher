@@ -2,13 +2,14 @@
 // anything outside it except that Solver's body sockets.
 import { beforeEach, describe, expect, it } from 'vitest';
 import { registerAllNodes } from '../../nodes/registerAll';
-import { __resetRegistryForTests, applyOp } from './index';
+import { __resetRegistryForTests, applyOp, applyOps } from './index';
 import type { DagState } from './state';
 import { emptyDagState } from './state';
 import {
   bindBodyInputs,
   bodyInputChoicesOf,
   bodyInputLeavesOf,
+  bodyInputOwnerOf,
   subnetworkOf,
   subnetworkViolations,
 } from './subnetworks';
@@ -148,6 +149,91 @@ describe('#1547 — a sub-network has one owner', () => {
   });
 });
 
+describe('#1623 — a batch is judged on the graph it ends in', () => {
+  // The undo of deleting m1: m1 comes back reading p1 and i1 before the wire into s1's body
+  // that puts it back inside. For that one operation p1 and i1 feed a node outside.
+  const deleted = () => {
+    const s = oneSolver();
+    return apply(s, [
+      {
+        type: 'disconnect',
+        from: { node: 'm1', socket: 'out' },
+        to: { node: 's1', socket: 'body' },
+      } as Op,
+      { type: 'removeNode', nodeId: 'm1' },
+    ]);
+  };
+  const restore: Op[] = [
+    {
+      type: 'addNode',
+      nodeId: 'm1',
+      nodeType: 'Math',
+      params: { op: 'add' },
+      inputs: { a: { node: 'p1', socket: 'out' }, b: { node: 'i1', socket: 'out' } },
+    } as Op,
+    wire('m1', 's1', 'body'),
+  ];
+
+  it('CONTROL: the first operation alone is refused, as before', () => {
+    // After the delete p1 and i1 are in no sub-network; put one back inside first.
+    const s = apply(deleted(), [
+      node('m0', 'Math'),
+      wire('p1', 'm0', 'a'),
+      wire('m0', 's1', 'body'),
+    ]);
+    expect(() => applyOp(s, restore[0])).toThrow(/addNode: "p1" is inside the sub-network/);
+  });
+
+  it('a batch that passes through a broken graph and ends whole is accepted', () => {
+    const s = apply(deleted(), [
+      node('m0', 'Math'),
+      wire('p1', 'm0', 'a'),
+      wire('m0', 's1', 'body'),
+    ]);
+    const { next } = applyOps(s, [
+      restore[0], // p1 is inside s1 through m0, and now also feeds m1, outside: broken
+      {
+        type: 'disconnect',
+        from: { node: 'm0', socket: 'out' },
+        to: { node: 's1', socket: 'body' },
+      } as Op,
+      restore[1], // m1 inside, but m0 is now outside and still reads p1: still broken
+      { type: 'removeNode', nodeId: 'm0' }, // whole again
+    ]);
+    expect(subnetworkViolations(next)).toEqual([]);
+    expect([...subnetworkOf(next, 's1')].sort()).toEqual(['i1', 'm1', 'p1']);
+  });
+
+  it('a batch that ends with a node in two sub-networks is still refused', () => {
+    const s = apply(oneSolver(), [node('s2', 'Solver')]);
+    expect(() =>
+      applyOps(s, [node('x', 'Clamp'), wire('m1', 's2', 'body'), wire('m1', 'x', 'in')]),
+    ).toThrow(
+      /^connect: "m1" is inside the sub-network of Solver "s1", so it can't also feed "s2"/,
+    );
+  });
+
+  it('a refused batch leaves the graph it was given untouched', () => {
+    const s = apply(oneSolver(), [node('s2', 'Solver')]);
+    const before = structuredClone(s.nodes);
+    expect(() => applyOps(s, [wire('m1', 's2', 'body')])).toThrow(/inside the sub-network/);
+    expect(s.nodes).toEqual(before);
+  });
+
+  it('only what the batch introduced is refused: a project that already broke the rule still edits', () => {
+    const broken = apply(oneSolver(), [node('s2', 'Solver')]);
+    const s = {
+      ...broken,
+      nodes: {
+        ...broken.nodes,
+        s2: { ...broken.nodes.s2, inputs: { body: { node: 'm1', socket: 'out' } } },
+      },
+    };
+    expect(subnetworkViolations(s).length).toBeGreaterThan(0);
+    expect(() => applyOps(s, [node('m9', 'Math'), wire('m9', 'm1', 'a')])).not.toThrow();
+  });
+});
+
 describe("#1548 — a sub-network reads its owner's inputs by name", () => {
   it('finds the leaves reading a declared input, with their slot', () => {
     const leaves = bodyInputLeavesOf(oneSolver(), 's1');
@@ -255,7 +341,9 @@ describe('#1569 — a leaf is offered the inputs its owner declares, and told wh
   });
 
   it('a leaf inside a nested owner reads that owner, not the one around it', () => {
-    expect(bodyInputChoicesOf(mixed(), 'inner').owners).toEqual(['s0']);
+    // #1645 — both hold it, nearest first; the nearest one that declares its name binds it.
+    expect(bodyInputChoicesOf(mixed(), 'inner').owners).toEqual(['s0', 's']);
+    expect(bodyInputOwnerOf(mixed(), 'inner')).toBe('s0');
   });
 
   it('a leaf in no sub-network has no owner and no choices', () => {

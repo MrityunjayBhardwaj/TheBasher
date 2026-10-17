@@ -31,7 +31,7 @@ interface W {
 }
 
 /** In-page mirror of selectActiveCameraNode: resolve scene.camera THROUGH a
- *  CameraSelect (by clamped `active` index over its `cameras` edge order). */
+ *  CameraSelect (the camera its `active` names, #1668). */
 const activeCameraId = (page: Page) =>
   page.evaluate(() => {
     const st = (window as unknown as W).__basher_dag.getState().state;
@@ -44,10 +44,9 @@ const activeCameraId = (page: Page) =>
     if (node.type !== 'CameraSelect') return node === undefined ? null : ref.node;
     const edges = (node.inputs.cameras as CamRef[]) ?? [];
     if (edges.length === 0) return null;
-    let i = Math.round((node.params.active as number) ?? 0);
-    if (i < 0) i = 0;
-    if (i >= edges.length) i = edges.length - 1;
-    return edges[i]?.node ?? null;
+    // #1668 — `active` names the camera; a name the list does not hold picks the first.
+    const named = node.params.active as string;
+    return edges.some((e) => e.node === named) ? named : (edges[0]?.node ?? null);
   });
 
 const SEED = 'n_camera';

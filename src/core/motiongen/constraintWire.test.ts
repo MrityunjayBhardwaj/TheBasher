@@ -94,19 +94,17 @@ describe('#897 — the FACING on the wire', () => {
   // fixes it, so a refactor cannot quietly drop the key again.
 
   // ── AND THE REQUEST IS EXPRESSED IN THE CANONICAL FRAME ──────────────────
-  // Sending the facing makes the character walk the path instead of strafing it,
-  // and does NOT make it start out facing the right way: frame 0's heading is
-  // canonicalised to zero, so a requested facing is somewhere the body TURNS TO.
-  // Measured on a +Z path with +Z headings, reading the yaw SERIES rather than
-  // its mean — the mean cannot tell a held facing from a reached one:
+  // Frame 0's heading is canonicalised, so a requested facing is somewhere the body TURNS TO
+  // rather than starts at. The path and its headings therefore go out rotated into the
+  // canonical frame, and the angle comes back for the placement to undo.
   //
-  //     yaw @ 0/25/50/75/100%  =  -0.6°  3.0°  91.6°  110.4°  94.1°
-  //
-  // So the path AND its headings go out rotated into the canonical frame, and
-  // the angle comes back for the placement to undo. These rows pin BOTH halves:
-  // the wire in the canonical frame, and the angle that turns it out again.
-  // Asserting only one of them is the failure mode the pair exists to prevent —
-  // a rotated request nobody rotates back walks the character down the wrong path.
+  // #1635 — THE CANONICAL FACING IS +Z, AND A HEADING IS `[z, x]`. Measured against the live
+  // server (Kimodo-SOMA-RP-v1.1, 3 s, seed 7, Hips yaw from the BVH): a free run goes +Z at yaw 0;
+  // a +Z path with `[1, 0]` runs forward at yaw ≈ −2°; a +X path with `[0, 1]` runs forward at
+  // yaw ≈ 85°; and the two requests this file used to pin (+X path with `[1, 0]`, +Z path with
+  // `[0, 1]`) both STRAFE. The SOMA rest pose puts `LeftLeg` at +X with Y up, so yaw 0 faces +Z.
+  // These rows used to read yaw 0 as +X — the same numbers, the opposite conclusion — and pinned
+  // a wire on which every generated walk travelled its path sideways.
   it('derives a facing from the path, and sends it in the CANONICAL frame', async () => {
     const { sent, impl } = capturingFetch();
     const cap = new HttpMotionGenerationCapability({ serverUrl: 'http://x', fetchImpl: impl });
@@ -119,16 +117,38 @@ describe('#897 — the FACING on the wire', () => {
         ],
       },
     });
-    // A +Z path leaves as a +X one — the canonical direction — because that is
-    // the heading generation pins frame 0 to.
+    // A +Z path already runs along the canonical facing: it leaves unturned, and its facing
+    // goes out as `[1, 0]` — +Z in the server's `[z, x]` pair.
     const wire = body(sent) as { headings: number[][]; waypoints: number[][] };
     expect(wire.headings[0][0]).toBeCloseTo(1, 12);
     expect(wire.headings[0][1]).toBeCloseTo(0, 12);
-    expect(wire.waypoints[1][0]).toBeCloseTo(2, 12);
-    expect(wire.waypoints[1][1]).toBeCloseTo(0, 12);
-    // And the angle that puts it back. +Z is +pi/2 in the waypoint frame; a swap
-    // or a sign flip here is a character walking backwards down a correct path.
-    expect(result.worldRotationRadians).toBeCloseTo(Math.PI / 2, 12);
+    expect(wire.waypoints[1][0]).toBeCloseTo(0, 12);
+    expect(wire.waypoints[1][1]).toBeCloseTo(2, 12);
+    // Nothing to turn back.
+    expect(result.worldRotationRadians).toBeCloseTo(0, 12);
+  });
+
+  it('turns a +X path onto +Z on the way out, and reports the turn that puts it back', async () => {
+    const { sent, impl } = capturingFetch();
+    const cap = new HttpMotionGenerationCapability({ serverUrl: 'http://x', fetchImpl: impl });
+    const result = await cap.generate({
+      ...REQ,
+      constraints: {
+        waypoints: [
+          { x: 0, z: 0 },
+          { x: 2, z: 0 },
+        ],
+      },
+    });
+    const wire = body(sent) as { headings: number[][]; waypoints: number[][] };
+    expect(wire.waypoints[1][0]).toBeCloseTo(0, 12);
+    expect(wire.waypoints[1][1]).toBeCloseTo(2, 12);
+    expect(wire.headings[0][0]).toBeCloseTo(1, 12);
+    expect(wire.headings[0][1]).toBeCloseTo(0, 12);
+    // The canonical +Z, turned by this angle in the waypoint frame (`atan2(z, x)`), is +X.
+    const r = result.worldRotationRadians!;
+    expect(Math.cos(Math.PI / 2 + r)).toBeCloseTo(1, 12);
+    expect(Math.sin(Math.PI / 2 + r)).toBeCloseTo(0, 12);
   });
 
   it('defers to an explicit facing rather than overriding it with the tangent', async () => {
@@ -148,14 +168,16 @@ describe('#897 — the FACING on the wire', () => {
         ],
       },
     });
-    // Canonicalised like any other facing: -X is pi, so the request leaves facing
-    // +X down a path that now runs -X, and the reported angle turns both back.
+    // Canonicalised like any other facing: the request leaves facing +Z down a path that now
+    // runs -Z, and the reported angle turns both back onto -X.
     const wire = body(sent) as { headings: number[][]; waypoints: number[][] };
     expect(wire.headings[0][0]).toBeCloseTo(1, 12);
     expect(wire.headings[0][1]).toBeCloseTo(0, 12);
-    expect(wire.waypoints[1][0]).toBeCloseTo(-2, 12);
-    expect(wire.waypoints[1][1]).toBeCloseTo(0, 12);
-    expect(result.worldRotationRadians).toBeCloseTo(Math.PI, 12);
+    expect(wire.waypoints[1][0]).toBeCloseTo(0, 12);
+    expect(wire.waypoints[1][1]).toBeCloseTo(-2, 12);
+    const r = result.worldRotationRadians!;
+    expect(Math.cos(Math.PI / 2 + r)).toBeCloseTo(-1, 12);
+    expect(Math.sin(Math.PI / 2 + r)).toBeCloseTo(0, 12);
   });
 
   // The rotation centre, which is NOT the world origin. The server rebases a path
@@ -171,7 +193,7 @@ describe('#897 — the FACING on the wire', () => {
       constraints: {
         waypoints: [
           { x: 3, z: 1 },
-          { x: 3, z: 3 },
+          { x: 5, z: 1 },
         ],
       },
     });
@@ -179,9 +201,9 @@ describe('#897 — the FACING on the wire', () => {
     // Fixed: the point the server will subtract is untouched.
     expect(wire.waypoints[0][0]).toBeCloseTo(3, 12);
     expect(wire.waypoints[0][1]).toBeCloseTo(1, 12);
-    // Turned about it: the +Z leg becomes a +X leg starting from the same place.
-    expect(wire.waypoints[1][0]).toBeCloseTo(5, 12);
-    expect(wire.waypoints[1][1]).toBeCloseTo(1, 12);
+    // Turned about it: the +X leg becomes a +Z leg starting from the same place.
+    expect(wire.waypoints[1][0]).toBeCloseTo(3, 12);
+    expect(wire.waypoints[1][1]).toBeCloseTo(3, 12);
   });
 
   it('sends NO facing for a path that expresses none', async () => {
@@ -220,9 +242,11 @@ describe('#826 — what actually goes on the wire', () => {
     await cap.generate({
       ...REQ,
       constraints: {
+        // Along +Z, the canonical facing (#1635), so the path goes out unturned and the values
+        // read straight through.
         waypoints: [
           { x: 3, z: 1 },
-          { x: 5, z: 1 },
+          { x: 3, z: 3 },
         ],
       },
     });
@@ -230,7 +254,7 @@ describe('#826 — what actually goes on the wire', () => {
     // The key the server actually reads, in the shape it actually parses.
     expect(body.waypoints).toEqual([
       [3, 1],
-      [5, 1],
+      [3, 3],
     ]);
   });
 

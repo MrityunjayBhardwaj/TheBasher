@@ -129,7 +129,8 @@ describe('#1057 — a turn does not act on a prompt the model did not read', () 
     expect(result.error).toContain('did not read the whole prompt');
     expect(rounds, 'the turn must stop at the round that was cut').toBe(1);
     // Its tool call was chosen against the cut prompt: nothing it asked for runs.
-    expect(chat).not.toContain('[dag.exec]');
+    // #1612 — a tool call is kept as a step on its message, not as a `[tool]` line in the text.
+    expect(chat).not.toContain('"tool":"dag.exec"');
     expect(diff.status).toBe('idle');
     // And the director is told, in the chat, not only in the returned value.
     expect(chat).toContain('did not read the whole prompt');
@@ -139,7 +140,7 @@ describe('#1057 — a turn does not act on a prompt the model did not read', () 
     const { result, rounds, diff, chat } = await turn([ratio(UNCUT_QWEN3), ratio(UNCUT_QWEN3)]);
     expect(result.error).toBeNull();
     expect(rounds).toBe(2);
-    expect(chat).toContain('[dag.exec]');
+    expect(chat).toContain('"tool":"dag.exec"');
     expect(diff.status).toBe('pending');
     expect(diff.pendingDiff?.ops).toHaveLength(1);
   });

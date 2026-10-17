@@ -130,3 +130,95 @@ describe('#1018 - the id-reference half reaches the model', () => {
     expect(all).toContain('n_chan'); // the dump really did include the channel
   });
 });
+
+// #1553 — the same answer the delete and duplicate doors read, so the model is told about the
+// relationships no param and no wire of its own shows.
+describe('#1553 - every relationship of a node reaches the model', () => {
+  const full = (state: DagState, nodeId: string): Record<string, unknown> =>
+    JSON.parse(
+      dagInspectTool.handler({ scope: 'node', nodeId } as never, { dagState: state } as never).text,
+    );
+  const math = (nodeId: string): Op => ({ type: 'addNode', nodeId, nodeType: 'Math', params: {} });
+  const wire = (from: string, to: string, socket: string): Op => ({
+    type: 'connect',
+    from: { node: from, socket: 'out' },
+    to: { node: to, socket },
+  });
+
+  it('a node whose name follows this one is listed, and so is what this one is wired into', () => {
+    const s = apply(base, [
+      math('n_hub'),
+      math('n_reader'),
+      wire('n_hub', 'n_reader', 'a'),
+      math('n_named'),
+      { type: 'setMeta', nodeId: 'n_named', name: 'x', nameFrom: 'n_hub' },
+    ]);
+    const hub = full(s, 'n_hub');
+    expect(hub.nameFollowers).toEqual(['n_named']);
+    expect(hub.consumers).toEqual([{ id: 'n_reader', socket: 'a' }]);
+    expect(full(s, 'n_named').followsNameOf).toBe('n_hub');
+  });
+
+  it('a loop of references is named on every node of it, and in the full dump', () => {
+    const s = apply(base, [
+      math('n_x'),
+      {
+        type: 'addNode',
+        nodeId: 'n_d',
+        nodeType: 'ParamDriver',
+        params: { target: 'n_x', paramPath: 'b' },
+      } as Op,
+      wire('n_x', 'n_d', 'in'),
+    ]);
+    const onX = full(s, 'n_x').referenceCycles as string[][];
+    expect(onX.map((cycle) => [...cycle].sort())).toEqual([['n_d', 'n_x']]);
+    expect(full(s, 'n_d').referenceCycles).toEqual(onX);
+    const all = JSON.parse(
+      dagInspectTool.handler({ scope: 'all' } as never, { dagState: s } as never).text,
+    );
+    expect(all.referenceCycles).toEqual(onX);
+  });
+
+  it('CONTROL: a node with none of these carries none of the keys', () => {
+    const lone = full(apply(base, [math('n_lone')]), 'n_lone');
+    for (const key of ['consumers', 'references', 'followsNameOf', 'nameFollowers']) {
+      expect(lone, key).not.toHaveProperty(key);
+    }
+    expect(lone).not.toHaveProperty('referenceCycles');
+    expect(lone).not.toHaveProperty('insideSubnetworkOf');
+  });
+});
+
+// #1552 — a channel aimed at a parameter or a node that is not there is stored (the raw door
+// accepts it, so an old project still loads) and said to the model, on both ends.
+describe('#1552 - a reference aimed at nothing reaches the model', () => {
+  const read = (state: DagState, args: Record<string, unknown>): Record<string, unknown> =>
+    JSON.parse(dagInspectTool.handler(args as never, { dagState: state } as never).text);
+  const typo: Op = {
+    type: 'addNode',
+    nodeId: 'n_typo',
+    nodeType: 'KeyframeChannelVec3',
+    params: { name: 'x', target: 'n_box', paramPath: 'positoin', keyframes: [] },
+  } as Op;
+  const row = {
+    node: 'n_typo',
+    type: 'KeyframeChannelVec3',
+    target: 'n_box',
+    paramPath: 'positoin',
+    problem: 'Object has no such parameter',
+  };
+
+  it('is listed on the channel, on its target, and in the full dump', () => {
+    const s = apply(base, [typo]);
+    expect(read(s, { scope: 'node', nodeId: 'n_typo' }).brokenReferences).toEqual([row]);
+    expect(read(s, { scope: 'node', nodeId: 'n_box' }).brokenReferences).toEqual([row]);
+    expect(read(s, { scope: 'all' }).brokenReferences).toEqual([row]);
+  });
+
+  it('CONTROL: a working channel adds no such key anywhere', () => {
+    const s = apply(base, [channel]);
+    expect(read(s, { scope: 'node', nodeId: 'n_box' })).not.toHaveProperty('brokenReferences');
+    expect(read(s, { scope: 'node', nodeId: 'n_light' })).not.toHaveProperty('brokenReferences');
+    expect(read(s, { scope: 'all' })).not.toHaveProperty('brokenReferences');
+  });
+});

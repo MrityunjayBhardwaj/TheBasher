@@ -54,8 +54,8 @@ export const MathNode: NodeDefinition<MathParams, number> = {
   cost: 'cheap',
   paramSchema: MathParams,
   inputs: {
-    a: { type: 'Number', cardinality: 'single' },
-    b: { type: 'Number', cardinality: 'single' },
+    a: { type: 'Number', cardinality: 'single', owns: 'always' },
+    b: { type: 'Number', cardinality: 'single', owns: 'always' },
   },
   outputs: NUMBER_OUT,
   evaluate: (params, inputs) => applyMathOp(params.op, num(inputs, 'a'), num(inputs, 'b')),
@@ -74,7 +74,7 @@ export const ClampNode: NodeDefinition<ClampParams, number> = {
   pure: true,
   cost: 'cheap',
   paramSchema: ClampParams,
-  inputs: { in: { type: 'Number', cardinality: 'single' } },
+  inputs: { in: { type: 'Number', cardinality: 'single', owns: 'always' } },
   outputs: NUMBER_OUT,
   evaluate: (params, inputs) => clamp(num(inputs, 'in'), params.min, params.max),
 };
@@ -95,7 +95,7 @@ export const FitNode: NodeDefinition<FitParams, number> = {
   pure: true,
   cost: 'cheap',
   paramSchema: FitParams,
-  inputs: { in: { type: 'Number', cardinality: 'single' } },
+  inputs: { in: { type: 'Number', cardinality: 'single', owns: 'always' } },
   outputs: NUMBER_OUT,
   evaluate: (params, inputs) =>
     fit(num(inputs, 'in'), params.inMin, params.inMax, params.outMin, params.outMax, params.clamp),
@@ -114,8 +114,8 @@ export const MixNode: NodeDefinition<MixParams, number> = {
   cost: 'cheap',
   paramSchema: MixParams,
   inputs: {
-    a: { type: 'Number', cardinality: 'single' },
-    b: { type: 'Number', cardinality: 'single' },
+    a: { type: 'Number', cardinality: 'single', owns: 'always' },
+    b: { type: 'Number', cardinality: 'single', owns: 'always' },
   },
   outputs: NUMBER_OUT,
   evaluate: (params, inputs) => lerp(num(inputs, 'a'), num(inputs, 'b'), params.factor),
@@ -136,7 +136,7 @@ export const CurveRemapNode: NodeDefinition<CurveRemapParams, number> = {
   pure: true,
   cost: 'cheap',
   paramSchema: CurveRemapParams,
-  inputs: { in: { type: 'Number', cardinality: 'single' } },
+  inputs: { in: { type: 'Number', cardinality: 'single', owns: 'always' } },
   outputs: NUMBER_OUT,
   evaluate: (params, inputs) => curveRemap(num(inputs, 'in'), params.points),
 };
@@ -157,7 +157,7 @@ export const NoiseNode: NodeDefinition<NoiseParams, number> = {
   pure: true,
   cost: 'cheap',
   paramSchema: NoiseParams,
-  inputs: { t: { type: 'Number', cardinality: 'single' } },
+  inputs: { t: { type: 'Number', cardinality: 'single', owns: 'always' } },
   outputs: NUMBER_OUT,
   evaluate: (params, inputs) =>
     fractalNoise(num(inputs, 't') * params.scale + params.phase, params.octaves) *
@@ -180,9 +180,9 @@ export const MakeVec3Node: NodeDefinition<Record<string, never>, Vec3> = {
   cost: 'cheap',
   paramSchema: z.object({}),
   inputs: {
-    x: { type: 'Number', cardinality: 'single' },
-    y: { type: 'Number', cardinality: 'single' },
-    z: { type: 'Number', cardinality: 'single' },
+    x: { type: 'Number', cardinality: 'single', owns: 'always' },
+    y: { type: 'Number', cardinality: 'single', owns: 'always' },
+    z: { type: 'Number', cardinality: 'single', owns: 'always' },
   },
   outputs: VECTOR3_OUT,
   evaluate: (_params, inputs) => [num(inputs, 'x'), num(inputs, 'y'), num(inputs, 'z')],
@@ -201,7 +201,7 @@ export const VecBreak3Node: NodeDefinition<
   pure: true,
   cost: 'cheap',
   paramSchema: z.object({}),
-  inputs: { v: { type: 'Vector3', cardinality: 'single' } },
+  inputs: { v: { type: 'Vector3', cardinality: 'single', owns: 'always' } },
   outputs: {
     x: { type: 'Number', cardinality: 'single' },
     y: { type: 'Number', cardinality: 'single' },
@@ -228,11 +228,11 @@ export const Vec3MathNode: NodeDefinition<Vec3MathParams, Vec3> = {
   cost: 'cheap',
   paramSchema: Vec3MathParams,
   inputs: {
-    a: { type: 'Vector3', cardinality: 'single' },
-    b: { type: 'Vector3', cardinality: 'single' },
+    a: { type: 'Vector3', cardinality: 'single', owns: 'always' },
+    b: { type: 'Vector3', cardinality: 'single', owns: 'always' },
     // Optional scalar override for scale/mix (spring wires velocity·dt here); falls
     // back to the `scalar` param when unconnected.
-    s: { type: 'Number', cardinality: 'single' },
+    s: { type: 'Number', cardinality: 'single', owns: 'always' },
   },
   outputs: VECTOR3_OUT,
   evaluate: (params, inputs) => {
