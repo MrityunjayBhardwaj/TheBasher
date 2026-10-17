@@ -59,7 +59,7 @@ const outY = (n: GraphNode, socket: string) => 20 + n.outputs.indexOf(socket) * 
 const clip = (s: string, n: number) =>
   s.length > n ? s.slice(0, Math.ceil(n / 2) - 1) + '…' + s.slice(s.length - Math.floor(n / 2)) : s;
 
-export function GraphView({ active }: { active: boolean }): ReactNode {
+export function GraphView(): ReactNode {
   const state = useDagStore((s) => s.state);
   const primary = useSelectionStore((s) => s.primaryNodeId);
   const select = useSelectionStore((s) => s.select);
@@ -111,11 +111,11 @@ export function GraphView({ active }: { active: boolean }): ReactNode {
       y: Math.max(m, (r.height - layout.height * k) / 2),
     });
   }, [layout]);
-  // Fit whenever the space opens or the graph's shape changes; the slot is display:none until then.
+  // Fit when the space opens (it mounts then) and whenever the graph's shape changes.
   const shapeKey = `${graph.nodes.length}:${graph.wires.length}`;
   useEffect(() => {
-    if (active) fit();
-  }, [active, shapeKey, fit]);
+    fit();
+  }, [shapeKey, fit]);
 
   // Wheel zoom at the cursor. Attached by hand: React's onWheel is passive and cannot preventDefault.
   useEffect(() => {
