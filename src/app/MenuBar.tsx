@@ -893,6 +893,7 @@ export function MenuBar() {
               { value: 'view3d', label: '3D Viewport' },
               { value: 'uv', label: '2D View' },
               { value: 'video', label: 'Video' },
+              { value: 'graph', label: 'Graph' },
             ] as { value: SpaceType; label: string }[]
           ).map((s) => (
             <Item

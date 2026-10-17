@@ -45,6 +45,7 @@ import { NPanel } from './NPanel';
 import { ProjectTabs } from './ProjectTabs';
 import { TimelineDrawer } from '../timeline/TimelineDrawer';
 import { TwoDView } from './TwoDView';
+import { GraphView } from './GraphView';
 import { VideoMode } from './video/VideoMode';
 import { Viewport } from '../viewport/Viewport';
 import { useIsNarrowLayout } from './hooks/useIsNarrowLayout';
@@ -175,6 +176,12 @@ export function Layout() {
     width: twoDViewWidth,
     zIndex: 15,
   };
+  // #1675 — the Graph space is the same bounded center surface as the 2D View, so the outliner
+  // and inspector stay beside it: a node clicked in the graph shows its params there.
+  const graphViewStyle: CSSProperties = {
+    ...twoDViewStyle,
+    display: space === 'graph' ? 'block' : 'none',
+  };
   return (
     <div
       data-testid="layout"
@@ -271,6 +278,14 @@ export function Layout() {
           onContextMenu={(e) => e.stopPropagation()}
         >
           <TwoDView />
+        </div>
+        <div
+          style={graphViewStyle}
+          data-testid="graph-slot"
+          className="overflow-hidden rounded-2xl border border-border bg-bg-2/95 shadow-xl shadow-black/40 backdrop-blur-md"
+          onContextMenu={(e) => e.stopPropagation()}
+        >
+          <GraphView active={space === 'graph'} />
         </div>
         {/* Video mode (the third editor space) — the AE-style compositor. Like
             the 2D View it swaps in via display:none (Canvas stays mounted, K1

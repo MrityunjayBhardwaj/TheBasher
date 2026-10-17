@@ -31,7 +31,10 @@
 import { create } from 'zustand';
 import { useGizmoStore } from './gizmoStore';
 
-export type SpaceType = 'view3d' | 'uv' | 'video';
+// #1675 — 'graph' is the read-only node view (THESIS §16). It is revealed on demand from
+// View ▸ Editor Space and deliberately NOT in SPACE_CYCLE: §196 keeps the graph hidden until
+// someone asks for it, so Tab never lands on it (from 'graph', Tab returns to the 3D View).
+export type SpaceType = 'view3d' | 'uv' | 'video' | 'graph';
 export type ActiveTool = 'select' | 'translate' | 'rotate' | 'scale';
 
 // Tab cycle order: 3D → 2D → Video → 3D. One source so the keyboard cycle and
