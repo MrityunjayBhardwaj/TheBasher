@@ -65,11 +65,26 @@ over one Mix node matches a Lag sample for sample.
 
 ### 6. The document is the graph
 
-- #1550: the scene and render outputs can be rebound by an operation.
+- #1550: the scene and render outputs can be rebound by an operation. The UI door is #1677,
+  because nothing in the UI can reach a second scene yet.
+- #1674: one scene at a time. Found while building #1550: a rebound scene output left the
+  viewport drawing the old scene.
 - #1562: node positions are stored.
-- #1565: no document state outside the graph.
-- #1566: every relationship kind survives a save and load.
-- #1567: every UI gesture goes through the 9 operations (8 until #1550 added `setOutput`).
+- #1566, first half: every project we can build survives a save and a load whole.
+
+Step 6 was cut down on purpose (2026-10-17). Step 7 needs positions, levels, the bound outputs
+and `relationsOf`, and all four are built. These moved to the unplaced list below, each with
+its measurement on the issue:
+
+- #1565: a first pass over all 41 stores found no document state to move. What's left is the
+  table and the gate that keeps a new store from holding some.
+- #1567 (every UI gesture goes through the 9 operations): nothing outside the store calls
+  `setState` on it, and the 94 call sites that write the graph go through dispatch. An
+  in-place write to a node would go unseen, so what's left is a guard against those and the
+  gesture e2e.
+- #1566, second half: one fixture holding every relationship kind the registry declares.
+- #1676: a raw wire can still split the render output from the scene output. It's worth
+  deciding when the node view starts drawing those flags.
 
 ### 7. Seeing it
 
@@ -77,8 +92,13 @@ over one Mix node matches a Lag sample for sample.
 - #1564: the agent and the node view see the same graph.
 - #1556: a read-only spreadsheet of a node's attributes.
 
+#1675, a read-only Graph editor space from the launch work, is the first slice of #1563. It
+should read the same layout (`layoutOf`) and relationships (`relationsOf`) as the rest of
+this step, so there is one layout and one query, not two.
+
 ## In the milestone, not yet placed in the order
 
+- #1565, #1567, #1676 and the second half of #1566: moved out of step 6, see there.
 - #1554: material assignment as a per-face reference, with its migration (decided in #1544).
 - #1555: each operator declares what it does to every attribute, in one table.
 - #606: operators materialise their source instead of holding a handle.
