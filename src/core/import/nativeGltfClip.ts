@@ -23,8 +23,9 @@
 // ── WHAT IS REFUSED ─────────────────────────────────────────────────────────────────────────────
 //
 // Refused whole, by name, like every other native-import refusal: a morph weights track (#1060), an accessor this reader cannot read
-// correctly (sparse, bufferless, interleaved — `readAccessor` would silently misread each), and a
-// file that breaks the spec's own rules for animation data. A channel with no target node is
+// correctly (sparse, bufferless — `readAccessor` would silently misread each), and a file that
+// breaks the spec's own rules for animation data, an interleaved accessor among them (only vertex
+// attributes may share a view, `Specification.adoc:1301`). A channel with no target node is
 // skipped, which is what the spec says to do with it (`:2782`).
 //
 // REF: glTF 2.0 `Specification.adoc` §3.11 + Appendix C, `schema/animation.sampler.schema.json`
@@ -90,7 +91,7 @@ const malformed = (why: string): NativeImportRefusal => ({
   issue: '#1063',
 });
 
-/** Why an accessor cannot be read here, or null. `readAccessor` reads a contiguous, dense run. */
+/** Why an accessor cannot be read here, or null. `readAccessor` reads a dense run from a buffer view. */
 function unreadable(json: ClipGltfJson, index: number, what: string): NativeImportRefusal | null {
   const accessor = json.accessors?.[index];
   if (!accessor) return malformed(`${what} names accessor ${index}, which does not exist`);
@@ -108,12 +109,7 @@ function unreadable(json: ClipGltfJson, index: number, what: string): NativeImpo
   }
   const stride = json.bufferViews?.[accessor.bufferView]?.byteStride;
   const element = (COMPONENT_BYTES[accessor.componentType] ?? 0) * (WIDTH[accessor.type] ?? 0);
-  if (typeof stride === 'number' && stride !== element) {
-    return {
-      refused: `its animation ${what} is interleaved, which this reader does not split`,
-      issue: '#1063',
-    };
-  }
+  if (typeof stride === 'number' && stride !== element) return malformed(`${what} is interleaved`);
   return null;
 }
 
