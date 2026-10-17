@@ -56,6 +56,19 @@ test('View ▸ Editor Space ▸ Graph draws the scene and shares the selection',
   await page.getByTestId('graph-view-canvas').click({ position: { x: 5, y: 5 } });
   await page.keyboard.press('Tab');
   await expect(layout).toHaveAttribute('data-space', 'view3d');
+
+  // Both buttons are roads in: the switcher at the top right and the toolbar.
+  await page.getByTestId('space-switch-graph').click();
+  await expect(layout).toHaveAttribute('data-space', 'graph');
+  await expect(page.getByTestId('graph-view')).toBeVisible();
+  await page.getByTestId('toolbar-space-view3d').click();
+  await expect(layout).toHaveAttribute('data-space', 'view3d');
+  await page.getByTestId('toolbar-space-graph').click();
+  await expect(layout).toHaveAttribute('data-space', 'graph');
+
+  await page.getByTestId('graph-view-canvas').click({ position: { x: 5, y: 5 } });
+  await page.keyboard.press('Tab');
+  await expect(layout).toHaveAttribute('data-space', 'view3d');
   // Closed, the graph is not mounted at all, so it does no work while the 3D View is up.
   await expect(page.getByTestId('graph-view')).toHaveCount(0);
 });

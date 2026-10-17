@@ -31,9 +31,9 @@
 import { create } from 'zustand';
 import { useGizmoStore } from './gizmoStore';
 
-// #1675 — 'graph' is the read-only node view (THESIS §16). It is revealed on demand from
-// View ▸ Editor Space and deliberately NOT in SPACE_CYCLE: §196 keeps the graph hidden until
-// someone asks for it, so Tab never lands on it (from 'graph', Tab returns to the 3D View).
+// #1675 — 'graph' is the read-only node view (THESIS §16). It has its own button in the space
+// switcher and the toolbar, and a View ▸ Editor Space entry, but it is NOT in SPACE_CYCLE: Tab
+// cycling through 3D/2D/Video never lands on it (from 'graph', Tab returns to the 3D View).
 export type SpaceType = 'view3d' | 'uv' | 'video' | 'graph';
 export type ActiveTool = 'select' | 'translate' | 'rotate' | 'scale';
 
