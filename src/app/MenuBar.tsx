@@ -919,6 +919,8 @@ const SPACE_SWITCHER_OPTIONS: { value: SpaceType; label: string }[] = [
   { value: 'view3d', label: '3D' },
   { value: 'uv', label: '2D' },
   { value: 'video', label: 'Video' },
+  // #1675 — the Graph space has its own button, as the user asked; Tab still never lands on it.
+  { value: 'graph', label: 'Graph' },
 ];
 
 function SpaceSwitcher({
