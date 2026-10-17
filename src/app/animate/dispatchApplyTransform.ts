@@ -69,6 +69,7 @@ import { linkedDataNodeId } from '../resolveDataParamOwner';
 import { resolveDataLaneBase } from '../operatorChain';
 import { dataLaneNodeIds } from '../dataLaneOverlay';
 import { isKeyframeChannelNode, paramAnimationState } from './paramAnimationState';
+import { driverStackForTarget } from '../paramDrivers';
 import { getStorage } from '../boot';
 import { useTimeStore } from '../stores/timeStore';
 import { isImportedChild } from '../importedChild';
@@ -77,6 +78,12 @@ import { useSelectionStore } from '../stores/selectionStore';
 import { useTransientEditStore } from '../stores/transientEditStore';
 import { hierarchyChildIds, hierarchySocketForKind } from '../sceneHierarchy';
 import { quaternionToEulerVec3 } from '../../core/import/threeAdapter';
+import { standingObjectsOf } from '../../core/import/skeletonObject';
+import type { AnimationClipParams } from '../../nodes/AnimationClip';
+import type { PoseLayerChannel, PoseLayerParams } from '../../nodes/PoseLayer';
+import type { SkeletonParams } from '../../nodes/Skeleton';
+import { edgeTarget, type GraphNodeLike } from './graphNodes';
+import { poseLayerChain } from './poseChain';
 import { openpbrToThree } from '../material/openpbrToThree';
 import { isIdentityPlacement, resolveSlotPlacement } from '../material/uvPlacement';
 import type { EvaluatorCache } from '../../core/dag/evaluator';
@@ -515,13 +522,26 @@ const ZERO_CTX: EvalCtx = { time: { frame: 0, seconds: 0, normalized: 0 } };
  * offered, with no capability list to keep updated.
  *
  * Mesh-ness does not vary with time, so a zero ctx is exact for this question.
+ *
+ * #1513 — with a `mask`, the answer is for that one mask: an armature group takes only its scale,
+ * so Location and Rotation are not offered there (and All only while the group is unmoved). The
+ * same `applyMaskUnavailableReason` the dispatcher refuses with answers it. Without one, "can any
+ * mask".
  */
 export function canApplyTransform(
   state: DagState,
   nodeId: string,
   cache?: EvaluatorCache,
+  mask?: ApplyMask,
 ): boolean {
   const node = state.nodes[nodeId];
+  // #1511 — a group holding a skeleton is an armature: its scale is applied into the rig.
+  if (node?.type === 'Group') {
+    return (
+      armatureSkeletonObjectsOf(state, nodeId).length > 0 &&
+      (mask === undefined || applyMaskUnavailableReason(state, nodeId, mask) === null)
+    );
+  }
   if (!node || !isBakeableWrapperType(node.type)) return false;
   // #1053 — the dispatcher refuses a kept clone-road import, so it is not offered either.
   if (isImportedChild(state.nodes, nodeId)) return false;
@@ -556,6 +576,16 @@ export async function dispatchApplyTransform(
   // an `Object`, and the Object road below would otherwise read it.
   if (isImportedChild(state.nodes, selectedId)) {
     return { ok: false, reason: KEPT_IMPORT_REFUSAL(name) };
+  }
+
+  // #1511 — the armature road: a group holding a skeleton takes its scale into the rig.
+  if (node.type === 'Group' && armatureSkeletonObjectsOf(state, selectedId).length > 0) {
+    return applyScaleIntoArmature(selectedId, mask, state, currentFrame, {
+      dispatchAtomic: deps?.dispatchAtomic ?? dagStore.dispatchAtomic.bind(dagStore),
+      clearTransients:
+        deps?.clearTransients ?? ((id: string) => useTransientEditStore.getState().clearNode(id)),
+      setSelection: deps?.setSelection ?? ((id: string) => useSelectionStore.getState().select(id)),
+    });
   }
 
   // #376: a split `Object` bakes alongside the still-fused `SphereMesh`. The gate stays
@@ -930,6 +960,27 @@ function transformMeshData(data: MeshGeometryData, matrix: THREE.Matrix4): MeshG
 }
 
 /**
+ * Walk UP from the mesh data to `objectId`: every step must have exactly one consumer. A second
+ * consumer at the base is a second Object posing the mesh; one higher is a second Object wearing a
+ * shared operator's result. Either way it would change with this Apply, so the sentence saying so
+ * comes back, or null when the lane is the Object's alone.
+ */
+function sharedLaneRefusal(state: DagState, objectId: string, dataId: string): string | null {
+  const name = nodeDisplayName(state.nodes, objectId);
+  const seen = new Set<string>();
+  for (let cur = dataId; cur !== objectId; ) {
+    const edges = consumerEdgesOf(state, cur);
+    if (edges.length !== 1 || seen.has(cur)) {
+      const others = Math.max(edges.length - 1, 0);
+      return `Apply: "${name}" shares its mesh data with ${others} other consumer${others === 1 ? '' : 's'} (at "${nodeDisplayName(state.nodes, cur)}"), and applying would change what they draw too. Give it its own copy of the mesh first.`;
+    }
+    seen.add(cur);
+    cur = edges[0].consumer;
+  }
+  return null;
+}
+
+/**
  * Apply over an Object whose data is a stored mesh (#1077): the pose goes INTO that mesh data, and
  * the Object keeps posing it. Nothing is baked and nothing is converted.
  *
@@ -974,23 +1025,9 @@ function applyIntoStoredMesh(
   currentFrame: number,
   io: Pick<ApplyDeps, 'dispatchAtomic' | 'clearTransients' | 'setSelection'>,
 ): DispatchResult {
-  // Walk UP from the mesh data to this Object: every step must have exactly one consumer. A second
-  // consumer at the base is a second Object posing the mesh; one higher is a second Object wearing a
-  // shared operator's result. Either way it would change with this Apply.
   const name = nodeDisplayName(state.nodes, selectedId);
-  const seen = new Set<string>();
-  for (let cur = dataId; cur !== selectedId; ) {
-    const edges = consumerEdgesOf(state, cur);
-    if (edges.length !== 1 || seen.has(cur)) {
-      const others = Math.max(edges.length - 1, 0);
-      return {
-        ok: false,
-        reason: `Apply: "${name}" shares its mesh data with ${others} other consumer${others === 1 ? '' : 's'} (at "${nodeDisplayName(state.nodes, cur)}"), and applying would change what they draw too. Give it its own copy of the mesh first.`,
-      };
-    }
-    seen.add(cur);
-    cur = edges[0].consumer;
-  }
+  const shared = sharedLaneRefusal(state, selectedId, dataId);
+  if (shared) return { ok: false, reason: shared };
   const applied = APPLIED_BANDS[mask];
   const split = splitAppliedPose(transform, mask);
   if (!split) return { ok: false, reason: zeroKeptScaleReason(name) };
@@ -1023,4 +1060,339 @@ function applyIntoStoredMesh(
   io.clearTransients(dataId);
   io.setSelection(selectedId);
   return { ok: true, bakedId: selectedId };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+// #1511 — APPLY SCALE ON AN ARMATURE
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+// A group that holds a skeleton is Basher's counterpart of Blender's armature object: a Mixamo
+// import puts its 0.01 there, over bones in centimetres. Applying that scale moves it INTO the rig.
+//
+// Blender's Apply rewrites the rest bones only (`BKE_armature_transform`, object_transform.cc:881-883)
+// and never touches the action, so an animated rig's location keys stay in the old units: measured on
+// the X Bot's walk, the hips jump from (0.006, 0.129, 1.017) to (0.610, 14.914, −1.226). Houdini
+// applies a unit change to rest, skin and motion together (KineFX character import, World Space /
+// Convert Units). This road does what Houdini does, in one undo step:
+//
+//   1. the skeleton's rest bone positions × s (rotations and bone scales untouched);
+//   2. every pose layer on the skeleton's chain: position keys and their handles × s, and members'
+//      static positions × s — muted layers too, since each holds a clip the rig can play;
+//   3. every clip standing on the skeleton: its poses' positions × s;
+//   4. each skinned mesh in the group: its points × s, through the stored-mesh road's transform. The
+//      skin needs nothing else: its bind is derived from the rest every evaluation (`skinnedDraw.ts`);
+//   5. every child keeps its world placement: its position × s, and a child whose data did not take
+//      the scale takes it on its own scale (Blender's `ignore_parent_tx`, :536-560);
+//   6. the group's scale becomes 1 and its pivot × s, so the group itself does not move.
+//
+// v1 applies a uniform scale only, and refuses by name what it cannot carry yet: a non-uniform or
+// non-positive scale, a keyed group, a moved or turned group asked to apply everything, two skeletons
+// in one group, a skeleton or skinned mesh used outside the group, a channel node, a driver or a
+// value F-modifier on the rig's motion (Cycles is carried: it only re-times the scaled keys), and anything
+// parented under the skeleton. A retarget onto the rig needs nothing:
+// it re-derives its travel from the rest it reads (`rootTravelScale`).
+//
+// REF: ref/GROUND_TRUTH_BLENDER_TRANSFORM_APPLY.md §6; issue #1511.
+
+/** The Objects a group holds directly whose data is a skeleton. */
+export function armatureSkeletonObjectsOf(state: DagState, groupId: string): string[] {
+  return hierarchyChildIds(state.nodes[groupId]).filter((id) => {
+    const node = state.nodes[id];
+    return (
+      node?.type === 'Object' && state.nodes[edgeTarget(node, 'data') ?? '']?.type === 'Skeleton'
+    );
+  });
+}
+
+/**
+ * Why an armature group cannot apply `mask`, finishing the sentence `"<group>" …`, or null when it
+ * can. v1 carries only the scale into the rig, so Location and Rotation never can, and All only
+ * while the group is neither moved nor turned. The offer (`canApplyTransform`) and the refusal
+ * (`applyScaleIntoArmature`) both read this, so the panel never offers what Apply refuses (#1513).
+ */
+function armatureMaskRefusal(group: { params?: unknown }, mask: ApplyMask): string | null {
+  if (mask === 'location' || mask === 'rotation') {
+    return `holds a skeleton, and only its scale can be applied into the rig for now. Use Apply ▸ Scale.`;
+  }
+  const gp = (group.params ?? {}) as Partial<{ position: Vec3; rotation: Vec3 }>;
+  const moved = isVec3(gp.position) && gp.position.some((v) => v !== 0);
+  const turned = isVec3(gp.rotation) && gp.rotation.some((v) => v !== 0);
+  if (mask === 'all' && (moved || turned)) {
+    return `is moved or turned, and only its scale can be applied into the rig for now. Use Apply ▸ Scale.`;
+  }
+  return null;
+}
+
+/**
+ * Why Apply cannot take `mask` on `nodeId`, as the sentence Apply refuses with, or null when the
+ * mask is not what stands in the way (#1525). Only an armature group restricts masks today. A
+ * disabled control shows this as its tooltip, and `canApplyTransform(…, mask)` and the refusal both
+ * answer from it, so the reason shown is the reason it is disabled.
+ */
+export function applyMaskUnavailableReason(
+  state: DagState,
+  nodeId: string,
+  mask: ApplyMask,
+): string | null {
+  const node = state.nodes[nodeId];
+  if (node?.type !== 'Group' || armatureSkeletonObjectsOf(state, nodeId).length === 0) return null;
+  const why = armatureMaskRefusal(node, mask);
+  return why ? `Apply: "${nodeDisplayName(state.nodes, nodeId)}" ${why}` : null;
+}
+
+const scaleVec = (v: readonly [number, number, number], s: number): [number, number, number] => [
+  v[0] * s,
+  v[1] * s,
+  v[2] * s,
+];
+
+/** A position channel's keys and handles in the rig's new units. */
+function scaledPositionChannel(
+  channel: Extract<PoseLayerChannel, { component: 'position' }>,
+  s: number,
+): PoseLayerChannel {
+  return {
+    ...channel,
+    keyframes: channel.keyframes.map((k) => ({
+      ...k,
+      value: scaleVec(k.value, s),
+      ...(k.inHandle ? { inHandle: { ...k.inHandle, value: scaleVec(k.inHandle.value, s) } } : {}),
+      ...(k.outHandle
+        ? { outHandle: { ...k.outHandle, value: scaleVec(k.outHandle.value, s) } }
+        : {}),
+    })),
+  };
+}
+
+function applyScaleIntoArmature(
+  groupId: string,
+  mask: ApplyMask,
+  state: DagState,
+  currentFrame: number,
+  io: Pick<ApplyDeps, 'dispatchAtomic' | 'clearTransients' | 'setSelection'>,
+): DispatchResult {
+  const name = nodeDisplayName(state.nodes, groupId);
+  const nameOf = (id: string) => nodeDisplayName(state.nodes, id);
+  const refuse = (why: string): DispatchResult => ({
+    ok: false,
+    reason: `Apply: "${name}" ${why}`,
+  });
+  const group = state.nodes[groupId];
+  const gp = group.params as Partial<{ scale: Vec3; pivot: Vec3 }>;
+  const scale = isVec3(gp.scale) ? gp.scale : ([1, 1, 1] as Vec3);
+  const pivot = isVec3(gp.pivot) ? gp.pivot : ([0, 0, 0] as Vec3);
+
+  const maskRefusal = applyMaskUnavailableReason(state, groupId, mask);
+  if (maskRefusal) return { ok: false, reason: maskRefusal };
+  const s = scale[0];
+  const tolerance = 1e-9 * Math.max(1, Math.abs(s));
+  if (Math.abs(scale[1] - s) > tolerance || Math.abs(scale[2] - s) > tolerance) {
+    return refuse(
+      `has a different scale on each axis (${scale.join(', ')}), which a skeleton's bones cannot take without shearing. Make the scale uniform first.`,
+    );
+  }
+  if (!(s > 0)) return refuse(`has a scale of ${s}, which cannot be applied into a skeleton.`);
+  if (isApplySourceAnimated(state, groupId, currentFrame))
+    return { ok: false, reason: ANIMATED_MSG };
+
+  const skeletonObjects = armatureSkeletonObjectsOf(state, groupId);
+  if (skeletonObjects.length !== 1) {
+    return refuse(
+      `holds ${skeletonObjects.length} skeletons (${skeletonObjects.map(nameOf).join(', ')}); apply each in its own group.`,
+    );
+  }
+  const [skeletonObjectId] = skeletonObjects;
+  const skeletonId = edgeTarget(state.nodes[skeletonObjectId], 'data')!;
+  const children = hierarchyChildIds(group);
+  const elsewhere = standingObjectsOf(state, skeletonId).filter((id) => !children.includes(id));
+  if (elsewhere.length > 0) {
+    return refuse(
+      `holds a skeleton that ${elsewhere.map((id) => `"${nameOf(id)}"`).join(', ')} also stands outside it, and applying would resize that too.`,
+    );
+  }
+  const underSkeleton = hierarchyChildIds(state.nodes[skeletonObjectId]);
+  if (underSkeleton.length > 0) {
+    return refuse(
+      `holds a skeleton with ${underSkeleton.map((id) => `"${nameOf(id)}"`).join(', ')} parented under it, which this Apply cannot keep in place yet.`,
+    );
+  }
+
+  // Which children are skinned to this skeleton: the ones whose data lane holds its modifier.
+  const modifiers = Object.values(state.nodes).filter(
+    (n) => n.type === 'ArmatureModifier' && edgeTarget(n, 'armature') === skeletonObjectId,
+  );
+  const skinnedChildOf = new Map<string, string>();
+  for (const childId of children) {
+    for (const laneId of dataLaneNodeIds(state, childId)) {
+      if (modifiers.some((m) => m.id === laneId)) skinnedChildOf.set(laneId, childId);
+    }
+  }
+  const outside = modifiers.filter((m) => !skinnedChildOf.has(m.id));
+  if (outside.length > 0) {
+    return refuse(
+      `holds a skeleton that skins a mesh outside it (at "${nameOf(outside[0].id)}"), and applying would resize that mesh's bones under it. Move the mesh into "${name}" first.`,
+    );
+  }
+
+  const nodes = state.nodes as unknown as Readonly<Record<string, GraphNodeLike>>;
+  const { layers } = poseLayerChain(nodes, skeletonObjectId);
+  const rig = new Set<string>([skeletonId, skeletonObjectId, ...layers]);
+  const channelNode = Object.values(state.nodes).find((n) => {
+    const target = (n.params as { target?: unknown } | undefined)?.target;
+    return isKeyframeChannelNode(n) && typeof target === 'string' && rig.has(target);
+  });
+  if (channelNode) {
+    return refuse(
+      `holds a rig keyed by "${nameOf(channelNode.id)}", a channel this Apply cannot rescale yet.`,
+    );
+  }
+  // #1541 — a driver writes a computed number into one param of the rig. If that param is a
+  // length, the number stays and its units shrink under it, so whatever it drives jumps (measured:
+  // a driven skeleton Object went from 0.75 to 0.30). A driver can compute anything, so there is
+  // no rescaling it; it is refused like a channel. Muted ones too: unmuting one later would jump.
+  const [rigDriverTarget, rigDriver] =
+    [...rig]
+      .map((id) => [id, driverStackForTarget(state.nodes, id, undefined, true)[0]] as const)
+      .find(([, d]) => d !== undefined) ?? [];
+  if (rigDriverTarget && rigDriver) {
+    return refuse(
+      `holds a rig driven by "${nameOf(rigDriver.id)}" (on "${nameOf(rigDriverTarget)}"), a driver this Apply cannot rescale yet.`,
+    );
+  }
+
+  const ops: Op[] = [];
+  // 1 — the rest.
+  const skeleton = state.nodes[skeletonId].params as SkeletonParams;
+  ops.push({
+    type: 'setParam',
+    nodeId: skeletonId,
+    paramPath: 'bones',
+    value: skeleton.bones.map((b) => ({ ...b, position: scaleVec(b.position, s) })),
+  });
+  // 2 — the motion the rig holds as keys.
+  for (const layerId of layers) {
+    const p = state.nodes[layerId].params as PoseLayerParams;
+    for (const c of p.channels) {
+      if (c.component !== 'position') continue;
+      // #1540 — Cycles only remaps WHEN the keys are read, so its output is the scaled keys; a
+      // value modifier (Noise, Generator, Envelope, Limits…) adds or clamps a length in the old
+      // units that scaling the keys does not reach.
+      const valueModifier = [
+        ...(c.modifiers ?? []),
+        ...(c.axisModifiers ?? []).flatMap((m) => m ?? []),
+      ].find((m) => m.type !== 'cycles');
+      if (valueModifier) {
+        return refuse(
+          `holds a rig whose "${c.bone}" position curve in "${nameOf(layerId)}" has a ${valueModifier.type} F-modifier, whose output this Apply cannot rescale yet.`,
+        );
+      }
+    }
+    ops.push(
+      {
+        type: 'setParam',
+        nodeId: layerId,
+        paramPath: 'members',
+        value: p.members.map((m) => (m.position ? { ...m, position: scaleVec(m.position, s) } : m)),
+      },
+      {
+        type: 'setParam',
+        nodeId: layerId,
+        paramPath: 'channels',
+        value: p.channels.map((c) =>
+          c.component === 'position' ? scaledPositionChannel(c, s) : c,
+        ),
+      },
+    );
+  }
+  // 3 — clips standing on the skeleton.
+  for (const clip of Object.values(state.nodes)) {
+    if (clip.type !== 'AnimationClip' || edgeTarget(clip, 'skeleton') !== skeletonId) continue;
+    const poses = (clip.params as AnimationClipParams).poses;
+    ops.push({
+      type: 'setParam',
+      nodeId: clip.id,
+      paramPath: 'poses',
+      value: poses.map((pose) => ({
+        ...pose,
+        bones: Object.fromEntries(
+          Object.entries(pose.bones).map(([bone, v]) => [
+            bone,
+            v.position ? { ...v, position: scaleVec(v.position, s) } : v,
+          ]),
+        ),
+      })),
+    });
+  }
+  // 4 + 5 — each child keeps its world placement.
+  const uniform = new THREE.Matrix4().makeScale(s, s, s);
+  const skinned = new Set(skinnedChildOf.values());
+  const placedChildren: string[] = [];
+  for (const childId of children) {
+    const child = state.nodes[childId];
+    if (childId === skeletonObjectId || skinned.has(childId)) {
+      if (isApplySourceAnimated(state, childId, currentFrame)) {
+        return refuse(`holds "${nameOf(childId)}", which is animated, and its keys would move it.`);
+      }
+      if (skinned.has(childId)) {
+        const road = applyRoadOf(state, childId);
+        if (road.kind !== 'into-stored-mesh') {
+          return refuse(
+            `holds "${nameOf(childId)}", a skinned mesh whose data is not stored mesh data.`,
+          );
+        }
+        const shared = sharedLaneRefusal(state, childId, road.dataId);
+        if (shared) return { ok: false, reason: shared };
+        ops.push({
+          type: 'setParam',
+          nodeId: road.dataId,
+          paramPath: 'mesh',
+          value: packMeshData(transformMeshData(unpackMeshData(road.mesh), uniform)),
+        });
+      }
+      const p = child.params as { position?: unknown };
+      if (isVec3(p.position)) {
+        ops.push({
+          type: 'setParam',
+          nodeId: childId,
+          paramPath: 'position',
+          value: scaleVec(p.position, s),
+        });
+      }
+    } else {
+      placedChildren.push(childId);
+    }
+  }
+  const compensation = childCompensation(
+    {
+      ...state,
+      nodes: {
+        ...state.nodes,
+        [groupId]: {
+          ...group,
+          inputs: {
+            ...group.inputs,
+            children: placedChildren.map((node) => ({ node, socket: 'out' })),
+          },
+        },
+      },
+    },
+    groupId,
+    uniform,
+    currentFrame,
+  );
+  if ('refusal' in compensation) return { ok: false, reason: compensation.refusal };
+  ops.push(...compensation.ops);
+  // 6 — the group.
+  ops.push(
+    { type: 'setParam', nodeId: groupId, paramPath: 'scale', value: [1, 1, 1] },
+    { type: 'setParam', nodeId: groupId, paramPath: 'pivot', value: scaleVec(pivot, s) },
+  );
+
+  try {
+    io.dispatchAtomic(ops, 'user', 'Apply scale → armature');
+  } catch (err) {
+    return { ok: false, reason: (err as Error).message };
+  }
+  for (const id of [groupId, skeletonId, ...layers, ...children]) io.clearTransients(id);
+  io.setSelection(groupId);
+  return { ok: true, bakedId: groupId };
 }
