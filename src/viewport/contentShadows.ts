@@ -143,3 +143,112 @@ export function installContentShadow(
     }
   }) as typeof shadow.updateMatrices;
 }
+
+// ── #1682 — SHADOW MAPS REDRAW ONLY WHEN WHAT THEY DRAW CHANGED ───────────────────────
+//
+// three redraws every shadow map on every render by default (`shadowMap.autoUpdate`), and the
+// canvas renders every frame, so a still scene paid for a 4096² sun map and six 1024² point
+// faces per frame — 2.3 → 16.2 ms an idle frame on the software renderer CI uses. A shadow map
+// depends only on the casters and the lights, never on the view, so orbiting needs no redraw.
+// Blender's EEVEE does the same: it re-renders only the shadow pages whose casters changed.
+//
+// So `autoUpdate` is off, and the scene's `onBeforeRender` — which three calls after it has
+// updated every world matrix and before the shadow pass (three r169 WebGLRenderer.js:1145,
+// :1161, :1216) — compares what the shadow pass would draw with what it drew last time, and asks
+// for one redraw when they differ (`needsUpdate`, cleared by three after the pass,
+// WebGLShadowMap.js:75/:197). A control pass (depth, normal) draws with one override material
+// and reads no shadow, so it never asks; the next beauty render still sees the change.
+//
+// REF: three r169 src/renderers/WebGLRenderer.js:1145/1161/1216,
+//      src/renderers/webgl/WebGLShadowMap.js:66-75/110/197.
+
+/**
+ * Every number the shadow pass's output depends on, in scene order: each non-chrome object's id,
+ * whether it is shown, and (shown) its world matrix; for a mesh, its geometry and attribute
+ * versions, draw range, materials and their versions, cast flag, instance matrices and morph
+ * weights; for a light, whether it casts and its shadow map size. Bones are objects, so a pose
+ * is in it; a CPU-deformed mesh bumps its position attribute's version. Chrome is pruned whole:
+ * it never casts.
+ */
+export function shadowInputs(root: THREE.Object3D): number[] {
+  const out: number[] = [];
+  const walk = (o: THREE.Object3D, shown: boolean): void => {
+    if (isEditorChrome(o)) return;
+    const visible = shown && o.visible;
+    out.push(o.id, visible ? 1 : 0);
+    if (!visible) return;
+    // Only the matrices a shadow pass reads: what it draws, the bones that skin it, and the
+    // lights. A group's or a camera's own matrix reaches the pass only through its drawn
+    // children, whose world matrices are recorded — the editor's view camera lives in the scene,
+    // and recording it redrew every map on every orbit frame (measured, #1682).
+    const drawn =
+      (o as THREE.Mesh).isMesh || (o as THREE.Line).isLine || (o as THREE.Points).isPoints;
+    if (drawn || (o as THREE.Bone).isBone || (o as THREE.Light).isLight) {
+      for (const e of o.matrixWorld.elements) out.push(e);
+    }
+    const mesh = o as THREE.Mesh;
+    if (mesh.isMesh) {
+      const g = mesh.geometry;
+      out.push(g.id, g.drawRange.start, g.drawRange.count, g.index?.version ?? -1);
+      for (const name in g.attributes) {
+        const a = g.attributes[name] as THREE.BufferAttribute | THREE.InterleavedBufferAttribute;
+        out.push(
+          (a as THREE.InterleavedBufferAttribute).isInterleavedBufferAttribute
+            ? (a as THREE.InterleavedBufferAttribute).data.version
+            : (a as THREE.BufferAttribute).version,
+        );
+      }
+      for (const m of Array.isArray(mesh.material) ? mesh.material : [mesh.material]) {
+        out.push(m.id, m.version);
+      }
+      out.push(mesh.castShadow ? 1 : 0);
+      const inst = o as THREE.InstancedMesh;
+      if (inst.isInstancedMesh) out.push(inst.count, inst.instanceMatrix.version);
+      if (mesh.morphTargetInfluences) out.push(...mesh.morphTargetInfluences);
+    }
+    const light = o as THREE.DirectionalLight;
+    if (light.isLight && light.shadow) {
+      out.push(light.castShadow ? 1 : 0, light.shadow.mapSize.x, light.shadow.mapSize.y);
+      // A sun or spot aims at its target (three r169 src/lights/LightShadow.js:66 reads
+      // `light.target.matrixWorld`), which need not sit in the scene.
+      if (light.target) for (const e of light.target.matrixWorld.elements) out.push(e);
+    }
+    for (const child of o.children) walk(child, visible);
+  };
+  walk(root, true);
+  return out;
+}
+
+const sameNumbers = (a: readonly number[], b: readonly number[]): boolean => {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+  return true;
+};
+
+/**
+ * Turn `gl`'s shadow maps from every-render to on-change for `scene`. Returns the undo.
+ * The first render after installing always draws them.
+ */
+export function installShadowInvalidation(
+  gl: Pick<THREE.WebGLRenderer, 'shadowMap'>,
+  scene: THREE.Scene,
+): () => void {
+  const prevAutoUpdate = gl.shadowMap.autoUpdate;
+  const prevHook = scene.onBeforeRender;
+  gl.shadowMap.autoUpdate = false;
+  gl.shadowMap.needsUpdate = true;
+  let last: number[] | null = null;
+  scene.onBeforeRender = function (this: THREE.Scene, ...args) {
+    prevHook.apply(this, args);
+    if (scene.overrideMaterial) return;
+    const now = shadowInputs(scene);
+    if (last === null || !sameNumbers(now, last)) {
+      gl.shadowMap.needsUpdate = true;
+      last = now;
+    }
+  } as typeof scene.onBeforeRender;
+  return () => {
+    scene.onBeforeRender = prevHook;
+    gl.shadowMap.autoUpdate = prevAutoUpdate;
+  };
+}
