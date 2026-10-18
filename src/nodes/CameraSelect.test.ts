@@ -8,7 +8,7 @@
 // REF: src/nodes/CameraSelect.ts; src/core/dag/evaluator.ts (`sourceIds`);
 //      src/app/activeCamera.test.ts (the id-side mirror).
 
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { __resetRegistryForTests, applyOp, emptyDagState, evaluate } from '../core/dag';
 import type { DagState } from '../core/dag';
 import type { Op } from '../core/dag/types';
@@ -139,5 +139,25 @@ describe('#1668 — through the real evaluator, the pick follows the camera, not
       },
     ]);
     expect(xOf(s)).toBe(20);
+  });
+});
+
+describe('#1679 — a v1 switch reaching the node migration says what it drops', () => {
+  const migrate = CameraSelectNode.migrations![1];
+
+  it('an index it cannot turn into a camera is dropped with a warning, not silently', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    expect(migrate({ active: 2 })).toEqual({ active: '' });
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(String(warn.mock.calls[0][0])).toContain('active');
+    warn.mockRestore();
+  });
+
+  it('a v1 switch with nothing to drop stays quiet', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    expect(migrate({ active: '' })).toEqual({ active: '' });
+    expect(migrate({})).toEqual({ active: '' });
+    expect(warn).not.toHaveBeenCalled();
+    warn.mockRestore();
   });
 });

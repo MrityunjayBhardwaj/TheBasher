@@ -142,8 +142,9 @@ const formatMigrations: Record<number, FormatMigration> = {
   // becomes the id of the camera it picked, read through the wires as saved.
   22: migrateCameraCutsToIds,
   // v23 → v24 (#1559): each Lag node becomes an instance of the built-in Lag template, holding the
-  // Lag's factor, start frame and controller, reading its `in`, under the Lag's own id.
-  23: migrateLagNodesToTemplate,
+  // Lag's factor, start frame and controller, reading its `in`, under the Lag's own id. First it
+  // finishes #1668 for a v23 file the graph build saved, which never ran it (#1679).
+  23: (raw) => migrateLagNodesToTemplate(finishCameraCutsForGraphV23(raw)),
 };
 
 // ── v1 → v2: AnimationLayer retirement (#199) ──────────────────────────────
@@ -2274,6 +2275,22 @@ export function migrateCameraCutsToIds(raw: unknown): unknown {
     `[migrateCameraCutsToIds] ${switches} camera switch(es) and ${channels} cut channel(s) now name their cameras (#1668).`,
   );
   return { ...proj, state: { ...proj.state, nodes: next }, formatVersion: 23 };
+}
+
+/**
+ * #1679 — two builds stamped v23 for different changes: the launch build for #1668 (cuts name
+ * their camera), the graph build for #1559 (Lag → template). When they merged, #1668 kept v23 and
+ * #1559 moved to v24, so a file the graph build saved reads as v23 while its camera switch still
+ * holds an index (node version 1) and its cuts are a number channel. The ladder skips v22 → v23
+ * for it, so this runs that pass here. A switch at node version 2 already names its camera — the
+ * launch build's v23 — and is left alone.
+ */
+function finishCameraCutsForGraphV23(raw: unknown): unknown {
+  const nodes = (raw as { state?: { nodes?: Record<string, RawNode> } }).state?.nodes;
+  const indexSwitch = Object.values(nodes ?? {}).some(
+    (n) => n?.type === 'CameraSelect' && (n.version ?? 1) < 2,
+  );
+  return indexSwitch ? migrateCameraCutsToIds(raw) : raw;
 }
 
 /**

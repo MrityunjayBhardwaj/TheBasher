@@ -160,3 +160,52 @@ describe('#1668 — v22 → v23: camera cuts name their cameras', () => {
     expect(selectOf(out.state).params).toEqual({ active: 'cam2' });
   });
 });
+
+// #1679 — the graph build stamped v23 for #1559 (Lag → template) without #1668, so a file it
+// saved says v23 while its switch still holds an index and its cuts are a number channel. The
+// ladder starts such a file past v22 → v23, so the v23 → v24 step has to finish the camera half.
+describe('#1679 — a v23 file from the graph build still has its cuts turned into cameras', () => {
+  const asGraphV23 = (s: DagState, active: number, cuts: [number, number][]) => ({
+    ...asV22(s, active, cuts),
+    formatVersion: 23,
+  });
+
+  it('loads through the real door with every shot on the camera it showed', async () => {
+    const saved = {
+      ...asGraphV23(fiveCameras(), 3, [
+        [0, 0],
+        [2, 2],
+        [4, 4],
+        [6, 1],
+        [8, 3],
+      ]),
+      id: 'p',
+      name: 'graph-build film',
+      createdAt: 0,
+      updatedAt: 0,
+      nodeVersions: { CameraSelect: 1, KeyframeChannelNumber: 2 },
+    };
+    const storage = new MemoryStorage();
+    await storage.write('projects/p/project.json', new TextEncoder().encode(JSON.stringify(saved)));
+    const loaded = await loadProject(storage, 'p');
+    const state = loaded.state as DagState;
+    expect(selectOf(state).params).toEqual({ active: 'cam4' });
+    expect(state.nodes.cuts.type).toBe('KeyframeChannelText');
+    expect(shotCameras(state)).toEqual(['0:n_camera', '2:cam3', '4:cam5', '6:cam2', '8:cam4']);
+  });
+
+  it('a v23 file the launch build saved comes through the v23 → v24 step unchanged', () => {
+    const launchV23 = migrateCameraCutsToIds(
+      asV22(fiveCameras(), 1, [
+        [0, 0],
+        [4, 2],
+      ]),
+    ) as { formatVersion: number; state: DagState };
+    const out = migrateProjectFormat(JSON.parse(JSON.stringify(launchV23))) as {
+      formatVersion: number;
+      state: DagState;
+    };
+    expect(out.formatVersion).toBe(PROJECT_FORMAT_VERSION);
+    expect(out.state).toEqual(launchV23.state);
+  });
+});

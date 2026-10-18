@@ -84,8 +84,16 @@ export const CameraSelectNode: NodeDefinition<CameraSelectParams, CameraValue | 
     // A v1 `active` is an index into the wires, which only the project-format step (v22 → v23,
     // `migrateCameraCutsToIds`) can turn into a camera — it sees the edges. A v1 node reaching
     // here did not come through it (a hand-built node): its index names no camera, so it picks the
-    // first, which is what an empty `active` says.
-    1: (old) => ({ ...(old as object), active: '' }),
+    // first, which is what an empty `active` says. #1679: when it drops a real index, it says so —
+    // a silent drop is how a graph-build v23 file lost every cut without a trace.
+    1: (old) => {
+      const was = (old as { active?: unknown }).active;
+      if (was !== undefined && was !== '')
+        console.warn(
+          `[CameraSelect v1 → v2] active ${JSON.stringify(was)} was an index into the wires; it names no camera here, so the switch shows its first camera (#1679).`,
+        );
+      return { ...(old as object), active: '' };
+    },
   },
   inputs: {
     cameras: { type: 'SceneObject', cardinality: 'list', sourceIds: true },
