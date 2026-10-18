@@ -171,10 +171,12 @@ const ORIGINS: Record<string, Origin> = {
     frequency: 'per-action',
     why: 'Cook or Generate click, or the motion-generate agent tool.',
   },
-  'src/app/asset/fitMotionPathScale.ts · worldUnitsOf → resolveWorldTransform': {
+  // #1681 — the path fit takes a cache again, so the cook button's per-render read forwards the
+  // button's shared cache; only the Cook action itself starts with none.
+  'src/app/asset/fitMotionPathScale.ts · fitMotionPathScaleOps → motionPathScaleFit': {
     count: 1,
     frequency: 'per-action',
-    why: 'Motion cook: reads each standing rig Object’s frame-0 world scale to fit the path (#1633).',
+    why: 'The Cook click or the motion-generate agent tool, once per producer (#1633, #1681).',
   },
   'src/app/asset/motionPathFromCurve.ts · waypointsFromCurve → curveSamplerFor': {
     count: 1,
@@ -300,6 +302,11 @@ const TAKERS: string[] = [
   'canWearMaterial@src/app/modifierGeometry.ts',
   'clipBakeStates@src/app/asset/bakeGeneratedClip.ts',
   'motionCookOffer@src/app/asset/cookMotionGenerations.ts',
+  // #1681 — the path fit: the producer's fit, each retarget's world ratio, each playing Object's
+  // world unit. The cook button hands these its cache (it reads the fit on every render).
+  'motionPathScaleFit@src/app/asset/fitMotionPathScale.ts',
+  'retargetRatios@src/app/asset/fitMotionPathScale.ts',
+  'worldUnitsOf@src/app/asset/fitMotionPathScale.ts',
   'resolveMeshUVSpace@src/app/resolveMeshUVSpace.ts',
   'resolveDataKind@src/app/modifierGeometry.ts',
   'scanForFollow@src/viewport/followScan.ts',

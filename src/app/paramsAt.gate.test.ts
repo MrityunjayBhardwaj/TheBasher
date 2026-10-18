@@ -161,6 +161,10 @@ const CONSUMERS: Record<string, Decision> = {
   'src/app/uiEvaluatorCache.ts': indifferent('never-reads-the-graph'),
   'src/app/resolveMeshUVSpace.ts': authored('delegates-to-a-folding-resolver'),
   'src/app/asset/cookMotionGenerations.ts': authored('fixed-ctx-by-design'),
+  // #1681 — the path fit takes the cook button's cache (TYPE only) and hands the authored state to
+  // `resolveWorldTransform` at frame 0: a rig's size is read at rest, never at the playhead, for
+  // the same reason the request it feeds must be time-invariant (the motion resolver's row below).
+  'src/app/asset/fitMotionPathScale.ts': authored('fixed-ctx-by-design'),
   // `dispatchApplyTransform` left this table at #1053 (its evaluate went with the clone road);
   // `canApplyTransform` takes its UI caller's cache (#1315), which brings it back for the TYPE only.
   'src/app/animate/dispatchApplyTransform.ts': authored('delegates-to-a-folding-resolver'),
@@ -348,7 +352,9 @@ describe('#582 — who evaluates the graph, and which params they need', () => {
     // (declared above as fixed-ctx).
     // 57 → 58 at #1353, a new road: binding a mesh reads its rest points and the armature's rest
     // bones (declared above as fixed-ctx).
-    expect(evaluatorConsumers()).toHaveLength(58); // 39 -> 40 at #935 (placement) (the motion resolver)
+    // 58 → 59 at #1681, not a new road: the path fit (#1633) takes the cook button's cache again,
+    // which #1508 had and the merge of the two dropped (declared above as fixed-ctx).
+    expect(evaluatorConsumers()).toHaveLength(59); // 39 -> 40 at #935 (placement) (the motion resolver)
   });
 
   it('every reason is load-bearing — no member of any union is decorative', () => {

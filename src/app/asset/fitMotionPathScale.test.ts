@@ -227,9 +227,9 @@ describe('fitting a generated walk’s path to its character (#1285)', () => {
   it('fits by the WORLD ratio when the character stands under a scaled group', async () => {
     const { cap } = recordingCapability();
     const { s: cooked, producerId, clipId } = await mintAndCook(cap);
-    let s = bind(cooked, clipId, 'tall_skel', 'tall_walk');
-    const rigRatio = appliedRatio(s, 'tall_walk');
-    s = apply(s, [
+    // The character stands in the scene BEFORE the walk is bound to it, as it does in the app: the
+    // bind wires the walk into its pose, which is what makes it the Object playing it (#1680).
+    let s = apply(cooked, [
       { type: 'addNode', nodeId: 'tall_obj', nodeType: 'Object', params: {} },
       {
         type: 'connect',
@@ -276,6 +276,8 @@ describe('fitting a generated walk’s path to its character (#1285)', () => {
         render: { node: 'n_render', socket: 'out' },
       },
     };
+    s = bind(s, clipId, 'tall_skel', 'tall_walk');
+    const rigRatio = appliedRatio(s, 'tall_walk');
 
     const fit = motionPathScaleFit(s, producerId);
     expect(fit.kind).toBe('fit');
@@ -408,6 +410,38 @@ describe('a rig stored in other units is fitted in world metres (#1508)', () => 
     const fit = motionPathScaleFit(s, producerId);
     expect(fit.kind).toBe('fit');
     expect(fitMotionPathScaleOps(s).refusals).toEqual([]);
+  });
+
+  // #1680 — only the Objects that PLAY the walk set its size. #1508 checked this; the fold into
+  // #1633 dropped it, and an idle copy of the character turned a correct fit into "mixed".
+  it('an idle copy of the character at another size does not change the fit', async () => {
+    const { s: playing, fit: alone } = await fitAlone(METRES);
+    const s = apply(playing, [
+      { type: 'addNode', nodeId: 'idle_obj', nodeType: 'Object', params: {} },
+      {
+        type: 'connect',
+        from: { node: 'm_skel', socket: 'out' },
+        to: { node: 'idle_obj', socket: 'data' },
+      },
+      {
+        type: 'addNode',
+        nodeId: 'half',
+        nodeType: 'Group',
+        params: { position: [3, 0, 0], rotation: [0, 0, 0], scale: [0.5, 0.5, 0.5] },
+      },
+      {
+        type: 'connect',
+        from: { node: 'idle_obj', socket: 'out' },
+        to: { node: 'half', socket: 'children' },
+      },
+      {
+        type: 'connect',
+        from: { node: 'half', socket: 'out' },
+        to: { node: 'n_scene', socket: 'children' },
+      },
+    ] as Op[]);
+    const producerId = Object.keys(s.nodes).find((id) => s.nodes[id].type === 'MotionGenerate')!;
+    expect(motionPathScaleFit(s, producerId)).toEqual(alone);
   });
 });
 

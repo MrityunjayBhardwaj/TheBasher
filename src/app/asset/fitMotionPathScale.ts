@@ -31,15 +31,31 @@
 // curve with nothing said, so the scale is left as it is and the cook names both.
 // With no character bound, the motion's own rig is what plays it, at ratio 1.
 //
+// ─────────────────────────────────────────────────────────────────────────────
+// WHY THE RATIO IS TAKEN TO THE WORLD FIRST (#1508, #1633)
+// ─────────────────────────────────────────────────────────────────────────────
+// `rootTravelScale` answers in each rig's own units — what the retarget needs,
+// because its output lives there. The path is drawn in world metres. A rig stored
+// in centimetres under a 0.01 group (every Mixamo character) reads ~100× its world
+// answer, so the request went out 100× too short. Blender never compares a
+// rig-space length across rigs or against the scene: it goes through the object's
+// world matrix first (`BKE_constraint_mat_convertspace`, constraint.cc:258-305,
+// v5.1.1). So each side's ratio is carried to the world through the Object that
+// stands its rig — and on the target side, only the Objects that PLAY this
+// retarget: an idle copy of the character at another size walks nothing (#1680).
+//
 // REF: src/core/import/retarget.ts (`rootTravelScale` — the one derivation);
 //      src/app/animate/retargetFromNodes.ts (`retargetOperandsFromNodes`, the
 //      operands the retarget itself reads); src/nodes/MotionGenerate.ts
-//      (`pathScale`, and why it enters the hash); issue #1285.
+//      (`pathScale`, and why it enters the hash); src/app/resolveWorldTransform.ts
+//      (the world composition the render uses); issues #1285, #1508, #1633, #1680.
 
+import type { EvaluatorCache } from '../../core/dag/evaluator';
 import type { DagState } from '../../core/dag/state';
 import type { Op } from '../../core/dag/types';
 import { rootTravelScale } from '../../core/import/retarget';
-import { edgeTarget } from '../animate/graphNodes';
+import { edgeTarget, type GraphNodeLike } from '../animate/graphNodes';
+import { poseLayerChain } from '../animate/poseChain';
 import { retargetOperandsFromNodes } from '../animate/retargetFromNodes';
 import { standingObjectsOf } from '../../core/import/skeletonObject';
 import { resolveWorldTransform } from '../resolveWorldTransform';
@@ -62,7 +78,6 @@ export type PathScaleFit =
       readonly ratios: readonly { readonly retargetId: string; readonly scale: number }[];
     };
 
-/** The ratio every `RetargetClip` playing one of this producer's clips applies, by node. */
 /** Frame 0, as the path is read (motionPathFromCurve's PATH_CTX): placement is a frame-0 fact. */
 const FIT_CTX = { time: { frame: 0, seconds: 0, normalized: 0 } } as const;
 
@@ -71,12 +86,20 @@ const FIT_CTX = { time: { frame: 0, seconds: 0, normalized: 0 } } as const;
  * — the uniform part of each one's world scale. Empty when none is reachable from the scene, which
  * the caller reads as 1: a rig nothing places is in world units by default. Two Objects at two
  * scales are two entries, so a rig stood twice at different sizes is refused as `mixed` like two
- * characters would be.
+ * characters would be. With `playing`, only the Objects whose pose chain starts at that retarget
+ * count (#1508): a copy of the character that plays something else, or nothing, is not this walk.
  */
-function worldUnitsOf(state: DagState, skeletonId: string): number[] {
+function worldUnitsOf(
+  state: DagState,
+  skeletonId: string,
+  cache?: EvaluatorCache,
+  playing?: string,
+): number[] {
+  const nodes = state.nodes as unknown as Readonly<Record<string, GraphNodeLike>>;
   const units: number[] = [];
   for (const objectId of standingObjectsOf(state, skeletonId)) {
-    const world = resolveWorldTransform(state, objectId, FIT_CTX);
+    if (playing !== undefined && poseLayerChain(nodes, objectId).source?.node !== playing) continue;
+    const world = resolveWorldTransform(state, objectId, FIT_CTX, cache);
     if (!world) continue;
     const [x, y, z] = world.scale.map(Math.abs);
     const unit = Math.cbrt(x * y * z);
@@ -85,9 +108,11 @@ function worldUnitsOf(state: DagState, skeletonId: string): number[] {
   return units;
 }
 
+/** The WORLD ratio every `RetargetClip` playing one of this producer's clips applies, by node. */
 function retargetRatios(
   state: DagState,
   producerId: string,
+  cache?: EvaluatorCache,
 ): { retargetId: string; scale: number }[] {
   const sinks = new Set(
     Object.keys(state.nodes).filter(
@@ -112,8 +137,8 @@ function retargetRatios(
     const rigRatio = rootTravelScale(sourceBones, map, targetBones);
     const sourceSkeleton = edgeTarget(state.nodes[source], 'skeleton');
     const targetSkeleton = edgeTarget(node, 'skeleton');
-    const sourceUnit = sourceSkeleton ? (worldUnitsOf(state, sourceSkeleton)[0] ?? 1) : 1;
-    const targetUnits = targetSkeleton ? worldUnitsOf(state, targetSkeleton) : [];
+    const sourceUnit = sourceSkeleton ? (worldUnitsOf(state, sourceSkeleton, cache)[0] ?? 1) : 1;
+    const targetUnits = targetSkeleton ? worldUnitsOf(state, targetSkeleton, cache, id) : [];
     for (const targetUnit of targetUnits.length > 0 ? targetUnits : [1]) {
       const scale = (rigRatio * targetUnit) / sourceUnit;
       if (Number.isFinite(scale) && scale > 0) out.push({ retargetId: id, scale });
@@ -122,14 +147,18 @@ function retargetRatios(
   return out;
 }
 
-export function motionPathScaleFit(state: DagState, producerId: string): PathScaleFit {
+export function motionPathScaleFit(
+  state: DagState,
+  producerId: string,
+  cache?: EvaluatorCache,
+): PathScaleFit {
   const node = state.nodes[producerId];
   if (!node || node.type !== 'MotionGenerate' || !edgeTarget(node, 'path')) {
     return { kind: 'no-path' };
   }
   const raw = (node.params as { pathScale?: unknown } | undefined)?.pathScale;
   const current = typeof raw === 'number' ? raw : 1;
-  const ratios = retargetRatios(state, producerId);
+  const ratios = retargetRatios(state, producerId, cache);
   if (ratios.length === 0) return { kind: 'fit', scale: 1, current };
   const [first] = ratios;
   if (ratios.every((r) => Math.abs(r.scale - first.scale) <= SAME_RATIO)) {
