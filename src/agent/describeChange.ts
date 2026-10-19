@@ -14,13 +14,20 @@
 // is a change to the cube.
 //
 // Names come from `nodeDisplayName`, the outliner's own answer, so a description never names a
-// thing differently from the outliner.
+// thing differently from the outliner. What feeds what comes from `relationsOf`, the one query
+// for a node's relationships (#1553), so a new kind of link is folded here the day it exists
+// (#1692).
+//
+// Two edits are not changes to a thing and get their own clause: binding an output (#1550) and
+// moving a node in the node view, which changes where it is drawn and nothing it does (#1562).
 //
 // REF: src/app/addPrimitives.ts (`buildAddPrimitiveOps`, the shapes an add takes);
-//      src/app/sceneTreeWalk.ts (`nodeDisplayName`); src/agent/orchestrator.ts (the callers).
+//      src/app/sceneTreeWalk.ts (`nodeDisplayName`); src/core/dag/idRefSweep.ts
+//      (`relationsOf`); src/agent/orchestrator.ts (the callers).
 
 import type { DagState } from '../core/dag/state';
-import type { Node, NodeId, Op } from '../core/dag/types';
+import type { NodeId, Op } from '../core/dag/types';
+import { relationsOf } from '../core/dag/idRefSweep';
 import { nodeDisplayName } from '../app/sceneTreeWalk';
 
 const DATA_NOUN: Record<string, string> = {
@@ -71,16 +78,6 @@ function names(items: string[]): string {
   return `${items.slice(0, 3).join(', ')} and ${items.length - 3} more`;
 }
 
-function refsOf(node: Node | undefined): NodeId[] {
-  if (!node) return [];
-  const out: NodeId[] = [];
-  for (const b of Object.values(node.inputs ?? {})) {
-    for (const r of Array.isArray(b) ? b : [b])
-      if (r && typeof r.node === 'string') out.push(r.node);
-  }
-  return out;
-}
-
 /**
  * One sentence for what `ops` do to `before`, e.g. "Added 3 cubes and an area light, changed
  * Cube". Empty when the ops change nothing a person would name.
@@ -109,14 +106,10 @@ export function describeChange(before: DagState, ops: readonly Op[]): string {
   const isScene = (id: NodeId) => (added.get(id)?.type ?? nodes[id]?.type) === 'Scene';
 
   // An existing node's change is shown on the object a person sees: the Object whose data it is.
-  const ownerOf = (id: NodeId): NodeId => {
-    for (const [oid, n] of Object.entries(nodes)) {
-      if (n.type !== 'Object') continue;
-      const data = n.inputs?.data;
-      if (data && !Array.isArray(data) && data.node === id) return oid;
-    }
-    return id;
-  };
+  const ownerOf = (id: NodeId): NodeId =>
+    relationsOf(before, id).wiresOut.find(
+      (w) => w.socket === 'data' && nodes[w.node]?.type === 'Object',
+    )?.node ?? id;
 
   const changed: NodeId[] = [];
   const change = (id: NodeId) => {
@@ -155,20 +148,42 @@ export function describeChange(before: DagState, ops: readonly Op[]): string {
     addedNouns.set(noun, (addedNouns.get(noun) ?? 0) + 1);
   }
 
-  // Removed things: a node is folded into another removed node it fed.
+  // Removed things: a node is folded into another removed node it fed, or acted on (a channel
+  // or constraint removed with the thing it animated).
   const removedNames: string[] = [];
   for (const id of removed) {
     if (!nodes[id]) continue;
-    const fedRemoved = Object.entries(nodes).some(
-      ([oid, n]) => oid !== id && removed.has(oid) && refsOf(n).includes(id),
-    );
-    if (!fedRemoved) removedNames.push(nodeDisplayName(nodes, id));
+    const r = relationsOf(before, id);
+    const partOfRemoved =
+      r.wiresOut.some((w) => w.node !== id && removed.has(w.node)) ||
+      r.refsOut.some((x) => x.role === 'subject' && x.node !== id && removed.has(x.node));
+    if (!partOfRemoved) removedNames.push(nodeDisplayName(nodes, id));
   }
+
+  // Bound outputs, and nodes moved in the node view: neither changes what a thing is.
+  const outputs: string[] = [];
+  const moved: NodeId[] = [];
+  const nameOf = (id: NodeId): string => {
+    const a = added.get(id);
+    return a ? `the new ${TYPE_NOUN[a.type] ?? typeWords(a.type)}` : nodeDisplayName(nodes, id);
+  };
 
   for (const op of ops) {
     switch (op.type) {
-      case 'setParam':
       case 'setMeta':
+        if (op.position !== undefined && op.name === undefined && op.nameFrom === undefined) {
+          if (!added.has(op.nodeId) && nodes[op.nodeId] && !moved.includes(op.nodeId))
+            moved.push(op.nodeId);
+        } else change(op.nodeId);
+        break;
+      case 'setOutput':
+        outputs.push(
+          op.ref
+            ? `set the ${op.name} output to ${nameOf(op.ref.node)}`
+            : `cleared the ${op.name} output`,
+        );
+        break;
+      case 'setParam':
       case 'setSpareParam':
       case 'removeSpareParam':
         change(op.nodeId);
@@ -186,6 +201,9 @@ export function describeChange(before: DagState, ops: readonly Op[]): string {
   if (removedNames.length > 0) clauses.push(`removed ${names(removedNames)}`);
   if (changed.length > 0)
     clauses.push(`changed ${names(changed.map((id) => nodeDisplayName(nodes, id)))}`);
+  clauses.push(...outputs);
+  if (moved.length > 0)
+    clauses.push(`moved ${names(moved.map((id) => nodeDisplayName(nodes, id)))} in the graph`);
   const s = clauses.join(', ');
   return s ? s[0].toUpperCase() + s.slice(1) : '';
 }
