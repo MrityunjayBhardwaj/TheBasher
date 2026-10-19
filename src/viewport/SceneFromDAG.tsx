@@ -2663,6 +2663,26 @@ function writeDeformed(
   built.geometry.boundingBox = null;
 }
 
+// #1610 / #1684 — a skinned mesh keeps its own bounds, measured from the posed vertices
+// (`SkinnedMesh.computeBoundingSphere` re-skins every vertex on the CPU, ~1.6 ms per X Bot mesh on
+// the software renderer). A click tests those bounds before any triangle, so once the bones move
+// they must be measured again, or a character that has walked away from where it was imported is
+// not under the pointer. They are NOT dropped to null for that: the renderer measures a null
+// sphere on every draw to sort objects (three r169 WebGLRenderer.js:1374-1379), which re-skinned
+// every character every frame, idle or not (measured: 2 re-skins, 3.3 ms per frame for one X Bot).
+// So a pose only marks the sphere stale, and a click measures it first. Nothing else needs it
+// fresh: the mesh is never frustum-culled, and the sort only orders by the centre. The box is read
+// by no draw, so it is simply dropped on each pose (a click skips a null box).
+// REF: three r169 src/objects/SkinnedMesh.js:69-82/114, src/renderers/WebGLRenderer.js:1374-1379.
+const staleSkinBounds = new WeakSet<THREE.SkinnedMesh>();
+
+function measureSkinBoundsOnPick(mesh: THREE.SkinnedMesh): void {
+  mesh.raycast = (raycaster, intersects) => {
+    if (staleSkinBounds.delete(mesh)) mesh.computeBoundingSphere();
+    THREE.SkinnedMesh.prototype.raycast.call(mesh, raycaster, intersects);
+  };
+}
+
 function SkinnedMeshR({
   pose,
   data,
@@ -2733,6 +2753,7 @@ function SkinnedMeshR({
       mesh.bindMode = THREE.DetachedBindMode;
       mesh.bind(draw.skeleton, draw.bindMatrix);
       mesh.frustumCulled = false;
+      measureSkinBoundsOnPick(mesh);
       draw.pose(useTimeStore.getState().seconds, skin.pose);
       next = { mesh, draw, geometry, deformed: null };
     }
@@ -2746,18 +2767,11 @@ function SkinnedMeshR({
     if (!built) return;
     const seconds = useTimeStore.getState().seconds;
     built.draw?.pose(seconds, skinPose.current);
-    // #1610 — a skinned mesh keeps its own bounds, measured from the posed vertices the first time
-    // a click asks and never again (`SkinnedMesh.raycast`). The bones just moved, so they are
-    // dropped: a character that has walked away from where it was imported is still under the
-    // pointer. Measured again only when something asks (the same rule as the bones, #1507).
+    // #1610 — the bones just moved, so the bounds a click tests are stale (`measureSkinBoundsOnPick`).
     if (built.draw && built.mesh instanceof THREE.SkinnedMesh) {
-      // three's types call these always present; its raycast is what reads null as "measure".
-      const bounds = built.mesh as unknown as {
-        boundingSphere: THREE.Sphere | null;
-        boundingBox: THREE.Box3 | null;
-      };
-      bounds.boundingSphere = null;
-      bounds.boundingBox = null;
+      staleSkinBounds.add(built.mesh);
+      // No draw reads the box, so dropping it costs nothing; `Box3.setFromObject` measures it anew.
+      (built.mesh as unknown as { boundingBox: THREE.Box3 | null }).boundingBox = null;
     }
     writeDeformed(built, seconds, skinPose.current);
   });
