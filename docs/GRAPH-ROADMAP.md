@@ -93,8 +93,9 @@ its measurement on the issue:
 - #1556: a read-only spreadsheet of a node's attributes.
 
 #1675, a read-only Graph editor space from the launch work, is the first slice of #1563. It
-should read the same layout (`layoutOf`) and relationships (`relationsOf`) as the rest of
-this step, so there is one layout and one query, not two.
+now reads the graph's own layout (`layoutOf`, with the launch's layered placement moved into
+it) and relationships (`relationsOf`, through `viewEdgesOf`), and shows one level at a time,
+so there is one layout and one query, not two.
 
 ## In the milestone, not yet placed in the order
 

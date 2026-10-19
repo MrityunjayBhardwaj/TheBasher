@@ -1,117 +1,14 @@
 import { describe, it, expect } from 'vitest';
-import { layoutGraph, sceneGraphOf } from './sceneGraph';
+import { sceneGraphOf } from './sceneGraph';
+import { buildDefaultDagState } from '../core/project/default';
+import { applyOps } from '../core/dag/ops';
+import { rawSpringOps } from '../test-utils/rawSpring';
+import { plazaState } from '../test-utils/plazaGraph';
 import { registerAllNodes } from '../nodes/registerAll';
 import type { DagState } from '../core/dag/state';
 
 // The references come from each node type's declared `idRefs`, so the registry has to be loaded.
 registerAllNodes();
-
-// The plaza run in miniature: a camera aimed at the runner by a Track To and pushed in by keys,
-// the runner (a group holding a meshed object and a chain of empty transforms), a ground tile, and a
-// stand-in character left in the file with its only drawable hidden.
-function plazaState(): DagState {
-  return {
-    nodes: {
-      render: {
-        id: 'render',
-        type: 'RenderOutput',
-        params: {},
-        inputs: { scene: { node: 'scene', socket: 'out' } },
-      },
-      scene: {
-        id: 'scene',
-        type: 'Scene',
-        params: {},
-        inputs: {
-          camera: { node: 'cam', socket: 'out' },
-          children: [
-            { node: 'runner', socket: 'out' },
-            { node: 'tile', socket: 'out' },
-            { node: 'standIn', socket: 'out' },
-          ],
-        },
-      },
-      cam: {
-        id: 'cam',
-        type: 'Object',
-        params: {},
-        inputs: { data: { node: 'camData', socket: 'out' } },
-      },
-      camData: { id: 'camData', type: 'CameraData', params: {}, inputs: {} },
-      camKeys: {
-        id: 'camKeys',
-        type: 'KeyframeChannelVec3',
-        params: { target: 'cam', paramPath: 'position' },
-        inputs: {},
-      },
-      track: {
-        id: 'track',
-        type: 'TrackTo',
-        params: { target: 'cam', aimNode: 'body' },
-        inputs: {},
-      },
-      runner: {
-        id: 'runner',
-        type: 'Group',
-        params: {},
-        inputs: {
-          children: [
-            { node: 'rig', socket: 'out' },
-            { node: 'body', socket: 'out' },
-          ],
-        },
-      },
-      // An imported transform chain that holds no geometry, as glTF imports carry.
-      rig: {
-        id: 'rig',
-        type: 'Group',
-        params: {},
-        inputs: { children: [{ node: 'empty', socket: 'out' }] },
-      },
-      empty: { id: 'empty', type: 'Group', params: {}, inputs: {} },
-      body: {
-        id: 'body',
-        type: 'Object',
-        params: {},
-        inputs: { data: { node: 'bodyMesh', socket: 'out' } },
-      },
-      bodyMesh: { id: 'bodyMesh', type: 'PolyMeshData', params: {}, inputs: {} },
-      tile: {
-        id: 'tile',
-        type: 'Object',
-        params: {},
-        inputs: { data: { node: 'tileMesh', socket: 'out' } },
-      },
-      tileMesh: { id: 'tileMesh', type: 'PolyMeshData', params: {}, inputs: {} },
-      standIn: {
-        id: 'standIn',
-        type: 'Group',
-        params: {},
-        inputs: {
-          children: [
-            { node: 'standInEmpty', socket: 'out' },
-            { node: 'standInBody', socket: 'out' },
-          ],
-        },
-      },
-      standInEmpty: { id: 'standInEmpty', type: 'Group', params: {}, inputs: {} },
-      standInBody: {
-        id: 'standInBody',
-        type: 'Object',
-        params: { viewport: false },
-        inputs: { data: { node: 'standInMesh', socket: 'out' } },
-      },
-      standInMesh: { id: 'standInMesh', type: 'PolyMeshData', params: {}, inputs: {} },
-      standInKeys: {
-        id: 'standInKeys',
-        type: 'KeyframeChannelVec3',
-        params: { target: 'standIn', paramPath: 'position' },
-        inputs: {},
-      },
-    },
-    outputs: { scene: { node: 'scene', socket: 'out' }, render: { node: 'render', socket: 'out' } },
-  } as unknown as DagState;
-}
 
 const ids = (g: { nodes: readonly { id: string }[] }) => g.nodes.map((n) => n.id).sort();
 
@@ -193,60 +90,52 @@ describe('sceneGraphOf — #1675 the scene as nodes', () => {
   });
 });
 
-describe('layoutGraph — #1675 data flows left to right', () => {
-  const O = { width: 200, colGap: 80, rowGap: 12 };
-  const laid = () => {
-    const g = sceneGraphOf(plazaState(), { showHidden: true });
-    const boxes = g.nodes.map((n) => ({ id: n.id, height: 40 + n.inputs.length * 18 }));
-    return { g, boxes, l: layoutGraph(boxes, g.wires, O) };
-  };
+describe('sceneGraphOf — #1563 one level at a time', () => {
+  /** The default scene with a spring on its box: a Solver whose body is its own level. */
+  function withSpring(): DagState {
+    const base = applyOps(buildDefaultDagState(), [
+      {
+        type: 'addNode',
+        nodeId: 'ctl',
+        nodeType: 'Null',
+        params: { position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
+      },
+      {
+        type: 'connect',
+        from: { node: 'ctl', socket: 'out' },
+        to: { node: 'n_scene', socket: 'children' },
+      },
+    ]).next;
+    return applyOps(
+      base,
+      rawSpringOps(base, { targetId: 'n_box', controllerId: 'ctl', idFor: (k) => `s_${k}` }),
+    ).next;
+  }
 
-  it('never runs a wire right to left', () => {
-    const { g, l } = laid();
-    for (const w of g.wires)
-      expect(l.pos.get(w.from)!.x, `${w.from} → ${w.to}`).toBeLessThan(l.pos.get(w.to)!.x);
-  });
+  it('the top level shows the owner and not what is inside it; going in shows only that', () => {
+    const s = withSpring();
+    const top = sceneGraphOf(s, { showHidden: true });
+    const solver = top.nodes.find((n) => n.id === 's_solver')!;
+    expect(solver.inside).toBeGreaterThan(3);
+    expect(top.path).toEqual([]);
 
-  it('puts the render in the last column', () => {
-    const { l } = laid();
-    expect(l.pos.get('render')!.x).toBe(Math.max(...[...l.pos.values()].map((p) => p.x)));
-  });
-
-  it('never overlaps two nodes in a column', () => {
-    const { boxes, l } = laid();
-    const h = new Map(boxes.map((b) => [b.id, b.height]));
-    const byX = new Map<number, string[]>();
-    for (const [id, p] of l.pos) byX.set(p.x, [...(byX.get(p.x) ?? []), id]);
-    for (const col of byX.values()) {
-      const sorted = col.sort((a, b) => l.pos.get(a)!.y - l.pos.get(b)!.y);
-      for (let i = 1; i < sorted.length; i++) {
-        expect(l.pos.get(sorted[i])!.y).toBeGreaterThanOrEqual(
-          l.pos.get(sorted[i - 1])!.y + h.get(sorted[i - 1])! + O.rowGap - 1e-6,
-        );
-      }
+    const body = sceneGraphOf(s, { showHidden: true, level: 's_solver' });
+    expect(body.path).toEqual(['s_solver']);
+    expect(body.nodes).toHaveLength(solver.inside);
+    const inside = new Set(body.nodes.map((n) => n.id));
+    expect(top.nodes.some((n) => inside.has(n.id))).toBe(false);
+    // Every node is shown at exactly one level.
+    expect(top.nodes.length + body.nodes.length).toBe(Object.keys(s.nodes).length);
+    // A line is drawn only when both its ends are at the level shown.
+    for (const g of [top, body]) {
+      const here = new Set(g.nodes.map((n) => n.id));
+      for (const w of g.wires) expect(here.has(w.from) && here.has(w.to)).toBe(true);
     }
   });
 
-  it('pulls a source beside its reader rather than leaving it at the far left', () => {
-    // The camera sits deep (the runner's body → the Track To → the camera); its lens has no
-    // inputs, so a plain longest-path ranking would leave it in the first column.
-    const { l } = laid();
-    expect(l.pos.get('cam')!.x).toBeGreaterThan(O.width + O.colGap);
-    expect(l.pos.get('camData')!.x).toBe(l.pos.get('cam')!.x - (O.width + O.colGap));
-  });
-
-  it('survives a cycle and still places every node', () => {
-    const l = layoutGraph(
-      [
-        { id: 'a', height: 40 },
-        { id: 'b', height: 40 },
-      ],
-      [
-        { from: 'a', to: 'b' },
-        { from: 'b', to: 'a' },
-      ],
-      O,
-    );
-    expect(l.pos.size).toBe(2);
+  it('a level whose owner is gone reads as the top level', () => {
+    const g = sceneGraphOf(plazaState(), { showHidden: true, level: 'nothing' });
+    expect(g.path).toEqual([]);
+    expect(g.nodes).toHaveLength(Object.keys(plazaState().nodes).length);
   });
 });

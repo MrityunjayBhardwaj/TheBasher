@@ -301,8 +301,8 @@ describe('relationsOf — one query for every relationship of a node (#1553)', (
   it('lists wires, references and name followers, each in both directions', () => {
     const s = hubScene();
     expect(relationsOf(s, 'hub')).toEqual({
-      wiresIn: [{ node: 'feed', socket: 'a' }],
-      wiresOut: [{ node: 'reader', socket: 'b' }],
+      wiresIn: [{ node: 'feed', socket: 'a', output: 'out' }],
+      wiresOut: [{ node: 'reader', socket: 'b', output: 'out' }],
       refsOut: [],
       refsIn: [
         { node: 'driver', path: 'target', role: 'subject', owns: false },
@@ -319,7 +319,7 @@ describe('relationsOf — one query for every relationship of a node (#1553)', (
       { node: 'hub', path: 'target', role: 'subject', owns: false },
     ]);
     expect(relationsOf(s, 'named').follows).toBe('hub');
-    expect(relationsOf(s, 'reader').wiresIn).toEqual([{ node: 'hub', socket: 'b' }]);
+    expect(relationsOf(s, 'reader').wiresIn).toEqual([{ node: 'hub', socket: 'b', output: 'out' }]);
   });
 
   it('CONTROL: a node nothing touches has no relationships', () => {
