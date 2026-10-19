@@ -163,6 +163,23 @@ describe('#1682 — shadow maps redraw only when what they draw changed', () => 
     expect(render()).toBe(false);
   });
 
+  // #1694 — the app's skinned characters pose a skeleton whose bones are NOT in the scene
+  // (`src/app/skinnedDraw.ts`); a bone added to the scene, as above, cannot show that.
+  it("posing a skin's own skeleton, outside the scene, asks for a redraw", () => {
+    const { scene, render } = rig();
+    const bone = new THREE.Bone();
+    const skin = new THREE.SkinnedMesh(new THREE.BoxGeometry(), new THREE.MeshStandardMaterial());
+    skin.bind(new THREE.Skeleton([bone]));
+    scene.add(skin);
+    expect(bone.parent).toBeNull();
+    render();
+    expect(render()).toBe(false);
+    bone.rotation.z = 0.3;
+    bone.updateMatrixWorld(true); // what the draw's pose does, since the scene never reaches it
+    expect(render()).toBe(true);
+    expect(render()).toBe(false);
+  });
+
   // Measured in the app: the editor's view camera is a child of the scene, so counting every
   // object's matrix redrew the shadows on every orbit frame (61 redraws in ~30 frames).
   it('a camera in the scene casts nothing: moving it asks for nothing, aiming a sun does', () => {

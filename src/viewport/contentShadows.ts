@@ -167,7 +167,8 @@ export function installContentShadow(
  * whether it is shown, and (shown) its world matrix; for a mesh, its geometry and attribute
  * versions, draw range, materials and their versions, cast flag, instance matrices and morph
  * weights; for a light, whether it casts and its shadow map size. Bones are objects, so a pose
- * is in it; a CPU-deformed mesh bumps its position attribute's version. Chrome is pruned whole:
+ * is in it, and so are a skinned mesh's own skeleton's bones, which need not be in the scene; a
+ * CPU-deformed mesh bumps its position attribute's version. Chrome is pruned whole:
  * it never casts.
  */
 export function shadowInputs(root: THREE.Object3D): number[] {
@@ -205,6 +206,15 @@ export function shadowInputs(root: THREE.Object3D): number[] {
       const inst = o as THREE.InstancedMesh;
       if (inst.isInstancedMesh) out.push(inst.count, inst.instanceMatrix.version);
       if (mesh.morphTargetInfluences) out.push(...mesh.morphTargetInfluences);
+      // An imported character's bones live outside the scene (`src/app/skinnedDraw.ts`), so the
+      // walk never meets them: a pose is read off the skeleton the skin draws with (#1694).
+      const skinned = o as THREE.SkinnedMesh;
+      if (skinned.isSkinnedMesh && skinned.skeleton) {
+        for (const e of skinned.bindMatrix.elements) out.push(e);
+        for (const bone of skinned.skeleton.bones) {
+          for (const e of bone.matrixWorld.elements) out.push(e);
+        }
+      }
     }
     const light = o as THREE.DirectionalLight;
     if (light.isLight && light.shadow) {
