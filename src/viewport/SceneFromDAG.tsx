@@ -2667,10 +2667,10 @@ function writeDeformed(
 // (`SkinnedMesh.computeBoundingSphere` re-skins every vertex on the CPU, ~1.6 ms per X Bot mesh on
 // the software renderer). A click tests those bounds before any triangle, so once the bones move
 // they must be measured again, or a character that has walked away from where it was imported is
-// not under the pointer. They are NOT dropped to null for that: the renderer measures a null
+// not under the pointer. The sphere is NOT dropped every frame for that: the renderer measures a null
 // sphere on every draw to sort objects (three r169 WebGLRenderer.js:1374-1379), which re-skinned
 // every character every frame, idle or not (measured: 2 re-skins, 3.3 ms per frame for one X Bot).
-// So a pose only marks the sphere stale, and a click measures it first. Nothing else needs it
+// So a pose only marks the sphere stale, and a click drops it just before testing. Nothing else needs it
 // fresh: the mesh is never frustum-culled, and the sort only orders by the centre. The box is read
 // by no draw, so it is simply dropped on each pose (a click skips a null box).
 // REF: three r169 src/objects/SkinnedMesh.js:69-82/114, src/renderers/WebGLRenderer.js:1374-1379.
@@ -2678,7 +2678,11 @@ const staleSkinBounds = new WeakSet<THREE.SkinnedMesh>();
 
 function measureSkinBoundsOnPick(mesh: THREE.SkinnedMesh): void {
   mesh.raycast = (raycaster, intersects) => {
-    if (staleSkinBounds.delete(mesh)) mesh.computeBoundingSphere();
+    // A null sphere is what three's raycast measures first (SkinnedMesh.js:114), on this mesh's own
+    // field — the shared geometry is never written.
+    if (staleSkinBounds.delete(mesh)) {
+      (mesh as unknown as { boundingSphere: THREE.Sphere | null }).boundingSphere = null;
+    }
     THREE.SkinnedMesh.prototype.raycast.call(mesh, raycaster, intersects);
   };
 }
