@@ -97,10 +97,53 @@ test('a sub-network is its own level: double-click goes in, the path bar comes o
       'user',
       'spring',
     );
+    // And a key on the camera's position, through the inspector's own road.
+    const { dispatchFirstKeyComposite } = await import('/src/app/animate/dispatchMutator.ts');
+    const keyed = dispatchFirstKeyComposite({
+      targetId: 'n_camera',
+      paramPath: 'position',
+      value: [0, 2, 8],
+      seconds: 0,
+    });
+    if (!keyed.ok) throw new Error(keyed.reason);
   });
   await page.getByTestId('space-switch-graph').click();
   const solver = page.locator('[data-graph-node="s_solver"]');
   await expect(solver).toBeVisible();
+
+  // The camera's keys act only on its position: hidden until asked for, and the row they drive
+  // is tinted instead. Asked for, they are a node again. The driver is fed by the Solver's
+  // wire, so it is drawn either way.
+  const channel = page.locator('[data-graph-node^="n_camera"][data-graph-node*="position"]');
+  await expect(channel).toHaveCount(0);
+  await expect(page.locator('[data-graph-node="s_driver"]')).toHaveCount(1);
+  await expect(
+    page.locator('[data-graph-node="n_camera"] [data-graph-tint="position:KeyframeChannelVec3"]'),
+  ).toHaveCount(1);
+  await page.getByTestId('graph-view-show-animation').check();
+  await expect(channel).toHaveCount(1);
+  await expect(page.locator('[data-graph-tint]')).toHaveCount(0);
+  // Reference lines: all of them, only the selected node's, or none. Wires always draw.
+  const refLines = page.locator('[data-graph-line^="ref:"]');
+  const wireLines = page.locator('[data-graph-line^="wire:"]');
+  const wiresDrawn = await wireLines.count();
+  await expect(refLines).not.toHaveCount(0);
+  await page.getByTestId('graph-view-ref-lines').selectOption('none');
+  await expect(refLines).toHaveCount(0);
+  await expect(wireLines).toHaveCount(wiresDrawn);
+  await page.getByTestId('graph-view-ref-lines').selectOption('selected');
+  await expect(refLines).toHaveCount(0);
+  await page.evaluate(async () => {
+    const m = await import('/src/app/stores/selectionStore.ts');
+    m.useSelectionStore.getState().select('s_driver');
+  });
+  await expect(page.locator('[data-graph-line="ref:s_driver>n_box"]')).toHaveCount(1);
+  await page.getByTestId('graph-view-ref-lines').selectOption('all');
+  // The scene and render outputs are flags on their nodes.
+  await expect(page.locator('[data-graph-node="n_scene"] [data-graph-badges]')).toHaveAttribute(
+    'data-graph-badges',
+    /SCENE/,
+  );
   const inside = Number(
     await solver.locator('[data-graph-inside]').getAttribute('data-graph-inside'),
   );

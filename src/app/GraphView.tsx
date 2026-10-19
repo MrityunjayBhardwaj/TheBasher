@@ -66,10 +66,25 @@ export function GraphView(): ReactNode {
   const select = useSelectionStore((s) => s.select);
   const [showHidden, setShowHidden] = useState(false);
   const [level, setLevel] = useState<NodeId | null>(null);
+  // Animation, constraints and drivers are hidden until asked for; what they drive is tinted.
+  const [showAnimation, setShowAnimation] = useState(false);
+  // Which references are drawn as lines (Houdini's dependency lines: all, the selected
+  // node's, or none).
+  const [refLines, setRefLines] = useState<'all' | 'selected' | 'none'>('all');
 
   const graph = useMemo(
-    () => sceneGraphOf(state, { showHidden, level }),
-    [state, showHidden, level],
+    () => sceneGraphOf(state, { showHidden, showAnimation, level }),
+    [state, showHidden, showAnimation, level],
+  );
+  const lines = useMemo(
+    () =>
+      graph.wires.filter(
+        (w) =>
+          !w.ref ||
+          refLines === 'all' ||
+          (refLines === 'selected' && (w.from === primary || w.to === primary)),
+      ),
+    [graph, refLines, primary],
   );
   const byId = useMemo(() => new Map(graph.nodes.map((n) => [n.id, n])), [graph]);
   // Positions are the graph's, for every node at every level; this level's box is what the
@@ -222,6 +237,7 @@ export function GraphView(): ReactNode {
         <span data-testid="graph-view-counts" className="tabular-nums">
           {graph.nodes.length} nodes · {graph.wires.length - refCount} wires · {refCount} references
           {graph.omitted > 0 ? ` · ${graph.omitted} hidden` : ''}
+          {graph.animation > 0 ? ` · ${graph.animation} animation hidden` : ''}
         </span>
         <span className="flex-1" />
         <label className="flex cursor-pointer items-center gap-1.5">
@@ -233,6 +249,29 @@ export function GraphView(): ReactNode {
             onChange={(e) => setShowHidden(e.target.checked)}
           />
           Show hidden
+        </label>
+        <label className="flex cursor-pointer items-center gap-1.5">
+          <input
+            id="graph-view-show-animation"
+            data-testid="graph-view-show-animation"
+            type="checkbox"
+            checked={showAnimation}
+            onChange={(e) => setShowAnimation(e.target.checked)}
+          />
+          Animation
+        </label>
+        <label className="flex items-center gap-1.5">
+          References
+          <select
+            data-testid="graph-view-ref-lines"
+            value={refLines}
+            onChange={(e) => setRefLines(e.target.value as typeof refLines)}
+            className="rounded border border-border bg-bg px-1 py-0.5 text-fg"
+          >
+            <option value="all">All</option>
+            <option value="selected">Selected</option>
+            <option value="none">None</option>
+          </select>
         </label>
         <button
           type="button"
@@ -262,7 +301,7 @@ export function GraphView(): ReactNode {
           </defs>
           <rect width="100%" height="100%" fill="url(#graph-view-dots)" />
           <g transform={`translate(${view.x},${view.y}) scale(${view.k})`}>
-            {graph.wires.map((w, i) => {
+            {lines.map((w, i) => {
               const a = byId.get(w.from)!;
               const b = byId.get(w.to)!;
               const pa = layout.pos.get(w.from)!;
@@ -282,6 +321,7 @@ export function GraphView(): ReactNode {
               return (
                 <path
                   key={i}
+                  data-graph-line={w.ref ? `ref:${w.from}>${w.to}` : `wire:${w.from}>${w.to}`}
                   d={`M${x1},${y1} C${x1 + dx},${y1} ${x2 - dx},${y2} ${x2},${y2}`}
                   fill="none"
                   stroke={w.ref ? KIND[kindOf(holder.type)].color : '#5b6478'}
@@ -297,6 +337,11 @@ export function GraphView(): ReactNode {
               const color = KIND[kindOf(n.type)].color;
               const selected = n.id === primary;
               const dim = lit ? !(lit.up.has(n.id) || lit.down.has(n.id)) : false;
+              const badges = [
+                ...n.flags.map((f) => (f === 'scene' ? 'SCENE' : 'RENDER')),
+                ...(n.timeDependent ? ['⏱'] : []),
+                ...(n.away ? [`↗${n.away}`] : []),
+              ];
               return (
                 <g
                   key={n.id}
@@ -306,7 +351,18 @@ export function GraphView(): ReactNode {
                   opacity={dim ? 0.18 : n.hidden ? 0.55 : 1}
                   className="cursor-pointer"
                 >
-                  <title>{`${n.name}\n${n.type} · ${n.id}${n.hidden ? '\nhidden' : ''}${n.inside ? '\ndouble-click to go inside' : ''}`}</title>
+                  <title>
+                    {[
+                      n.name,
+                      `${n.type} · ${n.id}`,
+                      ...n.flags.map((f) => `the ${f} output`),
+                      ...(n.timeDependent ? ['changes with time'] : []),
+                      ...(n.away ? [`${n.away} lines to another level`] : []),
+                      ...(n.namedAfter ? [`named after ${n.namedAfter}`] : []),
+                      ...(n.hidden ? ['hidden'] : []),
+                      ...(n.inside ? ['double-click to go inside'] : []),
+                    ].join('\n')}
+                  </title>
                   <rect
                     width={W}
                     height={h}
@@ -317,8 +373,21 @@ export function GraphView(): ReactNode {
                   />
                   <rect width={W} height={4} rx={2} fill={color} />
                   <text x={10} y={19} fontSize={12.5} fontWeight={600} fill="#ededf2">
-                    {clip(n.name, 30)}
+                    {clip(n.name, badges.length ? 20 : 30)}
                   </text>
+                  {badges.length > 0 && (
+                    <text
+                      data-graph-badges={badges.join(' ')}
+                      x={W - 10}
+                      y={19}
+                      fontSize={9.5}
+                      fontWeight={600}
+                      textAnchor="end"
+                      fill="#f0c75e"
+                    >
+                      {badges.join(' ')}
+                    </text>
+                  )}
                   <text x={10} y={33} fontSize={10.5} fill="#9b9ca6">
                     {clip(n.type, n.inside ? 22 : 34)}
                   </text>
@@ -336,13 +405,18 @@ export function GraphView(): ReactNode {
                   )}
                   {n.inputs.map((r) => {
                     const y = inY(n, r.socket, r.ref);
+                    // A row driven by hidden animation takes the colour of what drives it.
+                    const tint = r.tint ? KIND[kindOf(r.tint)].color : undefined;
                     return (
-                      <g key={`${r.ref ? 'r' : 'w'}:${r.socket}`}>
+                      <g
+                        key={`${r.ref ? 'r' : 'w'}:${r.socket}`}
+                        data-graph-tint={r.tint ? `${r.socket}:${r.tint}` : undefined}
+                      >
                         <circle
                           cx={0}
                           cy={y}
                           r={4}
-                          fill={r.ref ? '#e3cf5b' : '#5b6478'}
+                          fill={tint ?? (r.ref ? '#e3cf5b' : '#5b6478')}
                           stroke="#111114"
                           strokeWidth={1.5}
                         />
@@ -350,7 +424,7 @@ export function GraphView(): ReactNode {
                           x={10}
                           y={y + 3.5}
                           fontSize={10.5}
-                          fill="#9b9ca6"
+                          fill={tint ?? '#9b9ca6'}
                           fontFamily="ui-monospace, Menlo, monospace"
                         >
                           {r.count > 1 ? `${r.socket} ×${r.count}` : r.socket}
