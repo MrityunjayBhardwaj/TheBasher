@@ -9,6 +9,7 @@ import {
   buildRenderCamera,
   flipRowsY,
   isUniformColor,
+  visibleContentSphere,
   withEditorChromeHidden,
 } from './renderToImage';
 
@@ -258,5 +259,62 @@ describe('withEditorChromeHidden — a render shows DAG content only (V37)', () 
       }),
     ).toThrow(boom);
     expect(chrome.visible).toBe(true);
+  });
+});
+
+describe('visibleContentSphere — the depth range is measured over what draws (#1613)', () => {
+  const unitBox = () => new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1));
+
+  it('skips everything under a hidden parent, as the renderer does', () => {
+    const scene = new THREE.Scene();
+    scene.add(unitBox());
+    // The editor grid's shape: a chrome ROOT whose child keeps its own `visible` flag.
+    const chrome = new THREE.Group();
+    chrome.userData.editorChrome = true;
+    chrome.add(new THREE.Mesh(new THREE.PlaneGeometry(40, 40)));
+    scene.add(chrome);
+    scene.updateMatrixWorld(true);
+
+    const seen = visibleContentSphere(scene)!;
+    expect(seen.radius, 'the control: shown, the grid is in the range').toBeGreaterThan(20);
+    const hidden = withEditorChromeHidden(scene, () => visibleContentSphere(scene)!);
+    expect(hidden.radius).toBeCloseTo(Math.sqrt(3) / 2, 5);
+  });
+
+  it('returns null when nothing draws', () => {
+    const scene = new THREE.Scene();
+    const group = new THREE.Group();
+    group.visible = false;
+    group.add(unitBox());
+    scene.add(group);
+    expect(visibleContentSphere(scene)).toBeNull();
+  });
+
+  it('measures a skinned mesh where its bones put it, and leaves its own box as it was', () => {
+    const geometry = new THREE.BoxGeometry(1, 1, 1);
+    const count = geometry.getAttribute('position').count;
+    geometry.setAttribute(
+      'skinIndex',
+      new THREE.Uint16BufferAttribute(new Uint16Array(count * 4), 4),
+    );
+    const weights = new Float32Array(count * 4);
+    for (let i = 0; i < count; i++) weights[i * 4] = 1;
+    geometry.setAttribute('skinWeight', new THREE.Float32BufferAttribute(weights, 4));
+    const mesh = new THREE.SkinnedMesh(geometry);
+    const bone = new THREE.Bone();
+    mesh.add(bone);
+    mesh.bind(new THREE.Skeleton([bone]));
+    const scene = new THREE.Scene();
+    scene.add(mesh);
+    scene.updateMatrixWorld(true);
+    expect(visibleContentSphere(scene)!.center.x, 'at rest').toBeCloseTo(0, 5);
+
+    bone.position.set(10, 0, 0);
+    scene.updateMatrixWorld(true);
+    const posed = visibleContentSphere(scene)!;
+    expect(posed.center.x).toBeCloseTo(10, 5);
+    expect(posed.radius).toBeCloseTo(Math.sqrt(3) / 2, 5);
+    // A click trusts this slot when it is set; a box measured for one frame must not stay in it.
+    expect((mesh as unknown as { boundingBox: THREE.Box3 | null }).boundingBox).toBeNull();
   });
 });

@@ -1,7 +1,9 @@
 // solverBind — the pure op-builders for authoring a Solver's `body` edge (Epic 2).
 
 import { beforeEach, describe, expect, it } from 'vitest';
-import { applyOp, __resetRegistryForTests } from '../core/dag';
+import { applyOp, applyOps, __resetRegistryForTests } from '../core/dag';
+import { matchInstanceBody } from '../core/dag/templates';
+import { builtinDefinition } from './builtinTemplates';
 import { registerAllNodes } from '../nodes/registerAll';
 import type { DagState } from '../core/dag/state';
 import type { Op } from '../core/dag/types';
@@ -100,7 +102,7 @@ describe('buildSpringOps — the Spring preset (S, #300)', () => {
     } as Op).next;
   }
 
-  it('builds an applyable sub-network: a 2-slot Solver + a vec driver on the target', () => {
+  it('builds an applyable spring: a Spring instance over a 2-slot Solver + a vec driver', () => {
     const state = withController();
     const res = buildSpringOps(state, {
       targetId: BOX_ID,
@@ -109,18 +111,20 @@ describe('buildSpringOps — the Spring preset (S, #300)', () => {
     });
     expect(res.ok).toBe(true);
     if (!res.ok) return;
-    let next = state;
-    for (const op of res.ops) next = applyOp(next, op).next;
-    // The Solver has TWO body slots (position + velocity) + the vec live-input source.
-    const solver = next.nodes['sp_solver'];
-    expect((solver.inputs.bodies as unknown[]).length).toBe(2);
+    const next = applyOps(state, res.ops).next;
+    // #1559 — the spring is an instance of the built-in Spring template: it holds the vec
+    // live-input source, and its body's Solver has TWO body slots (position + velocity).
+    const spring = next.nodes['sp_solver'];
+    expect(spring.type).toBe('template.Spring');
     expect(
-      (solver.params as { sourceTransformVec?: { node?: string } }).sourceTransformVec?.node,
+      (spring.params as { sourceTransformVec?: { node?: string } }).sourceTransformVec?.node,
     ).toBe(CTL_ID);
-    // The vec driver targets the box position, wired to the Solver's outVec.
+    const body = matchInstanceBody(next, 'sp_solver', builtinDefinition('Spring'))!;
+    expect((next.nodes[body.get('solver')!].inputs.bodies as unknown[]).length).toBe(2);
+    // The vec driver targets the box position, wired to the spring's output.
     const driver = next.nodes['sp_driver'];
     expect((driver.params as { target?: string; paramPath?: string }).target).toBe(BOX_ID);
-    expect(driver.inputs.in).toEqual({ node: 'sp_solver', socket: 'outVec' });
+    expect(driver.inputs.in).toEqual({ node: 'sp_solver', socket: 'out' });
     expect(driverNodesForTarget(next.nodes, BOX_ID).map((d) => d.id)).toContain('sp_driver');
   });
 

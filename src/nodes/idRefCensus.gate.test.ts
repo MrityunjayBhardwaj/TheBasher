@@ -6,14 +6,24 @@
 // every place every registered schema can store a string (`paramStringPaths`) and requires each
 // one to be declared in `idRefs` or named in `idRefAcknowledged.ts` with what it holds instead.
 //
-// What it cannot see is printed, never assumed away: a schema it cannot read is a failure, and an
-// object that keeps undeclared keys is a row that has to be acknowledged by name.
-import { describe, expect, it } from 'vitest';
+// What it cannot see is printed, never assumed away: a schema it cannot read is a failure, and so
+// is an object that keeps undeclared keys (#1572: no registered schema does).
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import { getNodeType, listNodeTypes, paramFieldsOf } from '../core/dag/registry';
 import type { NodeDefinition } from '../core/dag/types';
 import { idRefStringPath, paramStringPaths } from '../core/dag/paramStringPaths';
-import { NOT_A_NODE_ID, OPENPBR_VALUE_MOUNTS, OPENPBR_VALUE_STRINGS } from './idRefAcknowledged';
+import {
+  NOT_A_NODE_ID,
+  OPENPBR_VALUE_MOUNTS,
+  OPENPBR_VALUE_STRINGS,
+  SHARED_WIRES,
+} from './idRefAcknowledged';
+import { wireOwnership } from '../core/dag/idRefSweep';
+import { applyOps } from '../core/dag/ops';
+import { emptyDagState } from '../core/dag/state';
+import { syncTemplateTypes } from '../core/dag/templates';
+import { planCollapseToTemplate } from '../app/templates';
 import { openpbrMaterialSchema } from './materialSchema';
 import { optionsValueKindOf } from './paramWidget';
 import { registerAllNodes } from './registerAll';
@@ -65,6 +75,51 @@ const registered = (): CensusDef[] =>
     if (!def) throw new Error(`listed but not registered: ${type}`);
     return def;
   });
+
+// #1557 — a template's type is defined only while its definition is in a graph, so the registry
+// this census reads holds none unless one is made. One is made here by the collapse the product
+// runs, over a Number and a Vector3 input, so its sockets are asked like every other type's.
+beforeAll(() => {
+  const plan = planCollapseToTemplate(
+    applyOps(emptyDagState(), [
+      { type: 'addNode', nodeId: 'n', nodeType: 'Fit', params: {} },
+      { type: 'addNode', nodeId: 'v', nodeType: 'MakeVec3', params: {} },
+      { type: 'addNode', nodeId: 'b', nodeType: 'VecBreak3', params: {} },
+      { type: 'connect', from: { node: 'v', socket: 'out' }, to: { node: 'b', socket: 'v' } },
+      { type: 'addNode', nodeId: 'm', nodeType: 'Math', params: {} },
+      { type: 'connect', from: { node: 'n', socket: 'out' }, to: { node: 'm', socket: 'a' } },
+      { type: 'connect', from: { node: 'b', socket: 'x' }, to: { node: 'm', socket: 'b' } },
+      { type: 'addNode', nodeId: 'r', nodeType: 'Math', params: {} },
+      { type: 'connect', from: { node: 'm', socket: 'out' }, to: { node: 'r', socket: 'a' } },
+    ]).next,
+    ['m', 'b'],
+    'Census',
+    'inst',
+  );
+  if (!plan.ok) throw new Error(plan.reason);
+  applyOps(emptyDagState(), plan.ops.slice(0, 1)); // the definition node defines the type
+  // #1559 — and one whose Solver trails a controller, which its instances then hold.
+  const lag = planCollapseToTemplate(
+    applyOps(emptyDagState(), [
+      { type: 'addNode', nodeId: 'p', nodeType: 'BodyInput', params: { input: 'prev' } },
+      {
+        type: 'addNode',
+        nodeId: 's',
+        nodeType: 'Solver',
+        params: { sourceTransform: { node: 'c', channel: 'tx' } },
+      },
+      { type: 'connect', from: { node: 'p', socket: 'out' }, to: { node: 's', socket: 'body' } },
+      { type: 'addNode', nodeId: 'r', nodeType: 'Math', params: {} },
+      { type: 'connect', from: { node: 's', socket: 'out' }, to: { node: 'r', socket: 'a' } },
+    ]).next,
+    ['s', 'p'],
+    'CensusLag',
+    'inst',
+  );
+  if (!lag.ok) throw new Error(lag.reason);
+  applyOps(emptyDagState(), lag.ops.slice(0, 1));
+});
+afterAll(() => syncTemplateTypes({ nodes: {} }));
 
 describe('#1551 — the census itself can fail', () => {
   const fake = (paramSchema: z.ZodTypeAny, idRefs?: NodeDefinition['idRefs']): CensusDef => ({
@@ -167,6 +222,18 @@ describe('#1551 — every string a registered node can store is an id reference 
     expect(census.unreadable).toEqual([]);
   });
 
+  it('no registered schema keeps keys it does not declare', () => {
+    // #1572 — an undeclared key cannot be listed, so an id stored in one is invisible to delete,
+    // to duplicate and to the agent. Scene, Group and Collection were the last three that kept
+    // them. Declare the key in the schema rather than reopening it.
+    const open = registered().flatMap((def) =>
+      paramStringPaths(def.paramSchema)
+        .filter((row) => row.kind === 'open')
+        .map((row) => `${def.type}.${row.path}`),
+    );
+    expect(open).toEqual([]);
+  });
+
   it('every string-capable param is declared in idRefs or acknowledged as something else', () => {
     // A new row here is a question, not a chore: can this string be another node's id? If so,
     // declare it in the type's `idRefs` with a deliberate `role`. If not, add it to
@@ -221,6 +288,7 @@ describe('#1551 — every string a registered node can store is an id reference 
       .sort();
     expect(declared).toMatchInlineSnapshot(`
       [
+        "CameraSelect.active:argument",
         "FollowPath.curve:argument",
         "FollowPath.target:subject",
         "KeyframeChannelColor.target:subject",
@@ -245,6 +313,96 @@ describe('#1551 — every string a registered node can store is an id reference 
         "Track.strips:argument",
         "TrackTo.aimNode:argument",
         "TrackTo.target:subject",
+        "template.CensusLag.sourceTransform.node:argument",
+      ]
+    `);
+  });
+});
+
+describe('#1560 — every input socket says what it owns, or is listed as owning nothing', () => {
+  it('reads template types too', () => {
+    expect(listNodeTypes()).toEqual(
+      expect.arrayContaining(['template.Census', 'template.CensusLag']),
+    );
+  });
+
+  const sockets = () =>
+    registered().flatMap((def) =>
+      Object.keys(getNodeType(def.type)?.inputs ?? {}).map((socket) => ({
+        key: `${def.type}.${socket}`,
+        owns: wireOwnership(def.type, socket),
+      })),
+    );
+
+  it('reads the real registry', () => {
+    expect(sockets().length).toBeGreaterThan(90);
+  });
+
+  it('no socket is undecided: it owns, or it is acknowledged as shared', () => {
+    const undecided = sockets()
+      .filter((s) => s.owns === null && !SHARED_WIRES.includes(s.key))
+      .map((s) => s.key);
+    expect(undecided).toEqual([]);
+  });
+
+  it('no acknowledgement outlives its socket, or contradicts what the socket declares', () => {
+    const byKey = new Map(sockets().map((s) => [s.key, s.owns]));
+    expect(SHARED_WIRES.filter((key) => !byKey.has(key))).toEqual([]);
+    expect(SHARED_WIRES.filter((key) => byKey.get(key))).toEqual([]);
+    expect(new Set(SHARED_WIRES).size).toBe(SHARED_WIRES.length);
+  });
+
+  it('the sockets that own, by how', () => {
+    const owning = sockets()
+      .filter((s) => s.owns)
+      .map((s) => `${s.key}:${s.owns}`)
+      .sort();
+    expect(owning).toMatchInlineSnapshot(`
+      [
+        "ArmatureModifier.target:stack",
+        "ArrayModifier.target:stack",
+        "BevelModifier.target:stack",
+        "CaptureModifier.target:stack",
+        "Clamp.in:always",
+        "ColorCorrect.target:stack",
+        "ComponentGroupOp.target:stack",
+        "CurveRemap.in:always",
+        "Fit.in:always",
+        "Group.children:always",
+        "Lag.in:always",
+        "MakeVec3.x:always",
+        "MakeVec3.y:always",
+        "MakeVec3.z:always",
+        "MaskModifier.target:stack",
+        "MaterialOverride.target:stack",
+        "MaterialOverrideOp.target:stack",
+        "Math.a:always",
+        "Math.b:always",
+        "MirrorModifier.target:stack",
+        "Mix.a:always",
+        "Mix.b:always",
+        "Noise.t:always",
+        "Object.children:always",
+        "Object.data:always",
+        "Object.pose:always",
+        "ParamDriver.in:always",
+        "PoseLayer.pose:stack",
+        "RetargetClip.boneMap:always",
+        "Rig.body:body",
+        "Rig.pose:stack",
+        "SetMaterialOp.target:stack",
+        "Solver.bodies:body",
+        "Solver.body:body",
+        "Transform.target:stack",
+        "UVProjectModifier.target:stack",
+        "Vec3Math.a:always",
+        "Vec3Math.b:always",
+        "Vec3Math.s:always",
+        "VecBreak3.v:always",
+        "template.Census.body:body",
+        "template.Census.n:always",
+        "template.Census.v:always",
+        "template.CensusLag.body:body",
       ]
     `);
   });

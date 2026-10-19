@@ -69,7 +69,7 @@ function apply(s: DagState, ops: readonly Op[]): DagState {
 
 /** A character whose hips stand at `hipHeight` — a native `Skeleton`, the kind a bind retargets
  *  onto since the clone road's `GltfSkeleton` stopped being a bind target (#1053). */
-function characterOps(id: string, hipHeight: number): Op[] {
+function characterOps(id: string, hipHeight: number, unit = 1): Op[] {
   return [
     {
       type: 'addNode',
@@ -78,7 +78,7 @@ function characterOps(id: string, hipHeight: number): Op[] {
       params: {
         bones: [
           { name: 'Hips', parent: -1, position: [0, hipHeight, 0], rotation: [0, 0, 0] },
-          { name: 'Spine', parent: 0, position: [0, 0.5, 0], rotation: [0, 0, 0] },
+          { name: 'Spine', parent: 0, position: [0, 0.5 * unit, 0], rotation: [0, 0, 0] },
         ],
       },
     },
@@ -119,14 +119,18 @@ function bind(s: DagState, clipId: string, characterSkel: string, outputClipId: 
 }
 
 /** Mint along the path, cook once (the rig lands), bake. */
-async function mintAndCook(cap: MotionGenerationCapability, withPath = true) {
-  const mint = mintMotionGenerateOps(project(), {
+async function mintAndCook(
+  cap: MotionGenerationCapability,
+  withPath = true,
+  base: () => DagState = project,
+) {
+  const mint = mintMotionGenerateOps(base(), {
     prompt: 'a slow walk',
     seed: 7,
     model: 'kimodo-base',
     ...(withPath ? { curveObjectId: 'pathObj' } : {}),
   });
-  let s = apply(project(), mint.ops as Op[]);
+  let s = apply(base(), mint.ops as Op[]);
   await resolvePendingMotionGenerations(s, cap);
   s = apply(s, bakeGeneratedClipOps(s));
   return { s, producerId: mint.producerId, clipId: mint.clipId };
@@ -216,6 +220,87 @@ describe('fitting a generated walk’s path to its character (#1285)', () => {
     expect(fitMotionPathScaleOps(s).ops).toEqual([]);
   });
 
+  // #1633 — the leg ratio is in each RIG's units; the walk lands in the WORLD. A character
+  // imported from a centimetre file has its skeleton under a group scaled 0.01, so the rig ratio
+  // (target cm per source metre) is ~100× the world one. Measured in the app before the fix: a
+  // Meshy character fitted at 50.78 and covered 0.5 m of a 49.6 m path.
+  it('fits by the WORLD ratio when the character stands under a scaled group', async () => {
+    const { cap } = recordingCapability();
+    const { s: cooked, producerId, clipId } = await mintAndCook(cap);
+    // The character stands in the scene BEFORE the walk is bound to it, as it does in the app: the
+    // bind wires the walk into its pose, which is what makes it the Object playing it (#1680).
+    let s = apply(cooked, [
+      { type: 'addNode', nodeId: 'tall_obj', nodeType: 'Object', params: {} },
+      {
+        type: 'connect',
+        from: { node: 'tall_skel', socket: 'out' },
+        to: { node: 'tall_obj', socket: 'data' },
+      },
+      {
+        type: 'addNode',
+        nodeId: 'cm_group',
+        nodeType: 'Group',
+        params: { scale: [0.01, 0.01, 0.01] },
+      },
+      {
+        type: 'connect',
+        from: { node: 'tall_obj', socket: 'out' },
+        to: { node: 'cm_group', socket: 'children' },
+      },
+      { type: 'addNode', nodeId: 'n_scene', nodeType: 'Scene', params: {} },
+      {
+        type: 'connect',
+        from: { node: 'cm_group', socket: 'out' },
+        to: { node: 'n_scene', socket: 'children' },
+      },
+    ] as Op[]);
+    s = apply(s, [
+      {
+        type: 'addNode',
+        nodeId: 'n_render',
+        nodeType: 'RenderOutput',
+        params: { postFx: { tonemap: 'ACES', smaa: true }, width: 1920, height: 1080 },
+      },
+      {
+        type: 'connect',
+        from: { node: 'n_scene', socket: 'out' },
+        to: { node: 'n_render', socket: 'scene' },
+      },
+    ] as Op[]);
+    // The world walk starts at the render output, as the viewport's does.
+    s = {
+      ...s,
+      outputs: {
+        ...s.outputs,
+        scene: { node: 'n_scene', socket: 'out' },
+        render: { node: 'n_render', socket: 'out' },
+      },
+    };
+    s = bind(s, clipId, 'tall_skel', 'tall_walk');
+    const rigRatio = appliedRatio(s, 'tall_walk');
+
+    const fit = motionPathScaleFit(s, producerId);
+    expect(fit.kind).toBe('fit');
+    // Not the rig ratio: that would ask for a path 100× too short.
+    expect((fit as { scale: number }).scale).toBeCloseTo(rigRatio * 0.01, 9);
+  });
+
+  it('the cook button does not say "Up to date" while characters of different sizes share the walk (#1509)', async () => {
+    const { cap } = recordingCapability();
+    const { s: cooked, producerId, clipId } = await mintAndCook(cap);
+    let s = bind(cooked, clipId, 'tall_skel', 'tall_walk');
+    // Fitted and cooked for the one character: the walk is right, and the button says so.
+    s = apply(s, fitMotionPathScaleOps(s).ops);
+    await resolvePendingMotionGenerations(s, cap);
+    s = apply(s, bakeGeneratedClipOps(s));
+    expect(motionCookOffer(s, producerId).label).toBe('Up to date');
+    s = bind(s, clipId, 'short_skel', 'short_walk');
+    expect(motionPathScaleFit(s, producerId).kind).toBe('mixed');
+    const offer = motionCookOffer(s, producerId);
+    expect(offer.label).toBe('Fits one size only (characters differ)');
+    expect(offer.disabled).toBe(false);
+  });
+
   it('the cook button offers a re-cook while the clip is current but the path is not fitted', async () => {
     const { cap } = recordingCapability();
     const { s: cooked, producerId, clipId } = await mintAndCook(cap);
@@ -224,6 +309,139 @@ describe('fitting a generated walk’s path to its character (#1285)', () => {
     const offer = motionCookOffer(s, producerId);
     expect(offer.label).toBe('Re-cook (fit path to character)');
     expect(offer.disabled).toBe(false);
+  });
+});
+
+/** Characters that stand in a scene the render draws, each under a group scaled `groupScale`:
+ *  a rig stored in centimetres under 0.01 is the shape every Mixamo character imports as. */
+function sceneProject(chars: { id: string; hip: number; unit: number; groupScale: number }[]) {
+  return (): DagState => {
+    const ops: Op[] = [
+      { type: 'addNode', nodeId: 'n_scene', nodeType: 'Scene', params: {} },
+      {
+        type: 'addNode',
+        nodeId: 'n_render',
+        nodeType: 'RenderOutput',
+        params: { postFx: { tonemap: 'ACES', smaa: true } },
+      },
+      {
+        type: 'connect',
+        from: { node: 'n_scene', socket: 'out' },
+        to: { node: 'n_render', socket: 'scene' },
+      },
+    ] as Op[];
+    for (const c of chars) {
+      const g = c.groupScale;
+      ops.push(
+        ...characterOps(c.id, c.hip, c.unit),
+        { type: 'addNode', nodeId: `${c.id}_obj`, nodeType: 'Object', params: {} },
+        {
+          type: 'connect',
+          from: { node: `${c.id}_skel`, socket: 'out' },
+          to: { node: `${c.id}_obj`, socket: 'data' },
+        },
+        {
+          type: 'addNode',
+          nodeId: `${c.id}_grp`,
+          nodeType: 'Group',
+          params: { position: [0, 0, 0], rotation: [0, 0, 0], scale: [g, g, g] },
+        },
+        {
+          type: 'connect',
+          from: { node: `${c.id}_obj`, socket: 'out' },
+          to: { node: `${c.id}_grp`, socket: 'children' },
+        },
+        {
+          type: 'connect',
+          from: { node: `${c.id}_grp`, socket: 'out' },
+          to: { node: 'n_scene', socket: 'children' },
+        },
+      );
+    }
+    const s = apply(project(), ops);
+    return {
+      ...s,
+      outputs: {
+        scene: { node: 'n_scene', socket: 'out' },
+        render: { node: 'n_render', socket: 'out' },
+      },
+    };
+  };
+}
+
+describe('a rig stored in other units is fitted in world metres (#1508)', () => {
+  beforeEach(() => {
+    registerAllNodes();
+    __resetGeneratedClipsForTests();
+  });
+
+  // The same 1.2 m character twice: once in metres, once in centimetres under a 0.01 group.
+  const METRES = { id: 'm', hip: 1.2, unit: 1, groupScale: 1 };
+  const CENTIMETRES = { id: 'cm', hip: 120, unit: 100, groupScale: 0.01 };
+
+  async function fitAlone(c: typeof METRES) {
+    const { cap } = recordingCapability();
+    const { s: cooked, producerId, clipId } = await mintAndCook(cap, true, sceneProject([c]));
+    const s = bind(cooked, clipId, `${c.id}_skel`, `${c.id}_walk`);
+    return { s, fit: motionPathScaleFit(s, producerId), rig: appliedRatio(s, `${c.id}_walk`) };
+  }
+
+  it('a centimetre rig under 0.01 fits to what the same character in metres fits to', async () => {
+    const m = await fitAlone(METRES);
+    const cm = await fitAlone(CENTIMETRES);
+    // The fixture has the bug's shape: in its own units the cm rig reads 100× the metres one.
+    expect(cm.rig / m.rig).toBeCloseTo(100, 6);
+    expect(m.fit.kind).toBe('fit');
+    expect(cm.fit.kind).toBe('fit');
+    if (m.fit.kind !== 'fit' || cm.fit.kind !== 'fit') return;
+    expect(m.fit.scale).toBeCloseTo(m.rig, 9);
+    expect(cm.fit.scale).toBeCloseTo(m.fit.scale, 9);
+  });
+
+  it('the two together are one size, not "characters of different sizes"', async () => {
+    const { cap } = recordingCapability();
+    const {
+      s: cooked,
+      producerId,
+      clipId,
+    } = await mintAndCook(cap, true, sceneProject([METRES, CENTIMETRES]));
+    let s = bind(cooked, clipId, 'm_skel', 'm_walk');
+    s = bind(s, clipId, 'cm_skel', 'cm_walk');
+    const fit = motionPathScaleFit(s, producerId);
+    expect(fit.kind).toBe('fit');
+    expect(fitMotionPathScaleOps(s).refusals).toEqual([]);
+  });
+
+  // #1680 — only the Objects that PLAY the walk set its size. #1508 checked this; the fold into
+  // #1633 dropped it, and an idle copy of the character turned a correct fit into "mixed".
+  it('an idle copy of the character at another size does not change the fit', async () => {
+    const { s: playing, fit: alone } = await fitAlone(METRES);
+    const s = apply(playing, [
+      { type: 'addNode', nodeId: 'idle_obj', nodeType: 'Object', params: {} },
+      {
+        type: 'connect',
+        from: { node: 'm_skel', socket: 'out' },
+        to: { node: 'idle_obj', socket: 'data' },
+      },
+      {
+        type: 'addNode',
+        nodeId: 'half',
+        nodeType: 'Group',
+        params: { position: [3, 0, 0], rotation: [0, 0, 0], scale: [0.5, 0.5, 0.5] },
+      },
+      {
+        type: 'connect',
+        from: { node: 'idle_obj', socket: 'out' },
+        to: { node: 'half', socket: 'children' },
+      },
+      {
+        type: 'connect',
+        from: { node: 'half', socket: 'out' },
+        to: { node: 'n_scene', socket: 'children' },
+      },
+    ] as Op[]);
+    const producerId = Object.keys(s.nodes).find((id) => s.nodes[id].type === 'MotionGenerate')!;
+    expect(motionPathScaleFit(s, producerId)).toEqual(alone);
   });
 });
 

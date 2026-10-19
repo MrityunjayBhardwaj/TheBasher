@@ -212,7 +212,9 @@ export function ProjectTabs(): ReactNode {
           {current?.name ?? 'Untitled'}
         </span>
       </div>
-      <div className="flex flex-1 items-stretch overflow-x-auto">
+      {/* #1637 — `min-w-0`: a flex item is never narrower than its content otherwise, so the
+          tabs pushed the bar wider instead of scrolling inside it. */}
+      <div className="flex min-w-0 flex-1 items-stretch overflow-x-auto">
         {tabs.map((p) => {
           const isActive = p.id === current?.id;
           return (

@@ -247,7 +247,7 @@ function assertChainDeclaration(def: NodeDefinition): void {
  * whole point. Measured on this repo's zod:
  *
  *     z.object({...})                  instanceof ✓   — the ordinary case
- *     z.object({...}).passthrough()    instanceof ✓   — `Group` and `Scene` take this road
+ *     z.object({...}).passthrough()    instanceof ✓   — no registered node does (#1572)
  *     z.object({...}).refine(...)      instanceof ✗   — and `.shape` is `undefined`
  *     z.object({...}).transform(...)   instanceof ✗   — likewise
  *     z.union([...])                   instanceof ✗   — likewise
@@ -355,11 +355,56 @@ export function registerNodeType<P, O>(def: NodeDefinition<P, O>): void {
   if (registry.has(def.type)) {
     throw new Error(`Node type already registered: ${def.type}`);
   }
-  assertInputDescriptors(def as unknown as NodeDefinition);
-  assertChainDeclaration(def as unknown as NodeDefinition);
-  assertBodyInputDeclarations(def as unknown as NodeDefinition);
+  assertDefinition(def as unknown as NodeDefinition);
   registry.set(def.type, def as unknown as NodeDefinition);
   epoch++;
+}
+
+function assertDefinition(def: NodeDefinition): void {
+  assertInputDescriptors(def);
+  assertChainDeclaration(def);
+  assertBodyInputDeclarations(def);
+}
+
+// ── #1647 — a type a project defines can be replaced and removed ────────────────
+//
+// A template's definition is a node type (#1557), registered from the project's library when
+// the project loads. Editing what it declares replaces the type, and opening another project
+// removes it. A built-in type is never replaced or removed, so a library can't shadow `Solver`.
+// Each moves the epoch, which is how everything worked out from a type and kept beside a graph
+// (`subnetworks.ts`, `idRefSweep.ts`, the evaluator's leaf feeds, the Solver's replay history)
+// learns that the answer was worked out under another definition.
+
+const defined = new Set<NodeTypeId>();
+
+/** Register `def`, or replace the type of that name if it was itself defined here. */
+export function defineNodeType<P, O>(def: NodeDefinition<P, O>): void {
+  if (registry.has(def.type) && !defined.has(def.type)) {
+    throw new Error(`Node type "${def.type}" is built in, so a definition can't replace it`);
+  }
+  assertDefinition(def as unknown as NodeDefinition);
+  registry.set(def.type, def as unknown as NodeDefinition);
+  defined.add(def.type);
+  epoch++;
+}
+
+/** Remove a type registered with `defineNodeType`. */
+export function undefineNodeType(type: NodeTypeId): void {
+  if (!defined.has(type)) {
+    throw new Error(
+      registry.has(type)
+        ? `Node type "${type}" is built in, so it can't be removed`
+        : `No defined node type "${type}" to remove`,
+    );
+  }
+  registry.delete(type);
+  defined.delete(type);
+  epoch++;
+}
+
+/** Whether `type` was registered with `defineNodeType`. */
+export function isDefinedNodeType(type: NodeTypeId): boolean {
+  return defined.has(type);
 }
 
 /** Changes whenever the set of registered types does, so an answer derived from a node's type
@@ -390,5 +435,6 @@ export function snapshotRegistry(): Record<NodeTypeId, NodeDefinition> {
 /** Test-only: clear and re-seed the registry. Never call from app code. */
 export function __resetRegistryForTests(): void {
   registry.clear();
+  defined.clear();
   epoch++;
 }

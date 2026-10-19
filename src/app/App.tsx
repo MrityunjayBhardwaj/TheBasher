@@ -4,6 +4,7 @@ import { MoveToCollectionMenu } from './MoveToCollectionMenu';
 import { boot } from './boot';
 import { Clock } from './Clock';
 import { SceneRangeSync } from './SceneRangeSync';
+import { SceneTimeSync } from './SceneTimeSync';
 import { Home } from './Home';
 import { KeyboardShortcuts } from './KeyboardShortcuts';
 import { Layout } from './Layout';
@@ -78,6 +79,7 @@ export function App() {
     <>
       <Clock />
       <SceneRangeSync />
+      <SceneTimeSync />
       <KeyboardShortcuts />
       <Layout />
       <AddMenu />

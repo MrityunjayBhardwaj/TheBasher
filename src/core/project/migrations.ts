@@ -10,6 +10,9 @@
 //
 // REF: THESIS.md §52, krama K5 step 7.
 
+import { TEMPLATE_DEFINITION_TYPE } from '../dag/templates';
+import { builtinDefinition } from '../../app/builtinTemplates';
+import { planTemplateInstance } from '../../app/templates';
 import { getNodeType } from '../dag/registry';
 import { normalizeRetiredParams } from './retiredLadders';
 import { RETIRED_NODE_TYPES } from './oldImports';
@@ -134,6 +137,14 @@ const formatMigrations: Record<number, FormatMigration> = {
   // v21 → v22 (#1548): the Solver's four input leaves become the two named body-input leaves —
   // each reads the input it stood for by name, so no leaf type is tied to the Solver.
   21: migrateSolverLeavesToBodyInputs,
+  // v22 → v23 (#1668): a camera switch names its camera. `CameraSelect.active` and every cut key on
+  // it held an index into the switch's wires, so deleting a camera re-pointed every later cut; each
+  // becomes the id of the camera it picked, read through the wires as saved.
+  22: migrateCameraCutsToIds,
+  // v23 → v24 (#1559): each Lag node becomes an instance of the built-in Lag template, holding the
+  // Lag's factor, start frame and controller, reading its `in`, under the Lag's own id. First it
+  // finishes #1668 for a v23 file the graph build saved, which never ran it (#1679).
+  23: (raw) => migrateLagNodesToTemplate(finishCameraCutsForGraphV23(raw)),
 };
 
 // ── v1 → v2: AnimationLayer retirement (#199) ──────────────────────────────
@@ -1203,14 +1214,43 @@ export function migrateProjectFormat(raw: unknown): unknown {
  * its registered version using its node-type's migration ladder.
  */
 export function migrateNodes(project: Project): Project {
+  // #1557 — an instance of one of the graph's own templates has a type no one has registered while
+  // the file is read: its definition node defines it when the graph reaches the DAG store. Its
+  // type declares nothing a saved version could predate, so it is taken as saved. A definition's
+  // body is nodes of built-in types like any other, and steps up the same ladder.
+  const templateTypes = new Set<string>();
+  for (const node of Object.values(project.state.nodes)) {
+    const type = templateDefinitionOf(node)?.type;
+    if (typeof type === 'string') templateTypes.add(type);
+  }
+  const migrate = (node: Node) => (templateTypes.has(node.type) ? node : migrateOneNode(node));
   const migratedNodes: Record<string, Node> = {};
   for (const [id, node] of Object.entries(project.state.nodes)) {
-    migratedNodes[id] = migrateOneNode(node);
+    migratedNodes[id] = migrateTemplateBody(migrate(node), migrate);
   }
   return {
     ...project,
     state: { ...project.state, nodes: migratedNodes },
     nodeVersions: snapshotCurrentNodeVersions(migratedNodes),
+  };
+}
+
+type RawDefinition = { type?: unknown; body?: { nodes?: Record<string, Node> } };
+const templateDefinitionOf = (node: Node): RawDefinition | undefined =>
+  node.type === TEMPLATE_DEFINITION_TYPE
+    ? (node.params as { definition?: RawDefinition } | undefined)?.definition
+    : undefined;
+
+/** A definition node with every node of its body stepped up its ladder; any other node as it is. */
+function migrateTemplateBody(node: Node, migrate: (n: Node) => Node): Node {
+  const definition = templateDefinitionOf(node);
+  const body = definition?.body?.nodes;
+  if (!definition || !body) return node;
+  const nodes = Object.fromEntries(Object.entries(body).map(([k, n]) => [k, migrate(n)]));
+  const params = node.params as Record<string, unknown>;
+  return {
+    ...node,
+    params: { ...params, definition: { ...definition, body: { ...definition.body, nodes } } },
   };
 }
 
@@ -2162,4 +2202,155 @@ export function migrateSolverLeavesToBodyInputs(raw: unknown): unknown {
     );
   }
   return { ...proj, state: { ...proj.state, nodes: next }, formatVersion: 22 };
+}
+
+/**
+ * v22 → v23 (#1668): `CameraSelect.active`, and every key of the channel cutting it, held an INDEX
+ * into the switch's `cameras` wires; they become the id of the camera that index picked. Only this
+ * pass can do it: it sees the wires as they were saved, and the index means nothing without them.
+ *
+ * The index resolves exactly as the v22 reader resolved it (`resolveCameraSelectIndex`, since gone: rounded,
+ * clamped into the list), so every shot keeps the camera it showed. The cut channel becomes a text
+ * channel (a step, each key held — what #1663 made every cut key do anyway) and keeps its name, its
+ * gates and its place in the blend; the number-curve fields (handles, extrapolation, modifiers)
+ * have no meaning on a step and are dropped. A switch with no cameras keeps an empty `active`.
+ */
+export function migrateCameraCutsToIds(raw: unknown): unknown {
+  const proj = raw as { formatVersion?: number; state?: { nodes?: Record<string, RawNode> } };
+  const nodes = proj.state?.nodes;
+  if (!nodes) return { ...proj, formatVersion: 23 };
+  const camerasOf = new Map<string, string[]>();
+  for (const [id, node] of Object.entries(nodes)) {
+    if (node?.type !== 'CameraSelect') continue;
+    camerasOf.set(
+      id,
+      asRefs(node.inputs?.cameras)
+        .map((r) => r.node)
+        .filter((n): n is string => typeof n === 'string'),
+    );
+  }
+  if (camerasOf.size === 0) return { ...proj, formatVersion: 23 };
+  const pick = (cameras: readonly string[], index: unknown): string => {
+    if (cameras.length === 0) return '';
+    if (typeof index === 'string') return index; // already an id
+    const i = Math.round(typeof index === 'number' && Number.isFinite(index) ? index : 0);
+    return cameras[Math.min(Math.max(i, 0), cameras.length - 1)];
+  };
+  let switches = 0;
+  let channels = 0;
+  const next: Record<string, RawNode> = {};
+  for (const [id, node] of Object.entries(nodes)) {
+    const cameras = camerasOf.get(id);
+    if (cameras) {
+      next[id] = {
+        ...node,
+        version: 2,
+        params: { ...node.params, active: pick(cameras, node.params?.active) },
+      };
+      switches++;
+      continue;
+    }
+    const p = node?.params ?? {};
+    const cutCameras = typeof p.target === 'string' ? camerasOf.get(p.target) : undefined;
+    if (node?.type === 'KeyframeChannelNumber' && cutCameras && p.paramPath === 'active') {
+      const keys = Array.isArray(p.keyframes)
+        ? (p.keyframes as { time?: unknown; value?: unknown }[])
+        : [];
+      const kept: Record<string, unknown> = { target: p.target, paramPath: 'active' };
+      for (const k of ['name', 'mute', 'solo', 'weight', 'blendMode', 'order']) {
+        if (k in p) kept[k] = p[k];
+      }
+      kept.keyframes = keys.map((k) => ({
+        time: k.time,
+        value: pick(cutCameras, k.value),
+        easing: 'constant',
+      }));
+      next[id] = { ...node, type: 'KeyframeChannelText', version: 1, params: kept };
+      channels++;
+      continue;
+    }
+    next[id] = node;
+  }
+  console.warn(
+    `[migrateCameraCutsToIds] ${switches} camera switch(es) and ${channels} cut channel(s) now name their cameras (#1668).`,
+  );
+  return { ...proj, state: { ...proj.state, nodes: next }, formatVersion: 23 };
+}
+
+/**
+ * #1679 — two builds stamped v23 for different changes: the launch build for #1668 (cuts name
+ * their camera), the graph build for #1559 (Lag → template). When they merged, #1668 kept v23 and
+ * #1559 moved to v24, so a file the graph build saved reads as v23 while its camera switch still
+ * holds an index (node version 1) and its cuts are a number channel. The ladder skips v22 → v23
+ * for it, so this runs that pass here. A switch at node version 2 already names its camera — the
+ * launch build's v23 — and is left alone.
+ */
+function finishCameraCutsForGraphV23(raw: unknown): unknown {
+  const nodes = (raw as { state?: { nodes?: Record<string, RawNode> } }).state?.nodes;
+  const indexSwitch = Object.values(nodes ?? {}).some(
+    (n) => n?.type === 'CameraSelect' && (n.version ?? 1) < 2,
+  );
+  return indexSwitch ? migrateCameraCutsToIds(raw) : raw;
+}
+
+/**
+ * v23 → v24 (#1559) — each Lag node becomes an instance of the built-in Lag template.
+ *
+ * Lag is a Solver preset now (`src/app/builtinTemplates.ts`). Each saved Lag becomes an instance
+ * under the SAME id, so every wire from its `out` and every id that names it still finds it,
+ * holding what the Lag held (factor, start frame, controller) and wired to what fed its `in`; its
+ * body is a fresh copy of the built-in body, and the built-in definition is added once. The
+ * instance computes what the Lag computed, frame for frame (`builtinTemplates.test.ts`). Runs on
+ * raw JSON, before `ProjectSchema.parse`.
+ */
+export function migrateLagNodesToTemplate(raw: unknown): unknown {
+  const proj = raw as { formatVersion?: number; state?: { nodes?: Record<string, RawNode> } };
+  const nodes = proj.state?.nodes;
+  const lags = Object.entries(nodes ?? {}).filter(([, n]) => n?.type === 'Lag');
+  if (!nodes || lags.length === 0) return { ...proj, formatVersion: 24 };
+  const definition = builtinDefinition('Lag');
+  const next: Record<string, RawNode> = { ...nodes };
+  let holder = 'tpl_Lag';
+  for (let n = 2; next[holder]; n++) holder = `tpl_Lag_${n}`;
+  next[holder] = {
+    id: holder,
+    type: TEMPLATE_DEFINITION_TYPE,
+    version: 1,
+    params: { definition, keep: false } as unknown as Record<string, unknown>,
+    inputs: {},
+  };
+  for (const [id, lag] of lags) {
+    const p = (lag.params ?? {}) as {
+      factor?: unknown;
+      seedFrame?: unknown;
+      sourceTransform?: unknown;
+    };
+    const params: Record<string, unknown> = {
+      locked: true,
+      factor: typeof p.factor === 'number' ? p.factor : 0.2,
+      seedFrame: typeof p.seedFrame === 'number' ? p.seedFrame : 0,
+      in: 0,
+      ...(p.sourceTransform !== undefined ? { sourceTransform: p.sourceTransform } : {}),
+    };
+    const { [id]: _self, ...others } = next;
+    void _self;
+    const ops = planTemplateInstance({ nodes: others } as never, definition, id, params);
+    for (const op of ops) {
+      if (op.type !== 'addNode') continue;
+      next[op.nodeId] = {
+        id: op.nodeId,
+        type: op.nodeType,
+        version: op.nodeId === id ? 1 : (getNodeType(op.nodeType)?.version ?? 1),
+        params: op.params as Record<string, unknown>,
+        inputs: {
+          ...((op.inputs ?? {}) as Record<string, RawRef | RawRef[]>),
+          ...(op.nodeId === id && lag.inputs?.in ? { in: lag.inputs.in } : {}),
+        },
+      };
+    }
+  }
+  console.warn(
+    `[migrateLagNodesToTemplate] ${lags.length} Lag node(s) are now instances of the built-in Lag template (#1559).`,
+  );
+  return { ...proj, state: { ...proj.state, nodes: next }, formatVersion: 24 };
 }

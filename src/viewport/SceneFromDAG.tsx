@@ -121,6 +121,7 @@ import {
 import { usePlayheadFollow } from './usePlayheadFollow';
 import { resolveRigLightSources } from '../app/resolveRigLightSources';
 import { degVec3ToRad } from './rotation';
+import { installContentShadow } from './contentShadows';
 import { selectNode } from './selectNodeOnClick';
 import { evaluate } from '../core/dag/evaluator';
 import { useDagStore } from '../core/dag/store';
@@ -517,7 +518,7 @@ export function SceneFromDAG({ outputName = 'render' }: SceneFromDAGProps) {
   const activeDof = resolveCameraDofAt(
     state,
     activeCameraId,
-    useTimeStore.getState().seconds,
+    useTimeStore.getState().filmSeconds,
     uiEvaluatorCache,
   );
 
@@ -1468,8 +1469,11 @@ function DirectChannelsLightR({
 // that is the walk's whole-clip retarget, three times a frame (~3 fps, idle or playing).
 function CameraFrustumFollower({ cameraId, active }: { cameraId: string; active: boolean }) {
   const cache = uiEvaluatorCache;
-  const pose = usePlayheadFollow((seconds) =>
-    resolveCameraPoseAt(useDagStore.getState().state, cameraId, seconds, cache),
+  // #1594 — a camera follows the playhead (film time), not the scene's slowed clock.
+  const pose = usePlayheadFollow(
+    (seconds) => resolveCameraPoseAt(useDagStore.getState().state, cameraId, seconds, cache),
+    undefined,
+    'film',
   );
   return <CameraHelper pose={pose} pickId={cameraId} active={active} />;
 }
@@ -1541,8 +1545,8 @@ function LightHelperFollower({
 // useFrame re-applies the SAMPLED channel values onto the LIVE scene each frame (live
 // time snapshot, never a subscription — H48), writing EXACTLY the props
 // SceneEnvironment sets so there is no jump at t=0 (intensity → environmentIntensity;
-// rotationY° → environmentRotation.y + backgroundRotation.y; backgroundIntensity is
-// left at drei's default, matching the static path). The env is a scene PROPERTY (not
+// rotationY° → environmentRotation.y + backgroundRotation.y; intensity → backgroundIntensity
+// too, as the static path sets it since #1639). The env is a scene PROPERTY (not
 // a node value), so this is an imperative ref-write like the camera, not a
 // value-recompute like the mesh/light overlays. Mounted only when the Scene node
 // carries channels, so a static scene pays nothing.
@@ -1558,6 +1562,7 @@ function SceneEnvChannelsR({ sceneNodeId }: { sceneNodeId: string }) {
       if (typeof v !== 'number') continue;
       if (ch.paramPath === 'envIntensity') {
         scene.environmentIntensity = v;
+        scene.backgroundIntensity = v;
       } else if (ch.paramPath === 'envRotationY') {
         const rad = (v * Math.PI) / 180;
         scene.environmentRotation.set(0, rad, 0);
@@ -1647,6 +1652,7 @@ function DirectionalLightR({
   // aim point). Skip the authored-target useEffect while constrained so the two
   // don't fight; toggling the constraint off re-runs it (constrained is a dep).
   useLightTargetAim(nodeId ?? null, constrained ?? false, ref);
+  useContentShadow(ref);
   useEffect(() => {
     if (constrained) return;
     const light = ref.current;
@@ -1674,9 +1680,18 @@ function DirectionalLightR({
       intensity={intensity}
       color={value.color}
       position={value.position as [number, number, number]}
-      castShadow={false}
     />
   );
+}
+
+/** #1644 — a sun, spot or point light casts, as in Blender. `installContentShadow` is
+ *  idempotent, so running it after every render costs a WeakSet lookup. */
+function useContentShadow(
+  ref: React.RefObject<THREE.DirectionalLight | THREE.SpotLight | THREE.PointLight | null>,
+) {
+  useEffect(() => {
+    if (ref.current) installContentShadow(ref.current);
+  });
 }
 
 function AmbientLightR({ value }: { value: AmbientLightValue }) {
@@ -1684,10 +1699,13 @@ function AmbientLightR({ value }: { value: AmbientLightValue }) {
 }
 
 function PointLightR({ value }: { value: PointLightValue }) {
+  const ref = useRef<THREE.PointLight | null>(null);
+  useContentShadow(ref);
   // Power scales with scale-vec volume product (see scalePower above).
   const intensity = value.intensity * scalePower(value.scale);
   return (
     <pointLight
+      ref={ref as React.MutableRefObject<THREE.PointLight>}
       intensity={intensity}
       color={value.color}
       position={value.position as [number, number, number]}
@@ -1707,6 +1725,7 @@ function SpotLightR({
   constrained?: boolean;
 }) {
   const ref = useRef<THREE.SpotLight | null>(null);
+  useContentShadow(ref);
   // #265 — a Track-To on this light OWNS the aim (per-frame, `.target` → world
   // aim point). Skip the authored-target useEffect while constrained so the two
   // don't fight; toggling the constraint off re-runs it (constrained is a dep).
@@ -2638,6 +2657,34 @@ function writeDeformed(
   if (!wrote) return;
   position.needsUpdate = true;
   if (normal) normal.needsUpdate = true;
+  // #1610 — three tests a click against the geometry's bounds before any triangle, and measures
+  // them only while they are null. The positions just moved, so the next click measures again.
+  built.geometry.boundingSphere = null;
+  built.geometry.boundingBox = null;
+}
+
+// #1610 / #1684 — a skinned mesh keeps its own bounds, measured from the posed vertices
+// (`SkinnedMesh.computeBoundingSphere` re-skins every vertex on the CPU, ~1.6 ms per X Bot mesh on
+// the software renderer). A click tests those bounds before any triangle, so once the bones move
+// they must be measured again, or a character that has walked away from where it was imported is
+// not under the pointer. The sphere is NOT dropped every frame for that: the renderer measures a null
+// sphere on every draw to sort objects (three r169 WebGLRenderer.js:1374-1379), which re-skinned
+// every character every frame, idle or not (measured: 2 re-skins, 3.3 ms per frame for one X Bot).
+// So a pose only marks the sphere stale, and a click drops it just before testing. Nothing else needs it
+// fresh: the mesh is never frustum-culled, and the sort only orders by the centre. The box is read
+// by no draw, so it is simply dropped on each pose (a click skips a null box).
+// REF: three r169 src/objects/SkinnedMesh.js:69-82/114, src/renderers/WebGLRenderer.js:1374-1379.
+const staleSkinBounds = new WeakSet<THREE.SkinnedMesh>();
+
+function measureSkinBoundsOnPick(mesh: THREE.SkinnedMesh): void {
+  mesh.raycast = (raycaster, intersects) => {
+    // A null sphere is what three's raycast measures first (SkinnedMesh.js:114), on this mesh's own
+    // field — the shared geometry is never written.
+    if (staleSkinBounds.delete(mesh)) {
+      (mesh as unknown as { boundingSphere: THREE.Sphere | null }).boundingSphere = null;
+    }
+    THREE.SkinnedMesh.prototype.raycast.call(mesh, raycaster, intersects);
+  };
 }
 
 function SkinnedMeshR({
@@ -2710,6 +2757,7 @@ function SkinnedMeshR({
       mesh.bindMode = THREE.DetachedBindMode;
       mesh.bind(draw.skeleton, draw.bindMatrix);
       mesh.frustumCulled = false;
+      measureSkinBoundsOnPick(mesh);
       draw.pose(useTimeStore.getState().seconds, skin.pose);
       next = { mesh, draw, geometry, deformed: null };
     }
@@ -2723,6 +2771,12 @@ function SkinnedMeshR({
     if (!built) return;
     const seconds = useTimeStore.getState().seconds;
     built.draw?.pose(seconds, skinPose.current);
+    // #1610 — the bones just moved, so the bounds a click tests are stale (`measureSkinBoundsOnPick`).
+    if (built.draw && built.mesh instanceof THREE.SkinnedMesh) {
+      staleSkinBounds.add(built.mesh);
+      // No draw reads the box, so dropping it costs nothing; `Box3.setFromObject` measures it anew.
+      (built.mesh as unknown as { boundingBox: THREE.Box3 | null }).boundingBox = null;
+    }
     writeDeformed(built, seconds, skinPose.current);
   });
   // A number, so the effect below can depend on it: `skin` itself is a new object every frame.

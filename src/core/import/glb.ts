@@ -77,6 +77,8 @@ export interface GltfBufferView {
   buffer: number;
   byteOffset?: number;
   byteLength: number;
+  /** Set when vertex attributes share the view (interleaved); the gap between element starts. */
+  byteStride?: number;
 }
 
 export interface GltfAnimationSampler {
@@ -406,6 +408,10 @@ const SIGNED_COMPONENT = new Set([5120, 5122]);
  * so arbitrary bin byteOffsets are safe regardless of component-size
  * alignment — and returns a fresh array (callers only read by index;
  * no aliasing dependency, verified at #89).
+ *
+ * #1063 — element i starts at `offset + i × stride`, where stride is the view's `byteStride` when
+ * set and the element size otherwise (`Specification.adoc:1268-1282`), so an interleaved view comes
+ * back as this accessor's values alone, tightly packed.
  */
 export function readAccessor(
   json: GltfJson,
@@ -439,7 +445,14 @@ export function readAccessor(
   }
   const count = accessor.count * numComponents;
   const byteOffset = (bufferView.byteOffset ?? 0) + (accessor.byteOffset ?? 0);
-  const totalBytes = count * compBytes;
+  const elementBytes = numComponents * compBytes;
+  const stride = bufferView.byteStride ?? elementBytes;
+  if (stride < elementBytes) {
+    throw new Error(
+      `readAccessor: bufferView[${accessor.bufferView}].byteStride ${stride} is smaller than one ${accessor.type} element (${elementBytes} bytes)`,
+    );
+  }
+  const totalBytes = accessor.count === 0 ? 0 : (accessor.count - 1) * stride + elementBytes;
   if (byteOffset + totalBytes > bin.byteLength) {
     throw new Error(
       `readAccessor: byteOffset+length ${byteOffset + totalBytes} overruns buffer ${bufferView.buffer} (${bin.byteLength} bytes)`,
@@ -451,7 +464,7 @@ export function readAccessor(
   const divisor = NORMALIZE_DIVISOR[accessor.componentType];
   const signed = SIGNED_COMPONENT.has(accessor.componentType);
   for (let i = 0; i < count; i++) {
-    const off = i * compBytes;
+    const off = Math.floor(i / numComponents) * stride + (i % numComponents) * compBytes;
     let raw: number;
     switch (accessor.componentType) {
       case 5126:

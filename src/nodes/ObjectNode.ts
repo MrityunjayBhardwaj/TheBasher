@@ -100,13 +100,13 @@ export const ObjectNode: NodeDefinition<ObjectParams, ObjectValue> = {
   // cardinality are the Group's), so a node that both IS something and HOLDS something has one
   // representation. `sceneHierarchy` is what makes the walk treat it as a parent.
   inputs: {
-    data: { type: ['ObjectData', 'Skeleton'], cardinality: 'single' },
-    children: { type: 'SceneObject', cardinality: 'list' },
+    data: { type: ['ObjectData', 'Skeleton'], cardinality: 'single', owns: 'always' },
+    children: { type: 'SceneObject', cardinality: 'list', owns: 'always' },
     // #1224 — the pose that poses this Object's skeleton: the end of the pose wire, as Houdini's
     // Joint Deform takes an animated pose and a Blender armature Object carries its pose. A
     // deform, the bone draw and a bone-parented Object read it through this Object (#393). It
     // was an `action` clip until #1224 (#1203); a clip reaches it through its `pose` output.
-    pose: { type: 'PosedSkeleton', cardinality: 'single' },
+    pose: { type: 'PosedSkeleton', cardinality: 'single', owns: 'always' },
   },
   outputs: { out: { type: 'SceneObject', cardinality: 'single' } },
   // The posable node — 'transform' implies 'constraint' (a pose can be

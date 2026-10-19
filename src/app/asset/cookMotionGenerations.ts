@@ -272,9 +272,21 @@ export function motionCookOffer(
     // #1285 — the clip matches its request, but the request no longer fits the
     // character (it was swapped, or bound after the first cook). "Up to date" would
     // be true of the clip and false of the walk, which stops short of the path.
-    if (pathScaleNeedsFit(motionPathScaleFit(state, producerId))) {
+    const fit = motionPathScaleFit(state, producerId, cache);
+    if (pathScaleNeedsFit(fit)) {
       return {
         label: 'Re-cook (fit path to character)',
+        disabled: false,
+        status: row.status,
+        stale: false,
+      };
+    }
+    // #1509 — characters of different sizes: no request lands them all, so at least one is off
+    // the path and "Up to date" would say otherwise. Live, because pressing it is how the cook's
+    // refusal — which names each character and its size — reaches the director.
+    if (fit.kind === 'mixed') {
+      return {
+        label: 'Fits one size only (characters differ)',
         disabled: false,
         status: row.status,
         stale: false,

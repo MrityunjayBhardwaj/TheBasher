@@ -9,7 +9,8 @@ import { z } from 'zod';
 import type { ToolDefinition, ToolContext } from './types';
 import { getNodeType } from '../../core/dag/registry';
 import { renderNodeCatalog } from '../nodeCatalog';
-import { idRefsByRole } from '../../core/dag/idRefSweep';
+import { referenceCycles, relationsOf, type NodeRelations } from '../../core/dag/idRefSweep';
+import { brokenReferences } from '../../app/animatableParams';
 import { readBaseParam } from '../../app/readBaseParam';
 import type { DagState } from '../../core/dag/state';
 import { paramsForAgent } from '../paramsForAgent';
@@ -35,7 +36,10 @@ export const dagInspectTool: ToolDefinition<DagInspectArgs> = {
     'scope=node also lists referencedBy: the nodes that name this one in a param ' +
     'rather than by a wire - animation channels, constraints, drivers. A param with ' +
     'a channel on it is driven at playback, so writing it changes the base value ' +
-    'and not what is rendered.',
+    'and not what is rendered. It also lists consumers (what this node is wired into), ' +
+    'nameFollowers (nodes whose name follows this one), and referenceCycles when the ' +
+    'node sits on a loop of references. brokenReferences lists a channel or driver ' +
+    'aimed at a node or a parameter path that does not exist: it animates nothing.',
   paramSchema: dagInspectSchema,
   handler(args: DagInspectArgs, ctx: ToolContext): { ops: []; text: string } {
     const { dagState } = ctx;
@@ -56,11 +60,17 @@ export const dagInspectTool: ToolDefinition<DagInspectArgs> = {
           };
         });
 
+        const cycles = referenceCycles(dagState);
+        const broken = brokenReferences(dagState);
         const text = JSON.stringify(
           {
             nodes: nodeList,
             outputs: dagState.outputs,
             nodeCount: nodeList.length,
+            // #1553 — a loop of references is stored, not refused, so it is said here.
+            referenceCycles: cycles.length > 0 ? cycles : undefined,
+            // #1552 — and so is a reference aimed at a node or a parameter that is not there.
+            brokenReferences: broken.length > 0 ? broken : undefined,
           },
           null,
           2,
@@ -77,7 +87,10 @@ export const dagInspectTool: ToolDefinition<DagInspectArgs> = {
           return { ops: [], text: `Error: node "${args.nodeId}" not found` };
         }
         const def = getNodeType(node.type);
-        const referencedBy = referencesInto(dagState, node.id);
+        // #1553 — every relationship comes from the one query delete and duplicate read too.
+        const relations = relationsOf(dagState, node.id);
+        const referencedBy = referencesInto(dagState, node.id, relations);
+        const some = <T>(list: readonly T[]) => (list.length > 0 ? list : undefined);
         const text = JSON.stringify(
           {
             id: node.id,
@@ -85,7 +98,20 @@ export const dagInspectTool: ToolDefinition<DagInspectArgs> = {
             params: paramsForAgent(node.params),
             inputs: listInputs(node.inputs),
             outputs: def ? Object.keys(def.outputs) : [],
-            referencedBy: referencedBy.length > 0 ? referencedBy : undefined,
+            consumers: some(relations.wiresOut.map((w) => ({ id: w.node, socket: w.socket }))),
+            referencedBy: some(referencedBy),
+            references: some(
+              relations.refsOut.map((r) => ({ id: r.node, role: r.role, paramPath: r.path })),
+            ),
+            followsNameOf: relations.follows ?? undefined,
+            nameFollowers: some(relations.followers),
+            insideSubnetworkOf: some(relations.insideSubnetworkOf),
+            subnetwork: some(relations.subnetwork),
+            referenceCycles: some(relations.cycles),
+            // #1552 — the broken references this node holds, or that are aimed at it.
+            brokenReferences: some(
+              brokenReferences(dagState).filter((b) => b.node === node.id || b.target === node.id),
+            ),
           },
           null,
           2,
@@ -138,29 +164,31 @@ export const dagInspectTool: ToolDefinition<DagInspectArgs> = {
  *   'argument' - a node that merely READS this one, which is an input like a wire.
  * Flattening the two into one "related" list would invert half of them.
  *
- * Read off `NodeDefinition.idRefs` through the shared walker, so a node kind appears
- * here the moment it declares its refs, with no list of types to keep current.
+ * Read off `relationsOf`, the one query for a node's relationships (#1553), so a node kind
+ * appears here the moment it declares its refs, with no list of types to keep current.
  */
 function referencesInto(
   state: DagState,
   nodeId: string,
+  relations: NodeRelations,
 ): Array<{ id: string; type: string; role: 'subject' | 'argument'; paramPath?: string }> {
+  // One row per referrer. A node naming this one twice (a driver whose target and source are
+  // the same node) is listed once, as the sidecar it is.
+  const roleOf = new Map<string, 'subject' | 'argument'>();
+  for (const ref of relations.refsIn) {
+    // A node that names itself is not its own referrer; the loop is in `referenceCycles`.
+    if (ref.node === nodeId) continue;
+    if (roleOf.get(ref.node) !== 'subject') roleOf.set(ref.node, ref.role);
+  }
   const out: Array<{ id: string; type: string; role: 'subject' | 'argument'; paramPath?: string }> =
     [];
-  for (const node of Object.values(state.nodes)) {
-    if (node.id === nodeId) continue;
-    const refs = idRefsByRole(node);
-    const role = refs.subject.includes(nodeId)
-      ? ('subject' as const)
-      : refs.argument.includes(nodeId)
-        ? ('argument' as const)
-        : null;
-    if (!role) continue;
+  for (const [id, role] of roleOf) {
+    const node = state.nodes[id];
     // Which param it drives, when the node carries one. A sidecar that keeps its
     // channels elsewhere (an NLA Strip holds them inside its Action) simply omits it.
     const paramPath = readBaseParam(node, 'paramPath');
     out.push({
-      id: node.id,
+      id,
       type: node.type,
       role,
       ...(typeof paramPath === 'string' && paramPath ? { paramPath } : {}),

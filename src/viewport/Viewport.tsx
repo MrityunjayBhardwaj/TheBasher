@@ -43,6 +43,7 @@ import { SceneFromDAG } from './SceneFromDAG';
 import { isUnderRenderOnly } from '../app/renderVisibility';
 import { VIEWPORT_BG, VIEWPORT_GRID_CELL, VIEWPORT_GRID_SECTION } from './viewportColors';
 import { attachWheelZoom } from './wheelZoom';
+import { installShadowInvalidation } from './contentShadows';
 
 function EditorOrbit() {
   // Disable orbit while a TransformControls handle is being dragged
@@ -253,6 +254,10 @@ export function Viewport() {
       <Canvas
         data-testid="viewport-canvas"
         dpr={[1, 2]}
+        // #1644 — PCF-soft shadow maps; which lights cast and which meshes cast and
+        // receive is decided per render in contentShadows.ts. #1682 — they redraw only when
+        // what they draw changed (installed in onCreated below).
+        shadows
         events={viewportEvents}
         gl={{
           antialias: false,
@@ -262,7 +267,8 @@ export function Viewport() {
           // forces this on mount but explicit is clearer.
           toneMapping: NoToneMapping,
         }}
-        onCreated={({ gl }) => {
+        onCreated={({ gl, scene }) => {
+          installShadowInvalidation(gl, scene);
           // Pre-set so the ACES path matches whether or not PostFx mounts
           // (e.g. in a test that disables effects).
           gl.toneMapping = NoToneMapping;

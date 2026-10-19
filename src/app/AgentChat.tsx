@@ -139,9 +139,37 @@ export function AgentChat() {
                 <div className="mb-0.5 text-[9px] uppercase tracking-wide text-fg/40">
                   {isAgent ? 'agent' : 'you'}
                 </div>
-                <div className="whitespace-pre-wrap break-words text-[11px] text-fg/85">
-                  {msg.content || (session.isStreaming ? '…' : '')}
-                </div>
+                {msg.content || (!msg.summary && !msg.steps) ? (
+                  <div className="whitespace-pre-wrap break-words text-[11px] text-fg/85">
+                    {msg.content || (session.isStreaming ? '…' : '')}
+                  </div>
+                ) : null}
+                {/* #1612 — what the round did, in plain words; the tool calls behind it
+                    (names, JSON, ids) only when opened. */}
+                {msg.summary ? (
+                  <div
+                    data-testid="agent-summary"
+                    className="mt-0.5 break-words text-[11px] text-fg/85"
+                  >
+                    {msg.summary}
+                  </div>
+                ) : null}
+                {msg.steps && msg.steps.length > 0 ? (
+                  <details data-testid="agent-steps" className="mt-0.5 text-[10px] text-fg/50">
+                    <summary className="cursor-pointer select-none hover:text-fg/80">
+                      {msg.steps.length === 1 ? '1 step' : `${msg.steps.length} steps`}
+                    </summary>
+                    {msg.steps.map((step, i) => (
+                      <div
+                        key={i}
+                        data-testid="agent-step"
+                        className={`mt-0.5 whitespace-pre-wrap break-all ${step.refused ? 'text-red-300/80' : ''}`}
+                      >
+                        [{step.tool}] {step.detail}
+                      </div>
+                    ))}
+                  </details>
+                ) : null}
               </div>
             );
           })}

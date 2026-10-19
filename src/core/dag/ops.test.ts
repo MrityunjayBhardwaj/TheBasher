@@ -105,6 +105,42 @@ describe('applyOp — removeNode', () => {
     }).next;
     expect(() => applyOp(state, { type: 'removeNode', nodeId: 'a' })).toThrow(OpError);
   });
+
+  // #1672 — undo replays the inverse, so a delete undone must bring back everything the node
+  // held, not only its params and wires.
+  it('undoing a delete brings the node back whole: name, name link, position, user params', () => {
+    let state = emptyDagState();
+    for (const id of ['src', 'n1']) {
+      state = applyOp(state, {
+        type: 'addNode',
+        nodeId: id,
+        nodeType: 'TestNumber',
+        params: { value: 1 },
+      }).next;
+    }
+    state = applyOp(state, { type: 'setMeta', nodeId: 'src', name: 'Hero' }).next;
+    state = applyOp(state, { type: 'setMeta', nodeId: 'n1', name: 'Hero', nameFrom: 'src' }).next;
+    state = applyOp(state, {
+      type: 'setSpareParam',
+      nodeId: 'n1',
+      key: 'k',
+      param: { type: 'float', value: 2 },
+    }).next;
+    state = {
+      ...state,
+      nodes: {
+        ...state.nodes,
+        n1: { ...state.nodes.n1, meta: { ...state.nodes.n1.meta, position: [4, 5] } },
+      },
+    };
+    const before = state.nodes.n1;
+    const removed = applyOp(state, { type: 'removeNode', nodeId: 'n1' });
+    const restored = applyOp(removed.next, OpSchema.parse(removed.inverse)).next;
+    expect(restored.nodes.n1).toEqual(before);
+    // The link is live again: renaming the source renames the restored node.
+    const renamed = applyOp(restored, { type: 'setMeta', nodeId: 'src', name: 'Villain' }).next;
+    expect(renamed.nodes.n1.meta?.name).toBe('Villain');
+  });
 });
 
 describe('applyOp — connect/disconnect', () => {
@@ -602,5 +638,57 @@ describe('inverse round-trip — every op restores prior state', () => {
     const r = applyOp(state, { type: 'setMeta', nodeId: 'n', name: 'renamed' });
     const back = applyOp(r.next, r.inverse).next;
     expect(snapshot(back)).toBe(before);
+  });
+});
+
+describe('applyOp — a disconnect from a list is undone in place (#1622)', () => {
+  beforeEach(() => seedTestRegistry());
+
+  const listOfThree = (): DagState => {
+    let s = emptyDagState();
+    const ops: Op[] = [
+      { type: 'addNode', nodeId: 'a', nodeType: 'TestNumber', params: { value: 1 } },
+      { type: 'addNode', nodeId: 'b', nodeType: 'TestNumber', params: { value: 2 } },
+      { type: 'addNode', nodeId: 'c', nodeType: 'TestNumber', params: { value: 3 } },
+      { type: 'addNode', nodeId: 'sum', nodeType: 'TestSumList', params: {} },
+      { type: 'connect', from: { node: 'a', socket: 'out' }, to: { node: 'sum', socket: 'items' } },
+      { type: 'connect', from: { node: 'b', socket: 'out' }, to: { node: 'sum', socket: 'items' } },
+      { type: 'connect', from: { node: 'c', socket: 'out' }, to: { node: 'sum', socket: 'items' } },
+    ];
+    for (const op of ops) s = applyOp(s, op).next;
+    return s;
+  };
+  const order = (s: DagState) =>
+    (s.nodes.sum.inputs.items as { node: string }[]).map((r) => r.node);
+
+  it.each(['a', 'b', 'c'])('disconnecting %s and applying the inverse restores the order', (id) => {
+    const state = listOfThree();
+    const cut = applyOp(state, {
+      type: 'disconnect',
+      from: { node: id, socket: 'out' },
+      to: { node: 'sum', socket: 'items' },
+    });
+    expect(order(cut.next)).not.toContain(id);
+    expect(order(applyOp(cut.next, cut.inverse).next)).toEqual(['a', 'b', 'c']);
+  });
+
+  it('the inverse of a disconnect from a SINGLE socket carries no position', () => {
+    let s = emptyDagState();
+    for (const op of [
+      { type: 'addNode', nodeId: 'a', nodeType: 'TestNumber', params: { value: 1 } },
+      { type: 'addNode', nodeId: 's', nodeType: 'TestSum', params: {} },
+      { type: 'connect', from: { node: 'a', socket: 'out' }, to: { node: 's', socket: 'a' } },
+    ] as Op[])
+      s = applyOp(s, op).next;
+    const cut = applyOp(s, {
+      type: 'disconnect',
+      from: { node: 'a', socket: 'out' },
+      to: { node: 's', socket: 'a' },
+    });
+    expect(cut.inverse).toEqual({
+      type: 'connect',
+      from: { node: 'a', socket: 'out' },
+      to: { node: 's', socket: 'a' },
+    });
   });
 });

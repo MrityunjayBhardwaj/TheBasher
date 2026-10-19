@@ -29,6 +29,7 @@ import { CompositionNode } from './Composition';
 import { COMPUTE_NODES } from './computeNodes';
 import { LagNode } from './Lag';
 import { SolverNode, BodyInputNode, BodyInputVecNode } from './Solver';
+import { TemplateDefinitionNode } from './TemplateDefinition';
 import { RigNode, BodyInputPoseNode } from './Rig';
 import { SampleGeometryNode } from './geometryQuery';
 import { CutNode } from './Cut';
@@ -232,8 +233,8 @@ const ALL: NodeDefinition[] = [
   TransformClipNode as unknown as NodeDefinition,
   ClipSelectNode as unknown as NodeDefinition,
   // #231 Inc 3 — multi-camera "active" model. CameraSelect (the ClipSelect
-  // pattern) picks the active camera by index to feed Scene.camera; `active` is
-  // keyframeable → camera cuts. selectActiveCameraNode resolves through it.
+  // pattern) picks the camera its `active` names (#1668: by id) to feed Scene.camera;
+  // `active` is keyframeable → camera cuts. selectActiveCameraNode resolves through it.
   CameraSelectNode as unknown as NodeDefinition,
   ShotNode as unknown as NodeDefinition,
   CutNode as unknown as NodeDefinition,
@@ -276,6 +277,8 @@ const ALL: NodeDefinition[] = [
   SolverNode as unknown as NodeDefinition,
   BodyInputNode as unknown as NodeDefinition,
   BodyInputVecNode as unknown as NodeDefinition,
+  // #1557 — a template's definition, held in the graph.
+  TemplateDefinitionNode as unknown as NodeDefinition,
   // #1357 — the Rig: a sub-network on the pose wire, and the leaf that reads its incoming pose.
   RigNode as unknown as NodeDefinition,
   BodyInputPoseNode as unknown as NodeDefinition,

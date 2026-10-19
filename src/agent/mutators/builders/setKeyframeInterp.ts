@@ -42,6 +42,7 @@ import {
   resolveChannelAddress,
   superRefineChannelAddress,
 } from './channelAddress';
+import { isDiscreteParamAt } from '../../../nodes/paramWidget';
 
 /** The KeyframeChannel node types that carry the broadened per-keyframe interp /
  *  ease / handle vocabulary (Number/Vec2/Vec3, from #272/#273). Color keeps the
@@ -164,6 +165,24 @@ export const setKeyframeInterpMutator: MutatorDefinition<SetKeyframeInterpSpec> 
     const view = resolved.view;
     if (!view) {
       return { ok: false, reason: `channel "${resolved.channelId}" could not be resolved.` };
+    }
+    // #1663 — a choice (the active camera) has nothing between its values, so its keys are a
+    // step whatever is stored, and the reader holds them regardless. Storing another easing would
+    // draw a ramp that never plays: refuse it by name rather than write a curve that lies.
+    // Asked FIRST (#1668): a cut channel is a text channel, and "is KeyframeChannelText" would
+    // not tell the caller why.
+    const { target, paramPath } = view.params as { target?: unknown; paramPath?: unknown };
+    if (
+      spec.easing !== undefined &&
+      spec.easing !== 'constant' &&
+      typeof target === 'string' &&
+      typeof paramPath === 'string' &&
+      isDiscreteParamAt(state.nodes[target]?.type, paramPath)
+    ) {
+      return {
+        ok: false,
+        reason: `${target}.${paramPath} picks one of several things, so its keys are always 'constant': the switch lands on the key.`,
+      };
     }
     if (view.type === 'KeyframeChannelQuat') {
       const refusal = quatRefusal(spec, resolved.channelId);

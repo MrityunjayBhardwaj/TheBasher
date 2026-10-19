@@ -42,7 +42,8 @@ const addSpare = (nodeId: string, key: string, value: number): Op => ({
 });
 
 const BOX_ID = 'n_box';
-const PARAM = 'material.metalness';
+// A parameter the cube really has: a path that names none is refused at this door (#1552).
+const PARAM = 'material.base.metalness';
 const DEFAULT_REMAP = { inMin: 0, inMax: 1, outMin: 0, outMax: 1 };
 
 function withNodes(...ops: Op[]): DagState {
@@ -127,10 +128,32 @@ describe('driverBind', () => {
       connect('c1', 'drv1'),
     );
     const ops = buildUnbindDriverOps(state, BOX_ID, PARAM);
-    expect(ops).toEqual([{ type: 'removeNode', nodeId: 'drv1' }]);
+    // #1560 — unbind goes through the shared delete, and a driver owns its source: `c1` had
+    // no other reader, so it goes too. Left behind it could not be reached again to remove.
+    expect(ops).toEqual([
+      { type: 'removeNode', nodeId: 'drv1' },
+      { type: 'removeNode', nodeId: 'c1' },
+    ]);
     let next = state;
     for (const op of ops) next = applyOp(next, op).next;
     expect(driverTargetSet(next.nodes).has(BOX_ID)).toBe(false);
+  });
+
+  it('buildUnbindDriverOps leaves a source another driver still reads', () => {
+    const state = withNodes(
+      addClamp('c1'),
+      addDriver('drv1', BOX_ID, PARAM),
+      connect('c1', 'drv1'),
+      addDriver('drv2', BOX_ID, 'scale.0'),
+      connect('c1', 'drv2'),
+    );
+    expect(buildUnbindDriverOps(state, BOX_ID, PARAM)).toEqual([
+      { type: 'removeNode', nodeId: 'drv1' },
+    ]);
+  });
+
+  it('buildUnbindDriverOps on a param nothing drives emits nothing', () => {
+    expect(buildUnbindDriverOps(withNodes(addClamp('c1')), BOX_ID, PARAM)).toEqual([]);
   });
 
   it('driverSourceOptions lists Number-output nodes, excluding the target + drivers', () => {
@@ -452,7 +475,7 @@ describe('driverBind — the Vector3 road (vec target drive)', () => {
     const state = withNodes(addMakeVec3('mv1'));
     const res = buildBindDriverOps(state, {
       targetId: BOX_ID,
-      paramPath: 'material.emissive',
+      paramPath: 'material.emission.color',
       source: vecSource('mv1'),
       driverId: 'drvV',
     });
@@ -525,7 +548,7 @@ describe('buildBindDriverOps — the new driver lands on top of its band (#315)'
     const state = withNodes(addClamp('c1'), addClamp('c2'), addDriver('d1', BOX_ID, PARAM));
     const r = buildBindDriverOps(state, {
       targetId: BOX_ID,
-      paramPath: 'material.roughness', // a different band — does not contend with d1
+      paramPath: 'material.specular.roughness', // a different band — does not contend with d1
       source: outSource('c2'),
       driverId: 'd2',
     });

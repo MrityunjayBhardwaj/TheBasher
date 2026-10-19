@@ -27,6 +27,7 @@ import {
 import type { ProjectMetadata } from '../core/project/io';
 import {
   canApplyTransform,
+  applyMaskUnavailableReason,
   isApplySourceAnimated,
   type ApplyMask,
 } from './animate/dispatchApplyTransform';
@@ -489,6 +490,30 @@ export function MenuBar() {
     selectedId && isPrimitive && isApplySourceAnimated(dag, selectedId, currentFrame),
   );
   const applyDisabled = !selectedId || !isPrimitive || applyAnimated;
+  // #1513 — each mask is offered only when Apply would take it (an armature group takes only its
+  // scale), asked through the same predicate. Memoised like `isPrimitive`.
+  const offeredMasks = useMemo(
+    () =>
+      new Set(
+        selectedId && isPrimitive
+          ? APPLY_MASKS.filter(({ mask }) =>
+              canApplyTransform(dag, selectedId, uiEvaluatorCache, mask),
+            ).map(({ mask }) => mask)
+          : [],
+      ),
+    [dag, selectedId, isPrimitive],
+  );
+  // #1525 — a mask that is not offered says why, in the words Apply would refuse with.
+  const maskReasons = useMemo(
+    () =>
+      new Map(
+        APPLY_MASKS.map(({ mask }) => [
+          mask,
+          selectedId ? applyMaskUnavailableReason(dag, selectedId, mask) : null,
+        ]),
+      ),
+    [dag, selectedId],
+  );
 
   return (
     <div
@@ -656,7 +681,8 @@ export function MenuBar() {
             <Item
               key={mask}
               label={label}
-              disabled={applyDisabled}
+              disabled={applyDisabled || !offeredMasks.has(mask)}
+              title={maskReasons.get(mask) ?? undefined}
               onSelect={() => {
                 // #1130 — a refusal is shown, never dropped.
                 if (selectedId) void applyTransformFromUi(selectedId, mask);
@@ -893,6 +919,7 @@ export function MenuBar() {
               { value: 'view3d', label: '3D Viewport' },
               { value: 'uv', label: '2D View' },
               { value: 'video', label: 'Video' },
+              { value: 'graph', label: 'Graph' },
             ] as { value: SpaceType; label: string }[]
           ).map((s) => (
             <Item
@@ -918,6 +945,8 @@ const SPACE_SWITCHER_OPTIONS: { value: SpaceType; label: string }[] = [
   { value: 'view3d', label: '3D' },
   { value: 'uv', label: '2D' },
   { value: 'video', label: 'Video' },
+  // #1675 — the Graph space has its own button, as the user asked; Tab still never lands on it.
+  { value: 'graph', label: 'Graph' },
 ];
 
 function SpaceSwitcher({

@@ -171,6 +171,13 @@ const ORIGINS: Record<string, Origin> = {
     frequency: 'per-action',
     why: 'Cook or Generate click, or the motion-generate agent tool.',
   },
+  // #1681 — the path fit takes a cache again, so the cook button's per-render read forwards the
+  // button's shared cache; only the Cook action itself starts with none.
+  'src/app/asset/fitMotionPathScale.ts · fitMotionPathScaleOps → motionPathScaleFit': {
+    count: 1,
+    frequency: 'per-action',
+    why: 'The Cook click or the motion-generate agent tool, once per producer (#1633, #1681).',
+  },
   'src/app/asset/motionPathFromCurve.ts · waypointsFromCurve → curveSamplerFor': {
     count: 1,
     frequency: 'per-action',
@@ -295,6 +302,11 @@ const TAKERS: string[] = [
   'canWearMaterial@src/app/modifierGeometry.ts',
   'clipBakeStates@src/app/asset/bakeGeneratedClip.ts',
   'motionCookOffer@src/app/asset/cookMotionGenerations.ts',
+  // #1681 — the path fit: the producer's fit, each retarget's world ratio, each playing Object's
+  // world unit. The cook button hands these its cache (it reads the fit on every render).
+  'motionPathScaleFit@src/app/asset/fitMotionPathScale.ts',
+  'retargetRatios@src/app/asset/fitMotionPathScale.ts',
+  'worldUnitsOf@src/app/asset/fitMotionPathScale.ts',
   'resolveMeshUVSpace@src/app/resolveMeshUVSpace.ts',
   'resolveDataKind@src/app/modifierGeometry.ts',
   'scanForFollow@src/viewport/followScan.ts',
@@ -354,10 +366,14 @@ const TAKERS: string[] = [
   'resolveTrackToTarget@src/app/nodeConstraints.ts',
   'resolveTransformParam@src/app/resolveTransformParam.ts',
   'resolveWorldTransform@src/app/resolveWorldTransform.ts',
+  // #1638 — forwards the caller's cache to the world resolver at each playhead it is asked.
+  'worldMatrixAt@src/app/resolveWorldTransform.ts',
   'rigChanges@src/app/animate/invertPoseStack.ts',
   'slotAbsenceOf@src/app/objectSlotAuthoring.ts',
   'statefulInputAt@src/app/statefulOps.ts',
   'statefulInputVecAt@src/app/statefulOps.ts',
+  // #1559 — an enclosing template instance's `in`, read with the replay's own cache.
+  'liveInputOf@src/app/statefulOps.ts',
   'underParent@src/app/resolveWorldTransform.ts',
   'walk@src/app/resolveWorldTransform.ts',
   'walkParent@src/app/resolveWorldTransform.ts',

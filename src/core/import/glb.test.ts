@@ -96,6 +96,37 @@ describe('parseGlb', () => {
 });
 
 describe('readAccessor', () => {
+  it('#1063 — reads one accessor out of an interleaved view, skipping its neighbour', () => {
+    // Two vertices, 20 bytes each: a float VEC3 at 0, then a float VEC2 at 12. The VEC2 is read
+    // from offset 12 every 20 bytes; a contiguous read would hand back the next vertex's position.
+    const binBytes = new Uint8Array(40);
+    const v = new DataView(binBytes.buffer);
+    [1, 2, 3, 0.25, 0.5, 4, 5, 6, 0.75, 1].forEach((val, i) => v.setFloat32(i * 4, val, true));
+    const json: GltfJson = {
+      nodes: [],
+      accessors: [
+        { bufferView: 0, componentType: 5126, count: 2, type: 'VEC3' },
+        { bufferView: 0, byteOffset: 12, componentType: 5126, count: 2, type: 'VEC2' },
+      ],
+      bufferViews: [{ buffer: 0, byteLength: 40, byteStride: 20 }],
+      buffers: [{ byteLength: 40 }],
+    };
+    const parsed = parseGlb(makeGlb(json, binBytes));
+    expect(Array.from(readAccessor(parsed.json, [parsed.bin], 0))).toEqual([1, 2, 3, 4, 5, 6]);
+    expect(Array.from(readAccessor(parsed.json, [parsed.bin], 1))).toEqual([0.25, 0.5, 0.75, 1]);
+  });
+
+  it('#1063 — a stride smaller than one element is refused loudly, not misread', () => {
+    const json: GltfJson = {
+      nodes: [],
+      accessors: [{ bufferView: 0, componentType: 5126, count: 2, type: 'VEC3' }],
+      bufferViews: [{ buffer: 0, byteLength: 24, byteStride: 8 }],
+      buffers: [{ byteLength: 24 }],
+    };
+    const parsed = parseGlb(makeGlb(json, new Uint8Array(24)));
+    expect(() => readAccessor(parsed.json, [parsed.bin], 0)).toThrow(/smaller than one VEC3/);
+  });
+
   it('reads a FLOAT32 VEC3 accessor verbatim', () => {
     // 2 keyframes of position (VEC3 FLOAT32) = 24 bytes.
     const binBytes = new Uint8Array(24);

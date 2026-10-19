@@ -20,6 +20,7 @@
 // REF: src/app/resolveEvaluatedParam.ts; src/app/animate/autoKeyCommit.ts;
 //      src/app/ParamDiamond.tsx; vyapti V57; hetvabhasa H40/H104.
 
+import { runsOnFilmTime } from '../subjectClock';
 import { useMemo } from 'react';
 import { useDagStore } from '../../core/dag/store';
 import { useTimeStore } from '../stores/timeStore';
@@ -50,11 +51,14 @@ export function useAnimatableField<T extends number | string>(
   base: T,
   onSource: (next: T) => void,
 ): AnimatableField<T> {
-  const frame = useTimeStore((s) => s.frame);
-  const seconds = useTimeStore((s) => s.seconds);
+  const dagState = useDagStore((s) => s.state);
+  // #1594 — read on the field's own clock: a camera's or the Scene speed's on the playhead,
+  // everything else on scene time.
+  const film = runsOnFilmTime(dagState, nodeId, paramPath);
+  const frame = useTimeStore((s) => (film ? s.filmFrame : s.frame));
+  const seconds = useTimeStore((s) => (film ? s.filmSeconds : s.seconds));
   const normalized = useTimeStore((s) => s.normalized);
   const playing = useTimeStore((s) => s.playing);
-  const dagState = useDagStore((s) => s.state);
   // A stable cache (#1389): this read follows the playhead, and a field driven through
   // pure nodes (a driver on a controller that reads the character) would otherwise
   // re-run every one of them per frame, per mounted field.

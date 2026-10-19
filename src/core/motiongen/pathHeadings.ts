@@ -10,13 +10,14 @@
 // `headings`, reading the Hips yaw (the travelling bone; ROOT is identically
 // zero on every frame):
 //
-//     path +X, no headings      yaw mean  -2.5°   ends (1.91, 0.01)   looks fine
-//     path +Z, no headings      yaw mean  -1.4°   ends (0.01, 2.07)   STRAFES
-//     path +Z, with headings    yaw mean  59.7°   ends (-0.01, 2.02)  walks it
+//     path +X, no headings      yaw mean  -2.5°   ends (1.91, 0.01)
+//     path +Z, no headings      yaw mean  -1.4°   ends (0.01, 2.07)
+//     path +Z, with headings    yaw mean  59.7°   ends (-0.01, 2.02)
 //
-// The +X path hides the defect completely, because facing +X IS the canonical
-// heading — which is why this survived: the fixture path and the canonical
-// direction were the same direction.
+// The facing a path needs is real; WHICH of these rows strafes was read
+// backwards at first — see the next section (#1635): yaw 0 faces +Z, so it is
+// the +X path that strafes without a heading, and the third row's 59.7° was a
+// +Z path being turned sideways.
 //
 // #897 reads this as unfixable from our side, on the grounds that the server
 // "returns no angle, so there is nothing for the client to re-apply". That is
@@ -27,13 +28,22 @@
 // using it.
 //
 // ─────────────────────────────────────────────────────────────────────────────
-// WHICH COMPONENT IS WHICH — measured, not inferred from the names
+// WHICH COMPONENT IS WHICH — measured, and measured twice (#1635)
 // ─────────────────────────────────────────────────────────────────────────────
 // `[cos, sin]` does not say which world axis each maps to, and guessing has a
-// 50% failure mode that looks like a model quality problem. Measured: `[1, 0]`
-// on a +X path holds yaw at ~0 (the canonical facing, i.e. +X), and `[0, 1]`
-// turns the character toward +Z on both an +X path and a +Z path. So the pair is
-// (x, z) in the same frame and units as the waypoints themselves.
+// 50% failure mode that looks like a model quality problem. The first reading
+// took yaw 0 to face +X, concluded the pair was `(x, z)`, and every walk sent
+// along a path strafed it. The yaw numbers were right; the reading was not. The
+// SOMA rest pose puts `LeftLeg` at +X with Y up, so yaw 0 faces **+Z**, and a
+// free run goes +Z at yaw 0. Re-measured (Kimodo-SOMA-RP-v1.1, 3 s, seed 7):
+//
+//     path +Z, `[1, 0]`   travel +Z   yaw ≈ −2°   runs forward
+//     path +X, `[0, 1]`   travel +X   yaw ≈ 85°   runs forward
+//     path +X, `[1, 0]`   travel +X   yaw ≈ 0°    STRAFES
+//
+// So the pair is `[cos, sin]` of the yaw from +Z — `[dir.z, dir.x]` — and the
+// canonical facing the request is turned into is +Z. This module stays in the
+// waypoint frame (`atan2(z, x)`); the wire's order lives in the capability.
 //
 // REF: src/core/motiongen/HttpMotionGenerationCapability.ts (the wire, where this
 //      is applied); kimodo `authoring/constraints.py` `root_path(headings=…)`;

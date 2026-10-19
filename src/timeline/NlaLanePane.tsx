@@ -207,7 +207,9 @@ export function NlaLanePane() {
       const rect = el.getBoundingClientRect();
       if (rect.width <= 0) return;
       const pct = ((clientX - rect.left) / rect.width) * 100;
-      useTimeStore.getState().setTime(percentToSeconds(pct, FRAMES_PER_SECOND, totalFrames, view));
+      // #1594 — strips sit at scene time; the playhead is film time.
+      const ts = useTimeStore.getState();
+      ts.setTime(ts.timeMap.filmAt(percentToSeconds(pct, FRAMES_PER_SECOND, totalFrames, view)));
     },
     [totalFrames, view],
   );

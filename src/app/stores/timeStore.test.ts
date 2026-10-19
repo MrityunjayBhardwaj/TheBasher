@@ -8,9 +8,12 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { useTimeStore } from './timeStore';
 
 beforeEach(() => {
+  useTimeStore.getState().setTimeMap(null);
   useTimeStore.setState({
     seconds: 0,
     frame: 0,
+    filmSeconds: 0,
+    filmFrame: 0,
     normalized: 0,
     durationSeconds: 10,
     playing: false,
@@ -49,7 +52,8 @@ describe('timeStore', () => {
 
   it('tick wraps at duration end (loop)', () => {
     useTimeStore.getState().play();
-    useTimeStore.setState({ seconds: 9.9 });
+    // #1594 — the playhead is `filmSeconds`; `seconds` (scene time) follows it.
+    useTimeStore.setState({ filmSeconds: 9.9 });
     useTimeStore.getState().tick(0.5);
     // 9.9 + 0.5 = 10.4 → wraps to 0.4
     expect(useTimeStore.getState().seconds).toBeCloseTo(0.4, 5);

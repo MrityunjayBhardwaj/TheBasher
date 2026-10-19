@@ -12,6 +12,7 @@
 // REF: THESIS.md §9 (five primitives), §50, App. B; krama K2 (op dispatch
 // lifecycle).
 
+import { followDefinition } from './templates';
 import { followableName, ownName } from './nodeName';
 import { passRoleOf } from './passRole';
 import { requireNodeType } from './registry';
@@ -32,7 +33,7 @@ import type {
   Op,
   OutputDescriptor,
 } from './types';
-import { acceptedTypes, OpSchema, SpareParamSchema } from './types';
+import { acceptedTypes, OpSchema, OUTPUT_SOCKET_TYPES, SpareParamSchema } from './types';
 import { inputTakes, whyNotTaken } from './socketConversion';
 
 /**
@@ -181,6 +182,9 @@ interface Draft {
    *  every write after it: undoing an import removes thousands of nodes, and asking each
    *  time whether anything still consumes one meant reading every node's inputs. */
   consumed: Map<NodeId, number> | null;
+  /** #1623 — the last operation that could have broken a sub-network rule, named in the
+   *  refusal. A batch is judged on the graph it ends in, so it is asked once, at the end. */
+  subnetworkCheck: Extract<Op, { type: 'addNode' | 'connect' | 'setParam' }> | null;
 }
 
 export interface AppliedOp {
@@ -201,7 +205,13 @@ export function applyOps(
   state: DagState,
   ops: readonly unknown[],
 ): { next: DagState; applied: AppliedOp[] } {
-  const draft: Draft = { nodes: null, touched: new Map(), followers: null, consumed: null };
+  const draft: Draft = {
+    nodes: null,
+    touched: new Map(),
+    followers: null,
+    consumed: null,
+    subnetworkCheck: null,
+  };
   const applied: AppliedOp[] = [];
   let working = state;
   for (const raw of ops) {
@@ -211,6 +221,15 @@ export function applyOps(
     const step = { forward, inverse, changed: next !== working };
     applied.push(reportable ? { ...step, reportable } : step);
     working = next;
+  }
+  // #1623 — the sub-network rules are asked of the graph the batch ends in, as the store asks
+  // the dangling-reference rule. Asked after each operation, they refused the undo of a delete
+  // inside a sub-network: the node comes back with its input wires one operation before the
+  // wire that puts it back inside, and for that one operation it counted as outside.
+  if (draft.subnetworkCheck) {
+    const reason = newSubnetworkViolation(state, working) ?? newStatefulLeafRead(state, working);
+    if (reason)
+      throw new OpError(`${draft.subnetworkCheck.type}: ${reason}`, draft.subnetworkCheck);
   }
   return { next: working, applied };
 }
@@ -292,6 +311,12 @@ function refollow(
 
 function applyWith(state: DagState, op: Op, draft: Draft | undefined): ApplyResult {
   const result = applyUnguarded(state, op, draft);
+  // #1557 — a template's definition node defines its type as it lands, so the same batch can add
+  // an instance of it; a second definition of one type is refused.
+  if (op.type === 'addNode' || op.type === 'setParam') {
+    const refused = followDefinition(result.next, op.nodeId);
+    if (refused) throw new OpError(`${op.type}: ${refused}`, op);
+  }
   // #1583 — which nodes own a sub-network follows the graph through every operation, so the
   // rules below never have to walk the graph to find them.
   carrySubnetworkOwners(state, result.next, op);
@@ -322,7 +347,44 @@ function applyUnguarded(state: DagState, op: Op, draft: Draft | undefined): Appl
       return applySetSpareParam(state, op, draft);
     case 'removeSpareParam':
       return applyRemoveSpareParam(state, op, draft);
+    case 'setOutput':
+      return applySetOutput(state, op);
   }
+}
+
+/** #1550 — bind a named output to a node's output socket, or unbind it. Only the outputs the app
+ *  reads exist, and each takes the one socket type its readers take; the inverse binds back
+ *  what was there. Writes `outputs` only, so a batch's node record is untouched. */
+function applySetOutput(state: DagState, op: Extract<Op, { type: 'setOutput' }>): ApplyResult {
+  const wants = OUTPUT_SOCKET_TYPES[op.name];
+  if (wants === undefined) {
+    throw new OpError(
+      `setOutput: there is no output '${op.name}' (outputs: ${Object.keys(OUTPUT_SOCKET_TYPES).join(', ')})`,
+      op,
+    );
+  }
+  const prior = state.outputs[op.name];
+  if (op.ref !== null) {
+    const node = getNode(state, op.ref.node);
+    const socket = requireNodeType(node.type).outputs[op.ref.socket];
+    if (!socket) {
+      throw new OpError(`setOutput: ${node.type} has no output '${op.ref.socket}'`, op);
+    }
+    if (socket.type !== wants) {
+      throw new OpError(
+        `setOutput: '${op.name}' takes a ${wants}, and ${op.ref.node}.${op.ref.socket} is a ${socket.type}`,
+        op,
+      );
+    }
+  }
+  const inverse: Op = { type: 'setOutput', name: op.name, ref: prior ?? null };
+  if (op.ref === null ? prior === undefined : sameParamValue(prior, op.ref)) {
+    return { next: state, inverse };
+  }
+  const outputs = { ...state.outputs };
+  if (op.ref === null) delete outputs[op.name];
+  else outputs[op.name] = { node: op.ref.node, socket: op.ref.socket };
+  return { next: { ...state, outputs }, inverse };
 }
 
 /** The nodes an edge-adding op wires FROM. */
@@ -344,6 +406,10 @@ function holdingSubnetworks(
   draft: Draft | undefined,
 ): ApplyResult {
   if (!reachesSubnetwork(result.next, producersOf(op))) return result;
+  if (draft) {
+    draft.subnetworkCheck = op; // #1623 — asked once the batch has ended (`applyOps`)
+    return result;
+  }
   const before = beforeWrites(state, draft);
   const reason =
     newSubnetworkViolation(before, result.next) ?? newStatefulLeafRead(before, result.next);
@@ -363,6 +429,10 @@ function holdingLeafNames(
   const node = state.nodes[op.nodeId];
   if (!node || requireNodeType(node.type).bodyInputLeaf !== true) return result;
   if (!reachesSubnetwork(result.next, [op.nodeId])) return result;
+  if (draft) {
+    draft.subnetworkCheck = op; // #1623 — asked once the batch has ended (`applyOps`)
+    return result;
+  }
   const reason = newStatefulLeafRead(beforeWrites(state, draft), result.next);
   if (reason) throw new OpError(`setParam: ${reason}`, op);
   return result;
@@ -415,6 +485,8 @@ function applyAddNode(
     version: def.version,
     params: paramsParsed.data,
     inputs: op.inputs ?? {},
+    ...(op.spare !== undefined ? { spare: op.spare } : {}),
+    ...(op.meta !== undefined ? { meta: op.meta } : {}),
   };
   const next = putNode(state, draft, op.nodeId, node);
   const inverse: Op = { type: 'removeNode', nodeId: op.nodeId };
@@ -455,6 +527,8 @@ function applyRemoveNode(
     nodeType: node.type,
     params: node.params,
     inputs: node.inputs,
+    ...(node.spare !== undefined ? { spare: node.spare } : {}),
+    ...(node.meta !== undefined ? { meta: node.meta } : {}),
   };
   return { next, inverse };
 }
@@ -644,6 +718,7 @@ function applyDisconnect(
   if (!inputDesc) {
     throw new OpError(`disconnect: ${consumer.type} has no input socket '${op.to.socket}'`, op);
   }
+  let listIndex: number | undefined;
   const prior = consumer.inputs[op.to.socket];
   if (prior === undefined) {
     throw new OpError(`disconnect: nothing connected at ${consumer.id}.${op.to.socket}`, op);
@@ -657,6 +732,7 @@ function applyDisconnect(
         op,
       );
     }
+    listIndex = idx;
     const nextList = [...prior.slice(0, idx), ...prior.slice(idx + 1)];
     if (nextList.length === 0) {
       delete inputs[op.to.socket];
@@ -674,7 +750,15 @@ function applyDisconnect(
   }
   const nextNode: Node = { ...consumer, inputs };
   const next = putNode(state, draft, consumer.id, nextNode);
-  const inverse: Op = { type: 'connect', from: op.from, to: op.to };
+  // #1622 — the inverse of a disconnect from a LIST puts the entry back where it was. Without the
+  // position a `connect` appends, so undoing a delete moved the object to the end of its
+  // parent's list.
+  const inverse: Op = {
+    type: 'connect',
+    from: op.from,
+    to: op.to,
+    ...(listIndex !== undefined ? { index: listIndex } : {}),
+  };
   return { next, inverse };
 }
 
@@ -773,8 +857,54 @@ function applySetParam(
       },
     };
   }
+  // 🔴 #1636 — A KEY LOST INSIDE THE WRITTEN VALUE. The check above reads the path; a
+  // list or object written AT the path survives the parse even when zod strips a key
+  // inside it. Measured: a Cycles modifier on every channel of a pose layer, one write of
+  // `channels` — the quaternion channels have no `modifiers` field, lost it, and the run
+  // froze at its last key while the write committed with nothing said. Same refusal as a
+  // path that does not exist: nothing commits, the badge names where the key went.
+  const lost = lostKeyIn(op.value, getAtPath(parsed.data, op.paramPath), '');
+  if (lost !== null) {
+    return {
+      next: state,
+      inverse,
+      reportable: {
+        badge: 'stripped-write',
+        nodeId: op.nodeId,
+        paramPath: op.paramPath,
+        reason: `${node.type} has no field at ${lost}`,
+      },
+    };
+  }
   const next = unchanged ? state : putNode(state, draft, node.id, { ...node, params: parsed.data });
   return { next, inverse };
+}
+
+/**
+ * #1636 — the first key the caller WROTE that the parse did not keep, as a path below the
+ * written one (`[1].modifiers`), else null. Only keys that were written and then lost count:
+ * a key the schema adds (a default) is fine, an `undefined` written value is not a key, and
+ * lists whose lengths differ cannot be aligned, so they are not judged (conservative — it
+ * can miss a strip, never invent one).
+ */
+function lostKeyIn(written: unknown, kept: unknown, at: string): string | null {
+  if (Array.isArray(written)) {
+    if (!Array.isArray(kept) || kept.length !== written.length) return null;
+    for (let i = 0; i < written.length; i += 1) {
+      const lost = lostKeyIn(written[i], kept[i], `${at}[${i}]`);
+      if (lost !== null) return lost;
+    }
+    return null;
+  }
+  if (typeof written !== 'object' || written === null || !isPlainRecord(written)) return null;
+  if (typeof kept !== 'object' || kept === null || !isPlainRecord(kept)) return null;
+  for (const [k, v] of Object.entries(written)) {
+    if (v === undefined) continue;
+    if (!Object.prototype.hasOwnProperty.call(kept, k)) return `${at}.${k}`.replace(/^\./, '');
+    const lost = lostKeyIn(v, kept[k], `${at}.${k}`);
+    if (lost !== null) return lost;
+  }
+  return null;
 }
 
 /**
@@ -922,6 +1052,7 @@ function applySetMeta(
   // meta fields (graph `position`) are preserved; an undefined name DELETES the
   // override key so the label cleanly falls back to the node id.
   const node = getNode(state, op.nodeId);
+  if (op.position !== undefined) return applySetPosition(state, op, node, draft);
   const prior = node.meta?.name;
   const priorFrom = node.meta?.nameFrom;
   const meta = { ...node.meta };
@@ -957,5 +1088,27 @@ function applySetMeta(
     name: prior,
     ...(priorFrom !== undefined ? { nameFrom: priorFrom } : {}),
   };
+  return { next, inverse };
+}
+
+/** #1562 — a setMeta carrying `position`: writes where the node sits in the node view and
+ *  nothing else; `null` clears it. The inverse puts back the position that was there. */
+function applySetPosition(
+  state: DagState,
+  op: Extract<Op, { type: 'setMeta' }>,
+  node: Node,
+  draft: Draft | undefined,
+): ApplyResult {
+  if (op.name !== undefined || op.nameFrom !== undefined) {
+    throw new OpError('setMeta: a position is set on its own, not with a name', op);
+  }
+  const meta: NonNullable<Node['meta']> = { ...node.meta };
+  if (op.position === null) delete meta.position;
+  else meta.position = [op.position![0], op.position![1]];
+  const nextMeta = Object.keys(meta).length === 0 ? undefined : meta;
+  const next = sameParamValue(node.meta, nextMeta)
+    ? state
+    : putNode(state, draft, node.id, { ...node, meta: nextMeta });
+  const inverse: Op = { type: 'setMeta', nodeId: op.nodeId, position: node.meta?.position ?? null };
   return { next, inverse };
 }

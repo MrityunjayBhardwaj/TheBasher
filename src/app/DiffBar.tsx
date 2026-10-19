@@ -91,7 +91,6 @@ export function DiffBar() {
 
   const hasMeta =
     hasMetaToShow({
-      sourceCounts,
       closureNodeCount,
       warningsCount: warnings.length,
       timeRange,
@@ -126,7 +125,13 @@ export function DiffBar() {
     >
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 12px' }}>
         <span style={{ fontWeight: 600, color: '#88aaff', marginRight: 8 }}>Agent Diff</span>
+        {/* #1612 — the title says what the diff does; which tools proposed it (it used to
+            be a visible "Sources:" row of tool names) is on hover, for whoever wants it. */}
         <span
+          data-testid="diffbar-description"
+          title={sourceCounts
+            .map((s) => `${s.source.replace(/^agent:/, '')} ×${s.count}`)
+            .join(' · ')}
           style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
         >
           {pendingDiff.description}
@@ -173,18 +178,6 @@ export function DiffBar() {
             color: '#9aa',
           }}
         >
-          {sourceCounts.length > 1 && (
-            <span data-testid="diffbar-sources">
-              <span style={{ color: '#666' }}>Sources:</span>{' '}
-              {sourceCounts.map((s, i) => (
-                <span key={s.source}>
-                  {i > 0 && <span style={{ color: '#444' }}> · </span>}
-                  <span style={{ color: '#bbc' }}>{s.source.replace(/^agent:/, '')}</span>
-                  <span style={{ color: '#666' }}> ×{s.count}</span>
-                </span>
-              ))}
-            </span>
-          )}
           {closureNodeCount > 0 && (
             <span data-testid="diffbar-closure">
               <span style={{ color: '#666' }}>Scope:</span>{' '}

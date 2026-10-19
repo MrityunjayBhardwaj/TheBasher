@@ -91,12 +91,15 @@ export const SHADING: readonly ShadingDef[] = [
 interface SpaceEntry {
   readonly value: SpaceType;
   readonly label: string;
-  readonly key: string;
+  /** The key that cycles to it; absent for a space Tab never lands on. */
+  readonly key?: string;
 }
 
 const SPACES: readonly SpaceEntry[] = [
   { value: 'view3d', label: '3D View', key: 'Tab' },
   { value: 'uv', label: '2D View', key: 'Tab' },
+  // #1675 — the read-only node view. Outside the Tab cycle, so its button is the way in.
+  { value: 'graph', label: 'Graph' },
 ];
 
 /** Click handler for the Home (⌂) button — fall back to frameAll() whenever
@@ -383,7 +386,7 @@ export function FloatingViewportToolbar(): ReactNode {
             type="button"
             onClick={() => setSpace(s.value)}
             data-testid={`toolbar-space-${s.value}`}
-            title={`${s.label} (${s.key} to toggle)`}
+            title={s.key ? `${s.label} (${s.key} to toggle)` : s.label}
             className={`rounded px-2 py-1 text-[11px] font-medium focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent ${
               space === s.value ? 'bg-accent/15 text-accent' : 'text-fg/60 hover:text-fg'
             }`}

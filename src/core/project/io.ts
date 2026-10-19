@@ -16,6 +16,7 @@
 // REF: THESIS.md §52, krama K5.
 
 import { detachGraph, type DagState } from '../dag/state';
+import { withoutUnusedTemplates } from '../dag/templates';
 import type { StorageCapability } from '../storage';
 import { migrateNodes, migrateProjectFormat } from './migrations';
 import { copyProjectImages, deleteProjectImages } from './projectImages';
@@ -67,8 +68,11 @@ export interface ComposeProjectArgs {
  * rebuilds the levels that were already safe and shares the one that is not.
  */
 export function composeProject(args: ComposeProjectArgs): Project {
+  // #1557 — a template no instance uses, and none asked to keep, is not written: Blender drops a
+  // data-block with no users when it saves.
+  const kept = withoutUnusedTemplates({ nodes: args.state.nodes, outputs: args.state.outputs });
   const nodeVersions: Record<string, number> = {};
-  for (const node of Object.values(args.state.nodes)) {
+  for (const node of Object.values(kept.nodes)) {
     nodeVersions[node.type] = Math.max(nodeVersions[node.type] ?? 0, node.version);
   }
   const now = Date.now();
@@ -79,10 +83,7 @@ export function composeProject(args: ComposeProjectArgs): Project {
     createdAt: args.createdAt ?? now,
     updatedAt: args.updatedAt ?? now,
     nodeVersions,
-    state: detachGraph({
-      nodes: args.state.nodes,
-      outputs: args.state.outputs,
-    }),
+    state: detachGraph(kept),
   };
 }
 

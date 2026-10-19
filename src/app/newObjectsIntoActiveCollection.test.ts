@@ -16,7 +16,7 @@ import {
   newCollectionOps,
   setActiveCollectionOp,
 } from './collections';
-import { buildDuplicateNodeOps } from './sceneNodeActions';
+import { buildDuplicateNodesOps } from './sceneNodeActions';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { buildAddStudioLightOps } from './addStudioLight';
@@ -112,13 +112,13 @@ describe('#1453 — a duplicate joins its source’s collections', () => {
     const { state: s3, id: loose } = add(s2, 'Cube');
     expect(collectionMembersOf(s3, col)).toEqual([member]);
 
-    const dupMember = buildDuplicateNodeOps(s3, member)!;
+    const dupMember = buildDuplicateNodesOps(s3, [member])!;
     const s4 = apply(s3, dupMember.ops);
-    expect(collectionMembersOf(s4, col)).toEqual([member, dupMember.newRootId]);
+    expect(collectionMembersOf(s4, col)).toEqual([member, dupMember.newRootIds[0]]);
 
-    const dupLoose = buildDuplicateNodeOps(s4, loose)!;
+    const dupLoose = buildDuplicateNodesOps(s4, [loose])!;
     const s5 = apply(s4, dupLoose.ops);
-    expect(collectionMembersOf(s5, col)).toEqual([member, dupMember.newRootId]);
+    expect(collectionMembersOf(s5, col)).toEqual([member, dupMember.newRootIds[0]]);
   });
 });
 

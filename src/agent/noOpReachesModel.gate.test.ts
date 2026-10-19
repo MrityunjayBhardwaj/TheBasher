@@ -181,9 +181,16 @@ describe('#1014 — a surfaced no-op reaches the model, not only the DiffBar', (
     // The DIRECTOR's reader: the chat line survives (#1014) and says the same.
     const chat = useAgentSessionStore
       .getState()
-      .session.messages.map((m) => String(m.content))
+      .session.messages.map((m) =>
+        [m.content, m.summary ?? '', ...(m.steps ?? []).map((s) => `[${s.tool}] ${s.detail}`)].join(
+          '\n',
+        ),
+      )
       .join('\n');
+    // #1612 — the raw line lives in the bubble's steps; the bubble's own words say a step was
+    // refused, so the director is told without reading the op layer's message.
     expect(chat).toContain('[dag.exec] ERROR: Node not found: n_nope');
+    expect(chat).toContain('One step was refused; the agent was told why.');
     // The turn went on to round 2 and ended cleanly; nothing from the refused batch is pending.
     expect(useAgentSessionStore.getState().session.error ?? '').toBe('');
     expect(useDiffStore.getState().pendingDiff).toBeNull();

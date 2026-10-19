@@ -23,7 +23,7 @@ import { evaluate, type EvaluatorCache } from '../core/dag/evaluator';
 import type { DagState } from '../core/dag/state';
 import { armaturePoseOf } from '../nodes/bonePose';
 import type { BoneSpec, ObjectValue, PosedSkeletonValue } from '../nodes/types';
-import { resolveWorldTransform } from './resolveWorldTransform';
+import { resolveWorldTransform, worldMatrixAt } from './resolveWorldTransform';
 import { hiddenNodes } from './collections';
 
 export interface SkeletonObject {
@@ -31,8 +31,14 @@ export interface SkeletonObject {
   readonly id: string;
   /** The Skeleton node its `data` points at. */
   readonly skeletonId: string;
-  /** The Object's world matrix, column-major (three's `toArray`). */
+  /** The Object's world matrix at frame 0, column-major (three's `toArray`). */
   readonly world: readonly number[];
+  /**
+   * #1638 — the Object's world matrix at `seconds`. The pose is sampled at the playhead, so the
+   * placement must be too: placed by `world`, a rig whose parent travels kept its bones at the
+   * frame-0 spot while the mesh ran on (10 m behind after 2 s at 5 m/s).
+   */
+  readonly worldAt: (seconds: number) => readonly number[];
   /** The rest bones. */
   readonly bones: readonly BoneSpec[];
   /** The Object's pose, or null when it has none or it was made for another rig (`armaturePoseOf`). */
@@ -80,6 +86,7 @@ export function collectSkeletonObjects(state: DagState, cache?: EvaluatorCache):
         id: node.id,
         skeletonId,
         world: world.matrix,
+        worldAt: worldMatrixAt(state, node.id, world.matrix, cache),
         bones: data.bones,
         pose,
         clipCount,

@@ -40,9 +40,12 @@ export const deleteNodeMutator: MutatorDefinition<DeleteNodeSpec> = {
     //              swept with their subject, and the survivors whose refs we clear
     //              (#421). No edge kind can reach these, so without it gate 3
     //              rejects this mutator's OWN ops.
+    // 'owned'    — everything the shared delete takes with a target (#1560): a cube's
+    //              driver is reached by id-ref and the Solver wired into that driver by
+    //              a wire, and no single kind above crosses from one to the other.
     return {
       rootSelectors: spec.targetSelectors,
-      followedEdges: ['parent', 'children', 'data', 'id-ref'],
+      followedEdges: ['parent', 'children', 'data', 'id-ref', 'owned'],
     };
   },
   preconditions(spec, _closure, state) {
