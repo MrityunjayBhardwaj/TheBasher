@@ -74,9 +74,11 @@ const UNSCOPED_INDEX = 108;
  * "the widened array draws more" alone is satisfied by a scoped array that draws NOTHING,
  * which is the worse defect. "the scoped array draws something" alone is satisfied by a
  * build that ignores the scope entirely — which is exactly the arm this file exists to red.
- * Measured on this tree at the project's 1920x1080 render: 30,947 blue against 78,387, a
- * ratio of 2.53. The threshold is 1.5, and the two counts go into the message so a change
- * that shrinks the difference reads as numbers rather than as a pass.
+ * Measured at the project's 1920x1080 render (SwiftShader, #1683): 7,568 blue scoped against
+ * 78,387 unscoped, a ratio of 10.4. The subject sits at the top edge of the frame, so only the
+ * lower edge of the input box and of one generated wall show when scoped. The floor is 5,000
+ * and the ratio 1.5, and the two counts go into the message so a change that shrinks the
+ * difference reads as numbers rather than as a pass.
  */
 const DRAWS_AT_ALL = 5_000;
 const WIDENING_RATIO = 1.5;
@@ -121,8 +123,18 @@ function scopedArrayOps(
       nodeId: dataId,
       nodeType: 'BoxData',
       // The material rides on the DATA node and the generator inherits it, so every copy
-      // is the same blue and the pixel count is a count of this subject alone.
-      params: { size: [1, 1, 1], material: { name: `${dataId}-blue`, base: { color: BLUE } } },
+      // is the same blue and the pixel count is a count of this subject alone. The blue is
+      // EMITTED over a black base, so lighting cannot move the count: the copies are open
+      // shells, and since #1644 the side the camera sees of a generated wall is correctly in
+      // its own shadow — a lit blue went black there and fell out of the count (#1683).
+      params: {
+        size: [1, 1, 1],
+        material: {
+          name: `${dataId}-blue`,
+          base: { color: '#000000' },
+          emission: { color: BLUE, luminance: 1 },
+        },
+      },
     },
     {
       type: 'addNode',
