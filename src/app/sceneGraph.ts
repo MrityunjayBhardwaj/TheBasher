@@ -159,14 +159,16 @@ function isSidecar(state: DagState, id: NodeId): boolean {
 
 /**
  * What the view draws at one level: the top level (`level` null or absent), or the sub-network
- * of the owner named. A level that no longer exists (its owner was deleted) reads as the top.
+ * of the owner named. A level that does not exist (its owner was deleted, or the node named
+ * holds no sub-network) reads as the top.
  */
 export function sceneGraphOf(
   state: DagState,
   opts: { showHidden: boolean; showAnimation?: boolean; level?: NodeId | null },
 ): SceneGraph {
   const levels = levelOf(state);
-  const level = opts.level && state.nodes[opts.level] ? opts.level : null;
+  const owners = new Set(levels.values());
+  const level = opts.level && owners.has(opts.level) ? opts.level : null;
   const all = viewEdgesOf(state);
   const hidden = hiddenNodes(state, 'viewport');
   const drawn = opts.showHidden ? null : drawnNodes(state, all, hidden);

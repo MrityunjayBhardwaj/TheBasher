@@ -134,7 +134,7 @@ describe('sceneGraphOf — #1563 one level at a time', () => {
     }
   });
 
-  it('a level whose owner is gone reads as the top level', () => {
+  it('a level whose owner is gone, or that is no owner, reads as the top level', () => {
     const g = sceneGraphOf(plazaState(), {
       showHidden: true,
       showAnimation: true,
@@ -142,6 +142,8 @@ describe('sceneGraphOf — #1563 one level at a time', () => {
     });
     expect(g.path).toEqual([]);
     expect(g.nodes).toHaveLength(Object.keys(plazaState().nodes).length);
+    // So does a node that is there but holds no sub-network.
+    expect(sceneGraphOf(plazaState(), { showHidden: true, level: 'cam' }).path).toEqual([]);
   });
 });
 
