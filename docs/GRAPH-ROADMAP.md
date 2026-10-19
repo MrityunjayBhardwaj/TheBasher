@@ -88,14 +88,20 @@ its measurement on the issue:
 
 ### 7. Seeing it
 
-- #1563: a read-only node view, one level at a time.
-- #1564: the agent and the node view see the same graph.
-- #1556: a read-only spreadsheet of a node's attributes.
+- #1563: a read-only node view, one level at a time. Built on #1675, the Graph space from the
+  launch work, which now draws the graph's own layout (`layoutOf`, with the launch's
+  layered placement moved into it) and relationships (`relationsOf`, through
+  `viewEdgesOf`), so there is one layout and one query. It shows one level and dives into an
+  owner, tints a row driven by hidden animation, flags the bound outputs, marks what changes
+  with time, and counts lines to other levels. Left open: hiding the Graph from first-time
+  users waits on #1627, since there is no app mode to hang it on, and the wire from a
+  sub-network back into its owner is not drawn yet (#1698).
+- #1564: the agent's `dag.inspect` scope=graph prints the view's own projection, and a gate
+  checks the two agree line for line.
+- #1556: a read-only Spreadsheet space of the selected mesh's attributes, per domain.
+- #1692: the agent's change summaries read links from `relationsOf`.
 
-#1675, a read-only Graph editor space from the launch work, is the first slice of #1563. It
-now reads the graph's own layout (`layoutOf`, with the launch's layered placement moved into
-it) and relationships (`relationsOf`, through `viewEdgesOf`), and shows one level at a time,
-so there is one layout and one query, not two.
+#1696 (editing the graph in the node view) builds on this view once #1567 lands.
 
 ## In the milestone, not yet placed in the order
 
