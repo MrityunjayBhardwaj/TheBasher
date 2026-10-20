@@ -14,15 +14,20 @@ import { brokenReferences } from '../../app/animatableParams';
 import { readBaseParam } from '../../app/readBaseParam';
 import type { DagState } from '../../core/dag/state';
 import { paramsForAgent } from '../paramsForAgent';
+import { sceneGraphOf } from '../../app/sceneGraph';
 
 export const dagInspectSchema = z.object({
   scope: z
-    .enum(['all', 'node', 'output', 'types'])
+    .enum(['all', 'node', 'output', 'types', 'graph'])
     .default('all')
     .describe(
-      'What to inspect: all (full DAG), node (specific node), output (scene outputs), types (available node types)',
+      'What to inspect: all (full DAG), node (specific node), output (scene outputs), types (available node types), graph (one level as the node view draws it)',
     ),
   nodeId: z.string().optional().describe('Required when scope=node — the node ID to inspect'),
+  level: z
+    .string()
+    .optional()
+    .describe('scope=graph: the sub-network owner to look inside; omit for the top level'),
 });
 
 export type DagInspectArgs = z.infer<typeof dagInspectSchema>;
@@ -39,7 +44,10 @@ export const dagInspectTool: ToolDefinition<DagInspectArgs> = {
     'and not what is rendered. It also lists consumers (what this node is wired into), ' +
     'nameFollowers (nodes whose name follows this one), and referenceCycles when the ' +
     'node sits on a loop of references. brokenReferences lists a channel or driver ' +
-    'aimed at a node or a parameter path that does not exist: it animates nothing.',
+    'aimed at a node or a parameter path that does not exist: it animates nothing. ' +
+    'scope=graph returns one level of the graph exactly as the node view draws it: its ' +
+    'nodes with their flags, the wires and references between them, and which owners ' +
+    'hold a sub-network to look inside (pass level).',
   paramSchema: dagInspectSchema,
   handler(args: DagInspectArgs, ctx: ToolContext): { ops: []; text: string } {
     const { dagState } = ctx;
@@ -112,6 +120,48 @@ export const dagInspectTool: ToolDefinition<DagInspectArgs> = {
             brokenReferences: some(
               brokenReferences(dagState).filter((b) => b.node === node.id || b.target === node.id),
             ),
+          },
+          null,
+          2,
+        );
+        return { ops: [], text };
+      }
+
+      case 'graph': {
+        // #1564 — the node view's own projection, everything shown: the agent and the view
+        // read one graph, so they agree node for node and line for line.
+        if (args.level && !dagState.nodes[args.level]) {
+          return { ops: [], text: `Error: node "${args.level}" not found` };
+        }
+        const g = sceneGraphOf(dagState, {
+          showHidden: true,
+          showAnimation: true,
+          level: args.level ?? null,
+        });
+        if (args.level && g.path[g.path.length - 1] !== args.level) {
+          return { ops: [], text: `Error: node "${args.level}" holds no sub-network` };
+        }
+        const text = JSON.stringify(
+          {
+            level: args.level ?? null,
+            path: g.path,
+            nodes: g.nodes.map((n) => ({
+              id: n.id,
+              type: n.type,
+              name: n.name !== n.id ? n.name : undefined,
+              flags: n.flags.length ? n.flags : undefined,
+              timeDependent: n.timeDependent || undefined,
+              hidden: n.hidden || undefined,
+              inside: n.inside || undefined,
+              linesToOtherLevels: n.away || undefined,
+              namedAfter: n.namedAfter ?? undefined,
+            })),
+            wires: g.wires
+              .filter((w) => !w.ref)
+              .map((w) => `${w.from}.${w.fromSocket} -> ${w.to}.${w.toSocket}`),
+            references: g.wires
+              .filter((w) => w.ref)
+              .map((w) => `${w.from} -> ${w.to}.${w.toSocket}`),
           },
           null,
           2,

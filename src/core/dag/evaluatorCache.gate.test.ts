@@ -308,6 +308,9 @@ const TAKERS: string[] = [
   'retargetRatios@src/app/asset/fitMotionPathScale.ts',
   'worldUnitsOf@src/app/asset/fitMotionPathScale.ts',
   'resolveMeshUVSpace@src/app/resolveMeshUVSpace.ts',
+  // #1556 — the Spreadsheet's read of the selected mesh; the view hands it the shared UI cache.
+  'attributeSheetOf@src/app/attributeSheet.ts',
+  'geometryOf@src/app/attributeSheet.ts',
   'resolveDataKind@src/app/modifierGeometry.ts',
   'scanForFollow@src/viewport/followScan.ts',
   'collectCompositeInputs@src/app/video/compositeDecode.ts',

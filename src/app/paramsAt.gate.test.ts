@@ -165,6 +165,11 @@ const CONSUMERS: Record<string, Decision> = {
   // `resolveWorldTransform` at frame 0: a rig's size is read at rest, never at the playhead, for
   // the same reason the request it feeds must be time-invariant (the motion resolver's row below).
   'src/app/asset/fitMotionPathScale.ts': authored('fixed-ctx-by-design'),
+  // #1556 — the Spreadsheet reads the selected mesh's attributes at rest (frame 0), the way the
+  // UV editor reads its UVs: it shows what a mesh holds, element by element, not where it is at
+  // the playhead. A data node is evaluated for its geometry handle; an Object goes through
+  // `resolveEvaluatedMesh`, as before.
+  'src/app/attributeSheet.ts': authored('fixed-ctx-by-design'),
   // `dispatchApplyTransform` left this table at #1053 (its evaluate went with the clone road);
   // `canApplyTransform` takes its UI caller's cache (#1315), which brings it back for the TYPE only.
   'src/app/animate/dispatchApplyTransform.ts': authored('delegates-to-a-folding-resolver'),
@@ -354,7 +359,9 @@ describe('#582 — who evaluates the graph, and which params they need', () => {
     // bones (declared above as fixed-ctx).
     // 58 → 59 at #1681, not a new road: the path fit (#1633) takes the cook button's cache again,
     // which #1508 had and the merge of the two dropped (declared above as fixed-ctx).
-    expect(evaluatorConsumers()).toHaveLength(59); // 39 -> 40 at #935 (placement) (the motion resolver)
+    // 59 → 60 at #1556, a new road: the Spreadsheet evaluates a selected data node for its mesh,
+    // which nothing else asks of a node that is not an Object (declared above as fixed-ctx).
+    expect(evaluatorConsumers()).toHaveLength(60); // 39 -> 40 at #935 (placement) (the motion resolver)
   });
 
   it('every reason is load-bearing — no member of any union is decorative', () => {

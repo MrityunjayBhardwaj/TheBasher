@@ -920,6 +920,7 @@ export function MenuBar() {
               { value: 'uv', label: '2D View' },
               { value: 'video', label: 'Video' },
               { value: 'graph', label: 'Graph' },
+              { value: 'sheet', label: 'Spreadsheet' },
             ] as { value: SpaceType; label: string }[]
           ).map((s) => (
             <Item

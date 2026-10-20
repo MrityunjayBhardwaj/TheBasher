@@ -34,7 +34,9 @@ import { useGizmoStore } from './gizmoStore';
 // #1675 — 'graph' is the read-only node view (THESIS §16). It has its own button in the space
 // switcher and the toolbar, and a View ▸ Editor Space entry, but it is NOT in SPACE_CYCLE: Tab
 // cycling through 3D/2D/Video never lands on it (from 'graph', Tab returns to the 3D View).
-export type SpaceType = 'view3d' | 'uv' | 'video' | 'graph';
+// #1556 — 'sheet' is the read-only Spreadsheet of the selected mesh's attributes. It is reached
+// from View ▸ Editor Space only, and like the Graph it is outside the Tab cycle.
+export type SpaceType = 'view3d' | 'uv' | 'video' | 'graph' | 'sheet';
 export type ActiveTool = 'select' | 'translate' | 'rotate' | 'scale';
 
 // Tab cycle order: 3D → 2D → Video → 3D. One source so the keyboard cycle and

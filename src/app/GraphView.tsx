@@ -2,23 +2,25 @@
 // the first slice of the §16 node view #1563). Opened from its Graph button (space switcher and
 // toolbar) or View ▸ Editor Space; the app still starts in the 3D View and Tab never lands here.
 //
-// It owns no graph logic: `sceneGraphOf` says what to draw and `layoutGraph` where. Selection is
+// It shows one level at a time (#1563): the top level, or the sub-network of an owner you
+// double-click into; the path bar climbs back out. It owns no graph logic: `sceneGraphOf` says
+// what to draw and `layoutOf`, the graph's own layout (#1562), where. Selection is
 // the app's own (`useSelectionStore`), so clicking a node here selects it in the outliner,
 // inspector and viewport, and selecting there lights its lineage up here.
 //
 // File-rooted V8: src/app/. Read-only surface — never touches the DAG.
 
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { layoutOf, nodeHeight as boxHeight, NODE_WIDTH } from '../core/dag/layout';
 import { useDagStore } from '../core/dag/store';
 import type { NodeId } from '../core/dag/types';
-import { type GraphNode, layoutGraph, sceneGraphOf } from './sceneGraph';
+import { type GraphNode, sceneGraphOf } from './sceneGraph';
+import { nodeDisplayName } from './sceneTreeWalk';
 import { useSelectionStore } from './stores/selectionStore';
 
-const W = 230;
+const W = NODE_WIDTH;
 const HEAD = 40;
 const ROW = 18;
-const PAD = 8;
-const LAYOUT = { width: W, colGap: 90, rowGap: 16 };
 
 // One colour per kind of node, so the eye can follow geometry into objects into the scene.
 const KIND: Record<string, { color: string; label: string }> = {
@@ -50,8 +52,7 @@ function kindOf(type: string): keyof typeof KIND {
   return 'geo';
 }
 
-const nodeHeight = (n: GraphNode) =>
-  HEAD + Math.max(n.inputs.length, n.outputs.length - 1, 0) * ROW + PAD;
+const nodeHeight = (n: GraphNode) => boxHeight(n.inputs.length, n.outputs.length);
 const inY = (n: GraphNode, socket: string, ref: boolean) =>
   HEAD + n.inputs.findIndex((r) => r.socket === socket && r.ref === ref) * ROW + ROW / 2 - 2;
 const outY = (n: GraphNode, socket: string) => 20 + n.outputs.indexOf(socket) * ROW;
@@ -64,18 +65,48 @@ export function GraphView(): ReactNode {
   const primary = useSelectionStore((s) => s.primaryNodeId);
   const select = useSelectionStore((s) => s.select);
   const [showHidden, setShowHidden] = useState(false);
+  const [level, setLevel] = useState<NodeId | null>(null);
+  // Animation, constraints and drivers are hidden until asked for; what they drive is tinted.
+  const [showAnimation, setShowAnimation] = useState(false);
+  // Which references are drawn as lines (Houdini's dependency lines: all, the selected
+  // node's, or none).
+  const [refLines, setRefLines] = useState<'all' | 'selected' | 'none'>('all');
 
-  const graph = useMemo(() => sceneGraphOf(state, { showHidden }), [state, showHidden]);
-  const byId = useMemo(() => new Map(graph.nodes.map((n) => [n.id, n])), [graph]);
-  const layout = useMemo(
-    () =>
-      layoutGraph(
-        graph.nodes.map((n) => ({ id: n.id, height: nodeHeight(n) })),
-        graph.wires,
-        LAYOUT,
-      ),
-    [graph],
+  const graph = useMemo(
+    () => sceneGraphOf(state, { showHidden, showAnimation, level }),
+    [state, showHidden, showAnimation, level],
   );
+  const lines = useMemo(
+    () =>
+      graph.wires.filter(
+        (w) =>
+          !w.ref ||
+          refLines === 'all' ||
+          (refLines === 'selected' && (w.from === primary || w.to === primary)),
+      ),
+    [graph, refLines, primary],
+  );
+  const byId = useMemo(() => new Map(graph.nodes.map((n) => [n.id, n])), [graph]);
+  // Positions are the graph's, for every node at every level; this level's box is what the
+  // shown nodes cover, so a hidden node leaves its place empty rather than moving the rest.
+  const layout = useMemo(() => {
+    const at = layoutOf(state);
+    const pos = new Map<NodeId, { x: number; y: number }>();
+    let x0 = Infinity;
+    let y0 = Infinity;
+    let x1 = -Infinity;
+    let y1 = -Infinity;
+    for (const n of graph.nodes) {
+      const [x, y] = at.get(n.id)!;
+      pos.set(n.id, { x, y });
+      x0 = Math.min(x0, x);
+      y0 = Math.min(y0, y);
+      x1 = Math.max(x1, x + W);
+      y1 = Math.max(y1, y + nodeHeight(n));
+    }
+    if (pos.size === 0) return { pos, x0: 0, y0: 0, width: 0, height: 0 };
+    return { pos, x0, y0, width: x1 - x0, height: y1 - y0 };
+  }, [state, graph]);
 
   // Lineage of the selected node: everything that feeds it and everything it changes.
   const lit = useMemo(() => {
@@ -107,12 +138,12 @@ export function GraphView(): ReactNode {
     const k = Math.min((r.width - 2 * m) / layout.width, (r.height - 2 * m) / layout.height, 1.2);
     setView({
       k,
-      x: (r.width - layout.width * k) / 2,
-      y: Math.max(m, (r.height - layout.height * k) / 2),
+      x: (r.width - layout.width * k) / 2 - layout.x0 * k,
+      y: Math.max(m, (r.height - layout.height * k) / 2) - layout.y0 * k,
     });
   }, [layout]);
   // Fit when the space opens (it mounts then) and whenever the graph's shape changes.
-  const shapeKey = `${graph.nodes.length}:${graph.wires.length}`;
+  const shapeKey = `${graph.path.join('/')}:${graph.nodes.length}:${graph.wires.length}`;
   useEffect(() => {
     fit();
   }, [shapeKey, fit]);
@@ -157,20 +188,56 @@ export function GraphView(): ReactNode {
     if (Math.abs(dx) + Math.abs(dy) > 4) d.moved = true;
     if (d.moved) setView((v) => ({ ...v, x: d.vx + dx, y: d.vy + dy }));
   };
+  // The node the last click landed on. The pointer is captured on press, so the double-click
+  // that follows is aimed at the canvas, not at the node under it.
+  const clicked = useRef<NodeId | null>(null);
   const onPointerUp = () => {
     const d = drag.current;
     drag.current = null;
-    if (d && !d.moved) select(d.node);
+    if (d && !d.moved) {
+      select(d.node);
+      clicked.current = d.node;
+    }
+  };
+  // Double-clicking an owner goes down into its sub-network.
+  const onDoubleClick = () => {
+    const id = clicked.current;
+    if (id && (byId.get(id)?.inside ?? 0) > 0) setLevel(id);
   };
 
   const refCount = graph.wires.filter((w) => w.ref).length;
   return (
     <div data-testid="graph-view" className="flex h-full w-full flex-col bg-bg">
       <div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-b border-border bg-muted/30 px-3 py-1.5 text-[11px] text-fg-dim">
-        <span className="font-medium text-fg">Graph</span>
+        <nav data-testid="graph-view-path" className="flex items-center gap-1">
+          <button
+            type="button"
+            data-testid="graph-view-path-top"
+            onClick={() => setLevel(null)}
+            className={graph.path.length ? 'text-fg-dim hover:text-fg' : 'font-medium text-fg'}
+          >
+            Graph
+          </button>
+          {graph.path.map((id, i) => (
+            <span key={id} className="flex items-center gap-1">
+              <span aria-hidden>›</span>
+              <button
+                type="button"
+                data-testid={`graph-view-path-${id}`}
+                onClick={() => setLevel(id)}
+                className={
+                  i === graph.path.length - 1 ? 'font-medium text-fg' : 'text-fg-dim hover:text-fg'
+                }
+              >
+                {nodeDisplayName(state.nodes, id)}
+              </button>
+            </span>
+          ))}
+        </nav>
         <span data-testid="graph-view-counts" className="tabular-nums">
           {graph.nodes.length} nodes · {graph.wires.length - refCount} wires · {refCount} references
           {graph.omitted > 0 ? ` · ${graph.omitted} hidden` : ''}
+          {graph.animation > 0 ? ` · ${graph.animation} animation hidden` : ''}
         </span>
         <span className="flex-1" />
         <label className="flex cursor-pointer items-center gap-1.5">
@@ -182,6 +249,29 @@ export function GraphView(): ReactNode {
             onChange={(e) => setShowHidden(e.target.checked)}
           />
           Show hidden
+        </label>
+        <label className="flex cursor-pointer items-center gap-1.5">
+          <input
+            id="graph-view-show-animation"
+            data-testid="graph-view-show-animation"
+            type="checkbox"
+            checked={showAnimation}
+            onChange={(e) => setShowAnimation(e.target.checked)}
+          />
+          Animation
+        </label>
+        <label className="flex items-center gap-1.5">
+          References
+          <select
+            data-testid="graph-view-ref-lines"
+            value={refLines}
+            onChange={(e) => setRefLines(e.target.value as typeof refLines)}
+            className="rounded border border-border bg-bg px-1 py-0.5 text-fg"
+          >
+            <option value="all">All</option>
+            <option value="selected">Selected</option>
+            <option value="none">None</option>
+          </select>
         </label>
         <button
           type="button"
@@ -200,6 +290,7 @@ export function GraphView(): ReactNode {
           onPointerDown={onPointerDown}
           onPointerMove={onPointerMove}
           onPointerUp={onPointerUp}
+          onDoubleClick={onDoubleClick}
           role="img"
           aria-label={`Scene graph: ${graph.nodes.length} nodes`}
         >
@@ -210,7 +301,7 @@ export function GraphView(): ReactNode {
           </defs>
           <rect width="100%" height="100%" fill="url(#graph-view-dots)" />
           <g transform={`translate(${view.x},${view.y}) scale(${view.k})`}>
-            {graph.wires.map((w, i) => {
+            {lines.map((w, i) => {
               const a = byId.get(w.from)!;
               const b = byId.get(w.to)!;
               const pa = layout.pos.get(w.from)!;
@@ -230,6 +321,7 @@ export function GraphView(): ReactNode {
               return (
                 <path
                   key={i}
+                  data-graph-line={w.ref ? `ref:${w.from}>${w.to}` : `wire:${w.from}>${w.to}`}
                   d={`M${x1},${y1} C${x1 + dx},${y1} ${x2 - dx},${y2} ${x2},${y2}`}
                   fill="none"
                   stroke={w.ref ? KIND[kindOf(holder.type)].color : '#5b6478'}
@@ -245,6 +337,11 @@ export function GraphView(): ReactNode {
               const color = KIND[kindOf(n.type)].color;
               const selected = n.id === primary;
               const dim = lit ? !(lit.up.has(n.id) || lit.down.has(n.id)) : false;
+              const badges = [
+                ...n.flags.map((f) => (f === 'scene' ? 'SCENE' : 'RENDER')),
+                ...(n.timeDependent ? ['⏱'] : []),
+                ...(n.away ? [`↗${n.away}`] : []),
+              ];
               return (
                 <g
                   key={n.id}
@@ -254,7 +351,18 @@ export function GraphView(): ReactNode {
                   opacity={dim ? 0.18 : n.hidden ? 0.55 : 1}
                   className="cursor-pointer"
                 >
-                  <title>{`${n.name}\n${n.type} · ${n.id}${n.hidden ? '\nhidden' : ''}`}</title>
+                  <title>
+                    {[
+                      n.name,
+                      `${n.type} · ${n.id}`,
+                      ...n.flags.map((f) => `the ${f} output`),
+                      ...(n.timeDependent ? ['changes with time'] : []),
+                      ...(n.away ? [`${n.away} lines to another level`] : []),
+                      ...(n.namedAfter ? [`named after ${n.namedAfter}`] : []),
+                      ...(n.hidden ? ['hidden'] : []),
+                      ...(n.inside ? ['double-click to go inside'] : []),
+                    ].join('\n')}
+                  </title>
                   <rect
                     width={W}
                     height={h}
@@ -265,20 +373,50 @@ export function GraphView(): ReactNode {
                   />
                   <rect width={W} height={4} rx={2} fill={color} />
                   <text x={10} y={19} fontSize={12.5} fontWeight={600} fill="#ededf2">
-                    {clip(n.name, 30)}
+                    {clip(n.name, badges.length ? 20 : 30)}
                   </text>
+                  {badges.length > 0 && (
+                    <text
+                      data-graph-badges={badges.join(' ')}
+                      x={W - 10}
+                      y={19}
+                      fontSize={9.5}
+                      fontWeight={600}
+                      textAnchor="end"
+                      fill="#f0c75e"
+                    >
+                      {badges.join(' ')}
+                    </text>
+                  )}
                   <text x={10} y={33} fontSize={10.5} fill="#9b9ca6">
-                    {clip(n.type, 34)}
+                    {clip(n.type, n.inside ? 22 : 34)}
                   </text>
+                  {n.inside > 0 && (
+                    <text
+                      data-graph-inside={n.inside}
+                      x={W - 10}
+                      y={33}
+                      fontSize={10.5}
+                      textAnchor="end"
+                      fill="#9b9ca6"
+                    >
+                      {`${n.inside} inside ⤵`}
+                    </text>
+                  )}
                   {n.inputs.map((r) => {
                     const y = inY(n, r.socket, r.ref);
+                    // A row driven by hidden animation takes the colour of what drives it.
+                    const tint = r.tint ? KIND[kindOf(r.tint)].color : undefined;
                     return (
-                      <g key={`${r.ref ? 'r' : 'w'}:${r.socket}`}>
+                      <g
+                        key={`${r.ref ? 'r' : 'w'}:${r.socket}`}
+                        data-graph-tint={r.tint ? `${r.socket}:${r.tint}` : undefined}
+                      >
                         <circle
                           cx={0}
                           cy={y}
                           r={4}
-                          fill={r.ref ? '#e3cf5b' : '#5b6478'}
+                          fill={tint ?? (r.ref ? '#e3cf5b' : '#5b6478')}
                           stroke="#111114"
                           strokeWidth={1.5}
                         />
@@ -286,7 +424,7 @@ export function GraphView(): ReactNode {
                           x={10}
                           y={y + 3.5}
                           fontSize={10.5}
-                          fill="#9b9ca6"
+                          fill={tint ?? '#9b9ca6'}
                           fontFamily="ui-monospace, Menlo, monospace"
                         >
                           {r.count > 1 ? `${r.socket} ×${r.count}` : r.socket}

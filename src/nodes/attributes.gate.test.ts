@@ -55,6 +55,22 @@ import { arrayGeometryRef, boxGeometryRef } from '../app/modifierGeometry';
 import { tiledCornerOrder, tiledFaceOrder } from '../app/faceCount';
 import { tiledPointOrder } from '../app/pointIdentity';
 import type { GeometryDescriptor } from './types';
+import { storeColumnsAt } from '../app/attributeSheet';
+
+/** One attribute on each domain, each a different length, for the Spreadsheet's site. */
+const FOUR_DOMAIN_SET = Object.fromEntries(
+  (
+    [
+      ['point', 8],
+      ['edge', 12],
+      ['face', 6],
+      ['corner', 24],
+    ] as const
+  ).map(([domain, count]) => [
+    `on_${domain}`,
+    { domain, type: 'int', count, data: new Int32Array(count) } satisfies AttributeData,
+  ]),
+);
 
 /** A twelve-face box — the descriptor the second dispatch site is probed against. */
 const BOX_DESCRIPTOR: GeometryDescriptor = { kind: 'box', size: [1, 1, 1] };
@@ -127,6 +143,13 @@ const DISPATCH_SITES: readonly DispatchSite[] = [
         ARRAYED_BOX.corners,
         ARRAYED_BOX.points,
       ),
+  },
+  {
+    // #1556 — the Spreadsheet lists a mesh's attributes per domain. Its answer for a domain is
+    // the column it shows there, so a domain it skipped would answer nothing.
+    module: 'src/app/attributeSheet.ts',
+    what: 'storeColumnsAt',
+    probe: (domain) => storeColumnsAt(FOUR_DOMAIN_SET, domain)[0]?.data.length,
   },
 ];
 

@@ -46,6 +46,7 @@ import { ProjectTabs } from './ProjectTabs';
 import { TimelineDrawer } from '../timeline/TimelineDrawer';
 import { TwoDView } from './TwoDView';
 import { GraphView } from './GraphView';
+import { SpreadsheetView } from './SpreadsheetView';
 import { VideoMode } from './video/VideoMode';
 import { Viewport } from '../viewport/Viewport';
 import { useIsNarrowLayout } from './hooks/useIsNarrowLayout';
@@ -182,6 +183,12 @@ export function Layout() {
     ...twoDViewStyle,
     display: space === 'graph' ? 'block' : 'none',
   };
+  // #1556 — the Spreadsheet takes the same bounded center surface, so the outliner stays beside
+  // it to pick what it shows.
+  const sheetViewStyle: CSSProperties = {
+    ...twoDViewStyle,
+    display: space === 'sheet' ? 'block' : 'none',
+  };
   return (
     <div
       data-testid="layout"
@@ -288,6 +295,14 @@ export function Layout() {
           {/* Mounted only while open: unlike the 3D Canvas there is no GPU state to keep, and a
               hidden graph would otherwise rebuild itself on every scene change. */}
           {space === 'graph' && <GraphView />}
+        </div>
+        <div
+          style={sheetViewStyle}
+          data-testid="sheet-slot"
+          className="overflow-hidden rounded-2xl border border-border bg-bg-2/95 shadow-xl shadow-black/40 backdrop-blur-md"
+          onContextMenu={(e) => e.stopPropagation()}
+        >
+          {space === 'sheet' && <SpreadsheetView />}
         </div>
         {/* Video mode (the third editor space) — the AE-style compositor. Like
             the 2D View it swaps in via display:none (Canvas stays mounted, K1

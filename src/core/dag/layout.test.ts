@@ -9,7 +9,18 @@ import { MemoryStorage } from '../storage/MemoryStorage';
 import { rawSpringOps } from '../../test-utils/rawSpring';
 import { applyOp, applyOps } from './ops';
 import type { DagState } from './state';
-import { layoutOf, levelOf, LAYOUT_ROW, positionOf } from './layout';
+import {
+  COLUMN_GAP,
+  layoutOf,
+  levelOf,
+  NODE_WIDTH,
+  nodeHeight,
+  positionOf,
+  ROW_GAP,
+  viewEdgesOf,
+  viewRowsOf,
+} from './layout';
+import { plazaState } from '../../test-utils/plazaGraph';
 import { subnetworkOf } from './subnetworks';
 
 beforeAll(() => registerAllNodes());
@@ -88,10 +99,74 @@ describe('#1562 — every node has a position', () => {
     let state = buildDefaultDagState();
     state = applyOp(state, { type: 'setMeta', nodeId: 'n_scene', position: [5000, 7000] }).next;
     expect(positionOf(state, 'n_scene')).toEqual([5000, 7000]);
+    const below = 7000 + heightOf(state, 'n_scene') + ROW_GAP;
     for (const [id, p] of layoutOf(state)) {
       if (id === 'n_scene') continue;
-      expect(p[1]).toBeGreaterThanOrEqual(7000 + LAYOUT_ROW);
+      expect(p[1]).toBeGreaterThanOrEqual(below);
     }
+  });
+});
+
+const heightOf = (state: DagState, id: string) => {
+  const rows = viewRowsOf(viewEdgesOf(state));
+  return nodeHeight(rows.inputs.get(id)?.length ?? 0, rows.outputs.get(id)?.length ?? 0);
+};
+
+describe('#1563 — one layout: the node view draws where the graph says', () => {
+  const COL = NODE_WIDTH + COLUMN_GAP;
+
+  it('never runs a wire or a reference right to left', () => {
+    const s = plazaState();
+    const at = layoutOf(s);
+    for (const e of viewEdgesOf(s))
+      expect(at.get(e.from)![0], `${e.from} → ${e.to}`).toBeLessThan(at.get(e.to)![0]);
+  });
+
+  it('puts the render in the last column', () => {
+    const at = layoutOf(plazaState());
+    expect(at.get('render')![0]).toBe(Math.max(...[...at.values()].map((p) => p[0])));
+  });
+
+  it('spaces a column by the rows each node shows, so no two boxes overlap', () => {
+    const s = plazaState();
+    const at = layoutOf(s);
+    const byX = new Map<number, string[]>();
+    for (const [id, p] of at) byX.set(p[0], [...(byX.get(p[0]) ?? []), id]);
+    for (const col of byX.values()) {
+      const sorted = col.sort((a, b) => at.get(a)![1] - at.get(b)![1]);
+      for (let i = 1; i < sorted.length; i++) {
+        expect(at.get(sorted[i])![1]).toBeGreaterThanOrEqual(
+          at.get(sorted[i - 1])![1] + heightOf(s, sorted[i - 1]) + ROW_GAP - 1e-6,
+        );
+      }
+    }
+    // The scene shows its camera and its children: two rows, so it is taller than a lens.
+    expect(heightOf(s, 'scene')).toBeGreaterThan(heightOf(s, 'camData'));
+  });
+
+  it('pulls a source beside its reader rather than leaving it at the far left', () => {
+    // The camera sits deep (the runner's body → the Track To → the camera) only through
+    // references; its lens has no inputs, so a plain longest-path ranking would leave it first.
+    const at = layoutOf(plazaState());
+    expect(at.get('cam')![0]).toBeGreaterThan(COL);
+    expect(at.get('camData')![0]).toBe(at.get('cam')![0] - COL);
+  });
+
+  it('a reference that closes a loop is left out of the ranking, never a wire', () => {
+    // tile → runner by wire; the Track To turns the tile and aims at the runner, so the two
+    // references close tile → runner → track → tile.
+    const s = plazaState();
+    const nodes = { ...s.nodes };
+    nodes.track = { ...nodes.track, params: { target: 'tile', aimNode: 'runner' } };
+    nodes.runner = {
+      ...nodes.runner,
+      inputs: { children: [{ node: 'tile', socket: 'out' }] },
+    } as typeof nodes.runner;
+    const looped = { ...s, nodes } as DagState;
+    const at = layoutOf(looped);
+    expect(at.size).toBe(Object.keys(nodes).length);
+    for (const [, p] of at) expect(Number.isFinite(p[0]) && Number.isFinite(p[1])).toBe(true);
+    expect(at.get('tile')![0]).toBeLessThan(at.get('runner')![0]);
   });
 });
 

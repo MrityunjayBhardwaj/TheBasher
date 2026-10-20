@@ -399,6 +399,8 @@ export interface WireRelation {
   readonly node: NodeId;
   /** The input socket the wire enters, on whichever node consumes it. */
   readonly socket: string;
+  /** The output socket the wire leaves, on whichever node produces it. */
+  readonly output: string;
 }
 
 /** A declared reference, seen from the node asked about. */
@@ -456,7 +458,7 @@ function wiresInto(node: { readonly inputs: DagState['nodes'][string]['inputs'] 
   const out: WireRelation[] = [];
   for (const [socket, binding] of Object.entries(node.inputs)) {
     for (const ref of Array.isArray(binding) ? binding : [binding]) {
-      out.push({ node: ref.node, socket });
+      out.push({ node: ref.node, socket, output: ref.socket });
     }
   }
   return out;
