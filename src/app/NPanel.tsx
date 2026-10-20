@@ -186,6 +186,7 @@ import { SpareParamControls } from './SpareParamControls';
 import { LagSourceControls } from './LagSourceControls';
 import { SolverControls } from './SolverControls';
 import * as THREE from 'three';
+import { drawnWorldBox } from '../render/drawnBox';
 import { useThreeRef } from './character/threeRef';
 import { originToGeometry } from './setOrigin';
 import { rotationModeOps, withResolvedRotation } from './resolvedRotation';
@@ -3459,7 +3460,15 @@ function SetOriginControl({ nodeId }: { nodeId: string }) {
     if (!scene) return;
     const obj = scene.getObjectByName(nodeId);
     if (!obj) return;
-    const box = new THREE.Box3().setFromObject(obj);
+    // #1684 — every mesh under the Group where it is drawn, a skinned one where its bones put it
+    // (`drawnWorldBox`), as frame-all and the shadow fit measure it.
+    obj.updateWorldMatrix(true, true);
+    const box = new THREE.Box3();
+    const drawn = new THREE.Box3();
+    obj.traverse((o) => {
+      const mesh = o as THREE.Mesh;
+      if (mesh.isMesh && drawnWorldBox(mesh, drawn)) box.union(drawn);
+    });
     if (box.isEmpty()) return;
     const c = box.getCenter(new THREE.Vector3());
     const params = useDagStore.getState().state.nodes[nodeId]?.params as

@@ -176,6 +176,7 @@ import type {
   Vec3,
 } from '../nodes/types';
 import { uiEvaluatorCache } from '../app/uiEvaluatorCache';
+import { drawnBox } from '../render/drawnBox';
 
 let rectAreaInit = false;
 function ensureRectAreaInit() {
@@ -2663,25 +2664,25 @@ function writeDeformed(
   built.geometry.boundingBox = null;
 }
 
-// #1610 / #1684 — a skinned mesh keeps its own bounds, measured from the posed vertices
-// (`SkinnedMesh.computeBoundingSphere` re-skins every vertex on the CPU, ~1.6 ms per X Bot mesh on
-// the software renderer). A click tests those bounds before any triangle, so once the bones move
-// they must be measured again, or a character that has walked away from where it was imported is
-// not under the pointer. The sphere is NOT dropped every frame for that: the renderer measures a null
-// sphere on every draw to sort objects (three r169 WebGLRenderer.js:1374-1379), which re-skinned
-// every character every frame, idle or not (measured: 2 re-skins, 3.3 ms per frame for one X Bot).
-// So a pose only marks the sphere stale, and a click drops it just before testing. Nothing else needs it
-// fresh: the mesh is never frustum-culled, and the sort only orders by the centre. The box is read
-// by no draw, so it is simply dropped on each pose (a click skips a null box).
-// REF: three r169 src/objects/SkinnedMesh.js:69-82/114, src/renderers/WebGLRenderer.js:1374-1379.
-const staleSkinBounds = new WeakSet<THREE.SkinnedMesh>();
-
-function measureSkinBoundsOnPick(mesh: THREE.SkinnedMesh): void {
+// #1610 / #1684 — a click tests a skinned mesh's own bounds before any triangle (three r169
+// SkinnedMesh.js:114/128), so they must be where the bones put the mesh now, or a character that
+// has walked away from where it was imported is not under the pointer. They are written from
+// `drawnBox` — the box every reader of "where is this mesh drawn" uses — just before the test, on
+// this mesh's own fields; the shared geometry is never written. They used to be cleared on every
+// pose so three would re-skin every vertex to refill them, which is what #1684 removed: the renderer
+// measures a null sphere on every draw to sort objects (WebGLRenderer.js:1374-1379), so clearing it
+// per frame re-skinned every character every frame (measured: 3.3 ms per frame for one X Bot).
+// REF: three r169 src/objects/SkinnedMesh.js:105-136, src/renderers/WebGLRenderer.js:1374-1379.
+function pickByDrawnBox(mesh: THREE.SkinnedMesh): void {
+  const measured = new THREE.Box3();
   mesh.raycast = (raycaster, intersects) => {
-    // A null sphere is what three's raycast measures first (SkinnedMesh.js:114), on this mesh's own
-    // field — the shared geometry is never written.
-    if (staleSkinBounds.delete(mesh)) {
-      (mesh as unknown as { boundingSphere: THREE.Sphere | null }).boundingSphere = null;
+    if (drawnBox(mesh, measured)) {
+      const own = mesh as unknown as {
+        boundingBox: THREE.Box3 | null;
+        boundingSphere: THREE.Sphere | null;
+      };
+      own.boundingBox = (own.boundingBox ?? new THREE.Box3()).copy(measured);
+      own.boundingSphere = measured.getBoundingSphere(own.boundingSphere ?? new THREE.Sphere());
     }
     THREE.SkinnedMesh.prototype.raycast.call(mesh, raycaster, intersects);
   };
@@ -2757,7 +2758,7 @@ function SkinnedMeshR({
       mesh.bindMode = THREE.DetachedBindMode;
       mesh.bind(draw.skeleton, draw.bindMatrix);
       mesh.frustumCulled = false;
-      measureSkinBoundsOnPick(mesh);
+      pickByDrawnBox(mesh);
       draw.pose(useTimeStore.getState().seconds, skin.pose);
       next = { mesh, draw, geometry, deformed: null };
     }
@@ -2771,12 +2772,6 @@ function SkinnedMeshR({
     if (!built) return;
     const seconds = useTimeStore.getState().seconds;
     built.draw?.pose(seconds, skinPose.current);
-    // #1610 — the bones just moved, so the bounds a click tests are stale (`measureSkinBoundsOnPick`).
-    if (built.draw && built.mesh instanceof THREE.SkinnedMesh) {
-      staleSkinBounds.add(built.mesh);
-      // No draw reads the box, so dropping it costs nothing; `Box3.setFromObject` measures it anew.
-      (built.mesh as unknown as { boundingBox: THREE.Box3 | null }).boundingBox = null;
-    }
     writeDeformed(built, seconds, skinPose.current);
   });
   // A number, so the effect below can depend on it: `skin` itself is a new object every frame.

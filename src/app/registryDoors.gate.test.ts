@@ -251,12 +251,13 @@ const MATERIAL_ACCESSORS = ['get', 'retain', 'release'];
 const SHARED_GEOMETRY_WRITERS: Record<string, string> = {
   // Reaches the instance THROUGH the registry — the importer cases can see this one.
   'src/app/boot.ts': 'the __basher_baked_geometry_bounds dev seam, unconditionally',
-  // Reach it off the scene graph (`mesh.geometry`) and import nothing. Invisible to an
-  // importer census by construction — these two are why this case exists at all.
-  'src/viewport/sceneBounds.ts': 'lazily fills boundingBox while walking the live scene',
-  'src/render/renderToImage.ts': 'same shape as sceneBounds, on the offline render path',
-  // #1644 — the sun's shadow box is fitted to the content box inside every shadow pass.
-  'src/viewport/contentShadows.ts': 'same shape as sceneBounds, inside each shadow pass',
+  // Reaches it off the scene graph (`mesh.geometry`) and imports nothing. Invisible to an
+  // importer census by construction — which is why this case exists at all.
+  // #1684 — frame-all (sceneBounds), the depth pass (renderToImage) and the sun's shadow fit
+  // (contentShadows, #1644) were three entries here, each filling the box its own way; they now
+  // all ask this one, which also measures a skinned mesh where its bones put it.
+  'src/render/drawnBox.ts':
+    'lazily fills a plain geometry’s boundingBox: where every reader asks a mesh is drawn',
 };
 
 /**

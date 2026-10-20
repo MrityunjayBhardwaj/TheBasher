@@ -16,6 +16,7 @@
 
 import * as THREE from 'three';
 import { isEditorChrome } from '../app/editorChrome';
+import { drawnWorldBox } from '../render/drawnBox';
 
 export interface SceneBounds {
   center: [number, number, number];
@@ -28,7 +29,8 @@ const tmpBox = new THREE.Box3();
 /**
  * World-space axis-aligned box of all non-chrome meshes in `root`, or null when
  * there is no measurable content (empty scene / chrome only). Each mesh is
- * measured by its OWN geometry box transformed to world space — NOT
+ * measured by the box it is drawn in (`drawnWorldBox`: where its bones put a skinned
+ * mesh, #1684), in world space — NOT
  * `Box3.setFromObject`, which would recurse into (and so include) any chrome
  * descendant. Pure read: it does not mutate the scene beyond refreshing world
  * matrices (idempotent), which R3F also does each frame.
@@ -48,16 +50,9 @@ export function computeSceneBox(root: THREE.Object3D): THREE.Box3 | null {
   const walk = (o: THREE.Object3D): void => {
     if (isEditorChrome(o)) return; // prune the whole chrome subtree
     const mesh = o as THREE.Mesh;
-    if (mesh.isMesh && mesh.geometry) {
-      const geom = mesh.geometry;
-      if (!geom.boundingBox) geom.computeBoundingBox();
-      if (geom.boundingBox) {
-        tmpBox.copy(geom.boundingBox).applyMatrix4(mesh.matrixWorld);
-        if (!tmpBox.isEmpty()) {
-          box.union(tmpBox);
-          any = true;
-        }
-      }
+    if (mesh.isMesh && drawnWorldBox(mesh, tmpBox) && !tmpBox.isEmpty()) {
+      box.union(tmpBox);
+      any = true;
     }
     for (const child of o.children) walk(child);
   };
