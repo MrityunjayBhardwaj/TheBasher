@@ -19,25 +19,15 @@
 // targeting the camera — use `resolveActiveCameraPoseAt` (#190). The camera is
 // wired via `scene.camera` (a single `Camera`-typed ref), NOT `scene.children`,
 // so it sits outside the AnimationLayer/scene-child machinery; its channels
-// target the camera node directly (no layer wrapper) and this file is where
-// they are sampled and overlaid — the camera analogue of
+// target the camera node directly (no layer wrapper), and `cameraChannels.ts` overlays
+// them by the rules every node's channels follow (#482) — the camera analogue of
 // `resolveEvaluatedTransform` for scene children.
 //
 // REF: THESIS.md §11; vyapti V1, V8; issue #190.
 
 import type { DagState } from '../core/dag';
 import type { Node, NodeRef } from '../core/dag/types';
-import { buildVec3Sampler, type KeyframeChannelVec3Params } from '../nodes/KeyframeChannelVec3';
-import {
-  sampleScalarKeyframes,
-  sampleScalarKeyframesExtended,
-  resolveExtend,
-  type ChannelExtend,
-  type ChannelExtrapolate,
-} from '../nodes/keyframeInterp';
-import type { FChannelModifier } from '../nodes/channelModifiers';
-import { bareChannelNodesForSubject } from './nodeChannels';
-import { linkedDataNodeId } from './resolveDataParamOwner';
+import { overlayCameraChannels, overlayCutChannel } from './cameraChannels';
 import {
   cameraDataOf,
   cameraLensParams,
@@ -46,27 +36,6 @@ import {
   isCameraNode,
 } from './cameraNode';
 import { type DofEffectSettings, resolveCameraDof } from './cameraDof';
-
-/** #270/#274/#275 — RESOLVE a channel's stored extend model (per-side hold/slope
- *  extrapolation + an optional Cycles F-Modifier) into the engine's rule + counts +
- *  the F-Modifier stack, so the camera-pose scalar path honours them exactly like
- *  `ch.sample()` does (H40: render == read). Undefined fields fall through to the
- *  sampler's hold/0/[] defaults. */
-function channelExtendArgs(
-  params: unknown,
-): [ChannelExtend, ChannelExtend, number, number, readonly FChannelModifier[] | undefined] {
-  const p = params as {
-    extendBefore?: ChannelExtrapolate;
-    extendAfter?: ChannelExtrapolate;
-    modifiers?: readonly FChannelModifier[];
-  };
-  const { before, after, cyclesBefore, cyclesAfter } = resolveExtend(
-    p.extendBefore,
-    p.extendAfter,
-    p.modifiers,
-  );
-  return [before, after, cyclesBefore, cyclesAfter, p.modifiers];
-}
 import { pickCameraSelect } from '../nodes/CameraSelect';
 import { sceneClockOf } from './sceneClock';
 import { resolveTrackToTarget, resolveConstraintPosition } from './nodeConstraints';
@@ -172,6 +141,11 @@ export function cutChannelOf(state: DagState, selectId: string): Node | null {
  * back brings its cuts back with it. With no key naming a listed camera, the static `active` stands.
  * The keys hold their camera by construction (a text key is a step), which is what #1663 needs of
  * a choice.
+ *
+ * #482 — the cut channel obeys the rules every channel does: the pick is folded onto the
+ * static `active` by `overlayCutChannel`, so a muted cut channel, or one whose weight leaves it
+ * no say, plays the switch's own camera. The pick itself stays here, since only this function
+ * knows which cameras the switch lists.
  */
 export function cutCameraIdAt(
   state: DagState,
@@ -183,8 +157,8 @@ export function cutCameraIdAt(
   const base = typeof params.active === 'string' ? params.active : '';
   if (seconds === undefined) return base;
   const channel = cutChannelOf(state, selectNode.id);
-  const keys = (channel?.params as { keyframes?: { time: number; value: unknown }[] } | undefined)
-    ?.keyframes;
+  if (!channel) return base;
+  const keys = (channel.params as { keyframes?: { time: number; value: unknown }[] }).keyframes;
   if (!Array.isArray(keys)) return base;
   const live = keys
     .filter((k): k is { time: number; value: string } => listed.includes(k.value as string))
@@ -192,7 +166,7 @@ export function cutCameraIdAt(
   if (live.length === 0) return base;
   let picked = live[0];
   for (const k of live) if (k.time <= seconds) picked = k;
-  return picked.value;
+  return overlayCutChannel(state, selectNode.id, channel, base, picked.value, seconds);
 }
 
 /** Every camera NODE id in the DAG, in stable enumeration order (Object.values
@@ -294,10 +268,10 @@ export function resolveActiveCameraPose(state: DagState): CameraPose {
  * so all three frame the SAME shot at time T (the V37/V51 viewport==render
  * parity invariant). One resolver, no parallel walk.
  *
- * PURE — a function of `(state, seconds)` only, with NO store reads. It samples
- * channels with the SAME shared interp primitives the channel nodes themselves
- * use (`buildVec3Sampler` / `sampleScalarKeyframes`), so it is the same sampling
- * math, not a parallel one (the H40 single-source rule). Held transient edits are
+ * PURE — a function of `(state, seconds)` only, with NO store reads. It overlays
+ * channels through `overlayCameraChannels`, the call the world transform makes too, so
+ * each channel is sampled by its own node and folded by the rules every node's channels
+ * follow (#482), not by a parallel copy of them. Held transient edits are
  * intentionally NOT overlaid here: a render is of committed DAG state, and
  * including uncommitted transients would break render parity — the live-edit
  * preview is a separate viewport concern.
@@ -346,53 +320,20 @@ export function resolveCameraPoseAt(
   const base = cameraPoseForNodeId(state, cameraId) ?? DEFAULT_CAMERA_POSE;
   if (!node) return base;
 
-  // Overlay every channel belonging to this camera. Sample by the channel's value
-  // type and write by paramPath.
+  // Overlay every channel belonging to this camera.
   //
-  // #387 — "belonging to" spans the PAIR, and this is the hazard the camera split
-  // turns on. The scan used to match `params.target === node.id` by hand; post-split
-  // the lens lives on the CameraData, so `addChannel` routes an fov/clip/aim channel
-  // to the DATA id while the user selects, and every surface addresses, the Object.
-  // An exact-id scan therefore finds nothing and the camera freezes on screen while
-  // the inspector still shows the value moving — silently, because "no channels" is a
-  // legitimate answer. `bareChannelNodesForSubject` is the SAME enumerator the
-  // management surfaces use (V108: one predicate, no second walk), it preserves
-  // Object-first order, and it already drops empty channels — so the inline
-  // zero-keyframe skip that used to live here is gone rather than duplicated.
-  let pose: CameraPose | null = null; // clone lazily, only when a channel hits
-  for (const ch of bareChannelNodesForSubject(
-    state.nodes,
-    node.id,
-    linkedDataNodeId(state, node.id),
-  )) {
-    const p = ch.params as { target?: unknown; paramPath?: unknown; keyframes?: unknown };
-    const path = p.paramPath;
-    const keyframes = Array.isArray(p.keyframes) ? p.keyframes : [];
-
-    if ((path === 'position' || path === 'lookAt') && ch.type === 'KeyframeChannelVec3') {
-      pose ??= { ...base };
-      const v = buildVec3Sampler(ch.params as KeyframeChannelVec3Params)(seconds);
-      // sampleVec3Keyframes returns a readonly Vec3; copy into the mutable tuple.
-      pose[path] = [v[0], v[1], v[2]];
-    } else if (
-      (path === 'fov' || path === 'near' || path === 'far' || path === 'roll') &&
-      ch.type === 'KeyframeChannelNumber'
-    ) {
-      pose ??= { ...base };
-      // Sort defensively before sampling (#200): `sampleScalarKeyframes` REQUIRES
-      // a time-sorted list (it walks adjacent pairs, no internal sort), and
-      // `KeyframeChannelNumber.evaluate` sorts the SAME way before its `.sample()`.
-      // Without this, an out-of-order keyframe array would make this render path
-      // interpolate against an unsorted list while the inspector read-side
-      // (`resolveEvaluatedParam` → the channel's sorted `evaluate().sample`)
-      // reads the sorted one → the two surfaces silently disagree. The vec3
-      // branch already gets this for free via `buildVec3Sampler` (which sorts).
-      const sorted = [...(keyframes as Parameters<typeof sampleScalarKeyframes>[0])].sort(
-        (a, b) => a.time - b.time,
-      );
-      pose[path] = sampleScalarKeyframesExtended(sorted, seconds, ...channelExtendArgs(ch.params));
-    }
-  }
+  // #387 — "belonging to" spans the PAIR: post-split the lens lives on the CameraData, so
+  // `addChannel` routes an fov/clip/aim channel to the DATA id while the user selects, and
+  // every surface addresses, the Object. An exact-id scan finds nothing and the camera
+  // freezes on screen while the inspector still shows the value moving.
+  //
+  // #482 — and the channels obey the rules every other node's do: solo per camera, then
+  // mute, weight, order and blend in `overlayChannels`. This used to be a private loop
+  // that sampled the keys and read nothing else, so a muted fov still zoomed and two
+  // channels on one param resolved by scan order. The world transform makes the same call,
+  // so the gizmo and the render cannot disagree about a camera's position again.
+  const overlaid = overlayCameraChannels(state, node.id, base, seconds);
+  let pose: CameraPose | null = overlaid === base ? null : overlaid; // clone lazily
 
   // #204 Track-To migration — an active Track-To on the camera node DERIVES its
   // aim ([[V60]]): lookAt = the target's world position (node-ref via #202, or the

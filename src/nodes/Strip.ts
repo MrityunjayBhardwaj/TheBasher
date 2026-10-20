@@ -11,9 +11,9 @@
 // track in Slices C–E. Serializable + registered so `addNode` validates it (V1).
 //
 // KNOWN-LIMIT (Phase 2): strips target SCENE NODES only. A strip whose `target`
-// is a camera is not picked up — the camera pose scan (activeCamera.ts) overwrites
-// per-channel instead of folding, so camera strips are a documented Phase-3+
-// sub-task, not a silent no-op.
+// is a camera is not picked up — the camera pose folds the camera's own bare
+// channels (`overlayCameraChannels`, cameraChannels.ts, #482) but no strips, so
+// camera strips are a documented sub-task (#480), not a silent no-op.
 //
 // ⚠️ HOW THAT "not a silent no-op" IS ACTUALLY ENFORCED, AND WHERE IT STILL IS NOT (#479).
 // It used to rest on the add-strip picker filtering camera rows out — one surface, while

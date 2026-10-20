@@ -3,8 +3,9 @@
 //
 // WHY THIS IS ONE PREDICATE AND NOT A FILTER ON A MENU (#479).
 // `Strip.ts:13-16` records the known limit — a strip whose target is a camera is not
-// picked up, because the camera pose is resolved by a private channel scan
-// (`activeCamera.ts`) that overwrites per-channel instead of folding strips — and claims
+// picked up, because the camera pose folds only the camera's own bare channels
+// (`overlayCameraChannels`, cameraChannels.ts — #482 put them on the shared rules) and no
+// strips — and claims
 // the mitigation is that "the UI simply must not offer" cameras. That mitigation was real
 // but covered ONE of three roads: the add-strip picker had it, push-down did not, and the
 // agent mutator did not. Push-down is a COMPOSITE whose destructive half (delete the bare
@@ -17,14 +18,14 @@
 // REPLACEMENT CANNOT DRIVE WHAT IT DROVE. A filter lives on a surface and surfaces
 // multiply; the limit is a property of the data and does not.
 //
-// ⏳ TEMPORARY — THIS MODULE EXPIRES WITH #480. #480 folds the camera's private overlay
-// scan onto the shared channel+strip seam (`layeredChannels.ts`), at which point a strip
+// ⏳ TEMPORARY — THIS MODULE EXPIRES WITH #480. #480 moves the camera's bare-channel
+// overlay onto the shared channel+strip seam (`layeredChannels.ts`), at which point a strip
 // CAN drive a camera and this refusal is wrong. When it lands, delete this module and its
 // three call sites rather than extending it — a permanent-looking guard around a
 // temporary limit is how the limit becomes permanent.
 //
-// REF: src/nodes/Strip.ts:13-16 (the limit), src/app/activeCamera.ts:294-325 (the scan
-//      that folds nothing), src/app/animate/dispatchMutator.ts (the accept),
+// REF: src/nodes/Strip.ts KNOWN-LIMIT (the limit), src/app/cameraChannels.ts
+//      `overlayCameraChannels` (the overlay that folds no strips), src/app/animate/dispatchMutator.ts (the accept),
 //      src/timeline/NlaLanePane.tsx (the offer), src/app/stripTargets.ts (the picker's
 //      list, shared by the popover and the Strip inspector — #1065); issues #479, #480, epic #283.
 

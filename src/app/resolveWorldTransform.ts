@@ -69,12 +69,11 @@ import type { EvalCtx, NodeRef } from '../core/dag/types';
 import type { RenderOutputValue, SceneChild } from '../nodes/types';
 import { overlayTransients } from './overlayTransients';
 import { overlayChannels } from '../nodes/overlayChannels';
-import { bareChannelValuesForSubject } from './nodeChannels';
+import { overlayCameraChannels } from './cameraChannels';
 import { layeredChannelValues } from './layeredChannels';
 import { driverChannelValuesForTarget } from './paramDrivers';
 import type { KeyframeChannelValue } from '../nodes/types';
 import { cameraLensParams, isCameraNode } from './cameraNode';
-import { linkedDataNodeId } from './resolveDataParamOwner';
 import { resolveRigLightSources } from './resolveRigLightSources';
 import { cameraOrientationQuat } from './cameraOrientation';
 import { hierarchySocketForKind, hasHierarchyParent } from './sceneHierarchy';
@@ -390,8 +389,8 @@ export function resolveWorldTransform(
   // 0. Cameras (#210 slice 3.2) — wired via scene.camera (a single ref), a camera
   //    never appears in the scene-child / light walks below. Resolve its world
   //    from its pose: position + look-orientation + identity scale, with the
-  //    position/lookAt channels overlaid by the shared primitive (one band, H40 —
-  //    overlayChannels.sample == the camera resolver's sampler). See the header on
+  //    camera's channels overlaid by `overlayCameraChannels`, the same call the
+  //    camera resolver makes (#482). See the header on
   //    why this stays inline (the activeCamera import would cycle) and why a camera
   //    Track-To aim is not reflected here.
   const camNode = state.nodes[selectedId];
@@ -410,16 +409,8 @@ export function resolveWorldTransform(
       lookAt: isVec3(cp.lookAt) ? cp.lookAt : [0, 0, 0],
       roll: typeof cp.roll === 'number' ? cp.roll : 0,
     };
-    const camChannels = bareChannelValuesForSubject(
-      state.nodes,
-      selectedId,
-      linkedDataNodeId(state, selectedId),
-    ).filter(
-      (c) => c.paramPath === 'position' || c.paramPath === 'lookAt' || c.paramPath === 'roll',
-    );
-    if (camChannels.length > 0) {
-      cam = overlayChannels(cam, camChannels, 1, ctx.time.seconds) ?? cam;
-    }
+    // #482 — the same call the camera's pose makes, so the gizmo and the render agree.
+    cam = overlayCameraChannels(state, selectedId, cam, ctx.time.seconds);
     // #231 Inc 3.3 — a camera nested in a Group composes the parent's world (the
     // groupable-camera path). `resolveParentWorldMatrix` returns null for a
     // top-level camera (wired only to scene.camera) → byte-identical to the flat
