@@ -28,7 +28,7 @@ import {
   buildIdRefIndex,
   idRefsByRole,
   idRefsOutOf,
-  refIdsAt,
+  idsOfRef,
   wireOwnership,
 } from '../../core/dag/idRefSweep';
 import { getNodeType } from '../../core/dag/registry';
@@ -204,10 +204,10 @@ function visitEdge(
       enqueue(id, from, kind, depth, seenInKind, seenEdges, visited, frontier, edges);
     for (const referrer of idRefsInto.get(from) ?? []) {
       const node = state.nodes[referrer];
-      if (node && idRefsByRole(node).subject.includes(from)) reach(referrer);
+      if (node && idRefsByRole(node, state.nodes).subject.includes(from)) reach(referrer);
     }
     for (const ref of getNodeType(self.type)?.idRefs ?? []) {
-      if (ref.owns) for (const id of refIdsAt(self.params, ref.path, ref.shape)) reach(id);
+      if (ref.owns) for (const id of idsOfRef(self, ref, state.nodes)) reach(id);
     }
     let ownsBody = false;
     for (const [socket, binding] of Object.entries(self.inputs)) {
@@ -231,7 +231,7 @@ function visitEdge(
     }
     const self = state.nodes[from];
     if (self) {
-      for (const named of idRefsOutOf(self)) {
+      for (const named of idRefsOutOf(self, state.nodes)) {
         enqueue(named, from, kind, depth, seenInKind, seenEdges, visited, frontier, edges);
       }
     }

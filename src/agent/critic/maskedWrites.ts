@@ -89,7 +89,7 @@ function overridersOf(state: DagState, nodeId: string, paramPath: string): strin
   const out: string[] = [];
   for (const node of Object.values(state.nodes)) {
     if (node.id === nodeId) continue;
-    if (!idRefsByRole(node).subject.includes(nodeId)) continue;
+    if (!idRefsByRole(node, state.nodes).subject.includes(nodeId)) continue;
     // Read through the shared base reader, NOT an inline `as { mute?: unknown }`
     // cast. That cast is a tracked defect class here - `operatorBypass.gate.test.ts`
     // censuses every file carrying one, and this file walked straight into it on its

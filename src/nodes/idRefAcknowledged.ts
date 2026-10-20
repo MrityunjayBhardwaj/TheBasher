@@ -23,12 +23,7 @@ const PACKED = 'packed numeric data';
 const STORAGE = 'a file or asset key in project storage';
 const PARAM_PATH = 'a parameter path on the target, not a node';
 const BODY_INPUT = 'the name of an input the owning node declares (`bodyInputs`)';
-// #1668 — on the channel cutting a camera switch, a text key holds the id of the camera the cut
-// picks. It is NOT declared on purpose: the resolver skips a key whose camera is gone, so a delete
-// leaves the cut in place and one undo brings it back. #1669 declares it once the walker can see
-// ids held in keys, and deletes the cut with its camera.
-const KEYED_VALUE =
-  "the keyed value itself: text, a colour or an image reference; on a camera switch's cut channel, a camera id resolved when sampled and skipped once that camera is gone (#1668, declared by #1669)";
+const KEYED_VALUE = 'the keyed value itself: text, a colour or an image reference';
 const SPARE_KEY = 'the name of a spare parameter on the source node';
 const BONE = 'a bone name inside a skeleton';
 const IMPORT_KEY = 'a key naming a child inside an imported asset, never a graph node';
@@ -218,7 +213,6 @@ export const NOT_A_NODE_ID: Readonly<Record<string, string>> = {
   'KeyframeChannelQuat.paramPath': PARAM_PATH,
   'KeyframeChannelText.name': LABEL,
   'KeyframeChannelText.paramPath': PARAM_PATH,
-  'KeyframeChannelText.keyframes[].value': KEYED_VALUE,
   'KeyframeChannelVec2.name': LABEL,
   'KeyframeChannelVec2.paramPath': PARAM_PATH,
   'KeyframeChannelVec3.name': LABEL,

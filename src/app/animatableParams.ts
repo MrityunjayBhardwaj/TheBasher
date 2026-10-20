@@ -452,7 +452,7 @@ export function brokenReferences(state: DagState): BrokenReference[] {
   for (const node of Object.values(state.nodes)) {
     const overlay = overlayKindOf(node.type);
     if (!overlay) continue;
-    const target = idRefsByRole(node).subject[0];
+    const target = idRefsByRole(node, state.nodes).subject[0];
     const paramPath = readBaseParam(node, 'paramPath');
     if (!target || !state.nodes[target] || typeof paramPath !== 'string' || !paramPath) continue;
     const missing = missingParamPath(state, target, paramPath, overlay.kind, {

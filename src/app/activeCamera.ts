@@ -137,7 +137,9 @@ export function cutChannelOf(state: DagState, selectId: string): Node | null {
  * #1668 — Blender's rule for camera markers (`BKE_scene_camera_switch_find`, scene.cc): a key whose
  * camera is not among `listed` (deleted, or taken out of the switch) is SKIPPED, so the shot before
  * it runs on; the live key is the last one at or before `seconds`; before the first key, the
- * left-most key's camera holds. The keys are left as they are, so an undo that brings the camera
+ * left-most key's camera holds. #1669 — a delete takes the keys naming its camera with it (the
+ * walker reads cut keys as references), so the skip is the safety net for a camera taken out of
+ * the switch but kept, whose keys are left as they are, so wiring the camera
  * back brings its cuts back with it. With no key naming a listed camera, the static `active` stands.
  * The keys hold their camera by construction (a text key is a step), which is what #1663 needs of
  * a choice.

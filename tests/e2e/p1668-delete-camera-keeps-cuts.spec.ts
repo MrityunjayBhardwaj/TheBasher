@@ -8,7 +8,11 @@
 // later camera moved up a place and the shots after it silently changed camera.
 //
 // Read what the viewport DRAWS THROUGH (`__basher_view_camera`) and what the RENDER frames
-// (`__basher_render_png`), never the graph. One undo brings the camera and its cut back.
+// (`__basher_render_png`). One undo brings the camera and its cut back.
+//
+// #1669 — and the cut goes with its camera: the key naming the deleted camera is gone from the
+// cut channel after the same Delete, and back after the same undo (read off the channel itself,
+// the one place a dead key could hide while the picture looks right).
 import { expect, test } from './_fixtures';
 import type { Page } from '@playwright/test';
 import { splitCameraOps } from './_splitCamera';
@@ -118,6 +122,15 @@ const renderAt = (page: Page, s: number) =>
     return (await w.__basher_render_png())!.dataUrl;
   }, s);
 
+/** The cut channel's keys, as `time:camera`. */
+const cutKeys = (page: Page) =>
+  page.evaluate(() => {
+    const ch = (window as unknown as W).__basher_dag.getState().state.nodes.p1668_cuts;
+    return (ch.params.keyframes as { time: number; value: string }[]).map(
+      (k) => `${k.time}:${k.value}`,
+    );
+  });
+
 const setPlayhead = (page: Page, s: number) =>
   page.evaluate((sec) => (window as unknown as W).__basher_time.getState().setTime(sec), s);
 
@@ -196,6 +209,10 @@ test('deleting the camera in the middle of the list moves no other shot, and one
   // Shot 4's cut names a camera that is gone: shot 3 runs on through it. Every other shot keeps
   // its camera, though cam3..cam5 all moved up a place in the list.
   expect(await drawnAt(page, MID), 'after the delete').toEqual([seedX, 40, 80, 80, 60]);
+  const keysBefore = [`0:n_camera`, ...cuts.map(([t, c]) => `${t}:${c}`)];
+  expect(await cutKeys(page), 'the deleted camera’s cut is deleted with it').toEqual(
+    keysBefore.filter((k) => k !== `6:${CAM2}`),
+  );
   const shot4After = await renderAt(page, 7);
   expect(shot4After, 'the render of shot 4 is now shot 3’s camera').toBe(await renderAt(page, 5));
   await page.getByTestId('left-sidebar-tab-shots').click();
@@ -214,5 +231,6 @@ test('deleting the camera in the middle of the list moves no other shot, and one
     )
     .toBe(true);
   expect(await drawnAt(page, MID), 'after one undo').toEqual([seedX, 40, 80, 20, 60]);
+  expect(await cutKeys(page), 'the same undo brings the cut back').toEqual(keysBefore);
   expect(await renderAt(page, 7), 'shot 4 renders as it did before the delete').toBe(shot4Before);
 });

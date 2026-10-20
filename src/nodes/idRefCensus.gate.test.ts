@@ -295,6 +295,7 @@ describe('#1551 — every string a registered node can store is an id reference 
         "KeyframeChannelImage.target:subject",
         "KeyframeChannelNumber.target:subject",
         "KeyframeChannelQuat.target:subject",
+        "KeyframeChannelText.keyframes:argument",
         "KeyframeChannelText.target:subject",
         "KeyframeChannelVec2.target:subject",
         "KeyframeChannelVec3.target:subject",

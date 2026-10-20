@@ -229,7 +229,11 @@ export function buildDeleteNodesOps(state: DagState, ids: readonly NodeId[]): Op
   const isStillNamed = (id: NodeId) =>
     (namedBy.get(id) ?? []).some((referrerId) => {
       const referrer = state.nodes[referrerId];
-      return !!referrer && !idSet.has(referrerId) && idRefsByRole(referrer).argument.includes(id);
+      return (
+        !!referrer &&
+        !idSet.has(referrerId) &&
+        idRefsByRole(referrer, state.nodes).argument.includes(id)
+      );
     });
   const takeOwned = () => {
     for (let changed = true; changed; ) {
@@ -538,7 +542,7 @@ export function buildDuplicateNodesOps(
       type: 'addNode',
       nodeId: idMap.get(id)!,
       nodeType: node.type,
-      params: remapIdRefs(node, remap),
+      params: remapIdRefs(node, remap, state.nodes),
     });
   }
   // 5. Every input wire of every copy: from the copy when its producer was copied, else from

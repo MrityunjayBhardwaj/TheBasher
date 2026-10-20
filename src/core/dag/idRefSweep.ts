@@ -24,7 +24,7 @@
 import { getNodeType, registryEpoch } from './registry';
 import type { DagState } from './state';
 import { subnetworkOf, subnetworkOwnersOf } from './subnetworks';
-import type { NodeId, Op } from './types';
+import type { NodeDefinition, NodeId, Op } from './types';
 
 /** Minimal node shape this walker reads (a DagState node subset). */
 interface NodeLike {
@@ -33,6 +33,9 @@ interface NodeLike {
   readonly params?: unknown;
   readonly meta?: { readonly name?: string; readonly nameFrom?: string };
 }
+
+type NodeTable = Readonly<Record<string, NodeLike>>;
+type IdRefRow = NonNullable<NodeDefinition['idRefs']>[number];
 
 /**
  * The node whose name `node` follows (`meta.nameFrom`, #1122), or undefined (#1553). It is an id
@@ -53,8 +56,9 @@ function atPath(params: unknown, path: string): unknown {
   return cur;
 }
 
-/** The node ids a single declared ref currently points at (0, 1 or many). */
-export function refIdsAt(params: unknown, path: string, shape: string): string[] {
+/** The node ids a single declared ref currently points at (0, 1 or many). A 'keyed' row is
+ *  read by `idsOfRef`, which knows the graph; here it names nothing. */
+function refIdsAt(params: unknown, path: string, shape: string): string[] {
   const raw = atPath(params, path);
   if (shape === 'idList') {
     return Array.isArray(raw) ? raw.filter((v): v is string => typeof v === 'string' && !!v) : [];
@@ -65,6 +69,43 @@ export function refIdsAt(params: unknown, path: string, shape: string): string[]
   }
   // 'id' and 'nested' both resolve to a plain string at `path`.
   return typeof raw === 'string' && raw ? [raw] : [];
+}
+
+/** The keys at `path` (a 'keyed' row), or none. */
+function keysAt(params: unknown, path: string): { readonly value?: unknown }[] {
+  const raw = atPath(params, path);
+  return Array.isArray(raw) ? (raw as { readonly value?: unknown }[]) : [];
+}
+
+/**
+ * Whether `node` keys a param its `target` declares as a plain id (#1669), so that each of its
+ * keys names a node. A camera switch's `active` names its camera, so the channel keying it (the
+ * film's cuts) names one camera per key. The same channel type keying a prompt holds text.
+ */
+function keysHoldIds(node: NodeLike, nodes: NodeTable): boolean {
+  const p = node.params as { target?: unknown; paramPath?: unknown } | undefined;
+  const target = typeof p?.target === 'string' ? nodes[p.target] : undefined;
+  if (!target) return false;
+  return (getNodeType(target.type)?.idRefs ?? []).some(
+    (r) => r.shape === 'id' && r.path === p!.paramPath,
+  );
+}
+
+/**
+ * The node ids one declared row of `node` names, read against `nodes`. Every reader of the
+ * reference universe comes through here, so a 'keyed' row, whose keys are ids only when its
+ * target says so, is seen by delete, duplicate, the commit check and the agent alike (#1669).
+ */
+export function idsOfRef(node: NodeLike, ref: IdRefRow, nodes: NodeTable): string[] {
+  if (ref.shape !== 'keyed') return refIdsAt(node.params, ref.path, ref.shape);
+  if (!keysHoldIds(node, nodes)) return [];
+  const out: string[] = [];
+  for (const key of keysAt(node.params, ref.path)) {
+    if (typeof key.value === 'string' && key.value && !out.includes(key.value)) {
+      out.push(key.value);
+    }
+  }
+  return out;
 }
 
 /**
@@ -96,7 +137,7 @@ function acceptsEmptyString(node: NodeLike, path: string): boolean {
  * (and invalid, since the node is gone) setParam.
  */
 export function idRefSweep(
-  nodes: Readonly<Record<string, NodeLike>>,
+  nodes: NodeTable,
   seedIds: readonly NodeId[],
 ): { remove: Set<NodeId>; ops: Op[] } {
   const remove = new Set<NodeId>(seedIds);
@@ -109,7 +150,7 @@ export function idRefSweep(
       if (!refs) continue;
       const selfRemoved = remove.has(node.id);
       for (const ref of refs) {
-        const targets = refIdsAt(node.params, ref.path, ref.shape);
+        const targets = idsOfRef(node, ref, nodes);
         // Downward: this node is going, so take what it owns with it.
         if (selfRemoved && ref.owns) {
           for (const t of targets) {
@@ -143,9 +184,20 @@ export function idRefSweep(
     if (!refs) continue;
     for (const ref of refs) {
       if (ref.role !== 'argument') continue;
-      const targets = refIdsAt(node.params, ref.path, ref.shape);
+      const targets = idsOfRef(node, ref, nodes);
       if (!targets.some((t) => remove.has(t))) continue;
-      if (ref.shape === 'idList') {
+      if (ref.shape === 'keyed') {
+        // #1669 — the keys naming a removed node go, the rest stay as they were: deleting a
+        // camera deletes its cuts, and the shot before runs on through them.
+        ops.push({
+          type: 'setParam',
+          nodeId: node.id,
+          paramPath: ref.path,
+          value: keysAt(node.params, ref.path).filter(
+            (k) => !(typeof k.value === 'string' && remove.has(k.value)),
+          ),
+        });
+      } else if (ref.shape === 'idList') {
         // Drop the removed members, keep the rest in order.
         ops.push({
           type: 'setParam',
@@ -181,13 +233,13 @@ export function idRefSweep(
  * O(1) per step instead of O(nodes) — the same reason `expandClosure` pre-builds its
  * consumer index for edges.
  */
-export function buildIdRefIndex(nodes: Readonly<Record<string, NodeLike>>): Map<string, string[]> {
+export function buildIdRefIndex(nodes: NodeTable): Map<string, string[]> {
   const index = new Map<string, string[]>();
   for (const node of Object.values(nodes)) {
     const refs = getNodeType(node.type)?.idRefs;
     if (!refs) continue;
     for (const ref of refs) {
-      for (const target of refIdsAt(node.params, ref.path, ref.shape)) {
+      for (const target of idsOfRef(node, ref, nodes)) {
         const list = index.get(target);
         if (list) {
           if (!list.includes(node.id)) list.push(node.id);
@@ -215,11 +267,14 @@ export function buildIdRefIndex(nodes: Readonly<Record<string, NodeLike>>): Map<
  * Exported so a reader needing the distinction does not re-walk the declaration and
  * drift from `idRefsOutOf`; both read `NodeDefinition.idRefs` and nothing else.
  */
-export function idRefsByRole(node: NodeLike): { subject: string[]; argument: string[] } {
+export function idRefsByRole(
+  node: NodeLike,
+  nodes: NodeTable,
+): { subject: string[]; argument: string[] } {
   const out = { subject: [] as string[], argument: [] as string[] };
   for (const ref of getNodeType(node.type)?.idRefs ?? []) {
     const bucket = ref.role === 'subject' ? out.subject : out.argument;
-    for (const target of refIdsAt(node.params, ref.path, ref.shape)) {
+    for (const target of idsOfRef(node, ref, nodes)) {
       if (!bucket.includes(target)) bucket.push(target);
     }
   }
@@ -227,10 +282,10 @@ export function idRefsByRole(node: NodeLike): { subject: string[]; argument: str
 }
 
 /** The node ids `node` names through its declared refs (the outward direction). */
-export function idRefsOutOf(node: NodeLike): string[] {
+export function idRefsOutOf(node: NodeLike, nodes: NodeTable): string[] {
   const out: string[] = [];
   for (const ref of getNodeType(node.type)?.idRefs ?? []) {
-    for (const target of refIdsAt(node.params, ref.path, ref.shape)) {
+    for (const target of idsOfRef(node, ref, nodes)) {
       if (!out.includes(target)) out.push(target);
     }
   }
@@ -251,19 +306,15 @@ export function idRefsOutOf(node: NodeLike): string[] {
  * commit chokepoint (`dispatchAtomic`), only when a removeNode is present — the sole op
  * that can turn a live ref into a dangling one.
  */
-export function findDanglingIdRef(
-  nodes: Readonly<Record<string, NodeLike>>,
-): { node: string; missing: string } | null {
+export function findDanglingIdRef(nodes: NodeTable): { node: string; missing: string } | null {
   return danglingIdRefs(nodes)[0] ?? null;
 }
 
 /** Every id-reference in `nodes` that names a node not present, as referrer and missing id. */
-export function danglingIdRefs(
-  nodes: Readonly<Record<string, NodeLike>>,
-): { node: string; missing: string }[] {
+export function danglingIdRefs(nodes: NodeTable): { node: string; missing: string }[] {
   const out: { node: string; missing: string }[] = [];
   for (const node of Object.values(nodes)) {
-    for (const target of idRefsOutOf(node)) {
+    for (const target of idRefsOutOf(node, nodes)) {
       if (!nodes[target]) out.push({ node: node.id, missing: target });
     }
     // #1553 — a followed name is an id too, and its source can be removed like any other.
@@ -280,8 +331,8 @@ export function danglingIdRefs(
  * id that never existed, would otherwise make every later delete of anything throw.
  */
 export function findNewDanglingIdRef(
-  before: Readonly<Record<string, NodeLike>>,
-  after: Readonly<Record<string, NodeLike>>,
+  before: NodeTable,
+  after: NodeTable,
 ): { node: string; missing: string } | null {
   const now = danglingIdRefs(after);
   if (now.length === 0) return null;
@@ -308,7 +359,7 @@ export function subjectReferrersInto<T extends NodeLike>(
     const refs = getNodeType(node.type)?.idRefs;
     if (!refs) continue;
     const owned = refs.some(
-      (r) => r.role === 'subject' && refIdsAt(node.params, r.path, r.shape).some((t) => ids.has(t)),
+      (r) => r.role === 'subject' && idsOfRef(node, r, nodes).some((t) => ids.has(t)),
     );
     if (owned) out.push(node);
   }
@@ -332,14 +383,23 @@ function setAtPath(obj: unknown, path: string, value: unknown): void {
  * touched, and a nested id is rewritten in place so its siblings (`sourceTransform`'s
  * `channel`, `sourceSpare`'s `key`) survive.
  */
-export function remapIdRefs(node: NodeLike, remap: (id: string) => string): unknown {
+export function remapIdRefs(
+  node: NodeLike,
+  remap: (id: string) => string,
+  nodes: NodeTable,
+): unknown {
   const params = structuredClone(node.params);
   const refs = getNodeType(node.type)?.idRefs;
   if (!refs) return params;
   for (const ref of refs) {
-    const cur = refIdsAt(params, ref.path, ref.shape);
+    const cur = idsOfRef(node, ref, nodes);
     if (cur.length === 0) continue;
-    if (ref.shape === 'idList') {
+    if (ref.shape === 'keyed') {
+      // #1669 — each key naming a node is re-pointed in place, its time and easing kept.
+      for (const key of keysAt(params, ref.path) as { value?: unknown }[]) {
+        if (typeof key.value === 'string' && key.value) key.value = remap(key.value);
+      }
+    } else if (ref.shape === 'idList') {
       setAtPath(params, ref.path, cur.map(remap));
     } else if (ref.shape === 'ref') {
       // `<path>` is the `{ node }` object; rewrite `.node` so any siblings survive.
@@ -464,10 +524,10 @@ function wiresInto(node: { readonly inputs: DagState['nodes'][string]['inputs'] 
   return out;
 }
 
-function refsOutOf(node: NodeLike): RefRelation[] {
+function refsOutOf(node: NodeLike, nodes: NodeTable): RefRelation[] {
   const out: RefRelation[] = [];
   for (const ref of getNodeType(node.type)?.idRefs ?? []) {
-    for (const target of refIdsAt(node.params, ref.path, ref.shape)) {
+    for (const target of idsOfRef(node, ref, nodes)) {
       out.push({ node: target, path: ref.path, role: ref.role, owns: ref.owns === true });
     }
   }
@@ -482,7 +542,8 @@ function relationIndexOf(state: DagState): RelationIndex {
   const followers = new Map<NodeId, NodeId[]>();
   for (const node of Object.values(state.nodes)) {
     for (const wire of wiresInto(node)) pushTo(wiresOut, wire.node, { ...wire, node: node.id });
-    for (const ref of refsOutOf(node)) pushTo(refsIn, ref.node, { ...ref, node: node.id });
+    for (const ref of refsOutOf(node, state.nodes))
+      pushTo(refsIn, ref.node, { ...ref, node: node.id });
     const source = nameSourceOf(node);
     if (source !== undefined) pushTo(followers, source, node.id);
   }
@@ -521,7 +582,7 @@ export function relationsOf(state: DagState, nodeId: NodeId): NodeRelations {
   return {
     wiresIn: node ? wiresInto(node) : [],
     wiresOut: index.wiresOut.get(nodeId) ?? [],
-    refsOut: node ? refsOutOf(node) : [],
+    refsOut: node ? refsOutOf(node, state.nodes) : [],
     refsIn: index.refsIn.get(nodeId) ?? [],
     follows: (node && nameSourceOf(node)) ?? null,
     followers: index.followers.get(nodeId) ?? [],
@@ -564,7 +625,7 @@ function dependencies(nodes: DagState['nodes']): Map<string, string[]> {
   for (const node of Object.values(nodes)) {
     add(node.id, node.id + PARAMS);
     for (const wire of wiresInto(node)) if (nodes[wire.node]) add(node.id, wire.node);
-    for (const ref of refsOutOf(node)) {
+    for (const ref of refsOutOf(node, nodes)) {
       if (!nodes[ref.node]) continue;
       if (ref.role === 'subject') add(ref.node + PARAMS, node.id);
       else add(node.id, ref.node + PARAMS);

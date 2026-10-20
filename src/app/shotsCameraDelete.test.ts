@@ -6,9 +6,13 @@
 // four of five shots on a different camera, silently.
 //
 // The outcome for a shot whose own camera is deleted is Blender's (`BKE_scene_camera_switch_find`
-// skips a marker whose camera is gone): the shot before runs on through it. Its key is left as it
-// was, so one undo of the delete brings the camera and its cut back together. (#1669 is the final
-// version: delete the cut with its camera.)
+// skips a marker whose camera is gone): the shot before runs on through it.
+//
+// #1669 — and its cut goes with it. The keys of the cut channel name cameras, and the reference
+// walker reads them as references (a 'keyed' row on the text channel), so delete drops the keys
+// naming the deleted camera in the same commit, one undo brings both back, the commit check
+// refuses a raw delete that would strand one, and "what refers to this camera" lists the cuts.
+// The read-time skip stays as the safety net for a camera taken out of the switch but not deleted.
 //
 // Run through the app's own delete (`buildDeleteNodesOps`) and the real store, and read back as
 // shots (`shotsOf` — the rows read each camera through the render's resolver).
@@ -22,7 +26,8 @@ import { makeSplitCamera } from '../test-utils/splitCamera';
 import { buildCutOps } from './shotOps';
 import { shotsOf } from './shots';
 import { buildDeleteNodesOps } from './sceneNodeActions';
-import { selectActiveCameraNode } from './activeCamera';
+import { cutChannelOf, selectActiveCameraNode } from './activeCamera';
+import { danglingIdRefs, relationsOf, remapIdRefs } from '../core/dag/idRefSweep';
 
 beforeAll(() => registerAllNodes());
 
@@ -165,4 +170,113 @@ describe('#1668 — deleting a camera leaves every other shot on its own camera'
       expect(shotCameras(after)).toEqual(shotCameras(before));
     },
   );
+});
+
+/** The film's cuts as `time:camera`, read off the cut channel's own keys. */
+function cutKeys(s: DagState): string[] {
+  const select = shotsOf(s, 10).selectId!;
+  const keys = (cutChannelOf(s, select)!.params as { keyframes: { time: number; value: string }[] })
+    .keyframes;
+  return keys.map((k) => `${k.time}:${k.value}`);
+}
+
+describe('#1669 — deleting a camera deletes its cuts', () => {
+  it('the keys naming the deleted camera go, every other key stays as it was', () => {
+    const before = cutKeys(useDagStore.getState().state);
+    expect(before.filter((k) => k.endsWith(':cam2'))).toEqual(['6:cam2']);
+    const s = deleteCamera('cam2');
+    expect(cutKeys(s)).toEqual(before.filter((k) => k !== '6:cam2'));
+    expect(danglingIdRefs(s.nodes)).toEqual([]);
+  });
+
+  it.each(['n_camera', 'cam2', 'cam5'])('one undo of deleting %s brings its keys back', (id) => {
+    const before = cutKeys(useDagStore.getState().state);
+    deleteCamera(id);
+    expect(cutKeys(useDagStore.getState().state).some((k) => k.endsWith(`:${id}`))).toBe(false);
+    useDagStore.getState().undo();
+    expect(cutKeys(useDagStore.getState().state)).toEqual(before);
+  });
+
+  it('the commit check refuses a raw delete that would leave a cut naming the camera', () => {
+    const s = useDagStore.getState().state;
+    const select = shotsOf(s, 10).selectId!;
+    // cam5 is named by its cut alone, not by the switch's own `active`.
+    expect((s.nodes[select].params as { active: string }).active).not.toBe('cam5');
+    const raw: Op[] = [
+      {
+        type: 'disconnect',
+        from: { node: 'cam5', socket: 'out' },
+        to: { node: select, socket: 'cameras' },
+      },
+      { type: 'removeNode', nodeId: 'cam5' },
+    ];
+    expect(() => useDagStore.getState().dispatchAtomic(raw, 'user', 'raw delete')).toThrow(
+      /referencing removed node "cam5"/,
+    );
+    expect(useDagStore.getState().state).toBe(s);
+  });
+
+  it('"what refers to this camera" lists the cut channel', () => {
+    const s = useDagStore.getState().state;
+    const channel = cutChannelOf(s, shotsOf(s, 10).selectId!)!.id;
+    expect(relationsOf(s, 'cam3').refsIn).toContainEqual({
+      node: channel,
+      path: 'keyframes',
+      role: 'argument',
+      owns: false,
+    });
+    expect(relationsOf(s, 'cam3').refsIn.some((r) => r.node === channel)).toBe(true);
+  });
+
+  it('a copy re-points the cuts naming a copied camera, and leaves the rest on the originals', () => {
+    const s = useDagStore.getState().state;
+    const channel = cutChannelOf(s, shotsOf(s, 10).selectId!)!;
+    const params = remapIdRefs(channel, (id) => (id === 'cam3' ? 'cam3_copy' : id), s.nodes) as {
+      keyframes: { time: number; value: string }[];
+    };
+    expect(params.keyframes.map((k) => `${k.time}:${k.value}`)).toEqual(
+      cutKeys(s).map((k) => (k === '2:cam3' ? '2:cam3_copy' : k)),
+    );
+  });
+
+  it('safety net: a camera taken out of the switch but kept leaves its key, and the shot before runs on', () => {
+    // A raw edit no sweep sees: cam5 stays in the graph, so its key is not a dangling reference,
+    // but the switch no longer lists it. Remove the read-time skip and this shot plays cam5.
+    let s = useDagStore.getState().state;
+    const select = shotsOf(s, 10).selectId!;
+    s = run(s, [
+      {
+        type: 'disconnect',
+        from: { node: 'cam5', socket: 'out' },
+        to: { node: select, socket: 'cameras' },
+      },
+    ]);
+    expect(cutKeys(s)).toContain('4:cam5');
+    expect(playing(s).slice(4, 6)).toEqual(['cam3', 'cam3']);
+  });
+
+  it('control: keyed text that is not an id is not a reference', () => {
+    // The same channel type on the same switch, keying a param that is not an id: a key whose
+    // text happens to spell a camera id names nothing, and deleting that camera leaves it alone.
+    let s = useDagStore.getState().state;
+    const select = shotsOf(s, 10).selectId!;
+    s = run(s, [
+      {
+        type: 'addNode',
+        nodeId: 'prompt',
+        nodeType: 'KeyframeChannelText',
+        params: {
+          target: select,
+          paramPath: 'notAnId',
+          keyframes: [{ time: 0, value: 'cam2', easing: 'constant' }],
+        },
+      },
+    ]);
+    expect(relationsOf(s, 'cam2').refsIn.some((r) => r.node === 'prompt')).toBe(false);
+    useDagStore.setState({ state: s, undoStack: [], redoStack: [] } as never);
+    const after = deleteCamera('cam2');
+    expect(
+      (after.nodes.prompt.params as { keyframes: { value: string }[] }).keyframes[0].value,
+    ).toBe('cam2');
+  });
 });

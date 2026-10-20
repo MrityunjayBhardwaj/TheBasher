@@ -675,6 +675,10 @@ export interface NodeDefinition<P = unknown, O = unknown> {
    *   • 'nested' — a string at `path` inside an object param (`sourceSpare.node`).
    *   • 'ref'    — a whole `{ node }` object param (`sourceTransformVec`).
    *   • 'idList' — an array of plain string ids (`Track.strips`).
+   *   • 'keyed'  — a list of keys (`keyframes`) whose `value`s are ids exactly when this
+   *                channel keys a param its `target` declares as an 'id' (a camera switch's
+   *                `active`, whose keys are the film's cuts, #1669). Keyed text is otherwise
+   *                text. Clearing a removed referent drops the keys naming it.
    *
    * `role` is what the reference MEANS, which decides what a delete does to it:
    *   • 'subject'  — this node is OWNED BY the referent and is meaningless without
@@ -699,7 +703,7 @@ export interface NodeDefinition<P = unknown, O = unknown> {
    */
   idRefs?: readonly {
     path: string;
-    shape: 'id' | 'nested' | 'ref' | 'idList';
+    shape: 'id' | 'nested' | 'ref' | 'idList' | 'keyed';
     role: 'subject' | 'argument';
     owns?: true;
   }[];
