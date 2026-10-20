@@ -51,7 +51,7 @@ function channelOp(id: string, target: string, keys: number): Op {
       keyframes: Array.from({ length: keys }, (_, k) => ({
         time: k,
         value: 3 + k,
-        interpolation: 'linear',
+        easing: 'linear',
       })),
     },
   };

@@ -828,7 +828,7 @@ describe('a param declares its control on its schema (#872)', () => {
         type: 'addNode' as const,
         nodeId: id,
         nodeType: 'ComfyUIWorkflow',
-        params: { graph: importComfyGraph(api, META) },
+        params: { graph: { apiJson: api, meta: META } },
       })),
     );
 

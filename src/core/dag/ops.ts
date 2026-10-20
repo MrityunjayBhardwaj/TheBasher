@@ -454,6 +454,14 @@ function applyAddNode(
       op,
     );
   }
+  // #1686 — the check setParam makes (#1636), at the other door: a key the caller wrote that
+  // the parse did not keep, at any depth, refuses the node instead of creating it without the
+  // key. Measured before turning it on: 0 such keys across 331 nodes of the saved plaza, alley
+  // and example scenes, so nothing already in a graph is refused when it is copied or restored.
+  const lost = lostKeyIn(op.params, paramsParsed.data, '');
+  if (lost !== null) {
+    throw new OpError(`addNode: ${op.nodeType} has no field at ${lost}`, op);
+  }
   // #1580 — `inputs` is the second door a wire comes in by, and it used to be unguarded: a
   // pose into a Number socket, a socket the type does not have, a producer that is not in the
   // graph. Every wire here answers to the rule `connect` applies, one wire at a time.
@@ -887,7 +895,7 @@ function applySetParam(
  * lists whose lengths differ cannot be aligned, so they are not judged (conservative — it
  * can miss a strip, never invent one).
  */
-function lostKeyIn(written: unknown, kept: unknown, at: string): string | null {
+export function lostKeyIn(written: unknown, kept: unknown, at: string): string | null {
   if (Array.isArray(written)) {
     if (!Array.isArray(kept) || kept.length !== written.length) return null;
     for (let i = 0; i < written.length; i += 1) {

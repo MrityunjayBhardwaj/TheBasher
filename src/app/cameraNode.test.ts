@@ -223,7 +223,7 @@ describe('#387 slice 3 — the re-keyed consumers accept a split camera', () => 
       type: 'addNode',
       nodeId: 'grp',
       nodeType: 'Group',
-      params: { name: 'Rig', position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
+      params: { position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
     }).next;
     s = applyOp(s, {
       type: 'connect',

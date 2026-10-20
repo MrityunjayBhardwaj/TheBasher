@@ -81,7 +81,7 @@ function channelOp(keys: number, blend?: { weight?: number; blendMode?: string }
       keyframes: Array.from({ length: keys }, (_, k) => ({
         time: k,
         value: 30 + k,
-        interpolation: 'linear',
+        easing: 'linear',
       })),
       ...blend,
     },

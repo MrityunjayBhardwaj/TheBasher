@@ -567,7 +567,6 @@ export const SPLIT_KINDS: Record<SplitKindName, SplitKindSpec> = {
     baseDataParams: {
       geometry: {
         key: 'baked|conformance',
-        kind: 'baked',
         descriptor: { kind: 'baked', hash: 'conformance', vertexCount: 8 },
       },
       material: {

@@ -280,7 +280,7 @@ describe('ParamDriver pickers — the census driver answers, of the source kind 
         type: 'addNode',
         nodeId: 'wf',
         nodeType: 'ComfyUIWorkflow',
-        params: { graph: importComfyGraph(api, META) },
+        params: { graph: { apiJson: api, meta: META } },
       },
     ]);
     const cfg = comfyParamPath('3', 'cfg');

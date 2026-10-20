@@ -50,7 +50,6 @@ function unprimedBakedPair(): DagState {
     {
       data: {
         geometry: {
-          kind: 'baked',
           key: 'baked|never-primed',
           descriptor: { kind: 'baked', hash: 'never-primed', vertexCount: 3 },
         },
