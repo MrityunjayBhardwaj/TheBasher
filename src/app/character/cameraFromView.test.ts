@@ -17,6 +17,8 @@ import { snapshotCameraFromOrbit } from './cameraFromView';
 import { useThreeRef } from './threeRef';
 import { buildSetActiveCameraOps } from '../setActiveCamera';
 import { selectActiveCameraNode } from '../activeCamera';
+import { useTimeStore } from '../stores/timeStore';
+import { useNotificationStore } from '../stores/notificationStore';
 
 beforeEach(() => {
   registerAllNodes();
@@ -45,6 +47,7 @@ beforeEach(() => {
   });
   const cam = new THREE.PerspectiveCamera(45, 1, 0.1, 1000);
   cam.position.set(2, 3, 4);
+  useTimeStore.getState().setTime(0);
   useThreeRef.setState({
     camera: cam,
     controlsTarget: new THREE.Vector3(1, 0, 0),
@@ -89,8 +92,8 @@ describe('snapshotCameraFromOrbit', () => {
     expect(reverted.state.nodes.scene.inputs.camera).toEqual({ node: 'cam', socket: 'out' });
   });
 
-  it('#1667 — with a camera switch, the new camera joins it and the cuts keep playing', async () => {
-    // Two cameras under a switch, with a cut to the second at 2 s.
+  /** Two cameras under a switch with a cut to the second at 2 s; returns the switch and both ids. */
+  function filmWithCut(): { sel: string; first: string; second: string } {
     let s = useDagStore.getState().state;
     s = makeSplitCamera(s, { objectId: 'cam2', position: [20, 0, 0] }).state;
     for (const op of buildSetActiveCameraOps(s, 'cam2') ?? []) s = applyOp(s, op).next;
@@ -113,22 +116,70 @@ describe('snapshotCameraFromOrbit', () => {
       },
     }).next;
     useDagStore.getState().hydrate({ nodes: s.nodes, outputs: s.outputs });
+    return { sel, first, second };
+  }
+
+  const cutTimes = () =>
+    (
+      useDagStore.getState().state.nodes.cuts.params as { keyframes: { time: number }[] }
+    ).keyframes.map((k) => k.time);
+
+  it('#1667 + #1690 — with cuts, the new camera joins the switch and is cut to at the playhead', async () => {
+    const { sel, first, second } = filmWithCut();
+    const activeBefore = useDagStore.getState().state.nodes[sel].params.active;
+    useTimeStore.getState().setTime(1);
 
     await snapshotCameraFromOrbit();
     const after = useDagStore.getState();
-    // The switch still feeds the scene's camera...
+    // The switch still feeds the scene's camera, and the new camera is the third in its list...
     expect(after.state.nodes.scene.inputs.camera).toEqual({ node: sel, socket: 'out' });
-    // ...the new camera is the third in its list, and the active one when nothing is keyed...
     const listed = (after.state.nodes[sel].inputs.cameras as { node: string }[]).map((r) => r.node);
     expect(listed).toHaveLength(3);
     const fresh = listed[2];
     expect(after.state.nodes[fresh].params).toMatchObject({ position: [2, 3, 4] });
-    expect(after.state.nodes[sel].params.active).toBe(fresh);
-    // ...and the keyed cut still plays: camera 1 before 2 s, camera 2 from it.
-    expect(selectActiveCameraNode(after.state, 1)?.id).toBe(listed[0]);
-    expect(selectActiveCameraNode(after.state, 2)?.id).toBe('cam2');
-    // One undo.
+    // ...it is ON SCREEN from the playhead to the next cut, and the cuts around it still play.
+    expect(selectActiveCameraNode(after.state, 0.5)?.id).toBe(first);
+    expect(selectActiveCameraNode(after.state, 1.5)?.id).toBe(fresh);
+    expect(selectActiveCameraNode(after.state, 2.5)?.id).toBe(second);
+    expect(cutTimes()).toEqual([0, 1, 2]);
+    // The switch's own camera is left alone: the cut is what shows the new view.
+    expect(after.state.nodes[sel].params.active).toBe(activeBefore);
+    // It says what it did, and it is one undo.
+    expect(useNotificationStore.getState().toasts.at(-1)?.message).toMatch(
+      /^Cut to .+ at 1\.00 s$/,
+    );
     expect(after.undoStack.length).toBe(1);
+    after.undo();
+    expect(cutTimes()).toEqual([0, 2]);
+  });
+
+  it('#1690 — with the playhead on a cut, that shot films from the new view', async () => {
+    const { sel, first } = filmWithCut();
+    useTimeStore.getState().setTime(2);
+    await snapshotCameraFromOrbit();
+    const after = useDagStore.getState().state;
+    const fresh = (after.nodes[sel].inputs.cameras as { node: string }[]).map((r) => r.node)[2];
+    expect(cutTimes()).toEqual([0, 2]);
+    expect(selectActiveCameraNode(after, 1)?.id).toBe(first);
+    expect(selectActiveCameraNode(after, 2.5)?.id).toBe(fresh);
+    expect(useNotificationStore.getState().toasts.at(-1)?.message).toMatch(
+      /^The shot at 2\.00 s now films from /,
+    );
+  });
+
+  it('#1667 — with a switch and no cuts, the new camera becomes the active one', async () => {
+    let s = useDagStore.getState().state;
+    s = makeSplitCamera(s, { objectId: 'cam2', position: [20, 0, 0] }).state;
+    for (const op of buildSetActiveCameraOps(s, 'cam2') ?? []) s = applyOp(s, op).next;
+    useDagStore.getState().hydrate({ nodes: s.nodes, outputs: s.outputs });
+    const sel = (s.nodes.scene.inputs.camera as { node: string }).node;
+    const toasts = useNotificationStore.getState().toasts.length;
+    await snapshotCameraFromOrbit();
+    const after = useDagStore.getState().state;
+    const listed = (after.nodes[sel].inputs.cameras as { node: string }[]).map((r) => r.node);
+    expect(after.nodes[sel].params.active).toBe(listed.at(-1));
+    expect(selectActiveCameraNode(after, 3)?.id).toBe(listed.at(-1));
+    expect(useNotificationStore.getState().toasts.length).toBe(toasts);
   });
 
   it('no-op when no editor camera is available', async () => {
