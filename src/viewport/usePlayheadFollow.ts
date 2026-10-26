@@ -1,6 +1,7 @@
 import { useRef, useState } from 'react';
 import { useFrame } from '@react-three/fiber';
 import { useTimeStore } from '../app/stores/timeStore';
+import type { Clock } from '../app/subjectClock';
 
 /**
  * Follow an animatable object's EVALUATED value at the live playhead ([[V85]],
@@ -28,12 +29,15 @@ import { useTimeStore } from '../app/stores/timeStore';
 export function usePlayheadFollow<T>(
   sample: (seconds: number) => T,
   signature: (value: T) => string = (v) => JSON.stringify(v),
-  clock: 'scene' | 'film' = 'scene',
+  clock: Clock | (() => Clock) = 'scene',
 ): T {
   // #1594 — `clock` picks the time handed to `sample`: scene time (default — everything in the
   // scene), or the playhead's film time (a camera, which keeps real time in a slowed scene).
+  // #1688 — or asked each frame (`clockOf`), for a thing whose clock its graph decides.
   const now = () =>
-    clock === 'film' ? useTimeStore.getState().filmSeconds : useTimeStore.getState().seconds;
+    (typeof clock === 'function' ? clock() : clock) === 'film'
+      ? useTimeStore.getState().filmSeconds
+      : useTimeStore.getState().seconds;
   const [value, setValue] = useState<T>(() => sample(now()));
   const sigRef = useRef<string>(signature(value));
   useFrame(() => {

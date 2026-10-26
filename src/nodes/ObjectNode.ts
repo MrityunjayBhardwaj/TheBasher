@@ -15,6 +15,7 @@
 
 import { z } from 'zod';
 import { visibilityParams } from './visibilityParams';
+import { clockParams } from './clockParams';
 import type { NodeDefinition } from '../core/dag/types';
 import { openpbrMaterialSchema } from './materialSchema';
 import type { ObjectData, ObjectValue, PosedSkeletonValue, SceneObject } from './types';
@@ -82,8 +83,10 @@ export const ObjectParams = z.object({
    * appended to, not reordered.
    */
   parentBone: z.string().min(1).optional(),
-  /** #1503 — shown in the viewport, and in the render (`visibilityParams`). Appended last. */
+  /** #1503 — shown in the viewport, and in the render (`visibilityParams`). */
   ...visibilityParams,
+  /** #1688 — the clock this node and its children run on (`clockParams`). Appended last. */
+  ...clockParams,
 });
 export type ObjectParams = z.infer<typeof ObjectParams>;
 
@@ -155,6 +158,8 @@ export const ObjectNode: NodeDefinition<ObjectParams, ObjectValue> = {
     // #1153 — drawn by the transform section's rotation-mode control.
     rotationMode: 'transform',
     quaternion: 'transform',
+    // #1688 — drawn by the transform section's Clock control.
+    clock: 'transform',
   },
   evaluate(params, inputs) {
     return {

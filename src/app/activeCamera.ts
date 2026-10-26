@@ -38,6 +38,7 @@ import {
 import { type DofEffectSettings, resolveCameraDof } from './cameraDof';
 import { pickCameraSelect } from '../nodes/CameraSelect';
 import { sceneClockOf } from './sceneClock';
+import { clockedCtx } from './subjectClock';
 import { resolveTrackToTarget, resolveConstraintPosition } from './nodeConstraints';
 import { resolveParentWorldMatrix } from './resolveWorldTransform';
 import { composeCameraPoseWithParent } from './cameraOrientation';
@@ -347,12 +348,13 @@ export function resolveCameraPoseAt(
   // path below and its cuts run on it, so a camera keeps moving while the scene is slowed. What
   // it aims at and what it hangs from are scene things, read at SCENE time — so it can circle a
   // frozen runner. Identical when the scene runs at speed 1.
-  const filmCtx = { time: { frame: Math.round(seconds * 60), seconds, normalized: 0 } };
+  //
+  // #1688 — "scene things" means things on the scene's clock: a rig set to film, and anything a
+  // camera aims at that runs on the playhead, are re-timed onto it by the resolvers below. The
+  // context carries the playhead time so they can, even across a stretch held at speed 0.
   const sceneSeconds = sceneClockOf(state).sceneAt(seconds);
-  const ctx =
-    sceneSeconds === seconds
-      ? filmCtx
-      : { time: { frame: Math.round(sceneSeconds * 60), seconds: sceneSeconds, normalized: 0 } };
+  const filmCtx = clockedCtx(sceneSeconds, seconds, 'film');
+  const ctx = clockedCtx(sceneSeconds, seconds);
 
   // #339 Follow-Path — a camera is posed by THIS resolver, not by the mesh road
   // (ConstrainedR / resolveEvaluatedTransform), so the POSITION band has to be folded here

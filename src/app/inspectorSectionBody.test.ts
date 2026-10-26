@@ -69,12 +69,13 @@ describe('#458 SECTION_CONTROLS — shape', () => {
     expect(keys.length).toBeGreaterThanOrEqual(15);
   });
 
-  it('places the two transform controls BELOW the rows and everything else above', () => {
+  it('places the three transform controls BELOW the rows and everything else above', () => {
     const after = Object.values(SECTION_CONTROLS)
       .flat()
       .filter((c) => c.placement === 'after')
       .map((c) => c.key);
-    expect(after.sort()).toEqual(['applyTransform', 'setOrigin']);
+    // #1688 — the Clock control joins Apply Transform and Set Origin below the rows.
+    expect(after.sort()).toEqual(['applyTransform', 'clock', 'setOrigin']);
   });
 });
 
@@ -126,11 +127,13 @@ describe('#458 per-section row suppression is equivalent to the global filter it
     expect(examined).toBeGreaterThanOrEqual(10);
   });
 
-  it('omits exactly the five original keys plus the nine the lens control authors', () => {
+  it('omits exactly the five original keys, the nine the lens control authors, and the clock', () => {
     const omitted = Object.values(SECTION_CONTROLS)
       .flat()
       .flatMap((c) => c.omitRowKeys ?? []);
     expect(omitted.sort()).toEqual([
+      // #1688 — the Clock control authors its one key.
+      'clock',
       // #387 — the nine keys CameraLensControls writes. They are listed rather than
       // suppressed wholesale because a CameraData's `projection`/`lookAt`/`roll` route
       // to the SAME section and the control does not author them: under whole-section
@@ -396,6 +399,7 @@ describe('#458 the shared dispatcher emits the same body for a data half as for 
       // #1153 — no rotation row to stand in for, so the rotation control is drawn after the
       // rows rather than dropped, still ahead of the `after` controls.
       'rotationMode(g,g)',
+      'clock(g,g)',
       'applyTransform(g,g)',
       'setOrigin(g,g)',
     ]);
@@ -417,6 +421,7 @@ describe('#458 the shared dispatcher emits the same body for a data half as for 
       'row:position',
       'rotationMode(g,g)',
       'row:scale',
+      'clock(g,g)',
       'applyTransform(g,g)',
       'setOrigin(g,g)',
     ]);

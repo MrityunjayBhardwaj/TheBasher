@@ -65,7 +65,7 @@
 import * as THREE from 'three';
 import { evaluate, type EvaluatorCache } from '../core/dag/evaluator';
 import type { DagState } from '../core/dag/state';
-import type { EvalCtx, NodeRef } from '../core/dag/types';
+import type { NodeRef } from '../core/dag/types';
 import type { RenderOutputValue, SceneChild } from '../nodes/types';
 import { overlayTransients } from './overlayTransients';
 import { overlayChannels } from '../nodes/overlayChannels';
@@ -80,6 +80,7 @@ import { hierarchySocketForKind, hasHierarchyParent } from './sceneHierarchy';
 import { useTransientEditStore } from './stores/transientEditStore';
 import { withResolvedRotation } from './resolvedRotation';
 import { boneParentMatrix } from '../nodes/boneParent';
+import { type ClockedCtx, ctxOnClock, ctxOnClockOf } from './subjectClock';
 
 type Vec3 = [number, number, number];
 
@@ -251,7 +252,14 @@ function walk(
   for (const edge of childEdges(state, nodeId, value)) {
     const child = overlaidAt(state, edge.id, edge.value, at);
     if (!child) continue;
-    const found = walk(state, edge.id, child, underParent(world, value, child, at), targetId, at);
+    const found = walk(
+      state,
+      edge.id,
+      child,
+      underParent(state, world, value, nodeId, child, at),
+      targetId,
+      at,
+    );
     if (found) return found;
   }
   return null;
@@ -279,7 +287,7 @@ function walkParent(
       state,
       edge.id,
       child,
-      underParent(world, value, child, at),
+      underParent(state, world, value, nodeId, child, at),
       targetId,
       at,
     );
@@ -294,18 +302,23 @@ function walkParent(
  * composes the same product (`ObjectR`), so the drawn child and this read agree.
  */
 function underParent(
+  state: DagState,
   parentWorld: THREE.Matrix4,
   parent: SceneChild,
+  parentId: string,
   child: SceneChild,
   at: Overlay,
 ): THREE.Matrix4 {
-  const bone = boneParentMatrix(parent, child, at.ctx.time.seconds);
+  // #1688 — the bone is posed on the clock the armature runs on (a camera rig's may be the
+  // playhead's), as `BoneParentR` draws it.
+  const seconds = ctxOnClockOf(state, parentId, at.ctx).time.seconds;
+  const bone = boneParentMatrix(parent, child, seconds);
   return bone ? parentWorld.clone().multiply(bone) : parentWorld;
 }
 
 /** The time, evaluation context and held edits a walk overlays each node with. */
 interface Overlay {
-  readonly ctx: EvalCtx;
+  readonly ctx: ClockedCtx;
   readonly cache: EvaluatorCache | undefined;
   readonly transients: ReturnType<typeof useTransientEditStore.getState>['edits'];
 }
@@ -334,6 +347,9 @@ function overlaidAt(
   value: SceneChild,
   at: Overlay,
 ): SceneChild | null {
+  // #1688 — each node folds its channels on the clock it runs on, as the renderer draws it.
+  const ctx = ctxOnClockOf(state, nodeId, at.ctx);
+  if (ctx !== at.ctx) at = { ...at, ctx };
   let child: SceneChild | null = value;
   const channels = drawnChannels(state, nodeId, at);
   if (channels.length > 0) child = overlayChannels(child, channels, 1, at.ctx.time.seconds);
@@ -383,9 +399,11 @@ function decompose(m: THREE.Matrix4): WorldTransform {
 export function resolveWorldTransform(
   state: DagState,
   selectedId: string,
-  ctx: EvalCtx,
+  ctx: ClockedCtx,
   cache?: EvaluatorCache,
 ): WorldTransform | null {
+  // #1688 — the tree is evaluated at scene time; each node is re-timed onto its own clock.
+  ctx = ctxOnClock(state, 'scene', ctx);
   // 0. Cameras (#210 slice 3.2) — wired via scene.camera (a single ref), a camera
   //    never appears in the scene-child / light walks below. Resolve its world
   //    from its pose: position + look-orientation + identity scale, with the
@@ -409,6 +427,10 @@ export function resolveWorldTransform(
       lookAt: isVec3(cp.lookAt) ? cp.lookAt : [0, 0, 0],
       roll: typeof cp.roll === 'number' ? cp.roll : 0,
     };
+    // #1643 / #1688 — a camera's own keys run on the playhead, so something parented to it or
+    // aimed at it reads it where it is drawn. What it hangs from keeps its own clock (below).
+    const hungAt = ctx;
+    ctx = ctxOnClockOf(state, selectedId, ctx);
     // #482 — the same call the camera's pose makes, so the gizmo and the render agree.
     cam = overlayCameraChannels(state, selectedId, cam, ctx.time.seconds);
     // #231 Inc 3.3 — a camera nested in a Group composes the parent's world (the
@@ -416,7 +438,7 @@ export function resolveWorldTransform(
     // top-level camera (wired only to scene.camera) → byte-identical to the flat
     // local-pose world. The local matrix is the camera's own pose orientation.
     const camLocal = cameraWorldMatrix(cam.position, cam.lookAt, cam.roll);
-    const parentWorld = resolveParentWorldMatrix(state, selectedId, ctx, cache);
+    const parentWorld = resolveParentWorldMatrix(state, selectedId, hungAt, cache);
     return decompose(parentWorld ? parentWorld.clone().multiply(camLocal) : camLocal);
   }
 
@@ -533,9 +555,11 @@ export function worldMatrixAt(
 export function resolveParentWorldMatrix(
   state: DagState,
   selectedId: string,
-  ctx: EvalCtx,
+  ctx: ClockedCtx,
   cache?: EvaluatorCache,
 ): THREE.Matrix4 | null {
+  // #1688 — the tree is evaluated at scene time; each node is re-timed onto its own clock.
+  ctx = ctxOnClock(state, 'scene', ctx);
   const node = state.nodes[selectedId];
   if (!node) return null;
   // #231 Inc 3.3 — a camera is NO LONGER always flat: it can be a Group child

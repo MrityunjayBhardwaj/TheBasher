@@ -45,6 +45,7 @@ import { BAKED_MAP_COLOR_SPACE } from '../app/asset/bakedTextureStore';
 import { useSelectionStore } from '../app/stores/selectionStore';
 import { useAssetErrorStore } from '../app/stores/assetErrorStore';
 import { useTimeStore } from '../app/stores/timeStore';
+import { type ClockedCtx, clockFor, clockOf, ctxOnClockOf, liveCtx } from '../app/subjectClock';
 import { restBonePose } from '../nodes/bonePose';
 import { boneParentMatrix } from '../nodes/boneParent';
 import { useTransientEditStore, keyOf, type TransientEdit } from '../app/stores/transientEditStore';
@@ -1382,6 +1383,19 @@ function useLightShadingTransients(
   return useLaneOverlayTransients(targetId, edits, 'lights');
 }
 
+/** #1688 — the live playhead on the clock `nodeId` runs on (scene time when there is no node). */
+function liveSecondsOf(nodeId: string | null): number {
+  return nodeId
+    ? clockFor(useDagStore.getState().state, nodeId).seconds
+    : useTimeStore.getState().seconds;
+}
+
+/** #1688 — the live playhead as a context on the clock `nodeId` runs on, carrying both times so
+ *  what it reads through (a Track-To's target, a Follow-Path's curve) keeps its own clock. */
+function liveCtxOf(nodeId: string): ClockedCtx {
+  return ctxOnClockOf(useDagStore.getState().state, nodeId, liveCtx());
+}
+
 function DirectChannelsLightR({
   value,
   nodeId,
@@ -1415,7 +1429,7 @@ function DirectChannelsLightR({
       ) ?? value;
     if (!followsPath) return { v: overlaid, followKey: '' };
     const state = useDagStore.getState().state;
-    const ctx = { time: { frame: Math.round(seconds * 60), seconds, normalized: 0 } };
+    const ctx = liveCtxOf(nodeId);
     const followed = resolveConstraintPosition(state, nodeId, ctx, cache);
     if (!followed) return { v: overlaid, followKey: '' };
     return {
@@ -1427,9 +1441,7 @@ function DirectChannelsLightR({
     };
   };
 
-  const [patched, setPatched] = useState<LightValue>(
-    () => build(useTimeStore.getState().seconds).v,
-  );
+  const [patched, setPatched] = useState<LightValue>(() => build(liveSecondsOf(nodeId)).v);
   const lastApplied = useRef<{
     seconds: number;
     channels: unknown;
@@ -1438,7 +1450,7 @@ function DirectChannelsLightR({
     followKey: string;
   } | null>(null);
   useFrame(() => {
-    const seconds = useTimeStore.getState().seconds;
+    const seconds = liveSecondsOf(nodeId);
     const { v, followKey } = build(seconds);
     const la = lastApplied.current;
     if (
@@ -1510,29 +1522,33 @@ function LightHelperFollower({
   // per-frame render-root evaluate (inside `resolveTrackToTarget`) HITS while the DAG
   // is unchanged (the ConstrainedR / useAreaLightAim pattern).
   const cache = uiEvaluatorCache;
-  const patched = usePlayheadFollow((seconds) => {
-    // #1153 — resolved after the overlay, as the light it follows is.
-    const base = withResolvedRotation(
-      overlayTransients(
-        overlayChannels(value, channels, 1, seconds) ?? value,
+  const patched = usePlayheadFollow(
+    (seconds) => {
+      // #1153 — resolved after the overlay, as the light it follows is.
+      const base = withResolvedRotation(
+        overlayTransients(
+          overlayChannels(value, channels, 1, seconds) ?? value,
+          nodeId,
+          transients,
+        ) ?? value,
+      );
+      // #265 — every AIMABLE light kind (AreaLight / SpotLight / DirectionalLight)
+      // derives its aim from the Track-To target per frame; the wireframe helper
+      // reads the AUTHORED aim (lookAt / target / rotation), so re-express the
+      // resolved world aim into the field THIS kind's helper draws from. A
+      // non-aimable kind (Point / Ambient) or an unconstrained light pays nothing.
+      if (!constrained || !isAimableLightKind(base.kind)) return base;
+      const aim = resolveTrackToTarget(
+        useDagStore.getState().state,
         nodeId,
-        transients,
-      ) ?? value,
-    );
-    // #265 — every AIMABLE light kind (AreaLight / SpotLight / DirectionalLight)
-    // derives its aim from the Track-To target per frame; the wireframe helper
-    // reads the AUTHORED aim (lookAt / target / rotation), so re-express the
-    // resolved world aim into the field THIS kind's helper draws from. A
-    // non-aimable kind (Point / Ambient) or an unconstrained light pays nothing.
-    if (!constrained || !isAimableLightKind(base.kind)) return base;
-    const aim = resolveTrackToTarget(
-      useDagStore.getState().state,
-      nodeId,
-      { time: { frame: Math.round(seconds * 60), seconds, normalized: 0 } },
-      cache,
-    );
-    return aim ? aimLightValueForHelper(base, aim) : base;
-  });
+        liveCtxOf(nodeId),
+        cache,
+      );
+      return aim ? aimLightValueForHelper(base, aim) : base;
+    },
+    undefined,
+    () => clockOf(useDagStore.getState().state, nodeId),
+  );
   return <LightHelper value={patched} pickId={pickId} />;
 }
 
@@ -1792,11 +1808,10 @@ function useAreaLightAim(
   // when constrained, so unconstrained lights spend a single boolean per frame.
   useFrame(() => {
     if (!constrained || !nodeId) return;
-    const seconds = useTimeStore.getState().seconds;
     const aim = resolveTrackToTarget(
       useDagStore.getState().state,
       nodeId,
-      { time: { frame: Math.round(seconds * 60), seconds, normalized: 0 } },
+      liveCtxOf(nodeId),
       cache,
     );
     if (!aim) return;
@@ -1827,11 +1842,10 @@ function useLightTargetAim(
     if (!constrained || !nodeId) return;
     const light = ref.current;
     if (!light) return;
-    const seconds = useTimeStore.getState().seconds;
     const aim = resolveTrackToTarget(
       useDagStore.getState().state,
       nodeId,
-      { time: { frame: Math.round(seconds * 60), seconds, normalized: 0 } },
+      liveCtxOf(nodeId),
       cache,
     );
     if (!aim) return;
@@ -2353,7 +2367,7 @@ function DirectChannelsR({
     overlayWithIdentity('children', value, pickId, channels, transients, seconds);
 
   const [patched, setPatched] = useState<IdentifiedSceneObject>(() =>
-    sample(useTimeStore.getState().seconds),
+    sample(liveSecondsOf(pickId)),
   );
   const lastApplied = useRef<{
     seconds: number;
@@ -2362,7 +2376,7 @@ function DirectChannelsR({
     value: unknown;
   } | null>(null);
   useFrame(() => {
-    const seconds = useTimeStore.getState().seconds;
+    const seconds = liveSecondsOf(pickId);
     if (
       lastApplied.current !== null &&
       lastApplied.current.seconds === seconds &&
@@ -2427,7 +2441,7 @@ function ConstrainedR({
   // re-render every frame).
   const build = (seconds: number): { v: IdentifiedSceneObject; aimKey: string } => {
     const state = useDagStore.getState().state;
-    const ctx = { time: { frame: Math.round(seconds * 60), seconds, normalized: 0 } };
+    const ctx = liveCtxOf(pickId);
     // #536 S2b — the same seam DirectChannelsR takes, for the same reason: this road is the
     // only one a CONSTRAINED split object ever travels, so a stale material key freezes an
     // animated colour here exactly as it did there (#422 is the precedent for this pair of
@@ -2467,7 +2481,7 @@ function ConstrainedR({
   };
 
   const [patched, setPatched] = useState<IdentifiedSceneObject>(
-    () => build(useTimeStore.getState().seconds).v,
+    () => build(liveSecondsOf(pickId)).v,
   );
   const lastApplied = useRef<{
     seconds: number;
@@ -2482,7 +2496,7 @@ function ConstrainedR({
     // re-render when the RESULT changed: a paused static constraint recomputes the
     // SAME aim → skip setState (H48). A target edit changes `aimKey` even while
     // paused (it isn't captured by this node's seconds/value) → re-render fires.
-    const seconds = useTimeStore.getState().seconds;
+    const seconds = liveSecondsOf(pickId);
     const { v, aimKey } = build(seconds);
     const la = lastApplied.current;
     if (
@@ -2693,11 +2707,14 @@ function SkinnedMeshR({
   data,
   skin,
   override,
+  nodeId = null,
 }: {
   pose: ModifiedMeshValue;
   data: ModifiedDataValue;
   skin: SkinDeformValue;
   override?: MaterialValue;
+  /** #1688 — the deformed Object's node: the pose is read on the clock it runs on. */
+  nodeId?: string | null;
 }) {
   const shading = useViewportStore((s) => s.shading);
   const mat = data.material;
@@ -2748,7 +2765,7 @@ function SkinnedMeshR({
         restNormal: normal ? Float32Array.from(normal.array) : null,
       };
       next = { mesh, geometry, draw: null, deformed };
-      writeDeformed(next, useTimeStore.getState().seconds, skin.pose);
+      writeDeformed(next, liveSecondsOf(nodeId), skin.pose);
     } else if (shared && descriptor.kind === 'mesh') {
       const draw = buildSkinnedDraw(skin, descriptor.data);
       const geometry = shared.clone();
@@ -2759,7 +2776,7 @@ function SkinnedMeshR({
       mesh.bind(draw.skeleton, draw.bindMatrix);
       mesh.frustumCulled = false;
       pickByDrawnBox(mesh);
-      draw.pose(useTimeStore.getState().seconds, skin.pose);
+      draw.pose(liveSecondsOf(nodeId), skin.pose);
       next = { mesh, draw, geometry, deformed: null };
     }
     cache.current = { key: buildKey, built: next };
@@ -2770,7 +2787,7 @@ function SkinnedMeshR({
   useEffect(() => () => built?.geometry.dispose(), [built]);
   useFrame(() => {
     if (!built) return;
-    const seconds = useTimeStore.getState().seconds;
+    const seconds = liveSecondsOf(nodeId);
     built.draw?.pose(seconds, skinPose.current);
     writeDeformed(built, seconds, skinPose.current);
   });
@@ -2858,7 +2875,7 @@ function ObjectR({
   // #1503 — a body shown in only one of the viewport and the render is stamped for the render.
   const self = hideSelf ? null : (
     <OwnVisibility nodeId={nodeId ?? null}>
-      <ObjectSelfR value={value} override={override} />
+      <ObjectSelfR value={value} override={override} nodeId={nodeId ?? null} />
     </OwnVisibility>
   );
   if (!value.children || value.children.length === 0) return self;
@@ -2885,7 +2902,7 @@ function ObjectR({
           return (c as { parentBone?: unknown }).parentBone === undefined ? (
             child
           ) : (
-            <BoneParentR key={`b:${i}`} parent={value} child={c}>
+            <BoneParentR key={`b:${i}`} parent={value} parentId={nodeId ?? null} child={c}>
               {child}
             </BoneParentR>
           );
@@ -2904,10 +2921,14 @@ function ObjectR({
  */
 function BoneParentR({
   parent,
+  parentId,
   child,
   children,
 }: {
   parent: ObjectValue;
+  /** #1688 — the armature's node: its bones pose on the clock it runs on (a camera rig's may be
+   *  the playhead's). */
+  parentId: string | null;
   child: SceneObject;
   children: ReactNode;
 }) {
@@ -2922,7 +2943,7 @@ function BoneParentR({
   useFrame(() => {
     const group = ref.current;
     if (!group) return;
-    const seconds = useTimeStore.getState().seconds;
+    const seconds = liveSecondsOf(parentId);
     const la = last.current;
     if (la && la.seconds === seconds && la.parent === parent && la.child === child) return;
     last.current = { seconds, parent, child };
@@ -2932,7 +2953,7 @@ function BoneParentR({
     <group
       ref={(group) => {
         ref.current = group;
-        if (group) place(group, useTimeStore.getState().seconds);
+        if (group) place(group, liveSecondsOf(parentId));
       }}
       matrixAutoUpdate={false}
     >
@@ -2941,7 +2962,16 @@ function BoneParentR({
   );
 }
 
-function ObjectSelfR({ value, override }: { value: ObjectValue; override?: MaterialValue }) {
+function ObjectSelfR({
+  value,
+  override,
+  nodeId = null,
+}: {
+  value: ObjectValue;
+  override?: MaterialValue;
+  /** #1688 — the Object's node, so a skinned body poses on the clock it runs on. */
+  nodeId?: string | null;
+}) {
   const data = value.data;
   if (data?.kind === 'CurveData') {
     // TRS is the Object's; samples/points are LOCAL (CurveLineChrome's enclosing
@@ -3047,7 +3077,15 @@ function ObjectSelfR({ value, override }: { value: ObjectValue; override?: Mater
     // forks before the slot fork: the recompose carries no skin, and a skinned mesh's per-slot
     // draw is not built yet, so it draws with its first material.
     if (data.skin) {
-      return <SkinnedMeshR pose={modified} data={data} skin={data.skin} override={override} />;
+      return (
+        <SkinnedMeshR
+          pose={modified}
+          data={data}
+          skin={data.skin}
+          override={override}
+          nodeId={nodeId}
+        />
+      );
     }
     // #638 (ns-1b step 6) — the same 1↔N fork the MeshData arm takes, and it has to be
     // here too: `SetMaterialOp` over a partial face range is the FIRST producer of a slot

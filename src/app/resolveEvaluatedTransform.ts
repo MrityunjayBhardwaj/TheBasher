@@ -45,7 +45,7 @@
 
 import { evaluate, type EvaluatorCache } from '../core/dag/evaluator';
 import type { DagState } from '../core/dag/state';
-import type { EvalCtx, NodeRef } from '../core/dag/types';
+import type { NodeRef } from '../core/dag/types';
 import type { Quat, RenderOutputValue, SceneChild } from '../nodes/types';
 import { overlayTransients } from './overlayTransients';
 import { overlayChannels } from '../nodes/overlayChannels';
@@ -59,6 +59,7 @@ import {
   resolvedQuaternionOf,
   withResolvedRotation,
 } from './resolvedRotation';
+import { type ClockedCtx, ctxOnClock, ctxOnClockOf } from './subjectClock';
 
 type Vec3 = [number, number, number];
 
@@ -94,9 +95,11 @@ function isVec3(v: unknown): v is Vec3 {
 export function resolveEvaluatedTransform(
   state: DagState,
   selectedId: string,
-  ctx: EvalCtx,
+  ctx: ClockedCtx,
   cache?: EvaluatorCache,
 ): EvaluatedTransform | null {
+  // #1688 — the tree is evaluated at scene time; the node is re-timed onto its own clock below.
+  ctx = ctxOnClock(state, 'scene', ctx);
   // 1. Render root.
   const target = state.outputs.render;
   if (!target) return null;
@@ -183,6 +186,10 @@ export function resolveEvaluatedTransform(
   //    #199 retired the AnimationLayer wrapper, so there is no patched clone to
   //    unwrap — the animation overlay below is the only "animated value" source).
   let child: SceneChild | null = nested ?? value.scene.children[matchIdx];
+
+  // #1688 — from here on the node is read on the clock it runs on (its channels, drivers, held
+  // edit and constraints), as the renderer draws it. The tree above was evaluated at scene time.
+  ctx = ctxOnClockOf(state, selectedId, ctx);
 
   // v0.7 unification (#197/#199) — overlay free-floating DIRECT channels the SAME
   // way the render side (DirectChannelsR, SceneFromDAG) does: the SAME
