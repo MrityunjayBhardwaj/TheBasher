@@ -4006,7 +4006,8 @@ function ClockControl({ nodeId }: { nodeId: string }) {
         </span>
         <select
           data-testid={`inspector-clock-${nodeId}`}
-          value={setting}
+          // A camera shows the clock it runs on; its own setting would change nothing.
+          value={camera ? 'film' : setting}
           disabled={camera}
           onChange={(e) => onChange(e.target.value)}
           className="rounded border border-border bg-muted px-1.5 py-0.5 font-mono text-[11px] text-fg focus-visible:border-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent disabled:opacity-60"
