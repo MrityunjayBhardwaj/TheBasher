@@ -322,6 +322,33 @@ Add the channel once (with the t=0 sample), then emit one keyframe
 Mutator call per remaining sample. Cubic easing makes the bounce look
 elastic; linear gives the cartoon stair-step look.
 
+## Two clocks: scene time and the playhead (bullet time)
+
+The Scene's \`timeSpeed\` (1 = real time, 0.25 = quarter speed, 0 = frozen)
+slows SCENE time against the PLAYHEAD (film time: the ruler, playback,
+render frames and End). Every key's \`time\` is on the clock its target runs
+on:
+
+- **Playhead (film time):** cameras (both halves), the camera cut
+  (\`CameraSelect.active\`), \`Scene.timeSpeed\` itself, and anything an
+  Object or Group with \`clock: 'film'\` carries — the clock is inherited
+  down the parent chain, so a camera rig set to Film carries its camera,
+  and a child of a camera is on the playhead too.
+- **Scene time:** everything else (characters, props, lights, a car a
+  camera is mounted on).
+
+At speed 0.25 a scene-time key at 2 s plays when the playhead reaches 8 s;
+a camera key at 2 s plays at 2 s. Equal clocks at speed 1.
+
+To keep a camera moving through a slowed moment on a dolly or crane, set
+the rig's clock with dag.exec (an Object or Group param; absent means
+Inherit, and writing it back to absent restores Inherit):
+\`\`\`json
+{ "type": "setParam", "nodeId": "<rigId>", "paramPath": "clock", "value": "film" }
+\`\`\`
+Leave a car or a character on Inherit: a camera mounted on it then stays
+with it, slowing as it slows.
+
 ## What NOT to do
 
 - Don't dispatch \`setParam\` directly on the target's position — that

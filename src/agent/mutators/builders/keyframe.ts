@@ -111,7 +111,10 @@ export const keyframeMutator: MutatorDefinition<KeyframeSpec> = {
     "(these + `ease` 'in'|'out'|'inout' and `handleType` apply to Number/Vec2/Vec3 " +
     'channels; Quat takes only linear|cubic|constant, Color only linear|cubic). Omitting easing takes the ' +
     "interpolation of the segment the key lands in (the channel default for a first or second key). A key on a choice (the active camera, CameraSelect.active) is always stored 'constant' so a cut lands on its key. A camera cut's key holds the camera's node id (a text channel), and must name a camera wired into the switch. Use mutator.timeline.addChannel to create a channel on an " +
-    'ordinary node. To re-interp keys you already placed, ' +
+    'ordinary node. `time` is on the clock the channel\u2019s target runs on: the playhead for a ' +
+    "camera, a cut, Scene.timeSpeed and anything under an Object/Group whose `clock` is 'film' " +
+    '(inherited down the parent chain); scene time (slowed by Scene.timeSpeed) for everything ' +
+    'else (agent.getStrategy animation). To re-interp keys you already placed, ' +
     'use mutator.timeline.setKeyframeInterp.' +
     CHANNEL_ADDRESS_DOC,
   spec: KeyframeSpec,
