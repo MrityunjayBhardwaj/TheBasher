@@ -102,6 +102,7 @@ import { appendComputedSourceRows, appendLayerRows, computedSourceCache } from '
 import { resolveRowChannelForWrite, rowFlagToggleOps } from '../app/animate/rowChannelWrite';
 import { dispatchRetimeKeyframe } from '../app/animate/dispatchMutator';
 import { nodeDisplayName } from '../app/sceneTreeWalk';
+import { IDENTITY_KEY_RULER, type KeyRuler, keyRulerFor } from './keyRuler';
 
 /**
  * Imperative canvas palette — the exact hex constants the 2D context
@@ -200,6 +201,9 @@ interface KeyDrag {
   free: boolean;
   /** Read ONCE at pointerdown (perf — D-04, K13). */
   canvasLeft: number;
+  /** #1641 — the row's ruler mapping: the key is drawn on the playhead's ruler and stored on its
+   *  channel's clock. */
+  ruler: KeyRuler;
 }
 
 /**
@@ -215,6 +219,19 @@ function landingSeconds(
   view: TimelineView,
 ): number {
   if (!drag.dragging) return drag.fromTime;
+  // #1641 — the ruler counts the playhead; the key is stored on its own clock.
+  return drag.ruler.fromRuler(landingRulerSeconds(drag, cssW, totalFrames, view));
+}
+
+/** #1641 — where on the ruler the dragged key is drawn: on the key until the drag threshold, then
+ *  the frame under the cursor (`landingSeconds` is the same place, stored on the key's clock). */
+function landingRulerSeconds(
+  drag: KeyDrag,
+  cssW: number,
+  totalFrames: number,
+  view: TimelineView,
+): number {
+  if (!drag.dragging) return drag.ruler.toRuler(drag.fromTime);
   const raw = xToFrame(
     drag.pointerClientX - drag.canvasLeft,
     totalFrames,
@@ -310,6 +327,7 @@ export function collectChannelRows(nodes: Record<string, Node>): ChannelRow[] {
       mute: params.mute === true,
       solo: params.solo === true,
       targetId: params.target ?? '',
+      ...(params.paramPath ? { paramPath: params.paramPath } : {}),
     });
   }
   return rows;
@@ -366,6 +384,8 @@ export function paintStaticLayer(
   view: TimelineView = DEFAULT_VIEW,
   /** #1287 — the scene's End, when the timeline reaches past it (content runs longer). */
   rangeEndSeconds?: number,
+  /** #1641 — each row's ruler mapping, index-aligned with `rows`; absent rows draw as stored. */
+  rulers?: ReadonlyArray<KeyRuler>,
 ): number {
   const { cssW, cssH } = dims;
   ctx.clearRect(0, 0, cssW, cssH);
@@ -465,16 +485,18 @@ export function paintStaticLayer(
       ctx.textAlign = 'left'; // restore for the next row's name + the ruler labels
     }
 
-    // Diamonds — cull to the visible window first so the count is honest.
+    // Diamonds — cull to the visible window first so the count is honest. #1641 — each key on
+    // the ruler where it plays (its row's mapping), not at its stored time.
+    const ruler = rulers?.[r] ?? IDENTITY_KEY_RULER;
     const culled = cullVisibleKeyframes(
-      row.keyframes.map((k) => ({ timeSeconds: k.time })),
+      row.keyframes.map((k) => ({ timeSeconds: ruler.toRuler(k.time) })),
       visibleStartSec,
       visibleEndSec,
     );
 
     for (const { index } of culled) {
       const t = row.keyframes[index].time;
-      const cx = fx(t * FPS);
+      const cx = fx(ruler.toRuler(t) * FPS);
       const cy = rowsTop + r * ROW_HEIGHT_PX + ROW_HEIGHT_PX / 2;
       const selected =
         !!activeKeyframe &&
@@ -621,6 +643,8 @@ export function TimelineCanvas({ duration, rangeEnd }: { duration: number; range
   // its own inputs change, not on every edit elsewhere (the H40/H48 pattern, as SceneFromDAG's drivers).
   const sourceCache = useMemo(() => computedSourceCache(), []);
   const setActiveChannel = useTimelineSelection((s) => s.setActiveChannel);
+  // #1641 — the scene clock, for drawing scene-time keys where they play on the playhead's ruler.
+  const timeMap = useTimeStore((s) => s.timeMap);
   const rows = useMemo(
     () =>
       // #1215 — below the layers, the computed motion the chain stands on, read-only until baked.
@@ -639,6 +663,12 @@ export function TimelineCanvas({ duration, rangeEnd }: { duration: number; range
       }),
     [nodes, primaryNodeId, sourceCache],
   );
+  const rulers = useMemo(
+    () => rows.map((row) => keyRulerFor(useDagStore.getState().state, row, timeMap)),
+    // `nodes` moves with every edit that could change a row's clock (a Clock setting, a parent).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [rows, nodes, timeMap],
+  );
 
   // P6 W10 UIR c-3 — the data-rendered-keyframes mirror attr (D-W9-4 data
   // contract) is the canvas's visual-correctness surrogate. The JSX used
@@ -653,16 +683,16 @@ export function TimelineCanvas({ duration, rangeEnd }: { duration: number; range
     const s0 = startFrame / FPS;
     const s1 = endFrame / FPS;
     return rows.reduce(
-      (n, row) =>
+      (n, row, r) =>
         n +
         cullVisibleKeyframes(
-          row.keyframes.map((k) => ({ timeSeconds: k.time })),
+          row.keyframes.map((k) => ({ timeSeconds: rulers[r].toRuler(k.time) })),
           s0,
           s1,
         ).length,
       0,
     );
-  }, [rows, durationSeconds, view]);
+  }, [rows, rulers, durationSeconds, view]);
 
   // Measure the host + observe resize (drawer is resizable 200–480px,
   // D-W9-10). useLayoutEffect so the first paint has real dims, not 0x0.
@@ -784,6 +814,7 @@ export function TimelineCanvas({ duration, rangeEnd }: { duration: number; range
       activeKeyframeId,
       view,
       rangeEnd,
+      rulers,
     );
 
     visCtx.setTransform(1, 0, 0, 1, 0, 0);
@@ -800,7 +831,18 @@ export function TimelineCanvas({ duration, rangeEnd }: { duration: number; range
     // overwritten by this repaint; reset the ghost idle-guard so the next
     // tick does not "restore" under a stale ghost x that no longer exists.
     lastGhostXRef.current = -1;
-  }, [nodes, activeChannelId, activeKeyframeId, durationSeconds, dims, dpr, rows, view, rangeEnd]);
+  }, [
+    nodes,
+    activeChannelId,
+    activeKeyframeId,
+    durationSeconds,
+    dims,
+    dpr,
+    rows,
+    rulers,
+    view,
+    rangeEnd,
+  ]);
 
   // ── C4: the imperative rAF playhead loop (the perf-critical hot path) ──
   //
@@ -973,7 +1015,7 @@ export function TimelineCanvas({ duration, rangeEnd }: { duration: number; range
             // key until the pointer passes the drag threshold, then the nearest whole frame (the
             // exact cursor frame with Ctrl/⌘). canvasLeft was read ONCE at pointerdown (NO
             // getBoundingClientRect in the hot loop — the K13 perf footgun).
-            const ghostFrame = landingSeconds(drag, cssW, totalFramesNow, viewNow) * FPS;
+            const ghostFrame = landingRulerSeconds(drag, cssW, totalFramesNow, viewNow) * FPS;
             const ghostX = frameToX(
               ghostFrame,
               totalFramesNow,
@@ -1216,7 +1258,7 @@ export function TimelineCanvas({ duration, rangeEnd }: { duration: number; range
         // Same view-aware frameToX the static layer paints with, so the hit
         // target tracks zoom/pan. cy mirrors the ruler-offset row center.
         const cx = frameToX(
-          kf.time * FPS,
+          rulers[r].toRuler(kf.time) * FPS,
           totalFrames,
           view,
           LABEL_GUTTER_PX,
@@ -1250,6 +1292,7 @@ export function TimelineCanvas({ duration, rangeEnd }: { duration: number; range
             dragging: false,
             free: e.ctrlKey || e.metaKey,
             canvasLeft: box.left, // read ONCE here (perf — D-04)
+            ruler: rulers[r],
           };
           useTimelineSelection.getState().setActiveKeyframe({
             channelId: row.channelId,
