@@ -71,6 +71,8 @@ import { resolveEvaluatedTransform } from './resolveEvaluatedTransform';
 import { resolveParentWorldMatrix, resolveWorldTransform } from './resolveWorldTransform';
 import { routeAnimatedGrab, autoKeyCommit } from './animate/autoKeyCommit';
 import { resolveActiveCameraPoseAt } from './activeCamera';
+import { sceneClockOf } from './sceneClock';
+import { clockedCtx } from './subjectClock';
 import { isCameraNode } from './cameraNode';
 import { cameraOrientationQuat, lookAtRollFromQuat } from './cameraOrientation';
 import { constraintTargetSet, resolveFollowedWorldPosition } from './nodeConstraints';
@@ -1133,10 +1135,13 @@ function CameraGizmo() {
     // #231 Inc 3.3 — the parent Group world (null for a top-level camera). The pose
     // above is already in WORLD space (resolveActiveCameraPoseAt composed it), so
     // the drag handlers undo this matrix to recover the LOCAL authored params.
+    // #1688 — `seconds` is the playhead; the parent read takes both clocks, so a rig on scene
+    // time is undone where the scene has reached and a rig set to Film where the playhead is.
+    const state = useDagStore.getState().state;
     const parentWorld = resolveParentWorldMatrix(
-      useDagStore.getState().state,
+      state,
       camId,
-      { time: { frame: Math.round(seconds * 60), seconds, normalized: 0 } },
+      clockedCtx(sceneClockOf(state).sceneAt(seconds), seconds),
       cache,
     );
     seedRef.current = { position: pose.position, distance, parentWorld };
