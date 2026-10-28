@@ -17,6 +17,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
+    "perf:prod": "playwright test -c playwright.perf-prod.config.ts tests/e2e/perf-scene-scale.spec.ts -g playback",
     "license-audit": "node scripts/license-audit.mjs",
     "notice": "node scripts/gen-notice.mjs",
     "seed:assets": "node scripts/seed-sample-assets.mjs"

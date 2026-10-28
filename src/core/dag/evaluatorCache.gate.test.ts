@@ -371,6 +371,9 @@ const TAKERS: string[] = [
   'resolveTrackToTarget@src/app/nodeConstraints.ts',
   'resolveTransformParam@src/app/resolveTransformParam.ts',
   'resolveWorldTransform@src/app/resolveWorldTransform.ts',
+  // #1727 — the two bodies the timed public reads above call, with the caller's cache.
+  'parentWorldMatrixOf@src/app/resolveWorldTransform.ts',
+  'worldTransformOf@src/app/resolveWorldTransform.ts',
   // #1638 — forwards the caller's cache to the world resolver at each playhead it is asked.
   'worldMatrixAt@src/app/resolveWorldTransform.ts',
   'rigChanges@src/app/animate/invertPoseStack.ts',

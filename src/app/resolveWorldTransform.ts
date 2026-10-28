@@ -81,6 +81,7 @@ import { useTransientEditStore } from './stores/transientEditStore';
 import { withResolvedRotation } from './resolvedRotation';
 import { boneParentMatrix } from '../nodes/boneParent';
 import { type ClockedCtx, ctxOnClock, ctxOnClockOf } from './subjectClock';
+import { measureStage } from '../perf/frameProfiler';
 
 type Vec3 = [number, number, number];
 
@@ -402,6 +403,16 @@ export function resolveWorldTransform(
   ctx: ClockedCtx,
   cache?: EvaluatorCache,
 ): WorldTransform | null {
+  // #1727 — timed as the `world` stage of a playback perf run; a plain call when none is armed.
+  return measureStage('world', () => worldTransformOf(state, selectedId, ctx, cache));
+}
+
+function worldTransformOf(
+  state: DagState,
+  selectedId: string,
+  ctx: ClockedCtx,
+  cache?: EvaluatorCache,
+): WorldTransform | null {
   // #1688 — the tree is evaluated at scene time; each node is re-timed onto its own clock.
   ctx = ctxOnClock(state, 'scene', ctx);
   // 0. Cameras (#210 slice 3.2) — wired via scene.camera (a single ref), a camera
@@ -553,6 +564,15 @@ export function worldMatrixAt(
  * (one band, H40).
  */
 export function resolveParentWorldMatrix(
+  state: DagState,
+  selectedId: string,
+  ctx: ClockedCtx,
+  cache?: EvaluatorCache,
+): THREE.Matrix4 | null {
+  return measureStage('world', () => parentWorldMatrixOf(state, selectedId, ctx, cache));
+}
+
+function parentWorldMatrixOf(
   state: DagState,
   selectedId: string,
   ctx: ClockedCtx,

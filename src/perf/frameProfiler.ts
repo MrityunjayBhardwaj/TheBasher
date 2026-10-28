@@ -15,6 +15,17 @@
 // Plus the total rAF interval — everything, including browser paint + idle —
 // which is the ground-truth "did we hold the frame budget" signal.
 //
+// #1727 — and the same costs PER FRAME, by stage (`perFrame`): every stage's milliseconds are
+// summed between two animation frames, so a playback run can say which stage grew. The stages
+// overlap and do not add up to the frame: `eval` runs inside `react` and inside `world`.
+//   - eval:        DAG evaluate() self-time (as above), wherever it ran.
+//   - react:       the scene subtree's commits (as above).
+//   - react:<id>:  another <PerfBoundary id> subtree's commits (the gizmo's, `react:gizmo`).
+//   - world:       world and parent-world transform reads (`resolveWorldTransform`,
+//                  `resolveParentWorldMatrix`), outermost call only.
+//   - render:      CPU time inside `renderer.render` (every pass the frame draws). The GPU's own
+//                  time is not in it.
+//
 // Lives outside src/nodes/** so the V2 purity lint does not apply (this is
 // instrumentation, not a node). All collection no-ops unless a run is armed
 // via start(); production never calls start(), so the hooks are inert.
@@ -54,6 +65,11 @@ export interface PerfSummary {
   evalCalls: number;
   /** How many React commits fired during the run (re-render frequency). */
   commits: number;
+  /** #1727 — milliseconds per animation frame, by stage (see the header). A stage nothing
+   *  recorded during the run is absent. */
+  perFrame: Record<string, BudgetSummary>;
+  /** #1727 — React commits per animation frame, every profiled subtree. */
+  commitsPerFrame: BudgetSummary;
 }
 
 const EMPTY: BudgetSummary = { count: 0, p50: 0, p95: 0, max: 0, mean: 0 };
@@ -96,6 +112,61 @@ class FrameProfiler {
   private lastTriangles = 0;
   private lastDrawCalls = 0;
 
+  // #1727 — per-frame stage totals: accumulated between two ticks, pushed on the tick.
+  private stageThisFrame = new Map<string, number>();
+  private stageSamples = new Map<string, number[]>();
+  private commitsThisFrame = 0;
+  private commitSamples: number[] = [];
+  private stageDepth = new Map<string, number>();
+
+  /** Add `ms` to `stage` for this frame. */
+  recordStage(stage: string, ms: number): void {
+    if (!this.armed) return;
+    this.stageThisFrame.set(stage, (this.stageThisFrame.get(stage) ?? 0) + ms);
+  }
+
+  /** Run `fn`, timing it as `stage` when a run is armed. Re-entrant calls of the same stage are
+   *  counted once, in the outermost call. Unarmed it is just `fn()`. */
+  measure<T>(stage: string, fn: () => T): T {
+    if (!this.armed) return fn();
+    const depth = this.stageDepth.get(stage) ?? 0;
+    if (depth > 0) return fn();
+    this.stageDepth.set(stage, 1);
+    const t0 = performance.now();
+    try {
+      return fn();
+    } finally {
+      this.stageDepth.set(stage, 0);
+      this.recordStage(stage, performance.now() - t0);
+    }
+  }
+
+  /** A commit of a profiled subtree other than the scene (`<PerfBoundary id>`). */
+  recordSubtreeCommit(id: string, actualMs: number): void {
+    if (!this.armed) return;
+    this.commits += 1;
+    this.commitsThisFrame += 1;
+    this.recordStage(`react:${id}`, actualMs);
+  }
+
+  private flushFrame(): void {
+    for (const [stage, ms] of this.stageThisFrame) {
+      let samples = this.stageSamples.get(stage);
+      if (!samples) {
+        // A stage first seen now read 0 on every frame before it.
+        samples = new Array<number>(this.commitSamples.length).fill(0);
+        this.stageSamples.set(stage, samples);
+      }
+      samples.push(ms);
+    }
+    for (const [stage, samples] of this.stageSamples) {
+      if (!this.stageThisFrame.has(stage)) samples.push(0);
+    }
+    this.commitSamples.push(this.commitsThisFrame);
+    this.stageThisFrame = new Map();
+    this.commitsThisFrame = 0;
+  }
+
   /** Called by the evaluator perf hook for every node evaluation. */
   recordEval(selfMs: number, hit: boolean): void {
     if (!this.armed) return;
@@ -104,12 +175,15 @@ class FrameProfiler {
     this.evalCalls += 1;
     if (hit) this.cacheHits += 1;
     else this.cacheMisses += 1;
+    this.recordStage('eval', selfMs);
   }
 
   /** Called by the React <Profiler onRender> for the scene subtree. */
   recordReactCommit(actualMs: number): void {
     if (!this.armed) return;
     this.commits += 1;
+    this.commitsThisFrame += 1;
+    this.recordStage('react', actualMs);
     this.reactSamples.push(actualMs);
     // eval ran inside this commit; subtract it to isolate reconciliation.
     const evalMs = this.evalMsThisCommit;
@@ -141,9 +215,15 @@ class FrameProfiler {
     this.cacheMisses = 0;
     this.evalCalls = 0;
     this.commits = 0;
+    this.stageThisFrame = new Map();
+    this.stageSamples = new Map();
+    this.commitsThisFrame = 0;
+    this.commitSamples = [];
+    this.stageDepth = new Map();
     this.lastFrameTs = performance.now();
     const tick = () => {
       const now = performance.now();
+      this.flushFrame();
       this.frameIntervals.push(now - this.lastFrameTs);
       this.lastFrameTs = now;
       if (this.armed) this.rafId = requestAnimationFrame(tick);
@@ -161,6 +241,10 @@ class FrameProfiler {
   summary(): PerfSummary {
     // Drop the first few warm-up intervals (mount + first paint spike).
     const warm = this.frameIntervals.slice(Math.min(5, this.frameIntervals.length));
+    // The per-frame series drop the same warm-up frames, so they line up with `frame`.
+    const skip = (xs: number[]) => xs.slice(Math.min(5, xs.length));
+    const perFrame: Record<string, BudgetSummary> = {};
+    for (const [stage, samples] of this.stageSamples) perFrame[stage] = summarize(skip(samples));
     return {
       frame: summarize(warm),
       react: summarize(this.reactSamples),
@@ -173,6 +257,8 @@ class FrameProfiler {
       cacheMisses: this.cacheMisses,
       evalCalls: this.evalCalls,
       commits: this.commits,
+      perFrame,
+      commitsPerFrame: summarize(skip(this.commitSamples)),
     };
   }
 
@@ -182,6 +268,12 @@ class FrameProfiler {
 }
 
 export const frameProfiler = new FrameProfiler();
+
+/** #1727 — time `fn` as `stage` of the current frame while a run is armed; otherwise just
+ *  `fn()`. For app code whose cost a playback table reports (the world-transform reads). */
+export function measureStage<T>(stage: string, fn: () => T): T {
+  return frameProfiler.measure(stage, fn);
+}
 
 let installed = false;
 
