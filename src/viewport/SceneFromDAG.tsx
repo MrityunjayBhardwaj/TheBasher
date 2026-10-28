@@ -15,7 +15,7 @@
 //
 // REF: THESIS.md §11, vyapti V8.
 
-import { flushSync, useFrame, useThree, type ThreeEvent } from '@react-three/fiber';
+import { useFrame, useThree, type ThreeEvent } from '@react-three/fiber';
 import {
   createContext,
   memo,
@@ -32,7 +32,6 @@ import * as THREE from 'three';
 import { RectAreaLightUniformsLib } from 'three/examples/jsm/lights/RectAreaLightUniformsLib.js';
 import { channelPathForBand, type OverlayBand } from '../app/objectDataBand';
 import {
-  dataLaneNodeIds,
   dataLaneNodes,
   dataLaneOverlaySources,
   overlayPathOn,
@@ -58,20 +57,14 @@ import {
   overlayWithIdentity,
   type IdentifiedSceneObject,
 } from '../app/overlayWithIdentity';
-import { directChannelTargetSet, animatedAncestorSet } from '../app/nodeChannels';
-import {
-  layeredChannelValues,
-  layeredChannelNodesForTarget,
-  stripTargetSet,
-} from '../app/layeredChannels';
+import { animatedAncestorSet } from '../app/nodeChannels';
+import { timeDependentSetOf } from '../app/timeDependentSet';
+import { layeredChannelValues, layeredChannelNodesForTarget } from '../app/layeredChannels';
 import {
   driverChannelValuesForTarget,
   driverSubscriptionNodesForTarget,
-  driverTargetSet,
 } from '../app/paramDrivers';
 import {
-  constraintTargetSet,
-  followPathTargetSet,
   resolveConstraintRotation,
   resolveConstraintPosition,
   resolveTrackToTarget,
@@ -184,6 +177,12 @@ import type {
   Vec3,
 } from '../nodes/types';
 import { uiEvaluatorCache } from '../app/uiEvaluatorCache';
+import {
+  createFrameEvaluator,
+  FrameEvaluatorProvider,
+  useFrameEvaluator,
+  useFrameTick,
+} from './frameEvaluator';
 import { drawnBox } from '../render/drawnBox';
 
 let rectAreaInit = false;
@@ -290,6 +289,8 @@ export function SceneFromDAG({ outputName = 'render' }: SceneFromDAGProps) {
   // params-hash memo is keyed on that object rather than on its contents. Omitting it
   // would be correct and would silently cost a rebuild per render for every folded node.
   const foldCache = useMemo<FoldCache>(() => createFoldCache(), []);
+  // #1730 — the one frame pass every animated renderer below registers its tick with.
+  const frameEvaluator = useMemo(() => createFrameEvaluator(), []);
 
   // 🔴 AND THE ROOT HAS TO SUBSCRIBE TO HELD EDITS, OR THE FOLD BELOW RUNS ONCE AND NEVER
   // AGAIN. This component re-renders only on `useDagStore.state` (the B13 change above),
@@ -394,39 +395,15 @@ export function SceneFromDAG({ outputName = 'render' }: SceneFromDAGProps) {
   // it (the PULL rail), so a driver-only target mounts its per-frame follower too and
   // `useLayeredChannels` then folds the driver value alongside channels/strips. No
   // bound driver → exactly the channels+strips set (byte-identical).
-  const directChannelTargets = new Set<string>([
-    ...directChannelTargetSet(state.nodes),
-    ...stripTargetSet(state.nodes),
-    ...driverTargetSet(state.nodes),
-  ]);
-  // #398 — the object↔data reach for MEMBERSHIP. A data-param channel (material, size)
-  // targets the DATA node, because that is the node the inspector renders those rows
-  // against. But this set gates whether a scene child mounts its overlay at all, and it
-  // is keyed by the SCENE CHILD. Without this, an animated cube's Object is absent from
-  // the set, DirectChannelsR never mounts, and the viewport silently never repaints —
-  // no error anywhere, because "not animated" and "animated but unmounted" look the same.
-  //
-  // 🔴 #522 — AND THE REACH IS THE WHOLE LANE, NOT ONE HOP. Since the operator stack moved
-  // onto the data lane, `data` names the TOP of the stack, so a single hop asks the operator
-  // whether it is animated and never the base. Measured: a cube with one ordinary
-  // ArrayModifier and a correctly-targeted colour channel stayed static, because its Object
-  // never entered this set and DirectChannelsR never mounted. This site is the reason
-  // widening the four hooks alone changed nothing — the overlay they build was never asked
-  // for. "Not animated" and "animated but unmounted" still look the same from here, which is
-  // why this gate is worth widening in the same slice as the hooks it gates.
-  for (const node of Object.values(state.nodes)) {
-    for (const laneId of dataLaneNodeIds(state, node.id)) {
-      if (directChannelTargets.has(laneId)) {
-        directChannelTargets.add(node.id);
-        break;
-      }
-    }
-  }
-  const constraintTargets = constraintTargetSet(state.nodes);
-  // #343 — the POSITION-band membership gate (Follow-Path only). Built once, O(1) per
-  // light: a light mounts its per-frame position follower ONLY if it is followed, so a
-  // Track-To'd-but-not-followed light and every static light pay nothing (B13).
-  const followPathTargets = followPathTargetSet(state.nodes);
+  // #1730 — the rule (channels, strips and bound drivers, widened along each object's whole
+  // data lane, #398 #522; then the constraint and Follow-Path bands, #204 #343) lives in
+  // `timeDependentSet`, kept per node table, so the frame loop and this render body read one
+  // answer. "Not animated" and "animated but unmounted" look the same from here, which is why
+  // there is only one copy of the rule.
+  const timeDependent = timeDependentSetOf(state);
+  const directChannelTargets = timeDependent.channelDriven;
+  const constraintTargets = timeDependent.constrained;
+  const followPathTargets = timeDependent.followed;
   // #266 (B2) — the synthesized dependency edge. Memoize the context value on a
   // CONTENT signature so nested `RenderChild` consumers re-render ONLY when overlay
   // membership actually changes (an overlay added/removed anywhere), NOT on every
@@ -532,193 +509,195 @@ export function SceneFromDAG({ outputName = 'render' }: SceneFromDAGProps) {
   );
 
   return (
-    <OverlayMembershipContext.Provider value={overlayMembership}>
-      {/* UX #9 — scene-level HDRI/IBL. Sets `scene.environment` (a scene
+    <FrameEvaluatorProvider evaluator={frameEvaluator}>
+      <OverlayMembershipContext.Provider value={overlayMembership}>
+        {/* UX #9 — scene-level HDRI/IBL. Sets `scene.environment` (a scene
           PROPERTY, not a traversed object), so it survives the renderToImage
           chrome hide-pass (V37) and lights the production render for free.
           NEVER mark this editorChrome (V47). */}
-      <SceneEnvironment value={value.scene.environment} />
-      {/* Seam B (#212) — per-frame overlay for the scene env's animatable params
+        <SceneEnvironment value={value.scene.environment} />
+        {/* Seam B (#212) — per-frame overlay for the scene env's animatable params
           (envIntensity / envRotationY). SceneEnvironment renders the STATIC
           evaluated env, so without this an env channel resolves but does not render
           (the H40 class seam A closed for lights). Mounted only when the Scene node
           carries channels, so a static scene pays nothing. */}
-      {sceneRef && directChannelTargets.has(sceneRef.node) ? (
-        <SceneEnvChannelsR sceneNodeId={sceneRef.node} />
-      ) : null}
-      {/* #165: the DAG camera no longer mounts a makeDefault render camera
+        {sceneRef && directChannelTargets.has(sceneRef.node) ? (
+          <SceneEnvChannelsR sceneNodeId={sceneRef.node} />
+        ) : null}
+        {/* #165: the DAG camera no longer mounts a makeDefault render camera
           here — the editor owns the view (EditorViewCamera) so DAG cameras
           become selectable frustum objects (CameraHelpers). */}
-      {value.scene.lights.map((light, i) => {
-        const lid = lightRefs[i]?.node ?? null;
-        // #1453 — a light hidden in the viewport AND the render (its flags, or its collections)
-        // lights nothing, as such a mesh draws nothing. #1503 — hidden in only one, it is mounted
-        // under its stamp (`OwnVisibility`): an invisible light lights nothing in the viewport, and
-        // the render flips it on.
-        if (lid != null && hiddenIds.has(lid)) return null;
-        // #205 — a light targeted by an active Track-To aims via lookAt (V60); the
-        // membership set is built once (O(N)) so this stays O(1) per light (B13).
-        return (
-          <OwnVisibility key={`light:${i}`} nodeId={lid}>
-            <LightNode
-              value={light}
-              nodeId={lid}
-              constrained={lid != null && constraintTargets.has(lid)}
-              hasDirectChannels={lid != null && directChannelTargets.has(lid)}
-              followsPath={lid != null && followPathTargets.has(lid)}
-            />
-          </OwnVisibility>
-        );
-      })}
-      {/* #208 — the active lighting PROFILE's lights, rendered as a parallel band.
+        {value.scene.lights.map((light, i) => {
+          const lid = lightRefs[i]?.node ?? null;
+          // #1453 — a light hidden in the viewport AND the render (its flags, or its collections)
+          // lights nothing, as such a mesh draws nothing. #1503 — hidden in only one, it is mounted
+          // under its stamp (`OwnVisibility`): an invisible light lights nothing in the viewport, and
+          // the render flips it on.
+          if (lid != null && hiddenIds.has(lid)) return null;
+          // #205 — a light targeted by an active Track-To aims via lookAt (V60); the
+          // membership set is built once (O(N)) so this stays O(1) per light (B13).
+          return (
+            <OwnVisibility key={`light:${i}`} nodeId={lid}>
+              <LightNode
+                value={light}
+                nodeId={lid}
+                constrained={lid != null && constraintTargets.has(lid)}
+                hasDirectChannels={lid != null && directChannelTargets.has(lid)}
+                followsPath={lid != null && followPathTargets.has(lid)}
+              />
+            </OwnVisibility>
+          );
+        })}
+        {/* #208 — the active lighting PROFILE's lights, rendered as a parallel band.
           Node ids come from `rigLightSources` (the rig's `inputs.lights` edge order,
           matching `rigLights`) so studio lights keep their Track-To aim + selection. */}
-      {rigLights.map((light, i) => {
-        const lid = rigLightSources[i] ?? null;
-        if (lid != null && hiddenIds.has(lid)) return null;
-        return (
-          <OwnVisibility key={`rig-light:${lid ?? i}`} nodeId={lid}>
-            <LightNode
-              value={light}
-              nodeId={lid}
-              constrained={lid != null && constraintTargets.has(lid)}
-              hasDirectChannels={lid != null && directChannelTargets.has(lid)}
-              followsPath={lid != null && followPathTargets.has(lid)}
-            />
-          </OwnVisibility>
-        );
-      })}
-      {/* Editor-only wireframe helpers — show position/direction/range
+        {rigLights.map((light, i) => {
+          const lid = rigLightSources[i] ?? null;
+          if (lid != null && hiddenIds.has(lid)) return null;
+          return (
+            <OwnVisibility key={`rig-light:${lid ?? i}`} nodeId={lid}>
+              <LightNode
+                value={light}
+                nodeId={lid}
+                constrained={lid != null && constraintTargets.has(lid)}
+                hasDirectChannels={lid != null && directChannelTargets.has(lid)}
+                followsPath={lid != null && followPathTargets.has(lid)}
+              />
+            </OwnVisibility>
+          );
+        })}
+        {/* Editor-only wireframe helpers — show position/direction/range
           for every DAG light. Hidden in `rendered` mode so the screenshot
           / production parity stays clean. */}
-      {showLightHelpers
-        ? value.scene.lights.map((light, i) => {
-            const lid = lightRefs[i]?.node ?? null;
-            if (lid != null && viewportHidden.has(lid)) return null; // #1453 — with its light
-            // [[V85]]/[[H132]] #241 — an animated light's helper follows the
-            // evaluated value at the playhead; a static light keeps the static path.
-            // #243 GAP 2 / #265 — a Track-To'd AIMABLE light (Area/Spot/Directional)
-            // derives its aim per frame, so its helper needs the follower too
-            // (re-resolve the aim at `seconds` into the field the helper draws).
-            return lid &&
-              (directChannelTargets.has(lid) ||
-                (constraintTargets.has(lid) && isAimableLightKind(light.kind))) ? (
-              <LightHelperFollower
-                key={`helper:${i}`}
-                nodeId={lid}
-                value={light}
-                pickId={lid}
-                constrained={constraintTargets.has(lid)}
-              />
-            ) : (
-              <LightHelper key={`helper:${i}`} value={light} pickId={lid} />
-            );
-          })
-        : null}
-      {/* #208 — wireframe helpers for the active rig's lights too. */}
-      {showLightHelpers
-        ? rigLights.map((light, i) => {
-            const lid = rigLightSources[i] ?? null;
-            if (lid != null && viewportHidden.has(lid)) return null; // #1453 — with its light
-            // #243 GAP 2 / #265 — a Track-To'd AIMABLE rig light follows its aim per frame.
-            return lid &&
-              (directChannelTargets.has(lid) ||
-                (constraintTargets.has(lid) && isAimableLightKind(light.kind))) ? (
-              <LightHelperFollower
-                key={`rig-helper:${lid}`}
-                nodeId={lid}
-                value={light}
-                pickId={lid}
-                constrained={constraintTargets.has(lid)}
-              />
-            ) : (
-              <LightHelper key={`rig-helper:${lid ?? i}`} value={light} pickId={lid} />
-            );
-          })
-        : null}
-      {/* #165: selectable wireframe camera frustums. Hidden in rendered mode;
+        {showLightHelpers
+          ? value.scene.lights.map((light, i) => {
+              const lid = lightRefs[i]?.node ?? null;
+              if (lid != null && viewportHidden.has(lid)) return null; // #1453 — with its light
+              // [[V85]]/[[H132]] #241 — an animated light's helper follows the
+              // evaluated value at the playhead; a static light keeps the static path.
+              // #243 GAP 2 / #265 — a Track-To'd AIMABLE light (Area/Spot/Directional)
+              // derives its aim per frame, so its helper needs the follower too
+              // (re-resolve the aim at `seconds` into the field the helper draws).
+              return lid &&
+                (directChannelTargets.has(lid) ||
+                  (constraintTargets.has(lid) && isAimableLightKind(light.kind))) ? (
+                <LightHelperFollower
+                  key={`helper:${i}`}
+                  nodeId={lid}
+                  value={light}
+                  pickId={lid}
+                  constrained={constraintTargets.has(lid)}
+                />
+              ) : (
+                <LightHelper key={`helper:${i}`} value={light} pickId={lid} />
+              );
+            })
+          : null}
+        {/* #208 — wireframe helpers for the active rig's lights too. */}
+        {showLightHelpers
+          ? rigLights.map((light, i) => {
+              const lid = rigLightSources[i] ?? null;
+              if (lid != null && viewportHidden.has(lid)) return null; // #1453 — with its light
+              // #243 GAP 2 / #265 — a Track-To'd AIMABLE rig light follows its aim per frame.
+              return lid &&
+                (directChannelTargets.has(lid) ||
+                  (constraintTargets.has(lid) && isAimableLightKind(light.kind))) ? (
+                <LightHelperFollower
+                  key={`rig-helper:${lid}`}
+                  nodeId={lid}
+                  value={light}
+                  pickId={lid}
+                  constrained={constraintTargets.has(lid)}
+                />
+              ) : (
+                <LightHelper key={`rig-helper:${lid ?? i}`} value={light} pickId={lid} />
+              );
+            })
+          : null}
+        {/* #165: selectable wireframe camera frustums. Hidden in rendered mode;
           the active camera's frustum also hides while looking through it. */}
-      {showLightHelpers
-        ? cameraNodeIds.map((id) => {
-            const active = id === activeCameraId;
-            if (active && lookThrough) return null;
-            // #1453 — a hidden camera (its eye, or a hidden collection) draws no frustum. As in
-            // Blender, hiding it does not stop the shot: the active camera still frames the render.
-            if (viewportHidden.has(id)) return null;
-            // [[V85]]/[[H132]] #240 — an ANIMATED camera (direct channels or a
-            // Track-To) follows the EVALUATED pose at the live playhead, parity with
-            // meshes/lights; a static camera keeps the cheap frame-0 read. #242 GAP 1
-            // — a camera nested under an ANIMATED ANCESTOR Group is animated too (its
-            // world pose moves per frame with the ancestor), so it likewise needs the
-            // follower even when its own params/constraints are static; meshes get this
-            // for free via the Group's DirectChannelsR subtree re-render.
-            if (
-              directChannelTargets.has(id) ||
-              constraintTargets.has(id) ||
-              animatedAncestors.has(id)
-            ) {
-              return <CameraFrustumFollower key={`cam:${id}`} cameraId={id} active={active} />;
-            }
-            // #231 Inc 3.3 — a camera nested in a Group draws its frustum at the
-            // group-composed WORLD pose (null parent → flat local pose, unchanged).
-            // Frame-0 ctx mirrors this component's static (time-decoupled) evaluate.
-            const pose = resolveCameraFrustumPose(
-              state,
-              id,
-              { time: { frame: 0, seconds: 0, normalized: 0 } },
-              cache,
-            );
-            if (!pose) return null;
-            return <CameraHelper key={`cam:${id}`} pose={pose} pickId={id} active={active} />;
-          })
-        : null}
-      {/* #972 — octahedral bones for every rig in the scene. A camera gets a
+        {showLightHelpers
+          ? cameraNodeIds.map((id) => {
+              const active = id === activeCameraId;
+              if (active && lookThrough) return null;
+              // #1453 — a hidden camera (its eye, or a hidden collection) draws no frustum. As in
+              // Blender, hiding it does not stop the shot: the active camera still frames the render.
+              if (viewportHidden.has(id)) return null;
+              // [[V85]]/[[H132]] #240 — an ANIMATED camera (direct channels or a
+              // Track-To) follows the EVALUATED pose at the live playhead, parity with
+              // meshes/lights; a static camera keeps the cheap frame-0 read. #242 GAP 1
+              // — a camera nested under an ANIMATED ANCESTOR Group is animated too (its
+              // world pose moves per frame with the ancestor), so it likewise needs the
+              // follower even when its own params/constraints are static; meshes get this
+              // for free via the Group's DirectChannelsR subtree re-render.
+              if (
+                directChannelTargets.has(id) ||
+                constraintTargets.has(id) ||
+                animatedAncestors.has(id)
+              ) {
+                return <CameraFrustumFollower key={`cam:${id}`} cameraId={id} active={active} />;
+              }
+              // #231 Inc 3.3 — a camera nested in a Group draws its frustum at the
+              // group-composed WORLD pose (null parent → flat local pose, unchanged).
+              // Frame-0 ctx mirrors this component's static (time-decoupled) evaluate.
+              const pose = resolveCameraFrustumPose(
+                state,
+                id,
+                { time: { frame: 0, seconds: 0, normalized: 0 } },
+                cache,
+              );
+              if (!pose) return null;
+              return <CameraHelper key={`cam:${id}`} pose={pose} pickId={id} active={active} />;
+            })
+          : null}
+        {/* #972 — octahedral bones for every rig in the scene. A camera gets a
           frustum and a light gets a gizmo; until now a rig got nothing, so a
           character animating wrongly and a character not animating at all
           looked the same (#970). Reads the LIVE `Bone` objects, so it follows
           the playhead; orients each bone by its own basis, so ROLL is visible
           (#854/#960). Hidden in `rendered` mode like every other helper. */}
-      {showLightHelpers ? (
-        <ArmatureHelper
-          sourceRigs={sourceRigs}
-          showSourceRigs={sourceRigVisible}
-          skeletonObjects={skeletonObjects}
-        />
-      ) : null}
-      {/* Index `i` corresponds to the Scene aggregator's `inputs.children[i]`
+        {showLightHelpers ? (
+          <ArmatureHelper
+            sourceRigs={sourceRigs}
+            showSourceRigs={sourceRigVisible}
+            skeletonObjects={skeletonObjects}
+          />
+        ) : null}
+        {/* Index `i` corresponds to the Scene aggregator's `inputs.children[i]`
           (childRefs) per the comment above. Each child renders through the
           MEMOIZED SceneChildNode so a single param edit re-renders ONE node, not
           all N (H48 / B13). */}
-      {value.scene.children.map((child, i) => {
-        const cpid = childRefs[i]?.node ?? null;
-        // #227 S4 — a hidden top-level node draws nothing of its own. #1462 — but its children
-        // still draw (`MeshChild` skips only the hidden node's body), as Blender hides an object
-        // alone; its wrapper drops the node's name, so nothing reads the node as drawn. The live
-        // scene is what the offscreen still/animation render captures (V37), so a skipped body
-        // is absent from the render too — one band, no #168 denylist. #1451 — a member of a
-        // hidden collection is hidden the same way.
-        return (
-          <SceneChildNode
-            key={`mesh:${i}`}
-            value={child}
-            pickId={cpid}
-            hidden={cpid != null && hiddenIds.has(cpid)}
-            // v0.7 unification (#197) — a node animated by free-floating direct
-            // channels (V57) overlays via DirectChannelsR. Membership tested
-            // against the ONE pre-built set (O(N) total, not O(N²)).
-            hasDirectChannels={cpid != null && directChannelTargets.has(cpid)}
-            // #204 — a node with an active Track-To renders through ConstrainedR
-            // (derived aim rotation), taking precedence over DirectChannelsR.
-            isConstrained={cpid != null && constraintTargets.has(cpid)}
-          />
-        );
-      })}
-      <MeshScaleProbe />
-      {/* V8: scene contents come ONLY from the DAG. No fixtures, no fallbacks.
+        {value.scene.children.map((child, i) => {
+          const cpid = childRefs[i]?.node ?? null;
+          // #227 S4 — a hidden top-level node draws nothing of its own. #1462 — but its children
+          // still draw (`MeshChild` skips only the hidden node's body), as Blender hides an object
+          // alone; its wrapper drops the node's name, so nothing reads the node as drawn. The live
+          // scene is what the offscreen still/animation render captures (V37), so a skipped body
+          // is absent from the render too — one band, no #168 denylist. #1451 — a member of a
+          // hidden collection is hidden the same way.
+          return (
+            <SceneChildNode
+              key={`mesh:${i}`}
+              value={child}
+              pickId={cpid}
+              hidden={cpid != null && hiddenIds.has(cpid)}
+              // v0.7 unification (#197) — a node animated by free-floating direct
+              // channels (V57) overlays via DirectChannelsR. Membership tested
+              // against the ONE pre-built set (O(N) total, not O(N²)).
+              hasDirectChannels={cpid != null && directChannelTargets.has(cpid)}
+              // #204 — a node with an active Track-To renders through ConstrainedR
+              // (derived aim rotation), taking precedence over DirectChannelsR.
+              isConstrained={cpid != null && constraintTargets.has(cpid)}
+            />
+          );
+        })}
+        <MeshScaleProbe />
+        {/* V8: scene contents come ONLY from the DAG. No fixtures, no fallbacks.
           If a project wants ambient fill, it adds an AmbientLight node. */}
-      <DiffOverlay />
-      <PostFx config={value.postFx} dof={activeDof} />
-    </OverlayMembershipContext.Provider>
+        <DiffOverlay />
+        <PostFx config={value.postFx} dof={activeDof} />
+      </OverlayMembershipContext.Provider>
+    </FrameEvaluatorProvider>
   );
 }
 
@@ -1456,7 +1435,8 @@ function DirectChannelsLightR({
     value: unknown;
     followKey: string;
   } | null>(null);
-  useFrame(() => {
+  const evaluator = useFrameEvaluator();
+  useFrameTick(nodeId, () => {
     const seconds = liveSecondsOf(nodeId);
     const { v, followKey } = build(seconds);
     const la = lastApplied.current;
@@ -1471,11 +1451,13 @@ function DirectChannelsLightR({
       return;
     }
     lastApplied.current = { seconds, channels, transients, value, followKey };
+    evaluator.record(nodeId, v);
     // #1728 — committed now, not scheduled: a deferred update from a frame loop is starved by the
     // playhead's higher-priority updates while the frame is busy, and the light froze (#1726).
     // A light reads its whole value (scale as brightness, position for its aim), so it has no
-    // transform-only write yet; the frame table's writers replace this (#1730).
-    flushSync(() => setPatched(v));
+    // transform-only write; #1730 commits it with the frame's other updates, in the evaluator's
+    // one synchronous commit.
+    return () => setPatched(v);
   });
   return <LightKindR value={patched} nodeId={nodeId} constrained={constrained} />;
 }
@@ -1498,6 +1480,7 @@ function CameraFrustumFollower({ cameraId, active }: { cameraId: string; active:
     (seconds) => resolveCameraPoseAt(useDagStore.getState().state, cameraId, seconds, cache),
     undefined,
     'film',
+    cameraId,
   );
   return <CameraHelper pose={pose} pickId={cameraId} active={active} />;
 }
@@ -1559,6 +1542,7 @@ function LightHelperFollower({
     },
     undefined,
     () => clockOf(useDagStore.getState().state, nodeId),
+    nodeId,
   );
   return <LightHelper value={patched} pickId={pickId} />;
 }
@@ -2437,7 +2421,15 @@ function useOverlayDraw(
     value: unknown;
     key: string;
   } | null>(null);
-  useFrame(() => {
+  // #1730 — the group is what carries this node's world when the transform is written onto it.
+  const evaluator = useFrameEvaluator();
+  useLayoutEffect(() => {
+    if (!direct || !group.current) return;
+    return evaluator.registerDrawn(nodeId, group.current);
+  }, [evaluator, direct, nodeId]);
+  // #1730 — run by the frame evaluator, not a frame loop of its own: holders before what they
+  // hold, and any React update committed with the frame's others in one synchronous commit.
+  useFrameTick(nodeId, () => {
     const seconds = liveSecondsOf(nodeId);
     const la = last.current;
     const unchanged =
@@ -2451,10 +2443,11 @@ function useOverlayDraw(
     if (unchanged && la.key === key) return;
     last.current = { seconds, inputs, value, key };
     latest.current = v;
+    evaluator.record(nodeId, v);
     if (direct && group.current) writeTransform(group.current, v);
-    // Committed now, not scheduled, for the reason `DirectChannelsLightR` gives: an animated
+    // Committed in the evaluator's one synchronous commit, for the reason it gives: an animated
     // colour or size would otherwise lag behind the playhead under the same load.
-    if (!direct || !sameApartFromTransform(v, sourceRef.current)) flushSync(() => setSource(v));
+    if (!direct || !sameApartFromTransform(v, sourceRef.current)) return () => setSource(v);
   });
   return { group, drawn };
 }

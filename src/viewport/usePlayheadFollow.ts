@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react';
-import { flushSync, useFrame } from '@react-three/fiber';
+import { useFrameTick } from './frameEvaluator';
 import { useTimeStore } from '../app/stores/timeStore';
 import type { Clock } from '../app/subjectClock';
 
@@ -20,8 +20,8 @@ import type { Clock } from '../app/subjectClock';
  * the evaluated value at clip-time `seconds` (it reads live DAG state itself, so
  * the closure stays valid across frames). Each frame we re-sample and, ONLY when
  * the result actually changed — a cheap `signature` compare, so a static playhead
- * causes no React churn — `setState`, committed synchronously (#1728), so the visual
- * re-renders. Because the sample reads live state, a gizmo/keyframe edit at the CURRENT
+ * causes no React churn — `setState`, committed synchronously (#1728) with the frame's other
+ * updates (#1730: the frame evaluator runs this, ordered by `nodeId`), so the visual re-renders. Because the sample reads live state, a gizmo/keyframe edit at the CURRENT
  * frame (no playhead move) is picked up on the next frame too: the sampled value changes →
  * signature differs → re-render. (The Canvas runs `frameloop="always"`, so `useFrame` ticks during
  * playback, scrub, AND a gizmo drag.)
@@ -30,6 +30,7 @@ export function usePlayheadFollow<T>(
   sample: (seconds: number) => T,
   signature: (value: T) => string = (v) => JSON.stringify(v),
   clock: Clock | (() => Clock) = 'scene',
+  nodeId: string | null = null,
 ): T {
   // #1594 — `clock` picks the time handed to `sample`: scene time (default — everything in the
   // scene), or the playhead's film time (a camera, which keeps real time in a slowed scene).
@@ -40,14 +41,15 @@ export function usePlayheadFollow<T>(
       : useTimeStore.getState().seconds;
   const [value, setValue] = useState<T>(() => sample(now()));
   const sigRef = useRef<string>(signature(value));
-  useFrame(() => {
+  useFrameTick(nodeId, () => {
     const next = sample(now());
     const sig = signature(next);
     if (sig === sigRef.current) return;
     sigRef.current = sig;
     // #1728 — committed now, not scheduled: a deferred update from a frame loop is starved by the
     // playhead's higher-priority updates while the frame is busy, and the frustum froze (#1726).
-    flushSync(() => setValue(next));
+    // #1730 — in the evaluator's one synchronous commit for the frame.
+    return () => setValue(next);
   });
   return value;
 }
