@@ -72,6 +72,10 @@ export interface PerfSummary {
   perFrame: Record<string, BudgetSummary>;
   /** #1727 — React commits per animation frame, every profiled subtree. */
   commitsPerFrame: BudgetSummary;
+  /** #1731 — commits of each profiled subtree other than the scene, by id, over the run (how
+   *  often the gizmo re-rendered), with the frames the run counted. */
+  subtreeCommits: Record<string, number>;
+  frames: number;
 }
 
 const EMPTY: BudgetSummary = { count: 0, p50: 0, p95: 0, max: 0, mean: 0 };
@@ -111,6 +115,7 @@ class FrameProfiler {
   private cacheMisses = 0;
   private evalCalls = 0;
   private commits = 0;
+  private subtreeCommits = new Map<string, number>();
   private lastTriangles = 0;
   private lastDrawCalls = 0;
 
@@ -147,6 +152,7 @@ class FrameProfiler {
   recordSubtreeCommit(id: string, actualMs: number): void {
     if (!this.armed) return;
     this.commitsThisFrame += 1;
+    this.subtreeCommits.set(id, (this.subtreeCommits.get(id) ?? 0) + 1);
     this.recordStage(`react:${id}`, actualMs);
   }
 
@@ -216,6 +222,7 @@ class FrameProfiler {
     this.cacheMisses = 0;
     this.evalCalls = 0;
     this.commits = 0;
+    this.subtreeCommits = new Map();
     this.stageThisFrame = new Map();
     this.stageSamples = new Map();
     this.commitsThisFrame = 0;
@@ -260,6 +267,8 @@ class FrameProfiler {
       commits: this.commits,
       perFrame,
       commitsPerFrame: summarize(skip(this.commitSamples)),
+      subtreeCommits: Object.fromEntries(this.subtreeCommits),
+      frames: this.commitSamples.length,
     };
   }
 
