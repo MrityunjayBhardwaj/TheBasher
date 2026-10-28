@@ -211,6 +211,9 @@ const CONSUMERS: Record<string, Decision> = {
   // this hands over, so evaluating at t here would sample the motion twice. It is handed the
   // authored state SceneFromDAG holds, like the source-rig read beside it.
   'src/app/skeletonObjects.ts': authored('fixed-ctx-by-design'),
+  // #1732 — the rig index reads an armature's rest bones and pose at frame 0, as the collector
+  // above does, once per graph instead of per bone lookup.
+  'src/app/rigIndex.ts': authored('fixed-ctx-by-design'),
   // #1337 — evaluates the wire feeding a pose layer at frame 0 and samples it at the playhead, as
   // `skeletonObjects` does: the pose wire carries time in its `sample`, not in the ctx.
   'src/app/animate/invertPoseStack.ts': authored('fixed-ctx-by-design'),
@@ -367,7 +370,10 @@ describe('#582 — who evaluates the graph, and which params they need', () => {
     // which nothing else asks of a node that is not an Object (declared above as fixed-ctx).
     // 60 → 61 at #480, not a new road: the camera overlay takes its caller's cache for the
     // drivers it now folds (declared above as folds-its-own-overlays).
-    expect(evaluatorConsumers()).toHaveLength(61); // 39 -> 40 at #935 (placement) (the motion resolver)
+    // 61 → 62 at #1732, not a new road: the armature read `gltfNodeWorld` made per bone lookup
+    // moved into the rig index, which keeps it per graph (declared above as fixed-ctx).
+    // `gltfNodeWorld` still evaluates, for the glTF-asset road.
+    expect(evaluatorConsumers()).toHaveLength(62); // 39 -> 40 at #935 (placement) (the motion resolver)
   });
 
   it('every reason is load-bearing — no member of any union is decorative', () => {

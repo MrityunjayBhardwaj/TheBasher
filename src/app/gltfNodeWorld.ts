@@ -27,12 +27,8 @@ import type { DagState } from '../core/dag/state';
 import type { EvalCtx } from '../core/dag/types';
 import type { GltfAssetValue } from '../nodes/types';
 import { resolveEvaluatedTransform } from './resolveEvaluatedTransform';
-import { resolveWorldTransform, worldMatrixAt } from './resolveWorldTransform';
-import { characterAssetOf, nativeRigsOf } from './characterParts';
-import type { SkeletonObject } from './skeletonObjects';
-import { armaturePoseOf } from '../nodes/bonePose';
-import type { BoneSpec, ObjectValue } from '../nodes/types';
-import { skeletonObjectFrames } from '../viewport/skeletonObjectPose';
+import { resolveWorldTransform } from './resolveWorldTransform';
+import { boneWorldHead, characterAssetFor, rigsFor } from './rigIndex';
 
 type Vec3 = [number, number, number];
 
@@ -48,7 +44,8 @@ export function gltfNodeWorldPosition(
   ctx: EvalCtx,
   cache?: EvaluatorCache,
 ): Vec3 | null {
-  const assetId = characterAssetOf(state, nodeId);
+  // #1732 — which asset (or armature) the node stands for is kept per graph, not walked per call.
+  const assetId = characterAssetFor(state, nodeId);
   if (!assetId) return nativeBoneWorldPosition(state, nodeId, nodeName, ctx, cache);
   let asset: GltfAssetValue;
   try {
@@ -94,8 +91,13 @@ export function gltfNodeWorldPosition(
 /**
  * The native road's answer (#1284 after #1216): the head of bone `boneName` of an armature Object
  * `nodeId` stands for, at `ctx.time`, placed exactly as the armature band draws it — the rig posed
- * by its pose wire at those seconds (`skeletonObjectFrames`), in its Object's world. The first
- * armature, in id order, that has the bone. Null when none does.
+ * by its pose wire at those seconds, in its Object's world. The first armature, in id order, that
+ * has the bone. Null when none does.
+ *
+ * #1732 — a lookup: the rig index says which armatures `nodeId` stands for and where the bone sits
+ * in each, and the bone is `world · pose_mat` of an armature posed once for that time
+ * (`boneWorldHead`). It used to walk the graph, re-evaluate the skeleton, pose every bone and
+ * search the result, on every call.
  */
 function nativeBoneWorldPosition(
   state: DagState,
@@ -104,51 +106,7 @@ function nativeBoneWorldPosition(
   ctx: EvalCtx,
   cache?: EvaluatorCache,
 ): Vec3 | null {
-  const rig = nativeRigsOf(state, nodeId).find((r) => r.boneNames.includes(boneName));
+  const rig = rigsFor(state, nodeId).find((r) => r.boneNames.has(boneName));
   if (!rig) return null;
-  const object = drawnArmature(state, rig.objectId, cache);
-  if (!object) return null;
-  const head = skeletonObjectFrames(object, ctx.time.seconds).find(
-    (f) => f.name === boneName,
-  )?.head;
-  return head ? [head[0], head[1], head[2]] : null;
-}
-
-const FRAME_0: EvalCtx = { time: { frame: 0, seconds: 0, normalized: 0 } };
-
-/**
- * The armature Object `objectId` as the band draws it — the same fields `collectSkeletonObjects`
- * builds for it (rest bones, world at frame 0 and at any playhead, the Object's pose wire). Built here rather than
- * read from that module because it would close a runtime import cycle through
- * `resolveWorldTransform` → `nodeConstraints` → this module (#814's gate). Null when it draws
- * nothing.
- */
-function drawnArmature(
-  state: DagState,
-  objectId: string,
-  cache?: EvaluatorCache,
-): SkeletonObject | null {
-  const node = state.nodes[objectId];
-  const skeletonId = (node?.inputs?.data as { node?: string } | undefined)?.node;
-  if (!skeletonId) return null;
-  try {
-    const data = evaluate(state, skeletonId, { cache, ctx: FRAME_0, socket: 'out' }).value as
-      | { kind?: string; bones?: BoneSpec[] }
-      | undefined;
-    if (data?.kind !== 'Skeleton' || !data.bones?.length) return null;
-    const world = resolveWorldTransform(state, objectId, FRAME_0, cache);
-    if (!world) return null;
-    const value = evaluate(state, objectId, { cache, ctx: FRAME_0 }).value as ObjectValue;
-    return {
-      id: objectId,
-      skeletonId,
-      world: world.matrix,
-      worldAt: worldMatrixAt(state, objectId, world.matrix, cache),
-      bones: data.bones,
-      pose: armaturePoseOf(value),
-      clipCount: 0, // a drawing diagnostic; nothing on this road reads it
-    };
-  } catch {
-    return null;
-  }
+  return boneWorldHead(state, rig.objectId, boneName, ctx.time.seconds, cache);
 }
