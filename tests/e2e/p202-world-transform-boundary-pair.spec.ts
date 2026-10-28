@@ -63,7 +63,7 @@ async function buildNestedAnimatedTransform(page: import('@playwright/test').Pag
         type: 'addNode',
         nodeId: xfId,
         nodeType: 'Transform',
-        params: { name: 'p202xf', position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
+        params: { position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
       });
       dispatch({
         type: 'disconnect',
