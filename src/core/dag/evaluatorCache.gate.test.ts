@@ -385,6 +385,12 @@ const TAKERS: string[] = [
   'underParent@src/app/resolveWorldTransform.ts',
   'walk@src/app/resolveWorldTransform.ts',
   'walkParent@src/app/resolveWorldTransform.ts',
+  // #1729 — the walk up and the one path down it, and the search kept for a node held twice; each
+  // is handed the cache its public read was given.
+  'composeDown@src/app/resolveWorldTransform.ts',
+  'sceneChildWorld@src/app/resolveWorldTransform.ts',
+  'searchFromRoot@src/app/resolveWorldTransform.ts',
+  'topLevelValue@src/app/resolveWorldTransform.ts',
   'dataLaneOverlaySources@src/app/dataLaneOverlay.ts',
   'exposeParams@src/app/exposeParams.ts',
   'mapPresenceBelow@src/app/resolveMaterialFieldOwner.ts',

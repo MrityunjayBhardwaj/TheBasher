@@ -15,9 +15,13 @@
 // at that time within 1e-3. The control — nothing selected — separates "the frame is busy" from
 // "the selection starves the update".
 //
-// The answer, measured 2026-10-29 on the dev build (400 spheres, 12 ms load): export IS affected.
+// The answer, measured 2026-10-29 on the dev build (400 spheres, 12 ms load): export WAS affected.
 // With the sphere selected, 21 and then 10 of 30 frames (two runs) were captured with the box one
 // frame behind (drawn 3, scrubbed 4 at t = 1/15 s); with nothing selected, 0 of 30 both times.
+// The selected sphere's gizmo searched the whole scene for its parent's world on every playhead
+// change, at a cost quadratic in the scene (#1729); with that read walking up its parents instead,
+// 0 of 30 on three runs. This pins it. It does not show the freeze itself is gone: playback under
+// the same load still freezes (p1727-playback-under-load, #1726).
 
 import type { Page } from '@playwright/test';
 import { test, expect } from './_fixtures';
@@ -199,10 +203,6 @@ test.describe('#1727 — an export under load shows the keyed object where scrub
   test('with an object selected, every exported frame has the box on its keys', async ({
     page,
   }) => {
-    // RED TODAY (#1726): most frames are captured one frame behind. Marked expected-to-fail so the
-    // suite stays green until #1728 lands; the fix turns this into an unexpected pass, which fails
-    // the run until this line is removed.
-    test.fail(true, '#1726: an export under load with a selection captures the keyed box late');
     const selectId = await stage(page);
     expect(selectId, 'a static node to select').not.toBeNull();
     await page.evaluate(

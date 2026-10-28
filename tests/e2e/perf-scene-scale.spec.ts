@@ -370,7 +370,13 @@ test('perf playback: per-stage frame table, selection on and off', async ({ page
   }
 
   const f = (n: number | undefined) => (n ?? 0).toFixed(2).padStart(7);
-  const st = (r: PlaybackRow, k: string, q: 'p50' | 'p95' = 'p50') => f(r.s.perFrame[k]?.[q]);
+  // A stage that never ran prints "—"; one that ran below the timer's resolution (the browser
+  // coarsens performance.now() to 0.1 ms) prints "<0.1", never 0.00.
+  const st = (r: PlaybackRow, k: string, q: 'p50' | 'p95' = 'p50') => {
+    const v = r.s.perFrame[k]?.[q];
+    if (v === undefined) return '—'.padStart(7);
+    return v < 0.1 ? '<0.1'.padStart(7) : f(v);
+  };
   const lines = [
     `\n[perf playback] ${PLAYBACK_FRAMES} frames playing, 2 keyed (n_box, a Group over the selected object), ms per frame`,
     'objects | nodes | sel | frame p50 | frame p95 |  eval  |  react | r:gizmo |  world | world p95 | render | commits/f',
@@ -400,9 +406,11 @@ test('perf playback: per-stage frame table, selection on and off', async ({ page
   }
   const sel = rows.filter((r) => r.selected);
   for (const r of sel) {
+    // The selected object's gizmo reads its parent's world on every playhead change: the stage was
+    // timed, however short it was.
     expect(
-      r.s.perFrame.world?.p50 ?? 0,
+      r.s.perFrame.world,
       `${r.objects}: the selected object's world reads timed`,
-    ).toBeGreaterThan(0);
+    ).toBeDefined();
   }
 });
