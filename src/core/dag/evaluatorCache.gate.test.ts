@@ -323,7 +323,14 @@ const TAKERS: string[] = [
   'collectSkeletonObjects@src/app/skeletonObjects.ts',
   'computedSourceRows@src/timeline/layerChannelRows.ts',
   'curveSamplerFor@src/app/curveSampleSource.ts',
-  'drawnArmature@src/app/gltfNodeWorld.ts',
+  // #1732 — the rig index: an armature is read once per graph and posed and placed once per time,
+  // each with the cache its caller holds (the per-call `drawnArmature` it replaces did the same).
+  'armature@src/app/rigIndex.ts',
+  'armatureOf@src/app/rigIndex.ts',
+  'armaturePoseAt@src/app/rigIndex.ts',
+  'armatureWorldAt@src/app/rigIndex.ts',
+  'boneWorldHead@src/app/rigIndex.ts',
+  'readArmature@src/app/rigIndex.ts',
   'drawnChannels@src/app/resolveWorldTransform.ts',
   'driverChannelValuesForTarget@src/app/paramDrivers.ts',
   'evaluate@src/core/dag/evaluator.ts',
@@ -371,6 +378,9 @@ const TAKERS: string[] = [
   'resolveTrackToTarget@src/app/nodeConstraints.ts',
   'resolveTransformParam@src/app/resolveTransformParam.ts',
   'resolveWorldTransform@src/app/resolveWorldTransform.ts',
+  // #1727 — the two bodies the timed public reads above call, with the caller's cache.
+  'parentWorldMatrixOf@src/app/resolveWorldTransform.ts',
+  'worldTransformOf@src/app/resolveWorldTransform.ts',
   // #1638 — forwards the caller's cache to the world resolver at each playhead it is asked.
   'worldMatrixAt@src/app/resolveWorldTransform.ts',
   'rigChanges@src/app/animate/invertPoseStack.ts',
@@ -382,6 +392,12 @@ const TAKERS: string[] = [
   'underParent@src/app/resolveWorldTransform.ts',
   'walk@src/app/resolveWorldTransform.ts',
   'walkParent@src/app/resolveWorldTransform.ts',
+  // #1729 — the walk up and the one path down it, and the search kept for a node held twice; each
+  // is handed the cache its public read was given.
+  'composeDown@src/app/resolveWorldTransform.ts',
+  'sceneChildWorld@src/app/resolveWorldTransform.ts',
+  'searchFromRoot@src/app/resolveWorldTransform.ts',
+  'topLevelValue@src/app/resolveWorldTransform.ts',
   'dataLaneOverlaySources@src/app/dataLaneOverlay.ts',
   'exposeParams@src/app/exposeParams.ts',
   'mapPresenceBelow@src/app/resolveMaterialFieldOwner.ts',

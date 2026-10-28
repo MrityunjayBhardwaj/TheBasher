@@ -339,7 +339,11 @@ export function Viewport() {
               cost is not SceneFromDAG's reconciliation cost to answer for. */}
           <GeometryLifetime />
           <GroundClick />
-          <Gizmo />
+          {/* #1727 — the gizmo re-renders on every playhead tick while something is selected;
+              its commits are their own per-frame stage, `react:gizmo`. */}
+          <PerfBoundary id="gizmo">
+            <Gizmo />
+          </PerfBoundary>
           {/* #322 — the selected Curve's control-point handles + the element gizmo that
               mounts on a picked point. A SIBLING of <Gizmo/>, deliberately OUTSIDE the
               SceneFromDAG subtree: inside it, every handle click would also travel up the
