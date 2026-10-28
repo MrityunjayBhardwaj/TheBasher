@@ -132,6 +132,10 @@ const CONSUMERS: Record<string, Decision> = {
   'src/app/nodeConstraints.ts': authored('folds-its-own-overlays'),
   'src/app/resolveTransformParam.ts': authored('folds-its-own-overlays'),
   'src/app/resolveWorldTransform.ts': authored('folds-its-own-overlays'),
+  // #480 — the camera's overlay imports only the `EvaluatorCache` type: it hands the authored
+  // state and the caller's cache to `driverChannelValuesForTarget` (its own row), so a driver
+  // on a camera folds like one on any node. Not a new road.
+  'src/app/cameraChannels.ts': authored('folds-its-own-overlays'),
   // #1284 — a bone's world position: evaluates the GltfAsset for its hierarchy and folds each
   // node's pose through resolveEvaluatedTransform, the way resolveWorldTransform does.
   'src/app/gltfNodeWorld.ts': authored('folds-its-own-overlays'),
@@ -361,7 +365,9 @@ describe('#582 — who evaluates the graph, and which params they need', () => {
     // which #1508 had and the merge of the two dropped (declared above as fixed-ctx).
     // 59 → 60 at #1556, a new road: the Spreadsheet evaluates a selected data node for its mesh,
     // which nothing else asks of a node that is not an Object (declared above as fixed-ctx).
-    expect(evaluatorConsumers()).toHaveLength(60); // 39 -> 40 at #935 (placement) (the motion resolver)
+    // 60 → 61 at #480, not a new road: the camera overlay takes its caller's cache for the
+    // drivers it now folds (declared above as folds-its-own-overlays).
+    expect(evaluatorConsumers()).toHaveLength(61); // 39 -> 40 at #935 (placement) (the motion resolver)
   });
 
   it('every reason is load-bearing — no member of any union is decorative', () => {

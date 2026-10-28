@@ -212,11 +212,9 @@ describe('#387 slice 3 — the re-keyed consumers accept a split camera', () => 
     );
   });
 
-  it('the strip picker excludes a split camera NESTED IN A GROUP', () => {
-    // ⚠️ FIXTURE CHOICE IS LOAD-BEARING. A TOP-LEVEL camera is wired into `scene.camera`,
-    // so its row carries `parent.socket:'camera'` and the socket filter excludes it on its
-    // own — that fixture passes even with the possession re-key deleted. Only a camera
-    // carrying a GROUP's socket isolates the camera test.
+  it('the strip picker offers a split camera NESTED IN A GROUP', () => {
+    // #480 — this used to pin the camera's exclusion, when a strip on a camera folded nothing.
+    // A nested camera is the shape that exclusion once failed open on, so it stays the fixture.
     let s = splitCamera();
     s = applyOp(s, { type: 'addNode', nodeId: 'scene', nodeType: 'Scene', params: {} }).next;
     s = applyOp(s, {
@@ -239,9 +237,8 @@ describe('#387 slice 3 — the re-keyed consumers accept a split camera', () => 
 
     const ids = stripTargetRows(s).map((r) => r.id);
     expect(ids, 'the positive control — the Group IS offered').toContain('grp');
-    expect(ids, 'a strip on a camera folds nothing, so it must not be offered').not.toContain(
-      'n_cam',
-    );
+    // #480 — the camera pose folds the strips placed on it, so a camera is offered too.
+    expect(ids, 'a strip on a camera drives it, so it is offered').toContain('n_cam');
   });
 });
 

@@ -107,7 +107,7 @@
       "far": {
         "kind": "number",
         "reach": "pose",
-        "driver": null
+        "driver": "pose"
       },
       "focusDistance": {
         "kind": "number",
@@ -117,22 +117,22 @@
       "fov": {
         "kind": "number",
         "reach": "scene",
-        "driver": null
+        "driver": "scene"
       },
       "lookAt": {
         "kind": "vec3",
         "reach": "scene",
-        "driver": null
+        "driver": "scene"
       },
       "near": {
         "kind": "number",
         "reach": "pose",
-        "driver": null
+        "driver": "pose"
       },
       "roll": {
         "kind": "number",
         "reach": "scene",
-        "driver": null
+        "driver": "scene"
       },
       "sensorSize": {
         "kind": "number",
@@ -154,7 +154,7 @@
       "far": {
         "kind": "number",
         "reach": "pose",
-        "driver": null
+        "driver": "pose"
       },
       "focusDistance": {
         "kind": "number",
@@ -164,22 +164,22 @@
       "fov": {
         "kind": "number",
         "reach": "scene",
-        "driver": null
+        "driver": "scene"
       },
       "lookAt": {
         "kind": "vec3",
         "reach": "scene",
-        "driver": null
+        "driver": "scene"
       },
       "near": {
         "kind": "number",
         "reach": "pose",
-        "driver": null
+        "driver": "pose"
       },
       "roll": {
         "kind": "number",
         "reach": "scene",
-        "driver": null
+        "driver": "scene"
       },
       "sensorSize": {
         "kind": "number",
@@ -959,7 +959,7 @@
       "position": {
         "kind": "vec3",
         "reach": "scene",
-        "driver": null
+        "driver": "scene"
       },
       "quaternion": {
         "kind": "quat",
@@ -980,7 +980,7 @@
       "position": {
         "kind": "vec3",
         "reach": "scene",
-        "driver": null
+        "driver": "scene"
       },
       "quaternion": {
         "kind": "quat",
@@ -1001,7 +1001,7 @@
       "position": {
         "kind": "vec3",
         "reach": "scene",
-        "driver": null
+        "driver": "scene"
       },
       "quaternion": {
         "kind": "quat",
@@ -1022,7 +1022,7 @@
       "position": {
         "kind": "vec3",
         "reach": "scene",
-        "driver": null
+        "driver": "scene"
       },
       "quaternion": {
         "kind": "quat",

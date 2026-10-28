@@ -321,8 +321,12 @@ describe('#814 the import cycles, enumerated and held', () => {
       // reads the bone where the draw puts it, so it folds through `resolveEvaluatedTransform`.
       // Both edges are call-time only: `nodeConstraints` calls it inside `aimTargetWorld`, and it
       // calls the two resolvers inside `gltfNodeWorldPosition`; nothing is read at module load.
+      // #480 — `cameraChannels` joined it knowingly, for the same reason: a camera folds the drivers
+      // bound to it, and a driver can read a transform. Its edge is call-time only —
+      // `driverChannelValuesForTarget` is called inside `overlayCameraChannels`.
       [
         'src/app/activeCamera.ts',
+        'src/app/cameraChannels.ts',
         'src/app/curveSampleSource.ts',
         'src/app/geometrySampleSource.ts',
         'src/app/gltfNodeWorld.ts',

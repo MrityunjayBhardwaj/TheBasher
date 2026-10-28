@@ -278,17 +278,14 @@ describe("a driver is answered from its own measurement, never the channel's (#1
     return { s, data: sphere.data };
   }
 
-  it("a camera's fov animates under a channel and not under a driver — the pose reads channels only (#1266)", () => {
+  it("a camera's fov animates under a channel and under a driver — the pose folds both (#480, #1266)", () => {
     const cam = place(buildDefaultDagState(), 'PerspectiveCamera');
     expect(isAnimatable(cam.s, cam.data, 'fov', 'number').answer).toBe('animatable');
-    expect(isAnimatable(cam.s, cam.data, 'fov', 'number', { mechanism: 'driver' })).toEqual({
-      answer: 'still',
-      kind: 'number',
+    expect(isAnimatable(cam.s, cam.data, 'fov', 'number', { mechanism: 'driver' })).toMatchObject({
+      answer: 'animatable',
+      reach: 'scene',
     });
-    expect(animatablePathsOf(cam.s, cam.data, 'number')).toContain('fov');
-    expect(animatablePathsOf(cam.s, cam.data, 'number', { mechanism: 'driver' })).not.toContain(
-      'fov',
-    );
+    expect(animatablePathsOf(cam.s, cam.data, 'number', { mechanism: 'driver' })).toContain('fov');
   });
 
   it("a sphere's radius animates under both", () => {

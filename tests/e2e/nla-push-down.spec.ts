@@ -49,6 +49,8 @@ interface BasherWindow {
   ) => { position?: [number, number, number] } | null;
   __basher_dispatchMutator?: (name: string, spec: unknown, intent: string) => DispatchResult;
   __basher_nlaPushDown?: (targetId: string) => DispatchResult;
+  __basher_viewport?: { getState: () => { setLookThroughCamera: (on: boolean) => void } };
+  __basher_view_camera?: () => { fov: number | null } | null;
 }
 
 const FPS = 60;
@@ -298,17 +300,16 @@ test('NLA 5E#2 — no bare channels: the button is DISABLED; a forced call retur
   expect(errors).toEqual([]);
 });
 
-// #479 — the OFFER half, which no unit test can see. The accept's refusal is unit-tested
-// (dispatchMutator.test.ts); what only the browser can answer is whether the BUTTON asks
-// the same question. A guard on the dispatcher alone leaves the affordance live and the
-// mutator refusing — the failure this pairing exists to catch.
+// #479 / #480 — a camera through the whole push-down road, which only the browser can answer
+// end to end: the button offers it, the click converts it, and the viewport looking through the
+// camera draws the same fov before and after. A camera's pose once folded no strips, so the strip
+// push-down minted drove nothing while the channel it replaced was deleted, and push-down had to
+// refuse cameras. Since #480 the pose folds the strips placed on the camera.
 //
-// The subject is the default project's camera, which HAS bare channels here (so the
-// button's other precondition is satisfied and the refusal is the only thing disabling
-// it) and which a strip cannot drive: the camera pose is resolved outside the strip fold,
-// so pushing down would delete the animation rather than convert it. Cameras become valid
-// targets when #480 lands, and this test flips with it.
-test('NLA 5E#3 — a camera is REFUSED on both sides: the button is disabled AND a forced call keeps the channel', async ({
+// Read off what the viewport DRAWS THROUGH (`__basher_view_camera`), not a resolver: the look-
+// through camera is the reader that lost the animation. Falsifiable: drop the strips from
+// `overlayCameraChannels` and the fov after the push falls to the camera's static base.
+test('NLA 5E#3 — a camera converts: the button is enabled, and the look-through fov survives the push', async ({
   page,
 }) => {
   const errors: string[] = [];
@@ -334,37 +335,46 @@ test('NLA 5E#3 — a camera is REFUSED on both sides: the button is disabled AND
     'second bare key',
   );
 
+  await page.evaluate(() =>
+    (window as unknown as BasherWindow).__basher_viewport!.getState().setLookThroughCamera(true),
+  );
+  /** The fov the viewport draws through at `sec`, once it has settled near `near`. */
+  const drawnFovAt = async (sec: number, near: number) => {
+    await page.evaluate(
+      (t) => (window as unknown as BasherWindow).__basher_time!.getState().setTime(t),
+      sec,
+    );
+    let fov = NaN;
+    await expect
+      .poll(async () => {
+        fov = await page.evaluate(
+          () => (window as unknown as BasherWindow).__basher_view_camera!()?.fov ?? NaN,
+        );
+        return Math.abs(fov - near) < 0.5;
+      })
+      .toBe(true);
+    return fov;
+  };
+  expect(await drawnFovAt(1, 80), 'the bare ramp before the push').toBeCloseTo(80, 0);
+
   await selectNode(page, 'n_camera');
   await openNlaTab(page);
 
-  // THE OFFER: disabled, and the title says why — not the generic "no bare channels"
-  // message, which would mean the button is disabled for the wrong reason.
+  // THE OFFER: enabled, with the convert title.
   const button = page.getByTestId('nla-push-down');
-  await expect(button).toBeDisabled();
-  await expect(button).toHaveAttribute('title', /cannot drive a camera/i);
-
-  // THE ACCEPT, through the same toast funnel: refused, and surfaced.
-  const res = await page.evaluate(() =>
-    (window as unknown as BasherWindow).__basher_nlaPushDown!('n_camera'),
-  );
-  expect(res.ok).toBe(false);
-  expect(res.reason).toMatch(/cannot drive a camera/i);
-  await expect(page.getByTestId('toast-error')).toBeVisible();
-
-  // THE CONSEQUENCE: the animation is still there. Before the guard this call minted a
-  // strip that folds nothing and deleted the channel it converted.
-  const nodes = await page.evaluate(
-    () => (window as unknown as BasherWindow).__basher_dag!.getState().state.nodes,
-  );
-  expect(nodes['n_camera_fov_channel'], 'the fov channel survives the refusal').toBeTruthy();
-  expect(await nodeIdsOfType(page, 'Strip')).toEqual([]);
-  expect(await nodeIdsOfType(page, 'Action')).toEqual([]);
-
-  // CONTROL: the same pane, same session — a mesh with bare channels is still offered,
-  // so the guard refuses cameras rather than disabling push-down outright.
-  await seedBareRamp(page);
-  await selectNode(page, 'n_box');
   await expect(button).toBeEnabled();
+  await expect(button).toHaveAttribute('title', /Convert 1 bare channel/);
+  await button.click();
+
+  // THE ACCEPT: the channel became an Action placed by a strip.
+  await expect.poll(() => nodeIdsOfType(page, 'Strip')).toHaveLength(1);
+  expect(await nodeIdsOfType(page, 'Action')).toHaveLength(1);
+  expect(await nodeExists(page, 'n_camera_fov_channel')).toBe(false);
+
+  // THE CONSEQUENCE: the look-through camera still zooms along the same ramp.
+  expect(await drawnFovAt(1, 80), 'the strip at 1 s').toBeCloseTo(80, 0);
+  expect(await drawnFovAt(2, 130), 'the strip at 2 s').toBeCloseTo(130, 0);
+  await page.screenshot({ path: 'test-results/nla-push-down-camera.png' });
 
   expect(errors).toEqual([]);
 });

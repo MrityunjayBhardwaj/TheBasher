@@ -161,3 +161,89 @@ describe('#482 — the film’s cuts obey mute and weight', () => {
     expect(keys.length).toBeGreaterThan(0);
   });
 });
+
+// #480 — the rest of what animates a param reaches the camera too. A strip placed on the camera
+// folded nothing, because the camera pose read only its bare channels; a driver bound to a lens
+// param was accepted and shown and moved nothing (#1266). Values are distinct from the base (45
+// fov, [3,2,3] position) so a strip or driver that is skipped cannot read as working.
+describe('#480 — strips and drivers on a camera', () => {
+  /** An Action keyed at `value` on `paramPath`, placed on the camera Object by a strip. */
+  function strip(paramPath: string, value: unknown, stripOver = {}): Op[] {
+    return [
+      {
+        type: 'addNode',
+        nodeId: 'act',
+        nodeType: 'Action',
+        params: {
+          name: 'act',
+          channels: [
+            {
+              valueType: Array.isArray(value) ? 'vec3' : 'number',
+              paramPath,
+              keyframes: [
+                { time: 0, value },
+                { time: 2, value },
+              ],
+            },
+          ],
+        },
+      },
+      {
+        type: 'addNode',
+        nodeId: 'st',
+        nodeType: 'Strip',
+        params: { name: 'st', action: 'act', target: 'n_camera', ...stripOver },
+      },
+      {
+        type: 'addNode',
+        nodeId: 'trk',
+        nodeType: 'Track',
+        params: { name: 'trk', strips: ['st'], order: 0 },
+      },
+    ] as Op[];
+  }
+
+  /** A driver writing the constant `value` onto the camera data's `paramPath`. */
+  function driver(paramPath: string, value: number, extra = {}): Op[] {
+    return [
+      { type: 'addNode', nodeId: 'k', nodeType: 'Clamp', params: { min: value, max: value } },
+      {
+        type: 'addNode',
+        nodeId: 'drv',
+        nodeType: 'ParamDriver',
+        params: { target: 'n_camera_data', paramPath, blendMode: 'replace', order: 0, ...extra },
+      },
+      { type: 'connect', from: { node: 'k', socket: 'out' }, to: { node: 'drv', socket: 'in' } },
+    ] as Op[];
+  }
+
+  it('a strip on the camera drives its fov', () => {
+    expect(fov(run(buildDefaultDagState(), strip('fov', 70)))).toBe(70);
+  });
+
+  it('a muted strip leaves the lens alone', () => {
+    expect(fov(run(buildDefaultDagState(), strip('fov', 70, { muted: true })))).toBe(45);
+  });
+
+  it('a strip on the position: what renders and what the gizmo shows agree', () => {
+    const s = run(buildDefaultDagState(), strip('position', [9, 1, 4]));
+    const pose = resolveCameraPoseAt(s, 'n_camera', 0).position;
+    expect(pose).toEqual([9, 1, 4]);
+    const world = resolveWorldTransform(s, 'n_camera', CTX)!.position;
+    world.forEach((v, i) => expect(v).toBeCloseTo(pose[i], 9));
+  });
+
+  it('a strip folds over a bare channel on the same param, as on any other node', () => {
+    // Bare first, then strips: a replace strip at full influence wins.
+    const s = run(buildDefaultDagState(), [channel('ch', 'fov', 100), ...strip('fov', 70)]);
+    expect(fov(s)).toBe(70);
+  });
+
+  it('a driver on the camera drives its fov', () => {
+    expect(fov(run(buildDefaultDagState(), driver('fov', 33)))).toBe(33);
+  });
+
+  it('a muted driver leaves the lens alone', () => {
+    expect(fov(run(buildDefaultDagState(), driver('fov', 33, { mute: true })))).toBe(45);
+  });
+});

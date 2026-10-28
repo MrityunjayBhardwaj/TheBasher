@@ -432,7 +432,7 @@ export function resolveWorldTransform(
     const hungAt = ctx;
     ctx = ctxOnClockOf(state, selectedId, ctx);
     // #482 — the same call the camera's pose makes, so the gizmo and the render agree.
-    cam = overlayCameraChannels(state, selectedId, cam, ctx.time.seconds);
+    cam = overlayCameraChannels(state, selectedId, cam, ctx, cache);
     // #231 Inc 3.3 — a camera nested in a Group composes the parent's world (the
     // groupable-camera path). `resolveParentWorldMatrix` returns null for a
     // top-level camera (wired only to scene.camera) → byte-identical to the flat

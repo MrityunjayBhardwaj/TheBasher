@@ -957,7 +957,7 @@ describe('a param declares its control on its schema (#872)', () => {
     ).toBe(true);
 
     // ParamDriver (#1258): the same property against the census's DRIVER answers, which differ
-    // from the channel's (the camera pose ignores a driver, #1266). A driver's kind is its
+    // from the channel's (the camera pose ignored a driver until #480, #1266). A driver's kind is its
     // source's, so one probe per road: each must offer exactly the leaves of its own kind(s).
     const controller = Object.values(s.nodes).find((n) => n.type === 'Null')!.id;
     const DRIVERS: readonly (readonly [string, Record<string, unknown>, boolean, string[]])[] = [

@@ -335,7 +335,12 @@ export function resolveCameraPoseAt(
   // that sampled the keys and read nothing else, so a muted fov still zoomed and two
   // channels on one param resolved by scan order. The world transform makes the same call,
   // so the gizmo and the render cannot disagree about a camera's position again.
-  const overlaid = overlayCameraChannels(state, node.id, base, seconds);
+  //
+  // #480 — strips placed on the camera and drivers bound to it fold here too. A driver is
+  // evaluated on the camera's own clock, the film's.
+  const sceneSeconds = sceneClockOf(state).sceneAt(seconds);
+  const filmCtx = clockedCtx(sceneSeconds, seconds, 'film');
+  const overlaid = overlayCameraChannels(state, node.id, base, filmCtx, cache);
   let pose: CameraPose | null = overlaid === base ? null : overlaid; // clone lazily
 
   // #204 Track-To migration — an active Track-To on the camera node DERIVES its
@@ -352,8 +357,6 @@ export function resolveCameraPoseAt(
   // #1688 — "scene things" means things on the scene's clock: a rig set to film, and anything a
   // camera aims at that runs on the playhead, are re-timed onto it by the resolvers below. The
   // context carries the playhead time so they can, even across a stretch held at speed 0.
-  const sceneSeconds = sceneClockOf(state).sceneAt(seconds);
-  const filmCtx = clockedCtx(sceneSeconds, seconds, 'film');
   const ctx = clockedCtx(sceneSeconds, seconds);
 
   // #339 Follow-Path — a camera is posed by THIS resolver, not by the mesh road

@@ -345,6 +345,8 @@ const TAKERS: string[] = [
   'objectSlotTable@src/app/objectSlotAuthoring.ts',
   'overlaidAt@src/app/resolveWorldTransform.ts',
   'overlaidPaths@src/app/cookState.ts',
+  // #480 — the camera overlay folds the drivers bound to the camera; both callers hand it theirs.
+  'overlayCameraChannels@src/app/cameraChannels.ts',
   'readCurveSampleAt@src/app/curveSampleSource.ts',
   'readTerrainSampleAt@src/app/geometrySampleSource.ts',
   'readTransformChannelAt@src/app/transformChannelSource.ts',
