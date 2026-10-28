@@ -379,8 +379,8 @@ test('perf playback: per-stage frame table, selection on and off', async ({ page
   };
   const lines = [
     `\n[perf playback] ${PLAYBACK_FRAMES} frames playing, 2 keyed (n_box, a Group over the selected object), ms per frame`,
-    'objects | nodes | sel | frame p50 | frame p95 |  eval  |  react | r:gizmo |  world | world p95 | render | commits/f',
-    '--------+-------+-----+-----------+-----------+--------+--------+---------+--------+-----------+--------+----------',
+    'objects | nodes | sel | frame p50 | frame p95 |  eval  |  react | r:gizmo |  world | world p95 | render | sh:inputs | sh:mark | commits/f',
+    '--------+-------+-----+-----------+-----------+--------+--------+---------+--------+-----------+--------+-----------+---------+----------',
   ];
   for (const r of rows) {
     lines.push(
@@ -389,7 +389,7 @@ test('perf playback: per-stage frame table, selection on and off', async ({ page
       )}   | ${f(r.s.frame.p95)}   |${st(r, 'eval')} |${st(r, 'react')} | ${st(r, 'react:gizmo')} |${st(
         r,
         'world',
-      )} |   ${st(r, 'world', 'p95')} |${st(r, 'render')} | ${r.s.commitsPerFrame.mean.toFixed(2).padStart(8)}`,
+      )} |   ${st(r, 'world', 'p95')} |${st(r, 'render')} |   ${st(r, 'shadow:inputs')} | ${st(r, 'shadow:mark')} | ${r.s.commitsPerFrame.mean.toFixed(2).padStart(8)}`,
     );
   }
   console.log(lines.join('\n') + '\n');

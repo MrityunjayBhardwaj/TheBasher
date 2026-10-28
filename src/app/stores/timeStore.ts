@@ -21,7 +21,7 @@
 // every seconds-subscriber.
 //
 // WHY here and NOT in Clock: Clock owns the rAF but NOT the frame value — it
-// only calls `tick()`. Non-playback scrub (dragScrub, ruler drag) and
+// only calls `stepFrames()` (#1733). Non-playback scrub (dragScrub, ruler drag) and
 // `setDuration` reframing mutate `frame` by calling `setTime`/`setDuration`
 // DIRECTLY, bypassing Clock entirely. Mirroring in Clock would silently
 // freeze the escape-hatch playhead during scrub and on duration change.
@@ -39,6 +39,7 @@
 import { create } from 'zustand';
 import { useViewportStore } from './viewportStore';
 import { FRAMES_PER_SECOND } from '../../core/sceneFrames';
+import type { PlaybackSync } from '../playbackPacing';
 
 export { FRAMES_PER_SECOND };
 const DEFAULT_DURATION_SECONDS = 10;
@@ -77,6 +78,12 @@ export interface TimeStore {
   extentSeconds: number;
   /** Whether the rAF clock is advancing time. */
   playing: boolean;
+  /** #1733 — Blender's playback sync: 'drop' keeps real time by skipping frames, 'every' shows
+   *  every frame and slows down (`src/app/playbackPacing.ts`). */
+  sync: PlaybackSync;
+  /** #1733 — the frames per real second playback last achieved; null while paused. Published by
+   *  the clock a few times a second, not every frame. */
+  achievedFps: number | null;
 
   /** Move the playhead to film time `seconds`. */
   setTime(seconds: number): void;
@@ -90,8 +97,13 @@ export interface TimeStore {
   play(): void;
   pause(): void;
   toggle(): void;
-  /** Advance time by `delta` seconds (called by Clock.tsx on each rAF tick). */
+  /** Advance time by `delta` seconds. */
   tick(delta: number): void;
+  /** #1733 — advance the playhead `frames` whole frames from the frame it is on (called by
+   *  Clock.tsx on each playback step). Loops at End as `tick` does. */
+  stepFrames(frames: number): void;
+  setSync(sync: PlaybackSync): void;
+  setAchievedFps(fps: number | null): void;
 }
 
 function clampToDuration(seconds: number, duration: number): number {
@@ -147,6 +159,8 @@ export const useTimeStore = create<TimeStore>((set, get) => ({
   durationSeconds: DEFAULT_DURATION_SECONDS,
   extentSeconds: DEFAULT_DURATION_SECONDS,
   playing: false,
+  sync: 'drop',
+  achievedFps: null,
 
   setTime(seconds) {
     const { durationSeconds, extentSeconds, timeMap } = get();
@@ -186,11 +200,26 @@ export const useTimeStore = create<TimeStore>((set, get) => ({
   },
 
   pause() {
-    set({ playing: false });
+    set({ playing: false, achievedFps: null });
   },
 
   toggle() {
-    set({ playing: !get().playing });
+    const playing = !get().playing;
+    set(playing ? { playing } : { playing, achievedFps: null });
+  },
+
+  setSync(sync) {
+    set({ sync });
+  },
+
+  setAchievedFps(achievedFps) {
+    if (get().achievedFps !== achievedFps) set({ achievedFps });
+  },
+
+  stepFrames(frames) {
+    // From the frame the playhead is on, so a playhead scrubbed between frames lands on the grid.
+    const from = Math.round(get().filmSeconds * FRAMES_PER_SECOND);
+    get().tick((from + frames) / FRAMES_PER_SECOND - get().filmSeconds);
   },
 
   tick(delta) {

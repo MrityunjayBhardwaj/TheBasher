@@ -26,6 +26,7 @@
 import * as THREE from 'three';
 import { isEditorChrome } from '../app/editorChrome';
 import { drawnWorldBox } from '../render/drawnBox';
+import { measureStage } from '../perf/frameProfiler';
 
 /** Shadow-map resolution per light kind. A sun covers the whole scene, so it gets the most. */
 export const SHADOW_MAP_SIZE = { directional: 4096, spot: 2048, point: 1024 } as const;
@@ -131,7 +132,8 @@ export function installContentShadow(
   ) => void;
   shadow.updateMatrices = ((l: THREE.Light, viewportIndex = 0) => {
     // A point light calls this once per cube face; one walk per render is enough.
-    const box = viewportIndex === 0 ? markContentShadows(rootOf(l)) : null;
+    const box =
+      viewportIndex === 0 ? measureStage('shadow:mark', () => markContentShadows(rootOf(l))) : null;
     base(l, viewportIndex);
     if (kind === 'directional' && box) {
       fitDirectionalShadow(shadow, box);
@@ -247,7 +249,7 @@ export function installShadowInvalidation(
   scene.onBeforeRender = function (this: THREE.Scene, ...args) {
     prevHook.apply(this, args);
     if (scene.overrideMaterial) return;
-    const now = shadowInputs(scene);
+    const now = measureStage('shadow:inputs', () => shadowInputs(scene));
     if (last === null || !sameNumbers(now, last)) {
       gl.shadowMap.needsUpdate = true;
       last = now;

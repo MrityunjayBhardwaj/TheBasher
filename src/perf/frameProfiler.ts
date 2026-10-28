@@ -63,7 +63,9 @@ export interface PerfSummary {
   cacheMisses: number;
   /** Eval-call count across the run (node-evaluations, hits + misses). */
   evalCalls: number;
-  /** How many React commits fired during the run (re-render frequency). */
+  /** How many commits the scene subtree made during the run (its re-render frequency). Other
+   *  profiled subtrees (the gizmo's) are not counted here: they are in `commitsPerFrame` and their
+   *  own `react:<id>` stage. */
   commits: number;
   /** #1727 — milliseconds per animation frame, by stage (see the header). A stage nothing
    *  recorded during the run is absent. */
@@ -144,7 +146,6 @@ class FrameProfiler {
   /** A commit of a profiled subtree other than the scene (`<PerfBoundary id>`). */
   recordSubtreeCommit(id: string, actualMs: number): void {
     if (!this.armed) return;
-    this.commits += 1;
     this.commitsThisFrame += 1;
     this.recordStage(`react:${id}`, actualMs);
   }

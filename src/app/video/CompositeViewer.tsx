@@ -10,10 +10,16 @@
 //
 // This is the same composite the export (1e) will walk — render==viewport ([[V37]]).
 //
+// #1734 — the Video space stays mounted, hidden, while another space is shown. Hidden
+// (`active` false), the viewer holds the playhead and the graph it last drew and so does no work:
+// it re-read, planned, decoded and drew a frame no one could see on every playback frame in the
+// 3D view (41 draws in 2 s, p1734). Shown again, it reads both afresh and draws the playhead.
+//
 // REF: docs/COMPOSITOR-DESIGN.md §6; vyapti V37 + V57 (evaluated overlay) + V80
 //      (the viewer surface); hetvabhasa H40; issue #237.
 
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useShallow } from 'zustand/react/shallow';
 import { useDagStore } from '../../core/dag/store';
 import { useTimeStore, FRAMES_PER_SECOND } from '../stores/timeStore';
 import type { NodeId } from '../../core/dag/types';
@@ -23,12 +29,32 @@ import { collectCompositeInputs, decodeDraws } from './compositeDecode';
 import { globalFrameToCompFrame } from './videoTimelineGeometry';
 import { uiEvaluatorCache } from '../uiEvaluatorCache';
 
-export function CompositeViewer({ compId, comp }: { compId: NodeId; comp: CompositionParams }) {
+export function CompositeViewer({
+  compId,
+  comp,
+  active = true,
+}: {
+  compId: NodeId;
+  comp: CompositionParams;
+  /** False while the Video space is hidden: hold what was last drawn, read nothing new. */
+  active?: boolean;
+}) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const dagState = useDagStore((s) => s.state);
-  const frame = useTimeStore((s) => s.frame);
-  const seconds = useTimeStore((s) => s.seconds);
-  const normalized = useTimeStore((s) => s.normalized);
+  // Hidden, each selector returns what it returned last, so neither store re-renders the viewer.
+  const held = useRef<{
+    state: ReturnType<typeof useDagStore.getState>['state'];
+    time: { frame: number; seconds: number; normalized: number };
+  } | null>(null);
+  const dagState = useDagStore((s) => (active || !held.current ? s.state : held.current.state));
+  const time = useTimeStore(
+    useShallow((s) =>
+      active || !held.current
+        ? { frame: s.frame, seconds: s.seconds, normalized: s.normalized }
+        : held.current.time,
+    ),
+  );
+  held.current = { state: dagState, time };
+  const { frame, seconds, normalized } = time;
   const [nonce, setNonce] = useState(0);
 
   const W = comp.width ?? 1280;
