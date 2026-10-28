@@ -15,7 +15,7 @@
 //
 // REF: THESIS.md §11, vyapti V8.
 
-import { useFrame, useThree, type ThreeEvent } from '@react-three/fiber';
+import { flushSync, useFrame, useThree, type ThreeEvent } from '@react-three/fiber';
 import {
   createContext,
   memo,
@@ -1471,7 +1471,11 @@ function DirectChannelsLightR({
       return;
     }
     lastApplied.current = { seconds, channels, transients, value, followKey };
-    setPatched(v);
+    // #1728 — committed now, not scheduled: a deferred update from a frame loop is starved by the
+    // playhead's higher-priority updates while the frame is busy, and the light froze (#1726).
+    // A light reads its whole value (scale as brightness, position for its aim), so it has no
+    // transform-only write yet; the frame table's writers replace this (#1730).
+    flushSync(() => setPatched(v));
   });
   return <LightKindR value={patched} nodeId={nodeId} constrained={constrained} />;
 }
@@ -2448,7 +2452,9 @@ function useOverlayDraw(
     last.current = { seconds, inputs, value, key };
     latest.current = v;
     if (direct && group.current) writeTransform(group.current, v);
-    if (!direct || !sameApartFromTransform(v, sourceRef.current)) setSource(v);
+    // Committed now, not scheduled, for the reason `DirectChannelsLightR` gives: an animated
+    // colour or size would otherwise lag behind the playhead under the same load.
+    if (!direct || !sameApartFromTransform(v, sourceRef.current)) flushSync(() => setSource(v));
   });
   return { group, drawn };
 }

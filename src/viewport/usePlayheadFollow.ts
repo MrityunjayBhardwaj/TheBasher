@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react';
-import { useFrame } from '@react-three/fiber';
+import { flushSync, useFrame } from '@react-three/fiber';
 import { useTimeStore } from '../app/stores/timeStore';
 import type { Clock } from '../app/subjectClock';
 
@@ -20,10 +20,10 @@ import type { Clock } from '../app/subjectClock';
  * the evaluated value at clip-time `seconds` (it reads live DAG state itself, so
  * the closure stays valid across frames). Each frame we re-sample and, ONLY when
  * the result actually changed — a cheap `signature` compare, so a static playhead
- * causes no React churn — `setState` so the visual re-renders. Because the sample
- * reads live state, a gizmo/keyframe edit at the CURRENT frame (no playhead move)
- * is picked up on the next frame too: the sampled value changes → signature differs
- * → re-render. (The Canvas runs `frameloop="always"`, so `useFrame` ticks during
+ * causes no React churn — `setState`, committed synchronously (#1728), so the visual
+ * re-renders. Because the sample reads live state, a gizmo/keyframe edit at the CURRENT
+ * frame (no playhead move) is picked up on the next frame too: the sampled value changes →
+ * signature differs → re-render. (The Canvas runs `frameloop="always"`, so `useFrame` ticks during
  * playback, scrub, AND a gizmo drag.)
  */
 export function usePlayheadFollow<T>(
@@ -45,7 +45,9 @@ export function usePlayheadFollow<T>(
     const sig = signature(next);
     if (sig === sigRef.current) return;
     sigRef.current = sig;
-    setValue(next);
+    // #1728 — committed now, not scheduled: a deferred update from a frame loop is starved by the
+    // playhead's higher-priority updates while the frame is busy, and the frustum froze (#1726).
+    flushSync(() => setValue(next));
   });
   return value;
 }
