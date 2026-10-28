@@ -128,21 +128,21 @@ describe('#733 critic — what the plan actually did', () => {
   });
 
   it('the whole-plan summary fires when no addition explains it', () => {
-    // A Shot has no consumer anywhere in the product yet, so it sits outside
-    // everything the outputs read. Created in SETUP, then edited by the plan: the plan
-    // adds nothing, so there is no per-node finding to make the summary a duplicate.
-    // This is the case the summary exists for.
-    const withShot = apply(base, [
-      { type: 'addNode', nodeId: 'n_shot', nodeType: 'Shot', params: {} },
+    // An unwired Fit has no consumer, so it sits outside everything the outputs read.
+    // (#1666 — this was a Shot, the product's one node no consumer ever read; it is gone.)
+    // Created in SETUP, then edited by the plan: the plan adds nothing, so there is no
+    // per-node finding to make the summary a duplicate. This is the case the summary exists for.
+    const withFit = apply(base, [
+      { type: 'addNode', nodeId: 'n_fit', nodeType: 'Fit', params: {} },
     ] as Op[]);
-    expect(outputClosure(withShot).has('n_shot')).toBe(false);
+    expect(outputClosure(withFit).has('n_fit')).toBe(false);
 
-    const ops = [{ type: 'setParam', nodeId: 'n_shot', paramPath: 'endTime', value: 4 }] as Op[];
-    const after = apply(withShot, ops);
-    const findings = critique(describeEffect(withShot, after, ops));
-    const report = describeEffect(withShot, after, ops);
+    const ops = [{ type: 'setParam', nodeId: 'n_fit', paramPath: 'outMax', value: 4 }] as Op[];
+    const after = apply(withFit, ops);
+    const findings = critique(describeEffect(withFit, after, ops));
+    const report = describeEffect(withFit, after, ops);
 
-    expect(report.changed).toEqual(['n_shot']);
+    expect(report.changed).toEqual(['n_fit']);
     expect(report.added).toEqual([]);
     expect(report.reachesOutput).toBe(false);
     expect(findings.join('\n')).toContain("Nothing the project's outputs can see changed");

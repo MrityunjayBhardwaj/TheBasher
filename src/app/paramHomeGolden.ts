@@ -173,7 +173,6 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
     '[layout] name=layout width=(unrouted) height=(unrouted) fps=(unrouted) durationFrames=(unrouted) background=(unrouted)',
   CurveData: '[curve] points=curve closed=curve resolution=curve',
   CurveRemap: '[] points=(unrouted)',
-  Cut: '[layout] transitionFrame=(unrouted)',
   DepthPass: '[render] width=(unrouted) height=(unrouted)',
   Fit: '[] inMin=(unrouted) inMax=(unrouted) outMin=(unrouted) outMax=(unrouted) clamp=(unrouted)',
   FollowPath:
@@ -271,7 +270,6 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
   // byte-identical and a re-home anywhere in the row still shows as a diff. The three
   // cells before it are untouched.
   SetMaterialOp: '[] muted=(unrouted) scope=(unrouted)',
-  Shot: '[layout] name=layout startTime=(unrouted) endTime=(unrouted)',
   Skeleton: '[] bones=(unrouted)',
   Solver: '[] seedFrame=(unrouted) sourceTransform=(unrouted) sourceTransformVec=(unrouted)',
   SphereData:
@@ -452,4 +450,7 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
 // #1688 appends `Object.clock` and `Group.clock`, each routed to `transform`, where the Clock
 // control draws it, in the commit that adds the param (the append rule above). +2 routed.
 //   types 92 · routed 150 + 2 = 152 · unrouted 260
-export const GOLDEN_TOTALS = { types: 92, routed: 152, unrouted: 260 } as const;
+// #1666 retires `Shot` (`name` routed to layout; `startTime`, `endTime` unrouted) and `Cut`
+// (`transitionFrame` unrouted), and their rows with them:
+//   types 92 - 2 = 90 · routed 152 - 1 = 151 · unrouted 260 - 3 = 257
+export const GOLDEN_TOTALS = { types: 90, routed: 151, unrouted: 257 } as const;

@@ -56,7 +56,7 @@ function pushRow(ctx: WalkCtx, row: TreeRow): void {
  *      and the a11y selection summary resolve to). Honoring it first keeps
  *      every surface 1:1 with the inspector identity, and it is what makes a
  *      director's rename beat an imported name rather than lose to it.
- *   2. params.name — the SEMANTIC name carried by Shot / AnimationClip /
+ *   2. params.name — the SEMANTIC name carried by Strip / AnimationClip /
  *      Character node params (their domain label, not a generic field).
  *   3. the imported child's `childName` — see below.
  *   4. node.id — the unique, stable fallback. Previously this fell back to

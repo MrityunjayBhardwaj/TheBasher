@@ -175,20 +175,21 @@ test('a path nothing draws is listed with why, and a target nobody measured is r
   await expect(aim).toContainText('aimPoint');
   await expect(aim).toContainText('no vec3 param of TrackTo animates');
 
-  // A Shot was never placed by the census: the path is shown read-only, saying so.
-  await dispatch(page, { type: 'addNode', nodeId: 'shot_e2e', nodeType: 'Shot', params: {} });
+  // A Strip was never placed by the census: the path is shown read-only, saying so. (#1666 — this
+  // was a Shot, a type since removed.)
+  await dispatch(page, { type: 'addNode', nodeId: 'strip_e2e', nodeType: 'Strip', params: {} });
   await dispatch(page, {
     type: 'addNode',
-    nodeId: 'shotch_e2e',
+    nodeId: 'stripch_e2e',
     nodeType: 'KeyframeChannelNumber',
-    params: { target: 'shot_e2e', paramPath: 'duration' },
+    params: { target: 'strip_e2e', paramPath: 'duration' },
   });
   await page.evaluate(() =>
-    (window as unknown as W).__basher_selection.getState().select('shotch_e2e'),
+    (window as unknown as W).__basher_selection.getState().select('stripch_e2e'),
   );
-  const locked = page.getByTestId('inspector-options-locked-shotch_e2e-paramPath');
+  const locked = page.getByTestId('inspector-options-locked-stripch_e2e-paramPath');
   await expect(locked).toContainText('duration');
-  await expect(locked).toContainText('the census has not measured Shot');
-  await expect(page.getByTestId('inspector-options-shotch_e2e-paramPath')).toHaveCount(0);
+  await expect(locked).toContainText('the census has not measured Strip');
+  await expect(page.getByTestId('inspector-options-stripch_e2e-paramPath')).toHaveCount(0);
   expect(errors, 'no page errors').toEqual([]);
 });

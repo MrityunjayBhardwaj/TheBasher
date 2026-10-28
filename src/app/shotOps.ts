@@ -102,6 +102,45 @@ export function buildSetShotCameraOps(
   return buildCutOps(state, start, cameraId);
 }
 
+/**
+ * #1666 — a shot from `start` to `end` on `cameraId`, as cuts: a cut to `cameraId` at `start`, and
+ * at `end` a cut back to the camera that was on screen there before, so the film after the shot is
+ * left as it was. Cuts strictly inside the span are removed, since they would break the shot up.
+ * Without `end` it is just the cut at `start`, and the shot runs to the next cut. This is how the
+ * agent makes a shot (`mutator.shot.create`), so an agent's shot is the panel's shot.
+ */
+export function buildShotOps(
+  state: DagState,
+  start: number,
+  end: number | undefined,
+  cameraId: string,
+): Op[] | null {
+  const after = end !== undefined && end > start ? selectActiveCameraNode(state, end) : null;
+  const ops: Op[] = [];
+  let s = state;
+  if (end !== undefined && end > start) {
+    const select = cameraSelectOf(s);
+    const channel = select ? cutChannelOf(s, select.id) : null;
+    const existing = channel ? ((channel.params as { keyframes?: Key[] }).keyframes ?? []) : [];
+    const kept = existing.filter((k) => k.time <= start || k.time >= end);
+    if (channel && kept.length !== existing.length) {
+      const op: Op = { type: 'setParam', nodeId: channel.id, paramPath: 'keyframes', value: kept };
+      ops.push(op);
+      s = applied(s, [op]);
+    }
+  }
+  const cut = buildCutOps(s, start, cameraId);
+  if (!cut) return null;
+  ops.push(...cut);
+  s = applied(s, cut);
+  if (after && after.id !== cameraId) {
+    const back = buildCutOps(s, end!, after.id);
+    if (!back) return null;
+    ops.push(...back);
+  }
+  return ops;
+}
+
 /** Remove the cut at `keyTime`; the shot before it runs on through. */
 export function buildRemoveCutOps(state: DagState, keyTime: number): Op[] | null {
   const select = cameraSelectOf(state);

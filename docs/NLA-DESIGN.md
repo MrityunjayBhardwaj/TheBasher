@@ -209,8 +209,8 @@ New (to add to `.anvi/vyapti.md`, closing **V88 D3** and advancing **D2**):
 
 The maps confirmed the seam is real but unwired, and **NLA must not touch it**:
 
-- A `Shot` is inert metadata (`Shot.ts:33-42`, `{name,startTime,endTime}` + camera + scene → `ShotValue`), consumed by nothing but the (also-unconsumed) `Cut` node.
-- Its output is `type:'Shot'` and cannot reach `Layer.source`'s `type:'Image'` — there is **no `Shot→Image` adapter**.
+- A `Shot` was inert metadata (`{name,startTime,endTime}` + camera + scene → `ShotValue`), consumed by nothing but the (also-unconsumed) `Cut` node. #1666 removed both: a shot is now the span between two cut keys on the camera switch (`src/app/shots.ts`), the same keys the viewport and the render play.
+- Nothing turns a shot into an `Image` for `Layer.source` — there is **no shot→Image adapter**.
 - The compositor decode dispatches only `MediaClip` / `ComfyUIWorkflow` (`compositeDecode.ts:161/175`); the headers **name** Shot/scene-render as the intended third source kind (`MediaClip.ts:16`, `Layer.ts:4`), and `composite.ts:77` even handles "source null for a not-yet-rendered scene layer" — a designed-for slot.
 - The global `useTimeStore` is already the shared clock for both the 3D render and the compositor (`renderImageAction.ts:84`; `CompositeViewer.tsx:41`).
 

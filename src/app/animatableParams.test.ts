@@ -159,16 +159,16 @@ describe('isAnimatable — three answers, never two', () => {
       answer: 'unmeasured',
       reason: expect.stringMatching(/texture/),
     });
-    // A subject the census never places: a Shot is a timeline range, not a scene object.
+    // A subject the census never places: a Strip is a placement on the timeline, not a scene object.
     const s = applyOp(cube.s, {
       type: 'addNode',
-      nodeId: 'shot',
-      nodeType: 'Shot',
+      nodeId: 'strip',
+      nodeType: 'Strip',
       params: {},
     }).next;
-    expect(isAnimatable(s, 'shot', 'endTime', 'number')).toEqual({
+    expect(isAnimatable(s, 'strip', 'start', 'number')).toEqual({
       answer: 'unmeasured',
-      reason: 'the census places no Shot',
+      reason: 'the census places no Strip',
     });
     // A path the census never saw on a subject it did place.
     expect(isAnimatable(cube.s, cube.data, 'nonsense', 'number')).toMatchObject({
@@ -337,8 +337,8 @@ describe('animatablePathsOf — a picker list', () => {
 
   it('says it cannot answer for a subject the census never placed, rather than offering nothing', () => {
     let s = buildDefaultDagState();
-    s = applyOp(s, { type: 'addNode', nodeId: 'shot', nodeType: 'Shot', params: {} }).next;
-    expect(animatablePathsOf(s, 'shot', 'number')).toBeNull();
+    s = applyOp(s, { type: 'addNode', nodeId: 'strip', nodeType: 'Strip', params: {} }).next;
+    expect(animatablePathsOf(s, 'strip', 'number')).toBeNull();
   });
 });
 

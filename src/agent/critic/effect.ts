@@ -21,9 +21,8 @@
 //   - `mutator.nla.createAction` mints an Action wired to nothing ON PURPOSE; a later
 //     `mutator.nla.addStrip` wires it. An unwired addition is a two-step authoring
 //     flow, not a defect.
-//   - `Shot` has no consumer anywhere in the product today — its render-graph
-//     integration is deferred (`src/nodes/Shot.ts`) — so a correct Shot is
-//     unconsumed by construction.
+//   - `Shot` had no consumer anywhere in the product — so a correct Shot was
+//     unconsumed by construction. (#1666 removed it: a shot is now a cut key.)
 // A rule saying "unwired is wrong" would be false about the product. The findings
 // here are therefore descriptions handed to the reader, never a gate.
 //
@@ -46,7 +45,7 @@
 // a referent that exists independently, which is an input like any wired edge.
 //
 // REF: src/core/dag/idRefSweep.ts (the id-ref universe), src/core/dag/state.ts
-//      (`edges`), src/nodes/Shot.ts (the unconsumed-by-design case); issue #733.
+//      (`edges`); issue #733.
 
 import { edges, type DagState } from '../../core/dag/state';
 import { buildIdRefIndex, idRefsByRole, idsOfRef } from '../../core/dag/idRefSweep';

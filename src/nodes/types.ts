@@ -2557,8 +2557,8 @@ export type SceneObject = SceneChild | LightValue | CameraValue;
 // primitive consumed by both the renderer and the read-side (V57). The legacy
 // AnimationLayer wrapper that aggregated channels per target is retired.
 //
-// Shot / Cut: editorial layer. Shot ties a time range to a camera + scene.
-// Cut sequences two shots with an optional transition.
+// (#1666 — the Shot / Cut value types are gone: a shot is the span between two cut keys on the
+// camera switch, `src/app/shots.ts`.)
 // ---------------------------------------------------------------------------
 
 export type Easing = 'linear' | 'cubic';
@@ -2852,23 +2852,6 @@ export interface FollowPathConstraintValue {
 }
 
 export type ConstraintValue = TrackToConstraintValue | FollowPathConstraintValue;
-
-export interface ShotValue {
-  readonly kind: 'Shot';
-  readonly name: string;
-  readonly startTime: number;
-  readonly endTime: number;
-  readonly camera: CameraValue | null;
-  readonly scene: SceneValue | null;
-}
-
-export interface CutValue {
-  readonly kind: 'Cut';
-  readonly from: ShotValue | null;
-  readonly to: ShotValue | null;
-  /** Transition length in frames. 0 = hard cut. */
-  readonly transitionFrame: number;
-}
 
 // ---------------------------------------------------------------------------
 // The Compositor — After Effects-style layer timeline (docs/COMPOSITOR-DESIGN.md).

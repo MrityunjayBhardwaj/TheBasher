@@ -74,7 +74,7 @@ export function DiffBar() {
     .filter((r): r is Reportable => r !== null)
     .map((r) => badgeLabel(r.badge, r));
   // Wave D — time-range indicator. Animation Mutators emit ops that carry
-  // explicit time values (keyframes / Shot bounds). Surfacing the range
+  // explicit time values (keyframes, a shot's cuts). Surfacing the range
   // lets the user see at a glance "this diff lands keyframes between
   // t=0 and t=2" before accepting.
   const timeRange = extractTimeRange(pendingDiff.ops);

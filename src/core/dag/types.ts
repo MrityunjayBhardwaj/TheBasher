@@ -119,8 +119,6 @@ export type SocketTypeName =
   // #1451 (Collections, #397) — a named set of scene Objects: membership, never a transform. The
   // Scene holds its collections as Blender's scene collection holds its children.
   | 'Collection'
-  | 'Shot'
-  | 'Cut'
   // The Compositor (After Effects-style layer timeline) — docs/COMPOSITOR-DESIGN.md.
   // A `Composition` holds an ordered list of `Layer`s (composite z-order); a Layer's
   // `source` input is the existing `Image` socket (any time-varying Image producer:

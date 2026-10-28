@@ -32,7 +32,6 @@ import { SolverNode, BodyInputNode, BodyInputVecNode } from './Solver';
 import { TemplateDefinitionNode } from './TemplateDefinition';
 import { RigNode, BodyInputPoseNode } from './Rig';
 import { SampleGeometryNode } from './geometryQuery';
-import { CutNode } from './Cut';
 import { LayerNode } from './Layer';
 import { MediaClipNode } from './MediaClip';
 import { DepthPassNode } from './DepthPass';
@@ -73,7 +72,6 @@ import { RenderOutputNode } from './RenderOutput';
 import { ScatterNode } from './ScatterNode';
 import { MotionGenerateNode } from './MotionGenerate';
 import { SceneNode } from './Scene';
-import { ShotNode } from './Shot';
 import { GltfSkeletonNode } from './GltfSkeleton';
 import { SkeletonNode } from './Skeleton';
 import { StripNode } from './Strip';
@@ -236,8 +234,6 @@ const ALL: NodeDefinition[] = [
   // pattern) picks the camera its `active` names (#1668: by id) to feed Scene.camera;
   // `active` is keyframeable → camera cuts. selectActiveCameraNode resolves through it.
   CameraSelectNode as unknown as NodeDefinition,
-  ShotNode as unknown as NodeDefinition,
-  CutNode as unknown as NodeDefinition,
   // The Compositor — AE-style layer timeline (docs/COMPOSITOR-DESIGN.md).
   CompositionNode as unknown as NodeDefinition,
   LayerNode as unknown as NodeDefinition,

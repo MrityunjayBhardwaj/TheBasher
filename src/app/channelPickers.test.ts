@@ -150,10 +150,10 @@ describe('channel pickers — what the census cannot answer is listed with its r
 
   it('"never measured" and "measured, nothing animates" read differently', () => {
     let s = buildDefaultDagState();
-    s = apply(s, [{ type: 'addNode', nodeId: 'shot', nodeType: 'Shot', params: {} }]);
+    s = apply(s, [{ type: 'addNode', nodeId: 'strip', nodeType: 'Strip', params: {} }]);
     expect(
-      channelPathLock(withChannel(s, 'KeyframeChannelNumber', 'shot', ''), 'ch', 'number'),
-    ).toBe('the census has not measured Shot');
+      channelPathLock(withChannel(s, 'KeyframeChannelNumber', 'strip', ''), 'ch', 'number'),
+    ).toBe('the census has not measured Strip');
     const spot = place(buildDefaultDagState(), 'SpotLight');
     expect(
       channelPathLock(withChannel(spot.s, 'KeyframeChannelColor', spot.obj, ''), 'ch', 'color'),

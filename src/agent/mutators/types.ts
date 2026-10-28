@@ -109,8 +109,12 @@ export interface MutatorDefinition<Spec = unknown> {
    * Build the closure expansion spec for this mutator's spec. The
    * five-gate validator passes the result to expandClosure and feeds
    * the resulting ClosureSet into preconditions + build.
+   *
+   * #1666 — `state` is the graph the plan is validated against, for a mutator whose scope is a
+   * node the spec cannot name: a shot's cuts land on the scene's camera switch and its cut
+   * channel, which the scene picks, not the agent. The roots are still declared before `build`.
    */
-  buildClosureSpec(spec: Spec): ClosureSpec;
+  buildClosureSpec(spec: Spec, state?: DagState): ClosureSpec;
   /**
    * Shape-only check. Fires AFTER closure is expanded; verifies the
    * scope contains the required nodes/edges. Per P-5 mitigation:

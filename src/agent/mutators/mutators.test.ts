@@ -20,6 +20,8 @@ import { makeSplitCamera } from '../../test-utils/splitCamera';
 import { dataIdFor } from '../../test-utils/splitKinds';
 import { BIND, skinBindSceneOps } from '../../test-utils/skinBindScene';
 import { buildDefaultDagState } from '../../core/project/default';
+import { selectActiveCameraNode } from '../../app/activeCamera';
+import { shotsOf } from '../../app/shots';
 import { rawSpringOps } from '../../test-utils/rawSpring';
 import { expandClosure } from '../closure/expand';
 import {
@@ -2849,47 +2851,69 @@ describe('mutator.timeline.keyframe', () => {
 });
 
 describe('mutator.shot.create', () => {
-  function stateWithCamera() {
-    let s = buildScene();
-    s = makeSplitCamera(s, {
-      objectId: 'cam',
-      fov: 45,
-      position: [0, 0, 5],
-      lens: { near: 0.1, far: 100, lookAt: [0, 0, 0] },
-    }).state;
-    return s;
+  // #1666 — a shot is cuts on the camera switch, the keys the Shots panel and the render read.
+  // The product's default scene films `n_camera`; `cam2` is a second split camera.
+  function twoCameras() {
+    return makeSplitCamera(buildDefaultDagState(), { objectId: 'cam2', position: [10, 0, 0] })
+      .state;
   }
+  const run = (state: DagState, spec: object) => {
+    const r = validatePlan(shotCreateMutator, spec as never, state, 's');
+    expect(r.ok, r.ok ? '' : r.reason).toBe(true);
+    if (!r.ok) throw new Error(r.reason);
+    let s = state;
+    for (const op of r.ops) s = applyOp(s, op).next;
+    return s;
+  };
+  const onScreen = (s: DagState, ...times: number[]) =>
+    times.map((t) => selectActiveCameraNode(s, t)?.id ?? null);
 
-  it('emits addNode Shot + 2 connects', () => {
-    const state = stateWithCamera();
-    const r = validatePlan(
-      shotCreateMutator,
-      {
-        cameraId: 'cam',
-        sceneId: 'scene',
-        name: 'Opening',
-        startTime: 0,
-        endTime: 4,
-        shotId: 'shot_opening',
-      },
-      state,
-      's',
-    );
-    expect(r.ok).toBe(true);
-    if (!r.ok) return;
-    expect(r.ops).toHaveLength(3);
-    const addOp = r.ops[0];
-    if (addOp.type !== 'addNode') throw new Error('expected addNode');
-    expect(addOp.nodeId).toBe('shot_opening');
-    expect(addOp.nodeType).toBe('Shot');
+  it("THE PIN: an agent's shot changes which camera renders at its start", () => {
+    const before = twoCameras();
+    expect(onScreen(before, 2)).toEqual(['n_camera']);
+    const after = run(before, { cameraId: 'cam2', startTime: 2, endTime: 4 });
+    expect(onScreen(after, 1, 2, 3.9, 4, 5)).toEqual([
+      'n_camera',
+      'cam2',
+      'cam2',
+      'n_camera',
+      'n_camera',
+    ]);
   });
 
-  it('rejects endTime < startTime (gate 4)', () => {
-    const state = stateWithCamera();
+  it("it is the panel's shot: the Shots tab lists it", () => {
+    const after = run(twoCameras(), { cameraId: 'cam2', startTime: 2, endTime: 4 });
+    expect(shotsOf(after, 6).shots.map((r) => `${r.start}-${r.end}:${r.cameraId}`)).toEqual([
+      '0-2:n_camera',
+      '2-4:cam2',
+      '4-6:n_camera',
+    ]);
+    expect(Object.values(after.nodes).some((n) => (n.type as string) === 'Shot')).toBe(false);
+  });
+
+  it('without endTime the shot runs to the next cut', () => {
+    const after = run(twoCameras(), { cameraId: 'cam2', startTime: 2 });
+    expect(onScreen(after, 1, 3, 100)).toEqual(['n_camera', 'cam2', 'cam2']);
+  });
+
+  it('a cut inside the span is removed, so the shot is not broken up', () => {
+    let s = run(twoCameras(), { cameraId: 'cam2', startTime: 3 }); // a cut at 3 to cam2
+    s = run(s, { cameraId: 'n_camera', startTime: 2, endTime: 5 });
+    expect(onScreen(s, 1, 2.5, 3.5, 4.9, 5, 6)).toEqual([
+      'n_camera',
+      'n_camera',
+      'n_camera',
+      'n_camera',
+      'cam2',
+      'cam2',
+    ]);
+  });
+
+  it('rejects endTime <= startTime (gate 4)', () => {
     const r = validatePlan(
       shotCreateMutator,
-      { cameraId: 'cam', sceneId: 'scene', startTime: 5, endTime: 1 },
-      state,
+      { cameraId: 'cam2', startTime: 5, endTime: 1 },
+      twoCameras(),
       's',
     );
     expect(r.ok).toBe(false);
@@ -2897,10 +2921,25 @@ describe('mutator.shot.create', () => {
   });
 
   it('rejects when cameraId points at a non-Camera node (gate 4)', () => {
-    const state = stateWithCamera();
-    const r = validatePlan(shotCreateMutator, { cameraId: 'box', sceneId: 'scene' }, state, 's');
+    const r = validatePlan(
+      shotCreateMutator,
+      { cameraId: 'n_box', startTime: 0 },
+      twoCameras(),
+      's',
+    );
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.gate).toBe(4);
+  });
+
+  it("says so when the only camera already films the whole film, rather than 'no socket'", () => {
+    const r = validatePlan(
+      shotCreateMutator,
+      { cameraId: 'n_camera', startTime: 1 },
+      buildDefaultDagState(),
+      's',
+    );
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.reason).toContain("the scene's only camera");
   });
 });
 
@@ -4502,15 +4541,10 @@ describe('V14 deeper non-redundancy — Op-shape probe (issue #22)', () => {
     },
     'mutator.shot.create': {
       mutator: _shotM as MutatorDefinition<unknown>,
-      build: buildSceneWithJob,
-      spec: {
-        cameraId: 'cam',
-        sceneId: 'scene',
-        name: 'Opening',
-        startTime: 0,
-        endTime: 4,
-        shotId: 'shot_opening',
-      },
+      // #1666 — a shot cuts between cameras, so the probe has two: the default's and `cam2`.
+      build: () =>
+        makeSplitCamera(buildDefaultDagState(), { objectId: 'cam2', position: [10, 0, 0] }).state,
+      spec: { cameraId: 'cam2', startTime: 2, endTime: 4 },
     },
     // A3 (#774). `buildSceneWithJob` is the one fixture carrying a camera, and the
     // camera is the whole subject here — the Follow-Path and the Track-To both name
