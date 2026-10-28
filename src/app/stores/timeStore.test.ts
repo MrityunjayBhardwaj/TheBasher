@@ -59,6 +59,31 @@ describe('timeStore', () => {
     expect(useTimeStore.getState().seconds).toBeCloseTo(0.4, 5);
   });
 
+  it('#1733 stepFrames lands on the frame grid, from the frame the playhead is on', () => {
+    useTimeStore.getState().play();
+    useTimeStore.getState().setTime(0.0123); // scrubbed between frames 0 and 1 (nearest: 1)
+    useTimeStore.getState().stepFrames(9);
+    expect(useTimeStore.getState().filmFrame).toBe(10);
+    expect(useTimeStore.getState().filmSeconds * 60).toBeCloseTo(10, 9);
+  });
+
+  it('#1733 stepFrames loops at End and does nothing while paused', () => {
+    useTimeStore.getState().play();
+    useTimeStore.getState().setTime(9.95); // frame 597 of a 600-frame range
+    useTimeStore.getState().stepFrames(6);
+    expect(useTimeStore.getState().filmFrame).toBe(3);
+    useTimeStore.getState().pause();
+    useTimeStore.getState().stepFrames(6);
+    expect(useTimeStore.getState().filmFrame).toBe(3);
+  });
+
+  it('#1733 pausing clears the achieved rate', () => {
+    useTimeStore.getState().play();
+    useTimeStore.getState().setAchievedFps(24);
+    useTimeStore.getState().pause();
+    expect(useTimeStore.getState().achievedFps).toBeNull();
+  });
+
   it('toggle flips playing', () => {
     expect(useTimeStore.getState().playing).toBe(false);
     useTimeStore.getState().toggle();

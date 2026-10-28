@@ -50,6 +50,9 @@ export function Timebar() {
     `(${sceneEnd.toFixed(2)}s): playback loops and Render ▸ Animation stops at End. ` +
     'Extend moves End to where it ends.';
   const playing = useTimeStore((s) => s.playing);
+  // #1733 — Blender's playback sync, and the rate playback is achieving (null while paused).
+  const sync = useTimeStore((s) => s.sync);
+  const fps = useTimeStore((s) => s.achievedFps);
   const autoKey = useAutoKeyStore((s) => s.enabled);
   return (
     <div
@@ -114,6 +117,30 @@ export function Timebar() {
       >
         {seconds.toFixed(2)}s / {duration.toFixed(2)}s
       </span>
+      {/* #1733 — playback sync (Blender's Playback ▸ Sync) and, while playing, the frames per
+          second actually drawn, warned below the scene rate as Blender's viewport fps is. */}
+      <select
+        value={sync}
+        onChange={(e) => useTimeStore.getState().setSync(e.target.value as 'drop' | 'every')}
+        title="Playback sync: drop frames to keep real time, or play every frame and slow down"
+        className="rounded border border-border bg-transparent px-1 py-0.5"
+        data-testid="timebar-sync"
+      >
+        <option value="drop">Drop frames</option>
+        <option value="every">Every frame</option>
+      </select>
+      {playing && fps !== null && (
+        <span
+          className={
+            'w-14 shrink-0 whitespace-nowrap text-right font-mono tabular-nums ' +
+            (fps < FRAMES_PER_SECOND * 0.95 ? 'text-warn' : '')
+          }
+          title={`Achieved ${fps.toFixed(1)} of ${FRAMES_PER_SECOND} frames per second`}
+          data-testid="timebar-fps"
+        >
+          {fps.toFixed(0)} fps
+        </span>
+      )}
       {/* #1287 — the scene's End (Blender's Timeline header End). Committed on Enter or blur as
           one undoable edit; `key` resets the draft when End changes elsewhere (undo, agent). */}
       <label
