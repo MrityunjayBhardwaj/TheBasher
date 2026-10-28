@@ -32,6 +32,7 @@ import { evaluate, evaluatorContentEpoch, type EvaluatorCache } from '../core/da
 import type { DagState } from '../core/dag/state';
 import type { EvalCtx } from '../core/dag/types';
 import { armaturePoseOf } from '../nodes/bonePose';
+import { samplePose } from '../nodes/poseSample';
 import type { BoneSpec, ObjectValue, PosedSkeletonValue } from '../nodes/types';
 import { boneWorldMatrices, posedWorldMatrices } from '../viewport/boneShape';
 import { characterAssetOf, nativeRigsOf } from './characterParts';
@@ -177,7 +178,7 @@ export function armaturePoseAt(
   const frame = index.frames.get(armatureId) ?? {};
   if (frame.pose && frame.pose.seconds === seconds) return frame.pose.value;
   const mats = arm.pose
-    ? posedWorldMatrices(arm.bones, arm.pose.sample(seconds))
+    ? posedWorldMatrices(arm.bones, samplePose(arm.pose, seconds))
     : boneWorldMatrices(arm.bones);
   const out = new Float64Array(mats.length * 16);
   mats.forEach((m, i) => out.set(m.elements, i * 16));

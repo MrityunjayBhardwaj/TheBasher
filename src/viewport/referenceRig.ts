@@ -17,6 +17,7 @@
 
 import * as THREE from 'three';
 import { eulerXYZFromQuat } from '../nodes/bonePose';
+import { samplePose } from '../nodes/poseSample';
 import type { BoneSpec, PosedSkeletonValue } from '../nodes/types';
 import type { BoneFrame } from './boneShape';
 
@@ -137,7 +138,7 @@ export function referencePlacement(
  * the pose directly (`poseTransforms`) and skips the euler round trip.
  */
 export function posedSourceBones(wire: PosedSkeletonValue, seconds: number): BoneSpec[] {
-  const pose = wire.sample(seconds);
+  const pose = samplePose(wire, seconds);
   return wire.skeleton.bones.map((bone, i) => {
     const p = pose[i];
     return p

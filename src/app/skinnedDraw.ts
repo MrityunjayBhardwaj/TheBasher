@@ -45,6 +45,7 @@ import { Bone, Matrix4, Skeleton } from 'three';
 import { specToThreeSkeleton } from '../core/import/threeAdapter';
 import { restBonePose } from '../nodes/bonePose';
 import { sampleSkinDeform, sampleSkinDirections } from '../nodes/armatureDeform';
+import { samplePose } from '../nodes/poseSample';
 import { SKIN_SET_WIDTH, skinLanes } from '../nodes/skinInfluences';
 import type {
   BonePose,
@@ -118,7 +119,7 @@ export function buildSkinnedDraw(skin: SkinDeformValue, mesh: MeshGeometryData):
     pose(seconds, pose) {
       // The same pose the CPU deform reads (`SkinDeformValue.pose`), so the draw and the modifier
       // cannot disagree.
-      place(pose === null ? rest : pose.sample(seconds));
+      place(pose === null ? rest : samplePose(pose, seconds));
       for (const root of roots) root.updateMatrixWorld(true);
     },
   };

@@ -23,6 +23,7 @@
 
 import { Matrix4, Vector3 } from 'three';
 import { boneWorldMatrices, posedWorldMatrices } from '../viewport/boneShape';
+import { samplePose } from './poseSample';
 import { skinLanes } from './skinInfluences';
 import type { BoneSpec, MeshGeometryData, PosedSkeletonValue, SkinDeformValue } from './types';
 
@@ -60,7 +61,7 @@ export function posedBoneMatrices(
   seconds: number,
 ): Matrix4[] {
   if (pose === null) return boneWorldMatrices(bones);
-  return posedWorldMatrices(bones, pose.sample(seconds));
+  return posedWorldMatrices(bones, samplePose(pose, seconds));
 }
 
 /** Each bone's skinning matrix at `seconds`, in armature space: pose · rest⁻¹. */
