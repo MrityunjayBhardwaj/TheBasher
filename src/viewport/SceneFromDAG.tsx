@@ -22,6 +22,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -122,6 +123,12 @@ import {
 import { usePlayheadFollow } from './usePlayheadFollow';
 import { resolveRigLightSources } from '../app/resolveRigLightSources';
 import { degVec3ToRad } from './rotation';
+import {
+  drawsTransformAsGroup,
+  sameApartFromTransform,
+  withoutTransform,
+  writeTransform,
+} from './drawnTransform';
 import { installContentShadow } from './contentShadows';
 import { selectNode } from './selectNodeOnClick';
 import { evaluate } from '../core/dag/evaluator';
@@ -2363,33 +2370,87 @@ function DirectChannelsR({
   // screen. `overlayWithIdentity` composes the same two primitives in the same order and
   // clears the identity its own writes invalidated. It returns `value` by reference when
   // nothing is written, so the static-node guard below is untouched.
-  const sample = (seconds: number): IdentifiedSceneObject =>
-    overlayWithIdentity('children', value, pickId, channels, transients, seconds);
-
-  const [patched, setPatched] = useState<IdentifiedSceneObject>(() =>
-    sample(liveSecondsOf(pickId)),
+  const { group, drawn } = useOverlayDraw(
+    pickId,
+    value,
+    [channels, transients],
+    false,
+    (seconds) => ({
+      v: overlayWithIdentity('children', value, pickId, channels, transients, seconds),
+      key: '',
+    }),
   );
-  const lastApplied = useRef<{
+  return (
+    <group ref={group}>
+      <MeshChild value={drawn} override={override} nodeId={pickId} />
+    </group>
+  );
+}
+
+/**
+ * #1728 — the per-frame half of the two overlay renderers (`DirectChannelsR`, `ConstrainedR`).
+ *
+ * `build(seconds)` samples the patched value and a key for any band the value's own inputs don't
+ * cover (a constraint's aim). Each frame, if anything moved:
+ *   - the value's TRANSFORM is written onto `group`, directly (`writeTransform`);
+ *   - React re-renders `drawn` only when a field OTHER than the transform changed (an animated
+ *     colour or size). A keyed transform asks React for nothing, so nothing can starve it (#1726).
+ * `drawn` is the patched value at identity, to be drawn inside `group`. For a kind whose renderer
+ * reads its transform for more than placement (`drawsTransformAsGroup` false: a light Object, a
+ * character), `group` stays at identity and `drawn` is the whole patched value, re-rendered on
+ * every change as before.
+ *
+ * `buildEveryFrame`: false skips `build` while the playhead and `inputs` are unchanged (a keyed
+ * node); true builds anyway and compares the key, for a band that moves with other objects.
+ */
+function useOverlayDraw(
+  nodeId: string,
+  value: SceneObject,
+  inputs: readonly unknown[],
+  buildEveryFrame: boolean,
+  build: (seconds: number) => { v: IdentifiedSceneObject; key: string },
+): { group: React.RefObject<THREE.Group>; drawn: IdentifiedSceneObject } {
+  const group = useRef<THREE.Group>(null);
+  const direct = drawsTransformAsGroup(value);
+  // The newest sample, whose transform the group carries; and the one `drawn` was made from.
+  const latest = useRef<IdentifiedSceneObject | null>(null);
+  const [source, setSource] = useState<IdentifiedSceneObject>(() => {
+    const { v } = build(liveSecondsOf(nodeId));
+    latest.current = v;
+    return v;
+  });
+  const sourceRef = useRef(source);
+  sourceRef.current = source;
+  const drawn = useMemo(() => (direct ? withoutTransform(source) : source), [direct, source]);
+  // After every commit, before paint: the group carries the newest transform (identity when this
+  // kind keeps its transform in `drawn`). A re-render never resets it: the group has no props.
+  useLayoutEffect(() => {
+    if (group.current) writeTransform(group.current, direct ? latest.current : null);
+  });
+  const last = useRef<{
     seconds: number;
-    channels: unknown;
-    transients: unknown;
+    inputs: readonly unknown[];
     value: unknown;
+    key: string;
   } | null>(null);
   useFrame(() => {
-    const seconds = liveSecondsOf(pickId);
-    if (
-      lastApplied.current !== null &&
-      lastApplied.current.seconds === seconds &&
-      lastApplied.current.channels === channels &&
-      lastApplied.current.transients === transients &&
-      lastApplied.current.value === value
-    ) {
-      return;
-    }
-    lastApplied.current = { seconds, channels, transients, value };
-    setPatched(sample(seconds));
+    const seconds = liveSecondsOf(nodeId);
+    const la = last.current;
+    const unchanged =
+      la !== null &&
+      la.seconds === seconds &&
+      la.value === value &&
+      la.inputs.length === inputs.length &&
+      la.inputs.every((x, i) => x === inputs[i]);
+    if (unchanged && !buildEveryFrame) return;
+    const { v, key } = build(seconds);
+    if (unchanged && la.key === key) return;
+    last.current = { seconds, inputs, value, key };
+    latest.current = v;
+    if (direct && group.current) writeTransform(group.current, v);
+    if (!direct || !sameApartFromTransform(v, sourceRef.current)) setSource(v);
   });
-  return <MeshChild value={patched} override={override} nodeId={pickId} />;
+  return { group, drawn };
 }
 
 // #204 (epic #201) — renderer for a node with an active Track-To constraint. The
@@ -2480,39 +2541,25 @@ function ConstrainedR({
     };
   };
 
-  const [patched, setPatched] = useState<IdentifiedSceneObject>(
-    () => build(liveSecondsOf(pickId)).v,
+  // The aim depends on object + target world positions, both of which can move every frame, so
+  // it is rebuilt every frame (cheap — cached eval + matrix math) and compared by `aimKey`: a
+  // paused static constraint rebuilds the SAME aim and writes nothing (H48), and a target edit
+  // changes the key even while paused (it isn't captured by this node's seconds/value).
+  const { group, drawn } = useOverlayDraw(
+    pickId,
+    value,
+    [channels, transients],
+    true,
+    (seconds) => {
+      const { v, aimKey } = build(seconds);
+      return { v, key: aimKey };
+    },
   );
-  const lastApplied = useRef<{
-    seconds: number;
-    channels: unknown;
-    transients: unknown;
-    value: unknown;
-    aimKey: string;
-  } | null>(null);
-  useFrame(() => {
-    // The aim depends on object + target world positions, both of which can move
-    // every frame, so recompute it (cheap — cached eval + matrix math). But only
-    // re-render when the RESULT changed: a paused static constraint recomputes the
-    // SAME aim → skip setState (H48). A target edit changes `aimKey` even while
-    // paused (it isn't captured by this node's seconds/value) → re-render fires.
-    const seconds = liveSecondsOf(pickId);
-    const { v, aimKey } = build(seconds);
-    const la = lastApplied.current;
-    if (
-      la !== null &&
-      la.seconds === seconds &&
-      la.channels === channels &&
-      la.transients === transients &&
-      la.value === value &&
-      la.aimKey === aimKey
-    ) {
-      return;
-    }
-    lastApplied.current = { seconds, channels, transients, value, aimKey };
-    setPatched(v);
-  });
-  return <MeshChild value={patched} override={override} nodeId={pickId} />;
+  return (
+    <group ref={group}>
+      <MeshChild value={drawn} override={override} nodeId={pickId} />
+    </group>
+  );
 }
 
 // #365 Phase 5a / #384 Stage C: BoxMeshR and SphereMeshR are RETIRED — a box/sphere renders

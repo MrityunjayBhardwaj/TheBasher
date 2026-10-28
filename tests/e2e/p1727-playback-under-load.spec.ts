@@ -215,10 +215,8 @@ test.describe('#1726 — a keyed object moves during playback under load', () =>
   test('with an object selected, the keyed box moves every frame and stays on its keys', async ({
     page,
   }) => {
-    // RED TODAY (#1726): the box stays where it was when play began. Marked expected-to-fail so
-    // the suite stays green until #1728 lands; the fix turns this into an unexpected pass, which
-    // fails the run until this line is removed.
-    test.fail(true, '#1726: keyed objects freeze during playback while something is selected');
+    // #1728 — red before the transform was written directly (moved on 0 of 89 frames); turning
+    // `drawsTransformAsGroup` off in `useOverlayDraw` turns it red again.
     const selectId = await stage(page);
     expect(selectId, 'a static node to select').not.toBeNull();
     await page.evaluate(

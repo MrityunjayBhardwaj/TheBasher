@@ -24,8 +24,10 @@ const SRC = path.resolve(__dirname, '..');
 /** Shrinks to empty as #1728 moves each of these to direct writes. */
 const ALLOWED = [
   'viewport/SceneFromDAG.tsx :: DirectChannelsLightR :: setPatched',
-  'viewport/SceneFromDAG.tsx :: DirectChannelsR :: setPatched',
-  'viewport/SceneFromDAG.tsx :: ConstrainedR :: setPatched',
+  // The two mesh overlay renderers' shared frame loop. It writes the transform directly and calls
+  // this only when a field OTHER than the transform changed (an animated colour or size), or for
+  // a kind that keeps its transform in the drawn value (a light Object, a character).
+  'viewport/SceneFromDAG.tsx :: useOverlayDraw :: setSource',
   'viewport/usePlayheadFollow.ts :: usePlayheadFollow :: setValue',
 ];
 
