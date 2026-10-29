@@ -454,11 +454,23 @@ test(TITLE, async ({ page }) => {
         const parts: string[] = [
           `env:${r4(scene.environmentIntensity ?? 1)}:${r4(scene.environmentRotation?.y ?? 0)}:${r4(scene.backgroundIntensity ?? 1)}`,
         ];
+        // #1739 — what DRAWS, not every object: a container draws nothing, and its transform is
+        // already in each child's world matrix. #1728 wraps a keyed object's mesh in a group that
+        // mounts when the key makes it move with time, so counting containers read an empty group
+        // as "the scene moved". Visibility is the effective one (self and every ancestor): a hidden
+        // container hides its children without touching their own `visible`. Bones stay: they
+        // draw nothing themselves but deform skinned meshes without changing their geometry.
+        const shown = new Map<unknown, boolean>();
         scene.traverse((o: Loose) => {
+          const visible = o.visible && (o.parent ? (shown.get(o.parent) ?? true) : true);
+          shown.set(o, visible);
+          const draws =
+            o.isMesh || o.isLine || o.isPoints || o.isSprite || o.isLight || o.isCamera || o.isBone;
+          if (!draws) return;
           const p: (string | number)[] = [
             o.type,
             o.name,
-            o.visible ? 1 : 0,
+            visible ? 1 : 0,
             ...o.matrixWorld.elements.map(r4),
           ];
           const g = o.geometry;
