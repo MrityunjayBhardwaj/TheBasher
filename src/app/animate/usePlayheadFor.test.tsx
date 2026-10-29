@@ -13,7 +13,8 @@ import type { Op } from '../../core/dag/types';
 import { buildDefaultDagState } from '../../core/project/default';
 import { registerAllNodes } from '../../nodes/registerAll';
 import { useTimeStore } from '../stores/timeStore';
-import { usePlayheadFor, type Playhead } from './usePlayheadFor';
+import type { DagState } from '../../core/dag/state';
+import { usePlayheadFor, valueMovesWithTime, type Playhead } from './usePlayheadFor';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -82,6 +83,15 @@ describe('#1731 usePlayheadFor', () => {
     expect(seen?.seconds).toBe(1.25);
   });
 
+  it('…and holds its time across a parent re-render, so a memo keyed on it holds too', () => {
+    act(() => useDagStore.getState().hydrate(buildDefaultDagState()));
+    act(() => root.render(<Probe nodeId="n_box" />));
+    const first = seen;
+    scrub([2.5]);
+    act(() => root.render(<Probe nodeId="n_box" />));
+    expect(seen).toBe(first);
+  });
+
   it('a keyed node re-renders on every playhead move, with the moved time', () => {
     act(() => useDagStore.getState().hydrate(applyOp(buildDefaultDagState(), KEY).next));
     act(() => root.render(<Probe nodeId="n_box" />));
@@ -99,5 +109,24 @@ describe('#1731 usePlayheadFor', () => {
     scrub([0.75]);
     expect(renders).toBe(before + 1);
     expect(seen?.seconds).toBe(0.75);
+  });
+
+  it('a pose moves an armature’s bones, not the Object’s own values', () => {
+    const state = {
+      nodes: {
+        arm: {
+          id: 'arm',
+          type: 'Object',
+          params: {},
+          inputs: { pose: { node: 'layer', socket: 'out' } },
+        },
+        layer: { id: 'layer', type: 'PoseLayer', params: {}, inputs: {} },
+        aimed: { id: 'aimed', type: 'Object', params: {}, inputs: {} },
+        aim: { id: 'aim', type: 'TrackTo', params: { target: 'aimed' }, inputs: {} },
+      },
+      outputs: {},
+    } as unknown as DagState;
+    expect(valueMovesWithTime(state, 'arm')).toBe(false);
+    expect(valueMovesWithTime(state, 'aimed')).toBe(true);
   });
 });

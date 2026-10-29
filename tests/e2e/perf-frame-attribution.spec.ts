@@ -21,6 +21,7 @@
 
 import type { CDPSession, Page } from '@playwright/test';
 import { test, expect } from './_fixtures';
+import { splitCurveOps } from './_splitCurve';
 
 // PERF_ATTR_GPU=1 runs on the machine's GPU (ANGLE on Metal here) instead of headless Chromium's
 // SwiftShader. Under SwiftShader the WebGL canvas is read back to the CPU on every compositor
@@ -35,6 +36,12 @@ if (process.env.PERF_ATTR_GPU === '1') {
 const LEVELS = (process.env.PERF_ATTR_OBJECTS ?? '400,800').split(',').map((n) => parseInt(n, 10));
 // PERF_ATTR_SELECT=0 leaves the nested sphere unselected (no gizmo, no inspector).
 const SELECT = process.env.PERF_ATTR_SELECT !== '0';
+// #1731 — PERF_ATTR_SUBJECT picks what is selected while the fixture plays, to price the editor
+// surfaces that still follow the playhead through React: `sphere` (the default: the nested sphere),
+// `camera` (the default scene's camera: its gizmo, lens rows and look-at target), `curve` (a
+// selected curve: its point handles), `bone` (a skinned import in Pose mode with a bone selected:
+// the bone gizmo), `diff` (an agent's proposed curve pending: the ghost preview), `none`.
+const SUBJECT = process.env.PERF_ATTR_SUBJECT ?? (SELECT ? 'sphere' : 'none');
 const WINDOW_MS = parseInt(process.env.PERF_ATTR_WINDOW_MS ?? '4000', 10);
 
 interface W {
@@ -152,9 +159,74 @@ async function stage(page: Page, objects: number) {
       );
       w.__basher_selection.getState().select(select ? 'attr_sel' : null);
     },
-    { objects, select: SELECT },
+    { objects, select: SUBJECT === 'sphere' },
   );
+  await selectSubject(page);
   await page.waitForTimeout(500);
+}
+
+/** Put the #1731 subject in place: select it, or (for `diff`) propose it. */
+async function selectSubject(page: Page) {
+  const curve = [
+    ...splitCurveOps({
+      objectId: 'attr_curve',
+      points: [
+        [0, 0, 0],
+        [2, 0, 0],
+        [4, 0, 2],
+      ],
+    }),
+  ];
+  await page.evaluate(
+    async ({ subject, curve }) => {
+      const w = window as unknown as W & {
+        __basher_diff: {
+          getState: () => { propose: (s: unknown, ops: unknown[], d: string, t: string[]) => void };
+        };
+      };
+      const dag = w.__basher_dag.getState();
+      const sceneId = dag.state.outputs.scene.node;
+      const toScene = {
+        type: 'connect',
+        from: { node: 'attr_curve', socket: 'out' },
+        to: { node: sceneId, socket: 'children' },
+      };
+      if (subject === 'camera') w.__basher_selection.getState().select('n_camera');
+      if (subject === 'curve') {
+        dag.dispatchAtomic([...curve, toScene], 'user', 'attr curve');
+        w.__basher_selection.getState().select('attr_curve');
+      }
+      if (subject === 'diff') {
+        w.__basher_diff
+          .getState()
+          .propose(dag.state, [...curve, toScene], 'add a curve', ['agent:mesh.add']);
+      }
+      if (subject === 'bone') {
+        const native = await import('/src/core/import/nativeGltfImport.ts');
+        const buffer = await fetch('/assets/skinned-bar.glb').then((r) => r.arrayBuffer());
+        const result = await native.buildNativeGltfImportOps({
+          buffer,
+          assetRef: 'user-imports/attr/skinned-bar.glb',
+          sceneNodeId: sceneId,
+          storeImage: async () => 'unused',
+        });
+        if ('refused' in result) throw new Error(result.refused);
+        dag.dispatchAtomic(result.ops, 'user', 'attr skinned import');
+        const nodes = w.__basher_dag.getState().state.nodes as Record<
+          string,
+          { type: string; inputs: Record<string, unknown> }
+        >;
+        const modifier = Object.entries(nodes).find(([, n]) => n.type === 'ArmatureModifier')![0];
+        const armature = (nodes[modifier].inputs.armature as { node: string }).node;
+        w.__basher_selection.getState().select(armature);
+        const modes = await import('/src/app/stores/armatureModeStore.ts');
+        const bones = await import('/src/app/stores/boneSelectionStore.ts');
+        modes.useArmatureModeStore.getState().setMode(armature, 'pose');
+        bones.useBoneSelectionStore.getState().selectBone(armature, 'Bone1', ['Bone0', 'Bone1']);
+      }
+    },
+    { subject: SUBJECT, curve },
+  );
 }
 
 /** Play for WINDOW_MS; return the animation-frame intervals. `finish` adds gl.finish() after each
@@ -342,7 +414,7 @@ test('perf frame attribution: where a playback frame goes', async ({ page }) => 
   test.setTimeout(600_000);
   const cdp = await page.context().newCDPSession(page);
   const lines: string[] = [
-    `\n[perf attribution] ${WINDOW_MS} ms of playback per row, nested sphere ${SELECT ? 'selected' : 'NOT selected'}; ms per frame`,
+    `\n[perf attribution] ${WINDOW_MS} ms of playback per row, selected: ${SUBJECT}; ms per frame`,
     'objects | frame p50 | idle  | program |  gc  | deps (three/react/r3f) | src  | other | finish p50 (pass 2) | frame p50 (pass 2)',
   ];
   const tops: string[] = [];

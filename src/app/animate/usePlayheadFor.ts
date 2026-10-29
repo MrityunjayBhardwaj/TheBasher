@@ -10,13 +10,19 @@
 //
 // A node's own value changes with time only through what targets it: a keyed channel, a strip, a
 // bound driver (on it or on its data lane), or an active constraint. That is the time-dependent
-// set's `roots` (`timeDependentSet.ts`), the same answer the viewport mounts its overlays from.
-// For a node outside it, this hook subscribes to nothing and reads the playhead when the field
-// renders for any other reason (a selection, an edit), which is the same value it would have
-// shown.
+// set's `channelDriven` and `constrained` (`timeDependentSet.ts`), the same answer the viewport
+// mounts its overlays from. Not `posed`: a pose moves an armature's bones, not the Object's own
+// position, rotation and scale, which is what its fields show (measured: a posed armature
+// selected in Pose mode re-resolved its transform rows every frame, 1.6 ms).
+//
+// For a node whose value cannot move, this hook subscribes to nothing and hands back a playhead
+// that stays put while the node does (taken when the field first asks for it), so a field whose
+// parent re-renders every frame (the Scene speed field under the Timebar) keeps its memo instead
+// of re-resolving at each new time. Any time gives that node the same value.
 //
 // REF: issue #1731; src/app/timeDependentSet.ts.
 
+import { useRef } from 'react';
 import { useDagStore } from '../../core/dag/store';
 import { useTimeStore } from '../stores/timeStore';
 import { timeDependentSetOf } from '../timeDependentSet';
@@ -34,23 +40,12 @@ export function valueMovesWithTime(
   state: Parameters<typeof timeDependentSetOf>[0],
   nodeId: string | null,
 ): boolean {
-  return nodeId != null && timeDependentSetOf(state).roots.has(nodeId);
+  if (nodeId == null) return false;
+  const set = timeDependentSetOf(state);
+  return set.channelDriven.has(nodeId) || set.constrained.has(nodeId);
 }
 
-/**
- * The playhead as `nodeId`'s field should see it. Re-renders on a playhead move only when
- * `nodeId`'s own value can change with time; otherwise it is read, not subscribed.
- */
-export function usePlayheadFor(nodeId: string | null): Playhead {
-  const live = useDagStore((s) => valueMovesWithTime(s.state, nodeId));
-  // Every selector runs on every render (hook order); a not-live one returns a constant, so a
-  // playhead move changes nothing it returns and nothing re-renders.
-  const frame = useTimeStore((s) => (live ? s.frame : -1));
-  const seconds = useTimeStore((s) => (live ? s.seconds : -1));
-  const normalized = useTimeStore((s) => (live ? s.normalized : -1));
-  const filmFrame = useTimeStore((s) => (live ? s.filmFrame : -1));
-  const filmSeconds = useTimeStore((s) => (live ? s.filmSeconds : -1));
-  if (live) return { frame, seconds, normalized, filmFrame, filmSeconds };
+const read = (): Playhead => {
   const now = useTimeStore.getState();
   return {
     frame: now.frame,
@@ -59,4 +54,34 @@ export function usePlayheadFor(nodeId: string | null): Playhead {
     filmFrame: now.filmFrame,
     filmSeconds: now.filmSeconds,
   };
+};
+
+/**
+ * The playhead as a field showing `nodeIds`' values should see it. Re-renders on a playhead move
+ * only when one of them can change with time; otherwise it is read once and held.
+ */
+export function usePlayheadFor(...nodeIds: (string | null)[]): Playhead {
+  const live = useDagStore((s) => nodeIds.some((id) => valueMovesWithTime(s.state, id)));
+  return usePlayheadWhen(live, nodeIds.join('|'));
+}
+
+/**
+ * The playhead, subscribed while `live`; otherwise read once and held until `key` changes. For a
+ * field whose own rule for "can this move?" is not `valueMovesWithTime` of its node ids.
+ */
+export function usePlayheadWhen(live: boolean, key: string): Playhead {
+  // Every selector runs on every render (hook order); a not-live one returns a constant, so a
+  // playhead move changes nothing it returns and nothing re-renders.
+  const frame = useTimeStore((s) => (live ? s.frame : -1));
+  const seconds = useTimeStore((s) => (live ? s.seconds : -1));
+  const normalized = useTimeStore((s) => (live ? s.normalized : -1));
+  const filmFrame = useTimeStore((s) => (live ? s.filmFrame : -1));
+  const filmSeconds = useTimeStore((s) => (live ? s.filmSeconds : -1));
+  const held = useRef<{ key: string; at: Playhead } | null>(null);
+  if (live) {
+    held.current = null;
+    return { frame, seconds, normalized, filmFrame, filmSeconds };
+  }
+  if (held.current?.key !== key) held.current = { key, at: read() };
+  return held.current.at;
 }

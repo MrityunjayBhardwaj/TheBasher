@@ -27,6 +27,8 @@ import { ParamDiamond } from './ParamDiamond';
 import { resolveEvaluatedParam } from './resolveEvaluatedParam';
 import { useTimeStore } from './stores/timeStore';
 import { DEFAULT_CAMERA_FAR, DEFAULT_CAMERA_NEAR } from '../nodes/CameraData';
+import { usePlayheadWhen, valueMovesWithTime } from './animate/usePlayheadFor';
+import { timeDependentSetOf } from './timeDependentSet';
 import { uiEvaluatorCache } from './uiEvaluatorCache';
 
 const ROW = 'flex items-center justify-between gap-2 px-3 py-1.5 text-[11px] text-fg/80';
@@ -73,9 +75,21 @@ export function CameraLensControls({
   // D-02 gate). Subscribing here is what makes the fields re-render on scrub.
   const dagState = useDagStore((s) => s.state);
   // #1594 — a camera's lens runs on the playhead (film time), as the renderer reads it.
-  const frame = useTimeStore((s) => s.filmFrame);
-  const seconds = useTimeStore((s) => s.filmSeconds);
-  const normalized = useTimeStore((s) => s.normalized);
+  // #1731 — subscribed only when what these rows show can move with time: a static camera's lens
+  // rows re-resolved every frame of playback (1.4 ms a frame with the camera selected). The lens
+  // moves through what targets either half of the camera's pair: a lens key can sit on the Object
+  // as well as on its data node (#387). The focus distance, when it follows the target,
+  // is read off the camera's WORLD pose, which also moves when the camera only sits under
+  // something animated, so for it the test is membership of the time-dependent set itself.
+  const live = useDagStore((s) => {
+    if (valueMovesWithTime(s.state, nodeId) || valueMovesWithTime(s.state, poseNodeId)) return true;
+    const p = s.state.nodes[nodeId]?.params as { focusOnTarget?: unknown } | undefined;
+    return p?.focusOnTarget === true && timeDependentSetOf(s.state).has(poseNodeId);
+  });
+  const playhead = usePlayheadWhen(live, `${nodeId}|${poseNodeId}`);
+  const frame = playhead.filmFrame;
+  const seconds = playhead.filmSeconds;
+  const normalized = playhead.normalized;
   const playing = useTimeStore((s) => s.playing);
   // #1314 — a stable cache: this re-reads the evaluated graph on every playhead change, and
   // uncached that re-runs everything under the node (a character's whole-clip retarget) per frame.
