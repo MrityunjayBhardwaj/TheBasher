@@ -24,6 +24,7 @@
 //
 // Skipped on CI (shared runners have no meaningful GPU and noisy CPU).
 
+import type { Page } from '@playwright/test';
 import { expect, test } from './_fixtures';
 
 interface BudgetSummary {
@@ -47,6 +48,7 @@ interface PerfSummary {
   commits: number;
   perFrame: Record<string, BudgetSummary>;
   commitsPerFrame: BudgetSummary;
+  subtreeCommits?: Record<string, number>;
 }
 interface PerfWindow {
   __basher_dag?: {
@@ -240,12 +242,15 @@ interface PlaybackRow {
   s: PerfSummary;
 }
 
-test('perf playback: per-stage frame table, selection on and off', async ({ page }) => {
-  test.skip(!!process.env.CI, 'CI runners have no real GPU and noisy CPU; run locally');
-  test.setTimeout(600_000);
+/** Play the PLAYBACK fixture at each of `levels` static objects, with nothing selected and then
+ *  with the nested object selected, and return each run's profiler summary. */
+async function measurePlayback(
+  page: Page,
+  levels: readonly number[],
+  frames: number,
+): Promise<PlaybackRow[]> {
   const rows: PlaybackRow[] = [];
-
-  for (const objects of PLAYBACK_LEVELS) {
+  for (const objects of levels) {
     await page.goto('/');
     await page.evaluate(async () => {
       if (typeof navigator?.storage?.getDirectory === 'function') {
@@ -363,11 +368,18 @@ test('perf playback: per-stage frame table, selection on and off', async ({ page
           time.pause();
           return out;
         },
-        { selected, nestedId: NESTED_ID, frames: PLAYBACK_FRAMES },
+        { selected, nestedId: NESTED_ID, frames },
       );
       rows.push({ objects, nodes, selected, s });
     }
   }
+  return rows;
+}
+
+test('perf playback: per-stage frame table, selection on and off', async ({ page }) => {
+  test.skip(!!process.env.CI, 'CI runners have no real GPU and noisy CPU; run locally');
+  test.setTimeout(600_000);
+  const rows = await measurePlayback(page, PLAYBACK_LEVELS, PLAYBACK_FRAMES);
 
   const f = (n: number | undefined) => (n ?? 0).toFixed(2).padStart(7);
   // A stage that never ran prints "—"; one that ran below the timer's resolution (the browser
@@ -412,5 +424,72 @@ test('perf playback: per-stage frame table, selection on and off', async ({ page
       r.s.perFrame.world,
       `${r.objects}: the selected object's world reads timed`,
     ).toBeDefined();
+  }
+});
+
+// #1734 (plan Phase 7) — the playback BUDGET. The frame pipeline's promise is that a frame's own
+// work grows with what moves, not with the scene: a static object costs nothing per frame
+// (#1729 #1730), and playing a scene with nothing edited asks React for nothing (#1728 #1735).
+// This test holds that promise at 100 and at 800 static objects, with nothing selected and with
+// the nested object under the keyed Group selected.
+//
+// It budgets the work that should be flat in the static count, not the frame interval: drawing
+// 700 more spheres legitimately costs render time, and under headless SwiftShader the canvas
+// read-back grows with the scene too (perf-frame-attribution), so a frame-time rule would only
+// measure the rasteriser. The budgets, 800 objects against 100, MEAN ms per frame (the browser
+// coarsens performance.now() to 0.1 ms, so a p50 of a sub-0.1 ms stage reads 0 or 0.1 and hides
+// growth; the mean averages the steps out):
+//   - `frameEval` (the frame evaluator's pass): grows by at most 0.3 ms. The issue's "0.5 ms"
+//     let a real regression through: rebuilding the time-dependent set every frame (an O(N) scan)
+//     measured 0.10 → 0.60 here, a growth of exactly 0.5;
+//   - the scene's React work, the gizmo's and the world reads (`react` + `react:gizmo` + `world`,
+//     summed though they overlap, so the sum over-states): grows by at most 1 ms;
+// and in every run: no scene commit while playing, and the gizmo commits at most twice.
+// Local only (skipped on CI). PERF_BUDGET_FRAMES sets the frames per run (default 120).
+const BUDGET_FRAMES = parseInt(process.env.PERF_BUDGET_FRAMES ?? '120', 10);
+
+test('perf playback budget: per-frame work is flat in the static object count', async ({
+  page,
+}) => {
+  test.skip(!!process.env.CI, 'CI runners have no real GPU and noisy CPU; run locally');
+  test.setTimeout(600_000);
+  const rows = await measurePlayback(page, [100, 800], BUDGET_FRAMES);
+  const mean = (r: PlaybackRow, k: string) => r.s.perFrame[k]?.mean ?? 0;
+  const own = (r: PlaybackRow) => mean(r, 'react') + mean(r, 'react:gizmo') + mean(r, 'world');
+  const report: string[] = ['\n[perf budget] 800 vs 100 static objects, mean ms per frame'];
+  for (const selected of [false, true]) {
+    const small = rows.find((r) => r.objects === 100 && r.selected === selected)!;
+    const big = rows.find((r) => r.objects === 800 && r.selected === selected)!;
+    report.push(
+      `  selected=${selected}: frameEval ${mean(small, 'frameEval').toFixed(3)} → ${mean(big, 'frameEval').toFixed(3)}` +
+        ` · react+gizmo+world ${own(small).toFixed(3)} → ${own(big).toFixed(3)}` +
+        ` · scene commits ${small.s.commits}/${big.s.commits}` +
+        ` · gizmo commits ${small.s.subtreeCommits?.gizmo ?? 0}/${big.s.subtreeCommits?.gizmo ?? 0}`,
+    );
+  }
+  console.log(report.join('\n') + '\n');
+
+  for (const r of rows) {
+    const at = `${r.objects} objects, selected=${r.selected}`;
+    // A budget over a stage that never ran would pass on nothing.
+    expect(r.s.perFrame.frameEval, `${at}: the frame evaluator was timed`).toBeDefined();
+    expect(r.s.frame.count, `${at}: frames sampled`).toBeGreaterThan(BUDGET_FRAMES / 2);
+    expect(r.s.commits, `${at}: the scene asked React for nothing while playing`).toBe(0);
+    expect(
+      r.s.subtreeCommits?.gizmo ?? 0,
+      `${at}: the gizmo committed at most twice`,
+    ).toBeLessThanOrEqual(2);
+  }
+  for (const selected of [false, true]) {
+    const small = rows.find((r) => r.objects === 100 && r.selected === selected)!;
+    const big = rows.find((r) => r.objects === 800 && r.selected === selected)!;
+    expect(
+      mean(big, 'frameEval') - mean(small, 'frameEval'),
+      `selected=${selected}: the frame evaluator's pass grew with static objects`,
+    ).toBeLessThanOrEqual(0.3);
+    expect(
+      own(big) - own(small),
+      `selected=${selected}: React and world-read work grew with static objects`,
+    ).toBeLessThanOrEqual(1);
   }
 });

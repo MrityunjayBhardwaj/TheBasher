@@ -35,6 +35,7 @@ import { createContext, useContext, useLayoutEffect, useRef, type ReactNode } fr
 import { flushSync, useFrame } from '@react-three/fiber';
 import type * as THREE from 'three';
 import type { DagState } from '../core/dag/state';
+import { measureStage } from '../perf/frameProfiler';
 import { resolveWorldTransform } from '../app/resolveWorldTransform';
 import { useDagStore } from '../core/dag/store';
 import { useTransientEditStore } from '../app/stores/transientEditStore';
@@ -182,7 +183,8 @@ export function FrameEvaluatorProvider({
   evaluator: FrameEvaluator;
   children: ReactNode;
 }) {
-  useFrame(() => evaluator.run(), -2);
+  // `frameEval` in the playback table: this pass's cost must not grow with the static scene (#1730).
+  useFrame(() => measureStage('frameEval', () => evaluator.run()), -2);
   useLayoutEffect(() => {
     if (!import.meta.env.DEV) return;
     const w = window as unknown as { __basher_frame_table?: FrameTable };

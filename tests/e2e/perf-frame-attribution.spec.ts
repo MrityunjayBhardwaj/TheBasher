@@ -47,7 +47,7 @@ const WINDOW_MS = parseInt(process.env.PERF_ATTR_WINDOW_MS ?? '4000', 10);
 interface W {
   __basher_dag: {
     getState: () => {
-      state: { outputs: { scene: { node: string } } };
+      state: { outputs: { scene: { node: string } }; nodes: Record<string, unknown> };
       dispatchAtomic: (ops: unknown[], source?: string, description?: string) => unknown;
     };
   };
@@ -202,7 +202,13 @@ async function selectSubject(page: Page) {
           .propose(dag.state, [...curve, toScene], 'add a curve', ['agent:mesh.add']);
       }
       if (subject === 'bone') {
-        const native = await import('/src/core/import/nativeGltfImport.ts');
+        // Vite serves these by URL; a variable keeps tsc from resolving them as modules.
+        const nativeUrl = '/src/core/import/nativeGltfImport.ts';
+        const native = (await import(/* @vite-ignore */ nativeUrl)) as {
+          buildNativeGltfImportOps: (
+            o: unknown,
+          ) => Promise<{ ops: unknown[] } | { refused: string }>;
+        };
         const buffer = await fetch('/assets/skinned-bar.glb').then((r) => r.arrayBuffer());
         const result = await native.buildNativeGltfImportOps({
           buffer,
@@ -219,8 +225,16 @@ async function selectSubject(page: Page) {
         const modifier = Object.entries(nodes).find(([, n]) => n.type === 'ArmatureModifier')![0];
         const armature = (nodes[modifier].inputs.armature as { node: string }).node;
         w.__basher_selection.getState().select(armature);
-        const modes = await import('/src/app/stores/armatureModeStore.ts');
-        const bones = await import('/src/app/stores/boneSelectionStore.ts');
+        const modesUrl = '/src/app/stores/armatureModeStore.ts';
+        const bonesUrl = '/src/app/stores/boneSelectionStore.ts';
+        const modes = (await import(/* @vite-ignore */ modesUrl)) as {
+          useArmatureModeStore: { getState: () => { setMode: (id: string, m: string) => void } };
+        };
+        const bones = (await import(/* @vite-ignore */ bonesUrl)) as {
+          useBoneSelectionStore: {
+            getState: () => { selectBone: (id: string, b: string, chain: string[]) => void };
+          };
+        };
         modes.useArmatureModeStore.getState().setMode(armature, 'pose');
         bones.useBoneSelectionStore.getState().selectBone(armature, 'Bone1', ['Bone0', 'Bone1']);
       }
