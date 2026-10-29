@@ -22,6 +22,10 @@
 // change, at a cost quadratic in the scene (#1729); with that read walking up its parents instead,
 // 0 of 30 on three runs. This pins it. It does not show the freeze itself is gone: playback under
 // the same load still freezes (p1727-playback-under-load, #1726).
+//
+// #1733 (5.2) — each export frame is now applied by one synchronous pass of the frame loop
+// instead of a wait of two animation frames; this spec is the parity gate for that, and prints
+// the export's time per frame.
 
 import type { Page } from '@playwright/test';
 import { test, expect } from './_fixtures';
@@ -145,7 +149,9 @@ async function stage(page: Page): Promise<string | null> {
 }
 
 /** Export under load; return the drawn box z at each captured frame, in order. */
-async function exportAndRead(page: Page): Promise<{ ok: boolean; captures: Capture[] }> {
+async function exportAndRead(
+  page: Page,
+): Promise<{ ok: boolean; captures: Capture[]; ms: number }> {
   const [, result] = await Promise.all([
     page.waitForEvent('download', { timeout: 240_000 }),
     page.evaluate(async (loadMs) => {
@@ -177,8 +183,9 @@ async function exportAndRead(page: Page): Promise<{ ok: boolean; captures: Captu
       };
       requestAnimationFrame(burn);
       try {
+        const t0 = performance.now();
         const r = await w.__basher_render_animation('png-sequence');
-        return { ok: r.ok, reason: r.reason, captures };
+        return { ok: r.ok, reason: r.reason, captures, ms: performance.now() - t0 };
       } finally {
         running = false;
         gl.render = original;
@@ -209,10 +216,10 @@ test.describe('#1727 — an export under load shows the keyed object where scrub
       (id) => (window as unknown as W).__basher_selection.getState().select(id),
       selectId,
     );
-    const { ok, captures } = await exportAndRead(page);
+    const { ok, captures, ms } = await exportAndRead(page);
     const bad = offTrack(captures);
     console.log(
-      `[p1727 export selected] nodes=${STATIC_NODES} load=${LOAD_MS}ms captured=${captures.length} offTrack=${bad.length}`,
+      `[p1727 export selected] nodes=${STATIC_NODES} load=${LOAD_MS}ms captured=${captures.length} offTrack=${bad.length} export=${(ms / FRAMES).toFixed(1)}ms/frame`,
       bad.slice(0, 4).join('; '),
     );
     expect(ok).toBe(true);
@@ -225,10 +232,10 @@ test.describe('#1727 — an export under load shows the keyed object where scrub
   }) => {
     await stage(page);
     await page.evaluate(() => (window as unknown as W).__basher_selection.getState().select(null));
-    const { ok, captures } = await exportAndRead(page);
+    const { ok, captures, ms } = await exportAndRead(page);
     const bad = offTrack(captures);
     console.log(
-      `[p1727 export control] nodes=${STATIC_NODES} load=${LOAD_MS}ms captured=${captures.length} offTrack=${bad.length}`,
+      `[p1727 export control] nodes=${STATIC_NODES} load=${LOAD_MS}ms captured=${captures.length} offTrack=${bad.length} export=${(ms / FRAMES).toFixed(1)}ms/frame`,
       bad.slice(0, 4).join('; '),
     );
     expect(ok).toBe(true);
