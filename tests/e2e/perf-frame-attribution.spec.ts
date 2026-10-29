@@ -19,6 +19,8 @@
 // Both are printed per row: frame p50, then each bucket as ms per frame (its share of the samples
 // times the frame), then the finish time. Skipped on CI.
 
+import { existsSync, rmSync, symlinkSync } from 'node:fs';
+import { join } from 'node:path';
 import type { CDPSession, Page } from '@playwright/test';
 import { test, expect } from './_fixtures';
 import { splitCurveOps } from './_splitCurve';
@@ -43,6 +45,16 @@ const SELECT = process.env.PERF_ATTR_SELECT !== '0';
 // the bone gizmo), `diff` (an agent's proposed curve pending: the ghost preview), `none`.
 const SUBJECT = process.env.PERF_ATTR_SUBJECT ?? (SELECT ? 'sphere' : 'none');
 const WINDOW_MS = parseInt(process.env.PERF_ATTR_WINDOW_MS ?? '4000', 10);
+// #1734 (6.4) — PERF_ATTR_SCENE=<a split .basher directory, see stageScene> plays that scene instead of the stress
+// fixture (one row, nothing selected), opened through the app's own bundle import. With it, the
+// row also counts the skinned meshes by road — skinned on the GPU (a three SkinnedMesh) or
+// deformed on the CPU (a plain mesh whose position buffer is rewritten as it plays) — and prices
+// the functions named in PERF_ATTR_INCLUSIVE, inclusive of what they call.
+const SCENE = process.env.PERF_ATTR_SCENE ?? '';
+const INCLUSIVE = (
+  process.env.PERF_ATTR_INCLUSIVE ??
+  'writeDeformed,write,pose,sampleSkinDeform,samplePose,posedBoneMatrices,updateMatrixWorld,update'
+).split(',');
 
 interface W {
   __basher_dag: {
@@ -166,6 +178,126 @@ async function stage(page: Page, objects: number) {
 }
 
 /** Put the #1731 subject in place: select it, or (for `diff`) propose it. */
+/** Open the scene at SCENE as a new project and wait until it draws. SCENE is a directory holding
+ *  a `.basher` file split, because the files this is for are past V8's longest string (0x1fffffe8
+ *  characters; the 595 MB alley file is, so neither `file.text()` nor `response.text()` can hold
+ *  it): `bundle.json` (the bundle without `assets`), `manifest.json` ([bundle path, file, length]
+ *  per asset) and `assets/<file>`, one asset's text each. The page puts the bundle object back
+ *  together, so no one string is longer than its largest part. The directory is served by the dev
+ *  server through a link at `public/__perf_attr_scene` (made here, removed after): routing it
+ *  through Playwright sends each body over the protocol as JSON, which aborts the test process. */
+async function stageScene(page: Page) {
+  const link = join(process.cwd(), 'public', '__perf_attr_scene');
+  if (!existsSync(link)) symlinkSync(SCENE, link);
+  await page.goto('/');
+  await expect(page.getByTestId('layout')).toBeVisible({ timeout: 15_000 });
+  await page.waitForFunction(() => {
+    const w = window as unknown as Partial<W> & { __basher_import_scene_bundle?: unknown };
+    return Boolean(
+      w.__basher_import_scene_bundle && w.__basher_time && w.__basher_three?.getState().gl,
+    );
+  });
+  await page.evaluate(async () => {
+    const get = async (rel: string) => {
+      const r = await fetch(`/__perf_attr_scene/${rel}`);
+      if (!r.ok) throw new Error(`${rel}: ${r.status}`);
+      return r.text();
+    };
+    const w = window as unknown as {
+      __basher_import_scene_bundle: (b: unknown) => Promise<string>;
+    };
+    const bundle = JSON.parse(await get('bundle.json')) as { assets?: Record<string, string> };
+    const manifest = JSON.parse(await get('manifest.json')) as [string, string, number][];
+    bundle.assets = {};
+    for (const [path, file] of manifest) bundle.assets[path] = await get(`assets/${file}`);
+    await w.__basher_import_scene_bundle(bundle);
+  });
+  // Assets load after the graph, a character at a time: wait until the mesh count has held for
+  // three checks in a row (it plateaus between loads; one repeat was not enough on the alley).
+  let last = -1;
+  let held = 0;
+  for (let i = 0; i < 90 && held < 3; i++) {
+    await page.waitForTimeout(3000);
+    const n = await page.evaluate(() => {
+      const scene = (
+        window as unknown as {
+          __basher_three: {
+            getState: () => {
+              scene: { traverse: (f: (o: { isMesh?: boolean }) => void) => void } | null;
+            };
+          };
+        }
+      ).__basher_three.getState().scene;
+      let c = 0;
+      scene?.traverse((o) => {
+        if (o.isMesh) c++;
+      });
+      return c;
+    });
+    held = n === last && n > 0 ? held + 1 : 0;
+    last = n;
+  }
+}
+
+/** The skinned meshes by road, over one second of playback. */
+async function skinRoads(page: Page) {
+  return page.evaluate(async () => {
+    type M = {
+      isMesh?: boolean;
+      isSkinnedMesh?: boolean;
+      skeleton?: { bones: unknown[] };
+      geometry?: { attributes: { position?: { version: number; count: number } } };
+    };
+    const w = window as unknown as {
+      __basher_three: {
+        getState: () => { scene: { traverse: (f: (o: M) => void) => void } | null };
+      };
+      __basher_time: {
+        getState: () => { setTime: (s: number) => void; play: () => void; pause: () => void };
+      };
+    };
+    const meshes: M[] = [];
+    w.__basher_three.getState().scene?.traverse((o) => {
+      if (o.isMesh) meshes.push(o);
+    });
+    const before = meshes.map((m) => m.geometry?.attributes.position?.version ?? 0);
+    const t = w.__basher_time.getState();
+    t.setTime(0);
+    t.play();
+    await new Promise((r) => setTimeout(r, 1000));
+    t.pause();
+    let gpu = 0;
+    let gpuVerts = 0;
+    const skeletons = new Set<unknown>();
+    let skeletonBones = 0;
+    let cpu = 0;
+    let cpuVerts = 0;
+    meshes.forEach((m, i) => {
+      const pos = m.geometry?.attributes.position;
+      if (m.isSkinnedMesh) {
+        gpu++;
+        gpuVerts += pos?.count ?? 0;
+        if (m.skeleton && !skeletons.has(m.skeleton)) {
+          skeletons.add(m.skeleton);
+          skeletonBones += m.skeleton.bones.length;
+        }
+      } else if (pos && pos.version > before[i]) {
+        cpu++;
+        cpuVerts += pos.count;
+      }
+    });
+    return {
+      meshes: meshes.length,
+      gpu,
+      gpuVerts,
+      cpu,
+      cpuVerts,
+      skeletons: skeletons.size,
+      skeletonBones,
+    };
+  });
+}
+
 async function selectSubject(page: Page) {
   const curve = [
     ...splitCurveOps({
@@ -324,10 +456,21 @@ async function profileWindow(page: Page, cdp: CDPSession) {
     `${n.callFrame.functionName || '(anon)'}@${n.callFrame.url.replace(/^.*\/src\//, '').replace(/\?.*$/, '')}:${n.callFrame.lineNumber + 1}`;
   const us = new Map<string, number>();
   const srcFns = new Map<string, number>();
+  const inclusive = new Map<string, number>();
+  const depFns = new Map<string, number>();
   let total = 0;
   profile.samples.forEach((id, i) => {
     const dt = profile.timeDeltas[i] ?? 0;
     const n = byId.get(id)!;
+    // Inclusive time of each watched function name: a sample counts once per name on its stack.
+    const seen = new Set<string>();
+    for (let k: number | undefined = id; k !== undefined; k = parentOf.get(k)) {
+      const f = byId.get(k)!.callFrame.functionName;
+      if (INCLUSIVE.includes(f) && !seen.has(f)) {
+        seen.add(f);
+        inclusive.set(f, (inclusive.get(f) ?? 0) + dt);
+      }
+    }
     const b = bucketOf(n);
     us.set(b, (us.get(b) ?? 0) + dt);
     total += dt;
@@ -344,12 +487,16 @@ async function profileWindow(page: Page, cdp: CDPSession) {
       const key = chain.join(' ← ');
       chains.set(key, (chains.get(key) ?? 0) + dt);
     }
+    if (b === 'js:deps') {
+      const name = `${n.callFrame.functionName || '(anon)'} ${n.callFrame.url.replace(/^.*\/deps\//, 'deps/').replace(/\?.*$/, '')}:${n.callFrame.lineNumber + 1}`;
+      depFns.set(name, (depFns.get(name) ?? 0) + dt);
+    }
     if (b === 'js:src' || b === 'js:other') {
       const name = `${n.callFrame.functionName || '(anon)'} ${n.callFrame.url.replace(/^.*\/(src|node_modules)\//, '$1/').replace(/\?.*$/, '')}:${n.callFrame.lineNumber + 1}`;
       srcFns.set(name, (srcFns.get(name) ?? 0) + dt);
     }
   });
-  return { run, us, total, srcFns, chains };
+  return { run, us, total, srcFns, chains, inclusive, depFns };
 }
 
 interface TraceEvent {
@@ -440,8 +587,14 @@ test('perf frame attribution: where a playback frame goes', async ({ page }) => 
     return ext ? String(gl!.getParameter(ext.UNMASKED_RENDERER_WEBGL)) : 'unknown';
   });
   lines[0] += ` — GL: ${renderer}`;
-  for (const objects of LEVELS) {
-    await stage(page, objects);
+  for (const objects of SCENE ? [0] : LEVELS) {
+    if (SCENE) {
+      await stageScene(page);
+      const roads = await skinRoads(page);
+      tops.push(
+        `  scene ${SCENE.replace(/^.*\//, '')}: ${roads.meshes} meshes drawn; skinned on the GPU ${roads.gpu} (${roads.gpuVerts} vertices), deformed on the CPU ${roads.cpu} (${roads.cpuVerts} vertices); ${roads.skeletons} three.js skeletons, ${roads.skeletonBones} bones posed and uploaded per frame`,
+      );
+    } else await stage(page, objects);
     const prof = await profileWindow(page, cdp);
     const frames = prof.run.intervals.length;
     // A bucket's share of the sampled time, times the frame: the profile spans a little more than
@@ -453,6 +606,26 @@ test('perf frame attribution: where a playback frame goes', async ({ page }) => 
     lines.push(
       `${String(objects).padStart(7)} | ${f(p50(prof.run.intervals))}     | ${f(perFrame('idle'))} | ${f(perFrame('program'))}   | ${f(perFrame('gc'))}| ${f(perFrame('js:deps') + perFrame('js:three') + perFrame('js:react') + perFrame('js:r3f'))}                 | ${f(perFrame('js:src'))}| ${f(perFrame('js:other'))} | ${f(p50(second.finishMs))}               | ${f(p50(second.intervals))}`,
     );
+    tops.push(
+      `  ${objects || 'scene'}: inclusive ms per frame: ` +
+        INCLUSIVE.map(
+          (k) =>
+            `${k} ${(((prof.inclusive.get(k) ?? 0) / Math.max(1, prof.total)) * frameP50).toFixed(2)}`,
+        ).join(' · '),
+    );
+    const deps = [...prof.depFns.entries()].sort((a, b) => b[1] - a[1]).slice(0, 10);
+    tops.push(
+      `  ${objects || 'scene'}: top three/React/R3F functions, self ms per frame: ` +
+        deps
+          .map(([k, v]) => `${k} ${((v / Math.max(1, prof.total)) * frameP50).toFixed(2)}`)
+          .join(' · '),
+    );
+    if (SCENE) {
+      const roads = await skinRoads(page);
+      tops.push(
+        `  scene, after the profile: ${roads.meshes} meshes drawn; skinned on the GPU ${roads.gpu} (${roads.gpuVerts} vertices), deformed on the CPU ${roads.cpu} (${roads.cpuVerts} vertices)`,
+      );
+    }
     const chains = [...prof.chains.entries()].sort((a, b) => b[1] - a[1]).slice(0, 10);
     tops.push(
       `  ${objects} objects, own-code call chains (leaf ← callers; ms per frame):\n` +
@@ -480,4 +653,8 @@ test('perf frame attribution: where a playback frame goes', async ({ page }) => 
     expect(prof.total, `${objects}: the profile sampled`).toBeGreaterThan(0);
   }
   console.log([...lines, '', ...tops].join('\n') + '\n');
+});
+
+test.afterAll(() => {
+  if (SCENE) rmSync(join(process.cwd(), 'public', '__perf_attr_scene'), { force: true });
 });
