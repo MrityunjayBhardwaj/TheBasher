@@ -46,6 +46,7 @@ import { useSelectionStore } from '../app/stores/selectionStore';
 import { useAssetErrorStore } from '../app/stores/assetErrorStore';
 import { useTimeStore } from '../app/stores/timeStore';
 import { type ClockedCtx, clockFor, clockOf, ctxOnClockOf, liveCtx } from '../app/subjectClock';
+import { rigsFor } from '../app/rigIndex';
 import { restBonePose } from '../nodes/bonePose';
 import { boneParentMatrix } from '../nodes/boneParent';
 import { useTransientEditStore, keyOf, type TransientEdit } from '../app/stores/transientEditStore';
@@ -2748,6 +2749,14 @@ function pickByDrawnBox(mesh: THREE.SkinnedMesh): void {
   };
 }
 
+/** #1737 — `${armature}|${clock}` for the skinned mesh `nodeId`, or null when it cannot be told. */
+function skinnedRigKey(nodeId: string | null): string | null {
+  if (!nodeId) return null;
+  const state = useDagStore.getState().state;
+  const rigs = rigsFor(state, nodeId);
+  return rigs.length === 1 ? `${rigs[0].objectId}|${clockOf(state, nodeId)}` : null;
+}
+
 function SkinnedMeshR({
   pose,
   data,
@@ -2779,7 +2788,11 @@ function SkinnedMeshR({
   // instance is attached to nothing and the registry's sweep evicts it. Asking for it every render
   // re-built it after each sweep, and keying on its identity then rebuilt the draw (measured: one
   // rebuild per quiet sweep on a keyed Object). Its content is already in the key.
-  const buildKey = skinnedDrawKey(data.geometry.key, skin);
+  // #1737 — the armature deforming this mesh, and the clock it runs on: meshes of one armature on
+  // one clock share its bones and, where their group tables match, one palette. Null (no node, or
+  // not exactly one armature found) keeps a private set of bones.
+  const rigKey = skinnedRigKey(nodeId);
+  const buildKey = `${skinnedDrawKey(data.geometry.key, skin)}|${rigKey ?? ''}`;
   const cache = useRef<{
     key: string;
     built: {
@@ -2813,7 +2826,7 @@ function SkinnedMeshR({
       next = { mesh, geometry, draw: null, deformed };
       writeDeformed(next, liveSecondsOf(nodeId), skin.pose);
     } else if (shared && descriptor.kind === 'mesh') {
-      const draw = buildSkinnedDraw(skin, descriptor.data);
+      const draw = buildSkinnedDraw(skin, descriptor.data, rigKey);
       const geometry = shared.clone();
       geometry.setAttribute('skinIndex', new THREE.Uint16BufferAttribute(draw.skinIndex, 4));
       geometry.setAttribute('skinWeight', new THREE.Float32BufferAttribute(draw.skinWeight, 4));
@@ -2830,7 +2843,13 @@ function SkinnedMeshR({
   const built = cache.current.built;
   const skinPose = useRef(skin.pose);
   skinPose.current = skin.pose;
-  useEffect(() => () => built?.geometry.dispose(), [built]);
+  useEffect(
+    () => () => {
+      built?.geometry.dispose();
+      built?.draw?.release();
+    },
+    [built],
+  );
   useFrame(() => {
     if (!built) return;
     const seconds = liveSecondsOf(nodeId);
