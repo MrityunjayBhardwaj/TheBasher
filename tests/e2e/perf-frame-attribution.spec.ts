@@ -270,6 +270,8 @@ async function skinRoads(page: Page) {
     let gpuVerts = 0;
     const skeletons = new Set<unknown>();
     let skeletonBones = 0;
+    // #1737 — distinct bone objects: how many bones are placed and composed per frame.
+    const bones = new Set<unknown>();
     let cpu = 0;
     let cpuVerts = 0;
     meshes.forEach((m, i) => {
@@ -280,6 +282,7 @@ async function skinRoads(page: Page) {
         if (m.skeleton && !skeletons.has(m.skeleton)) {
           skeletons.add(m.skeleton);
           skeletonBones += m.skeleton.bones.length;
+          for (const b of m.skeleton.bones) bones.add(b);
         }
       } else if (pos && pos.version > before[i]) {
         cpu++;
@@ -294,6 +297,7 @@ async function skinRoads(page: Page) {
       cpuVerts,
       skeletons: skeletons.size,
       skeletonBones,
+      bones: bones.size,
     };
   });
 }
@@ -592,7 +596,7 @@ test('perf frame attribution: where a playback frame goes', async ({ page }) => 
       await stageScene(page);
       const roads = await skinRoads(page);
       tops.push(
-        `  scene ${SCENE.replace(/^.*\//, '')}: ${roads.meshes} meshes drawn; skinned on the GPU ${roads.gpu} (${roads.gpuVerts} vertices), deformed on the CPU ${roads.cpu} (${roads.cpuVerts} vertices); ${roads.skeletons} three.js skeletons, ${roads.skeletonBones} bones posed and uploaded per frame`,
+        `  scene ${SCENE.replace(/^.*\//, '')}: ${roads.meshes} meshes drawn; skinned on the GPU ${roads.gpu} (${roads.gpuVerts} vertices), deformed on the CPU ${roads.cpu} (${roads.cpuVerts} vertices); ${roads.skeletons} three.js skeletons uploading ${roads.skeletonBones} palette bones per frame; ${roads.bones} distinct bones placed`,
       );
     } else await stage(page, objects);
     const prof = await profileWindow(page, cdp);
