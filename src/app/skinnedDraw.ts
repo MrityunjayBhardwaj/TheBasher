@@ -54,6 +54,17 @@
 // a key (nothing says which armature), a draw keeps a private hierarchy, as before. The bind
 // matrix stays per mesh (`SkinnedMesh.bind`), so meshes placed differently still share bones.
 //
+// ── WHY NOT ONE PALETTE PER ARMATURE (BLENDER'S SHAPE) — MEASURED, DECIDED: NOT BUILT ────────────
+//
+// Blender keeps one matrix per bone (`chan_mat`, `armature_update.cc:963-964`) and each mesh only
+// points at bones by group name (`armature_deform.cc:322-337`). The three equivalent — one palette
+// per armature, each mesh's joint numbers remapped to bone numbers at build — uploads FEWER bones
+// than the palettes here ONLY when meshes of one armature carry DIFFERENT group tables. Measured
+// 2026-10-29 (#1737): Mixamo X Bot 2 meshes → 1 palette, 68 bones; Tripo 1 → 1, 24; the alley 22
+// meshes → 2 armatures, 2 palettes, 439 bones uploaded = 439 distinct bones placed. One palette per
+// armature already, so the remap would save nothing and was not built (user's decision). Revisit
+// only when `perf-frame-attribution`'s scene row reads "at most N palettes per armature" with N > 1.
+//
 // REF: src/nodes/armatureDeform.ts; src/core/import/threeAdapter.ts (`specToThreeSkeleton`);
 //      node_modules/three/src/objects/SkinnedMesh.js; three r169 src/renderers/webgl/
 //      WebGLObjects.js (`updateMap.get( skeleton ) !== frame`), src/objects/Skeleton.js

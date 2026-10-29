@@ -242,10 +242,11 @@ async function stageScene(page: Page) {
 /** The skinned meshes by road, over one second of playback. */
 async function skinRoads(page: Page) {
   return page.evaluate(async () => {
+    type B = { name: string; isBone?: boolean; parent: B | null };
     type M = {
       isMesh?: boolean;
       isSkinnedMesh?: boolean;
-      skeleton?: { bones: unknown[] };
+      skeleton?: { bones: B[] };
       geometry?: { attributes: { position?: { version: number; count: number } } };
     };
     const w = window as unknown as {
@@ -272,6 +273,11 @@ async function skinRoads(page: Page) {
     let skeletonBones = 0;
     // #1737 — distinct bone objects: how many bones are placed and composed per frame.
     const bones = new Set<unknown>();
+    // Palettes per armature: the skeletons whose bones hang from the same root bone are one
+    // armature's. Above 1, an armature's meshes name different vertex-group tables, and only then
+    // would one palette per armature with joints remapped per mesh (Blender's shape) upload fewer
+    // bones — see "WHY NOT ONE PALETTE PER ARMATURE" in src/app/skinnedDraw.ts.
+    const palettesOfRig = new Map<unknown, number>();
     let cpu = 0;
     let cpuVerts = 0;
     meshes.forEach((m, i) => {
@@ -283,6 +289,9 @@ async function skinRoads(page: Page) {
           skeletons.add(m.skeleton);
           skeletonBones += m.skeleton.bones.length;
           for (const b of m.skeleton.bones) bones.add(b);
+          let root = m.skeleton.bones.find((b) => b.name !== '') ?? m.skeleton;
+          while ('parent' in root && root.parent?.isBone) root = root.parent;
+          palettesOfRig.set(root, (palettesOfRig.get(root) ?? 0) + 1);
         }
       } else if (pos && pos.version > before[i]) {
         cpu++;
@@ -298,6 +307,8 @@ async function skinRoads(page: Page) {
       skeletons: skeletons.size,
       skeletonBones,
       bones: bones.size,
+      armatures: palettesOfRig.size,
+      mostPalettesPerArmature: Math.max(0, ...palettesOfRig.values()),
     };
   });
 }
@@ -596,7 +607,7 @@ test('perf frame attribution: where a playback frame goes', async ({ page }) => 
       await stageScene(page);
       const roads = await skinRoads(page);
       tops.push(
-        `  scene ${SCENE.replace(/^.*\//, '')}: ${roads.meshes} meshes drawn; skinned on the GPU ${roads.gpu} (${roads.gpuVerts} vertices), deformed on the CPU ${roads.cpu} (${roads.cpuVerts} vertices); ${roads.skeletons} three.js skeletons uploading ${roads.skeletonBones} palette bones per frame; ${roads.bones} distinct bones placed`,
+        `  scene ${SCENE.replace(/^.*\//, '')}: ${roads.meshes} meshes drawn; skinned on the GPU ${roads.gpu} (${roads.gpuVerts} vertices), deformed on the CPU ${roads.cpu} (${roads.cpuVerts} vertices); ${roads.skeletons} three.js skeletons uploading ${roads.skeletonBones} palette bones per frame; ${roads.bones} distinct bones placed; ${roads.armatures} armatures, at most ${roads.mostPalettesPerArmature} palettes per armature`,
       );
     } else await stage(page, objects);
     const prof = await profileWindow(page, cdp);
