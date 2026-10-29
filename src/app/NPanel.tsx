@@ -89,6 +89,7 @@ import {
 import { OptionsSelect } from './OptionsSelect';
 import type { NodeRef } from '../core/dag/types';
 import { resolveStackBase } from './operatorStack';
+import { usePlayheadFor } from './animate/usePlayheadFor';
 import { useTimeStore } from './stores/timeStore';
 import {
   buildClearSlotOverrideOp,
@@ -395,9 +396,8 @@ function NumericField({
   // `value` path). Subscribing to dagState mirrors VectorField so a source edit
   // refreshes the display.
   const dagState = useDagStore((s) => s.state);
-  const frame = useTimeStore((s) => s.frame);
-  const seconds = useTimeStore((s) => s.seconds);
-  const normalized = useTimeStore((s) => s.normalized);
+  // #1731 — subscribed to the playhead only when this node's own value can move with it.
+  const { frame, seconds, normalized } = usePlayheadFor(nodeId);
   const driven = useMemo(
     () =>
       driverNodesForTarget(dagState.nodes, nodeId).some(
@@ -590,10 +590,10 @@ function VectorField({
   // Vec3 back via the resolver's patched-clone passthrough, so the
   // (resolved ?? value) seam is byte-identical to today's display for
   // anything not actively animated. V20: subscriber form throughout,
-  // never useTimeStore.getState() in the seam.
-  const frame = useTimeStore((s) => s.frame);
-  const seconds = useTimeStore((s) => s.seconds);
-  const normalized = useTimeStore((s) => s.normalized);
+  // never useTimeStore.getState() in the seam (#1731: `usePlayheadFor` subscribes whenever the
+  // node's value can move, and reads the playhead only for a node whose value cannot).
+  // #1731 — subscribed to the playhead only when this node's own value can move with it.
+  const { frame, seconds, normalized } = usePlayheadFor(nodeId);
   const playing = useTimeStore((s) => s.playing);
   const dagState = useDagStore((s) => s.state);
   // #1314 — a stable cache: this re-reads the evaluated graph on every playhead change, and
@@ -4099,9 +4099,8 @@ const QUATERNION_AXES = [
  *  euler row shows its evaluated triple), read-only while playing. Each component commits
  *  through the same animated re-route and Auto-Key the vector rows use. */
 function QuaternionField({ nodeId, authored }: { nodeId: string; authored: Quat }) {
-  const frame = useTimeStore((s) => s.frame);
-  const seconds = useTimeStore((s) => s.seconds);
-  const normalized = useTimeStore((s) => s.normalized);
+  // #1731 — subscribed to the playhead only when this node's own value can move with it.
+  const { frame, seconds, normalized } = usePlayheadFor(nodeId);
   const playing = useTimeStore((s) => s.playing);
   const dagState = useDagStore((s) => s.state);
   // #1314 — a stable cache: this re-reads the evaluated graph on every playhead change, and

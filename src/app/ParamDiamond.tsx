@@ -26,7 +26,7 @@ import { dispatchMutatorFromUI } from './animate/dispatchMutator';
 import { keyParamFromTransient, resolveChannel } from './animate/autoKeyCommit';
 import { paramAnimationState } from './animate/paramAnimationState';
 import { diamondActivation } from './animate/rowChannelWrite';
-import { useTimeStore } from './stores/timeStore';
+import { usePlayheadFor } from './animate/usePlayheadFor';
 import { runsOnFilmTime } from './subjectClock';
 import { keyOf, useTransientEditStore } from './stores/transientEditStore';
 
@@ -45,8 +45,9 @@ export function ParamDiamond({
    *  (H95 — duplicate testids break a strict locator). */
   testid?: string;
 }) {
-  const sceneFrame = useTimeStore((s) => s.frame);
-  const filmFrame = useTimeStore((s) => s.filmFrame);
+  // #1731 — subscribed to the playhead only when this node is animated: a param with no channel
+  // reads 'none' at every frame.
+  const { frame: sceneFrame, filmFrame } = usePlayheadFor(nodeId);
   const nodes = useDagStore((s) => s.state.nodes);
   const dagState = useDagStore((s) => s.state);
   // #1594 — a camera's keys sit on the playhead's clock, everything else's on the scene's.
