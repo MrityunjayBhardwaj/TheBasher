@@ -52,6 +52,10 @@ function buildRetimeOps(state: DagState, map: (t: number) => number): Op[] {
       const keys = p.keyframes ?? [];
       if (!keys.some((k) => map(k.time) !== k.time)) continue;
       const moved = keys.map((k) => ({ ...k, time: map(k.time) })).sort((a, b) => a.time - b.time);
+      // #1752 — the map never decreases, but it can flatten: keys inside a held stretch all show
+      // one scene moment and land on one time. Keep each one integration step after the last.
+      for (let i = 1; i < moved.length; i++)
+        if (moved[i].time <= moved[i - 1].time) moved[i].time = moved[i - 1].time + 1 / 240;
       ops.push({ type: 'setParam', nodeId: node.id, paramPath: 'keyframes', value: moved });
     } else if (node.type === 'Strip') {
       // An NLA placement is a film-time thing when what it plays on is.
@@ -120,7 +124,11 @@ export function buildShotSpeedOps(
   // A cut lands on a frame, as End does. The clock sums the speed on a 1/240 s grid, so the scene
   // time it reports across a step is off by a fraction of a millisecond; snapping keeps a shot
   // re-timed back to its old speed at its old length instead of drifting by that each time.
-  const newEnd = opts.keepLength ? end : Math.round((start + covered / speed) * FPS) / FPS;
+  // #1752 — a held shot (speed 0 across it) covers no scene time, so no length can be derived
+  // from it: it keeps its length and plays at `speed`, as with `keepLength`.
+  const derived = Math.round((start + covered / speed) * FPS) / FPS;
+  const keepLength = opts.keepLength || !(derived > start);
+  const newEnd = keepLength ? end : derived;
   const delta = newEnd - end;
 
   // The speed curve as it is now: its channel (the one the clock reads), and its value at a time.
@@ -149,7 +157,7 @@ export function buildShotSpeedOps(
   const map = (t: number): number => {
     if (t < start) return t;
     if (t >= end) return t + delta;
-    if (opts.keepLength || !(covered > 0)) return t;
+    if (keepLength) return t;
     // On the clock's own 1/240 s grid: the clock is good to a fraction of a step, so a key
     // re-timed there and back would otherwise drift by that each time. Rounding never reorders,
     // and the new end is on a frame, so a key stays inside the shot.

@@ -275,6 +275,69 @@ describe('#1700 — slowing a shot lengthens it', () => {
     );
   });
 
+  // #1752 — a held shot (the speed is 0 across it) covers no scene time, so a length cannot be
+  // derived from it: it used to collapse to nothing, its cut landing on the next one. It keeps its
+  // length and plays at the speed it was given.
+  const held = (keys: { time: number; value: number }[]) =>
+    run(film(), [
+      {
+        type: 'addNode',
+        nodeId: 'speed_held',
+        nodeType: 'KeyframeChannelNumber',
+        params: {
+          name: 'timeSpeed',
+          target: 'n_scene',
+          paramPath: 'timeSpeed',
+          keyframes: keys.map((k) => ({ ...k, easing: 'constant' })),
+        },
+      },
+    ]);
+  it('a held shot given a speed keeps its length and plays at that speed', () => {
+    const s0 = held([
+      { time: 0, value: 1 },
+      { time: 2, value: 0 },
+      { time: 5, value: 1 },
+    ]);
+    expect(speedOver(s0, 2, 5), 'the shot is held').toBeCloseTo(0, 2);
+    const edit = buildShotSpeedOps(s0, 2, 5, 0.5)!;
+    expect(edit.end).toBe(5);
+    const s = run(s0, edit.ops);
+    expect(keyTimes(s, cutChannelId(s))).toEqual(keyTimes(s0, cutChannelId(s0)));
+    expect(speedOver(s, 2, 5 - 1 / 60), 'the shot plays at 50%').toBeCloseTo(0.5, 2);
+  });
+
+  // #1752 — keys inside a held stretch of a shot all show the same scene moment, so moving each
+  // with the scene time it shows put them on one time, with different values. They stay in order,
+  // each after the one before.
+  it('keys inside a held stretch of a re-timed shot stay in order at distinct times', () => {
+    let s0 = held([
+      { time: 0, value: 1 },
+      { time: 3, value: 0 },
+      { time: 4.5, value: 1 },
+    ]);
+    s0 = run(s0, [
+      {
+        type: 'addNode',
+        nodeId: 'held_keys',
+        nodeType: 'KeyframeChannelVec3',
+        params: {
+          name: 'position',
+          target: 'cam2',
+          paramPath: 'position',
+          keyframes: [lin(2.5, [0, 0, 0]), lin(3.5, [1, 0, 0]), lin(4, [2, 0, 0])],
+        },
+      },
+    ]);
+    const s = run(s0, buildShotSpeedOps(s0, 2, 5, 1)!.ops);
+    const times = keyTimes(s, 'held_keys');
+    const values = (s.nodes.held_keys.params as { keyframes: { value: number[] }[] }).keyframes.map(
+      (k) => k.value[0],
+    );
+    expect(values, 'in their old order').toEqual([0, 1, 2]);
+    for (let i = 1; i < times.length; i++)
+      expect(times[i], `key ${i} after key ${i - 1}`).toBeGreaterThan(times[i - 1]);
+  });
+
   it('a speed that cannot hold a length is refused', () => {
     expect(buildShotSpeedOps(film(), 2, 5, 0)).toBeNull();
     expect(buildShotSpeedOps(film(), 2, 5, Number.NaN)).toBeNull();
