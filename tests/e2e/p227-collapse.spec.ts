@@ -82,7 +82,7 @@ test('a Transform wrapper collapses its single target', async ({ page }) => {
           type: 'addNode',
           nodeId: 'n_xf',
           nodeType: 'Transform',
-          params: { position: [0, 2, 0], rotation: [0, 0, 0], scale: [1, 1, 1], pivot: [0, 0, 0] },
+          params: { position: [0, 2, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
         },
         {
           type: 'disconnect',
