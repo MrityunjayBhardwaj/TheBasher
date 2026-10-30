@@ -15,10 +15,15 @@
 //
 // #1668 — a key names its camera. A key whose camera has been deleted (or taken out of the switch)
 // is not a cut: the resolver skips it and the shot before runs on, so it starts no row here either.
+//
+// #1747 — nor is a key on a channel that has no say: muted, silenced by a soloed sibling, or
+// weighted under the text snap. The resolver plays the switch's own camera there
+// (`overlayCutChannel`), so the film is one shot on that camera, and the panel says why.
 
 import type { DagState } from '../core/dag';
 import type { Node, NodeRef } from '../core/dag/types';
 import { cutChannelOf, listedCameraIds, selectActiveCameraNode } from './activeCamera';
+import { cutChannelHasSay } from './cameraChannels';
 
 export { cutChannelOf };
 
@@ -44,6 +49,9 @@ export interface ShotsView {
   /** The cameras the select can pick, in wire order. */
   readonly cameraIds: readonly string[];
   readonly shots: readonly Shot[];
+  /** True when the cuts channel has keys naming listed cameras but none of them cuts: the channel
+   *  is muted, soloed out or weighted to nothing, so one camera plays the whole film. */
+  readonly cutsSilenced: boolean;
 }
 
 /** The `CameraSelect` wired into `scene.camera`, if any. */
@@ -61,7 +69,7 @@ export function shotsOf(state: DagState, end: number): ShotsView {
   const select = cameraSelectOf(state);
   const cameraIds = select ? listedCameraIds(select) : [];
   const channel = select ? cutChannelOf(state, select.id) : null;
-  const keyTimes = channel
+  const listedTimes = channel
     ? [
         ...new Set(
           ((channel.params as { keyframes?: { time: number; value: unknown }[] }).keyframes ?? [])
@@ -70,6 +78,11 @@ export function shotsOf(state: DagState, end: number): ShotsView {
         ),
       ].sort((a, b) => a - b)
     : [];
+  // The keys that cut: the ones the resolver hears at their own time.
+  const keyTimes =
+    select && channel
+      ? listedTimes.filter((t) => cutChannelHasSay(state, select.id, channel, t))
+      : [];
 
   // Cuts are the keys after the first: before the first key its camera holds (extend hold), so
   // the first key starts nothing new. A key at or past the film's end starts no visible shot.
@@ -86,5 +99,11 @@ export function shotsOf(state: DagState, end: number): ShotsView {
     cameraId: selectActiveCameraNode(state, s.time)?.id ?? null,
     keyTime: s.keyTime,
   }));
-  return { selectId: select?.id ?? null, channelId: channel?.id ?? null, cameraIds, shots };
+  return {
+    selectId: select?.id ?? null,
+    channelId: channel?.id ?? null,
+    cameraIds,
+    shots,
+    cutsSilenced: listedTimes.length > 0 && keyTimes.length === 0,
+  };
 }

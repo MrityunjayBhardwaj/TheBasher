@@ -6,6 +6,7 @@ import { applyOp, type DagState } from '../core/dag';
 import { registerAllNodes } from '../nodes/registerAll';
 import { makeSplitCamera } from '../test-utils/splitCamera';
 import { buildSetActiveCameraOps } from './setActiveCamera';
+import { selectActiveCameraNode } from './activeCamera';
 import { shotsOf } from './shots';
 
 beforeAll(() => registerAllNodes());
@@ -106,5 +107,65 @@ describe('#1595 — shots from the camera cuts', () => {
       [0, 4, 'n_camera', 0],
       [4, 10, 'cam3', 4],
     ]);
+  });
+});
+
+// #1747 — the cuts obey the rules every channel does (`overlayCutChannel`): muted, silenced by a
+// soloed sibling, or weighted under the text snap, the channel leaves the switch's own camera on
+// screen. The rows follow the resolver: no cut that does not cut, one shot on what plays.
+describe('#1747 — a cuts channel with no say makes no shots', () => {
+  const cut = (): { s: DagState; select: string } => {
+    const { state, select } = threeCameras();
+    return {
+      select,
+      s: keyed(state, select, [
+        [0, 'cam2'],
+        [2, 'cam3'],
+        [5, 'cam2'],
+      ]),
+    };
+  };
+  const set = (s: DagState, paramPath: string, value: unknown) =>
+    applyOp(s, { type: 'setParam', nodeId: 'cuts', paramPath, value }).next;
+
+  it('heard (control): three shots, and nothing silenced', () => {
+    const { s } = cut();
+    expect(rows(s).map((r) => r[2])).toEqual(['cam2', 'cam3', 'cam2']);
+    expect(shotsOf(s, 10).cutsSilenced).toBe(false);
+  });
+
+  it('muted: one shot over the film, on the camera the resolver plays', () => {
+    const s = set(cut().s, 'mute', true);
+    expect(rows(s)).toEqual([[0, 10, 'n_camera', null]]);
+    expect(shotsOf(s, 10).cutsSilenced).toBe(true);
+  });
+
+  it('weight under the text snap: one shot; at or over it: the cuts', () => {
+    expect(rows(set(cut().s, 'weight', 0.4))).toEqual([[0, 10, 'n_camera', null]]);
+    expect(rows(set(cut().s, 'weight', 0.6)).map((r) => r[2])).toEqual(['cam2', 'cam3', 'cam2']);
+  });
+
+  it('a soloed sibling on the switch silences the cuts, as it does on screen', () => {
+    const { s: s0, select } = cut();
+    // The switch has one param, so a sibling the solo rule hears is a second, keyed channel on it.
+    const s = applyOp(s0, {
+      type: 'addNode',
+      nodeId: 'other',
+      nodeType: 'KeyframeChannelText',
+      params: {
+        name: 'active',
+        target: select,
+        paramPath: 'active',
+        solo: true,
+        keyframes: [{ time: 0, value: 'n_camera', easing: 'constant' }],
+      },
+    }).next;
+    expect(selectActiveCameraNode(s, 3)?.id, 'what plays').toBe('n_camera');
+    expect(rows(s)).toEqual([[0, 10, 'n_camera', null]]);
+    expect(shotsOf(s, 10).cutsSilenced).toBe(true);
+  });
+
+  it('no keys is not silenced: there is nothing to cut', () => {
+    expect(shotsOf(threeCameras().state, 10).cutsSilenced).toBe(false);
   });
 });

@@ -85,3 +85,20 @@ export function overlayCutChannel(
   const folded = overlayChannels({ active }, [cut], 1, seconds);
   return folded?.active ?? active;
 }
+
+/**
+ * #1747 — whether the cut channel decides the camera at `seconds`, judged by the very rule
+ * `overlayCutChannel` folds by: asked to fold a pick onto a different static camera, does the pick
+ * win? A muted channel, one a soloed sibling silences, or one whose weight is under the text snap
+ * leaves the static camera on screen, so its cuts cut nothing. Two values no camera id can be
+ * stand in for the cameras, so the answer is the rule's alone.
+ */
+export function cutChannelHasSay(
+  state: DagState,
+  selectId: string,
+  channel: Node,
+  seconds: number,
+): boolean {
+  const picked = '\u0000cut';
+  return overlayCutChannel(state, selectId, channel, '\u0000static', picked, seconds) === picked;
+}
