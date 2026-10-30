@@ -24,13 +24,17 @@ import { registerAllNodes } from '../nodes/registerAll';
 import { collectSkeletonObjects } from './skeletonObjects';
 import { skeletonObjectFrames } from '../viewport/skeletonObjectPose';
 import { gltfNodeWorldPosition } from './gltfNodeWorld';
-import { armatureOf, armaturePoseAt, rigsFor } from './rigIndex';
+import { armatureOf, armaturePoseAt, armatureWorldAt, rigsFor } from './rigIndex';
+import { useTransientEditStore } from './stores/transientEditStore';
 
 beforeEach(() => {
   __resetRegistryForTests();
   registerAllNodes();
 });
-afterEach(() => __setEvalPerfHook(null));
+afterEach(() => {
+  __setEvalPerfHook(null);
+  useTransientEditStore.getState().clearAll();
+});
 
 const BVH = `HIERARCHY
 ROOT Hips
@@ -172,6 +176,20 @@ describe('#1732 — a bone by name, where it is drawn', () => {
     const b = armaturePoseAt(state, rig.objectId, 1.1);
     expect(b).not.toBe(a);
     expect(Array.from(b!)).not.toEqual(Array.from(a!));
+  });
+
+  // #1750 — the armature's world is kept per time AND per held edit, so a drag in progress is
+  // read where it is drawn. Nothing asserted the held-edit half: a kept world that ignored the
+  // drag stayed green.
+  it('a held edit on the armature moves its kept world at the same time', () => {
+    const state = travelling();
+    const [rig] = rigsFor(state, 'grp');
+    const still = armatureWorldAt(state, rig.objectId, 1)!;
+    expect(armatureWorldAt(state, rig.objectId, 1), 'kept while nothing changes').toBe(still);
+    useTransientEditStore.getState().set(rig.objectId, 'position', [3, 0, 0]);
+    const held = armatureWorldAt(state, rig.objectId, 1)!;
+    expect(held, 'the drag is read, not the kept world').not.toBe(still);
+    expect(held[12] - still[12], 'moved by the held x').not.toBeCloseTo(0, 6);
   });
 
   it('an edit, or content arriving later, is read afresh', () => {

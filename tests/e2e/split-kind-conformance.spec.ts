@@ -1080,9 +1080,11 @@ test.describe('the split-kind conformance matrix (browser tier)', () => {
             `row's expected answer as a disguise`,
         ).toContain(no.issue);
 
-        // Offer and accept must agree on the SENTENCE, not merely on the verdict. They read
-        // it from one expression (`stripDriveRefusal`), and if that ever forks, the button's
-        // tooltip and the toast start explaining the same refusal differently.
+        // Offer and accept must agree on the SENTENCE, not merely on the verdict, or the
+        // button's tooltip and the toast explain the same refusal differently. No kind refuses
+        // push-down today: the one that did, the camera, became a strip target in #480, and the
+        // shared expression both sides read went with it. So this branch runs again only when a
+        // kind refuses, and then the button must carry a title that matches the dispatcher.
         const title = await page.getByTestId('nla-push-down').getAttribute('title');
         // The button must HAVE a tooltip before its sentence can be compared with the
         // dispatcher's. Asserted on its own line rather than folded into a fallback on the

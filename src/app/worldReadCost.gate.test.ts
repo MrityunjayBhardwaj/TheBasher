@@ -130,11 +130,17 @@ describe('#1729 — the world read costs the depth of its node, not the size of 
       expect(large).toBe(small);
     });
 
-    it(`${read}: more node reads at depth 6 than at depth 2`, () => {
-      const shallow = readsFor(100, 2, read);
-      const deep = readsFor(100, 6, read);
-      console.log(`[#1729 ${read}] N=100: ${shallow} node reads at depth 2, ${deep} at depth 6`);
-      expect(deep).toBeGreaterThan(shallow);
+    // #1750 — what each level of depth costs must not depend on the scene's size either. "More
+    // reads at depth 6 than at depth 2" held for the old whole-scene scan too (it costs more per
+    // level, and more again in a bigger scene), so it could not fail. The cost of four more levels
+    // at 50 objects and at 400 can: a scan per level makes it grow with N.
+    it(`${read}: each level of depth costs the same at 50 and at 400 static objects`, () => {
+      const perLevel = (n: number) => (readsFor(n, 6, read) - readsFor(n, 2, read)) / 4;
+      const small = perLevel(50);
+      const large = perLevel(400);
+      console.log(`[#1729 ${read}] node reads per level: ${small} at N=50, ${large} at N=400`);
+      expect(small, 'a deeper node costs more to read').toBeGreaterThan(0);
+      expect(large).toBe(small);
     });
   }
 
