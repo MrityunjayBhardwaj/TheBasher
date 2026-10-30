@@ -5,6 +5,7 @@ import { buildDefaultDagState } from '../core/project/default';
 import { applyOp, type DagState } from '../core/dag';
 import { useDagStore } from '../core/dag/store';
 import type { Op } from '../core/dag/types';
+import { sampleScalarKeyframes, type ScalarKey } from '../nodes/keyframeInterp';
 import { registerAllNodes } from '../nodes/registerAll';
 import { makeSplitCamera } from '../test-utils/splitCamera';
 import { buildCutOps } from './shotOps';
@@ -377,4 +378,84 @@ describe('#1700 — slowing a shot lengthens it', () => {
     expect(buildShotSpeedOps(film(), 2, 5, 0)).toBeNull();
     expect(buildShotSpeedOps(film(), 2, 5, Number.NaN)).toBeNull();
   });
+});
+
+// #1751 — a straight, 'cubic' or Bézier-handled segment cut at the shot's edges is split exactly,
+// as Blender's key insert splits a Bézier (`BKE_fcurve_bezt_subdivide_handles`, a De Casteljau
+// split): each kept piece IS the old curve, so it needs no extra keys and the speed curve reads
+// the same value at every time it kept. Equation easings (sine…elastic) are not Bézier curves and
+// are still drawn in short straight steps (see the ramps above).
+describe('#1751 — the speed curve is split exactly where it is a Bézier', () => {
+  type K = { time: number; value: number; easing: string } & Record<string, unknown>;
+  const ramps: Record<string, K[]> = {
+    linear: [
+      { time: 0, value: 1, easing: 'linear' },
+      { time: 10, value: 3, easing: 'linear' },
+    ],
+    cubic: [
+      { time: 0, value: 1, easing: 'linear' },
+      { time: 10, value: 3, easing: 'cubic' },
+    ],
+    'free-handle Bézier': [
+      {
+        time: 0,
+        value: 1,
+        easing: 'linear',
+        handleType: 'free',
+        outHandle: { time: 3, value: 1.5 },
+      },
+      {
+        time: 10,
+        value: 3,
+        easing: 'cubic',
+        handleType: 'free',
+        inHandle: { time: -2, value: 0.2 },
+      },
+    ],
+    // Computed handles follow their neighbours, and the cut gives both ends new ones; the edit
+    // keeps the handles they had, as stored 'free' handles, so the curve does not move.
+    'auto-clamped': [
+      { time: 0, value: 1, easing: 'linear', handleType: 'auto-clamped' },
+      { time: 10, value: 3, easing: 'cubic', handleType: 'auto-clamped' },
+      { time: 14, value: 2, easing: 'cubic', handleType: 'auto-clamped' },
+    ],
+  };
+  const withSpeed = (keys: K[]) =>
+    run(film(), [
+      {
+        type: 'addNode',
+        nodeId: 'speed_split',
+        nodeType: 'KeyframeChannelNumber',
+        params: { name: 'timeSpeed', target: 'n_scene', paramPath: 'timeSpeed', keyframes: keys },
+      },
+    ]);
+  const speedKeys = (s: DagState) =>
+    (s.nodes.speed_split.params as { keyframes: ScalarKey[] }).keyframes;
+
+  for (const [name, keys] of Object.entries(ramps)) {
+    it(`a ${name} speed curve is the same curve on both sides of the re-timed shot`, () => {
+      const s0 = withSpeed(keys);
+      const edit = buildShotSpeedOps(s0, 2, 5, 0.5)!;
+      const s = run(s0, edit.ops);
+      const d = edit.end - 5;
+      const was = speedKeys(s0);
+      const now = speedKeys(s);
+      // The old keys, a key where each piece ends, and the shot's own two.
+      expect(now.length, 'keys on the speed curve').toBeLessThanOrEqual(was.length + 4);
+      let worst = 0;
+      for (let t = 0; t <= 2 - 1 / 240; t += 1 / 48)
+        worst = Math.max(
+          worst,
+          Math.abs(sampleScalarKeyframes(now, t) - sampleScalarKeyframes(was, t)),
+        );
+      for (let t = 5; t <= 14; t += 1 / 48)
+        worst = Math.max(
+          worst,
+          Math.abs(sampleScalarKeyframes(now, t + d) - sampleScalarKeyframes(was, t)),
+        );
+      expect(worst, 'largest change in the speed at a kept time').toBeLessThan(1e-6);
+      const drift = sceneClockOf(s).sceneAt(10 + d) - sceneClockOf(s0).sceneAt(10);
+      expect(Math.abs(drift), 'scene time at the end of the ramp').toBeLessThan(1 / 60);
+    });
+  }
 });

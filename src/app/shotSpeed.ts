@@ -15,6 +15,7 @@
 
 import type { DagState } from '../core/dag/state';
 import type { Op } from '../core/dag/types';
+import { resolveScalarHandle, splitSegmentForKey, type ScalarKey } from '../nodes/keyframeInterp';
 import { isKeyframeChannelNode } from './animate/paramAnimationState';
 import { channelEntriesFromNodes, directChannelNodesForTarget } from './nodeChannels';
 import { sceneClockOf } from './sceneClock';
@@ -44,6 +45,46 @@ function samplesBetween(a: number, b: number): number[] {
   const out: number[] = [];
   for (let t = a + SAMPLE; t < b - SAMPLE / 2; t += SAMPLE) out.push(Math.round(t * 240) / 240);
   return out;
+}
+
+/** Computed handle types: their handles follow the neighbouring keys (keyframeInterp). */
+const COMPUTED = new Set(['vector', 'auto', 'auto-clamped']);
+
+/**
+ * #1751 — the old segment `keys[i]` → `keys[i + 1]` cut at `time`, as Blender's key insert cuts a
+ * Bézier (`BKE_fcurve_bezt_subdivide_handles`, via `splitSegmentForKey`): the two ends with the
+ * handles of the piece on their side, and a key at `time` with the handles of both pieces. Each
+ * piece IS the old curve, so it needs no other key. Null when the segment is an equation easing
+ * (sine…elastic), which is no Bézier and keeps no shape between new endpoints.
+ *
+ * Before the split every handle the sampler would draw with is written down: a computed one
+ * (vector, auto, auto-clamped) as the 'free' handle it resolves to now, since the cut gives both
+ * ends new neighbours and Blender would recompute it, reshaping a curve that times the whole
+ * film; and a segment with no handle as the flat (smoothstep, 'cubic') or straight ('linear')
+ * handles that draw it exactly (keyframeInterp's header).
+ */
+function splitOldSegment(
+  keys: readonly ScalarKey[],
+  i: number,
+  time: number,
+  value: number,
+): { a: ScalarKey; key: ScalarKey; b: ScalarKey } | null {
+  const frozen = (j: number): ScalarKey => {
+    const k = keys[j];
+    if (k.handleType === undefined || !COMPUTED.has(k.handleType)) return k;
+    const inHandle = resolveScalarHandle(keys, j, 'in');
+    const outHandle = resolveScalarHandle(keys, j, 'out');
+    return { ...k, handleType: 'free', inHandle, outHandle };
+  };
+  let a = frozen(i);
+  let b = frozen(i + 1);
+  if (!a.outHandle && !b.inHandle) {
+    const span = b.time - a.time;
+    const rise = b.easing === 'cubic' ? 0 : (b.value - a.value) / 3;
+    a = { ...a, outHandle: { time: span / 3, value: rise } };
+    b = { ...b, inHandle: { time: -span / 3, value: -rise } };
+  }
+  return splitSegmentForKey(a, b, { time, value, easing: b.easing });
 }
 
 function sceneIdOf(state: DagState): string | null {
@@ -204,15 +245,22 @@ export function buildShotSpeedOps(
   const keys: Key[] = [...before];
   const prev = before[before.length - 1];
   const hold = start - STEP;
+  let split: ReturnType<typeof splitOldSegment>;
   if (prev && prev.time < hold) {
     // The old curve ran from `prev` to the next key, shaped by that key. Stop it one integration
     // step before the shot, keeping its shape, so the shot before plays as it did.
     const next = old.find((k) => k.time > prev.time);
     if (cutsExactly(prev, next)) {
       keys.push({ time: hold, value: speedAt(hold), easing: next?.easing ?? 'constant' });
+    } else if (
+      (split = splitOldSegment(old as ScalarKey[], old.indexOf(prev), hold, speedAt(hold)))
+    ) {
+      // #1751 — a Bézier piece: the old curve up to the cut, exactly.
+      keys[keys.length - 1] = split.a;
+      keys.push(split.key);
     } else {
-      // #1751 — a piece of an eased (or handled) segment is not that easing between new
-      // endpoints, so it is drawn as the old curve sampled on short straight steps.
+      // #1751 — a piece of an equation easing is not that easing between new endpoints, so it
+      // is drawn as the old curve sampled on short straight steps.
       for (const t of samplesBetween(prev.time, hold))
         keys.push({ time: t, value: speedAt(t), easing: 'linear' });
       keys.push({ time: hold, value: speedAt(hold), easing: 'linear' });
@@ -232,9 +280,19 @@ export function buildShotSpeedOps(
     // it keeps the shape it arrived with.
     keys.push({ time: newEnd, value: resume, easing: 'constant' });
     const lastIn = [...old].reverse().find((k) => k.time < end);
-    if (first && lastIn && !cutsExactly(lastIn, first)) {
-      // #1751 — the rest of the old segment after the shot, sampled from the old curve at the
-      // old times it played, and arrived at in straight steps, `first` included.
+    if (
+      first &&
+      lastIn &&
+      !cutsExactly(lastIn, first) &&
+      (split = splitOldSegment(old as ScalarKey[], old.indexOf(lastIn), end, resume))
+    ) {
+      // #1751 — a Bézier piece: the old curve from the cut on, exactly. The key at the new end
+      // still arrives from the shot in a step; its out handle starts the piece.
+      keys[keys.length - 1] = { ...split.key, time: newEnd, easing: 'constant' };
+      after[0] = { ...split.b, time: first.time };
+    } else if (first && lastIn && !cutsExactly(lastIn, first)) {
+      // #1751 — the rest of an equation-eased segment after the shot, sampled from the old curve
+      // at the old times it played, and arrived at in straight steps, `first` included.
       for (const t of samplesBetween(end, first.time - delta))
         keys.push({ time: t + delta, value: speedAt(t), easing: 'linear' });
       after[0] = { ...first, easing: 'linear' };
