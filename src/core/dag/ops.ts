@@ -15,7 +15,7 @@
 import { followDefinition } from './templates';
 import { followableName, ownName } from './nodeName';
 import { passRoleOf } from './passRole';
-import { requireNodeType } from './registry';
+import { getNodeType, requireNodeType } from './registry';
 import type { DagState } from './state';
 import { getNode, hasNode, wouldCreateCycle } from './state';
 import {
@@ -529,11 +529,17 @@ function applyRemoveNode(
     }
   }
   const next = putNode(state, draft, op.nodeId, undefined);
+  // #1746 — the undo restores the node as addNode stores it: its params through its schema. A
+  // loaded project's params never pass through the schema, so a node saved with a key its type
+  // has since dropped would otherwise be refused by addNode's lost-key check (#1686) and could
+  // not be restored. The parse keeps every key the type reads, so this is the node as it draws;
+  // it is also exactly what the undo stored before #1686, which kept the parse's result too.
+  const parsed = getNodeType(node.type)?.paramSchema.safeParse(node.params);
   const inverse: Op = {
     type: 'addNode',
     nodeId: node.id,
     nodeType: node.type,
-    params: node.params,
+    params: parsed?.success ? parsed.data : node.params,
     inputs: node.inputs,
     ...(node.spare !== undefined ? { spare: node.spare } : {}),
     ...(node.meta !== undefined ? { meta: node.meta } : {}),

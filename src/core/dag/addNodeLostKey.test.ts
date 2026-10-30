@@ -72,3 +72,59 @@ describe('#1686 — addNode refuses a key its schema drops, as setParam does', (
     expect((node.params as { channels: unknown[] }).channels).toHaveLength(1);
   });
 });
+
+// #1746 — a delete's undo is an addNode with the node's stored params. A loaded project's params
+// never pass through their schema, so a node saved with a key its type no longer has could be
+// deleted and then not restored: the undo threw at the refusal above and the node stayed gone.
+describe('#1746 — undoing a delete restores a node saved with a key its type dropped', () => {
+  const channel = {
+    name: 'x',
+    target: 'n_box',
+    paramPath: 'position',
+    keyframes: [{ time: 0, value: 1, easing: 'linear' }],
+  };
+  const loaded = () => {
+    const s = applyOp(emptyDagState(), {
+      type: 'addNode',
+      nodeId: 'ch',
+      nodeType: 'KeyframeChannelNumber',
+      params: channel,
+    } as never).next;
+    // As a save loads it: the stored params carry a key the type no longer has.
+    const node = s.nodes.ch;
+    return {
+      ...s,
+      nodes: {
+        ...s.nodes,
+        ch: { ...node, params: { ...(node.params as object), legacyField: 7 } },
+      },
+    };
+  };
+
+  it('delete then undo puts the node back, without the key nothing reads', () => {
+    const s0 = loaded();
+    const removed = applyOp(s0, { type: 'removeNode', nodeId: 'ch' });
+    expect(removed.next.nodes.ch).toBeUndefined();
+    const restored = applyOp(removed.next, removed.inverse).next;
+    expect(restored.nodes.ch?.type).toBe('KeyframeChannelNumber');
+    expect(restored.nodes.ch?.params).toEqual(
+      applyOp(emptyDagState(), {
+        type: 'addNode',
+        nodeId: 'ch',
+        nodeType: 'KeyframeChannelNumber',
+        params: channel,
+      } as never).next.nodes.ch.params,
+    );
+  });
+
+  it('an addNode an author writes with that key is still refused', () => {
+    expect(() =>
+      applyOp(emptyDagState(), {
+        type: 'addNode',
+        nodeId: 'ch',
+        nodeType: 'KeyframeChannelNumber',
+        params: { ...channel, legacyField: 7 },
+      } as never),
+    ).toThrow(/has no field at legacyField/);
+  });
+});
