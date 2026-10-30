@@ -275,6 +275,41 @@ describe('#1700 — slowing a shot lengthens it', () => {
     );
   });
 
+  // #1751 — an eased ramp around the shot. The edit cuts the old curve at the shot's edges; a key
+  // there that only copies the easing's NAME draws a different curve between the new endpoints
+  // (measured: cubic, 0–2 s averaged 1.072 and became 1.103; after the shot 2.625 became 2.500).
+  // Each cut-off piece keeps the old curve's shape, so the film plays as it did on both sides.
+  for (const easing of ['cubic', 'sine', 'elastic'] as const) {
+    it(`a ${easing} speed ramp plays as it did before and after the re-timed shot`, () => {
+      const s0 = run(film(), [
+        {
+          type: 'addNode',
+          nodeId: 'speed_eased',
+          nodeType: 'KeyframeChannelNumber',
+          params: {
+            name: 'timeSpeed',
+            target: 'n_scene',
+            paramPath: 'timeSpeed',
+            keyframes: [
+              { time: 0, value: 1, easing: 'linear' },
+              { time: 10, value: 3, easing },
+            ],
+          },
+        },
+      ]);
+      const edit = buildShotSpeedOps(s0, 2, 5, 0.5)!;
+      const s = run(s0, edit.ops);
+      const d = edit.end - 5;
+      expect(speedOver(s, 0, 2), 'before the shot').toBeCloseTo(speedOver(s0, 0, 2), 2);
+      expect(speedOver(s, 5 + d, 10 + d), 'after the shot').toBeCloseTo(speedOver(s0, 5, 10), 2);
+      // And the scene stands where it stood at the end of the ramp: film time after the shot
+      // moved by exactly the shot's change in length, so cameras stay on their action.
+      // The cut-off pieces are drawn in short straight steps, good to well under a frame.
+      const drift = sceneClockOf(s).sceneAt(10 + d) - sceneClockOf(s0).sceneAt(10);
+      expect(Math.abs(drift), 'scene time at the end of the ramp').toBeLessThan(1 / 60);
+    });
+  }
+
   // #1752 — a held shot (the speed is 0 across it) covers no scene time, so a length cannot be
   // derived from it: it used to collapse to nothing, its cut landing on the next one. It keeps its
   // length and plays at the speed it was given.

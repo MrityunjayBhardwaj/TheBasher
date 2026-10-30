@@ -25,6 +25,27 @@ const FPS = 60;
 
 type Key = { time: number; value: unknown; easing?: string };
 
+/** True when the segment `from` → `to` cut at any time is still its own easing between the new
+ *  endpoints: a straight line or a step, with no Bézier handles to bend it (#1751). */
+function cutsExactly(from: Key, to: Key | undefined): boolean {
+  if (!to) return true;
+  const bent = (k: Key) =>
+    'inHandle' in k || 'outHandle' in k || ('handleType' in k && k.handleType !== undefined);
+  return (to.easing === 'linear' || to.easing === 'constant') && !bent(from) && !bent(to);
+}
+
+/** How finely a cut-off piece of an eased speed curve is sampled: the speed is integrated in
+ *  straight steps on a 1/240 s grid, so straight steps this short keep the scene time it covers
+ *  to well under a frame (#1751). */
+const SAMPLE = 1 / 24;
+
+/** Times strictly between `a` and `b`, SAMPLE apart from `a`. */
+function samplesBetween(a: number, b: number): number[] {
+  const out: number[] = [];
+  for (let t = a + SAMPLE; t < b - SAMPLE / 2; t += SAMPLE) out.push(Math.round(t * 240) / 240);
+  return out;
+}
+
 function sceneIdOf(state: DagState): string | null {
   const ref = state.outputs.scene;
   return ref && state.nodes[ref.node]?.type === 'Scene' ? ref.node : null;
@@ -185,9 +206,17 @@ export function buildShotSpeedOps(
   const hold = start - STEP;
   if (prev && prev.time < hold) {
     // The old curve ran from `prev` to the next key, shaped by that key. Stop it one integration
-    // step before the shot with the same shape, so the shot before plays as it did.
+    // step before the shot, keeping its shape, so the shot before plays as it did.
     const next = old.find((k) => k.time > prev.time);
-    keys.push({ time: hold, value: speedAt(hold), easing: next?.easing ?? 'constant' });
+    if (cutsExactly(prev, next)) {
+      keys.push({ time: hold, value: speedAt(hold), easing: next?.easing ?? 'constant' });
+    } else {
+      // #1751 — a piece of an eased (or handled) segment is not that easing between new
+      // endpoints, so it is drawn as the old curve sampled on short straight steps.
+      for (const t of samplesBetween(prev.time, hold))
+        keys.push({ time: t, value: speedAt(t), easing: 'linear' });
+      keys.push({ time: hold, value: speedAt(hold), easing: 'linear' });
+    }
   } else if (!prev && start > 0) {
     keys.push({ time: 0, value: speedAt(0), easing: 'constant' });
   }
@@ -202,6 +231,14 @@ export function buildShotSpeedOps(
     // Hold to the new end, then resume the speed the film had at the old end; the next key after
     // it keeps the shape it arrived with.
     keys.push({ time: newEnd, value: resume, easing: 'constant' });
+    const lastIn = [...old].reverse().find((k) => k.time < end);
+    if (first && lastIn && !cutsExactly(lastIn, first)) {
+      // #1751 — the rest of the old segment after the shot, sampled from the old curve at the
+      // old times it played, and arrived at in straight steps, `first` included.
+      for (const t of samplesBetween(end, first.time - delta))
+        keys.push({ time: t + delta, value: speedAt(t), easing: 'linear' });
+      after[0] = { ...first, easing: 'linear' };
+    }
   }
   keys.push(...after);
 
