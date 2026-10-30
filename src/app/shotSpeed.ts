@@ -31,12 +31,12 @@ function sceneIdOf(state: DagState): string | null {
 }
 
 /**
- * Ops that move everything on film time at or after `at` seconds later by `delta` seconds (an
- * earlier time when negative). A key keeps every field but its time: handles are offsets from
- * their own key, so they travel with it. Empty when there is nothing to move.
+ * Ops that re-time everything on film time through `map`, a film time to its new film time: every
+ * film-time channel's keys, every film-time strip's start, and the scene's End. `map` must never
+ * decrease, so keys keep their order. A key keeps every field but its time: handles are offsets
+ * from their own key, so they travel with it. Empty when nothing moves.
  */
-export function buildInsertTimeOps(state: DagState, at: number, delta: number): Op[] {
-  if (!Number.isFinite(at) || !Number.isFinite(delta) || delta === 0) return [];
+function buildRetimeOps(state: DagState, map: (t: number) => number): Op[] {
   const ops: Op[] = [];
   for (const node of Object.values(state.nodes)) {
     const p = node.params as {
@@ -50,29 +50,35 @@ export function buildInsertTimeOps(state: DagState, at: number, delta: number): 
       const path = typeof p.paramPath === 'string' ? p.paramPath : undefined;
       if (clockOf(state, p.target, path) !== 'film') continue;
       const keys = p.keyframes ?? [];
-      if (!keys.some((k) => k.time >= at)) continue;
-      const moved = keys
-        .map((k) => (k.time >= at ? { ...k, time: k.time + delta } : k))
-        .sort((a, b) => a.time - b.time);
+      if (!keys.some((k) => map(k.time) !== k.time)) continue;
+      const moved = keys.map((k) => ({ ...k, time: map(k.time) })).sort((a, b) => a.time - b.time);
       ops.push({ type: 'setParam', nodeId: node.id, paramPath: 'keyframes', value: moved });
     } else if (node.type === 'Strip') {
       // An NLA placement is a film-time thing when what it plays on is.
-      if (typeof p.start !== 'number' || p.start < at) continue;
+      if (typeof p.start !== 'number' || map(p.start) === p.start) continue;
       if (clockOf(state, p.target) !== 'film') continue;
-      ops.push({ type: 'setParam', nodeId: node.id, paramPath: 'start', value: p.start + delta });
+      ops.push({ type: 'setParam', nodeId: node.id, paramPath: 'start', value: map(p.start) });
     }
   }
   const sceneId = sceneIdOf(state);
   if (sceneId) {
     const raw = (state.nodes[sceneId].params as { frameEnd?: unknown }).frameEnd;
     const frameEnd = typeof raw === 'number' ? raw : 600;
-    if (at < frameEnd / FPS) {
-      const next = Math.max(1, Math.round(frameEnd + delta * FPS));
-      if (next !== frameEnd)
-        ops.push({ type: 'setParam', nodeId: sceneId, paramPath: 'frameEnd', value: next });
-    }
+    const next = Math.max(1, Math.round(map(frameEnd / FPS) * FPS));
+    if (next !== frameEnd)
+      ops.push({ type: 'setParam', nodeId: sceneId, paramPath: 'frameEnd', value: next });
   }
   return ops;
+}
+
+/**
+ * Ops that move everything on film time at or after `at` seconds later by `delta` seconds (an
+ * earlier time when negative), End included when it is at or after `at`. Empty when there is
+ * nothing to move.
+ */
+export function buildInsertTimeOps(state: DagState, at: number, delta: number): Op[] {
+  if (!Number.isFinite(at) || !Number.isFinite(delta) || delta === 0) return [];
+  return buildRetimeOps(state, (t) => (t >= at ? t + delta : t));
 }
 
 /** The speed a stretch of the film plays at: the scene time it covers over its playhead time. */
@@ -132,39 +138,62 @@ export function buildShotSpeedOps(
   };
   const resume = speedAt(end);
 
-  // 1 — move what comes after the shot. The speed curve is on film time too; its keys are
-  //     written whole in step 2, so its move is left to that.
-  const ops = buildInsertTimeOps(state, end, delta).filter(
+  // 1 — re-time what is on film time. Before the shot nothing moves; after it, everything moves
+  //     by the shot's change in length; inside it, a key moves with the scene time it shows, so a
+  //     camera move stays on the action it was keyed against (the shot plays its old scene time
+  //     at one speed across the new length). The map never decreases, so no key overtakes
+  //     another. With `keepLength` the shot covers different scene time and nothing moves. The
+  //     speed curve is on film time too; its keys are written whole in step 2, so its move is
+  //     left to that.
+  const sceneStart = clock.sceneAt(start);
+  const map = (t: number): number => {
+    if (t < start) return t;
+    if (t >= end) return t + delta;
+    if (opts.keepLength || !(covered > 0)) return t;
+    // On the clock's own 1/240 s grid: the clock is good to a fraction of a step, so a key
+    // re-timed there and back would otherwise drift by that each time. Rounding never reorders,
+    // and the new end is on a frame, so a key stays inside the shot.
+    const mapped = start + ((clock.sceneAt(t) - sceneStart) / covered) * (newEnd - start);
+    return Math.round(mapped * 240) / 240;
+  };
+  const ops = buildRetimeOps(state, map).filter(
     (op) => !(channel && op.type === 'setParam' && op.nodeId === channel.id),
   );
 
-  // 2 — the shot's span: one held key at its start, and a key at its new end that resumes the
-  //     speed the film had after it. Keys inside the old span are the old ramp, replaced.
+  // 2 — the shot's span: it holds `speed` from its start to its new end, and the film resumes the
+  //     speed it had at the old end. Keys inside the old span are the old ramp, replaced.
+  //     A key's easing is how the curve ARRIVES at it (destination-key-governs, keyframeInterp),
+  //     so each key below carries the shape of the stretch that ends at it (#1744).
   const old: Key[] = channel
     ? [...((channel.params as { keyframes?: Key[] }).keyframes ?? [])].sort(
         (a, b) => a.time - b.time,
       )
     : [];
+  const STEP = 1 / 240;
   const before = old.filter((k) => k.time < start);
   const after = old.filter((k) => k.time >= end).map((k) => ({ ...k, time: k.time + delta }));
   const keys: Key[] = [...before];
   const prev = before[before.length - 1];
-  const hold = start - 1 / 240;
-  if (prev && prev.easing !== 'constant' && prev.time < hold) {
-    // The key before the shot shapes the curve up to the next key. Hold its value for the last
-    // integration step before the shot instead, so the shot before plays as it did rather than
-    // ramping into the new speed.
-    keys.push({ time: hold, value: speedAt(hold), easing: 'constant' });
+  const hold = start - STEP;
+  if (prev && prev.time < hold) {
+    // The old curve ran from `prev` to the next key, shaped by that key. Stop it one integration
+    // step before the shot with the same shape, so the shot before plays as it did.
+    const next = old.find((k) => k.time > prev.time);
+    keys.push({ time: hold, value: speedAt(hold), easing: next?.easing ?? 'constant' });
   } else if (!prev && start > 0) {
     keys.push({ time: 0, value: speedAt(0), easing: 'constant' });
   }
+  // Arrive at the shot's speed in a step, then hold it to the new end.
   keys.push({ time: start, value: speed, easing: 'constant' });
-  if (after[0]?.time !== newEnd) {
-    // The curve after the old end ran from the key governing that stretch; resume with its shape
-    // (a ramp keeps ramping to the next key, a hold holds).
-    const governing = old.filter((k) => k.time < end);
-    const easing = governing[governing.length - 1]?.easing ?? 'constant';
-    keys.push({ time: newEnd, value: resume, easing });
+  const first = after[0];
+  if (first?.time === newEnd && first.easing !== 'constant') {
+    // The old curve resumes with a key right at the new end, whose shape would govern the shot.
+    // Hold the shot's speed up to one step before it instead.
+    keys.push({ time: newEnd - STEP, value: speed, easing: 'constant' });
+  } else if (first?.time !== newEnd) {
+    // Hold to the new end, then resume the speed the film had at the old end; the next key after
+    // it keeps the shape it arrived with.
+    keys.push({ time: newEnd, value: resume, easing: 'constant' });
   }
   keys.push(...after);
 

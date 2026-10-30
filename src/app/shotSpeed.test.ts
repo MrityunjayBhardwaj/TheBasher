@@ -112,7 +112,9 @@ describe('#1700 — slowing a shot lengthens it', () => {
     const s = run(s0, edit.ops);
 
     expect(keyTimes(s, cutChannelId(s))).toEqual([0, 2, 8]);
-    expect(keyTimes(s, 'cam_keys')).toEqual([1, 3, 9]);
+    // #1744 — the 3 s key is inside the shot: it moves with the scene time it shows (3 s of
+    // scene, now on screen at 4 s), so the camera stays on the action it was keyed against.
+    expect(keyTimes(s, 'cam_keys')).toEqual([1, 4, 9]);
     expect(keyTimes(s, 'box_keys')).toEqual([1, 3, 6]);
     expect(frameEnd(s)).toBe(780);
 
@@ -125,6 +127,8 @@ describe('#1700 — slowing a shot lengthens it', () => {
     const clock = sceneClockOf(s);
     expect(clock.sceneAt(8)).toBeCloseTo(5, 2);
     expect(clock.filmAt(6)).toBeCloseTo(9, 3);
+    // And inside the shot: the box's 3 s key is on screen at 4 s, where the camera's moved to.
+    expect(clock.filmAt(3)).toBeCloseTo(4, 2);
   });
 
   it('one Undo restores all of it', () => {
@@ -134,7 +138,7 @@ describe('#1700 — slowing a shot lengthens it', () => {
     const before = useDagStore.getState().state;
     const edit = buildShotSpeedOps(before, 2, 5, 0.5)!;
     useDagStore.getState().dispatchAtomic(edit.ops, 'user', 'Shot 2 at 50%');
-    expect(keyTimes(useDagStore.getState().state, 'cam_keys')).toEqual([1, 3, 9]);
+    expect(keyTimes(useDagStore.getState().state, 'cam_keys')).toEqual([1, 4, 9]);
     useDagStore.getState().undo();
     const after = useDagStore.getState().state;
     expect(after.nodes).toEqual(before.nodes);
@@ -157,7 +161,7 @@ describe('#1700 — slowing a shot lengthens it', () => {
     const s0 = film();
     const s = run(s0, buildShotSpeedOps(s0, 2, 5, 2)!.ops);
     expect(keyTimes(s, cutChannelId(s))).toEqual([0, 2, 3.5]);
-    expect(keyTimes(s, 'cam_keys')).toEqual([1, 3, 4.5]);
+    expect(keyTimes(s, 'cam_keys')).toEqual([1, 2.5, 4.5]);
     expect(frameEnd(s)).toBe(510);
     expect(speedOver(s, 2, 3.5)).toBeCloseTo(2, 2);
     expect(speedOver(s, 3.5, 8.5)).toBeCloseTo(1, 2);
@@ -171,6 +175,104 @@ describe('#1700 — slowing a shot lengthens it', () => {
     expect(keyTimes(s2, 'cam_keys')).toEqual([1, 3, 6]);
     expect(frameEnd(s2)).toBe(600);
     expect(speedOver(s2, 0, 10)).toBeCloseTo(1, 2);
+  });
+
+  // #1744 — speeding up removes film time. A key inside the shot past its new end used to stay
+  // put while the keys after the shot moved in past it, so the channel's keys came out of order.
+  it('speeding up never puts a later key before an earlier one', () => {
+    let s0 = film();
+    s0 = run(s0, [
+      {
+        type: 'setParam',
+        nodeId: 'cam_keys',
+        paramPath: 'keyframes',
+        value: [lin(1, [0, 0, 0]), lin(4.5, [1, 0, 0]), lin(6, [2, 0, 0])],
+      },
+    ]);
+    const s = run(s0, buildShotSpeedOps(s0, 2, 5, 3)!.ops);
+    const [k1, kA, kB] = keyTimes(s, 'cam_keys');
+    expect(k1).toBe(1);
+    expect(kA, 'the 4.5 s key stays inside the shot, now [2, 3)').toBeCloseTo(2 + 2.5 / 3, 3);
+    expect(kB, 'the 6 s key moves in with the shot after').toBeCloseTo(4, 3);
+    const values = (s.nodes.cam_keys.params as { keyframes: { value: number[] }[] }).keyframes.map(
+      (k) => k.value[0],
+    );
+    expect(values, 'the keys play in the order they were keyed').toEqual([0, 1, 2]);
+  });
+
+  // #1744 — the last shot ends exactly at End. End only moved for a shot ending before it, so
+  // the last shot's new length was reported and never played.
+  it('the last shot at 50% moves End with it', () => {
+    const s0 = film();
+    const edit = buildShotSpeedOps(s0, 5, 10, 0.5)!;
+    expect(edit.end).toBe(15);
+    const s = run(s0, edit.ops);
+    expect(frameEnd(s), 'End follows the shot').toBe(900);
+    expect(keyTimes(s, cutChannelId(s))).toEqual([0, 2, 5]);
+    expect(speedOver(s, 5, 15)).toBeCloseTo(0.5, 2);
+  });
+
+  it('the last shot at 200% pulls End in', () => {
+    const s0 = film();
+    const s = run(s0, buildShotSpeedOps(s0, 5, 10, 2)!.ops);
+    expect(frameEnd(s)).toBe(450);
+  });
+
+  // #1744 — a shot after a speed ramp. The ramp's last key before the shot shapes the curve up to
+  // the next key, which is now the shot's own; without a held key the shot before would ramp into
+  // the new speed instead of playing as it did.
+  it('the shot before a re-timed shot plays as it did when the speed was ramping into it', () => {
+    let s0 = film();
+    s0 = run(s0, [
+      {
+        type: 'addNode',
+        nodeId: 'speed_ramp',
+        nodeType: 'KeyframeChannelNumber',
+        params: {
+          name: 'timeSpeed',
+          target: 'n_scene',
+          paramPath: 'timeSpeed',
+          keyframes: [
+            { time: 0, value: 1, easing: 'linear' },
+            { time: 10, value: 2, easing: 'linear' },
+          ],
+        },
+      },
+    ]);
+    const before = speedOver(s0, 0, 2);
+    const s = run(s0, buildShotSpeedOps(s0, 2, 5, 0.5)!.ops);
+    expect(speedOver(s, 0, 2), 'the shot before is untouched').toBeCloseTo(before, 2);
+    expect(speedOver(s, 2, 2 + 0.5), 'the shot plays at 50%').toBeCloseTo(0.5, 2);
+  });
+
+  // #1744 — the old curve has a key at the shot's old end, so it lands right on the new end. Its
+  // easing is how the curve arrives at it, which is the shot's own span: a linear key there would
+  // ramp the shot toward the resumed speed instead of holding the one it was given.
+  it('a speed key at the end of the shot does not ramp the shot', () => {
+    let s0 = film();
+    s0 = run(s0, [
+      {
+        type: 'addNode',
+        nodeId: 'speed_ramp',
+        nodeType: 'KeyframeChannelNumber',
+        params: {
+          name: 'timeSpeed',
+          target: 'n_scene',
+          paramPath: 'timeSpeed',
+          keyframes: [
+            { time: 0, value: 1, easing: 'constant' },
+            { time: 5, value: 1, easing: 'linear' },
+            { time: 10, value: 2, easing: 'linear' },
+          ],
+        },
+      },
+    ]);
+    const s = run(s0, buildShotSpeedOps(s0, 2, 5, 0.5)!.ops);
+    expect(speedOver(s, 2, 8 - 1 / 60), 'the shot holds 50%').toBeCloseTo(0.5, 2);
+    expect(speedOver(s, 8, 13), 'the ramp after resumes as it was').toBeCloseTo(
+      speedOver(s0, 5, 10),
+      2,
+    );
   });
 
   it('a speed that cannot hold a length is refused', () => {
