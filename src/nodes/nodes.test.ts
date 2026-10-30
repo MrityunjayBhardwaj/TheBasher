@@ -30,7 +30,6 @@ import { KeyframeChannelImageNode } from './KeyframeChannelImage';
 import type {
   AnimationClipValue,
   CharacterValue,
-  CutValue,
   GroupValue,
   ImageValue,
   PromptValue,
@@ -46,7 +45,6 @@ import type {
   RenderOutputValue,
   ScatterValue,
   SceneValue,
-  ShotValue,
   SkeletonValue,
   TimeValue,
   TransformValue,
@@ -96,7 +94,6 @@ const ALL_TYPES = [
   'Composition',
   'CurveData',
   'CurveRemap',
-  'Cut',
   'DepthPass',
   'Fit',
   'FollowPath',
@@ -158,7 +155,6 @@ const ALL_TYPES = [
   // #394 S3c — the wholesale half of the material lane. NO inspector section: it is a
   // graph node like its reference (Blender GN `Set Material`), authored by the edge.
   'SetMaterialOp',
-  'Shot',
   'Skeleton',
   'Solver',
   'SphereData',
@@ -1531,93 +1527,6 @@ describe('P3 — KeyframeChannelText / Image (discrete step, inc 3)', () => {
   it('D-04: nodes declare NO inputs (function-of-time)', () => {
     expect(KeyframeChannelTextNode.inputs).toEqual({});
     expect(KeyframeChannelImageNode.inputs).toEqual({});
-  });
-});
-
-describe('P3 — Shot + Cut (editorial)', () => {
-  function buildShot(name: string, nodeId: string) {
-    let state = emptyDagState();
-    // #387 C4 — the fused camera node type is retired; a camera is now an Object posing a
-    // CameraData. `position` stays on the Object, the lens moves to the data half.
-    state = makeSplitCamera(state, {
-      objectId: 'cam',
-      fov: 45,
-      position: [0, 0, 5],
-      lens: { near: 0.1, far: 100, lookAt: [0, 0, 0] },
-    }).state;
-    state = applyOp(state, {
-      type: 'addNode',
-      nodeId: 'scene',
-      nodeType: 'Scene',
-      params: {},
-    }).next;
-    state = applyOp(state, {
-      type: 'addNode',
-      nodeId: nodeId,
-      nodeType: 'Shot',
-      params: { name, startTime: 0, endTime: 2 },
-    }).next;
-    state = applyOp(state, {
-      type: 'connect',
-      from: { node: 'cam', socket: 'out' },
-      to: { node: nodeId, socket: 'camera' },
-    }).next;
-    state = applyOp(state, {
-      type: 'connect',
-      from: { node: 'scene', socket: 'out' },
-      to: { node: nodeId, socket: 'scene' },
-    }).next;
-    return state;
-  }
-
-  it('Shot forwards camera + scene at twice-eval', () => {
-    const state = buildShot('s1', 'shot');
-    const a = evaluate(state, 'shot').value as ShotValue;
-    const b = evaluate(state, 'shot').value as ShotValue;
-    expect(a).toEqual(b);
-    expect(a.name).toBe('s1');
-    expect(a.camera?.kind).toBe('PerspectiveCamera');
-    expect(a.scene?.kind).toBe('Scene');
-  });
-
-  it('Cut wires two Shots with transitionFrame stored verbatim', () => {
-    let state = buildShot('a', 'shotA');
-    state = applyOp(state, {
-      type: 'addNode',
-      nodeId: 'shotB',
-      nodeType: 'Shot',
-      params: { name: 'b', startTime: 2, endTime: 4 },
-    }).next;
-    state = applyOp(state, {
-      type: 'connect',
-      from: { node: 'cam', socket: 'out' },
-      to: { node: 'shotB', socket: 'camera' },
-    }).next;
-    state = applyOp(state, {
-      type: 'connect',
-      from: { node: 'scene', socket: 'out' },
-      to: { node: 'shotB', socket: 'scene' },
-    }).next;
-    state = applyOp(state, {
-      type: 'addNode',
-      nodeId: 'cut',
-      nodeType: 'Cut',
-      params: { transitionFrame: 12 },
-    }).next;
-    state = applyOp(state, {
-      type: 'connect',
-      from: { node: 'shotA', socket: 'out' },
-      to: { node: 'cut', socket: 'from' },
-    }).next;
-    state = applyOp(state, {
-      type: 'connect',
-      from: { node: 'shotB', socket: 'out' },
-      to: { node: 'cut', socket: 'to' },
-    }).next;
-    const v = evaluate(state, 'cut').value as CutValue;
-    expect(v.transitionFrame).toBe(12);
-    expect(v.from?.name).toBe('a');
-    expect(v.to?.name).toBe('b');
   });
 });
 

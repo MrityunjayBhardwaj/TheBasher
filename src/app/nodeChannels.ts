@@ -1,9 +1,9 @@
 // nodeChannels — enumerate the free-floating "direct" KeyframeChannels driving a
-// node (v0.7 unification, #197). The native-mesh analogue of the camera's inline
-// channel scan (`resolveActiveCameraPoseAt`, activeCamera.ts:136) and the glTF
-// baked enumeration (`bakedChannelSamplersForAsset`) — generalized to ANY target
-// + ANY paramPath, so one primitive feeds the renderer + read-side overlay that
-// `overlayChannels` then applies (the camera/glTF "direct channel" road).
+// node (v0.7 unification, #197). Generalized from the camera's old inline channel
+// scan (now `overlayCameraChannels`, which calls this module too — #482) and the glTF
+// baked enumeration (`bakedChannelSamplersForAsset`) to ANY target + ANY paramPath, so
+// one primitive feeds the renderer + read-side overlay that `overlayChannels` then
+// applies (the camera/glTF "direct channel" road).
 //
 // Each channel value is built via the channel node's OWN `evaluate` (through the
 // registry), so the sampling math is the SAME source the dopesheet/camera/glTF
@@ -201,7 +201,15 @@ export function animatedAncestorSet(
  *  via the node's OWN `evaluate` (one sampling source, no drift). Unknown/dead
  *  node types are skipped. */
 export function channelValuesFromNodes(nodes: readonly NodeLike[]): KeyframeChannelValue[] {
-  const out: KeyframeChannelValue[] = [];
+  return channelEntriesFromNodes(nodes).map((e) => e.value);
+}
+
+/** {@link channelValuesFromNodes}, each value paired with the node it came from — for a reader
+ *  that must know which of its channels survived solo (the camera cut, #482). */
+export function channelEntriesFromNodes<T extends NodeLike>(
+  nodes: readonly T[],
+): { node: T; value: KeyframeChannelValue }[] {
+  const out: { node: T; value: KeyframeChannelValue }[] = [];
   for (const node of nodes) {
     const def = getNodeType(node.type);
     if (!def) continue;
@@ -209,7 +217,7 @@ export function channelValuesFromNodes(nodes: readonly NodeLike[]): KeyframeChan
     // time/ctx — V24/V3): time enters later via value.sample(seconds). Cast to the
     // params-only form so we don't fabricate an unused ResolvedInputs/EvalCtx.
     const evaluate = def.evaluate as (params: unknown) => KeyframeChannelValue;
-    out.push(evaluate(node.params));
+    out.push({ node, value: evaluate(node.params) });
   }
   // Per-channel SOLO (#263): every caller passes ONE target's (or child's) channel
   // nodes, so "any solo here" IS the per-object soloActive. When active, only solo'd
@@ -219,7 +227,7 @@ export function channelValuesFromNodes(nodes: readonly NodeLike[]): KeyframeChan
   // render == read (a per-fold gate in overlayChannels would differ per param-group).
   // Byte-identical when nothing is solo'd. The read-side param resolver applies the
   // SAME per-target rule (resolveEvaluatedParam).
-  return out.some((v) => v.solo === true) ? out.filter((v) => v.solo === true) : out;
+  return out.some((e) => e.value.solo === true) ? out.filter((e) => e.value.solo === true) : out;
 }
 
 /**

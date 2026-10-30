@@ -26,6 +26,8 @@ import type { GraphNodeLike } from '../../app/animate/boundClipsForAsset';
 import { gltfChannelDagId, gltfChildDagId } from '../import/gltfImportChain';
 import { radVec3ToDeg } from '../../viewport/rotation';
 import { edgeTarget } from '../../app/animate/graphNodes';
+import { buildShotOps } from '../../app/shotOps';
+import { applyOp, type DagState } from '../dag';
 import { posesFromKeyframes } from '../import/keyframePoses';
 import type { AnimationKeyframe } from '../../nodes/types';
 import type { Node } from '../dag/types';
@@ -145,6 +147,10 @@ const formatMigrations: Record<number, FormatMigration> = {
   // Lag's factor, start frame and controller, reading its `in`, under the Lag's own id. First it
   // finishes #1668 for a v23 file the graph build saved, which never ran it (#1679).
   23: (raw) => migrateLagNodesToTemplate(finishCameraCutsForGraphV23(raw)),
+  // v24 → v25 (#1666): the `Shot` and `Cut` node types are gone — nothing read them. Each saved Shot
+  // becomes the cuts the Shots panel writes (a cut to its camera at its start, and back at its
+  // end), and each Cut is dropped.
+  24: migrateShotsToCuts,
 };
 
 // ── v1 → v2: AnimationLayer retirement (#199) ──────────────────────────────
@@ -2353,4 +2359,90 @@ export function migrateLagNodesToTemplate(raw: unknown): unknown {
     `[migrateLagNodesToTemplate] ${lags.length} Lag node(s) are now instances of the built-in Lag template (#1559).`,
   );
   return { ...proj, state: { ...proj.state, nodes: next }, formatVersion: 24 };
+}
+
+/**
+ * v24 → v25 (#1666) — the `Shot` and `Cut` node types are removed. A Shot tied a time range to a
+ * camera, but nothing read it: what cuts the film is the camera switch's keys, which the Shots
+ * panel, the viewport and the render read. Each saved Shot becomes those keys, written by the
+ * panel's own `buildShotOps` — a cut to its camera at `startTime` and, at `endTime`, back to the
+ * camera that was on screen there — applied in start order, so a later shot wins where two
+ * overlap. A Cut only joined two Shots (its transition was never played), so it is dropped, and
+ * so is any wire into a removed node. A Shot with no camera wired, or a scene with no camera
+ * socket, has nothing to cut to: it is dropped and counted.
+ *
+ * This is the one pass that changes what a saved film shows: an agent's Shot was meant to be on
+ * screen and never was. Runs on raw JSON, before `ProjectSchema.parse`.
+ */
+export function migrateShotsToCuts(raw: unknown): unknown {
+  const proj = raw as {
+    formatVersion?: number;
+    state?: { nodes?: Record<string, RawNode>; outputs?: Record<string, RawRef> };
+  };
+  const nodes = proj.state?.nodes;
+  const gone = new Set(
+    Object.entries(nodes ?? {})
+      .filter(([, n]) => n?.type === 'Shot' || n?.type === 'Cut')
+      .map(([id]) => id),
+  );
+  if (!nodes || gone.size === 0) return { ...proj, formatVersion: 25 };
+
+  const shots = [...gone]
+    .map((id) => nodes[id])
+    .filter((n) => n.type === 'Shot')
+    .map((n) => ({
+      cameraId: asRefs(n.inputs?.camera)[0]?.node,
+      start: typeof n.params?.startTime === 'number' ? n.params.startTime : 0,
+      end: typeof n.params?.endTime === 'number' ? n.params.endTime : 2,
+    }))
+    .sort((a, b) => a.start - b.start);
+  const cuts = gone.size - shots.length;
+
+  const kept: Record<string, RawNode> = {};
+  for (const [id, node] of Object.entries(nodes)) {
+    if (gone.has(id)) continue;
+    const wired = Object.values(node.inputs ?? {}).some((b) =>
+      asRefs(b).some((r) => gone.has(r.node ?? '')),
+    );
+    if (!wired) {
+      kept[id] = node;
+      continue;
+    }
+    const inputs: Record<string, RawRef | RawRef[]> = {};
+    for (const [socket, binding] of Object.entries(node.inputs ?? {})) {
+      if (Array.isArray(binding)) inputs[socket] = binding.filter((r) => !gone.has(r.node ?? ''));
+      else if (!gone.has(binding?.node ?? '')) inputs[socket] = binding;
+    }
+    kept[id] = { ...node, inputs };
+  }
+
+  let state = {
+    ...proj.state,
+    nodes: kept,
+    outputs: proj.state?.outputs ?? {},
+  } as unknown as DagState;
+  let made = 0;
+  let dropped = 0;
+  for (const shot of shots) {
+    const ops = shot.cameraId
+      ? buildShotOps(state, shot.start, shot.end > shot.start ? shot.end : undefined, shot.cameraId)
+      : null;
+    if (!ops) {
+      dropped++;
+      continue;
+    }
+    try {
+      let next = state;
+      for (const op of ops) next = applyOp(next, op).next;
+      state = next;
+      made++;
+    } catch {
+      dropped++;
+    }
+  }
+  console.warn(
+    `[migrateShotsToCuts] ${made} Shot(s) are now cuts on the camera switch; ${dropped} Shot(s) ` +
+      `with no camera to cut to and ${cuts} Cut node(s) were dropped (#1666).`,
+  );
+  return { ...proj, state: { ...proj.state, nodes: state.nodes }, formatVersion: 25 };
 }

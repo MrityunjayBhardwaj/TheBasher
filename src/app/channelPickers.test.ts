@@ -150,10 +150,10 @@ describe('channel pickers — what the census cannot answer is listed with its r
 
   it('"never measured" and "measured, nothing animates" read differently', () => {
     let s = buildDefaultDagState();
-    s = apply(s, [{ type: 'addNode', nodeId: 'shot', nodeType: 'Shot', params: {} }]);
+    s = apply(s, [{ type: 'addNode', nodeId: 'strip', nodeType: 'Strip', params: {} }]);
     expect(
-      channelPathLock(withChannel(s, 'KeyframeChannelNumber', 'shot', ''), 'ch', 'number'),
-    ).toBe('the census has not measured Shot');
+      channelPathLock(withChannel(s, 'KeyframeChannelNumber', 'strip', ''), 'ch', 'number'),
+    ).toBe('the census has not measured Strip');
     const spot = place(buildDefaultDagState(), 'SpotLight');
     expect(
       channelPathLock(withChannel(spot.s, 'KeyframeChannelColor', spot.obj, ''), 'ch', 'color'),
@@ -200,15 +200,14 @@ function withDriver(
 }
 
 describe('ParamDriver pickers — the census driver answers, of the source kind (#1258)', () => {
-  it("a camera's fov is offered to a number channel, and not to a driver", () => {
+  it("a camera's fov is offered to a number channel and to a driver", () => {
     const cam = place(buildDefaultDagState(), 'PerspectiveCamera');
     const s = withChannel(cam.s, 'KeyframeChannelNumber', cam.data, '');
     expect(enabled(channelPathOptions(s, 'ch', 'number'))).toContain('fov');
-    // The camera pose reads bare channels only (#1266): the census measured a driver on fov
-    // move nothing, so the row is listed with that answer, never offered.
+    // #480 — the camera pose folds drivers too (#1266): the census measured a driver on fov
+    // move the scene, so it is offered.
     const d = withDriver(cam.s, cam.data, 'fov', {});
-    expect(enabled(driverPathOptions(d, 'drv'))).not.toContain('fov');
-    expect(reasonOf(driverPathOptions(d, 'drv'), 'fov')).toBe('nothing drawn changes');
+    expect(enabled(driverPathOptions(d, 'drv'))).toContain('fov');
   });
 
   it("a driver's kind is its source's: a Point controller lists vec3 paths only", () => {
@@ -245,11 +244,20 @@ describe('ParamDriver pickers — the census driver answers, of the source kind 
     expect(enabled(driverPathOptions(s, driver))).not.toContain('radius');
   });
 
-  it('a camera data node: the path is read-only, saying no param moves for a driver', () => {
-    const cam = place(buildDefaultDagState(), 'PerspectiveCamera');
-    expect(driverPathLock(withDriver(cam.s, cam.data, 'fov', {}), 'drv')).toBe(
-      'a driver moves no number or vec3 param of CameraData:Perspective',
+  it('a node no driver moves: the path is read-only, saying so', () => {
+    // A camera's data node was this case until #480 folded drivers into the camera pose; a
+    // Track-To is one the census still measures a driver moving nothing on.
+    const s = apply(buildDefaultDagState(), [
+      { type: 'addNode', nodeId: 'tt', nodeType: 'TrackTo', params: {} },
+    ]);
+    expect(driverPathLock(withDriver(s, 'tt', '', {}), 'drv')).toBe(
+      'a driver moves no number or vec3 param of TrackTo',
     );
+  });
+
+  it('a camera data node: the path can be picked (#480)', () => {
+    const cam = place(buildDefaultDagState(), 'PerspectiveCamera');
+    expect(driverPathLock(withDriver(cam.s, cam.data, 'fov', {}), 'drv')).toBeNull();
   });
 
   it('a driver does not count itself as "something else supplies it"', () => {
@@ -280,7 +288,7 @@ describe('ParamDriver pickers — the census driver answers, of the source kind 
         type: 'addNode',
         nodeId: 'wf',
         nodeType: 'ComfyUIWorkflow',
-        params: { graph: importComfyGraph(api, META) },
+        params: { graph: { apiJson: api, meta: META } },
       },
     ]);
     const cfg = comfyParamPath('3', 'cfg');

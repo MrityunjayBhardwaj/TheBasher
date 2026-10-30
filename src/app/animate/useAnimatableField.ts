@@ -23,6 +23,7 @@
 import { runsOnFilmTime } from '../subjectClock';
 import { useMemo } from 'react';
 import { useDagStore } from '../../core/dag/store';
+import { usePlayheadFor } from './usePlayheadFor';
 import { useTimeStore } from '../stores/timeStore';
 import { resolveEvaluatedParam } from '../resolveEvaluatedParam';
 import { routeAnimatedGrab, autoKeyCommit } from './autoKeyCommit';
@@ -55,9 +56,11 @@ export function useAnimatableField<T extends number | string>(
   // #1594 — read on the field's own clock: a camera's or the Scene speed's on the playhead,
   // everything else on scene time.
   const film = runsOnFilmTime(dagState, nodeId, paramPath);
-  const frame = useTimeStore((s) => (film ? s.filmFrame : s.frame));
-  const seconds = useTimeStore((s) => (film ? s.filmSeconds : s.seconds));
-  const normalized = useTimeStore((s) => s.normalized);
+  // #1731 — subscribed to the playhead only when this node's own value can move with it.
+  const playhead = usePlayheadFor(nodeId);
+  const frame = film ? playhead.filmFrame : playhead.frame;
+  const seconds = film ? playhead.filmSeconds : playhead.seconds;
+  const normalized = playhead.normalized;
   const playing = useTimeStore((s) => s.playing);
   // A stable cache (#1389): this read follows the playhead, and a field driven through
   // pure nodes (a driver on a controller that reads the character) would otherwise
@@ -110,9 +113,8 @@ export function useAnimatableVec2Field(
   base: readonly [number, number],
   onSource: (next: readonly [number, number]) => void,
 ): AnimatableVec2Field {
-  const frame = useTimeStore((s) => s.frame);
-  const seconds = useTimeStore((s) => s.seconds);
-  const normalized = useTimeStore((s) => s.normalized);
+  // #1731 — subscribed to the playhead only when this node's own value can move with it.
+  const { frame, seconds, normalized } = usePlayheadFor(nodeId);
   const playing = useTimeStore((s) => s.playing);
   const dagState = useDagStore((s) => s.state);
   // A stable cache, as in useAnimatableField (#1389).

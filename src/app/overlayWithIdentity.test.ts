@@ -488,6 +488,37 @@ describe('#537 — a write that feeds a geometry handle rebuilds it', () => {
 // is exactly when a muted channel would start re-minting keys. But they are documentation of
 // intent, not evidence, and a write-up that counted them as falsified coverage would be
 // claiming a guard that no perturbation demonstrated.
+describe('#1735 — a write the handle does not build from leaves `data` shared', () => {
+  it('a keyed position returns the evaluator’s own `data` object, frame after frame', () => {
+    // The drawn-transform road (#1728) re-renders only when a field other than the transform
+    // changed, compared by identity. A fresh copy of an unchanged `data` read as a change, and a
+    // box keyed only on position re-rendered on every frame.
+    const base = boxValue();
+    const at = (s: number) =>
+      overlayWithIdentity('children', base, NODE, [channel(POSITION, [s, 0, 0])], NO_TRANSIENTS, s);
+    const a = at(1);
+    const b = at(2);
+    expect(a.position).toEqual([1, 0, 0]);
+    expect(a.data).toBe(base.data);
+    expect(b.data).toBe(a.data);
+  });
+
+  it('a write that does feed the handle still gives a new `data`', () => {
+    // The control: the skip must not swallow a rebuild.
+    const base = boxValue();
+    const out = overlayWithIdentity(
+      'children',
+      base,
+      NODE,
+      [channel(SIZE, [4, 4, 4])],
+      NO_TRANSIENTS,
+      0,
+    );
+    expect(out.data).not.toBe(base.data);
+    expect(base.data.geometry).toEqual(boxGeometryRef([1, 1, 1], null));
+  });
+});
+
 describe('#537 — the handle repair mirrors the primitives it wraps', () => {
   it('does NOT rebuild for a MUTED size channel', () => {
     // The same filter the material half is pinned against, restated for geometry because it

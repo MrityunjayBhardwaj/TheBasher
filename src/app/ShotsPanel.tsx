@@ -4,9 +4,15 @@
 // shot. Each edit is one undo step written as those keys (`shotOps.ts`), the same data the agent
 // writes, and a cut moves by moving its key — in the dopesheet, on the "Camera cuts" row.
 //
-//   row     — Shot N · its time range · the camera that films it (a picker) · remove its cut
+//   row     — Shot N · its time range · the camera that films it (a picker) · its speed · remove
+//             its cut
 //   click   — look through the camera and put the playhead on the shot's first frame
-//   footer  — cut at the playhead to a chosen camera · a new camera from the current view
+//   footer  — cut at the playhead to a chosen camera · a new camera from the current view ·
+//             keep length (a speed change leaves the shot's length alone)
+//
+// #1700 — speed is edited on the shot, as Premiere's Speed/Duration is on a clip: it writes the
+// film's speed curve across the shot and the shot grows or shrinks, pushing everything after it on
+// the playhead's clock (`shotSpeed.ts`), all as one undo step.
 //
 // V8 file-rooted: src/app/. Reads the DAG + time stores; writes only through dispatchAtomic.
 
@@ -19,6 +25,7 @@ import { nodeDisplayName } from './sceneTreeWalk';
 import { sceneEndSeconds } from './sceneRange';
 import { shotsOf } from './shots';
 import { buildCutOps, buildRemoveCutOps, buildSetShotCameraOps } from './shotOps';
+import { buildShotSpeedOps, speedOver } from './shotSpeed';
 import { snapshotCameraFromOrbit } from './character/cameraFromView';
 import type { Op } from '../core/dag/types';
 
@@ -38,6 +45,7 @@ export function ShotsPanel(): ReactNode {
   const current = view.shots.find((s) => playhead >= s.start && playhead < s.end) ?? null;
   // The camera a new cut goes to: the first one that is not on screen at the playhead.
   const [cutTo, setCutTo] = useState<string | null>(null);
+  const [keepLength, setKeepLength] = useState(false);
   const target =
     cutTo && cameras.includes(cutTo)
       ? cutTo
@@ -94,6 +102,18 @@ export function ShotsPanel(): ReactNode {
                     </option>
                   ))}
                 </select>
+                <ShotSpeedInput
+                  index={shot.index}
+                  percent={Math.round(speedOver(state, shot.start, shot.end) * 100)}
+                  onCommit={(percent) =>
+                    commit(
+                      buildShotSpeedOps(state, shot.start, shot.end, percent / 100, {
+                        keepLength,
+                      })?.ops ?? null,
+                      `Shot ${shot.index + 1} at ${percent}%`,
+                    )
+                  }
+                />
                 {shot.keyTime !== null && shot.index > 0 && (
                   <button
                     type="button"
@@ -149,6 +169,18 @@ export function ShotsPanel(): ReactNode {
             ))}
           </select>
         </div>
+        <label
+          className="flex items-center gap-1 text-fg-dim"
+          title="Change a shot's speed without changing its length: nothing after it moves"
+        >
+          <input
+            type="checkbox"
+            data-testid="shots-keep-length"
+            checked={keepLength}
+            onChange={(e) => setKeepLength(e.target.checked)}
+          />
+          Keep length when changing speed
+        </label>
         <button
           type="button"
           data-testid="shots-camera-from-view"
@@ -160,5 +192,42 @@ export function ShotsPanel(): ReactNode {
         </button>
       </footer>
     </div>
+  );
+}
+
+/** A shot's speed in percent. Commits on Enter or on leaving the field; a value that is not a
+ *  positive number puts the shown speed back. */
+function ShotSpeedInput(props: {
+  index: number;
+  percent: number;
+  onCommit: (percent: number) => void;
+}): ReactNode {
+  const { index, percent, onCommit } = props;
+  return (
+    <label
+      className="flex shrink-0 items-center gap-0.5 font-mono text-[11px] text-fg-dim"
+      title="Shot speed: 50% plays the scene at half speed and makes the shot twice as long"
+    >
+      <input
+        // Re-mounted when the speed changes, so the field always starts from what plays.
+        key={percent}
+        type="number"
+        min={1}
+        step={5}
+        defaultValue={percent}
+        data-testid={`shot-speed-${index}`}
+        aria-label={`Speed of shot ${index + 1}, in percent`}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') e.currentTarget.blur();
+        }}
+        onBlur={(e) => {
+          const n = Number(e.currentTarget.value);
+          if (Number.isFinite(n) && n > 0 && n !== percent) onCommit(n);
+          else e.currentTarget.value = String(percent);
+        }}
+        className="w-12 rounded border border-border bg-transparent px-1 text-right tabular-nums text-fg"
+      />
+      %
+    </label>
   );
 }

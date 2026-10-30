@@ -119,8 +119,6 @@ export type SocketTypeName =
   // #1451 (Collections, #397) — a named set of scene Objects: membership, never a transform. The
   // Scene holds its collections as Blender's scene collection holds its children.
   | 'Collection'
-  | 'Shot'
-  | 'Cut'
   // The Compositor (After Effects-style layer timeline) — docs/COMPOSITOR-DESIGN.md.
   // A `Composition` holds an ordered list of `Layer`s (composite z-order); a Layer's
   // `source` input is the existing `Image` socket (any time-varying Image producer:
@@ -675,6 +673,10 @@ export interface NodeDefinition<P = unknown, O = unknown> {
    *   • 'nested' — a string at `path` inside an object param (`sourceSpare.node`).
    *   • 'ref'    — a whole `{ node }` object param (`sourceTransformVec`).
    *   • 'idList' — an array of plain string ids (`Track.strips`).
+   *   • 'keyed'  — a list of keys (`keyframes`) whose `value`s are ids exactly when this
+   *                channel keys a param its `target` declares as an 'id' (a camera switch's
+   *                `active`, whose keys are the film's cuts, #1669). Keyed text is otherwise
+   *                text. Clearing a removed referent drops the keys naming it.
    *
    * `role` is what the reference MEANS, which decides what a delete does to it:
    *   • 'subject'  — this node is OWNED BY the referent and is meaningless without
@@ -699,7 +701,7 @@ export interface NodeDefinition<P = unknown, O = unknown> {
    */
   idRefs?: readonly {
     path: string;
-    shape: 'id' | 'nested' | 'ref' | 'idList';
+    shape: 'id' | 'nested' | 'ref' | 'idList' | 'keyed';
     role: 'subject' | 'argument';
     owns?: true;
   }[];

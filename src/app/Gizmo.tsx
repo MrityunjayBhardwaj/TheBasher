@@ -49,7 +49,7 @@
 
 import { useThree, useFrame, type ThreeEvent } from '@react-three/fiber';
 import { TransformGizmo } from './TransformGizmo';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type DependencyList } from 'react';
 import * as THREE from 'three';
 import { degVec3ToRad, radVec3ToDeg } from '../viewport/rotation';
 import { rotationWriteOf, withResolvedRotation } from './resolvedRotation';
@@ -64,13 +64,15 @@ import { useEditorStore } from './stores/editorStore';
 import { isImportedChild } from './importedChild';
 import { isModifierNode, resolveStackObject } from './operatorStack';
 import { useSelectionStore } from './stores/selectionStore';
-import { useTimeStore } from './stores/timeStore';
+import { useTimeStore, type TimeStore } from './stores/timeStore';
 import { maybeSnapVec3, maybeSnapTransform, useViewportStore } from './stores/viewportStore';
 import { pivotPoint } from './gizmoPivot';
 import { resolveEvaluatedTransform } from './resolveEvaluatedTransform';
 import { resolveParentWorldMatrix, resolveWorldTransform } from './resolveWorldTransform';
 import { routeAnimatedGrab, autoKeyCommit } from './animate/autoKeyCommit';
 import { resolveActiveCameraPoseAt } from './activeCamera';
+import { sceneClockOf } from './sceneClock';
+import { clockedCtx } from './subjectClock';
 import { isCameraNode } from './cameraNode';
 import { cameraOrientationQuat, lookAtRollFromQuat } from './cameraOrientation';
 import { constraintTargetSet, resolveFollowedWorldPosition } from './nodeConstraints';
@@ -185,6 +187,65 @@ function getManipulable(node: Node | null): Manipulable | null {
   };
 }
 
+/** The playhead as a gizmo seeds from it. */
+interface Playhead {
+  frame: number;
+  seconds: number;
+  normalized: number;
+}
+const scenePlayhead = (t: TimeStore): Playhead => ({
+  frame: t.frame,
+  seconds: t.seconds,
+  normalized: t.normalized,
+});
+/** #1594 — the camera is posed on film time. */
+const filmPlayhead = (t: TimeStore): Playhead => ({
+  frame: t.filmFrame,
+  seconds: t.filmSeconds,
+  normalized: t.normalized,
+});
+
+/**
+ * #1731 — run `seed` at the playhead: at once when `deps` change, and from the frame loop
+ * whenever the playhead has moved since. The callback runs at priority −1, after the frame
+ * evaluator (−2) has advanced the frame and before the scene is drawn, so the proxy moves in the
+ * same frame as what it sits on.
+ *
+ * The gizmos used to subscribe React to the playhead, so each one — and the TransformControls
+ * under it — re-rendered on every playback frame only to move a proxy group: 90 commits of the
+ * gizmo subtree in 90 frames, even with nothing selected, where the dispatcher still mounts
+ * SingleGizmo (p1731). Paused, the callback reads the playhead and returns.
+ */
+function useSeedAtPlayhead(
+  read: (t: TimeStore) => Playhead,
+  seed: (at: Playhead) => void,
+  deps: DependencyList,
+): void {
+  const latest = useRef({ read, seed });
+  latest.current = { read, seed };
+  const seededAt = useRef<Playhead | null>(null);
+  useEffect(() => {
+    const at = latest.current.read(useTimeStore.getState());
+    seededAt.current = at;
+    latest.current.seed(at);
+    // The caller's deps decide when to re-seed; `seed` is read through the ref.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, deps);
+  useFrame(() => {
+    const at = latest.current.read(useTimeStore.getState());
+    const last = seededAt.current;
+    if (
+      last &&
+      last.seconds === at.seconds &&
+      last.frame === at.frame &&
+      last.normalized === at.normalized
+    )
+      return;
+    seededAt.current = at;
+    latest.current.seed(at);
+  }, -1);
+}
+
 function SingleGizmo() {
   const primarySelectedId = useSelectionStore((s) => s.primaryNodeId);
   // When a geometry MODIFIER (Array/Mirror) is selected, the gizmo edits the OBJECT
@@ -250,13 +311,12 @@ function SingleGizmo() {
   // comes from the resolver — in the seeding effect below, which is unchanged.
   const manip: Manipulable | null = isCharacter ? null : getManipulable(node);
 
-  // Time — drives the Character path AND (P7.3) the manip resolver re-seed.
-  const seconds = useTimeStore((s) => s.seconds);
-  const frame = useTimeStore((s) => s.frame);
-  const normalized = useTimeStore((s) => s.normalized);
+  // Time drives the Character path AND (P7.3) the manip resolver re-seed — read from the frame
+  // loop (#1731, `useSeedAtPlayhead`), not subscribed: a subscription re-rendered the gizmo on
+  // every playback frame.
   // D-03: reuse the EXISTING play/pause state (no new flag). Subscribed at
   // component scope (V20 — a React store subscription, NOT a currentFrameRef
-  // read) so the seeding effect re-runs across the play/pause transition
+  // read) so the seed re-runs across the play/pause transition
   // and Wave 4's `enabled={!playing}` re-renders.
   const playing = useTimeStore((s) => s.playing);
 
@@ -278,133 +338,137 @@ function SingleGizmo() {
   // graph under the selection (a character's pose, a constraint's target); uncached it re-ran all of
   // it every frame — on the "Camera Path + AI Walk" example, the walk's whole-clip retarget.
   const cache = uiEvaluatorCache;
-  useEffect(() => {
-    if (!groupNode || !selectedId) return;
-    if (manip) {
-      // P7.3 (#68): mirror the Character branch — evaluate the render tree
-      // and seed the proxy to the EVALUATED transform, re-running on every
-      // playhead change. The resolver returns the channel-overlaid value
-      // (the rendered transform) for an animated node; null when the
-      // selection isn't a rendered scene child / GltfChild.
-      //
-      // No proxy double-write: evalT is computed FIRST, then a SINGLE
-      // set() per axis chooses eval-or-static — we never set static then
-      // overwrite (which would flash the stale authored value for a frame).
-      // evalT non-null ⇒ the overlaid value IS the rendered transform, so
-      // seeding all three axes from it is correct-by-construction (the
-      // gizmo must sit where the cube renders; overlayChannels preserves
-      // un-channelled fields). evalT null ⇒ FULL static fallback — today's
-      // behavior exactly (D-04 per-param-when-null).
-      let evalT: ReturnType<typeof resolveEvaluatedTransform> = null;
-      try {
-        evalT = resolveEvaluatedTransform(
-          useDagStore.getState().state,
-          selectedId,
-          { time: { frame, seconds, normalized } },
-          cache,
-        );
-      } catch {
-        evalT = null; // fall back entirely to static (Character-branch shape)
+  useSeedAtPlayhead(
+    scenePlayhead,
+    ({ frame, seconds, normalized }) => {
+      if (!groupNode || !selectedId) return;
+      if (manip) {
+        // P7.3 (#68): mirror the Character branch — evaluate the render tree
+        // and seed the proxy to the EVALUATED transform, re-running on every
+        // playhead change. The resolver returns the channel-overlaid value
+        // (the rendered transform) for an animated node; null when the
+        // selection isn't a rendered scene child / GltfChild.
+        //
+        // No proxy double-write: evalT is computed FIRST, then a SINGLE
+        // set() per axis chooses eval-or-static — we never set static then
+        // overwrite (which would flash the stale authored value for a frame).
+        // evalT non-null ⇒ the overlaid value IS the rendered transform, so
+        // seeding all three axes from it is correct-by-construction (the
+        // gizmo must sit where the cube renders; overlayChannels preserves
+        // un-channelled fields). evalT null ⇒ FULL static fallback — today's
+        // behavior exactly (D-04 per-param-when-null).
+        let evalT: ReturnType<typeof resolveEvaluatedTransform> = null;
+        try {
+          evalT = resolveEvaluatedTransform(
+            useDagStore.getState().state,
+            selectedId,
+            { time: { frame, seconds, normalized } },
+            cache,
+          );
+        } catch {
+          evalT = null; // fall back entirely to static (Character-branch shape)
+        }
+
+        // position
+        if (evalT) groupNode.position.set(...evalT.position);
+        else groupNode.position.set(...manip.position);
+
+        // rotation — params/eval rotation are DEGREES; Object3D wants RADIANS.
+        // Per-param: eval rotation when the overlaid value carries one, else
+        // the static manip rotation, else identity (byte-identical defaults).
+        if (evalT && evalT.rotation) groupNode.rotation.set(...degVec3ToRad(evalT.rotation));
+        else if (!evalT && manip.rotation) groupNode.rotation.set(...degVec3ToRad(manip.rotation));
+        else groupNode.rotation.set(0, 0, 0);
+
+        // scale — eval scale (explicit or size fallback) when present, else
+        // the static scaleSeed, else identity (byte-identical defaults).
+        if (evalT && evalT.scale) groupNode.scale.set(...evalT.scale);
+        else if (!evalT && manip.scaleSeed) groupNode.scale.set(...manip.scaleSeed);
+        else groupNode.scale.set(1, 1, 1);
+
+        // #230 — the proxy now holds the node's LOCAL pose. If the node is nested
+        // under a transformed ancestor, RE-ANCHOR it to its WORLD pose so the gizmo
+        // sits where it renders (not detached by the parent transform). parentWorld
+        // is null for a top-level / flat (light·camera) / unresolvable (GltfChild)
+        // node → the local seed above stands, BYTE-IDENTICAL to pre-#230. The
+        // node's own pivot (a nested Group) is folded into localTRSMatrix here and
+        // stripped on write-back (worldToLocalTRS).
+        let parentWorld: THREE.Matrix4 | null = null;
+        try {
+          parentWorld = resolveParentWorldMatrix(
+            useDagStore.getState().state,
+            selectedId,
+            { time: { frame, seconds, normalized } },
+            cache,
+          );
+        } catch {
+          parentWorld = null;
+        }
+        parentWorldRef.current = parentWorld;
+        const np = node?.params as { pivot?: unknown } | undefined;
+        pivotRef.current = node?.type === 'Group' && isVec3(np?.pivot) ? (np!.pivot as Vec3) : null;
+        if (parentWorld) {
+          const localM = localTRSMatrix(
+            groupNode.position,
+            groupNode.rotation,
+            groupNode.scale,
+            pivotRef.current,
+          );
+          const worldM = parentWorld.clone().multiply(localM);
+          const wp = new THREE.Vector3();
+          const wq = new THREE.Quaternion();
+          const ws = new THREE.Vector3();
+          worldM.decompose(wp, wq, ws);
+          groupNode.position.copy(wp);
+          groupNode.quaternion.copy(wq);
+          groupNode.scale.copy(ws);
+        }
+        // NOTE: no early return here — fall through to the FLAG-C tail mirror
+        // so the dev-only proxy attr reflects whichever branch committed.
+      } else if (isCharacter) {
+        const dagState = useDagStore.getState().state;
+        try {
+          const result = evaluate(dagState, selectedId, {
+            cache,
+            ctx: { time: { frame, seconds, normalized } },
+          });
+          const v = result.value as CharacterValue;
+          groupNode.position.set(...v.position);
+          groupNode.rotation.set(0, v.heading, 0);
+          groupNode.scale.set(1, 1, 1);
+        } catch {
+          // node missing or eval error — leave gizmo unmounted
+        }
       }
 
-      // position
-      if (evalT) groupNode.position.set(...evalT.position);
-      else groupNode.position.set(...manip.position);
-
-      // rotation — params/eval rotation are DEGREES; Object3D wants RADIANS.
-      // Per-param: eval rotation when the overlaid value carries one, else
-      // the static manip rotation, else identity (byte-identical defaults).
-      if (evalT && evalT.rotation) groupNode.rotation.set(...degVec3ToRad(evalT.rotation));
-      else if (!evalT && manip.rotation) groupNode.rotation.set(...degVec3ToRad(manip.rotation));
-      else groupNode.rotation.set(0, 0, 0);
-
-      // scale — eval scale (explicit or size fallback) when present, else
-      // the static scaleSeed, else identity (byte-identical defaults).
-      if (evalT && evalT.scale) groupNode.scale.set(...evalT.scale);
-      else if (!evalT && manip.scaleSeed) groupNode.scale.set(...manip.scaleSeed);
-      else groupNode.scale.set(1, 1, 1);
-
-      // #230 — the proxy now holds the node's LOCAL pose. If the node is nested
-      // under a transformed ancestor, RE-ANCHOR it to its WORLD pose so the gizmo
-      // sits where it renders (not detached by the parent transform). parentWorld
-      // is null for a top-level / flat (light·camera) / unresolvable (GltfChild)
-      // node → the local seed above stands, BYTE-IDENTICAL to pre-#230. The
-      // node's own pivot (a nested Group) is folded into localTRSMatrix here and
-      // stripped on write-back (worldToLocalTRS).
-      let parentWorld: THREE.Matrix4 | null = null;
-      try {
-        parentWorld = resolveParentWorldMatrix(
-          useDagStore.getState().state,
-          selectedId,
-          { time: { frame, seconds, normalized } },
-          cache,
-        );
-      } catch {
-        parentWorld = null;
+      // *** FLAG-C — test-observation hook, dev-guarded, NOT user chrome ***
+      // The FINAL statement of the seeding effect: AFTER both the
+      // manip/resolver branch AND the Character branch have committed
+      // `groupNode`. Reflects the ACTUAL committed proxy transform
+      // regardless of which branch ran (never a mid-effect intermediate).
+      // The D-06 boundary-pair e2e reads this to observe the GIZMO side of
+      // the boundary (the side P7's E2 never observed — the #68 gap). It is
+      // a data-attr mirror on the proxy group, recorded in the B11 line as
+      // a test-only attr — no UI-SPEC delta, no new chrome surface.
+      if (import.meta.env.DEV) {
+        const p = groupNode.position;
+        const r = groupNode.rotation;
+        const s = groupNode.scale;
+        const el = groupNode as unknown as { userData: Record<string, unknown> };
+        el.userData.__basher_gizmo = {
+          position: [p.x, p.y, p.z],
+          // radians on the Object3D — report degrees to match params/eval.
+          rotation: radVec3ToDeg([r.x, r.y, r.z]),
+          scale: [s.x, s.y, s.z],
+        };
+        const w = window as unknown as Record<string, unknown>;
+        w.__basher_gizmo = () =>
+          (groupNode as unknown as { userData: Record<string, unknown> }).userData.__basher_gizmo ??
+          null;
       }
-      parentWorldRef.current = parentWorld;
-      const np = node?.params as { pivot?: unknown } | undefined;
-      pivotRef.current = node?.type === 'Group' && isVec3(np?.pivot) ? (np!.pivot as Vec3) : null;
-      if (parentWorld) {
-        const localM = localTRSMatrix(
-          groupNode.position,
-          groupNode.rotation,
-          groupNode.scale,
-          pivotRef.current,
-        );
-        const worldM = parentWorld.clone().multiply(localM);
-        const wp = new THREE.Vector3();
-        const wq = new THREE.Quaternion();
-        const ws = new THREE.Vector3();
-        worldM.decompose(wp, wq, ws);
-        groupNode.position.copy(wp);
-        groupNode.quaternion.copy(wq);
-        groupNode.scale.copy(ws);
-      }
-      // NOTE: no early return here — fall through to the FLAG-C tail mirror
-      // so the dev-only proxy attr reflects whichever branch committed.
-    } else if (isCharacter) {
-      const dagState = useDagStore.getState().state;
-      try {
-        const result = evaluate(dagState, selectedId, {
-          cache,
-          ctx: { time: { frame, seconds, normalized } },
-        });
-        const v = result.value as CharacterValue;
-        groupNode.position.set(...v.position);
-        groupNode.rotation.set(0, v.heading, 0);
-        groupNode.scale.set(1, 1, 1);
-      } catch {
-        // node missing or eval error — leave gizmo unmounted
-      }
-    }
-
-    // *** FLAG-C — test-observation hook, dev-guarded, NOT user chrome ***
-    // The FINAL statement of the seeding effect: AFTER both the
-    // manip/resolver branch AND the Character branch have committed
-    // `groupNode`. Reflects the ACTUAL committed proxy transform
-    // regardless of which branch ran (never a mid-effect intermediate).
-    // The D-06 boundary-pair e2e reads this to observe the GIZMO side of
-    // the boundary (the side P7's E2 never observed — the #68 gap). It is
-    // a data-attr mirror on the proxy group, recorded in the B11 line as
-    // a test-only attr — no UI-SPEC delta, no new chrome surface.
-    if (import.meta.env.DEV) {
-      const p = groupNode.position;
-      const r = groupNode.rotation;
-      const s = groupNode.scale;
-      const el = groupNode as unknown as { userData: Record<string, unknown> };
-      el.userData.__basher_gizmo = {
-        position: [p.x, p.y, p.z],
-        // radians on the Object3D — report degrees to match params/eval.
-        rotation: radVec3ToDeg([r.x, r.y, r.z]),
-        scale: [s.x, s.y, s.z],
-      };
-      const w = window as unknown as Record<string, unknown>;
-      w.__basher_gizmo = () =>
-        (groupNode as unknown as { userData: Record<string, unknown> }).userData.__basher_gizmo ??
-        null;
-    }
-  }, [groupNode, manip, node, isCharacter, selectedId, seconds, frame, normalized, playing, cache]);
+    },
+    [groupNode, manip, node, isCharacter, selectedId, playing, cache],
+  );
 
   if (!selectedId) return null;
   if (!isCharacter && !manip) return null;
@@ -657,9 +721,7 @@ function MultiGizmo() {
   // seeds (median/boundingBox/active) and, for 'individual', that each node
   // rotates/scales about its OWN origin instead of a shared pivot.
   const pivotMode = useViewportStore((s) => s.pivot);
-  const seconds = useTimeStore((s) => s.seconds);
-  const frame = useTimeStore((s) => s.frame);
-  const normalized = useTimeStore((s) => s.normalized);
+  // #1731 — the playhead is read from the frame loop (`useSeedAtPlayhead`), not subscribed.
   const playing = useTimeStore((s) => s.playing);
 
   const [groupNode, setGroupNode] = useState<THREE.Group | null>(null);
@@ -688,77 +750,85 @@ function MultiGizmo() {
   // graph under the selection (a character's pose, a constraint's target); uncached it re-ran all of
   // it every frame — on the "Camera Path + AI Walk" example, the walk's whole-clip retarget.
   const cache = uiEvaluatorCache;
-  useEffect(() => {
-    if (!groupNode) return;
-    const state = useDagStore.getState().state;
-    const ctx = { time: { frame, seconds, normalized } };
-    const seeds: NonNullable<typeof seedRef.current>['nodes'] = [];
-    for (const id of selectedIds) {
-      const node = state.nodes[id];
-      const manip = getManipulable(node ?? null);
-      if (!manip) continue;
-      let world: THREE.Matrix4;
-      let parentWorld: THREE.Matrix4 | null = null;
-      try {
-        const wt = resolveWorldTransform(state, id, ctx, cache);
-        world = wt
-          ? new THREE.Matrix4().fromArray(wt.matrix)
-          : new THREE.Matrix4().setPosition(...manip.position);
-        // A Follow-Path moves the ORIGIN, and resolveWorldTransform is pure TRS — it applies
-        // no band (that purity is what the band's own inputs read). So a follower's seed world
-        // must be re-based onto the point it actually renders at, or `origins` below medians a
-        // phantom and the whole group orbits a pivot that is nowhere near any object. Position
-        // ONLY — the band writes no rotation/scale, so the rest of the matrix stands. Read on
-        // top of the pure walk, never folded into it (#348).
-        const followed = resolveFollowedWorldPosition(state, id, ctx, cache);
-        if (followed) world.setPosition(followed[0], followed[1], followed[2]);
-        parentWorld = resolveParentWorldMatrix(state, id, ctx, cache);
-      } catch {
-        world = new THREE.Matrix4().setPosition(...manip.position);
-        parentWorld = null;
+  useSeedAtPlayhead(
+    scenePlayhead,
+    ({ frame, seconds, normalized }) => {
+      if (!groupNode) return;
+      const state = useDagStore.getState().state;
+      const ctx = { time: { frame, seconds, normalized } };
+      const seeds: NonNullable<typeof seedRef.current>['nodes'] = [];
+      for (const id of selectedIds) {
+        const node = state.nodes[id];
+        const manip = getManipulable(node ?? null);
+        if (!manip) continue;
+        let world: THREE.Matrix4;
+        let parentWorld: THREE.Matrix4 | null = null;
+        try {
+          const wt = resolveWorldTransform(state, id, ctx, cache);
+          world = wt
+            ? new THREE.Matrix4().fromArray(wt.matrix)
+            : new THREE.Matrix4().setPosition(...manip.position);
+          // A Follow-Path moves the ORIGIN, and resolveWorldTransform is pure TRS — it applies
+          // no band (that purity is what the band's own inputs read). So a follower's seed world
+          // must be re-based onto the point it actually renders at, or `origins` below medians a
+          // phantom and the whole group orbits a pivot that is nowhere near any object. Position
+          // ONLY — the band writes no rotation/scale, so the rest of the matrix stands. Read on
+          // top of the pure walk, never folded into it (#348).
+          const followed = resolveFollowedWorldPosition(state, id, ctx, cache);
+          if (followed) world.setPosition(followed[0], followed[1], followed[2]);
+          parentWorld = resolveParentWorldMatrix(state, id, ctx, cache);
+        } catch {
+          world = new THREE.Matrix4().setPosition(...manip.position);
+          parentWorld = null;
+        }
+        const np = node?.params as { pivot?: unknown } | undefined;
+        const pivot = node?.type === 'Group' && isVec3(np?.pivot) ? (np!.pivot as Vec3) : null;
+        seeds.push({ id, seedWorld: world, parentWorld, pivot, manip });
       }
-      const np = node?.params as { pivot?: unknown } | undefined;
-      const pivot = node?.type === 'Group' && isVec3(np?.pivot) ? (np!.pivot as Vec3) : null;
-      seeds.push({ id, seedWorld: world, parentWorld, pivot, manip });
-    }
-    if (seeds.length === 0) {
-      seedRef.current = null;
-      return;
-    }
-    // #228 — pivot point: where the proxy seeds + orbits/scales. median /
-    // boundingBox / active are computed from the world origins; 'individual'
-    // seeds at the median for DISPLAY but applies per-origin in onObjectChange.
-    const origins = seeds.map((s) => {
-      const p = new THREE.Vector3().setFromMatrixPosition(s.seedWorld);
-      return [p.x, p.y, p.z] as Vec3;
-    });
-    const activeIdx = seeds.findIndex((s) => s.id === primaryId);
-    const activeOrigin = activeIdx >= 0 ? origins[activeIdx] : null;
-    const pp = pivotPoint(pivotMode, origins, activeOrigin);
-    const pivotVec = new THREE.Vector3(pp[0], pp[1], pp[2]);
-    groupNode.position.copy(pivotVec);
-    groupNode.rotation.set(0, 0, 0);
-    groupNode.scale.set(1, 1, 1);
-    seedRef.current = {
-      proxyWorld: new THREE.Matrix4().setPosition(pivotVec),
-      pivotMode,
-      nodes: seeds,
-    };
-
-    if (import.meta.env.DEV) {
-      const w = window as unknown as Record<string, unknown>;
-      w.__basher_gizmo = () => ({
-        position: [groupNode.position.x, groupNode.position.y, groupNode.position.z],
-        rotation: radVec3ToDeg([groupNode.rotation.x, groupNode.rotation.y, groupNode.rotation.z]),
-        scale: [groupNode.scale.x, groupNode.scale.y, groupNode.scale.z],
+      if (seeds.length === 0) {
+        seedRef.current = null;
+        return;
+      }
+      // #228 — pivot point: where the proxy seeds + orbits/scales. median /
+      // boundingBox / active are computed from the world origins; 'individual'
+      // seeds at the median for DISPLAY but applies per-origin in onObjectChange.
+      const origins = seeds.map((s) => {
+        const p = new THREE.Vector3().setFromMatrixPosition(s.seedWorld);
+        return [p.x, p.y, p.z] as Vec3;
       });
-      w.__basher_gizmo_multi = () => ({
-        count: seeds.length,
-        pivot: [pivotVec.x, pivotVec.y, pivotVec.z],
+      const activeIdx = seeds.findIndex((s) => s.id === primaryId);
+      const activeOrigin = activeIdx >= 0 ? origins[activeIdx] : null;
+      const pp = pivotPoint(pivotMode, origins, activeOrigin);
+      const pivotVec = new THREE.Vector3(pp[0], pp[1], pp[2]);
+      groupNode.position.copy(pivotVec);
+      groupNode.rotation.set(0, 0, 0);
+      groupNode.scale.set(1, 1, 1);
+      seedRef.current = {
+        proxyWorld: new THREE.Matrix4().setPosition(pivotVec),
         pivotMode,
-      });
-    }
-  }, [groupNode, selectedIds, primaryId, pivotMode, seconds, frame, normalized, playing, cache]);
+        nodes: seeds,
+      };
+
+      if (import.meta.env.DEV) {
+        const w = window as unknown as Record<string, unknown>;
+        w.__basher_gizmo = () => ({
+          position: [groupNode.position.x, groupNode.position.y, groupNode.position.z],
+          rotation: radVec3ToDeg([
+            groupNode.rotation.x,
+            groupNode.rotation.y,
+            groupNode.rotation.z,
+          ]),
+          scale: [groupNode.scale.x, groupNode.scale.y, groupNode.scale.z],
+        });
+        w.__basher_gizmo_multi = () => ({
+          count: seeds.length,
+          pivot: [pivotVec.x, pivotVec.y, pivotVec.z],
+          pivotMode,
+        });
+      }
+    },
+    [groupNode, selectedIds, primaryId, pivotMode, playing, cache],
+  );
 
   function onObjectChange() {
     const g = groupNode;
@@ -1076,10 +1146,8 @@ function CameraGizmo() {
   const camId = useSelectionStore((s) => s.primaryNodeId);
   const mode = useGizmoStore((s) => s.mode);
   const orientation = useGizmoStore((s) => s.orientation);
-  // #1594 — the camera is posed on the playhead (film time), as `resolveActiveCameraPoseAt` reads it.
-  const seconds = useTimeStore((s) => s.filmSeconds);
-  const frame = useTimeStore((s) => s.filmFrame);
-  const normalized = useTimeStore((s) => s.normalized);
+  // #1594 — the camera is posed on the playhead (film time), as `resolveActiveCameraPoseAt` reads
+  // it. #1731 — read from the frame loop (`useSeedAtPlayhead`), not subscribed.
   const playing = useTimeStore((s) => s.playing);
 
   const [bodyNode, setBodyNode] = useState<THREE.Group | null>(null);
@@ -1116,52 +1184,61 @@ function CameraGizmo() {
   // graph under the selection (a character's pose, a constraint's target); uncached it re-ran all of
   // it every frame — on the "Camera Path + AI Walk" example, the walk's whole-clip retarget.
   const cache = uiEvaluatorCache;
-  useEffect(() => {
-    if (!camId) return;
-    let pose;
-    try {
-      pose = resolveActiveCameraPoseAt(useDagStore.getState().state, seconds, cache);
-    } catch {
-      return;
-    }
-    const distance =
-      Math.hypot(
-        pose.lookAt[0] - pose.position[0],
-        pose.lookAt[1] - pose.position[1],
-        pose.lookAt[2] - pose.position[2],
-      ) || 1;
-    // #231 Inc 3.3 — the parent Group world (null for a top-level camera). The pose
-    // above is already in WORLD space (resolveActiveCameraPoseAt composed it), so
-    // the drag handlers undo this matrix to recover the LOCAL authored params.
-    const parentWorld = resolveParentWorldMatrix(
-      useDagStore.getState().state,
-      camId,
-      { time: { frame: Math.round(seconds * 60), seconds, normalized: 0 } },
-      cache,
-    );
-    seedRef.current = { position: pose.position, distance, parentWorld };
-    if (bodyNode) {
-      bodyNode.position.set(...pose.position);
-      bodyNode.quaternion.copy(cameraOrientationQuat(pose.position, pose.lookAt, pose.roll));
-      bodyNode.scale.set(1, 1, 1);
-    }
-    if (aimNode) {
-      aimNode.position.set(...pose.lookAt);
-      aimNode.quaternion.identity();
-      aimNode.scale.set(1, 1, 1);
-    }
-    if (import.meta.env.DEV) {
-      const w = window as unknown as Record<string, unknown>;
-      w.__basher_camera_gizmo = () => ({
-        position: bodyNode ? [bodyNode.position.x, bodyNode.position.y, bodyNode.position.z] : null,
-        aim: aimNode ? [aimNode.position.x, aimNode.position.y, aimNode.position.z] : null,
-        // #247 — the aim is a target RETICLE (not a triad); `bound` = Track-To
-        // linked to an object (read-only, follows it).
-        reticle: true,
-        bound,
-      });
-    }
-  }, [camId, bodyNode, aimNode, seconds, frame, normalized, playing, bound, cache]);
+  useSeedAtPlayhead(
+    filmPlayhead,
+    ({ seconds }) => {
+      if (!camId) return;
+      let pose;
+      try {
+        pose = resolveActiveCameraPoseAt(useDagStore.getState().state, seconds, cache);
+      } catch {
+        return;
+      }
+      const distance =
+        Math.hypot(
+          pose.lookAt[0] - pose.position[0],
+          pose.lookAt[1] - pose.position[1],
+          pose.lookAt[2] - pose.position[2],
+        ) || 1;
+      // #231 Inc 3.3 — the parent Group world (null for a top-level camera). The pose
+      // above is already in WORLD space (resolveActiveCameraPoseAt composed it), so
+      // the drag handlers undo this matrix to recover the LOCAL authored params.
+      // #1688 — `seconds` is the playhead; the parent read takes both clocks, so a rig on scene
+      // time is undone where the scene has reached and a rig set to Film where the playhead is.
+      const state = useDagStore.getState().state;
+      const parentWorld = resolveParentWorldMatrix(
+        state,
+        camId,
+        clockedCtx(sceneClockOf(state).sceneAt(seconds), seconds),
+        cache,
+      );
+      seedRef.current = { position: pose.position, distance, parentWorld };
+      if (bodyNode) {
+        bodyNode.position.set(...pose.position);
+        bodyNode.quaternion.copy(cameraOrientationQuat(pose.position, pose.lookAt, pose.roll));
+        bodyNode.scale.set(1, 1, 1);
+      }
+      if (aimNode) {
+        aimNode.position.set(...pose.lookAt);
+        aimNode.quaternion.identity();
+        aimNode.scale.set(1, 1, 1);
+      }
+      if (import.meta.env.DEV) {
+        const w = window as unknown as Record<string, unknown>;
+        w.__basher_camera_gizmo = () => ({
+          position: bodyNode
+            ? [bodyNode.position.x, bodyNode.position.y, bodyNode.position.z]
+            : null,
+          aim: aimNode ? [aimNode.position.x, aimNode.position.y, aimNode.position.z] : null,
+          // #247 — the aim is a target RETICLE (not a triad); `bound` = Track-To
+          // linked to an object (read-only, follows it).
+          reticle: true,
+          bound,
+        });
+      }
+    },
+    [camId, bodyNode, aimNode, playing, bound, cache],
+  );
 
   // ONE write chokepoint per camera param — animated → re-route (channel keyed),
   // else raw setParam + autoKey first-key (mirrors the generic gizmo per-param,

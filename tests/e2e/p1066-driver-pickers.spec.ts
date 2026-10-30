@@ -1,5 +1,6 @@
 // #1066 — a ParamDriver's target and path, picked in the running app from the census's DRIVER
-// answers (#1258), which are not the channel's: the camera pose ignores a driver (#1266).
+// answers (#1258), which need not be the channel's. The camera pose ignored a driver until #480
+// (#1266); now a camera's fov is offered to both.
 //
 // Each picker is driven through the real <select>, and the effect is read off the drawn
 // three.js scene, not the DAG: a driver on a param nothing reads would still pass a DAG read.
@@ -135,9 +136,7 @@ test('a driver picks a spot light and its intensity from the pickers, and the dr
   expect(errors, 'no page errors').toEqual([]);
 });
 
-test("a camera's fov is offered to a channel, and read-only with why to a driver", async ({
-  page,
-}) => {
+test("a camera's fov is offered to a channel and to a driver", async ({ page }) => {
   const errors: string[] = [];
   page.on('pageerror', (e) => errors.push(e.message));
   await boot(page);
@@ -158,9 +157,8 @@ test("a camera's fov is offered to a channel, and read-only with why to a driver
     .poll(async () => (await shown(page, 'inspector-options-fovch_e2e-paramPath')).enabled)
     .toContain('fov');
 
-  // The driver: the census measured a driver move no param of a perspective camera's data
-  // (the pose ignores drivers, #1266), so there is nothing to offer — the path is read-only
-  // with that answer, and the camera is disabled in the target list.
+  // The driver: since #480 the camera pose folds drivers too, and the census measured a driver
+  // on fov move the scene, so the path is offered and the camera is a target.
   await dispatch(page, {
     type: 'addNode',
     nodeId: 'fovdrv_e2e',
@@ -168,13 +166,11 @@ test("a camera's fov is offered to a channel, and read-only with why to a driver
     params: { target: data, paramPath: 'fov' },
   });
   await select(page, 'fovdrv_e2e');
-  const locked = page.getByTestId('inspector-options-locked-fovdrv_e2e-paramPath');
-  await expect(locked).toContainText('fov');
-  await expect(locked).toContainText(
-    'a driver moves no number or vec3 param of CameraData:Perspective',
-  );
-  await expect(page.getByTestId('inspector-options-fovdrv_e2e-paramPath')).toHaveCount(0);
+  await expect
+    .poll(async () => (await shown(page, 'inspector-options-fovdrv_e2e-paramPath')).enabled)
+    .toContain('fov');
+  await expect(page.getByTestId('inspector-options-locked-fovdrv_e2e-paramPath')).toHaveCount(0);
   const targets = await shown(page, 'inspector-options-fovdrv_e2e-target');
-  expect(targets.enabled).not.toContain(data);
+  expect(targets.enabled).toContain(data);
   expect(errors, 'no page errors').toEqual([]);
 });

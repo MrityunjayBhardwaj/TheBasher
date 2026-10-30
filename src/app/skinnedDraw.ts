@@ -38,16 +38,47 @@
 // every point still has at most four bones that found a group is skinned on the GPU, its lanes
 // packed into the four the shader has (`gpuSkinnable`).
 //
+// ── ONE ARMATURE'S BONES, SHARED BY EVERY MESH IT DEFORMS (#1737) ──────────────────────────────
+//
+// three updates a `Skeleton` once per frame per Skeleton OBJECT (`WebGLObjects.js` keys its update
+// map on the skeleton), and each update is a multiply and a copy per palette bone
+// (`Skeleton.update`). Each mesh used to build its own copy of its armature's bones and its own
+// palette, so a character of eleven meshes posed its rig eleven times a frame and uploaded eleven
+// palettes: the alley scene drew 22 skinned meshes over 22 skeletons and 5,479 bones, ~2.7 ms a
+// frame. Blender poses an armature once (`BKE_pose_where_is`) and every mesh it deforms reads it.
+//
+// So a draw built with a `rig` key — the armature it is deformed by, and the clock it runs on, so
+// two meshes that may draw at different times never share — takes its bones from one hierarchy
+// per armature, placed at most once per pose and time, whichever mesh asks first. Meshes of that
+// armature whose group tables are the same share one palette, one `Skeleton`, updated once. Without
+// a key (nothing says which armature), a draw keeps a private hierarchy, as before. The bind
+// matrix stays per mesh (`SkinnedMesh.bind`), so meshes placed differently still share bones.
+//
+// ── WHY NOT ONE PALETTE PER ARMATURE (BLENDER'S SHAPE) — MEASURED, DECIDED: NOT BUILT ────────────
+//
+// Blender keeps one matrix per bone (`chan_mat`, `armature_update.cc:963-964`) and each mesh only
+// points at bones by group name (`armature_deform.cc:322-337`). The three equivalent — one palette
+// per armature, each mesh's joint numbers remapped to bone numbers at build — uploads FEWER bones
+// than the palettes here ONLY when meshes of one armature carry DIFFERENT group tables. Measured
+// 2026-10-29 (#1737): Mixamo X Bot 2 meshes → 1 palette, 68 bones; Tripo 1 → 1, 24; the alley 22
+// meshes → 2 armatures, 2 palettes, 439 bones uploaded = 439 distinct bones placed. One palette per
+// armature already, so the remap would save nothing and was not built (user's decision). Revisit
+// only when `perf-frame-attribution`'s scene row reads "at most N palettes per armature" with N > 1.
+//
 // REF: src/nodes/armatureDeform.ts; src/core/import/threeAdapter.ts (`specToThreeSkeleton`);
-//      node_modules/three/src/objects/SkinnedMesh.js; issues #1197, #393.
+//      node_modules/three/src/objects/SkinnedMesh.js; three r169 src/renderers/webgl/
+//      WebGLObjects.js (`updateMap.get( skeleton ) !== frame`), src/objects/Skeleton.js
+//      (`update`); issues #1197, #393, #1737.
 
 import { Bone, Matrix4, Skeleton } from 'three';
 import { specToThreeSkeleton } from '../core/import/threeAdapter';
 import { restBonePose } from '../nodes/bonePose';
 import { sampleSkinDeform, sampleSkinDirections } from '../nodes/armatureDeform';
+import { samplePose } from '../nodes/poseSample';
 import { SKIN_SET_WIDTH, skinLanes } from '../nodes/skinInfluences';
 import type {
   BonePose,
+  BoneSpec,
   MeshGeometryData,
   PosedSkeletonValue,
   SkinDeformValue,
@@ -71,6 +102,8 @@ export interface SkinnedDraw {
    * build must not be redone for it.
    */
   readonly pose: (seconds: number, pose: PosedSkeletonValue | null) => void;
+  /** #1737 — give back this draw's share of its armature's bones and palette (on unmount). */
+  readonly release: () => void;
 }
 
 /**
@@ -82,46 +115,131 @@ export function skinnedDrawKey(geometryKey: string, skin: SkinDeformValue): stri
   return JSON.stringify([geometryKey, skin.bones, skin.boneOfGroup, skin.armatureMatrix]);
 }
 
-/** Build the draw of `mesh` deformed by `skin`. */
-export function buildSkinnedDraw(skin: SkinDeformValue, mesh: MeshGeometryData): SkinnedDraw {
-  const { skeleton: armature, bones } = specToThreeSkeleton(skin.bones);
+/** One armature's bones, in armature space, posed for every draw that shares them (#1737). */
+interface Rig {
+  readonly bones: Bone[];
+  readonly roots: Bone[];
+  /** The rest bones' inverse bind matrices, in `bones` order. */
+  readonly inverses: Matrix4[];
+  readonly rest: readonly BonePose[];
+  /** The bone a vertex with no joined weight follows: it never moves. One per rig. */
+  readonly still: Bone;
+  /** What the bones were last placed at; placing again at the same is skipped. */
+  placed: { pose: PosedSkeletonValue | null; seconds: number } | null;
+  /** Palettes by group table, each one `Skeleton` shared by the draws with that table. */
+  readonly palettes: Map<string, { skeleton: Skeleton; users: number }>;
+  users: number;
+}
+
+const rigs = new Map<string, Rig>();
+
+function makeRig(specs: readonly BoneSpec[]): Rig {
+  const { skeleton: armature, bones } = specToThreeSkeleton(specs);
   const still = new Bone();
   still.name = '';
-  const groups = skin.boneOfGroup.length;
+  return {
+    bones,
+    roots: bones.filter((b) => !b.parent),
+    inverses: armature.boneInverses,
+    rest: specs.map(restBonePose),
+    still,
+    placed: null,
+    palettes: new Map(),
+    users: 0,
+  };
+}
+
+/** The shared rig for `key` and these rest bones, or a private one when there is no key. */
+function acquireRig(
+  key: string | null,
+  specs: readonly BoneSpec[],
+): { rig: Rig; id: string | null } {
+  if (key === null) return { rig: makeRig(specs), id: null };
+  const id = `${key}|${JSON.stringify(specs)}`;
+  let rig = rigs.get(id);
+  if (!rig) rigs.set(id, (rig = makeRig(specs)));
+  rig.users++;
+  return { rig, id };
+}
+
+function paletteOf(rig: Rig, boneOfGroup: readonly number[]): Skeleton {
+  const key = boneOfGroup.join(',');
+  const kept = rig.palettes.get(key);
+  if (kept) {
+    kept.users++;
+    return kept.skeleton;
+  }
   const palette: Bone[] = [];
   const inverses: Matrix4[] = [];
-  for (let g = 0; g < groups; g++) {
-    const b = skin.boneOfGroup[g];
-    palette.push(b >= 0 ? bones[b] : still);
-    inverses.push(b >= 0 ? armature.boneInverses[b].clone() : new Matrix4());
+  for (const b of boneOfGroup) {
+    palette.push(b >= 0 ? rig.bones[b] : rig.still);
+    inverses.push(b >= 0 ? rig.inverses[b].clone() : new Matrix4());
   }
-  palette.push(still);
+  palette.push(rig.still);
   inverses.push(new Matrix4());
+  const skeleton = new Skeleton(palette, inverses);
+  rig.palettes.set(key, { skeleton, users: 1 });
+  return skeleton;
+}
 
+/**
+ * Build the draw of `mesh` deformed by `skin`. `rig` names the armature deforming it and the clock
+ * it runs on (#1737): draws with the same `rig` and the same rest bones share one set of bones, and
+ * those with the same group table one palette. Null keeps a private set, as before.
+ */
+export function buildSkinnedDraw(
+  skin: SkinDeformValue,
+  mesh: MeshGeometryData,
+  rig: string | null = null,
+): SkinnedDraw {
+  const { rig: shared, id } = acquireRig(rig, skin.bones);
+  const groups = skin.boneOfGroup.length;
+  const skeleton = paletteOf(shared, skin.boneOfGroup);
+  const paletteKey = skin.boneOfGroup.join(',');
   const { skinIndex, skinWeight } = vertexBindings(skin, mesh, groups);
-  const roots = bones.filter((b) => !b.parent);
-  const rest = skin.bones.map(restBonePose);
   const place = (entries: readonly BonePose[]): void => {
     entries.forEach((p, i) => {
-      const bone = bones[i];
+      const bone = shared.bones[i];
       if (!bone) return;
       bone.position.set(p.position[0], p.position[1], p.position[2]);
       bone.quaternion.set(p.quaternion[0], p.quaternion[1], p.quaternion[2], p.quaternion[3]);
       bone.scale.set(p.scale[0], p.scale[1], p.scale[2]);
     });
   };
+  let released = false;
   return {
-    skeleton: new Skeleton(palette, inverses),
+    skeleton,
     bindMatrix: new Matrix4().fromArray(skin.armatureMatrix).invert(),
     skinIndex,
     skinWeight,
     pose(seconds, pose) {
+      // Once per pose and time per rig: the second mesh of an armature finds its bones placed.
+      const last = shared.placed;
+      if (last && last.pose === pose && last.seconds === seconds) return;
+      shared.placed = { pose, seconds };
       // The same pose the CPU deform reads (`SkinDeformValue.pose`), so the draw and the modifier
       // cannot disagree.
-      place(pose === null ? rest : pose.sample(seconds));
-      for (const root of roots) root.updateMatrixWorld(true);
+      place(pose === null ? shared.rest : samplePose(pose, seconds));
+      for (const root of shared.roots) root.updateMatrixWorld(true);
+    },
+    release() {
+      if (released) return;
+      released = true;
+      const kept = shared.palettes.get(paletteKey);
+      if (kept && --kept.users === 0) {
+        kept.skeleton.dispose();
+        shared.palettes.delete(paletteKey);
+      }
+      if (id !== null && --shared.users === 0) rigs.delete(id);
     },
   };
+}
+
+/** #1737 — how many shared rigs and palettes are held, for tests. */
+export function sharedRigCounts(): { rigs: number; palettes: number } {
+  let palettes = 0;
+  for (const r of rigs.values()) palettes += r.palettes.size;
+  return { rigs: rigs.size, palettes };
 }
 
 /** Each buffer vertex's joints and weights, rewritten to Blender's rule (see the header). */

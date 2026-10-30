@@ -40,6 +40,7 @@ import { useThreeRef } from './character/threeRef';
 import { downloadBlob } from './downloadBlob';
 import { type NotifyInput, useNotificationStore } from './stores/notificationStore';
 import { useRenderAnimationStore } from './stores/renderAnimationStore';
+import { advance } from '@react-three/fiber';
 
 /** Frozen evaluation time — only the STATIC RenderOutput config is read here
  *  (resolution + postFx); the animation is in the live scene we render. */
@@ -53,13 +54,24 @@ export interface RenderAnimationResult {
   frameCount?: number;
 }
 
-/** Resolve after the live scene has applied a just-set playhead time. The R3F
- *  render loop (frameloop="always") mutates the scene objects on its own rAF;
- *  awaiting two frames guarantees at least one of its ticks ran in between. */
-function waitForApply(): Promise<void> {
-  return new Promise((resolve) => {
-    requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
-  });
+/**
+ * #1733 (5.2) — apply a just-set playhead time to the live scene, NOW: one synchronous pass of
+ * the R3F frame loop (`advance`; R3F 8.18 `events-*.esm.js`, `advance` → `render$1`).
+ * That pass runs every frame callback in priority order — first the frame evaluator (−2), which
+ * runs every tick and commits all their React updates in one synchronous commit, then the gizmos
+ * (−1) and the remaining frame callbacks (skinned meshes, bone parents, light aims) — and draws.
+ * Blender renders a frame the same way: set the frame, evaluate everything at it, then draw
+ * (`ED_update_for_newframe`, synchronously).
+ *
+ * This replaced a wait of two animation frames, which assumed the loop's own frames would have
+ * caught up by then; under load they had not, and frames were exported one frame late (p1727).
+ * It holds for everything that moves with time through the frame loop. Content following the
+ * playhead through a React subscription would still lag; the placeholder rig (CharacterR) was
+ * the last such content and moved onto a tick with this change.
+ */
+function applyNow(): Promise<void> {
+  advance(performance.now());
+  return Promise.resolve();
 }
 
 /**
@@ -168,7 +180,7 @@ export async function renderAnimationToFile(
         frameCount,
         fps,
         setTime: (s) => useTimeStore.getState().setTime(s),
-        waitForApply,
+        waitForApply: applyNow,
         capture: () => {
           // #190 — resolve the camera pose at THIS frame's time, AFTER setTime +
           // waitForApply have advanced the playhead. Read the live seconds (just

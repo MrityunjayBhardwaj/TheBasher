@@ -134,10 +134,6 @@ const NO_CREATION_ROAD: Readonly<Record<string, string>> = {
     '"+ Add". This is the pre-operator-lane spelling, still rendered and still walked by ' +
     'the scene hierarchy, but no longer authored.',
 
-  Cut:
-    'The Shot/Cut editorial species (THESIS §42), shipped as data in Wave A with its ' +
-    'authoring surface never built. The compositor is where editorial lives now.',
-
   Lag:
     'A Lag is an instance of the built-in Lag template since #1559: Add › Lag places one ' +
     '(`placeBuiltin`, src/app/builtinTemplates.ts), and a project saved with Lag nodes loads ' +

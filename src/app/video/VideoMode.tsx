@@ -128,7 +128,7 @@ function CompositionShell({ comp }: { comp: ActiveComposition }) {
     <div className="flex h-full w-full min-h-0">
       <div className="flex min-w-0 flex-1 flex-col">
         {/* Composite viewer (top) — the live ordered composite at the playhead (1d). */}
-        <CompositeViewer compId={comp.id} comp={comp.params} />
+        <CompositeViewer compId={comp.id} comp={comp.params} active={space === 'video'} />
         {/* Layer timeline (bottom) — a transport bar over the outline + bars +
             twirl-down property rows. The strip header carries the comp name, the
             live layer count, and the Add Layer affordance (the layer Add path). */}

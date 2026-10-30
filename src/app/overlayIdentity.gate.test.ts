@@ -89,10 +89,13 @@ type PatchClass =
 
 const PATCH_SITES: Record<string, PatchClass> = {
   // The read side. `resolveEvaluatedTransform` overlays a SceneChild's TRS for the gizmo
-  // and the inspector; `resolveWorldTransform` does the same for the world-matrix walk and
-  // the camera pose. Both patch transform bands only.
+  // and the inspector; `resolveWorldTransform` does the same for the world-matrix walk.
+  // `cameraChannels` overlays a camera's pose and lens (position, aim, roll, fov, clip) for
+  // both camera readers, and folds the film's cut onto the switch's active camera id (#482).
+  // All patch plain values that carry no minted identity.
   'src/app/resolveEvaluatedTransform.ts': 'transform-values',
   'src/app/resolveWorldTransform.ts': 'transform-values',
+  'src/app/cameraChannels.ts': 'transform-values',
   // The renderer. Five composite sites: two light-band sites (a recomposed LightValue
   // carries no minted identity), the glTF materials road (which writes scalars onto
   // per-clone THREE.Materials and never touches the registry), and the two `<MeshChild>`

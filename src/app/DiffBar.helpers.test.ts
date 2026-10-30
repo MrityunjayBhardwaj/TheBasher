@@ -92,13 +92,18 @@ describe('extractTimeRange', () => {
     expect(extractTimeRange(ops)).toEqual({ min: 0, max: 2 });
   });
 
-  it('extracts startTime/endTime from a Shot addNode', () => {
+  it("extracts a shot's cut times from a new cut channel (#1666)", () => {
     const ops: Op[] = [
       {
         type: 'addNode',
-        nodeId: 'sh',
-        nodeType: 'Shot',
-        params: { startTime: 1.5, endTime: 3.25 },
+        nodeId: 'sel_active_channel',
+        nodeType: 'KeyframeChannelText',
+        params: {
+          keyframes: [
+            { time: 1.5, value: 'cam_b', easing: 'constant' },
+            { time: 3.25, value: 'cam_a', easing: 'constant' },
+          ],
+        },
       },
     ];
     expect(extractTimeRange(ops)).toEqual({ min: 1.5, max: 3.25 });
@@ -132,7 +137,12 @@ describe('extractTimeRange', () => {
         nodeType: 'KeyframeChannelVec3',
         params: { keyframes: [{ time: 0.1 }] },
       },
-      { type: 'addNode', nodeId: 'sh', nodeType: 'Shot', params: { startTime: 0, endTime: 5 } },
+      {
+        type: 'addNode',
+        nodeId: 'cut',
+        nodeType: 'KeyframeChannelText',
+        params: { keyframes: [{ time: 0 }, { time: 5 }] },
+      },
       { type: 'setParam', nodeId: 'ch', paramPath: 'time', value: 3 },
     ];
     expect(extractTimeRange(ops)).toEqual({ min: 0, max: 5 });

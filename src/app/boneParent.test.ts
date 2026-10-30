@@ -14,6 +14,7 @@ import { buildNativeGltfImportOps } from '../core/import/nativeGltfImport';
 import { unpackMeshData } from './meshGeometryData';
 import { registerAllNodes } from '../nodes/registerAll';
 import { resolveParentWorldMatrix, resolveWorldTransform } from './resolveWorldTransform';
+import { clockedCtx } from './subjectClock';
 
 const BLENDER = [
   { seconds: 0, origin: [1.8, 2.35, -0.2], corner: [1.7634, 2.2134, -0.3] },
@@ -152,5 +153,47 @@ describe('#1447 — a Group parented to a bone (an imported Empty) hangs from it
     expect(
       new THREE.Vector3(...empty.position).distanceTo(new THREE.Vector3(...prop.position)),
     ).toBeGreaterThan(0.1);
+  });
+});
+
+describe('#1688 — the bone poses on the clock the armature runs on', () => {
+  /** The scene at half speed, the armature's Object set to `clock` (a camera rig's may be Film). */
+  async function halfSpeed(clock?: 'film') {
+    const { state: imported_, propId } = await imported();
+    let state = imported_;
+    const armature = Object.values(state.nodes).find((n) =>
+      ((n.inputs.children as { node: string }[] | undefined) ?? []).some((r) => r.node === propId),
+    )!;
+    const scene = state.outputs.scene!.node;
+    state = applyOp(state, {
+      type: 'setParam',
+      nodeId: scene,
+      paramPath: 'timeSpeed',
+      value: 0.5,
+    }).next;
+    if (clock) {
+      state = applyOp(state, {
+        type: 'setParam',
+        nodeId: armature.id,
+        paramPath: 'clock',
+        value: clock,
+      }).next;
+    }
+    return { state, propId };
+  }
+
+  // The playhead at 1 s is scene time 0.5 s, so Blender's two rows tell the clocks apart.
+  const [, half, one] = BLENDER;
+
+  it('a Film armature stands the prop where Blender does at the playhead', async () => {
+    const { state, propId } = await halfSpeed('film');
+    const world = resolveWorldTransform(state, propId, clockedCtx(half.seconds, one.seconds))!;
+    world.position.forEach((c, k) => expect(c, `axis ${k}`).toBeCloseTo(one.origin[k], 4));
+  });
+
+  it('an armature left on Inherit stands it where Blender does at scene time', async () => {
+    const { state, propId } = await halfSpeed();
+    const world = resolveWorldTransform(state, propId, clockedCtx(half.seconds, one.seconds))!;
+    world.position.forEach((c, k) => expect(c, `axis ${k}`).toBeCloseTo(half.origin[k], 4));
   });
 });

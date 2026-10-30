@@ -5,6 +5,7 @@
 
 import { z } from 'zod';
 import { visibilityParams } from './visibilityParams';
+import { clockParams } from './clockParams';
 import type { NodeDefinition } from '../core/dag/types';
 import type { GroupValue, SceneObject } from './types';
 import { rotationModeFieldsOf, rotationModeParams } from './rotationMode';
@@ -33,8 +34,10 @@ export const GroupParams = z.object({
    * Optional and absent unless set; appended last, so the frozen param-home row is appended to.
    */
   parentBone: z.string().min(1).optional(),
-  /** #1503 — shown in the viewport, and in the render (`visibilityParams`). Appended last. */
+  /** #1503 — shown in the viewport, and in the render (`visibilityParams`). */
   ...visibilityParams,
+  /** #1688 — the clock this node and its children run on (`clockParams`). Appended last. */
+  ...clockParams,
 });
 export type GroupParams = z.infer<typeof GroupParams>;
 
@@ -55,6 +58,8 @@ export const GroupNode: NodeDefinition<GroupParams, GroupValue> = {
     // #1153 — drawn by the transform section's rotation-mode control.
     rotationMode: 'transform',
     quaternion: 'transform',
+    // #1688 — drawn by the transform section's Clock control.
+    clock: 'transform',
   },
   evaluate(params, inputs) {
     // V10/H14 layer-2 guard: an OLD saved Group (pre-#222, version 1, params `{}`)

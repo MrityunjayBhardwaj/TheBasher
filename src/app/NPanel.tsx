@@ -89,6 +89,7 @@ import {
 import { OptionsSelect } from './OptionsSelect';
 import type { NodeRef } from '../core/dag/types';
 import { resolveStackBase } from './operatorStack';
+import { usePlayheadFor } from './animate/usePlayheadFor';
 import { useTimeStore } from './stores/timeStore';
 import {
   buildClearSlotOverrideOp,
@@ -186,9 +187,12 @@ import { SpareParamControls } from './SpareParamControls';
 import { LagSourceControls } from './LagSourceControls';
 import { SolverControls } from './SolverControls';
 import * as THREE from 'three';
+import { drawnWorldBox } from '../render/drawnBox';
 import { useThreeRef } from './character/threeRef';
 import { originToGeometry } from './setOrigin';
 import { rotationModeOps, withResolvedRotation } from './resolvedRotation';
+import { isCameraNode } from './cameraNode';
+import { clockOf } from './subjectClock';
 import { IDENTITY_QUATERNION } from '../nodes/rotationMode';
 import {
   buildRevertedSet,
@@ -392,9 +396,8 @@ function NumericField({
   // `value` path). Subscribing to dagState mirrors VectorField so a source edit
   // refreshes the display.
   const dagState = useDagStore((s) => s.state);
-  const frame = useTimeStore((s) => s.frame);
-  const seconds = useTimeStore((s) => s.seconds);
-  const normalized = useTimeStore((s) => s.normalized);
+  // #1731 — subscribed to the playhead only when this node's own value can move with it.
+  const { frame, seconds, normalized } = usePlayheadFor(nodeId);
   const driven = useMemo(
     () =>
       driverNodesForTarget(dagState.nodes, nodeId).some(
@@ -587,10 +590,10 @@ function VectorField({
   // Vec3 back via the resolver's patched-clone passthrough, so the
   // (resolved ?? value) seam is byte-identical to today's display for
   // anything not actively animated. V20: subscriber form throughout,
-  // never useTimeStore.getState() in the seam.
-  const frame = useTimeStore((s) => s.frame);
-  const seconds = useTimeStore((s) => s.seconds);
-  const normalized = useTimeStore((s) => s.normalized);
+  // never useTimeStore.getState() in the seam (#1731: `usePlayheadFor` subscribes whenever the
+  // node's value can move, and reads the playhead only for a node whose value cannot).
+  // #1731 — subscribed to the playhead only when this node's own value can move with it.
+  const { frame, seconds, normalized } = usePlayheadFor(nodeId);
   const playing = useTimeStore((s) => s.playing);
   const dagState = useDagStore((s) => s.state);
   // #1314 — a stable cache: this re-reads the evaluated graph on every playhead change, and
@@ -3459,7 +3462,15 @@ function SetOriginControl({ nodeId }: { nodeId: string }) {
     if (!scene) return;
     const obj = scene.getObjectByName(nodeId);
     if (!obj) return;
-    const box = new THREE.Box3().setFromObject(obj);
+    // #1684 — every mesh under the Group where it is drawn, a skinned one where its bones put it
+    // (`drawnWorldBox`), as frame-all and the shadow fit measure it.
+    obj.updateWorldMatrix(true, true);
+    const box = new THREE.Box3();
+    const drawn = new THREE.Box3();
+    obj.traverse((o) => {
+      const mesh = o as THREE.Mesh;
+      if (mesh.isMesh && drawnWorldBox(mesh, drawn)) box.union(drawn);
+    });
     if (box.isEmpty()) return;
     const c = box.getCenter(new THREE.Vector3());
     const params = useDagStore.getState().state.nodes[nodeId]?.params as
@@ -3953,6 +3964,71 @@ function LinkedDataSections({
  * its lens params and its pose live on opposite halves of a split camera.
  */
 /**
+ * #1688 — the clock an Object or a Group, and everything hung from it, runs on: inherited from its
+ * parent (scene time at the top), or the playhead's. A camera rig set to Film keeps the camera
+ * moving through a moment the Scene's speed slows; a car a camera is mounted on stays on scene
+ * time, and the camera with it. A camera is always on the playhead (#1594), so its own setting
+ * would change nothing: it is shown, and says so.
+ */
+function ClockControl({ nodeId }: { nodeId: string }) {
+  const state = useDagStore((s) => s.state);
+  const dispatch = useDagStore((s) => s.dispatch);
+  const own = (state.nodes[nodeId]?.params as { clock?: unknown } | undefined)?.clock;
+  const setting = own === 'film' ? 'film' : 'inherit';
+  const camera = isCameraNode(state, nodeId);
+  const runs = clockOf(state, nodeId);
+  const hint = camera
+    ? 'a camera always runs on the playhead'
+    : setting === 'inherit' && runs === 'film'
+      ? 'inherits the playhead from its parent'
+      : null;
+  const onChange = (next: string) => {
+    dispatch(
+      {
+        type: 'setParam',
+        nodeId,
+        paramPath: 'clock',
+        // Absent is Inherit, so a node set back saves as it did before it was ever set.
+        value: next === 'film' ? 'film' : undefined,
+      },
+      'user',
+      next === 'film' ? 'clock → Film' : 'clock → Inherit',
+    );
+  };
+  return (
+    <div className="flex flex-col">
+      <label className="flex items-center justify-between gap-2 px-3 pt-1.5 text-[11px] text-fg/80">
+        <span
+          className="font-mono text-fg/60"
+          title="Film keeps this, and what hangs from it, moving at the playhead when the scene is slowed"
+        >
+          clock
+        </span>
+        <select
+          data-testid={`inspector-clock-${nodeId}`}
+          // A camera shows the clock it runs on; its own setting would change nothing.
+          value={camera ? 'film' : setting}
+          disabled={camera}
+          onChange={(e) => onChange(e.target.value)}
+          className="rounded border border-border bg-muted px-1.5 py-0.5 font-mono text-[11px] text-fg focus-visible:border-accent focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent disabled:opacity-60"
+        >
+          <option value="inherit">Inherit</option>
+          <option value="film">Film (playhead)</option>
+        </select>
+      </label>
+      {hint && (
+        <span
+          data-testid={`inspector-clock-hint-${nodeId}`}
+          className="px-3 pt-0.5 text-[10px] text-fg/50"
+        >
+          {hint}
+        </span>
+      )}
+    </div>
+  );
+}
+
+/**
  * #1153 — the rotation row of an Object or a Group, in whichever mode it is held.
  *
  * Blender's panel: a mode switch, and the rotation shown in that mode — XYZ euler as the
@@ -4023,9 +4099,8 @@ const QUATERNION_AXES = [
  *  euler row shows its evaluated triple), read-only while playing. Each component commits
  *  through the same animated re-route and Auto-Key the vector rows use. */
 function QuaternionField({ nodeId, authored }: { nodeId: string; authored: Quat }) {
-  const frame = useTimeStore((s) => s.frame);
-  const seconds = useTimeStore((s) => s.seconds);
-  const normalized = useTimeStore((s) => s.normalized);
+  // #1731 — subscribed to the playhead only when this node's own value can move with it.
+  const { frame, seconds, normalized } = usePlayheadFor(nodeId);
   const playing = useTimeStore((s) => s.playing);
   const dagState = useDagStore((s) => s.state);
   // #1314 — a stable cache: this re-reads the evaluated graph on every playhead change, and
@@ -4081,6 +4156,7 @@ const SECTION_CONTROL_RENDERERS: SectionControlRenderers = {
   boneMap: (ctx) => <BoneMapEditor nodeId={ctx.paramsNodeId} />,
   applyTransform: (ctx) => <ApplyTransformControl nodeId={ctx.objectNodeId} />,
   rotationMode: (ctx) => <RotationModeControl nodeId={ctx.paramsNodeId} />,
+  clock: (ctx) => <ClockControl nodeId={ctx.paramsNodeId} />,
   setOrigin: (ctx) => <SetOriginControl nodeId={ctx.paramsNodeId} />,
   // The OBJECT, not `paramsNodeId`: a slot override lives on the poser, which is what
   // lets two objects share one mesh and still look different. In the linked-data block

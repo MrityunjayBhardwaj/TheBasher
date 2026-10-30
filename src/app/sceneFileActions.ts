@@ -13,6 +13,7 @@
 
 import { buildSceneBundleForCurrent, importSceneBundle } from './boot';
 import { SCENE_BUNDLE_EXTENSION, SceneBundleSchema } from './sceneBundle';
+import { BundleSyntaxError, parseSceneBundleBytes, sceneBundleParts } from './sceneBundleText';
 import { useAssetErrorStore, formatAssetError } from './stores/assetErrorStore';
 
 /** Sanitize a project name into a download filename stem. */
@@ -28,8 +29,9 @@ function fileStem(name: string): string {
 export async function downloadSceneBundle(): Promise<void> {
   try {
     const { bundle, missingAssets } = await buildSceneBundleForCurrent();
-    const json = JSON.stringify(bundle);
-    const blob = new Blob([json], { type: 'application/json' });
+    // #1736 — in parts: the graph and each asset are their own string, so a scene past the
+    // browser's longest string still saves.
+    const blob = new Blob(sceneBundleParts(bundle), { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
@@ -70,11 +72,13 @@ export function openSceneFilePicker(): void {
       try {
         const file = input.files?.[0];
         if (!file) return;
-        const text = await file.text();
+        // #1736 — read as bytes and parsed one value at a time: `file.text()` cannot hold a file
+        // past the browser's longest string (a 595 MB shot failed to open).
         let raw: unknown;
         try {
-          raw = JSON.parse(text);
-        } catch {
+          raw = parseSceneBundleBytes(new Uint8Array(await file.arrayBuffer()));
+        } catch (err) {
+          if (!(err instanceof BundleSyntaxError)) throw err;
           throw new Error(`${file.name} is not a valid Basher scene file (corrupt JSON).`);
         }
         const bundle = SceneBundleSchema.parse(raw);

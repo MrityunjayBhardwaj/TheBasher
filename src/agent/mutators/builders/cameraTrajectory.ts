@@ -250,9 +250,10 @@ export const cameraTrajectoryMutator: MutatorDefinition<CameraTrajectorySpec> = 
       type: 'addNode',
       nodeId: objectId,
       nodeType: 'Object',
+      // #1686 — an Object's name is its `meta.name`; written into params it was dropped.
+      meta: { name: `${spec.name} path` },
       // AT THE ORIGIN, deliberately — see the header. The points are world.
       params: {
-        name: `${spec.name} path`,
         position: [0, 0, 0],
         rotation: [0, 0, 0],
         scale: [1, 1, 1],

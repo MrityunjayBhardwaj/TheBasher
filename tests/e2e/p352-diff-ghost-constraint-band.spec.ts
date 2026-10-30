@@ -267,7 +267,7 @@ async function seedAimSceneAndPropose(page: Page) {
             type: 'addNode',
             nodeId: 'n_p352_aimtarget',
             nodeType: 'Null',
-            params: { name: 'Target', position: [6, 4, -5] },
+            params: { position: [6, 4, -5] },
           },
           {
             type: 'connect',

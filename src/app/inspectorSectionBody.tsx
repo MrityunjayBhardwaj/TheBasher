@@ -108,7 +108,8 @@ export type ControlKey =
   | 'applyTransform'
   | 'setOrigin'
   | 'objectSlots'
-  | 'rotationMode';
+  | 'rotationMode'
+  | 'clock';
 
 export type SectionControl = {
   key: ControlKey;
@@ -167,6 +168,14 @@ export const SECTION_CONTROLS: Record<SectionId, readonly SectionControl[]> = {
       applies: (c) => c.ownsParam('rotationMode'),
       placement: { inPlaceOf: 'rotation' },
       omitRowKeys: ['rotationMode', 'quaternion'],
+    },
+    // #1688 — which clock the node and what hangs from it run on: inherited, or the playhead's
+    // (a camera rig keeps moving when the scene is slowed). Possession of the declared param.
+    {
+      key: 'clock',
+      applies: (c) => c.ownsParam('clock'),
+      placement: 'after',
+      omitRowKeys: ['clock'],
     },
     { key: 'applyTransform', applies: (c) => c.canApplyTransform, placement: 'after' },
     { key: 'setOrigin', applies: (c) => c.ownsParam('pivot'), placement: 'after' },

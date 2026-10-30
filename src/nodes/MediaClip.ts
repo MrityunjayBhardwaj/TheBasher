@@ -13,7 +13,7 @@
 // §4.4 / §6) — NOT baked here.
 //
 // REF: docs/COMPOSITOR-DESIGN.md §4.4; vyapti V2 (pure eval) + V34 (one substrate);
-//      sibling source kinds: Shot (scene), ComfyUIWorkflow (generator).
+//      sibling source kinds: a rendered scene (no node yet), ComfyUIWorkflow (generator).
 
 import { z } from 'zod';
 import { hashValue } from '../core/dag/hash';

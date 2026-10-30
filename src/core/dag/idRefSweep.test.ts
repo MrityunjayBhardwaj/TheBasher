@@ -367,8 +367,16 @@ describe('relationsOf — one query for every relationship of a node (#1553)', (
     expect(declared.length).toBeGreaterThan(20);
     for (const { type, ref } of declared) {
       const held =
-        ref.shape === 'idList' ? ['seen'] : ref.shape === 'ref' ? { node: 'seen' } : 'seen';
-      const params: Record<string, unknown> = {};
+        ref.shape === 'idList'
+          ? ['seen']
+          : ref.shape === 'ref'
+            ? { node: 'seen' }
+            : ref.shape === 'keyed'
+              ? [{ time: 0, value: 'seen' }]
+              : 'seen';
+      // A key names a node only when it keys a param its target declares as an id (#1669).
+      const params: Record<string, unknown> =
+        ref.shape === 'keyed' ? { target: 'switch', paramPath: 'active' } : {};
       const segs = ref.path.split('.');
       let at = params;
       for (const seg of segs.slice(0, -1)) at = at[seg] = {} as Record<string, unknown>;
@@ -379,15 +387,15 @@ describe('relationsOf — one query for every relationship of a node (#1553)', (
         nodes: {
           seen: { id: 'seen', type: 'Math', version: 1, params: {}, inputs: {} },
           holder: { id: 'holder', type, version: 1, params, inputs: {} },
+          switch: { id: 'switch', type: 'CameraSelect', version: 1, params: {}, inputs: {} },
         },
       } as unknown as DagState;
       const expected = { path: ref.path, role: ref.role, owns: ref.owns === true };
       expect(relationsOf(state, 'seen').refsIn, `${type}.${ref.path}`).toEqual([
         { node: 'holder', ...expected },
       ]);
-      expect(relationsOf(state, 'holder').refsOut, `${type}.${ref.path}`).toEqual([
-        { node: 'seen', ...expected },
-      ]);
+      const out = relationsOf(state, 'holder').refsOut.filter((r) => r.path === ref.path);
+      expect(out, `${type}.${ref.path}`).toEqual([{ node: 'seen', ...expected }]);
     }
   });
 

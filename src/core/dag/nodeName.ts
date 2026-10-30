@@ -10,7 +10,7 @@ import type { Node } from './types';
 
 /**
  * The name a node carries itself, in `nodeDisplayName`'s order: a director's `meta.name`,
- * then the semantic `params.name` (Shot / AnimationClip / Character). Undefined when it
+ * then the semantic `params.name` (Strip / AnimationClip / Character). Undefined when it
  * carries neither. Blank is returned as blank — the caller decides what blank means.
  */
 export function ownName(node: Node): string | undefined {

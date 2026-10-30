@@ -35,6 +35,7 @@ import {
 import { armatureBounds, referencePlacement } from './referenceRig';
 import type { ReferenceRig } from '../app/animate/referenceRigs';
 import { skeletonObjectFrames } from './skeletonObjectPose';
+import { samplePose } from '../nodes/poseSample';
 import { useTimeStore } from '../app/stores/timeStore';
 import { useViewportStore } from '../app/stores/viewportStore';
 import { useBoneSelectionStore } from '../app/stores/boneSelectionStore';
@@ -464,7 +465,7 @@ export function ArmatureHelper({
           if (standing < 0) continue;
           const best = standalone[standing];
 
-          const posed = poseTransforms(rig.pose.skeleton.bones, rig.pose.sample(seconds));
+          const posed = poseTransforms(rig.pose.skeleton.bones, samplePose(rig.pose, seconds));
           if (posed.length === 0) continue;
           const srcB = armatureBounds(posed);
           const tgtB = armatureBounds(best);

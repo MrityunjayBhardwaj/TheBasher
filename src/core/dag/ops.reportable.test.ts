@@ -201,16 +201,19 @@ describe('applyOp — #1572 Scene, Group and Collection report a mistyped key li
   ] as const;
 
   for (const row of rows) {
-    const added = () =>
+    const added = (params: Record<string, unknown> = {}) =>
       applyOp(emptyDagState(), {
         type: 'addNode',
         nodeId: 'n_it',
         nodeType: row.nodeType,
-        params: { notAParam: 'n_other' },
+        params,
       }).next;
 
-    it(`${row.nodeType}: a key the schema does not declare is not stored at creation`, () => {
-      expect(added().nodes.n_it.params).not.toHaveProperty('notAParam');
+    // #1686 — it used to be stored without the key, silently; it is refused, as setParam refuses it.
+    it(`${row.nodeType}: a key the schema does not declare is refused at creation`, () => {
+      expect(() => added({ notAParam: 'n_other' })).toThrow(
+        `addNode: ${row.nodeType} has no field at notAParam`,
+      );
     });
 
     it(`${row.nodeType}: writing one is flagged and changes nothing`, () => {

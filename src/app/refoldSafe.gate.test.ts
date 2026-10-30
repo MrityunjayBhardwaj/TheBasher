@@ -81,7 +81,7 @@ function channelOp(keys: number, blend?: { weight?: number; blendMode?: string }
       keyframes: Array.from({ length: keys }, (_, k) => ({
         time: k,
         value: 30 + k,
-        interpolation: 'linear',
+        easing: 'linear',
       })),
       ...blend,
     },
@@ -230,7 +230,10 @@ describe('#583 — the tier the render root may fold', () => {
     // light folds its strips and drivers as the draw does; still weight 1.
     // 7 → 6 (#1053): the clone renderer `GltfAssetR` is deleted with the clone road (a kept clone
     // import is not drawn), and its overlay site with it. No surviving site changed.
-    expect(calls).toHaveLength(6);
+    // 6 → 7 (#482): the camera's two readers share one call in `cameraChannels` (the world
+    // read's camera branch moved there), and the film's cut channel folds through a second
+    // one beside it, both at weight 1.
+    expect(calls).toHaveLength(7);
     expect(calls.filter((c) => !/,\s*1,\s*/.test(c))).toEqual([]);
   });
 });

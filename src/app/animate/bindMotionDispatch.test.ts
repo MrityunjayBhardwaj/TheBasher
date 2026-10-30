@@ -49,7 +49,7 @@ beforeEach(() => {
 });
 
 /** A character with a rig, a TimeSource, and one imported motion clip. */
-function buildScene(clipId: string, rotationAtEnd: number): DagState {
+function buildScene(clipId: string): DagState {
   let s = emptyDagState();
   s = applyOp(s, { type: 'addNode', nodeId: 'n_time', nodeType: 'TimeSource', params: {} }).next;
   s = applyOp(s, {
@@ -93,10 +93,6 @@ function buildScene(clipId: string, rotationAtEnd: number): DagState {
     params: {
       name: 'motion',
       duration: 2,
-      keyframes: [
-        { bone: 1, time: 0, position: [0, 0, 0], rotation: [0, 0, 0] },
-        { bone: 1, time: 2, position: [0, 0, 0], rotation: [0, rotationAtEnd, 0] },
-      ],
     },
   }).next;
   s = applyOp(s, {
@@ -141,7 +137,7 @@ const channelIds = () =>
 
 describe('binding a motion to a character', () => {
   it('creates the retargeted clip and NOT ONE channel', () => {
-    useDagStore.getState().hydrate(buildScene('n_clip_a', 60));
+    useDagStore.getState().hydrate(buildScene('n_clip_a'));
     expect(bind('n_clip_a', 'n_out_a')).toEqual({ ok: true });
 
     const nodes = useDagStore.getState().state.nodes;
@@ -161,7 +157,7 @@ describe('binding a motion to a character', () => {
   });
 
   it('lands as ONE undo entry, and that entry takes BOTH minted nodes', () => {
-    useDagStore.getState().hydrate(buildScene('n_clip_a', 60));
+    useDagStore.getState().hydrate(buildScene('n_clip_a'));
     expect(useDagStore.getState().undoStack).toHaveLength(0);
     expect(bind('n_clip_a', 'n_out_a')).toEqual({ ok: true });
     expect(useDagStore.getState().undoStack).toHaveLength(1);
@@ -178,7 +174,7 @@ describe('binding a motion to a character', () => {
   });
 
   it('ACCEPTS a second, different motion — there is no longer anything to destroy', () => {
-    useDagStore.getState().hydrate(buildScene('n_clip_a', 60));
+    useDagStore.getState().hydrate(buildScene('n_clip_a'));
     expect(bind('n_clip_a', 'n_out_a')).toEqual({ ok: true });
 
     // A DIFFERENT motion onto the same rig. Under the eager bake this was
@@ -195,10 +191,6 @@ describe('binding a motion to a character', () => {
       params: {
         name: 'other motion',
         duration: 2,
-        keyframes: [
-          { bone: 1, time: 0, position: [0, 0, 0], rotation: [0, 0, 0] },
-          { bone: 1, time: 2, position: [0, 0, 0], rotation: [0, -140, 0] },
-        ],
       },
     }).next;
     s = applyOp(s, {
@@ -224,7 +216,7 @@ describe('binding a motion to a character', () => {
   it('stands the PREVIOUS bind down and makes the new one active', () => {
     // Both binds target the SAME rig, which is the case #907 is about — the
     // second-motion drop, not two characters.
-    let s = buildScene('n_clip_a', 90);
+    let s = buildScene('n_clip_a');
     s = applyOp(s, {
       type: 'addNode',
       nodeId: 'n_clip_b',
@@ -258,7 +250,7 @@ describe('binding a motion to a character', () => {
     // The deactivation rides in the bind's own op batch. Split across two
     // entries, one undo would leave TWO active clips on one rig, which is the
     // state the flag exists to make unrepresentable.
-    let s = buildScene('n_clip_a', 90);
+    let s = buildScene('n_clip_a');
     s = applyOp(s, {
       type: 'addNode',
       nodeId: 'n_clip_b',
@@ -301,7 +293,7 @@ describe('binding a motion to a character', () => {
   it('hides the Object showing the source skeleton, in the SAME undo entry as the bind', () => {
     useDagStore
       .getState()
-      .hydrate(withSkeletonObject(buildScene('n_clip_a', 60), 'n_src_skel_object', 'n_src_skel'));
+      .hydrate(withSkeletonObject(buildScene('n_clip_a'), 'n_src_skel_object', 'n_src_skel'));
     expect(isHidden('n_src_skel_object')).toBe(false);
 
     expect(bind('n_clip_a', 'n_out_a')).toEqual({ ok: true });
@@ -321,7 +313,7 @@ describe('binding a motion to a character', () => {
   // hide it. The import's Object is the one with the id the import derives
   // (`skeletonObjectId`, `<skeleton>_object` — a rename changes its name, never its id).
   it('#1088 — an Object the director pointed at the source skeleton stays visible', () => {
-    let s = buildScene('n_clip_a', 60);
+    let s = buildScene('n_clip_a');
     s = withSkeletonObject(s, 'n_src_skel_object', 'n_src_skel');
     s = withSkeletonObject(s, 'n_by_hand', 'n_src_skel');
     useDagStore.getState().hydrate(s);
@@ -334,7 +326,7 @@ describe('binding a motion to a character', () => {
   it('#1088 — the import’s Object, re-pointed at another skeleton, is not hidden', () => {
     // The id alone is not the mark: once the director points that Object at something else it
     // no longer shows this motion, and hiding it would hide what it shows now.
-    let s = buildScene('n_clip_a', 60);
+    let s = buildScene('n_clip_a');
     s = applyOp(s, {
       type: 'addNode',
       nodeId: 'n_other_skel',
@@ -353,7 +345,7 @@ describe('binding a motion to a character', () => {
     // new clip drives, so hiding it would make the bind's own result disappear.
     useDagStore
       .getState()
-      .hydrate(withSkeletonObject(buildScene('n_clip_a', 60), 'n_src_skel_object', 'n_src_skel'));
+      .hydrate(withSkeletonObject(buildScene('n_clip_a'), 'n_src_skel_object', 'n_src_skel'));
     const result = dispatchMutatorFromUI(
       'mutator.animation.retarget',
       {
@@ -373,7 +365,7 @@ describe('binding a motion to a character', () => {
   it('leaves an Object showing the TARGET skeleton visible, though the bind reaches it', () => {
     // The target rig is a closure root too, so the Object standing it — the character — IS in the
     // set the loop walks; only the `data` edge tells it from the source's Object.
-    let s = buildScene('n_clip_a', 60);
+    let s = buildScene('n_clip_a');
     s = withSkeletonObject(s, 'n_src_skel_object', 'n_src_skel');
     useDagStore.getState().hydrate(s);
     expect(edgeOf(CHARACTER, 'data')).toBe(SKEL);
@@ -386,7 +378,7 @@ describe('binding a motion to a character', () => {
   it('a refused bind hides nothing — the motion stays visible', () => {
     useDagStore
       .getState()
-      .hydrate(withSkeletonObject(buildScene('n_clip_a', 60), 'n_src_skel_object', 'n_src_skel'));
+      .hydrate(withSkeletonObject(buildScene('n_clip_a'), 'n_src_skel_object', 'n_src_skel'));
     const refused = dispatchMutatorFromUI(
       'mutator.animation.retarget',
       {

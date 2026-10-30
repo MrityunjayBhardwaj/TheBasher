@@ -40,6 +40,7 @@ import { cameraDataOf } from '../app/cameraNode';
 import { cameraOrientationQuat } from '../app/cameraOrientation';
 import { useThreeRef } from '../app/character/threeRef';
 import { useDagStore } from '../core/dag/store';
+import { measureStage } from '../perf/frameProfiler';
 import { useTimeStore } from '../app/stores/timeStore';
 import { useProjectStore } from '../core/project/store';
 import { useViewportStore, DEFAULT_VIEWPORT_CLIP } from '../app/stores/viewportStore';
@@ -445,10 +446,9 @@ export function EditorViewCamera() {
     if (!cam || !lookThrough) return;
     // #1594 — the camera runs on the playhead (film time), not on the scene's slowed clock.
     const seconds = useTimeStore.getState().filmSeconds;
-    const evalPose = resolveActiveCameraPoseAt(
-      useDagStore.getState().state,
-      seconds,
-      cameraPoseCache,
+    // #1731 — its own stage in the playback table: the aim at a bone used to re-pose the rig here.
+    const evalPose = measureStage('camera', () =>
+      resolveActiveCameraPoseAt(useDagStore.getState().state, seconds, cameraPoseCache),
     );
     applyView(cam, evalPose.position, evalPose.lookAt, undefined, evalPose.roll);
     // fov/near/far are camera params too — apply imperatively (the JSX props are

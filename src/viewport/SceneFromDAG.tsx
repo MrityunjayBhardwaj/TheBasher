@@ -22,6 +22,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -31,7 +32,6 @@ import * as THREE from 'three';
 import { RectAreaLightUniformsLib } from 'three/examples/jsm/lights/RectAreaLightUniformsLib.js';
 import { channelPathForBand, type OverlayBand } from '../app/objectDataBand';
 import {
-  dataLaneNodeIds,
   dataLaneNodes,
   dataLaneOverlaySources,
   overlayPathOn,
@@ -45,6 +45,8 @@ import { BAKED_MAP_COLOR_SPACE } from '../app/asset/bakedTextureStore';
 import { useSelectionStore } from '../app/stores/selectionStore';
 import { useAssetErrorStore } from '../app/stores/assetErrorStore';
 import { useTimeStore } from '../app/stores/timeStore';
+import { type ClockedCtx, clockFor, clockOf, ctxOnClockOf, liveCtx } from '../app/subjectClock';
+import { rigsFor } from '../app/rigIndex';
 import { restBonePose } from '../nodes/bonePose';
 import { boneParentMatrix } from '../nodes/boneParent';
 import { useTransientEditStore, keyOf, type TransientEdit } from '../app/stores/transientEditStore';
@@ -56,20 +58,14 @@ import {
   overlayWithIdentity,
   type IdentifiedSceneObject,
 } from '../app/overlayWithIdentity';
-import { directChannelTargetSet, animatedAncestorSet } from '../app/nodeChannels';
-import {
-  layeredChannelValues,
-  layeredChannelNodesForTarget,
-  stripTargetSet,
-} from '../app/layeredChannels';
+import { animatedAncestorSet } from '../app/nodeChannels';
+import { timeDependentSetOf } from '../app/timeDependentSet';
+import { layeredChannelValues, layeredChannelNodesForTarget } from '../app/layeredChannels';
 import {
   driverChannelValuesForTarget,
   driverSubscriptionNodesForTarget,
-  driverTargetSet,
 } from '../app/paramDrivers';
 import {
-  constraintTargetSet,
-  followPathTargetSet,
   resolveConstraintRotation,
   resolveConstraintPosition,
   resolveTrackToTarget,
@@ -121,6 +117,12 @@ import {
 import { usePlayheadFollow } from './usePlayheadFollow';
 import { resolveRigLightSources } from '../app/resolveRigLightSources';
 import { degVec3ToRad } from './rotation';
+import {
+  drawsTransformAsGroup,
+  sameApartFromTransform,
+  withoutTransform,
+  writeTransform,
+} from './drawnTransform';
 import { installContentShadow } from './contentShadows';
 import { selectNode } from './selectNodeOnClick';
 import { evaluate } from '../core/dag/evaluator';
@@ -176,6 +178,13 @@ import type {
   Vec3,
 } from '../nodes/types';
 import { uiEvaluatorCache } from '../app/uiEvaluatorCache';
+import {
+  createFrameEvaluator,
+  FrameEvaluatorProvider,
+  useFrameEvaluator,
+  useFrameTick,
+} from './frameEvaluator';
+import { drawnBox } from '../render/drawnBox';
 
 let rectAreaInit = false;
 function ensureRectAreaInit() {
@@ -281,6 +290,8 @@ export function SceneFromDAG({ outputName = 'render' }: SceneFromDAGProps) {
   // params-hash memo is keyed on that object rather than on its contents. Omitting it
   // would be correct and would silently cost a rebuild per render for every folded node.
   const foldCache = useMemo<FoldCache>(() => createFoldCache(), []);
+  // #1730 — the one frame pass every animated renderer below registers its tick with.
+  const frameEvaluator = useMemo(() => createFrameEvaluator(), []);
 
   // 🔴 AND THE ROOT HAS TO SUBSCRIBE TO HELD EDITS, OR THE FOLD BELOW RUNS ONCE AND NEVER
   // AGAIN. This component re-renders only on `useDagStore.state` (the B13 change above),
@@ -385,39 +396,15 @@ export function SceneFromDAG({ outputName = 'render' }: SceneFromDAGProps) {
   // it (the PULL rail), so a driver-only target mounts its per-frame follower too and
   // `useLayeredChannels` then folds the driver value alongside channels/strips. No
   // bound driver → exactly the channels+strips set (byte-identical).
-  const directChannelTargets = new Set<string>([
-    ...directChannelTargetSet(state.nodes),
-    ...stripTargetSet(state.nodes),
-    ...driverTargetSet(state.nodes),
-  ]);
-  // #398 — the object↔data reach for MEMBERSHIP. A data-param channel (material, size)
-  // targets the DATA node, because that is the node the inspector renders those rows
-  // against. But this set gates whether a scene child mounts its overlay at all, and it
-  // is keyed by the SCENE CHILD. Without this, an animated cube's Object is absent from
-  // the set, DirectChannelsR never mounts, and the viewport silently never repaints —
-  // no error anywhere, because "not animated" and "animated but unmounted" look the same.
-  //
-  // 🔴 #522 — AND THE REACH IS THE WHOLE LANE, NOT ONE HOP. Since the operator stack moved
-  // onto the data lane, `data` names the TOP of the stack, so a single hop asks the operator
-  // whether it is animated and never the base. Measured: a cube with one ordinary
-  // ArrayModifier and a correctly-targeted colour channel stayed static, because its Object
-  // never entered this set and DirectChannelsR never mounted. This site is the reason
-  // widening the four hooks alone changed nothing — the overlay they build was never asked
-  // for. "Not animated" and "animated but unmounted" still look the same from here, which is
-  // why this gate is worth widening in the same slice as the hooks it gates.
-  for (const node of Object.values(state.nodes)) {
-    for (const laneId of dataLaneNodeIds(state, node.id)) {
-      if (directChannelTargets.has(laneId)) {
-        directChannelTargets.add(node.id);
-        break;
-      }
-    }
-  }
-  const constraintTargets = constraintTargetSet(state.nodes);
-  // #343 — the POSITION-band membership gate (Follow-Path only). Built once, O(1) per
-  // light: a light mounts its per-frame position follower ONLY if it is followed, so a
-  // Track-To'd-but-not-followed light and every static light pay nothing (B13).
-  const followPathTargets = followPathTargetSet(state.nodes);
+  // #1730 — the rule (channels, strips and bound drivers, widened along each object's whole
+  // data lane, #398 #522; then the constraint and Follow-Path bands, #204 #343) lives in
+  // `timeDependentSet`, kept per node table, so the frame loop and this render body read one
+  // answer. "Not animated" and "animated but unmounted" look the same from here, which is why
+  // there is only one copy of the rule.
+  const timeDependent = timeDependentSetOf(state);
+  const directChannelTargets = timeDependent.channelDriven;
+  const constraintTargets = timeDependent.constrained;
+  const followPathTargets = timeDependent.followed;
   // #266 (B2) — the synthesized dependency edge. Memoize the context value on a
   // CONTENT signature so nested `RenderChild` consumers re-render ONLY when overlay
   // membership actually changes (an overlay added/removed anywhere), NOT on every
@@ -523,193 +510,195 @@ export function SceneFromDAG({ outputName = 'render' }: SceneFromDAGProps) {
   );
 
   return (
-    <OverlayMembershipContext.Provider value={overlayMembership}>
-      {/* UX #9 — scene-level HDRI/IBL. Sets `scene.environment` (a scene
+    <FrameEvaluatorProvider evaluator={frameEvaluator}>
+      <OverlayMembershipContext.Provider value={overlayMembership}>
+        {/* UX #9 — scene-level HDRI/IBL. Sets `scene.environment` (a scene
           PROPERTY, not a traversed object), so it survives the renderToImage
           chrome hide-pass (V37) and lights the production render for free.
           NEVER mark this editorChrome (V47). */}
-      <SceneEnvironment value={value.scene.environment} />
-      {/* Seam B (#212) — per-frame overlay for the scene env's animatable params
+        <SceneEnvironment value={value.scene.environment} />
+        {/* Seam B (#212) — per-frame overlay for the scene env's animatable params
           (envIntensity / envRotationY). SceneEnvironment renders the STATIC
           evaluated env, so without this an env channel resolves but does not render
           (the H40 class seam A closed for lights). Mounted only when the Scene node
           carries channels, so a static scene pays nothing. */}
-      {sceneRef && directChannelTargets.has(sceneRef.node) ? (
-        <SceneEnvChannelsR sceneNodeId={sceneRef.node} />
-      ) : null}
-      {/* #165: the DAG camera no longer mounts a makeDefault render camera
+        {sceneRef && directChannelTargets.has(sceneRef.node) ? (
+          <SceneEnvChannelsR sceneNodeId={sceneRef.node} />
+        ) : null}
+        {/* #165: the DAG camera no longer mounts a makeDefault render camera
           here — the editor owns the view (EditorViewCamera) so DAG cameras
           become selectable frustum objects (CameraHelpers). */}
-      {value.scene.lights.map((light, i) => {
-        const lid = lightRefs[i]?.node ?? null;
-        // #1453 — a light hidden in the viewport AND the render (its flags, or its collections)
-        // lights nothing, as such a mesh draws nothing. #1503 — hidden in only one, it is mounted
-        // under its stamp (`OwnVisibility`): an invisible light lights nothing in the viewport, and
-        // the render flips it on.
-        if (lid != null && hiddenIds.has(lid)) return null;
-        // #205 — a light targeted by an active Track-To aims via lookAt (V60); the
-        // membership set is built once (O(N)) so this stays O(1) per light (B13).
-        return (
-          <OwnVisibility key={`light:${i}`} nodeId={lid}>
-            <LightNode
-              value={light}
-              nodeId={lid}
-              constrained={lid != null && constraintTargets.has(lid)}
-              hasDirectChannels={lid != null && directChannelTargets.has(lid)}
-              followsPath={lid != null && followPathTargets.has(lid)}
-            />
-          </OwnVisibility>
-        );
-      })}
-      {/* #208 — the active lighting PROFILE's lights, rendered as a parallel band.
+        {value.scene.lights.map((light, i) => {
+          const lid = lightRefs[i]?.node ?? null;
+          // #1453 — a light hidden in the viewport AND the render (its flags, or its collections)
+          // lights nothing, as such a mesh draws nothing. #1503 — hidden in only one, it is mounted
+          // under its stamp (`OwnVisibility`): an invisible light lights nothing in the viewport, and
+          // the render flips it on.
+          if (lid != null && hiddenIds.has(lid)) return null;
+          // #205 — a light targeted by an active Track-To aims via lookAt (V60); the
+          // membership set is built once (O(N)) so this stays O(1) per light (B13).
+          return (
+            <OwnVisibility key={`light:${i}`} nodeId={lid}>
+              <LightNode
+                value={light}
+                nodeId={lid}
+                constrained={lid != null && constraintTargets.has(lid)}
+                hasDirectChannels={lid != null && directChannelTargets.has(lid)}
+                followsPath={lid != null && followPathTargets.has(lid)}
+              />
+            </OwnVisibility>
+          );
+        })}
+        {/* #208 — the active lighting PROFILE's lights, rendered as a parallel band.
           Node ids come from `rigLightSources` (the rig's `inputs.lights` edge order,
           matching `rigLights`) so studio lights keep their Track-To aim + selection. */}
-      {rigLights.map((light, i) => {
-        const lid = rigLightSources[i] ?? null;
-        if (lid != null && hiddenIds.has(lid)) return null;
-        return (
-          <OwnVisibility key={`rig-light:${lid ?? i}`} nodeId={lid}>
-            <LightNode
-              value={light}
-              nodeId={lid}
-              constrained={lid != null && constraintTargets.has(lid)}
-              hasDirectChannels={lid != null && directChannelTargets.has(lid)}
-              followsPath={lid != null && followPathTargets.has(lid)}
-            />
-          </OwnVisibility>
-        );
-      })}
-      {/* Editor-only wireframe helpers — show position/direction/range
+        {rigLights.map((light, i) => {
+          const lid = rigLightSources[i] ?? null;
+          if (lid != null && hiddenIds.has(lid)) return null;
+          return (
+            <OwnVisibility key={`rig-light:${lid ?? i}`} nodeId={lid}>
+              <LightNode
+                value={light}
+                nodeId={lid}
+                constrained={lid != null && constraintTargets.has(lid)}
+                hasDirectChannels={lid != null && directChannelTargets.has(lid)}
+                followsPath={lid != null && followPathTargets.has(lid)}
+              />
+            </OwnVisibility>
+          );
+        })}
+        {/* Editor-only wireframe helpers — show position/direction/range
           for every DAG light. Hidden in `rendered` mode so the screenshot
           / production parity stays clean. */}
-      {showLightHelpers
-        ? value.scene.lights.map((light, i) => {
-            const lid = lightRefs[i]?.node ?? null;
-            if (lid != null && viewportHidden.has(lid)) return null; // #1453 — with its light
-            // [[V85]]/[[H132]] #241 — an animated light's helper follows the
-            // evaluated value at the playhead; a static light keeps the static path.
-            // #243 GAP 2 / #265 — a Track-To'd AIMABLE light (Area/Spot/Directional)
-            // derives its aim per frame, so its helper needs the follower too
-            // (re-resolve the aim at `seconds` into the field the helper draws).
-            return lid &&
-              (directChannelTargets.has(lid) ||
-                (constraintTargets.has(lid) && isAimableLightKind(light.kind))) ? (
-              <LightHelperFollower
-                key={`helper:${i}`}
-                nodeId={lid}
-                value={light}
-                pickId={lid}
-                constrained={constraintTargets.has(lid)}
-              />
-            ) : (
-              <LightHelper key={`helper:${i}`} value={light} pickId={lid} />
-            );
-          })
-        : null}
-      {/* #208 — wireframe helpers for the active rig's lights too. */}
-      {showLightHelpers
-        ? rigLights.map((light, i) => {
-            const lid = rigLightSources[i] ?? null;
-            if (lid != null && viewportHidden.has(lid)) return null; // #1453 — with its light
-            // #243 GAP 2 / #265 — a Track-To'd AIMABLE rig light follows its aim per frame.
-            return lid &&
-              (directChannelTargets.has(lid) ||
-                (constraintTargets.has(lid) && isAimableLightKind(light.kind))) ? (
-              <LightHelperFollower
-                key={`rig-helper:${lid}`}
-                nodeId={lid}
-                value={light}
-                pickId={lid}
-                constrained={constraintTargets.has(lid)}
-              />
-            ) : (
-              <LightHelper key={`rig-helper:${lid ?? i}`} value={light} pickId={lid} />
-            );
-          })
-        : null}
-      {/* #165: selectable wireframe camera frustums. Hidden in rendered mode;
+        {showLightHelpers
+          ? value.scene.lights.map((light, i) => {
+              const lid = lightRefs[i]?.node ?? null;
+              if (lid != null && viewportHidden.has(lid)) return null; // #1453 — with its light
+              // [[V85]]/[[H132]] #241 — an animated light's helper follows the
+              // evaluated value at the playhead; a static light keeps the static path.
+              // #243 GAP 2 / #265 — a Track-To'd AIMABLE light (Area/Spot/Directional)
+              // derives its aim per frame, so its helper needs the follower too
+              // (re-resolve the aim at `seconds` into the field the helper draws).
+              return lid &&
+                (directChannelTargets.has(lid) ||
+                  (constraintTargets.has(lid) && isAimableLightKind(light.kind))) ? (
+                <LightHelperFollower
+                  key={`helper:${i}`}
+                  nodeId={lid}
+                  value={light}
+                  pickId={lid}
+                  constrained={constraintTargets.has(lid)}
+                />
+              ) : (
+                <LightHelper key={`helper:${i}`} value={light} pickId={lid} />
+              );
+            })
+          : null}
+        {/* #208 — wireframe helpers for the active rig's lights too. */}
+        {showLightHelpers
+          ? rigLights.map((light, i) => {
+              const lid = rigLightSources[i] ?? null;
+              if (lid != null && viewportHidden.has(lid)) return null; // #1453 — with its light
+              // #243 GAP 2 / #265 — a Track-To'd AIMABLE rig light follows its aim per frame.
+              return lid &&
+                (directChannelTargets.has(lid) ||
+                  (constraintTargets.has(lid) && isAimableLightKind(light.kind))) ? (
+                <LightHelperFollower
+                  key={`rig-helper:${lid}`}
+                  nodeId={lid}
+                  value={light}
+                  pickId={lid}
+                  constrained={constraintTargets.has(lid)}
+                />
+              ) : (
+                <LightHelper key={`rig-helper:${lid ?? i}`} value={light} pickId={lid} />
+              );
+            })
+          : null}
+        {/* #165: selectable wireframe camera frustums. Hidden in rendered mode;
           the active camera's frustum also hides while looking through it. */}
-      {showLightHelpers
-        ? cameraNodeIds.map((id) => {
-            const active = id === activeCameraId;
-            if (active && lookThrough) return null;
-            // #1453 — a hidden camera (its eye, or a hidden collection) draws no frustum. As in
-            // Blender, hiding it does not stop the shot: the active camera still frames the render.
-            if (viewportHidden.has(id)) return null;
-            // [[V85]]/[[H132]] #240 — an ANIMATED camera (direct channels or a
-            // Track-To) follows the EVALUATED pose at the live playhead, parity with
-            // meshes/lights; a static camera keeps the cheap frame-0 read. #242 GAP 1
-            // — a camera nested under an ANIMATED ANCESTOR Group is animated too (its
-            // world pose moves per frame with the ancestor), so it likewise needs the
-            // follower even when its own params/constraints are static; meshes get this
-            // for free via the Group's DirectChannelsR subtree re-render.
-            if (
-              directChannelTargets.has(id) ||
-              constraintTargets.has(id) ||
-              animatedAncestors.has(id)
-            ) {
-              return <CameraFrustumFollower key={`cam:${id}`} cameraId={id} active={active} />;
-            }
-            // #231 Inc 3.3 — a camera nested in a Group draws its frustum at the
-            // group-composed WORLD pose (null parent → flat local pose, unchanged).
-            // Frame-0 ctx mirrors this component's static (time-decoupled) evaluate.
-            const pose = resolveCameraFrustumPose(
-              state,
-              id,
-              { time: { frame: 0, seconds: 0, normalized: 0 } },
-              cache,
-            );
-            if (!pose) return null;
-            return <CameraHelper key={`cam:${id}`} pose={pose} pickId={id} active={active} />;
-          })
-        : null}
-      {/* #972 — octahedral bones for every rig in the scene. A camera gets a
+        {showLightHelpers
+          ? cameraNodeIds.map((id) => {
+              const active = id === activeCameraId;
+              if (active && lookThrough) return null;
+              // #1453 — a hidden camera (its eye, or a hidden collection) draws no frustum. As in
+              // Blender, hiding it does not stop the shot: the active camera still frames the render.
+              if (viewportHidden.has(id)) return null;
+              // [[V85]]/[[H132]] #240 — an ANIMATED camera (direct channels or a
+              // Track-To) follows the EVALUATED pose at the live playhead, parity with
+              // meshes/lights; a static camera keeps the cheap frame-0 read. #242 GAP 1
+              // — a camera nested under an ANIMATED ANCESTOR Group is animated too (its
+              // world pose moves per frame with the ancestor), so it likewise needs the
+              // follower even when its own params/constraints are static; meshes get this
+              // for free via the Group's DirectChannelsR subtree re-render.
+              if (
+                directChannelTargets.has(id) ||
+                constraintTargets.has(id) ||
+                animatedAncestors.has(id)
+              ) {
+                return <CameraFrustumFollower key={`cam:${id}`} cameraId={id} active={active} />;
+              }
+              // #231 Inc 3.3 — a camera nested in a Group draws its frustum at the
+              // group-composed WORLD pose (null parent → flat local pose, unchanged).
+              // Frame-0 ctx mirrors this component's static (time-decoupled) evaluate.
+              const pose = resolveCameraFrustumPose(
+                state,
+                id,
+                { time: { frame: 0, seconds: 0, normalized: 0 } },
+                cache,
+              );
+              if (!pose) return null;
+              return <CameraHelper key={`cam:${id}`} pose={pose} pickId={id} active={active} />;
+            })
+          : null}
+        {/* #972 — octahedral bones for every rig in the scene. A camera gets a
           frustum and a light gets a gizmo; until now a rig got nothing, so a
           character animating wrongly and a character not animating at all
           looked the same (#970). Reads the LIVE `Bone` objects, so it follows
           the playhead; orients each bone by its own basis, so ROLL is visible
           (#854/#960). Hidden in `rendered` mode like every other helper. */}
-      {showLightHelpers ? (
-        <ArmatureHelper
-          sourceRigs={sourceRigs}
-          showSourceRigs={sourceRigVisible}
-          skeletonObjects={skeletonObjects}
-        />
-      ) : null}
-      {/* Index `i` corresponds to the Scene aggregator's `inputs.children[i]`
+        {showLightHelpers ? (
+          <ArmatureHelper
+            sourceRigs={sourceRigs}
+            showSourceRigs={sourceRigVisible}
+            skeletonObjects={skeletonObjects}
+          />
+        ) : null}
+        {/* Index `i` corresponds to the Scene aggregator's `inputs.children[i]`
           (childRefs) per the comment above. Each child renders through the
           MEMOIZED SceneChildNode so a single param edit re-renders ONE node, not
           all N (H48 / B13). */}
-      {value.scene.children.map((child, i) => {
-        const cpid = childRefs[i]?.node ?? null;
-        // #227 S4 — a hidden top-level node draws nothing of its own. #1462 — but its children
-        // still draw (`MeshChild` skips only the hidden node's body), as Blender hides an object
-        // alone; its wrapper drops the node's name, so nothing reads the node as drawn. The live
-        // scene is what the offscreen still/animation render captures (V37), so a skipped body
-        // is absent from the render too — one band, no #168 denylist. #1451 — a member of a
-        // hidden collection is hidden the same way.
-        return (
-          <SceneChildNode
-            key={`mesh:${i}`}
-            value={child}
-            pickId={cpid}
-            hidden={cpid != null && hiddenIds.has(cpid)}
-            // v0.7 unification (#197) — a node animated by free-floating direct
-            // channels (V57) overlays via DirectChannelsR. Membership tested
-            // against the ONE pre-built set (O(N) total, not O(N²)).
-            hasDirectChannels={cpid != null && directChannelTargets.has(cpid)}
-            // #204 — a node with an active Track-To renders through ConstrainedR
-            // (derived aim rotation), taking precedence over DirectChannelsR.
-            isConstrained={cpid != null && constraintTargets.has(cpid)}
-          />
-        );
-      })}
-      <MeshScaleProbe />
-      {/* V8: scene contents come ONLY from the DAG. No fixtures, no fallbacks.
+        {value.scene.children.map((child, i) => {
+          const cpid = childRefs[i]?.node ?? null;
+          // #227 S4 — a hidden top-level node draws nothing of its own. #1462 — but its children
+          // still draw (`MeshChild` skips only the hidden node's body), as Blender hides an object
+          // alone; its wrapper drops the node's name, so nothing reads the node as drawn. The live
+          // scene is what the offscreen still/animation render captures (V37), so a skipped body
+          // is absent from the render too — one band, no #168 denylist. #1451 — a member of a
+          // hidden collection is hidden the same way.
+          return (
+            <SceneChildNode
+              key={`mesh:${i}`}
+              value={child}
+              pickId={cpid}
+              hidden={cpid != null && hiddenIds.has(cpid)}
+              // v0.7 unification (#197) — a node animated by free-floating direct
+              // channels (V57) overlays via DirectChannelsR. Membership tested
+              // against the ONE pre-built set (O(N) total, not O(N²)).
+              hasDirectChannels={cpid != null && directChannelTargets.has(cpid)}
+              // #204 — a node with an active Track-To renders through ConstrainedR
+              // (derived aim rotation), taking precedence over DirectChannelsR.
+              isConstrained={cpid != null && constraintTargets.has(cpid)}
+            />
+          );
+        })}
+        <MeshScaleProbe />
+        {/* V8: scene contents come ONLY from the DAG. No fixtures, no fallbacks.
           If a project wants ambient fill, it adds an AmbientLight node. */}
-      <DiffOverlay />
-      <PostFx config={value.postFx} dof={activeDof} />
-    </OverlayMembershipContext.Provider>
+        <DiffOverlay />
+        <PostFx config={value.postFx} dof={activeDof} />
+      </OverlayMembershipContext.Provider>
+    </FrameEvaluatorProvider>
   );
 }
 
@@ -1381,6 +1370,19 @@ function useLightShadingTransients(
   return useLaneOverlayTransients(targetId, edits, 'lights');
 }
 
+/** #1688 — the live playhead on the clock `nodeId` runs on (scene time when there is no node). */
+function liveSecondsOf(nodeId: string | null): number {
+  return nodeId
+    ? clockFor(useDagStore.getState().state, nodeId).seconds
+    : useTimeStore.getState().seconds;
+}
+
+/** #1688 — the live playhead as a context on the clock `nodeId` runs on, carrying both times so
+ *  what it reads through (a Track-To's target, a Follow-Path's curve) keeps its own clock. */
+function liveCtxOf(nodeId: string): ClockedCtx {
+  return ctxOnClockOf(useDagStore.getState().state, nodeId, liveCtx());
+}
+
 function DirectChannelsLightR({
   value,
   nodeId,
@@ -1414,7 +1416,7 @@ function DirectChannelsLightR({
       ) ?? value;
     if (!followsPath) return { v: overlaid, followKey: '' };
     const state = useDagStore.getState().state;
-    const ctx = { time: { frame: Math.round(seconds * 60), seconds, normalized: 0 } };
+    const ctx = liveCtxOf(nodeId);
     const followed = resolveConstraintPosition(state, nodeId, ctx, cache);
     if (!followed) return { v: overlaid, followKey: '' };
     return {
@@ -1426,9 +1428,7 @@ function DirectChannelsLightR({
     };
   };
 
-  const [patched, setPatched] = useState<LightValue>(
-    () => build(useTimeStore.getState().seconds).v,
-  );
+  const [patched, setPatched] = useState<LightValue>(() => build(liveSecondsOf(nodeId)).v);
   const lastApplied = useRef<{
     seconds: number;
     channels: unknown;
@@ -1436,8 +1436,9 @@ function DirectChannelsLightR({
     value: unknown;
     followKey: string;
   } | null>(null);
-  useFrame(() => {
-    const seconds = useTimeStore.getState().seconds;
+  const evaluator = useFrameEvaluator();
+  useFrameTick(nodeId, () => {
+    const seconds = liveSecondsOf(nodeId);
     const { v, followKey } = build(seconds);
     const la = lastApplied.current;
     if (
@@ -1451,7 +1452,13 @@ function DirectChannelsLightR({
       return;
     }
     lastApplied.current = { seconds, channels, transients, value, followKey };
-    setPatched(v);
+    evaluator.record(nodeId, v);
+    // #1728 — committed now, not scheduled: a deferred update from a frame loop is starved by the
+    // playhead's higher-priority updates while the frame is busy, and the light froze (#1726).
+    // A light reads its whole value (scale as brightness, position for its aim), so it has no
+    // transform-only write; #1730 commits it with the frame's other updates, in the evaluator's
+    // one synchronous commit.
+    return () => setPatched(v);
   });
   return <LightKindR value={patched} nodeId={nodeId} constrained={constrained} />;
 }
@@ -1474,6 +1481,7 @@ function CameraFrustumFollower({ cameraId, active }: { cameraId: string; active:
     (seconds) => resolveCameraPoseAt(useDagStore.getState().state, cameraId, seconds, cache),
     undefined,
     'film',
+    cameraId,
   );
   return <CameraHelper pose={pose} pickId={cameraId} active={active} />;
 }
@@ -1509,29 +1517,34 @@ function LightHelperFollower({
   // per-frame render-root evaluate (inside `resolveTrackToTarget`) HITS while the DAG
   // is unchanged (the ConstrainedR / useAreaLightAim pattern).
   const cache = uiEvaluatorCache;
-  const patched = usePlayheadFollow((seconds) => {
-    // #1153 — resolved after the overlay, as the light it follows is.
-    const base = withResolvedRotation(
-      overlayTransients(
-        overlayChannels(value, channels, 1, seconds) ?? value,
+  const patched = usePlayheadFollow(
+    (seconds) => {
+      // #1153 — resolved after the overlay, as the light it follows is.
+      const base = withResolvedRotation(
+        overlayTransients(
+          overlayChannels(value, channels, 1, seconds) ?? value,
+          nodeId,
+          transients,
+        ) ?? value,
+      );
+      // #265 — every AIMABLE light kind (AreaLight / SpotLight / DirectionalLight)
+      // derives its aim from the Track-To target per frame; the wireframe helper
+      // reads the AUTHORED aim (lookAt / target / rotation), so re-express the
+      // resolved world aim into the field THIS kind's helper draws from. A
+      // non-aimable kind (Point / Ambient) or an unconstrained light pays nothing.
+      if (!constrained || !isAimableLightKind(base.kind)) return base;
+      const aim = resolveTrackToTarget(
+        useDagStore.getState().state,
         nodeId,
-        transients,
-      ) ?? value,
-    );
-    // #265 — every AIMABLE light kind (AreaLight / SpotLight / DirectionalLight)
-    // derives its aim from the Track-To target per frame; the wireframe helper
-    // reads the AUTHORED aim (lookAt / target / rotation), so re-express the
-    // resolved world aim into the field THIS kind's helper draws from. A
-    // non-aimable kind (Point / Ambient) or an unconstrained light pays nothing.
-    if (!constrained || !isAimableLightKind(base.kind)) return base;
-    const aim = resolveTrackToTarget(
-      useDagStore.getState().state,
-      nodeId,
-      { time: { frame: Math.round(seconds * 60), seconds, normalized: 0 } },
-      cache,
-    );
-    return aim ? aimLightValueForHelper(base, aim) : base;
-  });
+        liveCtxOf(nodeId),
+        cache,
+      );
+      return aim ? aimLightValueForHelper(base, aim) : base;
+    },
+    undefined,
+    () => clockOf(useDagStore.getState().state, nodeId),
+    nodeId,
+  );
   return <LightHelper value={patched} pickId={pickId} />;
 }
 
@@ -1791,11 +1804,10 @@ function useAreaLightAim(
   // when constrained, so unconstrained lights spend a single boolean per frame.
   useFrame(() => {
     if (!constrained || !nodeId) return;
-    const seconds = useTimeStore.getState().seconds;
     const aim = resolveTrackToTarget(
       useDagStore.getState().state,
       nodeId,
-      { time: { frame: Math.round(seconds * 60), seconds, normalized: 0 } },
+      liveCtxOf(nodeId),
       cache,
     );
     if (!aim) return;
@@ -1826,11 +1838,10 @@ function useLightTargetAim(
     if (!constrained || !nodeId) return;
     const light = ref.current;
     if (!light) return;
-    const seconds = useTimeStore.getState().seconds;
     const aim = resolveTrackToTarget(
       useDagStore.getState().state,
       nodeId,
-      { time: { frame: Math.round(seconds * 60), seconds, normalized: 0 } },
+      liveCtxOf(nodeId),
       cache,
     );
     if (!aim) return;
@@ -2348,33 +2359,98 @@ function DirectChannelsR({
   // screen. `overlayWithIdentity` composes the same two primitives in the same order and
   // clears the identity its own writes invalidated. It returns `value` by reference when
   // nothing is written, so the static-node guard below is untouched.
-  const sample = (seconds: number): IdentifiedSceneObject =>
-    overlayWithIdentity('children', value, pickId, channels, transients, seconds);
-
-  const [patched, setPatched] = useState<IdentifiedSceneObject>(() =>
-    sample(useTimeStore.getState().seconds),
+  const { group, drawn } = useOverlayDraw(
+    pickId,
+    value,
+    [channels, transients],
+    false,
+    (seconds) => ({
+      v: overlayWithIdentity('children', value, pickId, channels, transients, seconds),
+      key: '',
+    }),
   );
-  const lastApplied = useRef<{
-    seconds: number;
-    channels: unknown;
-    transients: unknown;
-    value: unknown;
-  } | null>(null);
-  useFrame(() => {
-    const seconds = useTimeStore.getState().seconds;
-    if (
-      lastApplied.current !== null &&
-      lastApplied.current.seconds === seconds &&
-      lastApplied.current.channels === channels &&
-      lastApplied.current.transients === transients &&
-      lastApplied.current.value === value
-    ) {
-      return;
-    }
-    lastApplied.current = { seconds, channels, transients, value };
-    setPatched(sample(seconds));
+  return (
+    <group ref={group}>
+      <MeshChild value={drawn} override={override} nodeId={pickId} />
+    </group>
+  );
+}
+
+/**
+ * #1728 — the per-frame half of the two overlay renderers (`DirectChannelsR`, `ConstrainedR`).
+ *
+ * `build(seconds)` samples the patched value and a key for any band the value's own inputs don't
+ * cover (a constraint's aim). Each frame, if anything moved:
+ *   - the value's TRANSFORM is written onto `group`, directly (`writeTransform`);
+ *   - React re-renders `drawn` only when a field OTHER than the transform changed (an animated
+ *     colour or size). A keyed transform asks React for nothing, so nothing can starve it (#1726).
+ * `drawn` is the patched value at identity, to be drawn inside `group`. For a kind whose renderer
+ * reads its transform for more than placement (`drawsTransformAsGroup` false: a light Object, a
+ * character), `group` stays at identity and `drawn` is the whole patched value, re-rendered on
+ * every change as before.
+ *
+ * `buildEveryFrame`: false skips `build` while the playhead and `inputs` are unchanged (a keyed
+ * node); true builds anyway and compares the key, for a band that moves with other objects.
+ */
+function useOverlayDraw(
+  nodeId: string,
+  value: SceneObject,
+  inputs: readonly unknown[],
+  buildEveryFrame: boolean,
+  build: (seconds: number) => { v: IdentifiedSceneObject; key: string },
+): { group: React.RefObject<THREE.Group>; drawn: IdentifiedSceneObject } {
+  const group = useRef<THREE.Group>(null);
+  const direct = drawsTransformAsGroup(value);
+  // The newest sample, whose transform the group carries; and the one `drawn` was made from.
+  const latest = useRef<IdentifiedSceneObject | null>(null);
+  const [source, setSource] = useState<IdentifiedSceneObject>(() => {
+    const { v } = build(liveSecondsOf(nodeId));
+    latest.current = v;
+    return v;
   });
-  return <MeshChild value={patched} override={override} nodeId={pickId} />;
+  const sourceRef = useRef(source);
+  sourceRef.current = source;
+  const drawn = useMemo(() => (direct ? withoutTransform(source) : source), [direct, source]);
+  // After every commit, before paint: the group carries the newest transform (identity when this
+  // kind keeps its transform in `drawn`). A re-render never resets it: the group has no props.
+  useLayoutEffect(() => {
+    if (group.current) writeTransform(group.current, direct ? latest.current : null);
+  });
+  const last = useRef<{
+    seconds: number;
+    inputs: readonly unknown[];
+    value: unknown;
+    key: string;
+  } | null>(null);
+  // #1730 — the group is what carries this node's world when the transform is written onto it.
+  const evaluator = useFrameEvaluator();
+  useLayoutEffect(() => {
+    if (!direct || !group.current) return;
+    return evaluator.registerDrawn(nodeId, group.current);
+  }, [evaluator, direct, nodeId]);
+  // #1730 — run by the frame evaluator, not a frame loop of its own: holders before what they
+  // hold, and any React update committed with the frame's others in one synchronous commit.
+  useFrameTick(nodeId, () => {
+    const seconds = liveSecondsOf(nodeId);
+    const la = last.current;
+    const unchanged =
+      la !== null &&
+      la.seconds === seconds &&
+      la.value === value &&
+      la.inputs.length === inputs.length &&
+      la.inputs.every((x, i) => x === inputs[i]);
+    if (unchanged && !buildEveryFrame) return;
+    const { v, key } = build(seconds);
+    if (unchanged && la.key === key) return;
+    last.current = { seconds, inputs, value, key };
+    latest.current = v;
+    evaluator.record(nodeId, v);
+    if (direct && group.current) writeTransform(group.current, v);
+    // Committed in the evaluator's one synchronous commit, for the reason it gives: an animated
+    // colour or size would otherwise lag behind the playhead under the same load.
+    if (!direct || !sameApartFromTransform(v, sourceRef.current)) return () => setSource(v);
+  });
+  return { group, drawn };
 }
 
 // #204 (epic #201) — renderer for a node with an active Track-To constraint. The
@@ -2426,7 +2502,7 @@ function ConstrainedR({
   // re-render every frame).
   const build = (seconds: number): { v: IdentifiedSceneObject; aimKey: string } => {
     const state = useDagStore.getState().state;
-    const ctx = { time: { frame: Math.round(seconds * 60), seconds, normalized: 0 } };
+    const ctx = liveCtxOf(pickId);
     // #536 S2b — the same seam DirectChannelsR takes, for the same reason: this road is the
     // only one a CONSTRAINED split object ever travels, so a stale material key freezes an
     // animated colour here exactly as it did there (#422 is the precedent for this pair of
@@ -2465,39 +2541,25 @@ function ConstrainedR({
     };
   };
 
-  const [patched, setPatched] = useState<IdentifiedSceneObject>(
-    () => build(useTimeStore.getState().seconds).v,
+  // The aim depends on object + target world positions, both of which can move every frame, so
+  // it is rebuilt every frame (cheap — cached eval + matrix math) and compared by `aimKey`: a
+  // paused static constraint rebuilds the SAME aim and writes nothing (H48), and a target edit
+  // changes the key even while paused (it isn't captured by this node's seconds/value).
+  const { group, drawn } = useOverlayDraw(
+    pickId,
+    value,
+    [channels, transients],
+    true,
+    (seconds) => {
+      const { v, aimKey } = build(seconds);
+      return { v, key: aimKey };
+    },
   );
-  const lastApplied = useRef<{
-    seconds: number;
-    channels: unknown;
-    transients: unknown;
-    value: unknown;
-    aimKey: string;
-  } | null>(null);
-  useFrame(() => {
-    // The aim depends on object + target world positions, both of which can move
-    // every frame, so recompute it (cheap — cached eval + matrix math). But only
-    // re-render when the RESULT changed: a paused static constraint recomputes the
-    // SAME aim → skip setState (H48). A target edit changes `aimKey` even while
-    // paused (it isn't captured by this node's seconds/value) → re-render fires.
-    const seconds = useTimeStore.getState().seconds;
-    const { v, aimKey } = build(seconds);
-    const la = lastApplied.current;
-    if (
-      la !== null &&
-      la.seconds === seconds &&
-      la.channels === channels &&
-      la.transients === transients &&
-      la.value === value &&
-      la.aimKey === aimKey
-    ) {
-      return;
-    }
-    lastApplied.current = { seconds, channels, transients, value, aimKey };
-    setPatched(v);
-  });
-  return <MeshChild value={patched} override={override} nodeId={pickId} />;
+  return (
+    <group ref={group}>
+      <MeshChild value={drawn} override={override} nodeId={pickId} />
+    </group>
+  );
 }
 
 // #365 Phase 5a / #384 Stage C: BoxMeshR and SphereMeshR are RETIRED — a box/sphere renders
@@ -2663,28 +2725,36 @@ function writeDeformed(
   built.geometry.boundingBox = null;
 }
 
-// #1610 / #1684 — a skinned mesh keeps its own bounds, measured from the posed vertices
-// (`SkinnedMesh.computeBoundingSphere` re-skins every vertex on the CPU, ~1.6 ms per X Bot mesh on
-// the software renderer). A click tests those bounds before any triangle, so once the bones move
-// they must be measured again, or a character that has walked away from where it was imported is
-// not under the pointer. The sphere is NOT dropped every frame for that: the renderer measures a null
-// sphere on every draw to sort objects (three r169 WebGLRenderer.js:1374-1379), which re-skinned
-// every character every frame, idle or not (measured: 2 re-skins, 3.3 ms per frame for one X Bot).
-// So a pose only marks the sphere stale, and a click drops it just before testing. Nothing else needs it
-// fresh: the mesh is never frustum-culled, and the sort only orders by the centre. The box is read
-// by no draw, so it is simply dropped on each pose (a click skips a null box).
-// REF: three r169 src/objects/SkinnedMesh.js:69-82/114, src/renderers/WebGLRenderer.js:1374-1379.
-const staleSkinBounds = new WeakSet<THREE.SkinnedMesh>();
-
-function measureSkinBoundsOnPick(mesh: THREE.SkinnedMesh): void {
+// #1610 / #1684 — a click tests a skinned mesh's own bounds before any triangle (three r169
+// SkinnedMesh.js:114/128), so they must be where the bones put the mesh now, or a character that
+// has walked away from where it was imported is not under the pointer. They are written from
+// `drawnBox` — the box every reader of "where is this mesh drawn" uses — just before the test, on
+// this mesh's own fields; the shared geometry is never written. They used to be cleared on every
+// pose so three would re-skin every vertex to refill them, which is what #1684 removed: the renderer
+// measures a null sphere on every draw to sort objects (WebGLRenderer.js:1374-1379), so clearing it
+// per frame re-skinned every character every frame (measured: 3.3 ms per frame for one X Bot).
+// REF: three r169 src/objects/SkinnedMesh.js:105-136, src/renderers/WebGLRenderer.js:1374-1379.
+function pickByDrawnBox(mesh: THREE.SkinnedMesh): void {
+  const measured = new THREE.Box3();
   mesh.raycast = (raycaster, intersects) => {
-    // A null sphere is what three's raycast measures first (SkinnedMesh.js:114), on this mesh's own
-    // field — the shared geometry is never written.
-    if (staleSkinBounds.delete(mesh)) {
-      (mesh as unknown as { boundingSphere: THREE.Sphere | null }).boundingSphere = null;
+    if (drawnBox(mesh, measured)) {
+      const own = mesh as unknown as {
+        boundingBox: THREE.Box3 | null;
+        boundingSphere: THREE.Sphere | null;
+      };
+      own.boundingBox = (own.boundingBox ?? new THREE.Box3()).copy(measured);
+      own.boundingSphere = measured.getBoundingSphere(own.boundingSphere ?? new THREE.Sphere());
     }
     THREE.SkinnedMesh.prototype.raycast.call(mesh, raycaster, intersects);
   };
+}
+
+/** #1737 — `${armature}|${clock}` for the skinned mesh `nodeId`, or null when it cannot be told. */
+function skinnedRigKey(nodeId: string | null): string | null {
+  if (!nodeId) return null;
+  const state = useDagStore.getState().state;
+  const rigs = rigsFor(state, nodeId);
+  return rigs.length === 1 ? `${rigs[0].objectId}|${clockOf(state, nodeId)}` : null;
 }
 
 function SkinnedMeshR({
@@ -2692,11 +2762,14 @@ function SkinnedMeshR({
   data,
   skin,
   override,
+  nodeId = null,
 }: {
   pose: ModifiedMeshValue;
   data: ModifiedDataValue;
   skin: SkinDeformValue;
   override?: MaterialValue;
+  /** #1688 — the deformed Object's node: the pose is read on the clock it runs on. */
+  nodeId?: string | null;
 }) {
   const shading = useViewportStore((s) => s.shading);
   const mat = data.material;
@@ -2715,7 +2788,11 @@ function SkinnedMeshR({
   // instance is attached to nothing and the registry's sweep evicts it. Asking for it every render
   // re-built it after each sweep, and keying on its identity then rebuilt the draw (measured: one
   // rebuild per quiet sweep on a keyed Object). Its content is already in the key.
-  const buildKey = skinnedDrawKey(data.geometry.key, skin);
+  // #1737 — the armature deforming this mesh, and the clock it runs on: meshes of one armature on
+  // one clock share its bones and, where their group tables match, one palette. Null (no node, or
+  // not exactly one armature found) keeps a private set of bones.
+  const rigKey = skinnedRigKey(nodeId);
+  const buildKey = `${skinnedDrawKey(data.geometry.key, skin)}|${rigKey ?? ''}`;
   const cache = useRef<{
     key: string;
     built: {
@@ -2747,9 +2824,9 @@ function SkinnedMeshR({
         restNormal: normal ? Float32Array.from(normal.array) : null,
       };
       next = { mesh, geometry, draw: null, deformed };
-      writeDeformed(next, useTimeStore.getState().seconds, skin.pose);
+      writeDeformed(next, liveSecondsOf(nodeId), skin.pose);
     } else if (shared && descriptor.kind === 'mesh') {
-      const draw = buildSkinnedDraw(skin, descriptor.data);
+      const draw = buildSkinnedDraw(skin, descriptor.data, rigKey);
       const geometry = shared.clone();
       geometry.setAttribute('skinIndex', new THREE.Uint16BufferAttribute(draw.skinIndex, 4));
       geometry.setAttribute('skinWeight', new THREE.Float32BufferAttribute(draw.skinWeight, 4));
@@ -2757,8 +2834,8 @@ function SkinnedMeshR({
       mesh.bindMode = THREE.DetachedBindMode;
       mesh.bind(draw.skeleton, draw.bindMatrix);
       mesh.frustumCulled = false;
-      measureSkinBoundsOnPick(mesh);
-      draw.pose(useTimeStore.getState().seconds, skin.pose);
+      pickByDrawnBox(mesh);
+      draw.pose(liveSecondsOf(nodeId), skin.pose);
       next = { mesh, draw, geometry, deformed: null };
     }
     cache.current = { key: buildKey, built: next };
@@ -2766,17 +2843,17 @@ function SkinnedMeshR({
   const built = cache.current.built;
   const skinPose = useRef(skin.pose);
   skinPose.current = skin.pose;
-  useEffect(() => () => built?.geometry.dispose(), [built]);
+  useEffect(
+    () => () => {
+      built?.geometry.dispose();
+      built?.draw?.release();
+    },
+    [built],
+  );
   useFrame(() => {
     if (!built) return;
-    const seconds = useTimeStore.getState().seconds;
+    const seconds = liveSecondsOf(nodeId);
     built.draw?.pose(seconds, skinPose.current);
-    // #1610 — the bones just moved, so the bounds a click tests are stale (`measureSkinBoundsOnPick`).
-    if (built.draw && built.mesh instanceof THREE.SkinnedMesh) {
-      staleSkinBounds.add(built.mesh);
-      // No draw reads the box, so dropping it costs nothing; `Box3.setFromObject` measures it anew.
-      (built.mesh as unknown as { boundingBox: THREE.Box3 | null }).boundingBox = null;
-    }
     writeDeformed(built, seconds, skinPose.current);
   });
   // A number, so the effect below can depend on it: `skin` itself is a new object every frame.
@@ -2863,7 +2940,7 @@ function ObjectR({
   // #1503 — a body shown in only one of the viewport and the render is stamped for the render.
   const self = hideSelf ? null : (
     <OwnVisibility nodeId={nodeId ?? null}>
-      <ObjectSelfR value={value} override={override} />
+      <ObjectSelfR value={value} override={override} nodeId={nodeId ?? null} />
     </OwnVisibility>
   );
   if (!value.children || value.children.length === 0) return self;
@@ -2890,7 +2967,7 @@ function ObjectR({
           return (c as { parentBone?: unknown }).parentBone === undefined ? (
             child
           ) : (
-            <BoneParentR key={`b:${i}`} parent={value} child={c}>
+            <BoneParentR key={`b:${i}`} parent={value} parentId={nodeId ?? null} child={c}>
               {child}
             </BoneParentR>
           );
@@ -2909,10 +2986,14 @@ function ObjectR({
  */
 function BoneParentR({
   parent,
+  parentId,
   child,
   children,
 }: {
   parent: ObjectValue;
+  /** #1688 — the armature's node: its bones pose on the clock it runs on (a camera rig's may be
+   *  the playhead's). */
+  parentId: string | null;
   child: SceneObject;
   children: ReactNode;
 }) {
@@ -2927,7 +3008,7 @@ function BoneParentR({
   useFrame(() => {
     const group = ref.current;
     if (!group) return;
-    const seconds = useTimeStore.getState().seconds;
+    const seconds = liveSecondsOf(parentId);
     const la = last.current;
     if (la && la.seconds === seconds && la.parent === parent && la.child === child) return;
     last.current = { seconds, parent, child };
@@ -2937,7 +3018,7 @@ function BoneParentR({
     <group
       ref={(group) => {
         ref.current = group;
-        if (group) place(group, useTimeStore.getState().seconds);
+        if (group) place(group, liveSecondsOf(parentId));
       }}
       matrixAutoUpdate={false}
     >
@@ -2946,7 +3027,16 @@ function BoneParentR({
   );
 }
 
-function ObjectSelfR({ value, override }: { value: ObjectValue; override?: MaterialValue }) {
+function ObjectSelfR({
+  value,
+  override,
+  nodeId = null,
+}: {
+  value: ObjectValue;
+  override?: MaterialValue;
+  /** #1688 — the Object's node, so a skinned body poses on the clock it runs on. */
+  nodeId?: string | null;
+}) {
   const data = value.data;
   if (data?.kind === 'CurveData') {
     // TRS is the Object's; samples/points are LOCAL (CurveLineChrome's enclosing
@@ -3052,7 +3142,15 @@ function ObjectSelfR({ value, override }: { value: ObjectValue; override?: Mater
     // forks before the slot fork: the recompose carries no skin, and a skinned mesh's per-slot
     // draw is not built yet, so it draws with its first material.
     if (data.skin) {
-      return <SkinnedMeshR pose={modified} data={data} skin={data.skin} override={override} />;
+      return (
+        <SkinnedMeshR
+          pose={modified}
+          data={data}
+          skin={data.skin}
+          override={override}
+          nodeId={nodeId}
+        />
+      );
     }
     // #638 (ns-1b step 6) — the same 1↔N fork the MeshData arm takes, and it has to be
     // here too: `SetMaterialOp` over a partial face range is the FIRST producer of a slot

@@ -25,7 +25,13 @@ import type {
 } from '../nodes/types';
 import { buildMeshGeometry } from './meshGeometryData';
 import { meshSplitLayout } from './polygonLayout';
-import { buildDeformedDraw, buildSkinnedDraw, gpuSkinnable, skinnedDrawKey } from './skinnedDraw';
+import {
+  buildDeformedDraw,
+  buildSkinnedDraw,
+  gpuSkinnable,
+  sharedRigCounts,
+  skinnedDrawKey,
+} from './skinnedDraw';
 import { skinLanes, skinPointLayers, skinSetCount } from '../nodes/skinInfluences';
 import { cloneForOverlay } from '../nodes/overlayChannels';
 import { clipValueFromKeys } from '../test-utils/clipValue';
@@ -396,5 +402,94 @@ describe('#1430 — every influence a file states is imported, deformed and draw
     const i = tip.point.findIndex((p) => Math.abs(p[0] + 0.978764) < 1e-3);
     expect(i).toBeGreaterThanOrEqual(0);
     expect(tip.vertex[i][1]).toBeCloseTo(1.286395, 3);
+  });
+});
+
+// #1737 — one armature's bones shared by every mesh it deforms, and one palette per group table.
+// What is drawn must not move: each mesh, posed in one frame alongside the others, is checked
+// against the Armature modifier's own answer (`sampleSkinDeform`) to 1e-5, as every draw here is.
+describe('#1737 — meshes of one armature share its bones, and draw exactly as before', () => {
+  /** A mesh drawn through a shared rig: the three mesh, and a reader of its drawn vertices. */
+  function sharedDraw(skin: SkinDeformValue, mesh: MeshGeometryData, rig: string) {
+    const draw = buildSkinnedDraw(skin, mesh, rig);
+    const geometry = buildMeshGeometry(mesh).geometry;
+    geometry.setAttribute('skinIndex', new Uint16BufferAttribute(draw.skinIndex, 4));
+    geometry.setAttribute('skinWeight', new Float32BufferAttribute(draw.skinWeight, 4));
+    const skinned = new SkinnedMesh(geometry);
+    skinned.bindMode = DetachedBindMode;
+    skinned.bind(draw.skeleton, draw.bindMatrix);
+    const { vertexCorner } = meshSplitLayout(mesh);
+    const read = (seconds: number) => {
+      // three uploads a palette once per frame; reading on the CPU, update it as the frame would.
+      skinned.skeleton.update();
+      const expected = sampleSkinDeform(skin, mesh, seconds);
+      const v3 = new Vector3();
+      return {
+        vertex: Array.from(vertexCorner, (_, v) => skinned.getVertexPosition(v, v3).toArray()),
+        point: Array.from(vertexCorner, (_, v) => {
+          const p = mesh.cornerPoints[vertexCorner[v]];
+          return Array.from(expected.subarray(p * 3, p * 3 + 3));
+        }),
+      };
+    };
+    return { draw, skinned, read };
+  }
+
+  // Two group tables over the same rig: [Root, Tip] and [Tip, Root] (the same bones, numbered the
+  // other way), two meshes with each, placed at different spots (a different bind per mesh).
+  const AB = ['Root', 'Tip'];
+  const BA = ['Tip', 'Root'];
+  const half: [number, number][] = [
+    [0, 0.5],
+    [1, 0.5],
+  ];
+  const cases = [
+    { groups: AB, lanes: [[1, 1]] as [number, number][], at: [0, 2, 0], place: undefined },
+    { groups: AB, lanes: half, at: [0.5, 1.5, 0], place: undefined },
+    { groups: BA, lanes: [[0, 1]] as [number, number][], at: [0, 2, 0], place: undefined },
+    {
+      groups: BA,
+      lanes: half,
+      at: [5, 2, 0],
+      place: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 5, 0, 0, 1],
+    },
+  ];
+
+  it('four meshes, two group tables, one armature: each drawn as the modifier evaluates it', () => {
+    const before = sharedRigCounts();
+    // One pose value for the armature, shared by reference as `armaturePoseOf` shares it, so the
+    // second and later meshes in a frame find the bones already placed.
+    const pose = skinOf(AB).pose;
+    const skins = cases.map((c) => ({ ...skinOf(c.groups, c.place), pose }));
+    const draws = cases.map((c, i) =>
+      sharedDraw(skins[i], triangle(c.groups, c.lanes, c.at), 'arm|scene'),
+    );
+    const held = sharedRigCounts();
+    expect(held.rigs - before.rigs, 'one set of bones for the armature').toBe(1);
+    expect(held.palettes - before.palettes, 'one palette per group table').toBe(2);
+    expect(draws[0].skinned.skeleton).toBe(draws[1].skinned.skeleton);
+    expect(draws[2].skinned.skeleton).toBe(draws[3].skinned.skeleton);
+    expect(draws[0].skinned.skeleton).not.toBe(draws[2].skinned.skeleton);
+    for (const t of [0, 0.25, 0.5, 1, 0.5]) {
+      // One frame: every mesh poses (the second and later find the bones placed), then is read.
+      draws.forEach((d) => d.draw.pose(t, pose));
+      draws.forEach((d) => expectEqualEverywhere(d.read(t)));
+    }
+    draws.forEach((d) => d.draw.release());
+    expect(sharedRigCounts()).toEqual(before);
+  });
+
+  it('two armatures with the same rest bones but different poses keep their own bones', () => {
+    const still = skinOf(AB);
+    const resting: SkinDeformValue = { ...still, pose: null };
+    const turning = sharedDraw(still, triangle(AB, [[1, 1]], [0, 2, 0]), 'armA|scene');
+    const atRest = sharedDraw(resting, triangle(AB, [[1, 1]], [0, 2, 0]), 'armB|scene');
+    expect(turning.skinned.skeleton.bones[1]).not.toBe(atRest.skinned.skeleton.bones[1]);
+    turning.draw.pose(1, still.pose);
+    atRest.draw.pose(1, null);
+    expectEqualEverywhere(turning.read(1));
+    expectEqualEverywhere(atRest.read(1));
+    turning.draw.release();
+    atRest.draw.release();
   });
 });

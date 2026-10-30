@@ -28,9 +28,9 @@
 // • `scene` includes editor chrome: a point light's `rotation` moves only its helper glyph, and a
 //   curve's line is itself chrome. That is still a visible response to the channel.
 // • Two mechanisms, each measured on its own (#1258): a bare keyframe channel, and a ParamDriver
-//   carrying the same value. They reach different readers — every reader of a driver goes
-//   through `driverChannelValuesForTarget`, and the camera pose is not one of them — so one's
-//   answer is never borrowed for the other. A driver carries a number or a vec3 only. Strips are
+//   carrying the same value. They can reach different readers — every reader of a driver goes
+//   through `driverChannelValuesForTarget`, and until #480 the camera pose was not one of them
+//   (#1266) — so one's answer is never borrowed for the other. A driver carries a number or a vec3 only. Strips are
 //   not measured.
 //
 // REF: tests/e2e/p1235-animatable-census.spec.ts (the measurement); src/app/animatableCensus.json
@@ -452,7 +452,7 @@ export function brokenReferences(state: DagState): BrokenReference[] {
   for (const node of Object.values(state.nodes)) {
     const overlay = overlayKindOf(node.type);
     if (!overlay) continue;
-    const target = idRefsByRole(node).subject[0];
+    const target = idRefsByRole(node, state.nodes).subject[0];
     const paramPath = readBaseParam(node, 'paramPath');
     if (!target || !state.nodes[target] || typeof paramPath !== 'string' || !paramPath) continue;
     const missing = missingParamPath(state, target, paramPath, overlay.kind, {

@@ -22,8 +22,8 @@
 // In production both exports are inert: PerfBoundary renders children
 // directly and GpuProbe renders nothing.
 
-import { useFrame } from '@react-three/fiber';
-import { Profiler, type ReactNode } from 'react';
+import { useFrame, useThree } from '@react-three/fiber';
+import { Profiler, useEffect, type ReactNode } from 'react';
 import type { BufferGeometry, Mesh } from 'three';
 import { frameProfiler, installFrameProfiler } from './frameProfiler';
 
@@ -39,6 +39,25 @@ function triCount(geom: BufferGeometry): number {
 }
 
 export function GpuProbe() {
+  // #1727 — the `render` stage: CPU time inside every `renderer.render` the frame makes (the
+  // post-processing composer calls it once per pass). Wrapped once, timed only while armed.
+  const gl = useThree((s) => s.gl);
+  useEffect(() => {
+    if (!DEV) return;
+    const original = gl.render;
+    gl.render = function timedRender(this: typeof gl, ...args: Parameters<typeof original>) {
+      if (!frameProfiler.isArmed()) return original.apply(this, args);
+      const t0 = performance.now();
+      try {
+        return original.apply(this, args);
+      } finally {
+        frameProfiler.recordStage('render', performance.now() - t0);
+      }
+    };
+    return () => {
+      gl.render = original;
+    };
+  }, [gl]);
   useFrame(({ scene }) => {
     if (!frameProfiler.isArmed()) return;
     let triangles = 0;
@@ -56,13 +75,16 @@ export function GpuProbe() {
   return null;
 }
 
-export function PerfBoundary({ children }: { children: ReactNode }) {
+/** `id` names the subtree: `scene` (the default) is the scene's own budget, with eval taken out;
+ *  any other id is reported as its own per-frame stage, `react:<id>` (#1727). */
+export function PerfBoundary({ children, id = 'scene' }: { children: ReactNode; id?: string }) {
   if (!DEV) return <>{children}</>;
   return (
     <Profiler
-      id="scene"
+      id={id}
       onRender={(_id, _phase, actualDuration) => {
-        frameProfiler.recordReactCommit(actualDuration);
+        if (id === 'scene') frameProfiler.recordReactCommit(actualDuration);
+        else frameProfiler.recordSubtreeCommit(id, actualDuration);
       }}
     >
       {children}

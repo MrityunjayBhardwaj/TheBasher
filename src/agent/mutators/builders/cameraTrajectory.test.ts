@@ -70,6 +70,8 @@ describe('#774 — a prompt becomes a wired, aimed camera trajectory', () => {
     const byType = (t: string) => added.find((o) => o.nodeType === t);
     expect(byType('CurveData'), 'no curve was minted').toBeDefined();
     expect(byType('Object'), 'the curve has no Object to pose it').toBeDefined();
+    // #1686 — the path is named for the shot, where an Object keeps its name (it was dropped).
+    expect(s1.nodes[byType('Object')!.nodeId].meta?.name).toBe('arc path');
     expect(byType('FollowPath'), 'the camera was given no path to travel').toBeDefined();
     expect(
       byType('TrackTo'),

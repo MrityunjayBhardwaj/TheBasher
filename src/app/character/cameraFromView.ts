@@ -15,10 +15,16 @@
 // REF: THESIS.md §11, vyapti V1, krama K7 (sister chain).
 
 import { useThreeRef } from './threeRef';
+import { applyOp } from '../../core/dag';
 import { useDagStore } from '../../core/dag/store';
 import type { Op } from '../../core/dag/types';
 import { linkIntoActiveCollection } from '../collections';
 import { DEFAULT_CAMERA_FAR, DEFAULT_CAMERA_NEAR } from '../../nodes/CameraData';
+import { cutChannelOf } from '../activeCamera';
+import { buildCutOps } from '../shotOps';
+import { nodeDisplayName } from '../sceneTreeWalk';
+import { useTimeStore } from '../stores/timeStore';
+import { useNotificationStore } from '../stores/notificationStore';
 
 export async function snapshotCameraFromOrbit(): Promise<void> {
   const cam = useThreeRef.getState().camera;
@@ -89,7 +95,25 @@ export async function snapshotCameraFromOrbit(): Promise<void> {
     from: { node: dataId, socket: 'out' },
     to: { node: newId, socket: 'data' },
   });
-  if (switchId) {
+  // #1690 — with cuts on the switch, the keys pick the camera and `active` alone would never be on
+  // screen: the new view would be made and never shown. So it is cut to at the playhead, which is
+  // Blender's Bind Camera to Markers (a marker at the current frame, made if none is there, bound
+  // to the camera). A cut already at the playhead is that shot, and it now films from the new view.
+  const channel = switchId ? cutChannelOf(state, switchId) : null;
+  let told: string | null = null;
+  if (switchId && channel) {
+    let s = state;
+    for (const op of ops) s = applyOp(s, op).next;
+    const at = useTimeStore.getState().filmSeconds;
+    const cut = buildCutOps(s, at, newId);
+    if (!cut) return;
+    ops.push(...cut);
+    const keys = (channel.params as { keyframes?: { time: number }[] }).keyframes ?? [];
+    const name = nodeDisplayName(s.nodes, newId);
+    told = keys.some((k) => k.time === at)
+      ? `The shot at ${at.toFixed(2)} s now films from ${name}`
+      : `Cut to ${name} at ${at.toFixed(2)} s`;
+  } else if (switchId) {
     ops.push({
       type: 'connect',
       from: { node: newId, socket: 'out' },
@@ -107,4 +131,5 @@ export async function snapshotCameraFromOrbit(): Promise<void> {
 
   // #1504 — into the active collection, as the Add menu's cameras join it (#1453).
   dag.dispatchAtomic(linkIntoActiveCollection(state, ops, [newId]), 'user', 'camera-from-view');
+  if (told) useNotificationStore.getState().notify({ severity: 'success', message: told });
 }

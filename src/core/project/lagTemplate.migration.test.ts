@@ -85,15 +85,15 @@ async function loadAs(formatVersion: number, state: DagState) {
 }
 
 describe('#1559 — v23 → v24: a Lag node becomes a Lag instance', () => {
-  it('the app writes v24', () => {
-    expect(PROJECT_FORMAT_VERSION).toBe(24);
+  it('the app writes v24 or later (#1666 took v25)', () => {
+    expect(PROJECT_FORMAT_VERSION).toBeGreaterThanOrEqual(24);
   });
 
   it('a project the launch build saved at v23 still has its Lags migrated', async () => {
     // The renumbering is for this file: #1668 also took v23, and the launch build saved projects
     // at it with their Lag nodes untouched. Were this step still 22 → 23 they would load as Lags.
     const loaded = await loadAs(23, v22());
-    expect(loaded.formatVersion).toBe(24);
+    expect(loaded.formatVersion).toBe(PROJECT_FORMAT_VERSION);
     const s = useDagStore.getState().state;
     expect(Object.values(s.nodes).filter((n) => n.type === 'Lag')).toEqual([]);
     expect(s.nodes.lag.type).toBe('template.Lag');
@@ -101,7 +101,7 @@ describe('#1559 — v23 → v24: a Lag node becomes a Lag instance', () => {
 
   it('each Lag becomes an instance under its own id, holding what it held', async () => {
     const loaded = await loadAs(22, v22());
-    expect(loaded.formatVersion).toBe(24);
+    expect(loaded.formatVersion).toBe(PROJECT_FORMAT_VERSION);
     const s = useDagStore.getState().state;
     expect(Object.values(s.nodes).filter((n) => n.type === 'Lag')).toEqual([]);
     expect(s.nodes.lag.type).toBe('template.Lag');

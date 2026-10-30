@@ -4,36 +4,19 @@
 // popover and the Strip inspector's pickers read the same functions, so the panel and the
 // popover cannot disagree about what a strip may drive (#1065 asked for exactly that).
 //
-// REF: src/app/stripDrive.ts (the refusal the target list applies);
-//      src/timeline/NlaAddStripPopover.tsx (the popover); src/nodes/Strip.ts (the pickers);
+// REF: src/timeline/NlaAddStripPopover.tsx (the popover); src/nodes/Strip.ts (the pickers);
 //      src/timeline/nlaLaneModel.ts (the lane reads an `action` only when it is an `Action`).
 
 import type { DagState } from '../core/dag/state';
 import type { ParamOption } from '../nodes/paramWidget';
 import { buildSceneTreeRows } from './sceneTreeWalk';
-import { stripDriveRefusal } from './stripDrive';
 
 /** Valid add-strip targets: the outliner's scene rows (depth > 0 — the Scene
- *  container itself is not a strip target) minus every row a strip could not
- *  actually drive. That exclusion is `stripDriveRefusal` — the SAME expression
- *  the push-down offer and accept consume (#479), so this picker and push-down
- *  cannot disagree about which targets are reachable (the agent road is
- *  deliberately still ungated — see Strip.ts); plus the camera band socket,
- *  which excludes a camera row structurally. Pure — unit/e2e assert the
- *  exclusion. Cameras become valid targets when #480 lands.
- *
- *  #387 — the refusal's camera test is POSSESSION-keyed (`isCameraNode`), so this
- *  picker inherits the split form transitively rather than spelling a type list.
- *  That matters for exactly one shape: a TOP-LEVEL camera is already excluded by
- *  the band socket, but a camera NESTED IN A GROUP carries the Group's socket
- *  instead, and post-split its `nodeType` is 'Object' — a type test fails open on
- *  it and offers a strip that folds nothing. Asserted on a GROUPED camera. */
+ *  container itself is not a strip target). Cameras included: since #480 the camera
+ *  pose folds the strips placed on it like every other node's params. Pure. */
 export function stripTargetRows(state: DagState): { id: string; label: string }[] {
   return buildSceneTreeRows(state)
-    .filter(
-      (r) =>
-        r.depth > 0 && r.parent?.socket !== 'camera' && stripDriveRefusal(state, r.nodeId) === null,
-    )
+    .filter((r) => r.depth > 0)
     .map((r) => ({ id: r.nodeId, label: r.display }));
 }
 

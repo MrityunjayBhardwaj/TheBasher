@@ -735,12 +735,11 @@ describe('5E — dispatchPushDownToStrip (bare channels → Action + Strip, ONE 
     expect(useDagStore.getState().undoStack).toHaveLength(0);
   });
 
-  // #479 — push-down is a COMPOSITE whose destructive half (delete the bare channels) is
-  // correct ONLY because the Strip it mints drives the same target. A camera's pose is
-  // resolved by a private scan that overwrites per-channel instead of folding strips
-  // (Strip.ts:13-16), so the replacement drives nothing and the deletion is pure loss.
-  // Measured before the guard: offer 1, accept {ok:true}, strip minted, channel gone,
-  // fov at t=1 falling 80 → 28 with the inspector still showing the animation.
+  // #479 / #480 — push-down is a COMPOSITE whose destructive half (delete the bare channels) is
+  // correct ONLY because the Strip it mints drives the same target. A camera's pose used to
+  // fold no strips, so the replacement drove nothing and the deletion was pure loss — measured
+  // then: fov at t=1 falling 80 → 28 — and push-down refused cameras. Since #480 the pose folds
+  // the strips placed on the camera, so push-down converts a camera like any other node.
   //
   // Fixture values are pairwise distinct ON PURPOSE (H177 / the slice-2 falsify rule):
   // 80 = animated mid-ramp · 30 = animated at t=0 · 28 = the static base (channel missed)
@@ -777,32 +776,25 @@ describe('5E — dispatchPushDownToStrip (bare channels → Action + Strip, ONE 
     return s;
   }
 
-  it('REFUSES a camera target: a strip cannot drive a camera pose, so the channels SURVIVE', () => {
+  it('converts a camera target: the channel becomes a strip and the fov animation survives', () => {
     useDagStore.getState().hydrate(seedAnimatedCamera());
-    const before = JSON.stringify(useDagStore.getState().state);
-    // The animation is live before the attempt — 80 mid-ramp, not the 28 base and not the
+    // The animation is live before the push — 80 mid-ramp, not the 28 base and not the
     // 45 fallback, so the probe is measuring the channel and not its own fixture.
     expect(resolveCameraPoseAt(useDagStore.getState().state, 'n_cam', 1).fov).toBe(80);
 
     const res = dispatchPushDownToStrip('n_cam');
 
+    const after = useDagStore.getState().state;
     expect({
       ok: res.ok,
-      fovAfter: resolveCameraPoseAt(useDagStore.getState().state, 'n_cam', 1).fov,
-      channelSurvives: !!useDagStore.getState().state.nodes['cam_fov_channel'],
-      stripMinted: !!useDagStore.getState().state.nodes['nla_strip_1'],
-    }).toEqual({ ok: false, fovAfter: 80, channelSurvives: true, stripMinted: false });
-    if (!res.ok) {
-      expect(res.reason).toContain('n_cam');
-      expect(res.reason).toMatch(/camera/i);
+      channelGone: !after.nodes['cam_fov_channel'],
+      strips: Object.values(after.nodes).filter((n) => n.type === 'Strip').length,
+    }).toEqual({ ok: true, channelGone: true, strips: 1 });
+    // The consequence, not just the verdict: the strip now draws what the channel drew.
+    for (const t of [0, 1, 2]) {
+      expect(resolveCameraPoseAt(after, 'n_cam', t).fov, `fov at ${t}s`).toBe(30 + 50 * t);
     }
-    expect(JSON.stringify(useDagStore.getState().state)).toBe(before);
-    expect(useDagStore.getState().undoStack).toHaveLength(0);
-    // The consequence, not just the verdict: the animation still renders.
-    expect(
-      resolveCameraPoseAt(useDagStore.getState().state, 'n_cam', 1).fov,
-      'the fov animation survives the refused push-down',
-    ).toBe(80);
+    expect(useDagStore.getState().undoStack).toHaveLength(1);
   });
 });
 

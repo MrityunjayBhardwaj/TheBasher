@@ -10,25 +10,10 @@
 // enumerates strips by `target` (mirroring the channel scan) and folds them per
 // track in Slices C–E. Serializable + registered so `addNode` validates it (V1).
 //
-// KNOWN-LIMIT (Phase 2): strips target SCENE NODES only. A strip whose `target`
-// is a camera is not picked up — the camera pose scan (activeCamera.ts) overwrites
-// per-channel instead of folding, so camera strips are a documented Phase-3+
-// sub-task, not a silent no-op.
-//
-// ⚠️ HOW THAT "not a silent no-op" IS ACTUALLY ENFORCED, AND WHERE IT STILL IS NOT (#479).
-// It used to rest on the add-strip picker filtering camera rows out — one surface, while
-// THREE roads reach this state: the picker, push-down, and `mutator.nla.addStrip`.
-// Push-down was ungated AND destructive: it minted the inert strip and deleted the bare
-// channels it converted, losing the camera's animation outright. So the rule is now the
-// DATA's rather than a menu's — `app/stripDrive.ts` (`stripDriveRefusal`), consumed by the
-// picker, the push-down button (the offer) and the push-down dispatcher (the accept).
-//
-// The agent road `mutator.nla.addStrip` is STILL ungated, deliberately: it is not
-// destructive, so what it produces is exactly the inert strip this comment has always
-// documented, not a loss. Do not read the three call sites above as full coverage.
-//
-// #480 removes the limit by folding the camera scan onto this seam; that is the change
-// that should delete `stripDrive.ts` — and close the agent road by making it valid.
+// Strips target scene nodes AND cameras. A camera is wired through `scene.camera`, not the
+// scene-child walk, so its pose folds its strips in `overlayCameraChannels`
+// (cameraChannels.ts) — until #480 it folded none, and push-down had to refuse cameras (#479)
+// because the strip it minted drove nothing while the channels it replaced were deleted.
 //
 // REF: docs/NLA-DESIGN.md §3.3/§6 (Phase 2), §11 (Fork A/B/D); vyapti V57/V88 D2.
 

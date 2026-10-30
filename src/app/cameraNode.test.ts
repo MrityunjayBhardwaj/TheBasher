@@ -15,7 +15,7 @@ import { applyOp, emptyDagState, type DagState } from '../core/dag';
 import { registerAllNodes } from '../nodes/registerAll';
 import { splitOps } from '../test-utils/splitKinds';
 import { cameraDataOf, cameraLensParams, cameraProjectionOf, isCameraNode } from './cameraNode';
-import { enumerateCameraNodeIds } from './activeCamera';
+import { enumerateCameraNodeIds, selectActiveCameraNode } from './activeCamera';
 import { buildSetActiveCameraOps } from './setActiveCamera';
 import { resolveWorldTransform } from './resolveWorldTransform';
 import { stripTargetRows } from './stripTargets';
@@ -212,18 +212,16 @@ describe('#387 slice 3 — the re-keyed consumers accept a split camera', () => 
     );
   });
 
-  it('the strip picker excludes a split camera NESTED IN A GROUP', () => {
-    // ⚠️ FIXTURE CHOICE IS LOAD-BEARING. A TOP-LEVEL camera is wired into `scene.camera`,
-    // so its row carries `parent.socket:'camera'` and the socket filter excludes it on its
-    // own — that fixture passes even with the possession re-key deleted. Only a camera
-    // carrying a GROUP's socket isolates the camera test.
+  it('the strip picker offers a split camera NESTED IN A GROUP', () => {
+    // #480 — this used to pin the camera's exclusion, when a strip on a camera folded nothing.
+    // A nested camera is the shape that exclusion once failed open on, so it stays the fixture.
     let s = splitCamera();
     s = applyOp(s, { type: 'addNode', nodeId: 'scene', nodeType: 'Scene', params: {} }).next;
     s = applyOp(s, {
       type: 'addNode',
       nodeId: 'grp',
       nodeType: 'Group',
-      params: { name: 'Rig', position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
+      params: { position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
     }).next;
     s = applyOp(s, {
       type: 'connect',
@@ -239,9 +237,8 @@ describe('#387 slice 3 — the re-keyed consumers accept a split camera', () => 
 
     const ids = stripTargetRows(s).map((r) => r.id);
     expect(ids, 'the positive control — the Group IS offered').toContain('grp');
-    expect(ids, 'a strip on a camera folds nothing, so it must not be offered').not.toContain(
-      'n_cam',
-    );
+    // #480 — the camera pose folds the strips placed on it, so a camera is offered too.
+    expect(ids, 'a strip on a camera drives it, so it is offered').toContain('n_cam');
   });
 });
 
@@ -279,21 +276,40 @@ describe('#387 slice 3 — the traps a passing re-key can still leave open', () 
 
   it('the agent can target a split camera for a shot', () => {
     let s = splitCamera();
-    s = applyOp(s, { type: 'addNode', nodeId: 'scene', nodeType: 'Scene', params: {} }).next;
-    s = applyOp(s, { type: 'addNode', nodeId: 'n_time', nodeType: 'TimeSource', params: {} }).next;
+    // #1666 — a shot is a cut on the scene's camera, so the scene is wired and films another
+    // split camera until the shot cuts to `n_cam`.
+    s = applyAll(s, [
+      ...splitOps(
+        'camera',
+        { objectId: 'n_cam2' },
+        {
+          data: { fov: 50, near: 0.1, far: 100, lookAt: [0, 0, 0] },
+          object: { position: [0, 0, 9] },
+        },
+      ),
+      { type: 'addNode', nodeId: 'scene', nodeType: 'Scene', params: {} },
+      { type: 'addNode', nodeId: 'n_time', nodeType: 'TimeSource', params: {} },
+      { type: 'setOutput', name: 'scene', ref: { node: 'scene', socket: 'out' } },
+      {
+        type: 'connect',
+        from: { node: 'n_cam2', socket: 'out' },
+        to: { node: 'scene', socket: 'camera' },
+      },
+    ]);
     // Through validatePlan — the road the agent actually travels. Calling
     // `preconditions()` directly would skip the contract_scope gate, which is a
     // SEPARATE type-keyed check; a test that stops at the precondition reports the
     // half that was fixed and cannot see the half that was not.
-    const spec = {
-      cameraId: 'n_cam',
-      sceneId: 'scene',
-      startTime: 0,
-      endTime: 4,
-      shotId: 'shot_1',
-    };
+    const spec = { cameraId: 'n_cam', startTime: 1, endTime: 4 };
     const res = validatePlan(shotCreateMutator, spec as never, s, 'shot on a split camera');
     expect(res.ok, `shotCreate refused a split camera: ${res.ok ? '' : res.reason}`).toBe(true);
+    if (!res.ok) return;
+    const after = applyAll(s, res.ops);
+    expect([0.5, 2, 5].map((t) => selectActiveCameraNode(after, t)?.id)).toEqual([
+      'n_cam2',
+      'n_cam',
+      'n_cam2',
+    ]);
   });
 
   // Same road, same reason: addPass resolves the camera IMPLICITLY (no cameraId given),

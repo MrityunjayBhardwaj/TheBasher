@@ -398,7 +398,7 @@ export function colorParam(defaultHex: string): z.ZodDefault<z.ZodString> {
  * This is the reasoning this module's header already states, applied to the param it is
  * most true of. A widget is a property of the PARAM TYPE, and `name` is the same field
  * wherever it appears: twenty-five node types carry a top-level `name: z.string()` whose
- * default is a domain label (`'Shot'`, `'clip'`, `'channel'`, `'track-to'`). Declaring the
+ * default is a domain label (`'Strip'`, `'clip'`, `'channel'`, `'track-to'`). Declaring the
  * control per node would spell one fact twenty-five times — the failure the spine comment
  * names — and a twenty-seventh node would have to remember. Calling this instead gets the
  * control for free and cannot forget to ask.
@@ -409,7 +409,7 @@ export function colorParam(defaultHex: string): z.ZodDefault<z.ZodString> {
  * authorable. A director's double-click in the outliner dispatches `setMeta`
  * (`src/app/RenameInput.tsx:59`), which writes `meta.name` — rung 1 of `nodeDisplayName`'s
  * priority ladder. `params.name` is rung 2, documented there as "the SEMANTIC name carried
- * by Shot / AnimationClip / Character node params — their domain label, not a generic
+ * by Strip / AnimationClip / Character node params — their domain label, not a generic
  * field", and it has 36 production readers: a light rig is found by it
  * (`resolveRigLightSources.ts:50`), a studio profile is keyed on it (`studioProfiles.ts:42`),
  * a composition exports under it (`exportCompositionAction.ts:154`), a retarget names its

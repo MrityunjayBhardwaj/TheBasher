@@ -25,6 +25,8 @@
 
 import * as THREE from 'three';
 import { isEditorChrome } from '../app/editorChrome';
+import { drawnWorldBox } from '../render/drawnBox';
+import { measureStage } from '../perf/frameProfiler';
 
 /** Shadow-map resolution per light kind. A sun covers the whole scene, so it gets the most. */
 export const SHADOW_MAP_SIZE = { directional: 4096, spot: 2048, point: 1024 } as const;
@@ -33,7 +35,9 @@ const tmpBox = new THREE.Box3();
 
 /**
  * Flag every content mesh under `root` to cast and receive, and return the world box of the
- * VISIBLE ones (null when nothing visible). Chrome subtrees are pruned entirely; an invisible
+ * VISIBLE ones (null when nothing visible), each measured where it is drawn (`drawnWorldBox`):
+ * a skinned character carried away by its bones casts where it stands, not at its import
+ * origin (#1684). Chrome subtrees are pruned entirely; an invisible
  * subtree is still flagged (it may be shown next render) but does not count toward the box,
  * the way three.js itself skips an invisible subtree when drawing.
  */
@@ -47,16 +51,9 @@ export function markContentShadows(root: THREE.Object3D): THREE.Box3 | null {
     if (mesh.isMesh) {
       mesh.castShadow = true;
       mesh.receiveShadow = true;
-      if (visible && mesh.geometry) {
-        const geom = mesh.geometry;
-        if (!geom.boundingBox) geom.computeBoundingBox();
-        if (geom.boundingBox) {
-          tmpBox.copy(geom.boundingBox).applyMatrix4(mesh.matrixWorld);
-          if (!tmpBox.isEmpty()) {
-            box.union(tmpBox);
-            any = true;
-          }
-        }
+      if (visible && drawnWorldBox(mesh, tmpBox) && !tmpBox.isEmpty()) {
+        box.union(tmpBox);
+        any = true;
       }
     }
     for (const child of o.children) walk(child, visible);
@@ -135,7 +132,8 @@ export function installContentShadow(
   ) => void;
   shadow.updateMatrices = ((l: THREE.Light, viewportIndex = 0) => {
     // A point light calls this once per cube face; one walk per render is enough.
-    const box = viewportIndex === 0 ? markContentShadows(rootOf(l)) : null;
+    const box =
+      viewportIndex === 0 ? measureStage('shadow:mark', () => markContentShadows(rootOf(l))) : null;
     base(l, viewportIndex);
     if (kind === 'directional' && box) {
       fitDirectionalShadow(shadow, box);
@@ -251,7 +249,7 @@ export function installShadowInvalidation(
   scene.onBeforeRender = function (this: THREE.Scene, ...args) {
     prevHook.apply(this, args);
     if (scene.overrideMaterial) return;
-    const now = shadowInputs(scene);
+    const now = measureStage('shadow:inputs', () => shadowInputs(scene));
     if (last === null || !sameNumbers(now, last)) {
       gl.shadowMap.needsUpdate = true;
       last = now;

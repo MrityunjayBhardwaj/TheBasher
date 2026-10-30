@@ -17,8 +17,8 @@
 // linked Material supplies — is LISTED, disabled, with the reason. When the channel's own
 // target is such a node, its path is shown read-only with that reason rather than offered.
 //
-// A ParamDriver asks the census's DRIVER answers (#1258), not the channel's: a driver reaches
-// fewer readers (the camera pose ignores it, #1266). Its kind is not its type — one driver
+// A ParamDriver asks the census's DRIVER answers (#1258), not the channel's: a driver can reach
+// fewer readers (the camera pose ignored one until #480, #1266). Its kind is not its type — one driver
 // carries a number or a vec3 depending on what feeds it — so the kind is read off the bound
 // source, the same way `driverSourceOptions` decides what to offer; a source that says
 // nothing about its shape asks both. A ComfyUI workflow answers a driver as it answers a

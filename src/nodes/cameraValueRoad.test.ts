@@ -1,7 +1,8 @@
 // The camera VALUE road for the object↔data split (#387, Stage C · C4 slice 4).
 //
 // Eight roads funnel a `CameraValue`: `Scene.camera`, `CameraSelect`, `Shot.camera`, the
-// four image passes, and `runRenderJob`'s raw evaluate-and-cast. Post-split the thing
+// four image passes, and `runRenderJob`'s raw evaluate-and-cast. (#1666 removed `Shot`, and its
+// row here with it: seven remain.) Post-split the thing
 // arriving on each is an `ObjectValue` posing a `CameraData`, and every one of those
 // sites used to reach it with a bare `as CameraValue` — a cast that cannot fail and
 // produces a struct with no `fov`, no `lookAt`, and the wrong `kind`.
@@ -31,7 +32,7 @@ import { splitOps } from '../test-utils/splitKinds';
 import { CameraDataNode } from './CameraData';
 import { recomposeCameraObject } from './cameraRecompose';
 import { runRenderJob, type PassEncoder } from '../render/runRenderJob';
-import type { CameraValue, ImageValue, SceneValue, ShotValue } from './types';
+import type { CameraValue, ImageValue, SceneValue } from './types';
 
 beforeEach(() => {
   __resetRegistryForTests();
@@ -191,21 +192,6 @@ describe('#387 slice 4 — Scene.camera recomposes the split pair', () => {
 });
 
 describe('#387 slice 4 — the other seven gathers', () => {
-  it('Shot.camera recomposes', () => {
-    let s = applyAll(emptyDagState(), splitCameraOps('n_cam'));
-    s = applyOp(s, { type: 'addNode', nodeId: 'n_shot', nodeType: 'Shot', params: {} }).next;
-    s = applyOp(s, {
-      type: 'connect',
-      from: { node: 'n_cam', socket: 'out' },
-      to: { node: 'n_shot', socket: 'camera' },
-    }).next;
-    const cam = (evaluate(s, 'n_shot').value as ShotValue).camera;
-    expect(cam?.kind).toBe('PerspectiveCamera');
-    if (cam?.kind !== 'PerspectiveCamera') throw new Error('unreachable');
-    expect(cam.fov).toBe(28);
-    expect(cam.position).toEqual([7, 1, -4]);
-  });
-
   it('CameraSelect recomposes the picked candidate, and picks by the camera it names', () => {
     // Two split cameras with DIFFERENT lenses, `active: 'n_camB'` (#1668: by id). Asserting the second one's fov
     // proves the recompose happens AFTER the pick — a recompose that ran over the

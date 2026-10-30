@@ -298,7 +298,13 @@ function rebuildInvalidatedHandles(
     // Returned by reference when nothing it builds from was written — so a value whose
     // animation never touches geometry keeps the key the evaluator minted, and two objects
     // sharing a build do not stop sharing because one of them moved.
-    if (rebuilt !== ref || source !== value) writeAt(clone, field.handlePath, rebuilt);
+    // #1735 — and not when the clone already holds that very ref (it shares what the overlay did
+    // not write, #1236): `writeAt` copies each object on its path, so putting the same ref back
+    // made a new `data` every frame for a node keyed only on its transform, and the drawn-transform
+    // road (#1728), which compares fields by identity, re-rendered it on every frame.
+    if ((rebuilt !== ref || source !== value) && readAt(clone, field.handlePath) !== rebuilt) {
+      writeAt(clone, field.handlePath, rebuilt);
+    }
 
     // ⚠️ THE OVERLAY'S OWN WRITE IS LEFT WHERE IT LANDED, and a reader should know why. The
     // clone still carries `data.size` — a field with no consumer, which is precisely the

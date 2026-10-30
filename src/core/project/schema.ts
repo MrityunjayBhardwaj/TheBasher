@@ -96,7 +96,9 @@ import { NodeSchema, NodeIdSchema, NodeRefSchema } from '../dag/types';
 // v24 (#1559): a Lag is an instance of the built-in Lag template, not a Lag node. See
 // migrations.ts formatMigrations[23]. Built beside #1668 as a second v23; renumbered when the two
 // lines merged, because projects saved by the launch build already carry #1668's v23.
-export const PROJECT_FORMAT_VERSION = 24;
+// v25 (#1666): the `Shot` and `Cut` node types are gone; a saved Shot becomes cuts on the camera
+// switch. See migrations.ts formatMigrations[24].
+export const PROJECT_FORMAT_VERSION = 25;
 
 export const ProjectSchema = z.object({
   formatVersion: z.literal(PROJECT_FORMAT_VERSION),

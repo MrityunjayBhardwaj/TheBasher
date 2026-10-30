@@ -255,7 +255,8 @@ describe('a param declares its control on its schema (#872)', () => {
       // 25 since #1124 retired `MotionGenerate.name` — a generated motion's clip owns its name.
       // 26 at #1240: `PoseLayer.name`, through `nameParam` like every other.
       // 25 at #1243: `PoseOverride.name` retired with its type.
-      nameCount: 25,
+      // 24 at #1666: `Shot.name` retired with its type.
+      nameCount: 24,
       undeclared: [],
     });
   });
@@ -265,12 +266,12 @@ describe('a param declares its control on its schema (#872)', () => {
     // declared name must validate EXACTLY as the bare string it replaced. Twenty-five node
     // types' saved projects parse through these fields, so a refinement added here would
     // be a migration, not a decoration.
-    const declared = nameParam('Shot');
+    const declared = nameParam('Strip');
     expect(widgetOf(declared)).toBe('text');
-    for (const value of ['Shot', '', 'a name with spaces', '🎬', 'arm-left']) {
+    for (const value of ['Strip', '', 'a name with spaces', '🎬', 'arm-left']) {
       expect({ value, ok: declared.safeParse(value).success }).toEqual({ value, ok: true });
     }
-    expect(declared.parse(undefined)).toBe('Shot');
+    expect(declared.parse(undefined)).toBe('Strip');
     // Blank is ACCEPTED on purpose — it is the unconfigured state `nodeDisplayName` falls
     // through on its way to the next rung, so refusing it would strand that fallback.
     expect(declared.safeParse('').success).toBe(true);
@@ -294,12 +295,12 @@ describe('a param declares its control on its schema (#872)', () => {
     const nodes = {
       both: {
         id: 'both',
-        type: 'Shot',
+        type: 'Strip',
         params: { name: 'from-params' },
         meta: { name: 'from-meta' },
       },
-      paramsOnly: { id: 'paramsOnly', type: 'Shot', params: { name: 'from-params' } },
-      neither: { id: 'neither', type: 'Shot', params: {} },
+      paramsOnly: { id: 'paramsOnly', type: 'Strip', params: { name: 'from-params' } },
+      neither: { id: 'neither', type: 'Strip', params: {} },
     } as unknown as Parameters<typeof nodeDisplayName>[0];
 
     expect({
@@ -431,18 +432,18 @@ describe('a param declares its control on its schema (#872)', () => {
     // this issue, and every one would have rendered "unnamed": a prompt, a media source,
     // three output paths. The control and the word are different questions, and this pins
     // them apart so the next param to join cannot inherit somebody else's sentence.
-    const shotName = fieldOf('Shot', 'name')!;
+    const stripName = fieldOf('Strip', 'name')!;
     const promptText = fieldOf('Prompt', 'text')!;
 
     expect({
       // A name HAS a reading for blank — the node still shows a label from the next rung of
       // `nodeDisplayName`'s ladder, so the field is empty but the node is not anonymous.
-      name: placeholderOf(shotName),
+      name: placeholderOf(stripName),
       // A prompt does not. It declines, and `ParamRow` supplies the neutral `'empty'`.
       promptText: placeholderOf(promptText),
       // Same control for both — which is the whole point: sharing a widget must not mean
       // sharing a word.
-      nameWidget: widgetOf(shotName),
+      nameWidget: widgetOf(stripName),
       promptWidget: widgetOf(promptText),
     }).toEqual({
       name: 'unnamed',
@@ -485,8 +486,8 @@ describe('a param declares its control on its schema (#872)', () => {
       // 25 `.name`s since #1124 retired `MotionGenerate.name`, the profile picker's word (#1064),
       // the bone picker's (#1284): an empty bone aims at "the object itself"; 28 at #1240
       // (`PoseLayer.name`); 27 at #1243 (`PoseOverride.name` retired with its type); 28 at #1668:
-      // the camera switch's empty `active` is "first camera".
-      count: 28,
+      // the camera switch's empty `active` is "first camera"; 27 at #1666 (`Shot.name` retired).
+      count: 27,
     });
     expect(declaredWord.filter((k) => !k.endsWith('.name'))).toEqual([
       'CameraSelect.active',
@@ -828,7 +829,7 @@ describe('a param declares its control on its schema (#872)', () => {
         type: 'addNode' as const,
         nodeId: id,
         nodeType: 'ComfyUIWorkflow',
-        params: { graph: importComfyGraph(api, META) },
+        params: { graph: { apiJson: api, meta: META } },
       })),
     );
 
@@ -957,7 +958,7 @@ describe('a param declares its control on its schema (#872)', () => {
     ).toBe(true);
 
     // ParamDriver (#1258): the same property against the census's DRIVER answers, which differ
-    // from the channel's (the camera pose ignores a driver, #1266). A driver's kind is its
+    // from the channel's (the camera pose ignored a driver until #480, #1266). A driver's kind is its
     // source's, so one probe per road: each must offer exactly the leaves of its own kind(s).
     const controller = Object.values(s.nodes).find((n) => n.type === 'Null')!.id;
     const DRIVERS: readonly (readonly [string, Record<string, unknown>, boolean, string[]])[] = [

@@ -21,9 +21,8 @@
 //   - `mutator.nla.createAction` mints an Action wired to nothing ON PURPOSE; a later
 //     `mutator.nla.addStrip` wires it. An unwired addition is a two-step authoring
 //     flow, not a defect.
-//   - `Shot` has no consumer anywhere in the product today — its render-graph
-//     integration is deferred (`src/nodes/Shot.ts`) — so a correct Shot is
-//     unconsumed by construction.
+//   - `Shot` had no consumer anywhere in the product — so a correct Shot was
+//     unconsumed by construction. (#1666 removed it: a shot is now a cut key.)
 // A rule saying "unwired is wrong" would be false about the product. The findings
 // here are therefore descriptions handed to the reader, never a gate.
 //
@@ -46,10 +45,10 @@
 // a referent that exists independently, which is an input like any wired edge.
 //
 // REF: src/core/dag/idRefSweep.ts (the id-ref universe), src/core/dag/state.ts
-//      (`edges`), src/nodes/Shot.ts (the unconsumed-by-design case); issue #733.
+//      (`edges`); issue #733.
 
 import { edges, type DagState } from '../../core/dag/state';
-import { buildIdRefIndex, idRefsByRole, refIdsAt } from '../../core/dag/idRefSweep';
+import { buildIdRefIndex, idRefsByRole, idsOfRef } from '../../core/dag/idRefSweep';
 import { getNodeType } from '../../core/dag/registry';
 import { hashValue } from '../../core/dag/hash';
 import type { NodeId, Op } from '../../core/dag/types';
@@ -150,7 +149,7 @@ export function outputClosure(state: DagState): Set<NodeId> {
   const producers = edgeProducers(state);
   const subjectSidecars = new Map<NodeId, NodeId[]>();
   for (const node of Object.values(state.nodes)) {
-    for (const target of idRefsByRole(node).subject) {
+    for (const target of idRefsByRole(node, state.nodes).subject) {
       (subjectSidecars.get(target) ?? subjectSidecars.set(target, []).get(target)!).push(node.id);
     }
   }
@@ -165,7 +164,8 @@ export function outputClosure(state: DagState): Set<NodeId> {
     seen.add(id);
     for (const p of producers.get(id) ?? []) if (!seen.has(p)) stack.push(p);
     const node = state.nodes[id];
-    if (node) for (const a of idRefsByRole(node).argument) if (!seen.has(a)) stack.push(a);
+    if (node)
+      for (const a of idRefsByRole(node, state.nodes).argument) if (!seen.has(a)) stack.push(a);
     for (const sc of subjectSidecars.get(id) ?? []) if (!seen.has(sc)) stack.push(sc);
   }
   return seen;
@@ -191,7 +191,7 @@ export function describeEffect(
   for (const id of Object.keys(after.nodes)) {
     if (id in before.nodes) continue;
     const node = after.nodes[id];
-    const roles = idRefsByRole(node);
+    const roles = idRefsByRole(node, after.nodes);
 
     // What this node READS: its wired producers, plus the referents it merely points at.
     const attachedTo: NodeId[] = [];
@@ -217,8 +217,10 @@ export function describeEffect(
     // naming nothing) is distinguishable from a wrong one.
     const badRefs: AddedNode['badRefs'] = [];
     for (const ref of getNodeType(node.type)?.idRefs ?? []) {
-      const named = refIdsAt(node.params, ref.path, ref.shape);
+      const named = idsOfRef(node, ref, after.nodes);
       if (named.length === 0) {
+        // Keys that name no node are text, not an unset reference (#1669).
+        if (ref.shape === 'keyed') continue;
         badRefs.push({ path: ref.path, names: null });
         continue;
       }

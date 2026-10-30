@@ -55,7 +55,6 @@ function buildNestedTransformState(opts: {
       nodeId: XF_ID,
       nodeType: 'Transform',
       params: {
-        name: 'xf',
         position: opts.xfPos ?? [0, 0, 0],
         rotation: opts.xfRot ?? [0, 0, 0],
         scale: opts.xfScale ?? [1, 1, 1],
@@ -191,9 +190,9 @@ describe('resolveWorldTransform', () => {
         type: 'addNode',
         nodeId: XF_ID,
         nodeType: 'Transform',
-        params: { name: 'xf', position: [0, 5, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
+        params: { position: [0, 5, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
       },
-      { type: 'addNode', nodeId: GRP_ID, nodeType: 'Group', params: { name: 'grp' } },
+      { type: 'addNode', nodeId: GRP_ID, nodeType: 'Group', params: {} },
       {
         type: 'disconnect',
         from: { node: BOX_ID, socket: 'out' },
@@ -242,7 +241,7 @@ describe('resolveWorldTransform', () => {
         type: 'addNode',
         nodeId: XF_ID,
         nodeType: 'Transform',
-        params: { name: 'xf', position: [0, 4, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
+        params: { position: [0, 4, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
       },
       {
         type: 'addNode',
@@ -535,7 +534,6 @@ describe('resolveWorldTransform — a baked PAIR reads its scale like an ordinar
   it('baked pair and a plain cube Object at the same scale both read world scale [3,3,3]', () => {
     const geometry = {
       key: 'baked|ws-8',
-      kind: 'baked' as const,
       descriptor: { kind: 'baked' as const, hash: 'wshash', vertexCount: 8 },
     };
     const material = rowDataParams('baked').material as Record<string, unknown>;

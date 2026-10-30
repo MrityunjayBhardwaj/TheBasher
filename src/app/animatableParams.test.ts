@@ -159,16 +159,16 @@ describe('isAnimatable — three answers, never two', () => {
       answer: 'unmeasured',
       reason: expect.stringMatching(/texture/),
     });
-    // A subject the census never places: a Shot is a timeline range, not a scene object.
+    // A subject the census never places: a Strip is a placement on the timeline, not a scene object.
     const s = applyOp(cube.s, {
       type: 'addNode',
-      nodeId: 'shot',
-      nodeType: 'Shot',
+      nodeId: 'strip',
+      nodeType: 'Strip',
       params: {},
     }).next;
-    expect(isAnimatable(s, 'shot', 'endTime', 'number')).toEqual({
+    expect(isAnimatable(s, 'strip', 'start', 'number')).toEqual({
       answer: 'unmeasured',
-      reason: 'the census places no Shot',
+      reason: 'the census places no Strip',
     });
     // A path the census never saw on a subject it did place.
     expect(isAnimatable(cube.s, cube.data, 'nonsense', 'number')).toMatchObject({
@@ -278,17 +278,14 @@ describe("a driver is answered from its own measurement, never the channel's (#1
     return { s, data: sphere.data };
   }
 
-  it("a camera's fov animates under a channel and not under a driver — the pose reads channels only (#1266)", () => {
+  it("a camera's fov animates under a channel and under a driver — the pose folds both (#480, #1266)", () => {
     const cam = place(buildDefaultDagState(), 'PerspectiveCamera');
     expect(isAnimatable(cam.s, cam.data, 'fov', 'number').answer).toBe('animatable');
-    expect(isAnimatable(cam.s, cam.data, 'fov', 'number', { mechanism: 'driver' })).toEqual({
-      answer: 'still',
-      kind: 'number',
+    expect(isAnimatable(cam.s, cam.data, 'fov', 'number', { mechanism: 'driver' })).toMatchObject({
+      answer: 'animatable',
+      reach: 'scene',
     });
-    expect(animatablePathsOf(cam.s, cam.data, 'number')).toContain('fov');
-    expect(animatablePathsOf(cam.s, cam.data, 'number', { mechanism: 'driver' })).not.toContain(
-      'fov',
-    );
+    expect(animatablePathsOf(cam.s, cam.data, 'number', { mechanism: 'driver' })).toContain('fov');
   });
 
   it("a sphere's radius animates under both", () => {
@@ -340,8 +337,8 @@ describe('animatablePathsOf — a picker list', () => {
 
   it('says it cannot answer for a subject the census never placed, rather than offering nothing', () => {
     let s = buildDefaultDagState();
-    s = applyOp(s, { type: 'addNode', nodeId: 'shot', nodeType: 'Shot', params: {} }).next;
-    expect(animatablePathsOf(s, 'shot', 'number')).toBeNull();
+    s = applyOp(s, { type: 'addNode', nodeId: 'strip', nodeType: 'Strip', params: {} }).next;
+    expect(animatablePathsOf(s, 'strip', 'number')).toBeNull();
   });
 });
 

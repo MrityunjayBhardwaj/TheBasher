@@ -52,7 +52,7 @@ export function validatePlan<S>(
   // Spec shape is validated at the tool boundary via mutator.spec.parse.
   // Mutator builders here can assume `spec` is well-typed.
 
-  const closureSpec = mutator.buildClosureSpec(spec);
+  const closureSpec = mutator.buildClosureSpec(spec, state);
 
   // Gate 1 — contract_edges: the closure spec the Mutator declares must
   // cover every edge kind the contract advertised. Without this, a

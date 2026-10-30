@@ -8,8 +8,8 @@
 // WHAT IT IS FOR, AND WHAT IT IS NOT FOR — this is the part that differs from the
 // light, and getting it wrong is the whole hazard of C4.
 //
-// `CameraValue` is consumed by seven `evaluate` gathers (Scene, CameraSelect, Shot,
-// and the four passes) plus `runRenderJob`, and `Scene.inputs.camera` is typed as a
+// `CameraValue` is consumed by six `evaluate` gathers (Scene, CameraSelect and the four
+// passes; #1666 removed Shot) plus `runRenderJob`, and `Scene.inputs.camera` is typed as a
 // `SceneObject`. All of that is the VALUE road, and this function is what keeps it
 // working for a split pair. But the value road is NOT what draws the picture: the
 // `CameraValue` a pass receives goes into `buildPassSourceHash` — a render-cache key.

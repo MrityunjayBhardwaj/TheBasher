@@ -42,6 +42,7 @@ import type { CameraPose } from '../app/activeCamera';
 import { cameraOrientationQuat } from '../app/cameraOrientation';
 import type { DofEffectSettings } from '../app/cameraDof';
 import { isEditorChrome } from '../app/editorChrome';
+import { drawnWorldBox } from './drawnBox';
 import { withRenderVisibility } from '../app/renderVisibility';
 import type { PostFxConfig } from '../nodes/types';
 
@@ -367,43 +368,23 @@ function renderViaManual(
  *    ROOT and leaves its children's own flag alone, so asking each mesh for its own flag counted
  *    the 40-unit editor grid, and a single character came out within four grey levels.
  *  - A skinned mesh is drawn where its bones put it, not where its stored (bind-pose) geometry
- *    lies, so its box is measured from the posed vertices. */
+ *    lies, so it is measured by `drawnWorldBox`, the box every reader of that uses (#1684). */
 export function visibleContentSphere(scene: THREE.Object3D): THREE.Sphere | null {
   const box = new THREE.Box3();
+  const drawn = new THREE.Box3();
   let any = false;
   const visit = (o: THREE.Object3D): void => {
     if (!o.visible) return; // …and nothing under it draws either
     const mesh = o as THREE.Mesh;
-    if (mesh.isMesh && mesh.geometry) {
-      const bb = localDrawnBox(mesh);
-      if (bb && !bb.isEmpty()) {
-        box.union(bb.applyMatrix4(mesh.matrixWorld));
-        any = true;
-      }
+    if (mesh.isMesh && drawnWorldBox(mesh, drawn) && !drawn.isEmpty()) {
+      box.union(drawn);
+      any = true;
     }
     for (const child of o.children) visit(child);
   };
   visit(scene);
   if (!any || box.isEmpty()) return null;
   return box.getBoundingSphere(new THREE.Sphere());
-}
-
-/** A mesh's box in its own space, as drawn: posed for a skinned mesh, the geometry's otherwise.
- *  Always a fresh box the caller may transform. */
-function localDrawnBox(mesh: THREE.Mesh): THREE.Box3 | null {
-  const skinned = mesh as THREE.SkinnedMesh;
-  if (skinned.isSkinnedMesh && skinned.skeleton) {
-    // The posed box is measured into the mesh's own slot; put back what was there, because a
-    // click reads that slot too and would trust a box measured for this one frame.
-    const slot = skinned as unknown as { boundingBox: THREE.Box3 | null };
-    const before = slot.boundingBox;
-    skinned.computeBoundingBox();
-    const posed = slot.boundingBox ? slot.boundingBox.clone() : null;
-    slot.boundingBox = before;
-    return posed;
-  }
-  if (!mesh.geometry.boundingBox) mesh.geometry.computeBoundingBox();
-  return mesh.geometry.boundingBox ? mesh.geometry.boundingBox.clone() : null;
 }
 
 /** The [near, far] eye-space range to normalize the depth pass over: the visible

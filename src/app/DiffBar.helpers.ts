@@ -56,12 +56,13 @@ const CHANNEL_NODE_TYPES = new Set([
   'KeyframeChannelVec3',
   'KeyframeChannelQuat',
   'KeyframeChannelColor',
+  // #1666 — a shot is a cut key on the camera switch's text channel.
+  'KeyframeChannelText',
 ]);
 
 /**
  * Walk a pending Op chain looking for explicit time values. Sources:
- *   - addNode of a KeyframeChannel* with seeded keyframes → keyframe times
- *   - addNode of a Shot                                  → startTime/endTime
+ *   - addNode of a KeyframeChannel* with seeded keyframes → keyframe times (a shot's cuts too)
  *   - setParam where paramPath is 'keyframes'           → element times
  *   - setParam where paramPath is 'time' (single keyframe field) → that scalar
  *
@@ -83,9 +84,6 @@ export function extractTimeRange(ops: Op[]): TimeRange | null {
       if (CHANNEL_NODE_TYPES.has(op.nodeType)) {
         const kfs = (params.keyframes as Array<{ time?: unknown }> | undefined) ?? [];
         for (const k of kfs) consume(k.time);
-      } else if (op.nodeType === 'Shot') {
-        consume(params.startTime);
-        consume(params.endTime);
       }
     } else if (op.type === 'setParam') {
       if (op.paramPath === 'keyframes' && Array.isArray(op.value)) {

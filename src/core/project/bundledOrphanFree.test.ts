@@ -61,7 +61,7 @@ function reachableFromOutputs(state: DagState): Set<string> {
 function idReferred(state: DagState): Set<string> {
   const out = new Set<string>();
   for (const node of Object.values(state.nodes)) {
-    for (const t of idRefsOutOf(node)) out.add(t);
+    for (const t of idRefsOutOf(node, state.nodes)) out.add(t);
   }
   return out;
 }

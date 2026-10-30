@@ -65,22 +65,26 @@
 import * as THREE from 'three';
 import { evaluate, type EvaluatorCache } from '../core/dag/evaluator';
 import type { DagState } from '../core/dag/state';
-import type { EvalCtx, NodeRef } from '../core/dag/types';
+import type { NodeRef } from '../core/dag/types';
 import type { RenderOutputValue, SceneChild } from '../nodes/types';
 import { overlayTransients } from './overlayTransients';
 import { overlayChannels } from '../nodes/overlayChannels';
-import { bareChannelValuesForSubject } from './nodeChannels';
+import { overlayCameraChannels } from './cameraChannels';
 import { layeredChannelValues } from './layeredChannels';
 import { driverChannelValuesForTarget } from './paramDrivers';
 import type { KeyframeChannelValue } from '../nodes/types';
 import { cameraLensParams, isCameraNode } from './cameraNode';
-import { linkedDataNodeId } from './resolveDataParamOwner';
 import { resolveRigLightSources } from './resolveRigLightSources';
 import { cameraOrientationQuat } from './cameraOrientation';
-import { hierarchySocketForKind, hasHierarchyParent } from './sceneHierarchy';
+import { hierarchySocketForKind } from './sceneHierarchy';
+import { sceneIndexOf } from './sceneIndex';
+import { getNodeType } from '../core/dag/registry';
+import { conversionsInto } from '../core/dag/socketConversion';
 import { useTransientEditStore } from './stores/transientEditStore';
 import { withResolvedRotation } from './resolvedRotation';
 import { boneParentMatrix } from '../nodes/boneParent';
+import { type ClockedCtx, ctxOnClock, ctxOnClockOf } from './subjectClock';
+import { measureStage } from '../perf/frameProfiler';
 
 type Vec3 = [number, number, number];
 
@@ -252,7 +256,14 @@ function walk(
   for (const edge of childEdges(state, nodeId, value)) {
     const child = overlaidAt(state, edge.id, edge.value, at);
     if (!child) continue;
-    const found = walk(state, edge.id, child, underParent(world, value, child, at), targetId, at);
+    const found = walk(
+      state,
+      edge.id,
+      child,
+      underParent(state, world, value, nodeId, child, at),
+      targetId,
+      at,
+    );
     if (found) return found;
   }
   return null;
@@ -280,7 +291,7 @@ function walkParent(
       state,
       edge.id,
       child,
-      underParent(world, value, child, at),
+      underParent(state, world, value, nodeId, child, at),
       targetId,
       at,
     );
@@ -295,18 +306,23 @@ function walkParent(
  * composes the same product (`ObjectR`), so the drawn child and this read agree.
  */
 function underParent(
+  state: DagState,
   parentWorld: THREE.Matrix4,
   parent: SceneChild,
+  parentId: string,
   child: SceneChild,
   at: Overlay,
 ): THREE.Matrix4 {
-  const bone = boneParentMatrix(parent, child, at.ctx.time.seconds);
+  // #1688 — the bone is posed on the clock the armature runs on (a camera rig's may be the
+  // playhead's), as `BoneParentR` draws it.
+  const seconds = ctxOnClockOf(state, parentId, at.ctx).time.seconds;
+  const bone = boneParentMatrix(parent, child, seconds);
   return bone ? parentWorld.clone().multiply(bone) : parentWorld;
 }
 
 /** The time, evaluation context and held edits a walk overlays each node with. */
 interface Overlay {
-  readonly ctx: EvalCtx;
+  readonly ctx: ClockedCtx;
   readonly cache: EvaluatorCache | undefined;
   readonly transients: ReturnType<typeof useTransientEditStore.getState>['edits'];
 }
@@ -318,7 +334,12 @@ interface Overlay {
  * strip or a driver drawn in one place while this read sat on its static pose.
  */
 function drawnChannels(state: DagState, nodeId: string, at: Overlay): KeyframeChannelValue[] {
-  const layered = layeredChannelValues(state.nodes, nodeId);
+  // #1729 — both folds read the scene index's slice of the table, not the whole of it: the
+  // channels, strips and tracks the layered fold reads, and the driver fold only for a node a
+  // driver names. Each used to scan every node, at every node a read passed.
+  const index = sceneIndexOf(state.nodes);
+  const layered = layeredChannelValues(index.layeredNodesFor(nodeId), nodeId);
+  if (!index.hasDriversOn(nodeId)) return layered;
   const drivers = driverChannelValuesForTarget(state, nodeId, at.ctx, at.cache);
   return drivers.length === 0 ? layered : [...layered, ...drivers];
 }
@@ -335,10 +356,175 @@ function overlaidAt(
   value: SceneChild,
   at: Overlay,
 ): SceneChild | null {
+  // #1688 — each node folds its channels on the clock it runs on, as the renderer draws it.
+  const ctx = ctxOnClockOf(state, nodeId, at.ctx);
+  if (ctx !== at.ctx) at = { ...at, ctx };
   let child: SceneChild | null = value;
   const channels = drawnChannels(state, nodeId, at);
   if (channels.length > 0) child = overlayChannels(child, channels, 1, at.ctx.time.seconds);
   return overlayTransients(child, nodeId, at.transients);
+}
+
+/**
+ * #1729 — the holders of `id` from a top-level scene child down to `id` itself, read UP the scene
+ * index: `[top, …, id]`. The cost is `id`'s depth, where searching down from the scene cost its
+ * size. Null when `id` does not hang under the scene at all. `'search'` when some node on the way
+ * is held more than once (by two parents, or listed twice): the depth-first search from the scene
+ * then decides which holding wins, as it always has, so the caller makes that search.
+ *
+ * Holders are the sockets `sceneHierarchy` names by node TYPE, where `childEdges` keys on the value
+ * KIND; the two agree for every type (pinned by the `mirrorsChildEdges` test), and the nesting fast
+ * path this replaces already decided on the same relation.
+ */
+function holderChain(state: DagState, id: string): string[] | null | 'search' {
+  const index = sceneIndexOf(state.nodes);
+  const sceneId = state.outputs.scene?.node;
+  const chain = [id];
+  for (let at = id; ; ) {
+    const holders = index.parentsOf(at);
+    if (holders.length === 0) return null;
+    if (holders.length > 1) return 'search';
+    const holder = holders[0];
+    if (holder === sceneId) return chain.reverse();
+    // Held by a scene that is not the one rendered.
+    if (state.nodes[holder]?.type === 'Scene') return null;
+    if (chain.includes(holder)) return 'search';
+    chain.push(holder);
+    at = holder;
+  }
+}
+
+/** Whether a value reaches the Scene's `children` exactly as its producer made it. When some type
+ *  converts on the way in (#1549), only the evaluate of the whole scene gives what arrives. Kept
+ *  once known; not while the Scene type is unregistered, so an early call cannot fix the answer. */
+let sceneChildrenAsProduced: boolean | undefined;
+function sceneChildrenArriveAsProduced(): boolean {
+  if (sceneChildrenAsProduced !== undefined) return sceneChildrenAsProduced;
+  const into = getNodeType('Scene')?.inputs.children;
+  if (!into) return false;
+  sceneChildrenAsProduced = conversionsInto(into) === null;
+  return sceneChildrenAsProduced;
+}
+
+/**
+ * The value top-level child `topId` gives the rendered scene, overlaid as the renderer draws it —
+ * `scene.children[i]` of the render root, got by evaluating `topId` alone: the scene passes its
+ * children through, so with the same context the evaluate is the same cache entries. Evaluating
+ * the render root re-walked and re-hashed every node to answer for one (#1729). `'search'` when the
+ * render does not draw the output scene directly, or a conversion on the way in means only the
+ * scene's own evaluate says what arrives.
+ */
+function topLevelValue(state: DagState, topId: string, at: Overlay): SceneChild | null | 'search' {
+  const render = state.outputs.render;
+  if (!render) return null;
+  const sceneId = state.outputs.scene?.node;
+  const drawn = state.nodes[render.node]?.inputs.scene;
+  if (!sceneId || !drawn || Array.isArray(drawn) || (drawn as NodeRef).node !== sceneId) {
+    return 'search';
+  }
+  if (!sceneChildrenArriveAsProduced()) return 'search';
+  const refs = state.nodes[sceneId]?.inputs.children;
+  const list = (Array.isArray(refs) ? refs : refs ? [refs] : []) as NodeRef[];
+  const ref = list.find((r) => r?.node === topId);
+  if (!ref) return null;
+  let produced: unknown;
+  try {
+    produced = evaluate(state, topId, { cache: at.cache, ctx: at.ctx }).value;
+  } catch {
+    return null;
+  }
+  // The evaluator's socket read: a record carrying the socket's name answers with that field.
+  const value =
+    produced &&
+    typeof produced === 'object' &&
+    Object.prototype.hasOwnProperty.call(produced, ref.socket)
+      ? (produced as Record<string, unknown>)[ref.socket]
+      : produced;
+  return value ? overlaidAt(state, topId, value as SceneChild, at) : null;
+}
+
+/** Compose down `chain` from its overlaid top value: `walk` / `walkParent` along the one path. */
+function composeDown(
+  state: DagState,
+  chain: readonly string[],
+  top: SceneChild,
+  at: Overlay,
+  parentOnly: boolean,
+): THREE.Matrix4 | null {
+  let value = top;
+  let acc = new THREE.Matrix4();
+  for (let k = 0; k + 1 < chain.length; k++) {
+    const world = acc.clone().multiply(localMatrix(value));
+    const edge = childEdges(state, chain[k], value).find((e) => e.id === chain[k + 1]);
+    if (!edge) return null;
+    const child = overlaidAt(state, edge.id, edge.value, at);
+    if (!child) return null;
+    acc = underParent(state, world, value, chain[k], child, at);
+    value = child;
+  }
+  return parentOnly ? acc : acc.clone().multiply(localMatrix(value));
+}
+
+/** The depth-first search from the render root that the chain replaces — kept for a node held
+ *  more than once, and for a render that does not draw the output scene directly. */
+function searchFromRoot(
+  state: DagState,
+  id: string,
+  at: Overlay,
+  parentOnly: boolean,
+): THREE.Matrix4 | null {
+  const target = state.outputs.render;
+  if (!target) return null;
+  let value: RenderOutputValue;
+  try {
+    value = evaluate(state, target.node, { cache: at.cache, ctx: at.ctx })
+      .value as RenderOutputValue;
+  } catch {
+    return null;
+  }
+  if (!value?.scene?.children) return null;
+  // Scene child-ref list — childRefs[i].node ↔ value.scene.children[i], EXACTLY as SceneFromDAG
+  // and resolveEvaluatedTransform resolve it.
+  const sceneRef = state.outputs.scene;
+  const sceneNode = sceneRef ? state.nodes[sceneRef.node] : null;
+  const childRefs =
+    sceneNode && Array.isArray(sceneNode.inputs.children)
+      ? (sceneNode.inputs.children as NodeRef[])
+      : [];
+  const identity = new THREE.Matrix4();
+  for (let i = 0; i < value.scene.children.length; i++) {
+    const topId = childRefs[i]?.node;
+    if (!topId) continue;
+    const child = overlaidAt(state, topId, value.scene.children[i], at);
+    if (!child) continue;
+    const found = parentOnly
+      ? walkParent(state, topId, child, identity, id, at)
+      : walk(state, topId, child, identity, id, at);
+    if (found) return found;
+  }
+  return null;
+}
+
+/**
+ * `id`'s world matrix as a scene-graph descendant — or, with `parentOnly`, the world of what it
+ * hangs from — or null when it is not one. Walks up to the scene and composes down that path
+ * (#1729); the search from the root answers only when the path is not unique.
+ */
+function sceneChildWorld(
+  state: DagState,
+  id: string,
+  at: Overlay,
+  parentOnly: boolean,
+): THREE.Matrix4 | null {
+  const chain = holderChain(state, id);
+  if (chain === null) return null;
+  // A top-level child hangs from the scene itself, whose world is the identity.
+  if (parentOnly && chain !== 'search' && chain.length === 1) return new THREE.Matrix4();
+  if (chain !== 'search') {
+    const top = topLevelValue(state, chain[0], at);
+    if (top !== 'search') return top ? composeDown(state, chain, top, at, parentOnly) : null;
+  }
+  return searchFromRoot(state, id, at, parentOnly);
 }
 
 function isIdentityMatrix(m: THREE.Matrix4): boolean {
@@ -384,14 +570,26 @@ function decompose(m: THREE.Matrix4): WorldTransform {
 export function resolveWorldTransform(
   state: DagState,
   selectedId: string,
-  ctx: EvalCtx,
+  ctx: ClockedCtx,
   cache?: EvaluatorCache,
 ): WorldTransform | null {
+  // #1727 — timed as the `world` stage of a playback perf run; a plain call when none is armed.
+  return measureStage('world', () => worldTransformOf(state, selectedId, ctx, cache));
+}
+
+function worldTransformOf(
+  state: DagState,
+  selectedId: string,
+  ctx: ClockedCtx,
+  cache?: EvaluatorCache,
+): WorldTransform | null {
+  // #1688 — the tree is evaluated at scene time; each node is re-timed onto its own clock.
+  ctx = ctxOnClock(state, 'scene', ctx);
   // 0. Cameras (#210 slice 3.2) — wired via scene.camera (a single ref), a camera
   //    never appears in the scene-child / light walks below. Resolve its world
   //    from its pose: position + look-orientation + identity scale, with the
-  //    position/lookAt channels overlaid by the shared primitive (one band, H40 —
-  //    overlayChannels.sample == the camera resolver's sampler). See the header on
+  //    camera's channels overlaid by `overlayCameraChannels`, the same call the
+  //    camera resolver makes (#482). See the header on
   //    why this stays inline (the activeCamera import would cycle) and why a camera
   //    Track-To aim is not reflected here.
   const camNode = state.nodes[selectedId];
@@ -410,26 +608,34 @@ export function resolveWorldTransform(
       lookAt: isVec3(cp.lookAt) ? cp.lookAt : [0, 0, 0],
       roll: typeof cp.roll === 'number' ? cp.roll : 0,
     };
-    const camChannels = bareChannelValuesForSubject(
-      state.nodes,
-      selectedId,
-      linkedDataNodeId(state, selectedId),
-    ).filter(
-      (c) => c.paramPath === 'position' || c.paramPath === 'lookAt' || c.paramPath === 'roll',
-    );
-    if (camChannels.length > 0) {
-      cam = overlayChannels(cam, camChannels, 1, ctx.time.seconds) ?? cam;
-    }
+    // #1643 / #1688 — a camera's own keys run on the playhead, so something parented to it or
+    // aimed at it reads it where it is drawn. What it hangs from keeps its own clock (below).
+    const hungAt = ctx;
+    ctx = ctxOnClockOf(state, selectedId, ctx);
+    // #482 — the same call the camera's pose makes, so the gizmo and the render agree.
+    cam = overlayCameraChannels(state, selectedId, cam, ctx, cache);
     // #231 Inc 3.3 — a camera nested in a Group composes the parent's world (the
     // groupable-camera path). `resolveParentWorldMatrix` returns null for a
     // top-level camera (wired only to scene.camera) → byte-identical to the flat
     // local-pose world. The local matrix is the camera's own pose orientation.
     const camLocal = cameraWorldMatrix(cam.position, cam.lookAt, cam.roll);
-    const parentWorld = resolveParentWorldMatrix(state, selectedId, ctx, cache);
+    const parentWorld = resolveParentWorldMatrix(state, selectedId, hungAt, cache);
     return decompose(parentWorld ? parentWorld.clone().multiply(camLocal) : camLocal);
   }
 
-  // 1. Render root — the same evaluate SceneFromDAG makes every render.
+  const transients = useTransientEditStore.getState().edits;
+  const identity = new THREE.Matrix4();
+
+  // 1–3. A scene-graph descendant: every node from the top-level child down is overlaid the
+  //    SAME way DirectChannelsR renders it (free-floating channels → held transient, at
+  //    ctx.time.seconds), so an animated ancestor moves its descendants' world transform in
+  //    lockstep with the render (H40, one band). #1729 — found by walking up the holders, not by
+  //    searching the scene.
+  const at: Overlay = { ctx, cache, transients };
+  const world = sceneChildWorld(state, selectedId, at, false);
+  if (world) return decompose(world);
+
+  // The render root, for the lights below — the same evaluate SceneFromDAG makes every render.
   const target = state.outputs.render;
   if (!target) return null;
   let value: RenderOutputValue;
@@ -439,32 +645,8 @@ export function resolveWorldTransform(
     return null;
   }
   if (!value?.scene?.children) return null;
-
-  // 2. Scene child-ref list — childRefs[i].node ↔ value.scene.children[i], EXACTLY
-  //    as SceneFromDAG and resolveEvaluatedTransform resolve it.
   const sceneRef = state.outputs.scene;
   const sceneNode = sceneRef ? state.nodes[sceneRef.node] : null;
-  const childRefs =
-    sceneNode && Array.isArray(sceneNode.inputs.children)
-      ? (sceneNode.inputs.children as NodeRef[])
-      : [];
-
-  const transients = useTransientEditStore.getState().edits;
-  const identity = new THREE.Matrix4();
-
-  // 3. Walk each top-level subtree. The top-level child value is overlaid the
-  //    SAME way DirectChannelsR renders it (free-floating channels → held
-  //    transient, at ctx.time.seconds) so an animated ancestor moves its
-  //    descendants' world transform in lockstep with the render (H40, one band).
-  const at: Overlay = { ctx, cache, transients };
-  for (let i = 0; i < value.scene.children.length; i++) {
-    const topId = childRefs[i]?.node;
-    if (!topId) continue;
-    const child = overlaidAt(state, topId, value.scene.children[i], at);
-    if (!child) continue;
-    const world = walk(state, topId, child, identity, selectedId, at);
-    if (world) return decompose(world);
-  }
 
   // 4. Lights (#210) — a light is wired FLAT into scene.lights (or the active
   //    rig's lights), not nested under a Transform, so its world == its own
@@ -542,67 +724,34 @@ export function worldMatrixAt(
 export function resolveParentWorldMatrix(
   state: DagState,
   selectedId: string,
-  ctx: EvalCtx,
+  ctx: ClockedCtx,
   cache?: EvaluatorCache,
 ): THREE.Matrix4 | null {
+  return measureStage('world', () => parentWorldMatrixOf(state, selectedId, ctx, cache));
+}
+
+function parentWorldMatrixOf(
+  state: DagState,
+  selectedId: string,
+  ctx: ClockedCtx,
+  cache?: EvaluatorCache,
+): THREE.Matrix4 | null {
+  // #1688 — the tree is evaluated at scene time; each node is re-timed onto its own clock.
+  ctx = ctxOnClock(state, 'scene', ctx);
   const node = state.nodes[selectedId];
   if (!node) return null;
-  // #231 Inc 3.3 — a camera is NO LONGER always flat: it can be a Group child
-  // (groupable cameras). So cameras now fall through to the scene-child walk,
-  // which finds a nested camera as a Group descendant (childEdges descends
-  // Group.children, V78) and returns the Group's accumulated world. A camera wired
-  // ONLY to scene.camera (every pre-Inc-3.3 project) is not in scene.children →
-  // the walk returns null → byte-identical to the old flat short-circuit. A
-  // top-level light is likewise flat (scene.lights) and the walk returns null.
+  // #231 Inc 3.3 — a camera can be a Group CHILD (groupable cameras), so cameras take the same
+  // road: a nested camera is found as a Group descendant and gets the Group's accumulated world,
+  // while one wired only to scene.camera, like a top-level light (scene.lights), is held by no
+  // parent and has none.
   //
-  // PERF — a node held as a child by NO scene-graph parent cannot be a scene-graph
-  // descendant, so it has no parent world: return null WITHOUT the render-root
-  // evaluate. This restores the old flat-camera/light fast path generally (a top-level
-  // camera/light is wired to scene.camera/.lights, not held as a child), while a
-  // NESTED node (Group child OR Transform target) still walks. Cheap O(N) scan, no
-  // evaluate — matters for the uncached per-frame render-export pose resolve.
-  //
-  // #621 — the socket set is no longer restated here. It used to be a literal
-  // `['children','target']` scanned across EVERY node regardless of type, with a
-  // comment saying it must mirror childEdges; `hasHierarchyParent` is that mirror,
-  // mechanically. The scan is now type-aware, which NARROWS it: a mesh that merely
-  // feeds an ArrayModifier is no longer counted as nested. That reaches the same
-  // answer faster rather than a different answer — childEdges does not descend a
-  // modifier, so the walk this fast path was skipping could never have found it and
-  // returned null at the end anyway.
-  if (!hasHierarchyParent(Object.values(state.nodes), selectedId)) return null;
-
-  const target = state.outputs.render;
-  if (!target) return null;
-  let value: RenderOutputValue;
-  try {
-    value = evaluate(state, target.node, { cache, ctx }).value as RenderOutputValue;
-  } catch {
-    return null;
-  }
-  if (!value?.scene?.children) return null;
-
-  const sceneRef = state.outputs.scene;
-  const sceneNode = sceneRef ? state.nodes[sceneRef.node] : null;
-  const childRefs =
-    sceneNode && Array.isArray(sceneNode.inputs.children)
-      ? (sceneNode.inputs.children as NodeRef[])
-      : [];
-
-  const transients = useTransientEditStore.getState().edits;
-  const identity = new THREE.Matrix4();
-
-  const at: Overlay = { ctx, cache, transients };
-  for (let i = 0; i < value.scene.children.length; i++) {
-    const topId = childRefs[i]?.node;
-    if (!topId) continue;
-    const child = overlaidAt(state, topId, value.scene.children[i], at);
-    if (!child) continue;
-    const parent = walkParent(state, topId, child, identity, selectedId, at);
-    if (parent) return isIdentityMatrix(parent) ? null : parent;
-  }
-
-  // Lights (scene.lights / rig) are flat → world == local → no parent. Not found
-  // as a scene-child descendant above → null (GltfChild / Scatter / unreachable).
-  return null;
+  // #1729 — the node is found by walking UP its holders (the scene index) and composing down that
+  // one path, so the cost is its depth. That walk also answers the old nesting fast path — a node
+  // nothing holds is not a descendant, null without an evaluate — and a top-level child, whose
+  // parent is the scene's identity, without one either.
+  const at: Overlay = { ctx, cache, transients: useTransientEditStore.getState().edits };
+  const parent = sceneChildWorld(state, selectedId, at, true);
+  // Not a descendant (GltfChild / Scatter / unreachable / flat camera or light) → null. A parent
+  // that composes to identity → null, so the caller keeps its local-only path.
+  return parent && !isIdentityMatrix(parent) ? parent : null;
 }

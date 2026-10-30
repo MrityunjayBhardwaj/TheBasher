@@ -108,11 +108,13 @@ beforeEach(() => {
 
 describe('#1014 — a surfaced no-op reaches the model, not only the DiffBar', () => {
   // The op shape is not invented: a model answered "make this shot run from 0 to
-  // 4 seconds on the camera" with exactly these three ops. Both writes vanished.
+  // 4 seconds on the camera" with three ops like these — a node plus two writes to params it
+  // does not have — and both writes vanished. (#1666 removed the `Shot` type it used; an
+  // unwired `Fit` has no `start` or `end` either.)
   const STRIPPED: Op[] = [
-    { type: 'addNode', nodeId: 'n_shot', nodeType: 'Shot', params: {} },
-    { type: 'setParam', nodeId: 'n_shot', paramPath: 'start', value: 0 },
-    { type: 'setParam', nodeId: 'n_shot', paramPath: 'end', value: 4 },
+    { type: 'addNode', nodeId: 'n_fit', nodeType: 'Fit', params: {} },
+    { type: 'setParam', nodeId: 'n_fit', paramPath: 'start', value: 0 },
+    { type: 'setParam', nodeId: 'n_fit', paramPath: 'end', value: 4 },
   ] as Op[];
 
   it('THE PIN: the tool result the next round sends names both dropped writes', async () => {
@@ -122,7 +124,7 @@ describe('#1014 — a surfaced no-op reaches the model, not only the DiffBar', (
     expect(text).toContain('start');
     expect(text).toContain('end');
     // The product's own diagnosis, not a sentence re-invented in the agent layer.
-    expect(text).toContain('Shot has no such parameter');
+    expect(text).toContain('Fit has no such parameter');
   });
 
   it('CONTROL: a plan whose ops all do real work carries no note', async () => {
@@ -199,9 +201,9 @@ describe('#1014 — a surfaced no-op reaches the model, not only the DiffBar', (
   it('the sentence the model reads is the sentence the director reads', () => {
     const r: Reportable = {
       badge: 'stripped-write',
-      nodeId: 'n_shot',
+      nodeId: 'n_fit',
       paramPath: 'start',
-      reason: 'Shot has no such parameter',
+      reason: 'Fit has no such parameter',
     };
     // If the agent layer ever grows its own formatter, these drift apart silently.
     expect(renderNoOpReport([r])).toContain(
@@ -256,12 +258,12 @@ describe('#733 — the critic reaches the model too', () => {
     // Stripped writes (the no-op half) AND an unconsumed addition (the critic half)
     // in one plan: the model must receive both, not whichever ran last.
     const both: Op[] = [
-      { type: 'addNode', nodeId: 'n_shot', nodeType: 'Shot', params: {} },
-      { type: 'setParam', nodeId: 'n_shot', paramPath: 'start', value: 0 },
+      { type: 'addNode', nodeId: 'n_fit', nodeType: 'Fit', params: {} },
+      { type: 'setParam', nodeId: 'n_fit', paramPath: 'start', value: 0 },
     ] as Op[];
     const text = toolText(await turnWithOps(both, 'shot 0-4s'));
     expect(text).toContain('NOTE -');
-    expect(text).toContain('Shot has no such parameter');
+    expect(text).toContain('Fit has no such parameter');
     expect(text).toContain('CRITIC -');
   });
 });

@@ -42,7 +42,7 @@
 // next keyframes array locally (mirroring keyframeMutator's sort +
 // same-time-replace semantics) and emit a single setParam Op.
 
-import { clockFor } from './subjectClock';
+import { clockFor, runsOnFilmTime } from './subjectClock';
 import { sceneEndSeconds, setSceneEndAtPlayhead } from './sceneRange';
 import { useEffect } from 'react';
 import type { Op } from '../core/dag/types';
@@ -242,6 +242,10 @@ function noKeyDeletedReason(): string {
 /** [ / ] seek helpers. Returns the time of the previous/next keyframe
  *  on the active channel relative to current time, or null when there
  *  isn't one. */
+/** The playhead time of the previous / next key on the active channel, or null. #1688 — keys are
+ *  compared on the clock they play on (`clockOf` of the channel's target: the playhead for a
+ *  camera, a cut or a Film rig, scene time for the rest), and a scene-time key is reached where it
+ *  is first on screen. */
 function findAdjacentKeyframeTime(direction: 'prev' | 'next'): number | null {
   const channelId = useTimelineSelection.getState().activeChannelId;
   if (!channelId) return null;
@@ -252,19 +256,32 @@ function findAdjacentKeyframeTime(direction: 'prev' | 'next'): number | null {
     ? { type: layerRow.nodeType, params: layerRow.params }
     : state.nodes[channelId];
   if (!channel || !isKeyframeChannelNode(channel)) return null;
-  const cParams = (channel.params ?? {}) as { keyframes?: KeyframeSample[] };
+  const cParams = (channel.params ?? {}) as {
+    keyframes?: KeyframeSample[];
+    target?: unknown;
+    paramPath?: unknown;
+  };
   const times = (cParams.keyframes ?? []).map((k) => k.time).sort((a, b) => a - b);
   if (times.length === 0) return null;
-  const cur = useTimeStore.getState().seconds;
+  const film =
+    typeof cParams.target === 'string' &&
+    runsOnFilmTime(
+      state,
+      cParams.target,
+      typeof cParams.paramPath === 'string' ? cParams.paramPath : undefined,
+    );
+  const time = useTimeStore.getState();
+  const cur = film ? time.filmSeconds : time.seconds;
+  const toPlayhead = (t: number) => (film ? t : time.timeMap.filmAt(t));
   if (direction === 'prev') {
     let candidate: number | null = null;
     for (const t of times) {
       if (t < cur) candidate = t;
       else break;
     }
-    return candidate;
+    return candidate === null ? null : toPlayhead(candidate);
   }
-  for (const t of times) if (t > cur) return t;
+  for (const t of times) if (t > cur) return toPlayhead(t);
   return null;
 }
 
@@ -720,16 +737,14 @@ export function KeyboardShortcuts() {
         }
         // [ / ] — seek to previous / next keyframe on active channel.
         if (e.key === '[') {
+          // #1594 / #1688 — the playhead goes to where the key is first on screen.
           const t = findAdjacentKeyframeTime('prev');
-          // #1594 — a key sits at scene time; the playhead goes to where it is first on screen.
-          if (t !== null)
-            useTimeStore.getState().setTime(useTimeStore.getState().timeMap.filmAt(t));
+          if (t !== null) useTimeStore.getState().setTime(t);
           return;
         }
         if (e.key === ']') {
           const t = findAdjacentKeyframeTime('next');
-          if (t !== null)
-            useTimeStore.getState().setTime(useTimeStore.getState().timeMap.filmAt(t));
+          if (t !== null) useTimeStore.getState().setTime(t);
           return;
         }
       }

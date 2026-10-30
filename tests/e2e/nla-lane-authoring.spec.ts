@@ -211,7 +211,7 @@ test('NLA 5D#1 — add-strip flow: popover (hit-testable, H103) commits addStrip
   expect(errors).toEqual([]);
 });
 
-test('NLA 5D#2 — the target list excludes cameras (the documented dead road, Strip.ts:13-16)', async ({
+test('NLA 5D#2 — the target list offers cameras too (#480: a strip moves a camera like any node)', async ({
   page,
 }) => {
   const errors: string[] = [];
@@ -228,7 +228,7 @@ test('NLA 5D#2 — the target list excludes cameras (the documented dead road, S
     .locator('option')
     .evaluateAll((opts) => opts.map((o) => (o as HTMLOptionElement).value));
   expect(values).toContain('n_box');
-  expect(values, 'cameras are never offered as strip targets').not.toContain('n_camera');
+  expect(values, 'a camera is offered as a strip target (#480)').toContain('n_camera');
 
   expect(errors).toEqual([]);
 });

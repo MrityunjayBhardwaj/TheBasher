@@ -83,7 +83,12 @@ export const KeyframeChannelTextNode: NodeDefinition<
   // #421 — the channel is OWNED BY its target: a bound animation curve is
   // meaningless once the object it drives is gone (the long-standing H136 sweep,
   // now declared instead of hardcoded at the delete site).
-  idRefs: [{ path: 'target', shape: 'id', role: 'subject' }],
+  idRefs: [
+    { path: 'target', shape: 'id', role: 'subject' },
+    // #1669 — keying a param its target declares as an id (a camera switch's `active`), each key
+    // names a node: the film's cuts name their cameras. Deleting a camera drops its cuts.
+    { path: 'keyframes', shape: 'keyed', role: 'argument' },
+  ],
   inputs: {},
   outputs: { out: { type: 'KeyframeChannel', cardinality: 'single' } },
   inspectorSections: ['channel', 'animate'],

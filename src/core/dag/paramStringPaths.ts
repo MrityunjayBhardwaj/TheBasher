@@ -138,5 +138,6 @@ export function paramStringPaths(schema: unknown): ParamStringRow[] {
 export function idRefStringPath(ref: { path: string; shape: string }): string {
   if (ref.shape === 'ref') return `${ref.path}.node`;
   if (ref.shape === 'idList') return `${ref.path}[]`;
+  if (ref.shape === 'keyed') return `${ref.path}[].value`;
   return ref.path;
 }

@@ -36,7 +36,7 @@ function buildScene(): DagState {
     { objectId: 'n_cam' },
     {
       data: { fov: 28, lookAt: [0, 1, 0] },
-      object: { position: [7, 1, -4], name: 'Camera' },
+      object: { position: [7, 1, -4] },
     },
   )) {
     s = applyOp(s, op as Parameters<typeof applyOp>[1]).next;
