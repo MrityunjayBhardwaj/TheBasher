@@ -192,6 +192,7 @@ import { useThreeRef } from './character/threeRef';
 import { originToGeometry } from './setOrigin';
 import { rotationModeOps, withResolvedRotation } from './resolvedRotation';
 import { isCameraNode } from './cameraNode';
+import { posingObjectId } from './resolveDataParamOwner';
 import { clockOf } from './subjectClock';
 import { IDENTITY_QUATERNION } from '../nodes/rotationMode';
 import {
@@ -593,7 +594,10 @@ function VectorField({
   // never useTimeStore.getState() in the seam (#1731: `usePlayheadFor` subscribes whenever the
   // node's value can move, and reads the playhead only for a node whose value cannot).
   // #1731 — subscribed to the playhead only when this node's own value can move with it.
-  const { frame, seconds, normalized } = usePlayheadFor(nodeId);
+  // #1753 — or the Object posing it, when this is a data half: the read reaches the animation
+  // kept on the Object (an older project's camera aim, a pushed-down strip).
+  const poser = useDagStore((s) => posingObjectId(s.state, nodeId));
+  const { frame, seconds, normalized } = usePlayheadFor(nodeId, poser);
   const playing = useTimeStore((s) => s.playing);
   const dagState = useDagStore((s) => s.state);
   // #1314 — a stable cache: this re-reads the evaluated graph on every playhead change, and
@@ -626,36 +630,25 @@ function VectorField({
       ),
     [dagState, nodeId, paramPath],
   );
-  // #1640 — a KEYED non-transform vec (a camera's aim, a material vector) moves with the playhead
-  // too, as a driven one does; it used to show the typed value while the render moved.
-  const animated = useMemo(
-    () => !isTransformParam && paramAnimationState(dagState, nodeId, paramPath, frame) !== 'none',
-    [isTransformParam, dagState, nodeId, paramPath, frame],
-  );
+  // #1640 / #1753 — a non-transform vec that anything animates (keys on it or on the other half of
+  // its Object/data pair, a pushed-down strip, a driver) shows the value it is drawn with. The
+  // read decides: `overridesOnly` answers null when nothing overrides the param, so the row keeps
+  // the typed value and stays editable. A separate "is it keyed" test missed the reaches the
+  // read makes, and the row froze on the typed aim of a camera keyed on its Object.
   const evaluatedVec = useMemo(() => {
-    // A driven or keyed TRANSFORM vec shows via `resolved` (the transform seam), so only the
-    // non-transform road reads the evaluated value through resolveEvaluatedParam.
-    if ((!driven && !animated) || isTransformParam) return null;
+    // A transform vec shows via `resolved` (the transform seam).
+    if (isTransformParam) return null;
     const r = resolveEvaluatedParam(
       dagState,
       nodeId,
       paramPath,
       { time: { frame, seconds, normalized } },
       cache,
+      undefined,
+      true,
     );
     return isVec3(r?.value) ? r!.value : null;
-  }, [
-    driven,
-    animated,
-    isTransformParam,
-    dagState,
-    nodeId,
-    paramPath,
-    frame,
-    seconds,
-    normalized,
-    cache,
-  ]);
+  }, [isTransformParam, dagState, nodeId, paramPath, frame, seconds, normalized, cache]);
   // Per-param fallback (D-01): evaluated non-transform vec → resolved transform Vec3 → authored.
   const effectiveValue: readonly number[] = evaluatedVec ?? resolved ?? value;
   // D-02: read-only while playing IFF this field is showing an evaluated

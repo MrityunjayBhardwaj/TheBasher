@@ -94,3 +94,76 @@ test('a keyed camera’s Position and aim rows follow the camera while scrubbing
       .toBeCloseTo(2 * t, 3);
   }
 });
+
+// #1753 — two more ways the aim row missed the camera. An older project keeps the camera's aim
+// keys on the camera Object, not its lens data: the row (drawn against the data) neither knew the
+// aim was keyed nor re-rendered as the playhead moved. And with the scene slowed, the row read
+// scene time while the camera runs on the playhead.
+test('the aim row follows an aim keyed on the camera Object, with the scene at half speed', async ({
+  page,
+}) => {
+  await page.goto('/');
+  await expect(page.getByTestId('layout')).toBeVisible({ timeout: 15_000 });
+  await page.waitForFunction(() => {
+    const w = window as unknown as Record<string, unknown>;
+    return Boolean(w.__basher_dag && w.__basher_selection && w.__basher_time);
+  });
+  await page.evaluate(() => {
+    const w = window as unknown as {
+      __basher_dag: {
+        getState: () => {
+          state: { outputs: { scene: { node: string } } };
+          dispatchAtomic: (ops: unknown[], s: string, d: string) => void;
+        };
+      };
+      __basher_selection: { getState: () => { select: (id: string) => void } };
+    };
+    const dag = w.__basher_dag.getState();
+    dag.dispatchAtomic(
+      [
+        {
+          type: 'setParam',
+          nodeId: dag.state.outputs.scene.node,
+          paramPath: 'timeSpeed',
+          value: 0.5,
+        },
+        {
+          type: 'addNode',
+          nodeId: 'p1753_aim',
+          nodeType: 'KeyframeChannelVec3',
+          params: {
+            name: 'lookAt',
+            target: 'n_camera',
+            paramPath: 'lookAt',
+            keyframes: [
+              { time: 0, value: [0, 0, 0], easing: 'linear' },
+              { time: 2, value: [4, 0, 0], easing: 'linear' },
+            ],
+          },
+        },
+      ],
+      'user',
+      'p1753-seed',
+    );
+    w.__basher_selection.getState().select('n_camera');
+  });
+  const aimX = page.getByTestId('inspector-vec-n_camera_data-lookAt-x');
+  await expect(aimX).toBeVisible();
+  for (const t of [0, 1, 2]) {
+    // `t` is the playhead; the scene is at half of it, and the camera's keys run on the playhead.
+    await page.evaluate(
+      (t) =>
+        (
+          window as unknown as {
+            __basher_time: { getState: () => { setTime: (s: number) => void } };
+          }
+        ).__basher_time
+          .getState()
+          .setTime(t),
+      t,
+    );
+    await expect
+      .poll(async () => Number(await aimX.inputValue()), { message: `playhead ${t}: aim row` })
+      .toBeCloseTo(2 * t, 3);
+  }
+});
