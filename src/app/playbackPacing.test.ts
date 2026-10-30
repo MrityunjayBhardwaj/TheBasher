@@ -60,6 +60,32 @@ describe('#1733 — a display faster than the scene does not speed it up', () =>
   });
 });
 
+// #1749 — a display whose rate is not a multiple of the scene's. "Every frame" threw away what a
+// tick overshot the period by, so at 75 Hz it stepped on every 2nd tick: 37.5 frames a second.
+describe('#1749 — every display rate plays the scene at its own rate', () => {
+  const stepsPerSecond = (sync: 'drop' | 'every', hz: number): number => {
+    const p = createPacer();
+    let frames = 0;
+    const ticks = hz * 10;
+    for (let i = 0; i < ticks; i++) frames += framesDue(p, sync, 1 / hz, 60);
+    return frames / 10;
+  };
+  for (const hz of [60, 75, 90, 120, 144, 165, 240]) {
+    for (const sync of ['every', 'drop'] as const) {
+      it(`${sync} at ${hz} Hz: 60 frames a second`, () => {
+        expect(stepsPerSecond(sync, hz)).toBeCloseTo(60, 0);
+      });
+    }
+  }
+
+  it('every: a slow frame is not caught up afterwards', () => {
+    const p = createPacer();
+    expect(framesDue(p, 'every', 0.15, 60)).toBe(1);
+    // The next display tick at 120 Hz is half a period: no step, the slow frame earned nothing.
+    expect(framesDue(p, 'every', 1 / 120, 60)).toBe(0);
+  });
+});
+
 describe('#1733 — the achieved rate', () => {
   it('counts steps per real second over each half-second window', () => {
     const p = createPacer();

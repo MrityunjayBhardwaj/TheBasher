@@ -65,8 +65,15 @@ export function framesDue(p: Pacer, sync: PlaybackSync, elapsed: number, fps: nu
   p.pending += elapsed > STALL_SECONDS ? period : Math.max(0, elapsed);
   if (p.pending < period - EARLY_SECONDS) return 0;
   const elapsedFrames = p.pending * fps;
+  if (sync === 'every') {
+    // Carry what the display tick overshot the period by, so a display whose rate is not a
+    // multiple of the scene's still steps once per period on average: at 75 Hz, 4 steps in every
+    // 5 ticks, not 1 in 2 (#1749). A tick slower than a period is the scene running behind, not
+    // the display: it carries nothing, so "every frame" never catches up.
+    p.pending = elapsed > period ? 0 : p.pending - period;
+    return 1;
+  }
   p.pending = 0;
-  if (sync === 'every') return 1;
   const delta = elapsedFrames + p.lagging;
   if (delta < 1) {
     p.lagging = 0;
