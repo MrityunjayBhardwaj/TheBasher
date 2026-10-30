@@ -31,7 +31,7 @@
 
 import type { DagState } from '../core/dag/state';
 import type { Node } from '../core/dag/types';
-import { linkedDataNodeId } from './resolveDataParamOwner';
+import { linkedDataNodeId, posingObjectId } from './resolveDataParamOwner';
 
 /** A camera's projection, in the `CameraData.projection` vocabulary. The fused types are
  *  mapped onto it so one word answers for both forms. */
@@ -50,6 +50,23 @@ export function cameraDataOf(state: DagState, id: string): Node | null {
   if (!dataId) return null;
   const data = state.nodes[dataId] ?? null;
   return data?.type === 'CameraData' ? data : null;
+}
+
+/**
+ * #1745 — the nodes a camera's channel solo is judged over, named from either half: the camera
+ * Object and the `CameraData` it poses. Null for anything else, a fused camera included (it is
+ * one node, so its own id is its whole scope).
+ *
+ * The render folds a camera's channels from both halves at once (`overlayCameraChannels`), so a
+ * solo on either half silences the other half's channels. A reader that judges solo per node
+ * shows a soloed-out lens channel still animating.
+ */
+export function cameraSoloScope(state: DagState, id: string): readonly [string, string] | null {
+  const data = cameraDataOf(state, id);
+  if (data) return [id, data.id];
+  if (state.nodes[id]?.type !== 'CameraData') return null;
+  const poser = posingObjectId(state, id);
+  return poser !== null && cameraDataOf(state, poser)?.id === id ? [poser, id] : null;
 }
 
 /**

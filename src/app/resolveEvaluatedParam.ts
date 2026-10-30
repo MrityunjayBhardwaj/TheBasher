@@ -32,6 +32,7 @@ import { driverChannelValuesForTarget } from './paramDrivers';
 import { readBaseParam } from './readBaseParam';
 import { posingObjectId, resolveDataParamOwner } from './resolveDataParamOwner';
 import { useTransientEditStore } from './stores/transientEditStore';
+import { cameraSoloScope } from './cameraNode';
 import { isKeyframeChannelNode } from './animate/paramAnimationState';
 
 interface ChannelParams {
@@ -89,11 +90,13 @@ export function resolveEvaluatedParam(
   // (so resolving a non-solo sibling param falls back to base). Byte-identical when
   // nothing is solo'd. Strips/drivers (2b/2c) are appended after — un-gated, matching
   // the render side (they aren't collected through `channelValuesFromNodes` either).
+  // #1745 — a camera's scope is both halves, Object and lens data, as the render folds them.
+  const soloScope = new Set<unknown>(cameraSoloScope(state, nodeId) ?? [nodeId]);
   const targetSoloActive = Object.values(state.nodes).some((node) => {
     if (!isKeyframeChannelNode(node)) return false;
     return (
       (node.params as ChannelParams & { solo?: boolean })?.solo === true &&
-      (node.params as ChannelParams)?.target === nodeId
+      soloScope.has((node.params as ChannelParams)?.target)
     );
   });
 
