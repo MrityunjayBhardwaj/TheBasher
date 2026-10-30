@@ -615,7 +615,7 @@ function VectorField({
   // exactly as the render side does (render == read, H40). A driven vec goes read-only
   // and displays the driven vector. The DISPLAY source differs by kind: a transform vec
   // reads through `resolved` (the transform seam, which also carries Track-To); a
-  // non-transform vec reads through `resolveEvaluatedParam` (`drivenVec`). `isTransformParam`
+  // non-transform vec reads through `resolveEvaluatedParam` (`evaluatedVec`). `isTransformParam`
   // is still the STRUCTURAL whitelist (never `resolved !== null` — an unrendered node's
   // transform resolves to null, which must not misclassify the param, the H153 gate).
   const isTransformParam = TRANSFORM_PARAMS.has(paramPath);
@@ -626,10 +626,16 @@ function VectorField({
       ),
     [dagState, nodeId, paramPath],
   );
-  const drivenVec = useMemo(() => {
-    // A driven TRANSFORM vec shows via `resolved` (the driver-aware transform seam), so
-    // only the non-transform road reads the driven value through resolveEvaluatedParam.
-    if (!driven || isTransformParam) return null;
+  // #1640 — a KEYED non-transform vec (a camera's aim, a material vector) moves with the playhead
+  // too, as a driven one does; it used to show the typed value while the render moved.
+  const animated = useMemo(
+    () => !isTransformParam && paramAnimationState(dagState, nodeId, paramPath, frame) !== 'none',
+    [isTransformParam, dagState, nodeId, paramPath, frame],
+  );
+  const evaluatedVec = useMemo(() => {
+    // A driven or keyed TRANSFORM vec shows via `resolved` (the transform seam), so only the
+    // non-transform road reads the evaluated value through resolveEvaluatedParam.
+    if ((!driven && !animated) || isTransformParam) return null;
     const r = resolveEvaluatedParam(
       dagState,
       nodeId,
@@ -638,15 +644,27 @@ function VectorField({
       cache,
     );
     return isVec3(r?.value) ? r!.value : null;
-  }, [driven, isTransformParam, dagState, nodeId, paramPath, frame, seconds, normalized, cache]);
-  // Per-param fallback (D-01): driven vec → resolved transform Vec3 → authored value.
-  const effectiveValue: readonly number[] = drivenVec ?? resolved ?? value;
+  }, [
+    driven,
+    animated,
+    isTransformParam,
+    dagState,
+    nodeId,
+    paramPath,
+    frame,
+    seconds,
+    normalized,
+    cache,
+  ]);
+  // Per-param fallback (D-01): evaluated non-transform vec → resolved transform Vec3 → authored.
+  const effectiveValue: readonly number[] = evaluatedVec ?? resolved ?? value;
   // D-02: read-only while playing IFF this field is showing an evaluated
   // value. `resolved !== null` means the helper returned a Vec3 (i.e. the
   // selection is a rendered transform-bearing node + paramPath is in the
-  // D-03 whitelist). A DRIVEN non-transform vec is also read-only (the driver
-  // owns the value; edit the source). Un-animated undriven vecs → editable.
-  const readOnly = driven || (playing && resolved !== null);
+  // D-03 whitelist); a keyed non-transform vec shows an evaluated value too. A DRIVEN
+  // non-transform vec is always read-only (the driver owns the value; edit the source).
+  // Un-animated undriven vecs → editable.
+  const readOnly = driven || (playing && (resolved !== null || evaluatedVec !== null));
   return (
     <div className="flex flex-col gap-1 px-3 py-1.5 text-[11px] text-fg/80">
       <span className="flex items-center gap-1">

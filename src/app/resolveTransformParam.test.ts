@@ -121,9 +121,13 @@ describe('resolveTransformParam', () => {
     // Nothing selected.
     expect(resolveTransformParam(state, null, 'position', ctx)).toBeNull();
 
-    // A real node that is neither a scene child nor a wrapped layer
-    // target (n_camera is wired to scene.camera, not scene.children).
-    expect(resolveTransformParam(state, 'n_camera', 'position', ctx)).toBeNull();
+    // A real node that nothing draws at a place of its own (the camera's lens data).
+    expect(resolveTransformParam(state, 'n_camera_data', 'position', ctx)).toBeNull();
+    // #1640 — the camera hangs off scene.camera, not scene.children, but it is drawn: its row
+    // reads its pose.
+    expect(resolveTransformParam(state, 'n_camera', 'position', ctx)).toEqual(
+      (state.nodes.n_camera.params as { position: number[] }).position,
+    );
 
     // Unknown id.
     expect(resolveTransformParam(state, 'not_a_node', 'position', ctx)).toBeNull();

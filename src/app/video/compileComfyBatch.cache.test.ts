@@ -3,7 +3,7 @@
 // "Render coherent clip" bakes each keyframeable workflow param (Mode B) or each scalar
 // basher_controller (Mode A) frame by frame through `resolveEvaluatedParam`. A driver on one of
 // those params evaluates its source through the scene, and on the "Camera Path + AI Walk" example
-// the camera aims at the walker's Hips, so a driver reading the camera reaches the character's
+// the camera aims at the walker's Hips, so a driver reading the camera reached the character's
 // whole-clip `RetargetClip`. Measured before the fix over 6 frames: 6 retargets per bake, one per
 // frame. With one evaluator cache per bake: 1.
 //
@@ -49,8 +49,10 @@ const CONTROLLED: ComfyApiJson = {
 beforeAll(() => registerAllNodes());
 
 /** The example with a workflow node holding `apiJson`: `keyed` ramps 0 → 5 over the first
- *  second, and `driven` is driven by the camera's x, which reaches the walker through the
- *  camera's aim. */
+ *  second, and `driven` is driven by the walker's group x, which reaches its whole-clip
+ *  retarget. (#1640 — it was the camera's x, read through the whole scene: a camera's transform
+ *  is now its own pose, so reading its x no longer walks the scene and retargets nothing, and
+ *  the count below could not tell once per bake from once per frame.) */
 async function exampleWithWorkflow(
   apiJson: ComfyApiJson,
   keyed: string,
@@ -85,7 +87,13 @@ async function exampleWithWorkflow(
     targetId: 'cw',
     paramPath: driven,
     driverId: 'cw_drv',
-    source: { kind: 'transform', id: 'cam_tx', label: 'tx', node: 'n_camera', channel: 'tx' },
+    source: {
+      kind: 'transform',
+      id: 'walk_tx',
+      label: 'tx',
+      node: 'n_nativeGrp_e6d386f1',
+      channel: 'tx',
+    },
   });
   if (!bind.ok) throw new Error(bind.reason);
   run(bind.ops);

@@ -53,7 +53,8 @@ import { layeredChannelValues } from './layeredChannels';
 import { driverChannelValuesForTarget } from './paramDrivers';
 import { resolveConstraintRotation, resolveConstraintPosition } from './nodeConstraints';
 import { useTransientEditStore } from './stores/transientEditStore';
-import { childEdges } from './resolveWorldTransform';
+import { cameraLocalPose, childEdges } from './resolveWorldTransform';
+import { isCameraNode } from './cameraNode';
 import {
   quaternionFromEulerDeg,
   resolvedQuaternionOf,
@@ -100,6 +101,28 @@ export function resolveEvaluatedTransform(
 ): EvaluatedTransform | null {
   // #1688 — the tree is evaluated at scene time; the node is re-timed onto its own clock below.
   ctx = ctxOnClock(state, 'scene', ctx);
+  // 0. A camera (#1640) hangs off `scene.camera`, never a scene child, so the walk below never
+  //    finds it and every reader fell back to the typed position while the camera moved. Its
+  //    local pose is the one the render draws (`cameraLocalPose`: keys on the playhead, the aim
+  //    and roll on its lens data), then the held edit, then a Follow-Path, in the order a mesh's
+  //    are applied below. Rotation and scale are the typed ones: a camera's orientation is its
+  //    aim, and the render reads neither off the Object.
+  if (isCameraNode(state, selectedId)) {
+    const params = (state.nodes[selectedId]?.params ?? {}) as {
+      rotation?: unknown;
+      scale?: unknown;
+    };
+    const keyed = { position: cameraLocalPose(state, selectedId, ctx, cache).position };
+    const held =
+      overlayTransients(keyed, selectedId, useTransientEditStore.getState().edits) ?? keyed;
+    const own = ctxOnClockOf(state, selectedId, ctx);
+    const followed = resolveConstraintPosition(state, selectedId, own, cache);
+    return {
+      position: followed ?? (held.position as Vec3),
+      rotation: isVec3(params.rotation) ? params.rotation : null,
+      scale: isVec3(params.scale) ? params.scale : null,
+    };
+  }
   // 1. Render root.
   const target = state.outputs.render;
   if (!target) return null;
@@ -158,8 +181,8 @@ export function resolveEvaluatedTransform(
     //   a LIGHT that is actually followed, return the followed position (a flat light's
     //   local == world, so resolveConstraintPosition's null-parent path gives world
     //   directly — the camera road's contract). Gated tightly: an UNCONSTRAINED light still
-    //   returns null → gizmo uses raw params, byte-identical; a followed CAMERA is excluded
-    //   by the kind check (it keeps resolveCameraPoseAt); a followed mesh/Null/Group already
+    //   returns null → gizmo uses raw params, byte-identical; a CAMERA never gets
+    //   here (step 0 answers it, #1640); a followed mesh/Null/Group already
     //   matched the children walk above and never reaches here.
     let lightVal: unknown;
     try {

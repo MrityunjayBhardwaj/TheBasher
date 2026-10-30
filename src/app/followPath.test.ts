@@ -38,6 +38,7 @@ import {
   resolveConstraintRotation,
 } from './nodeConstraints';
 import { resolveCameraPoseAt } from './activeCamera';
+import { resolveTransformParam } from './resolveTransformParam';
 import { withIds } from '../test-utils/curvePoints';
 
 type Vec3 = [number, number, number];
@@ -356,6 +357,15 @@ describe('FollowPath — the CAMERA road (the headline, and its own resolver)', 
     });
     const pose = resolveCameraPoseAt(state, 'n_camera', 0)!;
     expect(dist(pose.position as Vec3, [12, 0, 0])).toBeLessThan(1e-6);
+  });
+
+  it("#1640 — the camera's Position row shows it on the path, where it is drawn", () => {
+    const state = addFollowPath(addCurve(buildDefaultDagState()), {
+      target: 'n_camera',
+      evalTime: 1,
+    });
+    const row = resolveTransformParam(state, 'n_camera', 'position', ctxAt(0));
+    expect(dist(row as Vec3, [12, 0, 0])).toBeLessThan(1e-6);
   });
 
   it('"fly the path while locked on the hero" — position from the path, aim at the subject', () => {
