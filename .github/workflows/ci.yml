@@ -9,9 +9,12 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# Every job runs on ubuntu-24.04, not ubuntu-latest: ubuntu-latest moved to 26.04, where
+# Playwright 1.59 can't install Chromium, so every e2e job failed before a test ran (#1741).
+# Moving to a newer image is its own change: a Playwright that supports it, then the snapshots.
 jobs:
   lint:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -23,7 +26,7 @@ jobs:
       - run: npm run format:check
 
   typecheck:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -34,7 +37,7 @@ jobs:
       - run: npm run typecheck
 
   test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -53,7 +56,7 @@ jobs:
   # extra workers on one runner just timeshare the same silicon. More MACHINES
   # scale; more workers do not. `workers: 1` therefore stays as it is.
   e2e-shard:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       # Every shard must report, or the merged total silently describes a subset.
       # The MIN_EXPECTED_TESTS floor in e2e-diff is what catches that, but there is
@@ -114,7 +117,7 @@ jobs:
   # reads dist/. retries 0: a second attempt of a 45-min cap would double the
   # gate's wall time, and a rerun of the whole workflow is the flake policy.
   e2e-census:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
@@ -149,7 +152,7 @@ jobs:
   # rather than on the one whose playwright step runs under continue-on-error and
   # whose pass/fail we are explicitly told to ignore.
   e2e:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: [e2e-shard, e2e-census]
     # always(), not success(): a shard job that dies on install or build must still
     # reach the verdict step, because a missing shard has to be caught by the
@@ -201,7 +204,7 @@ jobs:
           retention-days: 14
 
   license-audit:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
