@@ -178,12 +178,7 @@ import type {
   Vec3,
 } from '../nodes/types';
 import { uiEvaluatorCache } from '../app/uiEvaluatorCache';
-import {
-  createFrameEvaluator,
-  FrameEvaluatorProvider,
-  useFrameEvaluator,
-  useFrameTick,
-} from './frameEvaluator';
+import { createFrameEvaluator, FrameEvaluatorProvider, useFrameTick } from './frameEvaluator';
 import { drawnBox } from '../render/drawnBox';
 
 let rectAreaInit = false;
@@ -1436,7 +1431,6 @@ function DirectChannelsLightR({
     value: unknown;
     followKey: string;
   } | null>(null);
-  const evaluator = useFrameEvaluator();
   useFrameTick(nodeId, () => {
     const seconds = liveSecondsOf(nodeId);
     const { v, followKey } = build(seconds);
@@ -1452,7 +1446,6 @@ function DirectChannelsLightR({
       return;
     }
     lastApplied.current = { seconds, channels, transients, value, followKey };
-    evaluator.record(nodeId, v);
     // #1728 — committed now, not scheduled: a deferred update from a frame loop is starved by the
     // playhead's higher-priority updates while the frame is busy, and the light froze (#1726).
     // A light reads its whole value (scale as brightness, position for its aim), so it has no
@@ -2422,12 +2415,6 @@ function useOverlayDraw(
     value: unknown;
     key: string;
   } | null>(null);
-  // #1730 — the group is what carries this node's world when the transform is written onto it.
-  const evaluator = useFrameEvaluator();
-  useLayoutEffect(() => {
-    if (!direct || !group.current) return;
-    return evaluator.registerDrawn(nodeId, group.current);
-  }, [evaluator, direct, nodeId]);
   // #1730 — run by the frame evaluator, not a frame loop of its own: holders before what they
   // hold, and any React update committed with the frame's others in one synchronous commit.
   useFrameTick(nodeId, () => {
@@ -2444,7 +2431,6 @@ function useOverlayDraw(
     if (unchanged && la.key === key) return;
     last.current = { seconds, inputs, value, key };
     latest.current = v;
-    evaluator.record(nodeId, v);
     if (direct && group.current) writeTransform(group.current, v);
     // Committed in the evaluator's one synchronous commit, for the reason it gives: an animated
     // colour or size would otherwise lag behind the playhead under the same load.
