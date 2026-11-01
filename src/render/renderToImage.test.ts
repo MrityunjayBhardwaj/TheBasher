@@ -23,6 +23,7 @@ const PERSP: CameraPose = aimed({
   kind: 'PerspectiveCamera',
   position: [3, 2, 3],
   lookAt: [0, 0, 0],
+  orthoScale: 6,
   fov: 45,
   near: 0.1,
   far: 1000,
@@ -86,6 +87,19 @@ describe('buildRenderCamera', () => {
   it('builds an orthographic camera for an ortho pose', () => {
     const cam = buildRenderCamera({ ...PERSP, kind: 'OrthographicCamera' }, 1600, 900);
     expect((cam as THREE.OrthographicCamera).isOrthographicCamera).toBe(true);
+  });
+
+  it('frames an ortho camera by its ortho scale: that tall, the width by the aspect (#1760)', () => {
+    // Same fov, same aim distance, two scales: only the scale may move the frame.
+    for (const orthoScale of [2, 8]) {
+      const cam = buildRenderCamera(
+        { ...PERSP, kind: 'OrthographicCamera', orthoScale },
+        1600,
+        900,
+      ) as THREE.OrthographicCamera;
+      expect(cam.top - cam.bottom).toBeCloseTo(orthoScale, 12);
+      expect(cam.right - cam.left).toBeCloseTo((orthoScale * 1600) / 900, 12);
+    }
   });
 });
 

@@ -60,6 +60,9 @@ export interface CameraPose {
   position: [number, number, number];
   lookAt: [number, number, number];
   fov: number;
+  /** #1760 — an orthographic camera's frame: the full height it sees, in world units (Blender's
+   *  `ortho_scale`, Sensor Fit Vertical). Read only when `kind` is orthographic. */
+  orthoScale: number;
   near: number;
   far: number;
   /** Roll about the view axis, in DEGREES (#229). Banks the implicit up-vector
@@ -78,6 +81,7 @@ export const DEFAULT_CAMERA_POSE: CameraPose = {
   position: [3, 2, 3],
   lookAt: [0, 0, 0],
   fov: 45,
+  orthoScale: 6,
   near: DEFAULT_CAMERA_NEAR,
   far: DEFAULT_CAMERA_FAR,
   roll: 0,
@@ -241,6 +245,10 @@ export function cameraPoseFromPair(
       position: isVec3(o.position) ? o.position : DEFAULT_CAMERA_POSE.position,
       lookAt: isVec3(lens.lookAt) ? lens.lookAt : DEFAULT_CAMERA_POSE.lookAt,
       fov: typeof lens.fov === 'number' ? lens.fov : DEFAULT_CAMERA_POSE.fov,
+      orthoScale:
+        typeof lens.orthoScale === 'number' && lens.orthoScale > 0
+          ? lens.orthoScale
+          : DEFAULT_CAMERA_POSE.orthoScale,
       near: typeof lens.near === 'number' ? lens.near : DEFAULT_CAMERA_POSE.near,
       far: typeof lens.far === 'number' ? lens.far : DEFAULT_CAMERA_POSE.far,
       roll: typeof lens.roll === 'number' ? lens.roll : DEFAULT_CAMERA_POSE.roll,

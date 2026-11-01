@@ -376,6 +376,7 @@ describe('activeCamera — cameraPoseFromPair', () => {
       kind: 'PerspectiveCamera',
       position: [3, 2, 3],
       lookAt: [0, 0, 0],
+      orthoScale: 6,
       fov: 45,
       near: 0.1,
       far: 1000,
@@ -496,11 +497,13 @@ describe('activeCamera — cameraPoseFromPair', () => {
       type: 'CameraData',
       // A split camera's node type is `Object` for BOTH projections, so the fused
       // `node.type === 'OrthographicCamera'` test cannot answer this question any more.
-      params: { projection: 'Orthographic', fov: 45, zoom: 60 },
+      params: { projection: 'Orthographic', fov: 45, orthoScale: 60 },
       inputs: {},
     } as unknown as Node;
 
     expect(cameraPoseFromPair(object, data)?.kind).toBe('OrthographicCamera');
+    // #1760 — and the pose carries the lens's own ortho scale, the frame the render takes.
+    expect(cameraPoseFromPair(object, data)?.orthoScale).toBe(60);
   });
 });
 

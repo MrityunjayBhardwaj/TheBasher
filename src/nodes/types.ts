@@ -57,7 +57,8 @@ export interface PerspectiveCameraValue {
 
 export interface OrthographicCameraValue {
   readonly kind: 'OrthographicCamera';
-  readonly zoom: number;
+  /** The full height seen, in world units (Blender `ortho_scale`, Sensor Fit Vertical). */
+  readonly orthoScale: number;
   readonly near: number;
   readonly far: number;
   readonly position: Vec3;
@@ -2233,7 +2234,7 @@ export interface LightDataValue {
 }
 
 /**
- * The camera's data half — the LENS (projection + focal length/zoom, clip planes,
+ * The camera's data half — the LENS (projection + focal length/ortho scale, clip planes,
  * sensor, depth of field) and the authored aim (`lookAt`/`roll`, parity-first #387
  * D1), and DELIBERATELY no position (the Object owns it).
  *
@@ -2241,7 +2242,7 @@ export interface LightDataValue {
  * collapses the two fused camera NODES into one Camera datablock, Blender-style. The
  * per-projection fields are all present (the schema defaults them) but a given
  * projection reads only the subset it owns — `fov` is inert for an orthographic
- * camera, `zoom` for a perspective one.
+ * camera, `orthoScale` for a perspective one.
  *
  * ⚠️ Unlike LightData, this value is NOT what frames the shot. `recomposeCameraObject`
  * turns the pair into the flat `CameraValue` the DAG's camera consumers read, but that
@@ -2254,8 +2255,8 @@ export interface CameraDataValue {
   readonly projection: 'Perspective' | 'Orthographic';
   /** Vertical FOV in degrees. Required with no schema default — see CameraData.ts. */
   readonly fov: number;
-  /** Orthographic scale. Read by nothing today (#478); owned here regardless. */
-  readonly zoom: number;
+  /** Orthographic scale: the full height seen, in world units (#478, #1760). */
+  readonly orthoScale: number;
   readonly near: number;
   readonly far: number;
   readonly sensorSize: number;

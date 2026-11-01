@@ -12,8 +12,9 @@
 // `observableDataParam`, chosen precisely because it survives to the evaluated value
 // unchanged — that property is what makes it a usable probe. R3, R4, R5, R8 and R10 all bind
 // that one param and no other. So for a camera with twelve schema params, the matrix proves
-// one of them makes it end to end and says nothing about the other eleven. `zoom` sits in
-// that blind spot, which is why #478 was found by reading rather than by a red test.
+// one of them makes it end to end and says nothing about the other eleven. The camera's old
+// `zoom` sat in that blind spot, which is why #478 was found by reading rather than by a red
+// test (it became the read `orthoScale` under #1760).
 //
 // WHAT IS DECLARED HERE, AND WHAT IS MEASURED
 // Exactly one thing is declared: WHO READS THE PARAM. Everything about where the param
@@ -25,8 +26,8 @@
 //   'value'    — present in the data node's evaluated value but dropped before the renderer
 //   'consumed' — absent under its own name; folded into some other key at evaluate time
 //
-// That distinction is not cosmetic. `zoom` is 'value': `CameraData.evaluate` emits it and
-// `recomposeCameraObject` drops it, so it is authored, saved, and never seen. Whereas
+// That distinction is not cosmetic. The old camera `zoom` was 'value': `CameraData.evaluate`
+// emitted it and nothing past it read it, so it was authored, saved, and never seen (#478). Whereas
 // `size` is 'consumed' — it becomes an opaque `GeometryRef` and is very much read. A gate
 // that only asked "does the name survive?" would call both broken.
 //
@@ -35,9 +36,9 @@
 // EXISTS and MENTIONS the param IN CODE — a comment, a file name or the text of a message does
 // not count (#1407: eleven rows were passing on prose alone, two of them naming code that had
 // been deleted). That is a necessary condition, not a sufficient one, and
-// there is a live counter-example in this very table: `zoom` appears in
-// `src/nodes/cameraRecompose.ts` and is nonetheless dropped by it. So a wrong `readBy` can
-// pass. What the gate does buy is totality — every param must have an answer, a new param
+// there was a live counter-example in this very table: the old camera `zoom` appeared in
+// `src/nodes/cameraRecompose.ts` and was read by nothing past it (#478). So a wrong `readBy`
+// can pass. What the gate does buy is totality — every param must have an answer, a new param
 // cannot appear without one, and a `none` answer must carry an issue number. The remaining
 // judgement is human, and `unverified` exists so that unfinished judgement is COUNTED rather
 // than guessed at.
@@ -184,15 +185,10 @@ export const PARAM_READERS: Record<SplitKindName, Record<string, ParamReader>> =
     // The projection rule lives in `cameraNode.ts`; the pose resolver asks it.
     projection: { by: CAMERA_NODE },
     fov: { by: ACTIVE_CAMERA },
-    // The one this table was built to make visible. `CameraData.evaluate` emits it and
-    // `recomposeCameraObject` drops it, so it is authored in the inspector, written to the
-    // project file, and read by nothing. The gate measures it as 'value' — reaching the
-    // evaluated value and stopping there — which is the signature of the whole class.
-    zoom: {
-      none: true,
-      why: 'authored and saved, dropped at recompose, read by no renderer',
-      issue: '#478',
-    },
+    // The one this table was built to make visible: as `zoom` it was authored, saved and read
+    // by nothing (#478). As `orthoScale` (#1760) the pose resolver reads it and the render
+    // frames an orthographic camera by it.
+    orthoScale: { by: ACTIVE_CAMERA },
     near: { by: ACTIVE_CAMERA },
     far: { by: ACTIVE_CAMERA },
     // The DoF and sensor group reaches the data value and is dropped at recompose exactly as

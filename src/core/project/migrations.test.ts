@@ -1502,9 +1502,14 @@ describe('object↔data split v6 → v7: fused cameras → Object + CameraData (
       projection: 'Orthographic',
       // D5 — the ONE invented value in this migration. An orthographic source never
       // had an fov and `CameraData.fov` is required; it is inert while the projection
-      // is orthographic (the recompose reads `zoom`).
+      // is orthographic.
       fov: 45,
-      zoom: 33,
+      // #1760 (v26) — the read-by-nothing `zoom: 33` is gone; the camera is framed by its own
+      // ortho scale, filled with the height the render framed it at: 2·tan(fov/2)·aim distance.
+      orthoScale:
+        2 *
+        Math.tan((45 * Math.PI) / 360) *
+        Math.hypot(CAM_LOOKAT[0] + 2, CAM_LOOKAT[1] - 6, CAM_LOOKAT[2] - 9),
       near: 0.02,
       far: CAM_FAR,
       lookAt: CAM_LOOKAT,

@@ -91,7 +91,7 @@ const ALL: NodeDefinition[] = [
   // Time (P2 — the only impure source; pure consumers wire to it)
   TimeSourceNode as unknown as NodeDefinition,
   // Cameras
-  // #387 (Stage C · C4) — the camera's data half (the lens: projection + fov/zoom,
+  // #387 (Stage C · C4) — the camera's data half (the lens: projection + fov/orthoScale,
   // clip planes, sensor, DoF, plus the authored aim). ONE discriminated node
   // (projection enum) covering both fused kinds — the THIRD non-mesh ObjectData, and
   // the first whose renderer reads a pose built from RAW params rather than the

@@ -130,7 +130,7 @@ export function CameraLensControls({
     sensorSize?: number;
     near?: number;
     far?: number;
-    zoom?: number;
+    orthoScale?: number;
     dofEnabled?: boolean;
     focusDistance?: number;
     fStop?: number;
@@ -140,7 +140,7 @@ export function CameraLensControls({
   // about the node's type. Post-split BOTH projections wear `type === 'Object'` on the
   // node this control is mounted for, so `node.type === 'OrthographicCamera'` answers
   // "perspective" for every split ortho camera: focal length + sensor + DoF rows on a
-  // camera that has none, and the `zoom` field gone. Asked through `cameraProjectionOf`
+  // camera that has none, and the ortho scale field gone. Asked through `cameraProjectionOf`
   // (which reads the `CameraData.projection` discriminator when split and the node type
   // when fused), so a still-fused camera is byte-identical ([[V119]]).
   const isOrtho = cameraProjectionOf(dagState, poseNodeId) === 'Orthographic';
@@ -224,16 +224,17 @@ export function CameraLensControls({
       <CameraLookAtTarget nodeId={nodeId} poseNodeId={poseNodeId} />
       {isOrtho ? (
         <label className={ROW}>
-          <span className={LABEL}>zoom</span>
+          {/* #478 #1760 — Blender's Orthographic Scale: the full height the camera sees. */}
+          <span className={LABEL}>ortho scale</span>
           <input
             type="number"
-            step={1}
+            step={0.1}
             min={0}
-            value={params.zoom ?? 50}
-            data-testid={`inspector-camera-zoom-${nodeId}`}
+            value={params.orthoScale ?? 6}
+            data-testid={`inspector-camera-ortho-scale-${nodeId}`}
             onChange={(e) => {
               const n = Number(e.target.value);
-              if (Number.isFinite(n) && n > 0) setParam('zoom', n, 'set camera zoom');
+              if (Number.isFinite(n) && n > 0) setParam('orthoScale', n, 'set camera ortho scale');
             }}
             className={NUM}
           />

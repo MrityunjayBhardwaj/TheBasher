@@ -17,7 +17,7 @@
 //      one too. A gap with no issue is a gap nobody will close.
 //
 //   3. A NAMED READER MUST EXIST AND MENTION THE PARAM IN CODE. Weak on purpose and documented
-//      as such — `zoom` is mentioned by the very file that drops it. It catches the careless
+//      as such — the camera's old `zoom` was mentioned by a file that read nothing of it (#478). It catches the careless
 //      case (a reader that does not name the param in code at all) and nothing subtler. It is
 //      stated here so nobody reads a green gate as proof the reader really reads. A comment, a
 //      file name or a message's text is NOT a mention (#1407); a reader that takes the params
@@ -30,8 +30,8 @@
 //      declaration is simply wrong.
 //
 // WHY THE SEAM IS MEASURED AT TWO PLACES. A param can die in two different ways and they need
-// telling apart. `zoom` is emitted by `CameraData.evaluate` and dropped by
-// `recomposeCameraObject` — it reaches the data value and stops. `widthSegments` never
+// telling apart. The camera's old `zoom` was emitted by `CameraData.evaluate` and read by
+// nothing past it — it reached the data value and stopped (#478). `widthSegments` never
 // appears in the data value at all, because it is folded into a `GeometryRef`. The first is a
 // defect; the second is normal. One seam cannot distinguish them, so the gate looks at both.
 //

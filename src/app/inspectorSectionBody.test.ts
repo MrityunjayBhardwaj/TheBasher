@@ -148,6 +148,7 @@ describe('#458 per-section row suppression is equivalent to the global filter it
       'fov',
       'modifiers',
       'near',
+      'orthoScale',
       'points',
       // #1153 — the rotation-mode control draws both; the rotation row it REPLACES is not
       // listed, because an anchor is replaced in place rather than omitted.
@@ -157,7 +158,6 @@ describe('#458 per-section row suppression is equivalent to the global filter it
       // Was a `node.type === 'MaterialOverride'` skip in the caller. It routes
       // to no section, so only the pre-grouping skip keeps it off screen.
       'slotIndex',
-      'zoom',
     ]);
   });
 

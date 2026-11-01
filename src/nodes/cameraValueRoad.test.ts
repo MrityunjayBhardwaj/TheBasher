@@ -123,18 +123,18 @@ describe('#387 slice 4 — Scene.camera recomposes the split pair', () => {
     // Post-split BOTH projections wear `type: 'Object'`, so a recompose hardcoded to
     // Perspective passes every test above. This is the one that separates them.
     const cam = sceneCamera(
-      sceneWith(splitCameraOps('n_cam', { projection: 'Orthographic', zoom: 12 }), 'n_cam'),
+      sceneWith(splitCameraOps('n_cam', { projection: 'Orthographic', orthoScale: 12 }), 'n_cam'),
     );
     expect(cam.kind).toBe('OrthographicCamera');
     if (cam.kind !== 'OrthographicCamera') throw new Error('unreachable');
-    expect(cam.zoom).toBe(12);
+    expect(cam.orthoScale).toBe(12);
     expect(cam.position).toEqual([7, 1, -4]);
     // …and it must equal what the fused OrthographicCamera produced, same as above. Note
     // there is no `fov` on this arm — the orthographic value never carried one, so the
     // whole struct is asserted rather than field-by-field: an extra key is a difference.
     expect(cam).toEqual({
       kind: 'OrthographicCamera',
-      zoom: 12,
+      orthoScale: 12,
       near: 0.02,
       far: 250,
       position: [7, 1, -4],

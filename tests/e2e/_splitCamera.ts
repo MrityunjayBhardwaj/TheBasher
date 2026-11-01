@@ -1,7 +1,7 @@
 // splitCameraOps — the canonical object↔data split-camera op list for end-to-end specs.
 //
 // #387 Stage C (C4): a camera is an `Object` (owning the transform) wired via its `data`
-// socket to a `CameraData` (owning the LENS — projection/fov/zoom/clip planes/DoF, plus the
+// socket to a `CameraData` (owning the LENS — projection/fov/orthoScale/clip planes/DoF, plus the
 // aim params `lookAt` and `roll`, which stay on the data half parity-first). This mirrors
 // what Add ▸ Camera (src/app/addPrimitives.ts), `default.ts`'s seed and the v6→v7 load
 // migration all produce, so a spec that used to inject a single fused camera node stays on

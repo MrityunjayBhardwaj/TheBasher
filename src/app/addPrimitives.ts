@@ -712,20 +712,18 @@ function lightDataParamsFor(kind: PrimitiveKind): Record<string, unknown> {
  * and the pose fallback use, so which road minted a camera no longer decides its clipping.
  * Before that, this builder's `far: 1000` was the lone 1000 against their 500, and its
  * near was 0.01 everywhere. Every OTHER value is still preserved exactly as the fused
- * builders seeded it, including the orthographic `zoom: 1`. NO behaviour change rides in on the creation flip: this slice
- * changes the SHAPE a new camera is minted in, nothing about what it looks like. The ortho
- * `zoom: 1` in particular is currently read by no renderer at all (#478) — it is seeded here
- * unchanged so that issue stays exactly as measurable as it was, and is fixed under #478.
+ * builders seeded it. An orthographic camera takes `CameraData`'s own ortho scale, Blender's
+ * default 6 (#478, #1760); the `zoom: 1` it used to be seeded with was read by nothing.
  *
  * `fov` is written for BOTH projections because `CameraData.fov` is required with no zod
  * default (deliberately — 45 is the pose road's failure value, so it must never arrive as a
- * silent fallback). Under `projection: 'Orthographic'` it is inert: the recompose reads
- * `zoom`. This is the same one-invented-value-in-one-place call the v6→v7 migration makes.
+ * silent fallback). Under `projection: 'Orthographic'` it is inert: the frame is
+ * `orthoScale`. This is the same one-invented-value-in-one-place call the v6→v7 migration makes.
  */
 function cameraDataParamsFor(kind: PrimitiveKind): Record<string, unknown> {
   const shared = { fov: 45, near: DEFAULT_CAMERA_NEAR, far: DEFAULT_CAMERA_FAR, lookAt: [0, 0, 0] };
   return kind === 'OrthographicCamera'
-    ? { projection: 'Orthographic', zoom: 1, ...shared }
+    ? { projection: 'Orthographic', ...shared }
     : { projection: 'Perspective', ...shared };
 }
 

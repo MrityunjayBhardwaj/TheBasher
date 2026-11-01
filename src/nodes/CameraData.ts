@@ -2,14 +2,14 @@
 // (#387, Stage C · C4).
 //
 // A camera's substance is its LENS — how it projects (perspective vs orthographic),
-// its focal length / zoom, its clip planes, and its depth-of-field. Where it sits in
+// its focal length / ortho scale, its clip planes, and its depth-of-field. Where it sits in
 // the world is a pose the Object owns. This node owns the lens half and DELIBERATELY
 // no position (the Object's `position` is the camera's position).
 //
 // ONE node with a `projection` discriminator, not two — the same call LightData made
 // for four light kinds, and for the same reason: Blender models perspective and
 // orthographic as ONE camera datablock with a Type enum, and the two fused nodes
-// already share every param but `fov`/`zoom`. One union arm, one migration writer,
+// already share every param but `fov`/`orthoScale`. One union arm, one migration writer,
 // one register entry, one inspector section.
 //
 // PARITY-FIRST: `lookAt` and `roll` STAY HERE (#387 D1). The design doc's longer-term
@@ -74,11 +74,13 @@ export const CameraDataParams = z.object({
    *  the orthographic migration has to write an fov its source never had; that is one
    *  invented value in one place, which is the cheaper of the two costs.
    *
-   *  Inert while `projection === 'Orthographic'` (the recompose reads `zoom` instead). */
+   *  Inert while `projection === 'Orthographic'` (the frame is `orthoScale` instead). */
   fov: z.number().min(1).max(170),
-  /** Orthographic scale. Owned here regardless of how #478 resolves — it is a lens
-   *  param by every definition including Blender's. (#478: nothing currently READS it.) */
-  zoom: z.number().positive().default(50),
+  /** Orthographic scale (#478, #1760): the full HEIGHT the camera sees, in world units —
+   *  Blender's `ortho_scale` with Sensor Fit Vertical, the fit Basher's vertical `fov` and
+   *  `sensorSize` already use (measured in Blender 5.1.1: Vertical fit → view height =
+   *  ortho_scale at any aspect). Default 6, Blender's. Inert for a perspective camera. */
+  orthoScale: z.number().positive().default(6),
   near: z.number().positive().default(DEFAULT_CAMERA_NEAR),
   far: z.number().positive().default(DEFAULT_CAMERA_FAR),
   /** Sensor height (mm) along the vertical FOV axis — authoring metadata for the
@@ -116,7 +118,7 @@ export const CameraDataNode: NodeDefinition<CameraDataParams, CameraDataValue> =
   home: {
     projection: 'camera',
     fov: 'camera',
-    zoom: 'camera',
+    orthoScale: 'camera',
     near: 'camera',
     far: 'camera',
     sensorSize: 'camera',
@@ -153,7 +155,7 @@ export const CameraDataNode: NodeDefinition<CameraDataParams, CameraDataValue> =
       // the same required param. Inventing one here would be the 45 the schema note
       // above refuses, just moved a layer further from where anyone would look for it.
       fov: params.fov,
-      zoom: params.zoom ?? 50,
+      orthoScale: params.orthoScale ?? 6,
       near: params.near ?? DEFAULT_CAMERA_NEAR,
       far: params.far ?? DEFAULT_CAMERA_FAR,
       sensorSize: params.sensorSize ?? 36,

@@ -75,11 +75,10 @@ export function perspectiveFrustumSegments(
   return out;
 }
 
-/** Ortho cameras draw a box (no convergence) of fixed display size. Width
- *  shrinks with zoom so a "more zoomed" ortho cam reads smaller, matching the
- *  perspective frustum's visual language. Pure + unit-testable. */
-export function orthoFrustumSegments(zoom: number, aspect: number, depth: number): number[] {
-  const hh = depth / (Number.isFinite(zoom) && zoom > 0 ? zoom : 1);
+/** Ortho cameras draw a box (no convergence) the size of what they see, as Blender draws one:
+ *  `orthoScale` tall (#1760), `aspect` wide, `depth` deep. Pure + unit-testable. */
+export function orthoFrustumSegments(orthoScale: number, aspect: number, depth: number): number[] {
+  const hh = (Number.isFinite(orthoScale) && orthoScale > 0 ? orthoScale : 6) / 2;
   const hw = hh * aspect;
   const fr: Array<[number, number, number]> = [
     [-hw, hh, 0],
@@ -119,9 +118,9 @@ export function CameraHelper({ pose, pickId, active }: CameraHelperProps) {
   const segs = useMemo(
     () =>
       pose.kind === 'OrthographicCamera'
-        ? orthoFrustumSegments(pose.fov, FRUSTUM_ASPECT, FRUSTUM_DEPTH)
+        ? orthoFrustumSegments(pose.orthoScale, FRUSTUM_ASPECT, FRUSTUM_DEPTH)
         : perspectiveFrustumSegments(pose.fov, FRUSTUM_ASPECT, FRUSTUM_DEPTH),
-    [pose.kind, pose.fov],
+    [pose.kind, pose.fov, pose.orthoScale],
   );
 
   const geom = useMemo(() => {

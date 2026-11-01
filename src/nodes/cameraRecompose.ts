@@ -54,7 +54,7 @@ export function recomposeCameraObject(value: unknown): CameraValue | null {
     case 'Orthographic':
       return {
         kind: 'OrthographicCamera',
-        zoom: d.zoom,
+        orthoScale: d.orthoScale,
         near: d.near,
         far: d.far,
         position,

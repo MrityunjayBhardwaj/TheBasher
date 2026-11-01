@@ -78,14 +78,11 @@ export function buildRenderCamera(pose: CameraPose, width: number, height: numbe
   const aspect = width / height;
   let cam: THREE.Camera;
   if (pose.kind === 'OrthographicCamera') {
-    // Ortho is rare; derive a nominal frustum half-height from the fov+distance
-    // so the framing is sane (cameraPoseFromNode defaults fov=45 for ortho).
-    const dist = Math.hypot(
-      pose.position[0] - pose.lookAt[0],
-      pose.position[1] - pose.lookAt[1],
-      pose.position[2] - pose.lookAt[2],
-    );
-    const halfH = Math.tan((pose.fov * Math.PI) / 360) * dist || 1;
+    // #478 #1760 — framed by the camera's own ortho scale: the full height it sees (Blender's
+    // `ortho_scale`, Sensor Fit Vertical), the width following the render aspect. It used to be
+    // guessed from the fov and the aim distance; the v26 step filled each saved camera's scale
+    // with exactly that, so a saved shot frames as it did.
+    const halfH = pose.orthoScale / 2;
     cam = new THREE.OrthographicCamera(
       -halfH * aspect,
       halfH * aspect,

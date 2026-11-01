@@ -37,10 +37,9 @@ describe('orthoFrustumSegments', () => {
     expect(segs.length).toBe(12 * 2 * 3);
   });
 
-  it('shrinks with zoom (higher zoom → smaller box)', () => {
-    const z1 = orthoFrustumSegments(1, 1, 1);
-    const z2 = orthoFrustumSegments(2, 1, 1);
-    // front top-left y at index 1.
-    expect(Math.abs(z2[1])).toBeCloseTo(Math.abs(z1[1]) / 2);
+  it('is as tall as the ortho scale (#1760): what the camera sees, as Blender draws it', () => {
+    // front top-left y at index 1 is the half-height.
+    expect(orthoFrustumSegments(1, 1, 1)[1]).toBeCloseTo(0.5);
+    expect(orthoFrustumSegments(8, 1, 1)[1]).toBeCloseTo(4);
   });
 });

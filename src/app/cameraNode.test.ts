@@ -153,7 +153,10 @@ describe('#387 slice 3 — the re-keyed consumers accept a split camera', () => 
       splitOps(
         'camera',
         { objectId: 'n_cam_2' },
-        { data: { fov: 28, projection: 'Orthographic', zoom: 1 }, object: { position: [0, 0, 5] } },
+        {
+          data: { fov: 28, projection: 'Orthographic', orthoScale: 1 },
+          object: { position: [0, 0, 5] },
+        },
       ),
     );
     // The second camera is the OTHER projection, so the walk is asked to find two cameras

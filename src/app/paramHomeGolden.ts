@@ -154,7 +154,7 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
   BoneNameMap: '[] name=(unrouted) map=(unrouted)',
   BoxData: '[mesh,material] size=mesh material=material',
   CameraData:
-    '[camera] projection=camera fov=camera zoom=camera near=camera far=camera sensorSize=camera dofEnabled=camera focusDistance=camera fStop=camera focusOnTarget=camera lookAt=camera roll=camera',
+    '[camera] projection=camera fov=camera orthoScale=camera near=camera far=camera sensorSize=camera dofEnabled=camera focusDistance=camera fStop=camera focusOnTarget=camera lookAt=camera roll=camera',
   CameraSelect: '[layout] active=(unrouted)',
   // #1353 — three cells, all on the stack card: the two settings a capture has and the mute. The
   // armature is an INPUT, as it is on `ArmatureModifier`. #1539 adds three more on the same card:

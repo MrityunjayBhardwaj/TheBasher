@@ -134,7 +134,7 @@ const CAMERAS: StrategyResource = {
 Two camera types in v0.5:
 - **PerspectiveCamera** — \`fov\` (vertical, degrees, default 45),
   \`near\` (default 0.01), \`far\` (default 1000), \`position\`, \`lookAt\`.
-- **OrthographicCamera** — \`zoom\`, \`near\`, \`far\`, \`position\`, \`lookAt\`.
+- **OrthographicCamera** — \`orthoScale\` (the full height it sees), \`near\`, \`far\`, \`position\`, \`lookAt\`.
 
 ## FOV cheat sheet (vertical, degrees)
 - 20° — telephoto / zoomed-in. Compressed depth.

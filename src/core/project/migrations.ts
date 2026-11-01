@@ -2465,6 +2465,13 @@ export function migrateShotsToCuts(raw: unknown): unknown {
 //
 // A strip placed on a camera can carry `lookAt` or `roll` inside its clip; those are not moved,
 // and each such camera is LOGGED so the loss is never silent.
+//
+// The same step gives an orthographic camera its own frame (#478, #1760). Its lens `zoom` was
+// read by nothing: the render framed it `2·tan(fov/2)·|lookAt − position|` tall, from its fov
+// and its aim distance. That height becomes its `orthoScale` (Blender's `ortho_scale`, Sensor Fit
+// Vertical), so the shot frames as it did; at no distance it was 2. The distance is the rest
+// pose's — a keyed dolly of an orthographic camera used to change its framing and now does not.
+// `zoom` leaves every lens, and keys or drivers on it are removed (they drove nothing), LOGGED.
 const AIM_PATHS = new Set(['lookAt', 'roll']);
 
 export function migrateCameraAimToTrackTo(raw: unknown): unknown {
@@ -2484,15 +2491,40 @@ export function migrateCameraAimToTrackTo(raw: unknown): unknown {
 
   let cameras = 0;
   let movedKeys = 0;
+  let droppedZoomKeys = 0;
   const stripCameras: string[] = [];
   for (const [dataId, lens] of entries) {
     if (lens?.type !== 'CameraData') continue;
     const objId = entries.find(([, n]) =>
       asRefs(n?.inputs?.data).some((r) => r.node === dataId),
     )?.[0];
+    // #1760 — `zoom` → `orthoScale`, worn or not.
+    const { zoom: _zoom, ...lensParams } = lens.params ?? {};
+    void _zoom;
+    if (lens.params?.projection === 'Orthographic') {
+      const at = objId ? out[objId]?.params?.position : undefined;
+      const look = lensParams.lookAt;
+      const dist =
+        isVec3(at) && isVec3(look)
+          ? Math.hypot(look[0] - at[0], look[1] - at[1], look[2] - at[2])
+          : 0;
+      lensParams.orthoScale = 2 * (Math.tan((num(lensParams.fov, 45) * Math.PI) / 360) * dist || 1);
+    }
+    out[dataId] = { ...lens, params: lensParams };
+    for (const [id, n] of entries) {
+      const p = n?.params;
+      if (p?.paramPath !== 'zoom' || (p.target !== dataId && p.target !== objId)) continue;
+      if (
+        !(typeof n.type === 'string' && n.type.startsWith('KeyframeChannel')) &&
+        n.type !== 'ParamDriver'
+      )
+        continue;
+      delete out[id];
+      droppedZoomKeys++;
+    }
     if (!objId) continue; // a lens no camera wears aims nothing
     cameras++;
-    const lp = lens.params ?? {};
+    const lp = lensParams;
     const roll = num(lp.roll, 0);
     const existing = entries.filter(([, n]) => n?.type === 'TrackTo' && n.params?.target === objId);
     const lowest = Math.min(0, ...existing.map(([, n]) => num(n.params?.order, 0)));
@@ -2550,6 +2582,12 @@ export function migrateCameraAimToTrackTo(raw: unknown): unknown {
     if (entries.some(([, n]) => n?.type === 'Strip' && holders.has(n.params?.target as string))) {
       stripCameras.push(objId);
     }
+  }
+  if (droppedZoomKeys > 0) {
+    console.warn(
+      `[migrateCameraAimToTrackTo] ${droppedZoomKeys} key/driver node(s) on a camera's zoom ` +
+        `removed: nothing read zoom; an orthographic camera is framed by its ortho scale (#1760).`,
+    );
   }
   if (cameras > 0) {
     console.warn(

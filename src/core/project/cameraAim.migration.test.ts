@@ -12,6 +12,8 @@ import { makeSplitCamera } from '../../test-utils/splitCamera';
 import { enumerateCameraNodeIds, resolveCameraPoseAt } from '../../app/activeCamera';
 import { cameraOrientationTuple } from '../../app/cameraOrientation';
 import v25Poses from './__fixtures__/cameraAim.v25poses.json';
+import * as THREE from 'three';
+import { buildRenderCamera } from '../../render/renderToImage';
 
 beforeEach(() => {
   __resetRegistryForTests();
@@ -280,5 +282,91 @@ describe('#1762 — v25 → v26 moves a camera’s aim onto a Track-To', () => {
           `${id} ${cam}`,
         ).toBe(true);
     }
+  });
+});
+
+// #1760 (#478) — the same step gives an orthographic camera its own frame. Its lens `zoom` was read
+// by nothing; the render framed it `2·tan(fov/2)·aim distance` tall. That height is its ortho scale
+// now, so the shot is framed as it was.
+describe('#1760 — an orthographic camera is framed by its ortho scale, filled from the old frame', () => {
+  /** A v25 state: the default scene, plus an orthographic camera 5 units from its look-at with a
+   *  zoom keyed, a perspective camera with a zoom, and an orthographic lens no camera wears. The
+   *  zoom fields are written raw — the v26 schema no longer has one. */
+  function v25(): DagState {
+    let s = makeSplitCamera(buildDefaultDagState(), {
+      objectId: 'ortho',
+      position: [3, 4, 0],
+      fov: 30,
+      lens: { projection: 'Orthographic', lookAt: [0, 0, 0] },
+    }).state;
+    s = makeSplitCamera(s, { objectId: 'persp', position: [0, 1, 6] }).state;
+    s = run(s, [
+      {
+        type: 'addNode',
+        nodeId: 'loose',
+        nodeType: 'CameraData',
+        params: { fov: 45, projection: 'Orthographic' },
+      },
+      {
+        type: 'addNode',
+        nodeId: 'zoom_keys',
+        nodeType: 'KeyframeChannelNumber',
+        params: {
+          name: 'zoom',
+          target: 'ortho_data',
+          paramPath: 'orthoScale',
+          keyframes: keys([
+            [0, 10],
+            [1, 90],
+          ]),
+        },
+      },
+    ]);
+    // As a v25 file holds them: a zoom, and no ortho scale (the schema default is v26's).
+    const raw = (id: string, extra: Record<string, unknown>) => {
+      const { orthoScale: _drop, ...params } = {
+        ...(s.nodes[id].params as object),
+        ...extra,
+      } as Record<string, unknown>;
+      void _drop;
+      s = { ...s, nodes: { ...s.nodes, [id]: { ...s.nodes[id], params } } };
+    };
+    raw('ortho_data', { zoom: 33 });
+    raw('persp_data', { zoom: 50 });
+    raw('loose', { zoom: 7 });
+    raw('zoom_keys', { paramPath: 'zoom' });
+    return s;
+  }
+
+  it('the ortho scale is the height the camera was framed at, and the render frames it so', () => {
+    const before = v25();
+    const after = migrate(before);
+    const lens = paramsOf(after.nodes.ortho_data);
+    const oldHalfHeight = Math.tan((30 * Math.PI) / 360) * 5;
+    expect('zoom' in lens).toBe(false);
+    expect(lens.orthoScale as number).toBeCloseTo(2 * oldHalfHeight, 12);
+    // The render's frame, from the converted camera's pose: as tall as before, at any aspect.
+    for (const [w, h] of [
+      [1920, 1080],
+      [1080, 1920],
+    ]) {
+      const cam = buildRenderCamera(
+        resolveCameraPoseAt(after, 'ortho', 0),
+        w,
+        h,
+      ) as THREE.OrthographicCamera;
+      expect(cam.top).toBeCloseTo(oldHalfHeight, 12);
+      expect(cam.right).toBeCloseTo((oldHalfHeight * w) / h, 12);
+    }
+  });
+
+  it('zoom leaves every lens; its keys go; a perspective lens gets no ortho scale; an unworn one gets 2', () => {
+    const after = migrate(v25());
+    expect('zoom' in paramsOf(after.nodes.persp_data)).toBe(false);
+    expect('orthoScale' in paramsOf(after.nodes.persp_data)).toBe(false);
+    expect(paramsOf(after.nodes.loose)).not.toHaveProperty('zoom');
+    // No camera wears it, so it has no aim distance: the render's old fallback height, 2.
+    expect(paramsOf(after.nodes.loose).orthoScale).toBe(2);
+    expect(after.nodes.zoom_keys).toBeUndefined();
   });
 });

@@ -139,10 +139,16 @@ describe('isAnimatable — three answers, never two', () => {
     });
   });
 
-  it("camera near/far reach only the pose the renderer takes; zoom and depth of field don't (#193)", () => {
+  it("camera near/far reach only the pose the renderer takes; depth of field doesn't (#193)", () => {
     const cam = place(buildDefaultDagState(), 'PerspectiveCamera');
     expect(isAnimatable(cam.s, cam.data, 'near', 'number')).toMatchObject({ reach: 'pose' });
-    expect(isAnimatable(cam.s, cam.data, 'zoom', 'number').answer).toBe('still');
+    // #1760 — the old `zoom` was read by nothing; its successor `orthoScale` is on the pose
+    // (activeCamera.test.ts), but the recorded census predates it. This reds when the census is
+    // regenerated (#1764); the answer then is `reach: 'pose'`, as for near.
+    expect(isAnimatable(cam.s, cam.data, 'orthoScale', 'number')).toMatchObject({
+      answer: 'unmeasured',
+      reason: expect.stringMatching(/census found no orthoScale/),
+    });
     expect(isAnimatable(cam.s, cam.data, 'fStop', 'number').answer).toBe('still');
   });
 

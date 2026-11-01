@@ -2,7 +2,7 @@
 // of truth for the split shape every #387 slice asserts against.
 //
 // #387 Stage C (C4): a camera is an `Object` (owning the transform) wired via its `data`
-// socket to a `CameraData` (owning the LENS — projection/fov/zoom/clip planes/DoF, plus the
+// socket to a `CameraData` (owning the LENS — projection/fov/orthoScale/clip planes/DoF, plus the
 // aim params `lookAt` and `roll`, which stay on the data half parity-first, #387 D1). This
 // mirrors exactly what the Add ▸ Camera builder (addPrimitives.ts), the default project, the
 // bundled examples, `cameraFromView`, the agent's `cameraSnapshot` and the v6→v7 load
@@ -47,7 +47,7 @@ export interface SplitCameraOpts {
    * distinguishable from a real read must pass something else.
    */
   fov?: number;
-  /** Any further lens params to seed on the CameraData (projection/zoom/near/far/lookAt/
+  /** Any further lens params to seed on the CameraData (projection/orthoScale/near/far/lookAt/
    *  roll/sensorSize/dof*). Omitted fields take their zod defaults. */
   lens?: Record<string, unknown>;
   /**
