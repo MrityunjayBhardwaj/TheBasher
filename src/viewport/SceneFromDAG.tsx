@@ -179,7 +179,7 @@ import type {
 } from '../nodes/types';
 import { uiEvaluatorCache } from '../app/uiEvaluatorCache';
 import { createFrameEvaluator, FrameEvaluatorProvider, useFrameTick } from './frameEvaluator';
-import { drawnBox } from '../render/drawnBox';
+import { pickAsDrawn } from '../render/skinnedPick';
 
 let rectAreaInit = false;
 function ensureRectAreaInit() {
@@ -2711,30 +2711,6 @@ function writeDeformed(
   built.geometry.boundingBox = null;
 }
 
-// #1610 / #1684 — a click tests a skinned mesh's own bounds before any triangle (three r169
-// SkinnedMesh.js:114/128), so they must be where the bones put the mesh now, or a character that
-// has walked away from where it was imported is not under the pointer. They are written from
-// `drawnBox` — the box every reader of "where is this mesh drawn" uses — just before the test, on
-// this mesh's own fields; the shared geometry is never written. They used to be cleared on every
-// pose so three would re-skin every vertex to refill them, which is what #1684 removed: the renderer
-// measures a null sphere on every draw to sort objects (WebGLRenderer.js:1374-1379), so clearing it
-// per frame re-skinned every character every frame (measured: 3.3 ms per frame for one X Bot).
-// REF: three r169 src/objects/SkinnedMesh.js:105-136, src/renderers/WebGLRenderer.js:1374-1379.
-function pickByDrawnBox(mesh: THREE.SkinnedMesh): void {
-  const measured = new THREE.Box3();
-  mesh.raycast = (raycaster, intersects) => {
-    if (drawnBox(mesh, measured)) {
-      const own = mesh as unknown as {
-        boundingBox: THREE.Box3 | null;
-        boundingSphere: THREE.Sphere | null;
-      };
-      own.boundingBox = (own.boundingBox ?? new THREE.Box3()).copy(measured);
-      own.boundingSphere = measured.getBoundingSphere(own.boundingSphere ?? new THREE.Sphere());
-    }
-    THREE.SkinnedMesh.prototype.raycast.call(mesh, raycaster, intersects);
-  };
-}
-
 /** #1737 — `${armature}|${clock}` for the skinned mesh `nodeId`, or null when it cannot be told. */
 function skinnedRigKey(nodeId: string | null): string | null {
   if (!nodeId) return null;
@@ -2820,7 +2796,7 @@ function SkinnedMeshR({
       mesh.bindMode = THREE.DetachedBindMode;
       mesh.bind(draw.skeleton, draw.bindMatrix);
       mesh.frustumCulled = false;
-      pickByDrawnBox(mesh);
+      pickAsDrawn(mesh);
       draw.pose(liveSecondsOf(nodeId), skin.pose);
       next = { mesh, draw, geometry, deformed: null };
     }
