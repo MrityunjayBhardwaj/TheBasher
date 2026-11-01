@@ -317,6 +317,8 @@ const TAKERS: string[] = [
   'captureCompositeFrame@src/app/video/compositeDecode.ts',
   'aimTargetWorld@src/app/nodeConstraints.ts',
   'aimPointWorld@src/app/nodeConstraints.ts',
+  'evaluatedTrackTo@src/app/nodeConstraints.ts',
+  'resolveActiveTrackTo@src/app/nodeConstraints.ts',
   'appendComputedSourceRows@src/timeline/layerChannelRows.ts',
   'applyGhostPoseBand@src/viewport/DiffOverlay.tsx',
   'buildOverrideSlotOp@src/app/objectSlotAuthoring.ts',

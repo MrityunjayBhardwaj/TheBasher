@@ -11,7 +11,7 @@
 import * as THREE from 'three';
 import type { EvaluatorCache } from '../core/dag/evaluator';
 import type { DagState } from '../core/dag/state';
-import { activeConstraintForTarget, resolveTrackToTarget } from './nodeConstraints';
+import { resolveActiveTrackTo, resolveTrackToTarget } from './nodeConstraints';
 import { resolveParentWorldMatrix } from './resolveWorldTransform';
 import type { ClockedCtx } from './subjectClock';
 
@@ -29,7 +29,7 @@ export function cameraTrackToAim(
 ): { lookAt: Vec3; roll: number } | null {
   const aim = resolveTrackToTarget(state, cameraId, ctx, cache);
   if (!aim) return null;
-  const roll = activeConstraintForTarget(state.nodes, cameraId)?.roll ?? 0;
+  const roll = resolveActiveTrackTo(state, cameraId, ctx, cache)?.roll ?? 0;
   const parentWorld = resolveParentWorldMatrix(state, cameraId, ctx, cache);
   if (!parentWorld) return { lookAt: aim, roll };
   const local = new THREE.Vector3(aim[0], aim[1], aim[2]).applyMatrix4(

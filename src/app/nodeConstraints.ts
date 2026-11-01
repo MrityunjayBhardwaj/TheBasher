@@ -449,7 +449,8 @@ export function resolveConstraintRotation(
   // writes POSITION while this writes ROTATION, so they commute. Per-member influence
   // blending (two members on the SAME band) is a later phase.
   let aimWorld: Vec3 | null = null;
-  for (const member of stack) {
+  for (const typed of stack) {
+    const member = evaluatedTrackTo(state, typed, ctx, cache);
     const memberAim = resolveTrackTo(
       aimOrigin,
       aimTargetWorld(state, member, ctx, cache),
@@ -593,9 +594,47 @@ export function resolveTrackToTarget(
   // stack is `[0]` either way → byte-identical to the pre-stack first-wins path.
   // #317 — "the top member" now has ONE name (`activeConstraintForTarget`), so the
   // authoring surfaces display/edit exactly the member this resolves.
-  const winner = activeConstraintForTarget(state.nodes, nodeId);
+  const winner = resolveActiveTrackTo(state, nodeId, ctx, cache);
   if (!winner) return null;
   return aimTargetWorld(state, winner, ctx, cache);
+}
+
+/** The winning Track-To on `nodeId` at `ctx`, its animatable settings evaluated (#1767): the
+ *  member `resolveTrackToTarget` aims by, for a reader that also needs its roll or up. */
+export function resolveActiveTrackTo(
+  state: DagState,
+  nodeId: string,
+  ctx: EvalCtx,
+  cache?: EvaluatorCache,
+): ActiveConstraint | null {
+  const winner = activeConstraintForTarget(state.nodes, nodeId);
+  return winner ? evaluatedTrackTo(state, winner, ctx, cache) : null;
+}
+
+/**
+ * #1767 — a Track-To member with its animatable settings read at `ctx` through the render's own
+ * param read, so keys, strips and drivers on its aim point, up and roll are honoured, as
+ * Follow-Path's `evalTime` is. The stack itself stays a typed scan (`constraintStackForTarget`
+ * takes no ctx), so this is applied where a member is resolved. A setting with nothing on it
+ * reads back as typed.
+ */
+function evaluatedTrackTo(
+  state: DagState,
+  member: ActiveConstraint,
+  ctx: EvalCtx,
+  cache?: EvaluatorCache,
+): ActiveConstraint {
+  const read = (path: 'aimPoint' | 'up' | 'roll') =>
+    resolveEvaluatedParam(state, member.nodeId, path, ctx, cache)?.value;
+  const aimPoint = read('aimPoint');
+  const up = read('up');
+  const roll = read('roll');
+  return {
+    ...member,
+    aimPoint: isVec3(aimPoint) ? aimPoint : member.aimPoint,
+    up: isVec3(up) ? up : member.up,
+    roll: typeof roll === 'number' && Number.isFinite(roll) ? roll : member.roll,
+  };
 }
 
 /** The world aim-target position for a resolved Track-To: the aim node's world
