@@ -75,7 +75,7 @@ import { sceneClockOf } from './sceneClock';
 import { clockedCtx } from './subjectClock';
 import { isCameraNode } from './cameraNode';
 import { cameraOrientationQuat, cameraRotationOf } from './cameraOrientation';
-import { constraintTargetSet, resolveFollowedWorldPosition } from './nodeConstraints';
+import { activeConstraintForTarget, resolveFollowedWorldPosition } from './nodeConstraints';
 import { useActiveCurvePoint } from './curvePointSelection';
 import { useArmatureMode } from './armatureMode';
 import { uiEvaluatorCache } from './uiEvaluatorCache';
@@ -1159,10 +1159,14 @@ function CameraGizmo() {
   // follows that object (resolveCameraPoseAt already derives lookAt from it) and
   // is read-only. Subscribe to nodes so add/remove of the constraint re-renders.
   const nodes = useDagStore((s) => s.state.nodes);
-  const bound = useMemo(
-    () => (camId ? constraintTargetSet(nodes).has(camId) : false),
+  // #1761 — the Track-To that aims the camera, if any. A point aim (every camera v26 converted)
+  // is the reticle's to move; only a Track-To that follows a node is read-only, since the node
+  // decides where it points.
+  const winningAim = useMemo(
+    () => (camId ? activeConstraintForTarget(nodes, camId) : null),
     [nodes, camId],
   );
+  const bound = Boolean(winningAim?.aimNode);
 
   // Captured at seed time: the camera's evaluated position + the aim DISTANCE, so
   // a rotate keeps the lookAt the same distance from the camera (the aim orbits,
@@ -1267,15 +1271,17 @@ function CameraGizmo() {
     // CameraData and `addNode` stores PARSED params — every instance carries the keys.
     // An optional param with no default would resolve to the Object forever.
     const owner = resolveDataParamOwner(useDagStore.getState().state, camId, path) ?? camId;
-    if (routeAnimatedGrab(owner, path, value)) return;
+    writeParamOn(owner, path, value);
+  }
+
+  /** One routed write to `nodeId`: re-routed into its channel when animated, else set and
+   *  auto-keyed — the same chokepoint for the camera's halves and for its Track-To. */
+  function writeParamOn(nodeId: string, path: string, value: unknown) {
+    if (routeAnimatedGrab(nodeId, path, value)) return;
     useDagStore
       .getState()
-      .dispatch(
-        { type: 'setParam', nodeId: owner, paramPath: path, value },
-        'user',
-        `camera ${path}`,
-      );
-    autoKeyCommit(owner, path, value);
+      .dispatch({ type: 'setParam', nodeId, paramPath: path, value }, 'user', `camera ${path}`);
+    autoKeyCommit(nodeId, path, value);
   }
 
   // #231 Inc 3.3 — a world-space point → the camera's LOCAL space when nested
@@ -1318,7 +1324,7 @@ function CameraGizmo() {
   function onAimChange() {
     const g = aimNode;
     if (!g || !camId) return;
-    aimAt(maybeSnapVec3(toLocalPoint([g.position.x, g.position.y, g.position.z])));
+    aimAt([g.position.x, g.position.y, g.position.z]);
   }
 
   /** #1760 — `quat` (parent space) as the camera's own rotation, in its rotation mode. */
@@ -1329,11 +1335,24 @@ function CameraGizmo() {
     writeCameraParam(write.paramPath, write.value);
   }
 
-  /** #1760 — re-aim at `local` (parent space): the camera turns to look at it, keeping its roll,
-   *  and the lens look-at moves there, so the aim distance (ortho size, focus) follows. */
-  function aimAt(local: Vec3) {
+  /** Re-aim at the WORLD point `world`.
+   *  #1761 — a camera a point Track-To aims: the Track-To's aim point moves there, in the space
+   *  the aim point is held in (the camera's parent's, or the world's). A plain camera (#1760):
+   *  it turns to look at the point, keeping its roll, and the lens look-at moves there, so the
+   *  aim distance (ortho size, focus) follows. */
+  function aimAt(world: Vec3) {
     const seed = seedRef.current;
     if (!seed || !camId) return;
+    const aim = winningAim;
+    if (aim && !aim.aimNode) {
+      writeParamOn(
+        aim.nodeId,
+        'aimPoint',
+        maybeSnapVec3(aim.aimSpace === 'parent' ? toLocalPoint(world) : world),
+      );
+      return;
+    }
+    const local = maybeSnapVec3(toLocalPoint(world));
     const localPos = toLocalPoint(seed.position);
     const pose = resolveActiveCameraPoseAt(
       useDagStore.getState().state,
@@ -1351,7 +1370,7 @@ function CameraGizmo() {
   function onReticleDrag(world: Vec3) {
     if (!aimNode || !camId) return;
     aimNode.position.set(world[0], world[1], world[2]);
-    aimAt(maybeSnapVec3(toLocalPoint(world)));
+    aimAt(world);
   }
 
   // *** D-06 grab observation seam — dev-guarded (mirrors SingleGizmo). Drives the
