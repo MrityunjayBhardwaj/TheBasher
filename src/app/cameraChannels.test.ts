@@ -136,7 +136,7 @@ describe('#482 — the film’s cuts obey mute and weight', () => {
     expect(playing(s)).toEqual([own(s), own(s)]);
   });
 
-  it('a soloed channel elsewhere on the switch silences the cut channel', () => {
+  it('a soloed channel elsewhere on the switch silences the cut channel and plays its own camera', () => {
     const s = film();
     const solo = run(s, [
       {
@@ -151,7 +151,9 @@ describe('#482 — the film’s cuts obey mute and weight', () => {
         },
       } as Op,
     ]);
-    expect(playing(solo)).toEqual([own(solo), own(solo)]);
+    // #1754 — the soloed channel is folded too: its camera plays, where the cut would show cam2
+    // at 3 s and the switch's own camera is cam2 as well.
+    expect(playing(solo)).toEqual(['n_camera', 'n_camera']);
   });
 
   it('muting leaves the cut keys in place, so unmuting brings the cuts back', () => {

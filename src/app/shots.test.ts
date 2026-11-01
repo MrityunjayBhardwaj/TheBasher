@@ -169,3 +169,48 @@ describe('#1747 — a cuts channel with no say makes no shots', () => {
     expect(shotsOf(threeCameras().state, 10).cutsSilenced).toBe(false);
   });
 });
+
+// #1754 — every channel on the switch's `active` is folded by the rules every channel follows,
+// not just the first: a soloed second channel silences the cuts AND plays its own camera.
+describe('#1754 — a second channel on the switch plays its own camera', () => {
+  const two = (second: Record<string, unknown>, keys: [number, string][]): DagState => {
+    const { state, select } = threeCameras();
+    const s = keyed(state, select, [
+      [0, 'n_camera'],
+      [2, 'cam2'],
+    ]);
+    return applyOp(s, {
+      type: 'addNode',
+      nodeId: 'second',
+      nodeType: 'KeyframeChannelText',
+      params: {
+        name: 'active',
+        target: select,
+        paramPath: 'active',
+        ...second,
+        keyframes: keys.map(([time, value]) => ({ time, value, easing: 'constant' })),
+      },
+    }).next;
+  };
+  const plays = (s: DagState) => [1, 3].map((t) => selectActiveCameraNode(s, t)?.id);
+
+  it('soloed: the cuts fall silent and the soloed channel’s camera plays throughout', () => {
+    const s = two({ solo: true }, [[0, 'cam3']]);
+    expect(plays(s)).toEqual(['cam3', 'cam3']);
+    expect(rows(s)).toEqual([[0, 10, 'cam3', null]]);
+    expect(shotsOf(s, 10).cutsSilenced).toBe(true);
+  });
+
+  it('soloed, but naming no listed camera: nothing to play, so the switch’s own camera', () => {
+    const s = two({ solo: true }, [[0, 'gone']]);
+    expect(plays(s)).toEqual(['n_camera', 'n_camera']);
+  });
+
+  it('not soloed: both are heard, and the later channel overrides where it has a key', () => {
+    const s = two({}, [[2.5, 'cam3']]);
+    // Before its first key a channel's left-most key holds, so the second channel wins throughout.
+    expect(plays(s)).toEqual(['cam3', 'cam3']);
+    const muted = two({ mute: true }, [[2.5, 'cam3']]);
+    expect(plays(muted), 'muted second: the cuts alone').toEqual(['n_camera', 'cam2']);
+  });
+});

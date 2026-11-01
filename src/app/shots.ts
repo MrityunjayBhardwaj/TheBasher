@@ -18,7 +18,7 @@
 //
 // #1747 — nor is a key on a channel that has no say: muted, silenced by a soloed sibling, or
 // weighted under the text snap. The resolver plays the switch's own camera there
-// (`overlayCutChannel`), so the film is one shot on that camera, and the panel says why.
+// (`overlayCutChannels`), so the film is one shot on that camera, and the panel says why.
 
 import type { DagState } from '../core/dag';
 import type { Node, NodeRef } from '../core/dag/types';
@@ -81,7 +81,7 @@ export function shotsOf(state: DagState, end: number): ShotsView {
   // The keys that cut: the ones the resolver hears at their own time.
   const keyTimes =
     select && channel
-      ? listedTimes.filter((t) => cutChannelHasSay(state, select.id, channel, t))
+      ? listedTimes.filter((t) => cutChannelHasSay(state, select.id, channel, cameraIds, t))
       : [];
 
   // Cuts are the keys after the first: before the first key its camera holds (extend hold), so

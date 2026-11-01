@@ -27,7 +27,7 @@
 
 import type { DagState } from '../core/dag';
 import type { Node, NodeRef } from '../core/dag/types';
-import { overlayCameraChannels, overlayCutChannel } from './cameraChannels';
+import { overlayCameraChannels, overlayCutChannels } from './cameraChannels';
 import {
   cameraDataOf,
   cameraLensParams,
@@ -120,8 +120,8 @@ function resolveActiveCameraFromSelect(
   return state.nodes[listed[idx]] ?? null;
 }
 
-/** The channel keying `selectId.active` — the film's cuts, each key naming its camera (#1668).
- *  The one the resolver samples and the shots panel reads and writes. */
+/** The first channel keying `selectId.active` — the film's cuts, each key naming its camera
+ *  (#1668). The one the shots panel reads and writes; the resolver folds it with any others. */
 export function cutChannelOf(state: DagState, selectId: string): Node | null {
   for (const n of Object.values(state.nodes)) {
     if (n.type !== 'KeyframeChannelText') continue;
@@ -132,23 +132,20 @@ export function cutChannelOf(state: DagState, selectId: string): Node | null {
 }
 
 /**
- * The camera id the switch names at `seconds`: its static `active`, overlaid by the cut keys
- * (`cutChannelOf`). Omit `seconds` → the static `active`.
+ * The camera id the switch names at `seconds`: its static `active`, overlaid by every channel on
+ * `active` (`overlayCutChannels`). Omit `seconds` → the static `active`.
  *
- * #1668 — Blender's rule for camera markers (`BKE_scene_camera_switch_find`, scene.cc): a key whose
+ * #1668 — each channel's pick follows Blender's rule for camera markers (`cutPickAt`): a key whose
  * camera is not among `listed` (deleted, or taken out of the switch) is SKIPPED, so the shot before
- * it runs on; the live key is the last one at or before `seconds`; before the first key, the
- * left-most key's camera holds. #1669 — a delete takes the keys naming its camera with it (the
- * walker reads cut keys as references), so the skip is the safety net for a camera taken out of
- * the switch but kept, whose keys are left as they are, so wiring the camera
- * back brings its cuts back with it. With no key naming a listed camera, the static `active` stands.
- * The keys hold their camera by construction (a text key is a step), which is what #1663 needs of
- * a choice.
+ * it runs on. #1669 — a delete takes the keys naming its camera with it (the walker reads cut keys
+ * as references), so the skip is the safety net for a camera taken out of the switch but kept,
+ * whose keys are left as they are, so wiring the camera back brings its cuts back with it. With no
+ * key naming a listed camera, the static `active` stands. The keys hold their camera by
+ * construction (a text key is a step), which is what #1663 needs of a choice.
  *
- * #482 — the cut channel obeys the rules every channel does: the pick is folded onto the
- * static `active` by `overlayCutChannel`, so a muted cut channel, or one whose weight leaves it
- * no say, plays the switch's own camera. The pick itself stays here, since only this function
- * knows which cameras the switch lists.
+ * #482 #1754 — the channels obey the rules every channel does: solo, mute, weight and order fold
+ * the picks onto the static `active`, so a muted cut channel plays the switch's own camera and a
+ * soloed second channel plays its own.
  */
 export function cutCameraIdAt(
   state: DagState,
@@ -159,17 +156,7 @@ export function cutCameraIdAt(
   const params = selectNode.params as { active?: unknown };
   const base = typeof params.active === 'string' ? params.active : '';
   if (seconds === undefined) return base;
-  const channel = cutChannelOf(state, selectNode.id);
-  if (!channel) return base;
-  const keys = (channel.params as { keyframes?: { time: number; value: unknown }[] }).keyframes;
-  if (!Array.isArray(keys)) return base;
-  const live = keys
-    .filter((k): k is { time: number; value: string } => listed.includes(k.value as string))
-    .sort((a, b) => a.time - b.time);
-  if (live.length === 0) return base;
-  let picked = live[0];
-  for (const k of live) if (k.time <= seconds) picked = k;
-  return overlayCutChannel(state, selectNode.id, channel, base, picked.value, seconds);
+  return overlayCutChannels(state, selectNode.id, base, listed, seconds);
 }
 
 /** Every camera NODE id in the DAG, in stable enumeration order (Object.values
