@@ -33,6 +33,11 @@ interface Owners {
 
 const ownersCache = new WeakMap<DagState['nodes'], Owners>();
 
+/** The edge-less constraint node types (`isRelationalPoseNode`), which name the object they
+ *  constrain in `params.target`. Spelled here because the constraint module imports the world
+ *  resolver, which imports this one (a cycle). */
+const CONSTRAINT_TYPES: ReadonlySet<string> = new Set(['TrackTo', 'FollowPath']);
+
 function ownersOf(state: DagState): Owners {
   const hit = ownersCache.get(state.nodes);
   if (hit) return hit;
@@ -48,6 +53,12 @@ function ownersOf(state: DagState): Owners {
       | { node?: unknown }
       | undefined;
     if (typeof data?.node === 'string' && !poser.has(data.node)) poser.set(data.node, id);
+    // #1769 — a constraint belongs to the object it constrains, as in Blender: its own keys run
+    // on that object's clock, so a camera's Track-To aim runs on the playhead as the camera does.
+    const target = (node.params as { target?: unknown } | undefined)?.target;
+    if (CONSTRAINT_TYPES.has(node.type) && typeof target === 'string' && target) {
+      poser.set(id, target);
+    }
   }
   const owners = { parent, poser };
   ownersCache.set(state.nodes, owners);
