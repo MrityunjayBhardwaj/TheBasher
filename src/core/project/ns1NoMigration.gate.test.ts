@@ -89,7 +89,7 @@ describe('#637 this phase ships no migration, and the absence is pinned', () => 
     registerAllNodes();
   });
 
-  it('has moved the project format version exactly sixteen times since the freeze — #915, #920, #930, #389, #1062, #1203, #1224, #1225 twice, #1316, #1227, #1503, #1548, #1668, #1559, then #1666', () => {
+  it('has moved the project format version exactly seventeen times since the freeze — #915, #920, #930, #389, #1062, #1203, #1224, #1225 twice, #1316, #1227, #1503, #1548, #1668, #1559, #1666, then #1762', () => {
     // 🔴 THIS ROW CHANGED SHAPE IN #915, AND THE HEADER ABOVE SAYS WHY IT MAY.
     //
     // It read `toBe(fixture().formatVersion)` — ns-1 shipped no migration, so the frozen
@@ -150,7 +150,10 @@ describe('#637 this phase ships no migration, and the absence is pinned', () => 
     // #1666 is the SIXTEENTH: the `Shot` and `Cut` types are gone; each saved Shot becomes cuts on
     // the camera switch (formatMigrations[24]). The types are no longer registered, so only a pass
     // over the raw file can turn one into the keys before the load looks its type up.
-    const MIGRATIONS_SINCE_FREEZE = 16; // #915, #920, #930, #389, #1062, #1203, #1224, #1225 ×2, #1316, #1227, #1503, #1548, #1668, #1559, #1666
+    // #1762 is the SEVENTEENTH: a camera's aim moves off its lens onto a Track-To, keys and drivers
+    // with it (formatMigrations[25], part of #487). A camera's look-at was a param the render read
+    // directly, so only a pass can hand each saved aim to the constraint that now owns it.
+    const MIGRATIONS_SINCE_FREEZE = 17; // #915, #920, #930, #389, #1062, #1203, #1224, #1225 ×2, #1316, #1227, #1503, #1548, #1668, #1559, #1666, #1762
     expect(PROJECT_FORMAT_VERSION).toBe(fixture().formatVersion + MIGRATIONS_SINCE_FREEZE);
   });
 

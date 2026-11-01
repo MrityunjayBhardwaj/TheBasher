@@ -54,8 +54,12 @@ const BULK_RUN_THRESHOLD = 32;
  *  This is a tripwire, not a budget. Raising it is allowed, but only with a stated
  *  reason for what grew — the number is here so a future reader can see the distance
  *  between the real payload and the ceiling instead of guessing at it. A single vertex
- *  buffer for the fixture's baked sphere would clear it by orders of magnitude. */
-const SIZE_BOUND_BYTES = 13_000;
+ *  buffer for the fixture's baked sphere would clear it by orders of magnitude.
+ *
+ *  Raised 13,000 → 13,500 at #1762: the fixture's camera gains its aim Track-To (v26 moves a
+ *  camera's look-at off its lens onto one), one node of about 350 bytes, taking the payload to
+ *  13,072. A fixed cost per camera, not per vertex. */
+const SIZE_BOUND_BYTES = 13_500;
 
 interface BulkFinding {
   path: string;

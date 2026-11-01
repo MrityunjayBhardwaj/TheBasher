@@ -73,8 +73,9 @@ const cut = (id: string, from: string, to: string): RawNode => ({
 const onScreen = (s: DagState, t: number) => selectActiveCameraNode(s, t)?.id ?? null;
 
 describe('#1666 — v24 → v25: a Shot becomes cuts, a Cut is dropped', () => {
-  it('the app writes v25', () => {
-    expect(PROJECT_FORMAT_VERSION).toBe(25);
+  it('the app writes v25 or later', () => {
+    // v25 was this step's; #1762 moved the app on to v26 (exportDag.test.ts pins the current one).
+    expect(PROJECT_FORMAT_VERSION).toBeGreaterThanOrEqual(25);
   });
 
   it('a saved Shot is on screen from its start to its end, and the film around it is unchanged', async () => {
@@ -82,7 +83,7 @@ describe('#1666 — v24 → v25: a Shot becomes cuts, a Cut is dropped', () => {
     expect([1, 3, 5].map((t) => onScreen(before, t))).toEqual(['n_camera', 'n_camera', 'n_camera']);
 
     const loaded = await loadV24(before, [shot('shot_1', 'cam2', 2, 4)]);
-    expect(loaded.formatVersion).toBe(25);
+    expect(loaded.formatVersion).toBe(PROJECT_FORMAT_VERSION);
     const s = useDagStore.getState().state;
     expect([1, 3, 5].map((t) => onScreen(s, t))).toEqual(['n_camera', 'cam2', 'n_camera']);
     // The Shots panel reads the same keys: three rows, the middle one on cam2.
@@ -138,7 +139,9 @@ describe('#1666 — v24 → v25: a Shot becomes cuts, a Cut is dropped', () => {
     const before = twoCameras();
     await loadV24(before, []);
     const s = useDagStore.getState().state;
-    expect(Object.keys(s.nodes).sort()).toEqual(Object.keys(before.nodes).sort());
+    // This step adds nothing; the later #1762 step gives each camera its aim Track-To.
+    const aims = ['n_camera_aim', 'cam2_aim'];
+    expect(Object.keys(s.nodes).sort()).toEqual([...Object.keys(before.nodes), ...aims].sort());
     expect(warn.mock.calls.some((c) => String(c[0]).includes('#1666'))).toBe(false);
   });
 });

@@ -151,6 +151,9 @@ const formatMigrations: Record<number, FormatMigration> = {
   // becomes the cuts the Shots panel writes (a cut to its camera at its start, and back at its
   // end), and each Cut is dropped.
   24: migrateShotsToCuts,
+  // v25 → v26 (#1762, part of #487): each camera's aim (its lens `lookAt` and `roll`) becomes a
+  // Track-To at the bottom of its stack, aim point in parent space, keys and drivers moved over.
+  25: migrateCameraAimToTrackTo,
 };
 
 // ── v1 → v2: AnimationLayer retirement (#199) ──────────────────────────────
@@ -2445,4 +2448,118 @@ export function migrateShotsToCuts(raw: unknown): unknown {
       `with no camera to cut to and ${cuts} Cut node(s) were dropped (#1666).`,
   );
   return { ...proj, state: { ...proj.state, nodes: state.nodes }, formatVersion: 25 };
+}
+
+// ── v25 → v26: a camera's aim becomes a Track-To (#1762, part of #487) ──────────────────────
+// A camera was aimed by `lookAt` and `roll` on its lens (`CameraData`), in its parent's space.
+// Each camera gains a Track-To at the bottom of its constraint stack that holds that aim: the
+// look-at as its aim point in `parent` space, the roll as its own. Keys and drivers on the lens's
+// `lookAt` move onto the Track-To's `aimPoint`, and those on `roll` onto its `roll`, unchanged —
+// nothing is resampled, because the Track-To honours them (#1767). The lens roll becomes 0.
+//
+// A camera that already had a Track-To keeps it winning: the new one sits below it, so muting the
+// old one shows the authored look-at again, as it did. Its roll used to add to the lens roll
+// whichever member won, so the lens roll (and any keys on it) is added to every existing member
+// too. The lens `lookAt` stays where it was until #1764 removes the field; the aim it held now
+// lives on the Track-To, which overrides it.
+//
+// A strip placed on a camera can carry `lookAt` or `roll` inside its clip; those are not moved,
+// and each such camera is LOGGED so the loss is never silent.
+const AIM_PATHS = new Set(['lookAt', 'roll']);
+
+export function migrateCameraAimToTrackTo(raw: unknown): unknown {
+  const proj = raw as { formatVersion?: number; state?: { nodes?: Record<string, RawNode> } };
+  const nodes = proj.state?.nodes;
+  if (!nodes) return { ...proj, formatVersion: 26 };
+  const out: Record<string, RawNode> = { ...nodes };
+  const entries = Object.entries(nodes);
+  const isVec3 = (v: unknown): v is [number, number, number] =>
+    Array.isArray(v) && v.length === 3 && v.every((x) => typeof x === 'number');
+  const num = (v: unknown, d: number) => (typeof v === 'number' && Number.isFinite(v) ? v : d);
+  const freshId = (base: string) => {
+    let id = base;
+    for (let i = 2; id in out; i++) id = `${base}_${i}`;
+    return id;
+  };
+
+  let cameras = 0;
+  let movedKeys = 0;
+  const stripCameras: string[] = [];
+  for (const [dataId, lens] of entries) {
+    if (lens?.type !== 'CameraData') continue;
+    const objId = entries.find(([, n]) =>
+      asRefs(n?.inputs?.data).some((r) => r.node === dataId),
+    )?.[0];
+    if (!objId) continue; // a lens no camera wears aims nothing
+    cameras++;
+    const lp = lens.params ?? {};
+    const roll = num(lp.roll, 0);
+    const existing = entries.filter(([, n]) => n?.type === 'TrackTo' && n.params?.target === objId);
+    const lowest = Math.min(0, ...existing.map(([, n]) => num(n.params?.order, 0)));
+    const aimId = freshId(`${objId}_aim`);
+    out[aimId] = {
+      id: aimId,
+      type: 'TrackTo',
+      version: 1,
+      params: {
+        name: 'aim',
+        target: objId,
+        aimNode: '',
+        aimBone: '',
+        aimPoint: isVec3(lp.lookAt) ? lp.lookAt : [0, 0, 0],
+        aimSpace: 'parent',
+        up: [0, 1, 0],
+        roll,
+        mute: false,
+        order: existing.length > 0 ? lowest - 1 : 0,
+      },
+      inputs: {},
+    };
+    for (const [ttId, tt] of existing) {
+      out[ttId] = { ...tt, params: { ...tt.params, roll: num(tt.params?.roll, 0) + roll } };
+    }
+    out[dataId] = { ...lens, params: { ...lp, roll: 0 } };
+
+    // Keys and drivers on the aim, addressed to the lens or the camera Object.
+    const holders = new Set([dataId, objId]);
+    for (const [id, n] of entries) {
+      const p = n?.params;
+      if (!p || !holders.has(p.target as string) || !AIM_PATHS.has(p.paramPath as string)) continue;
+      const isChannel = typeof n.type === 'string' && n.type.startsWith('KeyframeChannel');
+      if (!isChannel && n.type !== 'ParamDriver') continue;
+      movedKeys++;
+      if (p.paramPath === 'lookAt') {
+        out[id] = {
+          ...n,
+          params: {
+            ...p,
+            target: aimId,
+            paramPath: 'aimPoint',
+            ...(p.name === 'lookAt' ? { name: 'aimPoint' } : {}),
+          },
+        };
+        continue;
+      }
+      // `roll`: onto the new Track-To, and a copy onto every existing one.
+      out[id] = { ...n, params: { ...p, target: aimId } };
+      for (const [ttId] of existing) {
+        const copyId = freshId(`${id}_${ttId}`);
+        out[copyId] = { ...n, id: copyId, params: { ...p, target: ttId } };
+      }
+    }
+    if (entries.some(([, n]) => n?.type === 'Strip' && holders.has(n.params?.target as string))) {
+      stripCameras.push(objId);
+    }
+  }
+  if (cameras > 0) {
+    console.warn(
+      `[migrateCameraAimToTrackTo] ${cameras} camera(s) now aim by a Track-To; ${movedKeys} ` +
+        `key/driver node(s) on look-at or roll moved onto it (#1762).` +
+        (stripCameras.length > 0
+          ? ` Strips on ${stripCameras.join(', ')} were left as they were: a look-at or roll ` +
+            `inside them no longer aims the camera.`
+          : ''),
+    );
+  }
+  return { ...proj, state: { ...proj.state, nodes: out }, formatVersion: 26 };
 }

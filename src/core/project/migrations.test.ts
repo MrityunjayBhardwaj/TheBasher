@@ -1477,9 +1477,20 @@ describe('object↔data split v6 → v7: fused cameras → Object + CameraData (
       fStop: 1.4,
       focusOnTarget: true,
       lookAt: CAM_LOOKAT,
-      roll: CAM_ROLL,
+      // #1762 (v26) — the roll moves onto the camera's aim Track-To, below.
+      roll: 0,
     });
     expect((persp.inputs as Record<string, { node: string }>).data.node).toBe(perspData.id);
+    // #1762 (v26) — the aim the lens held is a parent-space Track-To on the Object.
+    const aimOf = (id: string) =>
+      Object.values(m.state.nodes).find(
+        (n) => n.type === 'TrackTo' && (n.params as { target?: string }).target === id,
+      );
+    expect(aimOf('n_persp')?.params).toMatchObject({
+      aimPoint: CAM_LOOKAT,
+      aimSpace: 'parent',
+      roll: CAM_ROLL,
+    });
 
     // Orthographic → the same Object shape + a CameraData discriminated the other way.
     const ortho = m.state.nodes.n_ortho;
@@ -1496,8 +1507,9 @@ describe('object↔data split v6 → v7: fused cameras → Object + CameraData (
       near: 0.02,
       far: CAM_FAR,
       lookAt: CAM_LOOKAT,
-      roll: CAM_ROLL,
+      roll: 0,
     });
+    expect(aimOf('n_ortho')?.params).toMatchObject({ aimPoint: CAM_LOOKAT, roll: CAM_ROLL });
     // The orthographic source has no DoF/sensor params at all, so the migration writes
     // none — CameraData's schema defaults them. Asserted as an absence because writing
     // perspective-only fields onto an ortho bag is the plausible wrong thing to do.
