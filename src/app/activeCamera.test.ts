@@ -1,6 +1,7 @@
 // activeCamera — locate the scene's active camera node + read its pose.
 // Drives the editor view camera (#165): boot framing + look-through adopt.
 
+import { cameraOrientationTuple } from './cameraOrientation';
 import { beforeAll, describe, expect, it } from 'vitest';
 import {
   cameraFilmCtx,
@@ -350,6 +351,8 @@ describe('activeCamera — cameraPoseFromPair', () => {
       near: 0.1,
       far: 1000,
       roll: 0,
+      // #1760 — the orientation the aim gives, carried on the pose.
+      quaternion: cameraOrientationTuple([3, 2, 3], [0, 0, 0], 0),
     });
     // #1193 — the seed's far is now Blender's 1000, which is also `DEFAULT_CAMERA_POSE.far`,
     // so every field above equals the default and the assertion can no longer tell "read the
@@ -438,6 +441,7 @@ describe('activeCamera — cameraPoseFromPair', () => {
       near: 0.02,
       far: 250,
       roll: 5,
+      quaternion: cameraOrientationTuple([7, 1, -4], [0, 1, 0], 5),
     });
   });
 

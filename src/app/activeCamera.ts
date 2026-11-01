@@ -42,7 +42,11 @@ import { clockedCtx, type ClockedCtx } from './subjectClock';
 import { resolveConstraintPosition } from './nodeConstraints';
 import { cameraTrackToAim } from './cameraTrackTo';
 import { resolveParentWorldMatrix } from './resolveWorldTransform';
-import { composeCameraPoseWithParent } from './cameraOrientation';
+import {
+  cameraOrientationTuple,
+  composeCameraPoseWithParent,
+  type Quat,
+} from './cameraOrientation';
 import type { EvaluatorCache } from '../core/dag/evaluator';
 import { DEFAULT_CAMERA_FAR, DEFAULT_CAMERA_NEAR } from '../nodes/CameraData';
 
@@ -58,6 +62,10 @@ export interface CameraPose {
   /** Roll about the view axis, in DEGREES (#229). Banks the implicit up-vector
    *  the lookAt model otherwise leaves at world +Y. 0 = no roll. */
   roll: number;
+  /** #1760 — the camera's orientation as `[x, y, z, w]`: WORLD for a resolved pose, parent-local
+   *  for a pose read off the params. The one value a reader turns a camera with; `lookAt` and
+   *  `roll` stay beside it while the readers move over (#487). */
+  quaternion: Quat;
 }
 
 /** Default editor framing — matches THESIS.md §11 and the default project's
@@ -70,6 +78,7 @@ export const DEFAULT_CAMERA_POSE: CameraPose = {
   near: DEFAULT_CAMERA_NEAR,
   far: DEFAULT_CAMERA_FAR,
   roll: 0,
+  quaternion: cameraOrientationTuple([3, 2, 3], [0, 0, 0], 0),
 };
 
 function isVec3(v: unknown): v is [number, number, number] {
@@ -221,7 +230,7 @@ export function cameraPoseFromPair(
     cameraProjectionFromPair(objectNode, dataNode) === 'Orthographic'
       ? 'OrthographicCamera'
       : 'PerspectiveCamera';
-  return {
+  return oriented({
     kind,
     position: isVec3(o.position) ? o.position : DEFAULT_CAMERA_POSE.position,
     lookAt: isVec3(lens.lookAt) ? lens.lookAt : DEFAULT_CAMERA_POSE.lookAt,
@@ -229,7 +238,13 @@ export function cameraPoseFromPair(
     near: typeof lens.near === 'number' ? lens.near : DEFAULT_CAMERA_POSE.near,
     far: typeof lens.far === 'number' ? lens.far : DEFAULT_CAMERA_POSE.far,
     roll: typeof lens.roll === 'number' ? lens.roll : DEFAULT_CAMERA_POSE.roll,
-  };
+  });
+}
+
+/** #1760 — the pose's orientation, from what turns the camera. Today that is its aim and roll;
+ *  the one place the source changes when the Object's rotation takes over (#487). */
+function oriented(pose: Omit<CameraPose, 'quaternion'> & { quaternion?: Quat }): CameraPose {
+  return { ...pose, quaternion: cameraOrientationTuple(pose.position, pose.lookAt, pose.roll) };
 }
 
 /** {@link cameraPoseFromPair} applied to a node id — resolves the data half itself.
@@ -379,7 +394,7 @@ export function resolveCameraPoseAt(
   // top-level camera (wired only to scene.camera) → byte-identical to the flat pose,
   // so this is a safe drop-in for every pre-Inc-3.3 project.
   const parentWorld = resolveParentWorldMatrix(state, node.id, ctx, cache);
-  const result = pose ?? base;
+  const result = pose ? oriented(pose) : base;
   return parentWorld ? composeCameraPoseWithParent(result, parentWorld) : result;
 }
 

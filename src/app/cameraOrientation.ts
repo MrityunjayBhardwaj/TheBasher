@@ -21,6 +21,19 @@
 
 import * as THREE from 'three';
 
+/** A unit quaternion as `[x, y, z, w]`, three's component order. */
+export type Quat = [number, number, number, number];
+
+/** {@link cameraOrientationQuat} as a plain `[x, y, z, w]`, the form a camera pose carries. */
+export function cameraOrientationTuple(
+  position: readonly [number, number, number],
+  lookAt: readonly [number, number, number],
+  rollDeg: number,
+): Quat {
+  const q = cameraOrientationQuat(position, lookAt, rollDeg);
+  return [q.x, q.y, q.z, q.w];
+}
+
 const LOCAL_FORWARD = new THREE.Vector3(0, 0, -1); // three.js camera looks down -Z
 const LOCAL_UP = new THREE.Vector3(0, 1, 0);
 const WORLD_UP = new THREE.Vector3(0, 1, 0);
@@ -88,9 +101,14 @@ export function composeCameraPoseWithParent<
     position: [number, number, number];
     lookAt: [number, number, number];
     roll: number;
+    quaternion?: Quat;
   },
 >(pose: T, parentWorld: THREE.Matrix4): T {
-  const localQuat = cameraOrientationQuat(pose.position, pose.lookAt, pose.roll);
+  // #1760 — a pose that carries its orientation is lifted by it; one that does not (a bare
+  // aim) derives it from the aim, as before.
+  const localQuat = pose.quaternion
+    ? new THREE.Quaternion(...pose.quaternion)
+    : cameraOrientationQuat(pose.position, pose.lookAt, pose.roll);
   const localPos = new THREE.Vector3(pose.position[0], pose.position[1], pose.position[2]);
   const localM = new THREE.Matrix4().compose(localPos, localQuat, new THREE.Vector3(1, 1, 1));
   const worldM = parentWorld.clone().multiply(localM);
@@ -106,7 +124,9 @@ export function composeCameraPoseWithParent<
     ) || 1;
   const worldPos: [number, number, number] = [wp.x, wp.y, wp.z];
   const { lookAt, roll } = lookAtRollFromQuat(wq, worldPos, dist);
-  return { ...pose, position: worldPos, lookAt, roll };
+  const out = { ...pose, position: worldPos, lookAt, roll };
+  if (pose.quaternion) out.quaternion = [wq.x, wq.y, wq.z, wq.w];
+  return out;
 }
 
 /**

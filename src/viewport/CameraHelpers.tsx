@@ -18,7 +18,6 @@ import * as THREE from 'three';
 import type { CameraPose } from '../app/activeCamera';
 import { useSelectionStore } from '../app/stores/selectionStore';
 import { selectNodeOnClick } from './selectNodeOnClick';
-import { cameraOrientationQuat } from '../app/cameraOrientation';
 
 // Display constants — the frustum is an editor indicator at a FIXED size, not
 // the real far plane (Blender's camera "display size"). Aspect is the common
@@ -99,18 +98,6 @@ export function orthoFrustumSegments(zoom: number, aspect: number, depth: number
   return out;
 }
 
-/** Quaternion orienting the camera frustum: local -Z onto (position → lookAt),
- *  banked by `roll`° about the view axis (#229). Delegates to the ONE shared
- *  `cameraOrientationQuat` so the drawn frustum matches the look-through + render
- *  exactly (V37). Pure. */
-export function frustumQuaternion(
-  position: readonly [number, number, number],
-  lookAt: readonly [number, number, number],
-  roll = 0,
-): THREE.Quaternion {
-  return cameraOrientationQuat(position, lookAt, roll);
-}
-
 export interface CameraHelperProps {
   pose: CameraPose;
   /** Producing DAG node id; null when selection routing is unavailable. */
@@ -124,12 +111,10 @@ export function CameraHelper({ pose, pickId, active }: CameraHelperProps) {
   const selected = pickId != null && pickId === selectedId;
   const color = selected ? COLOR_SELECTED : active ? COLOR_ACTIVE : COLOR_INACTIVE;
 
-  const [px, py, pz] = pose.position;
-  const [lx, ly, lz] = pose.lookAt;
-  const quat = useMemo(
-    () => frustumQuaternion([px, py, pz], [lx, ly, lz], pose.roll),
-    [px, py, pz, lx, ly, lz, pose.roll],
-  );
+  // #1760 — turned by the orientation the pose carries, the one the look-through and the render
+  // read (V37), so the drawn frustum points where the camera looks.
+  const [qx, qy, qz, qw] = pose.quaternion;
+  const quat = useMemo(() => new THREE.Quaternion(qx, qy, qz, qw), [qx, qy, qz, qw]);
 
   const segs = useMemo(
     () =>

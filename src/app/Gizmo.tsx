@@ -74,7 +74,7 @@ import { resolveActiveCameraPoseAt } from './activeCamera';
 import { sceneClockOf } from './sceneClock';
 import { clockedCtx } from './subjectClock';
 import { isCameraNode } from './cameraNode';
-import { cameraOrientationQuat, lookAtRollFromQuat } from './cameraOrientation';
+import { lookAtRollFromQuat } from './cameraOrientation';
 import { constraintTargetSet, resolveFollowedWorldPosition } from './nodeConstraints';
 import { useActiveCurvePoint } from './curvePointSelection';
 import { useArmatureMode } from './armatureMode';
@@ -925,7 +925,7 @@ function MultiGizmo() {
 // idioms onto Basher's lookAt model:
 //   - ROTATE the camera body (Blender "press R to rotate the camera object"):
 //     the rotate gizmo seeds from the camera's world ORIENTATION
-//     (cameraOrientationQuat) and a drag is converted BACK to authored lookAt +
+//     (the orientation its pose carries, #1760) and a drag is converted BACK to authored lookAt +
 //     roll via lookAtRollFromQuat (V68 — manipulate in render/world space, store
 //     authored params), keeping the aim DISTANCE fixed so the aim orbits the
 //     camera (yaw/pitch re-aim, roll about the view axis banks).
@@ -1215,7 +1215,8 @@ function CameraGizmo() {
       seedRef.current = { position: pose.position, distance, parentWorld };
       if (bodyNode) {
         bodyNode.position.set(...pose.position);
-        bodyNode.quaternion.copy(cameraOrientationQuat(pose.position, pose.lookAt, pose.roll));
+        // #1760 — the orientation the camera is drawn with, carried on its pose.
+        bodyNode.quaternion.set(...pose.quaternion);
         bodyNode.scale.set(1, 1, 1);
       }
       if (aimNode) {

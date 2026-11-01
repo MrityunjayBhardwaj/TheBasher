@@ -10,6 +10,7 @@ import { CAPTURED_EXAMPLE_IDS, EXAMPLE_PROJECT_IDS, buildExampleProject } from '
 import { migrateCameraAimToTrackTo } from './migrations';
 import { makeSplitCamera } from '../../test-utils/splitCamera';
 import { enumerateCameraNodeIds, resolveCameraPoseAt } from '../../app/activeCamera';
+import { cameraOrientationTuple } from '../../app/cameraOrientation';
 
 beforeEach(() => {
   __resetRegistryForTests();
@@ -57,6 +58,15 @@ function expectSamePoses(a: DagState, b: DagState) {
       const dist = (p: typeof pa) => Math.hypot(...p.lookAt.map((v, i) => v - p.position[i]));
       expect(dist(pb), `${label} aim distance (ortho size, focus)`).toBeCloseTo(dist(pa), 9);
       expect(pb.fov, `${label} fov`).toBe(pa.fov);
+      // #1760 — the orientation the pose carries, the one value readers turn the camera with:
+      // the same rotation both sides (q and −q are one rotation), and the one its aim gives.
+      const dot = pa.quaternion.reduce((acc, v, i) => acc + v * pb.quaternion[i], 0);
+      expect(Math.abs(dot), `${label} orientation`).toBeCloseTo(1, 9);
+      for (const p of [pa, pb]) {
+        const q = cameraOrientationTuple(p.position, p.lookAt, p.roll);
+        const d = q.reduce((acc, v, i) => acc + v * p.quaternion[i], 0);
+        expect(Math.abs(d), `${label} orientation = aim`).toBeCloseTo(1, 9);
+      }
     }
 }
 

@@ -23,6 +23,7 @@ import { registerAllNodes } from '../../nodes/registerAll';
 import { resolveEvaluatedMesh } from '../../app/resolveEvaluatedMesh';
 import { resolveEvaluatedTransform } from '../../app/resolveEvaluatedTransform';
 import { DEFAULT_CAMERA_POSE, resolveCameraPoseAt } from '../../app/activeCamera';
+import { cameraOrientationTuple } from '../../app/cameraOrientation';
 import { sphereGeometryRef } from '../../app/modifierGeometry';
 import { hydrateInlineMaterial, openpbrMaterialSchema } from '../../nodes/materialSchema';
 import { CURRENT_LOOK_ROUGHNESS } from '../../nodes/materialSchema';
@@ -1561,6 +1562,8 @@ describe('object↔data split v6 → v7: fused cameras → Object + CameraData (
       near: 0.05,
       far: CAM_FAR,
       roll: CAM_ROLL,
+      // #1760 — the orientation that aim and roll give, carried on the pose.
+      quaternion: cameraOrientationTuple(CAM_POSITION, CAM_LOOKAT, CAM_ROLL),
     });
     // The orthographic half keeps its own discriminator through the split.
     expect(resolveCameraPoseAt(m.state, 'n_ortho', 0).kind).toBe('OrthographicCamera');

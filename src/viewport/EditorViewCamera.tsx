@@ -37,7 +37,7 @@ import {
   selectActiveCameraNode,
 } from '../app/activeCamera';
 import { cameraDataOf } from '../app/cameraNode';
-import { cameraOrientationQuat } from '../app/cameraOrientation';
+import { cameraOrientationQuat, type Quat } from '../app/cameraOrientation';
 import { useThreeRef } from '../app/character/threeRef';
 import { useDagStore } from '../core/dag/store';
 import { measureStage } from '../perf/frameProfiler';
@@ -97,14 +97,14 @@ function applyView(
   position: readonly [number, number, number],
   lookAt: readonly [number, number, number],
   ortho?: { fovDeg: number; viewportHeight: number },
-  roll = 0,
+  quaternion?: Quat,
 ): void {
   cam.position.set(position[0], position[1], position[2]);
-  // #229 — set orientation from the ONE shared camera-orientation math so a
-  // rolled DAG camera banks in look-through exactly as it renders (V37). At
-  // roll 0 this is byte-identical to cam.lookAt (the camera path of
-  // Object3D.lookAt with up=+Y) — the free editor view never rolls.
-  cam.quaternion.copy(cameraOrientationQuat(position, lookAt, roll));
+  // #1760 — a DAG camera is turned by the orientation its pose carries, the one the render reads
+  // (V37). The free editor view has no such pose: it looks at its pivot and never rolls, which is
+  // what the camera-orientation math gives at roll 0 (the camera path of Object3D.lookAt, up=+Y).
+  if (quaternion) cam.quaternion.set(...quaternion);
+  else cam.quaternion.copy(cameraOrientationQuat(position, lookAt, 0));
   if (ortho && (cam as THREE.OrthographicCamera).isOrthographicCamera) {
     const distance = cam.position.distanceTo(new THREE.Vector3(lookAt[0], lookAt[1], lookAt[2]));
     cam.zoom = orthoZoomForView(distance, ortho.fovDeg, ortho.viewportHeight);
@@ -216,7 +216,7 @@ export function EditorViewCamera() {
       // Camera view: continuously adopt the DAG camera's pose (incl. roll, #229).
       // Re-runs when
       // the camera node changes (e.g. gizmo moves it while looking through).
-      applyView(cam, pose.position, pose.lookAt, undefined, pose.roll);
+      applyView(cam, pose.position, pose.lookAt, undefined, pose.quaternion);
       return;
     }
     const key = `${projectId ?? ''}|${useOrtho ? 'ortho' : 'persp'}`;
@@ -450,7 +450,7 @@ export function EditorViewCamera() {
     const evalPose = measureStage('camera', () =>
       resolveActiveCameraPoseAt(useDagStore.getState().state, seconds, cameraPoseCache),
     );
-    applyView(cam, evalPose.position, evalPose.lookAt, undefined, evalPose.roll);
+    applyView(cam, evalPose.position, evalPose.lookAt, undefined, evalPose.quaternion);
     // fov/near/far are camera params too — apply imperatively (the JSX props are
     // memoized on the static pose). Look-through is always the perspective view.
     const persp = cam as THREE.PerspectiveCamera;
