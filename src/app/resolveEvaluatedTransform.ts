@@ -43,6 +43,7 @@
 //
 // REF: issue #68, CONTEXT D-01/D-05, hetvabhasa H22/H34, vyapti V1/V8/V20.
 
+import { Euler, MathUtils } from 'three';
 import { evaluate, type EvaluatorCache } from '../core/dag/evaluator';
 import type { DagState } from '../core/dag/state';
 import type { NodeRef } from '../core/dag/types';
@@ -51,7 +52,12 @@ import { overlayTransients } from './overlayTransients';
 import { overlayChannels } from '../nodes/overlayChannels';
 import { layeredChannelValues } from './layeredChannels';
 import { driverChannelValuesForTarget } from './paramDrivers';
-import { resolveConstraintRotation, resolveConstraintPosition } from './nodeConstraints';
+import {
+  resolveConstraintRotation,
+  resolveConstraintPosition,
+  resolveTrackToTarget,
+} from './nodeConstraints';
+import { cameraOrientationQuat } from './cameraOrientation';
 import { useTransientEditStore } from './stores/transientEditStore';
 import { cameraLocalPose, childEdges } from './resolveWorldTransform';
 import { isCameraNode } from './cameraNode';
@@ -63,6 +69,7 @@ import {
 import { type ClockedCtx, ctxOnClock, ctxOnClockOf } from './subjectClock';
 
 type Vec3 = [number, number, number];
+const RAD2DEG = MathUtils.RAD2DEG;
 
 export interface EvaluatedTransform {
   /** World/local position of the rendered child. Always present (a
@@ -105,21 +112,29 @@ export function resolveEvaluatedTransform(
   //    finds it and every reader fell back to the typed position while the camera moved. Its
   //    local pose is the one the render draws (`cameraLocalPose`: keys on the playhead, the aim
   //    and roll on its lens data), then the held edit, then a Follow-Path, in the order a mesh's
-  //    are applied below. Rotation and scale are the typed ones: a camera's orientation is its
-  //    aim, and the render reads neither off the Object.
+  //    are applied below. Scale is the typed one, which the render does not read.
+  //
+  //    #1753 — the rotation is the orientation the camera is drawn with, not the Object's typed
+  //    rotation, which the render never reads: its aim (position → lookAt, a Track-To taking the
+  //    lookAt over) and roll, through the same `cameraOrientationQuat` and in the same order as
+  //    `resolveCameraPoseAt`. A driver reading a camera's rx…rz reads where it looks.
   if (isCameraNode(state, selectedId)) {
-    const params = (state.nodes[selectedId]?.params ?? {}) as {
-      rotation?: unknown;
-      scale?: unknown;
-    };
-    const keyed = { position: cameraLocalPose(state, selectedId, ctx, cache).position };
+    const params = (state.nodes[selectedId]?.params ?? {}) as { scale?: unknown };
+    const local = cameraLocalPose(state, selectedId, ctx, cache);
+    const keyed = { position: local.position };
     const held =
       overlayTransients(keyed, selectedId, useTransientEditStore.getState().edits) ?? keyed;
     const own = ctxOnClockOf(state, selectedId, ctx);
     const followed = resolveConstraintPosition(state, selectedId, own, cache);
+    const position = followed ?? (held.position as Vec3);
+    const lookAt = resolveTrackToTarget(state, selectedId, ctx, cache) ?? local.lookAt;
+    const e = new Euler().setFromQuaternion(
+      cameraOrientationQuat(position, lookAt, local.roll),
+      'XYZ',
+    );
     return {
-      position: followed ?? (held.position as Vec3),
-      rotation: isVec3(params.rotation) ? params.rotation : null,
+      position,
+      rotation: [e.x * RAD2DEG, e.y * RAD2DEG, e.z * RAD2DEG],
       scale: isVec3(params.scale) ? params.scale : null,
     };
   }

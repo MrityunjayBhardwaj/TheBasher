@@ -72,6 +72,15 @@ const DOORS: Record<string, Door> = {
     kind: 'POINT_IN_TIME',
     why: 'Constraint aim resolved fresh each frame from a lookAt matrix; the triple is returned and used immediately.',
   },
+  'src/app/resolveEvaluatedTransform.ts': {
+    count: 1,
+    kind: 'POINT_IN_TIME',
+    why:
+      "#1753 — a camera's drawn orientation (its aim and roll) read back as the euler a driver " +
+      'or the inspector reads, fresh per frame. The one writer that stores it, the I key, keys ' +
+      "the camera Object's `rotation`, which neither the render nor this read takes for a " +
+      'camera, so nothing interpolates between those keys.',
+  },
   'src/app/nodeConstraints.ts': {
     count: 1,
     kind: 'POINT_IN_TIME',

@@ -69,3 +69,59 @@ describe('#1753 — an evaluated param is read on its own node’s clock', () =>
     ).toBeCloseTo(2, 6);
   });
 });
+
+// #1753 item 2 — an aim animated by a strip pushed down onto the camera Object is seen by the aim
+// row: the row asks the read (`overridesOnly`), and the read reaches the posing Object's strips.
+describe('#1753 — an aim on a strip placed on the camera Object reaches the aim row', () => {
+  const withStrip = () =>
+    run(buildDefaultDagState(), [
+      {
+        type: 'addNode',
+        nodeId: 'aim_act',
+        nodeType: 'Action',
+        params: {
+          name: 'aim_act',
+          channels: [
+            {
+              valueType: 'vec3',
+              paramPath: 'lookAt',
+              keyframes: [
+                { time: 0, value: [0, 0, 0] },
+                { time: 2, value: [4, 0, 0] },
+              ],
+            },
+          ],
+        },
+      } as Op,
+      {
+        type: 'addNode',
+        nodeId: 'aim_strip',
+        nodeType: 'Strip',
+        params: { name: 'aim_strip', action: 'aim_act', target: 'n_camera' },
+      } as Op,
+      {
+        type: 'addNode',
+        nodeId: 'aim_track',
+        nodeType: 'Track',
+        params: { name: 'aim_track', strips: ['aim_strip'], order: 0 },
+      } as Op,
+    ]);
+  const at1 = { time: { frame: 60, seconds: 1, normalized: 0 }, scene: 1, film: 1 };
+
+  it('the camera is drawn aiming along the strip', () => {
+    expect(resolveCameraPoseAt(withStrip(), 'n_camera', 1).lookAt[0]).toBeCloseTo(2, 6);
+  });
+
+  it('the aim row, asking only for an override, reads what is drawn', () => {
+    const s = withStrip();
+    const r = resolveEvaluatedParam(s, 'n_camera_data', 'lookAt', at1, undefined, undefined, true);
+    expect(r?.value).toEqual(resolveCameraPoseAt(s, 'n_camera', 1).lookAt);
+  });
+
+  it('control: with no strip the row is told nothing overrides it', () => {
+    const s = buildDefaultDagState();
+    expect(
+      resolveEvaluatedParam(s, 'n_camera_data', 'lookAt', at1, undefined, undefined, true),
+    ).toBeNull();
+  });
+});
