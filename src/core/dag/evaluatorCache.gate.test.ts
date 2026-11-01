@@ -131,7 +131,7 @@ const ORIGINS: Record<string, Origin> = {
     frequency: 'per-action',
     why: 'Agent render-summary tool: one evaluation per tool call.',
   },
-  'src/app/CameraLookAtTarget.tsx · bindLookAtTargetOps → cameraTrackToLookAt': {
+  'src/app/CameraLookAtTarget.tsx · bindLookAtTargetOps → cameraTrackToAim': {
     count: 1,
     frequency: 'per-action',
     why: "The look-at target dropdown's change handler.",
@@ -316,11 +316,12 @@ const TAKERS: string[] = [
   'collectCompositeInputs@src/app/video/compositeDecode.ts',
   'captureCompositeFrame@src/app/video/compositeDecode.ts',
   'aimTargetWorld@src/app/nodeConstraints.ts',
+  'aimPointWorld@src/app/nodeConstraints.ts',
   'appendComputedSourceRows@src/timeline/layerChannelRows.ts',
   'applyGhostPoseBand@src/viewport/DiffOverlay.tsx',
   'buildOverrideSlotOp@src/app/objectSlotAuthoring.ts',
   'cameraLocalPose@src/app/resolveWorldTransform.ts',
-  'cameraTrackToLookAt@src/app/cameraTrackTo.ts',
+  'cameraTrackToAim@src/app/cameraTrackTo.ts',
   'collectReferenceRigs@src/app/animate/referenceRigs.ts',
   'collectSkeletonObjects@src/app/skeletonObjects.ts',
   'computedSourceRows@src/timeline/layerChannelRows.ts',

@@ -40,7 +40,7 @@ import { pickCameraSelect } from '../nodes/CameraSelect';
 import { sceneClockOf } from './sceneClock';
 import { clockedCtx, type ClockedCtx } from './subjectClock';
 import { resolveConstraintPosition } from './nodeConstraints';
-import { cameraTrackToLookAt } from './cameraTrackTo';
+import { cameraTrackToAim } from './cameraTrackTo';
 import { resolveParentWorldMatrix } from './resolveWorldTransform';
 import { composeCameraPoseWithParent } from './cameraOrientation';
 import type { EvaluatorCache } from '../core/dag/evaluator';
@@ -365,11 +365,12 @@ export function resolveCameraPoseAt(
     pose.position = followed;
   }
 
-  // #1766 — in the parent's space, as the lookAt it stands in for.
-  const aimTarget = cameraTrackToLookAt(state, node.id, ctx, cache);
-  if (aimTarget) {
+  // #1766 — in the parent's space, as the lookAt it stands in for. #1759 — its roll adds on.
+  const tracked = cameraTrackToAim(state, node.id, ctx, cache);
+  if (tracked) {
     pose ??= { ...base };
-    pose.lookAt = aimTarget;
+    pose.lookAt = tracked.lookAt;
+    pose.roll += tracked.roll;
   }
 
   // #231 Inc 3.3 — a camera nested in a Group frames from the group-composed WORLD.

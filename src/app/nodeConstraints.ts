@@ -57,7 +57,11 @@ export interface ActiveConstraint {
   /** #1284 — a node inside the `aimNode` character to aim at (a bone); '' = the node itself. */
   readonly aimBone: string;
   readonly aimPoint: Vec3;
+  /** #1759 — the space `aimPoint` is in: the world, or the constrained object's parent. */
+  readonly aimSpace: 'world' | 'parent';
   readonly up: Vec3;
+  /** #1759 — degrees of roll about the aim axis, after aiming. */
+  readonly roll: number;
   /** The constraint node itself — the panel needs to know which node a row
    *  edits/mutes/removes. */
   readonly nodeId: string;
@@ -227,7 +231,9 @@ export function constraintStackForTarget(
         aimNode: typeof p.aimNode === 'string' ? p.aimNode : '',
         aimBone: typeof p.aimBone === 'string' ? p.aimBone : '',
         aimPoint: isVec3(p.aimPoint) ? p.aimPoint : [0, 0, 0],
+        aimSpace: p.aimSpace === 'parent' ? 'parent' : 'world',
         up: isVec3(p.up) ? p.up : [0, 1, 0],
+        roll: typeof p.roll === 'number' && Number.isFinite(p.roll) ? p.roll : 0,
         nodeId: m.nodeId,
         order: m.order,
         muted: m.muted,
@@ -448,6 +454,7 @@ export function resolveConstraintRotation(
       aimOrigin,
       aimTargetWorld(state, member, ctx, cache),
       member.up,
+      member.roll,
     );
     if (memberAim) aimWorld = memberAim;
   }
@@ -608,7 +615,7 @@ function aimTargetWorld(
   ctx: EvalCtx,
   cache?: EvaluatorCache,
 ): Vec3 {
-  if (!tt.aimNode) return tt.aimPoint;
+  if (!tt.aimNode) return aimPointWorld(state, tt, ctx, cache);
   // #1284 — a bone of a character: its posed world position (the walk moves the Hips, not the
   // Group). An unresolvable bone falls through to the node itself, never to a blank aim.
   if (tt.aimBone) {
@@ -618,5 +625,20 @@ function aimTargetWorld(
   const followed = resolveFollowedWorldPosition(state, tt.aimNode, ctx, cache);
   if (followed) return followed;
   const targetWorld = resolveWorldTransform(state, tt.aimNode, ctx, cache);
-  return targetWorld ? targetWorld.position : tt.aimPoint;
+  return targetWorld ? targetWorld.position : aimPointWorld(state, tt, ctx, cache);
+}
+
+/** #1759 — the fixed `aimPoint` in the world: as authored in `world` space, or lifted by the
+ *  constrained object's parent in `parent` space (a top-level object's parent is the world). */
+function aimPointWorld(
+  state: DagState,
+  tt: ActiveConstraint,
+  ctx: EvalCtx,
+  cache?: EvaluatorCache,
+): Vec3 {
+  if (tt.aimSpace !== 'parent') return tt.aimPoint;
+  const parentWorld = resolveParentWorldMatrix(state, tt.target, ctx, cache);
+  if (!parentWorld) return tt.aimPoint;
+  const p = new THREE.Vector3(...tt.aimPoint).applyMatrix4(parentWorld);
+  return [p.x, p.y, p.z];
 }

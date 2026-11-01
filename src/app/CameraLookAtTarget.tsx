@@ -30,7 +30,7 @@ import {
   isRelationalPoseNode,
   nextConstraintOrder,
 } from './nodeConstraints';
-import { cameraTrackToLookAt } from './cameraTrackTo';
+import { cameraTrackToAim } from './cameraTrackTo';
 import { useTimeStore } from './stores/timeStore';
 
 const ROW = 'flex items-center justify-between gap-2 px-3 py-1.5 text-[11px] text-fg/80';
@@ -128,10 +128,16 @@ export function bindLookAtTargetOps(
     // the camera jumps back to its stale authored aim on clear; written to the Object
     // it lands on a param nothing reads → same jump, and a stray `lookAt` on an Object.
     if (!existingTTId) return { ops: [], label: 'clear look-at target', atomic: true };
-    // #1766 — frozen in the camera's parent space, where `lookAt` lives.
-    const aim = cameraTrackToLookAt(state, poseNodeId, ctx);
+    // #1766 — frozen in the camera's parent space, where `lookAt` lives. #1759 — the
+    // Track-To's roll folds into the lens roll, or the camera would level out on clear.
+    const aim = cameraTrackToAim(state, poseNodeId, ctx);
     const ops: Op[] = [];
-    if (aim) ops.push({ type: 'setParam', nodeId, paramPath: 'lookAt', value: aim });
+    if (aim) ops.push({ type: 'setParam', nodeId, paramPath: 'lookAt', value: aim.lookAt });
+    if (aim && aim.roll !== 0) {
+      const lensRoll = (nodes[nodeId]?.params as { roll?: unknown } | undefined)?.roll;
+      const value = (typeof lensRoll === 'number' ? lensRoll : 0) + aim.roll;
+      ops.push({ type: 'setParam', nodeId, paramPath: 'roll', value });
+    }
     ops.push({ type: 'removeNode', nodeId: existingTTId });
     return { ops, label: 'clear look-at target', atomic: true };
   }

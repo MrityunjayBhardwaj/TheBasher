@@ -11,27 +11,29 @@
 import * as THREE from 'three';
 import type { EvaluatorCache } from '../core/dag/evaluator';
 import type { DagState } from '../core/dag/state';
-import { resolveTrackToTarget } from './nodeConstraints';
+import { activeConstraintForTarget, resolveTrackToTarget } from './nodeConstraints';
 import { resolveParentWorldMatrix } from './resolveWorldTransform';
 import type { ClockedCtx } from './subjectClock';
 
 type Vec3 = [number, number, number];
 
 /** The camera's Track-To aim brought into its parent's space, ready to stand in for its
- *  `lookAt`; null when no Track-To aims it. A top-level camera's parent is the world, so its
- *  aim comes back unchanged. */
-export function cameraTrackToLookAt(
+ *  `lookAt`, and the Track-To's own roll (#1759), which the camera adds to its lens roll; null
+ *  when no Track-To aims it. A top-level camera's parent is the world, so its aim comes back
+ *  unchanged. */
+export function cameraTrackToAim(
   state: DagState,
   cameraId: string,
   ctx: ClockedCtx,
   cache?: EvaluatorCache,
-): Vec3 | null {
+): { lookAt: Vec3; roll: number } | null {
   const aim = resolveTrackToTarget(state, cameraId, ctx, cache);
   if (!aim) return null;
+  const roll = activeConstraintForTarget(state.nodes, cameraId)?.roll ?? 0;
   const parentWorld = resolveParentWorldMatrix(state, cameraId, ctx, cache);
-  if (!parentWorld) return aim;
+  if (!parentWorld) return { lookAt: aim, roll };
   const local = new THREE.Vector3(aim[0], aim[1], aim[2]).applyMatrix4(
     parentWorld.clone().invert(),
   );
-  return [local.x, local.y, local.z];
+  return { lookAt: [local.x, local.y, local.z], roll };
 }

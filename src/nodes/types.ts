@@ -2808,10 +2808,14 @@ export interface TrackToConstraintValue {
   readonly aimNode: string;
   /** #1284 — a node inside the `aimNode` character (a bone) to aim at instead; '' = none. */
   readonly aimBone: string;
-  /** Fixed-point aim target (world) used when `aimNode` is empty. */
+  /** Fixed-point aim target used when `aimNode` is empty, in `aimSpace`. */
   readonly aimPoint: Vec3;
+  /** #1759 — the space `aimPoint` is in: the world, or the constrained object's parent. */
+  readonly aimSpace: 'world' | 'parent';
   /** Roll reference (default +Y). */
   readonly up: Vec3;
+  /** #1759 — degrees of roll about the aim axis, after aiming. */
+  readonly roll: number;
   /** Bypass — a muted constraint contributes nothing (the constraint stack). */
   readonly mute: boolean;
   /** Position in the target's ordered constraint stack (low → high, bottom → top).

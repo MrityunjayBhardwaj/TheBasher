@@ -280,7 +280,7 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
   TimeSource: '[]',
   Track: '[layout] name=layout strips=(unrouted) order=(unrouted) mute=(unrouted) solo=(unrouted)',
   TrackTo:
-    '[constraint,driver] name=(unrouted) target=(unrouted) aimNode=(unrouted) aimBone=(unrouted) aimPoint=(unrouted) up=(unrouted) mute=(unrouted) order=(unrouted)',
+    '[constraint,driver] name=(unrouted) target=(unrouted) aimNode=(unrouted) aimBone=(unrouted) aimPoint=(unrouted) aimSpace=(unrouted) up=(unrouted) roll=(unrouted) mute=(unrouted) order=(unrouted)',
   Transform: '[transform,constraint,driver] position=transform rotation=transform scale=transform',
   TransformClip:
     '[animate] name=(unrouted) duration=(unrouted) loop=(unrouted) keyframes=(unrouted)',
@@ -453,4 +453,7 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
 // #1666 retires `Shot` (`name` routed to layout; `startTime`, `endTime` unrouted) and `Cut`
 // (`transitionFrame` unrouted), and their rows with them:
 //   types 92 - 2 = 90 · routed 152 - 1 = 151 · unrouted 260 - 3 = 257
-export const GOLDEN_TOTALS = { types: 90, routed: 151, unrouted: 257 } as const;
+// #1759 adds `TrackTo.aimSpace` and `TrackTo.roll`, unrouted like every other Track-To param
+// (the constraint card draws the node's own rows). Nothing existing moved:
+//   types 90 · routed 151 · unrouted 257 + 2 = 259
+export const GOLDEN_TOTALS = { types: 90, routed: 151, unrouted: 259 } as const;

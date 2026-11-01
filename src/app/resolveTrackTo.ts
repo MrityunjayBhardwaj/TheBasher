@@ -34,6 +34,8 @@ const _up = new THREE.Vector3();
 const _m = new THREE.Matrix4();
 const _q = new THREE.Quaternion();
 const _e = new THREE.Euler();
+const _dir = new THREE.Vector3();
+const _roll = new THREE.Quaternion();
 
 /**
  * The aim rotation (Euler XYZ, DEGREES) orienting an object at `objPos` so its
@@ -45,7 +47,12 @@ const _e = new THREE.Euler();
  * Object3D default), so the degrees this returns compose into the SAME world
  * matrix `resolveWorldTransform` / the render produce — render==read parity (V37).
  */
-export function resolveTrackTo(objPos: Vec3, targetPos: Vec3, up: Vec3 = DEFAULT_UP): Vec3 | null {
+export function resolveTrackTo(
+  objPos: Vec3,
+  targetPos: Vec3,
+  up: Vec3 = DEFAULT_UP,
+  rollDeg = 0,
+): Vec3 | null {
   _eye.set(objPos[0], objPos[1], objPos[2]);
   _target.set(targetPos[0], targetPos[1], targetPos[2]);
   if (_eye.distanceToSquared(_target) < DEGENERATE_EPS * DEGENERATE_EPS) return null;
@@ -54,6 +61,12 @@ export function resolveTrackTo(objPos: Vec3, targetPos: Vec3, up: Vec3 = DEFAULT
   // convention) → using it as the object's rotation aims -Z at the target.
   _m.lookAt(_eye, _target, _up);
   _q.setFromRotationMatrix(_m);
+  // #1759 — roll about the aim axis, the way a camera rolls (`cameraOrientationQuat`): rotating
+  // the whole basis about eye → target. No roll leaves the aim untouched.
+  if (rollDeg !== 0 && Number.isFinite(rollDeg)) {
+    _dir.subVectors(_target, _eye).normalize();
+    _q.premultiply(_roll.setFromAxisAngle(_dir, THREE.MathUtils.degToRad(rollDeg)));
+  }
   _e.setFromQuaternion(_q, 'XYZ');
   return [
     THREE.MathUtils.radToDeg(_e.x),

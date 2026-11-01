@@ -10,6 +10,7 @@ import { applyOp, type DagState } from '../core/dag';
 import { registerAllNodes } from '../nodes/registerAll';
 import { makeSplitCamera } from '../test-utils/splitCamera';
 import { resolveActiveCameraPoseAt } from './activeCamera';
+import { cameraOrientationQuat } from './cameraOrientation';
 import { resolveEvaluatedTransform } from './resolveEvaluatedTransform';
 import { bindLookAtTargetOps } from './CameraLookAtTarget';
 import { splitCameraDataId } from '../test-utils/splitCamera';
@@ -112,5 +113,43 @@ describe('#1766 — a nested camera tracks in world space', () => {
       pose.lookAt[2] - pose.position[2],
     ];
     expectDir(fwd, [-pose.position[0], -pose.position[1], -pose.position[2]]);
+  });
+
+  // #1759 — a Track-To's roll adds to the camera's: the read includes it, and a clear keeps it.
+  it('the rotation read includes the Track-To’s roll', () => {
+    const s = nested([0, 0, 0], [0, 0, 0]);
+    const rolled = applyOp(s, {
+      type: 'setParam',
+      nodeId: 'track',
+      paramPath: 'roll',
+      value: 25,
+    }).next;
+    const pose = resolveActiveCameraPoseAt(rolled, 0);
+    const t = resolveEvaluatedTransform(rolled, 'cam', CTX)!;
+    const read = new Quaternion().setFromEuler(
+      new Euler(...(t.rotation!.map((d) => (d * Math.PI) / 180) as V3), 'XYZ'),
+    );
+    const drawn = cameraOrientationQuat(pose.position, pose.lookAt, pose.roll);
+    expect(Math.abs(read.dot(drawn))).toBeCloseTo(1, 6);
+    expect(pose.roll).toBe(25);
+  });
+
+  it('clearing the target folds its roll into the lens roll, so the camera does not level out', () => {
+    const s = applyOp(nested([5, 1, 0], [0, 90, 0]), {
+      type: 'setParam',
+      nodeId: 'track',
+      paramPath: 'roll',
+      value: 25,
+    }).next;
+    const before = resolveActiveCameraPoseAt(s, 0).roll;
+    const { ops } = bindLookAtTargetOps(
+      s,
+      { nodeId: splitCameraDataId('cam'), poseNodeId: 'cam' },
+      '',
+      CTX,
+    );
+    let after = s;
+    for (const op of ops) after = applyOp(after, op).next;
+    expect(resolveActiveCameraPoseAt(after, 0).roll).toBeCloseTo(before, 6);
   });
 });

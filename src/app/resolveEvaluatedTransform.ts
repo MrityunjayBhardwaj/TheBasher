@@ -53,7 +53,7 @@ import { overlayChannels } from '../nodes/overlayChannels';
 import { layeredChannelValues } from './layeredChannels';
 import { driverChannelValuesForTarget } from './paramDrivers';
 import { resolveConstraintRotation, resolveConstraintPosition } from './nodeConstraints';
-import { cameraTrackToLookAt } from './cameraTrackTo';
+import { cameraTrackToAim } from './cameraTrackTo';
 import { cameraOrientationQuat } from './cameraOrientation';
 import { useTransientEditStore } from './stores/transientEditStore';
 import { cameraLocalPose, childEdges } from './resolveWorldTransform';
@@ -124,9 +124,10 @@ export function resolveEvaluatedTransform(
     const own = ctxOnClockOf(state, selectedId, ctx);
     const followed = resolveConstraintPosition(state, selectedId, own, cache);
     const position = followed ?? (held.position as Vec3);
-    const lookAt = cameraTrackToLookAt(state, selectedId, ctx, cache) ?? local.lookAt;
+    const tracked = cameraTrackToAim(state, selectedId, ctx, cache);
+    const lookAt = tracked?.lookAt ?? local.lookAt;
     const e = new Euler().setFromQuaternion(
-      cameraOrientationQuat(position, lookAt, local.roll),
+      cameraOrientationQuat(position, lookAt, local.roll + (tracked?.roll ?? 0)),
       'XYZ',
     );
     return {

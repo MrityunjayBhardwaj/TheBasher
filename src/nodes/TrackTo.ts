@@ -50,10 +50,18 @@ export const TrackToParams = z.object({
     'the object itself',
     'name',
   ),
-  /** Fixed-point aim target (world) used when `aimNode` is empty. */
+  /** Fixed-point aim target used when `aimNode` is empty, in `aimSpace`. */
   aimPoint: Vec3Schema.default([0, 0, 0]),
+  /** #1759 — the space `aimPoint` is in: the world (default), or the constrained object's
+   *  parent, so a point authored beside the object travels with what it hangs from — Blender's
+   *  Track To owner/target space. An `aimNode` is always aimed at where it is in the world. */
+  aimSpace: z.enum(['world', 'parent']).default('world'),
   /** Roll reference for the aim basis (default +Y). */
   up: Vec3Schema.default([0, 1, 0]),
+  /** #1759 — degrees of roll about the aim axis, after aiming (a dutch angle). Blender's Track To
+   *  has none, only an up axis, which cannot hold a steady roll while the aim moves; a camera's
+   *  roll moves onto its Track-To in #487, so this one goes past Blender on purpose. */
+  roll: z.number().default(0),
   /** Bypass — a muted constraint contributes nothing (the constraint stack). */
   mute: z.boolean().default(false),
   /** Position in the target's ordered constraint stack (low → high, bottom → top).
@@ -101,7 +109,9 @@ export const TrackToNode: NodeDefinition<TrackToParams, TrackToConstraintValue> 
       aimNode: params.aimNode,
       aimBone: params.aimBone,
       aimPoint: params.aimPoint,
+      aimSpace: params.aimSpace,
       up: params.up,
+      roll: params.roll,
       mute: params.mute,
       order: params.order,
     };
