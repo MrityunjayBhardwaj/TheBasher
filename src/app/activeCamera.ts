@@ -39,7 +39,8 @@ import { type DofEffectSettings, resolveCameraDof } from './cameraDof';
 import { pickCameraSelect } from '../nodes/CameraSelect';
 import { sceneClockOf } from './sceneClock';
 import { clockedCtx, type ClockedCtx } from './subjectClock';
-import { resolveTrackToTarget, resolveConstraintPosition } from './nodeConstraints';
+import { resolveConstraintPosition } from './nodeConstraints';
+import { cameraTrackToLookAt } from './cameraTrackTo';
 import { resolveParentWorldMatrix } from './resolveWorldTransform';
 import { composeCameraPoseWithParent } from './cameraOrientation';
 import type { EvaluatorCache } from '../core/dag/evaluator';
@@ -364,7 +365,8 @@ export function resolveCameraPoseAt(
     pose.position = followed;
   }
 
-  const aimTarget = resolveTrackToTarget(state, node.id, ctx, cache);
+  // #1766 — in the parent's space, as the lookAt it stands in for.
+  const aimTarget = cameraTrackToLookAt(state, node.id, ctx, cache);
   if (aimTarget) {
     pose ??= { ...base };
     pose.lookAt = aimTarget;

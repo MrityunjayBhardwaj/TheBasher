@@ -330,6 +330,7 @@ describe('#814 the import cycles, enumerated and held', () => {
       [
         'src/app/activeCamera.ts',
         'src/app/cameraChannels.ts',
+        'src/app/cameraTrackTo.ts',
         'src/app/curveSampleSource.ts',
         'src/app/geometrySampleSource.ts',
         'src/app/gltfNodeWorld.ts',

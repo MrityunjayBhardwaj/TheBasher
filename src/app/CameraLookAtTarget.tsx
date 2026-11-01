@@ -29,8 +29,8 @@ import {
   activeConstraintForTarget,
   isRelationalPoseNode,
   nextConstraintOrder,
-  resolveTrackToTarget,
 } from './nodeConstraints';
+import { cameraTrackToLookAt } from './cameraTrackTo';
 import { useTimeStore } from './stores/timeStore';
 
 const ROW = 'flex items-center justify-between gap-2 px-3 py-1.5 text-[11px] text-fg/80';
@@ -128,7 +128,8 @@ export function bindLookAtTargetOps(
     // the camera jumps back to its stale authored aim on clear; written to the Object
     // it lands on a param nothing reads → same jump, and a stray `lookAt` on an Object.
     if (!existingTTId) return { ops: [], label: 'clear look-at target', atomic: true };
-    const aim = resolveTrackToTarget(state, poseNodeId, ctx);
+    // #1766 — frozen in the camera's parent space, where `lookAt` lives.
+    const aim = cameraTrackToLookAt(state, poseNodeId, ctx);
     const ops: Op[] = [];
     if (aim) ops.push({ type: 'setParam', nodeId, paramPath: 'lookAt', value: aim });
     ops.push({ type: 'removeNode', nodeId: existingTTId });

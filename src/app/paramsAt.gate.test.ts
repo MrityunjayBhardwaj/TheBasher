@@ -180,6 +180,10 @@ const CONSUMERS: Record<string, Decision> = {
   // #1318 — the Comfy batch bakes create one cache per bake for `resolveEvaluatedParam`, which
   // folds the channels and drivers itself, so the state it is handed must stay authored.
   'src/app/video/compileComfyBatch.ts': authored('delegates-to-a-folding-resolver'),
+  // #1766 — a camera's Track-To aim brought into its parent's space. It takes its caller's cache
+  // (TYPE only) and hands the authored state to the Track-To and parent-world resolvers, which
+  // fold their own overlays. No new road: the three camera reads it serves called them directly.
+  'src/app/cameraTrackTo.ts': authored('delegates-to-a-folding-resolver'),
   // #902 — the motion resolver. It reads the generator's params AUTHORED and
   // evaluates at the default ctx, and both halves are the same claim: a
   // generation request must be time-invariant. If the playhead could change the
@@ -373,7 +377,8 @@ describe('#582 — who evaluates the graph, and which params they need', () => {
     // 61 → 62 at #1732, not a new road: the armature read `gltfNodeWorld` made per bone lookup
     // moved into the rig index, which keeps it per graph (declared above as fixed-ctx).
     // `gltfNodeWorld` still evaluates, for the glTF-asset road.
-    expect(evaluatorConsumers()).toHaveLength(62); // 39 -> 40 at #935 (placement) (the motion resolver)
+    // 62 → 63 at #1766, not a new road: the camera Track-To reads moved behind one helper.
+    expect(evaluatorConsumers()).toHaveLength(63); // 39 -> 40 at #935 (placement) (the motion resolver)
   });
 
   it('every reason is load-bearing — no member of any union is decorative', () => {
