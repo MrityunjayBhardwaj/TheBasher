@@ -394,21 +394,26 @@ export function resolveCameraPoseAt(
   // evaluated on the camera's own clock, the film's.
   const sceneSeconds = sceneClockOf(state).sceneAt(seconds);
   const filmCtx = clockedCtx(sceneSeconds, seconds, 'film');
-  // `quaternion` is left out of what the channels overlay: on the Object it names the
-  // quaternion-mode rotation, which is read below with the rest of the camera's own rotation.
-  const { quaternion: _omit, ...unoriented } = lensBase;
-  void _omit;
-  const pose: Omit<CameraPose, 'quaternion'> = {
-    ...overlayCameraChannels(state, node.id, unoriented, filmCtx, cache),
-  };
-  // #1760 — the camera's own rotation, keys overlaid on the same clock as its position.
-  const own = overlayCameraChannels(
+  // ONE overlay for everything the camera's channels can key (#1757 counts these scans per frame):
+  // its position and lens, and (#1760) its own rotation in its mode. The pose's own `quaternion`
+  // is left out: on the Object that name is the quaternion-mode rotation, which is what this
+  // bag carries under it, and the pose's orientation is decided below.
+  const { quaternion: _poseQuat, ...unoriented } = lensBase;
+  void _poseQuat;
+  const {
+    rotation,
+    rotationMode,
+    quaternion: ownQuat,
+    ...keyedPose
+  } = overlayCameraChannels(
     state,
     node.id,
-    ownRotationOf(node.params as Record<string, unknown>),
+    { ...unoriented, ...ownRotationOf(node.params as Record<string, unknown>) },
     filmCtx,
     cache,
   );
+  const pose: Omit<CameraPose, 'quaternion'> = keyedPose;
+  const own: CameraOwnRotation = { rotation, rotationMode, quaternion: ownQuat };
 
   // #204 Track-To migration — an active Track-To on the camera node DERIVES its
   // aim ([[V60]]): lookAt = the target's world position (node-ref via #202, or the
