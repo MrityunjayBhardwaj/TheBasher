@@ -70,7 +70,7 @@ import { pivotPoint } from './gizmoPivot';
 import { resolveEvaluatedTransform } from './resolveEvaluatedTransform';
 import { resolveParentWorldMatrix, resolveWorldTransform } from './resolveWorldTransform';
 import { routeAnimatedGrab, autoKeyCommit } from './animate/autoKeyCommit';
-import { resolveActiveCameraPoseAt } from './activeCamera';
+import { resolveCameraPoseAt } from './activeCamera';
 import { sceneClockOf } from './sceneClock';
 import { clockedCtx } from './subjectClock';
 import { isCameraNode } from './cameraNode';
@@ -937,7 +937,7 @@ function MultiGizmo() {
 // Every write funnels through the SAME routeAnimatedGrab → setParam →
 // autoKeyCommit chokepoint the generic gizmo + #190 camera authoring use (V1).
 // #231 Inc 3.3 — a camera CAN now be nested in a Group. The proxies seed at the
-// camera's WORLD pose (resolveActiveCameraPoseAt composes the parent), so a drag
+// camera's WORLD pose (resolveCameraPoseAt composes the parent), so a drag
 // must convert the world manipulation BACK to the camera's LOCAL params before
 // writing (the #230 round-trip, applied to the camera's point-based lookAt model).
 // `parentWorld` is null for a top-level camera → the proxy world IS the local pose,
@@ -1146,7 +1146,7 @@ function CameraGizmo() {
   const camId = useSelectionStore((s) => s.primaryNodeId);
   const mode = useGizmoStore((s) => s.mode);
   const orientation = useGizmoStore((s) => s.orientation);
-  // #1594 — the camera is posed on the playhead (film time), as `resolveActiveCameraPoseAt` reads
+  // #1594 — the camera is posed on the playhead (film time), as `resolveCameraPoseAt` reads
   // it. #1731 — read from the frame loop (`useSeedAtPlayhead`), not subscribed.
   const playing = useTimeStore((s) => s.playing);
 
@@ -1194,7 +1194,8 @@ function CameraGizmo() {
       if (!camId) return;
       let pose;
       try {
-        pose = resolveActiveCameraPoseAt(useDagStore.getState().state, seconds, cache);
+        // #1771 — the SELECTED camera's pose, the one the drags write to (not the active one).
+        pose = resolveCameraPoseAt(useDagStore.getState().state, camId, seconds, cache);
       } catch {
         return;
       }
@@ -1205,7 +1206,7 @@ function CameraGizmo() {
           pose.lookAt[2] - pose.position[2],
         ) || 1;
       // #231 Inc 3.3 — the parent Group world (null for a top-level camera). The pose
-      // above is already in WORLD space (resolveActiveCameraPoseAt composed it), so
+      // above is already in WORLD space (resolveCameraPoseAt composed it), so
       // the drag handlers undo this matrix to recover the LOCAL authored params.
       // #1688 — `seconds` is the playhead; the parent read takes both clocks, so a rig on scene
       // time is undone where the scene has reached and a rig set to Film where the playhead is.
@@ -1354,8 +1355,9 @@ function CameraGizmo() {
     }
     const local = maybeSnapVec3(toLocalPoint(world));
     const localPos = toLocalPoint(seed.position);
-    const pose = resolveActiveCameraPoseAt(
+    const pose = resolveCameraPoseAt(
       useDagStore.getState().state,
+      camId,
       useTimeStore.getState().filmSeconds,
       cache,
     );
