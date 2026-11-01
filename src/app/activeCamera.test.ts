@@ -3,6 +3,7 @@
 
 import { beforeAll, describe, expect, it } from 'vitest';
 import {
+  cameraFilmCtx,
   cameraPoseForNodeId,
   cameraPoseFromPair,
   DEFAULT_CAMERA_POSE,
@@ -21,6 +22,7 @@ import { registerAllNodes } from '../nodes/registerAll';
 import { makeSplitCamera } from '../test-utils/splitCamera';
 import { makeSplitCube } from '../test-utils/splitCube';
 import { splitOps } from '../test-utils/splitKinds';
+import { resolveEvaluatedParam } from './resolveEvaluatedParam';
 
 // buildDefaultDagState / applyOp resolve node types from the registry, which
 // is populated by registerAll (a side-effecting boot step in the real app).
@@ -906,5 +908,63 @@ describe('resolveCameraDofAt — the split camera DoF road (#387 D9)', () => {
     );
     expect(resolveCameraDofAt(s, 'n_cam', 0)!.focusDistance).toBeCloseTo(Math.sqrt(65), 6);
     expect(resolveCameraDofAt(s, 'n_cam', 1)!.focusDistance).toBeCloseTo(10, 6);
+  });
+});
+
+// #1745 — the camera's lens fields read a driven fov on the clock the render reads it on. The
+// fixture: the scene at half speed, the box keyed x = 10·t on the scene clock, and the camera's
+// fov driven by the box's x. At a playhead of 4 s the scene is at 2 s, so the render's fov is 20.
+// A plain `{ time }` context makes the playhead scene time and reads 40: the CONTROL below shows
+// the fixture tells the two clocks apart, so the parity is not a coincidence of speed 1.
+describe("cameraFilmCtx — a camera value read on the render's clock (#1745)", () => {
+  function slowSceneDrivenFov(): DagState {
+    let s = buildDefaultDagState();
+    const ops = [
+      { type: 'setParam', nodeId: s.outputs.scene!.node, paramPath: 'timeSpeed', value: 0.5 },
+      {
+        type: 'addNode',
+        nodeId: 'bx',
+        nodeType: 'KeyframeChannelVec3',
+        params: {
+          target: 'n_box',
+          paramPath: 'position',
+          keyframes: [
+            { time: 0, value: [0, 0, 0], easing: 'linear' },
+            { time: 8, value: [80, 0, 0], easing: 'linear' },
+          ],
+        },
+      },
+      {
+        type: 'addNode',
+        nodeId: 'drv',
+        nodeType: 'ParamDriver',
+        params: {
+          target: 'n_camera_data',
+          paramPath: 'fov',
+          blendMode: 'replace',
+          order: 0,
+          sourceTransform: { node: 'n_box', channel: 'tx' },
+        },
+      },
+    ];
+    for (const op of ops) s = applyOp(s, op as Parameters<typeof applyOp>[1]).next;
+    return s;
+  }
+
+  it('a driven fov reads what the render reads at a slowed scene', () => {
+    const s = slowSceneDrivenFov();
+    const rendered = resolveCameraPoseAt(s, 'n_camera', 4).fov;
+    expect(rendered).toBeCloseTo(20, 6);
+    const shown = resolveEvaluatedParam(s, 'n_camera_data', 'fov', cameraFilmCtx(s, 4));
+    expect(shown!.value as number).toBeCloseTo(rendered, 6);
+  });
+
+  it('CONTROL — a plain context takes the playhead for scene time and reads another value', () => {
+    const s = slowSceneDrivenFov();
+    const plain = { time: { frame: 240, seconds: 4, normalized: 0 } };
+    expect(resolveEvaluatedParam(s, 'n_camera_data', 'fov', plain)!.value as number).toBeCloseTo(
+      40,
+      6,
+    );
   });
 });

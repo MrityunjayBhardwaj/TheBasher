@@ -38,7 +38,7 @@ import {
 import { type DofEffectSettings, resolveCameraDof } from './cameraDof';
 import { pickCameraSelect } from '../nodes/CameraSelect';
 import { sceneClockOf } from './sceneClock';
-import { clockedCtx } from './subjectClock';
+import { clockedCtx, type ClockedCtx } from './subjectClock';
 import { resolveTrackToTarget, resolveConstraintPosition } from './nodeConstraints';
 import { resolveParentWorldMatrix } from './resolveWorldTransform';
 import { composeCameraPoseWithParent } from './cameraOrientation';
@@ -378,6 +378,17 @@ export function resolveCameraPoseAt(
   const parentWorld = resolveParentWorldMatrix(state, node.id, ctx, cache);
   const result = pose ?? base;
   return parentWorld ? composeCameraPoseWithParent(result, parentWorld) : result;
+}
+
+/**
+ * #1745 — the context a camera's own values are read in at playhead `seconds`: the film clock,
+ * carrying the scene time beside it, as the pose and the lens are read for the render. A reader
+ * that builds a plain `{ time }` context instead has its playhead taken for SCENE time by the
+ * clock helpers, so a driver reading a scene-clock source lands somewhere else whenever the
+ * scene does not run at speed 1 (render fov 20, inspector 40 at speed 0.5).
+ */
+export function cameraFilmCtx(state: DagState, seconds: number): ClockedCtx {
+  return clockedCtx(sceneClockOf(state).sceneAt(seconds), seconds, 'film');
 }
 
 /**

@@ -42,7 +42,10 @@ interface BasherWindow {
   __basher_dag?: {
     getState: () => {
       dispatch: (op: unknown, source: string, desc: string) => void;
-      state: { nodes: Record<string, { type: string; params: Record<string, unknown> }> };
+      state: {
+        nodes: Record<string, { type: string; params: Record<string, unknown> }>;
+        outputs: { scene?: { node: string } };
+      };
     };
   };
   __basher_selection?: { getState: () => { select: (id: string) => void } };
@@ -168,5 +171,54 @@ test.describe('#194 camera inspector read-side parity', () => {
     await setTime(page, 1);
     // Falsifiable: a frozen read side stays at the authored 0.1 / 0.5.
     expect(Number(await near.inputValue())).toBeCloseTo(4, 1);
+  });
+
+  // #1745 — the panel reads a driven fov on the render's clock. The scene runs at half speed, the
+  // box is keyed x = 10·t on the scene clock, and the camera's fov is driven by the box's x. At a
+  // playhead of 4 s the scene is at 2 s: the look-through camera's fov is 20, and the panel must
+  // show 20. Falsifiable: a plain `{ time }` context in the panel reads the playhead as scene time
+  // and shows 40.
+  test("a driven fov reads the render's value at a slowed scene", async ({ page }) => {
+    await waitReady(page);
+    const lens = await dataNodeIdOf(page, 'n_camera');
+    await page.evaluate((lens) => {
+      const dag = (window as unknown as BasherWindow).__basher_dag!.getState();
+      const scene = dag.state.outputs.scene!.node;
+      const ops = [
+        { type: 'setParam', nodeId: scene, paramPath: 'timeSpeed', value: 0.5 },
+        {
+          type: 'addNode',
+          nodeId: 'p1745_box',
+          nodeType: 'KeyframeChannelVec3',
+          params: {
+            target: 'n_box',
+            paramPath: 'position',
+            keyframes: [
+              { time: 0, value: [0, 0, 0], easing: 'linear' },
+              { time: 8, value: [80, 0, 0], easing: 'linear' },
+            ],
+          },
+        },
+        {
+          type: 'addNode',
+          nodeId: 'p1745_drv',
+          nodeType: 'ParamDriver',
+          params: {
+            target: lens,
+            paramPath: 'fov',
+            blendMode: 'replace',
+            order: 0,
+            sourceTransform: { node: 'n_box', channel: 'tx' },
+          },
+        },
+      ];
+      for (const op of ops) dag.dispatch(op, 'test', 'p1745 fixture');
+    }, lens);
+    await selectCamera(page);
+    await lookThrough(page);
+
+    await setTime(page, 4);
+    await expect.poll(async () => (await viewCam(page))!.fov).toBeCloseTo(20, 0);
+    await expect(page.getByTestId(`inspector-camera-fov-${lens}`)).toHaveText('20°');
   });
 });

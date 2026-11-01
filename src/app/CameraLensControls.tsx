@@ -21,7 +21,7 @@ import { useDagStore } from '../core/dag/store';
 import { DEFAULT_SENSOR_MM, focalLengthFromFov, fovFromFocalLength } from './cameraLens';
 import { autoKeyCommit, routeAnimatedGrab } from './animate/autoKeyCommit';
 import { CameraLookAtTarget } from './CameraLookAtTarget';
-import { resolveCameraPoseAt } from './activeCamera';
+import { cameraFilmCtx, resolveCameraPoseAt } from './activeCamera';
 import { cameraProjectionOf } from './cameraNode';
 import { ParamDiamond } from './ParamDiamond';
 import { resolveEvaluatedParam } from './resolveEvaluatedParam';
@@ -87,19 +87,20 @@ export function CameraLensControls({
     return p?.focusOnTarget === true && timeDependentSetOf(s.state).has(poseNodeId);
   });
   const playhead = usePlayheadWhen(live, `${nodeId}|${poseNodeId}`);
-  const frame = playhead.filmFrame;
   const seconds = playhead.filmSeconds;
-  const normalized = playhead.normalized;
   const playing = useTimeStore((s) => s.playing);
   // #1314 — a stable cache: this re-reads the evaluated graph on every playhead change, and
   // uncached that re-runs everything under the node (a character's whole-clip retarget) per frame.
   const cache = uiEvaluatorCache;
   const evaluatedScalar = useMemo(() => {
-    const ctx = { time: { frame, seconds, normalized } };
+    // #1745 — the render's clock: the film clock with the scene time beside it. A plain
+    // `{ time }` here was read as SCENE time, so a driver fed by a scene-clock source showed
+    // another value than the render whenever the scene ran at another speed.
+    const ctx = cameraFilmCtx(dagState, seconds);
     const at = (paramPath: string) =>
       resolveEvaluatedParam(dagState, nodeId, paramPath, ctx, cache);
     return { fov: at('fov'), near: at('near'), far: at('far') };
-  }, [dagState, nodeId, frame, seconds, normalized, cache]);
+  }, [dagState, nodeId, seconds, cache]);
 
   // #247 — when focus-on-target is on, the focus distance is DERIVED from the
   // evaluated pose (|position − lookAt|, channels + Track-To) — the same value the
