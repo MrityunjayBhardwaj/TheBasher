@@ -1,6 +1,6 @@
 // p1753 (#1753) — a camera's rotation, as a driver reads it, is the orientation the camera is drawn
-// with. A camera is oriented by its aim (position → lookAt, with roll), and the render reads no
-// rotation off the camera Object; the read used to return the Object's typed rotation anyway.
+// with. A camera is turned by its winning Track-To, else by its own rotation (#1760); the read
+// used to return the Object's typed rotation even while an aim turned the drawn camera.
 // Compared with what is DRAWN: the look-through camera's world forward (`__basher_view_camera`),
 // with the scene slowed so the camera (on the playhead) and the scene are at different times.
 import { expect, test } from './_fixtures';
@@ -60,16 +60,24 @@ test('a driver reading a camera’s rotation reads where the camera looks', asyn
     const ops = [
       { type: 'setParam', nodeId: 'n_scene', paramPath: 'timeSpeed', value: 0.5 },
       { type: 'setParam', nodeId: 'n_camera', paramPath: 'position', value: [0, 0, 5] },
-      // A typed rotation the render never reads: the read must not return it.
+      // A typed rotation the aim overrides: the read must not return it.
       { type: 'setParam', nodeId: 'n_camera', paramPath: 'rotation', value: [10, 20, 30] },
+      // #1760 — aimed as a saved camera is since v26: a point Track-To in its parent's space,
+      // its aim point keyed. #1769 — those keys run on the playhead, as the camera does.
+      {
+        type: 'addNode',
+        nodeId: 'p1753_tt',
+        nodeType: 'TrackTo',
+        params: { target: 'n_camera', aimPoint: [0, 0, 0], aimSpace: 'parent' },
+      },
       {
         type: 'addNode',
         nodeId: 'p1753_aim',
         nodeType: 'KeyframeChannelVec3',
         params: {
-          name: 'lookAt',
-          target: 'n_camera_data',
-          paramPath: 'lookAt',
+          name: 'aimPoint',
+          target: 'p1753_tt',
+          paramPath: 'aimPoint',
           keyframes: [
             { time: 0, value: [0, 0, 0], easing: 'linear' },
             { time: 2, value: [10, 0, 5], easing: 'linear' },

@@ -10,6 +10,7 @@
 //
 // REF: THESIS.md §50 (Op system); krama K6 (sister chain — asset drop).
 
+import { cameraRotationLookingAt } from './cameraOrientation';
 import type { DagState } from '../core/dag/state';
 import type { Op } from '../core/dag/types';
 import { buildSkeletonObjectOps } from '../core/import/skeletonObject';
@@ -757,9 +758,11 @@ function paramsFor(kind: PrimitiveKind, position: Vec3): Record<string, unknown>
     // #387 C4 — a camera is the object↔data split; these params are the OBJECT half's TRS
     // only. The lens (fov/zoom/near/far/lookAt/roll) is minted by cameraDataParamsFor onto
     // the CameraData half by the camera branch above.
+    // #1760 — turned by its own rotation to the world origin, where its lens look-at points
+    // (V665): the framing it had while the look-at turned it.
     case 'PerspectiveCamera':
     case 'OrthographicCamera':
-      return { position, rotation: [0, 0, 0], scale: [1, 1, 1] };
+      return { position, rotation: cameraRotationLookingAt(position, [0, 0, 0]), scale: [1, 1, 1] };
     // #394 — a Material has NO pose. Its params come from its own zod defaults (THE
     // standard material), so nothing is seeded here; passing a `position` would mint a
     // param the schema strips and read as though a material had a place in the world.

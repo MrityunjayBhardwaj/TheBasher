@@ -14,6 +14,7 @@
 //
 // REF: THESIS.md §11, vyapti V1, krama K7 (sister chain).
 
+import { cameraRotationOf } from '../cameraOrientation';
 import { useThreeRef } from './threeRef';
 import { applyOp } from '../../core/dag';
 import { useDagStore } from '../../core/dag/store';
@@ -86,7 +87,9 @@ export async function snapshotCameraFromOrbit(): Promise<void> {
     nodeType: 'Object',
     params: {
       position: [cam.position.x, cam.position.y, cam.position.z],
-      rotation: [0, 0, 0],
+      // #1760 — the view's own orientation, so the new camera frames exactly what the view
+      // does, roll included (V665). The lens look-at above only sets the aim distance now.
+      rotation: cameraRotationOf(cam.quaternion),
       scale: [1, 1, 1],
     },
   });

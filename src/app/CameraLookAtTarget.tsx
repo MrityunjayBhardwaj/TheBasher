@@ -31,6 +31,9 @@ import {
   nextConstraintOrder,
 } from './nodeConstraints';
 import { cameraTrackToAim } from './cameraTrackTo';
+import { resolveEvaluatedTransform } from './resolveEvaluatedTransform';
+import { rotationWriteOf } from './resolvedRotation';
+import type { RotationModeFields } from '../nodes/types';
 import { useTimeStore } from './stores/timeStore';
 
 const ROW = 'flex items-center justify-between gap-2 px-3 py-1.5 text-[11px] text-fg/80';
@@ -128,15 +131,19 @@ export function bindLookAtTargetOps(
     // the camera jumps back to its stale authored aim on clear; written to the Object
     // it lands on a param nothing reads → same jump, and a stray `lookAt` on an Object.
     if (!existingTTId) return { ops: [], label: 'clear look-at target', atomic: true };
-    // #1766 — frozen in the camera's parent space, where `lookAt` lives. #1759 — the
-    // Track-To's roll folds into the lens roll, or the camera would level out on clear.
+    // #1760 — the camera keeps looking where it looked: the orientation it is drawn with (aim
+    // and roll, in its parent's space) becomes its own rotation, in its rotation mode — what
+    // Blender's Apply Visual Transform does before a constraint is removed (V665). #1766 — the
+    // aim point, in the parent's space where `lookAt` lives, still sets the aim distance the
+    // ortho size and focus read until they have their own sources.
     const aim = cameraTrackToAim(state, poseNodeId, ctx);
+    const drawn = resolveEvaluatedTransform(state, poseNodeId, ctx);
     const ops: Op[] = [];
     if (aim) ops.push({ type: 'setParam', nodeId, paramPath: 'lookAt', value: aim.lookAt });
-    if (aim && aim.roll !== 0) {
-      const lensRoll = (nodes[nodeId]?.params as { roll?: unknown } | undefined)?.roll;
-      const value = (typeof lensRoll === 'number' ? lensRoll : 0) + aim.roll;
-      ops.push({ type: 'setParam', nodeId, paramPath: 'roll', value });
+    if (drawn?.rotation) {
+      const objParams = (nodes[poseNodeId]?.params ?? {}) as RotationModeFields;
+      const write = rotationWriteOf(objParams, drawn.rotation);
+      ops.push({ type: 'setParam', nodeId: poseNodeId, ...write });
     }
     ops.push({ type: 'removeNode', nodeId: existingTTId });
     return { ops, label: 'clear look-at target', atomic: true };

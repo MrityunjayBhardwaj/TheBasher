@@ -88,7 +88,9 @@ test.describe('#247 camera lookAt reticle', () => {
     expect(g.reticle).toBe(true);
     expect(g.bound).toBe(false);
     expect(g.position).toEqual([3, 2, 3]); // body at camera position
-    expect(g.aim).toEqual([0, 0, 0]); // reticle at the lookAt point
+    // reticle at the lookAt point — #1760: a point straight ahead along the camera's own
+    // rotation, which looks at it, so equal to the float.
+    g.aim!.forEach((v) => expect(v).toBeCloseTo(0, 6));
   });
 
   test('dragging the reticle re-aims the camera (real pointer drag, behind geometry)', async ({

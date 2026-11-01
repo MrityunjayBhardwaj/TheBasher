@@ -75,13 +75,13 @@ import { driverChannelValuesForTarget } from './paramDrivers';
 import type { KeyframeChannelValue } from '../nodes/types';
 import { cameraLensParams, isCameraNode } from './cameraNode';
 import { resolveRigLightSources } from './resolveRigLightSources';
-import { cameraOrientationQuat } from './cameraOrientation';
+import { quaternionFromEulerDeg, withResolvedRotation } from './resolvedRotation';
+import type { Quat, RotationModeFields } from '../nodes/types';
 import { hierarchySocketForKind } from './sceneHierarchy';
 import { sceneIndexOf } from './sceneIndex';
 import { getNodeType } from '../core/dag/registry';
 import { conversionsInto } from '../core/dag/socketConversion';
 import { useTransientEditStore } from './stores/transientEditStore';
-import { withResolvedRotation } from './resolvedRotation';
 import { boneParentMatrix } from '../nodes/boneParent';
 import { type ClockedCtx, ctxOnClock, ctxOnClockOf } from './subjectClock';
 import { measureStage } from '../perf/frameProfiler';
@@ -535,14 +535,17 @@ function isIdentityMatrix(m: THREE.Matrix4): boolean {
   return true;
 }
 
-/** The world matrix of a camera from its pose: position + the orientation from
- *  (position → lookAt) banked by `roll`° (#229), identity scale. Delegates to the
- *  ONE shared `cameraOrientationQuat` so the resolved world matches the drawn
- *  frustum + the rendered/look-through orientation exactly (V37). */
-function cameraWorldMatrix(position: Vec3, lookAt: Vec3, roll: number): THREE.Matrix4 {
-  const pos = new THREE.Vector3(position[0], position[1], position[2]);
-  const q = cameraOrientationQuat(position, lookAt, roll);
-  return new THREE.Matrix4().compose(pos, q, new THREE.Vector3(1, 1, 1));
+/** #1760 — a camera's local matrix from its own transform: position and its Object's rotation
+ *  (in its mode), identity scale (the render does not scale a camera). Like every object on this
+ *  walk, no constraint is applied: a Track-To is folded by the readers that may (V665). */
+function cameraLocalMatrix(cam: CameraLocalPose): THREE.Matrix4 {
+  const pos = new THREE.Vector3(cam.position[0], cam.position[1], cam.position[2]);
+  const [x, y, z, w] = quaternionFromEulerDeg(withResolvedRotation(cam).rotation);
+  return new THREE.Matrix4().compose(
+    pos,
+    new THREE.Quaternion(x, y, z, w),
+    new THREE.Vector3(1, 1, 1),
+  );
 }
 
 function decompose(m: THREE.Matrix4): WorldTransform {
@@ -571,18 +574,38 @@ function decompose(m: THREE.Matrix4): WorldTransform {
  * first; the both-ids enumerator, the same one push-down and the render overlay consume, answers
  * the second.
  */
+/** A camera's own transform as read (keys overlaid): its position, its rotation in its mode, and
+ *  the lens roll that still adds to a Track-To's aim until #1764. */
+export interface CameraLocalPose extends RotationModeFields {
+  position: Vec3;
+  rotation: Vec3;
+  roll: number;
+}
+
 export function cameraLocalPose(
   state: DagState,
   cameraId: string,
   ctx: ClockedCtx,
   cache?: EvaluatorCache,
-): { position: Vec3; lookAt: Vec3; roll: number } {
-  const op = (state.nodes[cameraId]?.params ?? {}) as { position?: unknown };
-  const cp = (cameraLensParams(state, cameraId) ?? {}) as { lookAt?: unknown; roll?: unknown };
-  const cam = {
+): CameraLocalPose {
+  const op = (state.nodes[cameraId]?.params ?? {}) as {
+    position?: unknown;
+    rotation?: unknown;
+    rotationMode?: unknown;
+    quaternion?: unknown;
+  };
+  const cp = (cameraLensParams(state, cameraId) ?? {}) as { roll?: unknown };
+  const q = op.quaternion;
+  const cam: CameraLocalPose = {
     // Fallbacks mirror DEFAULT_CAMERA_POSE (activeCamera.ts) without importing it.
     position: isVec3(op.position) ? op.position : ([3, 2, 3] as Vec3),
-    lookAt: isVec3(cp.lookAt) ? cp.lookAt : ([0, 0, 0] as Vec3),
+    // #1760 — the Object's own rotation, in its mode (V665).
+    rotation: isVec3(op.rotation) ? op.rotation : ([0, 0, 0] as Vec3),
+    rotationMode: op.rotationMode === 'quaternion' ? 'quaternion' : undefined,
+    quaternion:
+      Array.isArray(q) && q.length === 4 && q.every((v) => typeof v === 'number')
+        ? (q as unknown as Quat)
+        : undefined,
     roll: typeof cp.roll === 'number' ? cp.roll : 0,
   };
   // #482 — the same call the camera's pose makes, so the gizmo and the render agree.
@@ -631,7 +654,7 @@ function worldTransformOf(
     // groupable-camera path). `resolveParentWorldMatrix` returns null for a
     // top-level camera (wired only to scene.camera) → byte-identical to the flat
     // local-pose world. The local matrix is the camera's own pose orientation.
-    const camLocal = cameraWorldMatrix(cam.position, cam.lookAt, cam.roll);
+    const camLocal = cameraLocalMatrix(cam);
     const parentWorld = resolveParentWorldMatrix(state, selectedId, ctx, cache);
     return decompose(parentWorld ? parentWorld.clone().multiply(camLocal) : camLocal);
   }

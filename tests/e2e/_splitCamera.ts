@@ -19,6 +19,7 @@
 // CameraData's id (`inspector-camera-fov-<objectId>_data`), not on the id you selected.
 
 import { dataIdFor, splitOps } from '../../src/test-utils/splitKinds';
+import { cameraRotationLookingAt } from '../../src/app/cameraOrientation';
 
 export interface SplitCameraOpts {
   /** Id for the Object — the pose half, and the node a spec selects / poses / references. */
@@ -55,9 +56,14 @@ export function splitCameraOps(opts: SplitCameraOpts): unknown[] {
     lookAt: opts.lookAt ?? [0, 0, 0],
     ...(opts.lens ?? {}),
   };
+  // #1760 — as every camera creator does now: turned by its own rotation to the look-at, banked
+  // by the lens roll (V665). The look-at no longer turns a camera; a spec that gives a rotation
+  // gets exactly that rotation.
+  const position = opts.position ?? [0, 0, 0];
+  const roll = typeof opts.lens?.roll === 'number' ? opts.lens.roll : 0;
   const objParams: Record<string, unknown> = {
-    position: opts.position ?? [0, 0, 0],
-    rotation: opts.rotation ?? [0, 0, 0],
+    position,
+    rotation: opts.rotation ?? cameraRotationLookingAt(position, opts.lookAt ?? [0, 0, 0], roll),
     scale: opts.scale ?? [1, 1, 1],
   };
 

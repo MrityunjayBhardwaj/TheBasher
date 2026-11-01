@@ -122,42 +122,37 @@ test.describe('#229 camera aim gizmo', () => {
     for (let i = 0; i < 3; i++) expect(got[i]).toBeCloseTo(want[i], 2);
   });
 
-  test('rotate gizmo orbits the aim about the camera + banks roll', async ({ page }) => {
+  // #1760 — a camera is turned by its own rotation (V665): a rotate drag writes the camera
+  // Object's rotation, and the look-through looks along it, banked.
+  test('rotate gizmo turns the camera by its rotation + banks roll', async ({ page }) => {
     await ready(page);
     const id = await camId(page);
     await selectCamera(page, id);
 
-    const lens = await dataNodeIdOf(page, id);
-    const pos = (await camParam(page, id, 'position')) as [number, number, number];
-    const before = (await camParam(page, lens, 'lookAt')) as [number, number, number];
-    const distBefore = Math.hypot(before[0] - pos[0], before[1] - pos[1], before[2] - pos[2]);
-
-    // Rotate the camera body to an absolute orientation (euler degrees). A 30°
-    // yaw about Y re-aims the camera; the aim stays the same distance away.
+    // Rotate the camera body to an absolute world orientation (euler degrees). The default
+    // camera is top-level, so its own rotation is that orientation.
     await page.evaluate(() => {
       (window as unknown as BasherWindow).__basher_camera_gizmo_grab!('rotate', [0, 30, 20]);
     });
     await page.waitForTimeout(100);
 
-    const after = (await camParam(page, lens, 'lookAt')) as [number, number, number];
-    const roll = (await camParam(page, lens, 'roll')) as number;
-    const distAfter = Math.hypot(after[0] - pos[0], after[1] - pos[1], after[2] - pos[2]);
+    const rot = (await camParam(page, id, 'rotation')) as [number, number, number];
+    [0, 30, 20].forEach((v, i) => expect(rot[i]).toBeCloseTo(v, 3));
 
-    // The aim moved (re-aimed) but kept its distance from the camera.
-    const moved = Math.hypot(after[0] - before[0], after[1] - before[1], after[2] - before[2]);
-    expect(moved).toBeGreaterThan(0.1);
-    expect(distAfter).toBeCloseTo(distBefore, 2);
-    // Roll picked up the Z component of the rotation (banking).
-    expect(Math.abs(roll)).toBeGreaterThan(1);
-
-    // Side B — the look-through camera matches the new aim.
+    // Side B — the look-through camera looks along that rotation and is banked by it.
     await page.keyboard.press('0');
     await page.waitForTimeout(200);
     const view = await page.evaluate(() =>
       (window as unknown as BasherWindow).__basher_view_camera!(),
     );
-    const want = norm([after[0] - pos[0], after[1] - pos[1], after[2] - pos[2]]);
+    const d = Math.PI / 180;
+    const [ry, rz] = [30 * d, 20 * d];
+    // Forward of XYZ euler (0, ry, rz) applied to −Z: Ry·Rz·(0,0,−1) = (−sin ry, 0, −cos ry).
+    const want = norm([-Math.sin(ry), 0, -Math.cos(ry)]);
     const got = norm(view!.direction);
     for (let i = 0; i < 3; i++) expect(got[i]).toBeCloseTo(want[i], 2);
+    // Banked by the Z part: up = Ry·Rz·(0,1,0) = (−sin rz·cos ry, cos rz, sin rz·sin ry).
+    const wantUp = [-Math.sin(rz) * Math.cos(ry), Math.cos(rz), Math.sin(rz) * Math.sin(ry)];
+    for (let i = 0; i < 3; i++) expect(view!.up[i]).toBeCloseTo(wantUp[i], 2);
   });
 });

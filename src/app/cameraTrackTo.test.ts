@@ -22,7 +22,7 @@ const CTX = { time: { frame: 0, seconds: 0, normalized: 0 } };
 
 /** A camera at local origin in a Group at `position`/`rotation`, active, Track-To'd at the
  *  world origin (or at a node, when `aimNode` is given). */
-function nested(position: V3, rotation: V3, aimNode = ''): DagState {
+function nested(position: V3, rotation: V3, aimNode = '', local: V3 = [0, 0, 0]): DagState {
   let s = buildDefaultDagState();
   const run = (op: object) => (s = applyOp(s, op as never).next);
   run({ type: 'addNode', nodeId: 'grp', nodeType: 'Group', params: { position, rotation } });
@@ -33,7 +33,7 @@ function nested(position: V3, rotation: V3, aimNode = ''): DagState {
   });
   s = makeSplitCamera(s, {
     objectId: 'cam',
-    position: [0, 0, 0],
+    position: local,
     lens: { lookAt: [0, 0, -1] },
   }).state;
   run({
@@ -63,8 +63,15 @@ const unit = (v: V3): V3 => {
 const expectDir = (got: V3, want: V3) =>
   unit(got).forEach((x, i) => expect(x, `axis ${i}`).toBeCloseTo(unit(want)[i], 6));
 
-const CASES: { name: string; position: V3; rotation: V3 }[] = [
-  { name: 'a group at the origin (control)', position: [0, 0, 0], rotation: [0, 0, 0] },
+// #1760 — the control's camera stands off the origin: at the origin it would sit on its own aim
+// point, which aims nothing (the camera keeps its own rotation, as a mesh does).
+const CASES: { name: string; position: V3; rotation: V3; local?: V3 }[] = [
+  {
+    name: 'a group at the origin (control)',
+    position: [0, 0, 0],
+    rotation: [0, 0, 0],
+    local: [2, 1, 4],
+  },
   { name: 'a moved group', position: [5, 1, 0], rotation: [0, 0, 0] },
   { name: 'a moved and turned group', position: [5, 1, 0], rotation: [0, 90, 0] },
 ];
@@ -72,7 +79,7 @@ const CASES: { name: string; position: V3; rotation: V3 }[] = [
 describe('#1766 — a nested camera tracks in world space', () => {
   for (const c of CASES) {
     it(`the drawn camera looks at the world origin, in ${c.name}`, () => {
-      const pose = resolveActiveCameraPoseAt(nested(c.position, c.rotation), 0);
+      const pose = resolveActiveCameraPoseAt(nested(c.position, c.rotation, '', c.local), 0);
       const fwd: V3 = [
         pose.lookAt[0] - pose.position[0],
         pose.lookAt[1] - pose.position[1],
@@ -117,7 +124,7 @@ describe('#1766 — a nested camera tracks in world space', () => {
 
   // #1759 — a Track-To's roll adds to the camera's: the read includes it, and a clear keeps it.
   it('the rotation read includes the Track-To’s roll', () => {
-    const s = nested([0, 0, 0], [0, 0, 0]);
+    const s = nested([0, 0, 0], [0, 0, 0], '', [2, 1, 4]);
     const rolled = applyOp(s, {
       type: 'setParam',
       nodeId: 'track',
@@ -131,17 +138,18 @@ describe('#1766 — a nested camera tracks in world space', () => {
     );
     const drawn = cameraOrientationQuat(pose.position, pose.lookAt, pose.roll);
     expect(Math.abs(read.dot(drawn))).toBeCloseTo(1, 6);
-    expect(pose.roll).toBe(25);
+    expect(pose.roll).toBeCloseTo(25, 9);
   });
 
-  it('clearing the target folds its roll into the lens roll, so the camera does not level out', () => {
+  it('clearing the target keeps its roll in the camera’s rotation, so the camera does not level out', () => {
     const s = applyOp(nested([5, 1, 0], [0, 90, 0]), {
       type: 'setParam',
       nodeId: 'track',
       paramPath: 'roll',
       value: 25,
     }).next;
-    const before = resolveActiveCameraPoseAt(s, 0).roll;
+    const before = resolveActiveCameraPoseAt(s, 0);
+    expect(before.roll).toBeCloseTo(25, 6);
     const { ops } = bindLookAtTargetOps(
       s,
       { nodeId: splitCameraDataId('cam'), poseNodeId: 'cam' },
@@ -150,6 +158,11 @@ describe('#1766 — a nested camera tracks in world space', () => {
     );
     let after = s;
     for (const op of ops) after = applyOp(after, op).next;
-    expect(resolveActiveCameraPoseAt(after, 0).roll).toBeCloseTo(before, 6);
+    expect(after.nodes.track, 'the Track-To is gone').toBeUndefined();
+    const now = resolveActiveCameraPoseAt(after, 0);
+    // #1760 — the whole orientation, roll included, is what the camera's rotation now holds.
+    const dot = now.quaternion.reduce((acc, v, i) => acc + v * before.quaternion[i], 0);
+    expect(Math.abs(dot)).toBeCloseTo(1, 6);
+    expect(now.roll).toBeCloseTo(25, 6);
   });
 });

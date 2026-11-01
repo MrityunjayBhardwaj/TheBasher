@@ -50,6 +50,14 @@ interface Door {
  * an already-listed file fail rather than hide.
  */
 const DOORS: Record<string, Door> = {
+  'src/app/cameraOrientation.ts': {
+    count: 1,
+    kind: 'POINT_IN_TIME',
+    why:
+      '#1760 — `cameraRotationOf`: the rotation a camera creator (new project, Add > Camera, ' +
+      "camera from view, agent snapshot) writes once as a new camera Object's `rotation`. One " +
+      'value, never sampled into a channel or interpolated against a neighbour.',
+  },
   'src/core/import/threeAdapter.ts': {
     count: 1,
     kind: 'SEQUENCE',

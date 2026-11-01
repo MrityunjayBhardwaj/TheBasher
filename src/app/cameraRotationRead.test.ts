@@ -1,21 +1,20 @@
 // #1753 — a camera's rotation, read by a driver or any reader of the evaluated transform, is the
 // orientation the camera is drawn with.
 //
-// A camera is oriented by its aim: position → lookAt with roll (`cameraOrientationQuat`), the
-// lookAt on its lens data or taken over by a Track-To. The render reads no rotation off the
-// camera Object. The evaluated transform still returned the Object's typed rotation, so a driver
-// reading a camera's `ry` saw a value the camera was never drawn at.
+// When this was written a camera was oriented by the look-at on its lens, and the evaluated
+// transform returned the Object's typed rotation, which the render never read. #1760 — a camera is
+// now turned by its winning Track-To, else by its own rotation (V665); the read must follow the
+// same rule. The fixture aims the camera as a saved one is aimed since v26: a point Track-To in
+// its parent's space, at the bottom of the stack.
 
 import { beforeAll, describe, expect, it } from 'vitest';
-import { Euler } from 'three';
+import { Euler, Quaternion } from 'three';
 import { applyOp, type DagState } from '../core/dag';
 import type { Op } from '../core/dag/types';
 import { buildDefaultDagState } from '../core/project/default';
 import { registerAllNodes } from '../nodes/registerAll';
 import { resolveCameraPoseAt } from './activeCamera';
-import { cameraOrientationQuat } from './cameraOrientation';
 import { resolveEvaluatedTransform } from './resolveEvaluatedTransform';
-import { linkedDataNodeId } from './resolveDataParamOwner';
 import { sceneClockOf } from './sceneClock';
 import { clockedCtx } from './subjectClock';
 import { readTransformChannelAt } from './transformChannelSource';
@@ -33,27 +32,26 @@ const set = (nodeId: string, paramPath: string, value: unknown): Op => ({
   value,
 });
 
-/** The default camera at (0, 0, 5) with a typed rotation the render never reads, aimed by its
- *  lens data, with a roll. */
-function camera(lookAt: [number, number, number], roll = 0): { s: DagState; data: string } {
-  const s0 = buildDefaultDagState();
-  const data = linkedDataNodeId(s0, 'n_camera')!;
-  const s = run(s0, [
+/** The default camera at (0, 0, 5) with a typed rotation the aim overrides, aimed at `lookAt`
+ *  by a parent-space point Track-To (`cam_aim`) carrying `roll`. */
+function camera(lookAt: [number, number, number], roll = 0): { s: DagState; aim: string } {
+  const s = run(buildDefaultDagState(), [
     set('n_camera', 'position', [0, 0, 5]),
     set('n_camera', 'rotation', [10, 20, 30]),
-    set(data, 'lookAt', lookAt),
-    set(data, 'roll', roll),
+    {
+      type: 'addNode',
+      nodeId: 'cam_aim',
+      nodeType: 'TrackTo',
+      params: { target: 'n_camera', aimPoint: lookAt, aimSpace: 'parent', roll, order: -1 },
+    },
   ]);
-  return { s, data };
+  return { s, aim: 'cam_aim' };
 }
 
 /** XYZ degrees of the orientation the render draws the camera with at playhead `film`. */
 function drawnDeg(s: DagState, film: number): [number, number, number] {
-  const pose = resolveCameraPoseAt(s, 'n_camera', film);
-  const e = new Euler().setFromQuaternion(
-    cameraOrientationQuat(pose.position, pose.lookAt, pose.roll),
-    'XYZ',
-  );
+  const [x, y, z, w] = resolveCameraPoseAt(s, 'n_camera', film).quaternion;
+  const e = new Euler().setFromQuaternion(new Quaternion(x, y, z, w), 'XYZ');
   return [e.x, e.y, e.z].map((r) => (r * 180) / Math.PI) as [number, number, number];
 }
 const ctxAt = (s: DagState, film: number) => clockedCtx(sceneClockOf(s).sceneAt(film), film);
@@ -82,7 +80,7 @@ describe('#1753 — a camera reads back the orientation it is drawn with', () =>
   });
 
   it('a keyed aim with the scene slowed reads the moment drawn at the playhead', () => {
-    const { s: s0, data } = camera([0, 0, 0]);
+    const { s: s0, aim } = camera([0, 0, 0]);
     const s = run(s0, [
       set('n_scene', 'timeSpeed', 0.5),
       {
@@ -90,9 +88,9 @@ describe('#1753 — a camera reads back the orientation it is drawn with', () =>
         nodeId: 'aim_keys',
         nodeType: 'KeyframeChannelVec3',
         params: {
-          name: 'lookAt',
-          target: data,
-          paramPath: 'lookAt',
+          name: 'aimPoint',
+          target: aim,
+          paramPath: 'aimPoint',
           keyframes: [
             { time: 0, value: [0, 0, 0], easing: 'linear' },
             { time: 2, value: [10, 0, 5], easing: 'linear' },
@@ -122,6 +120,17 @@ describe('#1753 — a camera reads back the orientation it is drawn with', () =>
     ]);
     const drawn = drawnDeg(s, 0);
     expect(drawn[1], 'the camera turns to the box').toBeCloseTo(90, 3);
+    const xf = resolveEvaluatedTransform(s, 'n_camera', ctxAt(s, 0))!;
+    xf.rotation!.forEach((v, i) => expect(v, `rotation[${i}]`).toBeCloseTo(drawn[i], 4));
+  });
+
+  it('with no Track-To, the rotation is the typed one, as drawn (#1760)', () => {
+    const s = run(buildDefaultDagState(), [
+      set('n_camera', 'position', [0, 0, 5]),
+      set('n_camera', 'rotation', [10, 20, 30]),
+    ]);
+    const drawn = drawnDeg(s, 0);
+    [10, 20, 30].forEach((v, i) => expect(drawn[i], `drawn[${i}]`).toBeCloseTo(v, 4));
     const xf = resolveEvaluatedTransform(s, 'n_camera', ctxAt(s, 0))!;
     xf.rotation!.forEach((v, i) => expect(v, `rotation[${i}]`).toBeCloseTo(drawn[i], 4));
   });

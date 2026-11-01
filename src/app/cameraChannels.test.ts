@@ -8,6 +8,7 @@
 // Every row below runs through the resolvers the app draws with. The pose and the world
 // transform must agree, not merely each be right.
 
+import { Quaternion, Vector3 } from 'three';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { applyOp, type DagState } from '../core/dag';
 import type { Op } from '../core/dag/types';
@@ -36,7 +37,7 @@ function channel(id: string, paramPath: string, value: unknown, extra = {}): Op 
     nodeId: id,
     nodeType: vec ? 'KeyframeChannelVec3' : 'KeyframeChannelNumber',
     params: {
-      target: paramPath === 'position' ? 'n_camera' : 'n_camera_data',
+      target: paramPath === 'position' || paramPath === 'rotation' ? 'n_camera' : 'n_camera_data',
       paramPath,
       keyframes: [
         { time: 0, value },
@@ -89,10 +90,13 @@ describe('#482 — a camera channel obeys mute, solo, weight and the fold', () =
   it('a solo channel elsewhere on the camera silences this one', () => {
     const s = run(buildDefaultDagState(), [
       channel('ch', 'fov', 100),
-      channel('ch2', 'lookAt', [1, 1, 1], { solo: true }),
+      channel('ch2', 'rotation', [0, 90, 0], { solo: true }),
     ]);
     expect(fov(s)).toBe(45);
-    expect(resolveCameraPoseAt(s, 'n_camera', 0).lookAt).toEqual([1, 1, 1]);
+    // #1760 — the soloed channel turns the camera: keyed rotation [0, 90, 0] looks down −X.
+    const [x, y, z, w] = resolveCameraPoseAt(s, 'n_camera', 0).quaternion;
+    const fwd = new Vector3(0, 0, -1).applyQuaternion(new Quaternion(x, y, z, w));
+    expect(fwd.x).toBeCloseTo(-1, 9);
   });
 });
 

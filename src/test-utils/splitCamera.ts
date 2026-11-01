@@ -25,6 +25,11 @@
 import { applyOp, type DagState } from '../core/dag';
 import type { Op } from '../core/dag/types';
 import { dataIdFor, splitOps } from './splitKinds';
+import { cameraRotationLookingAt } from '../app/cameraOrientation';
+
+type Vec3 = [number, number, number];
+const isVec3 = (v: unknown): v is Vec3 =>
+  Array.isArray(v) && v.length === 3 && v.every((x) => typeof x === 'number');
 
 export interface SplitCameraOpts {
   /** Id for the Object (the pose half — the scene child / the node you select). */
@@ -78,6 +83,15 @@ export function makeSplitCamera(state: DagState, opts: SplitCameraOpts): SplitCa
   const objParams: Record<string, unknown> = {};
   if (opts.position) objParams.position = opts.position;
   if (opts.rotation) objParams.rotation = opts.rotation;
+  else {
+    // #1760 — as every camera creator does now: turned by its own rotation to the lens look-at,
+    // banked by the lens roll (V665). The look-at no longer turns a camera; a fixture that gives
+    // a rotation gets exactly that rotation.
+    const lens = opts.lens ?? {};
+    const lookAt = isVec3(lens.lookAt) ? lens.lookAt : ([0, 0, 0] as Vec3);
+    const roll = typeof lens.roll === 'number' ? lens.roll : 0;
+    objParams.rotation = cameraRotationLookingAt(opts.position ?? [0, 0, 0], lookAt, roll);
+  }
   if (opts.scale) objParams.scale = opts.scale;
 
   let s = state;

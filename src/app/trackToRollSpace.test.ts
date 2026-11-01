@@ -102,7 +102,7 @@ describe('#1759 — Track-To roll', () => {
         replace: true,
       },
     ]);
-    expect(resolveActiveCameraPoseAt(s, 0).roll).toBe(10);
+    expect(resolveActiveCameraPoseAt(s, 0).roll).toBeCloseTo(10, 9);
     s = run(s, [
       {
         type: 'addNode',
@@ -111,7 +111,7 @@ describe('#1759 — Track-To roll', () => {
         params: { target: 'cam', aimPoint: [1, 0, 0], roll: 20 },
       },
     ]);
-    expect(resolveActiveCameraPoseAt(s, 0).roll).toBe(30);
+    expect(resolveActiveCameraPoseAt(s, 0).roll).toBeCloseTo(30, 9);
   });
 });
 

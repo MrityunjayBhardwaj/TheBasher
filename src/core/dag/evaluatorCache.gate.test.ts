@@ -136,6 +136,11 @@ const ORIGINS: Record<string, Origin> = {
     frequency: 'per-action',
     why: "The look-at target dropdown's change handler.",
   },
+  'src/app/CameraLookAtTarget.tsx · bindLookAtTargetOps → resolveEvaluatedTransform': {
+    count: 1,
+    frequency: 'per-action',
+    why: "The look-at target dropdown's clear: the drawn orientation it freezes (#1760).",
+  },
   'src/app/KeyboardShortcuts.tsx · onKey → resolveEvaluatedTransform': {
     count: 1,
     frequency: 'per-action',
@@ -323,6 +328,7 @@ const TAKERS: string[] = [
   'applyGhostPoseBand@src/viewport/DiffOverlay.tsx',
   'buildOverrideSlotOp@src/app/objectSlotAuthoring.ts',
   'cameraLocalPose@src/app/resolveWorldTransform.ts',
+  'cameraLocalOrientation@src/app/cameraTrackTo.ts',
   'cameraTrackToAim@src/app/cameraTrackTo.ts',
   'collectReferenceRigs@src/app/animate/referenceRigs.ts',
   'collectSkeletonObjects@src/app/skeletonObjects.ts',

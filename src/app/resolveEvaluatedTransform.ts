@@ -43,7 +43,7 @@
 //
 // REF: issue #68, CONTEXT D-01/D-05, hetvabhasa H22/H34, vyapti V1/V8/V20.
 
-import { Euler, MathUtils } from 'three';
+import { Euler, MathUtils, Quaternion } from 'three';
 import { evaluate, type EvaluatorCache } from '../core/dag/evaluator';
 import type { DagState } from '../core/dag/state';
 import type { NodeRef } from '../core/dag/types';
@@ -53,8 +53,7 @@ import { overlayChannels } from '../nodes/overlayChannels';
 import { layeredChannelValues } from './layeredChannels';
 import { driverChannelValuesForTarget } from './paramDrivers';
 import { resolveConstraintRotation, resolveConstraintPosition } from './nodeConstraints';
-import { cameraTrackToAim } from './cameraTrackTo';
-import { cameraOrientationQuat } from './cameraOrientation';
+import { cameraLocalOrientation } from './cameraTrackTo';
 import { useTransientEditStore } from './stores/transientEditStore';
 import { cameraLocalPose, childEdges } from './resolveWorldTransform';
 import { isCameraNode } from './cameraNode';
@@ -111,10 +110,10 @@ export function resolveEvaluatedTransform(
   //    and roll on its lens data), then the held edit, then a Follow-Path, in the order a mesh's
   //    are applied below. Scale is the typed one, which the render does not read.
   //
-  //    #1753 — the rotation is the orientation the camera is drawn with, not the Object's typed
-  //    rotation, which the render never reads: its aim (position → lookAt, a Track-To taking the
-  //    lookAt over) and roll, through the same `cameraOrientationQuat` and in the same order as
-  //    `resolveCameraPoseAt`. A driver reading a camera's rx…rz reads where it looks.
+  //    #1753 #1760 — the rotation is the orientation the camera is drawn with: its winning
+  //    Track-To's aim and roll, else its Object's own rotation, through the one rule the pose
+  //    resolver uses (`cameraLocalOrientation`). A driver reading a camera's rx…rz reads where it
+  //    looks.
   if (isCameraNode(state, selectedId)) {
     const params = (state.nodes[selectedId]?.params ?? {}) as { scale?: unknown };
     const local = cameraLocalPose(state, selectedId, ctx, cache);
@@ -124,12 +123,16 @@ export function resolveEvaluatedTransform(
     const own = ctxOnClockOf(state, selectedId, ctx);
     const followed = resolveConstraintPosition(state, selectedId, own, cache);
     const position = followed ?? (held.position as Vec3);
-    const tracked = cameraTrackToAim(state, selectedId, ctx, cache);
-    const lookAt = tracked?.lookAt ?? local.lookAt;
-    const e = new Euler().setFromQuaternion(
-      cameraOrientationQuat(position, lookAt, local.roll + (tracked?.roll ?? 0)),
-      'XYZ',
+    const { quaternion } = cameraLocalOrientation(
+      state,
+      selectedId,
+      position,
+      local,
+      local.roll,
+      ctx,
+      cache,
     );
+    const e = new Euler().setFromQuaternion(new Quaternion(...quaternion), 'XYZ');
     return {
       position,
       rotation: [e.x * RAD2DEG, e.y * RAD2DEG, e.z * RAD2DEG],

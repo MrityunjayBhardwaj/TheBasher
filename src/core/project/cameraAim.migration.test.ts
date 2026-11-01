@@ -11,6 +11,7 @@ import { migrateCameraAimToTrackTo } from './migrations';
 import { makeSplitCamera } from '../../test-utils/splitCamera';
 import { enumerateCameraNodeIds, resolveCameraPoseAt } from '../../app/activeCamera';
 import { cameraOrientationTuple } from '../../app/cameraOrientation';
+import v25Poses from './__fixtures__/cameraAim.v25poses.json';
 
 beforeEach(() => {
   __resetRegistryForTests();
@@ -37,37 +38,45 @@ const keys = (pairs: [number, unknown][]) =>
   pairs.map(([time, value]) => ({ time, value, easing: 'linear' }));
 const TIMES = [0, 0.25, 0.5, 1, 1.5, 2, 3];
 
-/** Every camera's pose in `a` equals its pose in `b`, at every sampled time. */
+type PoseRead = Pick<
+  ReturnType<typeof resolveCameraPoseAt>,
+  'position' | 'quaternion' | 'lookAt' | 'roll' | 'fov'
+>;
+/** #1760 — the v25 side of each fixture, recorded by the code that last read a lens look-at
+ *  (provenance inside the file): since the look-at stopped turning a camera, the v25 state can no
+ *  longer be posed live, so what it posed is read from the recording instead. */
+const V25 = (v25Poses as unknown as { poses: Record<string, Record<string, PoseRead[]>> }).poses;
+const calls: Record<string, number> = {};
+
+/**
+ * Every camera in `b` (the converted state) poses as `a` (the saved one) did, at every sampled
+ * time. A fixture's `a` is read from the recording; an example's (built at v26 already) live.
+ */
 function expectSamePoses(a: DagState, b: DagState) {
+  const test = (expect.getState().currentTestName ?? '').split(' > ').slice(1).join(' > ');
+  const n = (calls[test] = (calls[test] ?? 0) + 1);
+  const recorded = V25[`${test} #${n}`];
   const ids = enumerateCameraNodeIds(a);
   expect(ids.length).toBeGreaterThan(0);
+  if (recorded) expect(Object.keys(recorded).sort(), 'recorded cameras').toEqual([...ids].sort());
   for (const id of ids)
-    for (const t of TIMES) {
-      const pa = resolveCameraPoseAt(a, id, t);
+    TIMES.forEach((t, i) => {
+      const pa: PoseRead = recorded ? recorded[id][i] : resolveCameraPoseAt(a, id, t);
       const pb = resolveCameraPoseAt(b, id, t);
       const label = `${id} @ ${t}s`;
-      pa.position.forEach((v, i) => expect(pb.position[i], `${label} position`).toBeCloseTo(v, 9));
-      // The aim is a point along the view ray; compare the direction and the roll.
-      const dir = (p: typeof pa) => {
-        const d = p.lookAt.map((v, i) => v - p.position[i]);
-        const l = Math.hypot(...d) || 1;
-        return d.map((v) => v / l);
-      };
-      dir(pa).forEach((v, i) => expect(dir(pb)[i], `${label} forward`).toBeCloseTo(v, 9));
-      expect(pb.roll, `${label} roll`).toBeCloseTo(pa.roll, 9);
-      const dist = (p: typeof pa) => Math.hypot(...p.lookAt.map((v, i) => v - p.position[i]));
+      pa.position.forEach((v, j) => expect(pb.position[j], `${label} position`).toBeCloseTo(v, 9));
+      // The orientation the pose carries, the one value readers turn the camera with: the same
+      // rotation (q and −q are one), which is the same view direction and the same roll.
+      const dot = pa.quaternion.reduce((acc, v, j) => acc + v * pb.quaternion[j], 0);
+      expect(Math.abs(dot), `${label} orientation`).toBeCloseTo(1, 9);
+      const dist = (p: PoseRead) => Math.hypot(...p.lookAt.map((v, j) => v - p.position[j]));
       expect(dist(pb), `${label} aim distance (ortho size, focus)`).toBeCloseTo(dist(pa), 9);
       expect(pb.fov, `${label} fov`).toBe(pa.fov);
-      // #1760 — the orientation the pose carries, the one value readers turn the camera with:
-      // the same rotation both sides (q and −q are one rotation), and the one its aim gives.
-      const dot = pa.quaternion.reduce((acc, v, i) => acc + v * pb.quaternion[i], 0);
-      expect(Math.abs(dot), `${label} orientation`).toBeCloseTo(1, 9);
-      for (const p of [pa, pb]) {
-        const q = cameraOrientationTuple(p.position, p.lookAt, p.roll);
-        const d = q.reduce((acc, v, i) => acc + v * p.quaternion[i], 0);
-        expect(Math.abs(d), `${label} orientation = aim`).toBeCloseTo(1, 9);
-      }
-    }
+      // While readers still take `lookAt`/`roll`, they must give the orientation carried.
+      const q = cameraOrientationTuple(pb.position, pb.lookAt, pb.roll);
+      const d = q.reduce((acc, v, j) => acc + v * pb.quaternion[j], 0);
+      expect(Math.abs(d), `${label} orientation = aim`).toBeCloseTo(1, 9);
+    });
 }
 
 /** A camera at `position` in a Group turned 90°, aimed by its lens, made active. */
@@ -189,7 +198,11 @@ describe('#1762 — v25 → v26 moves a camera’s aim onto a Track-To', () => {
     ]);
     const m = migrate(s);
     expect((paramsOf(m.nodes.drv).target as string).startsWith('cam_aim')).toBe(true);
-    expect(resolveCameraPoseAt(s, 'cam', 0).roll).toBeCloseTo(10, 6);
+    // The saved camera really was rolled by the driver: the recording says 10°.
+    expect(V25['a driven roll: the driver moves onto the Track-To #1'].cam[0].roll).toBeCloseTo(
+      10,
+      6,
+    );
     expectSamePoses(s, m);
   });
 

@@ -40,11 +40,14 @@ import { pickCameraSelect } from '../nodes/CameraSelect';
 import { sceneClockOf } from './sceneClock';
 import { clockedCtx, type ClockedCtx } from './subjectClock';
 import { resolveConstraintPosition } from './nodeConstraints';
-import { cameraTrackToAim } from './cameraTrackTo';
+import { cameraLocalOrientation, type CameraOwnRotation } from './cameraTrackTo';
+import { quaternionFromEulerDeg, withResolvedRotation } from './resolvedRotation';
+import * as THREE from 'three';
 import { resolveParentWorldMatrix } from './resolveWorldTransform';
 import {
   cameraOrientationTuple,
   composeCameraPoseWithParent,
+  lookAtRollFromQuat,
   type Quat,
 } from './cameraOrientation';
 import type { EvaluatorCache } from '../core/dag/evaluator';
@@ -80,6 +83,8 @@ export const DEFAULT_CAMERA_POSE: CameraPose = {
   roll: 0,
   quaternion: cameraOrientationTuple([3, 2, 3], [0, 0, 0], 0),
 };
+
+type Vec3 = [number, number, number];
 
 function isVec3(v: unknown): v is [number, number, number] {
   return Array.isArray(v) && v.length === 3 && v.every((x) => typeof x === 'number');
@@ -230,21 +235,59 @@ export function cameraPoseFromPair(
     cameraProjectionFromPair(objectNode, dataNode) === 'Orthographic'
       ? 'OrthographicCamera'
       : 'PerspectiveCamera';
-  return oriented({
-    kind,
-    position: isVec3(o.position) ? o.position : DEFAULT_CAMERA_POSE.position,
-    lookAt: isVec3(lens.lookAt) ? lens.lookAt : DEFAULT_CAMERA_POSE.lookAt,
-    fov: typeof lens.fov === 'number' ? lens.fov : DEFAULT_CAMERA_POSE.fov,
-    near: typeof lens.near === 'number' ? lens.near : DEFAULT_CAMERA_POSE.near,
-    far: typeof lens.far === 'number' ? lens.far : DEFAULT_CAMERA_POSE.far,
-    roll: typeof lens.roll === 'number' ? lens.roll : DEFAULT_CAMERA_POSE.roll,
-  });
+  return ownOriented(
+    {
+      kind,
+      position: isVec3(o.position) ? o.position : DEFAULT_CAMERA_POSE.position,
+      lookAt: isVec3(lens.lookAt) ? lens.lookAt : DEFAULT_CAMERA_POSE.lookAt,
+      fov: typeof lens.fov === 'number' ? lens.fov : DEFAULT_CAMERA_POSE.fov,
+      near: typeof lens.near === 'number' ? lens.near : DEFAULT_CAMERA_POSE.near,
+      far: typeof lens.far === 'number' ? lens.far : DEFAULT_CAMERA_POSE.far,
+      roll: typeof lens.roll === 'number' ? lens.roll : DEFAULT_CAMERA_POSE.roll,
+    },
+    ownRotationOf(o),
+  );
 }
 
-/** #1760 — the pose's orientation, from what turns the camera. Today that is its aim and roll;
- *  the one place the source changes when the Object's rotation takes over (#487). */
-function oriented(pose: Omit<CameraPose, 'quaternion'> & { quaternion?: Quat }): CameraPose {
-  return { ...pose, quaternion: cameraOrientationTuple(pose.position, pose.lookAt, pose.roll) };
+/** What a camera Object's params hold for its orientation (V665): `rotation`, in its mode. */
+function ownRotationOf(o: Record<string, unknown>): CameraOwnRotation {
+  return {
+    rotation: isVec3(o.rotation) ? o.rotation : [0, 0, 0],
+    rotationMode: o.rotationMode === 'quaternion' ? 'quaternion' : undefined,
+    quaternion: isQuat(o.quaternion) ? o.quaternion : undefined,
+  };
+}
+
+function isQuat(v: unknown): v is Quat {
+  return Array.isArray(v) && v.length === 4 && v.every((x) => typeof x === 'number');
+}
+
+/** #1760 — `pose` turned by `quaternion` (parent-local). `lookAt` and `roll` are re-derived from
+ *  it so the readers still on them agree: the look-at a point straight ahead, at the distance the
+ *  pose's own look-at was (the ortho size and the focus distance read that distance until they
+ *  get their own sources, #1760), unless `aim` gives the point itself. */
+function withOrientation(
+  pose: Omit<CameraPose, 'quaternion'>,
+  quaternion: Quat,
+  aim: Vec3 | null,
+): CameraPose {
+  const q = new THREE.Quaternion(...quaternion);
+  const dist =
+    aim === null
+      ? Math.hypot(
+          pose.lookAt[0] - pose.position[0],
+          pose.lookAt[1] - pose.position[1],
+          pose.lookAt[2] - pose.position[2],
+        ) || 1
+      : Math.hypot(aim[0] - pose.position[0], aim[1] - pose.position[1], aim[2] - pose.position[2]);
+  const { lookAt, roll } = lookAtRollFromQuat(q, pose.position, dist || 1);
+  return { ...pose, lookAt: aim ?? lookAt, roll, quaternion };
+}
+
+/** A pose with no Track-To in reach (a static read): its Object's own rotation turns it. */
+function ownOriented(pose: Omit<CameraPose, 'quaternion'>, own: CameraOwnRotation): CameraPose {
+  const { rotation } = withResolvedRotation(own);
+  return withOrientation(pose, quaternionFromEulerDeg(rotation), null);
 }
 
 /** {@link cameraPoseFromPair} applied to a node id — resolves the data half itself.
@@ -325,6 +368,14 @@ export function resolveCameraPoseAt(
   const node = state.nodes[cameraId] ?? null;
   const base = cameraPoseForNodeId(state, cameraId) ?? DEFAULT_CAMERA_POSE;
   if (!node) return base;
+  // The lens's own aim and roll, before the orientation re-derived them (a static read's
+  // look-at is a point along its rotation, so the raw lens values are read again here).
+  const lensRaw = (cameraLensParams(state, cameraId) ?? {}) as { lookAt?: unknown; roll?: unknown };
+  const lensBase = {
+    ...base,
+    lookAt: isVec3(lensRaw.lookAt) ? lensRaw.lookAt : DEFAULT_CAMERA_POSE.lookAt,
+    roll: typeof lensRaw.roll === 'number' ? lensRaw.roll : 0,
+  };
 
   // Overlay every channel belonging to this camera.
   //
@@ -343,8 +394,21 @@ export function resolveCameraPoseAt(
   // evaluated on the camera's own clock, the film's.
   const sceneSeconds = sceneClockOf(state).sceneAt(seconds);
   const filmCtx = clockedCtx(sceneSeconds, seconds, 'film');
-  const overlaid = overlayCameraChannels(state, node.id, base, filmCtx, cache);
-  let pose: CameraPose | null = overlaid === base ? null : overlaid; // clone lazily
+  // `quaternion` is left out of what the channels overlay: on the Object it names the
+  // quaternion-mode rotation, which is read below with the rest of the camera's own rotation.
+  const { quaternion: _omit, ...unoriented } = lensBase;
+  void _omit;
+  const pose: Omit<CameraPose, 'quaternion'> = {
+    ...overlayCameraChannels(state, node.id, unoriented, filmCtx, cache),
+  };
+  // #1760 — the camera's own rotation, keys overlaid on the same clock as its position.
+  const own = overlayCameraChannels(
+    state,
+    node.id,
+    ownRotationOf(node.params as Record<string, unknown>),
+    filmCtx,
+    cache,
+  );
 
   // #204 Track-To migration — an active Track-To on the camera node DERIVES its
   // aim ([[V60]]): lookAt = the target's world position (node-ref via #202, or the
@@ -375,18 +439,19 @@ export function resolveCameraPoseAt(
   // follows for free. `resolveConstraintPosition` returns PARENT-LOCAL, which is exactly
   // what the parent compose below expects.
   const followed = resolveConstraintPosition(state, node.id, filmCtx, cache);
-  if (followed) {
-    pose ??= { ...base };
-    pose.position = followed;
-  }
+  if (followed) pose.position = followed;
 
-  // #1766 — in the parent's space, as the lookAt it stands in for. #1759 — its roll adds on.
-  const tracked = cameraTrackToAim(state, node.id, ctx, cache);
-  if (tracked) {
-    pose ??= { ...base };
-    pose.lookAt = tracked.lookAt;
-    pose.roll += tracked.roll;
-  }
+  // #1760 — turned by its winning Track-To (#1766: aimed in the parent's space; #1759: its roll
+  // adds on), else by its own rotation: the rule every object follows (V665).
+  const { quaternion, aim } = cameraLocalOrientation(
+    state,
+    node.id,
+    pose.position,
+    own,
+    pose.roll,
+    ctx,
+    cache,
+  );
 
   // #231 Inc 3.3 — a camera nested in a Group frames from the group-composed WORLD.
   // Compose AFTER the channel + Track-To overlays so the animated/aimed LOCAL pose
@@ -394,7 +459,7 @@ export function resolveCameraPoseAt(
   // top-level camera (wired only to scene.camera) → byte-identical to the flat pose,
   // so this is a safe drop-in for every pre-Inc-3.3 project.
   const parentWorld = resolveParentWorldMatrix(state, node.id, ctx, cache);
-  const result = pose ? oriented(pose) : base;
+  const result = withOrientation(pose, quaternion, aim);
   return parentWorld ? composeCameraPoseWithParent(result, parentWorld) : result;
 }
 

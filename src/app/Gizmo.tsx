@@ -74,7 +74,7 @@ import { resolveActiveCameraPoseAt } from './activeCamera';
 import { sceneClockOf } from './sceneClock';
 import { clockedCtx } from './subjectClock';
 import { isCameraNode } from './cameraNode';
-import { lookAtRollFromQuat } from './cameraOrientation';
+import { cameraOrientationQuat, cameraRotationOf } from './cameraOrientation';
 import { constraintTargetSet, resolveFollowedWorldPosition } from './nodeConstraints';
 import { useActiveCurvePoint } from './curvePointSelection';
 import { useArmatureMode } from './armatureMode';
@@ -1244,7 +1244,10 @@ function CameraGizmo() {
   // ONE write chokepoint per camera param — animated → re-route (channel keyed),
   // else raw setParam + autoKey first-key (mirrors the generic gizmo per-param,
   // H36 single-write: route XOR setParam, never both).
-  function writeCameraParam(path: 'position' | 'lookAt' | 'roll', value: unknown) {
+  function writeCameraParam(
+    path: 'position' | 'lookAt' | 'roll' | 'rotation' | 'quaternion',
+    value: unknown,
+  ) {
     if (!camId) return;
     // #387 D1 — the camera pose SPANS both halves: the Object keeps `position`, while
     // `lookAt` and `roll` moved to the CameraData (parity-first, following LightData).
@@ -1290,24 +1293,21 @@ function CameraGizmo() {
     if (!g || !seed || !camId) return;
     const liveMode = useGizmoStore.getState().mode;
     if (liveMode === 'rotate') {
-      // Convert the dragged WORLD orientation back to authored lookAt + roll,
-      // keeping the seeded aim distance. Two params → two routed writes (a drag is
-      // many undo entries, same as SingleGizmo; documented). #231 Inc 3.3 — for a
-      // nested camera, strip the parent rotation and recover the lookAt about the
-      // LOCAL position so the authored params stay in the camera's own space.
-      const localPos = toLocalPoint(seed.position);
+      // #1760 — a camera is turned by its own rotation (V665): the dragged WORLD orientation,
+      // with the parent's rotation stripped for a nested camera (#231 Inc 3.3), is written as
+      // its rotation, in its rotation mode. A turn leaves the aim distance the lens look-at
+      // holds unchanged, so the look-at is left alone.
       let quat = g.quaternion;
       if (seed.parentWorld) {
         const pQuat = new THREE.Quaternion();
         seed.parentWorld.decompose(new THREE.Vector3(), pQuat, new THREE.Vector3());
         quat = pQuat.clone().invert().multiply(g.quaternion);
       }
-      const { lookAt, roll } = lookAtRollFromQuat(quat, localPos, seed.distance);
-      writeCameraParam('lookAt', lookAt);
-      writeCameraParam('roll', roll);
+      writeCameraRotation(quat);
     } else {
-      // translate (scale coerces here — cameras have no scale): move position
-      // only; the lookAt POINT stays put so the camera re-aims at it.
+      // translate (scale coerces here — cameras have no scale): move position only. #1760 — a
+      // plain camera keeps its rotation as it moves, as any object does; one a Track-To aims
+      // keeps looking at what the Track-To names.
       writeCameraParam(
         'position',
         maybeSnapVec3(toLocalPoint([g.position.x, g.position.y, g.position.z])),
@@ -1318,10 +1318,30 @@ function CameraGizmo() {
   function onAimChange() {
     const g = aimNode;
     if (!g || !camId) return;
-    writeCameraParam(
-      'lookAt',
-      maybeSnapVec3(toLocalPoint([g.position.x, g.position.y, g.position.z])),
+    aimAt(maybeSnapVec3(toLocalPoint([g.position.x, g.position.y, g.position.z])));
+  }
+
+  /** #1760 — `quat` (parent space) as the camera's own rotation, in its rotation mode. */
+  function writeCameraRotation(quat: THREE.Quaternion) {
+    if (!camId) return;
+    const params = (useDagStore.getState().state.nodes[camId]?.params ?? {}) as RotationModeFields;
+    const write = rotationWriteOf(params, cameraRotationOf(quat));
+    writeCameraParam(write.paramPath, write.value);
+  }
+
+  /** #1760 — re-aim at `local` (parent space): the camera turns to look at it, keeping its roll,
+   *  and the lens look-at moves there, so the aim distance (ortho size, focus) follows. */
+  function aimAt(local: Vec3) {
+    const seed = seedRef.current;
+    if (!seed || !camId) return;
+    const localPos = toLocalPoint(seed.position);
+    const pose = resolveActiveCameraPoseAt(
+      useDagStore.getState().state,
+      useTimeStore.getState().filmSeconds,
+      cache,
     );
+    writeCameraRotation(cameraOrientationQuat(localPos, local, pose.roll));
+    writeCameraParam('lookAt', local);
   }
 
   // #247 — the reticle drag delivers a WORLD lookAt point. Move the proxy
@@ -1331,7 +1351,7 @@ function CameraGizmo() {
   function onReticleDrag(world: Vec3) {
     if (!aimNode || !camId) return;
     aimNode.position.set(world[0], world[1], world[2]);
-    writeCameraParam('lookAt', maybeSnapVec3(toLocalPoint(world)));
+    aimAt(maybeSnapVec3(toLocalPoint(world)));
   }
 
   // *** D-06 grab observation seam — dev-guarded (mirrors SingleGizmo). Drives the

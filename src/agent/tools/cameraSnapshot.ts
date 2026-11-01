@@ -7,6 +7,7 @@
 //
 // REF: THESIS.md §11, vyapti V7, krama K9.
 
+import { cameraRotationLookingAt } from '../../app/cameraOrientation';
 import { z } from 'zod';
 import type { ToolDefinition, ToolContext, ToolResult } from './types';
 import type { Op } from '../../core/dag/types';
@@ -98,7 +99,15 @@ export const cameraSnapshotTool: ToolDefinition<CameraSnapshotArgs> = {
       type: 'addNode',
       nodeId: newId,
       nodeType: 'Object',
-      params: { position: args.position, rotation: [0, 0, 0], scale: [1, 1, 1] },
+      // #1760 — turned by its own rotation to the point the agent asked it to look at (V665).
+      params: {
+        position: args.position,
+        rotation: cameraRotationLookingAt(
+          args.position as [number, number, number],
+          args.lookAt as [number, number, number],
+        ),
+        scale: [1, 1, 1],
+      },
     });
 
     ops.push({

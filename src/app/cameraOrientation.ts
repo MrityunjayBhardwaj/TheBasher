@@ -20,9 +20,10 @@
 // (one band). Issue #229.
 
 import * as THREE from 'three';
+import type { Quat } from '../nodes/types';
 
-/** A unit quaternion as `[x, y, z, w]`, three's component order. */
-export type Quat = [number, number, number, number];
+/** A unit quaternion as `[x, y, z, w]`, three's component order — the one the node values use. */
+export type { Quat };
 
 /** {@link cameraOrientationQuat} as a plain `[x, y, z, w]`, the form a camera pose carries. */
 export function cameraOrientationTuple(
@@ -32,6 +33,30 @@ export function cameraOrientationTuple(
 ): Quat {
   const q = cameraOrientationQuat(position, lookAt, rollDeg);
   return [q.x, q.y, q.z, q.w];
+}
+
+/**
+ * #1760 — the rotation (XYZ euler, DEGREES, the Object's `rotation` unit) that turns a camera at
+ * `position` to look at `target`, banked `rollDeg` about the view. What a camera creator writes
+ * so a new camera frames what it is meant to while being an ordinary rotated Object (V665).
+ */
+export function cameraRotationLookingAt(
+  position: readonly [number, number, number],
+  target: readonly [number, number, number],
+  rollDeg = 0,
+): [number, number, number] {
+  return cameraRotationOf(cameraOrientationQuat(position, target, rollDeg));
+}
+
+/** #1760 — an orientation as the XYZ euler degrees a camera creator writes as `rotation`: one
+ *  value, written once, never interpolated against a neighbour. */
+export function cameraRotationOf(q: THREE.Quaternion): [number, number, number] {
+  const e = new THREE.Euler().setFromQuaternion(q, 'XYZ');
+  return [
+    THREE.MathUtils.radToDeg(e.x),
+    THREE.MathUtils.radToDeg(e.y),
+    THREE.MathUtils.radToDeg(e.z),
+  ];
 }
 
 const LOCAL_FORWARD = new THREE.Vector3(0, 0, -1); // three.js camera looks down -Z

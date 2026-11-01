@@ -10,6 +10,7 @@
 // Leaf node, no consumers in the seed — animation channels wire to it
 // when they exist.
 
+import { cameraRotationLookingAt } from '../../app/cameraOrientation';
 import { applyOp, emptyDagState, type DagState } from '../dag';
 import type { Op } from '../dag/types';
 import { composeProject, type Project } from './index';
@@ -41,7 +42,13 @@ const DEFAULT_OPS: Op[] = [
     type: 'addNode',
     nodeId: 'n_camera',
     nodeType: 'Object',
-    params: { position: [3, 2, 3], rotation: [0, 0, 0], scale: [1, 1, 1] },
+    // #1760 — turned to look at the origin by its own rotation, as any Object (V665); the
+    // lens's look-at stays until #1764 and only sets the aim distance meanwhile.
+    params: {
+      position: [3, 2, 3],
+      rotation: cameraRotationLookingAt([3, 2, 3], [0, 0, 0]),
+      scale: [1, 1, 1],
+    },
   },
   {
     type: 'connect',
