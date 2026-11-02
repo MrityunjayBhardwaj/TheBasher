@@ -14,7 +14,7 @@ import type { DagState } from '../core/dag/state';
 import { resolveActiveTrackTo, resolveTrackToTarget } from './nodeConstraints';
 import { resolveParentWorldMatrix } from './resolveWorldTransform';
 import type { ClockedCtx } from './subjectClock';
-import { trackToQuaternion } from './resolveTrackTo';
+import { trackToQuaternion, trackToUpIn } from './resolveTrackTo';
 import { quaternionFromEulerDeg, withResolvedRotation } from './resolvedRotation';
 import type { Quat, RotationModeFields } from '../nodes/types';
 
@@ -34,9 +34,11 @@ export function cameraTrackToAim(
   if (!aim) return null;
   const winner = resolveActiveTrackTo(state, cameraId, ctx, cache);
   const roll = winner?.roll ?? 0;
-  const up: Vec3 = winner ? [...winner.up] : [0, 1, 0];
+  let up: Vec3 = winner ? [...winner.up] : [0, 1, 0];
   const parentWorld = resolveParentWorldMatrix(state, cameraId, ctx, cache);
   if (!parentWorld) return { lookAt: aim, roll, up };
+  // #1770 — the up in the parent's frame the camera aims in, read in the Track-To's own space.
+  if (winner) up = trackToUpIn(up, winner.aimSpace, 'parent', parentWorld);
   const local = new THREE.Vector3(aim[0], aim[1], aim[2]).applyMatrix4(
     parentWorld.clone().invert(),
   );

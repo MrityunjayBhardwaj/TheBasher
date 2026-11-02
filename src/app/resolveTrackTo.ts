@@ -65,6 +65,32 @@ export function trackToQuaternion(
   return q;
 }
 
+const _pq = new THREE.Quaternion();
+const _pp = new THREE.Vector3();
+const _ps = new THREE.Vector3();
+
+/**
+ * #1770 — a Track-To's `up`, in the frame an aim is computed in. The up vector is read in the
+ * Track-To's own space, as Blender reads it (5.1.1, measured: World space keeps world up, Local
+ * space the parent's): `aimSpace` 'world' → the world's +Y, 'parent' → the parent's. A road that
+ * aims in the world (`frame` 'world', the mesh fold) lifts a parent-space up by the parent's
+ * rotation; one that aims in the parent's frame (`frame` 'parent', the camera) brings a world-space
+ * up down into it. No parent (`parentWorld` null), or the two frames already the same → `up`.
+ * The ONE rule both roads take, so a camera and a mesh aimed alike are banked alike.
+ */
+export function trackToUpIn(
+  up: Vec3,
+  aimSpace: 'world' | 'parent',
+  frame: 'world' | 'parent',
+  parentWorld: THREE.Matrix4 | null,
+): Vec3 {
+  if (!parentWorld || aimSpace === frame) return up;
+  parentWorld.decompose(_pp, _pq, _ps);
+  if (frame === 'parent') _pq.invert();
+  const v = new THREE.Vector3(up[0], up[1], up[2]).applyQuaternion(_pq);
+  return [v.x, v.y, v.z];
+}
+
 /**
  * The aim rotation (Euler XYZ, DEGREES) orienting an object at `objPos` so its
  * -Z faces `targetPos`, with `up` (default +Y) as the roll reference. Returns

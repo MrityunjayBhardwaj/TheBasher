@@ -27,7 +27,7 @@
 import * as THREE from 'three';
 import type { DagState } from '../core/dag/state';
 import type { EvalCtx } from '../core/dag/types';
-import { resolveTrackTo } from './resolveTrackTo';
+import { resolveTrackTo, trackToUpIn } from './resolveTrackTo';
 import {
   resolveWorldTransform,
   resolveParentWorldMatrix,
@@ -448,13 +448,15 @@ export function resolveConstraintRotation(
   // Members writing ORTHOGONAL bands need no ordering at all — a future Follow-Path
   // writes POSITION while this writes ROTATION, so they commute. Per-member influence
   // blending (two members on the SAME band) is a later phase.
+  // #1770 — read before the fold: a member's up is in its own space, and this fold aims in the world.
+  const parentWorld = resolveParentWorldMatrix(state, nodeId, ctx, cache);
   let aimWorld: Vec3 | null = null;
   for (const typed of stack) {
     const member = evaluatedTrackTo(state, typed, ctx, cache);
     const memberAim = resolveTrackTo(
       aimOrigin,
       aimTargetWorld(state, member, ctx, cache),
-      member.up,
+      trackToUpIn(member.up, member.aimSpace, 'world', parentWorld),
       member.roll,
     );
     if (memberAim) aimWorld = memberAim;
@@ -467,7 +469,6 @@ export function resolveConstraintRotation(
   // rendered WORLD orientation equals the aim, not aim double-rotated by the parent.
   // resolveParentWorldMatrix returns null for a TOP-LEVEL node (identity parent) →
   // aim stays world == local, byte-identical to the pre-#267 top-level path.
-  const parentWorld = resolveParentWorldMatrix(state, nodeId, ctx, cache);
   if (!parentWorld) return aimWorld;
   return worldAimToParentLocal(aimWorld, parentWorld);
 }
