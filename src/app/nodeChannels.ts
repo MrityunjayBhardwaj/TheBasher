@@ -44,15 +44,62 @@ export function directChannelNodesForTarget<T extends NodeLike & { id: string }>
   targetId: string,
 ): T[] {
   if (!targetId) return [];
-  const out: T[] = [];
+  return keyframeChannelsTargeting(nodes, targetId).filter((node) => {
+    const p = node.params as { keyframes?: unknown };
+    return Array.isArray(p.keyframes) && p.keyframes.length > 0; // empty → no overlay
+  });
+}
+
+interface ChannelIndex {
+  /** Every KeyframeChannel node, by its `target`, in node-table order. */
+  readonly byTarget: ReadonlyMap<string, readonly unknown[]>;
+  /** The targets with at least one soloed channel. */
+  readonly soloTargets: ReadonlySet<unknown>;
+}
+
+// #1757 — built once per node table, not once per read. Every op makes a new `nodes` object
+// (ops are immutable), so the table's identity is the index's version; the camera road reads
+// its channels several times per camera per frame, each a scan of every node before.
+const channelIndexMemo = new WeakMap<object, ChannelIndex>();
+
+function channelIndex(nodes: Readonly<Record<string, NodeLike>>): ChannelIndex {
+  const hit = channelIndexMemo.get(nodes);
+  if (hit) return hit;
+  const byTarget = new Map<string, unknown[]>();
+  const soloTargets = new Set<unknown>();
   for (const node of Object.values(nodes)) {
     if (!isKeyframeChannelNode(node)) continue;
-    const p = node.params as { target?: unknown; keyframes?: unknown };
-    if (p.target !== targetId) continue;
-    if (!Array.isArray(p.keyframes) || p.keyframes.length === 0) continue; // empty → no overlay
-    out.push(node);
+    const p = (node.params ?? {}) as { target?: unknown; solo?: unknown };
+    if (p.solo === true) soloTargets.add(p.target);
+    if (typeof p.target !== 'string') continue;
+    const list = byTarget.get(p.target);
+    if (list) list.push(node);
+    else byTarget.set(p.target, [node]);
   }
-  return out;
+  const index = { byTarget, soloTargets };
+  channelIndexMemo.set(nodes, index);
+  return index;
+}
+
+/**
+ * Every KeyframeChannel node whose `target` is `targetId`, empty ones included, in node-table
+ * order. Read-only: the array is the index's own, shared by every reader of this table.
+ */
+export function keyframeChannelsTargeting<T extends NodeLike>(
+  nodes: Readonly<Record<string, T>>,
+  targetId: string,
+): readonly T[] {
+  return (channelIndex(nodes).byTarget.get(targetId) ?? []) as readonly T[];
+}
+
+/** True when some KeyframeChannel whose `target` is in `targets` is soloed. */
+export function hasSoloChannelOn(
+  nodes: Readonly<Record<string, NodeLike>>,
+  targets: Iterable<unknown>,
+): boolean {
+  const solo = channelIndex(nodes).soloTargets;
+  for (const t of targets) if (solo.has(t)) return true;
+  return false;
 }
 
 /**

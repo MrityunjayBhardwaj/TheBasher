@@ -34,7 +34,8 @@ import { posingObjectId, resolveDataParamOwner } from './resolveDataParamOwner';
 import { useTransientEditStore } from './stores/transientEditStore';
 import { cameraSoloScope } from './cameraNode';
 import { type ClockedCtx, clockOf, ctxOnClock } from './subjectClock';
-import { isKeyframeChannelNode } from './animate/paramAnimationState';
+import { hasSoloChannelOn, keyframeChannelsTargeting } from './nodeChannels';
+import { stripTargetsOf } from './stripTargetIndex';
 
 interface ChannelParams {
   target?: unknown;
@@ -100,20 +101,17 @@ export function resolveEvaluatedParam(
   // nothing is solo'd. Strips/drivers (2b/2c) are appended after — un-gated, matching
   // the render side (they aren't collected through `channelValuesFromNodes` either).
   // #1745 — a camera's scope is both halves, Object and lens data, as the render folds them.
-  const soloScope = new Set<unknown>(cameraSoloScope(state, nodeId) ?? [nodeId]);
-  const targetSoloActive = Object.values(state.nodes).some((node) => {
-    if (!isKeyframeChannelNode(node)) return false;
-    return (
-      (node.params as ChannelParams & { solo?: boolean })?.solo === true &&
-      soloScope.has((node.params as ChannelParams)?.target)
-    );
-  });
+  // #1757 — both reads go through the node table's channel index (built once per table), not a
+  // scan of every node on every read.
+  const targetSoloActive = hasSoloChannelOn(
+    state.nodes,
+    cameraSoloScope(state, nodeId) ?? [nodeId],
+  );
 
   let matches: KeyframeChannelValue[] = [];
-  for (const node of Object.values(state.nodes)) {
-    if (!isKeyframeChannelNode(node)) continue;
+  for (const node of keyframeChannelsTargeting(state.nodes, nodeId)) {
     const p = (node.params ?? {}) as ChannelParams & { solo?: boolean };
-    if (p.target !== nodeId || p.paramPath !== paramPath) continue;
+    if (p.paramPath !== paramPath) continue;
     if (targetSoloActive && p.solo !== true) continue; // soloed out → contributes nothing
     try {
       matches.push(evaluate(state, node.id, { cache, ctx }).value as KeyframeChannelValue);
@@ -126,8 +124,12 @@ export function resolveEvaluatedParam(
   //     for THIS param so a placed Strip reads == renders (H40). The SAME enumerator
   //     the render seam uses; param-scoped here. No strips → `matches` unchanged →
   //     byte-identical. The fold below treats bare channels + strips uniformly.
-  for (const v of stripChannelValuesForTarget(state.nodes, nodeId)) {
-    if (v.paramPath === paramPath) matches.push(v);
+  //     #1757 — asked only of a node some strip targets: with none, the enumerator walks every
+  //     track to return nothing.
+  if (stripTargetsOf(state.nodes).has(nodeId)) {
+    for (const v of stripChannelValuesForTarget(state.nodes, nodeId)) {
+      if (v.paramPath === paramPath) matches.push(v);
+    }
   }
 
   // 2c. Drivers (#293, Inc 2 — the PULL rail). Every ParamDriver bound to
