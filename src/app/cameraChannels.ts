@@ -32,6 +32,7 @@ import {
   directChannelNodesForTarget,
 } from './nodeChannels';
 import { driverChannelValuesForTarget } from './paramDrivers';
+import { stripTargetsOf } from './stripTargetIndex';
 import { linkedDataNodeId } from './resolveDataParamOwner';
 
 /**
@@ -53,7 +54,11 @@ export function overlayCameraChannels<T extends object>(
   const ids = dataId && dataId !== cameraId ? [cameraId, dataId] : [cameraId];
   const all: KeyframeChannelValue[] = [
     ...bareChannelValuesForSubject(state.nodes, cameraId, dataId),
-    ...ids.flatMap((id) => stripChannelValuesForTarget(state.nodes, id)),
+    // #1757 — strips only for a half some strip targets: with none, the enumerator walks every
+    // track (per camera, per frame) to return nothing.
+    ...ids.flatMap((id) =>
+      stripTargetsOf(state.nodes).has(id) ? stripChannelValuesForTarget(state.nodes, id) : [],
+    ),
     ...ids.flatMap((id) => driverChannelValuesForTarget(state, id, ctx, cache)),
   ];
   const channels = all.filter((c) => c.paramPath in base);
