@@ -917,35 +917,28 @@ function MultiGizmo() {
   );
 }
 
-// #229 — the CAMERA gizmo. A Basher camera aims via position + lookAt (a POINT)
-// + roll, NOT an Euler rotation (V56), so the generic SingleGizmo can only
-// translate it (its `rotation` param is null → rotate coerces to translate, and
-// the lookAt aim point has no handle). CameraGizmo maps Blender's two camera
-// idioms onto Basher's lookAt model:
-//   - ROTATE the camera body (Blender "press R to rotate the camera object"):
-//     the rotate gizmo seeds from the camera's world ORIENTATION
-//     (the orientation its pose carries, #1760) and a drag is converted BACK to authored lookAt +
-//     roll via lookAtRollFromQuat (V68 — manipulate in render/world space, store
-//     authored params), keeping the aim DISTANCE fixed so the aim orbits the
-//     camera (yaw/pitch re-aim, roll about the view axis banks).
-//   - DRAG THE AIM TARGET: a second translate handle at the world lookAt point;
-//     dragging it re-aims the camera (writes lookAt directly — the user's chosen
-//     "write lookAt directly", not a Track-To constraint).
-//   - TRANSLATE the body moves `position` only; the lookAt POINT stays put so the
-//     camera re-aims at it (the aim handle is how you move WHAT it looks at).
+// #229 — the CAMERA gizmo. #1760/#1764 — a camera is turned by its own rotation, unless a
+// Track-To aims it (V665); the lens holds no aim. CameraGizmo maps Blender's two camera idioms:
+//   - ROTATE the camera body (Blender "press R to rotate the camera object"): the rotate gizmo
+//     seeds from the camera's drawn world ORIENTATION (its pose's quaternion) and a drag writes
+//     the camera's own rotation, in its rotation mode. On a camera a Track-To aims, that rotation
+//     is overridden on screen, as in Blender.
+//   - DRAG THE AIM RETICLE (#1761): on a camera a point Track-To aims, the reticle moves the
+//     Track-To's `aimPoint` (in its aim space); on a plain camera it turns the camera to look at
+//     the point, keeping its roll. A Track-To that follows a node makes the reticle read-only.
+//   - TRANSLATE the body moves `position` only; a plain camera keeps its rotation, one a
+//     Track-To aims keeps looking at what the Track-To names.
 // Every write funnels through the SAME routeAnimatedGrab → setParam →
 // autoKeyCommit chokepoint the generic gizmo + #190 camera authoring use (V1).
-// #231 Inc 3.3 — a camera CAN now be nested in a Group. The proxies seed at the
-// camera's WORLD pose (resolveCameraPoseAt composes the parent), so a drag
-// must convert the world manipulation BACK to the camera's LOCAL params before
-// writing (the #230 round-trip, applied to the camera's point-based lookAt model).
-// `parentWorld` is null for a top-level camera → the proxy world IS the local pose,
-// byte-identical to the pre-Inc-3.3 (#229) direct write.
-// #247 — the camera lookAt is a "Point of Interest" TARGET RETICLE, not a second
+// #231 Inc 3.3 — a camera CAN be nested in a Group. The proxies seed at the camera's WORLD pose
+// (resolveCameraPoseAt composes the parent), so a drag converts the world manipulation BACK to
+// the camera's LOCAL position/rotation (or the Track-To's parent-space aim point) before
+// writing. `parentWorld` is null for a top-level camera → the proxy world IS the local pose.
+// #247 — the aim point is a "Point of Interest" TARGET RETICLE, not a second
 // transform gizmo. The #245 twin-triad still read as "2 gizmos"; a categorically
 // different glyph (a billboarded ring + centre dot, fixed screen size) can never
 // be mistaken for the body's arrow/ring triad. Free (amber) = draggable; bound
-// (blue) = Track-To-linked to an object → read-only, follows that object.
+// (blue) = its Track-To follows an object → read-only, follows that object.
 const RETICLE_COLOR = '#ffb020';
 const RETICLE_BOUND_COLOR = '#5b9dff';
 /** local→world scale factor so the reticle holds a ~constant on-screen size,
@@ -1154,9 +1147,8 @@ function CameraGizmo() {
   const bodyRefCb = useCallback((g: THREE.Group | null) => setBodyNode(g), []);
   const aimRefCb = useCallback((g: THREE.Group | null) => setAimNode(g), []);
 
-  // #247 — is the camera's lookAt Track-To-BOUND to an object? Then the reticle
-  // follows that object (resolveCameraPoseAt already derives lookAt from it) and
-  // is read-only. Subscribe to nodes so add/remove of the constraint re-renders.
+  // #247 — does the camera's Track-To follow an object? Then the reticle follows that
+  // object (resolveCameraPoseAt derives the aim from it) and is read-only. Subscribe to nodes so add/remove of the constraint re-renders.
   const nodes = useDagStore((s) => s.state.nodes);
   // #1761 — the Track-To that aims the camera, if any. A point aim (every camera v26 converted)
   // is the reticle's to move; only a Track-To that follows a node is read-only, since the node
@@ -1334,10 +1326,10 @@ function CameraGizmo() {
     writeCameraRotation(cameraOrientationQuat(localPos, local, pose.roll));
   }
 
-  // #247 — the reticle drag delivers a WORLD lookAt point. Move the proxy
+  // #247 — the reticle drag delivers a WORLD aim point. Move the proxy
   // immediately (the seed effect only re-runs on scrub/selection, not on a param
-  // write, so the reticle would otherwise lag the pointer), then author the LOCAL
-  // lookAt through the same chokepoint.
+  // write, so the reticle would otherwise lag the pointer), then re-aim through
+  // `aimAt` (the Track-To's aim point, or the camera's rotation) via the same chokepoint.
   function onReticleDrag(world: Vec3) {
     if (!aimNode || !camId) return;
     aimNode.position.set(world[0], world[1], world[2]);
