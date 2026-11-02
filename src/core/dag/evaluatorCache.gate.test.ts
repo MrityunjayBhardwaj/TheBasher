@@ -144,12 +144,7 @@ const ORIGINS: Record<string, Origin> = {
   'src/app/CameraLookAtTarget.tsx · bindLookAtTargetOps → resolveCameraPoseAt': {
     count: 1,
     frequency: 'per-action',
-    why: "The look-at target dropdown's bind: the point the camera looks at, seeded as the Track-To's fallback aim (#1775).",
-  },
-  'src/app/CameraLookAtTarget.tsx · bindLookAtTargetOps → resolveParentWorldMatrix': {
-    count: 1,
-    frequency: 'per-action',
-    why: "The look-at target dropdown's bind: that point brought into the camera's parent space (#1775).",
+    why: "The look-at target dropdown's bind: the world point the camera looks at, seeded as the Track-To's fallback aim (#1775).",
   },
   'src/app/KeyboardShortcuts.tsx · onKey → resolveEvaluatedTransform': {
     count: 1,

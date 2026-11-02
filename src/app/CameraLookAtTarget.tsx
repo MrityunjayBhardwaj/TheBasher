@@ -30,10 +30,9 @@ import {
   isRelationalPoseNode,
   nextConstraintOrder,
 } from './nodeConstraints';
-import * as THREE from 'three';
 import { cameraTrackToAim } from './cameraTrackTo';
 import { resolveCameraPoseAt } from './activeCamera';
-import { resolveParentWorldMatrix } from './resolveWorldTransform';
+import { filmSecondsOf } from './subjectClock';
 import { resolveEvaluatedTransform } from './resolveEvaluatedTransform';
 import { rotationWriteOf } from './resolvedRotation';
 import type { RotationModeFields } from '../nodes/types';
@@ -181,14 +180,14 @@ export function bindLookAtTargetOps(
   }
 
   // #1775 — the fallback aim point (what the camera aims at if the target node is later removed)
-  // is the point it is drawn looking at now, held in its PARENT's space as the v26 conversion
-  // holds every camera's aim: so a nested camera falls back to where it looked, not to that
-  // point misread as a world one. Resolved for the Object, the half the pose road poses.
-  const drawnAim = resolveCameraPoseAt(state, poseNodeId, ctx.time.seconds).lookAt;
-  const parentWorld = resolveParentWorldMatrix(state, poseNodeId, ctx);
-  const aimPoint: Vec3 = parentWorld
-    ? (new THREE.Vector3(...drawnAim).applyMatrix4(parentWorld.clone().invert()).toArray() as Vec3)
-    : [...drawnAim];
+  // is the WORLD point it is drawn looking at now, in a world-space Track-To: a nested camera falls
+  // back to where it looked. World, not parent, space on purpose: a Track-To's space also picks
+  // which way is up (#1770), and a new binding keeps world up, level under a tilted rig, as it
+  // always has. Read on the playhead, the clock a camera is posed on (#1594), for the Object, the
+  // half the pose road poses.
+  const aimPoint: Vec3 = [
+    ...resolveCameraPoseAt(state, poseNodeId, filmSecondsOf(state, ctx)).lookAt,
+  ];
   return {
     ops: [
       {
@@ -203,7 +202,7 @@ export function bindLookAtTargetOps(
           target: poseNodeId,
           aimNode: value,
           aimPoint,
-          aimSpace: 'parent',
+          aimSpace: 'world',
           up: [0, 1, 0],
           mute: false,
           // #317 — land it on TOP of whatever the camera already carries. The hardcoded

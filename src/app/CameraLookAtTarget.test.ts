@@ -24,6 +24,7 @@ import { resolveEvaluatedTransform } from './resolveEvaluatedTransform';
 import { resolveCameraPoseAt } from './activeCamera';
 import { buildDefaultDagState } from '../core/project/default';
 import { makeSplitCamera } from '../test-utils/splitCamera';
+import * as THREE from 'three';
 
 beforeAll(() => {
   registerAllNodes();
@@ -97,7 +98,7 @@ describe('bindLookAtTargetOps', () => {
     // lens look-at (0, 1, 0), which no longer turns it.
     const seed = op.params.aimPoint as number[];
     [7, 1, -4 - Math.sqrt(65)].forEach((v, i) => expect(seed[i]).toBeCloseTo(v, 9));
-    expect(op.params.aimSpace).toBe('parent');
+    expect(op.params.aimSpace).toBe('world');
     expect(op.params.order).toBe(0);
   });
 
@@ -220,7 +221,7 @@ describe('bindLookAtTargetOps', () => {
     const { ops } = bindLookAtTargetOps(s, { nodeId: 'cam_data', poseNodeId: 'cam' }, 'n_box', CTX);
     for (const op of ops) s = applyOp(s, op as Parameters<typeof applyOp>[1]).next;
     const tt = Object.values(s.nodes).find((n) => n.type === 'TrackTo')!;
-    expect((tt.params as { aimSpace: string }).aimSpace).toBe('parent');
+    expect((tt.params as { aimSpace: string }).aimSpace).toBe('world');
     // The target node goes (what deleting it does to the Track-To): the fallback point takes over.
     s = applyOp(s, {
       type: 'setParam',
@@ -230,6 +231,72 @@ describe('bindLookAtTargetOps', () => {
     } as Parameters<typeof applyOp>[1]).next;
     const after = resolveCameraPoseAt(s, 'cam', 0).lookAt;
     [5, 1, 0].forEach((v, i) => expect(after[i]).toBeCloseTo(v, 6));
+  });
+
+  // The Track-To's space also picks which way is up (#1770): a new binding is world space, so a
+  // camera in a tilted rig stays level, as a binding always has. A parent-space seed banked it
+  // 30° with the rig here.
+  it('a camera in a tilted rig stays level when bound', () => {
+    let s = buildDefaultDagState();
+    for (const op of [
+      {
+        type: 'addNode',
+        nodeId: 'grp',
+        nodeType: 'Group',
+        params: { position: [0, 0, 6], rotation: [0, 0, 30] },
+      },
+      {
+        type: 'connect',
+        from: { node: 'grp', socket: 'out' },
+        to: { node: 'n_scene', socket: 'children' },
+      },
+    ])
+      s = applyOp(s, op as Parameters<typeof applyOp>[1]).next;
+    s = makeSplitCamera(s, {
+      objectId: 'cam',
+      position: [0, 1, 0],
+      connectTo: { node: 'grp', socket: 'children' },
+    }).state;
+    for (const op of bindLookAtTargetOps(s, { nodeId: 'cam_data', poseNodeId: 'cam' }, 'n_box', CTX)
+      .ops)
+      s = applyOp(s, op as Parameters<typeof applyOp>[1]).next;
+    const [x, y, z, w] = resolveCameraPoseAt(s, 'cam', 0).quaternion;
+    const right = new THREE.Vector3(1, 0, 0).applyQuaternion(new THREE.Quaternion(x, y, z, w));
+    expect(right.y).toBeCloseTo(0, 9); // a level horizon: the camera's right has no rise
+  });
+
+  // A camera is posed on the playhead (#1594); the dropdown's context is scene time. The scene
+  // runs at half speed and the camera's position is keyed on the playhead, so the seed must be
+  // read at playhead 2 s (where the camera is at x = 10), not at 1 s.
+  it('the seed is read on the playhead, the clock the camera is posed on', () => {
+    let s = buildScene();
+    s = applyOp(s, {
+      type: 'addNode',
+      nodeId: 'scn',
+      nodeType: 'Scene',
+      params: { timeSpeed: 0.5 },
+    } as Parameters<typeof applyOp>[1]).next;
+    s = { ...s, outputs: { ...s.outputs, scene: { node: 'scn', socket: 'out' } } };
+    s = applyOp(s, {
+      type: 'addNode',
+      nodeId: 'pos_keys',
+      nodeType: 'KeyframeChannelVec3',
+      params: {
+        target: 'n_cam',
+        paramPath: 'position',
+        keyframes: [
+          { time: 0, value: [0, 1, 6], easing: 'linear' },
+          { time: 2, value: [10, 1, 6], easing: 'linear' },
+        ],
+      },
+    } as Parameters<typeof applyOp>[1]).next;
+    const sceneAt1 = { time: { frame: 60, seconds: 1, normalized: 0 } };
+    const add = bindLookAtTargetOps(s, IDS, 'n_cube', sceneAt1).ops[0] as {
+      params: { aimPoint: number[] };
+    };
+    const want = resolveCameraPoseAt(s, 'n_cam', 2).lookAt;
+    expect(want[0]).toBeCloseTo(10, 9);
+    add.params.aimPoint.forEach((v, i) => expect(v).toBeCloseTo(want[i], 9));
   });
 
   it('control: a top-level camera seeds the point it is drawn looking at', () => {

@@ -326,13 +326,13 @@ export function resolveActiveCameraPose(state: DagState): CameraPose {
  * so all three frame the SAME shot at time T (the V37/V51 viewport==render
  * parity invariant). One resolver, no parallel walk.
  *
- * PURE — a function of `(state, seconds)` only, with NO store reads. It overlays
- * channels through `overlayCameraChannels`, the call the world transform makes too, so
- * each channel is sampled by its own node and folded by the rules every node's channels
- * follow (#482), not by a parallel copy of them. Held transient edits are
- * intentionally NOT overlaid here: a render is of committed DAG state, and
- * including uncommitted transients would break render parity — the live-edit
- * preview is a separate viewport concern.
+ * A function of `(state, seconds)` and the held-edit store. It overlays channels through
+ * `overlayCameraChannels`, the call the world transform makes too, so each channel is sampled
+ * by its own node and folded by the rules every node's channels follow (#482), not by a
+ * parallel copy of them. #1773 — then the camera's held (un-keyed) edits, as an object's road
+ * lays them on: the one store read, an empty store changes nothing. So a render taken while an
+ * edit is held shows it on the camera as it does on every object in the live scene the still is
+ * rendered from; keying the edit or changing frame releases it.
  *
  * #204 Track-To migration: when the camera node carries an active Track-To
  * constraint, its `lookAt` is DERIVED from the target ([[V60]]) via the SAME
@@ -366,8 +366,8 @@ export function resolveActiveCameraPoseAt(
  *  parent-group world. `resolveActiveCameraPoseAt` is this applied to the active
  *  node; the camera-frustum FOLLOWER (SceneFromDAG) applies it per camera so every
  *  frustum tracks its OWN animation — the box-parity the static, channel-blind
- *  `resolveCameraFrustumPose` lacked. PURE — a function of (state, cameraId,
- *  seconds), no store reads. */
+ *  `resolveCameraFrustumPose` lacked. A function of (state, cameraId, seconds) and the held-edit
+ *  store (#1773: the camera's held edits on top of its keys). */
 export function resolveCameraPoseAt(
   state: DagState,
   cameraId: string,
