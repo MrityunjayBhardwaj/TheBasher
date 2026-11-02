@@ -124,7 +124,6 @@ test('Auto-Key off: the clear holds the frozen rotation as a pending edit', asyn
         .keyframes as Key[],
   );
   expect(keys[0].value).toEqual(KEYED);
-  // Where the camera looks while the edit is held is #1773: a camera's pose does not read held
-  // edits yet (a cube's does), so it shows the keyed rotation. `aimed` is what it should show.
-  void aimed;
+  // …and the camera shows the held edit, as a cube does (#1773): it does not jump.
+  sameDirection(await look(page), aimed, 'direction after clear');
 });

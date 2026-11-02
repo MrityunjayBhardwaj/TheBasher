@@ -96,6 +96,9 @@ const PATCH_SITES: Record<string, PatchClass> = {
   'src/app/resolveEvaluatedTransform.ts': 'transform-values',
   'src/app/resolveWorldTransform.ts': 'transform-values',
   'src/app/cameraChannels.ts': 'transform-values',
+  // #1773 — a camera's held edits, laid on after its channels on both camera roads: the same
+  // plain pose and lens values.
+  'src/app/cameraHeldEdits.ts': 'transform-values',
   // The renderer. Five composite sites: two light-band sites (a recomposed LightValue
   // carries no minted identity), the glTF materials road (which writes scalars onto
   // per-clone THREE.Materials and never touches the registry), and the two `<MeshChild>`

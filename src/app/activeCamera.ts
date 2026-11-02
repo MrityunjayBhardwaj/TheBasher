@@ -40,6 +40,7 @@ import { pickCameraSelect } from '../nodes/CameraSelect';
 import { sceneClockOf } from './sceneClock';
 import { clockedCtx, type ClockedCtx } from './subjectClock';
 import { resolveConstraintPosition } from './nodeConstraints';
+import { withHeldCameraEdits } from './cameraHeldEdits';
 import { cameraLocalOrientation, cameraTrackToAim, type CameraOwnRotation } from './cameraTrackTo';
 import { quaternionFromEulerDeg, withResolvedRotation } from './resolvedRotation';
 import * as THREE from 'three';
@@ -413,12 +414,16 @@ export function resolveCameraPoseAt(
     rotationMode,
     quaternion: ownQuat,
     ...keyedPose
-  } = overlayCameraChannels(
+  } = withHeldCameraEdits(
     state,
     node.id,
-    { ...unoriented, ...ownRotationOf(node.params as Record<string, unknown>) },
-    filmCtx,
-    cache,
+    overlayCameraChannels(
+      state,
+      node.id,
+      { ...unoriented, ...ownRotationOf(node.params as Record<string, unknown>) },
+      filmCtx,
+      cache,
+    ),
   );
   const pose: Omit<CameraPose, 'quaternion'> = keyedPose;
   const own: CameraOwnRotation = { rotation, rotationMode, quaternion: ownQuat };

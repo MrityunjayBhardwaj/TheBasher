@@ -116,13 +116,12 @@ export function resolveEvaluatedTransform(
   //    looks.
   if (isCameraNode(state, selectedId)) {
     const params = (state.nodes[selectedId]?.params ?? {}) as { scale?: unknown };
+    // #1773 — its held edits (position, rotation, lens) are already on: `cameraLocalPose` lays
+    // them on after the keys, as the pose resolver does.
     const local = cameraLocalPose(state, selectedId, ctx, cache);
-    const keyed = { position: local.position };
-    const held =
-      overlayTransients(keyed, selectedId, useTransientEditStore.getState().edits) ?? keyed;
     const own = ctxOnClockOf(state, selectedId, ctx);
     const followed = resolveConstraintPosition(state, selectedId, own, cache);
-    const position = followed ?? (held.position as Vec3);
+    const position = followed ?? local.position;
     const { quaternion } = cameraLocalOrientation(
       state,
       selectedId,

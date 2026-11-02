@@ -63,6 +63,7 @@
 // REF: epic #201, docs/OPERATORS-AND-LIGHTING-DESIGN.md §4.3; vyapti V37/V58; H40.
 
 import * as THREE from 'three';
+import { withHeldCameraEdits } from './cameraHeldEdits';
 import { evaluate, type EvaluatorCache } from '../core/dag/evaluator';
 import type { DagState } from '../core/dag/state';
 import type { NodeRef } from '../core/dag/types';
@@ -608,8 +609,13 @@ export function cameraLocalPose(
         : undefined,
     roll: typeof cp.roll === 'number' ? cp.roll : 0,
   };
-  // #482 — the same call the camera's pose makes, so the gizmo and the render agree.
-  return overlayCameraChannels(state, cameraId, cam, ctxOnClockOf(state, cameraId, ctx), cache);
+  // #482 — the same call the camera's pose makes, so the gizmo and the render agree; #1773 — and
+  // the same held edits on top.
+  return withHeldCameraEdits(
+    state,
+    cameraId,
+    overlayCameraChannels(state, cameraId, cam, ctxOnClockOf(state, cameraId, ctx), cache),
+  );
 }
 
 /**
