@@ -141,6 +141,16 @@ const ORIGINS: Record<string, Origin> = {
     frequency: 'per-action',
     why: "The look-at target dropdown's clear: the drawn orientation it freezes (#1760).",
   },
+  'src/app/CameraLookAtTarget.tsx · bindLookAtTargetOps → resolveCameraPoseAt': {
+    count: 1,
+    frequency: 'per-action',
+    why: "The look-at target dropdown's bind: the point the camera looks at, seeded as the Track-To's fallback aim (#1775).",
+  },
+  'src/app/CameraLookAtTarget.tsx · bindLookAtTargetOps → resolveParentWorldMatrix': {
+    count: 1,
+    frequency: 'per-action',
+    why: "The look-at target dropdown's bind: that point brought into the camera's parent space (#1775).",
+  },
   'src/app/KeyboardShortcuts.tsx · onKey → resolveEvaluatedTransform': {
     count: 1,
     frequency: 'per-action',

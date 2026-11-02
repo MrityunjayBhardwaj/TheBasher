@@ -21,6 +21,9 @@ import { splitOps } from '../test-utils/splitKinds';
 import { bindLookAtTargetOps, lookAtTargetOptions } from './CameraLookAtTarget';
 import { makeSplitCube } from '../test-utils/splitCube';
 import { resolveEvaluatedTransform } from './resolveEvaluatedTransform';
+import { resolveCameraPoseAt } from './activeCamera';
+import { buildDefaultDagState } from '../core/project/default';
+import { makeSplitCamera } from '../test-utils/splitCamera';
 
 beforeAll(() => {
   registerAllNodes();
@@ -88,9 +91,13 @@ describe('bindLookAtTargetOps', () => {
     // displayed by this same dropdown, and ignored by every resolver.
     expect(op.params.target).toBe('n_cam');
     expect(op.params.aimNode).toBe('n_cube');
-    // The seed aim point comes from the LENS half, where `lookAt` lives. Read off the
-    // Object it is absent → [0,0,0] → the camera swings through the world origin.
-    expect(op.params.aimPoint).toEqual([0, 1, 0]);
+    // #1775 — the seed aim point is where the camera is drawn looking, resolved for the OBJECT
+    // (resolved off the lens half it is a fallback pose's aim). This camera has no rotation, so
+    // it looks down −Z from (7, 1, −4), at its aim distance √65; not at the origin, not at its
+    // lens look-at (0, 1, 0), which no longer turns it.
+    const seed = op.params.aimPoint as number[];
+    [7, 1, -4 - Math.sqrt(65)].forEach((v, i) => expect(seed[i]).toBeCloseTo(v, 9));
+    expect(op.params.aimSpace).toBe('parent');
     expect(op.params.order).toBe(0);
   });
 
@@ -186,6 +193,52 @@ describe('bindLookAtTargetOps', () => {
     const { ops, animatedWrite } = bindLookAtTargetOps(s, IDS, '', CTX);
     expect(animatedWrite).toBeUndefined();
     expect(ops.some((o) => o.type === 'setParam' && o.paramPath === 'rotation')).toBe(true);
+  });
+
+  // #1775 — the new Track-To's fallback aim point (used once its target node is gone) is where
+  // the camera is drawn looking, in its parent's space. It was the lens look-at — a parent-space
+  // point — under the default world space, so a nested camera fell back 5 units off here.
+  it('a nested camera falls back to where it looked when its target node is cleared', () => {
+    let s = buildDefaultDagState();
+    for (const op of [
+      { type: 'addNode', nodeId: 'grp', nodeType: 'Group', params: { position: [5, 0, 0] } },
+      {
+        type: 'connect',
+        from: { node: 'grp', socket: 'out' },
+        to: { node: 'n_scene', socket: 'children' },
+      },
+    ])
+      s = applyOp(s, op as Parameters<typeof applyOp>[1]).next;
+    s = makeSplitCamera(s, {
+      objectId: 'cam',
+      position: [0, 1, 6],
+      lens: { lookAt: [0, 1, 0] },
+      connectTo: { node: 'grp', socket: 'children' },
+    }).state;
+    const looked = resolveCameraPoseAt(s, 'cam', 0).lookAt;
+    [5, 1, 0].forEach((v, i) => expect(looked[i]).toBeCloseTo(v, 9)); // the fixture: world (5,1,0)
+    const { ops } = bindLookAtTargetOps(s, { nodeId: 'cam_data', poseNodeId: 'cam' }, 'n_box', CTX);
+    for (const op of ops) s = applyOp(s, op as Parameters<typeof applyOp>[1]).next;
+    const tt = Object.values(s.nodes).find((n) => n.type === 'TrackTo')!;
+    expect((tt.params as { aimSpace: string }).aimSpace).toBe('parent');
+    // The target node goes (what deleting it does to the Track-To): the fallback point takes over.
+    s = applyOp(s, {
+      type: 'setParam',
+      nodeId: tt.id,
+      paramPath: 'aimNode',
+      value: '',
+    } as Parameters<typeof applyOp>[1]).next;
+    const after = resolveCameraPoseAt(s, 'cam', 0).lookAt;
+    [5, 1, 0].forEach((v, i) => expect(after[i]).toBeCloseTo(v, 6));
+  });
+
+  it('control: a top-level camera seeds the point it is drawn looking at', () => {
+    const s = buildScene();
+    const looked = resolveCameraPoseAt(s, 'n_cam', 0).lookAt;
+    const add = bindLookAtTargetOps(s, IDS, 'n_cube', CTX).ops[0] as {
+      params: { aimPoint: number[] };
+    };
+    add.params.aimPoint.forEach((v, i) => expect(v).toBeCloseTo(looked[i], 9));
   });
 
   it('clearing an unaimed camera emits nothing', () => {

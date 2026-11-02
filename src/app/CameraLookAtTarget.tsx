@@ -30,7 +30,10 @@ import {
   isRelationalPoseNode,
   nextConstraintOrder,
 } from './nodeConstraints';
+import * as THREE from 'three';
 import { cameraTrackToAim } from './cameraTrackTo';
+import { resolveCameraPoseAt } from './activeCamera';
+import { resolveParentWorldMatrix } from './resolveWorldTransform';
 import { resolveEvaluatedTransform } from './resolveEvaluatedTransform';
 import { rotationWriteOf } from './resolvedRotation';
 import type { RotationModeFields } from '../nodes/types';
@@ -177,11 +180,15 @@ export function bindLookAtTargetOps(
     };
   }
 
-  // The seed aim point is the AUTHORED `lookAt` — a lens-half param, so read off
-  // `nodeId`. Read off the Object it is always absent → every new binding would seed
-  // [0,0,0] and the camera would swing through the world origin on the first bind.
-  const cam = nodes[nodeId]?.params as { lookAt?: unknown } | undefined;
-  const aimPoint = isVec3(cam?.lookAt) ? cam.lookAt : [0, 0, 0];
+  // #1775 — the fallback aim point (what the camera aims at if the target node is later removed)
+  // is the point it is drawn looking at now, held in its PARENT's space as the v26 conversion
+  // holds every camera's aim: so a nested camera falls back to where it looked, not to that
+  // point misread as a world one. Resolved for the Object, the half the pose road poses.
+  const drawnAim = resolveCameraPoseAt(state, poseNodeId, ctx.time.seconds).lookAt;
+  const parentWorld = resolveParentWorldMatrix(state, poseNodeId, ctx);
+  const aimPoint: Vec3 = parentWorld
+    ? (new THREE.Vector3(...drawnAim).applyMatrix4(parentWorld.clone().invert()).toArray() as Vec3)
+    : [...drawnAim];
   return {
     ops: [
       {
@@ -196,6 +203,7 @@ export function bindLookAtTargetOps(
           target: poseNodeId,
           aimNode: value,
           aimPoint,
+          aimSpace: 'parent',
           up: [0, 1, 0],
           mute: false,
           // #317 — land it on TOP of whatever the camera already carries. The hardcoded
