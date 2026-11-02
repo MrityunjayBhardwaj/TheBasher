@@ -3,7 +3,7 @@
 //
 // #387 Stage C (C4): a camera is an `Object` (owning the transform) wired via its `data`
 // socket to a `CameraData` (owning the LENS — projection/fov/orthoScale/clip planes/DoF, plus the
-// aim params `lookAt` and `roll`, which stay on the data half parity-first, #387 D1). This
+// aim, which is the Object rotation or a Track-To since #487). This
 // mirrors exactly what the Add ▸ Camera builder (addPrimitives.ts), the default project, the
 // bundled examples, `cameraFromView`, the agent's `cameraSnapshot` and the v6→v7 load
 // migration all produce — so one helper keeps the fixtures on ONE shape and none of those
@@ -47,8 +47,8 @@ export interface SplitCameraOpts {
    * distinguishable from a real read must pass something else.
    */
   fov?: number;
-  /** Any further lens params to seed on the CameraData (projection/orthoScale/near/far/lookAt/
-   *  roll/sensorSize/dof*). Omitted fields take their zod defaults. */
+  /** Any further lens params to seed on the CameraData (projection/orthoScale/near/far/
+   *  sensorSize/dof*; `lookAt`/`roll` here only TURN the camera). Omitted fields take their zod defaults. */
   lens?: Record<string, unknown>;
   /**
    * Optional edge to wire the Object's `out` into, e.g. `{ node: 'scene', socket: 'camera' }`.
@@ -75,10 +75,22 @@ export function makeSplitCamera(state: DagState, opts: SplitCameraOpts): SplitCa
 
   // Defaulting stays HERE rather than in the shared descriptor, which owns only the op list;
   // see splitLight.ts for why the unit and e2e builders are deliberately not unified.
-  const dataParams: Record<string, unknown> = {
-    fov: opts.fov ?? 45,
-    ...(opts.lens ?? {}),
-  };
+  // #1764 — the lens holds no aim. A fixture's `lens.lookAt` / `lens.roll` are read here as the
+  // point the camera is turned to look at and its bank, and never written to the lens; a fixture
+  // that names a look-at is also FOCUSED there (unless it sets `focusDistance`), so its aim
+  // reticle sits on that point as it did when the lens held it.
+  const {
+    lookAt: lensLookAt,
+    roll: _lensRoll,
+    ...lensRest
+  } = (opts.lens ?? {}) as Record<string, unknown>;
+  void _lensRoll;
+  const dataParams: Record<string, unknown> = { fov: opts.fov ?? 45, ...lensRest };
+  if (isVec3(lensLookAt) && dataParams.focusDistance === undefined) {
+    const at = opts.position ?? [0, 0, 0];
+    const d = Math.hypot(lensLookAt[0] - at[0], lensLookAt[1] - at[1], lensLookAt[2] - at[2]);
+    if (d > 0) dataParams.focusDistance = d;
+  }
 
   const objParams: Record<string, unknown> = {};
   if (opts.position) objParams.position = opts.position;

@@ -58,7 +58,14 @@ function scaffold(): Op[] {
       type: 'addNode',
       nodeId: 'n_camera_data',
       nodeType: 'CameraData',
-      params: { projection: 'Perspective', fov: 45, near: 0.1, far: 1000, lookAt: [0, 0.4, 0] },
+      // #1764 — focused on the point it looks at, so its aim reticle sits there.
+      params: {
+        projection: 'Perspective',
+        fov: 45,
+        near: 0.1,
+        far: 1000,
+        focusDistance: Math.hypot(4, 2.5 - 0.4, 4),
+      },
     },
     {
       type: 'addNode',

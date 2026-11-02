@@ -18,10 +18,9 @@
 // the cache key is right; it says nothing about whether the camera moved. That second
 // question belongs to the pose road, and it is asked separately.
 //
-// The Object's `rotation` and `scale` are DROPPED, and that is the parity-first
-// decision (#387 D1) showing through rather than an omission: `CameraValue` has no
-// rotation, the camera's orientation is `lookAt` + `roll` on the data half, and the
-// pose road reads those. A camera Object's `rotation` is therefore a no-op today.
+// #1764 — the Object's own `rotation` IS carried: it is what turns a camera with no Track-To
+// (#487), so a pass cached on this value is re-rendered when the camera turns. (It carried the
+// lens `lookAt` + `roll` until those left the lens.) `scale` is dropped: no camera reads it.
 //
 // REF: src/nodes/lightRecompose.ts (the shape this mirrors); src/nodes/CameraData.ts;
 //      src/app/activeCamera.ts (the pose road that does NOT go through here);
@@ -48,8 +47,7 @@ export function recomposeCameraObject(value: unknown): CameraValue | null {
         near: d.near,
         far: d.far,
         position,
-        lookAt: d.lookAt,
-        roll: d.roll,
+        rotation: obj.rotation,
       };
     case 'Orthographic':
       return {
@@ -58,8 +56,7 @@ export function recomposeCameraObject(value: unknown): CameraValue | null {
         near: d.near,
         far: d.far,
         position,
-        lookAt: d.lookAt,
-        roll: d.roll,
+        rotation: obj.rotation,
       };
   }
 }

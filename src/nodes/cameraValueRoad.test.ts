@@ -5,7 +5,7 @@
 // row here with it: seven remain.) Post-split the thing
 // arriving on each is an `ObjectValue` posing a `CameraData`, and every one of those
 // sites used to reach it with a bare `as CameraValue` — a cast that cannot fail and
-// produces a struct with no `fov`, no `lookAt`, and the wrong `kind`.
+// produces a struct with no `fov`, no `rotation`, and the wrong `kind`.
 //
 // ⚠️ WHY THESE TESTS GO THROUGH `evaluate` AND NOT THROUGH `renderedValueForBand`.
 // The conformance matrix's camera row already calls `recomposeCameraObject` DIRECTLY
@@ -43,7 +43,8 @@ beforeEach(() => {
 // broken road also returns: `fov` is 28 because 45 is `DEFAULT_CAMERA_POSE.fov` and what
 // `addPrimitives` seeds, and the pose sits off the default so a passthrough cannot
 // accidentally agree ([[V124]] observation trap, in unit form).
-const LENS = { fov: 28, near: 0.02, far: 250, lookAt: [0, 1, 0] as const, roll: 15 };
+// #1764 — no aim on the lens: a camera's orientation is its Object's rotation (or a Track-To).
+const LENS = { fov: 28, near: 0.02, far: 250 };
 const POSE = [7, 1, -4] as const;
 
 function applyAll(s: DagState, ops: unknown[]): DagState {
@@ -75,8 +76,7 @@ const CANONICAL_PERSPECTIVE: CameraValue = {
   near: 0.02,
   far: 250,
   position: [7, 1, -4],
-  lookAt: [0, 1, 0],
-  roll: 15,
+  rotation: [0, 0, 0],
 };
 
 /** A Scene whose `camera` input is fed by `cameraId`. */
@@ -104,8 +104,7 @@ describe('#387 slice 4 — Scene.camera recomposes the split pair', () => {
     expect(cam.fov).toBe(28);
     expect(cam.near).toBe(0.02);
     expect(cam.far).toBe(250);
-    expect(cam.lookAt).toEqual([0, 1, 0]);
-    expect(cam.roll).toBe(15);
+    expect(cam.rotation).toEqual([0, 0, 0]);
     // Position comes from the OTHER node. A recompose that read only the data half would
     // still satisfy every line above.
     expect(cam.position).toEqual([7, 1, -4]);
@@ -138,8 +137,7 @@ describe('#387 slice 4 — Scene.camera recomposes the split pair', () => {
       near: 0.02,
       far: 250,
       position: [7, 1, -4],
-      lookAt: [0, 1, 0],
-      roll: 15,
+      rotation: [0, 0, 0],
     });
   });
 
@@ -164,12 +162,11 @@ describe('#387 slice 4 — Scene.camera recomposes the split pair', () => {
     expect(cam).not.toHaveProperty('fov');
   });
 
-  it("drops the Object's rotation and scale — the parity-first decision, pinned", () => {
-    // #387 D1: a camera's orientation is `lookAt` + `roll` on the data half; the Object's
-    // `rotation` is a NO-OP on the camera road. So two cameras differing only in rotation
-    // must produce the identical value — which also means a rotate drag cannot thrash the
-    // render cache. This is the assertion an unrecomposed passthrough FAILS while the
-    // `fov` assertions above would still pass: the raw ObjectValue carries `rotation`.
+  it("carries the Object's rotation (it turns the camera), and drops its scale", () => {
+    // #1764 — a camera is turned by its Object's own rotation (#487), so two cameras differing
+    // only in rotation are DIFFERENT values: a pass cached on this value (its key hashes it) is
+    // re-rendered when the camera turns. Before, the value carried the lens look-at instead, and
+    // a turned camera kept the stale cached pass. Scale turns nothing on a camera and is dropped.
     let a = applyAll(emptyDagState(), splitCameraOps('n_cam'));
     a = applyOp(a, {
       type: 'setParam',
@@ -185,8 +182,8 @@ describe('#387 slice 4 — Scene.camera recomposes the split pair', () => {
     }).next;
     const rotated = sceneCamera(a);
     const unrotated = sceneCamera(sceneWith(splitCameraOps('n_cam'), 'n_cam'));
-    expect(rotated).toEqual(unrotated);
-    expect(rotated).not.toHaveProperty('rotation');
+    expect(rotated).not.toEqual(unrotated);
+    expect(rotated.rotation).toEqual([0, 45, 0]);
     expect(rotated).not.toHaveProperty('scale');
   });
 });
@@ -226,9 +223,11 @@ describe('#387 slice 4 — the other seven gathers', () => {
       // It used to be phrased as equality with a live fused camera's hash — the migration
       // contract, exactly. Slice 8 retired the fused node, so the discriminator moved to the
       // other property that separates the two structs: a recomposed CameraValue has NO
-      // `rotation`, while the raw ObjectValue does. Two split cameras differing ONLY in the
-      // Object's rotation must therefore hash IDENTICALLY — which also means a rotate drag
-      // cannot thrash the render cache. Note what the obvious alternative would not buy: "the
+      // `scale`, while the raw ObjectValue does. Two split cameras differing ONLY in the
+      // Object's scale must therefore hash IDENTICALLY. (#1764: rotation is no discriminator any
+      // more — it turns a camera, so the recomposed value carries it, and a turned camera MUST
+      // hash differently or its cached pass goes stale; asserted below.) Note what the obvious
+      // alternative would not buy: "the
       // hash flips when fov changes" does NOT discriminate, because the raw ObjectValue
       // carries `data.fov` too and hashing it flips just the same ([[H180]] vacuous negative).
       //
@@ -263,11 +262,17 @@ describe('#387 slice 4 — the other seven gathers', () => {
         }
         return (evaluate(s, 'n_pass').value as ImageValue).sourceHash;
       };
+      const scaled = [
+        ...splitCameraOps('n_cam'),
+        { type: 'setParam', nodeId: 'n_cam', paramPath: 'scale', value: [2, 2, 2] } as Op,
+      ];
       const rotated = [
         ...splitCameraOps('n_cam'),
         { type: 'setParam', nodeId: 'n_cam', paramPath: 'rotation', value: [0, 45, 0] } as Op,
       ];
-      expect(build(splitCameraOps('n_cam'))).toBe(build(rotated));
+      expect(build(splitCameraOps('n_cam'))).toBe(build(scaled));
+      // #1764 — and a turned camera is a different shot: its cached pass must not be reused.
+      expect(build(splitCameraOps('n_cam'))).not.toBe(build(rotated));
     },
   );
 

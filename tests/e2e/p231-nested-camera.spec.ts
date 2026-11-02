@@ -4,10 +4,11 @@
 // camera's local [0,0,0]). This is the viewport==render world-pose boundary-pair for
 // nested cameras (mirrors p231-grouped-light for lights).
 
+import { cameraRotationLookingAt } from '../../src/app/cameraOrientation';
 import { expect, test } from './_fixtures';
 import { dragRowOnto } from './_treeDrag';
 import type { Page } from '@playwright/test';
-import { splitCameraDataId, splitCameraOps } from './_splitCamera';
+import { splitCameraOps } from './_splitCamera';
 
 interface CamRef {
   node: string;
@@ -40,10 +41,6 @@ const groupChildren = (page: Page, groupId: string) =>
 
 const GRP = 'n_p231nc_grp';
 const CAM = 'n_p231nc_cam';
-/** The lens half. Post-split (#387 C4) the camera is an Object + CameraData pair, so `lookAt`
- *  — an AIM param, parity-first on the data half — is read from HERE, not from `CAM`. Reading
- *  it off the Object would report `undefined` no matter what the gizmo wrote. */
-const CAM_DATA = splitCameraDataId(CAM);
 /** One camera, built the only way the product can build one. Local origin, looking -Z. */
 const CAM_OPS = splitCameraOps({
   objectId: CAM,
@@ -196,25 +193,27 @@ test.describe('#231 Inc 3.3 — nested camera world pose', () => {
     await page.waitForFunction(() => Boolean((window as unknown as W).__basher_camera_gizmo_grab));
     await page.waitForTimeout(150);
 
-    // Grab the aim handle to WORLD point [5,2,0]. The camera lives at group-world
-    // [5,0,0], so aiming at world [5,2,0] must write the LOCAL lookAt [0,2,0]
-    // (world − group), not the raw world point — the world→local round-trip.
+    // Grab the aim handle to WORLD point [5,2,-3]. The camera lives at group-world [5,0,0], so it
+    // must turn to look at the LOCAL point [0,2,-3] (world − group), not the raw world point — the
+    // world→local round-trip. (#1764 — written as the camera's own rotation; the lens holds no aim.)
     await page.evaluate(() => {
-      (window as unknown as W).__basher_camera_gizmo_grab!('aim', [5, 2, 0]);
+      (window as unknown as W).__basher_camera_gizmo_grab!('aim', [5, 2, -3]);
     });
     await page.waitForTimeout(100);
 
-    const lookAt = await page.evaluate(
-      (camData) =>
-        (window as unknown as W).__basher_dag.getState().state.nodes[camData].params.lookAt as [
+    const rotation = await page.evaluate(
+      (cam) =>
+        (window as unknown as W).__basher_dag.getState().state.nodes[cam].params.rotation as [
           number,
           number,
           number,
         ],
-      CAM_DATA,
+      CAM,
     );
-    expect(lookAt[0]).toBeCloseTo(0, 2); // world 5 − group 5
-    expect(lookAt[1]).toBeCloseTo(2, 2);
-    expect(lookAt[2]).toBeCloseTo(0, 2);
+    const want = cameraRotationLookingAt([0, 0, 0], [0, 2, -3], 0);
+    // Unconverted, it would look at local [5,2,-3]: a different rotation, which this catches.
+    const wrong = cameraRotationLookingAt([0, 0, 0], [5, 2, -3], 0);
+    expect(Math.abs(wrong[1] - want[1])).toBeGreaterThan(10);
+    for (let i = 0; i < 3; i++) expect(rotation[i]).toBeCloseTo(want[i], 2);
   });
 });

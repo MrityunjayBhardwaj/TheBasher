@@ -154,7 +154,7 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
   BoneNameMap: '[] name=(unrouted) map=(unrouted)',
   BoxData: '[mesh,material] size=mesh material=material',
   CameraData:
-    '[camera] projection=camera fov=camera orthoScale=camera near=camera far=camera sensorSize=camera dofEnabled=camera focusDistance=camera fStop=camera focusOnTarget=camera lookAt=camera roll=camera',
+    '[camera] projection=camera fov=camera orthoScale=camera near=camera far=camera sensorSize=camera dofEnabled=camera focusDistance=camera fStop=camera focusOnTarget=camera',
   CameraSelect: '[layout] active=(unrouted)',
   // #1353 — three cells, all on the stack card: the two settings a capture has and the mute. The
   // armature is an INPUT, as it is on `ArmatureModifier`. #1539 adds three more on the same card:
@@ -456,4 +456,8 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
 // #1759 adds `TrackTo.aimSpace` and `TrackTo.roll`, unrouted like every other Track-To param
 // (the constraint card draws the node's own rows). Nothing existing moved:
 //   types 90 · routed 151 · unrouted 257 + 2 = 259
-export const GOLDEN_TOTALS = { types: 90, routed: 151, unrouted: 259 } as const;
+// #1764 retires `CameraData.lookAt` and `CameraData.roll`, both routed to `camera`: a camera is
+// turned by its Object's rotation or a Track-To (#487), and the lens holds no aim. Removed, not
+// moved, so the `camera` row loses its two cells:
+//   types 90 · routed 151 - 2 = 149 · unrouted 259
+export const GOLDEN_TOTALS = { types: 90, routed: 149, unrouted: 259 } as const;

@@ -5,7 +5,7 @@
 // reproduce that pose deterministically.
 //
 // Op chain (atomic):
-//   1. addNode(PerspectiveCamera, { fov, position, lookAt })
+//   1. addNode(CameraData { fov }) + addNode(Object { position, rotation }) — the view's own
 //   2. setOutputs is implicit when we connect to scene.camera — but
 //      setting an OUTPUT requires re-mapping `state.outputs.scene.camera`
 //      directly (outputs are not Ops in v0.5; they're declared at boot).
@@ -39,9 +39,10 @@ export async function snapshotCameraFromOrbit(): Promise<void> {
   const existing = sceneNode.inputs.camera;
   if (Array.isArray(existing)) return;
 
-  // Read current orbit camera pose. drei's OrbitControls writes through
-  // to the active perspective camera (THREE.PerspectiveCamera), so
-  // cam.position + the controls' target give us a faithful snapshot.
+  // Read current orbit camera pose. drei's OrbitControls writes through to the active perspective
+  // camera (THREE.PerspectiveCamera), so its position and orientation are a faithful snapshot.
+  // #1764 — the orbit target is where the view looks: the new camera is focused there, so its aim
+  // reticle sits on it.
   const target = useThreeRef.getState().controlsTarget;
   const newId = `cam_${Date.now().toString(36)}`;
   const camAny = cam as unknown as { isPerspectiveCamera?: boolean; fov?: number };
@@ -78,7 +79,7 @@ export async function snapshotCameraFromOrbit(): Promise<void> {
       fov,
       near: DEFAULT_CAMERA_NEAR,
       far: DEFAULT_CAMERA_FAR,
-      lookAt: target ? [target.x, target.y, target.z] : [0, 0, 0],
+      ...(target ? { focusDistance: cam.position.distanceTo(target) || 5 } : {}),
     },
   });
   ops.push({

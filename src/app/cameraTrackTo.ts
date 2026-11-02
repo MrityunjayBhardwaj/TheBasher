@@ -52,8 +52,8 @@ export type CameraOwnRotation = RotationModeFields & { rotation: Vec3 };
 /**
  * #1760 — a camera's orientation in its parent's space, by the rule every object follows (V665):
  * its winning Track-To's aim and roll, else its Object's own rotation. The Track-To's aim is taken
- * from `position`, the camera's parent-local position with its keys and path applied. `lensRoll`
- * is the lens's roll, which adds to an aim until #1764 removes it (the v26 step sets it to 0).
+ * from `position`, the camera's parent-local position with its keys and path applied. The
+ * Track-To's own roll is the only bank on an aim (#1764: the lens has none).
  * `aim` is the Track-To's aim point in the parent's space, or null when the camera's own rotation
  * turns it.
  */
@@ -62,13 +62,12 @@ export function cameraLocalOrientation(
   cameraId: string,
   position: Vec3,
   own: CameraOwnRotation,
-  lensRoll: number,
   ctx: ClockedCtx,
   cache?: EvaluatorCache,
 ): { quaternion: Quat; aim: Vec3 | null } {
   const tracked = cameraTrackToAim(state, cameraId, ctx, cache);
   if (tracked) {
-    const q = trackToQuaternion(position, tracked.lookAt, tracked.up, tracked.roll + lensRoll);
+    const q = trackToQuaternion(position, tracked.lookAt, tracked.up, tracked.roll);
     // A degenerate aim (the camera sits on its aim point) aims nothing; its own rotation stands.
     if (q) return { quaternion: [q.x, q.y, q.z, q.w], aim: tracked.lookAt };
   }

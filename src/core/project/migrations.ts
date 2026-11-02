@@ -2455,13 +2455,13 @@ export function migrateShotsToCuts(raw: unknown): unknown {
 // Each camera gains a Track-To at the bottom of its constraint stack that holds that aim: the
 // look-at as its aim point in `parent` space, the roll as its own. Keys and drivers on the lens's
 // `lookAt` move onto the Track-To's `aimPoint`, and those on `roll` onto its `roll`, unchanged —
-// nothing is resampled, because the Track-To honours them (#1767). The lens roll becomes 0.
+// nothing is resampled, because the Track-To honours them (#1767). #1764 — the lens keeps
+// neither: `lookAt` and `roll` leave every lens, worn or not, once the Track-To holds them.
 //
 // A camera that already had a Track-To keeps it winning: the new one sits below it, so muting the
 // old one shows the authored look-at again, as it did. Its roll used to add to the lens roll
 // whichever member won, so the lens roll (and any keys on it) is added to every existing member
-// too. The lens `lookAt` stays where it was until #1764 removes the field; the aim it held now
-// lives on the Track-To, which overrides it.
+// too.
 //
 // A strip placed on a camera can carry `lookAt` or `roll` inside its clip; those are not moved,
 // and each such camera is LOGGED so the loss is never silent.
@@ -2489,6 +2489,13 @@ export function migrateCameraAimToTrackTo(raw: unknown): unknown {
     return id;
   };
 
+  /** #1764 — a lens without the aim it no longer holds. */
+  const withoutAim = (p: Record<string, unknown>) => {
+    const { lookAt: _lookAt, roll: _roll, ...rest } = p;
+    void _lookAt;
+    void _roll;
+    return rest;
+  };
   let cameras = 0;
   let movedKeys = 0;
   let droppedZoomKeys = 0;
@@ -2510,7 +2517,7 @@ export function migrateCameraAimToTrackTo(raw: unknown): unknown {
           : 0;
       lensParams.orthoScale = 2 * (Math.tan((num(lensParams.fov, 45) * Math.PI) / 360) * dist || 1);
     }
-    out[dataId] = { ...lens, params: lensParams };
+    out[dataId] = { ...lens, params: withoutAim(lensParams) };
     for (const [id, n] of entries) {
       const p = n?.params;
       if (p?.paramPath !== 'zoom' || (p.target !== dataId && p.target !== objId)) continue;
@@ -2523,6 +2530,10 @@ export function migrateCameraAimToTrackTo(raw: unknown): unknown {
       droppedZoomKeys++;
     }
     if (!objId) continue; // a lens no camera wears aims nothing
+    // #1764 — a lens with no look-at holds no aim to move: a v25 lens always carried one (its
+    // schema default), so this is a camera already turned by its own rotation (a project built at
+    // v26), which a Track-To aimed at a made-up point would turn away from where it looks.
+    if (!isVec3(lensParams.lookAt)) continue;
     cameras++;
     const lp = lensParams;
     const roll = num(lp.roll, 0);
@@ -2550,7 +2561,7 @@ export function migrateCameraAimToTrackTo(raw: unknown): unknown {
     for (const [ttId, tt] of existing) {
       out[ttId] = { ...tt, params: { ...tt.params, roll: num(tt.params?.roll, 0) + roll } };
     }
-    out[dataId] = { ...lens, params: { ...lp, roll: 0 } };
+    out[dataId] = { ...lens, params: withoutAim(lp) };
 
     // Keys and drivers on the aim, addressed to the lens or the camera Object.
     const holders = new Set([dataId, objId]);

@@ -55,16 +55,16 @@
 // have to be answered differently, not excluded.
 //
 // SOME KINDS ANSWER NO, AND THE NOs DO NOT TRAVEL BETWEEN ROADS
-// The curve's render cannot follow a held edit (#474) and the camera's cannot either, for an
-// unrelated reason (#484); the camera additionally refuses push-down altogether (#480). Each
+// The curve's render cannot follow a held edit (#474) (the camera could not either until #1773
+// fixed #484); the camera additionally refuses push-down altogether (#480). Each
 // NO still builds the fixture, still applies the stimulus, and asserts the outcome as an
 // EQUALITY against the issue — so the day any of them is fixed, the row goes red and says
 // which one.
 //
 // R6 is the reason that last clause is per ROAD and not per kind. Carrying #484's NO onto the
-// constraint road would have recorded a gap that does not exist: the camera refuses a held
-// edit because `resolveCameraPoseAt` renders committed DAG state only, and a channel IS
-// committed state, so a constrained camera does follow its animated lens. The curve's NO, by
+// constraint road would have recorded a gap that did not exist: the camera refused a held
+// edit (until #1773) because `resolveCameraPoseAt` rendered committed DAG state only, while a
+// channel IS committed state, so a constrained camera followed its animated lens. The curve's NO, by
 // contrast, does carry over — but because the SAME mechanism applies (`samples` is baked at
 // evaluate time), not because it was inherited. Both were measured on this road.
 //
@@ -146,9 +146,9 @@ interface BasherWindow {
  * not, every spec importing it drags the DAG module graph in.
  *
  * `signature` is whatever quantity the held edit is supposed to move; `expectHeld` says what
- * must become of it, given what it rested at. Three kinds name the value they expect. The
- * curve records that its render cannot follow at all (#474), and the camera that its pose
- * road consults no transient at all (#484) — still answers, still asserted, never a skip.
+ * must become of it, given what it rested at. Four kinds name the value they expect. The
+ * curve records that its render cannot follow at all (#474) — still answers, still asserted,
+ * never a skip. (The camera recorded the same until #1773 fixed #484.)
  * See `HeldExpectation`.
  *
  * Note what none of them do: re-derive the expected value from the param. The curve's
@@ -427,35 +427,17 @@ const RENDER_PROBES: Record<ReachableKind, RenderProbe> = {
     what: "the mounted light's intensity",
   },
   camera: {
-    // MEASURED, not assumed, and measured on BOTH halves: with the channel seeded and a
-    // held edit of 85 applied to `fov`, the frustum stayed at 1 — whether the transient was
-    // keyed to the CameraData or to the Object. So this is not the wrong-half mistake it
-    // would resemble; the camera pose road simply does not consult transients at all.
-    // `resolveCameraPoseAt` says so in as many words ("a render is of committed DAG
-    // state"), which makes the camera the one kind whose held edit is refused by design
-    // rather than by oversight — and the design predates the split, so the answer here is
-    // not a regression this slice introduced.
-    //
-    // It is still a real gap for a director: dragging the focal-length slider on an
-    // animated camera moves the number and not the shot.
+    // #1773 — a camera shows its held edits, as every other kind does: the camera pose lays the
+    // transients held on either half on top of its keys (`withHeldCameraEdits`). Before, its
+    // pose road consulted none, and a held fov of 85 left the frustum at the seeded 1 (#484).
     signature: cameraFrustumFov,
-    expectHeld: () => ({
-      reaches: false,
-      why:
-        'the camera pose is resolved from committed DAG state only — `resolveCameraPoseAt` ' +
-        'deliberately applies no transient overlay, so no held lens edit can reach the ' +
-        'frustum or the look-through view',
-      issue: '#484',
-    }),
+    expectHeld: () => ({ reaches: true, value: SPLIT_KINDS.camera.distinctValues[1] as number }),
     // MEASURED: 28. Worth noting against the row above — the camera refuses a HELD lens edit
     // by design, but its committed fov reaches the frustum perfectly well. Those are
     // different claims, and only this one is R1's.
     expectBare: SPLIT_KINDS.camera.distinctValues[0] as number,
     expectSeeded: 1,
-    // MEASURED, and NOT the same answer as the held edit above. The camera refuses a
-    // TRANSIENT by design — `resolveCameraPoseAt` renders committed DAG state only — but a
-    // channel IS committed state, so the constrained camera does follow it. Carrying
-    // #484's answer over to this road would have recorded a gap that does not exist.
+    // MEASURED: the constrained camera follows its fov channel to 1.
     expectConstrained: { reaches: true, value: 1 },
     what: "the field of view the camera's frustum is drawn with",
   },

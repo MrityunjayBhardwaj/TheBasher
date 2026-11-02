@@ -425,8 +425,8 @@ function buildUnlinkedAddOps(
   }
 
   // #387 Stage C (C4) — a camera is the object↔data split too: an Object (the pose) wired to
-  // a CameraData (the lens: projection/fov/zoom/clip planes/DoF, plus the aim params lookAt
-  // and roll, which stay on the data half parity-first, #387 D1). Both projections mint the
+  // a CameraData (the lens: projection/fov/ortho scale/clip planes/DoF; no aim, #487). Both
+  // projections mint the
   // SAME node pair and differ only in `projection` — one datablock with a discriminator, as
   // LightData did for four light kinds. Split-native, so "Add ▸ Camera ▸ Perspective" and the
   // v6→v7 load-migration converge on one shape (K23).
@@ -449,7 +449,12 @@ function buildUnlinkedAddOps(
           type: 'addNode',
           nodeId: dataId,
           nodeType: 'CameraData',
-          params: cameraDataParamsFor(kind),
+          // #1764 — focused on the origin the new camera is turned to look at (below), so its
+          // aim reticle sits there.
+          params: {
+            ...cameraDataParamsFor(kind),
+            focusDistance: Math.hypot(...position) || 5,
+          },
         },
         {
           type: 'addNode',
@@ -721,7 +726,7 @@ function lightDataParamsFor(kind: PrimitiveKind): Record<string, unknown> {
  * `orthoScale`. This is the same one-invented-value-in-one-place call the v6→v7 migration makes.
  */
 function cameraDataParamsFor(kind: PrimitiveKind): Record<string, unknown> {
-  const shared = { fov: 45, near: DEFAULT_CAMERA_NEAR, far: DEFAULT_CAMERA_FAR, lookAt: [0, 0, 0] };
+  const shared = { fov: 45, near: DEFAULT_CAMERA_NEAR, far: DEFAULT_CAMERA_FAR };
   return kind === 'OrthographicCamera'
     ? { projection: 'Orthographic', ...shared }
     : { projection: 'Perspective', ...shared };
@@ -754,10 +759,10 @@ function paramsFor(kind: PrimitiveKind, position: Vec3): Record<string, unknown>
     case 'AmbientLight':
       return { intensity: 0.3, color: '#ffffff' };
     // #387 C4 — a camera is the object↔data split; these params are the OBJECT half's TRS
-    // only. The lens (fov/zoom/near/far/lookAt/roll) is minted by cameraDataParamsFor onto
+    // only. The lens (fov/orthoScale/near/far/DoF) is minted by cameraDataParamsFor onto
     // the CameraData half by the camera branch above.
-    // #1760 — turned by its own rotation to the world origin, where its lens look-at points
-    // (V665): the framing it had while the look-at turned it.
+    // #1760 — turned by its own rotation to the world origin (V665): the framing it had while
+    // a lens look-at turned it.
     case 'PerspectiveCamera':
     case 'OrthographicCamera':
       return { position, rotation: cameraRotationLookingAt(position, [0, 0, 0]), scale: [1, 1, 1] };

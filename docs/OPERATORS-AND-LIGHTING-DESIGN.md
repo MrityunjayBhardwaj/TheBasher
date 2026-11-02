@@ -207,6 +207,10 @@ structural re-parent edits.
 
 ### 4.2 The camera migration IS the proof (dogfood)
 
+> **Done (#487, 2026-11).** A camera is now a normal object: its own rotation turns it, a winning
+> Track-To overrides that, and the lens holds no aim. The v26 step moved every saved look-at, keys
+> unchanged, onto a parent-space Track-To. See `OBJECT-DATA-SPLIT-DESIGN.md` §2.3.1.
+
 The first constraint the system ships is **Track-To**, and the first thing it does
 is **absorb the camera's intrinsic `lookAt`** → the camera becomes a normal object
 with a Track-To constraint. This (a) deletes the camera's special case (the

@@ -1477,9 +1477,8 @@ describe('object↔data split v6 → v7: fused cameras → Object + CameraData (
       focusDistance: 7.5,
       fStop: 1.4,
       focusOnTarget: true,
-      lookAt: CAM_LOOKAT,
-      // #1762 (v26) — the roll moves onto the camera's aim Track-To, below.
-      roll: 0,
+      // #1762 #1764 (v26) — the look-at and roll move onto the camera's aim Track-To, below, and
+      // leave the lens.
     });
     expect((persp.inputs as Record<string, { node: string }>).data.node).toBe(perspData.id);
     // #1762 (v26) — the aim the lens held is a parent-space Track-To on the Object.
@@ -1512,8 +1511,6 @@ describe('object↔data split v6 → v7: fused cameras → Object + CameraData (
         Math.hypot(CAM_LOOKAT[0] + 2, CAM_LOOKAT[1] - 6, CAM_LOOKAT[2] - 9),
       near: 0.02,
       far: CAM_FAR,
-      lookAt: CAM_LOOKAT,
-      roll: 0,
     });
     expect(aimOf('n_ortho')?.params).toMatchObject({ aimPoint: CAM_LOOKAT, roll: CAM_ROLL });
     // The orthographic source has no DoF/sensor params at all, so the migration writes

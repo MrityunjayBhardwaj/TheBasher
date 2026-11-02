@@ -88,7 +88,7 @@ describe('#1759 — Track-To roll', () => {
     expectVec(up, [0, Math.cos(Math.PI / 6), Math.sin(Math.PI / 6)], 'up');
   });
 
-  it('adds to a camera’s own roll', () => {
+  it('replaces a camera’s own bank, as Blender’s Track To discards the object’s rotation', () => {
     let s = makeSplitCamera(buildDefaultDagState(), {
       objectId: 'cam',
       position: [0, 0, 5],
@@ -111,7 +111,9 @@ describe('#1759 — Track-To roll', () => {
         params: { target: 'cam', aimPoint: [1, 0, 0], roll: 20 },
       },
     ]);
-    expect(resolveActiveCameraPoseAt(s, 0).roll).toBeCloseTo(30, 9);
+    // #1764 — no lens roll to add to: the Track-To decides the whole orientation, its roll the
+    // only bank (it was 10 + 20 = 30 while the lens held a roll).
+    expect(resolveActiveCameraPoseAt(s, 0).roll).toBeCloseTo(20, 9);
   });
 });
 

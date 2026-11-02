@@ -9,6 +9,7 @@
 // Falsify: without the gizmo writing lookAt, dragging the aim handle would not
 // move the DAG lookAt and the look-through direction would not change.
 
+import { cameraRotationLookingAt } from '../../src/app/cameraOrientation';
 import { expect, test } from './_fixtures';
 import { dataNodeIdOf } from './_seedNodes';
 
@@ -83,17 +84,15 @@ async function selectCamera(page: import('@playwright/test').Page, id: string) {
 }
 
 test.describe('#229 camera aim gizmo', () => {
-  test('aim-target handle re-aims the camera (DAG lookAt + look-through agree)', async ({
+  test('aim-target handle re-aims the camera (DAG rotation + look-through agree)', async ({
     page,
   }) => {
     await ready(page);
     const id = await camId(page);
     await selectCamera(page, id);
 
-    // #387 C4 — the pose SPANS the pair: `position` stays on the Object the director
-    // selects, while `lookAt` and `roll` live on its CameraData. Reading the aim off the
-    // Object returns `undefined`, not a stale value, so the two halves are named apart
-    // here rather than routed by a helper that would re-implement the product's own rule.
+    // #1760 #1764 — an un-aimed camera turns by its own rotation, on the Object; its lens holds
+    // no aim, so the reticle writes the rotation and nothing on the lens.
     const lens = await dataNodeIdOf(page, id);
     const pos = (await camParam(page, id, 'position')) as [number, number, number];
 
@@ -104,11 +103,11 @@ test.describe('#229 camera aim gizmo', () => {
     }, AIM);
     await page.waitForTimeout(100);
 
-    // Side A — the DAG lookAt param updated.
-    const lookAt = (await camParam(page, lens, 'lookAt')) as [number, number, number];
-    expect(lookAt[0]).toBeCloseTo(5, 3);
-    expect(lookAt[1]).toBeCloseTo(1, 3);
-    expect(lookAt[2]).toBeCloseTo(0, 3);
+    // Side A — the DAG: the camera's own rotation now looks at the new point; the lens is untouched.
+    const rotation = (await camParam(page, id, 'rotation')) as [number, number, number];
+    const want0 = cameraRotationLookingAt(pos, AIM, 0);
+    for (let i = 0; i < 3; i++) expect(rotation[i]).toBeCloseTo(want0[i], 3);
+    expect(await camParam(page, lens, 'lookAt')).toBeUndefined();
 
     // Side B — the look-through camera aims from position toward the new lookAt.
     await page.keyboard.press('0');

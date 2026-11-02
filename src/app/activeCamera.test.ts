@@ -406,7 +406,13 @@ describe('activeCamera — cameraPoseFromPair', () => {
     const state = buildDefaultDagState();
     const objectOnly = cameraPoseFromPair(selectActiveCameraNode(state), null);
     // The Object half's own params — position and (#1760) rotation — are the things that survive.
-    expectPose(objectOnly, { ...DEFAULT_CAMERA_POSE, position: [3, 2, 3] });
+    // #1764 — and with no lens, the aim point sits the default focus distance (5) ahead.
+    const k = 5 / Math.hypot(3, 2, 3);
+    expectPose(objectOnly, {
+      ...DEFAULT_CAMERA_POSE,
+      position: [3, 2, 3],
+      lookAt: [3 - 3 * k, 2 - 2 * k, 3 - 3 * k],
+    });
     expect(objectOnly?.far).toBe(DEFAULT_CAMERA_POSE.far);
   });
 
@@ -448,10 +454,10 @@ describe('activeCamera — cameraPoseFromPair', () => {
     const object = {
       id: 'n_cam',
       type: 'Object',
-      // `lookAt`/`fov` planted on the OBJECT too, at values the assertion would catch.
+      // `focusDistance`/`fov` planted on the OBJECT too, at values the assertion would catch.
       // The Object owns position and NOTHING else on this road; if the read ever falls
       // back to the object's bag, these are what it would report.
-      params: { position: [7, 1, -4], lookAt: [9, 9, 9], fov: 12, roll: 33 },
+      params: { position: [7, 1, -4], focusDistance: 99, fov: 12 },
       inputs: { data: { node: 'n_cam_data', socket: 'out' } },
     } as unknown as Node;
     const data = {
@@ -462,8 +468,7 @@ describe('activeCamera — cameraPoseFromPair', () => {
         fov: 28,
         near: 0.02,
         far: 250,
-        lookAt: [0, 1, 0],
-        roll: 5,
+        focusDistance: 8,
       },
       inputs: {},
     } as unknown as Node;
@@ -476,13 +481,12 @@ describe('activeCamera — cameraPoseFromPair', () => {
       near: 0.02,
     });
     expect(pose.far).toBe(250);
-    // #1760 — the Object carries no rotation, so the camera is unturned: neither the lens's aim
-    // and roll nor the ones planted on the Object turn it. The lens's look-at still sets the
-    // aim distance (|[0,1,0] − position|, not |[9,9,9] − position|).
+    // #1760 — the Object carries no rotation, so the camera is unturned. #1764 — its aim point
+    // sits the LENS's focus distance ahead (8), not the one planted on the Object (99).
     expect(pose.quaternion).toEqual([0, 0, 0, 1]);
     expect(pose.roll).toBeCloseTo(0, 9);
     const dist = Math.hypot(...pose.lookAt.map((v, i) => v - pose.position[i]));
-    expect(dist).toBeCloseTo(Math.hypot(7, 0, -4), 9);
+    expect(dist).toBeCloseTo(8, 9);
   });
 
   it('takes the ortho kind from the data half’s projection, not the Object’s type', () => {
@@ -515,7 +519,7 @@ describe('activeCamera — the split camera pose road (#387)', () => {
       'camera',
       { objectId: 'n_cam' },
       {
-        data: { fov: 28, near: 0.02, far: 250, lookAt: [0, 1, 0] },
+        data: { fov: 28, near: 0.02, far: 250, focusDistance: Math.hypot(7, 0, -4) },
         object: { position: [7, 1, -4] },
       },
     )) {
@@ -551,7 +555,7 @@ describe('activeCamera — the split camera pose road (#387)', () => {
     const pose = resolveCameraPoseAt(buildSplitCamera(), 'n_cam', 0);
     expect(pose.position).toEqual([7, 1, -4]);
     expect(pose.fov).toBe(28);
-    // #1760 — the lens look-at, read off the data half, sets the aim distance.
+    // #1764 — the lens focus distance, read off the data half, sets the aim distance.
     expect(Math.hypot(...pose.lookAt.map((v, i) => v - pose.position[i]))).toBeCloseTo(
       Math.hypot(7, 0, -4),
       9,
@@ -864,7 +868,6 @@ describe('resolveCameraDofAt — the split camera DoF road (#387 D9)', () => {
           fov: 28,
           near: 0.02,
           far: 250,
-          lookAt: [0, 1, 0],
           dofEnabled: true,
           focusDistance: 3,
           fStop: 2.8,

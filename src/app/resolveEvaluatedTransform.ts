@@ -122,15 +122,7 @@ export function resolveEvaluatedTransform(
     const own = ctxOnClockOf(state, selectedId, ctx);
     const followed = resolveConstraintPosition(state, selectedId, own, cache);
     const position = followed ?? local.position;
-    const { quaternion } = cameraLocalOrientation(
-      state,
-      selectedId,
-      position,
-      local,
-      local.roll,
-      ctx,
-      cache,
-    );
+    const { quaternion } = cameraLocalOrientation(state, selectedId, position, local, ctx, cache);
     const e = new Euler().setFromQuaternion(new Quaternion(...quaternion), 'XYZ');
     return {
       position,

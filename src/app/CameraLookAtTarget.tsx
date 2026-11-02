@@ -30,7 +30,6 @@ import {
   isRelationalPoseNode,
   nextConstraintOrder,
 } from './nodeConstraints';
-import { cameraTrackToAim } from './cameraTrackTo';
 import { resolveCameraPoseAt } from './activeCamera';
 import { filmSecondsOf } from './subjectClock';
 import { resolveEvaluatedTransform } from './resolveEvaluatedTransform';
@@ -56,7 +55,7 @@ function newId(prefix: string): string {
 
 /** The two node ids a camera's aim binding spans. See {@link CameraLookAtTarget}. */
 export interface LookAtIds {
-  /** The lens half — owns `lookAt`. */
+  /** The lens half — the node the inspector control is mounted for. */
   readonly nodeId: string;
   /** The pose half (the Object) — owns the constraint stack. */
   readonly poseNodeId: string;
@@ -125,7 +124,7 @@ export function bindLookAtTargetOps(
   value: string,
   ctx: { time: { frame: number; seconds: number; normalized: number } },
 ): LookAtBinding {
-  const { nodeId, poseNodeId } = ids;
+  const { poseNodeId } = ids;
   const nodes = state.nodes;
   // The constraint this dropdown edits/removes — THE SAME member it displays. Anything
   // else is incoherent: reading the winner while writing a different node means "clear"
@@ -136,23 +135,14 @@ export function bindLookAtTargetOps(
   const existingTTId = activeConstraintForTarget(nodes, poseNodeId)?.nodeId;
 
   if (!value) {
-    // Clear — freeze the current aim into the authored lookAt (no jump), remove.
-    // #387 — BOTH ids are load-bearing in these three lines: the aim is RESOLVED for
-    // the Object (that is the subject the constraint targets) and WRITTEN to the lens
-    // half (that is where `lookAt` lives). Using one id for both silently breaks one
-    // end or the other: resolved off the lens half it is always null → no freeze →
-    // the camera jumps back to its stale authored aim on clear; written to the Object
-    // it lands on a param nothing reads → same jump, and a stray `lookAt` on an Object.
+    // Clear — freeze the current aim into the camera's own rotation (no jump), remove.
     if (!existingTTId) return { ops: [], label: 'clear look-at target', atomic: true };
     // #1760 — the camera keeps looking where it looked: the orientation it is drawn with (aim
     // and roll, in its parent's space) becomes its own rotation, in its rotation mode — what
-    // Blender's Apply Visual Transform does before a constraint is removed (V665). #1766 — the
-    // aim point, in the parent's space where `lookAt` lives, still sets the aim distance the
-    // ortho size and focus read until they have their own sources.
-    const aim = cameraTrackToAim(state, poseNodeId, ctx);
+    // Blender's Apply Visual Transform does before a constraint is removed (V665). Resolved for
+    // the OBJECT, the subject the constraint targets (off the lens half it resolves nothing).
     const drawn = resolveEvaluatedTransform(state, poseNodeId, ctx);
     const ops: Op[] = [];
-    if (aim) ops.push({ type: 'setParam', nodeId, paramPath: 'lookAt', value: aim.lookAt });
     let animatedWrite: LookAtBinding['animatedWrite'];
     if (drawn?.rotation) {
       const objParams = (nodes[poseNodeId]?.params ?? {}) as RotationModeFields;

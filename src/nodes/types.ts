@@ -50,9 +50,8 @@ export interface PerspectiveCameraValue {
   readonly near: number;
   readonly far: number;
   readonly position: Vec3;
-  readonly lookAt: Vec3;
-  /** Roll about the view axis, in DEGREES (#229). */
-  readonly roll: number;
+  /** #1764 — the camera Object's own rotation, the orientation it has with no Track-To. */
+  readonly rotation: Vec3;
 }
 
 export interface OrthographicCameraValue {
@@ -62,9 +61,8 @@ export interface OrthographicCameraValue {
   readonly near: number;
   readonly far: number;
   readonly position: Vec3;
-  readonly lookAt: Vec3;
-  /** Roll about the view axis, in DEGREES (#229). */
-  readonly roll: number;
+  /** #1764 — the camera Object's own rotation, the orientation it has with no Track-To. */
+  readonly rotation: Vec3;
 }
 
 export type CameraValue = PerspectiveCameraValue | OrthographicCameraValue;
@@ -2235,8 +2233,8 @@ export interface LightDataValue {
 
 /**
  * The camera's data half — the LENS (projection + focal length/ortho scale, clip planes,
- * sensor, depth of field) and the authored aim (`lookAt`/`roll`, parity-first #387
- * D1), and DELIBERATELY no position (the Object owns it).
+ * sensor, depth of field), and DELIBERATELY no pose: position and rotation are the
+ * Object's, and an aim is a Track-To (#487, #1764).
  *
  * ONE discriminated node, not two (#387, Stage C · C4): `projection` is the enum that
  * collapses the two fused camera NODES into one Camera datablock, Blender-style. The
@@ -2264,9 +2262,6 @@ export interface CameraDataValue {
   readonly focusDistance: number;
   readonly fStop: number;
   readonly focusOnTarget: boolean;
-  readonly lookAt: Vec3;
-  /** Roll about the view axis, in DEGREES (#229). */
-  readonly roll: number;
 }
 
 /**

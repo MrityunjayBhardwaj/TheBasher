@@ -74,7 +74,7 @@ import { overlayCameraChannels } from './cameraChannels';
 import { layeredChannelValues } from './layeredChannels';
 import { driverChannelValuesForTarget } from './paramDrivers';
 import type { KeyframeChannelValue } from '../nodes/types';
-import { cameraLensParams, isCameraNode } from './cameraNode';
+import { isCameraNode } from './cameraNode';
 import { resolveRigLightSources } from './resolveRigLightSources';
 import { quaternionFromEulerDeg, withResolvedRotation } from './resolvedRotation';
 import type { Quat, RotationModeFields } from '../nodes/types';
@@ -575,12 +575,11 @@ function decompose(m: THREE.Matrix4): WorldTransform {
  * first; the both-ids enumerator, the same one push-down and the render overlay consume, answers
  * the second.
  */
-/** A camera's own transform as read (keys overlaid): its position, its rotation in its mode, and
- *  the lens roll that still adds to a Track-To's aim until #1764. */
+/** A camera's own transform as read (keys and held edits overlaid): its position and its rotation
+ *  in its mode. (#1764 — no lens roll: a Track-To's own roll is the only bank on an aim.) */
 export interface CameraLocalPose extends RotationModeFields {
   position: Vec3;
   rotation: Vec3;
-  roll: number;
 }
 
 export function cameraLocalPose(
@@ -595,7 +594,6 @@ export function cameraLocalPose(
     rotationMode?: unknown;
     quaternion?: unknown;
   };
-  const cp = (cameraLensParams(state, cameraId) ?? {}) as { roll?: unknown };
   const q = op.quaternion;
   const cam: CameraLocalPose = {
     // Fallbacks mirror DEFAULT_CAMERA_POSE (activeCamera.ts) without importing it.
@@ -607,7 +605,6 @@ export function cameraLocalPose(
       Array.isArray(q) && q.length === 4 && q.every((v) => typeof v === 'number')
         ? (q as unknown as Quat)
         : undefined,
-    roll: typeof cp.roll === 'number' ? cp.roll : 0,
   };
   // #482 — the same call the camera's pose makes, so the gizmo and the render agree; #1773 — and
   // the same held edits on top.

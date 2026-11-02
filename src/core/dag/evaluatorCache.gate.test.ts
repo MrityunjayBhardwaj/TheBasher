@@ -131,11 +131,6 @@ const ORIGINS: Record<string, Origin> = {
     frequency: 'per-action',
     why: 'Agent render-summary tool: one evaluation per tool call.',
   },
-  'src/app/CameraLookAtTarget.tsx · bindLookAtTargetOps → cameraTrackToAim': {
-    count: 1,
-    frequency: 'per-action',
-    why: "The look-at target dropdown's change handler.",
-  },
   'src/app/CameraLookAtTarget.tsx · bindLookAtTargetOps → resolveEvaluatedTransform': {
     count: 1,
     frequency: 'per-action',

@@ -40,7 +40,8 @@ function buildScene(): DagState {
     'camera',
     { objectId: 'n_cam' },
     {
-      data: { fov: 28, lookAt: [0, 1, 0] },
+      // #1764 — no lens aim: focused √65 ahead, where the old lens look-at (0, 1, 0) sat.
+      data: { fov: 28, focusDistance: Math.sqrt(65) },
       object: { position: [7, 1, -4] },
     },
   )) {
@@ -115,7 +116,7 @@ describe('bindLookAtTargetOps', () => {
     expect(op.paramPath).toBe('aimNode');
   });
 
-  it('clear freezes the resolved aim onto the LENS half, then removes the constraint', () => {
+  it('clear freezes the drawn orientation onto the OBJECT, then removes the constraint', () => {
     let s = buildScene();
     for (const op of bindLookAtTargetOps(s, IDS, 'n_cube', CTX).ops) {
       s = applyOp(s, op as Parameters<typeof applyOp>[1]).next;
@@ -126,10 +127,11 @@ describe('bindLookAtTargetOps', () => {
       | { nodeId: string; paramPath: string; value: unknown }
       | undefined;
     expect(freeze).toBeDefined();
-    // `lookAt` is a CameraData param. Frozen onto the Object it lands where nothing
-    // reads it, and the camera snaps back to its stale authored aim on clear.
-    expect(freeze!.nodeId).toBe('n_cam_data');
-    expect(freeze!.paramPath).toBe('lookAt');
+    // #1760 #1764 — the camera keeps looking where it looked through its own rotation, on the
+    // Object; the lens holds no aim and is not written.
+    expect(freeze!.nodeId).toBe('n_cam');
+    expect(freeze!.paramPath).toBe('rotation');
+    expect(ops.some((o) => o.type === 'setParam' && o.nodeId === 'n_cam_data')).toBe(false);
     expect(ops.some((o) => o.type === 'removeNode')).toBe(true);
   });
 

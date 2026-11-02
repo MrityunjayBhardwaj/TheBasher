@@ -81,6 +81,22 @@ function expectSamePoses(a: DagState, b: DagState) {
     });
 }
 
+/** #1764 — `state` with the lens of camera `objectId` holding `lens`'s `lookAt` / `roll` RAW, as a
+ *  v25 file holds them: the v26 schema (and so the shared builder) has no such fields, and its
+ *  focus distance back at the schema default a v25 lens carried. */
+function asV25Lens(state: DagState, objectId: string, lens: Record<string, unknown>): DagState {
+  const dataId = `${objectId}_data`;
+  const { focusDistance: _f, ...params } = state.nodes[dataId].params as Record<string, unknown>;
+  void _f;
+  const aim = Object.fromEntries(
+    Object.entries(lens).filter(([k]) => k === 'lookAt' || k === 'roll'),
+  );
+  return {
+    ...state,
+    nodes: { ...state.nodes, [dataId]: { ...state.nodes[dataId], params: { ...params, ...aim } } },
+  };
+}
+
 /** A camera at `position` in a Group turned 90°, aimed by its lens, made active. */
 function nestedLensCamera(lens: Record<string, unknown>): DagState {
   let s = run(buildDefaultDagState(), [
@@ -96,7 +112,11 @@ function nestedLensCamera(lens: Record<string, unknown>): DagState {
       to: { node: 'n_scene', socket: 'children' },
     },
   ]);
-  s = makeSplitCamera(s, { objectId: 'cam', position: [1, 0, 2], lens }).state;
+  s = asV25Lens(makeSplitCamera(s, { objectId: 'cam', position: [1, 0, 2], lens }).state, 'cam', {
+    lookAt: [0, 0, 0],
+    roll: 0,
+    ...lens,
+  });
   return run(s, [
     {
       type: 'connect',
@@ -129,7 +149,10 @@ describe('#1762 — v25 → v26 moves a camera’s aim onto a Track-To', () => {
       roll: 12,
       aimNode: '',
     });
-    expect(paramsOf(m.nodes[lensId(m)]).roll).toBe(0);
+    // #1764 — the lens holds no aim once the Track-To does (the title predates it: it keys the
+    // recorded v25 poses, so it stays).
+    expect(paramsOf(m.nodes[lensId(m)])).not.toHaveProperty('roll');
+    expect(paramsOf(m.nodes[lensId(m)])).not.toHaveProperty('lookAt');
     expectSamePoses(s, m);
   });
 
@@ -331,7 +354,7 @@ describe('#1760 — an orthographic camera is framed by its ortho scale, filled 
       void _drop;
       s = { ...s, nodes: { ...s.nodes, [id]: { ...s.nodes[id], params } } };
     };
-    raw('ortho_data', { zoom: 33 });
+    raw('ortho_data', { zoom: 33, lookAt: [0, 0, 0], roll: 0 });
     raw('persp_data', { zoom: 50 });
     raw('loose', { zoom: 7 });
     raw('zoom_keys', { paramPath: 'zoom' });

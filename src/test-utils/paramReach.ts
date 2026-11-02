@@ -202,8 +202,6 @@ export const PARAM_READERS: Record<SplitKindName, Record<string, ParamReader>> =
     focusDistance: { by: CAMERA_DOF },
     fStop: { by: CAMERA_DOF },
     focusOnTarget: { by: ACTIVE_CAMERA },
-    lookAt: { by: ACTIVE_CAMERA },
-    roll: { by: ACTIVE_CAMERA },
   },
   baked: {
     geometry: { by: BAKED_RECOMPOSE },

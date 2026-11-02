@@ -78,11 +78,14 @@ describe('snapshotCameraFromOrbit', () => {
     if (Array.isArray(dataRef)) throw new Error('data is single-cardinality');
     const lensNode = after.state.nodes[dataRef!.node];
     expect(lensNode.type).toBe('CameraData');
-    expect(lensNode.params).toMatchObject({
-      projection: 'Perspective',
-      fov: 45,
-      lookAt: [1, 0, 0],
-    });
+    // #1764 — no aim on the lens: the camera is focused on the orbit target (1, 0, 0), from
+    // (2, 3, 4), so its aim reticle sits where the view was looking.
+    expect(lensNode.params).toMatchObject({ projection: 'Perspective', fov: 45 });
+    expect(lensNode.params).not.toHaveProperty('lookAt');
+    expect((lensNode.params as { focusDistance: number }).focusDistance).toBeCloseTo(
+      Math.hypot(1, 3, 4),
+      9,
+    );
 
     // The atomic group means ONE undo reverts the whole snapshot.
     expect(after.undoStack.length).toBe(1);

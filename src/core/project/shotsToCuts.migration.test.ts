@@ -139,9 +139,10 @@ describe('#1666 — v24 → v25: a Shot becomes cuts, a Cut is dropped', () => {
     const before = twoCameras();
     await loadV24(before, []);
     const s = useDagStore.getState().state;
-    // This step adds nothing; the later #1762 step gives each camera its aim Track-To.
-    const aims = ['n_camera_aim', 'cam2_aim'];
-    expect(Object.keys(s.nodes).sort()).toEqual([...Object.keys(before.nodes), ...aims].sort());
+    // This step adds nothing, and nor does the later #1762 step here: these cameras are built by
+    // today's code, turned by their own rotation with no lens look-at to move (#1764), so there is
+    // no aim to give a Track-To. (A real v25 lens always carried one; cameraAim.migration.test.ts.)
+    expect(Object.keys(s.nodes).sort()).toEqual(Object.keys(before.nodes).sort());
     expect(warn.mock.calls.some((c) => String(c[0]).includes('#1666'))).toBe(false);
   });
 });

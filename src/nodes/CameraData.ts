@@ -12,14 +12,10 @@
 // already share every param but `fov`/`orthoScale`. One union arm, one migration writer,
 // one register entry, one inspector section.
 //
-// PARITY-FIRST: `lookAt` and `roll` STAY HERE (#387 D1). The design doc's longer-term
-// target has the Object carry TRS with aim as a constraint; that migration is NOT
-// exact for an ANIMATED camera, because rotation(t) is a non-linear function of three
-// independently keyed channels whose key times need not coincide, so baking it would
-// be an approximation where every prior kind's migration met a byte-identity gate.
-// The shipped LightData made the same call for the same reason (`target`/`lookAt`
-// stayed on the data half). The Object's `rotation` is consequently UNUSED by the
-// camera road — see cameraRecompose.ts, which drops it.
+// NO AIM HERE (#487, #1764). A camera is an ordinary Object: its own `rotation` turns it, and
+// its aim, when it has one, is a Track-To — never baked, so an animated aim stays exact (the
+// v26 step moved every saved look-at, its keys unchanged, onto a parent-space Track-To). The
+// lens's old `lookAt` and `roll` are gone; the v26 step strips them from saved lenses.
 //
 // THE THING THAT MAKES THIS KIND DIFFERENT FROM EVERY EARLIER ONE: the camera does
 // not render through its evaluated value. `CameraValue` reaches the renderer only as
@@ -93,14 +89,11 @@ export const CameraDataParams = z.object({
   dofEnabled: z.boolean().default(false),
   focusDistance: z.number().positive().default(5),
   fStop: z.number().positive().default(2.8),
-  /** #247 — when true the focus plane tracks the aim instead of `focusDistance`, so the
-   *  effective distance becomes |position − lookAt|. Post-split that value SPANS both
-   *  halves: `position` is the Object's, `lookAt` is this node's. */
+  /** #247 #1760 — when true the focus plane tracks the camera's winning Track-To's aim
+   *  instead of `focusDistance` (`cameraFocusTargetDistance`); with no Track-To there is no
+   *  target and `focusDistance` stands. #1764 — `focusDistance` is also how far ahead an
+   *  un-aimed camera's aim reticle sits, as Blender's camera Limits mark the focus point. */
   focusOnTarget: z.boolean().default(false),
-  /** The aim point (authored framing orientation, not TRS — parity-first, #387 D1). */
-  lookAt: z.tuple([z.number(), z.number(), z.number()]).default([0, 0, 0]),
-  /** Bank about the view axis in DEGREES (#229). Parity-first, as above. */
-  roll: z.number().default(0),
 });
 export type CameraDataParams = z.infer<typeof CameraDataParams>;
 
@@ -126,8 +119,6 @@ export const CameraDataNode: NodeDefinition<CameraDataParams, CameraDataValue> =
     focusDistance: 'camera',
     fStop: 'camera',
     focusOnTarget: 'camera',
-    lookAt: 'camera',
-    roll: 'camera',
   },
   evaluate(params) {
     return {
@@ -163,8 +154,6 @@ export const CameraDataNode: NodeDefinition<CameraDataParams, CameraDataValue> =
       focusDistance: params.focusDistance ?? 5,
       fStop: params.fStop ?? 2.8,
       focusOnTarget: params.focusOnTarget ?? false,
-      lookAt: params.lookAt ?? [0, 0, 0],
-      roll: params.roll ?? 0,
     };
   },
 };

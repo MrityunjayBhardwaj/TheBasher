@@ -7,6 +7,7 @@
 // Falsify: without the Track-To the lookAt would stay the authored value; without
 // the freeze-on-clear the camera would snap back to a stale lookAt.
 
+import { cameraRotationLookingAt } from '../../src/app/cameraOrientation';
 import { expect, test } from './_fixtures';
 import { dataNodeIdOf } from './_seedNodes';
 
@@ -117,7 +118,7 @@ test.describe('#247 camera look-at target', () => {
     expect(g.aim).toEqual([-3, 2, 1]); // reticle followed the moved target
   });
 
-  test('clearing the binding freezes the aim into lookAt and removes the Track-To', async ({
+  test('clearing the binding freezes the aim into the camera’s rotation and removes the Track-To', async ({
     page,
   }) => {
     await ready(page);
@@ -133,11 +134,18 @@ test.describe('#247 camera look-at target', () => {
 
     const g = await gizmo(page);
     expect(g.bound).toBe(false);
-    const camLookAt = await page.evaluate((cid) => {
+    // #1760 #1764 — frozen into the camera's own rotation, still looking at the target: no jump.
+    const own = await page.evaluate((cid) => {
       const st = (window as unknown as BasherWindow).__basher_dag!.getState().state;
-      return st.nodes[cid].params.lookAt as number[];
-    }, lens);
-    expect(camLookAt).toEqual(targetPos); // frozen to the last aim, no jump
+      const p = st.nodes[cid].params as { position: number[]; rotation: number[] };
+      return { position: p.position, rotation: p.rotation };
+    }, camId);
+    const want = cameraRotationLookingAt(
+      own.position as [number, number, number],
+      targetPos as [number, number, number],
+      0,
+    );
+    for (let i = 0; i < 3; i++) expect(own.rotation[i]).toBeCloseTo(want[i], 3);
     const tt = await page.evaluate((cid) => {
       const st = (window as unknown as BasherWindow).__basher_dag!.getState().state;
       return Object.values(st.nodes).some(

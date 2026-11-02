@@ -244,7 +244,6 @@ export function cameraPoseFromPair(
     {
       kind,
       position: isVec3(o.position) ? o.position : DEFAULT_CAMERA_POSE.position,
-      lookAt: isVec3(lens.lookAt) ? lens.lookAt : DEFAULT_CAMERA_POSE.lookAt,
       fov: typeof lens.fov === 'number' ? lens.fov : DEFAULT_CAMERA_POSE.fov,
       orthoScale:
         typeof lens.orthoScale === 'number' && lens.orthoScale > 0
@@ -252,9 +251,9 @@ export function cameraPoseFromPair(
           : DEFAULT_CAMERA_POSE.orthoScale,
       near: typeof lens.near === 'number' ? lens.near : DEFAULT_CAMERA_POSE.near,
       far: typeof lens.far === 'number' ? lens.far : DEFAULT_CAMERA_POSE.far,
-      roll: typeof lens.roll === 'number' ? lens.roll : DEFAULT_CAMERA_POSE.roll,
     },
     ownRotationOf(o),
+    aimDistanceOf(lens),
   );
 }
 
@@ -271,32 +270,43 @@ function isQuat(v: unknown): v is Quat {
   return Array.isArray(v) && v.length === 4 && v.every((x) => typeof x === 'number');
 }
 
-/** #1760 — `pose` turned by `quaternion` (parent-local). `lookAt` and `roll` are re-derived from
- *  it so the readers still on them agree: the look-at a point straight ahead, at the distance the
- *  pose's own look-at was (the ortho size and the focus distance read that distance until they
- *  get their own sources, #1760), unless `aim` gives the point itself. */
+/** A pose before its orientation is decided: everything but the look-at, roll and quaternion. */
+type UnorientedPose = Omit<CameraPose, 'quaternion' | 'lookAt' | 'roll'>;
+
+/** #1764 — how far ahead an un-aimed camera's aim point sits: its lens focus distance (the user's
+ *  call; Blender's camera Limits mark the focus point the same way). Raw, as the DoF road reads it. */
+function aimDistanceOf(lens: Record<string, unknown> | null | undefined): number {
+  const d = lens?.focusDistance;
+  return typeof d === 'number' && Number.isFinite(d) && d > 0 ? d : 5;
+}
+
+/** #1760 — `pose` turned by `quaternion` (parent-local). `lookAt` and `roll` are DERIVED from it
+ *  for the readers on them (the aim reticle, the look-through pivot, a re-aim keeping its bank):
+ *  the look-at is `aim` when a Track-To gives one, else the point straight ahead at
+ *  `aimDistance` (#1764: the lens focus distance). */
 function withOrientation(
-  pose: Omit<CameraPose, 'quaternion'>,
+  pose: UnorientedPose,
   quaternion: Quat,
   aim: Vec3 | null,
+  aimDistance: number,
 ): CameraPose {
   const q = new THREE.Quaternion(...quaternion);
   const dist =
     aim === null
-      ? Math.hypot(
-          pose.lookAt[0] - pose.position[0],
-          pose.lookAt[1] - pose.position[1],
-          pose.lookAt[2] - pose.position[2],
-        ) || 1
+      ? aimDistance
       : Math.hypot(aim[0] - pose.position[0], aim[1] - pose.position[1], aim[2] - pose.position[2]);
   const { lookAt, roll } = lookAtRollFromQuat(q, pose.position, dist || 1);
   return { ...pose, lookAt: aim ?? lookAt, roll, quaternion };
 }
 
 /** A pose with no Track-To in reach (a static read): its Object's own rotation turns it. */
-function ownOriented(pose: Omit<CameraPose, 'quaternion'>, own: CameraOwnRotation): CameraPose {
+function ownOriented(
+  pose: UnorientedPose,
+  own: CameraOwnRotation,
+  aimDistance: number,
+): CameraPose {
   const { rotation } = withResolvedRotation(own);
-  return withOrientation(pose, quaternionFromEulerDeg(rotation), null);
+  return withOrientation(pose, quaternionFromEulerDeg(rotation), null, aimDistance);
 }
 
 /** {@link cameraPoseFromPair} applied to a node id — resolves the data half itself.
@@ -377,14 +387,8 @@ export function resolveCameraPoseAt(
   const node = state.nodes[cameraId] ?? null;
   const base = cameraPoseForNodeId(state, cameraId) ?? DEFAULT_CAMERA_POSE;
   if (!node) return base;
-  // The lens's own aim and roll, before the orientation re-derived them (a static read's
-  // look-at is a point along its rotation, so the raw lens values are read again here).
-  const lensRaw = (cameraLensParams(state, cameraId) ?? {}) as { lookAt?: unknown; roll?: unknown };
-  const lensBase = {
-    ...base,
-    lookAt: isVec3(lensRaw.lookAt) ? lensRaw.lookAt : DEFAULT_CAMERA_POSE.lookAt,
-    roll: typeof lensRaw.roll === 'number' ? lensRaw.roll : 0,
-  };
+  // #1764 — the lens holds no aim: an un-aimed camera's aim point sits its focus distance ahead.
+  const aimDistance = aimDistanceOf(cameraLensParams(state, cameraId));
 
   // Overlay every channel belonging to this camera.
   //
@@ -407,8 +411,10 @@ export function resolveCameraPoseAt(
   // its position and lens, and (#1760) its own rotation in its mode. The pose's own `quaternion`
   // is left out: on the Object that name is the quaternion-mode rotation, which is what this
   // bag carries under it, and the pose's orientation is decided below.
-  const { quaternion: _poseQuat, ...unoriented } = lensBase;
+  const { quaternion: _poseQuat, lookAt: _lookAt, roll: _roll, ...unoriented } = base;
   void _poseQuat;
+  void _lookAt;
+  void _roll;
   const {
     rotation,
     rotationMode,
@@ -425,7 +431,7 @@ export function resolveCameraPoseAt(
       cache,
     ),
   );
-  const pose: Omit<CameraPose, 'quaternion'> = keyedPose;
+  const pose: UnorientedPose = keyedPose;
   const own: CameraOwnRotation = { rotation, rotationMode, quaternion: ownQuat };
 
   // #204 Track-To migration — an active Track-To on the camera node DERIVES its
@@ -466,7 +472,6 @@ export function resolveCameraPoseAt(
     node.id,
     pose.position,
     own,
-    pose.roll,
     ctx,
     cache,
   );
@@ -477,7 +482,7 @@ export function resolveCameraPoseAt(
   // top-level camera (wired only to scene.camera) → byte-identical to the flat pose,
   // so this is a safe drop-in for every pre-Inc-3.3 project.
   const parentWorld = resolveParentWorldMatrix(state, node.id, ctx, cache);
-  const result = withOrientation(pose, quaternion, aim);
+  const result = withOrientation(pose, quaternion, aim, aimDistance);
   return parentWorld ? composeCameraPoseWithParent(result, parentWorld) : result;
 }
 

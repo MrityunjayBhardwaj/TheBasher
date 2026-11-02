@@ -1,20 +1,16 @@
-// #1640 — a keyed camera's Position and aim rows show where the camera is, as a mesh's rows do.
+// #1640 — a keyed camera's Position row shows where the camera is, as a mesh's rows do.
 //
 // The Position row read the transform seam, which looks a node up among the scene's children; a
 // camera hangs off `scene.camera`, so the read came back empty and the row kept the typed value.
-// The aim row (a non-transform vector on the lens data) read its evaluated value only when a
-// driver bound it, so a KEYED aim kept the typed value too. Both were observed frozen while the
-// camera moved: Position 3 against a camera at 6 then 9.
+// Observed frozen while the camera moved: Position 3 against a camera at 6 then 9.
 //
-// Both sides of the boundary at three scrubbed times: each row (DOM) against the resolver the
-// render and the gizmo read (`__basher_world_transform` for the position, the keyed aim's value
-// for the aim: linear 0 → 4 over 0..2 s).
+// Both sides of the boundary at three scrubbed times: the row (DOM) against the resolver the
+// render and the gizmo read (`__basher_world_transform`). (#1764 — the camera's aim is no longer
+// a lens row: it is a Track-To's aim point, whose row is the second test.)
 
 import { test, expect } from './_fixtures';
 
-test('a keyed camera’s Position and aim rows follow the camera while scrubbing', async ({
-  page,
-}) => {
+test('a keyed camera’s Position row follows the camera while scrubbing', async ({ page }) => {
   await page.goto('/');
   await expect(page.getByTestId('layout')).toBeVisible({ timeout: 15_000 });
   await page.waitForFunction(() => {
@@ -47,19 +43,14 @@ test('a keyed camera’s Position and aim rows follow the camera while scrubbing
     w.__basher_dag
       .getState()
       .dispatchAtomic(
-        [
-          key('p1640_pos', 'n_camera', 'position', [3, 2, 3], [9, 2, 3]),
-          key('p1640_aim', 'n_camera_data', 'lookAt', [0, 0, 0], [4, 0, 0]),
-        ],
+        [key('p1640_pos', 'n_camera', 'position', [3, 2, 3], [9, 2, 3])],
         'user',
         'p1640-seed',
       );
     w.__basher_selection.getState().select('n_camera');
   });
   const posX = page.getByTestId('inspector-vec-n_camera-position-x');
-  const aimX = page.getByTestId('inspector-vec-n_camera_data-lookAt-x');
   await expect(posX).toBeVisible();
-  await expect(aimX).toBeVisible();
 
   for (const t of [0, 1, 2]) {
     await page.evaluate(
@@ -89,17 +80,13 @@ test('a keyed camera’s Position and aim rows follow the camera while scrubbing
     await expect
       .poll(async () => Number(await posX.inputValue()), { message: `t=${t}: Position row` })
       .toBeCloseTo(drawnX, 3);
-    await expect
-      .poll(async () => Number(await aimX.inputValue()), { message: `t=${t}: aim row` })
-      .toBeCloseTo(2 * t, 3);
   }
 });
 
-// #1753 — two more ways the aim row missed the camera. An older project keeps the camera's aim
-// keys on the camera Object, not its lens data: the row (drawn against the data) neither knew the
-// aim was keyed nor re-rendered as the playhead moved. And with the scene slowed, the row read
-// scene time while the camera runs on the playhead.
-test('the aim row follows an aim keyed on the camera Object, with the scene at half speed', async ({
+// #1753 #1769 #1764 — a camera's aim is its Track-To's aim point. Keyed, its row follows the
+// playhead, the camera's clock (a constraint runs on the clock of what it constrains), even with
+// the scene slowed to half speed, where scene time would put it at half the value.
+test('a camera Track-To’s keyed aim-point row follows the playhead, with the scene at half speed', async ({
   page,
 }) => {
   await page.goto('/');
@@ -129,12 +116,18 @@ test('the aim row follows an aim keyed on the camera Object, with the scene at h
         },
         {
           type: 'addNode',
+          nodeId: 'p1753_tt',
+          nodeType: 'TrackTo',
+          params: { target: 'n_camera', aimPoint: [0, 0, 0] },
+        },
+        {
+          type: 'addNode',
           nodeId: 'p1753_aim',
           nodeType: 'KeyframeChannelVec3',
           params: {
-            name: 'lookAt',
-            target: 'n_camera',
-            paramPath: 'lookAt',
+            name: 'aimPoint',
+            target: 'p1753_tt',
+            paramPath: 'aimPoint',
             keyframes: [
               { time: 0, value: [0, 0, 0], easing: 'linear' },
               { time: 2, value: [4, 0, 0], easing: 'linear' },
@@ -145,9 +138,9 @@ test('the aim row follows an aim keyed on the camera Object, with the scene at h
       'user',
       'p1753-seed',
     );
-    w.__basher_selection.getState().select('n_camera');
+    w.__basher_selection.getState().select('p1753_tt');
   });
-  const aimX = page.getByTestId('inspector-vec-n_camera_data-lookAt-x');
+  const aimX = page.getByTestId('inspector-vec-p1753_tt-aimPoint-x');
   await expect(aimX).toBeVisible();
   for (const t of [0, 1, 2]) {
     // `t` is the playhead; the scene is at half of it, and the camera's keys run on the playhead.

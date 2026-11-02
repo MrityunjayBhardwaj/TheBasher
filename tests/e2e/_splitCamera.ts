@@ -51,11 +51,18 @@ export function splitCameraOps(opts: SplitCameraOpts): unknown[] {
   // (see _splitLight.ts for the full reasoning). `fov: 50` is the value the two p231 specs
   // this helper first served were authored with; every other lens param below is either the
   // schema's own default or absent, so writing it is byte-identical to omitting it.
-  const dataParams: Record<string, unknown> = {
-    fov: opts.fov ?? 50,
-    lookAt: opts.lookAt ?? [0, 0, 0],
-    ...(opts.lens ?? {}),
-  };
+  // #1764 — the lens holds no aim: `lookAt` and `lens.roll` turn the camera (below) and are never
+  // written to the lens. The camera is FOCUSED on its look-at (unless the spec sets
+  // `focusDistance`), so its aim reticle sits on that point as it did when the lens held it.
+  const { roll: _lensRoll, ...lensRest } = (opts.lens ?? {}) as Record<string, unknown>;
+  void _lensRoll;
+  const dataParams: Record<string, unknown> = { fov: opts.fov ?? 50, ...lensRest };
+  {
+    const at = opts.position ?? [0, 0, 0];
+    const look = opts.lookAt ?? [0, 0, 0];
+    const d = Math.hypot(look[0] - at[0], look[1] - at[1], look[2] - at[2]);
+    if (dataParams.focusDistance === undefined && d > 0) dataParams.focusDistance = d;
+  }
   // #1760 — as every camera creator does now: turned by its own rotation to the look-at, banked
   // by the lens roll (V665). The look-at no longer turns a camera; a spec that gives a rotation
   // gets exactly that rotation.

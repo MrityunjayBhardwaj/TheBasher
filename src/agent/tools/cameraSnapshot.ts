@@ -91,7 +91,11 @@ export const cameraSnapshotTool: ToolDefinition<CameraSnapshotArgs> = {
         fov: args.fov,
         near: 0.01,
         far: 1000,
-        lookAt: args.lookAt,
+        // #1764 — focused on the point it is turned to look at, so its aim reticle sits there.
+        focusDistance:
+          Math.hypot(
+            ...(args.lookAt as number[]).map((v, i) => v - (args.position as number[])[i]),
+          ) || 5,
       },
     });
 

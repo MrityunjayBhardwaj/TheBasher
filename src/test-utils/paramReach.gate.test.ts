@@ -269,7 +269,11 @@ describe('param-reach gate (#492)', () => {
     //
     // 43 → 44 at #1052: `PolyMeshData.materialSlots`, TRACED to the scene, which draws each slot
     // against the mesh's `material_index` groups. The ceiling does not move.
-    expect(total).toBe(44);
+    //
+    // 44 → 42 at #1764: `camera.lookAt` and `camera.roll` leave the lens schema (a camera is turned
+    // by its Object's rotation or a Track-To), and their rows with them. (#1760 renamed the
+    // unread `zoom` to the traced `orthoScale`, one for one.) The ceiling does not move.
+    expect(total).toBe(42);
     // A ceiling, not an equality: tracing a param down must not require editing this number,
     // but adding a new unverified one must. Lower it as #492 is worked through.
     expect(

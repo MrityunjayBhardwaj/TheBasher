@@ -54,7 +54,6 @@ import * as THREE from 'three';
 import { degVec3ToRad, radVec3ToDeg } from '../viewport/rotation';
 import { rotationWriteOf, withResolvedRotation } from './resolvedRotation';
 import { useDagStore } from '../core/dag/store';
-import { resolveDataParamOwner } from './resolveDataParamOwner';
 import { evaluate } from '../core/dag/evaluator';
 import type { Node, Op } from '../core/dag/types';
 import type { CharacterValue, RotationModeFields } from '../nodes/types';
@@ -1168,12 +1167,9 @@ function CameraGizmo() {
   );
   const bound = Boolean(winningAim?.aimNode);
 
-  // Captured at seed time: the camera's evaluated position + the aim DISTANCE, so
-  // a rotate keeps the lookAt the same distance from the camera (the aim orbits,
-  // it does not slide toward/away).
+  // Captured at seed time: the camera's evaluated position and its parent's world matrix.
   const seedRef = useRef<{
     position: Vec3;
-    distance: number;
     /** #231 Inc 3.3 — the parent Group's world matrix when the camera is nested
      *  (null = top-level → world == local, the #229 direct path). Captured at seed
      *  so the drag handlers convert world → local before writing authored params. */
@@ -1199,12 +1195,6 @@ function CameraGizmo() {
       } catch {
         return;
       }
-      const distance =
-        Math.hypot(
-          pose.lookAt[0] - pose.position[0],
-          pose.lookAt[1] - pose.position[1],
-          pose.lookAt[2] - pose.position[2],
-        ) || 1;
       // #231 Inc 3.3 — the parent Group world (null for a top-level camera). The pose
       // above is already in WORLD space (resolveCameraPoseAt composed it), so
       // the drag handlers undo this matrix to recover the LOCAL authored params.
@@ -1217,7 +1207,7 @@ function CameraGizmo() {
         clockedCtx(sceneClockOf(state).sceneAt(seconds), seconds),
         cache,
       );
-      seedRef.current = { position: pose.position, distance, parentWorld };
+      seedRef.current = { position: pose.position, parentWorld };
       if (bodyNode) {
         bodyNode.position.set(...pose.position);
         // #1760 — the orientation the camera is drawn with, carried on its pose.
@@ -1249,30 +1239,11 @@ function CameraGizmo() {
   // ONE write chokepoint per camera param — animated → re-route (channel keyed),
   // else raw setParam + autoKey first-key (mirrors the generic gizmo per-param,
   // H36 single-write: route XOR setParam, never both).
-  function writeCameraParam(
-    path: 'position' | 'lookAt' | 'roll' | 'rotation' | 'quaternion',
-    value: unknown,
-  ) {
+  function writeCameraParam(path: 'position' | 'rotation' | 'quaternion', value: unknown) {
     if (!camId) return;
-    // #387 D1 — the camera pose SPANS both halves: the Object keeps `position`, while
-    // `lookAt` and `roll` moved to the CameraData (parity-first, following LightData).
-    // So this chokepoint has to ask WHICH half owns the path before writing, or two of
-    // the three writes land on a node with no such param, where a setParam is reported
-    // and then dropped (#423) — the reticle springs back and nothing says why.
-    //
-    // The read side already reaches across the pair for these exact three paths
-    // (`resolveWorldTransform`), which is what made the gap silent: the resolver was
-    // looking for the value on a node this function never wrote to. The routing has to
-    // cover the ANIMATED road too, or a gizmo-authored `lookAt` key mints a channel
-    // targeting the Object while the resolver reads the data half's.
-    //
-    // `resolveDataParamOwner` returns the Object's own id for params the Object still
-    // carries, so `position` is unchanged. Its possession test reads live params, which
-    // is only sound because `lookAt` and `roll` are both declared with zod defaults on
-    // CameraData and `addNode` stores PARSED params — every instance carries the keys.
-    // An optional param with no default would resolve to the Object forever.
-    const owner = resolveDataParamOwner(useDagStore.getState().state, camId, path) ?? camId;
-    writeParamOn(owner, path, value);
+    // #1764 — every camera param the gizmo writes is the Object's: its position and its rotation.
+    // (The aim the lens once held, and its roll, now live on a Track-To or nowhere, #487.)
+    writeParamOn(camId, path, value);
   }
 
   /** One routed write to `nodeId`: re-routed into its channel when animated, else set and
@@ -1302,8 +1273,7 @@ function CameraGizmo() {
     if (liveMode === 'rotate') {
       // #1760 — a camera is turned by its own rotation (V665): the dragged WORLD orientation,
       // with the parent's rotation stripped for a nested camera (#231 Inc 3.3), is written as
-      // its rotation, in its rotation mode. A turn leaves the aim distance the lens look-at
-      // holds unchanged, so the look-at is left alone.
+      // its rotation, in its rotation mode.
       let quat = g.quaternion;
       if (seed.parentWorld) {
         const pQuat = new THREE.Quaternion();
@@ -1339,8 +1309,8 @@ function CameraGizmo() {
   /** Re-aim at the WORLD point `world`.
    *  #1761 — a camera a point Track-To aims: the Track-To's aim point moves there, in the space
    *  the aim point is held in (the camera's parent's, or the world's). A plain camera (#1760):
-   *  it turns to look at the point, keeping its roll, and the lens look-at moves there, so the
-   *  aim distance (ortho size, focus) follows. */
+   *  it turns to look at the point, keeping its roll (#1764: its reticle then sits its focus
+   *  distance ahead, along the new view). */
   function aimAt(world: Vec3) {
     const seed = seedRef.current;
     if (!seed || !camId) return;
@@ -1362,7 +1332,6 @@ function CameraGizmo() {
       cache,
     );
     writeCameraRotation(cameraOrientationQuat(localPos, local, pose.roll));
-    writeCameraParam('lookAt', local);
   }
 
   // #247 — the reticle drag delivers a WORLD lookAt point. Move the proxy

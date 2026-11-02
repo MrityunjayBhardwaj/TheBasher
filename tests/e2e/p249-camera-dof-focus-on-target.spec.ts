@@ -74,9 +74,10 @@ test.describe('#247 DoF focus on target', () => {
     await page.waitForTimeout(200);
 
     const focusField = page.locator(`[data-testid="inspector-camera-focus-${lens}"]`);
-    // #1760 — nothing aims the default camera yet, so there is no target: the authored 5
-    // stands and stays editable (it used to track the lens look-at, |[3,2,3]| ≈ 4.7).
-    expect(Number(await focusField.inputValue())).toBe(5);
+    // #1760 — nothing aims the default camera yet, so there is no target: its authored focus
+    // stands and stays editable. #1764 — the default camera is authored focused on the origin it
+    // looks at, |[3,2,3]| ≈ 4.69 (the field rounds).
+    expect(Number(await focusField.inputValue())).toBeCloseTo(dist([3, 2, 3], [0, 0, 0]), 1);
     expect(await focusField.getAttribute('readonly')).toBeNull();
     const camParams = await page.evaluate((cid) => {
       return (window as unknown as BasherWindow).__basher_dag!.getState().state.nodes[cid].params;
