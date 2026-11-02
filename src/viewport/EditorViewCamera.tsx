@@ -83,7 +83,7 @@ const CLIP_REACH_INTERVAL = 15;
 // module would have pulled R3F into a unit test). Re-exported here because this
 // is where it was, and both call sites below still read it as a local.
 export { orthoZoomForView } from './cameraFit';
-import { orthoZoomForView } from './cameraFit';
+import { orthoZoomForScale, orthoZoomForView } from './cameraFit';
 import { uiEvaluatorCache } from '../app/uiEvaluatorCache';
 
 /** Point a THREE camera from `position` toward `lookAt` + move the
@@ -123,11 +123,6 @@ export function EditorViewCamera() {
   const ref = useRef<THREE.PerspectiveCamera | THREE.OrthographicCamera | null>(null);
   const lookThrough = useViewportStore((s) => s.lookThroughCamera);
   const projection = useViewportStore((s) => s.cameraProjection);
-  // Look-through always mirrors the (perspective) DAG camera, so ortho only
-  // applies to the FREE orbit view. One editor camera, swapped between
-  // projections — never two default cameras at once ([[H67]]/V34: a single
-  // makeDefault camera, no oldCam-restore race).
-  const useOrtho = !lookThrough && projection === 'orthographic';
   // #192: manual viewport clip override (null = DEFAULT_VIEWPORT_CLIP, #1187).
   // Applies to the FREE view only — look-through uses the scene camera's own
   // near/far.
@@ -149,6 +144,11 @@ export function EditorViewCamera() {
     () => cameraPoseFromPair(camNode, camDataNode) ?? DEFAULT_CAMERA_POSE,
     [camNode, camDataNode],
   );
+  // Look-through draws through the DAG camera's OWN projection (#1774, as Blender's camera view
+  // does); the editor's persp/ortho toggle applies to the FREE orbit view only. One editor
+  // camera, swapped between projections — never two default cameras at once ([[H67]]/V34: a
+  // single makeDefault camera, no oldCam-restore race).
+  const useOrtho = lookThrough ? pose.kind === 'OrthographicCamera' : projection === 'orthographic';
   // #204 — a STABLE evaluator cache for the per-frame look-through pose resolve.
   // resolveActiveCameraPoseAt only evaluates the render root when the camera
   // carries a Track-To (to read the aim target's world pos via #202); the cache
@@ -177,6 +177,16 @@ export function EditorViewCamera() {
   //     camera is a different object, not the same one re-projected).
   // After the latched re-frame, OrbitControls owns the camera in free mode.
   const bootedKey = useRef<string | null>(null);
+  // #1774 — look-through mounts the camera's own projection, so leaving it can hand the free view
+  // a FRESH camera (an ortho camera looked through from a perspective view, or the reverse). A
+  // same-projection look-through leaves the free view where the camera stood; these two refs let
+  // a remounted one land there too: the free camera last seen, and the last look-through view.
+  const freeCam = useRef<THREE.Camera | null>(null);
+  const lastLook = useRef<{
+    position: readonly [number, number, number];
+    lookAt: readonly [number, number, number];
+    quaternion: Quat;
+  } | null>(null);
 
   // The active bounds-fit settle session (#186). `active:false` → the camera is
   // FREE (OrbitControls owns it); the fit only runs while content is arriving.
@@ -258,7 +268,14 @@ export function EditorViewCamera() {
         }
       }
       bootedKey.current = key;
+    } else if (freeCam.current && freeCam.current !== cam && lastLook.current) {
+      // #1774 — a look-through in the other projection swapped the camera out under the free
+      // view: land the fresh one where the camera stood, as a same-projection exit leaves it.
+      const l = lastLook.current;
+      const orthoArg = useOrtho ? { fovDeg: pose.fov, viewportHeight } : undefined;
+      applyView(cam, l.position, l.lookAt, orthoArg, l.quaternion);
     }
+    freeCam.current = cam;
     // Free mode, same (project, projection) after boot: OrbitControls owns
     // position — do not fight it.
   }, [lookThrough, pose, projectId, useOrtho, viewportHeight]);
@@ -441,7 +458,7 @@ export function EditorViewCamera() {
   // orbit view is untouched (OrbitControls owns it; this early-returns there).
   // This is THE viewport half of viewport==render parity (V37/V51): it samples
   // the SAME resolver the still + animation render consume.
-  useFrame(() => {
+  useFrame((state) => {
     const cam = ref.current;
     if (!cam || !lookThrough) return;
     // #1594 — the camera runs on the playhead (film time), not on the scene's slowed clock.
@@ -451,13 +468,23 @@ export function EditorViewCamera() {
       resolveActiveCameraPoseAt(useDagStore.getState().state, seconds, cameraPoseCache),
     );
     applyView(cam, evalPose.position, evalPose.lookAt, undefined, evalPose.quaternion);
+    lastLook.current = evalPose;
     // fov/near/far are camera params too — apply imperatively (the JSX props are
-    // memoized on the static pose). Look-through is always the perspective view.
+    // memoized on the static pose). The view is mounted in the camera's own projection (#1774).
     const persp = cam as THREE.PerspectiveCamera;
     let dirty = false;
     if (persp.isPerspectiveCamera && persp.fov !== evalPose.fov) {
       persp.fov = evalPose.fov;
       dirty = true;
+    }
+    // #1774 — an orthographic camera is framed by its Orthographic Scale: that many world units
+    // of height, the width following the viewport's aspect — exactly `buildRenderCamera`'s frame.
+    if ((cam as THREE.OrthographicCamera).isOrthographicCamera) {
+      const zoom = orthoZoomForScale(evalPose.orthoScale, state.size.height);
+      if (cam.zoom !== zoom) {
+        cam.zoom = zoom;
+        dirty = true;
+      }
     }
     if (cam.near !== evalPose.near || cam.far !== evalPose.far) {
       cam.near = evalPose.near;
@@ -488,9 +515,8 @@ export function EditorViewCamera() {
 
   // Projection: free mode uses the seed camera's fov (captured via `pose` at
   // boot so framing is identical); look-through uses the live DAG fov/near/far.
-  // Free-mode near/far are the user's clip or the default (#1178). OrthographicCamera
-  // look-through keeps a perspective editor camera (v1 limitation — ortho
-  // cameras are rare; pose still adopted).
+  // Free-mode near/far are the user's clip or the default (#1178). An orthographic camera is
+  // looked through orthographically (#1774); its zoom is set per frame from its ortho scale.
   const fov = pose.fov;
   // Free-view EFFECTIVE clip planes: the manual override (#192) when set, else
   // the default. Look-through ignores both and uses the scene camera's own
@@ -587,6 +613,18 @@ export function EditorViewCamera() {
         near: cam.near,
         far: cam.far,
         zoom: cam.zoom,
+        // #1774 — the world-unit frame an ortho view shows (null for perspective), so a spec can
+        // compare it with the camera's Orthographic Scale and the render's frame.
+        orthoFrame: isOrthographic
+          ? {
+              height:
+                ((cam as THREE.OrthographicCamera).top - (cam as THREE.OrthographicCamera).bottom) /
+                cam.zoom,
+              width:
+                ((cam as THREE.OrthographicCamera).right - (cam as THREE.OrthographicCamera).left) /
+                cam.zoom,
+            }
+          : null,
         isOrthographic,
         lookThrough: useViewportStore.getState().lookThroughCamera,
         projection: useViewportStore.getState().cameraProjection,
