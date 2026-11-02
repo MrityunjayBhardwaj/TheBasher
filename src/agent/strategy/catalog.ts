@@ -133,8 +133,12 @@ const CAMERAS: StrategyResource = {
 
 Two camera types in v0.5:
 - **PerspectiveCamera** — \`fov\` (vertical, degrees, default 45),
-  \`near\` (default 0.01), \`far\` (default 1000), \`position\`, \`lookAt\`.
-- **OrthographicCamera** — \`orthoScale\` (the full height it sees), \`near\`, \`far\`, \`position\`, \`lookAt\`.
+  \`near\` (default 0.01), \`far\` (default 1000), \`position\`, \`rotation\`.
+- **OrthographicCamera** — \`orthoScale\` (the full height it sees), \`near\`, \`far\`, \`position\`, \`rotation\`.
+
+A camera points where its own \`rotation\` turns it (−Z is the view direction), unless a
+\`TrackTo\` aims it — then the Track-To decides. The lens \`lookAt\` does NOT turn a camera:
+setting it changes nothing you can see.
 
 ## FOV cheat sheet (vertical, degrees)
 - 20° — telephoto / zoomed-in. Compressed depth.
@@ -151,9 +155,10 @@ lifecycle). Use when the user says "save this view" or "frame this".
 
 For explicit framing of a target node, compute camera position:
 - Distance ≈ \`bbox_diagonal / (2 * tan(fov/2 * π/180))\`.
-- LookAt at the target's center.
+- Face the target's center: \`camera.snapshot\` takes that point as its \`lookAt\` argument
+  and turns the new camera toward it; for an existing camera, set its \`rotation\`.
 
-\`lookAt\` is a fixed POINT. To keep a camera on a subject — "point the camera at
+That aims at where the subject IS NOW. To keep a camera on a subject — "point the camera at
 the cube", "follow the car" — constrain it instead (topic: constraints).`,
 };
 
@@ -673,7 +678,7 @@ RELATIONSHIP rather than a pose:
 
 - "point the camera at the cube", "keep the light on the hero" → \`TrackTo\`, \`to\` = the
   subject. It overrides the target's rotation every frame, so it stays aimed when either moves.
-  Don't keyframe rotations or set \`lookAt\` for this — those aim at where the subject IS NOW.
+  Don't keyframe rotations for this — they aim at where the subject IS NOW.
 - "make the camera follow the path", "move the car along the curve" → \`FollowPath\`, \`to\` =
   an EXISTING Curve object. It overrides position. To move along it over time, keyframe the
   constraint's \`evalTime\` 0 → 1. For a NEW camera move with no path yet, use
