@@ -39,8 +39,10 @@ interface W {
 
 /** World points spread around the default scene, off-axis so a wrong width, height or
  *  projection moves them on screen. */
+// Every probe off the line of sight: the point a camera aims at lands mid-frame under any
+// projection and any scale, so it could not tell a wrong frame from a right one.
 const PROBES: [number, number, number][] = [
-  [0, 0, 0],
+  [0.8, -0.4, 0.3],
   [0.5, 0.5, 0.5],
   [-0.5, 0.25, 0.4],
   [1.2, -0.3, -0.8],

@@ -29,6 +29,10 @@ interface BasherWindow {
   __basher_selection: { getState: () => { select: (id: string | null) => void } };
   __basher_viewport: { getState: () => { setLookThroughCamera: (on: boolean) => void } };
   __basher_time: { getState: () => { pause: () => void; setTime: (s: number) => void } };
+  __basher_autokey: { getState: () => { enabled: boolean; toggle: () => void } };
+  __basher_transient: {
+    getState: () => { get: (n: string, p: string) => { value: unknown } | undefined };
+  };
   __basher_camera_gizmo_grab?: (k: 'rotate' | 'translate' | 'aim', t: V3) => void;
   __basher_view_camera: () => { position: V3; direction: V3 } | null;
 }
@@ -76,6 +80,9 @@ async function boot(
         },
       });
     }
+    // Auto-Key OFF, said here rather than left to the store's default: with it on, a drag on an
+    // already-keyed param keys itself, and the second I below would go unexercised.
+    if (w.__basher_autokey.getState().enabled) w.__basher_autokey.getState().toggle();
     w.__basher_viewport.getState().setLookThroughCamera(true);
     w.__basher_time.getState().pause();
     w.__basher_time.getState().setTime(0);
@@ -95,6 +102,13 @@ const setTime = async (page: Page, s: number) => {
   );
   await settle(page);
 };
+
+/** The edit held on (`node`, `path`) with Auto-Key off, if any. */
+const held = (page: Page, node: string, path: string) =>
+  page.evaluate(
+    ([n, p]) => (window as unknown as BasherWindow).__basher_transient.getState().get(n, p),
+    [node, path] as const,
+  );
 
 const pressI = async (page: Page) => {
   await page.evaluate(() => {
@@ -162,6 +176,7 @@ test('a camera a point Track-To aims: I keys its own transform and the aim, so t
   await grab(page, 'aim', [4, 0, 0]);
   const dir2 = await lookDir(page);
   expect(Math.abs(dir2[0] - dir0[0]), 'the re-aim turned the camera').toBeGreaterThan(0.1);
+  expect(await held(page, 'tt', 'aimPoint'), 'the re-aim is held, not yet keyed').toBeTruthy();
   await pressI(page);
   const k2 = await channels(page);
   const aimKeys = k2['tt.aimPoint'];
@@ -175,7 +190,12 @@ test('a camera a point Track-To aims: I keys its own transform and the aim, so t
   expectClose(await lookDir(page), dir2, 'look direction @2 after scrub', 3);
 });
 
-test('a plain camera: I keys its own rotation, and a keyed turn comes back', async ({ page }) => {
+// CONTROL, not evidence for the fix: for a camera no Track-To aims, its drawn orientation IS its
+// own rotation, so the I path before this change keyed the same values and passes this too. It
+// guards the plain camera against a regression; the Track-To and quaternion cases discriminate.
+test('control: a plain camera: I keys its own rotation, and a keyed turn comes back', async ({
+  page,
+}) => {
   await boot(page, { rotation: [0, 0, 0] });
   await grab(page, 'rotate', [-10, 20, 0]);
   const rot0 = (await camParam(page, 'rotation')) as V3;
@@ -192,6 +212,7 @@ test('a plain camera: I keys its own rotation, and a keyed turn comes back', asy
   await grab(page, 'rotate', [-30, 60, 0]);
   const dir2 = await lookDir(page);
   expect(Math.abs(dir2[0] - dir0[0]), 'the turn moved the camera').toBeGreaterThan(0.1);
+  expect(await held(page, 'n_camera', 'rotation'), 'the turn is held, not yet keyed').toBeTruthy();
   await pressI(page);
   const rotKeys = (await channels(page))['n_camera.rotation'];
   expect(rotKeys.map((k) => k.time)).toEqual([0, 2]);
