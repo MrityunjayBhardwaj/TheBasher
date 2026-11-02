@@ -35,6 +35,9 @@ import { resolveEvaluatedTransform } from './resolveEvaluatedTransform';
 import { rotationWriteOf } from './resolvedRotation';
 import type { RotationModeFields } from '../nodes/types';
 import { useTimeStore } from './stores/timeStore';
+import { paramAnimationState } from './animate/paramAnimationState';
+import { routeAnimatedGrab } from './animate/autoKeyCommit';
+import { clockFor } from './subjectClock';
 
 const ROW = 'flex items-center justify-between gap-2 px-3 py-1.5 text-[11px] text-fg/80';
 const LABEL = 'font-mono text-fg/60';
@@ -94,6 +97,14 @@ export interface LookAtBinding {
   readonly ops: Op[];
   readonly label: string;
   readonly atomic: boolean;
+  /** #1772 — a write to an ANIMATED param, kept out of `ops`: a plain `setParam` on it is
+   *  overridden by its keys at once. The shell writes it as every edit to an animated param is
+   *  written (`routeAnimatedGrab`): a key with Auto-Key on, a held edit with it off. */
+  readonly animatedWrite?: {
+    readonly nodeId: string;
+    readonly paramPath: string;
+    readonly value: unknown;
+  };
 }
 
 /**
@@ -140,13 +151,22 @@ export function bindLookAtTargetOps(
     const drawn = resolveEvaluatedTransform(state, poseNodeId, ctx);
     const ops: Op[] = [];
     if (aim) ops.push({ type: 'setParam', nodeId, paramPath: 'lookAt', value: aim.lookAt });
+    let animatedWrite: LookAtBinding['animatedWrite'];
     if (drawn?.rotation) {
       const objParams = (nodes[poseNodeId]?.params ?? {}) as RotationModeFields;
       const write = rotationWriteOf(objParams, drawn.rotation);
-      ops.push({ type: 'setParam', nodeId: poseNodeId, ...write });
+      // #1772 — a keyed rotation, hidden while the Track-To aimed the camera, would take over the
+      // moment it is gone: the frozen rotation goes through the animated-edit road instead, as the
+      // same check `routeAnimatedGrab` makes decides.
+      const frame = clockFor(state, poseNodeId, write.paramPath).frame;
+      if (paramAnimationState(state, poseNodeId, write.paramPath, frame) !== 'none') {
+        animatedWrite = { nodeId: poseNodeId, ...write };
+      } else {
+        ops.push({ type: 'setParam', nodeId: poseNodeId, ...write });
+      }
     }
     ops.push({ type: 'removeNode', nodeId: existingTTId });
-    return { ops, label: 'clear look-at target', atomic: true };
+    return { ops, label: 'clear look-at target', atomic: true, animatedWrite };
   }
 
   if (existingTTId) {
@@ -244,7 +264,7 @@ export function CameraLookAtTarget({
     // `bindLookAtTargetOps` so it can be asserted without a DOM. This shell only chooses
     // the dispatch shape, preserving today's exactly (create = one `dispatch`, clear and
     // re-target = `dispatchAtomic`).
-    const { ops, label, atomic } = bindLookAtTargetOps(
+    const { ops, label, atomic, animatedWrite } = bindLookAtTargetOps(
       useDagStore.getState().state,
       { nodeId, poseNodeId },
       value,
@@ -253,6 +273,14 @@ export function CameraLookAtTarget({
     if (ops.length === 0) return;
     if (atomic) dispatchAtomic(ops, 'user', label);
     else dispatch(ops[0], 'user', label);
+    // #1772 — after the clear, so the camera's own rotation is what the edit lands on. An
+    // un-routed answer (no longer animated) falls back to the plain write.
+    if (animatedWrite) {
+      const { nodeId: id, paramPath, value: v } = animatedWrite;
+      if (!routeAnimatedGrab(id, paramPath, v)) {
+        dispatch({ type: 'setParam', nodeId: id, paramPath, value: v }, 'user', label);
+      }
+    }
   };
 
   return (

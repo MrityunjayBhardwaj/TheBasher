@@ -20,6 +20,7 @@ import { registerAllNodes } from '../nodes/registerAll';
 import { splitOps } from '../test-utils/splitKinds';
 import { bindLookAtTargetOps, lookAtTargetOptions } from './CameraLookAtTarget';
 import { makeSplitCube } from '../test-utils/splitCube';
+import { resolveEvaluatedTransform } from './resolveEvaluatedTransform';
 
 beforeAll(() => {
   registerAllNodes();
@@ -50,6 +51,15 @@ function buildScene(): DagState {
 }
 
 const IDS = { nodeId: 'n_cam_data', poseNodeId: 'n_cam' };
+
+/** `buildScene`, its camera aimed at the cube through the dropdown. */
+function aimedAtCube(): DagState {
+  let s = buildScene();
+  for (const op of bindLookAtTargetOps(s, IDS, 'n_cube', CTX).ops) {
+    s = applyOp(s, op as Parameters<typeof applyOp>[1]).next;
+  }
+  return s;
+}
 
 describe('lookAtTargetOptions', () => {
   it('offers other positioned objects and excludes the camera’s OWN Object', () => {
@@ -128,6 +138,54 @@ describe('bindLookAtTargetOps', () => {
     expect(bindLookAtTargetOps(s, collapsed, '', CTX).ops).toEqual([]);
     // …while the correct pair does the work. Disjoint, on one state, in one test.
     expect(bindLookAtTargetOps(s, IDS, '', CTX).ops.length).toBeGreaterThan(0);
+  });
+
+  // #1772 — a keyed rotation, hidden while the Track-To aimed the camera, takes over the moment
+  // the Track-To is gone: written as a plain param, the frozen rotation lost to its keys and the
+  // camera jumped 29.7° here. It goes through the animated-edit road instead (a key with Auto-Key
+  // on, a held edit with it off), which the shell runs.
+  it('a keyed rotation: the frozen rotation is an animated edit, not a plain write', () => {
+    let s = aimedAtCube();
+    s = applyOp(s, {
+      type: 'addNode',
+      nodeId: 'rot_keys',
+      nodeType: 'KeyframeChannelVec3',
+      params: {
+        name: 'rotation',
+        target: 'n_cam',
+        paramPath: 'rotation',
+        keyframes: [
+          { time: 0, value: [0, 90, 0], easing: 'linear' },
+          { time: 2, value: [0, 90, 0], easing: 'linear' },
+        ],
+      },
+    } as Parameters<typeof applyOp>[1]).next;
+    const drawn = resolveEvaluatedTransform(s, 'n_cam', CTX)!.rotation!;
+    const { ops, animatedWrite } = bindLookAtTargetOps(s, IDS, '', CTX);
+    expect(ops.some((o) => o.type === 'setParam' && o.paramPath === 'rotation')).toBe(false);
+    expect(animatedWrite?.nodeId).toBe('n_cam');
+    expect(animatedWrite?.paramPath).toBe('rotation');
+    (animatedWrite!.value as number[]).forEach((v, i) => expect(v).toBeCloseTo(drawn[i], 9));
+    // Written as the key at this frame, the camera looks where it looked.
+    for (const op of ops) s = applyOp(s, op as Parameters<typeof applyOp>[1]).next;
+    s = applyOp(s, {
+      type: 'setParam',
+      nodeId: 'rot_keys',
+      paramPath: 'keyframes',
+      value: [
+        { time: 0, value: animatedWrite!.value, easing: 'linear' },
+        { time: 2, value: [0, 90, 0], easing: 'linear' },
+      ],
+    } as Parameters<typeof applyOp>[1]).next;
+    const after = resolveEvaluatedTransform(s, 'n_cam', CTX)!.rotation!;
+    after.forEach((v, i) => expect(v).toBeCloseTo(drawn[i], 6));
+  });
+
+  it('control: an unkeyed rotation is frozen in the one atomic clear', () => {
+    const s = aimedAtCube();
+    const { ops, animatedWrite } = bindLookAtTargetOps(s, IDS, '', CTX);
+    expect(animatedWrite).toBeUndefined();
+    expect(ops.some((o) => o.type === 'setParam' && o.paramPath === 'rotation')).toBe(true);
   });
 
   it('clearing an unaimed camera emits nothing', () => {
