@@ -581,7 +581,8 @@ export function dispatchFirstKeyComposite(args: FirstKeyCompositeArgs): Dispatch
   // op set. Subsequent keys flow through the existing channel-id keyframe path.
   if (isCameraNode(base, targetId)) {
     return dispatchDirectFirstKey(args, base, {
-      allowed: ['number', 'vec3'],
+      // #1763 — 'quat': a camera in quaternion mode keys its quaternion, as any Object does.
+      allowed: ['number', 'vec3', 'quat'],
       intentTag: 'user:camera.firstKey',
       surface: 'Camera',
     });

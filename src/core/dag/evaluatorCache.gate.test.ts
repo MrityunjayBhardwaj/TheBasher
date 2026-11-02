@@ -333,6 +333,8 @@ const TAKERS: string[] = [
   'applyGhostPoseBand@src/viewport/DiffOverlay.tsx',
   'buildOverrideSlotOp@src/app/objectSlotAuthoring.ts',
   'cameraLocalPose@src/app/resolveWorldTransform.ts',
+  // #1763 — the keys I takes on a camera; the I key hands it the shared UI cache.
+  'cameraInsertKeys@src/app/animate/keyCamera.ts',
   'cameraFocusTargetDistance@src/app/activeCamera.ts',
   'cameraLocalOrientation@src/app/cameraTrackTo.ts',
   'cameraTrackToAim@src/app/cameraTrackTo.ts',
