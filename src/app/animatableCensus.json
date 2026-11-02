@@ -119,27 +119,17 @@
         "reach": "scene",
         "driver": "scene"
       },
-      "lookAt": {
-        "kind": "vec3",
-        "reach": "scene",
-        "driver": "scene"
-      },
       "near": {
         "kind": "number",
         "reach": "pose",
         "driver": "pose"
       },
-      "roll": {
+      "orthoScale": {
         "kind": "number",
         "reach": "scene",
         "driver": "scene"
       },
       "sensorSize": {
-        "kind": "number",
-        "reach": null,
-        "driver": null
-      },
-      "zoom": {
         "kind": "number",
         "reach": null,
         "driver": null
@@ -166,27 +156,17 @@
         "reach": "scene",
         "driver": "scene"
       },
-      "lookAt": {
-        "kind": "vec3",
-        "reach": "scene",
-        "driver": "scene"
-      },
       "near": {
         "kind": "number",
         "reach": "pose",
         "driver": "pose"
       },
-      "roll": {
+      "orthoScale": {
         "kind": "number",
-        "reach": "scene",
-        "driver": "scene"
+        "reach": "pose",
+        "driver": "pose"
       },
       "sensorSize": {
-        "kind": "number",
-        "reach": null,
-        "driver": null
-      },
-      "zoom": {
         "kind": "number",
         "reach": null,
         "driver": null
@@ -967,8 +947,8 @@
       },
       "rotation": {
         "kind": "vec3",
-        "reach": null,
-        "driver": null
+        "reach": "scene",
+        "driver": "scene"
       },
       "scale": {
         "kind": "vec3",
@@ -984,7 +964,7 @@
       },
       "quaternion": {
         "kind": "quat",
-        "reach": null
+        "reach": "scene"
       },
       "rotation": {
         "kind": "vec3",
@@ -1009,8 +989,8 @@
       },
       "rotation": {
         "kind": "vec3",
-        "reach": null,
-        "driver": null
+        "reach": "scene",
+        "driver": "scene"
       },
       "scale": {
         "kind": "vec3",
@@ -1026,7 +1006,7 @@
       },
       "quaternion": {
         "kind": "quat",
-        "reach": null
+        "reach": "scene"
       },
       "rotation": {
         "kind": "vec3",
@@ -1882,18 +1862,23 @@
     "TrackTo": {
       "aimPoint": {
         "kind": "vec3",
-        "reach": null,
-        "driver": null
+        "reach": "scene",
+        "driver": "scene"
       },
       "order": {
         "kind": "number",
         "reach": null,
         "driver": null
       },
+      "roll": {
+        "kind": "number",
+        "reach": "scene",
+        "driver": "scene"
+      },
       "up": {
         "kind": "vec3",
-        "reach": null,
-        "driver": null
+        "reach": "scene",
+        "driver": "scene"
       }
     },
     "Transform": {
