@@ -328,6 +328,7 @@ const TAKERS: string[] = [
   'applyGhostPoseBand@src/viewport/DiffOverlay.tsx',
   'buildOverrideSlotOp@src/app/objectSlotAuthoring.ts',
   'cameraLocalPose@src/app/resolveWorldTransform.ts',
+  'cameraFocusTargetDistance@src/app/activeCamera.ts',
   'cameraLocalOrientation@src/app/cameraTrackTo.ts',
   'cameraTrackToAim@src/app/cameraTrackTo.ts',
   'collectReferenceRigs@src/app/animate/referenceRigs.ts',

@@ -40,7 +40,7 @@ import { pickCameraSelect } from '../nodes/CameraSelect';
 import { sceneClockOf } from './sceneClock';
 import { clockedCtx, type ClockedCtx } from './subjectClock';
 import { resolveConstraintPosition } from './nodeConstraints';
-import { cameraLocalOrientation, type CameraOwnRotation } from './cameraTrackTo';
+import { cameraLocalOrientation, cameraTrackToAim, type CameraOwnRotation } from './cameraTrackTo';
 import { quaternionFromEulerDeg, withResolvedRotation } from './resolvedRotation';
 import * as THREE from 'three';
 import { resolveParentWorldMatrix } from './resolveWorldTransform';
@@ -526,15 +526,33 @@ export function resolveCameraDofAt(
   let targetFocusDistance: number | undefined;
   if (lens.focusOnTarget === true) {
     try {
-      const pose = resolveCameraPoseAt(state, cameraId, seconds, cache);
-      targetFocusDistance = Math.hypot(
-        pose.lookAt[0] - pose.position[0],
-        pose.lookAt[1] - pose.position[1],
-        pose.lookAt[2] - pose.position[2],
-      );
+      targetFocusDistance = cameraFocusTargetDistance(state, cameraId, seconds, cache);
     } catch {
       /* fall back to the authored focusDistance */
     }
   }
   return resolveCameraDof(lens, cameraProjectionOf(state, cameraId), targetFocusDistance);
+}
+
+/**
+ * #1760 — what "focus on target" focuses on: the camera's winning Track-To's aim, as far from the
+ * camera as it is at film time `seconds` (both in world space, so a scaled parent cannot skew
+ * it). `undefined` when no Track-To aims the camera — it has no target, and its authored focus
+ * distance stands. The one source for the render, the viewport and the inspector's readout.
+ */
+export function cameraFocusTargetDistance(
+  state: DagState,
+  cameraId: string,
+  seconds: number,
+  cache?: EvaluatorCache,
+): number | undefined {
+  const ctx = clockedCtx(sceneClockOf(state).sceneAt(seconds), seconds);
+  if (!cameraTrackToAim(state, cameraId, ctx, cache)) return undefined;
+  // The pose's look-at IS the winning Track-To's aim point when one aims the camera (V665).
+  const pose = resolveCameraPoseAt(state, cameraId, seconds, cache);
+  return Math.hypot(
+    pose.lookAt[0] - pose.position[0],
+    pose.lookAt[1] - pose.position[1],
+    pose.lookAt[2] - pose.position[2],
+  );
 }

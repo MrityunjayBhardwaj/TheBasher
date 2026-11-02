@@ -878,6 +878,17 @@ describe('resolveCameraDofAt — the split camera DoF road (#387 D9)', () => {
     return s;
   }
 
+  /** #1760 — `buildSplitDofCamera` aimed by a point Track-To at its lens look-at, [0, 1, 0]:
+   *  focus on target focuses on a Track-To's aim, so this is the camera that has a target. */
+  function aimedSplitDofCamera(data: Record<string, unknown> = {}): DagState {
+    return applyOp(buildSplitDofCamera(data), {
+      type: 'addNode',
+      nodeId: 'n_cam_aim',
+      nodeType: 'TrackTo',
+      params: { target: 'n_cam', aimPoint: [0, 1, 0], aimSpace: 'parent' },
+    } as Parameters<typeof applyOp>[1]).next;
+  }
+
   function withChannel(
     s: DagState,
     id: string,
@@ -922,14 +933,33 @@ describe('resolveCameraDofAt — the split camera DoF road (#387 D9)', () => {
   // position is the Object's. This is the assertion the pre-mortem asks for — a fixture
   // whose pose sits at a NON-default position, so the expected distance cannot be the
   // one a fallback pose would produce.
-  it('focus-on-target derives |position − lookAt| across BOTH halves', () => {
-    const dof = resolveCameraDofAt(buildSplitDofCamera({ focusOnTarget: true }), 'n_cam', 0);
+  it('focus-on-target derives |position − aim| across BOTH halves', () => {
+    const dof = resolveCameraDofAt(aimedSplitDofCamera({ focusOnTarget: true }), 'n_cam', 0);
     expect(dof!.focusDistance).toBeCloseTo(Math.sqrt(65), 6);
     // Naming the two numbers a broken road would return keeps the pass from being luck:
     // √22 is what a fallback DEFAULT_CAMERA_POSE gives, 3 is the authored value that
     // would stand if the flag were read off the wrong half.
     expect(dof!.focusDistance).not.toBeCloseTo(Math.sqrt(22), 6);
     expect(dof!.focusDistance).not.toBe(3);
+  });
+
+  // #1760 — the target is the Track-To's aim. A camera no Track-To aims has no target, whatever
+  // its lens look-at says (#1764 removes it): its authored distance stands. Before, it focused
+  // at the lens look-at's distance, √65 here.
+  it('focus-on-target with no Track-To keeps the authored distance', () => {
+    const dof = resolveCameraDofAt(buildSplitDofCamera({ focusOnTarget: true }), 'n_cam', 0);
+    expect(dof!.focusDistance).toBe(3);
+  });
+
+  it('focus-on-target follows the Track-To’s aim, not the lens look-at', () => {
+    // The lens look-at is √65 away; the Track-To aims at the origin, √66 away.
+    const s = applyOp(buildSplitDofCamera({ focusOnTarget: true }), {
+      type: 'addNode',
+      nodeId: 'n_cam_aim',
+      nodeType: 'TrackTo',
+      params: { target: 'n_cam', aimPoint: [0, 0, 0], aimSpace: 'parent' },
+    } as Parameters<typeof applyOp>[1]).next;
+    expect(resolveCameraDofAt(s, 'n_cam', 0)!.focusDistance).toBeCloseTo(Math.sqrt(66), 6);
   });
 
   // Handed the DATA half instead of the Object, this answers NULL rather than a plausible
@@ -969,7 +999,7 @@ describe('resolveCameraDofAt — the split camera DoF road (#387 D9)', () => {
 
   it('CONTROL — the same road DOES vary with time on the focus-on-target path', () => {
     const s = withChannel(
-      buildSplitDofCamera({ focusOnTarget: true }),
+      aimedSplitDofCamera({ focusOnTarget: true }),
       'ch_pos',
       'KeyframeChannelVec3',
       'n_cam',
