@@ -59,6 +59,7 @@ import type { Node, Op } from '../core/dag/types';
 import type { CharacterValue, RotationModeFields } from '../nodes/types';
 import { buildWalkToOps } from './character/walkTo';
 import { useGizmoStore, type GizmoMode } from './stores/gizmoStore';
+import { useTransientEditStore } from './stores/transientEditStore';
 import { useEditorStore } from './stores/editorStore';
 import { isImportedChild } from './importedChild';
 import { isModifierNode, resolveStackObject } from './operatorStack';
@@ -219,17 +220,24 @@ function useSeedAtPlayhead(
   read: (t: TimeStore) => Playhead,
   seed: (at: Playhead) => void,
   deps: DependencyList,
+  heldOn: Iterable<string | null | undefined> = [],
 ): void {
   const latest = useRef({ read, seed });
   latest.current = { read, seed };
   const seededAt = useRef<Playhead | null>(null);
+  // #1777 — a held edit on what the gizmo poses (an inspector edit with Auto-Key off) moves the
+  // drawn object without moving the playhead or the DAG, so it re-seeds here as a scrub does.
+  // Not mid-drag: the drag's own held writes are the proxy's, and it re-seeds when the drag ends.
+  const held = useTransientEditStore((s) => heldSignature(s.edits, heldOn));
+  const dragging = useGizmoStore((s) => s.dragging);
   useEffect(() => {
+    if (useGizmoStore.getState().dragging) return;
     const at = latest.current.read(useTimeStore.getState());
     seededAt.current = at;
     latest.current.seed(at);
     // The caller's deps decide when to re-seed; `seed` is read through the ref.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, deps);
+  }, [...deps, held, dragging]);
   useFrame(() => {
     const at = latest.current.read(useTimeStore.getState());
     const last = seededAt.current;
@@ -243,6 +251,20 @@ function useSeedAtPlayhead(
     seededAt.current = at;
     latest.current.seed(at);
   }, -1);
+}
+
+/** #1777 — the held edits on `ids`, as one string: it changes exactly when one of them is set,
+ *  changed or cleared, so a subscriber re-renders for those and for nothing else. */
+function heldSignature(
+  edits: ReadonlyMap<string, { nodeId: string; paramPath: string; value: unknown }>,
+  ids: Iterable<string | null | undefined>,
+): string {
+  if (edits.size === 0) return '';
+  const want = new Set([...ids].filter((i): i is string => typeof i === 'string'));
+  if (want.size === 0) return '';
+  const parts: string[] = [];
+  for (const [k, e] of edits) if (want.has(e.nodeId)) parts.push(`${k}=${JSON.stringify(e.value)}`);
+  return parts.sort().join(';');
 }
 
 function SingleGizmo() {
@@ -467,6 +489,7 @@ function SingleGizmo() {
       }
     },
     [groupNode, manip, node, isCharacter, selectedId, playing, cache],
+    [selectedId],
   );
 
   if (!selectedId) return null;
@@ -827,6 +850,7 @@ function MultiGizmo() {
       }
     },
     [groupNode, selectedIds, primaryId, pivotMode, playing, cache],
+    selectedIds,
   );
 
   function onObjectChange() {
@@ -1226,6 +1250,7 @@ function CameraGizmo() {
       }
     },
     [camId, bodyNode, aimNode, playing, bound, cache],
+    [camId, winningAim?.nodeId],
   );
 
   // ONE write chokepoint per camera param — animated → re-route (channel keyed),
