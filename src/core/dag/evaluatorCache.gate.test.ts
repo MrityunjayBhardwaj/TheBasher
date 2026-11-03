@@ -141,7 +141,7 @@ const ORIGINS: Record<string, Origin> = {
     frequency: 'per-action',
     why: "The look-at target dropdown's bind: the world point the camera looks at, seeded as the Track-To's fallback aim (#1775).",
   },
-  'src/app/KeyboardShortcuts.tsx · onKey → resolveEvaluatedTransform': {
+  'src/app/KeyboardShortcuts.tsx · onKey → resolveOwnTransform': {
     count: 1,
     frequency: 'per-action',
     why: 'The insert-keyframe key.',
@@ -386,6 +386,7 @@ const TAKERS: string[] = [
   'resolveEvaluatedParam@src/app/resolveEvaluatedParam.ts',
   'resolveEvaluatedTransform@src/app/resolveEvaluatedTransform.ts',
   'resolveFollowedWorldPosition@src/app/nodeConstraints.ts',
+  'resolveOwnTransform@src/app/resolveEvaluatedTransform.ts',
   'resolveParentWorldMatrix@src/app/resolveWorldTransform.ts',
   'resolvePrimitiveTransform@src/app/resolveEvaluatedMesh.ts',
   'resolveRigTarget@src/app/studioLightRig.ts',

@@ -72,7 +72,7 @@ import { keyCameraFromUI } from './animate/keyCamera';
 import { isCameraNode } from './cameraNode';
 import { historyUndo, historyRedo } from './history';
 import { isKeyframeChannelNode } from './animate/paramAnimationState';
-import { resolveEvaluatedTransform } from './resolveEvaluatedTransform';
+import { resolveOwnTransform } from './resolveEvaluatedTransform';
 import { resolvedQuaternionOf } from './resolvedRotation';
 import type { RotationModeFields } from '../nodes/types';
 import { getActiveCurvePoint } from './curvePointSelection';
@@ -716,7 +716,10 @@ export function KeyboardShortcuts() {
             const state = useDagStore.getState().state;
             // #1594 — the selection's own clock (a camera is read at the playhead).
             const { seconds, frame } = clockFor(state, selectedId);
-            const evalT = resolveEvaluatedTransform(state, selectedId, {
+            // #1776 — its OWN transform, never what a constraint derives (a Track-To's aim, a
+            // Follow-Path's position): Blender's I keys the object's own location/rotation/scale,
+            // and a key holding the derived value would be overridden anyway.
+            const evalT = resolveOwnTransform(state, selectedId, {
               time: { frame, seconds, normalized: 0 },
             });
             const params = (state.nodes[selectedId]?.params ?? {}) as Record<string, unknown>;

@@ -101,14 +101,17 @@ export function resolveEvaluatedTransform(
   selectedId: string,
   ctx: ClockedCtx,
   cache?: EvaluatorCache,
+  opts: { constraints?: boolean } = {},
 ): EvaluatedTransform | null {
+  // #1776 — `constraints: false` reads the node's OWN transform (keys, drivers, held edits) and
+  // skips what its constraints derive (a Track-To's aim, a Follow-Path's position). Default: on.
+  const constrained = opts.constraints !== false;
   // #1688 — the tree is evaluated at scene time; the node is re-timed onto its own clock below.
   ctx = ctxOnClock(state, 'scene', ctx);
   // 0. A camera (#1640) hangs off `scene.camera`, never a scene child, so the walk below never
   //    finds it and every reader fell back to the typed position while the camera moved. Its
-  //    local pose is the one the render draws (`cameraLocalPose`: keys on the playhead, the aim
-  //    and roll on its lens data), then the held edit, then a Follow-Path, in the order a mesh's
-  //    are applied below. Scale is the typed one, which the render does not read.
+  //    local pose is the one the render draws (`cameraLocalPose`: keys on the playhead, then the
+  //    held edit), then a Follow-Path, in the order a mesh's are applied below. Scale is the typed one, which the render does not read.
   //
   //    #1753 #1760 — the rotation is the orientation the camera is drawn with: its winning
   //    Track-To's aim and roll, else its Object's own rotation, through the one rule the pose
@@ -120,6 +123,17 @@ export function resolveEvaluatedTransform(
     // them on after the keys, as the pose resolver does.
     const local = cameraLocalPose(state, selectedId, ctx, cache);
     const own = ctxOnClockOf(state, selectedId, ctx);
+    const scale = isVec3(params.scale) ? params.scale : null;
+    if (!constrained) {
+      // #1776 — its own rotation, in its mode, as Insert Keyframe and Blender's N-panel read it.
+      const ownQuat = resolvedQuaternionOf(local);
+      return {
+        position: local.position,
+        rotation: withResolvedRotation(local).rotation,
+        scale,
+        ...(ownQuat ? { quaternion: ownQuat } : {}),
+      };
+    }
     const followed = resolveConstraintPosition(state, selectedId, own, cache);
     const position = followed ?? local.position;
     const { quaternion } = cameraLocalOrientation(state, selectedId, position, local, ctx, cache);
@@ -127,7 +141,7 @@ export function resolveEvaluatedTransform(
     return {
       position,
       rotation: [e.x * RAD2DEG, e.y * RAD2DEG, e.z * RAD2DEG],
-      scale: isVec3(params.scale) ? params.scale : null,
+      scale,
     };
   }
   // 1. Render root.
@@ -197,7 +211,8 @@ export function resolveEvaluatedTransform(
     } catch {
       lightVal = null;
     }
-    if ((lightVal as { kind?: unknown } | null)?.kind === 'light') {
+    // #1776 — only a followed light answers here, and its own transform is its typed one.
+    if (constrained && (lightVal as { kind?: unknown } | null)?.kind === 'light') {
       const followed = resolveConstraintPosition(state, selectedId, ctx, cache);
       if (followed) {
         // #1153 — a light Object's mode rides onto the flat light (lightRecompose).
@@ -286,7 +301,7 @@ export function resolveEvaluatedTransform(
   // authored/animated rotation. Applying it here (the read side) keeps the gizmo
   // + inspector showing the SAME aim the renderer applies (read==render, H40) —
   // one band, two callers. Unconstrained nodes → null → rotation unchanged.
-  const aim = resolveConstraintRotation(state, selectedId, ctx, cache);
+  const aim = constrained ? resolveConstraintRotation(state, selectedId, ctx, cache) : null;
   if (aim) rotation = aim;
   // #1153 — in quaternion mode, the quaternion of what is SHOWN: the overlaid one, or the aim's
   // when a Track-To replaced it, so a key taken here records the pose on screen, as the euler
@@ -298,10 +313,25 @@ export function resolveEvaluatedTransform(
   // OVERRIDES the authored/animated position exactly as the aim overrides rotation. The
   // second band, resolved the same way at the same seam and applied by the same two
   // callers (here and ConstrainedR) — one band, two callers, read == render.
-  const followed = resolveConstraintPosition(state, selectedId, ctx, cache);
+  const followed = constrained ? resolveConstraintPosition(state, selectedId, ctx, cache) : null;
   const position = followed ?? (c.position as Vec3);
 
   return { position, rotation, scale, ...(quaternion ? { quaternion } : {}) };
+}
+
+/**
+ * #1776 — the node's OWN transform: its keys, drivers and held edits, without what its
+ * constraints derive. What Insert Keyframe keys, as Blender 5.1.1 does (a constraint's result is
+ * keyed only by opt-in visual keying). `resolveEvaluatedTransform` stays the drawn one, which
+ * drivers and the gizmo read.
+ */
+export function resolveOwnTransform(
+  state: DagState,
+  selectedId: string,
+  ctx: ClockedCtx,
+  cache?: EvaluatorCache,
+): EvaluatedTransform | null {
+  return resolveEvaluatedTransform(state, selectedId, ctx, cache, { constraints: false });
 }
 
 /** The raw evaluated value of `targetId` under this subtree, or null when it is not in it. */
