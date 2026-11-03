@@ -119,7 +119,7 @@ describe('#1682 — shadow maps redraw only when what they draw changed', () => 
         camera,
         null as unknown as THREE.BufferGeometry,
         null as unknown as THREE.Material,
-        null,
+        null as unknown as THREE.Group,
       );
       const redrew = gl.shadowMap.needsUpdate;
       gl.shadowMap.needsUpdate = false; // three clears it after the pass (WebGLShadowMap.js:197)
