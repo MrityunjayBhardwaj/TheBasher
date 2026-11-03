@@ -252,6 +252,9 @@ test('#1153 — a light Object in quaternion mode aims by its quaternion', async
       ),
     );
   const q = axisAngle([1, 0, 0], 60);
+  // #1765 — the default sun comes aimed by a Track-To, which would decide its orientation; muted,
+  // its own rotation turns it.
+  await dispatch(page, setParams('n_light_aim', { mute: true }));
   await dispatch(
     page,
     setParams('n_light', { rotation: DECOY, rotationMode: 'quaternion', quaternion: q }),

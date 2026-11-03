@@ -17,6 +17,7 @@ import { buildSkeletonObjectOps } from '../core/import/skeletonObject';
 import { DEFAULT_CAMERA_FAR, DEFAULT_CAMERA_NEAR } from '../nodes/CameraData';
 import { placeBuiltin } from './builtinTemplates';
 import { linkIntoActiveCollection } from './collections';
+import { nextConstraintOrder } from './nodeConstraints';
 
 /**
  * THE SCENE OBJECTS — everything the Add menu can put in the scene as a thing with a
@@ -417,6 +418,10 @@ function buildUnlinkedAddOps(
           from: { node: objId, socket: 'out' },
           to: { node: sceneRef.node, socket: 'lights' },
         },
+        // #1765 — a sun, spot or area light comes aimed: a Track-To at the world origin, whose
+        // aim object the user can pick in the light's constraint stack. A point light shines
+        // every way, so it gets none.
+        ...(kind === 'PointLight' ? [] : [originAimOp(state, objId)]),
       ],
       description: `Add ${humanLabel(kind)}`,
       newNodeId: objId,
@@ -514,6 +519,28 @@ function buildUnlinkedAddOps(
     ops,
     description: `Add ${humanLabel(kind)}`,
     newNodeId: id,
+  };
+}
+
+/**
+ * #1765 — the Track-To a new sun, spot or area light is aimed by: at the world origin, in world
+ * space, its aim object left empty for the user to pick. The light's own rotation is turned the
+ * same way (`paramsFor`), so muting the Track-To leaves it facing where it faced.
+ */
+export function originAimOp(state: DagState, lightId: string): Op {
+  return {
+    type: 'addNode',
+    nodeId: newId('aim'),
+    nodeType: 'TrackTo',
+    params: {
+      name: 'aim',
+      target: lightId,
+      aimNode: '',
+      aimPoint: [0, 0, 0],
+      up: [0, 1, 0],
+      mute: false,
+      order: nextConstraintOrder(state.nodes, lightId),
+    },
   };
 }
 
@@ -749,10 +776,9 @@ function paramsFor(kind: PrimitiveKind, position: Vec3): Record<string, unknown>
     case 'Armature':
     case 'PointLight':
       return { position, rotation: [0, 0, 0], scale: [1, 1, 1] };
-    // #1765 — a sun, spot or area light shines down its own −Z, turned by its rotation (V665), so
-    // a new one gets the rotation that turns it toward the world origin: where its old aim (a
-    // spot's `target` / an area's `lookAt` at the origin, a sun's aim-at-origin) pointed it, and
-    // the same call a new camera's framing comes from.
+    // #1765 — a sun, spot or area light shines down its own −Z. A new one is aimed at the world
+    // origin by a Track-To (`originAimOp`), and its own rotation is turned the same way, so
+    // muting the Track-To leaves it facing where it faced.
     case 'DirectionalLight':
     case 'SpotLight':
     case 'AreaLight':

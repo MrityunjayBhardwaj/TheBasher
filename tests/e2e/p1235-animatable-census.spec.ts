@@ -211,6 +211,16 @@ test(TITLE, async ({ page }) => {
       kinds.forEach((k: string, i: number) => {
         placed[k] = w.__basher_addPrimitive(k, [i * 3 - 18, 1, -4]);
       });
+      // #1765 — a sun, spot or area light comes aimed by a Track-To, which decides its rotation.
+      // The census measures each param where nothing else supplies it, so those go before it
+      // measures (a light keeping one is answered "unmeasured" by `animatableContextOf`).
+      const placedIds = new Set(
+        Object.values(placed).map((r) => (r as { nodeId?: string } | null)?.nodeId),
+      );
+      const aims = Object.entries(dag().state.nodes as Record<string, Loose>)
+        .filter(([, n]) => n.type === 'TrackTo' && placedIds.has(n.params.target))
+        .map(([id]) => ({ type: 'removeNode', nodeId: id }));
+      if (aims.length > 0) dag().dispatchAtomic(aims, 'user', 'census: lights unaimed');
       // A Group or Transform with nothing in it draws nothing, so each gets a Cube, wired the
       // way the outliner nests one: out of the scene's children, into the wrapper.
       const sceneId = dag().state.outputs.scene.node;

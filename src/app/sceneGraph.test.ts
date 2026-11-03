@@ -201,7 +201,8 @@ describe('sceneGraphOf — #1563 what the node view shows beside the nodes', () 
     const g = sceneGraphOf(withSpring(), { showHidden: true });
     expect(g.nodes.map((n) => n.id)).toContain('s_driver');
     expect(g.wires.some((w) => w.from === 's_solver' && w.to === 's_driver')).toBe(true);
-    expect(g.animation).toBe(0);
+    // Hidden: only the default project's sun's own Track-To (#1765), never the driver.
+    expect(g.animation).toBe(1);
   });
 
   it('says whose name a node follows', () => {

@@ -5,6 +5,7 @@
 // window handles. Pixel-diff would re-fail H13 on every layout shift.
 
 import { expect, test } from './_fixtures';
+import { cameraRotationLookingAt } from '../../src/app/cameraOrientation';
 import { objectPosing, seedCubeObjectId } from './_seedNodes';
 
 interface BasherWindow {
@@ -384,14 +385,16 @@ test('P2.6#11 UV editor status reflects the added sphere (1 island, read-only)',
 // ---------------------------------------------------------------------------
 
 test('P2.6#12 lights carry rotation param + are selectable', async ({ page }) => {
-  // Seed has n_light (DirectionalLight) at [5,5,3]. Confirm rotation defaults
-  // to [0,0,0] after load.
+  // Seed has n_light (DirectionalLight) at [5,5,3]. #1765 — its rotation is turned toward the
+  // origin, where its Track-To aims it, so muting that leaves it facing where it faced.
   const before = await page.evaluate(() => {
     const w = window as unknown as BasherWindow;
     return (w.__basher_dag!.getState().state.nodes.n_light.params as { rotation?: number[] })
       .rotation;
   });
-  expect(before).toEqual([0, 0, 0]);
+  const facing = cameraRotationLookingAt([5, 5, 3], [0, 0, 0]);
+  expect(before).toHaveLength(3);
+  before!.forEach((v, i) => expect(v).toBeCloseTo(facing[i], 9));
 
   // Dispatch a setParam Op on the light's rotation — proves the Gizmo's
   // rotate path works once the param is on the schema.

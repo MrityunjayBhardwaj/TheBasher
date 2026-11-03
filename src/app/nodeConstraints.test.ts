@@ -85,7 +85,8 @@ describe('nodeConstraints — enumeration', () => {
   it('constraintTargetSet collects constrained node ids (excludes muted)', () => {
     const state = buildPointTrackTo([0, 0, 0], [1, 0, 0]);
     expect(constraintTargetSet(state.nodes).has(BOX_ID)).toBe(true);
-    expect(constraintTargetSet(state.nodes).size).toBe(1);
+    // #1765 — beside the default project's sun, which comes aimed by its own Track-To.
+    expect(constraintTargetSet(state.nodes)).toEqual(new Set([BOX_ID, 'n_light']));
   });
 
   // #311 T1 — a PRE-STACK project (authored with no `order`, exactly as
@@ -160,7 +161,7 @@ describe('nodeConstraints — the ordered constraint stack (#311)', () => {
       params: { name: 'unbound' },
     } as Op).next;
     expect(constraintTargetSet(state.nodes).has('')).toBe(false);
-    expect(constraintTargetSet(state.nodes).size).toBe(1);
+    expect(constraintTargetSet(state.nodes)).toEqual(new Set([BOX_ID, 'n_light']));
   });
 
   it('members carry the normalized aim shape (never raw node params)', () => {

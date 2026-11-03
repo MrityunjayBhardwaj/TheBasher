@@ -2641,10 +2641,9 @@ export function migrateCameraAimToTrackTo(raw: unknown): unknown {
 //   with. Keys and drivers on `target` / `lookAt` move onto the Track-To's `aimPoint`,
 //   unchanged. An existing Track-To keeps winning: the new one sits below it, so muting the old
 //   one shows the authored aim again, as it did.
-// - Sun at rotation 0: a top-level sun whose position nothing moves gets the rotation that
-//   points −Z from its position to the origin — exact, and from then on a plain Blender sun. One
-//   whose position can move (keys, drivers, a strip, a Follow-Path, or a parent group) gets a
-//   world-space Track-To aimed at the origin instead, which stays exact as it moves.
+// - Sun at rotation 0: a world-space Track-To aimed at the origin — the aim every new sun comes
+//   with, exact however its position moves — and its own rotation turned to the origin from
+//   where it stands, so muting the Track-To leaves it facing where it faced.
 // - Sun at any other rotation: the same orientation turned a quarter turn about its own X, which
 //   carries its old −Y onto its new −Z.
 //
@@ -2684,9 +2683,6 @@ export function migrateLightAimToTurn(raw: unknown): unknown {
     );
   const stripOn = (holders: Set<string>) =>
     entries.some(([, n]) => n?.type === 'Strip' && holders.has(n.params?.target as string));
-  const nested = new Set(
-    entries.flatMap(([, n]) => asRefs(n?.inputs?.children).map((r) => r.node)),
-  );
   const addTrackTo = (objId: string, aimPoint: [number, number, number]): string => {
     const existing = entries.filter(([, n]) => n?.type === 'TrackTo' && n.params?.target === objId);
     const orders = existing.map(([, n]) =>
@@ -2783,20 +2779,15 @@ export function migrateLightAimToTurn(raw: unknown): unknown {
       out[objId] = { ...obj, params: { ...op, ...rotationParamsOf(op, [q.x, q.y, q.z, q.w]) } };
       continue;
     }
+    // A sun at rotation 0 shone from wherever it was toward the world origin, every frame: a
+    // world-space Track-To at the origin, the aim every new sun comes with. Its own rotation is
+    // turned there too, from where it stands, so muting the Track-To leaves it facing where it
+    // faced (a sun on the origin had no direction, and keeps its rotation).
+    addTrackTo(objId, [0, 0, 0]);
     const position = isVec3(op.position) ? op.position : [0, 0, 0];
-    const positionMoves =
-      nested.has(objId) ||
-      keysOn(holders, 'position').length > 0 ||
-      stripOn(holders) ||
-      entries.some(([, n]) => n?.type === 'FollowPath' && n.params?.target === objId);
-    if (positionMoves) {
-      addTrackTo(objId, [0, 0, 0]);
-      continue;
-    }
-    // A sun on the origin had no direction (three normalises a zero vector); leave it as it is.
     const q = trackToQuaternion(position as [number, number, number], [0, 0, 0]);
-    if (!q) continue;
-    out[objId] = { ...obj, params: { ...op, ...rotationParamsOf(op, [q.x, q.y, q.z, q.w]) } };
+    if (q)
+      out[objId] = { ...obj, params: { ...op, ...rotationParamsOf(op, [q.x, q.y, q.z, q.w]) } };
   }
   if (lights > 0) {
     console.warn(

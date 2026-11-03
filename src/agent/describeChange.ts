@@ -27,7 +27,7 @@
 
 import type { DagState } from '../core/dag/state';
 import type { NodeId, Op } from '../core/dag/types';
-import { relationsOf } from '../core/dag/idRefSweep';
+import { idRefsByRole, relationsOf } from '../core/dag/idRefSweep';
 import { nodeDisplayName } from '../app/sceneTreeWalk';
 
 const DATA_NOUN: Record<string, string> = {
@@ -123,6 +123,10 @@ export function describeChange(before: DagState, ops: readonly Op[]): string {
   for (const [id, a] of added) {
     const into = feeds.get(id) ?? [];
     if (into.some((t) => added.has(t))) continue; // a part of something else added here
+    // #1765 — a sidecar on something added here (the Track-To a new light comes aimed by) is a
+    // part of it too: it names its owner by an id, not an edge.
+    const owners = idRefsByRole({ id, ...a }, nodes).subject;
+    if (owners.some((t) => added.has(t))) continue;
     const existing = into.filter((t) => !isScene(t));
     if (a.type !== 'Object' && existing.length > 0) {
       existing.forEach(change); // added onto something already there

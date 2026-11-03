@@ -22,13 +22,18 @@ test('View ▸ Editor Space ▸ Graph draws the scene and shares the selection',
   await expect(layout).toHaveAttribute('data-space', 'graph');
   await expect(page.getByTestId('graph-view')).toBeVisible();
 
-  // Every node of the starter scene is drawn (nothing in it is hidden).
-  const total = await page.evaluate(
-    () => Object.keys((window as unknown as DagWindow).__basher_dag!.getState().state.nodes).length,
-  );
-  expect(total).toBeGreaterThan(0);
-  await expect(page.locator('[data-graph-node]')).toHaveCount(total);
-  await expect(page.getByTestId('graph-view-counts')).toContainText(`${total} nodes`);
+  // Every node of the starter scene is drawn but the sun's Track-To (#1765): a constraint is
+  // animation, hidden until asked for, and counted as hidden.
+  const [total, aims] = await page.evaluate(() => {
+    const nodes = Object.values(
+      (window as unknown as DagWindow).__basher_dag!.getState().state.nodes,
+    ) as { type: string }[];
+    return [nodes.length, nodes.filter((n) => n.type === 'TrackTo').length];
+  });
+  expect(aims).toBe(1);
+  await expect(page.locator('[data-graph-node]')).toHaveCount(total - aims);
+  await expect(page.getByTestId('graph-view-counts')).toContainText(`${total - aims} nodes`);
+  await expect(page.getByTestId('graph-view-counts')).toContainText('1 animation hidden');
 
   // Graph → app: clicking the camera node selects it in the app.
   const camera = page.locator('[data-graph-node="n_camera"]');

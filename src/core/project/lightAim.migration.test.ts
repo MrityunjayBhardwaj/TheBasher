@@ -172,8 +172,8 @@ function withLight(opts: Parameters<typeof makeSplitLight>[1]): DagState {
 
 describe('#1765 v26 → v27: every light shines where it shone', () => {
   // The default project and the examples built from ops are created at the current format, never
-  // migrated: each seeds its sun with the rotation that turns it toward the world origin, where a
-  // sun at rotation 0 shone at v26. So each is checked against that, live, at every time.
+  // migrated: each seeds its sun aimed at the world origin by a Track-To, where a sun at rotation
+  // 0 shone at v26. So each is checked against that, live, at every time.
   const shinesAtOrigin = (s: DagState): number => {
     let n = 0;
     for (const light of aimableLights(s))
@@ -185,14 +185,41 @@ describe('#1765 v26 → v27: every light shines where it shone', () => {
     return n;
   };
 
-  it('the default project: its sun shines at the origin, as at v26', () => {
+  /** Every sun, spot and area light in `s` carries a live Track-To at the world origin with no
+   *  aim object, and still shines at the origin with every Track-To muted (its own rotation). */
+  const aimedAtOrigin = (s: DagState): number => {
+    const lights = aimableLights(s);
+    for (const light of lights) {
+      const aim = Object.values(s.nodes).find(
+        (n) => n.type === 'TrackTo' && (n.params as { target: string }).target === light.obj,
+      );
+      expect(aim?.params, light.obj).toMatchObject({
+        aimNode: '',
+        aimPoint: [0, 0, 0],
+        mute: false,
+      });
+    }
+    const muted = run(
+      s,
+      Object.values(s.nodes)
+        .filter((n) => n.type === 'TrackTo')
+        .map((n) => ({ type: 'setParam', nodeId: n.id, paramPath: 'mute', value: true }) as const),
+    );
+    shinesAtOrigin(muted);
+    return lights.length;
+  };
+
+  it('the default project: its sun shines at the origin, as at v26, aimed by a Track-To', () => {
     expect(shinesAtOrigin(buildDefaultDagState())).toBe(TIMES.length);
+    expect(aimedAtOrigin(buildDefaultDagState())).toBe(1);
   });
 
   it.each(EXAMPLE_PROJECT_IDS.filter((x) => !CAPTURED_EXAMPLE_IDS.includes(x)))(
     'example %s: its lights shine at the origin, as at v26',
     async (id) => {
-      expect(shinesAtOrigin((await buildExampleProject(id)).state)).toBeGreaterThan(0);
+      const s = (await buildExampleProject(id)).state;
+      expect(shinesAtOrigin(s)).toBeGreaterThan(0);
+      expect(aimedAtOrigin(s)).toBeGreaterThan(0);
     },
   );
 
@@ -223,7 +250,10 @@ describe('#1765 v26 → v27: every light shines where it shone', () => {
     const b = migrate(a);
     expect(expectSameTurns(a, b)).toBe(3 * TIMES.length);
     // Both aims are now Track-Tos in world space, and the fields are gone from the data.
-    const aims = Object.values(b.nodes).filter((n) => n.type === 'TrackTo');
+    const aims = Object.values(b.nodes).filter(
+      (n) =>
+        n.type === 'TrackTo' && ['spot', 'area'].includes((n.params as { target: string }).target),
+    );
     expect(aims.map((n) => (n.params as { aimSpace: string }).aimSpace)).toEqual([
       'world',
       'world',
@@ -278,15 +308,24 @@ describe('#1765 v26 → v27: every light shines where it shone', () => {
     expectSameTurns(mute(a), mute(b));
   });
 
-  it('a still sun at rotation 0 gets the rotation that points at the origin', () => {
+  // The aim every new sun comes with: a world-space Track-To at the origin, and its own rotation
+  // turned the same way, so muting the Track-To leaves it shining where it shone.
+  it('a still sun at rotation 0 gets a Track-To at the origin, and muting it changes nothing', () => {
     const a = withLight({ objectId: 'sun', lightKind: 'Directional', position: [7, 9, -4] });
     const b = migrate(a);
     expectSameTurns(a, b);
-    expect(Object.values(b.nodes).some((n) => n.type === 'TrackTo')).toBe(false);
+    expect(params(b, 'sun_aim')).toMatchObject({
+      target: 'sun',
+      aimNode: '',
+      aimPoint: [0, 0, 0],
+      aimSpace: 'world',
+    });
     expect((params(b, 'sun').rotation as number[]).some((v) => v !== 0)).toBe(true);
+    const muted = run(b, [{ type: 'setParam', nodeId: 'sun_aim', paramPath: 'mute', value: true }]);
+    expectSameTurns(a, muted);
   });
 
-  it('a sun at rotation 0 whose position is keyed gets a Track-To at the origin instead', () => {
+  it('a sun at rotation 0 whose position is keyed: its Track-To keeps it on the origin as it moves', () => {
     let a = withLight({ objectId: 'sun', lightKind: 'Directional', position: [7, 9, -4] });
     a = run(a, [
       {
@@ -306,7 +345,6 @@ describe('#1765 v26 → v27: every light shines where it shone', () => {
     ]);
     const b = migrate(a);
     expectSameTurns(a, b);
-    expect(params(b, 'sun').rotation).toEqual([0, 0, 0]);
     expect(params(b, 'sun_aim').aimPoint).toEqual([0, 0, 0]);
   });
 

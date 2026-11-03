@@ -218,12 +218,14 @@ describe('default project', () => {
     // Object/pose, id inherited) + n_light_data (the LightData/shading). #387 C4 — and so is
     // the camera: n_camera (the Object/pose, id inherited) + n_camera_data (the CameraData/
     // lens). Every seeded scene object is now split-native; nothing in a new project migrates.
+    // #1765 — and the sun comes aimed at the origin by its own Track-To, n_light_aim.
     expect(Object.keys(state.nodes).sort()).toEqual([
       'n_box',
       'n_box_data',
       'n_camera',
       'n_camera_data',
       'n_light',
+      'n_light_aim',
       'n_light_data',
       'n_render',
       'n_scene',

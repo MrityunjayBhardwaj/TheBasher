@@ -52,6 +52,19 @@ describe('describeChange', () => {
     }
   });
 
+  // #1765 — a sun, spot or area light comes with the Track-To that aims it: one light, not a
+  // light and a track to.
+  it('a light and the Track-To it comes aimed by read as the light', () => {
+    for (const kind of ['DirectionalLight', 'SpotLight', 'AreaLight'] as const) {
+      const { before, ops } = adds([kind]);
+      expect(
+        ops.some((o) => o.type === 'addNode' && o.nodeType === 'TrackTo'),
+        kind,
+      ).toBe(true);
+      expect(describeChange(before, ops), kind).not.toMatch(/track/i);
+    }
+  });
+
   it('mixed adds keep their order and their counts', () => {
     const { before, ops } = adds(['Cube', 'AreaLight', 'Cube']);
     expect(describeChange(before, ops)).toBe('Added 2 cubes and an area light');

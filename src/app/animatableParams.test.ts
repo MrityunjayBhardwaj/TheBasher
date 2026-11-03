@@ -125,9 +125,15 @@ describe('isAnimatable — three answers, never two', () => {
     });
   });
 
-  it('a spot light aims by its target, so its Object rotation moves nothing', () => {
+  // #1765 — a new spot comes aimed by a Track-To, which decides its rotation: a key there would
+  // not show, and that is a fact about this light, so it is unmeasured with the reason, never
+  // "still". Its position still moves it.
+  it('a new spot light is aimed by its Track-To, so a key on its rotation would not show', () => {
     const spot = place(buildDefaultDagState(), 'SpotLight');
-    expect(isAnimatable(spot.s, spot.obj, 'rotation', 'vec3').answer).toBe('still');
+    expect(isAnimatable(spot.s, spot.obj, 'rotation', 'vec3')).toEqual({
+      answer: 'unmeasured',
+      reason: 'a Track-To aims it, so a keyframe on it would not show',
+    });
     expect(isAnimatable(spot.s, spot.obj, 'position', 'vec3').answer).toBe('animatable');
   });
 

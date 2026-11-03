@@ -96,8 +96,8 @@ function scaffold(): Op[] {
       type: 'addNode',
       nodeId: 'n_light',
       nodeType: 'Object',
-      // #1765 — a sun shines down its own −Z, turned by its rotation: toward the origin, where it
-      // shone when a sun at rotation 0 aimed there.
+      // #1765 — a sun shines down its own −Z. It is aimed at the origin by the Track-To below,
+      // and turned that way by its own rotation too, so muting the Track-To changes nothing.
       params: {
         position: [5, 6, 3],
         rotation: cameraRotationLookingAt([5, 6, 3], [0, 0, 0]),
@@ -108,6 +108,22 @@ function scaffold(): Op[] {
       type: 'connect',
       from: { node: 'n_light_data', socket: 'out' },
       to: { node: 'n_light', socket: 'data' },
+    },
+    // #1765 — every new sun, spot or area light comes aimed at the world origin by a Track-To
+    // whose aim object can be picked, as Add ▸ Light makes one (`originAimOp`).
+    {
+      type: 'addNode',
+      nodeId: 'n_light_aim',
+      nodeType: 'TrackTo',
+      params: {
+        name: 'aim',
+        target: 'n_light',
+        aimNode: '',
+        aimPoint: [0, 0, 0],
+        up: [0, 1, 0],
+        mute: false,
+        order: 0,
+      },
     },
     { type: 'addNode', nodeId: 'n_time', nodeType: 'TimeSource', params: {} },
     { type: 'addNode', nodeId: 'n_scene', nodeType: 'Scene', params: {} },

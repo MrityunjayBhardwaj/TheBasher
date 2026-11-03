@@ -27,7 +27,7 @@ import { describe, expect, it } from 'vitest';
 import { registerAllNodes } from '../../nodes/registerAll';
 import { buildDefaultProject } from './default';
 import { buildAllExampleProjects, CAPTURED_EXAMPLE_IDS } from './examples';
-import { findDanglingIdRef, idRefsOutOf } from '../dag/idRefSweep';
+import { findDanglingIdRef, idRefsByRole } from '../dag/idRefSweep';
 import type { DagState } from '../dag/state';
 import type { NodeRef } from '../dag/types';
 import type { Project } from './index';
@@ -57,24 +57,31 @@ function reachableFromOutputs(state: DagState): Set<string> {
   return seen;
 }
 
-/** Every node named by a live id-ref anywhere in the graph. */
+/** Every node named by a live id-ref anywhere in the graph. #1765 — an ARGUMENT ref only: a
+ *  sidecar naming its subject depends on that subject, so it cannot keep the subject alive (a
+ *  Track-To on a stray object would otherwise vouch for it, and it for the Track-To). */
 function idReferred(state: DagState): Set<string> {
   const out = new Set<string>();
   for (const node of Object.values(state.nodes)) {
-    for (const t of idRefsOutOf(node, state.nodes)) out.add(t);
+    for (const t of idRefsByRole(node, state.nodes).argument) out.add(t);
   }
   return out;
 }
 
 /** Edge-orphans: nodes reachable by NEITHER an output walk NOR a live id-ref, that
- *  are not one of the allowlisted intentional leaves. */
+ *  are not one of the allowlisted intentional leaves. #1765 — nor a sidecar whose SUBJECT is
+ *  live (a constraint on a light the scene draws): it lives on its owner and reaches the scene
+ *  through the owner's own resolution (`idRefsByRole`). */
 function edgeOrphans(state: DagState): string[] {
   const reachable = reachableFromOutputs(state);
   const referred = idReferred(state);
+  const live = (id: string) => reachable.has(id) || referred.has(id);
   return Object.values(state.nodes)
     .filter(
       (n) =>
-        !reachable.has(n.id) && !referred.has(n.id) && !INTENTIONAL_UNREFERENCED_LEAVES.has(n.type),
+        !live(n.id) &&
+        !idRefsByRole(n, state.nodes).subject.some(live) &&
+        !INTENTIONAL_UNREFERENCED_LEAVES.has(n.type),
     )
     .map((n) => `${n.id}(${n.type})`)
     .sort();
@@ -124,6 +131,28 @@ describe('#436 — bundled standard projects ship orphan-free', () => {
       },
     };
     expect(edgeOrphans(withEdgeOrphan)).toEqual(['n_stray_data(BoxData)']);
+
+    // (1b) #1765 — a constraint lives on its owner only while the owner is live: a Track-To on
+    // a node the scene never reaches is debris too.
+    const withStrayAim: DagState = {
+      ...clean,
+      nodes: {
+        ...clean.nodes,
+        n_stray_obj: {
+          id: 'n_stray_obj',
+          type: 'Null',
+          inputs: {},
+          params: {},
+        } as unknown as (typeof clean.nodes)[string],
+        n_stray_aim: {
+          id: 'n_stray_aim',
+          type: 'TrackTo',
+          inputs: {},
+          params: { target: 'n_stray_obj' },
+        } as unknown as (typeof clean.nodes)[string],
+      },
+    };
+    expect(edgeOrphans(withStrayAim)).toEqual(['n_stray_aim(TrackTo)', 'n_stray_obj(Null)']);
 
     // (2) A dangling id-ref: a channel whose `target` names a missing node.
     const withDangle: DagState = {
