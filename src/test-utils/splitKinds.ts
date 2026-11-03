@@ -477,7 +477,7 @@ export const SPLIT_KINDS: Record<SplitKindName, SplitKindSpec> = {
     band: 'camera',
     // Two fused camera NODES collapse into one data node, the way four light nodes did.
     // Perspective and orthographic are one datablock with a projection discriminator in
-    // every reference model, and they already share every param but `fov`/`zoom`.
+    // every reference model, and they already share every param but `fov`/`orthoScale`.
     fusedTypes: ['PerspectiveCamera', 'OrthographicCamera'],
     migratesFromVersion: 6,
     // `fov` is the ONE camera param with no zod default (`z.number().min(1).max(170)`),
@@ -495,8 +495,8 @@ export const SPLIT_KINDS: Record<SplitKindName, SplitKindSpec> = {
     baseDataParams: { fov: 50 },
     // Measured, not assumed (#387 census): of the eleven params the fused camera holds,
     // only `fov`/`near`/`far` reach the render road under their own name. The five DoF
-    // and sensor params never enter the evaluated value at all, and ortho `zoom` enters
-    // it and is read by nothing (#478). `fov` is the only lens param that is both
+    // and sensor params never enter the evaluated value at all, and ortho `zoom` entered
+    // it and was read by nothing (#478; read since #1760, as `orthoScale`, by the pose road). `fov` is the only lens param that is both
     // primary and reachable.
     observableDataParam: 'fov',
     // Neither value may be 45: that is what `cameraPoseFromNode` falls back to when the

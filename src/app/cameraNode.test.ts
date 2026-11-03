@@ -42,7 +42,7 @@ function splitCamera(data: Record<string, unknown> = {}): DagState {
       'camera',
       { objectId: 'n_cam' },
       {
-        data: { fov: 28, near: 0.02, far: 250, lookAt: [0, 1, 0], ...data },
+        data: { fov: 28, near: 0.02, far: 250, ...data },
         object: { position: [7, 1, -4] },
       },
     ),
@@ -120,7 +120,7 @@ describe('cameraNode — cameraLensParams', () => {
   it('returns the DATA half for a split camera — and not the Object, which owns position', () => {
     const params = cameraLensParams(splitCamera(), 'n_cam');
     expect(params?.fov).toBe(28);
-    expect(params?.lookAt).toEqual([0, 1, 0]);
+    expect(params?.near).toBe(0.02);
     // The bag is the lens, NOT the pose: `position` lives on the Object. A caller handed
     // the wrong bag would read `undefined` here and silently fall back to a default.
     expect(params).not.toHaveProperty('position');
@@ -153,7 +153,10 @@ describe('#387 slice 3 — the re-keyed consumers accept a split camera', () => 
       splitOps(
         'camera',
         { objectId: 'n_cam_2' },
-        { data: { fov: 28, projection: 'Orthographic', zoom: 1 }, object: { position: [0, 0, 5] } },
+        {
+          data: { fov: 28, projection: 'Orthographic', orthoScale: 1 },
+          object: { position: [0, 0, 5] },
+        },
       ),
     );
     // The second camera is the OTHER projection, so the walk is asked to find two cameras
@@ -171,30 +174,27 @@ describe('#387 slice 3 — the re-keyed consumers accept a split camera', () => 
     expect(buildSetActiveCameraOps(s, 'nope')).toBeNull();
   });
 
-  // BOTH reaches in one test, because they fail independently and each alone looks fine:
-  // the RAW read (lookAt moved to the data half) and the CHANNEL read (a channel on the
-  // aim targets the data id). A non-origin lookAt is required — [0,0,0] is the fallback,
-  // so an origin-aimed fixture passes with the raw reach completely broken.
-  it('resolveWorldTransform reads a split camera aim from the data half — statically AND through a channel', () => {
-    const s = splitCamera({ lookAt: [0, 5, 0] });
+  // #1760 — a camera's world transform is its own: position and its Object's rotation, as any
+  // object's on this walk (V665), read statically and through a channel. (#1764 — the lens
+  // holds no aim to turn it any more.)
+  it('resolveWorldTransform reads a split camera’s own rotation — statically AND through a channel', () => {
+    const s = splitCamera();
     const ctx = { time: { frame: 0, seconds: 0, normalized: 0 } };
     const staticWorld = resolveWorldTransform(s, 'n_cam', ctx);
     expect(staticWorld, 'a split camera resolves a world transform at all').not.toBeNull();
     expect(staticWorld!.position).toEqual([7, 1, -4]);
 
-    // A channel on the DATA half's lookAt. Exact-id enumeration misses it entirely.
-    const dataId = cameraDataOf(s, 'n_cam')!.id;
     const animated = applyOp(s, {
       type: 'addNode',
-      nodeId: 'aim_ch',
+      nodeId: 'rot_ch',
       nodeType: 'KeyframeChannelVec3',
       params: {
-        name: 'lookAt',
-        target: dataId,
-        paramPath: 'lookAt',
+        name: 'rotation',
+        target: 'n_cam',
+        paramPath: 'rotation',
         keyframes: [
-          { time: 0, value: [0, 5, 0], easing: 'linear' },
-          { time: 2, value: [20, 5, 0], easing: 'linear' },
+          { time: 0, value: [0, 0, 0], easing: 'linear' },
+          { time: 2, value: [0, 90, 0], easing: 'linear' },
         ],
       },
     }).next;
@@ -202,14 +202,11 @@ describe('#387 slice 3 — the re-keyed consumers accept a split camera', () => 
     const at2 = resolveWorldTransform(animated, 'n_cam', {
       time: { frame: 120, seconds: 2, normalized: 0 },
     });
-    // The camera does not MOVE (position is unchannelled) — it TURNS. So the discriminator
-    // is the ORIENTATION, not the position: a missed aim channel leaves them identical.
-    // Read the field off the WorldTransform contract (`quaternion`); a mistyped field name
-    // compares undefined to undefined, which a positive assertion would pass vacuously.
-    expect(at0!.quaternion, 'the fixture must produce an orientation at all').toHaveLength(4);
-    expect(at0!.quaternion, 'a data-half aim channel turns the camera').not.toEqual(
-      at2!.quaternion,
-    );
+    // The camera does not MOVE (position is unchannelled) — it TURNS, by the keyed rotation.
+    expect(at0!.quaternion).toHaveLength(4);
+    expect(at0!.quaternion.map((v) => Math.round(v * 1e9) / 1e9)).toEqual([0, 0, 0, 1]);
+    expect(at2!.quaternion[1], 'turned 90° about +Y').toBeCloseTo(Math.SQRT1_2, 9);
+    expect(at2!.quaternion[3]).toBeCloseTo(Math.SQRT1_2, 9);
   });
 
   it('the strip picker offers a split camera NESTED IN A GROUP', () => {
@@ -248,22 +245,27 @@ describe('#387 slice 3 — the traps a passing re-key can still leave open', () 
   // half that makes the trap visible at all: even with the right gizmo mounted, the
   // camera Object HAS a `rotation` param (every Object does), and the pose road does not
   // read it. A rotate drag would turn a gizmo while the rendered camera sat still.
-  it('a `rotation` written on a camera Object does not move the rendered pose', () => {
+  // #1760 — this pinned the opposite while the aim lived on the lens: `rotation` was inert, and a
+  // rotation turning the camera would have been a second orientation source. It is now the ONE
+  // source for a camera no Track-To aims (V665), so writing it must turn the rendered pose.
+  it('a `rotation` written on a camera Object turns the rendered pose', () => {
     const s = splitCamera();
     const before = resolveCameraPoseAt(s, 'n_cam', 0);
     const rotated = applyOp(s, {
       type: 'setParam',
       nodeId: 'n_cam',
       paramPath: 'rotation',
-      value: [0.7, 1.4, 0.2],
+      value: [0, 90, 0],
     }).next;
     expect(
       rotated.nodes['n_cam'].params.rotation,
       'the fixture must actually have written a rotation',
-    ).toEqual([0.7, 1.4, 0.2]);
-    // The aim stays on the data half (parity-first), so `rotation` is inert by design.
-    // If this ever starts failing, the camera grew a second orientation source.
-    expect(resolveCameraPoseAt(rotated, 'n_cam', 0)).toEqual(before);
+    ).toEqual([0, 90, 0]);
+    const after = resolveCameraPoseAt(rotated, 'n_cam', 0);
+    expect(after.position).toEqual(before.position);
+    expect(after.quaternion).not.toEqual(before.quaternion);
+    expect(after.quaternion[1]).toBeCloseTo(Math.SQRT1_2, 9);
+    expect(after.quaternion[3]).toBeCloseTo(Math.SQRT1_2, 9);
   });
 
   it('the agent can identify a split camera, and a cube is not swept in', () => {
@@ -283,7 +285,7 @@ describe('#387 slice 3 — the traps a passing re-key can still leave open', () 
         'camera',
         { objectId: 'n_cam2' },
         {
-          data: { fov: 50, near: 0.1, far: 100, lookAt: [0, 0, 0] },
+          data: { fov: 50, near: 0.1, far: 100 },
           object: { position: [0, 0, 9] },
         },
       ),

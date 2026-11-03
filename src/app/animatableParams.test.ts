@@ -139,10 +139,12 @@ describe('isAnimatable — three answers, never two', () => {
     });
   });
 
-  it("camera near/far reach only the pose the renderer takes; zoom and depth of field don't (#193)", () => {
+  it("camera near/far reach only the pose the renderer takes; depth of field doesn't (#193)", () => {
     const cam = place(buildDefaultDagState(), 'PerspectiveCamera');
     expect(isAnimatable(cam.s, cam.data, 'near', 'number')).toMatchObject({ reach: 'pose' });
-    expect(isAnimatable(cam.s, cam.data, 'zoom', 'number').answer).toBe('still');
+    // #1760 — the old `zoom` was read by nothing; its successor `orthoScale` reaches the pose the
+    // renderer takes, as near does (measured by the census regenerated under #1764).
+    expect(isAnimatable(cam.s, cam.data, 'orthoScale', 'number')).toMatchObject({ reach: 'pose' });
     expect(isAnimatable(cam.s, cam.data, 'fStop', 'number').answer).toBe('still');
   });
 
@@ -178,15 +180,14 @@ describe('isAnimatable — three answers, never two', () => {
 });
 
 describe('a param read raw is measured, and answered still', () => {
-  it("a Track-To's fixed aim point is read straight from its params, so a keyframe on it moves nothing", () => {
+  // #1767 — a Track-To's own keys used to be read raw (a keyed aim point moved nothing); they are
+  // honoured now, and the census regenerated under #1764 measures the aim reaching the scene.
+  it("a Track-To's keyed aim point moves what it aims (#1767)", () => {
     const cube = place(buildDefaultDagState(), 'Cube');
     const tt = buildAddConstraintOps(cube.s, cube.obj, 'TrackTo')!;
     let s = cube.s;
     for (const op of tt.ops) s = applyOp(s, op).next;
-    expect(isAnimatable(s, tt.constraintId, 'aimPoint', 'vec3')).toEqual({
-      answer: 'still',
-      kind: 'vec3',
-    });
+    expect(isAnimatable(s, tt.constraintId, 'aimPoint', 'vec3')).toMatchObject({ reach: 'scene' });
   });
 });
 

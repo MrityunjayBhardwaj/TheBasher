@@ -11,7 +11,11 @@ import { registerAllNodes } from '../../nodes/registerAll';
 import { MemoryStorage } from '../storage';
 import { buildDefaultDagState } from './default';
 import { loadProject } from './io';
-import { migrateCameraCutsToIds, migrateProjectFormat } from './migrations';
+import {
+  migrateCameraAimToTrackTo,
+  migrateCameraCutsToIds,
+  migrateProjectFormat,
+} from './migrations';
 import { PROJECT_FORMAT_VERSION } from './schema';
 import { makeSplitCamera } from '../../test-utils/splitCamera';
 import { buildSetActiveCameraOps } from '../../app/setActiveCamera';
@@ -206,6 +210,11 @@ describe('#1679 — a v23 file from the graph build still has its cuts turned in
       state: DagState;
     };
     expect(out.formatVersion).toBe(PROJECT_FORMAT_VERSION);
-    expect(out.state).toEqual(launchV23.state);
+    // The v23 → v25 steps leave it alone; only v26 (#1762) acts, moving each camera's aim onto a
+    // Track-To, so it is compared against that step alone.
+    const aimOnly = migrateCameraAimToTrackTo({ ...launchV23, formatVersion: 25 }) as {
+      state: DagState;
+    };
+    expect(out.state).toEqual(aimOnly.state);
   });
 });

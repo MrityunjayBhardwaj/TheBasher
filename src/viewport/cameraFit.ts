@@ -232,3 +232,15 @@ export function orthoZoomForView(distance: number, fovDeg: number, viewportHeigh
   if (worldHeight <= 0) return 1;
   return viewportHeight / worldHeight;
 }
+
+/** #1774 — the ortho zoom that makes a look-through view frame what an orthographic camera's
+ *  render frames: `orthoScale` world units of HEIGHT (Blender's `ortho_scale`, Sensor Fit
+ *  Vertical), the width following the viewport's aspect — `buildRenderCamera`'s framing.
+ *
+ *  Same pixel frustum as above: the visible world-height at zoom z is `viewportHeight / z`, so
+ *  setting it to `orthoScale` gives z. Pure + testable (no THREE, no DOM). */
+export function orthoZoomForScale(orthoScale: number, viewportHeight: number): number {
+  if (!Number.isFinite(orthoScale) || orthoScale <= 0) return 1;
+  if (!Number.isFinite(viewportHeight) || viewportHeight <= 0) return 1;
+  return viewportHeight / orthoScale;
+}

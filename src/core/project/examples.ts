@@ -29,6 +29,7 @@
 // of the main bundle. Its AnimationClip holds the generated keys, so it opens and plays with
 // no motion server (measured with every request to the server blocked, #1282).
 
+import { cameraRotationLookingAt } from '../../app/cameraOrientation';
 import { applyOp, emptyDagState, type DagState } from '../dag';
 import type { Op } from '../dag/types';
 import { composeProject, type Project } from './index';
@@ -57,13 +58,25 @@ function scaffold(): Op[] {
       type: 'addNode',
       nodeId: 'n_camera_data',
       nodeType: 'CameraData',
-      params: { projection: 'Perspective', fov: 45, near: 0.1, far: 1000, lookAt: [0, 0.4, 0] },
+      // #1764 — focused on the point it looks at, so its aim reticle sits there.
+      params: {
+        projection: 'Perspective',
+        fov: 45,
+        near: 0.1,
+        far: 1000,
+        focusDistance: Math.hypot(4, 2.5 - 0.4, 4),
+      },
     },
     {
       type: 'addNode',
       nodeId: 'n_camera',
       nodeType: 'Object',
-      params: { position: [4, 2.5, 4], rotation: [0, 0, 0], scale: [1, 1, 1] },
+      // #1760 — turned by its own rotation to the point the lens aimed at (V665).
+      params: {
+        position: [4, 2.5, 4],
+        rotation: cameraRotationLookingAt([4, 2.5, 4], [0, 0.4, 0]),
+        scale: [1, 1, 1],
+      },
     },
     {
       type: 'connect',

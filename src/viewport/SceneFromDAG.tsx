@@ -178,13 +178,8 @@ import type {
   Vec3,
 } from '../nodes/types';
 import { uiEvaluatorCache } from '../app/uiEvaluatorCache';
-import {
-  createFrameEvaluator,
-  FrameEvaluatorProvider,
-  useFrameEvaluator,
-  useFrameTick,
-} from './frameEvaluator';
-import { drawnBox } from '../render/drawnBox';
+import { createFrameEvaluator, FrameEvaluatorProvider, useFrameTick } from './frameEvaluator';
+import { pickAsDrawn } from '../render/skinnedPick';
 
 let rectAreaInit = false;
 function ensureRectAreaInit() {
@@ -1436,7 +1431,6 @@ function DirectChannelsLightR({
     value: unknown;
     followKey: string;
   } | null>(null);
-  const evaluator = useFrameEvaluator();
   useFrameTick(nodeId, () => {
     const seconds = liveSecondsOf(nodeId);
     const { v, followKey } = build(seconds);
@@ -1452,7 +1446,6 @@ function DirectChannelsLightR({
       return;
     }
     lastApplied.current = { seconds, channels, transients, value, followKey };
-    evaluator.record(nodeId, v);
     // #1728 — committed now, not scheduled: a deferred update from a frame loop is starved by the
     // playhead's higher-priority updates while the frame is busy, and the light froze (#1726).
     // A light reads its whole value (scale as brightness, position for its aim), so it has no
@@ -2422,12 +2415,6 @@ function useOverlayDraw(
     value: unknown;
     key: string;
   } | null>(null);
-  // #1730 — the group is what carries this node's world when the transform is written onto it.
-  const evaluator = useFrameEvaluator();
-  useLayoutEffect(() => {
-    if (!direct || !group.current) return;
-    return evaluator.registerDrawn(nodeId, group.current);
-  }, [evaluator, direct, nodeId]);
   // #1730 — run by the frame evaluator, not a frame loop of its own: holders before what they
   // hold, and any React update committed with the frame's others in one synchronous commit.
   useFrameTick(nodeId, () => {
@@ -2444,7 +2431,6 @@ function useOverlayDraw(
     if (unchanged && la.key === key) return;
     last.current = { seconds, inputs, value, key };
     latest.current = v;
-    evaluator.record(nodeId, v);
     if (direct && group.current) writeTransform(group.current, v);
     // Committed in the evaluator's one synchronous commit, for the reason it gives: an animated
     // colour or size would otherwise lag behind the playhead under the same load.
@@ -2725,30 +2711,6 @@ function writeDeformed(
   built.geometry.boundingBox = null;
 }
 
-// #1610 / #1684 — a click tests a skinned mesh's own bounds before any triangle (three r169
-// SkinnedMesh.js:114/128), so they must be where the bones put the mesh now, or a character that
-// has walked away from where it was imported is not under the pointer. They are written from
-// `drawnBox` — the box every reader of "where is this mesh drawn" uses — just before the test, on
-// this mesh's own fields; the shared geometry is never written. They used to be cleared on every
-// pose so three would re-skin every vertex to refill them, which is what #1684 removed: the renderer
-// measures a null sphere on every draw to sort objects (WebGLRenderer.js:1374-1379), so clearing it
-// per frame re-skinned every character every frame (measured: 3.3 ms per frame for one X Bot).
-// REF: three r169 src/objects/SkinnedMesh.js:105-136, src/renderers/WebGLRenderer.js:1374-1379.
-function pickByDrawnBox(mesh: THREE.SkinnedMesh): void {
-  const measured = new THREE.Box3();
-  mesh.raycast = (raycaster, intersects) => {
-    if (drawnBox(mesh, measured)) {
-      const own = mesh as unknown as {
-        boundingBox: THREE.Box3 | null;
-        boundingSphere: THREE.Sphere | null;
-      };
-      own.boundingBox = (own.boundingBox ?? new THREE.Box3()).copy(measured);
-      own.boundingSphere = measured.getBoundingSphere(own.boundingSphere ?? new THREE.Sphere());
-    }
-    THREE.SkinnedMesh.prototype.raycast.call(mesh, raycaster, intersects);
-  };
-}
-
 /** #1737 — `${armature}|${clock}` for the skinned mesh `nodeId`, or null when it cannot be told. */
 function skinnedRigKey(nodeId: string | null): string | null {
   if (!nodeId) return null;
@@ -2834,7 +2796,7 @@ function SkinnedMeshR({
       mesh.bindMode = THREE.DetachedBindMode;
       mesh.bind(draw.skeleton, draw.bindMatrix);
       mesh.frustumCulled = false;
-      pickByDrawnBox(mesh);
+      pickAsDrawn(mesh);
       draw.pose(liveSecondsOf(nodeId), skin.pose);
       next = { mesh, draw, geometry, deformed: null };
     }

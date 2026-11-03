@@ -55,13 +55,27 @@ export function linkedDataNodeId(state: DagState, id: string): string | null {
  */
 export function posingObjectId(state: DagState, dataId: string): string | null {
   if (!dataId || !state.nodes[dataId]) return null;
-  for (const node of Object.values(state.nodes)) {
+  return posers(state.nodes).get(dataId) ?? null;
+}
+
+// #1757 — data id → the first node (in table order) that poses it, built once per node table
+// (its identity is the version: ops never mutate a table in place). Every non-transform param
+// read with no override of its own asks this, which was a scan of every node per read.
+const posersMemo = new WeakMap<object, ReadonlyMap<string, string>>();
+
+function posers(nodes: DagState['nodes']): ReadonlyMap<string, string> {
+  const hit = posersMemo.get(nodes);
+  if (hit) return hit;
+  const index = new Map<string, string>();
+  for (const node of Object.values(nodes)) {
     const dataRef = (node.inputs as Record<string, unknown> | undefined)?.data as
       | { node?: string }
       | undefined;
-    if (dataRef?.node === dataId) return node.id;
+    const dataId = dataRef?.node;
+    if (dataId && !index.has(dataId)) index.set(dataId, node.id);
   }
-  return null;
+  posersMemo.set(nodes, index);
+  return index;
 }
 
 /**

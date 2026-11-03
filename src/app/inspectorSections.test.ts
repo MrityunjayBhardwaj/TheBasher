@@ -45,11 +45,11 @@ describe('paramToSection — camera params route to the Camera section', () => {
     ]) {
       expect(homeOn('CameraData', p), `CameraData.${p}`).toBe('camera');
     }
-    // `zoom` is orthographic-only, and post-split both projections are the one CameraData —
+    // `orthoScale` is orthographic-only, and post-split both projections are the one CameraData —
     // which is why the whole loop reads that node. It used to read the fused
     // `PerspectiveCamera`, deleted in #599; CameraData is not a substitute for it but the
     // node that actually declares every one of these keys.
-    expect(homeOn('CameraData', 'zoom')).toBe('camera');
+    expect(homeOn('CameraData', 'orthoScale')).toBe('camera');
   });
   it('#257 — focusOnTarget must NOT fall through to the unrouted bucket (duplicate toggle)', () => {
     // A camera claims it; a node with no camera lens does not (no spurious routing).

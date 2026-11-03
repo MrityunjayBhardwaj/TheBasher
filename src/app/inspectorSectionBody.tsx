@@ -305,7 +305,7 @@ export const SECTION_CONTROLS: Record<SectionId, readonly SectionControl[]> = {
       omitRowKeys: [
         'fov',
         'sensorSize',
-        'zoom',
+        'orthoScale',
         'near',
         'far',
         'dofEnabled',

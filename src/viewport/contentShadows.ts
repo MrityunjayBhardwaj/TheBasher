@@ -171,10 +171,17 @@ export function installContentShadow(
  */
 export function shadowInputs(root: THREE.Object3D): number[] {
   const out: number[] = [];
+  walkShadowInputs(root, (v) => out.push(v));
+  return out;
+}
+
+/** {@link shadowInputs}, each number handed to `emit` in order rather than collected. */
+function walkShadowInputs(root: THREE.Object3D, emit: (v: number) => void): void {
   const walk = (o: THREE.Object3D, shown: boolean): void => {
     if (isEditorChrome(o)) return;
     const visible = shown && o.visible;
-    out.push(o.id, visible ? 1 : 0);
+    emit(o.id);
+    emit(visible ? 1 : 0);
     if (!visible) return;
     // Only the matrices a shadow pass reads: what it draws, the bones that skin it, and the
     // lights. A group's or a camera's own matrix reaches the pass only through its drawn
@@ -183,55 +190,84 @@ export function shadowInputs(root: THREE.Object3D): number[] {
     const drawn =
       (o as THREE.Mesh).isMesh || (o as THREE.Line).isLine || (o as THREE.Points).isPoints;
     if (drawn || (o as THREE.Bone).isBone || (o as THREE.Light).isLight) {
-      for (const e of o.matrixWorld.elements) out.push(e);
+      for (const e of o.matrixWorld.elements) emit(e);
     }
     const mesh = o as THREE.Mesh;
     if (mesh.isMesh) {
       const g = mesh.geometry;
-      out.push(g.id, g.drawRange.start, g.drawRange.count, g.index?.version ?? -1);
+      emit(g.id);
+      emit(g.drawRange.start);
+      emit(g.drawRange.count);
+      emit(g.index?.version ?? -1);
       for (const name in g.attributes) {
         const a = g.attributes[name] as THREE.BufferAttribute | THREE.InterleavedBufferAttribute;
-        out.push(
+        emit(
           (a as THREE.InterleavedBufferAttribute).isInterleavedBufferAttribute
             ? (a as THREE.InterleavedBufferAttribute).data.version
             : (a as THREE.BufferAttribute).version,
         );
       }
       for (const m of Array.isArray(mesh.material) ? mesh.material : [mesh.material]) {
-        out.push(m.id, m.version);
+        emit(m.id);
+        emit(m.version);
       }
-      out.push(mesh.castShadow ? 1 : 0);
+      emit(mesh.castShadow ? 1 : 0);
       const inst = o as THREE.InstancedMesh;
-      if (inst.isInstancedMesh) out.push(inst.count, inst.instanceMatrix.version);
-      if (mesh.morphTargetInfluences) out.push(...mesh.morphTargetInfluences);
+      if (inst.isInstancedMesh) {
+        emit(inst.count);
+        emit(inst.instanceMatrix.version);
+      }
+      if (mesh.morphTargetInfluences) for (const w of mesh.morphTargetInfluences) emit(w);
       // An imported character's bones live outside the scene (`src/app/skinnedDraw.ts`), so the
       // walk never meets them: a pose is read off the skeleton the skin draws with (#1694).
       const skinned = o as THREE.SkinnedMesh;
       if (skinned.isSkinnedMesh && skinned.skeleton) {
-        for (const e of skinned.bindMatrix.elements) out.push(e);
+        for (const e of skinned.bindMatrix.elements) emit(e);
         for (const bone of skinned.skeleton.bones) {
-          for (const e of bone.matrixWorld.elements) out.push(e);
+          for (const e of bone.matrixWorld.elements) emit(e);
         }
       }
     }
     const light = o as THREE.DirectionalLight;
     if (light.isLight && light.shadow) {
-      out.push(light.castShadow ? 1 : 0, light.shadow.mapSize.x, light.shadow.mapSize.y);
+      emit(light.castShadow ? 1 : 0);
+      emit(light.shadow.mapSize.x);
+      emit(light.shadow.mapSize.y);
       // A sun or spot aims at its target (three r169 src/lights/LightShadow.js:66 reads
       // `light.target.matrixWorld`), which need not sit in the scene.
-      if (light.target) for (const e of light.target.matrixWorld.elements) out.push(e);
+      if (light.target) for (const e of light.target.matrixWorld.elements) emit(e);
     }
     for (const child of o.children) walk(child, visible);
   };
   walk(root, true);
-  return out;
 }
 
-const sameNumbers = (a: readonly number[], b: readonly number[]): boolean => {
-  if (a.length !== b.length) return false;
-  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
-  return true;
-};
+/**
+ * #1757 — the last render's shadow inputs, kept in one buffer that each render's walk writes over
+ * while comparing, so a still frame allocates nothing (it built a fresh array of every number,
+ * about 63,000 on the alley, each frame). The same numbers in the same order as
+ * {@link shadowInputs}, compared the same way (`!==`).
+ */
+export function shadowInputsRecorder(): (root: THREE.Object3D) => boolean {
+  let buf = new Float64Array(4096);
+  let last = -1; // how many numbers the last render wrote; -1 before the first
+  return (root) => {
+    let n = 0;
+    let same = true;
+    walkShadowInputs(root, (v) => {
+      if (n === buf.length) {
+        const grown = new Float64Array(buf.length * 2);
+        grown.set(buf);
+        buf = grown;
+      }
+      if (same && buf[n] !== v) same = false; // past the last run's end, the length check decides
+      buf[n++] = v;
+    });
+    const changed = !same || n !== last;
+    last = n;
+    return changed;
+  };
+}
 
 /**
  * Turn `gl`'s shadow maps from every-render to on-change for `scene`. Returns the undo.
@@ -245,14 +281,12 @@ export function installShadowInvalidation(
   const prevHook = scene.onBeforeRender;
   gl.shadowMap.autoUpdate = false;
   gl.shadowMap.needsUpdate = true;
-  let last: number[] | null = null;
+  const changedSinceLast = shadowInputsRecorder();
   scene.onBeforeRender = function (this: THREE.Scene, ...args) {
     prevHook.apply(this, args);
     if (scene.overrideMaterial) return;
-    const now = measureStage('shadow:inputs', () => shadowInputs(scene));
-    if (last === null || !sameNumbers(now, last)) {
+    if (measureStage('shadow:inputs', () => changedSinceLast(scene))) {
       gl.shadowMap.needsUpdate = true;
-      last = now;
     }
   } as typeof scene.onBeforeRender;
   return () => {

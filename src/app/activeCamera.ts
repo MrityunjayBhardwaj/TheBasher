@@ -27,7 +27,7 @@
 
 import type { DagState } from '../core/dag';
 import type { Node, NodeRef } from '../core/dag/types';
-import { overlayCameraChannels, overlayCutChannel } from './cameraChannels';
+import { overlayCameraChannels, overlayCutChannels } from './cameraChannels';
 import {
   cameraDataOf,
   cameraLensParams,
@@ -38,10 +38,19 @@ import {
 import { type DofEffectSettings, resolveCameraDof } from './cameraDof';
 import { pickCameraSelect } from '../nodes/CameraSelect';
 import { sceneClockOf } from './sceneClock';
-import { clockedCtx } from './subjectClock';
-import { resolveTrackToTarget, resolveConstraintPosition } from './nodeConstraints';
+import { clockedCtx, type ClockedCtx } from './subjectClock';
+import { resolveConstraintPosition } from './nodeConstraints';
+import { withHeldCameraEdits } from './cameraHeldEdits';
+import { cameraLocalOrientation, cameraTrackToAim, type CameraOwnRotation } from './cameraTrackTo';
+import { quaternionFromEulerDeg, withResolvedRotation } from './resolvedRotation';
+import * as THREE from 'three';
 import { resolveParentWorldMatrix } from './resolveWorldTransform';
-import { composeCameraPoseWithParent } from './cameraOrientation';
+import {
+  cameraOrientationTuple,
+  composeCameraPoseWithParent,
+  lookAtRollFromQuat,
+  type Quat,
+} from './cameraOrientation';
 import type { EvaluatorCache } from '../core/dag/evaluator';
 import { DEFAULT_CAMERA_FAR, DEFAULT_CAMERA_NEAR } from '../nodes/CameraData';
 
@@ -52,11 +61,18 @@ export interface CameraPose {
   position: [number, number, number];
   lookAt: [number, number, number];
   fov: number;
+  /** #1760 — an orthographic camera's frame: the full height it sees, in world units (Blender's
+   *  `ortho_scale`, Sensor Fit Vertical). Read only when `kind` is orthographic. */
+  orthoScale: number;
   near: number;
   far: number;
   /** Roll about the view axis, in DEGREES (#229). Banks the implicit up-vector
    *  the lookAt model otherwise leaves at world +Y. 0 = no roll. */
   roll: number;
+  /** #1760 — the camera's orientation as `[x, y, z, w]`: WORLD for a resolved pose, parent-local
+   *  for a pose read off the params. The one value a reader turns a camera with; `lookAt` and
+   *  `roll` stay beside it while the readers move over (#487). */
+  quaternion: Quat;
 }
 
 /** Default editor framing — matches THESIS.md §11 and the default project's
@@ -66,10 +82,14 @@ export const DEFAULT_CAMERA_POSE: CameraPose = {
   position: [3, 2, 3],
   lookAt: [0, 0, 0],
   fov: 45,
+  orthoScale: 6,
   near: DEFAULT_CAMERA_NEAR,
   far: DEFAULT_CAMERA_FAR,
   roll: 0,
+  quaternion: cameraOrientationTuple([3, 2, 3], [0, 0, 0], 0),
 };
+
+type Vec3 = [number, number, number];
 
 function isVec3(v: unknown): v is [number, number, number] {
   return Array.isArray(v) && v.length === 3 && v.every((x) => typeof x === 'number');
@@ -120,8 +140,8 @@ function resolveActiveCameraFromSelect(
   return state.nodes[listed[idx]] ?? null;
 }
 
-/** The channel keying `selectId.active` — the film's cuts, each key naming its camera (#1668).
- *  The one the resolver samples and the shots panel reads and writes. */
+/** The first channel keying `selectId.active` — the film's cuts, each key naming its camera
+ *  (#1668). The one the shots panel reads and writes; the resolver folds it with any others. */
 export function cutChannelOf(state: DagState, selectId: string): Node | null {
   for (const n of Object.values(state.nodes)) {
     if (n.type !== 'KeyframeChannelText') continue;
@@ -132,23 +152,20 @@ export function cutChannelOf(state: DagState, selectId: string): Node | null {
 }
 
 /**
- * The camera id the switch names at `seconds`: its static `active`, overlaid by the cut keys
- * (`cutChannelOf`). Omit `seconds` → the static `active`.
+ * The camera id the switch names at `seconds`: its static `active`, overlaid by every channel on
+ * `active` (`overlayCutChannels`). Omit `seconds` → the static `active`.
  *
- * #1668 — Blender's rule for camera markers (`BKE_scene_camera_switch_find`, scene.cc): a key whose
+ * #1668 — each channel's pick follows Blender's rule for camera markers (`cutPickAt`): a key whose
  * camera is not among `listed` (deleted, or taken out of the switch) is SKIPPED, so the shot before
- * it runs on; the live key is the last one at or before `seconds`; before the first key, the
- * left-most key's camera holds. #1669 — a delete takes the keys naming its camera with it (the
- * walker reads cut keys as references), so the skip is the safety net for a camera taken out of
- * the switch but kept, whose keys are left as they are, so wiring the camera
- * back brings its cuts back with it. With no key naming a listed camera, the static `active` stands.
- * The keys hold their camera by construction (a text key is a step), which is what #1663 needs of
- * a choice.
+ * it runs on. #1669 — a delete takes the keys naming its camera with it (the walker reads cut keys
+ * as references), so the skip is the safety net for a camera taken out of the switch but kept,
+ * whose keys are left as they are, so wiring the camera back brings its cuts back with it. With no
+ * key naming a listed camera, the static `active` stands. The keys hold their camera by
+ * construction (a text key is a step), which is what #1663 needs of a choice.
  *
- * #482 — the cut channel obeys the rules every channel does: the pick is folded onto the
- * static `active` by `overlayCutChannel`, so a muted cut channel, or one whose weight leaves it
- * no say, plays the switch's own camera. The pick itself stays here, since only this function
- * knows which cameras the switch lists.
+ * #482 #1754 — the channels obey the rules every channel does: solo, mute, weight and order fold
+ * the picks onto the static `active`, so a muted cut channel plays the switch's own camera and a
+ * soloed second channel plays its own.
  */
 export function cutCameraIdAt(
   state: DagState,
@@ -159,17 +176,7 @@ export function cutCameraIdAt(
   const params = selectNode.params as { active?: unknown };
   const base = typeof params.active === 'string' ? params.active : '';
   if (seconds === undefined) return base;
-  const channel = cutChannelOf(state, selectNode.id);
-  if (!channel) return base;
-  const keys = (channel.params as { keyframes?: { time: number; value: unknown }[] }).keyframes;
-  if (!Array.isArray(keys)) return base;
-  const live = keys
-    .filter((k): k is { time: number; value: string } => listed.includes(k.value as string))
-    .sort((a, b) => a.time - b.time);
-  if (live.length === 0) return base;
-  let picked = live[0];
-  for (const k of live) if (k.time <= seconds) picked = k;
-  return overlayCutChannel(state, selectNode.id, channel, base, picked.value, seconds);
+  return overlayCutChannels(state, selectNode.id, base, listed, seconds);
 }
 
 /** Every camera NODE id in the DAG, in stable enumeration order (Object.values
@@ -233,15 +240,73 @@ export function cameraPoseFromPair(
     cameraProjectionFromPair(objectNode, dataNode) === 'Orthographic'
       ? 'OrthographicCamera'
       : 'PerspectiveCamera';
+  return ownOriented(
+    {
+      kind,
+      position: isVec3(o.position) ? o.position : DEFAULT_CAMERA_POSE.position,
+      fov: typeof lens.fov === 'number' ? lens.fov : DEFAULT_CAMERA_POSE.fov,
+      orthoScale:
+        typeof lens.orthoScale === 'number' && lens.orthoScale > 0
+          ? lens.orthoScale
+          : DEFAULT_CAMERA_POSE.orthoScale,
+      near: typeof lens.near === 'number' ? lens.near : DEFAULT_CAMERA_POSE.near,
+      far: typeof lens.far === 'number' ? lens.far : DEFAULT_CAMERA_POSE.far,
+    },
+    ownRotationOf(o),
+    aimDistanceOf(lens),
+  );
+}
+
+/** What a camera Object's params hold for its orientation (V665): `rotation`, in its mode. */
+function ownRotationOf(o: Record<string, unknown>): CameraOwnRotation {
   return {
-    kind,
-    position: isVec3(o.position) ? o.position : DEFAULT_CAMERA_POSE.position,
-    lookAt: isVec3(lens.lookAt) ? lens.lookAt : DEFAULT_CAMERA_POSE.lookAt,
-    fov: typeof lens.fov === 'number' ? lens.fov : DEFAULT_CAMERA_POSE.fov,
-    near: typeof lens.near === 'number' ? lens.near : DEFAULT_CAMERA_POSE.near,
-    far: typeof lens.far === 'number' ? lens.far : DEFAULT_CAMERA_POSE.far,
-    roll: typeof lens.roll === 'number' ? lens.roll : DEFAULT_CAMERA_POSE.roll,
+    rotation: isVec3(o.rotation) ? o.rotation : [0, 0, 0],
+    rotationMode: o.rotationMode === 'quaternion' ? 'quaternion' : undefined,
+    quaternion: isQuat(o.quaternion) ? o.quaternion : undefined,
   };
+}
+
+function isQuat(v: unknown): v is Quat {
+  return Array.isArray(v) && v.length === 4 && v.every((x) => typeof x === 'number');
+}
+
+/** A pose before its orientation is decided: everything but the look-at, roll and quaternion. */
+type UnorientedPose = Omit<CameraPose, 'quaternion' | 'lookAt' | 'roll'>;
+
+/** #1764 — how far ahead an un-aimed camera's aim point sits: its lens focus distance (the user's
+ *  call; Blender's camera Limits mark the focus point the same way). Raw, as the DoF road reads it. */
+function aimDistanceOf(lens: Record<string, unknown> | null | undefined): number {
+  const d = lens?.focusDistance;
+  return typeof d === 'number' && Number.isFinite(d) && d > 0 ? d : 5;
+}
+
+/** #1760 — `pose` turned by `quaternion` (parent-local). `lookAt` and `roll` are DERIVED from it
+ *  for the readers on them (the aim reticle, the look-through pivot, a re-aim keeping its bank):
+ *  the look-at is `aim` when a Track-To gives one, else the point straight ahead at
+ *  `aimDistance` (#1764: the lens focus distance). */
+function withOrientation(
+  pose: UnorientedPose,
+  quaternion: Quat,
+  aim: Vec3 | null,
+  aimDistance: number,
+): CameraPose {
+  const q = new THREE.Quaternion(...quaternion);
+  const dist =
+    aim === null
+      ? aimDistance
+      : Math.hypot(aim[0] - pose.position[0], aim[1] - pose.position[1], aim[2] - pose.position[2]);
+  const { lookAt, roll } = lookAtRollFromQuat(q, pose.position, dist || 1);
+  return { ...pose, lookAt: aim ?? lookAt, roll, quaternion };
+}
+
+/** A pose with no Track-To in reach (a static read): its Object's own rotation turns it. */
+function ownOriented(
+  pose: UnorientedPose,
+  own: CameraOwnRotation,
+  aimDistance: number,
+): CameraPose {
+  const { rotation } = withResolvedRotation(own);
+  return withOrientation(pose, quaternionFromEulerDeg(rotation), null, aimDistance);
 }
 
 /** {@link cameraPoseFromPair} applied to a node id — resolves the data half itself.
@@ -271,13 +336,13 @@ export function resolveActiveCameraPose(state: DagState): CameraPose {
  * so all three frame the SAME shot at time T (the V37/V51 viewport==render
  * parity invariant). One resolver, no parallel walk.
  *
- * PURE — a function of `(state, seconds)` only, with NO store reads. It overlays
- * channels through `overlayCameraChannels`, the call the world transform makes too, so
- * each channel is sampled by its own node and folded by the rules every node's channels
- * follow (#482), not by a parallel copy of them. Held transient edits are
- * intentionally NOT overlaid here: a render is of committed DAG state, and
- * including uncommitted transients would break render parity — the live-edit
- * preview is a separate viewport concern.
+ * A function of `(state, seconds)` and the held-edit store. It overlays channels through
+ * `overlayCameraChannels`, the call the world transform makes too, so each channel is sampled
+ * by its own node and folded by the rules every node's channels follow (#482), not by a
+ * parallel copy of them. #1773 — then the camera's held (un-keyed) edits, as an object's road
+ * lays them on: the one store read, an empty store changes nothing. So a render taken while an
+ * edit is held shows it on the camera as it does on every object in the live scene the still is
+ * rendered from; keying the edit or changing frame releases it.
  *
  * #204 Track-To migration: when the camera node carries an active Track-To
  * constraint, its `lookAt` is DERIVED from the target ([[V60]]) via the SAME
@@ -311,8 +376,8 @@ export function resolveActiveCameraPoseAt(
  *  parent-group world. `resolveActiveCameraPoseAt` is this applied to the active
  *  node; the camera-frustum FOLLOWER (SceneFromDAG) applies it per camera so every
  *  frustum tracks its OWN animation — the box-parity the static, channel-blind
- *  `resolveCameraFrustumPose` lacked. PURE — a function of (state, cameraId,
- *  seconds), no store reads. */
+ *  `resolveCameraFrustumPose` lacked. A function of (state, cameraId, seconds) and the held-edit
+ *  store (#1773: the camera's held edits on top of its keys). */
 export function resolveCameraPoseAt(
   state: DagState,
   cameraId: string,
@@ -322,6 +387,8 @@ export function resolveCameraPoseAt(
   const node = state.nodes[cameraId] ?? null;
   const base = cameraPoseForNodeId(state, cameraId) ?? DEFAULT_CAMERA_POSE;
   if (!node) return base;
+  // #1764 — the lens holds no aim: an un-aimed camera's aim point sits its focus distance ahead.
+  const aimDistance = aimDistanceOf(cameraLensParams(state, cameraId));
 
   // Overlay every channel belonging to this camera.
   //
@@ -340,8 +407,32 @@ export function resolveCameraPoseAt(
   // evaluated on the camera's own clock, the film's.
   const sceneSeconds = sceneClockOf(state).sceneAt(seconds);
   const filmCtx = clockedCtx(sceneSeconds, seconds, 'film');
-  const overlaid = overlayCameraChannels(state, node.id, base, filmCtx, cache);
-  let pose: CameraPose | null = overlaid === base ? null : overlaid; // clone lazily
+  // ONE overlay for everything the camera's channels can key (#1757 counts these scans per frame):
+  // its position and lens, and (#1760) its own rotation in its mode. The pose's own `quaternion`
+  // is left out: on the Object that name is the quaternion-mode rotation, which is what this
+  // bag carries under it, and the pose's orientation is decided below.
+  const { quaternion: _poseQuat, lookAt: _lookAt, roll: _roll, ...unoriented } = base;
+  void _poseQuat;
+  void _lookAt;
+  void _roll;
+  const {
+    rotation,
+    rotationMode,
+    quaternion: ownQuat,
+    ...keyedPose
+  } = withHeldCameraEdits(
+    state,
+    node.id,
+    overlayCameraChannels(
+      state,
+      node.id,
+      { ...unoriented, ...ownRotationOf(node.params as Record<string, unknown>) },
+      filmCtx,
+      cache,
+    ),
+  );
+  const pose: UnorientedPose = keyedPose;
+  const own: CameraOwnRotation = { rotation, rotationMode, quaternion: ownQuat };
 
   // #204 Track-To migration — an active Track-To on the camera node DERIVES its
   // aim ([[V60]]): lookAt = the target's world position (node-ref via #202, or the
@@ -372,16 +463,18 @@ export function resolveCameraPoseAt(
   // follows for free. `resolveConstraintPosition` returns PARENT-LOCAL, which is exactly
   // what the parent compose below expects.
   const followed = resolveConstraintPosition(state, node.id, filmCtx, cache);
-  if (followed) {
-    pose ??= { ...base };
-    pose.position = followed;
-  }
+  if (followed) pose.position = followed;
 
-  const aimTarget = resolveTrackToTarget(state, node.id, ctx, cache);
-  if (aimTarget) {
-    pose ??= { ...base };
-    pose.lookAt = aimTarget;
-  }
+  // #1760 — turned by its winning Track-To (#1766: aimed in the parent's space; #1759: its roll
+  // adds on), else by its own rotation: the rule every object follows (V665).
+  const { quaternion, aim } = cameraLocalOrientation(
+    state,
+    node.id,
+    pose.position,
+    own,
+    ctx,
+    cache,
+  );
 
   // #231 Inc 3.3 — a camera nested in a Group frames from the group-composed WORLD.
   // Compose AFTER the channel + Track-To overlays so the animated/aimed LOCAL pose
@@ -389,8 +482,19 @@ export function resolveCameraPoseAt(
   // top-level camera (wired only to scene.camera) → byte-identical to the flat pose,
   // so this is a safe drop-in for every pre-Inc-3.3 project.
   const parentWorld = resolveParentWorldMatrix(state, node.id, ctx, cache);
-  const result = pose ?? base;
+  const result = withOrientation(pose, quaternion, aim, aimDistance);
   return parentWorld ? composeCameraPoseWithParent(result, parentWorld) : result;
+}
+
+/**
+ * #1745 — the context a camera's own values are read in at playhead `seconds`: the film clock,
+ * carrying the scene time beside it, as the pose and the lens are read for the render. A reader
+ * that builds a plain `{ time }` context instead has its playhead taken for SCENE time by the
+ * clock helpers, so a driver reading a scene-clock source lands somewhere else whenever the
+ * scene does not run at speed 1 (render fov 20, inspector 40 at speed 0.5).
+ */
+export function cameraFilmCtx(state: DagState, seconds: number): ClockedCtx {
+  return clockedCtx(sceneClockOf(state).sceneAt(seconds), seconds, 'film');
 }
 
 /**
@@ -432,15 +536,33 @@ export function resolveCameraDofAt(
   let targetFocusDistance: number | undefined;
   if (lens.focusOnTarget === true) {
     try {
-      const pose = resolveCameraPoseAt(state, cameraId, seconds, cache);
-      targetFocusDistance = Math.hypot(
-        pose.lookAt[0] - pose.position[0],
-        pose.lookAt[1] - pose.position[1],
-        pose.lookAt[2] - pose.position[2],
-      );
+      targetFocusDistance = cameraFocusTargetDistance(state, cameraId, seconds, cache);
     } catch {
       /* fall back to the authored focusDistance */
     }
   }
   return resolveCameraDof(lens, cameraProjectionOf(state, cameraId), targetFocusDistance);
+}
+
+/**
+ * #1760 — what "focus on target" focuses on: the camera's winning Track-To's aim, as far from the
+ * camera as it is at film time `seconds` (both in world space, so a scaled parent cannot skew
+ * it). `undefined` when no Track-To aims the camera — it has no target, and its authored focus
+ * distance stands. The one source for the render, the viewport and the inspector's readout.
+ */
+export function cameraFocusTargetDistance(
+  state: DagState,
+  cameraId: string,
+  seconds: number,
+  cache?: EvaluatorCache,
+): number | undefined {
+  const ctx = clockedCtx(sceneClockOf(state).sceneAt(seconds), seconds);
+  if (!cameraTrackToAim(state, cameraId, ctx, cache)) return undefined;
+  // The pose's look-at IS the winning Track-To's aim point when one aims the camera (V665).
+  const pose = resolveCameraPoseAt(state, cameraId, seconds, cache);
+  return Math.hypot(
+    pose.lookAt[0] - pose.position[0],
+    pose.lookAt[1] - pose.position[1],
+    pose.lookAt[2] - pose.position[2],
+  );
 }

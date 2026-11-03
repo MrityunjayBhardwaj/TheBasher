@@ -21,7 +21,7 @@ import { useDagStore } from '../core/dag/store';
 import { DEFAULT_SENSOR_MM, focalLengthFromFov, fovFromFocalLength } from './cameraLens';
 import { autoKeyCommit, routeAnimatedGrab } from './animate/autoKeyCommit';
 import { CameraLookAtTarget } from './CameraLookAtTarget';
-import { resolveCameraPoseAt } from './activeCamera';
+import { cameraFilmCtx, cameraFocusTargetDistance } from './activeCamera';
 import { cameraProjectionOf } from './cameraNode';
 import { ParamDiamond } from './ParamDiamond';
 import { resolveEvaluatedParam } from './resolveEvaluatedParam';
@@ -87,37 +87,32 @@ export function CameraLensControls({
     return p?.focusOnTarget === true && timeDependentSetOf(s.state).has(poseNodeId);
   });
   const playhead = usePlayheadWhen(live, `${nodeId}|${poseNodeId}`);
-  const frame = playhead.filmFrame;
   const seconds = playhead.filmSeconds;
-  const normalized = playhead.normalized;
   const playing = useTimeStore((s) => s.playing);
   // #1314 — a stable cache: this re-reads the evaluated graph on every playhead change, and
   // uncached that re-runs everything under the node (a character's whole-clip retarget) per frame.
   const cache = uiEvaluatorCache;
   const evaluatedScalar = useMemo(() => {
-    const ctx = { time: { frame, seconds, normalized } };
+    // #1745 — the render's clock: the film clock with the scene time beside it. A plain
+    // `{ time }` here was read as SCENE time, so a driver fed by a scene-clock source showed
+    // another value than the render whenever the scene ran at another speed.
+    const ctx = cameraFilmCtx(dagState, seconds);
     const at = (paramPath: string) =>
       resolveEvaluatedParam(dagState, nodeId, paramPath, ctx, cache);
     return { fov: at('fov'), near: at('near'), far: at('far') };
-  }, [dagState, nodeId, frame, seconds, normalized, cache]);
+  }, [dagState, nodeId, seconds, cache]);
 
-  // #247 — when focus-on-target is on, the focus distance is DERIVED from the
-  // evaluated pose (|position − lookAt|, channels + Track-To) — the same value the
-  // renderer feeds cameraDof — so the field shows the live tracked distance,
-  // read-only. Hoisted above the early return (rules-of-hooks); reads focusOnTarget
+  // #247 — when focus-on-target is on and a Track-To aims the camera, the focus distance is
+  // DERIVED — the distance to that aim (#1760), the same value the renderer feeds cameraDof — so
+  // the field shows the live tracked distance, read-only. With no Track-To there is no target:
+  // the authored distance stands and stays editable. Hoisted above the early return (rules-of-hooks); reads focusOnTarget
   // from state so it needs no post-return destructure.
   const targetFocusDistance = useMemo(() => {
     const p = dagState.nodes[nodeId]?.params as { focusOnTarget?: unknown } | undefined;
     if (p?.focusOnTarget !== true) return null;
     try {
-      const pose = resolveCameraPoseAt(dagState, poseNodeId, seconds, cache);
-      return round(
-        Math.hypot(
-          pose.lookAt[0] - pose.position[0],
-          pose.lookAt[1] - pose.position[1],
-          pose.lookAt[2] - pose.position[2],
-        ),
-      );
+      const d = cameraFocusTargetDistance(dagState, poseNodeId, seconds, cache);
+      return d === undefined ? null : round(d);
     } catch {
       return null;
     }
@@ -129,7 +124,7 @@ export function CameraLensControls({
     sensorSize?: number;
     near?: number;
     far?: number;
-    zoom?: number;
+    orthoScale?: number;
     dofEnabled?: boolean;
     focusDistance?: number;
     fStop?: number;
@@ -139,7 +134,7 @@ export function CameraLensControls({
   // about the node's type. Post-split BOTH projections wear `type === 'Object'` on the
   // node this control is mounted for, so `node.type === 'OrthographicCamera'` answers
   // "perspective" for every split ortho camera: focal length + sensor + DoF rows on a
-  // camera that has none, and the `zoom` field gone. Asked through `cameraProjectionOf`
+  // camera that has none, and the ortho scale field gone. Asked through `cameraProjectionOf`
   // (which reads the `CameraData.projection` discriminator when split and the node type
   // when fused), so a still-fused camera is byte-identical ([[V119]]).
   const isOrtho = cameraProjectionOf(dagState, poseNodeId) === 'Orthographic';
@@ -147,9 +142,9 @@ export function CameraLensControls({
   const dofEnabled = params.dofEnabled ?? false;
   const focusOnTarget = params.focusOnTarget ?? false;
   const fStop = params.fStop ?? 2.8;
-  const focusDistance = focusOnTarget
-    ? (targetFocusDistance ?? params.focusDistance ?? 5)
-    : (params.focusDistance ?? 5);
+  // Tracking only while a Track-To gives the target a distance.
+  const tracking = focusOnTarget && targetFocusDistance !== null;
+  const focusDistance = tracking ? targetFocusDistance : (params.focusDistance ?? 5);
 
   // Effective (evaluated) value the renderer shows, falling back to the authored
   // param when no channel/transient drives it (resolved === null). `readOnly` while
@@ -223,16 +218,17 @@ export function CameraLensControls({
       <CameraLookAtTarget nodeId={nodeId} poseNodeId={poseNodeId} />
       {isOrtho ? (
         <label className={ROW}>
-          <span className={LABEL}>zoom</span>
+          {/* #478 #1760 — Blender's Orthographic Scale: the full height the camera sees. */}
+          <span className={LABEL}>ortho scale</span>
           <input
             type="number"
-            step={1}
+            step={0.1}
             min={0}
-            value={params.zoom ?? 50}
-            data-testid={`inspector-camera-zoom-${nodeId}`}
+            value={params.orthoScale ?? 6}
+            data-testid={`inspector-camera-ortho-scale-${nodeId}`}
             onChange={(e) => {
               const n = Number(e.target.value);
-              if (Number.isFinite(n) && n > 0) setParam('zoom', n, 'set camera zoom');
+              if (Number.isFinite(n) && n > 0) setParam('orthoScale', n, 'set camera ortho scale');
             }}
             className={NUM}
           />
@@ -324,11 +320,11 @@ export function CameraLensControls({
                   step={0.1}
                   min={0}
                   value={focusDistance}
-                  readOnly={focusOnTarget}
-                  data-readonly-tracking={focusOnTarget || undefined}
+                  readOnly={tracking}
+                  data-readonly-tracking={tracking || undefined}
                   data-testid={`inspector-camera-focus-${nodeId}`}
                   onChange={(e) => {
-                    if (focusOnTarget) return;
+                    if (tracking) return;
                     const n = Number(e.target.value);
                     if (Number.isFinite(n) && n > 0)
                       setParam('focusDistance', n, 'set focus distance');

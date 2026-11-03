@@ -182,26 +182,30 @@ describe('resolveDataParamOwner', () => {
   // The split is not obvious from the outside — `position` is a pose param and stays, while
   // `lookAt` and `roll` are ALSO pose params and move — so it is pinned per param rather
   // than described.
-  it('splits a camera pose across both halves — position stays, lookAt and roll move', () => {
+  it('splits a camera across both halves — the pose stays, the lens moves, and no half holds an aim', () => {
     const cam = makeSplitCamera(emptyDagState(), { objectId: 'cam' });
 
     expect(resolveDataParamOwner(cam.state, 'cam', 'position')).toBe('cam');
-    expect(resolveDataParamOwner(cam.state, 'cam', 'lookAt')).toBe(cam.dataId);
-    expect(resolveDataParamOwner(cam.state, 'cam', 'roll')).toBe(cam.dataId);
-    // The lens rides with the aim, for the same reason.
     expect(resolveDataParamOwner(cam.state, 'cam', 'fov')).toBe(cam.dataId);
+    // #1764 — the lens's `lookAt` and `roll` are gone (a camera is turned by its Object's rotation
+    // or a Track-To), so neither half answers for them.
+    expect(resolveDataParamOwner(cam.state, 'cam', 'lookAt')).toBeNull();
+    expect(resolveDataParamOwner(cam.state, 'cam', 'roll')).toBeNull();
   });
 
-  // The reach above is only sound because CameraData DECLARES `lookAt` and `roll` with zod
-  // defaults and `addNode` stores PARSED params, so a freshly minted lens carries both keys.
-  // This helper's possession test reads live params: an optional param with no default would
-  // be absent until something wrote it, and this would resolve to the Object forever — the
-  // self-locking shape that has bitten a possession check here before. So the presence of
-  // the keys is asserted directly, not assumed by the test above passing.
-  it('the camera lens carries its aim keys at mint, which is what makes the reach work', () => {
+  // The reach above is only sound because CameraData DECLARES its lens fields with zod defaults
+  // and `addNode` stores PARSED params, so a freshly minted lens carries every key. This helper's
+  // possession test reads live params: an optional param with no default would be absent until
+  // something wrote it, and would resolve to the Object forever — the self-locking shape that has
+  // bitten a possession check here before. So the presence of the keys is asserted directly.
+  it('the camera lens carries its lens keys at mint, which is what makes the reach work', () => {
     const cam = makeSplitCamera(emptyDagState(), { objectId: 'cam' });
     const lensParams = cam.state.nodes[cam.dataId].params as Record<string, unknown>;
 
-    expect(Object.keys(lensParams)).toEqual(expect.arrayContaining(['lookAt', 'roll']));
+    expect(Object.keys(lensParams)).toEqual(
+      expect.arrayContaining(['fov', 'near', 'far', 'orthoScale', 'focusDistance']),
+    );
+    expect(lensParams).not.toHaveProperty('lookAt');
+    expect(lensParams).not.toHaveProperty('roll');
   });
 });

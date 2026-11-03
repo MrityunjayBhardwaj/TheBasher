@@ -10,6 +10,7 @@
 // Leaf node, no consumers in the seed — animation channels wire to it
 // when they exist.
 
+import { cameraRotationLookingAt } from '../../app/cameraOrientation';
 import { applyOp, emptyDagState, type DagState } from '../dag';
 import type { Op } from '../dag/types';
 import { composeProject, type Project } from './index';
@@ -18,8 +19,8 @@ export const DEFAULT_PROJECT_ID = 'default';
 
 const DEFAULT_OPS: Op[] = [
   // #387 Stage C (C4) — the camera is split-native: a CameraData (the lens — projection,
-  // fov, clip planes, and the aim params lookAt/roll which stay on the data half
-  // parity-first, #387 D1) and an Object (the pose) that points at it via `data`.
+  // fov, clip planes) and an Object (the pose, its rotation turning it, #487) that points at it
+  // via `data`.
   //
   // ⚠️ THE OBJECT KEEPS THE ID `n_camera`. That id is what `scene.camera` names below, what
   // the v6→v7 migration's id-inheritance produces for an old fused save, and what ~18 e2e
@@ -28,20 +29,32 @@ const DEFAULT_OPS: Op[] = [
   // needs no migration on boot (K23).
   //
   // Values preserved EXACTLY as the fused seed carried them (fov 45 / near 0.01 /
-  // position [3,2,3] / lookAt [0,0,0]): the flip changes the shape, not the framing. The one
+  // position [3,2,3], turned to look at [0,0,0]): the flip changes the shape, not the framing. The one
   // exceptions are the clip planes: far 500 → 1000 (#1193) and near 0.01 → 0.1 (#1195),
   // Blender's camera Clip End and Clip Start.
   {
     type: 'addNode',
     nodeId: 'n_camera_data',
     nodeType: 'CameraData',
-    params: { projection: 'Perspective', fov: 45, near: 0.1, far: 1000, lookAt: [0, 0, 0] },
+    // #1764 — focused on the origin it looks at, so its aim reticle sits there.
+    params: {
+      projection: 'Perspective',
+      fov: 45,
+      near: 0.1,
+      far: 1000,
+      focusDistance: Math.hypot(3, 2, 3),
+    },
   },
   {
     type: 'addNode',
     nodeId: 'n_camera',
     nodeType: 'Object',
-    params: { position: [3, 2, 3], rotation: [0, 0, 0], scale: [1, 1, 1] },
+    // #1760 — turned to look at the origin by its own rotation, as any Object (V665).
+    params: {
+      position: [3, 2, 3],
+      rotation: cameraRotationLookingAt([3, 2, 3], [0, 0, 0]),
+      scale: [1, 1, 1],
+    },
   },
   {
     type: 'connect',

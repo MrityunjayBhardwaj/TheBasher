@@ -32,7 +32,10 @@ import { driverChannelValuesForTarget } from './paramDrivers';
 import { readBaseParam } from './readBaseParam';
 import { posingObjectId, resolveDataParamOwner } from './resolveDataParamOwner';
 import { useTransientEditStore } from './stores/transientEditStore';
-import { isKeyframeChannelNode } from './animate/paramAnimationState';
+import { cameraSoloScope } from './cameraNode';
+import { type ClockedCtx, clockOf, ctxOnClock } from './subjectClock';
+import { hasSoloChannelOn, keyframeChannelsTargeting } from './nodeChannels';
+import { stripTargetsOf } from './stripTargetIndex';
 
 interface ChannelParams {
   target?: unknown;
@@ -62,14 +65,22 @@ export function resolveEvaluatedParam(
    *  and inverse (data→poser) reaches below cannot bounce between the two halves forever.
    *  No external caller passes this. */
   visited?: ReadonlySet<string>,
-  /** INTERNAL — when true, return null rather than a BASE value if nothing overrides this
-   *  param. The inverse reach uses it so that "the poser has no override either" stays null:
+  /** When true, return null rather than a BASE value if nothing overrides this param. The
+   *  inspector's vector rows ask this way to learn whether anything animates the row (#1753).
+   *  The inverse reach uses it so that "the poser has no override either" stays null:
    *  this function's null IS the contract meaning "no override, caller uses base", and
    *  surfaces gate on it (NPanel's read-only-while-playing). Returning a base value up the
    *  inverse reach would mark every un-animated data param as animated. */
   overridesOnly?: boolean,
 ): { value: unknown } | null {
   const nodeId = requestedNodeId;
+  // #1753 — read on the clock this node runs on, as the render draws it: a camera and its lens
+  // data run on the playhead (#1594), so a scene-time context would sample a different moment
+  // with the scene slowed. Idempotent: a context already re-timed carries both its times. A plain
+  // context is scene time already, so a node on the scene's clock reads it as it is.
+  const clock = clockOf(state, nodeId, paramPath);
+  if (clock === 'film' || typeof (ctx as ClockedCtx).scene === 'number')
+    ctx = ctxOnClock(state, clock, ctx);
   const seen = new Set(visited ?? []);
   seen.add(requestedNodeId);
 
@@ -89,19 +100,18 @@ export function resolveEvaluatedParam(
   // (so resolving a non-solo sibling param falls back to base). Byte-identical when
   // nothing is solo'd. Strips/drivers (2b/2c) are appended after — un-gated, matching
   // the render side (they aren't collected through `channelValuesFromNodes` either).
-  const targetSoloActive = Object.values(state.nodes).some((node) => {
-    if (!isKeyframeChannelNode(node)) return false;
-    return (
-      (node.params as ChannelParams & { solo?: boolean })?.solo === true &&
-      (node.params as ChannelParams)?.target === nodeId
-    );
-  });
+  // #1745 — a camera's scope is both halves, Object and lens data, as the render folds them.
+  // #1757 — both reads go through the node table's channel index (built once per table), not a
+  // scan of every node on every read.
+  const targetSoloActive = hasSoloChannelOn(
+    state.nodes,
+    cameraSoloScope(state, nodeId) ?? [nodeId],
+  );
 
   let matches: KeyframeChannelValue[] = [];
-  for (const node of Object.values(state.nodes)) {
-    if (!isKeyframeChannelNode(node)) continue;
+  for (const node of keyframeChannelsTargeting(state.nodes, nodeId)) {
     const p = (node.params ?? {}) as ChannelParams & { solo?: boolean };
-    if (p.target !== nodeId || p.paramPath !== paramPath) continue;
+    if (p.paramPath !== paramPath) continue;
     if (targetSoloActive && p.solo !== true) continue; // soloed out → contributes nothing
     try {
       matches.push(evaluate(state, node.id, { cache, ctx }).value as KeyframeChannelValue);
@@ -114,8 +124,12 @@ export function resolveEvaluatedParam(
   //     for THIS param so a placed Strip reads == renders (H40). The SAME enumerator
   //     the render seam uses; param-scoped here. No strips → `matches` unchanged →
   //     byte-identical. The fold below treats bare channels + strips uniformly.
-  for (const v of stripChannelValuesForTarget(state.nodes, nodeId)) {
-    if (v.paramPath === paramPath) matches.push(v);
+  //     #1757 — asked only of a node some strip targets: with none, the enumerator walks every
+  //     track to return nothing.
+  if (stripTargetsOf(state.nodes).has(nodeId)) {
+    for (const v of stripChannelValuesForTarget(state.nodes, nodeId)) {
+      if (v.paramPath === paramPath) matches.push(v);
+    }
   }
 
   // 2c. Drivers (#293, Inc 2 — the PULL rail). Every ParamDriver bound to

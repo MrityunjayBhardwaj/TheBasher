@@ -63,6 +63,7 @@
 // REF: epic #201, docs/OPERATORS-AND-LIGHTING-DESIGN.md §4.3; vyapti V37/V58; H40.
 
 import * as THREE from 'three';
+import { withHeldCameraEdits } from './cameraHeldEdits';
 import { evaluate, type EvaluatorCache } from '../core/dag/evaluator';
 import type { DagState } from '../core/dag/state';
 import type { NodeRef } from '../core/dag/types';
@@ -73,15 +74,15 @@ import { overlayCameraChannels } from './cameraChannels';
 import { layeredChannelValues } from './layeredChannels';
 import { driverChannelValuesForTarget } from './paramDrivers';
 import type { KeyframeChannelValue } from '../nodes/types';
-import { cameraLensParams, isCameraNode } from './cameraNode';
+import { isCameraNode } from './cameraNode';
 import { resolveRigLightSources } from './resolveRigLightSources';
-import { cameraOrientationQuat } from './cameraOrientation';
+import { quaternionFromEulerDeg, withResolvedRotation } from './resolvedRotation';
+import type { Quat, RotationModeFields } from '../nodes/types';
 import { hierarchySocketForKind } from './sceneHierarchy';
 import { sceneIndexOf } from './sceneIndex';
 import { getNodeType } from '../core/dag/registry';
 import { conversionsInto } from '../core/dag/socketConversion';
 import { useTransientEditStore } from './stores/transientEditStore';
-import { withResolvedRotation } from './resolvedRotation';
 import { boneParentMatrix } from '../nodes/boneParent';
 import { type ClockedCtx, ctxOnClock, ctxOnClockOf } from './subjectClock';
 import { measureStage } from '../perf/frameProfiler';
@@ -535,14 +536,17 @@ function isIdentityMatrix(m: THREE.Matrix4): boolean {
   return true;
 }
 
-/** The world matrix of a camera from its pose: position + the orientation from
- *  (position → lookAt) banked by `roll`° (#229), identity scale. Delegates to the
- *  ONE shared `cameraOrientationQuat` so the resolved world matches the drawn
- *  frustum + the rendered/look-through orientation exactly (V37). */
-function cameraWorldMatrix(position: Vec3, lookAt: Vec3, roll: number): THREE.Matrix4 {
-  const pos = new THREE.Vector3(position[0], position[1], position[2]);
-  const q = cameraOrientationQuat(position, lookAt, roll);
-  return new THREE.Matrix4().compose(pos, q, new THREE.Vector3(1, 1, 1));
+/** #1760 — a camera's local matrix from its own transform: position and its Object's rotation
+ *  (in its mode), identity scale (the render does not scale a camera). Like every object on this
+ *  walk, no constraint is applied: a Track-To is folded by the readers that may (V665). */
+function cameraLocalMatrix(cam: CameraLocalPose): THREE.Matrix4 {
+  const pos = new THREE.Vector3(cam.position[0], cam.position[1], cam.position[2]);
+  const [x, y, z, w] = quaternionFromEulerDeg(withResolvedRotation(cam).rotation);
+  return new THREE.Matrix4().compose(
+    pos,
+    new THREE.Quaternion(x, y, z, w),
+    new THREE.Vector3(1, 1, 1),
+  );
 }
 
 function decompose(m: THREE.Matrix4): WorldTransform {
@@ -556,6 +560,59 @@ function decompose(m: THREE.Matrix4): WorldTransform {
     scale: [s.x, s.y, s.z],
     matrix: m.toArray(),
   };
+}
+
+/**
+ * A camera's own pose, before what it hangs from: its typed position, its lens data's aim and
+ * roll, and its channels overlaid on its own clock, the playhead (#482, #1594). `ctx` is the scene
+ * context the caller holds. The world read lifts this into world; the transform read (the
+ * inspector's Position row, a key taken with I) shows it as is (#1640).
+ *
+ * #387 — TWO reaches, and both must move together. The RAW read: `position` stays on the Object
+ * (it owns the TRS) while `lookAt`/`roll` moved to the CameraData, so a split camera read off one
+ * bag silently aims at the world origin. The CHANNEL read: a channel on the aim targets the DATA
+ * half, so an exact-id scan finds nothing and a keyed aim freezes. `cameraLensParams` answers the
+ * first; the both-ids enumerator, the same one push-down and the render overlay consume, answers
+ * the second.
+ */
+/** A camera's own transform as read (keys and held edits overlaid): its position and its rotation
+ *  in its mode. (#1764 — no lens roll: a Track-To's own roll is the only bank on an aim.) */
+export interface CameraLocalPose extends RotationModeFields {
+  position: Vec3;
+  rotation: Vec3;
+}
+
+export function cameraLocalPose(
+  state: DagState,
+  cameraId: string,
+  ctx: ClockedCtx,
+  cache?: EvaluatorCache,
+): CameraLocalPose {
+  const op = (state.nodes[cameraId]?.params ?? {}) as {
+    position?: unknown;
+    rotation?: unknown;
+    rotationMode?: unknown;
+    quaternion?: unknown;
+  };
+  const q = op.quaternion;
+  const cam: CameraLocalPose = {
+    // Fallbacks mirror DEFAULT_CAMERA_POSE (activeCamera.ts) without importing it.
+    position: isVec3(op.position) ? op.position : ([3, 2, 3] as Vec3),
+    // #1760 — the Object's own rotation, in its mode (V665).
+    rotation: isVec3(op.rotation) ? op.rotation : ([0, 0, 0] as Vec3),
+    rotationMode: op.rotationMode === 'quaternion' ? 'quaternion' : undefined,
+    quaternion:
+      Array.isArray(q) && q.length === 4 && q.every((v) => typeof v === 'number')
+        ? (q as unknown as Quat)
+        : undefined,
+  };
+  // #482 — the same call the camera's pose makes, so the gizmo and the render agree; #1773 — and
+  // the same held edits on top.
+  return withHeldCameraEdits(
+    state,
+    cameraId,
+    overlayCameraChannels(state, cameraId, cam, ctxOnClockOf(state, cameraId, ctx), cache),
+  );
 }
 
 /**
@@ -592,34 +649,16 @@ function worldTransformOf(
   //    camera resolver makes (#482). See the header on
   //    why this stays inline (the activeCamera import would cycle) and why a camera
   //    Track-To aim is not reflected here.
-  const camNode = state.nodes[selectedId];
-  if (camNode && isCameraNode(state, selectedId)) {
-    // #387 — TWO reaches, and both must move together. The RAW read: `position` stays on
-    // the Object (it owns the TRS) while `lookAt`/`roll` moved to the CameraData, so a
-    // split camera read off one bag silently aims at the world origin. The CHANNEL read:
-    // a channel on the aim targets the DATA half, so an exact-id scan finds nothing and a
-    // keyed aim freezes. `cameraLensParams` answers the first; the both-ids enumerator —
-    // the same one push-down and the render overlay consume — answers the second.
-    const op = camNode.params as { position?: unknown };
-    const cp = (cameraLensParams(state, selectedId) ?? {}) as { lookAt?: unknown; roll?: unknown };
-    let cam: { position: Vec3; lookAt: Vec3; roll: number } = {
-      // Fallbacks mirror DEFAULT_CAMERA_POSE (activeCamera.ts) without importing it.
-      position: isVec3(op.position) ? op.position : [3, 2, 3],
-      lookAt: isVec3(cp.lookAt) ? cp.lookAt : [0, 0, 0],
-      roll: typeof cp.roll === 'number' ? cp.roll : 0,
-    };
+  if (isCameraNode(state, selectedId)) {
     // #1643 / #1688 — a camera's own keys run on the playhead, so something parented to it or
     // aimed at it reads it where it is drawn. What it hangs from keeps its own clock (below).
-    const hungAt = ctx;
-    ctx = ctxOnClockOf(state, selectedId, ctx);
-    // #482 — the same call the camera's pose makes, so the gizmo and the render agree.
-    cam = overlayCameraChannels(state, selectedId, cam, ctx, cache);
+    const cam = cameraLocalPose(state, selectedId, ctx, cache);
     // #231 Inc 3.3 — a camera nested in a Group composes the parent's world (the
     // groupable-camera path). `resolveParentWorldMatrix` returns null for a
     // top-level camera (wired only to scene.camera) → byte-identical to the flat
     // local-pose world. The local matrix is the camera's own pose orientation.
-    const camLocal = cameraWorldMatrix(cam.position, cam.lookAt, cam.roll);
-    const parentWorld = resolveParentWorldMatrix(state, selectedId, hungAt, cache);
+    const camLocal = cameraLocalMatrix(cam);
+    const parentWorld = resolveParentWorldMatrix(state, selectedId, ctx, cache);
     return decompose(parentWorld ? parentWorld.clone().multiply(camLocal) : camLocal);
   }
 

@@ -107,3 +107,29 @@ describe('composeCameraPoseWithParent', () => {
     expect(out.lookAt[2]).toBeCloseTo(0);
   });
 });
+
+// Moved from CameraHelpers.test.ts (#1760): the frustum now reads the pose's quaternion, which
+// this function produces.
+describe('cameraOrientationQuat — aim', () => {
+  it('is identity when looking down -Z (three.js camera forward)', () => {
+    const q = cameraOrientationQuat([0, 0, 0], [0, 0, -1], 0);
+    const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(q);
+    expect(fwd.x).toBeCloseTo(0);
+    expect(fwd.y).toBeCloseTo(0);
+    expect(fwd.z).toBeCloseTo(-1);
+  });
+
+  it('rotates forward to point at the lookAt target', () => {
+    const q = cameraOrientationQuat([3, 2, 3], [0, 0, 0], 0);
+    const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(q).normalize();
+    const expected = new THREE.Vector3(-3, -2, -3).normalize();
+    expect(fwd.x).toBeCloseTo(expected.x);
+    expect(fwd.y).toBeCloseTo(expected.y);
+    expect(fwd.z).toBeCloseTo(expected.z);
+  });
+
+  it('defends against a zero-length direction (position == lookAt)', () => {
+    const q = cameraOrientationQuat([1, 1, 1], [1, 1, 1], 0);
+    expect(Number.isFinite(q.x + q.y + q.z + q.w)).toBe(true);
+  });
+});

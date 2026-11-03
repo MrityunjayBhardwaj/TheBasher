@@ -68,9 +68,11 @@ import { buildDeleteNodesOps, buildDuplicateNodesOps } from './sceneNodeActions'
 import { buildSetActiveCameraOps } from './setActiveCamera';
 import { useViewportStore } from './stores/viewportStore';
 import { keyParamFromTransient } from './animate/autoKeyCommit';
+import { keyCameraFromUI } from './animate/keyCamera';
+import { isCameraNode } from './cameraNode';
 import { historyUndo, historyRedo } from './history';
 import { isKeyframeChannelNode } from './animate/paramAnimationState';
-import { resolveEvaluatedTransform } from './resolveEvaluatedTransform';
+import { resolveOwnTransform } from './resolveEvaluatedTransform';
 import { resolvedQuaternionOf } from './resolvedRotation';
 import type { RotationModeFields } from '../nodes/types';
 import { getActiveCurvePoint } from './curvePointSelection';
@@ -703,11 +705,21 @@ export function KeyboardShortcuts() {
             return;
           }
           const selectedId = useSelectionStore.getState().primaryNodeId;
+          if (selectedId && isCameraNode(useDagStore.getState().state, selectedId)) {
+            // #1763 — a camera keys its OWN location, rotation (in its mode) and scale, and the
+            // aim of a point Track-To that wins on it; never the orientation the Track-To
+            // computes, which is what the evaluated read below would hand back (Blender's I).
+            keyCameraFromUI(selectedId);
+            return;
+          }
           if (selectedId) {
             const state = useDagStore.getState().state;
             // #1594 — the selection's own clock (a camera is read at the playhead).
             const { seconds, frame } = clockFor(state, selectedId);
-            const evalT = resolveEvaluatedTransform(state, selectedId, {
+            // #1776 — its OWN transform, never what a constraint derives (a Track-To's aim, a
+            // Follow-Path's position): Blender's I keys the object's own location/rotation/scale,
+            // and a key holding the derived value would be overridden anyway.
+            const evalT = resolveOwnTransform(state, selectedId, {
               time: { frame, seconds, normalized: 0 },
             });
             const params = (state.nodes[selectedId]?.params ?? {}) as Record<string, unknown>;

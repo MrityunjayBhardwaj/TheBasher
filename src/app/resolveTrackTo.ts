@@ -32,8 +32,64 @@ const _eye = new THREE.Vector3();
 const _target = new THREE.Vector3();
 const _up = new THREE.Vector3();
 const _m = new THREE.Matrix4();
-const _q = new THREE.Quaternion();
 const _e = new THREE.Euler();
+const _dir = new THREE.Vector3();
+const _roll = new THREE.Quaternion();
+
+/**
+ * #1760 — the aim as a quaternion: the orientation turning an object at `objPos` so its -Z faces
+ * `targetPos` with `up` as the roll reference, then rolled `rollDeg` about the aim. Null when the
+ * two coincide. {@link resolveTrackTo} is this as XYZ euler degrees; a camera, which carries its
+ * orientation as a quaternion, takes it as is. The returned quaternion is a fresh object.
+ */
+export function trackToQuaternion(
+  objPos: Vec3,
+  targetPos: Vec3,
+  up: Vec3 = DEFAULT_UP,
+  rollDeg = 0,
+): THREE.Quaternion | null {
+  _eye.set(objPos[0], objPos[1], objPos[2]);
+  _target.set(targetPos[0], targetPos[1], targetPos[2]);
+  if (_eye.distanceToSquared(_target) < DEGENERATE_EPS * DEGENERATE_EPS) return null;
+  _up.set(up[0], up[1], up[2]);
+  // Matrix4.lookAt builds a rotation whose -Z column points eye→target (camera
+  // convention) → using it as the object's rotation aims -Z at the target.
+  _m.lookAt(_eye, _target, _up);
+  const q = new THREE.Quaternion().setFromRotationMatrix(_m);
+  // #1759 — roll about the aim axis, the way a camera rolls (`cameraOrientationQuat`): rotating
+  // the whole basis about eye → target. No roll leaves the aim untouched.
+  if (rollDeg !== 0 && Number.isFinite(rollDeg)) {
+    _dir.subVectors(_target, _eye).normalize();
+    q.premultiply(_roll.setFromAxisAngle(_dir, THREE.MathUtils.degToRad(rollDeg)));
+  }
+  return q;
+}
+
+const _pq = new THREE.Quaternion();
+const _pp = new THREE.Vector3();
+const _ps = new THREE.Vector3();
+
+/**
+ * #1770 — a Track-To's `up`, in the frame an aim is computed in. The up vector is read in the
+ * Track-To's own space, as Blender reads it (5.1.1, measured: World space keeps world up, Local
+ * space the parent's): `aimSpace` 'world' → the world's +Y, 'parent' → the parent's. A road that
+ * aims in the world (`frame` 'world', the mesh fold) lifts a parent-space up by the parent's
+ * rotation; one that aims in the parent's frame (`frame` 'parent', the camera) brings a world-space
+ * up down into it. No parent (`parentWorld` null), or the two frames already the same → `up`.
+ * The ONE rule both roads take, so a camera and a mesh aimed alike are banked alike.
+ */
+export function trackToUpIn(
+  up: Vec3,
+  aimSpace: 'world' | 'parent',
+  frame: 'world' | 'parent',
+  parentWorld: THREE.Matrix4 | null,
+): Vec3 {
+  if (!parentWorld || aimSpace === frame) return up;
+  parentWorld.decompose(_pp, _pq, _ps);
+  if (frame === 'parent') _pq.invert();
+  const v = new THREE.Vector3(up[0], up[1], up[2]).applyQuaternion(_pq);
+  return [v.x, v.y, v.z];
+}
 
 /**
  * The aim rotation (Euler XYZ, DEGREES) orienting an object at `objPos` so its
@@ -45,16 +101,15 @@ const _e = new THREE.Euler();
  * Object3D default), so the degrees this returns compose into the SAME world
  * matrix `resolveWorldTransform` / the render produce — render==read parity (V37).
  */
-export function resolveTrackTo(objPos: Vec3, targetPos: Vec3, up: Vec3 = DEFAULT_UP): Vec3 | null {
-  _eye.set(objPos[0], objPos[1], objPos[2]);
-  _target.set(targetPos[0], targetPos[1], targetPos[2]);
-  if (_eye.distanceToSquared(_target) < DEGENERATE_EPS * DEGENERATE_EPS) return null;
-  _up.set(up[0], up[1], up[2]);
-  // Matrix4.lookAt builds a rotation whose -Z column points eye→target (camera
-  // convention) → using it as the object's rotation aims -Z at the target.
-  _m.lookAt(_eye, _target, _up);
-  _q.setFromRotationMatrix(_m);
-  _e.setFromQuaternion(_q, 'XYZ');
+export function resolveTrackTo(
+  objPos: Vec3,
+  targetPos: Vec3,
+  up: Vec3 = DEFAULT_UP,
+  rollDeg = 0,
+): Vec3 | null {
+  const q = trackToQuaternion(objPos, targetPos, up, rollDeg);
+  if (!q) return null;
+  _e.setFromQuaternion(q, 'XYZ');
   return [
     THREE.MathUtils.radToDeg(_e.x),
     THREE.MathUtils.radToDeg(_e.y),

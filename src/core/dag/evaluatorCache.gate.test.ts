@@ -131,12 +131,17 @@ const ORIGINS: Record<string, Origin> = {
     frequency: 'per-action',
     why: 'Agent render-summary tool: one evaluation per tool call.',
   },
-  'src/app/CameraLookAtTarget.tsx · bindLookAtTargetOps → resolveTrackToTarget': {
+  'src/app/CameraLookAtTarget.tsx · bindLookAtTargetOps → resolveEvaluatedTransform': {
     count: 1,
     frequency: 'per-action',
-    why: "The look-at target dropdown's change handler.",
+    why: "The look-at target dropdown's clear: the drawn orientation it freezes (#1760).",
   },
-  'src/app/KeyboardShortcuts.tsx · onKey → resolveEvaluatedTransform': {
+  'src/app/CameraLookAtTarget.tsx · bindLookAtTargetOps → resolveCameraPoseAt': {
+    count: 1,
+    frequency: 'per-action',
+    why: "The look-at target dropdown's bind: the world point the camera looks at, seeded as the Track-To's fallback aim (#1775).",
+  },
+  'src/app/KeyboardShortcuts.tsx · onKey → resolveOwnTransform': {
     count: 1,
     frequency: 'per-action',
     why: 'The insert-keyframe key.',
@@ -316,9 +321,18 @@ const TAKERS: string[] = [
   'collectCompositeInputs@src/app/video/compositeDecode.ts',
   'captureCompositeFrame@src/app/video/compositeDecode.ts',
   'aimTargetWorld@src/app/nodeConstraints.ts',
+  'aimPointWorld@src/app/nodeConstraints.ts',
+  'evaluatedTrackTo@src/app/nodeConstraints.ts',
+  'resolveActiveTrackTo@src/app/nodeConstraints.ts',
   'appendComputedSourceRows@src/timeline/layerChannelRows.ts',
   'applyGhostPoseBand@src/viewport/DiffOverlay.tsx',
   'buildOverrideSlotOp@src/app/objectSlotAuthoring.ts',
+  'cameraLocalPose@src/app/resolveWorldTransform.ts',
+  // #1763 — the keys I takes on a camera; the I key hands it the shared UI cache.
+  'cameraInsertKeys@src/app/animate/keyCamera.ts',
+  'cameraFocusTargetDistance@src/app/activeCamera.ts',
+  'cameraLocalOrientation@src/app/cameraTrackTo.ts',
+  'cameraTrackToAim@src/app/cameraTrackTo.ts',
   'collectReferenceRigs@src/app/animate/referenceRigs.ts',
   'collectSkeletonObjects@src/app/skeletonObjects.ts',
   'computedSourceRows@src/timeline/layerChannelRows.ts',
@@ -372,6 +386,7 @@ const TAKERS: string[] = [
   'resolveEvaluatedParam@src/app/resolveEvaluatedParam.ts',
   'resolveEvaluatedTransform@src/app/resolveEvaluatedTransform.ts',
   'resolveFollowedWorldPosition@src/app/nodeConstraints.ts',
+  'resolveOwnTransform@src/app/resolveEvaluatedTransform.ts',
   'resolveParentWorldMatrix@src/app/resolveWorldTransform.ts',
   'resolvePrimitiveTransform@src/app/resolveEvaluatedMesh.ts',
   'resolveRigTarget@src/app/studioLightRig.ts',

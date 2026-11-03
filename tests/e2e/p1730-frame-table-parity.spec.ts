@@ -1,12 +1,10 @@
-// #1730 — the frame table's world for a node equals the world it is DRAWN at.
+// #1730 — the world a reader resolves for a node equals the world it is DRAWN at.
 //
-// The frame evaluator keeps this frame's answers (`__basher_frame_table`): a node's world matrix,
-// asked for by id, as `resolveWorldTransform` gives it on the node's clock at the live playhead,
-// and the three.js objects drawn as carrying that node's world (the overlay group the keyed
-// transform is written onto). Readers move onto the table next (#1731), so the table must say
-// where things are drawn, not where some other road thinks they are. This is that check, on both
-// sides of the boundary: the table's matrix against the drawn object's `matrixWorld`, element by
-// element, at 20 playhead times.
+// The gizmo, the camera aim and a constraint read a node's world through `resolveWorldTransform`
+// (`__basher_world_transform`); the viewport draws it through the frame evaluator's ticks. This
+// checks both sides of that boundary at 20 playhead times: the resolved matrix's translation and
+// rotation against the drawn mesh's world position and quaternion. (#1730 read the resolved side
+// off a frame table; nothing in the app read that table, and #1748 cut it.)
 //
 // Subject: the default scene's `n_box`, keyed on position AND rotation (so every part of the
 // matrix moves), drawn through the mesh overlay.
@@ -15,12 +13,18 @@ import { test, expect } from './_fixtures';
 
 const TIMES = Array.from({ length: 20 }, (_, i) => +(i * 0.37 + 0.05).toFixed(3));
 
-test('the frame table world equals the drawn world at 20 times', async ({ page }) => {
+test('the resolved world equals the drawn world at 20 times', async ({ page }) => {
   await page.goto('/');
   await expect(page.getByTestId('layout')).toBeVisible({ timeout: 15_000 });
   await page.waitForFunction(() => {
     const w = window as unknown as Record<string, unknown>;
-    return Boolean(w.__basher_dag && w.__basher_time && w.__basher_frame_table);
+    return Boolean(
+      w.__basher_dag &&
+      w.__basher_time &&
+      w.__basher_world_transform &&
+      w.__basher_mesh_world_position &&
+      w.__basher_mesh_world_quaternion,
+    );
   });
   await page.evaluate(() => {
     const w = window as unknown as {
@@ -77,21 +81,35 @@ test('the frame table world equals the drawn world at 20 times', async ({ page }
         new Promise<{ t: number; maxDiff: number; drawn: number; x: number }>((resolve) =>
           requestAnimationFrame(() =>
             requestAnimationFrame(() => {
-              const table = (
-                window as unknown as {
-                  __basher_frame_table: {
-                    world: (id: string) => number[] | null;
-                    drawn: (id: string) => Set<{ matrixWorld: { elements: number[] } }>;
-                  };
-                }
-              ).__basher_frame_table;
-              const world = table.world('n_box');
-              const drawn = [...table.drawn('n_box')];
-              let maxDiff = world && drawn.length ? 0 : Infinity;
-              for (const o of drawn)
-                for (let i = 0; i < 16; i++)
-                  maxDiff = Math.max(maxDiff, Math.abs(o.matrixWorld.elements[i] - world![i]));
-              resolve({ t: s, maxDiff, drawn: drawn.length, x: world ? world[12] : NaN });
+              const w = window as unknown as {
+                __basher_world_transform: (
+                  id: string,
+                  ctx: unknown,
+                ) => { matrix: readonly number[] } | null;
+                __basher_mesh_world_position: (id: string) => number[] | null;
+                __basher_mesh_world_quaternion: (id: string) => number[] | null;
+              };
+              const m =
+                w.__basher_world_transform('n_box', {
+                  time: { frame: Math.round(s * 30), seconds: s, normalized: 0 },
+                })?.matrix ?? null;
+              const p = w.__basher_mesh_world_position('n_box');
+              const q = w.__basher_mesh_world_quaternion('n_box');
+              if (!m || !p || !q) return resolve({ t: s, maxDiff: Infinity, drawn: 0, x: NaN });
+              // The drawn rotation as a column-major 3×3 (unit scale), against the resolved one.
+              const [x, y, z, qw] = q;
+              const r = [
+                [1 - 2 * (y * y + z * z), 2 * (x * y + qw * z), 2 * (x * z - qw * y)],
+                [2 * (x * y - qw * z), 1 - 2 * (x * x + z * z), 2 * (y * z + qw * x)],
+                [2 * (x * z + qw * y), 2 * (y * z - qw * x), 1 - 2 * (x * x + y * y)],
+              ];
+              let maxDiff = 0;
+              for (let c = 0; c < 3; c++) {
+                maxDiff = Math.max(maxDiff, Math.abs(p[c] - m[12 + c]));
+                for (let k = 0; k < 3; k++)
+                  maxDiff = Math.max(maxDiff, Math.abs(r[c][k] - m[c * 4 + k]));
+              }
+              resolve({ t: s, maxDiff, drawn: 1, x: m[12] });
             }),
           ),
         ),
@@ -101,9 +119,9 @@ test('the frame table world equals the drawn world at 20 times', async ({ page }
   }
   console.log(`[p1730] ${JSON.stringify(rows.map((r) => [r.t, r.drawn, r.maxDiff]))}`);
   for (const r of rows) {
-    expect(r.drawn, `t=${r.t}: n_box is drawn by a registered object`).toBeGreaterThan(0);
+    expect(r.drawn, `t=${r.t}: n_box is drawn and resolves`).toBeGreaterThan(0);
     // float32 matrixWorld vs float64 compose: equal to well under a millionth of a unit.
-    expect(r.maxDiff, `t=${r.t}: table world vs drawn matrixWorld`).toBeLessThan(1e-5);
+    expect(r.maxDiff, `t=${r.t}: resolved world vs drawn world`).toBeLessThan(1e-5);
   }
   // The subject did move: a check of two frozen worlds would pass too.
   expect(rows.length).toBe(20);

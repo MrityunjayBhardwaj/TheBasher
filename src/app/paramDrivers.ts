@@ -107,13 +107,29 @@ export function driverNodesForTarget<T extends NodeLike>(
   targetId: string,
 ): T[] {
   if (!targetId) return [];
-  const out: T[] = [];
+  return ((driverIndex(nodes).get(targetId) ?? []) as T[]).slice();
+}
+
+// #1757 — the bound drivers by target, built once per node table (its identity is the version:
+// ops never mutate a table in place). Copied on the way out, so a caller's sort cannot reorder
+// what every other reader of the table sees.
+const driverIndexMemo = new WeakMap<object, ReadonlyMap<string, readonly NodeLike[]>>();
+
+function driverIndex(
+  nodes: Readonly<Record<string, NodeLike>>,
+): ReadonlyMap<string, readonly NodeLike[]> {
+  const hit = driverIndexMemo.get(nodes);
+  if (hit) return hit;
+  const index = new Map<string, NodeLike[]>();
   for (const node of Object.values(nodes)) {
     if (!isBoundDriver(node)) continue;
-    if (((node.params ?? {}) as DriverParams).target !== targetId) continue;
-    out.push(node);
+    const target = ((node.params ?? {}) as DriverParams).target as string;
+    const list = index.get(target);
+    if (list) list.push(node);
+    else index.set(target, [node]);
   }
-  return out;
+  driverIndexMemo.set(nodes, index);
+  return index;
 }
 
 /**

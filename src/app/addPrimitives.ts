@@ -10,6 +10,7 @@
 //
 // REF: THESIS.md §50 (Op system); krama K6 (sister chain — asset drop).
 
+import { cameraRotationLookingAt } from './cameraOrientation';
 import type { DagState } from '../core/dag/state';
 import type { Op } from '../core/dag/types';
 import { buildSkeletonObjectOps } from '../core/import/skeletonObject';
@@ -424,8 +425,8 @@ function buildUnlinkedAddOps(
   }
 
   // #387 Stage C (C4) — a camera is the object↔data split too: an Object (the pose) wired to
-  // a CameraData (the lens: projection/fov/zoom/clip planes/DoF, plus the aim params lookAt
-  // and roll, which stay on the data half parity-first, #387 D1). Both projections mint the
+  // a CameraData (the lens: projection/fov/ortho scale/clip planes/DoF; no aim, #487). Both
+  // projections mint the
   // SAME node pair and differ only in `projection` — one datablock with a discriminator, as
   // LightData did for four light kinds. Split-native, so "Add ▸ Camera ▸ Perspective" and the
   // v6→v7 load-migration converge on one shape (K23).
@@ -448,7 +449,12 @@ function buildUnlinkedAddOps(
           type: 'addNode',
           nodeId: dataId,
           nodeType: 'CameraData',
-          params: cameraDataParamsFor(kind),
+          // #1764 — focused on the origin the new camera is turned to look at (below), so its
+          // aim reticle sits there.
+          params: {
+            ...cameraDataParamsFor(kind),
+            focusDistance: Math.hypot(...position) || 5,
+          },
         },
         {
           type: 'addNode',
@@ -711,20 +717,18 @@ function lightDataParamsFor(kind: PrimitiveKind): Record<string, unknown> {
  * and the pose fallback use, so which road minted a camera no longer decides its clipping.
  * Before that, this builder's `far: 1000` was the lone 1000 against their 500, and its
  * near was 0.01 everywhere. Every OTHER value is still preserved exactly as the fused
- * builders seeded it, including the orthographic `zoom: 1`. NO behaviour change rides in on the creation flip: this slice
- * changes the SHAPE a new camera is minted in, nothing about what it looks like. The ortho
- * `zoom: 1` in particular is currently read by no renderer at all (#478) — it is seeded here
- * unchanged so that issue stays exactly as measurable as it was, and is fixed under #478.
+ * builders seeded it. An orthographic camera takes `CameraData`'s own ortho scale, Blender's
+ * default 6 (#478, #1760); the `zoom: 1` it used to be seeded with was read by nothing.
  *
  * `fov` is written for BOTH projections because `CameraData.fov` is required with no zod
  * default (deliberately — 45 is the pose road's failure value, so it must never arrive as a
- * silent fallback). Under `projection: 'Orthographic'` it is inert: the recompose reads
- * `zoom`. This is the same one-invented-value-in-one-place call the v6→v7 migration makes.
+ * silent fallback). Under `projection: 'Orthographic'` it is inert: the frame is
+ * `orthoScale`. This is the same one-invented-value-in-one-place call the v6→v7 migration makes.
  */
 function cameraDataParamsFor(kind: PrimitiveKind): Record<string, unknown> {
-  const shared = { fov: 45, near: DEFAULT_CAMERA_NEAR, far: DEFAULT_CAMERA_FAR, lookAt: [0, 0, 0] };
+  const shared = { fov: 45, near: DEFAULT_CAMERA_NEAR, far: DEFAULT_CAMERA_FAR };
   return kind === 'OrthographicCamera'
-    ? { projection: 'Orthographic', zoom: 1, ...shared }
+    ? { projection: 'Orthographic', ...shared }
     : { projection: 'Perspective', ...shared };
 }
 
@@ -755,11 +759,13 @@ function paramsFor(kind: PrimitiveKind, position: Vec3): Record<string, unknown>
     case 'AmbientLight':
       return { intensity: 0.3, color: '#ffffff' };
     // #387 C4 — a camera is the object↔data split; these params are the OBJECT half's TRS
-    // only. The lens (fov/zoom/near/far/lookAt/roll) is minted by cameraDataParamsFor onto
+    // only. The lens (fov/orthoScale/near/far/DoF) is minted by cameraDataParamsFor onto
     // the CameraData half by the camera branch above.
+    // #1760 — turned by its own rotation to the world origin (V665): the framing it had while
+    // a lens look-at turned it.
     case 'PerspectiveCamera':
     case 'OrthographicCamera':
-      return { position, rotation: [0, 0, 0], scale: [1, 1, 1] };
+      return { position, rotation: cameraRotationLookingAt(position, [0, 0, 0]), scale: [1, 1, 1] };
     // #394 — a Material has NO pose. Its params come from its own zod defaults (THE
     // standard material), so nothing is seeded here; passing a `position` would mint a
     // param the schema strips and read as though a material had a place in the world.

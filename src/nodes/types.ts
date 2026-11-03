@@ -50,20 +50,19 @@ export interface PerspectiveCameraValue {
   readonly near: number;
   readonly far: number;
   readonly position: Vec3;
-  readonly lookAt: Vec3;
-  /** Roll about the view axis, in DEGREES (#229). */
-  readonly roll: number;
+  /** #1764 — the camera Object's own rotation, the orientation it has with no Track-To. */
+  readonly rotation: Vec3;
 }
 
 export interface OrthographicCameraValue {
   readonly kind: 'OrthographicCamera';
-  readonly zoom: number;
+  /** The full height seen, in world units (Blender `ortho_scale`, Sensor Fit Vertical). */
+  readonly orthoScale: number;
   readonly near: number;
   readonly far: number;
   readonly position: Vec3;
-  readonly lookAt: Vec3;
-  /** Roll about the view axis, in DEGREES (#229). */
-  readonly roll: number;
+  /** #1764 — the camera Object's own rotation, the orientation it has with no Track-To. */
+  readonly rotation: Vec3;
 }
 
 export type CameraValue = PerspectiveCameraValue | OrthographicCameraValue;
@@ -2233,15 +2232,15 @@ export interface LightDataValue {
 }
 
 /**
- * The camera's data half — the LENS (projection + focal length/zoom, clip planes,
- * sensor, depth of field) and the authored aim (`lookAt`/`roll`, parity-first #387
- * D1), and DELIBERATELY no position (the Object owns it).
+ * The camera's data half — the LENS (projection + focal length/ortho scale, clip planes,
+ * sensor, depth of field), and DELIBERATELY no pose: position and rotation are the
+ * Object's, and an aim is a Track-To (#487, #1764).
  *
  * ONE discriminated node, not two (#387, Stage C · C4): `projection` is the enum that
  * collapses the two fused camera NODES into one Camera datablock, Blender-style. The
  * per-projection fields are all present (the schema defaults them) but a given
  * projection reads only the subset it owns — `fov` is inert for an orthographic
- * camera, `zoom` for a perspective one.
+ * camera, `orthoScale` for a perspective one.
  *
  * ⚠️ Unlike LightData, this value is NOT what frames the shot. `recomposeCameraObject`
  * turns the pair into the flat `CameraValue` the DAG's camera consumers read, but that
@@ -2254,8 +2253,8 @@ export interface CameraDataValue {
   readonly projection: 'Perspective' | 'Orthographic';
   /** Vertical FOV in degrees. Required with no schema default — see CameraData.ts. */
   readonly fov: number;
-  /** Orthographic scale. Read by nothing today (#478); owned here regardless. */
-  readonly zoom: number;
+  /** Orthographic scale: the full height seen, in world units (#478, #1760). */
+  readonly orthoScale: number;
   readonly near: number;
   readonly far: number;
   readonly sensorSize: number;
@@ -2263,9 +2262,6 @@ export interface CameraDataValue {
   readonly focusDistance: number;
   readonly fStop: number;
   readonly focusOnTarget: boolean;
-  readonly lookAt: Vec3;
-  /** Roll about the view axis, in DEGREES (#229). */
-  readonly roll: number;
 }
 
 /**
@@ -2808,10 +2804,14 @@ export interface TrackToConstraintValue {
   readonly aimNode: string;
   /** #1284 — a node inside the `aimNode` character (a bone) to aim at instead; '' = none. */
   readonly aimBone: string;
-  /** Fixed-point aim target (world) used when `aimNode` is empty. */
+  /** Fixed-point aim target used when `aimNode` is empty, in `aimSpace`. */
   readonly aimPoint: Vec3;
+  /** #1759 — the space `aimPoint` is in: the world, or the constrained object's parent. */
+  readonly aimSpace: 'world' | 'parent';
   /** Roll reference (default +Y). */
   readonly up: Vec3;
+  /** #1759 — degrees of roll about the aim axis, after aiming. */
+  readonly roll: number;
   /** Bypass — a muted constraint contributes nothing (the constraint stack). */
   readonly mute: boolean;
   /** Position in the target's ordered constraint stack (low → high, bottom → top).

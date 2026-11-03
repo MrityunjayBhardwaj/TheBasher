@@ -6,9 +6,10 @@
 // at the playhead: x = 4, the camera riding it the way Blender's own camera rigs carry theirs.
 // Read off what the viewport DRAWS THROUGH (`__basher_view_camera`). Falsifiable: read the rig at
 // scene time whatever its clock says and the second reading stays at 2.
+import { cameraRotationLookingAt } from '../../src/app/cameraOrientation';
 import { expect, test } from './_fixtures';
 import type { Page } from '@playwright/test';
-import { splitCameraDataId, splitCameraOps } from './_splitCamera';
+import { splitCameraOps } from './_splitCamera';
 
 interface W {
   __basher_dag: {
@@ -117,11 +118,12 @@ test('a rig set to the film clock carries its camera at the playhead in a slowed
   await page.screenshot({ path: 'test-results/p1688-rig-on-film.png' });
 });
 
-// The camera gizmo writes the aim in the camera's LOCAL space, so it undoes the rig's world. At 2 s
-// of the playhead a scene-time rig stands at x = 2 and a film-time rig at x = 4 — where they are
-// drawn. Aim at world x = 10 and the written local aim is 10 minus that. Falsifiable: hand the
-// gizmo's parent read the playhead as if it were scene time, and the rig is read at x = 4 (scene
-// rig) or x = 8 (film rig), and the local aim comes out 6 or 2.
+// The camera gizmo aims in the camera's LOCAL space, so it undoes the rig's world. At 2 s of the
+// playhead a scene-time rig stands at x = 2 and a film-time rig at x = 4 — where they are drawn.
+// Aim at world x = 10 and the camera turns to look at local x = 10 minus that (#1764: written as
+// its own rotation; the lens holds no aim). Falsifiable: hand the gizmo's parent read the playhead
+// as if it were scene time, and the rig is read at x = 4 (scene rig) or x = 8 (film rig), and the
+// camera turns toward local x = 6 or 2 instead.
 for (const rigClock of [undefined, 'film'] as const) {
   const rigX = rigClock ? 4 : 2;
   test(`the camera gizmo undoes the rig where it is drawn (rig ${rigClock ?? 'on scene time'})`, async ({
@@ -139,18 +141,22 @@ for (const rigClock of [undefined, 'film'] as const) {
     await page.evaluate(() =>
       (window as unknown as W).__basher_camera_gizmo_grab!('aim', [10, 0, 0]),
     );
-    let lookAt: number[] = [];
+    const want = cameraRotationLookingAt([0, 1, 6], [10 - rigX, 0, 0], 0);
+    // The rig read at the wrong clock would turn it toward local 10 − (2·rigX): far off.
+    const wrong = cameraRotationLookingAt([0, 1, 6], [10 - 2 * rigX, 0, 0], 0);
+    expect(Math.abs(wrong[1] - want[1])).toBeGreaterThan(5);
+    let rotation: number[] = [];
     await expect
       .poll(async () => {
-        lookAt = await page.evaluate(
-          (data) =>
-            (window as unknown as W).__basher_dag.getState().state.nodes[data].params
-              .lookAt as number[],
-          splitCameraDataId('p1688_cam'),
+        rotation = await page.evaluate(
+          () =>
+            (window as unknown as W).__basher_dag.getState().state.nodes.p1688_cam.params
+              .rotation as number[],
         );
-        return lookAt[0] !== 0;
+        return Math.abs(rotation[1] - want[1]) < 0.05;
       })
       .toBe(true);
-    expect(lookAt[0], 'world aim 10 minus the drawn rig').toBeCloseTo(10 - rigX, 2);
+    for (let i = 0; i < 3; i++)
+      expect(rotation[i], 'looks at world aim 10 minus the drawn rig').toBeCloseTo(want[i], 2);
   });
 }

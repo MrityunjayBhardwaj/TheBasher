@@ -143,8 +143,12 @@ describe('resolveEvaluatedTransform', () => {
   it('returns null for an unknown id and for a non-rendered node (no crash)', () => {
     const state = buildAnimatedState();
     expect(resolveEvaluatedTransform(state, 'not_a_node', ctxAt(0))).toBeNull();
-    // n_camera is a real node but not a scene child / wrapped target.
-    expect(resolveEvaluatedTransform(state, 'n_camera', ctxAt(0))).toBeNull();
+    // The camera's lens data is a real node, but nothing draws it at a place of its own.
+    expect(resolveEvaluatedTransform(state, 'n_camera_data', ctxAt(0))).toBeNull();
+    // #1640 — the camera itself is not a scene child, but it is drawn: it resolves to its pose.
+    expect(resolveEvaluatedTransform(state, 'n_camera', ctxAt(0))?.position).toEqual(
+      (state.nodes.n_camera.params as { position: number[] }).position,
+    );
   });
 
   // 6. SCALE/SIZE: BoxMesh has `size`, no `scale` → resolver returns scale

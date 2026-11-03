@@ -18,7 +18,8 @@
 //   - `armaturePoseAt(state, armatureId, seconds)`: every bone's posed matrix in armature space, as
 //     16 numbers per bone (Blender's `pose_mat`), computed once per armature per time and kept until
 //     another time is asked. Today it poses the rig itself, by the composer the armature helper
-//     draws with (`posedWorldMatrices`); the per-frame table (#1730) will answer it instead.
+//     draws with (`posedWorldMatrices`). This is where a bone's pose is asked for; the frame table
+//     #1730 planned to answer it from was cut unread (#1748).
 //   - `armatureWorldAt`: the armature Object's world at that time, kept the same way.
 //
 // A bone's world position is then `world · pose_mat[i]`'s translation: no evaluate, no scene walk,

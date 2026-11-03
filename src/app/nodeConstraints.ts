@@ -27,7 +27,7 @@
 import * as THREE from 'three';
 import type { DagState } from '../core/dag/state';
 import type { EvalCtx } from '../core/dag/types';
-import { resolveTrackTo } from './resolveTrackTo';
+import { resolveTrackTo, trackToUpIn } from './resolveTrackTo';
 import {
   resolveWorldTransform,
   resolveParentWorldMatrix,
@@ -57,7 +57,11 @@ export interface ActiveConstraint {
   /** #1284 — a node inside the `aimNode` character to aim at (a bone); '' = the node itself. */
   readonly aimBone: string;
   readonly aimPoint: Vec3;
+  /** #1759 — the space `aimPoint` is in: the world, or the constrained object's parent. */
+  readonly aimSpace: 'world' | 'parent';
   readonly up: Vec3;
+  /** #1759 — degrees of roll about the aim axis, after aiming. */
+  readonly roll: number;
   /** The constraint node itself — the panel needs to know which node a row
    *  edits/mutes/removes. */
   readonly nodeId: string;
@@ -227,7 +231,9 @@ export function constraintStackForTarget(
         aimNode: typeof p.aimNode === 'string' ? p.aimNode : '',
         aimBone: typeof p.aimBone === 'string' ? p.aimBone : '',
         aimPoint: isVec3(p.aimPoint) ? p.aimPoint : [0, 0, 0],
+        aimSpace: p.aimSpace === 'parent' ? 'parent' : 'world',
         up: isVec3(p.up) ? p.up : [0, 1, 0],
+        roll: typeof p.roll === 'number' && Number.isFinite(p.roll) ? p.roll : 0,
         nodeId: m.nodeId,
         order: m.order,
         muted: m.muted,
@@ -322,6 +328,37 @@ export function activeConstraintForTarget(
 ): ActiveConstraint | null {
   const stack = constraintStackForTarget(nodes, nodeId);
   return stack[stack.length - 1] ?? null;
+}
+
+/** #1776 — what a constraint controls on `nodeId`'s transform row `paramPath`, or null. */
+export interface TransformController {
+  /** The constraint node, so the row can name it and select it. */
+  readonly nodeId: string;
+  readonly type: 'TrackTo' | 'FollowPath';
+}
+
+/**
+ * #1776 — the constraint that decides what `nodeId`'s `paramPath` is drawn with: the winning
+ * Track-To for `rotation` / `quaternion`, the top Follow-Path for `position`. The inspector shows
+ * the drawn value on such a row and locks it, naming this constraint (the user's call over
+ * Blender, which shows the own value under a constraint): an edit there would change nothing on
+ * screen. Muted members control nothing. Every other param → null.
+ */
+export function transformControllerOf(
+  nodes: Readonly<Record<string, NodeLike>>,
+  nodeId: string,
+  paramPath: string,
+): TransformController | null {
+  if (paramPath === 'rotation' || paramPath === 'quaternion') {
+    const aim = activeConstraintForTarget(nodes, nodeId);
+    return aim ? { nodeId: aim.nodeId, type: 'TrackTo' } : null;
+  }
+  if (paramPath === 'position') {
+    const stack = followPathStackForTarget(nodes, nodeId);
+    const top = stack[stack.length - 1];
+    return top ? { nodeId: top.nodeId, type: 'FollowPath' } : null;
+  }
+  return null;
 }
 
 /**
@@ -442,12 +479,16 @@ export function resolveConstraintRotation(
   // Members writing ORTHOGONAL bands need no ordering at all — a future Follow-Path
   // writes POSITION while this writes ROTATION, so they commute. Per-member influence
   // blending (two members on the SAME band) is a later phase.
+  // #1770 — read before the fold: a member's up is in its own space, and this fold aims in the world.
+  const parentWorld = resolveParentWorldMatrix(state, nodeId, ctx, cache);
   let aimWorld: Vec3 | null = null;
-  for (const member of stack) {
+  for (const typed of stack) {
+    const member = evaluatedTrackTo(state, typed, ctx, cache);
     const memberAim = resolveTrackTo(
       aimOrigin,
       aimTargetWorld(state, member, ctx, cache),
-      member.up,
+      trackToUpIn(member.up, member.aimSpace, 'world', parentWorld),
+      member.roll,
     );
     if (memberAim) aimWorld = memberAim;
   }
@@ -459,7 +500,6 @@ export function resolveConstraintRotation(
   // rendered WORLD orientation equals the aim, not aim double-rotated by the parent.
   // resolveParentWorldMatrix returns null for a TOP-LEVEL node (identity parent) →
   // aim stays world == local, byte-identical to the pre-#267 top-level path.
-  const parentWorld = resolveParentWorldMatrix(state, nodeId, ctx, cache);
   if (!parentWorld) return aimWorld;
   return worldAimToParentLocal(aimWorld, parentWorld);
 }
@@ -586,9 +626,47 @@ export function resolveTrackToTarget(
   // stack is `[0]` either way → byte-identical to the pre-stack first-wins path.
   // #317 — "the top member" now has ONE name (`activeConstraintForTarget`), so the
   // authoring surfaces display/edit exactly the member this resolves.
-  const winner = activeConstraintForTarget(state.nodes, nodeId);
+  const winner = resolveActiveTrackTo(state, nodeId, ctx, cache);
   if (!winner) return null;
   return aimTargetWorld(state, winner, ctx, cache);
+}
+
+/** The winning Track-To on `nodeId` at `ctx`, its animatable settings evaluated (#1767): the
+ *  member `resolveTrackToTarget` aims by, for a reader that also needs its roll or up. */
+export function resolveActiveTrackTo(
+  state: DagState,
+  nodeId: string,
+  ctx: EvalCtx,
+  cache?: EvaluatorCache,
+): ActiveConstraint | null {
+  const winner = activeConstraintForTarget(state.nodes, nodeId);
+  return winner ? evaluatedTrackTo(state, winner, ctx, cache) : null;
+}
+
+/**
+ * #1767 — a Track-To member with its animatable settings read at `ctx` through the render's own
+ * param read, so keys, strips and drivers on its aim point, up and roll are honoured, as
+ * Follow-Path's `evalTime` is. The stack itself stays a typed scan (`constraintStackForTarget`
+ * takes no ctx), so this is applied where a member is resolved. A setting with nothing on it
+ * reads back as typed.
+ */
+function evaluatedTrackTo(
+  state: DagState,
+  member: ActiveConstraint,
+  ctx: EvalCtx,
+  cache?: EvaluatorCache,
+): ActiveConstraint {
+  const read = (path: 'aimPoint' | 'up' | 'roll') =>
+    resolveEvaluatedParam(state, member.nodeId, path, ctx, cache)?.value;
+  const aimPoint = read('aimPoint');
+  const up = read('up');
+  const roll = read('roll');
+  return {
+    ...member,
+    aimPoint: isVec3(aimPoint) ? aimPoint : member.aimPoint,
+    up: isVec3(up) ? up : member.up,
+    roll: typeof roll === 'number' && Number.isFinite(roll) ? roll : member.roll,
+  };
 }
 
 /** The world aim-target position for a resolved Track-To: the aim node's world
@@ -608,7 +686,7 @@ function aimTargetWorld(
   ctx: EvalCtx,
   cache?: EvaluatorCache,
 ): Vec3 {
-  if (!tt.aimNode) return tt.aimPoint;
+  if (!tt.aimNode) return aimPointWorld(state, tt, ctx, cache);
   // #1284 — a bone of a character: its posed world position (the walk moves the Hips, not the
   // Group). An unresolvable bone falls through to the node itself, never to a blank aim.
   if (tt.aimBone) {
@@ -618,5 +696,20 @@ function aimTargetWorld(
   const followed = resolveFollowedWorldPosition(state, tt.aimNode, ctx, cache);
   if (followed) return followed;
   const targetWorld = resolveWorldTransform(state, tt.aimNode, ctx, cache);
-  return targetWorld ? targetWorld.position : tt.aimPoint;
+  return targetWorld ? targetWorld.position : aimPointWorld(state, tt, ctx, cache);
+}
+
+/** #1759 — the fixed `aimPoint` in the world: as authored in `world` space, or lifted by the
+ *  constrained object's parent in `parent` space (a top-level object's parent is the world). */
+function aimPointWorld(
+  state: DagState,
+  tt: ActiveConstraint,
+  ctx: EvalCtx,
+  cache?: EvaluatorCache,
+): Vec3 {
+  if (tt.aimSpace !== 'parent') return tt.aimPoint;
+  const parentWorld = resolveParentWorldMatrix(state, tt.target, ctx, cache);
+  if (!parentWorld) return tt.aimPoint;
+  const p = new THREE.Vector3(...tt.aimPoint).applyMatrix4(parentWorld);
+  return [p.x, p.y, p.z];
 }

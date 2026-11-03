@@ -1,10 +1,14 @@
 // activeCamera — locate the scene's active camera node + read its pose.
 // Drives the editor view camera (#165): boot framing + look-through adopt.
 
+import * as THREE from 'three';
+import { cameraOrientationTuple } from './cameraOrientation';
 import { beforeAll, describe, expect, it } from 'vitest';
 import {
+  cameraFilmCtx,
   cameraPoseForNodeId,
   cameraPoseFromPair,
+  type CameraPose,
   DEFAULT_CAMERA_POSE,
   resolveActiveCameraPose,
   resolveActiveCameraPoseAt,
@@ -21,12 +25,38 @@ import { registerAllNodes } from '../nodes/registerAll';
 import { makeSplitCamera } from '../test-utils/splitCamera';
 import { makeSplitCube } from '../test-utils/splitCube';
 import { splitOps } from '../test-utils/splitKinds';
+import { resolveEvaluatedParam } from './resolveEvaluatedParam';
 
 // buildDefaultDagState / applyOp resolve node types from the registry, which
 // is populated by registerAll (a side-effecting boot step in the real app).
 beforeAll(() => {
   registerAllNodes();
 });
+
+type V3 = [number, number, number];
+/** #1760 — `got` is the same pose as `want`: lens fields and position exact; orientation the
+ *  same rotation (q and −q are one); the derived look-at and roll close (re-derived from it). */
+function expectPose(got: CameraPose | null | undefined, want: CameraPose): void {
+  expect(got).toBeTruthy();
+  const g = got!;
+  expect({ kind: g.kind, position: g.position, fov: g.fov, near: g.near, far: g.far }).toEqual({
+    kind: want.kind,
+    position: want.position,
+    fov: want.fov,
+    near: want.near,
+    far: want.far,
+  });
+  const dot = g.quaternion.reduce((acc, v, i) => acc + v * want.quaternion[i], 0);
+  expect(Math.abs(dot), 'orientation').toBeCloseTo(1, 9);
+  g.lookAt.forEach((v, i) => expect(v, `lookAt ${i}`).toBeCloseTo(want.lookAt[i], 9));
+  expect(g.roll, 'roll').toBeCloseTo(want.roll, 9);
+}
+/** The forward (view) direction a pose's orientation gives. */
+const forwardOf = (p: CameraPose): V3 => {
+  const [x, y, z, w] = p.quaternion;
+  const v = new THREE.Vector3(0, 0, -1).applyQuaternion(new THREE.Quaternion(x, y, z, w));
+  return [v.x, v.y, v.z];
+};
 
 describe('activeCamera — selectActiveCameraNode', () => {
   it('finds the camera node wired into scene.camera (default project)', () => {
@@ -319,7 +349,8 @@ describe('activeCamera — nested camera world pose (#231 Inc 3.3)', () => {
     // Default project: n_camera wired direct, not in any Group.
     const pose = resolveActiveCameraPoseAt(buildDefaultDagState(), 0);
     expect(pose.position).toEqual([3, 2, 3]);
-    expect(pose.lookAt).toEqual([0, 0, 0]);
+    // #1760 — turned by its own rotation, which looks at the origin.
+    pose.lookAt.forEach((v) => expect(v).toBeCloseTo(0, 9));
   });
 
   it('the frustum pose helper lifts a nested camera the same way', () => {
@@ -340,14 +371,17 @@ describe('activeCamera — cameraPoseFromPair', () => {
     // the resolver one half of a split camera — see the sibling test below, which pins what
     // that silently returns.
     const pose = cameraPoseForNodeId(state, 'n_camera');
-    expect(pose).toEqual({
+    // #1760 — the seed camera's own rotation looks at the origin, so its pose does.
+    expectPose(pose, {
       kind: 'PerspectiveCamera',
       position: [3, 2, 3],
       lookAt: [0, 0, 0],
+      orthoScale: 6,
       fov: 45,
       near: 0.1,
       far: 1000,
       roll: 0,
+      quaternion: cameraOrientationTuple([3, 2, 3], [0, 0, 0], 0),
     });
     // #1193 — the seed's far is now Blender's 1000, which is also `DEFAULT_CAMERA_POSE.far`,
     // so every field above equals the default and the assertion can no longer tell "read the
@@ -371,9 +405,13 @@ describe('activeCamera — cameraPoseFromPair', () => {
   it('given ONLY the Object half, a split camera silently poses at the DEFAULT lens', () => {
     const state = buildDefaultDagState();
     const objectOnly = cameraPoseFromPair(selectActiveCameraNode(state), null);
-    expect(objectOnly).toEqual({
+    // The Object half's own params — position and (#1760) rotation — are the things that survive.
+    // #1764 — and with no lens, the aim point sits the default focus distance (5) ahead.
+    const k = 5 / Math.hypot(3, 2, 3);
+    expectPose(objectOnly, {
       ...DEFAULT_CAMERA_POSE,
-      position: [3, 2, 3], // the Object half's own param — the one thing that does survive
+      position: [3, 2, 3],
+      lookAt: [3 - 3 * k, 2 - 2 * k, 3 - 3 * k],
     });
     expect(objectOnly?.far).toBe(DEFAULT_CAMERA_POSE.far);
   });
@@ -388,7 +426,15 @@ describe('activeCamera — cameraPoseFromPair', () => {
     // — it is what answers for an Object that poses no CameraData.
     const node = { id: 'c', type: 'Object', params: {}, inputs: {} } as unknown as Node;
     const pose = cameraPoseFromPair(node, null);
-    expect(pose).toEqual(DEFAULT_CAMERA_POSE);
+    // #1760 — every lens field and the position default; with no rotation the camera is
+    // unturned (looking down −Z), as any Object with no rotation is.
+    expect({ ...pose!, quaternion: null, lookAt: null, roll: null }).toEqual({
+      ...DEFAULT_CAMERA_POSE,
+      quaternion: null,
+      lookAt: null,
+      roll: null,
+    });
+    expect(pose!.quaternion).toEqual([0, 0, 0, 1]);
   });
 
   // A case tagging a raw `OrthographicCamera` node with the ortho kind stood here. It was the
@@ -408,10 +454,10 @@ describe('activeCamera — cameraPoseFromPair', () => {
     const object = {
       id: 'n_cam',
       type: 'Object',
-      // `lookAt`/`fov` planted on the OBJECT too, at values the assertion would catch.
+      // `focusDistance`/`fov` planted on the OBJECT too, at values the assertion would catch.
       // The Object owns position and NOTHING else on this road; if the read ever falls
       // back to the object's bag, these are what it would report.
-      params: { position: [7, 1, -4], lookAt: [9, 9, 9], fov: 12, roll: 33 },
+      params: { position: [7, 1, -4], focusDistance: 99, fov: 12 },
       inputs: { data: { node: 'n_cam_data', socket: 'out' } },
     } as unknown as Node;
     const data = {
@@ -422,21 +468,25 @@ describe('activeCamera — cameraPoseFromPair', () => {
         fov: 28,
         near: 0.02,
         far: 250,
-        lookAt: [0, 1, 0],
-        roll: 5,
+        focusDistance: 8,
       },
       inputs: {},
     } as unknown as Node;
 
-    expect(cameraPoseFromPair(object, data)).toEqual({
+    const pose = cameraPoseFromPair(object, data)!;
+    expect({ kind: pose.kind, position: pose.position, fov: pose.fov, near: pose.near }).toEqual({
       kind: 'PerspectiveCamera',
       position: [7, 1, -4],
-      lookAt: [0, 1, 0],
       fov: 28,
       near: 0.02,
-      far: 250,
-      roll: 5,
     });
+    expect(pose.far).toBe(250);
+    // #1760 — the Object carries no rotation, so the camera is unturned. #1764 — its aim point
+    // sits the LENS's focus distance ahead (8), not the one planted on the Object (99).
+    expect(pose.quaternion).toEqual([0, 0, 0, 1]);
+    expect(pose.roll).toBeCloseTo(0, 9);
+    const dist = Math.hypot(...pose.lookAt.map((v, i) => v - pose.position[i]));
+    expect(dist).toBeCloseTo(8, 9);
   });
 
   it('takes the ortho kind from the data half’s projection, not the Object’s type', () => {
@@ -451,11 +501,13 @@ describe('activeCamera — cameraPoseFromPair', () => {
       type: 'CameraData',
       // A split camera's node type is `Object` for BOTH projections, so the fused
       // `node.type === 'OrthographicCamera'` test cannot answer this question any more.
-      params: { projection: 'Orthographic', fov: 45, zoom: 60 },
+      params: { projection: 'Orthographic', fov: 45, orthoScale: 60 },
       inputs: {},
     } as unknown as Node;
 
     expect(cameraPoseFromPair(object, data)?.kind).toBe('OrthographicCamera');
+    // #1760 — and the pose carries the lens's own ortho scale, the frame the render takes.
+    expect(cameraPoseFromPair(object, data)?.orthoScale).toBe(60);
   });
 });
 
@@ -467,7 +519,7 @@ describe('activeCamera — the split camera pose road (#387)', () => {
       'camera',
       { objectId: 'n_cam' },
       {
-        data: { fov: 28, near: 0.02, far: 250, lookAt: [0, 1, 0] },
+        data: { fov: 28, near: 0.02, far: 250, focusDistance: Math.hypot(7, 0, -4) },
         object: { position: [7, 1, -4] },
       },
     )) {
@@ -503,7 +555,11 @@ describe('activeCamera — the split camera pose road (#387)', () => {
     const pose = resolveCameraPoseAt(buildSplitCamera(), 'n_cam', 0);
     expect(pose.position).toEqual([7, 1, -4]);
     expect(pose.fov).toBe(28);
-    expect(pose.lookAt).toEqual([0, 1, 0]);
+    // #1764 — the lens focus distance, read off the data half, sets the aim distance.
+    expect(Math.hypot(...pose.lookAt.map((v, i) => v - pose.position[i]))).toBeCloseTo(
+      Math.hypot(7, 0, -4),
+      9,
+    );
     // 45 is DEFAULT_CAMERA_POSE.fov — what this resolver returns when it reads neither
     // half. Naming it keeps a passing assertion from being a coincidence.
     expect(pose.fov).not.toBe(DEFAULT_CAMERA_POSE.fov);
@@ -585,9 +641,13 @@ describe('activeCamera — resolveActiveCameraPoseAt (#190)', () => {
     expect(resolveActiveCameraPoseAt(state, 0).position).toEqual([0, 0, 0]);
     expect(resolveActiveCameraPoseAt(state, 1).position).toEqual([10, 0, 0]);
     expect(resolveActiveCameraPoseAt(state, 0.5).position).toEqual([5, 0, 0]);
-    // Non-keyed params keep the base.
-    expect(resolveActiveCameraPoseAt(state, 0.5).lookAt).toEqual([0, 0, 0]);
-    expect(resolveActiveCameraPoseAt(state, 0.5).fov).toBe(45);
+    // Non-keyed params keep the base. #1760 — the orientation is the camera's own rotation,
+    // which a moving camera keeps (it does not swing to keep looking at a point).
+    const base = resolveActiveCameraPose(buildDefaultDagState());
+    const moved = resolveActiveCameraPoseAt(state, 0.5);
+    const dot = moved.quaternion.reduce((acc, v, i) => acc + v * base.quaternion[i], 0);
+    expect(Math.abs(dot)).toBeCloseTo(1, 9);
+    expect(moved.fov).toBe(45);
   });
 
   it('overlays a scalar fov channel', () => {
@@ -600,15 +660,29 @@ describe('activeCamera — resolveActiveCameraPoseAt (#190)', () => {
     expect(resolveActiveCameraPoseAt(state, 2).fov).toBe(60);
   });
 
-  it('overlays a scalar roll channel (#229)', () => {
-    expect(resolveActiveCameraPose(buildDefaultDagState()).roll).toBe(0); // base default
+  // #1760 — a camera banks by its own rotation (V665): keying the rotation turns it. A keyed lens
+  // roll turns a plain camera no more (it adds only to a Track-To's aim until #1764).
+  it('overlays a keyed rotation (#1760)', () => {
+    const state = addChannel(buildDefaultDagState(), 'KeyframeChannelVec3', 'rotation', [
+      { time: 0, value: [0, 0, 0], easing: 'linear' },
+      { time: 2, value: [0, 90, 0], easing: 'linear' },
+    ]);
+    const near = (p: CameraPose, want: V3) =>
+      forwardOf(p).forEach((v, i) => expect(v).toBeCloseTo(want[i], 9));
+    near(resolveActiveCameraPoseAt(state, 0), [0, 0, -1]);
+    near(resolveActiveCameraPoseAt(state, 1), [-Math.SQRT1_2, 0, -Math.SQRT1_2]);
+    near(resolveActiveCameraPoseAt(state, 2), [-1, 0, 0]);
+  });
+
+  it('a keyed lens roll does not turn a plain camera (#1760)', () => {
     const state = addChannel(buildDefaultDagState(), 'KeyframeChannelNumber', 'roll', [
       { time: 0, value: 0, easing: 'linear' },
       { time: 2, value: 90, easing: 'linear' },
     ]);
-    expect(resolveActiveCameraPoseAt(state, 0).roll).toBe(0);
-    expect(resolveActiveCameraPoseAt(state, 1).roll).toBe(45);
-    expect(resolveActiveCameraPoseAt(state, 2).roll).toBe(90);
+    const base = resolveActiveCameraPose(buildDefaultDagState());
+    const at = resolveActiveCameraPoseAt(state, 2);
+    const dot = at.quaternion.reduce((acc, v, i) => acc + v * base.quaternion[i], 0);
+    expect(Math.abs(dot)).toBeCloseTo(1, 9);
   });
 
   it('sorts a scalar channel before sampling, matching the inspector read-side (#200)', () => {
@@ -627,7 +701,7 @@ describe('activeCamera — resolveActiveCameraPoseAt (#190)', () => {
     expect(resolveActiveCameraPoseAt(state, 2).fov).toBe(60);
   });
 
-  it('overlays position + lookAt + fov channels together at the same time', () => {
+  it('overlays position + rotation + fov channels together at the same time', () => {
     let state = buildDefaultDagState();
     state = addChannel(
       state,
@@ -643,13 +717,13 @@ describe('activeCamera — resolveActiveCameraPoseAt (#190)', () => {
     state = addChannel(
       state,
       'KeyframeChannelVec3',
-      'lookAt',
+      'rotation',
       [
         { time: 0, value: [0, 0, 0], easing: 'linear' },
-        { time: 1, value: [1, 1, 1], easing: 'linear' },
+        { time: 1, value: [0, 90, 0], easing: 'linear' },
       ],
       'n_camera',
-      'ch_look',
+      'ch_rot',
     );
     state = addChannel(
       state,
@@ -664,7 +738,7 @@ describe('activeCamera — resolveActiveCameraPoseAt (#190)', () => {
     );
     const pose = resolveActiveCameraPoseAt(state, 1);
     expect(pose.position).toEqual([2, 4, 6]);
-    expect(pose.lookAt).toEqual([1, 1, 1]);
+    forwardOf(pose).forEach((v, i) => expect(v).toBeCloseTo([-1, 0, 0][i], 9));
     expect(pose.fov).toBe(50);
     // near/far untouched → base.
     expect(pose.near).toBe(0.1);
@@ -763,7 +837,7 @@ describe('activeCamera — Track-To migration (#204)', () => {
     expect(resolveActiveCameraPoseAt(state, 0).lookAt).toEqual([1, 2, 3]);
   });
 
-  it('a muted camera Track-To leaves the static lookAt untouched', () => {
+  it('a muted camera Track-To leaves the camera’s own rotation to turn it', () => {
     let state = buildCameraTrackTo({ aimNode: 'n_cam_target' });
     state = applyOp(state, {
       type: 'setParam',
@@ -771,8 +845,11 @@ describe('activeCamera — Track-To migration (#204)', () => {
       paramPath: 'mute',
       value: true,
     }).next;
-    // Byte-identical to the unconstrained base pose.
-    expect(resolveActiveCameraPoseAt(state, 0).lookAt).toEqual([0, 0, 0]);
+    // #1760 — the camera's own rotation stands, as in the unconstrained base pose.
+    const pose = resolveActiveCameraPoseAt(state, 0);
+    const own = resolveActiveCameraPose(state);
+    const dot = pose.quaternion.reduce((acc, v, i) => acc + v * own.quaternion[i], 0);
+    expect(Math.abs(dot)).toBeCloseTo(1, 9);
   });
 });
 
@@ -791,7 +868,6 @@ describe('resolveCameraDofAt — the split camera DoF road (#387 D9)', () => {
           fov: 28,
           near: 0.02,
           far: 250,
-          lookAt: [0, 1, 0],
           dofEnabled: true,
           focusDistance: 3,
           fStop: 2.8,
@@ -803,6 +879,17 @@ describe('resolveCameraDofAt — the split camera DoF road (#387 D9)', () => {
       s = applyOp(s, op as Parameters<typeof applyOp>[1]).next;
     }
     return s;
+  }
+
+  /** #1760 — `buildSplitDofCamera` aimed by a point Track-To at its lens look-at, [0, 1, 0]:
+   *  focus on target focuses on a Track-To's aim, so this is the camera that has a target. */
+  function aimedSplitDofCamera(data: Record<string, unknown> = {}): DagState {
+    return applyOp(buildSplitDofCamera(data), {
+      type: 'addNode',
+      nodeId: 'n_cam_aim',
+      nodeType: 'TrackTo',
+      params: { target: 'n_cam', aimPoint: [0, 1, 0], aimSpace: 'parent' },
+    } as Parameters<typeof applyOp>[1]).next;
   }
 
   function withChannel(
@@ -849,14 +936,33 @@ describe('resolveCameraDofAt — the split camera DoF road (#387 D9)', () => {
   // position is the Object's. This is the assertion the pre-mortem asks for — a fixture
   // whose pose sits at a NON-default position, so the expected distance cannot be the
   // one a fallback pose would produce.
-  it('focus-on-target derives |position − lookAt| across BOTH halves', () => {
-    const dof = resolveCameraDofAt(buildSplitDofCamera({ focusOnTarget: true }), 'n_cam', 0);
+  it('focus-on-target derives |position − aim| across BOTH halves', () => {
+    const dof = resolveCameraDofAt(aimedSplitDofCamera({ focusOnTarget: true }), 'n_cam', 0);
     expect(dof!.focusDistance).toBeCloseTo(Math.sqrt(65), 6);
     // Naming the two numbers a broken road would return keeps the pass from being luck:
     // √22 is what a fallback DEFAULT_CAMERA_POSE gives, 3 is the authored value that
     // would stand if the flag were read off the wrong half.
     expect(dof!.focusDistance).not.toBeCloseTo(Math.sqrt(22), 6);
     expect(dof!.focusDistance).not.toBe(3);
+  });
+
+  // #1760 — the target is the Track-To's aim. A camera no Track-To aims has no target, whatever
+  // its lens look-at says (#1764 removes it): its authored distance stands. Before, it focused
+  // at the lens look-at's distance, √65 here.
+  it('focus-on-target with no Track-To keeps the authored distance', () => {
+    const dof = resolveCameraDofAt(buildSplitDofCamera({ focusOnTarget: true }), 'n_cam', 0);
+    expect(dof!.focusDistance).toBe(3);
+  });
+
+  it('focus-on-target follows the Track-To’s aim, not the lens look-at', () => {
+    // The lens look-at is √65 away; the Track-To aims at the origin, √66 away.
+    const s = applyOp(buildSplitDofCamera({ focusOnTarget: true }), {
+      type: 'addNode',
+      nodeId: 'n_cam_aim',
+      nodeType: 'TrackTo',
+      params: { target: 'n_cam', aimPoint: [0, 0, 0], aimSpace: 'parent' },
+    } as Parameters<typeof applyOp>[1]).next;
+    expect(resolveCameraDofAt(s, 'n_cam', 0)!.focusDistance).toBeCloseTo(Math.sqrt(66), 6);
   });
 
   // Handed the DATA half instead of the Object, this answers NULL rather than a plausible
@@ -896,7 +1002,7 @@ describe('resolveCameraDofAt — the split camera DoF road (#387 D9)', () => {
 
   it('CONTROL — the same road DOES vary with time on the focus-on-target path', () => {
     const s = withChannel(
-      buildSplitDofCamera({ focusOnTarget: true }),
+      aimedSplitDofCamera({ focusOnTarget: true }),
       'ch_pos',
       'KeyframeChannelVec3',
       'n_cam',
@@ -906,5 +1012,63 @@ describe('resolveCameraDofAt — the split camera DoF road (#387 D9)', () => {
     );
     expect(resolveCameraDofAt(s, 'n_cam', 0)!.focusDistance).toBeCloseTo(Math.sqrt(65), 6);
     expect(resolveCameraDofAt(s, 'n_cam', 1)!.focusDistance).toBeCloseTo(10, 6);
+  });
+});
+
+// #1745 — the camera's lens fields read a driven fov on the clock the render reads it on. The
+// fixture: the scene at half speed, the box keyed x = 10·t on the scene clock, and the camera's
+// fov driven by the box's x. At a playhead of 4 s the scene is at 2 s, so the render's fov is 20.
+// A plain `{ time }` context makes the playhead scene time and reads 40: the CONTROL below shows
+// the fixture tells the two clocks apart, so the parity is not a coincidence of speed 1.
+describe("cameraFilmCtx — a camera value read on the render's clock (#1745)", () => {
+  function slowSceneDrivenFov(): DagState {
+    let s = buildDefaultDagState();
+    const ops = [
+      { type: 'setParam', nodeId: s.outputs.scene!.node, paramPath: 'timeSpeed', value: 0.5 },
+      {
+        type: 'addNode',
+        nodeId: 'bx',
+        nodeType: 'KeyframeChannelVec3',
+        params: {
+          target: 'n_box',
+          paramPath: 'position',
+          keyframes: [
+            { time: 0, value: [0, 0, 0], easing: 'linear' },
+            { time: 8, value: [80, 0, 0], easing: 'linear' },
+          ],
+        },
+      },
+      {
+        type: 'addNode',
+        nodeId: 'drv',
+        nodeType: 'ParamDriver',
+        params: {
+          target: 'n_camera_data',
+          paramPath: 'fov',
+          blendMode: 'replace',
+          order: 0,
+          sourceTransform: { node: 'n_box', channel: 'tx' },
+        },
+      },
+    ];
+    for (const op of ops) s = applyOp(s, op as Parameters<typeof applyOp>[1]).next;
+    return s;
+  }
+
+  it('a driven fov reads what the render reads at a slowed scene', () => {
+    const s = slowSceneDrivenFov();
+    const rendered = resolveCameraPoseAt(s, 'n_camera', 4).fov;
+    expect(rendered).toBeCloseTo(20, 6);
+    const shown = resolveEvaluatedParam(s, 'n_camera_data', 'fov', cameraFilmCtx(s, 4));
+    expect(shown!.value as number).toBeCloseTo(rendered, 6);
+  });
+
+  it('CONTROL — a plain context takes the playhead for scene time and reads another value', () => {
+    const s = slowSceneDrivenFov();
+    const plain = { time: { frame: 240, seconds: 4, normalized: 0 } };
+    expect(resolveEvaluatedParam(s, 'n_camera_data', 'fov', plain)!.value as number).toBeCloseTo(
+      40,
+      6,
+    );
   });
 });

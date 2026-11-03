@@ -66,7 +66,7 @@ const CAMERA: ObjectData = {
   kind: 'CameraData',
   projection: 'Perspective',
   fov: 50,
-  zoom: 1,
+  orthoScale: 6,
   near: 0.1,
   far: 500,
   sensorSize: 36,

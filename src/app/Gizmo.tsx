@@ -54,12 +54,12 @@ import * as THREE from 'three';
 import { degVec3ToRad, radVec3ToDeg } from '../viewport/rotation';
 import { rotationWriteOf, withResolvedRotation } from './resolvedRotation';
 import { useDagStore } from '../core/dag/store';
-import { resolveDataParamOwner } from './resolveDataParamOwner';
 import { evaluate } from '../core/dag/evaluator';
 import type { Node, Op } from '../core/dag/types';
 import type { CharacterValue, RotationModeFields } from '../nodes/types';
 import { buildWalkToOps } from './character/walkTo';
 import { useGizmoStore, type GizmoMode } from './stores/gizmoStore';
+import { useTransientEditStore } from './stores/transientEditStore';
 import { useEditorStore } from './stores/editorStore';
 import { isImportedChild } from './importedChild';
 import { isModifierNode, resolveStackObject } from './operatorStack';
@@ -70,12 +70,12 @@ import { pivotPoint } from './gizmoPivot';
 import { resolveEvaluatedTransform } from './resolveEvaluatedTransform';
 import { resolveParentWorldMatrix, resolveWorldTransform } from './resolveWorldTransform';
 import { routeAnimatedGrab, autoKeyCommit } from './animate/autoKeyCommit';
-import { resolveActiveCameraPoseAt } from './activeCamera';
+import { resolveCameraPoseAt } from './activeCamera';
 import { sceneClockOf } from './sceneClock';
 import { clockedCtx } from './subjectClock';
 import { isCameraNode } from './cameraNode';
-import { cameraOrientationQuat, lookAtRollFromQuat } from './cameraOrientation';
-import { constraintTargetSet, resolveFollowedWorldPosition } from './nodeConstraints';
+import { cameraOrientationQuat, cameraRotationOf } from './cameraOrientation';
+import { activeConstraintForTarget, resolveFollowedWorldPosition } from './nodeConstraints';
 import { useActiveCurvePoint } from './curvePointSelection';
 import { useArmatureMode } from './armatureMode';
 import { uiEvaluatorCache } from './uiEvaluatorCache';
@@ -220,17 +220,24 @@ function useSeedAtPlayhead(
   read: (t: TimeStore) => Playhead,
   seed: (at: Playhead) => void,
   deps: DependencyList,
+  heldOn: Iterable<string | null | undefined> = [],
 ): void {
   const latest = useRef({ read, seed });
   latest.current = { read, seed };
   const seededAt = useRef<Playhead | null>(null);
+  // #1777 — a held edit on what the gizmo poses (an inspector edit with Auto-Key off) moves the
+  // drawn object without moving the playhead or the DAG, so it re-seeds here as a scrub does.
+  // Not mid-drag: the drag's own held writes are the proxy's, and it re-seeds when the drag ends.
+  const held = useTransientEditStore((s) => heldSignature(s.edits, heldOn));
+  const dragging = useGizmoStore((s) => s.dragging);
   useEffect(() => {
+    if (useGizmoStore.getState().dragging) return;
     const at = latest.current.read(useTimeStore.getState());
     seededAt.current = at;
     latest.current.seed(at);
     // The caller's deps decide when to re-seed; `seed` is read through the ref.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, deps);
+  }, [...deps, held, dragging]);
   useFrame(() => {
     const at = latest.current.read(useTimeStore.getState());
     const last = seededAt.current;
@@ -244,6 +251,20 @@ function useSeedAtPlayhead(
     seededAt.current = at;
     latest.current.seed(at);
   }, -1);
+}
+
+/** #1777 — the held edits on `ids`, as one string: it changes exactly when one of them is set,
+ *  changed or cleared, so a subscriber re-renders for those and for nothing else. */
+function heldSignature(
+  edits: ReadonlyMap<string, { nodeId: string; paramPath: string; value: unknown }>,
+  ids: Iterable<string | null | undefined>,
+): string {
+  if (edits.size === 0) return '';
+  const want = new Set([...ids].filter((i): i is string => typeof i === 'string'));
+  if (want.size === 0) return '';
+  const parts: string[] = [];
+  for (const [k, e] of edits) if (want.has(e.nodeId)) parts.push(`${k}=${JSON.stringify(e.value)}`);
+  return parts.sort().join(';');
 }
 
 function SingleGizmo() {
@@ -468,6 +489,7 @@ function SingleGizmo() {
       }
     },
     [groupNode, manip, node, isCharacter, selectedId, playing, cache],
+    [selectedId],
   );
 
   if (!selectedId) return null;
@@ -828,6 +850,7 @@ function MultiGizmo() {
       }
     },
     [groupNode, selectedIds, primaryId, pivotMode, playing, cache],
+    selectedIds,
   );
 
   function onObjectChange() {
@@ -918,35 +941,28 @@ function MultiGizmo() {
   );
 }
 
-// #229 — the CAMERA gizmo. A Basher camera aims via position + lookAt (a POINT)
-// + roll, NOT an Euler rotation (V56), so the generic SingleGizmo can only
-// translate it (its `rotation` param is null → rotate coerces to translate, and
-// the lookAt aim point has no handle). CameraGizmo maps Blender's two camera
-// idioms onto Basher's lookAt model:
-//   - ROTATE the camera body (Blender "press R to rotate the camera object"):
-//     the rotate gizmo seeds from the camera's world ORIENTATION
-//     (cameraOrientationQuat) and a drag is converted BACK to authored lookAt +
-//     roll via lookAtRollFromQuat (V68 — manipulate in render/world space, store
-//     authored params), keeping the aim DISTANCE fixed so the aim orbits the
-//     camera (yaw/pitch re-aim, roll about the view axis banks).
-//   - DRAG THE AIM TARGET: a second translate handle at the world lookAt point;
-//     dragging it re-aims the camera (writes lookAt directly — the user's chosen
-//     "write lookAt directly", not a Track-To constraint).
-//   - TRANSLATE the body moves `position` only; the lookAt POINT stays put so the
-//     camera re-aims at it (the aim handle is how you move WHAT it looks at).
+// #229 — the CAMERA gizmo. #1760/#1764 — a camera is turned by its own rotation, unless a
+// Track-To aims it (V665); the lens holds no aim. CameraGizmo maps Blender's two camera idioms:
+//   - ROTATE the camera body (Blender "press R to rotate the camera object"): the rotate gizmo
+//     seeds from the camera's drawn world ORIENTATION (its pose's quaternion) and a drag writes
+//     the camera's own rotation, in its rotation mode. On a camera a Track-To aims, that rotation
+//     is overridden on screen, as in Blender.
+//   - DRAG THE AIM RETICLE (#1761): on a camera a point Track-To aims, the reticle moves the
+//     Track-To's `aimPoint` (in its aim space); on a plain camera it turns the camera to look at
+//     the point, keeping its roll. A Track-To that follows a node makes the reticle read-only.
+//   - TRANSLATE the body moves `position` only; a plain camera keeps its rotation, one a
+//     Track-To aims keeps looking at what the Track-To names.
 // Every write funnels through the SAME routeAnimatedGrab → setParam →
 // autoKeyCommit chokepoint the generic gizmo + #190 camera authoring use (V1).
-// #231 Inc 3.3 — a camera CAN now be nested in a Group. The proxies seed at the
-// camera's WORLD pose (resolveActiveCameraPoseAt composes the parent), so a drag
-// must convert the world manipulation BACK to the camera's LOCAL params before
-// writing (the #230 round-trip, applied to the camera's point-based lookAt model).
-// `parentWorld` is null for a top-level camera → the proxy world IS the local pose,
-// byte-identical to the pre-Inc-3.3 (#229) direct write.
-// #247 — the camera lookAt is a "Point of Interest" TARGET RETICLE, not a second
+// #231 Inc 3.3 — a camera CAN be nested in a Group. The proxies seed at the camera's WORLD pose
+// (resolveCameraPoseAt composes the parent), so a drag converts the world manipulation BACK to
+// the camera's LOCAL position/rotation (or the Track-To's parent-space aim point) before
+// writing. `parentWorld` is null for a top-level camera → the proxy world IS the local pose.
+// #247 — the aim point is a "Point of Interest" TARGET RETICLE, not a second
 // transform gizmo. The #245 twin-triad still read as "2 gizmos"; a categorically
 // different glyph (a billboarded ring + centre dot, fixed screen size) can never
 // be mistaken for the body's arrow/ring triad. Free (amber) = draggable; bound
-// (blue) = Track-To-linked to an object → read-only, follows that object.
+// (blue) = its Track-To follows an object → read-only, follows that object.
 const RETICLE_COLOR = '#ffb020';
 const RETICLE_BOUND_COLOR = '#5b9dff';
 /** local→world scale factor so the reticle holds a ~constant on-screen size,
@@ -1146,7 +1162,7 @@ function CameraGizmo() {
   const camId = useSelectionStore((s) => s.primaryNodeId);
   const mode = useGizmoStore((s) => s.mode);
   const orientation = useGizmoStore((s) => s.orientation);
-  // #1594 — the camera is posed on the playhead (film time), as `resolveActiveCameraPoseAt` reads
+  // #1594 — the camera is posed on the playhead (film time), as `resolveCameraPoseAt` reads
   // it. #1731 — read from the frame loop (`useSeedAtPlayhead`), not subscribed.
   const playing = useTimeStore((s) => s.playing);
 
@@ -1155,21 +1171,21 @@ function CameraGizmo() {
   const bodyRefCb = useCallback((g: THREE.Group | null) => setBodyNode(g), []);
   const aimRefCb = useCallback((g: THREE.Group | null) => setAimNode(g), []);
 
-  // #247 — is the camera's lookAt Track-To-BOUND to an object? Then the reticle
-  // follows that object (resolveCameraPoseAt already derives lookAt from it) and
-  // is read-only. Subscribe to nodes so add/remove of the constraint re-renders.
+  // #247 — does the camera's Track-To follow an object? Then the reticle follows that
+  // object (resolveCameraPoseAt derives the aim from it) and is read-only. Subscribe to nodes so add/remove of the constraint re-renders.
   const nodes = useDagStore((s) => s.state.nodes);
-  const bound = useMemo(
-    () => (camId ? constraintTargetSet(nodes).has(camId) : false),
+  // #1761 — the Track-To that aims the camera, if any. A point aim (every camera v26 converted)
+  // is the reticle's to move; only a Track-To that follows a node is read-only, since the node
+  // decides where it points.
+  const winningAim = useMemo(
+    () => (camId ? activeConstraintForTarget(nodes, camId) : null),
     [nodes, camId],
   );
+  const bound = Boolean(winningAim?.aimNode);
 
-  // Captured at seed time: the camera's evaluated position + the aim DISTANCE, so
-  // a rotate keeps the lookAt the same distance from the camera (the aim orbits,
-  // it does not slide toward/away).
+  // Captured at seed time: the camera's evaluated position and its parent's world matrix.
   const seedRef = useRef<{
     position: Vec3;
-    distance: number;
     /** #231 Inc 3.3 — the parent Group's world matrix when the camera is nested
      *  (null = top-level → world == local, the #229 direct path). Captured at seed
      *  so the drag handlers convert world → local before writing authored params. */
@@ -1190,18 +1206,13 @@ function CameraGizmo() {
       if (!camId) return;
       let pose;
       try {
-        pose = resolveActiveCameraPoseAt(useDagStore.getState().state, seconds, cache);
+        // #1771 — the SELECTED camera's pose, the one the drags write to (not the active one).
+        pose = resolveCameraPoseAt(useDagStore.getState().state, camId, seconds, cache);
       } catch {
         return;
       }
-      const distance =
-        Math.hypot(
-          pose.lookAt[0] - pose.position[0],
-          pose.lookAt[1] - pose.position[1],
-          pose.lookAt[2] - pose.position[2],
-        ) || 1;
       // #231 Inc 3.3 — the parent Group world (null for a top-level camera). The pose
-      // above is already in WORLD space (resolveActiveCameraPoseAt composed it), so
+      // above is already in WORLD space (resolveCameraPoseAt composed it), so
       // the drag handlers undo this matrix to recover the LOCAL authored params.
       // #1688 — `seconds` is the playhead; the parent read takes both clocks, so a rig on scene
       // time is undone where the scene has reached and a rig set to Film where the playhead is.
@@ -1212,10 +1223,11 @@ function CameraGizmo() {
         clockedCtx(sceneClockOf(state).sceneAt(seconds), seconds),
         cache,
       );
-      seedRef.current = { position: pose.position, distance, parentWorld };
+      seedRef.current = { position: pose.position, parentWorld };
       if (bodyNode) {
         bodyNode.position.set(...pose.position);
-        bodyNode.quaternion.copy(cameraOrientationQuat(pose.position, pose.lookAt, pose.roll));
+        // #1760 — the orientation the camera is drawn with, carried on its pose.
+        bodyNode.quaternion.set(...pose.quaternion);
         bodyNode.scale.set(1, 1, 1);
       }
       if (aimNode) {
@@ -1238,40 +1250,27 @@ function CameraGizmo() {
       }
     },
     [camId, bodyNode, aimNode, playing, bound, cache],
+    [camId, winningAim?.nodeId],
   );
 
   // ONE write chokepoint per camera param — animated → re-route (channel keyed),
   // else raw setParam + autoKey first-key (mirrors the generic gizmo per-param,
   // H36 single-write: route XOR setParam, never both).
-  function writeCameraParam(path: 'position' | 'lookAt' | 'roll', value: unknown) {
+  function writeCameraParam(path: 'position' | 'rotation' | 'quaternion', value: unknown) {
     if (!camId) return;
-    // #387 D1 — the camera pose SPANS both halves: the Object keeps `position`, while
-    // `lookAt` and `roll` moved to the CameraData (parity-first, following LightData).
-    // So this chokepoint has to ask WHICH half owns the path before writing, or two of
-    // the three writes land on a node with no such param, where a setParam is reported
-    // and then dropped (#423) — the reticle springs back and nothing says why.
-    //
-    // The read side already reaches across the pair for these exact three paths
-    // (`resolveWorldTransform`), which is what made the gap silent: the resolver was
-    // looking for the value on a node this function never wrote to. The routing has to
-    // cover the ANIMATED road too, or a gizmo-authored `lookAt` key mints a channel
-    // targeting the Object while the resolver reads the data half's.
-    //
-    // `resolveDataParamOwner` returns the Object's own id for params the Object still
-    // carries, so `position` is unchanged. Its possession test reads live params, which
-    // is only sound because `lookAt` and `roll` are both declared with zod defaults on
-    // CameraData and `addNode` stores PARSED params — every instance carries the keys.
-    // An optional param with no default would resolve to the Object forever.
-    const owner = resolveDataParamOwner(useDagStore.getState().state, camId, path) ?? camId;
-    if (routeAnimatedGrab(owner, path, value)) return;
+    // #1764 — every camera param the gizmo writes is the Object's: its position and its rotation.
+    // (The aim the lens once held, and its roll, now live on a Track-To or nowhere, #487.)
+    writeParamOn(camId, path, value);
+  }
+
+  /** One routed write to `nodeId`: re-routed into its channel when animated, else set and
+   *  auto-keyed — the same chokepoint for the camera's halves and for its Track-To. */
+  function writeParamOn(nodeId: string, path: string, value: unknown) {
+    if (routeAnimatedGrab(nodeId, path, value)) return;
     useDagStore
       .getState()
-      .dispatch(
-        { type: 'setParam', nodeId: owner, paramPath: path, value },
-        'user',
-        `camera ${path}`,
-      );
-    autoKeyCommit(owner, path, value);
+      .dispatch({ type: 'setParam', nodeId, paramPath: path, value }, 'user', `camera ${path}`);
+    autoKeyCommit(nodeId, path, value);
   }
 
   // #231 Inc 3.3 — a world-space point → the camera's LOCAL space when nested
@@ -1289,24 +1288,20 @@ function CameraGizmo() {
     if (!g || !seed || !camId) return;
     const liveMode = useGizmoStore.getState().mode;
     if (liveMode === 'rotate') {
-      // Convert the dragged WORLD orientation back to authored lookAt + roll,
-      // keeping the seeded aim distance. Two params → two routed writes (a drag is
-      // many undo entries, same as SingleGizmo; documented). #231 Inc 3.3 — for a
-      // nested camera, strip the parent rotation and recover the lookAt about the
-      // LOCAL position so the authored params stay in the camera's own space.
-      const localPos = toLocalPoint(seed.position);
+      // #1760 — a camera is turned by its own rotation (V665): the dragged WORLD orientation,
+      // with the parent's rotation stripped for a nested camera (#231 Inc 3.3), is written as
+      // its rotation, in its rotation mode.
       let quat = g.quaternion;
       if (seed.parentWorld) {
         const pQuat = new THREE.Quaternion();
         seed.parentWorld.decompose(new THREE.Vector3(), pQuat, new THREE.Vector3());
         quat = pQuat.clone().invert().multiply(g.quaternion);
       }
-      const { lookAt, roll } = lookAtRollFromQuat(quat, localPos, seed.distance);
-      writeCameraParam('lookAt', lookAt);
-      writeCameraParam('roll', roll);
+      writeCameraRotation(quat);
     } else {
-      // translate (scale coerces here — cameras have no scale): move position
-      // only; the lookAt POINT stays put so the camera re-aims at it.
+      // translate (scale coerces here — cameras have no scale): move position only. #1760 — a
+      // plain camera keeps its rotation as it moves, as any object does; one a Track-To aims
+      // keeps looking at what the Track-To names.
       writeCameraParam(
         'position',
         maybeSnapVec3(toLocalPoint([g.position.x, g.position.y, g.position.z])),
@@ -1317,20 +1312,53 @@ function CameraGizmo() {
   function onAimChange() {
     const g = aimNode;
     if (!g || !camId) return;
-    writeCameraParam(
-      'lookAt',
-      maybeSnapVec3(toLocalPoint([g.position.x, g.position.y, g.position.z])),
-    );
+    aimAt([g.position.x, g.position.y, g.position.z]);
   }
 
-  // #247 — the reticle drag delivers a WORLD lookAt point. Move the proxy
+  /** #1760 — `quat` (parent space) as the camera's own rotation, in its rotation mode. */
+  function writeCameraRotation(quat: THREE.Quaternion) {
+    if (!camId) return;
+    const params = (useDagStore.getState().state.nodes[camId]?.params ?? {}) as RotationModeFields;
+    const write = rotationWriteOf(params, cameraRotationOf(quat));
+    writeCameraParam(write.paramPath, write.value);
+  }
+
+  /** Re-aim at the WORLD point `world`.
+   *  #1761 — a camera a point Track-To aims: the Track-To's aim point moves there, in the space
+   *  the aim point is held in (the camera's parent's, or the world's). A plain camera (#1760):
+   *  it turns to look at the point, keeping its roll (#1764: its reticle then sits its focus
+   *  distance ahead, along the new view). */
+  function aimAt(world: Vec3) {
+    const seed = seedRef.current;
+    if (!seed || !camId) return;
+    const aim = winningAim;
+    if (aim && !aim.aimNode) {
+      writeParamOn(
+        aim.nodeId,
+        'aimPoint',
+        maybeSnapVec3(aim.aimSpace === 'parent' ? toLocalPoint(world) : world),
+      );
+      return;
+    }
+    const local = maybeSnapVec3(toLocalPoint(world));
+    const localPos = toLocalPoint(seed.position);
+    const pose = resolveCameraPoseAt(
+      useDagStore.getState().state,
+      camId,
+      useTimeStore.getState().filmSeconds,
+      cache,
+    );
+    writeCameraRotation(cameraOrientationQuat(localPos, local, pose.roll));
+  }
+
+  // #247 — the reticle drag delivers a WORLD aim point. Move the proxy
   // immediately (the seed effect only re-runs on scrub/selection, not on a param
-  // write, so the reticle would otherwise lag the pointer), then author the LOCAL
-  // lookAt through the same chokepoint.
+  // write, so the reticle would otherwise lag the pointer), then re-aim through
+  // `aimAt` (the Track-To's aim point, or the camera's rotation) via the same chokepoint.
   function onReticleDrag(world: Vec3) {
     if (!aimNode || !camId) return;
     aimNode.position.set(world[0], world[1], world[2]);
-    writeCameraParam('lookAt', maybeSnapVec3(toLocalPoint(world)));
+    aimAt(world);
   }
 
   // *** D-06 grab observation seam — dev-guarded (mirrors SingleGizmo). Drives the

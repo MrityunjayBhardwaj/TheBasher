@@ -8,8 +8,8 @@
 // Falsify: if the reticle didn't drive lookAt, dragging it would not change the
 // DAG lookAt; if the aim were still a triad, `reticle` would be absent.
 
+import * as THREE from 'three';
 import { expect, test } from './_fixtures';
-import { dataNodeIdOf } from './_seedNodes';
 
 interface CamGizmo {
   position: number[] | null;
@@ -64,17 +64,19 @@ async function selectCamera(page: import('@playwright/test').Page, id: string) {
   await page.waitForTimeout(150);
 }
 
-/** The camera's aim point. Takes the camera's OBJECT id — the node a director selects and
- *  the rest of this spec addresses — and reaches through to the CameraData, which owns
- *  `lookAt` since #387 C4 split the camera. Resolved here rather than at each call site so
- *  the spec keeps talking about "the camera's lookAt" and only this function knows the aim
- *  moved halves. Reading it off the Object yields `undefined`, not a stale point. */
-async function lookAt(page: import('@playwright/test').Page, objectId: string) {
-  const lens = await dataNodeIdOf(page, objectId);
+/** The camera Object's own rotation (#1764: an un-aimed camera is turned by it; the lens holds
+ *  no aim). */
+async function rotationOf(page: import('@playwright/test').Page, objectId: string) {
   return page.evaluate((cid) => {
     const st = (window as unknown as BasherWindow).__basher_dag!.getState().state;
-    return st.nodes[cid].params.lookAt as number[];
-  }, lens);
+    return st.nodes[cid].params.rotation as [number, number, number];
+  }, objectId);
+}
+
+/** Where a camera at `position` with euler-degree `rotation` looks (its −Z). */
+function forwardOf(rotation: [number, number, number]): THREE.Vector3 {
+  const e = new THREE.Euler(...rotation.map((d) => THREE.MathUtils.degToRad(d)), 'XYZ');
+  return new THREE.Vector3(0, 0, -1).applyEuler(e);
 }
 
 test.describe('#247 camera lookAt reticle', () => {
@@ -88,7 +90,9 @@ test.describe('#247 camera lookAt reticle', () => {
     expect(g.reticle).toBe(true);
     expect(g.bound).toBe(false);
     expect(g.position).toEqual([3, 2, 3]); // body at camera position
-    expect(g.aim).toEqual([0, 0, 0]); // reticle at the lookAt point
+    // reticle at the lookAt point — #1760: a point straight ahead along the camera's own
+    // rotation, which looks at it, so equal to the float.
+    g.aim!.forEach((v) => expect(v).toBeCloseTo(0, 6));
   });
 
   test('dragging the reticle re-aims the camera (real pointer drag, behind geometry)', async ({
@@ -97,7 +101,12 @@ test.describe('#247 camera lookAt reticle', () => {
     await ready(page);
     const id = await camId(page);
     await selectCamera(page, id);
-    expect(await lookAt(page, id)).toEqual([0, 0, 0]);
+    const before = await rotationOf(page, id);
+    // The default camera looks at, and is focused on, the origin: its reticle sits there.
+    const g0 = await page.evaluate(() =>
+      (window as unknown as BasherWindow).__basher_camera_gizmo!(),
+    );
+    g0.aim!.forEach((v) => expect(v).toBeCloseTo(0, 3));
     // The reticle sits at the world origin — screen-centre of the viewport — and is
     // occluded by the cube, proving the depth-independent pick works.
     await page.mouse.move(640, 394);
@@ -106,14 +115,17 @@ test.describe('#247 camera lookAt reticle', () => {
     await page.mouse.move(800, 280, { steps: 8 });
     await page.mouse.up();
     await page.waitForTimeout(120);
-    const after = await lookAt(page, id);
-    expect(after).not.toEqual([0, 0, 0]);
-    // The reticle proxy followed the drag (matches the authored lookAt).
+    // The camera turned: its own rotation moved…
+    const after = await rotationOf(page, id);
+    expect(after).not.toEqual(before);
+    // …to look at the reticle, which left the origin: the reticle lies on its new line of sight.
     const g = await page.evaluate(() =>
       (window as unknown as BasherWindow).__basher_camera_gizmo!(),
     );
-    expect(g.aim![0]).toBeCloseTo(after[0], 3);
-    expect(g.aim![1]).toBeCloseTo(after[1], 3);
-    expect(g.aim![2]).toBeCloseTo(after[2], 3);
+    expect(Math.hypot(...g.aim!)).toBeGreaterThan(0.1);
+    const pos = new THREE.Vector3(...(g.position as [number, number, number]));
+    const toAim = new THREE.Vector3(...(g.aim as [number, number, number])).sub(pos).normalize();
+    const fwd = forwardOf(after);
+    expect(toAim.dot(fwd)).toBeCloseTo(1, 3);
   });
 });

@@ -29,9 +29,16 @@ import {
   activeConstraintForTarget,
   isRelationalPoseNode,
   nextConstraintOrder,
-  resolveTrackToTarget,
 } from './nodeConstraints';
+import { resolveCameraPoseAt } from './activeCamera';
+import { filmSecondsOf } from './subjectClock';
+import { resolveEvaluatedTransform } from './resolveEvaluatedTransform';
+import { rotationWriteOf } from './resolvedRotation';
+import type { RotationModeFields } from '../nodes/types';
 import { useTimeStore } from './stores/timeStore';
+import { paramAnimationState } from './animate/paramAnimationState';
+import { routeAnimatedGrab } from './animate/autoKeyCommit';
+import { clockFor } from './subjectClock';
 
 const ROW = 'flex items-center justify-between gap-2 px-3 py-1.5 text-[11px] text-fg/80';
 const LABEL = 'font-mono text-fg/60';
@@ -48,7 +55,7 @@ function newId(prefix: string): string {
 
 /** The two node ids a camera's aim binding spans. See {@link CameraLookAtTarget}. */
 export interface LookAtIds {
-  /** The lens half — owns `lookAt`. */
+  /** The lens half — the node the inspector control is mounted for. */
   readonly nodeId: string;
   /** The pose half (the Object) — owns the constraint stack. */
   readonly poseNodeId: string;
@@ -91,6 +98,14 @@ export interface LookAtBinding {
   readonly ops: Op[];
   readonly label: string;
   readonly atomic: boolean;
+  /** #1772 — a write to an ANIMATED param, kept out of `ops`: a plain `setParam` on it is
+   *  overridden by its keys at once. The shell writes it as every edit to an animated param is
+   *  written (`routeAnimatedGrab`): a key with Auto-Key on, a held edit with it off. */
+  readonly animatedWrite?: {
+    readonly nodeId: string;
+    readonly paramPath: string;
+    readonly value: unknown;
+  };
 }
 
 /**
@@ -109,7 +124,7 @@ export function bindLookAtTargetOps(
   value: string,
   ctx: { time: { frame: number; seconds: number; normalized: number } },
 ): LookAtBinding {
-  const { nodeId, poseNodeId } = ids;
+  const { poseNodeId } = ids;
   const nodes = state.nodes;
   // The constraint this dropdown edits/removes — THE SAME member it displays. Anything
   // else is incoherent: reading the winner while writing a different node means "clear"
@@ -120,19 +135,30 @@ export function bindLookAtTargetOps(
   const existingTTId = activeConstraintForTarget(nodes, poseNodeId)?.nodeId;
 
   if (!value) {
-    // Clear — freeze the current aim into the authored lookAt (no jump), remove.
-    // #387 — BOTH ids are load-bearing in these three lines: the aim is RESOLVED for
-    // the Object (that is the subject the constraint targets) and WRITTEN to the lens
-    // half (that is where `lookAt` lives). Using one id for both silently breaks one
-    // end or the other: resolved off the lens half it is always null → no freeze →
-    // the camera jumps back to its stale authored aim on clear; written to the Object
-    // it lands on a param nothing reads → same jump, and a stray `lookAt` on an Object.
+    // Clear — freeze the current aim into the camera's own rotation (no jump), remove.
     if (!existingTTId) return { ops: [], label: 'clear look-at target', atomic: true };
-    const aim = resolveTrackToTarget(state, poseNodeId, ctx);
+    // #1760 — the camera keeps looking where it looked: the orientation it is drawn with (aim
+    // and roll, in its parent's space) becomes its own rotation, in its rotation mode — what
+    // Blender's Apply Visual Transform does before a constraint is removed (V665). Resolved for
+    // the OBJECT, the subject the constraint targets (off the lens half it resolves nothing).
+    const drawn = resolveEvaluatedTransform(state, poseNodeId, ctx);
     const ops: Op[] = [];
-    if (aim) ops.push({ type: 'setParam', nodeId, paramPath: 'lookAt', value: aim });
+    let animatedWrite: LookAtBinding['animatedWrite'];
+    if (drawn?.rotation) {
+      const objParams = (nodes[poseNodeId]?.params ?? {}) as RotationModeFields;
+      const write = rotationWriteOf(objParams, drawn.rotation);
+      // #1772 — a keyed rotation, hidden while the Track-To aimed the camera, would take over the
+      // moment it is gone: the frozen rotation goes through the animated-edit road instead, as the
+      // same check `routeAnimatedGrab` makes decides.
+      const frame = clockFor(state, poseNodeId, write.paramPath).frame;
+      if (paramAnimationState(state, poseNodeId, write.paramPath, frame) !== 'none') {
+        animatedWrite = { nodeId: poseNodeId, ...write };
+      } else {
+        ops.push({ type: 'setParam', nodeId: poseNodeId, ...write });
+      }
+    }
     ops.push({ type: 'removeNode', nodeId: existingTTId });
-    return { ops, label: 'clear look-at target', atomic: true };
+    return { ops, label: 'clear look-at target', atomic: true, animatedWrite };
   }
 
   if (existingTTId) {
@@ -143,11 +169,15 @@ export function bindLookAtTargetOps(
     };
   }
 
-  // The seed aim point is the AUTHORED `lookAt` — a lens-half param, so read off
-  // `nodeId`. Read off the Object it is always absent → every new binding would seed
-  // [0,0,0] and the camera would swing through the world origin on the first bind.
-  const cam = nodes[nodeId]?.params as { lookAt?: unknown } | undefined;
-  const aimPoint = isVec3(cam?.lookAt) ? cam.lookAt : [0, 0, 0];
+  // #1775 — the fallback aim point (what the camera aims at if the target node is later removed)
+  // is the WORLD point it is drawn looking at now, in a world-space Track-To: a nested camera falls
+  // back to where it looked. World, not parent, space on purpose: a Track-To's space also picks
+  // which way is up (#1770), and a new binding keeps world up, level under a tilted rig, as it
+  // always has. Read on the playhead, the clock a camera is posed on (#1594), for the Object, the
+  // half the pose road poses.
+  const aimPoint: Vec3 = [
+    ...resolveCameraPoseAt(state, poseNodeId, filmSecondsOf(state, ctx)).lookAt,
+  ];
   return {
     ops: [
       {
@@ -162,6 +192,7 @@ export function bindLookAtTargetOps(
           target: poseNodeId,
           aimNode: value,
           aimPoint,
+          aimSpace: 'world',
           up: [0, 1, 0],
           mute: false,
           // #317 — land it on TOP of whatever the camera already carries. The hardcoded
@@ -230,7 +261,7 @@ export function CameraLookAtTarget({
     // `bindLookAtTargetOps` so it can be asserted without a DOM. This shell only chooses
     // the dispatch shape, preserving today's exactly (create = one `dispatch`, clear and
     // re-target = `dispatchAtomic`).
-    const { ops, label, atomic } = bindLookAtTargetOps(
+    const { ops, label, atomic, animatedWrite } = bindLookAtTargetOps(
       useDagStore.getState().state,
       { nodeId, poseNodeId },
       value,
@@ -239,6 +270,14 @@ export function CameraLookAtTarget({
     if (ops.length === 0) return;
     if (atomic) dispatchAtomic(ops, 'user', label);
     else dispatch(ops[0], 'user', label);
+    // #1772 — after the clear, so the camera's own rotation is what the edit lands on. An
+    // un-routed answer (no longer animated) falls back to the plain write.
+    if (animatedWrite) {
+      const { nodeId: id, paramPath, value: v } = animatedWrite;
+      if (!routeAnimatedGrab(id, paramPath, v)) {
+        dispatch({ type: 'setParam', nodeId: id, paramPath, value: v }, 'user', label);
+      }
+    }
   };
 
   return (

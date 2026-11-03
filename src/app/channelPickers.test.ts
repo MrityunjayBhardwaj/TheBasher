@@ -112,7 +112,9 @@ describe('channel pickers — the rows #1066 names', () => {
 });
 
 describe('channel pickers — what the census cannot answer is listed with its reason', () => {
-  it("a Track-To's aim point is read raw: listed, disabled, never offered", () => {
+  // #1767 — a Track-To's aim point was read raw (listed, disabled); its keys are honoured now and
+  // the census measures it moving the scene, so it is offered like any animatable path.
+  it("a Track-To's aim point is offered: a key on it moves the aim (#1767)", () => {
     const cube = place(buildDefaultDagState(), 'Cube');
     const tt = buildAddConstraintOps(cube.s, cube.obj, 'TrackTo')!;
     const s = withChannel(
@@ -121,9 +123,8 @@ describe('channel pickers — what the census cannot answer is listed with its r
       tt.constraintId,
       'aimPoint',
     );
-    expect(reasonOf(channelPathOptions(s, 'ch', 'vec3'), 'aimPoint')).toBe('nothing drawn changes');
-    // And since no vec3 param of a Track-To draws, the panel shows the path read-only.
-    expect(channelPathLock(s, 'ch', 'vec3')).toBe('no vec3 param of TrackTo animates');
+    expect(reasonOf(channelPathOptions(s, 'ch', 'vec3'), 'aimPoint')).toBeUndefined();
+    expect(channelPathLock(s, 'ch', 'vec3')).toBeNull();
   });
 
   it('a data node under an operator stack: its path is read-only with the reason', () => {
@@ -244,14 +245,23 @@ describe('ParamDriver pickers — the census driver answers, of the source kind 
     expect(enabled(driverPathOptions(s, driver))).not.toContain('radius');
   });
 
-  it('a node no driver moves: the path is read-only, saying so', () => {
-    // A camera's data node was this case until #480 folded drivers into the camera pose; a
-    // Track-To is one the census still measures a driver moving nothing on.
+  it('a node a driver now moves: a Track-To’s path can be picked (#1767)', () => {
+    // A camera's data node was the read-only case until #480; a Track-To was until #1767 honoured
+    // its own params' drivers, which the census regenerated under #1764 measures moving the scene.
     const s = apply(buildDefaultDagState(), [
       { type: 'addNode', nodeId: 'tt', nodeType: 'TrackTo', params: {} },
     ]);
-    expect(driverPathLock(withDriver(s, 'tt', '', {}), 'drv')).toBe(
-      'a driver moves no number or vec3 param of TrackTo',
+    expect(driverPathLock(withDriver(s, 'tt', '', {}), 'drv')).toBeNull();
+  });
+
+  it('a node no driver moves: the path is read-only, saying so', () => {
+    // A Track-To was this case until #1767; a Clamp is one the census still measures a driver
+    // moving nothing on.
+    const s = apply(buildDefaultDagState(), [
+      { type: 'addNode', nodeId: 'cl', nodeType: 'Clamp', params: {} },
+    ]);
+    expect(driverPathLock(withDriver(s, 'cl', '', {}), 'drv')).toBe(
+      'a driver moves no number or vec3 param of Clamp',
     );
   });
 

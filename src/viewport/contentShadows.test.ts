@@ -5,6 +5,8 @@ import {
   installContentShadow,
   installShadowInvalidation,
   markContentShadows,
+  shadowInputs,
+  shadowInputsRecorder,
 } from './contentShadows';
 
 const box = (size: number, at: [number, number, number]) => {
@@ -117,7 +119,7 @@ describe('#1682 — shadow maps redraw only when what they draw changed', () => 
         camera,
         null as unknown as THREE.BufferGeometry,
         null as unknown as THREE.Material,
-        null,
+        null as unknown as THREE.Group,
       );
       const redrew = gl.shadowMap.needsUpdate;
       gl.shadowMap.needsUpdate = false; // three clears it after the pass (WebGLShadowMap.js:197)
@@ -226,5 +228,67 @@ describe('#1682 — shadow maps redraw only when what they draw changed', () => 
     undo();
     expect(gl.shadowMap.autoUpdate).toBe(true);
     expect(scene.onBeforeRender).toBe(THREE.Object3D.prototype.onBeforeRender);
+  });
+});
+
+// #1757 — the per-frame hook compares into one reused buffer instead of building an array.
+describe('#1757 — the reused shadow-input buffer answers as comparing whole arrays did', () => {
+  it('every edit in a run, including ones that shorten and lengthen the inputs past the buffer', () => {
+    const scene = new THREE.Scene();
+    const bodies = Array.from({ length: 300 }, (_, i) => box(1, [i, 0, 0]));
+    scene.add(...bodies);
+    const sun = new THREE.DirectionalLight();
+    scene.add(sun);
+    const changed = shadowInputsRecorder();
+    let prev: number[] | null = null;
+    const edits: Array<() => void> = [
+      () => {},
+      () => {},
+      () => bodies[7].position.set(0, 3, 0),
+      () => {},
+      () => (bodies[20].visible = false), // fewer numbers
+      () => {},
+      () => (bodies[20].visible = true), // more again
+      () => scene.add(...Array.from({ length: 200 }, (_, i) => box(1, [0, i, 0]))), // past 4096
+      () => {},
+      () => (sun.castShadow = !sun.castShadow),
+      () => ((bodies[0].geometry.attributes.position as THREE.BufferAttribute).needsUpdate = true),
+      () => scene.remove(bodies[299]), // one fewer object in the middle
+      () => {},
+      // The scene's last child gone: this run is the last one's exact prefix, so only the
+      // count of numbers can tell them apart.
+      () => scene.remove(scene.children[scene.children.length - 1]),
+      () => {},
+    ];
+    const answers: [boolean, boolean][] = [];
+    for (const edit of edits) {
+      edit();
+      scene.updateMatrixWorld(true);
+      const now = shadowInputs(scene);
+      const byArrays =
+        prev === null || now.length !== prev.length || now.some((v, i) => v !== prev![i]);
+      answers.push([changed(scene), byArrays]);
+      prev = now;
+    }
+    expect(prev!.length).toBeGreaterThan(4096);
+    expect(answers.map(([r]) => r)).toEqual(answers.map(([, a]) => a));
+    // The run has both answers in it, so neither can pass by always saying one thing.
+    expect(answers.map(([r]) => r)).toEqual([
+      true,
+      false,
+      true,
+      false,
+      true,
+      false,
+      true,
+      true,
+      false,
+      true,
+      true,
+      true,
+      false,
+      true,
+      false,
+    ]);
   });
 });

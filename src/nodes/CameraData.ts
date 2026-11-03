@@ -2,24 +2,20 @@
 // (#387, Stage C · C4).
 //
 // A camera's substance is its LENS — how it projects (perspective vs orthographic),
-// its focal length / zoom, its clip planes, and its depth-of-field. Where it sits in
+// its focal length / ortho scale, its clip planes, and its depth-of-field. Where it sits in
 // the world is a pose the Object owns. This node owns the lens half and DELIBERATELY
 // no position (the Object's `position` is the camera's position).
 //
 // ONE node with a `projection` discriminator, not two — the same call LightData made
 // for four light kinds, and for the same reason: Blender models perspective and
 // orthographic as ONE camera datablock with a Type enum, and the two fused nodes
-// already share every param but `fov`/`zoom`. One union arm, one migration writer,
+// already share every param but `fov`/`orthoScale`. One union arm, one migration writer,
 // one register entry, one inspector section.
 //
-// PARITY-FIRST: `lookAt` and `roll` STAY HERE (#387 D1). The design doc's longer-term
-// target has the Object carry TRS with aim as a constraint; that migration is NOT
-// exact for an ANIMATED camera, because rotation(t) is a non-linear function of three
-// independently keyed channels whose key times need not coincide, so baking it would
-// be an approximation where every prior kind's migration met a byte-identity gate.
-// The shipped LightData made the same call for the same reason (`target`/`lookAt`
-// stayed on the data half). The Object's `rotation` is consequently UNUSED by the
-// camera road — see cameraRecompose.ts, which drops it.
+// NO AIM HERE (#487, #1764). A camera is an ordinary Object: its own `rotation` turns it, and
+// its aim, when it has one, is a Track-To — never baked, so an animated aim stays exact (the
+// v26 step moved every saved look-at, its keys unchanged, onto a parent-space Track-To). The
+// lens's old `lookAt` and `roll` are gone; the v26 step strips them from saved lenses.
 //
 // THE THING THAT MAKES THIS KIND DIFFERENT FROM EVERY EARLIER ONE: the camera does
 // not render through its evaluated value. `CameraValue` reaches the renderer only as
@@ -74,11 +70,13 @@ export const CameraDataParams = z.object({
    *  the orthographic migration has to write an fov its source never had; that is one
    *  invented value in one place, which is the cheaper of the two costs.
    *
-   *  Inert while `projection === 'Orthographic'` (the recompose reads `zoom` instead). */
+   *  Inert while `projection === 'Orthographic'` (the frame is `orthoScale` instead). */
   fov: z.number().min(1).max(170),
-  /** Orthographic scale. Owned here regardless of how #478 resolves — it is a lens
-   *  param by every definition including Blender's. (#478: nothing currently READS it.) */
-  zoom: z.number().positive().default(50),
+  /** Orthographic scale (#478, #1760): the full HEIGHT the camera sees, in world units —
+   *  Blender's `ortho_scale` with Sensor Fit Vertical, the fit Basher's vertical `fov` and
+   *  `sensorSize` already use (measured in Blender 5.1.1: Vertical fit → view height =
+   *  ortho_scale at any aspect). Default 6, Blender's. Inert for a perspective camera. */
+  orthoScale: z.number().positive().default(6),
   near: z.number().positive().default(DEFAULT_CAMERA_NEAR),
   far: z.number().positive().default(DEFAULT_CAMERA_FAR),
   /** Sensor height (mm) along the vertical FOV axis — authoring metadata for the
@@ -91,14 +89,11 @@ export const CameraDataParams = z.object({
   dofEnabled: z.boolean().default(false),
   focusDistance: z.number().positive().default(5),
   fStop: z.number().positive().default(2.8),
-  /** #247 — when true the focus plane tracks the aim instead of `focusDistance`, so the
-   *  effective distance becomes |position − lookAt|. Post-split that value SPANS both
-   *  halves: `position` is the Object's, `lookAt` is this node's. */
+  /** #247 #1760 — when true the focus plane tracks the camera's winning Track-To's aim
+   *  instead of `focusDistance` (`cameraFocusTargetDistance`); with no Track-To there is no
+   *  target and `focusDistance` stands. #1764 — `focusDistance` is also how far ahead an
+   *  un-aimed camera's aim reticle sits, as Blender's camera Limits mark the focus point. */
   focusOnTarget: z.boolean().default(false),
-  /** The aim point (authored framing orientation, not TRS — parity-first, #387 D1). */
-  lookAt: z.tuple([z.number(), z.number(), z.number()]).default([0, 0, 0]),
-  /** Bank about the view axis in DEGREES (#229). Parity-first, as above. */
-  roll: z.number().default(0),
 });
 export type CameraDataParams = z.infer<typeof CameraDataParams>;
 
@@ -116,7 +111,7 @@ export const CameraDataNode: NodeDefinition<CameraDataParams, CameraDataValue> =
   home: {
     projection: 'camera',
     fov: 'camera',
-    zoom: 'camera',
+    orthoScale: 'camera',
     near: 'camera',
     far: 'camera',
     sensorSize: 'camera',
@@ -124,8 +119,6 @@ export const CameraDataNode: NodeDefinition<CameraDataParams, CameraDataValue> =
     focusDistance: 'camera',
     fStop: 'camera',
     focusOnTarget: 'camera',
-    lookAt: 'camera',
-    roll: 'camera',
   },
   evaluate(params) {
     return {
@@ -153,7 +146,7 @@ export const CameraDataNode: NodeDefinition<CameraDataParams, CameraDataValue> =
       // the same required param. Inventing one here would be the 45 the schema note
       // above refuses, just moved a layer further from where anyone would look for it.
       fov: params.fov,
-      zoom: params.zoom ?? 50,
+      orthoScale: params.orthoScale ?? 6,
       near: params.near ?? DEFAULT_CAMERA_NEAR,
       far: params.far ?? DEFAULT_CAMERA_FAR,
       sensorSize: params.sensorSize ?? 36,
@@ -161,8 +154,6 @@ export const CameraDataNode: NodeDefinition<CameraDataParams, CameraDataValue> =
       focusDistance: params.focusDistance ?? 5,
       fStop: params.fStop ?? 2.8,
       focusOnTarget: params.focusOnTarget ?? false,
-      lookAt: params.lookAt ?? [0, 0, 0],
-      roll: params.roll ?? 0,
     };
   },
 };

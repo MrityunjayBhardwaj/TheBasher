@@ -226,10 +226,10 @@ export const SPLIT_ROADS: Record<RoadId, RoadSpec> = {
     // TWO ANSWERS CAME BACK DIFFERENT FROM WHAT CARRYING R5's ROW OVER WOULD HAVE RECORDED,
     // which is the argument for measuring a road rather than reasoning from its neighbour:
     //
-    //   The CAMERA reaches. It refuses a held edit by design (#484: `resolveCameraPoseAt`
-    //   renders committed DAG state only), but a channel IS committed state, so a constrained
-    //   camera does follow its animated lens. Copying #484's NO here would have recorded a
-    //   gap that does not exist.
+    //   The CAMERA reaches. It refused a held edit at the time (#484, fixed by #1773:
+    //   `resolveCameraPoseAt` then rendered committed DAG state only), but a channel IS
+    //   committed state, so a constrained camera did follow its animated lens. Copying #484's
+    //   NO here would have recorded a gap that did not exist.
     //
     //   The CURVE does not reach, and for the SAME mechanism as its held edit (#474) rather
     //   than a second one: the renderer reads `samples`, baked at evaluate time, so no

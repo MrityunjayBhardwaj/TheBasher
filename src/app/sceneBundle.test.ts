@@ -341,6 +341,9 @@ describe('bundleToProject', () => {
     const migratedIds = Object.keys(project.state.nodes);
     const srcIds = Object.keys(src.state.nodes);
     for (const id of srcIds) expect(migratedIds).toContain(id); // nothing lost
+    // #1764 — and no Track-To either: the seed camera is turned by its own rotation, with no lens
+    // look-at for the v26 step to move (a real v25 lens always carried one — that conversion is
+    // gated in cameraAim.migration.test.ts).
     const added = migratedIds.filter((id) => !srcIds.includes(id));
     expect(added).toEqual([]);
     // ...and the data halves really did travel, so "added nothing" cannot be read as

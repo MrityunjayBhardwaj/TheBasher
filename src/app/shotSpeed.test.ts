@@ -5,6 +5,7 @@ import { buildDefaultDagState } from '../core/project/default';
 import { applyOp, type DagState } from '../core/dag';
 import { useDagStore } from '../core/dag/store';
 import type { Op } from '../core/dag/types';
+import { sampleScalarKeyframes, type ScalarKey } from '../nodes/keyframeInterp';
 import { registerAllNodes } from '../nodes/registerAll';
 import { makeSplitCamera } from '../test-utils/splitCamera';
 import { buildCutOps } from './shotOps';
@@ -112,7 +113,9 @@ describe('#1700 — slowing a shot lengthens it', () => {
     const s = run(s0, edit.ops);
 
     expect(keyTimes(s, cutChannelId(s))).toEqual([0, 2, 8]);
-    expect(keyTimes(s, 'cam_keys')).toEqual([1, 3, 9]);
+    // #1744 — the 3 s key is inside the shot: it moves with the scene time it shows (3 s of
+    // scene, now on screen at 4 s), so the camera stays on the action it was keyed against.
+    expect(keyTimes(s, 'cam_keys')).toEqual([1, 4, 9]);
     expect(keyTimes(s, 'box_keys')).toEqual([1, 3, 6]);
     expect(frameEnd(s)).toBe(780);
 
@@ -125,6 +128,8 @@ describe('#1700 — slowing a shot lengthens it', () => {
     const clock = sceneClockOf(s);
     expect(clock.sceneAt(8)).toBeCloseTo(5, 2);
     expect(clock.filmAt(6)).toBeCloseTo(9, 3);
+    // And inside the shot: the box's 3 s key is on screen at 4 s, where the camera's moved to.
+    expect(clock.filmAt(3)).toBeCloseTo(4, 2);
   });
 
   it('one Undo restores all of it', () => {
@@ -134,7 +139,7 @@ describe('#1700 — slowing a shot lengthens it', () => {
     const before = useDagStore.getState().state;
     const edit = buildShotSpeedOps(before, 2, 5, 0.5)!;
     useDagStore.getState().dispatchAtomic(edit.ops, 'user', 'Shot 2 at 50%');
-    expect(keyTimes(useDagStore.getState().state, 'cam_keys')).toEqual([1, 3, 9]);
+    expect(keyTimes(useDagStore.getState().state, 'cam_keys')).toEqual([1, 4, 9]);
     useDagStore.getState().undo();
     const after = useDagStore.getState().state;
     expect(after.nodes).toEqual(before.nodes);
@@ -157,7 +162,7 @@ describe('#1700 — slowing a shot lengthens it', () => {
     const s0 = film();
     const s = run(s0, buildShotSpeedOps(s0, 2, 5, 2)!.ops);
     expect(keyTimes(s, cutChannelId(s))).toEqual([0, 2, 3.5]);
-    expect(keyTimes(s, 'cam_keys')).toEqual([1, 3, 4.5]);
+    expect(keyTimes(s, 'cam_keys')).toEqual([1, 2.5, 4.5]);
     expect(frameEnd(s)).toBe(510);
     expect(speedOver(s, 2, 3.5)).toBeCloseTo(2, 2);
     expect(speedOver(s, 3.5, 8.5)).toBeCloseTo(1, 2);
@@ -173,8 +178,284 @@ describe('#1700 — slowing a shot lengthens it', () => {
     expect(speedOver(s2, 0, 10)).toBeCloseTo(1, 2);
   });
 
+  // #1744 — speeding up removes film time. A key inside the shot past its new end used to stay
+  // put while the keys after the shot moved in past it, so the channel's keys came out of order.
+  it('speeding up never puts a later key before an earlier one', () => {
+    let s0 = film();
+    s0 = run(s0, [
+      {
+        type: 'setParam',
+        nodeId: 'cam_keys',
+        paramPath: 'keyframes',
+        value: [lin(1, [0, 0, 0]), lin(4.5, [1, 0, 0]), lin(6, [2, 0, 0])],
+      },
+    ]);
+    const s = run(s0, buildShotSpeedOps(s0, 2, 5, 3)!.ops);
+    const [k1, kA, kB] = keyTimes(s, 'cam_keys');
+    expect(k1).toBe(1);
+    expect(kA, 'the 4.5 s key stays inside the shot, now [2, 3)').toBeCloseTo(2 + 2.5 / 3, 3);
+    expect(kB, 'the 6 s key moves in with the shot after').toBeCloseTo(4, 3);
+    const values = (s.nodes.cam_keys.params as { keyframes: { value: number[] }[] }).keyframes.map(
+      (k) => k.value[0],
+    );
+    expect(values, 'the keys play in the order they were keyed').toEqual([0, 1, 2]);
+  });
+
+  // #1744 — the last shot ends exactly at End. End only moved for a shot ending before it, so
+  // the last shot's new length was reported and never played.
+  it('the last shot at 50% moves End with it', () => {
+    const s0 = film();
+    const edit = buildShotSpeedOps(s0, 5, 10, 0.5)!;
+    expect(edit.end).toBe(15);
+    const s = run(s0, edit.ops);
+    expect(frameEnd(s), 'End follows the shot').toBe(900);
+    expect(keyTimes(s, cutChannelId(s))).toEqual([0, 2, 5]);
+    expect(speedOver(s, 5, 15)).toBeCloseTo(0.5, 2);
+  });
+
+  it('the last shot at 200% pulls End in', () => {
+    const s0 = film();
+    const s = run(s0, buildShotSpeedOps(s0, 5, 10, 2)!.ops);
+    expect(frameEnd(s)).toBe(450);
+  });
+
+  // #1744 — a shot after a speed ramp. The ramp's last key before the shot shapes the curve up to
+  // the next key, which is now the shot's own; without a held key the shot before would ramp into
+  // the new speed instead of playing as it did.
+  it('the shot before a re-timed shot plays as it did when the speed was ramping into it', () => {
+    let s0 = film();
+    s0 = run(s0, [
+      {
+        type: 'addNode',
+        nodeId: 'speed_ramp',
+        nodeType: 'KeyframeChannelNumber',
+        params: {
+          name: 'timeSpeed',
+          target: 'n_scene',
+          paramPath: 'timeSpeed',
+          keyframes: [
+            { time: 0, value: 1, easing: 'linear' },
+            { time: 10, value: 2, easing: 'linear' },
+          ],
+        },
+      },
+    ]);
+    const before = speedOver(s0, 0, 2);
+    const s = run(s0, buildShotSpeedOps(s0, 2, 5, 0.5)!.ops);
+    expect(speedOver(s, 0, 2), 'the shot before is untouched').toBeCloseTo(before, 2);
+    expect(speedOver(s, 2, 2 + 0.5), 'the shot plays at 50%').toBeCloseTo(0.5, 2);
+  });
+
+  // #1744 — the old curve has a key at the shot's old end, so it lands right on the new end. Its
+  // easing is how the curve arrives at it, which is the shot's own span: a linear key there would
+  // ramp the shot toward the resumed speed instead of holding the one it was given.
+  it('a speed key at the end of the shot does not ramp the shot', () => {
+    let s0 = film();
+    s0 = run(s0, [
+      {
+        type: 'addNode',
+        nodeId: 'speed_ramp',
+        nodeType: 'KeyframeChannelNumber',
+        params: {
+          name: 'timeSpeed',
+          target: 'n_scene',
+          paramPath: 'timeSpeed',
+          keyframes: [
+            { time: 0, value: 1, easing: 'constant' },
+            { time: 5, value: 1, easing: 'linear' },
+            { time: 10, value: 2, easing: 'linear' },
+          ],
+        },
+      },
+    ]);
+    const s = run(s0, buildShotSpeedOps(s0, 2, 5, 0.5)!.ops);
+    expect(speedOver(s, 2, 8 - 1 / 60), 'the shot holds 50%').toBeCloseTo(0.5, 2);
+    expect(speedOver(s, 8, 13), 'the ramp after resumes as it was').toBeCloseTo(
+      speedOver(s0, 5, 10),
+      2,
+    );
+  });
+
+  // #1751 — an eased ramp around the shot. The edit cuts the old curve at the shot's edges; a key
+  // there that only copies the easing's NAME draws a different curve between the new endpoints
+  // (measured: cubic, 0–2 s averaged 1.072 and became 1.103; after the shot 2.625 became 2.500).
+  // Each cut-off piece keeps the old curve's shape, so the film plays as it did on both sides.
+  for (const easing of ['cubic', 'sine', 'elastic'] as const) {
+    it(`a ${easing} speed ramp plays as it did before and after the re-timed shot`, () => {
+      const s0 = run(film(), [
+        {
+          type: 'addNode',
+          nodeId: 'speed_eased',
+          nodeType: 'KeyframeChannelNumber',
+          params: {
+            name: 'timeSpeed',
+            target: 'n_scene',
+            paramPath: 'timeSpeed',
+            keyframes: [
+              { time: 0, value: 1, easing: 'linear' },
+              { time: 10, value: 3, easing },
+            ],
+          },
+        },
+      ]);
+      const edit = buildShotSpeedOps(s0, 2, 5, 0.5)!;
+      const s = run(s0, edit.ops);
+      const d = edit.end - 5;
+      expect(speedOver(s, 0, 2), 'before the shot').toBeCloseTo(speedOver(s0, 0, 2), 2);
+      expect(speedOver(s, 5 + d, 10 + d), 'after the shot').toBeCloseTo(speedOver(s0, 5, 10), 2);
+      // And the scene stands where it stood at the end of the ramp: film time after the shot
+      // moved by exactly the shot's change in length, so cameras stay on their action.
+      // The cut-off pieces are drawn in short straight steps, good to well under a frame.
+      const drift = sceneClockOf(s).sceneAt(10 + d) - sceneClockOf(s0).sceneAt(10);
+      expect(Math.abs(drift), 'scene time at the end of the ramp').toBeLessThan(1 / 60);
+    });
+  }
+
+  // #1752 — a held shot (the speed is 0 across it) covers no scene time, so a length cannot be
+  // derived from it: it used to collapse to nothing, its cut landing on the next one. It keeps its
+  // length and plays at the speed it was given.
+  const held = (keys: { time: number; value: number }[]) =>
+    run(film(), [
+      {
+        type: 'addNode',
+        nodeId: 'speed_held',
+        nodeType: 'KeyframeChannelNumber',
+        params: {
+          name: 'timeSpeed',
+          target: 'n_scene',
+          paramPath: 'timeSpeed',
+          keyframes: keys.map((k) => ({ ...k, easing: 'constant' })),
+        },
+      },
+    ]);
+  it('a held shot given a speed keeps its length and plays at that speed', () => {
+    const s0 = held([
+      { time: 0, value: 1 },
+      { time: 2, value: 0 },
+      { time: 5, value: 1 },
+    ]);
+    expect(speedOver(s0, 2, 5), 'the shot is held').toBeCloseTo(0, 2);
+    const edit = buildShotSpeedOps(s0, 2, 5, 0.5)!;
+    expect(edit.end).toBe(5);
+    const s = run(s0, edit.ops);
+    expect(keyTimes(s, cutChannelId(s))).toEqual(keyTimes(s0, cutChannelId(s0)));
+    expect(speedOver(s, 2, 5 - 1 / 60), 'the shot plays at 50%').toBeCloseTo(0.5, 2);
+  });
+
+  // #1752 — keys inside a held stretch of a shot all show the same scene moment, so moving each
+  // with the scene time it shows put them on one time, with different values. They stay in order,
+  // each after the one before.
+  it('keys inside a held stretch of a re-timed shot stay in order at distinct times', () => {
+    let s0 = held([
+      { time: 0, value: 1 },
+      { time: 3, value: 0 },
+      { time: 4.5, value: 1 },
+    ]);
+    s0 = run(s0, [
+      {
+        type: 'addNode',
+        nodeId: 'held_keys',
+        nodeType: 'KeyframeChannelVec3',
+        params: {
+          name: 'position',
+          target: 'cam2',
+          paramPath: 'position',
+          keyframes: [lin(2.5, [0, 0, 0]), lin(3.5, [1, 0, 0]), lin(4, [2, 0, 0])],
+        },
+      },
+    ]);
+    const s = run(s0, buildShotSpeedOps(s0, 2, 5, 1)!.ops);
+    const times = keyTimes(s, 'held_keys');
+    const values = (s.nodes.held_keys.params as { keyframes: { value: number[] }[] }).keyframes.map(
+      (k) => k.value[0],
+    );
+    expect(values, 'in their old order').toEqual([0, 1, 2]);
+    for (let i = 1; i < times.length; i++)
+      expect(times[i], `key ${i} after key ${i - 1}`).toBeGreaterThan(times[i - 1]);
+  });
+
   it('a speed that cannot hold a length is refused', () => {
     expect(buildShotSpeedOps(film(), 2, 5, 0)).toBeNull();
     expect(buildShotSpeedOps(film(), 2, 5, Number.NaN)).toBeNull();
   });
+});
+
+// #1751 — a straight, 'cubic' or Bézier-handled segment cut at the shot's edges is split exactly,
+// as Blender's key insert splits a Bézier (`BKE_fcurve_bezt_subdivide_handles`, a De Casteljau
+// split): each kept piece IS the old curve, so it needs no extra keys and the speed curve reads
+// the same value at every time it kept. Equation easings (sine…elastic) are not Bézier curves and
+// are still drawn in short straight steps (see the ramps above).
+describe('#1751 — the speed curve is split exactly where it is a Bézier', () => {
+  type K = { time: number; value: number; easing: string } & Record<string, unknown>;
+  const ramps: Record<string, K[]> = {
+    linear: [
+      { time: 0, value: 1, easing: 'linear' },
+      { time: 10, value: 3, easing: 'linear' },
+    ],
+    cubic: [
+      { time: 0, value: 1, easing: 'linear' },
+      { time: 10, value: 3, easing: 'cubic' },
+    ],
+    'free-handle Bézier': [
+      {
+        time: 0,
+        value: 1,
+        easing: 'linear',
+        handleType: 'free',
+        outHandle: { time: 3, value: 1.5 },
+      },
+      {
+        time: 10,
+        value: 3,
+        easing: 'cubic',
+        handleType: 'free',
+        inHandle: { time: -2, value: 0.2 },
+      },
+    ],
+    // Computed handles follow their neighbours, and the cut gives both ends new ones; the edit
+    // keeps the handles they had, as stored 'free' handles, so the curve does not move.
+    'auto-clamped': [
+      { time: 0, value: 1, easing: 'linear', handleType: 'auto-clamped' },
+      { time: 10, value: 3, easing: 'cubic', handleType: 'auto-clamped' },
+      { time: 14, value: 2, easing: 'cubic', handleType: 'auto-clamped' },
+    ],
+  };
+  const withSpeed = (keys: K[]) =>
+    run(film(), [
+      {
+        type: 'addNode',
+        nodeId: 'speed_split',
+        nodeType: 'KeyframeChannelNumber',
+        params: { name: 'timeSpeed', target: 'n_scene', paramPath: 'timeSpeed', keyframes: keys },
+      },
+    ]);
+  const speedKeys = (s: DagState) =>
+    (s.nodes.speed_split.params as { keyframes: ScalarKey[] }).keyframes;
+
+  for (const [name, keys] of Object.entries(ramps)) {
+    it(`a ${name} speed curve is the same curve on both sides of the re-timed shot`, () => {
+      const s0 = withSpeed(keys);
+      const edit = buildShotSpeedOps(s0, 2, 5, 0.5)!;
+      const s = run(s0, edit.ops);
+      const d = edit.end - 5;
+      const was = speedKeys(s0);
+      const now = speedKeys(s);
+      // The old keys, a key where each piece ends, and the shot's own two.
+      expect(now.length, 'keys on the speed curve').toBeLessThanOrEqual(was.length + 4);
+      let worst = 0;
+      for (let t = 0; t <= 2 - 1 / 240; t += 1 / 48)
+        worst = Math.max(
+          worst,
+          Math.abs(sampleScalarKeyframes(now, t) - sampleScalarKeyframes(was, t)),
+        );
+      for (let t = 5; t <= 14; t += 1 / 48)
+        worst = Math.max(
+          worst,
+          Math.abs(sampleScalarKeyframes(now, t + d) - sampleScalarKeyframes(was, t)),
+        );
+      expect(worst, 'largest change in the speed at a kept time').toBeLessThan(1e-6);
+      const drift = sceneClockOf(s).sceneAt(10 + d) - sceneClockOf(s0).sceneAt(10);
+      expect(Math.abs(drift), 'scene time at the end of the ramp').toBeLessThan(1 / 60);
+    });
+  }
 });

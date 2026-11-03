@@ -173,6 +173,7 @@ import {
 import { useInspectorSectionsStore, resolveCollapsed } from './stores/inspectorSectionsStore';
 import { useChromeStore } from './stores/chromeStore';
 import { useSelectionStore } from './stores/selectionStore';
+import { transformControllerOf, type TransformController } from './nodeConstraints';
 import { useRenameStore } from './stores/renameStore';
 import { RenameInput } from './RenameInput';
 import { MultiSelectInspector } from './MultiSelectInspector';
@@ -192,6 +193,7 @@ import { useThreeRef } from './character/threeRef';
 import { originToGeometry } from './setOrigin';
 import { rotationModeOps, withResolvedRotation } from './resolvedRotation';
 import { isCameraNode } from './cameraNode';
+import { posingObjectId } from './resolveDataParamOwner';
 import { clockOf } from './subjectClock';
 import { IDENTITY_QUATERNION } from '../nodes/rotationMode';
 import {
@@ -593,7 +595,10 @@ function VectorField({
   // never useTimeStore.getState() in the seam (#1731: `usePlayheadFor` subscribes whenever the
   // node's value can move, and reads the playhead only for a node whose value cannot).
   // #1731 — subscribed to the playhead only when this node's own value can move with it.
-  const { frame, seconds, normalized } = usePlayheadFor(nodeId);
+  // #1753 — or the Object posing it, when this is a data half: the read reaches the animation
+  // kept on the Object (an older project's camera aim, a pushed-down strip).
+  const poser = useDagStore((s) => posingObjectId(s.state, nodeId));
+  const { frame, seconds, normalized } = usePlayheadFor(nodeId, poser);
   const playing = useTimeStore((s) => s.playing);
   const dagState = useDagStore((s) => s.state);
   // #1314 — a stable cache: this re-reads the evaluated graph on every playhead change, and
@@ -615,7 +620,7 @@ function VectorField({
   // exactly as the render side does (render == read, H40). A driven vec goes read-only
   // and displays the driven vector. The DISPLAY source differs by kind: a transform vec
   // reads through `resolved` (the transform seam, which also carries Track-To); a
-  // non-transform vec reads through `resolveEvaluatedParam` (`drivenVec`). `isTransformParam`
+  // non-transform vec reads through `resolveEvaluatedParam` (`evaluatedVec`). `isTransformParam`
   // is still the STRUCTURAL whitelist (never `resolved !== null` — an unrendered node's
   // transform resolves to null, which must not misclassify the param, the H153 gate).
   const isTransformParam = TRANSFORM_PARAMS.has(paramPath);
@@ -626,31 +631,48 @@ function VectorField({
       ),
     [dagState, nodeId, paramPath],
   );
-  const drivenVec = useMemo(() => {
-    // A driven TRANSFORM vec shows via `resolved` (the driver-aware transform seam), so
-    // only the non-transform road reads the driven value through resolveEvaluatedParam.
-    if (!driven || isTransformParam) return null;
+  // #1640 / #1753 — a non-transform vec that anything animates (keys on it or on the other half of
+  // its Object/data pair, a pushed-down strip, a driver) shows the value it is drawn with. The
+  // read decides: `overridesOnly` answers null when nothing overrides the param, so the row keeps
+  // the typed value and stays editable. A separate "is it keyed" test missed the reaches the
+  // read makes, and the row froze on the typed aim of a camera keyed on its Object.
+  const evaluatedVec = useMemo(() => {
+    // A transform vec shows via `resolved` (the transform seam).
+    if (isTransformParam) return null;
     const r = resolveEvaluatedParam(
       dagState,
       nodeId,
       paramPath,
       { time: { frame, seconds, normalized } },
       cache,
+      undefined,
+      true,
     );
     return isVec3(r?.value) ? r!.value : null;
-  }, [driven, isTransformParam, dagState, nodeId, paramPath, frame, seconds, normalized, cache]);
-  // Per-param fallback (D-01): driven vec → resolved transform Vec3 → authored value.
-  const effectiveValue: readonly number[] = drivenVec ?? resolved ?? value;
+  }, [isTransformParam, dagState, nodeId, paramPath, frame, seconds, normalized, cache]);
+  // Per-param fallback (D-01): evaluated non-transform vec → resolved transform Vec3 → authored.
+  const effectiveValue: readonly number[] = evaluatedVec ?? resolved ?? value;
   // D-02: read-only while playing IFF this field is showing an evaluated
   // value. `resolved !== null` means the helper returned a Vec3 (i.e. the
   // selection is a rendered transform-bearing node + paramPath is in the
-  // D-03 whitelist). A DRIVEN non-transform vec is also read-only (the driver
-  // owns the value; edit the source). Un-animated undriven vecs → editable.
-  const readOnly = driven || (playing && resolved !== null);
+  // D-03 whitelist); a keyed non-transform vec shows an evaluated value too. A DRIVEN
+  // non-transform vec is always read-only (the driver owns the value; edit the source).
+  // Un-animated undriven vecs → editable.
+  // #1776 — a row a constraint decides (a Track-To's rotation, a Follow-Path's position) shows
+  // the drawn value, locked, naming the constraint: an edit there would change nothing on screen.
+  const controller = useMemo(
+    () => (isTransformParam ? transformControllerOf(dagState.nodes, nodeId, paramPath) : null),
+    [isTransformParam, dagState, nodeId, paramPath],
+  );
+  const readOnly =
+    driven || controller !== null || (playing && (resolved !== null || evaluatedVec !== null));
   return (
     <div className="flex flex-col gap-1 px-3 py-1.5 text-[11px] text-fg/80">
       <span className="flex items-center gap-1">
         <ParamDiamond nodeId={nodeId} paramPath={paramPath} value={value} />
+        {controller ? (
+          <ControlledBy nodeId={nodeId} paramPath={paramPath} controller={controller} />
+        ) : null}
         {overrideInfo ? (
           <OverrideDecorator
             nodeId={nodeId}
@@ -4084,6 +4106,39 @@ function RotationModeControl({ nodeId }: { nodeId: string }) {
   );
 }
 
+const CONTROLLER_LABEL: Record<TransformController['type'], string> = {
+  TrackTo: 'Track-To',
+  FollowPath: 'Follow Path',
+};
+
+/** #1776 — the lock on a transform row a constraint decides, Houdini-style: it says what
+ *  controls the value and is a link to it (a click selects the constraint, where it is edited).
+ *  The row beside it is read-only. */
+function ControlledBy({
+  nodeId,
+  paramPath,
+  controller,
+}: {
+  nodeId: string;
+  paramPath: string;
+  controller: TransformController;
+}) {
+  const label = CONTROLLER_LABEL[controller.type];
+  return (
+    <button
+      type="button"
+      data-testid={`inspector-controlled-${nodeId}-${paramPath}`}
+      data-controller={controller.nodeId}
+      title={`Controlled by the ${label} constraint "${controller.nodeId}": this shows where it is drawn. Edit the constraint to change it (click to select it). A key here still records the object's own value.`}
+      onClick={() => useSelectionStore.getState().select(controller.nodeId)}
+      className="flex items-center gap-0.5 rounded border border-accent/40 px-1 text-[10px] text-accent hover:bg-accent/15"
+    >
+      <span aria-hidden>🔒</span>
+      {label}
+    </button>
+  );
+}
+
 /** W X Y Z → the stored index of each, since Basher stores [x, y, z, w]. */
 const QUATERNION_AXES = [
   ['w', 3],
@@ -4113,12 +4168,20 @@ function QuaternionField({ nodeId, authored }: { nodeId: string; authored: Quat 
     [dagState, nodeId, frame, seconds, normalized, cache],
   );
   const animated = paramAnimationState(dagState, nodeId, 'quaternion', frame) !== 'none';
-  const shown: Quat = animated && evaluated ? evaluated : authored;
-  const readOnly = playing && animated;
+  // #1776 — under a winning Track-To the row shows the drawn quaternion, locked.
+  const controller = useMemo(
+    () => transformControllerOf(dagState.nodes, nodeId, 'quaternion'),
+    [dagState, nodeId],
+  );
+  const shown: Quat = (animated || controller) && evaluated ? evaluated : authored;
+  const readOnly = controller !== null || (playing && animated);
   return (
     <div className="flex flex-col gap-1 px-3 py-1.5 text-[11px] text-fg/80">
       <span className="flex items-center gap-1">
         <ParamDiamond nodeId={nodeId} paramPath="quaternion" value={authored} />
+        {controller ? (
+          <ControlledBy nodeId={nodeId} paramPath="quaternion" controller={controller} />
+        ) : null}
         <span className="font-mono text-fg/60">rotation</span>
       </span>
       <div className="flex gap-1" data-testid={`inspector-quaternion-${nodeId}`}>

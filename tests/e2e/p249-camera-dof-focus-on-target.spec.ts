@@ -1,8 +1,10 @@
 // #247 increment 3 — depth-of-field "focus on target". When enabled, the focus
-// plane tracks the lookAt (the reticle / bound target): the effective focus
-// distance becomes |position − lookAt|, resolved at the SAME site the renderer
-// feeds cameraDof, so the bokeh follows the aim. The inspector field then shows
-// the tracked distance, read-only.
+// plane tracks the target: the effective focus distance becomes |position − aim|,
+// resolved at the SAME site the renderer feeds cameraDof, so the bokeh follows the aim.
+// The inspector field then shows the tracked distance, read-only.
+//
+// #1760 — the target is the camera's winning Track-To's aim. A camera no Track-To aims has
+// no target: its authored focus distance stands, editable.
 //
 // Falsify: without focus-on-target the focus field would keep the authored value
 // and not change when the lookAt / target moves.
@@ -58,7 +60,7 @@ function dist(a: number[], b: number[]) {
 }
 
 test.describe('#247 DoF focus on target', () => {
-  test('focus distance derives from the aim and is read-only; follows a bound target', async ({
+  test('with no Track-To the authored focus stands; a bound target is tracked, read-only', async ({
     page,
   }) => {
     const { camId, targetId, targetPos } = await setup(page);
@@ -72,17 +74,20 @@ test.describe('#247 DoF focus on target', () => {
     await page.waitForTimeout(200);
 
     const focusField = page.locator(`[data-testid="inspector-camera-focus-${lens}"]`);
-    // Default lookAt = [0,0,0], camera at [3,2,3] → focus = |[3,2,3]| ≈ 4.7.
+    // #1760 — nothing aims the default camera yet, so there is no target: its authored focus
+    // stands and stays editable. #1764 — the default camera is authored focused on the origin it
+    // looks at, |[3,2,3]| ≈ 4.69 (the field rounds).
     expect(Number(await focusField.inputValue())).toBeCloseTo(dist([3, 2, 3], [0, 0, 0]), 1);
-    expect(await focusField.getAttribute('readonly')).not.toBeNull();
+    expect(await focusField.getAttribute('readonly')).toBeNull();
     const camParams = await page.evaluate((cid) => {
       return (window as unknown as BasherWindow).__basher_dag!.getState().state.nodes[cid].params;
     }, lens);
     expect(camParams.focusOnTarget).toBe(true);
 
-    // Bind a target → focus jumps to the distance to it.
+    // Bind a target → focus jumps to the distance to it, read-only while it tracks.
     await page.selectOption(`[data-testid="inspector-camera-lookat-${lens}"]`, targetId);
     await page.waitForTimeout(250);
     expect(Number(await focusField.inputValue())).toBeCloseTo(dist([3, 2, 3], targetPos), 1);
+    expect(await focusField.getAttribute('readonly')).not.toBeNull();
   });
 });

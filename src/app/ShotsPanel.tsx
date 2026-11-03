@@ -87,7 +87,7 @@ export function ShotsPanel(): ReactNode {
                   data-testid={`shot-camera-${shot.index}`}
                   aria-label={`Camera for shot ${shot.index + 1}`}
                   value={shot.cameraId ?? ''}
-                  disabled={cameras.length < 2}
+                  disabled={cameras.length < 2 || view.cutsSilenced}
                   onChange={(e) =>
                     commit(
                       buildSetShotCameraOps(state, shot.start, e.target.value),
@@ -136,12 +136,20 @@ export function ShotsPanel(): ReactNode {
           );
         })}
       </ol>
+      {view.cutsSilenced && (
+        // #1747 — the cuts channel is muted, soloed out or weighted to nothing: the film plays the
+        // switch's own camera, so its keys cut nothing and writing more of them would not either.
+        <p data-testid="shots-cuts-muted" className="px-2 pb-1 text-[11px] text-fg-dim">
+          Camera cuts are muted: the whole film plays {nameOf(view.shots[0]?.cameraId ?? null)}.
+          Unmute the Camera cuts channel to cut again.
+        </p>
+      )}
       <footer className="flex flex-col gap-1 border-t border-border px-2 py-2 text-[12px]">
         <div className="flex items-center gap-1">
           <button
             type="button"
             data-testid="shots-cut-here"
-            disabled={!target}
+            disabled={!target || view.cutsSilenced}
             onClick={() =>
               target &&
               commit(

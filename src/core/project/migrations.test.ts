@@ -23,6 +23,7 @@ import { registerAllNodes } from '../../nodes/registerAll';
 import { resolveEvaluatedMesh } from '../../app/resolveEvaluatedMesh';
 import { resolveEvaluatedTransform } from '../../app/resolveEvaluatedTransform';
 import { DEFAULT_CAMERA_POSE, resolveCameraPoseAt } from '../../app/activeCamera';
+import { cameraOrientationTuple } from '../../app/cameraOrientation';
 import { sphereGeometryRef } from '../../app/modifierGeometry';
 import { hydrateInlineMaterial, openpbrMaterialSchema } from '../../nodes/materialSchema';
 import { CURRENT_LOOK_ROUGHNESS } from '../../nodes/materialSchema';
@@ -1476,10 +1477,20 @@ describe('object↔data split v6 → v7: fused cameras → Object + CameraData (
       focusDistance: 7.5,
       fStop: 1.4,
       focusOnTarget: true,
-      lookAt: CAM_LOOKAT,
-      roll: CAM_ROLL,
+      // #1762 #1764 (v26) — the look-at and roll move onto the camera's aim Track-To, below, and
+      // leave the lens.
     });
     expect((persp.inputs as Record<string, { node: string }>).data.node).toBe(perspData.id);
+    // #1762 (v26) — the aim the lens held is a parent-space Track-To on the Object.
+    const aimOf = (id: string) =>
+      Object.values(m.state.nodes).find(
+        (n) => n.type === 'TrackTo' && (n.params as { target?: string }).target === id,
+      );
+    expect(aimOf('n_persp')?.params).toMatchObject({
+      aimPoint: CAM_LOOKAT,
+      aimSpace: 'parent',
+      roll: CAM_ROLL,
+    });
 
     // Orthographic → the same Object shape + a CameraData discriminated the other way.
     const ortho = m.state.nodes.n_ortho;
@@ -1490,14 +1501,18 @@ describe('object↔data split v6 → v7: fused cameras → Object + CameraData (
       projection: 'Orthographic',
       // D5 — the ONE invented value in this migration. An orthographic source never
       // had an fov and `CameraData.fov` is required; it is inert while the projection
-      // is orthographic (the recompose reads `zoom`).
+      // is orthographic.
       fov: 45,
-      zoom: 33,
+      // #1760 (v26) — the read-by-nothing `zoom: 33` is gone; the camera is framed by its own
+      // ortho scale, filled with the height the render framed it at: 2·tan(fov/2)·aim distance.
+      orthoScale:
+        2 *
+        Math.tan((45 * Math.PI) / 360) *
+        Math.hypot(CAM_LOOKAT[0] + 2, CAM_LOOKAT[1] - 6, CAM_LOOKAT[2] - 9),
       near: 0.02,
       far: CAM_FAR,
-      lookAt: CAM_LOOKAT,
-      roll: CAM_ROLL,
     });
+    expect(aimOf('n_ortho')?.params).toMatchObject({ aimPoint: CAM_LOOKAT, roll: CAM_ROLL });
     // The orthographic source has no DoF/sensor params at all, so the migration writes
     // none — CameraData's schema defaults them. Asserted as an absence because writing
     // perspective-only fields onto an ortho bag is the plausible wrong thing to do.
@@ -1541,15 +1556,20 @@ describe('object↔data split v6 → v7: fused cameras → Object + CameraData (
     // Compared against a hand-written canonical CameraPose rather than a live resolve
     // of the fused node — slice 8 deletes the fused camera types, and a fixture that
     // compares against them dies with them (the sphere's shipped lesson).
-    expect(resolveCameraPoseAt(m.state, 'n_persp', 0)).toEqual({
+    const pose = resolveCameraPoseAt(m.state, 'n_persp', 0);
+    expect({ kind: pose.kind, position: pose.position, fov: pose.fov, near: pose.near }).toEqual({
       kind: 'PerspectiveCamera',
       position: CAM_POSITION,
-      lookAt: CAM_LOOKAT,
       fov: CAM_PERSP_FOV,
       near: 0.05,
-      far: CAM_FAR,
-      roll: CAM_ROLL,
     });
+    expect(pose.far).toBe(CAM_FAR);
+    // #1760 — the aim and roll arrive through the v26 Track-To, re-derived from the orientation
+    // the pose carries, so they are compared to the float, as that orientation is.
+    pose.lookAt.forEach((v, i) => expect(v, `lookAt ${i}`).toBeCloseTo(CAM_LOOKAT[i], 9));
+    expect(pose.roll).toBeCloseTo(CAM_ROLL, 9);
+    const q = cameraOrientationTuple(CAM_POSITION, CAM_LOOKAT, CAM_ROLL);
+    expect(Math.abs(q.reduce((acc, v, i) => acc + v * pose.quaternion[i], 0))).toBeCloseTo(1, 9);
     // The orthographic half keeps its own discriminator through the split.
     expect(resolveCameraPoseAt(m.state, 'n_ortho', 0).kind).toBe('OrthographicCamera');
     // Not a degenerate all-default fixture: every asserted value differs from the

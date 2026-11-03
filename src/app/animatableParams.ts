@@ -6,8 +6,8 @@
 // readers do not agree on one road. Twelve roads carry a channel's value to something that
 // uses it, each with its own membership: the scene-object overlay, the light overlay, the
 // camera pose (bare channels, a fixed path list), the environment, the glTF material map, the
-// compositor… (the road table is on #1235). Some params are read raw and never see a channel:
-// `TrackTo.aimPoint`, camera `zoom`, a curve's `points`. Nothing in the code recorded which is
+// compositor… (the road table is on #1235). Some params were read raw and never saw a channel —
+// `TrackTo.aimPoint` until #1767, the camera's `zoom` until #1760, a curve's `points`. Nothing in the code recorded which is
 // which, so a channel on a raw-read param was accepted, drawn in the dopesheet, and did nothing.
 //
 // Writing the roads' rules down beside them would be a second copy of every renderer's reads,

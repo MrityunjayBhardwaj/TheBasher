@@ -3,6 +3,7 @@
 
 import { describe, expect, it } from 'vitest';
 import { orthoZoomForView } from './EditorViewCamera';
+import { orthoZoomForScale } from './cameraFit';
 
 describe('orthoZoomForView', () => {
   it('equates ortho world-height with the perspective frustum at the pivot', () => {
@@ -33,5 +34,25 @@ describe('orthoZoomForView', () => {
     expect(orthoZoomForView(5, 45, 0)).toBe(1);
     expect(orthoZoomForView(Number.NaN, 45, 1080)).toBe(1);
     expect(orthoZoomForView(5, 45, Number.POSITIVE_INFINITY)).toBe(1);
+  });
+});
+
+describe('orthoZoomForScale (#1774)', () => {
+  it('shows exactly orthoScale world units of height on a pixel-sized frustum', () => {
+    for (const [scale, h] of [
+      [6, 1080],
+      [2.5, 720],
+      [40, 333],
+    ] as const) {
+      // drei's frustum is h pixels tall; the visible world height is h / zoom.
+      expect(h / orthoZoomForScale(scale, h)).toBeCloseTo(scale, 9);
+    }
+  });
+
+  it('returns a safe 1 for a degenerate scale or viewport', () => {
+    expect(orthoZoomForScale(0, 1080)).toBe(1);
+    expect(orthoZoomForScale(-3, 1080)).toBe(1);
+    expect(orthoZoomForScale(Number.NaN, 1080)).toBe(1);
+    expect(orthoZoomForScale(6, 0)).toBe(1);
   });
 });

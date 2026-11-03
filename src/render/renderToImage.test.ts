@@ -5,6 +5,7 @@
 import { describe, it, expect } from 'vitest';
 import * as THREE from 'three';
 import type { CameraPose } from '../app/activeCamera';
+import { cameraOrientationTuple } from '../app/cameraOrientation';
 import {
   buildRenderCamera,
   flipRowsY,
@@ -13,15 +14,21 @@ import {
   withEditorChromeHidden,
 } from './renderToImage';
 
-const PERSP: CameraPose = {
+/** A pose aimed by `lookAt` and `roll`, carrying the orientation they give (#1760). */
+const aimed = (p: Omit<CameraPose, 'quaternion'>): CameraPose => ({
+  ...p,
+  quaternion: cameraOrientationTuple(p.position, p.lookAt, p.roll),
+});
+const PERSP: CameraPose = aimed({
   kind: 'PerspectiveCamera',
   position: [3, 2, 3],
   lookAt: [0, 0, 0],
+  orthoScale: 6,
   fov: 45,
   near: 0.1,
   far: 1000,
   roll: 0,
-};
+});
 
 describe('buildRenderCamera', () => {
   it('builds a perspective camera at the render aspect, not the viewport aspect', () => {
@@ -45,7 +52,7 @@ describe('buildRenderCamera', () => {
   it('banks the render camera by roll while keeping the aim (#229)', () => {
     // Looking down -Z from +Z, a +90° roll rotates the camera up-vector to +X.
     const rolled = buildRenderCamera(
-      { ...PERSP, position: [0, 0, 5], lookAt: [0, 0, 0], roll: 90 },
+      aimed({ ...PERSP, position: [0, 0, 5], lookAt: [0, 0, 0], roll: 90 }),
       800,
       800,
     );
@@ -54,6 +61,20 @@ describe('buildRenderCamera', () => {
     expect(fwd.z).toBeCloseTo(-1); // aim unchanged by roll
     expect(up.x).toBeCloseTo(1); // up banked 90° about the view axis
     expect(up.y).toBeCloseTo(0);
+  });
+
+  it('is turned by the orientation the pose carries, not by its aim (#1760)', () => {
+    // A pose whose quaternion turns the camera 90° about +Y (looking down −X) while its lookAt
+    // still points down −Z: the render follows the quaternion.
+    const q = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI / 2);
+    const cam = buildRenderCamera(
+      { ...PERSP, position: [0, 0, 0], lookAt: [0, 0, -5], quaternion: [q.x, q.y, q.z, q.w] },
+      800,
+      800,
+    );
+    const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(cam.quaternion);
+    expect(fwd.x).toBeCloseTo(-1);
+    expect(fwd.z).toBeCloseTo(0);
   });
 
   it('aspect changes with the requested resolution (square vs wide)', () => {
@@ -66,6 +87,19 @@ describe('buildRenderCamera', () => {
   it('builds an orthographic camera for an ortho pose', () => {
     const cam = buildRenderCamera({ ...PERSP, kind: 'OrthographicCamera' }, 1600, 900);
     expect((cam as THREE.OrthographicCamera).isOrthographicCamera).toBe(true);
+  });
+
+  it('frames an ortho camera by its ortho scale: that tall, the width by the aspect (#1760)', () => {
+    // Same fov, same aim distance, two scales: only the scale may move the frame.
+    for (const orthoScale of [2, 8]) {
+      const cam = buildRenderCamera(
+        { ...PERSP, kind: 'OrthographicCamera', orthoScale },
+        1600,
+        900,
+      ) as THREE.OrthographicCamera;
+      expect(cam.top - cam.bottom).toBeCloseTo(orthoScale, 12);
+      expect(cam.right - cam.left).toBeCloseTo((orthoScale * 1600) / 900, 12);
+    }
   });
 });
 

@@ -159,8 +159,8 @@ test('a path nothing draws is listed with why, and a target nobody measured is r
       enabled: expect.arrayContaining(['intensity']),
     });
 
-  // A Track-To's aim point is read raw, and none of its vec3 params draws: nothing to pick,
-  // so the path is shown read-only with the measured answer.
+  // A Track-To's aim point animates since its keys are honoured (#1767), so it is picked like any
+  // other path — not shown read-only.
   await dispatch(page, { type: 'addNode', nodeId: 'tt_e2e', nodeType: 'TrackTo', params: {} });
   await dispatch(page, {
     type: 'addNode',
@@ -171,9 +171,26 @@ test('a path nothing draws is listed with why, and a target nobody measured is r
   await page.evaluate(() =>
     (window as unknown as W).__basher_selection.getState().select('aim_e2e'),
   );
-  const aim = page.getByTestId('inspector-options-locked-aim_e2e-paramPath');
-  await expect(aim).toContainText('aimPoint');
-  await expect(aim).toContainText('no vec3 param of TrackTo animates');
+  await expect
+    .poll(() => shown(page, 'inspector-options-aim_e2e-paramPath'))
+    .toMatchObject({ value: 'aimPoint', enabled: expect.arrayContaining(['aimPoint', 'up']) });
+  await expect(page.getByTestId('inspector-options-locked-aim_e2e-paramPath')).toHaveCount(0);
+
+  // A Clamp's numbers are read raw, and none of them draws: nothing to pick, so the path is
+  // shown read-only with the measured answer. (A Track-To was this case until #1767.)
+  await dispatch(page, { type: 'addNode', nodeId: 'clamp_e2e', nodeType: 'Clamp', params: {} });
+  await dispatch(page, {
+    type: 'addNode',
+    nodeId: 'min_e2e',
+    nodeType: 'KeyframeChannelNumber',
+    params: { target: 'clamp_e2e', paramPath: 'min' },
+  });
+  await page.evaluate(() =>
+    (window as unknown as W).__basher_selection.getState().select('min_e2e'),
+  );
+  const clampPath = page.getByTestId('inspector-options-locked-min_e2e-paramPath');
+  await expect(clampPath).toContainText('min');
+  await expect(clampPath).toContainText('no number param of Clamp animates');
 
   // A Strip was never placed by the census: the path is shown read-only, saying so. (#1666 — this
   // was a Shot, a type since removed.)

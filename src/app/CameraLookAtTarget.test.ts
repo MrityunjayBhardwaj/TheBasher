@@ -20,6 +20,11 @@ import { registerAllNodes } from '../nodes/registerAll';
 import { splitOps } from '../test-utils/splitKinds';
 import { bindLookAtTargetOps, lookAtTargetOptions } from './CameraLookAtTarget';
 import { makeSplitCube } from '../test-utils/splitCube';
+import { resolveEvaluatedTransform } from './resolveEvaluatedTransform';
+import { resolveCameraPoseAt } from './activeCamera';
+import { buildDefaultDagState } from '../core/project/default';
+import { makeSplitCamera } from '../test-utils/splitCamera';
+import * as THREE from 'three';
 
 beforeAll(() => {
   registerAllNodes();
@@ -35,7 +40,8 @@ function buildScene(): DagState {
     'camera',
     { objectId: 'n_cam' },
     {
-      data: { fov: 28, lookAt: [0, 1, 0] },
+      // #1764 — no lens aim: focused √65 ahead, where the old lens look-at (0, 1, 0) sat.
+      data: { fov: 28, focusDistance: Math.sqrt(65) },
       object: { position: [7, 1, -4] },
     },
   )) {
@@ -50,6 +56,15 @@ function buildScene(): DagState {
 }
 
 const IDS = { nodeId: 'n_cam_data', poseNodeId: 'n_cam' };
+
+/** `buildScene`, its camera aimed at the cube through the dropdown. */
+function aimedAtCube(): DagState {
+  let s = buildScene();
+  for (const op of bindLookAtTargetOps(s, IDS, 'n_cube', CTX).ops) {
+    s = applyOp(s, op as Parameters<typeof applyOp>[1]).next;
+  }
+  return s;
+}
 
 describe('lookAtTargetOptions', () => {
   it('offers other positioned objects and excludes the camera’s OWN Object', () => {
@@ -78,9 +93,13 @@ describe('bindLookAtTargetOps', () => {
     // displayed by this same dropdown, and ignored by every resolver.
     expect(op.params.target).toBe('n_cam');
     expect(op.params.aimNode).toBe('n_cube');
-    // The seed aim point comes from the LENS half, where `lookAt` lives. Read off the
-    // Object it is absent → [0,0,0] → the camera swings through the world origin.
-    expect(op.params.aimPoint).toEqual([0, 1, 0]);
+    // #1775 — the seed aim point is where the camera is drawn looking, resolved for the OBJECT
+    // (resolved off the lens half it is a fallback pose's aim). This camera has no rotation, so
+    // it looks down −Z from (7, 1, −4), at its aim distance √65; not at the origin, not at its
+    // lens look-at (0, 1, 0), which no longer turns it.
+    const seed = op.params.aimPoint as number[];
+    [7, 1, -4 - Math.sqrt(65)].forEach((v, i) => expect(seed[i]).toBeCloseTo(v, 9));
+    expect(op.params.aimSpace).toBe('world');
     expect(op.params.order).toBe(0);
   });
 
@@ -97,7 +116,7 @@ describe('bindLookAtTargetOps', () => {
     expect(op.paramPath).toBe('aimNode');
   });
 
-  it('clear freezes the resolved aim onto the LENS half, then removes the constraint', () => {
+  it('clear freezes the drawn orientation onto the OBJECT, then removes the constraint', () => {
     let s = buildScene();
     for (const op of bindLookAtTargetOps(s, IDS, 'n_cube', CTX).ops) {
       s = applyOp(s, op as Parameters<typeof applyOp>[1]).next;
@@ -108,10 +127,11 @@ describe('bindLookAtTargetOps', () => {
       | { nodeId: string; paramPath: string; value: unknown }
       | undefined;
     expect(freeze).toBeDefined();
-    // `lookAt` is a CameraData param. Frozen onto the Object it lands where nothing
-    // reads it, and the camera snaps back to its stale authored aim on clear.
-    expect(freeze!.nodeId).toBe('n_cam_data');
-    expect(freeze!.paramPath).toBe('lookAt');
+    // #1760 #1764 — the camera keeps looking where it looked through its own rotation, on the
+    // Object; the lens holds no aim and is not written.
+    expect(freeze!.nodeId).toBe('n_cam');
+    expect(freeze!.paramPath).toBe('rotation');
+    expect(ops.some((o) => o.type === 'setParam' && o.nodeId === 'n_cam_data')).toBe(false);
     expect(ops.some((o) => o.type === 'removeNode')).toBe(true);
   });
 
@@ -128,6 +148,166 @@ describe('bindLookAtTargetOps', () => {
     expect(bindLookAtTargetOps(s, collapsed, '', CTX).ops).toEqual([]);
     // …while the correct pair does the work. Disjoint, on one state, in one test.
     expect(bindLookAtTargetOps(s, IDS, '', CTX).ops.length).toBeGreaterThan(0);
+  });
+
+  // #1772 — a keyed rotation, hidden while the Track-To aimed the camera, takes over the moment
+  // the Track-To is gone: written as a plain param, the frozen rotation lost to its keys and the
+  // camera jumped 29.7° here. It goes through the animated-edit road instead (a key with Auto-Key
+  // on, a held edit with it off), which the shell runs.
+  it('a keyed rotation: the frozen rotation is an animated edit, not a plain write', () => {
+    let s = aimedAtCube();
+    s = applyOp(s, {
+      type: 'addNode',
+      nodeId: 'rot_keys',
+      nodeType: 'KeyframeChannelVec3',
+      params: {
+        name: 'rotation',
+        target: 'n_cam',
+        paramPath: 'rotation',
+        keyframes: [
+          { time: 0, value: [0, 90, 0], easing: 'linear' },
+          { time: 2, value: [0, 90, 0], easing: 'linear' },
+        ],
+      },
+    } as Parameters<typeof applyOp>[1]).next;
+    const drawn = resolveEvaluatedTransform(s, 'n_cam', CTX)!.rotation!;
+    const { ops, animatedWrite } = bindLookAtTargetOps(s, IDS, '', CTX);
+    expect(ops.some((o) => o.type === 'setParam' && o.paramPath === 'rotation')).toBe(false);
+    expect(animatedWrite?.nodeId).toBe('n_cam');
+    expect(animatedWrite?.paramPath).toBe('rotation');
+    (animatedWrite!.value as number[]).forEach((v, i) => expect(v).toBeCloseTo(drawn[i], 9));
+    // Written as the key at this frame, the camera looks where it looked.
+    for (const op of ops) s = applyOp(s, op as Parameters<typeof applyOp>[1]).next;
+    s = applyOp(s, {
+      type: 'setParam',
+      nodeId: 'rot_keys',
+      paramPath: 'keyframes',
+      value: [
+        { time: 0, value: animatedWrite!.value, easing: 'linear' },
+        { time: 2, value: [0, 90, 0], easing: 'linear' },
+      ],
+    } as Parameters<typeof applyOp>[1]).next;
+    const after = resolveEvaluatedTransform(s, 'n_cam', CTX)!.rotation!;
+    after.forEach((v, i) => expect(v).toBeCloseTo(drawn[i], 6));
+  });
+
+  it('control: an unkeyed rotation is frozen in the one atomic clear', () => {
+    const s = aimedAtCube();
+    const { ops, animatedWrite } = bindLookAtTargetOps(s, IDS, '', CTX);
+    expect(animatedWrite).toBeUndefined();
+    expect(ops.some((o) => o.type === 'setParam' && o.paramPath === 'rotation')).toBe(true);
+  });
+
+  // #1775 — the new Track-To's fallback aim point (used once its target node is gone) is where
+  // the camera is drawn looking, in its parent's space. It was the lens look-at — a parent-space
+  // point — under the default world space, so a nested camera fell back 5 units off here.
+  it('a nested camera falls back to where it looked when its target node is cleared', () => {
+    let s = buildDefaultDagState();
+    for (const op of [
+      { type: 'addNode', nodeId: 'grp', nodeType: 'Group', params: { position: [5, 0, 0] } },
+      {
+        type: 'connect',
+        from: { node: 'grp', socket: 'out' },
+        to: { node: 'n_scene', socket: 'children' },
+      },
+    ])
+      s = applyOp(s, op as Parameters<typeof applyOp>[1]).next;
+    s = makeSplitCamera(s, {
+      objectId: 'cam',
+      position: [0, 1, 6],
+      lens: { lookAt: [0, 1, 0] },
+      connectTo: { node: 'grp', socket: 'children' },
+    }).state;
+    const looked = resolveCameraPoseAt(s, 'cam', 0).lookAt;
+    [5, 1, 0].forEach((v, i) => expect(looked[i]).toBeCloseTo(v, 9)); // the fixture: world (5,1,0)
+    const { ops } = bindLookAtTargetOps(s, { nodeId: 'cam_data', poseNodeId: 'cam' }, 'n_box', CTX);
+    for (const op of ops) s = applyOp(s, op as Parameters<typeof applyOp>[1]).next;
+    const tt = Object.values(s.nodes).find((n) => n.type === 'TrackTo')!;
+    expect((tt.params as { aimSpace: string }).aimSpace).toBe('world');
+    // The target node goes (what deleting it does to the Track-To): the fallback point takes over.
+    s = applyOp(s, {
+      type: 'setParam',
+      nodeId: tt.id,
+      paramPath: 'aimNode',
+      value: '',
+    } as Parameters<typeof applyOp>[1]).next;
+    const after = resolveCameraPoseAt(s, 'cam', 0).lookAt;
+    [5, 1, 0].forEach((v, i) => expect(after[i]).toBeCloseTo(v, 6));
+  });
+
+  // The Track-To's space also picks which way is up (#1770): a new binding is world space, so a
+  // camera in a tilted rig stays level, as a binding always has. A parent-space seed banked it
+  // 30° with the rig here.
+  it('a camera in a tilted rig stays level when bound', () => {
+    let s = buildDefaultDagState();
+    for (const op of [
+      {
+        type: 'addNode',
+        nodeId: 'grp',
+        nodeType: 'Group',
+        params: { position: [0, 0, 6], rotation: [0, 0, 30] },
+      },
+      {
+        type: 'connect',
+        from: { node: 'grp', socket: 'out' },
+        to: { node: 'n_scene', socket: 'children' },
+      },
+    ])
+      s = applyOp(s, op as Parameters<typeof applyOp>[1]).next;
+    s = makeSplitCamera(s, {
+      objectId: 'cam',
+      position: [0, 1, 0],
+      connectTo: { node: 'grp', socket: 'children' },
+    }).state;
+    for (const op of bindLookAtTargetOps(s, { nodeId: 'cam_data', poseNodeId: 'cam' }, 'n_box', CTX)
+      .ops)
+      s = applyOp(s, op as Parameters<typeof applyOp>[1]).next;
+    const [x, y, z, w] = resolveCameraPoseAt(s, 'cam', 0).quaternion;
+    const right = new THREE.Vector3(1, 0, 0).applyQuaternion(new THREE.Quaternion(x, y, z, w));
+    expect(right.y).toBeCloseTo(0, 9); // a level horizon: the camera's right has no rise
+  });
+
+  // A camera is posed on the playhead (#1594); the dropdown's context is scene time. The scene
+  // runs at half speed and the camera's position is keyed on the playhead, so the seed must be
+  // read at playhead 2 s (where the camera is at x = 10), not at 1 s.
+  it('the seed is read on the playhead, the clock the camera is posed on', () => {
+    let s = buildScene();
+    s = applyOp(s, {
+      type: 'addNode',
+      nodeId: 'scn',
+      nodeType: 'Scene',
+      params: { timeSpeed: 0.5 },
+    } as Parameters<typeof applyOp>[1]).next;
+    s = { ...s, outputs: { ...s.outputs, scene: { node: 'scn', socket: 'out' } } };
+    s = applyOp(s, {
+      type: 'addNode',
+      nodeId: 'pos_keys',
+      nodeType: 'KeyframeChannelVec3',
+      params: {
+        target: 'n_cam',
+        paramPath: 'position',
+        keyframes: [
+          { time: 0, value: [0, 1, 6], easing: 'linear' },
+          { time: 2, value: [10, 1, 6], easing: 'linear' },
+        ],
+      },
+    } as Parameters<typeof applyOp>[1]).next;
+    const sceneAt1 = { time: { frame: 60, seconds: 1, normalized: 0 } };
+    const add = bindLookAtTargetOps(s, IDS, 'n_cube', sceneAt1).ops[0] as {
+      params: { aimPoint: number[] };
+    };
+    const want = resolveCameraPoseAt(s, 'n_cam', 2).lookAt;
+    expect(want[0]).toBeCloseTo(10, 9);
+    add.params.aimPoint.forEach((v, i) => expect(v).toBeCloseTo(want[i], 9));
+  });
+
+  it('control: a top-level camera seeds the point it is drawn looking at', () => {
+    const s = buildScene();
+    const looked = resolveCameraPoseAt(s, 'n_cam', 0).lookAt;
+    const add = bindLookAtTargetOps(s, IDS, 'n_cube', CTX).ops[0] as {
+      params: { aimPoint: number[] };
+    };
+    add.params.aimPoint.forEach((v, i) => expect(v).toBeCloseTo(looked[i], 9));
   });
 
   it('clearing an unaimed camera emits nothing', () => {

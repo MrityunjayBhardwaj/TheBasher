@@ -151,6 +151,9 @@ const formatMigrations: Record<number, FormatMigration> = {
   // becomes the cuts the Shots panel writes (a cut to its camera at its start, and back at its
   // end), and each Cut is dropped.
   24: migrateShotsToCuts,
+  // v25 → v26 (#1762, part of #487): each camera's aim (its lens `lookAt` and `roll`) becomes a
+  // Track-To at the bottom of its stack, aim point in parent space, keys and drivers moved over.
+  25: migrateCameraAimToTrackTo,
 };
 
 // ── v1 → v2: AnimationLayer retirement (#199) ──────────────────────────────
@@ -2445,4 +2448,167 @@ export function migrateShotsToCuts(raw: unknown): unknown {
       `with no camera to cut to and ${cuts} Cut node(s) were dropped (#1666).`,
   );
   return { ...proj, state: { ...proj.state, nodes: state.nodes }, formatVersion: 25 };
+}
+
+// ── v25 → v26: a camera's aim becomes a Track-To (#1762, part of #487) ──────────────────────
+// A camera was aimed by `lookAt` and `roll` on its lens (`CameraData`), in its parent's space.
+// Each camera gains a Track-To at the bottom of its constraint stack that holds that aim: the
+// look-at as its aim point in `parent` space, the roll as its own. Keys and drivers on the lens's
+// `lookAt` move onto the Track-To's `aimPoint`, and those on `roll` onto its `roll`, unchanged —
+// nothing is resampled, because the Track-To honours them (#1767). #1764 — the lens keeps
+// neither: `lookAt` and `roll` leave every lens, worn or not, once the Track-To holds them.
+//
+// A camera that already had a Track-To keeps it winning: the new one sits below it, so muting the
+// old one shows the authored look-at again, as it did. Its roll used to add to the lens roll
+// whichever member won, so the lens roll (and any keys on it) is added to every existing member
+// too.
+//
+// A strip placed on a camera can carry `lookAt` or `roll` inside its clip; those are not moved,
+// and each such camera is LOGGED so the loss is never silent.
+//
+// The same step gives an orthographic camera its own frame (#478, #1760). Its lens `zoom` was
+// read by nothing: the render framed it `2·tan(fov/2)·|lookAt − position|` tall, from its fov
+// and its aim distance. That height becomes its `orthoScale` (Blender's `ortho_scale`, Sensor Fit
+// Vertical), so the shot frames as it did; at no distance it was 2. The distance is the rest
+// pose's — a keyed dolly of an orthographic camera used to change its framing and now does not.
+// `zoom` leaves every lens, and keys or drivers on it are removed (they drove nothing), LOGGED.
+const AIM_PATHS = new Set(['lookAt', 'roll']);
+
+export function migrateCameraAimToTrackTo(raw: unknown): unknown {
+  const proj = raw as { formatVersion?: number; state?: { nodes?: Record<string, RawNode> } };
+  const nodes = proj.state?.nodes;
+  if (!nodes) return { ...proj, formatVersion: 26 };
+  const out: Record<string, RawNode> = { ...nodes };
+  const entries = Object.entries(nodes);
+  const isVec3 = (v: unknown): v is [number, number, number] =>
+    Array.isArray(v) && v.length === 3 && v.every((x) => typeof x === 'number');
+  const num = (v: unknown, d: number) => (typeof v === 'number' && Number.isFinite(v) ? v : d);
+  const freshId = (base: string) => {
+    let id = base;
+    for (let i = 2; id in out; i++) id = `${base}_${i}`;
+    return id;
+  };
+
+  /** #1764 — a lens without the aim it no longer holds. */
+  const withoutAim = (p: Record<string, unknown>) => {
+    const { lookAt: _lookAt, roll: _roll, ...rest } = p;
+    void _lookAt;
+    void _roll;
+    return rest;
+  };
+  let cameras = 0;
+  let movedKeys = 0;
+  let droppedZoomKeys = 0;
+  const stripCameras: string[] = [];
+  for (const [dataId, lens] of entries) {
+    if (lens?.type !== 'CameraData') continue;
+    const objId = entries.find(([, n]) =>
+      asRefs(n?.inputs?.data).some((r) => r.node === dataId),
+    )?.[0];
+    // #1760 — `zoom` → `orthoScale`, worn or not.
+    const { zoom: _zoom, ...lensParams } = lens.params ?? {};
+    void _zoom;
+    if (lens.params?.projection === 'Orthographic') {
+      const at = objId ? out[objId]?.params?.position : undefined;
+      const look = lensParams.lookAt;
+      const dist =
+        isVec3(at) && isVec3(look)
+          ? Math.hypot(look[0] - at[0], look[1] - at[1], look[2] - at[2])
+          : 0;
+      lensParams.orthoScale = 2 * (Math.tan((num(lensParams.fov, 45) * Math.PI) / 360) * dist || 1);
+    }
+    out[dataId] = { ...lens, params: withoutAim(lensParams) };
+    for (const [id, n] of entries) {
+      const p = n?.params;
+      if (p?.paramPath !== 'zoom' || (p.target !== dataId && p.target !== objId)) continue;
+      if (
+        !(typeof n.type === 'string' && n.type.startsWith('KeyframeChannel')) &&
+        n.type !== 'ParamDriver'
+      )
+        continue;
+      delete out[id];
+      droppedZoomKeys++;
+    }
+    if (!objId) continue; // a lens no camera wears aims nothing
+    // #1764 — a lens with no look-at holds no aim to move: a v25 lens always carried one (its
+    // schema default), so this is a camera already turned by its own rotation (a project built at
+    // v26), which a Track-To aimed at a made-up point would turn away from where it looks.
+    if (!isVec3(lensParams.lookAt)) continue;
+    cameras++;
+    const lp = lensParams;
+    const roll = num(lp.roll, 0);
+    const existing = entries.filter(([, n]) => n?.type === 'TrackTo' && n.params?.target === objId);
+    const lowest = Math.min(0, ...existing.map(([, n]) => num(n.params?.order, 0)));
+    const aimId = freshId(`${objId}_aim`);
+    out[aimId] = {
+      id: aimId,
+      type: 'TrackTo',
+      version: 1,
+      params: {
+        name: 'aim',
+        target: objId,
+        aimNode: '',
+        aimBone: '',
+        aimPoint: isVec3(lp.lookAt) ? lp.lookAt : [0, 0, 0],
+        aimSpace: 'parent',
+        up: [0, 1, 0],
+        roll,
+        mute: false,
+        order: existing.length > 0 ? lowest - 1 : 0,
+      },
+      inputs: {},
+    };
+    for (const [ttId, tt] of existing) {
+      out[ttId] = { ...tt, params: { ...tt.params, roll: num(tt.params?.roll, 0) + roll } };
+    }
+    out[dataId] = { ...lens, params: withoutAim(lp) };
+
+    // Keys and drivers on the aim, addressed to the lens or the camera Object.
+    const holders = new Set([dataId, objId]);
+    for (const [id, n] of entries) {
+      const p = n?.params;
+      if (!p || !holders.has(p.target as string) || !AIM_PATHS.has(p.paramPath as string)) continue;
+      const isChannel = typeof n.type === 'string' && n.type.startsWith('KeyframeChannel');
+      if (!isChannel && n.type !== 'ParamDriver') continue;
+      movedKeys++;
+      if (p.paramPath === 'lookAt') {
+        out[id] = {
+          ...n,
+          params: {
+            ...p,
+            target: aimId,
+            paramPath: 'aimPoint',
+            ...(p.name === 'lookAt' ? { name: 'aimPoint' } : {}),
+          },
+        };
+        continue;
+      }
+      // `roll`: onto the new Track-To, and a copy onto every existing one.
+      out[id] = { ...n, params: { ...p, target: aimId } };
+      for (const [ttId] of existing) {
+        const copyId = freshId(`${id}_${ttId}`);
+        out[copyId] = { ...n, id: copyId, params: { ...p, target: ttId } };
+      }
+    }
+    if (entries.some(([, n]) => n?.type === 'Strip' && holders.has(n.params?.target as string))) {
+      stripCameras.push(objId);
+    }
+  }
+  if (droppedZoomKeys > 0) {
+    console.warn(
+      `[migrateCameraAimToTrackTo] ${droppedZoomKeys} key/driver node(s) on a camera's zoom ` +
+        `removed: nothing read zoom; an orthographic camera is framed by its ortho scale (#1760).`,
+    );
+  }
+  if (cameras > 0) {
+    console.warn(
+      `[migrateCameraAimToTrackTo] ${cameras} camera(s) now aim by a Track-To; ${movedKeys} ` +
+        `key/driver node(s) on look-at or roll moved onto it (#1762).` +
+        (stripCameras.length > 0
+          ? ` Strips on ${stripCameras.join(', ')} were left as they were: a look-at or roll ` +
+            `inside them no longer aims the camera.`
+          : ''),
+    );
+  }
+  return { ...proj, state: { ...proj.state, nodes: out }, formatVersion: 26 };
 }

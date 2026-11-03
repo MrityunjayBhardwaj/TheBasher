@@ -50,6 +50,14 @@ interface Door {
  * an already-listed file fail rather than hide.
  */
 const DOORS: Record<string, Door> = {
+  'src/app/cameraOrientation.ts': {
+    count: 1,
+    kind: 'POINT_IN_TIME',
+    why:
+      '#1760 — `cameraRotationOf`: the rotation a camera creator (new project, Add > Camera, ' +
+      "camera from view, agent snapshot) writes once as a new camera Object's `rotation`. One " +
+      'value, never sampled into a channel or interpolated against a neighbour.',
+  },
   'src/core/import/threeAdapter.ts': {
     count: 1,
     kind: 'SEQUENCE',
@@ -71,6 +79,15 @@ const DOORS: Record<string, Door> = {
     count: 1,
     kind: 'POINT_IN_TIME',
     why: 'Constraint aim resolved fresh each frame from a lookAt matrix; the triple is returned and used immediately.',
+  },
+  'src/app/resolveEvaluatedTransform.ts': {
+    count: 1,
+    kind: 'POINT_IN_TIME',
+    why:
+      "#1753 — a camera's drawn orientation (its aim and roll) read back as the euler a driver " +
+      'or the inspector reads, fresh per frame. The one writer that stores it, the I key, keys ' +
+      "the camera Object's `rotation`, which neither the render nor this read takes for a " +
+      'camera, so nothing interpolates between those keys.',
   },
   'src/app/nodeConstraints.ts': {
     count: 1,

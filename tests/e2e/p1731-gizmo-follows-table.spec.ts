@@ -9,7 +9,7 @@
 //   - commits of the gizmo subtree (`<PerfBoundary id="gizmo">`) per playback frame, for each
 //     kind of selection, from the profiler's per-subtree commit count. Load-independent: a count,
 //     not a time;
-//   - where the proxy sits against the frame table's world (`__basher_frame_table.world`) and the
+//   - where the proxy sits against the resolved world (`__basher_world_transform`) and the
 //     drawn object (`__basher_mesh_world_position`), at scrubbed times and after playback stops.
 //
 // Fixture: N stress spheres; Group pg1 (keyed along x) ⊃ pg2 ⊃ `p_sel`; the default box keyed
@@ -41,7 +41,10 @@ interface W {
     start: () => void;
     stop: () => { subtreeCommits: Record<string, number>; frames: number };
   };
-  __basher_frame_table: { world: (id: string) => readonly number[] | null };
+  __basher_world_transform: (
+    id: string,
+    ctx?: { time: { frame: number; seconds: number; normalized: number } },
+  ) => { matrix: readonly number[] } | null;
   __basher_mesh_world_position: (id: string) => V3 | null;
   __basher_gizmo?: () => { position: V3 } | null;
   __basher_gizmo_multi?: () => { count: number; pivot: V3 };
@@ -70,7 +73,7 @@ async function stage(page: Page) {
       w.__basher_selection &&
       w.__basher_perf_stress &&
       w.__basher_perf &&
-      w.__basher_frame_table &&
+      w.__basher_world_transform &&
       w.__basher_mesh_world_position,
     );
   });
@@ -188,18 +191,19 @@ test('#1731 the gizmos follow the playhead without re-rendering', async ({ page 
   for (const s of [0.5, 1.7, 3.2]) {
     await page.evaluate((s) => (window as unknown as W).__basher_time.getState().setTime(s), s);
     await settle(page);
-    const got = await page.evaluate(() => {
+    const got = await page.evaluate((s) => {
       const w = window as unknown as W;
+      const time = { frame: Math.round(s * 30), seconds: s, normalized: 0 };
       return {
         gizmo: w.__basher_gizmo?.()?.position ?? null,
-        table: w.__basher_frame_table.world('p_sel'),
+        table: w.__basher_world_transform('p_sel', { time })?.matrix ?? null,
         drawn: w.__basher_mesh_world_position('p_sel'),
       };
-    });
+    }, s);
     // pg1 at (2s, 2, 0), pg2 +1 in x, p_sel +1 in z.
     const want: V3 = [2 * s + 1, 2, 1];
     expect(far(got.gizmo, want), `gizmo at ${s}: ${JSON.stringify(got.gizmo)}`).toBeLessThan(1e-6);
-    expect(far(translation(got.table), want), `table at ${s}`).toBeLessThan(1e-6);
+    expect(far(translation(got.table), want), `resolved at ${s}`).toBeLessThan(1e-6);
     expect(far(got.drawn, want), `drawn at ${s}`).toBeLessThan(1e-6);
   }
 
@@ -233,7 +237,8 @@ test('#1731 the gizmos follow the playhead without re-rendering', async ({ page 
         };
       }
       if (kind === 'camera') {
-        const m = w.__basher_frame_table.world('n_camera');
+        // Nothing keys the camera, so its world is the same at every time.
+        const m = w.__basher_world_transform('n_camera')?.matrix ?? null;
         return {
           gizmo: w.__basher_camera_gizmo?.().position ?? null,
           want: m ? ([m[12], m[13], m[14]] as V3) : null,
