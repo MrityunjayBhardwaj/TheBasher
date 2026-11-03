@@ -433,18 +433,8 @@
         "reach": "scene",
         "driver": "scene"
       },
-      "lookAt": {
-        "kind": "vec3",
-        "reach": "scene",
-        "driver": "scene"
-      },
       "penumbra": {
         "kind": "number",
-        "reach": null,
-        "driver": null
-      },
-      "target": {
-        "kind": "vec3",
         "reach": null,
         "driver": null
       },
@@ -484,18 +474,8 @@
         "reach": "scene",
         "driver": "scene"
       },
-      "lookAt": {
-        "kind": "vec3",
-        "reach": null,
-        "driver": null
-      },
       "penumbra": {
         "kind": "number",
-        "reach": null,
-        "driver": null
-      },
-      "target": {
-        "kind": "vec3",
         "reach": null,
         "driver": null
       },
@@ -535,18 +515,8 @@
         "reach": "scene",
         "driver": "scene"
       },
-      "lookAt": {
-        "kind": "vec3",
-        "reach": null,
-        "driver": null
-      },
       "penumbra": {
         "kind": "number",
-        "reach": null,
-        "driver": null
-      },
-      "target": {
-        "kind": "vec3",
         "reach": null,
         "driver": null
       },
@@ -586,18 +556,8 @@
         "reach": "scene",
         "driver": "scene"
       },
-      "lookAt": {
-        "kind": "vec3",
-        "reach": null,
-        "driver": null
-      },
       "penumbra": {
         "kind": "number",
-        "reach": "scene",
-        "driver": "scene"
-      },
-      "target": {
-        "kind": "vec3",
         "reach": "scene",
         "driver": "scene"
       },
@@ -1157,8 +1117,8 @@
       },
       "rotation": {
         "kind": "vec3",
-        "reach": null,
-        "driver": null
+        "reach": "scene",
+        "driver": "scene"
       },
       "scale": {
         "kind": "vec3",
@@ -1174,7 +1134,7 @@
       },
       "quaternion": {
         "kind": "quat",
-        "reach": null
+        "reach": "scene"
       },
       "rotation": {
         "kind": "vec3",
@@ -1283,8 +1243,8 @@
       },
       "rotation": {
         "kind": "vec3",
-        "reach": null,
-        "driver": null
+        "reach": "scene",
+        "driver": "scene"
       },
       "scale": {
         "kind": "vec3",
@@ -1300,7 +1260,7 @@
       },
       "quaternion": {
         "kind": "quat",
-        "reach": null
+        "reach": "scene"
       },
       "rotation": {
         "kind": "vec3",

@@ -22,18 +22,24 @@ test('View ▸ Editor Space ▸ Graph draws the scene and shares the selection',
   await expect(layout).toHaveAttribute('data-space', 'graph');
   await expect(page.getByTestId('graph-view')).toBeVisible();
 
-  // Every node of the starter scene is drawn but the sun's Track-To (#1765): a constraint is
-  // animation, hidden until asked for, and counted as hidden.
-  const [total, aims] = await page.evaluate(() => {
+  // Every node of the starter scene is drawn except its constraints (#1765: the sun comes aimed
+  // by a Track-To), which are animation, hidden until asked for and counted as hidden. Which
+  // types are constraints comes from the product's own list, so the expectation follows the
+  // default project as it gains or loses one.
+  const { total, constraints } = await page.evaluate(async () => {
+    const { ADDABLE_CONSTRAINTS } = await import('/src/app/constraintStack.ts');
+    const types = new Set(ADDABLE_CONSTRAINTS.map((c: { type: string }) => c.type));
     const nodes = Object.values(
       (window as unknown as DagWindow).__basher_dag!.getState().state.nodes,
     ) as { type: string }[];
-    return [nodes.length, nodes.filter((n) => n.type === 'TrackTo').length];
+    return { total: nodes.length, constraints: nodes.filter((n) => types.has(n.type)).length };
   });
-  expect(aims).toBe(1);
-  await expect(page.locator('[data-graph-node]')).toHaveCount(total - aims);
-  await expect(page.getByTestId('graph-view-counts')).toContainText(`${total - aims} nodes`);
-  await expect(page.getByTestId('graph-view-counts')).toContainText('1 animation hidden');
+  expect(total).toBeGreaterThan(constraints);
+  await expect(page.locator('[data-graph-node]')).toHaveCount(total - constraints);
+  const counts = page.getByTestId('graph-view-counts');
+  await expect(counts).toContainText(`${total - constraints} nodes`);
+  if (constraints > 0) await expect(counts).toContainText(`${constraints} animation hidden`);
+  else await expect(counts).not.toContainText('animation hidden');
 
   // Graph → app: clicking the camera node selects it in the app.
   const camera = page.locator('[data-graph-node="n_camera"]');
