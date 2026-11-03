@@ -9,6 +9,7 @@ import { registerAllNodes } from '../../nodes/registerAll';
 import { buildDefaultDagState } from './default';
 import { CAPTURED_EXAMPLE_IDS, EXAMPLE_PROJECT_IDS, buildExampleProject } from './examples';
 import { migrateLightAimToTurn } from './migrations';
+import { useNotificationStore } from '../../app/stores/notificationStore';
 import { makeSplitLight } from '../../test-utils/splitLight';
 import { cameraLocalOrientation } from '../../app/cameraTrackTo';
 import { resolveTrackToTarget } from '../../app/nodeConstraints';
@@ -407,5 +408,44 @@ describe('#1765 v26 → v27: every light shines where it shone', () => {
     const b = migrate(a);
     expectSameTurns(a, b);
     expect(params(b, 'sun').rotationMode).toBe('quaternion');
+  });
+
+  // The user's decision: a sun with keyed rotation is not converted. Its keys stay as they were
+  // and the person is told, by name, in the app's notice stack. A still sun says nothing.
+  describe('a sun with keyed rotation is named in a notice', () => {
+    const notices = () => useNotificationStore.getState().toasts;
+    beforeEach(() => useNotificationStore.getState().clear());
+
+    it('a keyed-rotation sun: a sticky warning names it, and its keys are kept', () => {
+      let a = withLight({ objectId: 'key_sun', lightKind: 'Directional', position: [3, 7, 1] });
+      a = run(a, [
+        {
+          type: 'addNode',
+          nodeId: 'key_sun_rot',
+          nodeType: 'KeyframeChannelVec3',
+          params: {
+            name: 'rotation',
+            target: 'key_sun',
+            paramPath: 'rotation',
+            keyframes: keys([
+              [0, [0, 0, 0]],
+              [2, [40, 10, 0]],
+            ]),
+          },
+        },
+      ]);
+      const b = migrate(a);
+      expect(params(b, 'key_sun_rot')).toEqual(params(a, 'key_sun_rot'));
+      const warned = notices().filter((t) => t.severity === 'warn');
+      expect(warned).toHaveLength(1);
+      expect(warned[0].message).toContain('"key_sun"');
+      expect(warned[0].message).toMatch(/quarter turn/);
+      expect(warned[0].durationMs).toBe(0);
+    });
+
+    it('a still sun: no notice', () => {
+      migrate(withLight({ objectId: 'still_sun', lightKind: 'Directional', position: [3, 7, 1] }));
+      expect(notices()).toEqual([]);
+    });
   });
 });

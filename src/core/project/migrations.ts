@@ -47,6 +47,7 @@ import {
   withResolvedRotation,
 } from '../../app/resolvedRotation';
 import { trackToQuaternion } from '../../app/resolveTrackTo';
+import { useNotificationStore } from '../../app/stores/notificationStore';
 import type { Quat, RotationModeFields } from '../../nodes/types';
 
 type FormatMigration = (raw: unknown) => unknown;
@@ -2647,9 +2648,11 @@ export function migrateCameraAimToTrackTo(raw: unknown): unknown {
 // - Sun at any other rotation: the same orientation turned a quarter turn about its own X, which
 //   carries its old −Y onto its new −Z.
 //
-// What cannot come across exactly is LOGGED so the change is never silent: a sun whose rotation
-// is keyed, driven or carried by a strip (its keys hold the old axis), and a strip on a spot or
-// area light (a `target` / `lookAt` inside its clip no longer aims anything). Both data fields go
+// What cannot come across exactly is never silent. A sun whose rotation is keyed, driven or
+// carried by a strip keeps its keys (they hold the old axis) and is NAMED in a notice the person
+// sees; no real file has one (all 8 scanned: each sun at rotation 0, no rotation channel), and
+// an exact conversion is built when one does. A strip on a spot or area light (a `target` /
+// `lookAt` inside its clip no longer aims anything) is logged. Both data fields go
 // from every light: nothing reads them now.
 const LIGHT_AIM_PATH = { Spot: 'target', Area: 'lookAt' } as const;
 const QUARTER_TURN_ABOUT_X = quaternionFromEulerDeg([-90, 0, 0]);
@@ -2789,14 +2792,30 @@ export function migrateLightAimToTurn(raw: unknown): unknown {
     if (q)
       out[objId] = { ...obj, params: { ...op, ...rotationParamsOf(op, [q.x, q.y, q.z, q.w]) } };
   }
+  // A sun whose rotation is keyed, driven or carried by a strip keeps its keys as they were: they
+  // turned its old −Y, so it now shines a quarter turn off while they play. That changes what the
+  // file shows, so it is said where the person sees it — the app's notice stack — naming each sun,
+  // and the toast stays until dismissed.
+  if (keyedSuns.length > 0) {
+    const named = keyedSuns.map((id) => {
+      const name = (nodes[id] as { meta?: { name?: unknown } }).meta?.name;
+      return typeof name === 'string' && name ? `"${name}"` : `"${id}"`;
+    });
+    useNotificationStore.getState().notify({
+      severity: 'warn',
+      durationMs: 0,
+      message:
+        `${keyedSuns.length === 1 ? 'Sun' : 'Suns'} ${named.join(', ')}: ` +
+        `${keyedSuns.length === 1 ? 'its' : 'their'} rotation keys were made when a sun shone ` +
+        `down its −Y axis. Lights now shine down −Z, and the keys were kept as they were, so ` +
+        `while they play ${keyedSuns.length === 1 ? 'it shines' : 'they shine'} a quarter turn ` +
+        `off from before.`,
+    });
+  }
   if (lights > 0) {
     console.warn(
       `[migrateLightAimToTurn] ${lights} light(s) are now turned by their rotation or a Track-To; ` +
         `${movedKeys} key/driver node(s) on a spot target or area look-at moved onto it (#1765).` +
-        (keyedSuns.length > 0
-          ? ` The rotation keys on ${keyedSuns.join(', ')} were kept as they were: they turned ` +
-            `the sun's old −Y axis, so the sun now shines a quarter turn away while they play.`
-          : '') +
         (stripLights.length > 0
           ? ` Strips on ${stripLights.join(', ')} were left as they were: an aim inside them no ` +
             `longer turns the light.`
