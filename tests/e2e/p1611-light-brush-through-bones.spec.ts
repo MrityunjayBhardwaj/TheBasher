@@ -132,7 +132,8 @@ async function addRigLight(page: Page) {
     objectId: LIGHT,
     lightKind: 'Area',
     position: START,
-    shading: { intensity: 5, color: '#ffffff', width: 2, height: 2, lookAt: [0, 0, 0] },
+    shading: { intensity: 5, color: '#ffffff', width: 2, height: 2 },
+    aimAt: [0, 0, 0],
   });
   await page.evaluate(
     ({ id, lightOps }) => {

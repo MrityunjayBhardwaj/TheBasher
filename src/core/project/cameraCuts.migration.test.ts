@@ -13,6 +13,7 @@ import { buildDefaultDagState } from './default';
 import { loadProject } from './io';
 import {
   migrateCameraAimToTrackTo,
+  migrateLightAimToTurn,
   migrateCameraCutsToIds,
   migrateProjectFormat,
 } from './migrations';
@@ -210,11 +211,12 @@ describe('#1679 — a v23 file from the graph build still has its cuts turned in
       state: DagState;
     };
     expect(out.formatVersion).toBe(PROJECT_FORMAT_VERSION);
-    // The v23 → v25 steps leave it alone; only v26 (#1762) acts, moving each camera's aim onto a
-    // Track-To, so it is compared against that step alone.
-    const aimOnly = migrateCameraAimToTrackTo({ ...launchV23, formatVersion: 25 }) as {
-      state: DagState;
-    };
+    // The v23 → v25 steps leave it alone; only v26 (#1762) acts on its cameras, moving each one's
+    // aim onto a Track-To, and v27 (#1765) on its sun, turning it by its rotation — so it is
+    // compared against those two steps alone.
+    const aimOnly = migrateLightAimToTurn(
+      migrateCameraAimToTrackTo({ ...launchV23, formatVersion: 25 }),
+    ) as { state: DagState };
     expect(out.state).toEqual(aimOnly.state);
   });
 });

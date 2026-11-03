@@ -66,7 +66,8 @@ async function addRigLight(page: import('@playwright/test').Page, id: string): P
     objectId: id,
     lightKind: 'Area',
     position: [6, 0, 0],
-    shading: { intensity: 5, color: '#ffffff', width: 2, height: 2, lookAt: [0, 0, 0] },
+    shading: { intensity: 5, color: '#ffffff', width: 2, height: 2 },
+    aimAt: [0, 0, 0],
   });
   await page.evaluate(
     ({ id, lightOps }) => {

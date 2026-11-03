@@ -18,6 +18,7 @@
 // nothing. Assert the value.
 
 import { dataIdFor, splitOps } from '../../src/test-utils/splitKinds';
+import { cameraRotationLookingAt } from '../../src/app/cameraOrientation';
 
 export type SplitLightKind = 'Directional' | 'Point' | 'Spot' | 'Area';
 
@@ -31,8 +32,12 @@ export interface SplitLightOpts {
   position?: [number, number, number];
   rotation?: [number, number, number];
   scale?: [number, number, number];
-  /** Shading params to seed on the LightData (intensity/color/width/height/target/lookAt/tex). */
+  /** Shading params to seed on the LightData (intensity/color/distance/width/height/tex). */
   shading?: Record<string, unknown>;
+  /** #1765 — a point to turn the light toward: its rotation becomes the one that faces its −Z
+   *  (the way it shines) at this point, with +Y up, which is what a spot's `target` or an area
+   *  light's `lookAt` did before lights lost them. Wins over `rotation`. */
+  aimAt?: [number, number, number];
 }
 
 /**
@@ -57,7 +62,9 @@ export function splitLightOps(opts: SplitLightOpts): unknown[] {
   };
   const objParams: Record<string, unknown> = {
     position: opts.position ?? [0, 0, 0],
-    rotation: opts.rotation ?? [0, 0, 0],
+    rotation: opts.aimAt
+      ? cameraRotationLookingAt(opts.position ?? [0, 0, 0], opts.aimAt)
+      : (opts.rotation ?? [0, 0, 0]),
     scale: opts.scale ?? [1, 1, 1],
   };
 

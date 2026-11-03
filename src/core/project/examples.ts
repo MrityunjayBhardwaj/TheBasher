@@ -96,7 +96,13 @@ function scaffold(): Op[] {
       type: 'addNode',
       nodeId: 'n_light',
       nodeType: 'Object',
-      params: { position: [5, 6, 3], rotation: [0, 0, 0], scale: [1, 1, 1] },
+      // #1765 — a sun shines down its own −Z, turned by its rotation: toward the origin, where it
+      // shone when a sun at rotation 0 aimed there.
+      params: {
+        position: [5, 6, 3],
+        rotation: cameraRotationLookingAt([5, 6, 3], [0, 0, 0]),
+        scale: [1, 1, 1],
+      },
     },
     {
       type: 'connect',

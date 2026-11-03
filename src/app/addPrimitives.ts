@@ -672,7 +672,7 @@ function humanLabel(kind: PrimitiveKind): string {
 }
 
 /** The LightData half's params for a NEW posable light — the SHADING (kind + intensity/
- *  colour/falloff/aim), mirroring the pre-split light values byte-for-byte so a fresh
+ *  colour/falloff; #1765: no aim — the Object's rotation turns it), mirroring the pre-split light values byte-for-byte so a fresh
  *  light looks identical across the split. The Object half gets the TRS (paramsFor).
  *  (penumbra 0.2 here preserves the pre-split Add ▸ Spot value; it disagrees with
  *  SpotLight/LightData's zod default 0.1 — a pre-existing in-repo disagreement, kept
@@ -688,7 +688,6 @@ function lightDataParamsFor(kind: PrimitiveKind): Record<string, unknown> {
         lightKind: 'Spot',
         intensity: 1.0,
         color: '#ffffff',
-        target: [0, 0, 0],
         angle: Math.PI / 6,
         penumbra: 0.2,
         distance: 0,
@@ -701,7 +700,6 @@ function lightDataParamsFor(kind: PrimitiveKind): Record<string, unknown> {
         color: '#ffffff',
         width: 2,
         height: 2,
-        lookAt: [0, 0, 0],
       };
     default:
       return {};
@@ -749,11 +747,16 @@ function paramsFor(kind: PrimitiveKind, position: Vec3): Record<string, unknown>
     case 'Sphere':
     case 'Curve':
     case 'Armature':
-    case 'DirectionalLight':
     case 'PointLight':
+      return { position, rotation: [0, 0, 0], scale: [1, 1, 1] };
+    // #1765 — a sun, spot or area light shines down its own −Z, turned by its rotation (V665), so
+    // a new one gets the rotation that turns it toward the world origin: where its old aim (a
+    // spot's `target` / an area's `lookAt` at the origin, a sun's aim-at-origin) pointed it, and
+    // the same call a new camera's framing comes from.
+    case 'DirectionalLight':
     case 'SpotLight':
     case 'AreaLight':
-      return { position, rotation: [0, 0, 0], scale: [1, 1, 1] };
+      return { position, rotation: cameraRotationLookingAt(position, [0, 0, 0]), scale: [1, 1, 1] };
     // AmbientLight stays FUSED (ambient = a World datablock) — its params are shading only
     // (no pose), minted directly as an AmbientLight node by the generic tail.
     case 'AmbientLight':

@@ -87,13 +87,15 @@ test('#208 — a LightRig wired to the scene renders its grouped lights; a Track
     objectId: 'rig_l1',
     lightKind: 'Area',
     position: POS,
-    shading: { intensity: 5, color: '#ffffff', width: 2, height: 2, lookAt: AUTHORED },
+    shading: { intensity: 5, color: '#ffffff', width: 2, height: 2 },
+    aimAt: AUTHORED,
   });
   const rigL2 = splitLightOps({
     objectId: 'rig_l2',
     lightKind: 'Area',
     position: [-3, 4, 3],
-    shading: { intensity: 3, color: '#ffffff', width: 2, height: 2, lookAt: AUTHORED },
+    shading: { intensity: 3, color: '#ffffff', width: 2, height: 2 },
+    aimAt: AUTHORED,
   });
   await page.evaluate(
     ({ aim, rigL1, rigL2 }) => {
@@ -219,7 +221,8 @@ test('#208 — a LightProfileSelect switches the live profile by name (one rig a
       objectId: id,
       lightKind: 'Area',
       position: [x, 4, 3],
-      shading: { intensity: 5, color: '#ffffff', width: 2, height: 2, lookAt: [0, 0, 0] },
+      shading: { intensity: 5, color: '#ffffff', width: 2, height: 2 },
+      aimAt: [0, 0, 0],
     });
   const profileLightOps = [...al('key_a', 3), ...al('key_b', -3), ...al('rim_a', 0)];
   await page.evaluate(
@@ -305,7 +308,8 @@ test('#208 — a rig NOT wired to the scene renders nothing (falsification)', as
     objectId: 'orphan_l1',
     lightKind: 'Area',
     position: [3, 4, 3],
-    shading: { intensity: 5, color: '#ffffff', width: 2, height: 2, lookAt: [0, 0, 0] },
+    shading: { intensity: 5, color: '#ffffff', width: 2, height: 2 },
+    aimAt: [0, 0, 0],
   });
   await page.evaluate(
     ({ orphanLightOps }) => {

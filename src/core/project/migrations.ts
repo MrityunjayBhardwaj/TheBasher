@@ -39,6 +39,15 @@ import {
   WRAP_NAME_OF_GLTF,
   WRAP_NAME_OF_THREE,
 } from '../../nodes/materialSchema';
+import * as THREE from 'three';
+import {
+  quaternionFromEulerDeg,
+  resolvedQuaternionOf,
+  rotationWriteOf,
+  withResolvedRotation,
+} from '../../app/resolvedRotation';
+import { trackToQuaternion } from '../../app/resolveTrackTo';
+import type { Quat, RotationModeFields } from '../../nodes/types';
 
 type FormatMigration = (raw: unknown) => unknown;
 
@@ -154,6 +163,11 @@ const formatMigrations: Record<number, FormatMigration> = {
   // v25 → v26 (#1762, part of #487): each camera's aim (its lens `lookAt` and `roll`) becomes a
   // Track-To at the bottom of its stack, aim point in parent space, keys and drivers moved over.
   25: migrateCameraAimToTrackTo,
+  // v26 → v27 (#1765): a light is turned by its own rotation or a Track-To, shining down its
+  // local −Z. A spot's `target` and an area light's `lookAt` become a Track-To; a sun's old
+  // aims (at the origin at rotation 0, down its −Y otherwise) are written into its rotation, or
+  // into a Track-To when its position moves.
+  26: migrateLightAimToTurn,
 };
 
 // ── v1 → v2: AnimationLayer retirement (#199) ──────────────────────────────
@@ -2611,4 +2625,192 @@ export function migrateCameraAimToTrackTo(raw: unknown): unknown {
     );
   }
   return { ...proj, state: { ...proj.state, nodes: out }, formatVersion: 26 };
+}
+
+// ── v26 → v27: a light is turned by its rotation or a Track-To (#1765) ─────────────────────────
+// A light used to be aimed three ways, one per kind, all in WORLD space: a spot at its data's
+// `target` point, an area light at its data's `lookAt` point (no roll), and a sun down its
+// Object's rotation applied to −Y — or, at rotation exactly 0, from its position toward the
+// world origin. Now every light is turned the way every object is: by its winning Track-To,
+// else its own rotation, shining down its local −Z (Blender 5.1.1, measured for sun, spot and
+// area). Each light comes across shining exactly where it shone:
+//
+// - Spot / area: a Track-To at the bottom of its stack aimed at the old point, in `world` space
+//   (the space the point was in, nested light or not; for a top-level light, world is its
+//   parent's space anyway), up +Y and no roll — the frame three's `lookAt` turned an area light
+//   with. Keys and drivers on `target` / `lookAt` move onto the Track-To's `aimPoint`,
+//   unchanged. An existing Track-To keeps winning: the new one sits below it, so muting the old
+//   one shows the authored aim again, as it did.
+// - Sun at rotation 0: a top-level sun whose position nothing moves gets the rotation that
+//   points −Z from its position to the origin — exact, and from then on a plain Blender sun. One
+//   whose position can move (keys, drivers, a strip, a Follow-Path, or a parent group) gets a
+//   world-space Track-To aimed at the origin instead, which stays exact as it moves.
+// - Sun at any other rotation: the same orientation turned a quarter turn about its own X, which
+//   carries its old −Y onto its new −Z.
+//
+// What cannot come across exactly is LOGGED so the change is never silent: a sun whose rotation
+// is keyed, driven or carried by a strip (its keys hold the old axis), and a strip on a spot or
+// area light (a `target` / `lookAt` inside its clip no longer aims anything). Both data fields go
+// from every light: nothing reads them now.
+const LIGHT_AIM_PATH = { Spot: 'target', Area: 'lookAt' } as const;
+const QUARTER_TURN_ABOUT_X = quaternionFromEulerDeg([-90, 0, 0]);
+
+export function migrateLightAimToTurn(raw: unknown): unknown {
+  const proj = raw as { formatVersion?: number; state?: { nodes?: Record<string, RawNode> } };
+  const nodes = proj.state?.nodes;
+  if (!nodes) return { ...proj, formatVersion: 27 };
+  const out: Record<string, RawNode> = { ...nodes };
+  const entries = Object.entries(nodes);
+  const isVec3 = (v: unknown): v is [number, number, number] =>
+    Array.isArray(v) && v.length === 3 && v.every((x) => typeof x === 'number');
+  const freshId = (base: string) => {
+    let id = base;
+    for (let i = 2; id in out; i++) id = `${base}_${i}`;
+    return id;
+  };
+  const onPath = (p: Record<string, unknown>, path: string) =>
+    typeof p.paramPath === 'string' && (p.paramPath === path || p.paramPath.startsWith(`${path}.`));
+  const isKeyOrDriver = (n: RawNode) =>
+    (typeof n.type === 'string' && n.type.startsWith('KeyframeChannel')) ||
+    n.type === 'ParamDriver';
+  /** Key and driver nodes on `holders` writing `path` (or one of its components). */
+  const keysOn = (holders: Set<string>, path: string) =>
+    entries.filter(
+      ([, n]) =>
+        n?.params &&
+        isKeyOrDriver(n) &&
+        holders.has(n.params.target as string) &&
+        onPath(n.params, path),
+    );
+  const stripOn = (holders: Set<string>) =>
+    entries.some(([, n]) => n?.type === 'Strip' && holders.has(n.params?.target as string));
+  const nested = new Set(
+    entries.flatMap(([, n]) => asRefs(n?.inputs?.children).map((r) => r.node)),
+  );
+  const addTrackTo = (objId: string, aimPoint: [number, number, number]): string => {
+    const existing = entries.filter(([, n]) => n?.type === 'TrackTo' && n.params?.target === objId);
+    const orders = existing.map(([, n]) =>
+      typeof n.params?.order === 'number' ? n.params.order : 0,
+    );
+    const aimId = freshId(`${objId}_aim`);
+    out[aimId] = {
+      id: aimId,
+      type: 'TrackTo',
+      version: 1,
+      params: {
+        name: 'aim',
+        target: objId,
+        aimNode: '',
+        aimBone: '',
+        aimPoint,
+        aimSpace: 'world',
+        up: [0, 1, 0],
+        roll: 0,
+        mute: false,
+        order: existing.length > 0 ? Math.min(0, ...orders) - 1 : 0,
+      },
+      inputs: {},
+    };
+    return aimId;
+  };
+  /** The rotation params that hold `q`, in the mode the Object keeps its rotation in. */
+  const rotationParamsOf = (op: Record<string, unknown>, q: Quat): Record<string, unknown> => {
+    const e = new THREE.Euler().setFromQuaternion(new THREE.Quaternion(...q), 'XYZ');
+    const deg = (r: number) => (r * 180) / Math.PI;
+    const write = rotationWriteOf(op as RotationModeFields, [deg(e.x), deg(e.y), deg(e.z)]);
+    return { [write.paramPath]: write.value };
+  };
+
+  let lights = 0;
+  let movedKeys = 0;
+  const keyedSuns: string[] = [];
+  const stripLights: string[] = [];
+  for (const [dataId, data] of entries) {
+    if (data?.type !== 'LightData') continue;
+    const dp = data.params ?? {};
+    const { target: _t, lookAt: _l, ...shading } = dp;
+    void _t;
+    void _l;
+    out[dataId] = { ...data, params: shading };
+    const objId = entries.find(([, n]) =>
+      asRefs(n?.inputs?.data).some((r) => r.node === dataId),
+    )?.[0];
+    if (!objId) continue; // a light's data no Object wears shines nowhere
+    const obj = nodes[objId];
+    const op = obj.params ?? {};
+    const holders = new Set([dataId, objId]);
+    const kind = dp.lightKind;
+
+    if (kind === 'Spot' || kind === 'Area') {
+      lights++;
+      const path = LIGHT_AIM_PATH[kind];
+      const aimId = addTrackTo(objId, isVec3(dp[path]) ? dp[path] : [0, 0, 0]);
+      for (const [id, n] of keysOn(holders, path)) {
+        movedKeys++;
+        const p = n.params!;
+        out[id] = {
+          ...n,
+          params: {
+            ...p,
+            target: aimId,
+            paramPath: (p.paramPath as string).replace(path, 'aimPoint'),
+            ...(p.name === path ? { name: 'aimPoint' } : {}),
+          },
+        };
+      }
+      if (stripOn(holders)) stripLights.push(objId);
+      continue;
+    }
+    if (kind !== 'Directional') continue; // a point light shines every way
+    lights++;
+    const own = resolvedQuaternionOf(op as RotationModeFields);
+    const euler = own
+      ? withResolvedRotation({ rotation: [0, 0, 0], ...op } as { rotation: number[] }).rotation
+      : isVec3(op.rotation)
+        ? op.rotation
+        : [0, 0, 0];
+    const rotationMoves =
+      keysOn(holders, 'rotation').length > 0 ||
+      keysOn(holders, 'quaternion').length > 0 ||
+      stripOn(holders);
+    if (rotationMoves) keyedSuns.push(objId);
+    const atOrigin = euler.every((v) => v === 0);
+    if (!atOrigin) {
+      // Old: down rotation × (0, −1, 0). New: down rotation' × (0, 0, −1). A quarter turn about
+      // the light's own X takes (0, 0, −1) to (0, −1, 0), so rotation' = rotation × that turn.
+      const q = new THREE.Quaternion(...quaternionFromEulerDeg(euler as [number, number, number]));
+      q.multiply(new THREE.Quaternion(...QUARTER_TURN_ABOUT_X));
+      out[objId] = { ...obj, params: { ...op, ...rotationParamsOf(op, [q.x, q.y, q.z, q.w]) } };
+      continue;
+    }
+    const position = isVec3(op.position) ? op.position : [0, 0, 0];
+    const positionMoves =
+      nested.has(objId) ||
+      keysOn(holders, 'position').length > 0 ||
+      stripOn(holders) ||
+      entries.some(([, n]) => n?.type === 'FollowPath' && n.params?.target === objId);
+    if (positionMoves) {
+      addTrackTo(objId, [0, 0, 0]);
+      continue;
+    }
+    // A sun on the origin had no direction (three normalises a zero vector); leave it as it is.
+    const q = trackToQuaternion(position as [number, number, number], [0, 0, 0]);
+    if (!q) continue;
+    out[objId] = { ...obj, params: { ...op, ...rotationParamsOf(op, [q.x, q.y, q.z, q.w]) } };
+  }
+  if (lights > 0) {
+    console.warn(
+      `[migrateLightAimToTurn] ${lights} light(s) are now turned by their rotation or a Track-To; ` +
+        `${movedKeys} key/driver node(s) on a spot target or area look-at moved onto it (#1765).` +
+        (keyedSuns.length > 0
+          ? ` The rotation keys on ${keyedSuns.join(', ')} were kept as they were: they turned ` +
+            `the sun's old −Y axis, so the sun now shines a quarter turn away while they play.`
+          : '') +
+        (stripLights.length > 0
+          ? ` Strips on ${stripLights.join(', ')} were left as they were: an aim inside them no ` +
+            `longer turns the light.`
+          : ''),
+    );
+  }
+  return { ...proj, state: { ...proj.state, nodes: out }, formatVersion: 27 };
 }

@@ -256,7 +256,9 @@ test('#1153 — a light Object in quaternion mode aims by its quaternion', async
     page,
     setParams('n_light', { rotation: DECOY, rotationMode: 'quaternion', quaternion: q }),
   );
-  const want = rotate(q, [0, -1, 0]);
+  // #1765 — a sun shines down its own −Z (it shone down −Y before lights were turned like every
+  // other object).
+  const want = rotate(q, [0, 0, -1]);
   await expect
     .poll(async () => {
       const a = await aimOfSun();

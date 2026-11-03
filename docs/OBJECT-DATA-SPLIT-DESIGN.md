@@ -351,6 +351,15 @@ nothing is resampled. Gates: 770 alley pose samples in the step's own test, and 
 samples over the eight alley and plaza files before and after the switch, both identical to float
 noise.
 
+Lights followed in #1765, by the same rule. A sun, spot or area light shines down its local −Z
+(Blender 5.1.1, measured), turned by its Object's rotation unless a Track-To aims it. `LightData`
+holds no aim: a spot's `target` and an area light's `lookAt` are gone, and so is the sun's old
+rule (down its rotation × −Y, or at rotation exactly 0 toward the world origin). The v27 step moves
+each saved aim onto a world-space Track-To, keys and drivers unchanged, and writes each sun's old
+direction into its rotation (or a Track-To at the origin when its position moves). Gates: the
+step's own test, and 90 light-direction samples over the eight alley and plaza files, worst
+difference 2.2e-16.
+
 What remains camera-specific, stated so it is not rediscovered:
 
 - the camera's pose is still resolved by its own resolver (`resolveCameraPoseAt`), on the film

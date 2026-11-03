@@ -46,7 +46,7 @@ export interface SplitLightOpts {
   rotation?: [number, number, number];
   scale?: [number, number, number];
   /** Any shading params to seed on the LightData (intensity/color/distance/decay/
-   *  angle/penumbra/width/height/target/lookAt/tex). Omitted fields take zod defaults. */
+   *  angle/penumbra/width/height/tex). Omitted fields take zod defaults. */
   shading?: Record<string, unknown>;
   /**
    * Optional edge to wire the Object's `out` into, e.g. `{ node: 'scene', socket: 'lights' }`.

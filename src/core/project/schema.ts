@@ -101,7 +101,10 @@ import { NodeSchema, NodeIdSchema, NodeRefSchema } from '../dag/types';
 // v26 (#1762, part of #487): a camera's aim is a Track-To — its lens `lookAt` and `roll` move onto a
 // Track-To at the bottom of its stack (aim point in parent space), keys and drivers with them. See
 // migrations.ts formatMigrations[25].
-export const PROJECT_FORMAT_VERSION = 26;
+// v27 (#1765): a light is turned by its own rotation or a Track-To, shining down its local −Z — a
+// spot's `target` and an area light's `lookAt` move onto a Track-To, and a sun's old aims are
+// written into its rotation (or a Track-To when it moves). See migrations.ts formatMigrations[26].
+export const PROJECT_FORMAT_VERSION = 27;
 
 export const ProjectSchema = z.object({
   formatVersion: z.literal(PROJECT_FORMAT_VERSION),

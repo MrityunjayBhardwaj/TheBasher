@@ -20,6 +20,7 @@ import type { Op } from '../core/dag/types';
 import { resolveStudioLightTransform } from './resolveStudioLightTransform';
 import { nextConstraintOrder } from './nodeConstraints';
 import { linkIntoActiveCollection } from './collections';
+import { cameraRotationLookingAt } from './cameraOrientation';
 
 type Vec3 = [number, number, number];
 
@@ -66,8 +67,8 @@ export function buildAddStudioLightOps(
       ? { node: rigId, socket: 'lights' }
       : { node: sceneRef.node, socket: 'lights' };
 
-  // #386 Stage C (C3) — a studio light is split-native: a LightData (the Area shading +
-  // the `lookAt` aim) and an Object (the pose) that inherits `lightId`. The Track-To
+  // #386 Stage C (C3) — a studio light is split-native: a LightData (the Area shading)
+  // and an Object (the pose) that inherits `lightId`. The Track-To
   // targets `lightId` (the Object), the rig/scene `dest` receives the Object, and the
   // panel's enumeration recognises it through `data` (studioLightRig, #386 S3b) — so the
   // rig aim + index-correspondence survive the split.
@@ -82,14 +83,15 @@ export function buildAddStudioLightOps(
         color: '#ffffff',
         width: 2,
         height: 2,
-        lookAt: target,
       },
     },
     {
       type: 'addNode',
       nodeId: lightId,
       nodeType: 'Object',
-      params: { position, rotation: [0, 0, 0], scale: [1, 1, 1] },
+      // #1765 — turned toward the rig centre by its own rotation as well, so muting the Track-To
+      // leaves it facing where it faced (its old `lookAt` did that, and lights no longer have one).
+      params: { position, rotation: cameraRotationLookingAt(position, target), scale: [1, 1, 1] },
     },
     {
       type: 'connect',

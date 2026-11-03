@@ -65,11 +65,10 @@ import {
   driverChannelValuesForTarget,
   driverSubscriptionNodesForTarget,
 } from '../app/paramDrivers';
-import {
-  resolveConstraintRotation,
-  resolveConstraintPosition,
-  resolveTrackToTarget,
-} from '../app/nodeConstraints';
+import { resolveConstraintRotation, resolveConstraintPosition } from '../app/nodeConstraints';
+// #1765 — a light is turned by the rule every object follows (V665), through the resolver the
+// camera turns by; its name is the camera's because the camera came first (#390 unifies them).
+import { cameraLocalOrientation as lightLocalOrientation } from '../app/cameraTrackTo';
 import { childEdges } from '../app/resolveWorldTransform';
 import { NullGlyphR } from './NullGlyph';
 import { CurveLineChrome } from './CurveLine';
@@ -147,7 +146,7 @@ import { useSlotMaterials } from '../app/material/useSlotMaterials';
 import { dataSlotsOnly, materialAssignmentOf, objectSlotsOf } from '../app/materialAssignment';
 import { threeSideFor } from '../app/material/threeSide';
 import { CENTRE_PIVOT, normalScaleFor, placeTexture } from '../app/material/uvPlacement';
-import { aimPatch, withResolvedRotation } from '../app/resolvedRotation';
+import { aimPatch, quaternionFromEulerDeg, withResolvedRotation } from '../app/resolvedRotation';
 import type {
   AmbientLightValue,
   AreaLightValue,
@@ -169,6 +168,7 @@ import type {
   ObjectValue,
   SkinDeformValue,
   PointLightValue,
+  Quat,
   RenderOutputValue,
   ScatterValue,
   SceneChild,
@@ -530,7 +530,7 @@ export function SceneFromDAG({ outputName = 'render' }: SceneFromDAGProps) {
           // under its stamp (`OwnVisibility`): an invisible light lights nothing in the viewport, and
           // the render flips it on.
           if (lid != null && hiddenIds.has(lid)) return null;
-          // #205 — a light targeted by an active Track-To aims via lookAt (V60); the
+          // #205 — a light targeted by an active Track-To is turned by it (V60, #1765); the
           // membership set is built once (O(N)) so this stays O(1) per light (B13).
           return (
             <OwnVisibility key={`light:${i}`} nodeId={lid}>
@@ -1112,7 +1112,7 @@ function LightKindR({
       // #265 — a Track-To'd spot aims its `.target` at the resolved world point.
       return <SpotLightR value={value} nodeId={nodeId} constrained={constrained} />;
     case 'AreaLight':
-      // #205 — the studio-light / rig aim consumer (aims via lookAt).
+      // #205 — the studio-light / rig light; turned like the sun and spot (#1765).
       return <AreaLightR value={value} nodeId={nodeId} constrained={constrained} />;
   }
 }
@@ -1499,16 +1499,12 @@ function LightHelperFollower({
 }) {
   const channels = useLayeredChannels(nodeId);
   const transients = useTransientEditStore((s) => s.edits);
-  // #243 ([[H132]] GAP 2) — a CONSTRAINED light DERIVES its aim from the Track-To
-  // target's world position per frame (the lit RectAreaLight follows via
-  // `useAreaLightAim` → `lookAt`). The helper reads `value.lookAt`, which carries
-  // only the AUTHORED aim (the constraint is a render-side derivation, V58), so it
-  // freezes at frame 0 while the lit effect tracks an animated target. Re-resolve the
-  // SAME aim at `seconds` here and write it into `lookAt` so the wireframe rectangle
-  // faces the current-frame target — the value-recompute analogue of the camera
-  // follower's `resolveCameraPoseAt` Track-To overlay. The shared UI cache (#1315) so the
-  // per-frame render-root evaluate (inside `resolveTrackToTarget`) HITS while the DAG
-  // is unchanged (the ConstrainedR / useAreaLightAim pattern).
+  // #243 ([[H132]] GAP 2) — a CONSTRAINED light is turned by its Track-To every frame, which the
+  // value it was built from does not hold (the constraint is a render-side derivation, V58), so
+  // the helper would freeze at the light's own rotation while the light turned. Re-resolve the
+  // SAME turn at `seconds` (#1765: the one every light takes, `lightLocalOrientation`) and hand
+  // it to the helper as the light's rotation. The shared UI cache (#1315) so the per-frame
+  // render-root evaluate HITS while the DAG is unchanged.
   const cache = uiEvaluatorCache;
   const patched = usePlayheadFollow(
     (seconds) => {
@@ -1520,19 +1516,19 @@ function LightHelperFollower({
           transients,
         ) ?? value,
       );
-      // #265 — every AIMABLE light kind (AreaLight / SpotLight / DirectionalLight)
-      // derives its aim from the Track-To target per frame; the wireframe helper
-      // reads the AUTHORED aim (lookAt / target / rotation), so re-express the
-      // resolved world aim into the field THIS kind's helper draws from. A
-      // non-aimable kind (Point / Ambient) or an unconstrained light pays nothing.
-      if (!constrained || !isAimableLightKind(base.kind)) return base;
-      const aim = resolveTrackToTarget(
+      // A Point or Ambient light has no direction to turn; an unconstrained light's own
+      // rotation is already what its helper reads.
+      if (!constrained || base.kind === 'AmbientLight' || base.kind === 'PointLight') return base;
+      const { quaternion, aim } = lightLocalOrientation(
         useDagStore.getState().state,
         nodeId,
+        [base.position[0], base.position[1], base.position[2]],
+        // Already read in its mode (`withResolvedRotation` above).
+        { rotation: [base.rotation[0], base.rotation[1], base.rotation[2]] },
         liveCtxOf(nodeId),
         cache,
       );
-      return aim ? aimLightValueForHelper(base, aim) : base;
+      return aim ? turnedLightValue(base, quaternion) : base;
     },
     undefined,
     () => clockOf(useDagStore.getState().state, nodeId),
@@ -1587,50 +1583,33 @@ function scalePower(scale: readonly [number, number, number] | undefined): numbe
   return Math.abs(s[0] * s[1] * s[2]);
 }
 
-/** #265 — the light kinds a Track-To can aim (they have a direction): AreaLight
- *  (aims via `lookAt`), SpotLight + DirectionalLight (aim via `.target`). Point +
- *  Ambient are omnidirectional → no aim. ONE predicate shared by the render mount
+/** #265 — the light kinds a Track-To can aim (they have a direction): Area, Spot and
+ *  Directional, each turned down its local −Z (#1765). Point + Ambient are
+ *  omnidirectional → no aim. ONE predicate shared by the render mount
  *  gate and the helper follower so the two can't drift on which kinds obey a
  *  constraint (the H40 render==helper contract). */
 function isAimableLightKind(kind: LightValue['kind']): boolean {
   return kind === 'AreaLight' || kind === 'SpotLight' || kind === 'DirectionalLight';
 }
 
-/** #265 — re-express a resolved WORLD aim point into the authored-aim field THIS
- *  light kind's wireframe helper (LightHelpers.tsx) draws from, so a constrained
- *  light's helper follows its derived aim instead of freezing at the authored one:
- *  AreaLight → `lookAt`; SpotLight → `target`; DirectionalLight → `rotation` (the
- *  Euler° that rotates the sun's default −Y down-axis onto `normalize(aim −
- *  position)`, matching `directionalDirection`). A render-side derivation only —
- *  the DAG value is untouched (V58). */
-function aimLightValueForHelper(base: LightValue, aim: [number, number, number]): LightValue {
-  switch (base.kind) {
-    case 'AreaLight':
-      return { ...base, lookAt: aim };
-    case 'SpotLight':
-      return { ...base, target: aim };
-    case 'DirectionalLight': {
-      const dir = new THREE.Vector3(
-        aim[0] - base.position[0],
-        aim[1] - base.position[1],
-        aim[2] - base.position[2],
-      );
-      if (dir.lengthSq() === 0) return base;
-      dir.normalize();
-      const q = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, -1, 0), dir);
-      const e = new THREE.Euler().setFromQuaternion(q, 'XYZ');
-      return {
-        ...base,
-        rotation: [
-          THREE.MathUtils.radToDeg(e.x),
-          THREE.MathUtils.radToDeg(e.y),
-          THREE.MathUtils.radToDeg(e.z),
-        ],
-      };
-    }
-    default:
-      return base;
-  }
+/** #1765 — `base` turned by `quaternion` (its parent-space orientation, as a Track-To resolves
+ *  it): written as the XYZ euler its helper reads, in whatever mode the light held (`aimPatch` —
+ *  an aim replaces the orientation, as in Blender). One orientation round-trips through euler
+ *  exactly (resolvedRotation.ts: 3.4e-6° worst), so the helper turns as the light does. */
+function turnedLightValue(
+  base: DirectionalLightValue | SpotLightValue | AreaLightValue,
+  quaternion: Quat,
+): LightValue {
+  const e = new THREE.Euler().setFromQuaternion(
+    new THREE.Quaternion(quaternion[0], quaternion[1], quaternion[2], quaternion[3]),
+    'XYZ',
+  );
+  const euler: [number, number, number] = [
+    THREE.MathUtils.radToDeg(e.x),
+    THREE.MathUtils.radToDeg(e.y),
+    THREE.MathUtils.radToDeg(e.z),
+  ];
+  return { ...base, ...aimPatch(base, euler) } as LightValue;
 }
 
 function DirectionalLightR({
@@ -1643,39 +1622,11 @@ function DirectionalLightR({
   constrained?: boolean;
 }) {
   const ref = useRef<THREE.DirectionalLight | null>(null);
-  // When rotation is non-zero, drive the light's target so direction =
-  // rotation × (0,-1,0). When rotation is identity (default), leave
-  // target at the origin — three.js's default behavior makes the light
-  // shine from `position` toward (0,0,0), which preserves the legacy
-  // seed scene's look (sun pointing roughly inward).
-  // Defensive — old saved DirectionalLights pre-P2.6.3 don't have
-  // rotation in their evaluated value. The evaluator now defaults but
-  // this guard makes the renderer robust regardless.
-  const [rx, ry, rz] = value.rotation ?? [0, 0, 0];
-  const [px, py, pz] = value.position;
-  const hasRotation = rx !== 0 || ry !== 0 || rz !== 0;
-  // #265 — a Track-To on this light OWNS the aim (per-frame, `.target` → world
-  // aim point). Skip the authored-target useEffect while constrained so the two
-  // don't fight; toggling the constraint off re-runs it (constrained is a dep).
-  useLightTargetAim(nodeId ?? null, constrained ?? false, ref);
+  // #1765 — turned by its own rotation or its Track-To, like every object, shining down its
+  // local −Z (Blender 5.1.1). Its target rides one unit down that axis.
+  useLightTarget(ref);
+  useLightTurn(nodeId ?? null, constrained ?? false, value.rotation ?? [0, 0, 0], ref);
   useContentShadow(ref);
-  useEffect(() => {
-    if (constrained) return;
-    const light = ref.current;
-    if (!light) return;
-    if (!hasRotation) {
-      // Legacy default: target at origin.
-      light.target.position.set(0, 0, 0);
-      light.target.updateMatrixWorld();
-      return;
-    }
-    // direction = rotation applied to (0,-1,0). target = position + dir.
-    // params.rotation is in degrees — Euler expects radians.
-    const [erx, ery, erz] = degVec3ToRad([rx, ry, rz]);
-    const dir = new THREE.Vector3(0, -1, 0).applyEuler(new THREE.Euler(erx, ery, erz));
-    light.target.position.set(px + dir.x, py + dir.y, pz + dir.z);
-    light.target.updateMatrixWorld();
-  }, [constrained, hasRotation, rx, ry, rz, px, py, pz]);
   // Power scales with the scale vec's volume product — bigger gizmo =
   // brighter sun. Round-trip stays clean: value.intensity stays raw,
   // multiplication is a render-side projection.
@@ -1732,16 +1683,9 @@ function SpotLightR({
 }) {
   const ref = useRef<THREE.SpotLight | null>(null);
   useContentShadow(ref);
-  // #265 — a Track-To on this light OWNS the aim (per-frame, `.target` → world
-  // aim point). Skip the authored-target useEffect while constrained so the two
-  // don't fight; toggling the constraint off re-runs it (constrained is a dep).
-  useLightTargetAim(nodeId ?? null, constrained ?? false, ref);
-  useEffect(() => {
-    if (constrained) return;
-    if (!ref.current) return;
-    ref.current.target.position.set(...value.target);
-    ref.current.target.updateMatrixWorld();
-  }, [constrained, value.target]);
+  // #1765 — turned as the sun is (`useLightTurn`): its cone opens down its local −Z.
+  useLightTarget(ref);
+  useLightTurn(nodeId ?? null, constrained ?? false, value.rotation ?? [0, 0, 0], ref);
   // Power scales with scale-vec volume product.
   const intensity = value.intensity * scalePower(value.scale);
   return (
@@ -1766,81 +1710,77 @@ interface AreaLightRProps {
   constrained: boolean;
 }
 
-/** #205 — drive an area light's aim (`lookAt`), the LIGHT RIG mechanism. When the
- *  light is the target of an active Track-To (`constrained`), re-resolve the world
- *  aim point PER FRAME and point every ref at it — the EditorViewCamera pattern
- *  (snapshot reads, live seconds, no React re-render), making the area light the
- *  THIRD V60 consumer after the mesh (ConstrainedR) and the camera. Lights aren't
- *  scene children, so ConstrainedR can't reach them — they aim via `lookAt`,
- *  exactly like the camera. Unconstrained → the authored `lookAt` applies once
- *  (byte-identical to pre-#205) and the per-frame path no-ops, so an ordinary
- *  area light pays nothing. */
-function useAreaLightAim(
-  lookAt: AreaLightValue['lookAt'],
+/** #1765 — turn a light the way every object is turned (V665): by its winning Track-To, else its
+ *  own `rotation` (euler degrees, already resolved from its mode), shining down its local −Z as
+ *  every Blender light does (5.1.1, measured for sun, spot and area). Lights hang off
+ *  `scene.lights` rather than being scene children, so ConstrainedR cannot reach them; this is
+ *  their copy of its rule, through the same resolver a camera turns by.
+ *
+ *  Unconstrained, the rotation is written once per change and the frame loop pays one boolean.
+ *  Constrained, the Track-To is re-resolved every frame from where the light is drawn now, so a
+ *  light that moves keeps facing its aim (#1782: the old area aim ran only when its `lookAt`
+ *  changed). `card` is a studio light's emitter card: a mesh, which three's `lookAt` turned with
+ *  +Z (not −Z) toward the aim, so it is the light turned half a turn about its own up. */
+function useLightTurn(
   nodeId: string | null,
   constrained: boolean,
-  refs: React.RefObject<THREE.Object3D | null>[],
+  rotation: readonly [number, number, number],
+  ref: React.RefObject<THREE.Object3D | null>,
+  card?: React.RefObject<THREE.Object3D | null>,
 ) {
-  // The shared UI cache (#1315) so the per-frame render-root evaluate (inside
-  // resolveTrackToTarget → resolveWorldTransform) HITS while the DAG is unchanged.
+  // The shared UI cache (#1315) so the per-frame render-root evaluate HITS while the DAG is
+  // unchanged.
   const cache = uiEvaluatorCache;
-  // Static authored aim — owns orientation when there is no Track-To.
-  useEffect(() => {
-    if (constrained) return;
-    const t = new THREE.Vector3(lookAt[0], lookAt[1], lookAt[2]);
-    for (const r of refs) r.current?.lookAt(t);
-    // `refs` are stable React refs read at apply time; only the authored aim and
-    // the constrained flag are reactive inputs.
+  const [rx, ry, rz] = rotation;
+  const apply = (q: Quat) => {
+    ref.current?.quaternion.set(q[0], q[1], q[2], q[3]);
+    card?.current?.quaternion.set(q[0], q[1], q[2], q[3]).multiply(HALF_TURN_ABOUT_Y);
+  };
+  useLayoutEffect(() => {
+    if (constrained && nodeId) return;
+    apply(quaternionFromEulerDeg([rx, ry, rz]));
+    // `ref` and `card` are stable React refs read at apply time; the rotation and the
+    // constrained flag are the reactive inputs.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [constrained, lookAt]);
-  // Per-frame Track-To aim (the camera parity mechanism, V60/V37). Resolves only
-  // when constrained, so unconstrained lights spend a single boolean per frame.
-  useFrame(() => {
-    if (!constrained || !nodeId) return;
-    const aim = resolveTrackToTarget(
-      useDagStore.getState().state,
-      nodeId,
-      liveCtxOf(nodeId),
-      cache,
-    );
-    if (!aim) return;
-    const t = new THREE.Vector3(aim[0], aim[1], aim[2]);
-    for (const r of refs) r.current?.lookAt(t);
-  });
-}
-
-/** #265 — drive a TARGET-aiming light (DirectionalLight / SpotLight) from an
- *  active Track-To. The `.target`-based analogue of {@link useAreaLightAim} (which
- *  aims via `.lookAt`): three.js orients these lights by `.target.position` (the
- *  shader reads `normalize(target − position)`), so a constraint re-resolves the
- *  world aim point per frame and writes it there — the EditorViewCamera pattern
- *  (snapshot reads, live seconds, no React re-render). This is the I4/C7 consumer
- *  widening ([[V45]] #2): a constraint must drive EVERY capable light in its native
- *  form. Unconstrained → this no-ops (the kind's own authored-target useEffect owns
- *  the aim), byte-identical to pre-#265; the constrained flag gates the per-frame
- *  path so an ordinary sun/spot spends a single boolean per frame. */
-function useLightTargetAim(
-  nodeId: string | null,
-  constrained: boolean,
-  ref: React.RefObject<THREE.SpotLight | THREE.DirectionalLight | null>,
-) {
-  // The shared UI cache (#1315) so the per-frame render-root evaluate (inside
-  // resolveTrackToTarget → resolveWorldTransform) HITS while the DAG is unchanged.
-  const cache = uiEvaluatorCache;
+  }, [constrained, nodeId, rx, ry, rz]);
   useFrame(() => {
     if (!constrained || !nodeId) return;
     const light = ref.current;
     if (!light) return;
-    const aim = resolveTrackToTarget(
+    const { quaternion } = lightLocalOrientation(
       useDagStore.getState().state,
       nodeId,
+      [light.position.x, light.position.y, light.position.z],
+      { rotation: [rx, ry, rz] },
       liveCtxOf(nodeId),
       cache,
     );
-    if (!aim) return;
-    light.target.position.set(aim[0], aim[1], aim[2]);
-    light.target.updateMatrixWorld();
+    apply(quaternion);
   });
+}
+
+const HALF_TURN_ABOUT_Y = new THREE.Quaternion().setFromAxisAngle(
+  new THREE.Vector3(0, 1, 0),
+  Math.PI,
+);
+
+/** #1765 — a sun or spot shines from its position toward `target` (three reads
+ *  `normalize(target − position)`, src/lights/LightShadow.js:66). Hung one unit down the light's
+ *  own −Z, the target turns with it, so the light's orientation is its direction and there is
+ *  nothing else to keep in step. */
+function useLightTarget(ref: React.RefObject<THREE.DirectionalLight | THREE.SpotLight | null>) {
+  useLayoutEffect(() => {
+    const light = ref.current;
+    if (!light) return;
+    light.add(light.target);
+    light.target.position.set(0, 0, -1);
+    light.target.updateMatrixWorld();
+    return () => {
+      light.remove(light.target);
+    };
+    // `ref` is a stable React ref.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 }
 
 function AreaLightR({ value, nodeId, constrained }: AreaLightRProps) {
@@ -1858,7 +1798,7 @@ function AreaLightR({ value, nodeId, constrained }: AreaLightRProps) {
 function PlainAreaLightR({ value, nodeId, constrained }: AreaLightRProps) {
   ensureRectAreaInit();
   const ref = useRef<THREE.RectAreaLight | null>(null);
-  useAreaLightAim(value.lookAt, nodeId, constrained, [ref]);
+  useLightTurn(nodeId, constrained, value.rotation ?? [0, 0, 0], ref);
   // AreaLight has a real geometric extent — scale.x multiplies width
   // and scale.y multiplies height so the gizmo's scale gesture maps
   // 1:1 onto the lit rectangle. Defensive default for legacy projects.
@@ -1890,9 +1830,9 @@ function StudioAreaLightR({ value, tex, nodeId, constrained }: AreaLightRProps &
   const texture = useEnvironmentTexture(tex);
   const lightRef = useRef<THREE.RectAreaLight | null>(null);
   const cardRef = useRef<THREE.Mesh | null>(null);
-  // Both the light and the card aim at `lookAt` (so the card stays coplanar with
-  // the lit rectangle) — and follow a Track-To per frame when constrained (V60).
-  useAreaLightAim(value.lookAt, nodeId, constrained, [lightRef, cardRef]);
+  // The light and the card turn together (so the card stays coplanar with the lit
+  // rectangle) — by the light's rotation, or its Track-To per frame (V60, #1765).
+  useLightTurn(nodeId, constrained, value.rotation ?? [0, 0, 0], lightRef, cardRef);
 
   const scale = value.scale ?? [1, 1, 1];
   const width = value.width * scale[0];
@@ -2887,6 +2827,21 @@ function SkinnedMeshR({
 // picking, exactly as `GroupR` does. The two are siblings rather than the children nesting inside
 // the drawn mesh, because every arm below poses its own three object and several of them
 // (a light, a camera, a skeleton) draw nothing to nest under.
+/** #1765 — a light nested in a Group, turned by its Track-To as a top-level one is: the step to
+ *  v27 aims lights with Track-Tos, and a nested light that ignored them would shine down its own
+ *  rotation instead. Its turn is computed in its parent's space, which is the space it is drawn
+ *  in under the group. */
+function NestedLightR({ value, nodeId }: { value: LightValue; nodeId: string | null }) {
+  const { constraintTargets } = useContext(OverlayMembershipContext);
+  return (
+    <LightKindR
+      value={value}
+      nodeId={nodeId}
+      constrained={nodeId != null && constraintTargets.has(nodeId)}
+    />
+  );
+}
+
 function ObjectR({
   value,
   override,
@@ -3017,14 +2972,14 @@ function ObjectSelfR({
     // #386 — a light nested in a Group flows through `children` (NOT `scene.lights`):
     // MeshChild 'Object' (:1513) → here. Recompose the Object+LightData into the flat
     // LightValue and render it through the SAME LightKindR the fused nested-light cases
-    // use (:1472-1477, #231 Inc 2). STATIC (nodeId=null/constrained=false): the nested
-    // light inherits the group's world transform from GroupR's <group>; no direct
-    // channels / Track-To aim (the same known-limit as the fused nested light). This is
-    // the arm the compiler forces once ObjectData widens (R1's TS2322) — closing it here
-    // by RECOMPOSING, never by casting `data` to MeshDataValue (that darkens the light).
+    // use (:1472-1477, #231 Inc 2). The nested light inherits the group's world transform
+    // from GroupR's <group>; its direct channels are not played here (the same known-limit
+    // as the fused nested light). This is the arm the compiler forces once ObjectData widens
+    // (R1's TS2322) — closing it here by RECOMPOSING, never by casting `data` to MeshDataValue
+    // (that darkens the light).
     const light = recomposeLightObject(value);
     if (!light) return null;
-    return <LightKindR value={light} nodeId={null} constrained={false} />;
+    return <NestedLightR value={light} nodeId={nodeId} />;
   }
   if (data?.kind === 'CameraData') {
     // #387 — a camera Object draws NO scene geometry, so this arm renders nothing, and

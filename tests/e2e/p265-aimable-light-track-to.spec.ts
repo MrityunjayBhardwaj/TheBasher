@@ -45,13 +45,13 @@ async function seed(page: import('@playwright/test').Page) {
     const w = window as unknown as BasherWindow;
     return Boolean(w.__basher_dag && w.__basher_time && w.__basher_light_world_aims);
   });
-  // #386 C3: both lights are split — Object (pose) + LightData (shading, incl. the
-  // authored `target`/aim). The Track-To targets the OBJECT, the half that owns the pose.
+  // #386 C3: both lights are split — Object (pose) + LightData (shading). #1765: the aim is
+  // the Object's own rotation. The Track-To targets the OBJECT, the half that owns the pose.
   const spotOps = splitLightOps({
     objectId: 'n265_spot',
     lightKind: 'Spot',
     position: SPOT_POS,
-    shading: { target: [SPOT_POS[0], SPOT_POS[1], SPOT_POS[2] - 1] },
+    aimAt: [SPOT_POS[0], SPOT_POS[1], SPOT_POS[2] - 1],
   });
   const sunOps = splitLightOps({
     objectId: 'n265_sun',
@@ -65,7 +65,7 @@ async function seed(page: import('@playwright/test').Page) {
       const d = (op: unknown) => w.__basher_dag!.getState().dispatch(op);
       w.__basher_time!.getState().pause();
       w.__basher_time!.getState().setTime(0);
-      // SpotLight authored to aim -Z (target = pos + (0,0,-1)), so an ignored
+      // SpotLight turned to aim -Z (toward pos + (0,0,-1)), so an ignored
       // constraint would read [0,0,-1] — DISTINCT from the aim toward the origin.
       for (const op of spotOps) d(op);
       d({
@@ -162,7 +162,7 @@ test.describe('#265 aimable-light Track-To (H40 boundary-pair)', () => {
     );
     const spotDir2 = aimAt(aims2, SPOT_POS);
     expect(spotDir2, 'spot still present').not.toBeNull();
-    // Authored target was pos + (0,0,-1) → direction [0,0,-1].
+    // Its own rotation turned it toward pos + (0,0,-1) → direction [0,0,-1].
     expect(spotDir2![0]).toBeCloseTo(0, 2);
     expect(spotDir2![1]).toBeCloseTo(0, 2);
     expect(spotDir2![2]).toBeCloseTo(-1, 2);

@@ -102,7 +102,7 @@ const LIGHTING: StrategyResource = {
   body: `# Lighting
 
 Basher ships five light types (P2.6+):
-- **DirectionalLight** — sun analogue. Direction = \`rotation × (0, -1, 0)\`.
+- **DirectionalLight** — sun analogue. Shines down its own −Z, turned by its \`rotation\`.
   Intensity ~1 for outdoor sun; can scale up for stylized lighting.
 - **PointLight** — omnidirectional. Use for lamps, fires, candles.
   Intensity ranges 5–100 typical.
@@ -110,6 +110,11 @@ Basher ships five light types (P2.6+):
 - **AreaLight** — rectangle. \`width\` × \`height\` controls coverage;
   intensity multiplied by area (V10 scale-drives-power applies).
 - **AmbientLight** — global fill, no position/rotation. Use sparingly.
+
+A sun, spot or area light shines down its local −Z: its own \`rotation\` turns it, unless a
+\`TrackTo\` aims it — then the Track-To decides. A light has no \`target\` or \`lookAt\` of its
+own. A new one from the Add menu faces the world origin; to aim one at an object, constrain it
+with a Track-To.
 
 ## Editor vs render
 

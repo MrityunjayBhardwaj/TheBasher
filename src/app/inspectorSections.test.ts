@@ -70,8 +70,6 @@ describe('paramToSection — light shading routes to the Light section (#386, H1
       'penumbra',
       'width',
       'height',
-      'target',
-      'lookAt',
       'tex',
     ]) {
       expect(homeOn('LightData', p), `LightData.${p}`).toBe('light');

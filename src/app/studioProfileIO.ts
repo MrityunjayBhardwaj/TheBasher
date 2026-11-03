@@ -23,6 +23,7 @@ import type { Op } from '../core/dag/types';
 import { ensureProfileSelectOps, enumerateProfiles, uniqueProfileName } from './studioProfiles';
 import { nextConstraintOrder } from './nodeConstraints';
 import { linkIntoActiveCollection } from './collections';
+import { cameraRotationLookingAt } from './cameraOrientation';
 import { isAreaLightNode, lightParamsOf } from './lightNode';
 
 type Vec3 = [number, number, number];
@@ -195,7 +196,7 @@ export function buildImportProfilesOps(
       const dataId = newId('data');
       const ttId = newId('tt');
       // #386 Stage C (C3) — an imported studio light is split-native: a LightData (the Area
-      // shading + `lookAt` aim) and an Object (pose) that inherits `lightId`, so the rig
+      // shading) and an Object (pose) that inherits `lightId`, so the rig
       // `lights` wire, the Track-To target, and the panel's `data`-aware enumeration all
       // resolve exactly as before the split.
       ops.push(
@@ -209,7 +210,6 @@ export function buildImportProfilesOps(
             color: light.color,
             width: light.width,
             height: light.height,
-            lookAt: profile.center,
             ...(light.tex ? { tex: light.tex } : {}),
           },
         },
@@ -219,7 +219,10 @@ export function buildImportProfilesOps(
           nodeType: 'Object',
           params: {
             position: light.position,
-            rotation: light.rotation,
+            // #1765 — turned toward the profile centre, which its old `lookAt` did whatever the
+            // stored rotation said (an area light's rotation turned nothing then), so muting the
+            // Track-To leaves it facing where it faced.
+            rotation: cameraRotationLookingAt(light.position, profile.center),
             scale: light.scale,
           },
         },
