@@ -40,6 +40,7 @@ import { cameraDataOf } from '../app/cameraNode';
 import { cameraOrientationQuat, type Quat } from '../app/cameraOrientation';
 import { useThreeRef } from '../app/character/threeRef';
 import { useDagStore } from '../core/dag/store';
+import type { DagState } from '../core/dag/state';
 import { measureStage } from '../perf/frameProfiler';
 import { useTimeStore } from '../app/stores/timeStore';
 import { useProjectStore } from '../core/project/store';
@@ -119,6 +120,30 @@ function applyView(
   if (target) target.set(lookAt[0], lookAt[1], lookAt[2]);
 }
 
+/** #1778 — is the camera live at the playhead (film time, as the look-through pose reads it)
+ *  orthographic? Recomputed on a playhead or graph change; it re-renders only when the answer
+ *  changes, so a playing film re-renders this at a cut between projections, never per frame. */
+function liveCameraIsOrtho(state: DagState, filmSeconds: number): boolean {
+  const node = selectActiveCameraNode(state, filmSeconds);
+  if (!node) return false;
+  return cameraPoseFromPair(node, cameraDataOf(state, node.id))?.kind === 'OrthographicCamera';
+}
+
+function useLiveCameraIsOrtho(enabled: boolean): boolean {
+  // Re-render triggers, one per store: each fires only when the answer read from its side changes
+  // (the playhead reaching a cut, or a graph edit changing the live camera). The selectors are
+  // inline, so each render re-reads both with the other store's current value.
+  useTimeStore((t) =>
+    enabled ? liveCameraIsOrtho(useDagStore.getState().state, t.filmSeconds) : false,
+  );
+  useDagStore((d) =>
+    enabled ? liveCameraIsOrtho(d.state, useTimeStore.getState().filmSeconds) : false,
+  );
+  return (
+    enabled && liveCameraIsOrtho(useDagStore.getState().state, useTimeStore.getState().filmSeconds)
+  );
+}
+
 export function EditorViewCamera() {
   const ref = useRef<THREE.PerspectiveCamera | THREE.OrthographicCamera | null>(null);
   const lookThrough = useViewportStore((s) => s.lookThroughCamera);
@@ -148,7 +173,11 @@ export function EditorViewCamera() {
   // does); the editor's persp/ortho toggle applies to the FREE orbit view only. One editor
   // camera, swapped between projections — never two default cameras at once ([[H67]]/V34: a
   // single makeDefault camera, no oldCam-restore race).
-  const useOrtho = lookThrough ? pose.kind === 'OrthographicCamera' : projection === 'orthographic';
+  // #1778 — and from the camera LIVE AT THE PLAYHEAD, so a cut between an orthographic and a
+  // perspective camera swaps the projection with the shot (the per-frame pose below already
+  // follows the cut). Subscribed to the projection only: it re-renders at such a cut, not per frame.
+  const liveOrtho = useLiveCameraIsOrtho(lookThrough);
+  const useOrtho = lookThrough ? liveOrtho : projection === 'orthographic';
   // #204 — a STABLE evaluator cache for the per-frame look-through pose resolve.
   // resolveActiveCameraPoseAt only evaluates the render root when the camera
   // carries a Track-To (to read the aim target's world pos via #202); the cache
