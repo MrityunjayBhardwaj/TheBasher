@@ -330,6 +330,37 @@ export function activeConstraintForTarget(
   return stack[stack.length - 1] ?? null;
 }
 
+/** #1776 — what a constraint controls on `nodeId`'s transform row `paramPath`, or null. */
+export interface TransformController {
+  /** The constraint node, so the row can name it and select it. */
+  readonly nodeId: string;
+  readonly type: 'TrackTo' | 'FollowPath';
+}
+
+/**
+ * #1776 — the constraint that decides what `nodeId`'s `paramPath` is drawn with: the winning
+ * Track-To for `rotation` / `quaternion`, the top Follow-Path for `position`. The inspector shows
+ * the drawn value on such a row and locks it, naming this constraint (the user's call over
+ * Blender, which shows the own value under a constraint): an edit there would change nothing on
+ * screen. Muted members control nothing. Every other param → null.
+ */
+export function transformControllerOf(
+  nodes: Readonly<Record<string, NodeLike>>,
+  nodeId: string,
+  paramPath: string,
+): TransformController | null {
+  if (paramPath === 'rotation' || paramPath === 'quaternion') {
+    const aim = activeConstraintForTarget(nodes, nodeId);
+    return aim ? { nodeId: aim.nodeId, type: 'TrackTo' } : null;
+  }
+  if (paramPath === 'position') {
+    const stack = followPathStackForTarget(nodes, nodeId);
+    const top = stack[stack.length - 1];
+    return top ? { nodeId: top.nodeId, type: 'FollowPath' } : null;
+  }
+  return null;
+}
+
 /**
  * The `order` a NEW constraint on `nodeId` should take: one above the current top (#317).
  * The pose twin of `nextDriverOrder` (paramDrivers.ts) — the two halves of the species get

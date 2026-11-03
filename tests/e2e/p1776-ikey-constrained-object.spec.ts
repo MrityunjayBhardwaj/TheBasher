@@ -8,6 +8,7 @@
 // constraints after the key.
 
 import { expect, test } from './_fixtures';
+import { openInspectorSection } from './_inspectorSections';
 
 type V3 = [number, number, number];
 interface Chan {
@@ -184,4 +185,107 @@ test('a cube a Follow-Path moves: I keys its own position, not the point on the 
     'not the point on the path',
   ).toBeGreaterThan(1);
   await expect.poll(async () => (await drawnBox(page))!.pos[0]).toBeCloseTo(12, 2);
+});
+
+// The inspector half of #1776 (the user's call over Blender): a row a constraint decides shows
+// where the object is drawn, locked, with a badge naming the constraint that links to it.
+test('the inspector locks a constrained row, shows the drawn value, and links to the constraint', async ({
+  page,
+}) => {
+  await boot(page);
+  await openInspectorSection(page, 'transform');
+  const lock = page.getByTestId('inspector-controlled-n_box-rotation');
+  const rx = page.getByTestId('inspector-vec-n_box-rotation-x');
+  // Control: no constraint, no lock, an editable row showing the own rotation.
+  await expect(lock).toHaveCount(0);
+  await expect(rx).not.toHaveAttribute('readonly', '');
+  expect(parseFloat(await rx.inputValue())).toBeCloseTo(OWN_ROT[0], 3);
+
+  await dispatch(page, {
+    type: 'addNode',
+    nodeId: 'tt',
+    nodeType: 'TrackTo',
+    params: { target: 'n_box', aimPoint: [3, -2, -5], aimNode: '' },
+  });
+  await expect(lock).toBeVisible();
+  await expect(lock).toContainText('Track-To');
+  await expect(rx).toHaveAttribute('readonly', '');
+  // The drawn (aimed) rotation, not the own one.
+  await expect
+    .poll(async () => Math.abs(parseFloat(await rx.inputValue()) - OWN_ROT[0]))
+    .toBeGreaterThan(1);
+  // Position is not what a Track-To decides: no lock there.
+  await expect(page.getByTestId('inspector-controlled-n_box-position')).toHaveCount(0);
+
+  // Quaternion mode: the quaternion row is locked the same way.
+  await dispatch(page, {
+    type: 'setParam',
+    nodeId: 'n_box',
+    paramPath: 'rotationMode',
+    value: 'quaternion',
+  });
+  await expect(page.getByTestId('inspector-controlled-n_box-quaternion')).toBeVisible();
+
+  // The badge is a link: a click selects the constraint.
+  await page.getByTestId('inspector-controlled-n_box-quaternion').click();
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          (
+            window as unknown as {
+              __basher_selection: { getState: () => { primaryNodeId: string | null } };
+            }
+          ).__basher_selection.getState().primaryNodeId,
+      ),
+    )
+    .toBe('tt');
+});
+
+test('a Follow-Path locks the position row, not the rotation row', async ({ page }) => {
+  await boot(page);
+  await openInspectorSection(page, 'transform');
+  await dispatch(page, {
+    type: 'addNode',
+    nodeId: 'crv_data',
+    nodeType: 'CurveData',
+    params: {
+      points: [
+        { id: 'p0', co: [0, 0, 0] },
+        { id: 'p1', co: [12, 0, 0] },
+      ],
+      closed: false,
+      resolution: 32,
+    },
+  });
+  for (const o of [
+    { type: 'addNode', nodeId: 'crv', nodeType: 'Object', params: {} },
+    {
+      type: 'connect',
+      from: { node: 'crv_data', socket: 'out' },
+      to: { node: 'crv', socket: 'data' },
+    },
+    {
+      type: 'connect',
+      from: { node: 'crv', socket: 'out' },
+      to: { node: 'n_scene', socket: 'children' },
+    },
+    {
+      type: 'addNode',
+      nodeId: 'fp',
+      nodeType: 'FollowPath',
+      params: { name: 'fp', target: 'n_box', curve: 'crv', evalTime: 1, offset: 0 },
+    },
+  ])
+    await dispatch(page, o);
+  await expect(page.getByTestId('inspector-controlled-n_box-position')).toContainText(
+    'Follow Path',
+  );
+  await expect(page.getByTestId('inspector-vec-n_box-position-x')).toHaveAttribute('readonly', '');
+  await expect
+    .poll(async () =>
+      parseFloat(await page.getByTestId('inspector-vec-n_box-position-x').inputValue()),
+    )
+    .toBeCloseTo(12, 2);
+  await expect(page.getByTestId('inspector-controlled-n_box-rotation')).toHaveCount(0);
 });
