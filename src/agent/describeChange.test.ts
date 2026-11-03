@@ -52,8 +52,8 @@ describe('describeChange', () => {
     }
   });
 
-  // #1765 — a sun, spot or area light comes with the Track-To that aims it: one light, not a
-  // light and a track to.
+  // #1765 — a sun, spot or area light comes with the Track-To that aims it and the empty that
+  // Track-To aims at: one light.
   it('a light and the Track-To it comes aimed by read as the light', () => {
     for (const kind of ['DirectionalLight', 'SpotLight', 'AreaLight'] as const) {
       const { before, ops } = adds([kind]);
@@ -61,7 +61,12 @@ describe('describeChange', () => {
         ops.some((o) => o.type === 'addNode' && o.nodeType === 'TrackTo'),
         kind,
       ).toBe(true);
-      expect(describeChange(before, ops), kind).not.toMatch(/track/i);
+      expect(
+        ops.some((o) => o.type === 'addNode' && o.nodeType === 'Null'),
+        kind,
+      ).toBe(true);
+      // Not "… and a track to", not "… and an empty": the aim and its empty are the light's.
+      expect(describeChange(before, ops), kind).not.toMatch(/track|empty/i);
     }
   });
 

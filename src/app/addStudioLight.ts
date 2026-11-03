@@ -18,7 +18,7 @@
 import type { DagState } from '../core/dag/state';
 import type { Op } from '../core/dag/types';
 import { resolveStudioLightTransform } from './resolveStudioLightTransform';
-import { nextConstraintOrder } from './nodeConstraints';
+import { lightAimOps } from './lightAim';
 import { linkIntoActiveCollection } from './collections';
 import { cameraRotationLookingAt } from './cameraOrientation';
 
@@ -72,6 +72,7 @@ export function buildAddStudioLightOps(
   // targets `lightId` (the Object), the rig/scene `dest` receives the Object, and the
   // panel's enumeration recognises it through `data` (studioLightRig, #386 S3b) — so the
   // rig aim + index-correspondence survive the split.
+  const aim = lightAimOps(state, lightId, { at: target, kind: 'Area', trackToId: ttId });
   const ops: Op[] = [
     {
       type: 'addNode',
@@ -103,23 +104,10 @@ export function buildAddStudioLightOps(
       from: { node: lightId, socket: 'out' },
       to: dest,
     },
-    {
-      type: 'addNode',
-      nodeId: ttId,
-      nodeType: 'TrackTo',
-      params: {
-        name: 'aim',
-        target: lightId,
-        aimNode: '',
-        aimPoint: target,
-        up: [0, 1, 0],
-        mute: false,
-        // #317 — through the shared top-of-stack rule, like every other creation road.
-        // A freshly-created light has an empty stack → 0: byte-identical.
-        order: nextConstraintOrder(state.nodes, lightId),
-      },
-    },
+    // #1765 — aimed at the rig centre by a Track-To at an empty ("Area.aim") there, the one way
+    // every light is aimed (`lightAimOps`).
+    ...aim.ops,
   ];
   // #1480 — into the active collection, as every light the Add menu makes joins it (#1453).
-  return { ops: linkIntoActiveCollection(state, ops, [lightId]), lightId };
+  return { ops: linkIntoActiveCollection(state, ops, [lightId, aim.nullId]), lightId };
 }

@@ -10,6 +10,8 @@ import { buildDefaultDagState } from './default';
 import { CAPTURED_EXAMPLE_IDS, EXAMPLE_PROJECT_IDS, buildExampleProject } from './examples';
 import { migrateLightAimToTurn } from './migrations';
 import { useNotificationStore } from '../../app/stores/notificationStore';
+import { buildDeleteNodesOps } from '../../app/sceneNodeActions';
+import { hierarchyChildIds } from '../../app/sceneHierarchy';
 import { makeSplitLight } from '../../test-utils/splitLight';
 import { cameraLocalOrientation } from '../../app/cameraTrackTo';
 import { resolveTrackToTarget } from '../../app/nodeConstraints';
@@ -186,20 +188,26 @@ describe('#1765 v26 → v27: every light shines where it shone', () => {
     return n;
   };
 
-  /** Every sun, spot and area light in `s` carries a live Track-To at the world origin with no
-   *  aim object, and still shines at the origin with every Track-To muted (its own rotation). */
+  /** Every sun, spot and area light in `s` carries a live Track-To aimed at an empty named after
+   *  it ("….aim") at the world origin — not hung under the light — and still shines at the
+   *  origin with the empties deleted (the Track-To's fallback point) and with every Track-To
+   *  muted (its own rotation). */
   const aimedAtOrigin = (s: DagState): number => {
     const lights = aimableLights(s);
+    const empties: string[] = [];
     for (const light of lights) {
       const aim = Object.values(s.nodes).find(
         (n) => n.type === 'TrackTo' && (n.params as { target: string }).target === light.obj,
       );
-      expect(aim?.params, light.obj).toMatchObject({
-        aimNode: '',
-        aimPoint: [0, 0, 0],
-        mute: false,
-      });
+      expect(aim?.params, light.obj).toMatchObject({ aimPoint: [0, 0, 0], mute: false });
+      const emptyId = (aim!.params as { aimNode: string }).aimNode;
+      expect(s.nodes[emptyId]?.type, `${light.obj}'s aim object`).toBe('Null');
+      expect(s.nodes[emptyId].meta?.name, light.obj).toMatch(/\.aim$/);
+      expect(worldPos(s, emptyId, 0).toArray(), light.obj).toEqual([0, 0, 0]);
+      expect(hierarchyChildIds(s.nodes[light.obj]), light.obj).not.toContain(emptyId);
+      empties.push(emptyId);
     }
+    shinesAtOrigin(run(s, buildDeleteNodesOps(s, empties) as Parameters<typeof run>[1]));
     const muted = run(
       s,
       Object.values(s.nodes)
@@ -263,7 +271,7 @@ describe('#1765 v26 → v27: every light shines where it shone', () => {
     expect(params(b, 'area_data')).not.toHaveProperty('lookAt');
   });
 
-  it('a keyed spot target: its keys move onto the Track-To and play there', () => {
+  it('a keyed spot target: its keys move onto the aim empty and play there', () => {
     let a = withLight({ objectId: 'spot', lightKind: 'Spot', position: [0, 5, 5] });
     a = run(a, [
       {
@@ -284,8 +292,10 @@ describe('#1765 v26 → v27: every light shines where it shone', () => {
     const b = migrate(a);
     expectSameTurns(a, b);
     const moved = params(b, 'spot_target_keys');
-    expect(moved.target).toBe('spot_aim');
-    expect(moved.paramPath).toBe('aimPoint');
+    // The keys move the empty the Track-To aims at.
+    expect(moved.target).toBe('spot_aim_target');
+    expect(moved.paramPath).toBe('position');
+    expect(params(b, 'spot_aim').aimNode).toBe('spot_aim_target');
   });
 
   it('an area light already aimed by a Track-To keeps it winning, and muting it shows the old aim', () => {
@@ -317,13 +327,22 @@ describe('#1765 v26 → v27: every light shines where it shone', () => {
     expectSameTurns(a, b);
     expect(params(b, 'sun_aim')).toMatchObject({
       target: 'sun',
-      aimNode: '',
+      aimNode: 'sun_aim_target',
       aimPoint: [0, 0, 0],
       aimSpace: 'world',
     });
+    // Its aim is an empty at the origin named after it, at the top of the scene.
+    expect(b.nodes.sun_aim_target.type).toBe('Null');
+    expect(b.nodes.sun_aim_target.meta?.name).toBe('Sun.aim');
+    expect(params(b, 'sun_aim_target').position).toEqual([0, 0, 0]);
     expect((params(b, 'sun').rotation as number[]).some((v) => v !== 0)).toBe(true);
     const muted = run(b, [{ type: 'setParam', nodeId: 'sun_aim', paramPath: 'mute', value: true }]);
     expectSameTurns(a, muted);
+    // Deleting the empty leaves it shining where it shone: the Track-To falls back to its point.
+    expectSameTurns(
+      a,
+      run(b, buildDeleteNodesOps(b, ['sun_aim_target']) as Parameters<typeof run>[1]),
+    );
   });
 
   it('a sun at rotation 0 whose position is keyed: its Track-To keeps it on the origin as it moves', () => {

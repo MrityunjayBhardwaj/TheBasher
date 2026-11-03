@@ -17,7 +17,7 @@ import { buildSkeletonObjectOps } from '../core/import/skeletonObject';
 import { DEFAULT_CAMERA_FAR, DEFAULT_CAMERA_NEAR } from '../nodes/CameraData';
 import { placeBuiltin } from './builtinTemplates';
 import { linkIntoActiveCollection } from './collections';
-import { nextConstraintOrder } from './nodeConstraints';
+import { AIMABLE_LIGHT_KINDS, lightAimOps } from './lightAim';
 
 /**
  * THE SCENE OBJECTS — everything the Add menu can put in the scene as a thing with a
@@ -140,6 +140,8 @@ export interface AddResult {
    * the first question with the second one's value.
    */
   dataNodeId?: string;
+  /** #1765 — the empty a new sun, spot or area light is aimed at (its Track-To's `aimNode`). */
+  aimNodeId?: string;
 }
 
 type Vec3 = [number, number, number];
@@ -190,7 +192,13 @@ export function buildAddPrimitiveOps(
         (op.to.socket === 'children' || op.to.socket === 'lights'),
     );
   return standsInScene
-    ? { ...result, ops: linkIntoActiveCollection(state, result.ops, [result.newNodeId]) }
+    ? {
+        ...result,
+        ops: linkIntoActiveCollection(state, result.ops, [
+          result.newNodeId,
+          ...(result.aimNodeId ? [result.aimNodeId] : []),
+        ]),
+      }
     : result;
 }
 
@@ -394,6 +402,12 @@ function buildUnlinkedAddOps(
   ) {
     const dataId = newId('data');
     const objId = newId('light');
+    // #1765 — a sun, spot or area light comes aimed at the world origin by a Track-To whose aim
+    // is an empty ("Spot.aim") the user moves to re-aim it. A point light shines every way.
+    const lightKind = (lightDataParamsFor(kind) as { lightKind: string }).lightKind;
+    const aim = AIMABLE_LIGHT_KINDS.has(lightKind)
+      ? lightAimOps(state, objId, { at: [0, 0, 0], kind: lightKind })
+      : null;
     return {
       ops: [
         {
@@ -418,14 +432,12 @@ function buildUnlinkedAddOps(
           from: { node: objId, socket: 'out' },
           to: { node: sceneRef.node, socket: 'lights' },
         },
-        // #1765 — a sun, spot or area light comes aimed: a Track-To at the world origin, whose
-        // aim object the user can pick in the light's constraint stack. A point light shines
-        // every way, so it gets none.
-        ...(kind === 'PointLight' ? [] : [originAimOp(state, objId)]),
+        ...(aim?.ops ?? []),
       ],
       description: `Add ${humanLabel(kind)}`,
       newNodeId: objId,
       dataNodeId: dataId,
+      ...(aim ? { aimNodeId: aim.nullId } : {}),
     };
   }
 
@@ -519,28 +531,6 @@ function buildUnlinkedAddOps(
     ops,
     description: `Add ${humanLabel(kind)}`,
     newNodeId: id,
-  };
-}
-
-/**
- * #1765 — the Track-To a new sun, spot or area light is aimed by: at the world origin, in world
- * space, its aim object left empty for the user to pick. The light's own rotation is turned the
- * same way (`paramsFor`), so muting the Track-To leaves it facing where it faced.
- */
-export function originAimOp(state: DagState, lightId: string): Op {
-  return {
-    type: 'addNode',
-    nodeId: newId('aim'),
-    nodeType: 'TrackTo',
-    params: {
-      name: 'aim',
-      target: lightId,
-      aimNode: '',
-      aimPoint: [0, 0, 0],
-      up: [0, 1, 0],
-      mute: false,
-      order: nextConstraintOrder(state.nodes, lightId),
-    },
   };
 }
 
@@ -777,8 +767,8 @@ function paramsFor(kind: PrimitiveKind, position: Vec3): Record<string, unknown>
     case 'PointLight':
       return { position, rotation: [0, 0, 0], scale: [1, 1, 1] };
     // #1765 — a sun, spot or area light shines down its own −Z. A new one is aimed at the world
-    // origin by a Track-To (`originAimOp`), and its own rotation is turned the same way, so
-    // muting the Track-To leaves it facing where it faced.
+    // origin by a Track-To at an empty (`lightAimOps`), and its own rotation is turned the same
+    // way, so muting the Track-To or deleting the empty leaves it facing where it faced.
     case 'DirectionalLight':
     case 'SpotLight':
     case 'AreaLight':

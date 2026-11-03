@@ -119,14 +119,22 @@ export function describeChange(before: DagState, ops: readonly Op[]): string {
   };
 
   // Added things, by noun, in the order they were added.
+  // #1765 — a sidecar on something added here (the Track-To a new light comes aimed by) is a
+  // part of it too: it names its owner by an id, not an edge. So is what that sidecar points at
+  // when it is added with it (the empty the light's Track-To aims at, "Spot.aim").
+  const sidecarParts = new Set<NodeId>();
+  for (const [id, a] of added) {
+    const refs = idRefsByRole({ id, ...a }, nodes);
+    if (!refs.subject.some((t) => added.has(t))) continue;
+    sidecarParts.add(id);
+    for (const t of refs.argument) if (added.has(t)) sidecarParts.add(t);
+  }
+
   const addedNouns = new Map<string, number>();
   for (const [id, a] of added) {
     const into = feeds.get(id) ?? [];
     if (into.some((t) => added.has(t))) continue; // a part of something else added here
-    // #1765 — a sidecar on something added here (the Track-To a new light comes aimed by) is a
-    // part of it too: it names its owner by an id, not an edge.
-    const owners = idRefsByRole({ id, ...a }, nodes).subject;
-    if (owners.some((t) => added.has(t))) continue;
+    if (sidecarParts.has(id)) continue;
     const existing = into.filter((t) => !isScene(t));
     if (a.type !== 'Object' && existing.length > 0) {
       existing.forEach(change); // added onto something already there

@@ -1,12 +1,13 @@
-// #1765 — a new sun, spot or area light comes aimed at the world origin by a Track-To, and the
-// object it aims at is picked in its constraint stack. A point light shines every way, so it
+// #1765 — a new sun, spot or area light comes aimed at the world origin by a Track-To at an
+// empty there ("Spot.aim"); moving the empty re-aims the light, and the object it aims at can be
+// re-picked in its constraint stack. A point light shines every way, so it
 // comes with none.
 //
 // Driven through the real surfaces: Shift+A ▸ Light ▸ Spot, the inspector's constraint stack, and
 // the node-ref picker's <select>. Side A is the drawn SpotLight (its world −Z, the way it shines);
 // side B is where it should face, normalize(aim − position), from the aim the DAG names.
-// Falsified by adding the light without its Track-To (`originAimOp` dropped from the Add-menu
-// branch): the stack has no row and the aim assertion goes red.
+// Falsified by adding the light without its Track-To, or with a Track-To but no empty
+// (`lightAimOps`): the stack has no row, or the aim object is not an empty, and it goes red.
 
 import { expect, test } from './_fixtures';
 
@@ -95,7 +96,16 @@ async function missFrom(page: import('@playwright/test').Page, aim: V3): Promise
   return Math.max(...d.map((v, i) => Math.abs(v - want[i])));
 }
 
-test('a new spot comes aimed at the origin by a Track-To, and its aim object is picked in the inspector', async ({
+/** A node's type, name and position, or null. */
+const nodeOf = (page: import('@playwright/test').Page, id: string) =>
+  page.evaluate((nid) => {
+    const n = (window as unknown as W).__basher_dag.getState().state.nodes[nid] as
+      | { type: string; params: Record<string, unknown>; meta?: { name?: string } }
+      | undefined;
+    return n ? { type: n.type, name: n.meta?.name ?? null, position: n.params.position } : null;
+  }, id);
+
+test('a new spot comes aimed at an empty at the origin, and its aim object can be re-picked in the inspector', async ({
   page,
 }) => {
   await boot(page);
@@ -106,11 +116,13 @@ test('a new spot comes aimed at the origin by a Track-To, and its aim object is 
   expect(objId, 'the add selects the new light').toBeTruthy();
   expect(minted).toContain(objId);
 
-  // DAG side: one Track-To on it, at the world origin, no aim object yet.
+  // DAG side: one Track-To on it, aimed at an empty named after it, at the world origin.
   const aims = await aimsOf(page, objId!);
   expect(aims).toHaveLength(1);
-  expect(aims[0]).toMatchObject({ aimNode: '', aimPoint: [0, 0, 0], mute: false });
+  expect(aims[0]).toMatchObject({ aimPoint: [0, 0, 0], mute: false });
   const ttId = aims[0].id;
+  const empty = await nodeOf(page, aims[0].aimNode as string);
+  expect(empty).toMatchObject({ type: 'Null', name: 'Spot.aim', position: [0, 0, 0] });
 
   // Move it off the origin (the Add menu drops it at the orbit target), then it faces the origin.
   const FROM: V3 = [4, 5, -2];
@@ -154,4 +166,47 @@ test('a new point light comes with no Track-To', async ({ page }) => {
   );
   expect(objId).toBeTruthy();
   expect(await aimsOf(page, objId!)).toEqual([]);
+});
+
+// The user's handle: the light aims at an object, and moving that object re-aims the light.
+test('moving a new spot’s "Spot.aim" empty in the viewport re-aims the light', async ({ page }) => {
+  await boot(page);
+  await addLight(page, 'SpotLight');
+  const objId = (await page.evaluate(
+    () => (window as unknown as W).__basher_selection.getState().selectedNodeId,
+  ))!;
+  const FROM: V3 = [4, 5, -2];
+  await page.evaluate(
+    ([id, at]) =>
+      (window as unknown as W).__basher_dag
+        .getState()
+        .dispatch({ type: 'setParam', nodeId: id, paramPath: 'position', value: at }),
+    [objId, FROM] as [string, V3],
+  );
+  const emptyId = (await aimsOf(page, objId))[0]?.aimNode as string;
+  expect((await nodeOf(page, emptyId))?.type, 'the light aims at an empty').toBe('Null');
+  await expect.poll(() => missFrom(page, [0, 0, 0])).toBeLessThan(1e-4);
+
+  // Select the empty by its outliner row, then move it with the viewport's gizmo.
+  await page.getByTestId(`scene-tree-row-${emptyId}`).click();
+  await expect
+    .poll(() =>
+      page.evaluate(() => (window as unknown as W).__basher_selection.getState().selectedNodeId),
+    )
+    .toBe(emptyId);
+  await page.waitForFunction(() =>
+    Boolean((window as unknown as { __basher_gizmo_grab?: unknown }).__basher_gizmo_grab),
+  );
+  const TO: V3 = [-3, 1, 2];
+  await page.evaluate((to) => {
+    (
+      window as unknown as {
+        __basher_gizmo_grab: (m: string, t: [number, number, number]) => void;
+      }
+    ).__basher_gizmo_grab('translate', to);
+  }, TO);
+  await expect.poll(async () => (await nodeOf(page, emptyId))?.position).toEqual(TO);
+  // The drawn light now faces where the empty went, not the origin.
+  await expect.poll(() => missFrom(page, TO)).toBeLessThan(1e-4);
+  expect(await missFrom(page, [0, 0, 0])).toBeGreaterThan(0.1);
 });

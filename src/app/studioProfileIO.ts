@@ -21,7 +21,7 @@ import { z } from 'zod';
 import type { DagState } from '../core/dag/state';
 import type { Op } from '../core/dag/types';
 import { ensureProfileSelectOps, enumerateProfiles, uniqueProfileName } from './studioProfiles';
-import { nextConstraintOrder } from './nodeConstraints';
+import { lightAimOps } from './lightAim';
 import { linkIntoActiveCollection } from './collections';
 import { cameraRotationLookingAt } from './cameraOrientation';
 import { isAreaLightNode, lightParamsOf } from './lightNode';
@@ -236,22 +236,9 @@ export function buildImportProfilesOps(
           from: { node: lightId, socket: 'out' },
           to: { node: rigId, socket: 'lights' },
         },
-        {
-          type: 'addNode',
-          nodeId: ttId,
-          nodeType: 'TrackTo',
-          params: {
-            name: 'aim',
-            target: lightId,
-            aimNode: '',
-            aimPoint: profile.center,
-            up: [0, 1, 0],
-            mute: false,
-            // #317 — through the shared top-of-stack rule, like every other creation
-            // road. A freshly-created light has an empty stack → 0: byte-identical.
-            order: nextConstraintOrder(state.nodes, lightId),
-          },
-        },
+        // #1765 — aimed at the profile centre by a Track-To at an empty there ("Area.aim"),
+        // the one way every light is aimed (`lightAimOps`).
+        ...lightAimOps(state, lightId, { at: profile.center, kind: 'Area', trackToId: ttId }).ops,
       );
     }
   }
@@ -268,8 +255,11 @@ export function buildImportProfilesOps(
 
   // #1480 — every light the file makes joins the active collection, as an importer links every
   // object it makes (`intoActiveCollection`).
+  // #1765 — and so does each light's aim empty.
   const lightIds = ops.flatMap((op) =>
-    op.type === 'addNode' && op.nodeType === 'Object' ? [op.nodeId] : [],
+    op.type === 'addNode' && (op.nodeType === 'Object' || op.nodeType === 'Null')
+      ? [op.nodeId]
+      : [],
   );
   return { ops: linkIntoActiveCollection(state, ops, lightIds), activatedName };
 }

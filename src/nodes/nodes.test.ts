@@ -218,7 +218,8 @@ describe('default project', () => {
     // Object/pose, id inherited) + n_light_data (the LightData/shading). #387 C4 — and so is
     // the camera: n_camera (the Object/pose, id inherited) + n_camera_data (the CameraData/
     // lens). Every seeded scene object is now split-native; nothing in a new project migrates.
-    // #1765 — and the sun comes aimed at the origin by its own Track-To, n_light_aim.
+    // #1765 — and the sun comes aimed at the origin by its own Track-To, n_light_aim, at an empty
+    // there, n_light_target ("Sun.aim").
     expect(Object.keys(state.nodes).sort()).toEqual([
       'n_box',
       'n_box_data',
@@ -227,6 +228,7 @@ describe('default project', () => {
       'n_light',
       'n_light_aim',
       'n_light_data',
+      'n_light_target',
       'n_render',
       'n_scene',
       'n_time',
@@ -263,7 +265,8 @@ describe('default project', () => {
     expect(value.scene.kind).toBe('Scene');
     expect(value.scene.camera.kind).toBe('PerspectiveCamera');
     expect(value.scene.lights).toHaveLength(1);
-    expect(value.scene.children).toHaveLength(1);
+    // The cube and the sun's aim empty (#1765).
+    expect(value.scene.children).toHaveLength(2);
     expect(value.postFx.tonemap).toBe('ACES');
     expect(value.postFx.smaa).toBe(true);
   });
