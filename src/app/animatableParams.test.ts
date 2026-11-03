@@ -16,6 +16,7 @@ import { buildBindDriverOps } from './driverBind';
 import { buildSpringOps } from './solverBind';
 import { buildNewMaterialOps } from './materialLink';
 import {
+  animatableContextOf,
   animatablePathPattern,
   animatablePathsOf,
   animatableSubjectOf,
@@ -111,6 +112,22 @@ describe('animatablePathPattern', () => {
 });
 
 describe('isAnimatable — three answers, never two', () => {
+  // #1765 — a Track-To's point is its fallback: while it aims at an object, a key on the point
+  // moves nothing, and that is a fact about this instance, so it is unmeasured, never "still".
+  it('a Track-To aimed at an object: its point is unmeasured; aimed at nothing, it is measured', () => {
+    const s = buildDefaultDagState();
+    expect(animatableContextOf(s, 'n_light_aim', 'aimPoint')).toEqual({
+      unmeasured: 'it aims at an object, so a keyframe on it would not show',
+    });
+    const bare = applyOp(s, {
+      type: 'setParam',
+      nodeId: 'n_light_aim',
+      paramPath: 'aimNode',
+      value: '',
+    } as Parameters<typeof applyOp>[1]).next;
+    expect(animatableContextOf(bare, 'n_light_aim', 'aimPoint')).toHaveProperty('subject');
+  });
+
   it('a spot light draws its cone angle; a point light, which has no cone, does not', () => {
     const spot = place(buildDefaultDagState(), 'SpotLight');
     const point = place(buildDefaultDagState(), 'PointLight');
