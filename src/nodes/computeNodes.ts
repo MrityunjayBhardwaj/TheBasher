@@ -18,7 +18,8 @@
 
 import { z } from 'zod';
 import type { NodeDefinition } from '../core/dag/types';
-import type { Vec3 } from './types';
+import type { Quat, Vec3 } from './types';
+import { IDENTITY_QUAT, slerp } from './quatMath';
 import {
   applyMathOp,
   applyVec3Op,
@@ -37,6 +38,11 @@ const NUMBER_OUT = { out: { type: 'Number', cardinality: 'single' } } as const;
 const VECTOR3_OUT = { out: { type: 'Vector3', cardinality: 'single' } } as const;
 const num = (inputs: Record<string, unknown>, key: string): number =>
   (inputs[key] as number | undefined) ?? 0;
+/** An unconnected Quaternion input defaults to no rotation. */
+const quat = (inputs: Record<string, unknown>, key: string): Quat => {
+  const v = inputs[key];
+  return Array.isArray(v) && v.length === 4 ? (v as unknown as Quat) : IDENTITY_QUAT;
+};
 /** An unconnected Vector3 input defaults to the origin (mirrors `num`'s 0 default). */
 const vec3 = (inputs: Record<string, unknown>, key: string): Vec3 =>
   (inputs[key] as Vec3 | undefined) ?? [0, 0, 0];
@@ -101,24 +107,65 @@ export const FitNode: NodeDefinition<FitParams, number> = {
     fit(num(inputs, 'in'), params.inMin, params.inMax, params.outMin, params.outMax, params.clamp),
 };
 
-// ── Mix — linear blend of a and b by `factor` ────────────────────────────────
+// ── Mix — blend a and b by `factor`: numbers, vectors or rotations ─────────────
+// #1801 — one Mix for every value type, as Blender's is: a socket per type (`a`/`b`/`out` for a
+// Number, `aVector`/… for a Vector3, `aRotation`/… for a Quaternion), and `dataType` decides
+// which are available (node_shader_mix.cc). A Number or a Vector lerps; a Rotation blends along
+// the shortest arc (Blender's `math::interpolate`), because lerping the numbers of two
+// orientations takes the wrong path. The Number sockets keep their names, so a Mix saved before
+// the mode existed loads as a Number Mix with its wires in place.
+export const MIX_DATA_TYPES = ['Number', 'Vector', 'Rotation'] as const;
 export const MixParams = z.object({
   factor: z.number().default(0.5),
+  dataType: z.enum(MIX_DATA_TYPES).default('Number'),
 });
 export type MixParams = z.infer<typeof MixParams>;
 
-export const MixNode: NodeDefinition<MixParams, number> = {
+const when = (dataType: (typeof MIX_DATA_TYPES)[number]) =>
+  ({ param: 'dataType', in: [dataType] }) as const;
+
+export const MixNode: NodeDefinition<MixParams, number | Vec3 | Quat> = {
   type: 'Mix',
   version: 1,
   pure: true,
   cost: 'cheap',
   paramSchema: MixParams,
   inputs: {
-    a: { type: 'Number', cardinality: 'single', owns: 'always' },
-    b: { type: 'Number', cardinality: 'single', owns: 'always' },
+    a: { type: 'Number', cardinality: 'single', owns: 'always', available: when('Number') },
+    b: { type: 'Number', cardinality: 'single', owns: 'always', available: when('Number') },
+    aVector: { type: 'Vector3', cardinality: 'single', owns: 'always', available: when('Vector') },
+    bVector: { type: 'Vector3', cardinality: 'single', owns: 'always', available: when('Vector') },
+    aRotation: {
+      type: 'Quaternion',
+      cardinality: 'single',
+      owns: 'always',
+      available: when('Rotation'),
+    },
+    bRotation: {
+      type: 'Quaternion',
+      cardinality: 'single',
+      owns: 'always',
+      available: when('Rotation'),
+    },
   },
-  outputs: NUMBER_OUT,
-  evaluate: (params, inputs) => lerp(num(inputs, 'a'), num(inputs, 'b'), params.factor),
+  outputs: {
+    out: { type: 'Number', cardinality: 'single', available: when('Number') },
+    outVector: { type: 'Vector3', cardinality: 'single', available: when('Vector') },
+    outRotation: { type: 'Quaternion', cardinality: 'single', available: when('Rotation') },
+  },
+  // One value: the current mode's. Only that mode's output is available, so it is the only one
+  // a live wire reads.
+  evaluate: (params, inputs) => {
+    const t = params.factor;
+    switch (params.dataType ?? 'Number') {
+      case 'Vector':
+        return applyVec3Op('mix', vec3(inputs, 'aVector'), vec3(inputs, 'bVector'), t);
+      case 'Rotation':
+        return slerp(quat(inputs, 'aRotation'), quat(inputs, 'bRotation'), t);
+      default:
+        return lerp(num(inputs, 'a'), num(inputs, 'b'), t);
+    }
+  },
 };
 
 // ── CurveRemap — piecewise-linear ramp remap ─────────────────────────────────

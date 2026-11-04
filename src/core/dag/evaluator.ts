@@ -24,6 +24,7 @@ import { hashString, hashValue, type ContentHash } from './hash';
 import { getNodeType, registryEpoch, requireNodeType } from './registry';
 import type { DagState, EvaluableState } from './state';
 import { arriving, conversionsInto, producedTypeOf } from './socketConversion';
+import { inputAvailable, outputAvailable } from './socketAvailability';
 import { bodyInputLeavesOf } from './subnetworks';
 import type { EvalCtx, InputDescriptor, NodeDefinition, NodeId, ResolvedInputs } from './types';
 import { sourceIdsKey } from './types';
@@ -415,6 +416,13 @@ export function evaluate(
     return arriving(into, producedTypeOf(state, ref), value);
   }
 
+  /** #1801 — whether `ref`'s producer currently has that output (its mode may have hidden it). */
+  function producesNow(ref: { node: NodeId; socket: string }): boolean {
+    const producer = state.nodes[ref.node];
+    const producerDef = producer ? getNodeType(producer.type) : undefined;
+    return !producerDef || outputAvailable(producerDef, producer.params, ref.socket);
+  }
+
   function evalNode(id: NodeId, depth: number): EvalResult {
     if (depth > DEPTH_LIMIT) {
       throw new Error(
@@ -496,8 +504,18 @@ export function evaluate(
     // node types and this node's cache key already carries its own.
     const resolved: ResolvedInputs = {};
     const inputHashes: Record<string, string | string[]> = {};
-    for (const [socket, binding] of Object.entries(node.inputs)) {
+    for (const [socket, rawBinding] of Object.entries(node.inputs)) {
       const into = def.inputs[socket];
+      // #1801 — a wire on a socket this node's mode has switched off, or from an output its
+      // producer's mode has, is kept but not read: the input is unconnected (Blender's invalid
+      // link). The node's own params, which pick the mode, are already in its cache key.
+      if (!inputAvailable(def, node.params, socket)) continue;
+      const binding = Array.isArray(rawBinding)
+        ? rawBinding.filter((ref) => producesNow(ref))
+        : producesNow(rawBinding)
+          ? rawBinding
+          : null;
+      if (binding === null) continue;
       if (Array.isArray(binding)) {
         const values: unknown[] = [];
         const hashes: string[] = [];

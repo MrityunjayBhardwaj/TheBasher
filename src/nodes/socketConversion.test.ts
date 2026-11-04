@@ -268,7 +268,7 @@ describe('every pair of plain-value types that can meet has an answer (#1549)', 
       }
     }
     expect([...produced].sort()).toEqual(['Matrix4', 'Number', 'Quaternion', 'Vector3']);
-    expect(inputs).toHaveLength(32);
+    expect(inputs).toHaveLength(36);
 
     const answers: Record<string, number> = { taken: 0, converted: 0, refused: 0 };
     const refused = new Set<string>();
@@ -282,11 +282,13 @@ describe('every pair of plain-value types that can meet has an answer (#1549)', 
         }
       }
     }
-    // 32 inputs × 4 produced types = 128 = taken + converted + refused. The inputs: Number 14,
-    // Vector3 9, Matrix4 6, Quaternion 2, the driver's Number|Vector3 1. Before #1784 nothing
-    // was refused; the transform and rotation types bring Blender's own refusals with them, and
-    // only those (`type_conversions.cc` registers none of these pairs).
-    expect(answers).toEqual({ taken: 33, converted: 45, refused: 50 });
+    // 36 inputs × 4 produced types = 144 = taken + converted + refused. The inputs: Number 14,
+    // Vector3 11, Matrix4 6, Quaternion 4, the driver's Number|Vector3 1 (#1801 added Mix's
+    // vector and rotation pairs; they are counted whether or not a mode has them on, because
+    // the type rule does not depend on the mode). Before #1784 nothing was refused; the
+    // transform and rotation types bring Blender's own refusals with them, and only those
+    // (`type_conversions.cc` registers none of these pairs).
+    expect(answers).toEqual({ taken: 37, converted: 55, refused: 52 });
     expect([...refused].sort()).toEqual([
       'Matrix4>Number',
       'Matrix4>Number|Vector3',

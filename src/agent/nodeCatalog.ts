@@ -34,7 +34,7 @@
 // is what makes "zero" a fact rather than a hope — a description failure should not
 // become an availability failure, but it should also never pass unnoticed.
 
-import type { NodeDefinition, NodeTypeId } from '../core/dag/types';
+import type { NodeDefinition, NodeTypeId, SocketAvailability } from '../core/dag/types';
 import { getNodeType, listNodeTypes } from '../core/dag/registry';
 
 /** What a param leaf IS, in the vocabulary a caller writing `setParam` needs. */
@@ -76,6 +76,13 @@ export interface SocketField {
   /** One accepted type, or a set spelled `A|B` — an input ACCEPTS, an output HAS. */
   type: string;
   cardinality: 'single' | 'list';
+  /** #1801 — present when the socket exists only in some modes: `dataType = Vector`. */
+  available?: string;
+}
+
+/** #1801 — a socket's mode condition, as the catalogue prints it. */
+function availableWhen(rule: SocketAvailability): string {
+  return `${rule.param} = ${rule.in.join(' | ')}`;
 }
 
 export interface NodeSchema {
@@ -254,11 +261,13 @@ function socketsOf(def: NodeDefinition): { inputs: SocketField[]; outputs: Socke
     // `Array.isArray` does not narrow a READONLY tuple, and `AcceptedTypeSet` is one.
     type: Array.isArray(d.type) ? (d.type as readonly string[]).join('|') : (d.type as string),
     cardinality: d.cardinality,
+    ...(d.available ? { available: availableWhen(d.available) } : {}),
   }));
   const outputs = Object.entries(def.outputs).map(([socket, d]) => ({
     socket,
     type: d.type,
     cardinality: d.cardinality,
+    ...(d.available ? { available: availableWhen(d.available) } : {}),
   }));
   return { inputs, outputs };
 }
@@ -299,7 +308,8 @@ function renderParam(p: ParamField): string {
 }
 
 function renderSocket(s: SocketField): string {
-  return `${s.socket}:${s.type}${s.cardinality === 'list' ? '[]' : ''}`;
+  const when = s.available ? `{${s.available}}` : '';
+  return `${s.socket}:${s.type}${s.cardinality === 'list' ? '[]' : ''}${when}`;
 }
 
 /**
@@ -438,6 +448,7 @@ export function renderNodeCatalog(schemas: NodeSchema[] = listNodeSchemas()): st
     '# Node types. One line each:  <Type> | in: <socket>:<Type> | out: <socket>:<Type> | params: <path>:<kind>',
     '#   []  after a socket type = list cardinality (accepts several connections)',
     '#   A|B after a socket name = accepts either type, unconverted',
+    '#   {p = v} after a socket = exists only while param p is v (otherwise its wires are ignored)',
     '#   (a|b|c) after a param   = the only legal values',
     '#   [3 number] after a tuple = fixed length and element kind',
     '#   ? after a param = may be null',

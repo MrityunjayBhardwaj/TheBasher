@@ -35,6 +35,7 @@ import type {
 } from './types';
 import { acceptedTypes, OpSchema, OUTPUT_SOCKET_TYPES, SpareParamSchema } from './types';
 import { inputTakes, whyNotTaken } from './socketConversion';
+import { inputAvailable, outputAvailable, whyUnavailable } from './socketAvailability';
 
 /**
  * #1586 — the graph declining an edit: an operation it will not apply (`OpError`), or a batch
@@ -620,6 +621,26 @@ function requireWire(
   return outputDesc;
 }
 
+/** #1801 — refuse a wire to or from a socket its node's current mode has switched off. */
+function requireAvailable(
+  op: Op,
+  node: { type: string; params?: unknown },
+  socket: string,
+  side: 'input' | 'output',
+): void {
+  const def = requireNodeType(node.type);
+  const ok =
+    side === 'input'
+      ? inputAvailable(def, node.params, socket)
+      : outputAvailable(def, node.params, socket);
+  if (ok) return;
+  const rule = (side === 'input' ? def.inputs[socket] : def.outputs[socket])!.available!;
+  throw new OpError(
+    `connect: ${node.type}.${socket} is not available — ${whyUnavailable(def, rule, node.params)}`,
+    op,
+  );
+}
+
 function applyConnect(
   state: DagState,
   op: Extract<Op, { type: 'connect' }>,
@@ -634,6 +655,11 @@ function applyConnect(
   const prior = consumer.inputs[op.to.socket];
   const held = Array.isArray(prior) ? prior : prior ? [prior] : [];
   requireWire('connect', op, state, consumer.type, op.to.socket, inputDesc, ref, held);
+  // #1801 — a NEW wire only between sockets the two nodes' modes have on. (`addNode` does not
+  // ask: it also restores a node on undo and paste, and a wire kept on a socket that is off is a
+  // state Blender keeps too — the evaluator ignores it until the mode brings the socket back.)
+  requireAvailable(op, consumer, op.to.socket, 'input');
+  requireAvailable(op, getNode(state, op.from.node), op.from.socket, 'output');
   if (wouldCreateCycle(state, op.from.node, op.to.node)) {
     throw new OpError(`connect: would create a cycle (${op.from.node} → ${op.to.node})`, op);
   }

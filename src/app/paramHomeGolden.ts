@@ -234,7 +234,8 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
   MediaClip:
     '[layout] name=layout src=(unrouted) mediaKind=(unrouted) srcFps=(unrouted) srcFrames=(unrouted) width=(unrouted) height=(unrouted)',
   MirrorModifier: '[modifier] axis=(unrouted) offset=modifier muted=modifier scope=modifier',
-  Mix: '[] factor=(unrouted)',
+  // APPENDED at #1801 — `dataType` picks which sockets Mix has on; unrouted like `factor`.
+  Mix: '[] factor=(unrouted) dataType=(unrouted)',
   // APPENDED at #902 — text-to-motion as a node. Unrouted like its neighbours
   // (AnimationClip, RetargetClip, Scatter) and for their reason: no inspector card
   // draws these yet, and a home would claim a section renders them when none does.
@@ -477,4 +478,6 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
 // Multiply/Invert Transform(s), Transform Point/Direction, Euler to Rotation, Rotation to Euler.
 // No cells, so only the type count moves:
 //   types 90 + 8 = 98 · routed 147 · unrouted 259
-export const GOLDEN_TOTALS = { types: 98, routed: 147, unrouted: 259 } as const;
+// #1801 appends `Mix.dataType`, unrouted like `factor` (the generic param list draws it):
+//   types 98 · routed 147 · unrouted 259 + 1 = 260
+export const GOLDEN_TOTALS = { types: 98, routed: 147, unrouted: 260 } as const;

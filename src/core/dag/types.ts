@@ -184,6 +184,28 @@ export interface OutputDescriptor {
   type: SocketTypeName;
   cardinality: Cardinality;
   role?: PassRole;
+  /** #1801 — when this output exists, by the node's params. See {@link SocketAvailability}. */
+  available?: SocketAvailability;
+}
+
+/**
+ * #1801 — a socket that exists only in some of its node's modes: available while the param
+ * `param` holds one of `in`. A socket's TYPE never changes; a node that works on several types
+ * declares one socket per type and lets a mode param pick which are available. That is Blender's
+ * own mechanism (its Mix declares `A_Float`, `A_Vector`, `A_Rotation`, … and its `data_type`
+ * toggles their availability, `node_shader_mix.cc`), and it keeps every reader of a socket's
+ * declared type correct.
+ *
+ * A wire on a socket that is not available is KEPT and IGNORED, as Blender keeps it and marks it
+ * invalid (`node_tree_update.cc`): the evaluator reads that input as unconnected, and switching
+ * the mode back brings the wire back into use. `connect` refuses to make a new one.
+ *
+ * Declarative, not a function, so it can be printed (the agent's node catalogue) and compared.
+ * Read through `socketAvailability.ts`, never off the descriptor.
+ */
+export interface SocketAvailability {
+  readonly param: string;
+  readonly in: readonly string[];
 }
 
 /**
@@ -281,6 +303,8 @@ export interface InputDescriptor {
    * input the key does not see.
    */
   sourceIds?: true;
+  /** #1801 — when this input exists, by the node's params. See {@link SocketAvailability}. */
+  available?: SocketAvailability;
 }
 
 /**
