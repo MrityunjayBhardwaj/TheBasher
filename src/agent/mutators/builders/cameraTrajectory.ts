@@ -274,6 +274,12 @@ export const cameraTrajectoryMutator: MutatorDefinition<CameraTrajectorySpec> = 
       to: { node: sceneRef.node, socket: 'children' },
     });
 
+    // #1791 — a Follow Path adds the camera's own position to the point on the path (Blender
+    // 5.1.1), so the camera's own position is cleared, as "Clear Location" does: the spec's points
+    // are where the camera goes, and the same silent doubling as above would otherwise put it at
+    // their sum with wherever the camera stood.
+    ops.push({ type: 'setParam', nodeId: spec.cameraId, paramPath: 'position', value: [0, 0, 0] });
+
     const follow = liveConstraintOfType(state, spec.cameraId, 'FollowPath');
     if (follow) {
       ops.push({ type: 'setParam', nodeId: follow, paramPath: 'curve', value: objectId });

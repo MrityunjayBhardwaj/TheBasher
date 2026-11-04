@@ -345,13 +345,24 @@ describe('FollowPath — evalTime is RESOLVED, not read raw', () => {
   });
 });
 
+/** #1791 — the default camera with its own position cleared, so it rides the path itself: its
+ *  own position is an offset from the path point (Blender 5.1.1), and the default is (3, 2, 3). */
+function cameraOnPath(state: DagState): DagState {
+  return applyOp(state, {
+    type: 'setParam',
+    nodeId: 'n_camera',
+    paramPath: 'position',
+    value: [0, 0, 0],
+  }).next;
+}
+
 describe('FollowPath — the CAMERA road (the headline, and its own resolver)', () => {
   // A camera is posed by `resolveCameraPoseAt`, NOT by the mesh road — it is never a
   // scene-child, so it never meets ConstrainedR or resolveEvaluatedTransform. Fold the
   // position band only on the mesh road and a Follow-Path works on a cube and silently
   // does NOTHING on a camera: the one object the whole rig is for.
   it('a camera flies the path — its pose resolver folds the position band too', () => {
-    const state = addFollowPath(addCurve(buildDefaultDagState()), {
+    const state = addFollowPath(addCurve(cameraOnPath(buildDefaultDagState())), {
       target: 'n_camera',
       evalTime: 1,
     });
@@ -360,7 +371,7 @@ describe('FollowPath — the CAMERA road (the headline, and its own resolver)', 
   });
 
   it("#1640 — the camera's Position row shows it on the path, where it is drawn", () => {
-    const state = addFollowPath(addCurve(buildDefaultDagState()), {
+    const state = addFollowPath(addCurve(cameraOnPath(buildDefaultDagState())), {
       target: 'n_camera',
       evalTime: 1,
     });
@@ -370,7 +381,7 @@ describe('FollowPath — the CAMERA road (the headline, and its own resolver)', 
 
   it('"fly the path while locked on the hero" — position from the path, aim at the subject', () => {
     // THE SENTENCE THE WHOLE CAMERA RIG EXISTS FOR, as one assertion.
-    let state = addFollowPath(addCurve(buildDefaultDagState()), {
+    let state = addFollowPath(addCurve(cameraOnPath(buildDefaultDagState())), {
       target: 'n_camera',
       evalTime: 1,
       order: 0,
@@ -397,7 +408,7 @@ describe('FollowPath — the CAMERA road (the headline, and its own resolver)', 
   });
 
   it('a keyframed evalTime moves the CAMERA along the path over time', () => {
-    let state = addFollowPath(addCurve(buildDefaultDagState()), {
+    let state = addFollowPath(addCurve(cameraOnPath(buildDefaultDagState())), {
       target: 'n_camera',
       evalTime: 0,
     });
@@ -421,6 +432,16 @@ describe('FollowPath — the CAMERA road (the headline, and its own resolver)', 
     expect(
       dist(resolveCameraPoseAt(state, 'n_camera', 1)!.position as Vec3, [12, 0, 0]),
     ).toBeLessThan(1e-6);
+  });
+
+  it("#1791 — a camera's own position is an offset from the path point", () => {
+    const state = addFollowPath(addCurve(buildDefaultDagState()), {
+      target: 'n_camera',
+      evalTime: 1,
+    });
+    // The default camera's own (3, 2, 3), added to the path's end (12, 0, 0).
+    const pose = resolveCameraPoseAt(state, 'n_camera', 0)!;
+    expect(dist(pose.position as Vec3, [15, 2, 3])).toBeLessThan(1e-6);
   });
 
   it('an unfollowed camera keeps its authored pose (byte-identical)', () => {
@@ -488,10 +509,11 @@ describe('FollowPath — the aim origin (rotation reads what position writes)', 
       params: { target: BOX_ID, aimNode: 'n_hero', up: [0, 1, 0] },
     }).next;
 
-    // The hero is really at [12,0,0] → the box looks +X. Aiming at its authored [0,0,5]
-    // would look +Z instead: the aim would trail the subject by the whole path.
+    // The hero is really at [12,0,5] (the path's end plus its own [0,0,5], #1791) → the box
+    // looks along (12, 0, 5)/13. Aiming at its authored [0,0,5] would look +Z instead: the aim
+    // would trail the subject by the whole path.
     const look = minusZ(resolveConstraintRotation(state, BOX_ID, ctxAt(0))!);
-    expect(look.x).toBeCloseTo(1, 5);
-    expect(look.z).toBeCloseTo(0, 5);
+    expect(look.x).toBeCloseTo(12 / 13, 5);
+    expect(look.z).toBeCloseTo(5 / 13, 5);
   });
 });

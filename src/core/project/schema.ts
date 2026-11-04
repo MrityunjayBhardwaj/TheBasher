@@ -104,7 +104,10 @@ import { NodeSchema, NodeIdSchema, NodeRefSchema } from '../dag/types';
 // v27 (#1765): a light is turned by its own rotation or a Track-To, shining down its local −Z — a
 // spot's `target` and an area light's `lookAt` move onto a Track-To, and a sun's old aims are
 // written into its rotation (or a Track-To when it moves). See migrations.ts formatMigrations[26].
-export const PROJECT_FORMAT_VERSION = 27;
+// v28 (#1791): a Follow Path adds the object's own position to the point on the path; each followed
+// object's own position becomes zero, its position keys and drivers removed. See migrations.ts
+// formatMigrations[27].
+export const PROJECT_FORMAT_VERSION = 28;
 
 export const ProjectSchema = z.object({
   formatVersion: z.literal(PROJECT_FORMAT_VERSION),
