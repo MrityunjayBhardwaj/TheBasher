@@ -307,7 +307,13 @@ test('a followed CAMERA renders on the path (camera pose road, frustum)', async 
   // The default production camera n_camera is drawn as a frustum (the editor view is active),
   // and the frustum follows the evaluated pose per playhead (#240) — which includes the
   // Follow-Path position band (resolveCameraPoseAt, #339). Observe the frustum's rendered pose.
-  await follow(page, [], 'n_camera');
+  // #1791 — the camera's own position is an offset from the path, as in Blender; the default
+  // camera stands at (3, 2, 3), so it is put at its origin to sit ON the path.
+  await follow(
+    page,
+    [{ type: 'setParam', nodeId: 'n_camera', paramPath: 'position', value: [0, 0, 0] }],
+    'n_camera',
+  );
   const pose = await page.evaluate(
     () => (window as unknown as UiWindow).__basher_frustum_pose?.['n_camera']?.position ?? null,
   );
