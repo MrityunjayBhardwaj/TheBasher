@@ -75,6 +75,13 @@ describe('transformControllerOf — partial control (#1795)', () => {
     );
   });
 
+  it('a strip on the constraint never locks; a muted driver animates nothing', () => {
+    const strip = node('tt_strip', 'Strip', { target: 'tt', clip: 'clip' });
+    expect(ctl({ ...trackTo('tt', { influence: 1 }), ...strip })?.locks).toBe(false);
+    const muted = node('tt_d', 'ParamDriver', { target: 'tt', paramPath: 'influence', mute: true });
+    expect(ctl({ ...trackTo('tt', { influence: 1 }), ...muted })?.locks).toBe(true);
+  });
+
   it('a fixed influence of 0 controls nothing', () => {
     expect(ctl(trackTo('tt', { influence: 0 }))).toBeNull();
     // ...unless it is keyed: then it can be above 0.

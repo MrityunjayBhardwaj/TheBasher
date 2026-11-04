@@ -77,6 +77,18 @@ describe('#1791 — v27 → v28: each followed object draws where it did', () =>
     expect(paramsOf(after.nodes.f).position).toEqual([0, 4, 0]);
   });
 
+  it('a Follow Path on a curve with no points placed nothing, so its object keeps its position', () => {
+    const s = FOLLOW_FIXTURES['a top-level cube with its own position'].build();
+    const empty = {
+      ...s,
+      nodes: {
+        ...s.nodes,
+        crv_data: { ...s.nodes.crv_data, params: { ...paramsOf(s.nodes.crv_data), points: [] } },
+      },
+    } as DagState;
+    expect(paramsOf(migrate(empty).nodes.f).position).toEqual([0, 4, 0]);
+  });
+
   it(
     'the captured example is stored converted and draws its camera where v26 did',
     { timeout: 120_000 },

@@ -75,9 +75,10 @@ export const FollowPathParams = z.object({
   influence: z.number().min(0).max(1).default(1),
   /** Position in the target's ordered constraint stack (low → high, bottom → top).
    *  Shared with Track-To: one object has ONE constraint stack, and both operators take
-   *  their slot in it. Within the POSITION band the fold is last-writer-wins, so a higher
-   *  `order` wins; a Track-To in the same stack writes a different band and never
-   *  contends. Mirrors `TrackTo.order` / `ParamDriver.order`. */
+   *  their slot in it. Within the POSITION band the fold runs bottom → top: each Follow Path
+   *  places the result of the ones below it (#1791), blended by its influence (#1783); a
+   *  Track-To in the same stack writes a different band and never contends. Mirrors
+   *  `TrackTo.order` / `ParamDriver.order`. */
   order: z.number().default(0),
 });
 export type FollowPathParams = z.infer<typeof FollowPathParams>;

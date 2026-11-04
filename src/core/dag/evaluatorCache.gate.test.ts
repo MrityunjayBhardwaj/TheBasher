@@ -332,6 +332,8 @@ const TAKERS: string[] = [
   // #1783 — a constraint's influence, and a Track-To stack evaluated for the camera road.
   'constraintInfluence@src/app/nodeConstraints.ts',
   'resolveTrackToStack@src/app/nodeConstraints.ts',
+  // #1794 — the Follow Path's linear map, which the gizmos invert so a drag lands under the cursor.
+  'followPathLinear@src/app/nodeConstraints.ts',
   'appendComputedSourceRows@src/timeline/layerChannelRows.ts',
   'applyGhostPoseBand@src/viewport/DiffOverlay.tsx',
   'buildOverrideSlotOp@src/app/objectSlotAuthoring.ts',

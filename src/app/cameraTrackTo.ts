@@ -58,8 +58,9 @@ export type CameraOwnRotation = RotationModeFields & { rotation: Vec3 };
  * #1783 — the stack blends bottom → top by each member's influence, by slerp from the camera's own
  * rotation, as the mesh road does (`resolveConstraintRotation`) and as Blender 5.1.1's constraint
  * Influence does. At full influence the top member that aims decides alone, exactly as before.
- * `aim` is that member's aim point in the parent's space, or null when the camera's own rotation
- * turns it or a partial influence blends the aim (its look-at is then straight ahead).
+ * `aim` is the aim point of the top member that aims, in the parent's space (under a partial
+ * influence too: it is the point focus-on-target measures to and the reticle sits on), or null
+ * when the camera's own rotation turns it.
  */
 export function cameraLocalOrientation(
   state: DagState,
@@ -92,13 +93,10 @@ export function cameraLocalOrientation(
     const m = trackToQuaternion(position, lookAt, up, member.roll);
     // A degenerate aim (the camera sits on its aim point) aims nothing.
     if (!m) continue;
-    if (member.influence >= 1) {
-      q = m;
-      aim = lookAt;
-    } else {
-      q = (q ?? ownQuat()).clone().slerp(m, member.influence);
-      aim = null;
-    }
+    q = member.influence >= 1 ? m : (q ?? ownQuat()).clone().slerp(m, member.influence);
+    // Under a partial influence too, the point the blend leans toward: what focus-on-target
+    // focuses on and where the aim reticle sits. The orientation is the blend's, on the pose.
+    aim = lookAt;
   }
   if (q) return { quaternion: [q.x, q.y, q.z, q.w], aim };
   const o = ownQuat();

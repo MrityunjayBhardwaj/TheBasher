@@ -52,7 +52,7 @@ import { TransformGizmo } from './TransformGizmo';
 import { useCallback, useEffect, useMemo, useRef, useState, type DependencyList } from 'react';
 import * as THREE from 'three';
 import { degVec3ToRad, radVec3ToDeg } from '../viewport/rotation';
-import { rotationWriteOf, withResolvedRotation } from './resolvedRotation';
+import { quaternionFromEulerDeg, rotationWriteOf, withResolvedRotation } from './resolvedRotation';
 import { useDagStore } from '../core/dag/store';
 import { evaluate } from '../core/dag/evaluator';
 import type { Node, Op } from '../core/dag/types';
@@ -68,14 +68,22 @@ import { useTimeStore, type TimeStore } from './stores/timeStore';
 import { maybeSnapVec3, maybeSnapTransform, useViewportStore } from './stores/viewportStore';
 import { pivotPoint } from './gizmoPivot';
 import { resolveEvaluatedTransform, resolveOwnTransform } from './resolveEvaluatedTransform';
-import { resolveParentWorldMatrix, resolveWorldTransform } from './resolveWorldTransform';
+import {
+  cameraLocalPose,
+  resolveParentWorldMatrix,
+  resolveWorldTransform,
+} from './resolveWorldTransform';
 import { routeAnimatedGrab, autoKeyCommit } from './animate/autoKeyCommit';
 import { resolveCameraPoseAt } from './activeCamera';
 import { sceneClockOf } from './sceneClock';
 import { clockedCtx } from './subjectClock';
 import { isCameraNode } from './cameraNode';
 import { cameraOrientationQuat, cameraRotationOf } from './cameraOrientation';
-import { activeConstraintForTarget, resolveFollowedWorldPosition } from './nodeConstraints';
+import {
+  followPathLinear,
+  resolveFollowedWorldPosition,
+  topContributingTrackTo,
+} from './nodeConstraints';
 import { useActiveCurvePoint } from './curvePointSelection';
 import { useArmatureMode } from './armatureMode';
 import { uiEvaluatorCache } from './uiEvaluatorCache';
@@ -332,10 +340,10 @@ function SingleGizmo() {
   // grab does, so writing the proxy back as the own value does not double the offset. Null when
   // the two agree (every unconstrained node), and the write is the proxy's value as it always was.
   const ownSeedRef = useRef<{
-    drawnPos: Vec3;
-    ownPos: Vec3;
-    drawnRot: Vec3 | null;
-    ownRot: Vec3 | null;
+    /** Null when the constraint leaves the position as the own one (a Track-To alone). */
+    pos: { drawn: Vec3; own: Vec3; followInv: THREE.Matrix3 | null } | null;
+    /** Null when the constraint leaves the rotation as the own one (a Follow Path alone). */
+    rot: { drawn: Vec3; own: Vec3 } | null;
   } | null>(null);
 
   const isCharacter = node?.type === 'Character';
@@ -431,15 +439,33 @@ function SingleGizmo() {
             a: readonly number[] | null | undefined,
             b: readonly number[] | null | undefined,
           ) => !!a && !!b && a.some((v, i) => v !== b[i]);
-          if (
-            ownT &&
-            (differs(evalT.position, ownT.position) || differs(evalT.rotation, ownT.rotation))
-          ) {
+          const posDiffers = !!ownT && differs(evalT.position, ownT.position);
+          const rotDiffers = !!ownT && differs(evalT.rotation, ownT.rotation);
+          if (ownT && (posDiffers || rotDiffers)) {
+            // The Follow Path's linear map, inverted, so a drag of the drawn point moves the own
+            // one to follow it exactly (Blender's grab, `constraints_list_needinv`).
+            let followInv: THREE.Matrix3 | null = null;
+            if (posDiffers) {
+              const a = followPathLinear(
+                useDagStore.getState().state,
+                selectedId,
+                { time: { frame, seconds, normalized } },
+                cache,
+              );
+              if (a && Math.abs(a.determinant()) > 1e-12) followInv = a.clone().invert();
+            }
             ownSeedRef.current = {
-              drawnPos: [...evalT.position] as Vec3,
-              ownPos: [...ownT.position] as Vec3,
-              drawnRot: evalT.rotation ? ([...evalT.rotation] as Vec3) : null,
-              ownRot: ownT.rotation ? ([...ownT.rotation] as Vec3) : null,
+              pos: posDiffers
+                ? {
+                    drawn: [...evalT.position] as Vec3,
+                    own: [...ownT.position] as Vec3,
+                    followInv,
+                  }
+                : null,
+              rot:
+                rotDiffers && evalT.rotation && ownT.rotation
+                  ? { drawn: [...evalT.rotation] as Vec3, own: [...ownT.rotation] as Vec3 }
+                  : null,
             };
           }
         }
@@ -590,6 +616,29 @@ function SingleGizmo() {
     return true;
   }
 
+  /** #1794 — the own (parent-local) position a drag to `dragged` (parent-local) writes: the own
+   *  position moved by the drag, the drag carried through the Follow Path's inverted linear map
+   *  in world space, so the drawn object lands under the cursor. */
+  function ownPlusDrag(
+    pos: { drawn: Vec3; own: Vec3; followInv: THREE.Matrix3 | null },
+    dragged: Vec3,
+  ): Vec3 {
+    const d = new THREE.Vector3(
+      dragged[0] - pos.drawn[0],
+      dragged[1] - pos.drawn[1],
+      dragged[2] - pos.drawn[2],
+    );
+    if (pos.followInv) {
+      const pw = parentWorldRef.current;
+      const parentLin = pw ? new THREE.Matrix3().setFromMatrix4(pw) : null;
+      if (parentLin) d.applyMatrix3(parentLin);
+      d.applyMatrix3(pos.followInv);
+      if (parentLin && Math.abs(parentLin.determinant()) > 1e-12)
+        d.applyMatrix3(parentLin.clone().invert());
+    }
+    return [pos.own[0] + d.x, pos.own[1] + d.y, pos.own[2] + d.z];
+  }
+
   function onObjectChange() {
     // Character: no per-frame dispatch — walkTo fires on drag end only.
     if (isCharacter) return;
@@ -609,11 +658,7 @@ function SingleGizmo() {
     if (liveMode === 'translate') {
       const dragged: Vec3 = local ? local.position : [g.position.x, g.position.y, g.position.z];
       // #1794 — the drag added to the own position (drawn → own by the same offset).
-      const value = maybeSnapVec3(
-        ownSeed
-          ? (ownSeed.ownPos.map((v, i) => v + dragged[i] - ownSeed.drawnPos[i]) as Vec3)
-          : dragged,
-      );
+      const value = maybeSnapVec3(ownSeed?.pos ? ownPlusDrag(ownSeed.pos, dragged) : dragged);
       if (routeAnimatedGrab(selectedId, 'position', value)) return; // D-02: re-route BEFORE setParam
       // P7.7: a GltfChild has NO keyframe channel (the clip lives on the asset),
       // so routeAnimatedGrab returns false and we land here — the manual layer.
@@ -643,19 +688,18 @@ function SingleGizmo() {
         ? local.rotation
         : radVec3ToDeg([g.rotation.x, g.rotation.y, g.rotation.z]);
       // #1794 — the drag's turn applied to the own rotation: own' = (dragged · drawn⁻¹) · own.
-      const turned: Vec3 =
-        ownSeed?.drawnRot && ownSeed.ownRot
-          ? // Through the matrix → local-TRS conversion the gizmo already writes with.
-            matrixToLocalTRS(
-              new THREE.Matrix4().makeRotationFromQuaternion(
-                quatOfDeg(dragged)
-                  .multiply(quatOfDeg(ownSeed.drawnRot).invert())
-                  .multiply(quatOfDeg(ownSeed.ownRot)),
-              ),
-              null,
-              null,
-            ).rotation
-          : dragged;
+      const turned: Vec3 = ownSeed?.rot
+        ? // Through the matrix → local-TRS conversion the gizmo already writes with.
+          matrixToLocalTRS(
+            new THREE.Matrix4().makeRotationFromQuaternion(
+              quatOfDeg(dragged)
+                .multiply(quatOfDeg(ownSeed.rot.drawn).invert())
+                .multiply(quatOfDeg(ownSeed.rot.own)),
+            ),
+            null,
+            null,
+          ).rotation
+        : dragged;
       const value: Vec3 = maybeSnapTransform('rotate', turned);
       // #1153 — through the node's mode: `rotation` for euler, `quaternion` otherwise, and the
       // keying below follows the same path so a quaternion node keys its quaternion channel.
@@ -835,6 +879,9 @@ function MultiGizmo() {
       /** #1794 — the node's OWN world (no constraint applied), which a drag adds to; the seed
        *  world is where it is drawn, which places the pivot. Null when the two are one. */
       ownWorld: THREE.Matrix4 | null;
+      /** #1794 — the Follow Path's linear map, inverted (`followPathLinear`), so the drawn point
+       *  lands where the gizmo moves it; null when none places the node or it cannot invert. */
+      followInv: THREE.Matrix3 | null;
       parentWorld: THREE.Matrix4 | null;
       pivot: Vec3 | null;
       manip: Manipulable;
@@ -861,6 +908,7 @@ function MultiGizmo() {
         if (!manip) continue;
         let world: THREE.Matrix4;
         let ownWorld: THREE.Matrix4 | null = null;
+        let followInv: THREE.Matrix3 | null = null;
         let parentWorld: THREE.Matrix4 | null = null;
         try {
           const wt = resolveWorldTransform(state, id, ctx, cache);
@@ -877,16 +925,19 @@ function MultiGizmo() {
           if (followed) {
             ownWorld = world.clone();
             world.setPosition(followed[0], followed[1], followed[2]);
+            const a = followPathLinear(state, id, ctx, cache);
+            if (a && Math.abs(a.determinant()) > 1e-12) followInv = a.clone().invert();
           }
           parentWorld = resolveParentWorldMatrix(state, id, ctx, cache);
         } catch {
           world = new THREE.Matrix4().setPosition(...manip.position);
           ownWorld = null;
+          followInv = null;
           parentWorld = null;
         }
         const np = node?.params as { pivot?: unknown } | undefined;
         const pivot = node?.type === 'Group' && isVec3(np?.pivot) ? (np!.pivot as Vec3) : null;
-        seeds.push({ id, seedWorld: world, ownWorld, parentWorld, pivot, manip });
+        seeds.push({ id, seedWorld: world, ownWorld, followInv, parentWorld, pivot, manip });
       }
       if (seeds.length === 0) {
         seedRef.current = null;
@@ -966,6 +1017,15 @@ function MultiGizmo() {
           .multiply(base);
       } else {
         newWorld = delta.clone().multiply(base);
+      }
+      // #1794 — a follower: its DRAWN point moves as the gizmo moves it, and its own position
+      // follows through the Follow Path's inverted map (Blender's grab), so it lands there.
+      if (sn.ownWorld && sn.followInv) {
+        const drawn = new THREE.Vector3().setFromMatrixPosition(sn.seedWorld);
+        const moved = individual ? drawn.clone() : drawn.clone().applyMatrix4(delta);
+        const own = new THREE.Vector3().setFromMatrixPosition(sn.ownWorld);
+        own.add(moved.sub(drawn).applyMatrix3(sn.followInv));
+        newWorld.setPosition(own);
       }
       const local = matrixToLocalTRS(newWorld, sn.parentWorld, sn.pivot);
       // Position changes under translate AND under rotate/scale-about-pivot.
@@ -1261,7 +1321,8 @@ function CameraGizmo() {
   // is the reticle's to move; only a Track-To that follows a node is read-only, since the node
   // decides where it points.
   const winningAim = useMemo(
-    () => (camId ? activeConstraintForTarget(nodes, camId) : null),
+    // #1795 — the top member that can aim it: one fixed at influence 0 aims nothing.
+    () => (camId ? topContributingTrackTo(nodes, camId) : null),
     [nodes, camId],
   );
   const bound = Boolean(winningAim?.aimNode);
@@ -1273,6 +1334,12 @@ function CameraGizmo() {
      *  (null = top-level → world == local, the #229 direct path). Captured at seed
      *  so the drag handlers convert world → local before writing authored params. */
     parentWorld: THREE.Matrix4 | null;
+    /** #1794 — where a constraint draws the camera away from its OWN pose (a Follow Path's
+     *  offset; a Track-To's aim), both in the parent's space, so a drag adds to the own pose as
+     *  it does on every object. Null when the camera is drawn at its own position. */
+    ownPos: { drawn: Vec3; own: Vec3; followInv: THREE.Matrix3 | null } | null;
+    /** The same for the orientation: drawn and own, parent-local. */
+    ownRot: { drawn: THREE.Quaternion; own: THREE.Quaternion } | null;
   } | null>(null);
 
   // Seed both proxies from the EVALUATED camera pose so the gizmo display-follows
@@ -1306,7 +1373,35 @@ function CameraGizmo() {
         clockedCtx(sceneClockOf(state).sceneAt(seconds), seconds),
         cache,
       );
-      seedRef.current = { position: pose.position, parentWorld };
+      // #1794 — the camera's own pose beside the drawn one, parent-local.
+      const ctx = clockedCtx(sceneClockOf(state).sceneAt(seconds), seconds);
+      const own = cameraLocalPose(state, camId, ctx, cache);
+      const toLocal = (w: Vec3): Vec3 => {
+        if (!parentWorld) return w;
+        const v = new THREE.Vector3(...w).applyMatrix4(parentWorld.clone().invert());
+        return [v.x, v.y, v.z];
+      };
+      const drawnPos = toLocal(pose.position as Vec3);
+      const parentQ = new THREE.Quaternion();
+      parentWorld?.decompose(new THREE.Vector3(), parentQ, new THREE.Vector3());
+      const drawnQ = parentQ
+        .clone()
+        .invert()
+        .multiply(new THREE.Quaternion(...pose.quaternion));
+      const ownQ = new THREE.Quaternion(
+        ...quaternionFromEulerDeg(withResolvedRotation(own).rotation),
+      );
+      let ownPos: { drawn: Vec3; own: Vec3; followInv: THREE.Matrix3 | null } | null = null;
+      if (drawnPos.some((v, i) => Math.abs(v - own.position[i]) > 1e-9)) {
+        const a = followPathLinear(state, camId, ctx, cache);
+        ownPos = {
+          drawn: drawnPos,
+          own: [...own.position] as Vec3,
+          followInv: a && Math.abs(a.determinant()) > 1e-12 ? a.clone().invert() : null,
+        };
+      }
+      const ownRot = Math.abs(drawnQ.dot(ownQ)) < 1 - 1e-12 ? { drawn: drawnQ, own: ownQ } : null;
+      seedRef.current = { position: pose.position, parentWorld, ownPos, ownRot };
       if (bodyNode) {
         bodyNode.position.set(...pose.position);
         // #1760 — the orientation the camera is drawn with, carried on its pose.
@@ -1380,15 +1475,36 @@ function CameraGizmo() {
         seed.parentWorld.decompose(new THREE.Vector3(), pQuat, new THREE.Vector3());
         quat = pQuat.clone().invert().multiply(g.quaternion);
       }
+      // #1794 — the drag's turn applied to the own orientation: own' = (dragged · drawn⁻¹) · own.
+      if (seed.ownRot)
+        quat = quat.clone().multiply(seed.ownRot.drawn.clone().invert()).multiply(seed.ownRot.own);
       writeCameraRotation(quat);
     } else {
       // translate (scale coerces here — cameras have no scale): move position only. #1760 — a
       // plain camera keeps its rotation as it moves, as any object does; one a Track-To aims
       // keeps looking at what the Track-To names.
-      writeCameraParam(
-        'position',
-        maybeSnapVec3(toLocalPoint([g.position.x, g.position.y, g.position.z])),
-      );
+      const dragged = toLocalPoint([g.position.x, g.position.y, g.position.z]);
+      const p = seed.ownPos;
+      let value = dragged;
+      if (p) {
+        // #1794 — the own position moved by the drag, through the Follow Path's inverted map.
+        const d = new THREE.Vector3(
+          dragged[0] - p.drawn[0],
+          dragged[1] - p.drawn[1],
+          dragged[2] - p.drawn[2],
+        );
+        if (p.followInv) {
+          const parentLin = seed.parentWorld
+            ? new THREE.Matrix3().setFromMatrix4(seed.parentWorld)
+            : null;
+          if (parentLin) d.applyMatrix3(parentLin);
+          d.applyMatrix3(p.followInv);
+          if (parentLin && Math.abs(parentLin.determinant()) > 1e-12)
+            d.applyMatrix3(parentLin.clone().invert());
+        }
+        value = [p.own[0] + d.x, p.own[1] + d.y, p.own[2] + d.z];
+      }
+      writeCameraParam('position', maybeSnapVec3(value));
     }
   }
 

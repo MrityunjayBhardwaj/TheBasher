@@ -16,7 +16,7 @@ import { registerAllNodes } from '../nodes/registerAll';
 import { withIds } from '../test-utils/curvePoints';
 import { makeSplitCube } from '../test-utils/splitCube';
 import { resolveConstraintRotation, resolveFollowedWorldPosition } from './nodeConstraints';
-import { resolveCameraPoseAt } from './activeCamera';
+import { cameraFocusTargetDistance, resolveCameraPoseAt } from './activeCamera';
 
 type Vec3 = [number, number, number];
 const ctxAt = (seconds: number) => ({ time: { frame: seconds * 24, seconds, normalized: 0 } });
@@ -155,6 +155,43 @@ describe('Track-To influence (#1783)', () => {
     expect(same(half, own.clone().slerp(full, 0.5))).toBeCloseTo(1, 9);
     // At full influence the camera still looks AT its aim point.
     expect(resolveCameraPoseAt(cam({}), 'n_camera', 0).lookAt).toEqual([-6, 0, 2]);
+  });
+});
+
+describe('a camera below full influence still names its target (review)', () => {
+  const aimed = (influence: number) =>
+    run(buildDefaultDagState(), [
+      {
+        type: 'addNode',
+        nodeId: 'tc',
+        nodeType: 'TrackTo',
+        params: { target: 'n_camera', aimNode: '', aimPoint: [10, 4, -20], influence },
+      },
+    ]);
+  const toAim = (s: DagState) => {
+    const p = resolveCameraPoseAt(s, 'n_camera', 0).position;
+    return Math.hypot(10 - p[0], 4 - p[1], -20 - p[2]);
+  };
+
+  it('focus-on-target measures to the aim point at 0.5 as at 1, with no jump just below 1', () => {
+    for (const f of [1, 0.999, 0.5]) {
+      const s = aimed(f);
+      expect(cameraFocusTargetDistance(s, 'n_camera', 0), `influence ${f}`).toBeCloseTo(
+        toAim(s),
+        9,
+      );
+    }
+  });
+
+  it('the pose looks at the aim point (the reticle sits there) while its orientation is the blend', () => {
+    const half = resolveCameraPoseAt(aimed(0.5), 'n_camera', 0);
+    expect(half.lookAt).toEqual([10, 4, -20]);
+    const full = resolveCameraPoseAt(aimed(1), 'n_camera', 0);
+    expect(
+      Math.abs(
+        new THREE.Quaternion(...half.quaternion).dot(new THREE.Quaternion(...full.quaternion)),
+      ),
+    ).toBeLessThan(0.999);
   });
 });
 

@@ -2878,11 +2878,17 @@ export function migrateFollowPathOwnOffset(raw: unknown): unknown {
   if (!nodes) return { ...proj, formatVersion: 28 };
   const out: Record<string, RawNode> = { ...nodes };
   const entries = Object.entries(nodes);
+  // A curve with at least one point: one with none samples nothing, so its Follow Path placed
+  // nothing and its object stood at its own position, which must stay.
+  const hasPoints = (n: RawNode | undefined) =>
+    Array.isArray(n?.params?.points) && (n.params.points as unknown[]).length > 0;
   const isCurve = (id: unknown) => {
     const n = typeof id === 'string' ? nodes[id] : undefined;
     if (!n) return false;
-    if (Array.isArray(n.params?.points)) return true;
-    return asRefs(n.inputs?.data).some((r) => nodes[r.node ?? '']?.type === 'CurveData');
+    if (hasPoints(n)) return true;
+    return asRefs(n.inputs?.data).some(
+      (r) => nodes[r.node ?? '']?.type === 'CurveData' && hasPoints(nodes[r.node ?? '']),
+    );
   };
   // Live members per followed object: not muted, bound to a curve that exists (a degenerate one
   // placed nothing before and places nothing now).
