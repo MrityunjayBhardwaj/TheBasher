@@ -147,3 +147,65 @@ test('two objects: a 1-unit shared drag adds 1 to the follower’s own position'
   close(await own(page), [1, 2, 0], 'own position');
   close(await drawn(page), [13, 2, 0], 'drawn');
 });
+
+// #1794 with #1783 — under a Track-To at half influence the drawn rotation is a blend of the own
+// rotation and the aim. A rotate that turns nothing must leave the own rotation as it is; writing
+// the drawn rotation back (the old write) would bake half the aim into it.
+test('a rotate that turns nothing leaves the own rotation of a half-aimed cube as it was', async ({
+  page,
+}) => {
+  await page.goto('/');
+  await page.waitForFunction(() => {
+    const w = window as unknown as Partial<W>;
+    return Boolean(w.__basher_dag && w.__basher_selection && w.__basher_mesh_world_position);
+  });
+  const OWN_ROT: V3 = [10, 20, 30];
+  await page.evaluate((rot) => {
+    const w = window as unknown as W;
+    if (w.__basher_autokey.getState().enabled) w.__basher_autokey.getState().toggle();
+    w.__basher_time.getState().pause();
+    w.__basher_time.getState().setTime(0);
+    w.__basher_dag.getState().dispatchAtomic(
+      [
+        { type: 'setParam', nodeId: 'n_box', paramPath: 'rotation', value: rot },
+        {
+          type: 'addNode',
+          nodeId: 'tt',
+          nodeType: 'TrackTo',
+          params: { target: 'n_box', aimNode: '', aimPoint: [3, -2, -5], influence: 0.5 },
+        },
+      ],
+      'user',
+      'p1794 half aim',
+    );
+    w.__basher_selection.getState().select('n_box');
+  }, OWN_ROT);
+  // The gizmo holds the drawn (blended) rotation; grab it back to exactly that.
+  const gizmoRot = () =>
+    page.evaluate(
+      () =>
+        (
+          window as unknown as { __basher_gizmo?: () => { rotation?: V3 } | null }
+        ).__basher_gizmo?.()?.rotation ?? null,
+    );
+  // Seeded at the blend: away from the own rotation (else the case proves nothing).
+  await expect
+    .poll(async () => {
+      const r = await gizmoRot();
+      return r ? Math.abs(r[0] - OWN_ROT[0]) + Math.abs(r[1] - OWN_ROT[1]) : 0;
+    })
+    .toBeGreaterThan(1);
+  const drawnRot = await gizmoRot();
+  await page.evaluate((r) => (window as unknown as W).__basher_gizmo_grab!('rotate', r), drawnRot!);
+  const own = await page.evaluate(
+    () =>
+      (
+        window as unknown as {
+          __basher_dag: {
+            getState: () => { state: { nodes: Record<string, { params: { rotation: V3 } }> } };
+          };
+        }
+      ).__basher_dag.getState().state.nodes.n_box.params.rotation,
+  );
+  close(own, OWN_ROT, 'own rotation');
+});

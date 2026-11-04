@@ -242,7 +242,12 @@ test('the inspector locks a constrained row, shows the drawn value, and links to
     .toBe('tt');
 });
 
-test('a Follow-Path locks the position row, not the rotation row', async ({ page }) => {
+// #1795 (the user's call, 2026-11-04) — since #1791 a Follow Path adds the own position as an
+// offset, so the Position row shows and edits that OWN position, named but not locked; typing in it
+// moves the cube off the path, as in Blender.
+test('a Follow-Path names the position row without locking it; typing there offsets the cube', async ({
+  page,
+}) => {
   await boot(page);
   await openInspectorSection(page, 'transform');
   await dispatch(page, {
@@ -278,14 +283,39 @@ test('a Follow-Path locks the position row, not the rotation row', async ({ page
     },
   ])
     await dispatch(page, o);
-  await expect(page.getByTestId('inspector-controlled-n_box-position')).toContainText(
-    'Follow Path',
-  );
-  await expect(page.getByTestId('inspector-vec-n_box-position-x')).toHaveAttribute('readonly', '');
-  await expect
-    .poll(async () =>
-      parseFloat(await page.getByTestId('inspector-vec-n_box-position-x').inputValue()),
-    )
-    .toBeCloseTo(12, 2);
+  const badge = page.getByTestId('inspector-controlled-n_box-position');
+  await expect(badge).toContainText('Follow Path');
+  await expect(badge).toHaveAttribute('data-locks', 'false');
+  const px = page.getByTestId('inspector-vec-n_box-position-x');
+  await expect(px).not.toHaveAttribute('readonly', '');
+  // The own position (the offset), not the point on the path at (12, 0, 0).
+  await expect.poll(async () => parseFloat(await px.inputValue())).toBeCloseTo(0, 2);
   await expect(page.getByTestId('inspector-controlled-n_box-rotation')).toHaveCount(0);
+  // Typing an offset moves the drawn cube off the path by it.
+  await px.fill('3');
+  await px.press('Tab');
+  await expect.poll(async () => (await drawnBox(page))?.pos[0]).toBeCloseTo(15, 2);
+});
+
+// #1795 — a Track-To below full influence blends over the own rotation, so the Rotation row shows
+// the own rotation, named but not locked.
+test('a Track-To at half influence names the rotation row without locking it', async ({ page }) => {
+  await boot(page);
+  await openInspectorSection(page, 'transform');
+  await dispatch(page, {
+    type: 'addNode',
+    nodeId: 'tt',
+    nodeType: 'TrackTo',
+    params: { target: 'n_box', aimPoint: [3, -2, -5], aimNode: '', influence: 0.5 },
+  });
+  const badge = page.getByTestId('inspector-controlled-n_box-rotation');
+  await expect(badge).toContainText('Track-To');
+  await expect(badge).toHaveAttribute('data-locks', 'false');
+  const rx = page.getByTestId('inspector-vec-n_box-rotation-x');
+  await expect(rx).not.toHaveAttribute('readonly', '');
+  await expect.poll(async () => parseFloat(await rx.inputValue())).toBeCloseTo(OWN_ROT[0], 3);
+  // At full influence the same row locks again and shows where it is drawn.
+  await dispatch(page, { type: 'setParam', nodeId: 'tt', paramPath: 'influence', value: 1 });
+  await expect(badge).toHaveAttribute('data-locks', 'true');
+  await expect(rx).toHaveAttribute('readonly', '');
 });

@@ -335,28 +335,57 @@ export interface TransformController {
   /** The constraint node, so the row can name it and select it. */
   readonly nodeId: string;
   readonly type: 'TrackTo' | 'FollowPath';
+  /** #1795 — the constraint decides the row outright, so an edit there would change nothing on
+   *  screen: the row shows the drawn value, locked. False when it only partly decides it (a
+   *  Follow Path, whose result adds the own position as an offset, #1791; Track-Tos none of which
+   *  is at full influence, #1783): the row shows the own value, editable, as Blender does. */
+  readonly locks: boolean;
+}
+
+/** #1795 — the influence a constraint is authored at, when nothing keys or drives it; null when
+ *  something does (it can be anything over time). */
+function fixedInfluence(
+  nodes: Readonly<Record<string, NodeLike>>,
+  constraintId: string,
+): number | null {
+  for (const n of Object.values(nodes)) {
+    const p = n.params as { target?: unknown; paramPath?: unknown } | undefined;
+    if (p?.target !== constraintId || p.paramPath !== 'influence') continue;
+    if (n.type.startsWith('KeyframeChannel') || n.type === 'ParamDriver') return null;
+  }
+  const raw = (nodes[constraintId]?.params as { influence?: unknown } | undefined)?.influence;
+  return typeof raw === 'number' && !Number.isNaN(raw) ? Math.min(1, Math.max(0, raw)) : 1;
 }
 
 /**
- * #1776 — the constraint that decides what `nodeId`'s `paramPath` is drawn with: the winning
- * Track-To for `rotation` / `quaternion`, the top Follow-Path for `position`. The inspector shows
- * the drawn value on such a row and locks it, naming this constraint (the user's call over
- * Blender, which shows the own value under a constraint): an edit there would change nothing on
- * screen. Muted members control nothing. Every other param → null.
+ * #1776 — the constraint that decides what `nodeId`'s `paramPath` is drawn with: the top live
+ * Track-To for `rotation` / `quaternion`, the top live Follow-Path for `position`. Muted members,
+ * and members at a fixed influence of 0, control nothing. Every other param → null.
+ *
+ * #1795 (the user's call, 2026-11-04) — `locks` says whether it decides the row OUTRIGHT. A
+ * Track-To at a fixed full influence does: everything below it, the own rotation included, is
+ * replaced, so the row shows the drawn value, locked (#1776's rule: an edit there would change
+ * nothing on screen). A Follow Path never does (the own position is its offset, #1791), nor do
+ * Track-Tos none of which is at full influence (#1783): the row shows the own value, editable,
+ * with the constraint named beside it.
  */
 export function transformControllerOf(
   nodes: Readonly<Record<string, NodeLike>>,
   nodeId: string,
   paramPath: string,
 ): TransformController | null {
+  const live = (ids: { nodeId: string }[]) =>
+    ids.map((m) => ({ id: m.nodeId, f: fixedInfluence(nodes, m.nodeId) })).filter((m) => m.f !== 0);
   if (paramPath === 'rotation' || paramPath === 'quaternion') {
-    const aim = activeConstraintForTarget(nodes, nodeId);
-    return aim ? { nodeId: aim.nodeId, type: 'TrackTo' } : null;
+    const members = live(constraintStackForTarget(nodes, nodeId));
+    const top = members[members.length - 1];
+    if (!top) return null;
+    return { nodeId: top.id, type: 'TrackTo', locks: members.some((m) => m.f === 1) };
   }
   if (paramPath === 'position') {
-    const stack = followPathStackForTarget(nodes, nodeId);
-    const top = stack[stack.length - 1];
-    return top ? { nodeId: top.nodeId, type: 'FollowPath' } : null;
+    const members = live(followPathStackForTarget(nodes, nodeId));
+    const top = members[members.length - 1];
+    return top ? { nodeId: top.id, type: 'FollowPath', locks: false } : null;
   }
   return null;
 }
