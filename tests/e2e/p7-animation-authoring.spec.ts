@@ -383,9 +383,10 @@ test.describe('P7 E2 — render-root rotation-delta motion gate (D-04, H34/H35/H
     //      free-floating direct channel overlaid by the renderer/resolver, so
     //      the scene topology is unchanged by keying — exactly one child, the box.
     // #365 Slice 2: that sole child is the split `Object`, not the fused `BoxMesh`.
-    expect(r0.sceneChildKinds).toEqual(['Object']);
-    expect(r1.sceneChildKinds).toEqual(['Object']);
-    expect(r2.sceneChildKinds).toEqual(['Object']);
+    // #1765: beside it hangs the sun's aim empty (a `Null`), which keying the box never touches.
+    expect(r0.sceneChildKinds).toEqual(['Object', 'Null']);
+    expect(r1.sceneChildKinds).toEqual(['Object', 'Null']);
+    expect(r2.sceneChildKinds).toEqual(['Object', 'Null']);
 
     // 4c — THE DELTA: rotation strictly advances 0 → 180 → 360 over
     //      t=0→2s (cubic-eased, smoothstep(0.5)=0.5 → exact 180 @ t=1).

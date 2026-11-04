@@ -43,7 +43,9 @@ test.beforeEach(async ({ page }) => {
     },
     { timeout: 15000 },
   );
-  // Add a second box at x=3 so the two objects project to distinct screen points.
+  // Add a second box at x=3 so the two objects project to distinct screen points. The sun's aim
+  // empty starts at the origin, on top of n_box's origin, where a box would rightly take both:
+  // it moves aside so each origin here belongs to one object.
   await page.evaluate(
     ({ ops }) => {
       const w = window as unknown as BoxSelectWindow;
@@ -52,6 +54,7 @@ test.beforeEach(async ({ page }) => {
       dag.dispatchAtomic(
         [
           ...ops,
+          { type: 'setParam', nodeId: 'n_light_target', paramPath: 'position', value: [0, 0, -6] },
           {
             type: 'connect',
             from: { node: 'n_box_b', socket: 'out' },

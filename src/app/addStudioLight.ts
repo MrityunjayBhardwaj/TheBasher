@@ -18,8 +18,9 @@
 import type { DagState } from '../core/dag/state';
 import type { Op } from '../core/dag/types';
 import { resolveStudioLightTransform } from './resolveStudioLightTransform';
-import { nextConstraintOrder } from './nodeConstraints';
+import { lightAimOps } from './lightAim';
 import { linkIntoActiveCollection } from './collections';
+import { cameraRotationLookingAt } from './cameraOrientation';
 
 type Vec3 = [number, number, number];
 
@@ -66,11 +67,12 @@ export function buildAddStudioLightOps(
       ? { node: rigId, socket: 'lights' }
       : { node: sceneRef.node, socket: 'lights' };
 
-  // #386 Stage C (C3) — a studio light is split-native: a LightData (the Area shading +
-  // the `lookAt` aim) and an Object (the pose) that inherits `lightId`. The Track-To
+  // #386 Stage C (C3) — a studio light is split-native: a LightData (the Area shading)
+  // and an Object (the pose) that inherits `lightId`. The Track-To
   // targets `lightId` (the Object), the rig/scene `dest` receives the Object, and the
   // panel's enumeration recognises it through `data` (studioLightRig, #386 S3b) — so the
   // rig aim + index-correspondence survive the split.
+  const aim = lightAimOps(state, lightId, { at: target, kind: 'Area', trackToId: ttId });
   const ops: Op[] = [
     {
       type: 'addNode',
@@ -82,14 +84,15 @@ export function buildAddStudioLightOps(
         color: '#ffffff',
         width: 2,
         height: 2,
-        lookAt: target,
       },
     },
     {
       type: 'addNode',
       nodeId: lightId,
       nodeType: 'Object',
-      params: { position, rotation: [0, 0, 0], scale: [1, 1, 1] },
+      // #1765 — turned toward the rig centre by its own rotation as well, so muting the Track-To
+      // leaves it facing where it faced (its old `lookAt` did that, and lights no longer have one).
+      params: { position, rotation: cameraRotationLookingAt(position, target), scale: [1, 1, 1] },
     },
     {
       type: 'connect',
@@ -101,23 +104,10 @@ export function buildAddStudioLightOps(
       from: { node: lightId, socket: 'out' },
       to: dest,
     },
-    {
-      type: 'addNode',
-      nodeId: ttId,
-      nodeType: 'TrackTo',
-      params: {
-        name: 'aim',
-        target: lightId,
-        aimNode: '',
-        aimPoint: target,
-        up: [0, 1, 0],
-        mute: false,
-        // #317 — through the shared top-of-stack rule, like every other creation road.
-        // A freshly-created light has an empty stack → 0: byte-identical.
-        order: nextConstraintOrder(state.nodes, lightId),
-      },
-    },
+    // #1765 — aimed at the rig centre by a Track-To at an empty ("Area.aim") there, the one way
+    // every light is aimed (`lightAimOps`).
+    ...aim.ops,
   ];
   // #1480 — into the active collection, as every light the Add menu makes joins it (#1453).
-  return { ops: linkIntoActiveCollection(state, ops, [lightId]), lightId };
+  return { ops: linkIntoActiveCollection(state, ops, [lightId, aim.nullId]), lightId };
 }

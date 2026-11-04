@@ -15,6 +15,7 @@
 //
 // REF: PLAN.md W1 (1.6); THESIS §52; vyapti V4/V10/V32; hetvabhasa H14/H25; #178.
 
+import * as THREE from 'three';
 import { primaryMaterial } from '../../app/materialAssignment';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { __resetRegistryForTests, applyOp, emptyDagState, type DagState } from '../dag';
@@ -1121,14 +1122,22 @@ function splitLightDataNode(project: Project, lightId: string) {
 describe('object↔data split v5 → v6: fused posable lights → Object + LightData (#386)', () => {
   it('splits each posable kind byte-identically: the Object inherits the id, the LightData owns the shading', () => {
     const m = loadFromBytes(buildFusedLightsJson());
-    // 5 → 6 (light pass) → 7 (camera pass) → 8 (baked pass); this fixture has
-    // neither a camera nor a baked mesh, so the last two steps are no-ops.
+    // 5 → 6 (light pass) → 7 (camera pass) → 8 (baked pass) → … → 27; this fixture has
+    // neither a camera nor a baked mesh, so those steps are no-ops. #1765 — v27 is not: it moves
+    // the spot's `target` and the area's `lookAt` onto Track-Tos, and turns the sun's rotation
+    // so its new −Z shines where its old −Y did. Both are checked below.
     expect(m.formatVersion).toBe(PROJECT_FORMAT_VERSION);
 
     // Directional → Object(pose) + LightData{lightKind, intensity, color}.
     const dir = m.state.nodes.n_dir;
     expect(dir.type).toBe('Object');
-    expect(dir.params).toEqual({ position: [1, 2, 3], rotation: [0.1, 0, 0], scale: [1, 1, 1] });
+    const { rotation: dirRotation, ...dirPose } = dir.params as { rotation: number[] };
+    expect(dirPose).toEqual({ position: [1, 2, 3], scale: [1, 1, 1] });
+    const turn = (deg: number[]) =>
+      new THREE.Euler(...(deg.map(THREE.MathUtils.degToRad) as [number, number, number]));
+    const shone = new THREE.Vector3(0, -1, 0).applyEuler(turn([0.1, 0, 0]));
+    const shines = new THREE.Vector3(0, 0, -1).applyEuler(turn(dirRotation));
+    expect(shines.dot(shone)).toBeCloseTo(1, 9);
     const dirData = splitLightDataNode(m, 'n_dir')!;
     expect(dirData.params).toEqual({ lightKind: 'Directional', intensity: 3.7, color: '#ffee00' });
     expect((dir.inputs as Record<string, { node: string }>).data.node).toBe(dirData.id);
@@ -1143,20 +1152,19 @@ describe('object↔data split v5 → v6: fused posable lights → Object + Light
       decay: 1.5,
     });
 
-    // Spot → +target, angle, penumbra, distance, decay (the cone).
+    // Spot → +angle, penumbra, distance, decay (the cone); its target is below.
     const spotData = splitLightDataNode(m, 'n_spot')!;
     expect(spotData.params).toEqual({
       lightKind: 'Spot',
       intensity: 5.5,
       color: '#ff00aa',
-      target: [1, 1, 1],
       angle: 0.5,
       penumbra: 0.45,
       distance: 8,
       decay: 3,
     });
 
-    // Area → +width, height, lookAt, tex.
+    // Area → +width, height, tex; its lookAt is below.
     const areaData = splitLightDataNode(m, 'n_area')!;
     expect(areaData.params).toEqual({
       lightKind: 'Area',
@@ -1164,9 +1172,16 @@ describe('object↔data split v5 → v6: fused posable lights → Object + Light
       color: '#0088ff',
       width: 3.25,
       height: 4.75,
-      lookAt: [2, 2, 2],
       tex: 'assets/hdri.exr',
     });
+    // #1765 — the spot's `target` and the area's `lookAt` the v6 split carried are now each a
+    // Track-To's aim point, in world space as the points were.
+    const aimOf = (lightId: string) =>
+      Object.values(m.state.nodes).find(
+        (n) => n.type === 'TrackTo' && (n.params as { target: string }).target === lightId,
+      )?.params as { aimPoint: number[]; aimSpace: string } | undefined;
+    expect(aimOf('n_spot')).toMatchObject({ aimPoint: [1, 1, 1], aimSpace: 'world' });
+    expect(aimOf('n_area')).toMatchObject({ aimPoint: [2, 2, 2], aimSpace: 'world' });
   });
 
   it('AmbientLight is SKIPPED — it stays fused with no Object and no data input (partial retirement)', () => {

@@ -51,6 +51,19 @@ const add = (s: DagState, kind: Parameters<typeof buildAddPrimitiveOps>[1]) => {
   return { state: apply(s, r.ops), id: r.newNodeId };
 };
 
+/** #1765 — the empties `lightId`'s Track-Tos aim at (a sun, spot or area light comes with one). */
+function aimEmptiesOf(s: DagState, lightId: string): string[] {
+  return Object.values(s.nodes).flatMap((n) => {
+    const p = n.params as { target?: unknown; aimNode?: unknown };
+    return n.type === 'TrackTo' &&
+      p.target === lightId &&
+      typeof p.aimNode === 'string' &&
+      s.nodes[p.aimNode]?.type === 'Null'
+      ? [p.aimNode]
+      : [];
+  });
+}
+
 describe('#1453 — Add links into the active collection', () => {
   it.each(['Cube', 'Sphere', 'Curve', 'Null'] as const)(
     'a %s added with a collection active is its member, and its hide hides it',
@@ -76,7 +89,9 @@ describe('#1453 — Add links into the active collection', () => {
     (kind) => {
       const { state, col } = withCollection(true);
       const { state: s, id } = add(state, kind);
-      expect(collectionMembersOf(s, col)).toEqual([id]);
+      // #1765 — a sun comes with the empty its Track-To aims at, and that joins too.
+      expect(collectionMembersOf(s, col)).toEqual([id, ...aimEmptiesOf(s, id)]);
+      if (kind === 'DirectionalLight') expect(aimEmptiesOf(s, id)).toHaveLength(1);
       const hidden = apply(s, [
         { type: 'setParam', nodeId: col, paramPath: 'viewport', value: false },
       ]);
@@ -234,7 +249,11 @@ describe('#1480 — studio lights join the active collection, and a rig’s ligh
       o.type === 'addNode' && o.nodeType === 'Object' ? [o.nodeId] : [],
     );
     expect(lights.length, 'the premise: the file made lights').toBe(2);
-    expect(collectionMembersOf(s, col)).toEqual(lights);
+    // #1765 — each light with the empty its Track-To aims at.
+    expect([...collectionMembersOf(s, col)].sort()).toEqual(
+      [...lights, ...lights.flatMap((id) => aimEmptiesOf(s, id))].sort(),
+    );
+    expect(lights.flatMap((id) => aimEmptiesOf(s, id))).toHaveLength(2);
   });
 });
 

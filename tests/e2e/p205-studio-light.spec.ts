@@ -154,7 +154,8 @@ test('#205 — a textured AreaLight renders the §1.5 pair; the light is tinted 
     objectId: 'studio_light_e2e',
     lightKind: 'Area',
     position: [3, 4, 3],
-    shading: { intensity: 5, color: '#ffffff', width: 2, height: 2, lookAt: [0, 0, 0] },
+    shading: { intensity: 5, color: '#ffffff', width: 2, height: 2 },
+    aimAt: [0, 0, 0],
   }) as Op[];
   const studioDataId = splitLightDataId('studio_light_e2e');
   await page.evaluate(
@@ -244,7 +245,8 @@ test('#205 — a Track-To aims the area light at the constraint target (the rig,
     objectId: 'rig_light_e2e',
     lightKind: 'Area',
     position: POS,
-    shading: { intensity: 5, color: '#ffffff', width: 2, height: 2, lookAt: AUTHORED },
+    shading: { intensity: 5, color: '#ffffff', width: 2, height: 2 },
+    aimAt: AUTHORED,
   }) as Op[];
   await page.evaluate(
     ({ aim, rigLightOps }) => {
@@ -327,7 +329,8 @@ test('#205 — a plain AreaLight (no tex) renders NO emissive card (falsificatio
     objectId: 'plain_area_e2e',
     lightKind: 'Area',
     position: [3, 4, 3],
-    shading: { intensity: 5, color: '#ffffff', width: 2, height: 2, lookAt: [0, 0, 0] },
+    shading: { intensity: 5, color: '#ffffff', width: 2, height: 2 },
+    aimAt: [0, 0, 0],
   }) as Op[];
   await page.evaluate(
     ({ plainLightOps }) => {

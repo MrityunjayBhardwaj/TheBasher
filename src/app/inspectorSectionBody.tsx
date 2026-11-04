@@ -288,7 +288,7 @@ export const SECTION_CONTROLS: Record<SectionId, readonly SectionControl[]> = {
   // they would render NOWHERE: no row, no control, no error, and a "does the card
   // render?" guard cannot see it, because the card is not empty. Listing the nine keys
   // the control actually writes lets the rest fall through as labelled generic rows,
-  // which is the shape `lightKind`/`target`/`lookAt` already have on a LightData.
+  // which is the shape `lightKind` already has on a LightData.
   //
   // Byte-identical for a FUSED camera: it declares `transform` as well, so its
   // `lookAt`/`roll` match the transform arm first and still render there.

@@ -140,12 +140,8 @@ export const constrainMutator: MutatorDefinition<ConstrainSpec> = {
       `${spec.target}_${spec.type.toLowerCase()}`,
       new Set(Object.keys(state.nodes)),
     );
-    const built = buildAddConstraintOps(state, spec.target, spec.type, id)!;
-    return built.ops.map((op) =>
-      op.type === 'addNode'
-        ? { ...op, params: { ...(op.params as object), [kind.pointer]: spec.to } }
-        : op,
-    );
+    // The pointee is named, so a light gets no aim empty (#1765): it aims at `to`.
+    return buildAddConstraintOps(state, spec.target, spec.type, id, spec.to)!.ops;
   },
 };
 

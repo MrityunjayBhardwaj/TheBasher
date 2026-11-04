@@ -18,6 +18,7 @@
 
 import { useMemo } from 'react';
 import * as THREE from 'three';
+import { withResolvedRotation } from '../app/resolvedRotation';
 import { degVec3ToRad } from './rotation';
 import { selectNodeOnClick } from './selectNodeOnClick';
 import type {
@@ -49,9 +50,11 @@ export interface LightHelperProps {
  *  (three's visibility inherits; `sceneBounds` prunes it), so a kind added later is chrome
  *  without having to remember. */
 export function LightHelper({ value, pickId }: LightHelperProps) {
+  // #1153 — a quaternion-mode light's orientation, as the `rotation` every helper below reads.
+  const resolved = useMemo(() => withResolvedRotation(value), [value]);
   return (
     <group userData={{ editorChrome: true }}>
-      <LightHelperOfKind value={value} pickId={pickId} />
+      <LightHelperOfKind value={resolved} pickId={pickId} />
     </group>
   );
 }
@@ -103,23 +106,16 @@ function HelperLine({
   );
 }
 
-/** Compute the world-space direction the directional light shines along.
- *  When rotation is non-zero, derive from rotation × (0,-1,0). When zero,
- *  fall back to the legacy "from position toward origin" interpretation
- *  so seed scenes look the same as before. */
-function directionalDirection(value: DirectionalLightValue): THREE.Vector3 {
-  // Defensive — projects saved before rotation existed land here with
-  // no rotation field. The evaluator defaults now, but guarding here
-  // makes the helper safe regardless.
-  const [rx, ry, rz] = value.rotation ?? [0, 0, 0];
-  if (rx !== 0 || ry !== 0 || rz !== 0) {
-    // params.rotation is in degrees — Euler expects radians.
-    const [erx, ery, erz] = degVec3ToRad([rx, ry, rz]);
-    return new THREE.Vector3(0, -1, 0).applyEuler(new THREE.Euler(erx, ery, erz)).normalize();
-  }
-  const v = new THREE.Vector3(-value.position[0], -value.position[1], -value.position[2]);
-  if (v.lengthSq() === 0) v.set(0, -1, 0);
-  return v.normalize();
+/** #1765 — the quaternion a light is turned by (its `rotation`, euler degrees), and the
+ *  direction it shines: down its local −Z, as every Blender light does (5.1.1, measured) and as
+ *  the light itself does (SceneFromDAG `useLightTurn`). */
+function lightTurn(rotation: readonly number[] | undefined): {
+  quat: THREE.Quaternion;
+  direction: THREE.Vector3;
+} {
+  const [rx, ry, rz] = degVec3ToRad((rotation ?? [0, 0, 0]) as [number, number, number]);
+  const quat = new THREE.Quaternion().setFromEuler(new THREE.Euler(rx, ry, rz));
+  return { quat, direction: new THREE.Vector3(0, 0, -1).applyQuaternion(quat) };
 }
 
 function DirectionalLightHelper({
@@ -132,7 +128,7 @@ function DirectionalLightHelper({
   // Sun "donut" — ring whose normal aligns to the light's direction so
   // looking down the direction shows it as a circle (matches the user's
   // expectation: the ring orients toward the direction vector).
-  const direction = useMemo(() => directionalDirection(value), [value]);
+  const direction = useMemo(() => lightTurn(value.rotation).direction, [value.rotation]);
   const ringQuat = useMemo(() => {
     // ringGeometry's plane is XY (normal = +Z). Rotate +Z → direction.
     return new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 0, 1), direction);
@@ -196,31 +192,24 @@ function PointLightHelper({ value, pickId }: { value: PointLightValue; pickId: s
 }
 
 function SpotLightHelper({ value, pickId }: { value: SpotLightValue; pickId: string | null }) {
-  // Cone from position toward target. The cone's height is the
-  // distance-to-target and its base radius is `tan(angle) * height`.
+  // Cone from the light down the way it shines (#1765: its local −Z). Its length is the
+  // light's reach when it has one, else a fixed 2 m: the old length was the distance to the
+  // `target` point, which a light no longer has. Base radius `tan(angle) * length`.
   const { length, baseR } = useMemo(() => {
-    const dx = value.target[0] - value.position[0];
-    const dy = value.target[1] - value.position[1];
-    const dz = value.target[2] - value.position[2];
-    const len = Math.max(0.5, Math.hypot(dx, dy, dz));
+    const len = value.distance > 0 ? value.distance : 2;
     return { length: len, baseR: Math.tan(value.angle) * len };
-  }, [value.position, value.target, value.angle]);
+  }, [value.distance, value.angle]);
 
-  // Build a coordinate frame so the cone points from position to target.
-  const quat = useMemo(() => {
-    const dir = new THREE.Vector3(
-      value.target[0] - value.position[0],
-      value.target[1] - value.position[1],
-      value.target[2] - value.position[2],
-    );
-    if (dir.lengthSq() === 0) dir.set(0, -1, 0);
-    dir.normalize();
-    // Default cone axis is +Y (apex up). We want the apex at the light's
-    // position, opening toward target. Rotate +Y → dir (so the base ends
-    // at target). Cone geometry is centered on its origin with height
-    // along Y, so we then translate down by length/2.
-    return new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, -1, 0), dir);
-  }, [value.position, value.target]);
+  // The cone geometry runs along +Y (apex up); turn its −Y onto the shining direction, then
+  // shift it down by length/2 so the apex sits on the light.
+  const quat = useMemo(
+    () =>
+      new THREE.Quaternion().setFromUnitVectors(
+        new THREE.Vector3(0, -1, 0),
+        lightTurn(value.rotation).direction,
+      ),
+    [value.rotation],
+  );
 
   const scale = (value.scale ?? [1, 1, 1]) as [number, number, number];
   return (
@@ -243,18 +232,9 @@ function SpotLightHelper({ value, pickId }: { value: SpotLightValue; pickId: str
 }
 
 function AreaLightHelper({ value, pickId }: { value: AreaLightValue; pickId: string | null }) {
-  // Wireframe rectangle facing lookAt.
-  const quat = useMemo(() => {
-    const dir = new THREE.Vector3(
-      value.lookAt[0] - value.position[0],
-      value.lookAt[1] - value.position[1],
-      value.lookAt[2] - value.position[2],
-    );
-    if (dir.lengthSq() === 0) dir.set(0, 0, -1);
-    dir.normalize();
-    // Plane normal is +Z by default. Rotate +Z → dir.
-    return new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 0, 1), dir);
-  }, [value.position, value.lookAt]);
+  // #1765 — the rectangle turned exactly as the lit one is: the plane's XY is the light's, so
+  // its width runs along the light's own X and its height along its Y, roll included.
+  const quat = useMemo(() => lightTurn(value.rotation).quat, [value.rotation]);
   // AreaLight: scale.x → width factor, scale.y → height factor. Mirrors
   // the renderer (SceneFromDAG → AreaLightR), so the wireframe outline
   // tracks the actual lit rectangle. scale.z is preserved on the value

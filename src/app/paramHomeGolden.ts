@@ -209,7 +209,7 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
   Layer:
     '[layout,animate] name=layout enabled=(unrouted) solo=(unrouted) locked=(unrouted) startFrame=animate inPoint=(unrouted) outPoint=(unrouted) blendMode=(unrouted) opacity=(unrouted) transform=(unrouted)',
   LightData:
-    '[light] lightKind=light intensity=light color=light distance=light decay=light angle=light penumbra=light width=light height=light target=light lookAt=light tex=light',
+    '[light] lightKind=light intensity=light color=light distance=light decay=light angle=light penumbra=light width=light height=light tex=light',
   LightProfileSelect: '[layout] selectedProfile=(unrouted)',
   LightRig: '[layout] name=layout center=(unrouted) radius=(unrouted)',
   LocomotionState: '[] speed=(unrouted) loop=(unrouted)',
@@ -460,4 +460,8 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
 // turned by its Object's rotation or a Track-To (#487), and the lens holds no aim. Removed, not
 // moved, so the `camera` row loses its two cells:
 //   types 90 · routed 151 - 2 = 149 · unrouted 259
-export const GOLDEN_TOTALS = { types: 90, routed: 149, unrouted: 259 } as const;
+// #1765 retires `LightData.target` and `LightData.lookAt`, both routed to `light`: a light is
+// turned by its Object's rotation or a Track-To, and its data holds no aim. Removed, not moved,
+// so the `light` row loses its two cells:
+//   types 90 · routed 149 - 2 = 147 · unrouted 259
+export const GOLDEN_TOTALS = { types: 90, routed: 147, unrouted: 259 } as const;

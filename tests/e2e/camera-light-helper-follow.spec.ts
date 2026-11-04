@@ -10,6 +10,7 @@
 // FALSIFIABLE: each assertion checks the MOVED value (x≈12 / x≈-9 / x≈20), distinct
 // from the frame-0 value (x≈3 / x≈5) — a frozen helper makes them RED.
 
+import * as THREE from 'three';
 import { expect, test } from './_fixtures';
 import { splitCubeOps } from './_splitCube';
 import { splitLightOps } from './_splitLight';
@@ -25,7 +26,7 @@ interface W {
   __basher_frustum_pose?: Record<string, { position: [number, number, number] }>;
   __basher_lighthelper_value?: Record<
     string,
-    { position: [number, number, number]; lookAt?: [number, number, number] }
+    { position: [number, number, number]; rotation?: [number, number, number] }
   >;
   __basher_mesh_world_position?: (id: string) => [number, number, number] | null;
 }
@@ -256,11 +257,12 @@ test("#243 GAP 2 — a Track-To'd AreaLight helper aim follows an ANIMATED targe
   page,
 }) => {
   // An AreaLight Track-To'd at an ANIMATED node (x 5 -> -5). The lit RectAreaLight
-  // re-resolves its aim per frame (useAreaLightAim), but the wireframe helper read
-  // value.lookAt — the AUTHORED aim — so it froze while the lit effect tracked the
-  // target. The fix re-resolves the SAME Track-To aim at `seconds` in the follower.
-  // FALSIFIABLE: a frozen helper keeps lookAt = authored [0,0,0]; the fix makes it
-  // track the target ([5,0,0] -> [-5,0,0]).
+  // re-resolves its turn per frame (useLightTurn), but the wireframe helper read the
+  // AUTHORED aim, so it froze while the lit effect tracked the target. The fix re-resolves
+  // the SAME Track-To turn at `seconds` in the follower, as the helper's rotation (#1765:
+  // a light shines down its −Z). FALSIFIABLE: a frozen helper keeps its own rotation,
+  // facing straight down from (0,4,0); the fix makes it face the target ([5,0,0] ->
+  // [-5,0,0]).
   // #365 Slice 2: the Track-To aim target is a split cube; the Object keeps `tt_aim`.
   const ttAimOps = splitCubeOps({
     objectId: 'tt_aim',
@@ -276,7 +278,8 @@ test("#243 GAP 2 — a Track-To'd AreaLight helper aim follows an ANIMATED targe
       objectId: 'tt_area',
       lightKind: 'Area',
       position: [0, 4, 0],
-      shading: { intensity: 5, color: '#ffffff', width: 2, height: 2, lookAt: [0, 0, 0] },
+      shading: { intensity: 5, color: '#ffffff', width: 2, height: 2 },
+      aimAt: [0, 0, 0],
     }),
   ];
   await page.evaluate((boxOps) => {
@@ -321,15 +324,21 @@ test("#243 GAP 2 — a Track-To'd AreaLight helper aim follows an ANIMATED targe
     );
   }, ttSetupOps);
 
+  /** The way the helper faces: down its −Z, turned by the rotation it was handed. */
+  const facing = async () => {
+    const r = await page.evaluate(
+      () => (window as unknown as W).__basher_lighthelper_value?.['tt_area']?.rotation ?? null,
+    );
+    expect(r, 'the helper carries a rotation').not.toBeNull();
+    const e = new THREE.Euler(...(r!.map(THREE.MathUtils.degToRad) as [number, number, number]));
+    return new THREE.Vector3(0, 0, -1).applyEuler(e);
+  };
+  const toward = (x: number) =>
+    new THREE.Vector3(x, 0, 0).sub(new THREE.Vector3(0, 4, 0)).normalize();
   await setTime(page, 0);
-  const at0 = await page.evaluate(
-    () => (window as unknown as W).__basher_lighthelper_value?.['tt_area']?.lookAt ?? null,
-  );
+  const at0 = await facing();
   await setTime(page, 1);
-  const at1 = await page.evaluate(
-    () => (window as unknown as W).__basher_lighthelper_value?.['tt_area']?.lookAt ?? null,
-  );
-  expect(at0).not.toBeNull();
-  expect(at0![0]).toBeCloseTo(5, 0); // aim resolves to the target's frame-0 position
-  expect(at1![0]).toBeCloseTo(-5, 0); // followed the animated target, not frozen at authored 0
+  const at1 = await facing();
+  expect(at0.dot(toward(5))).toBeCloseTo(1, 4); // faces the target's frame-0 position
+  expect(at1.dot(toward(-5))).toBeCloseTo(1, 4); // followed the animated target, not frozen
 });

@@ -17,6 +17,7 @@ import { buildSkeletonObjectOps } from '../core/import/skeletonObject';
 import { DEFAULT_CAMERA_FAR, DEFAULT_CAMERA_NEAR } from '../nodes/CameraData';
 import { placeBuiltin } from './builtinTemplates';
 import { linkIntoActiveCollection } from './collections';
+import { AIMABLE_LIGHT_KINDS, lightAimOps } from './lightAim';
 
 /**
  * THE SCENE OBJECTS — everything the Add menu can put in the scene as a thing with a
@@ -139,6 +140,8 @@ export interface AddResult {
    * the first question with the second one's value.
    */
   dataNodeId?: string;
+  /** #1765 — the empty a new sun, spot or area light is aimed at (its Track-To's `aimNode`). */
+  aimNodeId?: string;
 }
 
 type Vec3 = [number, number, number];
@@ -189,7 +192,13 @@ export function buildAddPrimitiveOps(
         (op.to.socket === 'children' || op.to.socket === 'lights'),
     );
   return standsInScene
-    ? { ...result, ops: linkIntoActiveCollection(state, result.ops, [result.newNodeId]) }
+    ? {
+        ...result,
+        ops: linkIntoActiveCollection(state, result.ops, [
+          result.newNodeId,
+          ...(result.aimNodeId ? [result.aimNodeId] : []),
+        ]),
+      }
     : result;
 }
 
@@ -393,6 +402,12 @@ function buildUnlinkedAddOps(
   ) {
     const dataId = newId('data');
     const objId = newId('light');
+    // #1765 — a sun, spot or area light comes aimed at the world origin by a Track-To whose aim
+    // is an empty ("Spot.aim") the user moves to re-aim it. A point light shines every way.
+    const lightKind = (lightDataParamsFor(kind) as { lightKind: string }).lightKind;
+    const aim = AIMABLE_LIGHT_KINDS.has(lightKind)
+      ? lightAimOps(state, objId, { at: [0, 0, 0], kind: lightKind })
+      : null;
     return {
       ops: [
         {
@@ -417,10 +432,12 @@ function buildUnlinkedAddOps(
           from: { node: objId, socket: 'out' },
           to: { node: sceneRef.node, socket: 'lights' },
         },
+        ...(aim?.ops ?? []),
       ],
       description: `Add ${humanLabel(kind)}`,
       newNodeId: objId,
       dataNodeId: dataId,
+      ...(aim ? { aimNodeId: aim.nullId } : {}),
     };
   }
 
@@ -672,7 +689,7 @@ function humanLabel(kind: PrimitiveKind): string {
 }
 
 /** The LightData half's params for a NEW posable light — the SHADING (kind + intensity/
- *  colour/falloff/aim), mirroring the pre-split light values byte-for-byte so a fresh
+ *  colour/falloff; #1765: no aim — the Object's rotation turns it), mirroring the pre-split light values byte-for-byte so a fresh
  *  light looks identical across the split. The Object half gets the TRS (paramsFor).
  *  (penumbra 0.2 here preserves the pre-split Add ▸ Spot value; it disagrees with
  *  SpotLight/LightData's zod default 0.1 — a pre-existing in-repo disagreement, kept
@@ -688,7 +705,6 @@ function lightDataParamsFor(kind: PrimitiveKind): Record<string, unknown> {
         lightKind: 'Spot',
         intensity: 1.0,
         color: '#ffffff',
-        target: [0, 0, 0],
         angle: Math.PI / 6,
         penumbra: 0.2,
         distance: 0,
@@ -701,7 +717,6 @@ function lightDataParamsFor(kind: PrimitiveKind): Record<string, unknown> {
         color: '#ffffff',
         width: 2,
         height: 2,
-        lookAt: [0, 0, 0],
       };
     default:
       return {};
@@ -749,11 +764,15 @@ function paramsFor(kind: PrimitiveKind, position: Vec3): Record<string, unknown>
     case 'Sphere':
     case 'Curve':
     case 'Armature':
-    case 'DirectionalLight':
     case 'PointLight':
+      return { position, rotation: [0, 0, 0], scale: [1, 1, 1] };
+    // #1765 — a sun, spot or area light shines down its own −Z. A new one is aimed at the world
+    // origin by a Track-To at an empty (`lightAimOps`), and its own rotation is turned the same
+    // way, so muting the Track-To or deleting the empty leaves it facing where it faced.
+    case 'DirectionalLight':
     case 'SpotLight':
     case 'AreaLight':
-      return { position, rotation: [0, 0, 0], scale: [1, 1, 1] };
+      return { position, rotation: cameraRotationLookingAt(position, [0, 0, 0]), scale: [1, 1, 1] };
     // AmbientLight stays FUSED (ambient = a World datablock) — its params are shading only
     // (no pose), minted directly as an AmbientLight node by the generic tail.
     case 'AmbientLight':

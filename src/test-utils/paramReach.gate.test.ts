@@ -273,7 +273,11 @@ describe('param-reach gate (#492)', () => {
     // 44 → 42 at #1764: `camera.lookAt` and `camera.roll` leave the lens schema (a camera is turned
     // by its Object's rotation or a Track-To), and their rows with them. (#1760 renamed the
     // unread `zoom` to the traced `orthoScale`, one for one.) The ceiling does not move.
-    expect(total).toBe(42);
+    //
+    // 42 → 40 at #1765: `light.target` and `light.lookAt` leave the light data's schema (a light
+    // is turned by its Object's rotation or a Track-To), and their rows with them. The ceiling
+    // does not move.
+    expect(total).toBe(40);
     // A ceiling, not an equality: tracing a param down must not require editing this number,
     // but adding a new unverified one must. Lower it as #492 is worked through.
     expect(

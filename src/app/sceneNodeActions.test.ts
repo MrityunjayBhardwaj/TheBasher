@@ -858,8 +858,11 @@ describe('buildDeleteNodesOps — an Object that carries a modifier stack (#1620
     useDagStore.getState().dispatchAtomic(buildDeleteNodesOps(s, ids), 'user', 'delete');
     return useDagStore.getState().state;
   };
+  // The scene's children beside the default sun's aim empty (#1765), which these leave alone.
   const sceneChildren = (s: DagState) =>
-    ((s.nodes.n_scene.inputs.children ?? []) as { node: string }[]).map((r) => r.node);
+    ((s.nodes.n_scene.inputs.children ?? []) as { node: string }[])
+      .map((r) => r.node)
+      .filter((id) => id !== 'n_light_target');
 
   it('CONTROL: the plain cube deletes with its data', () => {
     const after = commit(buildDefaultDagState(), ['n_box']);
@@ -1484,6 +1487,8 @@ describe('buildDuplicateNodeOps — an original read on a single socket (#1630)'
     expect(duplicated('n_box').after!.nodes.n_scene.inputs.children).toEqual([
       { node: 'n_box', socket: 'out' },
       { node: 'n_box_copy', socket: 'out' },
+      // The default sun's aim empty (#1765), after the copy.
+      { node: 'n_light_target', socket: 'out' },
     ]);
     expect(duplicated('n_light').after!.nodes.n_scene.inputs.lights).toEqual([
       { node: 'n_light', socket: 'out' },
@@ -1520,8 +1525,11 @@ describe('buildDuplicateNodesOps — one duplicate rule, deep and linked (#1561)
     Object.keys(after.nodes)
       .filter((id) => !s.nodes[id])
       .sort();
+  // The scene's children beside the default sun's aim empty (#1765), which these leave alone.
   const children = (s: DagState) =>
-    ((s.nodes.n_scene.inputs.children ?? []) as { node: string }[]).map((r) => r.node);
+    ((s.nodes.n_scene.inputs.children ?? []) as { node: string }[])
+      .map((r) => r.node)
+      .filter((id) => id !== 'n_light_target');
 
   const stacked = () => {
     let s = buildDefaultDagState();

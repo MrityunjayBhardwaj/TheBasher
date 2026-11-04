@@ -24,8 +24,6 @@ function lightData(
     penumbra: 0.1,
     width: 2,
     height: 2,
-    target: [0, 0, 0],
-    lookAt: [0, 0, 0],
     ...over,
   };
 }
@@ -71,16 +69,17 @@ describe('recomposeLightObject', () => {
     );
   });
 
-  it('carries the spot cone fields (target/angle/penumbra) — a dropped field would lose the cone', () => {
+  it('carries the spot cone fields (angle/penumbra) — a dropped field would lose the cone', () => {
     const out = recomposeLightObject(
-      objPosingLight(lightData({ light: 'Spot', angle: 0.42, penumbra: 0.45, target: [1, 2, 3] })),
+      objPosingLight(lightData({ light: 'Spot', angle: 0.42, penumbra: 0.45 })),
     ) as SpotLightValue;
     expect(out.angle).toBe(0.42);
     expect(out.penumbra).toBe(0.45);
-    expect(out.target).toEqual([1, 2, 3]);
+    // #1765 — no aim point of its own: the Object's rotation (or a Track-To) turns it.
+    expect(out).not.toHaveProperty('target');
   });
 
-  it('carries area width/height/lookAt and the optional emitter tex', () => {
+  it('carries area width/height and the optional emitter tex', () => {
     const withTex = recomposeLightObject(
       objPosingLight(
         lightData({ light: 'Area', width: 3.25, height: 4.5, tex: 'assets/hdri.exr' }),
@@ -88,7 +87,7 @@ describe('recomposeLightObject', () => {
     ) as AreaLightValue;
     expect(withTex.width).toBe(3.25);
     expect(withTex.height).toBe(4.5);
-    expect(withTex.lookAt).toEqual([0, 0, 0]);
+    expect(withTex).not.toHaveProperty('lookAt'); // #1765 — turned by its rotation
     expect(withTex.tex).toBe('assets/hdri.exr');
     // Absent tex stays absent (undefined → plain light).
     const noTex = recomposeLightObject(

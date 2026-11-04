@@ -62,13 +62,8 @@ async function addAreaLight(
     objectId: id,
     lightKind: 'Area',
     position: pos,
-    shading: {
-      intensity: 5,
-      color: '#ffffff',
-      width: 2,
-      height: 2,
-      lookAt: aimPoint ?? [0, 0, 0],
-    },
+    shading: { intensity: 5, color: '#ffffff', width: 2, height: 2 },
+    aimAt: aimPoint ?? [0, 0, 0],
   }) as Op[];
   await page.evaluate(
     ({ id, aimPoint, lightOps }) => {

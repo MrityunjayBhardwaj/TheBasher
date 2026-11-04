@@ -118,6 +118,18 @@ test('#233 single click selects the leaf under the cursor; Alt+click selects up;
       'rm cam',
     );
     dag.dispatch({ type: 'removeNode', nodeId: 'n_camera' }, 'user', 'rm cam');
+    // #1765 — the sun's Track-To names it and aims at the empty "Sun.aim": both go first.
+    dag.dispatch({ type: 'removeNode', nodeId: 'n_light_aim' }, 'user', 'rm light aim');
+    dag.dispatch(
+      {
+        type: 'disconnect',
+        from: { node: 'n_light_target', socket: 'out' },
+        to: { node: 'n_scene', socket: 'children' },
+      },
+      'user',
+      'rm light aim',
+    );
+    dag.dispatch({ type: 'removeNode', nodeId: 'n_light_target' }, 'user', 'rm light aim');
     dag.dispatch(
       {
         type: 'disconnect',

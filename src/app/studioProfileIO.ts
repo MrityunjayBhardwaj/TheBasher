@@ -21,8 +21,9 @@ import { z } from 'zod';
 import type { DagState } from '../core/dag/state';
 import type { Op } from '../core/dag/types';
 import { ensureProfileSelectOps, enumerateProfiles, uniqueProfileName } from './studioProfiles';
-import { nextConstraintOrder } from './nodeConstraints';
+import { lightAimOps } from './lightAim';
 import { linkIntoActiveCollection } from './collections';
+import { cameraRotationLookingAt } from './cameraOrientation';
 import { isAreaLightNode, lightParamsOf } from './lightNode';
 
 type Vec3 = [number, number, number];
@@ -195,7 +196,7 @@ export function buildImportProfilesOps(
       const dataId = newId('data');
       const ttId = newId('tt');
       // #386 Stage C (C3) — an imported studio light is split-native: a LightData (the Area
-      // shading + `lookAt` aim) and an Object (pose) that inherits `lightId`, so the rig
+      // shading) and an Object (pose) that inherits `lightId`, so the rig
       // `lights` wire, the Track-To target, and the panel's `data`-aware enumeration all
       // resolve exactly as before the split.
       ops.push(
@@ -209,7 +210,6 @@ export function buildImportProfilesOps(
             color: light.color,
             width: light.width,
             height: light.height,
-            lookAt: profile.center,
             ...(light.tex ? { tex: light.tex } : {}),
           },
         },
@@ -219,7 +219,10 @@ export function buildImportProfilesOps(
           nodeType: 'Object',
           params: {
             position: light.position,
-            rotation: light.rotation,
+            // #1765 — turned toward the profile centre, which its old `lookAt` did whatever the
+            // stored rotation said (an area light's rotation turned nothing then), so muting the
+            // Track-To leaves it facing where it faced.
+            rotation: cameraRotationLookingAt(light.position, profile.center),
             scale: light.scale,
           },
         },
@@ -233,22 +236,9 @@ export function buildImportProfilesOps(
           from: { node: lightId, socket: 'out' },
           to: { node: rigId, socket: 'lights' },
         },
-        {
-          type: 'addNode',
-          nodeId: ttId,
-          nodeType: 'TrackTo',
-          params: {
-            name: 'aim',
-            target: lightId,
-            aimNode: '',
-            aimPoint: profile.center,
-            up: [0, 1, 0],
-            mute: false,
-            // #317 — through the shared top-of-stack rule, like every other creation
-            // road. A freshly-created light has an empty stack → 0: byte-identical.
-            order: nextConstraintOrder(state.nodes, lightId),
-          },
-        },
+        // #1765 — aimed at the profile centre by a Track-To at an empty there ("Area.aim"),
+        // the one way every light is aimed (`lightAimOps`).
+        ...lightAimOps(state, lightId, { at: profile.center, kind: 'Area', trackToId: ttId }).ops,
       );
     }
   }
@@ -265,8 +255,11 @@ export function buildImportProfilesOps(
 
   // #1480 — every light the file makes joins the active collection, as an importer links every
   // object it makes (`intoActiveCollection`).
+  // #1765 — and so does each light's aim empty.
   const lightIds = ops.flatMap((op) =>
-    op.type === 'addNode' && op.nodeType === 'Object' ? [op.nodeId] : [],
+    op.type === 'addNode' && (op.nodeType === 'Object' || op.nodeType === 'Null')
+      ? [op.nodeId]
+      : [],
   );
   return { ops: linkIntoActiveCollection(state, ops, lightIds), activatedName };
 }

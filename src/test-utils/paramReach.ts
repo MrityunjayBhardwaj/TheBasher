@@ -177,8 +177,6 @@ export const PARAM_READERS: Record<SplitKindName, Record<string, ParamReader>> =
     penumbra: { by: LIGHT_RECOMPOSE },
     width: { by: LIGHT_RECOMPOSE },
     height: { by: LIGHT_RECOMPOSE },
-    target: { by: LIGHT_RECOMPOSE },
-    lookAt: { by: LIGHT_RECOMPOSE },
     tex: { by: LIGHT_RECOMPOSE },
   },
   camera: {

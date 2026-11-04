@@ -89,7 +89,7 @@ describe('#637 this phase ships no migration, and the absence is pinned', () => 
     registerAllNodes();
   });
 
-  it('has moved the project format version exactly seventeen times since the freeze — #915, #920, #930, #389, #1062, #1203, #1224, #1225 twice, #1316, #1227, #1503, #1548, #1668, #1559, #1666, then #1762', () => {
+  it('has moved the project format version exactly eighteen times since the freeze — #915, #920, #930, #389, #1062, #1203, #1224, #1225 twice, #1316, #1227, #1503, #1548, #1668, #1559, #1666, #1762, then #1765', () => {
     // 🔴 THIS ROW CHANGED SHAPE IN #915, AND THE HEADER ABOVE SAYS WHY IT MAY.
     //
     // It read `toBe(fixture().formatVersion)` — ns-1 shipped no migration, so the frozen
@@ -153,7 +153,11 @@ describe('#637 this phase ships no migration, and the absence is pinned', () => 
     // #1762 is the SEVENTEENTH: a camera's aim moves off its lens onto a Track-To, keys and drivers
     // with it (formatMigrations[25], part of #487). A camera's look-at was a param the render read
     // directly, so only a pass can hand each saved aim to the constraint that now owns it.
-    const MIGRATIONS_SINCE_FREEZE = 17; // #915, #920, #930, #389, #1062, #1203, #1224, #1225 ×2, #1316, #1227, #1503, #1548, #1668, #1559, #1666, #1762
+    // #1765 is the EIGHTEENTH: a light's aim (a spot's `target`, an area light's `lookAt`, a sun's
+    // aim at the origin and its −Y axis) moves onto its rotation or a Track-To, as a camera's did
+    // (formatMigrations[26]). The render read those aims directly, so only a pass can hand each
+    // saved one to what turns a light now.
+    const MIGRATIONS_SINCE_FREEZE = 18; // #915, #920, #930, #389, #1062, #1203, #1224, #1225 ×2, #1316, #1227, #1503, #1548, #1668, #1559, #1666, #1762, #1765
     expect(PROJECT_FORMAT_VERSION).toBe(fixture().formatVersion + MIGRATIONS_SINCE_FREEZE);
   });
 

@@ -28,7 +28,8 @@ test.beforeEach(async ({ page }) => {
   await page.waitForFunction(() => Boolean((window as unknown as OutlinerWindow).__basher_dag), {
     timeout: 15000,
   });
-  // Two extra boxes so the tree has n_box, n_box_b, n_box_c in order.
+  // Two extra boxes so the tree has n_box, n_box_b, n_box_c in order — with the default sun's aim
+  // empty, "Sun.aim" (n_light_target, #1765), between n_box and the two added after it.
   await page.evaluate(
     ({ built }) => {
       const w = window as unknown as OutlinerWindow;
@@ -92,7 +93,8 @@ test('Shift-click selects the inclusive range from the active row to the clicked
   await row(page, 'n_box_c').click({ modifiers: ['Shift'] });
 
   const s = await selection(page);
-  expect(s.ids).toEqual(['n_box', 'n_box_b', 'n_box_c']);
+  // Every row in between, the sun's aim empty included.
+  expect(s.ids).toEqual(['n_box', 'n_box_b', 'n_box_c', 'n_light_target']);
   expect(s.primary).toBe('n_box_c');
 });
 
@@ -100,6 +102,6 @@ test('a multi-set built in the outliner drives the multi-object inspector', asyn
   await row(page, 'n_box').click();
   await row(page, 'n_box_c').click({ modifiers: ['Shift'] });
   await expect(page.locator('[data-testid="inspector-multi-count"]')).toHaveText(
-    '3 objects selected',
+    '4 objects selected',
   );
 });

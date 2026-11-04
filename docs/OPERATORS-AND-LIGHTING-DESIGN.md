@@ -189,6 +189,12 @@ transform_ as a pure value. See §4.3.
 
 ### 4.1 The aim model — target, not stored rotation
 
+> **Superseded (#487, #1765).** Basher took Blender's model instead: an object, a camera and a
+> light are each turned by their own `rotation`, unless a winning Track-To aims them, and the
+> Track-To's aim point (or aim node) is the target this section describes. Neither a camera's lens
+> nor a light's data holds an aim of its own any more. The section is kept as the reasoning that
+> led to the Track-To.
+
 An object does not store a baked rotation it has to keep in sync. It carries a
 **`target`** and _derives_ orientation from (position → target) via a pure
 resolver — exactly the camera's existing `lookAt` (`resolveActiveCameraPoseAt`,

@@ -295,7 +295,7 @@ describe('resolveWorldTransform', () => {
       position: opts.pos ?? [0, 0, 0],
       rotation: opts.rot ?? [0, 0, 0],
       scale: opts.scale ?? [1, 1, 1],
-      shading: { intensity: 5, color: '#ffffff', width: 2, height: 2, lookAt: [0, 0, 0] },
+      shading: { intensity: 5, color: '#ffffff', width: 2, height: 2 },
       connectTo: { node: 'n_scene', socket: 'lights' },
     }).state;
   }

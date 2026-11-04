@@ -16,6 +16,7 @@ import { buildBindDriverOps } from './driverBind';
 import { buildSpringOps } from './solverBind';
 import { buildNewMaterialOps } from './materialLink';
 import {
+  animatableContextOf,
   animatablePathPattern,
   animatablePathsOf,
   animatableSubjectOf,
@@ -111,6 +112,22 @@ describe('animatablePathPattern', () => {
 });
 
 describe('isAnimatable — three answers, never two', () => {
+  // #1765 — a Track-To's point is its fallback: while it aims at an object, a key on the point
+  // moves nothing, and that is a fact about this instance, so it is unmeasured, never "still".
+  it('a Track-To aimed at an object: its point is unmeasured; aimed at nothing, it is measured', () => {
+    const s = buildDefaultDagState();
+    expect(animatableContextOf(s, 'n_light_aim', 'aimPoint')).toEqual({
+      unmeasured: 'it aims at an object, so a keyframe on it would not show',
+    });
+    const bare = applyOp(s, {
+      type: 'setParam',
+      nodeId: 'n_light_aim',
+      paramPath: 'aimNode',
+      value: '',
+    } as Parameters<typeof applyOp>[1]).next;
+    expect(animatableContextOf(bare, 'n_light_aim', 'aimPoint')).toHaveProperty('subject');
+  });
+
   it('a spot light draws its cone angle; a point light, which has no cone, does not', () => {
     const spot = place(buildDefaultDagState(), 'SpotLight');
     const point = place(buildDefaultDagState(), 'PointLight');
@@ -125,9 +142,15 @@ describe('isAnimatable — three answers, never two', () => {
     });
   });
 
-  it('a spot light aims by its target, so its Object rotation moves nothing', () => {
+  // #1765 — a new spot comes aimed by a Track-To, which decides its rotation: a key there would
+  // not show, and that is a fact about this light, so it is unmeasured with the reason, never
+  // "still". Its position still moves it.
+  it('a new spot light is aimed by its Track-To, so a key on its rotation would not show', () => {
     const spot = place(buildDefaultDagState(), 'SpotLight');
-    expect(isAnimatable(spot.s, spot.obj, 'rotation', 'vec3').answer).toBe('still');
+    expect(isAnimatable(spot.s, spot.obj, 'rotation', 'vec3')).toEqual({
+      answer: 'unmeasured',
+      reason: 'a Track-To aims it, so a keyframe on it would not show',
+    });
     expect(isAnimatable(spot.s, spot.obj, 'position', 'vec3').answer).toBe('animatable');
   });
 

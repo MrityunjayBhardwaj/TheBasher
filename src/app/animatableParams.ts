@@ -217,6 +217,14 @@ function suppliedElsewhere(
     return 'a Track-To aims it';
   if (root === 'position' && followPathStackForTarget(state.nodes, nodeId).length > 0)
     return 'a Follow-Path places it';
+  // #1765 — a Track-To's point is only its fallback: while it aims at an object (a light's
+  // "….aim" empty), the object's place is the aim, and a key on the point moves nothing.
+  if (root === 'aimPoint') {
+    const node = state.nodes[nodeId];
+    const aimNode = (node?.params as { aimNode?: unknown } | undefined)?.aimNode;
+    if (node?.type === 'TrackTo' && typeof aimNode === 'string' && aimNode && state.nodes[aimNode])
+      return 'it aims at an object';
+  }
   const owner = perState(state).ownerOf(nodeId, paramPath);
   if (owner && (owner.nodeId !== nodeId || owner.paramPath !== paramPath))
     return `${owner.nodeId}.${owner.paramPath} supplies it`;

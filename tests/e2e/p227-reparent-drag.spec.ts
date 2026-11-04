@@ -194,7 +194,11 @@ test('same-parent sibling drag still REORDERS (regression)', async ({ page }) =>
   // Order is [n_box, n_box_b]. Drag n_box_b onto n_box → swap to [n_box_b, n_box].
   // #1152 — aimed at n_box's TOP EDGE: n_box is an Object, which can parent now, so the middle of
   // its row parents into it and the edges reorder (treeDropIntent.ts).
-  expect(await childIds(page, '__scene__')).toEqual(['n_box', 'n_box_b']);
+  // #1765: the sun's aim empty sits between them in the scene's list; only the boxes' order is
+  // under test.
+  const boxes = async () =>
+    (await childIds(page, '__scene__')).filter((id) => id !== 'n_light_target');
+  expect(await boxes()).toEqual(['n_box', 'n_box_b']);
   await dragRowOnto(page, 'n_box_b', 'n_box', 'before');
-  expect(await childIds(page, '__scene__')).toEqual(['n_box_b', 'n_box']);
+  expect(await boxes()).toEqual(['n_box_b', 'n_box']);
 });

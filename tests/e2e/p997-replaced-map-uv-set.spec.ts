@@ -300,15 +300,24 @@ async function importAndSelect(page: Page, asset: string, folder: string) {
   );
   // The seed box is a unit cube at the origin and the quad's plane cuts straight through
   // it, so the box would occlude the very points this file samples. Move it out of shot;
-  // the quad is the subject and nothing here is about the box.
+  // the quad is the subject and nothing here is about the box. The sun's aim empty sits at the
+  // origin too, and its centre dot covers the quad's centre: the sun's Track-To lets go of it
+  // (falling back to the same point, so the light is unchanged) and the empty goes.
   await page.evaluate(() => {
-    (window as unknown as BasherWindow).__basher_dag
-      .getState()
-      .dispatchAtomic(
-        [{ type: 'setParam', nodeId: 'n_box', paramPath: 'position', value: [0, -1.5, 0] }],
-        'e2e',
-        '#997 clear the shot',
-      );
+    (window as unknown as BasherWindow).__basher_dag.getState().dispatchAtomic(
+      [
+        { type: 'setParam', nodeId: 'n_box', paramPath: 'position', value: [0, -1.5, 0] },
+        { type: 'setParam', nodeId: 'n_light_aim', paramPath: 'aimNode', value: '' },
+        {
+          type: 'disconnect',
+          from: { node: 'n_light_target', socket: 'out' },
+          to: { node: 'n_scene', socket: 'children' },
+        },
+        { type: 'removeNode', nodeId: 'n_light_target' },
+      ],
+      'e2e',
+      '#997 clear the shot',
+    );
   });
   await page.evaluate(
     async ({ asset, folder }: { asset: string; folder: string }) => {

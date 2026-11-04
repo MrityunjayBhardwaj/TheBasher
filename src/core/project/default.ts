@@ -75,7 +75,13 @@ const DEFAULT_OPS: Op[] = [
     type: 'addNode',
     nodeId: 'n_light',
     nodeType: 'Object',
-    params: { position: [5, 5, 3], rotation: [0, 0, 0], scale: [1, 1, 1] },
+    // #1765 — a sun shines down its own −Z. It is aimed at the origin by the Track-To at the end,
+    // and turned that way by its own rotation too, so muting the Track-To changes nothing.
+    params: {
+      position: [5, 5, 3],
+      rotation: cameraRotationLookingAt([5, 5, 3], [0, 0, 0]),
+      scale: [1, 1, 1],
+    },
   },
   {
     type: 'connect',
@@ -137,6 +143,35 @@ const DEFAULT_OPS: Op[] = [
     type: 'connect',
     from: { node: 'n_scene', socket: 'out' },
     to: { node: 'n_render', socket: 'scene' },
+  },
+  // #1765 — the sun comes aimed at the world origin by a Track-To at an empty there, "Sun.aim",
+  // that the user moves to re-aim it: the one way every light is aimed (`lightAimOps`, which
+  // Add ▸ Light goes through). Last, so the scene it hangs in exists.
+  {
+    type: 'addNode',
+    nodeId: 'n_light_target',
+    nodeType: 'Null',
+    params: { position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
+  },
+  { type: 'setMeta', nodeId: 'n_light_target', name: 'Sun.aim' },
+  {
+    type: 'connect',
+    from: { node: 'n_light_target', socket: 'out' },
+    to: { node: 'n_scene', socket: 'children' },
+  },
+  {
+    type: 'addNode',
+    nodeId: 'n_light_aim',
+    nodeType: 'TrackTo',
+    params: {
+      name: 'aim',
+      target: 'n_light',
+      aimNode: 'n_light_target',
+      aimPoint: [0, 0, 0],
+      up: [0, 1, 0],
+      mute: false,
+      order: 0,
+    },
   },
 ];
 

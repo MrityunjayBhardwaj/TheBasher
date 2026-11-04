@@ -39,6 +39,16 @@ import {
   WRAP_NAME_OF_GLTF,
   WRAP_NAME_OF_THREE,
 } from '../../nodes/materialSchema';
+import * as THREE from 'three';
+import {
+  quaternionFromEulerDeg,
+  resolvedQuaternionOf,
+  rotationWriteOf,
+  withResolvedRotation,
+} from '../../app/resolvedRotation';
+import { trackToQuaternion } from '../../app/resolveTrackTo';
+import { useNotificationStore } from '../../app/stores/notificationStore';
+import type { Quat, RotationModeFields } from '../../nodes/types';
 
 type FormatMigration = (raw: unknown) => unknown;
 
@@ -154,6 +164,11 @@ const formatMigrations: Record<number, FormatMigration> = {
   // v25 → v26 (#1762, part of #487): each camera's aim (its lens `lookAt` and `roll`) becomes a
   // Track-To at the bottom of its stack, aim point in parent space, keys and drivers moved over.
   25: migrateCameraAimToTrackTo,
+  // v26 → v27 (#1765): a light is turned by its own rotation or a Track-To, shining down its
+  // local −Z. A spot's `target` and an area light's `lookAt` become a Track-To; a sun's old
+  // aims (at the origin at rotation 0, down its −Y otherwise) are written into its rotation, or
+  // into a Track-To when its position moves.
+  26: migrateLightAimToTurn,
 };
 
 // ── v1 → v2: AnimationLayer retirement (#199) ──────────────────────────────
@@ -2611,4 +2626,231 @@ export function migrateCameraAimToTrackTo(raw: unknown): unknown {
     );
   }
   return { ...proj, state: { ...proj.state, nodes: out }, formatVersion: 26 };
+}
+
+// ── v26 → v27: a light is turned by its rotation or a Track-To (#1765) ─────────────────────────
+// A light used to be aimed three ways, one per kind, all in WORLD space: a spot at its data's
+// `target` point, an area light at its data's `lookAt` point (no roll), and a sun down its
+// Object's rotation applied to −Y — or, at rotation exactly 0, from its position toward the
+// world origin. Now every light is turned the way every object is: by its winning Track-To,
+// else its own rotation, shining down its local −Z (Blender 5.1.1, measured for sun, spot and
+// area). Each light comes across shining exactly where it shone:
+//
+// - Spot / area: an empty ("Spot.aim") at the old point, at the top of the scene, and a Track-To
+//   at the bottom of the light's stack aimed at it, with the point as its fallback in `world`
+//   space (the space the point was in, nested light or not), up +Y and no roll — the frame
+//   three's `lookAt` turned an area light with. Keys and drivers on `target` / `lookAt` move onto
+//   the empty's `position`, unchanged. An existing Track-To keeps winning: the new one sits below
+//   it, so muting the old one shows the authored aim again, as it did.
+// - Sun at rotation 0: the same, with its empty at the origin — exact however its position
+//   moves — and its own rotation turned to the origin from where it stands, so muting the
+//   Track-To or deleting the empty leaves it facing where it faced.
+// - Sun at any other rotation: the same orientation turned a quarter turn about its own X, which
+//   carries its old −Y onto its new −Z.
+//
+// What cannot come across exactly is never silent. A sun whose rotation is keyed, driven or
+// carried by a strip keeps its keys (they hold the old axis) and is NAMED in a notice the person
+// sees; no real file has one (all 8 scanned: each sun at rotation 0, no rotation channel), and
+// an exact conversion is built when one does. A strip on a spot or area light (a `target` /
+// `lookAt` inside its clip no longer aims anything) is logged. Both data fields go
+// from every light: nothing reads them now.
+const LIGHT_AIM_PATH = { Spot: 'target', Area: 'lookAt' } as const;
+const LIGHT_WORD: Record<string, string> = { Directional: 'Sun', Spot: 'Spot', Area: 'Area' };
+const QUARTER_TURN_ABOUT_X = quaternionFromEulerDeg([-90, 0, 0]);
+
+export function migrateLightAimToTurn(raw: unknown): unknown {
+  const proj = raw as { formatVersion?: number; state?: { nodes?: Record<string, RawNode> } };
+  const nodes = proj.state?.nodes;
+  if (!nodes) return { ...proj, formatVersion: 27 };
+  const out: Record<string, RawNode> = { ...nodes };
+  const entries = Object.entries(nodes);
+  const isVec3 = (v: unknown): v is [number, number, number] =>
+    Array.isArray(v) && v.length === 3 && v.every((x) => typeof x === 'number');
+  const freshId = (base: string) => {
+    let id = base;
+    for (let i = 2; id in out; i++) id = `${base}_${i}`;
+    return id;
+  };
+  const onPath = (p: Record<string, unknown>, path: string) =>
+    typeof p.paramPath === 'string' && (p.paramPath === path || p.paramPath.startsWith(`${path}.`));
+  const isKeyOrDriver = (n: RawNode) =>
+    (typeof n.type === 'string' && n.type.startsWith('KeyframeChannel')) ||
+    n.type === 'ParamDriver';
+  /** Key and driver nodes on `holders` writing `path` (or one of its components). */
+  const keysOn = (holders: Set<string>, path: string) =>
+    entries.filter(
+      ([, n]) =>
+        n?.params &&
+        isKeyOrDriver(n) &&
+        holders.has(n.params.target as string) &&
+        onPath(n.params, path),
+    );
+  const stripOn = (holders: Set<string>) =>
+    entries.some(([, n]) => n?.type === 'Strip' && holders.has(n.params?.target as string));
+  // Every aim is an empty the Track-To points at (the one way a light is aimed, `lightAimOps`):
+  // placed at the old WORLD point at the top of the scene, so it stays exactly where the aim was
+  // whatever the light hangs from, and named after the light ("Spot.aim").
+  const sceneId = (proj.state as { outputs?: { scene?: { node?: string } } }).outputs?.scene?.node;
+  const addTrackTo = (
+    objId: string,
+    aimPoint: [number, number, number],
+    kind: string,
+  ): { aimId: string; nullId: string } => {
+    const existing = entries.filter(([, n]) => n?.type === 'TrackTo' && n.params?.target === objId);
+    const orders = existing.map(([, n]) =>
+      typeof n.params?.order === 'number' ? n.params.order : 0,
+    );
+    const own = (nodes[objId] as { meta?: { name?: unknown } }).meta?.name;
+    const nullId = freshId(`${objId}_aim_target`);
+    out[nullId] = {
+      id: nullId,
+      type: 'Null',
+      version: 1,
+      params: { position: [...aimPoint], rotation: [0, 0, 0], scale: [1, 1, 1] },
+      inputs: {},
+      meta: { name: `${typeof own === 'string' && own ? own : LIGHT_WORD[kind]}.aim` },
+    } as RawNode;
+    if (sceneId && out[sceneId]) {
+      const scene = out[sceneId];
+      out[sceneId] = {
+        ...scene,
+        inputs: {
+          ...scene.inputs,
+          children: [...asRefs(scene.inputs?.children), { node: nullId, socket: 'out' }],
+        },
+      };
+    }
+    const aimId = freshId(`${objId}_aim`);
+    out[aimId] = {
+      id: aimId,
+      type: 'TrackTo',
+      version: 1,
+      params: {
+        name: 'aim',
+        target: objId,
+        aimNode: nullId,
+        aimBone: '',
+        aimPoint,
+        aimSpace: 'world',
+        up: [0, 1, 0],
+        roll: 0,
+        mute: false,
+        order: existing.length > 0 ? Math.min(0, ...orders) - 1 : 0,
+      },
+      inputs: {},
+    };
+    return { aimId, nullId };
+  };
+  /** The rotation params that hold `q`, in the mode the Object keeps its rotation in. */
+  const rotationParamsOf = (op: Record<string, unknown>, q: Quat): Record<string, unknown> => {
+    const e = new THREE.Euler().setFromQuaternion(new THREE.Quaternion(...q), 'XYZ');
+    const deg = (r: number) => (r * 180) / Math.PI;
+    const write = rotationWriteOf(op as RotationModeFields, [deg(e.x), deg(e.y), deg(e.z)]);
+    return { [write.paramPath]: write.value };
+  };
+
+  let lights = 0;
+  let movedKeys = 0;
+  const keyedSuns: string[] = [];
+  const stripLights: string[] = [];
+  for (const [dataId, data] of entries) {
+    if (data?.type !== 'LightData') continue;
+    const dp = data.params ?? {};
+    const { target: _t, lookAt: _l, ...shading } = dp;
+    void _t;
+    void _l;
+    out[dataId] = { ...data, params: shading };
+    const objId = entries.find(([, n]) =>
+      asRefs(n?.inputs?.data).some((r) => r.node === dataId),
+    )?.[0];
+    if (!objId) continue; // a light's data no Object wears shines nowhere
+    const obj = nodes[objId];
+    const op = obj.params ?? {};
+    const holders = new Set([dataId, objId]);
+    const kind = dp.lightKind;
+
+    if (kind === 'Spot' || kind === 'Area') {
+      lights++;
+      const path = LIGHT_AIM_PATH[kind];
+      const { nullId } = addTrackTo(objId, isVec3(dp[path]) ? dp[path] : [0, 0, 0], kind);
+      // Keys and drivers on the old point move the empty, which the Track-To follows.
+      for (const [id, n] of keysOn(holders, path)) {
+        movedKeys++;
+        const p = n.params!;
+        out[id] = {
+          ...n,
+          params: {
+            ...p,
+            target: nullId,
+            paramPath: (p.paramPath as string).replace(path, 'position'),
+            ...(p.name === path ? { name: 'position' } : {}),
+          },
+        };
+      }
+      if (stripOn(holders)) stripLights.push(objId);
+      continue;
+    }
+    if (kind !== 'Directional') continue; // a point light shines every way
+    lights++;
+    const own = resolvedQuaternionOf(op as RotationModeFields);
+    const euler = own
+      ? withResolvedRotation({ rotation: [0, 0, 0], ...op } as { rotation: number[] }).rotation
+      : isVec3(op.rotation)
+        ? op.rotation
+        : [0, 0, 0];
+    const rotationMoves =
+      keysOn(holders, 'rotation').length > 0 ||
+      keysOn(holders, 'quaternion').length > 0 ||
+      stripOn(holders);
+    if (rotationMoves) keyedSuns.push(objId);
+    const atOrigin = euler.every((v) => v === 0);
+    if (!atOrigin) {
+      // Old: down rotation × (0, −1, 0). New: down rotation' × (0, 0, −1). A quarter turn about
+      // the light's own X takes (0, 0, −1) to (0, −1, 0), so rotation' = rotation × that turn.
+      const q = new THREE.Quaternion(...quaternionFromEulerDeg(euler as [number, number, number]));
+      q.multiply(new THREE.Quaternion(...QUARTER_TURN_ABOUT_X));
+      out[objId] = { ...obj, params: { ...op, ...rotationParamsOf(op, [q.x, q.y, q.z, q.w]) } };
+      continue;
+    }
+    // A sun at rotation 0 shone from wherever it was toward the world origin, every frame: a
+    // world-space Track-To at the origin, the aim every new sun comes with. Its own rotation is
+    // turned there too, from where it stands, so muting the Track-To leaves it facing where it
+    // faced (a sun on the origin had no direction, and keeps its rotation).
+    addTrackTo(objId, [0, 0, 0], 'Directional');
+    const position = isVec3(op.position) ? op.position : [0, 0, 0];
+    const q = trackToQuaternion(position as [number, number, number], [0, 0, 0]);
+    if (q)
+      out[objId] = { ...obj, params: { ...op, ...rotationParamsOf(op, [q.x, q.y, q.z, q.w]) } };
+  }
+  // A sun whose rotation is keyed, driven or carried by a strip keeps its keys as they were: they
+  // turned its old −Y, so it now shines a quarter turn off while they play. That changes what the
+  // file shows, so it is said where the person sees it — the app's notice stack — naming each sun,
+  // and the toast stays until dismissed.
+  if (keyedSuns.length > 0) {
+    const named = keyedSuns.map((id) => {
+      const name = (nodes[id] as { meta?: { name?: unknown } }).meta?.name;
+      return typeof name === 'string' && name ? `"${name}"` : `"${id}"`;
+    });
+    useNotificationStore.getState().notify({
+      severity: 'warn',
+      durationMs: 0,
+      message:
+        `${keyedSuns.length === 1 ? 'Sun' : 'Suns'} ${named.join(', ')}: ` +
+        `${keyedSuns.length === 1 ? 'its' : 'their'} rotation keys were made when a sun shone ` +
+        `down its −Y axis. Lights now shine down −Z, and the keys were kept as they were, so ` +
+        `while they play ${keyedSuns.length === 1 ? 'it shines' : 'they shine'} a quarter turn ` +
+        `off from before.`,
+    });
+  }
+  if (lights > 0) {
+    console.warn(
+      `[migrateLightAimToTurn] ${lights} light(s) are now turned by their rotation or a Track-To; ` +
+        `${movedKeys} key/driver node(s) on a spot target or area look-at moved onto it (#1765).` +
+        (stripLights.length > 0
+          ? ` Strips on ${stripLights.join(', ')} were left as they were: an aim inside them no ` +
+            `longer turns the light.`
+          : ''),
+    );
+  }
+  return { ...proj, state: { ...proj.state, nodes: out }, formatVersion: 27 };
 }

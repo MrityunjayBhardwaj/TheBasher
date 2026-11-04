@@ -222,7 +222,9 @@ describe('bindLookAtTargetOps', () => {
     [5, 1, 0].forEach((v, i) => expect(looked[i]).toBeCloseTo(v, 9)); // the fixture: world (5,1,0)
     const { ops } = bindLookAtTargetOps(s, { nodeId: 'cam_data', poseNodeId: 'cam' }, 'n_box', CTX);
     for (const op of ops) s = applyOp(s, op as Parameters<typeof applyOp>[1]).next;
-    const tt = Object.values(s.nodes).find((n) => n.type === 'TrackTo')!;
+    const tt = Object.values(s.nodes).find(
+      (n) => n.type === 'TrackTo' && (n.params as { target: string }).target === 'cam',
+    )!;
     expect((tt.params as { aimSpace: string }).aimSpace).toBe('world');
     // The target node goes (what deleting it does to the Track-To): the fallback point takes over.
     s = applyOp(s, {

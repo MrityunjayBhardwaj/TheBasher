@@ -268,6 +268,11 @@ const ORIGINS: Record<string, Origin> = {
     frequency: 'deliberate',
     why: 'The injected previous-frame value makes the sub-graph frame-dependent; a shared cache would poison across frames (see its doc comment).',
   },
+  'src/app/lightAim.ts · lightAimOps → resolveParentWorldMatrix': {
+    count: 1,
+    frequency: 'per-action',
+    why: "#1765 — giving a nested light its aim empty: once, to place the empty in the light's group at the point it should face.",
+  },
   'src/app/statefulOps.ts · cookSolverVecStep → evaluate': {
     count: 1,
     frequency: 'deliberate',

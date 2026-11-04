@@ -136,8 +136,11 @@ describe('#774 — a prompt becomes a wired, aimed camera trajectory', () => {
     const ops2 = run(s1, { cameraId: cam, subjectId: 'n_box', points: second, name: 'dolly' });
     const s2 = apply(s1, ops2);
 
+    // On the camera: the default project's sun carries a Track-To of its own (#1765).
     const count = (st: DagState, t: string) =>
-      Object.values(st.nodes).filter((n) => n.type === t).length;
+      Object.values(st.nodes).filter(
+        (n) => n.type === t && (n.params as { target?: string }).target === cam,
+      ).length;
     expect(count(s2, 'FollowPath'), 'a second call stacked a rival Follow-Path').toBe(1);
     expect(count(s2, 'TrackTo'), 'a second call stacked a rival Track-To').toBe(1);
     // ...and it is the NEW curve the surviving constraint follows.
@@ -148,7 +151,8 @@ describe('#774 — a prompt becomes a wired, aimed camera trajectory', () => {
     expect((follow.params as { curve: string }).curve).toBe(newObj.nodeId);
     // The superseded curve is still there — visible and deletable, not removed
     // underneath a director who may want it back.
-    expect(count(s2, 'CurveData'), 'the first path was destroyed rather than superseded').toBe(2);
+    const curves = Object.values(s2.nodes).filter((n) => n.type === 'CurveData').length;
+    expect(curves, 'the first path was destroyed rather than superseded').toBe(2);
     // The re-point is a setParam, not an addNode: this is the mechanism, asserted.
     expect(
       ops2.some((o): o is SetParamOp => o.type === 'setParam' && o.paramPath === 'curve'),

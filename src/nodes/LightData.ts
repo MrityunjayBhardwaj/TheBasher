@@ -2,9 +2,11 @@
 // (#386, Stage C · C3).
 //
 // A light's substance is its SHADING — which kind it is (Directional/Point/Spot/
-// Area), how bright, what colour, its falloff and aim. Where it sits in the world
-// is a pose the Object owns. This node owns the shading half and DELIBERATELY no
-// transform (position/rotation/scale live on the Object).
+// Area), how bright, what colour, its falloff. Where it sits in the world and which way
+// it shines is a pose the Object owns (#1765: its rotation or a Track-To turns it, down its
+// local −Z; a spot's `target` and an area light's `lookAt` were retired by format v27). This
+// node owns the shading half and DELIBERATELY no transform (position/rotation/scale live on
+// the Object).
 //
 // It is the SECOND non-mesh member of the `ObjectData` union (after CurveData):
 // like a curve it produces NO `MeshData` (a light is not render geometry). Unlike
@@ -63,10 +65,6 @@ export const LightDataParams = z.object({
   penumbra: z.number().min(0).max(1).default(0.1),
   width: z.number().positive().default(2),
   height: z.number().positive().default(2),
-  /** Spot aim point (authored shading orientation, not TRS — parity-first, #386). */
-  target: z.tuple([z.number(), z.number(), z.number()]).default([0, 0, 0]),
-  /** Area aim point (same POSE-adjacent-but-shading-authoritative role as spot's target). */
-  lookAt: z.tuple([z.number(), z.number(), z.number()]).default([0, 0, 0]),
   /** #205 — optional HDR/EXR emitter texture (env-hdri assetRef) for a studio area light. */
   tex: z.string().optional(),
 });
@@ -93,8 +91,6 @@ export const LightDataNode: NodeDefinition<LightDataParams, LightDataValue> = {
     penumbra: 'light',
     width: 'light',
     height: 'light',
-    target: 'light',
-    lookAt: 'light',
     tex: 'light',
   },
   evaluate(params) {
@@ -113,8 +109,6 @@ export const LightDataNode: NodeDefinition<LightDataParams, LightDataValue> = {
       penumbra: params.penumbra ?? 0.1,
       width: params.width ?? 2,
       height: params.height ?? 2,
-      target: params.target ?? [0, 0, 0],
-      lookAt: params.lookAt ?? [0, 0, 0],
       // Pass the emitter texture ref through unchanged. undefined → plain light.
       ...(params.tex ? { tex: params.tex } : {}),
     };

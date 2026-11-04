@@ -89,7 +89,8 @@ test('#1309 — a missing HDRI is drawn magenta by the world and a studio light,
     objectId: 'p1309_light',
     lightKind: 'Area',
     position: [3, 4, 3],
-    shading: { intensity: 5, color: '#ffffff', width: 2, height: 2, lookAt: [0, 0, 0] },
+    shading: { intensity: 5, color: '#ffffff', width: 2, height: 2 },
+    aimAt: [0, 0, 0],
   });
   const assetRef = await page.evaluate(
     async ({ lightOps, dataId }) => {

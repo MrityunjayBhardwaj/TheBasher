@@ -22,13 +22,24 @@ test('View ▸ Editor Space ▸ Graph draws the scene and shares the selection',
   await expect(layout).toHaveAttribute('data-space', 'graph');
   await expect(page.getByTestId('graph-view')).toBeVisible();
 
-  // Every node of the starter scene is drawn (nothing in it is hidden).
-  const total = await page.evaluate(
-    () => Object.keys((window as unknown as DagWindow).__basher_dag!.getState().state.nodes).length,
-  );
-  expect(total).toBeGreaterThan(0);
-  await expect(page.locator('[data-graph-node]')).toHaveCount(total);
-  await expect(page.getByTestId('graph-view-counts')).toContainText(`${total} nodes`);
+  // Every node of the starter scene is drawn except its constraints (#1765: the sun comes aimed
+  // by a Track-To), which are animation, hidden until asked for and counted as hidden. Which
+  // types are constraints comes from the product's own list, so the expectation follows the
+  // default project as it gains or loses one.
+  const { total, constraints } = await page.evaluate(async () => {
+    const { ADDABLE_CONSTRAINTS } = await import('/src/app/constraintStack.ts');
+    const types = new Set(ADDABLE_CONSTRAINTS.map((c: { type: string }) => c.type));
+    const nodes = Object.values(
+      (window as unknown as DagWindow).__basher_dag!.getState().state.nodes,
+    ) as { type: string }[];
+    return { total: nodes.length, constraints: nodes.filter((n) => types.has(n.type)).length };
+  });
+  expect(total).toBeGreaterThan(constraints);
+  await expect(page.locator('[data-graph-node]')).toHaveCount(total - constraints);
+  const counts = page.getByTestId('graph-view-counts');
+  await expect(counts).toContainText(`${total - constraints} nodes`);
+  if (constraints > 0) await expect(counts).toContainText(`${constraints} animation hidden`);
+  else await expect(counts).not.toContainText('animation hidden');
 
   // Graph → app: clicking the camera node selects it in the app.
   const camera = page.locator('[data-graph-node="n_camera"]');

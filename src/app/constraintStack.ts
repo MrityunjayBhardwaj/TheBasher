@@ -31,6 +31,9 @@ import {
   nextConstraintOrder,
 } from './nodeConstraints';
 import type { StackRowEntry } from './OperatorStackRows';
+import { AIMABLE_LIGHT_KINDS, lightAimOps } from './lightAim';
+import { lightKindOf } from './lightNode';
+import { linkIntoActiveCollection } from './collections';
 import { resolveWorldTransform } from './resolveWorldTransform';
 import { readCurveSampleAt } from './curveSampleSource';
 import { nodeDisplayName } from './sceneTreeWalk';
@@ -167,9 +170,22 @@ export function buildAddConstraintOps(
   targetId: string,
   constraintType: string,
   explicitId?: string,
+  /** The node the constraint points at (its `pointer` param), when the caller already has one. */
+  pointee?: string,
 ): { ops: Op[]; constraintId: string } | null {
   if (!state.nodes[targetId]) return null;
   const constraintId = explicitId ?? newId('con');
+  // #1765 — a light's Track-To always aims at an object. Given none, it gets an empty at the
+  // world origin, named after the light, that the user moves to re-aim it (`lightAimOps`, the
+  // one way a light is aimed).
+  if (
+    !pointee &&
+    constraintType === 'TrackTo' &&
+    AIMABLE_LIGHT_KINDS.has(lightKindOf(state.nodes, targetId) ?? '')
+  ) {
+    const aim = lightAimOps(state, targetId, { at: [0, 0, 0], trackToId: constraintId });
+    return { ops: linkIntoActiveCollection(state, aim.ops, [aim.nullId]), constraintId };
+  }
   return {
     ops: [
       {
@@ -179,7 +195,11 @@ export function buildAddConstraintOps(
         // #317 — the top-of-stack rule now has ONE home (`nextConstraintOrder`), shared
         // with the sidecar creation sites (camera look-at, studio lights) so every road
         // that adds a constraint lands it on top the same way. Pose twin of nextDriverOrder.
-        params: { target: targetId, order: nextConstraintOrder(state.nodes, targetId) },
+        params: {
+          target: targetId,
+          order: nextConstraintOrder(state.nodes, targetId),
+          ...(pointee ? { [addableConstraint(constraintType)?.pointer ?? '']: pointee } : {}),
+        },
       },
     ],
     constraintId,

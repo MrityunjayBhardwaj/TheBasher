@@ -74,7 +74,8 @@ test('a light resolves world transform == its live rendered RectAreaLight (seam 
     objectId: 'p210_light',
     lightKind: 'Area',
     position: pos,
-    shading: { intensity: 5, color: '#ffffff', width: 2, height: 2, lookAt: [0, 0, 0] },
+    shading: { intensity: 5, color: '#ffffff', width: 2, height: 2 },
+    aimAt: [0, 0, 0],
   });
   // #1089 — how many RectAreaLights the scene draws BEFORE this row adds one, so the wait
   // below keys on OUR light arriving rather than on any light already standing there.

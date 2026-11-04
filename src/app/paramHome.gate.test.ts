@@ -140,7 +140,7 @@ describe('the collisions that make per-node homes necessary', () => {
   const routes = (nodeType: string, key: string) =>
     homeOf(nodeType, key, declaredSectionsOf(nodeType));
 
-  it('lookAt lands on the light card, and a camera lens has none (#1764)', () => {
+  it('no node routes a lookAt any more: not a camera lens (#1764), not a light (#1765)', () => {
     // This was a THREE-way collision, and it shrank exactly as the previous note here
     // predicted. The fused AreaLight held the 'transform' corner until #365 Phase 5 deleted
     // it; PerspectiveCamera was the last registered node routing `lookAt` there, and #599
@@ -149,9 +149,11 @@ describe('the collisions that make per-node homes necessary', () => {
     // The claim the case exists to make survives at two: `lookAt` still lands on different
     // cards on different nodes, so a per-node home is still what disambiguates it.
     // #1764 — the camera's lens lost its `lookAt` (a camera aims by its rotation or a Track-To),
-    // so the two-node collision this case recorded is down to one owner.
+    // so the two-node collision this case recorded is down to one owner. #1765 — and the
+    // light's data lost its `lookAt` the same way (a light is turned by its rotation or a
+    // Track-To), so the collision this case was written for has no owner left at all.
     expect(routes('CameraData', 'lookAt')).toBeNull();
-    expect(routes('LightData', 'lookAt')).toBe('light');
+    expect(routes('LightData', 'lookAt')).toBeNull();
   });
   // `roll` was the second collision, PerspectiveCamera('transform') against
   // CameraData('camera'). With the fused camera deleted (#599), CameraData is its only owner

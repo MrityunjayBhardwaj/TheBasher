@@ -68,12 +68,21 @@ const DOORS: Record<string, Door> = {
   },
   'src/viewport/SceneFromDAG.tsx': {
     // 2 → 1 (#1053): the bone-rotation accessor lived in the clone renderer, deleted with the
-    // clone road.
+    // clone road. #1765: the one left is `turnedLightValue`, which replaced the sun's look-at
+    // read one for one.
     count: 1,
     kind: 'POINT_IN_TIME',
     why:
-      "A per-frame render read: a look-at direction folded into one frame's TRS. It is " +
-      'not stored as a keyframe, so nothing interpolates between two of them.',
+      "A per-frame render read: a Track-To'd light's turn written into one frame's helper " +
+      'value. It is not stored as a keyframe, so nothing interpolates between two of them.',
+  },
+  'src/core/project/migrations.ts': {
+    count: 1,
+    kind: 'POINT_IN_TIME',
+    why:
+      "#1765 — the v26 → v27 step writes each sun's new orientation once, as its Object's " +
+      '`rotation` (through its mode). One stored value, never sampled into a channel; a sun whose ' +
+      'rotation is keyed keeps its keys and is named in the warning.',
   },
   'src/app/resolveTrackTo.ts': {
     count: 1,

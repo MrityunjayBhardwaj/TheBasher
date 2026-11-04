@@ -95,7 +95,6 @@ export interface SpotLightValue extends RotationModeFields {
   readonly kind: 'SpotLight';
   readonly intensity: number;
   readonly position: Vec3;
-  readonly target: Vec3;
   readonly rotation: Vec3;
   readonly scale: Vec3;
   readonly color: string;
@@ -114,7 +113,6 @@ export interface AreaLightValue extends RotationModeFields {
   readonly color: string;
   readonly width: number;
   readonly height: number;
-  readonly lookAt: Vec3;
   /** #205 — optional HDR/EXR emitter texture (env-hdri assetRef). When present,
    *  the renderer expands this into the §1.5 studio-light PAIR (a mean-radiance
    *  tinted RectAreaLight + an emissive textured card). Absent → plain light. */
@@ -2225,8 +2223,6 @@ export interface LightDataValue {
   readonly penumbra: number;
   readonly width: number;
   readonly height: number;
-  readonly target: Vec3;
-  readonly lookAt: Vec3;
   /** #205 — optional HDR/EXR emitter texture (env-hdri assetRef) for a studio area light. */
   readonly tex?: string;
 }

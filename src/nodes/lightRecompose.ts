@@ -16,9 +16,9 @@
 // light, keep the original".
 //
 // The recompose merges the Object's TRS (position/rotation/scale) back onto the flat
-// value and copies the per-kind shading fields off the LightData. `target` (spot) /
-// `lookAt` (area) live on the LightData (authored shading orientation, parity-first
-// #386) and are merged back here.
+// value and copies the per-kind shading fields off the LightData. Which way a light
+// shines is the Object's rotation (or its Track-To), merged like the rest of its TRS
+// (#1765: a spot's `target` and an area light's `lookAt` were retired by format v27).
 
 import { rotationModeFieldsOf } from './rotationMode';
 import type { LightDataValue, LightValue, ObjectValue, Vec3 } from './types';
@@ -76,7 +76,6 @@ export function recomposeLightObject(value: unknown): LightValue | null {
         kind: KIND_OF.Spot,
         intensity: d.intensity,
         position,
-        target: d.target,
         rotation,
         ...mode,
         scale,
@@ -97,7 +96,6 @@ export function recomposeLightObject(value: unknown): LightValue | null {
         color: d.color,
         width: d.width,
         height: d.height,
-        lookAt: d.lookAt,
         ...(d.tex ? { tex: d.tex } : {}),
       };
   }
