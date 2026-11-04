@@ -112,12 +112,21 @@ async function expectWhereBlenderPutsThem(page: Page): Promise<void> {
 async function importFixture(page: Page): Promise<void> {
   await openStarter(page);
   // Clear the ground the model stands on: the starter boxes aside, the camera and light (whose
-  // helpers span the origin and would take the click) removed.
+  // helpers span the origin and would take the click) removed — the light with its Track-To
+  // first (a constraint may not outlive its owner), and the light's aim empty, which sits at the
+  // origin.
   await page.evaluate(() => {
     const dag = (window as unknown as W).__basher_dag.getState();
     const d = (op: unknown) => dag.dispatch(op, 'user', 'clear');
     for (const b of ['n_box', 'n_box_2'])
       d({ type: 'setParam', nodeId: b, paramPath: 'position', value: [20, 0, 0] });
+    d({ type: 'removeNode', nodeId: 'n_light_aim' });
+    d({
+      type: 'disconnect',
+      from: { node: 'n_light_target', socket: 'out' },
+      to: { node: 'n_scene', socket: 'children' },
+    });
+    d({ type: 'removeNode', nodeId: 'n_light_target' });
     for (const [n, s] of [
       ['n_camera', 'camera'],
       ['n_light', 'lights'],

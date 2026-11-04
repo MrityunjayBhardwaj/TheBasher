@@ -5,6 +5,13 @@
 // same way a mesh is picked) — so NO onClick here; the invisible pick sphere just makes
 // the tiny glyph an easy click target (mirrors the light helpers' pick boost).
 //
+// The lines and the centre dot are pure visuals (no raycast): three picks a line by
+// `raycaster.params.Line.threshold`, 1 world unit by default (three Raycaster.js), so three
+// short axis lines would claim every click within a unit of the empty — out-picking a cube it
+// sits inside and blanketing empty screen so a click there never clears the selection (the
+// #250 frustum trap, again). The invisible sphere is the ONE pick surface; inside a mesh, the
+// mesh in front of it wins, as an empty inside a mesh does in Blender.
+//
 // Rotation params are DEGREES (rotation.ts); the group wants radians.
 //
 // REF: src/nodes/types.ts (NullValue); src/viewport/LightHelpers.tsx (the glyph +
@@ -21,7 +28,9 @@ const X_COLOR = '#ff3653';
 const Y_COLOR = '#8adb00';
 const Z_COLOR = '#2c8fff';
 
-/** A 2-point line from the origin along an axis (a bare BufferGeometry line). */
+const NO_RAYCAST = () => null;
+
+/** A 2-point line from the origin along an axis (one segment; `lineSegments` so TSX types it as three, not SVG). */
 function AxisLine({ to, color }: { to: [number, number, number]; color: string }) {
   const geom = useMemo(() => {
     const g = new THREE.BufferGeometry();
@@ -29,10 +38,10 @@ function AxisLine({ to, color }: { to: [number, number, number]; color: string }
     return g;
   }, [to[0], to[1], to[2]]); // eslint-disable-line react-hooks/exhaustive-deps
   return (
-    <line>
+    <lineSegments raycast={NO_RAYCAST}>
       <primitive object={geom} attach="geometry" />
       <lineBasicMaterial color={color} />
-    </line>
+    </lineSegments>
   );
 }
 
@@ -46,12 +55,12 @@ export function NullGlyphR({ value }: { value: NullValue }) {
       <AxisLine to={[0, AXIS_LEN, 0]} color={Y_COLOR} />
       <AxisLine to={[0, 0, AXIS_LEN]} color={Z_COLOR} />
       {/* small centre dot so the empty reads as an object, not just 3 lines */}
-      <mesh>
+      <mesh raycast={NO_RAYCAST}>
         <sphereGeometry args={[0.05, 12, 8]} />
         <meshBasicMaterial color="#e8e8ef" />
       </mesh>
-      {/* invisible pick boost — makes the tiny glyph an easy click target; selection
-          is handled by the enclosing SceneChildNode band, so no onClick here. */}
+      {/* invisible pick boost — the SOLE pick surface; selection is handled by the
+          enclosing SceneChildNode band, so no onClick here. */}
       <mesh>
         <sphereGeometry args={[0.28, 8, 6]} />
         <meshBasicMaterial transparent opacity={0} depthWrite={false} />

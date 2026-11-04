@@ -23,10 +23,13 @@ interface DupWindow {
   };
 }
 
+// #1765: the default scene also holds the sun's aim empty, which nothing here duplicates.
 const sceneChildren = (page: Page) =>
   page.evaluate(() => {
     const s = (window as unknown as DupWindow).__basher_dag.getState().state;
-    return (s.nodes[s.outputs.scene.node].inputs.children ?? []).map((c) => c.node);
+    return (s.nodes[s.outputs.scene.node].inputs.children ?? [])
+      .map((c) => c.node)
+      .filter((id) => id !== 'n_light_target');
   });
 const primary = (page: Page) =>
   page.evaluate(() => (window as unknown as DupWindow).__basher_selection.getState().primaryNodeId);
