@@ -27,6 +27,7 @@ import { ComfyUIWorkflowNode } from './ComfyUIWorkflow';
 import { ColorCorrectNode } from './ColorCorrect';
 import { CompositionNode } from './Composition';
 import { COMPUTE_NODES } from './computeNodes';
+import { TRANSFORM_NODES } from './transformNodes';
 import { LagNode } from './Lag';
 import { SolverNode, BodyInputNode, BodyInputVecNode } from './Solver';
 import { TemplateDefinitionNode } from './TemplateDefinition';
@@ -260,6 +261,9 @@ const ALL: NodeDefinition[] = [
   // over the ONE shared value-math core (valueMath.ts). A driver (Inc 2) wires one
   // onto a target param via the pull rail.
   ...COMPUTE_NODES,
+  // Transform vocabulary (#1784) — a whole transform (Matrix4) and a rotation (Quaternion)
+  // as values: Blender's matrix nodes over the pure transformMath.ts.
+  ...TRANSFORM_NODES,
   // Stateful op — Lag (epic #290 Epic 2, #297). Unlike the stateless compute nodes,
   // its output at frame N depends on its output at N−1 (a first-order recurrence).
   // Declares `stateful: true`; the real value is produced by the replay seam

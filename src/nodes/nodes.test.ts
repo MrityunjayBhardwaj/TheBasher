@@ -89,12 +89,14 @@ const ALL_TYPES = [
   // #1451 — Collections (#397): named membership, no transform.
   'Collection',
   'ColorCorrect',
+  'CombineTransform', // #1784
   'ComfyUIWorkflow',
   'ComponentGroupOp',
   'Composition',
   'CurveData',
   'CurveRemap',
   'DepthPass',
+  'EulerToRotation', // #1784
   'Fit',
   'FollowPath',
   'GltfAsset',
@@ -102,6 +104,7 @@ const ALL_TYPES = [
   'GltfSkeleton',
   'Group',
   'IDPass',
+  'InvertTransform', // #1784
   'KeyframeChannelColor',
   'KeyframeChannelImage',
   'KeyframeChannelNumber',
@@ -131,6 +134,7 @@ const ALL_TYPES = [
   // #902 — text-to-motion as a node, so a generated clip has a producer the
   // graph can re-cook instead of a call whose arguments were discarded.
   'MotionGenerate',
+  'MultiplyTransforms', // #1784
   'Navmesh',
   'Noise',
   'NormalPass',
@@ -149,9 +153,11 @@ const ALL_TYPES = [
   'RetargetClip',
   // #1357 — rig logic as one sub-network on the pose wire.
   'Rig',
+  'RotationToEuler', // #1784
   'SampleGeometry',
   'Scatter',
   'Scene',
+  'SeparateTransform', // #1784
   // #394 S3c — the wholesale half of the material lane. NO inspector section: it is a
   // graph node like its reference (Blender GN `Set Material`), authored by the edge.
   'SetMaterialOp',
@@ -166,6 +172,8 @@ const ALL_TYPES = [
   'TrackTo',
   'Transform',
   'TransformClip',
+  'TransformDirection', // #1784
+  'TransformPoint', // #1784
   'UVProjectModifier',
   'Vec3Math',
   'VecBreak3',

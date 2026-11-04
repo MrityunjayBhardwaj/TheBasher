@@ -63,7 +63,9 @@ const KINDS = [
 ];
 
 /** The compute vocabulary. Each is measured THROUGH a driver onto a Sphere, since a compute
- *  node draws nothing of its own. Mirrors `COMPUTE_KINDS` in src/app/addPrimitives.ts. */
+ *  node draws nothing of its own. Mirrors `COMPUTE_KINDS` in src/app/addPrimitives.ts, less the
+ *  eight Transform nodes (#1784): they hold no params to measure, and four of them output only a
+ *  transform or a rotation, which no driver takes until #1785. */
 const COMPUTE = [
   'Math',
   'Fit',

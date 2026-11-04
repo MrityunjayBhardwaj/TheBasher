@@ -12,7 +12,7 @@
 // socket carries are Number (14 inputs, 14 outputs) and Vector3 (4 inputs, 6 outputs), plus
 // one input that takes either (`ParamDriver.in`). No socket carries a Color, a Boolean, a
 // Vector2 or a Quaternion; those live in params. So two pairs can meet, and both convert as
-// Blender converts them:
+// Blender converts them (true on that date; #1784 added Quaternion and Matrix4 sockets, below):
 //
 //   Number → Vector3   Blender's `float_to_float3` (`type_conversions.cc:50`): the number on
 //                      all three axes. Nothing is lost.
@@ -20,6 +20,24 @@
 //                      the three axes. #1549 refused this one, pointing at `VecBreak3`; #1590
 //                      follows the reference. A graph that wants one axis still wires a
 //                      `VecBreak3`.
+//
+// #1784 added the first sockets that carry a rotation (Quaternion) and a whole transform
+// (Matrix4), and with them Blender's conversions for those two (`type_conversions.cc:542-660`):
+//
+//   Number → Quaternion      `float_to_quaternion`: the number as an Euler on all three axes.
+//   Vector3 → Quaternion     `float3_to_quaternion`: the vector read as an Euler.
+//   Quaternion → Vector3     `quaternion_to_float3`: the rotation written as an Euler.
+//   Matrix4 → Quaternion     `float4x4_to_quaternion`: the transform's rotation part.
+//   Quaternion → Matrix4     `quaternion_to_float4x4`: a pure rotation.
+//
+//   Blender's Euler vectors are radians; Basher's are DEGREES, in the order an object's
+//   `rotation` uses (transformMath.ts), so "a vector read as an Euler" means here what it means
+//   on an object. Blender has NO conversion from a rotation to a number, or between a transform
+//   and a number or a vector, and neither does this table: those wires are refused.
+//   One stated difference: for a MIRRORED transform (negative determinant) Matrix4 → Quaternion
+//   gives Separate Transform's rotation (the basis with the mirror taken out). Blender's
+//   conversion skips that step and runs its Euler formulas on an improper matrix, which has no
+//   rotation to find; matching that would copy an accident.
 //
 // ── A TYPE THE SOCKET ALREADY TAKES IS NEVER CONVERTED ────────────────────────────────────
 //
@@ -44,6 +62,14 @@ import { getNodeType } from './registry';
 import { acceptedTypes, inputAccepts } from './socketMembership';
 import type { EvaluableState } from './state';
 import type { InputDescriptor, NodeId, SocketTypeName } from './types';
+import {
+  composeTransform,
+  eulerToQuat,
+  isMat4,
+  isQuat,
+  quatToEuler,
+  separateTransform,
+} from '../math/transformMath';
 
 type Convert = (value: unknown) => unknown;
 
@@ -52,6 +78,11 @@ type Convert = (value: unknown) => unknown;
 const CONVERSIONS: Readonly<Record<string, Convert>> = {
   'Number>Vector3': (v) => (typeof v === 'number' ? [v, v, v] : v),
   'Vector3>Number': (v) => (isVec3(v) ? (v[0] + v[1] + v[2]) / 3 : v),
+  'Number>Quaternion': (v) => (typeof v === 'number' ? eulerToQuat([v, v, v]) : v),
+  'Vector3>Quaternion': (v) => (isVec3(v) ? eulerToQuat(v) : v),
+  'Quaternion>Vector3': (v) => (isQuat(v) ? quatToEuler(v) : v),
+  'Matrix4>Quaternion': (v) => (isMat4(v) ? separateTransform(v).rotation : v),
+  'Quaternion>Matrix4': (v) => (isQuat(v) ? composeTransform([0, 0, 0], v, [1, 1, 1]) : v),
 };
 
 function isVec3(v: unknown): v is [number, number, number] {

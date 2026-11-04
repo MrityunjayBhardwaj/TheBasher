@@ -83,6 +83,15 @@ export const COMPUTE_KINDS = [
   'MakeVec3',
   'VecBreak3',
   'Vec3Math',
+  // Transform compute (Matrix4 rail, #1784) — Blender's matrix nodes, plus Euler ↔ rotation.
+  'CombineTransform',
+  'SeparateTransform',
+  'MultiplyTransforms',
+  'InvertTransform',
+  'TransformPoint',
+  'TransformDirection',
+  'EulerToRotation',
+  'RotationToEuler',
   // Geometry query — SampleGeometry reads the ground point under a query node's world XZ;
   // its terrain/query are picked in the inspector.
   'SampleGeometry',
@@ -557,6 +566,14 @@ function isCompute(kind: PrimitiveKind): boolean {
     kind === 'MakeVec3' ||
     kind === 'VecBreak3' ||
     kind === 'Vec3Math' ||
+    kind === 'CombineTransform' ||
+    kind === 'SeparateTransform' ||
+    kind === 'MultiplyTransforms' ||
+    kind === 'InvertTransform' ||
+    kind === 'TransformPoint' ||
+    kind === 'TransformDirection' ||
+    kind === 'EulerToRotation' ||
+    kind === 'RotationToEuler' ||
     kind === 'Lag'
   );
 }
@@ -675,6 +692,22 @@ function humanLabel(kind: PrimitiveKind): string {
       return 'Break Vec3 node';
     case 'Vec3Math':
       return 'Vec3 Math node';
+    case 'CombineTransform':
+      return 'Combine Transform node';
+    case 'SeparateTransform':
+      return 'Separate Transform node';
+    case 'MultiplyTransforms':
+      return 'Multiply Transforms node';
+    case 'InvertTransform':
+      return 'Invert Transform node';
+    case 'TransformPoint':
+      return 'Transform Point node';
+    case 'TransformDirection':
+      return 'Transform Direction node';
+    case 'EulerToRotation':
+      return 'Euler to Rotation node';
+    case 'RotationToEuler':
+      return 'Rotation to Euler node';
     case 'SampleGeometry':
       return 'Sample Geometry node';
     case 'Lag':
@@ -807,6 +840,14 @@ function paramsFor(kind: PrimitiveKind, position: Vec3): Record<string, unknown>
     case 'MakeVec3':
     case 'VecBreak3':
     case 'Vec3Math':
+    case 'CombineTransform':
+    case 'SeparateTransform':
+    case 'MultiplyTransforms':
+    case 'InvertTransform':
+    case 'TransformPoint':
+    case 'TransformDirection':
+    case 'EulerToRotation':
+    case 'RotationToEuler':
     case 'SampleGeometry':
     case 'Lag':
     case 'Solver':

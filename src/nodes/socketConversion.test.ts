@@ -158,10 +158,13 @@ describe('a type a socket already takes is never converted (#1549)', () => {
     expect(sample(vector)).toEqual([7, 0, 0]);
   });
 
-  it('an input that takes both has no conversion at all', () => {
+  it('an input that takes both converts neither into the other', () => {
     const into = requireNodeType('ParamDriver').inputs.in;
     expect(acceptedTypes(into)).toEqual(['Number', 'Vector3']);
-    expect(conversionsInto(into)).toBeNull();
+    // #1784: the only conversion into it is from a type it does NOT take — a rotation arrives
+    // as an Euler in degrees (Blender's `quaternion_to_float3`), what an object's `rotation`
+    // stores. Number and Vector3 still arrive as they are.
+    expect([...(conversionsInto(into)?.keys() ?? [])]).toEqual(['Quaternion']);
   });
 });
 
@@ -239,7 +242,7 @@ describe('a wire that cannot convert says why (#1549)', () => {
 });
 
 describe('every pair of plain-value types that can meet has an answer (#1549)', () => {
-  it('each is taken as it is or converted; none is refused', () => {
+  it('each is taken as it is, converted, or refused exactly where Blender refuses it', () => {
     // The plain-value types any socket carries. A new one (a Color socket, a Boolean socket)
     // lands here with no answer for its pairs and reddens this test.
     const VALUE: readonly SocketTypeName[] = [
@@ -247,6 +250,7 @@ describe('every pair of plain-value types that can meet has an answer (#1549)', 
       'Vector2',
       'Vector3',
       'Quaternion',
+      'Matrix4',
       'Color',
       'Boolean',
     ];
@@ -263,20 +267,33 @@ describe('every pair of plain-value types that can meet has an answer (#1549)', 
           inputs.push({ at: `${id}.${socket}`, desc });
       }
     }
-    expect([...produced].sort()).toEqual(['Number', 'Vector3']);
-    expect(inputs).toHaveLength(19);
+    expect([...produced].sort()).toEqual(['Matrix4', 'Number', 'Quaternion', 'Vector3']);
+    expect(inputs).toHaveLength(32);
 
     const answers: Record<string, number> = { taken: 0, converted: 0, refused: 0 };
+    const refused = new Set<string>();
     for (const { desc } of inputs) {
       for (const from of produced) {
         if (acceptedTypes(desc).includes(from)) answers.taken += 1;
         else if (inputTakes(desc, from)) answers.converted += 1;
-        else answers.refused += 1;
+        else {
+          answers.refused += 1;
+          refused.add(`${from}>${acceptedTypes(desc).join('|')}`);
+        }
       }
     }
-    // 19 inputs × 2 produced types = 38. Number inputs (14): take a Number, convert a Vector3
-    // (#1590; refused before). Vector3 inputs (4): take a Vector3, convert a Number. The one
-    // that takes both: 2 taken.
-    expect(answers).toEqual({ taken: 20, converted: 18, refused: 0 });
+    // 32 inputs × 4 produced types = 128 = taken + converted + refused. The inputs: Number 14,
+    // Vector3 9, Matrix4 6, Quaternion 2, the driver's Number|Vector3 1. Before #1784 nothing
+    // was refused; the transform and rotation types bring Blender's own refusals with them, and
+    // only those (`type_conversions.cc` registers none of these pairs).
+    expect(answers).toEqual({ taken: 33, converted: 45, refused: 50 });
+    expect([...refused].sort()).toEqual([
+      'Matrix4>Number',
+      'Matrix4>Number|Vector3',
+      'Matrix4>Vector3',
+      'Number>Matrix4',
+      'Quaternion>Number',
+      'Vector3>Matrix4',
+    ]);
   });
 });

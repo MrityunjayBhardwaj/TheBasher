@@ -214,6 +214,15 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
   LightRig: '[layout] name=layout center=(unrouted) radius=(unrouted)',
   LocomotionState: '[] speed=(unrouted) loop=(unrouted)',
   MakeVec3: '[]',
+  // ADDED at #1784 (the fifth arm) — the Transform vocabulary. Paramless, like MakeVec3.
+  CombineTransform: '[]',
+  SeparateTransform: '[]',
+  MultiplyTransforms: '[]',
+  InvertTransform: '[]',
+  TransformPoint: '[]',
+  TransformDirection: '[]',
+  EulerToRotation: '[]',
+  RotationToEuler: '[]',
   ComponentGroupOp: '[modifier] name=modifier muted=modifier scope=modifier',
   MaskModifier: '[modifier] keep=modifier muted=modifier scope=modifier',
   Material: '[material] material=material',
@@ -464,4 +473,8 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
 // turned by its Object's rotation or a Track-To, and its data holds no aim. Removed, not moved,
 // so the `light` row loses its two cells:
 //   types 90 · routed 149 - 2 = 147 · unrouted 259
-export const GOLDEN_TOTALS = { types: 90, routed: 147, unrouted: 259 } as const;
+// #1784 adds eight paramless node types (the Transform vocabulary): Combine/Separate Transform,
+// Multiply/Invert Transform(s), Transform Point/Direction, Euler to Rotation, Rotation to Euler.
+// No cells, so only the type count moves:
+//   types 90 + 8 = 98 · routed 147 · unrouted 259
+export const GOLDEN_TOTALS = { types: 98, routed: 147, unrouted: 259 } as const;

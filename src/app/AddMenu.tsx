@@ -97,6 +97,16 @@ const GROUPS: MenuGroup[] = [
       { kind: 'MakeVec3', label: 'Make Vec3' },
       { kind: 'VecBreak3', label: 'Break Vec3' },
       { kind: 'Vec3Math', label: 'Vec3 Math' },
+      // Transform (Matrix4 rail, #1784) — build, take apart, combine and apply a whole
+      // transform; rotations as quaternions.
+      { kind: 'CombineTransform', label: 'Combine Transform' },
+      { kind: 'SeparateTransform', label: 'Separate Transform' },
+      { kind: 'MultiplyTransforms', label: 'Multiply Transforms' },
+      { kind: 'InvertTransform', label: 'Invert Transform' },
+      { kind: 'TransformPoint', label: 'Transform Point' },
+      { kind: 'TransformDirection', label: 'Transform Direction' },
+      { kind: 'EulerToRotation', label: 'Euler to Rotation' },
+      { kind: 'RotationToEuler', label: 'Rotation to Euler' },
       // NOTE — SampleGeometry (the Ray op) is a registered, seam-wired, agent-authorable
       // substrate node, but it is deliberately NOT surfaced here yet: a raw geometry op
       // belongs on a node-graph / VEX-VOP authoring surface (which Basher doesn't have),
