@@ -233,6 +233,8 @@ describe('#1765 v26 → v27: every light shines where it shone', () => {
   );
 
   // A captured example is stored already converted (re-captured through this step).
+  // #1800 — this builds every captured example project, which alone takes about vitest's
+  // default 5 s; the timeout covers that setup, not the check.
   it('the captured example is stored converted: no light data holds an aim point', async () => {
     for (const id of CAPTURED_EXAMPLE_IDS) {
       const s = (await buildExampleProject(id)).state;
@@ -243,7 +245,7 @@ describe('#1765 v26 → v27: every light shines where it shone', () => {
         expect(n.params, `${id} ${n.id}`).not.toHaveProperty('lookAt');
       }
     }
-  });
+  }, 30_000);
 
   it('a spot aimed at a point, and an area light at another', () => {
     let a = withLight({ objectId: 'spot', lightKind: 'Spot', position: [4, 6, 2] });
