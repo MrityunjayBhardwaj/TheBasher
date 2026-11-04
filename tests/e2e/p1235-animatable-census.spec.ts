@@ -795,6 +795,29 @@ test(TITLE, async ({ page }) => {
               setting.push(`${wPath}=1`);
             }
           }
+          // #1783 — a Track-To's influence blends from its object's own turn to the aim, so it
+          // shows only where the two differ. The default sun's own rotation IS its aim (kept so
+          // saved files look the same), and a key on its influence moves nothing. Turn the object
+          // for the measurement, record that it needed it, and turn it back after.
+          let ownTurn: { target: string; was: unknown[] } | null = null;
+          if (node.type === 'TrackTo' && path === 'influence') {
+            const target = node.params.target as string;
+            const was = (dag().state.nodes[target] as Loose | undefined)?.params?.rotation;
+            if (Array.isArray(was) && was.length === 3) {
+              dag().dispatch(
+                {
+                  type: 'setParam',
+                  nodeId: target,
+                  paramPath: 'rotation',
+                  value: [was[0] + 40, was[1], was[2]],
+                },
+                'user',
+                'census',
+              );
+              setting.push(`${target}.rotation turned off the aim`);
+              ownTurn = { target, was };
+            }
+          }
           const cam = posingCamera(id);
           if (cam) {
             w.__basher_setActiveCamera(cam);
@@ -834,6 +857,17 @@ test(TITLE, async ({ page }) => {
               setting,
               note: 'channel refused ' + JSON.stringify(res)?.slice(0, 120),
             });
+            if (ownTurn)
+              dag().dispatch(
+                {
+                  type: 'setParam',
+                  nodeId: ownTurn.target,
+                  paramPath: 'rotation',
+                  value: ownTurn.was,
+                },
+                'user',
+                'census',
+              );
             continue;
           }
           const { reach, back } = await reachOf(chId, pre, prePose, preComp);
@@ -892,6 +926,19 @@ test(TITLE, async ({ page }) => {
             const wPath = setting.find((x) => x.endsWith('=1'))!.slice(0, -2);
             dag().dispatch(
               { type: 'setParam', nodeId: id, paramPath: wPath, value: 0 },
+              'user',
+              'census',
+            );
+            await frames();
+          }
+          if (ownTurn) {
+            dag().dispatch(
+              {
+                type: 'setParam',
+                nodeId: ownTurn.target,
+                paramPath: 'rotation',
+                value: ownTurn.was,
+              },
               'user',
               'census',
             );

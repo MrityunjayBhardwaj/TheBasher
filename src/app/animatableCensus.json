@@ -301,6 +301,11 @@
         "reach": "scene",
         "driver": "scene"
       },
+      "influence": {
+        "kind": "number",
+        "reach": "scene",
+        "driver": "scene"
+      },
       "offset": {
         "kind": "number",
         "reach": null,
@@ -1822,6 +1827,11 @@
     "TrackTo": {
       "aimPoint": {
         "kind": "vec3",
+        "reach": "scene",
+        "driver": "scene"
+      },
+      "influence": {
+        "kind": "number",
         "reach": "scene",
         "driver": "scene"
       },
