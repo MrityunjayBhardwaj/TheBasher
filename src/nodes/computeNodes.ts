@@ -86,27 +86,72 @@ export const ClampNode: NodeDefinition<ClampParams, number> = {
 };
 
 // ── Fit — map an input range onto an output range (Houdini fit) ───────────────
+// #1802 — Fit is Basher's Map Range, and like Blender's it has a Vector mode
+// (node_shader_map_range.cc): `inVector` → `outVector`, each axis remapped through its own
+// range, clamp applied per axis. Number mode keeps the old sockets and params, and a Fit saved
+// before the mode existed reads as Number (#1801).
+const VEC3_PARAM = (d: number) => z.tuple([z.number(), z.number(), z.number()]).default([d, d, d]);
+export const FIT_DATA_TYPES = ['Number', 'Vector'] as const;
 export const FitParams = z.object({
   inMin: z.number().default(0),
   inMax: z.number().default(1),
   outMin: z.number().default(0),
   outMax: z.number().default(1),
   clamp: z.boolean().default(false),
+  dataType: z.enum(FIT_DATA_TYPES).default('Number'),
+  inMinVector: VEC3_PARAM(0),
+  inMaxVector: VEC3_PARAM(1),
+  outMinVector: VEC3_PARAM(0),
+  outMaxVector: VEC3_PARAM(1),
 });
 export type FitParams = z.infer<typeof FitParams>;
 
-export const FitNode: NodeDefinition<FitParams, number> = {
+const fitWhen = (dataType: (typeof FIT_DATA_TYPES)[number]) =>
+  ({ param: 'dataType', in: [dataType] }) as const;
+
+export const FitNode: NodeDefinition<FitParams, number | Vec3> = {
   type: 'Fit',
   version: 1,
   pure: true,
   cost: 'cheap',
   paramSchema: FitParams,
-  inputs: { in: { type: 'Number', cardinality: 'single', owns: 'always' } },
-  outputs: NUMBER_OUT,
-  evaluate: (params, inputs) =>
-    fit(num(inputs, 'in'), params.inMin, params.inMax, params.outMin, params.outMax, params.clamp),
+  inputs: {
+    in: { type: 'Number', cardinality: 'single', owns: 'always', available: fitWhen('Number') },
+    inVector: {
+      type: 'Vector3',
+      cardinality: 'single',
+      owns: 'always',
+      available: fitWhen('Vector'),
+    },
+  },
+  outputs: {
+    out: { type: 'Number', cardinality: 'single', available: fitWhen('Number') },
+    outVector: { type: 'Vector3', cardinality: 'single', available: fitWhen('Vector') },
+  },
+  evaluate: (params, inputs) => {
+    if (params.dataType === 'Vector') {
+      const v = vec3(inputs, 'inVector');
+      const axis = (i: 0 | 1 | 2) =>
+        fit(
+          v[i],
+          params.inMinVector[i],
+          params.inMaxVector[i],
+          params.outMinVector[i],
+          params.outMaxVector[i],
+          params.clamp,
+        );
+      return [axis(0), axis(1), axis(2)];
+    }
+    return fit(
+      num(inputs, 'in'),
+      params.inMin,
+      params.inMax,
+      params.outMin,
+      params.outMax,
+      params.clamp,
+    );
+  },
 };
-
 // ── Mix — blend a and b by `factor`: numbers, vectors or rotations ─────────────
 // #1801 — one Mix for every value type, as Blender's is: a socket per type (`a`/`b`/`out` for a
 // Number, `aVector`/… for a Vector3, `aRotation`/… for a Quaternion), and `dataType` decides

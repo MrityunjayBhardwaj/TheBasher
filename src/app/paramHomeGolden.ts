@@ -174,7 +174,8 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
   CurveData: '[curve] points=curve closed=curve resolution=curve',
   CurveRemap: '[] points=(unrouted)',
   DepthPass: '[render] width=(unrouted) height=(unrouted)',
-  Fit: '[] inMin=(unrouted) inMax=(unrouted) outMin=(unrouted) outMax=(unrouted) clamp=(unrouted)',
+  // APPENDED at #1802 — Fit's Vector mode: the mode and the four per-axis ranges.
+  Fit: '[] inMin=(unrouted) inMax=(unrouted) outMin=(unrouted) outMax=(unrouted) clamp=(unrouted) dataType=(unrouted) inMinVector=(unrouted) inMaxVector=(unrouted) outMinVector=(unrouted) outMaxVector=(unrouted)',
   FollowPath:
     '[constraint,driver] name=(unrouted) target=(unrouted) curve=(unrouted) evalTime=(unrouted) offset=(unrouted) mute=(unrouted) order=(unrouted)',
   GltfAsset:
@@ -480,4 +481,6 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
 //   types 90 + 8 = 98 · routed 147 · unrouted 259
 // #1801 appends `Mix.dataType`, unrouted like `factor` (the generic param list draws it):
 //   types 98 · routed 147 · unrouted 259 + 1 = 260
-export const GOLDEN_TOTALS = { types: 98, routed: 147, unrouted: 260 } as const;
+// #1802 appends Fit's `dataType` and its four per-axis ranges, unrouted like its neighbours:
+//   types 98 · routed 147 · unrouted 260 + 5 = 265
+export const GOLDEN_TOTALS = { types: 98, routed: 147, unrouted: 265 } as const;

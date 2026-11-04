@@ -279,8 +279,18 @@
         "reach": null,
         "driver": null
       },
+      "inMaxVector": {
+        "kind": "vec3",
+        "reach": null,
+        "driver": null
+      },
       "inMin": {
         "kind": "number",
+        "reach": null,
+        "driver": null
+      },
+      "inMinVector": {
+        "kind": "vec3",
         "reach": null,
         "driver": null
       },
@@ -289,8 +299,18 @@
         "reach": null,
         "driver": null
       },
+      "outMaxVector": {
+        "kind": "vec3",
+        "reach": null,
+        "driver": null
+      },
       "outMin": {
         "kind": "number",
+        "reach": null,
+        "driver": null
+      },
+      "outMinVector": {
+        "kind": "vec3",
         "reach": null,
         "driver": null
       }

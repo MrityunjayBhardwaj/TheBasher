@@ -373,6 +373,7 @@ describe('#1560 — every input socket says what it owns, or is listed as owning
         "CurveRemap.in:always",
         "EulerToRotation.euler:always",
         "Fit.in:always",
+        "Fit.inVector:always",
         "Group.children:always",
         "InvertTransform.transform:always",
         "Lag.in:always",
