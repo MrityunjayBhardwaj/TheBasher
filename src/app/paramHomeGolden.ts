@@ -176,7 +176,7 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
   DepthPass: '[render] width=(unrouted) height=(unrouted)',
   Fit: '[] inMin=(unrouted) inMax=(unrouted) outMin=(unrouted) outMax=(unrouted) clamp=(unrouted)',
   FollowPath:
-    '[constraint,driver] name=(unrouted) target=(unrouted) curve=(unrouted) evalTime=(unrouted) offset=(unrouted) mute=(unrouted) order=(unrouted)',
+    '[constraint,driver] name=(unrouted) target=(unrouted) curve=(unrouted) evalTime=(unrouted) offset=(unrouted) mute=(unrouted) influence=(unrouted) order=(unrouted)',
   GltfAsset:
     '[mesh,driver,material] assetRef=mesh nodeNameMap=(unrouted) childHierarchy=(unrouted) skins=(unrouted) suppressedChildren=(unrouted) keyByGltfNodeIndex=(unrouted)',
   GltfData:
@@ -280,7 +280,7 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
   TimeSource: '[]',
   Track: '[layout] name=layout strips=(unrouted) order=(unrouted) mute=(unrouted) solo=(unrouted)',
   TrackTo:
-    '[constraint,driver] name=(unrouted) target=(unrouted) aimNode=(unrouted) aimBone=(unrouted) aimPoint=(unrouted) aimSpace=(unrouted) up=(unrouted) roll=(unrouted) mute=(unrouted) order=(unrouted)',
+    '[constraint,driver] name=(unrouted) target=(unrouted) aimNode=(unrouted) aimBone=(unrouted) aimPoint=(unrouted) aimSpace=(unrouted) up=(unrouted) roll=(unrouted) mute=(unrouted) influence=(unrouted) order=(unrouted)',
   Transform: '[transform,constraint,driver] position=transform rotation=transform scale=transform',
   TransformClip:
     '[animate] name=(unrouted) duration=(unrouted) loop=(unrouted) keyframes=(unrouted)',
@@ -464,4 +464,7 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
 // turned by its Object's rotation or a Track-To, and its data holds no aim. Removed, not moved,
 // so the `light` row loses its two cells:
 //   types 90 · routed 149 - 2 = 147 · unrouted 259
-export const GOLDEN_TOTALS = { types: 90, routed: 147, unrouted: 259 } as const;
+// #1783 adds `TrackTo.influence` and `FollowPath.influence`, unrouted like every other constraint
+// param (the constraint card draws the node's own rows). Nothing existing moved:
+//   types 90 · routed 147 · unrouted 259 + 2 = 261
+export const GOLDEN_TOTALS = { types: 90, routed: 147, unrouted: 261 } as const;

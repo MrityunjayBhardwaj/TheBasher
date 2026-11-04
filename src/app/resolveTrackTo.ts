@@ -108,7 +108,12 @@ export function resolveTrackTo(
   rollDeg = 0,
 ): Vec3 | null {
   const q = trackToQuaternion(objPos, targetPos, up, rollDeg);
-  if (!q) return null;
+  return q ? aimEulerDeg(q) : null;
+}
+
+/** An aim quaternion as the Euler XYZ degrees `resolveTrackTo` returns — the one conversion, so a
+ *  blended aim (#1783) and an unblended one are written the same way. */
+export function aimEulerDeg(q: THREE.Quaternion): Vec3 {
   _e.setFromQuaternion(q, 'XYZ');
   return [
     THREE.MathUtils.radToDeg(_e.x),

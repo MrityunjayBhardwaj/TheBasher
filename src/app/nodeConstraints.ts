@@ -27,7 +27,7 @@
 import * as THREE from 'three';
 import type { DagState } from '../core/dag/state';
 import type { EvalCtx } from '../core/dag/types';
-import { resolveTrackTo, trackToUpIn } from './resolveTrackTo';
+import { aimEulerDeg, trackToQuaternion, trackToUpIn } from './resolveTrackTo';
 import {
   resolveWorldTransform,
   resolveParentWorldMatrix,
@@ -481,18 +481,28 @@ export function resolveConstraintRotation(
   // blending (two members on the SAME band) is a later phase.
   // #1770 — read before the fold: a member's up is in its own space, and this fold aims in the world.
   const parentWorld = resolveParentWorldMatrix(state, nodeId, ctx, cache);
-  let aimWorld: Vec3 | null = null;
+  // #1783 — each member's aim blends over the result of the members below it by its influence,
+  // by slerp, as Blender 5.1.1's constraint Influence does (measured: 0.5 over the own rotation is
+  // slerp(own, aim, 0.5) to 6 places; two stacked Track-Tos slerp in order). Influence 1 takes the
+  // aim exactly (the slerp's t = 1 is a copy), so a stack at full influence is the last-writer-wins
+  // fold it was, byte for byte. Below the first member is the object's own world rotation.
+  let aimQ: THREE.Quaternion | null = null;
   for (const typed of stack) {
     const member = evaluatedTrackTo(state, typed, ctx, cache);
-    const memberAim = resolveTrackTo(
+    const influence = constraintInfluence(state, member.nodeId, ctx, cache);
+    if (influence <= 0) continue;
+    const q = trackToQuaternion(
       aimOrigin,
       aimTargetWorld(state, member, ctx, cache),
       trackToUpIn(member.up, member.aimSpace, 'world', parentWorld),
       member.roll,
     );
-    if (memberAim) aimWorld = memberAim;
+    if (!q) continue; // degenerate — contributes nothing
+    if (influence >= 1) aimQ = q;
+    else aimQ = (aimQ ?? new THREE.Quaternion(...objWorld.quaternion)).clone().slerp(q, influence);
   }
-  if (!aimWorld) return null;
+  if (!aimQ) return null;
+  const aimWorld = aimEulerDeg(aimQ);
   // #267 (V45 #1 / I2 / C5) — the aim is derived in WORLD space, but the value we
   // return is written as the node's LOCAL rotation param, which then composes UNDER
   // the node's parent in the render (GroupR/TransformR `<group>`). Re-express the
@@ -551,12 +561,16 @@ export function resolveFollowedWorldPosition(
   if (stack.length === 0) return null;
   let world: Vec3 | null = null;
   let own: Vec3 | null = null;
+  let contributed = false;
   for (const member of stack) {
     if (!member.curve) continue; // degenerate — unbound path
+    const influence = constraintInfluence(state, member.nodeId, ctx, cache);
+    if (influence <= 0) continue;
     const resolved = resolveEvaluatedParam(state, member.nodeId, 'evalTime', ctx, cache);
     const evalTime = typeof resolved?.value === 'number' ? resolved.value : member.evalTime;
     const sample = readCurveSampleAt(state, member.curve, evalTime + member.offset, ctx, cache);
     if (!sample) continue;
+    contributed = true;
     // What this member places: the result of the members below, else the object's own world.
     if (!world) {
       own ??= resolveWorldTransform(state, nodeId, ctx, cache)?.position ?? [0, 0, 0];
@@ -570,9 +584,20 @@ export function resolveFollowedWorldPosition(
       ? new THREE.Matrix4().fromArray(curveWorld).setPosition(0, 0, 0)
       : new THREE.Matrix4();
     off.applyMatrix4(lin);
-    world = [sample.point[0] + off.x, sample.point[1] + off.y, sample.point[2] + off.z];
+    const full: Vec3 = [sample.point[0] + off.x, sample.point[1] + off.y, sample.point[2] + off.z];
+    // #1783 — blended over what is below by its influence, by lerp (Blender 5.1.1: an empty at
+    // (0, 4, 0) at influence 0.5 on a path to (10, 0, 0) draws at (5, 4, 0)). 1 is the path's
+    // result exactly.
+    world =
+      influence >= 1
+        ? full
+        : [
+            world[0] + (full[0] - world[0]) * influence,
+            world[1] + (full[1] - world[1]) * influence,
+            world[2] + (full[2] - world[2]) * influence,
+          ];
   }
-  return world;
+  return contributed ? world : null;
 }
 
 /**
@@ -674,6 +699,47 @@ export function resolveActiveTrackTo(
  * takes no ctx), so this is applied where a member is resolved. A setting with nothing on it
  * reads back as typed.
  */
+/**
+ * #1783 — how much constraint `constraintId` counts at `ctx`: its `influence`, keys and drivers
+ * applied, clamped to 0–1. A constraint saved before influence existed counts fully (1).
+ */
+export function constraintInfluence(
+  state: DagState,
+  constraintId: string,
+  ctx: EvalCtx,
+  cache?: EvaluatorCache,
+): number {
+  const raw =
+    resolveEvaluatedParam(state, constraintId, 'influence', ctx, cache)?.value ??
+    (state.nodes[constraintId]?.params as { influence?: unknown } | undefined)?.influence;
+  if (typeof raw !== 'number' || Number.isNaN(raw)) return 1;
+  return Math.min(1, Math.max(0, raw));
+}
+
+/** One live Track-To of an object's stack at `ctx`, bottom → top: its animatable settings
+ *  evaluated, its influence, and the WORLD point it aims at. For a road that aims in its own
+ *  space (the camera's, in its parent's), so it blends the same members the mesh road does. */
+export interface EvaluatedTrackTo extends ActiveConstraint {
+  readonly influence: number;
+  readonly targetWorld: Vec3;
+}
+
+export function resolveTrackToStack(
+  state: DagState,
+  nodeId: string,
+  ctx: EvalCtx,
+  cache?: EvaluatorCache,
+): EvaluatedTrackTo[] {
+  return constraintStackForTarget(state.nodes, nodeId).map((typed) => {
+    const member = evaluatedTrackTo(state, typed, ctx, cache);
+    return {
+      ...member,
+      influence: constraintInfluence(state, member.nodeId, ctx, cache),
+      targetWorld: aimTargetWorld(state, member, ctx, cache),
+    };
+  });
+}
+
 function evaluatedTrackTo(
   state: DagState,
   member: ActiveConstraint,

@@ -329,6 +329,9 @@ const TAKERS: string[] = [
   'aimPointWorld@src/app/nodeConstraints.ts',
   'evaluatedTrackTo@src/app/nodeConstraints.ts',
   'resolveActiveTrackTo@src/app/nodeConstraints.ts',
+  // #1783 — a constraint's influence, and a Track-To stack evaluated for the camera road.
+  'constraintInfluence@src/app/nodeConstraints.ts',
+  'resolveTrackToStack@src/app/nodeConstraints.ts',
   'appendComputedSourceRows@src/timeline/layerChannelRows.ts',
   'applyGhostPoseBand@src/viewport/DiffOverlay.tsx',
   'buildOverrideSlotOp@src/app/objectSlotAuthoring.ts',
