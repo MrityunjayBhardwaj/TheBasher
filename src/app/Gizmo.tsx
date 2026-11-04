@@ -645,16 +645,16 @@ function SingleGizmo() {
       // #1794 — the drag's turn applied to the own rotation: own' = (dragged · drawn⁻¹) · own.
       const turned: Vec3 =
         ownSeed?.drawnRot && ownSeed.ownRot
-          ? radVec3ToDeg(
-              ((e) => [e.x, e.y, e.z] as Vec3)(
-                new THREE.Euler().setFromQuaternion(
-                  quatOfDeg(dragged)
-                    .multiply(quatOfDeg(ownSeed.drawnRot).invert())
-                    .multiply(quatOfDeg(ownSeed.ownRot)),
-                  'XYZ',
-                ),
+          ? // Through the matrix → local-TRS conversion the gizmo already writes with.
+            matrixToLocalTRS(
+              new THREE.Matrix4().makeRotationFromQuaternion(
+                quatOfDeg(dragged)
+                  .multiply(quatOfDeg(ownSeed.drawnRot).invert())
+                  .multiply(quatOfDeg(ownSeed.ownRot)),
               ),
-            )
+              null,
+              null,
+            ).rotation
           : dragged;
       const value: Vec3 = maybeSnapTransform('rotate', turned);
       // #1153 — through the node's mode: `rotation` for euler, `quaternion` otherwise, and the
