@@ -11,7 +11,7 @@ import { evaluate as evaluateDag } from '../core/dag/evaluator';
 import { materialAssignmentReport } from './materialAssignment';
 import { resolveEvaluatedMesh } from './resolveEvaluatedMesh';
 import { resolveEvaluatedTransform } from './resolveEvaluatedTransform';
-import { resolveWorldTransform } from './resolveWorldTransform';
+import { resolveDrawnWorldTransform } from './drawnWorldTransform';
 import { resolveEvaluatedParam } from './resolveEvaluatedParam';
 import { resolveMeshUVSpace } from './resolveMeshUVSpace';
 import { unionUVBounds } from './uvIslands';
@@ -1037,7 +1037,8 @@ export function boot(): Promise<void> {
       w.__basher_world_transform = (nodeId: NodeId, ctx?: EvalCtx) => {
         const state = useDagStore.getState().state;
         const evalCtx: EvalCtx = ctx ?? { time: { frame: 0, seconds: 0, normalized: 0 } };
-        return resolveWorldTransform(state, nodeId, evalCtx);
+        // #1829 — where the node is drawn: its ancestors' constraints applied.
+        return resolveDrawnWorldTransform(state, nodeId, evalCtx);
       };
       w.__basher_evaluated_param = (nodeId: NodeId, paramPath: string, ctx?: EvalCtx) => {
         const state = useDagStore.getState().state;

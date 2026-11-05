@@ -23,7 +23,7 @@ import type { Op } from '../core/dag/types';
 import { nextConstraintOrder } from './nodeConstraints';
 import { lightKindOf } from './lightNode';
 import { hierarchyChildIds } from './sceneHierarchy';
-import { resolveParentWorldMatrix } from './resolveWorldTransform';
+import { resolveDrawnParentWorldMatrix } from './drawnWorldTransform';
 
 type Vec3 = [number, number, number];
 
@@ -83,7 +83,7 @@ export function lightAimOps(
   // carries the empty with it, and the light with it.
   let position: Vec3 = [...opts.at];
   if (parent) {
-    const parentWorld = resolveParentWorldMatrix(state, lightId, {
+    const parentWorld = resolveDrawnParentWorldMatrix(state, lightId, {
       time: { frame: 0, seconds: 0, normalized: 0 },
     });
     if (parentWorld) {
