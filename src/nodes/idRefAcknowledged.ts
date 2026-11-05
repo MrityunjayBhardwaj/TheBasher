@@ -316,6 +316,8 @@ export const SHARED_WIRES: readonly string[] = [
   'DepthPass.time',
   'GltfAsset.transformClip',
   'GltfSkeleton.asset',
+  // #1810 — an object's parent: deleting a child never takes what it hangs from.
+  'Group.parent',
   'IDPass.camera',
   'IDPass.scene',
   'IDPass.time',
@@ -329,6 +331,8 @@ export const SHARED_WIRES: readonly string[] = [
   'NormalPass.camera',
   'NormalPass.scene',
   'NormalPass.time',
+  'Null.parent',
+  'Object.parent',
   'PosedSkeleton.skeleton',
   'RenderJob.pass-input',
   'RenderJob.time',

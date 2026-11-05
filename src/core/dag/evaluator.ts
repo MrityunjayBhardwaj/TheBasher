@@ -386,6 +386,37 @@ export function setStatefulReplay(replay: StatefulReplay | null): void {
   statefulReplay = replay;
 }
 
+// #1810 — an object's WORLD output: the world its `parent` input carries (identity when nothing is
+// wired), times the object's own transform as it is drawn. The own transform folds the object's
+// keys, drivers and held edits, which live off the graph (decided on #1806) and are read through
+// the scene layer, so the fold lives above this module and is registered (`registerAllNodes`), as
+// the stateful replay is.
+//
+// Hashed by its VALUE, like the replay, and never keyed on the time: the fold is cheap (it reads
+// only the object's own channels), and a value hash is the one key that sees everything the fold
+// read. So an object that does not move hands the same hash to everything downstream on every
+// frame, and only what moves re-cooks (the #1809 trial: a world keyed on its params missed a key
+// edit by 1.84 units; a world keyed on the time filled the cache by the node count every frame).
+export type WorldFold = (
+  state: DagState,
+  nodeId: NodeId,
+  /** The world the parent input carries, column-major; null when nothing is wired. */
+  parent: readonly number[] | null,
+  /** The node the parent input is wired from, for a parent that is read further (a bone). */
+  parentId: NodeId | null,
+  ctx: EvalCtx,
+  cache: EvaluatorCache | undefined,
+) => number[];
+let worldFold: WorldFold | null = null;
+export function setWorldFold(fold: WorldFold | null): void {
+  worldFold = fold;
+}
+
+/** #1810 — whether `socket` is `def`'s world output. */
+function isWorldOutput(def: NodeDefinition | undefined, socket: string): boolean {
+  return def?.outputs[socket]?.world === true;
+}
+
 interface Frame {
   id: NodeId;
   depth: number;
@@ -404,6 +435,9 @@ export function evaluate(
   // multiple downstream consumers share an upstream.
   const memo = new Map<NodeId, EvalResult>();
   const onStack = new Set<NodeId>();
+  // #1810 — the world outputs met in this walk, and the ones being worked out (a parent loop).
+  const worldMemo = new Map<NodeId, EvalResult>();
+  const worldOnStack = new Set<NodeId>();
 
   /** `value`, produced by `ref`, as it arrives in an input described by `into` (#1549). The
    *  producer's type is looked up only for an input that has a conversion at all. */
@@ -421,6 +455,56 @@ export function evaluate(
     const producer = state.nodes[ref.node];
     const producerDef = producer ? getNodeType(producer.type) : undefined;
     return !producerDef || outputAvailable(producerDef, producer.params, ref.socket);
+  }
+
+  /** What `ref` carries: its producer's value at that socket, or its world when the socket is the
+   *  producer's world output (#1810). */
+  function evalRef(ref: { node: NodeId; socket: string }, depth: number): EvalResult {
+    const producer = state.nodes[ref.node];
+    if (producer && isWorldOutput(getNodeType(producer.type), ref.socket)) {
+      return evalWorld(ref.node, depth);
+    }
+    const sub = evalNode(ref.node, depth);
+    return { value: extractSocket(sub.value, ref.socket), hash: sub.hash };
+  }
+
+  /** #1810 — `id`'s world output. See {@link WorldFold}. */
+  function evalWorld(id: NodeId, depth: number): EvalResult {
+    if (depth > DEPTH_LIMIT) {
+      throw new Error(
+        `Evaluator: "${nodeId}" is fed by more than ${DEPTH_LIMIT} nodes in a row (reached "${id}"); ` +
+          'the chain is too long to evaluate',
+      );
+    }
+    if (worldOnStack.has(id)) {
+      throw new Error(`Evaluator: cycle detected at ${id} (its parent input leads back to it)`);
+    }
+    const memoed = worldMemo.get(id);
+    if (memoed) return memoed;
+    const node = state.nodes[id];
+    if (!node) throw new Error(`Evaluator: node not found: ${id}`);
+    const def = requireNodeType(node.type);
+    worldOnStack.add(id);
+    let parent: readonly number[] | null = null;
+    let parentId: NodeId | null = null;
+    for (const [socket, binding] of Object.entries(node.inputs)) {
+      const into = def.inputs[socket];
+      if (into?.world !== true || Array.isArray(binding)) continue;
+      if (!inputAvailable(def, node.params, socket) || !producesNow(binding)) continue;
+      const sub = evalRef(binding, depth + 1);
+      parent = (arrive(into, binding, sub.value) as readonly number[] | null | undefined) ?? null;
+      parentId = binding.node;
+    }
+    worldOnStack.delete(id);
+    if (!worldFold) {
+      throw new Error(
+        `Evaluator: ${node.type} "${id}" has a world output and no world fold is registered`,
+      );
+    }
+    const value = worldFold(state as DagState, id, parent, parentId, ctx, cache);
+    const result: EvalResult = { value, hash: hashString(`world:${id}:${hashValue(value)}`) };
+    worldMemo.set(id, result);
+    return result;
   }
 
   function evalNode(id: NodeId, depth: number): EvalResult {
@@ -477,10 +561,10 @@ export function evaluate(
         return held;
       }
       if (feed) {
-        const sub = evalNode(feed.node, depth + 1);
+        const sub = evalRef(feed, depth + 1);
         onStack.delete(id);
         const through: EvalResult = {
-          value: arrive(feed.into, feed, extractSocket(sub.value, feed.socket)),
+          value: arrive(feed.into, feed, sub.value),
           hash: hashString(`${feed.socket}:${sub.hash}`),
         };
         memo.set(id, through);
@@ -493,9 +577,8 @@ export function evaluate(
     // (A stateful owner never gets here: it was answered by its replay above.)
     if (def.bodyInputs !== undefined) {
       for (const [socket, binding] of Object.entries(node.inputs)) {
-        if (def.inputs[socket]?.body === true) continue;
-        for (const ref of Array.isArray(binding) ? binding : [binding])
-          evalNode(ref.node, depth + 1);
+        if (def.inputs[socket]?.body === true || def.inputs[socket]?.world === true) continue;
+        for (const ref of Array.isArray(binding) ? binding : [binding]) evalRef(ref, depth + 1);
       }
     }
 
@@ -506,6 +589,8 @@ export function evaluate(
     const inputHashes: Record<string, string | string[]> = {};
     for (const [socket, rawBinding] of Object.entries(node.inputs)) {
       const into = def.inputs[socket];
+      // #1810 — the parent input feeds the world output only, never the node's own value.
+      if (into?.world === true) continue;
       // #1801 — a wire on a socket this node's mode has switched off, or from an output its
       // producer's mode has, is kept but not read: the input is unconnected (Blender's invalid
       // link). The node's own params, which pick the mode, are already in its cache key.
@@ -520,8 +605,8 @@ export function evaluate(
         const values: unknown[] = [];
         const hashes: string[] = [];
         for (const ref of binding) {
-          const sub = evalNode(ref.node, depth + 1);
-          values.push(arrive(into, ref, extractSocket(sub.value, ref.socket)));
+          const sub = evalRef(ref, depth + 1);
+          values.push(arrive(into, ref, sub.value));
           hashes.push(`${ref.socket}:${sub.hash}`);
         }
         resolved[socket] = values;
@@ -529,8 +614,8 @@ export function evaluate(
         // #1668 — a socket that picks by identity also gets who each element is.
         if (into?.sourceIds === true) resolved[sourceIdsKey(socket)] = binding.map((r) => r.node);
       } else {
-        const sub = evalNode(binding.node, depth + 1);
-        resolved[socket] = arrive(into, binding, extractSocket(sub.value, binding.socket));
+        const sub = evalRef(binding, depth + 1);
+        resolved[socket] = arrive(into, binding, sub.value);
         inputHashes[socket] = `${binding.socket}:${sub.hash}`;
       }
     }
@@ -575,6 +660,10 @@ export function evaluate(
     return result;
   }
 
+  if (options.socket) {
+    const root = state.nodes[nodeId];
+    if (root && isWorldOutput(getNodeType(root.type), options.socket)) return evalWorld(nodeId, 0);
+  }
   const result = evalNode(nodeId, 0);
   if (options.socket) {
     return {

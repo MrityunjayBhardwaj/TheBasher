@@ -409,6 +409,10 @@ const TAKERS: string[] = [
   'underParent@src/app/resolveWorldTransform.ts',
   'walk@src/app/resolveWorldTransform.ts',
   'walkParent@src/app/resolveWorldTransform.ts',
+  // #1810 — an object's world output, folded with the cache the evaluator walk was given, and the
+  // armature it reads a parent bone off.
+  'objectWorldFold@src/app/objectWorld.ts',
+  'boneOf@src/app/objectWorld.ts',
   // #1729 — the walk up and the one path down it, and the search kept for a node held twice; each
   // is handed the cache its public read was given.
   'composeDown@src/app/resolveWorldTransform.ts',

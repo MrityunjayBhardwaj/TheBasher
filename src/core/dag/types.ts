@@ -186,6 +186,13 @@ export interface OutputDescriptor {
   role?: PassRole;
   /** #1801 — when this output exists, by the node's params. See {@link SocketAvailability}. */
   available?: SocketAvailability;
+  /**
+   * #1810 — the WORLD output of an object: the parent input's world (identity when nothing is
+   * wired) times the object's own transform as drawn (its keys, drivers and held edits folded).
+   * Not part of the node's value: the evaluator produces it through the registered world fold
+   * (`setWorldFold`), because the fold reads channels that live off the graph.
+   */
+  world?: true;
 }
 
 /**
@@ -305,6 +312,13 @@ export interface InputDescriptor {
   sourceIds?: true;
   /** #1801 — when this input exists, by the node's params. See {@link SocketAvailability}. */
   available?: SocketAvailability;
+  /**
+   * #1810 — the PARENT input of an object: what is wired here is the world transform the object
+   * hangs from (a Matrix4), as Houdini's object-level parent input. It feeds only this node's
+   * `world` output (an output marked {@link OutputDescriptor.world}), never its value: the
+   * object's value is its own transform, and its world is that value placed under the parent.
+   */
+  world?: true;
 }
 
 /**

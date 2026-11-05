@@ -322,7 +322,7 @@ function underParent(
 }
 
 /** The time, evaluation context and held edits a walk overlays each node with. */
-interface Overlay {
+export interface Overlay {
   readonly ctx: ClockedCtx;
   readonly cache: EvaluatorCache | undefined;
   readonly transients: ReturnType<typeof useTransientEditStore.getState>['edits'];
@@ -351,7 +351,7 @@ function drawnChannels(state: DagState, nodeId: string, at: Overlay): KeyframeCh
  * run for top-level scene children only, so a channel on a nested node, or on a nested ancestor,
  * moved the drawn mesh and left this read on the static pose.
  */
-function overlaidAt(
+export function overlaidAt(
   state: DagState,
   nodeId: string,
   value: SceneChild,
@@ -539,7 +539,7 @@ function isIdentityMatrix(m: THREE.Matrix4): boolean {
 /** #1760 — a camera's local matrix from its own transform: position and its Object's rotation
  *  (in its mode), identity scale (the render does not scale a camera). Like every object on this
  *  walk, no constraint is applied: a Track-To is folded by the readers that may (V665). */
-function cameraLocalMatrix(cam: CameraLocalPose): THREE.Matrix4 {
+export function cameraLocalMatrix(cam: CameraLocalPose): THREE.Matrix4 {
   const pos = new THREE.Vector3(cam.position[0], cam.position[1], cam.position[2]);
   const [x, y, z, w] = quaternionFromEulerDeg(withResolvedRotation(cam).rotation);
   return new THREE.Matrix4().compose(

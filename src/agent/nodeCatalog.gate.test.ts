@@ -88,8 +88,14 @@ describe('node schema payload (#1007)', () => {
       { socket: 'children', type: 'SceneObject', cardinality: 'list' },
       // #1203 — and a third, what poses an armature Object; since #1224 the pose wire, `pose`.
       { socket: 'pose', type: 'PosedSkeleton', cardinality: 'single' },
+      // #1810 — and the world it hangs from, as Houdini's object-level parent input.
+      { socket: 'parent', type: 'Matrix4', cardinality: 'single' },
     ]);
-    expect(obj.outputs).toEqual([{ socket: 'out', type: 'SceneObject', cardinality: 'single' }]);
+    expect(obj.outputs).toEqual([
+      { socket: 'out', type: 'SceneObject', cardinality: 'single' },
+      // #1810 — its world transform: the parent's world times its own transform as drawn.
+      { socket: 'world', type: 'Matrix4', cardinality: 'single' },
+    ]);
     // and `position` IS real — as a PARAM, which is the distinction nobody was given
     expect(obj.params.find((f) => f.path === 'position')).toEqual({
       path: 'position',

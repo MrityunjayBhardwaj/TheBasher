@@ -110,8 +110,15 @@ export const ObjectNode: NodeDefinition<ObjectParams, ObjectValue> = {
     // deform, the bone draw and a bone-parented Object read it through this Object (#393). It
     // was an `action` clip until #1224 (#1203); a clip reaches it through its `pose` output.
     pose: { type: 'PosedSkeleton', cardinality: 'single', owns: 'always' },
+    // #1810 — the world this object hangs from, and its own world: the parent's times its own
+    // transform as drawn. The parent input feeds the world output only (`objectWorld.ts`).
+    parent: { type: 'Matrix4', cardinality: 'single', world: true },
   },
-  outputs: { out: { type: 'SceneObject', cardinality: 'single' } },
+  outputs: {
+    out: { type: 'SceneObject', cardinality: 'single' },
+    // #1810 — see `parent`.
+    world: { type: 'Matrix4', cardinality: 'single', world: true },
+  },
   // The posable node — 'transform' implies 'constraint' (a pose can be
   // constrained) implies 'driver'. The data socket carries no pose, so those
   // sections live HERE, once, by construction.
