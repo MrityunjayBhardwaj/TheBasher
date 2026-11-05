@@ -266,17 +266,12 @@ const ORIGINS: Record<string, Origin> = {
   'src/app/statefulOps.ts · cookSolverStep → evaluate': {
     count: 1,
     frequency: 'deliberate',
-    why: 'The injected previous-frame value makes the sub-graph frame-dependent; a shared cache would poison across frames (see its doc comment).',
+    why: 'The injected previous-frame value makes the sub-graph frame-dependent; a shared cache would poison across frames (see its doc comment). One cook steps every kind of state the Solver carries (#1826).',
   },
   'src/app/lightAim.ts · lightAimOps → resolveParentWorldMatrix': {
     count: 1,
     frequency: 'per-action',
     why: "#1765 — giving a nested light its aim empty: once, to place the empty in the light's group at the point it should face.",
-  },
-  'src/app/statefulOps.ts · cookSolverVecStep → evaluate': {
-    count: 1,
-    frequency: 'deliberate',
-    why: 'Same as cookSolverStep: the injection is frame-dependent, so each step walks fresh.',
   },
   'src/test-utils/evaluateNodeAlone.ts · evaluateNodeAlone → evaluate': {
     count: 1,
@@ -378,8 +373,7 @@ const TAKERS: string[] = [
   'readTransformChannelAt@src/app/transformChannelSource.ts',
   'readTransformPositionAt@src/app/transformChannelSource.ts',
   'replayLag@src/app/statefulOps.ts',
-  'replaySolver@src/app/statefulOps.ts',
-  'replaySolverVec@src/app/statefulOps.ts',
+  'replaySolverState@src/app/statefulOps.ts',
   'resolveActiveCameraPoseAt@src/app/activeCamera.ts',
   'resolveActiveRigCenter@src/app/studioLightRig.ts',
   'resolveCameraDofAt@src/app/activeCamera.ts',
@@ -405,6 +399,7 @@ const TAKERS: string[] = [
   'worldMatrixAt@src/app/resolveWorldTransform.ts',
   'rigChanges@src/app/animate/invertPoseStack.ts',
   'slotAbsenceOf@src/app/objectSlotAuthoring.ts',
+  'solverSlot0@src/app/statefulOps.ts',
   'statefulInputAt@src/app/statefulOps.ts',
   'statefulInputVecAt@src/app/statefulOps.ts',
   // #1559 — an enclosing template instance's `in`, read with the replay's own cache.
