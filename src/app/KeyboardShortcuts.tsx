@@ -65,6 +65,12 @@ import { addIkFromUI, editSkeletonFromUI } from './skeletonEditActions';
 import { useBoxSelectStore } from './stores/boxSelectStore';
 import { getViewportSelectableIds } from './selectableNodes';
 import { buildDeleteNodesOps, buildDuplicateNodesOps } from './sceneNodeActions';
+import {
+  buildClearParentOps,
+  buildParentToOps,
+  residualNotice,
+  type MoveResult,
+} from './keepPlaceReparent';
 import { buildSetActiveCameraOps } from './setActiveCamera';
 import { useViewportStore } from './stores/viewportStore';
 import { keyParamFromTransient } from './animate/autoKeyCommit';
@@ -386,6 +392,21 @@ function sayIfRefused(outcome: { ok: true } | { ok: false; reason: string }): vo
   }
 }
 
+/** Dispatch a parenting change, saying what it refused or how far a shear kept it from its place.
+ *  True when it went through or there was nothing to do. */
+function runMove(result: MoveResult, description: string): boolean {
+  const notify = useNotificationStore.getState().notify;
+  if (!result.ok) {
+    notify({ severity: 'info', message: result.reason });
+    return false;
+  }
+  const dag = useDagStore.getState();
+  const notice = residualNotice(dag.state, result.residuals);
+  if (result.ops.length > 0) dag.dispatchAtomic(result.ops, 'user', description);
+  if (notice) notify({ severity: 'warn', message: notice });
+  return true;
+}
+
 export function KeyboardShortcuts() {
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
@@ -548,6 +569,30 @@ export function KeyboardShortcuts() {
           );
           return;
         }
+      }
+
+      // #1516 — Alt+P clears the selection's parent, keeping each object where it is drawn
+      // (Blender's Clear and Keep Transformation). e.code, because Alt+P types another character on
+      // a Mac. An armature in Edit mode keeps the key for its bones (above), with one active or not.
+      if (e.altKey && !cmd && !e.shiftKey && e.code === 'KeyP' && getArmatureMode() !== 'edit') {
+        const ids = [...useSelectionStore.getState().selectedNodeIds];
+        if (ids.length > 0) {
+          e.preventDefault();
+          runMove(buildClearParentOps(useDagStore.getState().state, ids), 'clear parent');
+          return;
+        }
+      }
+      // #1516 — Ctrl+P parents the selection to the active object, keeping each where it is drawn
+      // (Blender's Object (Keep Transform)). The browser's own Print has to be stopped either way.
+      if (cmd && !e.altKey && !e.shiftKey && e.code === 'KeyP') {
+        e.preventDefault();
+        const sel = useSelectionStore.getState();
+        const active = sel.primaryNodeId;
+        const others = [...sel.selectedNodeIds].filter((id) => id !== active);
+        if (active && others.length > 0) {
+          runMove(buildParentToOps(useDagStore.getState().state, others, active), 'set parent');
+        }
+        return;
       }
 
       // #1510 — Shift+I adds an IK to the selected bone in Pose mode (Blender's Add IK). Above the
