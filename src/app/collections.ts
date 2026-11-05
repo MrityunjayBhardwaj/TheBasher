@@ -13,8 +13,7 @@
 import type { DagState } from '../core/dag/state';
 import type { NodeId, Op } from '../core/dag/types';
 import { collectionOps } from '../core/import/modelImport';
-import { isCameraNode } from './cameraNode';
-import { resolveRigLightSources } from './resolveRigLightSources';
+import { HOP_TYPES, sceneMembersOf } from './sceneMembership';
 
 const refsOf = (binding: unknown): NodeId[] =>
   (Array.isArray(binding) ? binding : binding ? [binding] : [])
@@ -298,26 +297,15 @@ export function newCollectionOps(
 }
 
 /**
- * #397 — the scene's objects: what a collection can hold and an eye can hide. Every node the scene
- * holds through its `children` and `lights` bands, at any depth, every camera (#1453 — a camera
- * floats outside the scene's bands, and Blender lists it in a collection like any object), and the
- * active lighting profile's lights (#1480 — `resolveRigLightSources`, the lights the rig band
- * draws). Their drawers all honour `hiddenNodes`: the scene's children, the lights band and its
- * helpers, the rig band, and the camera frustums.
+ * #397 — the scene's objects: what a collection can hold and an eye can hide. Every thing the
+ * scene holds (#1821, `sceneMembersOf`: its bands at any depth, an object under a Transform or
+ * MaterialOverride wrapper, the active lighting profile's lights, every camera), less the nodes
+ * the wires pass through to reach them (`HOP_TYPES`). Their drawers all honour `hiddenNodes`.
  */
 export function collectableNodes(state: DagState): ReadonlySet<NodeId> {
-  const sceneId = state.outputs.scene?.node;
   const out = new Set<NodeId>();
-  const scene = sceneId ? state.nodes[sceneId] : undefined;
-  const stack = [...refsOf(scene?.inputs?.children), ...refsOf(scene?.inputs?.lights)];
-  while (stack.length > 0) {
-    const id = stack.pop()!;
-    if (out.has(id) || !state.nodes[id]) continue;
-    out.add(id);
-    stack.push(...refsOf(state.nodes[id].inputs?.children));
-  }
-  if (scene) for (const id of Object.keys(state.nodes)) if (isCameraNode(state, id)) out.add(id);
-  for (const id of resolveRigLightSources(state)) if (state.nodes[id]) out.add(id);
+  for (const id of sceneMembersOf(state))
+    if (!HOP_TYPES.has(state.nodes[id]?.type ?? '')) out.add(id);
   return out;
 }
 

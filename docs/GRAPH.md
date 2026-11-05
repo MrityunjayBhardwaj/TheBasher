@@ -146,8 +146,9 @@ OUTPUTS ─── outputs.scene · outputs.render
    object sits in the tree says nothing about whether the scene holds it, just as a Blender
    object's parent and its collections are separate. **Until #1810, #1823 and #1824 land,**
    `Scene.children` and the parenting wires (`src/app/sceneHierarchy.ts`) still put objects
-   in the scene, and the collection wires are listed but not drawn. Every door that adds or
-   removes a wire keeps nodes reachable. Decided in #1519.
+   in the scene, and the collection wires are listed but not drawn. `isInScene` in the same
+   file is the one answer; a surface that keeps its own list is tested against it (#1821). Every door that adds or removes a wire
+   keeps nodes reachable. Decided in #1519.
 
 4. **Time lives inside values.** A channel's value carries `sample(seconds)`, the Scene owns
    its frame range, and nothing cooks per frame. That keeps the content-keyed cache flat

@@ -31,8 +31,27 @@
 // (`hierarchySocketsOf`), whose sockets come partly from node declarations (a wrapper's chain
 // input), so a copy here would be a second definition that nothing checks.
 //
+// THE ANSWER (#1821). `isInScene(state, id)` walks these wires out from the scene output, plus the
+// parenting wires below anything it reaches. It follows a wire only when `drawnToday` is set, so
+// "in the scene" means what the renderer reaches, and the collection wires join every surface at
+// once when #1823 sets their flag. A LightProfileSelect is followed to its selected rig only: the
+// other profiles' lights are not drawn and the outliner does not list them. A CameraSelect is
+// followed to every camera it lists, as Blender holds every camera object, active or not.
+//
+// ONE EXCEPTION, until #1518: every camera node counts as in the scene, wired or not. Add leaves a
+// camera unwired (`addPrimitives.ts`, "Cameras + empties stay floating"), and the viewport draws
+// its frustum, the outliner lists it and its eye hides it, all through `enumerateCameraNodeIds`,
+// which lists every camera in the node table. `sceneMembership.test.ts` adds a camera through the
+// real Add door and fails once that door wires it, which is when this exception can go.
+//
 // REF: docs/GRAPH.md §4 rule 3; src/nodes/Scene.ts (`inputs`); src/app/sceneTreeWalk.ts (the
 //      outliner's walk); src/app/sceneHierarchy.ts (the parenting wires); #1519, #1820, #1821.
+
+import type { DagState } from '../core/dag/state';
+import type { NodeRef } from '../core/dag/types';
+import { wiredProfileRigs } from '../nodes/LightProfileSelect';
+import { isCameraNode } from './cameraNode';
+import { hierarchyChildIds } from './sceneHierarchy';
 
 /** One input socket, on one node type, that holds things in the scene. */
 export interface MembershipWire {
@@ -91,4 +110,81 @@ export function membershipSocketsOf(nodeType: string): readonly string[] {
   for (const w of [...MEMBERSHIP_WIRES, ...TRANSITIONAL_MEMBERSHIP_WIRES])
     if (w.nodeType === nodeType) out.push(w.socket);
   return out;
+}
+
+function refsOf(binding: unknown): string[] {
+  const refs = Array.isArray(binding) ? binding : binding ? [binding] : [];
+  return (refs as NodeRef[]).map((r) => r?.node).filter((n): n is string => Boolean(n));
+}
+
+/** The wires the walk follows today, per node type: both lists, `drawnToday` only. */
+const FOLLOWED: ReadonlyMap<string, readonly string[]> = (() => {
+  const out = new Map<string, string[]>();
+  for (const w of [...MEMBERSHIP_WIRES, ...TRANSITIONAL_MEMBERSHIP_WIRES]) {
+    if (!w.drawnToday) continue;
+    out.set(w.nodeType, [...(out.get(w.nodeType) ?? []), w.socket]);
+  }
+  return out;
+})();
+
+/** The nodes a membership wire of `nodeId` holds, in socket order. */
+function heldBy(state: DagState, nodeId: string): string[] {
+  const node = state.nodes[nodeId];
+  if (!node) return [];
+  const out: string[] = [];
+  for (const socket of FOLLOWED.get(node.type) ?? []) {
+    if (node.type === 'LightProfileSelect' && socket === 'rigs') {
+      const selected = (node.params as { selectedProfile?: unknown }).selectedProfile;
+      const rig = wiredProfileRigs(state, nodeId).find((r) => r.name === selected);
+      if (rig) out.push(rig.id);
+      continue;
+    }
+    out.push(...refsOf(node.inputs[socket]));
+  }
+  // Parenting carries its children into the scene with it until #1810.
+  out.push(...hierarchyChildIds(node));
+  return out;
+}
+
+/** Node types the membership wires pass through to reach things; never scene objects. */
+export const HOP_TYPES: ReadonlySet<string> = new Set([
+  'Collection',
+  'CameraSelect',
+  'LightRig',
+  'LightProfileSelect',
+]);
+
+const membersCache = new WeakMap<DagState['nodes'], Map<string, ReadonlySet<string>>>();
+
+/**
+ * Every node the scene holds today: reached from the scene output through the followed
+ * membership wires and the parenting wires, plus every camera (the exception in the header).
+ * The Scene node itself is not in it, and neither is an Object's data. The nodes the wires pass
+ * through on the way (a LightRig, a select) are in it; `HOP_TYPES` names them. Kept per node
+ * table, so a playhead change reuses it.
+ */
+export function sceneMembersOf(state: DagState): ReadonlySet<string> {
+  const sceneId = state.outputs.scene?.node;
+  if (!sceneId || !state.nodes[sceneId]) return new Set();
+  let bySceneId = membersCache.get(state.nodes);
+  const hit = bySceneId?.get(sceneId);
+  if (hit) return hit;
+  const members = new Set<string>();
+  const stack = heldBy(state, sceneId);
+  while (stack.length > 0) {
+    const id = stack.pop()!;
+    if (id === sceneId || members.has(id) || !state.nodes[id]) continue;
+    members.add(id);
+    stack.push(...heldBy(state, id));
+  }
+  // The unwired-camera exception (header).
+  for (const id of Object.keys(state.nodes)) if (isCameraNode(state, id)) members.add(id);
+  if (!bySceneId) membersCache.set(state.nodes, (bySceneId = new Map()));
+  bySceneId.set(sceneId, members);
+  return members;
+}
+
+/** Whether the scene holds `id` today (rule 3). The one answer every surface reads. */
+export function isInScene(state: DagState, id: string): boolean {
+  return sceneMembersOf(state).has(id);
 }
