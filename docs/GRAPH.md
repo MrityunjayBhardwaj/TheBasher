@@ -134,9 +134,21 @@ OUTPUTS ─── outputs.scene · outputs.render
    are computed from this, so the saved format has no nesting to migrate. Why flat:
    [OBJECT-DATA-SPLIT-DESIGN §2.2](OBJECT-DATA-SPLIT-DESIGN.md) ("on a DAG, pointer and
    containment are the same edge") and §2.4.
-3. **Membership is reachability.** An object is in the scene if the scene's wires reach it
-   (`children`, `lights`, `camera`, collection `members`). Every door that adds or removes
-   a wire keeps nodes reachable. Decided in #1519.
+3. **Membership is reachability.** An object is in the scene if the scene's membership
+   wires reach it. They are listed once, in `src/app/sceneMembership.ts` (#1820), and this
+   rule quotes that list:
+   - collections: `Scene.collections`, `Collection.members`, `Collection.collections`;
+   - the camera: `Scene.camera`, `CameraSelect.cameras`;
+   - the lights: `Scene.lights`;
+   - the lighting profile: `Scene.lightRig`, `LightProfileSelect.rigs`, `LightRig.lights`.
+
+   Parenting is not membership. A child will take its parent as an input (#1810), and where an
+   object sits in the tree says nothing about whether the scene holds it, just as a Blender
+   object's parent and its collections are separate. **Until #1810, #1823 and #1824 land,**
+   `Scene.children` and the parenting wires (`src/app/sceneHierarchy.ts`) still put objects
+   in the scene, and the collection wires are listed but not drawn. Every door that adds or
+   removes a wire keeps nodes reachable. Decided in #1519.
+
 4. **Time lives inside values.** A channel's value carries `sample(seconds)`, the Scene owns
    its frame range, and nothing cooks per frame. That keeps the content-keyed cache flat
    when you scrub ([NORTH-STAR §4.4](NORTH-STAR.md)).
