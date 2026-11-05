@@ -14,6 +14,10 @@
 //   • a node whose value changes with time is marked (its cook state, as the evaluator sees
 //     it: `timeDependentNodes`);
 //   • a node says how many of its lines lead to another level (`network/dependencies`);
+//   • a wire into or out of a socket the node's mode has switched off is not drawn (#1825):
+//     Blender keeps such a link but hides it (`node_link_is_hidden` needs both sockets visible,
+//     and a socket is visible only while available, BKE_node_runtime.hh `is_visible`); the
+//     evaluator ignores it, so drawing it would show a value flowing where none does;
 //   • a node that follows another's name says whose (in its tooltip: today every one is also
 //     wired to the node it follows, so a line would only repeat the wire).
 //
@@ -24,6 +28,8 @@ import { levelOf, viewEdgesOf, viewRowsOf, type ViewEdge, type ViewRow } from '.
 import type { DagState } from '../core/dag/state';
 import type { NodeId, NodeRef } from '../core/dag/types';
 import { relationsOf } from '../core/dag/idRefSweep';
+import { getNodeType } from '../core/dag/registry';
+import { inputAvailable, outputAvailable } from '../core/dag/socketAvailability';
 import { hiddenNodes } from './collections';
 import { nodeDisplayName } from './sceneTreeWalk';
 import { timeDependentNodes } from './timeDependence';
@@ -157,6 +163,20 @@ function isSidecar(state: DagState, id: NodeId): boolean {
   );
 }
 
+/** Whether a wire is live: both its sockets exist in their nodes' current modes. A reference
+ *  is not a socket wire and always is. */
+function live(state: DagState, w: ViewEdge): boolean {
+  if (w.ref) return true;
+  const a = state.nodes[w.from];
+  const b = state.nodes[w.to];
+  const da = a && getNodeType(a.type);
+  const db = b && getNodeType(b.type);
+  return (
+    (!da || outputAvailable(da, a.params, w.fromSocket)) &&
+    (!db || inputAvailable(db, b.params, w.toSocket))
+  );
+}
+
 /**
  * What the view draws at one level: the top level (`level` null or absent), or the sub-network
  * of the owner named. A level that does not exist (its owner was deleted, or the node named
@@ -169,7 +189,7 @@ export function sceneGraphOf(
   const levels = levelOf(state);
   const owners = new Set(levels.values());
   const level = opts.level && owners.has(opts.level) ? opts.level : null;
-  const all = viewEdgesOf(state);
+  const all = viewEdgesOf(state).filter((w) => live(state, w));
   const hidden = hiddenNodes(state, 'viewport');
   const drawn = opts.showHidden ? null : drawnNodes(state, all, hidden);
   const here = Object.keys(state.nodes).filter((id) => levels.get(id) === level);

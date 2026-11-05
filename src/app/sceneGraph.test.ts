@@ -268,3 +268,40 @@ describe('sceneGraphOf — #1563 what the node view shows beside the nodes', () 
     ).toBe(true);
   });
 });
+
+describe('sceneGraphOf — #1825 a wire the mode switched off is not drawn', () => {
+  /** v → m.aVector and m.outVector → m2.aVector, made while both Mixes blend vectors; then m is
+   *  set to `mode`. The wires stay in the graph either way. */
+  function mixes(mode: 'Number' | 'Vector'): DagState {
+    return applyOps(buildDefaultDagState(), [
+      { type: 'addNode', nodeId: 'v', nodeType: 'MakeVec3', params: {} },
+      { type: 'addNode', nodeId: 'm', nodeType: 'Mix', params: { dataType: 'Vector' } },
+      { type: 'addNode', nodeId: 'm2', nodeType: 'Mix', params: { dataType: 'Vector' } },
+      { type: 'connect', from: { node: 'v', socket: 'out' }, to: { node: 'm', socket: 'aVector' } },
+      {
+        type: 'connect',
+        from: { node: 'm', socket: 'outVector' },
+        to: { node: 'm2', socket: 'aVector' },
+      },
+      { type: 'setParam', nodeId: 'm', paramPath: 'dataType', value: mode },
+    ]).next;
+  }
+  const lines = (s: DagState) =>
+    sceneGraphOf(s, { showHidden: true, showAnimation: true })
+      .wires.filter((w) => !w.ref && ['v', 'm', 'm2'].includes(w.from))
+      .map((w) => `${w.from}.${w.fromSocket}>${w.to}.${w.toSocket}`)
+      .sort();
+
+  it('CONTROL: in the mode that has the sockets, both wires are drawn', () => {
+    expect(lines(mixes('Vector'))).toEqual(['m.outVector>m2.aVector', 'v.out>m.aVector']);
+  });
+
+  it('switched off at either end, the wire and its row are gone, as Blender hides the link', () => {
+    const s = mixes('Number');
+    expect(s.nodes.m.inputs.aVector).toBeDefined(); // still in the graph
+    expect(lines(s)).toEqual([]);
+    const g = sceneGraphOf(s, { showHidden: true, showAnimation: true });
+    expect(g.nodes.find((n) => n.id === 'm')!.inputs.map((r) => r.socket)).not.toContain('aVector');
+    expect(g.nodes.find((n) => n.id === 'm')!.outputs).not.toContain('outVector');
+  });
+});
