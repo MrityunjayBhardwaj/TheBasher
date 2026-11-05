@@ -35,7 +35,7 @@ import {
   setShownOp,
 } from './collections';
 import { hideRefusal } from './sceneVisibility';
-import { buildDeleteNodesOps, buildDuplicateNodesOps } from './sceneNodeActions';
+import { buildDuplicateNodesOps, planDeleteNodes } from './sceneNodeActions';
 import {
   buildMoveOps,
   residualNotice,
@@ -550,10 +550,11 @@ export function SceneTree({ filter = '' }: SceneTreeProps) {
 
   function ctxDelete(nodeId: NodeId) {
     const ids = ctxTargetIds(nodeId);
-    const ops = buildDeleteNodesOps(state, ids);
-    if (ops.length > 0) dispatchAtomic(ops, 'user', `delete ${ids.length} node(s)`);
-    clearSelection();
+    const plan = planDeleteNodes(state, ids);
     setCtxMenu(null);
+    if (!say(plan) || !plan.ok) return;
+    if (plan.ops.length > 0) dispatchAtomic(plan.ops, 'user', `delete ${ids.length} node(s)`);
+    clearSelection();
   }
 
   function onDragStart(e: DragEvent, row: TreeRow) {

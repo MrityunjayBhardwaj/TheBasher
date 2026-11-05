@@ -60,8 +60,10 @@ picker still lists it. Every input socket is in one row of this table or the oth
 lists the ones that own nothing (`SHARED_WIRES`, `src/nodes/idRefAcknowledged.ts`), so a new
 socket has to choose. One delete function applies it (`buildDeleteNodesOps`,
 `src/app/sceneNodeActions.ts`), for the Delete key, the outliner, the agent and the buttons
-that remove a driver. Children still go with a deleted parent; handing them up to the
-grandparent is #1517, which waits on the keep-position reparent in #1516.
+that remove a driver. The one exception is a parent's `children`: Duplicate copies them, and
+Delete hands them up to the deleted parent's own parent, keeping them where they are drawn
+(#1517, through the keep-position reparent of #1516, `src/app/keepPlaceReparent.ts`), unless they
+are deleted too.
 
 Duplicate reads the same table (`buildDuplicateNodesOps`, same file). A **deep** duplicate
 (Shift+D) copies what the original owns by wire, whole sub-networks included, and the sidecars

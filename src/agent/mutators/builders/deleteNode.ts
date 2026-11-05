@@ -21,7 +21,9 @@ export const deleteNodeMutator: MutatorDefinition<DeleteNodeSpec> = {
   name: 'mutator.deleteNode',
   description:
     'Delete one or more nodes. Auto-disconnects every consumer edge first ' +
-    '(removeNode requires zero consumers). Atomic — Cmd+Z reverts everything.',
+    '(removeNode requires zero consumers). A deleted parent hands its children up to its own ' +
+    'parent, keeping them where they are drawn: list the children too to delete them. ' +
+    'Atomic — Cmd+Z reverts everything.',
   spec: DeleteNodeSpec,
   specExample: { targetSelectors: ['node_id'] },
   contract: {
@@ -34,7 +36,8 @@ export const deleteNodeMutator: MutatorDefinition<DeleteNodeSpec> = {
   },
   buildClosureSpec(spec): ClosureSpec {
     // 'parent'   — consumers whose inputs we disconnect.
-    // 'children' — a Group OWNS its children and takes them with it (#431).
+    // 'children' — a deleted parent hands its children up to its own parent (#1517), so
+    //              the delete rewires them and writes their transform.
     // 'data'     — a split Object OWNS its data node (#365).
     // 'id-ref'   — the edge-less half: the channels/constraints/drivers/strips
     //              swept with their subject, and the survivors whose refs we clear

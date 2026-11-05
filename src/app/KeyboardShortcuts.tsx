@@ -64,7 +64,7 @@ import { getActiveBone } from './boneSelection';
 import { addIkFromUI, editSkeletonFromUI } from './skeletonEditActions';
 import { useBoxSelectStore } from './stores/boxSelectStore';
 import { getViewportSelectableIds } from './selectableNodes';
-import { buildDeleteNodesOps, buildDuplicateNodesOps } from './sceneNodeActions';
+import { buildDuplicateNodesOps, planDeleteNodes } from './sceneNodeActions';
 import {
   buildClearParentOps,
   buildParentToOps,
@@ -890,9 +890,15 @@ export function KeyboardShortcuts() {
             if (ids.length === 0) return;
             // Shared op-builder (#227) — the SAME disconnect-consumers + removeNode
             // path the outliner context menu uses, so the two can't drift.
-            const ops = buildDeleteNodesOps(dag.state, ids);
-            if (ops.length === 0) return;
-            dag.dispatchAtomic(ops, 'user', `delete ${ids.length} node(s)`);
+            // #1517 — a parent's children are handed up, so this can refuse (an animated child).
+            const plan = planDeleteNodes(dag.state, ids);
+            if (!plan.ok) {
+              useNotificationStore.getState().notify({ severity: 'info', message: plan.reason });
+              e.preventDefault();
+              return;
+            }
+            if (plan.ops.length === 0) return;
+            runMove(plan, `delete ${ids.length} node(s)`);
             sel.clear();
             e.preventDefault();
           }
