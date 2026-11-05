@@ -256,13 +256,18 @@ function walk(schema: unknown, path: string, out: ParamField[], depth: number): 
 }
 
 function socketsOf(def: NodeDefinition): { inputs: SocketField[]; outputs: SocketField[] } {
-  const inputs = Object.entries(def.inputs).map(([socket, d]) => ({
-    socket,
-    // `Array.isArray` does not narrow a READONLY tuple, and `AcceptedTypeSet` is one.
-    type: Array.isArray(d.type) ? (d.type as readonly string[]).join('|') : (d.type as string),
-    cardinality: d.cardinality,
-    ...(d.available ? { available: availableWhen(d.available) } : {}),
-  }));
+  // #1810 — an object's `parent` input is not offered: nothing draws from it until saved files
+  // are converted to parent inputs, and `dag.exec` refuses a wire into it. Its `world` output is
+  // honest today and stays.
+  const inputs = Object.entries(def.inputs)
+    .filter(([, d]) => d.world !== true)
+    .map(([socket, d]) => ({
+      socket,
+      // `Array.isArray` does not narrow a READONLY tuple, and `AcceptedTypeSet` is one.
+      type: Array.isArray(d.type) ? (d.type as readonly string[]).join('|') : (d.type as string),
+      cardinality: d.cardinality,
+      ...(d.available ? { available: availableWhen(d.available) } : {}),
+    }));
   const outputs = Object.entries(def.outputs).map(([socket, d]) => ({
     socket,
     type: d.type,
