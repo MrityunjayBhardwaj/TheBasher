@@ -402,6 +402,8 @@ const TAKERS: string[] = [
   'solverSlot0@src/app/statefulOps.ts',
   'statefulInputAt@src/app/statefulOps.ts',
   'statefulInputVecAt@src/app/statefulOps.ts',
+  'controllerRotationAt@src/app/statefulOps.ts',
+  'controllerTransformAt@src/app/statefulOps.ts',
   // #1559 — an enclosing template instance's `in`, read with the replay's own cache.
   'liveInputOf@src/app/statefulOps.ts',
   'underParent@src/app/resolveWorldTransform.ts',

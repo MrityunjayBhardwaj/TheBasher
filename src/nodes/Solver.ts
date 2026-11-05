@@ -53,6 +53,7 @@
 import { z } from 'zod';
 import type { NodeDefinition } from '../core/dag/types';
 import type { Vec3 } from './types';
+import { IDENTITY_MAT4, isMat4, isQuat, type Mat4, type Quat } from '../core/math/transformMath';
 import { TransformSourceSchema } from './ParamDriver';
 import { bodyInputChoicesOf, bodyInputSlotOf } from '../core/dag/subnetworks';
 import {
@@ -65,7 +66,10 @@ import {
 
 const NUMBER_OUT = { out: { type: 'Number', cardinality: 'single' } } as const;
 const VECTOR3_OUT = { out: { type: 'Vector3', cardinality: 'single' } } as const;
+const QUAT_OUT = { out: { type: 'Quaternion', cardinality: 'single' } } as const;
+const MATRIX_OUT = { out: { type: 'Matrix4', cardinality: 'single' } } as const;
 const ORIGIN: Vec3 = [0, 0, 0];
+const NO_ROTATION: Quat = [0, 0, 0, 1];
 
 // ── BodyInput / BodyInputVec — the named-input leaves (#1548) ─────────────────
 //
@@ -142,6 +146,32 @@ export const BodyInputVecNode: NodeDefinition<BodyInputParams, Vec3> = {
 };
 
 // ── Solver — the stateful meta-op ─────────────────────────────────────────────
+// #1826 — the rotation and transform twins, for a Solver whose state is a rotation or a whole
+// transform (Blender's Simulation Zone carries an item of any socket type).
+export const BodyInputRotationNode: NodeDefinition<BodyInputParams, Quat> = {
+  type: 'BodyInputRotation',
+  version: 1,
+  pure: true,
+  cost: 'cheap',
+  paramSchema: BodyInputParams,
+  inputs: {},
+  outputs: QUAT_OUT,
+  bodyInputLeaf: true,
+  evaluate: () => NO_ROTATION,
+};
+
+export const BodyInputTransformNode: NodeDefinition<BodyInputParams, Mat4> = {
+  type: 'BodyInputTransform',
+  version: 1,
+  pure: true,
+  cost: 'cheap',
+  paramSchema: BodyInputParams,
+  inputs: {},
+  outputs: MATRIX_OUT,
+  bodyInputLeaf: true,
+  evaluate: () => IDENTITY_MAT4,
+};
+
 export const SolverParams = z.object({
   /** The frame the recurrence is seeded from: on the seed frame Prev_Frame = the
    *  live input at this frame (Houdini's Input_1-seeds-Prev_Frame; Lag's seed rule).
@@ -161,7 +191,10 @@ export const SolverParams = z.object({
 });
 export type SolverParams = z.infer<typeof SolverParams>;
 
-export const SolverNode: NodeDefinition<SolverParams, { out: number; outVec: Vec3 }> = {
+export const SolverNode: NodeDefinition<
+  SolverParams,
+  { out: number; outVec: Vec3; outRotation: Quat; outTransform: Mat4 }
+> = {
   type: 'Solver',
   version: 1,
   // Not point-in-time reproducible — the real value needs the interval + the previous
@@ -189,6 +222,9 @@ export const SolverNode: NodeDefinition<SolverParams, { out: number; outVec: Vec
   inputs: {
     body: { type: 'Number', cardinality: 'single', body: true },
     bodies: { type: 'Vector3', cardinality: 'list', body: true },
+    // #1826 — rotation and transform state, one element per slot like `bodies`.
+    bodiesRotation: { type: 'Quaternion', cardinality: 'list', body: true },
+    bodiesTransform: { type: 'Matrix4', cardinality: 'list', body: true },
   },
   // Two output faces: `out` (Number, the scalar Solver) + `outVec` (Vector3, slot 0 of a
   // tuple Solver — the position a spring drives). A driver reads whichever matches its
@@ -197,6 +233,9 @@ export const SolverNode: NodeDefinition<SolverParams, { out: number; outVec: Vec
   outputs: {
     out: { type: 'Number', cardinality: 'single' },
     outVec: { type: 'Vector3', cardinality: 'single' },
+    // #1826 — slot 0 of the rotation and transform state.
+    outRotation: { type: 'Quaternion', cardinality: 'single' },
+    outTransform: { type: 'Matrix4', cardinality: 'single' },
   },
   // #1548 — the sub-network's named inputs. `prev`/`input` feed the scalar `body`;
   // `prevVec` (one element per state slot) and `inputVec` feed the tuple `bodies`.
@@ -206,11 +245,23 @@ export const SolverNode: NodeDefinition<SolverParams, { out: number; outVec: Vec
     // One element per state slot: slot i is what `bodies[i]` computed last frame (#1574).
     prevVec: { type: 'Vector3', cardinality: 'list', sizedBy: 'bodies' },
     inputVec: { type: 'Vector3', cardinality: 'single' },
+    // #1826 — the controller's rotation and whole transform are the live inputs.
+    prevRotation: { type: 'Quaternion', cardinality: 'list', sizedBy: 'bodiesRotation' },
+    inputRotation: { type: 'Quaternion', cardinality: 'single' },
+    prevTransform: { type: 'Matrix4', cardinality: 'list', sizedBy: 'bodiesTransform' },
+    inputTransform: { type: 'Matrix4', cardinality: 'single' },
   },
   evaluate: (_params, inputs) => {
     const bodies = inputs.bodies as Vec3[] | undefined;
     const outVec = bodies && bodies.length > 0 && isVec3(bodies[0]) ? bodies[0] : ORIGIN;
-    return { out: (inputs.body as number | undefined) ?? 0, outVec };
+    const rotations = inputs.bodiesRotation as unknown[] | undefined;
+    const transforms = inputs.bodiesTransform as unknown[] | undefined;
+    return {
+      out: (inputs.body as number | undefined) ?? 0,
+      outVec,
+      outRotation: isQuat(rotations?.[0]) ? rotations[0] : NO_ROTATION,
+      outTransform: isMat4(transforms?.[0]) ? transforms[0] : IDENTITY_MAT4,
+    };
   },
 };
 

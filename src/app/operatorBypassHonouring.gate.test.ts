@@ -349,7 +349,8 @@ describe('ns-2 step 5 — the bypass is honoured at ONE site', () => {
     // 91 -> 92 at #1557 (TemplateDefinition), NOT an operator, so the operator count does not move.
     // 92 -> 90 at #1666 (Shot and Cut retired), neither an operator.
     // 90 -> 98 at #1784 (the eight Transform nodes), NOT operators, so the operator count does not move.
-    expect(listNodeTypes()).toHaveLength(98);
+    // 98 -> 100 at #1826 (BodyInputRotation and BodyInputTransform, Solver leaves), likewise.
+    expect(listNodeTypes()).toHaveLength(100);
     expect(operators()).toHaveLength(13);
     expect(declaredBypassParams()).toEqual(['muted']);
     expect(FILES.length).toBeGreaterThan(500);

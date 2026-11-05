@@ -34,6 +34,7 @@ import {
   readTransformPositionAt,
 } from './transformChannelSource';
 import {
+  statefulSocketOf,
   statefulSourceOf,
   statefulUpstreamOf,
   makeStatefulDriverChannelValue,
@@ -472,6 +473,7 @@ export function driverChannelValuesForTarget(
               node.params as ParamDriverParams,
               stateful,
               cache,
+              statefulSocketOf(node),
             ),
           );
         } else {

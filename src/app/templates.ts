@@ -42,6 +42,8 @@ export { matchInstanceBody } from '../core/dag/templates';
 const LEAF_FOR_TYPE: Readonly<Record<string, string>> = {
   Number: 'BodyInput',
   Vector3: 'BodyInputVec',
+  Quaternion: 'BodyInputRotation',
+  Matrix4: 'BodyInputTransform',
   PosedSkeleton: 'BodyInputPose',
 };
 

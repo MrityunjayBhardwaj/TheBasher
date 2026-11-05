@@ -169,6 +169,8 @@ export const NOT_A_NODE_ID: Readonly<Record<string, string>> = {
   'BodyInput.input': BODY_INPUT,
   'BodyInputPose.input': BODY_INPUT,
   'BodyInputVec.input': BODY_INPUT,
+  'BodyInputRotation.input': BODY_INPUT,
+  'BodyInputTransform.input': BODY_INPUT,
   'BoneNameMap.name': LABEL,
   'BoneNameMap.map{key}': BONE,
   'BoneNameMap.map{}': BONE,

@@ -149,6 +149,10 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
   BodyInput: '[] input=(unrouted) slot=(unrouted)',
   BodyInputPose: '[] input=(unrouted)',
   BodyInputVec: '[] input=(unrouted) slot=(unrouted)',
+  // ADDED at #1826 (the fifth arm) — the rotation and transform twins of BodyInputVec, with
+  // its two cells, unrouted as its are.
+  BodyInputRotation: '[] input=(unrouted) slot=(unrouted)',
+  BodyInputTransform: '[] input=(unrouted) slot=(unrouted)',
   BevelModifier:
     '[modifier] amount=modifier muted=modifier scope=modifier limitMethod=modifier angleLimit=modifier',
   BoneNameMap: '[] name=(unrouted) map=(unrouted)',
@@ -483,4 +487,7 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
 //   types 98 · routed 147 · unrouted 259 + 1 = 260
 // #1802 appends Fit's `dataType` and its four per-axis ranges, unrouted like its neighbours:
 //   types 98 · routed 147 · unrouted 260 + 5 = 265
-export const GOLDEN_TOTALS = { types: 98, routed: 147, unrouted: 265 } as const;
+// #1826 adds BodyInputRotation and BodyInputTransform, two cells each (`input`, `slot`),
+// unrouted like BodyInputVec's:
+//   types 98 + 2 = 100 · routed 147 · unrouted 265 + 4 = 269
+export const GOLDEN_TOTALS = { types: 100, routed: 147, unrouted: 269 } as const;

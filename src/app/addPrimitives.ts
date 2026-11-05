@@ -104,6 +104,11 @@ export const COMPUTE_KINDS = [
   'Solver',
   'PrevFrame',
   'SolverInput',
+  // #1826 — the previous value of vector, rotation and transform state; each leaf's `input`
+  // picker offers every name of its type, so one entry per type also reads the live input.
+  'PrevFrameVector',
+  'PrevFrameRotation',
+  'PrevFrameTransform',
 ] as const;
 export type ComputeKind = (typeof COMPUTE_KINDS)[number];
 
@@ -581,7 +586,14 @@ function isCompute(kind: PrimitiveKind): boolean {
 /** The Solver meta-op family — floating number nodes added unwired (like compute), but
  *  distinct from the stateless compute vocabulary. */
 function isSolverKind(kind: PrimitiveKind): boolean {
-  return kind === 'Solver' || kind === 'PrevFrame' || kind === 'SolverInput';
+  return (
+    kind === 'Solver' ||
+    kind === 'PrevFrame' ||
+    kind === 'SolverInput' ||
+    kind === 'PrevFrameVector' ||
+    kind === 'PrevFrameRotation' ||
+    kind === 'PrevFrameTransform'
+  );
 }
 
 /** The Add-menu kind → the DAG node type it creates. Exported because the agent's
@@ -617,6 +629,12 @@ export function nodeTypeFor(kind: PrimitiveKind): string {
     case 'PrevFrame':
     case 'SolverInput':
       return 'BodyInput';
+    case 'PrevFrameVector':
+      return 'BodyInputVec';
+    case 'PrevFrameRotation':
+      return 'BodyInputRotation';
+    case 'PrevFrameTransform':
+      return 'BodyInputTransform';
     default:
       return kind; // AmbientLight (stays fused), empties, compute nodes — direct mapping
   }
@@ -718,6 +736,12 @@ function humanLabel(kind: PrimitiveKind): string {
       return 'Prev Frame node';
     case 'SolverInput':
       return 'Solver Input node';
+    case 'PrevFrameVector':
+      return 'Prev Frame (Vector) node';
+    case 'PrevFrameRotation':
+      return 'Prev Frame (Rotation) node';
+    case 'PrevFrameTransform':
+      return 'Prev Frame (Transform) node';
   }
 }
 
@@ -859,5 +883,11 @@ function paramsFor(kind: PrimitiveKind, position: Vec3): Record<string, unknown>
       return { input: 'prev', slot: 0 };
     case 'SolverInput':
       return { input: 'input', slot: 0 };
+    case 'PrevFrameVector':
+      return { input: 'prevVec', slot: 0 };
+    case 'PrevFrameRotation':
+      return { input: 'prevRotation', slot: 0 };
+    case 'PrevFrameTransform':
+      return { input: 'prevTransform', slot: 0 };
   }
 }

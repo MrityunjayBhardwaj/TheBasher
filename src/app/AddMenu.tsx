@@ -124,6 +124,9 @@ const GROUPS: MenuGroup[] = [
       { kind: 'Solver', label: 'Solver' },
       { kind: 'PrevFrame', label: 'Prev Frame' },
       { kind: 'SolverInput', label: 'Solver Input' },
+      { kind: 'PrevFrameVector', label: 'Prev Frame (Vector)' },
+      { kind: 'PrevFrameRotation', label: 'Prev Frame (Rotation)' },
+      { kind: 'PrevFrameTransform', label: 'Prev Frame (Transform)' },
     ],
   },
 ];

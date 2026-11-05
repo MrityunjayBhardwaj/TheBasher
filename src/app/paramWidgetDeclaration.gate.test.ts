@@ -572,6 +572,8 @@ describe('a param declares its control on its schema (#872)', () => {
       optionsWidget: [
         'BodyInput.input',
         'BodyInputPose.input',
+        'BodyInputRotation.input',
+        'BodyInputTransform.input',
         'BodyInputVec.input',
         'CameraSelect.active',
         'FollowPath.target',
@@ -598,6 +600,8 @@ describe('a param declares its control on its schema (#872)', () => {
       withProvider: [
         'BodyInput.input',
         'BodyInputPose.input',
+        'BodyInputRotation.input',
+        'BodyInputTransform.input',
         'BodyInputVec.input',
         'CameraSelect.active',
         'FollowPath.target',

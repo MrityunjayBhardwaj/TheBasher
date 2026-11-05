@@ -74,6 +74,8 @@ const ALL_TYPES = [
   'BodyInput',
   // #1357 — the pose-carrying leaf a Rig's sub-network reads its incoming pose through.
   'BodyInputPose',
+  'BodyInputRotation',
+  'BodyInputTransform',
   'BodyInputVec',
   'BoneNameMap',
   'BoxData',

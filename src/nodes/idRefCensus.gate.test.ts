@@ -407,6 +407,8 @@ describe('#1560 — every input socket says what it owns, or is listed as owning
         "SeparateTransform.transform:always",
         "SetMaterialOp.target:stack",
         "Solver.bodies:body",
+        "Solver.bodiesRotation:body",
+        "Solver.bodiesTransform:body",
         "Solver.body:body",
         "Transform.target:stack",
         "TransformDirection.direction:always",

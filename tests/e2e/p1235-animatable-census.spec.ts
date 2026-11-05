@@ -81,6 +81,9 @@ const COMPUTE = [
   'Solver',
   'PrevFrame',
   'SolverInput',
+  'PrevFrameVector',
+  'PrevFrameRotation',
+  'PrevFrameTransform',
 ];
 
 interface Row {

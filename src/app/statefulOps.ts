@@ -54,6 +54,17 @@ import {
   readTransformChannelAt,
   readTransformPositionAt,
 } from './transformChannelSource';
+import { resolveEvaluatedTransform } from './resolveEvaluatedTransform';
+import {
+  IDENTITY_MAT4,
+  composeTransform,
+  eulerToQuat,
+  quatToEuler,
+  isMat4,
+  isQuat,
+  type Mat4,
+  type Quat,
+} from '../core/math/transformMath';
 
 /** Never integrate more than this many frames back in one `sample`. A first-order
  *  lag with factor > 0 has fully converged long before this; the cap only guards
@@ -84,6 +95,11 @@ function singleInputRef(
  * by the node definition's `stateful` flag (Lag today), so it stays type-agnostic:
  * any future stateful op wired into a driver replays through the same path.
  */
+/** The output of the stateful source a driver's `in` is wired to (#1826). */
+export function statefulSocketOf(driverNode: NodeLike): string | undefined {
+  return singleInputRef(driverNode, 'in')?.socket;
+}
+
 export function statefulSourceOf(driverNode: NodeLike, state: DagState): Node | null {
   // A stateful op can drive a scalar target OR a Vector3 target (S #300 — a vec
   // Solver/spring driving a position). Both arrive on the same `in` socket since #609,
@@ -111,6 +127,7 @@ function isVec3(v: unknown): v is Vec3 {
 }
 
 const ORIGIN: Vec3 = [0, 0, 0];
+const NO_ROTATION: Quat = [0, 0, 0, 1];
 
 /** The EvalCtx for a specific integer frame — the per-frame clock the replay samples
  *  its input at (so an animated controller resolves to its value AT that frame). */
@@ -416,6 +433,24 @@ const STATE_KINDS = {
     valid: isVec3,
     inputAt: statefulInputVecAt,
   },
+  rotation: {
+    body: 'bodiesRotation',
+    list: true,
+    prev: 'prevRotation',
+    input: 'inputRotation',
+    empty: NO_ROTATION,
+    valid: isQuat,
+    inputAt: controllerRotationAt,
+  },
+  transform: {
+    body: 'bodiesTransform',
+    list: true,
+    prev: 'prevTransform',
+    input: 'inputTransform',
+    empty: IDENTITY_MAT4,
+    valid: isMat4,
+    inputAt: controllerTransformAt,
+  },
 } as const satisfies Record<string, StateKind>;
 type StateKindName = keyof typeof STATE_KINDS;
 const KIND_NAMES = Object.keys(STATE_KINDS) as StateKindName[];
@@ -438,10 +473,49 @@ function statefulInputVecAt(
   ctx: EvalCtx,
   cache?: EvaluatorCache,
 ): Vec3 {
+  const src = controllerOf(state, node);
+  return src ? readTransformPositionAt(state, src, ctx, cache) : ORIGIN;
+}
+
+/** The controller a Solver's vector, rotation and transform state follow: its own
+ *  `sourceTransformVec`, else the one its enclosing template instance holds. */
+function controllerOf(state: DagState, node: Node): string | null {
   const own = transformVecSourceOf(node);
   const owner = own ? null : enclosingInstance(state, node.id);
-  const src = own ?? (owner && transformVecSourceOf(owner));
-  return src ? readTransformPositionAt(state, src.node, ctx, cache) : ORIGIN;
+  return (own ?? (owner && transformVecSourceOf(owner)))?.node ?? null;
+}
+
+/** #1826 — the controller's evaluated rotation at `ctx`, as a quaternion (its own in
+ *  quaternion mode, else its Euler degrees converted). No controller ⇒ no rotation. */
+function controllerRotationAt(
+  state: DagState,
+  node: Node,
+  ctx: EvalCtx,
+  cache?: EvaluatorCache,
+): Quat {
+  const src = controllerOf(state, node);
+  const xf = src ? resolveEvaluatedTransform(state, src, ctx, cache) : null;
+  if (!xf) return NO_ROTATION;
+  if (xf.quaternion) return [...xf.quaternion] as Quat;
+  return xf.rotation ? eulerToQuat(xf.rotation) : NO_ROTATION;
+}
+
+/** #1826 — the controller's evaluated transform at `ctx`, composed from the same position,
+ *  rotation and scale the vector and rotation state read. No controller ⇒ identity. */
+function controllerTransformAt(
+  state: DagState,
+  node: Node,
+  ctx: EvalCtx,
+  cache?: EvaluatorCache,
+): Mat4 {
+  const src = controllerOf(state, node);
+  const xf = src ? resolveEvaluatedTransform(state, src, ctx, cache) : null;
+  if (!xf) return IDENTITY_MAT4;
+  return composeTransform(
+    xf.position,
+    controllerRotationAt(state, node, ctx, cache),
+    xf.scale ?? [1, 1, 1],
+  );
 }
 
 /** Replay a Solver up to `frame(targetSeconds)`: every wired kind, stepped together. Returns
@@ -544,7 +618,16 @@ export function makeStatefulDriverChannelValue(
   driverParams: ParamDriverParams,
   statefulNode: Node,
   cache?: EvaluatorCache,
+  /** The Solver output the driver's `in` is wired to, when known. */
+  socket?: string,
 ): KeyframeChannelValue {
+  // #1826 — a rotation drives a rotation param as Euler degrees, the conversion a wire from a
+  // Quaternion into a Vector3 makes (socketConversion `Quaternion>Vector3`).
+  if (statefulNode.type === 'Solver' && socket === 'outRotation') {
+    return makeParamDriverVec3ChannelValueFn(driverParams, (seconds) =>
+      quatToEuler(solverSlot0(state, statefulNode, 'rotation', seconds, cache) as Quat),
+    );
+  }
   if (isVecSolver(statefulNode)) {
     return makeParamDriverVec3ChannelValueFn(
       driverParams,
@@ -596,8 +679,11 @@ export function replayStatefulAt(
       const replayed = replaySolverState(state, node, seconds, cache);
       return {
         out: solverSlot0(state, node, 'number', seconds, cache),
-        // An unwired vector reads the origin here, as it always has, not its live input.
+        // An unwired vector reads the origin here, as it always has, not its live input; the
+        // rotation and transform likewise read no rotation and the identity (#1826).
         outVec: replayed.vector?.[0] ?? ORIGIN,
+        outRotation: replayed.rotation?.[0] ?? NO_ROTATION,
+        outTransform: replayed.transform?.[0] ?? IDENTITY_MAT4,
       };
     }
     // A stateful type this seam has no recurrence for. Answering it as a Lag would hand back a
