@@ -64,6 +64,10 @@ export const TrackToParams = z.object({
   roll: z.number().default(0),
   /** Bypass — a muted constraint contributes nothing (the constraint stack). */
   mute: z.boolean().default(false),
+  /** #1783 — how much this constraint counts, 0–1, keyable and drivable: its result blends over
+   *  the result of the members below it (rotation by slerp, position by lerp), as Blender 5.1.1's
+   *  constraint Influence does. 1 replaces what is below; 0 is the same as muted. */
+  influence: z.number().min(0).max(1).default(1),
   /** Position in the target's ordered constraint stack (low → high, bottom → top).
    *  A relational operator is EDGE-LESS, so the stack orders by this field rather
    *  than by a wire — the geometry stack's sub-chain model cannot apply (see

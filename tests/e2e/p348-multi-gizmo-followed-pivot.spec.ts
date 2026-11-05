@@ -158,9 +158,15 @@ test.describe('#348 — the group gizmo pivots on rendered origins', () => {
     const expected: V3 = [pivot[0] + dz, before[1], pivot[2] - dx];
 
     closeTo((await rendered(page, 'n_box_b'))!, expected);
-    // The follower stays on its path — the band owns its position, so the gizmo cannot
-    // drag it off. Pinning current semantics: the group rotates AROUND it.
-    closeTo((await rendered(page, 'n_box'))!, follower);
+    // #1791 / #1794 — the follower's own position is its offset from the path (Blender 5.1.1),
+    // and a drag moves the DRAWN follower as the gizmo moves it, its own position following
+    // through the curve object's inverted turn and scale (Blender's grab inverts a Follow Path).
+    // So it swings about the pivot exactly as the static box does, however the curve is posed.
+    // (Before #1791 the path replaced the own position, and this pinned the follower staying
+    // put on its path.)
+    const fx = follower[0] - pivot[0];
+    const fz = follower[2] - pivot[2];
+    closeTo((await rendered(page, 'n_box'))!, [pivot[0] + fz, follower[1], pivot[2] - fx]);
   });
 
   test('an all-static selection pivots exactly as before', async ({ page }) => {

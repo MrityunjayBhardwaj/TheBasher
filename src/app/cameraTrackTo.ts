@@ -11,7 +11,7 @@
 import * as THREE from 'three';
 import type { EvaluatorCache } from '../core/dag/evaluator';
 import type { DagState } from '../core/dag/state';
-import { resolveActiveTrackTo, resolveTrackToTarget } from './nodeConstraints';
+import { resolveActiveTrackTo, resolveTrackToStack, resolveTrackToTarget } from './nodeConstraints';
 import { resolveParentWorldMatrix } from './resolveWorldTransform';
 import type { ClockedCtx } from './subjectClock';
 import { trackToQuaternion, trackToUpIn } from './resolveTrackTo';
@@ -51,11 +51,16 @@ export type CameraOwnRotation = RotationModeFields & { rotation: Vec3 };
 
 /**
  * #1760 — a camera's orientation in its parent's space, by the rule every object follows (V665):
- * its winning Track-To's aim and roll, else its Object's own rotation. The Track-To's aim is taken
- * from `position`, the camera's parent-local position with its keys and path applied. The
- * Track-To's own roll is the only bank on an aim (#1764: the lens has none).
- * `aim` is the Track-To's aim point in the parent's space, or null when the camera's own rotation
- * turns it.
+ * its Track-Tos' aims, else its Object's own rotation. Each Track-To's aim is taken from
+ * `position`, the camera's parent-local position with its keys and path applied, with the
+ * Track-To's own roll, the only bank on an aim (#1764: the lens has none).
+ *
+ * #1783 — the stack blends bottom → top by each member's influence, by slerp from the camera's own
+ * rotation, as the mesh road does (`resolveConstraintRotation`) and as Blender 5.1.1's constraint
+ * Influence does. At full influence the top member that aims decides alone, exactly as before.
+ * `aim` is the aim point of the top member that aims, in the parent's space (under a partial
+ * influence too: it is the point focus-on-target measures to and the reticle sits on), or null
+ * when the camera's own rotation turns it.
  */
 export function cameraLocalOrientation(
   state: DagState,
@@ -65,12 +70,35 @@ export function cameraLocalOrientation(
   ctx: ClockedCtx,
   cache?: EvaluatorCache,
 ): { quaternion: Quat; aim: Vec3 | null } {
-  const tracked = cameraTrackToAim(state, cameraId, ctx, cache);
-  if (tracked) {
-    const q = trackToQuaternion(position, tracked.lookAt, tracked.up, tracked.roll);
-    // A degenerate aim (the camera sits on its aim point) aims nothing; its own rotation stands.
-    if (q) return { quaternion: [q.x, q.y, q.z, q.w], aim: tracked.lookAt };
+  const ownQuat = (): THREE.Quaternion => {
+    const { rotation } = withResolvedRotation(own);
+    return new THREE.Quaternion(...quaternionFromEulerDeg(rotation));
+  };
+  const stack = resolveTrackToStack(state, cameraId, ctx, cache);
+  const parentWorld =
+    stack.length > 0 ? resolveParentWorldMatrix(state, cameraId, ctx, cache) : null;
+  const toParent = parentWorld ? parentWorld.clone().invert() : null;
+  let q: THREE.Quaternion | null = null;
+  let aim: Vec3 | null = null;
+  for (const member of stack) {
+    if (member.influence <= 0) continue;
+    // #1766 — the aim brought into the parent's space; #1770 — the up read in the Track-To's own
+    // space, in the parent's frame the camera aims in.
+    const w = member.targetWorld;
+    const local = toParent ? new THREE.Vector3(w[0], w[1], w[2]).applyMatrix4(toParent) : null;
+    const lookAt: Vec3 = local ? [local.x, local.y, local.z] : [w[0], w[1], w[2]];
+    const up: Vec3 = parentWorld
+      ? trackToUpIn([...member.up], member.aimSpace, 'parent', parentWorld)
+      : [...member.up];
+    const m = trackToQuaternion(position, lookAt, up, member.roll);
+    // A degenerate aim (the camera sits on its aim point) aims nothing.
+    if (!m) continue;
+    q = member.influence >= 1 ? m : (q ?? ownQuat()).clone().slerp(m, member.influence);
+    // Under a partial influence too, the point the blend leans toward: what focus-on-target
+    // focuses on and where the aim reticle sits. The orientation is the blend's, on the pose.
+    aim = lookAt;
   }
-  const { rotation } = withResolvedRotation(own);
-  return { quaternion: quaternionFromEulerDeg(rotation), aim: null };
+  if (q) return { quaternion: [q.x, q.y, q.z, q.w], aim };
+  const o = ownQuat();
+  return { quaternion: [o.x, o.y, o.z, o.w], aim: null };
 }

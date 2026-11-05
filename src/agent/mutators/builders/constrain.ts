@@ -15,9 +15,9 @@
 // removal is `buildRemoveConstraintOps`. The panel and the voice cannot drift.
 //
 // A SECOND REQUEST RE-POINTS; IT DOES NOT STACK. The decision `mutator.camera.trajectory`
-// recorded (#774): two live Track-Tos on one object are not two aims — the fold is
-// last-writer-wins by `order`, and the loser is still drawn in the panel, a displayed ≠
-// rendered split. So a LIVE constraint of the same kind already on the target has its
+// recorded (#774): two live Track-Tos on one object are not two aims — at full influence the
+// top one decides alone and the one below is still drawn in the panel, a displayed ≠ rendered
+// split (and two Follow Paths COMPOSE since #1791, so a stacked one would add a second path). So a LIVE constraint of the same kind already on the target has its
 // pointer re-aimed. A muted one is not reused: re-pointing it would change nothing on
 // screen.
 //
@@ -98,7 +98,9 @@ export const constrainMutator: MutatorDefinition<ConstrainSpec> = {
   description:
     'Aim an object at another (TrackTo) or move it along a path (FollowPath). ' +
     'A live constraint of the same type already on the target is re-pointed, not stacked. ' +
-    'The target keeps its authored pose; the constraint overrides the band it writes.',
+    "A TrackTo overrides the target's rotation. A FollowPath puts the target ON the path: " +
+    'its own position is cleared, since a Follow Path adds it as an offset from the path ' +
+    '(as in Blender); set a position afterwards to ride beside the path.',
   spec: ConstrainSpec,
   specExample: { target: 'camera_id', type: 'TrackTo', to: 'node_id' },
   contract: {
@@ -132,16 +134,29 @@ export const constrainMutator: MutatorDefinition<ConstrainSpec> = {
   },
   build(spec, _closure: ClosureSet, state: DagState): Op[] {
     const kind = addableConstraint(spec.type)!;
+    // #1791 — a Follow Path adds the target's own position to the point on the path, so "move
+    // it along the path" clears that position (Blender's Clear Location), as the camera
+    // trajectory does: otherwise the target rides at the path plus wherever it stood.
+    const clearLocation: Op[] =
+      spec.type === 'FollowPath'
+        ? [{ type: 'setParam', nodeId: spec.target, paramPath: 'position', value: [0, 0, 0] }]
+        : [];
     const existing = liveConstraintOfType(state, spec.target, spec.type);
     if (existing) {
-      return [{ type: 'setParam', nodeId: existing, paramPath: kind.pointer, value: spec.to }];
+      return [
+        ...clearLocation,
+        { type: 'setParam', nodeId: existing, paramPath: kind.pointer, value: spec.to },
+      ];
     }
     const id = freshId(
       `${spec.target}_${spec.type.toLowerCase()}`,
       new Set(Object.keys(state.nodes)),
     );
     // The pointee is named, so a light gets no aim empty (#1765): it aims at `to`.
-    return buildAddConstraintOps(state, spec.target, spec.type, id, spec.to)!.ops;
+    return [
+      ...clearLocation,
+      ...buildAddConstraintOps(state, spec.target, spec.type, id, spec.to)!.ops,
+    ];
   },
 };
 

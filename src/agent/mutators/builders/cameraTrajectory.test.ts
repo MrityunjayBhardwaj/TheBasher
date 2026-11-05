@@ -11,6 +11,7 @@ import { buildDefaultDagState } from '../../../core/project/default';
 import { registerAllNodes } from '../../../nodes/registerAll';
 import type { DagState } from '../../../core/dag/state';
 import type { Op } from '../../../core/dag/types';
+import { resolveCameraPoseAt } from '../../../app/activeCamera';
 
 type AddNodeOp = {
   type: 'addNode';
@@ -119,6 +120,16 @@ describe('#774 — a prompt becomes a wired, aimed camera trajectory', () => {
     // Every point carries a stable id, or a later drag/undo cannot refer to one.
     const ids = (data.params.points as { id: string }[]).map((p) => p.id);
     expect(new Set(ids).size, 'point ids must be unique').toBe(PATH.length);
+  });
+
+  it('#1791 — the camera draws ON the points: its own position is cleared, not added to them', () => {
+    const s0 = scene();
+    const cam = cameraId(s0);
+    // The default camera stands away from the origin, so an own position left in place shows.
+    expect((s0.nodes[cam].params as { position?: unknown }).position).not.toEqual([0, 0, 0]);
+    const s1 = apply(s0, run(s0, { cameraId: cam, subjectId: 'n_box', points: PATH }));
+    const at = resolveCameraPoseAt(s1, cam, 0).position;
+    PATH[0].forEach((v, i) => expect(at[i], `start [${i}]`).toBeCloseTo(v, 6));
   });
 
   it('a SECOND shot re-points the constraints it already has instead of stacking a rival', () => {

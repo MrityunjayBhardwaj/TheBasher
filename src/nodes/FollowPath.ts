@@ -69,11 +69,16 @@ export const FollowPathParams = z.object({
   offset: z.number().default(0),
   /** Bypass — a muted constraint contributes nothing (the constraint stack). */
   mute: z.boolean().default(false),
+  /** #1783 — how much this constraint counts, 0–1, keyable and drivable: its result blends over
+   *  the result of the members below it (rotation by slerp, position by lerp), as Blender 5.1.1's
+   *  constraint Influence does. 1 replaces what is below; 0 is the same as muted. */
+  influence: z.number().min(0).max(1).default(1),
   /** Position in the target's ordered constraint stack (low → high, bottom → top).
    *  Shared with Track-To: one object has ONE constraint stack, and both operators take
-   *  their slot in it. Within the POSITION band the fold is last-writer-wins, so a higher
-   *  `order` wins; a Track-To in the same stack writes a different band and never
-   *  contends. Mirrors `TrackTo.order` / `ParamDriver.order`. */
+   *  their slot in it. Within the POSITION band the fold runs bottom → top: each Follow Path
+   *  places the result of the ones below it (#1791), blended by its influence (#1783); a
+   *  Track-To in the same stack writes a different band and never contends. Mirrors
+   *  `TrackTo.order` / `ParamDriver.order`. */
   order: z.number().default(0),
 });
 export type FollowPathParams = z.infer<typeof FollowPathParams>;

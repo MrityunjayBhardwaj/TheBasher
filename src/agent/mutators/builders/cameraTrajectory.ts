@@ -31,10 +31,10 @@
 // A SECOND REQUEST RE-POINTS THE EXISTING CONSTRAINTS; IT DOES NOT STACK
 // ─────────────────────────────────────────────────────────────────────────
 // "Now make it a dolly instead" is the ordinary second thing a director says. Two
-// Follow-Paths on one camera is not two paths — both write the POSITION band, the
-// fold is last-writer-wins by `order`, and the loser is still drawn in the
-// constraint panel: a displayed-≠-rendered split ([[V446]]/H40), authored by a
-// road that looked like it worked. So an existing Follow-Path on this camera has
+// Follow-Paths on one camera is not two paths — both write the POSITION band, and since
+// #1791 they COMPOSE: the second places the camera relative to where the first put it,
+// so the shot would ride the sum of both paths, a displayed-≠-rendered surprise ([[V446]]/H40)
+// authored by a road that looked like it worked. So an existing Follow-Path on this camera has
 // its `curve` re-pointed at the new Object, and an existing Track-To its
 // `aimNode`. The superseded curve stays in the scene — visible, selectable and
 // deletable — rather than being removed underneath a director who may want it
@@ -273,6 +273,12 @@ export const cameraTrajectoryMutator: MutatorDefinition<CameraTrajectorySpec> = 
       from: { node: objectId, socket: 'out' },
       to: { node: sceneRef.node, socket: 'children' },
     });
+
+    // #1791 — a Follow Path adds the camera's own position to the point on the path (Blender
+    // 5.1.1), so the camera's own position is cleared, as "Clear Location" does: the spec's points
+    // are where the camera goes, and the same silent doubling as above would otherwise put it at
+    // their sum with wherever the camera stood.
+    ops.push({ type: 'setParam', nodeId: spec.cameraId, paramPath: 'position', value: [0, 0, 0] });
 
     const follow = liveConstraintOfType(state, spec.cameraId, 'FollowPath');
     if (follow) {

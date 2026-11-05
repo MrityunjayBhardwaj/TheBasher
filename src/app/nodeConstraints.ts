@@ -27,13 +27,14 @@
 import * as THREE from 'three';
 import type { DagState } from '../core/dag/state';
 import type { EvalCtx } from '../core/dag/types';
-import { resolveTrackTo, trackToUpIn } from './resolveTrackTo';
+import { aimEulerDeg, trackToQuaternion, trackToUpIn } from './resolveTrackTo';
 import {
   resolveWorldTransform,
   resolveParentWorldMatrix,
   type WorldTransform,
 } from './resolveWorldTransform';
 import { readCurveSampleAt } from './curveSampleSource';
+import { isDriverMuted } from './paramDrivers';
 import { gltfNodeWorldPosition } from './gltfNodeWorld';
 import { resolveEvaluatedParam } from './resolveEvaluatedParam';
 import type { EvaluatorCache } from '../core/dag/evaluator';
@@ -293,10 +294,11 @@ export function followPathStackForTarget(
 /**
  * The BOTTOM member of `nodeId`'s constraint stack, or null — the old first-wins accessor.
  *
- * ⚠️ #317 — do NOT use this to answer "what is this object's aim?". The aim band is
- * LAST-WRITER-WINS, so the member that actually aims the object is the TOP one:
- * {@link activeConstraintForTarget}. The two coincide only while an object carries exactly
- * one constraint — which stopped being guaranteed when the Constraints panel (#312) shipped.
+ * ⚠️ #317 — do NOT use this to answer "what is this object's aim?". The aim band folds bottom
+ * → top, so at full influence the member that actually aims the object is the TOP one:
+ * {@link activeConstraintForTarget} (below full influence they blend, #1783). The two
+ * coincide only while an object carries exactly one constraint — which stopped being
+ * guaranteed when the Constraints panel (#312) shipped.
  * The camera look-at dropdown made precisely this mistake and displayed the LOSING
  * constraint (fixed in #317).
  *
@@ -313,8 +315,11 @@ export function trackToForTarget(
 /**
  * The WINNING member of `nodeId`'s constraint stack — the TOP one (#317).
  *
- * The aim band is LAST-WRITER-WINS, so the top member is the one `resolveConstraintRotation`
- * folds last and `resolveTrackToTarget` resolves: it is what the object ACTUALLY does. Any
+ * The aim band folds bottom → top, so the top member is the one `resolveConstraintRotation`
+ * folds last and `resolveTrackToTarget` resolves: at full influence it is what the object
+ * ACTUALLY does. #1783 — below full influence the members blend, so this is the member that
+ * folds LAST, not the whole answer: a reader of the drawn result reads the fold
+ * (`resolveConstraintRotation`, `cameraLocalOrientation`), and this names the constraint. Any
  * surface that DISPLAYS or EDITS "the current aim" must read THIS, not `trackToForTarget`
  * (the BOTTOM member) — they coincide for a single-constraint object and DIVERGE the moment
  * the Constraints panel adds a second one, at which point a bottom-reading surface shows the
@@ -335,28 +340,74 @@ export interface TransformController {
   /** The constraint node, so the row can name it and select it. */
   readonly nodeId: string;
   readonly type: 'TrackTo' | 'FollowPath';
+  /** #1795 — the constraint decides the row outright, so an edit there would change nothing on
+   *  screen: the row shows the drawn value, locked. False when it only partly decides it (a
+   *  Follow Path, whose result adds the own position as an offset, #1791; Track-Tos none of which
+   *  is at full influence, #1783): the row shows the own value, editable, as Blender does. */
+  readonly locks: boolean;
+}
+
+/** #1795 — the influence a constraint is authored at, when nothing animates it; null when
+ *  something can (a key channel or live driver on `influence`, or any strip placed on the
+ *  constraint, whose clip may carry it): it can then be anything over time. A muted driver
+ *  animates nothing; a key channel counts muted or not, the side that leaves the row editable. */
+function fixedInfluence(
+  nodes: Readonly<Record<string, NodeLike>>,
+  constraintId: string,
+): number | null {
+  for (const [id, n] of Object.entries(nodes)) {
+    const p = n.params as { target?: unknown; paramPath?: unknown } | undefined;
+    if (p?.target !== constraintId) continue;
+    if (n.type === 'Strip') return null;
+    if (p.paramPath !== 'influence') continue;
+    if (n.type.startsWith('KeyframeChannel')) return null;
+    if (n.type === 'ParamDriver' && !isDriverMuted({ ...n, id })) return null;
+  }
+  const raw = (nodes[constraintId]?.params as { influence?: unknown } | undefined)?.influence;
+  return typeof raw === 'number' && !Number.isNaN(raw) ? Math.min(1, Math.max(0, raw)) : 1;
+}
+
+/** #1795 — the top live Track-To on `nodeId` that can aim it: muted members and members at a
+ *  fixed influence of 0 are skipped (they aim nothing). The camera's aim reticle edits this one. */
+export function topContributingTrackTo(
+  nodes: Readonly<Record<string, NodeLike>>,
+  nodeId: string,
+): ActiveConstraint | null {
+  const live = constraintStackForTarget(nodes, nodeId).filter(
+    (m) => fixedInfluence(nodes, m.nodeId) !== 0,
+  );
+  return live[live.length - 1] ?? null;
 }
 
 /**
- * #1776 — the constraint that decides what `nodeId`'s `paramPath` is drawn with: the winning
- * Track-To for `rotation` / `quaternion`, the top Follow-Path for `position`. The inspector shows
- * the drawn value on such a row and locks it, naming this constraint (the user's call over
- * Blender, which shows the own value under a constraint): an edit there would change nothing on
- * screen. Muted members control nothing. Every other param → null.
+ * #1776 — the constraint that decides what `nodeId`'s `paramPath` is drawn with: the top live
+ * Track-To for `rotation` / `quaternion`, the top live Follow-Path for `position`. Muted members,
+ * and members at a fixed influence of 0, control nothing. Every other param → null.
+ *
+ * #1795 (the user's call, 2026-11-04) — `locks` says whether it decides the row OUTRIGHT. A
+ * Track-To at a fixed full influence does: everything below it, the own rotation included, is
+ * replaced, so the row shows the drawn value, locked (#1776's rule: an edit there would change
+ * nothing on screen). A Follow Path never does (the own position is its offset, #1791), nor do
+ * Track-Tos none of which is at full influence (#1783): the row shows the own value, editable,
+ * with the constraint named beside it.
  */
 export function transformControllerOf(
   nodes: Readonly<Record<string, NodeLike>>,
   nodeId: string,
   paramPath: string,
 ): TransformController | null {
+  const live = (ids: { nodeId: string }[]) =>
+    ids.map((m) => ({ id: m.nodeId, f: fixedInfluence(nodes, m.nodeId) })).filter((m) => m.f !== 0);
   if (paramPath === 'rotation' || paramPath === 'quaternion') {
-    const aim = activeConstraintForTarget(nodes, nodeId);
-    return aim ? { nodeId: aim.nodeId, type: 'TrackTo' } : null;
+    const members = live(constraintStackForTarget(nodes, nodeId));
+    const top = members[members.length - 1];
+    if (!top) return null;
+    return { nodeId: top.id, type: 'TrackTo', locks: members.some((m) => m.f === 1) };
   }
   if (paramPath === 'position') {
-    const stack = followPathStackForTarget(nodes, nodeId);
-    const top = stack[stack.length - 1];
-    return top ? { nodeId: top.nodeId, type: 'FollowPath' } : null;
+    const members = live(followPathStackForTarget(nodes, nodeId));
+    const top = members[members.length - 1];
+    return top ? { nodeId: top.id, type: 'FollowPath', locks: false } : null;
   }
   return null;
 }
@@ -468,31 +519,37 @@ export function resolveConstraintRotation(
   // pure TRS walk) and never re-enters this resolver.
   const aimOrigin = resolveFollowedWorldPosition(state, nodeId, ctx, cache) ?? objWorld.position;
 
-  // #311 — FOLD the stack bottom → top on the ROTATION band. v1 semantics are
-  // LAST-WRITER-WINS: each member that resolves to a defined aim overwrites the one
-  // below it, and a DEGENERATE member (unresolvable target / zero-distance aim)
-  // contributes nothing — exactly as a muted member would. So a single-member stack
-  // returns that member's aim unchanged: the byte-identity pin (this is why the fold
-  // picks a whole resolved aim rather than blending Euler angles, which would NOT be
-  // identity-preserving for one member).
+  // #311 — FOLD the stack bottom → top on the ROTATION band. A DEGENERATE member
+  // (unresolvable target / zero-distance aim) contributes nothing — exactly as a muted member
+  // would. A single member at full influence returns its aim unchanged: the byte-identity pin
+  // (this is why the fold blends whole rotations as quaternions, never Euler angles).
   //
-  // Members writing ORTHOGONAL bands need no ordering at all — a future Follow-Path
-  // writes POSITION while this writes ROTATION, so they commute. Per-member influence
-  // blending (two members on the SAME band) is a later phase.
+  // Members writing ORTHOGONAL bands need no ordering at all — a Follow-Path writes POSITION
+  // while this writes ROTATION, so they commute.
   // #1770 — read before the fold: a member's up is in its own space, and this fold aims in the world.
   const parentWorld = resolveParentWorldMatrix(state, nodeId, ctx, cache);
-  let aimWorld: Vec3 | null = null;
+  // #1783 — each member's aim blends over the result of the members below it by its influence,
+  // by slerp, as Blender 5.1.1's constraint Influence does (measured: 0.5 over the own rotation is
+  // slerp(own, aim, 0.5) to 6 places; two stacked Track-Tos slerp in order). Influence 1 takes the
+  // aim exactly (the slerp's t = 1 is a copy), so a stack at full influence is the last-writer-wins
+  // fold it was, byte for byte. Below the first member is the object's own world rotation.
+  let aimQ: THREE.Quaternion | null = null;
   for (const typed of stack) {
     const member = evaluatedTrackTo(state, typed, ctx, cache);
-    const memberAim = resolveTrackTo(
+    const influence = constraintInfluence(state, member.nodeId, ctx, cache);
+    if (influence <= 0) continue;
+    const q = trackToQuaternion(
       aimOrigin,
       aimTargetWorld(state, member, ctx, cache),
       trackToUpIn(member.up, member.aimSpace, 'world', parentWorld),
       member.roll,
     );
-    if (memberAim) aimWorld = memberAim;
+    if (!q) continue; // degenerate — contributes nothing
+    if (influence >= 1) aimQ = q;
+    else aimQ = (aimQ ?? new THREE.Quaternion(...objWorld.quaternion)).clone().slerp(q, influence);
   }
-  if (!aimWorld) return null;
+  if (!aimQ) return null;
+  const aimWorld = aimEulerDeg(aimQ);
   // #267 (V45 #1 / I2 / C5) — the aim is derived in WORLD space, but the value we
   // return is written as the node's LOCAL rotation param, which then composes UNDER
   // the node's parent in the render (GroupR/TransformR `<group>`). Re-express the
@@ -508,10 +565,21 @@ export function resolveConstraintRotation(
  * The WORLD point `nodeId`'s Follow-Path stack places it at, or null when it has no
  * active, non-degenerate Follow-Path.
  *
- * The POSITION band's fold, and the twin of `resolveConstraintRotation`'s aim fold:
- * bottom → top, LAST-WRITER-WINS, and a DEGENERATE member (no curve, or a `curve` that
- * isn't a resolvable Curve) contributes nothing — exactly as a muted one would. So a
- * single-member stack is just that member's point.
+ * #1791 — THE OBJECT'S OWN POSITION IS AN OFFSET FROM THE PATH, as in Blender 5.1.1, whose
+ * `followpath_evaluate` (constraint.cc) is `owner = curveWorld · T(point) · owner`: the path acts
+ * like a parent. So the result is the point on the path plus the object's own WORLD position (its
+ * keys, drivers, held edits and parent included: the pure `resolveWorldTransform`), carried
+ * through the curve object's rotation and scale. Measured in 5.1.1: an empty at (0, 4, 0) on a
+ * path from the origin to (10, 0, 0), at its end, draws at (10, 4, 0); with the curve object turned
+ * 90° about Z, at (−4, 10, 0); scaled 2, at (20, 8, 0); parented under an empty at (0, 0, 5), at
+ * (10, 4, 5). Before, the point REPLACED the own position, so it could not be nudged off the path.
+ *
+ * Only the position is taken. Blender also turns the object by the curve object's rotation (and by
+ * the tangent with Follow Curve); this band writes position only, so neither is applied here.
+ *
+ * The stack folds bottom → top, each member placing the result of the one below, as Blender
+ * applies constraints in order. A DEGENERATE member (no curve, or a `curve` that isn't a
+ * resolvable Curve) contributes nothing, exactly as a muted one would.
  *
  * `evalTime` is read through `resolveEvaluatedParam` — the render-identical path — NOT off
  * the raw param. That is what makes it keyframeable and driveable; reading it raw would
@@ -525,10 +593,10 @@ export function resolveConstraintRotation(
  * PUBLIC for the UI surfaces that must address an object where it RENDERS rather than where
  * it was authored (box-select, #342). Such a caller reads this ON TOP of the pure
  * `resolveWorldTransform` — it must never be folded INTO that walk. The pure walk is what
- * this resolver's own inputs (the curve's world) read, so folding it in closes a cycle
- * (A follows curve C, C parented under A → ∞). The pure/applied SPLIT is the cycle guard,
- * and the renderer already embodies it: `ConstrainedR` applies the band to an object's local
- * while the band reads pure worlds for its inputs.
+ * this resolver's own inputs (the curve's world, and the object's own world) read, so folding
+ * it in closes a cycle (A follows curve C, C parented under A → ∞). The pure/applied SPLIT is
+ * the cycle guard, and the renderer already embodies it: `ConstrainedR` applies the band to an
+ * object's local while the band reads pure worlds for its inputs.
  */
 export function resolveFollowedWorldPosition(
   state: DagState,
@@ -539,16 +607,82 @@ export function resolveFollowedWorldPosition(
   const stack = followPathStackForTarget(state.nodes, nodeId);
   if (stack.length === 0) return null;
   let world: Vec3 | null = null;
+  let own: Vec3 | null = null;
+  let contributed = false;
   for (const member of stack) {
     if (!member.curve) continue; // degenerate — unbound path
+    const influence = constraintInfluence(state, member.nodeId, ctx, cache);
+    if (influence <= 0) continue;
     const resolved = resolveEvaluatedParam(state, member.nodeId, 'evalTime', ctx, cache);
     const evalTime = typeof resolved?.value === 'number' ? resolved.value : member.evalTime;
     const sample = readCurveSampleAt(state, member.curve, evalTime + member.offset, ctx, cache);
-    // Copied, not aliased: the seam's point is readonly (and table-owned) — this resolver
-    // hands back a plain mutable Vec3 like every other band here.
-    if (sample) world = [sample.point[0], sample.point[1], sample.point[2]];
+    if (!sample) continue;
+    contributed = true;
+    // What this member places: the result of the members below, else the object's own world.
+    if (!world) {
+      own ??= resolveWorldTransform(state, nodeId, ctx, cache)?.position ?? [0, 0, 0];
+      world = own;
+    }
+    // The offset goes through the curve object's rotation and scale; its translation is already
+    // in the sampled point.
+    const curveWorld = resolveWorldTransform(state, member.curve, ctx, cache)?.matrix;
+    const off: THREE.Vector3 = new THREE.Vector3(world[0], world[1], world[2]);
+    const lin = curveWorld
+      ? new THREE.Matrix4().fromArray(curveWorld).setPosition(0, 0, 0)
+      : new THREE.Matrix4();
+    off.applyMatrix4(lin);
+    const full: Vec3 = [sample.point[0] + off.x, sample.point[1] + off.y, sample.point[2] + off.z];
+    // #1783 — blended over what is below by its influence, by lerp (Blender 5.1.1: an empty at
+    // (0, 4, 0) at influence 0.5 on a path to (10, 0, 0) draws at (5, 4, 0)). 1 is the path's
+    // result exactly.
+    world =
+      influence >= 1
+        ? full
+        : [
+            world[0] + (full[0] - world[0]) * influence,
+            world[1] + (full[1] - world[1]) * influence,
+            world[2] + (full[2] - world[2]) * influence,
+          ];
   }
-  return world;
+  return contributed ? world : null;
+}
+
+/**
+ * #1794 — how the drawn position of `nodeId` answers its own world position, as a 3×3 matrix A:
+ * the Follow Path fold is `drawn = A · own + b` (each live member contributes
+ * `(1 − f)·I + f·L`, L its curve object's rotation and scale, f its influence). Null when no
+ * live Follow Path places it (drawn = own).
+ *
+ * A drag that moves the drawn point by `d` moves the own position by `A⁻¹ · d`, so the object
+ * follows the cursor however the curve object is turned or scaled. Blender 5.1.1's grab does the
+ * same: for a Follow Path `constraints_list_needinv` holds, and `ObjectToTransData` converts the
+ * drag through the inverse of the constrained world matrix (transform_convert_object.cc).
+ */
+export function followPathLinear(
+  state: DagState,
+  nodeId: string,
+  ctx: EvalCtx,
+  cache?: EvaluatorCache,
+): THREE.Matrix3 | null {
+  const stack = followPathStackForTarget(state.nodes, nodeId);
+  let a: THREE.Matrix3 | null = null;
+  for (const member of stack) {
+    if (!member.curve) continue;
+    const f = constraintInfluence(state, member.nodeId, ctx, cache);
+    if (f <= 0) continue;
+    const resolved = resolveEvaluatedParam(state, member.nodeId, 'evalTime', ctx, cache);
+    const evalTime = typeof resolved?.value === 'number' ? resolved.value : member.evalTime;
+    if (!readCurveSampleAt(state, member.curve, evalTime + member.offset, ctx, cache)) continue;
+    const curveWorld = resolveWorldTransform(state, member.curve, ctx, cache)?.matrix;
+    const l = curveWorld
+      ? new THREE.Matrix3().setFromMatrix4(new THREE.Matrix4().fromArray(curveWorld))
+      : new THREE.Matrix3();
+    // (1 − f)·I + f·L
+    const e = l.elements.map((v, i) => f * v + (i % 4 === 0 ? 1 - f : 0));
+    const m = new THREE.Matrix3().fromArray(e);
+    a = a ? m.multiply(a) : m;
+  }
+  return a;
 }
 
 /**
@@ -621,8 +755,9 @@ export function resolveTrackToTarget(
   ctx: EvalCtx,
   cache?: EvaluatorCache,
 ): Vec3 | null {
-  // #311 — the aim band is LAST-WRITER-WINS, so the TOP of the stack owns the aim
-  // point, matching the member `resolveConstraintRotation` folds last. A single-member
+  // #311 — the TOP of the stack owns the aim point, matching the member
+  // `resolveConstraintRotation` folds last (#1783: at full influence it alone decides the aim;
+  // below it this is the last member's point, and the drawn aim is the fold's). A single-member
   // stack is `[0]` either way → byte-identical to the pre-stack first-wins path.
   // #317 — "the top member" now has ONE name (`activeConstraintForTarget`), so the
   // authoring surfaces display/edit exactly the member this resolves.
@@ -650,6 +785,47 @@ export function resolveActiveTrackTo(
  * takes no ctx), so this is applied where a member is resolved. A setting with nothing on it
  * reads back as typed.
  */
+/**
+ * #1783 — how much constraint `constraintId` counts at `ctx`: its `influence`, keys and drivers
+ * applied, clamped to 0–1. A constraint saved before influence existed counts fully (1).
+ */
+export function constraintInfluence(
+  state: DagState,
+  constraintId: string,
+  ctx: EvalCtx,
+  cache?: EvaluatorCache,
+): number {
+  const raw =
+    resolveEvaluatedParam(state, constraintId, 'influence', ctx, cache)?.value ??
+    (state.nodes[constraintId]?.params as { influence?: unknown } | undefined)?.influence;
+  if (typeof raw !== 'number' || Number.isNaN(raw)) return 1;
+  return Math.min(1, Math.max(0, raw));
+}
+
+/** One live Track-To of an object's stack at `ctx`, bottom → top: its animatable settings
+ *  evaluated, its influence, and the WORLD point it aims at. For a road that aims in its own
+ *  space (the camera's, in its parent's), so it blends the same members the mesh road does. */
+export interface EvaluatedTrackTo extends ActiveConstraint {
+  readonly influence: number;
+  readonly targetWorld: Vec3;
+}
+
+export function resolveTrackToStack(
+  state: DagState,
+  nodeId: string,
+  ctx: EvalCtx,
+  cache?: EvaluatorCache,
+): EvaluatedTrackTo[] {
+  return constraintStackForTarget(state.nodes, nodeId).map((typed) => {
+    const member = evaluatedTrackTo(state, typed, ctx, cache);
+    return {
+      ...member,
+      influence: constraintInfluence(state, member.nodeId, ctx, cache),
+      targetWorld: aimTargetWorld(state, member, ctx, cache),
+    };
+  });
+}
+
 function evaluatedTrackTo(
   state: DagState,
   member: ActiveConstraint,

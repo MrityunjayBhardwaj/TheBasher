@@ -100,15 +100,24 @@ describe('#353 — mutator.constrain', () => {
     const { state, curve } = withCurve();
     const spec = { target: 'n_camera', type: 'FollowPath', to: curve };
     const ops = okOps(plan(constrainMutator, spec, state));
-    expect(ops).toHaveLength(1);
-    expect(ops[0]).toMatchObject({
+    expect(ops).toHaveLength(2);
+    // #1791 — the camera's own position is cleared: a Follow Path adds it as an offset.
+    expect(ops[0]).toEqual({
+      type: 'setParam',
+      nodeId: 'n_camera',
+      paramPath: 'position',
+      value: [0, 0, 0],
+    });
+    expect(ops[1]).toMatchObject({
       type: 'addNode',
       nodeType: 'FollowPath',
       params: { target: 'n_camera', curve },
     });
     // No new path is minted — that is camera.trajectory's job, not this one's.
     expect(ops.some((o) => o.type === 'addNode' && o.nodeType === 'CurveData')).toBe(false);
-    propose(constrainMutator, spec, state, ops);
+    const fork = propose(constrainMutator, spec, state, ops);
+    // Its own position, the offset from the path, is zero: it rides the path itself.
+    expect(fork.nodes.n_camera.params).toMatchObject({ position: [0, 0, 0] });
   });
 
   it('asking again RE-POINTS the live constraint of that type; it does not stack a second', () => {
