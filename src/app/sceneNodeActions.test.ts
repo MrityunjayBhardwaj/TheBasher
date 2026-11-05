@@ -397,6 +397,8 @@ describe('buildDuplicateNodeOps', () => {
         to: { node: 'scene', socket: 'children' },
         index: 1,
       },
+      // An unnamed object's copy takes the word for its kind (#1518).
+      { type: 'setMeta', nodeId: 'box_copy', name: 'Object' },
     ]);
   });
 
@@ -425,6 +427,8 @@ describe('buildDuplicateNodeOps', () => {
         to: { node: 'scene', socket: 'children' },
         index: 2,
       },
+      { type: 'setMeta', nodeId: 'grp_copy', name: 'Empty' },
+      { type: 'setMeta', nodeId: 'inner_copy', name: 'Object' },
     ]);
   });
 
@@ -478,6 +482,7 @@ describe('buildDuplicateNodeOps', () => {
         to: { node: 'scene', socket: 'children' },
         index: 1,
       },
+      { type: 'setMeta', nodeId: 'obj_copy', name: 'Cube' },
     ]);
   });
 
@@ -1851,9 +1856,13 @@ describe('buildDuplicateNodesOps — one duplicate rule, deep and linked (#1561)
       expect(second.after.nodes[second.roots[0]].meta).toEqual({ name: 'Hero.002' });
     });
 
-    it('CONTROL: an unnamed original gives its copy no name', () => {
-      const { after } = commit(buildDefaultDagState(), ['n_box']);
-      expect(after.nodes.n_box_copy.meta).toBeUndefined();
+    it('#1518 — an unnamed object gives its copy the word for its kind, and its data no name', () => {
+      const base = buildDefaultDagState();
+      const { after } = commit(base, ['n_box']);
+      expect(after.nodes.n_box_copy.meta?.name).toMatch(/^Cube(\.\d{3})?$/);
+      const data = (after.nodes.n_box_copy.inputs.data as { node: string }).node;
+      expect(after.nodes[data].meta?.name).toBeUndefined();
+      expect(after.nodes.n_box.meta).toEqual(base.nodes.n_box.meta);
     });
 
     it('a follower copied alone keeps following the node its original followed', () => {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { dropIntent, dropZoneAt, reorderIndex } from './treeDropIntent';
+import { cameraRootDropOps, dropIntent, dropZoneAt, reorderIndex } from './treeDropIntent';
 
 describe('dropZoneAt — the edges are the top and bottom quarter', () => {
   it.each([
@@ -60,5 +60,27 @@ describe('reorderIndex — the index after the disconnect shifts the list', () =
   it('a drop that lands the node where it is does nothing', () => {
     expect(reorderIndex(1, 2, 'before')).toBeNull(); // b before c: already there
     expect(reorderIndex(2, 1, 'after')).toBeNull(); // c after b: already there
+  });
+});
+
+describe('#1518 — a camera dropped on the Scene root stays in the scene', () => {
+  const root = { nodeId: 'scene', depth: 0 };
+  const group = { nodeId: 'g', depth: 1 };
+  const row = (nodeId: string, socket: string) => ({
+    nodeId: 'cam',
+    depth: 2,
+    parent: { nodeId, socket },
+  });
+  it('out of its group and into Scene.children', () => {
+    const from = { node: 'cam', socket: 'out' };
+    expect(cameraRootDropOps(row('g', 'children'), root)).toEqual([
+      { type: 'disconnect', from, to: { node: 'g', socket: 'children' } },
+      { type: 'connect', from, to: { node: 'scene', socket: 'children' } },
+    ]);
+  });
+  it('no move for a camera already at the top, the active one, or a drop elsewhere', () => {
+    expect(cameraRootDropOps(row('scene', 'children'), root)).toBeNull();
+    expect(cameraRootDropOps(row('scene', 'camera'), root)).toBeNull();
+    expect(cameraRootDropOps(row('g', 'children'), group)).toBeNull();
   });
 });

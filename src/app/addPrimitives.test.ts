@@ -32,7 +32,9 @@ describe('buildAddPrimitiveOps', () => {
     // on the Object (the posable half), so newNodeId is the Object's id.
     const state = seedSceneState();
     const r = buildAddPrimitiveOps(state, 'Cube', [1, 2, 3])!;
-    expect(r.ops).toHaveLength(4);
+    // The pair, its two wires, and its name (#1518).
+    expect(r.ops).toHaveLength(5);
+    expect(r.ops[4]).toEqual({ type: 'setMeta', nodeId: r.newNodeId, name: 'Cube' });
     if (r.ops[0].type !== 'addNode' || r.ops[1].type !== 'addNode') throw new Error();
     expect(r.ops[0].nodeType).toBe('BoxData');
     expect(r.ops[1].nodeType).toBe('Object');
@@ -56,7 +58,7 @@ describe('buildAddPrimitiveOps', () => {
     // (geometry radius/segments + material) and an Object (pose) wired data→object, the Object
     // into scene.children. Selection lands on the Object, so newNodeId is the Object's id.
     const r = buildAddPrimitiveOps(seedSceneState(), 'Sphere', [1, 2, 3])!;
-    expect(r.ops).toHaveLength(4);
+    expect(r.ops).toHaveLength(5);
     if (r.ops[0].type !== 'addNode' || r.ops[1].type !== 'addNode') throw new Error();
     expect(r.ops[0].nodeType).toBe('SphereData');
     expect((r.ops[0].params as { radius: number }).radius).toBe(0.5);
@@ -126,19 +128,20 @@ describe('buildAddPrimitiveOps', () => {
     },
   );
 
-  it('cameras add only — no auto-wire to scene.camera (single-cardinality)', () => {
+  it('cameras stand in scene.children, never scene.camera (single-cardinality, #1518)', () => {
     const r = buildAddPrimitiveOps(seedSceneState(), 'PerspectiveCamera', [3, 2, 3])!;
-    // The only edge is the pair's own `data` wire — nothing reaches the Scene.
-    expect(r.ops.filter((o) => o.type === 'connect')).toHaveLength(1);
+    const connects = r.ops.filter((o) => o.type === 'connect');
+    expect(connects.map((o) => o.to.socket)).toEqual(['data', 'children']);
     expect(r.ops.filter((o) => o.type === 'connect' && o.to.socket === 'camera')).toHaveLength(0);
     expect(r.ops[0].type).toBe('addNode');
   });
 
-  it('empties add only — Group / Transform stay floating until wired', () => {
-    const a = buildAddPrimitiveOps(seedSceneState(), 'Group', [0, 0, 0])!;
-    const b = buildAddPrimitiveOps(seedSceneState(), 'Transform', [0, 0, 0])!;
-    expect(a.ops.filter((o) => o.type === 'connect')).toHaveLength(0);
-    expect(b.ops.filter((o) => o.type === 'connect')).toHaveLength(0);
+  it('a Group / Transform stands in scene.children, ready to be dropped into (#1518)', () => {
+    for (const kind of ['Group', 'Transform'] as const) {
+      const r = buildAddPrimitiveOps(seedSceneState(), kind, [0, 0, 0])!;
+      const connects = r.ops.filter((o) => o.type === 'connect');
+      expect(connects.map((o) => o.to.socket)).toEqual(['children']);
+    }
   });
 
   it('Null: standalone controller — auto-wires to scene.children with its TRS', () => {

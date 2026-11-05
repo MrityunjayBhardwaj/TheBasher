@@ -299,7 +299,7 @@ export function newCollectionOps(
 /**
  * #397 — the scene's objects: what a collection can hold and an eye can hide. Every thing the
  * scene holds (#1821, `sceneMembersOf`: its bands at any depth, an object under a Transform or
- * MaterialOverride wrapper, the active lighting profile's lights, every camera), less the nodes
+ * MaterialOverride wrapper, the active lighting profile's lights, its cameras), less the nodes
  * the wires pass through to reach them (`HOP_TYPES`). Their drawers all honour `hiddenNodes`.
  */
 export function collectableNodes(state: DagState): ReadonlySet<NodeId> {

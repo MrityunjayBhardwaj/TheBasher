@@ -24,6 +24,7 @@
 
 import { passRoleOf } from '../dag/passRole';
 import type { NodeId, SocketId } from '../dag/types';
+import { repairFloatingCameras } from './repairFloatingCameras';
 import type { Project } from './schema';
 
 export interface RoleBindingRepair {
@@ -101,5 +102,13 @@ export function repairAndWarn(project: Project): Project {
         `Re-wire the dropped node to another job if it was intentional.`,
     );
   }
-  return repaired;
+  // #1518 — every load door comes through here (`loadProject`, `sceneBundle`).
+  const cameras = repairFloatingCameras(repaired.state);
+  if (cameras.repaired.length > 0) {
+    console.warn(
+      `[repairFloatingCameras] stood ${cameras.repaired.length} unwired camera(s) in the scene: ` +
+        `${cameras.repaired.join(', ')} (#1518).`,
+    );
+  }
+  return cameras.state === repaired.state ? repaired : { ...repaired, state: cameras.state };
 }

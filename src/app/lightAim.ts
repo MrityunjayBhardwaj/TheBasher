@@ -22,6 +22,7 @@ import type { DagState } from '../core/dag/state';
 import type { Op } from '../core/dag/types';
 import { nextConstraintOrder } from './nodeConstraints';
 import { lightKindOf } from './lightNode';
+import { freshObjectName, takenObjectNames } from './objectNames';
 import { hierarchyChildIds } from './sceneHierarchy';
 import { resolveParentWorldMatrix } from './resolveWorldTransform';
 
@@ -99,7 +100,15 @@ export function lightAimOps(
       nodeType: 'Null',
       params: { position, rotation: [0, 0, 0], scale: [1, 1, 1] },
     },
-    { type: 'setMeta', nodeId: nullId, name: opts.name ?? lightAimName(state, lightId, opts.kind) },
+    {
+      type: 'setMeta',
+      nodeId: nullId,
+      // #1518 — a free name: two spots with no name of their own would otherwise share `Spot.aim`.
+      name: freshObjectName(
+        opts.name ?? lightAimName(state, lightId, opts.kind),
+        takenObjectNames(state),
+      ),
+    },
     ...(holder
       ? [
           {
