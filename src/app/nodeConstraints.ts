@@ -508,10 +508,21 @@ export function resolveConstraintRotation(
  * The WORLD point `nodeId`'s Follow-Path stack places it at, or null when it has no
  * active, non-degenerate Follow-Path.
  *
- * The POSITION band's fold, and the twin of `resolveConstraintRotation`'s aim fold:
- * bottom → top, LAST-WRITER-WINS, and a DEGENERATE member (no curve, or a `curve` that
- * isn't a resolvable Curve) contributes nothing — exactly as a muted one would. So a
- * single-member stack is just that member's point.
+ * #1791 — THE OBJECT'S OWN POSITION IS AN OFFSET FROM THE PATH, as in Blender 5.1.1, whose
+ * `followpath_evaluate` (constraint.cc) is `owner = curveWorld · T(point) · owner`: the path acts
+ * like a parent. So the result is the point on the path plus the object's own WORLD position (its
+ * keys, drivers, held edits and parent included: the pure `resolveWorldTransform`), carried
+ * through the curve object's rotation and scale. Measured in 5.1.1: an empty at (0, 4, 0) on a
+ * path from the origin to (10, 0, 0), at its end, draws at (10, 4, 0); with the curve object turned
+ * 90° about Z, at (−4, 10, 0); scaled 2, at (20, 8, 0); parented under an empty at (0, 0, 5), at
+ * (10, 4, 5). Before, the point REPLACED the own position, so it could not be nudged off the path.
+ *
+ * Only the position is taken. Blender also turns the object by the curve object's rotation (and by
+ * the tangent with Follow Curve); this band writes position only, so neither is applied here.
+ *
+ * The stack folds bottom → top, each member placing the result of the one below, as Blender
+ * applies constraints in order. A DEGENERATE member (no curve, or a `curve` that isn't a
+ * resolvable Curve) contributes nothing, exactly as a muted one would.
  *
  * `evalTime` is read through `resolveEvaluatedParam` — the render-identical path — NOT off
  * the raw param. That is what makes it keyframeable and driveable; reading it raw would
@@ -525,10 +536,10 @@ export function resolveConstraintRotation(
  * PUBLIC for the UI surfaces that must address an object where it RENDERS rather than where
  * it was authored (box-select, #342). Such a caller reads this ON TOP of the pure
  * `resolveWorldTransform` — it must never be folded INTO that walk. The pure walk is what
- * this resolver's own inputs (the curve's world) read, so folding it in closes a cycle
- * (A follows curve C, C parented under A → ∞). The pure/applied SPLIT is the cycle guard,
- * and the renderer already embodies it: `ConstrainedR` applies the band to an object's local
- * while the band reads pure worlds for its inputs.
+ * this resolver's own inputs (the curve's world, and the object's own world) read, so folding
+ * it in closes a cycle (A follows curve C, C parented under A → ∞). The pure/applied SPLIT is
+ * the cycle guard, and the renderer already embodies it: `ConstrainedR` applies the band to an
+ * object's local while the band reads pure worlds for its inputs.
  */
 export function resolveFollowedWorldPosition(
   state: DagState,
@@ -539,14 +550,27 @@ export function resolveFollowedWorldPosition(
   const stack = followPathStackForTarget(state.nodes, nodeId);
   if (stack.length === 0) return null;
   let world: Vec3 | null = null;
+  let own: Vec3 | null = null;
   for (const member of stack) {
     if (!member.curve) continue; // degenerate — unbound path
     const resolved = resolveEvaluatedParam(state, member.nodeId, 'evalTime', ctx, cache);
     const evalTime = typeof resolved?.value === 'number' ? resolved.value : member.evalTime;
     const sample = readCurveSampleAt(state, member.curve, evalTime + member.offset, ctx, cache);
-    // Copied, not aliased: the seam's point is readonly (and table-owned) — this resolver
-    // hands back a plain mutable Vec3 like every other band here.
-    if (sample) world = [sample.point[0], sample.point[1], sample.point[2]];
+    if (!sample) continue;
+    // What this member places: the result of the members below, else the object's own world.
+    if (!world) {
+      own ??= resolveWorldTransform(state, nodeId, ctx, cache)?.position ?? [0, 0, 0];
+      world = own;
+    }
+    // The offset goes through the curve object's rotation and scale; its translation is already
+    // in the sampled point.
+    const curveWorld = resolveWorldTransform(state, member.curve, ctx, cache)?.matrix;
+    const off: THREE.Vector3 = new THREE.Vector3(world[0], world[1], world[2]);
+    const lin = curveWorld
+      ? new THREE.Matrix4().fromArray(curveWorld).setPosition(0, 0, 0)
+      : new THREE.Matrix4();
+    off.applyMatrix4(lin);
+    world = [sample.point[0] + off.x, sample.point[1] + off.y, sample.point[2] + off.z];
   }
   return world;
 }

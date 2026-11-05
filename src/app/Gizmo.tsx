@@ -67,7 +67,7 @@ import { useSelectionStore } from './stores/selectionStore';
 import { useTimeStore, type TimeStore } from './stores/timeStore';
 import { maybeSnapVec3, maybeSnapTransform, useViewportStore } from './stores/viewportStore';
 import { pivotPoint } from './gizmoPivot';
-import { resolveEvaluatedTransform } from './resolveEvaluatedTransform';
+import { resolveEvaluatedTransform, resolveOwnTransform } from './resolveEvaluatedTransform';
 import { resolveParentWorldMatrix, resolveWorldTransform } from './resolveWorldTransform';
 import { routeAnimatedGrab, autoKeyCommit } from './animate/autoKeyCommit';
 import { resolveCameraPoseAt } from './activeCamera';
@@ -81,6 +81,18 @@ import { useArmatureMode } from './armatureMode';
 import { uiEvaluatorCache } from './uiEvaluatorCache';
 
 type Vec3 = [number, number, number];
+
+/** Euler XYZ degrees → quaternion. */
+function quatOfDeg(d: readonly number[]): THREE.Quaternion {
+  return new THREE.Quaternion().setFromEuler(
+    new THREE.Euler(
+      THREE.MathUtils.degToRad(d[0]),
+      THREE.MathUtils.degToRad(d[1]),
+      THREE.MathUtils.degToRad(d[2]),
+      'XYZ',
+    ),
+  );
+}
 
 function isVec3(v: unknown): v is Vec3 {
   return Array.isArray(v) && v.length === 3 && v.every((x) => typeof x === 'number');
@@ -314,6 +326,17 @@ function SingleGizmo() {
   // space). Plus the dragged node's own pivot (Group) to strip on write-back.
   const parentWorldRef = useRef<THREE.Matrix4 | null>(null);
   const pivotRef = useRef<Vec3 | null>(null);
+  // #1794 — where a constraint draws the node away from its OWN transform (a Follow Path's
+  // offset, #1791; a Track-To below full influence, #1783), the node's drawn and own local pose at
+  // seed time. The proxy sits where it is drawn; a drag adds to the own transform, as Blender's
+  // grab does, so writing the proxy back as the own value does not double the offset. Null when
+  // the two agree (every unconstrained node), and the write is the proxy's value as it always was.
+  const ownSeedRef = useRef<{
+    drawnPos: Vec3;
+    ownPos: Vec3;
+    drawnRot: Vec3 | null;
+    ownRot: Vec3 | null;
+  } | null>(null);
 
   const isCharacter = node?.type === 'Character';
   // The directly-manipulable params (position + rotation/scale-or-size). With
@@ -388,6 +411,37 @@ function SingleGizmo() {
           );
         } catch {
           evalT = null; // fall back entirely to static (Character-branch shape)
+        }
+
+        // #1794 — the own pose beside the drawn one, when a constraint parts them.
+        ownSeedRef.current = null;
+        if (evalT) {
+          let ownT: ReturnType<typeof resolveOwnTransform> = null;
+          try {
+            ownT = resolveOwnTransform(
+              useDagStore.getState().state,
+              selectedId,
+              { time: { frame, seconds, normalized } },
+              cache,
+            );
+          } catch {
+            ownT = null;
+          }
+          const differs = (
+            a: readonly number[] | null | undefined,
+            b: readonly number[] | null | undefined,
+          ) => !!a && !!b && a.some((v, i) => v !== b[i]);
+          if (
+            ownT &&
+            (differs(evalT.position, ownT.position) || differs(evalT.rotation, ownT.rotation))
+          ) {
+            ownSeedRef.current = {
+              drawnPos: [...evalT.position] as Vec3,
+              ownPos: [...ownT.position] as Vec3,
+              drawnRot: evalT.rotation ? ([...evalT.rotation] as Vec3) : null,
+              ownRot: ownT.rotation ? ([...ownT.rotation] as Vec3) : null,
+            };
+          }
         }
 
         // position
@@ -551,9 +605,14 @@ function SingleGizmo() {
     // pre-#230. (Snapping stays per-mode below, on the resolved local value.)
     const parentWorld = parentWorldRef.current;
     const local = parentWorld ? worldToLocalTRS(g, parentWorld, pivotRef.current) : null;
+    const ownSeed = ownSeedRef.current;
     if (liveMode === 'translate') {
+      const dragged: Vec3 = local ? local.position : [g.position.x, g.position.y, g.position.z];
+      // #1794 — the drag added to the own position (drawn → own by the same offset).
       const value = maybeSnapVec3(
-        local ? local.position : [g.position.x, g.position.y, g.position.z],
+        ownSeed
+          ? (ownSeed.ownPos.map((v, i) => v + dragged[i] - ownSeed.drawnPos[i]) as Vec3)
+          : dragged,
       );
       if (routeAnimatedGrab(selectedId, 'position', value)) return; // D-02: re-route BEFORE setParam
       // P7.7: a GltfChild has NO keyframe channel (the clip lives on the asset),
@@ -580,10 +639,24 @@ function SingleGizmo() {
       // Object3D.rotation is radians — params.rotation is degrees. #230: when
       // nested, the local rotation comes from the world→local conversion.
       // #228: snap to the rotate increment (degrees) when Snap ▸ Affect ▸ Rotate.
-      const value: Vec3 = maybeSnapTransform(
-        'rotate',
-        local ? local.rotation : radVec3ToDeg([g.rotation.x, g.rotation.y, g.rotation.z]),
-      );
+      const dragged: Vec3 = local
+        ? local.rotation
+        : radVec3ToDeg([g.rotation.x, g.rotation.y, g.rotation.z]);
+      // #1794 — the drag's turn applied to the own rotation: own' = (dragged · drawn⁻¹) · own.
+      const turned: Vec3 =
+        ownSeed?.drawnRot && ownSeed.ownRot
+          ? // Through the matrix → local-TRS conversion the gizmo already writes with.
+            matrixToLocalTRS(
+              new THREE.Matrix4().makeRotationFromQuaternion(
+                quatOfDeg(dragged)
+                  .multiply(quatOfDeg(ownSeed.drawnRot).invert())
+                  .multiply(quatOfDeg(ownSeed.ownRot)),
+              ),
+              null,
+              null,
+            ).rotation
+          : dragged;
+      const value: Vec3 = maybeSnapTransform('rotate', turned);
       // #1153 — through the node's mode: `rotation` for euler, `quaternion` otherwise, and the
       // keying below follows the same path so a quaternion node keys its quaternion channel.
       const params = (useDagStore.getState().state.nodes[selectedId]?.params ??
@@ -759,6 +832,9 @@ function MultiGizmo() {
     nodes: {
       id: string;
       seedWorld: THREE.Matrix4;
+      /** #1794 — the node's OWN world (no constraint applied), which a drag adds to; the seed
+       *  world is where it is drawn, which places the pivot. Null when the two are one. */
+      ownWorld: THREE.Matrix4 | null;
       parentWorld: THREE.Matrix4 | null;
       pivot: Vec3 | null;
       manip: Manipulable;
@@ -784,6 +860,7 @@ function MultiGizmo() {
         const manip = getManipulable(node ?? null);
         if (!manip) continue;
         let world: THREE.Matrix4;
+        let ownWorld: THREE.Matrix4 | null = null;
         let parentWorld: THREE.Matrix4 | null = null;
         try {
           const wt = resolveWorldTransform(state, id, ctx, cache);
@@ -797,15 +874,19 @@ function MultiGizmo() {
           // ONLY — the band writes no rotation/scale, so the rest of the matrix stands. Read on
           // top of the pure walk, never folded into it (#348).
           const followed = resolveFollowedWorldPosition(state, id, ctx, cache);
-          if (followed) world.setPosition(followed[0], followed[1], followed[2]);
+          if (followed) {
+            ownWorld = world.clone();
+            world.setPosition(followed[0], followed[1], followed[2]);
+          }
           parentWorld = resolveParentWorldMatrix(state, id, ctx, cache);
         } catch {
           world = new THREE.Matrix4().setPosition(...manip.position);
+          ownWorld = null;
           parentWorld = null;
         }
         const np = node?.params as { pivot?: unknown } | undefined;
         const pivot = node?.type === 'Group' && isVec3(np?.pivot) ? (np!.pivot as Vec3) : null;
-        seeds.push({ id, seedWorld: world, parentWorld, pivot, manip });
+        seeds.push({ id, seedWorld: world, ownWorld, parentWorld, pivot, manip });
       }
       if (seeds.length === 0) {
         seedRef.current = null;
@@ -872,17 +953,19 @@ function MultiGizmo() {
     const linear = delta.clone().setPosition(0, 0, 0); // rotation/scale about world origin
     const ops: Op[] = [];
     for (const sn of seed.nodes) {
+      // #1794 — a drag adds to the OWN world; the drawn seed only placed the pivot.
+      const base = sn.ownWorld ?? sn.seedWorld;
       let newWorld: THREE.Matrix4;
       if (individual) {
-        const o = new THREE.Vector3().setFromMatrixPosition(sn.seedWorld);
+        const o = new THREE.Vector3().setFromMatrixPosition(base);
         // T(o) · linear · T(-o) · seedWorld — rotate/scale about the node's origin.
         newWorld = new THREE.Matrix4()
           .makeTranslation(o.x, o.y, o.z)
           .multiply(linear)
           .multiply(new THREE.Matrix4().makeTranslation(-o.x, -o.y, -o.z))
-          .multiply(sn.seedWorld);
+          .multiply(base);
       } else {
-        newWorld = delta.clone().multiply(sn.seedWorld);
+        newWorld = delta.clone().multiply(base);
       }
       const local = matrixToLocalTRS(newWorld, sn.parentWorld, sn.pivot);
       // Position changes under translate AND under rotate/scale-about-pivot.

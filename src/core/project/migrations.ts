@@ -169,6 +169,9 @@ const formatMigrations: Record<number, FormatMigration> = {
   // aims (at the origin at rotation 0, down its −Y otherwise) are written into its rotation, or
   // into a Track-To when its position moves.
   26: migrateLightAimToTurn,
+  // v27 → v28 (#1791): a Follow Path adds the object's own position to the point on the path, as
+  // Blender does. Each followed object's own position becomes zero, so it draws where it did.
+  27: migrateFollowPathOwnOffset,
 };
 
 // ── v1 → v2: AnimationLayer retirement (#199) ──────────────────────────────
@@ -2853,4 +2856,82 @@ export function migrateLightAimToTurn(raw: unknown): unknown {
     );
   }
   return { ...proj, state: { ...proj.state, nodes: out }, formatVersion: 27 };
+}
+
+// ── v27 → v28: Follow Path keeps the object's own position as an offset (#1791) ────────────────
+// A Follow Path used to REPLACE the followed object's position with the point on the path; now it
+// ADDS the object's own (world) position to it, as Blender 5.1.1's does. So each object a live
+// Follow Path moves has its own position set to zero, and the keys and drivers on its position are
+// removed: the path overrode them, so they moved nothing, and as an offset they would. A top-level
+// follower then draws exactly where it did, at every time.
+//
+// What cannot come across exactly is never silent. Each of these is LOGGED by name, and none is in
+// a real file (all 19 projects on disk scanned, 2026-11-04: 12 hold a Follow Path, every one a
+// top-level camera on one path, no position keys):
+// - a follower with a parent: its parent's world position now adds to the path point;
+// - a follower with two or more live Follow Paths: they now compose in order, where the top one
+//   used to win alone;
+// - a follower a strip is placed on: a position inside the strip's clip now offsets it.
+export function migrateFollowPathOwnOffset(raw: unknown): unknown {
+  const proj = raw as { formatVersion?: number; state?: { nodes?: Record<string, RawNode> } };
+  const nodes = proj.state?.nodes;
+  if (!nodes) return { ...proj, formatVersion: 28 };
+  const out: Record<string, RawNode> = { ...nodes };
+  const entries = Object.entries(nodes);
+  const isCurve = (id: unknown) => {
+    const n = typeof id === 'string' ? nodes[id] : undefined;
+    if (!n) return false;
+    if (Array.isArray(n.params?.points)) return true;
+    return asRefs(n.inputs?.data).some((r) => nodes[r.node ?? '']?.type === 'CurveData');
+  };
+  // Live members per followed object: not muted, bound to a curve that exists (a degenerate one
+  // placed nothing before and places nothing now).
+  const live = new Map<string, string[]>();
+  for (const [id, n] of entries) {
+    if (n?.type !== 'FollowPath' || n.params?.mute === true) continue;
+    const target = n.params?.target;
+    if (typeof target !== 'string' || !nodes[target] || !isCurve(n.params?.curve)) continue;
+    live.set(target, [...(live.get(target) ?? []), id]);
+  }
+  const onPosition = (p: Record<string, unknown> | undefined) =>
+    typeof p?.paramPath === 'string' &&
+    (p.paramPath === 'position' || p.paramPath.startsWith('position.'));
+  const parented: string[] = [];
+  const stacked: string[] = [];
+  const stripped: string[] = [];
+  let removedKeys = 0;
+  for (const [target, members] of live) {
+    out[target] = { ...nodes[target], params: { ...nodes[target].params, position: [0, 0, 0] } };
+    for (const [id, n] of entries) {
+      if (n?.params?.target !== target || !onPosition(n.params)) continue;
+      const isKey = typeof n.type === 'string' && n.type.startsWith('KeyframeChannel');
+      if (!isKey && n.type !== 'ParamDriver') continue;
+      delete out[id];
+      removedKeys++;
+    }
+    const hasParent = entries.some(
+      ([, n]) => n?.type !== 'Scene' && asRefs(n?.inputs?.children).some((r) => r.node === target),
+    );
+    if (hasParent) parented.push(target);
+    if (members.length > 1) stacked.push(target);
+    if (entries.some(([, n]) => n?.type === 'Strip' && n.params?.target === target))
+      stripped.push(target);
+  }
+  if (live.size > 0) {
+    console.warn(
+      `[migrateFollowPathOwnOffset] ${live.size} object(s) on a Follow Path now have their own ` +
+        `position as an offset from the path; it is set to zero and ${removedKeys} key/driver ` +
+        `node(s) on it removed, so each draws where it did (#1791).` +
+        (parented.length > 0
+          ? ` Parented, so their parent's position now adds to the path: ${parented.join(', ')}.`
+          : '') +
+        (stacked.length > 0
+          ? ` Two or more live Follow Paths, which now compose in order: ${stacked.join(', ')}.`
+          : '') +
+        (stripped.length > 0
+          ? ` A strip is placed on them; a position inside it now offsets them: ${stripped.join(', ')}.`
+          : ''),
+    );
+  }
+  return { ...proj, state: { ...proj.state, nodes: out }, formatVersion: 28 };
 }

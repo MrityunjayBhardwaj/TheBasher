@@ -267,6 +267,8 @@ describe('#1480 / #1504 — every door that adds an object joins the active coll
     'src/app/sceneTreeWalk.ts': 'an outliner row naming a node type; adds nothing',
     'src/core/project/default.ts': 'the new project; no collection exists to be active',
     'src/core/project/examples.ts': 'example projects, built whole; no collection is active',
+    'src/core/project/__fixtures__/followPathOffset.fixtures.ts':
+      'the v26 scenes a format-step test is gated on (#1791); not reached by the app',
   };
   const JOINED_BY_CALLER: Record<string, string> = {
     'src/core/import/modelImport.ts': 'src/app/asset/importGltf.ts',

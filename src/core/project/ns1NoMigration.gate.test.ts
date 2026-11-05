@@ -157,7 +157,9 @@ describe('#637 this phase ships no migration, and the absence is pinned', () => 
     // aim at the origin and its −Y axis) moves onto its rotation or a Track-To, as a camera's did
     // (formatMigrations[26]). The render read those aims directly, so only a pass can hand each
     // saved one to what turns a light now.
-    const MIGRATIONS_SINCE_FREEZE = 18; // #915, #920, #930, #389, #1062, #1203, #1224, #1225 ×2, #1316, #1227, #1503, #1548, #1668, #1559, #1666, #1762, #1765
+    // #1791 is the NINETEENTH: a Follow Path now adds the own position as an offset, so each
+    // followed object's saved position (ignored until now) is set to zero (formatMigrations[27]).
+    const MIGRATIONS_SINCE_FREEZE = 19; // #915, #920, #930, #389, #1062, #1203, #1224, #1225 ×2, #1316, #1227, #1503, #1548, #1668, #1559, #1666, #1762, #1765, #1791
     expect(PROJECT_FORMAT_VERSION).toBe(fixture().formatVersion + MIGRATIONS_SINCE_FREEZE);
   });
 
