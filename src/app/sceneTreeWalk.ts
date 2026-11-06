@@ -17,7 +17,7 @@ import type { Node, NodeId, NodeRef } from '../core/dag/types';
 import { enumerateCameraNodeIds } from './activeCamera';
 import { importedChildOf } from './importedChild';
 import { chainSocketOf, isSceneLaneWrapper } from './operatorChain';
-import { hierarchySocketForKind } from './sceneHierarchy';
+import { childIdsOf, hierarchySocketForKind } from './sceneHierarchy';
 import { childCollectionsOf, collectionMembersOf, sceneCollectionsOf } from './collections';
 import { resolveActiveRigNode, resolveRigLightSources } from './resolveRigLightSources';
 
@@ -37,7 +37,29 @@ export interface TreeRow {
    * any. Top-level rows under Scene.children carry this; the Scene row
    * itself does not. Drag-reorder uses these to emit disconnect+connect.
    */
-  readonly parent?: { nodeId: NodeId; socket: string; index: number };
+  readonly parent?: TreeRowParent;
+}
+
+/** The row's holder and how it holds the row's node. */
+export interface TreeRowParent {
+  readonly nodeId: NodeId;
+  readonly socket: string;
+  /** Position in the holder's wired list; -1 when the row's node is held by its parent input. */
+  readonly index: number;
+  /** #1824 — the row's node names the holder through its own parent input: no wire on the holder
+   *  carries it, so moving it rewires the child, not the holder's list. */
+  readonly byParentInput?: true;
+}
+
+/** Blender's outliner order: case-insensitive, digit runs compared as numbers
+ *  (`BLI_strcasecmp_natural`, outliner_tree.cc `treesort_alpha`), so "Cube.2" sorts before "Cube.10". */
+const NATURAL = new Intl.Collator('en', { numeric: true, sensitivity: 'base' });
+
+/** `ids` sorted by what the outliner shows for each, then by id, so equal names keep one order. */
+function byName(state: DagState, ids: readonly NodeId[]): NodeId[] {
+  const named = ids.map((id) => ({ id, name: display(state, id) }));
+  named.sort((a, b) => NATURAL.compare(a.name, b.name) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  return named.map((n) => n.id);
 }
 
 interface WalkCtx {
@@ -114,7 +136,7 @@ function walkOneAsChild(
   nodeId: NodeId,
   depth: number,
   parentKey: string,
-  parent: { nodeId: NodeId; socket: string; index: number },
+  parent: TreeRowParent,
 ): void {
   if (ctx.visited.has(nodeId)) return;
   ctx.visited.add(nodeId);
@@ -133,16 +155,26 @@ function walkOneAsChild(
   // next aggregate parent the walk already descends.
   if (hierarchySocketForKind(node.type, node) === 'children') {
     pushRow(ctx, row);
-    const children = node.inputs.children;
-    if (Array.isArray(children)) {
-      children.forEach((ref, i) => {
-        ctx.visited.delete(ref.node);
-        walkOneAsChild(ctx, ref.node, depth + 1, row.key, {
-          nodeId,
-          socket: 'children',
-          index: i,
-        });
-      });
+    // #1824 — the children are whatever the tree module says hangs from this node: the ones wired
+    // into its `children` list and the ones whose parent input reads its world. Shown sorted by
+    // name as Blender's outliner sorts objects; the id breaks a tie, since names need not be unique
+    // and the id is what the row stands for.
+    const wired = node.inputs.children;
+    const wiredAt = new Map<NodeId, number>();
+    if (Array.isArray(wired))
+      wired.forEach((ref, i) => wiredAt.has(ref.node) || wiredAt.set(ref.node, i));
+    for (const childId of byName(ctx.state, childIdsOf(ctx.state, nodeId))) {
+      ctx.visited.delete(childId);
+      const at = wiredAt.get(childId);
+      walkOneAsChild(
+        ctx,
+        childId,
+        depth + 1,
+        row.key,
+        at === undefined
+          ? { nodeId, socket: 'children', index: -1, byParentInput: true }
+          : { nodeId, socket: 'children', index: at },
+      );
     }
     return;
   }

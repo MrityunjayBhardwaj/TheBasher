@@ -458,3 +458,69 @@ describe('#1505 — a member held in more than one place', () => {
     expect(new Set(targets).size).toBe(targets.length);
   });
 });
+
+// #1824 — a parent's rows are what the tree module says hangs from it: the children wired into its
+// list and the ones whose parent input reads its world. Rows sort as Blender's outliner sorts
+// objects (case-insensitive, digit runs as numbers), and the id settles equal names.
+describe('#1824 — the rows under a parent', () => {
+  function withGroup(): DagState {
+    return applyAll(buildSceneOnly(), [
+      { type: 'addNode', nodeId: 'grp', nodeType: 'Group', params: {} },
+      {
+        type: 'connect',
+        from: { node: 'grp', socket: 'out' },
+        to: { node: 'n_scene', socket: 'children' },
+      },
+    ]);
+  }
+  function cube(state: DagState, id: string, name: string, how: 'wire' | 'parent'): DagState {
+    let s = makeSplitCube(state, {
+      objectId: id,
+      size: [1, 1, 1],
+      ...(how === 'wire' ? { connectTo: { node: 'grp', socket: 'children' } } : {}),
+    }).state;
+    s = { ...s, nodes: { ...s.nodes, [id]: { ...s.nodes[id]!, meta: { name } } } };
+    if (how === 'parent')
+      s = applyOp(s, {
+        type: 'connect',
+        from: { node: 'grp', socket: 'world' },
+        to: { node: id, socket: 'parent' },
+      }).next;
+    return s;
+  }
+  const under = (state: DagState) =>
+    buildSceneTreeRows(state).filter((r) => r.parent?.nodeId === 'grp');
+
+  it('lists a child hung by its parent input, marked as held that way', () => {
+    const rows = under(cube(withGroup(), 'kid', 'Kid', 'parent'));
+    expect(rows.map((r) => r.nodeId)).toEqual(['kid']);
+    expect(rows[0].depth).toBe(2);
+    expect(rows[0].parent).toEqual({
+      nodeId: 'grp',
+      socket: 'children',
+      index: -1,
+      byParentInput: true,
+    });
+  });
+
+  it('sorts wired and parent-input children together, by name, naturally and without case', () => {
+    let s = withGroup();
+    s = cube(s, 'a', 'cube.10', 'wire');
+    s = cube(s, 'b', 'Cube.2', 'parent');
+    s = cube(s, 'c', 'apple', 'wire');
+    s = cube(s, 'd', 'Zed', 'parent');
+    const rows = under(s);
+    expect(rows.map((r) => r.display)).toEqual(['apple', 'Cube.2', 'cube.10', 'Zed']);
+    // A wired child keeps its place in the holder's list, which a drag disconnects by.
+    expect(rows.find((r) => r.nodeId === 'a')?.parent?.index).toBe(0);
+    expect(rows.find((r) => r.nodeId === 'c')?.parent?.index).toBe(1);
+  });
+
+  it('two children with one name list once each, in id order, not in the order they hang', () => {
+    let s = withGroup();
+    // The tree hands these back wired first: z_second, then a_first. Only the id puts a_first first.
+    s = cube(s, 'a_first', 'Cube', 'parent');
+    s = cube(s, 'z_second', 'Cube', 'wire');
+    expect(under(s).map((r) => r.nodeId)).toEqual(['a_first', 'z_second']);
+  });
+});

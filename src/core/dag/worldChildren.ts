@@ -82,6 +82,17 @@ export function worldChildrenOf(graph: WorldChildrenGraph, id: NodeId): readonly
   return indexOf(graph).childrenOf.get(id) ?? EMPTY;
 }
 
+/** The parent input of `nodeType` (its input marked `world`), or null when it has none and so can
+ *  hang from a parent only by a wire into the parent's list. */
+export function parentSocketOf(nodeType: string): string | null {
+  const def = getNodeType(nodeType);
+  if (!def) return null;
+  for (const [socket, into] of Object.entries(def.inputs)) {
+    if (into.world === true) return socket;
+  }
+  return null;
+}
+
 /** The input socket of `nodeType` marked `gathersChildren`, or null. */
 export function gatheringSocketOf(nodeType: string): string | null {
   const def = getNodeType(nodeType);

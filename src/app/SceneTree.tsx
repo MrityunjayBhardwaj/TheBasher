@@ -40,9 +40,10 @@ import { buildMoveOps, moveNotices, type HolderEdge, type MoveResult } from './k
 import { useNotificationStore } from './stores/notificationStore';
 import { selectActiveCameraNode } from './activeCamera';
 import { isCameraNode } from './cameraNode';
+import { gatheringSocketOf } from '../core/dag/worldChildren';
 import { buildSetActiveCameraOps } from './setActiveCamera';
 import {
-  cameraRootDropOps,
+  isCameraRootDrop,
   dropIntent,
   dropZoneAt,
   landsOnItself,
@@ -581,6 +582,9 @@ export function SceneTree({ filter = '' }: SceneTreeProps) {
     // sibling reorder for cameras (a disconnect/connect-index would corrupt the
     // single binding). Camera rows are also non-draggable, but guard the target too.
     if (srcRow.parent.socket === 'camera' || dstRow.parent.socket === 'camera') return false;
+    // #1824 — a Group's or an Object's rows sort by name, as Blender's outliner sorts objects, so
+    // there is no order among them to drag; a drop on one is a reparent or nothing.
+    if (gatheringSocketOf(state.nodes[srcRow.parent.nodeId]?.type ?? '') !== null) return false;
     return (
       srcRow.parent.nodeId === dstRow.parent.nodeId && srcRow.parent.socket === dstRow.parent.socket
     );
@@ -647,14 +651,14 @@ export function SceneTree({ filter = '' }: SceneTreeProps) {
   // the move kind or null.
   //   - 'into' : connect into dstRow (a Group), disconnecting a prior `children` edge.
   //   - 'root' : a NESTED camera dropped on the Scene root → out of its Group, into
-  //              `Scene.children` (`cameraRootDropOps`), still in the scene + active if it was.
+  //              `Scene.children` (`isCameraRootDrop`), still in the scene + active if it was.
   function cameraReparent(srcRow: TreeRow, dstRow: TreeRow): 'into' | 'root' | null {
     if (!isCameraNode(state, srcRow.nodeId)) return null; // possession, not the type's name (#387)
     if (landsOnItself(srcRow, dstRow)) return null;
     if (holdsChildren(dstRow)) {
       return dstRow.nodeId === srcRow.parent?.nodeId ? null : 'into'; // not its current parent
     }
-    return cameraRootDropOps(srcRow, dstRow) ? 'root' : null; // unparent
+    return isCameraRootDrop(srcRow, dstRow) ? 'root' : null; // unparent
   }
 
   // #1152 — ONE answer to "what would this drop do", asked by dragover (to draw it) and by drop (to
@@ -716,10 +720,18 @@ export function SceneTree({ filter = '' }: SceneTreeProps) {
     const camMove = cameraReparent(srcRow, dstRow);
     if (!camMove && !canReparent(srcRow, dstRow)) return;
     const to = camMove ? dstRow.nodeId : reparentSocket(srcRow, dstRow)!.node;
+    // #1824 — the edge the row stands on: a wire in its holder's list, or the child's own parent
+    // input reading the holder's world; `buildMoveOps` cuts whichever it is.
     const from: HolderEdge[] =
       srcRow.parent.socket === 'camera'
         ? []
-        : [{ node: srcRow.parent.nodeId, socket: srcRow.parent.socket }];
+        : [
+            {
+              node: srcRow.parent.nodeId,
+              socket: srcRow.parent.socket,
+              ...(srcRow.parent.byParentInput ? { byParentInput: true as const } : {}),
+            },
+          ];
     const moved = buildMoveOps(state, [{ childId: srcRow.nodeId, from, to }], {
       keepTransform: !e.altKey,
       verb: 'Parent',

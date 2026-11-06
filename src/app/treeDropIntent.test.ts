@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  cameraRootDropOps,
+  isCameraRootDrop,
   dropIntent,
   dropZoneAt,
   landsOnItself,
@@ -78,16 +78,12 @@ describe('#1518 — a camera dropped on the Scene root stays in the scene', () =
     parent: { nodeId, socket },
   });
   it('out of its group and into Scene.children', () => {
-    const from = { node: 'cam', socket: 'out' };
-    expect(cameraRootDropOps(row('g', 'children'), root)).toEqual([
-      { type: 'disconnect', from, to: { node: 'g', socket: 'children' } },
-      { type: 'connect', from, to: { node: 'scene', socket: 'children' } },
-    ]);
+    expect(isCameraRootDrop(row('g', 'children'), root)).toBe(true);
   });
   it('no move for a camera already at the top, the active one, or a drop elsewhere', () => {
-    expect(cameraRootDropOps(row('scene', 'children'), root)).toBeNull();
-    expect(cameraRootDropOps(row('scene', 'camera'), root)).toBeNull();
-    expect(cameraRootDropOps(row('g', 'children'), group)).toBeNull();
+    expect(isCameraRootDrop(row('scene', 'children'), root)).toBe(false);
+    expect(isCameraRootDrop(row('scene', 'camera'), root)).toBe(false);
+    expect(isCameraRootDrop(row('g', 'children'), group)).toBe(false);
   });
 });
 

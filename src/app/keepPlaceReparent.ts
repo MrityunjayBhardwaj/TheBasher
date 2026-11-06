@@ -1,6 +1,9 @@
 // keepPlaceReparent — move a scene object to a new parent without moving it on screen (#1516).
 //
-// Parenting in Basher is a wire: a Group's or an Object's `children`, or the scene's own lists.
+// Parenting in Basher is a wire: a child's parent input reading its parent's world (#1824), a
+// Group's or an Object's `children` for a child with no parent input, or the scene's own lists.
+// `detachOp` and `attachOp` are the one place that knows which, so every writer that moves a child
+// writes the same edge the readers (`sceneHierarchy.ts`) read.
 // Rewiring alone changes what the child hangs from, so it jumps to wherever its own transform puts
 // it under the new parent. Houdini's "Keep Position When Parenting" rewrites the child's own
 // translate / rotate / scale so its world transform is unchanged (`ObjNode.setWorldTransform`,
@@ -43,6 +46,7 @@ import type { DagState } from '../core/dag/state';
 import type { NodeId, Op } from '../core/dag/types';
 import { createEvaluatorCache } from '../core/dag/evaluator';
 import { applyOps } from '../core/dag/ops';
+import { gatheringSocketOf, parentSocketOf, worldParentOf } from '../core/dag/worldChildren';
 import { getNodeType, paramFieldsOf } from '../core/dag/registry';
 import { quaternionToEulerVec3 } from '../core/import/threeAdapter';
 import { isKeyframeChannelNode } from './animate/paramAnimationState';
@@ -51,7 +55,7 @@ import { isLightNode } from './lightNode';
 import { followPathStackForTarget, relationalPoseStackForTarget } from './nodeConstraints';
 import { resolveParentWorldMatrix } from './resolveWorldTransform';
 import { rotationWriteOf } from './resolvedRotation';
-import { hierarchySocketsOf } from './sceneHierarchy';
+import { hierarchySocketsOf, parentIdsOf } from './sceneHierarchy';
 import { nodeDisplayName } from './sceneTreeWalk';
 import { liveCtx, type ClockedCtx } from './subjectClock';
 import type { Quat, RotationModeFields } from '../nodes/types';
@@ -62,6 +66,67 @@ type Vec3 = [number, number, number];
 export interface HolderEdge {
   readonly node: NodeId;
   readonly socket: string;
+  /** #1824 — the child holds the holder, through its own parent input reading the holder's world,
+   *  rather than sitting in the holder's `socket` list. */
+  readonly byParentInput?: true;
+}
+
+/** The op that takes `childId` off `edge`. */
+export function detachOp(childId: NodeId, edge: HolderEdge, state: DagState): Op {
+  if (edge.byParentInput) {
+    const socket = parentSocketOf(state.nodes[childId]?.type ?? '') ?? 'parent';
+    return {
+      type: 'disconnect',
+      from: { node: edge.node, socket: 'world' },
+      to: { node: childId, socket },
+    };
+  }
+  return {
+    type: 'disconnect',
+    from: { node: childId, socket: 'out' },
+    to: { node: edge.node, socket: edge.socket },
+  };
+}
+
+/** True when `holderId` takes `childId` on `socket` through the child's parent input: the socket is
+ *  the holder's gathering list and the child has a parent input. */
+function attachesByParentInput(
+  state: DagState,
+  holderId: NodeId,
+  socket: string,
+  childId: NodeId,
+): boolean {
+  const holder = state.nodes[holderId];
+  const child = state.nodes[childId];
+  if (!holder || !child) return false;
+  return gatheringSocketOf(holder.type) === socket && parentSocketOf(child.type) !== null;
+}
+
+/**
+ * The op that hangs `childId` from `holderId` on `socket` (`receivingSocket`'s answer): the
+ * holder's world into the child's parent input when the holder gathers and the child has one,
+ * otherwise a wire into the holder's list, at `index` when given.
+ */
+export function attachOp(
+  state: DagState,
+  childId: NodeId,
+  holderId: NodeId,
+  socket: string,
+  index?: number,
+): Op {
+  if (attachesByParentInput(state, holderId, socket, childId)) {
+    return {
+      type: 'connect',
+      from: { node: holderId, socket: 'world' },
+      to: { node: childId, socket: parentSocketOf(state.nodes[childId]!.type)! },
+    };
+  }
+  return {
+    type: 'connect',
+    from: { node: childId, socket: 'out' },
+    to: { node: holderId, socket },
+    ...(index === undefined ? {} : { index }),
+  };
 }
 
 /** The transform params a keep-position rewrite reads and writes. */
@@ -112,27 +177,9 @@ export function movableHolderEdges(state: DagState, childId: NodeId): HolderEdge
         out.push({ node: holderId, socket });
     }
   }
-  return out;
-}
-
-const holdersMemo = new WeakMap<DagState['nodes'], ReadonlyMap<NodeId, readonly NodeId[]>>();
-
-/** Every node holding each node as a scene-graph child, through any parenting wire. */
-function holdersIndex(state: DagState): ReadonlyMap<NodeId, readonly NodeId[]> {
-  const hit = holdersMemo.get(state.nodes);
-  if (hit) return hit;
-  const out = new Map<NodeId, NodeId[]>();
-  for (const [holderId, holder] of Object.entries(state.nodes)) {
-    for (const socket of hierarchySocketsOf(holder)) {
-      for (const r of refsOf(holder.inputs?.[socket])) {
-        if (!r?.node) continue;
-        const list = out.get(r.node);
-        if (list) list.push(holderId);
-        else out.set(r.node, [holderId]);
-      }
-    }
-  }
-  holdersMemo.set(state.nodes, out);
+  const parent = worldParentOf(state, childId);
+  if (parent && !out.some((e) => e.node === parent))
+    out.push({ node: parent, socket: 'children', byParentInput: true });
   return out;
 }
 
@@ -143,7 +190,6 @@ function holdersIndex(state: DagState): ReadonlyMap<NodeId, readonly NodeId[]> {
  * parent landed at (5, 0, 0). That move is refused until the read can see the aim.
  */
 function constrainedAtOrAbove(state: DagState, id: NodeId): NodeId | null {
-  const holders = holdersIndex(state);
   const seen = new Set<NodeId>();
   const stack = [id];
   while (stack.length > 0) {
@@ -151,7 +197,7 @@ function constrainedAtOrAbove(state: DagState, id: NodeId): NodeId | null {
     if (seen.has(cur)) continue;
     seen.add(cur);
     if (relationalPoseStackForTarget(state.nodes, cur).length > 0) return cur;
-    stack.push(...(holders.get(cur) ?? []));
+    stack.push(...parentIdsOf(state, cur));
   }
   return null;
 }
@@ -165,7 +211,7 @@ export function isAtOrBelow(state: DagState, id: NodeId, ancestorId: NodeId): bo
     if (cur === ancestorId) return true;
     if (seen.has(cur)) continue;
     seen.add(cur);
-    stack.push(...(holdersIndex(state).get(cur) ?? []));
+    stack.push(...parentIdsOf(state, cur));
   }
   return false;
 }
@@ -396,23 +442,17 @@ export function buildMoveOps(
         reason: `${opts.verb}: "${nodeDisplayName(state.nodes, move.to)}" cannot hold "${nodeDisplayName(state.nodes, move.childId)}".`,
       };
     }
-    const ref = { node: move.childId, socket: 'out' };
-    const rewire: Op[] = move.from.map((edge) => ({
-      type: 'disconnect' as const,
-      from: ref,
-      to: { node: edge.node, socket: edge.socket },
-    }));
-    const key = `${move.to}\u0000${socket}`;
-    const list = state.nodes[move.to]?.inputs?.[socket];
-    const base = Array.isArray(list) ? list.length : 0;
-    const n = appended.get(key) ?? 0;
-    appended.set(key, n + 1);
-    rewire.push({
-      type: 'connect',
-      from: ref,
-      to: { node: move.to, socket },
-      index: base + n,
-    });
+    const rewire: Op[] = move.from.map((edge) => detachOp(move.childId, edge, state));
+    if (attachesByParentInput(state, move.to, socket, move.childId)) {
+      rewire.push(attachOp(state, move.childId, move.to, socket));
+    } else {
+      const key = `${move.to}\u0000${socket}`;
+      const list = state.nodes[move.to]?.inputs?.[socket];
+      const base = Array.isArray(list) ? list.length : 0;
+      const n = appended.get(key) ?? 0;
+      appended.set(key, n + 1);
+      rewire.push(attachOp(state, move.childId, move.to, socket, base + n));
+    }
     // A bone it hung from belongs to the parent it is leaving (Blender's Clear Parent clears both).
     if ((state.nodes[move.childId]?.params as { parentBone?: unknown })?.parentBone !== undefined) {
       rewire.push({
