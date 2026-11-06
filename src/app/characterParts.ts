@@ -3,6 +3,7 @@
 // this module while the node registry is still loading, so it must import nothing that can lead
 // back into it (#1284; the load cycle a schema import once closed through boot.ts).
 
+import { inputsBelow } from '../core/dag/worldChildren';
 import type { DagState } from '../core/dag/state';
 import { reachedFromSelection } from './character/reachedFromSelection';
 
@@ -28,7 +29,12 @@ export function characterAssetOf(state: DagState, nodeId: string): string | null
     const node = state.nodes[id];
     if (!node) continue;
     if (node.type === 'GltfAsset') return id;
-    const inputs = (node.inputs ?? {}) as Record<string, unknown>;
+    // #1824 — a group's children are read through their parent inputs; a child's own parent
+    // input leads up, not into the character.
+    const inputs = inputsBelow(state, id, { type: node.type, inputs: node.inputs ?? {} }) as Record<
+      string,
+      unknown
+    >;
     for (const socket of Object.keys(inputs).sort()) queue.push(...refsOf(inputs[socket]));
   }
   return null;

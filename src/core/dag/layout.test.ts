@@ -48,6 +48,25 @@ function withSpring(): DagState {
 
 /** "Readable", as a property: in each level no two nodes share a spot, and every wire between
  *  two nodes of one level runs from left to right. */
+/** Whether `from` reaches `to` by following what reads each node's outputs, parent wires aside. */
+function closesLoop(state: DagState, from: string, to: string): boolean {
+  const readers = new Map<string, string[]>();
+  for (const [id, node] of Object.entries(state.nodes))
+    for (const binding of Object.values(node.inputs))
+      for (const ref of Array.isArray(binding) ? binding : [binding])
+        if (ref.socket !== 'world') readers.set(ref.node, [...(readers.get(ref.node) ?? []), id]);
+  const seen = new Set<string>();
+  const stack = [from];
+  while (stack.length) {
+    const x = stack.pop()!;
+    if (x === to) return true;
+    if (seen.has(x)) continue;
+    seen.add(x);
+    stack.push(...(readers.get(x) ?? []));
+  }
+  return false;
+}
+
 function readability(state: DagState): { overlaps: string[]; backwards: string[] } {
   const layout = layoutOf(state);
   const level = levelOf(state);
@@ -62,7 +81,12 @@ function readability(state: DagState): { overlaps: string[]; backwards: string[]
     for (const binding of Object.values(state.nodes[id].inputs)) {
       for (const ref of Array.isArray(binding) ? binding : [binding]) {
         if (level.get(ref.node) !== level.get(id)) continue;
-        if (layout.get(ref.node)![0] >= p[0]) backwards.push(`${ref.node} → ${id}`);
+        if (layout.get(ref.node)![0] < p[0]) continue;
+        // #1824 — a parent wire whose child already feeds its parent through other wires closes a
+        // loop between two outputs of one node; one wire in it must run back, and the layout picks
+        // the parent wire. Any other backward wire is a bad layout.
+        if (ref.socket === 'world' && closesLoop(state, id, ref.node)) continue;
+        backwards.push(`${ref.node} → ${id}`);
       }
     }
   }
