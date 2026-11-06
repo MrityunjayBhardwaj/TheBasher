@@ -22,6 +22,7 @@ import type { DagState } from '../core/dag/state';
 import type { Op } from '../core/dag/types';
 import { ensureProfileSelectOps, enumerateProfiles, uniqueProfileName } from './studioProfiles';
 import { lightAimOps } from './lightAim';
+import { freshAimedNames, takenObjectNames } from './objectNames';
 import { linkIntoActiveCollection } from './collections';
 import { cameraRotationLookingAt } from './cameraOrientation';
 import { isAreaLightNode, lightParamsOf } from './lightNode';
@@ -160,6 +161,7 @@ export function buildImportProfilesOps(
   const sceneId = sceneRef.node;
 
   const ops: Op[] = [];
+  const names = takenObjectNames(state);
   // Track names minted in THIS import too, so two same-named imported profiles also
   // de-dupe against each other (not just against existing ones).
   const mintedNames = new Set<string>();
@@ -192,6 +194,7 @@ export function buildImportProfilesOps(
     });
 
     for (const light of profile.lights) {
+      const { name: lightName, aim: aimName } = freshAimedNames('Area', names);
       const lightId = newId('light');
       const dataId = newId('data');
       const ttId = newId('tt');
@@ -226,6 +229,8 @@ export function buildImportProfilesOps(
             scale: light.scale,
           },
         },
+        // #1518 — named when made, as Add ▸ Light names one.
+        { type: 'setMeta', nodeId: lightId, name: lightName },
         {
           type: 'connect',
           from: { node: dataId, socket: 'out' },
@@ -238,7 +243,12 @@ export function buildImportProfilesOps(
         },
         // #1765 — aimed at the profile centre by a Track-To at an empty there ("Area.aim"),
         // the one way every light is aimed (`lightAimOps`).
-        ...lightAimOps(state, lightId, { at: profile.center, kind: 'Area', trackToId: ttId }).ops,
+        ...lightAimOps(state, lightId, {
+          at: profile.center,
+          kind: 'Area',
+          trackToId: ttId,
+          name: aimName,
+        }).ops,
       );
     }
   }

@@ -20,6 +20,7 @@ import type { Op } from '../core/dag/types';
 import { resolveStudioLightTransform } from './resolveStudioLightTransform';
 import { lightAimOps } from './lightAim';
 import { linkIntoActiveCollection } from './collections';
+import { freshAimedNames, takenObjectNames } from './objectNames';
 import { cameraRotationLookingAt } from './cameraOrientation';
 
 type Vec3 = [number, number, number];
@@ -72,7 +73,13 @@ export function buildAddStudioLightOps(
   // targets `lightId` (the Object), the rig/scene `dest` receives the Object, and the
   // panel's enumeration recognises it through `data` (studioLightRig, #386 S3b) — so the
   // rig aim + index-correspondence survive the split.
-  const aim = lightAimOps(state, lightId, { at: target, kind: 'Area', trackToId: ttId });
+  const { name, aim: aimName } = freshAimedNames('Area', takenObjectNames(state));
+  const aim = lightAimOps(state, lightId, {
+    at: target,
+    kind: 'Area',
+    trackToId: ttId,
+    name: aimName,
+  });
   const ops: Op[] = [
     {
       type: 'addNode',
@@ -94,6 +101,8 @@ export function buildAddStudioLightOps(
       // leaves it facing where it faced (its old `lookAt` did that, and lights no longer have one).
       params: { position, rotation: cameraRotationLookingAt(position, target), scale: [1, 1, 1] },
     },
+    // #1518 — named when made, as Add ▸ Light names one.
+    { type: 'setMeta', nodeId: lightId, name },
     {
       type: 'connect',
       from: { node: dataId, socket: 'out' },

@@ -11,6 +11,7 @@ import {
   MEMBERSHIP_WIRES,
   TRANSITIONAL_MEMBERSHIP_WIRES,
   isInScene,
+  keepInSceneOps,
   membershipSocketsOf,
   sceneMembersOf,
   type MembershipWire,
@@ -27,7 +28,6 @@ import { enumerateCameraNodeIds } from './activeCamera';
 import { resolveRigLightSources } from './resolveRigLightSources';
 import { chainSocketOfType } from './operatorChain';
 import { collectableNodes } from './collections';
-import { buildAddPrimitiveOps } from './addPrimitives';
 
 beforeAll(() => registerAllNodes());
 
@@ -147,6 +147,8 @@ function disagreementScene(): DagState {
     { type: 'addNode', nodeId: 'S', nodeType: 'CameraSelect', params: { active: 'camA' } },
     { type: 'connect', from: out('camA'), to: to('S', 'cameras') },
     { type: 'connect', from: out('camB'), to: to('S', 'cameras') },
+    // Displacing the seed's camera the way the camera doors do: it stays in the scene (#1518).
+    { type: 'connect', from: out('n_camera'), to: SC },
     { type: 'connect', from: out('S'), to: to(scene, 'camera') },
   ]);
 }
@@ -215,20 +217,29 @@ describe('#1821 — one answer to "is this object in the scene"', () => {
     expect(sceneMembersOf({ ...s, outputs: {} } as DagState).size).toBe(0);
   });
 
-  it('an unwired camera counts only because Add leaves it unwired (#1518)', () => {
-    // The exception in sceneMembership.ts. When Add wires a camera into the scene, the first
-    // expectation fails: delete the exception, and this test with it.
+  it('a camera nothing wires is not in the scene: being a camera is no reason (#1518)', () => {
     const s0 = buildDefaultDagState();
-    const add = buildAddPrimitiveOps(s0, 'PerspectiveCamera', [0, 0, 5])!;
-    const s = run(s0, add.ops);
-    const wiredFromScene = Object.values(s.nodes).some((n) =>
-      Object.values(n.inputs ?? {}).some((b) =>
-        (Array.isArray(b) ? b : [b]).some((r) => (r as { node?: string })?.node === add.newNodeId),
-      ),
-    );
-    expect(wiredFromScene, 'Add now wires the camera: remove the unwired-camera exception').toBe(
-      false,
-    );
-    expect(isInScene(s, add.newNodeId)).toBe(true);
+    const { state: s, objectId } = makeSplitCamera(s0, { objectId: 'floating' });
+    expect(isInScene(s, objectId)).toBe(false);
+  });
+
+  it('a door that replaces the active camera keeps the old one in the scene (#1518)', () => {
+    const s = buildDefaultDagState();
+    const scene = s.outputs.scene!.node;
+    const old = (s.nodes[scene].inputs.camera as { node: string }).node;
+    const unhook = {
+      type: 'disconnect',
+      from: { node: old, socket: 'out' },
+      to: { node: scene, socket: 'camera' },
+    } as const;
+    expect(keepInSceneOps(s, [unhook])).toEqual([
+      {
+        type: 'connect',
+        from: { node: old, socket: 'out' },
+        to: { node: scene, socket: 'children' },
+      },
+    ]);
+    // What the ops take away is theirs to say: a node they remove is not put back.
+    expect(keepInSceneOps(s, [unhook, { type: 'removeNode', nodeId: old }])).toEqual([]);
   });
 });

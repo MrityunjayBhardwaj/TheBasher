@@ -44,6 +44,7 @@ const CENSUS: Record<string, string> = {
   'src/agent/tools/cameraSnapshot.ts': 'writes the scene camera',
   'src/app/asset/placeGeneratedMotion.ts': 'wires a generated character under a holder',
   'src/core/project/migrations.ts': 'converts old files',
+  'src/core/project/repairFloatingCameras.ts': 'wires a camera an old Add left floating, on load',
 };
 
 function readers(): string[] {

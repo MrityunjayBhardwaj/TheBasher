@@ -38,19 +38,13 @@
 // other profiles' lights are not drawn and the outliner does not list them. A CameraSelect is
 // followed to every camera it lists, as Blender holds every camera object, active or not.
 //
-// ONE EXCEPTION, until #1518: every camera node counts as in the scene, wired or not. Add leaves a
-// camera unwired (`addPrimitives.ts`, "Cameras + empties stay floating"), and the viewport draws
-// its frustum, the outliner lists it and its eye hides it, all through `enumerateCameraNodeIds`,
-// which lists every camera in the node table. `sceneMembership.test.ts` adds a camera through the
-// real Add door and fails once that door wires it, which is when this exception can go.
-//
 // REF: docs/GRAPH.md §4 rule 3; src/nodes/Scene.ts (`inputs`); src/app/sceneTreeWalk.ts (the
 //      outliner's walk); src/app/sceneHierarchy.ts (the parenting wires); #1519, #1820, #1821.
 
+import { applyOps } from '../core/dag/ops';
 import type { DagState } from '../core/dag/state';
-import type { NodeRef } from '../core/dag/types';
+import type { NodeRef, Op } from '../core/dag/types';
 import { wiredProfileRigs } from '../nodes/LightProfileSelect';
-import { isCameraNode } from './cameraNode';
 import { hierarchyChildIds } from './sceneHierarchy';
 
 /** One input socket, on one node type, that holds things in the scene. */
@@ -158,7 +152,7 @@ const membersCache = new WeakMap<DagState['nodes'], Map<string, ReadonlySet<stri
 
 /**
  * Every node the scene holds today: reached from the scene output through the followed
- * membership wires and the parenting wires, plus every camera (the exception in the header).
+ * membership wires and the parenting wires.
  * The Scene node itself is not in it, and neither is an Object's data. The nodes the wires pass
  * through on the way (a LightRig, a select) are in it; `HOP_TYPES` names them. Kept per node
  * table, so a playhead change reuses it.
@@ -177,8 +171,6 @@ export function sceneMembersOf(state: DagState): ReadonlySet<string> {
     members.add(id);
     stack.push(...heldBy(state, id));
   }
-  // The unwired-camera exception (header).
-  for (const id of Object.keys(state.nodes)) if (isCameraNode(state, id)) members.add(id);
   if (!bySceneId) membersCache.set(state.nodes, (bySceneId = new Map()));
   bySceneId.set(sceneId, members);
   return members;
@@ -187,4 +179,26 @@ export function sceneMembersOf(state: DagState): ReadonlySet<string> {
 /** Whether the scene holds `id` today (rule 3). The one answer every surface reads. */
 export function isInScene(state: DagState, id: string): boolean {
   return sceneMembersOf(state).has(id);
+}
+
+/**
+ * The ops that keep in the scene everything `ops` would take out of it, by standing it in
+ * `Scene.children` (#1518). For a door that replaces what `Scene.camera` reads: the camera it
+ * replaces is still one of the scene's cameras, as a Blender camera stays in the file when another
+ * becomes the scene's. Nothing for a hop, a node `ops` removes, or with no scene.
+ */
+export function keepInSceneOps(state: DagState, ops: readonly Op[]): Op[] {
+  const sceneId = state.outputs.scene?.node;
+  if (!sceneId) return [];
+  const after = applyOps(state, ops).next;
+  const kept = sceneMembersOf(after);
+  return [...sceneMembersOf(state)]
+    .filter((id) => !kept.has(id) && after.nodes[id] && !HOP_TYPES.has(after.nodes[id].type))
+    .map(
+      (id): Op => ({
+        type: 'connect',
+        from: { node: id, socket: 'out' },
+        to: { node: sceneId, socket: 'children' },
+      }),
+    );
 }

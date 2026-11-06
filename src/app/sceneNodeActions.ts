@@ -25,6 +25,7 @@ import {
   isMembershipWire,
   membershipOps,
 } from './collections';
+import { freshObjectName, numberedName, objectBaseNameOf, takenObjectNames } from './objectNames';
 
 /**
  * #432 — a WRAPPER node consumes its subject through a chain EDGE and re-exposes it
@@ -408,18 +409,6 @@ function copiesThrough(node: Node, socket: string, linked: boolean): boolean {
   return getNodeType(node.type)?.inputs?.[socket]?.type === 'SceneObject';
 }
 
-/** `name` with Blender's numeric suffix replaced by the first free one: `Cube` → `Cube.001`. */
-function numberedName(name: string, taken: Set<string>): string {
-  const base = name.replace(/\.\d{3,}$/, '');
-  for (let i = 1; ; i++) {
-    const candidate = `${base}.${String(i).padStart(3, '0')}`;
-    if (!taken.has(candidate)) {
-      taken.add(candidate);
-      return candidate;
-    }
-  }
-}
-
 /**
  * Ops to DUPLICATE the scene subtrees rooted at `rootIds`, as one atomic batch (→ one undo),
  * with the ids of the new roots in the order asked. Null when none of them can be duplicated.
@@ -439,10 +428,12 @@ function numberedName(name: string, taken: Set<string>): string {
  *
  * WHERE A COPY GOES: right after its original, in the list the original is read on. A root
  * that sits inside another root's subtree is copied as part of it and is not wired a second
- * time. A camera read on a single socket is left unwired (#1630).
+ * time. A camera read on a single socket (`scene.camera`) stands in `scene.children` instead:
+ * the copy must not take over as the active camera (#1630), and it is in the scene (#1518).
  *
  * NAMES: a copy of a named node takes the name with the next free number (`Cube.001`), as
- * Blender and Houdini both do. A copy whose original followed another node's name follows the
+ * Blender and Houdini both do. A copy of an unnamed object takes the word for its kind (#1518),
+ * so a file made before objects were named still gets a named copy. A copy whose original followed another node's name follows the
  * copy of that node when it was copied too, else the same node.
  *
  * Undo-safe order: every copy is added with empty inputs, then wires are made reader-first
@@ -580,6 +571,17 @@ export function buildDuplicateNodesOps(
     });
     inserted.set(list, before + 1);
   }
+  const sceneId = state.outputs.scene?.node;
+  if (sceneId) {
+    for (const root of roots) {
+      if (root.isList) continue;
+      ops.push({
+        type: 'connect',
+        from: { node: idMap.get(root.id)!, socket: root.parent.fromSocket },
+        to: { node: sceneId, socket: 'children' },
+      });
+    }
+  }
   // #1453 — each copy joins the collections its original is in, as Blender's Shift+D links a
   // duplicate into its source's collections. Membership only: where it hangs is step 6's.
   for (const [sourceId, cloneId] of idMap)
@@ -606,13 +608,17 @@ export function buildDuplicateNodesOps(
   //    gives its copy the next free number; a follower's copy follows the copy of what its
   //    original followed, and reads that node's (new) name.
   const names = options.reservedNames ?? new Set<string>();
-  for (const node of Object.values(state.nodes)) if (node.meta?.name) names.add(node.meta.name);
+  for (const name of takenObjectNames(state)) names.add(name);
   const copyName = new Map<NodeId, string>();
   for (const id of order) {
     const node = state.nodes[id];
-    if (node.meta?.name && nameSourceOf(node) === undefined) {
+    if (nameSourceOf(node) !== undefined) continue;
+    if (node.meta?.name) {
       copyName.set(id, numberedName(node.meta.name, names));
+      continue;
     }
+    const base = objectBaseNameOf(state, id);
+    if (base) copyName.set(id, freshObjectName(base, names));
   }
   for (const id of order) {
     const node = state.nodes[id];

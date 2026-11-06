@@ -40,6 +40,7 @@ import { selectActiveCameraNode } from './activeCamera';
 import { isCameraNode } from './cameraNode';
 import { buildSetActiveCameraOps } from './setActiveCamera';
 import {
+  cameraRootDropOps,
   dropIntent,
   dropZoneAt,
   reorderIndex,
@@ -582,8 +583,9 @@ export function SceneTree({ filter = '' }: SceneTreeProps) {
   // wrappers — single `target` socket, glTF children).
   // #1152 — can this row RECEIVE children? A Group, and an Object — but only an Object that
   // itself hangs in the `children` hierarchy. That is where the renderer draws an Object's
-  // children (ObjectR); a light or a camera Object hangs off its own band (`scene.lights`,
-  // `scene.camera`), is drawn through that band, and would hold a child nothing draws. A glTF
+  // children (ObjectR), a camera in `scene.children` included; a light or the active camera's own
+  // row hangs off its own band (`scene.lights`, `scene.camera`), is drawn through that band, and
+  // would hold a child nothing draws. A glTF
   // copy's rows carry no `parent` at all, so they are never a target either.
   function holdsChildren(row: TreeRow): boolean {
     if (row.nodeType === 'Group') return true;
@@ -622,23 +624,21 @@ export function SceneTree({ filter = '' }: SceneTreeProps) {
     return true;
   }
 
-  // #231 Inc 3.3 — camera reparent. A camera has NO scene-level list socket (it
-  // wires to `scene.camera`, a single ref, managed by Set Active) — so its parent
-  // is purely Group membership: nested in a Group (`parent.socket === 'children'`)
-  // or floating top-level (`parent.socket === 'camera'`, the enumeration fiction).
-  // Reparent moves ONLY that Group.children membership; the active (`scene.camera`)
-  // edge is independent and untouched. Returns the move kind or null.
-  //   - 'into' : connect into dstRow (a Group), disconnecting a prior Group edge.
-  //   - 'root' : a NESTED camera dropped on the Scene root → disconnect from its
-  //              Group → floating top-level (still enumerated + still active if it was).
+  // #231 Inc 3.3 — camera reparent. A camera's parent is a `children` list: a Group's or the
+  // Scene's (`parent.socket === 'children'`, #1518), or it is the active camera's own row
+  // (`parent.socket === 'camera'`, the single socket Set Active manages). Reparent moves ONLY that
+  // `children` membership; the active (`scene.camera`) edge is independent and untouched. Returns
+  // the move kind or null.
+  //   - 'into' : connect into dstRow (a Group), disconnecting a prior `children` edge.
+  //   - 'root' : a NESTED camera dropped on the Scene root → out of its Group, into
+  //              `Scene.children` (`cameraRootDropOps`), still in the scene + active if it was.
   function cameraReparent(srcRow: TreeRow, dstRow: TreeRow): 'into' | 'root' | null {
     if (!isCameraNode(state, srcRow.nodeId)) return null; // possession, not the type's name (#387)
     if (dstRow.key === srcRow.key) return null;
     if (holdsChildren(dstRow)) {
       return dstRow.nodeId === srcRow.parent?.nodeId ? null : 'into'; // not its current parent
     }
-    if (dstRow.depth === 0) return srcRow.parent?.socket === 'children' ? 'root' : null; // unparent
-    return null;
+    return cameraRootDropOps(srcRow, dstRow) ? 'root' : null; // unparent
   }
 
   // #1152 — ONE answer to "what would this drop do", asked by dragover (to draw it) and by drop (to
@@ -720,18 +720,7 @@ export function SceneTree({ filter = '' }: SceneTreeProps) {
       return;
     }
     if (camMove === 'root') {
-      // Unparent a nested camera → floating top-level (disconnect its Group edge).
-      dispatchAtomic(
-        [
-          {
-            type: 'disconnect',
-            from: ref,
-            to: { node: srcRow.parent!.nodeId, socket: 'children' },
-          },
-        ],
-        'user',
-        'unparent camera',
-      );
+      dispatchAtomic(cameraRootDropOps(srcRow, dstRow)!, 'user', 'unparent camera');
       return;
     }
 
