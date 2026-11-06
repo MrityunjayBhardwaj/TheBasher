@@ -128,18 +128,22 @@ export function withGatheredChildren(
 /**
  * `node`'s inputs as a walk DOWN the scene tree reads them: its gathered children included
  * (`withGatheredChildren`) and its own parent input left out, since that wire leads up to its parent,
- * not down to something it holds. For the walks that ask "what does this node hold or read" by
- * following input wires, which before #1824 found a group's children among its inputs.
+ * not down to something it holds. Its constraint chain is left out too (#1811): that wire leads to
+ * what the object aims at or follows, which it doesn't hold. For the walks that ask "what does this
+ * node hold or read" by following input wires, which before #1824 found a group's children among its
+ * inputs.
  */
 export function inputsBelow(
   graph: WorldChildrenGraph,
   id: NodeId,
   node: { readonly type: string; readonly inputs: Node['inputs'] },
 ): Node['inputs'] {
+  const def = getNodeType(node.type);
   const inputs = withGatheredChildren(graph, id, node);
-  const up = parentSocketOf(node.type);
-  if (!up || inputs[up] === undefined) return inputs;
-  const { [up]: _up, ...rest } = inputs;
-  void _up;
-  return rest;
+  return Object.fromEntries(
+    Object.entries(inputs).filter(([socket]) => {
+      const into = def?.inputs[socket];
+      return into?.world !== true && into?.chain === undefined;
+    }),
+  );
 }

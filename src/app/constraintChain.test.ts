@@ -11,6 +11,10 @@ import { withIds } from '../test-utils/curvePoints';
 import { makeSplitCube } from '../test-utils/splitCube';
 import { resolveConstraintRotation, resolveFollowedWorldPosition } from './nodeConstraints';
 import { resolveWorldTransform } from './resolveWorldTransform';
+import { characterAssetOf } from './characterParts';
+import { inputsBelow } from '../core/dag/worldChildren';
+import { layoutOf } from '../core/dag/layout';
+import { buildExampleProject } from '../core/project/examples';
 
 type Vec3 = [number, number, number];
 const at = (seconds = 0) => ({ time: { frame: seconds * 24, seconds, normalized: 0 } });
@@ -368,5 +372,65 @@ describe("the chain agrees with today's road", () => {
     expect(positionOf(matrix(s, 'b')).toArray()).toEqual(
       resolveFollowedWorldPosition(s, 'a', at()),
     );
+  });
+});
+
+describe('a chain and the walks that read the graph', () => {
+  it('a walk down from an object does not follow its chain to what it aims at', () => {
+    let s = cube(buildDefaultDagState(), 'a', [0, 0, 0]);
+    s = cube(s, 'hero', [1, 0, 0]);
+    s = run(s, aimOps('a', 'tt', {}, 'hero'));
+    const below = inputsBelow(s, 'a', s.nodes.a);
+    expect(Object.keys(below)).not.toContain('constraints');
+    expect(Object.keys(below)).toContain('data');
+  });
+
+  it('aiming at a character does not make the aimer stand for that character', () => {
+    const s = run(buildDefaultDagState(), [
+      add('asset', 'GltfAsset', { assetRef: 'assets/x.glb' }),
+      add('g', 'Group'),
+      wire('asset', 'out', 'g', 'children'),
+      add('a', 'Null'),
+      ...aimOps('a', 'tt_a', {}, 'g'),
+    ]);
+    expect(characterAssetOf(s, 'g')).toBe('asset');
+    expect(characterAssetOf(s, 'a')).toBeNull();
+  });
+
+  it('the node layout places every node of a chain', () => {
+    let s = cube(buildDefaultDagState(), 'a', [0, 0, 0]);
+    s = cube(s, 'hero', [1, 0, 0]);
+    s = run(s, aimOps('a', 'tt', {}, 'hero'));
+    const positions = layoutOf(s);
+    for (const id of ['a', 'own_a', 'tt', 'hero']) expect(positions.get(id), id).toBeDefined();
+  });
+});
+
+describe('Track-To aiming at a bone of what is wired in', () => {
+  const towards = (m: THREE.Matrix4, point: Vec3) =>
+    new THREE.Vector3(...point).sub(positionOf(m)).normalize();
+  const rig = async (aimBone: string) => {
+    const { state } = await buildExampleProject('example_camera_path_ai_walk');
+    const group = Object.values(state.nodes).find((n) => n.type === 'Group')!.id;
+    return run(state, [
+      add('a', 'Null', { position: [5, 5, 5] }),
+      ...aimOps('a', 'tt_a', { aimBone }, group),
+    ]);
+  };
+
+  // The drawn Hips, as `gltfNodeWorld.test.ts` reads them off the skeleton in the browser.
+  for (const [t, hips] of [
+    [0, [-2.019, 0.604, -1.99]],
+    [7.5, [1.349, 0.603, 0.261]],
+  ] as [number, Vec3][]) {
+    it(`follows the walking Hips at ${t} s`, async () => {
+      const m = matrix(await rig('mixamorig_Hips'), 'a', t);
+      expect(forwardOf(m).distanceTo(towards(m, hips))).toBeLessThan(0.005);
+    });
+  }
+
+  it('a bone that does not resolve aims at the object', async () => {
+    const m = matrix(await rig('no_such_bone'), 'a', 1);
+    expect(forwardOf(m).distanceTo(towards(m, [-2, 0, -2]))).toBeLessThan(1e-6);
   });
 });
