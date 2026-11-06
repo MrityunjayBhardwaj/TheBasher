@@ -63,7 +63,8 @@ socket has to choose. One delete function applies it (`buildDeleteNodesOps`,
 that remove a driver. The one exception is a parent's `children`: Duplicate copies them, and
 Delete hands them up to the deleted parent's own parent, keeping them where they are drawn
 (#1517, through the keep-position reparent of #1516, `src/app/keepPlaceReparent.ts`), unless they
-are deleted too.
+are deleted too. An animated child keeps its keys, so it moves, and the delete says so. Delete
+Hierarchy (`withHierarchy`) takes everything below the target as well.
 
 Duplicate reads the same table (`buildDuplicateNodesOps`, same file). A **deep** duplicate
 (Shift+D) copies what the original owns by wire, whole sub-networks included, and the sidecars

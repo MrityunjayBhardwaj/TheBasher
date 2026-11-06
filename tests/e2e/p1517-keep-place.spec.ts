@@ -237,9 +237,41 @@ test('a keyed cube is refused by name, and nothing moves', async ({ page }) => {
 
   await dragRowOnto(page, 'n_box', 'INNER', 'into', { altKey: true });
   expect(await childrenOf(page, 'INNER')).toEqual(['n_box']);
+  const underInner = await drawnAt(page, 'n_box');
   await select(page, ['INNER']);
   await page.keyboard.press('Delete');
-  await page.waitForTimeout(200);
-  expect(await hasNode(page, 'INNER')).toBe(true);
-  expect(await childrenOf(page, 'INNER')).toEqual(['n_box']);
+  // Delete has nothing to stay under, so the cube goes up with its keys and moves, and says so.
+  await expect.poll(() => hasNode(page, 'INNER')).toBe(false);
+  expect(await childrenOf(page, 'OUTER')).toEqual(['n_box']);
+  await expect(page.getByText(/Delete moved/).first()).toBeVisible();
+  await expect.poll(() => drawnAt(page, 'n_box')).not.toEqual(underInner);
+
+  await page.evaluate(() => (window as unknown as W).__basher_dag.getState().undo());
+  await expect.poll(() => childrenOf(page, 'INNER')).toEqual(['n_box']);
+  expect(await drawnAt(page, 'n_box')).toEqual(underInner);
+});
+
+test('Delete Hierarchy on a group takes what is below it, and one undo brings it back', async ({
+  page,
+}) => {
+  await setUp(page);
+  await dragRowOnto(page, 'n_box', 'INNER');
+  const home = await drawnAt(page, 'n_box');
+  await page.getByTestId('scene-tree-row-OUTER').click({ button: 'right' });
+  await page.getByTestId('outliner-ctx-delete-hierarchy').click();
+  await expect.poll(() => hasNode(page, 'OUTER')).toBe(false);
+  expect(await hasNode(page, 'INNER')).toBe(false);
+  expect(await hasNode(page, 'n_box')).toBe(false);
+  await expect(page.getByTestId('scene-tree-row-n_box')).toHaveCount(0);
+
+  await page.evaluate(() => (window as unknown as W).__basher_dag.getState().undo());
+  await expect.poll(() => hasNode(page, 'n_box')).toBe(true);
+  expect(await drawnAt(page, 'n_box')).toEqual(home);
+});
+
+test('a row with nothing below it is not offered Delete Hierarchy', async ({ page }) => {
+  await setUp(page);
+  await page.getByTestId('scene-tree-row-n_box').click({ button: 'right' });
+  await expect(page.getByTestId('outliner-ctx-delete')).toBeVisible();
+  await expect(page.getByTestId('outliner-ctx-delete-hierarchy')).toHaveCount(0);
 });

@@ -10,19 +10,25 @@ import type { MutatorDefinition } from '../types';
 import type { ClosureSet, ClosureSpec } from '../../closure/types';
 import type { DagState } from '../../../core/dag/state';
 import type { Op } from '../../../core/dag/types';
-import { buildDeleteNodesOps } from '../../../app/sceneNodeActions';
+import { moveNotices } from '../../../app/keepPlaceReparent';
+import { buildDeleteNodesOps, planDeleteNodes, withHierarchy } from '../../../app/sceneNodeActions';
 
 const DeleteNodeSpec = z.object({
   targetSelectors: z.array(z.string().min(1)).min(1),
+  hierarchy: z.boolean().optional(),
 });
 export type DeleteNodeSpec = z.infer<typeof DeleteNodeSpec>;
+
+const idsToDelete = (spec: DeleteNodeSpec, state: DagState): string[] =>
+  spec.hierarchy ? withHierarchy(state, spec.targetSelectors) : spec.targetSelectors;
 
 export const deleteNodeMutator: MutatorDefinition<DeleteNodeSpec> = {
   name: 'mutator.deleteNode',
   description:
     'Delete one or more nodes. Auto-disconnects every consumer edge first ' +
     '(removeNode requires zero consumers). A deleted parent hands its children up to its own ' +
-    'parent, keeping them where they are drawn: list the children too to delete them. ' +
+    'parent, keeping them where they are drawn. An animated child keeps its keys and may move: ' +
+    'the result warns when one does. Set hierarchy to delete everything below the targets too. ' +
     'Atomic — Cmd+Z reverts everything.',
   spec: DeleteNodeSpec,
   specExample: { targetSelectors: ['node_id'] },
@@ -81,6 +87,10 @@ export const deleteNodeMutator: MutatorDefinition<DeleteNodeSpec> = {
     // by construction — that divergence was the actual bug, more than any single
     // orphan it produced. The outliner and the Delete key already share this builder
     // (#227); the agent now makes three callers, one implementation.
-    return buildDeleteNodesOps(state, spec.targetSelectors);
+    return buildDeleteNodesOps(state, idsToDelete(spec, state));
+  },
+  advisories(spec, _closure, state) {
+    const plan = planDeleteNodes(state, idsToDelete(spec, state));
+    return plan.ok ? moveNotices(state, plan) : [];
   },
 };

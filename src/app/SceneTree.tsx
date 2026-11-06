@@ -35,13 +35,8 @@ import {
   setShownOp,
 } from './collections';
 import { hideRefusal } from './sceneVisibility';
-import { buildDuplicateNodesOps, planDeleteNodes } from './sceneNodeActions';
-import {
-  buildMoveOps,
-  residualNotice,
-  type HolderEdge,
-  type MoveResult,
-} from './keepPlaceReparent';
+import { buildDuplicateNodesOps, planDeleteNodes, withHierarchy } from './sceneNodeActions';
+import { buildMoveOps, moveNotices, type HolderEdge, type MoveResult } from './keepPlaceReparent';
 import { useNotificationStore } from './stores/notificationStore';
 import { selectActiveCameraNode } from './activeCamera';
 import { isCameraNode } from './cameraNode';
@@ -545,13 +540,13 @@ export function SceneTree({ filter = '' }: SceneTreeProps) {
       notify({ severity: 'info', message: result.reason });
       return false;
     }
-    const notice = residualNotice(state, result.residuals);
-    if (notice) notify({ severity: 'warn', message: notice });
+    for (const message of moveNotices(state, result)) notify({ severity: 'warn', message });
     return true;
   }
 
-  function ctxDelete(nodeId: NodeId) {
-    const ids = ctxTargetIds(nodeId);
+  function ctxDelete(nodeId: NodeId, hierarchy = false) {
+    const targets = ctxTargetIds(nodeId);
+    const ids = hierarchy ? withHierarchy(state, targets) : targets;
     const plan = planDeleteNodes(state, ids);
     setCtxMenu(null);
     if (!say(plan) || !plan.ok) return;
@@ -1033,6 +1028,15 @@ export function SceneTree({ filter = '' }: SceneTreeProps) {
                     ? `Delete ${ctxTargetIds(ctxMenu.nodeId).length} Objects`
                     : 'Delete'}
                 </CtxItem>
+                {withHierarchy(state, ctxTargetIds(ctxMenu.nodeId)).length >
+                ctxTargetIds(ctxMenu.nodeId).length ? (
+                  <CtxItem
+                    testId="outliner-ctx-delete-hierarchy"
+                    onClick={() => ctxDelete(ctxMenu.nodeId, true)}
+                  >
+                    Delete Hierarchy
+                  </CtxItem>
+                ) : null}
               </div>
             </>,
             document.body,

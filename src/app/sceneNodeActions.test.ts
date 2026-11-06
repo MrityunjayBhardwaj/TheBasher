@@ -3,12 +3,14 @@ import {
   buildDeleteNodesOps,
   buildDuplicateNodesOps,
   planDeleteNodes,
+  withHierarchy,
   type DuplicateOptions,
 } from './sceneNodeActions';
 import { resolveWorldTransform } from './resolveWorldTransform';
 import { validatePlan } from '../agent/mutators/validate';
 import { deleteNodeMutator } from '../agent/mutators/builders/deleteNode';
 import { isInScene } from './sceneMembership';
+import { moveNotices } from './keepPlaceReparent';
 import { registerAllNodes } from '../nodes/registerAll';
 import { applyOp, emptyDagState } from '../core/dag';
 import { danglingIdRefs } from '../core/dag/idRefSweep';
@@ -1996,6 +1998,55 @@ describe('buildDuplicateNodesOps — one duplicate rule, deep and linked (#1561)
   });
 });
 
+describe('withHierarchy — Delete Hierarchy takes what is below the target', () => {
+  const held = (id: string, type: string, children: string[] = []) => ({
+    id,
+    type,
+    params: {},
+    inputs: children.length ? { children: children.map((node) => ({ node, socket: 'out' })) } : {},
+  });
+  const tree = (extra: Record<string, unknown> = {}): DagState =>
+    ({
+      nodes: {
+        scene: held('scene', 'Scene', ['root', 'other']),
+        root: held('root', 'Group', ['kid']),
+        kid: held('kid', 'Group', ['grand']),
+        grand: held('grand', 'Group'),
+        other: held('other', 'Group'),
+        ...extra,
+      },
+      outputs: { scene: { node: 'scene' } },
+    }) as unknown as DagState;
+
+  // Measured in Blender 5.1.1, `outliner.delete(hierarchy=True)` on Root: Root, Kid and Grand go
+  // (Grand was in another collection), Other stays.
+  it('takes every level below the target and nothing beside it', () => {
+    expect(withHierarchy(tree(), ['root']).sort()).toEqual(['grand', 'kid', 'root']);
+  });
+
+  it('a target with nothing below it adds nothing, so the menu does not offer it', () => {
+    expect(withHierarchy(tree(), ['other'])).toEqual(['other']);
+  });
+
+  it('a collection listing a child does not keep it: membership is not a parent', () => {
+    const s = tree({
+      coll: {
+        ...held('coll', 'Collection'),
+        inputs: { members: [{ node: 'kid', socket: 'out' }] },
+      },
+    });
+    expect(withHierarchy(s, ['root']).sort()).toEqual(['grand', 'kid', 'root']);
+  });
+
+  it('a child a surviving parent also holds stays', () => {
+    const s = tree();
+    (s.nodes.other.inputs as Record<string, unknown>).children = [{ node: 'grand', socket: 'out' }];
+    expect(withHierarchy(s, ['root']).sort()).toEqual(['kid', 'root']);
+    // Both of its parents going, it goes.
+    expect(withHierarchy(s, ['root', 'other']).sort()).toEqual(['grand', 'kid', 'other', 'root']);
+  });
+});
+
 describe('buildDeleteNodesOps — #1673 a group holding a skinned character', () => {
   // As every skinned import stands it: scene → Armature group → { skeleton Object, mesh
   // Object }, the mesh Object's data an Armature modifier over the mesh, posed by the
@@ -2070,6 +2121,12 @@ describe('buildDeleteNodesOps — #1673 a group holding a skinned character', ()
       { node: 'skel', socket: 'out' },
       { node: 'obj', socket: 'out' },
     ]);
+  });
+
+  it('Delete Hierarchy on the group takes the whole character', () => {
+    const s = skinnedState();
+    const ops = buildDeleteNodesOps(s, withHierarchy(s, ['grp']));
+    expect(removedBy(ops).sort()).toEqual(['grp', 'mesh', 'mod', 'obj', 'pl', 'skel', 'skelData']);
   });
 
   it('deletes the whole character — group, both objects, the modifier, the mesh, the skeleton and its pose — and wires nothing', () => {
@@ -2265,7 +2322,7 @@ describe('buildDeleteNodesOps — a deleted parent hands its children up (#1517)
     }
   });
 
-  it('a keyed child refuses the delete by name rather than move, and the agent’s door throws it', () => {
+  it('a keyed child is handed up with its keys and its values as they are, and named', () => {
     const s = apply(nested(), [
       {
         type: 'addNode',
@@ -2279,11 +2336,41 @@ describe('buildDeleteNodesOps — a deleted parent hands its children up (#1517)
       },
     ]);
     const plan = planDeleteNodes(s, ['INNER'], { ctx: CTX });
-    expect(plan.ok).toBe(false);
-    if (!plan.ok) expect(plan.reason).toMatch(/"Cube".*animated|animated/);
-    expect(() => buildDeleteNodesOps(s, ['INNER'])).toThrow(/animated/);
-    // Deleted together there is nothing to keep, so nothing to refuse.
-    expect(planDeleteNodes(s, ['INNER', 'n_box'], { ctx: CTX }).ok).toBe(true);
+    if (!plan.ok) throw new Error(plan.reason);
+    expect(plan.unkept).toEqual([{ childId: 'n_box', driven: 'animated' }]);
+    expect(moveNotices(s, plan).join()).toMatch(/Delete moved "n_box" \(animated\)/);
+
+    const after = apply(s, plan.ops);
+    expect(isInScene(after, 'n_box')).toBe(true);
+    expect(after.nodes.n_box.params.position).toEqual(s.nodes.n_box.params.position);
+    expect(after.nodes.ch.params.keyframes).toEqual(s.nodes.ch.params.keyframes);
+    // The agent's door reads the same plan, so it does not throw.
+    expect(() => buildDeleteNodesOps(s, ['INNER'])).not.toThrow();
+    // Deleted together nothing moves, so there is nothing to say.
+    const both = planDeleteNodes(s, ['INNER', 'n_box'], { ctx: CTX });
+    if (!both.ok) throw new Error(both.reason);
+    expect(both.unkept).toEqual([]);
+  });
+
+  it('CONTROL: a keyed child whose parent adds nothing does not move, so nothing is said', () => {
+    const s = apply(nested(), [
+      {
+        type: 'addNode',
+        nodeId: 'ch',
+        nodeType: 'KeyframeChannelVec3',
+        params: {
+          target: 'n_box',
+          paramPath: 'position',
+          keyframes: [{ time: 0, value: [1, 1, 1], easing: 'linear' }],
+        },
+      },
+      set('INNER', 'position', [0, 0, 0]),
+      set('INNER', 'rotation', [0, 0, 0]),
+      set('INNER', 'scale', [1, 1, 1]),
+    ]);
+    const plan = planDeleteNodes(s, ['INNER'], { ctx: CTX });
+    if (!plan.ok) throw new Error(plan.reason);
+    expect(plan.unkept).toEqual([]);
   });
 
   // scene → (holder) → T → cube: a Transform wrapper holds one child, on its chain socket.

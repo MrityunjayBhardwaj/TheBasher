@@ -26,7 +26,7 @@ import {
   type ChildMove,
   type MoveResult,
 } from './keepPlaceReparent';
-import { hierarchySocketForKind, hierarchySocketsOf } from './sceneHierarchy';
+import { hierarchyChildIds, hierarchySocketForKind, hierarchySocketsOf } from './sceneHierarchy';
 import type { ClockedCtx } from './subjectClock';
 import {
   collectionDeleteRelinkOps,
@@ -173,6 +173,11 @@ function consumersFirst(
   return out;
 }
 
+/** Whether this wire holds its source as a scene-graph child. */
+function holdsAsParent(state: DagState, r: Reader): boolean {
+  return r.fromSocket === 'out' && hierarchySocketsOf(state.nodes[r.node]).includes(r.socket);
+}
+
 /**
  * #1517 — where the children of the deleted nodes go. A deleted Group or Object hands each child
  * that nothing surviving holds up to its nearest surviving ancestor, the scene at the top: Houdini
@@ -190,10 +195,6 @@ function handUpMoves(
 ): ChildMove[] {
   const sceneId = sceneIdOf(state);
   if (!sceneId) return [];
-  const holdsAsParent = (r: Reader) => {
-    const holder = state.nodes[r.node];
-    return r.fromSocket === 'out' && hierarchySocketsOf(holder).includes(r.socket);
-  };
   /** The nearest holder above `id` that is staying and can take `childId`. A wrapper (one socket,
    *  already filled) or a light's Object is passed on the way up. */
   const survivingHolderOf = (id: NodeId, childId: NodeId): NodeId => {
@@ -201,7 +202,7 @@ function handUpMoves(
     let cursor = id;
     while (!seen.has(cursor)) {
       seen.add(cursor);
-      const holders = (readers.get(cursor) ?? []).filter(holdsAsParent);
+      const holders = (readers.get(cursor) ?? []).filter((r) => holdsAsParent(state, r));
       const fit = holders.find(
         (r) => !idSet.has(r.node) && receivingSocket(state, r.node, childId) !== null,
       );
@@ -219,7 +220,7 @@ function handUpMoves(
     for (const ref of refsOf(node.inputs?.children)) {
       const childId = ref?.node;
       if (!childId || idSet.has(childId) || moves.has(childId) || !state.nodes[childId]) continue;
-      const holders = (readers.get(childId) ?? []).filter(holdsAsParent);
+      const holders = (readers.get(childId) ?? []).filter((r) => holdsAsParent(state, r));
       if (holders.some((r) => !idSet.has(r.node))) continue;
       moves.set(childId, {
         childId,
@@ -246,6 +247,42 @@ export function buildDeleteNodesOps(state: DagState, ids: readonly NodeId[]): Op
   const plan = planDeleteNodes(state, ids);
   if (!plan.ok) throw new Error(plan.reason);
   return plan.ops;
+}
+
+/**
+ * Blender's Delete Hierarchy: `ids` and everything below them, a child in another collection too.
+ * A child a surviving parent also holds stays, as a plain delete leaves it. A character's group is
+ * the case this is for: the group, its skeleton and mesh objects, and through those their data
+ * (#1673), which a plain delete of the group now hands up (#1517).
+ */
+export function withHierarchy(state: DagState, ids: readonly NodeId[]): NodeId[] {
+  const readers = readersIndex(state);
+  const out = new Set<NodeId>(ids);
+  for (const id of out) {
+    for (const childId of hierarchyChildIds(state.nodes[id])) {
+      if (out.has(childId) || !state.nodes[childId]) continue;
+      const alsoHeld = (readers.get(childId) ?? []).some(
+        (r) => holdsAsParent(state, r) && !isBelowAny(state, readers, r.node, out),
+      );
+      if (!alsoHeld) out.add(childId);
+    }
+  }
+  return [...out];
+}
+
+/** Whether `id` is in `set`, or held as a child by something that is, however far up. */
+function isBelowAny(
+  state: DagState,
+  readers: ReadonlyMap<NodeId, Reader[]>,
+  id: NodeId,
+  set: ReadonlySet<NodeId>,
+  seen: Set<NodeId> = new Set(),
+): boolean {
+  if (set.has(id)) return true;
+  if (seen.has(id)) return false;
+  seen.add(id);
+  const holders = (readers.get(id) ?? []).filter((r) => holdsAsParent(state, r));
+  return holders.length > 0 && holders.every((r) => isBelowAny(state, readers, r.node, set, seen));
 }
 
 /** {@link buildDeleteNodesOps}, with a refusal and any shear reported instead of thrown or lost. */
@@ -408,6 +445,9 @@ export function planDeleteNodes(
   const handUp = buildMoveOps(state, handUpMoves(state, readers, allIds, idSet), {
     ctx: opts.ctx,
     verb: 'Delete',
+    // The parent is going, so an animated child has nothing to stay under. It keeps its keys and
+    // moves, as Blender's does; the doors say so, which Blender does not.
+    drivenChildren: 'move',
   });
   if (!handUp.ok) return handUp;
   const ops: Op[] = [...sweep.ops, ...collectionDeleteRelinkOps(state, idSet), ...handUp.ops];
@@ -456,7 +496,7 @@ export function planDeleteNodes(
       to: { node: consumer.node, socket: consumer.socket },
     });
   }
-  return { ok: true, ops, residuals: handUp.residuals };
+  return { ok: true, ops, residuals: handUp.residuals, unkept: handUp.unkept };
 }
 
 /** A fresh node id derived from `base`, guaranteed absent from `taken` (and added

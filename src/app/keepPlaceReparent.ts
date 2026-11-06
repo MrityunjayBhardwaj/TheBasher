@@ -24,7 +24,9 @@
 //     rewriting the keys would silently change an animation. The move is refused by name, as
 //     Apply Transform refuses an animated child (#489, `childCompensation`). When the parent's
 //     world does not change (moving between two parents at the same place), nothing needs keeping
-//     and nothing is refused.
+//     and nothing is refused. Delete does not refuse: its parent is going, so there is nothing to
+//     stay under. The child moves with its keys as they are, as Blender's does, and is reported
+//     (`MoveResult.unkept`) because Blender says nothing.
 //
 //   - A CONSTRAINT ABOVE IT. The world read here does not include one (#1829), so it could not tell
 //     where such a child is drawn. Refused by name until it can (`constrainedAtOrAbove`). The
@@ -228,7 +230,7 @@ function matrixGap(a: THREE.Matrix4, b: THREE.Matrix4): number {
 
 export type KeepResult =
   | { readonly ok: true; readonly ops: Op[]; readonly residual: number }
-  | { readonly ok: false; readonly reason: string };
+  | { readonly ok: false; readonly reason: string; readonly driven?: string };
 
 /**
  * The setParams that keep `childId` where it is drawn when the world it hangs from changes from
@@ -253,6 +255,7 @@ export function keepWorldOps(
   if (driven) {
     return {
       ok: false,
+      driven,
       reason: `${verb}: "${name}" is ${driven}, and its keys are relative to its parent, so keeping it in place would move it again on the next frame. Alt-drag it in the outliner to move it with its values as they are.`,
     };
   }
@@ -348,6 +351,8 @@ export type MoveResult =
       readonly ops: Op[];
       /** Children a T·R·S could not keep exactly in place (shear), with how far they miss. */
       readonly residuals: ReadonlyArray<{ readonly childId: NodeId; readonly residual: number }>;
+      /** Children `drivenChildren: 'move'` let move: animated, so their values were left alone. */
+      readonly unkept?: ReadonlyArray<{ readonly childId: NodeId; readonly driven: string }>;
     }
   | { readonly ok: false; readonly reason: string };
 
@@ -356,17 +361,24 @@ export type MoveResult =
  * at the end of the socket that takes it, and (unless `keepTransform` is false) has its own
  * transform rewritten so it stays where it is drawn at `ctx`. Every move is solved on `state`
  * as given, so moving a parent and its child together keeps both. Refused whole when any one
- * child cannot be kept in place.
+ * child cannot be kept in place, except that `drivenChildren: 'move'` rewires an animated child
+ * with its values as they are and lists it in `unkept`.
  */
 export function buildMoveOps(
   state: DagState,
   moves: readonly ChildMove[],
-  opts: { readonly keepTransform?: boolean; readonly ctx?: ClockedCtx; readonly verb: string },
+  opts: {
+    readonly keepTransform?: boolean;
+    readonly ctx?: ClockedCtx;
+    readonly verb: string;
+    readonly drivenChildren?: 'refuse' | 'move';
+  },
 ): MoveResult {
   const keep = opts.keepTransform !== false;
   const ctx = opts.ctx ?? liveCtx();
   const ops: Op[] = [];
   const residuals: { childId: NodeId; residual: number }[] = [];
+  const unkept: { childId: NodeId; driven: string }[] = [];
   const appended = new Map<string, number>();
   const sceneId = sceneIdOf(state);
   const afterWorlds = new Map<NodeId, THREE.Matrix4>();
@@ -440,12 +452,16 @@ export function buildMoveOps(
       };
     }
     const kept = keepWorldOps(state, move.childId, before, after, opts.verb);
-    if (!kept.ok) return kept;
+    if (!kept.ok) {
+      if (!kept.driven || opts.drivenChildren !== 'move') return kept;
+      unkept.push({ childId: move.childId, driven: kept.driven });
+      continue;
+    }
     ops.push(...kept.ops);
     if (kept.residual > RESIDUAL_TOLERANCE)
       residuals.push({ childId: move.childId, residual: kept.residual });
   }
-  return { ok: true, ops, residuals };
+  return { ok: true, ops, residuals, unkept };
 }
 
 /** A sentence for children kept in place only as nearly as a T·R·S allows, or null. */
@@ -457,6 +473,22 @@ export function residualNotice(
   const names = residuals.map((r) => `"${nodeDisplayName(state.nodes, r.childId)}"`).join(', ');
   const worst = Math.max(...residuals.map((r) => r.residual));
   return `${names} kept its place as nearly as a position, rotation and scale can: its old parent's non-uniform scale sheared it, which they cannot hold (off by up to ${worst.toPrecision(2)}).`;
+}
+
+/** What a successful move should tell the director: a shear it could not hold, a child it moved. */
+export function moveNotices(state: DagState, result: Extract<MoveResult, { ok: true }>): string[] {
+  const notices: string[] = [];
+  const sheared = residualNotice(state, result.residuals);
+  if (sheared) notices.push(sheared);
+  if (result.unkept?.length) {
+    const names = result.unkept
+      .map((u) => `"${nodeDisplayName(state.nodes, u.childId)}" (${u.driven})`)
+      .join(', ');
+    notices.push(
+      `Delete moved ${names}: what moves them is relative to the parent that went. Undo brings everything back.`,
+    );
+  }
+  return notices;
 }
 
 /**

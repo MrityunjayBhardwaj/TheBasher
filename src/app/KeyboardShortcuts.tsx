@@ -68,7 +68,7 @@ import { buildDuplicateNodesOps, planDeleteNodes } from './sceneNodeActions';
 import {
   buildClearParentOps,
   buildParentToOps,
-  residualNotice,
+  moveNotices,
   type MoveResult,
 } from './keepPlaceReparent';
 import { buildSetActiveCameraOps } from './setActiveCamera';
@@ -401,9 +401,9 @@ function runMove(result: MoveResult, description: string): boolean {
     return false;
   }
   const dag = useDagStore.getState();
-  const notice = residualNotice(dag.state, result.residuals);
+  const notices = moveNotices(dag.state, result);
   if (result.ops.length > 0) dag.dispatchAtomic(result.ops, 'user', description);
-  if (notice) notify({ severity: 'warn', message: notice });
+  for (const message of notices) notify({ severity: 'warn', message });
   return true;
 }
 
@@ -890,7 +890,7 @@ export function KeyboardShortcuts() {
             if (ids.length === 0) return;
             // Shared op-builder (#227) — the SAME disconnect-consumers + removeNode
             // path the outliner context menu uses, so the two can't drift.
-            // #1517 — a parent's children are handed up, so this can refuse (an animated child).
+            // #1517 — a parent's children are handed up, which can refuse (a child under a constraint).
             const plan = planDeleteNodes(dag.state, ids);
             if (!plan.ok) {
               useNotificationStore.getState().notify({ severity: 'info', message: plan.reason });
