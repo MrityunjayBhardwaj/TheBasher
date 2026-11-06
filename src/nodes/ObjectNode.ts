@@ -113,6 +113,8 @@ export const ObjectNode: NodeDefinition<ObjectParams, ObjectValue> = {
     // #1810 — the world this object hangs from, and its own world: the parent's times its own
     // transform as drawn. The parent input feeds the world output only (`objectWorld.ts`).
     parent: { type: 'Matrix4', cardinality: 'single', world: true },
+    // #1811 — where this object's constraint chain ends. Wired, its world is what arrives here.
+    constraints: { type: 'Matrix4', cardinality: 'single', chain: 'end' },
   },
   outputs: {
     out: { type: 'SceneObject', cardinality: 'single' },

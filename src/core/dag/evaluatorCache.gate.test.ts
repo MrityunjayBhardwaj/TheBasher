@@ -420,6 +420,10 @@ const TAKERS: string[] = [
   // #1810 — an object's world output, folded with the cache the evaluator walk was given, and the
   // armature it reads a parent bone off.
   'objectWorldFold@src/app/objectWorld.ts',
+  // #1811 — a constraint chain's steps, read with the cache the evaluator walk was given.
+  'constraintStepFold@src/app/constraintChain.ts',
+  'trackToStep@src/app/constraintChain.ts',
+  'followPathStep@src/app/constraintChain.ts',
   // #1785 — a transform driver's channels and the value on its `in`, read with the fold's cache.
   'transformDriverChannels@src/app/paramDrivers.ts',
   'inSampler@src/app/paramDrivers.ts',

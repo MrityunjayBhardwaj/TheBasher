@@ -258,9 +258,10 @@ function walk(schema: unknown, path: string, out: ParamField[], depth: number): 
 function socketsOf(def: NodeDefinition): { inputs: SocketField[]; outputs: SocketField[] } {
   // #1810 — an object's `parent` input is not offered: nothing draws from it until saved files
   // are converted to parent inputs, and `dag.exec` refuses a wire into it. Its `world` output is
-  // honest today and stays.
+  // honest today and stays. #1811 — nor a constraint chain's inputs, for the same reason: nothing
+  // draws from a chain until the readers move onto it.
   const inputs = Object.entries(def.inputs)
-    .filter(([, d]) => d.world !== true)
+    .filter(([, d]) => d.world !== true && d.chain === undefined)
     .map(([socket, d]) => ({
       socket,
       // `Array.isArray` does not narrow a READONLY tuple, and `AcceptedTypeSet` is one.

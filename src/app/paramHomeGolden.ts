@@ -223,6 +223,7 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
   CombineTransform: '[]',
   SeparateTransform: '[]',
   PolarSplit: '[]',
+  OwnWorld: '[] object=(unrouted)',
   MultiplyTransforms: '[]',
   InvertTransform: '[]',
   TransformPoint: '[]',
@@ -491,4 +492,4 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
 // #1826 adds BodyInputRotation and BodyInputTransform, two cells each (`input`, `slot`),
 // unrouted like BodyInputVec's:
 //   types 98 + 2 = 100 · routed 147 · unrouted 265 + 4 = 269
-export const GOLDEN_TOTALS = { types: 101, routed: 147, unrouted: 269 } as const;
+export const GOLDEN_TOTALS = { types: 102, routed: 147, unrouted: 270 } as const;

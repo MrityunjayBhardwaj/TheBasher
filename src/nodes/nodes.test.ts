@@ -142,6 +142,7 @@ const ALL_TYPES = [
   'NormalPass',
   'Null',
   'Object',
+  'OwnWorld', // #1811
   'ParamDriver',
   'PolarSplit', // #1811
   // #1049 — a stored polygon mesh's data half.

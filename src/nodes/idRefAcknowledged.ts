@@ -316,6 +316,16 @@ export const SHARED_WIRES: readonly string[] = [
   'DepthPass.time',
   'GltfAsset.transformClip',
   'GltfSkeleton.asset',
+  // #1811 — a constraint chain's wires: deleting one step or object never takes what it reads.
+  // What dies with an object is decided with the doors that build a chain.
+  'FollowPath.in',
+  'FollowPath.curve',
+  'Group.constraints',
+  'Null.constraints',
+  'Object.constraints',
+  'TrackTo.in',
+  'TrackTo.aim',
+  'TrackTo.parent',
   // #1810 — an object's parent: deleting a child never takes what it hangs from.
   'Group.parent',
   'IDPass.camera',

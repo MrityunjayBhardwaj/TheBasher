@@ -248,11 +248,29 @@ export function wouldCreateCycleAt(
     const worldPoint = point.startsWith('w:');
     if (worldPoint) out.push(`v:${id}`);
     for (const [socket, binding] of Object.entries(node.inputs)) {
-      const parentInput = def?.inputs[socket]?.world === true;
-      if (parentInput !== worldPoint) continue;
+      const into = def?.inputs[socket];
+      const parentInput = into?.world === true;
+      // #1811 — a chain input feeds the world output only, as the parent input does.
+      if ((parentInput || into?.chain !== undefined) !== worldPoint) continue;
       for (const ref of Array.isArray(binding) ? binding : [binding]) {
         if (parentInput) out.push(`w:${ref.node}`, `v:${ref.node}`);
         else out.push(pointOf(ref));
+      }
+    }
+    // #1811 — the bottom of a chain reads the object it names: its value and what it hangs from,
+    // not its world, which is what the chain ends in.
+    const ownOf =
+      worldPoint && def?.ownWorldOf
+        ? (node.params as Record<string, unknown>)[def.ownWorldOf]
+        : undefined;
+    const owner = typeof ownOf === 'string' ? state.nodes[ownOf] : undefined;
+    if (owner) {
+      out.push(`v:${owner.id}`);
+      const ownerDef = getNodeType(owner.type);
+      for (const [socket, binding] of Object.entries(owner.inputs)) {
+        if (ownerDef?.inputs[socket]?.world !== true) continue;
+        for (const ref of Array.isArray(binding) ? binding : [binding])
+          out.push(`w:${ref.node}`, `v:${ref.node}`);
       }
     }
     if (!worldPoint && gatheringSocketOf(node.type)) {
@@ -273,9 +291,10 @@ export function wouldCreateCycleAt(
     return false;
   };
   const consumer = state.nodes[to.node];
-  const parentInput = consumer
-    ? getNodeType(consumer.type)?.inputs[to.socket]?.world === true
-    : false;
+  const into = consumer ? getNodeType(consumer.type)?.inputs[to.socket] : undefined;
+  const parentInput = into?.world === true;
+  // #1811 — the consumer's world would read `from`: a loop if `from` already reads that world.
+  if (into?.chain !== undefined) return reaches([pointOf(from)], `w:${to.node}`);
   if (!parentInput) {
     // The consumer's value would read `from`: a loop if `from` already reads that value.
     return reaches([pointOf(from)], `v:${to.node}`);

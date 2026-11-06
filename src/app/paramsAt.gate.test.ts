@@ -137,6 +137,8 @@ const CONSUMERS: Record<string, Decision> = {
   // #1810 — an object's `world` output: folds the object's own channels and held edits onto its
   // authored params, through resolveWorldTransform's own fold (its row above), one level at a time.
   'src/app/objectWorld.ts': authored('folds-its-own-overlays'),
+  // #1811 — a chain step reads its settings through `resolveEvaluatedParam`, as a keyed value.
+  'src/app/constraintChain.ts': authored('folds-its-own-overlays'),
   // #1829 — imports only the `EvaluatorCache` type: the drawn world read hands the authored state
   // and the caller's cache to `resolveWorldTransform`'s walk and the constraint resolvers (their
   // rows). Not a new road.
@@ -395,7 +397,7 @@ describe('#582 — who evaluates the graph, and which params they need', () => {
     // through the resolvers the render uses (declared above as delegates-to-a-folding-resolver).
     // 64 → 66, not new roads: #1829's drawn world read and #1516's keep-position reparent cache,
     // each declared above. 66 → 67 at #1810 (the world fold).
-    expect(evaluatorConsumers()).toHaveLength(67); // 39 -> 40 at #935 (placement) (the motion resolver)
+    expect(evaluatorConsumers()).toHaveLength(68); // 39 -> 40 at #935 (placement) (the motion resolver)
   });
 
   it('every reason is load-bearing — no member of any union is decorative', () => {

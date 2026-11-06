@@ -300,6 +300,7 @@ describe('#1551 — every string a registered node can store is an id reference 
         "KeyframeChannelVec2.target:subject",
         "KeyframeChannelVec3.target:subject",
         "Lag.sourceTransform.node:argument",
+        "OwnWorld.object:subject",
         "ParamDriver.sourceSpare.node:argument",
         "ParamDriver.sourceTransform.node:argument",
         "ParamDriver.sourceTransformVec:argument",

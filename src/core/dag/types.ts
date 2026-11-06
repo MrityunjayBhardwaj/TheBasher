@@ -320,6 +320,12 @@ export interface InputDescriptor {
    */
   world?: true;
   /**
+   * #1811 — an input of a constraint chain. It feeds the node's world output only, never its value.
+   * `'step'`: a chain node reads it (the transform coming up the chain, an aim target's world).
+   * `'end'`: the object's input where its chain ends. Wired, what arrives is the object's world.
+   */
+  chain?: 'step' | 'end';
+  /**
    * #1824 — a list input that also GATHERS this node's children: every node whose parent input
    * (an input marked {@link InputDescriptor.world}) reads this node's world output arrives here
    * after the wires, in node-table order, as if wired. So a parent draws what hangs from it
@@ -555,6 +561,17 @@ export interface NodeDefinition<P = unknown, O = unknown> {
    * point-in-time contract. Marker only; the machinery lives in the seam.
    */
   stateful?: boolean;
+  /**
+   * #1811 — a step of a constraint chain: its world output is the registered step fold
+   * (`setWorldStepFold`) on its `chain` inputs, because its settings can be keyed off the graph.
+   */
+  worldStep?: true;
+  /**
+   * #1811 — the bottom of a constraint chain: its world output is the world of the object this
+   * param names BEFORE that object's chain (the parent's world times its own transform). A param
+   * and not a wire, because the chain ends at that object: a wire would be a loop.
+   */
+  ownWorldOf?: string;
   cost: NodeCost;
   /**
    * Output type widened to `unknown` for the input shape so zod schemas with

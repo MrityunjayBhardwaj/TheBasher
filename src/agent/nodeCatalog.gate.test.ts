@@ -115,9 +115,12 @@ describe('node schema payload (#1007)', () => {
   it('agrees with the registry on every socket, for every type', () => {
     for (const s of schemas) {
       const def = getNodeType(s.type)!;
-      // Every input but an object's `parent` (#1810: not offered until something draws from it).
+      // Every input but an object's `parent` (#1810) and a constraint chain's (#1811): not offered
+      // until something draws from them.
       expect(s.inputs.map((i) => i.socket)).toEqual(
-        Object.keys(def.inputs).filter((k) => def.inputs[k].world !== true),
+        Object.keys(def.inputs).filter(
+          (k) => def.inputs[k].world !== true && def.inputs[k].chain === undefined,
+        ),
       );
       expect(s.outputs.map((o) => o.socket)).toEqual(Object.keys(def.outputs));
       for (const i of s.inputs) {

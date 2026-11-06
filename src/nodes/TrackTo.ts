@@ -78,6 +78,7 @@ export const TrackToNode: NodeDefinition<TrackToParams, TrackToConstraintValue> 
   type: 'TrackTo',
   version: 1,
   pure: true,
+  worldStep: true,
   cost: 'cheap',
   paramSchema: TrackToParams,
   // #421 — `target` is the CONSTRAINED object: this constraint lives on it
@@ -91,8 +92,18 @@ export const TrackToNode: NodeDefinition<TrackToParams, TrackToConstraintValue> 
   ],
   // Edge-less (enumerated + scene-layer resolved, like a direct channel). The
   // `out` socket exists for introspection/future stack wiring; nothing consumes it.
-  inputs: {},
-  outputs: { out: { type: 'Constraint', cardinality: 'single' } },
+  inputs: {
+    // #1811 — on a wired chain: the transform coming up it, what to aim at (else `aimPoint`), and
+    // the world the object hangs from, for an up or an aim point in its parent's space.
+    in: { type: 'Matrix4', cardinality: 'single', chain: 'step' },
+    aim: { type: 'Matrix4', cardinality: 'single', chain: 'step' },
+    parent: { type: 'Matrix4', cardinality: 'single', chain: 'step' },
+  },
+  outputs: {
+    out: { type: 'Constraint', cardinality: 'single' },
+    // #1811 — the transform that came up the chain, changed by this constraint.
+    world: { type: 'Matrix4', cardinality: 'single', world: true },
+  },
   inspectorSections: ['constraint', 'driver'],
   // The aim target is authored through the general node-ref picker (the same surface as
   // SampleGeometry/Solver), so a director can bind a Track-To's target from its own

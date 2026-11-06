@@ -807,6 +807,28 @@ describe('dag.exec tool', () => {
     expect(result.text).toContain('add test cube');
   });
 
+  // #1811 — a constraint chain wired into an object would succeed and move nothing, as above.
+  it("refuses a wire into an object's constraint chain, naming the way that constrains", () => {
+    const s = makeSplitCube(emptyDagState(), { objectId: 'b' }).state;
+    const end: import('../../core/dag/types').Op[] = [
+      { type: 'addNode', nodeId: 'tt', nodeType: 'TrackTo', params: {} },
+      {
+        type: 'connect',
+        from: { node: 'tt', socket: 'world' },
+        to: { node: 'b', socket: 'constraints' },
+      },
+    ];
+    const refused = dagExecTool.handler({ description: 'aim b', ops: end }, { dagState: s });
+    expect(refused.ops).toEqual([]);
+    expect(refused.text).toContain('tt → b.constraints');
+    expect(refused.text).toContain('"target"');
+    // CONTROL: the drawn way to constrain passes.
+    const ok: import('../../core/dag/types').Op[] = [
+      { type: 'addNode', nodeId: 'tt', nodeType: 'TrackTo', params: { target: 'b' } },
+    ];
+    expect(dagExecTool.handler({ description: 'aim b', ops: ok }, { dagState: s }).ops).toEqual(ok);
+  });
+
   // #1810 — "parent B under A" wired as A.world → B.parent would succeed and move nothing: no
   // viewport, render or world read draws from the parent input until files are converted.
   it("refuses a wire into an object's parent input, naming the wiring that does parent", () => {

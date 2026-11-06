@@ -82,6 +82,7 @@ export const FollowPathNode: NodeDefinition<FollowPathParams, FollowPathConstrai
   type: 'FollowPath',
   version: 1,
   pure: true,
+  worldStep: true,
   cost: 'cheap',
   paramSchema: FollowPathParams,
   // #421 — `target` is the constrained object (owner → subject). `curve` is a
@@ -93,8 +94,16 @@ export const FollowPathNode: NodeDefinition<FollowPathParams, FollowPathConstrai
   ],
   // Edge-less (enumerated + seam-resolved, like TrackTo and a direct channel). The `out`
   // socket exists for introspection; nothing consumes it.
-  inputs: {},
-  outputs: { out: { type: 'Constraint', cardinality: 'single' } },
+  inputs: {
+    // #1811 — on a wired chain: the transform coming up it, and the world of the curve object.
+    in: { type: 'Matrix4', cardinality: 'single', chain: 'step' },
+    curve: { type: 'Matrix4', cardinality: 'single', chain: 'step' },
+  },
+  outputs: {
+    out: { type: 'Constraint', cardinality: 'single' },
+    // #1811 — the transform that came up the chain, changed by this constraint.
+    world: { type: 'Matrix4', cardinality: 'single', world: true },
+  },
   inspectorSections: ['constraint', 'driver'],
   // The path is bound through the general node-ref picker (#341). `shape:'id'` because
   // `curve` is a plain string id (the fold reads it raw); `kind:'curve'` filters the
