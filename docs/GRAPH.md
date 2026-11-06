@@ -86,6 +86,8 @@ the link and the follower keeps the name it has. `relationsOf` (`src/core/dag/id
 answers every relationship of a node at once: wires in and out, references in and out, name
 followers and sub-network membership. A loop that runs through a reference is stored and
 named by `referenceCycles`, not refused; a loop of wires alone is still refused.
+Objects aiming at each other are such a loop, through a Track-To's aim target: each faces the other,
+whichever is read first, and a loop that runs through a parent is cut at the aim (`loopedWorldRefs`).
 
 A reference can also be aimed at nothing: a node that is gone, or a parameter path the target
 does not have. What happens depends on the door, as in Blender. The agent's authoring door

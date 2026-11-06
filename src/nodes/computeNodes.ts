@@ -353,14 +353,16 @@ export const Vec3MathNode: NodeDefinition<Vec3MathParams, Vec3> = {
 };
 
 /** The compute-node vocabulary, for bulk registration (registerAll.ts). */
-export const COMPUTE_NODES: NodeDefinition[] = [
-  MathNode as unknown as NodeDefinition,
-  ClampNode as unknown as NodeDefinition,
-  FitNode as unknown as NodeDefinition,
-  MixNode as unknown as NodeDefinition,
-  CurveRemapNode as unknown as NodeDefinition,
-  NoiseNode as unknown as NodeDefinition,
-  MakeVec3Node as unknown as NodeDefinition,
-  VecBreak3Node as unknown as NodeDefinition,
-  Vec3MathNode as unknown as NodeDefinition,
-];
+export const COMPUTE_NODES: NodeDefinition[] = (
+  [
+    MathNode as unknown as NodeDefinition,
+    ClampNode as unknown as NodeDefinition,
+    FitNode as unknown as NodeDefinition,
+    MixNode as unknown as NodeDefinition,
+    CurveRemapNode as unknown as NodeDefinition,
+    NoiseNode as unknown as NodeDefinition,
+    MakeVec3Node as unknown as NodeDefinition,
+    VecBreak3Node as unknown as NodeDefinition,
+    Vec3MathNode as unknown as NodeDefinition,
+  ] as NodeDefinition[]
+).map((def) => ({ ...def, keyedCook: true })); // #575

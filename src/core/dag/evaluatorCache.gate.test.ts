@@ -424,6 +424,8 @@ const TAKERS: string[] = [
   'constraintStepFold@src/app/constraintChain.ts',
   'trackToStep@src/app/constraintChain.ts',
   'followPathStep@src/app/constraintChain.ts',
+  // #575 — a compute node's keyed settings, read with the cache the evaluator walk was given.
+  'keyedParamsOf@src/app/keyedCook.ts',
   // #1785 — a transform driver's channels and the value on its `in`, read with the fold's cache.
   'transformDriverChannels@src/app/paramDrivers.ts',
   'inSampler@src/app/paramDrivers.ts',

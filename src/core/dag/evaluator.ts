@@ -22,7 +22,7 @@
 import { bypassSpineOf } from './chainBypass';
 import { hashString, hashValue, type ContentHash } from './hash';
 import { getNodeType, registryEpoch, requireNodeType } from './registry';
-import type { DagState, EvaluableState } from './state';
+import { loopedWorldRefs, type DagState, type EvaluableState } from './state';
 import { arriving, conversionsInto, producedTypeOf } from './socketConversion';
 import { inputAvailable, outputAvailable } from './socketAvailability';
 import { bodyInputLeavesOf } from './subnetworks';
@@ -438,6 +438,20 @@ export function setWorldStepFold(fold: WorldStepFold | null): void {
   worldStepFold = fold;
 }
 
+// #575 — a compute node's settings at the time being evaluated, on the road above and for the same
+// reason: keys live off the graph. Hands back `params` itself when nothing animates them.
+export type KeyedParams = (
+  state: DagState,
+  nodeId: NodeId,
+  params: unknown,
+  ctx: EvalCtx,
+  cache: EvaluatorCache | undefined,
+) => unknown;
+let keyedParams: KeyedParams | null = null;
+export function setKeyedParams(read: KeyedParams | null): void {
+  keyedParams = read;
+}
+
 /** #1810 — whether `socket` is `def`'s world output. */
 function isWorldOutput(def: NodeDefinition | undefined, socket: string): boolean {
   return def?.outputs[socket]?.world === true;
@@ -459,14 +473,54 @@ export function evaluate(
   const overrides = options.overrides;
   // Per-evaluation memo so a single sub-graph isn't re-walked twice when
   // multiple downstream consumers share an upstream.
-  const memo = new Map<NodeId, EvalResult>();
-  const onStack = new Set<NodeId>();
+  let memo = new Map<NodeId, EvalResult>();
+  let onStack = new Set<NodeId>();
   // #1810 — the world outputs met in this walk, and the ones being worked out (a parent loop).
-  const worldMemo = new Map<NodeId, EvalResult>();
-  const worldOnStack = new Set<NodeId>();
+  let worldMemo = new Map<NodeId, EvalResult>();
+  let worldOnStack = new Set<NodeId>();
   // #1811 — the same for a world before its object's constraint chain.
-  const ownWorldMemo = new Map<NodeId, EvalResult>();
-  const ownWorldOnStack = new Set<NodeId>();
+  let ownWorldMemo = new Map<NodeId, EvalResult>();
+  let ownWorldOnStack = new Set<NodeId>();
+  // #1811 — the pass that answers an aim on a loop, with its own books. See `inLoopPass`.
+  let loopPass: {
+    memo: typeof memo;
+    onStack: typeof onStack;
+    worldMemo: typeof worldMemo;
+    worldOnStack: typeof worldOnStack;
+    ownWorldMemo: typeof ownWorldMemo;
+    ownWorldOnStack: typeof ownWorldOnStack;
+  } | null = null;
+  let inLoop = false;
+
+  /**
+   * #1811 — `read`, with every step on a reference loop handing on what it received.
+   *
+   * A Track-To reads where its target IS, and a Track-To doesn't move its object, so a loop of aims
+   * is a loop of nodes and not of positions. This second pass reads that position without the
+   * steps that close the loop, and does so whichever object was asked first, so the answer is
+   * the same from any entry. When a parent is on the loop the rotation does matter (an aim at your
+   * own child) and this is where the loop is cut: the aim sees the child where the object holds it
+   * before aiming, and the child then hangs from the aimed object.
+   */
+  function inLoopPass<T>(read: () => T): T {
+    const outer = { memo, onStack, worldMemo, worldOnStack, ownWorldMemo, ownWorldOnStack };
+    loopPass ??= {
+      memo: new Map(),
+      onStack: new Set(),
+      worldMemo: new Map(),
+      worldOnStack: new Set(),
+      ownWorldMemo: new Map(),
+      ownWorldOnStack: new Set(),
+    };
+    ({ memo, onStack, worldMemo, worldOnStack, ownWorldMemo, ownWorldOnStack } = loopPass);
+    inLoop = true;
+    try {
+      return read();
+    } finally {
+      inLoop = false;
+      ({ memo, onStack, worldMemo, worldOnStack, ownWorldMemo, ownWorldOnStack } = outer);
+    }
+  }
 
   /** `value`, produced by `ref`, as it arrives in an input described by `into` (#1549). The
    *  producer's type is looked up only for an input that has a conversion at all. */
@@ -540,6 +594,11 @@ export function evaluate(
     return result;
   }
 
+  function typeOf(id: NodeId): NodeDefinition | undefined {
+    const node = state.nodes[id];
+    return node ? getNodeType(node.type) : undefined;
+  }
+
   /** #1811 — `id`'s chain inputs of one kind: what each carries, and who it is wired from. */
   function chainInputs(id: NodeId, kind: 'step' | 'end', depth: number) {
     const node = state.nodes[id];
@@ -587,8 +646,30 @@ export function evaluate(
           `Evaluator: ${node.type} "${id}" is a chain step and no step fold is registered`,
         );
       }
-      const { inputs, refs } = chainInputs(id, 'step', depth);
-      const value = worldStepFold(state as DagState, id, inputs, refs, ctx, cache);
+      const looped = def.worldRefs !== undefined && loopedWorldRefs(state as DagState).has(id);
+      let value: number[];
+      if (looped && inLoop) {
+        const below = node.inputs.in as NodeRef | undefined;
+        value = below
+          ? (evalRef(below, depth + 1).value as number[])
+          : [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
+      } else {
+        const { inputs, refs } = chainInputs(id, 'step', depth);
+        for (const [socket, param] of Object.entries(def.worldRefs ?? {})) {
+          if (node.inputs[socket]) continue;
+          const target = (node.params as Record<string, unknown>)[param];
+          if (typeof target !== 'string' || !isWorldOutput(typeOf(target), 'world')) continue;
+          if (looped) {
+            // The object, not a bone in it: a bone is read through an evaluation of its own,
+            // which would walk the loop again.
+            inputs[socket] = inLoopPass(() => evalWorld(target, depth + 1)).value;
+          } else {
+            inputs[socket] = evalWorld(target, depth + 1).value;
+            refs[socket] = { node: target, socket: 'world' };
+          }
+        }
+        value = worldStepFold(state as DagState, id, inputs, refs, ctx, cache);
+      }
       result = { value, hash: hashString(`world:${id}:${hashValue(value)}`) };
     } else {
       const ends = Object.values(chainInputs(id, 'end', depth).inputs);
@@ -721,7 +802,13 @@ export function evaluate(
 
     onStack.delete(id);
 
-    const paramsHash = hashParams(node.params);
+    // #575 — a keyed setting cooks at this time. Hashed by the value it reads, so an unkeyed node
+    // keeps its key on every frame and a keyed one misses only when the value changes.
+    const params =
+      def.keyedCook === true && keyedParams
+        ? keyedParams(state as DagState, id, node.params, ctx, cache)
+        : node.params;
+    const paramsHash = hashParams(params);
     const inputsHashStr = hashValue(inputHashes);
     const timePart = def.pure ? '' : `|t:${ctx.time.frame}.${ctx.time.seconds}`;
     const cacheKey = `${node.id}@${node.type}#${node.version}|p:${paramsHash}|i:${inputsHashStr}${timePart}`;
@@ -749,7 +836,7 @@ export function evaluate(
     const evalStart = evalPerfHook ? performance.now() : 0;
     const out =
       bypassSpine === null
-        ? def.evaluate(node.params, resolved, ctx, scopeFor(def, node.params, resolved))
+        ? def.evaluate(params, resolved, ctx, scopeFor(def, params, resolved))
         : resolved[bypassSpine];
     if (evalPerfHook) evalPerfHook(performance.now() - evalStart, false);
     const hash = hashString(cacheKey);

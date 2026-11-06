@@ -567,6 +567,19 @@ export interface NodeDefinition<P = unknown, O = unknown> {
    */
   worldStep?: true;
   /**
+   * #1811 — settings of a chain step that name an object whose world the step reads, each by the
+   * input it stands in for: a wire on that input wins. A reference, so it may close a loop
+   * (docs/GRAPH.md, a loop through a reference is stored and named), and the evaluator answers
+   * such a loop rather than throwing on it (`loopedWorldRefs`).
+   */
+  worldRefs?: Readonly<Record<string, string>>;
+  /**
+   * #575 — this node's cook reads its settings at the time being evaluated, so a key or a driver on
+   * one reaches what it outputs. The read lives above the evaluator and is registered
+   * (`setKeyedParams`), because keys live off the graph.
+   */
+  keyedCook?: boolean;
+  /**
    * #1811 — the bottom of a constraint chain: its world output is the world of the object this
    * param names BEFORE that object's chain (the parent's world times its own transform). A param
    * and not a wire, because the chain ends at that object: a wire would be a loop.

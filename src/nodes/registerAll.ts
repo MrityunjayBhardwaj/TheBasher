@@ -95,6 +95,7 @@ import { WalkPathNode } from './WalkPath';
 import { registerStatefulReplay } from '../app/statefulOps';
 import { registerWorldFold } from '../app/objectWorld';
 import { registerWorldStepFold } from '../app/constraintChain';
+import { registerKeyedCook } from '../app/keyedCook';
 import { OwnWorldNode } from './OwnWorld';
 
 const ALL: NodeDefinition[] = [
@@ -342,4 +343,5 @@ export function registerAllNodes(): void {
   // #1810 — and an object's `world` output with the fold that reads its own channels.
   registerWorldFold();
   registerWorldStepFold();
+  registerKeyedCook();
 }

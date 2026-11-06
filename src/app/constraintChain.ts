@@ -9,6 +9,10 @@
 //   - Track-To replaces the rotation, aiming from the position it receives. The position and the
 //     length of each axis stay, so a stretch from an unevenly scaled parent becomes plain scale and
 //     no shear reaches the aim. A target reads as its final world, after its own chain and its parents.
+//     The target is a wire, or the `aimNode` reference, and the reference can close a loop: Blender
+//     answers a loop from whatever it evaluated last, so its first answer depends on creation order
+//     and version, and it settles on each object facing the other. A Track-To doesn't move its
+//     object, so that settled answer needs no history (`inLoopPass` in the evaluator).
 //   - Follow Path keeps the position it receives as an offset from the path: the point on the path
 //     plus that position through the curve object's rotation and scale (`followpath_evaluate`:
 //     `owner = curveWorld · T(point) · owner`). It takes position only; Blender also turns the
