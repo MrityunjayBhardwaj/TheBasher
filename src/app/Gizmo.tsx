@@ -68,7 +68,7 @@ import { useTimeStore, type TimeStore } from './stores/timeStore';
 import { maybeSnapVec3, maybeSnapTransform, useViewportStore } from './stores/viewportStore';
 import { pivotPoint } from './gizmoPivot';
 import { resolveEvaluatedTransform } from './resolveEvaluatedTransform';
-import { resolveParentWorldMatrix, resolveWorldTransform } from './resolveWorldTransform';
+import { resolveDrawnParentWorldMatrix, resolveDrawnWorldTransform } from './drawnWorldTransform';
 import { routeAnimatedGrab, autoKeyCommit } from './animate/autoKeyCommit';
 import { resolveCameraPoseAt } from './activeCamera';
 import { sceneClockOf } from './sceneClock';
@@ -416,7 +416,7 @@ function SingleGizmo() {
         // stripped on write-back (worldToLocalTRS).
         let parentWorld: THREE.Matrix4 | null = null;
         try {
-          parentWorld = resolveParentWorldMatrix(
+          parentWorld = resolveDrawnParentWorldMatrix(
             useDagStore.getState().state,
             selectedId,
             { time: { frame, seconds, normalized } },
@@ -786,19 +786,19 @@ function MultiGizmo() {
         let world: THREE.Matrix4;
         let parentWorld: THREE.Matrix4 | null = null;
         try {
-          const wt = resolveWorldTransform(state, id, ctx, cache);
+          const wt = resolveDrawnWorldTransform(state, id, ctx, cache);
           world = wt
             ? new THREE.Matrix4().fromArray(wt.matrix)
             : new THREE.Matrix4().setPosition(...manip.position);
-          // A Follow-Path moves the ORIGIN, and resolveWorldTransform is pure TRS — it applies
-          // no band (that purity is what the band's own inputs read). So a follower's seed world
+          // A Follow-Path moves the ORIGIN, and the world read takes the node's own TRS — it
+          // applies none of its own bands. So a follower's seed world
           // must be re-based onto the point it actually renders at, or `origins` below medians a
           // phantom and the whole group orbits a pivot that is nowhere near any object. Position
           // ONLY — the band writes no rotation/scale, so the rest of the matrix stands. Read on
           // top of the pure walk, never folded into it (#348).
           const followed = resolveFollowedWorldPosition(state, id, ctx, cache);
           if (followed) world.setPosition(followed[0], followed[1], followed[2]);
-          parentWorld = resolveParentWorldMatrix(state, id, ctx, cache);
+          parentWorld = resolveDrawnParentWorldMatrix(state, id, ctx, cache);
         } catch {
           world = new THREE.Matrix4().setPosition(...manip.position);
           parentWorld = null;
@@ -1217,7 +1217,7 @@ function CameraGizmo() {
       // #1688 — `seconds` is the playhead; the parent read takes both clocks, so a rig on scene
       // time is undone where the scene has reached and a rig set to Film where the playhead is.
       const state = useDagStore.getState().state;
-      const parentWorld = resolveParentWorldMatrix(
+      const parentWorld = resolveDrawnParentWorldMatrix(
         state,
         camId,
         clockedCtx(sceneClockOf(state).sceneAt(seconds), seconds),

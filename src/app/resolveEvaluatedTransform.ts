@@ -53,7 +53,7 @@ import { overlayChannels } from '../nodes/overlayChannels';
 import { layeredChannelValues } from './layeredChannels';
 import { driverChannelValuesForTarget } from './paramDrivers';
 import { resolveConstraintRotation, resolveConstraintPosition } from './nodeConstraints';
-import { cameraLocalOrientation } from './cameraTrackTo';
+import { cameraFollowedPosition, cameraLocalOrientation } from './cameraTrackTo';
 import { useTransientEditStore } from './stores/transientEditStore';
 import { cameraLocalPose, childEdges } from './resolveWorldTransform';
 import { isCameraNode } from './cameraNode';
@@ -134,7 +134,7 @@ export function resolveEvaluatedTransform(
         ...(ownQuat ? { quaternion: ownQuat } : {}),
       };
     }
-    const followed = resolveConstraintPosition(state, selectedId, own, cache);
+    const followed = cameraFollowedPosition(state, selectedId, own, cache);
     const position = followed ?? local.position;
     const { quaternion } = cameraLocalOrientation(state, selectedId, position, local, ctx, cache);
     const e = new Euler().setFromQuaternion(new Quaternion(...quaternion), 'XYZ');

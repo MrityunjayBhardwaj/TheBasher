@@ -476,7 +476,12 @@ export function SceneFromDAG({ outputName = 'render' }: SceneFromDAGProps) {
   // ancestor moves (`resolveCameraPoseAt` composes that ancestor world at live
   // `seconds`). Meshes don't need this (the animated Group's DirectChannelsR
   // re-renders the whole subtree). Built once (O(N)), tested O(1) per camera (B13).
-  const animatedAncestors = animatedAncestorSet(state.nodes, directChannelTargets);
+  // #1829 — a constrained ancestor too: its aim moves whenever its target does, and the camera's
+  // pose now turns with it.
+  const animatedAncestors = animatedAncestorSet(
+    state.nodes,
+    new Set([...directChannelTargets, ...constraintTargets]),
+  );
 
   // #165: enumerate ALL camera nodes in the DAG (Blender draws every camera
   // object, not just the active one). They are NOT in value.scene.children —

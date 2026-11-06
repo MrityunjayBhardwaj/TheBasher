@@ -190,9 +190,8 @@ export function directChannelTargetSet(
  *
  * `animatedSet` should be `directChannelTargetSet` — the channel-animated ancestors
  * `resolveParentWorldMatrix` actually follows per-frame (it overlays the top-level
- * child's channels at `ctx.seconds`). A constraint-rotation-only ancestor is NOT
- * followed by that resolver, so it is intentionally excluded (a documented narrow
- * limitation — a position-keyed Track-To'd ancestor is still caught via its channels).
+ * child's channels at `ctx.seconds`). #1829 — the resolver now reads a constrained ancestor as it
+ * is drawn, so the caller passes constrained nodes in `animatedSet` as well.
  *
  * The hierarchy socket set is READ from `sceneHierarchy`, which `childEdges` and
  * `resolveParentWorldMatrix` read too — so this no longer MIRRORS the source of truth,

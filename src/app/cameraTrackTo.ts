@@ -11,8 +11,12 @@
 import * as THREE from 'three';
 import type { EvaluatorCache } from '../core/dag/evaluator';
 import type { DagState } from '../core/dag/state';
-import { resolveActiveTrackTo, resolveTrackToTarget } from './nodeConstraints';
-import { resolveParentWorldMatrix } from './resolveWorldTransform';
+import {
+  resolveActiveTrackTo,
+  resolveFollowedWorldPosition,
+  resolveTrackToTarget,
+} from './nodeConstraints';
+import { resolveDrawnParentWorldMatrix } from './drawnWorldTransform';
 import type { ClockedCtx } from './subjectClock';
 import { trackToQuaternion, trackToUpIn } from './resolveTrackTo';
 import { quaternionFromEulerDeg, withResolvedRotation } from './resolvedRotation';
@@ -35,7 +39,10 @@ export function cameraTrackToAim(
   const winner = resolveActiveTrackTo(state, cameraId, ctx, cache);
   const roll = winner?.roll ?? 0;
   let up: Vec3 = winner ? [...winner.up] : [0, 1, 0];
-  const parentWorld = resolveParentWorldMatrix(state, cameraId, ctx, cache);
+  // #1829 — the drawn parent, the one `resolveCameraPoseAt` lifts this pose by: the aim is
+  // brought into the space it is lifted out of, so a camera under an aimed object still frames its
+  // target. No cycle: a camera's aim enters no world read (a world read takes its own rotation).
+  const parentWorld = resolveDrawnParentWorldMatrix(state, cameraId, ctx, cache);
   if (!parentWorld) return { lookAt: aim, roll, up };
   // #1770 — the up in the parent's frame the camera aims in, read in the Track-To's own space.
   if (winner) up = trackToUpIn(up, winner.aimSpace, 'parent', parentWorld);
@@ -43,6 +50,23 @@ export function cameraTrackToAim(
     parentWorld.clone().invert(),
   );
   return { lookAt: [local.x, local.y, local.z], roll, up };
+}
+
+/** #1829 — the point a camera's Follow-Path puts it at, in the space its pose is lifted out of: the
+ *  drawn parent, as for its aim above, so a camera under an aimed object stays on its path. Null
+ *  when no Follow-Path moves it. A top-level camera's parent is the world. */
+export function cameraFollowedPosition(
+  state: DagState,
+  cameraId: string,
+  ctx: ClockedCtx,
+  cache?: EvaluatorCache,
+): Vec3 | null {
+  const world = resolveFollowedWorldPosition(state, cameraId, ctx, cache);
+  if (!world) return null;
+  const parentWorld = resolveDrawnParentWorldMatrix(state, cameraId, ctx, cache);
+  if (!parentWorld) return world;
+  const local = new THREE.Vector3(...world).applyMatrix4(parentWorld.clone().invert());
+  return [local.x, local.y, local.z];
 }
 
 /** What a camera's own transform holds for its orientation, keys already overlaid: its
