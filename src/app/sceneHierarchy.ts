@@ -158,3 +158,75 @@ export function hasHierarchyParent(nodes: Iterable<HierarchyNodeLike>, childId: 
   }
   return false;
 }
+
+// ── THE TREE AS A WHOLE-GRAPH QUESTION (#1823 / #1824, step 1) ─────────────────────────────
+//
+// `hierarchyChildIds(node)` answers from one node, because today a parent holds its children
+// in its own `children` input. Once parenting moves onto the child's `parent` input (#1810,
+// converted by #1824), a parent's children are the nodes that point at it, which only the whole
+// graph can answer. Readers ask the functions below instead of reading one node's inputs, so
+// that move changes `hierarchyEdgesOf` and not every reader.
+
+/** As much of the graph as the tree questions read. */
+export interface HierarchyGraphLike {
+  readonly nodes: Readonly<Record<string, HierarchyNodeLike>>;
+}
+
+/** One parent → child relation of the scene tree. */
+export interface HierarchyEdge {
+  readonly parent: string;
+  readonly child: string;
+}
+
+interface HierarchyIndex {
+  readonly edges: readonly HierarchyEdge[];
+  readonly children: ReadonlyMap<string, readonly string[]>;
+  readonly parents: ReadonlyMap<string, readonly string[]>;
+}
+
+const EMPTY: readonly string[] = Object.freeze([]);
+const indexMemo = new WeakMap<object, HierarchyIndex>();
+
+function indexOf(graph: HierarchyGraphLike): HierarchyIndex {
+  const hit = indexMemo.get(graph.nodes);
+  if (hit) return hit;
+  const edges: HierarchyEdge[] = [];
+  const children = new Map<string, string[]>();
+  const parents = new Map<string, string[]>();
+  for (const [parent, node] of Object.entries(graph.nodes)) {
+    for (const child of hierarchyChildIds(node)) {
+      edges.push({ parent, child });
+      (children.get(parent) ?? children.set(parent, []).get(parent)!).push(child);
+      (parents.get(child) ?? parents.set(child, []).get(child)!).push(parent);
+    }
+  }
+  const index = { edges, children, parents };
+  indexMemo.set(graph.nodes, index);
+  return index;
+}
+
+/**
+ * Every parent → child relation of the scene tree, parents in node-table order and each
+ * parent's children in the order the outliner shows them. Built once per node table.
+ */
+export function hierarchyEdgesOf(graph: HierarchyGraphLike): readonly HierarchyEdge[] {
+  return indexOf(graph).edges;
+}
+
+/** The scene-graph children of `parentId`, in order. Empty for an unknown id or a leaf. */
+export function childIdsOf(graph: HierarchyGraphLike, parentId: string): readonly string[] {
+  return indexOf(graph).children.get(parentId) ?? EMPTY;
+}
+
+/**
+ * Every node holding `childId` as a scene-graph child, in node-table order. Today a node wired
+ * into two holders has two; a parent input (#1824) holds one.
+ */
+export function parentIdsOf(graph: HierarchyGraphLike, childId: string): readonly string[] {
+  return indexOf(graph).parents.get(childId) ?? EMPTY;
+}
+
+/** The first holder of `childId`, or null at the top of the tree. */
+export function parentIdOf(graph: HierarchyGraphLike, childId: string): string | null {
+  return parentIdsOf(graph, childId)[0] ?? null;
+}

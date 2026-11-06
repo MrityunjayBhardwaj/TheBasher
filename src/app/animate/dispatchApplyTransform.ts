@@ -76,7 +76,7 @@ import { isImportedChild } from '../importedChild';
 import { nodeDisplayName } from '../sceneTreeWalk';
 import { useSelectionStore } from '../stores/selectionStore';
 import { useTransientEditStore } from '../stores/transientEditStore';
-import { hierarchyChildIds, hierarchySocketForKind } from '../sceneHierarchy';
+import { childIdsOf, hierarchySocketForKind } from '../sceneHierarchy';
 import { quaternionToEulerVec3 } from '../../core/import/threeAdapter';
 import { standingObjectsOf } from '../../core/import/skeletonObject';
 import type { AnimationClipParams } from '../../nodes/AnimationClip';
@@ -807,7 +807,7 @@ function childCompensation(
   const parent = state.nodes[parentId];
   const childIds =
     parent && hierarchySocketForKind(parent.type, parent) === 'children'
-      ? hierarchyChildIds(parent)
+      ? childIdsOf(state, parentId)
       : [];
   const parentName = nodeDisplayName(state.nodes, parentId);
   const D2R = Math.PI / 180;
@@ -1095,7 +1095,7 @@ function applyIntoStoredMesh(
 
 /** The Objects a group holds directly whose data is a skeleton. */
 export function armatureSkeletonObjectsOf(state: DagState, groupId: string): string[] {
-  return hierarchyChildIds(state.nodes[groupId]).filter((id) => {
+  return childIdsOf(state, groupId).filter((id) => {
     const node = state.nodes[id];
     return (
       node?.type === 'Object' && state.nodes[edgeTarget(node, 'data') ?? '']?.type === 'Skeleton'
@@ -1202,14 +1202,14 @@ function applyScaleIntoArmature(
   }
   const [skeletonObjectId] = skeletonObjects;
   const skeletonId = edgeTarget(state.nodes[skeletonObjectId], 'data')!;
-  const children = hierarchyChildIds(group);
+  const children = childIdsOf(state, groupId);
   const elsewhere = standingObjectsOf(state, skeletonId).filter((id) => !children.includes(id));
   if (elsewhere.length > 0) {
     return refuse(
       `holds a skeleton that ${elsewhere.map((id) => `"${nameOf(id)}"`).join(', ')} also stands outside it, and applying would resize that too.`,
     );
   }
-  const underSkeleton = hierarchyChildIds(state.nodes[skeletonObjectId]);
+  const underSkeleton = childIdsOf(state, skeletonObjectId);
   if (underSkeleton.length > 0) {
     return refuse(
       `holds a skeleton with ${underSkeleton.map((id) => `"${nameOf(id)}"`).join(', ')} parented under it, which this Apply cannot keep in place yet.`,

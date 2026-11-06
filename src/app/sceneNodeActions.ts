@@ -26,7 +26,7 @@ import {
   type ChildMove,
   type MoveResult,
 } from './keepPlaceReparent';
-import { hierarchyChildIds, hierarchySocketForKind, hierarchySocketsOf } from './sceneHierarchy';
+import { childIdsOf, hierarchySocketForKind, hierarchySocketsOf } from './sceneHierarchy';
 import type { ClockedCtx } from './subjectClock';
 import {
   collectionDeleteRelinkOps,
@@ -259,7 +259,7 @@ export function withHierarchy(state: DagState, ids: readonly NodeId[]): NodeId[]
   const readers = readersIndex(state);
   const out = new Set<NodeId>(ids);
   for (const id of out) {
-    for (const childId of hierarchyChildIds(state.nodes[id])) {
+    for (const childId of childIdsOf(state, id)) {
       if (out.has(childId) || !state.nodes[childId]) continue;
       const alsoHeld = (readers.get(childId) ?? []).some(
         (r) => holdsAsParent(state, r) && !isBelowAny(state, readers, r.node, out),

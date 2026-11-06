@@ -19,7 +19,7 @@ import type { DagState } from '../core/dag/state';
 import type { EvalCtx } from '../core/dag/types';
 import { isCameraNode } from './cameraNode';
 import { sceneClockOf } from './sceneClock';
-import { hierarchyChildIds } from './sceneHierarchy';
+import { hierarchyEdgesOf } from './sceneHierarchy';
 import { useTimeStore } from './stores/timeStore';
 
 export type Clock = 'scene' | 'film';
@@ -44,11 +44,6 @@ function ownersOf(state: DagState): Owners {
   const parent = new Map<string, string>();
   const poser = new Map<string, string>();
   for (const [id, node] of Object.entries(state.nodes)) {
-    // The Scene holds its top-level children; the top of the chain is scene time, so it is
-    // simply not recorded as a parent.
-    if (node.type !== 'Scene') {
-      for (const child of hierarchyChildIds(node)) if (!parent.has(child)) parent.set(child, id);
-    }
     const data = (node.inputs as Record<string, unknown> | undefined)?.data as
       | { node?: unknown }
       | undefined;
@@ -59,6 +54,12 @@ function ownersOf(state: DagState): Owners {
     if (CONSTRAINT_TYPES.has(node.type) && typeof target === 'string' && target) {
       poser.set(id, target);
     }
+  }
+  // The Scene holds its top-level children; the top of the chain is scene time, so it is
+  // simply not recorded as a parent.
+  for (const edge of hierarchyEdgesOf(state)) {
+    if (state.nodes[edge.parent]?.type === 'Scene') continue;
+    if (!parent.has(edge.child)) parent.set(edge.child, edge.parent);
   }
   const owners = { parent, poser };
   ownersCache.set(state.nodes, owners);

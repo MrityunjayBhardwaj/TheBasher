@@ -45,7 +45,7 @@ import { applyOps } from '../core/dag/ops';
 import type { DagState } from '../core/dag/state';
 import type { NodeRef, Op } from '../core/dag/types';
 import { wiredProfileRigs } from '../nodes/LightProfileSelect';
-import { hierarchyChildIds } from './sceneHierarchy';
+import { childIdsOf } from './sceneHierarchy';
 
 /** One input socket, on one node type, that holds things in the scene. */
 export interface MembershipWire {
@@ -136,7 +136,7 @@ function heldBy(state: DagState, nodeId: string): string[] {
     out.push(...refsOf(node.inputs[socket]));
   }
   // Parenting carries its children into the scene with it until #1810.
-  out.push(...hierarchyChildIds(node));
+  out.push(...childIdsOf(state, nodeId));
   return out;
 }
 
