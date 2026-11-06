@@ -1360,7 +1360,8 @@ function skeletonOps(
     ),
     ...buildSkeletonObjectOps({
       skeletonId,
-      sceneNodeId: parentId,
+      sceneNodeId: args.sceneNodeId,
+      parentId,
       // #1238 — the armature node's name, as Blender names the armature Object; the layer keeps the
       // animation's.
       name: armatureNameOf(json, skeleton),
@@ -1584,7 +1585,7 @@ async function buildNativeOps(
     if (typeof node.mesh !== 'number') {
       const emptyId = idOfNode(i);
       ops.push(...emptyOps(emptyId, nodeTransformOf(node), node.name || `Empty_${i}`));
-      parentEdges.push(parentEdge(emptyId, parentId));
+      parentEdges.push(parentEdge(emptyId, parentId, rootId));
       continue;
     }
     const data = meshes.get(i)!;
@@ -1619,7 +1620,7 @@ async function buildNativeOps(
     if (leftBehind) {
       const emptyId = idOfNode(i);
       ops.push(...emptyOps(emptyId, nodeTransformOf(node), node.name || `Empty_${i}`));
-      parentEdges.push(parentEdge(emptyId, parentId));
+      parentEdges.push(parentEdge(emptyId, parentId, rootId));
     }
     // #1052 — one material per slot, numbered by the same function that wrote each face's slot.
     const slotMaterials = primitiveSlots(json, node.mesh as number).slots.map((slot) =>
@@ -1702,7 +1703,7 @@ async function buildNativeOps(
     }
     // Under a bone, after every parent edge: the armature's Object is written among them, and the
     // file may number the mesh before its bones.
-    (underBone ? armatureEdges : parentEdges).push(parentEdge(objectId, objectParentId));
+    (underBone ? armatureEdges : parentEdges).push(parentEdge(objectId, objectParentId, rootId));
     objectIds.push(objectId);
   }
   const nodeIds = json.nodes.map((_, i) => (isBone.has(i) ? null : idOfNode(i)));

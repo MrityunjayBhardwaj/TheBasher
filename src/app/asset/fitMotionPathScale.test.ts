@@ -244,8 +244,8 @@ describe('fitting a generated walk’s path to its character (#1285)', () => {
       },
       {
         type: 'connect',
-        from: { node: 'tall_obj', socket: 'out' },
-        to: { node: 'cm_group', socket: 'children' },
+        from: { node: 'cm_group', socket: 'world' },
+        to: { node: 'tall_obj', socket: 'parent' },
       },
       { type: 'addNode', nodeId: 'n_scene', nodeType: 'Scene', params: {} },
       {
@@ -348,8 +348,8 @@ function sceneProject(chars: { id: string; hip: number; unit: number; groupScale
         },
         {
           type: 'connect',
-          from: { node: `${c.id}_obj`, socket: 'out' },
-          to: { node: `${c.id}_grp`, socket: 'children' },
+          from: { node: `${c.id}_grp`, socket: 'world' },
+          to: { node: `${c.id}_obj`, socket: 'parent' },
         },
         {
           type: 'connect',
@@ -431,8 +431,8 @@ describe('a rig stored in other units is fitted in world metres (#1508)', () => 
       },
       {
         type: 'connect',
-        from: { node: 'idle_obj', socket: 'out' },
-        to: { node: 'half', socket: 'children' },
+        from: { node: 'half', socket: 'world' },
+        to: { node: 'idle_obj', socket: 'parent' },
       },
       {
         type: 'connect',

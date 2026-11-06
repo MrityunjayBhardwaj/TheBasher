@@ -12,7 +12,7 @@
 // children in that order in the table.
 
 import { getNodeType, registryEpoch } from './registry';
-import type { Node, NodeId, NodeRef } from './types';
+import type { Node, NodeId, NodeRef, Op } from './types';
 
 /** As much of the graph as this reads. */
 export interface WorldChildrenGraph {
@@ -142,4 +142,46 @@ export function inputsBelow(
   const { [up]: _up, ...rest } = inputs;
   void _up;
   return rest;
+}
+
+/** True when `holderId` takes `childId` on `socket` through the child's parent input: the socket is
+ *  the holder's gathering list and the child has a parent input. */
+export function attachesByParentInput(
+  graph: WorldChildrenGraph,
+  holderId: NodeId,
+  socket: string,
+  childId: NodeId,
+): boolean {
+  const holder = graph.nodes[holderId];
+  const child = graph.nodes[childId];
+  if (!holder || !child) return false;
+  return gatheringSocketOf(holder.type) === socket && parentSocketOf(child.type) !== null;
+}
+
+/**
+ * #1824 — the op that hangs `childId` from `holderId` on `socket`: the holder's world into the
+ * child's parent input when the holder gathers on `socket` and the child has a parent input (the
+ * only way such a child may hang there, `connect` refuses the wire), otherwise a wire into the
+ * holder's list, at `index` when given. Both nodes must be in `graph`.
+ */
+export function attachOp(
+  graph: WorldChildrenGraph,
+  childId: NodeId,
+  holderId: NodeId,
+  socket: string,
+  index?: number,
+): Op {
+  if (attachesByParentInput(graph, holderId, socket, childId)) {
+    return {
+      type: 'connect',
+      from: { node: holderId, socket: 'world' },
+      to: { node: childId, socket: parentSocketOf(graph.nodes[childId]!.type)! },
+    };
+  }
+  return {
+    type: 'connect',
+    from: { node: childId, socket: 'out' },
+    to: { node: holderId, socket },
+    ...(index === undefined ? {} : { index }),
+  };
 }

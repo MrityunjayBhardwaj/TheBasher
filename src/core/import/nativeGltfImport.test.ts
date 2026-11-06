@@ -1740,8 +1740,10 @@ describe('#1051 — a hierarchy comes across as parent edges', () => {
   function parentOf(ops: readonly Op[]): Record<string, string> {
     const out: Record<string, string> = {};
     for (const op of ops) {
-      if (op.type !== 'connect' || op.to.socket !== 'children') continue;
-      out[op.from.node] = op.to.node;
+      if (op.type !== 'connect') continue;
+      // #1824 — under an Object or a Group the child names its parent; the scene's list is a wire.
+      if (op.to.socket === 'parent') out[op.to.node] = op.from.node;
+      else if (op.to.socket === 'children') out[op.from.node] = op.to.node;
     }
     return out;
   }
@@ -1840,13 +1842,16 @@ describe('#1051 — a hierarchy comes across as parent edges', () => {
     // has not added yet unless every parent edge comes after every node. `applyOp` throws if not.
     const { ops } = await importNested(nestedFixture());
     const addedBy: string[] = [];
+    let parentEdges = 0;
     for (const op of ops) {
       if (op.type === 'addNode') addedBy.push(op.nodeId);
-      if (op.type === 'connect' && op.to.socket === 'children' && op.to.node !== 'n_scene') {
+      if (op.type === 'connect' && op.to.socket === 'parent') {
+        parentEdges++;
         expect(addedBy, `connect to ${op.to.node} before it exists`).toContain(op.to.node);
         expect(addedBy, `connect from ${op.from.node} before it exists`).toContain(op.from.node);
       }
     }
+    expect(parentEdges, 'the fixture has a parent edge to check').toBeGreaterThan(0);
   });
 
   // #1152 — this shape was refused by name until an Object could parent. It is an Object now, and its
@@ -1871,9 +1876,13 @@ describe('#1051 — a hierarchy comes across as parent edges', () => {
     if ('refused' in result) throw new Error(result.refused);
     const added = new Map<string, string>();
     for (const op of result.ops) if (op.type === 'addNode') added.set(op.nodeId, op.nodeType);
+    // #1824 — the child names the Object as its parent: the Object's world into its parent input.
     const edge = result.ops.find(
       (op) =>
-        op.type === 'connect' && op.to.socket === 'children' && added.get(op.to.node) === 'Object',
+        op.type === 'connect' &&
+        op.to.socket === 'parent' &&
+        op.from.socket === 'world' &&
+        added.get(op.from.node) === 'Object',
     );
     expect(edge, 'a child edge into an Object').toBeDefined();
     expect(result.objectIds).toHaveLength(2);

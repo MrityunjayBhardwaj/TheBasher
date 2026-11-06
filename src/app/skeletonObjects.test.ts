@@ -67,16 +67,22 @@ function build({
   if (!sceneNodeId) throw new Error('default project has no scene output');
   s = apply(s, buildBvhClipOps({ text: BVH, ids: { skeleton: 'sk', clip: 'clip' } }).ops);
   if (inGroup)
-    s = apply(s, [importGroupOp('grp', [0, 0, 0], [0, 0, 0]), parentEdge('grp', sceneNodeId)]);
+    s = apply(s, [
+      importGroupOp('grp', [0, 0, 0], [0, 0, 0]),
+      parentEdge('grp', sceneNodeId, sceneNodeId),
+    ]);
   const { ops } = buildSkeletonObjectOps({
     skeletonId: 'sk',
-    sceneNodeId: inGroup ? 'grp' : sceneNodeId,
+    sceneNodeId,
+    ...(inGroup ? { parentId: 'grp' } : {}),
     name: 'wave',
     clipId: 'clip',
     nameFollowsClip: true,
   });
-  // Out of the scene: every op but the edge that makes it a scene child.
-  const outOfScene = ops.filter((op) => !(op.type === 'connect' && op.to.socket === 'children'));
+  // Out of the scene: every op but the edge that hangs it (in the scene's list, or from the group).
+  const outOfScene = ops.filter(
+    (op) => !(op.type === 'connect' && (op.to.socket === 'children' || op.to.socket === 'parent')),
+  );
   return apply(s, inScene ? ops : outOfScene);
 }
 

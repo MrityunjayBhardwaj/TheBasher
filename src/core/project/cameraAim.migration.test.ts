@@ -118,10 +118,11 @@ function nestedLensCamera(lens: Record<string, unknown>): DagState {
     ...lens,
   });
   return run(s, [
+    // #1824 — hung by its parent input, as a v28 project holds it (this step reads poses only).
     {
       type: 'connect',
-      from: { node: 'cam', socket: 'out' },
-      to: { node: 'grp', socket: 'children' },
+      from: { node: 'grp', socket: 'world' },
+      to: { node: 'cam', socket: 'parent' },
     },
     {
       type: 'connect',

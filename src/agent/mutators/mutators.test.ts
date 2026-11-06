@@ -2161,8 +2161,8 @@ describe('deleteNode mutator', () => {
       },
       {
         type: 'connect',
-        from: { node: 'n_box', socket: 'out' },
-        to: { node: 'G', socket: 'children' },
+        from: { node: 'G', socket: 'world' },
+        to: { node: 'n_box', socket: 'parent' },
       },
     ];
     if (keyed)

@@ -276,7 +276,8 @@ describe('#1557 — what cannot be collapsed, and why', () => {
   });
   it('a wire coming in carries a type no template input can be', () => {
     const s = apply(buildDefaultDagState(), [
-      node('nul', 'Null', { position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1] }),
+      // #1824 — a node with no parent input still hangs from a group by a wire into its list.
+      node('nul', 'Transform'),
       node('grp', 'Group'),
       wire('nul', 'grp', 'children'),
       wire('grp', 'n_scene', 'children'),

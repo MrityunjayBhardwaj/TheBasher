@@ -10,6 +10,7 @@ import { beforeAll, describe, expect, it, vi } from 'vitest';
 import * as THREE from 'three';
 import { applyOp } from '../core/dag';
 import type { DagState } from '../core/dag/state';
+import { worldParentOf } from '../core/dag/worldChildren';
 import { buildDefaultDagState } from '../core/project/default';
 import { registerAllNodes } from '../nodes/registerAll';
 import { makeSplitCamera } from '../test-utils/splitCamera';
@@ -48,16 +49,32 @@ function apply(state: DagState, ...ops: object[]): DagState {
   for (const op of ops) state = applyOp(state, op as never).next;
   return state;
 }
-const hang = (child: string, parent: string) => ({
-  type: 'connect',
-  from: { node: child, socket: 'out' },
-  to: { node: parent, socket: 'children' },
-});
-const unhang = (child: string, parent: string) => ({
-  type: 'disconnect',
-  from: { node: child, socket: 'out' },
-  to: { node: parent, socket: 'children' },
-});
+// #1824 — under the scene a child is on the scene's list; under an object it names that object
+// through its parent input.
+const hang = (child: string, parent: string) =>
+  parent === SCENE
+    ? {
+        type: 'connect',
+        from: { node: child, socket: 'out' },
+        to: { node: parent, socket: 'children' },
+      }
+    : {
+        type: 'connect',
+        from: { node: parent, socket: 'world' },
+        to: { node: child, socket: 'parent' },
+      };
+const unhang = (child: string, parent: string) =>
+  parent === SCENE
+    ? {
+        type: 'disconnect',
+        from: { node: child, socket: 'out' },
+        to: { node: parent, socket: 'children' },
+      }
+    : {
+        type: 'disconnect',
+        from: { node: parent, socket: 'world' },
+        to: { node: child, socket: 'parent' },
+      };
 const trackTo = (id: string, target: string, params: object) => ({
   type: 'addNode',
   nodeId: id,
@@ -236,16 +253,18 @@ describe('#1829 — the child of an aimed object reads where it is drawn', () =>
     expect(resolveDrawnParentWorldMatrix(s, 'kid', CTX)).toBeNull();
   });
 
-  it('a node held by two parents, which the search answers, is aimed the same', () => {
+  // #1824 — a child names its one parent through its parent input, so it can no longer be held by
+  // two: naming a second parent takes it off the aimed cube, and the read follows the new one.
+  it('a node given a second parent hangs from that one alone, unaimed', () => {
     let s = aimedCubeWithChild();
     s = makeSplitCube(s, { objectId: 'other', position: [40, 0, 0] }).state;
-    // The depth-first search visits the scene's children in order: the aimed cube first.
     s = apply(s, hang('kid', 'other'), hang('other', SCENE));
+    expect(worldParentOf(s, 'kid')).toBe('other');
     const drawn = resolveDrawnWorldTransform(s, 'kid', CTX)!.position;
-    expect(drawn[0]).toBeCloseTo(2.195, 3);
+    expect(drawn).toEqual([40, 2, -3].map((v) => expect.closeTo(v, 6)));
     const parent = resolveDrawnParentWorldMatrix(s, 'kid', CTX)!;
-    expect(new THREE.Vector3().setFromMatrixPosition(parent).length()).toBeCloseTo(0, 9);
-    expect(parent.elements[0]).not.toBeCloseTo(1, 3);
+    expect(new THREE.Vector3().setFromMatrixPosition(parent).x).toBeCloseTo(40, 9);
+    expect(parent.elements[0]).toBeCloseTo(1, 9);
   });
 });
 

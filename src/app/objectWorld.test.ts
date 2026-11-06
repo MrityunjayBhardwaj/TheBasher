@@ -38,6 +38,22 @@ const keys = (a: unknown, b: unknown) => [
 ];
 const SCENE = { node: 'n_scene', socket: 'children' };
 
+/** `child` appended to `grp`'s `children` list, written into the node table as v27 wrote it. */
+function inGrp(s: DagState, child: string): DagState {
+  const grp = s.nodes.grp;
+  const prior = (grp.inputs.children ?? []) as NodeRef[];
+  return {
+    ...s,
+    nodes: {
+      ...s.nodes,
+      grp: {
+        ...grp,
+        inputs: { ...grp.inputs, children: [...prior, { node: child, socket: 'out' }] },
+      },
+    },
+  };
+}
+
 /** A Group tilted and turned by a key, rotating about an off-centre pivot, holds a keyed cube, an
  *  Object that itself holds a Null, and a camera; a plain cube sits at the top level. */
 function rig(): DagState {
@@ -60,8 +76,9 @@ function rig(): DagState {
       keyframes: keys([40, 0, 25], [40, 90, 25]),
     },
   });
-  const IN_GRP = { node: 'grp', socket: 'children' };
-  s = makeSplitCube(s, { objectId: 'box', position: [0, 1, 2], connectTo: IN_GRP }).state;
+  // #1824 — the group's children wired into its list, as a v27 file holds them (`connect` now
+  // refuses that wire), so `rewired` below has a wired graph to turn into parent inputs.
+  s = inGrp(makeSplitCube(s, { objectId: 'box', position: [0, 1, 2] }).state, 'box');
   s = run(s, {
     type: 'addNode',
     nodeId: 'k_box',
@@ -78,8 +95,8 @@ function rig(): DagState {
     position: [-1, 0, 1],
     rotation: [0, 30, 0],
     scale: [2, 1, 1],
-    connectTo: IN_GRP,
   }).state;
+  s = inGrp(s, 'holder');
   s = run(s, {
     type: 'addNode',
     nodeId: 'nul',
@@ -88,10 +105,10 @@ function rig(): DagState {
   });
   s = run(s, {
     type: 'connect',
-    from: { node: 'nul', socket: 'out' },
-    to: { node: 'holder', socket: 'children' },
+    from: { node: 'holder', socket: 'world' },
+    to: { node: 'nul', socket: 'parent' },
   });
-  s = makeSplitCamera(s, { objectId: 'cam', position: [0, 0, 4], connectTo: IN_GRP }).state;
+  s = inGrp(makeSplitCamera(s, { objectId: 'cam', position: [0, 0, 4] }).state, 'cam');
   // A camera is drawn unscaled and turned by its own rotation, whatever its typed scale says.
   s = run(s, { type: 'setParam', nodeId: 'cam', paramPath: 'scale', value: [2, 3, 2] });
   s = run(s, { type: 'setParam', nodeId: 'cam', paramPath: 'rotation', value: [-15, 20, 0] });
@@ -280,33 +297,66 @@ describe('#1824 — a parent draws what hangs from it', () => {
   });
 
   it('a moved child follows its new parent, and every reader says so', () => {
-    let s = rig();
+    let s = rewired(rig());
     s = run(s, {
       type: 'disconnect',
-      from: { node: 'box', socket: 'out' },
-      to: { node: 'grp', socket: 'children' },
+      from: { node: 'grp', socket: 'world' },
+      to: { node: 'box', socket: 'parent' },
     });
+    // Cut loose, its world is its own transform: the factor the new parent multiplies.
+    const own = worldOf(s, 'box', 1);
     s = run(s, {
       type: 'connect',
       from: { node: 'top', socket: 'world' },
       to: { node: 'box', socket: 'parent' },
     });
-    const product = multiply(worldOf(s, 'top', 1), worldOf(rig(), 'box', 1));
+    const product = multiply(worldOf(s, 'top', 1), own);
     expect(diff(worldOf(s, 'box', 1), product)).toBeLessThan(1e-12);
     expect(diff(todayOf(s, 'box', 1), product)).toBeLessThan(1e-12);
     expect(parentIdOf(s, 'box')).toBe('top');
   });
 
-  it('with no parent input, an object hung in `children` reads its own transform as its world', () => {
-    const s = rig();
-    const own = worldOf(s, 'box', 1);
-    expect(diff(own, todayOf(s, 'box', 1))).toBeGreaterThan(0.1); // grp is not applied
+  // #1824 — an object can no longer hang in a `children` list: it names its parent through its
+  // own parent input, and the list refuses the wire. Cut from its parent, it reads its own
+  // transform as its world: the world output follows the parent input and nothing else.
+  it('an object cannot hang in `children`; with no parent input it reads its own transform', () => {
+    const cut = run(rewired(rig()), {
+      type: 'disconnect',
+      from: { node: 'grp', socket: 'world' },
+      to: { node: 'box', socket: 'parent' },
+    });
+    expect(() =>
+      run(cut, {
+        type: 'connect',
+        from: { node: 'box', socket: 'out' },
+        to: { node: 'grp', socket: 'children' },
+      }),
+    ).toThrow('connect: "box" names its parent through its own "parent" input');
+    const own = worldOf(cut, 'box', 1);
+    expect(diff(own, worldOf(rewired(rig()), 'box', 1))).toBeGreaterThan(0.1); // grp is not applied
     expect(own[12]).toBeCloseTo(1.5, 12); // the key, halfway from 0 to 3
   });
 
   it('a child has one parent: a parent input is refused while a children list holds it', () => {
+    // #1824 — `connect` no longer writes such a list, but a converted file keeps a second list's
+    // wire (the v28 conversion's "more than one parent" case), so the graph is written by hand.
+    const cut = run(rewired(rig()), {
+      type: 'disconnect',
+      from: { node: 'grp', socket: 'world' },
+      to: { node: 'box', socket: 'parent' },
+    });
+    const listed: DagState = {
+      ...cut,
+      nodes: {
+        ...cut.nodes,
+        grp: {
+          ...cut.nodes.grp,
+          inputs: { ...cut.nodes.grp.inputs, children: [{ node: 'box', socket: 'out' }] },
+        },
+      },
+    };
     expect(() =>
-      run(rig(), {
+      run(listed, {
         type: 'connect',
         from: { node: 'top', socket: 'world' },
         to: { node: 'box', socket: 'parent' },
@@ -325,20 +375,37 @@ describe('#1824 — a parent draws what hangs from it', () => {
         to: { node: 'holder', socket: 'children' },
       }),
     ).toThrow(
-      'connect: "box" already hangs from "grp" through its parent input; a child has one parent',
+      'connect: "box" names its parent through its own "parent" input; connect "holder".world to "box".parent',
     );
   });
 
   it('a value that reads its own parent is a loop; a world read by a sibling is not', () => {
     const wired = rewired(rig());
-    // grp gathers box, so box's value reading grp's value would read itself.
+    // grp gathers box, so box's value reading grp's value would read itself. #1824 — grp has a
+    // parent input, so it cannot be wired into box's list at all; a Transform of grp (no parent
+    // input) can, and closes the loop.
     expect(() =>
       run(wired, {
         type: 'connect',
         from: { node: 'grp', socket: 'out' },
         to: { node: 'box', socket: 'children' },
       }),
-    ).toThrow('connect: would create a cycle (grp → box)');
+    ).toThrow('connect: "grp" names its parent through its own "parent" input');
+    const wrapped = run(
+      run(wired, { type: 'addNode', nodeId: 'xf', nodeType: 'Transform', params: {} }),
+      {
+        type: 'connect',
+        from: { node: 'grp', socket: 'out' },
+        to: { node: 'xf', socket: 'target' },
+      },
+    );
+    expect(() =>
+      run(wrapped, {
+        type: 'connect',
+        from: { node: 'xf', socket: 'out' },
+        to: { node: 'box', socket: 'children' },
+      }),
+    ).toThrow('connect: would create a cycle');
     // A world is not a value: wiring one child's world into a sibling's parent input is fine.
     const moved = run(
       run(wired, {

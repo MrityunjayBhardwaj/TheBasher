@@ -75,6 +75,11 @@ interface SkeletonObjectBase {
   /** The scene aggregator the Object joins as a child. */
   readonly sceneNodeId: string;
   /**
+   * #1824 — the Object or Group it hangs from instead, when the file puts it under one: it names
+   * that parent through its own parent input. Absent, it joins the scene's list.
+   */
+  readonly parentId?: string;
+  /**
    * #1101 — the name the Object shows. For a motion's own rig, its motion's: the file's base name
    * on the import road and the prompt on the generation road. Blender's BVH importer does the same,
    * naming the armature Object and its action after the file (`io_anim_bvh/import_bvh.py`, `load`).
@@ -173,7 +178,7 @@ export function buildSkeletonObjectOps(args: SkeletonObjectArgs): {
         from: args.pose ?? { node: args.clipId, socket: 'pose' },
         to: { node: objectId, socket: 'pose' },
       },
-      parentEdge(objectId, args.sceneNodeId),
+      parentEdge(objectId, args.parentId ?? args.sceneNodeId, args.sceneNodeId),
     ],
   };
 }

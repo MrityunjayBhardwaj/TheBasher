@@ -543,15 +543,16 @@ describe('SceneChild recursion', () => {
       nodeType: 'Group',
       params: {},
     }).next;
+    // #1824 — each names the group through its parent input; the group gathers them.
     state = applyOp(state, {
       type: 'connect',
-      from: { node: 'a', socket: 'out' },
-      to: { node: 'g', socket: 'children' },
+      from: { node: 'g', socket: 'world' },
+      to: { node: 'a', socket: 'parent' },
     }).next;
     state = applyOp(state, {
       type: 'connect',
-      from: { node: 'b', socket: 'out' },
-      to: { node: 'g', socket: 'children' },
+      from: { node: 'g', socket: 'world' },
+      to: { node: 'b', socket: 'parent' },
     }).next;
     const v = evaluate(state, 'g').value as GroupValue;
     expect(v.kind).toBe('Group');

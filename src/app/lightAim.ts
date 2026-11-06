@@ -106,15 +106,25 @@ export function lightAimOps(
         takenObjectNames(state),
       ),
     },
-    ...(holder
+    // #1824 — under a group the empty names the group through its parent input; at the top it
+    // joins the scene's list.
+    ...(parent
       ? [
           {
             type: 'connect' as const,
-            from: { node: nullId, socket: 'out' },
-            to: { node: holder, socket: 'children' },
+            from: { node: parent, socket: 'world' },
+            to: { node: nullId, socket: 'parent' },
           },
         ]
-      : []),
+      : holder
+        ? [
+            {
+              type: 'connect' as const,
+              from: { node: nullId, socket: 'out' },
+              to: { node: holder, socket: 'children' },
+            },
+          ]
+        : []),
     {
       type: 'addNode',
       nodeId: trackToId,

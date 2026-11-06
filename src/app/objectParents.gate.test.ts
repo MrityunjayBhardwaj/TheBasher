@@ -32,7 +32,8 @@ import {
   resolveParentWorldMatrix,
   resolveWorldTransform,
 } from './resolveWorldTransform';
-import { hierarchyChildIds, HIERARCHY_PARENT_TYPES } from './sceneHierarchy';
+import { childIdsOf, HIERARCHY_PARENT_TYPES } from './sceneHierarchy';
+import { attachOp } from '../core/dag/worldChildren';
 import { buildSceneTreeRows } from './sceneTreeWalk';
 import { evaluate } from '../core/dag/evaluator';
 import { readFileSync } from 'node:fs';
@@ -78,11 +79,7 @@ function buildTree(): DagState {
     scale: [0.25, 0.25, 0.25],
     connectTo: { node: 'body', socket: 'children' },
   }).state;
-  s = applyOp(s, {
-    type: 'connect',
-    from: { node: 'socket', socket: 'out' },
-    to: { node: 'body', socket: 'children' },
-  }).next;
+  s = applyOp(s, attachOp(s, 'socket', 'body', 'children')).next;
   s = makeSplitCube(s, {
     objectId: 'bulb',
     position: [0, 0.5, 0],
@@ -106,7 +103,7 @@ describe('#1152 — an Object parents, and its children sit where Blender puts t
   it('an Object is a scene-graph parent through `children`', () => {
     expect(HIERARCHY_PARENT_TYPES.has('Object')).toBe(true);
     const s = buildTree();
-    expect(hierarchyChildIds(s.nodes.body)).toEqual(['lamp', 'socket']);
+    expect([...childIdsOf(s, 'body')].sort()).toEqual(['lamp', 'socket']);
   });
 
   it('carries `children` on its value only when it holds any', () => {
@@ -122,7 +119,10 @@ describe('#1152 — an Object parents, and its children sit where Blender puts t
   it('the walk pairs each evaluated child with its node, in socket order', () => {
     const s = buildTree();
     const { value } = evaluate(s, 'body', { ctx });
-    expect(childEdges(s, 'body', value as never).map((e) => e.id)).toEqual(['lamp', 'socket']);
+    // #1824 — the order the Object gathers its children in (node-table order), whatever it is.
+    const ids = childEdges(s, 'body', value as never).map((e) => e.id);
+    expect(ids).toEqual(childIdsOf(s, 'body'));
+    expect([...ids].sort()).toEqual(['lamp', 'socket']);
   });
 
   it.each([
@@ -151,8 +151,10 @@ describe('#1152 — an Object parents, and its children sit where Blender puts t
     expect(at('lamp').depth).toBe(at('body').depth + 1);
     expect(at('socket').depth).toBe(at('body').depth + 1);
     expect(at('bulb').depth).toBe(at('body').depth + 2);
-    expect(at('lamp').parent).toEqual({ nodeId: 'body', socket: 'children', index: 0 });
-    expect(at('socket').parent).toEqual({ nodeId: 'body', socket: 'children', index: 1 });
+    // #1824 — each names the Object through its parent input, so the row's edge is that input.
+    const byParentInput = { nodeId: 'body', socket: 'children', index: -1, byParentInput: true };
+    expect(at('lamp').parent).toEqual(byParentInput);
+    expect(at('socket').parent).toEqual(byParentInput);
   });
 });
 
@@ -179,9 +181,9 @@ describe('#1152 — the file imports native, and lands where Blender puts it', (
   it('the mesh that holds children is an Object, and they hang on it', async () => {
     const { s, idOf } = await importFixture();
     expect(s.nodes[idOf('Body')].type).toBe('Object');
-    expect(hierarchyChildIds(s.nodes[idOf('Body')])).toEqual([idOf('Lamp'), idOf('Socket')]);
+    expect(childIdsOf(s, idOf('Body'))).toEqual([idOf('Lamp'), idOf('Socket')]);
     expect(s.nodes[idOf('Socket')].type).toBe('Group');
-    expect(hierarchyChildIds(s.nodes[idOf('Socket')])).toEqual([idOf('Bulb')]);
+    expect(childIdsOf(s, idOf('Socket'))).toEqual([idOf('Bulb')]);
   });
 
   it.each([

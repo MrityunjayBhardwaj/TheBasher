@@ -208,8 +208,20 @@ export function emptyOps(emptyId: string, transform: ImportedTransform, name: st
   ];
 }
 
-/** #1051 — `child` hangs under `parent`: the hierarchy is an edge, not a field. */
-export function parentEdge(child: string, parent: string): Op {
+/**
+ * #1051 — `child` hangs under `parent`: the hierarchy is an edge, not a field. #1824 — under an
+ * Object or a Group the child names its parent (the parent's `world` into the child's `parent`
+ * input); only the top of an import joins the scene's list (`sceneNodeId`'s `children`). Every
+ * child an import makes is an Object or a Group, so it has a parent input to name one with.
+ */
+export function parentEdge(child: string, parent: string, sceneNodeId: string): Op {
+  if (parent !== sceneNodeId) {
+    return {
+      type: 'connect',
+      from: { node: parent, socket: 'world' },
+      to: { node: child, socket: 'parent' },
+    };
+  }
   return {
     type: 'connect',
     from: { node: child, socket: 'out' },

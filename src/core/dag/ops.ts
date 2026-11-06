@@ -18,7 +18,7 @@ import { passRoleOf } from './passRole';
 import { getNodeType, requireNodeType } from './registry';
 import type { DagState } from './state';
 import { getNode, hasNode, wouldCreateCycleAt } from './state';
-import { forgetWorldChildren, gatheringSocketOf, worldParentOf } from './worldChildren';
+import { forgetWorldChildren, gatheringSocketOf, parentSocketOf } from './worldChildren';
 import {
   carrySubnetworkOwners,
   newStatefulLeafRead,
@@ -676,11 +676,16 @@ function requireOneParent(
     return;
   }
   if (inputDesc.gathersChildren !== true) return;
-  const parent = worldParentOf(state, op.from.node);
-  if (parent) {
+  // #1824 — a child that can name its parent does: the holder draws it through the child's parent
+  // input, so a wire into the list would be a second way to say the same thing. Only a child with
+  // no parent input (a glTF asset, a Transform, a scatter) still hangs by a wire.
+  const childType = state.nodes[op.from.node]?.type;
+  const parentSocket = childType ? parentSocketOf(childType) : null;
+  if (parentSocket) {
     throw new OpError(
-      `connect: "${op.from.node}" already hangs from "${parent}" through its parent input; ` +
-        'a child has one parent',
+      `connect: "${op.from.node}" names its parent through its own "${parentSocket}" input; ` +
+        `connect "${op.to.node}".world to "${op.from.node}".${parentSocket} instead of wiring it ` +
+        `into "${op.to.node}".${op.to.socket}`,
       op,
     );
   }

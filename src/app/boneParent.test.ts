@@ -16,6 +16,7 @@ import { registerAllNodes } from '../nodes/registerAll';
 import { buildClearParentOps } from './keepPlaceReparent';
 import { resolveParentWorldMatrix, resolveWorldTransform } from './resolveWorldTransform';
 import { clockedCtx } from './subjectClock';
+import { worldParentOf } from '../core/dag/worldChildren';
 
 const BLENDER = [
   { seconds: 0, origin: [1.8, 2.35, -0.2], corner: [1.7634, 2.2134, -0.3] },
@@ -60,9 +61,7 @@ describe('#1210 — an Object parented to a bone', () => {
     const { state, propId } = await imported();
     const params = state.nodes[propId].params as { parentBone?: string };
     expect(params.parentBone).toBe('Bone1');
-    const parent = Object.values(state.nodes).find((n) =>
-      ((n.inputs.children as { node: string }[] | undefined) ?? []).some((r) => r.node === propId),
-    )!;
+    const parent = state.nodes[worldParentOf(state, propId)!];
     expect(parent.type).toBe('Object');
     expect(state.nodes[(parent.inputs.data as { node: string }).node].type).toBe('Skeleton');
   });
@@ -109,9 +108,7 @@ describe('#1447 — a Group parented to a bone (an imported Empty) hangs from it
     const { state: imported_, propId } = await imported();
     let state = imported_;
     const prop = state.nodes[propId].params as Record<string, unknown>;
-    const armature = Object.values(state.nodes).find((n) =>
-      ((n.inputs.children as { node: string }[] | undefined) ?? []).some((r) => r.node === propId),
-    )!;
+    const armature = state.nodes[worldParentOf(state, propId)!];
     const ops = [
       {
         type: 'addNode' as const,
@@ -128,8 +125,8 @@ describe('#1447 — a Group parented to a bone (an imported Empty) hangs from it
       },
       {
         type: 'connect' as const,
-        from: { node: 'empty', socket: 'out' },
-        to: { node: armature.id, socket: 'children' },
+        from: { node: armature.id, socket: 'world' },
+        to: { node: 'empty', socket: 'parent' },
       },
     ];
     for (const op of ops) state = applyOp(state, op).next;
@@ -162,9 +159,7 @@ describe('#1688 — the bone poses on the clock the armature runs on', () => {
   async function halfSpeed(clock?: 'film') {
     const { state: imported_, propId } = await imported();
     let state = imported_;
-    const armature = Object.values(state.nodes).find((n) =>
-      ((n.inputs.children as { node: string }[] | undefined) ?? []).some((r) => r.node === propId),
-    )!;
+    const armature = state.nodes[worldParentOf(state, propId)!];
     const scene = state.outputs.scene!.node;
     state = applyOp(state, {
       type: 'setParam',

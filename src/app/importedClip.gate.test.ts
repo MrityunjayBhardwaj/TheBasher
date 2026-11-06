@@ -15,6 +15,7 @@ import { buildDefaultDagState } from '../core/project/default';
 import { registerAllNodes } from '../nodes/registerAll';
 import { buildNativeGltfImportOps } from '../core/import/nativeGltfImport';
 import { resolveParentWorldMatrix, resolveWorldTransform } from './resolveWorldTransform';
+import { worldParentOf } from '../core/dag/worldChildren';
 
 beforeEach(() => {
   __resetRegistryForTests();
@@ -103,10 +104,8 @@ describe('#1051 — an imported clip plays as the spec defines it', () => {
     let state: DagState = buildDefaultDagState();
     for (const op of result.ops) state = applyOp(state, op).next;
     const cube = result.objectIds[0];
-    const pivot = Object.values(state.nodes).find((n) => {
-      const kids = n.inputs.children;
-      return n.type === 'Group' && Array.isArray(kids) && kids.some((k) => k.node === cube);
-    })!.id;
+    const pivot = worldParentOf(state, cube)!;
+    expect(state.nodes[pivot].type).toBe('Group');
 
     let worstDeg = 0;
     let worstPos = 0;

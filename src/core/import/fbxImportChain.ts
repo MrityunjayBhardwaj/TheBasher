@@ -460,7 +460,7 @@ function sceneOps(
       parent === null ? topId : parent.kind === 'node' ? idOf[parent.index] : armatureObject;
     if (parentId === null)
       throw new Error(`FBX node "${node.name}" hangs from a rig the file has none of`);
-    edges.push(parentEdge(idOf[k], parentId));
+    edges.push(parentEdge(idOf[k], parentId, topId));
     // #1441 — its keys, as the channels Auto-Key would have made on the same params.
     for (const field of ['position', 'rotation', 'scale'] as const) {
       const track = node.keys?.[field];
@@ -544,7 +544,7 @@ function skinnedMeshOps(
     // child edge back would close a cycle. Both stand at identity under one parent, so the mesh is
     // where Blender's child of the armature is; moved, the armature carries the points through the
     // deform (its placement is the modifier's `armatureMatrix`).
-    parentEdge(objectId, parentId),
+    parentEdge(objectId, parentId, parentId),
   );
   return ops;
 }
