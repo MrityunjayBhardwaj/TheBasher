@@ -63,6 +63,15 @@ function indexOf(graph: WorldChildrenGraph): Index {
   return index;
 }
 
+/**
+ * Drop what is known of `nodes`. A batch of operations writes one copy of the record in place
+ * (`putNode` in `ops.ts`), so an index taken part way through a batch (a `connect` asks for one)
+ * would otherwise be read back for the finished graph, missing every parent wired after it.
+ */
+export function forgetWorldChildren(nodes: object): void {
+  memo.delete(nodes);
+}
+
 /** The node whose world `id`'s parent input reads, or null when it hangs from nothing. */
 export function worldParentOf(graph: WorldChildrenGraph, id: NodeId): NodeId | null {
   return indexOf(graph).parentOf.get(id) ?? null;

@@ -18,7 +18,7 @@ import { passRoleOf } from './passRole';
 import { getNodeType, requireNodeType } from './registry';
 import type { DagState } from './state';
 import { getNode, hasNode, wouldCreateCycleAt } from './state';
-import { gatheringSocketOf, worldParentOf } from './worldChildren';
+import { forgetWorldChildren, gatheringSocketOf, worldParentOf } from './worldChildren';
 import {
   carrySubnetworkOwners,
   newStatefulLeafRead,
@@ -256,6 +256,9 @@ function putNode(
   const prior = nodes[id];
   if (!draft.touched.has(id)) draft.touched.set(id, prior);
   if (draft.followers) refollow(draft.followers, id, prior?.meta?.nameFrom, node?.meta?.nameFrom);
+  // #1824 — the record is written in place, so an index of who hangs from whom taken earlier in
+  // this batch no longer describes it.
+  if (prior?.inputs !== node?.inputs) forgetWorldChildren(nodes);
   if (draft.consumed && prior?.inputs !== node?.inputs) {
     if (prior) countWires(draft.consumed, prior, -1);
     if (node) countWires(draft.consumed, node, 1);

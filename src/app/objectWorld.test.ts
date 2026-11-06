@@ -6,6 +6,7 @@
 import { readFileSync } from 'node:fs';
 import { afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { applyOp, type DagState } from '../core/dag';
+import { applyOps } from '../core/dag/ops';
 import {
   __setEvalPerfHook,
   createEvaluatorCache,
@@ -240,6 +241,30 @@ describe('#1824 — a parent draws what hangs from it', () => {
         id,
       ).toEqual(childEdges(base, id, value(base)).map((e) => e.id));
     }
+  });
+
+  it('rewired in ONE batch, as the app dispatches it, the parent still gathers its children', () => {
+    // A batch writes one copy of the node record in place, and `connect` indexes who hangs from
+    // whom part way through it. Observed in the app: the index taken mid-batch was read back for
+    // the finished graph, so the children drew nowhere.
+    const base = rig();
+    const edges = HOLDERS.flatMap((holder) =>
+      ((base.nodes[holder].inputs.children ?? []) as NodeRef[]).map((kid) => ({ holder, kid })),
+    );
+    const { next } = applyOps(base, [
+      ...edges.map(({ holder, kid }) => ({
+        type: 'disconnect',
+        from: kid,
+        to: { node: holder, socket: 'children' },
+      })),
+      ...edges.map(({ holder, kid }) => ({
+        type: 'connect',
+        from: { node: holder, socket: 'world' },
+        to: { node: kid.node, socket: 'parent' },
+      })),
+    ]);
+    expect(childIdsOf(next, 'grp')).toEqual(childIdsOf(base, 'grp'));
+    expect(sceneOf(next, 1)).toEqual(sceneOf(base, 1));
   });
 
   it('CONTROL: without the gathering, the rewired children vanish from the scene', () => {
