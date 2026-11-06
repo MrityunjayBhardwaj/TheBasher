@@ -99,7 +99,8 @@ const run = (s: DagState, ops: object[]) => {
  * One scene holding every case where the surfaces used to disagree (#1821, measured on main
  * `79dbee62`): an object only in a collection, an object under a Transform wrapper, a light on the
  * active lighting profile and one on an inactive profile, two cameras on a CameraSelect, and a
- * child nested under an object.
+ * child nested under an object. The scene light, the active rig's light and one camera are also in
+ * the collection (#1505), which the outliner lists them under.
  */
 function disagreementScene(): DagState {
   let s = buildDefaultDagState();
@@ -128,6 +129,10 @@ function disagreementScene(): DagState {
     { type: 'addNode', nodeId: 'C', nodeType: 'Collection', params: {} },
     { type: 'connect', from: out('C'), to: to(scene, 'collections') },
     { type: 'connect', from: out('onlyColl'), to: to('C', 'members') },
+    // #1505 — a light on the scene's lights, a light on the active rig and a camera, each also in
+    // the collection: the outliner lists them under it, and still lists them.
+    { type: 'connect', from: out('onLights'), to: to('C', 'members') },
+    { type: 'connect', from: out('camB'), to: to('C', 'members') },
     { type: 'addNode', nodeId: 'T', nodeType: 'Transform', params: {} },
     { type: 'connect', from: out('wrapped'), to: to('T', chain) },
     { type: 'connect', from: out('T'), to: SC },
@@ -135,6 +140,7 @@ function disagreementScene(): DagState {
     { type: 'addNode', nodeId: 'R2', nodeType: 'LightRig', params: { name: 'night' } },
     { type: 'connect', from: out('activeRigLight'), to: to('R1', 'lights') },
     { type: 'connect', from: out('idleRigLight'), to: to('R2', 'lights') },
+    { type: 'connect', from: out('activeRigLight'), to: to('C', 'members') },
     {
       type: 'addNode',
       nodeId: 'P',
@@ -201,6 +207,25 @@ describe('#1821 — one answer to "is this object in the scene"', () => {
       ...outside('camera list', enumerateCameraNodeIds(s)),
       ...outside('rig lights', resolveRigLightSources(s)),
     ]).toEqual([]);
+  });
+
+  it('the outliner lists a collection’s light, rig light and camera under it, once (#1505)', () => {
+    const s = disagreementScene();
+    const rows = buildSceneTreeRows(s);
+    const colKey = rows.find((r) => r.nodeId === 'C')!.key;
+    const where = (id: string) =>
+      rows
+        .filter((r) => r.nodeId === id)
+        .map((r) => (r.key.startsWith(`${colKey}/`) ? 'C' : 'top'));
+    expect(['onLights', 'activeRigLight', 'camB', 'camA'].map(where)).toEqual([
+      ['C'],
+      ['C'],
+      ['C'],
+      ['top'],
+    ]);
+    // A collection does not put a thing in the scene today (#1823): the idle rig's light is not
+    // listed, under the collection or anywhere.
+    expect(where('idleRigLight')).toEqual([]);
   });
 
   it('collectable is the answer less the nodes the wires pass through', () => {

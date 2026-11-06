@@ -53,6 +53,19 @@ export function dropIntent(
 }
 
 /**
+ * Would this drop put a node inside itself? A node has a row per collection holding it (#1505), so
+ * the row's key path is not enough: the dragged row's own key does not prefix another copy of the
+ * node, or anything under that copy. A row key is its ancestors' ids joined by `/`, so this asks
+ * by node id, at any place the node is listed.
+ */
+export function landsOnItself(
+  src: { readonly nodeId: string },
+  dst: { readonly nodeId: string; readonly key: string },
+): boolean {
+  return dst.nodeId === src.nodeId || dst.key.includes(`/${src.nodeId}/`);
+}
+
+/**
  * The index the dragged node is connected at, for a reorder on one list: `from` is its index now,
  * `at` the target's. The disconnect shifts everything after `from` left by one, so an insertion
  * point past it is one lower. `null` when the node would land where it already is.

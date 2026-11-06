@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { dropIntent, dropZoneAt, reorderIndex } from './treeDropIntent';
+import { dropIntent, dropZoneAt, landsOnItself, reorderIndex } from './treeDropIntent';
 
 describe('dropZoneAt — the edges are the top and bottom quarter', () => {
   it.each([
@@ -60,5 +60,20 @@ describe('reorderIndex — the index after the disconnect shifts the list', () =
   it('a drop that lands the node where it is does nothing', () => {
     expect(reorderIndex(1, 2, 'before')).toBeNull(); // b before c: already there
     expect(reorderIndex(2, 1, 'after')).toBeNull(); // c after b: already there
+  });
+});
+
+describe('landsOnItself — by node, since a node has a row per collection holding it (#1505)', () => {
+  const src = { nodeId: 'O' };
+  it.each([
+    ['its own row', 'O', 'S/collection/A/O', true],
+    ['its copy under another collection', 'O', 'S/collection/B/O', true],
+    ['a child under its own row', 'K', 'S/collection/A/O/K', true],
+    ['a child under its other copy', 'K', 'S/collection/B/O/K', true],
+    ['a sibling', 'P', 'S/collection/A/P', false],
+    ['a node whose id starts with its id', 'O2', 'S/collection/A/O2', false],
+    ['a child of a node whose id starts with its id', 'K', 'S/collection/A/O2/K', false],
+  ])('%s', (_name, nodeId, key, expected) => {
+    expect(landsOnItself(src, { nodeId, key })).toBe(expected);
   });
 });
