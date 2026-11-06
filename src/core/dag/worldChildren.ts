@@ -124,3 +124,22 @@ export function withGatheredChildren(
   const extra = gathered.filter((c) => !held.has(c)).map((c) => ({ node: c, socket: 'out' }));
   return { ...node.inputs, [socket]: [...wired, ...extra] };
 }
+
+/**
+ * `node`'s inputs as a walk DOWN the scene tree reads them: its gathered children included
+ * (`withGatheredChildren`) and its own parent input left out, since that wire leads up to its parent,
+ * not down to something it holds. For the walks that ask "what does this node hold or read" by
+ * following input wires, which before #1824 found a group's children among its inputs.
+ */
+export function inputsBelow(
+  graph: WorldChildrenGraph,
+  id: NodeId,
+  node: { readonly type: string; readonly inputs: Node['inputs'] },
+): Node['inputs'] {
+  const inputs = withGatheredChildren(graph, id, node);
+  const up = parentSocketOf(node.type);
+  if (!up || inputs[up] === undefined) return inputs;
+  const { [up]: _up, ...rest } = inputs;
+  void _up;
+  return rest;
+}
