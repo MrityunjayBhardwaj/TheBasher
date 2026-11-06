@@ -24,9 +24,16 @@ import {
   receivingSocket,
   sceneIdOf,
   type ChildMove,
+  type HolderEdge,
   type MoveResult,
 } from './keepPlaceReparent';
-import { childIdsOf, hierarchySocketForKind, hierarchySocketsOf } from './sceneHierarchy';
+import {
+  childIdsOf,
+  hierarchySocketForKind,
+  hierarchySocketsOf,
+  parentIdsOf,
+} from './sceneHierarchy';
+import { gatheringSocketOf, worldChildrenOf, worldParentOf } from '../core/dag/worldChildren';
 import type { ClockedCtx } from './subjectClock';
 import {
   collectionDeleteRelinkOps,
@@ -202,13 +209,12 @@ function handUpMoves(
     let cursor = id;
     while (!seen.has(cursor)) {
       seen.add(cursor);
-      const holders = (readers.get(cursor) ?? []).filter((r) => holdsAsParent(state, r));
-      const fit = holders.find(
-        (r) => !idSet.has(r.node) && receivingSocket(state, r.node, childId) !== null,
-      );
-      if (fit) return fit.node;
+      // #1824 — what `cursor` hangs from, by a wire or by its own parent input.
+      const holders = parentIdsOf(state, cursor);
+      const fit = holders.find((h) => !idSet.has(h) && receivingSocket(state, h, childId) !== null);
+      if (fit) return fit;
       if (holders.length === 0) break;
-      cursor = holders[0].node;
+      cursor = holders[0];
     }
     return sceneId;
   };
@@ -217,16 +223,16 @@ function handUpMoves(
     const node = state.nodes[id];
     // A wrapper's single child is spliced out below instead (#432).
     if (!node || hierarchySocketForKind(node.type, node) !== 'children') continue;
-    for (const ref of refsOf(node.inputs?.children)) {
-      const childId = ref?.node;
-      if (!childId || idSet.has(childId) || moves.has(childId) || !state.nodes[childId]) continue;
-      const holders = (readers.get(childId) ?? []).filter((r) => holdsAsParent(state, r));
-      if (holders.some((r) => !idSet.has(r.node))) continue;
-      moves.set(childId, {
-        childId,
-        from: holders.map((r) => ({ node: r.node, socket: r.socket })),
-        to: survivingHolderOf(id, childId),
-      });
+    // #1824 — its children, wired into its list or hung from it by their own parent input.
+    for (const childId of childIdsOf(state, id)) {
+      if (idSet.has(childId) || moves.has(childId) || !state.nodes[childId]) continue;
+      const holders: HolderEdge[] = (readers.get(childId) ?? [])
+        .filter((r) => holdsAsParent(state, r))
+        .map((r) => ({ node: r.node, socket: r.socket }));
+      const parent = worldParentOf(state, childId);
+      if (parent) holders.push({ node: parent, socket: 'children', byParentInput: true });
+      if (holders.some((h) => !idSet.has(h.node))) continue;
+      moves.set(childId, { childId, from: holders, to: survivingHolderOf(id, childId) });
     }
   }
   return [...moves.values()];
@@ -451,9 +457,20 @@ export function planDeleteNodes(
   });
   if (!handUp.ok) return handUp;
   const ops: Op[] = [...sweep.ops, ...collectionDeleteRelinkOps(state, idSet), ...handUp.ops];
+  // #1824 — a child hung by its parent input reads the deleted node, so it is one of its readers;
+  // the hand-up above has already cut that wire, and cutting it twice would throw.
+  const cut = new Set(
+    handUp.ops.flatMap((op) =>
+      op.type === 'disconnect'
+        ? [`${op.from.node}\u0000${op.from.socket}\u0000${op.to.node}\u0000${op.to.socket}`]
+        : [],
+    ),
+  );
   for (const nodeId of consumersFirst(state, allIds, idSet)) {
     for (const reader of readers.get(nodeId) ?? []) {
       if (idSet.has(reader.node)) continue; // being deleted too — its removeNode covers it
+      if (cut.has(`${nodeId}\u0000${reader.fromSocket}\u0000${reader.node}\u0000${reader.socket}`))
+        continue;
       ops.push({
         type: 'disconnect',
         from: { node: nodeId, socket: reader.fromSocket },
@@ -594,16 +611,25 @@ export function buildDuplicateNodesOps(
   // 1. Where each root is read from: the first reader that is not a collection listing it.
   //    A root nothing reads, or one read on a single socket that is not a camera, has no
   //    place to be duplicated into.
+  //    #1824 — a root hung by its own parent input is read by nothing: its copy takes the same
+  //    parent input (step 5 copies every input wire), so it needs no place in a list.
   interface Placed {
     id: NodeId;
     parent: Reader & { index: number };
     isList: boolean;
   }
   const placed: Placed[] = [];
+  const hungRoots: NodeId[] = [];
   for (const id of [...new Set(rootIds)]) {
     if (!state.nodes[id]) continue;
-    const reader = (readers.get(id) ?? []).find((r) => !isMembershipWire(state, r.node, r.socket));
-    if (!reader) continue;
+    // Read through its `out`: a child reading this node's `world` is its child, not its place.
+    const reader = (readers.get(id) ?? []).find(
+      (r) => r.fromSocket === 'out' && !isMembershipWire(state, r.node, r.socket),
+    );
+    if (!reader) {
+      if (worldParentOf(state, id)) hungRoots.push(id);
+      continue;
+    }
     const isList =
       getNodeType(state.nodes[reader.node].type)?.inputs?.[reader.socket]?.cardinality === 'list';
     if (!isList && !isCameraNode(state, id)) continue;
@@ -612,7 +638,7 @@ export function buildDuplicateNodesOps(
     );
     placed.push({ id, parent: { ...reader, index }, isList });
   }
-  if (placed.length === 0) return null;
+  if (placed.length === 0 && hungRoots.length === 0) return null;
 
   // 2. The nodes to copy, in the order the walk reaches them (a reader before what it reads).
   const order: NodeId[] = [];
@@ -631,11 +657,19 @@ export function buildDuplicateNodesOps(
     // The whole sub-network, not just what the body socket reaches first: a node inside may
     // feed only another node inside, and one left out would be shared by two owners.
     if (ownsBody) for (const inside of subnetworkOf(state, id)) visit(inside);
+    for (const child of gatheredCopies(node, id)) visit(child);
   };
-  for (const root of placed) visit(root.id);
+  /** #1824 — the children hung from `id` by their parent input, when its children list is copied:
+   *  each copy's parent input is re-pointed at the copy of `id` in step 5. */
+  const gatheredCopies = (node: Node, id: NodeId): readonly NodeId[] => {
+    const socket = gatheringSocketOf(node.type);
+    return socket && copiesThrough(node, socket, linked) ? worldChildrenOf(state, id) : [];
+  };
+  const rootIdsAll = [...placed.map((root) => root.id), ...hungRoots];
+  for (const id of rootIdsAll) visit(id);
   // A root already reached from another root is part of that root's copy.
   const reachedFromAnother = new Set<NodeId>();
-  for (const root of placed) {
+  for (const root of rootIdsAll.map((id) => ({ id }))) {
     const below = new Set<NodeId>();
     const walk = (id: NodeId) => {
       const node = state.nodes[id];
@@ -645,10 +679,11 @@ export function buildDuplicateNodesOps(
         if (!copiesThrough(node, socket, linked)) continue;
         for (const ref of refsOf(binding)) if (ref?.node) walk(ref.node);
       }
+      for (const child of gatheredCopies(node, id)) walk(child);
     };
     walk(root.id);
-    for (const other of placed) {
-      if (other.id !== root.id && below.has(other.id)) reachedFromAnother.add(other.id);
+    for (const other of rootIdsAll) {
+      if (other !== root.id && below.has(other)) reachedFromAnother.add(other);
     }
   }
   // The sidecars of everything copied, and what they own in turn, until nothing is added.
@@ -780,5 +815,10 @@ export function buildDuplicateNodesOps(
 
   if (options.reserved) for (const cloneId of idMap.values()) options.reserved.add(cloneId);
 
-  return { ops, newRootIds: roots.map((root) => idMap.get(root.id)!) };
+  // In the order asked, a root hung by its parent input included (#1824).
+  const copiedRoots = new Set([...roots.map((root) => root.id), ...hungRoots]);
+  const newRootIds = [...new Set(rootIds)]
+    .filter((id) => copiedRoots.has(id) && !reachedFromAnother.has(id))
+    .map((id) => idMap.get(id)!);
+  return { ops, newRootIds };
 }

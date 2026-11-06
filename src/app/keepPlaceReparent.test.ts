@@ -19,6 +19,8 @@ import {
 } from './keepPlaceReparent';
 import { resolveWorldTransform } from './resolveWorldTransform';
 import { isInScene } from './sceneMembership';
+import { childIdsOf } from './sceneHierarchy';
+import { worldParentOf } from '../core/dag/worldChildren';
 
 registerAllNodes();
 
@@ -88,7 +90,10 @@ describe('keep the place: dragging into and out of a group (#1516)', () => {
     expect(r.ok).toBe(true);
     if (!r.ok) return;
     const after = apply(s, r.ops);
-    expect(after.nodes.G.inputs.children).toEqual([{ node: 'n_box', socket: 'out' }]);
+    // #1824 — it hangs from G by its own parent input, not by a wire in G's list.
+    expect(childIdsOf(after, 'G')).toEqual(['n_box']);
+    expect(worldParentOf(after, 'n_box')).toBe('G');
+    expect(after.nodes.G.inputs.children).toBeUndefined();
     expectSameWorld(before, world(after, 'n_box'));
     expect(r.residuals).toEqual([]);
     // The values really changed: nothing else could be holding it there.
@@ -214,10 +219,7 @@ describe('Ctrl+P and Alt+P (#1516)', () => {
     const r = buildParentToOps(s, ids, 'G', { ctx: CTX });
     if (!r.ok) throw new Error(r.reason);
     const after = apply(s, r.ops);
-    expect(after.nodes.G.inputs.children).toEqual([
-      { node: 'n_box', socket: 'out' },
-      { node: 'n_light', socket: 'out' },
-    ]);
+    expect([...childIdsOf(after, 'G')].sort()).toEqual(['n_box', 'n_light']);
     expect(after.nodes.n_scene.inputs.lights ?? []).not.toContainEqual({
       node: 'n_light',
       socket: 'out',
@@ -281,14 +283,15 @@ describe('Ctrl+P and Alt+P (#1516)', () => {
     if (!inGroup.ok) throw new Error(inGroup.reason);
     const a = apply(s, inGroup.ops);
     expect(a.nodes.n_scene.inputs.camera).toEqual(s.nodes.n_scene.inputs.camera);
-    expect(a.nodes.G.inputs.children).toEqual([{ node: 'n_camera', socket: 'out' }]);
+    expect(childIdsOf(a, 'G')).toEqual(['n_camera']);
     const posn = (m: number[]) => [m[12], m[13], m[14]];
     posn(before).forEach((v, i) => expect(posn(world(a, 'n_camera'))[i]).toBeCloseTo(v, 5));
 
     const out = buildClearParentOps(a, ['n_camera'], { ctx: CTX });
     if (!out.ok) throw new Error(out.reason);
     const b = apply(a, out.ops);
-    expect(b.nodes.G.inputs.children ?? []).toEqual([]);
+    expect(childIdsOf(b, 'G')).toEqual([]);
+    expect(b.nodes.n_camera.inputs.parent).toBeUndefined();
     expect(b.nodes.n_scene.inputs.camera).toEqual(s.nodes.n_scene.inputs.camera);
     expectSameWorld(before, world(b, 'n_camera'));
   });
@@ -299,7 +302,7 @@ describe('Ctrl+P and Alt+P (#1516)', () => {
     const r = buildParentToOps(s, ['n_box'], 'G', { ctx: CTX });
     if (!r.ok) throw new Error(r.reason);
     useDagStore.getState().dispatchAtomic(r.ops, 'user', 'set parent');
-    expect(useDagStore.getState().state.nodes.G.inputs.children).toHaveLength(1);
+    expect(childIdsOf(useDagStore.getState().state, 'G')).toHaveLength(1);
     useDagStore.getState().undo();
     expect(useDagStore.getState().state.nodes).toEqual(s.nodes);
   });

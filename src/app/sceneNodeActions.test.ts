@@ -15,6 +15,8 @@ import { registerAllNodes } from '../nodes/registerAll';
 import { applyOp, emptyDagState } from '../core/dag';
 import { danglingIdRefs } from '../core/dag/idRefSweep';
 import { evaluate } from '../core/dag/evaluator';
+import { worldParentOf } from '../core/dag/worldChildren';
+import { childIdsOf } from './sceneHierarchy';
 import { buildAddModifierOps, findConsumer, resolveStackBase } from './operatorStack';
 import { useDagStore } from '../core/dag/store';
 import { subnetworkOf, subnetworkViolations } from '../core/dag/subnetworks';
@@ -2252,7 +2254,7 @@ describe('buildDeleteNodesOps — a deleted parent hands its children up (#1517)
     const after = commit(s, ['INNER']);
     expect(after.nodes.INNER).toBeUndefined();
     expect(after.nodes.n_box).toBeDefined();
-    expect(after.nodes.OUTER.inputs.children).toEqual([{ node: 'n_box', socket: 'out' }]);
+    expect(childIdsOf(after, 'OUTER')).toEqual(['n_box']);
     expect(isInScene(after, 'n_box')).toBe(true);
     expectSameWorld(before, world(after, 'n_box'));
     useDagStore.getState().undo();
@@ -2440,7 +2442,7 @@ describe('buildDeleteNodesOps — a deleted parent hands its children up (#1517)
     const result = validatePlan(deleteNodeMutator, { targetSelectors: ['INNER'] }, s, 'del');
     if (!result.ok) throw new Error(JSON.stringify(result));
     const after = apply(s, result.ops);
-    expect(after.nodes.OUTER.inputs.children).toEqual([{ node: 'n_box', socket: 'out' }]);
+    expect(childIdsOf(after, 'OUTER')).toEqual(['n_box']);
     expectSameWorld(before, world(after, 'n_box'));
   });
 
@@ -2450,4 +2452,154 @@ describe('buildDeleteNodesOps — a deleted parent hands its children up (#1517)
     if (!plan.ok) throw new Error(plan.reason);
     expect(plan.residuals.map((r) => r.childId)).toEqual(['n_box']);
   });
+});
+
+// #1824 — a child hung by its own parent input (the parent's world wired into it) is handed up on
+// delete like a wired one. The delete cuts every wire out of the deleted node, the child's parent
+// input among them, so a child nothing hands up would drop out of the scene.
+describe('buildDeleteNodesOps — a parent hands up the children hung by their parent input (#1824)', () => {
+  const CTX = { time: { frame: 0, seconds: 0, normalized: 0 } };
+  const apply = (s: DagState, ops: readonly Op[]) =>
+    ops.reduce((acc, op) => applyOp(acc, op).next, s);
+  const set = (nodeId: string, paramPath: string, value: unknown): Op => ({
+    type: 'setParam',
+    nodeId,
+    paramPath,
+    value,
+  });
+  const hang = (child: string, parent: string): Op => ({
+    type: 'connect',
+    from: { node: parent, socket: 'world' },
+    to: { node: child, socket: 'parent' },
+  });
+  /** scene → OUTER (wired) → INNER (parent input) → the cube (parent input), each turned. */
+  const nested = (): DagState =>
+    apply(buildDefaultDagState(), [
+      { type: 'addNode', nodeId: 'OUTER', nodeType: 'Group', params: {} },
+      {
+        type: 'connect',
+        from: { node: 'OUTER', socket: 'out' },
+        to: { node: 'n_scene', socket: 'children' },
+      },
+      set('OUTER', 'position', [5, 1, 0]),
+      set('OUTER', 'rotation', [0, 30, 0]),
+      { type: 'addNode', nodeId: 'INNER', nodeType: 'Group', params: {} },
+      hang('INNER', 'OUTER'),
+      set('INNER', 'position', [0, 2, 1]),
+      set('INNER', 'rotation', [20, 0, 0]),
+      {
+        type: 'disconnect',
+        from: { node: 'n_box', socket: 'out' },
+        to: { node: 'n_scene', socket: 'children' },
+      },
+      hang('n_box', 'INNER'),
+      set('n_box', 'position', [1, 1, 1]),
+      set('n_box', 'rotation', [0, 0, 45]),
+    ]);
+  const world = (s: DagState, id: string) => resolveWorldTransform(s, id, CTX)!.matrix;
+  const commit = (s: DagState, ids: string[]) => {
+    useDagStore.getState().hydrate(s);
+    const plan = planDeleteNodes(s, ids, { ctx: CTX });
+    if (!plan.ok) throw new Error(plan.reason);
+    useDagStore.getState().dispatchAtomic(plan.ops, 'user', 'delete');
+    return useDagStore.getState().state;
+  };
+  const expectSameWorld = (a: number[], b: number[]) =>
+    a.forEach((v, i) => expect(b[i]).toBeCloseTo(v, 5));
+
+  it('the fixture hangs the cube by parent inputs, drawn well away from its own values', () => {
+    const s = nested();
+    expect(worldParentOf(s, 'n_box')).toBe('INNER');
+    expect(isInScene(s, 'n_box')).toBe(true);
+    expect(Math.abs(world(s, 'n_box')[12] - 1)).toBeGreaterThan(1);
+  });
+
+  it('the cube goes to the group’s parent by its parent input, in the scene and in place', () => {
+    const s = nested();
+    const before = world(s, 'n_box');
+    const after = commit(s, ['INNER']);
+    expect(after.nodes.INNER).toBeUndefined();
+    expect(worldParentOf(after, 'n_box')).toBe('OUTER');
+    expect(after.nodes.OUTER.inputs.children ?? []).toEqual([]);
+    expect(isInScene(after, 'n_box')).toBe(true);
+    expectSameWorld(before, world(after, 'n_box'));
+  });
+
+  it('a group at the top hands its child to the scene’s list, its parent input cleared', () => {
+    const s = nested();
+    const before = { inner: world(s, 'INNER'), box: world(s, 'n_box') };
+    const after = commit(s, ['OUTER']);
+    expect(after.nodes.n_scene.inputs.children).toContainEqual({ node: 'INNER', socket: 'out' });
+    expect(after.nodes.INNER.inputs.parent).toBeUndefined();
+    expect(worldParentOf(after, 'n_box')).toBe('INNER');
+    expectSameWorld(before.inner, world(after, 'INNER'));
+    expectSameWorld(before.box, world(after, 'n_box'));
+  });
+
+  it('children pass up past every deleted ancestor', () => {
+    const s = nested();
+    const before = world(s, 'n_box');
+    const after = commit(s, ['OUTER', 'INNER']);
+    expect(after.nodes.n_scene.inputs.children).toContainEqual({ node: 'n_box', socket: 'out' });
+    expect(after.nodes.n_box.inputs.parent).toBeUndefined();
+    expectSameWorld(before, world(after, 'n_box'));
+  });
+});
+
+// #1824 — Duplicate copies what hangs from a parent by its own parent input, and a copy of such a
+// child hangs from the same parent, as Blender's Shift+D keeps a duplicate's parent.
+describe('buildDuplicateNodesOps — children hung by their parent input (#1824)', () => {
+  const apply = (s: DagState, ops: readonly Op[]) =>
+    ops.reduce((acc, op) => applyOp(acc, op).next, s);
+  /** scene → G (wired) → n_box (its parent input reads G's world). */
+  const hung = (): DagState =>
+    apply(buildDefaultDagState(), [
+      { type: 'addNode', nodeId: 'G', nodeType: 'Group', params: {} },
+      {
+        type: 'connect',
+        from: { node: 'G', socket: 'out' },
+        to: { node: 'n_scene', socket: 'children' },
+      },
+      {
+        type: 'disconnect',
+        from: { node: 'n_box', socket: 'out' },
+        to: { node: 'n_scene', socket: 'children' },
+      },
+      {
+        type: 'connect',
+        from: { node: 'G', socket: 'world' },
+        to: { node: 'n_box', socket: 'parent' },
+      },
+    ]);
+
+  it('a copy of the child hangs from the same parent, and both are in the scene', () => {
+    const s = hung();
+    const dup = buildDuplicateNodeOps(s, 'n_box');
+    expect(dup).not.toBeNull();
+    const after = apply(s, dup!.ops);
+    expect(worldParentOf(after, dup!.newRootId)).toBe('G');
+    expect([...childIdsOf(after, 'G')].sort()).toEqual(['n_box', dup!.newRootId].sort());
+    expect(isInScene(after, dup!.newRootId)).toBe(true);
+    // Not also wired into the scene's list: one parent.
+    expect(after.nodes.n_scene.inputs.children).not.toContainEqual({
+      node: dup!.newRootId,
+      socket: 'out',
+    });
+  });
+
+  for (const linked of [false, true]) {
+    it(`a ${linked ? 'linked' : 'deep'} copy of the group holds a copy of the child`, () => {
+      const s = hung();
+      const dup = buildDuplicateNodeOps(s, 'G', { linked });
+      expect(dup).not.toBeNull();
+      const after = apply(s, dup!.ops);
+      const kids = childIdsOf(after, dup!.newRootId);
+      expect(kids).toHaveLength(1);
+      expect(kids[0]).not.toBe('n_box');
+      expect(after.nodes[kids[0]].type).toBe('Object');
+      expect(isInScene(after, kids[0])).toBe(true);
+      // The original keeps its own child.
+      expect(childIdsOf(after, 'G')).toEqual(['n_box']);
+    });
+  }
 });

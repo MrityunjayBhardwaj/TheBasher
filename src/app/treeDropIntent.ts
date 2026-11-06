@@ -17,8 +17,6 @@
 // Pure, so the rule is unit-tested without a DOM; SceneTree asks it on dragover (to draw the
 // indicator) and on drop (to act), so what is shown is what happens.
 
-import type { Op } from '../core/dag/types';
-
 /** Where on the row the pointer is. */
 export type DropZone = 'before' | 'into' | 'after';
 
@@ -86,16 +84,12 @@ interface CameraRootDropRow {
 }
 
 /**
- * #1518 — the ops for dropping a camera row on the Scene root: out of the group that holds it, into
- * `Scene.children`, so it stays in the scene. Null when the drop is no move: not the root, or the
- * camera is not nested (a top-level child of the scene, or the active camera's own row).
+ * #1518 — whether dropping a camera row on the Scene root moves it: out of the group that holds it
+ * and into `Scene.children`, so it stays in the scene. False when the drop is no move: not the root,
+ * or the camera is not nested (a top-level child of the scene, or the active camera's own row). The
+ * move itself is `buildMoveOps`'s (`keepPlaceReparent.ts`), the one writer of a parent edge, so it
+ * cuts whichever edge holds the camera, a wire or its own parent input (#1824).
  */
-export function cameraRootDropOps(src: CameraRootDropRow, dst: CameraRootDropRow): Op[] | null {
-  if (dst.depth !== 0 || src.parent?.socket !== 'children' || src.parent.nodeId === dst.nodeId)
-    return null;
-  const from = { node: src.nodeId, socket: 'out' };
-  return [
-    { type: 'disconnect', from, to: { node: src.parent.nodeId, socket: 'children' } },
-    { type: 'connect', from, to: { node: dst.nodeId, socket: 'children' } },
-  ];
+export function isCameraRootDrop(src: CameraRootDropRow, dst: CameraRootDropRow): boolean {
+  return dst.depth === 0 && src.parent?.socket === 'children' && src.parent.nodeId !== dst.nodeId;
 }
