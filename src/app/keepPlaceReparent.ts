@@ -174,11 +174,7 @@ export function isAtOrBelow(state: DagState, id: NodeId, ancestorId: NodeId): bo
  * camera at the top is in `children`, and one on no list is not in the scene). Null when `holderId`
  * cannot hold it.
  */
-export function receivingSocket(
-  state: DagState,
-  holderId: NodeId,
-  childId: NodeId,
-): string | null {
+export function receivingSocket(state: DagState, holderId: NodeId, childId: NodeId): string | null {
   const holder = state.nodes[holderId];
   if (!holder) return null;
   if (holderId === sceneIdOf(state)) {

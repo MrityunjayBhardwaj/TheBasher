@@ -386,6 +386,9 @@ describe('#1829 — the census of world readers', () => {
     'src/app/curveSampleSource.ts': 1, // a Follow-Path's curve
     'src/app/geometrySampleSource.ts': 2, // a driver's terrain and query point
     'src/app/gltfNodeWorld.ts': 1, // a Track-To's aim at a bone
+    // Keep-place: it refuses a constrained ancestor (`constrainedAtOrAbove`), so where it reads the
+    // two roads agree. It moves to the drawn road when that refusal goes.
+    'src/app/keepPlaceReparent.ts': 1,
     'src/app/nodeConstraints.ts': 5, // a constraint's origin, target and parent
     'src/app/rigIndex.ts': 2, // the armature world, read by a Track-To's aim at a bone
   };

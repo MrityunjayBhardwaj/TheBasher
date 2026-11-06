@@ -295,8 +295,9 @@ describe('#1505 — a collection lists its lights and cameras under it', () => {
         parent: p.topParent,
       });
     }
-    // The bands they come from: the scene's lights, the rig's lights, the cameras.
-    expect(placed.map((p) => p.parent?.socket)).toEqual(['lights', 'lights', 'camera', 'lights']);
+    // The bands they come from: the scene's lights, the rig's lights, and a camera Add stands in
+    // the scene's children (#1518).
+    expect(placed.map((p) => p.parent?.socket)).toEqual(['lights', 'lights', 'children', 'lights']);
     expect(placed[0].parent?.nodeId).toBe(scene);
     expect(placed[2].parent?.nodeId).toBe(scene);
     // Nothing of theirs is left at the top level.
@@ -352,6 +353,12 @@ describe('#1505 — a member held in more than one place', () => {
       {
         type: 'connect',
         from: { node: 'grp', socket: 'out' },
+        to: { node: scene, socket: 'children' },
+      },
+      // Out of the scene's children, where Add stood it (#1518), and into the Group.
+      {
+        type: 'disconnect',
+        from: { node: cam.newNodeId, socket: 'out' },
         to: { node: scene, socket: 'children' },
       },
       {
@@ -441,7 +448,7 @@ describe('#1505 — a member held in more than one place', () => {
       expect(rowsOf(id)[0].parent).toEqual(rowsOf(id)[1].parent);
     }
     expect(rowsOf(light.newNodeId)[0].parent?.socket).toBe('lights');
-    expect(rowsOf(camera.newNodeId)[0].parent?.socket).toBe('camera');
+    expect(rowsOf(camera.newNodeId)[0].parent?.socket).toBe('children');
     // A row key is what the outliner tells rows apart by; a nodeId may repeat, a key never.
     const keys = allRows.map((r) => r.key);
     expect(new Set(keys).size).toBe(keys.length);

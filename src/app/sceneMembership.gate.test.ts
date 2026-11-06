@@ -39,6 +39,8 @@ const CENSUS: Record<string, string> = {
   'src/app/studioProfiles.ts': 'finds the profile select to write to',
   'src/app/studioProfileIO.ts': "reads a rig's lights to save a profile",
   // Writers: they wire into these sockets.
+  'src/app/sceneNodeActions.ts':
+    'delete: what a group holds, and the scene as where it hands up to',
   'src/app/setActiveCamera.ts': 'writes the scene camera',
   'src/app/character/cameraFromView.ts': 'writes the scene camera',
   'src/agent/tools/cameraSnapshot.ts': 'writes the scene camera',
