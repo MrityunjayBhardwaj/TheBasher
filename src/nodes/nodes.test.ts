@@ -179,6 +179,7 @@ const ALL_TYPES = [
   'TransformDirection', // #1784
   'TransformPoint', // #1784
   'UVProjectModifier',
+  'Value', // #1811
   'Vec3Math',
   'VecBreak3',
   'VideoStitch',

@@ -352,9 +352,25 @@ export const Vec3MathNode: NodeDefinition<Vec3MathParams, Vec3> = {
   },
 };
 
+// Value — one number, to feed any number of sockets from one place. As Blender's Value node and
+// Houdini's Constant. A key on it reaches everything wired from it.
+export const ValueParams = z.object({ value: z.number().default(0) });
+export type ValueParams = z.infer<typeof ValueParams>;
+export const ValueNode: NodeDefinition<ValueParams, number> = {
+  type: 'Value',
+  version: 1,
+  pure: true,
+  cost: 'cheap',
+  paramSchema: ValueParams,
+  inputs: {},
+  outputs: NUMBER_OUT,
+  evaluate: (params) => params.value,
+};
+
 /** The compute-node vocabulary, for bulk registration (registerAll.ts). */
 export const COMPUTE_NODES: NodeDefinition[] = (
   [
+    ValueNode as unknown as NodeDefinition,
     MathNode as unknown as NodeDefinition,
     ClampNode as unknown as NodeDefinition,
     FitNode as unknown as NodeDefinition,

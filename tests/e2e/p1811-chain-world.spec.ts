@@ -205,3 +205,83 @@ test('two objects aim at each other by reference, and a key on Mix drives an obj
   expect(result.driven[2]).toBeCloseTo(10, 4);
   expect(errors).toEqual([]);
 });
+
+test("a chain built by its editor, with a keyed influence, ends at Blender's number", async ({
+  page,
+}) => {
+  const errors: string[] = [];
+  page.on('pageerror', (e) => errors.push(String(e)));
+  await page.goto('/');
+  const layout = page.getByTestId('layout');
+  const starter = page.getByRole('button', { name: /Open example Starter Scene/i });
+  await Promise.race([
+    layout.waitFor({ timeout: 15_000 }).catch(() => undefined),
+    starter.waitFor({ timeout: 15_000 }).catch(() => undefined),
+  ]);
+  if (await starter.isVisible().catch(() => false)) await starter.click();
+  await expect(layout).toBeVisible({ timeout: 10_000 });
+  await page.waitForFunction(() =>
+    Boolean((window as unknown as Partial<W>).__basher_dag?.getState().state.outputs.scene),
+  );
+
+  const result = await page.evaluate(async () => {
+    const w = window as unknown as W;
+    const sceneId = w.__basher_dag.getState().state.outputs.scene!.node;
+    const d = (op: unknown) => w.__basher_dag.getState().dispatch(op, 'user', 'e2e');
+    const state = () => w.__basher_dag.getState().state as never;
+    const wire = (from: string, socket: string, node: string, into: string) =>
+      d({ type: 'connect', from: { node: from, socket }, to: { node, socket: into } });
+    d({
+      type: 'addNode',
+      nodeId: 'e_cd',
+      nodeType: 'CurveData',
+      params: {
+        points: [
+          { id: 'cp0', co: [0, 0, 0] },
+          { id: 'cp1', co: [10, 0, 0] },
+        ],
+        closed: false,
+        resolution: 32,
+      },
+    });
+    d({ type: 'addNode', nodeId: 'e_c', nodeType: 'Object', params: { rotation: [0, 0, 90] } });
+    wire('e_cd', 'out', 'e_c', 'data');
+    wire('e_c', 'out', sceneId, 'children');
+    d({ type: 'addNode', nodeId: 'e_a', nodeType: 'Null', params: { position: [0, 4, 0] } });
+    wire('e_a', 'out', sceneId, 'children');
+
+    const edit = await import('/src/app/chainEdit.ts');
+    const ev = await import('/src/core/dag/evaluator.ts');
+    const add = edit.addStepOps(state(), 'e_a', 'e_fp', 'FollowPath', { evalTime: 1, offset: 0 });
+    for (const op of add!) d(op);
+    wire('e_c', 'world', 'e_fp', 'curve');
+    for (const op of edit.setInfluenceOps(state(), 'e_a', 'e_fp', 0.5)!) d(op);
+    const held = edit.influenceOf(state(), 'e_a', 'e_fp') as { nodeId: string };
+    d({
+      type: 'addNode',
+      nodeId: 'e_key',
+      nodeType: 'KeyframeChannelNumber',
+      params: {
+        target: held.nodeId,
+        paramPath: 'value',
+        keyframes: [
+          { time: 0, value: 0 },
+          { time: 1, value: 0.5 },
+        ],
+      },
+    });
+    const at = (seconds: number) => {
+      const m = ev.evaluate(state(), 'e_a', {
+        socket: 'world',
+        ctx: { time: { frame: seconds * 24, seconds, normalized: 0 } },
+      }).value as number[];
+      return [m[12], m[13], m[14]];
+    };
+    return { start: at(0), end: at(1) };
+  });
+
+  result.start.forEach((v, i) => expect(v).toBeCloseTo([0, 4, 0][i], 3));
+  // Blender 5.1.1, influence 0.5.
+  result.end.forEach((v, i) => expect(v).toBeCloseTo([-2, 7, 0][i], 3));
+  expect(errors).toEqual([]);
+});

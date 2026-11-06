@@ -87,6 +87,7 @@ const GROUPS: MenuGroup[] = [
     // is empty on a fresh scene.
     label: 'Compute',
     items: [
+      { kind: 'Value', label: 'Value' },
       { kind: 'Math', label: 'Math' },
       { kind: 'Fit', label: 'Fit' },
       { kind: 'Clamp', label: 'Clamp' },

@@ -79,6 +79,7 @@ export const COMPUTE_KINDS = [
   'Mix',
   'CurveRemap',
   'Noise',
+  'Value',
   // Vector compute (Vector3 rail) — MakeVec3/VecBreak3 convert to/from components,
   // Vec3Math does vector arithmetic.
   'MakeVec3',
@@ -610,6 +611,7 @@ function isCompute(kind: PrimitiveKind): boolean {
     kind === 'Mix' ||
     kind === 'CurveRemap' ||
     kind === 'Noise' ||
+    kind === 'Value' ||
     kind === 'MakeVec3' ||
     kind === 'VecBreak3' ||
     kind === 'Vec3Math' ||
@@ -747,6 +749,8 @@ function humanLabel(kind: PrimitiveKind): string {
       return 'Curve Remap node';
     case 'Noise':
       return 'Noise node';
+    case 'Value':
+      return 'Value node';
     case 'MakeVec3':
       return 'Make Vec3 node';
     case 'VecBreak3':
@@ -906,6 +910,7 @@ function paramsFor(kind: PrimitiveKind, position: Vec3): Record<string, unknown>
     case 'Mix':
     case 'CurveRemap':
     case 'Noise':
+    case 'Value':
     case 'MakeVec3':
     case 'VecBreak3':
     case 'Vec3Math':
