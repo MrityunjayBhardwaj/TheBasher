@@ -26,6 +26,15 @@
 
 import { z } from 'zod';
 import type { NodeDefinition } from '../core/dag/types';
+import {
+  IDENTITY_MAT4,
+  isMat4,
+  isQuat,
+  quatToEuler,
+  separateTransform,
+  type Mat4,
+  type Quat as MathQuat,
+} from '../core/math/transformMath';
 import { CHANNEL_BLEND_MODES } from './types';
 import { optionsParam } from './paramWidget';
 import {
@@ -36,8 +45,10 @@ import {
 } from './channelPickerSlot';
 import type {
   KeyframeChannelNumberValue,
+  KeyframeChannelQuatValue,
   KeyframeChannelVec3Value,
   KeyframeChannelValue,
+  Quat,
   Vec3,
 } from './types';
 
@@ -205,6 +216,81 @@ export function makeParamDriverVec3ChannelValue(
   return makeParamDriverVec3ChannelValueFn(params, () => value);
 }
 
+/** #1785 — the Quaternion twin: a driver on an object's `quaternion` (quaternion rotation mode)
+ *  folds a `quat` channel, which the fold slerps, as a quaternion keyframe channel does. */
+export function makeParamDriverQuatChannelValueFn(
+  params: ParamDriverParams,
+  sample: (seconds: number) => MathQuat,
+): KeyframeChannelQuatValue {
+  return {
+    kind: 'KeyframeChannel',
+    name: params.paramPath ? `→ ${params.paramPath}` : 'driver',
+    target: params.target,
+    paramPath: params.paramPath,
+    mute: params.mute ?? false, // #315 — as the scalar twin above.
+    weight: 1,
+    blendMode: params.blendMode,
+    order: params.order,
+    valueType: 'quat',
+    sample: (seconds) => sample(seconds) as Quat,
+  };
+}
+
+/**
+ * #1785 — a rotation driving a rotation. On `quaternion` it folds as a quaternion. On anything
+ * else (an Euler `rotation`) it folds as Euler degrees, the conversion a Quaternion → Vector3
+ * wire makes (socketConversion `Quaternion>Vector3`), as a Solver's rotation state already does.
+ */
+export function makeParamDriverRotationChannelValueFn(
+  params: ParamDriverParams,
+  sample: (seconds: number) => MathQuat,
+): KeyframeChannelValue {
+  return params.paramPath === 'quaternion'
+    ? makeParamDriverQuatChannelValueFn(params, sample)
+    : makeParamDriverVec3ChannelValueFn(params, (seconds) => [...quatToEuler(sample(seconds))]);
+}
+
+/**
+ * #1785 — the paramPath of a TRANSFORM driver: one driver writing its target's position,
+ * rotation and scale together, from one Matrix4. Blender writes a transform through a driver
+ * per channel; Houdini exports a transform's channels onto the object's parameters. The
+ * channels are built here, not folded under this name: no param is called `transform`.
+ */
+export const TRANSFORM_DRIVER_PATH = 'transform';
+
+/** The params a transform driver writes, by the target's rotation mode. */
+export function transformDriverPaths(quaternionMode: boolean): readonly string[] {
+  return ['position', quaternionMode ? 'quaternion' : 'rotation', 'scale'];
+}
+
+/**
+ * #1785 — the three channels a transform driver folds: its matrix separated (Blender's
+ * `to_loc_rot_scale_safe`, `separateTransform`) into position, rotation (in the target's mode)
+ * and scale, each folded on its own param exactly as a driver on that param alone would fold.
+ * Each sample separates the matrix once, shared by the three.
+ */
+export function makeParamDriverTransformChannelValues(
+  params: ParamDriverParams,
+  sample: (seconds: number) => Mat4,
+  quaternionMode: boolean,
+): KeyframeChannelValue[] {
+  let last: { seconds: number; parts: ReturnType<typeof separateTransform> } | null = null;
+  const parts = (seconds: number) => {
+    if (last?.seconds !== seconds) {
+      const m = sample(seconds);
+      last = { seconds, parts: separateTransform(isMat4(m) ? m : IDENTITY_MAT4) };
+    }
+    return last.parts;
+  };
+  const on = (paramPath: string): ParamDriverParams => ({ ...params, paramPath });
+  const [position, rotation, scale] = transformDriverPaths(quaternionMode);
+  return [
+    makeParamDriverVec3ChannelValueFn(on(position), (s) => [...parts(s).translation]),
+    makeParamDriverRotationChannelValueFn(on(rotation), (s) => parts(s).rotation),
+    makeParamDriverVec3ChannelValueFn(on(scale), (s) => [...parts(s).scale]),
+  ];
+}
+
 /** A runtime Vec3 guard for the vec road (a wired Vector3 output resolves to a 3-number
  *  array). Anything else falls through to the scalar road. This shape test was ALWAYS
  *  the real discriminator — the second socket only ever agreed with it (#609). */
@@ -249,8 +335,14 @@ export const ParamDriverNode: NodeDefinition<ParamDriverParams, KeyframeChannelV
   // The road is now chosen by the VALUE's shape, which is what actually decided it all
   // along — `asVec3` was already the guard, and the socket merely agreed with it.
   // Accepting two types is NOT coercion: a Number arrives a Number.
+  // #1785 — and a rotation or a whole transform: a Quaternion drives a rotation, a Matrix4 drives
+  // position, rotation and scale together (paramPath `transform`). Still one road, by shape.
   inputs: {
-    in: { type: ['Number', 'Vector3'], cardinality: 'single', owns: 'always' },
+    in: {
+      type: ['Number', 'Vector3', 'Quaternion', 'Matrix4'],
+      cardinality: 'single',
+      owns: 'always',
+    },
   },
   // Introspection-only output (like Constraint/Strip/Track): the driver is enumerated
   // + overlay-resolved by the target's followers, never wired into the render graph.
@@ -265,6 +357,17 @@ export const ParamDriverNode: NodeDefinition<ParamDriverParams, KeyframeChannelV
     // spare or a controller's evaluated transform).
     const vec = asVec3(inputs.in);
     if (vec) return makeParamDriverVec3ChannelValue(params, vec);
+    // #1785 — a rotation.
+    if (isQuat(inputs.in)) {
+      const q = inputs.in;
+      return makeParamDriverRotationChannelValueFn(params, () => q);
+    }
+    // #1785 — a transform folds as three channels, which only the enumeration seam builds
+    // (it needs the target's rotation mode, `driverChannelValuesForTarget`). Evaluated alone it
+    // contributes nothing: muted, so no fold ever writes a `transform` field onto the target.
+    if (isMat4(inputs.in) || params.paramPath === TRANSFORM_DRIVER_PATH) {
+      return { ...makeParamDriverChannelValue(params, 0), mute: true };
+    }
     // NON-NUMERIC READS 0, and the guard is load-bearing since #609. While the vec road
     // had its own socket, a malformed Vector3 left the scalar socket's real number to
     // fall back to. With one socket there is nothing behind it, so an unrecognised

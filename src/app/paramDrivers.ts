@@ -23,9 +23,15 @@ import type { EvalCtx, NodeId, Node } from '../core/dag/types';
 import type { KeyframeChannelValue } from '../nodes/types';
 import {
   makeParamDriverChannelValue,
+  makeParamDriverChannelValueFn,
+  makeParamDriverTransformChannelValues,
   makeParamDriverVec3ChannelValue,
+  makeParamDriverVec3ChannelValueFn,
+  TRANSFORM_DRIVER_PATH,
+  transformDriverPaths,
   type ParamDriverParams,
 } from '../nodes/ParamDriver';
+import { isMat4, IDENTITY_MAT4, type Mat4 } from '../core/math/transformMath';
 import { readBaseParam } from './readBaseParam';
 import {
   transformSourceOf,
@@ -39,7 +45,9 @@ import {
   statefulUpstreamOf,
   makeStatefulDriverChannelValue,
   makeStatefulUpstreamDriverChannelValue,
+  statefulOutputSampler,
 } from './statefulOps';
+import { FRAMES_PER_SECOND } from './stores/timeStore';
 import {
   geometrySampleSourceOf,
   geometrySampleRefOf,
@@ -166,13 +174,87 @@ export function driverStackForTarget<T extends NodeLike>(
   includeMuted = false,
 ): T[] {
   const stack = driverNodesForTarget(nodes, targetId).filter((node) => {
-    if (paramPath !== undefined && ((node.params ?? {}) as DriverParams).paramPath !== paramPath) {
-      return false;
-    }
+    if (paramPath !== undefined && !drivesPath(node, paramPath)) return false;
     return includeMuted || !isDriverMuted(node);
   });
   // Stable → equal `order` keeps node-table order (the pre-stack fold order).
   return stack.sort((a, b) => driverOrderOf(a) - driverOrderOf(b));
+}
+
+/** Whether `node` drives `paramPath`: its own paramPath, or (#1785) one of the three a transform
+ *  driver writes. Either rotation param counts, since which one it writes is the target's mode. */
+function drivesPath(node: NodeLike, paramPath: string): boolean {
+  const own = ((node.params ?? {}) as DriverParams).paramPath;
+  if (own === paramPath) return true;
+  return (
+    own === TRANSFORM_DRIVER_PATH &&
+    (transformDriverPaths(false).includes(paramPath) || paramPath === 'quaternion')
+  );
+}
+
+/**
+ * #1785 — the channels a TRANSFORM driver folds: the matrix on its `in`, read at any playhead,
+ * separated into position, rotation (in the target's rotation mode) and scale. The value comes
+ * through whichever road feeds `in`: a stateful node's output, a stateful node further back, or
+ * a plain compute graph (constant over time). An unwired or non-matrix `in` reads the identity.
+ */
+function transformDriverChannels(
+  state: DagState,
+  node: NodeLike,
+  ctx: EvalCtx,
+  cache: EvaluatorCache | undefined,
+): KeyframeChannelValue[] {
+  const params = node.params as ParamDriverParams;
+  const target = state.nodes[params.target];
+  const quaternionMode =
+    ((target?.params ?? {}) as { rotationMode?: unknown }).rotationMode === 'quaternion';
+  const sample = inSampler(state, node, ctx, cache);
+  const matrix = (seconds: number): Mat4 => {
+    const v = sample(seconds);
+    return isMat4(v) ? v : IDENTITY_MAT4;
+  };
+  return makeParamDriverTransformChannelValues(params, matrix, quaternionMode);
+}
+
+/** The raw value on a driver's `in` at any playhead (#1785). Read at the asked time, always
+ *  (#1832): what feeds it may move, a keyed object's world included. Unwired reads null. */
+function inSampler(
+  state: DagState,
+  node: NodeLike,
+  ctx: EvalCtx,
+  cache: EvaluatorCache | undefined,
+): (seconds: number) => unknown {
+  const stateful = statefulSourceOf(node, state);
+  if (stateful) return statefulOutputSampler(state, stateful, statefulSocketOf(node), cache);
+  const ref = wiredInOf(node);
+  if (!ref) return () => null;
+  return (seconds) => {
+    try {
+      return evaluate(state, ref.node, { cache, ctx: ctxFor(ctx, seconds), socket: ref.socket })
+        .value;
+    } catch {
+      return null;
+    }
+  };
+}
+
+/** The ref wired into a driver's `in`, or null when it is unwired. */
+function wiredInOf(node: NodeLike): { node: string; socket: string } | null {
+  const ref = (node.inputs ?? {}).in as { node?: unknown; socket?: unknown } | undefined;
+  return ref && typeof ref.node === 'string' && typeof ref.socket === 'string'
+    ? { node: ref.node, socket: ref.socket }
+    : null;
+}
+
+/**
+ * #1832 — the context a driver channel reads its source at when sampled at `seconds`. At the time
+ * the channel was built it is the caller's own context, so the clocks it carries (a scene running
+ * at another speed than the playhead, #1745) are kept exactly. At any other time it is a plain
+ * context at `seconds`, as the stateful roads' replays read.
+ */
+function ctxFor(built: EvalCtx, seconds: number): EvalCtx {
+  if (seconds === built.time.seconds) return built;
+  return { time: { frame: Math.round(seconds * FRAMES_PER_SECOND), seconds, normalized: 0 } };
 }
 
 /**
@@ -406,14 +488,26 @@ export function driverChannelValuesForTarget(
   // the panel lists is what the fold folds.
   for (const node of driverStackForTarget(state.nodes, targetId, paramPath)) {
     try {
+      // #1785 — one transform driver, three channels; a reader of one param takes its own.
+      if (((node.params ?? {}) as DriverParams).paramPath === TRANSFORM_DRIVER_PATH) {
+        for (const ch of transformDriverChannels(state, node, ctx, cache))
+          if (paramPath === undefined || ch.paramPath === paramPath) out.push(ch);
+        continue;
+      }
       const transformVec = transformVecSourceOf(node);
       if (transformVec) {
         // #300 F2b — the VEC controller road ("Point controller"): read the controller's
         // WHOLE evaluated POSITION as a Vec3 (so a gizmo-dragged / animated controller
         // drives correctly) and fold it as a vec3 channel — the SAME fold a position
         // keyframe rides, so it composes byte-identically with the wired vec road.
-        const value = readTransformPositionAt(state, transformVec.node, ctx, cache);
-        out.push(makeParamDriverVec3ChannelValue(node.params as ParamDriverParams, value));
+        // #1832 — read at the time the channel is sampled: the renderer builds a driver's
+        // channel once and samples it every frame, so a value read here would freeze a keyed
+        // controller on screen while every read of the target followed it.
+        out.push(
+          makeParamDriverVec3ChannelValueFn(node.params as ParamDriverParams, (seconds) =>
+            readTransformPositionAt(state, transformVec.node, ctxFor(ctx, seconds), cache),
+          ),
+        );
         continue;
       }
       const transform = transformSourceOf(node);
@@ -423,8 +517,12 @@ export function driverChannelValuesForTarget(
         // controller drives correctly), pick the channel, optionally remap through the
         // range, and build through the SAME builder → folds byte-identically to the
         // wired/spare roads. A null resolve (controller not rendered) reads 0.
-        const value = readTransformChannelAt(state, transform, ctx, cache);
-        out.push(makeParamDriverChannelValue(node.params as ParamDriverParams, value));
+        // #1832 — at the time sampled, as the Point controller road above.
+        out.push(
+          makeParamDriverChannelValueFn(node.params as ParamDriverParams, (seconds) =>
+            readTransformChannelAt(state, transform, ctxFor(ctx, seconds), cache),
+          ),
+        );
         continue;
       }
       const spare = spareSourceOf(node);
@@ -479,13 +577,16 @@ export function driverChannelValuesForTarget(
         } else {
           // #1558 — a stateful node further back (a Solver behind a Math node) makes the
           // graph's value move with time, so it folds as a function of the playhead too.
-          const upstream = statefulUpstreamOf(node, state);
+          // #1832 — and so can anything else upstream (a keyed object's `world`), so a wired
+          // driver always reads its input at the time it is sampled. A graph that does not move
+          // is a cache hit at every time.
+          const wired = statefulUpstreamOf(node, state) ?? wiredInOf(node);
           out.push(
-            upstream
+            wired
               ? makeStatefulUpstreamDriverChannelValue(
                   state,
                   node.params as ParamDriverParams,
-                  upstream,
+                  wired,
                   ctx,
                   cache,
                 )

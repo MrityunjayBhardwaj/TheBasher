@@ -44,6 +44,7 @@ import { FRAMES_PER_SECOND } from './stores/timeStore';
 import { lagStep } from '../nodes/valueMath';
 import {
   makeParamDriverChannelValueFn,
+  makeParamDriverRotationChannelValueFn,
   makeParamDriverVec3ChannelValueFn,
   type ParamDriverParams,
 } from '../nodes/ParamDriver';
@@ -59,7 +60,6 @@ import {
   IDENTITY_MAT4,
   composeTransform,
   eulerToQuat,
-  quatToEuler,
   isMat4,
   isQuat,
   type Mat4,
@@ -622,10 +622,12 @@ export function makeStatefulDriverChannelValue(
   socket?: string,
 ): KeyframeChannelValue {
   // #1826 — a rotation drives a rotation param as Euler degrees, the conversion a wire from a
-  // Quaternion into a Vector3 makes (socketConversion `Quaternion>Vector3`).
+  // Quaternion into a Vector3 makes (socketConversion `Quaternion>Vector3`); #1785 — or as a
+  // quaternion, on a quaternion-mode object's `quaternion`.
   if (statefulNode.type === 'Solver' && socket === 'outRotation') {
-    return makeParamDriverVec3ChannelValueFn(driverParams, (seconds) =>
-      quatToEuler(solverSlot0(state, statefulNode, 'rotation', seconds, cache) as Quat),
+    return makeParamDriverRotationChannelValueFn(
+      driverParams,
+      (seconds) => solverSlot0(state, statefulNode, 'rotation', seconds, cache) as Quat,
     );
   }
   if (isVecSolver(statefulNode)) {
@@ -639,6 +641,32 @@ export function makeStatefulDriverChannelValue(
       ? (seconds: number) => solverSlot0(state, statefulNode, 'number', seconds, cache) as number
       : (seconds: number) => replayLag(state, statefulNode, seconds, cache);
   return makeParamDriverChannelValueFn(driverParams, replay);
+}
+
+/** The kind of state a Solver output carries, by socket. */
+const SOLVER_OUTPUT_KIND: Readonly<Record<string, StateKindName>> = {
+  out: 'number',
+  outVec: 'vector',
+  outRotation: 'rotation',
+  outTransform: 'transform',
+};
+
+/**
+ * #1785 — what a stateful node's output `socket` reads at any playhead, as a raw value: a Solver's
+ * slot 0 of the state kind that output carries, a Lag's replay. For a driver that builds its own
+ * channels from the value (a transform driver separates a matrix into three).
+ */
+export function statefulOutputSampler(
+  state: DagState,
+  statefulNode: Node,
+  socket: string | undefined,
+  cache?: EvaluatorCache,
+): (seconds: number) => unknown {
+  if (statefulNode.type === 'Solver') {
+    const kind = SOLVER_OUTPUT_KIND[socket ?? 'out'] ?? 'number';
+    return (seconds) => solverSlot0(state, statefulNode, kind, seconds, cache);
+  }
+  return (seconds) => replayLag(state, statefulNode, seconds, cache);
 }
 
 // ── The evaluator's road to the replay (#1558) ─────────────────────────────────
@@ -742,19 +770,26 @@ export function makeStatefulUpstreamDriverChannelValue(
   const at = (seconds: number): unknown => {
     try {
       const frame = Math.round(seconds * FRAMES_PER_SECOND);
-      return evaluate(state, source.node, {
-        cache,
-        ctx: { time: { frame, seconds, normalized: 0 } },
-        socket: source.socket,
-      }).value;
+      // #1832 — at the time it was built, the caller's own context, so the clocks it carries
+      // (a scene running at another speed, #1745) are kept; at any other time a plain one.
+      const when = seconds === ctx.time.seconds ? ctx : { time: { frame, seconds, normalized: 0 } };
+      return evaluate(state, source.node, { cache, ctx: when, socket: source.socket }).value;
     } catch {
       return undefined;
     }
   };
-  if (isVec3(at(ctx.time.seconds))) {
+  const now = at(ctx.time.seconds);
+  if (isVec3(now)) {
     return makeParamDriverVec3ChannelValueFn(driverParams, (seconds) => {
       const v = at(seconds);
       return isVec3(v) ? v : ORIGIN;
+    });
+  }
+  // #1785 — a rotation behind a stateful node folds as a rotation.
+  if (isQuat(now)) {
+    return makeParamDriverRotationChannelValueFn(driverParams, (seconds) => {
+      const v = at(seconds);
+      return isQuat(v) ? v : NO_ROTATION;
     });
   }
   return makeParamDriverChannelValueFn(driverParams, (seconds) => {

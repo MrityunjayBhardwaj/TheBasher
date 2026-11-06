@@ -412,6 +412,10 @@ const TAKERS: string[] = [
   // #1810 — an object's world output, folded with the cache the evaluator walk was given, and the
   // armature it reads a parent bone off.
   'objectWorldFold@src/app/objectWorld.ts',
+  // #1785 — a transform driver's channels and the value on its `in`, read with the fold's cache.
+  'transformDriverChannels@src/app/paramDrivers.ts',
+  'inSampler@src/app/paramDrivers.ts',
+  'statefulOutputSampler@src/app/statefulOps.ts',
   'boneOf@src/app/objectWorld.ts',
   // #1729 — the walk up and the one path down it, and the search kept for a node held twice; each
   // is handed the cache its public read was given.
