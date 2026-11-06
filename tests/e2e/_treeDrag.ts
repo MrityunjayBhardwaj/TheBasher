@@ -20,6 +20,8 @@ export async function dragRowOnto(
   srcId: string,
   dstId: string,
   zone: TreeDropZone = 'into',
+  /** #1516 — Alt on the drop keeps the row's values, rather than where it is drawn. */
+  modifiers: { readonly altKey?: boolean } = {},
 ): Promise<void> {
   const dt: JSHandle = await page.evaluateHandle(() => new DataTransfer());
   const src = page.locator(`[data-testid="scene-tree-row-${srcId}"]`);
@@ -29,6 +31,7 @@ export async function dragRowOnto(
   const at = {
     clientX: box.x + box.width / 2,
     clientY: box.y + box.height * ZONE_FRACTION[zone],
+    ...modifiers,
   };
   await src.dispatchEvent('dragstart', { dataTransfer: dt });
   await dst.dispatchEvent('dragover', { dataTransfer: dt, ...at });

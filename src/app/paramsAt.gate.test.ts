@@ -127,6 +127,8 @@ const CONSUMERS: Record<string, Decision> = {
 
   // ── AUTHORED — handing these folded params would double-apply or go circular ───────
   'src/app/Gizmo.tsx': authored('folds-its-own-overlays'),
+  // #1516 — a keep-position reparent holds one cache for the gesture; it reads through the world resolver.
+  'src/app/keepPlaceReparent.ts': authored('delegates-to-a-folding-resolver'),
   'src/app/boot.ts': authored('folds-its-own-overlays'),
   'src/app/activeCamera.ts': authored('folds-its-own-overlays'),
   'src/app/nodeConstraints.ts': authored('folds-its-own-overlays'),
@@ -388,7 +390,9 @@ describe('#582 — who evaluates the graph, and which params they need', () => {
     // 62 → 63 at #1766, not a new road: the camera Track-To reads moved behind one helper.
     // 63 → 64 at #1763, not a new road: I on a camera reads its own pose and its Track-To's aim
     // through the resolvers the render uses (declared above as delegates-to-a-folding-resolver).
-    expect(evaluatorConsumers()).toHaveLength(65); // 39 -> 40 at #935 (placement) (the motion resolver)
+    // 64 → 66, not new roads: #1829's drawn world read and #1516's keep-position reparent cache,
+    // each declared above.
+    expect(evaluatorConsumers()).toHaveLength(66); // 39 -> 40 at #935 (placement) (the motion resolver)
   });
 
   it('every reason is load-bearing — no member of any union is decorative', () => {

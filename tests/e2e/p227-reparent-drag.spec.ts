@@ -74,11 +74,23 @@ test('drag a top-level node INTO a Group reparents it (DAG + rendered world)', a
 
   expect(await childIds(page, '__scene__')).not.toContain('n_box');
   expect(await childIds(page, 'n_grp')).toContain('n_box');
-  // The box now inherits the group's world transform → its origin sits at [5,0,0].
-  const x = await page.evaluate(
-    () => (window as unknown as ReparentWindow).__basher_world_transform('n_box')?.position?.[0],
+  // #1516 — it hangs from the group now and has not moved: its own values took the group out.
+  const x = () =>
+    page.evaluate(
+      () => (window as unknown as ReparentWindow).__basher_world_transform('n_box')?.position?.[0],
+    );
+  expect(await x()).toBeCloseTo(0, 3);
+
+  // Alt keeps the values instead (Blender's outliner drag). Out to the top first, where they read
+  // [0,0,0] again, then in with Alt: the group's [5,0,0] carries it.
+  const sceneId = await page.evaluate(
+    () => (window as unknown as ReparentWindow).__basher_dag.getState().state.outputs.scene.node,
   );
-  expect(x).toBeCloseTo(5, 3);
+  await dragRowOnto(page, 'n_box', sceneId);
+  expect(await x()).toBeCloseTo(0, 3);
+  await dragRowOnto(page, 'n_box', 'n_grp', 'into', { altKey: true });
+  expect(await childIds(page, 'n_grp')).toContain('n_box');
+  expect(await x()).toBeCloseTo(5, 3);
 });
 
 test('drag a nested node onto the Scene root un-parents it back to top level', async ({ page }) => {

@@ -28,6 +28,7 @@ import { enumerateCameraNodeIds } from './activeCamera';
 import { resolveRigLightSources } from './resolveRigLightSources';
 import { chainSocketOfType } from './operatorChain';
 import { collectableNodes } from './collections';
+import { buildDeleteNodesOps } from './sceneNodeActions';
 
 beforeAll(() => registerAllNodes());
 
@@ -266,5 +267,30 @@ describe('#1821 — one answer to "is this object in the scene"', () => {
     ]);
     // What the ops take away is theirs to say: a node they remove is not put back.
     expect(keepInSceneOps(s, [unhook, { type: 'removeNode', nodeId: old }])).toEqual([]);
+  });
+});
+
+describe('the doors that move a camera keep it in the scene (#1517 with #1518)', () => {
+  it('deleting the group holding a camera hands the camera up into the scene, in place', () => {
+    let s = buildDefaultDagState();
+    const scene = s.outputs.scene!.node;
+    s = run(s, [
+      { type: 'addNode', nodeId: 'G', nodeType: 'Group', params: { position: [1, 2, 3] } },
+      {
+        type: 'connect',
+        from: { node: 'G', socket: 'out' },
+        to: { node: scene, socket: 'children' },
+      },
+    ]);
+    s = makeSplitCamera(s, {
+      objectId: 'cam',
+      position: [4, 0, 0],
+      connectTo: { node: 'G', socket: 'children' },
+    }).state;
+    expect(isInScene(s, 'cam')).toBe(true);
+    const after = run(s, buildDeleteNodesOps(s, ['G']));
+    expect(after.nodes.G).toBeUndefined();
+    expect(isInScene(after, 'cam')).toBe(true);
+    expect(after.nodes.cam.params.position).toEqual([5, 2, 3]);
   });
 });

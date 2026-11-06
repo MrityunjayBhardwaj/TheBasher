@@ -13,6 +13,7 @@ import { buildDefaultDagState } from '../core/project/default';
 import { buildNativeGltfImportOps } from '../core/import/nativeGltfImport';
 import { unpackMeshData } from './meshGeometryData';
 import { registerAllNodes } from '../nodes/registerAll';
+import { buildClearParentOps } from './keepPlaceReparent';
 import { resolveParentWorldMatrix, resolveWorldTransform } from './resolveWorldTransform';
 import { clockedCtx } from './subjectClock';
 
@@ -195,5 +196,18 @@ describe('#1688 — the bone poses on the clock the armature runs on', () => {
     const { state, propId } = await halfSpeed();
     const world = resolveWorldTransform(state, propId, clockedCtx(half.seconds, one.seconds))!;
     world.position.forEach((c, k) => expect(c, `axis ${k}`).toBeCloseTo(half.origin[k], 4));
+  });
+});
+
+describe('#1516 — clearing the parent of an Object on a bone keeps it where it is drawn', () => {
+  it.each([0, 0.5, 1])('at %s s, posed by the bone, and the bone name goes', async (seconds) => {
+    const { state, propId } = await imported();
+    const before = resolveWorldTransform(state, propId, at(seconds))!.matrix;
+    const moved = buildClearParentOps(state, [propId], { ctx: at(seconds) });
+    if (!moved.ok) throw new Error(moved.reason);
+    const after = moved.ops.reduce((acc, op) => applyOp(acc, op).next, state);
+    expect((after.nodes[propId].params as { parentBone?: string }).parentBone).toBeUndefined();
+    const world = resolveWorldTransform(after, propId, at(seconds))!.matrix;
+    before.forEach((v, i) => expect(world[i]).toBeCloseTo(v, 4));
   });
 });

@@ -74,8 +74,9 @@ test.describe('#231 Inc 2a.2 — light reparent in the outliner', () => {
     expect(await sceneList(page, 'lights')).toContain(LIGHT_ID);
     await expect(page.locator(`[data-testid="scene-tree-row-${LIGHT_ID}"]`)).toBeVisible();
 
-    // Drag the light onto the Group → moves to group.children, leaves scene.lights.
-    await dragRowOnto(page, LIGHT_ID, GRP_ID);
+    // Drag the light onto the Group → moves to group.children, leaves scene.lights. Alt keeps its
+    // values (#1516), so what is read below is the group's world composed over them.
+    await dragRowOnto(page, LIGHT_ID, GRP_ID, 'into', { altKey: true });
     await expect.poll(() => groupChildren(page)).toContain(LIGHT_ID);
     expect(await sceneList(page, 'lights')).not.toContain(LIGHT_ID);
 
@@ -86,7 +87,7 @@ test.describe('#231 Inc 2a.2 — light reparent in the outliner', () => {
     });
 
     // Drag it back onto the Scene root → returns to scene.lights (rich band), not children.
-    await dragRowOnto(page, LIGHT_ID, 'n_scene');
+    await dragRowOnto(page, LIGHT_ID, 'n_scene', 'into', { altKey: true });
     await expect.poll(() => sceneList(page, 'lights')).toContain(LIGHT_ID);
     expect(await groupChildren(page)).not.toContain(LIGHT_ID);
   });
