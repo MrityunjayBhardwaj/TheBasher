@@ -19,6 +19,7 @@
 import { z } from 'zod';
 import type { NodeDefinition } from '../core/dag/types';
 import type { Quat, Vec3 } from './types';
+import { IDENTITY_MAT4, isMat4, type Mat4 } from '../core/math/transformMath';
 import { IDENTITY_QUAT, slerp } from './quatMath';
 import {
   applyMathOp,
@@ -42,6 +43,11 @@ const num = (inputs: Record<string, unknown>, key: string): number =>
 const quat = (inputs: Record<string, unknown>, key: string): Quat => {
   const v = inputs[key];
   return Array.isArray(v) && v.length === 4 ? (v as unknown as Quat) : IDENTITY_QUAT;
+};
+/** An unconnected Matrix4 input defaults to the identity. */
+const matrix = (inputs: Record<string, unknown>, key: string): Mat4 => {
+  const v = inputs[key];
+  return isMat4(v) ? v : IDENTITY_MAT4;
 };
 /** An unconnected Vector3 input defaults to the origin (mirrors `num`'s 0 default). */
 const vec3 = (inputs: Record<string, unknown>, key: string): Vec3 =>
@@ -159,7 +165,11 @@ export const FitNode: NodeDefinition<FitParams, number | Vec3> = {
 // the shortest arc (Blender's `math::interpolate`), because lerping the numbers of two
 // orientations takes the wrong path. The Number sockets keep their names, so a Mix saved before
 // the mode existed loads as a Number Mix with its wires in place.
-export const MIX_DATA_TYPES = ['Number', 'Vector', 'Rotation'] as const;
+// `factor` is a socket as well as a setting (#1811), as Blender's is: a wire wins, and with none the
+// setting is the value, so a Mix saved before the socket existed reads the same. A Matrix lerps
+// entry by entry, which is what the stretch part of a blended transform needs; it is not a way to
+// blend whole transforms, whose rotation would take the wrong path (`transformBlend.test.ts`).
+export const MIX_DATA_TYPES = ['Number', 'Vector', 'Rotation', 'Matrix'] as const;
 export const MixParams = z.object({
   factor: z.number().default(0.5),
   dataType: z.enum(MIX_DATA_TYPES).default('Number'),
@@ -169,13 +179,14 @@ export type MixParams = z.infer<typeof MixParams>;
 const when = (dataType: (typeof MIX_DATA_TYPES)[number]) =>
   ({ param: 'dataType', in: [dataType] }) as const;
 
-export const MixNode: NodeDefinition<MixParams, number | Vec3 | Quat> = {
+export const MixNode: NodeDefinition<MixParams, number | Vec3 | Quat | Mat4> = {
   type: 'Mix',
   version: 1,
   pure: true,
   cost: 'cheap',
   paramSchema: MixParams,
   inputs: {
+    factor: { type: 'Number', cardinality: 'single', owns: 'always' },
     a: { type: 'Number', cardinality: 'single', owns: 'always', available: when('Number') },
     b: { type: 'Number', cardinality: 'single', owns: 'always', available: when('Number') },
     aVector: { type: 'Vector3', cardinality: 'single', owns: 'always', available: when('Vector') },
@@ -192,21 +203,29 @@ export const MixNode: NodeDefinition<MixParams, number | Vec3 | Quat> = {
       owns: 'always',
       available: when('Rotation'),
     },
+    aMatrix: { type: 'Matrix4', cardinality: 'single', owns: 'always', available: when('Matrix') },
+    bMatrix: { type: 'Matrix4', cardinality: 'single', owns: 'always', available: when('Matrix') },
   },
   outputs: {
     out: { type: 'Number', cardinality: 'single', available: when('Number') },
     outVector: { type: 'Vector3', cardinality: 'single', available: when('Vector') },
     outRotation: { type: 'Quaternion', cardinality: 'single', available: when('Rotation') },
+    outMatrix: { type: 'Matrix4', cardinality: 'single', available: when('Matrix') },
   },
   // One value: the current mode's. Only that mode's output is available, so it is the only one
   // a live wire reads.
   evaluate: (params, inputs) => {
-    const t = params.factor;
+    const t = typeof inputs.factor === 'number' ? inputs.factor : params.factor;
     switch (params.dataType ?? 'Number') {
       case 'Vector':
         return applyVec3Op('mix', vec3(inputs, 'aVector'), vec3(inputs, 'bVector'), t);
       case 'Rotation':
         return slerp(quat(inputs, 'aRotation'), quat(inputs, 'bRotation'), t);
+      case 'Matrix': {
+        const a = matrix(inputs, 'aMatrix');
+        const b = matrix(inputs, 'bMatrix');
+        return t === 0 ? a : t === 1 ? b : a.map((v, i) => lerp(v, b[i], t));
+      }
       default:
         return lerp(num(inputs, 'a'), num(inputs, 'b'), t);
     }

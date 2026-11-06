@@ -30,6 +30,7 @@ import {
   isQuat,
   type Mat4,
   multiplyTransforms,
+  polarSplit,
   quatToEuler,
   separateTransform,
   transformDirection,
@@ -100,6 +101,28 @@ export const SeparateTransformNode: NodeDefinition<
     const { translation, rotation, scale } = separateTransform(mat4(inputs, 'transform'));
     return { translation, rotation, scale };
   },
+};
+
+// ── Polar Split — a transform → translation, rotation, stretch ─────────────────
+// Separate Transform's scale is a vector, which cannot hold the shear a non-uniformly scaled parent
+// leaves in a child's world. Blending two transforms the way a Blender constraint's influence does
+// needs the rest as a matrix (#1811): Combine Transform × the stretch rebuilds the transform.
+export const PolarSplitNode: NodeDefinition<
+  NoParams,
+  { translation: Vec3; rotation: Quat; stretch: Mat4 }
+> = {
+  type: 'PolarSplit',
+  version: 1,
+  pure: true,
+  cost: 'cheap',
+  paramSchema: NO_PARAMS,
+  inputs: { transform: { type: 'Matrix4', cardinality: 'single', owns: 'always' } },
+  outputs: {
+    translation: { type: 'Vector3', cardinality: 'single' },
+    rotation: { type: 'Quaternion', cardinality: 'single' },
+    stretch: { type: 'Matrix4', cardinality: 'single' },
+  },
+  evaluate: (_params, inputs) => polarSplit(mat4(inputs, 'transform')),
 };
 
 // ── Multiply Transforms — a · b (b applies first) ──────────────────────────────
@@ -188,6 +211,7 @@ export const RotationToEulerNode: NodeDefinition<NoParams, Vec3> = {
 export const TRANSFORM_NODES: NodeDefinition[] = [
   CombineTransformNode as unknown as NodeDefinition,
   SeparateTransformNode as unknown as NodeDefinition,
+  PolarSplitNode as unknown as NodeDefinition,
   MultiplyTransformsNode as unknown as NodeDefinition,
   InvertTransformNode as unknown as NodeDefinition,
   TransformPointNode as unknown as NodeDefinition,

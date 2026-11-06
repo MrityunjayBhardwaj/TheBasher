@@ -87,6 +87,7 @@ export const COMPUTE_KINDS = [
   // Transform compute (Matrix4 rail, #1784) — Blender's matrix nodes, plus Euler ↔ rotation.
   'CombineTransform',
   'SeparateTransform',
+  'PolarSplit',
   'MultiplyTransforms',
   'InvertTransform',
   'TransformPoint',
@@ -614,6 +615,7 @@ function isCompute(kind: PrimitiveKind): boolean {
     kind === 'Vec3Math' ||
     kind === 'CombineTransform' ||
     kind === 'SeparateTransform' ||
+    kind === 'PolarSplit' ||
     kind === 'MultiplyTransforms' ||
     kind === 'InvertTransform' ||
     kind === 'TransformPoint' ||
@@ -755,6 +757,8 @@ function humanLabel(kind: PrimitiveKind): string {
       return 'Combine Transform node';
     case 'SeparateTransform':
       return 'Separate Transform node';
+    case 'PolarSplit':
+      return 'Polar Split node';
     case 'MultiplyTransforms':
       return 'Multiply Transforms node';
     case 'InvertTransform':
@@ -907,6 +911,7 @@ function paramsFor(kind: PrimitiveKind, position: Vec3): Record<string, unknown>
     case 'Vec3Math':
     case 'CombineTransform':
     case 'SeparateTransform':
+    case 'PolarSplit':
     case 'MultiplyTransforms':
     case 'InvertTransform':
     case 'TransformPoint':

@@ -143,6 +143,7 @@ const ALL_TYPES = [
   'Null',
   'Object',
   'ParamDriver',
+  'PolarSplit', // #1811
   // #1049 — a stored polygon mesh's data half.
   'PolyMeshData',
   // #1240 — a layer that edits the pose wire; absorbed PoseOverride (retired, #1243).

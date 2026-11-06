@@ -101,6 +101,7 @@ const GROUPS: MenuGroup[] = [
       // transform; rotations as quaternions.
       { kind: 'CombineTransform', label: 'Combine Transform' },
       { kind: 'SeparateTransform', label: 'Separate Transform' },
+      { kind: 'PolarSplit', label: 'Polar Split' },
       { kind: 'MultiplyTransforms', label: 'Multiply Transforms' },
       { kind: 'InvertTransform', label: 'Invert Transform' },
       { kind: 'TransformPoint', label: 'Transform Point' },
