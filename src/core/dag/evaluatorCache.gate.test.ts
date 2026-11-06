@@ -228,7 +228,7 @@ const ORIGINS: Record<string, Origin> = {
     frequency: 'once',
     why: 'DEV-only window hook for e2e.',
   },
-  'src/app/boot.ts · boot → resolveWorldTransform': {
+  'src/app/boot.ts · boot → resolveDrawnWorldTransform': {
     count: 1,
     frequency: 'once',
     why: 'DEV-only window hook for e2e.',
@@ -268,7 +268,7 @@ const ORIGINS: Record<string, Origin> = {
     frequency: 'deliberate',
     why: 'The injected previous-frame value makes the sub-graph frame-dependent; a shared cache would poison across frames (see its doc comment). One cook steps every kind of state the Solver carries (#1826).',
   },
-  'src/app/lightAim.ts · lightAimOps → resolveParentWorldMatrix': {
+  'src/app/lightAim.ts · lightAimOps → resolveDrawnParentWorldMatrix': {
     count: 1,
     frequency: 'per-action',
     why: "#1765 — giving a nested light its aim empty: once, to place the empty in the light's group at the point it should face.",
@@ -283,7 +283,7 @@ const ORIGINS: Record<string, Origin> = {
     frequency: 'per-action',
     why: 'Box-select commit, once per selectable node.',
   },
-  'src/viewport/BoxSelectController.tsx · commit → resolveWorldTransform': {
+  'src/viewport/BoxSelectController.tsx · commit → resolveDrawnWorldTransform': {
     count: 1,
     frequency: 'per-action',
     why: 'Box-select commit, once per selectable node.',
@@ -395,6 +395,14 @@ const TAKERS: string[] = [
   // #1727 — the two bodies the timed public reads above call, with the caller's cache.
   'parentWorldMatrixOf@src/app/resolveWorldTransform.ts',
   'worldTransformOf@src/app/resolveWorldTransform.ts',
+  // #1829 — the drawn world read and the two seams it enters the walk by, each forwarding the
+  // caller's cache.
+  'cameraFollowedPosition@src/app/cameraTrackTo.ts',
+  'drawnAncestorLocal@src/app/drawnWorldTransform.ts',
+  'resolveDrawnParentWorldMatrix@src/app/drawnWorldTransform.ts',
+  'resolveDrawnWorldTransform@src/app/drawnWorldTransform.ts',
+  'resolveParentWorldMatrixWith@src/app/resolveWorldTransform.ts',
+  'resolveWorldTransformWith@src/app/resolveWorldTransform.ts',
   // #1638 — forwards the caller's cache to the world resolver at each playhead it is asked.
   'worldMatrixAt@src/app/resolveWorldTransform.ts',
   'rigChanges@src/app/animate/invertPoseStack.ts',

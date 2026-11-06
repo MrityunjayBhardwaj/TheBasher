@@ -65,7 +65,13 @@ export function objectWorldFold(
   if (isCameraNode(state, id)) {
     return world.multiply(cameraLocalMatrix(cameraLocalPose(state, id, ctx, cache))).toArray();
   }
-  const at: Overlay = { ctx, cache, transients: useTransientEditStore.getState().edits };
+  // The world before constraints (#1811), so an ancestor contributes its plain local matrix.
+  const at: Overlay = {
+    ctx,
+    cache,
+    transients: useTransientEditStore.getState().edits,
+    ancestorLocal: (_state, _id, value) => localMatrix(value),
+  };
   const own = ownValueOf(state, id, ctx);
   const drawn = overlaidAt(state, id, own, at) ?? own;
   // A child parented to a bone hangs from that bone's pose, as `underParent` composes it.

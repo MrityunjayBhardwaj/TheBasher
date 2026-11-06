@@ -75,7 +75,8 @@ test.beforeEach(async ({ page }) => {
 
 test('a row dropped onto an Object becomes its child, drawn in its space', async ({ page }) => {
   await expect(page.getByTestId('scene-tree-row-n_box')).toBeVisible();
-  await dragRowOnto(page, 'n_box_2', 'n_box');
+  // Alt keeps the child's values (#1516), so what is read below is the parent composed over them.
+  await dragRowOnto(page, 'n_box_2', 'n_box', 'into', { altKey: true });
 
   expect(await childIds(page, '__scene__')).not.toContain('n_box_2');
   expect(await childIds(page, 'n_box')).toEqual(['n_box_2']);
@@ -173,7 +174,7 @@ test('the edges of a sibling Object reorder instead of parenting; the row shows 
 // lost typed data under a keyed Group). The children ride on that copy, so a keyed parent Object
 // must carry them, drawn and read alike, at every time.
 test('a keyed parent Object carries its child, drawn and read alike', async ({ page }) => {
-  await dragRowOnto(page, 'n_box_2', 'n_box');
+  await dragRowOnto(page, 'n_box_2', 'n_box', 'into', { altKey: true });
   expect(await childIds(page, 'n_box')).toEqual(['n_box_2']);
   await page.evaluate(() => {
     const w = window as unknown as ParentWindow & {

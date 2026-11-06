@@ -30,6 +30,7 @@ import {
   instanceIdFor,
   planCollapseToTemplate,
   planTemplateInstance,
+  templateInstanceIntoSceneOps,
   templateTypeFor,
   templateTypeNamed,
 } from '../../../app/templates';
@@ -213,8 +214,12 @@ export const addTemplateInstanceMutator: MutatorDefinition<AddTemplateInstanceSp
       },
     ],
   },
-  buildClosureSpec(spec): ClosureSpec {
-    // Every op lands on a node the plan adds, except the connect into `outputTo`.
+  buildClosureSpec(spec, state): ClosureSpec {
+    // Every op lands on a node the plan adds, except the connect into `outputTo`, and the wires
+    // that stand a scene object in the scene when nothing is named to read it (#1518).
+    const r = state && !spec.outputTo ? resolve(spec, state) : null;
+    const sceneId = r?.ok && r.def.output.type === 'SceneObject' && state?.outputs.scene?.node;
+    if (sceneId) return { rootSelectors: [sceneId], followedEdges: ['active-collection'] };
     return { rootSelectors: spec.outputTo ? [spec.outputTo.node] : [], followedEdges: [] };
   },
   preconditions(spec, _closure, state) {
@@ -229,6 +234,7 @@ export const addTemplateInstanceMutator: MutatorDefinition<AddTemplateInstanceSp
       ops.push({ type: 'connect', from: refOf(from), to: { node: r.instance, socket: name } });
     if (spec.outputTo)
       ops.push({ type: 'connect', from: { node: r.instance, socket: 'out' }, to: spec.outputTo });
+    else ops.push(...templateInstanceIntoSceneOps(state, r.def, r.instance));
     return ops;
   },
   advisories(spec, _closure, state) {

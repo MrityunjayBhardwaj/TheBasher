@@ -20,7 +20,7 @@ import {
 import { createPortal } from 'react-dom';
 import { useDagStore } from '../core/dag/store';
 import { isLightNode } from './lightNode';
-import type { NodeId, Op } from '../core/dag/types';
+import type { NodeId } from '../core/dag/types';
 import { useSelectionStore } from './stores/selectionStore';
 import { useRenameStore } from './stores/renameStore';
 import { RenameInput } from './RenameInput';
@@ -35,13 +35,17 @@ import {
   setShownOp,
 } from './collections';
 import { hideRefusal } from './sceneVisibility';
-import { buildDeleteNodesOps, buildDuplicateNodesOps } from './sceneNodeActions';
+import { buildDuplicateNodesOps, planDeleteNodes, withHierarchy } from './sceneNodeActions';
+import { buildMoveOps, moveNotices, type HolderEdge, type MoveResult } from './keepPlaceReparent';
+import { useNotificationStore } from './stores/notificationStore';
 import { selectActiveCameraNode } from './activeCamera';
 import { isCameraNode } from './cameraNode';
 import { buildSetActiveCameraOps } from './setActiveCamera';
 import {
+  cameraRootDropOps,
   dropIntent,
   dropZoneAt,
+  landsOnItself,
   reorderIndex,
   type DropIntent,
   type DropZone,
@@ -529,12 +533,25 @@ export function SceneTree({ filter = '' }: SceneTreeProps) {
     setCtxMenu(null);
   }
 
-  function ctxDelete(nodeId: NodeId) {
-    const ids = ctxTargetIds(nodeId);
-    const ops = buildDeleteNodesOps(state, ids);
-    if (ops.length > 0) dispatchAtomic(ops, 'user', `delete ${ids.length} node(s)`);
-    clearSelection();
+  /** Say what a move refused, or how far a shear kept it from its place. True when it may go on. */
+  function say(result: MoveResult): boolean {
+    const notify = useNotificationStore.getState().notify;
+    if (!result.ok) {
+      notify({ severity: 'info', message: result.reason });
+      return false;
+    }
+    for (const message of moveNotices(state, result)) notify({ severity: 'warn', message });
+    return true;
+  }
+
+  function ctxDelete(nodeId: NodeId, hierarchy = false) {
+    const targets = ctxTargetIds(nodeId);
+    const ids = hierarchy ? withHierarchy(state, targets) : targets;
+    const plan = planDeleteNodes(state, ids);
     setCtxMenu(null);
+    if (!say(plan) || !plan.ok) return;
+    if (plan.ops.length > 0) dispatchAtomic(plan.ops, 'user', `delete ${ids.length} node(s)`);
+    clearSelection();
   }
 
   function onDragStart(e: DragEvent, row: TreeRow) {
@@ -582,8 +599,9 @@ export function SceneTree({ filter = '' }: SceneTreeProps) {
   // wrappers — single `target` socket, glTF children).
   // #1152 — can this row RECEIVE children? A Group, and an Object — but only an Object that
   // itself hangs in the `children` hierarchy. That is where the renderer draws an Object's
-  // children (ObjectR); a light or a camera Object hangs off its own band (`scene.lights`,
-  // `scene.camera`), is drawn through that band, and would hold a child nothing draws. A glTF
+  // children (ObjectR), a camera in `scene.children` included; a light or the active camera's own
+  // row hangs off its own band (`scene.lights`, `scene.camera`), is drawn through that band, and
+  // would hold a child nothing draws. A glTF
   // copy's rows carry no `parent` at all, so they are never a target either.
   function holdsChildren(row: TreeRow): boolean {
     if (row.nodeType === 'Group') return true;
@@ -618,27 +636,25 @@ export function SceneTree({ filter = '' }: SceneTreeProps) {
     if (!target) return false;
     if (target.node === srcRow.parent.nodeId && target.socket === srcRow.parent.socket)
       return false;
-    if (dstRow.key === srcRow.key || dstRow.key.startsWith(`${srcRow.key}/`)) return false;
+    if (landsOnItself(srcRow, dstRow)) return false;
     return true;
   }
 
-  // #231 Inc 3.3 — camera reparent. A camera has NO scene-level list socket (it
-  // wires to `scene.camera`, a single ref, managed by Set Active) — so its parent
-  // is purely Group membership: nested in a Group (`parent.socket === 'children'`)
-  // or floating top-level (`parent.socket === 'camera'`, the enumeration fiction).
-  // Reparent moves ONLY that Group.children membership; the active (`scene.camera`)
-  // edge is independent and untouched. Returns the move kind or null.
-  //   - 'into' : connect into dstRow (a Group), disconnecting a prior Group edge.
-  //   - 'root' : a NESTED camera dropped on the Scene root → disconnect from its
-  //              Group → floating top-level (still enumerated + still active if it was).
+  // #231 Inc 3.3 — camera reparent. A camera's parent is a `children` list: a Group's or the
+  // Scene's (`parent.socket === 'children'`, #1518), or it is the active camera's own row
+  // (`parent.socket === 'camera'`, the single socket Set Active manages). Reparent moves ONLY that
+  // `children` membership; the active (`scene.camera`) edge is independent and untouched. Returns
+  // the move kind or null.
+  //   - 'into' : connect into dstRow (a Group), disconnecting a prior `children` edge.
+  //   - 'root' : a NESTED camera dropped on the Scene root → out of its Group, into
+  //              `Scene.children` (`cameraRootDropOps`), still in the scene + active if it was.
   function cameraReparent(srcRow: TreeRow, dstRow: TreeRow): 'into' | 'root' | null {
     if (!isCameraNode(state, srcRow.nodeId)) return null; // possession, not the type's name (#387)
-    if (dstRow.key === srcRow.key) return null;
+    if (landsOnItself(srcRow, dstRow)) return null;
     if (holdsChildren(dstRow)) {
       return dstRow.nodeId === srcRow.parent?.nodeId ? null : 'into'; // not its current parent
     }
-    if (dstRow.depth === 0) return srcRow.parent?.socket === 'children' ? 'root' : null; // unparent
-    return null;
+    return cameraRootDropOps(srcRow, dstRow) ? 'root' : null; // unparent
   }
 
   // #1152 — ONE answer to "what would this drop do", asked by dragover (to draw it) and by drop (to
@@ -694,65 +710,21 @@ export function SceneTree({ filter = '' }: SceneTreeProps) {
       return;
     }
 
-    // #231 Inc 3.3 — camera reparent (handled FIRST; cameras never reorder/reparent
-    // via the list path — they have no scene-level list socket). Moves Group.children
-    // membership only; the active (`scene.camera`) edge is untouched.
+    // #1516 — a reparent keeps the object where it is drawn, unless Alt holds its values as they
+    // are (Blender's outliner drag, both ways). A camera moves only its Group membership: at the top
+    // it floats, and the active (`scene.camera`) wire is a separate choice (#231 Inc 3.3).
     const camMove = cameraReparent(srcRow, dstRow);
-    if (camMove === 'into') {
-      const dstList = state.nodes[dstRow.nodeId]?.inputs.children;
-      const appendIndex = Array.isArray(dstList) ? dstList.length : 0;
-      const ops: Op[] = [];
-      // If it was already nested in a Group, disconnect that edge first.
-      if (srcRow.parent?.socket === 'children') {
-        ops.push({
-          type: 'disconnect',
-          from: ref,
-          to: { node: srcRow.parent.nodeId, socket: 'children' },
-        });
-      }
-      ops.push({
-        type: 'connect',
-        from: ref,
-        to: { node: dstRow.nodeId, socket: 'children' },
-        index: appendIndex,
-      });
-      dispatchAtomic(ops, 'user', 'parent camera to group');
-      return;
-    }
-    if (camMove === 'root') {
-      // Unparent a nested camera → floating top-level (disconnect its Group edge).
-      dispatchAtomic(
-        [
-          {
-            type: 'disconnect',
-            from: ref,
-            to: { node: srcRow.parent!.nodeId, socket: 'children' },
-          },
-        ],
-        'user',
-        'unparent camera',
-      );
-      return;
-    }
-
-    // #227 — REPARENT: move into a Group / the Scene root (different parent).
-    // disconnect from the old parent socket, connect at the END of the new
-    // children list (a different list → no index-shift to compensate).
-    if (canReparent(srcRow, dstRow)) {
-      const target = reparentSocket(srcRow, dstRow)!;
-      // #231 — append at the END of the TARGET socket's list (children OR lights).
-      const dstList = state.nodes[target.node]?.inputs[target.socket];
-      const appendIndex = Array.isArray(dstList) ? dstList.length : 0;
-      const ops: Op[] = [
-        {
-          type: 'disconnect',
-          from: ref,
-          to: { node: srcRow.parent.nodeId, socket: srcRow.parent.socket },
-        },
-        { type: 'connect', from: ref, to: target, index: appendIndex },
-      ];
-      dispatchAtomic(ops, 'user', 'reparent scene node');
-    }
+    if (!camMove && !canReparent(srcRow, dstRow)) return;
+    const to = camMove ? dstRow.nodeId : reparentSocket(srcRow, dstRow)!.node;
+    const from: HolderEdge[] =
+      srcRow.parent.socket === 'camera'
+        ? []
+        : [{ node: srcRow.parent.nodeId, socket: srcRow.parent.socket }];
+    const moved = buildMoveOps(state, [{ childId: srcRow.nodeId, from, to }], {
+      keepTransform: !e.altKey,
+      verb: 'Parent',
+    });
+    if (say(moved) && moved.ok) dispatchAtomic(moved.ops, 'user', 'reparent scene node');
   }
 
   // #1453 — every scene object can be hidden: its eye reaches its drawer at any depth (#1462).
@@ -1056,6 +1028,15 @@ export function SceneTree({ filter = '' }: SceneTreeProps) {
                     ? `Delete ${ctxTargetIds(ctxMenu.nodeId).length} Objects`
                     : 'Delete'}
                 </CtxItem>
+                {withHierarchy(state, ctxTargetIds(ctxMenu.nodeId)).length >
+                ctxTargetIds(ctxMenu.nodeId).length ? (
+                  <CtxItem
+                    testId="outliner-ctx-delete-hierarchy"
+                    onClick={() => ctxDelete(ctxMenu.nodeId, true)}
+                  >
+                    Delete Hierarchy
+                  </CtxItem>
+                ) : null}
               </div>
             </>,
             document.body,

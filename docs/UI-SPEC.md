@@ -608,7 +608,7 @@ Single-primary, multi-secondary. Existing `selectionStore` already implements th
 | `Cmd/Ctrl+S`                      | Save project                                      |
 | `Cmd/Ctrl+Z`                      | Undo                                              |
 | `Cmd/Ctrl+Shift+Z` / `Cmd/Ctrl+Y` | Redo                                              |
-| `Cmd/Ctrl+P`                      | Command palette (out of scope for v0.5; reserved) |
+| `Cmd/Ctrl+P`                      | Parent the selection to the active object (#1516) |
 | `Esc`                             | Clear selection + return to mode `edit`           |
 
 **Mode-switch shortcuts** (active when not in input):

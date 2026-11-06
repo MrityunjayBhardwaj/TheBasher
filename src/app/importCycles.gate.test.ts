@@ -327,11 +327,16 @@ describe('#814 the import cycles, enumerated and held', () => {
       // #1732 — `rigIndex` joined it knowingly: `gltfNodeWorld` finds a bone through it, and it
       // places the armature with `resolveWorldTransform`. Call-time only — inside `readArmature` and
       // `armatureWorldAt`; nothing is read at module load.
+      // #1829 — `drawnWorldTransform` joined it knowingly: it calls the constraint resolvers, and a
+      // camera's evaluated transform places its aim and path with it (`resolveEvaluatedTransform` →
+      // `cameraTrackTo`). Call-time only — inside `drawnAncestorLocal` and the two camera reads;
+      // nothing is read at module load.
       [
         'src/app/activeCamera.ts',
         'src/app/cameraChannels.ts',
         'src/app/cameraTrackTo.ts',
         'src/app/curveSampleSource.ts',
+        'src/app/drawnWorldTransform.ts',
         'src/app/geometrySampleSource.ts',
         'src/app/gltfNodeWorld.ts',
         'src/app/nodeConstraints.ts',

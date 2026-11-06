@@ -10,18 +10,26 @@ import type { MutatorDefinition } from '../types';
 import type { ClosureSet, ClosureSpec } from '../../closure/types';
 import type { DagState } from '../../../core/dag/state';
 import type { Op } from '../../../core/dag/types';
-import { buildDeleteNodesOps } from '../../../app/sceneNodeActions';
+import { moveNotices } from '../../../app/keepPlaceReparent';
+import { buildDeleteNodesOps, planDeleteNodes, withHierarchy } from '../../../app/sceneNodeActions';
 
 const DeleteNodeSpec = z.object({
   targetSelectors: z.array(z.string().min(1)).min(1),
+  hierarchy: z.boolean().optional(),
 });
 export type DeleteNodeSpec = z.infer<typeof DeleteNodeSpec>;
+
+const idsToDelete = (spec: DeleteNodeSpec, state: DagState): string[] =>
+  spec.hierarchy ? withHierarchy(state, spec.targetSelectors) : spec.targetSelectors;
 
 export const deleteNodeMutator: MutatorDefinition<DeleteNodeSpec> = {
   name: 'mutator.deleteNode',
   description:
     'Delete one or more nodes. Auto-disconnects every consumer edge first ' +
-    '(removeNode requires zero consumers). Atomic — Cmd+Z reverts everything.',
+    '(removeNode requires zero consumers). A deleted parent hands its children up to its own ' +
+    'parent, keeping them where they are drawn. An animated child keeps its keys and may move: ' +
+    'the result warns when one does. Set hierarchy to delete everything below the targets too. ' +
+    'Atomic — Cmd+Z reverts everything.',
   spec: DeleteNodeSpec,
   specExample: { targetSelectors: ['node_id'] },
   contract: {
@@ -34,7 +42,8 @@ export const deleteNodeMutator: MutatorDefinition<DeleteNodeSpec> = {
   },
   buildClosureSpec(spec): ClosureSpec {
     // 'parent'   — consumers whose inputs we disconnect.
-    // 'children' — a Group OWNS its children and takes them with it (#431).
+    // 'children' — a deleted parent hands its children up to its own parent (#1517), so
+    //              the delete rewires them and writes their transform.
     // 'data'     — a split Object OWNS its data node (#365).
     // 'id-ref'   — the edge-less half: the channels/constraints/drivers/strips
     //              swept with their subject, and the survivors whose refs we clear
@@ -78,6 +87,10 @@ export const deleteNodeMutator: MutatorDefinition<DeleteNodeSpec> = {
     // by construction — that divergence was the actual bug, more than any single
     // orphan it produced. The outliner and the Delete key already share this builder
     // (#227); the agent now makes three callers, one implementation.
-    return buildDeleteNodesOps(state, spec.targetSelectors);
+    return buildDeleteNodesOps(state, idsToDelete(spec, state));
+  },
+  advisories(spec, _closure, state) {
+    const plan = planDeleteNodes(state, idsToDelete(spec, state));
+    return plan.ok ? moveNotices(state, plan) : [];
   },
 };

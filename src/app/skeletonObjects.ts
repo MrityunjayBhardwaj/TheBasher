@@ -23,7 +23,8 @@ import { evaluate, type EvaluatorCache } from '../core/dag/evaluator';
 import type { DagState } from '../core/dag/state';
 import { armaturePoseOf } from '../nodes/bonePose';
 import type { BoneSpec, ObjectValue, PosedSkeletonValue } from '../nodes/types';
-import { resolveWorldTransform, worldMatrixAt } from './resolveWorldTransform';
+import { resolveDrawnWorldTransform } from './drawnWorldTransform';
+import { worldMatrixAt } from './resolveWorldTransform';
 import { hiddenNodes } from './collections';
 
 export interface SkeletonObject {
@@ -75,7 +76,8 @@ export function collectSkeletonObjects(state: DagState, cache?: EvaluatorCache):
         | undefined;
       if (data?.kind !== 'Skeleton' || !data.bones?.length) continue;
       // Not reachable as a scene descendant ⇒ nothing in the scene stands there to draw.
-      const world = resolveWorldTransform(state, node.id, FRAME_0, cache);
+      // #1829 — the bones are chrome drawn in the world, so they read where the rig is drawn.
+      const world = resolveDrawnWorldTransform(state, node.id, FRAME_0, cache);
       if (!world) continue;
       const clipCount = nodes.filter(
         (n) => n.type === 'AnimationClip' && refNode(n.inputs.skeleton) === skeletonId,
@@ -86,7 +88,7 @@ export function collectSkeletonObjects(state: DagState, cache?: EvaluatorCache):
         id: node.id,
         skeletonId,
         world: world.matrix,
-        worldAt: worldMatrixAt(state, node.id, world.matrix, cache),
+        worldAt: worldMatrixAt(state, node.id, world.matrix, cache, resolveDrawnWorldTransform),
         bones: data.bones,
         pose,
         clipCount,

@@ -345,7 +345,9 @@ test.describe('#386 C3 — the split posable light, observed', () => {
       );
     }, GRP);
 
-    const dragRowOnto = (srcId: string, dstId: string) => dragTreeRowOnto(page, srcId, dstId);
+    // Alt keeps the light's values (#1516), so the worlds read below are the group's composed over them.
+    const dragRowOnto = (srcId: string, dstId: string) =>
+      dragTreeRowOnto(page, srcId, dstId, 'into', { altKey: true });
 
     const sceneBand = (socket: 'children' | 'lights') =>
       page.evaluate((s) => {

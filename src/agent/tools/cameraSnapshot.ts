@@ -12,6 +12,8 @@ import { z } from 'zod';
 import type { ToolDefinition, ToolContext, ToolResult } from './types';
 import type { Op } from '../../core/dag/types';
 import { linkIntoActiveCollection } from '../../app/collections';
+import { freshObjectName, takenObjectNames } from '../../app/objectNames';
+import { keepInSceneOps } from '../../app/sceneMembership';
 
 export const cameraSnapshotSchema = z.object({
   fov: z.number().positive().default(45).describe('Camera field of view in degrees'),
@@ -126,9 +128,17 @@ export const cameraSnapshotTool: ToolDefinition<CameraSnapshotArgs> = {
       to: { node: sceneRef.node, socket: 'camera' },
     });
 
+    ops.push({
+      type: 'setMeta',
+      nodeId: newId,
+      name: freshObjectName('Camera', takenObjectNames(ctx.dagState)),
+    });
+
     // #1504 — into the active collection, as the Add menu's cameras join it (#1453).
+    const joined = linkIntoActiveCollection(ctx.dagState, ops, [newId]);
     return {
-      ops: linkIntoActiveCollection(ctx.dagState, ops, [newId]),
+      // The camera it replaced stays in the scene (#1518).
+      ops: [...joined, ...keepInSceneOps(ctx.dagState, joined)],
       text: `Snapshot camera at [${args.position}] looking at [${args.lookAt}]`,
     };
   },

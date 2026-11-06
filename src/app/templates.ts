@@ -25,6 +25,8 @@ import { producedTypeOf } from '../core/dag/socketConversion';
 import { subnetworkOf } from '../core/dag/subnetworks';
 import type { DagState } from '../core/dag/state';
 import type { InputBinding, Node, NodeId, NodeRef, Op } from '../core/dag/types';
+import { linkIntoActiveCollection } from './collections';
+import { freshObjectName, takenObjectNames } from './objectNames';
 import {
   CONTROLLER_INPUTS,
   TEMPLATE_BODY_SOCKET,
@@ -266,6 +268,15 @@ export function planCollapseToTemplate(
     });
   }
 
+  // #1518 — an instance that stands in the scene is named for its template, as any object is.
+  if (outType === 'SceneObject') {
+    ops.push({
+      type: 'setMeta',
+      nodeId: instanceId,
+      name: freshObjectName(name.trim() || 'Template', takenObjectNames(state)),
+    });
+  }
+
   // The definition: the body as it will stand, each node keyed by its id in this first instance.
   const bodyNodes: Record<string, Node> = {};
   for (const id of inside) {
@@ -412,6 +423,48 @@ export function collapseSelectionToTemplate(
   return { ok: true, type: plan.definition.type, instance };
 }
 
+/**
+ * The wire a new instance needs to stand in the scene, when what it outputs is a scene object
+ * (#1518): nothing else would hold it, and `planTemplateInstance` leaves its output to the caller.
+ * Empty for any other template, whose output the caller wires to what reads it.
+ */
+export function templateInstanceIntoSceneOps(
+  state: DagState,
+  def: TemplateDefinition,
+  instance: NodeId,
+): Op[] {
+  const sceneId = state.outputs.scene?.node;
+  if (!sceneId || def.output.type !== 'SceneObject') return [];
+  return linkIntoActiveCollection(
+    state,
+    [
+      {
+        type: 'connect',
+        from: { node: instance, socket: 'out' },
+        to: { node: sceneId, socket: 'children' },
+      },
+      {
+        type: 'setMeta',
+        nodeId: instance,
+        name: freshObjectName(def.label, takenObjectNames(state)),
+      },
+    ],
+    [instance],
+  );
+}
+
+/** The ops `addTemplateInstance` dispatches: pure, so the door census can run it (#1822). */
+export function planAddTemplateInstance(
+  state: DagState,
+  def: TemplateDefinition,
+  instance: NodeId,
+): Op[] {
+  return [
+    ...planTemplateInstance(state, def, instance),
+    ...templateInstanceIntoSceneOps(state, def, instance),
+  ];
+}
+
 /** Add an instance of the graph's template `type`. */
 export function addTemplateInstance(type: string): TemplateActionResult {
   const state = useDagStore.getState().state;
@@ -421,7 +474,7 @@ export function addTemplateInstance(type: string): TemplateActionResult {
   try {
     useDagStore
       .getState()
-      .dispatchAtomic(planTemplateInstance(state, def, instance), 'user', `add ${def.label}`);
+      .dispatchAtomic(planAddTemplateInstance(state, def, instance), 'user', `add ${def.label}`);
   } catch (e) {
     return { ok: false, reason: (e as Error).message };
   }

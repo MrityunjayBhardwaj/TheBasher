@@ -60,8 +60,11 @@ picker still lists it. Every input socket is in one row of this table or the oth
 lists the ones that own nothing (`SHARED_WIRES`, `src/nodes/idRefAcknowledged.ts`), so a new
 socket has to choose. One delete function applies it (`buildDeleteNodesOps`,
 `src/app/sceneNodeActions.ts`), for the Delete key, the outliner, the agent and the buttons
-that remove a driver. Children still go with a deleted parent; handing them up to the
-grandparent is #1517, which waits on the keep-position reparent in #1516.
+that remove a driver. The one exception is a parent's `children`: Duplicate copies them, and
+Delete hands them up to the deleted parent's own parent, keeping them where they are drawn
+(#1517, through the keep-position reparent of #1516, `src/app/keepPlaceReparent.ts`), unless they
+are deleted too. An animated child keeps its keys, so it moves, and the delete says so. Delete
+Hierarchy (`withHierarchy`) takes everything below the target as well.
 
 Duplicate reads the same table (`buildDuplicateNodesOps`, same file). A **deep** duplicate
 (Shift+D) copies what the original owns by wire, whole sub-networks included, and the sidecars
@@ -134,9 +137,22 @@ OUTPUTS ─── outputs.scene · outputs.render
    are computed from this, so the saved format has no nesting to migrate. Why flat:
    [OBJECT-DATA-SPLIT-DESIGN §2.2](OBJECT-DATA-SPLIT-DESIGN.md) ("on a DAG, pointer and
    containment are the same edge") and §2.4.
-3. **Membership is reachability.** An object is in the scene if the scene's wires reach it
-   (`children`, `lights`, `camera`, collection `members`). Every door that adds or removes
-   a wire keeps nodes reachable. Decided in #1519.
+3. **Membership is reachability.** An object is in the scene if the scene's membership
+   wires reach it. They are listed once, in `src/app/sceneMembership.ts` (#1820), and this
+   rule quotes that list:
+   - collections: `Scene.collections`, `Collection.members`, `Collection.collections`;
+   - the camera: `Scene.camera`, `CameraSelect.cameras`;
+   - the lights: `Scene.lights`;
+   - the lighting profile: `Scene.lightRig`, `LightProfileSelect.rigs`, `LightRig.lights`.
+
+   Parenting is not membership. A child will take its parent as an input (#1810), and where an
+   object sits in the tree says nothing about whether the scene holds it, just as a Blender
+   object's parent and its collections are separate. **Until #1810, #1823 and #1824 land,**
+   `Scene.children` and the parenting wires (`src/app/sceneHierarchy.ts`) still put objects
+   in the scene, and the collection wires are listed but not drawn. `isInScene` in the same
+   file is the one answer; a surface that keeps its own list is tested against it (#1821). Every door that adds or removes a wire
+   keeps nodes reachable. Decided in #1519.
+
 4. **Time lives inside values.** A channel's value carries `sample(seconds)`, the Scene owns
    its frame range, and nothing cooks per frame. That keeps the content-keyed cache flat
    when you scrub ([NORTH-STAR §4.4](NORTH-STAR.md)).

@@ -64,7 +64,13 @@ import { getActiveBone } from './boneSelection';
 import { addIkFromUI, editSkeletonFromUI } from './skeletonEditActions';
 import { useBoxSelectStore } from './stores/boxSelectStore';
 import { getViewportSelectableIds } from './selectableNodes';
-import { buildDeleteNodesOps, buildDuplicateNodesOps } from './sceneNodeActions';
+import { buildDuplicateNodesOps, planDeleteNodes } from './sceneNodeActions';
+import {
+  buildClearParentOps,
+  buildParentToOps,
+  moveNotices,
+  type MoveResult,
+} from './keepPlaceReparent';
 import { buildSetActiveCameraOps } from './setActiveCamera';
 import { useViewportStore } from './stores/viewportStore';
 import { keyParamFromTransient } from './animate/autoKeyCommit';
@@ -386,6 +392,21 @@ function sayIfRefused(outcome: { ok: true } | { ok: false; reason: string }): vo
   }
 }
 
+/** Dispatch a parenting change, saying what it refused or how far a shear kept it from its place.
+ *  True when it went through or there was nothing to do. */
+function runMove(result: MoveResult, description: string): boolean {
+  const notify = useNotificationStore.getState().notify;
+  if (!result.ok) {
+    notify({ severity: 'info', message: result.reason });
+    return false;
+  }
+  const dag = useDagStore.getState();
+  const notices = moveNotices(dag.state, result);
+  if (result.ops.length > 0) dag.dispatchAtomic(result.ops, 'user', description);
+  for (const message of notices) notify({ severity: 'warn', message });
+  return true;
+}
+
 export function KeyboardShortcuts() {
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
@@ -548,6 +569,30 @@ export function KeyboardShortcuts() {
           );
           return;
         }
+      }
+
+      // #1516 — Alt+P clears the selection's parent, keeping each object where it is drawn
+      // (Blender's Clear and Keep Transformation). e.code, because Alt+P types another character on
+      // a Mac. An armature in Edit mode keeps the key for its bones (above), with one active or not.
+      if (e.altKey && !cmd && !e.shiftKey && e.code === 'KeyP' && getArmatureMode() !== 'edit') {
+        const ids = [...useSelectionStore.getState().selectedNodeIds];
+        if (ids.length > 0) {
+          e.preventDefault();
+          runMove(buildClearParentOps(useDagStore.getState().state, ids), 'clear parent');
+          return;
+        }
+      }
+      // #1516 — Ctrl+P parents the selection to the active object, keeping each where it is drawn
+      // (Blender's Object (Keep Transform)). The browser's own Print has to be stopped either way.
+      if (cmd && !e.altKey && !e.shiftKey && e.code === 'KeyP') {
+        e.preventDefault();
+        const sel = useSelectionStore.getState();
+        const active = sel.primaryNodeId;
+        const others = [...sel.selectedNodeIds].filter((id) => id !== active);
+        if (active && others.length > 0) {
+          runMove(buildParentToOps(useDagStore.getState().state, others, active), 'set parent');
+        }
+        return;
       }
 
       // #1510 — Shift+I adds an IK to the selected bone in Pose mode (Blender's Add IK). Above the
@@ -845,9 +890,15 @@ export function KeyboardShortcuts() {
             if (ids.length === 0) return;
             // Shared op-builder (#227) — the SAME disconnect-consumers + removeNode
             // path the outliner context menu uses, so the two can't drift.
-            const ops = buildDeleteNodesOps(dag.state, ids);
-            if (ops.length === 0) return;
-            dag.dispatchAtomic(ops, 'user', `delete ${ids.length} node(s)`);
+            // #1517 — a parent's children are handed up, which can refuse (a child under a constraint).
+            const plan = planDeleteNodes(dag.state, ids);
+            if (!plan.ok) {
+              useNotificationStore.getState().notify({ severity: 'info', message: plan.reason });
+              e.preventDefault();
+              return;
+            }
+            if (plan.ops.length === 0) return;
+            runMove(plan, `delete ${ids.length} node(s)`);
             sel.clear();
             e.preventDefault();
           }

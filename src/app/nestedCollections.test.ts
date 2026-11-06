@@ -178,8 +178,9 @@ describe('#397 — nested collections', () => {
     expect(at(Q)).toEqual([1]);
     expect(at(C)).toEqual([2, 2]);
     expect(at(D)).toEqual([3, 3]);
-    // A member is listed once — under the first collection holding it — at its depth there.
-    expect(at(O)).toEqual([3]);
+    // A member is listed at each place its collection is listed (#1505), as Blender lists an
+    // object once per path, at its depth there.
+    expect(at(O)).toEqual([3, 3]);
     const order = rows.map(([n]) => n);
     expect(order.indexOf(D)).toBeLessThan(order.indexOf(O));
     expect(order.indexOf(O)).toBeLessThan(order.indexOf(Q));

@@ -25,10 +25,11 @@
 //
 // ─── THE SPACES ───────────────────────────────────────────────────────────────────────
 // Points are authored in the curve's LOCAL space; the handles must appear where the path
-// RENDERS, so they are drawn at `world = M · p` with M the curve's world matrix from the ONE
-// world resolver (`resolveWorldTransform` — the same one curveSampleSource.ts measures the
-// arc-length table with, so handle == line == sampled path; a second walk here is exactly
-// how those three would drift). The drag runs in world space and is converted straight back:
+// RENDERS, so they are drawn at `world = M · p` with M the curve's drawn world matrix from the
+// ONE world walk (`resolveDrawnWorldTransform`; a second walk here is exactly how handle and line
+// would drift). The arc-length table curveSampleSource.ts measures is on the same walk without
+// ancestors' constraints (#1829), so a curve under an AIMED object is the one case where the
+// sampled path sits off the line it is drawn as, until the stack views (#1805). The drag runs in world space and is converted straight back:
 // `p = M⁻¹ · worldDrag`. So a curve that is rotated, scaled or parented under a moving Group
 // is still editable in place, and the authored params stay LOCAL (V68).
 //
@@ -46,7 +47,7 @@ import { moveCurvePoint } from './curvePointCommands';
 import { useActiveCurvePoint } from './curvePointSelection';
 import { curvePointEntriesOf } from './curvePoints';
 import { endGizmoDrag, startGizmoDrag } from './Gizmo';
-import { resolveWorldTransform } from './resolveWorldTransform';
+import { resolveDrawnWorldTransform } from './drawnWorldTransform';
 import { useCurveSelectionStore } from './stores/curveSelectionStore';
 import { useSelectionStore } from './stores/selectionStore';
 import { useTimeStore } from './stores/timeStore';
@@ -175,7 +176,7 @@ export function CurvePointHandles() {
     // The ONE world resolver — never a parallel walk. Null (curve not reachable as a scene
     // child) ⇒ identity, which is exactly what the sampling seam falls back to, so the
     // handles and the sampled path agree even in that degenerate case.
-    const wt = resolveWorldTransform(
+    const wt = resolveDrawnWorldTransform(
       state,
       curveId,
       { time: { frame, seconds, normalized } },

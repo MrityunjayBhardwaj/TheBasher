@@ -309,14 +309,16 @@ describe('camera.snapshot tool', () => {
     expect(result1.ops).toEqual(result2.ops);
     // #387 C4 — the snapshot mints the object↔data PAIR, so: disconnect old + addNode
     // (CameraData) + addNode (Object) + connect the `data` edge + connect the Object to
-    // scene.camera = 5 ops. Both ids are derived from the same content hash, which is what
-    // keeps the twice-call equality above meaningful for the pair as well.
-    expect(result1.ops).toHaveLength(5);
+    // scene.camera, then its name, then the replaced camera into scene.children so it stays in
+    // the scene (#1518). Both ids are derived from the same content hash, which is what keeps the
+    // twice-call equality above meaningful for the pair as well.
     expect(result1.ops.map((o) => o.type)).toEqual([
       'disconnect',
       'addNode',
       'addNode',
       'connect',
+      'connect',
+      'setMeta',
       'connect',
     ]);
     const added = result1.ops.filter((o) => o.type === 'addNode');
@@ -351,8 +353,13 @@ describe('camera.snapshot tool', () => {
     expect(result1.ops).toEqual(result2.ops);
     // #387 C4 — the pair again: addNode (CameraData) + addNode (Object) + the `data` edge +
     // the scene.camera edge. No disconnect, because nothing was wired.
-    expect(result1.ops).toHaveLength(4);
-    expect(result1.ops.map((o) => o.type)).toEqual(['addNode', 'addNode', 'connect', 'connect']);
+    expect(result1.ops.map((o) => o.type)).toEqual([
+      'addNode',
+      'addNode',
+      'connect',
+      'connect',
+      'setMeta',
+    ]);
     expect(
       result1.ops
         .filter((o) => o.type === 'addNode')
@@ -694,8 +701,8 @@ describe('mesh.add tool', () => {
     expect(types2).toEqual(types1);
 
     // #365 Phase 5a (Slice 1b) — a Cube is the object↔data split: addNode(BoxData) +
-    // addNode(Object) + connect(data→object) + connect(object→scene.children) = 4 ops.
-    expect(result1.ops).toHaveLength(4);
+    // addNode(Object) + connect(data→object) + connect(object→scene.children) + its name (#1518).
+    expect(result1.ops).toHaveLength(5);
     expect(result1.ops[0].type).toBe('addNode');
     expect(result1.ops[1].type).toBe('addNode');
     // The same node types in both calls (data leaf then the posable Object).
@@ -717,21 +724,20 @@ describe('mesh.add tool', () => {
     expect(types2).toEqual(types1);
 
     // #386 C3 — a PointLight is now the Object+LightData split: LightData + Object + two
-    // connects (data→object.data, object→scene.lights). The director still selects the Object.
-    expect(result1.ops).toHaveLength(4);
+    // connects (data→object.data, object→scene.lights), and its name (#1518). The director still
+    // selects the Object.
+    expect(result1.ops).toHaveLength(5);
     expect((result1.ops[0] as { nodeType: string }).nodeType).toBe('LightData');
     expect((result1.ops[1] as { nodeType: string }).nodeType).toBe('Object');
     const sceneConnect = result1.ops.find((o) => o.type === 'connect' && o.to.socket === 'lights');
     expect(sceneConnect).toBeDefined();
   });
 
-  it('returns a single Op for cameras and empties', () => {
+  it('wires a Group into the scene and names it (#1518)', () => {
     const ctx: ToolContext = { dagState: buildSceneBaseline() };
 
     const result = meshAddTool.handler({ kind: 'Group', position: [0, 0, 0] }, ctx);
-    // Group/Transform/PerspectiveCamera have no auto-connect to scene
-    expect(result.ops).toHaveLength(1);
-    expect(result.ops[0].type).toBe('addNode');
+    expect(result.ops.map((o) => o.type)).toEqual(['addNode', 'connect', 'setMeta']);
   });
 
   it('throws when scene output is missing', () => {

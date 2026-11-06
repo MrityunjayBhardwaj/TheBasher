@@ -18,6 +18,7 @@ import { DEFAULT_CAMERA_FAR, DEFAULT_CAMERA_NEAR } from '../nodes/CameraData';
 import { placeBuiltin } from './builtinTemplates';
 import { linkIntoActiveCollection } from './collections';
 import { AIMABLE_LIGHT_KINDS, lightAimOps } from './lightAim';
+import { freshAimedNames, freshObjectName, objectBaseName, takenObjectNames } from './objectNames';
 
 /**
  * THE SCENE OBJECTS — everything the Add menu can put in the scene as a thing with a
@@ -124,7 +125,7 @@ export type ComputeKind = (typeof COMPUTE_KINDS)[number];
  * DERIVED FROM by other surfaces (the agent's `mesh.add` enum, `identify`'s primitive types),
  * so a wrong membership propagates into vocabularies rather than staying local.
  *
- * Added UNWIRED, like a camera or an empty: the director wires it to what it should shade.
+ * Added UNWIRED: the director wires it to what it should shade.
  */
 export const RESOURCE_KINDS = ['Material'] as const;
 export type ResourceKind = (typeof RESOURCE_KINDS)[number];
@@ -169,42 +170,37 @@ function newId(prefix: string): string {
  * when the scene aggregator is missing (a corrupt project — caller should
  * surface a friendly error rather than throw).
  *
- * For meshes: addNode(primitive) → connect to scene.children.
+ * Every scene object lands in the scene (#1518, checked by the census in #1822), and is named
+ * there, as Blender names an object when it adds it (`objectNames.ts`).
+ *
+ * For meshes and empties: addNode → connect to scene.children. A Group or Transform with no child
+ *   yet draws nothing, and it is in the outliner, ready to be dropped into.
  * For lights: addNode(light) → connect to scene.lights.
- * For cameras: addNode(camera) only — wiring scene.camera REPLACES the
- *   existing camera (single-cardinality), so the user explicitly opts in
- *   via View → Camera-from-View OR by manually rerouting in Pro mode.
- *   Add menu cameras are visible nodes in the graph, ready to be wired.
- * For empties: addNode only — Group/Transform need a child to be
- *   visible. The user wires them via drag-drop or the (future) connect
- *   tool.
+ * For cameras: addNode(camera) → connect to scene.children, NOT scene.camera. `scene.camera` is one
+ *   socket, and wiring it REPLACES the active camera: the user opts in with Set Active or
+ *   Camera-from-View. A camera Object in `children` draws nothing of its own; its frustum is the
+ *   camera band's (`SceneFromDAG`), as for a camera in a Group.
  */
-const CAMERA_KINDS: ReadonlySet<PrimitiveKind> = new Set([
-  'PerspectiveCamera',
-  'OrthographicCamera',
-]);
-
 export function buildAddPrimitiveOps(
   state: DagState,
   kind: PrimitiveKind,
   position: Vec3,
 ): AddResult | null {
-  const result = buildUnlinkedAddOps(state, kind, position);
+  const unnamed = buildUnlinkedAddOps(state, kind, position);
   const sceneId = state.outputs.scene?.node;
-  if (!result || !sceneId) return result;
+  if (!unnamed || !sceneId) return unnamed;
+  const result = withNames(state, unnamed);
   // #1453 — every object added joins the active collection, as Blender links every object it adds:
-  // what the scene's `children` or `lights` band holds, and a camera, which floats outside both.
-  // Each of those drawers honours a hidden collection (`SceneFromDAG`). A Material, a compute node
-  // or an unwired empty is not a scene object, and joins nothing.
-  const standsInScene =
-    CAMERA_KINDS.has(kind) ||
-    result.ops.some(
-      (op) =>
-        op.type === 'connect' &&
-        op.from.node === result.newNodeId &&
-        op.to.node === sceneId &&
-        (op.to.socket === 'children' || op.to.socket === 'lights'),
-    );
+  // what the scene's `children` or `lights` band holds. Each of those drawers honours a hidden
+  // collection (`SceneFromDAG`). A Material or a compute node is not a scene object, and joins
+  // nothing.
+  const standsInScene = result.ops.some(
+    (op) =>
+      op.type === 'connect' &&
+      op.from.node === result.newNodeId &&
+      op.to.node === sceneId &&
+      (op.to.socket === 'children' || op.to.socket === 'lights'),
+  );
   return standsInScene
     ? {
         ...result,
@@ -214,6 +210,47 @@ export function buildAddPrimitiveOps(
         ]),
       }
     : result;
+}
+
+/**
+ * #1518 — `result` with the object it adds named: the name its builder gave it, or the word for its
+ * kind, made free in the graph. A light's aim empty is named after that light, so the second spot's
+ * is `Spot.001.aim` and not a second `Spot.aim`.
+ */
+function withNames(state: DagState, result: AddResult): AddResult {
+  const added = (id: string | undefined) =>
+    result.ops.find(
+      (op): op is Extract<Op, { type: 'addNode' }> => op.type === 'addNode' && op.nodeId === id,
+    );
+  const object = added(result.newNodeId);
+  const data = added(result.dataNodeId);
+  const base =
+    object &&
+    objectBaseName(
+      { type: object.nodeType, params: object.params },
+      data && { type: data.nodeType, params: data.params },
+    );
+  if (!base) return result;
+  const given = result.ops.find(
+    (op): op is Extract<Op, { type: 'setMeta' }> =>
+      op.type === 'setMeta' && op.nodeId === result.newNodeId,
+  )?.name;
+  const taken = takenObjectNames(state);
+  const names = new Map<string, string>();
+  if (result.aimNodeId) {
+    const aimed = freshAimedNames(given ?? base, taken);
+    names.set(result.newNodeId, aimed.name);
+    names.set(result.aimNodeId, aimed.aim);
+  } else {
+    names.set(result.newNodeId, freshObjectName(given ?? base, taken));
+  }
+  const ops = result.ops.map((op) =>
+    op.type === 'setMeta' && names.has(op.nodeId) ? { ...op, name: names.get(op.nodeId) } : op,
+  );
+  if (given === undefined) {
+    ops.push({ type: 'setMeta', nodeId: result.newNodeId, name: names.get(result.newNodeId) });
+  }
+  return { ...result, ops };
 }
 
 function buildUnlinkedAddOps(
@@ -469,8 +506,8 @@ function buildUnlinkedAddOps(
   // fused types retire. `buildAddPrimitiveOps` is covered by a unit test naming both camera
   // kinds for exactly this reason; that test is the gate the grep cannot be.
   //
-  // Cameras stay FLOATING (no scene edge) — unchanged from the fused behaviour: the user
-  // wires a camera to `scene.camera` deliberately.
+  // A camera stands in `scene.children` (#1518), so it is in the scene like anything else Add
+  // makes. Not in `scene.camera`, which is one socket: the user makes it active deliberately.
   if (isCamera(kind)) {
     const dataId = newId('data');
     const objId = newId('cam');
@@ -498,6 +535,11 @@ function buildUnlinkedAddOps(
           from: { node: dataId, socket: 'out' },
           to: { node: objId, socket: 'data' },
         },
+        {
+          type: 'connect',
+          from: { node: objId, socket: 'out' },
+          to: { node: sceneRef.node, socket: 'children' },
+        },
       ],
       description: `Add ${humanLabel(kind)}`,
       newNodeId: objId,
@@ -524,10 +566,9 @@ function buildUnlinkedAddOps(
     params,
   });
 
-  // Wire into the scene where applicable. Meshes go under .children,
-  // lights under .lights. Cameras + empties stay floating (the user
-  // wires them deliberately).
-  if (kind === 'Null') {
+  // Into the scene: empties under .children, lights under .lights. Compute nodes and resources
+  // are not scene objects and stay unwired.
+  if (kind === 'Null' || kind === 'Group' || kind === 'Transform') {
     ops.push({
       type: 'connect',
       from: { node: id, socket: 'out' },
