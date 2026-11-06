@@ -62,6 +62,7 @@ import type {
   Vec3,
 } from '../nodes/types';
 import { useDagStore } from '../core/dag/store';
+import { paramWiredFrom } from './wiredParam';
 import { getNodeType } from '../core/dag/registry';
 import { nodeRefCandidates, type NodeRefKind } from './nodeRefCandidates';
 import {
@@ -423,6 +424,22 @@ function NumericField({
   }, [driven, dagState, nodeId, paramPath, frame, seconds, normalized, cache]);
   const readOnly = driven || (playing && evaluated);
   const display = driven ? (drivenValue ?? value) : scrub.isDragging ? scrub.previewValue : value;
+  // #1811 — a wire has taken this value over, so the stored number is not the one in use. As in
+  // Blender, a linked socket shows no value field, only its name and where it now comes from.
+  const wiredFrom = paramWiredFrom(dagState, nodeId, paramPath);
+  if (wiredFrom) {
+    return (
+      <div
+        className="flex items-center justify-between gap-2 px-3 py-1.5 text-[11px] text-fg/80"
+        data-testid={`inspector-wired-${nodeId}-${paramPath}`}
+      >
+        <span className="select-none font-mono text-fg/40">{label}</span>
+        <span className="truncate text-fg/50" title="Set by a wire: edit the source">
+          from {nodeDisplayName(dagState.nodes, wiredFrom)}
+        </span>
+      </div>
+    );
+  }
   return (
     <label className="flex items-center justify-between gap-2 px-3 py-1.5 text-[11px] text-fg/80">
       <span className="flex items-center gap-1">
