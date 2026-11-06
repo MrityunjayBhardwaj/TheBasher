@@ -31,6 +31,7 @@ import { relationsOf } from '../core/dag/idRefSweep';
 import { getNodeType } from '../core/dag/registry';
 import { inputAvailable, outputAvailable } from '../core/dag/socketAvailability';
 import { hiddenNodes } from './collections';
+import { childIdsOf } from './sceneHierarchy';
 import { nodeDisplayName } from './sceneTreeWalk';
 import { timeDependentNodes } from './timeDependence';
 
@@ -104,13 +105,27 @@ function drawnNodes(
     }
     return seen;
   };
+  /** What `id` holds, however deep. Today every child is also wired into its holder, so this
+   *  adds nothing to `upstream`; once a child takes its parent as an input (#1824), it is how a
+   *  group still finds what it holds. */
+  const descendants = (id: NodeId): Set<NodeId> => {
+    const seen = new Set<NodeId>();
+    const stack = [...childIdsOf(state, id)];
+    while (stack.length) {
+      const x = stack.pop()!;
+      if (seen.has(x)) continue;
+      seen.add(x);
+      stack.push(...childIdsOf(state, x));
+    }
+    return seen;
+  };
   const drawable = (id: NodeId) =>
     !hidden.has(id) && bindingRefs(nodes[id]?.inputs?.data).length > 0;
 
   const keep = new Set<NodeId>(Object.keys(nodes).filter((id) => !hidden.has(id)));
   for (const id of keep) {
-    if (bindingRefs(nodes[id].inputs?.children).length === 0) continue;
-    const sub = [...upstream(id)];
+    if (childIdsOf(state, id).length === 0) continue;
+    const sub = [...upstream(id), ...descendants(id)];
     if (sub.some((x) => hidden.has(x)) && !sub.some(drawable)) keep.delete(id);
   }
 
