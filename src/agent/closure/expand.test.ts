@@ -306,6 +306,45 @@ describe('expandClosure', () => {
   });
 });
 
+describe('#1824 — a child hung by its parent input', () => {
+  // grp in the scene; box hangs from grp by its parent input (grp.world → box.parent).
+  function hung(): DagState {
+    let s = buildBaseline();
+    s = applyOp(s, { type: 'addNode', nodeId: 'grp', nodeType: 'Group', params: {} }).next;
+    s = applyOp(s, {
+      type: 'connect',
+      from: { node: 'grp', socket: 'out' },
+      to: { node: 'scene', socket: 'children' },
+    }).next;
+    s = applyOp(s, {
+      type: 'disconnect',
+      from: { node: 'box', socket: 'out' },
+      to: { node: 'scene', socket: 'children' },
+    }).next;
+    return applyOp(s, {
+      type: 'connect',
+      from: { node: 'grp', socket: 'world' },
+      to: { node: 'box', socket: 'parent' },
+    }).next;
+  }
+  const reach = (s: DagState, root: string, edge: 'parent' | 'children') =>
+    [
+      ...expandClosure({ rootSelectors: [root], followedEdges: [edge], maxDepth: 4 }, s).nodes,
+    ].sort();
+
+  it("'parent' from the child reaches its group and up; the group's 'parent' does not reach it", () => {
+    const s = hung();
+    expect(reach(s, 'box', 'parent')).toEqual(['box', 'grp', 'render', 'scene']);
+    expect(reach(s, 'grp', 'parent')).not.toContain('box');
+  });
+
+  it("'children' from the group reaches the child; from the child it does not climb to the group", () => {
+    const s = hung();
+    expect(reach(s, 'grp', 'children')).toContain('box');
+    expect(reach(s, 'box', 'children')).not.toContain('grp');
+  });
+});
+
 describe('opTargetNodeId', () => {
   it('addNode → nodeId', () => {
     const op: Op = {
