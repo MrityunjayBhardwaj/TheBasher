@@ -88,8 +88,8 @@ describe('node schema payload (#1007)', () => {
       { socket: 'children', type: 'SceneObject', cardinality: 'list' },
       // #1203 — and a third, what poses an armature Object; since #1224 the pose wire, `pose`.
       { socket: 'pose', type: 'PosedSkeleton', cardinality: 'single' },
-      // #1810 — its `parent` input is NOT offered: nothing draws from it until files are
-      // converted to parent inputs (dag.exec refuses the wire, tools.test.ts).
+      // #1824 — and its `parent` input, where it names the object it hangs from.
+      { socket: 'parent', type: 'Matrix4', cardinality: 'single' },
     ]);
     expect(obj.outputs).toEqual([
       { socket: 'out', type: 'SceneObject', cardinality: 'single' },
@@ -115,10 +115,7 @@ describe('node schema payload (#1007)', () => {
   it('agrees with the registry on every socket, for every type', () => {
     for (const s of schemas) {
       const def = getNodeType(s.type)!;
-      // Every input but an object's `parent` (#1810: not offered until something draws from it).
-      expect(s.inputs.map((i) => i.socket)).toEqual(
-        Object.keys(def.inputs).filter((k) => def.inputs[k].world !== true),
-      );
+      expect(s.inputs.map((i) => i.socket)).toEqual(Object.keys(def.inputs));
       expect(s.outputs.map((o) => o.socket)).toEqual(Object.keys(def.outputs));
       for (const i of s.inputs) {
         const d = def.inputs[i.socket];

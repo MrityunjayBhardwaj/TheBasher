@@ -16,6 +16,7 @@ import {
 import { registerAllNodes } from '../../nodes/registerAll';
 import { SCENE_OBJECT_KINDS } from '../../app/addPrimitives';
 import { makeSplitCamera } from '../../test-utils/splitCamera';
+import { worldParentOf } from '../../core/dag/worldChildren';
 import { makeSplitCube } from '../../test-utils/splitCube';
 import { MemoryStorage } from '../../core/storage/MemoryStorage';
 
@@ -43,7 +44,7 @@ import {
   dagInspectTool,
   dagExecTool,
 } from './index';
-import type { ToolContext } from './types';
+import type { ToolContext, ToolResult } from './types';
 
 beforeEach(() => {
   __resetRegistryForTests();
@@ -807,9 +808,10 @@ describe('dag.exec tool', () => {
     expect(result.text).toContain('add test cube');
   });
 
-  // #1810 — "parent B under A" wired as A.world → B.parent would succeed and move nothing: no
-  // viewport, render or world read draws from the parent input until files are converted.
-  it("refuses a wire into an object's parent input, naming the wiring that does parent", () => {
+  // #1824 — "parent B under A" is A.world → B.parent: the batch is proposed as written, and once
+  // applied B hangs from A. The old way, B wired into A's list, is refused by the op itself with
+  // the wiring that parents, so a model that tries it learns the right one in the same turn.
+  it("proposes a wire into an object's parent input; the list wire is refused naming it", () => {
     let s = emptyDagState();
     s = applyOp(s, { type: 'addNode', nodeId: 'a', nodeType: 'Group', params: {} }).next;
     s = makeSplitCube(s, { objectId: 'b' }).state;
@@ -826,25 +828,21 @@ describe('dag.exec tool', () => {
         to: { node: 'n', socket: 'parent' },
       },
     ];
-    const result = dagExecTool.handler({ description: 'parent b under a', ops }, { dagState: s });
-    expect(result.ops).toEqual([]);
-    expect(result.text).toContain('a → b.parent, b → n.parent');
-    expect(result.text).toContain('"children"');
-    // CONTROL: the drawn way to parent, and reading a world, both pass.
-    const ok: import('../../core/dag/types').Op[] = [
-      {
+    const result = dagExecTool.handler(
+      { description: 'parent b under a', ops: ops as never },
+      { dagState: s },
+    ) as ToolResult;
+    expect(result.ops).toEqual(ops);
+    const applied = ops.reduce((st, op) => applyOp(st, op).next, s);
+    expect(worldParentOf(applied, 'b')).toBe('a');
+    expect(worldParentOf(applied, 'n')).toBe('b');
+    expect(() =>
+      applyOp(s, {
         type: 'connect',
         from: { node: 'b', socket: 'out' },
         to: { node: 'a', socket: 'children' },
-      },
-      { type: 'addNode', nodeId: 'sep', nodeType: 'SeparateTransform', params: {} },
-      {
-        type: 'connect',
-        from: { node: 'a', socket: 'world' },
-        to: { node: 'sep', socket: 'transform' },
-      },
-    ];
-    expect(dagExecTool.handler({ description: 'ok', ops: ok }, { dagState: s }).ops).toEqual(ok);
+      }),
+    ).toThrow(/connect "a"\.world to "b"\.parent/);
   });
 
   it('rejects empty ops array via zod', () => {
