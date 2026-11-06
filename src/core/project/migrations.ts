@@ -52,6 +52,10 @@ import type { Quat, RotationModeFields } from '../../nodes/types';
 
 type FormatMigration = (raw: unknown) => unknown;
 
+/** #1824 — the format version the children-to-parent-input conversion produces. One constant, as
+ *  open PRs number their own conversions from the same base and one of them may land first. */
+export const PARENT_INPUTS_FORMAT = 28;
+
 /** Ladder of project-format migrations keyed by source version. */
 const formatMigrations: Record<number, FormatMigration> = {
   // v1 → v2 (#199): retire the AnimationLayer wrapper graph-wide.
@@ -169,6 +173,10 @@ const formatMigrations: Record<number, FormatMigration> = {
   // aims (at the origin at rotation 0, down its −Y otherwise) are written into its rotation, or
   // into a Track-To when its position moves.
   26: migrateLightAimToTurn,
+  // v27 → v28 (#1824): a child names its parent. Each Object, Group or Null in a Group's or an
+  // Object's `children` list moves onto its own parent input, reading that holder's world; the
+  // holder draws it from there. Keyed off one constant so a renumber is one line.
+  [PARENT_INPUTS_FORMAT - 1]: migrateChildrenToParentInputs,
 };
 
 // ── v1 → v2: AnimationLayer retirement (#199) ──────────────────────────────
@@ -2853,4 +2861,84 @@ export function migrateLightAimToTurn(raw: unknown): unknown {
     );
   }
   return { ...proj, state: { ...proj.state, nodes: out }, formatVersion: 27 };
+}
+
+// ── v27 → v28: a child names its parent (#1824) ─────────────────────────────────────────────
+//
+// Until v28 a Group or an Object held its children in its own `children` list. From v28 a child
+// that can name a parent does: its `parent` input reads the parent's `world`, and the parent draws
+// every node whose parent input reads it (`withGatheredChildren`). What each file draws is kept:
+//
+//   - A child is moved only when it can take a parent input. The types are listed as they stood
+//     at v28, not asked of the registry, so a later node type cannot change what this pass did.
+//     Any other child (a glTF asset, a Transform, a scatter) stays wired in the list.
+//   - The scene's own lists are not touched: the scene holds the top of the tree by wire until it
+//     draws its collections (#1823).
+//   - A node in two lists was drawn twice. The first holder in the table becomes its parent and
+//     the other wires stay, so it is still drawn in both places; said in the console.
+//   - A child already reading some parent's world in its parent input, and also in a list, was
+//     drawn under the list's holder. The list wins, since that is where it was seen; said too.
+const HOLDS_CHILDREN_AT_V28: ReadonlySet<string> = new Set(['Group', 'Object']);
+const TAKES_A_PARENT_AT_V28: ReadonlySet<string> = new Set(['Group', 'Object', 'Null']);
+
+export function migrateChildrenToParentInputs(raw: unknown): unknown {
+  const proj = raw as { formatVersion?: number; state?: { nodes?: Record<string, RawNode> } };
+  const nodes = proj.state?.nodes;
+  if (!nodes) return { ...proj, formatVersion: PARENT_INPUTS_FORMAT };
+  const out: Record<string, RawNode> = { ...nodes };
+  const parentOf = new Map<string, string>();
+  const twice: string[] = [];
+  const repointed: string[] = [];
+  for (const [holderId, holder] of Object.entries(nodes)) {
+    if (!HOLDS_CHILDREN_AT_V28.has(holder?.type ?? '')) continue;
+    const list = holder.inputs?.children;
+    if (!Array.isArray(list)) continue;
+    const kept: RawRef[] = [];
+    for (const ref of list) {
+      const childId = ref?.node;
+      const child = childId ? nodes[childId] : undefined;
+      const movable =
+        !!childId &&
+        ref.socket === 'out' &&
+        TAKES_A_PARENT_AT_V28.has(child?.type ?? '') &&
+        childId !== holderId;
+      if (!movable) {
+        kept.push(ref);
+        continue;
+      }
+      if (parentOf.has(childId)) {
+        twice.push(childId);
+        kept.push(ref);
+        continue;
+      }
+      parentOf.set(childId, holderId);
+    }
+    if (kept.length === list.length) continue;
+    const inputs = { ...(out[holderId].inputs ?? {}) };
+    if (kept.length > 0) inputs.children = kept;
+    else delete inputs.children;
+    out[holderId] = { ...out[holderId], inputs };
+  }
+  for (const [childId, holderId] of parentOf) {
+    const child = out[childId];
+    const prior = child.inputs?.parent;
+    const priorNode = !Array.isArray(prior) ? prior?.node : undefined;
+    if (priorNode && priorNode !== holderId) repointed.push(childId);
+    out[childId] = {
+      ...child,
+      inputs: { ...(child.inputs ?? {}), parent: { node: holderId, socket: 'world' } },
+    };
+  }
+  if (twice.length > 0 || repointed.length > 0) {
+    console.warn(
+      `[migrateChildrenToParentInputs] ${parentOf.size} child(ren) now name their parent (#1824).` +
+        (twice.length > 0
+          ? ` Held by more than one parent, so still wired into the others as before: ${[...new Set(twice)].join(', ')}.`
+          : '') +
+        (repointed.length > 0
+          ? ` Their parent input read another object, and now reads the one that drew them: ${repointed.join(', ')}.`
+          : ''),
+    );
+  }
+  return { ...proj, state: { ...proj.state, nodes: out }, formatVersion: PARENT_INPUTS_FORMAT };
 }
