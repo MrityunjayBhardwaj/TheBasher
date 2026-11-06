@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { cameraRootDropOps, dropIntent, dropZoneAt, reorderIndex } from './treeDropIntent';
+import {
+  cameraRootDropOps,
+  dropIntent,
+  dropZoneAt,
+  landsOnItself,
+  reorderIndex,
+} from './treeDropIntent';
 
 describe('dropZoneAt — the edges are the top and bottom quarter', () => {
   it.each([
@@ -82,5 +88,20 @@ describe('#1518 — a camera dropped on the Scene root stays in the scene', () =
     expect(cameraRootDropOps(row('scene', 'children'), root)).toBeNull();
     expect(cameraRootDropOps(row('scene', 'camera'), root)).toBeNull();
     expect(cameraRootDropOps(row('g', 'children'), group)).toBeNull();
+  });
+});
+
+describe('landsOnItself — by node, since a node has a row per collection holding it (#1505)', () => {
+  const src = { nodeId: 'O' };
+  it.each([
+    ['its own row', 'O', 'S/collection/A/O', true],
+    ['its copy under another collection', 'O', 'S/collection/B/O', true],
+    ['a child under its own row', 'K', 'S/collection/A/O/K', true],
+    ['a child under its other copy', 'K', 'S/collection/B/O/K', true],
+    ['a sibling', 'P', 'S/collection/A/P', false],
+    ['a node whose id starts with its id', 'O2', 'S/collection/A/O2', false],
+    ['a child of a node whose id starts with its id', 'K', 'S/collection/A/O2/K', false],
+  ])('%s', (_name, nodeId, key, expected) => {
+    expect(landsOnItself(src, { nodeId, key })).toBe(expected);
   });
 });

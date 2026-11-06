@@ -15,9 +15,10 @@ import { buildSceneTreeRows } from './sceneTreeWalk';
  *  container itself is not a strip target). Cameras included: since #480 the camera
  *  pose folds the strips placed on it like every other node's params. Pure. */
 export function stripTargetRows(state: DagState): { id: string; label: string }[] {
-  return buildSceneTreeRows(state)
-    .filter((r) => r.depth > 0)
-    .map((r) => ({ id: r.nodeId, label: r.display }));
+  // One target per node: a node has a row per collection holding it (#1505).
+  const byNode = new Map<string, string>();
+  for (const r of buildSceneTreeRows(state)) if (r.depth > 0) byNode.set(r.nodeId, r.display);
+  return [...byNode].map(([id, label]) => ({ id, label }));
 }
 
 /** The Actions a strip may place: every `Action` node, by name. The lane model and the

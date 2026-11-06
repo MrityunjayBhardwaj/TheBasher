@@ -43,6 +43,7 @@ import {
   cameraRootDropOps,
   dropIntent,
   dropZoneAt,
+  landsOnItself,
   reorderIndex,
   type DropIntent,
   type DropZone,
@@ -620,7 +621,7 @@ export function SceneTree({ filter = '' }: SceneTreeProps) {
     if (!target) return false;
     if (target.node === srcRow.parent.nodeId && target.socket === srcRow.parent.socket)
       return false;
-    if (dstRow.key === srcRow.key || dstRow.key.startsWith(`${srcRow.key}/`)) return false;
+    if (landsOnItself(srcRow, dstRow)) return false;
     return true;
   }
 
@@ -634,7 +635,7 @@ export function SceneTree({ filter = '' }: SceneTreeProps) {
   //              `Scene.children` (`cameraRootDropOps`), still in the scene + active if it was.
   function cameraReparent(srcRow: TreeRow, dstRow: TreeRow): 'into' | 'root' | null {
     if (!isCameraNode(state, srcRow.nodeId)) return null; // possession, not the type's name (#387)
-    if (dstRow.key === srcRow.key) return null;
+    if (landsOnItself(srcRow, dstRow)) return null;
     if (holdsChildren(dstRow)) {
       return dstRow.nodeId === srcRow.parent?.nodeId ? null : 'into'; // not its current parent
     }
