@@ -45,6 +45,7 @@
 //      src/app/operatorChain.ts (`chainSocketOf` — the DIFFERENT relation); issues
 //      #621, #610, #396.
 
+import { gatheringSocketOf, worldChildrenOf } from '../core/dag/worldChildren';
 import { chainSocketOfType } from './operatorChain';
 
 /** As much of a node as the predicates here read — structural so `nodeChannels`, which
@@ -185,6 +186,18 @@ interface HierarchyIndex {
 }
 
 const EMPTY: readonly string[] = Object.freeze([]);
+
+/**
+ * What `node` holds: its wired children, then (for a node that gathers, #1824) the nodes whose
+ * parent input reads its world, as the evaluator fills its gathering input. Until saved files are
+ * converted both can be present; a child named by both counts once.
+ */
+function heldChildIds(graph: HierarchyGraphLike, id: string, node: HierarchyNodeLike): string[] {
+  const wired = hierarchyChildIds(node);
+  if (!gatheringSocketOf(node.type)) return wired;
+  const held = new Set(wired);
+  return [...wired, ...worldChildrenOf(graph, id).filter((c) => !held.has(c))];
+}
 const indexMemo = new WeakMap<object, HierarchyIndex>();
 
 function indexOf(graph: HierarchyGraphLike): HierarchyIndex {
@@ -194,7 +207,7 @@ function indexOf(graph: HierarchyGraphLike): HierarchyIndex {
   const children = new Map<string, string[]>();
   const parents = new Map<string, string[]>();
   for (const [parent, node] of Object.entries(graph.nodes)) {
-    for (const child of hierarchyChildIds(node)) {
+    for (const child of heldChildIds(graph, parent, node)) {
       edges.push({ parent, child });
       (children.get(parent) ?? children.set(parent, []).get(parent)!).push(child);
       (parents.get(child) ?? parents.set(child, []).get(child)!).push(parent);

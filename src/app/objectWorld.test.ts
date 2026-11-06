@@ -18,7 +18,9 @@ import { buildNativeGltfImportOps } from '../core/import/nativeGltfImport';
 import { registerAllNodes } from '../nodes/registerAll';
 import { makeSplitCamera } from '../test-utils/splitCamera';
 import { makeSplitCube } from '../test-utils/splitCube';
-import { resolveWorldTransform } from './resolveWorldTransform';
+import { childEdges, resolveWorldTransform } from './resolveWorldTransform';
+import { childIdsOf, parentIdOf } from './sceneHierarchy';
+import type { SceneChild } from '../nodes/types';
 import { useTransientEditStore } from './stores/transientEditStore';
 import { clockedCtx } from './subjectClock';
 
@@ -208,23 +210,66 @@ describe('#1810 — an object parented to a bone hangs from the bone on the wire
   });
 });
 
-describe('#1810 — parenting has two sources until files are converted (#1824)', () => {
-  it('the world follows the parent input, never the `children` wire', () => {
-    // `box` still hangs in grp's children (as drawn today) and takes `top`'s world as its parent.
+describe('#1824 — a parent draws what hangs from it', () => {
+  // The parent gathers every node whose parent input reads its world (`gathersChildren`), so the
+  // graph wired the new way draws exactly what the graph wired today draws.
+  const sceneOf = (s: DagState, t: number) =>
+    evaluate(s, s.outputs.scene!.node, { ctx: clockedCtx(t, t) }).value;
+
+  it('the scene evaluates to the same value, wired either way', () => {
+    const base = rig();
+    const wired = rewired(base);
+    expect(wired.nodes.grp.inputs.children ?? []).toEqual([]);
+    for (const t of [0, 1]) expect(sceneOf(wired, t)).toEqual(sceneOf(base, t));
+  });
+
+  it('the drawn world, the world on the wire and the tree agree, wired either way', () => {
+    const base = rig();
+    const wired = rewired(base);
+    for (const t of TIMES)
+      for (const id of OBJECTS) {
+        expect(diff(todayOf(wired, id, t), todayOf(base, id, t)), id).toBeLessThan(1e-12);
+        expect(diff(worldOf(wired, id, t), todayOf(wired, id, t)), id).toBeLessThan(1e-12);
+      }
+    for (const id of OBJECTS) {
+      expect(childIdsOf(wired, id), id).toEqual(childIdsOf(base, id));
+      expect(parentIdOf(wired, id), id).toBe(parentIdOf(base, id));
+      const value = (s: DagState) => evaluate(s, id, { ctx: clockedCtx(1, 1) }).value as SceneChild;
+      expect(
+        childEdges(wired, id, value(wired)).map((e) => e.id),
+        id,
+      ).toEqual(childEdges(base, id, value(base)).map((e) => e.id));
+    }
+  });
+
+  it('CONTROL: without the gathering, the rewired children vanish from the scene', () => {
+    const wired = rewired(rig());
+    const cut = run(wired, {
+      type: 'disconnect',
+      from: { node: 'grp', socket: 'world' },
+      to: { node: 'box', socket: 'parent' },
+    });
+    expect(childIdsOf(cut, 'grp')).not.toContain('box');
+    expect(resolveWorldTransform(cut, 'box', clockedCtx(1, 1))).toBeNull();
+    expect(sceneOf(cut, 1)).not.toEqual(sceneOf(wired, 1));
+  });
+
+  it('a moved child follows its new parent, and every reader says so', () => {
     let s = rig();
+    s = run(s, {
+      type: 'disconnect',
+      from: { node: 'box', socket: 'out' },
+      to: { node: 'grp', socket: 'children' },
+    });
     s = run(s, {
       type: 'connect',
       from: { node: 'top', socket: 'world' },
       to: { node: 'box', socket: 'parent' },
     });
-    const viaTop = worldOf(s, 'box', 1);
-    const topWorld = worldOf(s, 'top', 1);
-    const own = worldOf(rig(), 'box', 1); // no parent input: its own transform
-    // world(box) = world(top) · own(box), whatever holds it in `children`.
-    const product = multiply(topWorld, own);
-    expect(diff(viaTop, product)).toBeLessThan(1e-12);
-    // …and `resolveWorldTransform`, which reads the `children` wires, still says grp.
-    expect(diff(viaTop, todayOf(s, 'box', 1))).toBeGreaterThan(0.1);
+    const product = multiply(worldOf(s, 'top', 1), worldOf(rig(), 'box', 1));
+    expect(diff(worldOf(s, 'box', 1), product)).toBeLessThan(1e-12);
+    expect(diff(todayOf(s, 'box', 1), product)).toBeLessThan(1e-12);
+    expect(parentIdOf(s, 'box')).toBe('top');
   });
 
   it('with no parent input, an object hung in `children` reads its own transform as its world', () => {
@@ -234,15 +279,55 @@ describe('#1810 — parenting has two sources until files are converted (#1824)'
     expect(own[12]).toBeCloseTo(1.5, 12); // the key, halfway from 0 to 3
   });
 
-  it('wiring the same relation both ways is a loop, and connect refuses it', () => {
-    const s = rig();
+  it('a child has one parent: a parent input is refused while a children list holds it', () => {
     expect(() =>
-      run(s, {
+      run(rig(), {
         type: 'connect',
-        from: { node: 'grp', socket: 'world' },
+        from: { node: 'top', socket: 'world' },
         to: { node: 'box', socket: 'parent' },
       }),
+    ).toThrow(
+      'connect: "box" already hangs from "grp" through its children list; a child has one parent',
+    );
+  });
+
+  it('a child has one parent: a children list refuses a node that has a parent input', () => {
+    const wired = rewired(rig());
+    expect(() =>
+      run(wired, {
+        type: 'connect',
+        from: { node: 'box', socket: 'out' },
+        to: { node: 'holder', socket: 'children' },
+      }),
+    ).toThrow(
+      'connect: "box" already hangs from "grp" through its parent input; a child has one parent',
+    );
+  });
+
+  it('a value that reads its own parent is a loop; a world read by a sibling is not', () => {
+    const wired = rewired(rig());
+    // grp gathers box, so box's value reading grp's value would read itself.
+    expect(() =>
+      run(wired, {
+        type: 'connect',
+        from: { node: 'grp', socket: 'out' },
+        to: { node: 'box', socket: 'children' },
+      }),
     ).toThrow('connect: would create a cycle (grp → box)');
+    // A world is not a value: wiring one child's world into a sibling's parent input is fine.
+    const moved = run(
+      run(wired, {
+        type: 'disconnect',
+        from: { node: 'grp', socket: 'world' },
+        to: { node: 'cam', socket: 'parent' },
+      }),
+      {
+        type: 'connect',
+        from: { node: 'box', socket: 'world' },
+        to: { node: 'cam', socket: 'parent' },
+      },
+    );
+    expect(parentIdOf(moved, 'cam')).toBe('box');
   });
 });
 

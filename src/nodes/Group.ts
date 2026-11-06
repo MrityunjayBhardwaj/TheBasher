@@ -48,7 +48,7 @@ export const GroupNode: NodeDefinition<GroupParams, GroupValue> = {
   cost: 'cheap',
   paramSchema: GroupParams,
   inputs: {
-    children: { type: 'SceneObject', cardinality: 'list', owns: 'always' },
+    children: { type: 'SceneObject', cardinality: 'list', owns: 'always', gathersChildren: true },
     // #1810 — the world this object hangs from, and its own world: the parent's times its own
     // transform as drawn. The parent input feeds the world output only (`objectWorld.ts`).
     parent: { type: 'Matrix4', cardinality: 'single', world: true },

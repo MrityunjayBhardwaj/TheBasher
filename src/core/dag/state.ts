@@ -6,7 +6,9 @@
 //
 // REF: THESIS.md §50.
 
+import { getNodeType } from './registry';
 import type { Node, NodeId, NodeRef } from './types';
+import { gatheringSocketOf, worldChildrenOf } from './worldChildren';
 
 /**
  * The graph WITHOUT any claim about what its params mean — ids, types, edges, outputs.
@@ -194,6 +196,11 @@ export function wouldCreateCycle(
           if (!visited.has(ref.node)) stack.push(ref.node);
         }
       }
+      // #1824 — a parent's value gathers its children's (see `gathersChildren`), so it depends
+      // on them as if they were wired in, as a `children` wire made it before.
+      if (gatheringSocketOf(node.type)) {
+        for (const child of worldChildrenOf(state, id)) if (!visited.has(child)) stack.push(child);
+      }
     }
     // #291 — also traverse driver/overlay dependencies for this node.
     for (const dep of paramDeps?.[id] ?? []) {
@@ -201,4 +208,85 @@ export function wouldCreateCycle(
     }
   }
   return false;
+}
+
+/**
+ * #1824 — {@link wouldCreateCycle} for one new wire, telling a node's world from its value.
+ *
+ * A child and its parent depend on each other at the level of nodes: the child's world reads the
+ * parent's world, and the parent's value gathers the child's value. Asked per node, as
+ * `wouldCreateCycle` asks, every parent wire would close a loop and be refused. Asked per output,
+ * there is none: the parent's world never reads the child. So each node is two points here, its
+ * value (every output but `world`) and its world:
+ *
+ *   - its value depends on what its inputs read (the producer's world when the wire leaves a
+ *     world output), on the children it gathers, and on its param dependencies;
+ *   - its world depends on what its parent input reads (that producer's world, and its value,
+ *     which a bone parent reads), on its own value, and on its param dependencies.
+ *
+ * The wire `from → to` is a loop when what it feeds already reaches back to what it reads.
+ */
+export function wouldCreateCycleAt(
+  state: DagState,
+  from: NodeRef,
+  to: { readonly node: NodeId; readonly socket: string },
+  paramDeps?: Record<NodeId, NodeId[]>,
+): boolean {
+  type Point = `${'v' | 'w'}:${NodeId}`;
+  const isWorldOutput = (ref: NodeRef): boolean => {
+    const producer = state.nodes[ref.node];
+    return producer ? getNodeType(producer.type)?.outputs[ref.socket]?.world === true : false;
+  };
+  const pointOf = (ref: NodeRef): Point => `${isWorldOutput(ref) ? 'w' : 'v'}:${ref.node}`;
+  const upstream = (point: Point): Point[] => {
+    const id = point.slice(2);
+    const node = state.nodes[id];
+    const out: Point[] = [];
+    for (const dep of paramDeps?.[id] ?? []) out.push(`v:${dep}`, `w:${dep}`);
+    if (!node) return out;
+    const def = getNodeType(node.type);
+    const worldPoint = point.startsWith('w:');
+    if (worldPoint) out.push(`v:${id}`);
+    for (const [socket, binding] of Object.entries(node.inputs)) {
+      const parentInput = def?.inputs[socket]?.world === true;
+      if (parentInput !== worldPoint) continue;
+      for (const ref of Array.isArray(binding) ? binding : [binding]) {
+        if (parentInput) out.push(`w:${ref.node}`, `v:${ref.node}`);
+        else out.push(pointOf(ref));
+      }
+    }
+    if (!worldPoint && gatheringSocketOf(node.type)) {
+      for (const child of worldChildrenOf(state, id)) out.push(`v:${child}`);
+    }
+    return out;
+  };
+  const reaches = (start: readonly Point[], goal: Point): boolean => {
+    const stack = [...start];
+    const visited = new Set<Point>();
+    while (stack.length) {
+      const point = stack.pop()!;
+      if (point === goal) return true;
+      if (visited.has(point)) continue;
+      visited.add(point);
+      stack.push(...upstream(point));
+    }
+    return false;
+  };
+  const consumer = state.nodes[to.node];
+  const parentInput = consumer
+    ? getNodeType(consumer.type)?.inputs[to.socket]?.world === true
+    : false;
+  if (!parentInput) {
+    // The consumer's value would read `from`: a loop if `from` already reads that value.
+    return reaches([pointOf(from)], `v:${to.node}`);
+  }
+  // The consumer's world would read the parent's world and value ...
+  if (reaches([`w:${from.node}`, `v:${from.node}`], `w:${to.node}`)) return true;
+  // ... and, when the wire leaves a world output, a gathering parent's value would read the
+  // consumer's value.
+  const gathers =
+    isWorldOutput(from) &&
+    state.nodes[from.node] !== undefined &&
+    gatheringSocketOf(state.nodes[from.node].type) !== null;
+  return gathers && reaches([`v:${to.node}`], `v:${from.node}`);
 }

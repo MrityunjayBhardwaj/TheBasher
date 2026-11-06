@@ -104,7 +104,7 @@ export const ObjectNode: NodeDefinition<ObjectParams, ObjectValue> = {
   // representation. `sceneHierarchy` is what makes the walk treat it as a parent.
   inputs: {
     data: { type: ['ObjectData', 'Skeleton'], cardinality: 'single', owns: 'always' },
-    children: { type: 'SceneObject', cardinality: 'list', owns: 'always' },
+    children: { type: 'SceneObject', cardinality: 'list', owns: 'always', gathersChildren: true },
     // #1224 — the pose that poses this Object's skeleton: the end of the pose wire, as Houdini's
     // Joint Deform takes an animated pose and a Blender armature Object carries its pose. A
     // deform, the bone draw and a bone-parented Object read it through this Object (#393). It

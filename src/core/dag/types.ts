@@ -319,6 +319,14 @@ export interface InputDescriptor {
    * object's value is its own transform, and its world is that value placed under the parent.
    */
   world?: true;
+  /**
+   * #1824 — a list input that also GATHERS this node's children: every node whose parent input
+   * (an input marked {@link InputDescriptor.world}) reads this node's world output arrives here
+   * after the wires, in node-table order, as if wired. So a parent draws what hangs from it
+   * without holding a wire to each child, as a Blender object's children point at it and not
+   * the other way round. Read through `worldChildrenOf` (`core/dag/worldChildren.ts`).
+   */
+  gathersChildren?: true;
 }
 
 /**

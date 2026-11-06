@@ -17,7 +17,8 @@ import { followableName, ownName } from './nodeName';
 import { passRoleOf } from './passRole';
 import { getNodeType, requireNodeType } from './registry';
 import type { DagState } from './state';
-import { getNode, hasNode, wouldCreateCycle } from './state';
+import { getNode, hasNode, wouldCreateCycleAt } from './state';
+import { gatheringSocketOf, worldParentOf } from './worldChildren';
 import {
   carrySubnetworkOwners,
   newStatefulLeafRead,
@@ -641,6 +642,47 @@ function requireAvailable(
   );
 }
 
+/**
+ * #1824 — a child has one parent. Until saved files are converted, a child can hang from a parent
+ * two ways: wired into a gathering `children` list, or through its own parent input. Either alone
+ * is a parent; both at once would name two (or the same one twice), so the second is refused.
+ */
+function requireOneParent(
+  state: DagState,
+  op: Extract<Op, { type: 'connect' }>,
+  inputDesc: InputDescriptor,
+): void {
+  const holderOf = (childId: NodeId): NodeId | null => {
+    for (const [id, node] of Object.entries(state.nodes)) {
+      const socket = gatheringSocketOf(node.type);
+      const binding = socket ? node.inputs[socket] : undefined;
+      const refs = Array.isArray(binding) ? binding : binding ? [binding] : [];
+      if (refs.some((r) => r.node === childId)) return id;
+    }
+    return null;
+  };
+  if (inputDesc.world === true) {
+    const holder = holderOf(op.to.node);
+    if (holder) {
+      throw new OpError(
+        `connect: "${op.to.node}" already hangs from "${holder}" through its children list; ` +
+          'a child has one parent',
+        op,
+      );
+    }
+    return;
+  }
+  if (inputDesc.gathersChildren !== true) return;
+  const parent = worldParentOf(state, op.from.node);
+  if (parent) {
+    throw new OpError(
+      `connect: "${op.from.node}" already hangs from "${parent}" through its parent input; ` +
+        'a child has one parent',
+      op,
+    );
+  }
+}
+
 function applyConnect(
   state: DagState,
   op: Extract<Op, { type: 'connect' }>,
@@ -660,7 +702,8 @@ function applyConnect(
   // state Blender keeps too — the evaluator ignores it until the mode brings the socket back.)
   requireAvailable(op, consumer, op.to.socket, 'input');
   requireAvailable(op, getNode(state, op.from.node), op.from.socket, 'output');
-  if (wouldCreateCycle(state, op.from.node, op.to.node)) {
+  requireOneParent(state, op, inputDesc);
+  if (wouldCreateCycleAt(state, op.from, op.to)) {
     throw new OpError(`connect: would create a cycle (${op.from.node} → ${op.to.node})`, op);
   }
 

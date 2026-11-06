@@ -85,6 +85,7 @@ import { resolveRigLightSources } from './resolveRigLightSources';
 import { quaternionFromEulerDeg, withResolvedRotation } from './resolvedRotation';
 import type { Quat, RotationModeFields } from '../nodes/types';
 import { hierarchySocketForKind } from './sceneHierarchy';
+import { withGatheredChildren } from '../core/dag/worldChildren';
 import { sceneIndexOf } from './sceneIndex';
 import { getNodeType } from '../core/dag/registry';
 import { conversionsInto } from '../core/dag/socketConversion';
@@ -231,7 +232,9 @@ export function childEdges(
       // through `hierarchyChildIds`, which compacts: an unbound entry must consume its
       // slot here or every later child would pair with the wrong value.
       const socket = hierarchySocketForKind(v.kind, node);
-      const refs = socket ? node.inputs[socket] : undefined;
+      // #1824 — the wires, then the children gathered from parent inputs, as the evaluator
+      // built the value's `children` (`withGatheredChildren`).
+      const refs = socket ? withGatheredChildren(state, nodeId, node)[socket] : undefined;
       const list = Array.isArray(refs) ? refs : refs ? [refs] : [];
       const kids = v.children ?? [];
       const out: Array<{ id: string; value: SceneChild }> = [];

@@ -44,7 +44,6 @@ const CENSUS: Record<string, string> = {
   'src/app/setActiveCamera.ts': 'writes the scene camera',
   'src/app/character/cameraFromView.ts': 'writes the scene camera',
   'src/agent/tools/cameraSnapshot.ts': 'writes the scene camera',
-  'src/app/asset/placeGeneratedMotion.ts': 'wires a generated character under a holder',
   'src/core/project/migrations.ts': 'converts old files',
   'src/core/project/repairFloatingCameras.ts': 'wires a camera an old Add left floating, on load',
 };
