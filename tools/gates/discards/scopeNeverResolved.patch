@@ -6,14 +6,14 @@ index 3fdc62a..a86ccd5 100644
      const evalStart = evalPerfHook ? performance.now() : 0;
      const out =
        bypassSpine === null
--        ? def.evaluate(node.params, resolved, ctx, scopeFor(def, node.params, resolved))
+-        ? def.evaluate(params, resolved, ctx, scopeFor(def, params, resolved))
 +        ? // DISCARD HARNESS: the resolver is NEVER CALLED. `scopeFor` stays defined and
 +          // imported, so every import census and every call-site census stays green; the
 +          // operators receive the same shape they would have received, so nothing throws.
 +          // What disappears is the PARSE — the only observable difference from
 +          // `scopeHandOff`, which calls the resolver and throws its answer away.
 +          def.evaluate(
-+            node.params,
++            params,
 +            resolved,
 +            ctx,
 +            def.chain !== undefined && def.chain.scope.kind !== 'unscoped' ? null : undefined,
