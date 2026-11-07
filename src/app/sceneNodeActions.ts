@@ -684,6 +684,10 @@ export function buildDuplicateNodesOps(
     // The whole sub-network, not just what the body socket reaches first: a node inside may
     // feed only another node inside, and one left out would be shared by two owners.
     if (ownsBody) for (const inside of subnetworkOf(state, id)) visit(inside);
+    // #1846 — its constraint chain, the blend nodes included, as delete takes it. The steps name
+    // the object, but a blend's nodes are reached only by wire; left out, the copy's `constraints`
+    // would still read the original's chain.
+    for (const inChain of chainNodeIds(state, id)) visit(inChain);
     for (const child of gatheredCopies(node, id)) visit(child);
   };
   /** #1824 — the children hung from `id` by their parent input, when its children list is copied:

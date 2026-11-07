@@ -261,7 +261,11 @@ export function drawnInputsOf(
   if (id === draw.sceneId) return { ...node.inputs, children: [...draw.roots] };
   const socket = gatheringSocketOf(node.type);
   if (!socket) return node.inputs;
-  const gathered = worldChildrenOf(graph, id).filter((c) => draw.drawn.has(c));
+  // #1847 — the filter is about a parent the tree draws. A node off the tree, such as one inside a
+  // template's body, is drawn by what reads it, so it holds all its children.
+  const gathered = draw.drawn.has(id)
+    ? worldChildrenOf(graph, id).filter((c) => draw.drawn.has(c))
+    : worldChildrenOf(graph, id);
   if (gathered.length === 0) return node.inputs;
   const prior = node.inputs[socket];
   const wired = Array.isArray(prior) ? prior : prior ? [prior] : [];

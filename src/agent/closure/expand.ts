@@ -31,6 +31,7 @@ import {
   idsOfRef,
   wireOwnership,
 } from '../../core/dag/idRefSweep';
+import { chainNodeIds } from '../../core/dag/chainEdit';
 import { getNodeType } from '../../core/dag/registry';
 import { inputsBelow } from '../../core/dag/worldChildren';
 import { subnetworkOf } from '../../core/dag/subnetworks';
@@ -210,6 +211,8 @@ function visitEdge(
     for (const ref of getNodeType(self.type)?.idRefs ?? []) {
       if (ref.owns) for (const id of idsOfRef(self, ref, state.nodes)) reach(id);
     }
+    // #1846 — its constraint chain, the blend nodes included: what the shared delete takes.
+    for (const id of chainNodeIds(state, from)) reach(id);
     let ownsBody = false;
     for (const [socket, binding] of Object.entries(self.inputs)) {
       const owns = wireOwnership(self.type, socket);

@@ -35,6 +35,7 @@ import { z } from 'zod';
 import { defineNodeType, getNodeType, isDefinedNodeType, undefineNodeType } from './registry';
 import type { DagState } from './state';
 import { NodeRefSchema, NodeSchema } from './types';
+import { parentSocketOf } from './worldChildren';
 import type {
   InputBinding,
   InputDescriptor,
@@ -117,6 +118,14 @@ export const TemplateDefinitionSchema = z
     // The body is what its output reads, and only that: an instance's copy is the closure behind
     // its `body` socket, so a node that feeds nothing would be copied and then belong to nothing,
     // and a wire to a node the body lacks would point out of every instance.
+    // #1847 — and a child hung from a node of the body by its parent input: that node's value holds it.
+    const hungFrom = new Map<string, string[]>();
+    for (const [key, node] of Object.entries(def.body.nodes)) {
+      const socket = parentSocketOf(node.type);
+      const parent = socket ? node.inputs[socket] : undefined;
+      if (!parent || Array.isArray(parent)) continue;
+      hungFrom.set(parent.node, [...(hungFrom.get(parent.node) ?? []), key]);
+    }
     const reached = new Set<string>();
     const stack = [def.body.out.node];
     while (stack.length) {
@@ -124,6 +133,7 @@ export const TemplateDefinitionSchema = z
       const node = def.body.nodes[key];
       if (!node || reached.has(key)) continue;
       reached.add(key);
+      stack.push(...(hungFrom.get(key) ?? []));
       for (const [socket, binding] of Object.entries(node.inputs)) {
         for (const ref of Array.isArray(binding) ? binding : [binding]) {
           if (def.body.nodes[ref.node]) stack.push(ref.node);
