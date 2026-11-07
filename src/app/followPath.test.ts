@@ -22,7 +22,7 @@
 
 import { beforeEach, describe, expect, it } from 'vitest';
 import * as THREE from 'three';
-import { applyOp } from '../core/dag';
+import { applyOp } from '../test-utils/committedApplyOp';
 import type { DagState } from '../core/dag/state';
 import { buildDefaultDagState } from '../core/project/default';
 import { __resetRegistryForTests } from '../core/dag';
@@ -71,6 +71,17 @@ function minusZ(euler: Vec3): THREE.Vector3 {
     'XYZ',
   );
   return new THREE.Vector3(0, 0, -1).applyEuler(e);
+}
+
+/** #1791 — the default camera with its own position cleared, so it rides the path itself: its
+ *  own position is an offset from the path point (Blender 5.1.1), and the default is (3, 2, 3). */
+function cameraOnPath(state: DagState): DagState {
+  return applyOp(state, {
+    type: 'setParam',
+    nodeId: 'n_camera',
+    paramPath: 'position',
+    value: [0, 0, 0],
+  }).next;
 }
 
 /** A curve WIRED INTO THE SCENE — the seam resolves its pose through the shared scene-tree
@@ -351,7 +362,7 @@ describe('FollowPath — the CAMERA road (the headline, and its own resolver)', 
   // position band only on the mesh road and a Follow-Path works on a cube and silently
   // does NOTHING on a camera: the one object the whole rig is for.
   it('a camera flies the path — its pose resolver folds the position band too', () => {
-    const state = addFollowPath(addCurve(buildDefaultDagState()), {
+    const state = addFollowPath(addCurve(cameraOnPath(buildDefaultDagState())), {
       target: 'n_camera',
       evalTime: 1,
     });
@@ -360,7 +371,7 @@ describe('FollowPath — the CAMERA road (the headline, and its own resolver)', 
   });
 
   it("#1640 — the camera's Position row shows it on the path, where it is drawn", () => {
-    const state = addFollowPath(addCurve(buildDefaultDagState()), {
+    const state = addFollowPath(addCurve(cameraOnPath(buildDefaultDagState())), {
       target: 'n_camera',
       evalTime: 1,
     });
@@ -370,7 +381,7 @@ describe('FollowPath — the CAMERA road (the headline, and its own resolver)', 
 
   it('"fly the path while locked on the hero" — position from the path, aim at the subject', () => {
     // THE SENTENCE THE WHOLE CAMERA RIG EXISTS FOR, as one assertion.
-    let state = addFollowPath(addCurve(buildDefaultDagState()), {
+    let state = addFollowPath(addCurve(cameraOnPath(buildDefaultDagState())), {
       target: 'n_camera',
       evalTime: 1,
       order: 0,
@@ -397,7 +408,7 @@ describe('FollowPath — the CAMERA road (the headline, and its own resolver)', 
   });
 
   it('a keyframed evalTime moves the CAMERA along the path over time', () => {
-    let state = addFollowPath(addCurve(buildDefaultDagState()), {
+    let state = addFollowPath(addCurve(cameraOnPath(buildDefaultDagState())), {
       target: 'n_camera',
       evalTime: 0,
     });
@@ -473,7 +484,7 @@ describe('FollowPath — the aim origin (rotation reads what position writes)', 
       type: 'addNode',
       nodeId: 'n_hero',
       nodeType: 'Null',
-      params: { position: [0, 0, 5] },
+      params: { position: [0, 0, 0] },
     }).next;
     state = applyOp(state, {
       type: 'connect',

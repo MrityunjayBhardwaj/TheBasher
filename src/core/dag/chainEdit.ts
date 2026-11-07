@@ -343,6 +343,36 @@ export function chainFollowUpOps(prev: DagState, next: DagState): Op[] {
   return ops;
 }
 
+/**
+ * Every node `objectId`'s chain is made of, readers first: for a delete of the object, which takes
+ * the blends with it. Empty when it has no chain, or one wired into another shape.
+ */
+export function chainNodeIds(state: DagState, objectId: string): string[] {
+  const chain = readChain(state, objectId);
+  if (!chain?.own) return [];
+  const out: string[] = [];
+  for (const step of [...chain.steps].reverse()) {
+    const blend = step.blend;
+    if (blend) {
+      out.push(
+        blend.out,
+        blend.place,
+        blend.stretch,
+        blend.rotation,
+        blend.location,
+        blend.over,
+        blend.under,
+      );
+      if (blend.factor && state.nodes[blend.factor.node]?.type === 'Value') {
+        out.push(blend.factor.node);
+      }
+    }
+    out.push(step.id);
+  }
+  out.push(chain.own);
+  return out;
+}
+
 /** Moves a step to position `to` (0 is the bottom), its blend with it. */
 export function moveStepOps(
   state: DagState,

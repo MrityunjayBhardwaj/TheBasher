@@ -25,6 +25,7 @@ import { createEvaluatorCache, type EvaluatorCache } from '../core/dag/evaluator
 import type { DagState } from '../core/dag/state';
 import type { Op } from '../core/dag/types';
 import { moveStepOps, removeStepOps } from '../core/dag/chainEdit';
+import { getNodeType } from '../core/dag/registry';
 import type { ParamOption } from '../nodes/paramWidget';
 import {
   relationalPoseStackForTarget,
@@ -127,6 +128,8 @@ export function constrainedObjectOptions(state: DagState): ParamOption[] {
   const cache = createEvaluatorCache();
   const out: ParamOption[] = [];
   for (const node of Object.values(state.nodes)) {
+    // #1813 — what can hold a chain: a constraint on anything else would do nothing.
+    if (getNodeType(node.type)?.inputs.constraints?.chain !== 'end') continue;
     if (resolveWorldTransform(state, node.id, ctx, cache) === null) continue;
     out.push({ value: node.id, label: nodeDisplayName(state.nodes, node.id) });
   }

@@ -3,7 +3,8 @@
 
 import { beforeEach, describe, expect, it } from 'vitest';
 import * as THREE from 'three';
-import { applyOp, evaluate, __resetRegistryForTests } from '../core/dag';
+import { evaluate, __resetRegistryForTests } from '../core/dag';
+import { applyOp } from '../test-utils/committedApplyOp';
 import type { DagState } from '../core/dag/state';
 import { buildDefaultDagState } from '../core/project/default';
 import { registerAllNodes } from '../nodes/registerAll';

@@ -9,7 +9,8 @@
 
 import { beforeAll, describe, expect, it } from 'vitest';
 import { Euler, Quaternion } from 'three';
-import { applyOp, type DagState } from '../core/dag';
+import { type DagState } from '../core/dag';
+import { applyOp } from '../test-utils/committedApplyOp';
 import type { Op } from '../core/dag/types';
 import { buildDefaultDagState } from '../core/project/default';
 import { registerAllNodes } from '../nodes/registerAll';

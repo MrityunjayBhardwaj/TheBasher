@@ -1,23 +1,13 @@
 // #1812 — saved constraint stacks open as wired chains, every object drawing where it did.
 //
-// The poses are recorded from the old road into `__fixtures__/constraintChains.poses.json`, so this
-// still holds once that road is gone (#1813). While it exists, the first test proves the recording
-// is what it draws. Regenerate with RECORD_CHAIN_POSES=1, only from a tree where the old road draws.
+// The poses in `__fixtures__/constraintChains.poses.json` were recorded from the old road before it
+// was removed (#1813, recorded at commit be6d28a7), so they can't be regenerated, only added to. A
+// change that reddens this has moved something that was drawn.
 
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import * as THREE from 'three';
 import { applyOp, emptyDagState, evaluate, __resetRegistryForTests, type DagState } from '../dag';
-import {
-  resolveDrawnParentWorldMatrix,
-  resolveDrawnWorldTransform,
-} from '../../app/drawnWorldTransform';
-import {
-  relationalPoseStackForTarget,
-  resolveConstraintPosition,
-  resolveConstraintRotation,
-} from '../../app/nodeConstraints';
 import { registerAllNodes } from '../../nodes/registerAll';
 import { withIds } from '../../test-utils/curvePoints';
 import { makeSplitCube } from '../../test-utils/splitCube';
@@ -227,50 +217,7 @@ const SAME: Record<string, () => DagState> = {
     run(pair(), [add('t', 'TrackTo', { target: 'a', aimNode: 'gone' })]),
 };
 
-/** `id`'s world as the old road draws it, its own constraints included. */
-function drawn(s: DagState, id: string, seconds: number): number[] | null {
-  const ctx = at(seconds);
-  const world = resolveDrawnWorldTransform(s, id, ctx);
-  if (!world) return null;
-  const parent = resolveDrawnParentWorldMatrix(s, id, ctx) ?? new THREE.Matrix4();
-  const local = new THREE.Matrix4()
-    .fromArray(world.matrix as number[])
-    .premultiply(parent.clone().invert());
-  const position = new THREE.Vector3();
-  const rotation = new THREE.Quaternion();
-  const scale = new THREE.Vector3();
-  local.decompose(position, rotation, scale);
-  if (relationalPoseStackForTarget(s.nodes, id).length > 0) {
-    const aim = resolveConstraintRotation(s, id, ctx);
-    const followed = resolveConstraintPosition(s, id, ctx);
-    if (aim) {
-      const r = aim.map((d: number) => THREE.MathUtils.degToRad(d)) as Vec3;
-      rotation.setFromEuler(new THREE.Euler(...r, 'XYZ'));
-    }
-    if (followed) position.set(...(followed as Vec3));
-  }
-  return parent
-    .clone()
-    .multiply(new THREE.Matrix4().compose(position, rotation, scale))
-    .toArray();
-}
-
-const objectsOf = (s: DagState) =>
-  Object.values(s.nodes)
-    .filter((n) => n.type === 'Object' || n.type === 'Group' || n.type === 'Null')
-    .map((n) => n.id);
-
 type Poses = Record<string, Record<string, number[]>>;
-function record(s: DagState): Poses {
-  const out: Poses = {};
-  for (const id of objectsOf(s)) {
-    for (const t of TIMES) {
-      const m = drawn(s, id, t);
-      if (m) (out[id] ??= {})[String(t)] = m.map((v) => +v.toFixed(6) + 0);
-    }
-  }
-  return out;
-}
 
 function expectChainsDraw(s: DagState, poses: Poses) {
   const after = convert(s);
@@ -284,30 +231,7 @@ function expectChainsDraw(s: DagState, poses: Poses) {
   }
 }
 
-const recording: Record<string, Poses> = existsSync(POSES)
-  ? JSON.parse(readFileSync(POSES, 'utf8'))
-  : {};
-
-describe('recording the old road', () => {
-  it.runIf(process.env.RECORD_CHAIN_POSES)(
-    'writes the poses',
-    async () => {
-      const out: Record<string, Poses> = {};
-      for (const [name, build] of Object.entries(SAME)) out[name] = record(build());
-      for (const id of EXAMPLE_PROJECT_IDS) out[id] = record((await buildExampleProject(id)).state);
-      writeFileSync(POSES, `${JSON.stringify(out)}\n`);
-    },
-    120_000,
-  );
-
-  it('the recording is what the old road draws today', async () => {
-    for (const [name, build] of Object.entries(SAME))
-      expect(record(build()), name).toEqual(recording[name]);
-    for (const id of EXAMPLE_PROJECT_IDS) {
-      expect(record((await buildExampleProject(id)).state), id).toEqual(recording[id]);
-    }
-  }, 120_000);
-});
+const recording: Record<string, Poses> = JSON.parse(readFileSync(POSES, 'utf8'));
 
 describe('every object draws where it did', () => {
   for (const [name, build] of Object.entries(SAME)) {
@@ -333,12 +257,15 @@ describe('where the chain differs on purpose', () => {
   const position = (m: number[]) => [m[12], m[13], m[14]];
 
   it('under an uneven parent the aim keeps axis lengths, as Blender: no shear on the object', () => {
-    const s = underGroup([1, 3, 1]);
-    const old = drawn(s, 'a', 0)!;
-    const chain = evaluate(convert(s), 'a', { socket: 'world', ctx: at(0) }).value as number[];
-    // Same place, different matrix: the old road carried the parent's stretch through the aim.
-    position(chain).forEach((v, i) => expect(v).toBeCloseTo(position(old)[i], 5));
-    expect(Math.max(...chain.map((v, i) => Math.abs(v - old[i])))).toBeGreaterThan(0.5);
+    const after = convert(underGroup([1, 3, 1]));
+    const m = evaluate(after, 'a', { socket: 'world', ctx: at(0) }).value as number[];
+    // Where the old road drew it, recorded at 0 s.
+    position(m).forEach((v, i) => expect(v).toBeCloseTo([-0.268, 4.083, 4.748][i], 3));
+    // Its axes stay square, where the old road carried the parent's stretch through the aim.
+    expect(m[0] * m[4] + m[1] * m[5] + m[2] * m[6]).toBeCloseTo(0, 6);
+    // So its child sits elsewhere: (1.092, 4.292, 6.26) on the old road.
+    const kid = evaluate(after, 'kid', { socket: 'world', ctx: at(0) }).value as number[];
+    position(kid).forEach((v, i) => expect(v).toBeCloseTo([1.22, 4.083, 6.085][i], 3));
   });
 
   it("a parented follower: the parent's position now adds to the path, and it is logged by name", () => {

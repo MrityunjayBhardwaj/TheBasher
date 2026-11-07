@@ -20,6 +20,7 @@
 import type { DagState } from '../core/dag/state';
 import type { Node } from '../core/dag/types';
 import type { Op } from '../core/dag/types';
+import { chainNodeIds } from '../core/dag/chainEdit';
 import { nodeDisplayName } from './sceneTreeWalk';
 import { resolveActiveRigNode } from './resolveRigLightSources';
 import { constraintStackForTarget, relationalPoseStackForTarget } from './nodeConstraints';
@@ -346,11 +347,19 @@ export function buildDeleteProfileOps(state: DagState, rigId: string): Op[] | nu
       to: { node: rigId, socket: 'lights' },
     });
   }
-  for (const ttId of trackToIds) {
-    ops.push({ type: 'removeNode', nodeId: ttId });
-  }
+  // #1812 — each light first: it reads its chain, and `removeNode` refuses what is still read.
   for (const lightId of lightIds) {
     ops.push({ type: 'removeNode', nodeId: lightId });
+  }
+  const chained = new Set<string>();
+  for (const lightId of lightIds) {
+    for (const id of chainNodeIds(state, lightId)) {
+      chained.add(id);
+      ops.push({ type: 'removeNode', nodeId: id });
+    }
+  }
+  for (const ttId of trackToIds) {
+    if (!chained.has(ttId)) ops.push({ type: 'removeNode', nodeId: ttId });
   }
 
   // Detach the rig from the select (or directly from the scene), then remove it.

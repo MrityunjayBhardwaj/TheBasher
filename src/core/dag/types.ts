@@ -574,6 +574,12 @@ export interface NodeDefinition<P = unknown, O = unknown> {
    */
   worldRefs?: Readonly<Record<string, string>>;
   /**
+   * #1813 — a chain step's input that reads the world its object hangs from, given here as `socket`
+   * and `owner`, the setting naming the object. Read through the object rather than stored as a wire
+   * of the step's own, so reparenting the object can't leave it behind. A wire there wins.
+   */
+  ownerParent?: { readonly socket: string; readonly owner: string };
+  /**
    * #575 — this node's cook reads its settings at the time being evaluated, so a key or a driver on
    * one reaches what it outputs. The read lives above the evaluator and is registered
    * (`setKeyedParams`), because keys live off the graph.

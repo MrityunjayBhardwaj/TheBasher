@@ -81,6 +81,7 @@ export const TrackToNode: NodeDefinition<TrackToParams, TrackToConstraintValue> 
   worldStep: true,
   // #1811 — an aim target picked by name, which can close a loop where a wire can't.
   worldRefs: { aim: 'aimNode' },
+  ownerParent: { socket: 'parent', owner: 'target' },
   cost: 'cheap',
   paramSchema: TrackToParams,
   // #421 — `target` is the CONSTRAINED object: this constraint lives on it

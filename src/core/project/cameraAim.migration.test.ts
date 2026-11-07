@@ -3,7 +3,11 @@
 // sampled, for every example project and for fixtures covering each case the step handles.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { __resetRegistryForTests, applyOp, type DagState } from '../dag';
+import { __resetRegistryForTests, type DagState } from '../dag';
+import { applyOp } from '../../test-utils/committedApplyOp';
+import { chainFollowUpOps } from '../dag/chainEdit';
+import { applyOps } from '../dag/ops';
+import { emptyDagState } from '../dag';
 import { registerAllNodes } from '../../nodes/registerAll';
 import { buildDefaultDagState } from './default';
 import { CAPTURED_EXAMPLE_IDS, EXAMPLE_PROJECT_IDS, buildExampleProject } from './examples';
@@ -32,7 +36,9 @@ const migrate = (s: DagState): DagState => {
     state: DagState;
   };
   expect(out.formatVersion).toBe(26);
-  return out.state;
+  // The readers take the chain. A fixture's own Track-To is on one already, so what the step added
+  // joins it as a commit would.
+  return applyOps(out.state, chainFollowUpOps(emptyDagState(), out.state)).next;
 };
 /** A node's params, read loosely: the fixtures check fields across node types. */
 const paramsOf = (n: { params?: unknown }) => n.params as Record<string, unknown>;

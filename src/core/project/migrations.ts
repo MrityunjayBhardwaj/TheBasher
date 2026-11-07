@@ -3131,10 +3131,6 @@ export function migrateConstraintsToChains(raw: unknown): unknown {
       .sort((a, b) => Number(b.follows) - Number(a.follows));
     for (const { id } of ordered) {
       wire(id, 'in', below);
-      const parent = out[objectId].inputs?.parent;
-      if (out[id].params?.aimSpace === 'parent' && parent && !Array.isArray(parent)) {
-        wire(id, 'parent', parent);
-      }
       below = { node: id, socket: 'world' };
     }
     wire(objectId, 'constraints', below);

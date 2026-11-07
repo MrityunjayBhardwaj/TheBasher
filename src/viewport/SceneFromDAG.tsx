@@ -1526,7 +1526,6 @@ function LightHelperFollower({
       const { quaternion, aim } = lightLocalOrientation(
         useDagStore.getState().state,
         nodeId,
-        [base.position[0], base.position[1], base.position[2]],
         // Already read in its mode (`withResolvedRotation` above).
         { rotation: [base.rotation[0], base.rotation[1], base.rotation[2]] },
         liveCtxOf(nodeId),
@@ -1754,7 +1753,6 @@ function useLightTurn(
     const { quaternion } = lightLocalOrientation(
       useDagStore.getState().state,
       nodeId,
-      [light.position.x, light.position.y, light.position.z],
       { rotation: [rx, ry, rz] },
       liveCtxOf(nodeId),
       cache,

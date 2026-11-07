@@ -19,7 +19,8 @@ import {
 } from './activeCamera';
 import { cameraDataOf } from './cameraNode';
 import { buildDefaultDagState } from '../core/project/default';
-import { applyOp, emptyDagState, type DagState } from '../core/dag';
+import { emptyDagState, type DagState } from '../core/dag';
+import { applyOp } from '../test-utils/committedApplyOp';
 import type { Node } from '../core/dag/types';
 import { registerAllNodes } from '../nodes/registerAll';
 import { makeSplitCamera } from '../test-utils/splitCamera';

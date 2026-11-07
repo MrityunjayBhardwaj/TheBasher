@@ -426,6 +426,10 @@ const TAKERS: string[] = [
   'followPathStep@src/app/constraintChain.ts',
   // #575 — a compute node's keyed settings, read with the cache the evaluator walk was given.
   'keyedParamsOf@src/app/keyedCook.ts',
+  // #1813 — the constraint reads take the chain's end, with the cache the reader was given.
+  'chainEnd@src/app/nodeConstraints.ts',
+  'aimedRotation@src/app/nodeConstraints.ts',
+  'chainParentWorld@src/app/nodeConstraints.ts',
   // #1785 — a transform driver's channels and the value on its `in`, read with the fold's cache.
   'transformDriverChannels@src/app/paramDrivers.ts',
   'inSampler@src/app/paramDrivers.ts',

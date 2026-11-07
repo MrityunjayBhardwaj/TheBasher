@@ -6,6 +6,8 @@
 
 import type { DagState } from '../core/dag/state';
 import type { Node, NodeId, Op } from '../core/dag/types';
+import { chainNodeIds, removeStepOps } from '../core/dag/chainEdit';
+import { applyOps } from '../core/dag/ops';
 import { getNodeType } from '../core/dag/registry';
 import {
   buildIdRefIndex,
@@ -369,6 +371,14 @@ export function planDeleteNodes(
       for (let i = 0; i < allIds.length; i++) {
         const owner = state.nodes[allIds[i]];
         if (!owner) continue;
+        // #1812 — an object takes its constraint chain with it, the blend nodes included.
+        for (const id of chainNodeIds(state, owner.id)) {
+          if (!idSet.has(id)) {
+            idSet.add(id);
+            allIds.push(id);
+            changed = true;
+          }
+        }
         for (const [socket, binding] of Object.entries(owner.inputs ?? {})) {
           const kind = wireOwnership(owner.type, socket);
           // #1517 — a parent's children are handed up, not taken with it.
@@ -457,6 +467,23 @@ export function planDeleteNodes(
   });
   if (!handUp.ok) return handUp;
   const ops: Op[] = [...sweep.ops, ...collectionDeleteRelinkOps(state, idSet), ...handUp.ops];
+  // #1812 — a constraint going from an object that stays comes out of its chain, the step above
+  // reading the one below, with its blend.
+  let chainWorking = applyOps(state, ops).next;
+  for (const id of [...allIds]) {
+    const step = state.nodes[id];
+    if (!step || !getNodeType(step.type)?.worldStep) continue;
+    const target = (step.params as { target?: unknown }).target;
+    if (typeof target !== 'string' || idSet.has(target)) continue;
+    const off = removeStepOps(chainWorking, target, id);
+    if (!off) continue;
+    ops.push(...off);
+    chainWorking = applyOps(chainWorking, off).next;
+    for (const op of off) {
+      if (op.type !== 'removeNode' || !idSet.delete(op.nodeId)) continue;
+      allIds.splice(allIds.indexOf(op.nodeId), 1);
+    }
+  }
   // #1824 — a child hung by its parent input reads the deleted node, so it is one of its readers;
   // the hand-up above has already cut that wire, and cutting it twice would throw.
   const cut = new Set(

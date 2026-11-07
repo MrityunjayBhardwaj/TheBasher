@@ -6,7 +6,8 @@
 import { beforeAll, describe, expect, it } from 'vitest';
 import { Euler, Quaternion, Vector3 } from 'three';
 import { buildDefaultDagState } from '../core/project/default';
-import { applyOp, type DagState } from '../core/dag';
+import { type DagState } from '../core/dag';
+import { applyOp } from '../test-utils/committedApplyOp';
 import { registerAllNodes } from '../nodes/registerAll';
 import { makeSplitCamera } from '../test-utils/splitCamera';
 import { resolveActiveCameraPoseAt } from './activeCamera';

@@ -655,6 +655,15 @@ export function evaluate(
           : [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
       } else {
         const { inputs, refs } = chainInputs(id, 'step', depth);
+        if (def.ownerParent && !node.inputs[def.ownerParent.socket]) {
+          const ownerId = (node.params as Record<string, unknown>)[def.ownerParent.owner];
+          const owner = typeof ownerId === 'string' ? state.nodes[ownerId] : undefined;
+          const ownerDef = owner ? getNodeType(owner.type) : undefined;
+          for (const [socket, binding] of Object.entries(owner?.inputs ?? {})) {
+            if (ownerDef?.inputs[socket]?.world !== true || Array.isArray(binding)) continue;
+            inputs[def.ownerParent.socket] = evalRef(binding, depth + 1).value;
+          }
+        }
         for (const [socket, param] of Object.entries(def.worldRefs ?? {})) {
           if (node.inputs[socket]) continue;
           const target = (node.params as Record<string, unknown>)[param];

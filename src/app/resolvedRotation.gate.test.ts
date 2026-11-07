@@ -11,7 +11,8 @@
 
 import { beforeEach, describe, expect, it } from 'vitest';
 import { Euler, Quaternion, Vector3 } from 'three';
-import { applyOp, evaluate, __resetRegistryForTests } from '../core/dag';
+import { evaluate, __resetRegistryForTests } from '../core/dag';
+import { applyOp } from '../test-utils/committedApplyOp';
 import type { DagState } from '../core/dag/state';
 import type { Op } from '../core/dag/types';
 import { buildDefaultDagState } from '../core/project/default';
