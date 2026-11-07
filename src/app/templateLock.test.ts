@@ -7,7 +7,7 @@ import { evaluate } from '../core/dag/evaluator';
 import type { DagState } from '../core/dag/state';
 import { useDagStore } from '../core/dag/store';
 import { matchInstanceBody, syncTemplateTypes, templatesOf } from '../core/dag/templates';
-import type { Op } from '../core/dag/types';
+import type { NodeRef, Op } from '../core/dag/types';
 import { buildDefaultDagState } from '../core/project/default';
 import { registerAllNodes } from '../nodes/registerAll';
 import { createFork } from '../agent/diff/forkedDag';
@@ -81,6 +81,25 @@ describe('#1557 D4 — a locked instance', () => {
 
   it('refuses it in the agent preview too, before anything is accepted', () => {
     expect(() => createFork(dag(), [set('two', 'outMax', 5)])).toThrow(/locked; unlock it/);
+  });
+
+  // #1852 — the socket the body hangs from belongs to no node of the body, so this used to pass.
+  it('refuses a new node hung on its body socket, locked and unlocked alike', () => {
+    const rehang = (instance: string): Op[] => {
+      const from = dag().nodes[instance].inputs.body as NodeRef;
+      const to = { node: instance, socket: 'body' };
+      return [
+        { type: 'addNode', nodeId: 'extra', nodeType: 'Clamp', params: {} },
+        { type: 'disconnect', from, to },
+        { type: 'connect', from, to: { node: 'extra', socket: 'in' } },
+        { type: 'connect', from: { node: 'extra', socket: 'out' }, to },
+      ];
+    };
+    const before = dag();
+    expect(() => store().dispatchAtomic(rehang('n_scale_2'))).toThrow(/n_scale_2.*locked/);
+    expect(dag()).toBe(before);
+    store().dispatchAtomic([set('n_scale_2', 'locked', false)]);
+    expect(() => store().dispatchAtomic(rehang('n_scale_2'))).toThrow(/#1665/);
   });
 
   it('can still be deleted with its body, and unlocked', () => {
