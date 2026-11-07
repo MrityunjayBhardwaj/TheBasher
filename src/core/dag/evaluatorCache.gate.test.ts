@@ -106,6 +106,16 @@ const ORIGINS: Record<string, Origin> = {
     frequency: 'per-action',
     why: 'The add-modifier click or agent tool: the accept side of the offer.',
   },
+  'src/app/stackEdit.ts · refusedByLane → canModifyGeometry': {
+    count: 1,
+    frequency: 'per-action',
+    why: 'A modifier added or moved through the stack (#1816): the same accept as the add-modifier click.',
+  },
+  'src/app/stackEdit.ts · refusedByLane → canWearMaterial': {
+    count: 1,
+    frequency: 'per-action',
+    why: 'A material operator added or moved through the stack (#1816): the same accept as the add-material click.',
+  },
   'src/app/viewLock.ts · hasSomethingToFollow → scanForFollow': {
     count: 1,
     frequency: 'per-action',

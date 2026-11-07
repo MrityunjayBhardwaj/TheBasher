@@ -70,8 +70,8 @@ export interface StackNodeRow {
   readonly outputSocket: string;
   /** What reads this node from outside the view. */
   readonly usedBy: readonly string[];
-  /** What feeds a folded step's influence, or null when the row isn't a blended step. */
-  readonly influence: NodeRef | null;
+  /** The blend folded into this row, whose `factor` is the influence; null on an unblended row. */
+  readonly blend: StepBlend | null;
   /** A body input: what it reads and whose. `owner` is null when it reads its default. */
   readonly boundary: { readonly input: string; readonly owner: string | null } | null;
   readonly template: StackTemplate | null;
@@ -237,7 +237,7 @@ export function stackOf(state: DagState, output: NodeRef): StackRow[] {
         nodeType: node.type,
         outputSocket: at.socket,
         usedBy: [],
-        influence: fold?.blend.factor ?? null,
+        blend: fold?.blend ?? null,
         boundary:
           typeof leafInput === 'string'
             ? { input: leafInput, owner: bodyInputOwnerOf(state, id) ?? null }

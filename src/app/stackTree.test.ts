@@ -344,7 +344,7 @@ describe('a constraint chain', () => {
     const rows = transform(s);
     expect(ids(rows).slice(0, 2)).toEqual(['tt', 'fp']);
     const tt = full(rows, 'tt');
-    expect(tt.influence).not.toBeNull();
+    expect(tt.blend?.factor).not.toBeNull();
     expect(s.nodes[ids(group(tt, 'factor').rows)[0]].type).toBe('Value');
     const types = everyRow(stackOf(s, out('crate'))).map((r) => s.nodes[r.nodeId].type);
     expect(types).not.toContain('PolarSplit');
