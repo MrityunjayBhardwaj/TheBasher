@@ -692,6 +692,7 @@ export function boot(): Promise<void> {
         import('./operatorStack'),
         import('./operatorChain'),
         import('./constraintStack'),
+        import('./keepPlaceReparent'),
         import('./materialLink'),
         import('./driverBind'),
         import('./video/newComposition'),
@@ -701,12 +702,27 @@ export function boot(): Promise<void> {
         import('./video/videoTimelineGeometry'),
         import('./stores/timeStore'),
       ]).then(
-        ([stack, chain, constraints, material, driver, comp, layer, video, decode, geo, time]) => {
+        ([
+          stack,
+          chain,
+          constraints,
+          parenting,
+          material,
+          driver,
+          comp,
+          layer,
+          video,
+          decode,
+          geo,
+          time,
+        ]) => {
           w.__basher_censusBuilders = {
             operatorTypesInSection: chain.operatorTypesInSection,
             buildAddModifierOps: stack.buildAddModifierOps,
             buildAddMaterialOpOps: stack.buildAddMaterialOpOps,
             buildAddConstraintOps: constraints.buildAddConstraintOps,
+            buildRemoveConstraintOps: constraints.buildRemoveConstraintOps,
+            buildParentToOps: parenting.buildParentToOps,
             buildNewMaterialOps: material.buildNewMaterialOps,
             buildBindDriverOps: driver.buildBindDriverOps,
             // #1259 — whether `type`'s schema DECLARES `key`, read off the schema itself and not

@@ -222,18 +222,31 @@ test(TITLE, async ({ page }) => {
       const placedIds = new Set(
         Object.values(placed).map((r) => (r as { nodeId?: string } | null)?.nodeId),
       );
+      // A Track-To sits on its light's chain, so it comes off the way the inspector takes it off.
       const aims = Object.entries(dag().state.nodes as Record<string, Loose>)
         .filter(([, n]) => n.type === 'TrackTo' && placedIds.has(n.params.target))
-        .map(([id]) => ({ type: 'removeNode', nodeId: id }));
-      if (aims.length > 0) dag().dispatchAtomic(aims, 'user', 'census: lights unaimed');
-      // A Group or Transform with nothing in it draws nothing, so each gets a Cube, wired the
-      // way the outliner nests one: out of the scene's children, into the wrapper.
+        .map(([id]) => id);
+      for (const id of aims)
+        dag().dispatchAtomic(
+          w.__basher_censusBuilders.buildRemoveConstraintOps(dag().state, id),
+          'user',
+          'census: lights unaimed',
+        );
+      // A Group or Transform with nothing in it draws nothing, so each gets a Cube. The Group's
+      // hangs from it the way Ctrl+P hangs one; the Transform's is wired the way the outliner
+      // nests one: out of the scene's children, into the wrapper.
       const sceneId = dag().state.outputs.scene.node;
       const wiring: string[] = [];
-      for (const [k, socket] of [
-        ['Group', 'children'],
-        ['Transform', 'target'],
-      ] as const) {
+      {
+        const wrapper = (placed['Group'] as { nodeId: string }).nodeId;
+        const child = w.__basher_addPrimitive('Cube', [0, 3, -8]).nodeId;
+        const moved = w.__basher_censusBuilders.buildParentToOps(dag().state, [child], wrapper);
+        if (moved.ok) dag().dispatchAtomic(moved.ops, 'user', 'census wiring');
+        wiring.push(`Group:parent:${moved.ok ? 'ok' : moved.reason}`);
+      }
+      {
+        const k = 'Transform';
+        const socket = 'target';
         const wrapper = (placed[k] as { nodeId: string }).nodeId;
         const child = w.__basher_addPrimitive('Cube', [0, 3, -8]).nodeId;
         for (const op of [
