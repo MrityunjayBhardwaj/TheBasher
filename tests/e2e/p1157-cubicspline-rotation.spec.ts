@@ -140,8 +140,18 @@ async function importedGroupId(page: Page): Promise<string | null> {
     // Walk up to the SCENE CHILD and stop there: only a top-level scene child carries its node id
     // on the drawn object (`SceneFromDAG.tsx`), and the Scene holds children too — walking past it
     // returns the scene, which draws nothing under that name.
+    // #1824 — a child names its parent through its own parent input; the scene's list it is also
+    // on is membership, so the parent input is read first.
+    const byId = (window as unknown as W).__basher_dag!.getState().state.nodes;
     let id = target;
     for (;;) {
+      const named = (
+        byId[id] as unknown as { inputs?: Record<string, { node?: string }> } | undefined
+      )?.inputs?.parent?.node;
+      if (named) {
+        id = named;
+        continue;
+      }
       const parent = nodes.find(holds(id));
       if (!parent) return null;
       if (parent.type === 'Scene') return id;

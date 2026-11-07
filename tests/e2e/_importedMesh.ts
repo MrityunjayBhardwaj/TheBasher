@@ -162,15 +162,24 @@ export async function importRoots(page: Page): Promise<ImportRoot[]> {
         if (!n) continue;
         if (n.type === 'GltfAsset') return 'clone';
         if (n.type === 'Object' && meshDataOf(id) !== null) road = 'native';
-        for (const v of Object.values(n.inputs)) stack.push(...refs(v));
+        // #1824 — a child names its parent through its own parent input, so the subtree is what
+        // the node reads (not upward through its own parent) plus what hangs from it.
+        for (const [socket, v] of Object.entries(n.inputs))
+          if (socket !== 'parent') stack.push(...refs(v));
+        stack.push(...hungFrom(id));
       }
       return road;
     };
+    const hungFrom = (id: string): string[] =>
+      Object.keys(nodes).filter((k) => refs(nodes[k].inputs.parent).includes(id));
     const out: { rootId: string; road: 'native' | 'clone' }[] = [];
     for (const child of refs(nodes[sceneId].inputs.children)) {
       // A spec's MaterialOverride wrapping a root (`_importOverride.ts`) is looked through.
       let id = child;
       while (nodes[id]?.type === 'MaterialOverride') id = refs(nodes[id].inputs.target)[0] ?? '';
+      // #1823 — the scene's list is membership: a child hanging from a parent is on it too, and
+      // is part of its parent's import, not a root of its own.
+      if (refs(nodes[id]?.inputs.parent).length > 0) continue;
       // #1451 — an import stands its root nodes in the scene with no wrapper, so a root is any
       // scene child, a Group (an Empty, or an import Group in an older save) or an Object, whose
       // subtree holds imported geometry. The default project's box is not one: its data is no
@@ -245,7 +254,11 @@ export async function importedMeshes(page: Page): Promise<ImportedMeshRow[]> {
               rows.push({ rootId, objectId: id, dataId, slots });
             }
           }
-          for (const v of Object.values(n.inputs)) stack.push(...refs(v));
+          // #1824 — what the node reads, not upward through its parent, plus what hangs from it.
+          for (const [socket, v] of Object.entries(n.inputs))
+            if (socket !== 'parent') stack.push(...refs(v));
+          for (const k of Object.keys(nodes))
+            if (refs(nodes[k].inputs.parent).includes(id)) stack.push(k);
         }
       }
       return rows;

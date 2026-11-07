@@ -156,10 +156,13 @@ function setDistance(a: Tuple3[], b: Tuple3[]): number {
   );
 }
 
-/** Who holds `id` through any input edge. */
+/** Who holds `id`: the parent it names through its own parent input (#1824; the scene's list it
+ *  is also on is membership), or else whoever takes it through any input edge. */
 const holdersOf = (page: Page, id: string) =>
   page.evaluate((nodeId) => {
     const nodes = (window as unknown as BasherWindow).__basher_dag!.getState().state.nodes;
+    const parent = (nodes[nodeId]?.inputs?.parent as { node?: string } | undefined)?.node;
+    if (parent) return [parent];
     return Object.entries(nodes)
       .filter(([, n]) =>
         Object.values(n.inputs ?? {})
