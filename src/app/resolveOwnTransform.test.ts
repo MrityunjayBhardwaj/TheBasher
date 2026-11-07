@@ -6,7 +6,8 @@
 // one, so a read that returned the drawn value is told apart.
 
 import { beforeEach, describe, expect, it } from 'vitest';
-import { applyOp, __resetRegistryForTests } from '../core/dag';
+import { __resetRegistryForTests } from '../core/dag';
+import { applyOp } from '../test-utils/committedApplyOp';
 import type { DagState } from '../core/dag/state';
 import { buildDefaultDagState } from '../core/project/default';
 import { registerAllNodes } from '../nodes/registerAll';

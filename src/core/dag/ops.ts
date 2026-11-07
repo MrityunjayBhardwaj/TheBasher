@@ -712,7 +712,12 @@ function applyConnect(
   requireAvailable(op, getNode(state, op.from.node), op.from.socket, 'output');
   requireOneParent(state, op, inputDesc);
   if (wouldCreateCycleAt(state, op.from, op.to)) {
-    throw new OpError(`connect: would create a cycle (${op.from.node} → ${op.to.node})`, op);
+    const instead = inputDesc?.chain && getNodeType(consumer.type)?.worldRefs?.[op.to.socket];
+    throw new OpError(
+      `connect: would create a cycle (${op.from.node} → ${op.to.node})` +
+        (instead ? `; pick it as the aim target instead, which can close a loop` : ''),
+      op,
+    );
   }
 
   let nextBinding: InputBinding;

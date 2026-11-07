@@ -31,13 +31,12 @@ interface W {
 }
 
 const groupChildren = (page: Page, groupId: string) =>
-  page.evaluate(
-    (g) =>
-      ((window as unknown as W).__basher_dag.getState().state.nodes[g]?.inputs.children ?? []).map(
-        (r) => r.node,
-      ),
-    groupId,
-  );
+  page.evaluate((g) => {
+    const s = (window as unknown as W).__basher_dag.getState().state;
+    return Object.entries(s.nodes)
+      .filter(([, c]) => (c.inputs as unknown as { parent?: { node: string } }).parent?.node === g)
+      .map(([cid]) => cid);
+  }, groupId);
 
 const GRP = 'n_p231nc_grp';
 const CAM = 'n_p231nc_cam';
@@ -74,8 +73,8 @@ test.describe('#231 Inc 3.3 — nested camera world pose', () => {
         for (const op of camOps) d(op);
         d({
           type: 'connect',
-          from: { node: cam, socket: 'out' },
-          to: { node: grp, socket: 'children' },
+          from: { node: grp, socket: 'world' },
+          to: { node: cam, socket: 'parent' },
         });
         d({
           type: 'connect',
@@ -176,8 +175,8 @@ test.describe('#231 Inc 3.3 — nested camera world pose', () => {
         for (const op of camOps) d(op);
         d({
           type: 'connect',
-          from: { node: cam, socket: 'out' },
-          to: { node: grp, socket: 'children' },
+          from: { node: grp, socket: 'world' },
+          to: { node: cam, socket: 'parent' },
         });
         d({
           type: 'connect',

@@ -420,6 +420,17 @@ const TAKERS: string[] = [
   // #1810 — an object's world output, folded with the cache the evaluator walk was given, and the
   // armature it reads a parent bone off.
   'objectWorldFold@src/app/objectWorld.ts',
+  // #1811 — a constraint chain's steps, read with the cache the evaluator walk was given.
+  'constraintStepFold@src/app/constraintChain.ts',
+  'trackToStep@src/app/constraintChain.ts',
+  'followPathStep@src/app/constraintChain.ts',
+  // #575 — a compute node's keyed settings, read with the cache the evaluator walk was given.
+  'keyedParamsOf@src/app/keyedCook.ts',
+  // #1813 — the constraint reads take the chain's end, with the cache the reader was given.
+  'chainEnd@src/app/nodeConstraints.ts',
+  'aimedRotation@src/app/nodeConstraints.ts',
+  'chainDrawCorrection@src/app/nodeConstraints.ts',
+  'chainParentWorld@src/app/nodeConstraints.ts',
   // #1785 — a transform driver's channels and the value on its `in`, read with the fold's cache.
   'transformDriverChannels@src/app/paramDrivers.ts',
   'inSampler@src/app/paramDrivers.ts',
@@ -430,6 +441,7 @@ const TAKERS: string[] = [
   'composeDown@src/app/resolveWorldTransform.ts',
   'sceneChildWorld@src/app/resolveWorldTransform.ts',
   'searchFromRoot@src/app/resolveWorldTransform.ts',
+  'wrapperParentWorld@src/app/resolveWorldTransform.ts',
   'topLevelValue@src/app/resolveWorldTransform.ts',
   'dataLaneOverlaySources@src/app/dataLaneOverlay.ts',
   'exposeParams@src/app/exposeParams.ts',

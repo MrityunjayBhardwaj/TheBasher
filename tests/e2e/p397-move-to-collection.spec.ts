@@ -196,7 +196,10 @@ test('#397 — a nested object moved into a collection hides with it, and its pa
         return (Array.isArray(v) ? v : v ? [v] : []).map((r: { node: string }) => r.node);
       };
       const child = all.find((n) => n.type === 'Object' && n.inputs.data)!;
-      const parent = Object.values(nodes).find((n) => kids(n).includes(child.id))!;
+      const hung = (child.inputs as unknown as { parent?: { node: string } }).parent;
+      const parent = hung
+        ? nodes[hung.node]
+        : Object.values(nodes).find((n) => kids(n).includes(child.id))!;
       return { child: child.id, parent: parent.id, parentType: parent.type };
     },
     [...before],

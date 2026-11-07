@@ -87,6 +87,7 @@ const GROUPS: MenuGroup[] = [
     // is empty on a fresh scene.
     label: 'Compute',
     items: [
+      { kind: 'Value', label: 'Value' },
       { kind: 'Math', label: 'Math' },
       { kind: 'Fit', label: 'Fit' },
       { kind: 'Clamp', label: 'Clamp' },
@@ -101,6 +102,7 @@ const GROUPS: MenuGroup[] = [
       // transform; rotations as quaternions.
       { kind: 'CombineTransform', label: 'Combine Transform' },
       { kind: 'SeparateTransform', label: 'Separate Transform' },
+      { kind: 'PolarSplit', label: 'Polar Split' },
       { kind: 'MultiplyTransforms', label: 'Multiply Transforms' },
       { kind: 'InvertTransform', label: 'Invert Transform' },
       { kind: 'TransformPoint', label: 'Transform Point' },

@@ -94,6 +94,9 @@ import { VideoStitchNode } from './VideoStitch';
 import { WalkPathNode } from './WalkPath';
 import { registerStatefulReplay } from '../app/statefulOps';
 import { registerWorldFold } from '../app/objectWorld';
+import { registerWorldStepFold } from '../app/constraintChain';
+import { registerKeyedCook } from '../app/keyedCook';
+import { OwnWorldNode } from './OwnWorld';
 import { registerSceneDraw } from '../app/sceneMembership';
 
 const ALL: NodeDefinition[] = [
@@ -188,6 +191,7 @@ const ALL: NodeDefinition[] = [
   // + scene-layer resolved like the channels above (the resolveActiveCameraPoseAt
   // pattern), since a relationship aim needs world context (resolveWorldTransform).
   TrackToNode as unknown as NodeDefinition,
+  OwnWorldNode as unknown as NodeDefinition,
   // #339 — the POSITION-band constraint. Same edge-less species as TrackTo (it reads a
   // Curve's WORLD geometry, so it resolves in the seam, not in evaluate); it joins the
   // SAME stack as a member rather than bringing its own resolver + panel.
@@ -339,5 +343,7 @@ export function registerAllNodes(): void {
   registerStatefulReplay();
   // #1810 — and an object's `world` output with the fold that reads its own channels.
   registerWorldFold();
+  registerWorldStepFold();
+  registerKeyedCook();
   registerSceneDraw();
 }

@@ -101,8 +101,13 @@ test('#1731 an armature is posed once per frame, whoever reads it', async ({ pag
         },
         {
           type: 'connect',
+          from: { node: armA, socket: 'world' },
+          to: { node: 'p1731_prop', socket: 'parent' },
+        },
+        {
+          type: 'connect',
           from: { node: 'p1731_prop', socket: 'out' },
-          to: { node: armA, socket: 'children' },
+          to: { node: 'n_scene', socket: 'children' },
         },
       ],
       'user',

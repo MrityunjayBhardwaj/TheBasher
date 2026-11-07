@@ -222,6 +222,8 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
   // ADDED at #1784 (the fifth arm) — the Transform vocabulary. Paramless, like MakeVec3.
   CombineTransform: '[]',
   SeparateTransform: '[]',
+  PolarSplit: '[]',
+  OwnWorld: '[] object=(unrouted)',
   MultiplyTransforms: '[]',
   InvertTransform: '[]',
   TransformPoint: '[]',
@@ -302,6 +304,7 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
   // #994 — every param routed, and there are only two. A modifier that reshapes nothing still
   // owes the inspector the same card every other modifier draws.
   UVProjectModifier: '[modifier] size=modifier muted=modifier',
+  Value: '[] value=(unrouted)',
   Vec3Math: '[] op=(unrouted) scalar=(unrouted)',
   VecBreak3: '[]',
   VideoStitch: '[render] codec=render fps=render outputPath=render',
@@ -490,4 +493,4 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
 // #1826 adds BodyInputRotation and BodyInputTransform, two cells each (`input`, `slot`),
 // unrouted like BodyInputVec's:
 //   types 98 + 2 = 100 · routed 147 · unrouted 265 + 4 = 269
-export const GOLDEN_TOTALS = { types: 100, routed: 147, unrouted: 269 } as const;
+export const GOLDEN_TOTALS = { types: 103, routed: 147, unrouted: 271 } as const;

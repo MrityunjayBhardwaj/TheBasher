@@ -136,7 +136,7 @@ export function resolveEvaluatedTransform(
     }
     const followed = cameraFollowedPosition(state, selectedId, own, cache);
     const position = followed ?? local.position;
-    const { quaternion } = cameraLocalOrientation(state, selectedId, position, local, ctx, cache);
+    const { quaternion } = cameraLocalOrientation(state, selectedId, local, ctx, cache);
     const e = new Euler().setFromQuaternion(new Quaternion(...quaternion), 'XYZ');
     return {
       position,

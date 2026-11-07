@@ -74,6 +74,8 @@ import {
 import { buildSetActiveCameraOps } from './setActiveCamera';
 import { useViewportStore } from './stores/viewportStore';
 import { keyParamFromTransient } from './animate/autoKeyCommit';
+import { hoveredElements, underMouse } from './animate/rowKey';
+import { nodeDisplayName } from './sceneTreeWalk';
 import { keyCameraFromUI } from './animate/keyCamera';
 import { isCameraNode } from './cameraNode';
 import { historyUndo, historyRedo } from './history';
@@ -647,6 +649,25 @@ export function KeyboardShortcuts() {
       // the tool keys do NOT (they are generic and mode-free).
       const timelineDrawerOpen = useViewportStore.getState().timelineDrawerOpen;
 
+      // #1845 — the row under the mouse comes first and needs no drawer, as its diamond does not.
+      // Blender's I over a button. Over no row, the rules below stand.
+      if (e.key === 'k' || e.key === 'K' || e.key === 'i' || e.key === 'I') {
+        const found = underMouse(hoveredElements());
+        if (found.kind === 'row') {
+          e.preventDefault();
+          sayIfRefused(found.key());
+          return;
+        }
+        if (found.kind === 'field') {
+          sayIfRefused({ ok: false, reason: 'This setting cannot be keyed.' });
+          return;
+        }
+        if (!timelineDrawerOpen) {
+          sayIfRefused({ ok: false, reason: 'Open the timeline to key the selection.' });
+          return;
+        }
+      }
+
       // Tool keys Q/W/E/R (P6 W2). Lowercase the input so capslock-on users get
       // the same behavior. The G/R/S aliases below stay alive for Blender muscle
       // memory; both routes funnel through setActiveTool, which propagates to
@@ -746,6 +767,8 @@ export function KeyboardShortcuts() {
             const ops = buildKeyframeInsertOp();
             if (ops) {
               useDagStore.getState().dispatchAtomic(ops, 'user', 'insert keyframe');
+            } else {
+              sayIfRefused({ ok: false, reason: 'Nothing to key on this channel.' });
             }
             return;
           }
@@ -785,10 +808,17 @@ export function KeyboardShortcuts() {
               rotationBand,
               ['scale', evalT?.scale ?? params.scale],
             ];
+            // #1845 — a press that keys nothing says so: a compute node has none of these bands.
+            let refusal: string | null =
+              `"${nodeDisplayName(state.nodes, selectedId)}" has no transform to key. Point at a setting and press I.`;
             for (const [band, v] of bands) {
               if (v === undefined || v === null) continue; // band absent → skip
-              keyParamFromTransient(selectedId, band, v);
+              const keyed = keyParamFromTransient(selectedId, band, v);
+              refusal = keyed.ok ? null : (keyed.reason ?? refusal);
             }
+            if (refusal) sayIfRefused({ ok: false, reason: refusal });
+          } else {
+            sayIfRefused({ ok: false, reason: 'Nothing selected to key.' });
           }
           return;
         }

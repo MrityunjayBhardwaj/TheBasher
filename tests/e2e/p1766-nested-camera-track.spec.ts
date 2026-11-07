@@ -47,8 +47,8 @@ for (const c of CASES)
         d({ type: 'setParam', nodeId: cam, paramPath: 'position', value: camLocal });
         d({
           type: 'connect',
-          from: { node: cam, socket: 'out' },
-          to: { node: 'n_p1766_grp', socket: 'children' },
+          from: { node: 'n_p1766_grp', socket: 'world' },
+          to: { node: cam, socket: 'parent' },
         });
         d({
           type: 'connect',

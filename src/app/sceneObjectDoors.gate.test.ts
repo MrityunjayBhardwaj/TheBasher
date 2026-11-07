@@ -456,6 +456,8 @@ const CREATES_NO_SCENE_OBJECT: Record<string, string> = {
   'src/app/character/walkTo.ts': 'a clock and a WalkPath, not scene nodes',
   'src/app/driverBind.ts': 'a ParamDriver',
   'src/app/materialLink.ts': 'a Material, a resource',
+  'src/core/dag/chainEdit.ts':
+    'a constraint step and its blend on an object that exists; none is SceneObject',
   'src/app/operatorStack.ts': 'an operator on a data, material or effect lane; none is SceneObject',
   'src/app/shotOps.ts': 'a keyframe channel',
   'src/app/shotSpeed.ts': 'a keyframe channel',

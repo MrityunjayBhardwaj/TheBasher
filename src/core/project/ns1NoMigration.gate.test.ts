@@ -160,7 +160,7 @@ describe('#637 this phase ships no migration, and the absence is pinned', () => 
     // #1824 is the NINETEENTH: a child in a Group's or an Object's `children` list moves onto its
     // own parent input, reading that holder's world (formatMigrations[27]). Who hangs from whom was
     // held by the parent's list, and only a pass over the saved wires can hand it to the child.
-    const MIGRATIONS_SINCE_FREEZE = 19; // #915, #920, #930, #389, #1062, #1203, #1224, #1225 ×2, #1316, #1227, #1503, #1548, #1668, #1559, #1666, #1762, #1765, #1824
+    const MIGRATIONS_SINCE_FREEZE = 20; // #915, #920, #930, #389, #1062, #1203, #1224, #1225 ×2, #1316, #1227, #1503, #1548, #1668, #1559, #1666, #1762, #1765, #1824
     expect(PROJECT_FORMAT_VERSION).toBe(fixture().formatVersion + MIGRATIONS_SINCE_FREEZE);
   });
 

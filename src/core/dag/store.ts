@@ -12,6 +12,7 @@
 
 import { syncTemplateTypes, templateEdits } from './templates';
 import { create } from 'zustand';
+import { chainFollowUpOps } from './chainEdit';
 import { applyOp, applyOps, GraphRefusal, validateOp } from './ops';
 import type { Reportable } from './ops';
 import { findNewDanglingIdRef } from './idRefSweep';
@@ -146,8 +147,10 @@ function withTemplateEdits(
 ): { next: DagState; carried: InverseOp[] } {
   const edits = templateEdits(prev, next);
   if ('refusal' in edits) throw new GraphRefusal(`dispatch: ${edits.refusal}`);
-  if (edits.ops.length === 0) return { next, carried: [] };
-  const batch = applyOps(next, edits.ops);
+  // #1812 — and a constraint that names its object joins that object's chain, on the same road.
+  const ops = [...edits.ops, ...chainFollowUpOps(prev, next)];
+  if (ops.length === 0) return { next, carried: [] };
+  const batch = applyOps(next, ops);
   const carried = batch.applied
     .filter((a) => a.changed)
     .map((a) => ({ forward: a.forward, inverse: a.inverse }));

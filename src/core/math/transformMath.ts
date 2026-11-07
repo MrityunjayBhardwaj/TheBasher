@@ -317,3 +317,107 @@ export function separateTransform(m: Mat4): SeparatedTransform {
     scale: [scale[0], scale[1], scale[2]],
   };
 }
+
+export interface PolarParts {
+  readonly translation: Vec3;
+  /** The pure rotation nearest the transform's 3×3. */
+  readonly rotation: Quat;
+  /** What is left once the rotation is out: scale and shear, as a transform with no translation. */
+  readonly stretch: Mat4;
+}
+
+type V3 = [number, number, number];
+const dot3 = (a: V3, b: V3) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+const cross3 = (a: V3, b: V3): V3 => [
+  a[1] * b[2] - a[2] * b[1],
+  a[2] * b[0] - a[0] * b[2],
+  a[0] * b[1] - a[1] * b[0],
+];
+
+/**
+ * A transform's 3×3 as rotation × stretch, the polar decomposition Blender blends by
+ * (`interp_m3_m3m3`, `mat3_polar_decompose`). Separating into a scale VECTOR cannot hold what a
+ * non-uniformly scaled parent leaves in a child's world, so the stretch stays a matrix and
+ * rotation × stretch rebuilds the 3×3 whatever it holds.
+ *
+ * The rotation comes from a one-sided Jacobi SVD (A = UΣVᵀ, rotation = UVᵀ). A mirrored 3×3 negates
+ * the whole rotation, as `separateTransform` does. A singular one completes the missing directions
+ * of U; an all-zero one reads as the identity rotation. None of them yield a NaN.
+ */
+export function polarSplit(m: Mat4): PolarParts {
+  const cols: V3[] = [0, 4, 8].map((o) => [m[o], m[o + 1], m[o + 2]]);
+  const v: V3[] = [
+    [1, 0, 0],
+    [0, 1, 0],
+    [0, 0, 1],
+  ];
+  for (let sweep = 0; sweep < 30; sweep++) {
+    let rotated = false;
+    for (const [p, q] of [
+      [0, 1],
+      [0, 2],
+      [1, 2],
+    ]) {
+      const alpha = dot3(cols[p], cols[p]);
+      const beta = dot3(cols[q], cols[q]);
+      const gamma = dot3(cols[p], cols[q]);
+      if (Math.abs(gamma) <= 1e-15 * Math.sqrt(alpha * beta) || gamma === 0) continue;
+      rotated = true;
+      const zeta = (beta - alpha) / (2 * gamma);
+      const t = (zeta >= 0 ? 1 : -1) / (Math.abs(zeta) + Math.sqrt(1 + zeta * zeta));
+      const c = 1 / Math.sqrt(1 + t * t);
+      const s = c * t;
+      for (const w of [cols, v]) {
+        const wp = w[p];
+        const wq = w[q];
+        w[p] = [c * wp[0] - s * wq[0], c * wp[1] - s * wq[1], c * wp[2] - s * wq[2]];
+        w[q] = [s * wp[0] + c * wq[0], s * wp[1] + c * wq[1], s * wp[2] + c * wq[2]];
+      }
+    }
+    if (!rotated) break;
+  }
+  const sigma = cols.map((c) => Math.sqrt(dot3(c, c)));
+  const tiny = 1e-12 * Math.max(...sigma);
+  const known = sigma.map((x) => x > tiny && x > 0);
+  const u: V3[] = cols.map((c, i) => (known[i] ? (c.map((x) => x / sigma[i]) as V3) : [0, 0, 0]));
+  const count = known.filter(Boolean).length;
+  if (count === 1) {
+    const i = known.indexOf(true);
+    const a = u[i];
+    const axis: V3 =
+      Math.abs(a[0]) <= Math.abs(a[1]) && Math.abs(a[0]) <= Math.abs(a[2])
+        ? [1, 0, 0]
+        : Math.abs(a[1]) <= Math.abs(a[2])
+          ? [0, 1, 0]
+          : [0, 0, 1];
+    const b = cross3(a, axis);
+    const len = Math.sqrt(dot3(b, b));
+    const j = (i + 1) % 3;
+    const k = (i + 2) % 3;
+    u[j] = b.map((x) => x / len) as V3;
+    u[k] = cross3(a, u[j]);
+  } else if (count === 2) {
+    const k = known.indexOf(false);
+    u[k] = cross3(u[(k + 1) % 3], u[(k + 2) % 3]);
+  }
+  // rotation = U·Vᵀ, column-major.
+  const r: number[][] = [0, 1, 2].map((col) =>
+    [0, 1, 2].map((row) => u[0][row] * v[0][col] + u[1][row] * v[1][col] + u[2][row] * v[2][col]),
+  );
+  const det = dot3(r[0] as V3, cross3(r[1] as V3, r[2] as V3));
+  const rot = det < 0 ? r.map((c) => c.map((x) => -x)) : r;
+  const rotation4: Mat4 = [...rot[0], 0, ...rot[1], 0, ...rot[2], 0, 0, 0, 0, 1];
+  // stretch = rotationᵀ · A, so rotation × stretch is the 3×3 exactly.
+  const a3: V3[] = [0, 4, 8].map((o) => [m[o], m[o + 1], m[o + 2]]);
+  const stretchCol = (c: V3) => [
+    dot3(rot[0] as V3, c),
+    dot3(rot[1] as V3, c),
+    dot3(rot[2] as V3, c),
+    0,
+  ];
+  return {
+    translation: [m[12], m[13], m[14]],
+    rotation: eulerToQuat(rotationMatrixToEuler(rotation4)),
+    stretch: [...stretchCol(a3[0]), ...stretchCol(a3[1]), ...stretchCol(a3[2]), 0, 0, 0, 1],
+  };
+}

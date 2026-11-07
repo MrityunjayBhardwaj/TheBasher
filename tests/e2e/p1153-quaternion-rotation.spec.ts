@@ -223,8 +223,13 @@ test('#1153 — a Group in quaternion mode turns the child it holds', async ({ p
     },
     {
       type: 'connect',
+      from: { node: 'g1153', socket: 'world' },
+      to: { node: 'kid1153', socket: 'parent' },
+    },
+    {
+      type: 'connect',
       from: { node: 'kid1153', socket: 'out' },
-      to: { node: 'g1153', socket: 'children' },
+      to: { node: 'n_scene', socket: 'children' },
     },
     {
       type: 'connect',

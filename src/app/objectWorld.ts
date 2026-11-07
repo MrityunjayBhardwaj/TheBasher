@@ -22,6 +22,10 @@
 // Wiring the SAME relation both ways (B in A's `children`, A's world into B's `parent`) is a loop
 // between the two nodes, and `connect` refuses it.
 //
+// #1838 — the one holder the parent input cannot name is a wrapper (a Transform, a
+// MaterialOverride): it takes its child by a wire and has no world output. An object with no parent
+// input that a wrapper holds reads what it hangs from through that wrapper.
+//
 // Not yet: a constraint (#1811) — like `resolveWorldTransform`, this is the world before any
 // constraint, the one a Track-To reads its target from today.
 
@@ -38,6 +42,7 @@ import {
   cameraLocalPose,
   localMatrix,
   overlaidAt,
+  wrapperParentWorld,
   type Overlay,
 } from './resolveWorldTransform';
 import { useTransientEditStore } from './stores/transientEditStore';
@@ -60,11 +65,6 @@ export function objectWorldFold(
 ): number[] {
   // As `resolveWorldTransform`: the tree runs at scene time, each node re-timed onto its clock.
   const ctx = ctxOnClock(state, 'scene', evalCtx as ClockedCtx);
-  const world = parent ? new THREE.Matrix4().fromArray(parent) : new THREE.Matrix4();
-  // A camera's own transform is its pose (keys and held edits on its own clock), drawn unscaled.
-  if (isCameraNode(state, id)) {
-    return world.multiply(cameraLocalMatrix(cameraLocalPose(state, id, ctx, cache))).toArray();
-  }
   // The world before constraints (#1811), so an ancestor contributes its plain local matrix.
   const at: Overlay = {
     ctx,
@@ -72,6 +72,13 @@ export function objectWorldFold(
     transients: useTransientEditStore.getState().edits,
     ancestorLocal: (_state, _id, value) => localMatrix(value),
   };
+  const world = parent
+    ? new THREE.Matrix4().fromArray(parent)
+    : (wrapperParentWorld(state, id, at) ?? new THREE.Matrix4());
+  // A camera's own transform is its pose (keys and held edits on its own clock), drawn unscaled.
+  if (isCameraNode(state, id)) {
+    return world.multiply(cameraLocalMatrix(cameraLocalPose(state, id, ctx, cache))).toArray();
+  }
   const own = ownValueOf(state, id, ctx);
   const drawn = overlaidAt(state, id, own, at) ?? own;
   // A child parented to a bone hangs from that bone's pose, as `underParent` composes it.

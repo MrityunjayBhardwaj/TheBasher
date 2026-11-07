@@ -256,7 +256,7 @@ function walk(schema: unknown, path: string, out: ParamField[], depth: number): 
 }
 
 function socketsOf(def: NodeDefinition): { inputs: SocketField[]; outputs: SocketField[] } {
-  // #1824 — every input, an object's `parent` included: a child names its parent there.
+  // Every input: #1824 an object's `parent`, #1813 its constraint chain.
   const inputs = Object.entries(def.inputs).map(([socket, d]) => ({
     socket,
     // `Array.isArray` does not narrow a READONLY tuple, and `AcceptedTypeSet` is one.

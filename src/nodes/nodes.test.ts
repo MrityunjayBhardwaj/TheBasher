@@ -142,7 +142,9 @@ const ALL_TYPES = [
   'NormalPass',
   'Null',
   'Object',
+  'OwnWorld', // #1811
   'ParamDriver',
+  'PolarSplit', // #1811
   // #1049 — a stored polygon mesh's data half.
   'PolyMeshData',
   // #1240 — a layer that edits the pose wire; absorbed PoseOverride (retired, #1243).
@@ -177,6 +179,7 @@ const ALL_TYPES = [
   'TransformDirection', // #1784
   'TransformPoint', // #1784
   'UVProjectModifier',
+  'Value', // #1811
   'Vec3Math',
   'VecBreak3',
   'VideoStitch',
@@ -238,6 +241,7 @@ describe('default project', () => {
       'n_light',
       'n_light_aim',
       'n_light_data',
+      'n_light_own_world',
       'n_light_target',
       'n_render',
       'n_scene',

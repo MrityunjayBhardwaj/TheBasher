@@ -84,7 +84,12 @@ async function imported(page: Page) {
         data.some((d) => d.id === (n.inputs.data as { node: string } | undefined)?.node),
     );
     // The mesh's parent is whoever holds it as a child: the file's Pivot, a top-level scene child.
-    const parent = object ? all.find((n) => childrenOf(n.id).includes(object.id)) : undefined;
+    const hung = (object?.inputs as unknown as { parent?: { node: string } } | undefined)?.parent;
+    const parent = !object
+      ? undefined
+      : hung
+        ? nodes[hung.node]
+        : all.find((n) => childrenOf(n.id).includes(object.id));
     return {
       objectId: object?.id ?? null,
       parentId: parent?.id ?? null,

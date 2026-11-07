@@ -20,7 +20,7 @@ describe('NullNode', () => {
 
   it('is a geometry-less source: only the world it hangs from in, one SceneObject output', () => {
     // #1810 — its one input is its parent's world, which feeds its `world` output only.
-    expect(Object.keys(NullNode.inputs)).toEqual(['parent']);
+    expect(Object.keys(NullNode.inputs)).toEqual(['parent', 'constraints']);
     expect(NullNode.inputs.parent.world).toBe(true);
     expect(NullNode.outputs.out.type).toBe('SceneObject');
     expect(NullNode.outputs.world.type).toBe('Matrix4');

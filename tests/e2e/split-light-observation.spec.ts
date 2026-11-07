@@ -151,8 +151,13 @@ test.describe('#386 C3 — the split posable light, observed', () => {
           },
           {
             type: 'connect',
+            from: { node: 'obs_grp', socket: 'world' },
+            to: { node: 'obs_point', socket: 'parent' },
+          },
+          {
+            type: 'connect',
             from: { node: 'obs_point', socket: 'out' },
-            to: { node: 'obs_grp', socket: 'children' },
+            to: { node: sceneId, socket: 'children' },
           },
         ],
         'e2e',
@@ -368,6 +373,11 @@ test.describe('#386 C3 — the split posable light, observed', () => {
     // would drop it into. And it must still actually illuminate, from its own world.
     await dragRowOnto(LIGHT, 'n_scene');
     await expect.poll(() => sceneBand('lights')).toContain(LIGHT);
+    // It lights the scene once: the band draws it, so the tree must not draw it as well.
+    const litHere = async () => (await litPositions(page)).filter((p) => near([p], 5, 5, 3)).length;
+    await expect.poll(litHere, { timeout: 10_000 }).toBeGreaterThan(0);
+    await page.waitForTimeout(500);
+    expect(await litHere(), 'one light at its own world, not two').toBe(1);
     expect(await sceneBand('children'), 'not demoted to the generic children band').not.toContain(
       LIGHT,
     );

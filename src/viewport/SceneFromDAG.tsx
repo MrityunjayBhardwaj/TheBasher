@@ -65,7 +65,12 @@ import {
   driverChannelValuesForTarget,
   driverSubscriptionNodesForTarget,
 } from '../app/paramDrivers';
-import { resolveConstraintRotation, resolveConstraintPosition } from '../app/nodeConstraints';
+import {
+  chainDrawCorrection,
+  resolveConstraintRotation,
+  resolveConstraintPosition,
+} from '../app/nodeConstraints';
+import { localMatrix } from '../app/resolveWorldTransform';
 // #1765 — a light is turned by the rule every object follows (V665), through the resolver the
 // camera turns by; its name is the camera's because the camera came first (#390 unifies them).
 import { cameraLocalOrientation as lightLocalOrientation } from '../app/cameraTrackTo';
@@ -1526,7 +1531,6 @@ function LightHelperFollower({
       const { quaternion, aim } = lightLocalOrientation(
         useDagStore.getState().state,
         nodeId,
-        [base.position[0], base.position[1], base.position[2]],
         // Already read in its mode (`withResolvedRotation` above).
         { rotation: [base.rotation[0], base.rotation[1], base.rotation[2]] },
         liveCtxOf(nodeId),
@@ -1754,7 +1758,6 @@ function useLightTurn(
     const { quaternion } = lightLocalOrientation(
       useDagStore.getState().state,
       nodeId,
-      [light.position.x, light.position.y, light.position.z],
       { rotation: [rx, ry, rz] },
       liveCtxOf(nodeId),
       cache,
@@ -2424,6 +2427,7 @@ function ConstrainedR({
   const rawTransients = useTransientEditStore((s) => s.edits);
   const transients = useDataParamTransients(pickId, rawTransients);
   const cache = uiEvaluatorCache;
+  const correctionRef = useRef<THREE.Group>(null);
 
   // channels (position) → transient → derived aim rotation (constraint wins on
   // rotation, the whole point of V58 — derived, never stored). Returns the
@@ -2465,6 +2469,21 @@ function ConstrainedR({
         : base;
     // The skip-key must cover EVERY band this builds, or a change in an unkeyed band
     // silently stops re-rendering (the H48 static-node guard would eat the update).
+    // #1813 — what position, rotation and scale can't hold of the chain's end (an aim under an
+    // uneven parent). Identity on every object where they can.
+    const correction = chainDrawCorrection(
+      state,
+      pickId,
+      localMatrix(v as unknown as SceneChild),
+      ctx,
+      cache,
+    );
+    const outer = correctionRef.current;
+    if (outer) {
+      if (correction) outer.matrix.copy(correction);
+      else outer.matrix.identity();
+      outer.matrixWorldNeedsUpdate = true;
+    }
     return {
       v,
       aimKey: `${aim ? aim.join(',') : ''}|${followed ? followed.join(',') : ''}`,
@@ -2486,8 +2505,10 @@ function ConstrainedR({
     },
   );
   return (
-    <group ref={group}>
-      <MeshChild value={drawn} override={override} nodeId={pickId} />
+    <group ref={correctionRef} matrixAutoUpdate={false}>
+      <group ref={group}>
+        <MeshChild value={drawn} override={override} nodeId={pickId} />
+      </group>
     </group>
   );
 }

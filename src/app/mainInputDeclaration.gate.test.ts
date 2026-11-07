@@ -63,6 +63,8 @@ describe('what the #1815 mockup draws', () => {
   it.each([
     ['BevelModifier', 'target'], // an operator answers through its chain
     ['Transform', 'target'],
+    ['TrackTo', 'in'],
+    ['FollowPath', 'in'],
     ['CurveRemap', 'in'],
     ['Noise', 't'],
     ['Clamp', 'in'],

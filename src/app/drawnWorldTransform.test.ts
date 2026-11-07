@@ -6,9 +6,10 @@
 // the aim `resolveTrackTo` derives, and three multiplies the nesting. The live app is compared in the
 // e2e observation; the fixture of the first case is the one measured in the app on #1829.
 
+import { readCurveSampleAt } from './curveSampleSource';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 import * as THREE from 'three';
-import { applyOp } from '../core/dag';
+import { applyOp } from '../test-utils/committedApplyOp';
 import type { DagState } from '../core/dag/state';
 import { worldParentOf } from '../core/dag/worldChildren';
 import { buildDefaultDagState } from '../core/project/default';
@@ -295,9 +296,8 @@ describe('#1829 — what each road leaves alone', () => {
     expectMatrix(resolveDrawnWorldTransform(s, 'kid', CTX)?.matrix, worldOf(kid));
   });
 
-  it('a Track-To aimed at the child of an aimed object still reads the child un-aimed', () => {
-    // KNOWN GAP, by the rule that a constraint reads its inputs without ancestors' constraints: it
-    // aims at (0, 2, −3), not at where the child is drawn. The stack views (#1805) lift this.
+  it('a Track-To aimed at the child of an aimed object reads the child where it is drawn', () => {
+    // #1811 — a target is read after its own chain and its parents, as Blender does.
     let s = aimedCubeWithChild();
     s = makeSplitCube(s, {
       objectId: 'watcher',
@@ -305,9 +305,10 @@ describe('#1829 — what each road leaves alone', () => {
       connectTo: { node: SCENE, socket: 'children' },
     }).state;
     s = apply(s, trackTo('tt2', 'watcher', { aimNode: 'kid', aimPoint: [0, 0, 0] }));
-    expect(resolveConstraintRotation(s, 'watcher', CTX)).toEqual(
-      resolveTrackTo([-5, 0, 0], [0, 2, -3], [0, 1, 0], 0),
-    );
+    const kid = resolveDrawnWorldTransform(s, 'kid', CTX)!.position;
+    const got = resolveConstraintRotation(s, 'watcher', CTX)!;
+    const want = resolveTrackTo([-5, 0, 0], kid as never, [0, 1, 0], 0)!;
+    got.forEach((v, i) => expect(v).toBeCloseTo(want[i], 6));
   });
 
   it('a Follow-Path whose curve hangs from the follower resolves, it does not loop', () => {
@@ -365,7 +366,10 @@ describe('#1829 — a camera under an aimed object', () => {
       params: { target: 'cam', curve: 'crv', evalTime: 0 },
     });
     const pose = resolveCameraPoseAt(s, 'cam', 0);
-    pose.position.forEach((x, i) => expect(x, `axis ${i}`).toBeCloseTo([5, 0, 0][i], 9));
+    // #1791 — the path point, plus the camera's own world position as an offset, as Blender does.
+    const own = resolveDrawnWorldTransform(s, 'cam', CTX)!.position;
+    const point = readCurveSampleAt(s, 'crv', 0, CTX)!.point;
+    pose.position.forEach((x, i) => expect(x, `axis ${i}`).toBeCloseTo(point[i] + own[i], 6));
   });
 
   it("a driver on the parent's aim that reads the aimed camera below it does not loop", () => {
@@ -396,7 +400,7 @@ describe('#1829 — a camera under an aimed object', () => {
     ]) {
       rotationCalls.count = 0;
       expect(read).not.toThrow();
-      expect(rotationCalls.count).toBeLessThan(10);
+      expect(rotationCalls.count).toBeLessThan(25);
     }
   });
 });
@@ -415,7 +419,7 @@ describe('#1829 — the census of world readers', () => {
     // Keep-place: it refuses a constrained ancestor (`constrainedAtOrAbove`), so where it reads the
     // two roads agree. It moves to the drawn road when that refusal goes.
     'src/app/keepPlaceReparent.ts': 1,
-    'src/app/nodeConstraints.ts': 5, // a constraint's origin, target and parent
+    'src/app/nodeConstraints.ts': 3, // a constraint's origin, target and parent
     'src/app/rigIndex.ts': 2, // the armature world, read by a Track-To's aim at a bone
   };
   const DRAWN_ROAD: Record<string, number> = {

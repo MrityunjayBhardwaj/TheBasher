@@ -30,7 +30,11 @@ const childIds = (page: Page, nodeId: string) =>
   page.evaluate((id) => {
     const s = (window as unknown as ParentWindow).__basher_dag.getState().state;
     const node = id === '__scene__' ? s.nodes[s.outputs.scene.node] : s.nodes[id];
-    return (node?.inputs.children ?? []).map((c) => c.node);
+    // The scene's list says who is a member; an object's children hang by their parent input.
+    if (id === '__scene__') return (node?.inputs.children ?? []).map((c) => c.node);
+    return Object.entries(s.nodes)
+      .filter(([, c]) => (c.inputs as unknown as { parent?: { node: string } }).parent?.node === id)
+      .map(([cid]) => cid);
   }, nodeId);
 
 const world = (page: Page, id: string) =>
@@ -78,7 +82,8 @@ test('a row dropped onto an Object becomes its child, drawn in its space', async
   // Alt keeps the child's values (#1516), so what is read below is the parent composed over them.
   await dragRowOnto(page, 'n_box_2', 'n_box', 'into', { altKey: true });
 
-  expect(await childIds(page, '__scene__')).not.toContain('n_box_2');
+  // #1823 — parenting is not membership: it hangs from the box and stays on the scene's list.
+  expect(await childIds(page, '__scene__')).toContain('n_box_2');
   expect(await childIds(page, 'n_box')).toEqual(['n_box_2']);
   // parent · child: (1,0,0) scaled by 2 → (2,0,0), turned 90° about Y → (0,0,-2), then + (0,2,0).
   const w = await world(page, 'n_box_2');

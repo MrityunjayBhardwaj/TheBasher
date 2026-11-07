@@ -432,6 +432,19 @@ export function buildMoveOps(
       move.to === sceneId &&
       socket === 'children' &&
       refsOf(state.nodes[sceneId]?.inputs?.children).some((r) => r?.node === move.childId);
+    // A light going back on the scene's `lights` leaves the list it joined when it was hung: the band
+    // draws what is on `lights`, the tree what the list names, and both would draw it.
+    if (
+      move.to === sceneId &&
+      socket === 'lights' &&
+      refsOf(state.nodes[sceneId]?.inputs?.children).some((r) => r?.node === move.childId)
+    ) {
+      rewire.push({
+        type: 'disconnect',
+        from: { node: move.childId, socket: 'out' },
+        to: { node: sceneId, socket: 'children' },
+      });
+    }
     if (sceneListed) {
       // Nothing to attach.
     } else if (attachesByParentInput(state, move.to, socket, move.childId)) {

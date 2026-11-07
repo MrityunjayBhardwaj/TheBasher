@@ -69,11 +69,7 @@ export const FollowPathParams = z.object({
   offset: z.number().default(0),
   /** Bypass — a muted constraint contributes nothing (the constraint stack). */
   mute: z.boolean().default(false),
-  /** Position in the target's ordered constraint stack (low → high, bottom → top).
-   *  Shared with Track-To: one object has ONE constraint stack, and both operators take
-   *  their slot in it. Within the POSITION band the fold is last-writer-wins, so a higher
-   *  `order` wins; a Track-To in the same stack writes a different band and never
-   *  contends. Mirrors `TrackTo.order` / `ParamDriver.order`. */
+  /** Where a new step joins its object's chain. Once it is on the chain, the wires are the order. */
   order: z.number().default(0),
 });
 export type FollowPathParams = z.infer<typeof FollowPathParams>;
@@ -82,6 +78,9 @@ export const FollowPathNode: NodeDefinition<FollowPathParams, FollowPathConstrai
   type: 'FollowPath',
   version: 1,
   pure: true,
+  worldStep: true,
+  // #1812 — the curve object picked by name, as a saved file holds it.
+  worldRefs: { curve: 'curve' },
   cost: 'cheap',
   paramSchema: FollowPathParams,
   // #421 — `target` is the constrained object (owner → subject). `curve` is a
@@ -93,8 +92,17 @@ export const FollowPathNode: NodeDefinition<FollowPathParams, FollowPathConstrai
   ],
   // Edge-less (enumerated + seam-resolved, like TrackTo and a direct channel). The `out`
   // socket exists for introspection; nothing consumes it.
-  inputs: {},
-  outputs: { out: { type: 'Constraint', cardinality: 'single' } },
+  mainInput: 'in',
+  inputs: {
+    // #1811 — on a wired chain: the transform coming up it, and the world of the curve object.
+    in: { type: 'Matrix4', cardinality: 'single', chain: 'step' },
+    curve: { type: 'Matrix4', cardinality: 'single', chain: 'step' },
+  },
+  outputs: {
+    out: { type: 'Constraint', cardinality: 'single' },
+    // #1811 — the transform that came up the chain, changed by this constraint.
+    world: { type: 'Matrix4', cardinality: 'single', world: true },
+  },
   inspectorSections: ['constraint', 'driver'],
   // The path is bound through the general node-ref picker (#341). `shape:'id'` because
   // `curve` is a plain string id (the fold reads it raw); `kind:'curve'` filters the

@@ -15,7 +15,8 @@
 //      OBJECT); #247 / #317 / #387.
 
 import { beforeAll, describe, expect, it } from 'vitest';
-import { applyOp, emptyDagState, type DagState } from '../core/dag';
+import { emptyDagState, type DagState } from '../core/dag';
+import { applyOp } from '../test-utils/committedApplyOp';
 import { registerAllNodes } from '../nodes/registerAll';
 import { splitOps } from '../test-utils/splitKinds';
 import { bindLookAtTargetOps, lookAtTargetOptions } from './CameraLookAtTarget';

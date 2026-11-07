@@ -90,6 +90,8 @@ describe('node schema payload (#1007)', () => {
       { socket: 'pose', type: 'PosedSkeleton', cardinality: 'single' },
       // #1824 — and its `parent` input, where it names the object it hangs from.
       { socket: 'parent', type: 'Matrix4', cardinality: 'single' },
+      // #1813 — and `constraints`, where its chain of constraints ends.
+      { socket: 'constraints', type: 'Matrix4', cardinality: 'single' },
     ]);
     expect(obj.outputs).toEqual([
       { socket: 'out', type: 'SceneObject', cardinality: 'single' },

@@ -471,14 +471,7 @@ export function resolveCameraPoseAt(
 
   // #1760 — turned by its winning Track-To (#1766: aimed in the parent's space; #1759: its roll
   // adds on), else by its own rotation: the rule every object follows (V665).
-  const { quaternion, aim } = cameraLocalOrientation(
-    state,
-    node.id,
-    pose.position,
-    own,
-    ctx,
-    cache,
-  );
+  const { quaternion, aim } = cameraLocalOrientation(state, node.id, own, ctx, cache);
 
   // #231 Inc 3.3 — a camera nested in a Group frames from the group-composed WORLD.
   // Compose AFTER the channel + Track-To overlays so the animated/aimed LOCAL pose

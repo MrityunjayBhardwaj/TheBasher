@@ -62,6 +62,7 @@ import type {
   Vec3,
 } from '../nodes/types';
 import { useDagStore } from '../core/dag/store';
+import { paramWiredFrom } from './wiredParam';
 import { getNodeType } from '../core/dag/registry';
 import { nodeRefCandidates, type NodeRefKind } from './nodeRefCandidates';
 import {
@@ -87,6 +88,7 @@ import {
   widgetOf,
 } from '../nodes/paramWidget';
 import { OptionsSelect } from './OptionsSelect';
+import type { DagState } from '../core/dag/state';
 import type { NodeRef } from '../core/dag/types';
 import { resolveStackBase } from './operatorStack';
 import { usePlayheadFor } from './animate/usePlayheadFor';
@@ -105,6 +107,8 @@ import {
 } from './animate/dispatchApplyTransform';
 import { applyTransformFromUi } from './animate/applyTransformAction';
 import { ParamDiamond } from './ParamDiamond';
+import { keyParamFromTransient } from './animate/autoKeyCommit';
+import { KEY_ROW_ATTR, ROW_KEY_ATTR, useRowKeyer } from './animate/rowKey';
 import {
   autoKeyCommit,
   commitObjectBonePose,
@@ -161,6 +165,7 @@ import { ModifierStackControls } from './ModifierStackControls';
 import { MaterialStackControls } from './MaterialStackControls';
 import { MaterialLinkControls } from './MaterialLinkControls';
 import { ConstraintStackControls } from './ConstraintStackControls';
+import { influenceOf, readChain, setInfluenceOps } from '../core/dag/chainEdit';
 import { DriverStackControls } from './DriverStackControls';
 import { CurvePointRows } from './CurvePointRows';
 import { EXTRAPOLATE_RULES } from '../nodes/keyframeInterp';
@@ -423,6 +428,22 @@ function NumericField({
   }, [driven, dagState, nodeId, paramPath, frame, seconds, normalized, cache]);
   const readOnly = driven || (playing && evaluated);
   const display = driven ? (drivenValue ?? value) : scrub.isDragging ? scrub.previewValue : value;
+  // #1811 — a wire has taken this value over, so the stored number is not the one in use. As in
+  // Blender, a linked socket shows no value field, only its name and where it now comes from.
+  const wiredFrom = paramWiredFrom(dagState, nodeId, paramPath);
+  if (wiredFrom) {
+    return (
+      <div
+        className="flex items-center justify-between gap-2 px-3 py-1.5 text-[11px] text-fg/80"
+        data-testid={`inspector-wired-${nodeId}-${paramPath}`}
+      >
+        <span className="select-none font-mono text-fg/40">{label}</span>
+        <span className="truncate text-fg/50" title="Set by a wire: edit the source">
+          from {nodeDisplayName(dagState.nodes, wiredFrom)}
+        </span>
+      </div>
+    );
+  }
   return (
     <label className="flex items-center justify-between gap-2 px-3 py-1.5 text-[11px] text-fg/80">
       <span className="flex items-center gap-1">
@@ -667,7 +688,10 @@ function VectorField({
   const readOnly =
     driven || controller !== null || (playing && (resolved !== null || evaluatedVec !== null));
   return (
-    <div className="flex flex-col gap-1 px-3 py-1.5 text-[11px] text-fg/80">
+    <div
+      {...{ [KEY_ROW_ATTR]: '' }}
+      className="flex flex-col gap-1 px-3 py-1.5 text-[11px] text-fg/80"
+    >
       <span className="flex items-center gap-1">
         <ParamDiamond nodeId={nodeId} paramPath={paramPath} value={value} />
         {controller ? (
@@ -3235,6 +3259,115 @@ function StandingParamRow({
   );
 }
 
+/**
+ * #1813 — a constraint's influence: how much of what it does is kept, from 0 to 1, as in Blender. It
+ * is one Value node feeding the blend's three Mix nodes (`chainEdit.ts`), and once there is one this
+ * is that node's own row, so keys, drivers and the diamond work on it as on any setting. Before that
+ * it is a field, which wires the blend on the first change away from 1, and a diamond, which wires
+ * it at 1 so there is something to key. A number wired into the factors is that wire's to change.
+ */
+/** The object and the chain step an Influence row shown for `nodeId` speaks for. */
+function influenceTarget(
+  state: DagState,
+  nodeId: string,
+  selected: string | null,
+): { objectId: string; stepId: string } | null {
+  const stepNode = state.nodes[nodeId];
+  const objectId =
+    stepNode && getNodeType(stepNode.type)?.worldStep
+      ? (stepNode.params as { target?: string }).target
+      : nodeId;
+  const steps = objectId ? (readChain(state, objectId)?.steps ?? []) : [];
+  const stepId = steps.some((s) => s.id === selected)
+    ? selected
+    : steps.length === 1
+      ? steps[0].id
+      : null;
+  return objectId && stepId ? { objectId, stepId } : null;
+}
+
+function InfluenceRow({ nodeId }: { nodeId: string }) {
+  const state = useDagStore((s) => s.state);
+  const selected = useSelectionStore((s) => s.selectedNodeId);
+  // #1845 — I over the row at influence 1, where no diamond exists yet: wires the blend and keys it.
+  const rowKey = useRowKeyer<HTMLButtonElement>(() => {
+    const live = useDagStore.getState();
+    const step = influenceTarget(live.state, nodeId, useSelectionStore.getState().selectedNodeId);
+    if (!step) return { ok: false, reason: 'This constraint has no influence to key.' };
+    const ops = setInfluenceOps(live.state, step.objectId, step.stepId, 1, true);
+    if (ops?.length) live.dispatchAtomic(ops, 'user', 'set constraint influence');
+    const wired = influenceOf(useDagStore.getState().state, step.objectId, step.stepId);
+    if (wired?.kind !== 'value') return { ok: false, reason: 'This influence cannot be keyed.' };
+    return keyParamFromTransient(wired.nodeId, 'value', 1);
+  });
+  const step = influenceTarget(state, nodeId, selected);
+  if (!step) return null;
+  const { objectId, stepId } = step;
+  const influence = influenceOf(state, objectId, stepId);
+  if (!influence) return null;
+  const set = (value: number, force = false) => {
+    const live = useDagStore.getState().state;
+    const ops = setInfluenceOps(live, objectId, stepId, value, force);
+    if (ops?.length) useDagStore.getState().dispatchAtomic(ops, 'user', 'set constraint influence');
+  };
+  const heading = (
+    <span className="px-3 pt-1 text-[10px] text-fg/60" data-testid="constraint-influence-label">
+      Influence
+    </span>
+  );
+  if (influence.kind === 'value') {
+    const value = (state.nodes[influence.nodeId].params as { value: number }).value;
+    return (
+      <div className="flex flex-col" data-testid="constraint-influence" {...{ [KEY_ROW_ATTR]: '' }}>
+        {heading}
+        <ParamRow nodeId={influence.nodeId} paramPath="value" value={value} />
+      </div>
+    );
+  }
+  if (influence.kind === 'wired') {
+    return (
+      <div className="flex flex-col" data-testid="constraint-influence">
+        {heading}
+        <span className="px-3 pb-1 text-[10px] text-fg/50" data-testid="constraint-influence-wired">
+          {influence.from ? `Driven by ${influence.from.node}` : 'Driven by wires'}
+        </span>
+      </div>
+    );
+  }
+  return (
+    <div className="flex items-center gap-1 px-3 py-1" data-testid="constraint-influence">
+      <span className="text-[10px] text-fg/60">Influence</span>
+      <input
+        type="number"
+        min={0}
+        max={1}
+        step={0.01}
+        defaultValue={1}
+        key={stepId}
+        data-testid="constraint-influence-input"
+        aria-label="Influence"
+        onChange={(e) => {
+          const value = Number(e.currentTarget.value);
+          if (Number.isFinite(value)) set(Math.min(1, Math.max(0, value)));
+        }}
+        className="w-16 rounded border border-border bg-bg-2 px-1 py-0.5 font-mono text-[10px] text-fg"
+      />
+      <button
+        ref={rowKey}
+        type="button"
+        {...{ [ROW_KEY_ATTR]: '' }}
+        data-testid="constraint-influence-key"
+        aria-label="Make influence keyable"
+        title="Make influence keyable"
+        onClick={() => set(1, true)}
+        className="select-none px-0.5 text-[10px] leading-none text-fg/40 hover:text-record"
+      >
+        ◇
+      </button>
+    </div>
+  );
+}
+
 function ParamRow({
   nodeId,
   paramPath,
@@ -4176,7 +4309,10 @@ function QuaternionField({ nodeId, authored }: { nodeId: string; authored: Quat 
   const shown: Quat = (animated || controller) && evaluated ? evaluated : authored;
   const readOnly = controller !== null || (playing && animated);
   return (
-    <div className="flex flex-col gap-1 px-3 py-1.5 text-[11px] text-fg/80">
+    <div
+      {...{ [KEY_ROW_ATTR]: '' }}
+      className="flex flex-col gap-1 px-3 py-1.5 text-[11px] text-fg/80"
+    >
       <span className="flex items-center gap-1">
         <ParamDiamond nodeId={nodeId} paramPath="quaternion" value={authored} />
         {controller ? (
@@ -4211,7 +4347,12 @@ const SECTION_CONTROL_RENDERERS: SectionControlRenderers = {
   modifierStack: (ctx) => <ModifierStackControls nodeId={ctx.paramsNodeId} />,
   materialStack: (ctx) => <MaterialStackControls nodeId={ctx.paramsNodeId} />,
   materialLink: (ctx) => <MaterialLinkControls nodeId={ctx.paramsNodeId} />,
-  constraintStack: (ctx) => <ConstraintStackControls nodeId={ctx.paramsNodeId} />,
+  constraintStack: (ctx) => (
+    <>
+      <ConstraintStackControls nodeId={ctx.paramsNodeId} />
+      <InfluenceRow nodeId={ctx.paramsNodeId} />
+    </>
+  ),
   driverStack: (ctx) => <DriverStackControls nodeId={ctx.paramsNodeId} />,
   curvePoints: (ctx) => <CurvePointRows nodeId={ctx.paramsNodeId} />,
   channelExtend: (ctx) => <ChannelExtendControls nodeId={ctx.paramsNodeId} />,

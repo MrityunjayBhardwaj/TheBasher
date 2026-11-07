@@ -79,6 +79,7 @@ export const COMPUTE_KINDS = [
   'Mix',
   'CurveRemap',
   'Noise',
+  'Value',
   // Vector compute (Vector3 rail) — MakeVec3/VecBreak3 convert to/from components,
   // Vec3Math does vector arithmetic.
   'MakeVec3',
@@ -87,6 +88,7 @@ export const COMPUTE_KINDS = [
   // Transform compute (Matrix4 rail, #1784) — Blender's matrix nodes, plus Euler ↔ rotation.
   'CombineTransform',
   'SeparateTransform',
+  'PolarSplit',
   'MultiplyTransforms',
   'InvertTransform',
   'TransformPoint',
@@ -609,11 +611,13 @@ function isCompute(kind: PrimitiveKind): boolean {
     kind === 'Mix' ||
     kind === 'CurveRemap' ||
     kind === 'Noise' ||
+    kind === 'Value' ||
     kind === 'MakeVec3' ||
     kind === 'VecBreak3' ||
     kind === 'Vec3Math' ||
     kind === 'CombineTransform' ||
     kind === 'SeparateTransform' ||
+    kind === 'PolarSplit' ||
     kind === 'MultiplyTransforms' ||
     kind === 'InvertTransform' ||
     kind === 'TransformPoint' ||
@@ -745,6 +749,8 @@ function humanLabel(kind: PrimitiveKind): string {
       return 'Curve Remap node';
     case 'Noise':
       return 'Noise node';
+    case 'Value':
+      return 'Value node';
     case 'MakeVec3':
       return 'Make Vec3 node';
     case 'VecBreak3':
@@ -755,6 +761,8 @@ function humanLabel(kind: PrimitiveKind): string {
       return 'Combine Transform node';
     case 'SeparateTransform':
       return 'Separate Transform node';
+    case 'PolarSplit':
+      return 'Polar Split node';
     case 'MultiplyTransforms':
       return 'Multiply Transforms node';
     case 'InvertTransform':
@@ -902,11 +910,13 @@ function paramsFor(kind: PrimitiveKind, position: Vec3): Record<string, unknown>
     case 'Mix':
     case 'CurveRemap':
     case 'Noise':
+    case 'Value':
     case 'MakeVec3':
     case 'VecBreak3':
     case 'Vec3Math':
     case 'CombineTransform':
     case 'SeparateTransform':
+    case 'PolarSplit':
     case 'MultiplyTransforms':
     case 'InvertTransform':
     case 'TransformPoint':

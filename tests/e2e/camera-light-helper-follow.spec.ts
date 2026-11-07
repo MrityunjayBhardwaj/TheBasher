@@ -209,14 +209,19 @@ test('#242 GAP 1 — a camera frustum follows an ANIMATED ANCESTOR Group (its ow
         },
         {
           type: 'connect',
-          from: { node: 'anc_box', socket: 'out' },
-          to: { node: 'anc_grp', socket: 'children' },
+          from: { node: 'anc_grp', socket: 'world' },
+          to: { node: 'anc_box', socket: 'parent' },
         },
-        // groupable camera: stays wired to scene.camera AND becomes a Group child
         {
           type: 'connect',
-          from: { node: 'n_camera', socket: 'out' },
-          to: { node: 'anc_grp', socket: 'children' },
+          from: { node: 'anc_box', socket: 'out' },
+          to: { node: scene, socket: 'children' },
+        },
+        // groupable camera: stays wired to scene.camera AND hangs from the Group
+        {
+          type: 'connect',
+          from: { node: 'anc_grp', socket: 'world' },
+          to: { node: 'n_camera', socket: 'parent' },
         },
         {
           type: 'connect',

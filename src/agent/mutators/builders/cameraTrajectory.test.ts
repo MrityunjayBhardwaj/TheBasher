@@ -254,7 +254,7 @@ describe('#774 — a prompt becomes a wired, aimed camera trajectory', () => {
     expect(res.ok === false && res.reason).toMatch(/CameraData|camera/i);
   });
 
-  it('lands the constraints on TOP of a stack the camera already carries', () => {
+  it('puts the path below an aim the camera already carries, so it aims from the path', () => {
     const s0 = scene();
     const cam = cameraId(s0);
     // An unrelated constraint already on the camera, at order 0.
@@ -272,8 +272,8 @@ describe('#774 — a prompt becomes a wired, aimed camera trajectory', () => {
       .find((o) => o.nodeType === 'FollowPath')!;
     expect(
       (follow.params as { order: number }).order,
-      'the new path took a slot already in use',
-    ).toBeGreaterThan(0);
+      'the only road that lands a path below an aim; every other lands on top, as Blender',
+    ).toBeLessThan(0);
     // ...and the Track-To already there was RE-POINTED rather than duplicated.
     expect(
       ops.filter((o) => o.type === 'addNode' && (o as AddNodeOp).nodeType === 'TrackTo'),

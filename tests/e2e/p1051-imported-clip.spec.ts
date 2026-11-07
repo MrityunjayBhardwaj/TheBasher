@@ -188,17 +188,18 @@ async function importShape(page: Page) {
             d.id === (n.inputs.data as { node: string } | undefined)?.node,
         ),
     );
-    const holds = (id: string) => (n: (typeof nodes)[number]) =>
-      Array.isArray(n.inputs.children) && n.inputs.children.some((k) => k.node === id);
+    const holderOf = (id: string) => {
+      const self = nodes.find((n) => n.id === id);
+      const hung = (self?.inputs as unknown as { parent?: { node: string } } | undefined)?.parent;
+      if (hung) return nodes.find((n) => n.id === hung.node);
+      return nodes.find(
+        (n) => Array.isArray(n.inputs.children) && n.inputs.children.some((k) => k.node === id),
+      );
+    };
     // #1451 — no wrapper Group: the import's top is the ancestor the Scene holds directly (here
     // the file's pivot), the one three draws under its own id.
     let top = cube;
-    for (
-      let h = top && nodes.find(holds(top.id));
-      h && h.type !== 'Scene';
-      h = nodes.find(holds(h.id))
-    )
-      top = h;
+    for (let h = top && holderOf(top.id); h && h.type !== 'Scene'; h = holderOf(h.id)) top = h;
     return {
       cubeId: cube?.id ?? null,
       topId: top && top !== cube ? top.id : null,

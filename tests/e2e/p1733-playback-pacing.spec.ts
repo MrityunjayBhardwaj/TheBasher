@@ -103,8 +103,13 @@ async function stage(page: Page, objects: number): Promise<void> {
         },
         {
           type: 'connect',
+          from: { node: 'pace_g', socket: 'world' },
+          to: { node: 'pace_sel', socket: 'parent' },
+        },
+        {
+          type: 'connect',
           from: { node: 'pace_sel', socket: 'out' },
-          to: { node: 'pace_g', socket: 'children' },
+          to: { node: sceneId, socket: 'children' },
         },
         {
           type: 'connect',

@@ -320,6 +320,12 @@ export interface InputDescriptor {
    */
   world?: true;
   /**
+   * #1811 — an input of a constraint chain. It feeds the node's world output only, never its value.
+   * `'step'`: a chain node reads it (the transform coming up the chain, an aim target's world).
+   * `'end'`: the object's input where its chain ends. Wired, what arrives is the object's world.
+   */
+  chain?: 'step' | 'end';
+  /**
    * #1824 — a list input that also GATHERS this node's children: every node whose parent input
    * (an input marked {@link InputDescriptor.world}) reads this node's world output arrives here
    * after the wires, in node-table order, as if wired. So a parent draws what hangs from it
@@ -555,6 +561,36 @@ export interface NodeDefinition<P = unknown, O = unknown> {
    * point-in-time contract. Marker only; the machinery lives in the seam.
    */
   stateful?: boolean;
+  /**
+   * #1811 — a step of a constraint chain: its world output is the registered step fold
+   * (`setWorldStepFold`) on its `chain` inputs, because its settings can be keyed off the graph.
+   */
+  worldStep?: true;
+  /**
+   * #1811 — settings of a chain step that name an object whose world the step reads, each by the
+   * input it stands in for: a wire on that input wins. A reference, so it may close a loop
+   * (docs/GRAPH.md, a loop through a reference is stored and named), and the evaluator answers
+   * such a loop rather than throwing on it (`loopedWorldRefs`).
+   */
+  worldRefs?: Readonly<Record<string, string>>;
+  /**
+   * #1813 — a chain step's input that reads the world its object hangs from, given here as `socket`
+   * and `owner`, the setting naming the object. Read through the object rather than stored as a wire
+   * of the step's own, so reparenting the object can't leave it behind. A wire there wins.
+   */
+  ownerParent?: { readonly socket: string; readonly owner: string };
+  /**
+   * #575 — this node's cook reads its settings at the time being evaluated, so a key or a driver on
+   * one reaches what it outputs. The read lives above the evaluator and is registered
+   * (`setKeyedParams`), because keys live off the graph.
+   */
+  keyedCook?: boolean;
+  /**
+   * #1811 — the bottom of a constraint chain: its world output is the world of the object this
+   * param names BEFORE that object's chain (the parent's world times its own transform). A param
+   * and not a wire, because the chain ends at that object: a wire would be a loop.
+   */
+  ownWorldOf?: string;
   cost: NodeCost;
   /**
    * Output type widened to `unknown` for the input shape so zod schemas with

@@ -64,7 +64,14 @@ const childrenOf = (page: Page, id: string) =>
   page.evaluate((nodeId) => {
     const s = (window as unknown as W).__basher_dag.getState().state;
     const n = nodeId === '__scene__' ? s.nodes[s.outputs.scene.node] : s.nodes[nodeId];
-    return n ? (n.inputs.children ?? []).map((c) => c.node) : null;
+    if (!n) return null;
+    // The scene's list says who is a member; a group's children hang by their parent input.
+    if (nodeId === '__scene__') return (n.inputs.children ?? []).map((c) => c.node);
+    return Object.entries(s.nodes)
+      .filter(
+        ([, c]) => (c.inputs as unknown as { parent?: { node: string } }).parent?.node === nodeId,
+      )
+      .map(([cid]) => cid);
   }, id);
 
 const hasNode = (page: Page, id: string) =>
@@ -96,8 +103,17 @@ async function setUp(page: Page) {
       {
         type: 'connect',
         from: { node: id, socket: 'out' },
-        to: { node: parent, socket: 'children' },
+        to: { node: 'n_scene', socket: 'children' },
       },
+      ...(parent === 'n_scene'
+        ? []
+        : [
+            {
+              type: 'connect',
+              from: { node: parent, socket: 'world' },
+              to: { node: id, socket: 'parent' },
+            },
+          ]),
     ];
     dag.dispatchAtomic(
       [

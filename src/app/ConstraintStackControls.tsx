@@ -5,9 +5,8 @@
 //
 // Same rows as the Modifiers panel (OperatorStackRows) — the presentation is the real
 // overlap. What differs, and stays here:
-//   - enumeration : constraintStackEntries — an edge-LESS set sharing a `target`,
-//                   ordered by an `order` field (NOT a wired sub-chain).
-//   - op-builders : constraintStack.ts — add/move/remove are `target`/`order` writes.
+//   - enumeration : constraintStackEntries — the steps of the object's wired chain, in its order.
+//   - op-builders : constraintStack.ts — add/move/remove edit that chain (`chainEdit.ts`).
 // Clicking a row selects that constraint so its params (aim target, up, aim point)
 // edit in the same section's ParamRows below — exactly the modifier-stack idiom.
 //

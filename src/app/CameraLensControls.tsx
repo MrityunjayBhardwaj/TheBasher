@@ -24,6 +24,7 @@ import { CameraLookAtTarget } from './CameraLookAtTarget';
 import { cameraFilmCtx, cameraFocusTargetDistance } from './activeCamera';
 import { cameraProjectionOf } from './cameraNode';
 import { ParamDiamond } from './ParamDiamond';
+import { KEY_ROW_ATTR } from './animate/rowKey';
 import { resolveEvaluatedParam } from './resolveEvaluatedParam';
 import { useTimeStore } from './stores/timeStore';
 import { DEFAULT_CAMERA_FAR, DEFAULT_CAMERA_NEAR } from '../nodes/CameraData';
@@ -272,7 +273,7 @@ export function CameraLensControls({
           {/* FOV is the stored param but presented as a derived readout — a
               director sets the lens, not the angle (Blender). The diamond keys it
               (#190): FOV is the keyable camera param the resolver overlays. */}
-          <div className={ROW}>
+          <div className={ROW} {...{ [KEY_ROW_ATTR]: '' }}>
             <span className="flex items-center gap-1">
               <ParamDiamond nodeId={nodeId} paramPath="fov" value={fov} />
               <span className={LABEL}>field of view</span>
