@@ -139,6 +139,87 @@ test('the Influence row: a number blends the object, and the same number takes a
   await expectAt(page, 'n_box', [-2, 7, 0]);
 });
 
+test('the Influence row: its diamond keys the blend from influence 1, and the object follows', async ({
+  page,
+}) => {
+  await boot(page);
+  await page.evaluate(() => {
+    const w = window as unknown as W;
+    w.__basher_time.getState().pause();
+    w.__basher_time.getState().setTime(1);
+    const sceneId = w.__basher_dag.getState().state.outputs.scene!.node;
+    const d = (op: unknown) => w.__basher_dag.getState().dispatch(op, 'user', 'e2e');
+    d({ type: 'setParam', nodeId: 'n_box', paramPath: 'position', value: [0, 4, 0] });
+    d({
+      type: 'addNode',
+      nodeId: 'e_cd',
+      nodeType: 'CurveData',
+      params: {
+        points: [
+          { id: 'cp0', co: [0, 0, 0] },
+          { id: 'cp1', co: [10, 0, 0] },
+        ],
+        closed: false,
+        resolution: 32,
+      },
+    });
+    d({ type: 'addNode', nodeId: 'e_c', nodeType: 'Object', params: { rotation: [0, 0, 90] } });
+    d({
+      type: 'connect',
+      from: { node: 'e_cd', socket: 'out' },
+      to: { node: 'e_c', socket: 'data' },
+    });
+    d({
+      type: 'connect',
+      from: { node: 'e_c', socket: 'out' },
+      to: { node: sceneId, socket: 'children' },
+    });
+    d({
+      type: 'addNode',
+      nodeId: 'e_f',
+      nodeType: 'FollowPath',
+      params: { target: 'n_box', curve: 'e_c', evalTime: 1 },
+    });
+    w.__basher_selection.getState().select('e_f');
+  });
+  const setTime = (s: number) =>
+    page.evaluate((t) => (window as unknown as W).__basher_time.getState().setTime(t), s);
+  const keys = () =>
+    page.evaluate(() => {
+      const nodes = (window as unknown as W).__basher_dag.getState().state.nodes;
+      const params = nodes['e_f_influence_value_value_channel']?.params as
+        | { keyframes: { time: number; value: number }[] }
+        | undefined;
+      return params?.keyframes.map((k) => [k.time, k.value]) ?? [];
+    });
+
+  // At influence 1 the blend is not wired yet: the small diamond wires it, and nothing moves.
+  await page.getByTestId('constraint-influence-key').click();
+  const diamond = page.getByTestId('inspector-diamond-e_f_influence_value-value');
+  await expect(diamond).toBeVisible();
+  await expectAt(page, 'n_box', [-4, 10, 0]);
+
+  await diamond.click();
+  await expect.poll(keys).toEqual([[1, 1]]);
+
+  await setTime(0);
+  const field = page.getByTestId('constraint-influence').locator('input[type="number"]').first();
+  await field.fill('0');
+  await field.blur();
+  await diamond.click();
+  await expect.poll(keys).toEqual([
+    [0, 0],
+    [1, 1],
+  ]);
+
+  // Blender 5.1.1's values for this line, at influence 0, 0.5 and 1.
+  await expectAt(page, 'n_box', [0, 4, 0]);
+  await setTime(0.5);
+  await expectAt(page, 'n_box', [-2, 7, 0]);
+  await setTime(1);
+  await expectAt(page, 'n_box', [-4, 10, 0]);
+});
+
 test('an aim under an uneven parent draws what the chain says, its child included', async ({
   page,
 }) => {
