@@ -47,6 +47,7 @@ export const GroupNode: NodeDefinition<GroupParams, GroupValue> = {
   pure: true,
   cost: 'cheap',
   paramSchema: GroupParams,
+  mainInput: null,
   inputs: {
     children: { type: 'SceneObject', cardinality: 'list', owns: 'always', gathersChildren: true },
     // #1810 — the world this object hangs from, and its own world: the parent's times its own

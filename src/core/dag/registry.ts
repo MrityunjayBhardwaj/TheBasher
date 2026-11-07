@@ -9,6 +9,7 @@ import type {
   NodeDefinition,
   NodeTypeId,
   OperatorSection,
+  SocketId,
   SocketTypeName,
 } from './types';
 import { z } from 'zod';
@@ -363,7 +364,41 @@ export function registerNodeType<P, O>(def: NodeDefinition<P, O>): void {
 function assertDefinition(def: NodeDefinition): void {
   assertInputDescriptors(def);
   assertChainDeclaration(def);
+  assertMainInput(def);
   assertBodyInputDeclarations(def);
+}
+
+/** #1814 — a main input is ONE socket that is always there, or a stack has nothing to continue. */
+function assertMainInput(def: NodeDefinition): void {
+  const main = def.mainInput;
+  if (main === undefined) return;
+  if (def.chain) {
+    throw new Error(
+      `registerNodeType(${def.type}): declares both chain and mainInput. An operator's main ` +
+        `input IS chain.input; stating it twice is two claims that can disagree.`,
+    );
+  }
+  if (main === null) return;
+  const socket = def.inputs?.[main];
+  if (socket === undefined) {
+    throw new Error(
+      `registerNodeType(${def.type}): mainInput names socket '${main}', which this node does ` +
+        `not declare as an input.`,
+    );
+  }
+  if (socket.cardinality !== 'single') {
+    throw new Error(
+      `registerNodeType(${def.type}): mainInput names socket '${main}', which has ` +
+        `'${socket.cardinality}' cardinality. A stack continues through one wire; a list is ` +
+        `routes, so this node has no main input (null).`,
+    );
+  }
+  if (socket.available !== undefined) {
+    throw new Error(
+      `registerNodeType(${def.type}): mainInput names socket '${main}', which only exists under ` +
+        `some params, so the stack would lose its continuation in the others. Declare null.`,
+    );
+  }
 }
 
 // ── #1647 — a type a project defines can be replaced and removed ────────────────
@@ -416,6 +451,20 @@ export function registryEpoch(): number {
 
 export function getNodeType(type: NodeTypeId): NodeDefinition | undefined {
   return registry.get(type);
+}
+
+/**
+ * #1814 — the socket a stack view continues flat under a node of `type`: its operator spine or
+ * its declared `mainInput`. `null` is a declared "none" (or no inputs to continue through);
+ * `undefined` is "nobody said", which the gate refuses for a shipped type, and a reader must not
+ * guess past.
+ */
+export function mainInputOfType(type: NodeTypeId): SocketId | null | undefined {
+  const def = registry.get(type);
+  if (!def) return undefined;
+  if (def.chain) return def.chain.input;
+  if (def.mainInput !== undefined) return def.mainInput;
+  return Object.keys(def.inputs ?? {}).length === 0 ? null : undefined;
 }
 
 export function requireNodeType(type: NodeTypeId): NodeDefinition {

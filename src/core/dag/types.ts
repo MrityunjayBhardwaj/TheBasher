@@ -624,6 +624,24 @@ export interface NodeDefinition<P = unknown, O = unknown> {
    */
   chain?: ChainDeclaration;
   /**
+   * #1814 — the input a STACK VIEW continues flat underneath this node, or `null` for "none":
+   * the node is always a group, one route per input. Read it through `mainInputOfType`.
+   *
+   * THE RULE: the main input is the one socket holding the thing this node's output is a
+   * version of, even when the type changes (a render pass of a `scene`). Peer operands (Mix,
+   * Math), lists (Scene, a select) and generators with only side inputs (a material on a Box)
+   * have none. It is never "the first input": Houdini's Blend CHOP has its weights there.
+   *
+   * NOT DECLARED BY AN OPERATOR. `chain.input` already answers this, and stating it twice is
+   * two claims that can disagree, so `registerNodeType` refuses both. It is not `chain` itself
+   * because declaring a chain makes a node an operator, with a lane and a stack section; a Clamp
+   * continues a stack without being one.
+   *
+   * Absent on a node with inputs fails `mainInputDeclaration.gate.test.ts`; it is not required
+   * at registration because the suite's synthetic definitions have no stack to be drawn in.
+   */
+  mainInput?: SocketId | null;
+  /**
    * Pure functional evaluator. Must NOT read clocks, randomness, or globals
    * — V2/V3 enforced by lint in src/nodes/**. Time enters via a `Time` input
    * or via ctx for impure nodes only.

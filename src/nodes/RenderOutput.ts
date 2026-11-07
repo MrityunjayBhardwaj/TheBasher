@@ -27,6 +27,7 @@ export const RenderOutputNode: NodeDefinition<RenderOutputParams, RenderOutputVa
   pure: true,
   cost: 'cheap',
   paramSchema: RenderOutputParams,
+  mainInput: 'scene',
   inputs: { scene: { type: 'Scene', cardinality: 'single' } },
   outputs: { out: { type: 'RenderOutput', cardinality: 'single' } },
   inspectorSections: ['render'],

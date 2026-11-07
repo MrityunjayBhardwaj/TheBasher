@@ -388,6 +388,7 @@ export const AnimationClipNode: NodeDefinition<AnimationClipParams, ClipOutputs>
   // per-frame-re-render invariant exists to forbid. The clip is a description;
   // sampling it at an instant is the consumer's job, and only a consumer with a
   // `Time` input can do it honestly.
+  mainInput: 'source',
   inputs: {
     skeleton: { type: 'Skeleton', cardinality: 'single' },
     /**

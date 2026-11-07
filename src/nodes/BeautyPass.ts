@@ -35,6 +35,7 @@ export const BeautyPassNode: NodeDefinition<BeautyPassParams, ImageValue> = {
   pure: true,
   cost: 'cheap',
   paramSchema: BeautyPassParams,
+  mainInput: 'scene',
   inputs: {
     scene: { type: 'Scene', cardinality: 'single' },
     camera: { type: 'SceneObject', cardinality: 'single' },

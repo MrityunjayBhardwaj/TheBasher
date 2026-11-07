@@ -34,6 +34,7 @@ export const NullNode: NodeDefinition<NullParams, NullValue> = {
   pure: true,
   cost: 'cheap',
   paramSchema: NullParams,
+  mainInput: null,
   inputs: {
     // #1810 — the world this object hangs from, and its own world: the parent's times its own
     // transform as drawn. The parent input feeds the world output only (`objectWorld.ts`).

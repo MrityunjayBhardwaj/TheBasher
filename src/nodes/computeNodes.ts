@@ -59,6 +59,7 @@ export const MathNode: NodeDefinition<MathParams, number> = {
   pure: true,
   cost: 'cheap',
   paramSchema: MathParams,
+  mainInput: null,
   inputs: {
     a: { type: 'Number', cardinality: 'single', owns: 'always' },
     b: { type: 'Number', cardinality: 'single', owns: 'always' },
@@ -80,6 +81,7 @@ export const ClampNode: NodeDefinition<ClampParams, number> = {
   pure: true,
   cost: 'cheap',
   paramSchema: ClampParams,
+  mainInput: 'in',
   inputs: { in: { type: 'Number', cardinality: 'single', owns: 'always' } },
   outputs: NUMBER_OUT,
   evaluate: (params, inputs) => clamp(num(inputs, 'in'), params.min, params.max),
@@ -115,6 +117,8 @@ export const FitNode: NodeDefinition<FitParams, number | Vec3> = {
   pure: true,
   cost: 'cheap',
   paramSchema: FitParams,
+  // `in` or `inVector` by data type: no one socket is always there to continue a stack (#1814).
+  mainInput: null,
   inputs: {
     in: { type: 'Number', cardinality: 'single', owns: 'always', available: fitWhen('Number') },
     inVector: {
@@ -175,6 +179,7 @@ export const MixNode: NodeDefinition<MixParams, number | Vec3 | Quat> = {
   pure: true,
   cost: 'cheap',
   paramSchema: MixParams,
+  mainInput: null,
   inputs: {
     a: { type: 'Number', cardinality: 'single', owns: 'always', available: when('Number') },
     b: { type: 'Number', cardinality: 'single', owns: 'always', available: when('Number') },
@@ -228,6 +233,7 @@ export const CurveRemapNode: NodeDefinition<CurveRemapParams, number> = {
   pure: true,
   cost: 'cheap',
   paramSchema: CurveRemapParams,
+  mainInput: 'in',
   inputs: { in: { type: 'Number', cardinality: 'single', owns: 'always' } },
   outputs: NUMBER_OUT,
   evaluate: (params, inputs) => curveRemap(num(inputs, 'in'), params.points),
@@ -249,6 +255,7 @@ export const NoiseNode: NodeDefinition<NoiseParams, number> = {
   pure: true,
   cost: 'cheap',
   paramSchema: NoiseParams,
+  mainInput: 't',
   inputs: { t: { type: 'Number', cardinality: 'single', owns: 'always' } },
   outputs: NUMBER_OUT,
   evaluate: (params, inputs) =>
@@ -271,6 +278,7 @@ export const MakeVec3Node: NodeDefinition<Record<string, never>, Vec3> = {
   pure: true,
   cost: 'cheap',
   paramSchema: z.object({}),
+  mainInput: null,
   inputs: {
     x: { type: 'Number', cardinality: 'single', owns: 'always' },
     y: { type: 'Number', cardinality: 'single', owns: 'always' },
@@ -293,6 +301,7 @@ export const VecBreak3Node: NodeDefinition<
   pure: true,
   cost: 'cheap',
   paramSchema: z.object({}),
+  mainInput: 'v',
   inputs: { v: { type: 'Vector3', cardinality: 'single', owns: 'always' } },
   outputs: {
     x: { type: 'Number', cardinality: 'single' },
@@ -319,6 +328,7 @@ export const Vec3MathNode: NodeDefinition<Vec3MathParams, Vec3> = {
   pure: true,
   cost: 'cheap',
   paramSchema: Vec3MathParams,
+  mainInput: null,
   inputs: {
     a: { type: 'Vector3', cardinality: 'single', owns: 'always' },
     b: { type: 'Vector3', cardinality: 'single', owns: 'always' },

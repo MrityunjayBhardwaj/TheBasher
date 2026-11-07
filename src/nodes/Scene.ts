@@ -55,6 +55,7 @@ export const SceneNode: NodeDefinition<SceneParams, SceneValue> = {
   pure: true,
   cost: 'cheap',
   paramSchema: SceneParams,
+  mainInput: null,
   inputs: {
     camera: { type: 'SceneObject', cardinality: 'single' },
     lights: { type: 'SceneObject', cardinality: 'list' },

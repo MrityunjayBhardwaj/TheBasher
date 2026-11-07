@@ -66,6 +66,7 @@ export const CombineTransformNode: NodeDefinition<NoParams, Mat4> = {
   pure: true,
   cost: 'cheap',
   paramSchema: NO_PARAMS,
+  mainInput: null,
   inputs: {
     translation: { type: 'Vector3', cardinality: 'single', owns: 'always' },
     rotation: { type: 'Quaternion', cardinality: 'single', owns: 'always' },
@@ -90,6 +91,7 @@ export const SeparateTransformNode: NodeDefinition<
   pure: true,
   cost: 'cheap',
   paramSchema: NO_PARAMS,
+  mainInput: 'transform',
   inputs: { transform: { type: 'Matrix4', cardinality: 'single', owns: 'always' } },
   outputs: {
     translation: { type: 'Vector3', cardinality: 'single' },
@@ -109,6 +111,7 @@ export const MultiplyTransformsNode: NodeDefinition<NoParams, Mat4> = {
   pure: true,
   cost: 'cheap',
   paramSchema: NO_PARAMS,
+  mainInput: null,
   inputs: {
     a: { type: 'Matrix4', cardinality: 'single', owns: 'always' },
     b: { type: 'Matrix4', cardinality: 'single', owns: 'always' },
@@ -124,6 +127,7 @@ export const InvertTransformNode: NodeDefinition<NoParams, Mat4> = {
   pure: true,
   cost: 'cheap',
   paramSchema: NO_PARAMS,
+  mainInput: 'transform',
   inputs: { transform: { type: 'Matrix4', cardinality: 'single', owns: 'always' } },
   outputs: MATRIX_OUT,
   evaluate: (_params, inputs) => invertTransform(mat4(inputs, 'transform')) ?? IDENTITY_MAT4,
@@ -136,6 +140,7 @@ export const TransformPointNode: NodeDefinition<NoParams, Vec3> = {
   pure: true,
   cost: 'cheap',
   paramSchema: NO_PARAMS,
+  mainInput: 'point',
   inputs: {
     point: { type: 'Vector3', cardinality: 'single', owns: 'always' },
     transform: { type: 'Matrix4', cardinality: 'single', owns: 'always' },
@@ -152,6 +157,7 @@ export const TransformDirectionNode: NodeDefinition<NoParams, Vec3> = {
   pure: true,
   cost: 'cheap',
   paramSchema: NO_PARAMS,
+  mainInput: 'direction',
   inputs: {
     direction: { type: 'Vector3', cardinality: 'single', owns: 'always' },
     transform: { type: 'Matrix4', cardinality: 'single', owns: 'always' },
@@ -168,6 +174,7 @@ export const EulerToRotationNode: NodeDefinition<NoParams, Quat> = {
   pure: true,
   cost: 'cheap',
   paramSchema: NO_PARAMS,
+  mainInput: 'euler',
   inputs: { euler: { type: 'Vector3', cardinality: 'single', owns: 'always' } },
   outputs: QUAT_OUT,
   evaluate: (_params, inputs) => eulerToQuat(vec3(inputs, 'euler', [0, 0, 0])),
@@ -179,6 +186,7 @@ export const RotationToEulerNode: NodeDefinition<NoParams, Vec3> = {
   pure: true,
   cost: 'cheap',
   paramSchema: NO_PARAMS,
+  mainInput: 'rotation',
   inputs: { rotation: { type: 'Quaternion', cardinality: 'single', owns: 'always' } },
   outputs: VECTOR3_OUT,
   evaluate: (_params, inputs) => quatToEuler(quat(inputs, 'rotation')),

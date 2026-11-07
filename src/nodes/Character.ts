@@ -34,6 +34,7 @@ export const CharacterNode: NodeDefinition<CharacterParams, CharacterValue> = {
   pure: true,
   cost: 'cheap',
   paramSchema: CharacterParams,
+  mainInput: 'locomotion',
   inputs: { locomotion: { type: 'LocomotionState', cardinality: 'single' } },
   outputs: { out: { type: 'Character', cardinality: 'single' } },
   evaluate(params, inputs: ResolvedInputs) {

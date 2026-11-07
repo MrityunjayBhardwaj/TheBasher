@@ -42,6 +42,7 @@ export const PosedSkeletonNode: NodeDefinition<PosedSkeletonParams, PosedSkeleto
   pure: true,
   cost: 'cheap',
   paramSchema: PosedSkeletonParams,
+  mainInput: 'skeleton',
   inputs: {
     skeleton: { type: 'Skeleton', cardinality: 'single' },
   },
