@@ -2,19 +2,11 @@
 // node (`target`) so its -Z faces an aim target (a node-ref `aimNode` whose world
 // position is read, or a fixed `aimPoint`), with `up` as the roll reference.
 //
-// MODELLED LIKE A KEYFRAME CHANNEL (V57 direct-channel road), NOT a wrapper node:
-// a relationship constraint needs the constrained object's WORLD position to
-// compute the aim, and a bare node `evaluate` has no world context (that depends
-// on ancestors). So TrackTo is EDGE-LESS — it carries `target` + the aim, is
-// enumerated from the node table (`nodeConstraints.ts`), and is RESOLVED at the
-// scene-resolution layer (alongside `resolveWorldTransform` / the camera's
-// `resolveActiveCameraPoseAt`), where world transforms exist. This is the exact
-// `resolveActiveCameraPoseAt` pattern ([[V56]]) generalized to any node, and is
-// why §2.2's "wrapper sub-chain" model fits geometry/value operators but NOT
-// relationship constraints (the aim is a scene-layer derive).
-//
-// `evaluate` returns a `ConstraintValue` for agent/introspection completeness; the
-// resolver reads params directly (the channel pattern — no edge, no consumer).
+// A STEP ON ITS OBJECT'S CHAIN (#1811, #1812): the transform comes up `in`, the aim replaces its
+// rotation (`constraintChain.ts`), and `world` goes on to the next step or the object's `constraints`
+// input. `target` still names the object, which is what ties the step's life to it and how a commit
+// knows which chain a new step joins (`chainFollowUpOps`). What it aims at is a wire on `aim` or the
+// `aimNode` reference; only the reference can close a loop.
 //
 // REF: epic #201, docs/OPERATORS-AND-LIGHTING-DESIGN.md §4.1/§4.2; vyapti V58/V56.
 
@@ -64,12 +56,7 @@ export const TrackToParams = z.object({
   roll: z.number().default(0),
   /** Bypass — a muted constraint contributes nothing (the constraint stack). */
   mute: z.boolean().default(false),
-  /** Position in the target's ordered constraint stack (low → high, bottom → top).
-   *  A relational operator is EDGE-LESS, so the stack orders by this field rather
-   *  than by a wire — the geometry stack's sub-chain model cannot apply (see
-   *  `operatorStack.ts`: "modifiers are [sub-chains]; constraints aren't"). Mirrors
-   *  `ParamDriver.order`. Default 0 → a pre-stack project is a single-member stack in
-   *  node-table order, byte-identical to the old first-wins scan. */
+  /** Where a new step joins its object's chain. Once it is on the chain, the wires are the order. */
   order: z.number().default(0),
 });
 export type TrackToParams = z.infer<typeof TrackToParams>;
@@ -93,8 +80,6 @@ export const TrackToNode: NodeDefinition<TrackToParams, TrackToConstraintValue> 
     { path: 'target', shape: 'id', role: 'subject' },
     { path: 'aimNode', shape: 'id', role: 'argument' },
   ],
-  // Edge-less (enumerated + scene-layer resolved, like a direct channel). The
-  // `out` socket exists for introspection/future stack wiring; nothing consumes it.
   inputs: {
     // #1811 — on a wired chain: the transform coming up it, what to aim at (else `aimPoint`), and
     // the world the object hangs from, for an up or an aim point in its parent's space.

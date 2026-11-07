@@ -274,6 +274,13 @@ export const cameraTrajectoryMutator: MutatorDefinition<CameraTrajectorySpec> = 
       to: { node: sceneRef.node, socket: 'children' },
     });
 
+    // #1791 — a Follow Path adds the camera's own position to the point on the path (Blender
+    // 5.1.1), so the camera's own position is cleared, as "Clear Location" does: the spec's points
+    // are where the camera goes, and the same silent doubling as above would otherwise put it at
+    // their sum with wherever the camera stood.
+    ops.push({ type: 'setParam', nodeId: spec.cameraId, paramPath: 'position', value: [0, 0, 0] });
+
+    const track = liveConstraintOfType(state, spec.cameraId, 'TrackTo');
     const follow = liveConstraintOfType(state, spec.cameraId, 'FollowPath');
     if (follow) {
       ops.push({ type: 'setParam', nodeId: follow, paramPath: 'curve', value: objectId });
@@ -290,15 +297,19 @@ export const cameraTrajectoryMutator: MutatorDefinition<CameraTrajectorySpec> = 
           evalTime: spec.evalTime,
           // On top of whatever stack the camera already carries, the way every other
           // road that adds a constraint lands one (#317).
-          order: nextConstraintOrder(
-            state.nodes as unknown as Readonly<Record<string, { type: string }>>,
-            spec.cameraId,
-          ),
+          // #1813 — below the camera's aim when it has one, so it aims from the path. Every other
+          // road lands a new constraint on top, as Blender does; this builder alone is asked for a
+          // camera that flies the path while looking at something.
+          order: track
+            ? Number((state.nodes[track].params as { order?: unknown }).order ?? 0) - 1
+            : nextConstraintOrder(
+                state.nodes as unknown as Readonly<Record<string, { type: string }>>,
+                spec.cameraId,
+              ),
         },
       });
     }
 
-    const track = liveConstraintOfType(state, spec.cameraId, 'TrackTo');
     const aimParams =
       spec.subjectId !== undefined
         ? { aimNode: spec.subjectId }

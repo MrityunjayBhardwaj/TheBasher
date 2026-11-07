@@ -808,28 +808,6 @@ describe('dag.exec tool', () => {
     expect(result.text).toContain('add test cube');
   });
 
-  // #1811 — a constraint chain wired into an object would succeed and move nothing, as above.
-  it("refuses a wire into an object's constraint chain, naming the way that constrains", () => {
-    const s = makeSplitCube(emptyDagState(), { objectId: 'b' }).state;
-    const end: import('../../core/dag/types').Op[] = [
-      { type: 'addNode', nodeId: 'tt', nodeType: 'TrackTo', params: {} },
-      {
-        type: 'connect',
-        from: { node: 'tt', socket: 'world' },
-        to: { node: 'b', socket: 'constraints' },
-      },
-    ];
-    const refused = dagExecTool.handler({ description: 'aim b', ops: end }, { dagState: s });
-    expect(refused.ops).toEqual([]);
-    expect(refused.text).toContain('tt → b.constraints');
-    expect(refused.text).toContain('"target"');
-    // CONTROL: the drawn way to constrain passes.
-    const ok: import('../../core/dag/types').Op[] = [
-      { type: 'addNode', nodeId: 'tt', nodeType: 'TrackTo', params: { target: 'b' } },
-    ];
-    expect(dagExecTool.handler({ description: 'aim b', ops: ok }, { dagState: s }).ops).toEqual(ok);
-  });
-
   // #1824 — "parent B under A" is A.world → B.parent: the batch is proposed as written, and once
   // applied B hangs from A. The old way, B wired into A's list, is refused by the op itself with
   // the wiring that parents, so a model that tries it learns the right one in the same turn.

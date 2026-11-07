@@ -69,11 +69,7 @@ export const FollowPathParams = z.object({
   offset: z.number().default(0),
   /** Bypass — a muted constraint contributes nothing (the constraint stack). */
   mute: z.boolean().default(false),
-  /** Position in the target's ordered constraint stack (low → high, bottom → top).
-   *  Shared with Track-To: one object has ONE constraint stack, and both operators take
-   *  their slot in it. Within the POSITION band the fold is last-writer-wins, so a higher
-   *  `order` wins; a Track-To in the same stack writes a different band and never
-   *  contends. Mirrors `TrackTo.order` / `ParamDriver.order`. */
+  /** Where a new step joins its object's chain. Once it is on the chain, the wires are the order. */
   order: z.number().default(0),
 });
 export type FollowPathParams = z.infer<typeof FollowPathParams>;

@@ -429,6 +429,7 @@ const TAKERS: string[] = [
   // #1813 — the constraint reads take the chain's end, with the cache the reader was given.
   'chainEnd@src/app/nodeConstraints.ts',
   'aimedRotation@src/app/nodeConstraints.ts',
+  'chainDrawCorrection@src/app/nodeConstraints.ts',
   'chainParentWorld@src/app/nodeConstraints.ts',
   // #1785 — a transform driver's channels and the value on its `in`, read with the fold's cache.
   'transformDriverChannels@src/app/paramDrivers.ts',

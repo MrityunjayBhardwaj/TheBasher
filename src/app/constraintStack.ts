@@ -3,11 +3,9 @@
 // files IS the design:
 //
 //   operatorStack (SOP) : a stack is a wired sub-chain. add/move/remove = RE-WIRING.
-//   constraintStack(CHOP): a constraint is EDGE-LESS — it names its target by a param.
-//                          A stack is the SET of pose operators sharing a `target`,
-//                          ordered by an `order` FIELD. add/move/remove = FIELD WRITES.
-//                          There is no wire to re-route ("modifiers are [sub-chains];
-//                          constraints aren't" — operatorStack.ts).
+//   constraintStack(CHOP): the same now, on the object's chain (#1811): add names the object and a
+//                          commit wires it in (`chainFollowUpOps`), move and remove edit the wires
+//                          (`chainEdit.ts`). `order` says where a new one joins.
 //
 // Enumeration is NOT duplicated here: it comes from `constraintStackForTarget`
 // (nodeConstraints.ts) — the SAME scan + sort the resolvers fold — asked for its

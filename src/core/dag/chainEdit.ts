@@ -107,9 +107,12 @@ export function readChain(state: DagState, objectId: string): Chain | null {
   let ref = single(object.inputs.constraints);
   if (!ref) return { own: null, steps: [] };
   const steps: ChainStep[] = [];
-  for (let guard = Object.keys(state.nodes).length; guard >= 0; guard--) {
+  // A chain written by hand into a loop has no bottom, and this is not the place to hang on it.
+  const met = new Set<string>();
+  for (;;) {
     const node: DagState['nodes'][string] | undefined = state.nodes[ref.node];
-    if (!node) return null;
+    if (!node || met.has(node.id)) return null;
+    met.add(node.id);
     if (node.type === 'OwnWorld') {
       if ((node.params as { object?: unknown }).object !== objectId) return null;
       return { own: node.id, steps: steps.reverse() };
@@ -130,7 +133,6 @@ export function readChain(state: DagState, objectId: string): Chain | null {
     steps.push({ id: read.step, blend: read.blend });
     ref = read.below;
   }
-  return null;
 }
 
 const world = (node: string): NodeRef => ({ node, socket: 'world' });
@@ -413,6 +415,8 @@ export function setInfluenceOps(
   objectId: string,
   stepId: string,
   value: number,
+  /** Wire the blend even at 1, so there is a number to key. */
+  force = false,
 ): Op[] | null {
   const chain = readChain(state, objectId);
   const index = chain?.steps.findIndex((s) => s.id === stepId) ?? -1;
@@ -424,7 +428,7 @@ export function setInfluenceOps(
       ? [{ type: 'setParam', nodeId: now.nodeId, paramPath: 'value', value }]
       : null;
   }
-  if (value === 1) return [];
+  if (value === 1 && !force) return [];
 
   const n = (suffix: string) => `${stepId}_influence_${suffix}`;
   const below = index === 0 ? world(chain.own) : outputOf(chain.steps[index - 1]);

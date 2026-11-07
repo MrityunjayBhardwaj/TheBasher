@@ -162,6 +162,7 @@ import { ModifierStackControls } from './ModifierStackControls';
 import { MaterialStackControls } from './MaterialStackControls';
 import { MaterialLinkControls } from './MaterialLinkControls';
 import { ConstraintStackControls } from './ConstraintStackControls';
+import { influenceOf, readChain, setInfluenceOps } from '../core/dag/chainEdit';
 import { DriverStackControls } from './DriverStackControls';
 import { CurvePointRows } from './CurvePointRows';
 import { EXTRAPOLATE_RULES } from '../nodes/keyframeInterp';
@@ -3252,6 +3253,91 @@ function StandingParamRow({
   );
 }
 
+/**
+ * #1813 — a constraint's influence: how much of what it does is kept, from 0 to 1, as in Blender. It
+ * is one Value node feeding the blend's three Mix nodes (`chainEdit.ts`), and once there is one this
+ * is that node's own row, so keys, drivers and the diamond work on it as on any setting. Before that
+ * it is a field, which wires the blend on the first change away from 1, and a diamond, which wires
+ * it at 1 so there is something to key. A number wired into the factors is that wire's to change.
+ */
+function InfluenceRow({ nodeId }: { nodeId: string }) {
+  const state = useDagStore((s) => s.state);
+  const selected = useSelectionStore((s) => s.selectedNodeId);
+  const stepNode = state.nodes[nodeId];
+  const objectId =
+    stepNode && getNodeType(stepNode.type)?.worldStep
+      ? (stepNode.params as { target?: string }).target
+      : nodeId;
+  const steps = objectId ? (readChain(state, objectId)?.steps ?? []) : [];
+  const stepId = steps.some((s) => s.id === selected)
+    ? selected
+    : steps.length === 1
+      ? steps[0].id
+      : null;
+  if (!objectId || !stepId) return null;
+  const influence = influenceOf(state, objectId, stepId);
+  if (!influence) return null;
+  const set = (value: number, force = false) => {
+    const live = useDagStore.getState().state;
+    const ops = setInfluenceOps(live, objectId, stepId, value, force);
+    if (ops?.length) useDagStore.getState().dispatchAtomic(ops, 'user', 'set constraint influence');
+  };
+  const heading = (
+    <span className="px-3 pt-1 text-[10px] text-fg/60" data-testid="constraint-influence-label">
+      Influence
+    </span>
+  );
+  if (influence.kind === 'value') {
+    const value = (state.nodes[influence.nodeId].params as { value: number }).value;
+    return (
+      <div className="flex flex-col" data-testid="constraint-influence">
+        {heading}
+        <ParamRow nodeId={influence.nodeId} paramPath="value" value={value} />
+      </div>
+    );
+  }
+  if (influence.kind === 'wired') {
+    return (
+      <div className="flex flex-col" data-testid="constraint-influence">
+        {heading}
+        <span className="px-3 pb-1 text-[10px] text-fg/50" data-testid="constraint-influence-wired">
+          {influence.from ? `Driven by ${influence.from.node}` : 'Driven by wires'}
+        </span>
+      </div>
+    );
+  }
+  return (
+    <div className="flex items-center gap-1 px-3 py-1" data-testid="constraint-influence">
+      <span className="text-[10px] text-fg/60">Influence</span>
+      <input
+        type="number"
+        min={0}
+        max={1}
+        step={0.01}
+        defaultValue={1}
+        key={stepId}
+        data-testid="constraint-influence-input"
+        aria-label="Influence"
+        onChange={(e) => {
+          const value = Number(e.currentTarget.value);
+          if (Number.isFinite(value)) set(Math.min(1, Math.max(0, value)));
+        }}
+        className="w-16 rounded border border-border bg-bg-2 px-1 py-0.5 font-mono text-[10px] text-fg"
+      />
+      <button
+        type="button"
+        data-testid="constraint-influence-key"
+        aria-label="Make influence keyable"
+        title="Make influence keyable"
+        onClick={() => set(1, true)}
+        className="select-none px-0.5 text-[10px] leading-none text-fg/40 hover:text-record"
+      >
+        ◇
+      </button>
+    </div>
+  );
+}
+
 function ParamRow({
   nodeId,
   paramPath,
@@ -4228,7 +4314,12 @@ const SECTION_CONTROL_RENDERERS: SectionControlRenderers = {
   modifierStack: (ctx) => <ModifierStackControls nodeId={ctx.paramsNodeId} />,
   materialStack: (ctx) => <MaterialStackControls nodeId={ctx.paramsNodeId} />,
   materialLink: (ctx) => <MaterialLinkControls nodeId={ctx.paramsNodeId} />,
-  constraintStack: (ctx) => <ConstraintStackControls nodeId={ctx.paramsNodeId} />,
+  constraintStack: (ctx) => (
+    <>
+      <ConstraintStackControls nodeId={ctx.paramsNodeId} />
+      <InfluenceRow nodeId={ctx.paramsNodeId} />
+    </>
+  ),
   driverStack: (ctx) => <DriverStackControls nodeId={ctx.paramsNodeId} />,
   curvePoints: (ctx) => <CurvePointRows nodeId={ctx.paramsNodeId} />,
   channelExtend: (ctx) => <ChannelExtendControls nodeId={ctx.paramsNodeId} />,

@@ -174,6 +174,13 @@ function poseStackIndex(
   }
   // Stable → equal `order` keeps node-table order (the pre-stack first-wins order).
   for (const list of index.values()) list.sort((a, b) => a.order - b.order);
+  // #1813 — on a chain, the wires are the order. A step not on it, which draws nothing, sorts last.
+  for (const [target, list] of index) {
+    const steps = readChain({ nodes } as unknown as DagState, target)?.steps;
+    if (!steps?.length) continue;
+    const place = new Map(steps.map((step, i) => [step.id, i]));
+    list.sort((a, b) => (place.get(a.nodeId) ?? Infinity) - (place.get(b.nodeId) ?? Infinity));
+  }
 
   poseStackIndexMemo.set(nodes, index);
   return index;
@@ -622,6 +629,34 @@ export function resolveConstraintPosition(
     parentWorld.clone().invert(),
   );
   return [v.x, v.y, v.z];
+}
+
+/**
+ * #1813 — what the renderer must multiply over `drawnLocal`, the transform it composes from a
+ * position, a rotation and a scale, for the object to land where its chain ends. Null when they
+ * agree. They part under an unevenly scaled or mirrored parent: an aim keeps its axes square in the
+ * world, as Blender's does, and that is not a shape position, rotation and scale can hold under
+ * such a parent.
+ */
+export function chainDrawCorrection(
+  state: DagState,
+  nodeId: string,
+  drawnLocal: THREE.Matrix4,
+  ctx: EvalCtx,
+  cache?: EvaluatorCache,
+): THREE.Matrix4 | null {
+  if (relationalPoseStackForTarget(state.nodes, nodeId).length === 0) return null;
+  return whileReading(() => {
+    const end = chainEnd(state, nodeId, ctx, cache);
+    if (!end) return null;
+    const parent = chainParentWorld(state, nodeId, ctx, cache);
+    const local = parent ? parent.clone().invert().multiply(end.world) : end.world.clone();
+    const correction = local.multiply(drawnLocal.clone().invert());
+    const identity = new THREE.Matrix4().elements;
+    return correction.elements.every((v, i) => Math.abs(v - identity[i]) < 1e-7)
+      ? null
+      : correction;
+  });
 }
 
 /**

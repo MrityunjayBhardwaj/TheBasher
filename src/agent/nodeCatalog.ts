@@ -256,17 +256,14 @@ function walk(schema: unknown, path: string, out: ParamField[], depth: number): 
 }
 
 function socketsOf(def: NodeDefinition): { inputs: SocketField[]; outputs: SocketField[] } {
-  // #1824 — every input, an object's `parent` included: a child names its parent there. #1811 — but
-  // not a constraint chain's: nothing draws from a chain until the readers move onto it.
-  const inputs = Object.entries(def.inputs)
-    .filter(([, d]) => d.chain === undefined)
-    .map(([socket, d]) => ({
-      socket,
-      // `Array.isArray` does not narrow a READONLY tuple, and `AcceptedTypeSet` is one.
-      type: Array.isArray(d.type) ? (d.type as readonly string[]).join('|') : (d.type as string),
-      cardinality: d.cardinality,
-      ...(d.available ? { available: availableWhen(d.available) } : {}),
-    }));
+  // Every input: #1824 an object's `parent`, #1813 its constraint chain.
+  const inputs = Object.entries(def.inputs).map(([socket, d]) => ({
+    socket,
+    // `Array.isArray` does not narrow a READONLY tuple, and `AcceptedTypeSet` is one.
+    type: Array.isArray(d.type) ? (d.type as readonly string[]).join('|') : (d.type as string),
+    cardinality: d.cardinality,
+    ...(d.available ? { available: availableWhen(d.available) } : {}),
+  }));
   const outputs = Object.entries(def.outputs).map(([socket, d]) => ({
     socket,
     type: d.type,

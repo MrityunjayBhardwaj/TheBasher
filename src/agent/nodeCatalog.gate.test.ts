@@ -90,6 +90,8 @@ describe('node schema payload (#1007)', () => {
       { socket: 'pose', type: 'PosedSkeleton', cardinality: 'single' },
       // #1824 — and its `parent` input, where it names the object it hangs from.
       { socket: 'parent', type: 'Matrix4', cardinality: 'single' },
+      // #1813 — and `constraints`, where its chain of constraints ends.
+      { socket: 'constraints', type: 'Matrix4', cardinality: 'single' },
     ]);
     expect(obj.outputs).toEqual([
       { socket: 'out', type: 'SceneObject', cardinality: 'single' },
@@ -115,10 +117,7 @@ describe('node schema payload (#1007)', () => {
   it('agrees with the registry on every socket, for every type', () => {
     for (const s of schemas) {
       const def = getNodeType(s.type)!;
-      // Every input but a constraint chain's (#1811): not offered until something draws from them.
-      expect(s.inputs.map((i) => i.socket)).toEqual(
-        Object.keys(def.inputs).filter((k) => def.inputs[k].chain === undefined),
-      );
+      expect(s.inputs.map((i) => i.socket)).toEqual(Object.keys(def.inputs));
       expect(s.outputs.map((o) => o.socket)).toEqual(Object.keys(def.outputs));
       for (const i of s.inputs) {
         const d = def.inputs[i.socket];

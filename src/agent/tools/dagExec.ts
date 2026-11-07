@@ -16,7 +16,6 @@
 // REF: THESIS.md §50, App. B, vyapti V7.
 
 import { z } from 'zod';
-import { getNodeType } from '../../core/dag/registry';
 import type { ToolDefinition, ToolContext, ToolResult } from './types';
 import {
   OpAddNodeSchema,
@@ -68,9 +67,7 @@ export const dagExecTool: ToolDefinition<DagExecArgs> = {
     'validated and proposed as a diff for the user to accept or reject. Use dag.inspect first ' +
     'to understand the DAG state.',
   paramSchema: OpBatchSchema,
-  handler(args: DagExecArgs, ctx: ToolContext): ToolResult {
-    const chained = chainEndWires(args.ops, ctx);
-    if (chained.length > 0) return { ops: [], text: chainEndRedirect(chained) };
+  handler(args: DagExecArgs, _ctx: ToolContext): ToolResult {
     const removed = args.ops.flatMap((op) => (op.type === 'removeNode' ? [op.nodeId] : []));
     if (removed.length > 0) {
       // The whole batch is refused, not just the removeNode: the ops around a delete
@@ -83,30 +80,6 @@ export const dagExecTool: ToolDefinition<DagExecArgs> = {
     };
   },
 };
-
-/** #1811 — the connects in this batch into the input where an object's constraint chain ends.
- *  Nothing draws from a chain yet, so as with the parent input the op would succeed and nothing
- *  would move. */
-function chainEndWires(ops: DagExecArgs['ops'], ctx: ToolContext): string[] {
-  const typeOf = new Map<string, string>();
-  for (const [id, node] of Object.entries(ctx.dagState.nodes)) typeOf.set(id, node.type);
-  for (const op of ops) if (op.type === 'addNode') typeOf.set(op.nodeId, op.nodeType);
-  return ops.flatMap((op) => {
-    if (op.type !== 'connect') return [];
-    const type = typeOf.get(op.to.node);
-    const into = type ? getNodeType(type)?.inputs[op.to.socket] : undefined;
-    return into?.chain === 'end' ? [`${op.from.node} → ${op.to.node}.${op.to.socket}`] : [];
-  });
-}
-
-function chainEndRedirect(wires: readonly string[]): string {
-  return (
-    `ERROR: dag.exec does not wire an object's constraint chain yet (${wires.join(', ')}), so ` +
-    'nothing in this batch was proposed. The viewport and the render do not read that input: ' +
-    'an object is constrained by adding a TrackTo or FollowPath node whose "target" param names ' +
-    'it. Resend the batch that way.'
-  );
-}
 
 /**
  * The refusal a raw removeNode gets: a redirect, not a wall. It names the call to make
