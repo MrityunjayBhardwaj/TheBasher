@@ -11,11 +11,13 @@
 
 import { beforeAll, describe, expect, it } from 'vitest';
 import {
+  defineNodeType,
   getNodeType,
   listNodeTypes,
   mainInputOfType,
   registerNodeType,
 } from '../core/dag/registry';
+import { templateNodeType } from '../core/dag/templates';
 import { registerAllNodes } from '../nodes/registerAll';
 
 beforeAll(() => {
@@ -73,6 +75,17 @@ describe('what the #1815 mockup draws', () => {
   it.each(['Object', 'Mix', 'Math', 'Solver'])('%s has none: always a group', (type) => {
     expect(mainInputOfType(type)).toBeNull();
   });
+});
+
+// A template registers when its project loads, so the census over the shipped types never meets one.
+it('a template has none: its inputs are routes (#1815 rule 7)', () => {
+  const def = {
+    type: 'tmpTemplate',
+    inputs: { in: { type: 'Number' } },
+    output: { type: 'Number' },
+  } as never;
+  defineNodeType(templateNodeType(def));
+  expect(mainInputOfType('tmpTemplate')).toBeNull();
 });
 
 describe('a main input that could not continue a stack is refused', () => {

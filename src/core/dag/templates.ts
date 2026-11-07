@@ -270,6 +270,8 @@ export function templateNodeType(def: TemplateDefinition): NodeDefinition {
     pure: true,
     cost: 'cheap',
     paramSchema: templateInstanceParams(def),
+    // #1815 — a template is a group: its inputs are routes, whichever one a body happens to continue.
+    mainInput: null,
     inputs,
     outputs: { out: single(def.output.type) },
     bodyInputs,
