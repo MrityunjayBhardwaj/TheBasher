@@ -60,8 +60,13 @@ async function addGroupWithChild(page: Page) {
           },
           {
             type: 'connect',
+            from: { node: 'n_grp', socket: 'world' },
+            to: { node: 'n_child', socket: 'parent' },
+          },
+          {
+            type: 'connect',
             from: { node: 'n_child', socket: 'out' },
-            to: { node: 'n_grp', socket: 'children' },
+            to: { node: sceneId, socket: 'children' },
           },
         ],
         'user',

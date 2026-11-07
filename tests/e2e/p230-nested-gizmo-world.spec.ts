@@ -56,14 +56,9 @@ test('gizmo on a Group-nested child anchors in WORLD space and writes LOCAL para
           params: { position: [5, 1, 0], rotation: [0, 0, 0], scale: [1, 1, 1], pivot: [0, 0, 0] },
         },
         {
-          type: 'disconnect',
-          from: { node: 'n_box', socket: 'out' },
-          to: { node: sceneId, socket: 'children' },
-        },
-        {
           type: 'connect',
-          from: { node: 'n_box', socket: 'out' },
-          to: { node: 'n_grp_nest', socket: 'children' },
+          from: { node: 'n_grp_nest', socket: 'world' },
+          to: { node: 'n_box', socket: 'parent' },
         },
         {
           type: 'connect',

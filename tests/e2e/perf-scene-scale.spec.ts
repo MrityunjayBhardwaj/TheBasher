@@ -309,13 +309,23 @@ async function measurePlayback(
           },
           {
             type: 'connect',
+            from: { node: 'perfplay_g2', socket: 'world' },
+            to: { node: nestedId, socket: 'parent' },
+          },
+          {
+            type: 'connect',
             from: { node: nestedId, socket: 'out' },
-            to: { node: 'perfplay_g2', socket: 'children' },
+            to: { node: sceneId, socket: 'children' },
+          },
+          {
+            type: 'connect',
+            from: { node: 'perfplay_g1', socket: 'world' },
+            to: { node: 'perfplay_g2', socket: 'parent' },
           },
           {
             type: 'connect',
             from: { node: 'perfplay_g2', socket: 'out' },
-            to: { node: 'perfplay_g1', socket: 'children' },
+            to: { node: sceneId, socket: 'children' },
           },
           {
             type: 'connect',

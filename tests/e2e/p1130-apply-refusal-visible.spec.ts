@@ -61,8 +61,13 @@ async function stageAndSelect(page: Page, animated: boolean): Promise<void> {
           },
           {
             type: 'connect',
+            from: { node: parent, socket: 'world' },
+            to: { node: child, socket: 'parent' },
+          },
+          {
+            type: 'connect',
             from: { node: child, socket: 'out' },
-            to: { node: parent, socket: 'children' },
+            to: { node: sceneId, socket: 'children' },
           },
           ...(animated
             ? [
