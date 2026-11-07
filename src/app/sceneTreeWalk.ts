@@ -20,7 +20,6 @@ import { chainSocketOf, isSceneLaneWrapper } from './operatorChain';
 import { childIdsOf, hierarchySocketForKind, parentIdsOf } from './sceneHierarchy';
 import { childCollectionsOf, collectionMembersOf, sceneCollectionsOf } from './collections';
 import { resolveActiveRigNode, resolveRigLightSources } from './resolveRigLightSources';
-import { isInScene } from './sceneMembership';
 
 export interface TreeRow {
   /** Stable key for React. */
@@ -362,10 +361,15 @@ export function buildSceneTreeRows(state: DagState): TreeRow[] {
   // not listed at the top level as well. One in several collections has a row under each, as a
   // nested collection does (#397), so a nodeId can repeat in these rows; a key never does.
   const collected = new Set<NodeId>();
-  // #1823 — the scene's list and its collections are membership: a member that hangs from a parent
-  // the scene holds is listed under that parent, not again at the level that lists it. One whose
-  // parent is not in the scene is listed where its membership puts it (#1833).
-  const hangsFromParent = (id: NodeId) => parentIdsOf(state, id).some((p) => isInScene(state, p));
+  // #1823 — the scene's list and its collections are membership, not parenting. #1833 — a member
+  // has a row in the list that holds it unless its parent has a row in that same list, where it
+  // nests under the parent instead. A parent listed anywhere else lists it as a child as well, so
+  // the member is found both under its collection and under its parent. Blender 5.1.1's outliner
+  // moves a child's row under its parent only when it finds that row in the parent's own
+  // collection, and otherwise leaves it where it is and adds one under the parent
+  // (tree_display_view_layer.cc, `make_object_parent_hierarchy_collections`).
+  const nestsIn = (id: NodeId, listed: (p: NodeId) => boolean) =>
+    parentIdsOf(state, id).some(listed);
   // #397 — a nested collection lists under the collection holding it, and under each one when it
   // sits in several, as Blender's outliner lists one row per path. Its members list under it.
   const walkCollection = (collectionId: NodeId, depth: number, parentKey: string) => {
@@ -382,8 +386,10 @@ export function buildSceneTreeRows(state: DagState): TreeRow[] {
         walkCollection(child, depth + 1, key);
       }
     }
-    collectionMembersOf(state, collectionId).forEach((member, i) => {
-      if (hangsFromParent(member) || !state.nodes[member]) return;
+    const members = collectionMembersOf(state, collectionId);
+    const inThis = new Set(members);
+    members.forEach((member, i) => {
+      if (nestsIn(member, (p) => inThis.has(p)) || !state.nodes[member]) return;
       // #1823 — a member listed by the collection alone is the scene's too (collections are
       // drawn); its row's linkage is the collection's own list.
       const parent = bands.get(member) ?? {
@@ -398,8 +404,12 @@ export function buildSceneTreeRows(state: DagState): TreeRow[] {
   };
   for (const collectionId of sceneCollectionsOf(state))
     walkCollection(collectionId, 1, sceneRef.node);
+  // The scene's own list (Blender's scene collection): a parent a collection lists has no row here
+  // (it is listed under that collection instead), so its child gets a row of its own here.
+  const inSceneList = new Set(sceneChildren.map((ref) => ref.node));
+  const listedHere = (p: NodeId) => inSceneList.has(p) && !collected.has(p);
   sceneChildren.forEach((ref, i) => {
-    if (collected.has(ref.node) || hangsFromParent(ref.node)) return;
+    if (collected.has(ref.node) || nestsIn(ref.node, listedHere)) return;
     ctx.visited.delete(ref.node);
     walkOneAsChild(ctx, ref.node, 1, sceneRef.node, {
       nodeId: sceneRef.node,

@@ -2,7 +2,8 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { __resetRegistryForTests, applyOp, emptyDagState, type DagState } from '../core/dag';
 import type { Op } from '../core/dag/types';
 import { registerAllNodes } from '../nodes/registerAll';
-import { buildSceneTreeRows } from './sceneTreeWalk';
+import { buildSceneTreeRows, type TreeRow } from './sceneTreeWalk';
+import { collectionOps } from '../core/import/modelImport';
 import { makeSplitCube } from '../test-utils/splitCube';
 import { importedChildOps } from '../test-utils/importedChildFixture';
 import { buildDefaultDagState } from '../core/project/default';
@@ -347,7 +348,9 @@ describe('#1505 — a collection lists its lights and cameras under it', () => {
 });
 
 describe('#1505 — a member held in more than one place', () => {
-  it('a camera nested in a Group and also in a collection is listed once, under the Group', () => {
+  // #1833 — a Group the collection does not hold: the member has its own row under the collection
+  // as well, and still no top-level row in its band.
+  it('a camera nested in a Group and also in a collection is listed under each, not at the top', () => {
     let s = buildDefaultDagState();
     const scene = s.outputs.scene!.node;
     const made = newCollectionOps(s)!;
@@ -379,12 +382,17 @@ describe('#1505 — a member held in more than one place', () => {
       },
     ]);
     const rows = buildSceneTreeRows(s).filter((r) => r.nodeId === cam.newNodeId);
+    expect(rows.map((r) => r.key)).toEqual([
+      `${scene}/collection/${made.collectionId}/${cam.newNodeId}`,
+      `${scene}/grp/${cam.newNodeId}`,
+    ]);
     expect(rows.map((r) => r.parent)).toEqual([
+      { nodeId: made.collectionId, socket: 'members', index: 0 },
       { nodeId: 'grp', socket: 'children', index: -1, byParentInput: true },
     ]);
   });
 
-  it('a rig light nested in a Group and also in a collection is listed once, under the Group', () => {
+  it('a rig light nested in a Group and also in a collection is listed under each, not at the top', () => {
     let s = buildDefaultDagState();
     const scene = s.outputs.scene!.node;
     const made = newCollectionOps(s)!;
@@ -409,7 +417,12 @@ describe('#1505 — a member held in more than one place', () => {
       { type: 'connect', from: ref, to: { node: made.collectionId, socket: 'members' } },
     ]);
     const rows = buildSceneTreeRows(s).filter((r) => r.nodeId === studio.lightId);
+    expect(rows.map((r) => r.key)).toEqual([
+      `${scene}/collection/${made.collectionId}/${studio.lightId}`,
+      `${scene}/grp/${studio.lightId}`,
+    ]);
     expect(rows.map((r) => r.parent)).toEqual([
+      { nodeId: made.collectionId, socket: 'members', index: 0 },
       { nodeId: 'grp', socket: 'children', index: -1, byParentInput: true },
     ]);
   });
@@ -544,5 +557,119 @@ describe('#1824 — the rows under a parent', () => {
     s = cube(s, 'a_first', 'Cube', 'parent');
     s = cube(s, 'z_second', 'Cube', 'wire');
     expect(under(s).map((r) => r.nodeId)).toEqual(['a_first', 'z_second']);
+  });
+});
+
+// #1833 — a member gets a row under the list that holds it (a collection, or the scene's own list)
+// unless its parent is in that same list, where it nests under the parent instead. Blender 5.1.1's
+// outliner does the same: it moves a child's row under its parent only when it finds that row in
+// the parent's own collection, and otherwise leaves it in its collection and lists it under the
+// parent as well (tree_display_view_layer.cc, `make_object_parent_hierarchy_collections`).
+describe('#1833 — a member whose parent is somewhere else', () => {
+  /** Scene with CollA and CollB, a Group `grp` placed by `group`, and a cube `cube` in CollA hung
+   *  from the group by its parent input. */
+  function build(group: 'CollB' | 'scene' | 'CollA'): DagState {
+    let s = applyAll(buildSceneOnly(), [
+      ...collectionOps('colA', 'CollA', [], 'n_scene'),
+      ...collectionOps('colB', 'CollB', [], 'n_scene'),
+      { type: 'addNode', nodeId: 'grp', nodeType: 'Group', params: {} },
+      {
+        type: 'connect',
+        from: { node: 'grp', socket: 'out' },
+        to:
+          group === 'scene'
+            ? { node: 'n_scene', socket: 'children' }
+            : { node: group === 'CollA' ? 'colA' : 'colB', socket: 'members' },
+      },
+    ]);
+    s = makeSplitCube(s, { objectId: 'cube' }).state;
+    return applyAll(s, [
+      {
+        type: 'connect',
+        from: { node: 'grp', socket: 'world' },
+        to: { node: 'cube', socket: 'parent' },
+      },
+      {
+        type: 'connect',
+        from: { node: 'cube', socket: 'out' },
+        to: { node: 'colA', socket: 'members' },
+      },
+    ]);
+  }
+  const keysOf = (rows: TreeRow[], id: string) =>
+    rows.filter((r) => r.nodeId === id).map((r) => r.key);
+  const uniqueKeys = (rows: TreeRow[]) =>
+    expect(new Set(rows.map((r) => r.key)).size).toBe(rows.length);
+
+  it('parent in CollB: the cube has its own row in CollA, and the group in CollB lists it too', () => {
+    const rows = buildSceneTreeRows(build('CollB'));
+    expect(keysOf(rows, 'cube')).toEqual([
+      'n_scene/collection/colA/cube',
+      'n_scene/collection/colB/grp/cube',
+    ]);
+    const own = rows.find((r) => r.key === 'n_scene/collection/colA/cube')!;
+    expect(own.depth).toBe(2);
+    expect(own.parent).toEqual({ nodeId: 'colA', socket: 'members', index: 0 });
+    uniqueKeys(rows);
+  });
+
+  it('parent in no collection: the cube has its own row in CollA, and the group lists it too', () => {
+    const rows = buildSceneTreeRows(build('scene'));
+    expect(keysOf(rows, 'cube')).toEqual(['n_scene/collection/colA/cube', 'n_scene/grp/cube']);
+    uniqueKeys(rows);
+  });
+
+  it('parent in CollA too: the cube nests under the group, with no second row', () => {
+    const rows = buildSceneTreeRows(build('CollA'));
+    expect(keysOf(rows, 'cube')).toEqual(['n_scene/collection/colA/grp/cube']);
+  });
+
+  /** The scene's own list holds the cube; its parent `grp` is held by `group`. */
+  function buildSceneList(group: 'scene' | 'CollB'): DagState {
+    let s = applyAll(buildSceneOnly(), [
+      ...collectionOps('colB', 'CollB', [], 'n_scene'),
+      { type: 'addNode', nodeId: 'grp', nodeType: 'Group', params: {} },
+      {
+        type: 'connect',
+        from: { node: 'grp', socket: 'out' },
+        to:
+          group === 'scene'
+            ? { node: 'n_scene', socket: 'children' }
+            : { node: 'colB', socket: 'members' },
+      },
+    ]);
+    s = makeSplitCube(s, { objectId: 'cube' }).state;
+    return applyAll(s, [
+      {
+        type: 'connect',
+        from: { node: 'grp', socket: 'world' },
+        to: { node: 'cube', socket: 'parent' },
+      },
+      {
+        type: 'connect',
+        from: { node: 'cube', socket: 'out' },
+        to: { node: 'n_scene', socket: 'children' },
+      },
+    ]);
+  }
+
+  it('scene list, parent in CollB: the cube has its own row in the scene list too', () => {
+    const s = buildSceneList('CollB');
+    const rows = buildSceneTreeRows(s);
+    expect(keysOf(rows, 'cube')).toEqual(['n_scene/collection/colB/grp/cube', 'n_scene/cube']);
+    const index = (s.nodes.n_scene.inputs.children as { node: string }[]).findIndex(
+      (r) => r.node === 'cube',
+    );
+    expect(rows.find((r) => r.key === 'n_scene/cube')!.parent).toEqual({
+      nodeId: 'n_scene',
+      socket: 'children',
+      index,
+    });
+    uniqueKeys(rows);
+  });
+
+  it('scene list, parent in the scene list too: the cube nests under it, with no second row', () => {
+    const rows = buildSceneTreeRows(buildSceneList('scene'));
+    expect(keysOf(rows, 'cube')).toEqual(['n_scene/grp/cube']);
   });
 });
