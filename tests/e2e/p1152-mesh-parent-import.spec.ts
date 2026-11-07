@@ -115,12 +115,14 @@ async function importFixture(page: Page): Promise<void> {
   // helpers span the origin and would take the click) removed — the light with its Track-To
   // first (a constraint may not outlive its owner), and the light's aim empty, which sits at the
   // origin.
-  await page.evaluate(() => {
+  await page.evaluate(async () => {
     const dag = (window as unknown as W).__basher_dag.getState();
     const d = (op: unknown) => dag.dispatch(op, 'user', 'clear');
     for (const b of ['n_box', 'n_box_2'])
       d({ type: 'setParam', nodeId: b, paramPath: 'position', value: [20, 0, 0] });
-    d({ type: 'removeNode', nodeId: 'n_light_aim' });
+    // A constraint on a chain comes off the chain; a raw removeNode is refused as still consumed.
+    const { removeStepOps } = await import('/src/core/dag/chainEdit.ts');
+    for (const op of removeStepOps(dag.state, 'n_light', 'n_light_aim')!) d(op);
     d({
       type: 'disconnect',
       from: { node: 'n_light_target', socket: 'out' },

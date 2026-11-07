@@ -40,7 +40,9 @@ const sceneList = (page: Page, socket: 'children' | 'lights') =>
 const groupChildren = (page: Page) =>
   page.evaluate((g) => {
     const st = (window as unknown as W).__basher_dag.getState().state;
-    return (st.nodes[g].inputs.children ?? []).map((r) => r.node);
+    return Object.entries(st.nodes)
+      .filter(([, c]) => (c.inputs as unknown as { parent?: { node: string } }).parent?.node === g)
+      .map(([cid]) => cid);
   }, GRP_ID);
 
 test.describe('#231 Inc 2a.2 — light reparent in the outliner', () => {
