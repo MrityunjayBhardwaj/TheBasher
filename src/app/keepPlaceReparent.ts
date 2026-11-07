@@ -59,7 +59,7 @@ import { quaternionToEulerVec3 } from '../core/import/threeAdapter';
 import { isKeyframeChannelNode } from './animate/paramAnimationState';
 import { isCameraNode } from './cameraNode';
 import { isLightNode } from './lightNode';
-import { followPathStackForTarget, relationalPoseStackForTarget } from './nodeConstraints';
+import { relationalPoseStackForTarget } from './nodeConstraints';
 import { resolveParentWorldMatrix } from './resolveWorldTransform';
 import { rotationWriteOf } from './resolvedRotation';
 import { hierarchySocketsOf, parentIdsOf } from './sceneHierarchy';
@@ -272,10 +272,9 @@ export function keepWorldOps(
   const child = state.nodes[childId];
   if (!child) return { ok: true, ops: [], residual: 0 };
   const name = nodeDisplayName(state.nodes, childId);
-  // A live Follow Path writes the position, as a key does. A Track-To writes only the rotation.
-  const driven =
-    drivenTransforms(state).get(childId) ??
-    (followPathStackForTarget(state.nodes, childId).length > 0 ? 'on a path' : undefined);
+  // #1848 — a constraint is not on this list. It works from the object's own world, the world this
+  // keeps, so what it draws stays put too: a Follow Path adds the path to it, as Blender's does.
+  const driven = drivenTransforms(state).get(childId);
   if (driven) {
     return {
       ok: false,
@@ -445,7 +444,17 @@ export function buildMoveOps(
         to: { node: sceneId, socket: 'children' },
       });
     }
-    if (sceneListed) {
+    // #1842 — a light leaving its parent for the scene keeps the band that already draws it: back
+    // on the scene's list as well, a rig light would be drawn twice and outlive its profile.
+    const staysOnBand =
+      move.to === sceneId &&
+      socket === 'lights' &&
+      (refsOf(state.nodes[sceneId]?.inputs?.lights).some((r) => r?.node === move.childId) ||
+        Object.values(state.nodes).some(
+          (n) =>
+            n.type === 'LightRig' && refsOf(n.inputs.lights).some((r) => r?.node === move.childId),
+        ));
+    if (sceneListed || staysOnBand) {
       // Nothing to attach.
     } else if (attachesByParentInput(state, move.to, socket, move.childId)) {
       rewire.push(attachOp(state, move.childId, move.to, socket));

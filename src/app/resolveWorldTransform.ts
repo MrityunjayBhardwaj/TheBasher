@@ -787,7 +787,9 @@ function worldTransformOf(
     // A light folds what DirectChannelsLightR draws it with, as every other node does.
     const lit = overlaidAt(state, edge.id, edge.value, at);
     if (!lit) continue;
-    return decompose(identity.clone().multiply(localMatrix(lit)));
+    // #1842 — and at its world: what it hangs from composes over it, as for any object.
+    const parentWorld = parentWorldMatrixOf(state, selectedId, ctx, cache, ancestorLocal);
+    return decompose((parentWorld ?? identity).clone().multiply(localMatrix(lit)));
   }
 
   return null;
@@ -888,8 +890,36 @@ function parentWorldMatrixOf(
     transients: useTransientEditStore.getState().edits,
     ancestorLocal,
   };
-  const parent = sceneChildWorld(state, selectedId, at, true);
+  // #1842 — a light a band draws hangs from its parent input though the tree does not hold it.
+  const parent =
+    sceneChildWorld(state, selectedId, at, true) ?? bandLightParentWorld(state, selectedId, at);
   // Not a descendant (GltfChild / Scatter / unreachable / flat camera or light) → null. A parent
   // that composes to identity → null, so the caller keeps its local-only path.
   return parent && !isIdentityMatrix(parent) ? parent : null;
+}
+
+/** The world of what a band's light hangs from, read through the tree the parent is drawn in. Null
+ *  for anything else. A light cannot hold a child through any door, so a parent is never on a band. */
+function bandLightParentWorld(state: DagState, id: string, at: Overlay): THREE.Matrix4 | null {
+  const ref = state.nodes[id]?.inputs.parent;
+  if (!ref || Array.isArray(ref)) return null;
+  const sceneNode = state.outputs.scene ? state.nodes[state.outputs.scene.node] : null;
+  const sceneLights = sceneNode?.inputs.lights;
+  const onBand =
+    (Array.isArray(sceneLights) && sceneLights.some((r) => r.node === id)) ||
+    resolveRigLightSources(state).includes(id);
+  if (!onBand) return null;
+  // The parent is an ancestor here, so its own transform is read by the ancestor rule: on the drawn
+  // road that holds its aim, which reading it as the node asked about would leave out.
+  const above = sceneChildWorld(state, ref.node, at, true);
+  if (!above) return null;
+  let value: SceneChild | null;
+  try {
+    const raw = evaluate(state, ref.node, { cache: at.cache, ctx: at.ctx }).value as SceneChild;
+    value = overlaidAt(state, ref.node, raw, at);
+  } catch {
+    return null;
+  }
+  if (!value) return null;
+  return above.multiply(at.ancestorLocal(state, ref.node, value, at.ctx, at.cache));
 }

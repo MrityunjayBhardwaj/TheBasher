@@ -379,6 +379,7 @@ const TAKERS: string[] = [
   // #480 — the camera overlay folds the drivers bound to the camera; both callers hand it theirs.
   'overlayCameraChannels@src/app/cameraChannels.ts',
   'readCurveSampleAt@src/app/curveSampleSource.ts',
+  'bandLightParentWorld@src/app/resolveWorldTransform.ts',
   'readTerrainSampleAt@src/app/geometrySampleSource.ts',
   'readTransformChannelAt@src/app/transformChannelSource.ts',
   'readTransformPositionAt@src/app/transformChannelSource.ts',

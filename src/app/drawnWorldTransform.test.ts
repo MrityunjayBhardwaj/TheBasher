@@ -432,6 +432,8 @@ describe('#1829 — the census of world readers', () => {
     'src/app/lightAim.ts': 1,
     'src/app/skeletonObjects.ts': 1,
     'src/viewport/BoxSelectController.tsx': 1,
+    // A band's hung light stands under what its parent draws, an aimed parent included (#1842).
+    'src/viewport/SceneFromDAG.tsx': 1,
   };
   const sources = import.meta.glob('/src/**/*.{ts,tsx}', {
     query: '?raw',
