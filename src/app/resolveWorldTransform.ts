@@ -85,7 +85,7 @@ import { resolveRigLightSources } from './resolveRigLightSources';
 import { quaternionFromEulerDeg, withResolvedRotation } from './resolvedRotation';
 import type { Quat, RotationModeFields } from '../nodes/types';
 import { hierarchySocketForKind } from './sceneHierarchy';
-import { withGatheredChildren } from '../core/dag/worldChildren';
+import { drawnInputsOf } from '../core/dag/worldChildren';
 import { sceneIndexOf } from './sceneIndex';
 import { getNodeType } from '../core/dag/registry';
 import { conversionsInto } from '../core/dag/socketConversion';
@@ -93,6 +93,7 @@ import { useTransientEditStore } from './stores/transientEditStore';
 import { boneParentMatrix } from '../nodes/boneParent';
 import { type ClockedCtx, ctxOnClock, ctxOnClockOf } from './subjectClock';
 import { measureStage } from '../perf/frameProfiler';
+import { sceneChildRefs } from './sceneMembership';
 
 type Vec3 = [number, number, number];
 
@@ -232,9 +233,9 @@ export function childEdges(
       // through `hierarchyChildIds`, which compacts: an unbound entry must consume its
       // slot here or every later child would pair with the wrong value.
       const socket = hierarchySocketForKind(v.kind, node);
-      // #1824 — the wires, then the children gathered from parent inputs, as the evaluator
-      // built the value's `children` (`withGatheredChildren`).
-      const refs = socket ? withGatheredChildren(state, nodeId, node)[socket] : undefined;
+      // #1824 — the wires, then the drawn children gathered from parent inputs (#1823), as the
+      // evaluator built the value's `children` (`drawnInputsOf`).
+      const refs = socket ? drawnInputsOf(state, nodeId, node)[socket] : undefined;
       const list = Array.isArray(refs) ? refs : refs ? [refs] : [];
       const kids = v.children ?? [];
       const out: Array<{ id: string; value: SceneChild }> = [];
@@ -409,9 +410,12 @@ function holderChain(state: DagState, id: string): string[] | null | 'search' {
   const index = sceneIndexOf(state.nodes);
   const sceneId = state.outputs.scene?.node;
   const chain = [id];
+  // #1823 — the tops of what the scene draws.
+  const tops = new Set(sceneChildRefs(state).map((r) => r.node));
   for (let at = id; ; ) {
     const holders = index.parentsOf(at);
-    if (holders.length === 0) return null;
+    // #1823 — the scene is not a parent: a node no parent holds is a top when the scene draws it.
+    if (holders.length === 0) return tops.has(at) ? chain.reverse() : null;
     if (holders.length > 1) return 'search';
     const holder = holders[0];
     if (holder === sceneId) return chain.reverse();
@@ -452,9 +456,7 @@ function topLevelValue(state: DagState, topId: string, at: Overlay): SceneChild 
     return 'search';
   }
   if (!sceneChildrenArriveAsProduced()) return 'search';
-  const refs = state.nodes[sceneId]?.inputs.children;
-  const list = (Array.isArray(refs) ? refs : refs ? [refs] : []) as NodeRef[];
-  const ref = list.find((r) => r?.node === topId);
+  const ref = sceneChildRefs(state).find((r) => r?.node === topId);
   if (!ref) return null;
   let produced: unknown;
   try {
@@ -514,12 +516,8 @@ function searchFromRoot(
   if (!value?.scene?.children) return null;
   // Scene child-ref list — childRefs[i].node ↔ value.scene.children[i], EXACTLY as SceneFromDAG
   // and resolveEvaluatedTransform resolve it.
-  const sceneRef = state.outputs.scene;
-  const sceneNode = sceneRef ? state.nodes[sceneRef.node] : null;
-  const childRefs =
-    sceneNode && Array.isArray(sceneNode.inputs.children)
-      ? (sceneNode.inputs.children as NodeRef[])
-      : [];
+  // #1823 — as the scene draws them (`sceneChildRefs`).
+  const childRefs = sceneChildRefs(state);
   const identity = new THREE.Matrix4();
   for (let i = 0; i < value.scene.children.length; i++) {
     const topId = childRefs[i]?.node;

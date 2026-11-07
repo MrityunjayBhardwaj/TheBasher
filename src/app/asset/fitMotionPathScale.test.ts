@@ -253,6 +253,12 @@ describe('fitting a generated walk’s path to its character (#1285)', () => {
         from: { node: 'cm_group', socket: 'out' },
         to: { node: 'n_scene', socket: 'children' },
       },
+      // #1823 — hung from the group and the scene's own, as an import links every object.
+      {
+        type: 'connect',
+        from: { node: 'tall_obj', socket: 'out' },
+        to: { node: 'n_scene', socket: 'children' },
+      },
     ] as Op[]);
     s = apply(s, [
       {
@@ -356,6 +362,12 @@ function sceneProject(chars: { id: string; hip: number; unit: number; groupScale
           from: { node: `${c.id}_grp`, socket: 'out' },
           to: { node: 'n_scene', socket: 'children' },
         },
+        // #1823 — hung from the group and the scene's own, as an import links every object.
+        {
+          type: 'connect',
+          from: { node: `${c.id}_obj`, socket: 'out' },
+          to: { node: 'n_scene', socket: 'children' },
+        },
       );
     }
     const s = apply(project(), ops);
@@ -437,6 +449,12 @@ describe('a rig stored in other units is fitted in world metres (#1508)', () => 
       {
         type: 'connect',
         from: { node: 'half', socket: 'out' },
+        to: { node: 'n_scene', socket: 'children' },
+      },
+      // #1823 — hung from the group and the scene's own, as an import links every object.
+      {
+        type: 'connect',
+        from: { node: 'idle_obj', socket: 'out' },
         to: { node: 'n_scene', socket: 'children' },
       },
     ] as Op[]);

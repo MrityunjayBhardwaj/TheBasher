@@ -13,7 +13,8 @@
 import type { DagState } from '../core/dag/state';
 import type { NodeId, Op } from '../core/dag/types';
 import { collectionOps } from '../core/import/modelImport';
-import { HOP_TYPES, sceneMembersOf } from './sceneMembership';
+import { applyOps } from '../core/dag/ops';
+import { HOP_TYPES, isInScene, sceneCarriersOf, sceneMembersOf } from './sceneMembership';
 
 const refsOf = (binding: unknown): NodeId[] =>
   (Array.isArray(binding) ? binding : binding ? [binding] : [])
@@ -174,6 +175,9 @@ export function hiddenByCollection(
  */
 export function hiddenNodes(state: DagState, purpose: VisibilityPurpose): ReadonlySet<NodeId> {
   const out = new Set<NodeId>(hiddenByCollection(state, purpose));
+  // #1823 — a node drawn only because a member hangs below it is not in the scene itself: it
+  // carries its children's transform and draws nothing of its own, in the viewport or the render.
+  for (const id of sceneCarriersOf(state)) out.add(id);
   for (const node of Object.values(state.nodes)) {
     if (VISIBILITY_TYPES.has(node.type) && !ownShown(node, purpose)) out.add(node.id);
   }
@@ -211,11 +215,12 @@ export function setActiveCollectionOp(state: DagState, collectionId: NodeId | nu
  * importers link each object they make (`import_fbx.py`, `import_bvh.py`, the glTF importer's
  * single-scene case). An imported Empty is a Group here (`emptyOps`), and Blender links it too.
  * Membership only: where each one hangs in the scene is the import's own. With the scene itself
- * active, the ops are returned as they are.
+ * active, each joins the scene's own list (#1823).
  */
 export function intoActiveCollection(state: DagState, ops: readonly Op[]): Op[] {
   const made = ops.flatMap((op) =>
-    op.type === 'addNode' && (op.nodeType === 'Object' || op.nodeType === 'Group')
+    op.type === 'addNode' &&
+    (op.nodeType === 'Object' || op.nodeType === 'Group' || op.nodeType === 'Null')
       ? [op.nodeId]
       : [],
   );
@@ -225,7 +230,7 @@ export function intoActiveCollection(state: DagState, ops: readonly Op[]): Op[] 
 /**
  * #1453 — `ops` with each of `ids` linked into the active collection, as Blender links every object
  * it adds (`bpy.ops.mesh.primitive_cube_add` lands in the active collection, the scene collection
- * when that is active). With the scene itself active, the ops are returned as they are.
+ * when that is active). With the scene itself active, each joins the scene's own list (#1823).
  */
 export function linkIntoActiveCollection(
   state: DagState,
@@ -233,7 +238,40 @@ export function linkIntoActiveCollection(
   ids: readonly NodeId[],
 ): Op[] {
   const collectionId = activeCollectionOf(state);
-  return collectionId === null ? [...ops] : [...ops, ...membershipOps(collectionId, ids)];
+  if (collectionId !== null) return [...ops, ...membershipOps(collectionId, ids)];
+  // #1823 — the scene itself active: each joins the scene's own list (Blender's scene collection),
+  // unless `ops` or the graph already puts it there. Parenting is not membership, so an object
+  // made under a parent is listed too.
+  const sceneId = state.outputs.scene?.node;
+  if (!sceneId) return [...ops];
+  // Only what `ops` leaves outside the scene: a camera the scene reads through its `camera`, or a
+  // light a rig or the scene's `lights` holds, is the scene's already and draws through that band.
+  // `ops` can name nodes an earlier part of the same gesture makes; then the scene's list, as
+  // `ops` leaves it, is what is checked.
+  let after: DagState | null = null;
+  try {
+    after = applyOps(state, ops).next;
+  } catch {
+    after = null;
+  }
+  const listed = new Set(refsOf(state.nodes[sceneId]?.inputs?.children));
+  for (const op of ops) {
+    if (op.type === 'connect' && op.to.node === sceneId && op.to.socket === 'children') {
+      listed.add(op.from.node);
+    }
+  }
+  return [
+    ...ops,
+    ...ids
+      .filter((id) => (after ? after.nodes[id] && !isInScene(after, id) : !listed.has(id)))
+      .map(
+        (id): Op => ({
+          type: 'connect',
+          from: { node: id, socket: 'out' },
+          to: { node: sceneId, socket: 'children' },
+        }),
+      ),
+  ];
 }
 
 /** The scene's collections that hold `id`, nested ones too, in outliner order. */

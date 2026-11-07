@@ -1739,11 +1739,18 @@ describe('#1051 — a hierarchy comes across as parent edges', () => {
   /** Who each node is wired under, by node id → parent id, read off the emitted connects. */
   function parentOf(ops: readonly Op[]): Record<string, string> {
     const out: Record<string, string> = {};
+    const named = new Set<string>();
     for (const op of ops) {
       if (op.type !== 'connect') continue;
       // #1824 — under an Object or a Group the child names its parent; the scene's list is a wire.
-      if (op.to.socket === 'parent') out[op.to.node] = op.from.node;
-      else if (op.to.socket === 'children') out[op.from.node] = op.to.node;
+      // #1823 — and the scene's list is membership too, so a node that names a parent is listed
+      // there as well: the parent it names is its parent, whatever order the two edges come in.
+      if (op.to.socket === 'parent') {
+        out[op.to.node] = op.from.node;
+        named.add(op.to.node);
+      } else if (op.to.socket === 'children' && !named.has(op.from.node)) {
+        out[op.from.node] = op.to.node;
+      }
     }
     return out;
   }
@@ -1835,6 +1842,13 @@ describe('#1051 — a hierarchy comes across as parent edges', () => {
     expect(typeOf(ops, emptyId)).toBe('Group');
     // #1451 — no wrapper Group: the file's root node stands in the scene itself.
     expect(parents[emptyId], 'and the empty hangs under the scene').toBe('n_scene');
+    // #1823 — and both are the scene's, the hung cube too: an import links every object it makes.
+    const listed = ops.flatMap((o) =>
+      o.type === 'connect' && o.to.node === 'n_scene' && o.to.socket === 'children'
+        ? [o.from.node]
+        : [],
+    );
+    expect(listed).toEqual(expect.arrayContaining([emptyId, objectIds[0]]));
   });
 
   it('a child written BEFORE its parent still connects — glTF fixes no node order', async () => {

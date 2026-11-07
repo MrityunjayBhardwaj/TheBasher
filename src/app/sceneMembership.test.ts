@@ -9,7 +9,6 @@ import { registerAllNodes } from '../nodes/registerAll';
 import {
   HOP_TYPES,
   MEMBERSHIP_WIRES,
-  TRANSITIONAL_MEMBERSHIP_WIRES,
   isInScene,
   keepInSceneOps,
   membershipSocketsOf,
@@ -32,7 +31,7 @@ import { buildDeleteNodesOps } from './sceneNodeActions';
 
 beforeAll(() => registerAllNodes());
 
-const ALL = [...MEMBERSHIP_WIRES, ...TRANSITIONAL_MEMBERSHIP_WIRES];
+const ALL = MEMBERSHIP_WIRES;
 const key = (w: Pick<MembershipWire, 'nodeType' | 'socket'>) => `${w.nodeType}.${w.socket}`;
 
 /** The `Type.socket` names rule 3 quotes, in order. */
@@ -62,20 +61,21 @@ describe('#1820 — one list of the membership wires', () => {
   });
 
   it('parenting is not on the list: no parenting socket is a membership wire', () => {
-    // Today `Scene.children` is both (the Scene is in the hierarchy table for the outliner's
-    // scan); it is the one overlap, and it is on the TRANSITIONAL list for that reason.
+    // #1823 — `Scene.children` was the one overlap until the scene drew its collections: it is now
+    // the scene collection's own objects, and the Scene parents nothing.
     const overlap = MEMBERSHIP_WIRES.filter((w) =>
       hierarchySocketsOf({ type: w.nodeType }).includes(w.socket),
     ).map(key);
     expect(overlap).toEqual([]);
-    expect(hierarchySocketsOf({ type: 'Scene' })).toEqual(['children']);
+    expect(hierarchySocketsOf({ type: 'Scene' })).toEqual([]);
+    expect(membershipSocketsOf('Scene')).toContain('children');
   });
 
   it('the three disagreements #1820 measured are each answered', () => {
     // A rig's lights are in the scene.
     expect(membershipSocketsOf('Scene')).toContain('lightRig');
     expect(membershipSocketsOf('LightRig')).toEqual(['lights']);
-    // Collections are listed, and say they are not drawn yet (#1823).
+    // Collections are listed (and drawn, #1823).
     const collectionWires = MEMBERSHIP_WIRES.filter(
       (w) => w.nodeType === 'Collection' || w.socket === 'collections',
     );
@@ -84,7 +84,6 @@ describe('#1820 — one list of the membership wires', () => {
       'Collection.members',
       'Collection.collections',
     ]);
-    expect(collectionWires.every((w) => !w.drawnToday)).toBe(true);
     // A Transform's chain input parents; it does not put anything in the scene.
     expect(membershipSocketsOf('Transform')).toEqual([]);
     expect(membershipSocketsOf('MaterialOverride')).toEqual([]);
@@ -173,14 +172,14 @@ const OBJECTS = [
 ];
 
 describe('#1821 — one answer to "is this object in the scene"', () => {
-  it('answers each case as rule 3 does today', () => {
+  it('answers each case as rule 3 does', () => {
     const s = disagreementScene();
     const answer = Object.fromEntries(OBJECTS.map((id) => [id, isInScene(s, id)]));
     expect(answer).toEqual({
       inCh: true,
       nested: true,
-      // Collections are listed but not followed until the scene draws them (#1823).
-      onlyColl: false,
+      // The scene draws its collections (#1823): one listed by a collection alone is in.
+      onlyColl: true,
       wrapped: true,
       onLights: true,
       activeRigLight: true,
@@ -226,8 +225,7 @@ describe('#1821 — one answer to "is this object in the scene"', () => {
       ['C'],
       ['top'],
     ]);
-    // A collection does not put a thing in the scene today (#1823): the idle rig's light is not
-    // listed, under the collection or anywhere.
+    // The idle rig's light is on no wire the scene follows, so it is listed nowhere.
     expect(where('idleRigLight')).toEqual([]);
   });
 

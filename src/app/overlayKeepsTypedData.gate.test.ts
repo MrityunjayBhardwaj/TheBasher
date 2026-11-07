@@ -28,6 +28,7 @@ import { overlayTransients } from './overlayTransients';
 import { overlayWithIdentity } from './overlayWithIdentity';
 import * as geometryRegistry from './geometryRegistry';
 import type { SceneChild } from '../nodes/types';
+import { sceneChildRefs } from './sceneMembership';
 
 beforeEach(() => {
   __resetRegistryForTests();
@@ -58,11 +59,7 @@ async function animatedImport() {
   const sceneId = state.outputs.scene!.node;
   for (const op of [
     { type: 'addNode', nodeId: group, nodeType: 'Group', params: {} },
-    {
-      type: 'disconnect',
-      from: { node: cube, socket: 'out' },
-      to: { node: sceneId, socket: 'children' },
-    },
+    // #1823 — the cube stays the scene's: hanging it is not leaving the scene.
     {
       type: 'connect',
       from: { node: group, socket: 'world' },
@@ -93,7 +90,8 @@ async function animatedImport() {
   const root = evaluate(state, state.outputs.render!.node, { ctx }).value as {
     scene: { children: SceneChild[] };
   };
-  const refs = state.nodes[state.outputs.scene!.node].inputs.children as { node: string }[];
+  // #1823 — the scene's children as it draws them: index i is `scene.children[i]`.
+  const refs = sceneChildRefs(state);
   const at = refs.findIndex((r) => r.node === group);
   expect(at, 'the Group is a scene child').toBeGreaterThanOrEqual(0);
   const pivot = { id: group, value: root.scene.children[at] };

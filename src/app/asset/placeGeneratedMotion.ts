@@ -70,6 +70,7 @@ import { evaluate } from '../../core/dag/evaluator';
 import type { AnimationClipValue, RotationModeFields } from '../../nodes/types';
 import { rotationWriteOf, withResolvedRotation } from '../resolvedRotation';
 import { parentIdsOf } from '../sceneHierarchy';
+import { sceneChildRefs } from '../sceneMembership';
 
 /** What placing a character did, or why it could not. A void return would be the
  *  same trap the bind path was fixed for: four situations collapsing into one
@@ -108,13 +109,14 @@ function vec3Param(params: unknown, key: string): [number, number, number] {
  * half, #1053.)
  */
 export function placementRootOf(state: DagState, character: DrivenCharacter): string | null {
-  const sceneId = state.outputs.scene?.node;
+  // #1823 — the top of the tree the Object hangs in, when the scene draws that tree: the scene's
+  // list is membership, not a parent, so the walk ends where no parent holds the node.
+  const tops = new Set(sceneChildRefs(state).map((r) => r.node));
   let id = character.objectId;
   for (let guard = 0; guard < 64; guard++) {
     // The last holder in node-table order, as the map this replaced kept it.
     const parent = parentIdsOf(state, id).at(-1);
-    if (parent === undefined) return null;
-    if (parent === sceneId) return id;
+    if (parent === undefined) return tops.has(id) ? id : null;
     id = parent;
   }
   return null;

@@ -180,6 +180,7 @@ import type {
 import { uiEvaluatorCache } from '../app/uiEvaluatorCache';
 import { createFrameEvaluator, FrameEvaluatorProvider, useFrameTick } from './frameEvaluator';
 import { pickAsDrawn } from '../render/skinnedPick';
+import { sceneChildRefs } from '../app/sceneMembership';
 
 let rectAreaInit = false;
 function ensureRectAreaInit() {
@@ -450,10 +451,8 @@ export function SceneFromDAG({ outputName = 'render' }: SceneFromDAGProps) {
   // corresponds to index i in that list.
   const sceneRef = state.outputs.scene;
   const sceneNode = sceneRef ? state.nodes[sceneRef.node] : null;
-  const childRefs =
-    sceneNode && Array.isArray(sceneNode.inputs.children)
-      ? (sceneNode.inputs.children as { node: string; socket: string }[])
-      : [];
+  // #1823 — the scene's children as it draws them: the tops of its members' tree.
+  const childRefs = sceneChildRefs(state);
   const lightRefs =
     sceneNode && Array.isArray(sceneNode.inputs.lights)
       ? (sceneNode.inputs.lights as { node: string; socket: string }[])

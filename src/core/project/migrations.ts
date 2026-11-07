@@ -2872,14 +2872,75 @@ export function migrateLightAimToTurn(raw: unknown): unknown {
 //   - A child is moved only when it can take a parent input. The types are listed as they stood
 //     at v28, not asked of the registry, so a later node type cannot change what this pass did.
 //     Any other child (a glTF asset, a Transform, a scatter) stays wired in the list.
-//   - The scene's own lists are not touched: the scene holds the top of the tree by wire until it
-//     draws its collections (#1823).
+//   - Parenting stops putting a node in the scene (#1823): each child moved onto its parent input
+//     joins the scene's own list and every collection that holds its top ancestor, appended.
 //   - A node in two lists was drawn twice. The first holder in the table becomes its parent and
 //     the other wires stay, so it is still drawn in both places; said in the console.
 //   - A child already reading some parent's world in its parent input, and also in a list, was
 //     drawn under the list's holder. The list wins, since that is where it was seen; said too.
 const HOLDS_CHILDREN_AT_V28: ReadonlySet<string> = new Set(['Group', 'Object']);
 const TAKES_A_PARENT_AT_V28: ReadonlySet<string> = new Set(['Group', 'Object', 'Null']);
+
+/** The wires that held a scene object at v28, by holder type: a list, or a wrapper's one child. */
+const HOLDING_SOCKETS_AT_V28: Readonly<Record<string, string>> = {
+  Group: 'children',
+  Object: 'children',
+  Transform: 'target',
+  MaterialOverride: 'target',
+};
+
+/**
+ * #1823 — parenting stops putting a node in the scene: only the scene's own list and its
+ * collections do. Every child this step hung by its parent input joins each list that holds its
+ * top ancestor (climbing parent inputs, then the wires that still hold a node), so it is drawn
+ * exactly where it was. Appended, so the lists keep their order.
+ */
+function linkHungChildren(out: Record<string, RawNode>, parentOf: ReadonlyMap<string, string>) {
+  const refsIn = (b: unknown): RawRef[] => (Array.isArray(b) ? b : b ? [b as RawRef] : []);
+  const wiredHolder = new Map<string, string>();
+  for (const [id, node] of Object.entries(out)) {
+    const socket = HOLDING_SOCKETS_AT_V28[node?.type ?? ''];
+    if (!socket) continue;
+    for (const ref of refsIn(node.inputs?.[socket])) {
+      if (ref?.node && !wiredHolder.has(ref.node)) wiredHolder.set(ref.node, id);
+    }
+  }
+  const up = (id: string): string | undefined => {
+    const parent = out[id]?.inputs?.parent;
+    const viaParent = !Array.isArray(parent) ? parent?.node : undefined;
+    return viaParent && out[viaParent] ? viaParent : wiredHolder.get(id);
+  };
+  // Which membership lists hold each node, read once (a top is never one of the children added).
+  const listsOf = new Map<string, Array<{ holder: string; socket: string }>>();
+  for (const [holder, node] of Object.entries(out)) {
+    const socket =
+      node?.type === 'Scene' ? 'children' : node?.type === 'Collection' ? 'members' : null;
+    if (!socket) continue;
+    for (const ref of refsIn(node.inputs?.[socket])) {
+      if (!ref?.node) continue;
+      const at = listsOf.get(ref.node) ?? listsOf.set(ref.node, []).get(ref.node)!;
+      if (!at.some((l) => l.holder === holder)) at.push({ holder, socket });
+    }
+  }
+  const lists = (id: string) => listsOf.get(id) ?? [];
+  for (const childId of parentOf.keys()) {
+    let top = childId;
+    const seen = new Set([top]);
+    for (let next = up(top); next && !seen.has(next); next = up(top)) {
+      seen.add(next);
+      top = next;
+    }
+    for (const { holder, socket } of lists(top)) {
+      const node = out[holder];
+      const list = refsIn(node.inputs?.[socket]);
+      if (list.some((r) => r?.node === childId)) continue;
+      out[holder] = {
+        ...node,
+        inputs: { ...(node.inputs ?? {}), [socket]: [...list, { node: childId, socket: 'out' }] },
+      };
+    }
+  }
+}
 
 export function migrateChildrenToParentInputs(raw: unknown): unknown {
   const proj = raw as { formatVersion?: number; state?: { nodes?: Record<string, RawNode> } };
@@ -2929,6 +2990,7 @@ export function migrateChildrenToParentInputs(raw: unknown): unknown {
       inputs: { ...(child.inputs ?? {}), parent: { node: holderId, socket: 'world' } },
     };
   }
+  linkHungChildren(out, parentOf);
   if (twice.length > 0 || repointed.length > 0) {
     console.warn(
       `[migrateChildrenToParentInputs] ${parentOf.size} child(ren) now name their parent (#1824).` +

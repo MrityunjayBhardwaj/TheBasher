@@ -2154,11 +2154,8 @@ describe('deleteNode mutator', () => {
         from: { node: 'G', socket: 'out' },
         to: { node: 'n_scene', socket: 'children' },
       },
-      {
-        type: 'disconnect',
-        from: { node: 'n_box', socket: 'out' },
-        to: { node: 'n_scene', socket: 'children' },
-      },
+      // #1823 — the box hangs from G and stays in the scene's own list: parenting is not
+      // membership.
       {
         type: 'connect',
         from: { node: 'G', socket: 'world' },

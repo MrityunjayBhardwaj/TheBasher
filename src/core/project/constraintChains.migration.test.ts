@@ -60,6 +60,12 @@ const cube = (s: DagState, objectId: string, position: Vec3) =>
     position,
     connectTo: { node: 'n_scene', socket: 'children' },
   }).state;
+/** An object in the scene that hangs from `parent`: membership and parenting are separate wires. */
+const hung = (id: string, parent: string, params: object) => [
+  add(id, 'Object', params),
+  wire(parent, 'world', id, 'parent'),
+  wire(id, 'out', 'n_scene', 'children'),
+];
 const line = (params: object = {}) => [
   add('cv_d', 'CurveData', {
     points: withIds([
@@ -93,11 +99,9 @@ const underGroup = (scale: Vec3) => {
     }),
   ]);
   return run(cube(s, 'h', [4, 0, 0]), [
-    add('a', 'Object', { position: [0, 1, 0], scale: [2, 1, 1] }),
-    wire('g', 'world', 'a', 'parent'),
+    ...hung('a', 'g', { position: [0, 1, 0], scale: [2, 1, 1] }),
     add('tt', 'TrackTo', { target: 'a', aimNode: 'h' }),
-    add('kid', 'Object', { position: [1, 0, 0] }),
-    wire('a', 'world', 'kid', 'parent'),
+    ...hung('kid', 'a', { position: [1, 0, 0] }),
   ]);
 };
 const evalKey = (target: string, duration = 3) =>
@@ -206,8 +210,7 @@ const SAME: Record<string, () => DagState> = {
     run(base(), [
       add('g', 'Group', { position: [1, 2, 3], rotation: [40, 0, 25] }),
       wire('g', 'out', 'n_scene', 'children'),
-      add('a', 'Object', { position: [0, 1, 0] }),
-      wire('g', 'world', 'a', 'parent'),
+      ...hung('a', 'g', { position: [0, 1, 0] }),
       add('tt', 'TrackTo', { target: 'a', aimPoint: [3, 0, 0], aimSpace: 'parent', up: [0, 0, 1] }),
     ]),
   'two objects aiming at each other': () =>
@@ -217,8 +220,7 @@ const SAME: Record<string, () => DagState> = {
     ]),
   'aiming at your own child': () =>
     run(cube(base(), 'p', [0, 0, 0]), [
-      add('k', 'Object', { position: [2, 0, 0] }),
-      wire('p', 'world', 'k', 'parent'),
+      ...hung('k', 'p', { position: [2, 0, 0] }),
       add('tt', 'TrackTo', { target: 'p', aimNode: 'k' }),
     ]),
   'an aim whose target is gone': () =>
@@ -344,8 +346,7 @@ describe('where the chain differs on purpose', () => {
       add('g', 'Group', { position: [1, 2, 3] }),
       wire('g', 'out', 'n_scene', 'children'),
       ...line(),
-      add('a', 'Object', { position: [0, 1, 0] }),
-      wire('g', 'world', 'a', 'parent'),
+      ...hung('a', 'g', { position: [0, 1, 0] }),
       add('f', 'FollowPath', { target: 'a', curve: 'cv', evalTime: 0.5 }),
     ]);
     const chain = evaluate(convert(s), 'a', { socket: 'world', ctx: at(0) }).value as number[];

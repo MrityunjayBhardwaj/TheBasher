@@ -34,7 +34,7 @@ import type {
   NodeRef,
   ResolvedInputs,
 } from './types';
-import { withGatheredChildren } from './worldChildren';
+import { drawnInputsOf } from './worldChildren';
 import { sourceIdsKey } from './types';
 // ns-2 step 9b — the FIRST value import from `src/nodes/**` into `src/core/dag/**`, and the
 // reason `modifierDataSource` was extracted to a leaf one commit earlier: the resolver's own
@@ -765,7 +765,7 @@ export function evaluate(
     // node types and this node's cache key already carries its own.
     const resolved: ResolvedInputs = {};
     const inputHashes: Record<string, string | string[]> = {};
-    for (const [socket, rawBinding] of Object.entries(withGatheredChildren(state, id, node))) {
+    for (const [socket, rawBinding] of Object.entries(drawnInputsOf(state, id, node))) {
       const into = def.inputs[socket];
       // #1810 — the parent input feeds the world output only, never the node's own value.
       if (into?.world === true) continue;

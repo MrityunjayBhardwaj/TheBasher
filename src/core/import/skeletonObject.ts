@@ -178,7 +178,7 @@ export function buildSkeletonObjectOps(args: SkeletonObjectArgs): {
         from: args.pose ?? { node: args.clipId, socket: 'pose' },
         to: { node: objectId, socket: 'pose' },
       },
-      parentEdge(objectId, args.parentId ?? args.sceneNodeId, args.sceneNodeId),
+      ...parentEdge(objectId, args.parentId ?? args.sceneNodeId, args.sceneNodeId),
     ],
   };
 }

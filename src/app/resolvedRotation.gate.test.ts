@@ -149,6 +149,12 @@ describe('#1153 — every read-side entry honours the mode', () => {
         from: { node: 'g', socket: 'out' },
         to: { node: 'n_scene', socket: 'children' },
       },
+      // #1823 — the kid is the scene's too: parenting is not membership.
+      {
+        type: 'connect',
+        from: { node: 'kid', socket: 'out' },
+        to: { node: 'n_scene', socket: 'children' },
+      },
     ]);
     const q = axisAngle([0, 0, 1], 90);
     state = quaternionMode('g', q, state);
@@ -363,6 +369,12 @@ describe('#1153 — writers go through the mode (Blender object.cc:2826-2837)', 
             {
               type: 'connect',
               from: { node: 'g', socket: 'out' },
+              to: { node: 'n_scene', socket: 'children' },
+            },
+            // #1823 — the kid is the scene's too: parenting is not membership.
+            {
+              type: 'connect',
+              from: { node: 'kid', socket: 'out' },
               to: { node: 'n_scene', socket: 'children' },
             },
           ]

@@ -323,6 +323,12 @@ describe('activeCamera — nested camera world pose (#231 Inc 3.3)', () => {
       from: { node: 'n_grp', socket: 'world' },
       to: { node: 'n_cam2', socket: 'parent' },
     }).next;
+    // #1823 — and the scene's, as parenting is not membership.
+    state = applyOp(state, {
+      type: 'connect',
+      from: { node: 'n_cam2', socket: 'out' },
+      to: { node: 'n_scene', socket: 'children' },
+    }).next;
     // Make it the active camera (replace the seed direct wire on the single socket).
     state = applyOp(state, {
       type: 'connect',

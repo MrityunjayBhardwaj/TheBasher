@@ -45,36 +45,44 @@ const SCENE = 'n_scene';
 
 beforeAll(() => registerAllNodes());
 
-function apply(state: DagState, ...ops: object[]): DagState {
-  for (const op of ops) state = applyOp(state, op as never).next;
+type Step = object | ((s: DagState) => object[]);
+function apply(state: DagState, ...ops: Step[]): DagState {
+  for (const op of ops) {
+    const each = typeof op === 'function' ? op(state) : [op];
+    for (const o of each) state = applyOp(state, o as never).next;
+  }
   return state;
 }
+/** #1823 — `child` in the scene's own list, unless it is listed already: parenting is not
+ *  membership, so a child hung below the scene is a member of it too. */
+const member =
+  (child: string) =>
+  (s: DagState): object[] => {
+    const list = s.nodes[SCENE].inputs.children;
+    const refs = (Array.isArray(list) ? list : list ? [list] : []) as { node: string }[];
+    return refs.some((r) => r.node === child)
+      ? []
+      : [
+          {
+            type: 'connect',
+            from: { node: child, socket: 'out' },
+            to: { node: SCENE, socket: 'children' },
+          },
+        ];
+  };
 // #1824 — under the scene a child is on the scene's list; under an object it names that object
-// through its parent input.
-const hang = (child: string, parent: string) =>
+// through its parent input, and (#1823) is a member of the scene as well.
+const hang = (child: string, parent: string): Step =>
   parent === SCENE
-    ? {
-        type: 'connect',
-        from: { node: child, socket: 'out' },
-        to: { node: parent, socket: 'children' },
-      }
-    : {
-        type: 'connect',
-        from: { node: parent, socket: 'world' },
-        to: { node: child, socket: 'parent' },
-      };
-const unhang = (child: string, parent: string) =>
-  parent === SCENE
-    ? {
-        type: 'disconnect',
-        from: { node: child, socket: 'out' },
-        to: { node: parent, socket: 'children' },
-      }
-    : {
-        type: 'disconnect',
-        from: { node: parent, socket: 'world' },
-        to: { node: child, socket: 'parent' },
-      };
+    ? member(child)
+    : (s: DagState) => [
+        {
+          type: 'connect',
+          from: { node: parent, socket: 'world' },
+          to: { node: child, socket: 'parent' },
+        },
+        ...member(child)(s),
+      ];
 const trackTo = (id: string, target: string, params: object) => ({
   type: 'addNode',
   nodeId: id,
@@ -206,7 +214,6 @@ describe('#1829 — the child of an aimed object reads where it is drawn', () =>
         params: { position: [1, 0, 0], pivot: [0, 1, 0] },
       },
       hang('grp', SCENE),
-      unhang(BOX, SCENE),
       hang(BOX, 'grp'),
       setPosition(BOX, [0, 2, -3]),
       trackTo('tt', 'grp', { aimNode: '', aimPoint: [6, 2, 1] }),

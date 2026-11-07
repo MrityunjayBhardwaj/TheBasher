@@ -47,7 +47,8 @@ describe('hierarchySocketsOf', () => {
 
   it('gives an aggregate its children list socket', () => {
     expect(hierarchySocketsOf(node('a', 'Group'))).toEqual(['children']);
-    expect(hierarchySocketsOf(node('a', 'Scene'))).toEqual(['children']);
+    // #1823 — the Scene's list is membership: the scene parents nothing.
+    expect(hierarchySocketsOf(node('a', 'Scene'))).toEqual([]);
   });
 
   it('gives an OPERATOR nothing, even though it declares a `target` chain socket', () => {
@@ -178,11 +179,11 @@ describe('the tree as a whole-graph question', () => {
     expect(childIdsOf(g, 'missing')).toEqual([]);
     expect(parentIdsOf(g, 'a')).toEqual(['g', 'h']);
     expect(parentIdOf(g, 'a')).toBe('g');
-    expect(parentIdOf(g, 'g')).toBe('scene');
+    // #1823 — listed by the scene is membership, not a parent.
+    expect(parentIdOf(g, 'g')).toBeNull();
     expect(parentIdOf(g, 'scene')).toBeNull();
     expect(parentIdOf(g, 'd')).toBeNull();
     expect(hierarchyEdgesOf(g).map((e) => `${e.parent}>${e.child}`)).toEqual([
-      'scene>g',
       'g>b',
       'g>a',
       'h>a',

@@ -193,6 +193,12 @@ describe('#1511 — Apply Scale on an armature carries the scale into the rig', 
         from: { node: groupId, socket: 'world' },
         to: { node: 'socket', socket: 'parent' },
       },
+      // #1823 — and the scene's own, as every door that makes an object links it.
+      {
+        type: 'connect',
+        from: { node: 'socket', socket: 'out' },
+        to: { node: imported.outputs.scene!.node, socket: 'children' },
+      },
     ]);
     before = makeSplitCube(before, {
       objectId: 'prop',

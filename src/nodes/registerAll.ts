@@ -97,6 +97,7 @@ import { registerWorldFold } from '../app/objectWorld';
 import { registerWorldStepFold } from '../app/constraintChain';
 import { registerKeyedCook } from '../app/keyedCook';
 import { OwnWorldNode } from './OwnWorld';
+import { registerSceneDraw } from '../app/sceneMembership';
 
 const ALL: NodeDefinition[] = [
   // Time (P2 — the only impure source; pure consumers wire to it)
@@ -344,4 +345,5 @@ export function registerAllNodes(): void {
   registerWorldFold();
   registerWorldStepFold();
   registerKeyedCook();
+  registerSceneDraw();
 }

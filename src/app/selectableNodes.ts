@@ -13,6 +13,7 @@
 
 import type { DagState } from '../core/dag/state';
 import type { NodeRef } from '../core/dag/types';
+import { sceneChildRefs } from './sceneMembership';
 
 function refNodes(binding: unknown): string[] {
   if (Array.isArray(binding)) {
@@ -30,7 +31,8 @@ export function getViewportSelectableIds(state: DagState): string[] {
   const scene = state.nodes[sceneRef.node];
   if (!scene) return [];
   return [
-    ...refNodes(scene.inputs.children),
+    // #1823 — the tops of what the scene draws.
+    ...sceneChildRefs(state).map((r) => r.node),
     ...refNodes(scene.inputs.lights),
     ...refNodes(scene.inputs.camera),
   ];

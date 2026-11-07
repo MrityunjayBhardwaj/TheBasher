@@ -764,6 +764,27 @@ export function buildDuplicateNodesOps(
   // duplicate into its source's collections. Membership only: where it hangs is step 6's.
   for (const [sourceId, cloneId] of idMap)
     for (const c of collectionsHolding(state, sourceId)) ops.push(...membershipOps(c, [cloneId]));
+  // #1823 — and the scene's own list, the scene collection's objects, for each copy whose original
+  // it lists, apart from a root step 6 already placed there.
+  if (sceneId) {
+    const listed = new Set(refsOf(state.nodes[sceneId]?.inputs?.children).map((r) => r?.node));
+    const placedInScene = new Set(
+      roots
+        .filter(
+          (root) =>
+            !root.isList || (root.parent.node === sceneId && root.parent.socket === 'children'),
+        )
+        .map((root) => root.id),
+    );
+    for (const [sourceId, cloneId] of idMap) {
+      if (!listed.has(sourceId) || placedInScene.has(sourceId)) continue;
+      ops.push({
+        type: 'connect',
+        from: { node: cloneId, socket: 'out' },
+        to: { node: sceneId, socket: 'children' },
+      });
+    }
+  }
 
   // 7. A Strip is only active through its Track's `strips` list (the resolver reaches strips
   //    only via tracks). A copied strip that no track lists is inert, so each is appended to

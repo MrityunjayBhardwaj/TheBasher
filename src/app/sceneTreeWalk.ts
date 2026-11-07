@@ -17,9 +17,10 @@ import type { Node, NodeId, NodeRef } from '../core/dag/types';
 import { enumerateCameraNodeIds } from './activeCamera';
 import { importedChildOf } from './importedChild';
 import { chainSocketOf, isSceneLaneWrapper } from './operatorChain';
-import { childIdsOf, hierarchySocketForKind } from './sceneHierarchy';
+import { childIdsOf, hierarchySocketForKind, parentIdsOf } from './sceneHierarchy';
 import { childCollectionsOf, collectionMembersOf, sceneCollectionsOf } from './collections';
 import { resolveActiveRigNode, resolveRigLightSources } from './resolveRigLightSources';
+import { isInScene } from './sceneMembership';
 
 export interface TreeRow {
   /** Stable key for React. */
@@ -361,6 +362,10 @@ export function buildSceneTreeRows(state: DagState): TreeRow[] {
   // not listed at the top level as well. One in several collections has a row under each, as a
   // nested collection does (#397), so a nodeId can repeat in these rows; a key never does.
   const collected = new Set<NodeId>();
+  // #1823 — the scene's list and its collections are membership: a member that hangs from a parent
+  // the scene holds is listed under that parent, not again at the level that lists it. One whose
+  // parent is not in the scene is listed where its membership puts it (#1833).
+  const hangsFromParent = (id: NodeId) => parentIdsOf(state, id).some((p) => isInScene(state, p));
   // #397 — a nested collection lists under the collection holding it, and under each one when it
   // sits in several, as Blender's outliner lists one row per path. Its members list under it.
   const walkCollection = (collectionId: NodeId, depth: number, parentKey: string) => {
@@ -377,18 +382,24 @@ export function buildSceneTreeRows(state: DagState): TreeRow[] {
         walkCollection(child, depth + 1, key);
       }
     }
-    for (const member of collectionMembersOf(state, collectionId)) {
-      const parent = bands.get(member);
-      if (!parent) continue;
+    collectionMembersOf(state, collectionId).forEach((member, i) => {
+      if (hangsFromParent(member) || !state.nodes[member]) return;
+      // #1823 — a member listed by the collection alone is the scene's too (collections are
+      // drawn); its row's linkage is the collection's own list.
+      const parent = bands.get(member) ?? {
+        nodeId: collectionId,
+        socket: 'members',
+        index: i,
+      };
       collected.add(member);
       ctx.visited.delete(member);
       walkOneAsChild(ctx, member, depth + 1, key, parent);
-    }
+    });
   };
   for (const collectionId of sceneCollectionsOf(state))
     walkCollection(collectionId, 1, sceneRef.node);
   sceneChildren.forEach((ref, i) => {
-    if (collected.has(ref.node)) return;
+    if (collected.has(ref.node) || hangsFromParent(ref.node)) return;
     ctx.visited.delete(ref.node);
     walkOneAsChild(ctx, ref.node, 1, sceneRef.node, {
       nodeId: sceneRef.node,
