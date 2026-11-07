@@ -160,6 +160,12 @@ describe('#1759 — Track-To aim-point space', () => {
         from: { node: 'grp', socket: 'world' },
         to: { node: 'cam', socket: 'parent' },
       },
+      // #1823 — the scene's too: parenting is not membership.
+      {
+        type: 'connect',
+        from: { node: 'cam', socket: 'out' },
+        to: { node: 'n_scene', socket: 'children' },
+      },
       {
         type: 'connect',
         from: { node: 'cam', socket: 'out' },

@@ -63,6 +63,7 @@ import { followPathStackForTarget, relationalPoseStackForTarget } from './nodeCo
 import { resolveParentWorldMatrix } from './resolveWorldTransform';
 import { rotationWriteOf } from './resolvedRotation';
 import { hierarchySocketsOf, parentIdsOf } from './sceneHierarchy';
+import { isInScene } from './sceneMembership';
 import { nodeDisplayName } from './sceneTreeWalk';
 import { liveCtx, type ClockedCtx } from './subjectClock';
 import type { Quat, RotationModeFields } from '../nodes/types';
@@ -93,6 +94,17 @@ export function detachOp(childId: NodeId, edge: HolderEdge, state: DagState): Op
     from: { node: childId, socket: 'out' },
     to: { node: edge.node, socket: edge.socket },
   };
+}
+
+/** #1823 — whether `edge` lists its child as a member rather than holding it as a parent: the
+ *  scene's own `children`, a collection's `members`. */
+function isMembershipEdge(state: DagState, edge: HolderEdge): boolean {
+  if (edge.byParentInput) return false;
+  const type = state.nodes[edge.node]?.type;
+  return (
+    (type === 'Scene' && edge.socket === 'children') ||
+    (type === 'Collection' && edge.socket === 'members')
+  );
 }
 
 /** The transform params a keep-position rewrite reads and writes. */
@@ -408,9 +420,35 @@ export function buildMoveOps(
         reason: `${opts.verb}: "${nodeDisplayName(state.nodes, move.to)}" cannot hold "${nodeDisplayName(state.nodes, move.childId)}".`,
       };
     }
-    const rewire: Op[] = move.from.map((edge) => detachOp(move.childId, edge, state));
-    if (attachesByParentInput(state, move.to, socket, move.childId)) {
+    // #1823 — a membership wire (the scene's own list, a collection's members) is not a parent:
+    // a move leaves it as it is. A light's place in the scene's `lights` band is cut, as it moves
+    // into the tree.
+    const rewire: Op[] = move.from
+      .filter((edge) => !isMembershipEdge(state, edge))
+      .map((edge) => detachOp(move.childId, edge, state));
+    // #1823 — the scene's own list is membership, not a parent. Leaving every parent for the scene
+    // only cuts the parent edge when the scene already lists the child.
+    const sceneListed =
+      move.to === sceneId &&
+      socket === 'children' &&
+      refsOf(state.nodes[sceneId]?.inputs?.children).some((r) => r?.node === move.childId);
+    if (sceneListed) {
+      // Nothing to attach.
+    } else if (attachesByParentInput(state, move.to, socket, move.childId)) {
       rewire.push(attachOp(state, move.childId, move.to, socket));
+      // Hanging is not membership: a child that leaves the scene's lists on the way (a light out of
+      // its `lights`), or was in none, joins the scene's own list so it is still drawn.
+      const leavesScene = move.from.some((e) => e.node === sceneId && e.socket === 'lights');
+      const listed = refsOf(state.nodes[sceneId ?? '']?.inputs?.children).some(
+        (r) => r?.node === move.childId,
+      );
+      if (sceneId && !listed && (leavesScene || !isInScene(state, move.childId))) {
+        rewire.push({
+          type: 'connect',
+          from: { node: move.childId, socket: 'out' },
+          to: { node: sceneId, socket: 'children' },
+        });
+      }
     } else {
       const key = `${move.to}\u0000${socket}`;
       const list = state.nodes[move.to]?.inputs?.[socket];
@@ -520,7 +558,9 @@ export function buildParentToOps(
     if (childId === parentId) continue;
     const from = movableHolderEdges(state, childId);
     const isCamera = isCameraNode(state, childId);
-    if (from.length === 0 && !isCamera) continue;
+    // #1823 — an object at the top of the scene has no holder (the scene's list is membership, not
+    // a parent); one that is neither held nor in the scene is not something the tree moves.
+    if (from.length === 0 && !isCamera && !isInScene(state, childId)) continue;
     if (from.some((e) => e.node === parentId)) continue;
     if (isAtOrBelow(state, parentId, childId)) {
       return {

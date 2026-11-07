@@ -28,9 +28,9 @@ const ops: Op[] = [
     nodeType: 'KeyframeChannelVec3',
     params: { target: 'child', paramPath: 'position', keyframes: [{ time: 0, value: [0, 0, 0] }] },
   },
-  parentEdge('top', 'scene', 'scene'),
-  parentEdge('bare', 'scene', 'scene'),
-  parentEdge('child', 'top', 'scene'),
+  ...parentEdge('top', 'scene', 'scene'),
+  ...parentEdge('bare', 'scene', 'scene'),
+  ...parentEdge('child', 'top', 'scene'),
 ];
 const params = (out: Op[], id: string) =>
   (out.find((o) => o.type === 'addNode' && o.nodeId === id) as { params: Record<string, unknown> })

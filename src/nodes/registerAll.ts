@@ -94,6 +94,7 @@ import { VideoStitchNode } from './VideoStitch';
 import { WalkPathNode } from './WalkPath';
 import { registerStatefulReplay } from '../app/statefulOps';
 import { registerWorldFold } from '../app/objectWorld';
+import { registerSceneDraw } from '../app/sceneMembership';
 
 const ALL: NodeDefinition[] = [
   // Time (P2 — the only impure source; pure consumers wire to it)
@@ -338,4 +339,5 @@ export function registerAllNodes(): void {
   registerStatefulReplay();
   // #1810 — and an object's `world` output with the fold that reads its own channels.
   registerWorldFold();
+  registerSceneDraw();
 }

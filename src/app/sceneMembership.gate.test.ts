@@ -26,12 +26,15 @@ const CENSUS: Record<string, string> = {
   'src/app/sceneTreeWalk.ts': 'the outliner tree; rows checked against isInScene',
   'src/app/collections.ts': "a collection's own sockets (its members, nested collections)",
   'src/app/selectableNodes.ts': 'box-select: the top-level band only; checked to stay inside',
-  // Pairing a wire with the value it produced (value.children[i] ↔ inputs.children[i]).
-  'src/app/resolveEvaluatedTransform.ts': 'pairs scene children with their evaluated values',
-  'src/app/resolveWorldTransform.ts': 'pairs scene children with their evaluated values',
-  'src/app/character/framing.ts': 'pairs scene children with their evaluated values',
-  'src/viewport/SceneFromDAG.tsx': 'pairs scene children and lights with what it draws',
-  'src/viewport/DiffOverlay.tsx': 'pairs scene children with their evaluated values',
+  // The answer itself, and what the scene draws (#1823): the one walk this census protects.
+  'src/app/sceneMembership.ts': 'the answer, and what the scene draws (sceneDrawOf)',
+  // Pairing a wire with the value it produced. The scene's children come from `sceneChildRefs`
+  // since #1823; these read the other sockets.
+  'src/app/resolveWorldTransform.ts':
+    "whether the render draws the output scene; the Scene type's input",
+  'src/viewport/SceneFromDAG.tsx': 'pairs scene lights with what it draws',
+  // A move between parents: a membership wire is not a parent, so it is left as it is (#1823).
+  'src/app/keepPlaceReparent.ts': "tells a scene list or collection's members from a parent edge",
   // The active camera and the lighting profile: which one, not whether.
   'src/app/activeCamera.ts': 'which camera is active',
   'src/app/shots.ts': 'which camera is active',
@@ -43,6 +46,8 @@ const CENSUS: Record<string, string> = {
   'src/app/character/cameraFromView.ts': 'writes the scene camera',
   'src/agent/tools/cameraSnapshot.ts': 'writes the scene camera',
   'src/core/project/migrations.ts': 'converts old files',
+  'src/app/sceneNodeActions.ts':
+    "Duplicate: a copy joins the scene's own list where its original is (#1823)",
   'src/core/project/repairFloatingCameras.ts': 'wires a camera an old Add left floating, on load',
 };
 

@@ -17,6 +17,7 @@ import type { EvalCtx } from '../core/dag/types';
 import { degVec3ToRad } from './rotation';
 import { aimPatch, withResolvedRotation } from '../app/resolvedRotation';
 import type { RenderOutputValue, CameraValue, LightValue, SceneObject } from '../nodes/types';
+import { sceneChildRefs } from '../app/sceneMembership';
 
 export function DiffOverlay() {
   const pendingDiff = useDiffStore((s) => s.pendingDiff);
@@ -50,12 +51,8 @@ function DiffOverlayInner({
   // applied to it. Index i in `value.scene.children` corresponds to index i in the Scene
   // aggregator's `inputs.children` — the SAME index-correspondence the renderer uses to
   // recover pick ids (SceneFromDAG.tsx). Read from the FORK: the proposal's scene.
-  const sceneRef = diff.forkState.outputs.scene;
-  const sceneNode = sceneRef ? diff.forkState.nodes[sceneRef.node] : null;
-  const childRefs =
-    sceneNode && Array.isArray(sceneNode.inputs.children)
-      ? (sceneNode.inputs.children as { node: string; socket: string }[])
-      : [];
+  // #1823 — the scene's children as it draws them (`sceneChildRefs`).
+  const childRefs = sceneChildRefs(diff.forkState);
 
   return (
     // editorChrome: agent-diff ghost preview is an editor overlay, never part

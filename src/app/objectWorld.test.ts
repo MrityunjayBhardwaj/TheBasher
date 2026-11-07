@@ -108,6 +108,8 @@ function rig(): DagState {
     from: { node: 'holder', socket: 'world' },
     to: { node: 'nul', socket: 'parent' },
   });
+  // #1823 — hung by its parent input, so the scene lists it: parenting is not membership.
+  s = run(s, { type: 'connect', from: { node: 'nul', socket: 'out' }, to: SCENE });
   s = inGrp(makeSplitCamera(s, { objectId: 'cam', position: [0, 0, 4] }).state, 'cam');
   // A camera is drawn unscaled and turned by its own rotation, whatever its typed scale says.
   s = run(s, { type: 'setParam', nodeId: 'cam', paramPath: 'scale', value: [2, 3, 2] });
@@ -138,7 +140,22 @@ function rewired(base: DagState, holders: readonly string[] = HOLDERS): DagState
       from: { node: holder, socket: 'world' },
       to: { node: kid.node, socket: 'parent' },
     });
+  // #1823 — as the v28 conversion does: a child moved onto its parent input joins the scene's own
+  // list, since a holder's wire carried it into the scene and a parent input does not.
+  for (const op of membershipOf(
+    s,
+    edges.map((e) => e.kid.node),
+  ))
+    s = run(s, op);
   return s;
+}
+
+/** The connects that list each of `ids` in the scene's `children`, those not listed already. */
+function membershipOf(s: DagState, ids: readonly string[]): object[] {
+  const listed = new Set(((s.nodes.n_scene.inputs.children ?? []) as NodeRef[]).map((r) => r.node));
+  return [...new Set(ids)]
+    .filter((id) => !listed.has(id))
+    .map((id) => ({ type: 'connect', from: { node: id, socket: 'out' }, to: SCENE }));
 }
 
 const worldOf = (s: DagState, id: string, t: number, cache?: EvaluatorCache) =>
@@ -279,12 +296,18 @@ describe('#1824 — a parent draws what hangs from it', () => {
         from: { node: holder, socket: 'world' },
         to: { node: kid.node, socket: 'parent' },
       })),
-    ]);
+      ...membershipOf(
+        base,
+        edges.map((e) => e.kid.node),
+      ),
+    ] as never);
     expect(childIdsOf(next, 'grp')).toEqual(childIdsOf(base, 'grp'));
     expect(sceneOf(next, 1)).toEqual(sceneOf(base, 1));
   });
 
-  it('CONTROL: without the gathering, the rewired children vanish from the scene', () => {
+  // #1823 — cut from its parent, a member is no longer drawn under the group: it stands at the top
+  // of the scene at its own transform (it used to vanish, when parenting was what listed it).
+  it('CONTROL: without the gathering, a rewired child leaves its group for the top', () => {
     const wired = rewired(rig());
     const cut = run(wired, {
       type: 'disconnect',
@@ -292,7 +315,8 @@ describe('#1824 — a parent draws what hangs from it', () => {
       to: { node: 'box', socket: 'parent' },
     });
     expect(childIdsOf(cut, 'grp')).not.toContain('box');
-    expect(resolveWorldTransform(cut, 'box', clockedCtx(1, 1))).toBeNull();
+    expect(diff(todayOf(cut, 'box', 1), worldOf(cut, 'box', 1))).toBeLessThan(1e-12);
+    expect(diff(todayOf(cut, 'box', 1), todayOf(wired, 'box', 1))).toBeGreaterThan(0.1);
     expect(sceneOf(cut, 1)).not.toEqual(sceneOf(wired, 1));
   });
 

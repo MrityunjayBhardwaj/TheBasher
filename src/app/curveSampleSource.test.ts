@@ -178,6 +178,12 @@ describe('curveSampleSource — arc-length parameterization', () => {
       from: { node: 'g1', socket: 'out' },
       to: { node: 'n_scene', socket: 'children' },
     }).next;
+    // #1823 — the curve is the scene's too: parenting is not membership.
+    state = applyOp(state, {
+      type: 'connect',
+      from: { node: 'c1', socket: 'out' },
+      to: { node: 'n_scene', socket: 'children' },
+    }).next;
 
     const sampler = curveSamplerFor(state, 'c1', CTX)!;
     expect(sampler).toBeTruthy();

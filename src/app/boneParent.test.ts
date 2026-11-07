@@ -128,6 +128,12 @@ describe('#1447 — a Group parented to a bone (an imported Empty) hangs from it
         from: { node: armature.id, socket: 'world' },
         to: { node: 'empty', socket: 'parent' },
       },
+      // #1823 — and a member of the scene's own list, as an import links every object it makes.
+      {
+        type: 'connect' as const,
+        from: { node: 'empty', socket: 'out' },
+        to: { node: state.outputs.scene!.node, socket: 'children' },
+      },
     ];
     for (const op of ops) state = applyOp(state, op).next;
     return { state, propId };

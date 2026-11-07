@@ -63,6 +63,12 @@ function primitiveTree(opts: { lampQuaternion?: boolean; bodyScale?: number[] } 
       from: { node: 'body', socket: 'world' },
       to: { node: 'socket', socket: 'parent' },
     },
+    // #1823 — and is the scene's, in its own list, as every door that makes one links it.
+    {
+      type: 'connect',
+      from: { node: 'socket', socket: 'out' },
+      to: { node: 'n_scene', socket: 'children' },
+    },
   ];
   if (opts.lampQuaternion) {
     ops.push(

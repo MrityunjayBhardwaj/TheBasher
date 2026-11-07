@@ -59,15 +59,19 @@ interface Pose {
 }
 const pose = (id: string, p: Pose): Op[] =>
   Object.entries(p).map(([path, value]) => set(id, path, value));
+/** #1823 — a group made under `parent`: hung there, and a member of the scene's own list as every
+ *  door that makes an object links it (parenting is not membership). */
 const group = (id: string, parent: string, p: Pose = {}): Op[] => [
   { type: 'addNode', nodeId: id, nodeType: 'Group', params: {} },
   wire(id, parent),
+  ...(parent === 'n_scene' ? [] : [wire(id, 'n_scene')]),
   ...pose(id, p),
 ];
-/** The default scene, with the cube posed and moved under `parent` when one is given. */
+/** The default scene, with the cube posed and hung under `parent` when one is given. #1823 — it
+ *  stays in the scene's list: hanging it is not taking it out of the scene. */
 function cubeUnder(parent: string | null, cube: Pose, build: Op[] = []): DagState {
   const s = apply(buildDefaultDagState(), [...build, ...pose('n_box', cube)]);
-  return parent ? apply(s, [unwire('n_box', 'n_scene'), wire('n_box', parent)]) : s;
+  return parent ? apply(s, [wire('n_box', parent)]) : s;
 }
 
 const world = (s: DagState, id: string): number[] => resolveWorldTransform(s, id, CTX)!.matrix;
@@ -265,9 +269,10 @@ describe('Ctrl+P and Alt+P (#1516)', () => {
   it('Alt+P: a light goes back to the lights list, a cube to children', () => {
     const s = apply(buildDefaultDagState(), [
       ...group('G', 'n_scene', { position: [2, 0, 0] }),
-      unwire('n_box', 'n_scene'),
       wire('n_box', 'G'),
+      // #1823 — as Ctrl+P leaves it: out of the lights band, a member of the scene's own list.
       unwire('n_light', 'n_scene', 'lights'),
+      wire('n_light', 'n_scene'),
       wire('n_light', 'G'),
     ]);
     const before = { box: world(s, 'n_box'), light: world(s, 'n_light') };

@@ -67,11 +67,14 @@ function scene(n: number, depth: number): DagState {
       to: { node: child, socket: 'parent' },
     });
   }
-  ops.push({
-    type: 'connect',
-    from: { node: 'g0', socket: 'out' },
-    to: { node: 'n_scene', socket: 'children' },
-  });
+  // #1823 — every node of the chain is the scene's: parenting is not membership.
+  for (let d = 0; d <= depth; d++) {
+    ops.push({
+      type: 'connect',
+      from: { node: d < depth ? `g${d}` : TARGET, socket: 'out' },
+      to: { node: 'n_scene', socket: 'children' },
+    });
+  }
   ops.push({
     type: 'addNode',
     nodeId: 'g0_key',

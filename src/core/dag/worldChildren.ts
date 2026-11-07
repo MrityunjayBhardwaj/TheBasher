@@ -70,6 +70,7 @@ function indexOf(graph: WorldChildrenGraph): Index {
  */
 export function forgetWorldChildren(nodes: object): void {
   memo.delete(nodes);
+  drawMemo.delete(nodes);
 }
 
 /** The node whose world `id`'s parent input reads, or null when it hangs from nothing. */
@@ -184,4 +185,83 @@ export function attachOp(
     to: { node: holderId, socket },
     ...(index === undefined ? {} : { index }),
   };
+}
+
+// ── WHAT THE SCENE DRAWS (#1823) ────────────────────────────────────────────────────────────
+//
+// Membership and parenting are two relations (decided on #1808): a node is in the scene when the
+// scene's membership wires reach it (`src/app/sceneMembership.ts`), and it hangs from its parent
+// through its parent input. The renderer keeps drawing a nested tree, so what it draws is the
+// scene's members and every ancestor of one: an ancestor that is not a member carries its
+// children's transform and draws nothing of its own (it is hidden, `hiddenNodes`), as Blender
+// draws an object at its world place whatever collection its parent is in. A node that is neither
+// is not drawn, though its parent is.
+//
+// Which nodes those are is the app's answer (the membership wires are listed there once); it is
+// registered here, as the world fold is, so the evaluator and every reader that lines a value's
+// children up with node ids (`resolveWorldTransform`, the renderer) ask the same function.
+
+/** What the scene draws: the nodes in its drawn tree and the tops of that tree, in order. */
+export interface SceneDraw {
+  /** The scene node these answer for. */
+  readonly sceneId: NodeId;
+  /** Members and their ancestors. */
+  readonly drawn: ReadonlySet<NodeId>;
+  /** The drawn nodes that are not members: drawn only to carry a member's transform, so they
+   *  draw nothing of their own. */
+  readonly carriers: ReadonlySet<NodeId>;
+  /** The drawn nodes with no drawn parent, as the scene's `children` input reads them. */
+  readonly roots: readonly NodeRef[];
+}
+
+/** The graph a scene question reads: its nodes and which node is the scene. */
+export interface SceneGraph extends WorldChildrenGraph {
+  readonly outputs: { readonly scene?: NodeRef };
+}
+
+type SceneDrawOf = (graph: SceneGraph) => SceneDraw | null;
+let sceneDrawOf: SceneDrawOf | null = null;
+const drawMemo = new WeakMap<object, SceneDraw | null>();
+
+/** Hands the tree module the app's answer to what the scene draws. Called by `registerAllNodes`. */
+export function setSceneDraw(fn: SceneDrawOf | null): void {
+  sceneDrawOf = fn;
+}
+
+/** What the scene output draws, or null when nothing is registered or there is no scene. Kept
+ *  per node table, as the tree index is. */
+export function sceneDrawOfGraph(graph: SceneGraph): SceneDraw | null {
+  if (!sceneDrawOf) return null;
+  const sceneId = graph.outputs.scene?.node;
+  if (!sceneId || !graph.nodes[sceneId]) return null;
+  const hit = drawMemo.get(graph.nodes);
+  if (hit !== undefined && hit?.sceneId === sceneId) return hit;
+  const draw = sceneDrawOf(graph);
+  drawMemo.set(graph.nodes, draw);
+  return draw;
+}
+
+/**
+ * `node`'s inputs as the scene draws them: the scene output's `children` are the tops of the drawn
+ * tree, and a parent gathers only the children hung by their parent input that are drawn. Wired
+ * children stay as wired. `withGatheredChildren` when nothing is registered or `graph` has no
+ * scene; that is also what every question about the TREE (not the drawing) reads.
+ */
+export function drawnInputsOf(
+  graph: WorldChildrenGraph & { readonly outputs?: { readonly scene?: NodeRef } },
+  id: NodeId,
+  node: { readonly type: string; readonly inputs: Node['inputs'] },
+): Node['inputs'] {
+  const draw = graph.outputs ? sceneDrawOfGraph(graph as SceneGraph) : null;
+  if (!draw) return withGatheredChildren(graph, id, node);
+  if (id === draw.sceneId) return { ...node.inputs, children: [...draw.roots] };
+  const socket = gatheringSocketOf(node.type);
+  if (!socket) return node.inputs;
+  const gathered = worldChildrenOf(graph, id).filter((c) => draw.drawn.has(c));
+  if (gathered.length === 0) return node.inputs;
+  const prior = node.inputs[socket];
+  const wired = Array.isArray(prior) ? prior : prior ? [prior] : [];
+  const held = new Set(wired.map((r) => r.node));
+  const extra = gathered.filter((c) => !held.has(c)).map((c) => ({ node: c, socket: 'out' }));
+  return { ...node.inputs, [socket]: [...wired, ...extra] };
 }

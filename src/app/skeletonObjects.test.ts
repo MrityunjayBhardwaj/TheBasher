@@ -69,7 +69,7 @@ function build({
   if (inGroup)
     s = apply(s, [
       importGroupOp('grp', [0, 0, 0], [0, 0, 0]),
-      parentEdge('grp', sceneNodeId, sceneNodeId),
+      ...parentEdge('grp', sceneNodeId, sceneNodeId),
     ]);
   const { ops } = buildSkeletonObjectOps({
     skeletonId: 'sk',

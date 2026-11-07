@@ -85,7 +85,9 @@ const CHILDREN_SOCKET = 'children';
  *  parents its children for the two SCAN sites, whose question is "is anything holding
  *  this node as a child?" rather than "what do I descend next". Keeping it out would
  *  re-open the flat/nested confusion the fast path exists to resolve. */
-const AGGREGATE_PARENT_TYPES: ReadonlySet<string> = new Set(['Group', 'Scene', 'Object']);
+// #1823 — `Scene` left this set: its `children` list is the scene collection's own objects,
+// membership (`sceneMembership.ts`), and an object listed there has no parent for being listed.
+const AGGREGATE_PARENT_TYPES: ReadonlySet<string> = new Set(['Group', 'Object']);
 
 /** Types that parent exactly ONE child, through their declared chain socket.
  *
@@ -229,6 +231,15 @@ export function hierarchyEdgesOf(graph: HierarchyGraphLike): readonly HierarchyE
 /** The scene-graph children of `parentId`, in order. Empty for an unknown id or a leaf. */
 export function childIdsOf(graph: HierarchyGraphLike, parentId: string): readonly string[] {
   return indexOf(graph).children.get(parentId) ?? EMPTY;
+}
+
+/**
+ * #1823 — the children `parentId` holds by a WIRE (its list, or a wrapper's one child), not the
+ * ones hung from it by their own parent input. A wired child has no parent input to be a scene
+ * member through, so its holder carries it into the scene (`sceneMembership.ts`).
+ */
+export function wiredChildIdsOf(graph: HierarchyGraphLike, parentId: string): string[] {
+  return hierarchyChildIds(graph.nodes[parentId]);
 }
 
 /**

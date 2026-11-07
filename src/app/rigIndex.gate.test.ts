@@ -70,7 +70,7 @@ function travelling(): DagState {
   let s = buildDefaultDagState();
   const scene = s.outputs.scene!.node;
   s = apply(s, buildBvhClipOps({ text: BVH, ids: { skeleton: 'sk', clip: 'clip' } }).ops);
-  s = apply(s, [importGroupOp('grp', [0, 0, 0], [0, 0, 0]), parentEdge('grp', scene, scene)]);
+  s = apply(s, [importGroupOp('grp', [0, 0, 0], [0, 0, 0]), ...parentEdge('grp', scene, scene)]);
   s = apply(
     s,
     buildSkeletonObjectOps({

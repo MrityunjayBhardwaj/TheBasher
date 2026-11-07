@@ -10,6 +10,7 @@ import { resolveWorldTransform } from './resolveWorldTransform';
 import { validatePlan } from '../agent/mutators/validate';
 import { deleteNodeMutator } from '../agent/mutators/builders/deleteNode';
 import { isInScene } from './sceneMembership';
+import { parentIdsOf } from './sceneHierarchy';
 import { moveNotices } from './keepPlaceReparent';
 import { registerAllNodes } from '../nodes/registerAll';
 import { applyOp, emptyDagState } from '../core/dag';
@@ -1376,6 +1377,12 @@ describe('buildDeleteNodesOps — the cost does not grow with what is deleted (#
           from: { node: 'G', socket: 'world' },
           to: { node: `o${i}`, socket: 'parent' },
         },
+        // #1823 — each a member of the scene's own list, as the doors that make one link it.
+        {
+          type: 'connect',
+          from: { node: `o${i}`, socket: 'out' },
+          to: { node: 'n_scene', socket: 'children' },
+        },
       );
     }
     return ops.reduce((acc, op) => applyOp(acc, op).next, buildDefaultDagState());
@@ -1416,7 +1423,12 @@ describe('buildDeleteNodesOps — the cost does not grow with what is deleted (#
     expect(ops.filter((op) => op.type === 'removeNode')).toEqual([
       { type: 'removeNode', nodeId: 'G' },
     ]);
-    expect(ops.filter((op) => op.type === 'connect')).toHaveLength(count);
+    // #1823 — each child is listed by the scene already, so handing it up cuts its parent input and
+    // adds nothing.
+    expect(ops.filter((op) => op.type === 'connect')).toHaveLength(0);
+    expect(ops.filter((op) => op.type === 'disconnect' && op.to.socket === 'parent')).toHaveLength(
+      count,
+    );
     return walks;
   };
 
@@ -1432,11 +1444,6 @@ describe('buildDeleteNodesOps — the cost does not grow with what is deleted (#
           {
             type: 'connect',
             from: { node: 'H', socket: 'out' },
-            to: { node: 'n_scene', socket: 'children' },
-          },
-          {
-            type: 'disconnect',
-            from: { node: 'G', socket: 'out' },
             to: { node: 'n_scene', socket: 'children' },
           },
           {
@@ -2245,18 +2252,28 @@ describe('buildDeleteNodesOps — a deleted parent hands its children up (#1517)
     set(id, 'scale', [scl, scl, scl]),
   ];
   // #1824 — a hang under a group or object goes through its child's parent input when it has one
-  // (a Transform has none and stays wired).
+  // (a Transform has none and stays wired). #1823 — and a node hung that way stays (or becomes) a
+  // member of the scene's own list, as every door that makes an object links it: parenting is not
+  // membership, so the fixtures' "take it out of the scene, hang it" keeps it in the scene.
   const apply = (s: DagState, ops: readonly Op[]) =>
-    ops.reduce(
-      (acc, op) =>
-        applyOp(
-          acc,
-          op.type === 'connect' && op.to.socket === 'children'
-            ? attachOp(acc, op.from.node, op.to.node, 'children')
-            : op,
-        ).next,
-      s,
-    );
+    ops.reduce((acc, op) => {
+      if (op.type !== 'connect' || op.to.socket !== 'children' || op.to.node === 'n_scene') {
+        return applyOp(acc, op).next;
+      }
+      const hang = attachOp(acc, op.from.node, op.to.node, 'children');
+      let next = applyOp(acc, hang).next;
+      const listed = ((next.nodes.n_scene.inputs.children ?? []) as { node: string }[]).some(
+        (r) => r.node === op.from.node,
+      );
+      if (hang.type === 'connect' && hang.to.socket === 'parent' && !listed) {
+        next = applyOp(next, {
+          type: 'connect',
+          from: { node: op.from.node, socket: 'out' },
+          to: { node: 'n_scene', socket: 'children' },
+        }).next;
+      }
+      return next;
+    }, s);
   /** scene → OUTER → INNER → the cube, each turned and offset. */
   const nested = (): DagState =>
     apply(buildDefaultDagState(), [
@@ -2507,7 +2524,8 @@ describe('buildDeleteNodesOps — a parent hands up the children hung by their p
     from: { node: parent, socket: 'world' },
     to: { node: child, socket: 'parent' },
   });
-  /** scene → OUTER (wired) → INNER (parent input) → the cube (parent input), each turned. */
+  /** scene → OUTER (wired) → INNER (parent input) → the cube (parent input), each turned; all three
+   *  members of the scene's own list (#1823: the cube is not taken out of it to be hung). */
   const nested = (): DagState =>
     apply(buildDefaultDagState(), [
       { type: 'addNode', nodeId: 'OUTER', nodeType: 'Group', params: {} },
@@ -2520,13 +2538,14 @@ describe('buildDeleteNodesOps — a parent hands up the children hung by their p
       set('OUTER', 'rotation', [0, 30, 0]),
       { type: 'addNode', nodeId: 'INNER', nodeType: 'Group', params: {} },
       hang('INNER', 'OUTER'),
-      set('INNER', 'position', [0, 2, 1]),
-      set('INNER', 'rotation', [20, 0, 0]),
+      // #1823 — made, so a member of the scene's own list; hanging it is not membership.
       {
-        type: 'disconnect',
-        from: { node: 'n_box', socket: 'out' },
+        type: 'connect',
+        from: { node: 'INNER', socket: 'out' },
         to: { node: 'n_scene', socket: 'children' },
       },
+      set('INNER', 'position', [0, 2, 1]),
+      set('INNER', 'rotation', [20, 0, 0]),
       hang('n_box', 'INNER'),
       set('n_box', 'position', [1, 1, 1]),
       set('n_box', 'rotation', [0, 0, 45]),
@@ -2586,18 +2605,13 @@ describe('buildDeleteNodesOps — a parent hands up the children hung by their p
 describe('buildDuplicateNodesOps — children hung by their parent input (#1824)', () => {
   const apply = (s: DagState, ops: readonly Op[]) =>
     ops.reduce((acc, op) => applyOp(acc, op).next, s);
-  /** scene → G (wired) → n_box (its parent input reads G's world). */
+  /** scene → G (wired) → n_box (its parent input reads G's world), still a member (#1823). */
   const hung = (): DagState =>
     apply(buildDefaultDagState(), [
       { type: 'addNode', nodeId: 'G', nodeType: 'Group', params: {} },
       {
         type: 'connect',
         from: { node: 'G', socket: 'out' },
-        to: { node: 'n_scene', socket: 'children' },
-      },
-      {
-        type: 'disconnect',
-        from: { node: 'n_box', socket: 'out' },
         to: { node: 'n_scene', socket: 'children' },
       },
       {
@@ -2615,11 +2629,14 @@ describe('buildDuplicateNodesOps — children hung by their parent input (#1824)
     expect(worldParentOf(after, dup!.newRootId)).toBe('G');
     expect([...childIdsOf(after, 'G')].sort()).toEqual(['n_box', dup!.newRootId].sort());
     expect(isInScene(after, dup!.newRootId)).toBe(true);
-    // Not also wired into the scene's list: one parent.
-    expect(after.nodes.n_scene.inputs.children).not.toContainEqual({
-      node: dup!.newRootId,
-      socket: 'out',
-    });
+    // #1823 — the copy is listed where the original is (Blender's Shift+D links a duplicate into
+    // the original's collections), once, and its parent is still its parent input alone.
+    const listed = (id: string) =>
+      ((after.nodes.n_scene.inputs.children ?? []) as { node: string }[]).filter(
+        (r) => r.node === id,
+      ).length;
+    expect(listed(dup!.newRootId)).toBe(listed('n_box'));
+    expect(parentIdsOf(after, dup!.newRootId)).toEqual(['G']);
   });
 
   for (const linked of [false, true]) {

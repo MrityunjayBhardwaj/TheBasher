@@ -101,11 +101,14 @@ export function nativeCharacterOps(opts: {
     },
   ];
   if (opts.sceneId) {
-    ops.push({
-      type: 'connect',
-      from: { node: ids.groupId, socket: 'out' },
-      to: { node: opts.sceneId, socket: 'children' },
-    });
+    // #1823 — the group, its armature and its mesh are each the scene's, as an import links them.
+    for (const id of [ids.groupId, ids.armatureId, ids.meshId]) {
+      ops.push({
+        type: 'connect',
+        from: { node: id, socket: 'out' },
+        to: { node: opts.sceneId, socket: 'children' },
+      });
+    }
   }
   return { ops, ids };
 }

@@ -124,6 +124,12 @@ function nestedLensCamera(lens: Record<string, unknown>): DagState {
       from: { node: 'grp', socket: 'world' },
       to: { node: 'cam', socket: 'parent' },
     },
+    // #1823 — and listed by the scene, as a v28 project lists every hung object.
+    {
+      type: 'connect',
+      from: { node: 'cam', socket: 'out' },
+      to: { node: 'n_scene', socket: 'children' },
+    },
     {
       type: 'connect',
       from: { node: 'cam', socket: 'out' },
