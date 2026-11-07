@@ -28,7 +28,7 @@ import * as THREE from 'three';
 import type { DagState } from '../core/dag/state';
 import type { EvalCtx } from '../core/dag/types';
 import { resolveWorldTransform, resolveParentWorldMatrix } from './resolveWorldTransform';
-import { readCurveSampleAt } from './curveSampleSource';
+import { curveSamplerFor, readCurveSampleAt } from './curveSampleSource';
 import { gltfNodeWorldPosition } from './gltfNodeWorld';
 import { resolveEvaluatedParam } from './resolveEvaluatedParam';
 import { evaluate, type EvaluatorCache } from '../core/dag/evaluator';
@@ -638,6 +638,65 @@ export function resolveConstraintPosition(
  * world, as Blender's does, and that is not a shape position, rotation and scale can hold under
  * such a parent.
  */
+/**
+ * #1794 — how the object's drawn WORLD position answers a change of its own world position: the
+ * product, bottom step first, of each live Follow Path's curve turn and scale, `L`, mixed by its
+ * blend's factor as `(1 − f)·I + f·L`. A Follow Path draws `point + L · below`
+ * (`followPathStep`), a Track-To leaves the position alone, and a blend mixes the positions, so
+ * the drawn position is affine in the own one and this is its linear part. A drag of the drawn
+ * point carried through its inverse moves the own position so the object lands under the cursor,
+ * as Blender's grab does for a Follow Path (`constraints_list_needinv`). Null when no step moves
+ * the position, or a blend's factor has no single source to read.
+ */
+export function chainPositionLinear(
+  state: DagState,
+  nodeId: string,
+  ctx: EvalCtx,
+  cache?: EvaluatorCache,
+): THREE.Matrix3 | null {
+  const chain = readChain(state, nodeId);
+  if (!chain?.own) return null;
+  const read = (ref: { node: string; socket: string }) =>
+    evaluate(state, ref.node, { socket: ref.socket, ctx, cache }).value;
+  let a: THREE.Matrix3 | null = null;
+  try {
+    for (const step of chain.steps) {
+      const node = state.nodes[step.id];
+      if (node?.type !== 'FollowPath' || (node.params as { mute?: boolean }).mute === true)
+        continue;
+      // The curve object: wired, or named by the step's setting (`worldRefs`), as the evaluator
+      // reads it.
+      const wired = node.inputs.curve;
+      const named = (node.params as { curve?: unknown }).curve;
+      const curveRef =
+        wired && !Array.isArray(wired)
+          ? wired
+          : typeof named === 'string' && state.nodes[named]
+            ? { node: named, socket: 'world' }
+            : null;
+      if (!curveRef) continue;
+      const curveWorld = new THREE.Matrix4().fromArray(read(curveRef) as number[]);
+      // A curve with nothing to sample leaves the position as it came (`followPathStep`).
+      if (!curveSamplerFor(state, curveRef.node, ctx, cache, curveWorld.toArray())) continue;
+      let f = 1;
+      if (step.blend) {
+        if (!step.blend.factor) return null;
+        const v = read(step.blend.factor);
+        if (typeof v !== 'number') return null;
+        f = v;
+      }
+      const l = new THREE.Matrix3().setFromMatrix4(curveWorld);
+      const m = new THREE.Matrix3().fromArray(
+        l.elements.map((v, i) => f * v + (i % 4 === 0 ? 1 - f : 0)),
+      );
+      a = a ? m.multiply(a) : m;
+    }
+  } catch {
+    return null;
+  }
+  return a;
+}
+
 export function chainDrawCorrection(
   state: DagState,
   nodeId: string,

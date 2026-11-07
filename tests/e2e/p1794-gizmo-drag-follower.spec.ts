@@ -33,14 +33,19 @@ const PATH_END: V3 = [12, 0, 0];
 
 /** n_box at its own (0, 2, 0) on a path from the origin to (12, 0, 0), at its end: drawn at
  *  (12, 2, 0). Auto-Key off, paused at 0. */
-async function boot(page: Page, extraOps: unknown[] = []) {
+async function boot(
+  page: Page,
+  extraOps: unknown[] = [],
+  curvePose: Record<string, unknown> = {},
+  expectDrawn: V3 = [12, 2, 0],
+) {
   await page.goto('/');
   await page.waitForFunction(() => {
     const w = window as unknown as Partial<W>;
     return Boolean(w.__basher_dag && w.__basher_selection && w.__basher_mesh_world_position);
   });
   await page.evaluate(
-    ({ own, end, extra }) => {
+    ({ own, end, extra, curve }) => {
       const w = window as unknown as W;
       if (w.__basher_autokey.getState().enabled) w.__basher_autokey.getState().toggle();
       w.__basher_time.getState().pause();
@@ -61,7 +66,7 @@ async function boot(page: Page, extraOps: unknown[] = []) {
               resolution: 32,
             },
           },
-          { type: 'addNode', nodeId: 'crv', nodeType: 'Object', params: {} },
+          { type: 'addNode', nodeId: 'crv', nodeType: 'Object', params: curve },
           {
             type: 'connect',
             from: { node: 'crv_data', socket: 'out' },
@@ -84,12 +89,17 @@ async function boot(page: Page, extraOps: unknown[] = []) {
         'p1794 setup',
       );
     },
-    { own: OWN, end: PATH_END, extra: extraOps },
+    { own: OWN, end: PATH_END, extra: extraOps, curve: curvePose },
   );
   // The premise: the cube draws at the path's end plus its own offset.
   await expect
-    .poll(() => page.evaluate(() => (window as unknown as W).__basher_mesh_world_position('n_box')))
-    .toEqual([12, 2, 0]);
+    .poll(async () => {
+      const p = await page.evaluate(() =>
+        (window as unknown as W).__basher_mesh_world_position('n_box'),
+      );
+      return p ? p.map((v) => Math.round(v * 1e4) / 1e4) : null;
+    })
+    .toEqual(expectDrawn);
 }
 
 const own = (page: Page) =>
@@ -148,8 +158,6 @@ test('two objects: a 1-unit shared drag adds 1 to the follower’s own position'
   close(await drawn(page), [13, 2, 0], 'drawn');
 });
 
-// #1813 — a drag that goes nowhere changes nothing. The handle sits where the chain ends and the
-// write goes to the own transform, so this is the shortest test that the two aren't confused.
 test('a zero-length drag on a followed object leaves its own position', async ({ page }) => {
   await boot(page);
   const own = await page.evaluate(() => {
@@ -168,4 +176,137 @@ test('a zero-length drag on a followed object leaves its own position', async ({
     return w.__basher_dag.getState().state.nodes.n_box.params.position;
   });
   expect(after).toEqual(own);
+});
+
+// #1794 with #1783 — under a Track-To at half influence the drawn rotation is a blend of the own
+// rotation and the aim. A rotate that turns nothing must leave the own rotation as it is; writing
+// the drawn rotation back (the old write) would bake half the aim into it.
+test('a rotate that turns nothing leaves the own rotation of a half-aimed cube as it was', async ({
+  page,
+}) => {
+  await page.goto('/');
+  await page.waitForFunction(() => {
+    const w = window as unknown as Partial<W>;
+    return Boolean(w.__basher_dag && w.__basher_selection && w.__basher_mesh_world_position);
+  });
+  const OWN_ROT: V3 = [10, 20, 30];
+  await page.evaluate(async (rot) => {
+    const w = window as unknown as W;
+    if (w.__basher_autokey.getState().enabled) w.__basher_autokey.getState().toggle();
+    w.__basher_time.getState().pause();
+    w.__basher_time.getState().setTime(0);
+    w.__basher_dag.getState().dispatchAtomic(
+      [
+        { type: 'setParam', nodeId: 'n_box', paramPath: 'rotation', value: rot },
+        {
+          type: 'addNode',
+          nodeId: 'tt',
+          nodeType: 'TrackTo',
+          params: { target: 'n_box', aimNode: '', aimPoint: [3, -2, -5] },
+        },
+      ],
+      'user',
+      'p1794 half aim',
+    );
+    // #1811 — the Track-To is a step on the cube's chain; half influence is its blend at 0.5,
+    // set the way the inspector's Influence row sets it.
+    const edit = await import('/src/core/dag/chainEdit.ts');
+    const dag = w.__basher_dag.getState();
+    const ops = edit.setInfluenceOps(dag.state, 'n_box', 'tt', 0.5);
+    if (!ops) throw new Error("the Track-To is not on the cube's chain");
+    dag.dispatchAtomic(ops, 'user', 'p1794 half influence');
+    w.__basher_selection.getState().select('n_box');
+  }, OWN_ROT);
+  // The gizmo holds the drawn (blended) rotation; grab it back to exactly that.
+  const gizmoRot = () =>
+    page.evaluate(
+      () =>
+        (
+          window as unknown as { __basher_gizmo?: () => { rotation?: V3 } | null }
+        ).__basher_gizmo?.()?.rotation ?? null,
+    );
+  // Seeded at the blend: away from the own rotation (else the case proves nothing).
+  await expect
+    .poll(async () => {
+      const r = await gizmoRot();
+      return r ? Math.abs(r[0] - OWN_ROT[0]) + Math.abs(r[1] - OWN_ROT[1]) : 0;
+    })
+    .toBeGreaterThan(1);
+  const drawnRot = await gizmoRot();
+  await page.evaluate((r) => (window as unknown as W).__basher_gizmo_grab!('rotate', r), drawnRot!);
+  const own = await page.evaluate(
+    () =>
+      (
+        window as unknown as {
+          __basher_dag: {
+            getState: () => { state: { nodes: Record<string, { params: { rotation: V3 } }> } };
+          };
+        }
+      ).__basher_dag.getState().state.nodes.n_box.params.rotation,
+  );
+  close(own, OWN_ROT, 'own rotation');
+});
+
+// Review finding — the drag is carried through the curve object's inverted turn and scale, as
+// Blender's grab inverts a Follow Path (`constraints_list_needinv`, transform_convert_object.cc):
+// the cube lands under the cursor. Curve turned 90° about Z and scaled 2: the path's end is
+// (0, 24, 0) and the own (0, 2, 0) offsets it by (−4, 0, 0), so the cube draws at (−4, 24, 0).
+test('a curve object turned and scaled: a 1-unit drag moves the drawn cube 1 unit', async ({
+  page,
+}) => {
+  await boot(page, [], { rotation: [0, 0, 90], scale: [2, 2, 2] }, [-4, 24, 0]);
+  await page.evaluate(() => (window as unknown as W).__basher_selection.getState().select('n_box'));
+  await expect
+    .poll(
+      async () =>
+        (
+          await page.evaluate(() => (window as unknown as W).__basher_gizmo?.()?.position ?? null)
+        )?.[0],
+    )
+    .toBeCloseTo(-4, 4);
+  await page.evaluate(() =>
+    (window as unknown as W).__basher_gizmo_grab!('translate', [-3, 24, 0]),
+  );
+  await expect.poll(async () => (await drawn(page))?.[0]).toBeCloseTo(-3, 4);
+  close(await drawn(page), [-3, 24, 0], 'drawn');
+  // The own position moved by the drag undone through the curve: (1, 0, 0) → (0, −0.5, 0).
+  close(await own(page), [0, 1.5, 0], 'own position');
+});
+
+// Review finding — the camera gizmo writes own + drag too: a camera on a path is not doubled.
+test('a camera on a path: a 1-unit drag adds 1 to its own position', async ({ page }) => {
+  await boot(
+    page,
+    [
+      { type: 'setParam', nodeId: 'n_camera', paramPath: 'position', value: [0, 2, 0] },
+      { type: 'setParam', nodeId: 'fp', paramPath: 'target', value: 'n_camera' },
+    ],
+    {},
+    [0, 2, 0],
+  );
+  await page.evaluate(() =>
+    (window as unknown as W).__basher_selection.getState().select('n_camera'),
+  );
+  const camPos = () =>
+    page.evaluate(
+      () =>
+        (
+          window as unknown as {
+            __basher_camera_gizmo?: () => { position: V3 | null } | null;
+          }
+        ).__basher_camera_gizmo?.()?.position ?? null,
+    );
+  // The gizmo sits where the camera is drawn: on the path's end plus its own (0, 2, 0).
+  await expect.poll(async () => (await camPos())?.[0]).toBeCloseTo(12, 4);
+  await page.evaluate(() =>
+    (
+      window as unknown as { __basher_camera_gizmo_grab: (k: string, t: V3) => void }
+    ).__basher_camera_gizmo_grab('translate', [13, 2, 0]),
+  );
+  const camOwn = () =>
+    page.evaluate(
+      () => (window as unknown as W).__basher_dag.getState().state.nodes.n_camera.params.position,
+    );
+  await expect.poll(async () => (await camOwn())?.[0]).toBeCloseTo(1, 4);
+  close(await camOwn(), [1, 2, 0], 'camera own position');
 });
