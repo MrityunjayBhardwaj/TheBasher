@@ -48,7 +48,8 @@ export interface Chain {
 const single = (binding: unknown): NodeRef | null =>
   binding && !Array.isArray(binding) ? (binding as NodeRef) : null;
 
-function readBlend(
+/** The blend whose output is `outId`, or null when that node isn't one this module wrote. */
+export function readBlend(
   state: DagState,
   outId: string,
 ): { step: string; blend: StepBlend; below: NodeRef } | null {
