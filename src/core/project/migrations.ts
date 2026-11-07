@@ -56,6 +56,9 @@ type FormatMigration = (raw: unknown) => unknown;
  *  open PRs number their own conversions from the same base and one of them may land first. */
 export const PARENT_INPUTS_FORMAT = 28;
 
+/** #1812 — the format version the constraint-stacks-to-chains conversion produces. */
+export const CONSTRAINT_CHAINS_FORMAT = PARENT_INPUTS_FORMAT + 1;
+
 /** Ladder of project-format migrations keyed by source version. */
 const formatMigrations: Record<number, FormatMigration> = {
   // v1 → v2 (#199): retire the AnimationLayer wrapper graph-wide.
@@ -177,6 +180,9 @@ const formatMigrations: Record<number, FormatMigration> = {
   // Object's `children` list moves onto its own parent input, reading that holder's world; the
   // holder draws it from there. Keyed off one constant so a renumber is one line.
   [PARENT_INPUTS_FORMAT - 1]: migrateChildrenToParentInputs,
+  // v28 → v29 (#1812): each object's constraint stack becomes a wired chain, and a followed object's
+  // own position becomes zero, as a Follow Path now adds it to the path.
+  [CONSTRAINT_CHAINS_FORMAT - 1]: migrateConstraintsToChains,
 };
 
 // ── v1 → v2: AnimationLayer retirement (#199) ──────────────────────────────
@@ -3091,7 +3097,7 @@ function followedOwnPositionsCleared(nodes: Record<string, RawNode>): Record<str
 export function migrateConstraintsToChains(raw: unknown): unknown {
   const proj = raw as { state?: { nodes?: Record<string, RawNode> } };
   const nodes = proj.state?.nodes;
-  if (!nodes) return raw;
+  if (!nodes) return { ...proj, formatVersion: CONSTRAINT_CHAINS_FORMAT };
   const out = followedOwnPositionsCleared(nodes);
   const stacks = new Map<string, { id: string; order: number; follows: boolean }[]>();
   for (const [id, node] of Object.entries(out)) {
@@ -3099,6 +3105,8 @@ export function migrateConstraintsToChains(raw: unknown): unknown {
     const params = (node.params ?? {}) as { target?: unknown; order?: unknown };
     const target = params.target;
     if (typeof target !== 'string' || !ENDS_A_CHAIN_AT_V29.has(out[target]?.type ?? '')) continue;
+    // Already on a chain: a state built at this version, passed back through the step.
+    if (out[target].inputs?.constraints || node.inputs?.in) continue;
     const order = typeof params.order === 'number' ? params.order : 0;
     const member = { id, order, follows: node.type === 'FollowPath' };
     stacks.set(target, [...(stacks.get(target) ?? []), member]);
@@ -3131,5 +3139,5 @@ export function migrateConstraintsToChains(raw: unknown): unknown {
     }
     wire(objectId, 'constraints', below);
   }
-  return { ...proj, state: { ...proj.state, nodes: out } };
+  return { ...proj, state: { ...proj.state, nodes: out }, formatVersion: CONSTRAINT_CHAINS_FORMAT };
 }

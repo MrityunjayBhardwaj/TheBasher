@@ -8,7 +8,7 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as THREE from 'three';
-import { applyOp, evaluate, __resetRegistryForTests, type DagState } from '../dag';
+import { applyOp, emptyDagState, evaluate, __resetRegistryForTests, type DagState } from '../dag';
 import {
   resolveDrawnParentWorldMatrix,
   resolveDrawnWorldTransform,
@@ -421,19 +421,17 @@ describe('what the conversion writes', () => {
     expect(after.nodes.data).toEqual(s.nodes.data);
   });
 
-  it('a file with no constraints comes back unchanged', () => {
-    const s = cube(base(), 'b', [0, 0, 0]);
-    const bare = {
-      ...s,
-      nodes: Object.fromEntries(Object.entries(s.nodes).filter(([, n]) => n.type !== 'TrackTo')),
-    };
-    const after = convert(bare);
-    expect(Object.keys(after.nodes).filter((id) => after.nodes[id].type === 'OwnWorld')).toEqual(
-      [],
-    );
+  it('a file with no constraints comes back with the same nodes', () => {
+    const s = makeSplitCube(emptyDagState(), { objectId: 'b', position: [0, 0, 0] }).state;
+    expect(convert(s).nodes).toEqual(s.nodes);
+  });
+
+  it('a state already on chains passes through the step unchanged', () => {
+    const s = convert(run(pair(), [add('t', 'TrackTo', { target: 'a', aimNode: 'h' })]));
+    expect(convert(s).nodes).toEqual(s.nodes);
   });
 
   it('a project with no state passes through', () => {
-    expect(migrateConstraintsToChains({ formatVersion: 28 })).toEqual({ formatVersion: 28 });
+    expect(migrateConstraintsToChains({ formatVersion: 28 })).toEqual({ formatVersion: 29 });
   });
 });

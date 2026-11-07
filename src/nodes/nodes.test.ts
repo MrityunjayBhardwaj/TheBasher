@@ -241,6 +241,7 @@ describe('default project', () => {
       'n_light',
       'n_light_aim',
       'n_light_data',
+      'n_light_own_world',
       'n_light_target',
       'n_render',
       'n_scene',

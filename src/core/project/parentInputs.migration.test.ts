@@ -122,7 +122,7 @@ function into(child: string, holder: string): Step {
 
 describe('v27 → v28: a child names its parent (#1824)', () => {
   it('the format is the conversion’s, one step on from v27', () => {
-    expect(PROJECT_FORMAT_VERSION).toBe(PARENT_INPUTS_FORMAT);
+    expect(PROJECT_FORMAT_VERSION).toBeGreaterThanOrEqual(PARENT_INPUTS_FORMAT);
     const out = migrateProjectFormat({
       formatVersion: PARENT_INPUTS_FORMAT - 1,
       state: { nodes: {} },

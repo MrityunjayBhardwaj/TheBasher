@@ -107,7 +107,9 @@ import { NodeSchema, NodeIdSchema, NodeRefSchema } from '../dag/types';
 // v28 (#1824): a child names its parent — each Object, Group or Null in a Group's or an Object's
 // `children` list moves onto its own `parent` input, reading that holder's world. See
 // migrations.ts `migrateChildrenToParentInputs` (`PARENT_INPUTS_FORMAT`).
-export const PROJECT_FORMAT_VERSION = 28;
+// v29 (#1812): a constraint stack is a wired chain ending at its object. See migrations.ts
+// `migrateConstraintsToChains` (`CONSTRAINT_CHAINS_FORMAT`).
+export const PROJECT_FORMAT_VERSION = 29;
 
 export const ProjectSchema = z.object({
   formatVersion: z.literal(PROJECT_FORMAT_VERSION),
