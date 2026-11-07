@@ -92,6 +92,7 @@ export const FollowPathNode: NodeDefinition<FollowPathParams, FollowPathConstrai
   ],
   // Edge-less (enumerated + seam-resolved, like TrackTo and a direct channel). The `out`
   // socket exists for introspection; nothing consumes it.
+  mainInput: 'in',
   inputs: {
     // #1811 — on a wired chain: the transform coming up it, and the world of the curve object.
     in: { type: 'Matrix4', cardinality: 'single', chain: 'step' },

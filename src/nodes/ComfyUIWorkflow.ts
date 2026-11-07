@@ -123,6 +123,7 @@ export const ComfyUIWorkflowNode: NodeDefinition<ComfyUIWorkflowParams, ImageVal
   pure: false,
   cost: 'expensive',
   paramSchema: ComfyUIWorkflowParams,
+  mainInput: null,
   inputs: {
     prompt: { type: 'Prompt', cardinality: 'single' },
     /** Raw pass results consumed as ControlNet / img2img inputs. Socket

@@ -40,6 +40,7 @@ export const VideoStitchNode: NodeDefinition<VideoStitchParams, VideoValue> = {
   pure: false,
   cost: 'medium',
   paramSchema: VideoStitchParams,
+  mainInput: null,
   inputs: {
     /** Stylized frames feeding the stitch. D-01 reuse: 'pass-input'
      *  carries both raw passes AND stylized output AND VideoStitch

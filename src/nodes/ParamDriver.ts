@@ -337,6 +337,7 @@ export const ParamDriverNode: NodeDefinition<ParamDriverParams, KeyframeChannelV
   // Accepting two types is NOT coercion: a Number arrives a Number.
   // #1785 — and a rotation or a whole transform: a Quaternion drives a rotation, a Matrix4 drives
   // position, rotation and scale together (paramPath `transform`). Still one road, by shape.
+  mainInput: 'in',
   inputs: {
     in: {
       type: ['Number', 'Vector3', 'Quaternion', 'Matrix4'],

@@ -44,6 +44,7 @@ export const SphereDataNode: NodeDefinition<SphereDataParams, MeshDataValue> = {
   pure: true,
   cost: 'cheap',
   paramSchema: SphereDataParams,
+  mainInput: null,
   inputs: {
     // #394 — the material can come from a Material node instead of this node's own
     // param. `list` cardinality is deliberate and the reason is in materialSocket.ts:

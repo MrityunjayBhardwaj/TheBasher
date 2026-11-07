@@ -100,6 +100,7 @@ export const GltfAssetNode: NodeDefinition<GltfAssetParams, GltfAssetValue> = {
   pure: true,
   cost: 'cheap',
   paramSchema: GltfAssetParams,
+  mainInput: null,
   inputs: {
     // P7.5 — optional. When connected, the clone renderer overrode per-child
     // TRS via `nodeNameMap` keys (until #1053). Closure walks via the 'animation'

@@ -82,6 +82,7 @@ export const RigNode: NodeDefinition<RigParams, PosedSkeletonValue> = {
   pure: true,
   cost: 'cheap',
   paramSchema: RigParams,
+  mainInput: 'pose',
   inputs: {
     pose: { ...POSE, owns: 'stack' },
     body: { ...POSE, body: true },

@@ -96,6 +96,7 @@ export const LightProfileSelectNode: NodeDefinition<
   pure: true,
   cost: 'cheap',
   paramSchema: LightProfileSelectParams,
+  mainInput: null,
   inputs: {
     rigs: { type: 'LightRig', cardinality: 'list' },
   },

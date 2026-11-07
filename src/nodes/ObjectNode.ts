@@ -102,6 +102,8 @@ export const ObjectNode: NodeDefinition<ObjectParams, ObjectValue> = {
   // #1152 — `children`: an Object parents other scene objects, as a Group does (the socket and its
   // cardinality are the Group's), so a node that both IS something and HOLDS something has one
   // representation. `sceneHierarchy` is what makes the walk treat it as a parent.
+  // An object draws its transform and its geometry as two groups, neither under the other (#1815).
+  mainInput: null,
   inputs: {
     data: { type: ['ObjectData', 'Skeleton'], cardinality: 'single', owns: 'always' },
     children: { type: 'SceneObject', cardinality: 'list', owns: 'always', gathersChildren: true },

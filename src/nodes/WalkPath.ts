@@ -66,6 +66,7 @@ export const WalkPathNode: NodeDefinition<WalkPathParams, WalkPathValue> = {
   pure: true,
   cost: 'cheap',
   paramSchema: WalkPathParams,
+  mainInput: 'navmesh',
   inputs: { navmesh: { type: 'Navmesh', cardinality: 'single' } },
   outputs: { out: { type: 'WalkPath', cardinality: 'single' } },
   evaluate(params, inputs: ResolvedInputs) {

@@ -29,6 +29,7 @@ export const CollectionNode: NodeDefinition<CollectionParams, CollectionValue> =
   pure: true,
   cost: 'cheap',
   paramSchema: CollectionParams,
+  mainInput: null,
   inputs: {
     members: { type: 'SceneObject', cardinality: 'list' },
     // #397 — the collections nested in this one, as the scene's own `collections` holds the top

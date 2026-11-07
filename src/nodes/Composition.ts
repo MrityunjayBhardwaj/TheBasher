@@ -37,6 +37,7 @@ export const CompositionNode: NodeDefinition<CompositionParams, CompositionValue
   pure: true,
   cost: 'cheap',
   paramSchema: CompositionParams,
+  mainInput: null,
   inputs: {
     layers: { type: 'Layer', cardinality: 'list' },
   },

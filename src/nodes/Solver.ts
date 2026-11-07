@@ -219,6 +219,7 @@ export const SolverNode: NodeDefinition<
   // Wired, so the render subscription + cycle guard walk them. #1547 — both are BODY
   // sockets: the closure behind them is this Solver's sub-network, and nothing in it may
   // feed anything outside it (`src/core/dag/subnetworks.ts`).
+  mainInput: null,
   inputs: {
     body: { type: 'Number', cardinality: 'single', body: true },
     bodies: { type: 'Vector3', cardinality: 'list', body: true },

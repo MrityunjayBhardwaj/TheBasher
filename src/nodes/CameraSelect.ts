@@ -95,6 +95,7 @@ export const CameraSelectNode: NodeDefinition<CameraSelectParams, CameraValue | 
       return { ...(old as object), active: '' };
     },
   },
+  mainInput: null,
   inputs: {
     cameras: { type: 'SceneObject', cardinality: 'list', sourceIds: true },
   },

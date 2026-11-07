@@ -80,6 +80,7 @@ export const TrackToNode: NodeDefinition<TrackToParams, TrackToConstraintValue> 
     { path: 'target', shape: 'id', role: 'subject' },
     { path: 'aimNode', shape: 'id', role: 'argument' },
   ],
+  mainInput: 'in',
   inputs: {
     // #1811 — on a wired chain: the transform coming up it, what to aim at (else `aimPoint`), and
     // the world the object hangs from, for an up or an aim point in its parent's space.

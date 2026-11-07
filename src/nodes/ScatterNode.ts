@@ -41,6 +41,7 @@ export const ScatterNode: NodeDefinition<ScatterNodeParams, ScatterValue> = {
   pure: true,
   cost: 'medium',
   paramSchema: ScatterNodeParams,
+  mainInput: null,
   inputs: { assets: { type: 'SceneObject', cardinality: 'list' } },
   outputs: { out: { type: 'SceneObject', cardinality: 'single' } },
   // The pose contract (#362, §9): a Scatter has no single object pose — it spreads
