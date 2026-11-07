@@ -21,6 +21,8 @@ import { makeSplitCamera } from '../test-utils/splitCamera';
 import { makeSplitCube } from '../test-utils/splitCube';
 import { childEdges, resolveWorldTransform } from './resolveWorldTransform';
 import { childIdsOf, parentIdOf } from './sceneHierarchy';
+import { buildParentToOps } from './keepPlaceReparent';
+import { sceneDrawOf } from './sceneMembership';
 import type { SceneChild } from '../nodes/types';
 import { useTransientEditStore } from './stores/transientEditStore';
 import { clockedCtx } from './subjectClock';
@@ -561,6 +563,106 @@ describe('#1810 — what the world costs and what re-cooks', () => {
     // `top` has no keys: later frames hit. `box` is keyed: each new frame cooks its consumer.
     expect([cook('top', 0.5), cook('top', 1)]).toEqual([0, 0]);
     expect([cook('box', 0.5), cook('box', 1)]).toEqual([1, 1]);
+  });
+});
+
+// #1838 — a wrapper takes its child by a wire and has no world output, so the parent input cannot
+// carry what it does. The world reads through it, as `resolveWorldTransform` always has.
+describe('an object a Transform holds', () => {
+  const wrapped = (extra: (s: DagState) => DagState = (s) => s) => {
+    let s = makeSplitCube(buildDefaultDagState(), { objectId: 'kid', position: [1, 0, 0] }).state;
+    s = run(s, {
+      type: 'addNode',
+      nodeId: 'tf',
+      nodeType: 'Transform',
+      params: { position: [2, 0, 0], rotation: [0, 90, 0] },
+    });
+    s = run(s, {
+      type: 'connect',
+      from: { node: 'kid', socket: 'out' },
+      to: { node: 'tf', socket: 'target' },
+    });
+    s = run(s, { type: 'connect', from: { node: 'tf', socket: 'out' }, to: SCENE });
+    return extra(s);
+  };
+  const worldOf = (s: DagState, id: string, t = 0) =>
+    evaluate(s, id, { socket: 'world', ctx: clockedCtx(t, t) }).value as number[];
+
+  it('reads the world it is drawn in', () => {
+    const s = wrapped();
+    const drawn = resolveWorldTransform(s, 'kid', clockedCtx(0, 0))!.matrix;
+    const world = worldOf(s, 'kid');
+    // The Transform turned [1,0,0] by 90 degrees about Y and moved it to x=2: a real offset.
+    expect(world[12]).toBeCloseTo(2, 5);
+    expect(world[14]).toBeCloseTo(-1, 5);
+    for (let i = 0; i < 16; i++) expect(world[i]).toBeCloseTo(drawn[i], 5);
+  });
+
+  it('moves with a key on the Transform', () => {
+    const s = wrapped((g) =>
+      run(g, {
+        type: 'addNode',
+        nodeId: 'tf_key',
+        nodeType: 'KeyframeChannelVec3',
+        params: {
+          name: 'position',
+          target: 'tf',
+          paramPath: 'position',
+          keyframes: keys([2, 0, 0], [2, 8, 0]),
+        },
+      }),
+    );
+    expect(worldOf(s, 'kid', 2)[13]).toBeCloseTo(8, 5);
+  });
+
+  it('adds nothing for an object no wrapper holds (control)', () => {
+    const s = wrapped();
+    const box = s.nodes.n_box.params as { position: number[] };
+    expect(worldOf(s, 'n_box').slice(12, 15)).toEqual(box.position);
+  });
+});
+
+// #1841 — the default camera is a member through the scene's `camera` socket alone. Hung from a
+// group it has to be in the drawn tree, or the world output and the tree's readers disagree.
+describe('a camera the scene holds only through its camera socket', () => {
+  const ctx = clockedCtx(0, 0);
+  const withGroup = () => {
+    let s = run(buildDefaultDagState(), {
+      type: 'addNode',
+      nodeId: 'grp',
+      nodeType: 'Group',
+      params: { position: [5, 1, 0] },
+    });
+    s = run(s, { type: 'connect', from: { node: 'grp', socket: 'out' }, to: SCENE });
+    return s;
+  };
+  const expectReadsAgree = (s: DagState) => {
+    const world = evaluate(s, 'n_camera', { socket: 'world', ctx }).value as number[];
+    expect(resolveWorldTransform(s, 'n_camera', ctx)!.position).toEqual(world.slice(12, 15));
+    return world.slice(12, 15);
+  };
+
+  it('moves with a parent wired straight to it', () => {
+    const s = run(withGroup(), {
+      type: 'connect',
+      from: { node: 'grp', socket: 'world' },
+      to: { node: 'n_camera', socket: 'parent' },
+    });
+    expect(expectReadsAgree(s)).toEqual([8, 3, 3]);
+  });
+
+  it('moves with a parent given by Ctrl+P', () => {
+    const made = buildParentToOps(withGroup(), ['n_camera'], 'grp', { keepTransform: false });
+    if (!made.ok) throw new Error(made.reason);
+    const s = applyOps(withGroup(), made.ops).next;
+    expect(s.nodes.n_camera.inputs.parent).toEqual({ node: 'grp', socket: 'world' });
+    expect(expectReadsAgree(s)).toEqual([8, 3, 3]);
+  });
+
+  it('stays out of the drawn tree with no parent (control)', () => {
+    const s = withGroup();
+    expect(sceneDrawOf(s as never)!.drawn.has('n_camera')).toBe(false);
+    expect(expectReadsAgree(s)).toEqual([3, 2, 3]);
   });
 });
 

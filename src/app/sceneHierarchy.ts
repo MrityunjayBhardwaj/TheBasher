@@ -93,7 +93,7 @@ const AGGREGATE_PARENT_TYPES: ReadonlySet<string> = new Set(['Group', 'Object'])
  *
  *  Declared here rather than derived from `chain.input`, because `chain.input` answers a
  *  different question — see the header. This set is the SCENE-lane wrappers only. */
-const WRAPPER_PARENT_TYPES: ReadonlySet<string> = new Set(['Transform', 'MaterialOverride']);
+export const WRAPPER_PARENT_TYPES: ReadonlySet<string> = new Set(['Transform', 'MaterialOverride']);
 
 /** Every node type that can be a scene-graph parent. Exported for the mirror test. */
 export const HIERARCHY_PARENT_TYPES: ReadonlySet<string> = new Set([

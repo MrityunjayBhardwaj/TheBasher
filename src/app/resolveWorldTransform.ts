@@ -84,7 +84,7 @@ import { isCameraNode } from './cameraNode';
 import { resolveRigLightSources } from './resolveRigLightSources';
 import { quaternionFromEulerDeg, withResolvedRotation } from './resolvedRotation';
 import type { Quat, RotationModeFields } from '../nodes/types';
-import { hierarchySocketForKind } from './sceneHierarchy';
+import { hierarchySocketForKind, WRAPPER_PARENT_TYPES } from './sceneHierarchy';
 import { drawnInputsOf } from '../core/dag/worldChildren';
 import { sceneIndexOf } from './sceneIndex';
 import { getNodeType } from '../core/dag/registry';
@@ -552,6 +552,17 @@ function sceneChildWorld(
     if (top !== 'search') return top ? composeDown(state, chain, top, at, parentOnly) : null;
   }
   return searchFromRoot(state, id, at, parentOnly);
+}
+
+/**
+ * #1838 — the world `id` hangs from when a wrapper (a Transform, a MaterialOverride) holds it: a
+ * wrapper takes its child by a wire and has no world output, so no parent input can carry this.
+ * Null when no wrapper holds `id`, without touching the graph beyond its holders.
+ */
+export function wrapperParentWorld(state: DagState, id: string, at: Overlay): THREE.Matrix4 | null {
+  const holders = sceneIndexOf(state.nodes).parentsOf(id);
+  if (!holders.some((h) => WRAPPER_PARENT_TYPES.has(state.nodes[h]?.type ?? ''))) return null;
+  return sceneChildWorld(state, id, at, true);
 }
 
 function isIdentityMatrix(m: THREE.Matrix4): boolean {

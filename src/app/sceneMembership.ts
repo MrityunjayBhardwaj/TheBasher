@@ -233,11 +233,15 @@ export function sceneDrawOf(graph: SceneGraph): SceneDraw | null {
   for (const socket of OBJECT_WIRES.get('Scene')!) {
     for (const id of refsOf(sceneNode.inputs[socket])) visit(id);
   }
+  const holderOf = (id: string) =>
+    parentIdsOf(state, id).find((p) => p !== sceneId && state.nodes[p]?.type !== 'Scene');
+  // #1841 — a member on no list that hangs from something (a camera the scene reads through its
+  // `camera` socket) is drawn under what it hangs from, or the tree's readers would not see its
+  // parent. With no parent it stays out of the tree: the camera band draws it.
+  for (const id of members) if (!seen.has(id) && holderOf(id)) visit(id);
   // Each object and its ancestors, tops first in the order their first object was met.
   const drawn = new Set<string>();
   const tops: string[] = [];
-  const holderOf = (id: string) =>
-    parentIdsOf(state, id).find((p) => p !== sceneId && state.nodes[p]?.type !== 'Scene');
   for (const id of objects) {
     for (let at: string | undefined = id; at && !drawn.has(at); ) {
       drawn.add(at);

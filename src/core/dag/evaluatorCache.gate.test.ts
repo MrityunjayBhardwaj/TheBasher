@@ -441,6 +441,7 @@ const TAKERS: string[] = [
   'composeDown@src/app/resolveWorldTransform.ts',
   'sceneChildWorld@src/app/resolveWorldTransform.ts',
   'searchFromRoot@src/app/resolveWorldTransform.ts',
+  'wrapperParentWorld@src/app/resolveWorldTransform.ts',
   'topLevelValue@src/app/resolveWorldTransform.ts',
   'dataLaneOverlaySources@src/app/dataLaneOverlay.ts',
   'exposeParams@src/app/exposeParams.ts',
