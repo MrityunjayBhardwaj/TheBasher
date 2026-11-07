@@ -22,7 +22,11 @@ import { buildDefaultDagState } from '../core/project/default';
 import { registerAllNodes } from '../nodes/registerAll';
 import { makeSplitSphere } from '../test-utils/splitSphere';
 import { layeredChannelValues } from './layeredChannels';
-import { resolveParentWorldMatrix, resolveWorldTransform } from './resolveWorldTransform';
+import {
+  resolveParentWorldMatrix,
+  resolveWorldTransform,
+  sceneTopsOf,
+} from './resolveWorldTransform';
 import { sceneIndexOf } from './sceneIndex';
 
 beforeEach(() => {
@@ -260,5 +264,29 @@ describe('#1729 — the scene index hands each fold exactly what the whole table
     }
     // The comparison saw folds with something in them: g0's key, s1's key, both strips.
     expect(compared).toBeGreaterThanOrEqual(4);
+  });
+});
+
+// #1844 — every world read asks for the scene's tops. Built per read, each read costs the scene's
+// size, and the playback budget stayed green while it did, so this pins it directly.
+describe('the scene tops a world read asks for', () => {
+  it('are kept while the node table is unchanged, and follow a change to it', () => {
+    __resetRegistryForTests();
+    registerAllNodes();
+    const s = buildDefaultDagState();
+    expect(sceneTopsOf(s)).toBe(sceneTopsOf(s));
+    expect(sceneTopsOf(s).has('n_grp_1844')).toBe(false);
+    let next = applyOp(s, {
+      type: 'addNode',
+      nodeId: 'n_grp_1844',
+      nodeType: 'Group',
+      params: {},
+    }).next;
+    next = applyOp(next, {
+      type: 'connect',
+      from: { node: 'n_grp_1844', socket: 'out' },
+      to: { node: 'n_scene', socket: 'children' },
+    }).next;
+    expect(sceneTopsOf(next).has('n_grp_1844')).toBe(true);
   });
 });

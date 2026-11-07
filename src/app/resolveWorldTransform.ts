@@ -395,6 +395,21 @@ export function overlaidAt(
   return overlayTransients(child, nodeId, at.transients);
 }
 
+/** #1844 — the scene's tops by id, kept per node table: every world read asks, so building this per
+ *  read made each one cost the scene's size. */
+const sceneTopsCache = new WeakMap<
+  DagState['nodes'],
+  { sceneId: string | undefined; tops: Map<string, NodeRef> }
+>();
+export function sceneTopsOf(state: DagState): Map<string, NodeRef> {
+  const sceneId = state.outputs.scene?.node;
+  const hit = sceneTopsCache.get(state.nodes);
+  if (hit && hit.sceneId === sceneId) return hit.tops;
+  const tops = new Map(sceneChildRefs(state).map((r) => [r.node, r]));
+  sceneTopsCache.set(state.nodes, { sceneId, tops });
+  return tops;
+}
+
 /**
  * #1729 — the holders of `id` from a top-level scene child down to `id` itself, read UP the scene
  * index: `[top, …, id]`. The cost is `id`'s depth, where searching down from the scene cost its
@@ -411,7 +426,7 @@ function holderChain(state: DagState, id: string): string[] | null | 'search' {
   const sceneId = state.outputs.scene?.node;
   const chain = [id];
   // #1823 — the tops of what the scene draws.
-  const tops = new Set(sceneChildRefs(state).map((r) => r.node));
+  const tops = sceneTopsOf(state);
   for (let at = id; ; ) {
     const holders = index.parentsOf(at);
     // #1823 — the scene is not a parent: a node no parent holds is a top when the scene draws it.
@@ -456,7 +471,7 @@ function topLevelValue(state: DagState, topId: string, at: Overlay): SceneChild 
     return 'search';
   }
   if (!sceneChildrenArriveAsProduced()) return 'search';
-  const ref = sceneChildRefs(state).find((r) => r?.node === topId);
+  const ref = sceneTopsOf(state).get(topId);
   if (!ref) return null;
   let produced: unknown;
   try {
