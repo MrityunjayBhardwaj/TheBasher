@@ -3041,11 +3041,16 @@ const ENDS_A_CHAIN_AT_V29: ReadonlySet<string> = new Set(['Group', 'Object', 'Nu
 function followedOwnPositionsCleared(nodes: Record<string, RawNode>): Record<string, RawNode> {
   const out: Record<string, RawNode> = { ...nodes };
   const entries = Object.entries(nodes);
-  // An object holding a curve: what `curveSamplerFor` follows. A step naming anything else placed
-  // nothing and still doesn't, so its object keeps its position.
+  // An object holding a curve with points: what `curveSamplerFor` follows. A step naming anything
+  // else placed nothing and still doesn't, so its object keeps its position. #1853 — that
+  // includes a curve with no points, which an older file can hold: nothing to sample.
   const isCurve = (id: unknown) => {
     const n = typeof id === 'string' ? nodes[id] : undefined;
-    return asRefs(n?.inputs?.data).some((r) => nodes[r.node ?? '']?.type === 'CurveData');
+    return asRefs(n?.inputs?.data).some((r) => {
+      const data = nodes[r.node ?? ''];
+      const points = (data?.params as { points?: unknown } | undefined)?.points;
+      return data?.type === 'CurveData' && Array.isArray(points) && points.length > 0;
+    });
   };
   const live = new Map<string, number>();
   for (const [, n] of entries) {
