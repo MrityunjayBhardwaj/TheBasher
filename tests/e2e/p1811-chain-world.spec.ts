@@ -250,7 +250,7 @@ test("a chain built by its editor, with a keyed influence, ends at Blender's num
     d({ type: 'addNode', nodeId: 'e_a', nodeType: 'Null', params: { position: [0, 4, 0] } });
     wire('e_a', 'out', sceneId, 'children');
 
-    const edit = await import('/src/app/chainEdit.ts');
+    const edit = await import('/src/core/dag/chainEdit.ts');
     const ev = await import('/src/core/dag/evaluator.ts');
     const add = edit.addStepOps(state(), 'e_a', 'e_fp', 'FollowPath', { evalTime: 1, offset: 0 });
     for (const op of add!) d(op);

@@ -3,12 +3,13 @@
 
 import { beforeEach, describe, expect, it } from 'vitest';
 import * as THREE from 'three';
-import { applyOp, evaluate, __resetRegistryForTests } from '../core/dag';
-import type { DagState } from '../core/dag/state';
-import { buildDefaultDagState } from '../core/project/default';
-import { registerAllNodes } from '../nodes/registerAll';
-import { withIds } from '../test-utils/curvePoints';
-import { makeSplitCube } from '../test-utils/splitCube';
+import { applyOp, evaluate, __resetRegistryForTests } from '.';
+import type { DagState } from './state';
+import { useDagStore } from './store';
+import { buildDefaultDagState } from '../project/default';
+import { registerAllNodes } from '../../nodes/registerAll';
+import { withIds } from '../../test-utils/curvePoints';
+import { makeSplitCube } from '../../test-utils/splitCube';
 import {
   addStepOps,
   influenceOf,
@@ -319,5 +320,66 @@ describe('influence', () => {
       },
     ]);
     expect(influenceOf(s, 'a', 'fp')).toEqual({ kind: 'wired', from: null });
+  });
+});
+
+describe('a commit wires a constraint that names its object', () => {
+  const commit = (s: DagState, ops: object[]) => {
+    useDagStore.getState().hydrate(s);
+    useDagStore.getState().dispatchAtomic(ops as never);
+    return useDagStore.getState().state;
+  };
+  const addT = (id: string, target: string, params: object = {}) => ({
+    type: 'addNode',
+    nodeId: id,
+    nodeType: 'TrackTo',
+    params: { target, up: [0, 1, 0], ...params },
+  });
+
+  it('joins on top, by its order, on one undo', () => {
+    let s = commit(cube(buildDefaultDagState(), 'a', [1, 0, 0]), [
+      addT('t2', 'a', { order: 2, aimPoint: [1, 5, 0] }),
+    ]);
+    s = commit(s, [addT('t1', 'a', { order: 1, aimPoint: [5, 0, 0] })]);
+    s = commit(s, [addT('t3', 'a', { order: 3, aimPoint: [1, 0, 5] })]);
+    expect(order(s)).toEqual(['t1', 't2', 't3']);
+    close(forward(matrix(s)), [0, 0, 1]);
+    useDagStore.getState().undo();
+    expect(order(useDagStore.getState().state)).toEqual(['t1', 't2']);
+    expect(useDagStore.getState().state.nodes.t3).toBeUndefined();
+  });
+
+  it('a tie lands above what is there, as node-table order did', () => {
+    let s = commit(cube(buildDefaultDagState(), 'a', [1, 0, 0]), [addT('t1', 'a')]);
+    s = commit(s, [addT('t2', 'a')]);
+    expect(order(s)).toEqual(['t1', 't2']);
+  });
+
+  it('changing its object moves it between chains', () => {
+    let s = cube(cube(buildDefaultDagState(), 'a', [1, 0, 0]), 'b', [2, 0, 0]);
+    s = commit(s, [addT('t', 'a', { aimPoint: [5, 0, 0] })]);
+    expect(order(s)).toEqual(['t']);
+    s = commit(s, [{ type: 'setParam', nodeId: 't', paramPath: 'target', value: 'b' }]);
+    expect(readChain(s, 'a')).toEqual({ own: null, steps: [] });
+    expect(s.nodes.a_own_world).toBeUndefined();
+    expect(readChain(s, 'b')!.steps.map((x) => x.id)).toEqual(['t']);
+  });
+
+  it('a step wired by hand, or naming no object, is left alone', () => {
+    const start = cube(buildDefaultDagState(), 'a', [1, 0, 0]);
+    let s = commit(start, [addT('free', '')]);
+    expect(s.nodes.free.inputs).toEqual({});
+    s = commit(start, [
+      { type: 'addNode', nodeId: 'o', nodeType: 'OwnWorld', params: { object: 'a' } },
+      addT('hand', 'a'),
+      { type: 'connect', from: { node: 'o', socket: 'world' }, to: { node: 'hand', socket: 'in' } },
+    ]);
+    expect(s.nodes.a.inputs.constraints).toBeUndefined();
+  });
+
+  it('a step on a node that cannot end a chain stays as it was', () => {
+    const start = cube(buildDefaultDagState(), 'a', [1, 0, 0]);
+    const s = commit(start, [addT('t', 'a_data')]);
+    expect(s.nodes.t.inputs).toEqual({});
   });
 });

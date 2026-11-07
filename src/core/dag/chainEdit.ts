@@ -14,10 +14,11 @@
 // A chain somebody wired by hand into another shape is theirs: `readChain` answers null for it and
 // nothing here edits it, rather than guess which wire is which.
 
-import type { DagState } from '../core/dag/state';
-import type { NodeRef, Op } from '../core/dag/types';
-import { subjectReferrersInto } from '../core/dag/idRefSweep';
-import { getNodeType } from '../core/dag/registry';
+import { subjectReferrersInto } from './idRefSweep';
+import { applyOps } from './ops';
+import { getNodeType } from './registry';
+import type { DagState } from './state';
+import type { NodeRef, Op } from './types';
 
 /** The blend over one step: the ids of its small nodes, and what feeds its factor. */
 export interface StepBlend {
@@ -188,10 +189,36 @@ function restackOps(
   return [...cuts, ...joins];
 }
 
+/** The OwnWorld a chain starts from, and the op that makes it when the object has none. */
+function bottomOf(chain: Chain, objectId: string, state: DagState): { own: string; ops: Op[] } {
+  if (chain.own) return { own: chain.own, ops: [] };
+  let own = `${objectId}_own_world`;
+  while (state.nodes[own]) own += '_';
+  return {
+    own,
+    ops: [{ type: 'addNode', nodeId: own, nodeType: 'OwnWorld', params: { object: objectId } }],
+  };
+}
+
 /**
- * Adds a step to `objectId`'s chain, on top unless `at` says where (0 is the bottom), starting the
- * chain if it has none. Null when the chain isn't one this module can edit.
+ * Wires a step that already exists into `objectId`'s chain, on top unless `at` says where (0 is the
+ * bottom), starting the chain if it has none. Null when the chain isn't one this module can edit.
  */
+export function attachStepOps(
+  state: DagState,
+  objectId: string,
+  stepId: string,
+  at?: number,
+): Op[] | null {
+  const chain = readChain(state, objectId);
+  if (!chain) return null;
+  const { own, ops } = bottomOf(chain, objectId, state);
+  const steps = [...chain.steps];
+  steps.splice(at ?? steps.length, 0, { id: stepId, blend: null });
+  return [...ops, ...restackOps(chain, objectId, own, steps)];
+}
+
+/** Adds a new step to `objectId`'s chain. See {@link attachStepOps}. */
 export function addStepOps(
   state: DagState,
   objectId: string,
@@ -202,16 +229,7 @@ export function addStepOps(
 ): Op[] | null {
   const chain = readChain(state, objectId);
   if (!chain) return null;
-  const ops: Op[] = [];
-  const own = chain.own ?? `${objectId}_own_world`;
-  if (!chain.own) {
-    ops.push({
-      type: 'addNode',
-      nodeId: own,
-      nodeType: 'OwnWorld',
-      params: { object: objectId },
-    });
-  }
+  const { own, ops } = bottomOf(chain, objectId, state);
   ops.push({
     type: 'addNode',
     nodeId: stepId,
@@ -224,21 +242,15 @@ export function addStepOps(
   return ops;
 }
 
-/** Takes a step off, with its blend. The last step takes the chain's bottom with it. */
-export function removeStepOps(state: DagState, objectId: string, stepId: string): Op[] | null {
-  const chain = readChain(state, objectId);
-  const step = chain?.steps.find((s) => s.id === stepId);
-  if (!chain?.own || !step) return null;
+/** The wires and nodes that take `step` off `chain`, leaving the step's own node for the caller. */
+function offChainOps(state: DagState, chain: Chain, objectId: string, step: ChainStep): Op[] {
   const rest = chain.steps.filter((s) => s !== step);
+  const own = chain.own!;
   const ops: Op[] = [];
-  if (rest.length === 0) {
-    ops.push(disconnect(outputOf(step), objectId, 'constraints'));
-  } else {
-    ops.push(...restackOps(chain, objectId, chain.own, rest));
-    // The node above no longer reads this step, and the step itself still reads below.
-  }
-  const blend = step.blend;
+  if (rest.length === 0) ops.push(disconnect(outputOf(step), objectId, 'constraints'));
+  else ops.push(...restackOps(chain, objectId, own, rest));
   const going: string[] = [];
+  const blend = step.blend;
   if (blend) {
     // Readers before what they read: `removeNode` refuses a node something still consumes.
     going.push(
@@ -253,13 +265,81 @@ export function removeStepOps(state: DagState, objectId: string, stepId: string)
     const source = blend.factor;
     if (source && state.nodes[source.node]?.type === 'Value') going.push(source.node);
   }
-  going.push(stepId);
-  if (rest.length === 0) going.push(chain.own);
   // A key or a driver on any of them goes too, as it does with any deleted node.
   for (const sidecar of subjectReferrersInto(state.nodes, new Set(going))) {
     ops.push({ type: 'removeNode', nodeId: sidecar.id });
   }
   for (const id of going) ops.push({ type: 'removeNode', nodeId: id });
+  return ops;
+}
+
+/** Takes a step off, with its blend. The last step takes the chain's bottom with it. */
+export function removeStepOps(state: DagState, objectId: string, stepId: string): Op[] | null {
+  const chain = readChain(state, objectId);
+  const step = chain?.steps.find((s) => s.id === stepId);
+  if (!chain?.own || !step) return null;
+  const ops = offChainOps(state, chain, objectId, step);
+  for (const sidecar of subjectReferrersInto(state.nodes, new Set([stepId]))) {
+    ops.push({ type: 'removeNode', nodeId: sidecar.id });
+  }
+  ops.push({ type: 'removeNode', nodeId: stepId });
+  if (chain.steps.length === 1) ops.push({ type: 'removeNode', nodeId: chain.own });
+  return ops;
+}
+
+/**
+ * Takes a step out of a chain and keeps its node, for a step moving to another object. Its blend
+ * goes, so its influence is back to 1: the blend belonged to where it was.
+ */
+export function detachStepOps(state: DagState, objectId: string, stepId: string): Op[] | null {
+  const chain = readChain(state, objectId);
+  const step = chain?.steps.find((s) => s.id === stepId);
+  if (!chain?.own || !step) return null;
+  const below = state.nodes[stepId].inputs.in;
+  const ops = offChainOps(state, chain, objectId, step);
+  if (below && !Array.isArray(below)) ops.push(disconnect(below, stepId, 'in'));
+  if (chain.steps.length === 1) ops.push({ type: 'removeNode', nodeId: chain.own });
+  return ops;
+}
+
+const orderOf = (state: DagState, id: string): number => {
+  const order = (state.nodes[id]?.params as { order?: unknown } | undefined)?.order;
+  return typeof order === 'number' ? order : 0;
+};
+
+/**
+ * What a commit owes the chains: a step that names an object and isn't on its chain joins it, at
+ * the place its `order` says, and one whose object changed leaves the old chain first. So every
+ * road that adds a constraint by naming its object, raw ops included, ends up wired. A step wired by
+ * hand, or an object whose chain was wired into another shape, is left as it is.
+ */
+export function chainFollowUpOps(prev: DagState, next: DagState): Op[] {
+  const ops: Op[] = [];
+  let working = next;
+  const applyAll = (more: readonly Op[]) => {
+    ops.push(...more);
+    working = applyOps(working, more).next;
+  };
+  for (const [id, node] of Object.entries(next.nodes)) {
+    if (prev.nodes[id] === node || !getNodeType(node.type)?.worldStep) continue;
+    const target = (node.params as { target?: unknown }).target;
+    const was = (prev.nodes[id]?.params as { target?: unknown } | undefined)?.target;
+    if (typeof was === 'string' && was !== target && prev.nodes[was]) {
+      if (readChain(working, was)?.steps.some((s) => s.id === id)) {
+        const off = detachStepOps(working, was, id);
+        if (off) applyAll(off);
+      }
+    }
+    if (typeof target !== 'string' || !working.nodes[target]) continue;
+    if (getNodeType(working.nodes[target].type)?.inputs.constraints?.chain !== 'end') continue;
+    if (working.nodes[id].inputs.in) continue;
+    const chain = readChain(working, target);
+    if (!chain) continue;
+    const order = orderOf(working, id);
+    const at = chain.steps.filter((s) => orderOf(working, s.id) <= order).length;
+    const on = attachStepOps(working, target, id, at);
+    if (on) applyAll(on);
+  }
   return ops;
 }
 

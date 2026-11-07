@@ -24,6 +24,7 @@
 import { createEvaluatorCache, type EvaluatorCache } from '../core/dag/evaluator';
 import type { DagState } from '../core/dag/state';
 import type { Op } from '../core/dag/types';
+import { moveStepOps, removeStepOps } from '../core/dag/chainEdit';
 import type { ParamOption } from '../nodes/paramWidget';
 import {
   relationalPoseStackForTarget,
@@ -253,12 +254,17 @@ export function buildMoveConstraintOps(
   return [
     { type: 'setParam', nodeId: a.nodeId, paramPath: 'order', value: aOrder },
     { type: 'setParam', nodeId: b.nodeId, paramPath: 'order', value: bOrder },
+    // #1812 — and the chain's wires, when the stack is on one.
+    ...(moveStepOps(state, targetId, constraintId, j) ?? []),
   ];
 }
 
-/** Remove a constraint. Edge-less → nothing to unwire; the node just goes. */
+/** Remove a constraint. */
 export function buildRemoveConstraintOps(state: DagState, constraintId: string): Op[] | null {
   const node = state.nodes[constraintId];
   if (!node || !isRelationalPoseNode(node)) return null;
-  return [{ type: 'removeNode', nodeId: constraintId }];
+  const target = (node.params as { target?: unknown }).target;
+  // #1812 — off the chain's wires with its blend, when it is on one.
+  const offChain = typeof target === 'string' ? removeStepOps(state, target, constraintId) : null;
+  return offChain ?? [{ type: 'removeNode', nodeId: constraintId }];
 }
