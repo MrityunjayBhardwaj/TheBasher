@@ -18,7 +18,7 @@ import {
   residualNotice,
 } from './keepPlaceReparent';
 import { resolveWorldTransform } from './resolveWorldTransform';
-import { isInScene } from './sceneMembership';
+import { isInScene, sceneDrawOf } from './sceneMembership';
 import { childIdsOf } from './sceneHierarchy';
 import { worldParentOf } from '../core/dag/worldChildren';
 
@@ -284,6 +284,22 @@ describe('Ctrl+P and Alt+P (#1516)', () => {
     expect(isInScene(after, 'n_box') && isInScene(after, 'n_light')).toBe(true);
     expectSameWorld(before.box, world(after, 'n_box'));
     expectSameWorld(before.light, world(after, 'n_light'));
+  });
+
+  it('a light back on the lights list leaves the scene list, so it draws once', () => {
+    const s = apply(buildDefaultDagState(), group('G', 'n_scene', { position: [2, 0, 0] }));
+    const into = buildParentToOps(s, ['n_light'], 'G', { ctx: CTX });
+    if (!into.ok) throw new Error(into.reason);
+    const held = apply(s, into.ops);
+    expect(sceneDrawOf(held as never)!.drawn.has('n_light')).toBe(true);
+
+    const out = buildClearParentOps(held, ['n_light'], { ctx: CTX });
+    if (!out.ok) throw new Error(out.reason);
+    const after = apply(held, out.ops);
+    // The band draws what is on `lights`, and the tree draws what the scene's list names.
+    expect(after.nodes.n_scene.inputs.lights).toContainEqual({ node: 'n_light', socket: 'out' });
+    expect(sceneDrawOf(after as never)!.drawn.has('n_light')).toBe(false);
+    expect(isInScene(after, 'n_light')).toBe(true);
   });
 
   it('a camera moves its group membership only, and its active wire is untouched', () => {
