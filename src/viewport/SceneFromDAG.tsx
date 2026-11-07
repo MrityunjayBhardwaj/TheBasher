@@ -119,6 +119,7 @@ import {
   selectActiveCameraNode,
 } from '../app/activeCamera';
 import { usePlayheadFollow } from './usePlayheadFollow';
+import { resolveDrawnParentWorldMatrix } from '../app/drawnWorldTransform';
 import { resolveRigLightSources } from '../app/resolveRigLightSources';
 import { degVec3ToRad } from './rotation';
 import {
@@ -583,18 +584,21 @@ export function SceneFromDAG({ outputName = 'render' }: SceneFromDAGProps) {
               // #243 GAP 2 / #265 — a Track-To'd AIMABLE light (Area/Spot/Directional)
               // derives its aim per frame, so its helper needs the follower too
               // (re-resolve the aim at `seconds` into the field the helper draws).
-              return lid &&
-                (directChannelTargets.has(lid) ||
-                  (constraintTargets.has(lid) && isAimableLightKind(light.kind))) ? (
-                <LightHelperFollower
-                  key={`helper:${i}`}
-                  nodeId={lid}
-                  value={light}
-                  pickId={lid}
-                  constrained={constraintTargets.has(lid)}
-                />
-              ) : (
-                <LightHelper key={`helper:${i}`} value={light} pickId={lid} />
+              return (
+                <BandLightPlace key={`helper:${i}`} nodeId={lid}>
+                  {lid &&
+                  (directChannelTargets.has(lid) ||
+                    (constraintTargets.has(lid) && isAimableLightKind(light.kind))) ? (
+                    <LightHelperFollower
+                      nodeId={lid}
+                      value={light}
+                      pickId={lid}
+                      constrained={constraintTargets.has(lid)}
+                    />
+                  ) : (
+                    <LightHelper value={light} pickId={lid} />
+                  )}
+                </BandLightPlace>
               );
             })
           : null}
@@ -604,18 +608,21 @@ export function SceneFromDAG({ outputName = 'render' }: SceneFromDAGProps) {
               const lid = rigLightSources[i] ?? null;
               if (lid != null && viewportHidden.has(lid)) return null; // #1453 — with its light
               // #243 GAP 2 / #265 — a Track-To'd AIMABLE rig light follows its aim per frame.
-              return lid &&
-                (directChannelTargets.has(lid) ||
-                  (constraintTargets.has(lid) && isAimableLightKind(light.kind))) ? (
-                <LightHelperFollower
-                  key={`rig-helper:${lid}`}
-                  nodeId={lid}
-                  value={light}
-                  pickId={lid}
-                  constrained={constraintTargets.has(lid)}
-                />
-              ) : (
-                <LightHelper key={`rig-helper:${lid ?? i}`} value={light} pickId={lid} />
+              return (
+                <BandLightPlace key={`rig-helper:${lid ?? i}`} nodeId={lid}>
+                  {lid &&
+                  (directChannelTargets.has(lid) ||
+                    (constraintTargets.has(lid) && isAimableLightKind(light.kind))) ? (
+                    <LightHelperFollower
+                      nodeId={lid}
+                      value={light}
+                      pickId={lid}
+                      constrained={constraintTargets.has(lid)}
+                    />
+                  ) : (
+                    <LightHelper value={light} pickId={lid} />
+                  )}
+                </BandLightPlace>
               );
             })
           : null}
@@ -1078,18 +1085,57 @@ const LightNode = memo(function LightNode({
   // playhead, exactly as a channel is), so it also routes through here. A static,
   // un-followed light (the common case) renders the per-kind switch directly and
   // pays nothing.
-  if ((hasDirectChannels || followsPath) && nodeId) {
-    return (
-      <DirectChannelsLightR
-        value={value}
-        nodeId={nodeId}
-        constrained={constrained}
-        followsPath={followsPath}
-      />
-    );
-  }
-  return <LightKindR value={value} nodeId={nodeId} constrained={constrained} />;
+  return (
+    <BandLightPlace nodeId={nodeId}>
+      {(hasDirectChannels || followsPath) && nodeId ? (
+        <DirectChannelsLightR
+          value={value}
+          nodeId={nodeId}
+          constrained={constrained}
+          followsPath={followsPath}
+        />
+      ) : (
+        <LightKindR value={value} nodeId={nodeId} constrained={constrained} />
+      )}
+    </BandLightPlace>
+  );
 });
+
+/** #1842 — a band's light that hangs from something stands under it. A band draws outside the tree,
+ *  so nothing nests it as the tree nests a child. One with no parent gets no extra group and no
+ *  per-frame read. Its own transform, aim and path are already parent-local. */
+function BandLightPlace({ nodeId, children }: { nodeId: string | null; children: ReactNode }) {
+  const hung = useDagStore((s) => nodeId != null && Boolean(s.state.nodes[nodeId]?.inputs.parent));
+  return hung && nodeId ? (
+    <HungBandLight nodeId={nodeId}>{children}</HungBandLight>
+  ) : (
+    <>{children}</>
+  );
+}
+
+function HungBandLight({ nodeId, children }: { nodeId: string; children: ReactNode }) {
+  const ref = useRef<THREE.Group>(null);
+  const place = () => {
+    const group = ref.current;
+    if (!group) return;
+    const parent = resolveDrawnParentWorldMatrix(
+      useDagStore.getState().state,
+      nodeId,
+      liveCtxOf(nodeId),
+      uiEvaluatorCache,
+    );
+    if (parent) group.matrix.copy(parent);
+    else group.matrix.identity();
+    group.matrixWorldNeedsUpdate = true;
+  };
+  useLayoutEffect(place);
+  useFrame(place);
+  return (
+    <group ref={ref} matrixAutoUpdate={false}>
+      {children}
+    </group>
+  );
+}
 
 /** The per-kind light dispatch — pure projection of an (already-overlaid) light
  *  value onto the three.js light objects. Shared by the static path (LightNode)

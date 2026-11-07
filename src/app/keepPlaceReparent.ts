@@ -445,7 +445,17 @@ export function buildMoveOps(
         to: { node: sceneId, socket: 'children' },
       });
     }
-    if (sceneListed) {
+    // #1842 — a light leaving its parent for the scene keeps the band that already draws it: back
+    // on the scene's list as well, a rig light would be drawn twice and outlive its profile.
+    const staysOnBand =
+      move.to === sceneId &&
+      socket === 'lights' &&
+      (refsOf(state.nodes[sceneId]?.inputs?.lights).some((r) => r?.node === move.childId) ||
+        Object.values(state.nodes).some(
+          (n) =>
+            n.type === 'LightRig' && refsOf(n.inputs.lights).some((r) => r?.node === move.childId),
+        ));
+    if (sceneListed || staysOnBand) {
       // Nothing to attach.
     } else if (attachesByParentInput(state, move.to, socket, move.childId)) {
       rewire.push(attachOp(state, move.childId, move.to, socket));
