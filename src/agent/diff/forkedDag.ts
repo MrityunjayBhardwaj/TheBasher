@@ -10,6 +10,7 @@
 import type { DagState } from '../../core/dag/state';
 import type { Op, InverseOp } from '../../core/dag/types';
 import { applyOps, GraphRefusal, type Reportable } from '../../core/dag/ops';
+import { chainFollowUpOps } from '../../core/dag/chainEdit';
 import { templateEdits } from '../../core/dag/templates';
 import { resolveDataParamOwner } from '../../app/resolveDataParamOwner';
 
@@ -52,7 +53,10 @@ export function createFork(state: DagState, ops: Op[]): ForkResult {
   // it (the store works it out again on accept, from the plan's own operations).
   const edits = templateEdits(state, planned);
   if ('refusal' in edits) throw new GraphRefusal(edits.refusal);
-  const next = edits.ops.length ? applyOps(planned, edits.ops).next : planned;
+  // #1837 — and a constraint that names its object joins that object's chain, as the commit does:
+  // constraints are read from the chain, so without this a proposal shows nothing in the ghost.
+  const followUps = [...edits.ops, ...chainFollowUpOps(state, planned)];
+  const next = followUps.length ? applyOps(planned, followUps).next : planned;
   const fork: DagState = { ...next, nodes: { ...next.nodes } };
   const inverseOps: InverseOp[] = applied.map((a) => ({ forward: a.forward, inverse: a.inverse }));
   // The owner a stripped write names is read off the graph the plan ends in (`withOwner`).
