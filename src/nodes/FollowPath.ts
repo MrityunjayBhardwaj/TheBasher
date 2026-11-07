@@ -83,6 +83,8 @@ export const FollowPathNode: NodeDefinition<FollowPathParams, FollowPathConstrai
   version: 1,
   pure: true,
   worldStep: true,
+  // #1812 — the curve object picked by name, as a saved file holds it.
+  worldRefs: { curve: 'curve' },
   cost: 'cheap',
   paramSchema: FollowPathParams,
   // #421 — `target` is the constrained object (owner → subject). `curve` is a

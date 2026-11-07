@@ -2942,3 +2942,132 @@ export function migrateChildrenToParentInputs(raw: unknown): unknown {
   }
   return { ...proj, state: { ...proj.state, nodes: out }, formatVersion: PARENT_INPUTS_FORMAT };
 }
+
+// ── Saved constraint stacks become wired chains (#1812) ────────────────────────────
+//
+// A constraint named its object in `target` and took its place by `order`, with ties in node-table
+// order, which is how `relationalPoseStackForTarget` reads them. Each object's stack becomes
+//
+//   OwnWorld → step → step → the object's `constraints` input
+//
+// with muted steps in place. Keys, strips and drivers on a step's settings stay on the same node.
+// What a step aims at or follows stays a reference (`aimNode`, `curve`): that is what lets two
+// objects aim at each other, which a wire can't, and a file holding that must keep it. A step whose
+// object can't end a chain is left as it was.
+//
+// Two things the chain does differently from the old road, each handled so an object draws where
+// it did:
+//
+// - A Follow Path adds the object's own position to the path point, as Blender does (#1791); the old
+//   road replaced it. So the object's own position becomes zero, and the keys and drivers on it go:
+//   the path overrode them, so they moved nothing, and as an offset they would.
+// - The old road aimed from the followed position whatever the order, because the two wrote separate
+//   bands. On a chain a step reads what is below it, as in Blender. So Follow Paths go below aims.
+//
+// What can't come across exactly is logged by name: a follower with a parent, whose parent's
+// position now adds to the path; two or more live Follow Paths, which now compose in order where the
+// top one won alone; a strip on a follower, where a position in its clip now offsets it. PR #1803's
+// scan of 19 projects on disk found none of these in a real file.
+const ENDS_A_CHAIN_AT_V29: ReadonlySet<string> = new Set(['Group', 'Object', 'Null']);
+
+function followedOwnPositionsCleared(nodes: Record<string, RawNode>): Record<string, RawNode> {
+  const out: Record<string, RawNode> = { ...nodes };
+  const entries = Object.entries(nodes);
+  // An object holding a curve: what `curveSamplerFor` follows. A step naming anything else placed
+  // nothing and still doesn't, so its object keeps its position.
+  const isCurve = (id: unknown) => {
+    const n = typeof id === 'string' ? nodes[id] : undefined;
+    return asRefs(n?.inputs?.data).some((r) => nodes[r.node ?? '']?.type === 'CurveData');
+  };
+  const live = new Map<string, number>();
+  for (const [, n] of entries) {
+    if (n?.type !== 'FollowPath' || n.params?.mute === true) continue;
+    const target = n.params?.target;
+    if (typeof target !== 'string' || !nodes[target] || !isCurve(n.params?.curve)) continue;
+    live.set(target, (live.get(target) ?? 0) + 1);
+  }
+  const onPosition = (p: Record<string, unknown> | undefined) =>
+    typeof p?.paramPath === 'string' &&
+    (p.paramPath === 'position' || p.paramPath.startsWith('position.'));
+  const parented: string[] = [];
+  const stacked: string[] = [];
+  const stripped: string[] = [];
+  let removed = 0;
+  for (const [target, members] of live) {
+    out[target] = { ...nodes[target], params: { ...nodes[target].params, position: [0, 0, 0] } };
+    for (const [id, n] of entries) {
+      if (n?.params?.target !== target || !onPosition(n.params)) continue;
+      const isKey = typeof n.type === 'string' && n.type.startsWith('KeyframeChannel');
+      if (!isKey && n.type !== 'ParamDriver') continue;
+      delete out[id];
+      removed++;
+    }
+    if (asRefs(nodes[target].inputs?.parent).length > 0) parented.push(target);
+    if (members > 1) stacked.push(target);
+    if (entries.some(([, n]) => n?.type === 'Strip' && n.params?.target === target))
+      stripped.push(target);
+  }
+  if (live.size > 0) {
+    console.warn(
+      `[migrateConstraintsToChains] ${live.size} object(s) on a Follow Path now have their own ` +
+        `position as an offset from the path; it is set to zero and ${removed} key/driver node(s) ` +
+        `on it removed, so each draws where it did (#1791).` +
+        (parented.length > 0
+          ? ` Parented, so their parent's position now adds to the path: ${parented.join(', ')}.`
+          : '') +
+        (stacked.length > 0
+          ? ` Two or more live Follow Paths, which now compose in order: ${stacked.join(', ')}.`
+          : '') +
+        (stripped.length > 0
+          ? ` A strip is placed on them; a position inside it now offsets them: ${stripped.join(', ')}.`
+          : ''),
+    );
+  }
+  return out;
+}
+
+export function migrateConstraintsToChains(raw: unknown): unknown {
+  const proj = raw as { state?: { nodes?: Record<string, RawNode> } };
+  const nodes = proj.state?.nodes;
+  if (!nodes) return raw;
+  const out = followedOwnPositionsCleared(nodes);
+  const stacks = new Map<string, { id: string; order: number; follows: boolean }[]>();
+  for (const [id, node] of Object.entries(out)) {
+    if (node?.type !== 'TrackTo' && node?.type !== 'FollowPath') continue;
+    const params = (node.params ?? {}) as { target?: unknown; order?: unknown };
+    const target = params.target;
+    if (typeof target !== 'string' || !ENDS_A_CHAIN_AT_V29.has(out[target]?.type ?? '')) continue;
+    const order = typeof params.order === 'number' ? params.order : 0;
+    const member = { id, order, follows: node.type === 'FollowPath' };
+    stacks.set(target, [...(stacks.get(target) ?? []), member]);
+  }
+  const wire = (id: string, socket: string, ref: RawRef) => {
+    out[id] = { ...out[id], inputs: { ...out[id].inputs, [socket]: ref } };
+  };
+  for (const [objectId, stack] of stacks) {
+    let ownId = `${objectId}_own_world`;
+    while (out[ownId]) ownId += '_';
+    out[ownId] = {
+      id: ownId,
+      type: 'OwnWorld',
+      version: 1,
+      params: { object: objectId },
+      inputs: {},
+    };
+    let below: RawRef = { node: ownId, socket: 'world' };
+    // Stable sorts, so a tie keeps node-table order and each kind keeps its own order.
+    const ordered = [...stack]
+      .sort((a, b) => a.order - b.order)
+      .sort((a, b) => Number(b.follows) - Number(a.follows));
+    for (const { id } of ordered) {
+      wire(id, 'in', below);
+      const parent = out[objectId].inputs?.parent;
+      if (out[id].params?.aimSpace === 'parent' && parent && !Array.isArray(parent)) {
+        wire(id, 'parent', parent);
+      }
+      below = { node: id, socket: 'world' };
+    }
+    wire(objectId, 'constraints', below);
+  }
+  return { ...proj, state: { ...proj.state, nodes: out } };
+}
