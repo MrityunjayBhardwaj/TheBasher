@@ -22,7 +22,7 @@ import type { MeshGeometryData, ModifiedDataValue } from '../../nodes/types';
 import type { PoseLayerParams } from '../../nodes/PoseLayer';
 import type { SkeletonParams } from '../../nodes/Skeleton';
 import { resolveWorldTransform } from '../resolveWorldTransform';
-import { hierarchyChildIds } from '../sceneHierarchy';
+import { childIdsOf } from '../sceneHierarchy';
 import { poseLayerChain } from './poseChain';
 import type { GraphNodeLike } from './graphNodes';
 import {
@@ -190,8 +190,8 @@ describe('#1511 — Apply Scale on an armature carries the scale into the rig', 
       },
       {
         type: 'connect',
-        from: { node: 'socket', socket: 'out' },
-        to: { node: groupId, socket: 'children' },
+        from: { node: groupId, socket: 'world' },
+        to: { node: 'socket', socket: 'parent' },
       },
     ]);
     before = makeSplitCube(before, {
@@ -205,7 +205,7 @@ describe('#1511 — Apply Scale on an armature carries the scale into the rig', 
     const { result, next: after } = await applied(before, groupId);
     expect(result).toEqual({ ok: true, bakedId: groupId });
     for (const id of ['prop', 'socket']) {
-      expect(hierarchyChildIds(after.nodes[groupId]), `${id} is still held`).toContain(id);
+      expect(childIdsOf(after, groupId), `${id} is still held`).toContain(id);
       const was = resolveWorldTransform(before, id, at(0))!.matrix;
       const now = resolveWorldTransform(after, id, at(0))!.matrix;
       now.forEach((v, i) => expect(v, `${id} world[${i}]`).toBeCloseTo(was[i], 6));
@@ -350,7 +350,7 @@ describe('#1511 — Apply Scale on an armature carries the scale into the rig', 
     // Without a mask the question is "can any mask", which stays yes.
     expect(canApplyTransform(imported, groupId)).toBe(true);
     // A node that is not an armature group has no mask-shaped reason: its masks are not restricted.
-    const skinned = hierarchyChildIds(imported.nodes[groupId]).find(
+    const skinned = childIdsOf(imported, groupId).find(
       (id) => !armatureSkeletonObjectsOf(imported, groupId).includes(id),
     )!;
     for (const mask of ['all', 'location', 'rotation', 'scale'] as const) {
@@ -391,7 +391,7 @@ describe('#1511 — Apply Scale on an armature carries the scale into the rig', 
       const group = armatureGroupOf(state);
       const skeletonObject = armatureSkeletonObjectsOf(state, group)[0];
       const skeleton = (state.nodes[skeletonObject].inputs!.data as { node: string }).node;
-      const skinned = hierarchyChildIds(state.nodes[group]).find((id) => id !== skeletonObject)!;
+      const skinned = childIdsOf(state, group).find((id) => id !== skeletonObject)!;
       const modifier = (state.nodes[skinned].inputs!.data as { node: string }).node;
       return { group, skeletonObject, skeleton, skinned, modifier, layers: clipsOf(state, group) };
     }
@@ -413,14 +413,21 @@ describe('#1511 — Apply Scale on an armature carries the scale into the rig', 
       paramPath: 'scale',
       value: [s, s, s],
     });
-    const objectOf = (id: string, data: string, parent: string): Op[] => [
+    // #1824 — under a Group the Object names it as its parent; the scene's list is a wire.
+    const objectOf = (id: string, data: string, parent: string, scene?: string): Op[] => [
       { type: 'addNode', nodeId: id, nodeType: 'Object', params: {} },
       { type: 'connect', from: { node: data, socket: 'out' }, to: { node: id, socket: 'data' } },
-      {
-        type: 'connect',
-        from: { node: id, socket: 'out' },
-        to: { node: parent, socket: 'children' },
-      },
+      parent === scene
+        ? {
+            type: 'connect',
+            from: { node: id, socket: 'out' },
+            to: { node: parent, socket: 'children' },
+          }
+        : {
+            type: 'connect',
+            from: { node: parent, socket: 'world' },
+            to: { node: id, socket: 'parent' },
+          },
     ];
 
     const CASES: {
@@ -468,7 +475,10 @@ describe('#1511 — Apply Scale on an armature carries the scale into the rig', 
       {
         what: 'the skeleton also stood outside the group',
         build: (s, rig) =>
-          apply(s, [scaled(rig, 2), ...objectOf('stand_in', rig.skeleton, s.outputs.scene!.node)]),
+          apply(s, [
+            scaled(rig, 2),
+            ...objectOf('stand_in', rig.skeleton, s.outputs.scene!.node, s.outputs.scene!.node),
+          ]),
         reason: /"stand_in" also stands outside it/,
       },
       {
@@ -487,8 +497,8 @@ describe('#1511 — Apply Scale on an armature carries the scale into the rig', 
             scaled(rig, 2),
             {
               type: 'disconnect',
-              from: { node: rig.skinned, socket: 'out' },
-              to: { node: rig.group, socket: 'children' },
+              from: { node: rig.group, socket: 'world' },
+              to: { node: rig.skinned, socket: 'parent' },
             },
             {
               type: 'connect',
@@ -604,7 +614,10 @@ describe('#1511 — Apply Scale on an armature carries the scale into the rig', 
       {
         what: 'the skinned mesh shared with an object outside',
         build: (s, rig) =>
-          apply(s, [scaled(rig, 2), ...objectOf('twin', rig.modifier, s.outputs.scene!.node)]),
+          apply(s, [
+            scaled(rig, 2),
+            ...objectOf('twin', rig.modifier, s.outputs.scene!.node, s.outputs.scene!.node),
+          ]),
         reason: /shares its mesh data with 1 other consumer/,
       },
     ];
@@ -635,6 +648,6 @@ describe('#1511 — Apply Scale on an armature carries the scale into the rig', 
   it('the group holds the skeleton directly (fixture guard)', async () => {
     const imported = await importBar();
     const groupId = armatureGroupOf(imported);
-    expect(hierarchyChildIds(imported.nodes[groupId]).length).toBeGreaterThan(1);
+    expect(childIdsOf(imported, groupId).length).toBeGreaterThan(1);
   });
 });

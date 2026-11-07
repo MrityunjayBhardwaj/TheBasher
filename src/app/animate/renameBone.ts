@@ -33,7 +33,7 @@
 //      src/nodes/armatureDeform.ts (`boneOfGroups`); src/nodes/boneParent.ts; issue #1201.
 
 import type { DagState } from '../../core/dag/state';
-import type { Node, Op } from '../../core/dag/types';
+import type { Op } from '../../core/dag/types';
 import type { PoseLayerChannel, PoseLayerIk, PoseLayerMember } from '../../nodes/PoseLayer';
 import type { SkeletonParams } from '../../nodes/Skeleton';
 import { uniqueBoneName } from '../../core/import/nativeGltfSkeleton';
@@ -42,6 +42,7 @@ import { chainSocketOf } from '../operatorChain';
 import { producerOf } from '../asset/bakeGeneratedClip';
 import { resolveBoneNames } from '../../core/import/retarget';
 import { edgeTarget } from './graphNodes';
+import { childIdsOf } from '../sceneHierarchy';
 import { poseLayerChain, poseSkeletonIdOf } from './poseChain';
 
 /** What a rename did: the name the bone now has, each record rewritten, and each one left as it was. */
@@ -60,14 +61,6 @@ export interface BoneRenameReport {
 export type BoneRenameResult =
   | { readonly ok: true; readonly ops: readonly Op[]; readonly report: BoneRenameReport }
   | { readonly ok: false; readonly reason: string };
-
-const inputList = (node: Node | undefined, socket: string): string[] => {
-  const s = node?.inputs?.[socket];
-  const list = Array.isArray(s) ? s : s ? [s] : [];
-  return list
-    .map((b) => (b as { node?: unknown }).node)
-    .filter((n): n is string => typeof n === 'string');
-};
 
 /**
  * The skeleton a retarget's SOURCE poses, found by walking the pose wire producer-side to where a rig
@@ -129,7 +122,8 @@ export function rigReach(state: DagState, objectId: string): RigReach | null {
     armatures,
     // #1357 — the layers inside a Rig on the wire name bones too (an ik chain, a corrective).
     layers: unique(armatures.flatMap((id) => poseLayerChain(state.nodes, id).allLayers)),
-    children: unique(armatures.flatMap((id) => inputList(state.nodes[id], 'children'))),
+    // #1824 — what hangs from the armature, by a wire or through its own parent input.
+    children: unique(armatures.flatMap((id) => childIdsOf(state, id))),
     meshes: unique(
       nodes
         .filter(

@@ -38,8 +38,8 @@ function nested(position: V3, rotation: V3, aimNode = '', local: V3 = [0, 0, 0])
   }).state;
   run({
     type: 'connect',
-    from: { node: 'cam', socket: 'out' },
-    to: { node: 'grp', socket: 'children' },
+    from: { node: 'grp', socket: 'world' },
+    to: { node: 'cam', socket: 'parent' },
   });
   run({
     type: 'connect',

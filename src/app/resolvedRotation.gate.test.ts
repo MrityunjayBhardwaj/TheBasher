@@ -141,8 +141,8 @@ describe('#1153 — every read-side entry honours the mode', () => {
       },
       {
         type: 'connect',
-        from: { node: 'kid', socket: 'out' },
-        to: { node: 'g', socket: 'children' },
+        from: { node: 'g', socket: 'world' },
+        to: { node: 'kid', socket: 'parent' },
       },
       {
         type: 'connect',
@@ -355,8 +355,8 @@ describe('#1153 — writers go through the mode (Blender object.cc:2826-2837)', 
       },
       {
         type: 'connect',
-        from: { node: 'kid', socket: 'out' },
-        to: { node: 'g', socket: 'children' },
+        from: { node: 'g', socket: 'world' },
+        to: { node: 'kid', socket: 'parent' },
       },
       ...((inScene
         ? [

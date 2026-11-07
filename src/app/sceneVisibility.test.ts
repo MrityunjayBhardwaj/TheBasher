@@ -56,8 +56,8 @@ describe('which nodes can be hidden (#1448)', () => {
     });
     op({
       type: 'connect',
-      from: { node: 'n_box', socket: 'out' },
-      to: { node: 'grp', socket: 'children' },
+      from: { node: 'grp', socket: 'world' },
+      to: { node: 'n_box', socket: 'parent' },
     });
     op({
       type: 'connect',

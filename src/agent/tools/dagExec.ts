@@ -69,8 +69,6 @@ export const dagExecTool: ToolDefinition<DagExecArgs> = {
     'to understand the DAG state.',
   paramSchema: OpBatchSchema,
   handler(args: DagExecArgs, ctx: ToolContext): ToolResult {
-    const parented = parentInputWires(args.ops, ctx);
-    if (parented.length > 0) return { ops: [], text: parentInputRedirect(parented) };
     const chained = chainEndWires(args.ops, ctx);
     if (chained.length > 0) return { ops: [], text: chainEndRedirect(chained) };
     const removed = args.ops.flatMap((op) => (op.type === 'removeNode' ? [op.nodeId] : []));
@@ -85,26 +83,6 @@ export const dagExecTool: ToolDefinition<DagExecArgs> = {
     };
   },
 };
-
-/**
- * #1810 — the connects in this batch that wire an object's `parent` input. That input carries the
- * world an object hangs from into its `world` output, and nothing draws from it yet: the viewport,
- * the render and every world read still place an object by the `children` wire that holds it,
- * until saved files are converted to parent inputs. A model told "parent B under A" that wired
- * A.world → B.parent would see its op succeed and nothing move, so the wire is refused here with
- * the wiring that does parent today.
- */
-function parentInputWires(ops: DagExecArgs['ops'], ctx: ToolContext): string[] {
-  const typeOf = new Map<string, string>();
-  for (const [id, node] of Object.entries(ctx.dagState.nodes)) typeOf.set(id, node.type);
-  for (const op of ops) if (op.type === 'addNode') typeOf.set(op.nodeId, op.nodeType);
-  return ops.flatMap((op) => {
-    if (op.type !== 'connect') return [];
-    const type = typeOf.get(op.to.node);
-    const into = type ? getNodeType(type)?.inputs[op.to.socket] : undefined;
-    return into?.world === true ? [`${op.from.node} → ${op.to.node}.${op.to.socket}`] : [];
-  });
-}
 
 /** #1811 — the connects in this batch into the input where an object's constraint chain ends.
  *  Nothing draws from a chain yet, so as with the parent input the op would succeed and nothing
@@ -127,16 +105,6 @@ function chainEndRedirect(wires: readonly string[]): string {
     'nothing in this batch was proposed. The viewport and the render do not read that input: ' +
     'an object is constrained by adding a TrackTo or FollowPath node whose "target" param names ' +
     'it. Resend the batch that way.'
-  );
-}
-
-function parentInputRedirect(wires: readonly string[]): string {
-  return (
-    `ERROR: dag.exec does not wire an object's parent input yet (${wires.join(', ')}), so ` +
-    'nothing in this batch was proposed. The viewport and the render do not read that input: ' +
-    'an object is placed under another by connecting the child\'s "out" into the parent\'s ' +
-    '"children" socket (an Object or a Group), after disconnecting it from where it hangs now. ' +
-    'Resend the batch with that wiring.'
   );
 }
 

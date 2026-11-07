@@ -65,8 +65,8 @@ async function animatedImport() {
     },
     {
       type: 'connect',
-      from: { node: cube, socket: 'out' },
-      to: { node: group, socket: 'children' },
+      from: { node: group, socket: 'world' },
+      to: { node: cube, socket: 'parent' },
     },
     {
       type: 'connect',

@@ -19,7 +19,7 @@ import { buildDefaultDagState } from '../../core/project/default';
 import { buildNativeGltfImportOps } from '../../core/import/nativeGltfImport';
 import * as geometryRegistry from '../geometryRegistry';
 import { resolveWorldTransform } from '../resolveWorldTransform';
-import { hierarchyChildIds } from '../sceneHierarchy';
+import { childIdsOf } from '../sceneHierarchy';
 import { nodeDisplayName } from '../sceneTreeWalk';
 import { makeSplitCube } from '../../test-utils/splitCube';
 import { dispatchApplyTransform } from './dispatchApplyTransform';
@@ -57,10 +57,11 @@ function primitiveTree(opts: { lampQuaternion?: boolean; bodyScale?: number[] } 
       nodeType: 'Group',
       params: { position: [-1, 0, 0], rotation: [10, 0, 0], pivot: [0.3, 0, 0] },
     },
+    // #1824 — the Group names the Object as its parent.
     {
       type: 'connect',
-      from: { node: 'socket', socket: 'out' },
-      to: { node: 'body', socket: 'children' },
+      from: { node: 'body', socket: 'world' },
+      to: { node: 'socket', socket: 'parent' },
     },
   ];
   if (opts.lampQuaternion) {
@@ -112,7 +113,7 @@ describe('#1185 — Apply on a parent Object keeps its children where they are d
       const before = primitiveTree();
       const { result, after } = await apply(before, 'body', mask);
       expect(result.ok).toBe(true);
-      expect(hierarchyChildIds(after.nodes.body)).toEqual(['lamp', 'socket']);
+      expect([...childIdsOf(after, 'body')].sort()).toEqual(['lamp', 'socket']);
       expectSameWorld(before, after, 'lamp');
       expectSameWorld(before, after, 'socket');
     },
@@ -146,7 +147,7 @@ describe('#1185 — Apply on a parent Object keeps its children where they are d
     const { result, after } = await apply(before, id('Body'), 'all');
     expect(result.ok).toBe(true);
     // In place: the Body is the same node, still holding both.
-    expect(hierarchyChildIds(after.nodes[id('Body')])).toEqual([id('Lamp'), id('Socket')]);
+    expect(childIdsOf(after, id('Body'))).toEqual([id('Lamp'), id('Socket')]);
     for (const name of ['Lamp', 'Socket', 'Bulb']) expectSameWorld(before, after, id(name));
   });
 

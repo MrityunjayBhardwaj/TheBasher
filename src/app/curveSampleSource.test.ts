@@ -170,8 +170,8 @@ describe('curveSampleSource — arc-length parameterization', () => {
     }).next;
     state = applyOp(state, {
       type: 'connect',
-      from: { node: 'c1', socket: 'out' },
-      to: { node: 'g1', socket: 'children' },
+      from: { node: 'g1', socket: 'world' },
+      to: { node: 'c1', socket: 'parent' },
     }).next;
     state = applyOp(state, {
       type: 'connect',

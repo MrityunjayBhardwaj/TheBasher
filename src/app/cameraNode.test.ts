@@ -227,8 +227,8 @@ describe('#387 slice 3 — the re-keyed consumers accept a split camera', () => 
     }).next;
     s = applyOp(s, {
       type: 'connect',
-      from: { node: 'n_cam', socket: 'out' },
-      to: { node: 'grp', socket: 'children' },
+      from: { node: 'grp', socket: 'world' },
+      to: { node: 'n_cam', socket: 'parent' },
     }).next;
     s = { ...s, outputs: { ...s.outputs, scene: { node: 'scene', socket: 'out' } } };
 

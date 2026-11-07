@@ -15,6 +15,7 @@ import { buildDefaultDagState } from '../core/project/default';
 import { registerAllNodes } from '../nodes/registerAll';
 import { buildNativeGltfImportOps } from '../core/import/nativeGltfImport';
 import { resolveParentWorldMatrix, resolveWorldTransform } from './resolveWorldTransform';
+import { worldParentOf } from '../core/dag/worldChildren';
 
 beforeEach(() => {
   __resetRegistryForTests();
@@ -43,10 +44,8 @@ async function rotatedImport() {
   let state: DagState = buildDefaultDagState();
   for (const op of result.ops) state = applyOp(state, op).next;
   const cubeId = result.objectIds[0];
-  const emptyId = Object.values(state.nodes).find((n) => {
-    const kids = n.inputs.children;
-    return n.type === 'Group' && Array.isArray(kids) && kids.some((k) => k.node === cubeId);
-  })!.id;
+  const emptyId = worldParentOf(state, cubeId)!;
+  expect(state.nodes[emptyId].type).toBe('Group');
   const local = (n: { translation?: number[]; rotation?: number[] }) =>
     new Matrix4().compose(
       new Vector3(...((n.translation ?? [0, 0, 0]) as [number, number, number])),

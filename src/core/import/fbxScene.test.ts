@@ -34,6 +34,7 @@ import { parseGltfContainer, readAccessor, resolveBuffers } from './glb';
 import { buildFbxImportOps } from './fbxImportChain';
 import { parseFbx } from './fbx';
 import { readFbxScene } from './fbxScene';
+import { worldParentOf } from '../dag/worldChildren';
 
 const DIR = 'src/core/import/__fixtures__';
 const SCENE = 'rigged-scene-blender-default';
@@ -94,8 +95,10 @@ const named = (state: DagState, name: string) => {
   return found[0];
 };
 
-/** The node whose `children` holds `id`. */
+/** The node `id` names as its parent (#1824), or whose `children` holds it (the scene's list). */
 function parentOf(state: DagState, id: string): string | null {
+  const named = worldParentOf(state, id);
+  if (named) return named;
   for (const node of Object.values(state.nodes)) {
     const children = (node.inputs as Record<string, unknown>).children;
     const list = Array.isArray(children) ? children : children ? [children] : [];

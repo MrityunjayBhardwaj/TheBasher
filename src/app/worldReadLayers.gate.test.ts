@@ -21,6 +21,7 @@ import { registerAllNodes } from '../nodes/registerAll';
 import { buildNativeGltfImportOps } from '../core/import/nativeGltfImport';
 import { resolveParentWorldMatrix, resolveWorldTransform } from './resolveWorldTransform';
 import { resolveEvaluatedTransform } from './resolveEvaluatedTransform';
+import { worldParentOf } from '../core/dag/worldChildren';
 
 beforeEach(() => {
   __resetRegistryForTests();
@@ -109,10 +110,9 @@ async function imported() {
   if ('refused' in result) throw new Error(result.refused);
   const state = run(buildDefaultDagState(), result.ops);
   const cube = result.objectIds[0];
-  const empty = Object.values(state.nodes).find((n) => {
-    const kids = n.inputs.children;
-    return n.type === 'Group' && Array.isArray(kids) && kids.some((k) => k.node === cube);
-  })!.id;
+  // #1824 — the cube names the empty through its parent input.
+  const empty = worldParentOf(state, cube)!;
+  expect(state.nodes[empty].type).toBe('Group');
   return { state, cube, empty };
 }
 

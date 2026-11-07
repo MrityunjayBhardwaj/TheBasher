@@ -66,7 +66,13 @@ describe('buildSceneTreeRows — projection (THESIS.md §12)', () => {
     // scene socket, so the walk must not surface it as a sibling row in the outliner.
     expect(rows.map((r) => r.nodeType)).toEqual(['Scene', 'Group', 'Object']);
     expect(rows[1].parent).toEqual({ nodeId: 'n_scene', socket: 'children', index: 0 });
-    expect(rows[2].parent).toEqual({ nodeId: 'grp', socket: 'children', index: 0 });
+    // #1824 — the cube hangs by its parent input, which has no place in the group's list.
+    expect(rows[2].parent).toEqual({
+      nodeId: 'grp',
+      socket: 'children',
+      index: -1,
+      byParentInput: true,
+    });
   });
 
   it('walks Transform → child via target socket', () => {
@@ -363,8 +369,8 @@ describe('#1505 — a member held in more than one place', () => {
       },
       {
         type: 'connect',
-        from: { node: cam.newNodeId, socket: 'out' },
-        to: { node: 'grp', socket: 'children' },
+        from: { node: 'grp', socket: 'world' },
+        to: { node: cam.newNodeId, socket: 'parent' },
       },
       {
         type: 'connect',
@@ -373,7 +379,9 @@ describe('#1505 — a member held in more than one place', () => {
       },
     ]);
     const rows = buildSceneTreeRows(s).filter((r) => r.nodeId === cam.newNodeId);
-    expect(rows.map((r) => r.parent)).toEqual([{ nodeId: 'grp', socket: 'children', index: 0 }]);
+    expect(rows.map((r) => r.parent)).toEqual([
+      { nodeId: 'grp', socket: 'children', index: -1, byParentInput: true },
+    ]);
   });
 
   it('a rig light nested in a Group and also in a collection is listed once, under the Group', () => {
@@ -393,11 +401,17 @@ describe('#1505 — a member held in more than one place', () => {
         from: { node: 'grp', socket: 'out' },
         to: { node: scene, socket: 'children' },
       },
-      { type: 'connect', from: ref, to: { node: 'grp', socket: 'children' } },
+      {
+        type: 'connect',
+        from: { node: 'grp', socket: 'world' },
+        to: { node: studio.lightId, socket: 'parent' },
+      },
       { type: 'connect', from: ref, to: { node: made.collectionId, socket: 'members' } },
     ]);
     const rows = buildSceneTreeRows(s).filter((r) => r.nodeId === studio.lightId);
-    expect(rows.map((r) => r.parent)).toEqual([{ nodeId: 'grp', socket: 'children', index: 0 }]);
+    expect(rows.map((r) => r.parent)).toEqual([
+      { nodeId: 'grp', socket: 'children', index: -1, byParentInput: true },
+    ]);
   });
 
   it('a member on two of the scene’s lists is listed under the collection by the first', () => {
@@ -473,12 +487,20 @@ describe('#1824 — the rows under a parent', () => {
       },
     ]);
   }
+  // A wired child is one with no parent input to name its parent with (a Transform): an Object can
+  // only hang by its parent input now.
   function cube(state: DagState, id: string, name: string, how: 'wire' | 'parent'): DagState {
-    let s = makeSplitCube(state, {
-      objectId: id,
-      size: [1, 1, 1],
-      ...(how === 'wire' ? { connectTo: { node: 'grp', socket: 'children' } } : {}),
-    }).state;
+    let s =
+      how === 'wire'
+        ? applyAll(state, [
+            { type: 'addNode', nodeId: id, nodeType: 'Transform', params: {} },
+            {
+              type: 'connect',
+              from: { node: id, socket: 'out' },
+              to: { node: 'grp', socket: 'children' },
+            },
+          ])
+        : makeSplitCube(state, { objectId: id, size: [1, 1, 1] }).state;
     s = { ...s, nodes: { ...s.nodes, [id]: { ...s.nodes[id]!, meta: { name } } } };
     if (how === 'parent')
       s = applyOp(s, {

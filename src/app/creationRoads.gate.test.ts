@@ -86,9 +86,6 @@ const NO_CREATION_ROAD: Readonly<Record<string, string>> = {
     'The P3 locomotion species — see #998. The generate panel\'s "character" kind imports ' +
     'a glTF; it does not mint this. Dormant, and its only surface (GroundClick) correctly ' +
     'self-disables when no Character exists.',
-  OwnWorld:
-    'The bottom of a wired constraint chain (#1811). The doors that build a chain arrive when ' +
-    'the readers move onto it; until then nothing draws from one.',
   LocomotionState: 'The P3 locomotion species — see #998. Character.inputs.locomotion wants one.',
   Navmesh:
     'The P3 locomotion species — see #998. buildWalkToOps returns null without one, which ' +

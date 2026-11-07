@@ -139,48 +139,49 @@ describe('#578 — timeDependentNodes', () => {
     // are indistinguishable and the counter asserted nothing. Falsification is what
     // surfaced it: removing the dedup left all seven cases green.
     //
-    // `Group.children` is `cardinality: 'list'`, and Group emits SceneObject, so a chain
-    // of Groups gives a genuine diamond: g0 fans out to g1 and g2, which both feed g3.
+    // `Scene.children` is `cardinality: 'list'`. #1824 — a Group names its one parent through its
+    // parent input, so the fan-out is g0's world read by g1 and g2, and the join is a Scene whose
+    // list holds both: g0 → g1, g2 → sc, a genuine diamond.
     let s = emptyDagState();
     for (const op of [
       { type: 'addNode', nodeId: 'g0', nodeType: 'Group', params: {} },
       { type: 'addNode', nodeId: 'g1', nodeType: 'Group', params: {} },
       { type: 'addNode', nodeId: 'g2', nodeType: 'Group', params: {} },
-      { type: 'addNode', nodeId: 'g3', nodeType: 'Group', params: {} },
+      { type: 'addNode', nodeId: 'sc', nodeType: 'Scene', params: {} },
       {
         type: 'connect',
-        from: { node: 'g0', socket: 'out' },
-        to: { node: 'g1', socket: 'children' },
+        from: { node: 'g0', socket: 'world' },
+        to: { node: 'g1', socket: 'parent' },
       },
       {
         type: 'connect',
-        from: { node: 'g0', socket: 'out' },
-        to: { node: 'g2', socket: 'children' },
+        from: { node: 'g0', socket: 'world' },
+        to: { node: 'g2', socket: 'parent' },
       },
       {
         type: 'connect',
         from: { node: 'g1', socket: 'out' },
-        to: { node: 'g3', socket: 'children' },
+        to: { node: 'sc', socket: 'children' },
       },
       {
         type: 'connect',
         from: { node: 'g2', socket: 'out' },
-        to: { node: 'g3', socket: 'children' },
+        to: { node: 'sc', socket: 'children' },
       },
       channelOp('ch', 'g0', 2),
     ] as Op[]) {
       s = applyOp(s, op).next;
     }
 
-    // The fixture's own precondition, asserted rather than assumed: g3 really does have
+    // The fixture's own precondition, asserted rather than assumed: sc really does have
     // TWO incoming edges. Without this the case can silently rot back to vacuous.
-    const intoG3 = [...edges(s)].filter((e) => e.consumer === 'g3').map((e) => e.producer.node);
-    expect(intoG3.sort()).toEqual(['g1', 'g2']);
+    const intoJoin = [...edges(s)].filter((e) => e.consumer === 'sc').map((e) => e.producer.node);
+    expect(intoJoin.sort()).toEqual(['g1', 'g2']);
 
     const counters = { visits: 0 };
     const flagged = timeDependentNodes(s, counters);
-    expect([...flagged].sort()).toEqual(['g0', 'g1', 'g2', 'g3']);
-    // Exactly one visit per flagged node — 4, not 5. g3 is reachable by two paths, so a
+    expect([...flagged].sort()).toEqual(['g0', 'g1', 'g2', 'sc']);
+    // Exactly one visit per flagged node — 4, not 5. sc is reachable by two paths, so a
     // walk that expands per-edge dequeues it twice while producing the identical set.
     expect(counters.visits).toBe(4);
 

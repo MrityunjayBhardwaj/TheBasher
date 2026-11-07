@@ -23,6 +23,7 @@ import { motionImportOps, type MotionImportOps } from '../../app/asset/importBvh
 import { resolveWorldTransform } from '../../app/resolveWorldTransform';
 import { buildFbxImportOps } from './fbxImportChain';
 import { skeletonObjectId } from './skeletonObject';
+import { worldParentOf } from '../dag/worldChildren';
 
 const DIR = 'src/core/import/__fixtures__';
 
@@ -96,8 +97,10 @@ const named = (state: DagState, name: string) => {
   return found[0];
 };
 
-/** The node whose `children` holds `id`. */
+/** The node `id` names as its parent (#1824), or whose `children` holds it (the scene's list). */
 function parentOf(state: DagState, id: string): string | null {
+  const named = worldParentOf(state, id);
+  if (named) return named;
   for (const node of Object.values(state.nodes)) {
     const children = node.inputs?.children;
     const list = Array.isArray(children) ? children : children ? [children] : [];

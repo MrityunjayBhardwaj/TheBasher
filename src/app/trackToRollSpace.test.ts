@@ -157,8 +157,8 @@ describe('#1759 — Track-To aim-point space', () => {
     s = run(s, [
       {
         type: 'connect',
-        from: { node: 'cam', socket: 'out' },
-        to: { node: 'grp', socket: 'children' },
+        from: { node: 'grp', socket: 'world' },
+        to: { node: 'cam', socket: 'parent' },
       },
       {
         type: 'connect',

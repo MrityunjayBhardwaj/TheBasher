@@ -27,6 +27,7 @@ import type {
   PosedSkeletonValue,
 } from '../../nodes/types';
 import { sceneOnlyState } from '../../test-utils/sceneOnlyState';
+import { worldChildrenOf } from '../dag/worldChildren';
 
 const SKINNED_BAR = 'public/assets/skinned-bar.glb';
 const STANDIN = 'public/fixtures/rig/standin-character.glb';
@@ -137,8 +138,7 @@ describe('#393 step 1 — a skinned glTF’s joints become a skeleton', () => {
     const standIn = standInObjectOf(state, skeletonId);
     expect(standIn).toBe(skeletonObjectId(skeletonId));
     const meshObject = result.objectIds[0];
-    const children = state.nodes[meshObject].inputs.children as { node: string }[];
-    expect(children.map((c) => c.node)).toEqual([standIn]);
+    expect(worldChildrenOf(state, meshObject)).toEqual([standIn]);
     expect(state.nodes[standIn!].params).toMatchObject({ scale: [1, 1, 1] });
     // #1238 — named after the armature node, as Blender 5.1.1 names it; not after the clip `bend`.
     expect(state.nodes[standIn!].meta?.name).toBe('SkinnedBar');

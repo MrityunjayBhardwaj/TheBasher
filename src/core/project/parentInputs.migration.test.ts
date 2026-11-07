@@ -25,8 +25,11 @@ beforeEach(() => {
 });
 afterEach(() => vi.restoreAllMocks());
 
-const run = (s: DagState, ops: object[]) => {
-  for (const op of ops) s = applyOp(s, op as never).next;
+/** An op, or a step written straight into the node table: what `connect` now refuses (a child
+ *  with a parent input wired into a group's list) is what a saved v27 file holds. */
+type Step = object | ((s: DagState) => DagState);
+const run = (s: DagState, ops: Step[]) => {
+  for (const op of ops) s = typeof op === 'function' ? op(s) : applyOp(s, op as never).next;
   return s;
 };
 const migrate = (s: DagState): DagState => {
@@ -84,25 +87,38 @@ function expectSameDrawing(before: DagState, after: DagState): number {
   return compared;
 }
 
-const group = (id: string, holder: string, socket = 'children') => [
+const group = (id: string, holder: string): Step[] => [
   {
     type: 'addNode',
     nodeId: id,
     nodeType: 'Group',
     params: { position: [1, 2, 0], rotation: [0, 30, 10] },
   },
-  { type: 'connect', from: { node: id, socket: 'out' }, to: { node: holder, socket } },
+  into(id, holder),
 ];
 const unscene = (id: string) => ({
   type: 'disconnect',
   from: { node: id, socket: 'out' },
   to: { node: 'n_scene', socket: 'children' },
 });
-const into = (child: string, holder: string) => ({
-  type: 'connect',
-  from: { node: child, socket: 'out' },
-  to: { node: holder, socket: 'children' },
-});
+/** `child` wired into `holder`'s `children` list, as v27 wrote it. */
+function into(child: string, holder: string): Step {
+  return (s: DagState): DagState => {
+    const h = s.nodes[holder];
+    const prior = h.inputs.children;
+    const list = Array.isArray(prior) ? prior : prior ? [prior] : [];
+    return {
+      ...s,
+      nodes: {
+        ...s.nodes,
+        [holder]: {
+          ...h,
+          inputs: { ...h.inputs, children: [...list, { node: child, socket: 'out' }] },
+        },
+      },
+    };
+  };
+}
 
 describe('v27 → v28: a child names its parent (#1824)', () => {
   it('the format is the conversion’s, one step on from v27', () => {

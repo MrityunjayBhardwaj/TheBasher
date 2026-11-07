@@ -512,12 +512,16 @@ describe('referenceCycles — a cycle through a reference is reported by name (#
   });
 
   it('CONTROL: an object in a group that aims at the group is not a cycle', () => {
-    // The group is wired to the object, and the object's aim names the group. The aim reads
+    // The object hangs from the group, and the object's aim names the group. The aim reads
     // the group's own transform, which does not need the object.
     const s = build([
       add('cam', 'Object'),
       add('rig', 'Group'),
-      wire('cam', 'rig', 'children'),
+      {
+        type: 'connect',
+        from: { node: 'rig', socket: 'world' },
+        to: { node: 'cam', socket: 'parent' },
+      },
       add('aim', 'TrackTo', { target: 'cam', aimNode: 'rig' }),
     ]);
     expect(referenceCycles(s)).toEqual([]);

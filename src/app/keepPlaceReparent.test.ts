@@ -35,11 +35,16 @@ const set = (nodeId: string, paramPath: string, value: unknown): Op => ({
   paramPath,
   value,
 });
-const wire = (from: string, to: string, socket = 'children'): Op => ({
-  type: 'connect',
-  from: { node: from, socket: 'out' },
-  to: { node: to, socket },
-});
+/** `from` hangs under `to`: in the scene's list, or (#1824) naming a group or object through its
+ *  own parent input. */
+const wire = (from: string, to: string, socket = 'children'): Op =>
+  to === 'n_scene' || socket !== 'children'
+    ? { type: 'connect', from: { node: from, socket: 'out' }, to: { node: to, socket } }
+    : {
+        type: 'connect',
+        from: { node: to, socket: 'world' },
+        to: { node: from, socket: 'parent' },
+      };
 const unwire = (from: string, to: string, socket = 'children'): Op => ({
   type: 'disconnect',
   from: { node: from, socket: 'out' },

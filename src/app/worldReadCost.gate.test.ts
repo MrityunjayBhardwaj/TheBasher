@@ -63,8 +63,8 @@ function scene(n: number, depth: number): DagState {
     const child = d + 1 < depth ? `g${d + 1}` : TARGET;
     ops.push({
       type: 'connect',
-      from: { node: child, socket: 'out' },
-      to: { node: `g${d}`, socket: 'children' },
+      from: { node: `g${d}`, socket: 'world' },
+      to: { node: child, socket: 'parent' },
     });
   }
   ops.push({
@@ -153,18 +153,16 @@ describe('#1729 — the world read costs the depth of its node, not the size of 
     world!.position.forEach((v, i) => expect(v).toBeCloseTo([2, 2, 1][i], 9));
   });
 
-  it('a node held by two Groups is read through the first in scene order, as the scene search does', () => {
-    // g0 ⊃ g1 ⊃ deep, and also hx ⊃ deep with hx at (0,0,5) added after g0. The search from the
-    // root meets g0's subtree first; the walk up cannot choose between two holders, so it hands the
-    // read to that search. At t = 0 g0's key holds it at the origin and g1 sits at (1,0,0), so the
-    // parent is at (1,0,0); through hx it would be (0,0,5).
+  // #1824 — a node names its one parent through its parent input, so two Groups can no longer hold
+  // it: naming hx takes it out of g1, and the walk up reads hx alone, at (0,0,5).
+  it('a node given a second Group hangs from that one alone, and the walk up reads it', () => {
     let s = scene(5, 2);
     s = run(s, [
       { type: 'addNode', nodeId: 'hx', nodeType: 'Group', params: { position: [0, 0, 5] } },
       {
         type: 'connect',
-        from: { node: TARGET, socket: 'out' },
-        to: { node: 'hx', socket: 'children' },
+        from: { node: 'hx', socket: 'world' },
+        to: { node: TARGET, socket: 'parent' },
       },
       {
         type: 'connect',
@@ -172,9 +170,9 @@ describe('#1729 — the world read costs the depth of its node, not the size of 
         to: { node: 'n_scene', socket: 'children' },
       },
     ]);
-    expect(sceneIndexOf(s.nodes).parentsOf(TARGET)).toEqual(['g1', 'hx']);
+    expect(sceneIndexOf(s.nodes).parentsOf(TARGET)).toEqual(['hx']);
     const parent = resolveParentWorldMatrix(s, TARGET, at(0));
-    expect(parent?.elements.slice(12, 15)).toEqual([1, 0, 0]);
+    expect(parent?.elements.slice(12, 15)).toEqual([0, 0, 5]);
   });
 
   it('a top-level node and a node nothing holds have no parent world', () => {

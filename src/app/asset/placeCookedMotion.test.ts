@@ -112,7 +112,7 @@ function withCharacter(s: DagState, suffix = ''): DagState {
     { type: 'addNode', nodeId: obj, nodeType: 'Object', params: {} },
     { type: 'connect', from: { node: skel, socket: 'out' }, to: { node: obj, socket: 'data' } },
     { type: 'addNode', nodeId: root, nodeType: 'Group', params: { position: [0, 0, 0] } },
-    { type: 'connect', from: { node: obj, socket: 'out' }, to: { node: root, socket: 'children' } },
+    { type: 'connect', from: { node: root, socket: 'world' }, to: { node: obj, socket: 'parent' } },
     {
       type: 'connect',
       from: { node: root, socket: 'out' },

@@ -55,10 +55,11 @@ function scene() {
       from: { node: c.id, socket: 'out' },
       to: { node: sceneId, socket: 'children' },
     },
+    // #1824 — C names P as its parent.
     {
       type: 'connect',
-      from: { node: c.id, socket: 'out' },
-      to: { node: p.id, socket: 'children' },
+      from: { node: p.id, socket: 'world' },
+      to: { node: c.id, socket: 'parent' },
     },
     ...membershipOps(a.id, [p.id]),
     ...membershipOps(b.id, [p.id]),

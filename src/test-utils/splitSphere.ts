@@ -14,6 +14,7 @@
 
 import { applyOp, type DagState } from '../core/dag';
 import type { Op } from '../core/dag/types';
+import { attachOp } from '../core/dag/worldChildren';
 import { dataIdFor, splitOps } from './splitKinds';
 
 export interface SplitSphereOpts {
@@ -78,11 +79,8 @@ export function makeSplitSphere(state: DagState, opts: SplitSphereOpts): SplitSp
     s = applyOp(s, op as Op).next;
   }
   if (opts.connectTo) {
-    s = applyOp(s, {
-      type: 'connect',
-      from: { node: objectId, socket: 'out' },
-      to: opts.connectTo,
-    }).next;
+    // #1824 — under a Group or an Object it names its parent through its parent input.
+    s = applyOp(s, attachOp(s, objectId, opts.connectTo.node, opts.connectTo.socket)).next;
   }
 
   return { state: s, objectId, dataId };

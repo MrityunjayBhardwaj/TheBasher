@@ -84,8 +84,8 @@ function rigScene(clock?: 'film'): DagState {
   return apply(state, [
     {
       type: 'connect',
-      from: { node: 'n_cam2', socket: 'out' },
-      to: { node: 'n_rig', socket: 'children' },
+      from: { node: 'n_rig', socket: 'world' },
+      to: { node: 'n_cam2', socket: 'parent' },
     },
     {
       type: 'connect',
@@ -113,8 +113,8 @@ function cameraChildScene(): DagState {
     },
     {
       type: 'connect',
-      from: { node: 'n_kid', socket: 'out' },
-      to: { node: 'n_camera', socket: 'children' },
+      from: { node: 'n_camera', socket: 'world' },
+      to: { node: 'n_kid', socket: 'parent' },
     },
   ]);
 }

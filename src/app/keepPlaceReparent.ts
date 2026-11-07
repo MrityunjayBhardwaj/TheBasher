@@ -46,7 +46,14 @@ import type { DagState } from '../core/dag/state';
 import type { NodeId, Op } from '../core/dag/types';
 import { createEvaluatorCache } from '../core/dag/evaluator';
 import { applyOps } from '../core/dag/ops';
-import { gatheringSocketOf, parentSocketOf, worldParentOf } from '../core/dag/worldChildren';
+import {
+  attachOp,
+  attachesByParentInput,
+  parentSocketOf,
+  worldParentOf,
+} from '../core/dag/worldChildren';
+
+export { attachOp };
 import { getNodeType, paramFieldsOf } from '../core/dag/registry';
 import { quaternionToEulerVec3 } from '../core/import/threeAdapter';
 import { isKeyframeChannelNode } from './animate/paramAnimationState';
@@ -85,47 +92,6 @@ export function detachOp(childId: NodeId, edge: HolderEdge, state: DagState): Op
     type: 'disconnect',
     from: { node: childId, socket: 'out' },
     to: { node: edge.node, socket: edge.socket },
-  };
-}
-
-/** True when `holderId` takes `childId` on `socket` through the child's parent input: the socket is
- *  the holder's gathering list and the child has a parent input. */
-function attachesByParentInput(
-  state: DagState,
-  holderId: NodeId,
-  socket: string,
-  childId: NodeId,
-): boolean {
-  const holder = state.nodes[holderId];
-  const child = state.nodes[childId];
-  if (!holder || !child) return false;
-  return gatheringSocketOf(holder.type) === socket && parentSocketOf(child.type) !== null;
-}
-
-/**
- * The op that hangs `childId` from `holderId` on `socket` (`receivingSocket`'s answer): the
- * holder's world into the child's parent input when the holder gathers and the child has one,
- * otherwise a wire into the holder's list, at `index` when given.
- */
-export function attachOp(
-  state: DagState,
-  childId: NodeId,
-  holderId: NodeId,
-  socket: string,
-  index?: number,
-): Op {
-  if (attachesByParentInput(state, holderId, socket, childId)) {
-    return {
-      type: 'connect',
-      from: { node: holderId, socket: 'world' },
-      to: { node: childId, socket: parentSocketOf(state.nodes[childId]!.type)! },
-    };
-  }
-  return {
-    type: 'connect',
-    from: { node: childId, socket: 'out' },
-    to: { node: holderId, socket },
-    ...(index === undefined ? {} : { index }),
   };
 }
 
