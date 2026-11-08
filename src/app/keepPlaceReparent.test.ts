@@ -17,7 +17,11 @@ import {
   movableHolderEdges,
   residualNotice,
 } from './keepPlaceReparent';
+import { resolveDrawnWorldTransform } from './drawnWorldTransform';
 import { resolveWorldTransform } from './resolveWorldTransform';
+import { applyOp as committedApplyOp } from '../test-utils/committedApplyOp';
+import { withIds } from '../test-utils/curvePoints';
+import { planDeleteNodes } from './sceneNodeActions';
 import { isInScene, sceneDrawOf } from './sceneMembership';
 import { childIdsOf } from './sceneHierarchy';
 import { worldParentOf } from '../core/dag/worldChildren';
@@ -406,40 +410,132 @@ describe('a bone it hung from goes with the old parent (#1516)', () => {
   });
 });
 
-describe('a constraint above the child cannot be read yet, so it is refused (#1829)', () => {
+describe('a constraint above the child is kept like any parent, as Blender keeps it (#1854)', () => {
+  // Through the commit step, so each constraint is on its object's chain as the app builds it.
+  const committed = (s: DagState, ops: readonly Op[]) =>
+    ops.reduce((acc, op) => committedApplyOp(acc, op).next, s);
   const aim = (target: string, mute = false): Op => ({
     type: 'addNode',
     nodeId: `tt_${target}`,
     nodeType: 'TrackTo',
     params: { target, aimNode: 'n_light', order: 0, mute },
   });
+  const follow = (target: string): Op[] => [
+    {
+      type: 'addNode',
+      nodeId: 'crv_data',
+      nodeType: 'CurveData',
+      params: {
+        points: withIds([
+          [5, 0, 0],
+          [9, 4, 2],
+        ]),
+        closed: false,
+        resolution: 32,
+      },
+    },
+    { type: 'addNode', nodeId: 'crv', nodeType: 'Object', params: {} },
+    {
+      type: 'connect',
+      from: { node: 'crv_data', socket: 'out' },
+      to: { node: 'crv', socket: 'data' },
+    },
+    wire('crv', 'n_scene'),
+    {
+      type: 'addNode',
+      nodeId: `fp_${target}`,
+      nodeType: 'FollowPath',
+      params: { target, curve: 'crv', evalTime: 0.4 },
+    },
+  ];
+  const drawn = (s: DagState, id: string) => resolveDrawnWorldTransform(s, id, CTX)!.matrix;
+  /** The case proves something only where the constraint moves what the child is drawn under. */
+  const expectPosed = (s: DagState) =>
+    expect(
+      Math.max(...drawn(s, 'n_box').map((v, i) => Math.abs(v - world(s, 'n_box')[i]))),
+    ).toBeGreaterThan(0.5);
+  const keeps = (s: DagState, r: ReturnType<typeof buildClearParentOps>) => {
+    if (!r.ok) throw new Error(r.reason);
+    expectSameWorld(drawn(s, 'n_box'), drawn(apply(s, r.ops), 'n_box'));
+  };
 
-  it('leaving an aimed parent refuses by its name, as does joining one', () => {
-    const s = apply(cubeUnder('A', CUBE, [...group('A', 'n_scene'), ...group('B', 'n_scene')]), [
-      aim('A'),
-    ]);
-    const leave = buildClearParentOps(s, ['n_box'], { ctx: CTX });
-    expect(leave.ok).toBe(false);
-    if (!leave.ok) expect(leave.reason).toMatch(/constraint/);
-
-    const t = apply(cubeUnder(null, CUBE, group('B', 'n_scene')), [aim('B')]);
-    expect(buildParentToOps(t, ['n_box'], 'B', { ctx: CTX }).ok).toBe(false);
+  it('Alt+P away from an aimed parent keeps the child where it is drawn', () => {
+    const s = committed(cubeUnder('A', CUBE, group('A', 'n_scene', TURNED)), [aim('A')]);
+    expectPosed(s);
+    keeps(s, buildClearParentOps(s, ['n_box'], { ctx: CTX }));
   });
 
-  it('so does a constraint further up the chain', () => {
-    const s = apply(cubeUnder('B', CUBE, [...group('A', 'n_scene'), ...group('B', 'A')]), [
-      aim('A'),
-    ]);
-    expect(buildClearParentOps(s, ['n_box'], { ctx: CTX }).ok).toBe(false);
+  it('Ctrl+P under an aimed parent keeps the child where it is drawn', () => {
+    const s = committed(cubeUnder(null, CUBE, group('B', 'n_scene', TURNED)), [aim('B')]);
+    const r = buildParentToOps(s, ['n_box'], 'B', { ctx: CTX });
+    keeps(s, r);
+    if (r.ok) expectPosed(apply(s, r.ops));
   });
 
-  it('CONTROL: a muted constraint poses nothing and refuses nothing', () => {
-    const s = apply(cubeUnder('A', CUBE, group('A', 'n_scene', TURNED)), [aim('A', true)]);
-    expect(buildClearParentOps(s, ['n_box'], { ctx: CTX }).ok).toBe(true);
+  it('from one aimed parent to another, and under an aimed grandparent', () => {
+    const s = committed(
+      cubeUnder('B', CUBE, [
+        ...group('A', 'n_scene', TURNED),
+        ...group('B', 'A', { position: [5, 1, -2], rotation: [0, 0, 45] }),
+        ...group('C', 'n_scene', CUBE),
+      ]),
+      [aim('A'), aim('C')],
+    );
+    expectPosed(s);
+    keeps(s, buildParentToOps(s, ['n_box'], 'C', { ctx: CTX }));
+    keeps(s, buildClearParentOps(s, ['n_box'], { ctx: CTX }));
+  });
+
+  it('a parent on a Follow Path: away and under', () => {
+    const s = committed(cubeUnder('A', CUBE, group('A', 'n_scene', TURNED)), follow('A'));
+    expectPosed(s);
+    keeps(s, buildClearParentOps(s, ['n_box'], { ctx: CTX }));
+    const t = committed(cubeUnder(null, CUBE, group('A', 'n_scene', TURNED)), follow('A'));
+    keeps(t, buildParentToOps(t, ['n_box'], 'A', { ctx: CTX }));
+  });
+
+  /** Delete through the plan the doors use and the store's commit, chain clean-up included. */
+  const deleteThrough = (s: DagState, ids: string[]) => {
+    useDagStore.getState().hydrate(s);
+    const plan = planDeleteNodes(s, ids, { ctx: CTX });
+    if (!plan.ok) throw new Error(plan.reason);
+    useDagStore.getState().dispatchAtomic(plan.ops, 'user', 'delete');
+    return useDagStore.getState().state;
+  };
+
+  it('deleting an aimed parent keeps its child where it is drawn (the case the issue saw)', () => {
+    const s = committed(cubeUnder('A', CUBE, group('A', 'n_scene', TURNED)), [aim('A')]);
+    expectPosed(s);
+    const after = deleteThrough(s, ['A']);
+    expect(after.nodes.A).toBeUndefined();
+    expect(after.nodes.tt_A).toBeUndefined();
+    expectSameWorld(drawn(s, 'n_box'), drawn(after, 'n_box'));
+  });
+
+  // The aimed grandparent stays, so its aim cancels out of the change: the read with or without the
+  // constraint keeps the child alike. What this case pins is that the delete is no longer refused.
+  it('deleting the middle of a chain under an aimed grandparent keeps the child too', () => {
+    const s = committed(
+      cubeUnder('B', CUBE, [
+        ...group('A', 'n_scene', TURNED),
+        ...group('B', 'A', { position: [0, 2, 1], rotation: [20, 0, 0] }),
+      ]),
+      [aim('A')],
+    );
+    expectPosed(s);
+    const after = deleteThrough(s, ['B']);
+    expect(worldParentOf(after, 'n_box')).toBe('A');
+    expectSameWorld(drawn(s, 'n_box'), drawn(after, 'n_box'));
+  });
+
+  it('CONTROL: a muted constraint poses nothing, and the child is kept as under any parent', () => {
+    const s = committed(cubeUnder('A', CUBE, group('A', 'n_scene', TURNED)), [aim('A', true)]);
+    expectSameWorld(drawn(s, 'n_box'), world(s, 'n_box'));
+    keeps(s, buildClearParentOps(s, ['n_box'], { ctx: CTX }));
   });
 
   it('CONTROL: the child’s own Track-To refuses nothing, and its position is kept', () => {
-    const s = apply(cubeUnder(null, CUBE, group('G', 'n_scene', TURNED)), [aim('n_box')]);
+    const s = committed(cubeUnder(null, CUBE, group('G', 'n_scene', TURNED)), [aim('n_box')]);
     const before = world(s, 'n_box');
     const r = buildParentToOps(s, ['n_box'], 'G', { ctx: CTX });
     if (!r.ok) throw new Error(r.reason);
@@ -447,8 +543,9 @@ describe('a constraint above the child cannot be read yet, so it is refused (#18
     [12, 13, 14].forEach((i) => expect(after[i]).toBeCloseTo(before[i], 5));
   });
 
-  it('Alt moves it anyway, with its values as they are', () => {
-    const s = apply(cubeUnder('A', CUBE, group('A', 'n_scene')), [aim('A')]);
-    expect(buildClearParentOps(s, ['n_box'], { keepTransform: false, ctx: CTX }).ok).toBe(true);
+  it('Alt still moves it with its values as they are', () => {
+    const s = committed(cubeUnder('A', CUBE, group('A', 'n_scene', TURNED)), [aim('A')]);
+    const r = buildClearParentOps(s, ['n_box'], { keepTransform: false, ctx: CTX });
+    expect(r.ok && r.ops.some((op) => op.type === 'setParam' && op.nodeId === 'n_box')).toBe(false);
   });
 });

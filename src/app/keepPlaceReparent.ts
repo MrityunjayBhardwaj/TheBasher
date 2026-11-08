@@ -31,15 +31,23 @@
 //     stay under. The child moves with its keys as they are, as Blender's does, and is reported
 //     (`MoveResult.unkept`) because Blender says nothing.
 //
-//   - A CONSTRAINT ABOVE IT. The world read here does not include one (#1829), so it could not tell
-//     where such a child is drawn. Refused by name until it can (`constrainedAtOrAbove`). The
-//     child's own Track-To is fine: its position is kept, and the aim overrides its rotation.
+// A CONSTRAINT ABOVE IT is kept like any other parent (#1854): both worlds are read as they are
+// DRAWN (`resolveDrawnParentWorldMatrix`), every holder with its Track-To aim and Follow Path point
+// applied, so a child leaving or joining an aimed or following object stays where it is drawn.
+// Blender does the same (measured on 5.1.1, a parent posed 1.75 by a Track-To and 4.48 by a Follow
+// Path: Ctrl+P and Alt+P "Clear and Keep Transformation" each keep the child where it is drawn, 0
+// drift). The child's own Track-To is fine too: its position is kept, and the aim overrides its
+// rotation. Until #1854 the read left the constraint out (#1829), so such a move was refused.
+//
+// DELETE keeps the children in place, where Blender's does not: measured on 5.1.1, deleting a
+// parent drops each child onto its own values, constrained parent or not (#1516 chose to keep).
 //
 // Only the world the parent has at `ctx` is kept: under an animated parent, as in Blender, the
 // child is in place at the frame the gesture was made at.
 //
-// REF: issues #1516, #1517; src/app/animate/dispatchApplyTransform.ts (`childCompensation`, the
-//      same compensation for Apply); src/app/resolveWorldTransform.ts (`resolveParentWorldMatrix`).
+// REF: issues #1516, #1517, #1854; src/app/animate/dispatchApplyTransform.ts (`childCompensation`,
+//      the same compensation for Apply); src/app/drawnWorldTransform.ts
+//      (`resolveDrawnParentWorldMatrix`).
 
 import * as THREE from 'three';
 import type { DagState } from '../core/dag/state';
@@ -59,8 +67,7 @@ import { quaternionToEulerVec3 } from '../core/import/threeAdapter';
 import { isKeyframeChannelNode } from './animate/paramAnimationState';
 import { isCameraNode } from './cameraNode';
 import { isLightNode } from './lightNode';
-import { relationalPoseStackForTarget } from './nodeConstraints';
-import { resolveParentWorldMatrix } from './resolveWorldTransform';
+import { resolveDrawnParentWorldMatrix } from './drawnWorldTransform';
 import { rotationWriteOf } from './resolvedRotation';
 import { hierarchySocketsOf, parentIdsOf } from './sceneHierarchy';
 import { isInScene } from './sceneMembership';
@@ -159,25 +166,6 @@ export function movableHolderEdges(state: DagState, childId: NodeId): HolderEdge
   if (parent && !out.some((e) => e.node === parent))
     out.push({ node: parent, socket: 'children', byParentInput: true });
   return out;
-}
-
-/**
- * `id` or the nearest node above it that a constraint poses, or null. A constraint is drawn by the
- * renderer and is not in `resolveWorldTransform`'s walk (#1829), so the world this module reads for
- * a child of one is not the world it is drawn in: measured, a child at (3, 0, -2) under an aimed
- * parent landed at (5, 0, 0). That move is refused until the read can see the aim.
- */
-function constrainedAtOrAbove(state: DagState, id: NodeId): NodeId | null {
-  const seen = new Set<NodeId>();
-  const stack = [id];
-  while (stack.length > 0) {
-    const cur = stack.pop()!;
-    if (seen.has(cur)) continue;
-    seen.add(cur);
-    if (relationalPoseStackForTarget(state.nodes, cur).length > 0) return cur;
-    stack.push(...parentIdsOf(state, cur));
-  }
-  return null;
 }
 
 /** True when `id` is `ancestorId` or hangs somewhere below it. */
@@ -408,8 +396,9 @@ export function buildMoveOps(
   // One gesture, one cache, and one read per holder: resolving a child means evaluating its parent,
   // whose value holds every sibling, so a read per child costs the square of a big group.
   const cache = createEvaluatorCache();
+  // #1854 — as drawn: an aimed or following holder counts with its constraint.
   const parentWorldOf = (from: DagState, childId: NodeId): THREE.Matrix4 =>
-    resolveParentWorldMatrix(from, childId, ctx, cache) ?? new THREE.Matrix4();
+    resolveDrawnParentWorldMatrix(from, childId, ctx, cache) ?? new THREE.Matrix4();
   const beforeWorlds = new Map<NodeId, THREE.Matrix4>();
   for (const move of moves) {
     const socket = receivingSocket(state, move.to, move.childId);
@@ -490,16 +479,6 @@ export function buildMoveOps(
     }
     ops.push(...rewire);
     if (!keep) continue;
-    // What the child hangs from now, and what it will: either read without its constraint is wrong.
-    const aimed = [...move.from.map((edge) => edge.node), move.to]
-      .map((holder) => constrainedAtOrAbove(state, holder))
-      .find((id) => id !== null);
-    if (aimed) {
-      return {
-        ok: false,
-        reason: `${opts.verb}: "${nodeDisplayName(state.nodes, aimed)}" is posed by a constraint, so "${nodeDisplayName(state.nodes, move.childId)}" cannot yet be kept in place under or away from it. Alt-drag it in the outliner to move it with its values as they are.`,
-      };
-    }
     // A child on a bone hangs from that bone, not from its holder alone, so it reads for itself.
     const holder = move.from[0]?.node;
     const onBone =

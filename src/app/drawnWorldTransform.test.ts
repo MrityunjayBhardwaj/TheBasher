@@ -416,9 +416,6 @@ describe('#1829 — the census of world readers', () => {
     'src/app/curveSampleSource.ts': 1, // a Follow-Path's curve
     'src/app/geometrySampleSource.ts': 2, // a driver's terrain and query point
     'src/app/gltfNodeWorld.ts': 1, // a Track-To's aim at a bone
-    // Keep-place: it refuses a constrained ancestor (`constrainedAtOrAbove`), so where it reads the
-    // two roads agree. It moves to the drawn road when that refusal goes.
-    'src/app/keepPlaceReparent.ts': 1,
     'src/app/nodeConstraints.ts': 3, // a constraint's origin, target and parent
     'src/app/rigIndex.ts': 2, // the armature world, read by a Track-To's aim at a bone
   };
@@ -429,6 +426,8 @@ describe('#1829 — the census of world readers', () => {
     'src/app/asset/fitMotionPathScale.ts': 1,
     'src/app/boot.ts': 1,
     'src/app/cameraTrackTo.ts': 2,
+    // Keep-place keeps a child where it is drawn under or away from an aimed parent (#1854).
+    'src/app/keepPlaceReparent.ts': 1,
     'src/app/lightAim.ts': 1,
     'src/app/skeletonObjects.ts': 1,
     'src/viewport/BoxSelectController.tsx': 1,
