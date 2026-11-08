@@ -50,7 +50,7 @@ const single = (binding: unknown): NodeRef | null =>
 
 /** The blend whose output is `outId`, or null when that node isn't one this module wrote. */
 export function readBlend(
-  state: DagState,
+  state: Pick<DagState, 'nodes'>,
   outId: string,
 ): { step: string; blend: StepBlend; below: NodeRef } | null {
   const input = (id: string | undefined, socket: string): NodeRef | null =>
@@ -102,7 +102,8 @@ export function readBlend(
 }
 
 /** `objectId`'s chain, or null when its wires aren't the shape this module writes. */
-export function readChain(state: DagState, objectId: string): Chain | null {
+/** Reads only the node table, so a caller holding just that can ask. */
+export function readChain(state: Pick<DagState, 'nodes'>, objectId: string): Chain | null {
   const object = state.nodes[objectId];
   if (!object) return null;
   let ref = single(object.inputs.constraints);
@@ -397,7 +398,11 @@ export type Influence =
   | { readonly kind: 'value'; readonly nodeId: string }
   | { readonly kind: 'wired'; readonly from: NodeRef | null };
 
-export function influenceOf(state: DagState, objectId: string, stepId: string): Influence | null {
+export function influenceOf(
+  state: Pick<DagState, 'nodes'>,
+  objectId: string,
+  stepId: string,
+): Influence | null {
   const step = readChain(state, objectId)?.steps.find((s) => s.id === stepId);
   if (!step) return null;
   if (!step.blend) return { kind: 'none' };

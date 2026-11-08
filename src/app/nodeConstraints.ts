@@ -28,11 +28,12 @@ import * as THREE from 'three';
 import type { DagState } from '../core/dag/state';
 import type { EvalCtx } from '../core/dag/types';
 import { resolveWorldTransform, resolveParentWorldMatrix } from './resolveWorldTransform';
-import { readCurveSampleAt } from './curveSampleSource';
+import { curveSamplerFor, readCurveSampleAt } from './curveSampleSource';
 import { gltfNodeWorldPosition } from './gltfNodeWorld';
 import { resolveEvaluatedParam } from './resolveEvaluatedParam';
 import { evaluate, type EvaluatorCache } from '../core/dag/evaluator';
-import { readChain } from '../core/dag/chainEdit';
+import { influenceOf, readChain } from '../core/dag/chainEdit';
+import { isDriverMuted } from './paramDrivers';
 import { getNodeType } from '../core/dag/registry';
 
 type Vec3 = [number, number, number];
@@ -337,28 +338,86 @@ export interface TransformController {
   /** The constraint node, so the row can name it and select it. */
   readonly nodeId: string;
   readonly type: 'TrackTo' | 'FollowPath';
+  /** #1795 — whether it decides the row outright: the row then shows the drawn value, locked.
+   *  False when it only partly decides it: the row shows and edits the object's own value. */
+  readonly locks: boolean;
 }
 
 /**
- * #1776 — the constraint that decides what `nodeId`'s `paramPath` is drawn with: the winning
- * Track-To for `rotation` / `quaternion`, the top Follow-Path for `position`. The inspector shows
- * the drawn value on such a row and locks it, naming this constraint (the user's call over
- * Blender, which shows the own value under a constraint): an edit there would change nothing on
- * screen. Muted members control nothing. Every other param → null.
+ * #1795 — `constraintId`'s influence when it is one held number, clamped to [0, 1]: 1 when its
+ * step has no blend (#1811: at 1 a step adds no blend), or when it is on no chain; the blend's
+ * Value when nothing keys, drives or places a strip on it. Null when the number moves (keyed,
+ * driven, on a strip) or a wire from anything else feeds the blend: no one value describes it.
+ */
+export function fixedInfluence(
+  nodes: Readonly<Record<string, NodeLike>>,
+  constraintId: string,
+): number | null {
+  const target = (nodes[constraintId]?.params as { target?: unknown } | undefined)?.target;
+  if (typeof target !== 'string') return null;
+  const influence = influenceOf({ nodes } as Pick<DagState, 'nodes'>, target, constraintId);
+  if (!influence || influence.kind === 'none') return 1;
+  if (influence.kind === 'wired') return null;
+  const held = influence.nodeId;
+  for (const [id, n] of Object.entries(nodes)) {
+    const p = n.params as { target?: unknown; paramPath?: unknown } | undefined;
+    if (p?.target !== held) continue;
+    if (n.type === 'Strip') return null;
+    if (p.paramPath !== 'value') continue;
+    if (n.type.startsWith('KeyframeChannel')) return null;
+    if (
+      n.type === 'ParamDriver' &&
+      !isDriverMuted({ ...n, id } as Parameters<typeof isDriverMuted>[0])
+    )
+      return null;
+  }
+  const raw = (nodes[held]?.params as { value?: unknown } | undefined)?.value;
+  return typeof raw === 'number' && !Number.isNaN(raw) ? Math.min(1, Math.max(0, raw)) : null;
+}
+
+/** #1795 — the top live Track-To on `nodeId` that can aim it: muted members and members at a
+ *  fixed influence of 0 are skipped (they aim nothing). The camera's aim reticle edits this one. */
+export function topContributingTrackTo(
+  nodes: Readonly<Record<string, NodeLike>>,
+  nodeId: string,
+): ActiveConstraint | null {
+  const live = constraintStackForTarget(nodes, nodeId).filter(
+    (m) => fixedInfluence(nodes, m.nodeId) !== 0,
+  );
+  return live[live.length - 1] ?? null;
+}
+
+/**
+ * #1776 — the constraint that decides what `nodeId`'s `paramPath` is drawn with: the top live
+ * Track-To for `rotation` / `quaternion`, the top live Follow-Path for `position`. Muted members,
+ * and members at a fixed influence of 0, control nothing. Every other param → null.
+ *
+ * #1795 (the user's call, 2026-11-04) — `locks` says whether it decides the row OUTRIGHT. A
+ * Track-To at a fixed full influence does: everything below it, the own rotation included, is
+ * replaced, so the row shows the drawn value, locked (#1776's rule: an edit there would change
+ * nothing on screen). A Follow Path never does (the own position is its offset, #1791), nor do
+ * Track-Tos none of which is at full influence: the row shows the own value, editable, with the
+ * constraint named beside it, as Blender does.
  */
 export function transformControllerOf(
   nodes: Readonly<Record<string, NodeLike>>,
   nodeId: string,
   paramPath: string,
 ): TransformController | null {
+  const live = (members: readonly { nodeId: string }[]) =>
+    members
+      .map((m) => ({ id: m.nodeId, f: fixedInfluence(nodes, m.nodeId) }))
+      .filter((m) => m.f !== 0);
   if (paramPath === 'rotation' || paramPath === 'quaternion') {
-    const aim = activeConstraintForTarget(nodes, nodeId);
-    return aim ? { nodeId: aim.nodeId, type: 'TrackTo' } : null;
+    const members = live(constraintStackForTarget(nodes, nodeId));
+    const top = members[members.length - 1];
+    if (!top) return null;
+    return { nodeId: top.id, type: 'TrackTo', locks: members.some((m) => m.f === 1) };
   }
   if (paramPath === 'position') {
-    const stack = followPathStackForTarget(nodes, nodeId);
-    const top = stack[stack.length - 1];
-    return top ? { nodeId: top.nodeId, type: 'FollowPath' } : null;
+    const members = live(followPathStackForTarget(nodes, nodeId));
+    const top = members[members.length - 1];
+    return top ? { nodeId: top.id, type: 'FollowPath', locks: false } : null;
   }
   return null;
 }
@@ -638,6 +697,70 @@ export function resolveConstraintPosition(
  * world, as Blender's does, and that is not a shape position, rotation and scale can hold under
  * such a parent.
  */
+/**
+ * #1794 — how the object's drawn WORLD position answers a change of its own world position: the
+ * product, bottom step first, of each live Follow Path's curve turn and scale, `L`, mixed by its
+ * blend's factor as `(1 − f)·I + f·L`. A Follow Path draws `point + L · below`
+ * (`followPathStep`), a Track-To leaves the position alone, and a blend mixes the positions, so
+ * the drawn position is affine in the own one and this is its linear part. A drag of the drawn
+ * point carried through its inverse moves the own position so the object lands under the cursor,
+ * as Blender's grab does for a Follow Path (`constraints_list_needinv`). Null when no step moves
+ * the position, or a blend's factor has no single source to read.
+ */
+export function chainPositionLinear(
+  state: DagState,
+  nodeId: string,
+  ctx: EvalCtx,
+  cache?: EvaluatorCache,
+): THREE.Matrix3 | null {
+  const chain = readChain(state, nodeId);
+  if (!chain?.own) return null;
+  const read = (ref: { node: string; socket: string }) =>
+    evaluate(state, ref.node, { socket: ref.socket, ctx, cache }).value;
+  // A bypassed step moves nothing, read through the one scan that reads the flag.
+  const muted = new Set(
+    relationalPoseStackForTarget(state.nodes, nodeId, true)
+      .filter((m) => m.muted)
+      .map((m) => m.nodeId),
+  );
+  let a: THREE.Matrix3 | null = null;
+  try {
+    for (const step of chain.steps) {
+      const node = state.nodes[step.id];
+      if (node?.type !== 'FollowPath' || muted.has(step.id)) continue;
+      // The curve object: wired, or named by the step's setting (`worldRefs`), as the evaluator
+      // reads it.
+      const wired = node.inputs.curve;
+      const named = (node.params as { curve?: unknown }).curve;
+      const curveRef =
+        wired && !Array.isArray(wired)
+          ? wired
+          : typeof named === 'string' && state.nodes[named]
+            ? { node: named, socket: 'world' }
+            : null;
+      if (!curveRef) continue;
+      const curveWorld = new THREE.Matrix4().fromArray(read(curveRef) as number[]);
+      // A curve with nothing to sample leaves the position as it came (`followPathStep`).
+      if (!curveSamplerFor(state, curveRef.node, ctx, cache, curveWorld.toArray())) continue;
+      let f = 1;
+      if (step.blend) {
+        if (!step.blend.factor) return null;
+        const v = read(step.blend.factor);
+        if (typeof v !== 'number') return null;
+        f = v;
+      }
+      const l = new THREE.Matrix3().setFromMatrix4(curveWorld);
+      const m = new THREE.Matrix3().fromArray(
+        l.elements.map((v, i) => f * v + (i % 4 === 0 ? 1 - f : 0)),
+      );
+      a = a ? m.multiply(a) : m;
+    }
+  } catch {
+    return null;
+  }
+  return a;
+}
+
 export function chainDrawCorrection(
   state: DagState,
   nodeId: string,

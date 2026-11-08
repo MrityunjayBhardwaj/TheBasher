@@ -292,6 +292,28 @@ describe('where the chain differs on purpose', () => {
     position(chain).forEach((v, i) => expect(v).toBeCloseTo([7, 0, 0][i], 4));
     expect(console.warn).toHaveBeenCalledWith(expect.stringContaining('compose in order: a.'));
   });
+
+  // #1853 — a curve with no points places nothing (`curveSamplerFor` has nothing to sample), so
+  // its follower stood at its own position and must keep it: not zeroed as an offset.
+  it('a Follow Path on a curve with no points placed nothing, so its object keeps its position', () => {
+    // The app cannot make one (a curve keeps at least two points), but loading takes a saved file's
+    // params as they are, so an older file can hold one. It is emptied here the same way.
+    const built = run(follower(), [
+      ...line(),
+      add('f', 'FollowPath', { target: 'a', curve: 'cv', evalTime: 0.5 }),
+    ]);
+    const cvData = built.nodes.cv_d;
+    const s: DagState = {
+      ...built,
+      nodes: { ...built.nodes, cv_d: { ...cvData, params: { ...cvData.params, points: [] } } },
+    };
+    const after = convert(s);
+    expect(after.nodes.a.params.position).toEqual([0, 4, 0]);
+    for (const t of TIMES) {
+      const m = evaluate(after, 'a', { socket: 'world', ctx: at(t) }).value as number[];
+      position(m).forEach((v, i) => expect(v, `at ${t}`).toBeCloseTo([0, 4, 0][i], 4));
+    }
+  });
 });
 
 describe('what the conversion writes', () => {

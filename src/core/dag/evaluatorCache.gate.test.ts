@@ -442,6 +442,8 @@ const TAKERS: string[] = [
   'aimedRotation@src/app/nodeConstraints.ts',
   'chainDrawCorrection@src/app/nodeConstraints.ts',
   'chainParentWorld@src/app/nodeConstraints.ts',
+  // #1794 — the chain's position map, read at gizmo seed with the gizmo's cache.
+  'chainPositionLinear@src/app/nodeConstraints.ts',
   // #1785 — a transform driver's channels and the value on its `in`, read with the fold's cache.
   'transformDriverChannels@src/app/paramDrivers.ts',
   'inSampler@src/app/paramDrivers.ts',
