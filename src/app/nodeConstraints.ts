@@ -658,12 +658,17 @@ export function chainPositionLinear(
   if (!chain?.own) return null;
   const read = (ref: { node: string; socket: string }) =>
     evaluate(state, ref.node, { socket: ref.socket, ctx, cache }).value;
+  // A bypassed step moves nothing, read through the one scan that reads the flag.
+  const muted = new Set(
+    relationalPoseStackForTarget(state.nodes, nodeId, true)
+      .filter((m) => m.muted)
+      .map((m) => m.nodeId),
+  );
   let a: THREE.Matrix3 | null = null;
   try {
     for (const step of chain.steps) {
       const node = state.nodes[step.id];
-      if (node?.type !== 'FollowPath' || (node.params as { mute?: boolean }).mute === true)
-        continue;
+      if (node?.type !== 'FollowPath' || muted.has(step.id)) continue;
       // The curve object: wired, or named by the step's setting (`worldRefs`), as the evaluator
       // reads it.
       const wired = node.inputs.curve;
