@@ -109,7 +109,9 @@ import { NodeSchema, NodeIdSchema, NodeRefSchema } from '../dag/types';
 // migrations.ts `migrateChildrenToParentInputs` (`PARENT_INPUTS_FORMAT`).
 // v29 (#1812): a constraint stack is a wired chain ending at its object. See migrations.ts
 // `migrateConstraintsToChains` (`CONSTRAINT_CHAINS_FORMAT`).
-export const PROJECT_FORMAT_VERSION = 29;
+// v30 (#1856): a lens saved past v26 without the v26 strip loses `lookAt`, `roll` and `zoom`. See
+// migrations.ts `migrateStaleLensFields` (`CAMERA_LENS_STRIP_FORMAT`).
+export const PROJECT_FORMAT_VERSION = 30;
 
 export const ProjectSchema = z.object({
   formatVersion: z.literal(PROJECT_FORMAT_VERSION),

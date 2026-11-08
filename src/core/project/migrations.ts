@@ -59,6 +59,9 @@ export const PARENT_INPUTS_FORMAT = 28;
 /** #1812 — the format version the constraint-stacks-to-chains conversion produces. */
 export const CONSTRAINT_CHAINS_FORMAT = PARENT_INPUTS_FORMAT + 1;
 
+/** #1856 — the format version that finishes the v26 lens strip on files saved past v26 without it. */
+export const CAMERA_LENS_STRIP_FORMAT = CONSTRAINT_CHAINS_FORMAT + 1;
+
 /** Ladder of project-format migrations keyed by source version. */
 const formatMigrations: Record<number, FormatMigration> = {
   // v1 → v2 (#199): retire the AnimationLayer wrapper graph-wide.
@@ -183,6 +186,9 @@ const formatMigrations: Record<number, FormatMigration> = {
   // v28 → v29 (#1812): each object's constraint stack becomes a wired chain, and a followed object's
   // own position becomes zero, as a Follow Path now adds it to the path.
   [CONSTRAINT_CHAINS_FORMAT - 1]: migrateConstraintsToChains,
+  // v29 → v30 (#1856): a lens saved past v26 still holding `lookAt`, `roll` or `zoom` loses them, as
+  // the v26 step does now; a file saved before the step learned to strip them never ran it again.
+  [CAMERA_LENS_STRIP_FORMAT - 1]: migrateStaleLensFields,
 };
 
 // ── v1 → v2: AnimationLayer retirement (#199) ──────────────────────────────
@@ -3141,4 +3147,73 @@ export function migrateConstraintsToChains(raw: unknown): unknown {
     wire(objectId, 'constraints', below);
   }
   return { ...proj, state: { ...proj.state, nodes: out }, formatVersion: CONSTRAINT_CHAINS_FORMAT };
+}
+
+// ── v29 → v30: finish the lens strip on files saved past v26 without it (#1856) ────────────────
+// The v26 step first moved a camera's aim onto a Track-To and set the lens `roll` to 0, but kept
+// `lookAt` and `zoom` on the lens. It learned to frame an orthographic camera by its own
+// `orthoScale` (from the old `zoom`-free framing, `2·tan(fov/2)·|lookAt − position|`) and to strip
+// `lookAt`, `roll` and `zoom` only later, and a file already at v26 never ran it again. The bundled
+// "Camera Path + AI Walk" example was saved in between, and boot seeds a stored copy of it once and
+// never over it, so stored copies and anything saved from them keep three params the lens schema
+// does not have: every door that re-creates the node (duplicate, paste, restore) refuses it.
+//
+// From any v26+ file those fields are inert: the aim is the Track-To the step made (or whatever
+// the person turned the camera to since), and nothing reads the lens `roll` or `zoom`. So this step
+// is the part the v26 step gained after: an orthographic lens with no `orthoScale` gets the frame
+// it was drawn with, the three fields leave every lens, and keys or drivers on `zoom` (which drove
+// nothing) are removed. Keys on `lookAt` / `roll` were already moved by the step that made the aim.
+const STALE_LENS_FIELDS = ['lookAt', 'roll', 'zoom'] as const;
+
+export function migrateStaleLensFields(raw: unknown): unknown {
+  const proj = raw as { formatVersion?: number; state?: { nodes?: Record<string, RawNode> } };
+  const nodes = proj.state?.nodes;
+  if (!nodes) return { ...proj, formatVersion: CAMERA_LENS_STRIP_FORMAT };
+  const out: Record<string, RawNode> = { ...nodes };
+  const entries = Object.entries(nodes);
+  const isVec3 = (v: unknown): v is [number, number, number] =>
+    Array.isArray(v) && v.length === 3 && v.every((x) => typeof x === 'number');
+  const lenses: string[] = [];
+  let droppedZoomKeys = 0;
+  for (const [dataId, lens] of entries) {
+    if (lens?.type !== 'CameraData' || !lens.params) continue;
+    const p = lens.params;
+    if (!STALE_LENS_FIELDS.some((k) => k in p)) continue;
+    const { lookAt, roll: _roll, zoom: _zoom, ...rest } = p;
+    void _roll;
+    void _zoom;
+    const objId = entries.find(([, n]) =>
+      asRefs(n?.inputs?.data).some((r) => r.node === dataId),
+    )?.[0];
+    if (p.projection === 'Orthographic' && typeof p.orthoScale !== 'number') {
+      const at = objId ? out[objId]?.params?.position : undefined;
+      const dist =
+        isVec3(at) && isVec3(lookAt)
+          ? Math.hypot(lookAt[0] - at[0], lookAt[1] - at[1], lookAt[2] - at[2])
+          : 0;
+      const fov = typeof p.fov === 'number' && Number.isFinite(p.fov) ? p.fov : 45;
+      rest.orthoScale = 2 * (Math.tan((fov * Math.PI) / 360) * dist || 1);
+    }
+    out[dataId] = { ...lens, params: rest };
+    lenses.push(dataId);
+    for (const [id, n] of entries) {
+      const q = n?.params;
+      if (q?.paramPath !== 'zoom' || (q.target !== dataId && q.target !== objId)) continue;
+      if (
+        !(typeof n.type === 'string' && n.type.startsWith('KeyframeChannel')) &&
+        n.type !== 'ParamDriver'
+      )
+        continue;
+      delete out[id];
+      droppedZoomKeys++;
+    }
+  }
+  if (lenses.length > 0) {
+    console.warn(
+      `[migrateStaleLensFields] ${lenses.length} camera lens(es) (${lenses.join(', ')}) lost the ` +
+        `look-at, roll or zoom their schema no longer has; ${droppedZoomKeys} key/driver node(s) ` +
+        `on zoom removed (#1856).`,
+    );
+  }
+  return { ...proj, state: { ...proj.state, nodes: out }, formatVersion: CAMERA_LENS_STRIP_FORMAT };
 }
