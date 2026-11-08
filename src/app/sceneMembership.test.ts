@@ -292,7 +292,7 @@ describe('the doors that move a camera keep it in the scene (#1517 with #1518)',
     const after = run(s, buildDeleteNodesOps(s, ['G']));
     expect(after.nodes.G).toBeUndefined();
     expect(isInScene(after, 'cam')).toBe(true);
-    expect(after.nodes.cam.params.position).toEqual([5, 2, 3]);
+    expect((after.nodes.cam.params as { position?: unknown }).position).toEqual([5, 2, 3]);
   });
 });
 
