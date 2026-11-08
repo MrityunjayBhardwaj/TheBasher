@@ -90,6 +90,24 @@ describe('reading the Crate', () => {
   });
 });
 
+describe('what the stack reaches through a name', () => {
+  it('shows it without its edits, and "go to" opens the object it belongs to', () => {
+    show(m.crate);
+    const rail = (dag().nodes.follow.params as { curve: string }).curve;
+    const curve = (dag().nodes[rail].inputs.data as NodeRef).node;
+    const railRow = container.querySelector(`[data-row-key="${rail}"]`) as HTMLElement;
+    const curveRow = container.querySelector(`[data-row-key="${curve}"]`) as HTMLElement;
+    expect(railRow.getAttribute('draggable')).toBe('false');
+    expect(curveRow.querySelector('[data-testid^="s-remove-"]')).toBeNull();
+    expect(curveRow.querySelector('[data-testid^="s-up-"]')).toBeNull();
+    const goTo = railRow.querySelector('[data-testid^="s-goto-"]') as HTMLElement;
+    act(() => goTo.click());
+    expect(useSelectionStore.getState().selectedNodeId).toBe(rail);
+    // What the Crate owns keeps its edits.
+    expect(el('s-row-mirror')?.querySelector('[data-testid="s-remove-mirror"]')).not.toBeNull();
+  });
+});
+
 describe('editing through the panel', () => {
   it('mute writes the bypass, and the button says so', () => {
     show(m.crate);

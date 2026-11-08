@@ -10,7 +10,8 @@
 //    only the person knows whether that is meant. A row can still be added above it, because that
 //    moves one wire.
 //  - the top row of the view: it is the view's output, and what reads it is outside the view.
-//  - a row a param names instead of a wire (`worldRefs`): that is the param's to change.
+//  - a row a param names instead of a wire (`worldRefs`), and everything under it: it belongs to
+//    the object named, and is edited there. This stack only shows what it depends on.
 //  - the source of a blended step's influence: without one the step stops being one row.
 //  - a node with more than one output added where the wire could take either.
 //  - a constraint leaving its chain: it says in its own `target` whose chain it is on.
@@ -105,6 +106,8 @@ interface Place {
   readonly top: RunTop;
   /** What reads this row. Null on the view's own top row. */
   readonly slot: readonly Wire[] | null;
+  /** The object this row belongs to when the view reaches it by a name, not a wire; else null. */
+  readonly byName: { readonly object: string; readonly param: string } | null;
 }
 
 const refuse = (reason: string): never => {
@@ -140,20 +143,25 @@ function groupTop(row: StackNodeRow, group: StackGroup): RunTop {
 /** Every row of the view by key, with what reads it. */
 function locate(state: DagState, output: NodeRef): Map<string, Place> {
   const places = new Map<string, Place>();
-  const visit = (rows: readonly StackRow[], top: RunTop) => {
+  const visit = (rows: readonly StackRow[], top: RunTop, byName: Place['byName']) => {
     rows.forEach((row, index) => {
       const above = rows[index - 1];
       const slot = above?.kind === 'node' ? entriesOf(above) : top.wires;
-      places.set(row.key, { row, run: rows, index, top, slot });
+      places.set(row.key, { row, run: rows, index, top, slot, byName });
       if (row.kind !== 'node') return;
-      for (const group of row.groups) visit(group.rows, groupTop(row, group));
+      for (const group of row.groups) {
+        // Everything under a name belongs to the object named, however deep it goes.
+        const named = group.reference && group.rows[0];
+        const under = byName ?? (named ? { object: named.nodeId, param: group.reference! } : null);
+        visit(group.rows, groupTop(row, group), under);
+      }
       if (row.template) {
         const body = single(TEMPLATE_BODY_SOCKET, row.nodeId);
-        visit(row.template.inside, { wires: [body], reference: null, factor: false });
+        visit(row.template.inside, { wires: [body], reference: null, factor: false }, byName);
       }
     });
   };
-  visit(stackOf(state, output), { wires: null, reference: null, factor: false });
+  visit(stackOf(state, output), { wires: null, reference: null, factor: false }, null);
   return places;
 }
 
@@ -593,8 +601,27 @@ function assertCommits(state: DagState, ops: readonly Op[]) {
   if (dangling) refuse(`"${dangling.node}" still names "${dangling.missing}"`);
 }
 
+/**
+ * A row the view reaches through another object's name is that object's to edit: this stack only
+ * shows what it depends on. Deleting the curve a Follow Path follows from the follower's stack would
+ * reshape the path for everything that follows it.
+ */
+function refusedIfNamed(places: ReadonlyMap<string, Place>, key: string) {
+  const owner = places.get(key)?.byName;
+  if (owner) {
+    refuse(
+      `"${places.get(key)!.row.nodeId}" belongs to "${owner.object}", which this stack reads by its ` +
+        `"${owner.param}" setting; edit it on "${owner.object}"`,
+    );
+  }
+}
+
 function opsOf(state: DagState, output: NodeRef, edit: StackEdit): Op[] {
   const places = locate(state, output);
+  if (edit.kind !== 'add') refusedIfNamed(places, edit.row);
+  if (edit.kind === 'add' || edit.kind === 'regroup') {
+    refusedIfNamed(places, 'above' in edit.place ? edit.place.above : edit.place.route.owner);
+  }
   switch (edit.kind) {
     case 'add':
       return addOps(state, output, edit);

@@ -103,7 +103,7 @@ export const FollowPathNode: NodeDefinition<FollowPathParams, FollowPathConstrai
     // #1811 — the transform that came up the chain, changed by this constraint.
     world: { type: 'Matrix4', cardinality: 'single', world: true },
   },
-  // #1817 — 'stack': a step selected in the Transform Stack keeps its object's stack on screen.
+  // #1817 — 'stack': a step selected in the Constraint Stack keeps its object's stack on screen.
   inspectorSections: ['constraint', 'driver', 'stack'],
   // The path is bound through the general node-ref picker (#341). `shape:'id'` because
   // `curve` is a plain string id (the fold reads it raw); `kind:'curve'` filters the

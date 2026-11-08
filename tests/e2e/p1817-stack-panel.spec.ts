@@ -1,4 +1,4 @@
-// #1817 — the Transform Stack card in the running app. A chain built, blended, reordered and cut
+// #1817 — the Constraint Stack card in the running app. A chain built, blended, reordered and cut
 // through the stack panel moves the object the viewport draws, and a refused edit says why.
 
 import { expect, test } from './_fixtures';
@@ -59,9 +59,9 @@ const select = (page: Page, id: string) =>
 /** Every row id the panel draws, groups included, top first. */
 const allRows = (page: Page) =>
   page
-    .getByTestId('transform-stack-panel')
-    .locator('[data-testid^="transform-stack-row-"]')
-    .evaluateAll((els) => els.map((e) => e.getAttribute('data-testid')!.slice(20)));
+    .getByTestId('constraint-chain-panel')
+    .locator('[data-testid^="constraint-chain-row-"]')
+    .evaluateAll((els) => els.map((e) => e.getAttribute('data-testid')!.slice(21)));
 
 /** The chain's own rows: what the curve group and the influence group hold left out. */
 const rowOrder = async (page: Page) =>
@@ -69,7 +69,7 @@ const rowOrder = async (page: Page) =>
     (id) => !['e_c', 'e_cd'].includes(id) && !id.includes('_influence_'),
   );
 
-test('the Transform Stack builds, blends, reorders and cuts a chain, and the object follows', async ({
+test('the Constraint Stack builds, blends, reorders and cuts a chain, and the object follows', async ({
   page,
 }) => {
   await boot(page);
@@ -112,12 +112,12 @@ test('the Transform Stack builds, blends, reorders and cuts a chain, and the obj
   // The card is on the object, empty, and "+ add" offers the constraints.
   await select(page, 'n_box');
   await page.getByTestId('inspector-section-toggle-stack').click();
-  const panel = page.getByTestId('transform-stack-panel');
+  const panel = page.getByTestId('constraint-chain-panel');
   await expect(panel).toBeVisible();
-  await page.getByTestId('transform-stack-empty-n_box-constraints').click();
-  await expect(page.getByTestId('transform-stack-offer-TrackTo')).toBeVisible();
-  await page.getByTestId('transform-stack-offer-FollowPath').click();
-  await expect(page.getByTestId('transform-stack-row-FollowPath_1')).toBeVisible();
+  await page.getByTestId('constraint-chain-empty-n_box-constraints').click();
+  await expect(page.getByTestId('constraint-chain-offer-TrackTo')).toBeVisible();
+  await page.getByTestId('constraint-chain-offer-FollowPath').click();
+  await expect(page.getByTestId('constraint-chain-row-FollowPath_1')).toBeVisible();
   expect(await rowOrder(page)).toEqual(['FollowPath_1', 'n_box_own_world']);
 
   // Point it at the path: the object goes to the end of it.
@@ -136,7 +136,7 @@ test('the Transform Stack builds, blends, reorders and cuts a chain, and the obj
   await influence.fill('0.5');
   await expectAt(page, 'n_box', [-2, 7, 0]);
   await select(page, 'n_box');
-  await expect(page.getByTestId('transform-stack-influence-FollowPath_1')).toContainText(
+  await expect(page.getByTestId('constraint-chain-influence-FollowPath_1')).toContainText(
     'influence 0.5',
   );
   expect(await rowOrder(page)).toEqual(['FollowPath_1', 'n_box_own_world']);
@@ -146,41 +146,41 @@ test('the Transform Stack builds, blends, reorders and cuts a chain, and the obj
   ]);
 
   // A Track-To on top through "+", then ▼ moves it under the blended Follow Path.
-  await page.getByTestId('transform-stack-row-FollowPath_1').hover();
-  await page.getByTestId('transform-stack-add-FollowPath_1').click();
-  await page.getByTestId('transform-stack-offer-TrackTo').click();
+  await page.getByTestId('constraint-chain-row-FollowPath_1').hover();
+  await page.getByTestId('constraint-chain-add-FollowPath_1').click();
+  await page.getByTestId('constraint-chain-offer-TrackTo').click();
   expect(await rowOrder(page)).toEqual(['TrackTo_1', 'FollowPath_1', 'n_box_own_world']);
-  await page.getByTestId('transform-stack-row-TrackTo_1').hover();
-  await page.getByTestId('transform-stack-down-TrackTo_1').click();
+  await page.getByTestId('constraint-chain-row-TrackTo_1').hover();
+  await page.getByTestId('constraint-chain-down-TrackTo_1').click();
   expect(await rowOrder(page)).toEqual(['FollowPath_1', 'TrackTo_1', 'n_box_own_world']);
-  await expect(page.getByTestId('transform-stack-influence-FollowPath_1')).toContainText(
+  await expect(page.getByTestId('constraint-chain-influence-FollowPath_1')).toContainText(
     'influence 0.5',
   );
   await expectAt(page, 'n_box', [-2, 7, 0]); // a Track-To aiming at nothing moves nothing
 
   // The bottom of the chain can't go: the panel says why, and nothing changes.
-  await page.getByTestId('transform-stack-row-n_box_own_world').hover();
-  await page.getByTestId('transform-stack-remove-n_box_own_world').click();
-  await expect(page.getByTestId('transform-stack-notice')).toContainText(
+  await page.getByTestId('constraint-chain-row-n_box_own_world').hover();
+  await page.getByTestId('constraint-chain-remove-n_box_own_world').click();
+  await expect(page.getByTestId('constraint-chain-notice')).toContainText(
     'bottom of a constraint chain',
   );
 
   // Mute the Follow Path: the object is back at its own place. Mute again: half way.
-  await page.getByTestId('transform-stack-mute-FollowPath_1').click();
+  await page.getByTestId('constraint-chain-mute-FollowPath_1').click();
   await expectAt(page, 'n_box', [0, 4, 0]);
-  await page.getByTestId('transform-stack-mute-FollowPath_1').click();
+  await page.getByTestId('constraint-chain-mute-FollowPath_1').click();
   await expectAt(page, 'n_box', [-2, 7, 0]);
 
   // Delete it, blend and all: the object is home, and one undo brings the whole blend back.
-  await page.getByTestId('transform-stack-row-FollowPath_1').hover();
-  await page.getByTestId('transform-stack-remove-FollowPath_1').click();
+  await page.getByTestId('constraint-chain-row-FollowPath_1').hover();
+  await page.getByTestId('constraint-chain-remove-FollowPath_1').click();
   expect(await rowOrder(page)).toEqual(['TrackTo_1', 'n_box_own_world']);
   await expectAt(page, 'n_box', [0, 4, 0]);
   await page.evaluate(() => (window as unknown as W).__basher_dag.getState().undo());
   await expectAt(page, 'n_box', [-2, 7, 0]);
   expect(await rowOrder(page)).toEqual(['FollowPath_1', 'TrackTo_1', 'n_box_own_world']);
 
-  await page.getByTestId('transform-stack-panel').screenshot({
-    path: test.info().outputPath('transform-stack.png'),
+  await page.getByTestId('constraint-chain-panel').screenshot({
+    path: test.info().outputPath('constraint-stack.png'),
   });
 });

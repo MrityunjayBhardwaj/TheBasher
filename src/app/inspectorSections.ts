@@ -102,7 +102,7 @@ export function formatSectionLabel(id: SectionId): string {
  */
 const SECTION_LABELS: Partial<Record<SectionId, string>> = {
   slots: 'Material Slots',
-  stack: 'Transform Stack',
+  stack: 'Constraint Stack',
 };
 
 /** D-10 A — multi-select Inspector resolution: show Transform + Layout

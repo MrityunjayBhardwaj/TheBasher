@@ -13,6 +13,7 @@ import type { NodeRef, Op } from '../core/dag/types';
 import { buildDefaultDagState } from '../core/project/default';
 import { buildAllExampleProjects } from '../core/project/examples';
 import { registerAllNodes } from '../nodes/registerAll';
+import { buildCrateMockup } from '../test-utils/crateMockup';
 import { makeSplitCube } from '../test-utils/splitCube';
 import { planStackEdit, type StackEdit, type StackPlace } from './stackEdit';
 import { stackOf, type StackNodeRow, type StackRow } from './stackTree';
@@ -559,6 +560,26 @@ describe('moving the top row', () => {
   it("is refused: what holds the view's output isn't in the view", () => {
     const place: StackPlace = { route: { owner: 'clamp', socket: 'in' } };
     expect(refusal(numberRun(), MATH, { kind: 'regroup', row: 'math', place })).toMatch(/output/);
+  });
+});
+
+describe('what a stack reaches through a name', () => {
+  it("belongs to the object named: the Crate's stack can't delete the curve Rail is made of", () => {
+    const m = buildCrateMockup(buildDefaultDagState());
+    const rail = (m.state.nodes.follow.params as { curve: string }).curve;
+    const curve = (m.state.nodes[rail].inputs.data as NodeRef).node;
+    const curveRow = allKeys(stackOf(m.state, m.crate)).find(
+      (r) => r.kind === 'node' && r.nodeId === curve,
+    )!;
+    const reason = refusal(m.state, m.crate, { kind: 'delete', row: curveRow.key });
+    expect(reason).toMatch(new RegExp(`belongs to "${rail}".*edit it on "${rail}"`));
+    expect(refusal(m.state, m.crate, { kind: 'mute', row: curveRow.key })).toMatch(/belongs to/);
+    const place: StackPlace = { above: curveRow.key };
+    expect(
+      refusal(m.state, m.crate, { kind: 'add', nodeId: 'x', nodeType: 'Clamp', place }),
+    ).toMatch(/belongs to/);
+    // On Rail's own stack the same row is Rail's, and the same delete is an ordinary one.
+    expect(planStackEdit(m.state, out(rail), { kind: 'delete', row: curve }).ok).toBe(true);
   });
 });
 

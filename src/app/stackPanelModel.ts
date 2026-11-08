@@ -169,7 +169,7 @@ export function offersAt(state: DagState, output: NodeRef, place: StackPlace): O
 }
 
 /**
- * The object whose Transform Stack a selected node shows: a constraint step's own object (its
+ * The object whose Constraint Stack a selected node shows: a constraint step's own object (its
  * `target`), so selecting a row keeps the stack on screen, as the old Constraints card did.
  */
 export function stackObjectOf(state: DagState, nodeId: string): string {

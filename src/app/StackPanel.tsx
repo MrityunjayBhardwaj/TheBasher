@@ -52,11 +52,11 @@ export interface StackPanelProps {
   readonly lane?: string;
 }
 
-/** The Transform Stack card: the constraints lane of the selected object, or of a selected step's. */
-export function TransformStackCard({ nodeId }: { readonly nodeId: string }) {
+/** The Constraint Stack card: the constraints lane of the selected object, or of a selected step's. */
+export function ConstraintStackCard({ nodeId }: { readonly nodeId: string }) {
   const object = useDagStore((s) => stackObjectOf(s.state, nodeId));
   const output = useMemo(() => ({ node: object, socket: 'out' }), [object]);
-  return <StackPanel output={output} lane="constraints" testIdPrefix="transform-stack" />;
+  return <StackPanel output={output} lane="constraints" testIdPrefix="constraint-chain" />;
 }
 
 /** The key a template row's inside opens and closes by. */
@@ -175,7 +175,9 @@ export function StackPanel({ output, testIdPrefix = 'stack', lane }: StackPanelP
     );
   }
 
-  function renderGroup(owner: StackNodeRow, group: StackGroup): ReactNode {
+  function renderGroup(owner: StackNodeRow, group: StackGroup, named: string | null): ReactNode {
+    // Under a name, every row is the named object's: shown, not edited here.
+    const under = named ?? (group.reference ? (group.rows[0]?.nodeId ?? null) : null);
     const open = isOpen(group.key, true);
     const list = group.index !== null;
     const routes = list ? owner.groups.filter((g) => g.socket === group.socket).length : 0;
@@ -184,7 +186,7 @@ export function StackPanel({ output, testIdPrefix = 'stack', lane }: StackPanelP
         <div
           data-testid={`${p}-group-${group.key}`}
           className="flex items-center gap-1 text-fg-dim"
-          {...dropOn({ route: { owner: owner.key, socket: group.socket } })}
+          {...(named ? {} : dropOn({ route: { owner: owner.key, socket: group.socket } }))}
         >
           <button
             type="button"
@@ -204,7 +206,7 @@ export function StackPanel({ output, testIdPrefix = 'stack', lane }: StackPanelP
               </span>
             )}
           </button>
-          {list ? (
+          {list && !named ? (
             <>
               <button
                 type="button"
@@ -251,12 +253,18 @@ export function StackPanel({ output, testIdPrefix = 'stack', lane }: StackPanelP
             </>
           ) : null}
         </div>
-        {open ? renderRun(group.rows) : null}
+        {open ? renderRun(group.rows, under) : null}
       </div>
     );
   }
 
-  function renderNode(row: StackNodeRow, run_: readonly StackRow[], index: number): ReactNode {
+  function renderNode(
+    row: StackNodeRow,
+    run_: readonly StackRow[],
+    index: number,
+    named: string | null,
+  ): ReactNode {
+    const editable = named === null;
     const view = rowView(state, row);
     const active = row.nodeId === selectedNodeId;
     const empty = emptySockets(state, row);
@@ -267,13 +275,13 @@ export function StackPanel({ output, testIdPrefix = 'stack', lane }: StackPanelP
         <div
           data-testid={`${p}-row-${row.key}`}
           data-row-key={row.nodeId}
-          draggable
+          draggable={editable}
           onDragStart={(e) => {
             setDragging(row.key);
             e.dataTransfer?.setData('text/plain', row.key);
           }}
           onDragEnd={() => setDragging(null)}
-          {...dropOn({ above: row.key })}
+          {...(editable ? dropOn({ above: row.key }) : {})}
           className={`group flex items-center gap-1 rounded border px-1 py-0.5 ${
             active ? 'border-accent bg-bg-2' : 'border-border'
           }`}
@@ -288,7 +296,18 @@ export function StackPanel({ output, testIdPrefix = 'stack', lane }: StackPanelP
             {view.name !== view.type ? <span className="text-fg-dim"> · {view.type}</span> : null}
             {view.tag ? <span className="text-fg-dim"> [{view.tag}]</span> : null}
           </button>
-          {view.muted !== null ? (
+          {named === row.nodeId ? (
+            <button
+              type="button"
+              data-testid={`${p}-goto-${row.key}`}
+              className={BTN}
+              title={`Edit ${view.name} on its own`}
+              onClick={() => select(row.nodeId)}
+            >
+              go to
+            </button>
+          ) : null}
+          {editable && view.muted !== null ? (
             <button
               type="button"
               data-testid={`${p}-mute-${row.key}`}
@@ -300,49 +319,52 @@ export function StackPanel({ output, testIdPrefix = 'stack', lane }: StackPanelP
               {view.muted ? '◌' : '●'}
             </button>
           ) : null}
-          {/* The edits stay out of the way until a person points at the row or selects it. */}
-          <span
-            className={`items-center gap-1 ${active ? 'flex' : 'hidden group-hover:flex group-focus-within:flex'}`}
-          >
-            <button
-              type="button"
-              data-testid={`${p}-up-${row.key}`}
-              className={BTN}
-              disabled={index === 0}
-              title="Move up"
-              onClick={() => run({ kind: 'move', row: row.key, to: index - 1 }, 'stack: move')}
+          {/* The edits stay out of the way until a person points at the row or selects it, and a
+              row this stack only reaches by a name has none: it is edited on its own object. */}
+          {editable ? (
+            <span
+              className={`items-center gap-1 ${active ? 'flex' : 'hidden group-hover:flex group-focus-within:flex'}`}
             >
-              ▲
-            </button>
-            <button
-              type="button"
-              data-testid={`${p}-down-${row.key}`}
-              className={BTN}
-              disabled={index === run_.length - 1}
-              title="Move down"
-              onClick={() => run({ kind: 'move', row: row.key, to: index + 1 }, 'stack: move')}
-            >
-              ▼
-            </button>
-            <button
-              type="button"
-              data-testid={`${p}-add-${row.key}`}
-              className={BTN}
-              title="Add on top of this row"
-              onClick={() => openMenu({ above: row.key }, addAt)}
-            >
-              +
-            </button>
-            <button
-              type="button"
-              data-testid={`${p}-remove-${row.key}`}
-              className={BTN}
-              title="Remove"
-              onClick={() => run({ kind: 'delete', row: row.key }, 'stack: delete')}
-            >
-              ✕
-            </button>
-          </span>
+              <button
+                type="button"
+                data-testid={`${p}-up-${row.key}`}
+                className={BTN}
+                disabled={index === 0}
+                title="Move up"
+                onClick={() => run({ kind: 'move', row: row.key, to: index - 1 }, 'stack: move')}
+              >
+                ▲
+              </button>
+              <button
+                type="button"
+                data-testid={`${p}-down-${row.key}`}
+                className={BTN}
+                disabled={index === run_.length - 1}
+                title="Move down"
+                onClick={() => run({ kind: 'move', row: row.key, to: index + 1 }, 'stack: move')}
+              >
+                ▼
+              </button>
+              <button
+                type="button"
+                data-testid={`${p}-add-${row.key}`}
+                className={BTN}
+                title="Add on top of this row"
+                onClick={() => openMenu({ above: row.key }, addAt)}
+              >
+                +
+              </button>
+              <button
+                type="button"
+                data-testid={`${p}-remove-${row.key}`}
+                className={BTN}
+                title="Remove"
+                onClick={() => run({ kind: 'delete', row: row.key }, 'stack: delete')}
+              >
+                ✕
+              </button>
+            </span>
+          ) : null}
         </div>
         {menuFor(addAt)}
         {/* On a line of their own: in a panel as narrow as the inspector, the row's own line
@@ -385,7 +407,7 @@ export function StackPanel({ output, testIdPrefix = 'stack', lane }: StackPanelP
                 {row.template.locked ? ' · locked' : ''}
                 {inside ? null : ` · ${rowCount(row.template.inside)} nodes`}
               </button>
-              {row.template.instances > 1 ? (
+              {editable && row.template.instances > 1 ? (
                 <button
                   type="button"
                   data-testid={`${p}-unique-${row.key}`}
@@ -404,14 +426,14 @@ export function StackPanel({ output, testIdPrefix = 'stack', lane }: StackPanelP
                   {row.template.instances === 1 ? '' : 's'}
                 </p>
                 <div className="border-l border-border pl-1.5">
-                  {renderRun(row.template.inside)}
+                  {renderRun(row.template.inside, named)}
                 </div>
               </>
             ) : null}
           </div>
         ) : null}
-        {row.groups.map((g) => renderGroup(row, g))}
-        {active && empty.length > 0 ? (
+        {row.groups.map((g) => renderGroup(row, g, named))}
+        {editable && active && empty.length > 0 ? (
           <div className="ml-3 flex flex-wrap items-center gap-1">
             {empty.map((socket) => {
               const at = `${row.key}:${socket}:route`;
@@ -437,12 +459,12 @@ export function StackPanel({ output, testIdPrefix = 'stack', lane }: StackPanelP
     );
   }
 
-  function renderRun(list: readonly StackRow[]): ReactNode {
+  function renderRun(list: readonly StackRow[], named: string | null = null): ReactNode {
     return (
       <div className="flex flex-col gap-0.5">
         {list.map((row, i) =>
           row.kind === 'node' ? (
-            renderNode(row, list, i)
+            renderNode(row, list, i, named)
           ) : (
             <div
               key={row.key}
@@ -458,15 +480,17 @@ export function StackPanel({ output, testIdPrefix = 'stack', lane }: StackPanelP
               >
                 ⤷ {nameOf(state, row.nodeId)} = same node as above
               </button>
-              <button
-                type="button"
-                data-testid={`${p}-remove-${row.key}`}
-                className={BTN}
-                title="Stop reading it here"
-                onClick={() => run({ kind: 'delete', row: row.key }, 'stack: delete')}
-              >
-                ✕
-              </button>
+              {named ? null : (
+                <button
+                  type="button"
+                  data-testid={`${p}-remove-${row.key}`}
+                  className={BTN}
+                  title="Stop reading it here"
+                  onClick={() => run({ kind: 'delete', row: row.key }, 'stack: delete')}
+                >
+                  ✕
+                </button>
+              )}
             </div>
           ),
         )}
