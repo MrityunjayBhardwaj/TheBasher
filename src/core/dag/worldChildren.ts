@@ -87,21 +87,42 @@ export function worldChildrenOf(graph: WorldChildrenGraph, id: NodeId): readonly
  *  hang from a parent only by a wire into the parent's list. */
 export function parentSocketOf(nodeType: string): string | null {
   const def = getNodeType(nodeType);
-  if (!def) return null;
-  for (const [socket, into] of Object.entries(def.inputs)) {
-    if (into.world === true) return socket;
-  }
-  return null;
+  return def ? markedSocket(def, 'world', parentSockets) : null;
 }
 
 /** The input socket of `nodeType` marked `gathersChildren`, or null. */
 export function gatheringSocketOf(nodeType: string): string | null {
   const def = getNodeType(nodeType);
-  if (!def) return null;
+  return def ? markedSocket(def, 'gathersChildren', gatheringSockets) : null;
+}
+
+// #1855 — both answers are asked once per node on every evaluation and every walk of the drawn tree,
+// and they never change for a definition: measured, the scan of a type's inputs was 11 ms of each 90
+// edited frames at 500 objects. Kept per DEFINITION, not per type name, so a type registered again
+// (a template the graph defines, a test's registry reset) is a new definition and is scanned afresh.
+const parentSockets = new WeakMap<object, string | null>();
+const gatheringSockets = new WeakMap<object, string | null>();
+function markedSocket(
+  def: {
+    readonly inputs: Record<
+      string,
+      { readonly world?: boolean; readonly gathersChildren?: boolean }
+    >;
+  },
+  mark: 'world' | 'gathersChildren',
+  memo: WeakMap<object, string | null>,
+): string | null {
+  const hit = memo.get(def);
+  if (hit !== undefined) return hit;
+  let found: string | null = null;
   for (const [socket, into] of Object.entries(def.inputs)) {
-    if (into.gathersChildren === true) return socket;
+    if (into[mark] === true) {
+      found = socket;
+      break;
+    }
   }
-  return null;
+  memo.set(def, found);
+  return found;
 }
 
 /**
