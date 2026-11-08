@@ -501,7 +501,7 @@ function reorderOps(
 }
 
 /** The param that mutes a node: its declared bypass, or a `mute` a constraint or a layer holds. */
-function muteParamOf(def: NodeDefinition | undefined): string | null {
+export function muteParamOf(def: NodeDefinition | undefined): string | null {
   if (!def) return null;
   const declared = bypassParamOf(def);
   if (declared) return declared;
