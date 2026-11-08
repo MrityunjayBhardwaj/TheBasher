@@ -22,20 +22,30 @@ test('View ▸ Editor Space ▸ Graph draws the scene and shares the selection',
   await expect(layout).toHaveAttribute('data-space', 'graph');
   await expect(page.getByTestId('graph-view')).toBeVisible();
 
-  // Every node of the starter scene is drawn except its constraints (#1765: the sun comes aimed
-  // by a Track-To), which are animation, hidden until asked for and counted as hidden. Which
-  // types are constraints comes from the product's own list, so the expectation follows the
-  // default project as it gains or loses one.
-  const { total, constraints } = await page.evaluate(async () => {
+  // Every node of the starter scene is drawn (#1765: the sun comes aimed by a Track-To). A
+  // constraint on a chain is a wired step (#1811), so it is drawn with the wires it sits on; only
+  // one that just names its object, with no wire, is animation, hidden until asked for and counted
+  // as hidden. Which types are constraints comes from the product's own list, so the expectation
+  // follows the default project as it gains or loses one.
+  const { total, onChain, constraints } = await page.evaluate(async () => {
     const { ADDABLE_CONSTRAINTS } = await import('/src/app/constraintStack.ts');
     const types = new Set(ADDABLE_CONSTRAINTS.map((c: { type: string }) => c.type));
     const nodes = Object.values(
       (window as unknown as DagWindow).__basher_dag!.getState().state.nodes,
-    ) as { type: string }[];
-    return { total: nodes.length, constraints: nodes.filter((n) => types.has(n.type)).length };
+    ) as { id: string; type: string; inputs: Record<string, unknown> }[];
+    const steps = nodes.filter((n) => types.has(n.type));
+    const wired = steps.filter((n) => n.inputs.in !== undefined);
+    return {
+      total: nodes.length,
+      onChain: wired.map((n) => n.id),
+      constraints: steps.length - wired.length,
+    };
   });
+  // The premise: the starter scene's aim is on a chain, so the case below is not empty.
+  expect(onChain.length).toBeGreaterThan(0);
   expect(total).toBeGreaterThan(constraints);
   await expect(page.locator('[data-graph-node]')).toHaveCount(total - constraints);
+  for (const id of onChain) await expect(page.locator(`[data-graph-node="${id}"]`)).toHaveCount(1);
   const counts = page.getByTestId('graph-view-counts');
   await expect(counts).toContainText(`${total - constraints} nodes`);
   if (constraints > 0) await expect(counts).toContainText(`${constraints} animation hidden`);
