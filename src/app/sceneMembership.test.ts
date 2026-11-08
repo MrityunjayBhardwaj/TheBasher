@@ -7,14 +7,17 @@ import { beforeAll, describe, expect, it } from 'vitest';
 import { getNodeType } from '../core/dag/registry';
 import { registerAllNodes } from '../nodes/registerAll';
 import {
+  DRAWN_TREE_PARAMS,
   HOP_TYPES,
   MEMBERSHIP_WIRES,
   isInScene,
   keepInSceneOps,
   membershipSocketsOf,
+  sceneDrawOf,
   sceneMembersOf,
   type MembershipWire,
 } from './sceneMembership';
+import { __resetRegistryForTests } from '../core/dag/registry';
 import { hierarchySocketsOf } from './sceneHierarchy';
 import { applyOp, type DagState } from '../core/dag';
 import { buildDefaultDagState } from '../core/project/default';
@@ -290,5 +293,111 @@ describe('the doors that move a camera keep it in the scene (#1517 with #1518)',
     expect(after.nodes.G).toBeUndefined();
     expect(isInScene(after, 'cam')).toBe(true);
     expect(after.nodes.cam.params.position).toEqual([5, 2, 3]);
+  });
+});
+
+describe('#1855 — the drawn tree is reused across an edit that cannot change it', () => {
+  const set = (s: DagState, nodeId: string, paramPath: string, value: unknown) =>
+    applyOp(s, { type: 'setParam', nodeId, paramPath, value }).next;
+  /** Built from scratch: a copy shares no `inputs` with anything seen before. */
+  const fresh = (s: DagState) => sceneDrawOf(JSON.parse(JSON.stringify(s)) as DagState);
+
+  it('a position edit reuses the tree, and the tree is the one a fresh build gives', () => {
+    const a = disagreementScene();
+    const before = sceneDrawOf(a);
+    const b = set(a, 'n_box', 'position', [3, 1, 4]);
+    expect(b.nodes).not.toBe(a.nodes);
+    expect(sceneDrawOf(b)).toBe(before);
+    expect(fresh(b)).toEqual(before);
+  });
+
+  it('switching the light profile builds it again: a light its old rig drew moves into the tree', () => {
+    // On the active rig, the band draws it; once another profile is chosen, its collection does.
+    const a = disagreementScene();
+    const before = sceneDrawOf(a);
+    expect(before!.drawn.has('activeRigLight')).toBe(false);
+    const b = set(a, 'P', 'selectedProfile', 'night');
+    const after = sceneDrawOf(b);
+    expect(after).not.toBe(before);
+    expect(after!.drawn.has('activeRigLight')).toBe(true);
+    expect(fresh(b)).toEqual(after);
+  });
+
+  it('renaming a rig builds it again: the switch no longer finds the rig it names', () => {
+    const a = disagreementScene();
+    const before = sceneDrawOf(a);
+    const b = set(a, 'R2', 'name', 'day');
+    expect(sceneDrawOf(b)).not.toBe(before);
+    expect(fresh(b)).toEqual(sceneDrawOf(b));
+  });
+
+  it('a rewire builds it again', () => {
+    const a = disagreementScene();
+    const before = sceneDrawOf(a);
+    const b = applyOp(a, {
+      type: 'disconnect',
+      from: { node: 'onlyColl', socket: 'out' },
+      to: { node: 'C', socket: 'members' },
+    }).next;
+    const after = sceneDrawOf(b);
+    expect(after).not.toBe(before);
+    expect(after!.drawn.has('onlyColl')).toBe(false);
+    expect(fresh(b)).toEqual(after);
+  });
+
+  it('a type registered again builds it again', () => {
+    const a = disagreementScene();
+    const before = sceneDrawOf(a);
+    __resetRegistryForTests();
+    registerAllNodes();
+    const b = set(a, 'n_box', 'position', [3, 1, 4]);
+    expect(sceneDrawOf(b)).not.toBe(before);
+  });
+
+  // The census: every param the walk reads, read off its sources. A new read in any of these goes
+  // red here until it is added to DRAWN_TREE_PARAMS, so a reused tree can never miss its change.
+  it('the walk reads exactly the params DRAWN_TREE_PARAMS lists', () => {
+    const src = (path: string) => readFileSync(resolve(__dirname, '..', path), 'utf8');
+    const body = (text: string, name: string) => {
+      const at = text.indexOf(`export function ${name}`);
+      expect(at, name).toBeGreaterThanOrEqual(0);
+      return text.slice(at, text.indexOf('\n}\n', at));
+    };
+    const code = (text: string) =>
+      text
+        .split('\n')
+        .filter((l) => !/^\s*(\/\/|\*|\/\*)/.test(l))
+        .join('\n');
+    const walked: Record<string, string> = {
+      'app/sceneMembership.ts': code(src('app/sceneMembership.ts')),
+      'app/sceneHierarchy.ts': code(src('app/sceneHierarchy.ts')),
+      'core/dag/worldChildren.ts': code(src('core/dag/worldChildren.ts')),
+      'app/operatorChain.ts#chainSocketOfType': body(
+        code(src('app/operatorChain.ts')),
+        'chainSocketOfType',
+      ),
+      'nodes/LightProfileSelect.ts#wiredProfileRigs': body(
+        code(src('nodes/LightProfileSelect.ts')),
+        'wiredProfileRigs',
+      ),
+    };
+    const read: Record<string, string[]> = {};
+    for (const [where, text] of Object.entries(walked)) {
+      const names = [...text.matchAll(/params as \{ (\w+)\?/g)].map((m) => m[1]);
+      // Every mention of params in the walk is one of the reads above, or this census misses one.
+      const mentions = (text.match(/\bparams\b/g) ?? []).length;
+      const owned = where === 'app/sceneMembership.ts' ? 2 : 0; // DRAWN_TREE_PARAMS's own comparison
+      expect(mentions - owned, `${where}: params mentioned outside a typed read`).toBe(
+        names.length,
+      );
+      if (names.length) read[where] = names;
+    }
+    expect(read).toEqual({
+      'app/sceneMembership.ts': ['selectedProfile'],
+      'nodes/LightProfileSelect.ts#wiredProfileRigs': ['name'],
+    });
+    expect(Object.values(DRAWN_TREE_PARAMS).flat().sort()).toEqual(
+      Object.values(read).flat().sort(),
+    );
   });
 });
