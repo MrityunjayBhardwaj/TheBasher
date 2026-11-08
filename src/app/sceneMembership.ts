@@ -210,7 +210,13 @@ export function sceneDrawOf(graph: SceneGraph): SceneDraw | null {
     return lastDraw.draw;
   }
   const draw = buildSceneDraw(state);
-  lastDraw = { nodes: state.nodes, scene: state.outputs.scene, epoch, draw };
+  lastDraw = {
+    nodes: state.nodes,
+    count: Object.keys(state.nodes).length,
+    scene: state.outputs.scene,
+    epoch,
+    draw,
+  };
   return draw;
 }
 
@@ -232,6 +238,8 @@ export const DRAWN_TREE_PARAMS: Readonly<Record<string, readonly string[]>> = {
 // registered definitions (`registryEpoch`), the same scene output, and the same values of `DRAWN_TREE_PARAMS`.
 interface LastDraw {
   readonly nodes: DagState['nodes'];
+  /** How many nodes `nodes` holds, kept so the check doesn't list them again on every edit. */
+  readonly count: number;
   readonly scene: NodeRef | undefined;
   readonly epoch: number;
   readonly draw: SceneDraw | null;
@@ -255,7 +263,7 @@ function sameDrawnTreeInputs(last: LastDraw, state: DagState, epoch: number): bo
     const b = now.params as Record<string, unknown>;
     for (const key of read) if (a?.[key] !== b?.[key]) return false;
   }
-  return count === Object.keys(last.nodes).length;
+  return count === last.count;
 }
 
 function buildSceneDraw(state: DagState): SceneDraw | null {
