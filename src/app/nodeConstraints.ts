@@ -32,7 +32,8 @@ import { curveSamplerFor, readCurveSampleAt } from './curveSampleSource';
 import { gltfNodeWorldPosition } from './gltfNodeWorld';
 import { resolveEvaluatedParam } from './resolveEvaluatedParam';
 import { evaluate, type EvaluatorCache } from '../core/dag/evaluator';
-import { readChain } from '../core/dag/chainEdit';
+import { influenceOf, readChain } from '../core/dag/chainEdit';
+import { isDriverMuted } from './paramDrivers';
 import { getNodeType } from '../core/dag/registry';
 
 type Vec3 = [number, number, number];
@@ -337,28 +338,86 @@ export interface TransformController {
   /** The constraint node, so the row can name it and select it. */
   readonly nodeId: string;
   readonly type: 'TrackTo' | 'FollowPath';
+  /** #1795 — whether it decides the row outright: the row then shows the drawn value, locked.
+   *  False when it only partly decides it: the row shows and edits the object's own value. */
+  readonly locks: boolean;
 }
 
 /**
- * #1776 — the constraint that decides what `nodeId`'s `paramPath` is drawn with: the winning
- * Track-To for `rotation` / `quaternion`, the top Follow-Path for `position`. The inspector shows
- * the drawn value on such a row and locks it, naming this constraint (the user's call over
- * Blender, which shows the own value under a constraint): an edit there would change nothing on
- * screen. Muted members control nothing. Every other param → null.
+ * #1795 — `constraintId`'s influence when it is one held number, clamped to [0, 1]: 1 when its
+ * step has no blend (#1811: at 1 a step adds no blend), or when it is on no chain; the blend's
+ * Value when nothing keys, drives or places a strip on it. Null when the number moves (keyed,
+ * driven, on a strip) or a wire from anything else feeds the blend: no one value describes it.
+ */
+export function fixedInfluence(
+  nodes: Readonly<Record<string, NodeLike>>,
+  constraintId: string,
+): number | null {
+  const target = (nodes[constraintId]?.params as { target?: unknown } | undefined)?.target;
+  if (typeof target !== 'string') return null;
+  const influence = influenceOf({ nodes } as Pick<DagState, 'nodes'>, target, constraintId);
+  if (!influence || influence.kind === 'none') return 1;
+  if (influence.kind === 'wired') return null;
+  const held = influence.nodeId;
+  for (const [id, n] of Object.entries(nodes)) {
+    const p = n.params as { target?: unknown; paramPath?: unknown } | undefined;
+    if (p?.target !== held) continue;
+    if (n.type === 'Strip') return null;
+    if (p.paramPath !== 'value') continue;
+    if (n.type.startsWith('KeyframeChannel')) return null;
+    if (
+      n.type === 'ParamDriver' &&
+      !isDriverMuted({ ...n, id } as Parameters<typeof isDriverMuted>[0])
+    )
+      return null;
+  }
+  const raw = (nodes[held]?.params as { value?: unknown } | undefined)?.value;
+  return typeof raw === 'number' && !Number.isNaN(raw) ? Math.min(1, Math.max(0, raw)) : null;
+}
+
+/** #1795 — the top live Track-To on `nodeId` that can aim it: muted members and members at a
+ *  fixed influence of 0 are skipped (they aim nothing). The camera's aim reticle edits this one. */
+export function topContributingTrackTo(
+  nodes: Readonly<Record<string, NodeLike>>,
+  nodeId: string,
+): ActiveConstraint | null {
+  const live = constraintStackForTarget(nodes, nodeId).filter(
+    (m) => fixedInfluence(nodes, m.nodeId) !== 0,
+  );
+  return live[live.length - 1] ?? null;
+}
+
+/**
+ * #1776 — the constraint that decides what `nodeId`'s `paramPath` is drawn with: the top live
+ * Track-To for `rotation` / `quaternion`, the top live Follow-Path for `position`. Muted members,
+ * and members at a fixed influence of 0, control nothing. Every other param → null.
+ *
+ * #1795 (the user's call, 2026-11-04) — `locks` says whether it decides the row OUTRIGHT. A
+ * Track-To at a fixed full influence does: everything below it, the own rotation included, is
+ * replaced, so the row shows the drawn value, locked (#1776's rule: an edit there would change
+ * nothing on screen). A Follow Path never does (the own position is its offset, #1791), nor do
+ * Track-Tos none of which is at full influence: the row shows the own value, editable, with the
+ * constraint named beside it, as Blender does.
  */
 export function transformControllerOf(
   nodes: Readonly<Record<string, NodeLike>>,
   nodeId: string,
   paramPath: string,
 ): TransformController | null {
+  const live = (members: readonly { nodeId: string }[]) =>
+    members
+      .map((m) => ({ id: m.nodeId, f: fixedInfluence(nodes, m.nodeId) }))
+      .filter((m) => m.f !== 0);
   if (paramPath === 'rotation' || paramPath === 'quaternion') {
-    const aim = activeConstraintForTarget(nodes, nodeId);
-    return aim ? { nodeId: aim.nodeId, type: 'TrackTo' } : null;
+    const members = live(constraintStackForTarget(nodes, nodeId));
+    const top = members[members.length - 1];
+    if (!top) return null;
+    return { nodeId: top.id, type: 'TrackTo', locks: members.some((m) => m.f === 1) };
   }
   if (paramPath === 'position') {
-    const stack = followPathStackForTarget(nodes, nodeId);
-    const top = stack[stack.length - 1];
-    return top ? { nodeId: top.nodeId, type: 'FollowPath' } : null;
+    const members = live(followPathStackForTarget(nodes, nodeId));
+    const top = members[members.length - 1];
+    return top ? { nodeId: top.id, type: 'FollowPath', locks: false } : null;
   }
   return null;
 }

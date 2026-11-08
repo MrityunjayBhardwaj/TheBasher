@@ -77,9 +77,9 @@ import { clockedCtx } from './subjectClock';
 import { isCameraNode } from './cameraNode';
 import { cameraOrientationQuat, cameraRotationOf } from './cameraOrientation';
 import {
-  activeConstraintForTarget,
   chainPositionLinear,
   resolveFollowedWorldPosition,
+  topContributingTrackTo,
 } from './nodeConstraints';
 import { useActiveCurvePoint } from './curvePointSelection';
 import { useArmatureMode } from './armatureMode';
@@ -1327,7 +1327,8 @@ function CameraGizmo() {
   // is the reticle's to move; only a Track-To that follows a node is read-only, since the node
   // decides where it points.
   const winningAim = useMemo(
-    () => (camId ? activeConstraintForTarget(nodes, camId) : null),
+    // #1795 — the top member that can aim it: one fixed at influence 0 aims nothing.
+    () => (camId ? topContributingTrackTo(nodes, camId) : null),
     [nodes, camId],
   );
   const bound = Boolean(winningAim?.aimNode);
