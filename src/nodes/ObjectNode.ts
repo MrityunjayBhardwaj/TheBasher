@@ -157,7 +157,10 @@ export const ObjectNode: NodeDefinition<ObjectParams, ObjectValue> = {
   //
   // Appended LAST, keeping `sections[0]` at 'transform', so no existing section's
   // default-collapsed state shifts underneath the specs that assert it.
-  inspectorSections: ['transform', 'constraint', 'driver', 'modifier', 'slots'],
+  //
+  // #1817 — 'stack' is the transform lane drawn by the one stack panel. It is Object-owned like
+  // 'constraint' (any object has a transform, data or none), and appended last like the two above.
+  inspectorSections: ['transform', 'constraint', 'driver', 'modifier', 'slots', 'stack'],
   home: {
     position: 'transform',
     rotation: 'transform',

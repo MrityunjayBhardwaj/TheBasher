@@ -698,4 +698,6 @@ export const OBJECT_SECTIONS: readonly string[] = [
   'modifier',
   // #645 — the Object's per-slot material overrides.
   'slots',
+  // #1817 — the transform lane, drawn by the one stack panel.
+  'stack',
 ];

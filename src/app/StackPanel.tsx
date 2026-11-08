@@ -30,6 +30,7 @@ import {
   openPaths,
   rowCount,
   rowView,
+  stackObjectOf,
   type Offer,
 } from './stackPanelModel';
 import { stackOf, type StackGroup, type StackNodeRow, type StackRow } from './stackTree';
@@ -44,12 +45,24 @@ export interface StackPanelProps {
   readonly output: NodeRef;
   /** Prefixes every data-testid. */
   readonly testIdPrefix?: string;
+  /**
+   * Show one lane of `output`: only the groups on this socket of the top row, which itself is not
+   * drawn. The view stays rooted at `output`, so a row can still go on top of the lane's top row.
+   */
+  readonly lane?: string;
+}
+
+/** The Transform Stack card: the constraints lane of the selected object, or of a selected step's. */
+export function TransformStackCard({ nodeId }: { readonly nodeId: string }) {
+  const object = useDagStore((s) => stackObjectOf(s.state, nodeId));
+  const output = useMemo(() => ({ node: object, socket: 'out' }), [object]);
+  return <StackPanel output={output} lane="constraints" testIdPrefix="transform-stack" />;
 }
 
 /** The key a template row's inside opens and closes by. */
 const insideKey = (row: StackNodeRow) => `${row.key}:inside`;
 
-export function StackPanel({ output, testIdPrefix = 'stack' }: StackPanelProps) {
+export function StackPanel({ output, testIdPrefix = 'stack', lane }: StackPanelProps) {
   const state = useDagStore((s) => s.state);
   const selectedNodeId = useSelectionStore((s) => s.selectedNodeId);
   const select = useSelectionStore((s) => s.select);
@@ -105,8 +118,9 @@ export function StackPanel({ output, testIdPrefix = 'stack' }: StackPanelProps) 
     if (!menu) return;
     const now = useDagStore.getState().state;
     const nodeId = freshId(now, type);
+    // The selection stays where it is, as the old stacks' "+ Add" leaves it: selecting the new
+    // node would move the inspector to it, and the panel out from under the person's hand.
     run({ kind: 'add', nodeId, nodeType: type, place: menu.place }, 'stack: add');
-    select(nodeId);
   }
 
   /** Shows a node's full row: opens every group it sits in, selects it and scrolls to it. */
@@ -273,18 +287,6 @@ export function StackPanel({ output, testIdPrefix = 'stack' }: StackPanelProps) 
             {view.name}
             {view.name !== view.type ? <span className="text-fg-dim"> · {view.type}</span> : null}
             {view.tag ? <span className="text-fg-dim"> [{view.tag}]</span> : null}
-            {view.influence !== null ? (
-              <span data-testid={`${p}-influence-${row.key}`} className="text-fg-dim">
-                {' '}
-                · influence {view.influence}
-              </span>
-            ) : null}
-            {row.usedBy.length > 0 ? (
-              <span data-testid={`${p}-usedby-${row.key}`} className="text-fg-dim">
-                {' '}
-                · used by {row.usedBy.map((id) => nameOf(state, id)).join(', ')}
-              </span>
-            ) : null}
           </button>
           {view.muted !== null ? (
             <button
@@ -343,6 +345,18 @@ export function StackPanel({ output, testIdPrefix = 'stack' }: StackPanelProps) 
           </span>
         </div>
         {menuFor(addAt)}
+        {/* On a line of their own: in a panel as narrow as the inspector, the row's own line
+            truncates, and an influence cut off at the edge is an influence nobody reads. */}
+        {view.influence !== null ? (
+          <p data-testid={`${p}-influence-${row.key}`} className="ml-4 text-fg-dim">
+            influence {view.influence}
+          </p>
+        ) : null}
+        {row.usedBy.length > 0 ? (
+          <p data-testid={`${p}-usedby-${row.key}`} className="ml-4 truncate text-fg-dim">
+            used by {row.usedBy.map((id) => nameOf(state, id)).join(', ')}
+          </p>
+        ) : null}
         {view.exposed.length > 0 ? (
           <p data-testid={`${p}-exposed-${row.key}`} className="ml-4 text-fg-dim">
             {view.exposed.map((o) => `${o.param} ${o.value}`).join(' · ')}
@@ -460,6 +474,36 @@ export function StackPanel({ output, testIdPrefix = 'stack' }: StackPanelProps) 
     );
   }
 
+  function renderLane(socket: string): ReactNode {
+    const top = rows[0];
+    if (top?.kind !== 'node') return null;
+    const groups = top.groups.filter((g) => g.socket === socket);
+    const at = `${top.key}:${socket}:route`;
+    return (
+      <>
+        {groups.map((g) => (
+          <div key={g.key} className="flex flex-col gap-0.5">
+            {renderRun(g.rows)}
+          </div>
+        ))}
+        {groups.length === 0 ? (
+          <>
+            <button
+              type="button"
+              data-testid={`${p}-empty-${top.key}-${socket}`}
+              className={`${CHIP} self-start`}
+              onClick={() => openMenu({ route: { owner: top.key, socket } }, at)}
+              {...dropOn({ route: { owner: top.key, socket } })}
+            >
+              + add
+            </button>
+            {menuFor(at)}
+          </>
+        ) : null}
+      </>
+    );
+  }
+
   return (
     <div data-testid={`${p}-panel`} className="flex flex-col gap-1 text-xs">
       {notice ? (
@@ -472,7 +516,7 @@ export function StackPanel({ output, testIdPrefix = 'stack' }: StackPanelProps) 
         </p>
       ) : null}
       {rows.length === 0 ? <p className="px-1 py-0.5 text-fg/60">Nothing to show.</p> : null}
-      {renderRun(rows)}
+      {lane ? renderLane(lane) : renderRun(rows)}
     </div>
   );
 }

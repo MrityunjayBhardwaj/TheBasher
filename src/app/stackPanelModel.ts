@@ -168,6 +168,19 @@ export function offersAt(state: DagState, output: NodeRef, place: StackPlace): O
   return offers.sort((a, b) => a.label.localeCompare(b.label));
 }
 
+/**
+ * The object whose Transform Stack a selected node shows: a constraint step's own object (its
+ * `target`), so selecting a row keeps the stack on screen, as the old Constraints card did.
+ */
+export function stackObjectOf(state: DagState, nodeId: string): string {
+  const node = state.nodes[nodeId];
+  if (node && getNodeType(node.type)?.worldStep) {
+    const target = (node.params as { target?: unknown }).target;
+    if (typeof target === 'string' && state.nodes[target]) return target;
+  }
+  return nodeId;
+}
+
 /** A fresh id for a node of `type`, which no node holds. */
 export function freshId(state: DagState, type: string): string {
   const base = type.replace(/^template\./, '').replace(/\W/g, '_');

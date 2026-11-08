@@ -16,6 +16,7 @@ import {
   openPaths,
   rowCount,
   rowView,
+  stackObjectOf,
 } from './stackPanelModel';
 import { stackOf, type StackNodeRow, type StackRow } from './stackTree';
 
@@ -82,6 +83,13 @@ describe('a row', () => {
   it('offers a socket only while nothing feeds it', () => {
     expect(emptySockets(m.state, rowOf(rows, 'blend'))).toEqual([]);
     expect(emptySockets(m.state, rowOf(rows, 'noise'))).toEqual(['t']);
+  });
+
+  it("a selected step shows its object's stack; anything else shows its own", () => {
+    expect(stackObjectOf(m.state, 'barrelAim')).toBe(m.barrel.node);
+    expect(stackObjectOf(m.state, 'aimA')).toBe(m.crate.node);
+    expect(stackObjectOf(m.state, 'blend')).toBe('blend');
+    expect(stackObjectOf(m.state, m.crate.node)).toBe(m.crate.node);
   });
 
   it('a fresh id is free', () => {

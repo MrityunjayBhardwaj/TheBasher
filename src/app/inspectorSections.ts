@@ -34,7 +34,8 @@ export type SectionId =
   | 'environment'
   | 'camera'
   | 'layout'
-  | 'slots';
+  | 'slots'
+  | 'stack';
 
 export const SECTION_IDS: readonly SectionId[] = [
   'transform',
@@ -72,6 +73,9 @@ export const SECTION_IDS: readonly SectionId[] = [
   // one answers the other half of the reference's per-slot question — which slots does
   // THIS object re-point, leaving the shared datablock untouched.
   'slots',
+  // #1817 — the object's transform lane as a stack: its constraints chain, drawn and edited by
+  // the one stack panel. Appended last for the same reason 'modifier' and 'slots' were.
+  'stack',
 ];
 
 /** Type-narrow at the persistence boundary — unknown strings (legacy
@@ -98,6 +102,7 @@ export function formatSectionLabel(id: SectionId): string {
  */
 const SECTION_LABELS: Partial<Record<SectionId, string>> = {
   slots: 'Material Slots',
+  stack: 'Transform Stack',
 };
 
 /** D-10 A — multi-select Inspector resolution: show Transform + Layout

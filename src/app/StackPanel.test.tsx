@@ -115,8 +115,9 @@ describe('editing through the panel', () => {
     expect((dag().nodes[m.crate.node].inputs.data as NodeRef).node).toBe('mirror');
   });
 
-  it('+ offers what fits on top of the row, and adds the one picked', () => {
+  it('+ offers what fits on top of the row, and adds the one picked, leaving the selection', () => {
     show(m.crate);
+    act(() => useSelectionStore.getState().select(m.crate.node));
     click('s-add-remap');
     expect(el('s-offer-Clamp')).not.toBeNull();
     expect(el('s-offer-BoxData')).toBeNull(); // no main input: it can't sit on a row
@@ -124,7 +125,7 @@ describe('editing through the panel', () => {
     const added = (dag().nodes[m.lag].inputs.in as NodeRef).node;
     expect(dag().nodes[added].type).toBe('Clamp');
     expect((dag().nodes[added].inputs.in as NodeRef).node).toBe('remap');
-    expect(useSelectionStore.getState().selectedNodeId).toBe(added);
+    expect(useSelectionStore.getState().selectedNodeId).toBe(m.crate.node);
   });
 
   it('dragging a row onto another moves it there', () => {

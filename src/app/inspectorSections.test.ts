@@ -119,6 +119,8 @@ describe('SECTION_IDS', () => {
       // The OBJECT's per-slot material overrides (#645) — the object half of the
       // reference's per-slot link, distinct from the DATA's 'material' section.
       'slots',
+      // #1817 — the object's transform lane, drawn by the one stack panel.
+      'stack',
     ]);
   });
 });

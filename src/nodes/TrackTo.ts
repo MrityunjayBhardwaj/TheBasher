@@ -93,7 +93,8 @@ export const TrackToNode: NodeDefinition<TrackToParams, TrackToConstraintValue> 
     // #1811 — the transform that came up the chain, changed by this constraint.
     world: { type: 'Matrix4', cardinality: 'single', world: true },
   },
-  inspectorSections: ['constraint', 'driver'],
+  // #1817 — 'stack': a step selected in the Transform Stack keeps its object's stack on screen.
+  inspectorSections: ['constraint', 'driver', 'stack'],
   // The aim target is authored through the general node-ref picker (the same surface as
   // SampleGeometry/Solver), so a director can bind a Track-To's target from its own
   // inspector instead of only through the bespoke camera look-at dropdown (#341, the last

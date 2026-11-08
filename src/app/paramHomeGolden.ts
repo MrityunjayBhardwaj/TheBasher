@@ -181,7 +181,7 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
   // APPENDED at #1802 — Fit's Vector mode: the mode and the four per-axis ranges.
   Fit: '[] inMin=(unrouted) inMax=(unrouted) outMin=(unrouted) outMax=(unrouted) clamp=(unrouted) dataType=(unrouted) inMinVector=(unrouted) inMaxVector=(unrouted) outMinVector=(unrouted) outMaxVector=(unrouted)',
   FollowPath:
-    '[constraint,driver] name=(unrouted) target=(unrouted) curve=(unrouted) evalTime=(unrouted) offset=(unrouted) mute=(unrouted) order=(unrouted)',
+    '[constraint,driver,stack] name=(unrouted) target=(unrouted) curve=(unrouted) evalTime=(unrouted) offset=(unrouted) mute=(unrouted) order=(unrouted)',
   GltfAsset:
     '[mesh,driver,material] assetRef=mesh nodeNameMap=(unrouted) childHierarchy=(unrouted) skins=(unrouted) suppressedChildren=(unrouted) keyByGltfNodeIndex=(unrouted)',
   GltfData:
@@ -255,7 +255,7 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
   NormalPass: '[render] width=(unrouted) height=(unrouted)',
   Null: '[transform,constraint,driver] position=transform rotation=transform scale=transform',
   Object:
-    '[transform,constraint,driver,modifier,slots] position=transform rotation=transform scale=transform slotOverrides=slots overridden=(unrouted) rotationMode=transform quaternion=transform parentBone=(unrouted) viewport=(unrouted) render=(unrouted) clock=transform',
+    '[transform,constraint,driver,modifier,slots,stack] position=transform rotation=transform scale=transform slotOverrides=slots overridden=(unrouted) rotationMode=transform quaternion=transform parentBone=(unrouted) viewport=(unrouted) render=(unrouted) clock=transform',
   ParamDriver:
     '[driver] target=(unrouted) paramPath=(unrouted) blendMode=(unrouted) order=(unrouted) mute=(unrouted) sourceSpare=(unrouted) sourceTransform=(unrouted) sourceTransformVec=(unrouted)',
   PosedSkeleton: '[] amplitude=(unrouted) frequency=(unrouted)',
@@ -297,7 +297,7 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
   TimeSource: '[]',
   Track: '[layout] name=layout strips=(unrouted) order=(unrouted) mute=(unrouted) solo=(unrouted)',
   TrackTo:
-    '[constraint,driver] name=(unrouted) target=(unrouted) aimNode=(unrouted) aimBone=(unrouted) aimPoint=(unrouted) aimSpace=(unrouted) up=(unrouted) roll=(unrouted) mute=(unrouted) order=(unrouted)',
+    '[constraint,driver,stack] name=(unrouted) target=(unrouted) aimNode=(unrouted) aimBone=(unrouted) aimPoint=(unrouted) aimSpace=(unrouted) up=(unrouted) roll=(unrouted) mute=(unrouted) order=(unrouted)',
   Transform: '[transform,constraint,driver] position=transform rotation=transform scale=transform',
   TransformClip:
     '[animate] name=(unrouted) duration=(unrouted) loop=(unrouted) keyframes=(unrouted)',

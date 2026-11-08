@@ -165,6 +165,7 @@ import { ModifierStackControls } from './ModifierStackControls';
 import { MaterialStackControls } from './MaterialStackControls';
 import { MaterialLinkControls } from './MaterialLinkControls';
 import { ConstraintStackControls } from './ConstraintStackControls';
+import { TransformStackCard } from './StackPanel';
 import { influenceOf, readChain, setInfluenceOps } from '../core/dag/chainEdit';
 import { DriverStackControls } from './DriverStackControls';
 import { CurvePointRows } from './CurvePointRows';
@@ -4382,6 +4383,7 @@ const SECTION_CONTROL_RENDERERS: SectionControlRenderers = {
   applyTransform: (ctx) => <ApplyTransformControl nodeId={ctx.objectNodeId} />,
   rotationMode: (ctx) => <RotationModeControl nodeId={ctx.paramsNodeId} />,
   clock: (ctx) => <ClockControl nodeId={ctx.paramsNodeId} />,
+  transformStack: (ctx) => <TransformStackCard nodeId={ctx.paramsNodeId} />,
   setOrigin: (ctx) => <SetOriginControl nodeId={ctx.paramsNodeId} />,
   // The OBJECT, not `paramsNodeId`: a slot override lives on the poser, which is what
   // lets two objects share one mesh and still look different. In the linked-data block

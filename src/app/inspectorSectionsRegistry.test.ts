@@ -317,6 +317,8 @@ describe('C2 — inspectorSections declarations', () => {
       'transform',
       'constraint',
       'driver',
+      // #1817 — the transform lane as a stack: any object has a transform, so it holds too.
+      'stack',
     ];
 
     const snap = snapshotRegistry();
