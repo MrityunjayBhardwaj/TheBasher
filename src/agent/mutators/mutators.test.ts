@@ -2200,6 +2200,47 @@ describe('deleteNode mutator', () => {
     expect(one.ops.some((o) => o.type === 'setParam' && o.nodeId === 'n_box')).toBe(true);
   });
 
+  // #1863 — the agent can ask for what Alt+Delete does (#1861): the child keeps its own values.
+  it('children "values" keeps the child\'s own values and hangs it from the deleted parent\'s parent', () => {
+    const state = groupOverBox(false);
+    const run = (children?: 'place' | 'values') => {
+      const result = validatePlan(
+        deleteNodeMutator,
+        { targetSelectors: ['G'], children },
+        state,
+        'd',
+      );
+      if (!result.ok) throw new Error(JSON.stringify(result));
+      return result.ops.reduce((acc, op) => applyOp(acc, op).next, state);
+    };
+    const own = (s: DagState) => (s.nodes.n_box.params as { position: number[] }).position;
+    const values = run('values');
+    expect(values.nodes.G).toBeUndefined();
+    expect(own(values)).toEqual(own(state));
+    expect((values.nodes.n_box.inputs as { parent?: unknown }).parent).toBeUndefined();
+    // The control: the default, and 'place' named, keep it where it was drawn, so its own
+    // position takes on the group's offset.
+    expect(own(run())).toEqual([own(state)[0] + 3, own(state)[1], own(state)[2]]);
+    expect(own(run('place'))).toEqual(own(run()));
+  });
+
+  it('children "values" leaves a keyed child where its keys put it, so nothing is reported moved', () => {
+    const result = validatePlan(
+      deleteNodeMutator,
+      { targetSelectors: ['G'], children: 'values' },
+      groupOverBox(true),
+      'd',
+    );
+    if (!result.ok) throw new Error(JSON.stringify(result));
+    expect(result.warnings.join()).not.toMatch(/Delete moved/);
+  });
+
+  it('children takes only "place" or "values"', () => {
+    expect(
+      deleteNodeMutator.spec.safeParse({ targetSelectors: ['G'], children: 'keep' }).success,
+    ).toBe(false);
+  });
+
   it('a keyed child moved by the delete is in the warnings; a plain one is not', () => {
     expect(validated(groupOverBox(true)).warnings.join()).toMatch(/Delete moved .*\(animated\)/);
     expect(validated(groupOverBox(false)).warnings.join()).not.toMatch(/Delete moved/);

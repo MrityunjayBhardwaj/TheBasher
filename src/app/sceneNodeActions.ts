@@ -251,8 +251,12 @@ function handUpMoves(
  * but through the throw (the agent's mutator reports it as a build exception). The UI's two
  * delete doors call `planDeleteNodes` and say the refusal.
  */
-export function buildDeleteNodesOps(state: DagState, ids: readonly NodeId[]): Op[] {
-  const plan = planDeleteNodes(state, ids);
+export function buildDeleteNodesOps(
+  state: DagState,
+  ids: readonly NodeId[],
+  opts: { readonly children?: 'place' | 'values' } = {},
+): Op[] {
+  const plan = planDeleteNodes(state, ids, opts);
   if (!plan.ok) throw new Error(plan.reason);
   return plan.ops;
 }
@@ -476,8 +480,9 @@ export function planDeleteNodes(
   //      parent's parent; Blender usually leaves them in place, and jumps them only when the parent
   //      moved after parenting (measured on 5.1.1: it then unparents the child to the top level and
   //      drops it onto its own values, 2.0 away from where it was drawn).
-  // Alt+Delete (`children: 'values'`) keeps each child's own values instead, so it lands at them
-  // under its new parent. Either way it hangs from the deleted node's own parent.
+  // Alt+Delete, the outliner's "Delete, Children Keep Their Values" and the agent's delete with
+  // `children: 'values'` (#1863) keep each child's own values instead, so it lands at them under
+  // its new parent. Either way it hangs from the deleted node's own parent.
   const handUp = buildMoveOps(state, handUpMoves(state, readers, allIds, idSet), {
     keepTransform: opts.children !== 'values',
     ctx: opts.ctx,

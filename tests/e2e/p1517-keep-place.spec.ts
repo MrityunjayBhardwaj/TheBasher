@@ -339,3 +339,41 @@ test('the outliner offers the same delete on a row with children, and not on one
   expect(await childrenOf(page, 'OUTER')).toEqual(['n_box']);
   expect(await ownValues(page, 'n_box')).toEqual(values);
 });
+
+// #1863 — the agent's delete asks for the same thing: `children: 'values'` through the agent's own
+// gates (schema, closure, validation, one undo entry), in the running app. Left out, it keeps place.
+const agentDelete = (page: Page, spec: Record<string, unknown>) =>
+  page.evaluate(async (s) => {
+    const m = await import('/src/app/animate/dispatchMutator.ts');
+    return m.dispatchMutatorFromUI('mutator.deleteNode', s, 'delete the inner group');
+  }, spec);
+
+for (const children of ['values', undefined] as const) {
+  test(`the agent's delete with children ${children ?? 'left out'} ${children ? 'keeps the child’s own values' : 'keeps the child in place'}`, async ({
+    page,
+  }) => {
+    await setUp(page);
+    await dragRowOnto(page, 'n_box', 'INNER');
+    const values = await ownValues(page, 'n_box');
+    const drawn = await drawnAt(page, 'n_box');
+    const result = await agentDelete(page, {
+      targetSelectors: ['INNER'],
+      ...(children ? { children } : {}),
+    });
+    expect(result).toMatchObject({ ok: true });
+    await expect.poll(() => hasNode(page, 'INNER')).toBe(false);
+    expect(await childrenOf(page, 'OUTER')).toEqual(['n_box']);
+    if (children === 'values') {
+      expect(await ownValues(page, 'n_box')).toEqual(values);
+      await expect.poll(() => drawnAt(page, 'n_box')).not.toEqual(drawn);
+    } else {
+      expect(await ownValues(page, 'n_box')).not.toEqual(values);
+      await expect.poll(() => drawnAt(page, 'n_box')).toEqual(drawn);
+    }
+
+    await page.evaluate(() => (window as unknown as W).__basher_dag.getState().undo());
+    await expect.poll(() => childrenOf(page, 'INNER')).toEqual(['n_box']);
+    expect(await drawnAt(page, 'n_box')).toEqual(drawn);
+    expect(await ownValues(page, 'n_box')).toEqual(values);
+  });
+}

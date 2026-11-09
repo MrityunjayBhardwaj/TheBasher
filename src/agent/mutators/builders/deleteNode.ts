@@ -16,6 +16,8 @@ import { buildDeleteNodesOps, planDeleteNodes, withHierarchy } from '../../../ap
 const DeleteNodeSpec = z.object({
   targetSelectors: z.array(z.string().min(1)).min(1),
   hierarchy: z.boolean().optional(),
+  // #1863 — what a deleted parent's children keep, as Delete and Alt+Delete choose (#1861).
+  children: z.enum(['place', 'values']).optional(),
 });
 export type DeleteNodeSpec = z.infer<typeof DeleteNodeSpec>;
 
@@ -28,7 +30,9 @@ export const deleteNodeMutator: MutatorDefinition<DeleteNodeSpec> = {
     'Delete one or more nodes. Auto-disconnects every consumer edge first ' +
     '(removeNode requires zero consumers). A deleted parent hands its children up to its own ' +
     'parent, keeping them where they are drawn. An animated child keeps its keys and may move: ' +
-    'the result warns when one does. Set hierarchy to delete everything below the targets too. ' +
+    'the result warns when one does. Set children to "values" to keep each child\'s own ' +
+    'position, rotation and scale instead, so it moves on screen (Alt+Delete). Set hierarchy ' +
+    'to delete everything below the targets too. ' +
     'Atomic — Cmd+Z reverts everything.',
   spec: DeleteNodeSpec,
   specExample: { targetSelectors: ['node_id'] },
@@ -87,10 +91,10 @@ export const deleteNodeMutator: MutatorDefinition<DeleteNodeSpec> = {
     // by construction — that divergence was the actual bug, more than any single
     // orphan it produced. The outliner and the Delete key already share this builder
     // (#227); the agent now makes three callers, one implementation.
-    return buildDeleteNodesOps(state, idsToDelete(spec, state));
+    return buildDeleteNodesOps(state, idsToDelete(spec, state), { children: spec.children });
   },
   advisories(spec, _closure, state) {
-    const plan = planDeleteNodes(state, idsToDelete(spec, state));
+    const plan = planDeleteNodes(state, idsToDelete(spec, state), { children: spec.children });
     return plan.ok ? moveNotices(state, plan) : [];
   },
 };
