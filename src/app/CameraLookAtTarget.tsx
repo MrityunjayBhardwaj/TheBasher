@@ -24,6 +24,7 @@
 import { useMemo } from 'react';
 import { useDagStore } from '../core/dag/store';
 import type { DagState } from '../core/dag/state';
+import { buildRemoveConstraintOps } from './constraintStack';
 import type { Op } from '../core/dag/types';
 import {
   activeConstraintForTarget,
@@ -157,7 +158,7 @@ export function bindLookAtTargetOps(
         ops.push({ type: 'setParam', nodeId: poseNodeId, ...write });
       }
     }
-    ops.push({ type: 'removeNode', nodeId: existingTTId });
+    ops.push(...(buildRemoveConstraintOps(state, existingTTId) ?? []));
     return { ops, label: 'clear look-at target', atomic: true, animatedWrite };
   }
 

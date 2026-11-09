@@ -51,8 +51,8 @@ async function boot(
       });
       dag.dispatch({
         type: 'connect',
-        from: { node: 'n_camera', socket: 'out' },
-        to: { node: 'grp', socket: 'children' },
+        from: { node: 'grp', socket: 'world' },
+        to: { node: 'n_camera', socket: 'parent' },
       });
     }
     dag.dispatch({

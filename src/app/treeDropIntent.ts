@@ -53,6 +53,19 @@ export function dropIntent(
 }
 
 /**
+ * Would this drop put a node inside itself? A node has a row per collection holding it (#1505), so
+ * the row's key path is not enough: the dragged row's own key does not prefix another copy of the
+ * node, or anything under that copy. A row key is its ancestors' ids joined by `/`, so this asks
+ * by node id, at any place the node is listed.
+ */
+export function landsOnItself(
+  src: { readonly nodeId: string },
+  dst: { readonly nodeId: string; readonly key: string },
+): boolean {
+  return dst.nodeId === src.nodeId || dst.key.includes(`/${src.nodeId}/`);
+}
+
+/**
  * The index the dragged node is connected at, for a reorder on one list: `from` is its index now,
  * `at` the target's. The disconnect shifts everything after `from` left by one, so an insertion
  * point past it is one lower. `null` when the node would land where it already is.
@@ -61,4 +74,22 @@ export function reorderIndex(from: number, at: number, place: 'before' | 'after'
   const insertAt = place === 'after' ? at + 1 : at;
   const index = insertAt > from ? insertAt - 1 : insertAt;
   return index === from ? null : index;
+}
+
+/** The row fields a camera's drop on the Scene root reads. */
+interface CameraRootDropRow {
+  readonly nodeId: string;
+  readonly depth: number;
+  readonly parent?: { readonly nodeId: string; readonly socket: string };
+}
+
+/**
+ * #1518 — whether dropping a camera row on the Scene root moves it: out of the group that holds it
+ * and into `Scene.children`, so it stays in the scene. False when the drop is no move: not the root,
+ * or the camera is not nested (a top-level child of the scene, or the active camera's own row). The
+ * move itself is `buildMoveOps`'s (`keepPlaceReparent.ts`), the one writer of a parent edge, so it
+ * cuts whichever edge holds the camera, a wire or its own parent input (#1824).
+ */
+export function isCameraRootDrop(src: CameraRootDropRow, dst: CameraRootDropRow): boolean {
+  return dst.depth === 0 && src.parent?.socket === 'children' && src.parent.nodeId !== dst.nodeId;
 }

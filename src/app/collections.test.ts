@@ -174,8 +174,37 @@ describe('#1451 — the active collection', () => {
     expect(useDagStore.getState().state.nodes.sk_object).toBeUndefined();
   });
 
-  it('with the scene active, an import’s ops are left as they are', () => {
-    expect(intoActiveCollection(build(), made)).toEqual(made);
+  // #1823 — parenting is not membership, so an Object or Empty an import makes (hung or not) joins
+  // the scene's own list when the scene itself is active, as one would join the active collection.
+  it('with the scene active, every Object and Empty the import makes joins the scene’s list', () => {
+    const s = build();
+    const scene = s.outputs.scene!.node;
+    const ops = intoActiveCollection(s, made);
+    expect(ops.slice(0, made.length)).toEqual(made);
+    expect(ops.slice(made.length)).toEqual(
+      ['obj', 'empty'].map((id) => ({
+        type: 'connect',
+        from: { node: id, socket: 'out' },
+        to: { node: scene, socket: 'children' },
+      })),
+    );
+  });
+
+  it('with the scene active, one the ops already list is not listed twice', () => {
+    const s = build();
+    const scene = s.outputs.scene!.node;
+    const listed: Op[] = [
+      ...made,
+      {
+        type: 'connect',
+        from: { node: 'obj', socket: 'out' },
+        to: { node: scene, socket: 'children' },
+      },
+    ];
+    const ops = intoActiveCollection(s, listed);
+    expect(
+      ops.slice(listed.length).map((op) => (op as { from: { node: string } }).from.node),
+    ).toEqual(['empty']);
   });
 
   it('with a collection active, every Object and Empty the import makes is linked into it', () => {

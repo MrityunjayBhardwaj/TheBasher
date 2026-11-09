@@ -46,14 +46,13 @@
 import { Euler, MathUtils, Quaternion } from 'three';
 import { evaluate, type EvaluatorCache } from '../core/dag/evaluator';
 import type { DagState } from '../core/dag/state';
-import type { NodeRef } from '../core/dag/types';
 import type { Quat, RenderOutputValue, SceneChild } from '../nodes/types';
 import { overlayTransients } from './overlayTransients';
 import { overlayChannels } from '../nodes/overlayChannels';
 import { layeredChannelValues } from './layeredChannels';
 import { driverChannelValuesForTarget } from './paramDrivers';
 import { resolveConstraintRotation, resolveConstraintPosition } from './nodeConstraints';
-import { cameraLocalOrientation } from './cameraTrackTo';
+import { cameraFollowedPosition, cameraLocalOrientation } from './cameraTrackTo';
 import { useTransientEditStore } from './stores/transientEditStore';
 import { cameraLocalPose, childEdges } from './resolveWorldTransform';
 import { isCameraNode } from './cameraNode';
@@ -63,6 +62,7 @@ import {
   withResolvedRotation,
 } from './resolvedRotation';
 import { type ClockedCtx, ctxOnClock, ctxOnClockOf } from './subjectClock';
+import { sceneChildRefs } from './sceneMembership';
 
 type Vec3 = [number, number, number];
 const RAD2DEG = MathUtils.RAD2DEG;
@@ -134,9 +134,9 @@ export function resolveEvaluatedTransform(
         ...(ownQuat ? { quaternion: ownQuat } : {}),
       };
     }
-    const followed = resolveConstraintPosition(state, selectedId, own, cache);
+    const followed = cameraFollowedPosition(state, selectedId, own, cache);
     const position = followed ?? local.position;
-    const { quaternion } = cameraLocalOrientation(state, selectedId, position, local, ctx, cache);
+    const { quaternion } = cameraLocalOrientation(state, selectedId, local, ctx, cache);
     const e = new Euler().setFromQuaternion(new Quaternion(...quaternion), 'XYZ');
     return {
       position,
@@ -161,12 +161,8 @@ export function resolveEvaluatedTransform(
 
   // 3. Resolve the scene child-ref list EXACTLY as SceneFromDAG:91-110 —
   //    childRefs[i].node ↔ value.scene.children[i].
-  const sceneRef = state.outputs.scene;
-  const sceneNode = sceneRef ? state.nodes[sceneRef.node] : null;
-  const childRefs =
-    sceneNode && Array.isArray(sceneNode.inputs.children)
-      ? (sceneNode.inputs.children as NodeRef[])
-      : [];
+  // #1823 — as the scene draws them (`sceneChildRefs`).
+  const childRefs = sceneChildRefs(state);
 
   // 4. Find the matching scene-child index: childRefs[i].node === selectedId
   //    (the producing node IS its own scene child — v0.7 #199 retired the

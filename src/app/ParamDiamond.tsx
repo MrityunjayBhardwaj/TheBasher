@@ -26,6 +26,7 @@ import { dispatchMutatorFromUI } from './animate/dispatchMutator';
 import { keyParamFromTransient, resolveChannel } from './animate/autoKeyCommit';
 import { paramAnimationState } from './animate/paramAnimationState';
 import { diamondActivation } from './animate/rowChannelWrite';
+import { ROW_KEY_ATTR, useRowKeyer } from './animate/rowKey';
 import { usePlayheadFor } from './animate/usePlayheadFor';
 import { runsOnFilmTime } from './subjectClock';
 import { keyOf, useTransientEditStore } from './stores/transientEditStore';
@@ -120,9 +121,16 @@ export function ParamDiamond({
     }
   };
 
+  // #1845 — I over this row keys it. The same shared fork as a click, without a click's toggle.
+  const rowKey = useRowKeyer<HTMLButtonElement>(() =>
+    keyParamFromTransient(nodeId, paramPath, value),
+  );
+
   return (
     <button
+      ref={rowKey}
       type="button"
+      {...{ [ROW_KEY_ATTR]: '' }}
       data-testid={testid ?? `inspector-diamond-${nodeId}-${paramPath}`}
       data-anim-state={animState}
       data-transient={isTransient || undefined}

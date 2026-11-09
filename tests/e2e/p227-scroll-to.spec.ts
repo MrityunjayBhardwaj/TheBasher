@@ -39,14 +39,9 @@ test('selecting a node hidden under a collapsed Group expands the ancestor', asy
           to: { node: sceneId, socket: 'children' },
         },
         {
-          type: 'disconnect',
-          from: { node: 'n_box', socket: 'out' },
-          to: { node: sceneId, socket: 'children' },
-        },
-        {
           type: 'connect',
-          from: { node: 'n_box', socket: 'out' },
-          to: { node: 'n_grp', socket: 'children' },
+          from: { node: 'n_grp', socket: 'world' },
+          to: { node: 'n_box', socket: 'parent' },
         },
       ],
       'user',

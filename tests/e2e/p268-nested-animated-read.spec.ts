@@ -75,7 +75,11 @@ async function imported(page: Page) {
     );
     // The child's parent is whoever holds it as a child. #1451 — no wrapper Group: the import's
     // top is the ancestor the Scene holds directly, the one three draws under its own id.
-    const holder = (id: string) => all.find((n) => childrenOf(n.id).includes(id));
+    // A hung child names its parent by its parent input, and stays on the scene's list.
+    const holder = (id: string) => {
+      const wired = (nodes[id]?.inputs as unknown as { parent?: { node: string } }).parent?.node;
+      return wired ? nodes[wired] : all.find((n) => childrenOf(n.id).includes(id));
+    };
     const parent = object ? holder(object.id) : undefined;
     let top = object;
     while (top && holder(top.id) && holder(top.id)!.type !== 'Scene') top = holder(top.id);

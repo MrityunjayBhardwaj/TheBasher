@@ -40,6 +40,7 @@ export const LightRigNode: NodeDefinition<LightRigParams, LightRigValue> = {
   pure: true,
   cost: 'cheap',
   paramSchema: LightRigParams,
+  mainInput: null,
   inputs: {
     lights: { type: 'SceneObject', cardinality: 'list' },
   },

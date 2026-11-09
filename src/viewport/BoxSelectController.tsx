@@ -7,7 +7,7 @@
 //
 // Discipline: lives in src/viewport/ but writes only through useSelectionStore (a
 // UI projection, not the DAG) — the same V1/V8 contract selectNodeOnClick keeps.
-// Reads world origins via the pure resolveWorldTransform (one band, H40 / V37) so a
+// Reads world origins via the drawn world read (one band, H40 / V37) so a
 // box-select hits an object exactly where it RENDERS — plus the Follow-Path position
 // band ON TOP (#342), because the pure walk is TRS-only and a follower renders where
 // its path puts it, not where it was authored.
@@ -19,7 +19,7 @@ import { useDagStore } from '../core/dag/store';
 import { useTimeStore } from '../app/stores/timeStore';
 import { useSelectionStore } from '../app/stores/selectionStore';
 import { useBoxSelectStore } from '../app/stores/boxSelectStore';
-import { resolveWorldTransform } from '../app/resolveWorldTransform';
+import { resolveDrawnWorldTransform } from '../app/drawnWorldTransform';
 import { resolveFollowedWorldPosition } from '../app/nodeConstraints';
 import { getViewportSelectableIds } from '../app/selectableNodes';
 import { boxSelectHits, type BoxCandidate, type PixelRect, type ScreenPoint } from './boxSelect';
@@ -46,11 +46,11 @@ export function BoxSelect() {
       const ctx = { time: { frame: t.frame, seconds: t.seconds, normalized: t.normalized } };
       const candidates: BoxCandidate[] = [];
       for (const id of getViewportSelectableIds(state)) {
-        const wt = resolveWorldTransform(state, id, ctx);
+        // #1829 — the drawn read: a child of an aimed object is boxed where it is drawn.
+        const wt = resolveDrawnWorldTransform(state, id, ctx);
         if (!wt) continue;
-        // A Follow-Path moves an object's ORIGIN, and resolveWorldTransform is pure TRS —
-        // it deliberately applies no constraint band, because that purity is what the band's
-        // own inputs read. So a follower must be boxed at its FOLLOWED world point (what the
+        // A Follow-Path moves an object's ORIGIN, and the world read takes a node's own TRS —
+        // it deliberately applies none of its own constraint bands. So a follower must be boxed at its FOLLOWED world point (what the
         // renderer draws) rather than its authored one; unfollowed objects keep the pure
         // origin byte-for-byte. Reading the band ON TOP of the pure walk (never folded INTO
         // it) is the same split the renderer uses — and is why this can't cycle. #342.

@@ -157,7 +157,15 @@ describe('#637 this phase ships no migration, and the absence is pinned', () => 
     // aim at the origin and its −Y axis) moves onto its rotation or a Track-To, as a camera's did
     // (formatMigrations[26]). The render read those aims directly, so only a pass can hand each
     // saved one to what turns a light now.
-    const MIGRATIONS_SINCE_FREEZE = 18; // #915, #920, #930, #389, #1062, #1203, #1224, #1225 ×2, #1316, #1227, #1503, #1548, #1668, #1559, #1666, #1762, #1765
+    // #1824 is the NINETEENTH: a child in a Group's or an Object's `children` list moves onto its
+    // own parent input, reading that holder's world (formatMigrations[27]). Who hangs from whom was
+    // held by the parent's list, and only a pass over the saved wires can hand it to the child.
+    // #1812 is the TWENTIETH: each object's constraint stack becomes a wired chain
+    // (formatMigrations[28]).
+    // #1856 is the TWENTY-FIRST: a lens saved past v26 before the v26 step learned to strip its
+    // `lookAt`, `roll` and `zoom` loses them (formatMigrations[29]). The v26 step never runs again
+    // on such a file, so only a later pass can finish it.
+    const MIGRATIONS_SINCE_FREEZE = 21; // #915, #920, #930, #389, #1062, #1203, #1224, #1225 ×2, #1316, #1227, #1503, #1548, #1668, #1559, #1666, #1762, #1765, #1824, #1812, #1856
     expect(PROJECT_FORMAT_VERSION).toBe(fixture().formatVersion + MIGRATIONS_SINCE_FREEZE);
   });
 

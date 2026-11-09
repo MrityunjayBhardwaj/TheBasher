@@ -44,7 +44,8 @@ describe('ParamDriverNode.evaluate', () => {
     // #609 — ONE socket accepting BOTH types, where there were two sockets for one
     // role. Pinned as the set, in order: this is the first production socket to declare
     // one, so it is also the adoption proof that the union has a real user.
-    expect(ParamDriverNode.inputs.in.type).toEqual(['Number', 'Vector3']);
+    // #1785 — and a rotation and a transform, on the same one socket.
+    expect(ParamDriverNode.inputs.in.type).toEqual(['Number', 'Vector3', 'Quaternion', 'Matrix4']);
     expect(Object.keys(ParamDriverNode.inputs)).toEqual(['in']);
     expect(ParamDriverNode.outputs.out.type).toBe('Number');
   });

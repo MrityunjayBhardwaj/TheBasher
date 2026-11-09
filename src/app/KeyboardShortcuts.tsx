@@ -64,10 +64,18 @@ import { getActiveBone } from './boneSelection';
 import { addIkFromUI, editSkeletonFromUI } from './skeletonEditActions';
 import { useBoxSelectStore } from './stores/boxSelectStore';
 import { getViewportSelectableIds } from './selectableNodes';
-import { buildDeleteNodesOps, buildDuplicateNodesOps } from './sceneNodeActions';
+import { buildDuplicateNodesOps, planDeleteNodes } from './sceneNodeActions';
+import {
+  buildClearParentOps,
+  buildParentToOps,
+  moveNotices,
+  type MoveResult,
+} from './keepPlaceReparent';
 import { buildSetActiveCameraOps } from './setActiveCamera';
 import { useViewportStore } from './stores/viewportStore';
 import { keyParamFromTransient } from './animate/autoKeyCommit';
+import { hoveredElements, underMouse } from './animate/rowKey';
+import { nodeDisplayName } from './sceneTreeWalk';
 import { keyCameraFromUI } from './animate/keyCamera';
 import { isCameraNode } from './cameraNode';
 import { historyUndo, historyRedo } from './history';
@@ -386,6 +394,21 @@ function sayIfRefused(outcome: { ok: true } | { ok: false; reason: string }): vo
   }
 }
 
+/** Dispatch a parenting change, saying what it refused or how far a shear kept it from its place.
+ *  True when it went through or there was nothing to do. */
+function runMove(result: MoveResult, description: string): boolean {
+  const notify = useNotificationStore.getState().notify;
+  if (!result.ok) {
+    notify({ severity: 'info', message: result.reason });
+    return false;
+  }
+  const dag = useDagStore.getState();
+  const notices = moveNotices(dag.state, result);
+  if (result.ops.length > 0) dag.dispatchAtomic(result.ops, 'user', description);
+  for (const message of notices) notify({ severity: 'warn', message });
+  return true;
+}
+
 export function KeyboardShortcuts() {
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
@@ -550,6 +573,30 @@ export function KeyboardShortcuts() {
         }
       }
 
+      // #1516 — Alt+P clears the selection's parent, keeping each object where it is drawn
+      // (Blender's Clear and Keep Transformation). e.code, because Alt+P types another character on
+      // a Mac. An armature in Edit mode keeps the key for its bones (above), with one active or not.
+      if (e.altKey && !cmd && !e.shiftKey && e.code === 'KeyP' && getArmatureMode() !== 'edit') {
+        const ids = [...useSelectionStore.getState().selectedNodeIds];
+        if (ids.length > 0) {
+          e.preventDefault();
+          runMove(buildClearParentOps(useDagStore.getState().state, ids), 'clear parent');
+          return;
+        }
+      }
+      // #1516 — Ctrl+P parents the selection to the active object, keeping each where it is drawn
+      // (Blender's Object (Keep Transform)). The browser's own Print has to be stopped either way.
+      if (cmd && !e.altKey && !e.shiftKey && e.code === 'KeyP') {
+        e.preventDefault();
+        const sel = useSelectionStore.getState();
+        const active = sel.primaryNodeId;
+        const others = [...sel.selectedNodeIds].filter((id) => id !== active);
+        if (active && others.length > 0) {
+          runMove(buildParentToOps(useDagStore.getState().state, others, active), 'set parent');
+        }
+        return;
+      }
+
       // #1510 — Shift+I adds an IK to the selected bone in Pose mode (Blender's Add IK). Above the
       // no-modifier guard, which would drop it; bare I stays Insert Keyframe.
       if (e.shiftKey && !cmd && !e.altKey && e.code === 'KeyI' && getArmatureMode() === 'pose') {
@@ -601,6 +648,25 @@ export function KeyboardShortcuts() {
       // [/]) and the Delete-keyframe override gate on this; Space transport and
       // the tool keys do NOT (they are generic and mode-free).
       const timelineDrawerOpen = useViewportStore.getState().timelineDrawerOpen;
+
+      // #1845 — the row under the mouse comes first and needs no drawer, as its diamond does not.
+      // Blender's I over a button. Over no row, the rules below stand.
+      if (e.key === 'k' || e.key === 'K' || e.key === 'i' || e.key === 'I') {
+        const found = underMouse(hoveredElements());
+        if (found.kind === 'row') {
+          e.preventDefault();
+          sayIfRefused(found.key());
+          return;
+        }
+        if (found.kind === 'field') {
+          sayIfRefused({ ok: false, reason: 'This setting cannot be keyed.' });
+          return;
+        }
+        if (!timelineDrawerOpen) {
+          sayIfRefused({ ok: false, reason: 'Open the timeline to key the selection.' });
+          return;
+        }
+      }
 
       // Tool keys Q/W/E/R (P6 W2). Lowercase the input so capslock-on users get
       // the same behavior. The G/R/S aliases below stay alive for Blender muscle
@@ -701,6 +767,8 @@ export function KeyboardShortcuts() {
             const ops = buildKeyframeInsertOp();
             if (ops) {
               useDagStore.getState().dispatchAtomic(ops, 'user', 'insert keyframe');
+            } else {
+              sayIfRefused({ ok: false, reason: 'Nothing to key on this channel.' });
             }
             return;
           }
@@ -740,10 +808,17 @@ export function KeyboardShortcuts() {
               rotationBand,
               ['scale', evalT?.scale ?? params.scale],
             ];
+            // #1845 — a press that keys nothing says so: a compute node has none of these bands.
+            let refusal: string | null =
+              `"${nodeDisplayName(state.nodes, selectedId)}" has no transform to key. Point at a setting and press I.`;
             for (const [band, v] of bands) {
               if (v === undefined || v === null) continue; // band absent → skip
-              keyParamFromTransient(selectedId, band, v);
+              const keyed = keyParamFromTransient(selectedId, band, v);
+              refusal = keyed.ok ? null : (keyed.reason ?? refusal);
             }
+            if (refusal) sayIfRefused({ ok: false, reason: refusal });
+          } else {
+            sayIfRefused({ ok: false, reason: 'Nothing selected to key.' });
           }
           return;
         }
@@ -845,9 +920,15 @@ export function KeyboardShortcuts() {
             if (ids.length === 0) return;
             // Shared op-builder (#227) — the SAME disconnect-consumers + removeNode
             // path the outliner context menu uses, so the two can't drift.
-            const ops = buildDeleteNodesOps(dag.state, ids);
-            if (ops.length === 0) return;
-            dag.dispatchAtomic(ops, 'user', `delete ${ids.length} node(s)`);
+            // #1517 — a parent's children are handed up, which can refuse (a child under a constraint).
+            const plan = planDeleteNodes(dag.state, ids);
+            if (!plan.ok) {
+              useNotificationStore.getState().notify({ severity: 'info', message: plan.reason });
+              e.preventDefault();
+              return;
+            }
+            if (plan.ops.length === 0) return;
+            runMove(plan, `delete ${ids.length} node(s)`);
             sel.clear();
             e.preventDefault();
           }

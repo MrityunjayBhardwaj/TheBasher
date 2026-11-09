@@ -11,10 +11,15 @@
 import * as THREE from 'three';
 import type { EvaluatorCache } from '../core/dag/evaluator';
 import type { DagState } from '../core/dag/state';
-import { resolveActiveTrackTo, resolveTrackToTarget } from './nodeConstraints';
-import { resolveParentWorldMatrix } from './resolveWorldTransform';
+import {
+  resolveActiveTrackTo,
+  resolveConstraintRotation,
+  resolveFollowedWorldPosition,
+  resolveTrackToTarget,
+} from './nodeConstraints';
+import { resolveDrawnParentWorldMatrix } from './drawnWorldTransform';
 import type { ClockedCtx } from './subjectClock';
-import { trackToQuaternion, trackToUpIn } from './resolveTrackTo';
+import { trackToUpIn } from './resolveTrackTo';
 import { quaternionFromEulerDeg, withResolvedRotation } from './resolvedRotation';
 import type { Quat, RotationModeFields } from '../nodes/types';
 
@@ -35,7 +40,10 @@ export function cameraTrackToAim(
   const winner = resolveActiveTrackTo(state, cameraId, ctx, cache);
   const roll = winner?.roll ?? 0;
   let up: Vec3 = winner ? [...winner.up] : [0, 1, 0];
-  const parentWorld = resolveParentWorldMatrix(state, cameraId, ctx, cache);
+  // #1829 — the drawn parent, the one `resolveCameraPoseAt` lifts this pose by: the aim is
+  // brought into the space it is lifted out of, so a camera under an aimed object still frames its
+  // target. No cycle: a camera's aim enters no world read (a world read takes its own rotation).
+  const parentWorld = resolveDrawnParentWorldMatrix(state, cameraId, ctx, cache);
   if (!parentWorld) return { lookAt: aim, roll, up };
   // #1770 — the up in the parent's frame the camera aims in, read in the Track-To's own space.
   if (winner) up = trackToUpIn(up, winner.aimSpace, 'parent', parentWorld);
@@ -45,14 +53,30 @@ export function cameraTrackToAim(
   return { lookAt: [local.x, local.y, local.z], roll, up };
 }
 
+/** #1829 — the point a camera's Follow-Path puts it at, in the space its pose is lifted out of: the
+ *  drawn parent, as for its aim above, so a camera under an aimed object stays on its path. Null
+ *  when no Follow-Path moves it. A top-level camera's parent is the world. */
+export function cameraFollowedPosition(
+  state: DagState,
+  cameraId: string,
+  ctx: ClockedCtx,
+  cache?: EvaluatorCache,
+): Vec3 | null {
+  const world = resolveFollowedWorldPosition(state, cameraId, ctx, cache);
+  if (!world) return null;
+  const parentWorld = resolveDrawnParentWorldMatrix(state, cameraId, ctx, cache);
+  if (!parentWorld) return world;
+  const local = new THREE.Vector3(...world).applyMatrix4(parentWorld.clone().invert());
+  return [local.x, local.y, local.z];
+}
+
 /** What a camera's own transform holds for its orientation, keys already overlaid: its
  *  `rotation`, read in the mode it is in (`rotationMode`, `quaternion`). */
 export type CameraOwnRotation = RotationModeFields & { rotation: Vec3 };
 
 /**
  * #1760 — a camera's orientation in its parent's space, by the rule every object follows (V665):
- * its winning Track-To's aim and roll, else its Object's own rotation. The Track-To's aim is taken
- * from `position`, the camera's parent-local position with its keys and path applied. The
+ * its winning Track-To's aim and roll, else its Object's own rotation. The aim is the camera's constraint chain. The
  * Track-To's own roll is the only bank on an aim (#1764: the lens has none).
  * `aim` is the Track-To's aim point in the parent's space, or null when the camera's own rotation
  * turns it.
@@ -60,17 +84,14 @@ export type CameraOwnRotation = RotationModeFields & { rotation: Vec3 };
 export function cameraLocalOrientation(
   state: DagState,
   cameraId: string,
-  position: Vec3,
   own: CameraOwnRotation,
   ctx: ClockedCtx,
   cache?: EvaluatorCache,
 ): { quaternion: Quat; aim: Vec3 | null } {
   const tracked = cameraTrackToAim(state, cameraId, ctx, cache);
-  if (tracked) {
-    const q = trackToQuaternion(position, tracked.lookAt, tracked.up, tracked.roll);
-    // A degenerate aim (the camera sits on its aim point) aims nothing; its own rotation stands.
-    if (q) return { quaternion: [q.x, q.y, q.z, q.w], aim: tracked.lookAt };
-  }
+  // A degenerate aim (the camera sits on its aim point) aims nothing; its own rotation stands.
+  const aimed = tracked ? resolveConstraintRotation(state, cameraId, ctx, cache) : null;
+  if (tracked && aimed) return { quaternion: quaternionFromEulerDeg(aimed), aim: tracked.lookAt };
   const { rotation } = withResolvedRotation(own);
   return { quaternion: quaternionFromEulerDeg(rotation), aim: null };
 }

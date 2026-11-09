@@ -15,6 +15,7 @@ import { cloneForOverlay } from './overlayChannels';
 import type { BoneSpec, MeshGeometryData, ModifiedDataValue, SkinDeformValue } from './types';
 import { clipValueFromKeys } from '../test-utils/clipValue';
 import { sceneOnlyState } from '../test-utils/sceneOnlyState';
+import { worldParentOf } from '../core/dag/worldChildren';
 
 const CTX = { ctx: { time: { frame: 0, seconds: 0, normalized: 0 } } };
 
@@ -346,12 +347,16 @@ describe('#1218 — a skinned mesh under a moved armature stands in the armature
     )!.id;
     return { state, objectId, modifierId };
   }
-  const parentOf = (state: DagState, id: string) =>
-    Object.values(state.nodes).find((n) =>
+  // #1824 — under an Object or a Group a node names its parent; the scene's list is still a wire.
+  const parentOf = (state: DagState, id: string) => {
+    const named = worldParentOf(state, id);
+    if (named) return state.nodes[named];
+    return Object.values(state.nodes).find((n) =>
       ([] as { node: string }[])
         .concat((n.inputs.children as never) ?? [])
         .some((c) => c?.node === id),
     );
+  };
   /** The point resting at `rest` in the mesh's stored space, deformed at `t`. */
   function pointAtRest(state: DagState, modifierId: string, rest: number[], t: number): number[] {
     const { skin, mesh } = deformed(state, modifierId);

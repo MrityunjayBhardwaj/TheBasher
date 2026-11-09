@@ -52,6 +52,16 @@ import type { Quat, RotationModeFields } from '../../nodes/types';
 
 type FormatMigration = (raw: unknown) => unknown;
 
+/** #1824 — the format version the children-to-parent-input conversion produces. One constant, as
+ *  open PRs number their own conversions from the same base and one of them may land first. */
+export const PARENT_INPUTS_FORMAT = 28;
+
+/** #1812 — the format version the constraint-stacks-to-chains conversion produces. */
+export const CONSTRAINT_CHAINS_FORMAT = PARENT_INPUTS_FORMAT + 1;
+
+/** #1856 — the format version that finishes the v26 lens strip on files saved past v26 without it. */
+export const CAMERA_LENS_STRIP_FORMAT = CONSTRAINT_CHAINS_FORMAT + 1;
+
 /** Ladder of project-format migrations keyed by source version. */
 const formatMigrations: Record<number, FormatMigration> = {
   // v1 → v2 (#199): retire the AnimationLayer wrapper graph-wide.
@@ -169,6 +179,16 @@ const formatMigrations: Record<number, FormatMigration> = {
   // aims (at the origin at rotation 0, down its −Y otherwise) are written into its rotation, or
   // into a Track-To when its position moves.
   26: migrateLightAimToTurn,
+  // v27 → v28 (#1824): a child names its parent. Each Object, Group or Null in a Group's or an
+  // Object's `children` list moves onto its own parent input, reading that holder's world; the
+  // holder draws it from there. Keyed off one constant so a renumber is one line.
+  [PARENT_INPUTS_FORMAT - 1]: migrateChildrenToParentInputs,
+  // v28 → v29 (#1812): each object's constraint stack becomes a wired chain, and a followed object's
+  // own position becomes zero, as a Follow Path now adds it to the path.
+  [CONSTRAINT_CHAINS_FORMAT - 1]: migrateConstraintsToChains,
+  // v29 → v30 (#1856): a lens saved past v26 still holding `lookAt`, `roll` or `zoom` loses them, as
+  // the v26 step does now; a file saved before the step learned to strip them never ran it again.
+  [CAMERA_LENS_STRIP_FORMAT - 1]: migrateStaleLensFields,
 };
 
 // ── v1 → v2: AnimationLayer retirement (#199) ──────────────────────────────
@@ -2853,4 +2873,347 @@ export function migrateLightAimToTurn(raw: unknown): unknown {
     );
   }
   return { ...proj, state: { ...proj.state, nodes: out }, formatVersion: 27 };
+}
+
+// ── v27 → v28: a child names its parent (#1824) ─────────────────────────────────────────────
+//
+// Until v28 a Group or an Object held its children in its own `children` list. From v28 a child
+// that can name a parent does: its `parent` input reads the parent's `world`, and the parent draws
+// every node whose parent input reads it (`withGatheredChildren`). What each file draws is kept:
+//
+//   - A child is moved only when it can take a parent input. The types are listed as they stood
+//     at v28, not asked of the registry, so a later node type cannot change what this pass did.
+//     Any other child (a glTF asset, a Transform, a scatter) stays wired in the list.
+//   - Parenting stops putting a node in the scene (#1823): each child moved onto its parent input
+//     joins the scene's own list and every collection that holds its top ancestor, appended.
+//   - A node in two lists was drawn twice. The first holder in the table becomes its parent and
+//     the other wires stay, so it is still drawn in both places; said in the console.
+//   - A child already reading some parent's world in its parent input, and also in a list, was
+//     drawn under the list's holder. The list wins, since that is where it was seen; said too.
+const HOLDS_CHILDREN_AT_V28: ReadonlySet<string> = new Set(['Group', 'Object']);
+const TAKES_A_PARENT_AT_V28: ReadonlySet<string> = new Set(['Group', 'Object', 'Null']);
+
+/** The wires that held a scene object at v28, by holder type: a list, or a wrapper's one child. */
+const HOLDING_SOCKETS_AT_V28: Readonly<Record<string, string>> = {
+  Group: 'children',
+  Object: 'children',
+  Transform: 'target',
+  MaterialOverride: 'target',
+};
+
+/**
+ * #1823 — parenting stops putting a node in the scene: only the scene's own list and its
+ * collections do. Every child this step hung by its parent input joins each list that holds its
+ * top ancestor (climbing parent inputs, then the wires that still hold a node), so it is drawn
+ * exactly where it was. Appended, so the lists keep their order.
+ */
+function linkHungChildren(out: Record<string, RawNode>, parentOf: ReadonlyMap<string, string>) {
+  const refsIn = (b: unknown): RawRef[] => (Array.isArray(b) ? b : b ? [b as RawRef] : []);
+  const wiredHolder = new Map<string, string>();
+  for (const [id, node] of Object.entries(out)) {
+    const socket = HOLDING_SOCKETS_AT_V28[node?.type ?? ''];
+    if (!socket) continue;
+    for (const ref of refsIn(node.inputs?.[socket])) {
+      if (ref?.node && !wiredHolder.has(ref.node)) wiredHolder.set(ref.node, id);
+    }
+  }
+  const up = (id: string): string | undefined => {
+    const parent = out[id]?.inputs?.parent;
+    const viaParent = !Array.isArray(parent) ? parent?.node : undefined;
+    return viaParent && out[viaParent] ? viaParent : wiredHolder.get(id);
+  };
+  // Which membership lists hold each node, read once (a top is never one of the children added).
+  const listsOf = new Map<string, Array<{ holder: string; socket: string }>>();
+  for (const [holder, node] of Object.entries(out)) {
+    const socket =
+      node?.type === 'Scene' ? 'children' : node?.type === 'Collection' ? 'members' : null;
+    if (!socket) continue;
+    for (const ref of refsIn(node.inputs?.[socket])) {
+      if (!ref?.node) continue;
+      const at = listsOf.get(ref.node) ?? listsOf.set(ref.node, []).get(ref.node)!;
+      if (!at.some((l) => l.holder === holder)) at.push({ holder, socket });
+    }
+  }
+  const lists = (id: string) => listsOf.get(id) ?? [];
+  for (const childId of parentOf.keys()) {
+    let top = childId;
+    const seen = new Set([top]);
+    for (let next = up(top); next && !seen.has(next); next = up(top)) {
+      seen.add(next);
+      top = next;
+    }
+    for (const { holder, socket } of lists(top)) {
+      const node = out[holder];
+      const list = refsIn(node.inputs?.[socket]);
+      if (list.some((r) => r?.node === childId)) continue;
+      out[holder] = {
+        ...node,
+        inputs: { ...(node.inputs ?? {}), [socket]: [...list, { node: childId, socket: 'out' }] },
+      };
+    }
+  }
+}
+
+export function migrateChildrenToParentInputs(raw: unknown): unknown {
+  const proj = raw as { formatVersion?: number; state?: { nodes?: Record<string, RawNode> } };
+  const nodes = proj.state?.nodes;
+  if (!nodes) return { ...proj, formatVersion: PARENT_INPUTS_FORMAT };
+  const out: Record<string, RawNode> = { ...nodes };
+  const parentOf = new Map<string, string>();
+  const twice: string[] = [];
+  const repointed: string[] = [];
+  for (const [holderId, holder] of Object.entries(nodes)) {
+    if (!HOLDS_CHILDREN_AT_V28.has(holder?.type ?? '')) continue;
+    const list = holder.inputs?.children;
+    if (!Array.isArray(list)) continue;
+    const kept: RawRef[] = [];
+    for (const ref of list) {
+      const childId = ref?.node;
+      const child = childId ? nodes[childId] : undefined;
+      const movable =
+        !!childId &&
+        ref.socket === 'out' &&
+        TAKES_A_PARENT_AT_V28.has(child?.type ?? '') &&
+        childId !== holderId;
+      if (!movable) {
+        kept.push(ref);
+        continue;
+      }
+      if (parentOf.has(childId)) {
+        twice.push(childId);
+        kept.push(ref);
+        continue;
+      }
+      parentOf.set(childId, holderId);
+    }
+    if (kept.length === list.length) continue;
+    const inputs = { ...(out[holderId].inputs ?? {}) };
+    if (kept.length > 0) inputs.children = kept;
+    else delete inputs.children;
+    out[holderId] = { ...out[holderId], inputs };
+  }
+  for (const [childId, holderId] of parentOf) {
+    const child = out[childId];
+    const prior = child.inputs?.parent;
+    const priorNode = !Array.isArray(prior) ? prior?.node : undefined;
+    if (priorNode && priorNode !== holderId) repointed.push(childId);
+    out[childId] = {
+      ...child,
+      inputs: { ...(child.inputs ?? {}), parent: { node: holderId, socket: 'world' } },
+    };
+  }
+  linkHungChildren(out, parentOf);
+  if (twice.length > 0 || repointed.length > 0) {
+    console.warn(
+      `[migrateChildrenToParentInputs] ${parentOf.size} child(ren) now name their parent (#1824).` +
+        (twice.length > 0
+          ? ` Held by more than one parent, so still wired into the others as before: ${[...new Set(twice)].join(', ')}.`
+          : '') +
+        (repointed.length > 0
+          ? ` Their parent input read another object, and now reads the one that drew them: ${repointed.join(', ')}.`
+          : ''),
+    );
+  }
+  return { ...proj, state: { ...proj.state, nodes: out }, formatVersion: PARENT_INPUTS_FORMAT };
+}
+
+// ── Saved constraint stacks become wired chains (#1812) ────────────────────────────
+//
+// A constraint named its object in `target` and took its place by `order`, with ties in node-table
+// order, which is how `relationalPoseStackForTarget` reads them. Each object's stack becomes
+//
+//   OwnWorld → step → step → the object's `constraints` input
+//
+// with muted steps in place. Keys, strips and drivers on a step's settings stay on the same node.
+// What a step aims at or follows stays a reference (`aimNode`, `curve`): that is what lets two
+// objects aim at each other, which a wire can't, and a file holding that must keep it. A step whose
+// object can't end a chain is left as it was.
+//
+// Two things the chain does differently from the old road, each handled so an object draws where
+// it did:
+//
+// - A Follow Path adds the object's own position to the path point, as Blender does (#1791); the old
+//   road replaced it. So the object's own position becomes zero, and the keys and drivers on it go:
+//   the path overrode them, so they moved nothing, and as an offset they would.
+// - The old road aimed from the followed position whatever the order, because the two wrote separate
+//   bands. On a chain a step reads what is below it, as in Blender. So Follow Paths go below aims.
+//
+// What can't come across exactly is logged by name: a follower with a parent, whose parent's
+// position now adds to the path; two or more live Follow Paths, which now compose in order where the
+// top one won alone; a strip on a follower, where a position in its clip now offsets it. PR #1803's
+// scan of 19 projects on disk found none of these in a real file.
+const ENDS_A_CHAIN_AT_V29: ReadonlySet<string> = new Set(['Group', 'Object', 'Null']);
+
+function followedOwnPositionsCleared(nodes: Record<string, RawNode>): Record<string, RawNode> {
+  const out: Record<string, RawNode> = { ...nodes };
+  const entries = Object.entries(nodes);
+  // An object holding a curve with points: what `curveSamplerFor` follows. A step naming anything
+  // else placed nothing and still doesn't, so its object keeps its position. #1853 — that
+  // includes a curve with no points, which an older file can hold: nothing to sample.
+  const isCurve = (id: unknown) => {
+    const n = typeof id === 'string' ? nodes[id] : undefined;
+    return asRefs(n?.inputs?.data).some((r) => {
+      const data = nodes[r.node ?? ''];
+      const points = (data?.params as { points?: unknown } | undefined)?.points;
+      return data?.type === 'CurveData' && Array.isArray(points) && points.length > 0;
+    });
+  };
+  const live = new Map<string, number>();
+  for (const [, n] of entries) {
+    if (n?.type !== 'FollowPath' || n.params?.mute === true) continue;
+    const target = n.params?.target;
+    if (typeof target !== 'string' || !nodes[target] || !isCurve(n.params?.curve)) continue;
+    live.set(target, (live.get(target) ?? 0) + 1);
+  }
+  const onPosition = (p: Record<string, unknown> | undefined) =>
+    typeof p?.paramPath === 'string' &&
+    (p.paramPath === 'position' || p.paramPath.startsWith('position.'));
+  const parented: string[] = [];
+  const stacked: string[] = [];
+  const stripped: string[] = [];
+  let removed = 0;
+  for (const [target, members] of live) {
+    out[target] = { ...nodes[target], params: { ...nodes[target].params, position: [0, 0, 0] } };
+    for (const [id, n] of entries) {
+      if (n?.params?.target !== target || !onPosition(n.params)) continue;
+      const isKey = typeof n.type === 'string' && n.type.startsWith('KeyframeChannel');
+      if (!isKey && n.type !== 'ParamDriver') continue;
+      delete out[id];
+      removed++;
+    }
+    if (asRefs(nodes[target].inputs?.parent).length > 0) parented.push(target);
+    if (members > 1) stacked.push(target);
+    if (entries.some(([, n]) => n?.type === 'Strip' && n.params?.target === target))
+      stripped.push(target);
+  }
+  if (live.size > 0) {
+    console.warn(
+      `[migrateConstraintsToChains] ${live.size} object(s) on a Follow Path now have their own ` +
+        `position as an offset from the path; it is set to zero and ${removed} key/driver node(s) ` +
+        `on it removed, so each draws where it did (#1791).` +
+        (parented.length > 0
+          ? ` Parented, so their parent's position now adds to the path: ${parented.join(', ')}.`
+          : '') +
+        (stacked.length > 0
+          ? ` Two or more live Follow Paths, which now compose in order: ${stacked.join(', ')}.`
+          : '') +
+        (stripped.length > 0
+          ? ` A strip is placed on them; a position inside it now offsets them: ${stripped.join(', ')}.`
+          : ''),
+    );
+  }
+  return out;
+}
+
+export function migrateConstraintsToChains(raw: unknown): unknown {
+  const proj = raw as { state?: { nodes?: Record<string, RawNode> } };
+  const nodes = proj.state?.nodes;
+  if (!nodes) return { ...proj, formatVersion: CONSTRAINT_CHAINS_FORMAT };
+  const out = followedOwnPositionsCleared(nodes);
+  const stacks = new Map<string, { id: string; order: number; follows: boolean }[]>();
+  for (const [id, node] of Object.entries(out)) {
+    if (node?.type !== 'TrackTo' && node?.type !== 'FollowPath') continue;
+    const params = (node.params ?? {}) as { target?: unknown; order?: unknown };
+    const target = params.target;
+    if (typeof target !== 'string' || !ENDS_A_CHAIN_AT_V29.has(out[target]?.type ?? '')) continue;
+    // Already on a chain: a state built at this version, passed back through the step.
+    if (out[target].inputs?.constraints || node.inputs?.in) continue;
+    const order = typeof params.order === 'number' ? params.order : 0;
+    const member = { id, order, follows: node.type === 'FollowPath' };
+    stacks.set(target, [...(stacks.get(target) ?? []), member]);
+  }
+  const wire = (id: string, socket: string, ref: RawRef) => {
+    out[id] = { ...out[id], inputs: { ...out[id].inputs, [socket]: ref } };
+  };
+  for (const [objectId, stack] of stacks) {
+    let ownId = `${objectId}_own_world`;
+    while (out[ownId]) ownId += '_';
+    out[ownId] = {
+      id: ownId,
+      type: 'OwnWorld',
+      version: 1,
+      params: { object: objectId },
+      inputs: {},
+    };
+    let below: RawRef = { node: ownId, socket: 'world' };
+    // Stable sorts, so a tie keeps node-table order and each kind keeps its own order.
+    const ordered = [...stack]
+      .sort((a, b) => a.order - b.order)
+      .sort((a, b) => Number(b.follows) - Number(a.follows));
+    for (const { id } of ordered) {
+      wire(id, 'in', below);
+      below = { node: id, socket: 'world' };
+    }
+    wire(objectId, 'constraints', below);
+  }
+  return { ...proj, state: { ...proj.state, nodes: out }, formatVersion: CONSTRAINT_CHAINS_FORMAT };
+}
+
+// ── v29 → v30: finish the lens strip on files saved past v26 without it (#1856) ────────────────
+// The v26 step first moved a camera's aim onto a Track-To and set the lens `roll` to 0, but kept
+// `lookAt` and `zoom` on the lens. It learned to frame an orthographic camera by its own
+// `orthoScale` (from the old `zoom`-free framing, `2·tan(fov/2)·|lookAt − position|`) and to strip
+// `lookAt`, `roll` and `zoom` only later, and a file already at v26 never ran it again. The bundled
+// "Camera Path + AI Walk" example was saved in between, and boot seeds a stored copy of it once and
+// never over it, so stored copies and anything saved from them keep three params the lens schema
+// does not have: every door that re-creates the node (duplicate, paste, restore) refuses it.
+//
+// From any v26+ file those fields are inert: the aim is the Track-To the step made (or whatever
+// the person turned the camera to since), and nothing reads the lens `roll` or `zoom`. So this step
+// is the part the v26 step gained after: an orthographic lens with no `orthoScale` gets the frame
+// it was drawn with, the three fields leave every lens, and keys or drivers on `zoom` (which drove
+// nothing) are removed. Keys on `lookAt` / `roll` were already moved by the step that made the aim.
+const STALE_LENS_FIELDS = ['lookAt', 'roll', 'zoom'] as const;
+
+export function migrateStaleLensFields(raw: unknown): unknown {
+  const proj = raw as { formatVersion?: number; state?: { nodes?: Record<string, RawNode> } };
+  const nodes = proj.state?.nodes;
+  if (!nodes) return { ...proj, formatVersion: CAMERA_LENS_STRIP_FORMAT };
+  const out: Record<string, RawNode> = { ...nodes };
+  const entries = Object.entries(nodes);
+  const isVec3 = (v: unknown): v is [number, number, number] =>
+    Array.isArray(v) && v.length === 3 && v.every((x) => typeof x === 'number');
+  const lenses: string[] = [];
+  let droppedZoomKeys = 0;
+  for (const [dataId, lens] of entries) {
+    if (lens?.type !== 'CameraData' || !lens.params) continue;
+    const p = lens.params;
+    if (!STALE_LENS_FIELDS.some((k) => k in p)) continue;
+    const { lookAt, roll: _roll, zoom: _zoom, ...rest } = p;
+    void _roll;
+    void _zoom;
+    const objId = entries.find(([, n]) =>
+      asRefs(n?.inputs?.data).some((r) => r.node === dataId),
+    )?.[0];
+    if (p.projection === 'Orthographic' && typeof p.orthoScale !== 'number') {
+      const at = objId ? out[objId]?.params?.position : undefined;
+      const dist =
+        isVec3(at) && isVec3(lookAt)
+          ? Math.hypot(lookAt[0] - at[0], lookAt[1] - at[1], lookAt[2] - at[2])
+          : 0;
+      const fov = typeof p.fov === 'number' && Number.isFinite(p.fov) ? p.fov : 45;
+      rest.orthoScale = 2 * (Math.tan((fov * Math.PI) / 360) * dist || 1);
+    }
+    out[dataId] = { ...lens, params: rest };
+    lenses.push(dataId);
+    for (const [id, n] of entries) {
+      const q = n?.params;
+      if (q?.paramPath !== 'zoom' || (q.target !== dataId && q.target !== objId)) continue;
+      if (
+        !(typeof n.type === 'string' && n.type.startsWith('KeyframeChannel')) &&
+        n.type !== 'ParamDriver'
+      )
+        continue;
+      delete out[id];
+      droppedZoomKeys++;
+    }
+  }
+  if (lenses.length > 0) {
+    console.warn(
+      `[migrateStaleLensFields] ${lenses.length} camera lens(es) (${lenses.join(', ')}) lost the ` +
+        `look-at, roll or zoom their schema no longer has; ${droppedZoomKeys} key/driver node(s) ` +
+        `on zoom removed (#1856).`,
+    );
+  }
+  return { ...proj, state: { ...proj.state, nodes: out }, formatVersion: CAMERA_LENS_STRIP_FORMAT };
 }

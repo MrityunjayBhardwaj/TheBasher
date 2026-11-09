@@ -56,6 +56,12 @@
 //   and does NOT reflect a camera Track-To aim (that is the active-camera RENDER
 //   path, resolveActiveCameraPoseAt). Descent stops at out-of-scope nodes, null.
 //
+// #1829 — THIS IS THE INPUT READ: it builds every ancestor WITHOUT its constraints, so a constraint
+//   that reads through it can never read its own result. The child of an aimed object therefore
+//   reads back where it would be if the parent were not aimed. A reader that wants where a thing is
+//   DRAWN (the gizmo, chrome, anything but a constraint's inputs) uses `resolveDrawnWorldTransform`
+//   (drawnWorldTransform.ts), which is this same walk with each ancestor's constraints applied.
+//
 // V8 file-location: lives in src/app/ beside resolveEvaluatedTransform — its
 //   consumers (constraints, the camera migration) and its tests sit in
 //   src/app/-reach; placing it in src/viewport/ would force app→viewport imports.
@@ -78,7 +84,8 @@ import { isCameraNode } from './cameraNode';
 import { resolveRigLightSources } from './resolveRigLightSources';
 import { quaternionFromEulerDeg, withResolvedRotation } from './resolvedRotation';
 import type { Quat, RotationModeFields } from '../nodes/types';
-import { hierarchySocketForKind } from './sceneHierarchy';
+import { hierarchySocketForKind, WRAPPER_PARENT_TYPES } from './sceneHierarchy';
+import { drawnInputsOf } from '../core/dag/worldChildren';
 import { sceneIndexOf } from './sceneIndex';
 import { getNodeType } from '../core/dag/registry';
 import { conversionsInto } from '../core/dag/socketConversion';
@@ -86,6 +93,7 @@ import { useTransientEditStore } from './stores/transientEditStore';
 import { boneParentMatrix } from '../nodes/boneParent';
 import { type ClockedCtx, ctxOnClock, ctxOnClockOf } from './subjectClock';
 import { measureStage } from '../perf/frameProfiler';
+import { sceneChildRefs } from './sceneMembership';
 
 type Vec3 = [number, number, number];
 
@@ -225,7 +233,9 @@ export function childEdges(
       // through `hierarchyChildIds`, which compacts: an unbound entry must consume its
       // slot here or every later child would pair with the wrong value.
       const socket = hierarchySocketForKind(v.kind, node);
-      const refs = socket ? node.inputs[socket] : undefined;
+      // #1824 — the wires, then the drawn children gathered from parent inputs (#1823), as the
+      // evaluator built the value's `children` (`drawnInputsOf`).
+      const refs = socket ? drawnInputsOf(state, nodeId, node)[socket] : undefined;
       const list = Array.isArray(refs) ? refs : refs ? [refs] : [];
       const kids = v.children ?? [];
       const out: Array<{ id: string; value: SceneChild }> = [];
@@ -251,8 +261,8 @@ function walk(
   targetId: string,
   at: Overlay,
 ): THREE.Matrix4 | null {
-  const world = acc.clone().multiply(localMatrix(value));
-  if (nodeId === targetId) return world;
+  if (nodeId === targetId) return acc.clone().multiply(localMatrix(value));
+  const world = acc.clone().multiply(at.ancestorLocal(state, nodeId, value, at.ctx, at.cache));
   // `childEdges` reads the children off the RAW value, so each one is overlaid on the way down.
   for (const edge of childEdges(state, nodeId, value)) {
     const child = overlaidAt(state, edge.id, edge.value, at);
@@ -284,7 +294,7 @@ function walkParent(
   at: Overlay,
 ): THREE.Matrix4 | null {
   if (nodeId === targetId) return acc;
-  const world = acc.clone().multiply(localMatrix(value));
+  const world = acc.clone().multiply(at.ancestorLocal(state, nodeId, value, at.ctx, at.cache));
   for (const edge of childEdges(state, nodeId, value)) {
     const child = overlaidAt(state, edge.id, edge.value, at);
     if (!child) continue;
@@ -321,11 +331,30 @@ function underParent(
   return bone ? parentWorld.clone().multiply(bone) : parentWorld;
 }
 
+/**
+ * #1829 — the local matrix an ANCESTOR on the walk contributes: `nodeId` holds the node being read,
+ * and `value` is its overlaid value. The read below passes {@link localMatrix}, the ancestor without
+ * its constraints, which is what a constraint must read its inputs with (nothing reads its own
+ * result). `drawnWorldTransform.ts` passes the ancestor as the renderer draws it, aim and path
+ * applied, for every reader that wants where a thing is drawn. The node being read itself always
+ * contributes its own `localMatrix`: its own constraints are folded by the readers that may (V665).
+ */
+export type AncestorLocal = (
+  state: DagState,
+  nodeId: string,
+  value: SceneChild,
+  ctx: ClockedCtx,
+  cache: EvaluatorCache | undefined,
+) => THREE.Matrix4;
+
+const unconstrainedLocal: AncestorLocal = (_state, _id, value) => localMatrix(value);
+
 /** The time, evaluation context and held edits a walk overlays each node with. */
-interface Overlay {
+export interface Overlay {
   readonly ctx: ClockedCtx;
   readonly cache: EvaluatorCache | undefined;
   readonly transients: ReturnType<typeof useTransientEditStore.getState>['edits'];
+  readonly ancestorLocal: AncestorLocal;
 }
 
 /**
@@ -351,7 +380,7 @@ function drawnChannels(state: DagState, nodeId: string, at: Overlay): KeyframeCh
  * run for top-level scene children only, so a channel on a nested node, or on a nested ancestor,
  * moved the drawn mesh and left this read on the static pose.
  */
-function overlaidAt(
+export function overlaidAt(
   state: DagState,
   nodeId: string,
   value: SceneChild,
@@ -364,6 +393,21 @@ function overlaidAt(
   const channels = drawnChannels(state, nodeId, at);
   if (channels.length > 0) child = overlayChannels(child, channels, 1, at.ctx.time.seconds);
   return overlayTransients(child, nodeId, at.transients);
+}
+
+/** #1844 — the scene's tops by id, kept per node table: every world read asks, so building this per
+ *  read made each one cost the scene's size. */
+const sceneTopsCache = new WeakMap<
+  DagState['nodes'],
+  { sceneId: string | undefined; tops: Map<string, NodeRef> }
+>();
+export function sceneTopsOf(state: DagState): Map<string, NodeRef> {
+  const sceneId = state.outputs.scene?.node;
+  const hit = sceneTopsCache.get(state.nodes);
+  if (hit && hit.sceneId === sceneId) return hit.tops;
+  const tops = new Map(sceneChildRefs(state).map((r) => [r.node, r]));
+  sceneTopsCache.set(state.nodes, { sceneId, tops });
+  return tops;
 }
 
 /**
@@ -381,9 +425,12 @@ function holderChain(state: DagState, id: string): string[] | null | 'search' {
   const index = sceneIndexOf(state.nodes);
   const sceneId = state.outputs.scene?.node;
   const chain = [id];
+  // #1823 — the tops of what the scene draws.
+  const tops = sceneTopsOf(state);
   for (let at = id; ; ) {
     const holders = index.parentsOf(at);
-    if (holders.length === 0) return null;
+    // #1823 — the scene is not a parent: a node no parent holds is a top when the scene draws it.
+    if (holders.length === 0) return tops.has(at) ? chain.reverse() : null;
     if (holders.length > 1) return 'search';
     const holder = holders[0];
     if (holder === sceneId) return chain.reverse();
@@ -424,9 +471,7 @@ function topLevelValue(state: DagState, topId: string, at: Overlay): SceneChild 
     return 'search';
   }
   if (!sceneChildrenArriveAsProduced()) return 'search';
-  const refs = state.nodes[sceneId]?.inputs.children;
-  const list = (Array.isArray(refs) ? refs : refs ? [refs] : []) as NodeRef[];
-  const ref = list.find((r) => r?.node === topId);
+  const ref = sceneTopsOf(state).get(topId);
   if (!ref) return null;
   let produced: unknown;
   try {
@@ -455,7 +500,7 @@ function composeDown(
   let value = top;
   let acc = new THREE.Matrix4();
   for (let k = 0; k + 1 < chain.length; k++) {
-    const world = acc.clone().multiply(localMatrix(value));
+    const world = acc.clone().multiply(at.ancestorLocal(state, chain[k], value, at.ctx, at.cache));
     const edge = childEdges(state, chain[k], value).find((e) => e.id === chain[k + 1]);
     if (!edge) return null;
     const child = overlaidAt(state, edge.id, edge.value, at);
@@ -486,12 +531,8 @@ function searchFromRoot(
   if (!value?.scene?.children) return null;
   // Scene child-ref list — childRefs[i].node ↔ value.scene.children[i], EXACTLY as SceneFromDAG
   // and resolveEvaluatedTransform resolve it.
-  const sceneRef = state.outputs.scene;
-  const sceneNode = sceneRef ? state.nodes[sceneRef.node] : null;
-  const childRefs =
-    sceneNode && Array.isArray(sceneNode.inputs.children)
-      ? (sceneNode.inputs.children as NodeRef[])
-      : [];
+  // #1823 — as the scene draws them (`sceneChildRefs`).
+  const childRefs = sceneChildRefs(state);
   const identity = new THREE.Matrix4();
   for (let i = 0; i < value.scene.children.length; i++) {
     const topId = childRefs[i]?.node;
@@ -528,6 +569,17 @@ function sceneChildWorld(
   return searchFromRoot(state, id, at, parentOnly);
 }
 
+/**
+ * #1838 — the world `id` hangs from when a wrapper (a Transform, a MaterialOverride) holds it: a
+ * wrapper takes its child by a wire and has no world output, so no parent input can carry this.
+ * Null when no wrapper holds `id`, without touching the graph beyond its holders.
+ */
+export function wrapperParentWorld(state: DagState, id: string, at: Overlay): THREE.Matrix4 | null {
+  const holders = sceneIndexOf(state.nodes).parentsOf(id);
+  if (!holders.some((h) => WRAPPER_PARENT_TYPES.has(state.nodes[h]?.type ?? ''))) return null;
+  return sceneChildWorld(state, id, at, true);
+}
+
 function isIdentityMatrix(m: THREE.Matrix4): boolean {
   const e = m.elements;
   // Column-major identity. Tolerance absorbs compose/clone float noise.
@@ -539,7 +591,7 @@ function isIdentityMatrix(m: THREE.Matrix4): boolean {
 /** #1760 — a camera's local matrix from its own transform: position and its Object's rotation
  *  (in its mode), identity scale (the render does not scale a camera). Like every object on this
  *  walk, no constraint is applied: a Track-To is folded by the readers that may (V665). */
-function cameraLocalMatrix(cam: CameraLocalPose): THREE.Matrix4 {
+export function cameraLocalMatrix(cam: CameraLocalPose): THREE.Matrix4 {
   const pos = new THREE.Vector3(cam.position[0], cam.position[1], cam.position[2]);
   const [x, y, z, w] = quaternionFromEulerDeg(withResolvedRotation(cam).rotation);
   return new THREE.Matrix4().compose(
@@ -631,14 +683,33 @@ export function resolveWorldTransform(
   cache?: EvaluatorCache,
 ): WorldTransform | null {
   // #1727 — timed as the `world` stage of a playback perf run; a plain call when none is armed.
-  return measureStage('world', () => worldTransformOf(state, selectedId, ctx, cache));
+  return measureStage('world', () =>
+    worldTransformOf(state, selectedId, ctx, cache, unconstrainedLocal),
+  );
+}
+
+/**
+ * #1829 — {@link resolveWorldTransform} with each ancestor's local matrix given by `ancestorLocal`.
+ * Not for direct use: `resolveDrawnWorldTransform` (drawnWorldTransform.ts) is the one caller.
+ */
+export function resolveWorldTransformWith(
+  state: DagState,
+  selectedId: string,
+  ctx: ClockedCtx,
+  cache: EvaluatorCache | undefined,
+  ancestorLocal: AncestorLocal,
+): WorldTransform | null {
+  return measureStage('world', () =>
+    worldTransformOf(state, selectedId, ctx, cache, ancestorLocal),
+  );
 }
 
 function worldTransformOf(
   state: DagState,
   selectedId: string,
   ctx: ClockedCtx,
-  cache?: EvaluatorCache,
+  cache: EvaluatorCache | undefined,
+  ancestorLocal: AncestorLocal,
 ): WorldTransform | null {
   // #1688 — the tree is evaluated at scene time; each node is re-timed onto its own clock.
   ctx = ctxOnClock(state, 'scene', ctx);
@@ -658,7 +729,9 @@ function worldTransformOf(
     // top-level camera (wired only to scene.camera) → byte-identical to the flat
     // local-pose world. The local matrix is the camera's own pose orientation.
     const camLocal = cameraLocalMatrix(cam);
-    const parentWorld = resolveParentWorldMatrix(state, selectedId, ctx, cache);
+    const parentWorld = measureStage('world', () =>
+      parentWorldMatrixOf(state, selectedId, ctx, cache, ancestorLocal),
+    );
     return decompose(parentWorld ? parentWorld.clone().multiply(camLocal) : camLocal);
   }
 
@@ -670,7 +743,7 @@ function worldTransformOf(
   //    ctx.time.seconds), so an animated ancestor moves its descendants' world transform in
   //    lockstep with the render (H40, one band). #1729 — found by walking up the holders, not by
   //    searching the scene.
-  const at: Overlay = { ctx, cache, transients };
+  const at: Overlay = { ctx, cache, transients, ancestorLocal };
   const world = sceneChildWorld(state, selectedId, at, false);
   if (world) return decompose(world);
 
@@ -712,9 +785,11 @@ function worldTransformOf(
   for (const edge of lightEdges) {
     if (edge.id !== selectedId) continue;
     // A light folds what DirectChannelsLightR draws it with, as every other node does.
-    const lit = overlaidAt(state, edge.id, edge.value, { ctx, cache, transients });
+    const lit = overlaidAt(state, edge.id, edge.value, at);
     if (!lit) continue;
-    return decompose(identity.clone().multiply(localMatrix(lit)));
+    // #1842 — and at its world: what it hangs from composes over it, as for any object.
+    const parentWorld = parentWorldMatrixOf(state, selectedId, ctx, cache, ancestorLocal);
+    return decompose((parentWorld ?? identity).clone().multiply(localMatrix(lit)));
   }
 
   return null;
@@ -731,9 +806,11 @@ export function worldMatrixAt(
   nodeId: string,
   atRest: readonly number[],
   cache?: EvaluatorCache,
+  // #1829 — the read to answer with; the rig bones (`skeletonObjects`) ask for the drawn one.
+  read: typeof resolveWorldTransform = resolveWorldTransform,
 ): (seconds: number) => readonly number[] {
   return (seconds) =>
-    resolveWorldTransform(
+    read(
       state,
       nodeId,
       { time: { frame: Math.round(seconds * 60), seconds, normalized: 0 } },
@@ -766,14 +843,33 @@ export function resolveParentWorldMatrix(
   ctx: ClockedCtx,
   cache?: EvaluatorCache,
 ): THREE.Matrix4 | null {
-  return measureStage('world', () => parentWorldMatrixOf(state, selectedId, ctx, cache));
+  return measureStage('world', () =>
+    parentWorldMatrixOf(state, selectedId, ctx, cache, unconstrainedLocal),
+  );
+}
+
+/**
+ * #1829 — {@link resolveParentWorldMatrix} with each ancestor's local matrix given by
+ * `ancestorLocal`. Not for direct use: `resolveDrawnParentWorldMatrix` is the one caller.
+ */
+export function resolveParentWorldMatrixWith(
+  state: DagState,
+  selectedId: string,
+  ctx: ClockedCtx,
+  cache: EvaluatorCache | undefined,
+  ancestorLocal: AncestorLocal,
+): THREE.Matrix4 | null {
+  return measureStage('world', () =>
+    parentWorldMatrixOf(state, selectedId, ctx, cache, ancestorLocal),
+  );
 }
 
 function parentWorldMatrixOf(
   state: DagState,
   selectedId: string,
   ctx: ClockedCtx,
-  cache?: EvaluatorCache,
+  cache: EvaluatorCache | undefined,
+  ancestorLocal: AncestorLocal,
 ): THREE.Matrix4 | null {
   // #1688 — the tree is evaluated at scene time; each node is re-timed onto its own clock.
   ctx = ctxOnClock(state, 'scene', ctx);
@@ -788,9 +884,42 @@ function parentWorldMatrixOf(
   // one path, so the cost is its depth. That walk also answers the old nesting fast path — a node
   // nothing holds is not a descendant, null without an evaluate — and a top-level child, whose
   // parent is the scene's identity, without one either.
-  const at: Overlay = { ctx, cache, transients: useTransientEditStore.getState().edits };
-  const parent = sceneChildWorld(state, selectedId, at, true);
+  const at: Overlay = {
+    ctx,
+    cache,
+    transients: useTransientEditStore.getState().edits,
+    ancestorLocal,
+  };
+  // #1842 — a light a band draws hangs from its parent input though the tree does not hold it.
+  const parent =
+    sceneChildWorld(state, selectedId, at, true) ?? bandLightParentWorld(state, selectedId, at);
   // Not a descendant (GltfChild / Scatter / unreachable / flat camera or light) → null. A parent
   // that composes to identity → null, so the caller keeps its local-only path.
   return parent && !isIdentityMatrix(parent) ? parent : null;
+}
+
+/** The world of what a band's light hangs from, read through the tree the parent is drawn in. Null
+ *  for anything else. A light cannot hold a child through any door, so a parent is never on a band. */
+function bandLightParentWorld(state: DagState, id: string, at: Overlay): THREE.Matrix4 | null {
+  const ref = state.nodes[id]?.inputs.parent;
+  if (!ref || Array.isArray(ref)) return null;
+  const sceneNode = state.outputs.scene ? state.nodes[state.outputs.scene.node] : null;
+  const sceneLights = sceneNode?.inputs.lights;
+  const onBand =
+    (Array.isArray(sceneLights) && sceneLights.some((r) => r.node === id)) ||
+    resolveRigLightSources(state).includes(id);
+  if (!onBand) return null;
+  // The parent is an ancestor here, so its own transform is read by the ancestor rule: on the drawn
+  // road that holds its aim, which reading it as the node asked about would leave out.
+  const above = sceneChildWorld(state, ref.node, at, true);
+  if (!above) return null;
+  let value: SceneChild | null;
+  try {
+    const raw = evaluate(state, ref.node, { cache: at.cache, ctx: at.ctx }).value as SceneChild;
+    value = overlaidAt(state, ref.node, raw, at);
+  } catch {
+    return null;
+  }
+  if (!value) return null;
+  return above.multiply(at.ancestorLocal(state, ref.node, value, at.ctx, at.cache));
 }

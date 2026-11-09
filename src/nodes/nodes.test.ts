@@ -74,6 +74,8 @@ const ALL_TYPES = [
   'BodyInput',
   // #1357 — the pose-carrying leaf a Rig's sub-network reads its incoming pose through.
   'BodyInputPose',
+  'BodyInputRotation',
+  'BodyInputTransform',
   'BodyInputVec',
   'BoneNameMap',
   'BoxData',
@@ -89,12 +91,14 @@ const ALL_TYPES = [
   // #1451 — Collections (#397): named membership, no transform.
   'Collection',
   'ColorCorrect',
+  'CombineTransform', // #1784
   'ComfyUIWorkflow',
   'ComponentGroupOp',
   'Composition',
   'CurveData',
   'CurveRemap',
   'DepthPass',
+  'EulerToRotation', // #1784
   'Fit',
   'FollowPath',
   'GltfAsset',
@@ -102,6 +106,7 @@ const ALL_TYPES = [
   'GltfSkeleton',
   'Group',
   'IDPass',
+  'InvertTransform', // #1784
   'KeyframeChannelColor',
   'KeyframeChannelImage',
   'KeyframeChannelNumber',
@@ -131,12 +136,15 @@ const ALL_TYPES = [
   // #902 — text-to-motion as a node, so a generated clip has a producer the
   // graph can re-cook instead of a call whose arguments were discarded.
   'MotionGenerate',
+  'MultiplyTransforms', // #1784
   'Navmesh',
   'Noise',
   'NormalPass',
   'Null',
   'Object',
+  'OwnWorld', // #1811
   'ParamDriver',
+  'PolarSplit', // #1811
   // #1049 — a stored polygon mesh's data half.
   'PolyMeshData',
   // #1240 — a layer that edits the pose wire; absorbed PoseOverride (retired, #1243).
@@ -149,9 +157,11 @@ const ALL_TYPES = [
   'RetargetClip',
   // #1357 — rig logic as one sub-network on the pose wire.
   'Rig',
+  'RotationToEuler', // #1784
   'SampleGeometry',
   'Scatter',
   'Scene',
+  'SeparateTransform', // #1784
   // #394 S3c — the wholesale half of the material lane. NO inspector section: it is a
   // graph node like its reference (Blender GN `Set Material`), authored by the edge.
   'SetMaterialOp',
@@ -166,7 +176,10 @@ const ALL_TYPES = [
   'TrackTo',
   'Transform',
   'TransformClip',
+  'TransformDirection', // #1784
+  'TransformPoint', // #1784
   'UVProjectModifier',
+  'Value', // #1811
   'Vec3Math',
   'VecBreak3',
   'VideoStitch',
@@ -228,6 +241,7 @@ describe('default project', () => {
       'n_light',
       'n_light_aim',
       'n_light_data',
+      'n_light_own_world',
       'n_light_target',
       'n_render',
       'n_scene',
@@ -533,15 +547,16 @@ describe('SceneChild recursion', () => {
       nodeType: 'Group',
       params: {},
     }).next;
+    // #1824 — each names the group through its parent input; the group gathers them.
     state = applyOp(state, {
       type: 'connect',
-      from: { node: 'a', socket: 'out' },
-      to: { node: 'g', socket: 'children' },
+      from: { node: 'g', socket: 'world' },
+      to: { node: 'a', socket: 'parent' },
     }).next;
     state = applyOp(state, {
       type: 'connect',
-      from: { node: 'b', socket: 'out' },
-      to: { node: 'g', socket: 'children' },
+      from: { node: 'g', socket: 'world' },
+      to: { node: 'b', socket: 'parent' },
     }).next;
     const v = evaluate(state, 'g').value as GroupValue;
     expect(v.kind).toBe('Group');

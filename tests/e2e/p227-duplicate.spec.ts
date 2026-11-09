@@ -87,8 +87,13 @@ test('Shift-D deep-copies a Group subtree (the copy owns CLONED children, not sh
           },
           {
             type: 'connect',
+            from: { node: 'n_grp', socket: 'world' },
+            to: { node: 'n_child', socket: 'parent' },
+          },
+          {
+            type: 'connect',
             from: { node: 'n_child', socket: 'out' },
-            to: { node: 'n_grp', socket: 'children' },
+            to: { node: sceneId, socket: 'children' },
           },
         ],
         'user',
@@ -106,7 +111,11 @@ test('Shift-D deep-copies a Group subtree (the copy owns CLONED children, not sh
     const s = w.__basher_dag.getState().state;
     const kids = (s.nodes[s.outputs.scene.node].inputs.children ?? []).map((c) => c.node);
     const grpCopy = kids.find((id) => id.startsWith('n_grp_copy'))!;
-    const grpCopyKids = (s.nodes[grpCopy].inputs.children ?? []).map((c) => c.node);
+    const grpCopyKids = Object.entries(s.nodes)
+      .filter(
+        ([, c]) => (c.inputs as unknown as { parent?: { node: string } }).parent?.node === grpCopy,
+      )
+      .map(([cid]) => cid);
     return { grpCopy, grpCopyKids, primary: w.__basher_selection.getState().primaryNodeId };
   });
 

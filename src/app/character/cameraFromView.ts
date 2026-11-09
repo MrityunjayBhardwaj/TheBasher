@@ -14,36 +14,53 @@
 //
 // REF: THESIS.md §11, vyapti V1, krama K7 (sister chain).
 
+import type * as THREE from 'three';
 import { cameraRotationOf } from '../cameraOrientation';
 import { useThreeRef } from './threeRef';
 import { applyOp } from '../../core/dag';
+import type { DagState } from '../../core/dag/state';
 import { useDagStore } from '../../core/dag/store';
 import type { Op } from '../../core/dag/types';
 import { linkIntoActiveCollection } from '../collections';
 import { DEFAULT_CAMERA_FAR, DEFAULT_CAMERA_NEAR } from '../../nodes/CameraData';
 import { cutChannelOf } from '../activeCamera';
 import { buildCutOps } from '../shotOps';
+import { freshObjectName, takenObjectNames } from '../objectNames';
+import { keepInSceneOps } from '../sceneMembership';
 import { nodeDisplayName } from '../sceneTreeWalk';
 import { useTimeStore } from '../stores/timeStore';
 import { useNotificationStore } from '../stores/notificationStore';
 
-export async function snapshotCameraFromOrbit(): Promise<void> {
-  const cam = useThreeRef.getState().camera;
-  if (!cam) return;
-  const dag = useDagStore.getState();
-  const state = dag.state;
+/** The editor view a camera is made from. */
+export interface CameraView {
+  readonly camera: THREE.Camera;
+  /** The orbit target: where the view looks. Null when the controls have none. */
+  readonly target: THREE.Vector3 | null;
+  /** The playhead, in film seconds: where a cut to the new camera lands. */
+  readonly seconds: number;
+}
+
+/**
+ * The ops that make a camera from `view`, plus what to tell the director. Null when there is
+ * nothing to do it to (no scene). Pure, so the door census can run it (#1822).
+ */
+export function buildCameraFromViewOps(
+  state: DagState,
+  view: CameraView,
+): { ops: Op[]; told: string | null } | null {
+  const cam = view.camera;
   const sceneRef = state.outputs.scene;
-  if (!sceneRef) return;
+  if (!sceneRef) return null;
   const sceneNode = state.nodes[sceneRef.node];
-  if (!sceneNode) return;
+  if (!sceneNode) return null;
   const existing = sceneNode.inputs.camera;
-  if (Array.isArray(existing)) return;
+  if (Array.isArray(existing)) return null;
 
   // Read current orbit camera pose. drei's OrbitControls writes through to the active perspective
   // camera (THREE.PerspectiveCamera), so its position and orientation are a faithful snapshot.
   // #1764 — the orbit target is where the view looks: the new camera is focused there, so its aim
   // reticle sits on it.
-  const target = useThreeRef.getState().controlsTarget;
+  const target = view.target;
   const newId = `cam_${Date.now().toString(36)}`;
   const camAny = cam as unknown as { isPerspectiveCamera?: boolean; fov?: number };
   const fov = camAny.isPerspectiveCamera && typeof camAny.fov === 'number' ? camAny.fov : 45;
@@ -52,8 +69,8 @@ export async function snapshotCameraFromOrbit(): Promise<void> {
   // `active` holds the film's cuts. Re-routing `Scene.camera` to the new camera unhooked that
   // switch, and every cut silently stopped playing. With a switch in place the new camera joins
   // its list and becomes the active one instead — what the outliner's Set Active does — so the
-  // switch, and the cuts on it, stay wired. A directly wired camera is still replaced: the old
-  // one stays in the scene, unwired, as every camera that is not active sits (#1630).
+  // switch, and the cuts on it, stay wired. A directly wired camera is still replaced, and the old
+  // one stays in the scene: `keepInSceneOps` below stands it in `scene.children` (#1518).
   const select = existing ? state.nodes[existing.node] : undefined;
   const switchId = select?.type === 'CameraSelect' ? select.id : null;
   const ops: Op[] = [];
@@ -95,6 +112,11 @@ export async function snapshotCameraFromOrbit(): Promise<void> {
     },
   });
   ops.push({
+    type: 'setMeta',
+    nodeId: newId,
+    name: freshObjectName('Camera', takenObjectNames(state)),
+  });
+  ops.push({
     type: 'connect',
     from: { node: dataId, socket: 'out' },
     to: { node: newId, socket: 'data' },
@@ -108,9 +130,9 @@ export async function snapshotCameraFromOrbit(): Promise<void> {
   if (switchId && channel) {
     let s = state;
     for (const op of ops) s = applyOp(s, op).next;
-    const at = useTimeStore.getState().filmSeconds;
+    const at = view.seconds;
     const cut = buildCutOps(s, at, newId);
-    if (!cut) return;
+    if (!cut) return null;
     ops.push(...cut);
     const keys = (channel.params as { keyframes?: { time: number }[] }).keyframes ?? [];
     const name = nodeDisplayName(s.nodes, newId);
@@ -134,6 +156,22 @@ export async function snapshotCameraFromOrbit(): Promise<void> {
   }
 
   // #1504 — into the active collection, as the Add menu's cameras join it (#1453).
-  dag.dispatchAtomic(linkIntoActiveCollection(state, ops, [newId]), 'user', 'camera-from-view');
-  if (told) useNotificationStore.getState().notify({ severity: 'success', message: told });
+  const joined = linkIntoActiveCollection(state, ops, [newId]);
+  return { ops: [...joined, ...keepInSceneOps(state, joined)], told };
+}
+
+export async function snapshotCameraFromOrbit(): Promise<void> {
+  const three = useThreeRef.getState();
+  if (!three.camera) return;
+  const dag = useDagStore.getState();
+  const built = buildCameraFromViewOps(dag.state, {
+    camera: three.camera,
+    target: three.controlsTarget,
+    seconds: useTimeStore.getState().filmSeconds,
+  });
+  if (!built) return;
+  dag.dispatchAtomic(built.ops, 'user', 'camera-from-view');
+  if (built.told) {
+    useNotificationStore.getState().notify({ severity: 'success', message: built.told });
+  }
 }

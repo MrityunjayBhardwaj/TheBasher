@@ -37,6 +37,7 @@ export const ClipSelectNode: NodeDefinition<ClipSelectParams, TransformClipValue
   pure: true,
   cost: 'cheap',
   paramSchema: ClipSelectParams,
+  mainInput: null,
   inputs: {
     clips: { type: 'TransformClip', cardinality: 'list' },
   },

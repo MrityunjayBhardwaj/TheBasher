@@ -76,7 +76,7 @@ import { isImportedChild } from '../importedChild';
 import { nodeDisplayName } from '../sceneTreeWalk';
 import { useSelectionStore } from '../stores/selectionStore';
 import { useTransientEditStore } from '../stores/transientEditStore';
-import { hierarchyChildIds, hierarchySocketForKind } from '../sceneHierarchy';
+import { childIdsOf, hierarchySocketForKind } from '../sceneHierarchy';
 import { quaternionToEulerVec3 } from '../../core/import/threeAdapter';
 import { standingObjectsOf } from '../../core/import/skeletonObject';
 import type { AnimationClipParams } from '../../nodes/AnimationClip';
@@ -803,12 +803,15 @@ function childCompensation(
   parentId: string,
   applied: THREE.Matrix4,
   currentFrame: number,
+  // The children to re-solve, when not all of them (an armature group re-places its rig itself).
+  only?: readonly string[],
 ): { readonly ops: Op[]; readonly childIds: readonly string[] } | { readonly refusal: string } {
   const parent = state.nodes[parentId];
   const childIds =
-    parent && hierarchySocketForKind(parent.type, parent) === 'children'
-      ? hierarchyChildIds(parent)
-      : [];
+    only ??
+    (parent && hierarchySocketForKind(parent.type, parent) === 'children'
+      ? childIdsOf(state, parentId)
+      : []);
   const parentName = nodeDisplayName(state.nodes, parentId);
   const D2R = Math.PI / 180;
   const ops: Op[] = [];
@@ -1095,7 +1098,7 @@ function applyIntoStoredMesh(
 
 /** The Objects a group holds directly whose data is a skeleton. */
 export function armatureSkeletonObjectsOf(state: DagState, groupId: string): string[] {
-  return hierarchyChildIds(state.nodes[groupId]).filter((id) => {
+  return childIdsOf(state, groupId).filter((id) => {
     const node = state.nodes[id];
     return (
       node?.type === 'Object' && state.nodes[edgeTarget(node, 'data') ?? '']?.type === 'Skeleton'
@@ -1202,14 +1205,14 @@ function applyScaleIntoArmature(
   }
   const [skeletonObjectId] = skeletonObjects;
   const skeletonId = edgeTarget(state.nodes[skeletonObjectId], 'data')!;
-  const children = hierarchyChildIds(group);
+  const children = childIdsOf(state, groupId);
   const elsewhere = standingObjectsOf(state, skeletonId).filter((id) => !children.includes(id));
   if (elsewhere.length > 0) {
     return refuse(
       `holds a skeleton that ${elsewhere.map((id) => `"${nameOf(id)}"`).join(', ')} also stands outside it, and applying would resize that too.`,
     );
   }
-  const underSkeleton = hierarchyChildIds(state.nodes[skeletonObjectId]);
+  const underSkeleton = childIdsOf(state, skeletonObjectId);
   if (underSkeleton.length > 0) {
     return refuse(
       `holds a skeleton with ${underSkeleton.map((id) => `"${nameOf(id)}"`).join(', ')} parented under it, which this Apply cannot keep in place yet.`,
@@ -1361,24 +1364,9 @@ function applyScaleIntoArmature(
       placedChildren.push(childId);
     }
   }
-  const compensation = childCompensation(
-    {
-      ...state,
-      nodes: {
-        ...state.nodes,
-        [groupId]: {
-          ...group,
-          inputs: {
-            ...group.inputs,
-            children: placedChildren.map((node) => ({ node, socket: 'out' })),
-          },
-        },
-      },
-    },
-    groupId,
-    uniform,
-    currentFrame,
-  );
+  // #1824 — the plain children only, named outright: a child hung by its parent input is the
+  // group's child whatever its `children` list says, so the list cannot be what narrows them.
+  const compensation = childCompensation(state, groupId, uniform, currentFrame, placedChildren);
   if ('refusal' in compensation) return { ok: false, reason: compensation.refusal };
   ops.push(...compensation.ops);
   // 6 — the group.

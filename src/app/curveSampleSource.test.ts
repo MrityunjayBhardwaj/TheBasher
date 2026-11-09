@@ -170,12 +170,18 @@ describe('curveSampleSource — arc-length parameterization', () => {
     }).next;
     state = applyOp(state, {
       type: 'connect',
-      from: { node: 'c1', socket: 'out' },
-      to: { node: 'g1', socket: 'children' },
+      from: { node: 'g1', socket: 'world' },
+      to: { node: 'c1', socket: 'parent' },
     }).next;
     state = applyOp(state, {
       type: 'connect',
       from: { node: 'g1', socket: 'out' },
+      to: { node: 'n_scene', socket: 'children' },
+    }).next;
+    // #1823 — the curve is the scene's too: parenting is not membership.
+    state = applyOp(state, {
+      type: 'connect',
+      from: { node: 'c1', socket: 'out' },
       to: { node: 'n_scene', socket: 'children' },
     }).next;
 

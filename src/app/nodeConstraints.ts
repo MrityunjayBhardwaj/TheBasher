@@ -27,20 +27,16 @@
 import * as THREE from 'three';
 import type { DagState } from '../core/dag/state';
 import type { EvalCtx } from '../core/dag/types';
-import { resolveTrackTo, trackToUpIn } from './resolveTrackTo';
-import {
-  resolveWorldTransform,
-  resolveParentWorldMatrix,
-  type WorldTransform,
-} from './resolveWorldTransform';
-import { readCurveSampleAt } from './curveSampleSource';
+import { resolveWorldTransform, resolveParentWorldMatrix } from './resolveWorldTransform';
+import { curveSamplerFor, readCurveSampleAt } from './curveSampleSource';
 import { gltfNodeWorldPosition } from './gltfNodeWorld';
 import { resolveEvaluatedParam } from './resolveEvaluatedParam';
-import type { EvaluatorCache } from '../core/dag/evaluator';
+import { evaluate, type EvaluatorCache } from '../core/dag/evaluator';
+import { influenceOf, readChain } from '../core/dag/chainEdit';
+import { isDriverMuted } from './paramDrivers';
+import { getNodeType } from '../core/dag/registry';
 
 type Vec3 = [number, number, number];
-
-const DEG2RAD = Math.PI / 180;
 
 /** Minimal node shape the enumerator reads (a DagState node subset). */
 interface NodeLike {
@@ -179,6 +175,13 @@ function poseStackIndex(
   }
   // Stable → equal `order` keeps node-table order (the pre-stack first-wins order).
   for (const list of index.values()) list.sort((a, b) => a.order - b.order);
+  // #1813 — on a chain, the wires are the order. A step not on it, which draws nothing, sorts last.
+  for (const [target, list] of index) {
+    const steps = readChain({ nodes } as unknown as DagState, target)?.steps;
+    if (!steps?.length) continue;
+    const place = new Map(steps.map((step, i) => [step.id, i]));
+    list.sort((a, b) => (place.get(a.nodeId) ?? Infinity) - (place.get(b.nodeId) ?? Infinity));
+  }
 
   poseStackIndexMemo.set(nodes, index);
   return index;
@@ -335,28 +338,86 @@ export interface TransformController {
   /** The constraint node, so the row can name it and select it. */
   readonly nodeId: string;
   readonly type: 'TrackTo' | 'FollowPath';
+  /** #1795 — whether it decides the row outright: the row then shows the drawn value, locked.
+   *  False when it only partly decides it: the row shows and edits the object's own value. */
+  readonly locks: boolean;
 }
 
 /**
- * #1776 — the constraint that decides what `nodeId`'s `paramPath` is drawn with: the winning
- * Track-To for `rotation` / `quaternion`, the top Follow-Path for `position`. The inspector shows
- * the drawn value on such a row and locks it, naming this constraint (the user's call over
- * Blender, which shows the own value under a constraint): an edit there would change nothing on
- * screen. Muted members control nothing. Every other param → null.
+ * #1795 — `constraintId`'s influence when it is one held number, clamped to [0, 1]: 1 when its
+ * step has no blend (#1811: at 1 a step adds no blend), or when it is on no chain; the blend's
+ * Value when nothing keys, drives or places a strip on it. Null when the number moves (keyed,
+ * driven, on a strip) or a wire from anything else feeds the blend: no one value describes it.
+ */
+export function fixedInfluence(
+  nodes: Readonly<Record<string, NodeLike>>,
+  constraintId: string,
+): number | null {
+  const target = (nodes[constraintId]?.params as { target?: unknown } | undefined)?.target;
+  if (typeof target !== 'string') return null;
+  const influence = influenceOf({ nodes } as Pick<DagState, 'nodes'>, target, constraintId);
+  if (!influence || influence.kind === 'none') return 1;
+  if (influence.kind === 'wired') return null;
+  const held = influence.nodeId;
+  for (const [id, n] of Object.entries(nodes)) {
+    const p = n.params as { target?: unknown; paramPath?: unknown } | undefined;
+    if (p?.target !== held) continue;
+    if (n.type === 'Strip') return null;
+    if (p.paramPath !== 'value') continue;
+    if (n.type.startsWith('KeyframeChannel')) return null;
+    if (
+      n.type === 'ParamDriver' &&
+      !isDriverMuted({ ...n, id } as Parameters<typeof isDriverMuted>[0])
+    )
+      return null;
+  }
+  const raw = (nodes[held]?.params as { value?: unknown } | undefined)?.value;
+  return typeof raw === 'number' && !Number.isNaN(raw) ? Math.min(1, Math.max(0, raw)) : null;
+}
+
+/** #1795 — the top live Track-To on `nodeId` that can aim it: muted members and members at a
+ *  fixed influence of 0 are skipped (they aim nothing). The camera's aim reticle edits this one. */
+export function topContributingTrackTo(
+  nodes: Readonly<Record<string, NodeLike>>,
+  nodeId: string,
+): ActiveConstraint | null {
+  const live = constraintStackForTarget(nodes, nodeId).filter(
+    (m) => fixedInfluence(nodes, m.nodeId) !== 0,
+  );
+  return live[live.length - 1] ?? null;
+}
+
+/**
+ * #1776 — the constraint that decides what `nodeId`'s `paramPath` is drawn with: the top live
+ * Track-To for `rotation` / `quaternion`, the top live Follow-Path for `position`. Muted members,
+ * and members at a fixed influence of 0, control nothing. Every other param → null.
+ *
+ * #1795 (the user's call, 2026-11-04) — `locks` says whether it decides the row OUTRIGHT. A
+ * Track-To at a fixed full influence does: everything below it, the own rotation included, is
+ * replaced, so the row shows the drawn value, locked (#1776's rule: an edit there would change
+ * nothing on screen). A Follow Path never does (the own position is its offset, #1791), nor do
+ * Track-Tos none of which is at full influence: the row shows the own value, editable, with the
+ * constraint named beside it, as Blender does.
  */
 export function transformControllerOf(
   nodes: Readonly<Record<string, NodeLike>>,
   nodeId: string,
   paramPath: string,
 ): TransformController | null {
+  const live = (members: readonly { nodeId: string }[]) =>
+    members
+      .map((m) => ({ id: m.nodeId, f: fixedInfluence(nodes, m.nodeId) }))
+      .filter((m) => m.f !== 0);
   if (paramPath === 'rotation' || paramPath === 'quaternion') {
-    const aim = activeConstraintForTarget(nodes, nodeId);
-    return aim ? { nodeId: aim.nodeId, type: 'TrackTo' } : null;
+    const members = live(constraintStackForTarget(nodes, nodeId));
+    const top = members[members.length - 1];
+    if (!top) return null;
+    return { nodeId: top.id, type: 'TrackTo', locks: members.some((m) => m.f === 1) };
   }
   if (paramPath === 'position') {
-    const stack = followPathStackForTarget(nodes, nodeId);
-    const top = stack[stack.length - 1];
-    return top ? { nodeId: top.nodeId, type: 'FollowPath' } : null;
+    const members = live(followPathStackForTarget(nodes, nodeId));
+    const top = members[members.length - 1];
+    return top ? { nodeId: top.id, type: 'FollowPath', locks: false } : null;
   }
   return null;
 }
@@ -386,6 +447,68 @@ export function nextConstraintOrder(
 ): number {
   const stack = relationalPoseStackForTarget(nodes, nodeId, true);
   return stack.length === 0 ? 0 : stack[stack.length - 1].order + 1;
+}
+
+// #1813 — THE CHAIN IS THE ANSWER. An object's constraints are wired steps ending at its `constraints`
+// input, and its `world` output is where they end, so every read below takes that one value.
+//
+// A driver on a step's setting can read an aimed object below that step through the evaluated
+// transform, which comes back here while the first read is still running. `reading` answers any
+// such re-entry with the object as it is without its constraints, which is what that driver has
+// always read: the walk it would start is the one already running.
+let reading = false;
+
+/** `read` under that guard, or null when it is already held. */
+function whileReading<T>(read: () => T | null): T | null {
+  if (reading) return null;
+  reading = true;
+  try {
+    return read();
+  } finally {
+    reading = false;
+  }
+}
+
+function chainEnd(
+  state: DagState,
+  nodeId: string,
+  ctx: EvalCtx,
+  cache: EvaluatorCache | undefined,
+): { world: THREE.Matrix4; own: THREE.Matrix4 } | null {
+  const node = state.nodes[nodeId];
+  if (!node || getNodeType(node.type)?.outputs.world?.world !== true) return null;
+  const read = (id: string) =>
+    new THREE.Matrix4().fromArray(
+      evaluate(state, id, { socket: 'world', ctx, cache }).value as number[],
+    );
+  try {
+    const chain = readChain(state, nodeId);
+    const world = read(nodeId);
+    return { world, own: chain?.own ? read(chain.own) : world };
+  } catch {
+    return null;
+  }
+}
+
+/** The world the object's local transform composes under, as the renderer nests it. */
+function chainParentWorld(
+  state: DagState,
+  nodeId: string,
+  ctx: EvalCtx,
+  cache: EvaluatorCache | undefined,
+): THREE.Matrix4 | null {
+  const node = state.nodes[nodeId];
+  const ref = node?.inputs.parent;
+  const bone = (node?.params as { parentBone?: unknown } | undefined)?.parentBone;
+  if (!ref || Array.isArray(ref) || bone)
+    return resolveParentWorldMatrix(state, nodeId, ctx, cache);
+  try {
+    return new THREE.Matrix4().fromArray(
+      evaluate(state, ref.node, { socket: ref.socket, ctx, cache }).value as number[],
+    );
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -447,61 +570,46 @@ export function resolveConstraintRotation(
   ctx: EvalCtx,
   cache?: EvaluatorCache,
 ): Vec3 | null {
-  const stack = constraintStackForTarget(state.nodes, nodeId);
-  if (stack.length === 0) return null;
-  const objWorld: WorldTransform | null = resolveWorldTransform(state, nodeId, ctx, cache);
-  if (!objWorld) return null;
+  if (constraintStackForTarget(state.nodes, nodeId).length === 0) return null;
+  return whileReading(() => aimedRotation(state, nodeId, ctx, cache));
+}
 
-  // #339 — THE AIM ORIGIN IS THE FOLLOWED POSITION WHEN THERE IS ONE.
-  //
-  // The two bands are orthogonal in what they WRITE, but they are NOT independent: an aim
-  // is derived FROM the object's position, so the rotation band READS what the position
-  // band writes. `resolveWorldTransform` deliberately composes pure TRS and applies no
-  // constraints (that is what keeps it cycle-free — see its header), so its `position` is
-  // where the object was AUTHORED, not where its Follow-Path put it. Aiming from there
-  // would make "fly the path while locked on the hero" — the sentence this whole rig
-  // exists for — compute the aim from a point the camera is not at, and be wrong by
-  // exactly the distance the path moved it.
-  //
-  // So the position band resolves FIRST and the aim starts from its result. No cycle: the
-  // followed position depends only on the CURVE's world (a different node, resolved by the
-  // pure TRS walk) and never re-enters this resolver.
-  const aimOrigin = resolveFollowedWorldPosition(state, nodeId, ctx, cache) ?? objWorld.position;
-
-  // #311 — FOLD the stack bottom → top on the ROTATION band. v1 semantics are
-  // LAST-WRITER-WINS: each member that resolves to a defined aim overwrites the one
-  // below it, and a DEGENERATE member (unresolvable target / zero-distance aim)
-  // contributes nothing — exactly as a muted member would. So a single-member stack
-  // returns that member's aim unchanged: the byte-identity pin (this is why the fold
-  // picks a whole resolved aim rather than blending Euler angles, which would NOT be
-  // identity-preserving for one member).
-  //
-  // Members writing ORTHOGONAL bands need no ordering at all — a future Follow-Path
-  // writes POSITION while this writes ROTATION, so they commute. Per-member influence
-  // blending (two members on the SAME band) is a later phase.
-  // #1770 — read before the fold: a member's up is in its own space, and this fold aims in the world.
-  const parentWorld = resolveParentWorldMatrix(state, nodeId, ctx, cache);
-  let aimWorld: Vec3 | null = null;
-  for (const typed of stack) {
-    const member = evaluatedTrackTo(state, typed, ctx, cache);
-    const memberAim = resolveTrackTo(
-      aimOrigin,
-      aimTargetWorld(state, member, ctx, cache),
-      trackToUpIn(member.up, member.aimSpace, 'world', parentWorld),
-      member.roll,
+function aimedRotation(
+  state: DagState,
+  nodeId: string,
+  ctx: EvalCtx,
+  cache: EvaluatorCache | undefined,
+): Vec3 | null {
+  const end = chainEnd(state, nodeId, ctx, cache);
+  if (!end) return null;
+  // A degenerate aim (nothing to aim at, standing on the target) left the rotation as it was, and
+  // "no aim" is what a caller reads that as. The step's own result says where it aimed from.
+  const onChain = new Set(readChain(state, nodeId)?.steps.map((step) => step.id));
+  const aims = constraintStackForTarget(state.nodes, nodeId).some((member) => {
+    const from = onChain.has(member.nodeId) ? chainEnd(state, member.nodeId, ctx, cache) : null;
+    if (!from) return false;
+    const target = aimTargetWorld(state, evaluatedTrackTo(state, member, ctx, cache), ctx, cache);
+    return (
+      new THREE.Vector3()
+        .setFromMatrixPosition(from.world)
+        .distanceToSquared(new THREE.Vector3(...target)) > 1e-18
     );
-    if (memberAim) aimWorld = memberAim;
+  });
+  if (!aims) return null;
+  const q = new THREE.Quaternion();
+  end.world.decompose(new THREE.Vector3(), q, new THREE.Vector3());
+  const parent = chainParentWorld(state, nodeId, ctx, cache);
+  if (parent) {
+    const qParent = new THREE.Quaternion();
+    parent.decompose(new THREE.Vector3(), qParent, new THREE.Vector3());
+    q.premultiply(qParent.invert());
   }
-  if (!aimWorld) return null;
-  // #267 (V45 #1 / I2 / C5) — the aim is derived in WORLD space, but the value we
-  // return is written as the node's LOCAL rotation param, which then composes UNDER
-  // the node's parent in the render (GroupR/TransformR `<group>`). Re-express the
-  // world aim into the node's PARENT-LOCAL frame — parentWorld⁻¹ · aimWorld — so the
-  // rendered WORLD orientation equals the aim, not aim double-rotated by the parent.
-  // resolveParentWorldMatrix returns null for a TOP-LEVEL node (identity parent) →
-  // aim stays world == local, byte-identical to the pre-#267 top-level path.
-  if (!parentWorld) return aimWorld;
-  return worldAimToParentLocal(aimWorld, parentWorld);
+  const e = new THREE.Euler().setFromQuaternion(q, 'XYZ');
+  return [
+    THREE.MathUtils.radToDeg(e.x),
+    THREE.MathUtils.radToDeg(e.y),
+    THREE.MathUtils.radToDeg(e.z),
+  ];
 }
 
 /**
@@ -536,19 +644,21 @@ export function resolveFollowedWorldPosition(
   ctx: EvalCtx,
   cache?: EvaluatorCache,
 ): Vec3 | null {
-  const stack = followPathStackForTarget(state.nodes, nodeId);
-  if (stack.length === 0) return null;
-  let world: Vec3 | null = null;
-  for (const member of stack) {
-    if (!member.curve) continue; // degenerate — unbound path
-    const resolved = resolveEvaluatedParam(state, member.nodeId, 'evalTime', ctx, cache);
-    const evalTime = typeof resolved?.value === 'number' ? resolved.value : member.evalTime;
-    const sample = readCurveSampleAt(state, member.curve, evalTime + member.offset, ctx, cache);
-    // Copied, not aliased: the seam's point is readonly (and table-owned) — this resolver
-    // hands back a plain mutable Vec3 like every other band here.
-    if (sample) world = [sample.point[0], sample.point[1], sample.point[2]];
-  }
-  return world;
+  const members = followPathStackForTarget(state.nodes, nodeId);
+  if (members.length === 0) return null;
+  return whileReading(() => {
+    const onChain = new Set(readChain(state, nodeId)?.steps.map((step) => step.id));
+    const live = members.some(
+      (member) =>
+        onChain.has(member.nodeId) &&
+        member.curve &&
+        readCurveSampleAt(state, member.curve, 0, ctx, cache),
+    );
+    const end = live ? chainEnd(state, nodeId, ctx, cache) : null;
+    if (!end) return null;
+    const p = new THREE.Vector3().setFromMatrixPosition(end.world);
+    return [p.x, p.y, p.z] as Vec3;
+  });
 }
 
 /**
@@ -572,7 +682,7 @@ export function resolveConstraintPosition(
 ): Vec3 | null {
   const world = resolveFollowedWorldPosition(state, nodeId, ctx, cache);
   if (!world) return null;
-  const parentWorld = resolveParentWorldMatrix(state, nodeId, ctx, cache);
+  const parentWorld = chainParentWorld(state, nodeId, ctx, cache);
   if (!parentWorld) return world;
   const v = new THREE.Vector3(world[0], world[1], world[2]).applyMatrix4(
     parentWorld.clone().invert(),
@@ -580,30 +690,96 @@ export function resolveConstraintPosition(
   return [v.x, v.y, v.z];
 }
 
-/** Re-express a WORLD aim rotation (Euler XYZ, degrees) into the parent-local frame:
- *  localR = parentWorldR⁻¹ · aimWorldR, returned as Euler XYZ degrees. The parent's
- *  rotation is taken from its world matrix (scale/translation dropped — a constraint
- *  drives orientation only). 'XYZ' order + degrees match resolveTrackTo and the
- *  renderer's `rotation={degVec3ToRad(...)}`, so the local rotation composes back to
- *  the intended world aim (V37/H40). */
-function worldAimToParentLocal(aimWorldDeg: Vec3, parentWorld: THREE.Matrix4): Vec3 {
-  const qAim = new THREE.Quaternion().setFromEuler(
-    new THREE.Euler(
-      aimWorldDeg[0] * DEG2RAD,
-      aimWorldDeg[1] * DEG2RAD,
-      aimWorldDeg[2] * DEG2RAD,
-      'XYZ',
-    ),
+/**
+ * #1813 — what the renderer must multiply over `drawnLocal`, the transform it composes from a
+ * position, a rotation and a scale, for the object to land where its chain ends. Null when they
+ * agree. They part under an unevenly scaled or mirrored parent: an aim keeps its axes square in the
+ * world, as Blender's does, and that is not a shape position, rotation and scale can hold under
+ * such a parent.
+ */
+/**
+ * #1794 — how the object's drawn WORLD position answers a change of its own world position: the
+ * product, bottom step first, of each live Follow Path's curve turn and scale, `L`, mixed by its
+ * blend's factor as `(1 − f)·I + f·L`. A Follow Path draws `point + L · below`
+ * (`followPathStep`), a Track-To leaves the position alone, and a blend mixes the positions, so
+ * the drawn position is affine in the own one and this is its linear part. A drag of the drawn
+ * point carried through its inverse moves the own position so the object lands under the cursor,
+ * as Blender's grab does for a Follow Path (`constraints_list_needinv`). Null when no step moves
+ * the position, or a blend's factor has no single source to read.
+ */
+export function chainPositionLinear(
+  state: DagState,
+  nodeId: string,
+  ctx: EvalCtx,
+  cache?: EvaluatorCache,
+): THREE.Matrix3 | null {
+  const chain = readChain(state, nodeId);
+  if (!chain?.own) return null;
+  const read = (ref: { node: string; socket: string }) =>
+    evaluate(state, ref.node, { socket: ref.socket, ctx, cache }).value;
+  // A bypassed step moves nothing, read through the one scan that reads the flag.
+  const muted = new Set(
+    relationalPoseStackForTarget(state.nodes, nodeId, true)
+      .filter((m) => m.muted)
+      .map((m) => m.nodeId),
   );
-  const qParent = new THREE.Quaternion();
-  parentWorld.decompose(new THREE.Vector3(), qParent, new THREE.Vector3());
-  const qLocal = qParent.invert().multiply(qAim);
-  const e = new THREE.Euler().setFromQuaternion(qLocal, 'XYZ');
-  return [
-    THREE.MathUtils.radToDeg(e.x),
-    THREE.MathUtils.radToDeg(e.y),
-    THREE.MathUtils.radToDeg(e.z),
-  ];
+  let a: THREE.Matrix3 | null = null;
+  try {
+    for (const step of chain.steps) {
+      const node = state.nodes[step.id];
+      if (node?.type !== 'FollowPath' || muted.has(step.id)) continue;
+      // The curve object: wired, or named by the step's setting (`worldRefs`), as the evaluator
+      // reads it.
+      const wired = node.inputs.curve;
+      const named = (node.params as { curve?: unknown }).curve;
+      const curveRef =
+        wired && !Array.isArray(wired)
+          ? wired
+          : typeof named === 'string' && state.nodes[named]
+            ? { node: named, socket: 'world' }
+            : null;
+      if (!curveRef) continue;
+      const curveWorld = new THREE.Matrix4().fromArray(read(curveRef) as number[]);
+      // A curve with nothing to sample leaves the position as it came (`followPathStep`).
+      if (!curveSamplerFor(state, curveRef.node, ctx, cache, curveWorld.toArray())) continue;
+      let f = 1;
+      if (step.blend) {
+        if (!step.blend.factor) return null;
+        const v = read(step.blend.factor);
+        if (typeof v !== 'number') return null;
+        f = v;
+      }
+      const l = new THREE.Matrix3().setFromMatrix4(curveWorld);
+      const m = new THREE.Matrix3().fromArray(
+        l.elements.map((v, i) => f * v + (i % 4 === 0 ? 1 - f : 0)),
+      );
+      a = a ? m.multiply(a) : m;
+    }
+  } catch {
+    return null;
+  }
+  return a;
+}
+
+export function chainDrawCorrection(
+  state: DagState,
+  nodeId: string,
+  drawnLocal: THREE.Matrix4,
+  ctx: EvalCtx,
+  cache?: EvaluatorCache,
+): THREE.Matrix4 | null {
+  if (relationalPoseStackForTarget(state.nodes, nodeId).length === 0) return null;
+  return whileReading(() => {
+    const end = chainEnd(state, nodeId, ctx, cache);
+    if (!end) return null;
+    const parent = chainParentWorld(state, nodeId, ctx, cache);
+    const local = parent ? parent.clone().invert().multiply(end.world) : end.world.clone();
+    const correction = local.multiply(drawnLocal.clone().invert());
+    const identity = new THREE.Matrix4().elements;
+    return correction.elements.every((v, i) => Math.abs(v - identity[i]) < 1e-7)
+      ? null
+      : correction;
+  });
 }
 
 /**
@@ -693,8 +869,13 @@ function aimTargetWorld(
     const bone = gltfNodeWorldPosition(state, tt.aimNode, tt.aimBone, ctx, cache);
     if (bone) return bone;
   }
-  const followed = resolveFollowedWorldPosition(state, tt.aimNode, ctx, cache);
-  if (followed) return followed;
+  const end = reading
+    ? chainEnd(state, tt.aimNode, ctx, cache)
+    : whileReading(() => chainEnd(state, tt.aimNode, ctx, cache));
+  if (end) {
+    const p = new THREE.Vector3().setFromMatrixPosition(end.world);
+    return [p.x, p.y, p.z];
+  }
   const targetWorld = resolveWorldTransform(state, tt.aimNode, ctx, cache);
   return targetWorld ? targetWorld.position : aimPointWorld(state, tt, ctx, cache);
 }

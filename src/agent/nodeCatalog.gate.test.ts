@@ -88,8 +88,16 @@ describe('node schema payload (#1007)', () => {
       { socket: 'children', type: 'SceneObject', cardinality: 'list' },
       // #1203 — and a third, what poses an armature Object; since #1224 the pose wire, `pose`.
       { socket: 'pose', type: 'PosedSkeleton', cardinality: 'single' },
+      // #1824 — and its `parent` input, where it names the object it hangs from.
+      { socket: 'parent', type: 'Matrix4', cardinality: 'single' },
+      // #1813 — and `constraints`, where its chain of constraints ends.
+      { socket: 'constraints', type: 'Matrix4', cardinality: 'single' },
     ]);
-    expect(obj.outputs).toEqual([{ socket: 'out', type: 'SceneObject', cardinality: 'single' }]);
+    expect(obj.outputs).toEqual([
+      { socket: 'out', type: 'SceneObject', cardinality: 'single' },
+      // #1810 — its world transform: the parent's world times its own transform as drawn.
+      { socket: 'world', type: 'Matrix4', cardinality: 'single' },
+    ]);
     // and `position` IS real — as a PARAM, which is the distinction nobody was given
     expect(obj.params.find((f) => f.path === 'position')).toEqual({
       path: 'position',

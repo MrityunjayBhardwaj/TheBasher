@@ -58,6 +58,7 @@ export const LayerNode: NodeDefinition<LayerParams, LayerValue> = {
   pure: true,
   cost: 'cheap',
   paramSchema: LayerParams,
+  mainInput: 'source',
   inputs: {
     source: { type: 'Image', cardinality: 'single' },
   },

@@ -102,16 +102,27 @@ export const ObjectNode: NodeDefinition<ObjectParams, ObjectValue> = {
   // #1152 — `children`: an Object parents other scene objects, as a Group does (the socket and its
   // cardinality are the Group's), so a node that both IS something and HOLDS something has one
   // representation. `sceneHierarchy` is what makes the walk treat it as a parent.
+  // An object draws its transform and its geometry as two groups, neither under the other (#1815).
+  mainInput: null,
   inputs: {
     data: { type: ['ObjectData', 'Skeleton'], cardinality: 'single', owns: 'always' },
-    children: { type: 'SceneObject', cardinality: 'list', owns: 'always' },
+    children: { type: 'SceneObject', cardinality: 'list', owns: 'always', gathersChildren: true },
     // #1224 — the pose that poses this Object's skeleton: the end of the pose wire, as Houdini's
     // Joint Deform takes an animated pose and a Blender armature Object carries its pose. A
     // deform, the bone draw and a bone-parented Object read it through this Object (#393). It
     // was an `action` clip until #1224 (#1203); a clip reaches it through its `pose` output.
     pose: { type: 'PosedSkeleton', cardinality: 'single', owns: 'always' },
+    // #1810 — the world this object hangs from, and its own world: the parent's times its own
+    // transform as drawn. The parent input feeds the world output only (`objectWorld.ts`).
+    parent: { type: 'Matrix4', cardinality: 'single', world: true },
+    // #1811 — where this object's constraint chain ends. Wired, its world is what arrives here.
+    constraints: { type: 'Matrix4', cardinality: 'single', chain: 'end' },
   },
-  outputs: { out: { type: 'SceneObject', cardinality: 'single' } },
+  outputs: {
+    out: { type: 'SceneObject', cardinality: 'single' },
+    // #1810 — see `parent`.
+    world: { type: 'Matrix4', cardinality: 'single', world: true },
+  },
   // The posable node — 'transform' implies 'constraint' (a pose can be
   // constrained) implies 'driver'. The data socket carries no pose, so those
   // sections live HERE, once, by construction.

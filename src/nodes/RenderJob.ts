@@ -39,6 +39,7 @@ export const RenderJobNode: NodeDefinition<RenderJobParams, JobResultValue> = {
   pure: false,
   cost: 'medium',
   paramSchema: RenderJobParams,
+  mainInput: null,
   inputs: {
     /** Pass nodes feeding the dispatch — socket name MUST equal the
      *  EdgeKind literal so per-kind closure BFS isolates pass siblings

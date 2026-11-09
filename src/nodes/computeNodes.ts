@@ -18,7 +18,9 @@
 
 import { z } from 'zod';
 import type { NodeDefinition } from '../core/dag/types';
-import type { Vec3 } from './types';
+import type { Quat, Vec3 } from './types';
+import { IDENTITY_MAT4, isMat4, type Mat4 } from '../core/math/transformMath';
+import { IDENTITY_QUAT, slerp } from './quatMath';
 import {
   applyMathOp,
   applyVec3Op,
@@ -37,6 +39,16 @@ const NUMBER_OUT = { out: { type: 'Number', cardinality: 'single' } } as const;
 const VECTOR3_OUT = { out: { type: 'Vector3', cardinality: 'single' } } as const;
 const num = (inputs: Record<string, unknown>, key: string): number =>
   (inputs[key] as number | undefined) ?? 0;
+/** An unconnected Quaternion input defaults to no rotation. */
+const quat = (inputs: Record<string, unknown>, key: string): Quat => {
+  const v = inputs[key];
+  return Array.isArray(v) && v.length === 4 ? (v as unknown as Quat) : IDENTITY_QUAT;
+};
+/** An unconnected Matrix4 input defaults to the identity. */
+const matrix = (inputs: Record<string, unknown>, key: string): Mat4 => {
+  const v = inputs[key];
+  return isMat4(v) ? v : IDENTITY_MAT4;
+};
 /** An unconnected Vector3 input defaults to the origin (mirrors `num`'s 0 default). */
 const vec3 = (inputs: Record<string, unknown>, key: string): Vec3 =>
   (inputs[key] as Vec3 | undefined) ?? [0, 0, 0];
@@ -53,6 +65,7 @@ export const MathNode: NodeDefinition<MathParams, number> = {
   pure: true,
   cost: 'cheap',
   paramSchema: MathParams,
+  mainInput: null,
   inputs: {
     a: { type: 'Number', cardinality: 'single', owns: 'always' },
     b: { type: 'Number', cardinality: 'single', owns: 'always' },
@@ -74,51 +87,154 @@ export const ClampNode: NodeDefinition<ClampParams, number> = {
   pure: true,
   cost: 'cheap',
   paramSchema: ClampParams,
+  mainInput: 'in',
   inputs: { in: { type: 'Number', cardinality: 'single', owns: 'always' } },
   outputs: NUMBER_OUT,
   evaluate: (params, inputs) => clamp(num(inputs, 'in'), params.min, params.max),
 };
 
 // ── Fit — map an input range onto an output range (Houdini fit) ───────────────
+// #1802 — Fit is Basher's Map Range, and like Blender's it has a Vector mode
+// (node_shader_map_range.cc): `inVector` → `outVector`, each axis remapped through its own
+// range, clamp applied per axis. Number mode keeps the old sockets and params, and a Fit saved
+// before the mode existed reads as Number (#1801).
+const VEC3_PARAM = (d: number) => z.tuple([z.number(), z.number(), z.number()]).default([d, d, d]);
+export const FIT_DATA_TYPES = ['Number', 'Vector'] as const;
 export const FitParams = z.object({
   inMin: z.number().default(0),
   inMax: z.number().default(1),
   outMin: z.number().default(0),
   outMax: z.number().default(1),
   clamp: z.boolean().default(false),
+  dataType: z.enum(FIT_DATA_TYPES).default('Number'),
+  inMinVector: VEC3_PARAM(0),
+  inMaxVector: VEC3_PARAM(1),
+  outMinVector: VEC3_PARAM(0),
+  outMaxVector: VEC3_PARAM(1),
 });
 export type FitParams = z.infer<typeof FitParams>;
 
-export const FitNode: NodeDefinition<FitParams, number> = {
+const fitWhen = (dataType: (typeof FIT_DATA_TYPES)[number]) =>
+  ({ param: 'dataType', in: [dataType] }) as const;
+
+export const FitNode: NodeDefinition<FitParams, number | Vec3> = {
   type: 'Fit',
   version: 1,
   pure: true,
   cost: 'cheap',
   paramSchema: FitParams,
-  inputs: { in: { type: 'Number', cardinality: 'single', owns: 'always' } },
-  outputs: NUMBER_OUT,
-  evaluate: (params, inputs) =>
-    fit(num(inputs, 'in'), params.inMin, params.inMax, params.outMin, params.outMax, params.clamp),
+  // `in` or `inVector` by data type: no one socket is always there to continue a stack (#1814).
+  mainInput: null,
+  inputs: {
+    in: { type: 'Number', cardinality: 'single', owns: 'always', available: fitWhen('Number') },
+    inVector: {
+      type: 'Vector3',
+      cardinality: 'single',
+      owns: 'always',
+      available: fitWhen('Vector'),
+    },
+  },
+  outputs: {
+    out: { type: 'Number', cardinality: 'single', available: fitWhen('Number') },
+    outVector: { type: 'Vector3', cardinality: 'single', available: fitWhen('Vector') },
+  },
+  evaluate: (params, inputs) => {
+    if (params.dataType === 'Vector') {
+      const v = vec3(inputs, 'inVector');
+      const axis = (i: 0 | 1 | 2) =>
+        fit(
+          v[i],
+          params.inMinVector[i],
+          params.inMaxVector[i],
+          params.outMinVector[i],
+          params.outMaxVector[i],
+          params.clamp,
+        );
+      return [axis(0), axis(1), axis(2)];
+    }
+    return fit(
+      num(inputs, 'in'),
+      params.inMin,
+      params.inMax,
+      params.outMin,
+      params.outMax,
+      params.clamp,
+    );
+  },
 };
-
-// ── Mix — linear blend of a and b by `factor` ────────────────────────────────
+// ── Mix — blend a and b by `factor`: numbers, vectors or rotations ─────────────
+// #1801 — one Mix for every value type, as Blender's is: a socket per type (`a`/`b`/`out` for a
+// Number, `aVector`/… for a Vector3, `aRotation`/… for a Quaternion), and `dataType` decides
+// which are available (node_shader_mix.cc). A Number or a Vector lerps; a Rotation blends along
+// the shortest arc (Blender's `math::interpolate`), because lerping the numbers of two
+// orientations takes the wrong path. The Number sockets keep their names, so a Mix saved before
+// the mode existed loads as a Number Mix with its wires in place.
+// `factor` is a socket as well as a setting (#1811), as Blender's is: a wire wins, and with none the
+// setting is the value, so a Mix saved before the socket existed reads the same. A Matrix lerps
+// entry by entry, which is what the stretch part of a blended transform needs; it is not a way to
+// blend whole transforms, whose rotation would take the wrong path (`transformBlend.test.ts`).
+export const MIX_DATA_TYPES = ['Number', 'Vector', 'Rotation', 'Matrix'] as const;
 export const MixParams = z.object({
   factor: z.number().default(0.5),
+  dataType: z.enum(MIX_DATA_TYPES).default('Number'),
 });
 export type MixParams = z.infer<typeof MixParams>;
 
-export const MixNode: NodeDefinition<MixParams, number> = {
+const when = (dataType: (typeof MIX_DATA_TYPES)[number]) =>
+  ({ param: 'dataType', in: [dataType] }) as const;
+
+export const MixNode: NodeDefinition<MixParams, number | Vec3 | Quat | Mat4> = {
   type: 'Mix',
   version: 1,
   pure: true,
   cost: 'cheap',
   paramSchema: MixParams,
+  mainInput: null,
   inputs: {
-    a: { type: 'Number', cardinality: 'single', owns: 'always' },
-    b: { type: 'Number', cardinality: 'single', owns: 'always' },
+    factor: { type: 'Number', cardinality: 'single', owns: 'always' },
+    a: { type: 'Number', cardinality: 'single', owns: 'always', available: when('Number') },
+    b: { type: 'Number', cardinality: 'single', owns: 'always', available: when('Number') },
+    aVector: { type: 'Vector3', cardinality: 'single', owns: 'always', available: when('Vector') },
+    bVector: { type: 'Vector3', cardinality: 'single', owns: 'always', available: when('Vector') },
+    aRotation: {
+      type: 'Quaternion',
+      cardinality: 'single',
+      owns: 'always',
+      available: when('Rotation'),
+    },
+    bRotation: {
+      type: 'Quaternion',
+      cardinality: 'single',
+      owns: 'always',
+      available: when('Rotation'),
+    },
+    aMatrix: { type: 'Matrix4', cardinality: 'single', owns: 'always', available: when('Matrix') },
+    bMatrix: { type: 'Matrix4', cardinality: 'single', owns: 'always', available: when('Matrix') },
   },
-  outputs: NUMBER_OUT,
-  evaluate: (params, inputs) => lerp(num(inputs, 'a'), num(inputs, 'b'), params.factor),
+  outputs: {
+    out: { type: 'Number', cardinality: 'single', available: when('Number') },
+    outVector: { type: 'Vector3', cardinality: 'single', available: when('Vector') },
+    outRotation: { type: 'Quaternion', cardinality: 'single', available: when('Rotation') },
+    outMatrix: { type: 'Matrix4', cardinality: 'single', available: when('Matrix') },
+  },
+  // One value: the current mode's. Only that mode's output is available, so it is the only one
+  // a live wire reads.
+  evaluate: (params, inputs) => {
+    const t = typeof inputs.factor === 'number' ? inputs.factor : params.factor;
+    switch (params.dataType ?? 'Number') {
+      case 'Vector':
+        return applyVec3Op('mix', vec3(inputs, 'aVector'), vec3(inputs, 'bVector'), t);
+      case 'Rotation':
+        return slerp(quat(inputs, 'aRotation'), quat(inputs, 'bRotation'), t);
+      case 'Matrix': {
+        const a = matrix(inputs, 'aMatrix');
+        const b = matrix(inputs, 'bMatrix');
+        return t === 0 ? a : t === 1 ? b : a.map((v, i) => lerp(v, b[i], t));
+      }
+      default:
+        return lerp(num(inputs, 'a'), num(inputs, 'b'), t);
+    }
+  },
 };
 
 // ── CurveRemap — piecewise-linear ramp remap ─────────────────────────────────
@@ -136,6 +252,7 @@ export const CurveRemapNode: NodeDefinition<CurveRemapParams, number> = {
   pure: true,
   cost: 'cheap',
   paramSchema: CurveRemapParams,
+  mainInput: 'in',
   inputs: { in: { type: 'Number', cardinality: 'single', owns: 'always' } },
   outputs: NUMBER_OUT,
   evaluate: (params, inputs) => curveRemap(num(inputs, 'in'), params.points),
@@ -157,6 +274,7 @@ export const NoiseNode: NodeDefinition<NoiseParams, number> = {
   pure: true,
   cost: 'cheap',
   paramSchema: NoiseParams,
+  mainInput: 't',
   inputs: { t: { type: 'Number', cardinality: 'single', owns: 'always' } },
   outputs: NUMBER_OUT,
   evaluate: (params, inputs) =>
@@ -179,6 +297,7 @@ export const MakeVec3Node: NodeDefinition<Record<string, never>, Vec3> = {
   pure: true,
   cost: 'cheap',
   paramSchema: z.object({}),
+  mainInput: null,
   inputs: {
     x: { type: 'Number', cardinality: 'single', owns: 'always' },
     y: { type: 'Number', cardinality: 'single', owns: 'always' },
@@ -201,6 +320,7 @@ export const VecBreak3Node: NodeDefinition<
   pure: true,
   cost: 'cheap',
   paramSchema: z.object({}),
+  mainInput: 'v',
   inputs: { v: { type: 'Vector3', cardinality: 'single', owns: 'always' } },
   outputs: {
     x: { type: 'Number', cardinality: 'single' },
@@ -227,6 +347,7 @@ export const Vec3MathNode: NodeDefinition<Vec3MathParams, Vec3> = {
   pure: true,
   cost: 'cheap',
   paramSchema: Vec3MathParams,
+  mainInput: null,
   inputs: {
     a: { type: 'Vector3', cardinality: 'single', owns: 'always' },
     b: { type: 'Vector3', cardinality: 'single', owns: 'always' },
@@ -241,15 +362,33 @@ export const Vec3MathNode: NodeDefinition<Vec3MathParams, Vec3> = {
   },
 };
 
+// Value — one number, to feed any number of sockets from one place. As Blender's Value node and
+// Houdini's Constant. A key on it reaches everything wired from it.
+export const ValueParams = z.object({ value: z.number().default(0) });
+export type ValueParams = z.infer<typeof ValueParams>;
+export const ValueNode: NodeDefinition<ValueParams, number> = {
+  type: 'Value',
+  version: 1,
+  pure: true,
+  cost: 'cheap',
+  paramSchema: ValueParams,
+  inputs: {},
+  outputs: NUMBER_OUT,
+  evaluate: (params) => params.value,
+};
+
 /** The compute-node vocabulary, for bulk registration (registerAll.ts). */
-export const COMPUTE_NODES: NodeDefinition[] = [
-  MathNode as unknown as NodeDefinition,
-  ClampNode as unknown as NodeDefinition,
-  FitNode as unknown as NodeDefinition,
-  MixNode as unknown as NodeDefinition,
-  CurveRemapNode as unknown as NodeDefinition,
-  NoiseNode as unknown as NodeDefinition,
-  MakeVec3Node as unknown as NodeDefinition,
-  VecBreak3Node as unknown as NodeDefinition,
-  Vec3MathNode as unknown as NodeDefinition,
-];
+export const COMPUTE_NODES: NodeDefinition[] = (
+  [
+    ValueNode as unknown as NodeDefinition,
+    MathNode as unknown as NodeDefinition,
+    ClampNode as unknown as NodeDefinition,
+    FitNode as unknown as NodeDefinition,
+    MixNode as unknown as NodeDefinition,
+    CurveRemapNode as unknown as NodeDefinition,
+    NoiseNode as unknown as NodeDefinition,
+    MakeVec3Node as unknown as NodeDefinition,
+    VecBreak3Node as unknown as NodeDefinition,
+    Vec3MathNode as unknown as NodeDefinition,
+  ] as NodeDefinition[]
+).map((def) => ({ ...def, keyedCook: true })); // #575

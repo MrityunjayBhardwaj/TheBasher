@@ -127,11 +127,23 @@ const CONSUMERS: Record<string, Decision> = {
 
   // ── AUTHORED — handing these folded params would double-apply or go circular ───────
   'src/app/Gizmo.tsx': authored('folds-its-own-overlays'),
+  // #1516 — a keep-position reparent holds one cache for the gesture; it reads through the world resolver.
+  'src/app/keepPlaceReparent.ts': authored('delegates-to-a-folding-resolver'),
   'src/app/boot.ts': authored('folds-its-own-overlays'),
   'src/app/activeCamera.ts': authored('folds-its-own-overlays'),
   'src/app/nodeConstraints.ts': authored('folds-its-own-overlays'),
   'src/app/resolveTransformParam.ts': authored('folds-its-own-overlays'),
   'src/app/resolveWorldTransform.ts': authored('folds-its-own-overlays'),
+  // #1810 — an object's `world` output: folds the object's own channels and held edits onto its
+  // authored params, through resolveWorldTransform's own fold (its row above), one level at a time.
+  'src/app/objectWorld.ts': authored('folds-its-own-overlays'),
+  // #1811 — a chain step reads its settings through `resolveEvaluatedParam`, as a keyed value.
+  'src/app/constraintChain.ts': authored('folds-its-own-overlays'),
+  'src/app/keyedCook.ts': authored('folds-its-own-overlays'),
+  // #1829 — imports only the `EvaluatorCache` type: the drawn world read hands the authored state
+  // and the caller's cache to `resolveWorldTransform`'s walk and the constraint resolvers (their
+  // rows). Not a new road.
+  'src/app/drawnWorldTransform.ts': authored('folds-its-own-overlays'),
   // #480 — the camera's overlay imports only the `EvaluatorCache` type: it hands the authored
   // state and the caller's cache to `driverChannelValuesForTarget` (its own row), so a driver
   // on a camera folds like one on any node. Not a new road.
@@ -384,7 +396,10 @@ describe('#582 — who evaluates the graph, and which params they need', () => {
     // 62 → 63 at #1766, not a new road: the camera Track-To reads moved behind one helper.
     // 63 → 64 at #1763, not a new road: I on a camera reads its own pose and its Track-To's aim
     // through the resolvers the render uses (declared above as delegates-to-a-folding-resolver).
-    expect(evaluatorConsumers()).toHaveLength(64); // 39 -> 40 at #935 (placement) (the motion resolver)
+    // 64 → 66, not new roads: #1829's drawn world read and #1516's keep-position reparent cache,
+    // each declared above. 66 → 67 at #1810 (the world fold). 68 → 69 at #575, a compute node's
+    // keyed settings at its cook, declared above.
+    expect(evaluatorConsumers()).toHaveLength(69); // 39 -> 40 at #935 (placement) (the motion resolver)
   });
 
   it('every reason is load-bearing — no member of any union is decorative', () => {

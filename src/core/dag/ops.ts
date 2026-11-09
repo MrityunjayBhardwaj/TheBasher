@@ -17,7 +17,8 @@ import { followableName, ownName } from './nodeName';
 import { passRoleOf } from './passRole';
 import { getNodeType, requireNodeType } from './registry';
 import type { DagState } from './state';
-import { getNode, hasNode, wouldCreateCycle } from './state';
+import { getNode, hasNode, wouldCreateCycleAt } from './state';
+import { forgetWorldChildren, gatheringSocketOf, parentSocketOf } from './worldChildren';
 import {
   carrySubnetworkOwners,
   newStatefulLeafRead,
@@ -35,6 +36,7 @@ import type {
 } from './types';
 import { acceptedTypes, OpSchema, OUTPUT_SOCKET_TYPES, SpareParamSchema } from './types';
 import { inputTakes, whyNotTaken } from './socketConversion';
+import { inputAvailable, outputAvailable, whyUnavailable } from './socketAvailability';
 
 /**
  * #1586 — the graph declining an edit: an operation it will not apply (`OpError`), or a batch
@@ -254,6 +256,9 @@ function putNode(
   const prior = nodes[id];
   if (!draft.touched.has(id)) draft.touched.set(id, prior);
   if (draft.followers) refollow(draft.followers, id, prior?.meta?.nameFrom, node?.meta?.nameFrom);
+  // #1824 — the record is written in place, so an index of who hangs from whom taken earlier in
+  // this batch no longer describes it.
+  if (prior?.inputs !== node?.inputs) forgetWorldChildren(nodes);
   if (draft.consumed && prior?.inputs !== node?.inputs) {
     if (prior) countWires(draft.consumed, prior, -1);
     if (node) countWires(draft.consumed, node, 1);
@@ -620,6 +625,72 @@ function requireWire(
   return outputDesc;
 }
 
+/** #1801 — refuse a wire to or from a socket its node's current mode has switched off. */
+function requireAvailable(
+  op: Op,
+  node: { type: string; params?: unknown },
+  socket: string,
+  side: 'input' | 'output',
+): void {
+  const def = requireNodeType(node.type);
+  const ok =
+    side === 'input'
+      ? inputAvailable(def, node.params, socket)
+      : outputAvailable(def, node.params, socket);
+  if (ok) return;
+  const rule = (side === 'input' ? def.inputs[socket] : def.outputs[socket])!.available!;
+  throw new OpError(
+    `connect: ${node.type}.${socket} is not available — ${whyUnavailable(def, rule, node.params)}`,
+    op,
+  );
+}
+
+/**
+ * #1824 — a child has one parent. Until saved files are converted, a child can hang from a parent
+ * two ways: wired into a gathering `children` list, or through its own parent input. Either alone
+ * is a parent; both at once would name two (or the same one twice), so the second is refused.
+ */
+function requireOneParent(
+  state: DagState,
+  op: Extract<Op, { type: 'connect' }>,
+  inputDesc: InputDescriptor,
+): void {
+  const holderOf = (childId: NodeId): NodeId | null => {
+    for (const [id, node] of Object.entries(state.nodes)) {
+      const socket = gatheringSocketOf(node.type);
+      const binding = socket ? node.inputs[socket] : undefined;
+      const refs = Array.isArray(binding) ? binding : binding ? [binding] : [];
+      if (refs.some((r) => r.node === childId)) return id;
+    }
+    return null;
+  };
+  if (inputDesc.world === true) {
+    const holder = holderOf(op.to.node);
+    if (holder) {
+      throw new OpError(
+        `connect: "${op.to.node}" already hangs from "${holder}" through its children list; ` +
+          'a child has one parent',
+        op,
+      );
+    }
+    return;
+  }
+  if (inputDesc.gathersChildren !== true) return;
+  // #1824 — a child that can name its parent does: the holder draws it through the child's parent
+  // input, so a wire into the list would be a second way to say the same thing. Only a child with
+  // no parent input (a glTF asset, a Transform, a scatter) still hangs by a wire.
+  const childType = state.nodes[op.from.node]?.type;
+  const parentSocket = childType ? parentSocketOf(childType) : null;
+  if (parentSocket) {
+    throw new OpError(
+      `connect: "${op.from.node}" names its parent through its own "${parentSocket}" input; ` +
+        `connect "${op.to.node}".world to "${op.from.node}".${parentSocket} instead of wiring it ` +
+        `into "${op.to.node}".${op.to.socket}`,
+      op,
+    );
+  }
+}
+
 function applyConnect(
   state: DagState,
   op: Extract<Op, { type: 'connect' }>,
@@ -634,8 +705,19 @@ function applyConnect(
   const prior = consumer.inputs[op.to.socket];
   const held = Array.isArray(prior) ? prior : prior ? [prior] : [];
   requireWire('connect', op, state, consumer.type, op.to.socket, inputDesc, ref, held);
-  if (wouldCreateCycle(state, op.from.node, op.to.node)) {
-    throw new OpError(`connect: would create a cycle (${op.from.node} → ${op.to.node})`, op);
+  // #1801 — a NEW wire only between sockets the two nodes' modes have on. (`addNode` does not
+  // ask: it also restores a node on undo and paste, and a wire kept on a socket that is off is a
+  // state Blender keeps too — the evaluator ignores it until the mode brings the socket back.)
+  requireAvailable(op, consumer, op.to.socket, 'input');
+  requireAvailable(op, getNode(state, op.from.node), op.from.socket, 'output');
+  requireOneParent(state, op, inputDesc);
+  if (wouldCreateCycleAt(state, op.from, op.to)) {
+    const instead = inputDesc?.chain && getNodeType(consumer.type)?.worldRefs?.[op.to.socket];
+    throw new OpError(
+      `connect: would create a cycle (${op.from.node} → ${op.to.node})` +
+        (instead ? `; pick it as the aim target instead, which can close a loop` : ''),
+      op,
+    );
   }
 
   let nextBinding: InputBinding;

@@ -138,6 +138,8 @@ export function curveSamplerFor(
   curveId: string,
   ctx: EvalCtx,
   cache?: EvaluatorCache,
+  /** #1811 — the curve object's world when the caller has it off a wire, its constraints included. */
+  world?: readonly number[],
 ): CurveSampler | null {
   const node = state.nodes[curveId];
   // Accept a fused Curve OR a split Object whose data is a CurveData (#385). `points` is a
@@ -150,7 +152,7 @@ export function curveSamplerFor(
   const samples = geom?.samples;
   if (!geom || !samples || samples.length === 0) return null;
 
-  const matrix = resolveWorldTransform(state, curveId, ctx, cache)?.matrix ?? IDENTITY16;
+  const matrix = world ?? resolveWorldTransform(state, curveId, ctx, cache)?.matrix ?? IDENTITY16;
   const matrixKey = Array.prototype.join.call(matrix, ',');
 
   const key = samples as unknown as object;

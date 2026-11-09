@@ -36,6 +36,7 @@ export const NormalPassNode: NodeDefinition<NormalPassParams, ImageValue> = {
   pure: true,
   cost: 'cheap',
   paramSchema: NormalPassParams,
+  mainInput: 'scene',
   inputs: {
     scene: { type: 'Scene', cardinality: 'single' },
     camera: { type: 'SceneObject', cardinality: 'single' },

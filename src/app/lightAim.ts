@@ -22,8 +22,9 @@ import type { DagState } from '../core/dag/state';
 import type { Op } from '../core/dag/types';
 import { nextConstraintOrder } from './nodeConstraints';
 import { lightKindOf } from './lightNode';
-import { hierarchyChildIds } from './sceneHierarchy';
-import { resolveParentWorldMatrix } from './resolveWorldTransform';
+import { freshObjectName, takenObjectNames } from './objectNames';
+import { parentIdsOf } from './sceneHierarchy';
+import { resolveDrawnParentWorldMatrix } from './drawnWorldTransform';
 
 type Vec3 = [number, number, number];
 
@@ -48,11 +49,8 @@ export function lightAimName(state: DagState, lightId: string, kind?: string | n
 
 /** The group `lightId` hangs in, or null at the top of the scene (the Scene, a rig, nothing). */
 function parentGroupOf(state: DagState, lightId: string): string | null {
-  for (const node of Object.values(state.nodes)) {
-    if (node.type === 'Scene') continue;
-    if (hierarchyChildIds(node).includes(lightId)) return node.type === 'Group' ? node.id : null;
-  }
-  return null;
+  const holder = parentIdsOf(state, lightId).find((id) => state.nodes[id]?.type !== 'Scene');
+  return holder && state.nodes[holder].type === 'Group' ? holder : null;
 }
 
 export interface LightAimOpts {
@@ -83,7 +81,7 @@ export function lightAimOps(
   // carries the empty with it, and the light with it.
   let position: Vec3 = [...opts.at];
   if (parent) {
-    const parentWorld = resolveParentWorldMatrix(state, lightId, {
+    const parentWorld = resolveDrawnParentWorldMatrix(state, lightId, {
       time: { frame: 0, seconds: 0, normalized: 0 },
     });
     if (parentWorld) {
@@ -99,16 +97,34 @@ export function lightAimOps(
       nodeType: 'Null',
       params: { position, rotation: [0, 0, 0], scale: [1, 1, 1] },
     },
-    { type: 'setMeta', nodeId: nullId, name: opts.name ?? lightAimName(state, lightId, opts.kind) },
-    ...(holder
+    {
+      type: 'setMeta',
+      nodeId: nullId,
+      // #1518 — a free name: two spots with no name of their own would otherwise share `Spot.aim`.
+      name: freshObjectName(
+        opts.name ?? lightAimName(state, lightId, opts.kind),
+        takenObjectNames(state),
+      ),
+    },
+    // #1824 — under a group the empty names the group through its parent input; at the top it
+    // joins the scene's list.
+    ...(parent
       ? [
           {
             type: 'connect' as const,
-            from: { node: nullId, socket: 'out' },
-            to: { node: holder, socket: 'children' },
+            from: { node: parent, socket: 'world' },
+            to: { node: nullId, socket: 'parent' },
           },
         ]
-      : []),
+      : holder
+        ? [
+            {
+              type: 'connect' as const,
+              from: { node: nullId, socket: 'out' },
+              to: { node: holder, socket: 'children' },
+            },
+          ]
+        : []),
     {
       type: 'addNode',
       nodeId: trackToId,

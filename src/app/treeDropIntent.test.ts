@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { dropIntent, dropZoneAt, reorderIndex } from './treeDropIntent';
+import {
+  isCameraRootDrop,
+  dropIntent,
+  dropZoneAt,
+  landsOnItself,
+  reorderIndex,
+} from './treeDropIntent';
 
 describe('dropZoneAt — the edges are the top and bottom quarter', () => {
   it.each([
@@ -60,5 +66,38 @@ describe('reorderIndex — the index after the disconnect shifts the list', () =
   it('a drop that lands the node where it is does nothing', () => {
     expect(reorderIndex(1, 2, 'before')).toBeNull(); // b before c: already there
     expect(reorderIndex(2, 1, 'after')).toBeNull(); // c after b: already there
+  });
+});
+
+describe('#1518 — a camera dropped on the Scene root stays in the scene', () => {
+  const root = { nodeId: 'scene', depth: 0 };
+  const group = { nodeId: 'g', depth: 1 };
+  const row = (nodeId: string, socket: string) => ({
+    nodeId: 'cam',
+    depth: 2,
+    parent: { nodeId, socket },
+  });
+  it('out of its group and into Scene.children', () => {
+    expect(isCameraRootDrop(row('g', 'children'), root)).toBe(true);
+  });
+  it('no move for a camera already at the top, the active one, or a drop elsewhere', () => {
+    expect(isCameraRootDrop(row('scene', 'children'), root)).toBe(false);
+    expect(isCameraRootDrop(row('scene', 'camera'), root)).toBe(false);
+    expect(isCameraRootDrop(row('g', 'children'), group)).toBe(false);
+  });
+});
+
+describe('landsOnItself — by node, since a node has a row per collection holding it (#1505)', () => {
+  const src = { nodeId: 'O' };
+  it.each([
+    ['its own row', 'O', 'S/collection/A/O', true],
+    ['its copy under another collection', 'O', 'S/collection/B/O', true],
+    ['a child under its own row', 'K', 'S/collection/A/O/K', true],
+    ['a child under its other copy', 'K', 'S/collection/B/O/K', true],
+    ['a sibling', 'P', 'S/collection/A/P', false],
+    ['a node whose id starts with its id', 'O2', 'S/collection/A/O2', false],
+    ['a child of a node whose id starts with its id', 'K', 'S/collection/A/O2/K', false],
+  ])('%s', (_name, nodeId, key, expected) => {
+    expect(landsOnItself(src, { nodeId, key })).toBe(expected);
   });
 });

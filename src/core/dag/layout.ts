@@ -17,6 +17,7 @@
 import type { DagState } from './state';
 import { relationsOf } from './idRefSweep';
 import { registryEpoch } from './registry';
+import { parentSocketOf } from './worldChildren';
 import { subnetworkOf, subnetworkOwnersOf } from './subnetworks';
 import type { NodeId } from './types';
 
@@ -199,16 +200,26 @@ function layoutLevel(
 
   const inLevel = new Set(unplaced);
   const local = edges.filter((e) => e.from !== e.to && inLevel.has(e.from) && inLevel.has(e.to));
-  for (const [id, [x, y]] of layered(unplaced, height, acyclic(local))) into.set(id, [x, top + y]);
+  // #1824 — a parent wire runs from the parent's `world` into the child, which can close a loop with
+  // a wire the other way (a skeleton's `out` into the modifier its parent mesh deforms by). The
+  // loop is between two outputs of one node, not a real one, so the parent wire gives way.
+  const parentWire = (e: ViewEdge) =>
+    !e.ref && parentSocketOf(state.nodes[e.to]?.type ?? '') === e.toSocket;
+  for (const [id, [x, y]] of layered(unplaced, height, acyclic(local, parentWire)))
+    into.set(id, [x, top + y]);
 }
 
 /**
- * The edges to rank by, with none closing a loop. Wires never do (`connect` refuses a loop), so
- * all of them stay; a reference is kept unless what it points at already reaches what it starts
- * from (a driver reading the node it drives). Dropping a reference rather than a wire keeps
- * every wire running left to right.
+ * The edges to rank by, with none closing a loop. Wires other than parent wires never do
+ * (`connect` refuses a loop between them), so all of them stay. A parent wire (#1824), then a
+ * reference, is kept unless what it points at already reaches what it starts from: a child whose
+ * `out` feeds its own parent's data, a driver reading the node it drives. Dropping those rather
+ * than a plain wire keeps every other wire running left to right.
  */
-function acyclic(edges: readonly ViewEdge[]): { from: NodeId; to: NodeId }[] {
+function acyclic(
+  edges: readonly ViewEdge[],
+  parentWire: (e: ViewEdge) => boolean,
+): { from: NodeId; to: NodeId }[] {
   const next = new Map<NodeId, NodeId[]>();
   const add = (from: NodeId, to: NodeId) => next.set(from, [...(next.get(from) ?? []), to]);
   const reaches = (start: NodeId, goal: NodeId): boolean => {
@@ -224,15 +235,18 @@ function acyclic(edges: readonly ViewEdge[]): { from: NodeId; to: NodeId }[] {
     return false;
   };
   const kept: { from: NodeId; to: NodeId }[] = [];
+  const firm = (e: ViewEdge) => !e.ref && !parentWire(e);
   for (const e of edges) {
-    if (e.ref) continue;
+    if (!firm(e)) continue;
     add(e.from, e.to);
     kept.push(e);
   }
-  for (const e of edges) {
-    if (!e.ref || reaches(e.to, e.from)) continue;
-    add(e.from, e.to);
-    kept.push(e);
+  for (const pass of [parentWire, (e: ViewEdge) => e.ref]) {
+    for (const e of edges) {
+      if (!pass(e) || reaches(e.to, e.from)) continue;
+      add(e.from, e.to);
+      kept.push(e);
+    }
   }
   return kept;
 }

@@ -38,6 +38,7 @@ export const BoxDataNode: NodeDefinition<BoxDataParams, MeshDataValue> = {
   pure: true,
   cost: 'cheap',
   paramSchema: BoxDataParams,
+  mainInput: null,
   inputs: {
     // #394 — the material can come from a Material node instead of this node's own
     // param. `list` cardinality is deliberate and the reason is in materialSocket.ts:

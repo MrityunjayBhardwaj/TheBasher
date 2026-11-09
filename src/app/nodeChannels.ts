@@ -23,7 +23,7 @@
 import { getNodeType } from '../core/dag/registry';
 import type { KeyframeChannelValue } from '../nodes/types';
 import { isKeyframeChannelNode } from './animate/paramAnimationState';
-import { hierarchyChildIds } from './sceneHierarchy';
+import { parentIdsOf } from './sceneHierarchy';
 
 /** Minimal node shape this enumerator reads (a DagState node subset). */
 interface NodeLike {
@@ -190,9 +190,8 @@ export function directChannelTargetSet(
  *
  * `animatedSet` should be `directChannelTargetSet` — the channel-animated ancestors
  * `resolveParentWorldMatrix` actually follows per-frame (it overlays the top-level
- * child's channels at `ctx.seconds`). A constraint-rotation-only ancestor is NOT
- * followed by that resolver, so it is intentionally excluded (a documented narrow
- * limitation — a position-keyed Track-To'd ancestor is still caught via its channels).
+ * child's channels at `ctx.seconds`). #1829 — the resolver now reads a constrained ancestor as it
+ * is drawn, so the caller passes constrained nodes in `animatedSet` as well.
  *
  * The hierarchy socket set is READ from `sceneHierarchy`, which `childEdges` and
  * `resolveParentWorldMatrix` read too — so this no longer MIRRORS the source of truth,
@@ -216,20 +215,12 @@ export function animatedAncestorSet(
   // conservative rather than wrong — over-marking costs re-renders, it cannot produce a
   // wrong transform — but it was not the set this comment claimed, and a set nobody can
   // state is a set nobody can check.
-  const parents = new Map<string, string[]>();
-  for (const node of Object.values(nodes)) {
-    for (const childId of hierarchyChildIds(node)) {
-      const list = parents.get(childId);
-      if (list) list.push(node.id);
-      else parents.set(childId, [node.id]);
-    }
-  }
   const out = new Set<string>();
   for (const id of Object.keys(nodes)) {
     // BFS up the ancestor chain; mark `id` if any ancestor is animated. The `seen`
     // guard makes a malformed cyclic graph terminate instead of looping forever.
     const seen = new Set<string>([id]);
-    const stack = [...(parents.get(id) ?? [])];
+    const stack = [...parentIdsOf({ nodes }, id)];
     while (stack.length) {
       const cur = stack.pop()!;
       if (seen.has(cur)) continue;
@@ -238,7 +229,7 @@ export function animatedAncestorSet(
         out.add(id);
         break;
       }
-      stack.push(...(parents.get(cur) ?? []));
+      stack.push(...parentIdsOf({ nodes }, cur));
     }
   }
   return out;

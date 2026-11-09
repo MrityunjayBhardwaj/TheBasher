@@ -119,13 +119,23 @@ async function stage(page: Page) {
         },
         {
           type: 'connect',
+          from: { node: 'pg2', socket: 'world' },
+          to: { node: 'p_sel', socket: 'parent' },
+        },
+        {
+          type: 'connect',
           from: { node: 'p_sel', socket: 'out' },
-          to: { node: 'pg2', socket: 'children' },
+          to: { node: sceneId, socket: 'children' },
+        },
+        {
+          type: 'connect',
+          from: { node: 'pg1', socket: 'world' },
+          to: { node: 'pg2', socket: 'parent' },
         },
         {
           type: 'connect',
           from: { node: 'pg2', socket: 'out' },
-          to: { node: 'pg1', socket: 'children' },
+          to: { node: sceneId, socket: 'children' },
         },
         {
           type: 'connect',

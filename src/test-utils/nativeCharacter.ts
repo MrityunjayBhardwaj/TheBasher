@@ -88,23 +88,27 @@ export function nativeCharacterOps(opts: {
         pivot: [0, 0, 0],
       },
     },
+    // #1824 — each names the group as its parent.
     {
       type: 'connect',
-      from: { node: ids.armatureId, socket: 'out' },
-      to: { node: ids.groupId, socket: 'children' },
+      from: { node: ids.groupId, socket: 'world' },
+      to: { node: ids.armatureId, socket: 'parent' },
     },
     {
       type: 'connect',
-      from: { node: ids.meshId, socket: 'out' },
-      to: { node: ids.groupId, socket: 'children' },
+      from: { node: ids.groupId, socket: 'world' },
+      to: { node: ids.meshId, socket: 'parent' },
     },
   ];
   if (opts.sceneId) {
-    ops.push({
-      type: 'connect',
-      from: { node: ids.groupId, socket: 'out' },
-      to: { node: opts.sceneId, socket: 'children' },
-    });
+    // #1823 — the group, its armature and its mesh are each the scene's, as an import links them.
+    for (const id of [ids.groupId, ids.armatureId, ids.meshId]) {
+      ops.push({
+        type: 'connect',
+        from: { node: id, socket: 'out' },
+        to: { node: opts.sceneId, socket: 'children' },
+      });
+    }
   }
   return { ops, ids };
 }

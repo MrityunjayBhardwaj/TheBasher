@@ -11,7 +11,7 @@ import { evaluate as evaluateDag } from '../core/dag/evaluator';
 import { materialAssignmentReport } from './materialAssignment';
 import { resolveEvaluatedMesh } from './resolveEvaluatedMesh';
 import { resolveEvaluatedTransform } from './resolveEvaluatedTransform';
-import { resolveWorldTransform } from './resolveWorldTransform';
+import { resolveDrawnWorldTransform } from './drawnWorldTransform';
 import { resolveEvaluatedParam } from './resolveEvaluatedParam';
 import { resolveMeshUVSpace } from './resolveMeshUVSpace';
 import { unionUVBounds } from './uvIslands';
@@ -692,6 +692,7 @@ export function boot(): Promise<void> {
         import('./operatorStack'),
         import('./operatorChain'),
         import('./constraintStack'),
+        import('./keepPlaceReparent'),
         import('./materialLink'),
         import('./driverBind'),
         import('./video/newComposition'),
@@ -701,12 +702,27 @@ export function boot(): Promise<void> {
         import('./video/videoTimelineGeometry'),
         import('./stores/timeStore'),
       ]).then(
-        ([stack, chain, constraints, material, driver, comp, layer, video, decode, geo, time]) => {
+        ([
+          stack,
+          chain,
+          constraints,
+          parenting,
+          material,
+          driver,
+          comp,
+          layer,
+          video,
+          decode,
+          geo,
+          time,
+        ]) => {
           w.__basher_censusBuilders = {
             operatorTypesInSection: chain.operatorTypesInSection,
             buildAddModifierOps: stack.buildAddModifierOps,
             buildAddMaterialOpOps: stack.buildAddMaterialOpOps,
             buildAddConstraintOps: constraints.buildAddConstraintOps,
+            buildRemoveConstraintOps: constraints.buildRemoveConstraintOps,
+            buildParentToOps: parenting.buildParentToOps,
             buildNewMaterialOps: material.buildNewMaterialOps,
             buildBindDriverOps: driver.buildBindDriverOps,
             // #1259 — whether `type`'s schema DECLARES `key`, read off the schema itself and not
@@ -1037,7 +1053,8 @@ export function boot(): Promise<void> {
       w.__basher_world_transform = (nodeId: NodeId, ctx?: EvalCtx) => {
         const state = useDagStore.getState().state;
         const evalCtx: EvalCtx = ctx ?? { time: { frame: 0, seconds: 0, normalized: 0 } };
-        return resolveWorldTransform(state, nodeId, evalCtx);
+        // #1829 — where the node is drawn: its ancestors' constraints applied.
+        return resolveDrawnWorldTransform(state, nodeId, evalCtx);
       };
       w.__basher_evaluated_param = (nodeId: NodeId, paramPath: string, ctx?: EvalCtx) => {
         const state = useDagStore.getState().state;

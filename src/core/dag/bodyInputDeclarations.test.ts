@@ -89,6 +89,12 @@ describe('#1570 — body-input declarations are refused when nothing would honou
         .filter((d) => d.bodyInputLeaf)
         .map((d) => d.type)
         .sort(),
-    ).toEqual(['BodyInput', 'BodyInputPose', 'BodyInputVec']);
+    ).toEqual([
+      'BodyInput',
+      'BodyInputPose',
+      'BodyInputRotation',
+      'BodyInputTransform',
+      'BodyInputVec',
+    ]);
   });
 });

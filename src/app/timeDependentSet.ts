@@ -34,7 +34,7 @@ import { stripTargetSet } from './layeredChannels';
 import { directChannelTargetSet } from './nodeChannels';
 import { constraintTargetSet, followPathTargetSet } from './nodeConstraints';
 import { driverTargetSet } from './paramDrivers';
-import { hierarchyChildIds } from './sceneHierarchy';
+import { childIdsOf } from './sceneHierarchy';
 
 type Nodes = DagState['nodes'];
 
@@ -98,12 +98,12 @@ function build(state: DagState): TimeDependentSet {
     const id = stack.pop()!;
     if (members.has(id)) continue;
     members.add(id);
-    for (const child of hierarchyChildIds(nodes[id])) if (nodes[child]) stack.push(child);
+    for (const child of childIdsOf({ nodes }, id)) if (nodes[child]) stack.push(child);
   }
   const holders = new Map<string, number>();
   for (const id of members) holders.set(id, 0);
   for (const id of members) {
-    for (const child of hierarchyChildIds(nodes[id])) {
+    for (const child of childIdsOf({ nodes }, id)) {
       if (members.has(child)) holders.set(child, holders.get(child)! + 1);
     }
   }
@@ -112,7 +112,7 @@ function build(state: DagState): TimeDependentSet {
   while (ready.length) {
     const id = ready.shift()!;
     order.push(id);
-    for (const child of hierarchyChildIds(nodes[id])) {
+    for (const child of childIdsOf({ nodes }, id)) {
       if (!holders.has(child)) continue;
       const left = holders.get(child)! - 1;
       holders.set(child, left);

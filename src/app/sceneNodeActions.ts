@@ -6,6 +6,8 @@
 
 import type { DagState } from '../core/dag/state';
 import type { Node, NodeId, Op } from '../core/dag/types';
+import { chainNodeIds, removeStepOps } from '../core/dag/chainEdit';
+import { applyOps } from '../core/dag/ops';
 import { getNodeType } from '../core/dag/registry';
 import {
   buildIdRefIndex,
@@ -20,11 +22,28 @@ import {
 import { subnetworkOf } from '../core/dag/subnetworks';
 import { isCameraNode } from './cameraNode';
 import {
+  buildMoveOps,
+  receivingSocket,
+  sceneIdOf,
+  type ChildMove,
+  type HolderEdge,
+  type MoveResult,
+} from './keepPlaceReparent';
+import {
+  childIdsOf,
+  hierarchySocketForKind,
+  hierarchySocketsOf,
+  parentIdsOf,
+} from './sceneHierarchy';
+import { gatheringSocketOf, worldChildrenOf, worldParentOf } from '../core/dag/worldChildren';
+import type { ClockedCtx } from './subjectClock';
+import {
   collectionDeleteRelinkOps,
   collectionsHolding,
   isMembershipWire,
   membershipOps,
 } from './collections';
+import { freshObjectName, numberedName, objectBaseNameOf, takenObjectNames } from './objectNames';
 
 /**
  * #432 — a WRAPPER node consumes its subject through a chain EDGE and re-exposes it
@@ -163,24 +182,135 @@ function consumersFirst(
   return out;
 }
 
+/** Whether this wire holds its source as a scene-graph child. */
+function holdsAsParent(state: DagState, r: Reader): boolean {
+  return r.fromSocket === 'out' && hierarchySocketsOf(state.nodes[r.node]).includes(r.socket);
+}
+
+/**
+ * #1517 — where the children of the deleted nodes go. A deleted Group or Object hands each child
+ * that nothing surviving holds up to its nearest surviving ancestor, the scene at the top: Houdini
+ * "connects all the descendants of the deleted node to the node's first parent". A child also being
+ * deleted goes with the batch, and a child a surviving parent still holds stays there.
+ *
+ * This is what keeps #431 fixed. #431 found children left in the file with nothing reaching them,
+ * and answered by deleting them; here they are rewired, so nothing is left unreachable either way.
+ */
+function handUpMoves(
+  state: DagState,
+  readers: ReadonlyMap<NodeId, Reader[]>,
+  deleted: readonly NodeId[],
+  idSet: ReadonlySet<NodeId>,
+): ChildMove[] {
+  const sceneId = sceneIdOf(state);
+  if (!sceneId) return [];
+  /** The nearest holder above `id` that is staying and can take `childId`. A wrapper (one socket,
+   *  already filled) or a light's Object is passed on the way up. */
+  const survivingHolderOf = (id: NodeId, childId: NodeId): NodeId => {
+    const seen = new Set<NodeId>();
+    let cursor = id;
+    while (!seen.has(cursor)) {
+      seen.add(cursor);
+      // #1824 — what `cursor` hangs from, by a wire or by its own parent input.
+      const holders = parentIdsOf(state, cursor);
+      const fit = holders.find((h) => !idSet.has(h) && receivingSocket(state, h, childId) !== null);
+      if (fit) return fit;
+      if (holders.length === 0) break;
+      cursor = holders[0];
+    }
+    return sceneId;
+  };
+  const moves = new Map<NodeId, ChildMove>();
+  for (const id of deleted) {
+    const node = state.nodes[id];
+    // A wrapper's single child is spliced out below instead (#432).
+    if (!node || hierarchySocketForKind(node.type, node) !== 'children') continue;
+    // #1824 — its children, wired into its list or hung from it by their own parent input.
+    for (const childId of childIdsOf(state, id)) {
+      if (idSet.has(childId) || moves.has(childId) || !state.nodes[childId]) continue;
+      const holders: HolderEdge[] = (readers.get(childId) ?? [])
+        .filter((r) => holdsAsParent(state, r))
+        .map((r) => ({ node: r.node, socket: r.socket }));
+      const parent = worldParentOf(state, childId);
+      if (parent) holders.push({ node: parent, socket: 'children', byParentInput: true });
+      if (holders.some((h) => !idSet.has(h.node))) continue;
+      moves.set(childId, { childId, from: holders, to: survivingHolderOf(id, childId) });
+    }
+  }
+  return [...moves.values()];
+}
+
 /**
  * Ops to delete `ids` in one atomic batch (→ one undo). `removeNode` refuses to
  * remove a node whose output is still consumed, so every consumer edge into a
  * deleted node is disconnected FIRST (consumers also being deleted are skipped —
  * their own removeNode handles them). Mirrors the long-standing Delete-key path,
  * now shared so the context menu can't drift from it.
+ *
+ * Throws what {@link planDeleteNodes} refuses, for callers with no way to tell the user anything
+ * but through the throw (the agent's mutator reports it as a build exception). The UI's two
+ * delete doors call `planDeleteNodes` and say the refusal.
  */
 export function buildDeleteNodesOps(state: DagState, ids: readonly NodeId[]): Op[] {
+  const plan = planDeleteNodes(state, ids);
+  if (!plan.ok) throw new Error(plan.reason);
+  return plan.ops;
+}
+
+/**
+ * Blender's Delete Hierarchy: `ids` and everything below them, a child in another collection too.
+ * A child a surviving parent also holds stays, as a plain delete leaves it. A character's group is
+ * the case this is for: the group, its skeleton and mesh objects, and through those their data
+ * (#1673), which a plain delete of the group now hands up (#1517).
+ */
+export function withHierarchy(state: DagState, ids: readonly NodeId[]): NodeId[] {
+  const readers = readersIndex(state);
+  const out = new Set<NodeId>(ids);
+  for (const id of out) {
+    for (const childId of childIdsOf(state, id)) {
+      if (out.has(childId) || !state.nodes[childId]) continue;
+      const alsoHeld = (readers.get(childId) ?? []).some(
+        (r) => holdsAsParent(state, r) && !isBelowAny(state, readers, r.node, out),
+      );
+      if (!alsoHeld) out.add(childId);
+    }
+  }
+  return [...out];
+}
+
+/** Whether `id` is in `set`, or held as a child by something that is, however far up. */
+function isBelowAny(
+  state: DagState,
+  readers: ReadonlyMap<NodeId, Reader[]>,
+  id: NodeId,
+  set: ReadonlySet<NodeId>,
+  seen: Set<NodeId> = new Set(),
+): boolean {
+  if (set.has(id)) return true;
+  if (seen.has(id)) return false;
+  seen.add(id);
+  const holders = (readers.get(id) ?? []).filter((r) => holdsAsParent(state, r));
+  return holders.length > 0 && holders.every((r) => isBelowAny(state, readers, r.node, set, seen));
+}
+
+/** {@link buildDeleteNodesOps}, with a refusal and any shear reported instead of thrown or lost. */
+export function planDeleteNodes(
+  state: DagState,
+  ids: readonly NodeId[],
+  opts: { readonly ctx?: ClockedCtx } = {},
+): MoveResult {
   const idSet = new Set<NodeId>(ids);
   const readers = readersIndex(state);
   const allIds = [...idSet];
 
   // ── Direction 1: what the deleted nodes OWN, through edges. ──────────────────
-  // #365 — a split Object OWNS its BoxData through `data`. #431 — a Group OWNS its
-  // `children`: delete means delete, and getting objects OUT of a group is a
-  // different verb (drag-reparent, SceneTree.tsx:512). Left behind, either one
-  // survives in the file while unreachable from `scene` — invisible, unrenderable,
-  // unrecoverable through the UI, and growing the save every time.
+  // #365 — a split Object OWNS its BoxData through `data`. Left behind, it survives in
+  // the file while unreachable from `scene` — invisible, unrenderable, unrecoverable
+  // through the UI, and growing the save every time. #431 found the same strand under a
+  // deleted Group and answered by deleting its `children`; #1517 reverses that answer and
+  // keeps the protection. A parent's `children` socket still declares ownership (Duplicate
+  // copies through it), but Delete hands them up instead (`handUpMoves`), so they are
+  // rewired rather than stranded.
   //
   // A stack socket (a modifier's `target`, a pose layer's `pose`) is deliberately NOT owned
   // when the node holding it is deleted on its own: deleting a modifier must not delete the
@@ -241,8 +371,27 @@ export function buildDeleteNodesOps(state: DagState, ids: readonly NodeId[]): Op
       for (let i = 0; i < allIds.length; i++) {
         const owner = state.nodes[allIds[i]];
         if (!owner) continue;
+        // #1812 — an object takes its constraint chain with it, the blend nodes included.
+        for (const id of chainNodeIds(state, owner.id)) {
+          if (!idSet.has(id)) {
+            idSet.add(id);
+            allIds.push(id);
+            changed = true;
+          }
+        }
         for (const [socket, binding] of Object.entries(owner.inputs ?? {})) {
           const kind = wireOwnership(owner.type, socket);
+          // #1517 — a parent's children are handed up, not taken with it.
+          // One the caller named too is owned as it always was, so a wrapper deleted with its
+          // group takes its stack rather than stranding the subject (#431).
+          if (kind === 'always' && hierarchySocketForKind(owner.type, owner) === socket) {
+            for (const ref of refsOf(binding)) {
+              if (!ref?.node || !idSet.has(ref.node) || reachedAsOwned.has(ref.node)) continue;
+              reachedAsOwned.add(ref.node);
+              changed = true;
+            }
+            continue;
+          }
           if (kind === 'body') {
             for (const inside of subnetworkOf(state, owner.id)) {
               if (reachedAsOwned.has(inside) || !state.nodes[inside]) continue;
@@ -306,10 +455,49 @@ export function buildDeleteNodesOps(state: DagState, ids: readonly NodeId[]): Op
   // chokepoint, not a per-op one (see `findDanglingIdRef`).
   // #397 — a deleted collection hands its members and nested collections to the collections it
   // sat in, as Blender's Delete does, before it goes.
-  const ops: Op[] = [...sweep.ops, ...collectionDeleteRelinkOps(state, idSet)];
+  // #1517 — the children of what is going move first, keeping their place, while the world of
+  // every parent they read is still in the graph. They leave the deleted node's list here, so its
+  // removeNode takes no wire of theirs with it.
+  const handUp = buildMoveOps(state, handUpMoves(state, readers, allIds, idSet), {
+    ctx: opts.ctx,
+    verb: 'Delete',
+    // The parent is going, so an animated child has nothing to stay under. It keeps its keys and
+    // moves, as Blender's does; the doors say so, which Blender does not.
+    drivenChildren: 'move',
+  });
+  if (!handUp.ok) return handUp;
+  const ops: Op[] = [...sweep.ops, ...collectionDeleteRelinkOps(state, idSet), ...handUp.ops];
+  // #1812 — a constraint going from an object that stays comes out of its chain, the step above
+  // reading the one below, with its blend.
+  let chainWorking = applyOps(state, ops).next;
+  for (const id of [...allIds]) {
+    const step = state.nodes[id];
+    if (!step || !getNodeType(step.type)?.worldStep) continue;
+    const target = (step.params as { target?: unknown }).target;
+    if (typeof target !== 'string' || idSet.has(target)) continue;
+    const off = removeStepOps(chainWorking, target, id);
+    if (!off) continue;
+    ops.push(...off);
+    chainWorking = applyOps(chainWorking, off).next;
+    for (const op of off) {
+      if (op.type !== 'removeNode' || !idSet.delete(op.nodeId)) continue;
+      allIds.splice(allIds.indexOf(op.nodeId), 1);
+    }
+  }
+  // #1824 — a child hung by its parent input reads the deleted node, so it is one of its readers;
+  // the hand-up above has already cut that wire, and cutting it twice would throw.
+  const cut = new Set(
+    handUp.ops.flatMap((op) =>
+      op.type === 'disconnect'
+        ? [`${op.from.node}\u0000${op.from.socket}\u0000${op.to.node}\u0000${op.to.socket}`]
+        : [],
+    ),
+  );
   for (const nodeId of consumersFirst(state, allIds, idSet)) {
     for (const reader of readers.get(nodeId) ?? []) {
       if (idSet.has(reader.node)) continue; // being deleted too — its removeNode covers it
+      if (cut.has(`${nodeId}\u0000${reader.fromSocket}\u0000${reader.node}\u0000${reader.socket}`))
+        continue;
       ops.push({
         type: 'disconnect',
         from: { node: nodeId, socket: reader.fromSocket },
@@ -352,7 +540,7 @@ export function buildDeleteNodesOps(state: DagState, ids: readonly NodeId[]): Op
       to: { node: consumer.node, socket: consumer.socket },
     });
   }
-  return ops;
+  return { ok: true, ops, residuals: handUp.residuals, unkept: handUp.unkept };
 }
 
 /** A fresh node id derived from `base`, guaranteed absent from `taken` (and added
@@ -408,18 +596,6 @@ function copiesThrough(node: Node, socket: string, linked: boolean): boolean {
   return getNodeType(node.type)?.inputs?.[socket]?.type === 'SceneObject';
 }
 
-/** `name` with Blender's numeric suffix replaced by the first free one: `Cube` → `Cube.001`. */
-function numberedName(name: string, taken: Set<string>): string {
-  const base = name.replace(/\.\d{3,}$/, '');
-  for (let i = 1; ; i++) {
-    const candidate = `${base}.${String(i).padStart(3, '0')}`;
-    if (!taken.has(candidate)) {
-      taken.add(candidate);
-      return candidate;
-    }
-  }
-}
-
 /**
  * Ops to DUPLICATE the scene subtrees rooted at `rootIds`, as one atomic batch (→ one undo),
  * with the ids of the new roots in the order asked. Null when none of them can be duplicated.
@@ -439,10 +615,12 @@ function numberedName(name: string, taken: Set<string>): string {
  *
  * WHERE A COPY GOES: right after its original, in the list the original is read on. A root
  * that sits inside another root's subtree is copied as part of it and is not wired a second
- * time. A camera read on a single socket is left unwired (#1630).
+ * time. A camera read on a single socket (`scene.camera`) stands in `scene.children` instead:
+ * the copy must not take over as the active camera (#1630), and it is in the scene (#1518).
  *
  * NAMES: a copy of a named node takes the name with the next free number (`Cube.001`), as
- * Blender and Houdini both do. A copy whose original followed another node's name follows the
+ * Blender and Houdini both do. A copy of an unnamed object takes the word for its kind (#1518),
+ * so a file made before objects were named still gets a named copy. A copy whose original followed another node's name follows the
  * copy of that node when it was copied too, else the same node.
  *
  * Undo-safe order: every copy is added with empty inputs, then wires are made reader-first
@@ -460,16 +638,25 @@ export function buildDuplicateNodesOps(
   // 1. Where each root is read from: the first reader that is not a collection listing it.
   //    A root nothing reads, or one read on a single socket that is not a camera, has no
   //    place to be duplicated into.
+  //    #1824 — a root hung by its own parent input is read by nothing: its copy takes the same
+  //    parent input (step 5 copies every input wire), so it needs no place in a list.
   interface Placed {
     id: NodeId;
     parent: Reader & { index: number };
     isList: boolean;
   }
   const placed: Placed[] = [];
+  const hungRoots: NodeId[] = [];
   for (const id of [...new Set(rootIds)]) {
     if (!state.nodes[id]) continue;
-    const reader = (readers.get(id) ?? []).find((r) => !isMembershipWire(state, r.node, r.socket));
-    if (!reader) continue;
+    // Read through its `out`: a child reading this node's `world` is its child, not its place.
+    const reader = (readers.get(id) ?? []).find(
+      (r) => r.fromSocket === 'out' && !isMembershipWire(state, r.node, r.socket),
+    );
+    if (!reader) {
+      if (worldParentOf(state, id)) hungRoots.push(id);
+      continue;
+    }
     const isList =
       getNodeType(state.nodes[reader.node].type)?.inputs?.[reader.socket]?.cardinality === 'list';
     if (!isList && !isCameraNode(state, id)) continue;
@@ -478,7 +665,7 @@ export function buildDuplicateNodesOps(
     );
     placed.push({ id, parent: { ...reader, index }, isList });
   }
-  if (placed.length === 0) return null;
+  if (placed.length === 0 && hungRoots.length === 0) return null;
 
   // 2. The nodes to copy, in the order the walk reaches them (a reader before what it reads).
   const order: NodeId[] = [];
@@ -497,11 +684,23 @@ export function buildDuplicateNodesOps(
     // The whole sub-network, not just what the body socket reaches first: a node inside may
     // feed only another node inside, and one left out would be shared by two owners.
     if (ownsBody) for (const inside of subnetworkOf(state, id)) visit(inside);
+    // #1846 — its constraint chain, the blend nodes included, as delete takes it. The steps name
+    // the object, but a blend's nodes are reached only by wire; left out, the copy's `constraints`
+    // would still read the original's chain.
+    for (const inChain of chainNodeIds(state, id)) visit(inChain);
+    for (const child of gatheredCopies(node, id)) visit(child);
   };
-  for (const root of placed) visit(root.id);
+  /** #1824 — the children hung from `id` by their parent input, when its children list is copied:
+   *  each copy's parent input is re-pointed at the copy of `id` in step 5. */
+  const gatheredCopies = (node: Node, id: NodeId): readonly NodeId[] => {
+    const socket = gatheringSocketOf(node.type);
+    return socket && copiesThrough(node, socket, linked) ? worldChildrenOf(state, id) : [];
+  };
+  const rootIdsAll = [...placed.map((root) => root.id), ...hungRoots];
+  for (const id of rootIdsAll) visit(id);
   // A root already reached from another root is part of that root's copy.
   const reachedFromAnother = new Set<NodeId>();
-  for (const root of placed) {
+  for (const root of rootIdsAll.map((id) => ({ id }))) {
     const below = new Set<NodeId>();
     const walk = (id: NodeId) => {
       const node = state.nodes[id];
@@ -511,10 +710,11 @@ export function buildDuplicateNodesOps(
         if (!copiesThrough(node, socket, linked)) continue;
         for (const ref of refsOf(binding)) if (ref?.node) walk(ref.node);
       }
+      for (const child of gatheredCopies(node, id)) walk(child);
     };
     walk(root.id);
-    for (const other of placed) {
-      if (other.id !== root.id && below.has(other.id)) reachedFromAnother.add(other.id);
+    for (const other of rootIdsAll) {
+      if (other !== root.id && below.has(other)) reachedFromAnother.add(other);
     }
   }
   // The sidecars of everything copied, and what they own in turn, until nothing is added.
@@ -580,10 +780,42 @@ export function buildDuplicateNodesOps(
     });
     inserted.set(list, before + 1);
   }
+  const sceneId = state.outputs.scene?.node;
+  if (sceneId) {
+    for (const root of roots) {
+      if (root.isList) continue;
+      ops.push({
+        type: 'connect',
+        from: { node: idMap.get(root.id)!, socket: root.parent.fromSocket },
+        to: { node: sceneId, socket: 'children' },
+      });
+    }
+  }
   // #1453 — each copy joins the collections its original is in, as Blender's Shift+D links a
   // duplicate into its source's collections. Membership only: where it hangs is step 6's.
   for (const [sourceId, cloneId] of idMap)
     for (const c of collectionsHolding(state, sourceId)) ops.push(...membershipOps(c, [cloneId]));
+  // #1823 — and the scene's own list, the scene collection's objects, for each copy whose original
+  // it lists, apart from a root step 6 already placed there.
+  if (sceneId) {
+    const listed = new Set(refsOf(state.nodes[sceneId]?.inputs?.children).map((r) => r?.node));
+    const placedInScene = new Set(
+      roots
+        .filter(
+          (root) =>
+            !root.isList || (root.parent.node === sceneId && root.parent.socket === 'children'),
+        )
+        .map((root) => root.id),
+    );
+    for (const [sourceId, cloneId] of idMap) {
+      if (!listed.has(sourceId) || placedInScene.has(sourceId)) continue;
+      ops.push({
+        type: 'connect',
+        from: { node: cloneId, socket: 'out' },
+        to: { node: sceneId, socket: 'children' },
+      });
+    }
+  }
 
   // 7. A Strip is only active through its Track's `strips` list (the resolver reaches strips
   //    only via tracks). A copied strip that no track lists is inert, so each is appended to
@@ -606,13 +838,17 @@ export function buildDuplicateNodesOps(
   //    gives its copy the next free number; a follower's copy follows the copy of what its
   //    original followed, and reads that node's (new) name.
   const names = options.reservedNames ?? new Set<string>();
-  for (const node of Object.values(state.nodes)) if (node.meta?.name) names.add(node.meta.name);
+  for (const name of takenObjectNames(state)) names.add(name);
   const copyName = new Map<NodeId, string>();
   for (const id of order) {
     const node = state.nodes[id];
-    if (node.meta?.name && nameSourceOf(node) === undefined) {
+    if (nameSourceOf(node) !== undefined) continue;
+    if (node.meta?.name) {
       copyName.set(id, numberedName(node.meta.name, names));
+      continue;
     }
+    const base = objectBaseNameOf(state, id);
+    if (base) copyName.set(id, freshObjectName(base, names));
   }
   for (const id of order) {
     const node = state.nodes[id];
@@ -631,5 +867,10 @@ export function buildDuplicateNodesOps(
 
   if (options.reserved) for (const cloneId of idMap.values()) options.reserved.add(cloneId);
 
-  return { ops, newRootIds: roots.map((root) => idMap.get(root.id)!) };
+  // In the order asked, a root hung by its parent input included (#1824).
+  const copiedRoots = new Set([...roots.map((root) => root.id), ...hungRoots]);
+  const newRootIds = [...new Set(rootIds)]
+    .filter((id) => copiedRoots.has(id) && !reachedFromAnother.has(id))
+    .map((id) => idMap.get(id)!);
+  return { ops, newRootIds };
 }

@@ -87,6 +87,7 @@ const GROUPS: MenuGroup[] = [
     // is empty on a fresh scene.
     label: 'Compute',
     items: [
+      { kind: 'Value', label: 'Value' },
       { kind: 'Math', label: 'Math' },
       { kind: 'Fit', label: 'Fit' },
       { kind: 'Clamp', label: 'Clamp' },
@@ -97,6 +98,17 @@ const GROUPS: MenuGroup[] = [
       { kind: 'MakeVec3', label: 'Make Vec3' },
       { kind: 'VecBreak3', label: 'Break Vec3' },
       { kind: 'Vec3Math', label: 'Vec3 Math' },
+      // Transform (Matrix4 rail, #1784) — build, take apart, combine and apply a whole
+      // transform; rotations as quaternions.
+      { kind: 'CombineTransform', label: 'Combine Transform' },
+      { kind: 'SeparateTransform', label: 'Separate Transform' },
+      { kind: 'PolarSplit', label: 'Polar Split' },
+      { kind: 'MultiplyTransforms', label: 'Multiply Transforms' },
+      { kind: 'InvertTransform', label: 'Invert Transform' },
+      { kind: 'TransformPoint', label: 'Transform Point' },
+      { kind: 'TransformDirection', label: 'Transform Direction' },
+      { kind: 'EulerToRotation', label: 'Euler to Rotation' },
+      { kind: 'RotationToEuler', label: 'Rotation to Euler' },
       // NOTE — SampleGeometry (the Ray op) is a registered, seam-wired, agent-authorable
       // substrate node, but it is deliberately NOT surfaced here yet: a raw geometry op
       // belongs on a node-graph / VEX-VOP authoring surface (which Basher doesn't have),
@@ -114,6 +126,9 @@ const GROUPS: MenuGroup[] = [
       { kind: 'Solver', label: 'Solver' },
       { kind: 'PrevFrame', label: 'Prev Frame' },
       { kind: 'SolverInput', label: 'Solver Input' },
+      { kind: 'PrevFrameVector', label: 'Prev Frame (Vector)' },
+      { kind: 'PrevFrameRotation', label: 'Prev Frame (Rotation)' },
+      { kind: 'PrevFrameTransform', label: 'Prev Frame (Transform)' },
     ],
   },
 ];

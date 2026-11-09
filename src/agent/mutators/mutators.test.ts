@@ -2143,6 +2143,68 @@ describe('duplicate mutator', () => {
 });
 
 describe('deleteNode mutator', () => {
+  // scene → G (moved) → box. The agent gets what the outliner gets: Delete Hierarchy, and word of a
+  // keyed child a plain delete moved.
+  const groupOverBox = (keyed: boolean): DagState => {
+    const ops: Op[] = [
+      { type: 'addNode', nodeId: 'G', nodeType: 'Group', params: {} },
+      { type: 'setParam', nodeId: 'G', paramPath: 'position', value: [3, 0, 0] },
+      {
+        type: 'connect',
+        from: { node: 'G', socket: 'out' },
+        to: { node: 'n_scene', socket: 'children' },
+      },
+      // #1823 — the box hangs from G and stays in the scene's own list: parenting is not
+      // membership.
+      {
+        type: 'connect',
+        from: { node: 'G', socket: 'world' },
+        to: { node: 'n_box', socket: 'parent' },
+      },
+    ];
+    if (keyed)
+      ops.push({
+        type: 'addNode',
+        nodeId: 'ch',
+        nodeType: 'KeyframeChannelVec3',
+        params: {
+          target: 'n_box',
+          paramPath: 'position',
+          keyframes: [{ time: 0, value: [0, 2, 0], easing: 'linear' }],
+        },
+      });
+    return ops.reduce((acc, op) => applyOp(acc, op).next, buildDefaultDagState());
+  };
+  const removed = (ops: readonly Op[]) =>
+    ops.flatMap((o) => (o.type === 'removeNode' ? [o.nodeId] : []));
+  const validated = (state: DagState, hierarchy?: boolean) => {
+    const result = validatePlan(
+      deleteNodeMutator,
+      { targetSelectors: ['G'], hierarchy },
+      state,
+      'd',
+    );
+    if (!result.ok) throw new Error(JSON.stringify(result));
+    return result;
+  };
+
+  it('hierarchy takes what is below the target; without it the child is handed up', () => {
+    const state = groupOverBox(false);
+    const all = removed(validated(state, true).ops);
+    // The Object, and its data with it.
+    expect(all).toEqual(expect.arrayContaining(['G', 'n_box']));
+    expect(all.length).toBeGreaterThan(2);
+    const one = validated(state);
+    expect(removed(one.ops)).toEqual(['G']);
+    // Kept in place: the group's offset went into the cube's own position.
+    expect(one.ops.some((o) => o.type === 'setParam' && o.nodeId === 'n_box')).toBe(true);
+  });
+
+  it('a keyed child moved by the delete is in the warnings; a plain one is not', () => {
+    expect(validated(groupOverBox(true)).warnings.join()).toMatch(/Delete moved .*\(animated\)/);
+    expect(validated(groupOverBox(false)).warnings.join()).not.toMatch(/Delete moved/);
+  });
+
   it('emits disconnect for each consumer, then removeNode', () => {
     const state = buildScene();
     const result = validatePlan(deleteNodeMutator, { targetSelectors: ['box'] }, state, 'del');

@@ -22,6 +22,7 @@ import { collectSkeletonObjects } from '../skeletonObjects';
 import { useSelectionStore } from '../stores/selectionStore';
 import { useTimeStore } from '../stores/timeStore';
 import { useThreeRef } from './threeRef';
+import { sceneChildRefs } from '../sceneMembership';
 
 /** Default camera offset used when nothing is on screen yet. Matches the
  *  initial editor pose (THESIS.md §11). */
@@ -241,12 +242,8 @@ export function frameSelected(): boolean {
  *  to the world origin when no top-level node has an anchor. */
 export function frameAll(): void {
   const dag = useDagStore.getState().state;
-  const sceneRef = dag.outputs.scene;
-  const sceneNode = sceneRef ? dag.nodes[sceneRef.node] : null;
-  const children =
-    sceneNode && Array.isArray(sceneNode.inputs.children)
-      ? (sceneNode.inputs.children as { node: string }[])
-      : [];
+  // #1823 — the tops of what the scene draws.
+  const children = sceneChildRefs(dag);
   const sum = new THREE.Vector3();
   let count = 0;
   for (const ref of children) {

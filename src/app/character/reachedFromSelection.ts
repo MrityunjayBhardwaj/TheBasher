@@ -10,6 +10,7 @@
 // (`children`). A prop parented to a bone does not reach it: the prop is the armature's CHILD
 // (`parentBone` is a param, `ObjectNode.ts`), and the walk goes up inputs only.
 
+import { inputsBelow } from '../../core/dag/worldChildren';
 import type { DagState } from '../../core/dag/state';
 
 /**
@@ -26,7 +27,13 @@ export function reachedFromSelection(state: DagState, selectedNodeId: string): S
   for (let depth = 0; depth < 3 && frontier.length > 0; depth++) {
     const next: string[] = [];
     for (const nodeId of frontier) {
-      for (const socket of Object.values(state.nodes[nodeId]?.inputs ?? {})) {
+      const node = state.nodes[nodeId];
+      // #1824 — what a node holds includes the children hung from it by their parent input; its own
+      // parent input leads up, out of the character, and is not followed.
+      const inputs = node
+        ? inputsBelow(state, nodeId, { type: node.type, inputs: node.inputs ?? {} })
+        : {};
+      for (const socket of Object.values(inputs)) {
         const conns = Array.isArray(socket) ? socket : socket ? [socket] : [];
         for (const conn of conns) {
           if (!conn?.node || reached.has(conn.node) || !state.nodes[conn.node]) continue;

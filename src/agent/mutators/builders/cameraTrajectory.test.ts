@@ -6,6 +6,8 @@
 
 import { describe, expect, it } from 'vitest';
 import { cameraTrajectoryMutator } from './cameraTrajectory';
+import { resolveCameraPoseAt } from '../../../app/activeCamera';
+import { applyOp as committedApplyOp } from '../../../test-utils/committedApplyOp';
 import { applyOp } from '../../../core/dag/ops';
 import { buildDefaultDagState } from '../../../core/project/default';
 import { registerAllNodes } from '../../../nodes/registerAll';
@@ -60,6 +62,20 @@ function apply(state: DagState, ops: Op[]): DagState {
 }
 
 describe('#774 — a prompt becomes a wired, aimed camera trajectory', () => {
+  it('#1791 — the camera draws ON the points: its own position is cleared, not added to them', () => {
+    const s0 = scene();
+    const cam = cameraId(s0);
+    // The default camera stands away from the origin, so an own position left in place shows.
+    expect((s0.nodes[cam].params as { position?: unknown }).position).not.toEqual([0, 0, 0]);
+    // Applied as the store commits them, so the new Follow Path joins the camera's chain (#1811).
+    let s1 = s0;
+    for (const op of run(s0, { cameraId: cam, subjectId: 'n_box', points: PATH }))
+      s1 = committedApplyOp(s1, op).next;
+    expect(s1.nodes[cam].inputs.constraints).toBeDefined();
+    const at = resolveCameraPoseAt(s1, cam, 0).position;
+    PATH[0].forEach((v, i) => expect(at[i], `start [${i}]`).toBeCloseTo(v, 6));
+  });
+
   it('mints the path, wires it into the scene, and puts BOTH bands on the camera', () => {
     const s0 = scene();
     const cam = cameraId(s0);
@@ -254,7 +270,7 @@ describe('#774 — a prompt becomes a wired, aimed camera trajectory', () => {
     expect(res.ok === false && res.reason).toMatch(/CameraData|camera/i);
   });
 
-  it('lands the constraints on TOP of a stack the camera already carries', () => {
+  it('puts the path below an aim the camera already carries, so it aims from the path', () => {
     const s0 = scene();
     const cam = cameraId(s0);
     // An unrelated constraint already on the camera, at order 0.
@@ -272,8 +288,8 @@ describe('#774 — a prompt becomes a wired, aimed camera trajectory', () => {
       .find((o) => o.nodeType === 'FollowPath')!;
     expect(
       (follow.params as { order: number }).order,
-      'the new path took a slot already in use',
-    ).toBeGreaterThan(0);
+      'the only road that lands a path below an aim; every other lands on top, as Blender',
+    ).toBeLessThan(0);
     // ...and the Track-To already there was RE-POINTED rather than duplicated.
     expect(
       ops.filter((o) => o.type === 'addNode' && (o as AddNodeOp).nodeType === 'TrackTo'),

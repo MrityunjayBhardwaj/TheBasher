@@ -26,6 +26,7 @@ import type { DagState } from './state';
 import { edges } from './state';
 import { getNodeType, registryEpoch } from './registry';
 import type { NodeId, Op } from './types';
+import { withGatheredChildren } from './worldChildren';
 
 export interface SubnetworkViolation {
   /** The node inside the sub-network. */
@@ -108,7 +109,8 @@ export function reachesSubnetwork(state: DagState, nodes: readonly NodeId[]): bo
   return false;
 }
 
-/** Every node behind `owner`'s body sockets, walked upstream over wired inputs. */
+/** Every node behind `owner`'s body sockets, walked upstream over wired inputs and, as the
+ *  evaluator reads them, the children hung from an object inside (#1847): its value holds them. */
 export function subnetworkOf(state: DagState, owner: NodeId): Set<NodeId> {
   const node = state.nodes[owner];
   const closure = new Set<NodeId>();
@@ -125,7 +127,7 @@ export function subnetworkOf(state: DagState, owner: NodeId): Set<NodeId> {
     closure.add(id);
     const inner = state.nodes[id];
     if (!inner) continue;
-    for (const binding of Object.values(inner.inputs)) {
+    for (const binding of Object.values(withGatheredChildren(state, id, inner))) {
       const refs = Array.isArray(binding) ? binding : binding ? [binding] : [];
       for (const ref of refs) if (!closure.has(ref.node)) stack.push(ref.node);
     }

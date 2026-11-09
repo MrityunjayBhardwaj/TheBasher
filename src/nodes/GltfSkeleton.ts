@@ -38,6 +38,7 @@ export const GltfSkeletonNode: NodeDefinition<GltfSkeletonParams, SkeletonValue>
   pure: true,
   cost: 'cheap',
   paramSchema: GltfSkeletonParams,
+  mainInput: 'asset',
   inputs: {
     // Connect a `GltfAsset.out`. It is typed `Mesh` (the asset's render
     // output socket type), but the resolved value is a `GltfAssetValue` whose

@@ -21,6 +21,9 @@ import { makeSplitCamera } from '../../test-utils/splitCamera';
 import { dataIdFor, splitOps } from '../../test-utils/splitKinds';
 import { deleteNodeMutator } from '../mutators/builders/deleteNode';
 import { buildDeleteNodesOps } from '../../app/sceneNodeActions';
+import { readChain } from '../../core/dag/chainEdit';
+import { buildDefaultDagState } from '../../core/project/default';
+import { applyOp as committedApplyOp } from '../../test-utils/committedApplyOp';
 
 /**
  * The geometry half of the baseline `box`. Named because it is load-bearing rather than
@@ -596,5 +599,23 @@ describe('#423 — propose surfaces a REPORTABLE wrong-half write', () => {
         'recolor',
       );
     expect(right.reportable).toBeUndefined();
+  });
+});
+
+// #1837 — constraints are read from the chain, and the store adds a step to the chain as part of
+// the commit. The fork is what the ghost draws, so it has to take that step too.
+describe('a proposed constraint in the fork', () => {
+  it('is on its object chain, as it will be once accepted', () => {
+    const state = buildDefaultDagState();
+    const op = {
+      type: 'addNode',
+      nodeId: 'tt_1837',
+      nodeType: 'TrackTo',
+      params: { target: 'n_box', aimPoint: [6, 4, -5] },
+    } as unknown as Op;
+    expect(readChain(state, 'n_box')?.steps ?? []).toEqual([]);
+    const { fork } = createFork(state, [op]);
+    expect(readChain(fork, 'n_box')?.steps.map((s) => s.id)).toEqual(['tt_1837']);
+    expect(fork.nodes.n_box.inputs).toEqual(committedApplyOp(state, op).next.nodes.n_box.inputs);
   });
 });

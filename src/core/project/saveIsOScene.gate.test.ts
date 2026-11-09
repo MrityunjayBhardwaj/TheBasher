@@ -63,7 +63,8 @@ const BULK_RUN_THRESHOLD = 32;
  *  Raised 13,500 → 14,000 at #1765: the fixture's sun gains its aim at load (v27 aims a sun at
  *  rotation 0 by a Track-To at an empty, "Sun.aim") — two nodes, about 470
  *  bytes, taking the payload to 13,969. A fixed cost per light, not per vertex. */
-const SIZE_BOUND_BYTES = 14_000;
+// 14,000 → 15,000 at #1812: the sun's chain, an OwnWorld and three wires. A fixed count of nodes.
+const SIZE_BOUND_BYTES = 15_000;
 
 interface BulkFinding {
   path: string;

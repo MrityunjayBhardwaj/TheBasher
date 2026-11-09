@@ -58,7 +58,7 @@ import { edgeTarget, type GraphNodeLike } from '../animate/graphNodes';
 import { poseLayerChain } from '../animate/poseChain';
 import { retargetOperandsFromNodes } from '../animate/retargetFromNodes';
 import { standingObjectsOf } from '../../core/import/skeletonObject';
-import { resolveWorldTransform } from '../resolveWorldTransform';
+import { resolveDrawnWorldTransform } from '../drawnWorldTransform';
 
 /** Two ratios this close are one character size. Bone lengths come from the same
  *  bind pose every time, so this only absorbs float noise between two rigs that
@@ -99,7 +99,7 @@ function worldUnitsOf(
   const units: number[] = [];
   for (const objectId of standingObjectsOf(state, skeletonId)) {
     if (playing !== undefined && poseLayerChain(nodes, objectId).source?.node !== playing) continue;
-    const world = resolveWorldTransform(state, objectId, FIT_CTX, cache);
+    const world = resolveDrawnWorldTransform(state, objectId, FIT_CTX, cache);
     if (!world) continue;
     const [x, y, z] = world.scale.map(Math.abs);
     const unit = Math.cbrt(x * y * z);

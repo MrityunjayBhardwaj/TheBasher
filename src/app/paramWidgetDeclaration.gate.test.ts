@@ -32,7 +32,8 @@ import {
   type ParamOption,
   type ParamWidget,
 } from '../nodes/paramWidget';
-import { applyOp, evaluate } from '../core/dag';
+import { evaluate } from '../core/dag';
+import { applyOp } from '../test-utils/committedApplyOp';
 import type { DagState } from '../core/dag/state';
 import type { Op } from '../core/dag/types';
 import { buildDefaultDagState } from '../core/project/default';
@@ -572,6 +573,8 @@ describe('a param declares its control on its schema (#872)', () => {
       optionsWidget: [
         'BodyInput.input',
         'BodyInputPose.input',
+        'BodyInputRotation.input',
+        'BodyInputTransform.input',
         'BodyInputVec.input',
         'CameraSelect.active',
         'FollowPath.target',
@@ -588,6 +591,7 @@ describe('a param declares its control on its schema (#872)', () => {
         'KeyframeChannelVec3.target',
         'KeyframeChannelVec3.paramPath',
         'LightProfileSelect.selectedProfile',
+        'OwnWorld.object',
         'ParamDriver.target',
         'ParamDriver.paramPath',
         'Strip.action',
@@ -598,6 +602,8 @@ describe('a param declares its control on its schema (#872)', () => {
       withProvider: [
         'BodyInput.input',
         'BodyInputPose.input',
+        'BodyInputRotation.input',
+        'BodyInputTransform.input',
         'BodyInputVec.input',
         'CameraSelect.active',
         'FollowPath.target',
@@ -614,6 +620,7 @@ describe('a param declares its control on its schema (#872)', () => {
         'KeyframeChannelVec3.target',
         'KeyframeChannelVec3.paramPath',
         'LightProfileSelect.selectedProfile',
+        'OwnWorld.object',
         'ParamDriver.target',
         'ParamDriver.paramPath',
         'Strip.action',

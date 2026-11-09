@@ -82,6 +82,7 @@ export const LocomotionStateNode: NodeDefinition<LocomotionStateParams, Locomoti
   pure: true,
   cost: 'cheap',
   paramSchema: LocomotionStateParams,
+  mainInput: 'pose',
   inputs: {
     path: { type: 'WalkPath', cardinality: 'single' },
     /** #1225 — the motion, as the pose wire. It used to take a clip and turn it into a pose here,

@@ -39,7 +39,8 @@ const add = (s: DagState, kind: Parameters<typeof buildAddPrimitiveOps>[1]) => {
   return { state: apply(s, r.ops), id: r.newNodeId };
 };
 
-/** A cube P in collections A and B, with a cube C parented under it and in neither. */
+/** A cube P in collections A and B, with a cube C parented under it and in neither (C is in the
+ *  scene's own list, the Scene Collection). */
 function scene() {
   let s = buildDefaultDagState();
   const a = addCollection(s);
@@ -48,17 +49,13 @@ function scene() {
   const p = add(s, 'Cube');
   const c = add(p.state, 'Cube');
   s = c.state;
-  const sceneId = s.outputs.scene!.node;
   s = apply(s, [
-    {
-      type: 'disconnect',
-      from: { node: c.id, socket: 'out' },
-      to: { node: sceneId, socket: 'children' },
-    },
+    // #1824 — C names P as its parent. #1823 — and stays where Add linked it, the scene's own list
+    // (the Scene Collection), as Blender's Ctrl+P leaves an object's collections alone.
     {
       type: 'connect',
-      from: { node: c.id, socket: 'out' },
-      to: { node: p.id, socket: 'children' },
+      from: { node: p.id, socket: 'world' },
+      to: { node: c.id, socket: 'parent' },
     },
     ...membershipOps(a.id, [p.id]),
     ...membershipOps(b.id, [p.id]),

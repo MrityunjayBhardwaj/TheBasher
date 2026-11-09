@@ -7,7 +7,7 @@
 
 import { beforeEach, describe, expect, it } from 'vitest';
 import * as THREE from 'three';
-import { applyOp } from '../core/dag';
+import { applyOp } from '../test-utils/committedApplyOp';
 import type { DagState } from '../core/dag/state';
 import type { Op } from '../core/dag/types';
 import { buildDefaultDagState } from '../core/project/default';

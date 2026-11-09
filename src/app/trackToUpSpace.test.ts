@@ -6,7 +6,8 @@
 
 import * as THREE from 'three';
 import { beforeAll, describe, expect, it } from 'vitest';
-import { applyOp, type DagState } from '../core/dag';
+import { type DagState } from '../core/dag';
+import { applyOp } from '../test-utils/committedApplyOp';
 import { buildDefaultDagState } from '../core/project/default';
 import { registerAllNodes } from '../nodes/registerAll';
 import { makeSplitCamera } from '../test-utils/splitCamera';
@@ -39,7 +40,7 @@ function rig(space: 'world' | 'parent'): DagState {
     },
   ])
     s = applyOp(s, op as never).next;
-  s = makeSplitCube(s, { objectId: 'tgt', position: [5, 1, -3] }).state;
+  s = makeSplitCube(s, { objectId: 'tgt', position: [0, 0, 0] }).state;
   s = makeSplitCamera(s, {
     objectId: 'cam',
     position: [0, 0, 4],

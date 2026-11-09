@@ -180,6 +180,7 @@ export const RetargetClipNode: NodeDefinition<
   // a node that runs once per graph change. Purity + no `time` input is the lever.
   cost: 'cheap',
   paramSchema: RetargetClipParams,
+  mainInput: 'source',
   inputs: {
     /**
      * #1225 — the motion to retarget, as the pose wire: a clip's pose, a character's base layer, any

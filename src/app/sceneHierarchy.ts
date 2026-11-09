@@ -45,6 +45,7 @@
 //      src/app/operatorChain.ts (`chainSocketOf` — the DIFFERENT relation); issues
 //      #621, #610, #396.
 
+import { gatheringSocketOf, worldChildrenOf } from '../core/dag/worldChildren';
 import { chainSocketOfType } from './operatorChain';
 
 /** As much of a node as the predicates here read — structural so `nodeChannels`, which
@@ -84,13 +85,15 @@ const CHILDREN_SOCKET = 'children';
  *  parents its children for the two SCAN sites, whose question is "is anything holding
  *  this node as a child?" rather than "what do I descend next". Keeping it out would
  *  re-open the flat/nested confusion the fast path exists to resolve. */
-const AGGREGATE_PARENT_TYPES: ReadonlySet<string> = new Set(['Group', 'Scene', 'Object']);
+// #1823 — `Scene` left this set: its `children` list is the scene collection's own objects,
+// membership (`sceneMembership.ts`), and an object listed there has no parent for being listed.
+const AGGREGATE_PARENT_TYPES: ReadonlySet<string> = new Set(['Group', 'Object']);
 
 /** Types that parent exactly ONE child, through their declared chain socket.
  *
  *  Declared here rather than derived from `chain.input`, because `chain.input` answers a
  *  different question — see the header. This set is the SCENE-lane wrappers only. */
-const WRAPPER_PARENT_TYPES: ReadonlySet<string> = new Set(['Transform', 'MaterialOverride']);
+export const WRAPPER_PARENT_TYPES: ReadonlySet<string> = new Set(['Transform', 'MaterialOverride']);
 
 /** Every node type that can be a scene-graph parent. Exported for the mirror test. */
 export const HIERARCHY_PARENT_TYPES: ReadonlySet<string> = new Set([
@@ -157,4 +160,97 @@ export function hasHierarchyParent(nodes: Iterable<HierarchyNodeLike>, childId: 
     if (hierarchyChildIds(n).includes(childId)) return true;
   }
   return false;
+}
+
+// ── THE TREE AS A WHOLE-GRAPH QUESTION (#1823 / #1824, step 1) ─────────────────────────────
+//
+// `hierarchyChildIds(node)` answers from one node, because today a parent holds its children
+// in its own `children` input. Once parenting moves onto the child's `parent` input (#1810,
+// converted by #1824), a parent's children are the nodes that point at it, which only the whole
+// graph can answer. Readers ask the functions below instead of reading one node's inputs, so
+// that move changes `hierarchyEdgesOf` and not every reader.
+
+/** As much of the graph as the tree questions read. */
+export interface HierarchyGraphLike {
+  readonly nodes: Readonly<Record<string, HierarchyNodeLike>>;
+}
+
+/** One parent → child relation of the scene tree. */
+export interface HierarchyEdge {
+  readonly parent: string;
+  readonly child: string;
+}
+
+interface HierarchyIndex {
+  readonly edges: readonly HierarchyEdge[];
+  readonly children: ReadonlyMap<string, readonly string[]>;
+  readonly parents: ReadonlyMap<string, readonly string[]>;
+}
+
+const EMPTY: readonly string[] = Object.freeze([]);
+
+/**
+ * What `node` holds: its wired children, then (for a node that gathers, #1824) the nodes whose
+ * parent input reads its world, as the evaluator fills its gathering input. Until saved files are
+ * converted both can be present; a child named by both counts once.
+ */
+function heldChildIds(graph: HierarchyGraphLike, id: string, node: HierarchyNodeLike): string[] {
+  const wired = hierarchyChildIds(node);
+  if (!gatheringSocketOf(node.type)) return wired;
+  const held = new Set(wired);
+  return [...wired, ...worldChildrenOf(graph, id).filter((c) => !held.has(c))];
+}
+const indexMemo = new WeakMap<object, HierarchyIndex>();
+
+function indexOf(graph: HierarchyGraphLike): HierarchyIndex {
+  const hit = indexMemo.get(graph.nodes);
+  if (hit) return hit;
+  const edges: HierarchyEdge[] = [];
+  const children = new Map<string, string[]>();
+  const parents = new Map<string, string[]>();
+  for (const [parent, node] of Object.entries(graph.nodes)) {
+    for (const child of heldChildIds(graph, parent, node)) {
+      edges.push({ parent, child });
+      (children.get(parent) ?? children.set(parent, []).get(parent)!).push(child);
+      (parents.get(child) ?? parents.set(child, []).get(child)!).push(parent);
+    }
+  }
+  const index = { edges, children, parents };
+  indexMemo.set(graph.nodes, index);
+  return index;
+}
+
+/**
+ * Every parent → child relation of the scene tree, parents in node-table order and each
+ * parent's children in the order the outliner shows them. Built once per node table.
+ */
+export function hierarchyEdgesOf(graph: HierarchyGraphLike): readonly HierarchyEdge[] {
+  return indexOf(graph).edges;
+}
+
+/** The scene-graph children of `parentId`, in order. Empty for an unknown id or a leaf. */
+export function childIdsOf(graph: HierarchyGraphLike, parentId: string): readonly string[] {
+  return indexOf(graph).children.get(parentId) ?? EMPTY;
+}
+
+/**
+ * #1823 — the children `parentId` holds by a WIRE (its list, or a wrapper's one child), not the
+ * ones hung from it by their own parent input. A wired child has no parent input to be a scene
+ * member through, so its holder carries it into the scene (`sceneMembership.ts`).
+ */
+export function wiredChildIdsOf(graph: HierarchyGraphLike, parentId: string): string[] {
+  return hierarchyChildIds(graph.nodes[parentId]);
+}
+
+/**
+ * Every node holding `childId` as a scene-graph child, in node-table order. Today a node wired
+ * into two holders has two; a parent input (#1824) holds one.
+ */
+export function parentIdsOf(graph: HierarchyGraphLike, childId: string): readonly string[] {
+  return indexOf(graph).parents.get(childId) ?? EMPTY;
+}
+
+/** The first holder of `childId`, or null at the top of the tree. */
+export function parentIdOf(graph: HierarchyGraphLike, childId: string): string | null {
+  return parentIdsOf(graph, childId)[0] ?? null;
 }

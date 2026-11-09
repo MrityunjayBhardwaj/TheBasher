@@ -4,7 +4,11 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as THREE from 'three';
-import { __resetRegistryForTests, applyOp, type DagState } from '../dag';
+import { __resetRegistryForTests, type DagState } from '../dag';
+import { applyOp } from '../../test-utils/committedApplyOp';
+import { chainFollowUpOps } from '../dag/chainEdit';
+import { applyOps } from '../dag/ops';
+import { emptyDagState } from '../dag';
 import { registerAllNodes } from '../../nodes/registerAll';
 import { buildDefaultDagState } from './default';
 import { CAPTURED_EXAMPLE_IDS, EXAMPLE_PROJECT_IDS, buildExampleProject } from './examples';
@@ -39,7 +43,9 @@ const migrate = (s: DagState): DagState => {
     state: DagState;
   };
   expect(out.formatVersion).toBe(27);
-  return out.state;
+  // The readers take the chain. A fixture's own Track-To is on one already, so what the step added
+  // joins it as a commit would.
+  return applyOps(out.state, chainFollowUpOps(emptyDagState(), out.state)).next;
 };
 const keys = (pairs: [number, unknown][]) =>
   pairs.map(([time, value]) => ({ time, value, easing: 'linear' }));
@@ -122,13 +128,7 @@ function newTurn(
   const local = worldPos(s, light.obj, t);
   if (parent) local.applyMatrix4(parent.clone().invert());
   const rotation = ownRotation(s, light.obj, t);
-  const { quaternion } = cameraLocalOrientation(
-    s,
-    light.obj,
-    local.toArray() as V3,
-    { rotation },
-    ctx,
-  );
+  const { quaternion } = cameraLocalOrientation(s, light.obj, { rotation }, ctx);
   const quat = new THREE.Quaternion(...quaternion);
   if (parent) quat.premultiply(new THREE.Quaternion().setFromRotationMatrix(parent));
   return { dir: new THREE.Vector3(0, 0, -1).applyQuaternion(quat), quat };
@@ -233,6 +233,8 @@ describe('#1765 v26 → v27: every light shines where it shone', () => {
   );
 
   // A captured example is stored already converted (re-captured through this step).
+  // #1800 — this builds every captured example project, which alone takes about vitest's
+  // default 5 s; the timeout covers that setup, not the check.
   it('the captured example is stored converted: no light data holds an aim point', async () => {
     for (const id of CAPTURED_EXAMPLE_IDS) {
       const s = (await buildExampleProject(id)).state;
@@ -243,7 +245,7 @@ describe('#1765 v26 → v27: every light shines where it shone', () => {
         expect(n.params, `${id} ${n.id}`).not.toHaveProperty('lookAt');
       }
     }
-  });
+  }, 30_000);
 
   it('a spot aimed at a point, and an area light at another', () => {
     let a = withLight({ objectId: 'spot', lightKind: 'Spot', position: [4, 6, 2] });

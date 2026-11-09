@@ -154,8 +154,13 @@ async function stage(page: Page, objects: number) {
           },
           {
             type: 'connect',
+            from: { node: 'attr_g', socket: 'world' },
+            to: { node: 'attr_sel', socket: 'parent' },
+          },
+          {
+            type: 'connect',
             from: { node: 'attr_sel', socket: 'out' },
-            to: { node: 'attr_g', socket: 'children' },
+            to: { node: sceneId, socket: 'children' },
           },
           {
             type: 'connect',

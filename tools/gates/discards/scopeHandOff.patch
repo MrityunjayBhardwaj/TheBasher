@@ -6,12 +6,12 @@ index e5c5534..36fa76e 100644
      const evalStart = evalPerfHook ? performance.now() : 0;
      const out =
        bypassSpine === null
--        ? def.evaluate(node.params, resolved, ctx, scopeFor(def, node.params, resolved))
+-        ? def.evaluate(params, resolved, ctx, scopeFor(def, params, resolved))
 +        ? // DISCARD HARNESS: the selection is resolved, then thrown away at the point of
 +          // use. Every call stays, every import stays, every source census stays green.
-+          (scopeFor(def, node.params, resolved),
++          (scopeFor(def, params, resolved),
 +          def.evaluate(
-+            node.params,
++            params,
 +            resolved,
 +            ctx,
 +            def.chain !== undefined && def.chain.scope.kind !== 'unscoped' ? null : undefined,

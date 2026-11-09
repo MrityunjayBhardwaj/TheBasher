@@ -15,6 +15,7 @@
 //      wouldCreateCycle; src/app/paramDrivers.ts (driverParamDeps); issue #293.
 
 import type { DagState } from '../core/dag/state';
+import { outputAvailable } from '../core/dag/socketAvailability';
 import { wouldCreateCycle } from '../core/dag/state';
 import type { NodeRef, Op } from '../core/dag/types';
 import { getNodeType } from '../core/dag/registry';
@@ -279,6 +280,9 @@ export function driverSourceOptions(
     if (def) {
       for (const [socket, desc] of Object.entries(def.outputs)) {
         if (desc.type !== wantType) continue;
+        // #1801 — an output the node's mode has switched off is not a source (a Mix in Vector
+        // mode offers its vector result, not its number one).
+        if (!outputAvailable(def, node.params, socket)) continue;
         out.push({
           kind: 'output',
           id: `out:${node.id}:${socket}`,

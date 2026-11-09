@@ -98,6 +98,9 @@ export function resolveTransformParam(
   paramPath: string,
   ctx: EvalCtx,
   cache?: EvaluatorCache,
+  /** #1795 — `{ constraints: false }` reads the OWN transform (keys, drivers, held edits), for a
+   *  row a constraint only partly decides. */
+  opts?: { constraints?: boolean },
 ): Vec3 | null {
   // 1. Nothing selected → null (caller shows static `value`).
   if (selectedId == null) return null;
@@ -112,7 +115,7 @@ export function resolveTransformParam(
   //    selectedId, ...)` here — that returns the RAW source value (the
   //    named trap). The resolver overlays the free-floating direct channel
   //    via the SceneFromDAG index-correspondence (V57).
-  const result = resolveEvaluatedTransform(state, selectedId, ctx, cache);
+  const result = resolveEvaluatedTransform(state, selectedId, ctx, cache, opts);
   if (result == null) return null;
 
   // 4. Per-param projection. Each field is `Vec3 | null` (for position the

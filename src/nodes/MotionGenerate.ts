@@ -209,6 +209,7 @@ export const MotionGenerateNode: NodeDefinition<MotionGenerateParams, AnimationC
    * `SceneObject` rather than `ObjectData`: placement lives on the Object under
    * the object/data split, and a path's placement is part of the request.
    */
+  mainInput: 'path',
   inputs: { path: { type: 'SceneObject', cardinality: 'single' } },
   outputs: { out: { type: 'AnimationClip', cardinality: 'single' } },
   inspectorSections: ['animate'],

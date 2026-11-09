@@ -2,12 +2,22 @@ import { describe, it, expect } from 'vitest';
 import {
   buildDeleteNodesOps,
   buildDuplicateNodesOps,
+  planDeleteNodes,
+  withHierarchy,
   type DuplicateOptions,
 } from './sceneNodeActions';
+import { resolveWorldTransform } from './resolveWorldTransform';
+import { validatePlan } from '../agent/mutators/validate';
+import { deleteNodeMutator } from '../agent/mutators/builders/deleteNode';
+import { isInScene } from './sceneMembership';
+import { parentIdsOf } from './sceneHierarchy';
+import { moveNotices } from './keepPlaceReparent';
 import { registerAllNodes } from '../nodes/registerAll';
 import { applyOp, emptyDagState } from '../core/dag';
 import { danglingIdRefs } from '../core/dag/idRefSweep';
 import { evaluate } from '../core/dag/evaluator';
+import { attachOp, worldParentOf } from '../core/dag/worldChildren';
+import { childIdsOf } from './sceneHierarchy';
 import { buildAddModifierOps, findConsumer, resolveStackBase } from './operatorStack';
 import { useDagStore } from '../core/dag/store';
 import { subnetworkOf, subnetworkViolations } from '../core/dag/subnetworks';
@@ -397,6 +407,8 @@ describe('buildDuplicateNodeOps', () => {
         to: { node: 'scene', socket: 'children' },
         index: 1,
       },
+      // An unnamed object's copy takes the word for its kind (#1518).
+      { type: 'setMeta', nodeId: 'box_copy', name: 'Object' },
     ]);
   });
 
@@ -425,6 +437,8 @@ describe('buildDuplicateNodeOps', () => {
         to: { node: 'scene', socket: 'children' },
         index: 2,
       },
+      { type: 'setMeta', nodeId: 'grp_copy', name: 'Empty' },
+      { type: 'setMeta', nodeId: 'inner_copy', name: 'Object' },
     ]);
   });
 
@@ -478,6 +492,7 @@ describe('buildDuplicateNodeOps', () => {
         to: { node: 'scene', socket: 'children' },
         index: 1,
       },
+      { type: 'setMeta', nodeId: 'obj_copy', name: 'Cube' },
     ]);
   });
 
@@ -880,7 +895,7 @@ describe('buildDeleteNodesOps — an Object that carries a modifier stack (#1620
     expect(useDagStore.getState().state.nodes).toEqual(s.nodes);
   });
 
-  it('a Group holding that Object takes the whole stack with it', () => {
+  it('a Group deleted with that Object takes the whole stack with it', () => {
     const { s, mods } = withStack(2);
     const grouped = (
       [
@@ -897,13 +912,18 @@ describe('buildDeleteNodesOps — an Object that carries a modifier stack (#1620
         },
         {
           type: 'connect',
-          from: { node: 'n_box', socket: 'out' },
-          to: { node: 'G', socket: 'children' },
+          from: { node: 'G', socket: 'world' },
+          to: { node: 'n_box', socket: 'parent' },
         },
       ] as Op[]
     ).reduce((acc, op) => applyOp(acc, op).next, s);
-    const after = commit(grouped, ['G']);
+    const after = commit(grouped, ['G', 'n_box']);
     for (const id of ['G', 'n_box', 'n_box_data', ...mods]) expect(after.nodes[id]).toBeUndefined();
+    // #1517 — the Group alone hands the Object up, and the stack stays under it.
+    const kept = commit(grouped, ['G']);
+    expect(kept.nodes.G).toBeUndefined();
+    expect(kept.nodes.n_scene.inputs.children).toContainEqual({ node: 'n_box', socket: 'out' });
+    for (const id of ['n_box', 'n_box_data', ...mods]) expect(kept.nodes[id]).toBeDefined();
   });
 
   // Two Objects reading ONE stack (a linked duplicate, built by hand).
@@ -1011,8 +1031,8 @@ describe('buildDeleteNodesOps — the order the ids arrive in (#1621)', () => {
         },
         {
           type: 'connect',
-          from: { node: 'n_box', socket: 'out' },
-          to: { node: 'G', socket: 'children' },
+          from: { node: 'G', socket: 'world' },
+          to: { node: 'n_box', socket: 'parent' },
         },
       ] as Op[]
     ).reduce((acc, op) => applyOp(acc, op).next, buildDefaultDagState());
@@ -1041,8 +1061,10 @@ describe('buildDeleteNodesOps — the order the ids arrive in (#1621)', () => {
       buildDeleteNodesOps(s, ids)
         .filter((op) => op.type === 'removeNode')
         .map((op) => (op as { nodeId: string }).nodeId);
-    expect(removed(['G', 'n_box'])).toEqual(['G', 'n_box', 'n_box_data']);
-    expect(removed(['n_box', 'G'])).toEqual(['G', 'n_box', 'n_box_data']);
+    // #1824 — the cube reads the group's world through its parent input, so the cube goes first:
+    // the given order is kept when it is that one, and put right when it is not.
+    expect(removed(['n_box', 'G'])).toEqual(['n_box', 'G', 'n_box_data']);
+    expect(removed(['G', 'n_box'])).toEqual(['n_box', 'G', 'n_box_data']);
   });
 });
 
@@ -1352,8 +1374,14 @@ describe('buildDeleteNodesOps — the cost does not grow with what is deleted (#
         },
         {
           type: 'connect',
+          from: { node: 'G', socket: 'world' },
+          to: { node: `o${i}`, socket: 'parent' },
+        },
+        // #1823 — each a member of the scene's own list, as the doors that make one link it.
+        {
+          type: 'connect',
           from: { node: `o${i}`, socket: 'out' },
-          to: { node: 'G', socket: 'children' },
+          to: { node: 'n_scene', socket: 'children' },
         },
       );
     }
@@ -1371,10 +1399,77 @@ describe('buildDeleteNodesOps — the cost does not grow with what is deleted (#
         },
       }),
     } as DagState;
-    const ops = buildDeleteNodesOps(counted, ['G']);
+    const ops = buildDeleteNodesOps(counted, [
+      'G',
+      ...Array.from({ length: count }, (_, i) => `o${i}`),
+    ]);
     expect(ops.filter((op) => op.type === 'removeNode')).toHaveLength(1 + 2 * count);
     return walks;
   };
+  // #1517 — and handing them up instead costs no more: one solve per holder, not per child.
+  const walksToHandUp = (count: number) => {
+    const s = groupOf(count);
+    let walks = 0;
+    const counted = {
+      ...s,
+      nodes: new Proxy(s.nodes, {
+        ownKeys(target) {
+          walks++;
+          return Reflect.ownKeys(target);
+        },
+      }),
+    } as DagState;
+    const ops = buildDeleteNodesOps(counted, ['G']);
+    expect(ops.filter((op) => op.type === 'removeNode')).toEqual([
+      { type: 'removeNode', nodeId: 'G' },
+    ]);
+    // #1823 — each child is listed by the scene already, so handing it up cuts its parent input and
+    // adds nothing.
+    expect(ops.filter((op) => op.type === 'connect')).toHaveLength(0);
+    expect(ops.filter((op) => op.type === 'disconnect' && op.to.socket === 'parent')).toHaveLength(
+      count,
+    );
+    return walks;
+  };
+
+  it('handing up 200 children enumerates the graph as often as handing up 20', () => {
+    expect(walksToHandUp(200)).toBe(walksToHandUp(20));
+  });
+
+  it('…and so does handing them to a parent other than the scene, solved once per parent', () => {
+    const under = (count: number) => {
+      const s = (
+        [
+          { type: 'addNode', nodeId: 'H', nodeType: 'Group', params: { position: [1, 0, 0] } },
+          {
+            type: 'connect',
+            from: { node: 'H', socket: 'out' },
+            to: { node: 'n_scene', socket: 'children' },
+          },
+          {
+            type: 'connect',
+            from: { node: 'H', socket: 'world' },
+            to: { node: 'G', socket: 'parent' },
+          },
+        ] as Op[]
+      ).reduce((acc, op) => applyOp(acc, op).next, groupOf(count));
+      let walks = 0;
+      const counted = {
+        ...s,
+        nodes: new Proxy(s.nodes, {
+          ownKeys(target) {
+            walks++;
+            return Reflect.ownKeys(target);
+          },
+        }),
+      } as DagState;
+      expect(buildDeleteNodesOps(counted, ['G']).filter((o) => o.type === 'connect')).toHaveLength(
+        count,
+      );
+      return walks;
+    };
+    expect(under(200)).toBe(under(20));
+  });
 
   it('a group of 200 enumerates the graph as often as a group of 20', () => {
     const small = walksToDelete(20);
@@ -1400,8 +1495,8 @@ describe('buildDeleteNodesOps — a collection never keeps a deleted group’s c
         },
         {
           type: 'connect',
-          from: { node: 'n_box', socket: 'out' },
-          to: { node: 'G', socket: 'children' },
+          from: { node: 'G', socket: 'world' },
+          to: { node: 'n_box', socket: 'parent' },
         },
       ] as Op[]
     ).reduce((acc, op) => applyOp(acc, op).next, buildDefaultDagState());
@@ -1418,13 +1513,24 @@ describe('buildDeleteNodesOps — a collection never keeps a deleted group’s c
 
   it('the fixture: the cube is under the group AND in the collection', () => {
     const { s, coll } = grouped();
-    expect(s.nodes.G.inputs.children).toEqual([{ node: 'n_box', socket: 'out' }]);
+    expect(childIdsOf(s, 'G')).toEqual(['n_box']);
     expect(s.nodes[coll].inputs.members).toEqual([{ node: 'n_box', socket: 'out' }]);
   });
 
-  it('deleting the group takes the child and its data, and the collection stops listing it', () => {
+  it('deleting the group hands the child up, and the collection keeps listing it', () => {
     const { s, coll } = grouped();
     const after = commit(s, ['G']);
+    expect(after.nodes.G).toBeUndefined();
+    expect(after.nodes.n_box).toBeDefined();
+    expect(after.nodes.n_box_data).toBeDefined();
+    expect(after.nodes[coll].inputs.members).toEqual([{ node: 'n_box', socket: 'out' }]);
+    useDagStore.getState().undo();
+    expect(useDagStore.getState().state.nodes).toEqual(s.nodes);
+  });
+
+  it('deleting the group AND the child takes its data, and the collection stops listing it', () => {
+    const { s, coll } = grouped();
+    const after = commit(s, ['G', 'n_box']);
     expect(after.nodes.n_box).toBeUndefined();
     expect(after.nodes.n_box_data).toBeUndefined();
     expect(after.nodes[coll]).toBeDefined();
@@ -1445,14 +1551,14 @@ describe('buildDeleteNodesOps — a collection never keeps a deleted group’s c
         },
         {
           type: 'connect',
-          from: { node: 'n_box', socket: 'out' },
-          to: { node: 'G2', socket: 'children' },
+          from: { node: 'G2', socket: 'world' },
+          to: { node: 'n_box', socket: 'parent' },
         },
       ] as Op[]
     ).reduce((acc, op) => applyOp(acc, op).next, s);
     const after = commit(two, ['G']);
     expect(after.nodes.n_box).toBeDefined();
-    expect(after.nodes.G2.inputs.children).toEqual([{ node: 'n_box', socket: 'out' }]);
+    expect(childIdsOf(after, 'G2')).toEqual(['n_box']);
   });
 });
 
@@ -1751,11 +1857,11 @@ describe('buildDuplicateNodesOps — one duplicate rule, deep and linked (#1561)
           from: { node: 'n_box', socket: 'out' },
           to: { node: 'n_scene', socket: 'children' },
         } as Op,
-        wire('n_box', 'G', 'children'),
+        wire('G', 'n_box', 'parent', 'world'),
       ]);
       const { after } = commit(s, ['G'], true);
       expect(added(s, after)).toEqual(['G_copy', 'n_box_copy']);
-      expect(after.nodes.G_copy.inputs.children).toEqual([{ node: 'n_box_copy', socket: 'out' }]);
+      expect(childIdsOf(after, 'G_copy')).toEqual(['n_box_copy']);
       expect(after.nodes.n_box_copy.inputs.data).toEqual({ node: 'n_box_data', socket: 'out' });
     });
   });
@@ -1816,12 +1922,12 @@ describe('buildDuplicateNodesOps — one duplicate rule, deep and linked (#1561)
           from: { node: 'n_box', socket: 'out' },
           to: { node: 'n_scene', socket: 'children' },
         } as Op,
-        wire('n_box', 'G', 'children'),
+        wire('G', 'n_box', 'parent', 'world'),
       ]);
       const { after, roots } = commit(s, ['n_box', 'G']);
       expect(roots).toEqual(['G_copy']);
       expect(added(s, after)).toEqual(['G_copy', 'n_box_copy', 'n_box_data_copy']);
-      expect(after.nodes.G.inputs.children).toEqual([{ node: 'n_box', socket: 'out' }]);
+      expect(childIdsOf(after, 'G')).toEqual(['n_box']);
     });
 
     it('the same id asked twice is one copy, wired in once', () => {
@@ -1851,9 +1957,13 @@ describe('buildDuplicateNodesOps — one duplicate rule, deep and linked (#1561)
       expect(second.after.nodes[second.roots[0]].meta).toEqual({ name: 'Hero.002' });
     });
 
-    it('CONTROL: an unnamed original gives its copy no name', () => {
-      const { after } = commit(buildDefaultDagState(), ['n_box']);
-      expect(after.nodes.n_box_copy.meta).toBeUndefined();
+    it('#1518 — an unnamed object gives its copy the word for its kind, and its data no name', () => {
+      const base = buildDefaultDagState();
+      const { after } = commit(base, ['n_box']);
+      expect(after.nodes.n_box_copy.meta?.name).toMatch(/^Cube(\.\d{3})?$/);
+      const data = (after.nodes.n_box_copy.inputs.data as { node: string }).node;
+      expect(after.nodes[data].meta?.name).toBeUndefined();
+      expect(after.nodes.n_box.meta).toEqual(base.nodes.n_box.meta);
     });
 
     it('a follower copied alone keeps following the node its original followed', () => {
@@ -1885,17 +1995,88 @@ describe('buildDuplicateNodesOps — one duplicate rule, deep and linked (#1561)
       ...membershipOps(coll, ['n_box']),
       node('late', 'Group'),
       wire('late', 'n_scene', 'children'),
-      wire('n_box', 'late', 'children'),
+      wire('late', 'n_box', 'parent', 'world'),
     ]);
     const { after } = commit(s, ['n_box']);
-    expect(after.nodes.late.inputs.children).toEqual([
-      { node: 'n_box', socket: 'out' },
-      { node: 'n_box_copy', socket: 'out' },
-    ]);
+    expect(childIdsOf(after, 'late')).toEqual(['n_box', 'n_box_copy']);
     expect((after.nodes[coll].inputs.members as { node: string }[]).map((r) => r.node)).toEqual([
       'n_box',
       'n_box_copy',
     ]);
+  });
+});
+
+describe('withHierarchy — Delete Hierarchy takes what is below the target', () => {
+  const held = (id: string, type: string, children: string[] = []) => ({
+    id,
+    type,
+    params: {},
+    inputs: children.length ? { children: children.map((node) => ({ node, socket: 'out' })) } : {},
+  });
+  const tree = (extra: Record<string, unknown> = {}): DagState =>
+    ({
+      nodes: {
+        scene: held('scene', 'Scene', ['root', 'other']),
+        root: held('root', 'Group', ['kid']),
+        kid: held('kid', 'Group', ['grand']),
+        grand: held('grand', 'Group'),
+        other: held('other', 'Group'),
+        ...extra,
+      },
+      outputs: { scene: { node: 'scene' } },
+    }) as unknown as DagState;
+
+  // Measured in Blender 5.1.1, `outliner.delete(hierarchy=True)` on Root: Root, Kid and Grand go
+  // (Grand was in another collection), Other stays.
+  it('takes every level below the target and nothing beside it', () => {
+    expect(withHierarchy(tree(), ['root']).sort()).toEqual(['grand', 'kid', 'root']);
+  });
+
+  it('a target with nothing below it adds nothing, so the menu does not offer it', () => {
+    expect(withHierarchy(tree(), ['other'])).toEqual(['other']);
+  });
+
+  it('a collection listing a child does not keep it: membership is not a parent', () => {
+    const s = tree({
+      coll: {
+        ...held('coll', 'Collection'),
+        inputs: { members: [{ node: 'kid', socket: 'out' }] },
+      },
+    });
+    expect(withHierarchy(s, ['root']).sort()).toEqual(['grand', 'kid', 'root']);
+  });
+
+  // #1824 — a two-parent child as the conversion can leave one: hung from `root` by its parent
+  // input and still wired into `kid`'s list. `kid` hangs from `root` by its parent input, so it
+  // goes too, and the child with it, whichever of the two the walk meets first.
+  it('a child whose second holder hangs by its parent input below the target goes with it', () => {
+    const s = {
+      nodes: {
+        scene: held('scene', 'Scene', ['root']),
+        root: held('root', 'Group'),
+        twice: {
+          ...held('twice', 'Group'),
+          inputs: { parent: { node: 'root', socket: 'world' } },
+        },
+        kid: {
+          ...held('kid', 'Group', ['twice']),
+          inputs: {
+            children: [{ node: 'twice', socket: 'out' }],
+            parent: { node: 'root', socket: 'world' },
+          },
+        },
+      },
+      outputs: { scene: { node: 'scene' } },
+    } as unknown as DagState;
+    expect(withHierarchy(s, ['root']).sort()).toEqual(['kid', 'root', 'twice']);
+  });
+
+  it('a child a surviving parent also holds stays', () => {
+    const s = tree();
+    (s.nodes.other.inputs as Record<string, unknown>).children = [{ node: 'grand', socket: 'out' }];
+    expect(withHierarchy(s, ['root']).sort()).toEqual(['kid', 'root']);
+    // Both of its parents going, it goes.
+    expect(withHierarchy(s, ['root', 'other']).sort()).toEqual(['grand', 'kid', 'other', 'root']);
   });
 });
 
@@ -1964,15 +2145,32 @@ describe('buildDeleteNodesOps — #1673 a group holding a skinned character', ()
   const removedBy = (ops: Op[]) =>
     ops.filter((o) => o.type === 'removeNode').map((o) => (o as { nodeId: string }).nodeId);
 
-  it('deletes the whole character — group, both objects, the modifier, the mesh, the skeleton and its pose — and wires nothing', () => {
+  // #1517 — the group alone no longer takes them: its two objects are handed up as they stand.
+  it('the group alone hands both objects up, and takes nothing of theirs', () => {
     const ops = buildDeleteNodesOps(skinnedState(), ['grp']);
+    expect(removedBy(ops)).toEqual(['grp']);
+    const s = ops.reduce((acc, op) => applyOp(acc, op).next, skinnedState());
+    expect(s.nodes.scene.inputs.children).toEqual([
+      { node: 'skel', socket: 'out' },
+      { node: 'obj', socket: 'out' },
+    ]);
+  });
+
+  it('Delete Hierarchy on the group takes the whole character', () => {
+    const s = skinnedState();
+    const ops = buildDeleteNodesOps(s, withHierarchy(s, ['grp']));
+    expect(removedBy(ops).sort()).toEqual(['grp', 'mesh', 'mod', 'obj', 'pl', 'skel', 'skelData']);
+  });
+
+  it('deletes the whole character — group, both objects, the modifier, the mesh, the skeleton and its pose — and wires nothing', () => {
+    const ops = buildDeleteNodesOps(skinnedState(), ['grp', 'skel', 'obj']);
     expect(removedBy(ops).sort()).toEqual(['grp', 'mesh', 'mod', 'obj', 'pl', 'skel', 'skelData']);
     // The bug: the deleted modifier was "spliced" out by wiring its mesh into the scene.
     expect(ops.some((o) => o.type === 'connect')).toBe(false);
   });
 
   it('the batch applies: every node is gone and the scene holds nothing', () => {
-    const ops = buildDeleteNodesOps(skinnedState(), ['grp']);
+    const ops = buildDeleteNodesOps(skinnedState(), ['grp', 'skel', 'obj']);
     const s = ops.reduce((acc, op) => applyOp(acc, op).next, skinnedState());
     expect(Object.keys(s.nodes)).toEqual(['scene']);
     expect(s.nodes.scene.inputs.children ?? []).toEqual([]);
@@ -1987,7 +2185,7 @@ describe('buildDeleteNodesOps — #1673 a group holding a skinned character', ()
       inputs: { data: { node: 'mesh', socket: 'out' } },
     };
     (s.nodes.scene.inputs.children as unknown[]).push({ node: 'other', socket: 'out' });
-    const ops = buildDeleteNodesOps(s, ['grp']);
+    const ops = buildDeleteNodesOps(s, ['grp', 'skel', 'obj']);
     expect(removedBy(ops)).not.toContain('mesh');
     expect(ops.some((o) => o.type === 'connect')).toBe(false);
   });
@@ -2012,7 +2210,7 @@ describe('buildDeleteNodesOps — #1673 a group holding a skinned character', ()
       inputs: { data: { node: 'mod2', socket: 'out' } },
     };
     (s.nodes.scene.inputs.children as unknown[]).push({ node: 'obj2', socket: 'out' });
-    const ops = buildDeleteNodesOps(s, ['grp']);
+    const ops = buildDeleteNodesOps(s, ['grp', 'obj']);
     expect(removedBy(ops)).not.toContain('skel');
     expect(removedBy(ops)).toEqual(expect.arrayContaining(['grp', 'obj', 'mod', 'mesh']));
   });
@@ -2026,4 +2224,434 @@ describe('buildDeleteNodesOps — #1673 a group holding a skinned character', ()
       to: { node: 'obj', socket: 'data' },
     });
   });
+});
+
+describe('buildDeleteNodesOps — a deleted parent hands its children up (#1517)', () => {
+  const CTX = { time: { frame: 0, seconds: 0, normalized: 0 } };
+  const conn = (from: string, to: string): Op => ({
+    type: 'connect',
+    from: { node: from, socket: 'out' },
+    to: { node: to, socket: 'children' },
+  });
+  const disc = (from: string, to: string): Op => ({
+    type: 'disconnect',
+    from: { node: from, socket: 'out' },
+    to: { node: to, socket: 'children' },
+  });
+  const set = (nodeId: string, paramPath: string, value: unknown): Op => ({
+    type: 'setParam',
+    nodeId,
+    paramPath,
+    value,
+  });
+  const group = (id: string, parent: string, pos: number[], rot: number[], scl = 2): Op[] => [
+    { type: 'addNode', nodeId: id, nodeType: 'Group', params: {} },
+    conn(id, parent),
+    set(id, 'position', pos),
+    set(id, 'rotation', rot),
+    set(id, 'scale', [scl, scl, scl]),
+  ];
+  // #1824 — a hang under a group or object goes through its child's parent input when it has one
+  // (a Transform has none and stays wired). #1823 — and a node hung that way stays (or becomes) a
+  // member of the scene's own list, as every door that makes an object links it: parenting is not
+  // membership, so the fixtures' "take it out of the scene, hang it" keeps it in the scene.
+  const apply = (s: DagState, ops: readonly Op[]) =>
+    ops.reduce((acc, op) => {
+      if (op.type !== 'connect' || op.to.socket !== 'children' || op.to.node === 'n_scene') {
+        return applyOp(acc, op).next;
+      }
+      const hang = attachOp(acc, op.from.node, op.to.node, 'children');
+      let next = applyOp(acc, hang).next;
+      const listed = ((next.nodes.n_scene.inputs.children ?? []) as { node: string }[]).some(
+        (r) => r.node === op.from.node,
+      );
+      if (hang.type === 'connect' && hang.to.socket === 'parent' && !listed) {
+        next = applyOp(next, {
+          type: 'connect',
+          from: { node: op.from.node, socket: 'out' },
+          to: { node: 'n_scene', socket: 'children' },
+        }).next;
+      }
+      return next;
+    }, s);
+  /** scene → OUTER → INNER → the cube, each turned and offset. */
+  const nested = (): DagState =>
+    apply(buildDefaultDagState(), [
+      ...group('OUTER', 'n_scene', [5, 1, 0], [0, 30, 0]),
+      ...group('INNER', 'OUTER', [0, 2, 1], [20, 0, 0]),
+      disc('n_box', 'n_scene'),
+      conn('n_box', 'INNER'),
+      set('n_box', 'position', [1, 1, 1]),
+      set('n_box', 'rotation', [0, 0, 45]),
+    ]);
+  const world = (s: DagState, id: string) => resolveWorldTransform(s, id, CTX)!.matrix;
+  const commit = (s: DagState, ids: string[]) => {
+    useDagStore.getState().hydrate(s);
+    const plan = planDeleteNodes(s, ids, { ctx: CTX });
+    if (!plan.ok) throw new Error(plan.reason);
+    useDagStore.getState().dispatchAtomic(plan.ops, 'user', 'delete');
+    return useDagStore.getState().state;
+  };
+  const expectSameWorld = (a: number[], b: number[]) =>
+    a.forEach((v, i) => expect(b[i]).toBeCloseTo(v, 5));
+
+  it('the fixture draws the cube well away from its own values', () => {
+    const s = nested();
+    expect(Math.abs(world(s, 'n_box')[12] - 1)).toBeGreaterThan(1);
+  });
+
+  it('a child goes to the group’s parent, stays in the scene, and stays where it is drawn', () => {
+    const s = nested();
+    const before = world(s, 'n_box');
+    const after = commit(s, ['INNER']);
+    expect(after.nodes.INNER).toBeUndefined();
+    expect(after.nodes.n_box).toBeDefined();
+    expect(childIdsOf(after, 'OUTER')).toEqual(['n_box']);
+    expect(isInScene(after, 'n_box')).toBe(true);
+    expectSameWorld(before, world(after, 'n_box'));
+    useDagStore.getState().undo();
+    expect(useDagStore.getState().state.nodes).toEqual(s.nodes);
+  });
+
+  it('a group at the top hands its children to the scene', () => {
+    const s = nested();
+    const before = { inner: world(s, 'INNER'), box: world(s, 'n_box') };
+    const after = commit(s, ['OUTER']);
+    expect(after.nodes.n_scene.inputs.children).toContainEqual({ node: 'INNER', socket: 'out' });
+    expect(childIdsOf(after, 'INNER')).toEqual(['n_box']);
+    expectSameWorld(before.inner, world(after, 'INNER'));
+    expectSameWorld(before.box, world(after, 'n_box'));
+  });
+
+  it('children pass up past EVERY deleted ancestor, in whichever order they are picked', () => {
+    for (const ids of [
+      ['OUTER', 'INNER'],
+      ['INNER', 'OUTER'],
+    ]) {
+      const s = nested();
+      const before = world(s, 'n_box');
+      const after = commit(s, ids);
+      expect(after.nodes.OUTER).toBeUndefined();
+      expect(after.nodes.INNER).toBeUndefined();
+      expect(after.nodes.n_scene.inputs.children).toContainEqual({ node: 'n_box', socket: 'out' });
+      expect(isInScene(after, 'n_box')).toBe(true);
+      expectSameWorld(before, world(after, 'n_box'));
+    }
+  });
+
+  it('the group and its children picked together all go, data and all', () => {
+    const s = nested();
+    const after = commit(s, ['OUTER', 'INNER', 'n_box']);
+    for (const id of ['OUTER', 'INNER', 'n_box', 'n_box_data'])
+      expect(after.nodes[id]).toBeUndefined();
+    expect(after.nodes.n_scene.inputs.children ?? []).not.toContainEqual({
+      node: 'n_box',
+      socket: 'out',
+    });
+    useDagStore.getState().undo();
+    expect(useDagStore.getState().state.nodes).toEqual(s.nodes);
+  });
+
+  it('a deleted mesh Object hands its children up as a Group does (#1152)', () => {
+    const s = apply(buildDefaultDagState(), [
+      set('n_box', 'position', [3, 0, 0]),
+      { type: 'addNode', nodeId: 'kid', nodeType: 'Object', params: { position: [0, 2, 0] } },
+      conn('kid', 'n_box'),
+    ]);
+    const before = world(s, 'kid');
+    const after = commit(s, ['n_box']);
+    expect(after.nodes.n_box).toBeUndefined();
+    expect(after.nodes.n_box_data).toBeUndefined();
+    expect(after.nodes.n_scene.inputs.children).toContainEqual({ node: 'kid', socket: 'out' });
+    expectSameWorld(before, world(after, 'kid'));
+  });
+
+  it('nothing is left unreachable: #431’s protection, measured across the whole graph', () => {
+    const s = nested();
+    const after = commit(s, ['INNER']);
+    // Every Object the scene held before it still holds, bar the one deleted.
+    for (const id of Object.keys(s.nodes)) {
+      if (id === 'INNER' || !isInScene(s, id)) continue;
+      expect([id, isInScene(after, id)]).toEqual([id, true]);
+    }
+  });
+
+  it('a keyed child is handed up with its keys and its values as they are, and named', () => {
+    const s = apply(nested(), [
+      {
+        type: 'addNode',
+        nodeId: 'ch',
+        nodeType: 'KeyframeChannelVec3',
+        params: {
+          target: 'n_box',
+          paramPath: 'position',
+          keyframes: [{ time: 0, value: [1, 1, 1], easing: 'linear' }],
+        },
+      },
+    ]);
+    const plan = planDeleteNodes(s, ['INNER'], { ctx: CTX });
+    if (!plan.ok) throw new Error(plan.reason);
+    expect(plan.unkept).toEqual([{ childId: 'n_box', driven: 'animated' }]);
+    expect(moveNotices(s, plan).join()).toMatch(/Delete moved "n_box" \(animated\)/);
+
+    const after = apply(s, plan.ops);
+    expect(isInScene(after, 'n_box')).toBe(true);
+    expect(after.nodes.n_box.params.position).toEqual(s.nodes.n_box.params.position);
+    expect(after.nodes.ch.params.keyframes).toEqual(s.nodes.ch.params.keyframes);
+    // The agent's door reads the same plan, so it does not throw.
+    expect(() => buildDeleteNodesOps(s, ['INNER'])).not.toThrow();
+    // Deleted together nothing moves, so there is nothing to say.
+    const both = planDeleteNodes(s, ['INNER', 'n_box'], { ctx: CTX });
+    if (!both.ok) throw new Error(both.reason);
+    expect(both.unkept).toEqual([]);
+  });
+
+  it('CONTROL: a keyed child whose parent adds nothing does not move, so nothing is said', () => {
+    const s = apply(nested(), [
+      {
+        type: 'addNode',
+        nodeId: 'ch',
+        nodeType: 'KeyframeChannelVec3',
+        params: {
+          target: 'n_box',
+          paramPath: 'position',
+          keyframes: [{ time: 0, value: [1, 1, 1], easing: 'linear' }],
+        },
+      },
+      set('INNER', 'position', [0, 0, 0]),
+      set('INNER', 'rotation', [0, 0, 0]),
+      set('INNER', 'scale', [1, 1, 1]),
+    ]);
+    const plan = planDeleteNodes(s, ['INNER'], { ctx: CTX });
+    if (!plan.ok) throw new Error(plan.reason);
+    expect(plan.unkept).toEqual([]);
+  });
+
+  // scene → (holder) → T → cube: a Transform wrapper holds one child, on its chain socket.
+  const wrapped = (outer: 'G-over-T' | 'T-over-G'): DagState => {
+    const t: Op = {
+      type: 'addNode',
+      nodeId: 'T',
+      nodeType: 'Transform',
+      params: { position: [0, 4, 0], rotation: [0, 0, 0], scale: [1, 1, 1] },
+    };
+    const onT = (id: string): Op => ({
+      type: 'connect',
+      from: { node: id, socket: 'out' },
+      to: { node: 'T', socket: 'target' },
+    });
+    if (outer === 'G-over-T')
+      return apply(buildDefaultDagState(), [
+        ...group('G', 'n_scene', [1, 0, 0], [0, 0, 0], 1),
+        t,
+        conn('T', 'G'),
+        disc('n_box', 'n_scene'),
+        onT('n_box'),
+      ]);
+    return apply(buildDefaultDagState(), [
+      { type: 'addNode', nodeId: 'G', nodeType: 'Group', params: {} },
+      set('G', 'position', [1, 0, 0]),
+      t,
+      conn('T', 'n_scene'),
+      onT('G'),
+      disc('n_box', 'n_scene'),
+      conn('n_box', 'G'),
+    ]);
+  };
+
+  it('a wrapper deleted with its group leaves nothing stranded', () => {
+    const s = wrapped('G-over-T');
+    const after = commit(s, ['G', 'T']);
+    expect(after.nodes.G).toBeUndefined();
+    expect(after.nodes.T).toBeUndefined();
+    // Named together, the wrapper takes its stack, as it did before #1517: gone, not unreachable.
+    expect(after.nodes.n_box).toBeUndefined();
+    expect(after.nodes.n_box_data).toBeUndefined();
+  });
+
+  it('a group alone hands its wrapper up, with the cube still inside it', () => {
+    const s = wrapped('G-over-T');
+    const before = world(s, 'n_box');
+    const after = commit(s, ['G']);
+    expect(after.nodes.n_scene.inputs.children).toContainEqual({ node: 'T', socket: 'out' });
+    expect(after.nodes.T.inputs.target).toEqual({ node: 'n_box', socket: 'out' });
+    expect(isInScene(after, 'n_box')).toBe(true);
+    expectSameWorld(before, world(after, 'n_box'));
+  });
+
+  it('a group inside a wrapper hands its child past the wrapper, which holds one thing', () => {
+    const s = wrapped('T-over-G');
+    const before = world(s, 'n_box');
+    const after = commit(s, ['G']);
+    expect(after.nodes.n_scene.inputs.children).toContainEqual({ node: 'n_box', socket: 'out' });
+    expect(isInScene(after, 'n_box')).toBe(true);
+    expectSameWorld(before, world(after, 'n_box'));
+  });
+
+  it('the agent’s door passes every gate, and hands the child up the same way', () => {
+    const s = nested();
+    const before = world(s, 'n_box');
+    const result = validatePlan(deleteNodeMutator, { targetSelectors: ['INNER'] }, s, 'del');
+    if (!result.ok) throw new Error(JSON.stringify(result));
+    const after = apply(s, result.ops);
+    expect(childIdsOf(after, 'OUTER')).toEqual(['n_box']);
+    expectSameWorld(before, world(after, 'n_box'));
+  });
+
+  it('a shear is reported on the plan, and the delete still goes', () => {
+    const s = apply(nested(), [set('INNER', 'scale', [3, 1, 1])]);
+    const plan = planDeleteNodes(s, ['INNER'], { ctx: CTX });
+    if (!plan.ok) throw new Error(plan.reason);
+    expect(plan.residuals.map((r) => r.childId)).toEqual(['n_box']);
+  });
+});
+
+// #1824 — a child hung by its own parent input (the parent's world wired into it) is handed up on
+// delete like a wired one. The delete cuts every wire out of the deleted node, the child's parent
+// input among them, so a child nothing hands up would drop out of the scene.
+describe('buildDeleteNodesOps — a parent hands up the children hung by their parent input (#1824)', () => {
+  const CTX = { time: { frame: 0, seconds: 0, normalized: 0 } };
+  const apply = (s: DagState, ops: readonly Op[]) =>
+    ops.reduce((acc, op) => applyOp(acc, op).next, s);
+  const set = (nodeId: string, paramPath: string, value: unknown): Op => ({
+    type: 'setParam',
+    nodeId,
+    paramPath,
+    value,
+  });
+  const hang = (child: string, parent: string): Op => ({
+    type: 'connect',
+    from: { node: parent, socket: 'world' },
+    to: { node: child, socket: 'parent' },
+  });
+  /** scene → OUTER (wired) → INNER (parent input) → the cube (parent input), each turned; all three
+   *  members of the scene's own list (#1823: the cube is not taken out of it to be hung). */
+  const nested = (): DagState =>
+    apply(buildDefaultDagState(), [
+      { type: 'addNode', nodeId: 'OUTER', nodeType: 'Group', params: {} },
+      {
+        type: 'connect',
+        from: { node: 'OUTER', socket: 'out' },
+        to: { node: 'n_scene', socket: 'children' },
+      },
+      set('OUTER', 'position', [5, 1, 0]),
+      set('OUTER', 'rotation', [0, 30, 0]),
+      { type: 'addNode', nodeId: 'INNER', nodeType: 'Group', params: {} },
+      hang('INNER', 'OUTER'),
+      // #1823 — made, so a member of the scene's own list; hanging it is not membership.
+      {
+        type: 'connect',
+        from: { node: 'INNER', socket: 'out' },
+        to: { node: 'n_scene', socket: 'children' },
+      },
+      set('INNER', 'position', [0, 2, 1]),
+      set('INNER', 'rotation', [20, 0, 0]),
+      hang('n_box', 'INNER'),
+      set('n_box', 'position', [1, 1, 1]),
+      set('n_box', 'rotation', [0, 0, 45]),
+    ]);
+  const world = (s: DagState, id: string) => resolveWorldTransform(s, id, CTX)!.matrix;
+  const commit = (s: DagState, ids: string[]) => {
+    useDagStore.getState().hydrate(s);
+    const plan = planDeleteNodes(s, ids, { ctx: CTX });
+    if (!plan.ok) throw new Error(plan.reason);
+    useDagStore.getState().dispatchAtomic(plan.ops, 'user', 'delete');
+    return useDagStore.getState().state;
+  };
+  const expectSameWorld = (a: number[], b: number[]) =>
+    a.forEach((v, i) => expect(b[i]).toBeCloseTo(v, 5));
+
+  it('the fixture hangs the cube by parent inputs, drawn well away from its own values', () => {
+    const s = nested();
+    expect(worldParentOf(s, 'n_box')).toBe('INNER');
+    expect(isInScene(s, 'n_box')).toBe(true);
+    expect(Math.abs(world(s, 'n_box')[12] - 1)).toBeGreaterThan(1);
+  });
+
+  it('the cube goes to the group’s parent by its parent input, in the scene and in place', () => {
+    const s = nested();
+    const before = world(s, 'n_box');
+    const after = commit(s, ['INNER']);
+    expect(after.nodes.INNER).toBeUndefined();
+    expect(worldParentOf(after, 'n_box')).toBe('OUTER');
+    expect(after.nodes.OUTER.inputs.children ?? []).toEqual([]);
+    expect(isInScene(after, 'n_box')).toBe(true);
+    expectSameWorld(before, world(after, 'n_box'));
+  });
+
+  it('a group at the top hands its child to the scene’s list, its parent input cleared', () => {
+    const s = nested();
+    const before = { inner: world(s, 'INNER'), box: world(s, 'n_box') };
+    const after = commit(s, ['OUTER']);
+    expect(after.nodes.n_scene.inputs.children).toContainEqual({ node: 'INNER', socket: 'out' });
+    expect(after.nodes.INNER.inputs.parent).toBeUndefined();
+    expect(worldParentOf(after, 'n_box')).toBe('INNER');
+    expectSameWorld(before.inner, world(after, 'INNER'));
+    expectSameWorld(before.box, world(after, 'n_box'));
+  });
+
+  it('children pass up past every deleted ancestor', () => {
+    const s = nested();
+    const before = world(s, 'n_box');
+    const after = commit(s, ['OUTER', 'INNER']);
+    expect(after.nodes.n_scene.inputs.children).toContainEqual({ node: 'n_box', socket: 'out' });
+    expect(after.nodes.n_box.inputs.parent).toBeUndefined();
+    expectSameWorld(before, world(after, 'n_box'));
+  });
+});
+
+// #1824 — Duplicate copies what hangs from a parent by its own parent input, and a copy of such a
+// child hangs from the same parent, as Blender's Shift+D keeps a duplicate's parent.
+describe('buildDuplicateNodesOps — children hung by their parent input (#1824)', () => {
+  const apply = (s: DagState, ops: readonly Op[]) =>
+    ops.reduce((acc, op) => applyOp(acc, op).next, s);
+  /** scene → G (wired) → n_box (its parent input reads G's world), still a member (#1823). */
+  const hung = (): DagState =>
+    apply(buildDefaultDagState(), [
+      { type: 'addNode', nodeId: 'G', nodeType: 'Group', params: {} },
+      {
+        type: 'connect',
+        from: { node: 'G', socket: 'out' },
+        to: { node: 'n_scene', socket: 'children' },
+      },
+      {
+        type: 'connect',
+        from: { node: 'G', socket: 'world' },
+        to: { node: 'n_box', socket: 'parent' },
+      },
+    ]);
+
+  it('a copy of the child hangs from the same parent, and both are in the scene', () => {
+    const s = hung();
+    const dup = buildDuplicateNodeOps(s, 'n_box');
+    expect(dup).not.toBeNull();
+    const after = apply(s, dup!.ops);
+    expect(worldParentOf(after, dup!.newRootId)).toBe('G');
+    expect([...childIdsOf(after, 'G')].sort()).toEqual(['n_box', dup!.newRootId].sort());
+    expect(isInScene(after, dup!.newRootId)).toBe(true);
+    // #1823 — the copy is listed where the original is (Blender's Shift+D links a duplicate into
+    // the original's collections), once, and its parent is still its parent input alone.
+    const listed = (id: string) =>
+      ((after.nodes.n_scene.inputs.children ?? []) as { node: string }[]).filter(
+        (r) => r.node === id,
+      ).length;
+    expect(listed(dup!.newRootId)).toBe(listed('n_box'));
+    expect(parentIdsOf(after, dup!.newRootId)).toEqual(['G']);
+  });
+
+  for (const linked of [false, true]) {
+    it(`a ${linked ? 'linked' : 'deep'} copy of the group holds a copy of the child`, () => {
+      const s = hung();
+      const dup = buildDuplicateNodeOps(s, 'G', { linked });
+      expect(dup).not.toBeNull();
+      const after = apply(s, dup!.ops);
+      const kids = childIdsOf(after, dup!.newRootId);
+      expect(kids).toHaveLength(1);
+      expect(kids[0]).not.toBe('n_box');
+      expect(after.nodes[kids[0]].type).toBe('Object');
+      expect(isInScene(after, kids[0])).toBe(true);
+      // The original keeps its own child.
+      expect(childIdsOf(after, 'G')).toEqual(['n_box']);
+    });
+  }
 });

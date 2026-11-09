@@ -39,12 +39,16 @@ import { type DofEffectSettings, resolveCameraDof } from './cameraDof';
 import { pickCameraSelect } from '../nodes/CameraSelect';
 import { sceneClockOf } from './sceneClock';
 import { clockedCtx, type ClockedCtx } from './subjectClock';
-import { resolveConstraintPosition } from './nodeConstraints';
 import { withHeldCameraEdits } from './cameraHeldEdits';
-import { cameraLocalOrientation, cameraTrackToAim, type CameraOwnRotation } from './cameraTrackTo';
+import {
+  cameraFollowedPosition,
+  cameraLocalOrientation,
+  cameraTrackToAim,
+  type CameraOwnRotation,
+} from './cameraTrackTo';
 import { quaternionFromEulerDeg, withResolvedRotation } from './resolvedRotation';
 import * as THREE from 'three';
-import { resolveParentWorldMatrix } from './resolveWorldTransform';
+import { resolveDrawnParentWorldMatrix } from './drawnWorldTransform';
 import {
   cameraOrientationTuple,
   composeCameraPoseWithParent,
@@ -205,7 +209,7 @@ export function resolveCameraFrustumPose(
 ): CameraPose | null {
   const local = cameraPoseForNodeId(state, cameraId);
   if (!local) return null;
-  const parentWorld = resolveParentWorldMatrix(state, cameraId, ctx, cache);
+  const parentWorld = resolveDrawnParentWorldMatrix(state, cameraId, ctx, cache);
   return parentWorld ? composeCameraPoseWithParent(local, parentWorld) : local;
 }
 
@@ -460,28 +464,22 @@ export function resolveCameraPoseAt(
   // The two bands need no ordering HERE, and for a nicer reason than on the mesh road: a
   // camera aims by a lookAt POINT, not a rotation, so the orientation is derived from
   // (position → lookAt) downstream by `cameraOrientationQuat`. Move the camera and the aim
-  // follows for free. `resolveConstraintPosition` returns PARENT-LOCAL, which is exactly
+  // follows for free. `cameraFollowedPosition` returns PARENT-LOCAL, which is exactly
   // what the parent compose below expects.
-  const followed = resolveConstraintPosition(state, node.id, filmCtx, cache);
+  const followed = cameraFollowedPosition(state, node.id, filmCtx, cache);
   if (followed) pose.position = followed;
 
   // #1760 — turned by its winning Track-To (#1766: aimed in the parent's space; #1759: its roll
   // adds on), else by its own rotation: the rule every object follows (V665).
-  const { quaternion, aim } = cameraLocalOrientation(
-    state,
-    node.id,
-    pose.position,
-    own,
-    ctx,
-    cache,
-  );
+  const { quaternion, aim } = cameraLocalOrientation(state, node.id, own, ctx, cache);
 
   // #231 Inc 3.3 — a camera nested in a Group frames from the group-composed WORLD.
   // Compose AFTER the channel + Track-To overlays so the animated/aimed LOCAL pose
   // is what gets lifted into world. `resolveParentWorldMatrix` returns null for a
   // top-level camera (wired only to scene.camera) → byte-identical to the flat pose,
   // so this is a safe drop-in for every pre-Inc-3.3 project.
-  const parentWorld = resolveParentWorldMatrix(state, node.id, ctx, cache);
+  // #1829 — the parent as it is drawn, so a camera under an aimed object turns with it.
+  const parentWorld = resolveDrawnParentWorldMatrix(state, node.id, ctx, cache);
   const result = withOrientation(pose, quaternion, aim, aimDistance);
   return parentWorld ? composeCameraPoseWithParent(result, parentWorld) : result;
 }

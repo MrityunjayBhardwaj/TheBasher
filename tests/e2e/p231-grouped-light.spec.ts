@@ -62,8 +62,13 @@ test.describe('#231 Inc 2a — grouped light boundary-pair', () => {
         for (const op of ops) dispatch(op);
         dispatch({
           type: 'connect',
+          from: { node: grpId, socket: 'world' },
+          to: { node: lightId, socket: 'parent' },
+        });
+        dispatch({
+          type: 'connect',
           from: { node: lightId, socket: 'out' },
-          to: { node: grpId, socket: 'children' },
+          to: { node: 'n_scene', socket: 'children' },
         });
         dispatch({
           type: 'connect',

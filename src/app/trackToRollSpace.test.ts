@@ -5,7 +5,8 @@
 import { beforeAll, describe, expect, it } from 'vitest';
 import { Euler, Quaternion, Vector3 } from 'three';
 import { buildDefaultDagState } from '../core/project/default';
-import { applyOp, type DagState } from '../core/dag';
+import { type DagState } from '../core/dag';
+import { applyOp } from '../test-utils/committedApplyOp';
 import { registerAllNodes } from '../nodes/registerAll';
 import { makeSplitCamera } from '../test-utils/splitCamera';
 import { makeSplitCube } from '../test-utils/splitCube';
@@ -157,8 +158,14 @@ describe('#1759 — Track-To aim-point space', () => {
     s = run(s, [
       {
         type: 'connect',
+        from: { node: 'grp', socket: 'world' },
+        to: { node: 'cam', socket: 'parent' },
+      },
+      // #1823 — the scene's too: parenting is not membership.
+      {
+        type: 'connect',
         from: { node: 'cam', socket: 'out' },
-        to: { node: 'grp', socket: 'children' },
+        to: { node: 'n_scene', socket: 'children' },
       },
       {
         type: 'connect',

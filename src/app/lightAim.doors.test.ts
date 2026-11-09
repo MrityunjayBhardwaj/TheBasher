@@ -31,7 +31,7 @@ import { buildAddConstraintOps } from './constraintStack';
 import { constrainMutator } from '../agent/mutators/builders/constrain';
 import { makeSplitLight } from '../test-utils/splitLight';
 import { resolveWorldTransform } from './resolveWorldTransform';
-import { hierarchyChildIds } from './sceneHierarchy';
+import { childIdsOf } from './sceneHierarchy';
 import { lightKindOf } from './lightNode';
 
 registerAllNodes();
@@ -54,7 +54,7 @@ function expectAimedAtEmpties(s: DagState, at: (lightId: string) => V3, label: s
     const empty = s.nodes[p.aimNode];
     expect(empty?.type, `${label}: ${p.target}'s Track-To aims at an object`).toBe('Null');
     expect(empty.meta?.name, label).toMatch(/\.aim$/);
-    expect(hierarchyChildIds(s.nodes[p.target]), label).not.toContain(p.aimNode);
+    expect(childIdsOf(s, p.target), label).not.toContain(p.aimNode);
     const w = resolveWorldTransform(s, p.aimNode, T0)!;
     expect(w, `${label}: the empty is placed in the scene`).not.toBeNull();
     const want = at(p.target);
@@ -183,7 +183,7 @@ describe('#1765 — a light Track-To always aims at an object', () => {
     s = apply(s, built.ops);
     const aim = (s.nodes[built.constraintId].params as { aimNode: string }).aimNode;
     // It hangs where the light hangs: in the group, so moving the group carries both.
-    expect(hierarchyChildIds(s.nodes.grp)).toContain(aim);
+    expect(childIdsOf(s, 'grp')).toContain(aim);
     expect(expectAimedAtEmpties(s, () => [0, 0, 0], 'stack')).toBe(2);
     // A mesh still gets a bare Track-To: the rule is a light's.
     const box = buildAddConstraintOps(s, 'n_box', 'TrackTo')!;

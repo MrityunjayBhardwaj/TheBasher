@@ -6,7 +6,8 @@
 import { beforeAll, describe, expect, it } from 'vitest';
 import { Euler, Quaternion, Vector3 } from 'three';
 import { buildDefaultDagState } from '../core/project/default';
-import { applyOp, type DagState } from '../core/dag';
+import { type DagState } from '../core/dag';
+import { applyOp } from '../test-utils/committedApplyOp';
 import { registerAllNodes } from '../nodes/registerAll';
 import { makeSplitCamera } from '../test-utils/splitCamera';
 import { resolveActiveCameraPoseAt } from './activeCamera';
@@ -38,8 +39,14 @@ function nested(position: V3, rotation: V3, aimNode = '', local: V3 = [0, 0, 0])
   }).state;
   run({
     type: 'connect',
+    from: { node: 'grp', socket: 'world' },
+    to: { node: 'cam', socket: 'parent' },
+  });
+  // #1823 — hung from the group and, as parenting is not membership, the scene's.
+  run({
+    type: 'connect',
     from: { node: 'cam', socket: 'out' },
-    to: { node: 'grp', socket: 'children' },
+    to: { node: 'n_scene', socket: 'children' },
   });
   run({
     type: 'connect',

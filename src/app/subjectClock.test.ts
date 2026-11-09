@@ -84,8 +84,14 @@ function rigScene(clock?: 'film'): DagState {
   return apply(state, [
     {
       type: 'connect',
+      from: { node: 'n_rig', socket: 'world' },
+      to: { node: 'n_cam2', socket: 'parent' },
+    },
+    // #1823 — the scene's too: parenting is not membership.
+    {
+      type: 'connect',
       from: { node: 'n_cam2', socket: 'out' },
-      to: { node: 'n_rig', socket: 'children' },
+      to: { node: scene, socket: 'children' },
     },
     {
       type: 'connect',
@@ -113,8 +119,13 @@ function cameraChildScene(): DagState {
     },
     {
       type: 'connect',
+      from: { node: 'n_camera', socket: 'world' },
+      to: { node: 'n_kid', socket: 'parent' },
+    },
+    {
+      type: 'connect',
       from: { node: 'n_kid', socket: 'out' },
-      to: { node: 'n_camera', socket: 'children' },
+      to: { node: scene, socket: 'children' },
     },
   ]);
 }

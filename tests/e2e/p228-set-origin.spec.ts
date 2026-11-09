@@ -51,14 +51,9 @@ test('Set Origin to Geometry moves a Group origin to the content centre', async 
         },
         { type: 'setParam', nodeId: 'n_box', paramPath: 'position', value: [3, 0, 0] },
         {
-          type: 'disconnect',
-          from: { node: 'n_box', socket: 'out' },
-          to: { node: sceneId, socket: 'children' },
-        },
-        {
           type: 'connect',
-          from: { node: 'n_box', socket: 'out' },
-          to: { node: 'n_grp', socket: 'children' },
+          from: { node: 'n_grp', socket: 'world' },
+          to: { node: 'n_box', socket: 'parent' },
         },
         {
           type: 'connect',

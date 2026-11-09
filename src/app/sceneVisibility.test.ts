@@ -49,15 +49,11 @@ describe('which nodes can be hidden (#1448)', () => {
       s = applyOp(s, o).next;
     };
     op({ type: 'addNode', nodeId: 'grp', nodeType: 'Group', params: {} });
-    op({
-      type: 'disconnect',
-      to: { node: s.outputs.scene!.node, socket: 'children' },
-      from: { node: 'n_box', socket: 'out' },
-    });
+    // #1823 — hung from the group, the cube stays in the scene's list: parenting is not membership.
     op({
       type: 'connect',
-      from: { node: 'n_box', socket: 'out' },
-      to: { node: 'grp', socket: 'children' },
+      from: { node: 'grp', socket: 'world' },
+      to: { node: 'n_box', socket: 'parent' },
     });
     op({
       type: 'connect',

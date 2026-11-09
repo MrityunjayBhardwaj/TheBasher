@@ -29,6 +29,7 @@
 // of the main bundle. Its AnimationClip holds the generated keys, so it opens and plays with
 // no motion server (measured with every request to the server blocked, #1282).
 
+import { chainFollowUpOps } from '../dag/chainEdit';
 import { cameraRotationLookingAt } from '../../app/cameraOrientation';
 import { applyOp, emptyDagState, type DagState } from '../dag';
 import type { Op } from '../dag/types';
@@ -244,6 +245,8 @@ export const EXAMPLE_PROJECT_IDS: readonly string[] = EXAMPLES.map((e) => e.id);
 function buildState(ops: readonly Op[]): DagState {
   let state = emptyDagState();
   for (const op of ops) state = applyOp(state, op).next;
+  // #1812 — built off the store, so the commit step that wires a constraint's chain is run here.
+  for (const op of chainFollowUpOps(emptyDagState(), state)) state = applyOp(state, op).next;
   return {
     ...state,
     outputs: {

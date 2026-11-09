@@ -37,6 +37,7 @@ interface BasherWindow {
     getState: () => {
       state: { nodes: Record<string, DagNode> };
       dispatch: (op: unknown, source?: string, description?: string) => void;
+      dispatchAtomic: (ops: unknown[], source?: string, description?: string) => void;
     };
   };
   __basher_selection?: { getState: () => { selectedNodeId: string | null } };
@@ -95,7 +96,7 @@ test('#233 single click selects the leaf under the cursor; Alt+click selects up;
   // move the starter boxes far aside, and DELETE the camera + light nodes —
   // their helper gizmos (esp. the camera's far=1000 frustum LineSegments) span
   // the origin and would intercept the raycast.
-  await page.evaluate(() => {
+  await page.evaluate(async () => {
     const w = window as unknown as BasherWindow;
     const dag = w.__basher_dag!.getState();
     dag.dispatch(
@@ -118,8 +119,12 @@ test('#233 single click selects the leaf under the cursor; Alt+click selects up;
       'rm cam',
     );
     dag.dispatch({ type: 'removeNode', nodeId: 'n_camera' }, 'user', 'rm cam');
-    // #1765 — the sun's Track-To names it and aims at the empty "Sun.aim": both go first.
-    dag.dispatch({ type: 'removeNode', nodeId: 'n_light_aim' }, 'user', 'rm light aim');
+    // #1765 — the sun's Track-To names it and aims at the empty "Sun.aim": both go first. #1811 —
+    // the Track-To is a step on the sun's chain, so it comes off the way the inspector takes it off.
+    const { buildRemoveConstraintOps } = await import('/src/app/constraintStack.ts');
+    const offChain = buildRemoveConstraintOps(w.__basher_dag!.getState().state, 'n_light_aim');
+    if (!offChain) throw new Error('the sun has no Track-To to take off');
+    dag.dispatchAtomic(offChain, 'user', 'rm light aim');
     dag.dispatch(
       {
         type: 'disconnect',

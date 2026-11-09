@@ -13,11 +13,11 @@
 
 import { ownName } from '../core/dag/nodeName';
 import type { DagState } from '../core/dag/state';
-import type { Node, NodeId } from '../core/dag/types';
+import type { Node, NodeId, NodeRef } from '../core/dag/types';
 import { enumerateCameraNodeIds } from './activeCamera';
 import { importedChildOf } from './importedChild';
 import { chainSocketOf, isSceneLaneWrapper } from './operatorChain';
-import { hierarchySocketForKind } from './sceneHierarchy';
+import { childIdsOf, hierarchySocketForKind, parentIdsOf } from './sceneHierarchy';
 import { childCollectionsOf, collectionMembersOf, sceneCollectionsOf } from './collections';
 import { resolveActiveRigNode, resolveRigLightSources } from './resolveRigLightSources';
 
@@ -37,7 +37,29 @@ export interface TreeRow {
    * any. Top-level rows under Scene.children carry this; the Scene row
    * itself does not. Drag-reorder uses these to emit disconnect+connect.
    */
-  readonly parent?: { nodeId: NodeId; socket: string; index: number };
+  readonly parent?: TreeRowParent;
+}
+
+/** The row's holder and how it holds the row's node. */
+export interface TreeRowParent {
+  readonly nodeId: NodeId;
+  readonly socket: string;
+  /** Position in the holder's wired list; -1 when the row's node is held by its parent input. */
+  readonly index: number;
+  /** #1824 — the row's node names the holder through its own parent input: no wire on the holder
+   *  carries it, so moving it rewires the child, not the holder's list. */
+  readonly byParentInput?: true;
+}
+
+/** Blender's outliner order: case-insensitive, digit runs compared as numbers
+ *  (`BLI_strcasecmp_natural`, outliner_tree.cc `treesort_alpha`), so "Cube.2" sorts before "Cube.10". */
+const NATURAL = new Intl.Collator('en', { numeric: true, sensitivity: 'base' });
+
+/** `ids` sorted by what the outliner shows for each, then by id, so equal names keep one order. */
+function byName(state: DagState, ids: readonly NodeId[]): NodeId[] {
+  const named = ids.map((id) => ({ id, name: display(state, id) }));
+  named.sort((a, b) => NATURAL.compare(a.name, b.name) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  return named.map((n) => n.id);
 }
 
 interface WalkCtx {
@@ -114,7 +136,7 @@ function walkOneAsChild(
   nodeId: NodeId,
   depth: number,
   parentKey: string,
-  parent: { nodeId: NodeId; socket: string; index: number },
+  parent: TreeRowParent,
 ): void {
   if (ctx.visited.has(nodeId)) return;
   ctx.visited.add(nodeId);
@@ -133,16 +155,26 @@ function walkOneAsChild(
   // next aggregate parent the walk already descends.
   if (hierarchySocketForKind(node.type, node) === 'children') {
     pushRow(ctx, row);
-    const children = node.inputs.children;
-    if (Array.isArray(children)) {
-      children.forEach((ref, i) => {
-        ctx.visited.delete(ref.node);
-        walkOneAsChild(ctx, ref.node, depth + 1, row.key, {
-          nodeId,
-          socket: 'children',
-          index: i,
-        });
-      });
+    // #1824 — the children are whatever the tree module says hangs from this node: the ones wired
+    // into its `children` list and the ones whose parent input reads its world. Shown sorted by
+    // name as Blender's outliner sorts objects; the id breaks a tie, since names need not be unique
+    // and the id is what the row stands for.
+    const wired = node.inputs.children;
+    const wiredAt = new Map<NodeId, number>();
+    if (Array.isArray(wired))
+      wired.forEach((ref, i) => wiredAt.has(ref.node) || wiredAt.set(ref.node, i));
+    for (const childId of byName(ctx.state, childIdsOf(ctx.state, nodeId))) {
+      ctx.visited.delete(childId);
+      const at = wiredAt.get(childId);
+      walkOneAsChild(
+        ctx,
+        childId,
+        depth + 1,
+        row.key,
+        at === undefined
+          ? { nodeId, socket: 'children', index: -1, byParentInput: true }
+          : { nodeId, socket: 'children', index: at },
+      );
     }
     return;
   }
@@ -254,6 +286,48 @@ function projectGltfChildren(
   }
 }
 
+type RowParent = NonNullable<TreeRow['parent']>;
+
+/**
+ * #1505 — the `parent` each top-level band gives the objects it lists: the scene's `children`, its
+ * `lights`, the active rig's lights, then the cameras, in the order the walk below lists them. A
+ * collection lists a member under it with this same linkage, so a drag from that row moves or
+ * reorders the wire the member really hangs on.
+ *
+ * A rig light or a camera that a `children` or `lights` entry already holds (a camera nested under
+ * a Group, #231 Inc 3.3) is not in its band: the walk lists it under that holder, not at the top.
+ * Which ones those are is what the walk visits, so a dry walk answers it rather than a second
+ * description of what the walk descends. First band wins when an object sits in two.
+ */
+function bandParents(
+  state: DagState,
+  sceneId: NodeId,
+  sceneChildren: readonly NodeRef[],
+  sceneLights: readonly NodeRef[],
+  rigId: NodeId | null,
+): Map<NodeId, RowParent> {
+  const out = new Map<NodeId, RowParent>();
+  const dry: WalkCtx = { rows: [], state, visited: new Set([sceneId]) };
+  const take = (id: NodeId, parent: RowParent) => {
+    if (!out.has(id)) out.set(id, parent);
+    dry.visited.delete(id);
+    walkOneAsChild(dry, id, 1, sceneId, parent);
+  };
+  sceneChildren.forEach((ref, i) =>
+    take(ref.node, { nodeId: sceneId, socket: 'children', index: i }),
+  );
+  sceneLights.forEach((ref, i) => take(ref.node, { nodeId: sceneId, socket: 'lights', index: i }));
+  if (rigId) {
+    resolveRigLightSources(state).forEach((id, i) => {
+      if (!dry.visited.has(id)) take(id, { nodeId: rigId, socket: 'lights', index: i });
+    });
+  }
+  enumerateCameraNodeIds(state).forEach((id, i) => {
+    if (!dry.visited.has(id)) out.set(id, { nodeId: sceneId, socket: 'camera', index: i });
+  });
+  return out;
+}
+
 export function buildSceneTreeRows(state: DagState): TreeRow[] {
   const sceneRef = state.outputs.scene;
   if (!sceneRef) return [];
@@ -273,12 +347,29 @@ export function buildSceneTreeRows(state: DagState): TreeRow[] {
   ctx.visited.add(sceneRef.node);
   const children = sceneNode.inputs.children;
   const sceneChildren = Array.isArray(children) ? children : [];
+  const lights = sceneNode.inputs.lights;
+  const sceneLights = Array.isArray(lights) ? lights : [];
+  const rigId = resolveActiveRigNode(state);
+  const bands = bandParents(state, sceneRef.node, sceneChildren, sceneLights, rigId);
   // #1451 — the scene's collections first, as Blender's outliner lists a scene's collections, each
-  // with the scene objects it holds under it. A member keeps its scene `children` linkage (it is
-  // still the scene's child — a collection is membership, not a parent), so reordering and the eye
-  // act on it as on any top-level row. A collection row has no linkage: it is not dragged in this
-  // slice. A member nested under another Object is listed under that Object, as ever.
+  // with the scene objects it holds under it. A member keeps its band linkage (it is still the
+  // scene's child, light or camera — a collection is membership, not a parent), so reordering and
+  // the eye act on it as on any top-level row. A collection row has no linkage: it is not dragged
+  // in this slice. A member nested under another Object is listed under that Object, as ever.
+  // #1505 — whatever band the member sits in: the scene's `children`, its `lights`, the active
+  // rig's lights or the cameras. Each keeps the `parent` its top-level row carried, and is then
+  // not listed at the top level as well. One in several collections has a row under each, as a
+  // nested collection does (#397), so a nodeId can repeat in these rows; a key never does.
   const collected = new Set<NodeId>();
+  // #1823 — the scene's list and its collections are membership, not parenting. #1833 — a member
+  // has a row in the list that holds it unless its parent has a row in that same list, where it
+  // nests under the parent instead. A parent listed anywhere else lists it as a child as well, so
+  // the member is found both under its collection and under its parent. Blender 5.1.1's outliner
+  // moves a child's row under its parent only when it finds that row in the parent's own
+  // collection, and otherwise leaves it where it is and adds one under the parent
+  // (tree_display_view_layer.cc, `make_object_parent_hierarchy_collections`).
+  const nestsIn = (id: NodeId, listed: (p: NodeId) => boolean) =>
+    parentIdsOf(state, id).some(listed);
   // #397 — a nested collection lists under the collection holding it, and under each one when it
   // sits in several, as Blender's outliner lists one row per path. Its members list under it.
   const walkCollection = (collectionId: NodeId, depth: number, parentKey: string) => {
@@ -295,22 +386,30 @@ export function buildSceneTreeRows(state: DagState): TreeRow[] {
         walkCollection(child, depth + 1, key);
       }
     }
-    for (const member of collectionMembersOf(state, collectionId)) {
-      const i = sceneChildren.findIndex((ref) => ref.node === member);
-      if (i < 0 || collected.has(member)) continue;
+    const members = collectionMembersOf(state, collectionId);
+    const inThis = new Set(members);
+    members.forEach((member, i) => {
+      if (nestsIn(member, (p) => inThis.has(p)) || !state.nodes[member]) return;
+      // #1823 — a member listed by the collection alone is the scene's too (collections are
+      // drawn); its row's linkage is the collection's own list.
+      const parent = bands.get(member) ?? {
+        nodeId: collectionId,
+        socket: 'members',
+        index: i,
+      };
       collected.add(member);
       ctx.visited.delete(member);
-      walkOneAsChild(ctx, member, depth + 1, key, {
-        nodeId: sceneRef.node,
-        socket: 'children',
-        index: i,
-      });
-    }
+      walkOneAsChild(ctx, member, depth + 1, key, parent);
+    });
   };
   for (const collectionId of sceneCollectionsOf(state))
     walkCollection(collectionId, 1, sceneRef.node);
+  // The scene's own list (Blender's scene collection): a parent a collection lists has no row here
+  // (it is listed under that collection instead), so its child gets a row of its own here.
+  const inSceneList = new Set(sceneChildren.map((ref) => ref.node));
+  const listedHere = (p: NodeId) => inSceneList.has(p) && !collected.has(p);
   sceneChildren.forEach((ref, i) => {
-    if (collected.has(ref.node)) return;
+    if (collected.has(ref.node) || nestsIn(ref.node, listedHere)) return;
     ctx.visited.delete(ref.node);
     walkOneAsChild(ctx, ref.node, 1, sceneRef.node, {
       nodeId: sceneRef.node,
@@ -323,21 +422,19 @@ export function buildSceneTreeRows(state: DagState): TreeRow[] {
   // viewport helper-pick selected them). Carrying `parent.socket: 'lights'` lets
   // a light be drag-reparented into a Group's `children` (cross-socket reparent,
   // SceneTree.canReparent) and back to the scene's light list.
-  const lights = sceneNode.inputs.lights;
-  if (Array.isArray(lights)) {
-    lights.forEach((ref, i) => {
-      ctx.visited.delete(ref.node);
-      walkOneAsChild(ctx, ref.node, 1, sceneRef.node, {
-        nodeId: sceneRef.node,
-        socket: 'lights',
-        index: i,
-      });
+  sceneLights.forEach((ref, i) => {
+    if (collected.has(ref.node)) return;
+    ctx.visited.delete(ref.node);
+    walkOneAsChild(ctx, ref.node, 1, sceneRef.node, {
+      nodeId: sceneRef.node,
+      socket: 'lights',
+      index: i,
     });
-  }
+  });
   // #1480 — and the active lighting profile's lights, the ones the rig band draws
   // (`resolveRigLightSources`), so each has a row and an eye like a scene light. The row's parent is
-  // the rig's own `lights` list — the socket the light is wired to, which a drag reorders.
-  const rigId = resolveActiveRigNode(state);
+  // the rig's own `lights` list — the socket the light is wired to, which a drag reorders. One a
+  // collection listed is in `visited` already, so it is not listed here again (#1505).
   if (rigId) {
     resolveRigLightSources(state).forEach((lightId, i) => {
       if (ctx.visited.has(lightId)) return;

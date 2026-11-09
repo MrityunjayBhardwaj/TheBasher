@@ -11,7 +11,8 @@
 
 import { beforeEach, describe, expect, it } from 'vitest';
 import { Euler, Quaternion, Vector3 } from 'three';
-import { applyOp, evaluate, __resetRegistryForTests } from '../core/dag';
+import { evaluate, __resetRegistryForTests } from '../core/dag';
+import { applyOp } from '../test-utils/committedApplyOp';
 import type { DagState } from '../core/dag/state';
 import type { Op } from '../core/dag/types';
 import { buildDefaultDagState } from '../core/project/default';
@@ -141,12 +142,18 @@ describe('#1153 — every read-side entry honours the mode', () => {
       },
       {
         type: 'connect',
-        from: { node: 'kid', socket: 'out' },
-        to: { node: 'g', socket: 'children' },
+        from: { node: 'g', socket: 'world' },
+        to: { node: 'kid', socket: 'parent' },
       },
       {
         type: 'connect',
         from: { node: 'g', socket: 'out' },
+        to: { node: 'n_scene', socket: 'children' },
+      },
+      // #1823 — the kid is the scene's too: parenting is not membership.
+      {
+        type: 'connect',
+        from: { node: 'kid', socket: 'out' },
         to: { node: 'n_scene', socket: 'children' },
       },
     ]);
@@ -355,14 +362,20 @@ describe('#1153 — writers go through the mode (Blender object.cc:2826-2837)', 
       },
       {
         type: 'connect',
-        from: { node: 'kid', socket: 'out' },
-        to: { node: 'g', socket: 'children' },
+        from: { node: 'g', socket: 'world' },
+        to: { node: 'kid', socket: 'parent' },
       },
       ...((inScene
         ? [
             {
               type: 'connect',
               from: { node: 'g', socket: 'out' },
+              to: { node: 'n_scene', socket: 'children' },
+            },
+            // #1823 — the kid is the scene's too: parenting is not membership.
+            {
+              type: 'connect',
+              from: { node: 'kid', socket: 'out' },
               to: { node: 'n_scene', socket: 'children' },
             },
           ]

@@ -6,7 +6,9 @@
 //
 // REF: THESIS.md §50.
 
+import { getNodeType } from './registry';
 import type { Node, NodeId, NodeRef } from './types';
+import { gatheringSocketOf, worldChildrenOf } from './worldChildren';
 
 /**
  * The graph WITHOUT any claim about what its params mean — ids, types, edges, outputs.
@@ -194,6 +196,11 @@ export function wouldCreateCycle(
           if (!visited.has(ref.node)) stack.push(ref.node);
         }
       }
+      // #1824 — a parent's value gathers its children's (see `gathersChildren`), so it depends
+      // on them as if they were wired in, as a `children` wire made it before.
+      if (gatheringSocketOf(node.type)) {
+        for (const child of worldChildrenOf(state, id)) if (!visited.has(child)) stack.push(child);
+      }
     }
     // #291 — also traverse driver/overlay dependencies for this node.
     for (const dep of paramDeps?.[id] ?? []) {
@@ -201,4 +208,167 @@ export function wouldCreateCycle(
     }
   }
   return false;
+}
+
+type Point = `${'v' | 'w'}:${NodeId}`;
+
+function worldPointOf(state: DagState, ref: NodeRef): Point {
+  const producer = state.nodes[ref.node];
+  const world = producer ? getNodeType(producer.type)?.outputs[ref.socket]?.world === true : false;
+  return `${world ? 'w' : 'v'}:${ref.node}`;
+}
+
+/** What a point reads: see {@link wouldCreateCycleAt}. `references` adds a step's world references. */
+function worldPointsUpstream(
+  state: DagState,
+  point: Point,
+  paramDeps?: Record<NodeId, NodeId[]>,
+  references = false,
+): Point[] {
+  const id = point.slice(2);
+  const node = state.nodes[id];
+  const out: Point[] = [];
+  for (const dep of paramDeps?.[id] ?? []) out.push(`v:${dep}`, `w:${dep}`);
+  if (!node) return out;
+  const def = getNodeType(node.type);
+  const worldPoint = point.startsWith('w:');
+  if (worldPoint) out.push(`v:${id}`);
+  for (const [socket, binding] of Object.entries(node.inputs)) {
+    const into = def?.inputs[socket];
+    const parentInput = into?.world === true;
+    // #1811 — a chain input feeds the world output only, as the parent input does.
+    if ((parentInput || into?.chain !== undefined) !== worldPoint) continue;
+    for (const ref of Array.isArray(binding) ? binding : [binding]) {
+      if (parentInput) out.push(`w:${ref.node}`, `v:${ref.node}`);
+      else out.push(worldPointOf(state, ref));
+    }
+  }
+  if (references && worldPoint) {
+    for (const target of worldRefTargets(state, id)) out.push(`w:${target}`);
+  }
+  // #1811 — the bottom of a chain reads the object it names: its value and what it hangs from,
+  // not its world, which is what the chain ends in.
+  const ownOf =
+    worldPoint && def?.ownWorldOf
+      ? (node.params as Record<string, unknown>)[def.ownWorldOf]
+      : undefined;
+  const owner = typeof ownOf === 'string' ? state.nodes[ownOf] : undefined;
+  if (owner) {
+    out.push(`v:${owner.id}`);
+    const ownerDef = getNodeType(owner.type);
+    for (const [socket, binding] of Object.entries(owner.inputs)) {
+      if (ownerDef?.inputs[socket]?.world !== true) continue;
+      for (const ref of Array.isArray(binding) ? binding : [binding])
+        out.push(`w:${ref.node}`, `v:${ref.node}`);
+    }
+  }
+  if (!worldPoint && gatheringSocketOf(node.type)) {
+    for (const child of worldChildrenOf(state, id)) out.push(`v:${child}`);
+  }
+  return out;
+}
+
+/** The objects a chain step reads by reference: each named by a setting, with no wire on its input. */
+function worldRefTargets(state: DagState, id: NodeId): NodeId[] {
+  const node = state.nodes[id];
+  const refs = node ? getNodeType(node.type)?.worldRefs : undefined;
+  if (!refs) return [];
+  const out: NodeId[] = [];
+  for (const [socket, param] of Object.entries(refs)) {
+    if (node.inputs[socket]) continue;
+    const target = (node.params as Record<string, unknown>)[param];
+    if (typeof target !== 'string' || !state.nodes[target]) continue;
+    if (getNodeType(state.nodes[target].type)?.outputs.world?.world !== true) continue;
+    out.push(target);
+  }
+  return out;
+}
+
+const loopedCache = new WeakMap<DagState['nodes'], ReadonlySet<NodeId>>();
+
+/**
+ * #1811 — the chain steps whose reference closes a loop: what they read leads back to their own
+ * result. Kept per node table, so a playhead change reuses it.
+ *
+ * Every loop a graph can hold runs through one of these, because a loop of wires alone is refused at
+ * `connect`. So a walk that passes these steps through (the evaluator's second pass) cannot loop.
+ */
+export function loopedWorldRefs(state: DagState): ReadonlySet<NodeId> {
+  const hit = loopedCache.get(state.nodes);
+  if (hit) return hit;
+  const looped = new Set<NodeId>();
+  for (const [id, node] of Object.entries(state.nodes)) {
+    if (!getNodeType(node.type)?.worldRefs) continue;
+    const goal: Point = `w:${id}`;
+    const stack: Point[] = worldRefTargets(state, id).map((t): Point => `w:${t}`);
+    const visited = new Set<Point>();
+    while (stack.length) {
+      const point = stack.pop()!;
+      if (point === goal) {
+        looped.add(id);
+        break;
+      }
+      if (visited.has(point)) continue;
+      visited.add(point);
+      stack.push(...worldPointsUpstream(state, point, undefined, true));
+    }
+  }
+  loopedCache.set(state.nodes, looped);
+  return looped;
+}
+
+/**
+ * #1824 — {@link wouldCreateCycle} for one new wire, telling a node's world from its value.
+ *
+ * A child and its parent depend on each other at the level of nodes: the child's world reads the
+ * parent's world, and the parent's value gathers the child's value. Asked per node, as
+ * `wouldCreateCycle` asks, every parent wire would close a loop and be refused. Asked per output,
+ * there is none: the parent's world never reads the child. So each node is two points here, its
+ * value (every output but `world`) and its world:
+ *
+ *   - its value depends on what its inputs read (the producer's world when the wire leaves a
+ *     world output), on the children it gathers, and on its param dependencies;
+ *   - its world depends on what its parent input reads (that producer's world, and its value,
+ *     which a bone parent reads), on its own value, and on its param dependencies.
+ *
+ * The wire `from → to` is a loop when what it feeds already reaches back to what it reads.
+ */
+export function wouldCreateCycleAt(
+  state: DagState,
+  from: NodeRef,
+  to: { readonly node: NodeId; readonly socket: string },
+  paramDeps?: Record<NodeId, NodeId[]>,
+): boolean {
+  const upstream = (point: Point) => worldPointsUpstream(state, point, paramDeps);
+  const pointOf = (ref: NodeRef) => worldPointOf(state, ref);
+  const reaches = (start: readonly Point[], goal: Point): boolean => {
+    const stack = [...start];
+    const visited = new Set<Point>();
+    while (stack.length) {
+      const point = stack.pop()!;
+      if (point === goal) return true;
+      if (visited.has(point)) continue;
+      visited.add(point);
+      stack.push(...upstream(point));
+    }
+    return false;
+  };
+  const consumer = state.nodes[to.node];
+  const into = consumer ? getNodeType(consumer.type)?.inputs[to.socket] : undefined;
+  const parentInput = into?.world === true;
+  // #1811 — the consumer's world would read `from`: a loop if `from` already reads that world.
+  if (into?.chain !== undefined) return reaches([pointOf(from)], `w:${to.node}`);
+  if (!parentInput) {
+    // The consumer's value would read `from`: a loop if `from` already reads that value.
+    return reaches([pointOf(from)], `v:${to.node}`);
+  }
+  // The consumer's world would read the parent's world and value ...
+  if (reaches([`w:${from.node}`, `v:${from.node}`], `w:${to.node}`)) return true;
+  // ... and, when the wire leaves a world output, a gathering parent's value would read the
+  // consumer's value.
+  const gathers =
+    pointOf(from).startsWith('w:') &&
+    state.nodes[from.node] !== undefined &&
+    gatheringSocketOf(state.nodes[from.node].type) !== null;
+  return gathers && reaches([`v:${to.node}`], `v:${from.node}`);
 }

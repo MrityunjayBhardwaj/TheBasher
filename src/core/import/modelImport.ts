@@ -208,13 +208,28 @@ export function emptyOps(emptyId: string, transform: ImportedTransform, name: st
   ];
 }
 
-/** #1051 — `child` hangs under `parent`: the hierarchy is an edge, not a field. */
-export function parentEdge(child: string, parent: string): Op {
-  return {
+/**
+ * #1051 — `child` hangs under `parent`: the hierarchy is an edge, not a field. #1824 — under an
+ * Object or a Group the child names its parent (the parent's `world` into the child's `parent`
+ * input). #1823 — and every object an import makes joins the scene's own list, as Blender's
+ * importers link each object they make: parenting is not membership. Every child an import makes
+ * is an Object or a Group, so it has a parent input to name one with.
+ */
+export function parentEdge(child: string, parent: string, sceneNodeId: string): Op[] {
+  const member: Op = {
     type: 'connect',
     from: { node: child, socket: 'out' },
-    to: { node: parent, socket: 'children' },
+    to: { node: sceneNodeId, socket: 'children' },
   };
+  if (parent === sceneNodeId) return [member];
+  return [
+    {
+      type: 'connect',
+      from: { node: parent, socket: 'world' },
+      to: { node: child, socket: 'parent' },
+    },
+    member,
+  ];
 }
 
 /**
@@ -225,9 +240,17 @@ export function parentEdge(child: string, parent: string): Op {
  */
 export function offsetTopLevel(ops: readonly Op[], sceneNodeId: string, offset: Vec3): Op[] {
   if (offset.every((c) => c === 0)) return [...ops];
+  // #1823 — the scene's list is membership: a node hung from a parent is listed too, and rides
+  // with its parent rather than taking the offset itself.
+  const hung = new Set(
+    ops.flatMap((op) => (op.type === 'connect' && op.to.socket === 'parent' ? [op.to.node] : [])),
+  );
   const top = new Set(
     ops.flatMap((op) =>
-      op.type === 'connect' && op.to.node === sceneNodeId && op.to.socket === 'children'
+      op.type === 'connect' &&
+      op.to.node === sceneNodeId &&
+      op.to.socket === 'children' &&
+      !hung.has(op.from.node)
         ? [op.from.node]
         : [],
     ),

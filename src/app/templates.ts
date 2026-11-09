@@ -25,6 +25,9 @@ import { producedTypeOf } from '../core/dag/socketConversion';
 import { subnetworkOf } from '../core/dag/subnetworks';
 import type { DagState } from '../core/dag/state';
 import type { InputBinding, Node, NodeId, NodeRef, Op } from '../core/dag/types';
+import { worldChildrenOf, worldParentOf } from '../core/dag/worldChildren';
+import { isMembershipWire, linkIntoActiveCollection } from './collections';
+import { freshObjectName, takenObjectNames } from './objectNames';
 import {
   CONTROLLER_INPUTS,
   TEMPLATE_BODY_SOCKET,
@@ -42,6 +45,8 @@ export { matchInstanceBody } from '../core/dag/templates';
 const LEAF_FOR_TYPE: Readonly<Record<string, string>> = {
   Number: 'BodyInput',
   Vector3: 'BodyInputVec',
+  Quaternion: 'BodyInputRotation',
+  Matrix4: 'BodyInputTransform',
   PosedSkeleton: 'BodyInputPose',
 };
 
@@ -91,11 +96,26 @@ export function planCollapseToTemplate(
 
   // What the outside reads: exactly one output.
   const outsideReads: { consumer: NodeId; socket: string; ref: NodeRef }[] = [];
+  // #1847 — a list that only says a child hung inside the selection is in the scene is membership,
+  // not a read of a second output (#1823): the child stands in the instance with its parent, so
+  // the wire goes. A child whose parent stays outside is an object the outside reads, as ever.
+  const hungInside = (id: NodeId) => {
+    const parent = worldParentOf(state, id);
+    return parent !== null && inside.has(parent);
+  };
+  const membershipOfHung: { consumer: NodeId; socket: string; ref: NodeRef }[] = [];
   for (const node of Object.values(state.nodes)) {
     if (inside.has(node.id)) continue;
     for (const [socket, binding] of Object.entries(node.inputs))
-      for (const ref of refsOf(binding))
-        if (inside.has(ref.node)) outsideReads.push({ consumer: node.id, socket, ref });
+      for (const ref of refsOf(binding)) {
+        if (!inside.has(ref.node)) continue;
+        const listing =
+          (node.type === 'Scene' && socket === 'children') ||
+          isMembershipWire(state, node.id, socket);
+        const read = { consumer: node.id, socket, ref };
+        if (listing && hungInside(ref.node)) membershipOfHung.push(read);
+        else outsideReads.push(read);
+      }
   }
   const outputs = [...new Map(outsideReads.map((r) => [refKey(r.ref), r.ref])).values()];
   if (outputs.length === 0)
@@ -123,6 +143,8 @@ export function planCollapseToTemplate(
     feeding.add(id);
     for (const binding of Object.values(state.nodes[id].inputs))
       for (const ref of refsOf(binding)) stack.push(ref.node);
+    // #1847 — a hung child reads its parent, and the parent's value gathers it: it feeds the output.
+    stack.push(...worldChildrenOf(state, id));
   }
   const stray = [...inside].filter((id) => !feeding.has(id));
   if (stray.length)
@@ -248,6 +270,9 @@ export function planCollapseToTemplate(
   // The first instance's nodes are its body, so they hand the controller to it too.
   for (const t of trailing)
     ops.push({ type: 'setParam', nodeId: t.id, paramPath: t.name, value: undefined });
+  for (const r of membershipOfHung) {
+    ops.push({ type: 'disconnect', from: r.ref, to: { node: r.consumer, socket: r.socket } });
+  }
   for (const r of outsideReads) {
     const to = { node: r.consumer, socket: r.socket };
     const index = refsOf(state.nodes[r.consumer].inputs[r.socket]).findIndex(
@@ -261,6 +286,15 @@ export function planCollapseToTemplate(
       from: { node: instanceId, socket: 'out' },
       to,
       ...(list ? { index } : {}),
+    });
+  }
+
+  // #1518 — an instance that stands in the scene is named for its template, as any object is.
+  if (outType === 'SceneObject') {
+    ops.push({
+      type: 'setMeta',
+      nodeId: instanceId,
+      name: freshObjectName(name.trim() || 'Template', takenObjectNames(state)),
     });
   }
 
@@ -410,6 +444,48 @@ export function collapseSelectionToTemplate(
   return { ok: true, type: plan.definition.type, instance };
 }
 
+/**
+ * The wire a new instance needs to stand in the scene, when what it outputs is a scene object
+ * (#1518): nothing else would hold it, and `planTemplateInstance` leaves its output to the caller.
+ * Empty for any other template, whose output the caller wires to what reads it.
+ */
+export function templateInstanceIntoSceneOps(
+  state: DagState,
+  def: TemplateDefinition,
+  instance: NodeId,
+): Op[] {
+  const sceneId = state.outputs.scene?.node;
+  if (!sceneId || def.output.type !== 'SceneObject') return [];
+  return linkIntoActiveCollection(
+    state,
+    [
+      {
+        type: 'connect',
+        from: { node: instance, socket: 'out' },
+        to: { node: sceneId, socket: 'children' },
+      },
+      {
+        type: 'setMeta',
+        nodeId: instance,
+        name: freshObjectName(def.label, takenObjectNames(state)),
+      },
+    ],
+    [instance],
+  );
+}
+
+/** The ops `addTemplateInstance` dispatches: pure, so the door census can run it (#1822). */
+export function planAddTemplateInstance(
+  state: DagState,
+  def: TemplateDefinition,
+  instance: NodeId,
+): Op[] {
+  return [
+    ...planTemplateInstance(state, def, instance),
+    ...templateInstanceIntoSceneOps(state, def, instance),
+  ];
+}
+
 /** Add an instance of the graph's template `type`. */
 export function addTemplateInstance(type: string): TemplateActionResult {
   const state = useDagStore.getState().state;
@@ -419,7 +495,7 @@ export function addTemplateInstance(type: string): TemplateActionResult {
   try {
     useDagStore
       .getState()
-      .dispatchAtomic(planTemplateInstance(state, def, instance), 'user', `add ${def.label}`);
+      .dispatchAtomic(planAddTemplateInstance(state, def, instance), 'user', `add ${def.label}`);
   } catch (e) {
     return { ok: false, reason: (e as Error).message };
   }

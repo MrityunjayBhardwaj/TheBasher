@@ -158,10 +158,13 @@ describe('a type a socket already takes is never converted (#1549)', () => {
     expect(sample(vector)).toEqual([7, 0, 0]);
   });
 
-  it('an input that takes both has no conversion at all', () => {
+  it('an input that takes both converts neither into the other', () => {
     const into = requireNodeType('ParamDriver').inputs.in;
-    expect(acceptedTypes(into)).toEqual(['Number', 'Vector3']);
-    expect(conversionsInto(into)).toBeNull();
+    // #1785 — it takes a rotation and a transform as they are too, so nothing is converted on
+    // the way in. A rotation still writes an Euler `rotation` in degrees, as the conversion did
+    // (Blender's `quaternion_to_float3`): the driver makes that conversion itself, by paramPath.
+    expect(acceptedTypes(into)).toEqual(['Number', 'Vector3', 'Quaternion', 'Matrix4']);
+    expect([...(conversionsInto(into)?.keys() ?? [])]).toEqual([]);
   });
 });
 
@@ -239,7 +242,7 @@ describe('a wire that cannot convert says why (#1549)', () => {
 });
 
 describe('every pair of plain-value types that can meet has an answer (#1549)', () => {
-  it('each is taken as it is or converted; none is refused', () => {
+  it('each is taken as it is, converted, or refused exactly where Blender refuses it', () => {
     // The plain-value types any socket carries. A new one (a Color socket, a Boolean socket)
     // lands here with no answer for its pairs and reddens this test.
     const VALUE: readonly SocketTypeName[] = [
@@ -247,6 +250,7 @@ describe('every pair of plain-value types that can meet has an answer (#1549)', 
       'Vector2',
       'Vector3',
       'Quaternion',
+      'Matrix4',
       'Color',
       'Boolean',
     ];
@@ -263,20 +267,43 @@ describe('every pair of plain-value types that can meet has an answer (#1549)', 
           inputs.push({ at: `${id}.${socket}`, desc });
       }
     }
-    expect([...produced].sort()).toEqual(['Number', 'Vector3']);
-    expect(inputs).toHaveLength(19);
+    expect([...produced].sort()).toEqual(['Matrix4', 'Number', 'Quaternion', 'Vector3']);
+    expect(inputs).toHaveLength(54);
 
     const answers: Record<string, number> = { taken: 0, converted: 0, refused: 0 };
+    const refused = new Set<string>();
     for (const { desc } of inputs) {
       for (const from of produced) {
         if (acceptedTypes(desc).includes(from)) answers.taken += 1;
         else if (inputTakes(desc, from)) answers.converted += 1;
-        else answers.refused += 1;
+        else {
+          answers.refused += 1;
+          refused.add(`${from}>${acceptedTypes(desc).join('|')}`);
+        }
       }
     }
-    // 19 inputs × 2 produced types = 38. Number inputs (14): take a Number, convert a Vector3
-    // (#1590; refused before). Vector3 inputs (4): take a Vector3, convert a Number. The one
-    // that takes both: 2 taken.
-    expect(answers).toEqual({ taken: 20, converted: 18, refused: 0 });
+    // 54 inputs × 4 produced types = 216 = taken + converted + refused. The inputs: Number 15,
+    // Vector3 12, Matrix4 21, Quaternion 5, the driver's Number|Vector3|Quaternion|Matrix4 1 (#1785
+    // widened the driver's input to take a rotation and a transform as they are, so it takes all
+    // four types: +2 taken, −1 converted (the rotation), −1 refused (the transform); #1810 added the
+    // `parent` input of Object, Group and Null: each takes a Matrix4, converts a Quaternion and
+    // refuses a Number and a Vector3, so +1 taken, +1 converted, +2 refused each; #1826 added the
+    // Solver's rotation and transform state lists; #1811 added Mix's `factor` and matrix pair and
+    // Polar Split's `transform`, each +1 taken, +1 converted, +2 refused, and a constraint chain's 8
+    // inputs (`constraints` on Object, Group and Null; `in`, `aim` and `parent` on a Track-To; `in`
+    // and `curve` on a Follow Path), the same each; #1801 added Mix's
+    // vector and rotation pairs, #1802 Fit's `inVector`; they are counted whether or
+    // not a mode has them on, because
+    // the type rule does not depend on the mode). Before #1784 nothing was refused; the
+    // transform and rotation types bring Blender's own refusals with them, and only those
+    // (`type_conversions.cc` registers none of these pairs).
+    expect(answers).toEqual({ taken: 57, converted: 75, refused: 84 });
+    expect([...refused].sort()).toEqual([
+      'Matrix4>Number',
+      'Matrix4>Vector3',
+      'Number>Matrix4',
+      'Quaternion>Number',
+      'Vector3>Matrix4',
+    ]);
   });
 });

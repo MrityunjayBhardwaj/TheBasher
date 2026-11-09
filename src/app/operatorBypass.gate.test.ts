@@ -162,7 +162,10 @@ describe('ns-2 step 3 — the bypass, censused with its category attached', () =
     // 90 -> 91 at #1353 (CaptureModifier), an OPERATOR, so the operator census moves with it.
     // 91 -> 92 at #1557 (TemplateDefinition, a template held in the graph), NOT an operator.
     // 92 -> 90 at #1666 (Shot and Cut retired), neither an operator.
-    expect(listNodeTypes()).toHaveLength(90);
+    // 90 -> 98 at #1784 (the eight Transform nodes), NOT operators.
+    // 98 -> 100 at #1826 (BodyInputRotation and BodyInputTransform, Solver leaves), NOT operators.
+    // 100 -> 101 -> 102 at #1811 (PolarSplit, OwnWorld). 102 -> 103 at #1811 (Value).
+    expect(listNodeTypes()).toHaveLength(103);
   });
 
   it('`muted` is declared ELEVEN times in source, and that is three different populations', () => {
@@ -289,6 +292,7 @@ describe('ns-2 step 3 — the bypass, censused with its category attached', () =
     // nobody can quietly re-scope. Their numbers are UNCHANGED across step 5, which is
     // itself the assertion that this step stayed inside its lane.
     expect(casts).toEqual([
+      ['src/app/constraintChain.ts', 1], // constraint / driver lane — OUT of this phase (#673)
       ['src/app/constraintStack.ts', 1], // constraint / driver lane — OUT of this phase (#673)
       ['src/app/nodeConstraints.ts', 2], // constraint / driver lane — OUT of this phase (#673)
       // `src/timeline/TimelineDrawer.tsx` (2, timeline lane) LEFT at #1215: its Mute/Solo pressed state

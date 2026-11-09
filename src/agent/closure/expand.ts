@@ -31,7 +31,9 @@ import {
   idsOfRef,
   wireOwnership,
 } from '../../core/dag/idRefSweep';
+import { chainNodeIds } from '../../core/dag/chainEdit';
 import { getNodeType } from '../../core/dag/registry';
+import { inputsBelow } from '../../core/dag/worldChildren';
 import { subnetworkOf } from '../../core/dag/subnetworks';
 import { chainSocketOf, isDataLaneOperator } from '../../app/operatorChain';
 import { rigReach, rigReachNodes } from '../../app/animate/renameBone';
@@ -209,6 +211,8 @@ function visitEdge(
     for (const ref of getNodeType(self.type)?.idRefs ?? []) {
       if (ref.owns) for (const id of idsOfRef(self, ref, state.nodes)) reach(id);
     }
+    // #1846 — its constraint chain, the blend nodes included: what the shared delete takes.
+    for (const id of chainNodeIds(state, from)) reach(id);
     let ownsBody = false;
     for (const [socket, binding] of Object.entries(self.inputs)) {
       const owns = wireOwnership(self.type, socket);
@@ -243,7 +247,9 @@ function visitEdge(
   const node = state.nodes[from];
   if (!node) return;
 
-  for (const [socket, binding] of Object.entries(node.inputs)) {
+  // #1824 — the inputs as a walk DOWN reads them: a group's children hung by their parent input
+  // are among them, and a child's own parent input (which leads UP) is not.
+  for (const [socket, binding] of Object.entries(inputsBelow(state, from, node))) {
     if (kind !== 'children' && !socketCarriesKind(socket, kind, node)) continue;
     const refs = Array.isArray(binding) ? binding : [binding];
     for (const ref of refs) {
@@ -309,7 +315,9 @@ function buildConsumerIndex(
 ): Map<NodeId, Array<{ consumer: NodeId; socket: string }>> {
   const index = new Map<NodeId, Array<{ consumer: NodeId; socket: string }>>();
   for (const consumer of Object.values(state.nodes)) {
-    for (const [socket, binding] of Object.entries(consumer.inputs)) {
+    // #1824 — a child hung by its parent input is consumed by its parent, as a wired child is; the
+    // parent input itself is not the parent's consumer.
+    for (const [socket, binding] of Object.entries(inputsBelow(state, consumer.id, consumer))) {
       const refs = Array.isArray(binding) ? binding : [binding];
       for (const ref of refs) {
         let bucket = index.get(ref.node);

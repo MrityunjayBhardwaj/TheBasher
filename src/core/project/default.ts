@@ -10,6 +10,7 @@
 // Leaf node, no consumers in the seed — animation channels wire to it
 // when they exist.
 
+import { chainFollowUpOps } from '../dag/chainEdit';
 import { cameraRotationLookingAt } from '../../app/cameraOrientation';
 import { applyOp, emptyDagState, type DagState } from '../dag';
 import type { Op } from '../dag/types';
@@ -178,6 +179,8 @@ const DEFAULT_OPS: Op[] = [
 export function buildDefaultDagState(): DagState {
   let state = emptyDagState();
   for (const op of DEFAULT_OPS) state = applyOp(state, op).next;
+  // #1812 — built off the store, so the commit step that wires a constraint's chain is run here.
+  for (const op of chainFollowUpOps(emptyDagState(), state)) state = applyOp(state, op).next;
   state = {
     ...state,
     outputs: {

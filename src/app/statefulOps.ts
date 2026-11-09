@@ -37,18 +37,14 @@ import { evaluate, setStatefulReplay, type EvaluatorCache } from '../core/dag/ev
 import { arriving, producedTypeOf } from '../core/dag/socketConversion';
 import { getNodeType, registryEpoch } from '../core/dag/registry';
 import type { DagState } from '../core/dag/state';
-import {
-  bindBodyInputs,
-  bodyInputLeavesOf,
-  holdersOf,
-  type BodyInputLeaf,
-} from '../core/dag/subnetworks';
+import { bindBodyInputs, bodyInputLeavesOf, holdersOf } from '../core/dag/subnetworks';
 import { LIVE_INPUT, REPLAY_INPUTS, TEMPLATE_TYPE_PREFIX } from '../core/dag/templates';
 import type { EvalCtx, Node } from '../core/dag/types';
 import { FRAMES_PER_SECOND } from './stores/timeStore';
 import { lagStep } from '../nodes/valueMath';
 import {
   makeParamDriverChannelValueFn,
+  makeParamDriverRotationChannelValueFn,
   makeParamDriverVec3ChannelValueFn,
   type ParamDriverParams,
 } from '../nodes/ParamDriver';
@@ -59,6 +55,16 @@ import {
   readTransformChannelAt,
   readTransformPositionAt,
 } from './transformChannelSource';
+import { resolveEvaluatedTransform } from './resolveEvaluatedTransform';
+import {
+  IDENTITY_MAT4,
+  composeTransform,
+  eulerToQuat,
+  isMat4,
+  isQuat,
+  type Mat4,
+  type Quat,
+} from '../core/math/transformMath';
 
 /** Never integrate more than this many frames back in one `sample`. A first-order
  *  lag with factor > 0 has fully converged long before this; the cap only guards
@@ -89,6 +95,11 @@ function singleInputRef(
  * by the node definition's `stateful` flag (Lag today), so it stays type-agnostic:
  * any future stateful op wired into a driver replays through the same path.
  */
+/** The output of the stateful source a driver's `in` is wired to (#1826). */
+export function statefulSocketOf(driverNode: NodeLike): string | undefined {
+  return singleInputRef(driverNode, 'in')?.socket;
+}
+
 export function statefulSourceOf(driverNode: NodeLike, state: DagState): Node | null {
   // A stateful op can drive a scalar target OR a Vector3 target (S #300 — a vec
   // Solver/spring driving a position). Both arrive on the same `in` socket since #609,
@@ -116,6 +127,7 @@ function isVec3(v: unknown): v is Vec3 {
 }
 
 const ORIGIN: Vec3 = [0, 0, 0];
+const NO_ROTATION: Quat = [0, 0, 0, 1];
 
 /** The EvalCtx for a specific integer frame — the per-frame clock the replay samples
  *  its input at (so an animated controller resolves to its value AT that frame). */
@@ -367,70 +379,90 @@ function replayLag(
  *  unevaluable). No shared cache: the binding makes the sub-graph value frame-dependent and
  *  it is tiny, so a fresh walk per frame is both correct (no cross-frame poisoning) and
  *  cheap. */
-function cookSolverStep(
-  state: DagState,
-  solverId: string,
-  body: { node: string; socket?: string },
-  leaves: readonly BodyInputLeaf[],
-  prev: number,
-  input: number,
-  frame: number,
-): number {
-  const overrides = bindBodyInputs(state, solverId, leaves, { prev, input });
-  try {
-    // The wired OUTPUT, not the node's whole value: a body with more than one output (another
-    // Solver, #1558) evaluates to a record, and reading that as a number gave 0.
-    const v = evaluate(state, body.node, {
-      ctx: ctxAtFrame(frame),
-      overrides,
-      socket: body.socket,
-    }).value;
-    return typeof v === 'number' && Number.isFinite(v) ? v : 0;
-  } catch {
-    return 0;
-  }
-}
-
-/** Replay a Solver's sub-network up to `frame(targetSeconds)`. Generalizes {@link
- *  replayLag}: the per-frame step cooks the sub-network instead of applying `lagStep`.
- *  Seed = the live input at the seed frame (Houdini Input_1 seeds Prev_Frame; matches
- *  Lag). An unfinished Solver (no `body` wired) falls back to its live input, never NaN. */
-function replaySolver(
-  state: DagState,
-  node: Node,
-  targetSeconds: number,
-  cache?: EvaluatorCache,
-): number {
-  const seedFrame = seedFrameOf(state, node);
-  const targetFrame = Math.round(targetSeconds * FRAMES_PER_SECOND);
-  const inputAt = (frame: number) => statefulInputAt(state, node, ctxAtFrame(frame), cache);
-
-  const bodyRef = singleInputRef(node, 'body');
-  const bodyId = bodyRef?.node;
-  if (!bodyId || !state.nodes[bodyId]) return inputAt(targetFrame);
-  const body = { node: bodyId, socket: bodyRef.socket };
-  const leaves = bodyInputLeavesOf(state, node.id);
-
-  return cachedIntegrate(state, node.id, seedFrame, targetFrame, inputAt, (prev, frame) =>
-    cookSolverStep(state, node.id, body, leaves, prev, inputAt(frame), frame),
-  );
-}
-
-// ── The TUPLE-state Solver — vec state (S, #300, the 2nd-order Spring) ─────────
+// ── The Solver's state: every type it carries, stepped together (#1826, #1828) ──
 //
-// A scalar Solver carries ONE number forward; a 2nd-order spring's state is TWO Vec3s
-// (position + velocity), so the vec Solver carries a Vec3[] tuple. `bodies[i]` is the
-// sub-network output for slot i (bodies[0] = new position, bodies[1] = new velocity);
-// `prevVec` element `slot` feeds back prevState[slot]; `inputVec` binds the live target
-// vector (a controller's whole position, the F2b Point road). The Solver's driven value
-// is slot 0 (position). Everything else — the seed+interval replay, determinism under
-// scrub, both H40 roads calling one `sample` — is EXACTLY Lag's/the scalar Solver's
-// contract, only the state type widens (number → Vec3[]).
+// A Solver carries its state forward from frame to frame, as Blender's Simulation Zone does
+// (each state item has its own socket type, `NodeSimulationItem.socket_type`). Each kind of
+// state is a row of `STATE_KINDS`: the body socket that computes the next value, the named
+// inputs a step reads (the previous value, and the live input), the value a slot starts from
+// when nothing seeds it, and how the live input is read. A Number is one value (`body`); the
+// other kinds are lists, one element per state slot (a spring: slot 0 = position, slot 1 =
+// velocity).
+//
+// Every kind the Solver has wired is stepped in ONE cook per frame, and the whole state is kept
+// as ONE history per Solver. Before, the number and the vector were replayed apart and saved
+// under the same key, so with both wired the vector read the number's history and stayed at
+// the origin (#1828).
+//
+// Seed (Houdini's Input_1 seeds Prev_Frame; Lag's seed rule): slot 0 of each kind starts on its
+// live input at the seed frame, every other slot on the kind's default. A kind whose body is
+// not wired is not stepped: it reads its live input (an unfinished Solver, never NaN).
 
-/** True for a Solver in VEC/tuple mode: its `bodies` (Vector3 multi) input is wired.
- *  A scalar Solver (only `body` wired) stays on the byte-identical scalar path. */
-function isVecSolver(node: NodeLike): boolean {
-  return node.type === 'Solver' && multiInputRefs(node, 'bodies').length > 0;
+interface StateKind {
+  /** The Solver input the next value comes from: one wire for a single kind, a list for a list. */
+  readonly body: string;
+  readonly list: boolean;
+  /** The named inputs a step reads: the previous value(s) and the live input. */
+  readonly prev: string;
+  readonly input: string;
+  /** What a slot holds when nothing seeds it, and the test a computed value must pass. */
+  readonly empty: unknown;
+  readonly valid: (v: unknown) => boolean;
+  /** The live input at `ctx`. */
+  readonly inputAt: (state: DagState, node: Node, ctx: EvalCtx, cache?: EvaluatorCache) => unknown;
+}
+
+const isFiniteNumber = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
+
+const STATE_KINDS = {
+  number: {
+    body: 'body',
+    list: false,
+    prev: 'prev',
+    input: 'input',
+    empty: 0,
+    valid: isFiniteNumber,
+    inputAt: statefulInputAt,
+  },
+  vector: {
+    body: 'bodies',
+    list: true,
+    prev: 'prevVec',
+    input: 'inputVec',
+    empty: ORIGIN,
+    valid: isVec3,
+    inputAt: statefulInputVecAt,
+  },
+  rotation: {
+    body: 'bodiesRotation',
+    list: true,
+    prev: 'prevRotation',
+    input: 'inputRotation',
+    empty: NO_ROTATION,
+    valid: isQuat,
+    inputAt: controllerRotationAt,
+  },
+  transform: {
+    body: 'bodiesTransform',
+    list: true,
+    prev: 'prevTransform',
+    input: 'inputTransform',
+    empty: IDENTITY_MAT4,
+    valid: isMat4,
+    inputAt: controllerTransformAt,
+  },
+} as const satisfies Record<string, StateKind>;
+type StateKindName = keyof typeof STATE_KINDS;
+const KIND_NAMES = Object.keys(STATE_KINDS) as StateKindName[];
+
+/** One Solver's state at a frame: each wired kind's slots, in slot order. */
+type SolverState = Partial<Record<StateKindName, unknown[]>>;
+
+/** The wires into `kind`'s body socket, in slot order (none when it is not wired). */
+function bodyRefsOf(node: NodeLike, kind: StateKind): { node: string; socket?: string }[] {
+  if (kind.list) return multiInputRefs(node, kind.body);
+  const ref = singleInputRef(node, kind.body);
+  return ref?.node ? [{ node: ref.node, socket: ref.socket }] : [];
 }
 
 /** The vec live-input of a Solver at `ctx`: its `sourceTransformVec` controller's whole
@@ -441,82 +473,137 @@ function statefulInputVecAt(
   ctx: EvalCtx,
   cache?: EvaluatorCache,
 ): Vec3 {
+  const src = controllerOf(state, node);
+  return src ? readTransformPositionAt(state, src, ctx, cache) : ORIGIN;
+}
+
+/** The controller a Solver's vector, rotation and transform state follow: its own
+ *  `sourceTransformVec`, else the one its enclosing template instance holds. */
+function controllerOf(state: DagState, node: Node): string | null {
   const own = transformVecSourceOf(node);
   const owner = own ? null : enclosingInstance(state, node.id);
-  const src = own ?? (owner && transformVecSourceOf(owner));
-  return src ? readTransformPositionAt(state, src.node, ctx, cache) : ORIGIN;
+  return (own ?? (owner && transformVecSourceOf(owner)))?.node ?? null;
 }
 
-/** Cook the tuple sub-network once at `frame`: bind `prevVec` (element `slot` = prevState
- *  [slot]) and `inputVec` (the live target), then evaluate each `bodies[i]` → the new value of
- *  slot i. Returns the full new state tuple. No shared cache — the binding makes the
- *  sub-graph frame-dependent (as the scalar cook). */
-function cookSolverVecStep(
+/** #1826 — the controller's evaluated rotation at `ctx`, as a quaternion (its own in
+ *  quaternion mode, else its Euler degrees converted). No controller ⇒ no rotation. */
+function controllerRotationAt(
   state: DagState,
-  solverId: string,
-  bodyRefs: { node: string; socket: string }[],
-  leaves: readonly BodyInputLeaf[],
-  prevState: Vec3[],
-  input: Vec3,
-  frame: number,
-): Vec3[] {
-  const overrides = bindBodyInputs(state, solverId, leaves, {
-    prevVec: prevState,
-    inputVec: input,
-  });
-  const ctx = ctxAtFrame(frame);
-  const bodiesInto = getNodeType(state.nodes[solverId]?.type ?? '')?.inputs.bodies;
-  return bodyRefs.map((ref) => {
-    try {
-      // A body is read here, not through the Solver's own input resolution, so what the wire
-      // carries is converted here as it would be there (#1549: a Number body fills all three
-      // axes).
-      const v = arriving(
-        bodiesInto,
-        producedTypeOf(state, ref),
-        evaluate(state, ref.node, { ctx, overrides, socket: ref.socket }).value,
-      );
-      return isVec3(v) ? v : ORIGIN;
-    } catch {
-      return ORIGIN;
-    }
-  });
+  node: Node,
+  ctx: EvalCtx,
+  cache?: EvaluatorCache,
+): Quat {
+  const src = controllerOf(state, node);
+  const xf = src ? resolveEvaluatedTransform(state, src, ctx, cache) : null;
+  if (!xf) return NO_ROTATION;
+  if (xf.quaternion) return [...xf.quaternion] as Quat;
+  return xf.rotation ? eulerToQuat(xf.rotation) : NO_ROTATION;
 }
 
-/** Replay a vec/tuple Solver up to `frame(targetSeconds)`, returning slot 0 (the driven
- *  position). Seed: slot 0 = the live target at the seed frame (the spring starts at
- *  rest ON the target, Houdini's Input_1-seeds-Prev_Frame), every other slot = origin
- *  (zero velocity). Determinism (H40 under scrub): identical to the scalar path — the
- *  value at N is a pure function of (seed, target over [seed,N], the sub-network). */
-function replaySolverVec(
+/** #1826 — the controller's evaluated transform at `ctx`, composed from the same position,
+ *  rotation and scale the vector and rotation state read. No controller ⇒ identity. */
+function controllerTransformAt(
+  state: DagState,
+  node: Node,
+  ctx: EvalCtx,
+  cache?: EvaluatorCache,
+): Mat4 {
+  const src = controllerOf(state, node);
+  const xf = src ? resolveEvaluatedTransform(state, src, ctx, cache) : null;
+  if (!xf) return IDENTITY_MAT4;
+  return composeTransform(
+    xf.position,
+    controllerRotationAt(state, node, ctx, cache),
+    xf.scale ?? [1, 1, 1],
+  );
+}
+
+/** Replay a Solver up to `frame(targetSeconds)`: every wired kind, stepped together. Returns
+ *  the full state; a kind with no wired body is absent from it. */
+function replaySolverState(
   state: DagState,
   node: Node,
   targetSeconds: number,
   cache?: EvaluatorCache,
-): Vec3 {
+): SolverState {
   const seedFrame = seedFrameOf(state, node);
   const targetFrame = Math.round(targetSeconds * FRAMES_PER_SECOND);
-  const bodyRefs = multiInputRefs(node, 'bodies');
-  const inputAt = (frame: number) => statefulInputVecAt(state, node, ctxAtFrame(frame), cache);
-  if (bodyRefs.length === 0) return inputAt(targetFrame); // unfinished → the target, never NaN
+  const wired = KIND_NAMES.map((name) => ({
+    name,
+    kind: STATE_KINDS[name] as StateKind,
+    refs: bodyRefsOf(node, STATE_KINDS[name]).filter((r) => state.nodes[r.node]),
+  })).filter((w) => w.refs.length > 0);
+  if (wired.length === 0) return {};
 
-  const slots = bodyRefs.length;
+  const def = getNodeType(node.type);
   const leaves = bodyInputLeavesOf(state, node.id);
-  const seedState = (frame: number): Vec3[] => {
-    const s: Vec3[] = new Array(slots).fill(ORIGIN);
-    s[0] = inputAt(frame); // slot 0 (position) starts on the target; other slots = origin
-    return s;
+  const inputsAt = (frame: number) => {
+    const ctx = ctxAtFrame(frame);
+    return wired.map((w) => w.kind.inputAt(state, node, ctx, cache));
   };
-  const result = cachedIntegrate<Vec3[]>(
-    state,
-    node.id,
-    seedFrame,
-    targetFrame,
-    seedState,
-    (prev, frame) =>
-      cookSolverVecStep(state, node.id, bodyRefs, leaves, prev, inputAt(frame), frame),
-  );
-  return result[0] ?? ORIGIN;
+  const seed = (frame: number): SolverState => {
+    const inputs = inputsAt(frame);
+    const out: SolverState = {};
+    wired.forEach((w, i) => {
+      const slots: unknown[] = new Array(w.refs.length).fill(w.kind.empty);
+      slots[0] = inputs[i];
+      out[w.name] = slots;
+    });
+    return out;
+  };
+  const cookSolverStep = (prev: SolverState, frame: number): SolverState => {
+    const inputs = inputsAt(frame);
+    const values: Record<string, unknown> = {};
+    wired.forEach((w, i) => {
+      const slots = prev[w.name] ?? [];
+      values[w.kind.prev] = w.kind.list ? slots : slots[0];
+      values[w.kind.input] = inputs[i];
+    });
+    const overrides = bindBodyInputs(state, node.id, leaves, values);
+    const ctx = ctxAtFrame(frame);
+    const next: SolverState = {};
+    for (const w of wired) {
+      const into = def?.inputs[w.kind.body];
+      next[w.name] = w.refs.map((ref) => {
+        try {
+          // A body is read here, not through the Solver's own input resolution, so what the
+          // wire carries is converted here as it would be there (#1549: a Number body fills
+          // all three axes). The wired OUTPUT, not the node's whole value: a body with more
+          // than one output (another Solver, #1558) evaluates to a record.
+          const raw = evaluate(state, ref.node, { ctx, overrides, socket: ref.socket }).value;
+          const v = ref.socket
+            ? arriving(into, producedTypeOf(state, { node: ref.node, socket: ref.socket }), raw)
+            : raw;
+          return w.kind.valid(v) ? v : w.kind.empty;
+        } catch {
+          return w.kind.empty;
+        }
+      });
+    }
+    return next;
+  };
+  return cachedIntegrate(state, node.id, seedFrame, targetFrame, seed, cookSolverStep);
+}
+
+/** Slot 0 of `kind` at `targetSeconds`: what the Solver's output of that kind gives. A kind
+ *  that is not wired reads its live input (an unfinished Solver). */
+function solverSlot0(
+  state: DagState,
+  node: Node,
+  name: StateKindName,
+  targetSeconds: number,
+  cache?: EvaluatorCache,
+): unknown {
+  const slots = replaySolverState(state, node, targetSeconds, cache)[name];
+  if (slots && slots.length > 0) return slots[0];
+  const kind: StateKind = STATE_KINDS[name];
+  const frame = Math.round(targetSeconds * FRAMES_PER_SECOND);
+  return kind.inputAt(state, node, ctxAtFrame(frame), cache);
+}
+
+/** True for a Solver whose vector state is wired: a driver reading it folds a vector. */
+function isVecSolver(node: NodeLike): boolean {
+  return node.type === 'Solver' && multiInputRefs(node, STATE_KINDS.vector.body).length > 0;
 }
 
 /**
@@ -531,17 +618,55 @@ export function makeStatefulDriverChannelValue(
   driverParams: ParamDriverParams,
   statefulNode: Node,
   cache?: EvaluatorCache,
+  /** The Solver output the driver's `in` is wired to, when known. */
+  socket?: string,
 ): KeyframeChannelValue {
+  // #1826 — a rotation drives a rotation param as Euler degrees, the conversion a wire from a
+  // Quaternion into a Vector3 makes (socketConversion `Quaternion>Vector3`); #1785 — or as a
+  // quaternion, on a quaternion-mode object's `quaternion`.
+  if (statefulNode.type === 'Solver' && socket === 'outRotation') {
+    return makeParamDriverRotationChannelValueFn(
+      driverParams,
+      (seconds) => solverSlot0(state, statefulNode, 'rotation', seconds, cache) as Quat,
+    );
+  }
   if (isVecSolver(statefulNode)) {
-    return makeParamDriverVec3ChannelValueFn(driverParams, (seconds) =>
-      replaySolverVec(state, statefulNode, seconds, cache),
+    return makeParamDriverVec3ChannelValueFn(
+      driverParams,
+      (seconds) => solverSlot0(state, statefulNode, 'vector', seconds, cache) as Vec3,
     );
   }
   const replay =
     statefulNode.type === 'Solver'
-      ? (seconds: number) => replaySolver(state, statefulNode, seconds, cache)
+      ? (seconds: number) => solverSlot0(state, statefulNode, 'number', seconds, cache) as number
       : (seconds: number) => replayLag(state, statefulNode, seconds, cache);
   return makeParamDriverChannelValueFn(driverParams, replay);
+}
+
+/** The kind of state a Solver output carries, by socket. */
+const SOLVER_OUTPUT_KIND: Readonly<Record<string, StateKindName>> = {
+  out: 'number',
+  outVec: 'vector',
+  outRotation: 'rotation',
+  outTransform: 'transform',
+};
+
+/**
+ * #1785 — what a stateful node's output `socket` reads at any playhead, as a raw value: a Solver's
+ * slot 0 of the state kind that output carries, a Lag's replay. For a driver that builds its own
+ * channels from the value (a transform driver separates a matrix into three).
+ */
+export function statefulOutputSampler(
+  state: DagState,
+  statefulNode: Node,
+  socket: string | undefined,
+  cache?: EvaluatorCache,
+): (seconds: number) => unknown {
+  if (statefulNode.type === 'Solver') {
+    const kind = SOLVER_OUTPUT_KIND[socket ?? 'out'] ?? 'number';
+    return (seconds) => solverSlot0(state, statefulNode, kind, seconds, cache);
+  }
+  return (seconds) => replayLag(state, statefulNode, seconds, cache);
 }
 
 // ── The evaluator's road to the replay (#1558) ─────────────────────────────────
@@ -579,9 +704,14 @@ export function replayStatefulAt(
     const seconds = ctx.time.seconds;
     if (node.type === 'Lag') return replayLag(state, node, seconds, cache);
     if (node.type === 'Solver') {
+      const replayed = replaySolverState(state, node, seconds, cache);
       return {
-        out: replaySolver(state, node, seconds, cache),
-        outVec: isVecSolver(node) ? replaySolverVec(state, node, seconds, cache) : ORIGIN,
+        out: solverSlot0(state, node, 'number', seconds, cache),
+        // An unwired vector reads the origin here, as it always has, not its live input; the
+        // rotation and transform likewise read no rotation and the identity (#1826).
+        outVec: replayed.vector?.[0] ?? ORIGIN,
+        outRotation: replayed.rotation?.[0] ?? NO_ROTATION,
+        outTransform: replayed.transform?.[0] ?? IDENTITY_MAT4,
       };
     }
     // A stateful type this seam has no recurrence for. Answering it as a Lag would hand back a
@@ -640,19 +770,26 @@ export function makeStatefulUpstreamDriverChannelValue(
   const at = (seconds: number): unknown => {
     try {
       const frame = Math.round(seconds * FRAMES_PER_SECOND);
-      return evaluate(state, source.node, {
-        cache,
-        ctx: { time: { frame, seconds, normalized: 0 } },
-        socket: source.socket,
-      }).value;
+      // #1832 — at the time it was built, the caller's own context, so the clocks it carries
+      // (a scene running at another speed, #1745) are kept; at any other time a plain one.
+      const when = seconds === ctx.time.seconds ? ctx : { time: { frame, seconds, normalized: 0 } };
+      return evaluate(state, source.node, { cache, ctx: when, socket: source.socket }).value;
     } catch {
       return undefined;
     }
   };
-  if (isVec3(at(ctx.time.seconds))) {
+  const now = at(ctx.time.seconds);
+  if (isVec3(now)) {
     return makeParamDriverVec3ChannelValueFn(driverParams, (seconds) => {
       const v = at(seconds);
       return isVec3(v) ? v : ORIGIN;
+    });
+  }
+  // #1785 — a rotation behind a stateful node folds as a rotation.
+  if (isQuat(now)) {
+    return makeParamDriverRotationChannelValueFn(driverParams, (seconds) => {
+      const v = at(seconds);
+      return isQuat(v) ? v : NO_ROTATION;
     });
   }
   return makeParamDriverChannelValueFn(driverParams, (seconds) => {

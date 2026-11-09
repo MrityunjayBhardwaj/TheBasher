@@ -3,11 +3,9 @@
 // files IS the design:
 //
 //   operatorStack (SOP) : a stack is a wired sub-chain. add/move/remove = RE-WIRING.
-//   constraintStack(CHOP): a constraint is EDGE-LESS — it names its target by a param.
-//                          A stack is the SET of pose operators sharing a `target`,
-//                          ordered by an `order` FIELD. add/move/remove = FIELD WRITES.
-//                          There is no wire to re-route ("modifiers are [sub-chains];
-//                          constraints aren't" — operatorStack.ts).
+//   constraintStack(CHOP): the same now, on the object's chain (#1811): add names the object and a
+//                          commit wires it in (`chainFollowUpOps`), move and remove edit the wires
+//                          (`chainEdit.ts`). `order` says where a new one joins.
 //
 // Enumeration is NOT duplicated here: it comes from `constraintStackForTarget`
 // (nodeConstraints.ts) — the SAME scan + sort the resolvers fold — asked for its
@@ -24,6 +22,8 @@
 import { createEvaluatorCache, type EvaluatorCache } from '../core/dag/evaluator';
 import type { DagState } from '../core/dag/state';
 import type { Op } from '../core/dag/types';
+import { moveStepOps, removeStepOps } from '../core/dag/chainEdit';
+import { getNodeType } from '../core/dag/registry';
 import type { ParamOption } from '../nodes/paramWidget';
 import {
   relationalPoseStackForTarget,
@@ -126,6 +126,8 @@ export function constrainedObjectOptions(state: DagState): ParamOption[] {
   const cache = createEvaluatorCache();
   const out: ParamOption[] = [];
   for (const node of Object.values(state.nodes)) {
+    // #1813 — what can hold a chain: a constraint on anything else would do nothing.
+    if (getNodeType(node.type)?.inputs.constraints?.chain !== 'end') continue;
     if (resolveWorldTransform(state, node.id, ctx, cache) === null) continue;
     out.push({ value: node.id, label: nodeDisplayName(state.nodes, node.id) });
   }
@@ -253,12 +255,17 @@ export function buildMoveConstraintOps(
   return [
     { type: 'setParam', nodeId: a.nodeId, paramPath: 'order', value: aOrder },
     { type: 'setParam', nodeId: b.nodeId, paramPath: 'order', value: bOrder },
+    // #1812 — and the chain's wires, when the stack is on one.
+    ...(moveStepOps(state, targetId, constraintId, j) ?? []),
   ];
 }
 
-/** Remove a constraint. Edge-less → nothing to unwire; the node just goes. */
+/** Remove a constraint. */
 export function buildRemoveConstraintOps(state: DagState, constraintId: string): Op[] | null {
   const node = state.nodes[constraintId];
   if (!node || !isRelationalPoseNode(node)) return null;
-  return [{ type: 'removeNode', nodeId: constraintId }];
+  const target = (node.params as { target?: unknown }).target;
+  // #1812 — off the chain's wires with its blend, when it is on one.
+  const offChain = typeof target === 'string' ? removeStepOps(state, target, constraintId) : null;
+  return offChain ?? [{ type: 'removeNode', nodeId: constraintId }];
 }

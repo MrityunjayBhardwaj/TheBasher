@@ -149,6 +149,10 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
   BodyInput: '[] input=(unrouted) slot=(unrouted)',
   BodyInputPose: '[] input=(unrouted)',
   BodyInputVec: '[] input=(unrouted) slot=(unrouted)',
+  // ADDED at #1826 (the fifth arm) — the rotation and transform twins of BodyInputVec, with
+  // its two cells, unrouted as its are.
+  BodyInputRotation: '[] input=(unrouted) slot=(unrouted)',
+  BodyInputTransform: '[] input=(unrouted) slot=(unrouted)',
   BevelModifier:
     '[modifier] amount=modifier muted=modifier scope=modifier limitMethod=modifier angleLimit=modifier',
   BoneNameMap: '[] name=(unrouted) map=(unrouted)',
@@ -174,7 +178,8 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
   CurveData: '[curve] points=curve closed=curve resolution=curve',
   CurveRemap: '[] points=(unrouted)',
   DepthPass: '[render] width=(unrouted) height=(unrouted)',
-  Fit: '[] inMin=(unrouted) inMax=(unrouted) outMin=(unrouted) outMax=(unrouted) clamp=(unrouted)',
+  // APPENDED at #1802 — Fit's Vector mode: the mode and the four per-axis ranges.
+  Fit: '[] inMin=(unrouted) inMax=(unrouted) outMin=(unrouted) outMax=(unrouted) clamp=(unrouted) dataType=(unrouted) inMinVector=(unrouted) inMaxVector=(unrouted) outMinVector=(unrouted) outMaxVector=(unrouted)',
   FollowPath:
     '[constraint,driver] name=(unrouted) target=(unrouted) curve=(unrouted) evalTime=(unrouted) offset=(unrouted) mute=(unrouted) order=(unrouted)',
   GltfAsset:
@@ -214,6 +219,17 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
   LightRig: '[layout] name=layout center=(unrouted) radius=(unrouted)',
   LocomotionState: '[] speed=(unrouted) loop=(unrouted)',
   MakeVec3: '[]',
+  // ADDED at #1784 (the fifth arm) — the Transform vocabulary. Paramless, like MakeVec3.
+  CombineTransform: '[]',
+  SeparateTransform: '[]',
+  PolarSplit: '[]',
+  OwnWorld: '[] object=(unrouted)',
+  MultiplyTransforms: '[]',
+  InvertTransform: '[]',
+  TransformPoint: '[]',
+  TransformDirection: '[]',
+  EulerToRotation: '[]',
+  RotationToEuler: '[]',
   ComponentGroupOp: '[modifier] name=modifier muted=modifier scope=modifier',
   MaskModifier: '[modifier] keep=modifier muted=modifier scope=modifier',
   Material: '[material] material=material',
@@ -225,7 +241,8 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
   MediaClip:
     '[layout] name=layout src=(unrouted) mediaKind=(unrouted) srcFps=(unrouted) srcFrames=(unrouted) width=(unrouted) height=(unrouted)',
   MirrorModifier: '[modifier] axis=(unrouted) offset=modifier muted=modifier scope=modifier',
-  Mix: '[] factor=(unrouted)',
+  // APPENDED at #1801 — `dataType` picks which sockets Mix has on; unrouted like `factor`.
+  Mix: '[] factor=(unrouted) dataType=(unrouted)',
   // APPENDED at #902 — text-to-motion as a node. Unrouted like its neighbours
   // (AnimationClip, RetargetClip, Scatter) and for their reason: no inspector card
   // draws these yet, and a home would claim a section renders them when none does.
@@ -287,6 +304,7 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
   // #994 — every param routed, and there are only two. A modifier that reshapes nothing still
   // owes the inspector the same card every other modifier draws.
   UVProjectModifier: '[modifier] size=modifier muted=modifier',
+  Value: '[] value=(unrouted)',
   Vec3Math: '[] op=(unrouted) scalar=(unrouted)',
   VecBreak3: '[]',
   VideoStitch: '[render] codec=render fps=render outputPath=render',
@@ -464,4 +482,15 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
 // turned by its Object's rotation or a Track-To, and its data holds no aim. Removed, not moved,
 // so the `light` row loses its two cells:
 //   types 90 · routed 149 - 2 = 147 · unrouted 259
-export const GOLDEN_TOTALS = { types: 90, routed: 147, unrouted: 259 } as const;
+// #1784 adds eight paramless node types (the Transform vocabulary): Combine/Separate Transform,
+// Multiply/Invert Transform(s), Transform Point/Direction, Euler to Rotation, Rotation to Euler.
+// No cells, so only the type count moves:
+//   types 90 + 8 = 98 · routed 147 · unrouted 259
+// #1801 appends `Mix.dataType`, unrouted like `factor` (the generic param list draws it):
+//   types 98 · routed 147 · unrouted 259 + 1 = 260
+// #1802 appends Fit's `dataType` and its four per-axis ranges, unrouted like its neighbours:
+//   types 98 · routed 147 · unrouted 260 + 5 = 265
+// #1826 adds BodyInputRotation and BodyInputTransform, two cells each (`input`, `slot`),
+// unrouted like BodyInputVec's:
+//   types 98 + 2 = 100 · routed 147 · unrouted 265 + 4 = 269
+export const GOLDEN_TOTALS = { types: 103, routed: 147, unrouted: 271 } as const;

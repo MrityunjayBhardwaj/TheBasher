@@ -1739,9 +1739,18 @@ describe('#1051 — a hierarchy comes across as parent edges', () => {
   /** Who each node is wired under, by node id → parent id, read off the emitted connects. */
   function parentOf(ops: readonly Op[]): Record<string, string> {
     const out: Record<string, string> = {};
+    const named = new Set<string>();
     for (const op of ops) {
-      if (op.type !== 'connect' || op.to.socket !== 'children') continue;
-      out[op.from.node] = op.to.node;
+      if (op.type !== 'connect') continue;
+      // #1824 — under an Object or a Group the child names its parent; the scene's list is a wire.
+      // #1823 — and the scene's list is membership too, so a node that names a parent is listed
+      // there as well: the parent it names is its parent, whatever order the two edges come in.
+      if (op.to.socket === 'parent') {
+        out[op.to.node] = op.from.node;
+        named.add(op.to.node);
+      } else if (op.to.socket === 'children' && !named.has(op.from.node)) {
+        out[op.from.node] = op.to.node;
+      }
     }
     return out;
   }
@@ -1833,6 +1842,13 @@ describe('#1051 — a hierarchy comes across as parent edges', () => {
     expect(typeOf(ops, emptyId)).toBe('Group');
     // #1451 — no wrapper Group: the file's root node stands in the scene itself.
     expect(parents[emptyId], 'and the empty hangs under the scene').toBe('n_scene');
+    // #1823 — and both are the scene's, the hung cube too: an import links every object it makes.
+    const listed = ops.flatMap((o) =>
+      o.type === 'connect' && o.to.node === 'n_scene' && o.to.socket === 'children'
+        ? [o.from.node]
+        : [],
+    );
+    expect(listed).toEqual(expect.arrayContaining([emptyId, objectIds[0]]));
   });
 
   it('a child written BEFORE its parent still connects — glTF fixes no node order', async () => {
@@ -1840,13 +1856,16 @@ describe('#1051 — a hierarchy comes across as parent edges', () => {
     // has not added yet unless every parent edge comes after every node. `applyOp` throws if not.
     const { ops } = await importNested(nestedFixture());
     const addedBy: string[] = [];
+    let parentEdges = 0;
     for (const op of ops) {
       if (op.type === 'addNode') addedBy.push(op.nodeId);
-      if (op.type === 'connect' && op.to.socket === 'children' && op.to.node !== 'n_scene') {
+      if (op.type === 'connect' && op.to.socket === 'parent') {
+        parentEdges++;
         expect(addedBy, `connect to ${op.to.node} before it exists`).toContain(op.to.node);
         expect(addedBy, `connect from ${op.from.node} before it exists`).toContain(op.from.node);
       }
     }
+    expect(parentEdges, 'the fixture has a parent edge to check').toBeGreaterThan(0);
   });
 
   // #1152 — this shape was refused by name until an Object could parent. It is an Object now, and its
@@ -1871,9 +1890,13 @@ describe('#1051 — a hierarchy comes across as parent edges', () => {
     if ('refused' in result) throw new Error(result.refused);
     const added = new Map<string, string>();
     for (const op of result.ops) if (op.type === 'addNode') added.set(op.nodeId, op.nodeType);
+    // #1824 — the child names the Object as its parent: the Object's world into its parent input.
     const edge = result.ops.find(
       (op) =>
-        op.type === 'connect' && op.to.socket === 'children' && added.get(op.to.node) === 'Object',
+        op.type === 'connect' &&
+        op.to.socket === 'parent' &&
+        op.from.socket === 'world' &&
+        added.get(op.from.node) === 'Object',
     );
     expect(edge, 'a child edge into an Object').toBeDefined();
     expect(result.objectIds).toHaveLength(2);

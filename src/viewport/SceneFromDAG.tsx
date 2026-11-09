@@ -65,7 +65,12 @@ import {
   driverChannelValuesForTarget,
   driverSubscriptionNodesForTarget,
 } from '../app/paramDrivers';
-import { resolveConstraintRotation, resolveConstraintPosition } from '../app/nodeConstraints';
+import {
+  chainDrawCorrection,
+  resolveConstraintRotation,
+  resolveConstraintPosition,
+} from '../app/nodeConstraints';
+import { localMatrix } from '../app/resolveWorldTransform';
 // #1765 — a light is turned by the rule every object follows (V665), through the resolver the
 // camera turns by; its name is the camera's because the camera came first (#390 unifies them).
 import { cameraLocalOrientation as lightLocalOrientation } from '../app/cameraTrackTo';
@@ -114,6 +119,7 @@ import {
   selectActiveCameraNode,
 } from '../app/activeCamera';
 import { usePlayheadFollow } from './usePlayheadFollow';
+import { resolveDrawnParentWorldMatrix } from '../app/drawnWorldTransform';
 import { resolveRigLightSources } from '../app/resolveRigLightSources';
 import { degVec3ToRad } from './rotation';
 import {
@@ -180,6 +186,7 @@ import type {
 import { uiEvaluatorCache } from '../app/uiEvaluatorCache';
 import { createFrameEvaluator, FrameEvaluatorProvider, useFrameTick } from './frameEvaluator';
 import { pickAsDrawn } from '../render/skinnedPick';
+import { sceneChildRefs } from '../app/sceneMembership';
 
 let rectAreaInit = false;
 function ensureRectAreaInit() {
@@ -450,10 +457,8 @@ export function SceneFromDAG({ outputName = 'render' }: SceneFromDAGProps) {
   // corresponds to index i in that list.
   const sceneRef = state.outputs.scene;
   const sceneNode = sceneRef ? state.nodes[sceneRef.node] : null;
-  const childRefs =
-    sceneNode && Array.isArray(sceneNode.inputs.children)
-      ? (sceneNode.inputs.children as { node: string; socket: string }[])
-      : [];
+  // #1823 — the scene's children as it draws them: the tops of its members' tree.
+  const childRefs = sceneChildRefs(state);
   const lightRefs =
     sceneNode && Array.isArray(sceneNode.inputs.lights)
       ? (sceneNode.inputs.lights as { node: string; socket: string }[])
@@ -476,7 +481,12 @@ export function SceneFromDAG({ outputName = 'render' }: SceneFromDAGProps) {
   // ancestor moves (`resolveCameraPoseAt` composes that ancestor world at live
   // `seconds`). Meshes don't need this (the animated Group's DirectChannelsR
   // re-renders the whole subtree). Built once (O(N)), tested O(1) per camera (B13).
-  const animatedAncestors = animatedAncestorSet(state.nodes, directChannelTargets);
+  // #1829 — a constrained ancestor too: its aim moves whenever its target does, and the camera's
+  // pose now turns with it.
+  const animatedAncestors = animatedAncestorSet(
+    state.nodes,
+    new Set([...directChannelTargets, ...constraintTargets]),
+  );
 
   // #165: enumerate ALL camera nodes in the DAG (Blender draws every camera
   // object, not just the active one). They are NOT in value.scene.children —
@@ -574,18 +584,21 @@ export function SceneFromDAG({ outputName = 'render' }: SceneFromDAGProps) {
               // #243 GAP 2 / #265 — a Track-To'd AIMABLE light (Area/Spot/Directional)
               // derives its aim per frame, so its helper needs the follower too
               // (re-resolve the aim at `seconds` into the field the helper draws).
-              return lid &&
-                (directChannelTargets.has(lid) ||
-                  (constraintTargets.has(lid) && isAimableLightKind(light.kind))) ? (
-                <LightHelperFollower
-                  key={`helper:${i}`}
-                  nodeId={lid}
-                  value={light}
-                  pickId={lid}
-                  constrained={constraintTargets.has(lid)}
-                />
-              ) : (
-                <LightHelper key={`helper:${i}`} value={light} pickId={lid} />
+              return (
+                <BandLightPlace key={`helper:${i}`} nodeId={lid}>
+                  {lid &&
+                  (directChannelTargets.has(lid) ||
+                    (constraintTargets.has(lid) && isAimableLightKind(light.kind))) ? (
+                    <LightHelperFollower
+                      nodeId={lid}
+                      value={light}
+                      pickId={lid}
+                      constrained={constraintTargets.has(lid)}
+                    />
+                  ) : (
+                    <LightHelper value={light} pickId={lid} />
+                  )}
+                </BandLightPlace>
               );
             })
           : null}
@@ -595,18 +608,21 @@ export function SceneFromDAG({ outputName = 'render' }: SceneFromDAGProps) {
               const lid = rigLightSources[i] ?? null;
               if (lid != null && viewportHidden.has(lid)) return null; // #1453 — with its light
               // #243 GAP 2 / #265 — a Track-To'd AIMABLE rig light follows its aim per frame.
-              return lid &&
-                (directChannelTargets.has(lid) ||
-                  (constraintTargets.has(lid) && isAimableLightKind(light.kind))) ? (
-                <LightHelperFollower
-                  key={`rig-helper:${lid}`}
-                  nodeId={lid}
-                  value={light}
-                  pickId={lid}
-                  constrained={constraintTargets.has(lid)}
-                />
-              ) : (
-                <LightHelper key={`rig-helper:${lid ?? i}`} value={light} pickId={lid} />
+              return (
+                <BandLightPlace key={`rig-helper:${lid ?? i}`} nodeId={lid}>
+                  {lid &&
+                  (directChannelTargets.has(lid) ||
+                    (constraintTargets.has(lid) && isAimableLightKind(light.kind))) ? (
+                    <LightHelperFollower
+                      nodeId={lid}
+                      value={light}
+                      pickId={lid}
+                      constrained={constraintTargets.has(lid)}
+                    />
+                  ) : (
+                    <LightHelper value={light} pickId={lid} />
+                  )}
+                </BandLightPlace>
               );
             })
           : null}
@@ -1069,18 +1085,57 @@ const LightNode = memo(function LightNode({
   // playhead, exactly as a channel is), so it also routes through here. A static,
   // un-followed light (the common case) renders the per-kind switch directly and
   // pays nothing.
-  if ((hasDirectChannels || followsPath) && nodeId) {
-    return (
-      <DirectChannelsLightR
-        value={value}
-        nodeId={nodeId}
-        constrained={constrained}
-        followsPath={followsPath}
-      />
-    );
-  }
-  return <LightKindR value={value} nodeId={nodeId} constrained={constrained} />;
+  return (
+    <BandLightPlace nodeId={nodeId}>
+      {(hasDirectChannels || followsPath) && nodeId ? (
+        <DirectChannelsLightR
+          value={value}
+          nodeId={nodeId}
+          constrained={constrained}
+          followsPath={followsPath}
+        />
+      ) : (
+        <LightKindR value={value} nodeId={nodeId} constrained={constrained} />
+      )}
+    </BandLightPlace>
+  );
 });
+
+/** #1842 — a band's light that hangs from something stands under it. A band draws outside the tree,
+ *  so nothing nests it as the tree nests a child. One with no parent gets no extra group and no
+ *  per-frame read. Its own transform, aim and path are already parent-local. */
+function BandLightPlace({ nodeId, children }: { nodeId: string | null; children: ReactNode }) {
+  const hung = useDagStore((s) => nodeId != null && Boolean(s.state.nodes[nodeId]?.inputs.parent));
+  return hung && nodeId ? (
+    <HungBandLight nodeId={nodeId}>{children}</HungBandLight>
+  ) : (
+    <>{children}</>
+  );
+}
+
+function HungBandLight({ nodeId, children }: { nodeId: string; children: ReactNode }) {
+  const ref = useRef<THREE.Group>(null);
+  const place = () => {
+    const group = ref.current;
+    if (!group) return;
+    const parent = resolveDrawnParentWorldMatrix(
+      useDagStore.getState().state,
+      nodeId,
+      liveCtxOf(nodeId),
+      uiEvaluatorCache,
+    );
+    if (parent) group.matrix.copy(parent);
+    else group.matrix.identity();
+    group.matrixWorldNeedsUpdate = true;
+  };
+  useLayoutEffect(place);
+  useFrame(place);
+  return (
+    <group ref={ref} matrixAutoUpdate={false}>
+      {children}
+    </group>
+  );
+}
 
 /** The per-kind light dispatch — pure projection of an (already-overlaid) light
  *  value onto the three.js light objects. Shared by the static path (LightNode)
@@ -1522,7 +1577,6 @@ function LightHelperFollower({
       const { quaternion, aim } = lightLocalOrientation(
         useDagStore.getState().state,
         nodeId,
-        [base.position[0], base.position[1], base.position[2]],
         // Already read in its mode (`withResolvedRotation` above).
         { rotation: [base.rotation[0], base.rotation[1], base.rotation[2]] },
         liveCtxOf(nodeId),
@@ -1750,7 +1804,6 @@ function useLightTurn(
     const { quaternion } = lightLocalOrientation(
       useDagStore.getState().state,
       nodeId,
-      [light.position.x, light.position.y, light.position.z],
       { rotation: [rx, ry, rz] },
       liveCtxOf(nodeId),
       cache,
@@ -2420,6 +2473,7 @@ function ConstrainedR({
   const rawTransients = useTransientEditStore((s) => s.edits);
   const transients = useDataParamTransients(pickId, rawTransients);
   const cache = uiEvaluatorCache;
+  const correctionRef = useRef<THREE.Group>(null);
 
   // channels (position) → transient → derived aim rotation (constraint wins on
   // rotation, the whole point of V58 — derived, never stored). Returns the
@@ -2461,6 +2515,21 @@ function ConstrainedR({
         : base;
     // The skip-key must cover EVERY band this builds, or a change in an unkeyed band
     // silently stops re-rendering (the H48 static-node guard would eat the update).
+    // #1813 — what position, rotation and scale can't hold of the chain's end (an aim under an
+    // uneven parent). Identity on every object where they can.
+    const correction = chainDrawCorrection(
+      state,
+      pickId,
+      localMatrix(v as unknown as SceneChild),
+      ctx,
+      cache,
+    );
+    const outer = correctionRef.current;
+    if (outer) {
+      if (correction) outer.matrix.copy(correction);
+      else outer.matrix.identity();
+      outer.matrixWorldNeedsUpdate = true;
+    }
     return {
       v,
       aimKey: `${aim ? aim.join(',') : ''}|${followed ? followed.join(',') : ''}`,
@@ -2482,8 +2551,10 @@ function ConstrainedR({
     },
   );
   return (
-    <group ref={group}>
-      <MeshChild value={drawn} override={override} nodeId={pickId} />
+    <group ref={correctionRef} matrixAutoUpdate={false}>
+      <group ref={group}>
+        <MeshChild value={drawn} override={override} nodeId={pickId} />
+      </group>
     </group>
   );
 }

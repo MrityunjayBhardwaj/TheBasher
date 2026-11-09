@@ -27,8 +27,15 @@ import { ComfyUIWorkflowNode } from './ComfyUIWorkflow';
 import { ColorCorrectNode } from './ColorCorrect';
 import { CompositionNode } from './Composition';
 import { COMPUTE_NODES } from './computeNodes';
+import { TRANSFORM_NODES } from './transformNodes';
 import { LagNode } from './Lag';
-import { SolverNode, BodyInputNode, BodyInputVecNode } from './Solver';
+import {
+  SolverNode,
+  BodyInputNode,
+  BodyInputVecNode,
+  BodyInputRotationNode,
+  BodyInputTransformNode,
+} from './Solver';
 import { TemplateDefinitionNode } from './TemplateDefinition';
 import { RigNode, BodyInputPoseNode } from './Rig';
 import { SampleGeometryNode } from './geometryQuery';
@@ -86,6 +93,11 @@ import { CurveDataNode } from './CurveData';
 import { VideoStitchNode } from './VideoStitch';
 import { WalkPathNode } from './WalkPath';
 import { registerStatefulReplay } from '../app/statefulOps';
+import { registerWorldFold } from '../app/objectWorld';
+import { registerWorldStepFold } from '../app/constraintChain';
+import { registerKeyedCook } from '../app/keyedCook';
+import { OwnWorldNode } from './OwnWorld';
+import { registerSceneDraw } from '../app/sceneMembership';
 
 const ALL: NodeDefinition[] = [
   // Time (P2 — the only impure source; pure consumers wire to it)
@@ -179,6 +191,7 @@ const ALL: NodeDefinition[] = [
   // + scene-layer resolved like the channels above (the resolveActiveCameraPoseAt
   // pattern), since a relationship aim needs world context (resolveWorldTransform).
   TrackToNode as unknown as NodeDefinition,
+  OwnWorldNode as unknown as NodeDefinition,
   // #339 — the POSITION-band constraint. Same edge-less species as TrackTo (it reads a
   // Curve's WORLD geometry, so it resolves in the seam, not in evaluate); it joins the
   // SAME stack as a member rather than bringing its own resolver + panel.
@@ -260,6 +273,9 @@ const ALL: NodeDefinition[] = [
   // over the ONE shared value-math core (valueMath.ts). A driver (Inc 2) wires one
   // onto a target param via the pull rail.
   ...COMPUTE_NODES,
+  // Transform vocabulary (#1784) — a whole transform (Matrix4) and a rotation (Quaternion)
+  // as values: Blender's matrix nodes over the pure transformMath.ts.
+  ...TRANSFORM_NODES,
   // Stateful op — Lag (epic #290 Epic 2, #297). Unlike the stateless compute nodes,
   // its output at frame N depends on its output at N−1 (a first-order recurrence).
   // Declares `stateful: true`; the real value is produced by the replay seam
@@ -273,6 +289,9 @@ const ALL: NodeDefinition[] = [
   SolverNode as unknown as NodeDefinition,
   BodyInputNode as unknown as NodeDefinition,
   BodyInputVecNode as unknown as NodeDefinition,
+  // #1826 — the rotation and transform twins, for rotation and transform state.
+  BodyInputRotationNode as unknown as NodeDefinition,
+  BodyInputTransformNode as unknown as NodeDefinition,
   // #1557 — a template's definition, held in the graph.
   TemplateDefinitionNode as unknown as NodeDefinition,
   // #1357 — the Rig: a sub-network on the pose wire, and the leaf that reads its incoming pose.
@@ -322,4 +341,9 @@ export function registerAllNodes(): void {
   // #1558 — the evaluator answers a stateful node (Lag, Solver) with its replay. Set here, with
   // the types that need it, so no graph holding one can be evaluated before it exists.
   registerStatefulReplay();
+  // #1810 — and an object's `world` output with the fold that reads its own channels.
+  registerWorldFold();
+  registerWorldStepFold();
+  registerKeyedCook();
+  registerSceneDraw();
 }

@@ -184,6 +184,35 @@ export interface OutputDescriptor {
   type: SocketTypeName;
   cardinality: Cardinality;
   role?: PassRole;
+  /** #1801 — when this output exists, by the node's params. See {@link SocketAvailability}. */
+  available?: SocketAvailability;
+  /**
+   * #1810 — the WORLD output of an object: the parent input's world (identity when nothing is
+   * wired) times the object's own transform as drawn (its keys, drivers and held edits folded).
+   * Not part of the node's value: the evaluator produces it through the registered world fold
+   * (`setWorldFold`), because the fold reads channels that live off the graph.
+   */
+  world?: true;
+}
+
+/**
+ * #1801 — a socket that exists only in some of its node's modes: available while the param
+ * `param` holds one of `in`. A socket's TYPE never changes; a node that works on several types
+ * declares one socket per type and lets a mode param pick which are available. That is Blender's
+ * own mechanism (its Mix declares `A_Float`, `A_Vector`, `A_Rotation`, … and its `data_type`
+ * toggles their availability, `node_shader_mix.cc`), and it keeps every reader of a socket's
+ * declared type correct.
+ *
+ * A wire on a socket that is not available is KEPT and IGNORED, as Blender keeps it and marks it
+ * invalid (`node_tree_update.cc`): the evaluator reads that input as unconnected, and switching
+ * the mode back brings the wire back into use. `connect` refuses to make a new one.
+ *
+ * Declarative, not a function, so it can be printed (the agent's node catalogue) and compared.
+ * Read through `socketAvailability.ts`, never off the descriptor.
+ */
+export interface SocketAvailability {
+  readonly param: string;
+  readonly in: readonly string[];
 }
 
 /**
@@ -281,6 +310,29 @@ export interface InputDescriptor {
    * input the key does not see.
    */
   sourceIds?: true;
+  /** #1801 — when this input exists, by the node's params. See {@link SocketAvailability}. */
+  available?: SocketAvailability;
+  /**
+   * #1810 — the PARENT input of an object: what is wired here is the world transform the object
+   * hangs from (a Matrix4), as Houdini's object-level parent input. It feeds only this node's
+   * `world` output (an output marked {@link OutputDescriptor.world}), never its value: the
+   * object's value is its own transform, and its world is that value placed under the parent.
+   */
+  world?: true;
+  /**
+   * #1811 — an input of a constraint chain. It feeds the node's world output only, never its value.
+   * `'step'`: a chain node reads it (the transform coming up the chain, an aim target's world).
+   * `'end'`: the object's input where its chain ends. Wired, what arrives is the object's world.
+   */
+  chain?: 'step' | 'end';
+  /**
+   * #1824 — a list input that also GATHERS this node's children: every node whose parent input
+   * (an input marked {@link InputDescriptor.world}) reads this node's world output arrives here
+   * after the wires, in node-table order, as if wired. So a parent draws what hangs from it
+   * without holding a wire to each child, as a Blender object's children point at it and not
+   * the other way round. Read through `worldChildrenOf` (`core/dag/worldChildren.ts`).
+   */
+  gathersChildren?: true;
 }
 
 /**
@@ -509,6 +561,36 @@ export interface NodeDefinition<P = unknown, O = unknown> {
    * point-in-time contract. Marker only; the machinery lives in the seam.
    */
   stateful?: boolean;
+  /**
+   * #1811 — a step of a constraint chain: its world output is the registered step fold
+   * (`setWorldStepFold`) on its `chain` inputs, because its settings can be keyed off the graph.
+   */
+  worldStep?: true;
+  /**
+   * #1811 — settings of a chain step that name an object whose world the step reads, each by the
+   * input it stands in for: a wire on that input wins. A reference, so it may close a loop
+   * (docs/GRAPH.md, a loop through a reference is stored and named), and the evaluator answers
+   * such a loop rather than throwing on it (`loopedWorldRefs`).
+   */
+  worldRefs?: Readonly<Record<string, string>>;
+  /**
+   * #1813 — a chain step's input that reads the world its object hangs from, given here as `socket`
+   * and `owner`, the setting naming the object. Read through the object rather than stored as a wire
+   * of the step's own, so reparenting the object can't leave it behind. A wire there wins.
+   */
+  ownerParent?: { readonly socket: string; readonly owner: string };
+  /**
+   * #575 — this node's cook reads its settings at the time being evaluated, so a key or a driver on
+   * one reaches what it outputs. The read lives above the evaluator and is registered
+   * (`setKeyedParams`), because keys live off the graph.
+   */
+  keyedCook?: boolean;
+  /**
+   * #1811 — the bottom of a constraint chain: its world output is the world of the object this
+   * param names BEFORE that object's chain (the parent's world times its own transform). A param
+   * and not a wire, because the chain ends at that object: a wire would be a loop.
+   */
+  ownWorldOf?: string;
   cost: NodeCost;
   /**
    * Output type widened to `unknown` for the input shape so zod schemas with
@@ -577,6 +659,24 @@ export interface NodeDefinition<P = unknown, O = unknown> {
    * something refuses at runtime.
    */
   chain?: ChainDeclaration;
+  /**
+   * #1814 — the input a STACK VIEW continues flat underneath this node, or `null` for "none":
+   * the node is always a group, one route per input. Read it through `mainInputOfType`.
+   *
+   * THE RULE: the main input is the one socket holding the thing this node's output is a
+   * version of, even when the type changes (a render pass of a `scene`). Peer operands (Mix,
+   * Math), lists (Scene, a select) and generators with only side inputs (a material on a Box)
+   * have none. It is never "the first input": Houdini's Blend CHOP has its weights there.
+   *
+   * NOT DECLARED BY AN OPERATOR. `chain.input` already answers this, and stating it twice is
+   * two claims that can disagree, so `registerNodeType` refuses both. It is not `chain` itself
+   * because declaring a chain makes a node an operator, with a lane and a stack section; a Clamp
+   * continues a stack without being one.
+   *
+   * Absent on a node with inputs fails `mainInputDeclaration.gate.test.ts`; it is not required
+   * at registration because the suite's synthetic definitions have no stack to be drawn in.
+   */
+  mainInput?: SocketId | null;
   /**
    * Pure functional evaluator. Must NOT read clocks, randomness, or globals
    * — V2/V3 enforced by lint in src/nodes/**. Time enters via a `Time` input

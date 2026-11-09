@@ -60,8 +60,11 @@ picker still lists it. Every input socket is in one row of this table or the oth
 lists the ones that own nothing (`SHARED_WIRES`, `src/nodes/idRefAcknowledged.ts`), so a new
 socket has to choose. One delete function applies it (`buildDeleteNodesOps`,
 `src/app/sceneNodeActions.ts`), for the Delete key, the outliner, the agent and the buttons
-that remove a driver. Children still go with a deleted parent; handing them up to the
-grandparent is #1517, which waits on the keep-position reparent in #1516.
+that remove a driver. The one exception is a parent's `children`: Duplicate copies them, and
+Delete hands them up to the deleted parent's own parent, keeping them where they are drawn
+(#1517, through the keep-position reparent of #1516, `src/app/keepPlaceReparent.ts`), unless they
+are deleted too. An animated child keeps its keys, so it moves, and the delete says so. Delete
+Hierarchy (`withHierarchy`) takes everything below the target as well.
 
 Duplicate reads the same table (`buildDuplicateNodesOps`, same file). A **deep** duplicate
 (Shift+D) copies what the original owns by wire, whole sub-networks included, and the sidecars
@@ -83,6 +86,8 @@ the link and the follower keeps the name it has. `relationsOf` (`src/core/dag/id
 answers every relationship of a node at once: wires in and out, references in and out, name
 followers and sub-network membership. A loop that runs through a reference is stored and
 named by `referenceCycles`, not refused; a loop of wires alone is still refused.
+Objects aiming at each other are such a loop, through a Track-To's aim target: each faces the other,
+whichever is read first, and a loop that runs through a parent is cut at the aim (`loopedWorldRefs`).
 
 A reference can also be aimed at nothing: a node that is gone, or a parameter path the target
 does not have. What happens depends on the door, as in Blender. The agent's authoring door
@@ -134,9 +139,28 @@ OUTPUTS ─── outputs.scene · outputs.render
    are computed from this, so the saved format has no nesting to migrate. Why flat:
    [OBJECT-DATA-SPLIT-DESIGN §2.2](OBJECT-DATA-SPLIT-DESIGN.md) ("on a DAG, pointer and
    containment are the same edge") and §2.4.
-3. **Membership is reachability.** An object is in the scene if the scene's wires reach it
-   (`children`, `lights`, `camera`, collection `members`). Every door that adds or removes
-   a wire keeps nodes reachable. Decided in #1519.
+3. **Membership is reachability.** An object is in the scene if the scene's membership
+   wires reach it. They are listed once, in `src/app/sceneMembership.ts` (#1820), and this
+   rule quotes that list:
+   - the scene's own objects: `Scene.children` (Blender's scene collection holding objects
+     directly);
+   - collections: `Scene.collections`, `Collection.members`, `Collection.collections`;
+   - the camera: `Scene.camera`, `CameraSelect.cameras`;
+   - the lights: `Scene.lights`;
+   - the lighting profile: `Scene.lightRig`, `LightProfileSelect.rigs`, `LightRig.lights`.
+
+   Parenting is not membership (decided on #1808). A child takes its parent as an input
+   (#1810), and where an object sits in the tree says nothing about whether the scene holds
+   it, as a Blender object's parent and its collections are separate and a Houdini object is
+   in `/obj` whatever it is wired to. Only a child hung by a wire, which has no parent input
+   to be listed through (a glTF asset in a group's list, an object inside a Transform), comes
+   in with its holder (`src/app/sceneHierarchy.ts`). The renderer draws the scene's members
+   as a nested tree: each one under its parent, and a parent that is not a member drawn as a
+   hidden carrier of its children's place (#1823). `isInScene` in the same file is the one
+   answer; a surface that keeps its own list is tested against it (#1821). Every door that
+   creates an object links it into the active collection, the scene's own list when that is
+   active, as Blender does. Decided in #1519.
+
 4. **Time lives inside values.** A channel's value carries `sample(seconds)`, the Scene owns
    its frame range, and nothing cooks per frame. That keeps the content-keyed cache flat
    when you scrub ([NORTH-STAR §4.4](NORTH-STAR.md)).
@@ -185,7 +209,7 @@ Houdini facts here are documentation-tier: Houdini is closed source, and the gro
 | 12  | Data      | One skeleton input, no separate capture pose                                                                                      | Capture pose and rest pose                                                                                                                    | Accepted cost in #393                                                                                                                           | #393                                                             | Deliberate                  |
 | 13  | Data      | Spare parameters on every node                                                                                                    | Spare parameters                                                                                                                              | A match, chosen to follow Houdini                                                                                                               | `setSpareParam`                                                  | Match                       |
 | 14  | Animation | Keyframes are channel nodes that reference their target                                                                           | Channels live on parameters                                                                                                                   | Edge-less in the value graph, edge-ful in the dependency graph; `sample(seconds)` keeps cache keys stable                                       | `src/nodes/KeyframeChannelNumber.ts`                             | Treated as a match          |
-| 15  | Animation | Constraints resolve in the scene, by reference                                                                                    | Constraint CHOP networks                                                                                                                      | A constraint needs world position, so it can't be a wired sub-chain (#204)                                                                      | `src/app/operatorStack.ts`                                       | Deliberate                  |
+| 15  | Animation | Constraints are wired steps ending at their object (#1811)                                                                        | Constraint CHOP networks                                                                                                                      | Matches, with what an aim or path reads kept as a reference so a loop can be stored                                                             | `src/nodes/TrackTo.ts`, `src/app/constraintChain.ts`             | Match                       |
 | 16  | Animation | Drivers are nodes (ParamDriver, Math, Fit, Clamp), no expressions                                                                 | `ch()` and HScript expressions                                                                                                                | An expression string is sugar over the same primitives; an Expression node is a later escape hatch                                              | Drivers grounding                                                | Deferred                    |
 | 17  | Animation | Time sampled inside a value                                                                                                       | SOPs cook per frame                                                                                                                           | Frame-keyed geometry thrashes the content-keyed cache                                                                                           | NORTH-STAR §4.4                                                  | Deliberate                  |
 | 18  | Animation | NLA strips for parameters, wired pose layers for bones                                                                            | CHOPs and KineFX motion clips                                                                                                                 | Basher is curve-based like Blender; a scanned strip can't reach the armature deform and a wired layer can                                       | [NLA-DESIGN](NLA-DESIGN.md)                                      | Deliberate                  |

@@ -16,9 +16,15 @@ import type { DagState } from '../core/dag/state';
 import type { Node } from '../core/dag/types';
 import { registerAllNodes } from '../nodes/registerAll';
 import { childEdges } from './resolveWorldTransform';
+import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { join } from 'node:path';
 import {
   HIERARCHY_PARENT_TYPES,
+  childIdsOf,
   hasHierarchyParent,
+  hierarchyEdgesOf,
+  parentIdOf,
+  parentIdsOf,
   hierarchyChildIds,
   hierarchySocketForKind,
   hierarchySocketsOf,
@@ -41,7 +47,8 @@ describe('hierarchySocketsOf', () => {
 
   it('gives an aggregate its children list socket', () => {
     expect(hierarchySocketsOf(node('a', 'Group'))).toEqual(['children']);
-    expect(hierarchySocketsOf(node('a', 'Scene'))).toEqual(['children']);
+    // #1823 — the Scene's list is membership: the scene parents nothing.
+    expect(hierarchySocketsOf(node('a', 'Scene'))).toEqual([]);
   });
 
   it('gives an OPERATOR nothing, even though it declares a `target` chain socket', () => {
@@ -150,5 +157,67 @@ describe('mirrorsChildEdges — the promise three comments used to make', () => 
     for (const t of HIERARCHY_PARENT_TYPES) {
       expect(hierarchySocketsOf(node('x', t)), `${t} resolved to no socket`).not.toEqual([]);
     }
+  });
+});
+
+// #1823 / #1824 step 1 — the tree asked of the whole graph. When parenting moves onto the
+// child's `parent` input, only `hierarchyEdgesOf` changes; these pin what every reader relies on.
+describe('the tree as a whole-graph question', () => {
+  const graph = (...ns: Node[]) => ({ nodes: Object.fromEntries(ns.map((n) => [n.id, n])) });
+
+  it('lists children in wire order and parents in node-table order', () => {
+    const g = graph(
+      node('scene', 'Scene', { children: [{ node: 'g' }] }),
+      node('g', 'Group', { children: [{ node: 'b' }, { node: 'a' }] }),
+      node('h', 'Group', { children: [{ node: 'a' }] }),
+      node('xf', 'Transform', { target: { node: 'c' } }),
+      node('arr', 'ArrayModifier', { target: { node: 'd' } }),
+    );
+    expect(childIdsOf(g, 'g')).toEqual(['b', 'a']);
+    expect(childIdsOf(g, 'xf')).toEqual(['c']);
+    expect(childIdsOf(g, 'arr')).toEqual([]);
+    expect(childIdsOf(g, 'missing')).toEqual([]);
+    expect(parentIdsOf(g, 'a')).toEqual(['g', 'h']);
+    expect(parentIdOf(g, 'a')).toBe('g');
+    // #1823 — listed by the scene is membership, not a parent.
+    expect(parentIdOf(g, 'g')).toBeNull();
+    expect(parentIdOf(g, 'scene')).toBeNull();
+    expect(parentIdOf(g, 'd')).toBeNull();
+    expect(hierarchyEdgesOf(g).map((e) => `${e.parent}>${e.child}`)).toEqual([
+      'g>b',
+      'g>a',
+      'h>a',
+      'xf>c',
+    ]);
+  });
+
+  it('answers a new node table afresh, never from the last one', () => {
+    const before = graph(node('g', 'Group', { children: [{ node: 'a' }] }));
+    expect(parentIdOf(before, 'a')).toBe('g');
+    const after = graph(node('g', 'Group', { children: [] }));
+    expect(parentIdOf(after, 'a')).toBeNull();
+    expect(childIdsOf(after, 'g')).toEqual([]);
+  });
+
+  it('no reader outside this module asks one node for its children', () => {
+    // A reader that reads one node's inputs keeps reading `children` wires after parenting moves
+    // to the child, and silently answers "no children". The whole-graph functions are the door.
+    const root = join(__dirname, '..');
+    const files: string[] = [];
+    const walk = (dir: string) => {
+      for (const name of readdirSync(dir)) {
+        const path = join(dir, name);
+        if (statSync(path).isDirectory()) walk(path);
+        else if (/\.tsx?$/.test(name) && !/\.test\.tsx?$/.test(name)) files.push(path);
+      }
+    };
+    walk(root);
+    const offenders = files.filter(
+      (f) =>
+        !f.endsWith(join('app', 'sceneHierarchy.ts')) &&
+        /\bhierarchyChildIds\(/.test(readFileSync(f, 'utf8')),
+    );
+    expect(files.length).toBeGreaterThan(500);
+    expect(offenders).toEqual([]);
   });
 });

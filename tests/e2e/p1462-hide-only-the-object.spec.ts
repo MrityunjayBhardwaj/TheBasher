@@ -96,14 +96,9 @@ test('#1462 — a hidden parent draws nothing of its own, and its child still dr
           { type: 'setParam', nodeId: P, paramPath: 'position', value: [0, 2, 0] },
           { type: 'setParam', nodeId: C, paramPath: 'position', value: [3, 0, 0] },
           {
-            type: 'disconnect',
-            from: { node: C, socket: 'out' },
-            to: { node: scene, socket: 'children' },
-          },
-          {
             type: 'connect',
-            from: { node: C, socket: 'out' },
-            to: { node: P, socket: 'children' },
+            from: { node: P, socket: 'world' },
+            to: { node: C, socket: 'parent' },
           },
         ],
         'user',

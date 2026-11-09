@@ -32,7 +32,7 @@
 
 import type { DagState } from '../core/dag/state';
 import { isKeyframeChannelNode } from './animate/paramAnimationState';
-import { hierarchyChildIds } from './sceneHierarchy';
+import { parentIdsOf } from './sceneHierarchy';
 
 type Nodes = DagState['nodes'];
 type Node = Nodes[string];
@@ -47,7 +47,6 @@ export interface SceneIndex {
   hasDriversOn(id: string): boolean;
 }
 
-const EMPTY: readonly string[] = [];
 const indexCache = new WeakMap<Nodes, SceneIndex>();
 
 /** The index of `nodes`, built on first use and kept while the table is unchanged. */
@@ -60,7 +59,6 @@ export function sceneIndexOf(nodes: Nodes): SceneIndex {
 }
 
 function buildSceneIndex(nodes: Nodes): SceneIndex {
-  const parents = new Map<string, string[]>();
   const channels = new Map<string, Node[]>();
   const strips = new Map<string, Node[]>();
   const tracks: Node[] = [];
@@ -71,7 +69,6 @@ function buildSceneIndex(nodes: Nodes): SceneIndex {
     else map.set(key, [value]);
   };
   for (const node of Object.values(nodes)) {
-    for (const child of hierarchyChildIds(node)) push(parents, child, node.id);
     const target = (node.params as { target?: unknown } | undefined)?.target;
     if (node.type === 'Track') tracks.push(node);
     if (typeof target !== 'string' || !target) continue;
@@ -84,7 +81,7 @@ function buildSceneIndex(nodes: Nodes): SceneIndex {
 
   const layered = new Map<string, Nodes>();
   return {
-    parentsOf: (id) => parents.get(id) ?? EMPTY,
+    parentsOf: (id) => parentIdsOf({ nodes }, id),
     hasDriversOn: (id) => driven.has(id),
     layeredNodesFor(id) {
       const known = layered.get(id);

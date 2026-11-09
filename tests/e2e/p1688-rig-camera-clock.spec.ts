@@ -65,8 +65,13 @@ async function rigWithCamera(page: Page, rigClock?: 'film'): Promise<void> {
         ...camOps,
         {
           type: 'connect',
+          from: { node: 'p1688_rig', socket: 'world' },
+          to: { node: 'p1688_cam', socket: 'parent' },
+        },
+        {
+          type: 'connect',
           from: { node: 'p1688_cam', socket: 'out' },
-          to: { node: 'p1688_rig', socket: 'children' },
+          to: { node: scene, socket: 'children' },
         },
         ...(rigClock
           ? [{ type: 'setParam', nodeId: 'p1688_rig', paramPath: 'clock', value: rigClock }]

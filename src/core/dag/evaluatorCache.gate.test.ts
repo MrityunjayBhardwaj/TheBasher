@@ -228,7 +228,7 @@ const ORIGINS: Record<string, Origin> = {
     frequency: 'once',
     why: 'DEV-only window hook for e2e.',
   },
-  'src/app/boot.ts · boot → resolveWorldTransform': {
+  'src/app/boot.ts · boot → resolveDrawnWorldTransform': {
     count: 1,
     frequency: 'once',
     why: 'DEV-only window hook for e2e.',
@@ -266,17 +266,12 @@ const ORIGINS: Record<string, Origin> = {
   'src/app/statefulOps.ts · cookSolverStep → evaluate': {
     count: 1,
     frequency: 'deliberate',
-    why: 'The injected previous-frame value makes the sub-graph frame-dependent; a shared cache would poison across frames (see its doc comment).',
+    why: 'The injected previous-frame value makes the sub-graph frame-dependent; a shared cache would poison across frames (see its doc comment). One cook steps every kind of state the Solver carries (#1826).',
   },
-  'src/app/lightAim.ts · lightAimOps → resolveParentWorldMatrix': {
+  'src/app/lightAim.ts · lightAimOps → resolveDrawnParentWorldMatrix': {
     count: 1,
     frequency: 'per-action',
     why: "#1765 — giving a nested light its aim empty: once, to place the empty in the light's group at the point it should face.",
-  },
-  'src/app/statefulOps.ts · cookSolverVecStep → evaluate': {
-    count: 1,
-    frequency: 'deliberate',
-    why: 'Same as cookSolverStep: the injection is frame-dependent, so each step walks fresh.',
   },
   'src/test-utils/evaluateNodeAlone.ts · evaluateNodeAlone → evaluate': {
     count: 1,
@@ -288,7 +283,7 @@ const ORIGINS: Record<string, Origin> = {
     frequency: 'per-action',
     why: 'Box-select commit, once per selectable node.',
   },
-  'src/viewport/BoxSelectController.tsx · commit → resolveWorldTransform': {
+  'src/viewport/BoxSelectController.tsx · commit → resolveDrawnWorldTransform': {
     count: 1,
     frequency: 'per-action',
     why: 'Box-select commit, once per selectable node.',
@@ -374,12 +369,12 @@ const TAKERS: string[] = [
   // #480 — the camera overlay folds the drivers bound to the camera; both callers hand it theirs.
   'overlayCameraChannels@src/app/cameraChannels.ts',
   'readCurveSampleAt@src/app/curveSampleSource.ts',
+  'bandLightParentWorld@src/app/resolveWorldTransform.ts',
   'readTerrainSampleAt@src/app/geometrySampleSource.ts',
   'readTransformChannelAt@src/app/transformChannelSource.ts',
   'readTransformPositionAt@src/app/transformChannelSource.ts',
   'replayLag@src/app/statefulOps.ts',
-  'replaySolver@src/app/statefulOps.ts',
-  'replaySolverVec@src/app/statefulOps.ts',
+  'replaySolverState@src/app/statefulOps.ts',
   'resolveActiveCameraPoseAt@src/app/activeCamera.ts',
   'resolveActiveRigCenter@src/app/studioLightRig.ts',
   'resolveCameraDofAt@src/app/activeCamera.ts',
@@ -401,22 +396,55 @@ const TAKERS: string[] = [
   // #1727 — the two bodies the timed public reads above call, with the caller's cache.
   'parentWorldMatrixOf@src/app/resolveWorldTransform.ts',
   'worldTransformOf@src/app/resolveWorldTransform.ts',
+  // #1829 — the drawn world read and the two seams it enters the walk by, each forwarding the
+  // caller's cache.
+  'cameraFollowedPosition@src/app/cameraTrackTo.ts',
+  'drawnAncestorLocal@src/app/drawnWorldTransform.ts',
+  'resolveDrawnParentWorldMatrix@src/app/drawnWorldTransform.ts',
+  'resolveDrawnWorldTransform@src/app/drawnWorldTransform.ts',
+  'resolveParentWorldMatrixWith@src/app/resolveWorldTransform.ts',
+  'resolveWorldTransformWith@src/app/resolveWorldTransform.ts',
   // #1638 — forwards the caller's cache to the world resolver at each playhead it is asked.
   'worldMatrixAt@src/app/resolveWorldTransform.ts',
   'rigChanges@src/app/animate/invertPoseStack.ts',
   'slotAbsenceOf@src/app/objectSlotAuthoring.ts',
+  'solverSlot0@src/app/statefulOps.ts',
   'statefulInputAt@src/app/statefulOps.ts',
   'statefulInputVecAt@src/app/statefulOps.ts',
+  'controllerRotationAt@src/app/statefulOps.ts',
+  'controllerTransformAt@src/app/statefulOps.ts',
   // #1559 — an enclosing template instance's `in`, read with the replay's own cache.
   'liveInputOf@src/app/statefulOps.ts',
   'underParent@src/app/resolveWorldTransform.ts',
   'walk@src/app/resolveWorldTransform.ts',
   'walkParent@src/app/resolveWorldTransform.ts',
+  // #1810 — an object's world output, folded with the cache the evaluator walk was given, and the
+  // armature it reads a parent bone off.
+  'objectWorldFold@src/app/objectWorld.ts',
+  // #1811 — a constraint chain's steps, read with the cache the evaluator walk was given.
+  'constraintStepFold@src/app/constraintChain.ts',
+  'trackToStep@src/app/constraintChain.ts',
+  'followPathStep@src/app/constraintChain.ts',
+  // #575 — a compute node's keyed settings, read with the cache the evaluator walk was given.
+  'keyedParamsOf@src/app/keyedCook.ts',
+  // #1813 — the constraint reads take the chain's end, with the cache the reader was given.
+  'chainEnd@src/app/nodeConstraints.ts',
+  'aimedRotation@src/app/nodeConstraints.ts',
+  'chainDrawCorrection@src/app/nodeConstraints.ts',
+  'chainParentWorld@src/app/nodeConstraints.ts',
+  // #1794 — the chain's position map, read at gizmo seed with the gizmo's cache.
+  'chainPositionLinear@src/app/nodeConstraints.ts',
+  // #1785 — a transform driver's channels and the value on its `in`, read with the fold's cache.
+  'transformDriverChannels@src/app/paramDrivers.ts',
+  'inSampler@src/app/paramDrivers.ts',
+  'statefulOutputSampler@src/app/statefulOps.ts',
+  'boneOf@src/app/objectWorld.ts',
   // #1729 — the walk up and the one path down it, and the search kept for a node held twice; each
   // is handed the cache its public read was given.
   'composeDown@src/app/resolveWorldTransform.ts',
   'sceneChildWorld@src/app/resolveWorldTransform.ts',
   'searchFromRoot@src/app/resolveWorldTransform.ts',
+  'wrapperParentWorld@src/app/resolveWorldTransform.ts',
   'topLevelValue@src/app/resolveWorldTransform.ts',
   'dataLaneOverlaySources@src/app/dataLaneOverlay.ts',
   'exposeParams@src/app/exposeParams.ts',

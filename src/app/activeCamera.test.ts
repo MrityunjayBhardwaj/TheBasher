@@ -19,7 +19,8 @@ import {
 } from './activeCamera';
 import { cameraDataOf } from './cameraNode';
 import { buildDefaultDagState } from '../core/project/default';
-import { applyOp, emptyDagState, type DagState } from '../core/dag';
+import { emptyDagState, type DagState } from '../core/dag';
+import { applyOp } from '../test-utils/committedApplyOp';
 import type { Node } from '../core/dag/types';
 import { registerAllNodes } from '../nodes/registerAll';
 import { makeSplitCamera } from '../test-utils/splitCamera';
@@ -320,8 +321,14 @@ describe('activeCamera — nested camera world pose (#231 Inc 3.3)', () => {
     // Nest the camera under the Group.
     state = applyOp(state, {
       type: 'connect',
+      from: { node: 'n_grp', socket: 'world' },
+      to: { node: 'n_cam2', socket: 'parent' },
+    }).next;
+    // #1823 — and the scene's, as parenting is not membership.
+    state = applyOp(state, {
+      type: 'connect',
       from: { node: 'n_cam2', socket: 'out' },
-      to: { node: 'n_grp', socket: 'children' },
+      to: { node: 'n_scene', socket: 'children' },
     }).next;
     // Make it the active camera (replace the seed direct wire on the single socket).
     state = applyOp(state, {
