@@ -545,10 +545,10 @@ export function SceneTree({ filter = '' }: SceneTreeProps) {
     return true;
   }
 
-  function ctxDelete(nodeId: NodeId, hierarchy = false) {
+  function ctxDelete(nodeId: NodeId, hierarchy = false, children: 'place' | 'values' = 'place') {
     const targets = ctxTargetIds(nodeId);
     const ids = hierarchy ? withHierarchy(state, targets) : targets;
-    const plan = planDeleteNodes(state, ids);
+    const plan = planDeleteNodes(state, ids, { children });
     setCtxMenu(null);
     if (!say(plan) || !plan.ok) return;
     if (plan.ops.length > 0) dispatchAtomic(plan.ops, 'user', `delete ${ids.length} node(s)`);
@@ -1040,6 +1040,16 @@ export function SceneTree({ filter = '' }: SceneTreeProps) {
                     ? `Delete ${ctxTargetIds(ctxMenu.nodeId).length} Objects`
                     : 'Delete'}
                 </CtxItem>
+                {withHierarchy(state, ctxTargetIds(ctxMenu.nodeId)).length >
+                ctxTargetIds(ctxMenu.nodeId).length ? (
+                  // #1861 — the Alt+Delete of the menu: only offered where there are children.
+                  <CtxItem
+                    testId="outliner-ctx-delete-keep-values"
+                    onClick={() => ctxDelete(ctxMenu.nodeId, false, 'values')}
+                  >
+                    Delete, Children Keep Their Values
+                  </CtxItem>
+                ) : null}
                 {withHierarchy(state, ctxTargetIds(ctxMenu.nodeId)).length >
                 ctxTargetIds(ctxMenu.nodeId).length ? (
                   <CtxItem

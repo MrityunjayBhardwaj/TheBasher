@@ -2285,9 +2285,9 @@ describe('buildDeleteNodesOps — a deleted parent hands its children up (#1517)
       set('n_box', 'rotation', [0, 0, 45]),
     ]);
   const world = (s: DagState, id: string) => resolveWorldTransform(s, id, CTX)!.matrix;
-  const commit = (s: DagState, ids: string[]) => {
+  const commit = (s: DagState, ids: string[], children: 'place' | 'values' = 'place') => {
     useDagStore.getState().hydrate(s);
-    const plan = planDeleteNodes(s, ids, { ctx: CTX });
+    const plan = planDeleteNodes(s, ids, { ctx: CTX, children });
     if (!plan.ok) throw new Error(plan.reason);
     useDagStore.getState().dispatchAtomic(plan.ops, 'user', 'delete');
     return useDagStore.getState().state;
@@ -2427,6 +2427,51 @@ describe('buildDeleteNodesOps — a deleted parent hands its children up (#1517)
     expect(plan.unkept).toEqual([]);
   });
 
+  // #1861 — Alt+Delete: the children hang where plain Delete hangs them, keeping their own values.
+  const paramsOf = (st: DagState, id: string) => st.nodes[id].params as Record<string, unknown>;
+  it('Alt+Delete hands the child up with its own values unchanged, so it lands at them', () => {
+    const s = nested();
+    const own = ['position', 'rotation', 'scale'].map((k) => paramsOf(s, 'n_box')[k]);
+    const plan = planDeleteNodes(s, ['INNER'], { ctx: CTX, children: 'values' });
+    if (!plan.ok) throw new Error(plan.reason);
+    expect(plan.ops.some((op) => op.type === 'setParam' && op.nodeId === 'n_box')).toBe(false);
+    const after = commit(s, ['INNER'], 'values');
+    expect(after.nodes.INNER).toBeUndefined();
+    expect(childIdsOf(after, 'OUTER')).toEqual(['n_box']);
+    expect(isInScene(after, 'n_box')).toBe(true);
+    expect(['position', 'rotation', 'scale'].map((k) => paramsOf(after, 'n_box')[k])).toEqual(own);
+    // It lands at its values under OUTER, which is not where INNER drew it.
+    const moved = world(after, 'n_box').map((v, i) => Math.abs(v - world(s, 'n_box')[i]));
+    expect(Math.max(...moved)).toBeGreaterThan(0.5);
+  });
+
+  it('CONTROL: plain Delete on the same fixture keeps the child where it was drawn', () => {
+    const s = nested();
+    expectSameWorld(world(s, 'n_box'), world(commit(s, ['INNER']), 'n_box'));
+  });
+
+  it('Alt+Delete moves a keyed child with its keys and values, and has nothing to report', () => {
+    const s = apply(nested(), [
+      {
+        type: 'addNode',
+        nodeId: 'ch',
+        nodeType: 'KeyframeChannelVec3',
+        params: {
+          target: 'n_box',
+          paramPath: 'position',
+          keyframes: [{ time: 0, value: [1, 1, 1], easing: 'linear' }],
+        },
+      },
+    ]);
+    const plan = planDeleteNodes(s, ['INNER'], { ctx: CTX, children: 'values' });
+    if (!plan.ok) throw new Error(plan.reason);
+    expect(plan.unkept).toEqual([]);
+    expect(moveNotices(s, plan)).toEqual([]);
+    const after = apply(s, plan.ops);
+    expect(paramsOf(after, 'ch').keyframes).toEqual(paramsOf(s, 'ch').keyframes);
+    expect(paramsOf(after, 'n_box').position).toEqual(paramsOf(s, 'n_box').position);
+  });
+
   // scene → (holder) → T → cube: a Transform wrapper holds one child, on its chain socket.
   const wrapped = (outer: 'G-over-T' | 'T-over-G'): DagState => {
     const t: Op = {
@@ -2551,9 +2596,9 @@ describe('buildDeleteNodesOps — a parent hands up the children hung by their p
       set('n_box', 'rotation', [0, 0, 45]),
     ]);
   const world = (s: DagState, id: string) => resolveWorldTransform(s, id, CTX)!.matrix;
-  const commit = (s: DagState, ids: string[]) => {
+  const commit = (s: DagState, ids: string[], children: 'place' | 'values' = 'place') => {
     useDagStore.getState().hydrate(s);
-    const plan = planDeleteNodes(s, ids, { ctx: CTX });
+    const plan = planDeleteNodes(s, ids, { ctx: CTX, children });
     if (!plan.ok) throw new Error(plan.reason);
     useDagStore.getState().dispatchAtomic(plan.ops, 'user', 'delete');
     return useDagStore.getState().state;

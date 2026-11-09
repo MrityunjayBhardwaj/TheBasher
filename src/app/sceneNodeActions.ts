@@ -297,7 +297,12 @@ function isBelowAny(
 export function planDeleteNodes(
   state: DagState,
   ids: readonly NodeId[],
-  opts: { readonly ctx?: ClockedCtx } = {},
+  opts: {
+    readonly ctx?: ClockedCtx;
+    /** #1861 — what a deleted parent's children keep: where they are drawn (the default), or
+     *  their own position, rotation and scale (Alt+Delete). */
+    readonly children?: 'place' | 'values';
+  } = {},
 ): MoveResult {
   const idSet = new Set<NodeId>(ids);
   const readers = readersIndex(state);
@@ -455,10 +460,26 @@ export function planDeleteNodes(
   // chokepoint, not a per-op one (see `findDanglingIdRef`).
   // #397 — a deleted collection hands its members and nested collections to the collections it
   // sat in, as Blender's Delete does, before it goes.
-  // #1517 — the children of what is going move first, keeping their place, while the world of
-  // every parent they read is still in the graph. They leave the deleted node's list here, so its
-  // removeNode takes no wire of theirs with it.
+  // #1517 — the children of what is going move first, while the world of every parent they read
+  // is still in the graph. They leave the deleted node's list here, so its removeNode takes no wire
+  // of theirs with it.
+  //
+  // #1861 — by default each child keeps its PLACE: the deleted parent's transform is applied into
+  // its values, so it is drawn where it was. That is the default because:
+  //   1. Deleting one thing shouldn't move other things. You're removing the parent, not editing the
+  //      children. If they jump, you've changed parts of the shot you didn't touch, and you may not
+  //      notice until a render.
+  //   2. It's the same rule as every other hierarchy gesture: Ctrl+P, Alt+P and dragging in the
+  //      outliner all keep things where they're drawn. A delete that broke it would be the one
+  //      surprise.
+  //   3. The reference programs agree on what the artist sees. Houdini hands the children to the
+  //      parent's parent; Blender usually leaves them in place, and jumps them only when the parent
+  //      moved after parenting (measured on 5.1.1: it then unparents the child to the top level and
+  //      drops it onto its own values, 2.0 away from where it was drawn).
+  // Alt+Delete (`children: 'values'`) keeps each child's own values instead, so it lands at them
+  // under its new parent. Either way it hangs from the deleted node's own parent.
   const handUp = buildMoveOps(state, handUpMoves(state, readers, allIds, idSet), {
+    keepTransform: opts.children !== 'values',
     ctx: opts.ctx,
     verb: 'Delete',
     // The parent is going, so an animated child has nothing to stay under. It keeps its keys and
