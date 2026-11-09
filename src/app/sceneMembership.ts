@@ -34,6 +34,7 @@
 //      #1823.
 
 import { applyOps } from '../core/dag/ops';
+import { registryEpoch } from '../core/dag/registry';
 import type { DagState } from '../core/dag/state';
 import type { NodeRef, Op } from '../core/dag/types';
 import { wiredProfileRigs } from '../nodes/LightProfileSelect';
@@ -203,6 +204,69 @@ const OBJECT_WIRES: ReadonlyMap<string, readonly string[]> = new Map([
  */
 export function sceneDrawOf(graph: SceneGraph): SceneDraw | null {
   const state = graph as unknown as DagState;
+  const epoch = registryEpoch();
+  if (lastDraw && sameDrawnTreeInputs(lastDraw, state, epoch)) {
+    lastDraw = { ...lastDraw, nodes: state.nodes };
+    return lastDraw.draw;
+  }
+  const draw = buildSceneDraw(state);
+  lastDraw = {
+    nodes: state.nodes,
+    count: Object.keys(state.nodes).length,
+    scene: state.outputs.scene,
+    epoch,
+    draw,
+  };
+  return draw;
+}
+
+/**
+ * #1855 — every param the drawn tree reads, by node type: the profile switch's choice and each
+ * rig's name (`heldBy`, `wiredProfileRigs`). Everything else the walk reads is wires, node types
+ * and the type definitions. A census test reads the walk's sources and goes red when it starts
+ * reading a param this does not list.
+ */
+export const DRAWN_TREE_PARAMS: Readonly<Record<string, readonly string[]>> = {
+  LightProfileSelect: ['selectedProfile'],
+  LightRig: ['name'],
+};
+
+// #1855 — the drawn tree is kept per node table (`drawMemo`), and every edit makes a new table, so a
+// param edit rebuilt it although no wire moved: profiled at 500 objects, ~0.3 ms of each edited
+// frame. The last tree is reused when nothing it reads changed: the same nodes, each with the same
+// type, the very same `inputs` (an op that rewires replaces it; a setParam keeps it), the same
+// registered definitions (`registryEpoch`), the same scene output, and the same values of `DRAWN_TREE_PARAMS`.
+interface LastDraw {
+  readonly nodes: DagState['nodes'];
+  /** How many nodes `nodes` holds, kept so the check doesn't list them again on every edit. */
+  readonly count: number;
+  readonly scene: NodeRef | undefined;
+  readonly epoch: number;
+  readonly draw: SceneDraw | null;
+}
+let lastDraw: LastDraw | null = null;
+
+function sameDrawnTreeInputs(last: LastDraw, state: DagState, epoch: number): boolean {
+  if (last.epoch !== epoch) return false;
+  if (last.nodes === state.nodes) return true;
+  const scene = state.outputs.scene;
+  if (last.scene?.node !== scene?.node || last.scene?.socket !== scene?.socket) return false;
+  let count = 0;
+  for (const id in state.nodes) {
+    count++;
+    const now = state.nodes[id];
+    const was = last.nodes[id];
+    if (!was || was.type !== now.type || was.inputs !== now.inputs) return false;
+    const read = DRAWN_TREE_PARAMS[now.type];
+    if (!read) continue;
+    const a = was.params as Record<string, unknown>;
+    const b = now.params as Record<string, unknown>;
+    for (const key of read) if (a?.[key] !== b?.[key]) return false;
+  }
+  return count === last.count;
+}
+
+function buildSceneDraw(state: DagState): SceneDraw | null {
   const sceneId = state.outputs.scene?.node;
   if (!sceneId || !state.nodes[sceneId]) return null;
   const members = sceneMembersOf(state);

@@ -69,6 +69,9 @@ const line = (params: object = {}) => [
   wire('cv_d', 'out', 'cv', 'data'),
   wire('cv', 'out', 'n_scene', 'children'),
 ];
+/** An object's own position as stored. */
+const ownPositionOf = (s: DagState, id: string) =>
+  (s.nodes[id].params as { position?: unknown }).position;
 const convert = (s: DagState) =>
   (migrateConstraintsToChains({ state: s }) as { state: DagState }).state;
 
@@ -305,14 +308,67 @@ describe('where the chain differs on purpose', () => {
     const cvData = built.nodes.cv_d;
     const s: DagState = {
       ...built,
-      nodes: { ...built.nodes, cv_d: { ...cvData, params: { ...cvData.params, points: [] } } },
+      nodes: {
+        ...built.nodes,
+        cv_d: { ...cvData, params: { ...(cvData.params as object), points: [] } },
+      },
     };
     const after = convert(s);
-    expect(after.nodes.a.params.position).toEqual([0, 4, 0]);
+    expect(ownPositionOf(after, 'a')).toEqual([0, 4, 0]);
     for (const t of TIMES) {
       const m = evaluate(after, 'a', { socket: 'world', ctx: at(t) }).value as number[];
       position(m).forEach((v, i) => expect(v, `at ${t}`).toBeCloseTo([0, 4, 0][i], 4));
     }
+  });
+});
+
+// #1791 — before the chain a Follow Path drew its object AT the path point, its own position
+// unused, so each case below is where the old road drew it: the point, through the curve object.
+describe('a follower converted: its own position becomes a zero offset', () => {
+  const position = (m: number[]) => [m[12], m[13], m[14]];
+  const drawnAt = (s: DagState, id: string, t = 0) =>
+    position(evaluate(s, id, { socket: 'world', ctx: at(t) }).value as number[]);
+
+  it('the converted state is what the step says: own position zero, position keys gone', () => {
+    const s = run(follower(), [
+      ...line(),
+      add('kp', 'KeyframeChannelVec3', {
+        target: 'a',
+        paramPath: 'position',
+        keyframes: [
+          { time: 0, value: [1, 2, 3] },
+          { time: 3, value: [9, 9, 9] },
+        ],
+      }),
+      add('f', 'FollowPath', { target: 'a', curve: 'cv', evalTime: 0.5 }),
+    ]);
+    const after = convert(s);
+    expect(ownPositionOf(after, 'a')).toEqual([0, 0, 0]);
+    expect(after.nodes.kp).toBeUndefined();
+  });
+
+  it('a cube on a curve object moved, turned and scaled is drawn at the point through it', () => {
+    // The point halfway along (5, 0, 0), through a curve object at (5, 0, 3), turned 90° about Z
+    // and scaled 2: (5, 10, 3).
+    const s = run(follower(), [
+      ...line({ position: [5, 0, 3], rotation: [0, 0, 90], scale: [2, 2, 2] }),
+      add('f', 'FollowPath', { target: 'a', curve: 'cv', evalTime: 0.5 }),
+    ]);
+    const after = convert(s);
+    expect(ownPositionOf(after, 'a')).toEqual([0, 0, 0]);
+    drawnAt(after, 'a').forEach((v, i) => expect(v).toBeCloseTo([5, 10, 3][i], 4));
+  });
+
+  it('the default camera, standing at its own position, is drawn on the path', () => {
+    const s0 = run(base(), [
+      ...line(),
+      add('f', 'FollowPath', { target: 'n_camera', curve: 'cv', evalTime: 0.5 }),
+    ]);
+    // The premise: the default camera stands away from the origin.
+    expect(ownPositionOf(s0, 'n_camera')).not.toEqual([0, 0, 0]);
+    const after = convert(s0);
+    expect(ownPositionOf(after, 'n_camera')).toEqual([0, 0, 0]);
+    drawnAt(after, 'n_camera').forEach((v, i) => expect(v).toBeCloseTo([5, 0, 0][i], 4));
   });
 });
 

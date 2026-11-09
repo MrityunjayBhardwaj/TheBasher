@@ -370,6 +370,16 @@ describe('FollowPath — the CAMERA road (the headline, and its own resolver)', 
     expect(dist(pose.position as Vec3, [12, 0, 0])).toBeLessThan(1e-6);
   });
 
+  it("#1791 — a camera's own position is an offset from the path point", () => {
+    const state = addFollowPath(addCurve(buildDefaultDagState()), {
+      target: 'n_camera',
+      evalTime: 1,
+    });
+    // The default camera's own (3, 2, 3), added to the path's end (12, 0, 0).
+    const pose = resolveCameraPoseAt(state, 'n_camera', 0)!;
+    expect(dist(pose.position as Vec3, [15, 2, 3])).toBeLessThan(1e-6);
+  });
+
   it("#1640 — the camera's Position row shows it on the path, where it is drawn", () => {
     const state = addFollowPath(addCurve(cameraOnPath(buildDefaultDagState())), {
       target: 'n_camera',

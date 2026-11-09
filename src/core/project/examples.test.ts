@@ -4,12 +4,20 @@
 // default.ts — so an opened example is an ordinary, selectable, undoable project.
 // #1282 — one example is a scene the app saved rather than one built from ops here, so it
 // never passed applyOp in this repo; its row below checks what applyOp would have: every
-// node's params parse under its type's schema and every edge reaches a node that exists.
+// node's params parse under its type's schema, the parse keeps every key the file holds (the
+// check addNode makes, #1686 — a copy of a node is refused for a key its schema dropped, #1851),
+// and every edge reaches a node that exists.
 
 import { describe, expect, it } from 'vitest';
 import { registerAllNodes } from '../../nodes/registerAll';
+import { lostKeyIn } from '../dag/ops';
 import { getNodeType } from '../dag/registry';
-import { buildAllExampleProjects, buildExampleProject, EXAMPLE_PROJECT_IDS } from './examples';
+import {
+  buildAllExampleProjects,
+  buildExampleProject,
+  CAPTURED_EXAMPLE_IDS,
+  EXAMPLE_PROJECT_IDS,
+} from './examples';
 
 registerAllNodes();
 
@@ -60,6 +68,10 @@ describe('example projects (v0.6 #4 W4)', () => {
       }
       const parsed = def.paramSchema.safeParse(n.params);
       if (!parsed.success) bad.push(`${id} ${n.type}: ${parsed.error.issues[0]?.message}`);
+      else {
+        const lost = lostKeyIn(n.params, parsed.data, '');
+        if (lost !== null) bad.push(`${id} ${n.type}: no field at ${lost}`);
+      }
       for (const [socket, ref] of Object.entries(n.inputs ?? {}))
         for (const r of Array.isArray(ref) ? ref : [ref])
           if (r && !((r as { node: string }).node in nodes))
@@ -82,6 +94,11 @@ describe('example projects (v0.6 #4 W4)', () => {
       'ArmatureModifier',
     ])
       expect(types, t).toContain(t);
+  });
+
+  it('the captured example is the only captured one, so the row above covers them all (#1851)', () => {
+    // A second captured example would skip the row above, which reads this one by id.
+    expect(CAPTURED_EXAMPLE_IDS).toEqual(['example_camera_path_ai_walk']);
   });
 
   it('buildAllExampleProjects returns one project per id', async () => {
