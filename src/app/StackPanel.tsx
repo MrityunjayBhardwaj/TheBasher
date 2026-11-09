@@ -3,8 +3,9 @@
 // Whatever lane it shows (modifiers, constraints, materials, effects), it reads the same tree
 // (`stackOf`) and writes through the same edits (`planStackEdit`), so the lanes look and behave
 // alike, and the panel holds nothing of its own but which groups are open:
-//   - a node's main input continues underneath it; every other input is a group that opens and
-//     closes, and says how many rows it holds while closed;
+//   - rows read in apply order, first applied on top (the user's decision, 2026-11-09): a node's
+//     main input is drawn above it; every other input is a group under it that opens and closes,
+//     and says how many rows it holds while closed;
 //   - a "same as" row jumps to the node's full row, opening what it sits in;
 //   - a template opens in place, and says that an edit inside reaches every instance;
 //   - a row shows its mute when its type has one, and any param a wired input overrides;
@@ -41,7 +42,7 @@ const CHIP =
   'rounded border border-dashed border-border px-1.5 py-0.5 text-fg-dim hover:border-accent hover:text-accent';
 
 export interface StackPanelProps {
-  /** The output whose stack this is: it draws on top. */
+  /** The output whose stack this is: it draws last, as what is applied last. */
   readonly output: NodeRef;
   /** Prefixes every data-testid. */
   readonly testIdPrefix?: string;
@@ -325,13 +326,15 @@ export function StackPanel({ output, testIdPrefix = 'stack', lane }: StackPanelP
             <span
               className={`items-center gap-1 ${active ? 'flex' : 'hidden group-hover:flex group-focus-within:flex'}`}
             >
+              {/* Drawn in apply order, so ▲ is earlier: one place further from the output, which
+                  is a higher index in the edit's run (0 = the row the output reads). */}
               <button
                 type="button"
                 data-testid={`${p}-up-${row.key}`}
                 className={BTN}
-                disabled={index === 0}
-                title="Move up"
-                onClick={() => run({ kind: 'move', row: row.key, to: index - 1 }, 'stack: move')}
+                disabled={index === run_.length - 1}
+                title="Move up (applied earlier)"
+                onClick={() => run({ kind: 'move', row: row.key, to: index + 1 }, 'stack: move')}
               >
                 ▲
               </button>
@@ -339,9 +342,9 @@ export function StackPanel({ output, testIdPrefix = 'stack', lane }: StackPanelP
                 type="button"
                 data-testid={`${p}-down-${row.key}`}
                 className={BTN}
-                disabled={index === run_.length - 1}
-                title="Move down"
-                onClick={() => run({ kind: 'move', row: row.key, to: index + 1 }, 'stack: move')}
+                disabled={index === 0}
+                title="Move down (applied later)"
+                onClick={() => run({ kind: 'move', row: row.key, to: index - 1 }, 'stack: move')}
               >
                 ▼
               </button>
@@ -349,7 +352,7 @@ export function StackPanel({ output, testIdPrefix = 'stack', lane }: StackPanelP
                 type="button"
                 data-testid={`${p}-add-${row.key}`}
                 className={BTN}
-                title="Add on top of this row"
+                title="Add after this row (applied next)"
                 onClick={() => openMenu({ above: row.key }, addAt)}
               >
                 +
@@ -459,10 +462,17 @@ export function StackPanel({ output, testIdPrefix = 'stack', lane }: StackPanelP
     );
   }
 
+  /**
+   * A flat run in apply order: what is applied first on top, read top to bottom as a person reads
+   * (the user's decision, 2026-11-09, as Blender's Modifier and Constraint tabs list them). The tree
+   * holds a run output-first, so it is drawn reversed, and each row keeps its index in the tree's
+   * order, which is what the edits speak.
+   */
   function renderRun(list: readonly StackRow[], named: string | null = null): ReactNode {
+    const applied = list.map((row, i) => ({ row, i })).reverse();
     return (
       <div className="flex flex-col gap-0.5">
-        {list.map((row, i) =>
+        {applied.map(({ row, i }) =>
           row.kind === 'node' ? (
             renderNode(row, list, i, named)
           ) : (
@@ -478,7 +488,7 @@ export function StackPanel({ output, testIdPrefix = 'stack', lane }: StackPanelP
                 title="Show the full row"
                 onClick={() => jumpTo(row.nodeId)}
               >
-                ⤷ {nameOf(state, row.nodeId)} = same node as above
+                ⤷ {nameOf(state, row.nodeId)} = same node, shown in full elsewhere
               </button>
               {named ? null : (
                 <button

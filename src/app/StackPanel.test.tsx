@@ -124,9 +124,22 @@ describe('editing through the panel', () => {
     expect(dag()).toBe(before);
   });
 
-  it('▼ moves a row down its run, by one undo', () => {
+  // Apply order, first applied on top (2026-11-09): the data lane reads Box, Bevel, Array, Mirror.
+  it('a run reads in apply order, and its ends cannot move past themselves', () => {
     show(m.crate);
-    click('s-down-mirror');
+    const rows = [...container.querySelectorAll('[data-testid^="s-row-"]')].map((e) =>
+      e.getAttribute('data-testid')!.slice('s-row-'.length),
+    );
+    const box = (dag().nodes.bevel.inputs.target as NodeRef).node;
+    const lane = rows.filter((id) => [box, 'bevel', 'array', 'mirror'].includes(id));
+    expect(lane).toEqual([box, 'bevel', 'array', 'mirror']);
+    expect((el(`s-up-${box}`) as HTMLButtonElement).disabled).toBe(true);
+    expect((el('s-down-mirror') as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it('▲ moves a row earlier in apply order, by one undo', () => {
+    show(m.crate);
+    click('s-up-mirror');
     expect((dag().nodes[m.crate.node].inputs.data as NodeRef).node).toBe('array');
     expect((dag().nodes.array.inputs.target as NodeRef).node).toBe('mirror');
     act(() => useDagStore.getState().undo());
