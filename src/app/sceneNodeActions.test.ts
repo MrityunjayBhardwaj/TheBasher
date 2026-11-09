@@ -2244,6 +2244,8 @@ describe('buildDeleteNodesOps — a deleted parent hands its children up (#1517)
     paramPath,
     value,
   });
+  /** A node's params, typed for reading a field off them. */
+  const paramsOf = (st: DagState, id: string) => st.nodes[id].params as Record<string, unknown>;
   const group = (id: string, parent: string, pos: number[], rot: number[], scl = 2): Op[] => [
     { type: 'addNode', nodeId: id, nodeType: 'Group', params: {} },
     conn(id, parent),
@@ -2396,8 +2398,8 @@ describe('buildDeleteNodesOps — a deleted parent hands its children up (#1517)
 
     const after = apply(s, plan.ops);
     expect(isInScene(after, 'n_box')).toBe(true);
-    expect(after.nodes.n_box.params.position).toEqual(s.nodes.n_box.params.position);
-    expect(after.nodes.ch.params.keyframes).toEqual(s.nodes.ch.params.keyframes);
+    expect(paramsOf(after, 'n_box').position).toEqual(paramsOf(s, 'n_box').position);
+    expect(paramsOf(after, 'ch').keyframes).toEqual(paramsOf(s, 'ch').keyframes);
     // The agent's door reads the same plan, so it does not throw.
     expect(() => buildDeleteNodesOps(s, ['INNER'])).not.toThrow();
     // Deleted together nothing moves, so there is nothing to say.
@@ -2428,7 +2430,6 @@ describe('buildDeleteNodesOps — a deleted parent hands its children up (#1517)
   });
 
   // #1861 — Alt+Delete: the children hang where plain Delete hangs them, keeping their own values.
-  const paramsOf = (st: DagState, id: string) => st.nodes[id].params as Record<string, unknown>;
   it('Alt+Delete hands the child up with its own values unchanged, so it lands at them', () => {
     const s = nested();
     const own = ['position', 'rotation', 'scale'].map((k) => paramsOf(s, 'n_box')[k]);
