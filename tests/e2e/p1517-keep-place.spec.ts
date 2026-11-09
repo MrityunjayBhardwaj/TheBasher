@@ -291,3 +291,51 @@ test('a row with nothing below it is not offered Delete Hierarchy', async ({ pag
   await expect(page.getByTestId('outliner-ctx-delete')).toBeVisible();
   await expect(page.getByTestId('outliner-ctx-delete-hierarchy')).toHaveCount(0);
 });
+
+// #1861 — Alt+Delete (and Alt+Backspace, and the outliner's entry) deletes a parent and lets its
+// children keep their own values: each hangs from the deleted node's parent at those values, so it
+// lands somewhere else on screen. Plain Delete, above, keeps it where it was drawn.
+const ownValues = (page: Page, id: string) =>
+  page.evaluate((nodeId) => {
+    const p = (window as unknown as W).__basher_dag.getState().state.nodes[nodeId].params;
+    return JSON.stringify([p.position, p.rotation, p.scale]);
+  }, id);
+
+for (const key of ['Alt+Delete', 'Alt+Backspace']) {
+  test(`${key} deletes a group and its child keeps its own values under the group's parent`, async ({
+    page,
+  }) => {
+    await setUp(page);
+    await dragRowOnto(page, 'n_box', 'INNER');
+    const values = await ownValues(page, 'n_box');
+    const drawn = await drawnAt(page, 'n_box');
+    await select(page, ['INNER']);
+    await page.keyboard.press(key);
+    await expect.poll(() => hasNode(page, 'INNER')).toBe(false);
+    expect(await childrenOf(page, 'OUTER')).toEqual(['n_box']);
+    expect(await ownValues(page, 'n_box')).toEqual(values);
+    await expect.poll(() => drawnAt(page, 'n_box')).not.toEqual(drawn);
+
+    await page.evaluate(() => (window as unknown as W).__basher_dag.getState().undo());
+    await expect.poll(() => childrenOf(page, 'INNER')).toEqual(['n_box']);
+    expect(await drawnAt(page, 'n_box')).toEqual(drawn);
+  });
+}
+
+test('the outliner offers the same delete on a row with children, and not on one without', async ({
+  page,
+}) => {
+  await setUp(page);
+  await dragRowOnto(page, 'n_box', 'INNER');
+  const values = await ownValues(page, 'n_box');
+  await page.getByTestId('scene-tree-row-n_box').click({ button: 'right' });
+  await expect(page.getByTestId('outliner-ctx-delete')).toBeVisible();
+  await expect(page.getByTestId('outliner-ctx-delete-keep-values')).toHaveCount(0);
+  await page.keyboard.press('Escape');
+
+  await page.getByTestId('scene-tree-row-INNER').click({ button: 'right' });
+  await page.getByTestId('outliner-ctx-delete-keep-values').click();
+  await expect.poll(() => hasNode(page, 'INNER')).toBe(false);
+  expect(await childrenOf(page, 'OUTER')).toEqual(['n_box']);
+  expect(await ownValues(page, 'n_box')).toEqual(values);
+});

@@ -39,8 +39,9 @@
 // drift). The child's own Track-To is fine too: its position is kept, and the aim overrides its
 // rotation. Until #1854 the read left the constraint out (#1829), so such a move was refused.
 //
-// DELETE keeps the children in place, where Blender's does not: measured on 5.1.1, deleting a
-// parent drops each child onto its own values, constrained parent or not (#1516 chose to keep).
+// DELETE keeps the children in place by default, for the reasons written at `planDeleteNodes`
+// (#1861); Alt+Delete keeps their own values instead (`keepTransform: false`). Blender's Delete
+// drops a child onto its own values, which its parent-inverse matrix usually hides.
 //
 // Only the world the parent has at `ctx` is kept: under an animated parent, as in Blender, the
 // child is in place at the frame the gesture was made at.
