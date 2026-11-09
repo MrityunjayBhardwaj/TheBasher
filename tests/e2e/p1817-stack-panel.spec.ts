@@ -184,3 +184,109 @@ test('the Constraint Stack builds, blends, reorders and cuts a chain, and the ob
     path: test.info().outputPath('constraint-stack.png'),
   });
 });
+
+/** Adds a Lag through Shift+A ▸ Compute, as a person does, and returns the new instance's id. */
+async function addLag(page: Page): Promise<string> {
+  const before = await page.evaluate(() =>
+    Object.keys((window as unknown as W).__basher_dag.getState().state.nodes),
+  );
+  await page.locator('canvas').first().hover();
+  await page.keyboard.press('Shift+A');
+  await page.getByTestId('add-menu-compute').click();
+  // At 1280×720 the Compute list runs below the window and doesn't scroll (#1857), so Lag can't
+  // be clicked where it is drawn; the click runs the menu item's own handler all the same.
+  await page.getByTestId('add-menu-item-Lag').dispatchEvent('click');
+  return expect
+    .poll(() =>
+      page.evaluate(
+        (had) =>
+          Object.entries((window as unknown as W).__basher_dag.getState().state.nodes).find(
+            ([id, n]) => !had.includes(id) && n.type.startsWith('template.'),
+          )?.[0] ?? null,
+        before,
+      ),
+    )
+    .not.toBeNull()
+    .then(() =>
+      page.evaluate(
+        (had) =>
+          Object.entries((window as unknown as W).__basher_dag.getState().state.nodes).find(
+            ([id, n]) => !had.includes(id) && n.type.startsWith('template.'),
+          )![0],
+        before,
+      ),
+    );
+}
+
+test('a hand-wired lane keeps the stack on screen, and a drag and make unique edit it', async ({
+  page,
+}) => {
+  await boot(page);
+  const lag = await addLag(page);
+  const spare = await addLag(page); // a second instance, so the template is shared
+  expect(spare).not.toBe(lag);
+  await page.evaluate((lagId) => {
+    const w = window as unknown as W;
+    const d = (op: unknown) => w.__basher_dag.getState().dispatch(op, 'user', 'e2e');
+    const node = (nodeId: string, nodeType: string, params: Record<string, unknown> = {}) =>
+      d({ type: 'addNode', nodeId, nodeType, params });
+    const wire = (from: string, to: string, socket: string, out = 'out') =>
+      d({ type: 'connect', from: { node: from, socket: out }, to: { node: to, socket } });
+    node('e_own', 'OwnWorld', { object: 'n_box' });
+    node('e_aimA', 'TrackTo', { target: 'n_box' });
+    node('e_aimB', 'TrackTo', { target: 'n_box', roll: 15 });
+    node('e_mix', 'Mix', { dataType: 'Matrix', factor: 0.5 });
+    node('e_noise', 'Noise');
+    node('e_remap', 'CurveRemap');
+    wire('e_own', 'e_aimA', 'in', 'world');
+    wire('e_own', 'e_aimB', 'in', 'world');
+    wire('e_aimA', 'e_mix', 'aMatrix', 'world');
+    wire('e_aimB', 'e_mix', 'bMatrix', 'world');
+    wire('e_mix', 'n_box', 'constraints', 'outMatrix');
+    wire('e_noise', 'e_remap', 'in');
+    wire('e_remap', lagId, 'in');
+    wire(lagId, 'e_mix', 'factor');
+  }, lag);
+  const inputOf = (id: string, socket: string) =>
+    page.evaluate(
+      ([i, s]) =>
+        (
+          (window as unknown as W).__basher_dag.getState().state.nodes[i] as unknown as {
+            inputs: Record<string, { node: string } | undefined>;
+          }
+        ).inputs[s]?.node ?? null,
+      [id, socket] as const,
+    );
+  expect(await inputOf('n_box', 'constraints')).toBe('e_mix');
+
+  // Selecting the hand-wired Mix, then the Lag on its factor, keeps n_box's stack on screen:
+  // before #1817 closed, either one took the card away.
+  const panel = page.getByTestId('constraint-chain-panel');
+  for (const id of ['e_mix', lag, 'e_noise']) {
+    await select(page, id);
+    await expect(panel, `the stack with ${id} selected`).toBeVisible();
+    await expect(page.getByTestId('constraint-chain-row-e_aimA')).toBeVisible();
+    await expect(page.getByTestId(`constraint-chain-row-${lag}`)).toBeVisible();
+  }
+
+  // Drag Noise onto Remap: it moves to read Remap's place, and Remap hangs under it.
+  await page
+    .getByTestId('constraint-chain-row-e_noise')
+    .dragTo(page.getByTestId('constraint-chain-row-e_remap'));
+  await expect.poll(() => inputOf(lag, 'in')).toBe('e_noise');
+  expect(await inputOf('e_noise', 't')).toBe('e_remap');
+  await expect(page.getByTestId('constraint-chain-notice')).toHaveCount(0);
+
+  // Make unique: this Lag gets a template of its own, and the spare keeps the shared one.
+  const typeOf = (id: string) =>
+    page.evaluate((i) => (window as unknown as W).__basher_dag.getState().state.nodes[i].type, id);
+  const shared = await typeOf(lag);
+  expect(await typeOf(spare)).toBe(shared);
+  await page.getByTestId(`constraint-chain-unique-${lag}`).click();
+  await expect.poll(() => typeOf(lag)).not.toBe(shared);
+  expect(await typeOf(spare)).toBe(shared);
+  await expect(page.getByTestId(`constraint-chain-unique-${lag}`)).toHaveCount(0);
+  expect(await inputOf('e_mix', 'factor')).toBe(lag);
+
+  await panel.screenshot({ path: test.info().outputPath('hand-wired-stack.png') });
+});

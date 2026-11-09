@@ -295,3 +295,57 @@ export function stackOf(state: DagState, output: NodeRef): StackRow[] {
   }
   return rows;
 }
+
+/** Whether a node type holds a constraints lane: an input declared as a chain's end. */
+const holdsLane = (type: string): boolean =>
+  Object.values(getNodeType(type)?.inputs ?? {}).some((input) => input.chain === 'end');
+
+const readersByNodes = new WeakMap<
+  DagState['nodes'],
+  Map<string, { node: string; socket: string }[]>
+>();
+
+/** Who reads each node, by wire: built once per graph, as a selector asks on every store change. */
+function readersOf(nodes: DagState['nodes']): Map<string, { node: string; socket: string }[]> {
+  let readers = readersByNodes.get(nodes);
+  if (readers) return readers;
+  readers = new Map();
+  for (const [id, node] of Object.entries(nodes)) {
+    for (const [socket, binding] of Object.entries(node.inputs)) {
+      for (const ref of refsOf(binding)) {
+        const list = readers.get(ref.node);
+        if (list) list.push({ node: id, socket });
+        else readers.set(ref.node, [{ node: id, socket }]);
+      }
+    }
+  }
+  readersByNodes.set(nodes, readers);
+  return readers;
+}
+
+/**
+ * The object whose constraints lane reaches `nodeId` by wire, or null when none does. Walks the
+ * readers downstream until one reads through a chain's end; it never walks past an object, so a node
+ * on one object's lane isn't claimed by an object that reads that object. A name is no wire, so what
+ * a lane only names (a Track-To's aim) stays its own object's. With several, the first found.
+ */
+export function laneObjectOf(state: DagState, nodeId: string): string | null {
+  const start = state.nodes[nodeId];
+  if (!start || holdsLane(start.type)) return null;
+  const readers = readersOf(state.nodes);
+  const seen = new Set([nodeId]);
+  const queue = [nodeId];
+  while (queue.length > 0) {
+    const id = queue.shift()!;
+    for (const reader of readers.get(id) ?? []) {
+      const node = state.nodes[reader.node];
+      if (!node) continue;
+      const def = getNodeType(node.type);
+      if (def?.inputs?.[reader.socket]?.chain === 'end') return reader.node;
+      if (holdsLane(node.type) || seen.has(reader.node)) continue;
+      seen.add(reader.node);
+      queue.push(reader.node);
+    }
+  }
+  return null;
+}

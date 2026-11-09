@@ -1,12 +1,13 @@
 // #1817 — what the stack panel shows for a row, and what its "+" offers.
 
 import { beforeAll, describe, expect, it } from 'vitest';
-import { __resetRegistryForTests } from '../core/dag';
+import { __resetRegistryForTests, applyOps } from '../core/dag';
 import { getNodeType, listNodeTypes, mainInputOfType } from '../core/dag/registry';
-import { TEMPLATE_DEFINITION_TYPE } from '../core/dag/templates';
+import { TEMPLATE_BODY_SOCKET, TEMPLATE_DEFINITION_TYPE } from '../core/dag/templates';
 import { buildDefaultDagState } from '../core/project/default';
 import { registerAllNodes } from '../nodes/registerAll';
 import { buildCrateMockup, type CrateMockup } from '../test-utils/crateMockup';
+import { sectionsOf } from './inspectorSections';
 import { planStackEdit, type StackPlace } from './stackEdit';
 import {
   emptySockets,
@@ -88,8 +89,52 @@ describe('a row', () => {
   it("a selected step shows its object's stack; anything else shows its own", () => {
     expect(stackObjectOf(m.state, 'barrelAim')).toBe(m.barrel.node);
     expect(stackObjectOf(m.state, 'aimA')).toBe(m.crate.node);
-    expect(stackObjectOf(m.state, 'blend')).toBe('blend');
     expect(stackObjectOf(m.state, m.crate.node)).toBe(m.crate.node);
+    // Off every constraints lane: the data lane's top, and the curve a Follow Path only names.
+    expect(stackObjectOf(m.state, 'mirror')).toBe('mirror');
+    const railData = (m.state.nodes.follow.params as { curve: string }).curve;
+    const curve = (m.state.nodes[railData].inputs.data as { node: string }).node;
+    expect(stackObjectOf(m.state, curve)).toBe(curve);
+  });
+
+  // #1817 — a hand-wired node has no `target`: the lane its wires reach says whose it is.
+  it.each(['blend', 'noise', 'remap'])(
+    "a hand-wired %s on the lane shows the Crate's stack",
+    (id) => {
+      expect(stackObjectOf(m.state, id)).toBe(m.crate.node);
+      expect(sectionsOf(m.state, id)).toContain('stack');
+    },
+  );
+
+  it("the Lag on the blend's factor, and a node inside it, show the Crate's stack", () => {
+    expect(stackObjectOf(m.state, m.lag)).toBe(m.crate.node);
+    const inside = (m.state.nodes[m.lag].inputs[TEMPLATE_BODY_SOCKET] as { node: string }).node;
+    expect(stackObjectOf(m.state, inside)).toBe(m.crate.node);
+  });
+
+  // The walk stops at an object: what feeds Rail is Rail's, even when Rail's world is wired on.
+  it("a node behind another object's wired world stays that object's", () => {
+    const rail = (m.state.nodes.follow.params as { curve: string }).curve;
+    const wired = applyOps(m.state, [
+      {
+        type: 'connect',
+        from: { node: rail, socket: 'world' },
+        to: { node: 'aimA', socket: 'aim' },
+      },
+    ]).next;
+    expect(wired.nodes.aimA.inputs.aim).toBeDefined();
+    const curve = (wired.nodes[rail].inputs.data as { node: string }).node;
+    expect(stackObjectOf(wired, curve)).toBe(curve);
+    expect(sectionsOf(wired, curve)).not.toContain('stack');
+  });
+
+  it('a node on no constraints lane gets no Constraint Stack card', () => {
+    expect(sectionsOf(m.state, 'mirror')).not.toContain('stack');
+    const spare = Object.keys(m.state.nodes).find(
+      (id) => m.state.nodes[id].type === m.state.nodes[m.lag].type && id !== m.lag,
+    )!;
+    expect(spare).toBeDefined();
+    expect(sectionsOf(m.state, spare)).not.toContain('stack');
   });
 
   it('a fresh id is free', () => {

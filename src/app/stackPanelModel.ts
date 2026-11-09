@@ -12,7 +12,7 @@ import { TEMPLATE_DEFINITION_TYPE, templatesOf } from '../core/dag/templates';
 import type { NodeRef } from '../core/dag/types';
 import { nodeDisplayName } from './sceneTreeWalk';
 import { muteParamOf, planStackEdit, type StackPlace } from './stackEdit';
-import type { StackGroup, StackNodeRow, StackRow } from './stackTree';
+import { laneObjectOf, type StackGroup, type StackNodeRow, type StackRow } from './stackTree';
 
 /** `TrackTo` reads "Track To"; a template type reads its definition's label. */
 export function typeLabel(state: DagState, type: string): string {
@@ -170,7 +170,8 @@ export function offersAt(state: DagState, output: NodeRef, place: StackPlace): O
 
 /**
  * The object whose Constraint Stack a selected node shows: a constraint step's own object (its
- * `target`), so selecting a row keeps the stack on screen, as the old Constraints card did.
+ * `target`), or the object whose lane a hand-wired node (a Mix, a Lag) feeds, so selecting any row
+ * keeps the stack on screen, as the old Constraints card did.
  */
 export function stackObjectOf(state: DagState, nodeId: string): string {
   const node = state.nodes[nodeId];
@@ -178,7 +179,7 @@ export function stackObjectOf(state: DagState, nodeId: string): string {
     const target = (node.params as { target?: unknown }).target;
     if (typeof target === 'string' && state.nodes[target]) return target;
   }
-  return nodeId;
+  return laneObjectOf(state, nodeId) ?? nodeId;
 }
 
 /** A fresh id for a node of `type`, which no node holds. */

@@ -188,7 +188,7 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
     '[material] assetRef=(unrouted) childName=(unrouted) material=material materialSlots=(unrouted) faceCount=(unrouted) pointCount=(unrouted)',
   GltfSkeleton: '[] skinIndex=(unrouted)',
   Group:
-    '[transform,constraint,driver,layout] position=transform rotation=transform scale=transform pivot=transform rotationMode=transform quaternion=transform parentBone=(unrouted) viewport=(unrouted) render=(unrouted) clock=transform',
+    '[transform,constraint,driver,stack,layout] position=transform rotation=transform scale=transform pivot=transform rotationMode=transform quaternion=transform parentBone=(unrouted) viewport=(unrouted) render=(unrouted) clock=transform',
   IDPass: '[render] width=(unrouted) height=(unrouted)',
   KeyframeChannelColor:
     '[channel,animate] name=(unrouted) target=(unrouted) paramPath=channel mute=(unrouted) solo=(unrouted) weight=animate blendMode=(unrouted) order=(unrouted) keyframes=channel',
@@ -253,7 +253,7 @@ export const GOLDEN_PARAM_HOMES: Readonly<Record<string, string>> = {
   Noise:
     '[] scale=(unrouted) phase=(unrouted) octaves=(unrouted) amplitude=(unrouted) offset=(unrouted)',
   NormalPass: '[render] width=(unrouted) height=(unrouted)',
-  Null: '[transform,constraint,driver] position=transform rotation=transform scale=transform',
+  Null: '[transform,constraint,driver,stack] position=transform rotation=transform scale=transform',
   Object:
     '[transform,constraint,driver,modifier,slots,stack] position=transform rotation=transform scale=transform slotOverrides=slots overridden=(unrouted) rotationMode=transform quaternion=transform parentBone=(unrouted) viewport=(unrouted) render=(unrouted) clock=transform',
   ParamDriver:

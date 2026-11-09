@@ -47,7 +47,8 @@ export const NullNode: NodeDefinition<NullParams, NullValue> = {
     // #1810 — see `parent`.
     world: { type: 'Matrix4', cardinality: 'single', world: true },
   },
-  inspectorSections: ['transform', 'constraint', 'driver'],
+  // #1817 — 'stack': a Null holds a constraints lane as an Object does, so it shows the same card.
+  inspectorSections: ['transform', 'constraint', 'driver', 'stack'],
   home: {
     position: 'transform',
     rotation: 'transform',
