@@ -618,6 +618,26 @@ export function KeyboardShortcuts() {
         return;
       }
 
+      // #1861 — Alt+Delete (Alt+Backspace on a laptop) deletes the selection and lets a deleted
+      // parent's children keep their own position, rotation and scale, landing at those values
+      // under its parent. Plain Delete, below, keeps them where they're drawn: the default, for the
+      // reasons at `planDeleteNodes`. Not in an armature's Edit mode, whose Delete is for bones.
+      if (
+        e.altKey &&
+        !cmd &&
+        !e.shiftKey &&
+        (e.key === 'Delete' || e.key === 'Backspace') &&
+        getArmatureMode() !== 'edit'
+      ) {
+        const ids = [...useSelectionStore.getState().selectedNodeIds];
+        if (ids.length === 0) return;
+        e.preventDefault();
+        const plan = planDeleteNodes(useDagStore.getState().state, ids, { children: 'values' });
+        if (runMove(plan, `delete ${ids.length} node(s), children keep their values`))
+          useSelectionStore.getState().clear();
+        return;
+      }
+
       // Single-key shortcuts (only when no mod is held).
       if (cmd || e.altKey || e.shiftKey) return;
 
