@@ -72,6 +72,9 @@ const rowOrder = async (page: Page) =>
 test('the Constraint Stack builds, blends, reorders and cuts a chain, and the object follows', async ({
   page,
 }) => {
+  // A long UI journey (~25 clicks and hovers): about 2 s each on the slowest CI shard, past the
+  // 60 s default there, against ~14 s locally.
+  test.setTimeout(120_000);
   await boot(page);
   // n_box at its own (0, 4, 0); a line to (10, 0, 0) turned 90° about Z puts it at (-4, 10, 0) at
   // the end of the path, and half way at Blender 5.1.1's (-2, 7, 0) (the #1813 fixture).
@@ -222,6 +225,9 @@ async function addLag(page: Page): Promise<string> {
 test('a hand-wired lane keeps the stack on screen, and a drag and make unique edit it', async ({
   page,
 }) => {
+  // A long UI journey (~25 clicks and hovers): about 2 s each on the slowest CI shard, past the
+  // 60 s default there, against ~14 s locally.
+  test.setTimeout(120_000);
   await boot(page);
   const lag = await addLag(page);
   const spare = await addLag(page); // a second instance, so the template is shared
