@@ -168,7 +168,11 @@ function AddMenuGroup({
   onDeactivate: () => void;
   close: () => void;
 }) {
-  const { containerRef, style: flyoutStyle } = useFlyoutSide<HTMLLIElement>(active, SUBMENU_WIDTH);
+  const {
+    containerRef,
+    panelRef,
+    style: flyoutStyle,
+  } = useFlyoutSide<HTMLLIElement>(active, SUBMENU_WIDTH);
   return (
     <li
       ref={containerRef}
@@ -194,6 +198,7 @@ function AddMenuGroup({
       </button>
       {active ? (
         <div
+          ref={panelRef}
           role="menu"
           aria-label={group.label}
           data-testid={`add-menu-${group.label.toLowerCase()}-panel`}

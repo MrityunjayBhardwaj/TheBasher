@@ -201,9 +201,7 @@ async function addLag(page: Page): Promise<string> {
   await page.locator('canvas').first().hover();
   await page.keyboard.press('Shift+A');
   await page.getByTestId('add-menu-compute').click();
-  // At 1280×720 the Compute list runs below the window and doesn't scroll (#1857), so Lag can't
-  // be clicked where it is drawn; the click runs the menu item's own handler all the same.
-  await page.getByTestId('add-menu-item-Lag').dispatchEvent('click');
+  await page.getByTestId('add-menu-item-Lag').click();
   return expect
     .poll(() =>
       page.evaluate(
