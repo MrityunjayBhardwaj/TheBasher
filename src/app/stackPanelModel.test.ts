@@ -128,6 +128,10 @@ describe('a row', () => {
     expect(sectionsOf(wired, curve)).not.toContain('stack');
   });
 
+  it('an object shows its own Constraint Stack card', () => {
+    expect(sectionsOf(m.state, m.crate.node)).toContain('stack');
+  });
+
   it('a node on no constraints lane gets no Constraint Stack card', () => {
     expect(sectionsOf(m.state, 'mirror')).not.toContain('stack');
     const spare = Object.keys(m.state.nodes).find(
