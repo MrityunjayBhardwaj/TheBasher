@@ -61,7 +61,9 @@ export const GroupNode: NodeDefinition<GroupParams, GroupValue> = {
     // #1810 — see `parent`.
     world: { type: 'Matrix4', cardinality: 'single', world: true },
   },
-  inspectorSections: ['transform', 'constraint', 'driver', 'layout'],
+  // #1817 — 'stack': a Group holds a constraints lane as an Object does, so it shows the same card.
+  // Before 'layout', which trails (the pin's intent); only `sections[0]` decides what starts open.
+  inspectorSections: ['transform', 'constraint', 'driver', 'stack', 'layout'],
   home: {
     position: 'transform',
     rotation: 'transform',

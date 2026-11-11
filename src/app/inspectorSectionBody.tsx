@@ -109,7 +109,8 @@ export type ControlKey =
   | 'setOrigin'
   | 'objectSlots'
   | 'rotationMode'
-  | 'clock';
+  | 'clock'
+  | 'constraintChain';
 
 export type SectionControl = {
   key: ControlKey;
@@ -333,6 +334,8 @@ export const SECTION_CONTROLS: Record<SectionId, readonly SectionControl[]> = {
   slots: [
     { key: 'objectSlots', applies: whenDeclared, placement: 'before', suppressesAllRows: true },
   ],
+  // #1817 — the stack panel on the object's constraints lane. No param routes here.
+  stack: [{ key: 'constraintChain', applies: whenDeclared, placement: 'before' }],
 };
 
 /** Every row key a control owns across the sections a node declares.

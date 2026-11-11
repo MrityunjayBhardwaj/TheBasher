@@ -438,13 +438,14 @@ export function templateEdits(
     const before = matchInstanceBody(prev, instance.id, def);
     if (!before) continue;
     const touched = [...before].filter(([, id]) => changed.has(id));
-    if (touched.length === 0) continue;
-    const [, first] = touched[0];
+    // The socket the body hangs from is part of the shape, and belongs to no node of the body.
+    const rehung = !same(instance.inputs[TEMPLATE_BODY_SOCKET], after.inputs[TEMPLATE_BODY_SOCKET]);
+    if (touched.length === 0 && !rehung) continue;
     if (isLocked(after))
       return {
         refusal:
-          `"${first}" is inside "${instance.id}", an instance of ${def.type} that is locked; ` +
-          `unlock it to edit the template`,
+          `"${touched[0]?.[1] ?? before.get(def.body.out.node)}" is inside "${instance.id}", an ` +
+          `instance of ${def.type} that is locked; unlock it to edit the template`,
       };
     const now = matchInstanceBody(next, instance.id, def);
     // The same nodes at the same places: a socket moved to a new node of the same type still

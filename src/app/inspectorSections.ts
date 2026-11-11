@@ -17,6 +17,7 @@
 
 import { getNodeType } from '../core/dag/registry';
 import type { DagState } from '../core/dag/state';
+import { laneObjectOf } from './stackTree';
 
 export type SectionId =
   | 'transform'
@@ -34,7 +35,8 @@ export type SectionId =
   | 'environment'
   | 'camera'
   | 'layout'
-  | 'slots';
+  | 'slots'
+  | 'stack';
 
 export const SECTION_IDS: readonly SectionId[] = [
   'transform',
@@ -72,6 +74,9 @@ export const SECTION_IDS: readonly SectionId[] = [
   // one answers the other half of the reference's per-slot question — which slots does
   // THIS object re-point, leaving the shared datablock untouched.
   'slots',
+  // #1817 — the object's transform lane as a stack: its constraints chain, drawn and edited by
+  // the one stack panel. Appended last for the same reason 'modifier' and 'slots' were.
+  'stack',
 ];
 
 /** Type-narrow at the persistence boundary — unknown strings (legacy
@@ -98,6 +103,7 @@ export function formatSectionLabel(id: SectionId): string {
  */
 const SECTION_LABELS: Partial<Record<SectionId, string>> = {
   slots: 'Material Slots',
+  stack: 'Constraint Stack',
 };
 
 /** D-10 A — multi-select Inspector resolution: show Transform + Layout
@@ -164,8 +170,19 @@ export function sectionsOf(
 ): readonly SectionId[] {
   const node = nodeId ? state.nodes[nodeId] : undefined;
   if (!node) return NO_SECTIONS;
-  const declared = getNodeType(node.type)?.inspectorSections;
-  if (!declared || declared.length === 0) return NO_SECTIONS;
+  const declared = getNodeType(node.type)?.inspectorSections ?? NO_SECTIONS;
+  // #1817 — a node a type can't know is on a lane: a Mix or Lag wired into an object's constraints.
+  // Selecting it shows that object's Constraint Stack, as selecting a Track-To does, instead of
+  // taking the stack away from under the person's hand. Its own params stay where they were.
+  if (!declared.includes('stack') && nodeId && laneObjectOf(state, nodeId) !== null) {
+    let withStack = withStackSections.get(declared);
+    if (!withStack) {
+      withStack = [...declared.filter(isSectionId), 'stack'];
+      withStackSections.set(declared, withStack);
+    }
+    return withStack;
+  }
+  if (declared.length === 0) return NO_SECTIONS;
   // The narrowed array is cached against the registry's own (module-constant)
   // array so this returns a STABLE reference for a given node type. Call sites
   // subscribe through a `useDagStore` selector, and zustand compares with
@@ -180,6 +197,7 @@ export function sectionsOf(
 }
 
 const NO_SECTIONS: readonly SectionId[] = [];
+const withStackSections = new WeakMap<readonly string[], SectionId[]>();
 const narrowedSections = new WeakMap<readonly string[], SectionId[]>();
 
 /** Default-collapsed convention (§5.8). A section is default-collapsed

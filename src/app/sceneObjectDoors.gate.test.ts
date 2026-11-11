@@ -459,6 +459,9 @@ const CREATES_NO_SCENE_OBJECT: Record<string, string> = {
   'src/core/dag/chainEdit.ts':
     'a constraint step and its blend on an object that exists; none is SceneObject',
   'src/app/operatorStack.ts': 'an operator on a data, material or effect lane; none is SceneObject',
+  'src/app/stackEdit.ts':
+    'refuses a type with a world output (an object goes in through Add, which links it into a ' +
+    'collection); make unique puts back an instance that was already there',
   'src/app/shotOps.ts': 'a keyframe channel',
   'src/app/shotSpeed.ts': 'a keyframe channel',
   'src/app/solverBind.ts': 'a ParamDriver',

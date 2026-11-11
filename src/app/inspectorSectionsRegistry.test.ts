@@ -205,7 +205,14 @@ describe('C2 — inspectorSections declarations', () => {
     // #312 — a Group has a POSE, so it also carries a constraint stack. The pin's
     // intent is PRIMACY (transform leads, layout trails), which still holds.
     // #316 — and its params are drivable, so it carries a Drivers stack too.
-    expect(snap.Group.inspectorSections).toEqual(['transform', 'constraint', 'driver', 'layout']);
+    // #1817 — and the Constraint Stack, before layout so layout still trails.
+    expect(snap.Group.inspectorSections).toEqual([
+      'transform',
+      'constraint',
+      'driver',
+      'stack',
+      'layout',
+    ]);
     expect(snap.Group.inspectorSections?.[0]).toBe('transform');
   });
 
@@ -317,6 +324,8 @@ describe('C2 — inspectorSections declarations', () => {
       'transform',
       'constraint',
       'driver',
+      // #1817 — the transform lane as a stack: any object has a transform, so it holds too.
+      'stack',
     ];
 
     const snap = snapshotRegistry();
