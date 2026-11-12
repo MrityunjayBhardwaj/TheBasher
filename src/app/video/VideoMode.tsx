@@ -29,6 +29,7 @@ import { ControlsPanel } from './ControlsPanel';
 import { CompositeViewer } from './CompositeViewer';
 import { VideoTransport } from './VideoTransport';
 import { compDurationSeconds } from './videoTimelineGeometry';
+import { compositionLayerIds } from './videoLayers';
 import { exportCompositionWithFeedback } from './exportCompositionAction';
 import { useRenderAnimationStore } from '../stores/renderAnimationStore';
 import { CommercialUseToggle } from '../licence/CommercialUseToggle';
@@ -91,13 +92,9 @@ function EmptyState() {
   );
 }
 
-/** The number of layers wired into a Composition's `layers` list socket. */
+/** The number of layers in a Composition's stack: the same layers its rows and its composite show. */
 function useCompositionLayerCount(compId: NodeId): number {
-  return useDagStore((s) => {
-    const binding = s.state.nodes[compId]?.inputs?.layers;
-    if (Array.isArray(binding)) return binding.length;
-    return binding ? 1 : 0;
-  });
+  return useDagStore((s) => compositionLayerIds(s.state, compId).length);
 }
 
 function CompositionShell({ comp }: { comp: ActiveComposition }) {

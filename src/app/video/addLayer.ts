@@ -21,6 +21,7 @@ import type { IngestFile } from '../asset/importGltf';
 import { SD15_TEXT2IMG, SD15_TEXT2IMG_META } from '../../core/comfy/starterGraphs';
 import { parseComfyWorkflowJson, type ParsedComfyGraph } from '../../core/comfy/importWorkflowJson';
 import { useNotificationStore } from '../stores/notificationStore';
+import { stackLayerOnTopOps } from './videoLayers';
 
 /**
  * Build the ops wrapping `sourceNodeId` (an Image producer) as a new Layer in the
@@ -44,11 +45,7 @@ export function buildAddLayerOps(
       from: { node: sourceNodeId, socket: sourceSocket },
       to: { node: layerId, socket: 'source' },
     },
-    {
-      type: 'connect',
-      from: { node: layerId, socket: 'out' },
-      to: { node: compId, socket: 'layers' },
-    },
+    ...stackLayerOnTopOps(compId, layerId),
   ];
 }
 

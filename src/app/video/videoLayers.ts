@@ -61,18 +61,44 @@ function num(value: unknown, fallback: number): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
 }
 
+// #1879 — how a composition stores its layer stack is known HERE and nowhere else. Today it
+// is the Composition's `layers` list (0 = back); #1879 turns it into a chain on the Image lane.
+// Every reader asks `compositionLayerIds` and every writer builds its ops here, so that change
+// rewrites these functions and not each caller. Before, three readers walked the list by hand
+// and disagreed: the Video header counted a dangling ref or a non-Layer node as a layer, while
+// the rows and the composite skipped it.
+
+/**
+ * The Layer node ids of composition `compId`, back→front. A ref to a missing node or to a
+ * node that is not a Layer is skipped, the same rule for every reader. [] when the comp is
+ * missing or has no layers.
+ */
+export function compositionLayerIds(state: DagState, compId: NodeId): NodeId[] {
+  const comp = state.nodes[compId];
+  if (!comp) return [];
+  return refNodeIds(comp.inputs?.layers).filter((id) => state.nodes[id]?.type === 'Layer');
+}
+
+/** The ops that put Layer `layerId` on top (front) of composition `compId`'s stack. */
+export function stackLayerOnTopOps(compId: NodeId, layerId: NodeId): Op[] {
+  return [
+    {
+      type: 'connect',
+      from: { node: layerId, socket: 'out' },
+      to: { node: compId, socket: 'layers' },
+    },
+  ];
+}
+
 /**
  * The ordered layer rows of `compId`, back→front (the `layers` list order). A
  * dangling layer ref (node missing) is skipped. Returns [] when the comp is
  * missing or has no layers.
  */
 export function collectLayerRows(state: DagState, compId: NodeId): LayerRow[] {
-  const comp = state.nodes[compId];
-  if (!comp) return [];
   const rows: LayerRow[] = [];
-  for (const layerId of refNodeIds(comp.inputs?.layers)) {
-    const layer = state.nodes[layerId];
-    if (!layer || layer.type !== 'Layer') continue;
+  for (const layerId of compositionLayerIds(state, compId)) {
+    const layer = state.nodes[layerId]!;
     const p = layer.params as Record<string, unknown>;
     // The source edge may pass through an effect chain (Image→Image) — resolve to
     // the BASE source (the MediaClip) so the bar length reads the real frame count,

@@ -40,6 +40,7 @@ import type { CompositionParams } from '../../nodes/Composition';
 import type { LayerBlendMode } from '../../nodes/types';
 import { resolveEvaluatedParam } from '../resolveEvaluatedParam';
 import { resolveComfyImageBindings, type ComfyImageUpload } from './comfyImageBinding';
+import { compositionLayerIds } from './videoLayers';
 import { enumerateEffectStack, resolveEffectBase } from '../operatorStack';
 import {
   compositeBitmapKey,
@@ -115,18 +116,9 @@ export function collectCompositeInputs(
   ctx: EvalCtx,
   cache?: EvaluatorCache,
 ): ResolvedLayerInput[] {
-  const comp = state.nodes[compId];
-  if (!comp) return [];
-  const binding = comp.inputs?.layers;
-  const layerIds = Array.isArray(binding)
-    ? binding.map((r) => (r as { node: NodeId }).node)
-    : binding
-      ? [(binding as { node: NodeId }).node]
-      : [];
   const inputs: ResolvedLayerInput[] = [];
-  for (const layerId of layerIds) {
-    const layer = state.nodes[layerId];
-    if (!layer || layer.type !== 'Layer') continue;
+  for (const layerId of compositionLayerIds(state, compId)) {
+    const layer = state.nodes[layerId]!;
     const p = layer.params as Record<string, unknown>;
     const t = (p.transform ?? {}) as Record<string, unknown>;
 

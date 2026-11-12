@@ -9,7 +9,10 @@ import {
   collectChannelKeyframeSamples,
   collectComfySourceChannelRows,
   collectLayerRows,
+  compositionLayerIds,
+  stackLayerOnTopOps,
 } from './videoLayers';
+import { collectCompositeInputs } from './compositeDecode';
 
 function state(nodes: Record<string, unknown>): DagState {
   return { nodes } as unknown as DagState;
@@ -248,5 +251,52 @@ describe('collectComfySourceChannelRows', () => {
       ch: channel('ch', 'KeyframeChannelNumber', 'comfy:3.cfg', [0]),
     });
     expect(collectComfySourceChannelRows(sMedia, 'l2')).toEqual([]);
+  });
+});
+
+// #1879 — one reader of a composition's layer stack. The fixture's list holds a real layer, a
+// ref to a missing node and a ref to a node that is not a Layer: every reader must see the same
+// one layer. Before, the Video header counted all three.
+describe('compositionLayerIds — the one read of a layer stack (#1879)', () => {
+  const s = state({
+    comp: {
+      id: 'comp',
+      type: 'Composition',
+      params: {},
+      inputs: {
+        layers: [
+          { node: 'gone', socket: 'out' },
+          { node: 'l_real', socket: 'out' },
+          { node: 'clip', socket: 'out' },
+        ],
+      },
+    },
+    l_real: { id: 'l_real', type: 'Layer', params: { name: 'real' }, inputs: {} },
+    clip: { id: 'clip', type: 'MediaClip', params: { srcFrames: 4 }, inputs: {} },
+  });
+
+  it('keeps only Layer nodes, back to front', () => {
+    expect(compositionLayerIds(s, 'comp')).toEqual(['l_real']);
+  });
+
+  it('the rows and the composite read the same layers', () => {
+    expect(collectLayerRows(s, 'comp').map((r) => r.id)).toEqual(['l_real']);
+    expect(collectCompositeInputs(s, 'comp', { time: 0 }).map((i) => i.layerId)).toEqual([
+      'l_real',
+    ]);
+  });
+
+  it('is empty for a missing comp', () => {
+    expect(compositionLayerIds(s, 'nope')).toEqual([]);
+  });
+
+  it('a layer stacked on top becomes the last (front) entry', () => {
+    expect(stackLayerOnTopOps('comp', 'l_new')).toEqual([
+      {
+        type: 'connect',
+        from: { node: 'l_new', socket: 'out' },
+        to: { node: 'comp', socket: 'layers' },
+      },
+    ]);
   });
 });
