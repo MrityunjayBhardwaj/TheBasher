@@ -7,6 +7,7 @@
 import { beforeAll, describe, expect, it } from 'vitest';
 import { registerAllNodes } from '../../nodes/registerAll';
 import { BitmapLRU, collectCompositeInputs } from './compositeDecode';
+import { isLayerInput } from './composite';
 import type { DagState } from '../../core/dag/state';
 import type { EvalCtx } from '../../core/dag/types';
 import type { ComfyApiJson } from '../../core/comfy/comfyGraph';
@@ -64,7 +65,7 @@ function stateWithBinding(imageBindings: Record<string, string>): DagState {
 describe('collectCompositeInputs — comfy image bindings', () => {
   it('rewrites a bound LoadImage.image to a stable upload name + records the bytes to upload', () => {
     const state = stateWithBinding({ '10.image': 'media/pose-abc123.png' });
-    const inputs = collectCompositeInputs(state, 'comp', CTX);
+    const inputs = collectCompositeInputs(state, 'comp', CTX).filter(isLayerInput);
 
     expect(inputs).toHaveLength(1);
     const source = inputs[0].source;
@@ -82,7 +83,7 @@ describe('collectCompositeInputs — comfy image bindings', () => {
 
   it('leaves the authored literal + no uploads when nothing is bound', () => {
     const state = stateWithBinding({});
-    const source = collectCompositeInputs(state, 'comp', CTX)[0].source;
+    const source = collectCompositeInputs(state, 'comp', CTX).filter(isLayerInput)[0].source;
 
     const compiled = source?.comfyWorkflow as ComfyApiJson;
     expect(compiled['10'].inputs.image).toBe('placeholder.png');
@@ -90,8 +91,16 @@ describe('collectCompositeInputs — comfy image bindings', () => {
   });
 
   it('busts the source cache key when the bound image changes (animated/edited redraw)', () => {
-    const a = collectCompositeInputs(stateWithBinding({ '10.image': 'media/a.png' }), 'comp', CTX);
-    const b = collectCompositeInputs(stateWithBinding({ '10.image': 'media/b.png' }), 'comp', CTX);
+    const a = collectCompositeInputs(
+      stateWithBinding({ '10.image': 'media/a.png' }),
+      'comp',
+      CTX,
+    ).filter(isLayerInput);
+    const b = collectCompositeInputs(
+      stateWithBinding({ '10.image': 'media/b.png' }),
+      'comp',
+      CTX,
+    ).filter(isLayerInput);
     expect(a[0].source?.path).not.toBe(b[0].source?.path);
   });
 });

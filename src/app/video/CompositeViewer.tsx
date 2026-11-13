@@ -24,7 +24,7 @@ import { useDagStore } from '../../core/dag/store';
 import { useTimeStore, FRAMES_PER_SECOND } from '../stores/timeStore';
 import type { NodeId } from '../../core/dag/types';
 import type { CompositionParams } from '../../nodes/Composition';
-import { drawComposite, planComposite, type LayerComposite } from './composite';
+import { drawComposite, isLayerDraw, planComposite, type CompositeDraw } from './composite';
 import { collectCompositeInputs, decodeDraws } from './compositeDecode';
 import { globalFrameToCompFrame } from './videoTimelineGeometry';
 import { uiEvaluatorCache } from '../uiEvaluatorCache';
@@ -74,7 +74,7 @@ export function CompositeViewer({
     () => collectCompositeInputs(dagState, compId, { time: { frame, seconds, normalized } }, cache),
     [dagState, compId, frame, seconds, normalized, cache],
   );
-  const draws: LayerComposite[] = useMemo(
+  const draws: CompositeDraw[] = useMemo(
     () => planComposite({ fps, durationFrames }, inputs, compFrame),
     [inputs, fps, durationFrames, compFrame],
   );
@@ -105,7 +105,7 @@ export function CompositeViewer({
         width={W}
         height={H}
         data-testid="composite-canvas"
-        data-composite-draws={draws.length}
+        data-composite-draws={draws.filter(isLayerDraw).length}
         data-composite-nonce={nonce}
         className="max-h-full max-w-full rounded"
         style={{ aspectRatio: `${W} / ${H}` }}

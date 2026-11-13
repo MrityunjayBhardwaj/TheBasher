@@ -71,6 +71,28 @@ export function effectsKey(effects: readonly EffectOp[]): string {
   return effects.map((e) => `${e.type}:${e.brightness},${e.contrast},${e.saturation}`).join('|');
 }
 
+/** The canvas filter that applies an effect chain (base → top, the apply order). '' for an
+ *  empty chain. ColorCorrect maps to `brightness()/contrast()/saturate()`. The ONE place an
+ *  effect becomes a filter, for a layer's own effects and for a step between layers. PURE. */
+export function effectFilter(effects: readonly EffectOp[]): string {
+  const filters: string[] = [];
+  for (const e of effects) {
+    if (e.type === 'ColorCorrect') {
+      filters.push(`brightness(${e.brightness}) contrast(${e.contrast}) saturate(${e.saturation})`);
+    }
+  }
+  return filters.join(' ');
+}
+
+/** A step between layers (#1879 step 4): an Image→Image operator on the stack's chain. It
+ *  adjusts everything drawn below it — the layers under it and the comp background. Muted
+ *  steps are not collected. */
+export interface ResolvedAdjustInput {
+  readonly kind: 'adjust';
+  readonly nodeId: string;
+  readonly effects: readonly EffectOp[];
+}
+
 /** A layer's composite inputs at a playhead: authored params with `opacity` +
  *  `rotation` already overlaid by their evaluated channel value (the rest are
  *  authored until 3c-ii makes them keyframeable). `source` is null when the layer
@@ -90,6 +112,29 @@ export interface ResolvedLayerInput {
   readonly source: CompositeSource | null;
   /** The layer's effect chain (base → top), already evaluated. Empty = no effects. */
   readonly effects: readonly EffectOp[];
+}
+
+/** One entry of the stack at a playhead, back→front: a layer or a step between layers. */
+export type ResolvedStackInput = ResolvedLayerInput | ResolvedAdjustInput;
+
+/** Narrow a stack input to a layer input. */
+export function isLayerInput(i: ResolvedStackInput): i is ResolvedLayerInput {
+  return !('kind' in i);
+}
+
+/** A step that applies to the canvas drawn so far. */
+export interface AdjustComposite {
+  readonly kind: 'adjust';
+  readonly nodeId: string;
+  readonly effects: readonly EffectOp[];
+}
+
+/** What `drawComposite` does, in order: draw a layer, or adjust what is drawn. */
+export type CompositeDraw = LayerComposite | AdjustComposite;
+
+/** Narrow a planned draw to a layer draw (the ones that decode a source). */
+export function isLayerDraw(d: CompositeDraw): d is LayerComposite {
+  return !('kind' in d);
 }
 
 /** A visible layer resolved to exactly what `drawComposite` needs to draw it. */
@@ -118,20 +163,27 @@ export function compositeBitmapKey(c: {
 }
 
 /**
- * The ordered (back→front) list of layers visible at `compFrame`, each resolved to
- * its source frame. PURE. A layer is dropped when it has no source, is hidden (the
- * eyeball / solo rule: if ANY layer solos, only solos draw), or the playhead is
- * outside its trimmed span. `inputs` must be in back→front (comp `layers`) order.
+ * The ordered (back→front) draws at `compFrame`: each visible layer resolved to its source
+ * frame, and each step between layers that adjusts what is below it. PURE. A layer is
+ * dropped when it has no source, is hidden (the eyeball / solo rule: if ANY layer solos,
+ * only solos draw), or the playhead is outside its trimmed span. A step has no span and no
+ * solo: it applies whenever it has an effect (its off switch is the stack mute). `inputs`
+ * must be in back→front (stack) order.
  */
 export function planComposite(
   comp: { fps: number; durationFrames: number },
-  inputs: readonly ResolvedLayerInput[],
+  inputs: readonly ResolvedStackInput[],
   compFrame: number,
-): LayerComposite[] {
-  const anySolo = inputs.some((i) => i.solo);
+): CompositeDraw[] {
+  const anySolo = inputs.some((i) => !('kind' in i) && i.solo);
   const fps = comp.fps > 0 ? comp.fps : 30;
-  const out: LayerComposite[] = [];
+  const out: CompositeDraw[] = [];
   for (const i of inputs) {
+    if ('kind' in i) {
+      if (effectFilter(i.effects))
+        out.push({ kind: 'adjust', nodeId: i.nodeId, effects: i.effects });
+      continue;
+    }
     if (!i.source) continue;
     const visible = anySolo ? i.solo : i.enabled;
     if (!visible) continue;
@@ -197,7 +249,8 @@ function clamp01(n: number): number {
 
 /**
  * Draw the composite onto `ctx` (size = comp width×height): clear, fill the comp
- * background, then draw each visible layer back→top. Each layer's source is fitted
+ * background, then draw each visible layer back→top. A step between layers re-draws the
+ * canvas so far through its filter, so it adjusts every layer under it and the background. Each layer's source is fitted
  * (contain) and centered, then translated by `position`, rotated, and scaled about
  * the comp centre, with `opacity` + blend applied. A draw whose bitmap is missing
  * (still decoding) is skipped — the next redraw paints it.
@@ -205,7 +258,7 @@ function clamp01(n: number): number {
 export function drawComposite(
   ctx: CanvasRenderingContext2D,
   comp: { width: number; height: number; background: string },
-  draws: readonly LayerComposite[],
+  draws: readonly CompositeDraw[],
   bitmaps: ReadonlyMap<string, CanvasImageSource & { width: number; height: number }>,
 ): void {
   const W = comp.width;
@@ -216,6 +269,10 @@ export function drawComposite(
     ctx.fillRect(0, 0, W, H);
   }
   for (const d of draws) {
+    if (!isLayerDraw(d)) {
+      adjustCanvas(ctx, W, H, effectFilter(d.effects));
+      continue;
+    }
     const bmp = bitmaps.get(compositeBitmapKey(d));
     if (!bmp) continue;
     ctx.save();
@@ -228,4 +285,23 @@ export function drawComposite(
     ctx.drawImage(bmp, -dw / 2, -dh / 2, dw, dh);
     ctx.restore();
   }
+}
+
+/** Re-draw the `W`×`H` canvas behind `ctx` through `filter`, replacing it: a snapshot of what
+ *  is drawn, then that snapshot filtered back over it with `copy`. No-op for ''. */
+function adjustCanvas(ctx: CanvasRenderingContext2D, W: number, H: number, filter: string): void {
+  if (!filter) return;
+  const snap = document.createElement('canvas');
+  snap.width = W;
+  snap.height = H;
+  const sctx = snap.getContext('2d');
+  if (!sctx) return;
+  sctx.drawImage(ctx.canvas, 0, 0);
+  ctx.save();
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.globalAlpha = 1;
+  ctx.globalCompositeOperation = 'copy';
+  ctx.filter = filter;
+  ctx.drawImage(snap, 0, 0);
+  ctx.restore();
 }

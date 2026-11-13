@@ -19,6 +19,7 @@ import {
 } from './migrations';
 import { PROJECT_FORMAT_VERSION } from './schema';
 import { collectCompositeInputs } from '../../app/video/compositeDecode';
+import { isLayerInput } from '../../app/video/composite';
 import { compositionLayerIds } from '../../app/video/videoLayers';
 import { workflowSocketsOf } from '../../nodes/ComfyUIWorkflow';
 
@@ -105,7 +106,9 @@ describe("v31 → v32: a composition's layer list becomes a chain (#1879)", () =
     // What the viewer and the export composite: order and visibility exactly as the list had them.
     const plan = collectCompositeInputs(project.state, 'comp', {
       time: { frame: 0, seconds: 0, normalized: 0 },
-    }).map((i) => [i.layerId, i.enabled, i.opacity]);
+    })
+      .filter(isLayerInput)
+      .map((i) => [i.layerId, i.enabled, i.opacity]);
     expect(plan).toEqual([
       ['bg', true, 1],
       ['mid', false, 0.5],

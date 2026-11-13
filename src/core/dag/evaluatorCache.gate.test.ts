@@ -336,6 +336,9 @@ const TAKERS: string[] = [
   'resolveDataKind@src/app/modifierGeometry.ts',
   'scanForFollow@src/viewport/followScan.ts',
   'collectCompositeInputs@src/app/video/compositeDecode.ts',
+  // #1879 step 4 — one effect node's evaluated params, for a layer's own effects and a step
+  // between layers; collectCompositeInputs hands it its cache.
+  'evaluatedEffectOp@src/app/video/compositeDecode.ts',
   'captureCompositeFrame@src/app/video/compositeDecode.ts',
   'aimTargetWorld@src/app/nodeConstraints.ts',
   'aimPointWorld@src/app/nodeConstraints.ts',

@@ -18,9 +18,11 @@ import {
   collectComfySourceChannelRows,
   collectLayerRows,
   compositionLayerIds,
+  compositionStack,
   stackLayerOnTopOps,
 } from './videoLayers';
 import { collectCompositeInputs } from './compositeDecode';
+import { isLayerInput } from './composite';
 
 // #1879 — the stack is walked through each node's DECLARED chain socket, so the registry is needed.
 beforeAll(() => registerAllNodes());
@@ -142,23 +144,6 @@ describe('buildReorderLayerOps', () => {
     const s = realStack(['a']);
     expect(buildReorderLayerOps(s, 'nope', 'a', 0)).toEqual([]);
     expect(buildReorderLayerOps(s, 'comp', 'ghost', 0)).toEqual([]);
-  });
-
-  it('refuses while something other than a layer stands on the stack', () => {
-    // Where an adjustment between layers goes when a layer moves past it is #1879 step 4's
-    // question; until then a reorder declines rather than answer it by accident.
-    let s = realStack(['a', 'b']);
-    s = apply(s, [
-      { type: 'addNode', nodeId: 'cc', nodeType: 'ColorCorrect', params: {} },
-      {
-        type: 'disconnect',
-        from: { node: 'a', socket: 'out' },
-        to: { node: 'b', socket: 'below' },
-      },
-      { type: 'connect', from: { node: 'a', socket: 'out' }, to: { node: 'cc', socket: 'target' } },
-      { type: 'connect', from: { node: 'cc', socket: 'out' }, to: { node: 'b', socket: 'below' } },
-    ]);
-    expect(buildReorderLayerOps(s, 'comp', 'a', 1)).toEqual([]);
   });
 });
 
@@ -297,6 +282,97 @@ describe('collectComfySourceChannelRows', () => {
 // #1879 — one reader of a composition's layer stack: the chain under `Composition.in`, walked
 // through each node's declared chain socket. Every reader (the rows, the composite, the header's
 // count) goes through it.
+/** Put a Color Correct `id` on the stack directly above layer `layer`, wired as a user would:
+ *  between it and whatever read it (the next layer's `below`, or the comp's `in`). */
+function stepAbove(s: DagState, layer: string, id = 'cc', params: Record<string, unknown> = {}) {
+  const reader = Object.values(s.nodes).find(
+    (n) => (n.inputs?.below as { node?: string } | undefined)?.node === layer,
+  );
+  const to = reader ? { node: reader.id, socket: 'below' } : { node: 'comp', socket: 'in' };
+  return apply(s, [
+    { type: 'addNode', nodeId: id, nodeType: 'ColorCorrect', params },
+    { type: 'disconnect', from: { node: layer, socket: 'out' }, to },
+    { type: 'connect', from: { node: layer, socket: 'out' }, to: { node: id, socket: 'target' } },
+    { type: 'connect', from: { node: id, socket: 'out' }, to },
+  ]);
+}
+
+const stackIds = (s: DagState) => compositionStack(s, 'comp').map((e) => e.id);
+
+describe('buildReorderLayerOps across a step between layers (#1879 step 4)', () => {
+  // The rule: steps keep their place relative to the layers that do not move; the moved layer
+  // lands directly on the far side of the last layer it passes.
+  const move = (s: DagState, layer: string, to: number) =>
+    stackIds(apply(s, buildReorderLayerOps(s, 'comp', layer, to)));
+
+  it("moving a layer back under an adjustment puts it in the adjustment's reach", () => {
+    const s = stepAbove(realStack(['a', 'b']), 'a'); // a, cc, b
+    expect(stackIds(s)).toEqual(['a', 'cc', 'b']);
+    expect(move(s, 'b', 0)).toEqual(['b', 'a', 'cc']);
+  });
+
+  it('moving a layer forward over an adjustment takes it out of reach', () => {
+    const s = stepAbove(realStack(['a', 'b']), 'a'); // a, cc, b
+    expect(move(s, 'a', 1)).toEqual(['cc', 'b', 'a']);
+  });
+
+  it('a move between other layers leaves the step where it stood among them', () => {
+    const s = stepAbove(realStack(['a', 'b', 'c']), 'b'); // a, b, cc, c
+    expect(move(s, 'a', 1)).toEqual(['b', 'a', 'cc', 'c']);
+    expect(move(s, 'a', 2)).toEqual(['b', 'cc', 'c', 'a']);
+    expect(move(s, 'c', 0)).toEqual(['c', 'a', 'b', 'cc']);
+  });
+
+  it('a step on top stays on top', () => {
+    const s = stepAbove(realStack(['a', 'b']), 'b'); // a, b, cc
+    expect(move(s, 'b', 0)).toEqual(['b', 'a', 'cc']);
+    expect(move(s, 'a', 1)).toEqual(['b', 'a', 'cc']);
+  });
+
+  it('a plain source wired under the back layer stays under the back layer', () => {
+    let s = realStack(['a', 'b']);
+    s = apply(s, buildMediaClipOps('plate', 'plate', 'media/plate.png', STILL));
+    s = apply(s, [
+      {
+        type: 'connect',
+        from: { node: 'plate', socket: 'out' },
+        to: { node: 'a', socket: 'below' },
+      },
+    ]);
+    const after = apply(s, buildReorderLayerOps(s, 'comp', 'b', 0));
+    expect(stackIds(after)).toEqual(['b', 'a']);
+    expect(after.nodes.b.inputs?.below).toMatchObject({ node: 'plate' });
+    expect(after.nodes.a.inputs?.below).toMatchObject({ node: 'b' });
+  });
+
+  it('the moved stack is one chain: every entry read exactly once, the comp reads the top', () => {
+    const s = stepAbove(realStack(['a', 'b', 'c']), 'b');
+    const after = apply(s, buildReorderLayerOps(s, 'comp', 'c', 0));
+    expect(stackIds(after)).toEqual(['c', 'a', 'b', 'cc']);
+    expect(after.nodes.comp.inputs?.in).toMatchObject({ node: 'cc' });
+    expect(after.nodes.cc.inputs?.target).toMatchObject({ node: 'b' });
+    expect(after.nodes.c.inputs?.below).toBeUndefined();
+  });
+});
+
+describe('collectCompositeInputs reads a step between layers as an adjustment (#1879 step 4)', () => {
+  const CTX0 = { time: { frame: 0, seconds: 0, normalized: 0 } };
+  const kinds = (s: DagState) =>
+    collectCompositeInputs(s, 'comp', CTX0).map((i) => (isLayerInput(i) ? i.layerId : i.kind));
+
+  it('in its place in the stack, with its evaluated params', () => {
+    const s = stepAbove(realStack(['a', 'b']), 'a', 'cc', { brightness: 0.5 });
+    expect(kinds(s)).toEqual(['a', 'adjust', 'b']);
+    const adj = collectCompositeInputs(s, 'comp', CTX0)[1];
+    expect(adj).toMatchObject({ kind: 'adjust', nodeId: 'cc', effects: [{ brightness: 0.5 }] });
+  });
+
+  it('not at all when muted', () => {
+    const s = stepAbove(realStack(['a', 'b']), 'a', 'cc', { muted: true });
+    expect(kinds(s)).toEqual(['a', 'b']);
+  });
+});
+
 describe('compositionLayerIds — the one read of a layer stack (#1879)', () => {
   it('reads a stack built by Add Layer, back to front', () => {
     expect(compositionLayerIds(realStack(['bg', 'mid', 'fg']), 'comp')).toEqual([
@@ -325,9 +401,9 @@ describe('compositionLayerIds — the one read of a layer stack (#1879)', () => 
     const s = realStack(['a', 'b']);
     expect(collectLayerRows(s, 'comp').map((r) => r.id)).toEqual(['a', 'b']);
     expect(
-      collectCompositeInputs(s, 'comp', { time: { frame: 0, seconds: 0, normalized: 0 } }).map(
-        (i) => i.layerId,
-      ),
+      collectCompositeInputs(s, 'comp', { time: { frame: 0, seconds: 0, normalized: 0 } })
+        .filter(isLayerInput)
+        .map((i) => i.layerId),
     ).toEqual(['a', 'b']);
   });
 

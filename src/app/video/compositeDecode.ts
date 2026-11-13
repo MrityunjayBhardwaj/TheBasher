@@ -40,16 +40,20 @@ import type { CompositionParams } from '../../nodes/Composition';
 import type { LayerBlendMode } from '../../nodes/types';
 import { resolveEvaluatedParam } from '../resolveEvaluatedParam';
 import { resolveComfyImageBindings, type ComfyImageUpload } from './comfyImageBinding';
-import { compositionLayerIds } from './videoLayers';
+import { compositionStack } from './videoLayers';
+import { getNodeType } from '../../core/dag/registry';
+import { isBypassed } from '../../core/dag/chainBypass';
 import { enumerateEffectStack, resolveEffectBase } from '../operatorStack';
 import {
   compositeBitmapKey,
   drawComposite,
+  effectFilter,
+  isLayerDraw,
   planComposite,
+  type CompositeDraw,
   type CompositeSource,
   type EffectOp,
-  type LayerComposite,
-  type ResolvedLayerInput,
+  type ResolvedStackInput,
 } from './composite';
 
 function num(v: unknown, fallback: number): number {
@@ -107,17 +111,49 @@ function resolveComfySource(graphParam: unknown, imageBindingsParam: unknown): R
   return { graphJson: gp.apiJson, name: meta.name, compiledJson, imageUploads };
 }
 
-/** Resolve the comp's layers (back→front) to composite inputs: authored params with
- *  opacity + rotation overlaid by their evaluated channel value, and the source
- *  MediaClip resolved to its OPFS path + metadata (null when not yet decodable). */
+/** Effect node `nodeId` as an evaluated EffectOp (channel overlay → H40), or null when its
+ *  type has no composite draw yet. */
+function evaluatedEffectOp(
+  state: DagState,
+  nodeId: NodeId,
+  ctx: EvalCtx,
+  cache?: EvaluatorCache,
+): EffectOp | null {
+  const node = state.nodes[nodeId];
+  if (node?.type !== 'ColorCorrect') return null;
+  const ep = node.params as Record<string, unknown>;
+  const at = (path: string) =>
+    num(resolveEvaluatedParam(state, nodeId, path, ctx, cache)?.value, num(ep[path], 1));
+  return {
+    type: 'ColorCorrect',
+    brightness: at('brightness'),
+    contrast: at('contrast'),
+    saturation: at('saturation'),
+  };
+}
+
+/** Resolve the comp's stack (back→front) to composite inputs: each layer's authored params
+ *  with opacity + rotation overlaid by their evaluated channel value and its source MediaClip
+ *  resolved to its OPFS path + metadata (null when not yet decodable), and each unmuted step
+ *  between layers as the adjustment it applies (#1879 step 4). */
 export function collectCompositeInputs(
   state: DagState,
   compId: NodeId,
   ctx: EvalCtx,
   cache?: EvaluatorCache,
-): ResolvedLayerInput[] {
-  const inputs: ResolvedLayerInput[] = [];
-  for (const layerId of compositionLayerIds(state, compId)) {
+): ResolvedStackInput[] {
+  const inputs: ResolvedStackInput[] = [];
+  for (const entry of compositionStack(state, compId)) {
+    if (entry.kind === 'step') {
+      // The stack mute bypasses a step as it does a layer (V58), read through its declaration.
+      const step = state.nodes[entry.id];
+      const def = step ? getNodeType(step.type) : undefined;
+      if (!step || !def || isBypassed(def, step.params)) continue;
+      const op = evaluatedEffectOp(state, entry.id, ctx, cache);
+      if (op) inputs.push({ kind: 'adjust', nodeId: entry.id, effects: [op] });
+      continue;
+    }
+    const layerId = entry.id;
     const layer = state.nodes[layerId]!;
     const p = layer.params as Record<string, unknown>;
     const t = (p.transform ?? {}) as Record<string, unknown>;
@@ -191,24 +227,8 @@ export function collectCompositeInputs(
       }
       for (const entry of enumerateEffectStack(state, baseId)) {
         if (entry.muted) continue; // V58 mute-bypass — passes the frame through
-        if (entry.type === 'ColorCorrect') {
-          const ep = state.nodes[entry.nodeId].params as Record<string, unknown>;
-          effects.push({
-            type: 'ColorCorrect',
-            brightness: num(
-              resolveEvaluatedParam(state, entry.nodeId, 'brightness', ctx, cache)?.value,
-              num(ep.brightness, 1),
-            ),
-            contrast: num(
-              resolveEvaluatedParam(state, entry.nodeId, 'contrast', ctx, cache)?.value,
-              num(ep.contrast, 1),
-            ),
-            saturation: num(
-              resolveEvaluatedParam(state, entry.nodeId, 'saturation', ctx, cache)?.value,
-              num(ep.saturation, 1),
-            ),
-          });
-        }
+        const op = evaluatedEffectOp(state, entry.nodeId, ctx, cache);
+        if (op) effects.push(op);
       }
     }
 
@@ -432,19 +452,14 @@ const gradedCache = new BitmapLRU(MAX_CACHED_BITMAPS);
  *  effects = shaders" path); the apply order is the chain order. ColorCorrect maps
  *  to canvas `brightness()/contrast()/saturate()`. PURE of the DAG. */
 async function applyEffects(bmp: ImageBitmap, effects: readonly EffectOp[]): Promise<ImageBitmap> {
-  const filters: string[] = [];
-  for (const e of effects) {
-    if (e.type === 'ColorCorrect') {
-      filters.push(`brightness(${e.brightness}) contrast(${e.contrast}) saturate(${e.saturation})`);
-    }
-  }
-  if (!filters.length) return bmp;
+  const filter = effectFilter(effects);
+  if (!filter) return bmp;
   const canvas = document.createElement('canvas');
   canvas.width = bmp.width;
   canvas.height = bmp.height;
   const ctx = canvas.getContext('2d');
   if (!ctx) return bmp;
-  ctx.filter = filters.join(' ');
+  ctx.filter = filter;
   ctx.drawImage(bmp, 0, 0);
   return await createImageBitmap(canvas);
 }
@@ -454,11 +469,11 @@ async function applyEffects(bmp: ImageBitmap, effects: readonly EffectOp[]): Pro
  *  effect-aware). A draw that fails to decode is simply absent → drawComposite skips
  *  it (no throw, no blank crash). */
 export async function decodeDraws(
-  draws: readonly LayerComposite[],
+  draws: readonly CompositeDraw[],
 ): Promise<Map<string, ImageBitmap>> {
   const map = new Map<string, ImageBitmap>();
   await Promise.all(
-    draws.map(async (d) => {
+    draws.filter(isLayerDraw).map(async (d) => {
       const key = compositeBitmapKey(d);
       const cachedGraded = gradedCache.get(key);
       if (cachedGraded) {
@@ -492,7 +507,7 @@ export async function captureCompositeFrame(
   compFrame: number,
   ctx: CanvasRenderingContext2D,
   cache?: EvaluatorCache,
-): Promise<LayerComposite[]> {
+): Promise<CompositeDraw[]> {
   const fps = comp.fps ?? 30;
   const durationFrames = Math.max(1, comp.durationFrames ?? 150);
   const seconds = fps > 0 ? compFrame / fps : 0;

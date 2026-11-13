@@ -9,7 +9,7 @@
 //      sibling: videoTimelineGeometry; issue #237.
 
 import type { DagState } from '../../core/dag/state';
-import type { NodeId, NodeRef, Op } from '../../core/dag/types';
+import type { NodeId, NodeRef, Op, SocketId } from '../../core/dag/types';
 import { buildAddEffectOps, enumerateEffectStack, resolveEffectBase } from '../operatorStack';
 import { chainSocketOf } from '../operatorChain';
 import { parseComfyParamPath, type ComfyApiJson } from '../../core/comfy/comfyGraph';
@@ -92,15 +92,46 @@ function stackChainTopDown(state: DagState, compId: NodeId): NodeId[] {
   return out;
 }
 
+/** One entry of a composition's stack: a Layer, or a step between layers (an Image→Image
+ *  operator such as Color Correct placed on the chain) that adjusts everything below it. */
+export interface StackEntry {
+  readonly kind: 'layer' | 'step';
+  readonly id: NodeId;
+}
+
+/** Composition `compId`'s stack split into its entries (back→front) and the chainless node
+ *  the back entry reads, if any (`base`): a plain Image source wired into the bottom, which
+ *  has no spine and so always stays at the bottom. */
+function compositionStackParts(
+  state: DagState,
+  compId: NodeId,
+): { entries: StackEntry[]; base: NodeId | null } {
+  const topDown = stackChainTopDown(state, compId);
+  const last = topDown[topDown.length - 1];
+  const base = last !== undefined && !chainSocketOf(state.nodes[last]) ? last : null;
+  const entries = (base ? topDown.slice(0, -1) : topDown)
+    .map((id): StackEntry => ({ kind: state.nodes[id]?.type === 'Layer' ? 'layer' : 'step', id }))
+    .reverse();
+  return { entries, base };
+}
+
 /**
- * The Layer node ids of composition `compId`, back→front. Anything on the chain that is not a
- * Layer (an adjustment step between layers) is walked through and not listed. [] when the comp
- * is missing or has no layers.
+ * Composition `compId`'s stack, back→front: its Layers and the steps between them (#1879
+ * step 4). A step adjusts everything below it, so its place in this list is its scope.
+ * [] when the comp is missing or its stack is empty.
+ */
+export function compositionStack(state: DagState, compId: NodeId): StackEntry[] {
+  return compositionStackParts(state, compId).entries;
+}
+
+/**
+ * The Layer node ids of composition `compId`, back→front. Steps between layers are walked
+ * through and not listed. [] when the comp is missing or has no layers.
  */
 export function compositionLayerIds(state: DagState, compId: NodeId): NodeId[] {
-  return stackChainTopDown(state, compId)
-    .filter((id) => state.nodes[id]?.type === 'Layer')
-    .reverse();
+  return compositionStack(state, compId)
+    .filter((e) => e.kind === 'layer')
+    .map((e) => e.id);
 }
 
 /** The ops that put Layer `layerId` on top (front) of composition `compId`'s stack: the old top
@@ -161,14 +192,15 @@ export function collectLayerRows(state: DagState, compId: NodeId): LayerRow[] {
 }
 
 /**
- * Ops to move `layerId` to index `toIndex` (0=back…last=front) in the comp's layer stack: the
- * stack's wires are taken down and put back up in the new order, so `toIndex` IS the moved
- * layer's final index. One atomic batch → one undo.
+ * Ops to move `layerId` to index `toIndex` (0=back…last=front) among the comp's LAYERS. One
+ * atomic batch → one undo. `toIndex` is clamped into range; [] (a no-op) when the comp/layer
+ * is missing or the target equals the current index.
  *
- * Returns [] (a no-op) when the comp/layer is missing or the target equals the current index.
- * `toIndex` is clamped into the valid range. Also [] when something other than a Layer sits on
- * the chain: where an adjustment between layers goes when a layer moves past it is its own
- * question (#1879 step 4), and is not answered here by accident.
+ * Steps between layers (#1879 step 4) keep their place relative to the layers that do not
+ * move: the moved layer lands directly on the far side of the last layer it passes (below it
+ * when moving back, above it when moving forward). So moving a layer under an adjustment puts
+ * it in that adjustment's reach and moving it over one takes it out, as an adjustment layer
+ * behaves in After Effects. A chainless source wired into the bottom stays at the bottom.
  */
 export function buildReorderLayerOps(
   state: DagState,
@@ -176,37 +208,53 @@ export function buildReorderLayerOps(
   layerId: NodeId,
   toIndex: number,
 ): Op[] {
-  const chain = stackChainTopDown(state, compId);
-  if (chain.some((id) => state.nodes[id]?.type !== 'Layer')) return [];
-  const order = chain.slice().reverse(); // back → front
-  const from = order.indexOf(layerId);
+  const { entries, base } = compositionStackParts(state, compId);
+  const order = entries.map((e) => e.id); // back → front, layers and steps
+  const layers = entries.filter((e) => e.kind === 'layer').map((e) => e.id);
+  const from = layers.indexOf(layerId);
   if (from === -1) return [];
-  const to = toIndex < 0 ? 0 : toIndex > order.length - 1 ? order.length - 1 : toIndex;
+  const to = toIndex < 0 ? 0 : toIndex > layers.length - 1 ? layers.length - 1 : toIndex;
   if (to === from) return [];
-  const next = order.slice();
-  next.splice(from, 1);
-  next.splice(to, 0, layerId);
+  const passed = layers[to];
+  const next = order.filter((id) => id !== layerId);
+  const at = next.indexOf(passed);
+  next.splice(to < from ? at : at + 1, 0, layerId);
 
+  const spine = (id: NodeId): SocketId => chainSocketOf(state.nodes[id]) ?? BELOW;
   const ops: Op[] = [];
-  // Down: the comp's read of the top, and every layer's read of the one under it.
+  // Down: the comp's read of the top, every entry's read of the one under it, the base's.
   ops.push({
     type: 'disconnect',
     from: { node: order[order.length - 1], socket: 'out' },
     to: { node: compId, socket: COMP_IN },
   });
+  if (base) {
+    ops.push({
+      type: 'disconnect',
+      from: { node: base, socket: 'out' },
+      to: { node: order[0], socket: spine(order[0]) },
+    });
+  }
   for (let i = 1; i < order.length; i++) {
     ops.push({
       type: 'disconnect',
       from: { node: order[i - 1], socket: 'out' },
-      to: { node: order[i], socket: BELOW },
+      to: { node: order[i], socket: spine(order[i]) },
     });
   }
   // Up, in the new order.
+  if (base) {
+    ops.push({
+      type: 'connect',
+      from: { node: base, socket: 'out' },
+      to: { node: next[0], socket: spine(next[0]) },
+    });
+  }
   for (let i = 1; i < next.length; i++) {
     ops.push({
       type: 'connect',
       from: { node: next[i - 1], socket: 'out' },
-      to: { node: next[i], socket: BELOW },
+      to: { node: next[i], socket: spine(next[i]) },
     });
   }
   ops.push({
